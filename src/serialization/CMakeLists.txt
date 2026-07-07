@@ -1,0 +1,5 @@
+add_library(EngineLabSerialization STATIC src/JsonEngineSerializer.cpp src/YamlEngineSerializer.cpp)
+add_library(EngineLab::Serialization ALIAS EngineLabSerialization)
+target_include_directories(EngineLabSerialization PUBLIC include)
+target_link_libraries(EngineLabSerialization PUBLIC EngineLab::Foundation nlohmann_json::nlohmann_json yaml-cpp::yaml-cpp)
+enginelab_set_warnings(EngineLabSerialization)

@@ -1,0 +1,19 @@
+name: Windows build and tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  release:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake --preset windows-vs2022
+      - name: Build
+        run: cmake --build --preset windows-release --parallel
+      - name: Test
+        run: ctest --preset windows-release
+      - name: Package
+        run: cmake --build out/build/windows-vs2022 --config Release --target package

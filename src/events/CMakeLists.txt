@@ -1,0 +1,5 @@
+add_library(EngineLabEvents STATIC src/FourStrokeEventGenerator.cpp)
+add_library(EngineLab::Events ALIAS EngineLabEvents)
+target_include_directories(EngineLabEvents PUBLIC include)
+target_link_libraries(EngineLabEvents PUBLIC EngineLab::Foundation)
+enginelab_set_warnings(EngineLabEvents)

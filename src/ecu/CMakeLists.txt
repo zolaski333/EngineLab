@@ -1,0 +1,5 @@
+add_library(EngineLabEcu STATIC src/SimpleEcuModel.cpp)
+add_library(EngineLab::Ecu ALIAS EngineLabEcu)
+target_include_directories(EngineLabEcu PUBLIC include)
+target_link_libraries(EngineLabEcu PUBLIC EngineLab::Foundation)
+enginelab_set_warnings(EngineLabEcu)

@@ -1,0 +1,5 @@
+add_library(EngineLabPhysics STATIC src/SimplifiedGasolinePhysics.cpp)
+add_library(EngineLab::Physics ALIAS EngineLabPhysics)
+target_include_directories(EngineLabPhysics PUBLIC include)
+target_link_libraries(EngineLabPhysics PUBLIC EngineLab::Foundation)
+enginelab_set_warnings(EngineLabPhysics)

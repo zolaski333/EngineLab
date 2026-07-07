@@ -1,0 +1,16 @@
+build/
+out/
+.vs/
+.vscode/
+CMakeUserPresets.json
+compile_commands.json
+*.user
+*.suo
+*.pdb
+*.ilk
+*.exe
+*.dll
+*.local
+.DS_Store
+.agents/
+

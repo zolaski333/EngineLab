@@ -1,0 +1,5 @@
+add_library(EngineLabDiagnostics STATIC src/EngineDiagnostics.cpp)
+add_library(EngineLab::Diagnostics ALIAS EngineLabDiagnostics)
+target_include_directories(EngineLabDiagnostics PUBLIC include)
+target_link_libraries(EngineLabDiagnostics PUBLIC EngineLab::Foundation)
+enginelab_set_warnings(EngineLabDiagnostics)

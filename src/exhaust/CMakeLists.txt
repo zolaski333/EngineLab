@@ -1,0 +1,5 @@
+add_library(EngineLabExhaust STATIC src/ExhaustGraph.cpp)
+add_library(EngineLab::Exhaust ALIAS EngineLabExhaust)
+target_include_directories(EngineLabExhaust PUBLIC include)
+target_link_libraries(EngineLabExhaust PUBLIC EngineLab::Foundation EngineLab::Events)
+enginelab_set_warnings(EngineLabExhaust)

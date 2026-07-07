@@ -1,0 +1,5 @@
+add_library(EngineLabRuntime STATIC src/EngineRuntime.cpp)
+add_library(EngineLab::Runtime ALIAS EngineLabRuntime)
+target_include_directories(EngineLabRuntime PUBLIC include)
+target_link_libraries(EngineLabRuntime PUBLIC EngineLab::Simulation EngineLab::Ecu EngineLab::Physics EngineLab::Events EngineLab::Exhaust)
+enginelab_set_warnings(EngineLabRuntime)

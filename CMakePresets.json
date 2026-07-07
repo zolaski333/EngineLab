@@ -1,0 +1,36 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": { "major": 3, "minor": 24, "patch": 0 },
+  "configurePresets": [
+    {
+      "name": "windows-vs2022",
+      "displayName": "Windows VS 2022 x64",
+      "generator": "Visual Studio 17 2022",
+      "architecture": "x64",
+      "binaryDir": "${sourceDir}/out/build/windows-vs2022",
+      "cacheVariables": {
+        "ENGINELAB_BUILD_TESTS": "ON",
+        "ENGINELAB_ENABLE_WARNINGS_AS_ERRORS": "ON"
+      }
+    },
+    {
+      "name": "ninja-dev",
+      "displayName": "Ninja developer build",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/out/build/ninja-dev",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "ENGINELAB_BUILD_TESTS": "ON",
+        "ENGINELAB_ENABLE_WARNINGS_AS_ERRORS": "ON"
+      }
+    }
+  ],
+  "buildPresets": [
+    { "name": "windows-release", "configurePreset": "windows-vs2022", "configuration": "Release" },
+    { "name": "ninja-dev", "configurePreset": "ninja-dev" }
+  ],
+  "testPresets": [
+    { "name": "windows-release", "configurePreset": "windows-vs2022", "configuration": "Release", "output": { "outputOnFailure": true } },
+    { "name": "ninja-dev", "configurePreset": "ninja-dev", "output": { "outputOnFailure": true } }
+  ]
+}
