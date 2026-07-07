@@ -1,120 +1,78 @@
-# EngineLab
+# 🏎️ EngineLab
 
-Simulateur moteur/audio natif Windows en C++20 et JUCE. Le projet vise une
-illusion sonore crédible pilotée par une physique simplifiée cohérente — pas un
-outil de calcul moteur 1:1.
+EngineLab is a real-time, high-fidelity internal combustion engine simulation and audio synthesis application built in modern C++20 and the JUCE framework. It targets a perceptual and acoustically rich simulation driven by coherent, physically motivated simplified equations rather than a 1:1 thermodynamic calculation.
 
-## État actuel
+---
 
-Le squelette produit une application desktop JUCE avec :
+## 🌟 Key Features
 
-- simulation 4 cylindres essence 4 temps sur une thread dédiée à 240 Hz ;
-- événements d'allumage `1-3-4-2` transmis par file SPSC sans verrou ;
-- physique, ECU, échappement en graphe, diagnostics et sérialisation séparés ;
-- callback audio sans allocation et générateur de pulses minimal ;
-- visualisation 2D native des pistons, bielles et vilebrequin ;
-- import/export métier JSON et YAML ;
-- tests du démarrage, de l'ordre d'allumage, de la file temps réel et des codecs.
+### 1. Advanced Engine Physics Simulation
+- **Dynamic Torque Balance:** Real-time coupling of indicated combustion torque, mechanical friction, pumping losses, dynamic load, starter motor torque, and reciprocating piston inertia.
+- **Exact Piston Kinematics:** Exact geometric slider-crank calculations for piston speed, acceleration, and reciprocating mass inertia forces.
+- **Compressible Throttle Flow:** Isentropic sonic (choked flow) and subsonic restriction equations for manifold air mass calculations.
+- **Sub-stepping Numerical Solver:** Multi-rate integration targeting at least 240 Hz internally to guarantee numeric stability under high torque spikes.
 
-Cette version ajoute également :
+### 2. Physical Engine Configurations
+- **Uneven-Firing & Layout Support:** Fully customizable bank angles and per-cylinder crank offset degrees (`crankOffsetDegrees`), allowing modeling of I2, I4, I5, V6, crossplane/flatplane V8s, and custom designs.
+- **Camshaft Timing & Lift:** Dual camshaft (intake/exhaust) modeling parameterized by centerlines, durations, and lift profiles, dynamically animating valves and scaling volumetric efficiency.
 
-- cinq moteurs de base sélectionnables : I2, I4, I5, V6 et V8 ;
-- arbres à cames paramétrés par durée, centre et levée, avec soupapes animées ;
-- injection idéalisée (débit d'air, rendement volumétrique et masse injectée) ;
-- synthèse audio procédurale stéréo multicouche avec résonance d'échappement ;
-- banc freiné automatique, calcul couple/puissance et comparaison colorée des runs ;
-- suppression individuelle des anciennes courbes.
+### 3. Real-Time Audio Synthesis
+- **Stereo Procedural Synthesis:** Lock-free, allocation-free real-time audio threads generating physical combustion pulses, intake noise, mechanical distribution clicks, and starter sound layers.
+- **Exhaust Graph Resonance:** Multi-node exhaust delay paths modeling piping length delays and primary pipe acoustic resonances.
 
-Le moteur utilise désormais un bilan de couple explicite (indiqué,
-frottement, charge, démarreur et efforts alternatifs), une intégration en
-unités SI, un remplissage MAP/VE, des masses d'air/carburant cohérentes, des
-cartographies ECU interpolées et un modèle thermique. Le contact seul ne peut
-plus lancer un moteur arrêté : le démarreur doit atteindre le régime de
-combustion autonome.
+### 4. Interactive Dyno Sweep
+- **Automated Dyno Sweep:** Automatic brake sweep mapping torque/power curves across the engine speed range.
+- **Data Export & Analysis:** CSV curve export, comparison overlay plots, and complete engine configuration serialization (JSON/YAML).
 
-Le collecteur d'admission conserve maintenant la masse d'air dans un plénum
-paramétrable (`plenum_volume_l`, `throttle_diameter_mm`). Les ratés retirent une
-vraie impulsion de couple cylindre par cylindre, l'AFR affiché inclut les
-corrections de carburant et la thermique dépend du débit d'énergie par seconde.
-Les moteurs en V exposent également leur angle de banc.
+---
 
-L'application expose un éditeur JSON complet, l'import/export JSON/YAML,
-l'export CSV enrichi des passages au banc et un historique RPM/MAP/température.
-Les événements audio sont placés à l'échantillon et complétés par des couches
-admission, mécanique, distribution et démarreur.
+## ⌨️ Controls & Navigation
 
-Le rendu audio reste entièrement synthétique et temps réel : il est sensiblement
-plus riche que le générateur de pulses initial, sans prétendre remplacer une
-bibliothèque de prises moteur enregistrées en studio.
+- **`S` (Hold):** Starter motor engagement.
+- **`W`:** 25% Throttle.
+- **`E`:** 50% Throttle.
+- **`R`:** 100% Throttle.
+- **`D`:** Start/Stop Automated Dyno Sweep.
+- **`F1` to `F5`:** Load base preset engines (I2, I4, I5, V6, V8).
+- **`Spacebar`:** Pause/Resume simulation.
+- **`1`, `2`, `3`:** Set simulation speed scale (0.5×, 1×, 2×).
 
-## Commandes clavier
+---
 
-- `S` maintenu : démarreur ;
-- `W` : quart de gaz ;
-- `E` : mi-gaz ;
-- `R` : plein gaz ;
-- `D` : démarrer ou arrêter le banc de puissance.
-- `F1` à `F5` : sélectionner directement les cinq moteurs de base ;
-- `Espace` : pause/reprise de la simulation ;
-- `1`, `2`, `3` : vitesse de simulation 0,5×, 1× ou 2×.
+## 🛠️ Build Requirements
 
-La barre supérieure permet d'éditer tous les paramètres, d'importer ou
-d'exporter un moteur et d'exporter la courbe sélectionnée en CSV.
+- **Windows 10/11** (64-bit)
+- **Visual Studio 2022 or 2026** (with **Desktop development with C++** workload)
+- **CMake 3.24 or higher**
+- **Git**
 
-## Prérequis Windows
+All dependencies (JUCE, nlohmann_json, yaml-cpp) are managed directly by CMake via `FetchContent` and will be downloaded and compiled during the initial configuration.
 
-- Visual Studio 2022 ou 2026 avec **Desktop development with C++** ;
-- CMake 3.24 ou supérieur ;
-- Git ;
-- Windows 10/11 64 bits.
+---
 
-Les versions de JUCE, nlohmann/json et yaml-cpp sont épinglées dans le
-`CMakeLists.txt` racine. CMake les télécharge à la première configuration.
+## 🚀 Compiling the Project
 
-## Compiler
+Run the following commands in a PowerShell terminal:
 
 ```powershell
+# 1. Configure the build directory
 cmake -S . -B build -G "Visual Studio 18 2026" -A x64
+
+# 2. Build the application in Release mode
 cmake --build build --config Release --target EngineLabApp
+
+# 3. Build and execute the test suite
+cmake --build build --config Release --target EngineLabCoreTests
 ctest --test-dir build -C Release --output-on-failure
 ```
 
-Ou avec les presets reproductibles :
+*Note: For Visual Studio 2022, replace the generator option with `-G "Visual Studio 17 2022"`.*
 
-```powershell
-cmake --preset windows-vs2022
-cmake --build --preset windows-release --parallel
-ctest --preset windows-release
-```
+The compiled executable will be located at:
+`build/src/app/EngineLabApp_artefacts/Release/EngineLab.exe`
 
-Avec Visual Studio 2022, remplacez simplement le générateur par
-`"Visual Studio 17 2022"`.
+---
 
-Validation mémoire instrumentée (MSVC AddressSanitizer) :
+## ⚖️ License & Contributions
 
-```powershell
-cmake -S . -B build -DENGINELAB_ENABLE_SANITIZERS=ON
-cmake --build build --config Debug --target EngineLabCoreTests
-ctest --test-dir build -C Debug --output-on-failure
-```
-
-Exécutable attendu :
-
-```text
-build/src/app/EngineLabApp_artefacts/Release/EngineLab.exe
-```
-
-## Contrats importants
-
-- L'audio ne prend aucun mutex, n'alloue pas et n'appelle jamais l'UI.
-- La simulation ne dépend ni de JUCE, ni du pilote audio, ni de l'UI.
-- L'UI écrit des commandes atomiques et lit des snapshots ; elle ne calcule pas
-  le moteur.
-- Chaque nouveau cycle ou carburant arrive comme nouvelle stratégie derrière
-  les interfaces existantes, pas comme une cascade de conditions dans le 4T.
-- Les fichiers moteur sont versionnés (`schema_version`).
-
-Consultez [docs/architecture.md](docs/architecture.md) et
-[docs/realtime-audio.md](docs/realtime-audio.md), ainsi que
-[docs/simulation-model.md](docs/simulation-model.md) pour les équations et les
-limites du modèle.
+Please refer to [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) for community guidelines. This repository is licensed under the MIT License.
