@@ -1,0 +1,75 @@
+street_mild:
+  intake_duration_deg: 242
+  exhaust_duration_deg: 238
+  intake_lift_mm: 9.8
+  exhaust_lift_mm: 9.4
+  intake_centerline_deg: 112
+  exhaust_centerline_deg: 114
+
+sport_na:
+  intake_duration_deg: 268
+  exhaust_duration_deg: 264
+  intake_lift_mm: 12.2
+  exhaust_lift_mm: 11.8
+  intake_centerline_deg: 108
+  exhaust_centerline_deg: 110
+
+turbo_street:
+  intake_duration_deg: 248
+  exhaust_duration_deg: 244
+  intake_lift_mm: 10.4
+  exhaust_lift_mm: 9.8
+  intake_centerline_deg: 112
+  exhaust_centerline_deg: 116
+
+big_v8_street:
+  intake_duration_deg: 260
+  exhaust_duration_deg: 266
+  intake_lift_mm: 12.8
+  exhaust_lift_mm: 12.4
+  intake_centerline_deg: 110
+  exhaust_centerline_deg: 112
+
+motorcycle_high_rpm:
+  intake_duration_deg: 284
+  exhaust_duration_deg: 278
+  intake_lift_mm: 9.4
+  exhaust_lift_mm: 8.8
+  intake_centerline_deg: 105
+  exhaust_centerline_deg: 108
+
+v_twin_torque:
+  intake_duration_deg: 236
+  exhaust_duration_deg: 242
+  intake_lift_mm: 10.8
+  exhaust_lift_mm: 10.2
+  intake_centerline_deg: 104
+  exhaust_centerline_deg: 108
+
+v12_aircraft:
+  intake_duration_deg: 258
+  exhaust_duration_deg: 262
+  intake_lift_mm: 12.0
+  exhaust_lift_mm: 11.6
+  intake_centerline_deg: 108
+  exhaust_centerline_deg: 110
+
+aircooled_flat6:
+  intake_duration_deg: 270
+  exhaust_duration_deg: 266
+  intake_lift_mm: 12.2
+  exhaust_lift_mm: 11.8
+  intake_centerline_deg: 106
+  exhaust_centerline_deg: 109
+  intake_flow_coefficient: 0.70
+  exhaust_flow_coefficient: 0.68
+
+radial_aircraft:
+  intake_duration_deg: 246
+  exhaust_duration_deg: 250
+  intake_lift_mm: 11.6
+  exhaust_lift_mm: 11.2
+  intake_centerline_deg: 106
+  exhaust_centerline_deg: 110
+  intake_flow_coefficient: 0.58
+  exhaust_flow_coefficient: 0.60

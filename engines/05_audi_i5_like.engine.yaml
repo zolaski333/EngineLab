@@ -1,0 +1,25 @@
+schema_version: 1
+family: odd inline
+engine:
+  name: Audi I5-like 2.5 Turbo
+  layout: inline
+  cylinder_count: 5
+  firing_order: [1, 2, 4, 5, 3]
+  idle_rpm: 780
+  redline_rpm: 7100
+  rotating_inertia_kg_m2: 0.31
+  friction_coefficient: 0.13
+  octane_rating: 98
+  plenum_volume_l: 3.6
+  throttle_diameter_mm: 70
+  uses:
+    camshafts: turbo_street
+    exhaust: turbo_downpipe
+    transmission: sport_6_speed
+    vehicle: compact_coupe
+  cylinder_template:
+    bore_mm: 82.5
+    stroke_mm: 92.8
+    connecting_rod_mm: 144.0
+    piston_mass_g: 405
+    compression_ratio: 9.3

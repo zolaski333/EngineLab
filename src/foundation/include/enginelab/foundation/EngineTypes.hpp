@@ -10,7 +10,7 @@ namespace enginelab {
 
 enum class EngineCycle : std::uint8_t { fourStroke, twoStroke };
 enum class FuelType : std::uint8_t { gasoline, diesel };
-enum class EngineLayout : std::uint8_t { inlineLayout, vLayout, flat, custom };
+enum class EngineLayout : std::uint8_t { inlineLayout, vLayout, flat, radial, custom };
 enum class RunningState : std::uint8_t {
     stopped, cranking, idling, running, unstable, knocking, overheating, damaged, destroyed
 };
@@ -25,6 +25,19 @@ struct CylinderConfig final {
     double ignitionOffsetDegrees { 0.0 };
     double efficiencyOffset { 0.0 };
     double crankOffsetDegrees { 0.0 };
+    std::uint32_t crankJournalId { 0 };
+    double bankOffsetDegrees { 0.0 };
+};
+
+struct CrankJournalConfig final {
+    std::uint32_t id { 0 };
+    double angleDegrees { 0.0 };
+    double throwMm { 0.0 };
+};
+
+struct ValveLiftSample final {
+    double angleDegrees { 0.0 };
+    double liftMm { 0.0 };
 };
 
 struct CamshaftConfig final {
@@ -34,6 +47,10 @@ struct CamshaftConfig final {
     double exhaustLiftMm { 9.8 };
     double intakeCenterlineDegrees { 110.0 };
     double exhaustCenterlineDegrees { 112.0 };
+    double intakeFlowCoefficient { 0.62 };
+    double exhaustFlowCoefficient { 0.62 };
+    std::vector<ValveLiftSample> intakeLiftProfile;
+    std::vector<ValveLiftSample> exhaustLiftProfile;
 };
 
 struct ExhaustConfig final {
@@ -44,6 +61,37 @@ struct ExhaustConfig final {
     double outletDiameterMm { 65.0 };
 };
 
+struct TransmissionConfig final {
+    std::vector<double> gearRatios { 2.97, 2.07, 1.43, 1.00, 0.84, 0.56 };
+    double finalDriveRatio { 3.42 };
+    double maxClutchTorqueNm { 1'356.0 };
+};
+
+struct VehicleConfig final {
+    double massKg { 1'420.0 };
+    double dragCoefficient { 0.32 };
+    double frontalAreaM2 { 2.20 };
+    double tireRadiusM { 0.315 };
+    double rollingResistanceCoefficient { 0.014 };
+};
+
+struct ForcedInductionConfig final {
+    bool enabled { false };
+    double pressureRatio { 1.0 };
+    double fullBoostRpm { 3'500.0 };
+    double compressorEfficiency { 0.68 };
+    double chargeTemperatureRiseC { 35.0 };
+};
+
+struct ThermalConfig final {
+    double coolantMassKjPerC { 180.0 };
+    double oilMassKjPerC { 95.0 };
+    double coolantHeatShare { 0.34 };
+    double oilHeatShare { 0.18 };
+    double coolingPowerKwPerC { 0.42 };
+    double oilCoolingPowerKwPerC { 0.22 };
+};
+
 struct EngineConfig final {
     std::uint32_t schemaVersion { 1 };
     std::string name { "Untitled engine" };
@@ -52,6 +100,7 @@ struct EngineConfig final {
     EngineLayout layout { EngineLayout::inlineLayout };
     std::vector<CylinderConfig> cylinders;
     std::vector<std::uint32_t> firingOrder;
+    std::vector<CrankJournalConfig> crankJournals;
     double idleRpm { 850.0 };
     double redlineRpm { 7'200.0 };
     double rotatingInertiaKgM2 { 0.24 };
@@ -63,8 +112,12 @@ struct EngineConfig final {
     double plenumVolumeLitres { 3.0 };
     double throttleDiameterMm { 60.0 };
     double bankAngleDegrees { 0.0 };
+    ForcedInductionConfig forcedInduction;
+    ThermalConfig thermal;
     CamshaftConfig camshafts;
     ExhaustConfig exhaust;
+    TransmissionConfig transmission;
+    VehicleConfig vehicle;
 };
 
 struct EngineControls final {
@@ -80,6 +133,11 @@ struct CylinderState final {
     double pressureEstimateBar { 0.0 };
     double combustionPulse { 0.0 };
     double misfireProbability { 0.0 };
+    double intakeValveLiftMm { 0.0 };
+    double exhaustValveLiftMm { 0.0 };
+    double intakeFlowMgPerCycle { 0.0 };
+    double exhaustFlowMgPerCycle { 0.0 };
+    double runnerPressureKpa { 101.325 };
     double exhaustTemperatureC { 22.0 };
     bool combustionActive { false };
     bool misfiring { false };
@@ -111,6 +169,9 @@ struct EngineState final {
     double ignitionAdvanceDegrees { 0.0 };
     double manifoldPressureKpa { 28.0 };
     double exhaustPressureKpa { 101.325 };
+    double intakeRunnerPressureKpa { 101.325 };
+    double exhaustRunnerPressureKpa { 101.325 };
+    double exhaustFlowGramsPerSecond { 0.0 };
     double volumetricEfficiency { 0.0 };
     double airMassMgPerCycle { 0.0 };
     double injectedFuelMgPerCycle { 0.0 };
@@ -125,6 +186,15 @@ struct EngineState final {
     double cycleAveragedPowerKw { 0.0 };
     double wear { 0.0 };
     double damage { 0.0 };
+    int gear { -1 };
+    int gearCount { 0 };
+    double clutchPressure { 1.0 };
+    double vehicleSpeedMps { 0.0 };
+    double vehicleDistanceM { 0.0 };
+    double wheelTorqueNm { 0.0 };
+    double drivelineLoadTorqueNm { 0.0 };
+    double dynoHoldRpm { 0.0 };
+    bool dynoHoldEnabled { false };
     RunningState runningState { RunningState::stopped };
     std::array<CylinderState, 32> cylinderStates {};
     std::size_t cylinderStateCount { 0 };
@@ -193,10 +263,15 @@ struct DynoRun final {
 [[nodiscard]] EngineConfig makeDefaultInlineFive();
 [[nodiscard]] EngineConfig makeDefaultV6();
 [[nodiscard]] EngineConfig makeDefaultV8();
+[[nodiscard]] EngineConfig makeDefaultFlatSix();
+[[nodiscard]] EngineConfig makeDefaultRadialFive();
 [[nodiscard]] std::vector<EngineConfig> makeBaseEnginePresets();
 [[nodiscard]] double engineDisplacementLitres(const EngineConfig&) noexcept;
 [[nodiscard]] double valveLiftMm(double crankAngleDegrees, double centerlineDegrees,
                                  double durationDegrees, double maximumLiftMm) noexcept;
+[[nodiscard]] double profiledValveLiftMm(double crankAngleDegrees, double centerlineDegrees,
+                                         double durationDegrees, double maximumLiftMm,
+                                         const std::vector<ValveLiftSample>& samples) noexcept;
 [[nodiscard]] double combustionPulse(double cylinderPhaseDegrees, double ignitionAdvanceDegrees,
                                      double ignitionOffsetDegrees) noexcept;
 [[nodiscard]] std::optional<std::string> validateEngineConfig(const EngineConfig&);

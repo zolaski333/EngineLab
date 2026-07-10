@@ -1,0 +1,27 @@
+schema_version: 1
+family: aircooled flat-six
+engine:
+  name: Aircooled-like 3.6 Flat-6
+  layout: flat
+  bank_angle_deg: 180
+  cylinder_count: 6
+  firing_order: [1, 6, 2, 4, 3, 5]
+  idle_rpm: 780
+  redline_rpm: 7600
+  rotating_inertia_kg_m2: 0.33
+  friction_coefficient: 0.13
+  octane_rating: 98
+  cooling_efficiency: 1.65
+  plenum_volume_l: 4.2
+  throttle_diameter_mm: 74
+  uses:
+    camshafts: aircooled_flat6
+    exhaust: flat6_equal_length
+    transmission: sport_6_speed
+    vehicle: compact_coupe
+  cylinder_template:
+    bore_mm: 97.0
+    stroke_mm: 81.5
+    connecting_rod_mm: 134.0
+    piston_mass_g: 455
+    compression_ratio: 11.3

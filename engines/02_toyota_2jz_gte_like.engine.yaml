@@ -1,0 +1,25 @@
+schema_version: 1
+family: turbo inline
+engine:
+  name: 2JZ-GTE-like 3.0 I6 Turbo
+  layout: inline
+  cylinder_count: 6
+  firing_order: [1, 5, 3, 6, 2, 4]
+  idle_rpm: 760
+  redline_rpm: 7200
+  rotating_inertia_kg_m2: 0.36
+  friction_coefficient: 0.14
+  octane_rating: 98
+  plenum_volume_l: 4.2
+  throttle_diameter_mm: 74
+  uses:
+    camshafts: turbo_street
+    exhaust: turbo_downpipe
+    transmission: jdm_6_speed
+    vehicle: jdm_gt
+  cylinder_template:
+    bore_mm: 86.0
+    stroke_mm: 86.0
+    connecting_rod_mm: 142.0
+    piston_mass_g: 430
+    compression_ratio: 8.7

@@ -22,6 +22,12 @@ private:
     IExhaustModel& exhaust_;
     EngineState state_;
     std::array<double, 32> previousCylinderPhases_ {};
+    std::array<double, 32> intakeRunnerPressureKpa_ {};
+    std::array<double, 32> exhaustRunnerPressureKpa_ {};
+    std::array<double, 32> chamberPressureBar_ {};
+    std::array<double, 32> intakeFlowMgPerCycle_ {};
+    std::array<double, 32> exhaustFlowMgPerCycle_ {};
+    std::array<double, 32> cylinderWallTemperatureC_ {};
     std::array<bool, 32> cylinderMisfires_ {};
     std::array<bool, 32> cylinderMisfirePrepared_ {};
     std::uint32_t randomState_ { 0x6d2b79f5U };

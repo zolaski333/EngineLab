@@ -1,0 +1,48 @@
+compact_coupe:
+  mass_kg: 1280
+  drag_coefficient: 0.31
+  frontal_area_m2: 2.05
+  tire_radius_m: 0.305
+  rolling_resistance_coefficient: 0.013
+
+jdm_gt:
+  mass_kg: 1560
+  drag_coefficient: 0.32
+  frontal_area_m2: 2.12
+  tire_radius_m: 0.323
+  rolling_resistance_coefficient: 0.014
+
+muscle_car:
+  mass_kg: 1660
+  drag_coefficient: 0.36
+  frontal_area_m2: 2.22
+  tire_radius_m: 0.335
+  rolling_resistance_coefficient: 0.015
+
+rally_sedan:
+  mass_kg: 1450
+  drag_coefficient: 0.34
+  frontal_area_m2: 2.18
+  tire_radius_m: 0.315
+  rolling_resistance_coefficient: 0.016
+
+motorcycle:
+  mass_kg: 260
+  drag_coefficient: 0.62
+  frontal_area_m2: 0.62
+  tire_radius_m: 0.300
+  rolling_resistance_coefficient: 0.018
+
+cruiser_bike:
+  mass_kg: 360
+  drag_coefficient: 0.68
+  frontal_area_m2: 0.70
+  tire_radius_m: 0.315
+  rolling_resistance_coefficient: 0.018
+
+test_stand:
+  mass_kg: 1000
+  drag_coefficient: 0.30
+  frontal_area_m2: 2.00
+  tire_radius_m: 0.320
+  rolling_resistance_coefficient: 0.014

@@ -1,0 +1,35 @@
+schema_version: 1
+family: radial aircraft
+engine:
+  name: Radial-like 6.5 R5
+  layout: radial
+  bank_angle_deg: 72
+  firing_order: [1, 3, 5, 2, 4]
+  idle_rpm: 640
+  redline_rpm: 3200
+  rotating_inertia_kg_m2: 0.86
+  friction_coefficient: 0.19
+  octane_rating: 92
+  cooling_efficiency: 2.6
+  plenum_volume_l: 6.4
+  throttle_diameter_mm: 82
+  uses:
+    camshafts: radial_aircraft
+    exhaust: radial_collector
+    transmission: aircraft_direct
+    vehicle: test_stand
+  thermal:
+    coolant_mass_kj_per_c: 820
+    oil_mass_kj_per_c: 430
+    coolant_heat_share: 0.24
+    oil_heat_share: 0.16
+    cooling_power_kw_per_c: 0.92
+    oil_cooling_power_kw_per_c: 0.46
+  crank_journals:
+    - { id: 1, angle_deg: 0.0, throw_mm: 63.5 }
+  cylinders:
+    - { id: 1, bore_mm: 114.0, stroke_mm: 127.0, connecting_rod_mm: 228.0, piston_mass_g: 1050, compression_ratio: 7.0, crank_offset_deg: 0.0, crank_journal_id: 1, bank_offset_deg: 0.0 }
+    - { id: 2, bore_mm: 114.0, stroke_mm: 127.0, connecting_rod_mm: 228.0, piston_mass_g: 1050, compression_ratio: 7.0, crank_offset_deg: 432.0, crank_journal_id: 1, bank_offset_deg: 72.0 }
+    - { id: 3, bore_mm: 114.0, stroke_mm: 127.0, connecting_rod_mm: 228.0, piston_mass_g: 1050, compression_ratio: 7.0, crank_offset_deg: 144.0, crank_journal_id: 1, bank_offset_deg: 144.0 }
+    - { id: 4, bore_mm: 114.0, stroke_mm: 127.0, connecting_rod_mm: 228.0, piston_mass_g: 1050, compression_ratio: 7.0, crank_offset_deg: 576.0, crank_journal_id: 1, bank_offset_deg: 216.0 }
+    - { id: 5, bore_mm: 114.0, stroke_mm: 127.0, connecting_rod_mm: 228.0, piston_mass_g: 1050, compression_ratio: 7.0, crank_offset_deg: 288.0, crank_journal_id: 1, bank_offset_deg: 288.0 }

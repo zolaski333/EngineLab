@@ -19,7 +19,8 @@ EngineConfig makeEngine(std::string name, EngineLayout layout, std::uint32_t cou
     config.rotatingInertiaKgM2 = inertia;
     config.plenumVolumeLitres = std::max(0.6, static_cast<double>(count) * 0.70);
     config.throttleDiameterMm = std::clamp(36.0 + static_cast<double>(count) * 4.5, 42.0, 82.0);
-    config.bankAngleDegrees = layout == EngineLayout::vLayout ? 60.0 : 0.0;
+    config.bankAngleDegrees = layout == EngineLayout::vLayout ? 60.0
+        : (layout == EngineLayout::flat ? 180.0 : 0.0);
     config.camshafts = cams;
     config.cylinders.reserve(count);
     const auto spacing = 720.0 / static_cast<double>(count);
@@ -36,6 +37,13 @@ EngineConfig makeEngine(std::string name, EngineLayout layout, std::uint32_t cou
         } else {
             cylinder.crankOffsetDegrees = 0.0;
         }
+        cylinder.crankJournalId = id;
+        if (layout == EngineLayout::vLayout) {
+            cylinder.bankOffsetDegrees = id % 2U == 0U ? config.bankAngleDegrees * 0.5 : -config.bankAngleDegrees * 0.5;
+        } else if (layout == EngineLayout::flat) {
+            cylinder.bankOffsetDegrees = id % 2U == 0U ? 90.0 : -90.0;
+        }
+        config.crankJournals.push_back({ id, cylinder.crankOffsetDegrees, stroke * 0.5 });
         config.cylinders.push_back(cylinder);
     }
     config.firingOrder = std::move(order);
@@ -71,8 +79,62 @@ EngineConfig makeDefaultV8() {
     return config;
 }
 
+EngineConfig makeDefaultFlatSix() {
+    auto config = makeEngine("EL-36 F6", EngineLayout::flat, 6, { 1, 6, 2, 4, 3, 5 },
+                             97.0, 81.5, 780.0, 7'600.0, 0.33,
+                             { 270.0, 266.0, 12.3, 11.9, 106.0, 109.0 });
+    config.frictionCoefficient = 0.13;
+    config.plenumVolumeLitres = 4.2;
+    config.throttleDiameterMm = 74.0;
+    config.exhaust = { 720.0, 42.0, 66.0, 0.22, 74.0 };
+    config.transmission = { { 3.82, 2.20, 1.52, 1.22, 1.02, 0.84 }, 3.44, 980.0 };
+    config.vehicle = { 1'430.0, 0.30, 2.04, 0.325, 0.013 };
+    return config;
+}
+
+EngineConfig makeDefaultRadialFive() {
+    EngineConfig config;
+    config.name = "EL-R5 Radial";
+    config.layout = EngineLayout::radial;
+    config.firingOrder = { 1, 3, 5, 2, 4 };
+    config.idleRpm = 640.0;
+    config.redlineRpm = 3'200.0;
+    config.rotatingInertiaKgM2 = 0.86;
+    config.frictionCoefficient = 0.19;
+    config.octaneRating = 92.0;
+    config.coolingEfficiency = 2.6;
+    config.plenumVolumeLitres = 6.4;
+    config.throttleDiameterMm = 82.0;
+    config.bankAngleDegrees = 72.0;
+    config.camshafts = { 246.0, 250.0, 11.6, 11.2, 106.0, 110.0 };
+    config.exhaust = { 920.0, 54.0, 96.0, 0.08, 110.0 };
+    config.transmission = { { 1.0 }, 1.0, 6'800.0 };
+    config.vehicle = { 1'000.0, 0.30, 2.0, 0.320, 0.014 };
+    config.thermal = { 820.0, 430.0, 0.24, 0.16, 0.92, 0.46 };
+    config.crankJournals.push_back({ 1, 0.0, 63.5 });
+    constexpr std::uint32_t count = 5;
+    for (std::uint32_t id = 1; id <= count; ++id) {
+        CylinderConfig cylinder;
+        cylinder.id = id;
+        cylinder.boreMm = 114.0;
+        cylinder.strokeMm = 127.0;
+        cylinder.connectingRodMm = 228.0;
+        cylinder.pistonMassGrams = 1'050.0;
+        cylinder.compressionRatio = 7.0;
+        cylinder.efficiencyOffset = (static_cast<double>(id) - 3.0) * 0.004;
+        const auto order = std::find(config.firingOrder.begin(), config.firingOrder.end(), id);
+        cylinder.crankOffsetDegrees = order == config.firingOrder.end() ? 0.0
+            : static_cast<double>(std::distance(config.firingOrder.begin(), order)) * (720.0 / static_cast<double>(count));
+        cylinder.crankJournalId = 1;
+        cylinder.bankOffsetDegrees = static_cast<double>(id - 1U) * (360.0 / static_cast<double>(count));
+        config.cylinders.push_back(cylinder);
+    }
+    return config;
+}
+
 std::vector<EngineConfig> makeBaseEnginePresets() {
-    return { makeDefaultInlineTwo(), makeDefaultInlineFour(), makeDefaultInlineFive(), makeDefaultV6(), makeDefaultV8() };
+    return { makeDefaultInlineTwo(), makeDefaultInlineFour(), makeDefaultInlineFive(), makeDefaultV6(),
+             makeDefaultV8(), makeDefaultFlatSix(), makeDefaultRadialFive() };
 }
 
 double engineDisplacementLitres(const EngineConfig& config) noexcept {
@@ -89,6 +151,29 @@ double valveLiftMm(double crankAngleDegrees, double centerlineDegrees,
     if (std::abs(wrapped) >= halfDuration) return 0.0;
     const auto phase = (wrapped + halfDuration) / durationDegrees;
     return std::max(0.0, maximumLiftMm * 0.5 * (1.0 - std::cos(phase * 2.0 * std::numbers::pi)));
+}
+
+double profiledValveLiftMm(double crankAngleDegrees, double centerlineDegrees,
+                           double durationDegrees, double maximumLiftMm,
+                           const std::vector<ValveLiftSample>& samples) noexcept {
+    if (samples.size() < 2) return valveLiftMm(crankAngleDegrees, centerlineDegrees, durationDegrees, maximumLiftMm);
+    const auto relativeAngle = std::remainder(crankAngleDegrees - centerlineDegrees, 720.0);
+    const auto halfDuration = std::max(1.0, durationDegrees * 0.5);
+    if (std::abs(relativeAngle) >= halfDuration) return 0.0;
+    const auto firstAngle = samples.front().angleDegrees;
+    const auto lastAngle = samples.back().angleDegrees;
+    if (relativeAngle <= firstAngle) return std::clamp(samples.front().liftMm, 0.0, maximumLiftMm);
+    if (relativeAngle >= lastAngle) return std::clamp(samples.back().liftMm, 0.0, maximumLiftMm);
+    for (std::size_t index = 1; index < samples.size(); ++index) {
+        const auto& left = samples[index - 1];
+        const auto& right = samples[index];
+        if (relativeAngle <= right.angleDegrees) {
+            const auto span = std::max(1.0e-9, right.angleDegrees - left.angleDegrees);
+            const auto t = std::clamp((relativeAngle - left.angleDegrees) / span, 0.0, 1.0);
+            return std::clamp(std::lerp(left.liftMm, right.liftMm, t), 0.0, maximumLiftMm);
+        }
+    }
+    return 0.0;
 }
 
 double combustionPulse(double cylinderPhaseDegrees, double ignitionAdvanceDegrees,
@@ -120,18 +205,63 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
         || !inRange(config.plenumVolumeLitres, 0.1, 50.0)
         || !inRange(config.throttleDiameterMm, 15.0, 150.0)
         || !inRange(config.bankAngleDegrees, 0.0, 180.0)
+        || !inRange(config.forcedInduction.pressureRatio, 1.0, 3.5)
+        || !inRange(config.forcedInduction.fullBoostRpm, 200.0, 20'000.0)
+        || !inRange(config.forcedInduction.compressorEfficiency, 0.35, 0.95)
+        || !inRange(config.forcedInduction.chargeTemperatureRiseC, 0.0, 160.0)
+        || !inRange(config.thermal.coolantMassKjPerC, 20.0, 5'000.0)
+        || !inRange(config.thermal.oilMassKjPerC, 10.0, 2'500.0)
+        || !inRange(config.thermal.coolantHeatShare, 0.0, 1.0)
+        || !inRange(config.thermal.oilHeatShare, 0.0, 1.0)
+        || !inRange(config.thermal.coolingPowerKwPerC, 0.02, 20.0)
+        || !inRange(config.thermal.oilCoolingPowerKwPerC, 0.01, 10.0)
         || !inRange(config.camshafts.intakeDurationDegrees, 1.0, 720.0)
         || !inRange(config.camshafts.exhaustDurationDegrees, 1.0, 720.0)
         || !inRange(config.camshafts.intakeLiftMm, 0.0, 30.0)
         || !inRange(config.camshafts.exhaustLiftMm, 0.0, 30.0)
         || !inRange(config.camshafts.intakeCenterlineDegrees, 0.0, 720.0)
         || !inRange(config.camshafts.exhaustCenterlineDegrees, 0.0, 720.0)
+        || !inRange(config.camshafts.intakeFlowCoefficient, 0.05, 1.50)
+        || !inRange(config.camshafts.exhaustFlowCoefficient, 0.05, 1.50)
         || !inRange(config.exhaust.primaryLengthMm, 100.0, 3'000.0)
         || !inRange(config.exhaust.primaryDiameterMm, 15.0, 200.0)
         || !inRange(config.exhaust.collectorDiameterMm, 15.0, 300.0)
         || !inRange(config.exhaust.outletDiameterMm, 15.0, 300.0)
-        || !inRange(config.exhaust.mufflerRestriction, 0.0, 1.0))
+        || !inRange(config.exhaust.mufflerRestriction, 0.0, 1.0)
+        || !inRange(config.transmission.finalDriveRatio, 1.0, 8.0)
+        || !inRange(config.transmission.maxClutchTorqueNm, 10.0, 10'000.0)
+        || !inRange(config.vehicle.massKg, 50.0, 20'000.0)
+        || !inRange(config.vehicle.dragCoefficient, 0.05, 2.0)
+        || !inRange(config.vehicle.frontalAreaM2, 0.1, 20.0)
+        || !inRange(config.vehicle.tireRadiusM, 0.05, 2.0)
+        || !inRange(config.vehicle.rollingResistanceCoefficient, 0.0, 0.20))
         return "Engine configuration contains non-finite or physically invalid values";
+    if (config.transmission.gearRatios.empty() || config.transmission.gearRatios.size() > 12)
+        return "Transmission must contain between 1 and 12 forward gears";
+    for (const auto gearRatio : config.transmission.gearRatios)
+        if (!inRange(gearRatio, 0.05, 10.0)) return "Transmission gear ratios must be finite and positive";
+    if (config.crankJournals.size() > 64) return "Crank journal table must contain at most 64 entries";
+    std::unordered_set<std::uint32_t> journalIds;
+    for (const auto& journal : config.crankJournals) {
+        if (journal.id == 0 || !inRange(journal.angleDegrees, -360.0, 720.0)
+            || !inRange(journal.throwMm, 1.0, 120.0))
+            return "Crank journals must have finite IDs, angles and throws";
+        journalIds.insert(journal.id);
+    }
+    if (journalIds.size() != config.crankJournals.size()) return "Crank journal IDs must be unique";
+    const auto validateLiftProfile = [&inRange](const std::vector<ValveLiftSample>& profile, double maxLift) {
+        if (profile.size() > 64) return false;
+        double previous = -std::numeric_limits<double>::infinity();
+        for (const auto& sample : profile) {
+            if (!inRange(sample.angleDegrees, -360.0, 360.0) || !inRange(sample.liftMm, 0.0, maxLift)) return false;
+            if (sample.angleDegrees <= previous) return false;
+            previous = sample.angleDegrees;
+        }
+        return true;
+    };
+    if (!validateLiftProfile(config.camshafts.intakeLiftProfile, config.camshafts.intakeLiftMm)
+        || !validateLiftProfile(config.camshafts.exhaustLiftProfile, config.camshafts.exhaustLiftMm))
+        return "Valve lift profiles must be sorted finite tables within configured max lift";
     std::unordered_set<std::uint32_t> cylinderIds;
     constexpr std::uint32_t mergeId = std::numeric_limits<std::uint32_t>::max() - 2U;
     for (const auto& cylinder : config.cylinders) {
@@ -142,8 +272,11 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
             || !inRange(cylinder.compressionRatio, 5.0, 20.0)
             || !inRange(cylinder.ignitionOffsetDegrees, -30.0, 30.0)
             || !inRange(cylinder.efficiencyOffset, -0.5, 0.5)
-            || !inRange(cylinder.crankOffsetDegrees, -360.0, 720.0))
+            || !inRange(cylinder.crankOffsetDegrees, -360.0, 720.0)
+            || !inRange(cylinder.bankOffsetDegrees, -360.0, 360.0))
             return "Cylinder IDs and dimensions must be finite and physically valid";
+        if (cylinder.crankJournalId != 0 && !journalIds.empty() && !journalIds.contains(cylinder.crankJournalId))
+            return "Cylinder crankJournalId must reference a configured crank journal";
         cylinderIds.insert(cylinder.id);
     }
     const std::unordered_set<std::uint32_t> firingIds(config.firingOrder.begin(), config.firingOrder.end());

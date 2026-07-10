@@ -1,0 +1,62 @@
+compact_sport:
+  primary_length_mm: 520
+  primary_diameter_mm: 42
+  collector_diameter_mm: 58
+  muffler_restriction: 0.34
+  outlet_diameter_mm: 63
+
+turbo_downpipe:
+  primary_length_mm: 430
+  primary_diameter_mm: 40
+  collector_diameter_mm: 64
+  muffler_restriction: 0.46
+  outlet_diameter_mm: 76
+
+equal_length_header:
+  primary_length_mm: 760
+  primary_diameter_mm: 45
+  collector_diameter_mm: 63
+  muffler_restriction: 0.25
+  outlet_diameter_mm: 70
+
+crossplane_dual:
+  primary_length_mm: 690
+  primary_diameter_mm: 48
+  collector_diameter_mm: 76
+  muffler_restriction: 0.30
+  outlet_diameter_mm: 82
+
+motorcycle_4_2_1:
+  primary_length_mm: 610
+  primary_diameter_mm: 34
+  collector_diameter_mm: 48
+  muffler_restriction: 0.20
+  outlet_diameter_mm: 52
+
+short_v_twin:
+  primary_length_mm: 880
+  primary_diameter_mm: 46
+  collector_diameter_mm: 60
+  muffler_restriction: 0.18
+  outlet_diameter_mm: 60
+
+aircraft_manifold:
+  primary_length_mm: 980
+  primary_diameter_mm: 64
+  collector_diameter_mm: 128
+  muffler_restriction: 0.04
+  outlet_diameter_mm: 145
+
+flat6_equal_length:
+  primary_length_mm: 720
+  primary_diameter_mm: 42
+  collector_diameter_mm: 66
+  muffler_restriction: 0.22
+  outlet_diameter_mm: 74
+
+radial_collector:
+  primary_length_mm: 920
+  primary_diameter_mm: 54
+  collector_diameter_mm: 96
+  muffler_restriction: 0.08
+  outlet_diameter_mm: 110

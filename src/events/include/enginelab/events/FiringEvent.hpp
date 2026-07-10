@@ -16,6 +16,8 @@ struct FiringEvent final {
     float ignitionAdvanceDegrees { 0.0F };
     float knockAmount { 0.0F };
     float stereoPosition { 0.0F };
+    float exhaustFlowMgPerCycle { 0.0F };
+    float exhaustRunnerPressureKpa { 101.325F };
     float exhaustDelaySeconds { 0.0F };
     float exhaustResonanceHz { 0.0F };
     bool misfire { false };

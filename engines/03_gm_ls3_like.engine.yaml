@@ -1,0 +1,26 @@
+schema_version: 1
+family: american v8
+engine:
+  name: LS3-like 6.2 Crossplane V8
+  layout: v
+  bank_angle_deg: 90
+  cylinder_count: 8
+  firing_order: [1, 8, 7, 2, 6, 5, 4, 3]
+  idle_rpm: 720
+  redline_rpm: 6600
+  rotating_inertia_kg_m2: 0.52
+  friction_coefficient: 0.16
+  octane_rating: 95
+  plenum_volume_l: 6.0
+  throttle_diameter_mm: 90
+  uses:
+    camshafts: big_v8_street
+    exhaust: crossplane_dual
+    transmission: muscle_6_speed
+    vehicle: muscle_car
+  cylinder_template:
+    bore_mm: 103.25
+    stroke_mm: 92.0
+    connecting_rod_mm: 155.0
+    piston_mass_g: 520
+    compression_ratio: 10.7

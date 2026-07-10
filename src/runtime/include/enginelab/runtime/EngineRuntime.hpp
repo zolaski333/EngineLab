@@ -16,6 +16,8 @@
 
 namespace enginelab {
 using FiringEventQueue = SpscQueue<FiringEvent, 2'048>;
+enum class AudioExhaustPreset : int { street = 0, openHeaders = 1, turboMuffled = 2, longTube = 3, motorcycle = 4 };
+
 struct RealtimeAudioState final {
     std::atomic<float> rpm { 0.0F };
     std::atomic<float> throttle { 0.0F };
@@ -24,7 +26,24 @@ struct RealtimeAudioState final {
     std::atomic<float> starter { 0.0F };
     std::atomic<float> timeScale { 1.0F };
     std::atomic<float> cylinderCount { 4.0F };
+    std::atomic<float> redlineRpm { 7'200.0F };
+    std::atomic<float> displacementLitres { 2.0F };
+    std::atomic<float> cylinderDisplacementLitres { 0.5F };
+    std::atomic<float> boreStrokeRatio { 1.0F };
+    std::atomic<float> bankSeparation { 0.0F };
+    std::atomic<float> exhaustOpenness { 0.5F };
+    std::atomic<float> boostPressureRatio { 1.0F };
     std::atomic<float> exhaustReflectionSeconds { 0.006F };
+    std::atomic<float> volume { 1.0F };
+    std::atomic<float> convolution { 0.45F };
+    std::atomic<float> highFrequencyGain { 1.0F };
+    std::atomic<float> lowFrequencyNoise { 0.35F };
+    std::atomic<float> highFrequencyNoise { 0.35F };
+    std::atomic<float> combustionGain { 1.0F };
+    std::atomic<float> exhaustGain { 1.0F };
+    std::atomic<float> intakeGain { 0.85F };
+    std::atomic<float> mechanicalGain { 0.70F };
+    std::atomic<int> exhaustPreset { static_cast<int>(AudioExhaustPreset::street) };
 };
 static_assert(std::atomic<float>::is_always_lock_free, "Realtime audio telemetry requires lock-free float atomics");
 
@@ -41,6 +60,23 @@ public:
     void setStarterEngaged(bool value) noexcept { starter_.store(value); }
     void setThrottle(double value) noexcept { throttle_.store(std::isfinite(value) ? std::clamp(value, 0.0, 1.0) : 0.0); }
     void setLoad(double value) noexcept { load_.store(std::isfinite(value) ? std::clamp(value, 0.0, 1.0) : 0.0); }
+    void setClutchPressure(double value) noexcept { clutchPressure_.store(std::isfinite(value) ? std::clamp(value, 0.0, 1.0) : 1.0); }
+    void shiftUp() noexcept;
+    void shiftDown() noexcept;
+    void setGear(int gear) noexcept;
+    void setDynoHoldEnabled(bool value) noexcept { dynoHoldEnabled_.store(value); }
+    void adjustDynoHoldRpm(double delta) noexcept;
+    void setAudioVolume(double value) noexcept { audioState_.volume.store(static_cast<float>(std::clamp(value, 0.0, 2.0))); }
+    void setAudioConvolution(double value) noexcept { audioState_.convolution.store(static_cast<float>(std::clamp(value, 0.0, 1.0))); }
+    void setHighFrequencyGain(double value) noexcept { audioState_.highFrequencyGain.store(static_cast<float>(std::clamp(value, 0.2, 2.5))); }
+    void setLowFrequencyNoise(double value) noexcept { audioState_.lowFrequencyNoise.store(static_cast<float>(std::clamp(value, 0.0, 1.5))); }
+    void setHighFrequencyNoise(double value) noexcept { audioState_.highFrequencyNoise.store(static_cast<float>(std::clamp(value, 0.0, 1.5))); }
+    void setCombustionGain(double value) noexcept { audioState_.combustionGain.store(static_cast<float>(std::clamp(value, 0.0, 2.0))); }
+    void setExhaustGain(double value) noexcept { audioState_.exhaustGain.store(static_cast<float>(std::clamp(value, 0.0, 2.0))); }
+    void setIntakeGain(double value) noexcept { audioState_.intakeGain.store(static_cast<float>(std::clamp(value, 0.0, 2.0))); }
+    void setMechanicalGain(double value) noexcept { audioState_.mechanicalGain.store(static_cast<float>(std::clamp(value, 0.0, 2.0))); }
+    void setExhaustPreset(AudioExhaustPreset value) noexcept { audioState_.exhaustPreset.store(static_cast<int>(value), std::memory_order_relaxed); }
+    [[nodiscard]] bool dynoHoldEnabled() const noexcept { return dynoHoldEnabled_.load(); }
     void setTargetAirFuelRatio(double value) noexcept { ecu_.setTargetAirFuelRatio(value); }
     void setIgnitionAdvanceDegrees(double value) noexcept { ecu_.setIgnitionAdvanceDegrees(value); }
     void setPaused(bool value) noexcept { paused_.store(value); }
@@ -60,6 +96,7 @@ public:
     [[nodiscard]] std::uint64_t timingOverrunCount() const noexcept { return timingOverruns_.load(); }
 private:
     void run(std::stop_token stopToken);
+    [[nodiscard]] double updateDriveline(double dtSeconds, const EngineState& engineState, double requestedLoad) noexcept;
     EngineConfig config_;
     SimpleEcuModel ecu_;
     SimplifiedGasolinePhysics physics_;
@@ -74,6 +111,10 @@ private:
     std::atomic<bool> starter_ { false };
     std::atomic<double> throttle_ { 0.12 };
     std::atomic<double> load_ { 0.08 };
+    std::atomic<double> clutchPressure_ { 1.0 };
+    std::atomic<int> gear_ { -1 };
+    std::atomic<bool> dynoHoldEnabled_ { false };
+    std::atomic<double> dynoHoldRpm_ { 2'500.0 };
     std::atomic<std::uint64_t> droppedEvents_ { 0 };
     std::atomic<std::uint64_t> timingOverruns_ { 0 };
     std::atomic<bool> paused_ { false };
@@ -95,6 +136,10 @@ private:
     bool savedStarter_ { false };
     double savedThrottle_ { 0.12 };
     double savedLoad_ { 0.08 };
+    double vehicleSpeedMps_ { 0.0 };
+    double vehicleDistanceM_ { 0.0 };
+    double wheelTorqueNm_ { 0.0 };
+    double drivelineLoadTorqueNm_ { 0.0 };
     std::atomic<bool> dynoSweeping_ { false };
     std::atomic<bool> dynoCompleted_ { false };
     std::jthread thread_;

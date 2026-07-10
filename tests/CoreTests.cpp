@@ -8,10 +8,12 @@
 #include <enginelab/simulation/EngineSimulator.hpp>
 #include <enginelab/runtime/EngineRuntime.hpp>
 #include <enginelab/audio/RealtimeEngineAudio.hpp>
+#include <enginelab/catalog/EngineCatalog.hpp>
 #include <chrono>
 #include <algorithm>
 #include <array>
 #include <cstdlib>
+#include <filesystem>
 #include <iostream>
 #include <limits>
 #include <numeric>
@@ -55,6 +57,16 @@ int main() {
     }
     require(simulator.state().rpm > 500.0, "engine should start");
     require(firedCylinders == std::set<std::uint32_t>({ 1, 2, 3, 4 }), "all cylinders should fire");
+    require(simulator.state().intakeRunnerPressureKpa > 0.0 && simulator.state().exhaustRunnerPressureKpa > 0.0,
+            "simulation must expose intake and exhaust runner pressures");
+    require(simulator.state().exhaustFlowGramsPerSecond > 0.0,
+            "running simulation must produce exhaust mass flow telemetry");
+    require(std::any_of(simulator.state().cylinderStates.begin(),
+            simulator.state().cylinderStates.begin() + static_cast<std::ptrdiff_t>(simulator.state().cylinderStateCount),
+            [](const enginelab::CylinderState& cylinder) {
+                return cylinder.pressureEstimateBar > 1.2 && cylinder.runnerPressureKpa > 0.0
+                    && (cylinder.intakeValveLiftMm > 0.0 || cylinder.exhaustValveLiftMm > 0.0);
+            }), "cylinder states must include chamber pressure, valve lift and runner pressure");
     require(std::abs(simulator.state().torqueNm
             - (simulator.state().indicatedTorqueNm - simulator.state().frictionTorqueNm)) < 0.001,
             "brake torque must equal indicated torque minus engine losses");
@@ -77,11 +89,21 @@ int main() {
     require(jsonRoundTrip.config->firingOrder == config.firingOrder, "JSON must preserve firing order");
     require(std::abs(jsonRoundTrip.config->exhaust.primaryLengthMm - config.exhaust.primaryLengthMm) < 0.001,
             "JSON must preserve exhaust geometry");
+    require(jsonRoundTrip.config->transmission.gearRatios.size() == config.transmission.gearRatios.size(),
+            "JSON must preserve transmission gear count");
+    require(std::abs(jsonRoundTrip.config->vehicle.massKg - config.vehicle.massKg) < 0.001,
+            "JSON must preserve vehicle mass");
     require(std::abs(jsonRoundTrip.config->plenumVolumeLitres - config.plenumVolumeLitres) < 0.001,
             "JSON must preserve intake plenum geometry");
+    require(jsonRoundTrip.config->crankJournals.size() == config.crankJournals.size(),
+            "JSON must preserve explicit crank journal geometry");
     const auto v8JsonRoundTrip = json.decode(json.encode(enginelab::makeDefaultV8()));
     require(v8JsonRoundTrip && v8JsonRoundTrip.config->layout == enginelab::EngineLayout::vLayout,
             "JSON must preserve V engine layout");
+    const auto radialJsonRoundTrip = json.decode(json.encode(enginelab::makeDefaultRadialFive()));
+    require(radialJsonRoundTrip && radialJsonRoundTrip.config->layout == enginelab::EngineLayout::radial
+            && radialJsonRoundTrip.config->crankJournals.size() == 1,
+            "JSON must preserve radial layout and shared crank journal");
     require(!json.decode(R"({"schema_version":1,"engine":{"name":"bad","cycle":"steam","fuel":"gasoline"}})"),
             "JSON must reject unknown enum values");
 
@@ -92,8 +114,18 @@ int main() {
     const auto v8YamlRoundTrip = yaml.decode(yaml.encode(enginelab::makeDefaultV8()));
     require(v8YamlRoundTrip && v8YamlRoundTrip.config->layout == enginelab::EngineLayout::vLayout,
             "YAML must preserve V engine layout");
+    const auto radialYamlRoundTrip = yaml.decode(yaml.encode(enginelab::makeDefaultRadialFive()));
+    require(radialYamlRoundTrip && radialYamlRoundTrip.config->layout == enginelab::EngineLayout::radial
+            && radialYamlRoundTrip.config->cylinders.front().crankJournalId == 1,
+            "YAML must preserve radial layout and cylinder journal references");
     require(v8YamlRoundTrip && std::abs(v8YamlRoundTrip.config->bankAngleDegrees - 90.0) < 0.001,
             "YAML must preserve V-engine bank angle");
+    require(yamlRoundTrip.config->transmission.gearRatios.size() == config.transmission.gearRatios.size(),
+            "YAML must preserve transmission gear count");
+    require(std::abs(yamlRoundTrip.config->vehicle.tireRadiusM - config.vehicle.tireRadiusM) < 0.001,
+            "YAML must preserve vehicle tire radius");
+    require(yamlRoundTrip.config->crankJournals.size() == config.crankJournals.size(),
+            "YAML must preserve explicit crank journal geometry");
     require(std::abs(jsonRoundTrip.config->camshafts.intakeLiftMm - config.camshafts.intakeLiftMm) < 0.001,
             "JSON must preserve camshaft lift");
     auto invalidPhysicalConfig = config;
@@ -102,12 +134,38 @@ int main() {
     require(!yaml.decode(yaml.encode(invalidPhysicalConfig)), "YAML decoder must reject physically invalid engine files");
 
     const auto presets = enginelab::makeBaseEnginePresets();
-    require(presets.size() == 5, "I2, I4, I5, V6 and V8 presets must exist");
+    require(presets.size() == 7, "I2, I4, I5, V6, V8, flat-six and radial-five presets must exist");
     require(presets[0].cylinders.size() == 2 && presets[2].cylinders.size() == 5
-            && presets[3].cylinders.size() == 6 && presets[4].cylinders.size() == 8,
-            "base presets must expose the requested cylinder counts");
+            && presets[3].cylinders.size() == 6 && presets[4].cylinders.size() == 8
+            && presets[5].layout == enginelab::EngineLayout::flat
+            && presets[6].layout == enginelab::EngineLayout::radial,
+            "base presets must expose common and exotic layouts");
     require(enginelab::engineDisplacementLitres(presets[4]) > enginelab::engineDisplacementLitres(presets[0]),
             "V8 displacement should exceed I2 displacement");
+
+    const auto catalog = enginelab::loadEngineCatalog(std::filesystem::path(ENGINELAB_CATALOG_ROOT));
+    if (!catalog.errors.empty()) {
+        for (const auto& error : catalog.errors) std::cerr << "catalog error: " << error << '\n';
+    }
+    require(catalog.errors.empty(), "engine catalog files must load without errors");
+    require(catalog.entries.size() >= 10, "catalog must ship a meaningful starter library of realistic and exotic engines");
+    bool found2jz = false;
+    bool foundV8 = false;
+    bool foundMotorcycle = false;
+    bool foundFlatSix = false;
+    bool foundRadial = false;
+    for (const auto& entry : catalog.entries) {
+        found2jz = found2jz || entry.config.name.find("2JZ") != std::string::npos;
+        foundV8 = foundV8 || (entry.config.layout == enginelab::EngineLayout::vLayout && entry.config.cylinders.size() == 8);
+        foundMotorcycle = foundMotorcycle || entry.family == "motorcycle";
+        foundFlatSix = foundFlatSix || (entry.config.layout == enginelab::EngineLayout::flat && entry.config.cylinders.size() == 6);
+        foundRadial = foundRadial || (entry.config.layout == enginelab::EngineLayout::radial
+            && entry.config.cylinders.size() == 5 && entry.config.crankJournals.size() == 1);
+        require(!enginelab::validateEngineConfig(entry.config), "every catalog engine must validate");
+        require(!entry.sourcePath.empty(), "catalog entries must retain their source path");
+    }
+    require(found2jz && foundV8 && foundMotorcycle && foundFlatSix && foundRadial,
+            "catalog must cover iconic inline, V8, motorcycle, flat-six and radial profiles");
 
     {
         const auto simulate = [](const enginelab::EngineConfig& testConfig, double dt) {
@@ -146,6 +204,15 @@ int main() {
             "ignition advance must move the mechanical pressure peak earlier in the crank cycle");
     require(enginelab::combustionPulse(90.0, 0.0, 10.0) < 0.98,
             "per-cylinder ignition offset must shift the mechanical pressure trace");
+    {
+        std::vector<enginelab::ValveLiftSample> profile {
+            { -120.0, 0.0 }, { -60.0, 2.0 }, { 0.0, 8.0 }, { 60.0, 2.0 }, { 120.0, 0.0 }
+        };
+        require(enginelab::profiledValveLiftMm(470.0, 470.0, 248.0, 10.2, profile) > 7.99,
+                "profiled valve lift must use tabulated peak lift");
+        require(enginelab::profiledValveLiftMm(350.0, 470.0, 248.0, 10.2, profile) == 0.0,
+                "profiled valve lift must close at the table boundary");
+    }
 
     {
         enginelab::SimpleEcuModel misfireEcu;
@@ -257,22 +324,43 @@ int main() {
                 "zero valve lift must result in zero volumetric efficiency");
         require(zeroLiftSim.state().rpm < 300.0,
                 "engine must not start and run with zero valve lift");
+        require(std::abs(zeroLiftSim.state().manifoldPressureKpa - config.ambientPressureKpa) < 0.01,
+                "zero valve lift must not drop manifold pressure");
     }
 
     {
         auto customCrankConfig = config;
+        customCrankConfig.crankJournals = { { 10, 90.0, 43.0 }, { 20, 270.0, 43.0 },
+            { 30, 450.0, 43.0 }, { 40, 630.0, 43.0 } };
         customCrankConfig.cylinders[0].crankOffsetDegrees = 90.0;
+        customCrankConfig.cylinders[0].crankJournalId = 10;
+        customCrankConfig.cylinders[0].bankOffsetDegrees = -12.0;
         customCrankConfig.cylinders[1].crankOffsetDegrees = 270.0;
+        customCrankConfig.cylinders[1].crankJournalId = 20;
         customCrankConfig.cylinders[2].crankOffsetDegrees = 450.0;
+        customCrankConfig.cylinders[2].crankJournalId = 30;
         customCrankConfig.cylinders[3].crankOffsetDegrees = 630.0;
+        customCrankConfig.cylinders[3].crankJournalId = 40;
+        customCrankConfig.camshafts.intakeFlowCoefficient = 0.70;
+        customCrankConfig.camshafts.exhaustFlowCoefficient = 0.66;
+        customCrankConfig.camshafts.intakeLiftProfile = {
+            { -124.0, 0.0 }, { -60.0, 3.2 }, { 0.0, 10.2 }, { 60.0, 3.2 }, { 124.0, 0.0 }
+        };
         const enginelab::JsonEngineSerializer jsonSer;
         const auto jsonRt = jsonSer.decode(jsonSer.encode(customCrankConfig));
         require(jsonRt && std::abs(jsonRt.config->cylinders[0].crankOffsetDegrees - 90.0) < 0.01,
                 "JSON round trip must preserve custom crankOffsetDegrees");
+        require(jsonRt && jsonRt.config->cylinders[0].crankJournalId == 10
+                && std::abs(jsonRt.config->cylinders[0].bankOffsetDegrees + 12.0) < 0.01
+                && jsonRt.config->camshafts.intakeLiftProfile.size() == 5,
+                "JSON round trip must preserve es2d-style journals, bank offsets and lift tables");
         const enginelab::YamlEngineSerializer yamlSer;
         const auto yamlRt = yamlSer.decode(yamlSer.encode(customCrankConfig));
         require(yamlRt && std::abs(yamlRt.config->cylinders[1].crankOffsetDegrees - 270.0) < 0.01,
                 "YAML round trip must preserve custom crankOffsetDegrees");
+        require(yamlRt && yamlRt.config->cylinders[1].crankJournalId == 20
+                && std::abs(yamlRt.config->camshafts.intakeFlowCoefficient - 0.70) < 0.001,
+                "YAML round trip must preserve es2d-style journals and flow coefficients");
     }
 
     {
@@ -313,6 +401,11 @@ int main() {
         flowState.fuelFlowGramsPerSecond = 18.0;
         require(restrictedExhaust.backPressureKpa(flowState) > openExhaust.backPressureKpa(flowState) + 20.0,
                 "collector and outlet diameters must materially change back pressure");
+        flowState.exhaustRunnerPressureKpa = 180.0;
+        const auto pulsedBackPressure = openExhaust.backPressureKpa(flowState);
+        require(pulsedBackPressure > openConfig.ambientPressureKpa + 2.0
+                    && pulsedBackPressure < openConfig.ambientPressureKpa + 8.0,
+                "runner pressure pulses must feed but not dominate exhaust back pressure");
 
         auto arbitraryIds = config;
         arbitraryIds.cylinders[0].id = 100;
@@ -380,6 +473,8 @@ int main() {
         event.intensity = 0.8F;
         event.pressureEstimateBar = 60.0F;
         event.combustionDurationMs = 5.0F;
+        event.exhaustResonanceHz = 240.0F;
+        event.airFuelRatio = 12.8F;
         require(audioQueue.tryPush(event), "audio timing event must enter realtime queue");
         juce::AudioBuffer<float> buffer(2, 1'200);
         renderer.render(buffer, 0, buffer.getNumSamples());
@@ -388,6 +483,8 @@ int main() {
             if (std::abs(buffer.getSample(0, sample)) > 1.0e-7F) { firstAudible = sample; break; }
         require(firstAudible >= 955 && firstAudible <= 970,
                 "audio event must be rendered at its sample-accurate scheduled offset");
+        require(buffer.getMagnitude(0, firstAudible, buffer.getNumSamples() - firstAudible) > 1.0e-4F,
+                "combustion audio must produce a sustained audible impulse tail");
     }
 
     {
@@ -424,6 +521,63 @@ int main() {
         scaledRenderer.render(shortBuffer, 0, shortBuffer.getNumSamples());
         require(scaledRenderer.droppedPendingEventCount() > 0,
                 "pending audio saturation must be observable instead of blocking the producer queue");
+    }
+
+    {
+        enginelab::FiringEventQueue presetQueue;
+        enginelab::RealtimeAudioState presetState;
+        presetState.rpm.store(3'600.0F);
+        presetState.throttle.store(0.8F);
+        presetState.load.store(0.5F);
+        presetState.intakeGain.store(0.0F);
+        presetState.mechanicalGain.store(0.0F);
+        enginelab::FiringEvent event;
+        event.timeSeconds = 0.0;
+        event.intensity = 0.9F;
+        event.pressureEstimateBar = 72.0F;
+        event.combustionDurationMs = 5.8F;
+        event.exhaustDelaySeconds = 0.008F;
+        event.exhaustResonanceHz = 220.0F;
+        event.airFuelRatio = 12.9F;
+
+        presetState.exhaustPreset.store(static_cast<int>(enginelab::AudioExhaustPreset::openHeaders));
+        enginelab::RealtimeEngineAudio openRenderer(presetQueue, presetState);
+        openRenderer.prepare(48'000.0, 4'800);
+        require(presetQueue.tryPush(event), "open-header fixture event must enter queue");
+        juce::AudioBuffer<float> openBuffer(2, 4'800);
+        openRenderer.render(openBuffer, 0, openBuffer.getNumSamples());
+        const auto openMagnitude = openBuffer.getMagnitude(0, 0, openBuffer.getNumSamples());
+
+        enginelab::FiringEventQueue mutedQueue;
+        enginelab::RealtimeAudioState mutedState;
+        mutedState.combustionGain.store(0.0F);
+        mutedState.exhaustGain.store(0.0F);
+        mutedState.intakeGain.store(0.0F);
+        mutedState.mechanicalGain.store(0.0F);
+        enginelab::RealtimeEngineAudio mutedRenderer(mutedQueue, mutedState);
+        mutedRenderer.prepare(48'000.0, 4'800);
+        require(mutedQueue.tryPush(event), "muted fixture event must enter queue");
+        juce::AudioBuffer<float> mutedBuffer(2, 4'800);
+        mutedRenderer.render(mutedBuffer, 0, mutedBuffer.getNumSamples());
+        require(mutedBuffer.getMagnitude(0, 0, mutedBuffer.getNumSamples()) < openMagnitude * 0.05F,
+                "live mixer gains must be able to mute audio layers");
+
+        enginelab::FiringEventQueue turboQueue;
+        enginelab::RealtimeAudioState turboState;
+        turboState.rpm.store(3'600.0F);
+        turboState.throttle.store(0.8F);
+        turboState.load.store(0.5F);
+        turboState.intakeGain.store(0.0F);
+        turboState.mechanicalGain.store(0.0F);
+        turboState.exhaustPreset.store(static_cast<int>(enginelab::AudioExhaustPreset::turboMuffled));
+        enginelab::RealtimeEngineAudio turboRenderer(turboQueue, turboState);
+        turboRenderer.prepare(48'000.0, 4'800);
+        require(turboQueue.tryPush(event), "turbo fixture event must enter queue");
+        juce::AudioBuffer<float> turboBuffer(2, 4'800);
+        turboRenderer.render(turboBuffer, 0, turboBuffer.getNumSamples());
+        const auto turboMagnitude = turboBuffer.getMagnitude(0, 0, turboBuffer.getNumSamples());
+        require(std::abs(openMagnitude - turboMagnitude) > 1.0e-4F,
+                "exhaust presets must produce observably different impulse responses");
     }
 
     {
@@ -488,6 +642,26 @@ int main() {
                 "dyno points must retain the physical telemetry needed to explain a result");
         require(std::abs(restored.throttle - 0.31) < 0.01 && std::abs(restored.load - 0.27) < 0.001,
                 "dyno must restore the user's manual throttle and load");
+    }
+
+    {
+        enginelab::EngineRuntime runtime(enginelab::makeDefaultInlineFour());
+        runtime.setIgnitionEnabled(true);
+        runtime.setStarterEngaged(true);
+        runtime.setThrottle(0.55);
+        runtime.setGear(0);
+        runtime.setClutchPressure(1.0);
+        runtime.start();
+        std::this_thread::sleep_for(std::chrono::milliseconds(2'200));
+        runtime.setStarterEngaged(false);
+        runtime.shiftUp();
+        std::this_thread::sleep_for(std::chrono::milliseconds(600));
+        const auto state = runtime.snapshot();
+        runtime.stop();
+        require(state.gear == 1 && state.gearCount >= 5, "runtime must expose es2d-style gear state");
+        require(state.clutchPressure > 0.9, "runtime must expose clutch pressure");
+        require(state.vehicleSpeedMps >= 0.0 && std::isfinite(state.drivelineLoadTorqueNm),
+                "runtime must expose finite vehicle/driveline telemetry");
     }
     std::cout << "EngineLab core tests passed\n";
     return EXIT_SUCCESS;

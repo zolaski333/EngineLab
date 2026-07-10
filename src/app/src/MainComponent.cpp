@@ -23,9 +23,36 @@ constexpr std::array<std::uint32_t, 8> curveColours {
     }
     return "INCONNU";
 }
+
+[[nodiscard]] const char* layoutName(EngineLayout layout) noexcept {
+    switch (layout) {
+    case EngineLayout::inlineLayout: return "INLINE";
+    case EngineLayout::vLayout: return "V";
+    case EngineLayout::flat: return "FLAT";
+    case EngineLayout::radial: return "RADIAL";
+    case EngineLayout::custom: return "CUSTOM";
+    }
+    return "CUSTOM";
+}
+
+[[nodiscard]] double crankThrowMmFor(const EngineConfig& config, const CylinderConfig& cylinder) noexcept {
+    if (cylinder.crankJournalId != 0) {
+        const auto journal = std::find_if(config.crankJournals.begin(), config.crankJournals.end(),
+            [&cylinder](const CrankJournalConfig& item) { return item.id == cylinder.crankJournalId; });
+        if (journal != config.crankJournals.end()) return journal->throwMm;
+    }
+    return cylinder.strokeMm * 0.5;
+}
+
+[[nodiscard]] double crankOffsetDegreesFor(const EngineConfig& config, const CylinderConfig& cylinder) noexcept {
+    (void)config;
+    return cylinder.crankOffsetDegrees;
+}
 }
 
 MainComponent::MainComponent() {
+    presets_ = makeCatalogOrBasePresets(std::filesystem::path(ENGINELAB_CATALOG_ROOT));
+    config_ = presets_[std::min<std::size_t>(1, presets_.size() - 1)];
     setSize(1'440, 840);
     setWantsKeyboardFocus(true);
     title_.setFont(juce::FontOptions(18.0F, juce::Font::bold));
@@ -42,6 +69,12 @@ MainComponent::MainComponent() {
     exportButton_.onClick = [this] { exportEngine(); };
     csvButton_.onClick = [this] { exportDynoCsv(); };
     for (auto* button : { &editButton_, &importButton_, &exportButton_, &csvButton_ }) addAndMakeVisible(*button);
+    const std::array<const char*, 5> exhaustPresets { "Street", "Open", "Turbo", "Long tube", "Moto" };
+    for (int index = 0; index < static_cast<int>(exhaustPresets.size()); ++index)
+        exhaustPresetSelector_.addItem(exhaustPresets[static_cast<std::size_t>(index)], index + 1);
+    exhaustPresetSelector_.setSelectedItemIndex(exhaustPresetIndex_, juce::dontSendNotification);
+    exhaustPresetSelector_.onChange = [this] { applyExhaustPreset(exhaustPresetSelector_.getSelectedItemIndex()); };
+    addAndMakeVisible(exhaustPresetSelector_);
 
     ignitionButton_.setClickingTogglesState(true);
     starterButton_.setButtonText(utf8("S  DÉMARREUR"));
@@ -86,7 +119,7 @@ MainComponent::MainComponent() {
     afrSlider_.onValueChange = [this] { if (runtime_) runtime_->setTargetAirFuelRatio(afrSlider_.getValue()); };
     advanceSlider_.onValueChange = [this] { if (runtime_) runtime_->setIgnitionAdvanceDegrees(advanceSlider_.getValue()); };
 
-    selectEngine(1);
+    selectEngine(std::min(1, static_cast<int>(presets_.size()) - 1));
     startTimerHz(30);
     juce::MessageManager::callAsync([safe = juce::Component::SafePointer<MainComponent>(this)] { if (safe) safe->grabKeyboardFocus(); });
 }
@@ -120,6 +153,16 @@ void MainComponent::applyConfig(const EngineConfig& newConfig) {
     runtime_->setTargetAirFuelRatio(afrSlider_.getValue());
     runtime_->setIgnitionAdvanceDegrees(advanceSlider_.getValue());
     runtime_->setIgnitionEnabled(ignitionButton_.getToggleState());
+    runtime_->setAudioVolume(audioVolume_);
+    runtime_->setAudioConvolution(audioConvolution_);
+    runtime_->setHighFrequencyGain(highFrequencyGain_);
+    runtime_->setLowFrequencyNoise(lowFrequencyNoise_);
+    runtime_->setHighFrequencyNoise(highFrequencyNoise_);
+    runtime_->setCombustionGain(combustionGain_);
+    runtime_->setExhaustGain(exhaustGain_);
+    runtime_->setIntakeGain(intakeGain_);
+    runtime_->setMechanicalGain(mechanicalGain_);
+    runtime_->setExhaustPreset(static_cast<AudioExhaustPreset>(exhaustPresetIndex_));
     runtime_->start();
     setAudioChannels(0, 2);
     title_.setText("EngineLab   /   " + juce::String(config_.name) + "   /   "
@@ -256,6 +299,24 @@ void MainComponent::exportDynoCsv() {
         });
 }
 
+void MainComponent::reloadEngine() {
+    const auto selectedIndex = engineSelector_.getSelectedItemIndex();
+    if (selectedIndex >= 0) {
+        auto reloadedPresets = makeCatalogOrBasePresets(std::filesystem::path(ENGINELAB_CATALOG_ROOT));
+        if (!reloadedPresets.empty()) {
+            presets_ = std::move(reloadedPresets);
+            engineSelector_.clear(juce::dontSendNotification);
+            for (int index = 0; index < static_cast<int>(presets_.size()); ++index)
+                engineSelector_.addItem(presets_[static_cast<std::size_t>(index)].name, index + 1);
+            const auto clampedIndex = std::clamp(selectedIndex, 0, static_cast<int>(presets_.size()) - 1);
+            engineSelector_.setSelectedItemIndex(clampedIndex, juce::dontSendNotification);
+            applyConfig(presets_[static_cast<std::size_t>(clampedIndex)]);
+            return;
+        }
+    }
+    applyConfig(config_);
+}
+
 void MainComponent::prepareToPlay(int blockSize, double sampleRate) { if (audio_) audio_->prepare(sampleRate, blockSize); }
 void MainComponent::getNextAudioBlock(const juce::AudioSourceChannelInfo& info) {
     if (audio_ && info.buffer != nullptr) audio_->render(*info.buffer, info.startSample, info.numSamples);
@@ -304,9 +365,56 @@ void MainComponent::toggleDyno() {
     if (runtime_->dynoRunning()) runtime_->stopDyno(); else runtime_->startDyno();
 }
 
+void MainComponent::applyExhaustPreset(int presetIndex) {
+    exhaustPresetIndex_ = std::clamp(presetIndex, 0, 4);
+    if (runtime_) runtime_->setExhaustPreset(static_cast<AudioExhaustPreset>(exhaustPresetIndex_));
+    repaint();
+}
+
+void MainComponent::adjustAudioOrSimulation(double wheelDelta) {
+    if (!runtime_ || wheelDelta == 0.0) return;
+    const auto step = juce::KeyPress::isKeyCurrentlyDown(juce::KeyPress::spaceKey) ? 0.01 : 0.05;
+    if (juce::KeyPress::isKeyCurrentlyDown('G') && visibleState_.dynoHoldEnabled) {
+        runtime_->adjustDynoHoldRpm(wheelDelta > 0.0 ? 100.0 : -100.0);
+    } else if (juce::KeyPress::isKeyCurrentlyDown('Z')) {
+        audioVolume_ = std::clamp(audioVolume_ + wheelDelta * step, 0.0, 2.0);
+        runtime_->setAudioVolume(audioVolume_);
+    } else if (juce::KeyPress::isKeyCurrentlyDown('X')) {
+        audioConvolution_ = std::clamp(audioConvolution_ + wheelDelta * step, 0.0, 1.0);
+        runtime_->setAudioConvolution(audioConvolution_);
+    } else if (juce::KeyPress::isKeyCurrentlyDown('C')) {
+        highFrequencyGain_ = std::clamp(highFrequencyGain_ + wheelDelta * step, 0.2, 2.5);
+        runtime_->setHighFrequencyGain(highFrequencyGain_);
+    } else if (juce::KeyPress::isKeyCurrentlyDown('V')) {
+        lowFrequencyNoise_ = std::clamp(lowFrequencyNoise_ + wheelDelta * step, 0.0, 1.5);
+        runtime_->setLowFrequencyNoise(lowFrequencyNoise_);
+    } else if (juce::KeyPress::isKeyCurrentlyDown('B')) {
+        highFrequencyNoise_ = std::clamp(highFrequencyNoise_ + wheelDelta * step, 0.0, 1.5);
+        runtime_->setHighFrequencyNoise(highFrequencyNoise_);
+    } else if (juce::KeyPress::isKeyCurrentlyDown('J')) {
+        combustionGain_ = std::clamp(combustionGain_ + wheelDelta * step, 0.0, 2.0);
+        runtime_->setCombustionGain(combustionGain_);
+    } else if (juce::KeyPress::isKeyCurrentlyDown('K')) {
+        exhaustGain_ = std::clamp(exhaustGain_ + wheelDelta * step, 0.0, 2.0);
+        runtime_->setExhaustGain(exhaustGain_);
+    } else if (juce::KeyPress::isKeyCurrentlyDown('L')) {
+        intakeGain_ = std::clamp(intakeGain_ + wheelDelta * step, 0.0, 2.0);
+        runtime_->setIntakeGain(intakeGain_);
+    } else if (juce::KeyPress::isKeyCurrentlyDown('O')) {
+        mechanicalGain_ = std::clamp(mechanicalGain_ + wheelDelta * step, 0.0, 2.0);
+        runtime_->setMechanicalGain(mechanicalGain_);
+    } else if (juce::KeyPress::isKeyCurrentlyDown('N')) {
+        runtime_->setTimeScale(runtime_->timeScale() + wheelDelta * step);
+    } else if (juce::KeyPress::isKeyCurrentlyDown(juce::KeyPress::spaceKey)) {
+        throttleSlider_.setValue(std::clamp(throttleSlider_.getValue() + wheelDelta * 2.0, 0.0, 100.0),
+                                 juce::sendNotificationSync);
+    }
+    repaint();
+}
+
 bool MainComponent::keyPressed(const juce::KeyPress& key) {
     const auto character = juce::CharacterFunctions::toUpperCase(key.getTextCharacter());
-    if (key.getKeyCode() >= juce::KeyPress::F1Key && key.getKeyCode() <= juce::KeyPress::F5Key) {
+    if (key.getKeyCode() >= juce::KeyPress::F1Key && key.getKeyCode() <= juce::KeyPress::F12Key) {
         const auto presetIndex = key.getKeyCode() - juce::KeyPress::F1Key;
         if (runtime_ && !runtime_->dynoRunning() && presetIndex < static_cast<int>(presets_.size())) {
             engineSelector_.setSelectedItemIndex(presetIndex, juce::dontSendNotification);
@@ -314,17 +422,50 @@ bool MainComponent::keyPressed(const juce::KeyPress& key) {
         }
         return true;
     }
-    if (key == juce::KeyPress::spaceKey) {
-        if (runtime_) runtime_->setPaused(!runtime_->paused());
+    if (key == juce::KeyPress::escapeKey) { juce::JUCEApplicationBase::quit(); return true; }
+    if (key == juce::KeyPress::returnKey) { reloadEngine(); return true; }
+    if (key == juce::KeyPress::tabKey) { screen_ = (screen_ + 1) % 5; repaint(); return true; }
+    if (key == juce::KeyPress::upKey) { if (runtime_) runtime_->shiftUp(); return true; }
+    if (key == juce::KeyPress::downKey) { if (runtime_) runtime_->shiftDown(); return true; }
+    if (character == 'P') { if (runtime_) runtime_->setPaused(!runtime_->paused()); return true; }
+    if (character == 'F') {
+        if (auto* window = findParentComponentOfClass<juce::DocumentWindow>())
+            window->setFullScreen(!window->isFullScreen());
         return true;
     }
-    if (character == '1') { if (runtime_) runtime_->setTimeScale(0.5); return true; }
-    if (character == '2') { if (runtime_) runtime_->setTimeScale(1.0); return true; }
-    if (character == '3') { if (runtime_) runtime_->setTimeScale(2.0); return true; }
+    if (character == 'I') { showDynoStats_ = !showDynoStats_; repaint(); return true; }
+    if (character == 'Y') {
+        applyExhaustPreset((exhaustPresetIndex_ + 1) % 5);
+        exhaustPresetSelector_.setSelectedItemIndex(exhaustPresetIndex_, juce::dontSendNotification);
+        return true;
+    }
+    if (character == 'M') { viewLayer_ = std::min(viewLayer_ + 1, 3); repaint(); return true; }
+    if (character == ',') { viewLayer_ = std::max(viewLayer_ - 1, 0); repaint(); return true; }
+    if (character == '1') { if (runtime_) runtime_->setTimeScale(0.25); return true; }
+    if (character == '2') { if (runtime_) runtime_->setTimeScale(0.5); return true; }
+    if (character == '3') { if (runtime_) runtime_->setTimeScale(1.0); return true; }
+    if (character == '4') { if (runtime_) runtime_->setTimeScale(2.0); return true; }
+    if (character == '5') { if (runtime_) runtime_->setTimeScale(4.0); return true; }
+    if (character == 'A') {
+        ignitionButton_.setToggleState(!ignitionButton_.getToggleState(), juce::sendNotificationSync);
+        return true;
+    }
+    if (character == 'Q') { setThrottlePreset(0.01); return true; }
     if (character == 'R') { setThrottlePreset(1.0); return true; }
     if (character == 'W') { setThrottlePreset(0.25); return true; }
     if (character == 'E') { setThrottlePreset(0.50); return true; }
     if (character == 'D') { toggleDyno(); return true; }
+    if (character == 'H') { if (runtime_) runtime_->setDynoHoldEnabled(!runtime_->dynoHoldEnabled()); return true; }
+    if (character == 'T') {
+        targetClutchPressure_ = std::clamp(targetClutchPressure_ - 0.08, 0.0, 1.0);
+        if (runtime_) runtime_->setClutchPressure(targetClutchPressure_);
+        return true;
+    }
+    if (character == 'U') {
+        targetClutchPressure_ = std::clamp(targetClutchPressure_ + 0.08, 0.0, 1.0);
+        if (runtime_) runtime_->setClutchPressure(targetClutchPressure_);
+        return true;
+    }
     return character == 'S';
 }
 
@@ -335,7 +476,18 @@ bool MainComponent::keyStateChanged(bool) {
         if (runtime_) runtime_->setStarterEngaged(down || starterButton_.getState() == juce::Button::buttonDown);
         starterButton_.setToggleState(down, juce::dontSendNotification);
     }
-    return down;
+    if (runtime_) {
+        if (juce::ModifierKeys::getCurrentModifiersRealtime().isShiftDown()) {
+            runtime_->setClutchPressure(0.0);
+        } else {
+            runtime_->setClutchPressure(targetClutchPressure_);
+        }
+    }
+    return down || juce::ModifierKeys::getCurrentModifiersRealtime().isShiftDown();
+}
+
+void MainComponent::mouseWheelMove(const juce::MouseEvent&, const juce::MouseWheelDetails& wheel) {
+    adjustAudioOrSimulation(wheel.deltaY);
 }
 
 void MainComponent::timerCallback() {
@@ -357,6 +509,7 @@ void MainComponent::timerCallback() {
     ignitionButton_.setEnabled(!running);
     starterButton_.setEnabled(!running);
     engineSelector_.setEnabled(!running);
+    exhaustPresetSelector_.setEnabled(true);
     editButton_.setEnabled(!running); importButton_.setEnabled(!running);
     for (auto* slider : { &throttleSlider_, &loadSlider_, &afrSlider_, &advanceSlider_ }) slider->setEnabled(!running);
     repaint();
@@ -370,31 +523,46 @@ void MainComponent::paint(juce::Graphics& g) {
     const auto chartWidth = std::clamp(getWidth() * 0.34F, 380.0F, 540.0F);
     const auto chartX = static_cast<float>(getWidth()) - chartWidth - 22.0F;
     g.drawVerticalLine(static_cast<int>(chartX - 18.0F), 66.0F, static_cast<float>(getHeight()));
-    drawEngine(g, { 305.0F, 82.0F, chartX - 335.0F, static_cast<float>(getHeight()) - 400.0F });
+    const auto mainArea = juce::Rectangle<float>(305.0F, 82.0F, chartX - 335.0F, static_cast<float>(getHeight()) - 400.0F);
+    if (screen_ == 1) drawLoadSimulationPanel(g, mainArea);
+    else if (screen_ == 2) drawMixerPanel(g, mainArea);
+    else if (screen_ == 3) drawOscilloscopePanel(g, mainArea);
+    else if (screen_ == 4) drawDebugPanel(g, mainArea);
+    else drawEngine(g, mainArea);
     auto details = juce::Rectangle<float>(305.0F, static_cast<float>(getHeight()) - 282.0F, chartX - 335.0F, 72.0F);
     g.setColour(juce::Colour(0xff111817)); g.fillRoundedRectangle(details, 8.0F);
     g.setColour(juce::Colour(0xff2b3834)); g.drawRoundedRectangle(details, 8.0F, 1.0F);
-    const std::array<juce::String, 6> detailValues {
+    double peakCylinderPressure = 0.0;
+    for (std::size_t index = 0; index < visibleState_.cylinderStateCount; ++index)
+        peakCylinderPressure = std::max(peakCylinderPressure, visibleState_.cylinderStates[index].pressureEstimateBar);
+    const std::array<juce::String, 9> detailValues {
         utf8(runningStateName(visibleState_.runningState)),
+        juce::String(layoutName(config_.layout)) + "  " + juce::String(config_.cylinders.size()) + " cyl",
         "VE " + juce::String(visibleState_.volumetricEfficiency * 100.0, 1) + " %",
         utf8("Air/ess. ") + juce::String(visibleState_.airFlowGramsPerSecond, 1) + "/"
             + juce::String(visibleState_.fuelFlowGramsPerSecond, 2) + " g/s",
+        "Pmax " + juce::String(peakCylinderPressure, 1) + " bar  EXH "
+            + juce::String(visibleState_.exhaustRunnerPressureKpa, 0) + " kPa",
         utf8("Huile ") + juce::String(visibleState_.oilPressureKpa, 0) + " kPa · " + juce::String(visibleState_.oilTemperatureC, 0) + utf8("°C"),
         "EGT " + juce::String(visibleState_.exhaustTemperatureC, 0) + utf8("°C"),
         utf8("Piston ") + juce::String(visibleState_.meanPistonSpeedMps, 1) + " m/s · "
-            + juce::String(visibleState_.peakPistonAccelerationG, 0) + " g"
+            + juce::String(visibleState_.peakPistonAccelerationG, 0) + " g",
+        "V " + juce::String(visibleState_.vehicleSpeedMps * 3.6, 1) + " km/h · G "
+            + (visibleState_.gear < 0 ? juce::String("N") : juce::String(visibleState_.gear + 1))
     };
     auto detailBody = details.reduced(12.0F, 8.0F);
     const auto detailWidth = detailBody.getWidth() / 3.0F;
+    const auto detailRowHeight = detailBody.getHeight() / 3.0F;
     g.setFont(juce::FontOptions(12.0F, juce::Font::bold));
     for (std::size_t index = 0; index < detailValues.size(); ++index) {
         const auto row = static_cast<float>(index / 3U);
         const auto column = static_cast<float>(index % 3U);
         const auto cell = juce::Rectangle<float>(detailBody.getX() + column * detailWidth,
-            detailBody.getY() + row * detailBody.getHeight() * 0.5F, detailWidth, detailBody.getHeight() * 0.5F);
+            detailBody.getY() + row * detailRowHeight, detailWidth, detailRowHeight);
         g.setColour(index == 0 ? juce::Colour(0xff79b89f) : juce::Colour(0xffc4cfca));
         g.drawFittedText(detailValues[index], cell.toNearestInt(), juce::Justification::centredLeft, 1);
     }
+    drawGaugeCluster(g, details);
     drawTelemetryChart(g, { 305.0F, static_cast<float>(getHeight()) - 202.0F, chartX - 335.0F, 94.0F });
     drawDynoChart(g, { chartX, 92.0F, chartWidth, static_cast<float>(getHeight()) - 132.0F });
 
@@ -441,6 +609,199 @@ void MainComponent::paint(juce::Graphics& g) {
     g.drawFittedText(diagnosticText, diagnosticArea.reduced(10.0F, 7.0F).toNearestInt(), juce::Justification::centredLeft, 3);
 }
 
+void MainComponent::drawLoadSimulationPanel(juce::Graphics& g, juce::Rectangle<float> area) const {
+    g.setColour(juce::Colour(0xff111817)); g.fillRoundedRectangle(area, 8.0F);
+    g.setColour(juce::Colour(0xff2b3834)); g.drawRoundedRectangle(area, 8.0F, 1.0F);
+    auto body = area.reduced(18.0F);
+    g.setColour(juce::Colour(0xffdce5e1)); g.setFont(juce::FontOptions(16.0F, juce::Font::bold));
+    g.drawText("LOAD / TRANSMISSION", body.removeFromTop(34.0F), juce::Justification::centredLeft);
+    const auto gearText = visibleState_.gear < 0 ? juce::String("N") : juce::String(visibleState_.gear + 1);
+    const std::array<juce::String, 8> values {
+        "GEAR  " + gearText + " / " + juce::String(visibleState_.gearCount),
+        "CLUTCH  " + juce::String(visibleState_.clutchPressure * 100.0, 0) + " %",
+        "SPEED  " + juce::String(visibleState_.vehicleSpeedMps * 3.6, 1) + " km/h",
+        "DIST  " + juce::String(visibleState_.vehicleDistanceM / 1'000.0, 3) + " km",
+        "WHEEL  " + juce::String(visibleState_.wheelTorqueNm, 0) + " Nm",
+        "DRAG LOAD  " + juce::String(visibleState_.drivelineLoadTorqueNm, 0) + " Nm",
+        "DYNO HOLD  " + juce::String(visibleState_.dynoHoldEnabled ? "ON" : "OFF"),
+        "HOLD RPM  " + juce::String(visibleState_.dynoHoldRpm, 0)
+    };
+    const auto columns = 2;
+    const auto cellHeight = std::min(58.0F, body.getHeight() / 4.0F);
+    const auto cellWidth = body.getWidth() / static_cast<float>(columns);
+    for (std::size_t index = 0; index < values.size(); ++index) {
+        const auto row = static_cast<float>(index / columns);
+        const auto column = static_cast<float>(index % columns);
+        auto cell = juce::Rectangle<float>(body.getX() + column * cellWidth, body.getY() + row * cellHeight,
+                                           cellWidth - 10.0F, cellHeight - 8.0F);
+        g.setColour(juce::Colour(0xff17231f)); g.fillRoundedRectangle(cell, 7.0F);
+        g.setColour(index == 6 && visibleState_.dynoHoldEnabled ? juce::Colour(0xff79b89f) : juce::Colour(0xffc4cfca));
+        g.setFont(juce::FontOptions(14.0F, juce::Font::bold));
+        g.drawFittedText(values[index], cell.reduced(10.0F, 5.0F).toNearestInt(), juce::Justification::centredLeft, 1);
+    }
+}
+
+void MainComponent::drawMixerPanel(juce::Graphics& g, juce::Rectangle<float> area) const {
+    g.setColour(juce::Colour(0xff111817)); g.fillRoundedRectangle(area, 8.0F);
+    g.setColour(juce::Colour(0xff2b3834)); g.drawRoundedRectangle(area, 8.0F, 1.0F);
+    auto body = area.reduced(18.0F);
+    g.setColour(juce::Colour(0xffdce5e1)); g.setFont(juce::FontOptions(16.0F, juce::Font::bold));
+    g.drawText("MIXER / AUDIO", body.removeFromTop(34.0F), juce::Justification::centredLeft);
+    const std::array<const char*, 5> presetNames { "Street chamber", "Open headers", "Turbo muffled", "Long tube", "Motorcycle" };
+    g.setColour(juce::Colour(0xff79b89f));
+    g.setFont(juce::FontOptions(13.0F, juce::Font::bold));
+    g.drawText("PRESET  " + juce::String(presetNames[static_cast<std::size_t>(std::clamp(exhaustPresetIndex_, 0, 4))]),
+               body.removeFromTop(28.0F), juce::Justification::centredLeft);
+    const std::array<std::pair<juce::String, double>, 9> values {{
+        { "Z  Volume", audioVolume_ / 2.0 },
+        { "X  Convolution", audioConvolution_ },
+        { "C  High gain", highFrequencyGain_ / 2.5 },
+        { "V  Low noise", lowFrequencyNoise_ / 1.5 },
+        { "B  High noise", highFrequencyNoise_ / 1.5 },
+        { "J  Combustion", combustionGain_ / 2.0 },
+        { "K  Exhaust", exhaustGain_ / 2.0 },
+        { "L  Intake", intakeGain_ / 2.0 },
+        { "O  Mechanical", mechanicalGain_ / 2.0 }
+    }};
+    for (const auto& item : values) {
+        auto row = body.removeFromTop(36.0F);
+        row.removeFromBottom(6.0F);
+        g.setColour(juce::Colour(0xff202b28)); g.fillRoundedRectangle(row, 7.0F);
+        g.setColour(juce::Colour(0xff83918c)); g.setFont(juce::FontOptions(12.0F, juce::Font::bold));
+        g.drawText(item.first, row.removeFromLeft(130.0F).reduced(10.0F, 0.0F), juce::Justification::centredLeft);
+        auto meter = row.reduced(8.0F, 12.0F);
+        g.setColour(juce::Colour(0xff30413c)); g.fillRoundedRectangle(meter, 4.0F);
+        g.setColour(juce::Colour(0xffef6f3c));
+        g.fillRoundedRectangle(meter.withWidth(meter.getWidth() * static_cast<float>(std::clamp(item.second, 0.0, 1.0))), 4.0F);
+    }
+}
+
+void MainComponent::drawGaugeCluster(juce::Graphics& g, juce::Rectangle<float> area) const {
+    g.setColour(juce::Colour(0xff111817)); g.fillRoundedRectangle(area, 8.0F);
+    g.setColour(juce::Colour(0xff2b3834)); g.drawRoundedRectangle(area, 8.0F, 1.0F);
+    auto body = area.reduced(10.0F, 8.0F);
+    struct Gauge { juce::String label; juce::String value; double normalized; juce::Colour colour; };
+    const auto gearText = visibleState_.gear < 0 ? juce::String("N") : juce::String(visibleState_.gear + 1);
+    const std::array<Gauge, 8> gauges {{
+        { "RPM", juce::String(visibleState_.rpm, 0), visibleState_.rpm / std::max(1.0, config_.redlineRpm), juce::Colour(0xffef6f3c) },
+        { "MAP", juce::String(visibleState_.manifoldPressureKpa, 0) + " kPa", visibleState_.manifoldPressureKpa / std::max(1.0, config_.ambientPressureKpa), juce::Colour(0xff41b6d7) },
+        { "AFR", juce::String(visibleState_.airFuelRatio, 1), 1.0 - std::abs(visibleState_.airFuelRatio - visibleState_.targetAirFuelRatio) / 6.0, juce::Colour(0xff79b89f) },
+        { "VE", juce::String(visibleState_.volumetricEfficiency * 100.0, 0) + "%", visibleState_.volumetricEfficiency / 1.20, juce::Colour(0xff9ccc65) },
+        { "OIL", juce::String(visibleState_.oilPressureKpa, 0), visibleState_.oilPressureKpa / 520.0, juce::Colour(0xffffca28) },
+        { "EGT", juce::String(visibleState_.exhaustTemperatureC, 0), (visibleState_.exhaustTemperatureC - 100.0) / 850.0, juce::Colour(0xffff7a45) },
+        { "TRQ", juce::String(visibleState_.cycleAveragedTorqueNm, 0), visibleState_.cycleAveragedTorqueNm / std::max(80.0, engineDisplacementLitres(config_) * 125.0), juce::Colour(0xffab76ff) },
+        { "GEAR", gearText + "  " + juce::String(visibleState_.vehicleSpeedMps * 3.6, 0), visibleState_.vehicleSpeedMps * 3.6 / 280.0, juce::Colour(0xff26d7ae) }
+    }};
+    const auto cellWidth = body.getWidth() / static_cast<float>(gauges.size());
+    for (std::size_t index = 0; index < gauges.size(); ++index) {
+        auto cell = juce::Rectangle<float>(body.getX() + static_cast<float>(index) * cellWidth, body.getY(),
+                                           cellWidth - 6.0F, body.getHeight());
+        const auto fill = std::clamp(static_cast<float>(gauges[index].normalized), 0.0F, 1.0F);
+        g.setColour(juce::Colour(0xff1b2522)); g.fillRoundedRectangle(cell, 6.0F);
+        auto bar = cell.removeFromBottom(7.0F).reduced(5.0F, 0.0F);
+        g.setColour(juce::Colour(0xff303d39)); g.fillRoundedRectangle(bar, 3.0F);
+        g.setColour(gauges[index].colour); g.fillRoundedRectangle(bar.withWidth(bar.getWidth() * fill), 3.0F);
+        auto text = cell.reduced(6.0F, 3.0F);
+        g.setColour(juce::Colour(0xff83918c)); g.setFont(juce::FontOptions(10.0F, juce::Font::bold));
+        g.drawFittedText(gauges[index].label, text.removeFromTop(15.0F).toNearestInt(), juce::Justification::centred, 1);
+        g.setColour(juce::Colour(0xffe3ebe7)); g.setFont(juce::FontOptions(13.0F, juce::Font::bold));
+        g.drawFittedText(gauges[index].value, text.toNearestInt(), juce::Justification::centred, 1);
+    }
+}
+
+void MainComponent::drawOscilloscopePanel(juce::Graphics& g, juce::Rectangle<float> area) const {
+    g.setColour(juce::Colour(0xff111817)); g.fillRoundedRectangle(area, 8.0F);
+    g.setColour(juce::Colour(0xff2b3834)); g.drawRoundedRectangle(area, 8.0F, 1.0F);
+    auto header = area.reduced(18.0F).removeFromTop(34.0F);
+    g.setColour(juce::Colour(0xffdce5e1)); g.setFont(juce::FontOptions(16.0F, juce::Font::bold));
+    g.drawText("OSCILLOSCOPE", header, juce::Justification::centredLeft);
+    auto plot = area.reduced(18.0F, 52.0F);
+    g.setColour(juce::Colour(0xff17231f)); g.fillRoundedRectangle(plot, 7.0F);
+    g.setColour(juce::Colour(0xff283632));
+    for (int grid = 1; grid < 5; ++grid) {
+        const auto y = plot.getY() + plot.getHeight() * static_cast<float>(grid) / 5.0F;
+        g.drawHorizontalLine(static_cast<int>(y), plot.getX(), plot.getRight());
+    }
+    const auto drawTrace = [&](auto getter, double minimum, double maximum, juce::Colour colour, float width) {
+        if (telemetryCount_ < 2) return;
+        juce::Path path;
+        for (std::size_t i = 0; i < telemetryCount_; ++i) {
+            const auto index = (telemetryWrite_ + telemetryHistory_.size() - telemetryCount_ + i) % telemetryHistory_.size();
+            const auto normalized = std::clamp((getter(telemetryHistory_[index]) - minimum) / (maximum - minimum), 0.0, 1.0);
+            const auto x = plot.getX() + plot.getWidth() * static_cast<float>(i) / static_cast<float>(telemetryCount_ - 1);
+            const auto y = plot.getBottom() - plot.getHeight() * static_cast<float>(normalized);
+            if (i == 0) path.startNewSubPath(x, y); else path.lineTo(x, y);
+        }
+        g.setColour(colour); g.strokePath(path, juce::PathStrokeType(width));
+    };
+    drawTrace([this](const EngineState& state) { return state.rpm; }, 0.0, config_.redlineRpm, juce::Colour(0xffef6f3c), 2.2F);
+    drawTrace([](const EngineState& state) { return state.manifoldPressureKpa; }, 20.0, 110.0, juce::Colour(0xff41b6d7), 1.8F);
+    drawTrace([](const EngineState& state) { return state.lambda; }, 0.55, 1.35, juce::Colour(0xff79b89f), 1.6F);
+    drawTrace([](const EngineState& state) { return state.knockLevel; }, 0.0, 1.0, juce::Colour(0xffffca28), 1.5F);
+    drawTrace([](const EngineState& state) { return state.exhaustRunnerPressureKpa; }, 80.0, 220.0, juce::Colour(0xffff7a45), 1.5F);
+    auto legend = area.reduced(18.0F).removeFromBottom(32.0F);
+    const std::array<std::pair<const char*, juce::Colour>, 5> labels {{
+        { "RPM", juce::Colour(0xffef6f3c) }, { "MAP", juce::Colour(0xff41b6d7) },
+        { "LAMBDA", juce::Colour(0xff79b89f) }, { "KNOCK", juce::Colour(0xffffca28) },
+        { "EXH", juce::Colour(0xffff7a45) }
+    }};
+    for (const auto& label : labels) {
+        auto item = legend.removeFromLeft(90.0F);
+        g.setColour(label.second); g.fillRoundedRectangle(item.removeFromLeft(18.0F).reduced(2.0F, 10.0F), 3.0F);
+        g.setColour(juce::Colour(0xffaab7b2)); g.setFont(juce::FontOptions(11.0F, juce::Font::bold));
+        g.drawText(label.first, item, juce::Justification::centredLeft);
+    }
+}
+
+void MainComponent::drawDebugPanel(juce::Graphics& g, juce::Rectangle<float> area) const {
+    g.setColour(juce::Colour(0xff111817)); g.fillRoundedRectangle(area, 8.0F);
+    g.setColour(juce::Colour(0xff2b3834)); g.drawRoundedRectangle(area, 8.0F, 1.0F);
+    auto body = area.reduced(18.0F);
+    g.setColour(juce::Colour(0xffdce5e1)); g.setFont(juce::FontOptions(16.0F, juce::Font::bold));
+    g.drawText("PHYSICS DEBUG", body.removeFromTop(34.0F), juce::Justification::centredLeft);
+    const auto cylCount = std::max<std::size_t>(1, visibleState_.cylinderStateCount);
+    double maxPressure = 0.0;
+    double intakeLift = 0.0;
+    double exhaustLift = 0.0;
+    for (std::size_t index = 0; index < cylCount; ++index) {
+        maxPressure = std::max(maxPressure, visibleState_.cylinderStates[index].pressureEstimateBar);
+        intakeLift = std::max(intakeLift, visibleState_.cylinderStates[index].intakeValveLiftMm);
+        exhaustLift = std::max(exhaustLift, visibleState_.cylinderStates[index].exhaustValveLiftMm);
+    }
+    const std::array<juce::String, 18> values {
+        "Net torque       " + juce::String(visibleState_.netTorqueNm, 2),
+        "Indicated torque " + juce::String(visibleState_.indicatedTorqueNm, 2),
+        "Friction torque  " + juce::String(visibleState_.frictionTorqueNm, 2),
+        "Recip torque     " + juce::String(visibleState_.reciprocatingTorqueNm, 2),
+        "Load torque      " + juce::String(visibleState_.loadTorqueNm, 2),
+        "Starter torque   " + juce::String(visibleState_.starterTorqueNm, 2),
+        "MAP              " + juce::String(visibleState_.manifoldPressureKpa, 3),
+        "Intake runner    " + juce::String(visibleState_.intakeRunnerPressureKpa, 3),
+        "Exhaust runner   " + juce::String(visibleState_.exhaustRunnerPressureKpa, 3),
+        "Exhaust flow     " + juce::String(visibleState_.exhaustFlowGramsPerSecond, 4),
+        "Air mass/cycle   " + juce::String(visibleState_.airMassMgPerCycle, 3),
+        "Fuel mg/cycle    " + juce::String(visibleState_.injectedFuelMgPerCycle, 4),
+        "Max cyl pressure " + juce::String(maxPressure, 3),
+        "Intake lift max  " + juce::String(intakeLift, 3),
+        "Exhaust lift max " + juce::String(exhaustLift, 3),
+        "Damage/wear      " + juce::String(visibleState_.damage, 4) + " / " + juce::String(visibleState_.wear, 4),
+        "SPSC drops       " + juce::String(runtime_ ? runtime_->droppedEventCount() : 0),
+        "Audio late/file  " + juce::String(audio_ ? audio_->lateEventCount() : 0) + " / " + juce::String(audio_ ? audio_->droppedPendingEventCount() : 0)
+    };
+    const auto columns = area.getWidth() > 680.0F ? 3 : 2;
+    const auto cellWidth = body.getWidth() / static_cast<float>(columns);
+    const auto cellHeight = std::min(34.0F, body.getHeight() / 6.0F);
+    for (std::size_t index = 0; index < values.size(); ++index) {
+        const auto row = static_cast<float>(index / static_cast<std::size_t>(columns));
+        const auto column = static_cast<float>(index % static_cast<std::size_t>(columns));
+        auto cell = juce::Rectangle<float>(body.getX() + column * cellWidth, body.getY() + row * cellHeight,
+                                           cellWidth - 8.0F, cellHeight - 6.0F);
+        g.setColour(juce::Colour(0xff17231f)); g.fillRoundedRectangle(cell, 6.0F);
+        g.setColour(juce::Colour(0xffc4cfca)); g.setFont(juce::FontOptions(11.5F, juce::Font::bold));
+        g.drawFittedText(values[index], cell.reduced(8.0F, 2.0F).toNearestInt(), juce::Justification::centredLeft, 1);
+    }
+}
+
 void MainComponent::drawTelemetryChart(juce::Graphics& g, juce::Rectangle<float> area) const {
     g.setColour(juce::Colour(0xff111817)); g.fillRoundedRectangle(area, 8.0F);
     g.setColour(juce::Colour(0xff2b3834)); g.drawRoundedRectangle(area, 8.0F, 1.0F);
@@ -477,23 +838,126 @@ void MainComponent::drawTelemetryChart(juce::Graphics& g, juce::Rectangle<float>
 
 void MainComponent::drawEngine(juce::Graphics& g, juce::Rectangle<float> area) const {
     const auto count = static_cast<int>(config_.cylinders.size());
-    const auto columns = config_.layout == EngineLayout::vLayout ? (count + 1) / 2 : count;
+    if (count <= 0) return;
+    if (config_.layout == EngineLayout::radial) {
+        g.setFont(juce::FontOptions(12.0F, juce::Font::bold));
+        g.setColour(juce::Colour(0xff82918b));
+        g.drawText("RADIAL  /  DISTRIBUTION  " + juce::String(config_.camshafts.intakeDurationDegrees, 0)
+            + " deg / " + juce::String(config_.camshafts.intakeLiftMm, 1) + " mm",
+            area.removeFromTop(28.0F), juce::Justification::centred);
+        auto body = area.reduced(10.0F);
+        const auto diameter = std::min(body.getWidth(), body.getHeight());
+        const auto radius = diameter * 0.30F;
+        const auto strokeTravel = diameter * 0.13F;
+        const auto cylinderWidth = std::clamp(diameter * 0.115F, 42.0F, 72.0F);
+        const auto cylinderHeight = std::clamp(diameter * 0.245F, 88.0F, 138.0F);
+        const auto center = body.getCentre();
+        g.setColour(juce::Colour(0xff18221f));
+        g.fillEllipse(center.x - radius * 0.72F, center.y - radius * 0.72F, radius * 1.44F, radius * 1.44F);
+        g.setColour(juce::Colour(0xff2b3834));
+        g.drawEllipse(center.x - radius * 0.72F, center.y - radius * 0.72F, radius * 1.44F, radius * 1.44F, 1.4F);
+        g.setColour(juce::Colour(0x3341b6d7));
+        g.drawEllipse(center.x - radius * 1.13F, center.y - radius * 1.13F, radius * 2.26F, radius * 2.26F, 5.0F);
+        g.setColour(juce::Colour(0x44ef6f3c));
+        g.drawEllipse(center.x - radius * 1.34F, center.y - radius * 1.34F, radius * 2.68F, radius * 2.68F, 5.0F);
+
+        for (int index = 0; index < count; ++index) {
+            const auto& cylinder = config_.cylinders[static_cast<std::size_t>(index)];
+            const auto phase = std::fmod(visibleState_.crankAngleDegrees - crankOffsetDegreesFor(config_, cylinder) + 720.0, 720.0);
+            const auto pistonAngle = phase / 720.0 * std::numbers::pi * 4.0;
+            const auto crankRadius = crankThrowMmFor(config_, cylinder);
+            const auto rodLength = std::max(cylinder.connectingRodMm, crankRadius + 0.1);
+            const auto sliderTravel = crankRadius * (1.0 - std::cos(pistonAngle)) + rodLength
+                - std::sqrt(std::max(0.0, rodLength * rodLength
+                    - crankRadius * crankRadius * std::sin(pistonAngle) * std::sin(pistonAngle)));
+            const auto travel = static_cast<float>(std::clamp(sliderTravel / cylinder.strokeMm, 0.0, 1.0));
+            const auto angle = -std::numbers::pi * 0.5 + static_cast<double>(index) / static_cast<double>(count)
+                * std::numbers::pi * 2.0;
+            const auto unitX = static_cast<float>(std::cos(angle));
+            const auto unitY = static_cast<float>(std::sin(angle));
+            const auto pistonCenterX = center.x + unitX * (radius + travel * strokeTravel);
+            const auto pistonCenterY = center.y + unitY * (radius + travel * strokeTravel);
+            const auto crankPinX = center.x + static_cast<float>(std::cos(pistonAngle)) * diameter * 0.060F;
+            const auto crankPinY = center.y + static_cast<float>(std::sin(pistonAngle)) * diameter * 0.060F;
+            const auto* liveCylinder = static_cast<std::size_t>(index) < visibleState_.cylinderStateCount
+                ? &visibleState_.cylinderStates[static_cast<std::size_t>(index)] : nullptr;
+            if (liveCylinder != nullptr) {
+                const auto intakePulse = static_cast<float>(std::clamp(liveCylinder->intakeFlowMgPerCycle / 55.0, 0.0, 1.0));
+                const auto exhaustPulse = static_cast<float>(std::clamp(liveCylinder->exhaustFlowMgPerCycle / 55.0, 0.0, 1.0));
+                g.setColour(juce::Colour(0xff41b6d7).withAlpha(0.18F + intakePulse * 0.52F));
+                g.drawLine(center.x + unitX * radius * 1.13F, center.y + unitY * radius * 1.13F,
+                           pistonCenterX, pistonCenterY, 1.4F + intakePulse * 3.4F);
+                g.setColour(juce::Colour(0xffef6f3c).withAlpha(0.18F + exhaustPulse * 0.52F));
+                g.drawLine(center.x + unitX * radius * 1.34F, center.y + unitY * radius * 1.34F,
+                           pistonCenterX, pistonCenterY, 1.4F + exhaustPulse * 3.4F);
+            }
+            g.setColour(juce::Colour(0xff9ba8a3));
+            g.drawLine(pistonCenterX, pistonCenterY, crankPinX, crankPinY, 4.0F);
+            g.saveState();
+            g.addTransform(juce::AffineTransform::rotation(static_cast<float>(angle + std::numbers::pi * 0.5),
+                                                           pistonCenterX, pistonCenterY));
+            const auto chamber = juce::Rectangle<float>(pistonCenterX - cylinderWidth * 0.5F,
+                                                        pistonCenterY - cylinderHeight * 0.5F,
+                                                        cylinderWidth, cylinderHeight);
+            g.setColour(juce::Colour(0xff111817));
+            g.fillRoundedRectangle(chamber, 7.0F);
+            g.setColour(juce::Colour(0xff3a4743));
+            g.drawRoundedRectangle(chamber, 7.0F, 1.3F);
+            if (liveCylinder != nullptr && liveCylinder->combustionActive && liveCylinder->combustionPulse > 0.08) {
+                g.setColour(liveCylinder->misfiring ? juce::Colour(0x88ffca28) : juce::Colour(0x99ff7a3d));
+                g.fillEllipse(chamber.reduced(8.0F, cylinderHeight * 0.35F));
+            }
+            g.setColour(juce::Colour(0xff41b6d7));
+            g.drawLine(chamber.getX() + cylinderWidth * 0.30F, chamber.getY() + 5.0F,
+                       chamber.getX() + cylinderWidth * 0.30F, chamber.getY() + 23.0F, 3.0F);
+            g.setColour(juce::Colour(0xffef6f3c));
+            g.drawLine(chamber.getX() + cylinderWidth * 0.70F, chamber.getY() + 5.0F,
+                       chamber.getX() + cylinderWidth * 0.70F, chamber.getY() + 23.0F, 3.0F);
+            g.setColour(juce::Colour(0xffb7c1bd));
+            g.fillRoundedRectangle(chamber.getX() + 5.0F, chamber.getBottom() - 28.0F - travel * 18.0F,
+                                   cylinderWidth - 10.0F, 20.0F, 3.0F);
+            g.restoreState();
+            if (liveCylinder != nullptr) {
+                g.setColour(liveCylinder->misfireProbability > 0.2 ? juce::Colour(0xffffca28) : juce::Colour(0xffaab7b2));
+                g.setFont(juce::FontOptions(10.5F, juce::Font::bold));
+                g.drawFittedText("C" + juce::String(liveCylinder->id) + "  "
+                    + juce::String(liveCylinder->pressureEstimateBar, 1) + " bar",
+                    juce::Rectangle<float>(pistonCenterX - 38.0F, pistonCenterY - 8.0F, 76.0F, 16.0F).toNearestInt(),
+                    juce::Justification::centred, 1);
+            }
+        }
+        const auto crankNeedle = visibleState_.crankAngleDegrees * std::numbers::pi / 180.0;
+        g.setColour(juce::Colour(0xffef6f3c));
+        g.fillEllipse(center.x - 11.0F, center.y - 11.0F, 22.0F, 22.0F);
+        g.drawLine(center.x, center.y,
+                   center.x + static_cast<float>(std::cos(crankNeedle)) * diameter * 0.085F,
+                   center.y + static_cast<float>(std::sin(crankNeedle)) * diameter * 0.085F, 4.0F);
+        return;
+    }
+    const auto splitBanks = config_.layout == EngineLayout::vLayout || config_.layout == EngineLayout::flat;
+    const auto columns = splitBanks ? (count + 1) / 2 : count;
     const auto spacing = 14.0F;
     const auto cylinderWidth = std::clamp((area.getWidth() - spacing * static_cast<float>(columns - 1)) / static_cast<float>(columns), 46.0F, 112.0F);
     const auto totalWidth = cylinderWidth * static_cast<float>(columns) + spacing * static_cast<float>(columns - 1);
     const auto startX = area.getCentreX() - totalWidth * 0.5F;
-    const auto bankHeight = config_.layout == EngineLayout::vLayout ? area.getHeight() * 0.43F : area.getHeight() * 0.72F;
+    const auto bankHeight = splitBanks ? area.getHeight() * 0.43F : area.getHeight() * 0.72F;
     g.setFont(juce::FontOptions(12.0F, juce::Font::bold)); g.setColour(juce::Colour(0xff82918b));
     g.drawText(juce::String("DISTRIBUTION  ") + juce::String(config_.camshafts.intakeDurationDegrees, 0) + utf8("° / ")
         + juce::String(config_.camshafts.intakeLiftMm, 1) + " mm", area.removeFromTop(28.0F), juce::Justification::centred);
 
+    const auto runnerTop = area.getY() + 10.0F;
+    g.setColour(juce::Colour(0x3341b6d7));
+    g.fillRoundedRectangle(area.withY(runnerTop).withHeight(11.0F).reduced(12.0F, 0.0F), 5.0F);
+    g.setColour(juce::Colour(0x44ef6f3c));
+    g.fillRoundedRectangle(area.withY(area.getBottom() - 18.0F).withHeight(11.0F).reduced(12.0F, 0.0F), 5.0F);
+
     for (int index = 0; index < count; ++index) {
-        const auto bank = config_.layout == EngineLayout::vLayout ? index % 2 : 0;
-        const auto column = config_.layout == EngineLayout::vLayout ? index / 2 : index;
+        const auto bank = splitBanks ? index % 2 : 0;
+        const auto column = splitBanks ? index / 2 : index;
         const auto& cylinder = config_.cylinders[static_cast<std::size_t>(index)];
-        const auto phase = std::fmod(visibleState_.crankAngleDegrees - cylinder.crankOffsetDegrees + 720.0, 720.0);
+        const auto phase = std::fmod(visibleState_.crankAngleDegrees - crankOffsetDegreesFor(config_, cylinder) + 720.0, 720.0);
         const auto pistonAngle = phase / 720.0 * std::numbers::pi * 4.0;
-        const auto crankRadius = cylinder.strokeMm * 0.5;
+        const auto crankRadius = crankThrowMmFor(config_, cylinder);
         const auto rodLength = std::max(cylinder.connectingRodMm, crankRadius + 0.1);
         const auto sliderTravel = crankRadius * (1.0 - std::cos(pistonAngle)) + rodLength
             - std::sqrt(std::max(0.0, rodLength * rodLength
@@ -513,10 +977,13 @@ void MainComponent::drawEngine(juce::Graphics& g, juce::Rectangle<float> area) c
         }
         g.setColour(juce::Colour(0xff111817)); g.fillRoundedRectangle(x, top, cylinderWidth, height, 7.0F);
         g.setColour(juce::Colour(0xff3a4743)); g.drawRoundedRectangle(x, top, cylinderWidth, height, 7.0F, 1.5F);
-        const auto intakeLift = valveLiftMm(phase, 360.0 + config_.camshafts.intakeCenterlineDegrees,
-                                           config_.camshafts.intakeDurationDegrees, config_.camshafts.intakeLiftMm);
-        const auto exhaustLift = valveLiftMm(phase, 720.0 - config_.camshafts.exhaustCenterlineDegrees,
-                                            config_.camshafts.exhaustDurationDegrees, config_.camshafts.exhaustLiftMm);
+        const auto bankedPhase = phase + cylinder.bankOffsetDegrees;
+        const auto intakeLift = profiledValveLiftMm(bankedPhase, 360.0 + config_.camshafts.intakeCenterlineDegrees,
+            config_.camshafts.intakeDurationDegrees, config_.camshafts.intakeLiftMm,
+            config_.camshafts.intakeLiftProfile);
+        const auto exhaustLift = profiledValveLiftMm(bankedPhase, 720.0 - config_.camshafts.exhaustCenterlineDegrees,
+            config_.camshafts.exhaustDurationDegrees, config_.camshafts.exhaustLiftMm,
+            config_.camshafts.exhaustLiftProfile);
         const auto intakeDrop = static_cast<float>(intakeLift / std::max(1.0, config_.camshafts.intakeLiftMm) * 17.0);
         const auto exhaustDrop = static_cast<float>(exhaustLift / std::max(1.0, config_.camshafts.exhaustLiftMm) * 17.0);
         g.setColour(juce::Colour(0xff41b6d7)); g.drawLine(x + cylinderWidth * 0.30F, top + 5.0F, x + cylinderWidth * 0.30F, top + 22.0F + intakeDrop, 3.0F);
@@ -528,6 +995,14 @@ void MainComponent::drawEngine(juce::Graphics& g, juce::Rectangle<float> area) c
         if (liveCylinder != nullptr && liveCylinder->combustionActive && liveCylinder->combustionPulse > 0.08) {
             g.setColour(liveCylinder->misfiring ? juce::Colour(0x88ffca28) : juce::Colour(0x99ff7a3d));
             g.fillEllipse(x + 9.0F, top + 30.0F, cylinderWidth - 18.0F, 22.0F);
+        }
+        if (liveCylinder != nullptr) {
+            const auto intakePulse = static_cast<float>(std::clamp(liveCylinder->intakeFlowMgPerCycle / 45.0, 0.0, 1.0));
+            const auto exhaustPulse = static_cast<float>(std::clamp(liveCylinder->exhaustFlowMgPerCycle / 45.0, 0.0, 1.0));
+            g.setColour(juce::Colour(0xff41b6d7).withAlpha(0.20F + intakePulse * 0.58F));
+            g.drawLine(centerX, runnerTop + 9.0F, centerX, top + 25.0F, 2.0F + intakePulse * 4.0F);
+            g.setColour(juce::Colour(0xffef6f3c).withAlpha(0.20F + exhaustPulse * 0.58F));
+            g.drawLine(centerX, top + height - 24.0F, centerX, area.getBottom() - 13.0F, 2.0F + exhaustPulse * 4.0F);
         }
         g.setColour(juce::Colour(0xffb7c1bd)); g.fillRoundedRectangle(x + 5.0F, pistonY, cylinderWidth - 10.0F, 22.0F, 3.0F);
         const auto crankX = centerX + static_cast<float>(std::sin(pistonAngle)) * 14.0F;
@@ -553,6 +1028,12 @@ void MainComponent::drawDynoChart(juce::Graphics& g, juce::Rectangle<float> area
     g.setFont(juce::FontOptions(13.0F, juce::Font::bold)); g.setColour(juce::Colour(0xffdce5e1));
     g.drawText(utf8("BANC DE PUISSANCE FREINÉ"), area.removeFromTop(38.0F), juce::Justification::centred);
     const auto maxRpm = std::max(8'500.0, config_.redlineRpm);
+    if (visibleState_.dynoHoldEnabled) {
+        g.setColour(juce::Colour(0xff79b89f));
+        g.drawText("HOLD " + juce::String(visibleState_.dynoHoldRpm, 0) + " RPM",
+                   juce::Rectangle<float>(plot.getX(), plot.getY() - 20.0F, plot.getWidth(), 18.0F),
+                   juce::Justification::centredRight);
+    }
     double maxTorque = 100.0;
     double maxPower = 75.0;
     auto accumulateMax = [&maxTorque, &maxPower](const DynoRun& run) {
@@ -606,12 +1087,18 @@ void MainComponent::drawDynoChart(juce::Graphics& g, juce::Rectangle<float> area
     }
     g.drawText("Corrigé · Nm axe G (foncé) · kW axe D (clair)",
                juce::Rectangle<float>(plot.getX(), plot.getBottom() + 18.0F, plot.getWidth(), 18.0F), juce::Justification::centred);
+    if (visibleState_.dynoHoldEnabled) {
+        const auto holdX = plot.getX() + static_cast<float>(visibleState_.dynoHoldRpm / maxRpm) * plot.getWidth();
+        g.setColour(juce::Colour(0xff79b89f).withAlpha(0.75F));
+        g.drawVerticalLine(static_cast<int>(holdX), plot.getY(), plot.getBottom());
+    }
 }
 
 void MainComponent::resized() {
     title_.setBounds(22, 12, getWidth() - 770, 42);
     engineSelector_.setBounds(getWidth() - 260, 17, 230, 32);
-    auto toolbarX = getWidth() - 672;
+    exhaustPresetSelector_.setBounds(getWidth() - 415, 17, 145, 32);
+    auto toolbarX = getWidth() - 827;
     editButton_.setBounds(toolbarX, 17, 98, 32); toolbarX += 102;
     importButton_.setBounds(toolbarX, 17, 92, 32); toolbarX += 96;
     exportButton_.setBounds(toolbarX, 17, 92, 32); toolbarX += 96;

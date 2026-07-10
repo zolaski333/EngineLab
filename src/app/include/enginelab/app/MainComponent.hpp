@@ -1,5 +1,6 @@
 #pragma once
 #include <enginelab/audio/RealtimeEngineAudio.hpp>
+#include <enginelab/catalog/EngineCatalog.hpp>
 #include <enginelab/diagnostics/EngineDiagnostics.hpp>
 #include <enginelab/foundation/EngineTypes.hpp>
 #include <enginelab/runtime/EngineRuntime.hpp>
@@ -23,6 +24,7 @@ public:
     void resized() override;
     bool keyPressed(const juce::KeyPress&) override;
     bool keyStateChanged(bool isKeyDown) override;
+    void mouseWheelMove(const juce::MouseEvent&, const juce::MouseWheelDetails&) override;
 private:
     void timerCallback() override;
     void configureSlider(juce::Slider&, double minimum, double maximum, double value, const juce::String& suffix);
@@ -34,10 +36,18 @@ private:
     void exportEngine();
     void exportDynoCsv();
     void showError(const juce::String& title, const juce::String& message);
+    void reloadEngine();
     void collectFinishedRuns();
     void updateHistorySelector();
     void setThrottlePreset(double value);
     void toggleDyno();
+    void applyExhaustPreset(int presetIndex);
+    void adjustAudioOrSimulation(double wheelDelta);
+    void drawLoadSimulationPanel(juce::Graphics&, juce::Rectangle<float> area) const;
+    void drawMixerPanel(juce::Graphics&, juce::Rectangle<float> area) const;
+    void drawOscilloscopePanel(juce::Graphics&, juce::Rectangle<float> area) const;
+    void drawDebugPanel(juce::Graphics&, juce::Rectangle<float> area) const;
+    void drawGaugeCluster(juce::Graphics&, juce::Rectangle<float> area) const;
     void drawEngine(juce::Graphics&, juce::Rectangle<float> area) const;
     void drawDynoChart(juce::Graphics&, juce::Rectangle<float> area) const;
     void drawTelemetryChart(juce::Graphics&, juce::Rectangle<float> area) const;
@@ -56,6 +66,20 @@ private:
     std::size_t importedRunCount_ { 0 };
     std::uint64_t nextUiRunId_ { 1 };
     bool starterKeyDown_ { false };
+    double targetClutchPressure_ { 1.0 };
+    int screen_ { 0 };
+    int viewLayer_ { 0 };
+    bool showDynoStats_ { true };
+    double audioVolume_ { 1.0 };
+    double audioConvolution_ { 0.45 };
+    double highFrequencyGain_ { 1.0 };
+    double lowFrequencyNoise_ { 0.35 };
+    double highFrequencyNoise_ { 0.35 };
+    double combustionGain_ { 1.0 };
+    double exhaustGain_ { 1.0 };
+    double intakeGain_ { 0.85 };
+    double mechanicalGain_ { 0.70 };
+    int exhaustPresetIndex_ { 0 };
     std::array<EngineState, 300> telemetryHistory_ {};
     std::size_t telemetryWrite_ { 0 };
     std::size_t telemetryCount_ { 0 };
@@ -68,6 +92,7 @@ private:
     juce::TextButton importButton_ { "IMPORTER" };
     juce::TextButton exportButton_ { "EXPORTER" };
     juce::TextButton csvButton_ { "CSV DYNO" };
+    juce::ComboBox exhaustPresetSelector_;
     juce::TextButton ignitionButton_ { "CONTACT" };
     juce::TextButton starterButton_;
     juce::TextButton dynoButton_ { "D  LANCER DYNO" };

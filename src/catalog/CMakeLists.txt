@@ -1,0 +1,6 @@
+add_library(EngineLabCatalog STATIC src/EngineCatalog.cpp)
+add_library(EngineLab::Catalog ALIAS EngineLabCatalog)
+target_include_directories(EngineLabCatalog PUBLIC include)
+target_link_libraries(EngineLabCatalog PUBLIC EngineLab::Foundation yaml-cpp::yaml-cpp)
+target_compile_features(EngineLabCatalog PUBLIC cxx_std_20)
+enginelab_set_warnings(EngineLabCatalog)

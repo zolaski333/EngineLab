@@ -23,6 +23,14 @@ std::size_t FourStrokeEventGenerator::generate(
         float stereoPosition = 0.0F;
         if (config.layout == EngineLayout::vLayout)
             stereoPosition = (cylinderIndex % 2U == 0U ? -0.52F : 0.52F);
+        else if (config.layout == EngineLayout::flat) {
+            const auto bankColumns = std::max(1.0, static_cast<double>((config.cylinders.size() + 1U) / 2U));
+            stereoPosition = (cylinderIndex % 2U == 0U ? -0.64F : 0.64F)
+                + static_cast<float>((static_cast<double>(cylinderIndex / 2U) / std::max(1.0, bankColumns - 1.0)) - 0.5) * 0.18F;
+        }
+        else if (config.layout == EngineLayout::radial)
+            stereoPosition = static_cast<float>(std::sin(static_cast<double>(cylinderIndex)
+                / static_cast<double>(config.cylinders.size()) * 6.283185307179586) * 0.74);
         else if (config.cylinders.size() > 1)
             stereoPosition = static_cast<float>(-0.72 + 1.44 * static_cast<double>(cylinderIndex)
                 / static_cast<double>(config.cylinders.size() - 1));
@@ -45,7 +53,12 @@ std::size_t FourStrokeEventGenerator::generate(
                 static_cast<float>(combustion.pressureEstimateBar),
                 static_cast<float>(1.4 + 10.0 / std::max(1.0, state.rpm / 1'000.0)),
                 static_cast<float>(combustion.actualAirFuelRatio), static_cast<float>(ecu.ignitionAdvanceDegrees),
-                static_cast<float>(combustion.knockLevel), stereoPosition, 0.0F, 0.0F,
+                static_cast<float>(combustion.knockLevel), stereoPosition,
+                cylinderState != state.cylinderStates.begin() + static_cast<std::ptrdiff_t>(state.cylinderStateCount)
+                    ? static_cast<float>(cylinderState->exhaustFlowMgPerCycle) : 0.0F,
+                cylinderState != state.cylinderStates.begin() + static_cast<std::ptrdiff_t>(state.cylinderStateCount)
+                    ? static_cast<float>(cylinderState->runnerPressureKpa) : static_cast<float>(state.exhaustRunnerPressureKpa),
+                0.0F, 0.0F,
                 misfire, cylinderId, cylinderId };
             if (written < output.size()) {
                 auto insertion = written;

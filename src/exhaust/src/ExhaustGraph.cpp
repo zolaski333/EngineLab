@@ -33,15 +33,17 @@ ExhaustGraph ExhaustGraph::makeForEngine(const EngineConfig& config) {
     graph.edges_.push_back({ mergeId, mufflerId });
     graph.edges_.push_back({ mufflerId, outletId });
     graph.effectiveRestriction_ = primaryRestriction + collectorRestriction
-        + config.exhaust.mufflerRestriction + outletRestriction;
+        + config.exhaust.mufflerRestriction * 0.62 + outletRestriction;
     graph.ambientPressureKpa_ = config.ambientPressureKpa;
     return graph;
 }
 
 double ExhaustGraph::backPressureKpa(const EngineState& state) const noexcept {
-    const auto massFlowGramsPerSecond = state.airFlowGramsPerSecond + state.fuelFlowGramsPerSecond;
-    const auto flowFactor = std::max(0.0, massFlowGramsPerSecond * 0.0070 + state.rpm / 12'000.0);
-    return ambientPressureKpa_ + effectiveRestriction_ * flowFactor * flowFactor * 48.0;
+    const auto massFlowGramsPerSecond = std::max(state.airFlowGramsPerSecond + state.fuelFlowGramsPerSecond,
+                                                 state.exhaustFlowGramsPerSecond);
+    const auto flowFactor = std::max(0.0, massFlowGramsPerSecond * 0.0042 + state.rpm / 18'000.0);
+    const auto runnerPulse = std::max(0.0, state.exhaustRunnerPressureKpa - ambientPressureKpa_) * 0.045;
+    return ambientPressureKpa_ + effectiveRestriction_ * flowFactor * flowFactor * 48.0 + runnerPulse;
 }
 
 void ExhaustGraph::process(FiringEvent& event) const noexcept {

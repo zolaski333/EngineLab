@@ -1,0 +1,25 @@
+schema_version: 1
+family: boxer turbo
+engine:
+  name: EJ25-like 2.5 Flat-4 Turbo
+  layout: flat
+  cylinder_count: 4
+  firing_order: [1, 3, 2, 4]
+  idle_rpm: 820
+  redline_rpm: 6800
+  rotating_inertia_kg_m2: 0.29
+  friction_coefficient: 0.15
+  octane_rating: 98
+  plenum_volume_l: 3.2
+  throttle_diameter_mm: 65
+  uses:
+    camshafts: turbo_street
+    exhaust: compact_sport
+    transmission: sport_6_speed
+    vehicle: rally_sedan
+  cylinder_template:
+    bore_mm: 99.5
+    stroke_mm: 79.0
+    connecting_rod_mm: 130.5
+    piston_mass_g: 455
+    compression_ratio: 8.4

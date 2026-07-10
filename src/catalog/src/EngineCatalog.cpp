@@ -1,0 +1,284 @@
+#include <enginelab/catalog/EngineCatalog.hpp>
+#include <yaml-cpp/yaml.h>
+#include <algorithm>
+#include <fstream>
+#include <map>
+#include <optional>
+#include <sstream>
+
+namespace enginelab {
+namespace {
+template <typename T>
+void assignIfPresent(const YAML::Node& node, const char* key, T& value) {
+    if (node && node[key]) value = node[key].as<T>();
+}
+
+[[nodiscard]] EngineLayout parseLayout(const std::string& value) {
+    if (value == "inline") return EngineLayout::inlineLayout;
+    if (value == "v") return EngineLayout::vLayout;
+    if (value == "flat") return EngineLayout::flat;
+    if (value == "radial") return EngineLayout::radial;
+    if (value == "custom") return EngineLayout::custom;
+    throw std::runtime_error("Unknown engine layout: " + value);
+}
+
+template <typename T>
+[[nodiscard]] std::map<std::string, T> loadPartMap(const std::filesystem::path& file,
+                                                   T (*decode)(const YAML::Node&)) {
+    std::map<std::string, T> parts;
+    if (!std::filesystem::exists(file)) return parts;
+    const auto document = YAML::LoadFile(file.string());
+    for (const auto& item : document) parts.emplace(item.first.as<std::string>(), decode(item.second));
+    return parts;
+}
+
+[[nodiscard]] CamshaftConfig decodeCamshafts(const YAML::Node& node) {
+    CamshaftConfig value;
+    assignIfPresent(node, "intake_duration_deg", value.intakeDurationDegrees);
+    assignIfPresent(node, "exhaust_duration_deg", value.exhaustDurationDegrees);
+    assignIfPresent(node, "intake_lift_mm", value.intakeLiftMm);
+    assignIfPresent(node, "exhaust_lift_mm", value.exhaustLiftMm);
+    assignIfPresent(node, "intake_centerline_deg", value.intakeCenterlineDegrees);
+    assignIfPresent(node, "exhaust_centerline_deg", value.exhaustCenterlineDegrees);
+    assignIfPresent(node, "intake_flow_coefficient", value.intakeFlowCoefficient);
+    assignIfPresent(node, "exhaust_flow_coefficient", value.exhaustFlowCoefficient);
+    if (node["intake_lift_profile"]) {
+        for (const auto& sample : node["intake_lift_profile"])
+            value.intakeLiftProfile.push_back({ sample["angle_deg"].as<double>(), sample["lift_mm"].as<double>() });
+    }
+    if (node["exhaust_lift_profile"]) {
+        for (const auto& sample : node["exhaust_lift_profile"])
+            value.exhaustLiftProfile.push_back({ sample["angle_deg"].as<double>(), sample["lift_mm"].as<double>() });
+    }
+    return value;
+}
+
+[[nodiscard]] ExhaustConfig decodeExhaust(const YAML::Node& node) {
+    ExhaustConfig value;
+    assignIfPresent(node, "primary_length_mm", value.primaryLengthMm);
+    assignIfPresent(node, "primary_diameter_mm", value.primaryDiameterMm);
+    assignIfPresent(node, "collector_diameter_mm", value.collectorDiameterMm);
+    assignIfPresent(node, "muffler_restriction", value.mufflerRestriction);
+    assignIfPresent(node, "outlet_diameter_mm", value.outletDiameterMm);
+    return value;
+}
+
+[[nodiscard]] TransmissionConfig decodeTransmission(const YAML::Node& node) {
+    TransmissionConfig value;
+    assignIfPresent(node, "gear_ratios", value.gearRatios);
+    assignIfPresent(node, "final_drive_ratio", value.finalDriveRatio);
+    assignIfPresent(node, "max_clutch_torque_nm", value.maxClutchTorqueNm);
+    return value;
+}
+
+[[nodiscard]] VehicleConfig decodeVehicle(const YAML::Node& node) {
+    VehicleConfig value;
+    assignIfPresent(node, "mass_kg", value.massKg);
+    assignIfPresent(node, "drag_coefficient", value.dragCoefficient);
+    assignIfPresent(node, "frontal_area_m2", value.frontalAreaM2);
+    assignIfPresent(node, "tire_radius_m", value.tireRadiusM);
+    assignIfPresent(node, "rolling_resistance_coefficient", value.rollingResistanceCoefficient);
+    return value;
+}
+
+[[nodiscard]] ForcedInductionConfig decodeForcedInduction(const YAML::Node& node) {
+    ForcedInductionConfig value;
+    assignIfPresent(node, "enabled", value.enabled);
+    assignIfPresent(node, "pressure_ratio", value.pressureRatio);
+    assignIfPresent(node, "full_boost_rpm", value.fullBoostRpm);
+    assignIfPresent(node, "compressor_efficiency", value.compressorEfficiency);
+    assignIfPresent(node, "charge_temperature_rise_c", value.chargeTemperatureRiseC);
+    return value;
+}
+
+[[nodiscard]] ThermalConfig decodeThermal(const YAML::Node& node) {
+    ThermalConfig value;
+    assignIfPresent(node, "coolant_mass_kj_per_c", value.coolantMassKjPerC);
+    assignIfPresent(node, "oil_mass_kj_per_c", value.oilMassKjPerC);
+    assignIfPresent(node, "coolant_heat_share", value.coolantHeatShare);
+    assignIfPresent(node, "oil_heat_share", value.oilHeatShare);
+    assignIfPresent(node, "cooling_power_kw_per_c", value.coolingPowerKwPerC);
+    assignIfPresent(node, "oil_cooling_power_kw_per_c", value.oilCoolingPowerKwPerC);
+    return value;
+}
+
+struct PartsLibrary final {
+    std::map<std::string, CamshaftConfig> camshafts;
+    std::map<std::string, ExhaustConfig> exhausts;
+    std::map<std::string, TransmissionConfig> transmissions;
+    std::map<std::string, VehicleConfig> vehicles;
+};
+
+template <typename T>
+void applyPart(const std::map<std::string, T>& parts, const YAML::Node& uses, const char* key, T& target) {
+    if (!uses || !uses[key]) return;
+    const auto name = uses[key].as<std::string>();
+    const auto found = parts.find(name);
+    if (found == parts.end()) throw std::runtime_error(std::string("Unknown part reference: ") + key + "." + name);
+    target = found->second;
+}
+
+[[nodiscard]] std::vector<CylinderConfig> decodeCylinders(const YAML::Node& engine) {
+    if (engine["cylinders"]) {
+        std::vector<CylinderConfig> cylinders;
+        for (const auto& item : engine["cylinders"]) {
+            CylinderConfig cylinder;
+            cylinder.id = item["id"].as<std::uint32_t>();
+            cylinder.boreMm = item["bore_mm"].as<double>();
+            cylinder.strokeMm = item["stroke_mm"].as<double>();
+            cylinder.connectingRodMm = item["connecting_rod_mm"].as<double>();
+            cylinder.pistonMassGrams = item["piston_mass_g"].as<double>();
+            cylinder.compressionRatio = item["compression_ratio"].as<double>();
+            assignIfPresent(item, "ignition_offset_deg", cylinder.ignitionOffsetDegrees);
+            assignIfPresent(item, "efficiency_offset", cylinder.efficiencyOffset);
+            assignIfPresent(item, "crank_offset_deg", cylinder.crankOffsetDegrees);
+            assignIfPresent(item, "crank_journal_id", cylinder.crankJournalId);
+            assignIfPresent(item, "bank_offset_deg", cylinder.bankOffsetDegrees);
+            cylinders.push_back(cylinder);
+        }
+        return cylinders;
+    }
+
+    const auto count = engine["cylinder_count"].as<std::uint32_t>();
+    const auto cylinderNode = engine["cylinder_template"];
+    std::vector<CylinderConfig> cylinders;
+    cylinders.reserve(count);
+    for (std::uint32_t index = 1; index <= count; ++index) {
+        CylinderConfig cylinder;
+        cylinder.id = index;
+        cylinder.boreMm = cylinderNode["bore_mm"].as<double>();
+        cylinder.strokeMm = cylinderNode["stroke_mm"].as<double>();
+        cylinder.connectingRodMm = cylinderNode["connecting_rod_mm"].as<double>();
+        cylinder.pistonMassGrams = cylinderNode["piston_mass_g"].as<double>();
+        cylinder.compressionRatio = cylinderNode["compression_ratio"].as<double>();
+        assignIfPresent(cylinderNode, "ignition_offset_deg", cylinder.ignitionOffsetDegrees);
+        assignIfPresent(cylinderNode, "efficiency_offset", cylinder.efficiencyOffset);
+        assignIfPresent(cylinderNode, "crank_journal_id", cylinder.crankJournalId);
+        assignIfPresent(cylinderNode, "bank_offset_deg", cylinder.bankOffsetDegrees);
+        cylinders.push_back(cylinder);
+    }
+    return cylinders;
+}
+
+void applyCrankOffsets(EngineConfig& config) {
+    const auto spacing = 720.0 / static_cast<double>(config.firingOrder.size());
+    for (std::size_t index = 0; index < config.cylinders.size(); ++index) {
+        auto& cylinder = config.cylinders[index];
+        const auto found = std::find(config.firingOrder.begin(), config.firingOrder.end(), cylinder.id);
+        if (found == config.firingOrder.end()) continue;
+        cylinder.crankOffsetDegrees = static_cast<double>(std::distance(config.firingOrder.begin(), found)) * spacing;
+        if (config.layout == EngineLayout::vLayout) {
+            cylinder.bankOffsetDegrees = cylinder.id % 2U == 0U ? config.bankAngleDegrees * 0.5 : -config.bankAngleDegrees * 0.5;
+        } else if (config.layout == EngineLayout::flat) {
+            cylinder.bankOffsetDegrees = cylinder.id % 2U == 0U ? 90.0 : -90.0;
+        } else if (config.layout == EngineLayout::radial) {
+            cylinder.bankOffsetDegrees = static_cast<double>(index) * (360.0 / static_cast<double>(config.cylinders.size()));
+        }
+    }
+}
+
+[[nodiscard]] EngineConfig decodeEngineFile(const std::filesystem::path& path, const PartsLibrary& parts) {
+    const auto document = YAML::LoadFile(path.string());
+    const auto engine = document["engine"];
+    if (!engine) throw std::runtime_error("Missing engine node");
+
+    EngineConfig config;
+    config.schemaVersion = document["schema_version"].as<std::uint32_t>(1);
+    config.name = engine["name"].as<std::string>();
+    config.layout = parseLayout(engine["layout"].as<std::string>("inline"));
+    config.firingOrder = engine["firing_order"].as<std::vector<std::uint32_t>>();
+    const auto hasExplicitCylinders = static_cast<bool>(engine["cylinders"]);
+    config.cylinders = decodeCylinders(engine);
+
+    assignIfPresent(engine, "idle_rpm", config.idleRpm);
+    assignIfPresent(engine, "redline_rpm", config.redlineRpm);
+    assignIfPresent(engine, "rotating_inertia_kg_m2", config.rotatingInertiaKgM2);
+    assignIfPresent(engine, "friction_coefficient", config.frictionCoefficient);
+    assignIfPresent(engine, "octane_rating", config.octaneRating);
+    assignIfPresent(engine, "ambient_pressure_kpa", config.ambientPressureKpa);
+    assignIfPresent(engine, "ambient_temperature_c", config.ambientTemperatureC);
+    assignIfPresent(engine, "cooling_efficiency", config.coolingEfficiency);
+    assignIfPresent(engine, "plenum_volume_l", config.plenumVolumeLitres);
+    assignIfPresent(engine, "throttle_diameter_mm", config.throttleDiameterMm);
+    assignIfPresent(engine, "bank_angle_deg", config.bankAngleDegrees);
+    if (!hasExplicitCylinders) applyCrankOffsets(config);
+
+    const auto uses = engine["uses"];
+    applyPart(parts.camshafts, uses, "camshafts", config.camshafts);
+    applyPart(parts.exhausts, uses, "exhaust", config.exhaust);
+    applyPart(parts.transmissions, uses, "transmission", config.transmission);
+    applyPart(parts.vehicles, uses, "vehicle", config.vehicle);
+    if (engine["camshafts"]) config.camshafts = decodeCamshafts(engine["camshafts"]);
+    if (engine["exhaust"]) config.exhaust = decodeExhaust(engine["exhaust"]);
+    if (engine["transmission"]) config.transmission = decodeTransmission(engine["transmission"]);
+    if (engine["vehicle"]) config.vehicle = decodeVehicle(engine["vehicle"]);
+    if (engine["forced_induction"]) config.forcedInduction = decodeForcedInduction(engine["forced_induction"]);
+    if (engine["thermal"]) config.thermal = decodeThermal(engine["thermal"]);
+    if (const auto crankJournals = engine["crank_journals"]) {
+        config.crankJournals.clear();
+        for (const auto& journal : crankJournals)
+            config.crankJournals.push_back({ journal["id"].as<std::uint32_t>(),
+                journal["angle_deg"].as<double>(), journal["throw_mm"].as<double>() });
+    }
+
+    if (const auto error = validateEngineConfig(config)) throw std::runtime_error(*error);
+    return config;
+}
+
+[[nodiscard]] PartsLibrary loadParts(const std::filesystem::path& root) {
+    const auto partsRoot = root / "parts";
+    return {
+        loadPartMap<CamshaftConfig>(partsRoot / "camshafts.yaml", decodeCamshafts),
+        loadPartMap<ExhaustConfig>(partsRoot / "exhausts.yaml", decodeExhaust),
+        loadPartMap<TransmissionConfig>(partsRoot / "transmissions.yaml", decodeTransmission),
+        loadPartMap<VehicleConfig>(partsRoot / "vehicles.yaml", decodeVehicle)
+    };
+}
+} // namespace
+
+EngineCatalogLoadResult loadEngineCatalog(const std::filesystem::path& rootDirectory) {
+    EngineCatalogLoadResult result;
+    const auto enginesRoot = rootDirectory / "engines";
+    if (!std::filesystem::exists(enginesRoot)) {
+        result.errors.push_back("Engine catalog not found: " + enginesRoot.string());
+        return result;
+    }
+
+    PartsLibrary parts;
+    try {
+        parts = loadParts(rootDirectory);
+    } catch (const std::exception& error) {
+        result.errors.push_back(std::string("Failed to load parts library: ") + error.what());
+        return result;
+    }
+
+    std::vector<std::filesystem::path> files;
+    for (const auto& entry : std::filesystem::directory_iterator(enginesRoot)) {
+        if (entry.is_regular_file() && entry.path().extension() == ".yaml") files.push_back(entry.path());
+    }
+    std::sort(files.begin(), files.end());
+    for (const auto& file : files) {
+        try {
+            EngineCatalogEntry entry;
+            entry.config = decodeEngineFile(file, parts);
+            entry.sourcePath = file;
+            if (const auto document = YAML::LoadFile(file.string()); document["family"])
+                entry.family = document["family"].as<std::string>();
+            result.entries.push_back(std::move(entry));
+        } catch (const std::exception& error) {
+            result.errors.push_back(file.filename().string() + ": " + error.what());
+        }
+    }
+    return result;
+}
+
+std::vector<EngineConfig> makeCatalogOrBasePresets(const std::filesystem::path& rootDirectory) {
+    auto loaded = loadEngineCatalog(rootDirectory);
+    if (loaded.entries.empty()) return makeBaseEnginePresets();
+    std::vector<EngineConfig> configs;
+    configs.reserve(loaded.entries.size());
+    for (auto& entry : loaded.entries) configs.push_back(std::move(entry.config));
+    return configs;
+}
+
+} // namespace enginelab

@@ -1,0 +1,25 @@
+schema_version: 1
+family: motorcycle
+engine:
+  name: Hayabusa-like 1.3 I4
+  layout: inline
+  cylinder_count: 4
+  firing_order: [1, 2, 4, 3]
+  idle_rpm: 1250
+  redline_rpm: 11200
+  rotating_inertia_kg_m2: 0.055
+  friction_coefficient: 0.09
+  octane_rating: 98
+  plenum_volume_l: 1.2
+  throttle_diameter_mm: 46
+  uses:
+    camshafts: motorcycle_high_rpm
+    exhaust: motorcycle_4_2_1
+    transmission: motorcycle_6_speed
+    vehicle: motorcycle
+  cylinder_template:
+    bore_mm: 81.0
+    stroke_mm: 63.0
+    connecting_rod_mm: 119.0
+    piston_mass_g: 195
+    compression_ratio: 12.5

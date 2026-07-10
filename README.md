@@ -14,11 +14,13 @@ EngineLab is a real-time, high-fidelity internal combustion engine simulation an
 
 ### 2. Physical Engine Configurations
 - **Uneven-Firing & Layout Support:** Fully customizable bank angles and per-cylinder crank offset degrees (`crankOffsetDegrees`), allowing modeling of I2, I4, I5, V6, crossplane/flatplane V8s, and custom designs.
+- **Exotic Geometry Catalog:** Built-in flat-six and radial-five examples use explicit crank journals, per-cylinder bank offsets, and preserved YAML/JSON round trips so non-standard layouts are first-class configs.
 - **Camshaft Timing & Lift:** Dual camshaft (intake/exhaust) modeling parameterized by centerlines, durations, and lift profiles, dynamically animating valves and scaling volumetric efficiency.
 
 ### 3. Real-Time Audio Synthesis
 - **Stereo Procedural Synthesis:** Lock-free, allocation-free real-time audio threads generating physical combustion pulses, intake noise, mechanical distribution clicks, and starter sound layers.
-- **Exhaust Graph Resonance:** Multi-node exhaust delay paths modeling piping length delays and primary pipe acoustic resonances.
+- **Pressure-Driven Exhaust Pulses:** Firing events carry cylinder pressure, exhaust runner pressure, mass flow, path delay, and resonance into the renderer.
+- **Exhaust Graph Resonance:** Multi-node exhaust delay paths modeling piping length delays, primary pipe acoustic resonances, wave reflections, and an internal IR-style muffler network.
 
 ### 4. Interactive Dyno Sweep
 - **Automated Dyno Sweep:** Automatic brake sweep mapping torque/power curves across the engine speed range.
@@ -33,9 +35,10 @@ EngineLab is a real-time, high-fidelity internal combustion engine simulation an
 - **`E`:** 50% Throttle.
 - **`R`:** 100% Throttle.
 - **`D`:** Start/Stop Automated Dyno Sweep.
-- **`F1` to `F5`:** Load base preset engines (I2, I4, I5, V6, V8).
-- **`Spacebar`:** Pause/Resume simulation.
-- **`1`, `2`, `3`:** Set simulation speed scale (0.5×, 1×, 2×).
+- **`F1` to `F12`:** Load available catalog engines.
+- **`P`:** Pause/Resume simulation.
+- **`Tab`:** Cycle engine, load/transmission, mixer, oscilloscope, and debug views.
+- **`1` to `5`:** Set simulation speed scale (0.25x, 0.5x, 1x, 2x, 4x).
 
 ---
 

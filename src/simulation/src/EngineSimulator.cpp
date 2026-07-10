@@ -9,6 +9,50 @@ namespace {
 [[nodiscard]] double smooth(double current, double target, double dt, double rate) noexcept {
     return current + (target - current) * (1.0 - std::exp(-dt * rate));
 }
+
+[[nodiscard]] double valveAreaMm2(double boreMm, double liftMm) noexcept {
+    const auto valveDiameterMm = std::clamp(boreMm * 0.34, 16.0, 58.0);
+    return std::numbers::pi * valveDiameterMm * std::max(0.0, liftMm);
+}
+
+[[nodiscard]] double gasFlowMg(double upstreamKpa, double downstreamKpa, double areaMm2,
+                               double dtSeconds, double temperatureC, double dischargeCoefficient) noexcept {
+    const auto pressureDeltaPa = std::max(0.0, upstreamKpa - downstreamKpa) * 1'000.0;
+    if (pressureDeltaPa <= 0.0 || areaMm2 <= 0.0 || dtSeconds <= 0.0) return 0.0;
+    const auto temperatureK = std::max(240.0, temperatureC + 273.15);
+    const auto densityKgM3 = upstreamKpa * 1'000.0 / (287.05 * temperatureK);
+    const auto velocityMps = std::sqrt(2.0 * pressureDeltaPa / std::max(0.05, densityKgM3));
+    return std::clamp(dischargeCoefficient, 0.05, 1.50) * areaMm2 * 1.0e-6 * velocityMps
+        * densityKgM3 * dtSeconds * 1'000'000.0;
+}
+
+[[nodiscard]] double chamberVolumeLitres(const CylinderConfig& cylinder, double phaseDegrees) noexcept {
+    const auto boreM = cylinder.boreMm * 0.001;
+    const auto strokeM = cylinder.strokeMm * 0.001;
+    const auto crankRadiusM = strokeM * 0.5;
+    const auto rodM = cylinder.connectingRodMm * 0.001;
+    const auto theta = phaseDegrees * std::numbers::pi / 180.0;
+    const auto rodRoot = std::sqrt(std::max(0.0, rodM * rodM
+        - crankRadiusM * crankRadiusM * std::sin(theta) * std::sin(theta)));
+    const auto pistonTravelM = crankRadiusM * (1.0 - std::cos(theta)) + rodM - rodRoot;
+    const auto sweptM3 = std::numbers::pi * boreM * boreM * 0.25 * strokeM;
+    const auto clearanceM3 = sweptM3 / std::max(1.0, cylinder.compressionRatio - 1.0);
+    return (clearanceM3 + std::numbers::pi * boreM * boreM * 0.25 * pistonTravelM) * 1'000.0;
+}
+
+[[nodiscard]] double crankThrowMmFor(const EngineConfig& config, const CylinderConfig& cylinder) noexcept {
+    if (cylinder.crankJournalId != 0) {
+        const auto journal = std::find_if(config.crankJournals.begin(), config.crankJournals.end(),
+            [&cylinder](const CrankJournalConfig& item) { return item.id == cylinder.crankJournalId; });
+        if (journal != config.crankJournals.end()) return journal->throwMm;
+    }
+    return cylinder.strokeMm * 0.5;
+}
+
+[[nodiscard]] double crankOffsetDegreesFor(const EngineConfig& config, const CylinderConfig& cylinder) noexcept {
+    (void)config;
+    return cylinder.crankOffsetDegrees;
+}
 }
 
 EngineSimulator::EngineSimulator(EngineConfig config, IEcuModel& ecu, IPhysicsModel& physics,
@@ -46,8 +90,18 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
             state_.manifoldPressureKpa = smooth(state_.manifoldPressureKpa, config_.ambientPressureKpa, subDt, 13.0);
         } else {
             constexpr double airGasConstant = 287.05;
-            const auto temperatureK = std::max(240.0, config_.ambientTemperatureC + 273.15);
-            const auto ambientPressurePa = config_.ambientPressureKpa * 1'000.0;
+            const auto boostRange = std::max(250.0, config_.forcedInduction.fullBoostRpm - config_.idleRpm);
+            const auto boostBlend = config_.forcedInduction.enabled
+                ? std::clamp((state_.rpm - config_.idleRpm * 0.75) / boostRange, 0.0, 1.0)
+                    * std::clamp(std::pow(state_.throttle, 0.72), 0.0, 1.0)
+                : 0.0;
+            const auto pressureRatioTarget = 1.0 + (config_.forcedInduction.pressureRatio - 1.0) * boostBlend;
+            const auto intakeSourcePressureKpa = config_.ambientPressureKpa * pressureRatioTarget;
+            const auto chargeTemperatureC = config_.ambientTemperatureC
+                + config_.forcedInduction.chargeTemperatureRiseC * boostBlend
+                    / std::max(0.35, config_.forcedInduction.compressorEfficiency);
+            const auto temperatureK = std::max(240.0, chargeTemperatureC + 273.15);
+            const auto ambientPressurePa = intakeSourcePressureKpa * 1'000.0;
             const auto manifoldPressurePa = state_.manifoldPressureKpa * 1'000.0;
 
             const auto throttleRadiusM = config_.throttleDiameterMm * 0.0005;
@@ -59,7 +113,7 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
             constexpr double criticalRatio = 0.52828;
             double psi = 0.0;
             if (pressureRatio <= criticalRatio) {
-                psi = 0.4842; // Choked flow
+                psi = 0.6834; // Choked flow
             } else {
                 constexpr double c1 = 2.0 * gamma / (gamma - 1.0);
                 const auto r1 = std::pow(pressureRatio, 2.0 / gamma);
@@ -70,13 +124,13 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
 
             const auto manifoldDensity = manifoldPressurePa / (airGasConstant * temperatureK);
             const auto displacementM3 = engineDisplacementLitres(config_) * 0.001;
-            const auto priorVe = std::clamp(state_.volumetricEfficiency, 0.35, 1.15);
+            const auto priorVe = std::clamp(state_.volumetricEfficiency, 0.0, 1.25);
             const auto engineMassFlowKgPerSecond = displacementM3 * (state_.rpm / 120.0) * priorVe * manifoldDensity;
             const auto plenumVolumeM3 = config_.plenumVolumeLitres * 0.001;
             const auto pressureRatePaPerSecond = (intakeMassFlowKgPerSecond - engineMassFlowKgPerSecond)
                 * airGasConstant * temperatureK / plenumVolumeM3;
             state_.manifoldPressureKpa = std::clamp(state_.manifoldPressureKpa
-                + pressureRatePaPerSecond * subDt / 1'000.0, 10.0, config_.ambientPressureKpa * 1.01);
+                + pressureRatePaPerSecond * subDt / 1'000.0, 10.0, intakeSourcePressureKpa * 1.01);
         }
 
         const auto backPressure = exhaust_.backPressureKpa(state_);
@@ -87,11 +141,15 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
         double reciprocatingTorque = 0.0;
         double peakPistonAcceleration = 0.0;
         double combustionPulseSum = 0.0;
+        double intakeRunnerPressureSum = 0.0;
+        double exhaustRunnerPressureSum = 0.0;
+        double exhaustFlowMgSum = 0.0;
 
         for (std::size_t cylinderIndex = 0; cylinderIndex < config_.cylinders.size(); ++cylinderIndex) {
             const auto& cylinder = config_.cylinders[cylinderIndex];
-            const auto theta = (state_.crankAngleDegrees - cylinder.crankOffsetDegrees) * std::numbers::pi / 180.0;
-            const auto cyclePhase = std::fmod(state_.crankAngleDegrees - cylinder.crankOffsetDegrees + 1'440.0, 720.0);
+            const auto crankOffset = crankOffsetDegreesFor(config_, cylinder);
+            const auto theta = (state_.crankAngleDegrees - crankOffset) * std::numbers::pi / 180.0;
+            const auto cyclePhase = std::fmod(state_.crankAngleDegrees - crankOffset + 1'440.0, 720.0);
             const auto wrappedCycle = cyclePhase < previousCylinderPhases_[cylinderIndex];
             const auto reachedIgnitionWindow = !wrappedCycle && previousCylinderPhases_[cylinderIndex] < 600.0
                 && cyclePhase >= 600.0;
@@ -111,8 +169,56 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
             const auto pulse = combustion.combustionEnabled && !cylinderMisfires_[cylinderIndex]
                 ? enginelab::combustionPulse(cyclePhase, ecuCommand.ignitionAdvanceDegrees,
                                              cylinder.ignitionOffsetDegrees) : 0.0;
-            combustionPulseSum += pulse * std::clamp(1.0 + cylinder.efficiencyOffset, 0.8, 1.2);
-            const auto radiusM = cylinder.strokeMm * 0.0005;
+            const auto bankedPhase = cyclePhase + cylinder.bankOffsetDegrees;
+            const auto intakeLift = profiledValveLiftMm(bankedPhase, 360.0 + config_.camshafts.intakeCenterlineDegrees,
+                                                        config_.camshafts.intakeDurationDegrees, config_.camshafts.intakeLiftMm,
+                                                        config_.camshafts.intakeLiftProfile);
+            const auto exhaustLift = profiledValveLiftMm(bankedPhase, 720.0 - config_.camshafts.exhaustCenterlineDegrees,
+                                                         config_.camshafts.exhaustDurationDegrees, config_.camshafts.exhaustLiftMm,
+                                                         config_.camshafts.exhaustLiftProfile);
+            const auto chamberVolume = chamberVolumeLitres(cylinder, cyclePhase);
+            const auto cylinderDisplacement = displacement / static_cast<double>(config_.cylinders.size());
+            const auto compressionVolumeRatio = std::clamp(cylinderDisplacement / std::max(0.001, chamberVolume),
+                                                           0.25, cylinder.compressionRatio);
+            const auto motoredPressureBar = state_.manifoldPressureKpa / 100.0 * std::pow(compressionVolumeRatio, 1.28);
+            const auto combustionPressureBar = combustion.pressureEstimateBar * pulse
+                * std::clamp(1.0 + cylinder.efficiencyOffset, 0.8, 1.2);
+            chamberPressureBar_[cylinderIndex] = smooth(chamberPressureBar_[cylinderIndex],
+                std::max(0.15, motoredPressureBar + combustionPressureBar), subDt, 75.0);
+
+            const auto chamberKpa = chamberPressureBar_[cylinderIndex] * 100.0;
+            const auto intakeArea = valveAreaMm2(cylinder.boreMm, intakeLift);
+            const auto exhaustArea = valveAreaMm2(cylinder.boreMm, exhaustLift);
+            const auto intakeIn = gasFlowMg(state_.manifoldPressureKpa, chamberKpa, intakeArea,
+                                            subDt, config_.ambientTemperatureC, config_.camshafts.intakeFlowCoefficient);
+            const auto intakeReversion = gasFlowMg(chamberKpa, state_.manifoldPressureKpa, intakeArea,
+                                                   subDt, state_.coolantTemperatureC, config_.camshafts.intakeFlowCoefficient);
+            const auto exhaustOut = gasFlowMg(chamberKpa, exhaustRunnerPressureKpa_[cylinderIndex], exhaustArea,
+                                              subDt, state_.exhaustTemperatureC, config_.camshafts.exhaustFlowCoefficient);
+            const auto exhaustReversion = gasFlowMg(exhaustRunnerPressureKpa_[cylinderIndex], chamberKpa,
+                                                    exhaustArea, subDt, state_.exhaustTemperatureC,
+                                                    config_.camshafts.exhaustFlowCoefficient);
+            intakeFlowMgPerCycle_[cylinderIndex] = smooth(intakeFlowMgPerCycle_[cylinderIndex],
+                std::max(0.0, intakeIn - intakeReversion * 0.45), subDt, 52.0);
+            exhaustFlowMgPerCycle_[cylinderIndex] = smooth(exhaustFlowMgPerCycle_[cylinderIndex],
+                std::max(0.0, exhaustOut - exhaustReversion * 0.35), subDt, 58.0);
+            const auto runnerPulse = std::sin(cyclePhase * std::numbers::pi / 180.0);
+            intakeRunnerPressureKpa_[cylinderIndex] = smooth(intakeRunnerPressureKpa_[cylinderIndex],
+                state_.manifoldPressureKpa + (intakeReversion - intakeIn) * 0.018 + runnerPulse * intakeLift * 0.08,
+                subDt, 44.0);
+            exhaustRunnerPressureKpa_[cylinderIndex] = smooth(exhaustRunnerPressureKpa_[cylinderIndex],
+                backPressure + (exhaustOut - exhaustReversion) * 0.026 + pulse * combustion.pressureEstimateBar * 1.8,
+                subDt, 38.0);
+            cylinderWallTemperatureC_[cylinderIndex] = smooth(cylinderWallTemperatureC_[cylinderIndex],
+                config_.ambientTemperatureC + combustion.heatOutput * 175.0 + pulse * 95.0, subDt, 0.22);
+            intakeRunnerPressureSum += intakeRunnerPressureKpa_[cylinderIndex];
+            exhaustRunnerPressureSum += exhaustRunnerPressureKpa_[cylinderIndex];
+            exhaustFlowMgSum += exhaustFlowMgPerCycle_[cylinderIndex];
+            const auto breathingQuality = std::clamp(intakeFlowMgPerCycle_[cylinderIndex]
+                / std::max(1.0, combustion.airMassMgPerCycle / static_cast<double>(config_.cylinders.size())),
+                0.45, 1.35);
+            combustionPulseSum += pulse * std::clamp(1.0 + cylinder.efficiencyOffset, 0.8, 1.2) * breathingQuality;
+            const auto radiusM = crankThrowMmFor(config_, cylinder) * 0.001;
             const auto rodM = cylinder.connectingRodMm * 0.001;
             const auto massKg = cylinder.pistonMassGrams * 0.001;
             const auto ratio = radiusM / rodM;
@@ -128,7 +234,8 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 * (cosTheta + exactTerm);
 
             const auto inertiaForce = massKg * acceleration;
-            reciprocatingTorque -= inertiaForce * radiusM * std::sin(theta);
+            const auto leverArm = radiusM * (std::sin(theta) + (ratio * std::sin(2.0 * theta)) / (2.0 * std::sqrt(denom)));
+            reciprocatingTorque -= inertiaForce * leverArm;
             peakPistonAcceleration = std::max(peakPistonAcceleration, std::abs(acceleration));
             pistonSpeedSum += 2.0 * cylinder.strokeMm * 0.001 * state_.rpm / 60.0;
         }
@@ -187,6 +294,9 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
         state_.airFlowGramsPerSecond = state_.airMassMgPerCycle * (state_.rpm / 120.0) / 1'000.0;
         state_.lambda = state_.airFuelRatio / 14.7;
         state_.exhaustPressureKpa = backPressure;
+        state_.intakeRunnerPressureKpa = intakeRunnerPressureSum / static_cast<double>(config_.cylinders.size());
+        state_.exhaustRunnerPressureKpa = exhaustRunnerPressureSum / static_cast<double>(config_.cylinders.size());
+        state_.exhaustFlowGramsPerSecond = exhaustFlowMgSum * (state_.rpm / 120.0) / 1'000.0;
         state_.powerKw = state_.torqueNm * state_.angularVelocityRadPerSecond / 1'000.0;
         state_.cycleAveragedPowerKw = state_.cycleAveragedTorqueNm * state_.angularVelocityRadPerSecond / 1'000.0;
         state_.brakeSpecificFuelConsumptionGPerKwh = state_.cycleAveragedPowerKw > 1.0
@@ -199,11 +309,20 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
         const auto thermostatOpening = std::clamp((state_.coolantTemperatureC - 82.0) / 12.0, 0.08, 1.0);
         const auto coolingAirflow = config_.coolingEfficiency * (0.18 + thermostatOpening
             * (0.42 + state_.rpm / std::max(1.0, config_.redlineRpm) * 0.8));
-        const auto coolantTarget = config_.ambientTemperatureC + combustion.heatPowerKw * 0.42 / coolingAirflow;
-        const auto oilTarget = config_.ambientTemperatureC + combustion.heatPowerKw * 0.48 / std::max(0.5, coolingAirflow * 0.85);
+        const auto coolantHeatKw = combustion.heatPowerKw * config_.thermal.coolantHeatShare;
+        const auto oilHeatKw = combustion.heatPowerKw * config_.thermal.oilHeatShare
+            + mechanicalFriction * state_.angularVelocityRadPerSecond / 1'000.0 * 0.18;
+        const auto coolantRejectedKw = std::max(0.0, state_.coolantTemperatureC - config_.ambientTemperatureC)
+            * config_.thermal.coolingPowerKwPerC * coolingAirflow;
+        const auto oilRejectedKw = std::max(0.0, state_.oilTemperatureC - config_.ambientTemperatureC)
+            * config_.thermal.oilCoolingPowerKwPerC * std::max(0.35, coolingAirflow * 0.72);
         const auto exhaustTarget = config_.ambientTemperatureC + combustion.heatOutput * 760.0;
-        state_.coolantTemperatureC = smooth(state_.coolantTemperatureC, coolantTarget, subDt, 0.030);
-        state_.oilTemperatureC = smooth(state_.oilTemperatureC, oilTarget, subDt, 0.019);
+        state_.coolantTemperatureC = std::clamp(state_.coolantTemperatureC
+            + (coolantHeatKw - coolantRejectedKw) / config_.thermal.coolantMassKjPerC * subDt,
+            config_.ambientTemperatureC - 5.0, 150.0);
+        state_.oilTemperatureC = std::clamp(state_.oilTemperatureC
+            + (oilHeatKw - oilRejectedKw) / config_.thermal.oilMassKjPerC * subDt,
+            config_.ambientTemperatureC - 5.0, 170.0);
         state_.exhaustTemperatureC = smooth(state_.exhaustTemperatureC, exhaustTarget, subDt, 0.18);
         const auto overrev = std::max(0.0, state_.rpm / config_.redlineRpm - 1.0);
         const auto oilStarvation = state_.rpm > 800.0 && state_.oilPressureKpa < 90.0 ? 1.0 : 0.0;
@@ -217,15 +336,25 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
         state_.cylinderStateCount = std::min(config_.cylinders.size(), state_.cylinderStates.size());
         for (std::size_t index = 0; index < state_.cylinderStateCount; ++index) {
             const auto& cylinder = config_.cylinders[index];
-            const auto phase = std::fmod(state_.crankAngleDegrees - cylinder.crankOffsetDegrees + 1'440.0, 720.0);
+            const auto phase = std::fmod(state_.crankAngleDegrees - crankOffsetDegreesFor(config_, cylinder) + 1'440.0, 720.0);
             const auto active = combustion.combustionEnabled && !cylinderMisfires_[index];
             const auto pulse = active ? enginelab::combustionPulse(phase, ecuCommand.ignitionAdvanceDegrees,
                                                                    cylinder.ignitionOffsetDegrees) : 0.0;
+            const auto bankedPhase = phase + cylinder.bankOffsetDegrees;
+            const auto intakeLift = profiledValveLiftMm(bankedPhase, 360.0 + config_.camshafts.intakeCenterlineDegrees,
+                                                        config_.camshafts.intakeDurationDegrees, config_.camshafts.intakeLiftMm,
+                                                        config_.camshafts.intakeLiftProfile);
+            const auto exhaustLift = profiledValveLiftMm(bankedPhase, 720.0 - config_.camshafts.exhaustCenterlineDegrees,
+                                                         config_.camshafts.exhaustDurationDegrees, config_.camshafts.exhaustLiftMm,
+                                                         config_.camshafts.exhaustLiftProfile);
             state_.cylinderStates[index] = { cylinder.id, phase,
-                1.0 + combustion.pressureEstimateBar * pulse,
+                chamberPressureBar_[index],
                 pulse, combustion.misfireProbability,
+                intakeLift, exhaustLift, intakeFlowMgPerCycle_[index], exhaustFlowMgPerCycle_[index],
+                exhaustRunnerPressureKpa_[index],
                 config_.ambientTemperatureC + (state_.exhaustTemperatureC - config_.ambientTemperatureC)
-                    * std::clamp(1.0 + cylinder.efficiencyOffset, 0.8, 1.2),
+                    * std::clamp(1.0 + cylinder.efficiencyOffset, 0.8, 1.2)
+                    + (cylinderWallTemperatureC_[index] - config_.ambientTemperatureC) * 0.18,
                 active, combustion.combustionEnabled && cylinderMisfires_[index] };
         }
     }
@@ -253,11 +382,20 @@ void EngineSimulator::reset() noexcept {
     state_.exhaustTemperatureC = config_.ambientTemperatureC;
     state_.manifoldPressureKpa = config_.ambientPressureKpa;
     state_.exhaustPressureKpa = config_.ambientPressureKpa;
+    state_.intakeRunnerPressureKpa = config_.ambientPressureKpa;
+    state_.exhaustRunnerPressureKpa = config_.ambientPressureKpa;
     randomState_ = 0x6d2b79f5U;
     cylinderMisfires_.fill(false);
     cylinderMisfirePrepared_.fill(false);
+    intakeFlowMgPerCycle_.fill(0.0);
+    exhaustFlowMgPerCycle_.fill(0.0);
     for (std::size_t index = 0; index < config_.cylinders.size(); ++index) {
-        previousCylinderPhases_[index] = std::fmod(state_.crankAngleDegrees - config_.cylinders[index].crankOffsetDegrees + 1'440.0, 720.0);
+        previousCylinderPhases_[index] = std::fmod(state_.crankAngleDegrees
+            - crankOffsetDegreesFor(config_, config_.cylinders[index]) + 1'440.0, 720.0);
+        intakeRunnerPressureKpa_[index] = config_.ambientPressureKpa;
+        exhaustRunnerPressureKpa_[index] = config_.ambientPressureKpa;
+        chamberPressureBar_[index] = config_.ambientPressureKpa / 100.0;
+        cylinderWallTemperatureC_[index] = config_.ambientTemperatureC;
     }
 }
 

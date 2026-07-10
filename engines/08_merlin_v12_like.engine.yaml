@@ -1,0 +1,40 @@
+schema_version: 1
+family: aircraft
+engine:
+  name: Merlin-like 19.8 V12 Scaled
+  layout: v
+  bank_angle_deg: 60
+  cylinder_count: 12
+  firing_order: [1, 8, 5, 10, 3, 7, 6, 11, 2, 9, 4, 12]
+  idle_rpm: 600
+  redline_rpm: 3800
+  rotating_inertia_kg_m2: 1.85
+  friction_coefficient: 0.13
+  octane_rating: 100
+  cooling_efficiency: 3.2
+  plenum_volume_l: 18.0
+  throttle_diameter_mm: 120
+  forced_induction:
+    enabled: true
+    pressure_ratio: 1.72
+    full_boost_rpm: 2300
+    compressor_efficiency: 0.70
+    charge_temperature_rise_c: 48
+  thermal:
+    coolant_mass_kj_per_c: 1350
+    oil_mass_kj_per_c: 620
+    coolant_heat_share: 0.26
+    oil_heat_share: 0.13
+    cooling_power_kw_per_c: 1.15
+    oil_cooling_power_kw_per_c: 0.58
+  uses:
+    camshafts: v12_aircraft
+    exhaust: aircraft_manifold
+    transmission: aircraft_direct
+    vehicle: test_stand
+  cylinder_template:
+    bore_mm: 120.0
+    stroke_mm: 146.0
+    connecting_rod_mm: 255.0
+    piston_mass_g: 1320
+    compression_ratio: 6.0
