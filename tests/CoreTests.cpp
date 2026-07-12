@@ -3,6 +3,7 @@
 #include <enginelab/exhaust/ExhaustGraph.hpp>
 #include <enginelab/foundation/SpscQueue.hpp>
 #include <enginelab/physics/SimplifiedGasolinePhysics.hpp>
+#include <enginelab/physics/ConservativeGasSystem.hpp>
 #include <enginelab/serialization/JsonEngineSerializer.hpp>
 #include <enginelab/serialization/YamlEngineSerializer.hpp>
 #include <enginelab/simulation/EngineSimulator.hpp>
@@ -29,6 +30,50 @@ void require(bool condition, const char* message) {
 }
 
 int main() {
+    {
+        enginelab::GasCell highPressure;
+        enginelab::GasCell lowPressure;
+        highPressure.initialise(220.0, 1.2, 340.0);
+        lowPressure.initialise(85.0, 2.4, 295.0);
+        const auto initialMoles = enginelab::ConservativeGasSystem::totalMoles(highPressure, lowPressure);
+        const auto initialEnergy = enginelab::ConservativeGasSystem::totalEnergy(highPressure, lowPressure);
+        const auto initialMomentum = enginelab::ConservativeGasSystem::totalMomentum(highPressure, lowPressure);
+        double transferred = 0.0;
+        for (int step = 0; step < 2'000; ++step)
+            transferred += enginelab::ConservativeGasSystem::flow(
+                highPressure, lowPressure, 8.0e-6, 0.72, 1.0 / 20'000.0).transferredMoles;
+        require(transferred > 0.0, "gas network must flow from high to low pressure");
+        require(std::abs(enginelab::ConservativeGasSystem::totalMoles(highPressure, lowPressure) - initialMoles)
+                < initialMoles * 1.0e-10, "gas transfers must conserve moles");
+        require(std::abs(enginelab::ConservativeGasSystem::totalEnergy(highPressure, lowPressure) - initialEnergy)
+                < std::max(1.0, initialEnergy) * 1.0e-10, "gas transfers must conserve internal energy");
+        require(std::abs(enginelab::ConservativeGasSystem::totalMomentum(highPressure, lowPressure) - initialMomentum)
+                < 1.0e-10, "gas transfers must conserve one-dimensional momentum");
+        require(highPressure.pressureKpa() < 220.0 && lowPressure.pressureKpa() > 85.0,
+                "gas transfer must move both control volumes toward equilibrium");
+
+        const auto pressureBeforeCompression = lowPressure.pressureKpa();
+        const auto energyBeforeCompression = lowPressure.internalEnergyJoules();
+        lowPressure.setVolumeAdiabatic(lowPressure.volumeLitres() * 0.5);
+        require(lowPressure.pressureKpa() > pressureBeforeCompression * 1.8,
+                "adiabatic compression must increase pressure");
+        require(lowPressure.internalEnergyJoules() > energyBeforeCompression,
+                "compression work must increase gas internal energy");
+
+        enginelab::GasCell combustible;
+        combustible.initialise(100.0, 0.5, 330.0);
+        combustible.injectFuelMoles(combustible.mixture().oxygenMoles / 12.5);
+        const auto temperatureBefore = combustible.temperatureK();
+        const auto massBeforeReaction = combustible.massKg();
+        const auto reaction = enginelab::ConservativeGasSystem::reactGasoline(combustible, 0.5, 0.72);
+        require(reaction.burnedFuelMoles > 0.0 && reaction.releasedEnergyJoules > 0.0,
+                "gasoline reaction must consume mixture and release heat");
+        require(combustible.temperatureK() > temperatureBefore,
+                "combustion heat must raise cylinder temperature");
+        require(std::abs(combustible.massKg() - massBeforeReaction) < massBeforeReaction * 1.0e-12,
+                "global gasoline reaction must conserve reactant mass");
+    }
+
     auto config = enginelab::makeDefaultInlineFour();
 
     {
@@ -61,6 +106,9 @@ int main() {
             "simulation must expose intake and exhaust runner pressures");
     require(simulator.state().exhaustFlowGramsPerSecond > 0.0,
             "running simulation must produce exhaust mass flow telemetry");
+    require(simulator.state().manifoldGasMassGrams > 0.0 && simulator.state().cylinderGasMassGrams > 0.0
+            && simulator.state().gasInternalEnergyJoules > 0.0,
+            "running simulation must expose conserved gas mass and energy telemetry");
     require(std::any_of(simulator.state().cylinderStates.begin(),
             simulator.state().cylinderStates.begin() + static_cast<std::ptrdiff_t>(simulator.state().cylinderStateCount),
             [](const enginelab::CylinderState& cylinder) {
@@ -77,6 +125,22 @@ int main() {
     require(std::isfinite(simulator.state().cycleAveragedTorqueNm)
             && std::isfinite(simulator.state().cycleAveragedPowerKw),
             "cycle-averaged output must remain finite for UI and dyno consumers");
+
+    {
+        enginelab::SimpleEcuModel drivenEcu;
+        enginelab::SimplifiedGasolinePhysics drivenPhysics;
+        enginelab::FourStrokeEventGenerator drivenEvents;
+        auto drivenExhaust = enginelab::ExhaustGraph::makeForEngine(config);
+        enginelab::EngineSimulator driven(config, drivenEcu, drivenPhysics, drivenEvents, drivenExhaust);
+        for (int step = 0; step < 500; ++step)
+            (void)driven.step(1.0 / 500.0, { false, false, 0.0, 0.0, 90.0 });
+        const auto drivenRpm = driven.state().rpm;
+        require(drivenRpm > 500.0, "positive driveline torque must be able to motor the engine through the clutch");
+        for (int step = 0; step < 500; ++step)
+            (void)driven.step(1.0 / 500.0, { false, false, 0.0, 0.0, -90.0 });
+        require(driven.state().rpm < drivenRpm * 0.55,
+                "negative driveline torque must provide bidirectional engine braking");
+    }
 
     enginelab::SpscQueue<int, 8> queue;
     require(queue.tryPush(42), "queue push should succeed");
@@ -97,6 +161,12 @@ int main() {
             "JSON must preserve intake plenum geometry");
     require(jsonRoundTrip.config->crankJournals.size() == config.crankJournals.size(),
             "JSON must preserve explicit crank journal geometry");
+    require(jsonRoundTrip.config->banks.size() == config.banks.size()
+            && jsonRoundTrip.config->exhaustPaths.size() == config.exhaustPaths.size(),
+            "JSON must preserve bank and exhaust topology");
+    require(std::abs(jsonRoundTrip.config->solver.mechanicalFrequencyHz - config.solver.mechanicalFrequencyHz) < 0.001
+            && jsonRoundTrip.config->ignition.timingCurve.size() == config.ignition.timingCurve.size(),
+            "JSON must preserve solver and ignition calibration");
     const auto v8JsonRoundTrip = json.decode(json.encode(enginelab::makeDefaultV8()));
     require(v8JsonRoundTrip && v8JsonRoundTrip.config->layout == enginelab::EngineLayout::vLayout,
             "JSON must preserve V engine layout");
@@ -126,6 +196,12 @@ int main() {
             "YAML must preserve vehicle tire radius");
     require(yamlRoundTrip.config->crankJournals.size() == config.crankJournals.size(),
             "YAML must preserve explicit crank journal geometry");
+    require(yamlRoundTrip.config->banks.size() == config.banks.size()
+            && yamlRoundTrip.config->exhaustPaths.size() == config.exhaustPaths.size(),
+            "YAML must preserve bank and exhaust topology");
+    require(std::abs(yamlRoundTrip.config->intake.runnerLengthMm - config.intake.runnerLengthMm) < 0.001
+            && yamlRoundTrip.config->ignition.timingCurve.size() == config.ignition.timingCurve.size(),
+            "YAML must preserve intake and ignition calibration");
     require(std::abs(jsonRoundTrip.config->camshafts.intakeLiftMm - config.camshafts.intakeLiftMm) < 0.001,
             "JSON must preserve camshaft lift");
     auto invalidPhysicalConfig = config;
@@ -154,6 +230,7 @@ int main() {
     bool foundMotorcycle = false;
     bool foundFlatSix = false;
     bool foundRadial = false;
+    bool foundCalibratedVtec = false;
     for (const auto& entry : catalog.entries) {
         found2jz = found2jz || entry.config.name.find("2JZ") != std::string::npos;
         foundV8 = foundV8 || (entry.config.layout == enginelab::EngineLayout::vLayout && entry.config.cylinders.size() == 8);
@@ -161,11 +238,16 @@ int main() {
         foundFlatSix = foundFlatSix || (entry.config.layout == enginelab::EngineLayout::flat && entry.config.cylinders.size() == 6);
         foundRadial = foundRadial || (entry.config.layout == enginelab::EngineLayout::radial
             && entry.config.cylinders.size() == 5 && entry.config.crankJournals.size() == 1);
+        foundCalibratedVtec = foundCalibratedVtec || (entry.config.name.find("K20A") != std::string::npos
+            && entry.config.camshafts.variableProfileEnabled
+            && entry.config.ignition.timingCurve.size() >= 5
+            && entry.config.solver.gasSubsteps == 3
+            && entry.config.intake.runnerLengthMm > 250.0);
         require(!enginelab::validateEngineConfig(entry.config), "every catalog engine must validate");
         require(!entry.sourcePath.empty(), "catalog entries must retain their source path");
     }
-    require(found2jz && foundV8 && foundMotorcycle && foundFlatSix && foundRadial,
-            "catalog must cover iconic inline, V8, motorcycle, flat-six and radial profiles");
+    require(found2jz && foundV8 && foundMotorcycle && foundFlatSix && foundRadial && foundCalibratedVtec,
+            "catalog must cover iconic layouts and an explicit variable-valvetrain calibration");
 
     {
         const auto simulate = [](const enginelab::EngineConfig& testConfig, double dt) {
@@ -205,6 +287,29 @@ int main() {
     require(enginelab::combustionPulse(90.0, 0.0, 10.0) < 0.98,
             "per-cylinder ignition offset must shift the mechanical pressure trace");
     {
+        auto variableCamConfig = config;
+        variableCamConfig.banks.clear();
+        variableCamConfig.camshafts.variableProfileEnabled = true;
+        variableCamConfig.camshafts.switchRpm = 450.0;
+        variableCamConfig.camshafts.switchThrottle = 0.2;
+        variableCamConfig.camshafts.highIntakeLiftMm = 18.0;
+        variableCamConfig.camshafts.highIntakeDurationDegrees = 330.0;
+        enginelab::SimpleEcuModel variableEcu;
+        enginelab::SimplifiedGasolinePhysics variablePhysics;
+        enginelab::FourStrokeEventGenerator variableEvents;
+        auto variableExhaust = enginelab::ExhaustGraph::makeForEngine(variableCamConfig);
+        enginelab::EngineSimulator variableSimulator(variableCamConfig, variableEcu, variablePhysics,
+                                                      variableEvents, variableExhaust);
+        double observedLift = 0.0;
+        for (int step = 0; step < 1'200; ++step) {
+            (void)variableSimulator.step(1.0 / 480.0, { true, step < 400, 0.8, 0.02 });
+            for (std::size_t index = 0; index < variableSimulator.state().cylinderStateCount; ++index)
+                observedLift = std::max(observedLift, variableSimulator.state().cylinderStates[index].intakeValveLiftMm);
+        }
+        require(observedLift > config.camshafts.intakeLiftMm * 1.35,
+                "variable valvetrain must switch to the configured high-lift profile under RPM/load conditions");
+    }
+    {
         std::vector<enginelab::ValveLiftSample> profile {
             { -120.0, 0.0 }, { -60.0, 2.0 }, { 0.0, 8.0 }, { 60.0, 2.0 }, { 120.0, 0.0 }
         };
@@ -233,6 +338,10 @@ int main() {
                 }
             }
         }
+        if (!observedMechanicalMisfire)
+            std::cerr << "misfire diagnostic: rpm=" << misfireSimulator.state().rpm
+                      << " probability=" << misfireSimulator.state().misfireRate
+                      << " afr=" << misfireSimulator.state().airFuelRatio << '\n';
         require(observedMechanicalMisfire, "deterministic lean-mixture run must expose cylinder-level misfires");
     }
 
@@ -407,6 +516,22 @@ int main() {
                     && pulsedBackPressure < openConfig.ambientPressureKpa + 8.0,
                 "runner pressure pulses must feed but not dominate exhaust back pressure");
 
+        auto splitConfig = config;
+        splitConfig.exhaustPaths.clear();
+        auto shortPath = enginelab::ExhaustPathConfig { 1, { 1, 2 }, splitConfig.exhaust, {}, 1.0 };
+        auto longPath = enginelab::ExhaustPathConfig { 2, { 3, 4 }, splitConfig.exhaust, {}, 0.7 };
+        shortPath.geometry.primaryLengthMm = 320.0;
+        longPath.geometry.primaryLengthMm = 980.0;
+        splitConfig.exhaustPaths = { shortPath, longPath };
+        auto splitGraph = enginelab::ExhaustGraph::makeForEngine(splitConfig);
+        enginelab::FiringEvent shortEvent, longEvent;
+        shortEvent.exhaustPortId = 1; shortEvent.intensity = 1.0F;
+        longEvent.exhaustPortId = 3; longEvent.intensity = 1.0F;
+        splitGraph.process(shortEvent); splitGraph.process(longEvent);
+        require(longEvent.exhaustDelaySeconds > shortEvent.exhaustDelaySeconds + 0.001F
+                && longEvent.intensity < shortEvent.intensity,
+                "per-path exhaust geometry and audio attenuation must affect timing and level");
+
         auto arbitraryIds = config;
         arbitraryIds.cylinders[0].id = 100;
         arbitraryIds.cylinders[1].id = 200;
@@ -427,6 +552,8 @@ int main() {
         manyCylinderConfig.name = "32 cylinder event stress";
         manyCylinderConfig.cylinders.clear();
         manyCylinderConfig.firingOrder.clear();
+        manyCylinderConfig.banks.clear();
+        manyCylinderConfig.exhaustPaths.clear();
         manyCylinderConfig.rotatingInertiaKgM2 = 1.5;
         for (std::uint32_t index = 0; index < 32; ++index) {
             auto cylinder = config.cylinders.front();
@@ -578,6 +705,37 @@ int main() {
         const auto turboMagnitude = turboBuffer.getMagnitude(0, 0, turboBuffer.getNumSamples());
         require(std::abs(openMagnitude - turboMagnitude) > 1.0e-4F,
                 "exhaust presets must produce observably different impulse responses");
+
+        enginelab::FiringEventQueue directIrQueue;
+        enginelab::RealtimeAudioState directIrState;
+        directIrState.intakeGain.store(0.0F);
+        directIrState.mechanicalGain.store(0.0F);
+        enginelab::RealtimeEngineAudio directIrRenderer(directIrQueue, directIrState);
+        const std::array<float, 1> directIr { 1.0F };
+        directIrRenderer.setImpulseResponse(directIr);
+        directIrRenderer.prepare(48'000.0, 4'800);
+        require(directIrQueue.tryPush(event), "direct IR fixture event must enter queue");
+        juce::AudioBuffer<float> directIrBuffer(2, 4'800);
+        directIrRenderer.render(directIrBuffer, 0, directIrBuffer.getNumSamples());
+
+        enginelab::FiringEventQueue delayedIrQueue;
+        enginelab::RealtimeAudioState delayedIrState;
+        delayedIrState.intakeGain.store(0.0F);
+        delayedIrState.mechanicalGain.store(0.0F);
+        enginelab::RealtimeEngineAudio delayedIrRenderer(delayedIrQueue, delayedIrState);
+        std::array<float, 128> delayedIr {};
+        delayedIr[0] = 0.15F;
+        delayedIr[96] = 0.85F;
+        delayedIrRenderer.setImpulseResponse(delayedIr);
+        delayedIrRenderer.prepare(48'000.0, 4'800);
+        require(delayedIrQueue.tryPush(event), "delayed IR fixture event must enter queue");
+        juce::AudioBuffer<float> delayedIrBuffer(2, 4'800);
+        delayedIrRenderer.render(delayedIrBuffer, 0, delayedIrBuffer.getNumSamples());
+        double irDifference = 0.0;
+        for (int sample = 0; sample < directIrBuffer.getNumSamples(); ++sample)
+            irDifference += std::abs(directIrBuffer.getSample(0, sample) - delayedIrBuffer.getSample(0, sample));
+        require(irDifference > 0.01,
+                "a configured FIR response must materially change the rendered exhaust signature");
     }
 
     {

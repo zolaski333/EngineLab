@@ -1,5 +1,6 @@
 #pragma once
 #include <enginelab/audio/RealtimeEngineAudio.hpp>
+#include <enginelab/app/ActionMap.hpp>
 #include <enginelab/catalog/EngineCatalog.hpp>
 #include <enginelab/diagnostics/EngineDiagnostics.hpp>
 #include <enginelab/foundation/EngineTypes.hpp>
@@ -10,6 +11,7 @@
 #include <juce_gui_extra/juce_gui_extra.h>
 #include <memory>
 #include <array>
+#include <filesystem>
 
 namespace enginelab {
 /** Desktop presentation layer. It only writes controls and renders snapshots. */
@@ -25,6 +27,9 @@ public:
     bool keyPressed(const juce::KeyPress&) override;
     bool keyStateChanged(bool isKeyDown) override;
     void mouseWheelMove(const juce::MouseEvent&, const juce::MouseWheelDetails&) override;
+    void mouseDown(const juce::MouseEvent&) override;
+    void mouseDrag(const juce::MouseEvent&) override;
+    void mouseDoubleClick(const juce::MouseEvent&) override;
 private:
     void timerCallback() override;
     void configureSlider(juce::Slider&, double minimum, double maximum, double value, const juce::String& suffix);
@@ -32,6 +37,7 @@ private:
     void applyConfig(const EngineConfig&);
     void showConfigEditor();
     void showConfigEditor(const juce::String& initialText);
+    void showKeyBindingsEditor();
     void importEngine();
     void exportEngine();
     void exportDynoCsv();
@@ -42,6 +48,7 @@ private:
     void setThrottlePreset(double value);
     void toggleDyno();
     void applyExhaustPreset(int presetIndex);
+    void configureImpulseResponse();
     void adjustAudioOrSimulation(double wheelDelta);
     void drawLoadSimulationPanel(juce::Graphics&, juce::Rectangle<float> area) const;
     void drawMixerPanel(juce::Graphics&, juce::Rectangle<float> area) const;
@@ -53,10 +60,12 @@ private:
     void drawTelemetryChart(juce::Graphics&, juce::Rectangle<float> area) const;
 
     std::vector<EngineConfig> presets_ { makeBaseEnginePresets() };
+    std::filesystem::path catalogRoot_;
     EngineConfig config_ { presets_[1] };
     std::unique_ptr<EngineRuntime> runtime_;
     std::unique_ptr<RealtimeEngineAudio> audio_;
     EngineDiagnostics diagnostics_;
+    ActionMap actionMap_;
     JsonEngineSerializer jsonSerializer_;
     YamlEngineSerializer yamlSerializer_;
     EngineState visibleState_;
@@ -67,8 +76,13 @@ private:
     std::uint64_t nextUiRunId_ { 1 };
     bool starterKeyDown_ { false };
     double targetClutchPressure_ { 1.0 };
+    double currentClutchPressure_ { 1.0 };
     int screen_ { 0 };
     int viewLayer_ { 0 };
+    float engineViewZoom_ { 1.0F };
+    juce::Point<float> engineViewPan_ {};
+    juce::Point<float> dragStartPan_ {};
+    juce::Rectangle<float> engineViewportArea_ {};
     bool showDynoStats_ { true };
     double audioVolume_ { 1.0 };
     double audioConvolution_ { 0.45 };
@@ -85,6 +99,7 @@ private:
     std::size_t telemetryCount_ { 0 };
     std::unique_ptr<juce::FileChooser> fileChooser_;
     std::unique_ptr<juce::AlertWindow> configEditor_;
+    std::unique_ptr<juce::AlertWindow> keyBindingsEditor_;
 
     juce::Label title_;
     juce::ComboBox engineSelector_;
@@ -92,6 +107,7 @@ private:
     juce::TextButton importButton_ { "IMPORTER" };
     juce::TextButton exportButton_ { "EXPORTER" };
     juce::TextButton csvButton_ { "CSV DYNO" };
+    juce::TextButton keyBindingsButton_ { "TOUCHES" };
     juce::ComboBox exhaustPresetSelector_;
     juce::TextButton ignitionButton_ { "CONTACT" };
     juce::TextButton starterButton_;

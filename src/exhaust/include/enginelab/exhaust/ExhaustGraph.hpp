@@ -11,10 +11,11 @@ struct ExhaustNode final {
     double diameterMm { 42.0 };
     double restriction { 0.0 };
     double resonanceHz { 0.0 };
+    double audioGain { 1.0 };
 };
 struct ExhaustEdge final { std::uint32_t from {}; std::uint32_t to {}; };
 
-/** Directed acyclic graph skeleton shared by physics and future acoustic propagation. */
+/** Directed exhaust topology shared by back-pressure and acoustic event propagation. */
 class ExhaustGraph final : public IExhaustModel {
 public:
     [[nodiscard]] static ExhaustGraph makeForEngine(const EngineConfig&);

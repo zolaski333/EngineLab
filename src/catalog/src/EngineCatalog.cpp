@@ -42,6 +42,13 @@ template <typename T>
     assignIfPresent(node, "exhaust_centerline_deg", value.exhaustCenterlineDegrees);
     assignIfPresent(node, "intake_flow_coefficient", value.intakeFlowCoefficient);
     assignIfPresent(node, "exhaust_flow_coefficient", value.exhaustFlowCoefficient);
+    assignIfPresent(node, "variable_profile_enabled", value.variableProfileEnabled);
+    assignIfPresent(node, "switch_rpm", value.switchRpm);
+    assignIfPresent(node, "switch_throttle", value.switchThrottle);
+    assignIfPresent(node, "high_intake_duration_deg", value.highIntakeDurationDegrees);
+    assignIfPresent(node, "high_exhaust_duration_deg", value.highExhaustDurationDegrees);
+    assignIfPresent(node, "high_intake_lift_mm", value.highIntakeLiftMm);
+    assignIfPresent(node, "high_exhaust_lift_mm", value.highExhaustLiftMm);
     if (node["intake_lift_profile"]) {
         for (const auto& sample : node["intake_lift_profile"])
             value.intakeLiftProfile.push_back({ sample["angle_deg"].as<double>(), sample["lift_mm"].as<double>() });
@@ -134,6 +141,12 @@ void applyPart(const std::map<std::string, T>& parts, const YAML::Node& uses, co
             assignIfPresent(item, "crank_offset_deg", cylinder.crankOffsetDegrees);
             assignIfPresent(item, "crank_journal_id", cylinder.crankJournalId);
             assignIfPresent(item, "bank_offset_deg", cylinder.bankOffsetDegrees);
+            assignIfPresent(item, "bank_id", cylinder.bankId);
+            assignIfPresent(item, "intake_runner_length_mm", cylinder.intakeRunnerLengthMm);
+            assignIfPresent(item, "intake_runner_diameter_mm", cylinder.intakeRunnerDiameterMm);
+            assignIfPresent(item, "exhaust_primary_length_mm", cylinder.exhaustPrimaryLengthMm);
+            assignIfPresent(item, "sound_attenuation", cylinder.soundAttenuation);
+            assignIfPresent(item, "blow_by_coefficient", cylinder.blowByCoefficient);
             cylinders.push_back(cylinder);
         }
         return cylinders;
@@ -155,6 +168,12 @@ void applyPart(const std::map<std::string, T>& parts, const YAML::Node& uses, co
         assignIfPresent(cylinderNode, "efficiency_offset", cylinder.efficiencyOffset);
         assignIfPresent(cylinderNode, "crank_journal_id", cylinder.crankJournalId);
         assignIfPresent(cylinderNode, "bank_offset_deg", cylinder.bankOffsetDegrees);
+        assignIfPresent(cylinderNode, "bank_id", cylinder.bankId);
+        assignIfPresent(cylinderNode, "intake_runner_length_mm", cylinder.intakeRunnerLengthMm);
+        assignIfPresent(cylinderNode, "intake_runner_diameter_mm", cylinder.intakeRunnerDiameterMm);
+        assignIfPresent(cylinderNode, "exhaust_primary_length_mm", cylinder.exhaustPrimaryLengthMm);
+        assignIfPresent(cylinderNode, "sound_attenuation", cylinder.soundAttenuation);
+        assignIfPresent(cylinderNode, "blow_by_coefficient", cylinder.blowByCoefficient);
         cylinders.push_back(cylinder);
     }
     return cylinders;
@@ -201,6 +220,35 @@ void applyCrankOffsets(EngineConfig& config) {
     assignIfPresent(engine, "plenum_volume_l", config.plenumVolumeLitres);
     assignIfPresent(engine, "throttle_diameter_mm", config.throttleDiameterMm);
     assignIfPresent(engine, "bank_angle_deg", config.bankAngleDegrees);
+    config.intake.plenumVolumeLitres = config.plenumVolumeLitres;
+    config.intake.throttleDiameterMm = config.throttleDiameterMm;
+    if (const auto intake = engine["intake"]) {
+        assignIfPresent(intake, "plenum_volume_l", config.intake.plenumVolumeLitres);
+        assignIfPresent(intake, "throttle_diameter_mm", config.intake.throttleDiameterMm);
+        assignIfPresent(intake, "throttle_discharge_coefficient", config.intake.throttleDischargeCoefficient);
+        assignIfPresent(intake, "runner_length_mm", config.intake.runnerLengthMm);
+        assignIfPresent(intake, "runner_diameter_mm", config.intake.runnerDiameterMm);
+        assignIfPresent(intake, "idle_bypass_area_mm2", config.intake.idleBypassAreaMm2);
+        assignIfPresent(intake, "throttle_gamma", config.intake.throttleGamma);
+        config.plenumVolumeLitres = config.intake.plenumVolumeLitres;
+        config.throttleDiameterMm = config.intake.throttleDiameterMm;
+    }
+    config.ignition.revLimitRpm = config.redlineRpm;
+    if (const auto ignition = engine["ignition"]) {
+        assignIfPresent(ignition, "rev_limit_rpm", config.ignition.revLimitRpm);
+        assignIfPresent(ignition, "limiter_duration_s", config.ignition.limiterDurationSeconds);
+        if (ignition["timing_curve"]) {
+            config.ignition.timingCurve.clear();
+            for (const auto& sample : ignition["timing_curve"])
+                config.ignition.timingCurve.push_back({ sample["rpm"].as<double>(), sample["advance_deg"].as<double>() });
+        }
+    }
+    if (const auto solver = engine["solver"]) {
+        assignIfPresent(solver, "mechanical_frequency_hz", config.solver.mechanicalFrequencyHz);
+        assignIfPresent(solver, "maximum_frequency_hz", config.solver.maximumMechanicalFrequencyHz);
+        assignIfPresent(solver, "maximum_crank_deg_per_step", config.solver.maximumCrankDegreesPerStep);
+        assignIfPresent(solver, "gas_substeps", config.solver.gasSubsteps);
+    }
     if (!hasExplicitCylinders) applyCrankOffsets(config);
 
     const auto uses = engine["uses"];
@@ -219,6 +267,55 @@ void applyCrankOffsets(EngineConfig& config) {
         for (const auto& journal : crankJournals)
             config.crankJournals.push_back({ journal["id"].as<std::uint32_t>(),
                 journal["angle_deg"].as<double>(), journal["throw_mm"].as<double>() });
+    }
+    if (const auto banks = engine["banks"]) {
+        config.banks.clear();
+        for (const auto& bankNode : banks) {
+            CylinderBankConfig bank;
+            bank.id = bankNode["id"].as<std::uint32_t>();
+            bank.angleDegrees = bankNode["angle_deg"].as<double>(0.0);
+            bank.cylinderIds = bankNode["cylinder_ids"].as<std::vector<std::uint32_t>>();
+            bank.intakeId = bankNode["intake_id"].as<std::uint32_t>(0);
+            bank.exhaustPathId = bankNode["exhaust_path_id"].as<std::uint32_t>(0);
+            bank.camshafts = bankNode["camshafts"] ? decodeCamshafts(bankNode["camshafts"]) : config.camshafts;
+            config.banks.push_back(std::move(bank));
+        }
+    }
+    if (const auto paths = engine["exhaust_paths"]) {
+        config.exhaustPaths.clear();
+        for (const auto& pathNode : paths) {
+            ExhaustPathConfig pathConfig;
+            pathConfig.id = pathNode["id"].as<std::uint32_t>();
+            pathConfig.cylinderIds = pathNode["cylinder_ids"].as<std::vector<std::uint32_t>>();
+            pathConfig.geometry = pathNode["geometry"] ? decodeExhaust(pathNode["geometry"]) : config.exhaust;
+            pathConfig.impulseResponsePath = pathNode["impulse_response"].as<std::string>("");
+            pathConfig.audioVolume = pathNode["audio_volume"].as<double>(1.0);
+            config.exhaustPaths.push_back(std::move(pathConfig));
+        }
+    }
+
+    if (config.banks.empty()) {
+        if (config.layout == EngineLayout::vLayout || config.layout == EngineLayout::flat) {
+            CylinderBankConfig left { 1, -config.bankAngleDegrees * 0.5, {}, config.camshafts, 0, 1 };
+            CylinderBankConfig right { 2, config.bankAngleDegrees * 0.5, {}, config.camshafts, 0, 1 };
+            for (auto& cylinder : config.cylinders) {
+                auto& bank = cylinder.id % 2U == 0U ? right : left;
+                bank.cylinderIds.push_back(cylinder.id);
+                cylinder.bankId = bank.id;
+            }
+            config.banks = { std::move(left), std::move(right) };
+        } else {
+            CylinderBankConfig bank { 1, 0.0, {}, config.camshafts, 0, 1 };
+            for (auto& cylinder : config.cylinders) { bank.cylinderIds.push_back(cylinder.id); cylinder.bankId = 1; }
+            config.banks.push_back(std::move(bank));
+        }
+    }
+    if (config.exhaustPaths.empty()) {
+        ExhaustPathConfig pathConfig;
+        pathConfig.id = 1;
+        pathConfig.geometry = config.exhaust;
+        for (const auto& cylinder : config.cylinders) pathConfig.cylinderIds.push_back(cylinder.id);
+        config.exhaustPaths.push_back(std::move(pathConfig));
     }
 
     if (const auto error = validateEngineConfig(config)) throw std::runtime_error(*error);

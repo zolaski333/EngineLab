@@ -3,7 +3,9 @@ juce_add_gui_app(EngineLabApp
     COMPANY_NAME "EngineLab"
     BUNDLE_ID "com.enginelab.desktop")
 juce_generate_juce_header(EngineLabApp)
-target_sources(EngineLabApp PRIVATE src/Main.cpp src/MainComponent.cpp include/enginelab/app/MainComponent.hpp)
+target_sources(EngineLabApp PRIVATE
+    src/Main.cpp src/MainComponent.cpp src/ActionMap.cpp
+    include/enginelab/app/MainComponent.hpp include/enginelab/app/ActionMap.hpp)
 target_include_directories(EngineLabApp PRIVATE include)
 target_link_libraries(EngineLabApp PRIVATE
     EngineLab::Audio EngineLab::Runtime EngineLab::Diagnostics EngineLab::Serialization EngineLab::Catalog

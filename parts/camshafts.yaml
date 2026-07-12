@@ -13,6 +13,13 @@ sport_na:
   exhaust_lift_mm: 11.8
   intake_centerline_deg: 108
   exhaust_centerline_deg: 110
+  variable_profile_enabled: true
+  switch_rpm: 5800
+  switch_throttle: 0.55
+  high_intake_duration_deg: 292
+  high_exhaust_duration_deg: 286
+  high_intake_lift_mm: 13.2
+  high_exhaust_lift_mm: 12.4
 
 turbo_street:
   intake_duration_deg: 248

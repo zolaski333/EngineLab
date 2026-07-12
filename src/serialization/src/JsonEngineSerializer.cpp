@@ -31,6 +31,45 @@ using Json = nlohmann::json;
         profile.push_back({ sample.at("angle_deg").get<double>(), sample.at("lift_mm").get<double>() });
     return profile;
 }
+
+[[nodiscard]] Json camshaftJson(const CamshaftConfig& cams) {
+    return { {"intake_duration_deg", cams.intakeDurationDegrees}, {"exhaust_duration_deg", cams.exhaustDurationDegrees},
+        {"intake_lift_mm", cams.intakeLiftMm}, {"exhaust_lift_mm", cams.exhaustLiftMm},
+        {"intake_centerline_deg", cams.intakeCenterlineDegrees}, {"exhaust_centerline_deg", cams.exhaustCenterlineDegrees},
+        {"intake_flow_coefficient", cams.intakeFlowCoefficient}, {"exhaust_flow_coefficient", cams.exhaustFlowCoefficient},
+        {"intake_lift_profile", liftProfileJson(cams.intakeLiftProfile)},
+        {"exhaust_lift_profile", liftProfileJson(cams.exhaustLiftProfile)},
+        {"variable_profile_enabled", cams.variableProfileEnabled}, {"switch_rpm", cams.switchRpm},
+        {"switch_throttle", cams.switchThrottle}, {"high_intake_duration_deg", cams.highIntakeDurationDegrees},
+        {"high_exhaust_duration_deg", cams.highExhaustDurationDegrees}, {"high_intake_lift_mm", cams.highIntakeLiftMm},
+        {"high_exhaust_lift_mm", cams.highExhaustLiftMm},
+        {"high_intake_lift_profile", liftProfileJson(cams.highIntakeLiftProfile)},
+        {"high_exhaust_lift_profile", liftProfileJson(cams.highExhaustLiftProfile)} };
+}
+
+[[nodiscard]] CamshaftConfig decodeCamshaft(const Json& cams) {
+    CamshaftConfig value;
+    value.intakeDurationDegrees = cams.value("intake_duration_deg", value.intakeDurationDegrees);
+    value.exhaustDurationDegrees = cams.value("exhaust_duration_deg", value.exhaustDurationDegrees);
+    value.intakeLiftMm = cams.value("intake_lift_mm", value.intakeLiftMm);
+    value.exhaustLiftMm = cams.value("exhaust_lift_mm", value.exhaustLiftMm);
+    value.intakeCenterlineDegrees = cams.value("intake_centerline_deg", value.intakeCenterlineDegrees);
+    value.exhaustCenterlineDegrees = cams.value("exhaust_centerline_deg", value.exhaustCenterlineDegrees);
+    value.intakeFlowCoefficient = cams.value("intake_flow_coefficient", value.intakeFlowCoefficient);
+    value.exhaustFlowCoefficient = cams.value("exhaust_flow_coefficient", value.exhaustFlowCoefficient);
+    value.variableProfileEnabled = cams.value("variable_profile_enabled", false);
+    value.switchRpm = cams.value("switch_rpm", value.switchRpm);
+    value.switchThrottle = cams.value("switch_throttle", value.switchThrottle);
+    value.highIntakeDurationDegrees = cams.value("high_intake_duration_deg", value.highIntakeDurationDegrees);
+    value.highExhaustDurationDegrees = cams.value("high_exhaust_duration_deg", value.highExhaustDurationDegrees);
+    value.highIntakeLiftMm = cams.value("high_intake_lift_mm", value.highIntakeLiftMm);
+    value.highExhaustLiftMm = cams.value("high_exhaust_lift_mm", value.highExhaustLiftMm);
+    if (cams.contains("intake_lift_profile")) value.intakeLiftProfile = decodeLiftProfile(cams.at("intake_lift_profile"));
+    if (cams.contains("exhaust_lift_profile")) value.exhaustLiftProfile = decodeLiftProfile(cams.at("exhaust_lift_profile"));
+    if (cams.contains("high_intake_lift_profile")) value.highIntakeLiftProfile = decodeLiftProfile(cams.at("high_intake_lift_profile"));
+    if (cams.contains("high_exhaust_lift_profile")) value.highExhaustLiftProfile = decodeLiftProfile(cams.at("high_exhaust_lift_profile"));
+    return value;
+}
 }
 
 std::string JsonEngineSerializer::encode(const EngineConfig& config) const {
@@ -40,10 +79,27 @@ std::string JsonEngineSerializer::encode(const EngineConfig& config) const {
         {"connecting_rod_mm", cylinder.connectingRodMm}, {"piston_mass_g", cylinder.pistonMassGrams},
         {"compression_ratio", cylinder.compressionRatio}, {"ignition_offset_deg", cylinder.ignitionOffsetDegrees},
         {"efficiency_offset", cylinder.efficiencyOffset}, {"crank_offset_deg", cylinder.crankOffsetDegrees},
-        {"crank_journal_id", cylinder.crankJournalId}, {"bank_offset_deg", cylinder.bankOffsetDegrees} });
+        {"crank_journal_id", cylinder.crankJournalId}, {"bank_offset_deg", cylinder.bankOffsetDegrees},
+        {"bank_id", cylinder.bankId}, {"intake_runner_length_mm", cylinder.intakeRunnerLengthMm},
+        {"intake_runner_diameter_mm", cylinder.intakeRunnerDiameterMm},
+        {"exhaust_primary_length_mm", cylinder.exhaustPrimaryLengthMm},
+        {"sound_attenuation", cylinder.soundAttenuation}, {"blow_by_coefficient", cylinder.blowByCoefficient} });
     Json crankJournals = Json::array();
     for (const auto& journal : config.crankJournals) crankJournals.push_back({
         {"id", journal.id}, {"angle_deg", journal.angleDegrees}, {"throw_mm", journal.throwMm} });
+    Json banks = Json::array();
+    for (const auto& bank : config.banks) banks.push_back({ {"id", bank.id}, {"angle_deg", bank.angleDegrees},
+        {"cylinder_ids", bank.cylinderIds}, {"intake_id", bank.intakeId}, {"exhaust_path_id", bank.exhaustPathId},
+        {"camshafts", camshaftJson(bank.camshafts)} });
+    Json exhaustPaths = Json::array();
+    for (const auto& path : config.exhaustPaths) exhaustPaths.push_back({ {"id", path.id},
+        {"cylinder_ids", path.cylinderIds}, {"impulse_response", path.impulseResponsePath},
+        {"audio_volume", path.audioVolume}, {"geometry", {{"primary_length_mm", path.geometry.primaryLengthMm},
+            {"primary_diameter_mm", path.geometry.primaryDiameterMm}, {"collector_diameter_mm", path.geometry.collectorDiameterMm},
+            {"muffler_restriction", path.geometry.mufflerRestriction}, {"outlet_diameter_mm", path.geometry.outletDiameterMm}}} });
+    Json timingCurve = Json::array();
+    for (const auto& sample : config.ignition.timingCurve)
+        timingCurve.push_back({ {"rpm", sample.rpm}, {"advance_deg", sample.advanceDegrees} });
     Json document = { {"schema_version", config.schemaVersion}, {"engine", {
         {"name", config.name}, {"cycle", cycleName(config.cycle)}, {"fuel", fuelName(config.fuel)},
         {"layout", layoutName(config.layout)},
@@ -66,15 +122,19 @@ std::string JsonEngineSerializer::encode(const EngineConfig& config) const {
                       {"oil_heat_share", config.thermal.oilHeatShare},
                       {"cooling_power_kw_per_c", config.thermal.coolingPowerKwPerC},
                       {"oil_cooling_power_kw_per_c", config.thermal.oilCoolingPowerKwPerC}}},
-        {"camshafts", {{"intake_duration_deg", config.camshafts.intakeDurationDegrees},
-                        {"exhaust_duration_deg", config.camshafts.exhaustDurationDegrees},
-                        {"intake_lift_mm", config.camshafts.intakeLiftMm}, {"exhaust_lift_mm", config.camshafts.exhaustLiftMm},
-                        {"intake_centerline_deg", config.camshafts.intakeCenterlineDegrees},
-                        {"exhaust_centerline_deg", config.camshafts.exhaustCenterlineDegrees},
-                        {"intake_flow_coefficient", config.camshafts.intakeFlowCoefficient},
-                        {"exhaust_flow_coefficient", config.camshafts.exhaustFlowCoefficient},
-                        {"intake_lift_profile", liftProfileJson(config.camshafts.intakeLiftProfile)},
-                        {"exhaust_lift_profile", liftProfileJson(config.camshafts.exhaustLiftProfile)}}},
+        {"camshafts", camshaftJson(config.camshafts)},
+        {"intake", {{"plenum_volume_l", config.intake.plenumVolumeLitres},
+                     {"throttle_diameter_mm", config.intake.throttleDiameterMm},
+                     {"throttle_discharge_coefficient", config.intake.throttleDischargeCoefficient},
+                     {"runner_length_mm", config.intake.runnerLengthMm}, {"runner_diameter_mm", config.intake.runnerDiameterMm},
+                     {"idle_bypass_area_mm2", config.intake.idleBypassAreaMm2}, {"throttle_gamma", config.intake.throttleGamma}}},
+        {"banks", banks}, {"exhaust_paths", exhaustPaths},
+        {"ignition", {{"rev_limit_rpm", config.ignition.revLimitRpm},
+                       {"limiter_duration_s", config.ignition.limiterDurationSeconds}, {"timing_curve", timingCurve}}},
+        {"solver", {{"mechanical_frequency_hz", config.solver.mechanicalFrequencyHz},
+                     {"maximum_frequency_hz", config.solver.maximumMechanicalFrequencyHz},
+                     {"maximum_crank_deg_per_step", config.solver.maximumCrankDegreesPerStep},
+                     {"gas_substeps", config.solver.gasSubsteps}}},
         {"crank_journals", crankJournals},
         {"exhaust", {{"primary_length_mm", config.exhaust.primaryLengthMm},
                       {"primary_diameter_mm", config.exhaust.primaryDiameterMm},
@@ -145,13 +205,19 @@ EngineDecodeResult JsonEngineSerializer::decode(std::string_view text) const noe
         }
         if (engine.contains("camshafts")) {
             const auto& cams = engine.at("camshafts");
-            config.camshafts = { cams.value("intake_duration_deg", 248.0), cams.value("exhaust_duration_deg", 244.0),
-                cams.value("intake_lift_mm", 10.2), cams.value("exhaust_lift_mm", 9.8),
-                cams.value("intake_centerline_deg", 110.0), cams.value("exhaust_centerline_deg", 112.0) };
-            config.camshafts.intakeFlowCoefficient = cams.value("intake_flow_coefficient", 0.62);
-            config.camshafts.exhaustFlowCoefficient = cams.value("exhaust_flow_coefficient", 0.62);
-            if (cams.contains("intake_lift_profile")) config.camshafts.intakeLiftProfile = decodeLiftProfile(cams.at("intake_lift_profile"));
-            if (cams.contains("exhaust_lift_profile")) config.camshafts.exhaustLiftProfile = decodeLiftProfile(cams.at("exhaust_lift_profile"));
+            config.camshafts = decodeCamshaft(cams);
+        }
+        config.intake.plenumVolumeLitres = config.plenumVolumeLitres;
+        config.intake.throttleDiameterMm = config.throttleDiameterMm;
+        if (engine.contains("intake")) {
+            const auto& intake = engine.at("intake");
+            config.intake.plenumVolumeLitres = intake.value("plenum_volume_l", config.intake.plenumVolumeLitres);
+            config.intake.throttleDiameterMm = intake.value("throttle_diameter_mm", config.intake.throttleDiameterMm);
+            config.intake.throttleDischargeCoefficient = intake.value("throttle_discharge_coefficient", config.intake.throttleDischargeCoefficient);
+            config.intake.runnerLengthMm = intake.value("runner_length_mm", config.intake.runnerLengthMm);
+            config.intake.runnerDiameterMm = intake.value("runner_diameter_mm", config.intake.runnerDiameterMm);
+            config.intake.idleBypassAreaMm2 = intake.value("idle_bypass_area_mm2", config.intake.idleBypassAreaMm2);
+            config.intake.throttleGamma = intake.value("throttle_gamma", config.intake.throttleGamma);
         }
         if (engine.contains("crank_journals")) {
             for (const auto& journal : engine.at("crank_journals"))
@@ -179,6 +245,53 @@ EngineDecodeResult JsonEngineSerializer::decode(std::string_view text) const noe
             config.vehicle.rollingResistanceCoefficient = vehicle.value("rolling_resistance_coefficient",
                                                                         config.vehicle.rollingResistanceCoefficient);
         }
+        if (engine.contains("ignition")) {
+            const auto& ignition = engine.at("ignition");
+            config.ignition.revLimitRpm = ignition.value("rev_limit_rpm", config.redlineRpm);
+            config.ignition.limiterDurationSeconds = ignition.value("limiter_duration_s", config.ignition.limiterDurationSeconds);
+            if (ignition.contains("timing_curve")) {
+                config.ignition.timingCurve.clear();
+                for (const auto& sample : ignition.at("timing_curve"))
+                    config.ignition.timingCurve.push_back({ sample.at("rpm"), sample.at("advance_deg") });
+            }
+        } else config.ignition.revLimitRpm = config.redlineRpm;
+        if (engine.contains("solver")) {
+            const auto& solver = engine.at("solver");
+            config.solver.mechanicalFrequencyHz = solver.value("mechanical_frequency_hz", config.solver.mechanicalFrequencyHz);
+            config.solver.maximumMechanicalFrequencyHz = solver.value("maximum_frequency_hz", config.solver.maximumMechanicalFrequencyHz);
+            config.solver.maximumCrankDegreesPerStep = solver.value("maximum_crank_deg_per_step", config.solver.maximumCrankDegreesPerStep);
+            config.solver.gasSubsteps = solver.value("gas_substeps", config.solver.gasSubsteps);
+        }
+        if (engine.contains("banks")) {
+            for (const auto& item : engine.at("banks")) {
+                CylinderBankConfig bank;
+                bank.id = item.at("id");
+                bank.angleDegrees = item.value("angle_deg", 0.0);
+                bank.cylinderIds = item.value("cylinder_ids", std::vector<std::uint32_t> {});
+                bank.intakeId = item.value("intake_id", std::uint32_t { 0 });
+                bank.exhaustPathId = item.value("exhaust_path_id", std::uint32_t { 0 });
+                bank.camshafts = item.contains("camshafts") ? decodeCamshaft(item.at("camshafts")) : config.camshafts;
+                config.banks.push_back(std::move(bank));
+            }
+        }
+        if (engine.contains("exhaust_paths")) {
+            for (const auto& item : engine.at("exhaust_paths")) {
+                ExhaustPathConfig path;
+                path.id = item.at("id");
+                path.cylinderIds = item.value("cylinder_ids", std::vector<std::uint32_t> {});
+                path.impulseResponsePath = item.value("impulse_response", std::string {});
+                path.audioVolume = item.value("audio_volume", 1.0);
+                if (item.contains("geometry")) {
+                    const auto& geometry = item.at("geometry");
+                    path.geometry.primaryLengthMm = geometry.value("primary_length_mm", path.geometry.primaryLengthMm);
+                    path.geometry.primaryDiameterMm = geometry.value("primary_diameter_mm", path.geometry.primaryDiameterMm);
+                    path.geometry.collectorDiameterMm = geometry.value("collector_diameter_mm", path.geometry.collectorDiameterMm);
+                    path.geometry.mufflerRestriction = geometry.value("muffler_restriction", path.geometry.mufflerRestriction);
+                    path.geometry.outletDiameterMm = geometry.value("outlet_diameter_mm", path.geometry.outletDiameterMm);
+                }
+                config.exhaustPaths.push_back(std::move(path));
+            }
+        }
         for (const auto& item : engine.at("cylinders")) {
             const std::uint32_t cylinderId = item.at("id");
             double crankOffset = 0.0;
@@ -197,6 +310,12 @@ EngineDecodeResult JsonEngineSerializer::decode(std::string_view text) const noe
                 item.at("efficiency_offset"), crankOffset };
             cylinder.crankJournalId = item.value("crank_journal_id", std::uint32_t { 0 });
             cylinder.bankOffsetDegrees = item.value("bank_offset_deg", 0.0);
+            cylinder.bankId = item.value("bank_id", std::uint32_t { 0 });
+            cylinder.intakeRunnerLengthMm = item.value("intake_runner_length_mm", cylinder.intakeRunnerLengthMm);
+            cylinder.intakeRunnerDiameterMm = item.value("intake_runner_diameter_mm", cylinder.intakeRunnerDiameterMm);
+            cylinder.exhaustPrimaryLengthMm = item.value("exhaust_primary_length_mm", cylinder.exhaustPrimaryLengthMm);
+            cylinder.soundAttenuation = item.value("sound_attenuation", cylinder.soundAttenuation);
+            cylinder.blowByCoefficient = item.value("blow_by_coefficient", cylinder.blowByCoefficient);
             config.cylinders.push_back(cylinder);
         }
         if (const auto error = validateEngineConfig(config)) return { std::nullopt, *error };

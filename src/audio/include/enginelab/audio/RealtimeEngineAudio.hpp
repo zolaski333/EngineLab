@@ -4,6 +4,7 @@
 #include <array>
 #include <atomic>
 #include <cstdint>
+#include <span>
 namespace enginelab {
 /** Allocation-free layered combustion/exhaust renderer with stereo spatialisation. */
 class RealtimeEngineAudio final : public IAudioRenderer {
@@ -12,6 +13,7 @@ public:
     void prepare(double sampleRate, int maximumBlockSize) noexcept override;
     void release() noexcept override;
     void render(juce::AudioBuffer<float>& output, int startSample, int sampleCount) noexcept override;
+    void setImpulseResponse(std::span<const float> samples) noexcept;
     [[nodiscard]] std::uint64_t lateEventCount() const noexcept { return lateEvents_.load(std::memory_order_relaxed); }
     [[nodiscard]] std::uint64_t stolenVoiceCount() const noexcept { return stolenVoices_.load(std::memory_order_relaxed); }
     [[nodiscard]] std::uint64_t droppedPendingEventCount() const noexcept { return droppedPendingEvents_.load(std::memory_order_relaxed); }
@@ -46,6 +48,11 @@ private:
     std::array<float, 2'111> fdnB_ {};
     std::array<float, 2'791> fdnC_ {};
     std::array<float, 3'557> fdnD_ {};
+    std::array<float, 512> impulseResponse_ {};
+    std::array<float, 512> irHistoryLeft_ {};
+    std::array<float, 512> irHistoryRight_ {};
+    std::size_t impulseResponseLength_ { 0 };
+    std::size_t irWrite_ { 0 };
     std::size_t waveWrite_ { 0 };
     std::size_t fdnWriteA_ { 0 };
     std::size_t fdnWriteB_ { 0 };

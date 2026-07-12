@@ -78,10 +78,11 @@ double EngineRuntime::updateDriveline(double dtSeconds, const EngineState& engin
     const auto vehicle = config_.vehicle;
     const auto transmission = config_.transmission;
     const auto aeroForce = 0.5 * 1.225 * vehicle.dragCoefficient * vehicle.frontalAreaM2 * vehicleSpeedMps_ * vehicleSpeedMps_;
-    const auto rollingForce = vehicle.massKg * 9.80665 * vehicle.rollingResistanceCoefficient;
-    const auto coastAcceleration = -(aeroForce + rollingForce) / vehicle.massKg;
+    const auto rollingForce = vehicleSpeedMps_ > 0.01
+        ? vehicle.massKg * 9.80665 * vehicle.rollingResistanceCoefficient : 0.0;
     double driveForce = 0.0;
     drivelineLoadTorqueNm_ = 0.0;
+    engineClutchTorqueNm_ = 0.0;
     wheelTorqueNm_ = 0.0;
     if (gear >= 0 && gear < static_cast<int>(transmission.gearRatios.size()) && clutch > 0.001) {
         const auto totalRatio = transmission.gearRatios[static_cast<std::size_t>(gear)] * transmission.finalDriveRatio;
@@ -90,14 +91,18 @@ double EngineRuntime::updateDriveline(double dtSeconds, const EngineState& engin
         const auto slipRpm = engineState.rpm - expectedEngineRpm;
         const auto clutchTorque = std::clamp(slipRpm * 0.16 * clutch,
             -transmission.maxClutchTorqueNm * clutch, transmission.maxClutchTorqueNm * clutch);
-        drivelineLoadTorqueNm_ = std::max(0.0, clutchTorque);
-        wheelTorqueNm_ = std::max(0.0, clutchTorque * totalRatio * 0.88);
+        // clutchTorque is applied to the vehicle. The equal and opposite
+        // reaction is injected into the crankshaft, preserving overrun and
+        // engine-braking behaviour instead of clipping it away.
+        engineClutchTorqueNm_ = -clutchTorque;
+        drivelineLoadTorqueNm_ = clutchTorque;
+        wheelTorqueNm_ = clutchTorque * totalRatio * 0.88;
         driveForce = wheelTorqueNm_ / vehicle.tireRadiusM;
     }
     const auto acceleration = (driveForce - aeroForce - rollingForce) / vehicle.massKg;
-    vehicleSpeedMps_ = std::max(0.0, vehicleSpeedMps_ + (driveForce > 0.0 ? acceleration : coastAcceleration) * dtSeconds);
+    vehicleSpeedMps_ = std::max(0.0, vehicleSpeedMps_ + acceleration * dtSeconds);
     vehicleDistanceM_ += vehicleSpeedMps_ * dtSeconds;
-    const auto loadFromDriveline = std::clamp(drivelineLoadTorqueNm_
+    const auto loadFromDriveline = std::clamp(std::max(0.0, drivelineLoadTorqueNm_)
         / std::max(20.0, engineDisplacementLitres(config_) * 105.0), 0.0, 1.0);
     return std::clamp(std::max(requestedLoad, loadFromDriveline), 0.0, 1.0);
 }
@@ -196,7 +201,8 @@ void EngineRuntime::run(std::stop_token stopToken) {
         if (!dynoRunning_.load(std::memory_order_relaxed))
             requestedLoad = updateDriveline(baseStep.count(), simulator_.state(), requestedLoad);
         const EngineControls controls { ignition_.load(), starter_.load(),
-            dynoRunning_.load() ? (dynoSweeping_ ? 1.0 : 0.18) : std::clamp(throttle_.load(), 0.0, 1.0), requestedLoad };
+            dynoRunning_.load() ? (dynoSweeping_ ? 1.0 : 0.18) : std::clamp(throttle_.load(), 0.0, 1.0),
+            requestedLoad, dynoRunning_.load() ? 0.0 : engineClutchTorqueNm_ };
         const auto isPaused = paused_.load(std::memory_order_relaxed) && !dynoRunning_.load(std::memory_order_relaxed);
         const auto simulationDt = isPaused ? 0.0 : baseStep.count()
             * (dynoRunning_.load(std::memory_order_relaxed) ? 1.0 : timeScale_.load(std::memory_order_relaxed));
@@ -211,6 +217,7 @@ void EngineRuntime::run(std::stop_token stopToken) {
         audioState_.rpm.store(isPaused ? 0.0F : static_cast<float>(frame.state.rpm), std::memory_order_relaxed);
         audioState_.throttle.store(isPaused ? 0.0F : static_cast<float>(frame.state.throttle), std::memory_order_relaxed);
         audioState_.load.store(static_cast<float>(frame.state.load), std::memory_order_relaxed);
+        audioState_.boostPressureRatio.store(static_cast<float>(frame.state.boostPressureRatio), std::memory_order_relaxed);
         audioState_.mechanicalStress.store(static_cast<float>(std::clamp(frame.state.peakPistonAccelerationG / 7'000.0, 0.0, 1.0)),
                                            std::memory_order_relaxed);
         audioState_.starter.store(controls.starterEngaged && !isPaused ? 1.0F : 0.0F, std::memory_order_relaxed);

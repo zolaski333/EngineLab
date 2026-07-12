@@ -16,6 +16,17 @@ void RealtimeEngineAudio::prepare(double sampleRate, int) noexcept {
     rpmFilterCoefficient_ = static_cast<float>(1.0 - std::exp(-18.0 / sampleRate_));
     reflectionFilterCoefficient_ = static_cast<float>(1.0 - std::exp(-2.0 * std::numbers::pi * 980.0 / sampleRate_));
     release();
+    if (impulseResponseLength_ == 0) {
+        std::array<float, 96> physicalIr {};
+        physicalIr[0] = 0.72F;
+        for (std::size_t index = 1; index < physicalIr.size(); ++index) {
+            const auto time = static_cast<float>(index) / static_cast<float>(sampleRate_);
+            physicalIr[index] = std::exp(-time * 4'800.0F)
+                * (std::sin(static_cast<float>(2.0 * std::numbers::pi * 1'150.0) * time) * 0.16F
+                   + std::sin(static_cast<float>(2.0 * std::numbers::pi * 310.0) * time) * 0.09F);
+        }
+        setImpulseResponse(physicalIr);
+    }
     updateExhaustPreset(realtimeState_.exhaustPreset.load(std::memory_order_relaxed));
 }
 void RealtimeEngineAudio::release() noexcept {
@@ -25,6 +36,21 @@ void RealtimeEngineAudio::release() noexcept {
     pressureTailLeft_ = 0.0F; pressureTailRight_ = 0.0F; exhaustBodyLeft_ = 0.0F; exhaustBodyRight_ = 0.0F;
     exhaustAirLeft_ = 0.0F; exhaustAirRight_ = 0.0F; mechanicalPhase_ = 0.0; valvetrainPhase_ = 0.0;
     starterPhase_ = 0.0; smoothedRpm_ = 0.0F; intakeFilter_ = 0.0F; reflectedLowPass_ = 0.0F; collectorState_ = 0.0F;
+    irHistoryLeft_.fill(0.0F); irHistoryRight_.fill(0.0F); irWrite_ = 0;
+}
+
+void RealtimeEngineAudio::setImpulseResponse(std::span<const float> samples) noexcept {
+    impulseResponse_.fill(0.0F);
+    impulseResponseLength_ = std::min(samples.size(), impulseResponse_.size());
+    float absoluteSum = 0.0F;
+    for (std::size_t index = 0; index < impulseResponseLength_; ++index)
+        absoluteSum += std::abs(samples[index]);
+    const auto scale = absoluteSum > 4.0F ? 4.0F / absoluteSum : 1.0F;
+    for (std::size_t index = 0; index < impulseResponseLength_; ++index)
+        impulseResponse_[index] = samples[index] * scale;
+    irHistoryLeft_.fill(0.0F);
+    irHistoryRight_.fill(0.0F);
+    irWrite_ = 0;
 }
 
 void RealtimeEngineAudio::render(juce::AudioBuffer<float>& output, int startSample, int sampleCount) noexcept {
@@ -184,8 +210,22 @@ void RealtimeEngineAudio::render(juce::AudioBuffer<float>& output, int startSamp
             + mechanicalRight * mechanicalGain;
         lowPassLeft_ += lowPassCoefficient_ * (left - lowPassLeft_);
         lowPassRight_ += lowPassCoefficient_ * (right - lowPassRight_);
-        const auto outLeft = std::tanh(lowPassLeft_ * (1.35F + highGain * 0.30F)) * 0.42F * volume;
-        const auto outRight = std::tanh(lowPassRight_ * (1.35F + highGain * 0.30F)) * 0.42F * volume;
+        irHistoryLeft_[irWrite_] = lowPassLeft_;
+        irHistoryRight_[irWrite_] = lowPassRight_;
+        float irLeft = 0.0F;
+        float irRight = 0.0F;
+        auto read = irWrite_;
+        for (std::size_t tap = 0; tap < impulseResponseLength_; ++tap) {
+            irLeft += impulseResponse_[tap] * irHistoryLeft_[read];
+            irRight += impulseResponse_[tap] * irHistoryRight_[read];
+            read = read == 0 ? impulseResponse_.size() - 1 : read - 1;
+        }
+        irWrite_ = (irWrite_ + 1) % impulseResponse_.size();
+        const auto irMix = std::clamp(convolution * 0.72F, 0.0F, 0.82F);
+        const auto hybridLeft = lowPassLeft_ * (1.0F - irMix) + irLeft * irMix;
+        const auto hybridRight = lowPassRight_ * (1.0F - irMix) + irRight * irMix;
+        const auto outLeft = std::tanh(hybridLeft * (1.35F + highGain * 0.30F)) * 0.42F * volume;
+        const auto outRight = std::tanh(hybridRight * (1.35F + highGain * 0.30F)) * 0.42F * volume;
         if (output.getNumChannels() > 0) output.setSample(0, startSample + sample, outLeft);
         if (output.getNumChannels() > 1) output.setSample(1, startSample + sample, outRight);
         for (int channel = 2; channel < output.getNumChannels(); ++channel)

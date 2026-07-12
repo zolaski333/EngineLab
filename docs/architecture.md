@@ -30,11 +30,11 @@ Les flèches indiquent les dépendances de compilation. `foundation` à
 |---|---|---|
 | `EngineLabFoundation` | types, configuration, file SPSC | JUCE, UI |
 | `EngineLabEvents` | timing et payloads d'allumage | audio, thread |
-| `EngineLabPhysics` | combustion et contraintes simplifiées | horloge, UI |
+| `EngineLabPhysics` | volumes gazeux conservatifs, combustion et contraintes | horloge, UI |
 | `EngineLabEcu` | commandes carburant/allumage | audio |
 | `EngineLabExhaust` | graphe et contre-pression | rendu UI |
 | `EngineLabSimulation` | intégration de l'état | création de thread |
-| `EngineLabRuntime` | thread 240 Hz, snapshots, transport | DSP |
+| `EngineLabRuntime` | thread temps réel, solveur adaptatif, transmission, snapshots | DSP |
 | `EngineLabAudio` | consommation RT et synthèse | verrou, allocation |
 | `EngineLabSerialization` | codecs versionnés JSON/YAML | état live |
 | `EngineLabDiagnostics` | explications utilisateur | callback audio |
@@ -58,9 +58,11 @@ partir du fichier moteur sans déplacer cette décision dans l'UI.
 ## Données
 
 `EngineConfig` est une donnée de conception, chargée hors temps réel et validée
-avant la création du runtime. `RealtimeAudioState` ne contient que cinq valeurs
-atomiques triviales ; il transporte les couches continues sans donner au
-callback accès au snapshot verrouillé de l'UI.
+avant la création du runtime. Elle décrit aussi l'admission, les banques, les
+chemins d'échappement, les profils variables, l'allumage et les limites du
+solveur. `RealtimeAudioState` ne contient que des valeurs atomiques triviales ;
+il transporte les couches continues sans donner au callback accès au snapshot
+verrouillé de l'UI.
 `EngineControls` contient les commandes utilisateur. `EngineState` est le
 snapshot observable. `FiringEvent` est petit, trivialement copiable et constitue
 le contrat stable entre simulation, audio, échappement et visualisations.

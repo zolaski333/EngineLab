@@ -27,6 +27,12 @@ struct CylinderConfig final {
     double crankOffsetDegrees { 0.0 };
     std::uint32_t crankJournalId { 0 };
     double bankOffsetDegrees { 0.0 };
+    std::uint32_t bankId { 0 };
+    double intakeRunnerLengthMm { 300.0 };
+    double intakeRunnerDiameterMm { 38.0 };
+    double exhaustPrimaryLengthMm { 0.0 };
+    double soundAttenuation { 1.0 };
+    double blowByCoefficient { 0.00002 };
 };
 
 struct CrankJournalConfig final {
@@ -51,6 +57,15 @@ struct CamshaftConfig final {
     double exhaustFlowCoefficient { 0.62 };
     std::vector<ValveLiftSample> intakeLiftProfile;
     std::vector<ValveLiftSample> exhaustLiftProfile;
+    bool variableProfileEnabled { false };
+    double switchRpm { 5'800.0 };
+    double switchThrottle { 0.55 };
+    double highIntakeDurationDegrees { 282.0 };
+    double highExhaustDurationDegrees { 276.0 };
+    double highIntakeLiftMm { 12.5 };
+    double highExhaustLiftMm { 11.8 };
+    std::vector<ValveLiftSample> highIntakeLiftProfile;
+    std::vector<ValveLiftSample> highExhaustLiftProfile;
 };
 
 struct ExhaustConfig final {
@@ -59,6 +74,54 @@ struct ExhaustConfig final {
     double collectorDiameterMm { 58.0 };
     double mufflerRestriction { 0.28 };
     double outletDiameterMm { 65.0 };
+};
+
+struct IntakeConfig final {
+    double plenumVolumeLitres { 3.0 };
+    double throttleDiameterMm { 60.0 };
+    double throttleDischargeCoefficient { 0.72 };
+    double runnerLengthMm { 300.0 };
+    double runnerDiameterMm { 38.0 };
+    double idleBypassAreaMm2 { 12.0 };
+    double throttleGamma { 1.7 };
+};
+
+struct CylinderBankConfig final {
+    std::uint32_t id { 0 };
+    double angleDegrees { 0.0 };
+    std::vector<std::uint32_t> cylinderIds;
+    CamshaftConfig camshafts;
+    std::uint32_t intakeId { 0 };
+    std::uint32_t exhaustPathId { 0 };
+};
+
+struct ExhaustPathConfig final {
+    std::uint32_t id { 0 };
+    std::vector<std::uint32_t> cylinderIds;
+    ExhaustConfig geometry;
+    std::string impulseResponsePath;
+    double audioVolume { 1.0 };
+};
+
+struct IgnitionMapSample final {
+    double rpm { 0.0 };
+    double advanceDegrees { 10.0 };
+};
+
+struct IgnitionConfig final {
+    std::vector<IgnitionMapSample> timingCurve {
+        { 0.0, 10.0 }, { 1'000.0, 14.0 }, { 2'000.0, 22.0 },
+        { 3'500.0, 30.0 }, { 5'500.0, 34.0 }, { 8'000.0, 32.0 }
+    };
+    double revLimitRpm { 7'200.0 };
+    double limiterDurationSeconds { 0.08 };
+};
+
+struct SolverConfig final {
+    double mechanicalFrequencyHz { 2'000.0 };
+    double maximumMechanicalFrequencyHz { 20'000.0 };
+    double maximumCrankDegreesPerStep { 2.0 };
+    std::uint32_t gasSubsteps { 1 };
 };
 
 struct TransmissionConfig final {
@@ -112,6 +175,11 @@ struct EngineConfig final {
     double plenumVolumeLitres { 3.0 };
     double throttleDiameterMm { 60.0 };
     double bankAngleDegrees { 0.0 };
+    IntakeConfig intake;
+    std::vector<CylinderBankConfig> banks;
+    std::vector<ExhaustPathConfig> exhaustPaths;
+    IgnitionConfig ignition;
+    SolverConfig solver;
     ForcedInductionConfig forcedInduction;
     ThermalConfig thermal;
     CamshaftConfig camshafts;
@@ -125,6 +193,7 @@ struct EngineControls final {
     bool starterEngaged { false };
     double throttle { 0.0 };
     double load { 0.0 };
+    double externalTorqueNm { 0.0 };
 };
 
 struct CylinderState final {
@@ -139,6 +208,13 @@ struct CylinderState final {
     double exhaustFlowMgPerCycle { 0.0 };
     double runnerPressureKpa { 101.325 };
     double exhaustTemperatureC { 22.0 };
+    double gasTemperatureC { 22.0 };
+    double trappedMassMg { 0.0 };
+    double oxygenMoles { 0.0 };
+    double fuelMoles { 0.0 };
+    double burnedMoles { 0.0 };
+    double intakeVelocityMps { 0.0 };
+    double exhaustVelocityMps { 0.0 };
     bool combustionActive { false };
     bool misfiring { false };
 };
@@ -168,10 +244,16 @@ struct EngineState final {
     double targetAirFuelRatio { 14.7 };
     double ignitionAdvanceDegrees { 0.0 };
     double manifoldPressureKpa { 28.0 };
+    double boostPressureRatio { 1.0 };
     double exhaustPressureKpa { 101.325 };
     double intakeRunnerPressureKpa { 101.325 };
     double exhaustRunnerPressureKpa { 101.325 };
     double exhaustFlowGramsPerSecond { 0.0 };
+    double manifoldGasMassGrams { 0.0 };
+    double cylinderGasMassGrams { 0.0 };
+    double gasInternalEnergyJoules { 0.0 };
+    double solverFrequencyHz { 0.0 };
+    std::uint32_t solverSubsteps { 0 };
     double volumetricEfficiency { 0.0 };
     double airMassMgPerCycle { 0.0 };
     double injectedFuelMgPerCycle { 0.0 };

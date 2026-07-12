@@ -4,12 +4,13 @@
 #include <atomic>
 #include <cmath>
 namespace enginelab {
-/** Initial scalar ECU; its atomic parameters will later be replaced by interpolated RPM/load maps. */
+/** Configured ignition curve plus live AFR/advance trims, transient enrichment and latched limiter. */
 class SimpleEcuModel final : public IEcuModel {
 public:
     [[nodiscard]] EcuCommand evaluate(const EngineConfig&, const EngineState&, const EngineControls&) const noexcept override;
     void reset() noexcept override {
         limiterLatched_.store(false, std::memory_order_relaxed);
+        limiterReleaseTime_.store(0.0, std::memory_order_relaxed);
         previousThrottle_.store(0.0, std::memory_order_relaxed);
     }
     void setTargetAirFuelRatio(double value) noexcept {
@@ -22,6 +23,7 @@ private:
     std::atomic<double> targetAfr_ { 14.2 };
     std::atomic<double> ignitionAdvance_ { 18.0 };
     mutable std::atomic<bool> limiterLatched_ { false };
+    mutable std::atomic<double> limiterReleaseTime_ { 0.0 };
     mutable std::atomic<double> previousThrottle_ { 0.0 };
 };
 } // namespace enginelab

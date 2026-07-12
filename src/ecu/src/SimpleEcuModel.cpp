@@ -20,13 +20,33 @@ double interpolate(const CalibrationTable& table, double rpm, double load) noexc
     const auto high = std::lerp(table[r1][l0], table[r1][l1], lt);
     return std::lerp(low, high, rt);
 }
+
+double interpolateTimingCurve(const std::vector<IgnitionMapSample>& curve, double rpm) noexcept {
+    if (curve.empty()) return 18.0;
+    if (curve.size() == 1 || rpm <= curve.front().rpm) return curve.front().advanceDegrees;
+    for (std::size_t index = 1; index < curve.size(); ++index) {
+        if (rpm <= curve[index].rpm) {
+            const auto span = std::max(1.0, curve[index].rpm - curve[index - 1].rpm);
+            const auto t = std::clamp((rpm - curve[index - 1].rpm) / span, 0.0, 1.0);
+            return std::lerp(curve[index - 1].advanceDegrees, curve[index].advanceDegrees, t);
+        }
+    }
+    return curve.back().advanceDegrees;
+}
 }
 
 EcuCommand SimpleEcuModel::evaluate(const EngineConfig& config, const EngineState& state,
                                     const EngineControls& controls) const noexcept {
+    const auto revLimit = std::clamp(config.ignition.revLimitRpm, config.idleRpm + 100.0, 25'000.0);
     auto limiterActive = limiterLatched_.load(std::memory_order_relaxed);
-    if (state.rpm >= config.redlineRpm) limiterActive = true;
-    else if (state.rpm < config.redlineRpm - 180.0) limiterActive = false;
+    if (state.rpm >= revLimit) {
+        limiterActive = true;
+        limiterReleaseTime_.store(state.simulationTimeSeconds + config.ignition.limiterDurationSeconds,
+                                  std::memory_order_relaxed);
+    } else if (state.rpm < revLimit - 180.0
+               && state.simulationTimeSeconds >= limiterReleaseTime_.load(std::memory_order_relaxed)) {
+        limiterActive = false;
+    }
     limiterLatched_.store(limiterActive, std::memory_order_relaxed);
 
     const auto idleError = std::max(0.0, config.idleRpm - state.rpm);
@@ -44,7 +64,9 @@ EcuCommand SimpleEcuModel::evaluate(const EngineConfig& config, const EngineStat
         {{ 9.0, 5.0, 1.0 }}, {{ 11.0, 6.0, 0.0 }} }};
     auto mappedAfr = std::clamp(targetAfr_.load(std::memory_order_relaxed)
         + interpolate(afrCorrection, state.rpm, normalizedLoad), 10.5, 18.0);
-    auto mappedAdvance = std::clamp(ignitionAdvance_.load(std::memory_order_relaxed)
+    const auto configuredAdvance = interpolateTimingCurve(config.ignition.timingCurve, state.rpm);
+    const auto liveTrim = ignitionAdvance_.load(std::memory_order_relaxed) - 18.0;
+    auto mappedAdvance = std::clamp(configuredAdvance + liveTrim
         + interpolate(advanceCorrection, state.rpm, normalizedLoad), -10.0, 55.0);
     const auto previousThrottle = previousThrottle_.exchange(effectiveThrottle, std::memory_order_relaxed);
     const auto accelerationEnrichment = std::clamp(effectiveThrottle - previousThrottle, 0.0, 0.35);
@@ -52,7 +74,7 @@ EcuCommand SimpleEcuModel::evaluate(const EngineConfig& config, const EngineStat
         - std::max(0.0, state.coolantTemperatureC - 108.0) * 0.025, 10.5, 18.0);
     mappedAdvance = std::clamp(mappedAdvance - state.knockLevel * 12.0
         - std::max(0.0, state.coolantTemperatureC - 108.0) * 0.20, -10.0, 55.0);
-    const auto softLimit = state.rpm > config.redlineRpm - 220.0;
+    const auto softLimit = state.rpm > revLimit - 220.0;
     const auto alternatingCut = softLimit && (static_cast<std::uint64_t>(state.simulationTimeSeconds * 120.0) & 1U) != 0U;
     const auto enabled = controls.ignitionEnabled && !limiterActive;
     return { mappedAfr, mappedAdvance,

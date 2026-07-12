@@ -140,6 +140,7 @@ private:
     double vehicleDistanceM_ { 0.0 };
     double wheelTorqueNm_ { 0.0 };
     double drivelineLoadTorqueNm_ { 0.0 };
+    double engineClutchTorqueNm_ { 0.0 };
     std::atomic<bool> dynoSweeping_ { false };
     std::atomic<bool> dynoCompleted_ { false };
     std::jthread thread_;

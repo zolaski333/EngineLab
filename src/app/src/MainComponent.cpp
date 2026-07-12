@@ -9,6 +9,19 @@ constexpr std::array<std::uint32_t, 8> curveColours {
     0xfff26b38, 0xff40c4ff, 0xff9ccc65, 0xffffca28, 0xffab76ff, 0xffff6e9d, 0xff26d7ae, 0xffef5350
 };
 [[nodiscard]] juce::String utf8(const char* text) { return juce::String::fromUTF8(text); }
+[[nodiscard]] std::filesystem::path resolveCatalogRoot() {
+    const auto executable = juce::File::getSpecialLocation(juce::File::currentExecutableFile);
+    const std::array<std::filesystem::path, 4> candidates {
+        std::filesystem::path(executable.getParentDirectory().getFullPathName().toStdString()),
+        std::filesystem::path(executable.getParentDirectory().getParentDirectory().getFullPathName().toStdString()),
+        std::filesystem::path(ENGINELAB_CATALOG_ROOT),
+        std::filesystem::current_path()
+    };
+    for (const auto& candidate : candidates)
+        if (std::filesystem::is_directory(candidate / "engines")
+            && std::filesystem::is_directory(candidate / "parts")) return candidate;
+    return std::filesystem::path(ENGINELAB_CATALOG_ROOT);
+}
 [[nodiscard]] const char* runningStateName(RunningState state) noexcept {
     switch (state) {
     case RunningState::stopped: return "ARRÊTÉ";
@@ -51,7 +64,8 @@ constexpr std::array<std::uint32_t, 8> curveColours {
 }
 
 MainComponent::MainComponent() {
-    presets_ = makeCatalogOrBasePresets(std::filesystem::path(ENGINELAB_CATALOG_ROOT));
+    catalogRoot_ = resolveCatalogRoot();
+    presets_ = makeCatalogOrBasePresets(catalogRoot_);
     config_ = presets_[std::min<std::size_t>(1, presets_.size() - 1)];
     setSize(1'440, 840);
     setWantsKeyboardFocus(true);
@@ -68,7 +82,8 @@ MainComponent::MainComponent() {
     importButton_.onClick = [this] { importEngine(); };
     exportButton_.onClick = [this] { exportEngine(); };
     csvButton_.onClick = [this] { exportDynoCsv(); };
-    for (auto* button : { &editButton_, &importButton_, &exportButton_, &csvButton_ }) addAndMakeVisible(*button);
+    keyBindingsButton_.onClick = [this] { showKeyBindingsEditor(); };
+    for (auto* button : { &editButton_, &importButton_, &exportButton_, &csvButton_, &keyBindingsButton_ }) addAndMakeVisible(*button);
     const std::array<const char*, 5> exhaustPresets { "Street", "Open", "Turbo", "Long tube", "Moto" };
     for (int index = 0; index < static_cast<int>(exhaustPresets.size()); ++index)
         exhaustPresetSelector_.addItem(exhaustPresets[static_cast<std::size_t>(index)], index + 1);
@@ -163,11 +178,46 @@ void MainComponent::applyConfig(const EngineConfig& newConfig) {
     runtime_->setIntakeGain(intakeGain_);
     runtime_->setMechanicalGain(mechanicalGain_);
     runtime_->setExhaustPreset(static_cast<AudioExhaustPreset>(exhaustPresetIndex_));
+    configureImpulseResponse();
     runtime_->start();
     setAudioChannels(0, 2);
     title_.setText("EngineLab   /   " + juce::String(config_.name) + "   /   "
                    + juce::String(engineDisplacementLitres(config_), 2) + " L", juce::dontSendNotification);
     engineSelector_.setText(juce::String(config_.name), juce::dontSendNotification);
+}
+
+void MainComponent::configureImpulseResponse() {
+    if (!audio_) return;
+    const auto path = std::find_if(config_.exhaustPaths.begin(), config_.exhaustPaths.end(),
+        [](const ExhaustPathConfig& item) { return !item.impulseResponsePath.empty(); });
+    if (path == config_.exhaustPaths.end()) return;
+    const auto configuredPath = juce::String::fromUTF8(path->impulseResponsePath.c_str());
+    auto file = juce::File::isAbsolutePath(configuredPath)
+        ? juce::File(configuredPath)
+        : juce::File(juce::String(catalogRoot_.string())).getChildFile(configuredPath);
+    if (!file.existsAsFile()) return;
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    std::unique_ptr<juce::AudioFormatReader> reader(formats.createReaderFor(file));
+    if (!reader) return;
+    constexpr int maximumIrSamples = 512;
+    const auto count = static_cast<int>(std::min<juce::int64>(reader->lengthInSamples, maximumIrSamples));
+    if (count <= 0) return;
+    juce::AudioBuffer<float> decoded(std::max(1, static_cast<int>(reader->numChannels)), count);
+    if (!reader->read(&decoded, 0, count, 0, true, true)) return;
+    std::array<float, maximumIrSamples> mono {};
+    float peak = 0.0F;
+    for (int sample = 0; sample < count; ++sample) {
+        float value = 0.0F;
+        for (int channel = 0; channel < decoded.getNumChannels(); ++channel)
+            value += decoded.getSample(channel, sample);
+        value /= static_cast<float>(decoded.getNumChannels());
+        mono[static_cast<std::size_t>(sample)] = value;
+        peak = std::max(peak, std::abs(value));
+    }
+    const auto gain = peak > 1.0e-5F ? 0.9F / peak : 1.0F;
+    for (int sample = 0; sample < count; ++sample) mono[static_cast<std::size_t>(sample)] *= gain;
+    audio_->setImpulseResponse(std::span<const float>(mono.data(), static_cast<std::size_t>(count)));
 }
 
 void MainComponent::showError(const juce::String& title, const juce::String& message) {
@@ -214,6 +264,37 @@ void MainComponent::showConfigEditor(const juce::String& initialText) {
             });
         }
     }), false);
+}
+
+void MainComponent::showKeyBindingsEditor() {
+    if (keyBindingsEditor_) return;
+    keyBindingsEditor_ = std::make_unique<juce::AlertWindow>(utf8("Raccourcis clavier"),
+        utf8("Modifiez les descriptions JUCE. Les doublons et touches invalides sont refusés."),
+        juce::MessageBoxIconType::NoIcon);
+    keyBindingsEditor_->addTextEditor("bindings", actionMap_.toJson(), {}, false);
+    if (auto* editor = keyBindingsEditor_->getTextEditor("bindings")) {
+        editor->setMultiLine(true);
+        editor->setReturnKeyStartsNewLine(true);
+        editor->setSize(620, 520);
+    }
+    keyBindingsEditor_->addButton("APPLIQUER", 1, juce::KeyPress(juce::KeyPress::returnKey,
+        juce::ModifierKeys::ctrlModifier, 0));
+    keyBindingsEditor_->addButton("ANNULER", 0, juce::KeyPress(juce::KeyPress::escapeKey));
+    auto safe = juce::Component::SafePointer<MainComponent>(this);
+    keyBindingsEditor_->enterModalState(true, juce::ModalCallbackFunction::create([safe](int result) {
+        if (!safe) return;
+        if (result == 1 && safe->keyBindingsEditor_) {
+            juce::String error;
+            if (const auto* editor = safe->keyBindingsEditor_->getTextEditor("bindings");
+                !safe->actionMap_.fromJson(editor->getText(), error)) {
+                safe->showError("Raccourcis invalides", error);
+            } else {
+                safe->actionMap_.save();
+            }
+        }
+        safe->keyBindingsEditor_.reset();
+        safe->grabKeyboardFocus();
+    }), true);
 }
 
 void MainComponent::importEngine() {
@@ -302,7 +383,7 @@ void MainComponent::exportDynoCsv() {
 void MainComponent::reloadEngine() {
     const auto selectedIndex = engineSelector_.getSelectedItemIndex();
     if (selectedIndex >= 0) {
-        auto reloadedPresets = makeCatalogOrBasePresets(std::filesystem::path(ENGINELAB_CATALOG_ROOT));
+        auto reloadedPresets = makeCatalogOrBasePresets(catalogRoot_);
         if (!reloadedPresets.empty()) {
             presets_ = std::move(reloadedPresets);
             engineSelector_.clear(juce::dontSendNotification);
@@ -373,39 +454,39 @@ void MainComponent::applyExhaustPreset(int presetIndex) {
 
 void MainComponent::adjustAudioOrSimulation(double wheelDelta) {
     if (!runtime_ || wheelDelta == 0.0) return;
-    const auto step = juce::KeyPress::isKeyCurrentlyDown(juce::KeyPress::spaceKey) ? 0.01 : 0.05;
-    if (juce::KeyPress::isKeyCurrentlyDown('G') && visibleState_.dynoHoldEnabled) {
+    const auto step = actionMap_.isDown(AppAction::wheelFineThrottle) ? 0.01 : 0.05;
+    if (actionMap_.isDown(AppAction::wheelDynoRpm) && visibleState_.dynoHoldEnabled) {
         runtime_->adjustDynoHoldRpm(wheelDelta > 0.0 ? 100.0 : -100.0);
-    } else if (juce::KeyPress::isKeyCurrentlyDown('Z')) {
+    } else if (actionMap_.isDown(AppAction::wheelVolume)) {
         audioVolume_ = std::clamp(audioVolume_ + wheelDelta * step, 0.0, 2.0);
         runtime_->setAudioVolume(audioVolume_);
-    } else if (juce::KeyPress::isKeyCurrentlyDown('X')) {
+    } else if (actionMap_.isDown(AppAction::wheelConvolution)) {
         audioConvolution_ = std::clamp(audioConvolution_ + wheelDelta * step, 0.0, 1.0);
         runtime_->setAudioConvolution(audioConvolution_);
-    } else if (juce::KeyPress::isKeyCurrentlyDown('C')) {
+    } else if (actionMap_.isDown(AppAction::wheelHighGain)) {
         highFrequencyGain_ = std::clamp(highFrequencyGain_ + wheelDelta * step, 0.2, 2.5);
         runtime_->setHighFrequencyGain(highFrequencyGain_);
-    } else if (juce::KeyPress::isKeyCurrentlyDown('V')) {
+    } else if (actionMap_.isDown(AppAction::wheelLowNoise)) {
         lowFrequencyNoise_ = std::clamp(lowFrequencyNoise_ + wheelDelta * step, 0.0, 1.5);
         runtime_->setLowFrequencyNoise(lowFrequencyNoise_);
-    } else if (juce::KeyPress::isKeyCurrentlyDown('B')) {
+    } else if (actionMap_.isDown(AppAction::wheelHighNoise)) {
         highFrequencyNoise_ = std::clamp(highFrequencyNoise_ + wheelDelta * step, 0.0, 1.5);
         runtime_->setHighFrequencyNoise(highFrequencyNoise_);
-    } else if (juce::KeyPress::isKeyCurrentlyDown('J')) {
+    } else if (actionMap_.isDown(AppAction::wheelCombustion)) {
         combustionGain_ = std::clamp(combustionGain_ + wheelDelta * step, 0.0, 2.0);
         runtime_->setCombustionGain(combustionGain_);
-    } else if (juce::KeyPress::isKeyCurrentlyDown('K')) {
+    } else if (actionMap_.isDown(AppAction::wheelExhaust)) {
         exhaustGain_ = std::clamp(exhaustGain_ + wheelDelta * step, 0.0, 2.0);
         runtime_->setExhaustGain(exhaustGain_);
-    } else if (juce::KeyPress::isKeyCurrentlyDown('L')) {
+    } else if (actionMap_.isDown(AppAction::wheelIntake)) {
         intakeGain_ = std::clamp(intakeGain_ + wheelDelta * step, 0.0, 2.0);
         runtime_->setIntakeGain(intakeGain_);
-    } else if (juce::KeyPress::isKeyCurrentlyDown('O')) {
+    } else if (actionMap_.isDown(AppAction::wheelMechanical)) {
         mechanicalGain_ = std::clamp(mechanicalGain_ + wheelDelta * step, 0.0, 2.0);
         runtime_->setMechanicalGain(mechanicalGain_);
-    } else if (juce::KeyPress::isKeyCurrentlyDown('N')) {
+    } else if (actionMap_.isDown(AppAction::wheelSimulationRate)) {
         runtime_->setTimeScale(runtime_->timeScale() + wheelDelta * step);
-    } else if (juce::KeyPress::isKeyCurrentlyDown(juce::KeyPress::spaceKey)) {
+    } else if (actionMap_.isDown(AppAction::wheelFineThrottle)) {
         throttleSlider_.setValue(std::clamp(throttleSlider_.getValue() + wheelDelta * 2.0, 0.0, 100.0),
                                  juce::sendNotificationSync);
     }
@@ -413,7 +494,6 @@ void MainComponent::adjustAudioOrSimulation(double wheelDelta) {
 }
 
 bool MainComponent::keyPressed(const juce::KeyPress& key) {
-    const auto character = juce::CharacterFunctions::toUpperCase(key.getTextCharacter());
     if (key.getKeyCode() >= juce::KeyPress::F1Key && key.getKeyCode() <= juce::KeyPress::F12Key) {
         const auto presetIndex = key.getKeyCode() - juce::KeyPress::F1Key;
         if (runtime_ && !runtime_->dynoRunning() && presetIndex < static_cast<int>(presets_.size())) {
@@ -424,74 +504,99 @@ bool MainComponent::keyPressed(const juce::KeyPress& key) {
     }
     if (key == juce::KeyPress::escapeKey) { juce::JUCEApplicationBase::quit(); return true; }
     if (key == juce::KeyPress::returnKey) { reloadEngine(); return true; }
-    if (key == juce::KeyPress::tabKey) { screen_ = (screen_ + 1) % 5; repaint(); return true; }
-    if (key == juce::KeyPress::upKey) { if (runtime_) runtime_->shiftUp(); return true; }
-    if (key == juce::KeyPress::downKey) { if (runtime_) runtime_->shiftDown(); return true; }
-    if (character == 'P') { if (runtime_) runtime_->setPaused(!runtime_->paused()); return true; }
-    if (character == 'F') {
+    if (actionMap_.matches(AppAction::nextScreen, key)) { screen_ = (screen_ + 1) % 5; repaint(); return true; }
+    if (actionMap_.matches(AppAction::shiftUp, key)) { if (runtime_) runtime_->shiftUp(); return true; }
+    if (actionMap_.matches(AppAction::shiftDown, key)) { if (runtime_) runtime_->shiftDown(); return true; }
+    if (actionMap_.matches(AppAction::pause, key)) { if (runtime_) runtime_->setPaused(!runtime_->paused()); return true; }
+    if (actionMap_.matches(AppAction::fullscreen, key)) {
         if (auto* window = findParentComponentOfClass<juce::DocumentWindow>())
             window->setFullScreen(!window->isFullScreen());
         return true;
     }
-    if (character == 'I') { showDynoStats_ = !showDynoStats_; repaint(); return true; }
-    if (character == 'Y') {
+    if (actionMap_.matches(AppAction::dynoStats, key)) { showDynoStats_ = !showDynoStats_; repaint(); return true; }
+    if (actionMap_.matches(AppAction::exhaustPreset, key)) {
         applyExhaustPreset((exhaustPresetIndex_ + 1) % 5);
         exhaustPresetSelector_.setSelectedItemIndex(exhaustPresetIndex_, juce::dontSendNotification);
         return true;
     }
-    if (character == 'M') { viewLayer_ = std::min(viewLayer_ + 1, 3); repaint(); return true; }
-    if (character == ',') { viewLayer_ = std::max(viewLayer_ - 1, 0); repaint(); return true; }
-    if (character == '1') { if (runtime_) runtime_->setTimeScale(0.25); return true; }
-    if (character == '2') { if (runtime_) runtime_->setTimeScale(0.5); return true; }
-    if (character == '3') { if (runtime_) runtime_->setTimeScale(1.0); return true; }
-    if (character == '4') { if (runtime_) runtime_->setTimeScale(2.0); return true; }
-    if (character == '5') { if (runtime_) runtime_->setTimeScale(4.0); return true; }
-    if (character == 'A') {
+    if (actionMap_.matches(AppAction::layerUp, key)) { viewLayer_ = std::min(viewLayer_ + 1, 3); repaint(); return true; }
+    if (actionMap_.matches(AppAction::layerDown, key)) { viewLayer_ = std::max(viewLayer_ - 1, 0); repaint(); return true; }
+    if (actionMap_.matches(AppAction::timeQuarter, key)) { if (runtime_) runtime_->setTimeScale(0.25); return true; }
+    if (actionMap_.matches(AppAction::timeHalf, key)) { if (runtime_) runtime_->setTimeScale(0.5); return true; }
+    if (actionMap_.matches(AppAction::timeNormal, key)) { if (runtime_) runtime_->setTimeScale(1.0); return true; }
+    if (actionMap_.matches(AppAction::timeDouble, key)) { if (runtime_) runtime_->setTimeScale(2.0); return true; }
+    if (actionMap_.matches(AppAction::timeQuadruple, key)) { if (runtime_) runtime_->setTimeScale(4.0); return true; }
+    if (actionMap_.matches(AppAction::ignition, key)) {
         ignitionButton_.setToggleState(!ignitionButton_.getToggleState(), juce::sendNotificationSync);
         return true;
     }
-    if (character == 'Q') { setThrottlePreset(0.01); return true; }
-    if (character == 'R') { setThrottlePreset(1.0); return true; }
-    if (character == 'W') { setThrottlePreset(0.25); return true; }
-    if (character == 'E') { setThrottlePreset(0.50); return true; }
-    if (character == 'D') { toggleDyno(); return true; }
-    if (character == 'H') { if (runtime_) runtime_->setDynoHoldEnabled(!runtime_->dynoHoldEnabled()); return true; }
-    if (character == 'T') {
+    if (actionMap_.matches(AppAction::throttleIdle, key)) { setThrottlePreset(0.01); return true; }
+    if (actionMap_.matches(AppAction::throttleFull, key)) { setThrottlePreset(1.0); return true; }
+    if (actionMap_.matches(AppAction::throttleQuarter, key)) { setThrottlePreset(0.25); return true; }
+    if (actionMap_.matches(AppAction::throttleHalf, key)) { setThrottlePreset(0.50); return true; }
+    if (actionMap_.matches(AppAction::dyno, key)) { toggleDyno(); return true; }
+    if (actionMap_.matches(AppAction::dynoHold, key)) { if (runtime_) runtime_->setDynoHoldEnabled(!runtime_->dynoHoldEnabled()); return true; }
+    if (actionMap_.matches(AppAction::clutchDecrease, key)) {
         targetClutchPressure_ = std::clamp(targetClutchPressure_ - 0.08, 0.0, 1.0);
-        if (runtime_) runtime_->setClutchPressure(targetClutchPressure_);
         return true;
     }
-    if (character == 'U') {
+    if (actionMap_.matches(AppAction::clutchIncrease, key)) {
         targetClutchPressure_ = std::clamp(targetClutchPressure_ + 0.08, 0.0, 1.0);
-        if (runtime_) runtime_->setClutchPressure(targetClutchPressure_);
         return true;
     }
-    return character == 'S';
+    return actionMap_.matches(AppAction::starter, key);
 }
 
 bool MainComponent::keyStateChanged(bool) {
-    const auto down = juce::KeyPress::isKeyCurrentlyDown('S');
+    const auto down = actionMap_.isDown(AppAction::starter);
     if (down != starterKeyDown_) {
         starterKeyDown_ = down;
         if (runtime_) runtime_->setStarterEngaged(down || starterButton_.getState() == juce::Button::buttonDown);
         starterButton_.setToggleState(down, juce::dontSendNotification);
     }
-    if (runtime_) {
-        if (juce::ModifierKeys::getCurrentModifiersRealtime().isShiftDown()) {
-            runtime_->setClutchPressure(0.0);
-        } else {
-            runtime_->setClutchPressure(targetClutchPressure_);
-        }
-    }
     return down || juce::ModifierKeys::getCurrentModifiersRealtime().isShiftDown();
 }
 
 void MainComponent::mouseWheelMove(const juce::MouseEvent&, const juce::MouseWheelDetails& wheel) {
-    adjustAudioOrSimulation(wheel.deltaY);
+    const auto mappedModifierDown = actionMap_.isDown(AppAction::wheelDynoRpm)
+        || actionMap_.isDown(AppAction::wheelVolume) || actionMap_.isDown(AppAction::wheelConvolution)
+        || actionMap_.isDown(AppAction::wheelHighGain) || actionMap_.isDown(AppAction::wheelLowNoise)
+        || actionMap_.isDown(AppAction::wheelHighNoise) || actionMap_.isDown(AppAction::wheelCombustion)
+        || actionMap_.isDown(AppAction::wheelExhaust) || actionMap_.isDown(AppAction::wheelIntake)
+        || actionMap_.isDown(AppAction::wheelMechanical) || actionMap_.isDown(AppAction::wheelSimulationRate)
+        || actionMap_.isDown(AppAction::wheelFineThrottle);
+    if (screen_ == 0 && !mappedModifierDown) {
+        engineViewZoom_ = std::clamp(engineViewZoom_ * std::exp(wheel.deltaY * 0.55F), 0.45F, 3.5F);
+        repaint();
+    } else adjustAudioOrSimulation(wheel.deltaY);
+}
+
+void MainComponent::mouseDown(const juce::MouseEvent& event) {
+    if (screen_ == 0 && engineViewportArea_.contains(event.position)) dragStartPan_ = engineViewPan_;
+}
+
+void MainComponent::mouseDrag(const juce::MouseEvent& event) {
+    if (screen_ != 0 || !engineViewportArea_.contains(event.getMouseDownPosition().toFloat())) return;
+    engineViewPan_ = dragStartPan_ + event.getOffsetFromDragStart().toFloat() / engineViewZoom_;
+    repaint();
+}
+
+void MainComponent::mouseDoubleClick(const juce::MouseEvent& event) {
+    if (screen_ == 0 && engineViewportArea_.contains(event.position)) {
+        engineViewPan_ = {};
+        engineViewZoom_ = 1.0F;
+        repaint();
+    }
 }
 
 void MainComponent::timerCallback() {
     if (!runtime_) return;
+    const auto clutchTarget = juce::ModifierKeys::getCurrentModifiersRealtime().isShiftDown()
+        ? 0.0 : targetClutchPressure_;
+    const auto slowClutch = actionMap_.isDown(AppAction::wheelFineThrottle);
+    const auto clutchRate = slowClutch ? 2.2 : 12.0;
+    currentClutchPressure_ += (clutchTarget - currentClutchPressure_) * (1.0 - std::exp(-clutchRate / 30.0));
+    runtime_->setClutchPressure(currentClutchPressure_);
     visibleState_ = runtime_->snapshot();
     telemetryHistory_[telemetryWrite_] = visibleState_;
     telemetryWrite_ = (telemetryWrite_ + 1) % telemetryHistory_.size();
@@ -528,7 +633,16 @@ void MainComponent::paint(juce::Graphics& g) {
     else if (screen_ == 2) drawMixerPanel(g, mainArea);
     else if (screen_ == 3) drawOscilloscopePanel(g, mainArea);
     else if (screen_ == 4) drawDebugPanel(g, mainArea);
-    else drawEngine(g, mainArea);
+    else {
+        engineViewportArea_ = mainArea;
+        juce::Graphics::ScopedSaveState sceneState(g);
+        g.reduceClipRegion(mainArea.toNearestInt());
+        const auto centre = mainArea.getCentre();
+        g.addTransform(juce::AffineTransform::translation(-centre.x, -centre.y)
+            .scaled(engineViewZoom_)
+            .translated(centre.x + engineViewPan_.x, centre.y + engineViewPan_.y));
+        drawEngine(g, mainArea);
+    }
     auto details = juce::Rectangle<float>(305.0F, static_cast<float>(getHeight()) - 282.0F, chartX - 335.0F, 72.0F);
     g.setColour(juce::Colour(0xff111817)); g.fillRoundedRectangle(details, 8.0F);
     g.setColour(juce::Colour(0xff2b3834)); g.drawRoundedRectangle(details, 8.0F, 1.0F);
@@ -768,7 +882,7 @@ void MainComponent::drawDebugPanel(juce::Graphics& g, juce::Rectangle<float> are
         intakeLift = std::max(intakeLift, visibleState_.cylinderStates[index].intakeValveLiftMm);
         exhaustLift = std::max(exhaustLift, visibleState_.cylinderStates[index].exhaustValveLiftMm);
     }
-    const std::array<juce::String, 18> values {
+    const std::array<juce::String, 24> values {
         "Net torque       " + juce::String(visibleState_.netTorqueNm, 2),
         "Indicated torque " + juce::String(visibleState_.indicatedTorqueNm, 2),
         "Friction torque  " + juce::String(visibleState_.frictionTorqueNm, 2),
@@ -781,16 +895,24 @@ void MainComponent::drawDebugPanel(juce::Graphics& g, juce::Rectangle<float> are
         "Exhaust flow     " + juce::String(visibleState_.exhaustFlowGramsPerSecond, 4),
         "Air mass/cycle   " + juce::String(visibleState_.airMassMgPerCycle, 3),
         "Fuel mg/cycle    " + juce::String(visibleState_.injectedFuelMgPerCycle, 4),
+        "Gas manifold g   " + juce::String(visibleState_.manifoldGasMassGrams, 4),
+        "Gas cylinders g  " + juce::String(visibleState_.cylinderGasMassGrams, 4),
+        "Gas energy J     " + juce::String(visibleState_.gasInternalEnergyJoules, 1),
+        "Boost ratio      " + juce::String(visibleState_.boostPressureRatio, 3),
+        "Solver Hz/steps  " + juce::String(visibleState_.solverFrequencyHz, 0) + " / " + juce::String(visibleState_.solverSubsteps),
         "Max cyl pressure " + juce::String(maxPressure, 3),
         "Intake lift max  " + juce::String(intakeLift, 3),
         "Exhaust lift max " + juce::String(exhaustLift, 3),
         "Damage/wear      " + juce::String(visibleState_.damage, 4) + " / " + juce::String(visibleState_.wear, 4),
         "SPSC drops       " + juce::String(runtime_ ? runtime_->droppedEventCount() : 0),
+        "Runtime overruns " + juce::String(runtime_ ? runtime_->timingOverrunCount() : 0),
         "Audio late/file  " + juce::String(audio_ ? audio_->lateEventCount() : 0) + " / " + juce::String(audio_ ? audio_->droppedPendingEventCount() : 0)
     };
     const auto columns = area.getWidth() > 680.0F ? 3 : 2;
     const auto cellWidth = body.getWidth() / static_cast<float>(columns);
-    const auto cellHeight = std::min(34.0F, body.getHeight() / 6.0F);
+    const auto rows = static_cast<float>((values.size() + static_cast<std::size_t>(columns) - 1U)
+        / static_cast<std::size_t>(columns));
+    const auto cellHeight = std::min(34.0F, body.getHeight() / rows);
     for (std::size_t index = 0; index < values.size(); ++index) {
         const auto row = static_cast<float>(index / static_cast<std::size_t>(columns));
         const auto column = static_cast<float>(index % static_cast<std::size_t>(columns));
@@ -839,6 +961,14 @@ void MainComponent::drawTelemetryChart(juce::Graphics& g, juce::Rectangle<float>
 void MainComponent::drawEngine(juce::Graphics& g, juce::Rectangle<float> area) const {
     const auto count = static_cast<int>(config_.cylinders.size());
     if (count <= 0) return;
+    const auto showFlow = viewLayer_ == 0 || viewLayer_ == 3;
+    const auto showCombustion = viewLayer_ == 0 || viewLayer_ == 1;
+    const auto showValvetrain = viewLayer_ == 0 || viewLayer_ == 1;
+    static constexpr std::array<const char*, 4> layerNames { "ENSEMBLE", "COMBUSTION / DISTRIBUTION", "MECANIQUE", "FLUX GAZ" };
+    g.setColour(juce::Colour(0xff82918b));
+    g.setFont(juce::FontOptions(10.0F, juce::Font::bold));
+    g.drawText("COUCHE  " + juce::String(layerNames[static_cast<std::size_t>(std::clamp(viewLayer_, 0, 3))]),
+               area.removeFromTop(14.0F), juce::Justification::centredRight);
     if (config_.layout == EngineLayout::radial) {
         g.setFont(juce::FontOptions(12.0F, juce::Font::bold));
         g.setColour(juce::Colour(0xff82918b));
@@ -881,7 +1011,7 @@ void MainComponent::drawEngine(juce::Graphics& g, juce::Rectangle<float> area) c
             const auto crankPinY = center.y + static_cast<float>(std::sin(pistonAngle)) * diameter * 0.060F;
             const auto* liveCylinder = static_cast<std::size_t>(index) < visibleState_.cylinderStateCount
                 ? &visibleState_.cylinderStates[static_cast<std::size_t>(index)] : nullptr;
-            if (liveCylinder != nullptr) {
+            if (showFlow && liveCylinder != nullptr) {
                 const auto intakePulse = static_cast<float>(std::clamp(liveCylinder->intakeFlowMgPerCycle / 55.0, 0.0, 1.0));
                 const auto exhaustPulse = static_cast<float>(std::clamp(liveCylinder->exhaustFlowMgPerCycle / 55.0, 0.0, 1.0));
                 g.setColour(juce::Colour(0xff41b6d7).withAlpha(0.18F + intakePulse * 0.52F));
@@ -903,7 +1033,7 @@ void MainComponent::drawEngine(juce::Graphics& g, juce::Rectangle<float> area) c
             g.fillRoundedRectangle(chamber, 7.0F);
             g.setColour(juce::Colour(0xff3a4743));
             g.drawRoundedRectangle(chamber, 7.0F, 1.3F);
-            if (liveCylinder != nullptr && liveCylinder->combustionActive && liveCylinder->combustionPulse > 0.08) {
+            if (showCombustion && liveCylinder != nullptr && liveCylinder->combustionActive && liveCylinder->combustionPulse > 0.08) {
                 g.setColour(liveCylinder->misfiring ? juce::Colour(0x88ffca28) : juce::Colour(0x99ff7a3d));
                 g.fillEllipse(chamber.reduced(8.0F, cylinderHeight * 0.35F));
             }
@@ -934,16 +1064,23 @@ void MainComponent::drawEngine(juce::Graphics& g, juce::Rectangle<float> area) c
                    center.y + static_cast<float>(std::sin(crankNeedle)) * diameter * 0.085F, 4.0F);
         return;
     }
-    const auto splitBanks = config_.layout == EngineLayout::vLayout || config_.layout == EngineLayout::flat;
-    const auto columns = splitBanks ? (count + 1) / 2 : count;
+    const auto bankCount = std::max<std::size_t>(1, config_.banks.size());
+    int columns = config_.banks.empty() ? count : 1;
+    for (const auto& bank : config_.banks)
+        columns = std::max(columns, static_cast<int>(bank.cylinderIds.size()));
     const auto spacing = 14.0F;
     const auto cylinderWidth = std::clamp((area.getWidth() - spacing * static_cast<float>(columns - 1)) / static_cast<float>(columns), 46.0F, 112.0F);
     const auto totalWidth = cylinderWidth * static_cast<float>(columns) + spacing * static_cast<float>(columns - 1);
     const auto startX = area.getCentreX() - totalWidth * 0.5F;
-    const auto bankHeight = splitBanks ? area.getHeight() * 0.43F : area.getHeight() * 0.72F;
+    const auto bankGap = bankCount > 1 ? 14.0F : 0.0F;
+    const auto bankHeight = bankCount > 1
+        ? std::max(54.0F, (area.getHeight() * 0.90F - bankGap * static_cast<float>(bankCount - 1))
+            / static_cast<float>(bankCount))
+        : area.getHeight() * 0.72F;
     g.setFont(juce::FontOptions(12.0F, juce::Font::bold)); g.setColour(juce::Colour(0xff82918b));
     g.drawText(juce::String("DISTRIBUTION  ") + juce::String(config_.camshafts.intakeDurationDegrees, 0) + utf8("° / ")
-        + juce::String(config_.camshafts.intakeLiftMm, 1) + " mm", area.removeFromTop(28.0F), juce::Justification::centred);
+        + juce::String(config_.camshafts.intakeLiftMm, 1) + " mm  /  " + juce::String(static_cast<int>(bankCount)) + " banque(s)",
+        area.removeFromTop(28.0F), juce::Justification::centred);
 
     const auto runnerTop = area.getY() + 10.0F;
     g.setColour(juce::Colour(0x3341b6d7));
@@ -952,9 +1089,20 @@ void MainComponent::drawEngine(juce::Graphics& g, juce::Rectangle<float> area) c
     g.fillRoundedRectangle(area.withY(area.getBottom() - 18.0F).withHeight(11.0F).reduced(12.0F, 0.0F), 5.0F);
 
     for (int index = 0; index < count; ++index) {
-        const auto bank = splitBanks ? index % 2 : 0;
-        const auto column = splitBanks ? index / 2 : index;
         const auto& cylinder = config_.cylinders[static_cast<std::size_t>(index)];
+        std::size_t bankIndex = 0;
+        int column = index;
+        const CylinderBankConfig* bankConfig = nullptr;
+        for (std::size_t candidate = 0; candidate < config_.banks.size(); ++candidate) {
+            const auto found = std::find(config_.banks[candidate].cylinderIds.begin(),
+                                         config_.banks[candidate].cylinderIds.end(), cylinder.id);
+            if (found != config_.banks[candidate].cylinderIds.end()) {
+                bankIndex = candidate;
+                column = static_cast<int>(std::distance(config_.banks[candidate].cylinderIds.begin(), found));
+                bankConfig = &config_.banks[candidate];
+                break;
+            }
+        }
         const auto phase = std::fmod(visibleState_.crankAngleDegrees - crankOffsetDegreesFor(config_, cylinder) + 720.0, 720.0);
         const auto pistonAngle = phase / 720.0 * std::numbers::pi * 4.0;
         const auto crankRadius = crankThrowMmFor(config_, cylinder);
@@ -964,39 +1112,43 @@ void MainComponent::drawEngine(juce::Graphics& g, juce::Rectangle<float> area) c
                 - crankRadius * crankRadius * std::sin(pistonAngle) * std::sin(pistonAngle)));
         const auto travel = static_cast<float>(std::clamp(sliderTravel / cylinder.strokeMm, 0.0, 1.0));
         const auto x = startX + static_cast<float>(column) * (cylinderWidth + spacing);
-        const auto top = area.getY() + 20.0F + static_cast<float>(bank) * (bankHeight + 18.0F);
+        const auto top = area.getY() + 20.0F + static_cast<float>(bankIndex) * (bankHeight + bankGap);
         const auto height = bankHeight - 18.0F;
         const auto pistonY = top + 43.0F + travel * (height - 92.0F);
         const auto centerX = x + cylinderWidth * 0.5F;
         const auto crankY = top + height - 18.0F;
         g.saveState();
-        if (config_.layout == EngineLayout::vLayout) {
-            const auto visualAngle = static_cast<float>(std::clamp(config_.bankAngleDegrees * 0.12, 4.0, 12.0)
-                * std::numbers::pi / 180.0);
-            g.addTransform(juce::AffineTransform::rotation(bank == 0 ? -visualAngle : visualAngle, centerX, crankY));
+        if (bankConfig != nullptr && std::abs(bankConfig->angleDegrees) > 0.1) {
+            const auto visualDegrees = std::clamp(bankConfig->angleDegrees * 0.12, -12.0, 12.0);
+            g.addTransform(juce::AffineTransform::rotation(static_cast<float>(visualDegrees * std::numbers::pi / 180.0),
+                                                           centerX, crankY));
         }
         g.setColour(juce::Colour(0xff111817)); g.fillRoundedRectangle(x, top, cylinderWidth, height, 7.0F);
         g.setColour(juce::Colour(0xff3a4743)); g.drawRoundedRectangle(x, top, cylinderWidth, height, 7.0F, 1.5F);
-        const auto bankedPhase = phase + cylinder.bankOffsetDegrees;
-        const auto intakeLift = profiledValveLiftMm(bankedPhase, 360.0 + config_.camshafts.intakeCenterlineDegrees,
-            config_.camshafts.intakeDurationDegrees, config_.camshafts.intakeLiftMm,
-            config_.camshafts.intakeLiftProfile);
-        const auto exhaustLift = profiledValveLiftMm(bankedPhase, 720.0 - config_.camshafts.exhaustCenterlineDegrees,
-            config_.camshafts.exhaustDurationDegrees, config_.camshafts.exhaustLiftMm,
-            config_.camshafts.exhaustLiftProfile);
-        const auto intakeDrop = static_cast<float>(intakeLift / std::max(1.0, config_.camshafts.intakeLiftMm) * 17.0);
-        const auto exhaustDrop = static_cast<float>(exhaustLift / std::max(1.0, config_.camshafts.exhaustLiftMm) * 17.0);
-        g.setColour(juce::Colour(0xff41b6d7)); g.drawLine(x + cylinderWidth * 0.30F, top + 5.0F, x + cylinderWidth * 0.30F, top + 22.0F + intakeDrop, 3.0F);
-        g.fillEllipse(x + cylinderWidth * 0.21F, top + 18.0F + intakeDrop, cylinderWidth * 0.18F, 4.0F);
-        g.setColour(juce::Colour(0xffef6f3c)); g.drawLine(x + cylinderWidth * 0.70F, top + 5.0F, x + cylinderWidth * 0.70F, top + 22.0F + exhaustDrop, 3.0F);
-        g.fillEllipse(x + cylinderWidth * 0.61F, top + 18.0F + exhaustDrop, cylinderWidth * 0.18F, 4.0F);
         const auto* liveCylinder = static_cast<std::size_t>(index) < visibleState_.cylinderStateCount
             ? &visibleState_.cylinderStates[static_cast<std::size_t>(index)] : nullptr;
-        if (liveCylinder != nullptr && liveCylinder->combustionActive && liveCylinder->combustionPulse > 0.08) {
+        const auto bankedPhase = phase + cylinder.bankOffsetDegrees;
+        const auto fallbackIntakeLift = profiledValveLiftMm(bankedPhase, 360.0 + config_.camshafts.intakeCenterlineDegrees,
+            config_.camshafts.intakeDurationDegrees, config_.camshafts.intakeLiftMm, config_.camshafts.intakeLiftProfile);
+        const auto fallbackExhaustLift = profiledValveLiftMm(bankedPhase, 720.0 - config_.camshafts.exhaustCenterlineDegrees,
+            config_.camshafts.exhaustDurationDegrees, config_.camshafts.exhaustLiftMm, config_.camshafts.exhaustLiftProfile);
+        const auto intakeLift = liveCylinder != nullptr ? liveCylinder->intakeValveLiftMm : fallbackIntakeLift;
+        const auto exhaustLift = liveCylinder != nullptr ? liveCylinder->exhaustValveLiftMm : fallbackExhaustLift;
+        const auto intakeDrop = static_cast<float>(intakeLift
+            / std::max({ 1.0, config_.camshafts.intakeLiftMm, config_.camshafts.highIntakeLiftMm }) * 17.0);
+        const auto exhaustDrop = static_cast<float>(exhaustLift
+            / std::max({ 1.0, config_.camshafts.exhaustLiftMm, config_.camshafts.highExhaustLiftMm }) * 17.0);
+        if (showValvetrain) {
+            g.setColour(juce::Colour(0xff41b6d7)); g.drawLine(x + cylinderWidth * 0.30F, top + 5.0F, x + cylinderWidth * 0.30F, top + 22.0F + intakeDrop, 3.0F);
+            g.fillEllipse(x + cylinderWidth * 0.21F, top + 18.0F + intakeDrop, cylinderWidth * 0.18F, 4.0F);
+            g.setColour(juce::Colour(0xffef6f3c)); g.drawLine(x + cylinderWidth * 0.70F, top + 5.0F, x + cylinderWidth * 0.70F, top + 22.0F + exhaustDrop, 3.0F);
+            g.fillEllipse(x + cylinderWidth * 0.61F, top + 18.0F + exhaustDrop, cylinderWidth * 0.18F, 4.0F);
+        }
+        if (showCombustion && liveCylinder != nullptr && liveCylinder->combustionActive && liveCylinder->combustionPulse > 0.08) {
             g.setColour(liveCylinder->misfiring ? juce::Colour(0x88ffca28) : juce::Colour(0x99ff7a3d));
             g.fillEllipse(x + 9.0F, top + 30.0F, cylinderWidth - 18.0F, 22.0F);
         }
-        if (liveCylinder != nullptr) {
+        if (showFlow && liveCylinder != nullptr) {
             const auto intakePulse = static_cast<float>(std::clamp(liveCylinder->intakeFlowMgPerCycle / 45.0, 0.0, 1.0));
             const auto exhaustPulse = static_cast<float>(std::clamp(liveCylinder->exhaustFlowMgPerCycle / 45.0, 0.0, 1.0));
             g.setColour(juce::Colour(0xff41b6d7).withAlpha(0.20F + intakePulse * 0.58F));
@@ -1103,6 +1255,8 @@ void MainComponent::resized() {
     importButton_.setBounds(toolbarX, 17, 92, 32); toolbarX += 96;
     exportButton_.setBounds(toolbarX, 17, 92, 32); toolbarX += 96;
     csvButton_.setBounds(toolbarX, 17, 92, 32);
+    toolbarX += 96;
+    keyBindingsButton_.setBounds(toolbarX, 17, 86, 32);
     const auto compact = getHeight() < 740;
     const auto buttonHeight = compact ? 38 : 42;
     const auto labelHeight = compact ? 20 : 23;
