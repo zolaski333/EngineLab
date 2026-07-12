@@ -217,6 +217,20 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
     if (config.name.empty() || config.name.size() > 128) return "Engine name must contain between 1 and 128 bytes";
     if (config.cycle != EngineCycle::fourStroke || config.fuel != FuelType::gasoline)
         return "Only four-stroke gasoline engines are currently supported";
+    if (config.fuelProperties.name.empty() || config.fuelProperties.name.size() > 128
+        || !inRange(config.fuelProperties.lowerHeatingValueMjPerKg, 10.0, 60.0)
+        || !inRange(config.fuelProperties.densityKgPerL, 0.30, 1.50)
+        || !inRange(config.fuelProperties.stoichiometricAirFuelRatio, 5.0, 25.0)
+        || !inRange(config.fuelProperties.molarMassGramsPerMole, 20.0, 300.0)
+        || !inRange(config.fuelProperties.oxygenMolesPerFuelMole, 1.0, 40.0)
+        || !inRange(config.fuelProperties.productMolesPerFuelMole, 1.0, 60.0)
+        || !inRange(config.fuelProperties.laminarFlameSpeedMps, 0.05, 2.0)
+        || !inRange(config.fuelProperties.turbulenceFlameSpeedGain, 0.0, 10.0))
+        return "Fuel properties must define finite gasoline chemistry and thermodynamic values";
+    const auto chemistryStoichiometricAfr = config.fuelProperties.oxygenMolesPerFuelMole * 31.9988
+        / config.fuelProperties.molarMassGramsPerMole / 0.232;
+    if (std::abs(config.fuelProperties.stoichiometricAirFuelRatio / chemistryStoichiometricAfr - 1.0) > 0.25)
+        return "Fuel stoichiometric AFR is inconsistent with its molar oxygen requirement";
     if (config.cylinders.empty() || config.cylinders.size() > 32 || config.firingOrder.size() != config.cylinders.size())
         return "Firing order must reference between 1 and 32 cylinders";
     if (!inRange(config.idleRpm, 200.0, 3'000.0)
@@ -253,6 +267,8 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
         || !inRange(config.exhaust.collectorDiameterMm, 15.0, 300.0)
         || !inRange(config.exhaust.outletDiameterMm, 15.0, 300.0)
         || !inRange(config.exhaust.mufflerRestriction, 0.0, 1.0)
+        || !inRange(config.exhaust.collectorVolumeLitres, 0.05, 200.0)
+        || !inRange(config.exhaust.outletDischargeCoefficient, 0.02, 1.5)
         || !inRange(config.transmission.finalDriveRatio, 1.0, 8.0)
         || !inRange(config.transmission.maxClutchTorqueNm, 10.0, 10'000.0)
         || !inRange(config.vehicle.massKg, 50.0, 20'000.0)
@@ -269,11 +285,30 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
         || !inRange(config.intake.throttleGamma, 0.2, 5.0)
         || !inRange(config.ignition.revLimitRpm, config.idleRpm + 100.0, 25'000.0)
         || !inRange(config.ignition.limiterDurationSeconds, 0.005, 2.0)
+        || !inRange(config.injection.startAngleDegrees, 0.0, 720.0)
+        || !inRange(config.injection.endAngleDegrees, 0.0, 720.0)
+        || std::abs(config.injection.startAngleDegrees - config.injection.endAngleDegrees) < 1.0
+        || !inRange(config.injection.injectorFlowMgPerSecond, 10.0, 500'000.0)
+        || !inRange(config.injection.fuelTemperatureC, -50.0, 180.0)
+        || !inRange(config.injection.railPressureBar, 1.2, 3'000.0)
+        || !inRange(config.injection.referencePressureBar, 1.2, 3'000.0)
+        || !inRange(config.injection.wallFilmFraction, 0.0, 0.98)
+        || !inRange(config.injection.vaporisationTimeConstantSeconds, 0.001, 2.0)
+        || !inRange(config.injection.latentHeatKjPerKg, 10.0, 1'000.0)
+        || !inRange(config.injection.directChargeCoolingEfficiency, 0.0, 1.0)
+        || !inRange(config.injection.portChargeCoolingEfficiency, 0.0, 1.0)
         || !inRange(config.solver.mechanicalFrequencyHz, 240.0, 50'000.0)
         || !inRange(config.solver.maximumMechanicalFrequencyHz, config.solver.mechanicalFrequencyHz, 100'000.0)
         || !inRange(config.solver.maximumCrankDegreesPerStep, 0.1, 30.0)
         || config.solver.gasSubsteps < 1 || config.solver.gasSubsteps > 32)
         return "Engine configuration contains non-finite or physically invalid values";
+    const auto maximumCalibratedRpm = std::max(config.redlineRpm, config.ignition.revLimitRpm);
+    const auto requiredAngleFrequency = maximumCalibratedRpm * 6.0
+        / config.solver.maximumCrankDegreesPerStep;
+    const auto requiredSolverFrequency = std::max(requiredAngleFrequency,
+        config.solver.mechanicalFrequencyHz * static_cast<double>(config.solver.gasSubsteps));
+    if (config.solver.maximumMechanicalFrequencyHz + 1.0e-9 < requiredSolverFrequency)
+        return "Solver maximum frequency cannot satisfy the configured crank-angle resolution at the rev limit";
     if (config.transmission.gearRatios.empty() || config.transmission.gearRatios.size() > 12)
         return "Transmission must contain between 1 and 12 forward gears";
     for (const auto gearRatio : config.transmission.gearRatios)
@@ -344,7 +379,12 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
             || !inRange(cylinder.intakeRunnerDiameterMm, 10.0, 150.0)
             || !inRange(cylinder.exhaustPrimaryLengthMm, 0.0, 3'000.0)
             || !inRange(cylinder.soundAttenuation, 0.0, 4.0)
-            || !inRange(cylinder.blowByCoefficient, 0.0, 0.1))
+            || !inRange(cylinder.blowByCoefficient, 0.0, 0.1)
+            || !inRange(cylinder.connectingRodMassGrams, 20.0, 5'000.0)
+            || !inRange(cylinder.pistonFrictionCoefficient, 0.0, 0.5)
+            || !inRange(cylinder.pistonBreakawayForceN, 0.0, 5'000.0)
+            || !inRange(cylinder.pistonBreakawayVelocityMps, 0.001, 5.0)
+            || !inRange(cylinder.pistonViscousFrictionNsPerM, 0.0, 2'000.0))
             return "Cylinder IDs and dimensions must be finite and physically valid";
         if (cylinder.crankJournalId != 0 && !journalIds.empty() && !journalIds.contains(cylinder.crankJournalId))
             return "Cylinder crankJournalId must reference a configured crank journal";
@@ -377,7 +417,9 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
             || !inRange(exhaust.primaryDiameterMm, 15.0, 200.0)
             || !inRange(exhaust.collectorDiameterMm, 15.0, 300.0)
             || !inRange(exhaust.outletDiameterMm, 15.0, 300.0)
-            || !inRange(exhaust.mufflerRestriction, 0.0, 1.0))
+            || !inRange(exhaust.mufflerRestriction, 0.0, 1.0)
+            || !inRange(exhaust.collectorVolumeLitres, 0.05, 200.0)
+            || !inRange(exhaust.outletDischargeCoefficient, 0.02, 1.5))
             return "Exhaust path IDs and audio volumes must be valid";
         for (const auto cylinderId : path.cylinderIds)
             if (!cylinderIds.contains(cylinderId) || !assignedExhaustCylinders.insert(cylinderId).second)

@@ -1,5 +1,6 @@
 #pragma once
 #include <enginelab/audio/IAudioRenderer.hpp>
+#include <enginelab/audio/RealtimeConvolutionBank.hpp>
 #include <enginelab/runtime/EngineRuntime.hpp>
 #include <array>
 #include <atomic>
@@ -13,7 +14,12 @@ public:
     void prepare(double sampleRate, int maximumBlockSize) noexcept override;
     void release() noexcept override;
     void render(juce::AudioBuffer<float>& output, int startSample, int sampleCount) noexcept override;
-    void setImpulseResponse(std::span<const float> samples) noexcept;
+    void setImpulseResponse(std::span<const float> samples,
+                            double sourceSampleRate = 48'000.0,
+                            std::size_t pathIndex = 0);
+    void setImpulseResponse(juce::AudioBuffer<float>&& samples,
+                            double sourceSampleRate,
+                            std::size_t pathIndex);
     [[nodiscard]] std::uint64_t lateEventCount() const noexcept { return lateEvents_.load(std::memory_order_relaxed); }
     [[nodiscard]] std::uint64_t stolenVoiceCount() const noexcept { return stolenVoices_.load(std::memory_order_relaxed); }
     [[nodiscard]] std::uint64_t droppedPendingEventCount() const noexcept { return droppedPendingEvents_.load(std::memory_order_relaxed); }
@@ -24,6 +30,7 @@ private:
         float bodyFrequency {}, crackFrequency {}, pipeFrequency {};
         float leftGain {}, rightGain {}, filterState {}, turbulence {}, knock {};
         float massFlow {}, runnerPressure {}, jetBandState {}, jetLowState {}, jetHighState {};
+        std::uint32_t exhaustPathIndex {};
         bool exhaust {};
         bool active {};
     };
@@ -48,11 +55,9 @@ private:
     std::array<float, 2'111> fdnB_ {};
     std::array<float, 2'791> fdnC_ {};
     std::array<float, 3'557> fdnD_ {};
-    std::array<float, 512> impulseResponse_ {};
-    std::array<float, 512> irHistoryLeft_ {};
-    std::array<float, 512> irHistoryRight_ {};
-    std::size_t impulseResponseLength_ { 0 };
-    std::size_t irWrite_ { 0 };
+    RealtimeConvolutionBank convolutionBank_;
+    std::array<float, 64> jitterHistory_ {};
+    std::size_t jitterWrite_ { 0 };
     std::size_t waveWrite_ { 0 };
     std::size_t fdnWriteA_ { 0 };
     std::size_t fdnWriteB_ { 0 };
@@ -75,6 +80,15 @@ private:
     float lowPassRight_ { 0.0F };
     float reflectedLowPass_ { 0.0F };
     float collectorState_ { 0.0F };
+    float previousCollectorInput_ { 0.0F };
+    float jitterDelaySamples_ { 0.0F };
+    float levelEnvelope_ { 0.0F };
+    float levelGain_ { 1.0F };
+    float antiAliasLeftA_ { 0.0F };
+    float antiAliasLeftB_ { 0.0F };
+    float antiAliasRightA_ { 0.0F };
+    float antiAliasRightB_ { 0.0F };
+    float antiAliasCoefficient_ { 0.5F };
     float pressureTailLeft_ { 0.0F };
     float pressureTailRight_ { 0.0F };
     float exhaustBodyLeft_ { 0.0F };

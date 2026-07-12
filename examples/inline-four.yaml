@@ -3,6 +3,7 @@ engine:
   name: EL-20 Inline Four
   cycle: four_stroke
   fuel: gasoline
+  fuel_properties: { name: "Premium gasoline 98 RON", lower_heating_value_mj_per_kg: 43.2, density_kg_per_l: 0.75, stoichiometric_afr: 14.7, molar_mass_g_per_mol: 114.23, oxygen_moles_per_fuel_mole: 12.5, product_moles_per_fuel_mole: 17.0, laminar_flame_speed_mps: 0.39, turbulence_flame_speed_gain: 1.6 }
   layout: inline
   idle_rpm: 850.0
   redline_rpm: 7200.0
@@ -16,10 +17,12 @@ engine:
   throttle_diameter_mm: 54.0
   bank_angle_deg: 0.0
   camshafts: { intake_duration_deg: 248.0, exhaust_duration_deg: 244.0, intake_lift_mm: 10.2, exhaust_lift_mm: 9.8, intake_centerline_deg: 110.0, exhaust_centerline_deg: 112.0 }
-  exhaust: { primary_length_mm: 480.0, primary_diameter_mm: 42.0, collector_diameter_mm: 58.0, muffler_restriction: 0.28, outlet_diameter_mm: 65.0 }
+  injection: { mode: port, start_angle_deg: 260.0, end_angle_deg: 610.0, injector_flow_mg_s: 8000.0, fuel_temperature_c: 25.0, rail_pressure_bar: 4.0, reference_pressure_bar: 4.0, wall_film_fraction: 0.22, vaporisation_time_constant_s: 0.04, latent_heat_kj_per_kg: 350.0, port_charge_cooling_efficiency: 0.28 }
+  solver: { mechanical_frequency_hz: 2000.0, maximum_frequency_hz: 60000.0, maximum_crank_deg_per_step: 2.0, gas_substeps: 1 }
+  exhaust: { primary_length_mm: 480.0, primary_diameter_mm: 42.0, collector_diameter_mm: 58.0, muffler_restriction: 0.28, outlet_diameter_mm: 65.0, collector_volume_l: 2.0, outlet_discharge_coefficient: 0.72 }
   firing_order: [1, 3, 4, 2]
   cylinders:
-    - { id: 1, bore_mm: 86.0, stroke_mm: 86.0, connecting_rod_mm: 143.0, piston_mass_g: 420.0, compression_ratio: 10.5, ignition_offset_deg: 0.0, efficiency_offset: -0.009 }
+    - { id: 1, bore_mm: 86.0, stroke_mm: 86.0, connecting_rod_mm: 143.0, piston_mass_g: 420.0, connecting_rod_mass_g: 600.0, compression_ratio: 10.5, ignition_offset_deg: 0.0, efficiency_offset: -0.009 }
     - { id: 2, bore_mm: 86.0, stroke_mm: 86.0, connecting_rod_mm: 143.0, piston_mass_g: 420.0, compression_ratio: 10.5, ignition_offset_deg: 0.0, efficiency_offset: -0.003 }
     - { id: 3, bore_mm: 86.0, stroke_mm: 86.0, connecting_rod_mm: 143.0, piston_mass_g: 420.0, compression_ratio: 10.5, ignition_offset_deg: 0.0, efficiency_offset: 0.003 }
     - { id: 4, bore_mm: 86.0, stroke_mm: 86.0, connecting_rod_mm: 143.0, piston_mass_g: 420.0, compression_ratio: 10.5, ignition_offset_deg: 0.0, efficiency_offset: 0.009 }

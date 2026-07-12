@@ -31,10 +31,12 @@ engine:
       - { rpm: 8700, advance_deg: 27 }
   solver:
     mechanical_frequency_hz: 2000
-    maximum_frequency_hz: 24000
+    maximum_frequency_hz: 40000
     maximum_crank_deg_per_step: 1.5
     gas_substeps: 3
   uses:
+    fuel: premium_gasoline_98
+    injection: sequential_port
     camshafts: sport_na
     exhaust: equal_length_header
     transmission: jdm_6_speed

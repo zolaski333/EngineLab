@@ -32,6 +32,9 @@ struct RealtimeAudioState final {
     std::atomic<float> boreStrokeRatio { 1.0F };
     std::atomic<float> bankSeparation { 0.0F };
     std::atomic<float> exhaustOpenness { 0.5F };
+    std::atomic<float> manifoldPressureKpa { 101.325F };
+    std::atomic<float> exhaustPressureKpa { 101.325F };
+    std::atomic<float> exhaustFlowGramsPerSecond { 0.0F };
     std::atomic<float> boostPressureRatio { 1.0F };
     std::atomic<float> exhaustReflectionSeconds { 0.006F };
     std::atomic<float> volume { 1.0F };
@@ -129,6 +132,7 @@ private:
     double dynoTargetRpm_ { 0.0 };
     double dynoStableElapsed_ { 0.0 };
     double dynoLoadCommand_ { 0.34 };
+    double dynoFilteredRpm_ { 0.0 };
     double dynoTorqueAccumulator_ { 0.0 };
     double dynoPowerAccumulator_ { 0.0 };
     std::uint32_t dynoSampleCount_ { 0 };

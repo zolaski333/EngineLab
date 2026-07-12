@@ -28,6 +28,8 @@ engine:
     cooling_power_kw_per_c: 1.15
     oil_cooling_power_kw_per_c: 0.58
   uses:
+    fuel: avgas_100ll
+    injection: continuous_manifold
     camshafts: v12_aircraft
     exhaust: aircraft_manifold
     transmission: aircraft_direct

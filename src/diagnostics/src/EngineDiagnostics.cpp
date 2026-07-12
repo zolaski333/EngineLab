@@ -11,10 +11,20 @@ std::vector<Diagnostic> EngineDiagnostics::evaluate(const EngineConfig& config, 
     if (state.rpm > 900.0 && state.oilPressureKpa < 100.0) result.push_back({ DiagnosticSeverity::critical, "lubrication.pressure", "Pression d'huile insuffisante sous regime." });
     if (state.exhaustTemperatureC > 920.0) result.push_back({ DiagnosticSeverity::warning, "thermal.exhaust", "Temperature d'echappement excessive." });
     if (state.oilTemperatureC > 135.0) result.push_back({ DiagnosticSeverity::critical, "thermal.oil", "Temperature d'huile critique." });
-    if (state.load > 0.55 && state.airFuelRatio > 15.2)
+    if (state.load > 0.55 && state.lambda > 1.03)
         result.push_back({ DiagnosticSeverity::critical, "combustion.lean", "Melange trop pauvre sous charge." });
-    if (state.airFuelRatio < 10.8)
+    if (state.lambda < 0.74)
         result.push_back({ DiagnosticSeverity::warning, "combustion.rich", "Melange excessivement riche : dilution d'huile possible." });
+    if (state.solverResolutionLimited)
+        result.push_back({ DiagnosticSeverity::critical, "solver.resolution", "Resolution angulaire du solveur insuffisante au regime actuel." });
+    if (state.load > 0.40 && state.rpm > config.idleRpm * 1.2 && state.cylinderStateCount > 0) {
+        double fuelDelivery = 0.0;
+        for (std::size_t index = 0; index < state.cylinderStateCount; ++index)
+            fuelDelivery += state.cylinderStates[index].fuelDeliveryRatio;
+        fuelDelivery /= static_cast<double>(state.cylinderStateCount);
+        if (fuelDelivery < 0.82)
+            result.push_back({ DiagnosticSeverity::warning, "injection.capacity", "Debit injecteur ou transfert carburant insuffisant sous charge." });
+    }
     const auto exhaustDeltaKpa = state.exhaustPressureKpa - config.ambientPressureKpa;
     const auto flowAllowance = 28.0 + engineDisplacementLitres(config) * 1.4
         + config.exhaust.collectorDiameterMm * 0.10 + config.exhaust.outletDiameterMm * 0.06;

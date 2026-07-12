@@ -4,6 +4,8 @@
 #include <enginelab/exhaust/IExhaustModel.hpp>
 #include <enginelab/physics/IPhysicsModel.hpp>
 #include <enginelab/physics/ConservativeGasSystem.hpp>
+#include <enginelab/physics/FlamePhysicsModel.hpp>
+#include <enginelab/physics/FuelInjectionModel.hpp>
 #include <enginelab/simulation/IEngineSimulation.hpp>
 #include <array>
 namespace enginelab {
@@ -30,14 +32,19 @@ private:
     std::array<double, 32> exhaustFlowMgPerCycle_ {};
     std::array<double, 32> cylinderWallTemperatureC_ {};
     GasCell manifoldGas_ {};
-    GasCell collectorGas_ {};
+    std::array<GasCell, 32> exhaustCollectorGas_ {};
+    std::size_t exhaustCollectorCount_ { 1 };
     std::array<GasCell, 32> intakeRunnerGas_ {};
     std::array<GasCell, 32> cylinderGas_ {};
     std::array<GasCell, 32> exhaustRunnerGas_ {};
-    std::array<double, 32> lastCombustionProfile_ {};
+    std::array<double, 32> instantaneousCombustionPulse_ {};
     std::array<double, 32> injectedFuelMolesThisCycle_ {};
+    std::array<double, 32> deliveredFuelMolesLastCycle_ {};
+    std::array<double, 32> fuelDeliveryRatio_ {};
+    std::array<FlameEvent, 32> flameEvents_ {};
+    std::array<FuelInjectionState, 32> injectionStates_ {};
+    FlamePhysicsModel flamePhysics_ {};
     std::array<bool, 32> cylinderMisfires_ {};
-    std::array<bool, 32> cylinderMisfirePrepared_ {};
     std::uint32_t randomState_ { 0x6d2b79f5U };
 };
 } // namespace enginelab

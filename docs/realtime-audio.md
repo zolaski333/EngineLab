@@ -1,44 +1,56 @@
 # Audio temps réel
 
-## Règles du callback
+## Contrat du callback
 
-`RealtimeEngineAudio::render` n'effectue aucune allocation, attente,
-entrée/sortie, journalisation ou prise de mutex. Les voix et le tampon de
-planification sont fixes ; les événements arrivent par
-`SpscQueue<FiringEvent, 2048>`.
+`RealtimeEngineAudio::render` n'effectue aucune entrée/sortie, journalisation,
+attente ou prise de mutex. Les voix, événements en attente, lignes de retard et
+buffers de convolution sont préparés avant le démarrage. Les événements
+arrivent par `SpscQueue<FiringEvent, 2048>` et conservent leur temps interpolé.
 
-Les événements conservent leur temps interpolé dans le pas de simulation. Le
-renderer applique 20 ms de latence contrôlée et les déclenche au bon
-échantillon, même lorsque la simulation et le périphérique utilisent des blocs
-différents.
+## Sources sonores
 
-Chaque allumage produit une couche bloc moteur immédiate et une couche
-échappement retardée par le chemin complet port-collecteur-silencieux-sortie.
-Le délai de réflexion provient lui aussi de cette géométrie. Les couches
-continues suivent le facteur de vitesse de simulation afin de rester accordées
-aux événements.
+Chaque allumage crée une couche bloc moteur immédiate et une couche échappement
+retardée par le chemin port-collecteur-silencieux-sortie. Pression cylindre,
+vitesse de flamme, débit, pression runner, géométrie, banque et chemin
+d'échappement modulent attaque, durée, spectre et panorama. Les couches
+continues admission, mécanique, distribution et démarreur suivent les atomiques
+du runtime.
 
-La sortie est hybride : le graphe procédural conserve la réponse aux changements
-de régime, charge, pression, débit, turbo et géométrie, puis une convolution FIR
-de 512 taps maximum apporte la signature courte d'un silencieux ou d'une prise
-de son. Sans asset, une réponse physique déterministe est générée. Un chemin
-`impulse_response` peut être associé à chaque chemin d'échappement ; le WAV est
-décodé, réduit en mono et normalisé sur le thread UI avant le démarrage audio.
-Le callback ne charge donc jamais un fichier et n'alloue aucune mémoire.
+Le signal d'échappement combine :
 
-```text
-FiringEvent ──► combustion ──► délai/résonance échappement
-       RealtimeAudioState ──► admission + mécanique + distribution + démarreur
-```
+- ondes aller/retour et délai géométrique ;
+- réseau FDN du silencieux ;
+- bandes de choc, jet et turbulence ;
+- mélange du signal de pression et de sa dérivée ;
+- jitter à retard fractionnaire dépendant du débit ;
+- bruit d'air filtré ;
+- leveler attaque/relâchement borné ;
+- filtre anti-alias après les non-linéarités.
 
-Les coefficients de filtre et retards sont convertis depuis des fréquences ou
-durées lors de `prepare`, donc restent cohérents à 44,1, 48 ou 96 kHz. Les
-phases sont repliées pour éviter une perte de précision après une longue
-session.
+## Convolution par chemin
 
-Les réponses externes dont la fréquence diffère encore de celle du périphérique
-devront recevoir un ré-échantillonnage hors callback. Les changements de graphe
-utiliseront des snapshots immuables échangés atomiquement
-avec crossfade. Les compteurs événements perdus, événements tardifs, overruns
-simulation, voix volées et saturation du tampon de planification rendent les
-régressions observables.
+`RealtimeConvolutionBank` fournit jusqu'à huit convolutions partitionnées JUCE
+DSP indépendantes. `FiringEvent::exhaustPathIndex` route chaque impulsion vers
+la bonne réponse. Un WAV mono ou stéréo est décodé hors callback, conservé
+jusqu'à 262 144 échantillons, puis ré-échantillonné par le moteur de convolution
+à la fréquence du périphérique.
+
+Quand aucun fichier n'est fourni, l'application génère une IR déterministe à
+partir de la longueur primaire, du diamètre collecteur et de la restriction du
+silencieux. Chaque chemin conserve donc une signature propre sans dépendre des
+cinq presets génériques. Les presets restent un réglage de matériau/ouverture,
+pas un remplacement des IR moteur.
+
+## Observabilité
+
+Les compteurs d'événements tardifs, événements perdus, voix volées et saturation
+du planning restent exposés. Les tests vérifient le routage par chemin, la
+différence entre IR, le respect des tranches de buffer, les gains du mixeur et
+l'absence de sortie non finie.
+
+## Limites
+
+- huit chemins convolutifs maximum dans le renderer courant ;
+- 262 144 échantillons maximum par fichier chargé depuis l'UI ;
+- acoustique de l'habitacle et position micro réduites à l'IR fournie ;
+- pas encore d'enregistrement WAV depuis l'interface.

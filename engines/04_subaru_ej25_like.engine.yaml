@@ -13,6 +13,7 @@ engine:
   plenum_volume_l: 3.2
   throttle_diameter_mm: 65
   uses:
+    injection: sequential_port
     camshafts: turbo_street
     exhaust: compact_sport
     transmission: sport_6_speed

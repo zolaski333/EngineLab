@@ -38,6 +38,17 @@ std::string YamlEngineSerializer::encode(const EngineConfig& config) const {
         << YAML::Key << "name" << YAML::Value << config.name
         << YAML::Key << "cycle" << YAML::Value << (config.cycle == EngineCycle::fourStroke ? "four_stroke" : "two_stroke")
         << YAML::Key << "fuel" << YAML::Value << (config.fuel == FuelType::gasoline ? "gasoline" : "diesel")
+        << YAML::Key << "fuel_properties" << YAML::Value << YAML::BeginMap
+        << YAML::Key << "name" << YAML::Value << config.fuelProperties.name
+        << YAML::Key << "lower_heating_value_mj_per_kg" << YAML::Value << config.fuelProperties.lowerHeatingValueMjPerKg
+        << YAML::Key << "density_kg_per_l" << YAML::Value << config.fuelProperties.densityKgPerL
+        << YAML::Key << "stoichiometric_afr" << YAML::Value << config.fuelProperties.stoichiometricAirFuelRatio
+        << YAML::Key << "molar_mass_g_per_mol" << YAML::Value << config.fuelProperties.molarMassGramsPerMole
+        << YAML::Key << "oxygen_moles_per_fuel_mole" << YAML::Value << config.fuelProperties.oxygenMolesPerFuelMole
+        << YAML::Key << "product_moles_per_fuel_mole" << YAML::Value << config.fuelProperties.productMolesPerFuelMole
+        << YAML::Key << "laminar_flame_speed_mps" << YAML::Value << config.fuelProperties.laminarFlameSpeedMps
+        << YAML::Key << "turbulence_flame_speed_gain" << YAML::Value << config.fuelProperties.turbulenceFlameSpeedGain
+        << YAML::EndMap
         << YAML::Key << "layout" << YAML::Value << layoutName(config.layout)
         << YAML::Key << "idle_rpm" << YAML::Value << config.idleRpm
         << YAML::Key << "redline_rpm" << YAML::Value << config.redlineRpm
@@ -97,7 +108,9 @@ std::string YamlEngineSerializer::encode(const EngineConfig& config) const {
         << YAML::Key << "primary_diameter_mm" << YAML::Value << config.exhaust.primaryDiameterMm
         << YAML::Key << "collector_diameter_mm" << YAML::Value << config.exhaust.collectorDiameterMm
         << YAML::Key << "muffler_restriction" << YAML::Value << config.exhaust.mufflerRestriction
-        << YAML::Key << "outlet_diameter_mm" << YAML::Value << config.exhaust.outletDiameterMm << YAML::EndMap
+        << YAML::Key << "outlet_diameter_mm" << YAML::Value << config.exhaust.outletDiameterMm
+        << YAML::Key << "collector_volume_l" << YAML::Value << config.exhaust.collectorVolumeLitres
+        << YAML::Key << "outlet_discharge_coefficient" << YAML::Value << config.exhaust.outletDischargeCoefficient << YAML::EndMap
         << YAML::Key << "transmission" << YAML::Value << YAML::BeginMap
         << YAML::Key << "gear_ratios" << YAML::Value << YAML::Flow << config.transmission.gearRatios
         << YAML::Key << "final_drive_ratio" << YAML::Value << config.transmission.finalDriveRatio
@@ -124,6 +137,20 @@ std::string YamlEngineSerializer::encode(const EngineConfig& config) const {
         out << YAML::BeginMap << YAML::Key << "rpm" << YAML::Value << sample.rpm
             << YAML::Key << "advance_deg" << YAML::Value << sample.advanceDegrees << YAML::EndMap;
     out << YAML::EndSeq << YAML::EndMap
+        << YAML::Key << "injection" << YAML::Value << YAML::BeginMap
+        << YAML::Key << "mode" << YAML::Value << (config.injection.mode == InjectionMode::port ? "port" : "direct")
+        << YAML::Key << "start_angle_deg" << YAML::Value << config.injection.startAngleDegrees
+        << YAML::Key << "end_angle_deg" << YAML::Value << config.injection.endAngleDegrees
+        << YAML::Key << "injector_flow_mg_s" << YAML::Value << config.injection.injectorFlowMgPerSecond
+        << YAML::Key << "fuel_temperature_c" << YAML::Value << config.injection.fuelTemperatureC
+        << YAML::Key << "rail_pressure_bar" << YAML::Value << config.injection.railPressureBar
+        << YAML::Key << "reference_pressure_bar" << YAML::Value << config.injection.referencePressureBar
+        << YAML::Key << "wall_film_fraction" << YAML::Value << config.injection.wallFilmFraction
+        << YAML::Key << "vaporisation_time_constant_s" << YAML::Value << config.injection.vaporisationTimeConstantSeconds
+        << YAML::Key << "latent_heat_kj_per_kg" << YAML::Value << config.injection.latentHeatKjPerKg
+        << YAML::Key << "direct_charge_cooling_efficiency" << YAML::Value << config.injection.directChargeCoolingEfficiency
+        << YAML::Key << "port_charge_cooling_efficiency" << YAML::Value << config.injection.portChargeCoolingEfficiency
+        << YAML::EndMap
         << YAML::Key << "solver" << YAML::Value << YAML::BeginMap
         << YAML::Key << "mechanical_frequency_hz" << YAML::Value << config.solver.mechanicalFrequencyHz
         << YAML::Key << "maximum_frequency_hz" << YAML::Value << config.solver.maximumMechanicalFrequencyHz
@@ -165,6 +192,8 @@ std::string YamlEngineSerializer::encode(const EngineConfig& config) const {
             << YAML::Key << "collector_diameter_mm" << YAML::Value << path.geometry.collectorDiameterMm
             << YAML::Key << "muffler_restriction" << YAML::Value << path.geometry.mufflerRestriction
             << YAML::Key << "outlet_diameter_mm" << YAML::Value << path.geometry.outletDiameterMm
+            << YAML::Key << "collector_volume_l" << YAML::Value << path.geometry.collectorVolumeLitres
+            << YAML::Key << "outlet_discharge_coefficient" << YAML::Value << path.geometry.outletDischargeCoefficient
             << YAML::EndMap << YAML::EndMap;
     out << YAML::EndSeq
         << YAML::Key << "firing_order" << YAML::Value << YAML::Flow << config.firingOrder
@@ -173,6 +202,7 @@ std::string YamlEngineSerializer::encode(const EngineConfig& config) const {
         << YAML::Key << "id" << YAML::Value << cylinder.id << YAML::Key << "bore_mm" << YAML::Value << cylinder.boreMm
         << YAML::Key << "stroke_mm" << YAML::Value << cylinder.strokeMm << YAML::Key << "connecting_rod_mm" << YAML::Value << cylinder.connectingRodMm
         << YAML::Key << "piston_mass_g" << YAML::Value << cylinder.pistonMassGrams << YAML::Key << "compression_ratio" << YAML::Value << cylinder.compressionRatio
+        << YAML::Key << "connecting_rod_mass_g" << YAML::Value << cylinder.connectingRodMassGrams
         << YAML::Key << "ignition_offset_deg" << YAML::Value << cylinder.ignitionOffsetDegrees << YAML::Key << "efficiency_offset" << YAML::Value << cylinder.efficiencyOffset
         << YAML::Key << "crank_offset_deg" << YAML::Value << cylinder.crankOffsetDegrees
         << YAML::Key << "crank_journal_id" << YAML::Value << cylinder.crankJournalId
@@ -183,6 +213,10 @@ std::string YamlEngineSerializer::encode(const EngineConfig& config) const {
         << YAML::Key << "exhaust_primary_length_mm" << YAML::Value << cylinder.exhaustPrimaryLengthMm
         << YAML::Key << "sound_attenuation" << YAML::Value << cylinder.soundAttenuation
         << YAML::Key << "blow_by_coefficient" << YAML::Value << cylinder.blowByCoefficient
+        << YAML::Key << "piston_friction_coefficient" << YAML::Value << cylinder.pistonFrictionCoefficient
+        << YAML::Key << "piston_breakaway_force_n" << YAML::Value << cylinder.pistonBreakawayForceN
+        << YAML::Key << "piston_breakaway_velocity_mps" << YAML::Value << cylinder.pistonBreakawayVelocityMps
+        << YAML::Key << "piston_viscous_friction_ns_per_m" << YAML::Value << cylinder.pistonViscousFrictionNsPerM
         << YAML::EndMap;
     out << YAML::EndSeq << YAML::EndMap << YAML::EndMap;
     return out.c_str();
@@ -204,6 +238,17 @@ EngineDecodeResult YamlEngineSerializer::decode(std::string_view text) const noe
         if (fuel == "gasoline") config.fuel = FuelType::gasoline;
         else if (fuel == "diesel") config.fuel = FuelType::diesel;
         else return { std::nullopt, "Unknown fuel type: " + fuel };
+        if (const auto properties = engine["fuel_properties"]) {
+            config.fuelProperties.name = properties["name"].as<std::string>(config.fuelProperties.name);
+            config.fuelProperties.lowerHeatingValueMjPerKg = properties["lower_heating_value_mj_per_kg"].as<double>(config.fuelProperties.lowerHeatingValueMjPerKg);
+            config.fuelProperties.densityKgPerL = properties["density_kg_per_l"].as<double>(config.fuelProperties.densityKgPerL);
+            config.fuelProperties.stoichiometricAirFuelRatio = properties["stoichiometric_afr"].as<double>(config.fuelProperties.stoichiometricAirFuelRatio);
+            config.fuelProperties.molarMassGramsPerMole = properties["molar_mass_g_per_mol"].as<double>(config.fuelProperties.molarMassGramsPerMole);
+            config.fuelProperties.oxygenMolesPerFuelMole = properties["oxygen_moles_per_fuel_mole"].as<double>(config.fuelProperties.oxygenMolesPerFuelMole);
+            config.fuelProperties.productMolesPerFuelMole = properties["product_moles_per_fuel_mole"].as<double>(config.fuelProperties.productMolesPerFuelMole);
+            config.fuelProperties.laminarFlameSpeedMps = properties["laminar_flame_speed_mps"].as<double>(config.fuelProperties.laminarFlameSpeedMps);
+            config.fuelProperties.turbulenceFlameSpeedGain = properties["turbulence_flame_speed_gain"].as<double>(config.fuelProperties.turbulenceFlameSpeedGain);
+        }
         const auto layout = engine["layout"] ? engine["layout"].as<std::string>() : "inline";
         if (layout == "inline") config.layout = EngineLayout::inlineLayout;
         else if (layout == "v") config.layout = EngineLayout::vLayout;
@@ -264,7 +309,8 @@ EngineDecodeResult YamlEngineSerializer::decode(std::string_view text) const noe
         if (const auto exhaust = engine["exhaust"]) config.exhaust = {
             exhaust["primary_length_mm"].as<double>(480.0), exhaust["primary_diameter_mm"].as<double>(42.0),
             exhaust["collector_diameter_mm"].as<double>(58.0), exhaust["muffler_restriction"].as<double>(0.28),
-            exhaust["outlet_diameter_mm"].as<double>(65.0) };
+            exhaust["outlet_diameter_mm"].as<double>(65.0), exhaust["collector_volume_l"].as<double>(2.0),
+            exhaust["outlet_discharge_coefficient"].as<double>(0.72) };
         if (const auto transmission = engine["transmission"]) {
             if (transmission["gear_ratios"]) config.transmission.gearRatios = transmission["gear_ratios"].as<std::vector<double>>();
             if (transmission["final_drive_ratio"]) config.transmission.finalDriveRatio = transmission["final_drive_ratio"].as<double>();
@@ -298,6 +344,29 @@ EngineDecodeResult YamlEngineSerializer::decode(std::string_view text) const noe
                 for (const auto& sample : ignition["timing_curve"])
                     config.ignition.timingCurve.push_back({ sample["rpm"].as<double>(), sample["advance_deg"].as<double>() });
             }
+        }
+        if (const auto injection = engine["injection"]) {
+            const auto mode = injection["mode"].as<std::string>("direct");
+            if (mode == "port") {
+                config.injection.mode = InjectionMode::port;
+                config.injection.railPressureBar = 4.0;
+                config.injection.referencePressureBar = 4.0;
+                config.injection.wallFilmFraction = 0.22;
+                config.injection.vaporisationTimeConstantSeconds = 0.040;
+            }
+            else if (mode == "direct") config.injection.mode = InjectionMode::direct;
+            else return { std::nullopt, "Unknown injection mode: " + mode };
+            config.injection.startAngleDegrees = injection["start_angle_deg"].as<double>(config.injection.startAngleDegrees);
+            config.injection.endAngleDegrees = injection["end_angle_deg"].as<double>(config.injection.endAngleDegrees);
+            config.injection.injectorFlowMgPerSecond = injection["injector_flow_mg_s"].as<double>(config.injection.injectorFlowMgPerSecond);
+            config.injection.fuelTemperatureC = injection["fuel_temperature_c"].as<double>(config.injection.fuelTemperatureC);
+            config.injection.railPressureBar = injection["rail_pressure_bar"].as<double>(config.injection.railPressureBar);
+            config.injection.referencePressureBar = injection["reference_pressure_bar"].as<double>(config.injection.referencePressureBar);
+            config.injection.wallFilmFraction = injection["wall_film_fraction"].as<double>(config.injection.wallFilmFraction);
+            config.injection.vaporisationTimeConstantSeconds = injection["vaporisation_time_constant_s"].as<double>(config.injection.vaporisationTimeConstantSeconds);
+            config.injection.latentHeatKjPerKg = injection["latent_heat_kj_per_kg"].as<double>(config.injection.latentHeatKjPerKg);
+            config.injection.directChargeCoolingEfficiency = injection["direct_charge_cooling_efficiency"].as<double>(config.injection.directChargeCoolingEfficiency);
+            config.injection.portChargeCoolingEfficiency = injection["port_charge_cooling_efficiency"].as<double>(config.injection.portChargeCoolingEfficiency);
         }
         if (const auto solver = engine["solver"]) {
             config.solver.mechanicalFrequencyHz = solver["mechanical_frequency_hz"].as<double>(config.solver.mechanicalFrequencyHz);
@@ -343,7 +412,8 @@ EngineDecodeResult YamlEngineSerializer::decode(std::string_view text) const noe
                 if (const auto geometry = item["geometry"]) path.geometry = {
                     geometry["primary_length_mm"].as<double>(480.0), geometry["primary_diameter_mm"].as<double>(42.0),
                     geometry["collector_diameter_mm"].as<double>(58.0), geometry["muffler_restriction"].as<double>(0.28),
-                    geometry["outlet_diameter_mm"].as<double>(65.0) };
+                    geometry["outlet_diameter_mm"].as<double>(65.0), geometry["collector_volume_l"].as<double>(2.0),
+                    geometry["outlet_discharge_coefficient"].as<double>(0.72) };
                 config.exhaustPaths.push_back(std::move(path));
             }
         }
@@ -365,6 +435,7 @@ EngineDecodeResult YamlEngineSerializer::decode(std::string_view text) const noe
                 item["connecting_rod_mm"].as<double>(), item["piston_mass_g"].as<double>(), item["compression_ratio"].as<double>(),
                 item["ignition_offset_deg"].as<double>(), item["efficiency_offset"].as<double>(), crankOffset };
             cylinder.crankJournalId = item["crank_journal_id"].as<std::uint32_t>(0);
+            cylinder.connectingRodMassGrams = item["connecting_rod_mass_g"].as<double>(cylinder.connectingRodMassGrams);
             cylinder.bankOffsetDegrees = item["bank_offset_deg"].as<double>(0.0);
             cylinder.bankId = item["bank_id"].as<std::uint32_t>(0);
             cylinder.intakeRunnerLengthMm = item["intake_runner_length_mm"].as<double>(cylinder.intakeRunnerLengthMm);
@@ -372,6 +443,10 @@ EngineDecodeResult YamlEngineSerializer::decode(std::string_view text) const noe
             cylinder.exhaustPrimaryLengthMm = item["exhaust_primary_length_mm"].as<double>(cylinder.exhaustPrimaryLengthMm);
             cylinder.soundAttenuation = item["sound_attenuation"].as<double>(cylinder.soundAttenuation);
             cylinder.blowByCoefficient = item["blow_by_coefficient"].as<double>(cylinder.blowByCoefficient);
+            cylinder.pistonFrictionCoefficient = item["piston_friction_coefficient"].as<double>(cylinder.pistonFrictionCoefficient);
+            cylinder.pistonBreakawayForceN = item["piston_breakaway_force_n"].as<double>(cylinder.pistonBreakawayForceN);
+            cylinder.pistonBreakawayVelocityMps = item["piston_breakaway_velocity_mps"].as<double>(cylinder.pistonBreakawayVelocityMps);
+            cylinder.pistonViscousFrictionNsPerM = item["piston_viscous_friction_ns_per_m"].as<double>(cylinder.pistonViscousFrictionNsPerM);
             config.cylinders.push_back(cylinder);
         }
         if (const auto error = validateEngineConfig(config)) return { std::nullopt, *error };

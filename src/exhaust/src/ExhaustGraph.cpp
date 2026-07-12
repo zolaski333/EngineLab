@@ -52,7 +52,8 @@ ExhaustGraph ExhaustGraph::makeForEngine(const EngineConfig& config) {
             ++connectedCylinders;
             graph.nodes_.push_back({ cylinder->id, ExhaustNodeType::pipe, length, primaryDiameter,
                                      restriction, 520'000.0 / std::max(200.0, 4.0 * length),
-                                     path.audioVolume * cylinder->soundAttenuation });
+                                     path.audioVolume * cylinder->soundAttenuation,
+                                     static_cast<std::uint32_t>(pathIndex) });
             graph.edges_.push_back({ cylinder->id, mergeId });
         }
         const auto meanPrimaryRestriction = primaryRestrictionSum / static_cast<double>(std::max<std::size_t>(1, connectedCylinders));
@@ -92,6 +93,7 @@ void ExhaustGraph::process(FiringEvent& event) const noexcept {
             return item.id == currentId;
         });
         if (node == nodes_.end()) break;
+        if (hop == 0) event.exhaustPathIndex = node->pathIndex;
         pathLengthMm += node->lengthMm;
         if (hop == 0) audioGain = node->audioGain;
         resonanceHz = std::max(resonanceHz, node->resonanceHz);

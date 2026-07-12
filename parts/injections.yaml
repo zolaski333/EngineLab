@@ -1,0 +1,51 @@
+sequential_port:
+  mode: port
+  start_angle_deg: 260
+  end_angle_deg: 610
+  injector_flow_mg_s: 8000
+  fuel_temperature_c: 25
+  rail_pressure_bar: 4.0
+  reference_pressure_bar: 4.0
+  wall_film_fraction: 0.22
+  vaporisation_time_constant_s: 0.040
+  latent_heat_kj_per_kg: 350
+  port_charge_cooling_efficiency: 0.28
+
+high_flow_port:
+  mode: port
+  start_angle_deg: 250
+  end_angle_deg: 620
+  injector_flow_mg_s: 12000
+  fuel_temperature_c: 25
+  rail_pressure_bar: 4.5
+  reference_pressure_bar: 4.5
+  wall_film_fraction: 0.16
+  vaporisation_time_constant_s: 0.026
+  latent_heat_kj_per_kg: 350
+  port_charge_cooling_efficiency: 0.32
+
+continuous_manifold:
+  mode: port
+  start_angle_deg: 0
+  end_angle_deg: 719
+  injector_flow_mg_s: 30000
+  fuel_temperature_c: 20
+  rail_pressure_bar: 2.0
+  reference_pressure_bar: 2.0
+  wall_film_fraction: 0.38
+  vaporisation_time_constant_s: 0.075
+  latent_heat_kj_per_kg: 350
+  port_charge_cooling_efficiency: 0.22
+
+direct_injection:
+  mode: direct
+  start_angle_deg: 570
+  end_angle_deg: 690
+  injector_flow_mg_s: 20000
+  fuel_temperature_c: 25
+  rail_pressure_bar: 200
+  reference_pressure_bar: 200
+  wall_film_fraction: 0.0
+  vaporisation_time_constant_s: 0.010
+  latent_heat_kj_per_kg: 350
+  direct_charge_cooling_efficiency: 0.82

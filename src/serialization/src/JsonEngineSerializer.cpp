@@ -6,6 +6,7 @@ namespace {
 using Json = nlohmann::json;
 [[nodiscard]] std::string cycleName(EngineCycle value) { return value == EngineCycle::fourStroke ? "four_stroke" : "two_stroke"; }
 [[nodiscard]] std::string fuelName(FuelType value) { return value == FuelType::gasoline ? "gasoline" : "diesel"; }
+[[nodiscard]] std::string injectionModeName(InjectionMode value) { return value == InjectionMode::port ? "port" : "direct"; }
 [[nodiscard]] std::string layoutName(EngineLayout value) {
     switch (value) {
     case EngineLayout::inlineLayout: return "inline";
@@ -77,13 +78,18 @@ std::string JsonEngineSerializer::encode(const EngineConfig& config) const {
     for (const auto& cylinder : config.cylinders) cylinders.push_back({
         {"id", cylinder.id}, {"bore_mm", cylinder.boreMm}, {"stroke_mm", cylinder.strokeMm},
         {"connecting_rod_mm", cylinder.connectingRodMm}, {"piston_mass_g", cylinder.pistonMassGrams},
+        {"connecting_rod_mass_g", cylinder.connectingRodMassGrams},
         {"compression_ratio", cylinder.compressionRatio}, {"ignition_offset_deg", cylinder.ignitionOffsetDegrees},
         {"efficiency_offset", cylinder.efficiencyOffset}, {"crank_offset_deg", cylinder.crankOffsetDegrees},
         {"crank_journal_id", cylinder.crankJournalId}, {"bank_offset_deg", cylinder.bankOffsetDegrees},
         {"bank_id", cylinder.bankId}, {"intake_runner_length_mm", cylinder.intakeRunnerLengthMm},
         {"intake_runner_diameter_mm", cylinder.intakeRunnerDiameterMm},
         {"exhaust_primary_length_mm", cylinder.exhaustPrimaryLengthMm},
-        {"sound_attenuation", cylinder.soundAttenuation}, {"blow_by_coefficient", cylinder.blowByCoefficient} });
+        {"sound_attenuation", cylinder.soundAttenuation}, {"blow_by_coefficient", cylinder.blowByCoefficient},
+        {"piston_friction_coefficient", cylinder.pistonFrictionCoefficient},
+        {"piston_breakaway_force_n", cylinder.pistonBreakawayForceN},
+        {"piston_breakaway_velocity_mps", cylinder.pistonBreakawayVelocityMps},
+        {"piston_viscous_friction_ns_per_m", cylinder.pistonViscousFrictionNsPerM} });
     Json crankJournals = Json::array();
     for (const auto& journal : config.crankJournals) crankJournals.push_back({
         {"id", journal.id}, {"angle_deg", journal.angleDegrees}, {"throw_mm", journal.throwMm} });
@@ -96,12 +102,23 @@ std::string JsonEngineSerializer::encode(const EngineConfig& config) const {
         {"cylinder_ids", path.cylinderIds}, {"impulse_response", path.impulseResponsePath},
         {"audio_volume", path.audioVolume}, {"geometry", {{"primary_length_mm", path.geometry.primaryLengthMm},
             {"primary_diameter_mm", path.geometry.primaryDiameterMm}, {"collector_diameter_mm", path.geometry.collectorDiameterMm},
-            {"muffler_restriction", path.geometry.mufflerRestriction}, {"outlet_diameter_mm", path.geometry.outletDiameterMm}}} });
+            {"muffler_restriction", path.geometry.mufflerRestriction}, {"outlet_diameter_mm", path.geometry.outletDiameterMm},
+            {"collector_volume_l", path.geometry.collectorVolumeLitres},
+            {"outlet_discharge_coefficient", path.geometry.outletDischargeCoefficient}}} });
     Json timingCurve = Json::array();
     for (const auto& sample : config.ignition.timingCurve)
         timingCurve.push_back({ {"rpm", sample.rpm}, {"advance_deg", sample.advanceDegrees} });
     Json document = { {"schema_version", config.schemaVersion}, {"engine", {
         {"name", config.name}, {"cycle", cycleName(config.cycle)}, {"fuel", fuelName(config.fuel)},
+        {"fuel_properties", {{"name", config.fuelProperties.name},
+                             {"lower_heating_value_mj_per_kg", config.fuelProperties.lowerHeatingValueMjPerKg},
+                             {"density_kg_per_l", config.fuelProperties.densityKgPerL},
+                             {"stoichiometric_afr", config.fuelProperties.stoichiometricAirFuelRatio},
+                             {"molar_mass_g_per_mol", config.fuelProperties.molarMassGramsPerMole},
+                             {"oxygen_moles_per_fuel_mole", config.fuelProperties.oxygenMolesPerFuelMole},
+                             {"product_moles_per_fuel_mole", config.fuelProperties.productMolesPerFuelMole},
+                             {"laminar_flame_speed_mps", config.fuelProperties.laminarFlameSpeedMps},
+                             {"turbulence_flame_speed_gain", config.fuelProperties.turbulenceFlameSpeedGain}}},
         {"layout", layoutName(config.layout)},
         {"cylinders", cylinders}, {"firing_order", config.firingOrder}, {"idle_rpm", config.idleRpm},
         {"redline_rpm", config.redlineRpm}, {"rotating_inertia_kg_m2", config.rotatingInertiaKgM2},
@@ -130,7 +147,19 @@ std::string JsonEngineSerializer::encode(const EngineConfig& config) const {
                      {"idle_bypass_area_mm2", config.intake.idleBypassAreaMm2}, {"throttle_gamma", config.intake.throttleGamma}}},
         {"banks", banks}, {"exhaust_paths", exhaustPaths},
         {"ignition", {{"rev_limit_rpm", config.ignition.revLimitRpm},
-                       {"limiter_duration_s", config.ignition.limiterDurationSeconds}, {"timing_curve", timingCurve}}},
+                        {"limiter_duration_s", config.ignition.limiterDurationSeconds}, {"timing_curve", timingCurve}}},
+        {"injection", {{"mode", injectionModeName(config.injection.mode)},
+                        {"start_angle_deg", config.injection.startAngleDegrees},
+                        {"end_angle_deg", config.injection.endAngleDegrees},
+                        {"injector_flow_mg_s", config.injection.injectorFlowMgPerSecond},
+                        {"fuel_temperature_c", config.injection.fuelTemperatureC},
+                        {"rail_pressure_bar", config.injection.railPressureBar},
+                        {"reference_pressure_bar", config.injection.referencePressureBar},
+                        {"wall_film_fraction", config.injection.wallFilmFraction},
+                        {"vaporisation_time_constant_s", config.injection.vaporisationTimeConstantSeconds},
+                        {"latent_heat_kj_per_kg", config.injection.latentHeatKjPerKg},
+                        {"direct_charge_cooling_efficiency", config.injection.directChargeCoolingEfficiency},
+                        {"port_charge_cooling_efficiency", config.injection.portChargeCoolingEfficiency}}},
         {"solver", {{"mechanical_frequency_hz", config.solver.mechanicalFrequencyHz},
                      {"maximum_frequency_hz", config.solver.maximumMechanicalFrequencyHz},
                      {"maximum_crank_deg_per_step", config.solver.maximumCrankDegreesPerStep},
@@ -140,7 +169,9 @@ std::string JsonEngineSerializer::encode(const EngineConfig& config) const {
                       {"primary_diameter_mm", config.exhaust.primaryDiameterMm},
                       {"collector_diameter_mm", config.exhaust.collectorDiameterMm},
                       {"muffler_restriction", config.exhaust.mufflerRestriction},
-                      {"outlet_diameter_mm", config.exhaust.outletDiameterMm}}},
+                      {"outlet_diameter_mm", config.exhaust.outletDiameterMm},
+                      {"collector_volume_l", config.exhaust.collectorVolumeLitres},
+                      {"outlet_discharge_coefficient", config.exhaust.outletDischargeCoefficient}}},
         {"transmission", {{"gear_ratios", config.transmission.gearRatios},
                            {"final_drive_ratio", config.transmission.finalDriveRatio},
                            {"max_clutch_torque_nm", config.transmission.maxClutchTorqueNm}}},
@@ -168,6 +199,26 @@ EngineDecodeResult JsonEngineSerializer::decode(std::string_view text) const noe
         if (fuel == "gasoline") config.fuel = FuelType::gasoline;
         else if (fuel == "diesel") config.fuel = FuelType::diesel;
         else return { std::nullopt, "Unknown fuel type: " + fuel };
+        if (engine.contains("fuel_properties")) {
+            const auto& properties = engine.at("fuel_properties");
+            config.fuelProperties.name = properties.value("name", config.fuelProperties.name);
+            config.fuelProperties.lowerHeatingValueMjPerKg = properties.value(
+                "lower_heating_value_mj_per_kg", config.fuelProperties.lowerHeatingValueMjPerKg);
+            config.fuelProperties.densityKgPerL = properties.value(
+                "density_kg_per_l", config.fuelProperties.densityKgPerL);
+            config.fuelProperties.stoichiometricAirFuelRatio = properties.value(
+                "stoichiometric_afr", config.fuelProperties.stoichiometricAirFuelRatio);
+            config.fuelProperties.molarMassGramsPerMole = properties.value(
+                "molar_mass_g_per_mol", config.fuelProperties.molarMassGramsPerMole);
+            config.fuelProperties.oxygenMolesPerFuelMole = properties.value(
+                "oxygen_moles_per_fuel_mole", config.fuelProperties.oxygenMolesPerFuelMole);
+            config.fuelProperties.productMolesPerFuelMole = properties.value(
+                "product_moles_per_fuel_mole", config.fuelProperties.productMolesPerFuelMole);
+            config.fuelProperties.laminarFlameSpeedMps = properties.value(
+                "laminar_flame_speed_mps", config.fuelProperties.laminarFlameSpeedMps);
+            config.fuelProperties.turbulenceFlameSpeedGain = properties.value(
+                "turbulence_flame_speed_gain", config.fuelProperties.turbulenceFlameSpeedGain);
+        }
         const auto layout = engine.value("layout", "inline");
         if (layout == "inline") config.layout = EngineLayout::inlineLayout;
         else if (layout == "v") config.layout = EngineLayout::vLayout;
@@ -228,7 +279,8 @@ EngineDecodeResult JsonEngineSerializer::decode(std::string_view text) const noe
             const auto& exhaust = engine.at("exhaust");
             config.exhaust = { exhaust.value("primary_length_mm", 480.0), exhaust.value("primary_diameter_mm", 42.0),
                 exhaust.value("collector_diameter_mm", 58.0), exhaust.value("muffler_restriction", 0.28),
-                exhaust.value("outlet_diameter_mm", 65.0) };
+                exhaust.value("outlet_diameter_mm", 65.0), exhaust.value("collector_volume_l", 2.0),
+                exhaust.value("outlet_discharge_coefficient", 0.72) };
         }
         if (engine.contains("transmission")) {
             const auto& transmission = engine.at("transmission");
@@ -255,6 +307,30 @@ EngineDecodeResult JsonEngineSerializer::decode(std::string_view text) const noe
                     config.ignition.timingCurve.push_back({ sample.at("rpm"), sample.at("advance_deg") });
             }
         } else config.ignition.revLimitRpm = config.redlineRpm;
+        if (engine.contains("injection")) {
+            const auto& injection = engine.at("injection");
+            const auto mode = injection.value("mode", std::string { "direct" });
+            if (mode == "port") {
+                config.injection.mode = InjectionMode::port;
+                config.injection.railPressureBar = 4.0;
+                config.injection.referencePressureBar = 4.0;
+                config.injection.wallFilmFraction = 0.22;
+                config.injection.vaporisationTimeConstantSeconds = 0.040;
+            }
+            else if (mode == "direct") config.injection.mode = InjectionMode::direct;
+            else return { std::nullopt, "Unknown injection mode: " + mode };
+            config.injection.startAngleDegrees = injection.value("start_angle_deg", config.injection.startAngleDegrees);
+            config.injection.endAngleDegrees = injection.value("end_angle_deg", config.injection.endAngleDegrees);
+            config.injection.injectorFlowMgPerSecond = injection.value("injector_flow_mg_s", config.injection.injectorFlowMgPerSecond);
+            config.injection.fuelTemperatureC = injection.value("fuel_temperature_c", config.injection.fuelTemperatureC);
+            config.injection.railPressureBar = injection.value("rail_pressure_bar", config.injection.railPressureBar);
+            config.injection.referencePressureBar = injection.value("reference_pressure_bar", config.injection.referencePressureBar);
+            config.injection.wallFilmFraction = injection.value("wall_film_fraction", config.injection.wallFilmFraction);
+            config.injection.vaporisationTimeConstantSeconds = injection.value("vaporisation_time_constant_s", config.injection.vaporisationTimeConstantSeconds);
+            config.injection.latentHeatKjPerKg = injection.value("latent_heat_kj_per_kg", config.injection.latentHeatKjPerKg);
+            config.injection.directChargeCoolingEfficiency = injection.value("direct_charge_cooling_efficiency", config.injection.directChargeCoolingEfficiency);
+            config.injection.portChargeCoolingEfficiency = injection.value("port_charge_cooling_efficiency", config.injection.portChargeCoolingEfficiency);
+        }
         if (engine.contains("solver")) {
             const auto& solver = engine.at("solver");
             config.solver.mechanicalFrequencyHz = solver.value("mechanical_frequency_hz", config.solver.mechanicalFrequencyHz);
@@ -288,6 +364,8 @@ EngineDecodeResult JsonEngineSerializer::decode(std::string_view text) const noe
                     path.geometry.collectorDiameterMm = geometry.value("collector_diameter_mm", path.geometry.collectorDiameterMm);
                     path.geometry.mufflerRestriction = geometry.value("muffler_restriction", path.geometry.mufflerRestriction);
                     path.geometry.outletDiameterMm = geometry.value("outlet_diameter_mm", path.geometry.outletDiameterMm);
+                    path.geometry.collectorVolumeLitres = geometry.value("collector_volume_l", path.geometry.collectorVolumeLitres);
+                    path.geometry.outletDischargeCoefficient = geometry.value("outlet_discharge_coefficient", path.geometry.outletDischargeCoefficient);
                 }
                 config.exhaustPaths.push_back(std::move(path));
             }
@@ -309,6 +387,7 @@ EngineDecodeResult JsonEngineSerializer::decode(std::string_view text) const noe
                 item.at("piston_mass_g"), item.at("compression_ratio"), item.at("ignition_offset_deg"),
                 item.at("efficiency_offset"), crankOffset };
             cylinder.crankJournalId = item.value("crank_journal_id", std::uint32_t { 0 });
+            cylinder.connectingRodMassGrams = item.value("connecting_rod_mass_g", cylinder.connectingRodMassGrams);
             cylinder.bankOffsetDegrees = item.value("bank_offset_deg", 0.0);
             cylinder.bankId = item.value("bank_id", std::uint32_t { 0 });
             cylinder.intakeRunnerLengthMm = item.value("intake_runner_length_mm", cylinder.intakeRunnerLengthMm);
@@ -316,6 +395,10 @@ EngineDecodeResult JsonEngineSerializer::decode(std::string_view text) const noe
             cylinder.exhaustPrimaryLengthMm = item.value("exhaust_primary_length_mm", cylinder.exhaustPrimaryLengthMm);
             cylinder.soundAttenuation = item.value("sound_attenuation", cylinder.soundAttenuation);
             cylinder.blowByCoefficient = item.value("blow_by_coefficient", cylinder.blowByCoefficient);
+            cylinder.pistonFrictionCoefficient = item.value("piston_friction_coefficient", cylinder.pistonFrictionCoefficient);
+            cylinder.pistonBreakawayForceN = item.value("piston_breakaway_force_n", cylinder.pistonBreakawayForceN);
+            cylinder.pistonBreakawayVelocityMps = item.value("piston_breakaway_velocity_mps", cylinder.pistonBreakawayVelocityMps);
+            cylinder.pistonViscousFrictionNsPerM = item.value("piston_viscous_friction_ns_per_m", cylinder.pistonViscousFrictionNsPerM);
             config.cylinders.push_back(cylinder);
         }
         if (const auto error = validateEngineConfig(config)) return { std::nullopt, *error };

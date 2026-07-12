@@ -13,56 +13,61 @@ foundation
       simulation
           │
           ▼
-        runtime ──SPSC + atomiques──► audio (JUCE)
-          │                 │
-          └──── snapshot ───┴──► app/UI (JUCE)
+        runtime ── SPSC + atomiques ──► audio (JUCE + JUCE DSP)
+          │                                  │
+          └──────────── snapshot ────────────┴──► app/UI (JUCE)
 
 foundation ──► diagnostics
 foundation ──► serialization (JSON/YAML)
 ```
 
-Les flèches indiquent les dépendances de compilation. `foundation` à
-`simulation` sont du C++ standard. JUCE est confiné à `audio` et `app`.
+JUCE reste confiné à `audio` et `app`. Les lois de gaz, de flamme, d'injection,
+de frottement, d'ECU et de simulation restent en C++ standard testable.
 
-## Modules
+## Responsabilités
 
-| Cible | Responsabilité | Interdit |
-|---|---|---|
-| `EngineLabFoundation` | types, configuration, file SPSC | JUCE, UI |
-| `EngineLabEvents` | timing et payloads d'allumage | audio, thread |
-| `EngineLabPhysics` | volumes gazeux conservatifs, combustion et contraintes | horloge, UI |
-| `EngineLabEcu` | commandes carburant/allumage | audio |
-| `EngineLabExhaust` | graphe et contre-pression | rendu UI |
-| `EngineLabSimulation` | intégration de l'état | création de thread |
-| `EngineLabRuntime` | thread temps réel, solveur adaptatif, transmission, snapshots | DSP |
-| `EngineLabAudio` | consommation RT et synthèse | verrou, allocation |
-| `EngineLabSerialization` | codecs versionnés JSON/YAML | état live |
-| `EngineLabDiagnostics` | explications utilisateur | callback audio |
-| `EngineLabApp` | composition et rendu desktop 2D | lois moteur |
+| Cible | Responsabilité |
+|---|---|
+| `EngineLabFoundation` | Types, configuration, télémétrie, file SPSC |
+| `EngineLabPhysics` | Gaz conservatif, propagation de flamme, injection, politique essence |
+| `EngineLabEvents` | Timing et payloads d'allumage |
+| `EngineLabEcu` | Commandes carburant/allumage et limiteur |
+| `EngineLabExhaust` | Topologie, contre-pression, délai/résonance et routage audio |
+| `EngineLabSimulation` | Intégration mécanique, gaz, combustion et thermique |
+| `EngineLabRuntime` | Thread 240 Hz, transmission, banc, snapshots et pont audio |
+| `EngineLabAudio` | Voix temps réel, conditionnement et convolution par chemin |
+| `EngineLabSerialization` | Codecs JSON/YAML versionnés |
+| `EngineLabCatalog` | Presets et parts réutilisables |
+| `EngineLabDiagnostics` | Règles explicatives utilisateur |
+| `EngineLabApp` | Composition, fichiers audio et rendu desktop |
 
-## Extension 2T et diesel
+## Contrats physiques
 
-Le type `EngineCycle` annonce les formats possibles, mais le modèle initial
-refuse explicitement autre chose que `fourStroke + gasoline`. Un 2T ajoutera un
-`TwoStrokeEventGenerator` (cycle 360°) et sa physique. Un diesel ajoutera une
-physique de combustion et un modèle ECU adaptés. Le runtime et l'audio
-continueront à consommer le même `FiringEvent`.
+- `GasCell` possède les espèces, l'énergie interne, le volume et le momentum
+  2D. `ConservativeGasSystem` est seul responsable des transferts.
+- `FlamePhysicsModel` transforme des conditions thermodynamiques en avancement
+  de front sans connaître l'horloge, l'UI ou l'audio.
+- `FuelInjectionModel` transforme une commande en carburant mesuré/vaporisé et
+  refroidissement de charge ; son film liquide est un état par cylindre.
+- `EngineSimulator` orchestre ces modèles et utilise la pression cylindre comme
+  source de couple. Il ne crée aucun thread.
+- `EngineRuntime` est l'unique propriétaire du thread de simulation.
+- `FiringEvent` est l'unique payload événementiel vers l'audio ; les grandeurs
+  continues utilisent des atomiques lock-free.
+- `RealtimeConvolutionBank` alloue et prépare hors callback, puis ne fait que du
+  traitement borné dans le callback.
 
-## Composition
+## Configuration
 
-`EngineRuntime` est la racine de composition actuelle : il construit les
-stratégies concrètes et les injecte dans `EngineSimulator`. Quand plusieurs
-familles seront disponibles, une fabrique sélectionnera cette composition à
-partir du fichier moteur sans déplacer cette décision dans l'UI.
+YAML et JSON restent les formats canoniques. Les nouveaux paramètres de rail,
+film, vaporisation, chaleur latente, refroidissement DI/port et friction
+Stribeck sont sérialisés et validés. Les anciens fichiers port-injection sans
+ces champs reçoivent des valeurs physiques rétrocompatibles ; aucune branche
+spécifique à un moteur n'est ajoutée au solveur.
 
-## Données
+## Extensions futures
 
-`EngineConfig` est une donnée de conception, chargée hors temps réel et validée
-avant la création du runtime. Elle décrit aussi l'admission, les banques, les
-chemins d'échappement, les profils variables, l'allumage et les limites du
-solveur. `RealtimeAudioState` ne contient que des valeurs atomiques triviales ;
-il transporte les couches continues sans donner au callback accès au snapshot
-verrouillé de l'UI.
-`EngineControls` contient les commandes utilisateur. `EngineState` est le
-snapshot observable. `FiringEvent` est petit, trivialement copiable et constitue
-le contrat stable entre simulation, audio, échappement et visualisations.
+Un moteur deux temps, diesel, une cinématique de bielle maîtresse ou un réseau
+acoustique 1D doivent arriver sous forme de nouveaux modèles explicites. Ils ne
+doivent pas contourner les contrats de conservation, le pont SPSC ou la
+validation de configuration.

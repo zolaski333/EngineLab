@@ -61,6 +61,17 @@ constexpr std::array<std::uint32_t, 8> curveColours {
     (void)config;
     return cylinder.crankOffsetDegrees;
 }
+
+[[nodiscard]] double mechanicalCrankOffsetDegreesFor(const EngineConfig& config,
+                                                      const CylinderConfig& cylinder) noexcept {
+    if (config.layout == EngineLayout::radial) return cylinder.bankOffsetDegrees;
+    if (cylinder.crankJournalId != 0) {
+        const auto journal = std::find_if(config.crankJournals.begin(), config.crankJournals.end(),
+            [&cylinder](const CrankJournalConfig& item) { return item.id == cylinder.crankJournalId; });
+        if (journal != config.crankJournals.end()) return journal->angleDegrees;
+    }
+    return cylinder.crankOffsetDegrees;
+}
 }
 
 MainComponent::MainComponent() {
@@ -188,36 +199,59 @@ void MainComponent::applyConfig(const EngineConfig& newConfig) {
 
 void MainComponent::configureImpulseResponse() {
     if (!audio_) return;
-    const auto path = std::find_if(config_.exhaustPaths.begin(), config_.exhaustPaths.end(),
-        [](const ExhaustPathConfig& item) { return !item.impulseResponsePath.empty(); });
-    if (path == config_.exhaustPaths.end()) return;
-    const auto configuredPath = juce::String::fromUTF8(path->impulseResponsePath.c_str());
-    auto file = juce::File::isAbsolutePath(configuredPath)
-        ? juce::File(configuredPath)
-        : juce::File(juce::String(catalogRoot_.string())).getChildFile(configuredPath);
-    if (!file.existsAsFile()) return;
     juce::AudioFormatManager formats;
     formats.registerBasicFormats();
-    std::unique_ptr<juce::AudioFormatReader> reader(formats.createReaderFor(file));
-    if (!reader) return;
-    constexpr int maximumIrSamples = 512;
-    const auto count = static_cast<int>(std::min<juce::int64>(reader->lengthInSamples, maximumIrSamples));
-    if (count <= 0) return;
-    juce::AudioBuffer<float> decoded(std::max(1, static_cast<int>(reader->numChannels)), count);
-    if (!reader->read(&decoded, 0, count, 0, true, true)) return;
-    std::array<float, maximumIrSamples> mono {};
-    float peak = 0.0F;
-    for (int sample = 0; sample < count; ++sample) {
-        float value = 0.0F;
-        for (int channel = 0; channel < decoded.getNumChannels(); ++channel)
-            value += decoded.getSample(channel, sample);
-        value /= static_cast<float>(decoded.getNumChannels());
-        mono[static_cast<std::size_t>(sample)] = value;
-        peak = std::max(peak, std::abs(value));
+    constexpr juce::int64 maximumIrSamples = 262'144;
+    const auto pathCount = std::min(config_.exhaustPaths.size(),
+                                    RealtimeConvolutionBank::maximumPaths);
+    for (std::size_t pathIndex = 0; pathIndex < pathCount; ++pathIndex) {
+        const auto& path = config_.exhaustPaths[pathIndex];
+        if (!path.impulseResponsePath.empty()) {
+            const auto configuredPath = juce::String::fromUTF8(path.impulseResponsePath.c_str());
+            auto file = juce::File::isAbsolutePath(configuredPath)
+                ? juce::File(configuredPath)
+                : juce::File(juce::String(catalogRoot_.string())).getChildFile(configuredPath);
+            if (file.existsAsFile()) {
+                std::unique_ptr<juce::AudioFormatReader> reader(formats.createReaderFor(file));
+                if (reader) {
+                    const auto count = static_cast<int>(std::min(reader->lengthInSamples, maximumIrSamples));
+                    if (count > 0) {
+                        juce::AudioBuffer<float> decoded(std::clamp(static_cast<int>(reader->numChannels), 1, 2), count);
+                        if (reader->read(&decoded, 0, count, 0, true, true)) {
+                            audio_->setImpulseResponse(std::move(decoded), reader->sampleRate, pathIndex);
+                            continue;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Asset-free fallback: derive a deterministic path-specific IR from
+        // the configured primary, collector and muffler geometry.
+        constexpr double generatedSampleRate = 48'000.0;
+        constexpr int generatedSamples = 4'096;
+        juce::AudioBuffer<float> generated(1, generatedSamples);
+        generated.clear();
+        generated.setSample(0, 0, 0.72F);
+        const auto pathDelay = std::clamp(static_cast<int>(generatedSampleRate
+            * path.geometry.primaryLengthMm / 520'000.0), 8, 1'200);
+        const auto resonanceHz = std::clamp(520'000.0
+            / std::max(200.0, 4.0 * path.geometry.primaryLengthMm), 45.0, 1'800.0);
+        const auto reflection = std::clamp(0.18 + path.geometry.mufflerRestriction * 0.48
+            + (58.0 / path.geometry.collectorDiameterMm - 1.0) * 0.12, 0.08, 0.78);
+        for (int sample = 1; sample < generatedSamples; ++sample) {
+            const auto time = static_cast<double>(sample) / generatedSampleRate;
+            const auto body = std::sin(2.0 * std::numbers::pi * resonanceHz * time)
+                * std::exp(-time * (32.0 + path.geometry.mufflerRestriction * 75.0)) * 0.10;
+            generated.addSample(0, sample, static_cast<float>(body));
+        }
+        for (int echo = 1; echo <= 3; ++echo) {
+            const auto sample = pathDelay * echo;
+            if (sample < generatedSamples)
+                generated.addSample(0, sample, static_cast<float>(std::pow(reflection, echo) * 0.42));
+        }
+        audio_->setImpulseResponse(std::move(generated), generatedSampleRate, pathIndex);
     }
-    const auto gain = peak > 1.0e-5F ? 0.9F / peak : 1.0F;
-    for (int sample = 0; sample < count; ++sample) mono[static_cast<std::size_t>(sample)] *= gain;
-    audio_->setImpulseResponse(std::span<const float>(mono.data(), static_cast<std::size_t>(count)));
 }
 
 void MainComponent::showError(const juce::String& title, const juce::String& message) {
@@ -877,14 +911,24 @@ void MainComponent::drawDebugPanel(juce::Graphics& g, juce::Rectangle<float> are
     double maxPressure = 0.0;
     double intakeLift = 0.0;
     double exhaustLift = 0.0;
+    double flameSpeed = 0.0;
+    double burnedFraction = 0.0;
+    double fuelDelivery = 0.0;
     for (std::size_t index = 0; index < cylCount; ++index) {
         maxPressure = std::max(maxPressure, visibleState_.cylinderStates[index].pressureEstimateBar);
         intakeLift = std::max(intakeLift, visibleState_.cylinderStates[index].intakeValveLiftMm);
         exhaustLift = std::max(exhaustLift, visibleState_.cylinderStates[index].exhaustValveLiftMm);
+        flameSpeed = std::max(flameSpeed, visibleState_.cylinderStates[index].flameSpeedMps);
+        burnedFraction = std::max(burnedFraction, visibleState_.cylinderStates[index].burnedFraction);
+        fuelDelivery += visibleState_.cylinderStates[index].fuelDeliveryRatio;
     }
-    const std::array<juce::String, 24> values {
+    fuelDelivery /= static_cast<double>(cylCount);
+    const std::array<juce::String, 35> values {
         "Net torque       " + juce::String(visibleState_.netTorqueNm, 2),
         "Indicated torque " + juce::String(visibleState_.indicatedTorqueNm, 2),
+        "Mean-work torque " + juce::String(visibleState_.meanWorkTorqueNm, 2),
+        "Pressure torque  " + juce::String(visibleState_.cylinderPressureTorqueNm, 2),
+        "Pressure active  " + juce::String(visibleState_.cylinderPressureTorqueBlend > 0.5 ? "YES" : "startup"),
         "Friction torque  " + juce::String(visibleState_.frictionTorqueNm, 2),
         "Recip torque     " + juce::String(visibleState_.reciprocatingTorqueNm, 2),
         "Load torque      " + juce::String(visibleState_.loadTorqueNm, 2),
@@ -895,14 +939,22 @@ void MainComponent::drawDebugPanel(juce::Graphics& g, juce::Rectangle<float> are
         "Exhaust flow     " + juce::String(visibleState_.exhaustFlowGramsPerSecond, 4),
         "Air mass/cycle   " + juce::String(visibleState_.airMassMgPerCycle, 3),
         "Fuel mg/cycle    " + juce::String(visibleState_.injectedFuelMgPerCycle, 4),
+        "Fuel consumed g  " + juce::String(visibleState_.fuelConsumedGrams, 3),
+        "Fuel consumed L  " + juce::String(visibleState_.fuelConsumedLitres, 5),
+        "Consumption      " + juce::String(visibleState_.fuelEconomyLitresPer100Km, 2) + " L/100",
         "Gas manifold g   " + juce::String(visibleState_.manifoldGasMassGrams, 4),
         "Gas cylinders g  " + juce::String(visibleState_.cylinderGasMassGrams, 4),
         "Gas energy J     " + juce::String(visibleState_.gasInternalEnergyJoules, 1),
         "Boost ratio      " + juce::String(visibleState_.boostPressureRatio, 3),
         "Solver Hz/steps  " + juce::String(visibleState_.solverFrequencyHz, 0) + " / " + juce::String(visibleState_.solverSubsteps),
+        "Crank step deg   " + juce::String(visibleState_.crankDegreesPerSolverStep, 3),
+        "Solver limited   " + juce::String(visibleState_.solverResolutionLimited ? "YES" : "no"),
         "Max cyl pressure " + juce::String(maxPressure, 3),
         "Intake lift max  " + juce::String(intakeLift, 3),
         "Exhaust lift max " + juce::String(exhaustLift, 3),
+        "Flame speed m/s  " + juce::String(flameSpeed, 3),
+        "Burned fraction  " + juce::String(burnedFraction * 100.0, 1) + " %",
+        "Fuel delivery    " + juce::String(fuelDelivery * 100.0, 1) + " %",
         "Damage/wear      " + juce::String(visibleState_.damage, 4) + " / " + juce::String(visibleState_.wear, 4),
         "SPSC drops       " + juce::String(runtime_ ? runtime_->droppedEventCount() : 0),
         "Runtime overruns " + juce::String(runtime_ ? runtime_->timingOverrunCount() : 0),
@@ -993,22 +1045,24 @@ void MainComponent::drawEngine(juce::Graphics& g, juce::Rectangle<float> area) c
 
         for (int index = 0; index < count; ++index) {
             const auto& cylinder = config_.cylinders[static_cast<std::size_t>(index)];
-            const auto phase = std::fmod(visibleState_.crankAngleDegrees - crankOffsetDegreesFor(config_, cylinder) + 720.0, 720.0);
-            const auto pistonAngle = phase / 720.0 * std::numbers::pi * 4.0;
+            const auto mechanicalPhase = std::fmod(visibleState_.crankAngleDegrees
+                - mechanicalCrankOffsetDegreesFor(config_, cylinder) + 720.0, 360.0);
+            const auto pistonAngle = mechanicalPhase * std::numbers::pi / 180.0;
             const auto crankRadius = crankThrowMmFor(config_, cylinder);
             const auto rodLength = std::max(cylinder.connectingRodMm, crankRadius + 0.1);
             const auto sliderTravel = crankRadius * (1.0 - std::cos(pistonAngle)) + rodLength
                 - std::sqrt(std::max(0.0, rodLength * rodLength
                     - crankRadius * crankRadius * std::sin(pistonAngle) * std::sin(pistonAngle)));
             const auto travel = static_cast<float>(std::clamp(sliderTravel / cylinder.strokeMm, 0.0, 1.0));
-            const auto angle = -std::numbers::pi * 0.5 + static_cast<double>(index) / static_cast<double>(count)
-                * std::numbers::pi * 2.0;
+            const auto angle = -std::numbers::pi * 0.5
+                + cylinder.bankOffsetDegrees * std::numbers::pi / 180.0;
             const auto unitX = static_cast<float>(std::cos(angle));
             const auto unitY = static_cast<float>(std::sin(angle));
             const auto pistonCenterX = center.x + unitX * (radius + travel * strokeTravel);
             const auto pistonCenterY = center.y + unitY * (radius + travel * strokeTravel);
-            const auto crankPinX = center.x + static_cast<float>(std::cos(pistonAngle)) * diameter * 0.060F;
-            const auto crankPinY = center.y + static_cast<float>(std::sin(pistonAngle)) * diameter * 0.060F;
+            const auto sharedCrankAngle = visibleState_.crankAngleDegrees * std::numbers::pi / 180.0;
+            const auto crankPinX = center.x + static_cast<float>(std::cos(sharedCrankAngle)) * diameter * 0.060F;
+            const auto crankPinY = center.y + static_cast<float>(std::sin(sharedCrankAngle)) * diameter * 0.060F;
             const auto* liveCylinder = static_cast<std::size_t>(index) < visibleState_.cylinderStateCount
                 ? &visibleState_.cylinderStates[static_cast<std::size_t>(index)] : nullptr;
             if (showFlow && liveCylinder != nullptr) {
@@ -1103,8 +1157,11 @@ void MainComponent::drawEngine(juce::Graphics& g, juce::Rectangle<float> area) c
                 break;
             }
         }
-        const auto phase = std::fmod(visibleState_.crankAngleDegrees - crankOffsetDegreesFor(config_, cylinder) + 720.0, 720.0);
-        const auto pistonAngle = phase / 720.0 * std::numbers::pi * 4.0;
+        const auto phase = std::fmod(visibleState_.crankAngleDegrees
+            - crankOffsetDegreesFor(config_, cylinder) + 720.0, 720.0);
+        const auto mechanicalPhase = std::fmod(visibleState_.crankAngleDegrees
+            - mechanicalCrankOffsetDegreesFor(config_, cylinder) + 720.0, 360.0);
+        const auto pistonAngle = mechanicalPhase * std::numbers::pi / 180.0;
         const auto crankRadius = crankThrowMmFor(config_, cylinder);
         const auto rodLength = std::max(cylinder.connectingRodMm, crankRadius + 0.1);
         const auto sliderTravel = crankRadius * (1.0 - std::cos(pistonAngle)) + rodLength
@@ -1127,10 +1184,9 @@ void MainComponent::drawEngine(juce::Graphics& g, juce::Rectangle<float> area) c
         g.setColour(juce::Colour(0xff3a4743)); g.drawRoundedRectangle(x, top, cylinderWidth, height, 7.0F, 1.5F);
         const auto* liveCylinder = static_cast<std::size_t>(index) < visibleState_.cylinderStateCount
             ? &visibleState_.cylinderStates[static_cast<std::size_t>(index)] : nullptr;
-        const auto bankedPhase = phase + cylinder.bankOffsetDegrees;
-        const auto fallbackIntakeLift = profiledValveLiftMm(bankedPhase, 360.0 + config_.camshafts.intakeCenterlineDegrees,
+        const auto fallbackIntakeLift = profiledValveLiftMm(phase, 360.0 + config_.camshafts.intakeCenterlineDegrees,
             config_.camshafts.intakeDurationDegrees, config_.camshafts.intakeLiftMm, config_.camshafts.intakeLiftProfile);
-        const auto fallbackExhaustLift = profiledValveLiftMm(bankedPhase, 720.0 - config_.camshafts.exhaustCenterlineDegrees,
+        const auto fallbackExhaustLift = profiledValveLiftMm(phase, 360.0 - config_.camshafts.exhaustCenterlineDegrees,
             config_.camshafts.exhaustDurationDegrees, config_.camshafts.exhaustLiftMm, config_.camshafts.exhaustLiftProfile);
         const auto intakeLift = liveCylinder != nullptr ? liveCylinder->intakeValveLiftMm : fallbackIntakeLift;
         const auto exhaustLift = liveCylinder != nullptr ? liveCylinder->exhaustValveLiftMm : fallbackExhaustLift;

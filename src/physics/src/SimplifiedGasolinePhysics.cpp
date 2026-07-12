@@ -35,6 +35,67 @@ double baseVolumetricEfficiency(double rpmRatio, double load) noexcept {
     }
     return area;
 }
+
+struct CamMetrics final {
+    double intakeAreaRatio { 1.0 };
+    double exhaustAreaRatio { 1.0 };
+    double centerEffect { 1.0 };
+    double liftFactor { 1.0 };
+};
+
+[[nodiscard]] const CamshaftConfig& camshaftForCylinder(const EngineConfig& config,
+                                                        const CylinderConfig& cylinder) noexcept {
+    const auto bank = std::find_if(config.banks.begin(), config.banks.end(),
+        [&cylinder](const CylinderBankConfig& item) {
+            return item.id == cylinder.bankId
+                || std::find(item.cylinderIds.begin(), item.cylinderIds.end(), cylinder.id)
+                    != item.cylinderIds.end();
+        });
+    return bank != config.banks.end() ? bank->camshafts : config.camshafts;
+}
+
+[[nodiscard]] CamMetrics aggregateCamMetrics(const EngineConfig& config, double rpmRatio,
+                                              double rpm, double throttle) noexcept {
+    CamMetrics total { 0.0, 0.0, 0.0, 0.0 };
+    for (const auto& cylinder : config.cylinders) {
+        const auto& cam = camshaftForCylinder(config, cylinder);
+        const auto high = cam.variableProfileEnabled && rpm >= cam.switchRpm && throttle >= cam.switchThrottle;
+        const auto intakeDuration = high ? cam.highIntakeDurationDegrees : cam.intakeDurationDegrees;
+        const auto exhaustDuration = high ? cam.highExhaustDurationDegrees : cam.exhaustDurationDegrees;
+        const auto intakeLift = high ? cam.highIntakeLiftMm : cam.intakeLiftMm;
+        const auto exhaustLift = high ? cam.highExhaustLiftMm : cam.exhaustLiftMm;
+        const auto& intakeProfile = high && !cam.highIntakeLiftProfile.empty()
+            ? cam.highIntakeLiftProfile : cam.intakeLiftProfile;
+        const auto& exhaustProfile = high && !cam.highExhaustLiftProfile.empty()
+            ? cam.highExhaustLiftProfile : cam.exhaustLiftProfile;
+        const auto intakeAreaRatio = effectiveLiftArea(intakeDuration, intakeLift, intakeProfile)
+            / (248.0 * 10.2 * 0.5);
+        const auto exhaustAreaRatio = effectiveLiftArea(exhaustDuration, exhaustLift, exhaustProfile)
+            / (244.0 * 9.8 * 0.5);
+        const auto intakeCenter = 360.0 + cam.intakeCenterlineDegrees;
+        const auto exhaustCenter = 360.0 - cam.exhaustCenterlineDegrees;
+        const auto overlapProxy = std::max(0.0, (intakeDuration + exhaustDuration) * 0.5
+            - std::abs(exhaustCenter - intakeCenter));
+        constexpr double baselineOverlap = 108.0;
+        const auto highRpmCamGain = std::clamp((intakeDuration - 248.0) / 180.0, -0.25, 0.35)
+            * std::clamp((rpmRatio - 0.35) / 0.65, 0.0, 1.0);
+        const auto lowRpmOverlapLoss = std::max(0.0, overlapProxy - baselineOverlap) / 240.0
+            * (1.0 - std::clamp(rpmRatio / 0.55, 0.0, 1.0));
+        total.intakeAreaRatio += intakeAreaRatio;
+        total.exhaustAreaRatio += exhaustAreaRatio;
+        total.centerEffect += 1.0 + (110.0 - cam.intakeCenterlineDegrees) * 0.0012
+            + (112.0 - cam.exhaustCenterlineDegrees) * 0.0008 + highRpmCamGain - lowRpmOverlapLoss;
+        total.liftFactor += std::min(std::clamp(intakeLift / 1.5, 0.0, 1.0),
+            std::clamp(exhaustLift / 1.5, 0.0, 1.0))
+            * std::sqrt(cam.intakeFlowCoefficient * cam.exhaustFlowCoefficient) / 0.62;
+    }
+    const auto count = static_cast<double>(std::max<std::size_t>(1, config.cylinders.size()));
+    total.intakeAreaRatio /= count;
+    total.exhaustAreaRatio /= count;
+    total.centerEffect /= count;
+    total.liftFactor /= count;
+    return total;
+}
 }
 
 CombustionResult SimplifiedGasolinePhysics::evaluateCombustion(
@@ -47,49 +108,29 @@ CombustionResult SimplifiedGasolinePhysics::evaluateCombustion(
         [](double sum, const CylinderConfig& cylinder) { return sum + cylinder.compressionRatio; });
     const auto compression = compressionSum / static_cast<double>(config.cylinders.size());
     const auto rpmRatio = std::clamp(state.rpm / config.redlineRpm, 0.0, 1.35);
-    // The cosine lift law has a mean lift of half its peak. Using its integrated
-    // curtain-area proxy keeps duration and lift meaningful without pretending
-    // to be a 1D gas solver.
-    const auto intakeAreaRatio = effectiveLiftArea(config.camshafts.intakeDurationDegrees, config.camshafts.intakeLiftMm,
-                                                   config.camshafts.intakeLiftProfile)
-        / (248.0 * 10.2 * 0.5);
-    const auto exhaustAreaRatio = effectiveLiftArea(config.camshafts.exhaustDurationDegrees, config.camshafts.exhaustLiftMm,
-                                                    config.camshafts.exhaustLiftProfile)
-        / (244.0 * 9.8 * 0.5);
-    const auto intakeCenter = 360.0 + config.camshafts.intakeCenterlineDegrees;
-    const auto exhaustCenter = 720.0 - config.camshafts.exhaustCenterlineDegrees;
-    const auto centerSeparation = std::abs(exhaustCenter - intakeCenter);
-    const auto overlapProxy = std::max(0.0, (config.camshafts.intakeDurationDegrees
-        + config.camshafts.exhaustDurationDegrees) * 0.5 - centerSeparation);
-    constexpr double baselineOverlap = 108.0;
-    const auto highRpmCamGain = std::clamp((config.camshafts.intakeDurationDegrees - 248.0) / 180.0, -0.25, 0.35)
-        * std::clamp((rpmRatio - 0.35) / 0.65, 0.0, 1.0);
-    const auto lowRpmOverlapLoss = std::max(0.0, overlapProxy - baselineOverlap) / 240.0
-        * (1.0 - std::clamp(rpmRatio / 0.55, 0.0, 1.0));
-    const auto camCenterEffect = 1.0 + (110.0 - config.camshafts.intakeCenterlineDegrees) * 0.0012
-                               + (112.0 - config.camshafts.exhaustCenterlineDegrees) * 0.0008
-                               + highRpmCamGain - lowRpmOverlapLoss;
+    // Aggregate the active profile of every cylinder/bank. This keeps the
+    // low-frequency calibration model aligned with the valves used by the gas
+    // solver instead of silently falling back to the global camshaft.
+    const auto cam = aggregateCamMetrics(config, rpmRatio, state.rpm, state.throttle);
     const auto normalizedLoad = std::clamp(state.manifoldPressureKpa / std::max(1.0, config.ambientPressureKpa), 0.25, 1.0);
-    const auto mappedVe = baseVolumetricEfficiency(rpmRatio - (intakeAreaRatio - 1.0) * 0.12, normalizedLoad);
+    const auto mappedVe = baseVolumetricEfficiency(rpmRatio - (cam.intakeAreaRatio - 1.0) * 0.12, normalizedLoad);
     const auto backPressureLoss = std::clamp((exhaustBackPressureKpa - config.ambientPressureKpa) / 90.0, 0.0, 0.32);
-    const auto intakeLiftFactor = std::clamp(config.camshafts.intakeLiftMm / 1.5, 0.0, 1.0);
-    const auto exhaustLiftFactor = std::clamp(config.camshafts.exhaustLiftMm / 1.5, 0.0, 1.0);
-    const auto liftFactor = std::min(intakeLiftFactor, exhaustLiftFactor)
-        * std::sqrt(config.camshafts.intakeFlowCoefficient * config.camshafts.exhaustFlowCoefficient) / 0.62;
     const auto volumetricEfficiency = std::clamp(mappedVe
-        * std::clamp(std::sqrt(std::max(0.1, intakeAreaRatio * exhaustAreaRatio)) * camCenterEffect, 0.72, 1.22)
-        * (1.0 - backPressureLoss), 0.30, 1.18) * liftFactor;
+        * std::clamp(std::sqrt(std::max(0.1, cam.intakeAreaRatio * cam.exhaustAreaRatio)) * cam.centerEffect, 0.72, 1.22)
+        * (1.0 - backPressureLoss), 0.30, 1.18) * cam.liftFactor;
 
     const auto temperatureK = std::max(240.0, config.ambientTemperatureC + 273.15);
     const auto manifoldDensityKgM3 = 1.204 * (state.manifoldPressureKpa / 101.325) * (293.15 / temperatureK);
     const auto displacedVolumeM3 = engineDisplacementLitres(config) * 0.001;
     const auto airMassMg = displacedVolumeM3 * volumetricEfficiency * manifoldDensityKgM3 * 1'000'000.0;
-    const auto afr = std::clamp(ecu.targetAirFuelRatio, 8.0, 30.0);
+    const auto afr = std::clamp(ecu.targetAirFuelRatio, 5.0, 30.0);
     const auto fuelMassMg = ecu.fuelEnabled ? airMassMg / afr * ecu.fuelCorrection : 0.0;
     const auto actualAfr = fuelMassMg > 1.0e-9 ? airMassMg / fuelMassMg : afr;
-    constexpr double gasolineEnergyJPerKg = 43'000'000.0;
+    const auto fuelEnergyJPerKg = config.fuelProperties.lowerHeatingValueMjPerKg * 1'000'000.0;
+    const auto bestPowerAfr = config.fuelProperties.stoichiometricAirFuelRatio * 0.87;
 
-    const auto afrEfficiency = std::clamp(1.0 - std::abs(actualAfr - 12.8) * 0.045, 0.35, 1.0);
+    const auto afrEfficiency = std::clamp(1.0 - std::abs(actualAfr - bestPowerAfr)
+        / config.fuelProperties.stoichiometricAirFuelRatio * 0.66, 0.35, 1.0);
     const auto load = std::clamp(0.25 + state.manifoldPressureKpa / std::max(1.0, config.ambientPressureKpa) * 0.75, 0.0, 1.0);
     const auto optimumAdvance = 8.0 + rpmRatio * 20.0 + (1.0 - load) * 12.0;
     const auto timingError = ecu.ignitionAdvanceDegrees - optimumAdvance;
@@ -98,18 +139,20 @@ CombustionResult SimplifiedGasolinePhysics::evaluateCombustion(
         / (static_cast<double>(config.cylinders.size()) * std::max(1.0, compression - 1.0)));
     constexpr double universalGasConstant = 8.314462618;
     constexpr double airMolarMassKg = 0.02897;
-    constexpr double fuelMolarMassKg = 0.11423; // octane proxy
+    const auto fuelMolarMassKg = config.fuelProperties.molarMassGramsPerMole * 0.001;
     const auto airMoles = airMassMg * 1.0e-6 / airMolarMassKg;
     const auto fuelMoles = fuelMassMg * 1.0e-6 / fuelMolarMassKg;
     const auto oxygenMoles = airMoles * 0.2095;
     const auto inertMoles = airMoles * 0.7905;
-    const auto stoichFuelMoles = oxygenMoles / 12.5;
+    const auto stoichFuelMoles = oxygenMoles / config.fuelProperties.oxygenMolesPerFuelMole;
     const auto burnedFuelMoles = std::min(fuelMoles, stoichFuelMoles);
     const auto burnCompleteness = fuelMoles > 1.0e-12 ? burnedFuelMoles / fuelMoles : 0.0;
     const auto turbulence = std::clamp(state.meanPistonSpeedMps / 22.0, 0.0, 1.8);
     const auto pressureRatio = std::max(0.35, state.manifoldPressureKpa / std::max(1.0, config.ambientPressureKpa));
-    const auto flameSpeedMps = std::clamp(0.38 * (1.0 + turbulence * 1.55)
-        * std::clamp(1.0 - std::abs(actualAfr - 12.8) * 0.035, 0.25, 1.0)
+    const auto flameSpeedMps = std::clamp(config.fuelProperties.laminarFlameSpeedMps
+        * (1.0 + turbulence * config.fuelProperties.turbulenceFlameSpeedGain)
+        * std::clamp(1.0 - std::abs(actualAfr - bestPowerAfr)
+            / config.fuelProperties.stoichiometricAirFuelRatio * 0.52, 0.25, 1.0)
         * std::sqrt(std::max(0.65, temperatureK / 293.15)) / std::pow(pressureRatio, 0.18), 0.08, 5.8);
     const auto boreMeanM = std::accumulate(config.cylinders.begin(), config.cylinders.end(), 0.0,
         [](double sum, const CylinderConfig& cylinder) { return sum + cylinder.boreMm * 0.001; })
@@ -118,10 +161,11 @@ CombustionResult SimplifiedGasolinePhysics::evaluateCombustion(
     const auto flameFraction = std::clamp(std::pow(flameRadiusM / std::max(0.005, boreMeanM * 0.5), 3.0), 0.0, 1.0);
     const auto burnedFraction = std::clamp(flameFraction * burnCompleteness, 0.0, 1.0);
     const auto releasedTemperatureK = temperatureK + burnedFraction * fuelMassMg * 1.0e-6
-        * gasolineEnergyJPerKg / std::max(0.015, airMassMg * 1.0e-6 * 930.0);
+        * fuelEnergyJPerKg / std::max(0.015, airMassMg * 1.0e-6 * 930.0);
     const auto wallLoss = std::clamp((state.coolantTemperatureC + 273.15) / std::max(300.0, releasedTemperatureK), 0.55, 0.98);
-    const auto burnedGasMoles = inertMoles + std::max(0.0, oxygenMoles - burnedFuelMoles * 12.5)
-        + burnedFuelMoles * 8.0 + burnedFuelMoles * 9.0;
+    const auto burnedGasMoles = inertMoles + std::max(0.0, oxygenMoles
+        - burnedFuelMoles * config.fuelProperties.oxygenMolesPerFuelMole)
+        + burnedFuelMoles * config.fuelProperties.productMolesPerFuelMole;
     const auto idealPressureBar = burnedGasMoles * universalGasConstant * releasedTemperatureK * wallLoss
         / chamberVolumeM3 / 100'000.0;
     const auto boostPressureRatio = std::clamp(state.manifoldPressureKpa / std::max(1.0, config.ambientPressureKpa), 0.35, 3.5);
@@ -130,7 +174,7 @@ CombustionResult SimplifiedGasolinePhysics::evaluateCombustion(
     const auto damageEfficiency = std::clamp(1.0 - state.damage * 0.82 - state.wear * 0.18, 0.0, 1.0);
     const auto thermalEfficiency = compressionEfficiency * afrEfficiency * timingEfficiency * damageEfficiency
         * std::clamp(0.72 + burnedFraction * 0.28, 0.60, 1.0);
-    const auto workPerCycleJ = fuelMassMg * 1.0e-6 * gasolineEnergyJPerKg * thermalEfficiency;
+    const auto workPerCycleJ = fuelMassMg * 1.0e-6 * fuelEnergyJPerKg * thermalEfficiency;
     const auto indicatedTorque = combustionEnabled ? workPerCycleJ / (4.0 * std::numbers::pi) : 0.0;
 
     const auto octaneKnockResistance = 9.0 + (config.octaneRating - 87.0) * 0.055;
@@ -146,7 +190,8 @@ CombustionResult SimplifiedGasolinePhysics::evaluateCombustion(
     const auto heatOutput = combustionEnabled
         ? std::clamp(fuelMassMg / std::max(1.0, displacedVolumeM3 * 100'000.0), 0.0, 1.5) : 0.0;
     const auto cyclesPerSecond = state.rpm / 120.0;
-    const auto fuelPowerKw = combustionEnabled ? fuelMassMg * 1.0e-6 * cyclesPerSecond * gasolineEnergyJPerKg / 1'000.0 : 0.0;
+    const auto fuelPowerKw = combustionEnabled
+        ? fuelMassMg * 1.0e-6 * cyclesPerSecond * fuelEnergyJPerKg / 1'000.0 : 0.0;
     const auto heatPowerKw = fuelPowerKw * (1.0 - thermalEfficiency);
     (void)controls;
     return { indicatedTorque, combustionEnabled ? std::clamp(std::max(imepBar * 5.5, idealPressureBar), 2.0, 160.0) : 0.0,

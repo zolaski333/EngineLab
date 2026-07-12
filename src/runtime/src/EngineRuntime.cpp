@@ -102,9 +102,10 @@ double EngineRuntime::updateDriveline(double dtSeconds, const EngineState& engin
     const auto acceleration = (driveForce - aeroForce - rollingForce) / vehicle.massKg;
     vehicleSpeedMps_ = std::max(0.0, vehicleSpeedMps_ + acceleration * dtSeconds);
     vehicleDistanceM_ += vehicleSpeedMps_ * dtSeconds;
-    const auto loadFromDriveline = std::clamp(std::max(0.0, drivelineLoadTorqueNm_)
-        / std::max(20.0, engineDisplacementLitres(config_) * 105.0), 0.0, 1.0);
-    return std::clamp(std::max(requestedLoad, loadFromDriveline), 0.0, 1.0);
+    // The clutch reaction is already injected as a signed external crankshaft
+    // torque. Converting it into the generic brake-load channel as well would
+    // apply the same driveline demand twice under acceleration.
+    return std::clamp(requestedLoad, 0.0, 1.0);
 }
 
 void EngineRuntime::startDyno() {
@@ -118,6 +119,7 @@ void EngineRuntime::startDyno() {
     dynoTargetRpm_ = nextSampleRpm_;
     dynoStableElapsed_ = 0.0;
     dynoLoadCommand_ = 0.34;
+    dynoFilteredRpm_ = simulator_.state().rpm;
     dynoTorqueAccumulator_ = 0.0;
     dynoPowerAccumulator_ = 0.0;
     dynoSampleCount_ = 0;
@@ -180,6 +182,7 @@ void EngineRuntime::run(std::stop_token stopToken) {
                 dynoTargetRpm_ = nextSampleRpm_;
                 dynoStableElapsed_ = 0.0;
                 dynoLoadCommand_ = 0.34;
+                dynoFilteredRpm_ = simulator_.state().rpm;
                 dynoTorqueAccumulator_ = 0.0;
                 dynoPowerAccumulator_ = 0.0;
                 dynoSampleCount_ = 0;
@@ -189,9 +192,11 @@ void EngineRuntime::run(std::stop_token stopToken) {
             if (dynoSweeping_) {
                 dynoElapsed_ += baseStep.count();
                 dynoElapsed = dynoElapsed_;
+                dynoFilteredRpm_ += (simulator_.state().rpm - dynoFilteredRpm_)
+                    * (1.0 - std::exp(-baseStep.count() * 12.0));
                 if (dynoHoldEnabled_.load(std::memory_order_relaxed))
                     dynoTargetRpm_ = dynoHoldRpm_.load(std::memory_order_relaxed);
-                const auto error = simulator_.state().rpm - dynoTargetRpm_;
+                const auto error = dynoFilteredRpm_ - dynoTargetRpm_;
                 dynoLoadCommand_ = std::clamp(dynoLoadCommand_ + error * 0.0022 * baseStep.count(), 0.02, 0.98);
                 requestedLoad = std::clamp(dynoLoadCommand_ + error / 900.0, 0.02, 0.98);
             } else {
@@ -216,7 +221,16 @@ void EngineRuntime::run(std::stop_token stopToken) {
         }
         audioState_.rpm.store(isPaused ? 0.0F : static_cast<float>(frame.state.rpm), std::memory_order_relaxed);
         audioState_.throttle.store(isPaused ? 0.0F : static_cast<float>(frame.state.throttle), std::memory_order_relaxed);
-        audioState_.load.store(static_cast<float>(frame.state.load), std::memory_order_relaxed);
+        const auto drivelineAudioLoad = std::clamp(std::abs(engineClutchTorqueNm_)
+            / std::max(20.0, config_.transmission.maxClutchTorqueNm), 0.0, 1.0);
+        audioState_.load.store(static_cast<float>(std::max(frame.state.load, drivelineAudioLoad)),
+                               std::memory_order_relaxed);
+        audioState_.manifoldPressureKpa.store(static_cast<float>(frame.state.manifoldPressureKpa),
+                                              std::memory_order_relaxed);
+        audioState_.exhaustPressureKpa.store(static_cast<float>(frame.state.exhaustPressureKpa),
+                                             std::memory_order_relaxed);
+        audioState_.exhaustFlowGramsPerSecond.store(static_cast<float>(frame.state.exhaustFlowGramsPerSecond),
+                                                    std::memory_order_relaxed);
         audioState_.boostPressureRatio.store(static_cast<float>(frame.state.boostPressureRatio), std::memory_order_relaxed);
         audioState_.mechanicalStress.store(static_cast<float>(std::clamp(frame.state.peakPistonAccelerationG / 7'000.0, 0.0, 1.0)),
                                            std::memory_order_relaxed);
@@ -224,7 +238,7 @@ void EngineRuntime::run(std::stop_token stopToken) {
         audioState_.timeScale.store(isPaused ? 0.0F : static_cast<float>(dynoRunning_.load(std::memory_order_relaxed)
             ? 1.0 : timeScale_.load(std::memory_order_relaxed)), std::memory_order_relaxed);
         if (dynoRunning_.load() && dynoSweeping_) {
-            if (std::abs(frame.state.rpm - dynoTargetRpm_) <= 80.0) {
+            if (std::abs(dynoFilteredRpm_ - dynoTargetRpm_) <= 80.0) {
                 dynoTorqueAccumulator_ += frame.state.cycleAveragedTorqueNm;
                 dynoPowerAccumulator_ += frame.state.cycleAveragedPowerKw;
                 ++dynoSampleCount_;
@@ -283,6 +297,8 @@ void EngineRuntime::run(std::stop_token stopToken) {
             frame.state.clutchPressure = clutchPressure_.load(std::memory_order_relaxed);
             frame.state.vehicleSpeedMps = vehicleSpeedMps_;
             frame.state.vehicleDistanceM = vehicleDistanceM_;
+            frame.state.fuelEconomyLitresPer100Km = vehicleDistanceM_ > 10.0
+                ? frame.state.fuelConsumedLitres * 100'000.0 / vehicleDistanceM_ : 0.0;
             frame.state.wheelTorqueNm = wheelTorqueNm_;
             frame.state.drivelineLoadTorqueNm = drivelineLoadTorqueNm_;
             frame.state.dynoHoldRpm = dynoHoldRpm_.load(std::memory_order_relaxed);

@@ -15,6 +15,7 @@ engine:
   plenum_volume_l: 4.2
   throttle_diameter_mm: 74
   uses:
+    injection: sequential_port
     camshafts: aircooled_flat6
     exhaust: flat6_equal_length
     transmission: sport_6_speed

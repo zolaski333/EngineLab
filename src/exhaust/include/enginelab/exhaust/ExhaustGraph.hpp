@@ -12,6 +12,7 @@ struct ExhaustNode final {
     double restriction { 0.0 };
     double resonanceHz { 0.0 };
     double audioGain { 1.0 };
+    std::uint32_t pathIndex { 0 };
 };
 struct ExhaustEdge final { std::uint32_t from {}; std::uint32_t to {}; };
 

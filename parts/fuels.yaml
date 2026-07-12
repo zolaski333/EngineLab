@@ -1,0 +1,32 @@
+pump_gasoline_95:
+  name: Pump gasoline 95 RON
+  lower_heating_value_mj_per_kg: 43.0
+  density_kg_per_l: 0.745
+  stoichiometric_afr: 14.7
+  molar_mass_g_per_mol: 114.23
+  oxygen_moles_per_fuel_mole: 12.5
+  product_moles_per_fuel_mole: 17.0
+  laminar_flame_speed_mps: 0.38
+  turbulence_flame_speed_gain: 1.55
+
+premium_gasoline_98:
+  name: Premium gasoline 98 RON
+  lower_heating_value_mj_per_kg: 43.2
+  density_kg_per_l: 0.750
+  stoichiometric_afr: 14.7
+  molar_mass_g_per_mol: 114.23
+  oxygen_moles_per_fuel_mole: 12.5
+  product_moles_per_fuel_mole: 17.0
+  laminar_flame_speed_mps: 0.39
+  turbulence_flame_speed_gain: 1.60
+
+avgas_100ll:
+  name: Aviation gasoline 100LL surrogate
+  lower_heating_value_mj_per_kg: 43.5
+  density_kg_per_l: 0.720
+  stoichiometric_afr: 14.7
+  molar_mass_g_per_mol: 114.23
+  oxygen_moles_per_fuel_mole: 12.5
+  product_moles_per_fuel_mole: 17.0
+  laminar_flame_speed_mps: 0.40
+  turbulence_flame_speed_gain: 1.45

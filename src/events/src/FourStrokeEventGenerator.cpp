@@ -48,10 +48,25 @@ std::size_t FourStrokeEventGenerator::generate(
                 : randomUnit() < static_cast<float>(combustion.misfireProbability);
             const auto variation = 0.97F + randomUnit() * 0.06F + static_cast<float>(cylinder->efficiencyOffset);
             const auto eventTime = stepStartTime + dtSeconds * std::clamp(distance / travelledDegrees, 0.0, 1.0);
+            const auto hasCylinderState = cylinderState != state.cylinderStates.begin()
+                + static_cast<std::ptrdiff_t>(state.cylinderStateCount);
+            const auto fuelDelivery = hasCylinderState
+                ? static_cast<float>(std::clamp(cylinderState->fuelDeliveryRatio, 0.0, 1.0)) : 1.0F;
+            const auto resolvedPulse = hasCylinderState
+                ? static_cast<float>(std::clamp(cylinderState->combustionPulse / 1.4, 0.20, 1.35)) : 1.0F;
+            const auto resolvedPressureBar = hasCylinderState && cylinderState->pressureEstimateBar > 1.0
+                ? static_cast<float>(cylinderState->pressureEstimateBar)
+                : static_cast<float>(combustion.pressureEstimateBar);
+            const auto resolvedCombustionDurationMs = hasCylinderState
+                && cylinderState->flameSpeedMps > 0.01
+                ? static_cast<float>(std::clamp(cylinder->boreMm * 0.5
+                    / cylinderState->flameSpeedMps, 1.0, 45.0))
+                : static_cast<float>(1.4 + 10.0 / std::max(1.0, state.rpm / 1'000.0));
             FiringEvent event { eventTime, cylinderId, target,
-                misfire ? 0.04F : std::clamp(static_cast<float>(state.throttle * combustion.combustionQuality) * variation, 0.035F, 1.0F),
-                static_cast<float>(combustion.pressureEstimateBar),
-                static_cast<float>(1.4 + 10.0 / std::max(1.0, state.rpm / 1'000.0)),
+                misfire ? 0.04F : std::clamp(static_cast<float>(state.throttle * combustion.combustionQuality)
+                    * variation * fuelDelivery * (0.65F + resolvedPulse * 0.35F), 0.001F, 1.0F),
+                resolvedPressureBar,
+                resolvedCombustionDurationMs,
                 static_cast<float>(combustion.actualAirFuelRatio), static_cast<float>(ecu.ignitionAdvanceDegrees),
                 static_cast<float>(combustion.knockLevel), stereoPosition,
                 cylinderState != state.cylinderStates.begin() + static_cast<std::ptrdiff_t>(state.cylinderStateCount)

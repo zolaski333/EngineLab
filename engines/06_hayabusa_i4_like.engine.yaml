@@ -13,6 +13,7 @@ engine:
   plenum_volume_l: 1.2
   throttle_diameter_mm: 46
   uses:
+    injection: high_flow_port
     camshafts: motorcycle_high_rpm
     exhaust: motorcycle_4_2_1
     transmission: motorcycle_6_speed

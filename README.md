@@ -7,27 +7,35 @@ EngineLab is a real-time, high-fidelity internal combustion engine simulation an
 ## 🌟 Key Features
 
 ### 1. Advanced Engine Physics Simulation
-- **Dynamic Torque Balance:** Real-time coupling of indicated combustion torque, mechanical friction, pumping losses, dynamic load, starter motor torque, and reciprocating piston inertia.
+- **Pressure-Derived Torque Balance:** Resolved cylinder pressure is the operating crank-torque source. The former mean-work estimate remains visible as diagnostic telemetry, but is no longer blended into normal operation.
 - **Exact Piston Kinematics:** Exact geometric slider-crank calculations for piston speed, acceleration, and reciprocating mass inertia forces.
 - **Compressible Throttle Flow:** Isentropic sonic (choked flow) and subsonic restriction equations for manifold air mass calculations.
-- **Adaptive Multi-rate Solver:** Mechanical integration runs at 2 kHz by default and scales up to 20 kHz (or the configured limits) so no step exceeds the configured crank-angle increment; each mechanical step can sub-step the gas network independently.
-- **Conservative Gas Network:** Intake, runners, cylinders and exhaust runners exchange gas through choked/subsonic restrictions while conserving species, internal energy and transferred momentum. Cylinder pressure therefore follows trapped mass, heat release and instantaneous volume.
+- **Validated Adaptive Solver:** Integration runs at 2 kHz by default and scales up to 60 kHz. Engine files are rejected when their maximum cadence cannot honour the requested crank-angle resolution at the limiter; live telemetry reports both the actual angle step and any over-speed saturation.
+- **Closed Conservative Gas Network:** Intake, runners, cylinders, exhaust runners and per-path collectors exchange gas through choked/subsonic restrictions while conserving species, stagnation enthalpy, total energy and both momentum components. Variable mixture heat capacity and gamma, isentropic stagnation pressure, sonic velocity limiting and analytical pressure-equilibrium bounds make runner inertia and reversion causal without an arbitrary per-call mass clamp.
+- **Propagating Flame Front:** A standalone Metghalchi-Keck model resolves laminar speed from equivalence ratio, temperature and pressure, adds piston-driven turbulence and burned-gas dilution, then advances an ellipsoidal flame kernel through each moving chamber.
+- **Stribeck Piston Friction:** Per-cylinder Coulomb, breakaway and viscous friction uses actual piston speed and connecting-rod side load instead of a single engine-wide loss multiplier.
 - **Bidirectional Driveline:** Clutch slip, all forward ratios, final drive, vehicle inertia and road loads feed signed torque back to the crankshaft, including overrun and engine braking.
 
 ### 2. Physical Engine Configurations
 - **Uneven-Firing & Layout Support:** Fully customizable bank angles and per-cylinder crank offset degrees (`crankOffsetDegrees`), allowing modeling of I2, I4, I5, V6, crossplane/flatplane V8s, and custom designs.
 - **Exotic Geometry Catalog:** Built-in flat-six and radial-five examples use explicit crank journals, per-cylinder bank offsets, and preserved YAML/JSON round trips so non-standard layouts are first-class configs.
 - **Camshaft Timing & Lift:** Per-bank intake/exhaust timing, sampled lift curves and throttle/RPM-switched high-lift profiles dynamically animate valves and affect cylinder filling.
-- **Data-driven Topology:** Intake geometry, cylinder banks, per-cylinder runners, independent exhaust paths, ignition maps, limiter behavior and solver fidelity are serializable in YAML and JSON.
+- **Fuel and Injection Calibration:** Reusable fuel parts define density, heating value, stoichiometric AFR, molar chemistry and flame speed. Port and direct injection use rail-to-cylinder pressure differential, injector capacity, latent heat and fuel temperature; port injection also retains and evaporates a persistent wall film, while DI applies configurable charge cooling.
+- **Data-driven Topology:** Intake geometry, cylinder banks, crank journals, connecting-rod mass, per-cylinder runners, independent exhaust paths, ignition maps, limiter behavior and solver fidelity are serializable in YAML and JSON.
 
 ### 3. Real-Time Audio Synthesis
-- **Hybrid Stereo Synthesis:** Lock-free, allocation-free real-time rendering combines pressure-driven combustion, intake, valvetrain, mechanical and starter layers with a fixed-size FIR response. Exhaust-path WAV responses are decoded outside the callback.
-- **Pressure-Driven Exhaust Pulses:** Firing events carry cylinder pressure, exhaust runner pressure, mass flow, path delay, and resonance into the renderer.
+- **Hybrid Stereo Synthesis:** Lock-free, allocation-free callback rendering combines pressure-driven combustion, intake, valvetrain, mechanical and starter layers with a partitioned convolution bank. Every exhaust path can use its own full WAV IR (resampled by JUCE DSP); geometry-derived path IRs are generated when no asset is supplied.
+- **Pressure-Driven Exhaust Pulses:** Firing events carry resolved per-cylinder pressure, delivered-fuel ratio, exhaust runner pressure, mass flow, path delay, and resonance into the renderer. Continuous intake/exhaust noise follows simulated manifold depression, collector pressure and outlet flow.
 - **Exhaust Graph Resonance:** Multi-node exhaust delay paths modeling piping length delays, primary pipe acoustic resonances, wave reflections, and an internal IR-style muffler network.
+- **Realtime Signal Conditioning:** Pressure-derivative/raw blending, flow-dependent sub-sample jitter, turbulent air noise, attack/release leveling and post-nonlinearity anti-alias filtering complete the exhaust synthesis chain.
 
 ### 4. Interactive Dyno Sweep
 - **Automated Dyno Sweep:** Automatic brake sweep mapping torque/power curves across the engine speed range.
 - **Data Export & Analysis:** CSV curve export, comparison overlay plots, and complete engine configuration serialization (JSON/YAML).
+
+The targeted ES2D gap-closure record, including explicit remaining limits and
+out-of-scope work, is maintained in
+[`docs/es2d-targeted-gap-closure.md`](docs/es2d-targeted-gap-closure.md).
 
 ---
 

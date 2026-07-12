@@ -67,6 +67,8 @@ template <typename T>
     assignIfPresent(node, "collector_diameter_mm", value.collectorDiameterMm);
     assignIfPresent(node, "muffler_restriction", value.mufflerRestriction);
     assignIfPresent(node, "outlet_diameter_mm", value.outletDiameterMm);
+    assignIfPresent(node, "collector_volume_l", value.collectorVolumeLitres);
+    assignIfPresent(node, "outlet_discharge_coefficient", value.outletDischargeCoefficient);
     return value;
 }
 
@@ -109,7 +111,49 @@ template <typename T>
     return value;
 }
 
+[[nodiscard]] FuelConfig decodeFuel(const YAML::Node& node) {
+    FuelConfig value;
+    assignIfPresent(node, "name", value.name);
+    assignIfPresent(node, "lower_heating_value_mj_per_kg", value.lowerHeatingValueMjPerKg);
+    assignIfPresent(node, "density_kg_per_l", value.densityKgPerL);
+    assignIfPresent(node, "stoichiometric_afr", value.stoichiometricAirFuelRatio);
+    assignIfPresent(node, "molar_mass_g_per_mol", value.molarMassGramsPerMole);
+    assignIfPresent(node, "oxygen_moles_per_fuel_mole", value.oxygenMolesPerFuelMole);
+    assignIfPresent(node, "product_moles_per_fuel_mole", value.productMolesPerFuelMole);
+    assignIfPresent(node, "laminar_flame_speed_mps", value.laminarFlameSpeedMps);
+    assignIfPresent(node, "turbulence_flame_speed_gain", value.turbulenceFlameSpeedGain);
+    return value;
+}
+
+[[nodiscard]] InjectionConfig decodeInjection(const YAML::Node& node) {
+    InjectionConfig value;
+    const auto mode = node["mode"].as<std::string>("direct");
+    if (mode == "port") {
+        value.mode = InjectionMode::port;
+        value.railPressureBar = 4.0;
+        value.referencePressureBar = 4.0;
+        value.wallFilmFraction = 0.22;
+        value.vaporisationTimeConstantSeconds = 0.040;
+    }
+    else if (mode == "direct") value.mode = InjectionMode::direct;
+    else throw std::runtime_error("Unknown injection mode: " + mode);
+    assignIfPresent(node, "start_angle_deg", value.startAngleDegrees);
+    assignIfPresent(node, "end_angle_deg", value.endAngleDegrees);
+    assignIfPresent(node, "injector_flow_mg_s", value.injectorFlowMgPerSecond);
+    assignIfPresent(node, "fuel_temperature_c", value.fuelTemperatureC);
+    assignIfPresent(node, "rail_pressure_bar", value.railPressureBar);
+    assignIfPresent(node, "reference_pressure_bar", value.referencePressureBar);
+    assignIfPresent(node, "wall_film_fraction", value.wallFilmFraction);
+    assignIfPresent(node, "vaporisation_time_constant_s", value.vaporisationTimeConstantSeconds);
+    assignIfPresent(node, "latent_heat_kj_per_kg", value.latentHeatKjPerKg);
+    assignIfPresent(node, "direct_charge_cooling_efficiency", value.directChargeCoolingEfficiency);
+    assignIfPresent(node, "port_charge_cooling_efficiency", value.portChargeCoolingEfficiency);
+    return value;
+}
+
 struct PartsLibrary final {
+    std::map<std::string, FuelConfig> fuels;
+    std::map<std::string, InjectionConfig> injections;
     std::map<std::string, CamshaftConfig> camshafts;
     std::map<std::string, ExhaustConfig> exhausts;
     std::map<std::string, TransmissionConfig> transmissions;
@@ -135,6 +179,7 @@ void applyPart(const std::map<std::string, T>& parts, const YAML::Node& uses, co
             cylinder.strokeMm = item["stroke_mm"].as<double>();
             cylinder.connectingRodMm = item["connecting_rod_mm"].as<double>();
             cylinder.pistonMassGrams = item["piston_mass_g"].as<double>();
+            assignIfPresent(item, "connecting_rod_mass_g", cylinder.connectingRodMassGrams);
             cylinder.compressionRatio = item["compression_ratio"].as<double>();
             assignIfPresent(item, "ignition_offset_deg", cylinder.ignitionOffsetDegrees);
             assignIfPresent(item, "efficiency_offset", cylinder.efficiencyOffset);
@@ -147,6 +192,10 @@ void applyPart(const std::map<std::string, T>& parts, const YAML::Node& uses, co
             assignIfPresent(item, "exhaust_primary_length_mm", cylinder.exhaustPrimaryLengthMm);
             assignIfPresent(item, "sound_attenuation", cylinder.soundAttenuation);
             assignIfPresent(item, "blow_by_coefficient", cylinder.blowByCoefficient);
+            assignIfPresent(item, "piston_friction_coefficient", cylinder.pistonFrictionCoefficient);
+            assignIfPresent(item, "piston_breakaway_force_n", cylinder.pistonBreakawayForceN);
+            assignIfPresent(item, "piston_breakaway_velocity_mps", cylinder.pistonBreakawayVelocityMps);
+            assignIfPresent(item, "piston_viscous_friction_ns_per_m", cylinder.pistonViscousFrictionNsPerM);
             cylinders.push_back(cylinder);
         }
         return cylinders;
@@ -163,6 +212,7 @@ void applyPart(const std::map<std::string, T>& parts, const YAML::Node& uses, co
         cylinder.strokeMm = cylinderNode["stroke_mm"].as<double>();
         cylinder.connectingRodMm = cylinderNode["connecting_rod_mm"].as<double>();
         cylinder.pistonMassGrams = cylinderNode["piston_mass_g"].as<double>();
+        assignIfPresent(cylinderNode, "connecting_rod_mass_g", cylinder.connectingRodMassGrams);
         cylinder.compressionRatio = cylinderNode["compression_ratio"].as<double>();
         assignIfPresent(cylinderNode, "ignition_offset_deg", cylinder.ignitionOffsetDegrees);
         assignIfPresent(cylinderNode, "efficiency_offset", cylinder.efficiencyOffset);
@@ -174,6 +224,10 @@ void applyPart(const std::map<std::string, T>& parts, const YAML::Node& uses, co
         assignIfPresent(cylinderNode, "exhaust_primary_length_mm", cylinder.exhaustPrimaryLengthMm);
         assignIfPresent(cylinderNode, "sound_attenuation", cylinder.soundAttenuation);
         assignIfPresent(cylinderNode, "blow_by_coefficient", cylinder.blowByCoefficient);
+        assignIfPresent(cylinderNode, "piston_friction_coefficient", cylinder.pistonFrictionCoefficient);
+        assignIfPresent(cylinderNode, "piston_breakaway_force_n", cylinder.pistonBreakawayForceN);
+        assignIfPresent(cylinderNode, "piston_breakaway_velocity_mps", cylinder.pistonBreakawayVelocityMps);
+        assignIfPresent(cylinderNode, "piston_viscous_friction_ns_per_m", cylinder.pistonViscousFrictionNsPerM);
         cylinders.push_back(cylinder);
     }
     return cylinders;
@@ -243,6 +297,9 @@ void applyCrankOffsets(EngineConfig& config) {
                 config.ignition.timingCurve.push_back({ sample["rpm"].as<double>(), sample["advance_deg"].as<double>() });
         }
     }
+    if (const auto injection = engine["injection"]) {
+        config.injection = decodeInjection(injection);
+    }
     if (const auto solver = engine["solver"]) {
         assignIfPresent(solver, "mechanical_frequency_hz", config.solver.mechanicalFrequencyHz);
         assignIfPresent(solver, "maximum_frequency_hz", config.solver.maximumMechanicalFrequencyHz);
@@ -252,16 +309,20 @@ void applyCrankOffsets(EngineConfig& config) {
     if (!hasExplicitCylinders) applyCrankOffsets(config);
 
     const auto uses = engine["uses"];
+    applyPart(parts.fuels, uses, "fuel", config.fuelProperties);
+    applyPart(parts.injections, uses, "injection", config.injection);
     applyPart(parts.camshafts, uses, "camshafts", config.camshafts);
     applyPart(parts.exhausts, uses, "exhaust", config.exhaust);
     applyPart(parts.transmissions, uses, "transmission", config.transmission);
     applyPart(parts.vehicles, uses, "vehicle", config.vehicle);
+    if (engine["injection"]) config.injection = decodeInjection(engine["injection"]);
     if (engine["camshafts"]) config.camshafts = decodeCamshafts(engine["camshafts"]);
     if (engine["exhaust"]) config.exhaust = decodeExhaust(engine["exhaust"]);
     if (engine["transmission"]) config.transmission = decodeTransmission(engine["transmission"]);
     if (engine["vehicle"]) config.vehicle = decodeVehicle(engine["vehicle"]);
     if (engine["forced_induction"]) config.forcedInduction = decodeForcedInduction(engine["forced_induction"]);
     if (engine["thermal"]) config.thermal = decodeThermal(engine["thermal"]);
+    if (engine["fuel_properties"]) config.fuelProperties = decodeFuel(engine["fuel_properties"]);
     if (const auto crankJournals = engine["crank_journals"]) {
         config.crankJournals.clear();
         for (const auto& journal : crankJournals)
@@ -325,6 +386,8 @@ void applyCrankOffsets(EngineConfig& config) {
 [[nodiscard]] PartsLibrary loadParts(const std::filesystem::path& root) {
     const auto partsRoot = root / "parts";
     return {
+        loadPartMap<FuelConfig>(partsRoot / "fuels.yaml", decodeFuel),
+        loadPartMap<InjectionConfig>(partsRoot / "injections.yaml", decodeInjection),
         loadPartMap<CamshaftConfig>(partsRoot / "camshafts.yaml", decodeCamshafts),
         loadPartMap<ExhaustConfig>(partsRoot / "exhausts.yaml", decodeExhaust),
         loadPartMap<TransmissionConfig>(partsRoot / "transmissions.yaml", decodeTransmission),

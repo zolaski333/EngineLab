@@ -14,6 +14,7 @@ engine:
   plenum_volume_l: 6.0
   throttle_diameter_mm: 90
   uses:
+    injection: sequential_port
     camshafts: big_v8_street
     exhaust: crossplane_dual
     transmission: muscle_6_speed

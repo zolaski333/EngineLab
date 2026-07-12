@@ -10,9 +10,23 @@ namespace enginelab {
 
 enum class EngineCycle : std::uint8_t { fourStroke, twoStroke };
 enum class FuelType : std::uint8_t { gasoline, diesel };
+enum class InjectionMode : std::uint8_t { port, direct };
 enum class EngineLayout : std::uint8_t { inlineLayout, vLayout, flat, radial, custom };
 enum class RunningState : std::uint8_t {
     stopped, cranking, idling, running, unstable, knocking, overheating, damaged, destroyed
+};
+
+/** Calibrated properties of the gasoline surrogate used by this engine. */
+struct FuelConfig final {
+    std::string name { "Pump gasoline" };
+    double lowerHeatingValueMjPerKg { 43.0 };
+    double densityKgPerL { 0.745 };
+    double stoichiometricAirFuelRatio { 14.7 };
+    double molarMassGramsPerMole { 114.23 };
+    double oxygenMolesPerFuelMole { 12.5 };
+    double productMolesPerFuelMole { 17.0 };
+    double laminarFlameSpeedMps { 0.38 };
+    double turbulenceFlameSpeedGain { 1.55 };
 };
 
 struct CylinderConfig final {
@@ -33,6 +47,11 @@ struct CylinderConfig final {
     double exhaustPrimaryLengthMm { 0.0 };
     double soundAttenuation { 1.0 };
     double blowByCoefficient { 0.00002 };
+    double connectingRodMassGrams { 600.0 };
+    double pistonFrictionCoefficient { 0.055 };
+    double pistonBreakawayForceN { 45.0 };
+    double pistonBreakawayVelocityMps { 0.10 };
+    double pistonViscousFrictionNsPerM { 18.0 };
 };
 
 struct CrankJournalConfig final {
@@ -74,6 +93,8 @@ struct ExhaustConfig final {
     double collectorDiameterMm { 58.0 };
     double mufflerRestriction { 0.28 };
     double outletDiameterMm { 65.0 };
+    double collectorVolumeLitres { 2.0 };
+    double outletDischargeCoefficient { 0.72 };
 };
 
 struct IntakeConfig final {
@@ -117,9 +138,24 @@ struct IgnitionConfig final {
     double limiterDurationSeconds { 0.08 };
 };
 
+struct InjectionConfig final {
+    InjectionMode mode { InjectionMode::direct };
+    double startAngleDegrees { 570.0 };
+    double endAngleDegrees { 690.0 };
+    double injectorFlowMgPerSecond { 20'000.0 };
+    double fuelTemperatureC { 25.0 };
+    double railPressureBar { 200.0 };
+    double referencePressureBar { 200.0 };
+    double wallFilmFraction { 0.0 };
+    double vaporisationTimeConstantSeconds { 0.035 };
+    double latentHeatKjPerKg { 350.0 };
+    double directChargeCoolingEfficiency { 0.82 };
+    double portChargeCoolingEfficiency { 0.28 };
+};
+
 struct SolverConfig final {
     double mechanicalFrequencyHz { 2'000.0 };
-    double maximumMechanicalFrequencyHz { 20'000.0 };
+    double maximumMechanicalFrequencyHz { 60'000.0 };
     double maximumCrankDegreesPerStep { 2.0 };
     std::uint32_t gasSubsteps { 1 };
 };
@@ -160,6 +196,7 @@ struct EngineConfig final {
     std::string name { "Untitled engine" };
     EngineCycle cycle { EngineCycle::fourStroke };
     FuelType fuel { FuelType::gasoline };
+    FuelConfig fuelProperties;
     EngineLayout layout { EngineLayout::inlineLayout };
     std::vector<CylinderConfig> cylinders;
     std::vector<std::uint32_t> firingOrder;
@@ -179,6 +216,7 @@ struct EngineConfig final {
     std::vector<CylinderBankConfig> banks;
     std::vector<ExhaustPathConfig> exhaustPaths;
     IgnitionConfig ignition;
+    InjectionConfig injection;
     SolverConfig solver;
     ForcedInductionConfig forcedInduction;
     ThermalConfig thermal;
@@ -215,6 +253,10 @@ struct CylinderState final {
     double burnedMoles { 0.0 };
     double intakeVelocityMps { 0.0 };
     double exhaustVelocityMps { 0.0 };
+    double fuelDeliveryRatio { 0.0 };
+    double flameSpeedMps { 0.0 };
+    double burnedFraction { 0.0 };
+    double combustionEfficiency { 0.0 };
     bool combustionActive { false };
     bool misfiring { false };
 };
@@ -227,6 +269,9 @@ struct EngineState final {
     double load { 0.0 };
     double angularVelocityRadPerSecond { 0.0 };
     double indicatedTorqueNm { 0.0 };
+    double meanWorkTorqueNm { 0.0 };
+    double cylinderPressureTorqueNm { 0.0 };
+    double cylinderPressureTorqueBlend { 0.0 };
     double frictionTorqueNm { 0.0 };
     double reciprocatingTorqueNm { 0.0 };
     double meanPistonSpeedMps { 0.0 };
@@ -253,11 +298,16 @@ struct EngineState final {
     double cylinderGasMassGrams { 0.0 };
     double gasInternalEnergyJoules { 0.0 };
     double solverFrequencyHz { 0.0 };
+    double crankDegreesPerSolverStep { 0.0 };
     std::uint32_t solverSubsteps { 0 };
+    bool solverResolutionLimited { false };
     double volumetricEfficiency { 0.0 };
     double airMassMgPerCycle { 0.0 };
     double injectedFuelMgPerCycle { 0.0 };
     double fuelFlowGramsPerSecond { 0.0 };
+    double fuelConsumedGrams { 0.0 };
+    double fuelConsumedLitres { 0.0 };
+    double fuelEconomyLitresPer100Km { 0.0 };
     double airFlowGramsPerSecond { 0.0 };
     double lambda { 1.0 };
     double brakeSpecificFuelConsumptionGPerKwh { 0.0 };

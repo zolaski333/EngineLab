@@ -23,6 +23,7 @@ struct FiringEvent final {
     bool misfire { false };
     std::uint32_t exhaustPortId { 0 };
     std::uint32_t intakePortId { 0 };
+    std::uint32_t exhaustPathIndex { 0 };
 };
 
 } // namespace enginelab
