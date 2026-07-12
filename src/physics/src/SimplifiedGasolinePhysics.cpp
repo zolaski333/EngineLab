@@ -115,14 +115,20 @@ CombustionResult SimplifiedGasolinePhysics::evaluateCombustion(
     const auto normalizedLoad = std::clamp(state.manifoldPressureKpa / std::max(1.0, config.ambientPressureKpa), 0.25, 1.0);
     const auto mappedVe = baseVolumetricEfficiency(rpmRatio - (cam.intakeAreaRatio - 1.0) * 0.12, normalizedLoad);
     const auto backPressureLoss = std::clamp((exhaustBackPressureKpa - config.ambientPressureKpa) / 90.0, 0.0, 0.32);
-    const auto volumetricEfficiency = std::clamp(mappedVe
+    const auto calibratedVolumetricEfficiency = std::clamp(mappedVe
         * std::clamp(std::sqrt(std::max(0.1, cam.intakeAreaRatio * cam.exhaustAreaRatio)) * cam.centerEffect, 0.72, 1.22)
         * (1.0 - backPressureLoss), 0.30, 1.18) * cam.liftFactor;
+    const auto hasResolvedCharge = state.airMassMgPerCycle > 1.0
+        && state.volumetricEfficiency > 0.0;
+    const auto volumetricEfficiency = hasResolvedCharge
+        ? std::clamp(state.volumetricEfficiency, 0.0, 2.5)
+        : calibratedVolumetricEfficiency;
 
     const auto temperatureK = std::max(240.0, config.ambientTemperatureC + 273.15);
     const auto manifoldDensityKgM3 = 1.204 * (state.manifoldPressureKpa / 101.325) * (293.15 / temperatureK);
     const auto displacedVolumeM3 = engineDisplacementLitres(config) * 0.001;
-    const auto airMassMg = displacedVolumeM3 * volumetricEfficiency * manifoldDensityKgM3 * 1'000'000.0;
+    const auto airMassMg = hasResolvedCharge ? state.airMassMgPerCycle
+        : displacedVolumeM3 * volumetricEfficiency * manifoldDensityKgM3 * 1'000'000.0;
     const auto afr = std::clamp(ecu.targetAirFuelRatio, 5.0, 30.0);
     const auto fuelMassMg = ecu.fuelEnabled ? airMassMg / afr * ecu.fuelCorrection : 0.0;
     const auto actualAfr = fuelMassMg > 1.0e-9 ? airMassMg / fuelMassMg : afr;
@@ -177,11 +183,10 @@ CombustionResult SimplifiedGasolinePhysics::evaluateCombustion(
     const auto workPerCycleJ = fuelMassMg * 1.0e-6 * fuelEnergyJPerKg * thermalEfficiency;
     const auto indicatedTorque = combustionEnabled ? workPerCycleJ / (4.0 * std::numbers::pi) : 0.0;
 
-    const auto octaneKnockResistance = 9.0 + (config.octaneRating - 87.0) * 0.055;
-    const auto compressionKnock = std::max(0.0, compression - octaneKnockResistance) * 0.13;
-    const auto timingKnock = std::max(0.0, timingError) / 13.0;
-    const auto thermalKnock = std::max(0.0, state.coolantTemperatureC - 105.0) / 35.0;
-    const auto knock = combustionEnabled ? std::clamp((compressionKnock + timingKnock + thermalKnock) * load, 0.0, 1.0) : 0.0;
+    // Knock is resolved in EngineSimulator by the Livengood-Wu end-gas model
+    // from each cylinder's actual pressure and temperature. The mean-value
+    // policy must not create an independent empirical knock signal.
+    constexpr double knock = 0.0;
     const auto mixtureMisfire = std::max(0.0, std::abs(actualAfr - 14.0) - 2.6) * 0.055;
     const auto lowSpeedMisfire = std::max(0.0, 420.0 - state.rpm) / 1'500.0;
     const auto misfire = combustionEnabled ? std::clamp(mixtureMisfire + lowSpeedMisfire + knock * 0.07, 0.0, 0.85) : 0.0;

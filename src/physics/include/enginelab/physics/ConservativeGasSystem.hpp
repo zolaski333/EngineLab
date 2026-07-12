@@ -181,6 +181,11 @@ struct GasFlowResult final {
     bool choked { false };
 };
 
+struct SimultaneousGasFlowResult final {
+    GasFlowResult first {};
+    GasFlowResult second {};
+};
+
 struct CombustionReaction final {
     double burnedFuelMoles { 0.0 };
     double releasedEnergyJoules { 0.0 };
@@ -236,6 +241,15 @@ public:
      * directional jet-momentum injection (see FlowParameters documentation).
      */
     [[nodiscard]] static GasFlowResult flow(const FlowParameters& params) noexcept;
+
+    /**
+     * Resolves two restrictions sharing the middle control volume from one
+     * common pre-flow state, then commits their conservative deltas together.
+     * This removes valve-order bias during intake/exhaust overlap.
+     * Contract: first.system1 must be second.system0.
+     */
+    [[nodiscard]] static SimultaneousGasFlowResult flowSimultaneous(
+        const FlowParameters& first, const FlowParameters& second) noexcept;
 
     [[nodiscard]] static GasFlowResult flowFromBoundary(GasCell& target, double boundaryPressureKpa,
                                                         double boundaryTemperatureK,

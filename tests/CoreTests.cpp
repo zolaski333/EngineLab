@@ -6,6 +6,7 @@
 #include <enginelab/physics/ConservativeGasSystem.hpp>
 #include <enginelab/physics/FlamePhysicsModel.hpp>
 #include <enginelab/physics/FuelInjectionModel.hpp>
+#include <enginelab/physics/EndGasKnockModel.hpp>
 #include <enginelab/serialization/JsonEngineSerializer.hpp>
 #include <enginelab/serialization/YamlEngineSerializer.hpp>
 #include <enginelab/simulation/EngineSimulator.hpp>
@@ -21,6 +22,7 @@
 #include <iostream>
 #include <iterator>
 #include <limits>
+#include <memory>
 #include <numeric>
 #include <set>
 #include <cmath>
@@ -34,6 +36,45 @@ void require(bool condition, const char* message) {
 }
 
 int main() {
+    {
+        enginelab::GasCell intake;
+        enginelab::GasCell cylinder;
+        enginelab::GasCell exhaust;
+        intake.initialise(135.0, 0.35, 320.0);
+        cylinder.initialise(105.0, 0.055, 520.0);
+        exhaust.initialise(78.0, 0.40, 600.0);
+        const auto molesBefore = intake.totalMoles() + cylinder.totalMoles() + exhaust.totalMoles();
+        const auto energyBefore = intake.internalEnergyJoules() + cylinder.internalEnergyJoules()
+            + exhaust.internalEnergyJoules() + intake.bulkKineticEnergyJoules()
+            + cylinder.bulkKineticEnergyJoules() + exhaust.bulkKineticEnergyJoules();
+        const auto overlap = enginelab::ConservativeGasSystem::flowSimultaneous(
+            { &intake, &cylinder, 0.00012, 0.68, 0.0001, 0.0, 1.0 },
+            { &cylinder, &exhaust, 0.00010, 0.66, 0.0001, 0.0, -1.0 });
+        const auto molesAfter = intake.totalMoles() + cylinder.totalMoles() + exhaust.totalMoles();
+        const auto energyAfter = intake.internalEnergyJoules() + cylinder.internalEnergyJoules()
+            + exhaust.internalEnergyJoules() + intake.bulkKineticEnergyJoules()
+            + cylinder.bulkKineticEnergyJoules() + exhaust.bulkKineticEnergyJoules();
+        require(overlap.first.transferredMassKg > 0.0 && overlap.second.transferredMassKg > 0.0,
+                "simultaneous valve transaction must resolve both overlap gradients");
+        require(std::abs(molesAfter - molesBefore) < 1.0e-10
+                && std::abs(energyAfter - energyBefore) < 1.0e-5,
+                "simultaneous valve transaction must conserve species and total energy");
+    }
+    {
+        enginelab::EndGasKnockState coolState;
+        enginelab::EndGasKnockState hotState;
+        bool hotAutoIgnited = false;
+        for (int step = 0; step < 300; ++step) {
+            const auto cool = enginelab::EndGasKnockModel::advance(coolState,
+                { 12.0, 650.0, 1.0, 0.25, 98.0, true }, 0.00005);
+            const auto hot = enginelab::EndGasKnockModel::advance(hotState,
+                { 72.0, 1'060.0, 1.0, 0.25, 90.0, true }, 0.00005);
+            require(!cool.autoIgnited, "cool low-pressure end gas must not knock");
+            hotAutoIgnited = hotAutoIgnited || hot.autoIgnited;
+        }
+        require(hotAutoIgnited && hotState.filteredLevel > 0.0,
+                "hot high-pressure end gas must auto-ignite through the Livengood-Wu integral");
+    }
     {
         enginelab::GasCell highPressure;
         enginelab::GasCell lowPressure;
@@ -284,7 +325,11 @@ int main() {
     require(jsonRoundTrip.config->firingOrder == config.firingOrder, "JSON must preserve firing order");
     require(std::abs(jsonRoundTrip.config->exhaust.primaryLengthMm - config.exhaust.primaryLengthMm) < 0.001,
             "JSON must preserve exhaust geometry");
-    require(jsonRoundTrip.config->transmission.gearRatios.size() == config.transmission.gearRatios.size(),
+    require(jsonRoundTrip.config->transmission.gearRatios.size() == config.transmission.gearRatios.size()
+            && std::abs(jsonRoundTrip.config->transmission.drivelineEfficiency
+                - config.transmission.drivelineEfficiency) < 0.001
+            && std::abs(jsonRoundTrip.config->transmission.drivenWheelInertiaKgM2
+                - config.transmission.drivenWheelInertiaKgM2) < 0.001,
             "JSON must preserve transmission gear count");
     require(std::abs(jsonRoundTrip.config->vehicle.massKg - config.vehicle.massKg) < 0.001,
             "JSON must preserve vehicle mass");
@@ -365,7 +410,9 @@ int main() {
             "YAML must preserve radial layout and cylinder journal references");
     require(v8YamlRoundTrip && std::abs(v8YamlRoundTrip.config->bankAngleDegrees - 90.0) < 0.001,
             "YAML must preserve V-engine bank angle");
-    require(yamlRoundTrip.config->transmission.gearRatios.size() == config.transmission.gearRatios.size(),
+    require(yamlRoundTrip.config->transmission.gearRatios.size() == config.transmission.gearRatios.size()
+            && std::abs(yamlRoundTrip.config->transmission.shiftDurationSeconds
+                - config.transmission.shiftDurationSeconds) < 0.001,
             "YAML must preserve transmission gear count");
     require(std::abs(yamlRoundTrip.config->vehicle.tireRadiusM - config.vehicle.tireRadiusM) < 0.001,
             "YAML must preserve vehicle tire radius");
@@ -594,10 +641,14 @@ int main() {
     {
         enginelab::SimpleEcuModel misfireEcu;
         misfireEcu.setTargetAirFuelRatio(18.0);
+        auto misfireConfig = config;
+        // Keep the chamber warm so cold-start enrichment does not turn this
+        // deliberately lean flammability test back into a stoichiometric run.
+        misfireConfig.ambientTemperatureC = 60.0;
         enginelab::SimplifiedGasolinePhysics misfirePhysics;
         enginelab::FourStrokeEventGenerator misfireEvents;
-        auto misfireExhaust = enginelab::ExhaustGraph::makeForEngine(config);
-        enginelab::EngineSimulator misfireSimulator(config, misfireEcu, misfirePhysics, misfireEvents, misfireExhaust);
+        auto misfireExhaust = enginelab::ExhaustGraph::makeForEngine(misfireConfig);
+        enginelab::EngineSimulator misfireSimulator(misfireConfig, misfireEcu, misfirePhysics, misfireEvents, misfireExhaust);
         bool observedMechanicalMisfire = false;
         for (int step = 0; step < 4'000; ++step) {
             (void)misfireSimulator.step(1.0 / 240.0, { true, step < 600, 0.55, 0.04 });
@@ -1035,6 +1086,35 @@ int main() {
     }
 
     {
+        enginelab::FiringEventQueue pressureEventQueue;
+        enginelab::RealtimeAudioState pressureAudioState;
+        auto pressureQueue = std::make_unique<enginelab::CylinderPressureQueue>();
+        enginelab::CylinderPressureSample pressure0;
+        pressure0.timeSeconds = 0.0;
+        pressure0.cylinderCount = 4;
+        pressure0.pressureBar[0] = 42.0F;
+        pressure0.pressureBar[1] = 3.0F;
+        pressure0.pressureBar[2] = 1.1F;
+        pressure0.pressureBar[3] = 1.0F;
+        auto pressure1 = pressure0;
+        pressure1.timeSeconds = 0.004;
+        pressure1.pressureBar[0] = 5.0F;
+        pressure1.pressureBar[1] = 38.0F;
+        require(pressureQueue->tryPush(pressure0) && pressureQueue->tryPush(pressure1),
+                "pressure audio queue must accept thermodynamic substeps");
+        enginelab::RealtimeEngineAudio pressureRenderer(pressureEventQueue, pressureAudioState,
+                                                        pressureQueue.get());
+        pressureRenderer.prepare(48'000.0, 512);
+        juce::AudioBuffer<float> pressureBuffer(2, 512);
+        pressureRenderer.render(pressureBuffer, 0, pressureBuffer.getNumSamples());
+        double pressureEnergy = 0.0;
+        for (int sample = 0; sample < pressureBuffer.getNumSamples(); ++sample)
+            pressureEnergy += std::abs(pressureBuffer.getSample(0, sample));
+        require(pressureEnergy > 0.01,
+                "continuous chamber-pressure samples must produce audio without a firing event");
+    }
+
+    {
         enginelab::SpscQueue<int, 8> saturationQueue;
         for (int index = 0; index < 7; ++index) require(saturationQueue.tryPush(index), "SPSC must accept usable capacity");
         require(!saturationQueue.tryPush(8), "SPSC must report saturation without overwriting unread data");
@@ -1048,6 +1128,13 @@ int main() {
         { true, false, std::numeric_limits<double>::infinity(), std::numeric_limits<double>::quiet_NaN() });
     require(std::isfinite(finiteFrame.state.rpm) && std::isfinite(finiteFrame.state.throttle)
             && std::isfinite(finiteFrame.state.load), "non-finite controls must not poison simulation state");
+    enginelab::CylinderPressureSample discardedPressureSample;
+    while (simulator.tryPopCylinderPressureSample(discardedPressureSample)) {}
+    simulator.setPressureSamplingEnabled(true);
+    const auto pressureFrame = simulator.step(1.0 / 240.0, { true, false, 0.4, 0.1 });
+    require(pressureFrame.cylinderPressureSampleCount > 0
+            && pressureFrame.cylinderPressureSampleCount == pressureFrame.state.solverSubsteps,
+            "simulator must publish one chamber-pressure frame per thermodynamic substep");
 
     {
         auto invalidConfig = config;
@@ -1116,6 +1203,35 @@ int main() {
         require(state.clutchPressure > 0.9, "runtime must expose clutch pressure");
         require(state.vehicleSpeedMps >= 0.0 && std::isfinite(state.drivelineLoadTorqueNm),
                 "runtime must expose finite vehicle/driveline telemetry");
+        require(std::isfinite(state.clutchSlipRpm) && std::isfinite(state.clutchTorqueNm)
+                && !state.shiftInProgress,
+                "physical clutch slip, transmitted torque and completed shift state must be observable");
+    }
+    {
+        auto automaticConfig = enginelab::makeDefaultInlineTwo();
+        automaticConfig.transmission.automaticShifting = true;
+        automaticConfig.transmission.automaticUpshiftRpm = 500.0;
+        automaticConfig.transmission.automaticDownshiftRpm = 100.0;
+        auto runtime = std::make_unique<enginelab::EngineRuntime>(automaticConfig);
+        runtime->setIgnitionEnabled(true);
+        runtime->setStarterEngaged(true);
+        runtime->setThrottle(0.5);
+        runtime->setClutchPressure(0.0);
+        runtime->setGear(0);
+        runtime->start();
+        std::this_thread::sleep_for(std::chrono::milliseconds(1'500));
+        const auto freeRunning = runtime->snapshot();
+        require(freeRunning.gear > 0,
+                "automatic transmission must upshift from configured RPM thresholds");
+        runtime->setStarterEngaged(false);
+        runtime->setThrottle(0.0);
+        runtime->setClutchPressure(1.0);
+        std::this_thread::sleep_for(std::chrono::milliseconds(900));
+        const auto stalled = runtime->snapshot();
+        runtime->stop();
+        require(freeRunning.rpm > 250.0 && stalled.rpm < 250.0
+                && stalled.runningState == enginelab::RunningState::stopped,
+                "engaging the clutch at zero vehicle speed without throttle must be able to stall the engine");
     }
     std::cout << "EngineLab core tests passed\n";
     return EXIT_SUCCESS;

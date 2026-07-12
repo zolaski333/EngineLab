@@ -114,7 +114,15 @@ std::string YamlEngineSerializer::encode(const EngineConfig& config) const {
         << YAML::Key << "transmission" << YAML::Value << YAML::BeginMap
         << YAML::Key << "gear_ratios" << YAML::Value << YAML::Flow << config.transmission.gearRatios
         << YAML::Key << "final_drive_ratio" << YAML::Value << config.transmission.finalDriveRatio
-        << YAML::Key << "max_clutch_torque_nm" << YAML::Value << config.transmission.maxClutchTorqueNm << YAML::EndMap
+        << YAML::Key << "max_clutch_torque_nm" << YAML::Value << config.transmission.maxClutchTorqueNm
+        << YAML::Key << "driveline_efficiency" << YAML::Value << config.transmission.drivelineEfficiency
+        << YAML::Key << "driven_wheel_inertia_kg_m2" << YAML::Value << config.transmission.drivenWheelInertiaKgM2
+        << YAML::Key << "clutch_slip_stiffness_nm_per_rpm" << YAML::Value << config.transmission.clutchSlipStiffnessNmPerRpm
+        << YAML::Key << "clutch_lock_speed_rpm" << YAML::Value << config.transmission.clutchLockSpeedRpm
+        << YAML::Key << "shift_duration_s" << YAML::Value << config.transmission.shiftDurationSeconds
+        << YAML::Key << "automatic_shifting" << YAML::Value << config.transmission.automaticShifting
+        << YAML::Key << "automatic_upshift_rpm" << YAML::Value << config.transmission.automaticUpshiftRpm
+        << YAML::Key << "automatic_downshift_rpm" << YAML::Value << config.transmission.automaticDownshiftRpm << YAML::EndMap
         << YAML::Key << "vehicle" << YAML::Value << YAML::BeginMap
         << YAML::Key << "mass_kg" << YAML::Value << config.vehicle.massKg
         << YAML::Key << "drag_coefficient" << YAML::Value << config.vehicle.dragCoefficient
@@ -315,6 +323,14 @@ EngineDecodeResult YamlEngineSerializer::decode(std::string_view text) const noe
             if (transmission["gear_ratios"]) config.transmission.gearRatios = transmission["gear_ratios"].as<std::vector<double>>();
             if (transmission["final_drive_ratio"]) config.transmission.finalDriveRatio = transmission["final_drive_ratio"].as<double>();
             if (transmission["max_clutch_torque_nm"]) config.transmission.maxClutchTorqueNm = transmission["max_clutch_torque_nm"].as<double>();
+            if (transmission["driveline_efficiency"]) config.transmission.drivelineEfficiency = transmission["driveline_efficiency"].as<double>();
+            if (transmission["driven_wheel_inertia_kg_m2"]) config.transmission.drivenWheelInertiaKgM2 = transmission["driven_wheel_inertia_kg_m2"].as<double>();
+            if (transmission["clutch_slip_stiffness_nm_per_rpm"]) config.transmission.clutchSlipStiffnessNmPerRpm = transmission["clutch_slip_stiffness_nm_per_rpm"].as<double>();
+            if (transmission["clutch_lock_speed_rpm"]) config.transmission.clutchLockSpeedRpm = transmission["clutch_lock_speed_rpm"].as<double>();
+            if (transmission["shift_duration_s"]) config.transmission.shiftDurationSeconds = transmission["shift_duration_s"].as<double>();
+            if (transmission["automatic_shifting"]) config.transmission.automaticShifting = transmission["automatic_shifting"].as<bool>();
+            if (transmission["automatic_upshift_rpm"]) config.transmission.automaticUpshiftRpm = transmission["automatic_upshift_rpm"].as<double>();
+            if (transmission["automatic_downshift_rpm"]) config.transmission.automaticDownshiftRpm = transmission["automatic_downshift_rpm"].as<double>();
         }
         if (const auto vehicle = engine["vehicle"]) {
             if (vehicle["mass_kg"]) config.vehicle.massKg = vehicle["mass_kg"].as<double>();
@@ -349,6 +365,9 @@ EngineDecodeResult YamlEngineSerializer::decode(std::string_view text) const noe
             const auto mode = injection["mode"].as<std::string>("direct");
             if (mode == "port") {
                 config.injection.mode = InjectionMode::port;
+                config.injection.startAngleDegrees = 250.0;
+                config.injection.endAngleDegrees = 620.0;
+                config.injection.injectorFlowMgPerSecond = 5'000.0;
                 config.injection.railPressureBar = 4.0;
                 config.injection.referencePressureBar = 4.0;
                 config.injection.wallFilmFraction = 0.22;

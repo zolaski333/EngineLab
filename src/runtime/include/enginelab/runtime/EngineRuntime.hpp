@@ -1,6 +1,7 @@
 #pragma once
 #include <enginelab/ecu/SimpleEcuModel.hpp>
 #include <enginelab/events/FiringEvent.hpp>
+#include <enginelab/events/CylinderPressureSample.hpp>
 #include <enginelab/events/FourStrokeEventGenerator.hpp>
 #include <enginelab/exhaust/ExhaustGraph.hpp>
 #include <enginelab/foundation/SpscQueue.hpp>
@@ -16,6 +17,7 @@
 
 namespace enginelab {
 using FiringEventQueue = SpscQueue<FiringEvent, 2'048>;
+using CylinderPressureQueue = SpscQueue<CylinderPressureSample, 2'048>;
 enum class AudioExhaustPreset : int { street = 0, openHeaders = 1, turboMuffled = 2, longTube = 3, motorcycle = 4 };
 
 struct RealtimeAudioState final {
@@ -94,8 +96,10 @@ public:
     void deleteDynoRun(std::uint64_t id);
     [[nodiscard]] EngineState snapshot() const;
     [[nodiscard]] FiringEventQueue& audioEvents() noexcept { return eventQueue_; }
+    [[nodiscard]] CylinderPressureQueue& cylinderPressureSamples() noexcept { return pressureQueue_; }
     [[nodiscard]] RealtimeAudioState& audioState() noexcept { return audioState_; }
     [[nodiscard]] std::uint64_t droppedEventCount() const noexcept { return droppedEvents_.load(); }
+    [[nodiscard]] std::uint64_t droppedPressureSampleCount() const noexcept { return droppedPressureSamples_.load(); }
     [[nodiscard]] std::uint64_t timingOverrunCount() const noexcept { return timingOverruns_.load(); }
 private:
     void run(std::stop_token stopToken);
@@ -107,6 +111,7 @@ private:
     ExhaustGraph exhaust_;
     EngineSimulator simulator_;
     FiringEventQueue eventQueue_;
+    CylinderPressureQueue pressureQueue_;
     RealtimeAudioState audioState_;
     mutable std::mutex snapshotMutex_;
     EngineState snapshot_;
@@ -119,6 +124,7 @@ private:
     std::atomic<bool> dynoHoldEnabled_ { false };
     std::atomic<double> dynoHoldRpm_ { 2'500.0 };
     std::atomic<std::uint64_t> droppedEvents_ { 0 };
+    std::atomic<std::uint64_t> droppedPressureSamples_ { 0 };
     std::atomic<std::uint64_t> timingOverruns_ { 0 };
     std::atomic<bool> paused_ { false };
     std::atomic<double> timeScale_ { 1.0 };
@@ -145,6 +151,14 @@ private:
     double wheelTorqueNm_ { 0.0 };
     double drivelineLoadTorqueNm_ { 0.0 };
     double engineClutchTorqueNm_ { 0.0 };
+    double clutchSlipRpm_ { 0.0 };
+    double effectiveClutchPressure_ { 0.0 };
+    int engagedGear_ { -1 };
+    int shiftFromGear_ { -1 };
+    int shiftTargetGear_ { -1 };
+    double shiftElapsedSeconds_ { 0.0 };
+    double shiftProgress_ { 0.0 };
+    bool shiftInProgress_ { false };
     std::atomic<bool> dynoSweeping_ { false };
     std::atomic<bool> dynoCompleted_ { false };
     std::jthread thread_;

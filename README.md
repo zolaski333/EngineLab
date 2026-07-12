@@ -14,7 +14,7 @@ EngineLab is a real-time, high-fidelity internal combustion engine simulation an
 - **Closed Conservative Gas Network:** Intake, runners, cylinders, exhaust runners and per-path collectors exchange gas through choked/subsonic restrictions while conserving species, stagnation enthalpy, total energy and both momentum components. Variable mixture heat capacity and gamma, isentropic stagnation pressure, sonic velocity limiting and analytical pressure-equilibrium bounds make runner inertia and reversion causal without an arbitrary per-call mass clamp.
 - **Propagating Flame Front:** A standalone Metghalchi-Keck model resolves laminar speed from equivalence ratio, temperature and pressure, adds piston-driven turbulence and burned-gas dilution, then advances an ellipsoidal flame kernel through each moving chamber.
 - **Stribeck Piston Friction:** Per-cylinder Coulomb, breakaway and viscous friction uses actual piston speed and connecting-rod side load instead of a single engine-wide loss multiplier.
-- **Bidirectional Driveline:** Clutch slip, all forward ratios, final drive, vehicle inertia and road loads feed signed torque back to the crankshaft, including overrun and engine braking.
+- **Bidirectional Driveline:** Capacity-limited clutch slip/lock, reflected engine and wheel inertia, timed manual shifts, optional automatic up/down shifts, final drive and road loads feed signed torque back to the crankshaft. Poor clutch control can physically stall the engine.
 
 ### 2. Physical Engine Configurations
 - **Uneven-Firing & Layout Support:** Fully customizable bank angles and per-cylinder crank offset degrees (`crankOffsetDegrees`), allowing modeling of I2, I4, I5, V6, crossplane/flatplane V8s, and custom designs.
@@ -25,7 +25,7 @@ EngineLab is a real-time, high-fidelity internal combustion engine simulation an
 
 ### 3. Real-Time Audio Synthesis
 - **Hybrid Stereo Synthesis:** Lock-free, allocation-free callback rendering combines pressure-driven combustion, intake, valvetrain, mechanical and starter layers with a partitioned convolution bank. Every exhaust path can use its own full WAV IR (resampled by JUCE DSP); geometry-derived path IRs are generated when no asset is supplied.
-- **Pressure-Driven Exhaust Pulses:** Firing events carry resolved per-cylinder pressure, delivered-fuel ratio, exhaust runner pressure, mass flow, path delay, and resonance into the renderer. Continuous intake/exhaust noise follows simulated manifold depression, collector pressure and outlet flow.
+- **Continuous Chamber-Pressure Audio:** Every thermodynamic substep sends all cylinder pressures through a dedicated lock-free queue. The renderer resamples, high-pass filters and differentiates that physical waveform; firing events still carry spatialisation, delivered fuel, blowdown, path delay and resonance.
 - **Exhaust Graph Resonance:** Multi-node exhaust delay paths modeling piping length delays, primary pipe acoustic resonances, wave reflections, and an internal IR-style muffler network.
 - **Realtime Signal Conditioning:** Pressure-derivative/raw blending, flow-dependent sub-sample jitter, turbulent air noise, attack/release leveling and post-nonlinearity anti-alias filtering complete the exhaust synthesis chain.
 

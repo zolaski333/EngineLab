@@ -17,6 +17,9 @@ void RealtimeEngineAudio::prepare(double sampleRate, int maximumBlockSize) noexc
     reflectionFilterCoefficient_ = static_cast<float>(1.0 - std::exp(-2.0 * std::numbers::pi * 980.0 / sampleRate_));
     antiAliasCoefficient_ = static_cast<float>(1.0 - std::exp(-2.0 * std::numbers::pi
         * std::min(18'000.0, sampleRate_ * 0.42) / sampleRate_));
+    pressureHighPassPole_ = static_cast<float>(std::exp(-2.0 * std::numbers::pi * 18.0 / sampleRate_));
+    pressureBandCoefficient_ = static_cast<float>(1.0 - std::exp(-2.0 * std::numbers::pi
+        * std::min(9'500.0, sampleRate_ * 0.38) / sampleRate_));
     if (!convolutionBank_.hasAnyImpulseResponse()) {
         std::array<float, 384> physicalIr {};
         physicalIr[0] = 0.72F;
@@ -42,6 +45,9 @@ void RealtimeEngineAudio::release() noexcept {
     previousCollectorInput_ = 0.0F; jitterDelaySamples_ = 0.0F; jitterHistory_.fill(0.0F); jitterWrite_ = 0;
     levelEnvelope_ = 0.0F; levelGain_ = 1.0F;
     antiAliasLeftA_ = antiAliasLeftB_ = antiAliasRightA_ = antiAliasRightB_ = 0.0F;
+    currentPressureSample_ = {}; nextPressureSample_ = {};
+    hasCurrentPressureSample_ = hasNextPressureSample_ = false;
+    pressureRawPrevious_ = pressureHighPass_ = pressureHighPassPrevious_ = pressureBandLimited_ = 0.0F;
     convolutionBank_.reset();
 }
 
@@ -81,6 +87,15 @@ void RealtimeEngineAudio::render(juce::AudioBuffer<float>& output, int startSamp
             if (exhaust.scheduledTimeSeconds + 1.0 / sampleRate_ < audioTimeSeconds_)
                 lateEvents_.fetch_add(1, std::memory_order_relaxed);
         }
+    }
+    if (pressureQueue_) {
+        if (!hasCurrentPressureSample_)
+            hasCurrentPressureSample_ = pressureQueue_->tryPop(currentPressureSample_);
+        if (hasCurrentPressureSample_ && !hasNextPressureSample_)
+            hasNextPressureSample_ = pressureQueue_->tryPop(nextPressureSample_);
+        if (hasCurrentPressureSample_ && pendingEventCount_ == 0
+                && std::abs(currentPressureSample_.timeSeconds - audioTimeSeconds_) > 0.25)
+            audioTimeSeconds_ = currentPressureSample_.timeSeconds;
     }
     const auto targetRpm = realtimeState_.rpm.load(std::memory_order_relaxed);
     const auto throttle = realtimeState_.throttle.load(std::memory_order_relaxed);
@@ -126,6 +141,47 @@ void RealtimeEngineAudio::render(juce::AudioBuffer<float>& output, int startSamp
         float intakeRight = 0.0F;
         float mechanicalLeft = 0.0F;
         float mechanicalRight = 0.0F;
+        float physicalCylinderPressure = 0.0F;
+        if (pressureQueue_ && hasCurrentPressureSample_) {
+            const auto pressureTime = audioTimeSeconds_ - eventLatencySeconds_;
+            while (hasNextPressureSample_ && nextPressureSample_.timeSeconds <= pressureTime) {
+                currentPressureSample_ = nextPressureSample_;
+                hasNextPressureSample_ = pressureQueue_->tryPop(nextPressureSample_);
+            }
+            if (!hasNextPressureSample_)
+                hasNextPressureSample_ = pressureQueue_->tryPop(nextPressureSample_);
+            const auto count = std::min<std::size_t>(currentPressureSample_.cylinderCount,
+                currentPressureSample_.pressureBar.size());
+            if (count > 0) {
+                const auto denominator = hasNextPressureSample_
+                    ? nextPressureSample_.timeSeconds - currentPressureSample_.timeSeconds : 0.0;
+                const auto fraction = denominator > 1.0e-9
+                    ? std::clamp((pressureTime - currentPressureSample_.timeSeconds) / denominator, 0.0, 1.0)
+                    : 0.0;
+                float meanPressureBar = 0.0F;
+                for (std::size_t index = 0; index < count; ++index) {
+                    const auto nextPressure = hasNextPressureSample_
+                        && index < nextPressureSample_.cylinderCount
+                        ? nextPressureSample_.pressureBar[index]
+                        : currentPressureSample_.pressureBar[index];
+                    meanPressureBar += std::lerp(currentPressureSample_.pressureBar[index],
+                                                 nextPressure, static_cast<float>(fraction));
+                }
+                meanPressureBar /= static_cast<float>(count);
+                const auto rawGaugePressure = meanPressureBar - 1.01325F;
+                pressureHighPass_ = pressureHighPassPole_
+                    * (pressureHighPass_ + rawGaugePressure - pressureRawPrevious_);
+                pressureRawPrevious_ = rawGaugePressure;
+                const auto derivative = pressureHighPass_ - pressureHighPassPrevious_;
+                pressureHighPassPrevious_ = pressureHighPass_;
+                const auto pressureTarget = pressureHighPass_ * 0.0085F + derivative * 0.085F;
+                pressureBandLimited_ += pressureBandCoefficient_
+                    * (pressureTarget - pressureBandLimited_);
+                physicalCylinderPressure = std::clamp(pressureBandLimited_, -0.65F, 0.65F);
+            }
+        }
+        combustionLeft += physicalCylinderPressure * combustionGain;
+        combustionRight += physicalCylinderPressure * combustionGain * 0.97F;
         const auto audibleRpm = targetRpm * timeScale;
         smoothedRpm_ += rpmFilterCoefficient_ * (audibleRpm - smoothedRpm_);
         const auto rotationHz = std::max(0.0F, smoothedRpm_) / 60.0F;

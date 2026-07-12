@@ -38,6 +38,12 @@ les produits brûlés proches de 1,26, et la vapeur de carburant apporte sa fort
 capacité thermique. Ces propriétés pilotent compression/détente adiabatique,
 vitesse du son et débit critique.
 
+Pendant le croisement des soupapes, les deux restrictions sont évaluées depuis
+le même état initial du cylindre. Leurs deltas de masse, espèces, enthalpie et
+momentum sont ensuite validés et appliqués en une transaction conservative.
+L'admission ne peut donc plus modifier artificiellement le gradient vu par
+l'échappement simplement parce qu'elle est calculée en premier.
+
 ## Combustion par propagation de flamme
 
 `FlamePhysicsModel` est indépendant du simulateur. À l'étincelle, il crée un
@@ -52,6 +58,12 @@ un nombre absolu de moles à brûler, évitant l'erreur qui consistait à appliq
 chaque incrément à la quantité restante. L'énergie libérée utilise le PCI et la
 chimie du carburant configuré. Pression cylindre, vitesse de flamme, fraction
 brûlée et rendement restent observables par cylindre.
+
+Le knock utilise une intégrale de Livengood-Wu par cylindre. Le délai
+d'auto-inflammation dépend de la pression, de la température, de l'octane et du
+ratio d'équivalence du gaz non brûlé. Quand l'intégrale atteint l'unité, une
+partie du reliquat s'auto-enflamme dans la `GasCell`, ce qui produit à la fois
+la hausse de pression, le signal de knock, le retrait d'avance ECU et l'audio.
 
 ## Injection
 
@@ -68,6 +80,29 @@ pression différentielle entre le rail et le volume récepteur.
 La quantité mesurée, la vapeur réellement présente à l'étincelle et le
 carburant consommé sont distincts. Une capacité d'injecteur insuffisante ou une
 vaporisation trop lente réduit donc réellement la combustion.
+
+La consigne n'est plus la masse d'air estimée par le modèle mean-value. Elle
+vient de l'oxygène réel et de la dernière charge piégée ; le carburant vaporisé
+ou stocké en film est déduit avant de commander l'injecteur. Le couple pression
+est utilisé dès le premier sous-pas, sans bascule arbitraire après 10 ms.
+
+`injector_flow_mg_s` est le débit massique d'un injecteur. Avec une densité
+d'essence de 0,745 kg/L, 400 cc/min vaut environ 4 970 mg/s. Les valeurs par
+défaut DI et port diffèrent volontairement à cause de la pression et de la
+fenêtre disponible.
+
+## Transmission
+
+Le runtime résout le glissement entre vilebrequin et arbre réfléchi par le
+rapport total. Près de la synchronisation, le couple requis pour verrouiller
+les deux inerties est calculé puis borné par la capacité de l'embrayage ; en
+glissement, une loi continue bornée transmet le couple et sa réaction opposée
+au vilebrequin. L'inertie des roues augmente la masse longitudinale équivalente.
+
+Un passage de rapport suit une enveloppe débrayage/changement/réembrayage.
+`automatic_shifting` active les seuils de montée et descente ; sans lui, les
+commandes manuelles utilisent la même machine d'état. Le moteur peut caler si
+le couple réfléchi dépasse le couple disponible à faible régime.
 
 ## Solveur
 
@@ -87,7 +122,8 @@ physiquement correcte.
 - réaction globale essence/oxygène, sans cinétique chimique multi-espèces ;
 - front de flamme ellipsoïdal et turbulence agrégée, sans champ spatial 3D ;
 - film d'injection indirecte agrégé, sans suivi de gouttelettes ni spray 3D ;
-- knock, transferts thermiques et blow-by encore semi-empiriques ;
+- délai end-gas corrélé globalement, sans cinétique chimique multi-espèces ;
+- transferts thermiques et blow-by encore semi-empiriques ;
 - essence quatre temps uniquement dans la composition runtime actuelle ;
 - moteur radial sans cinématique de bielle maîtresse/articulée.
 

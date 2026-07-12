@@ -10,7 +10,9 @@ namespace enginelab {
 /** Allocation-free layered combustion/exhaust renderer with stereo spatialisation. */
 class RealtimeEngineAudio final : public IAudioRenderer {
 public:
-    RealtimeEngineAudio(FiringEventQueue& queue, RealtimeAudioState& state) : queue_(queue), realtimeState_(state) {}
+    RealtimeEngineAudio(FiringEventQueue& queue, RealtimeAudioState& state,
+                        CylinderPressureQueue* pressureQueue = nullptr)
+        : queue_(queue), realtimeState_(state), pressureQueue_(pressureQueue) {}
     void prepare(double sampleRate, int maximumBlockSize) noexcept override;
     void release() noexcept override;
     void render(juce::AudioBuffer<float>& output, int startSample, int sampleCount) noexcept override;
@@ -42,6 +44,11 @@ private:
     [[nodiscard]] float noise() noexcept;
     FiringEventQueue& queue_;
     RealtimeAudioState& realtimeState_;
+    CylinderPressureQueue* pressureQueue_ { nullptr };
+    CylinderPressureSample currentPressureSample_ {};
+    CylinderPressureSample nextPressureSample_ {};
+    bool hasCurrentPressureSample_ { false };
+    bool hasNextPressureSample_ { false };
     std::array<Voice, 48> voices_ {};
     std::array<PendingEvent, 512> pendingEvents_ {};
     std::size_t pendingEventCount_ { 0 };
@@ -91,6 +98,12 @@ private:
     float antiAliasCoefficient_ { 0.5F };
     float pressureTailLeft_ { 0.0F };
     float pressureTailRight_ { 0.0F };
+    float pressureRawPrevious_ { 0.0F };
+    float pressureHighPass_ { 0.0F };
+    float pressureHighPassPrevious_ { 0.0F };
+    float pressureBandLimited_ { 0.0F };
+    float pressureHighPassPole_ { 0.997F };
+    float pressureBandCoefficient_ { 0.5F };
     float exhaustBodyLeft_ { 0.0F };
     float exhaustBodyRight_ { 0.0F };
     float exhaustAirLeft_ { 0.0F };

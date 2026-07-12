@@ -271,6 +271,13 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
         || !inRange(config.exhaust.outletDischargeCoefficient, 0.02, 1.5)
         || !inRange(config.transmission.finalDriveRatio, 1.0, 8.0)
         || !inRange(config.transmission.maxClutchTorqueNm, 10.0, 10'000.0)
+        || !inRange(config.transmission.drivelineEfficiency, 0.2, 1.0)
+        || !inRange(config.transmission.drivenWheelInertiaKgM2, 0.0, 200.0)
+        || !inRange(config.transmission.clutchSlipStiffnessNmPerRpm, 0.001, 20.0)
+        || !inRange(config.transmission.clutchLockSpeedRpm, 0.1, 500.0)
+        || !inRange(config.transmission.shiftDurationSeconds, 0.01, 3.0)
+        || !inRange(config.transmission.automaticUpshiftRpm, 250.0, 50'000.0)
+        || !inRange(config.transmission.automaticDownshiftRpm, 100.0, 30'000.0)
         || !inRange(config.vehicle.massKg, 50.0, 20'000.0)
         || !inRange(config.vehicle.dragCoefficient, 0.05, 2.0)
         || !inRange(config.vehicle.frontalAreaM2, 0.1, 20.0)
@@ -313,6 +320,8 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
         return "Transmission must contain between 1 and 12 forward gears";
     for (const auto gearRatio : config.transmission.gearRatios)
         if (!inRange(gearRatio, 0.05, 10.0)) return "Transmission gear ratios must be finite and positive";
+    if (config.transmission.automaticDownshiftRpm >= config.transmission.automaticUpshiftRpm)
+        return "Automatic transmission downshift RPM must be lower than upshift RPM";
     if (config.crankJournals.size() > 64) return "Crank journal table must contain at most 64 entries";
     std::unordered_set<std::uint32_t> journalIds;
     for (const auto& journal : config.crankJournals) {

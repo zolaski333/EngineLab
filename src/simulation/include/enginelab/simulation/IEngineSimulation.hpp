@@ -13,6 +13,8 @@ struct SimulationFrame final {
     std::array<FiringEvent, maxEventsPerSimulationStep> firingEvents {};
     std::size_t firingEventCount { 0 };
     std::size_t droppedFiringEventCount { 0 };
+    std::size_t cylinderPressureSampleCount { 0 };
+    std::size_t droppedCylinderPressureSampleCount { 0 };
 };
 class IEngineSimulation {
 public:

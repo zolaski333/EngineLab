@@ -174,7 +174,15 @@ std::string JsonEngineSerializer::encode(const EngineConfig& config) const {
                       {"outlet_discharge_coefficient", config.exhaust.outletDischargeCoefficient}}},
         {"transmission", {{"gear_ratios", config.transmission.gearRatios},
                            {"final_drive_ratio", config.transmission.finalDriveRatio},
-                           {"max_clutch_torque_nm", config.transmission.maxClutchTorqueNm}}},
+                           {"max_clutch_torque_nm", config.transmission.maxClutchTorqueNm},
+                           {"driveline_efficiency", config.transmission.drivelineEfficiency},
+                           {"driven_wheel_inertia_kg_m2", config.transmission.drivenWheelInertiaKgM2},
+                           {"clutch_slip_stiffness_nm_per_rpm", config.transmission.clutchSlipStiffnessNmPerRpm},
+                           {"clutch_lock_speed_rpm", config.transmission.clutchLockSpeedRpm},
+                           {"shift_duration_s", config.transmission.shiftDurationSeconds},
+                           {"automatic_shifting", config.transmission.automaticShifting},
+                           {"automatic_upshift_rpm", config.transmission.automaticUpshiftRpm},
+                           {"automatic_downshift_rpm", config.transmission.automaticDownshiftRpm}}},
         {"vehicle", {{"mass_kg", config.vehicle.massKg},
                       {"drag_coefficient", config.vehicle.dragCoefficient},
                       {"frontal_area_m2", config.vehicle.frontalAreaM2},
@@ -287,6 +295,14 @@ EngineDecodeResult JsonEngineSerializer::decode(std::string_view text) const noe
             config.transmission.gearRatios = transmission.value("gear_ratios", config.transmission.gearRatios);
             config.transmission.finalDriveRatio = transmission.value("final_drive_ratio", config.transmission.finalDriveRatio);
             config.transmission.maxClutchTorqueNm = transmission.value("max_clutch_torque_nm", config.transmission.maxClutchTorqueNm);
+            config.transmission.drivelineEfficiency = transmission.value("driveline_efficiency", config.transmission.drivelineEfficiency);
+            config.transmission.drivenWheelInertiaKgM2 = transmission.value("driven_wheel_inertia_kg_m2", config.transmission.drivenWheelInertiaKgM2);
+            config.transmission.clutchSlipStiffnessNmPerRpm = transmission.value("clutch_slip_stiffness_nm_per_rpm", config.transmission.clutchSlipStiffnessNmPerRpm);
+            config.transmission.clutchLockSpeedRpm = transmission.value("clutch_lock_speed_rpm", config.transmission.clutchLockSpeedRpm);
+            config.transmission.shiftDurationSeconds = transmission.value("shift_duration_s", config.transmission.shiftDurationSeconds);
+            config.transmission.automaticShifting = transmission.value("automatic_shifting", config.transmission.automaticShifting);
+            config.transmission.automaticUpshiftRpm = transmission.value("automatic_upshift_rpm", config.transmission.automaticUpshiftRpm);
+            config.transmission.automaticDownshiftRpm = transmission.value("automatic_downshift_rpm", config.transmission.automaticDownshiftRpm);
         }
         if (engine.contains("vehicle")) {
             const auto& vehicle = engine.at("vehicle");
@@ -312,6 +328,9 @@ EngineDecodeResult JsonEngineSerializer::decode(std::string_view text) const noe
             const auto mode = injection.value("mode", std::string { "direct" });
             if (mode == "port") {
                 config.injection.mode = InjectionMode::port;
+                config.injection.startAngleDegrees = 250.0;
+                config.injection.endAngleDegrees = 620.0;
+                config.injection.injectorFlowMgPerSecond = 5'000.0;
                 config.injection.railPressureBar = 4.0;
                 config.injection.referencePressureBar = 4.0;
                 config.injection.wallFilmFraction = 0.22;

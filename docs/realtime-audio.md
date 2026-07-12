@@ -6,6 +6,8 @@
 attente ou prise de mutex. Les voix, événements en attente, lignes de retard et
 buffers de convolution sont préparés avant le démarrage. Les événements
 arrivent par `SpscQueue<FiringEvent, 2048>` et conservent leur temps interpolé.
+Une seconde file `SpscQueue<CylinderPressureSample, 2048>` transporte, sans
+mutex ni allocation, les pressions de tous les cylindres à chaque sous-pas.
 
 ## Sources sonores
 
@@ -15,6 +17,12 @@ vitesse de flamme, débit, pression runner, géométrie, banque et chemin
 d'échappement modulent attaque, durée, spectre et panorama. Les couches
 continues admission, mécanique, distribution et démarreur suivent les atomiques
 du runtime.
+
+Le signal de chambre n'est plus reconstruit à partir du seul instant
+d'allumage. Les trames de pression sont interpolées à la fréquence audio,
+centrées par un passe-haut, dérivées puis limitées en bande avant le mixage.
+Les `FiringEvent` restent utiles pour la spatialisation, le blowdown et les
+chemins d'échappement, mais la forme intra-cycle vient de la thermodynamique.
 
 Le signal d'échappement combine :
 
@@ -43,7 +51,8 @@ pas un remplacement des IR moteur.
 
 ## Observabilité
 
-Les compteurs d'événements tardifs, événements perdus, voix volées et saturation
+Les compteurs d'événements tardifs, événements perdus, trames de pression
+perdues, voix volées et saturation
 du planning restent exposés. Les tests vérifient le routage par chemin, la
 différence entre IR, le respect des tranches de buffer, les gains du mixeur et
 l'absence de sortie non finie.

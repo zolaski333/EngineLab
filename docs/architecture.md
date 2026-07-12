@@ -29,7 +29,7 @@ de frottement, d'ECU et de simulation restent en C++ standard testable.
 | Cible | Responsabilité |
 |---|---|
 | `EngineLabFoundation` | Types, configuration, télémétrie, file SPSC |
-| `EngineLabPhysics` | Gaz conservatif, propagation de flamme, injection, politique essence |
+| `EngineLabPhysics` | Gaz conservatif, propagation de flamme, knock end-gas, injection, politique essence |
 | `EngineLabEvents` | Timing et payloads d'allumage |
 | `EngineLabEcu` | Commandes carburant/allumage et limiteur |
 | `EngineLabExhaust` | Topologie, contre-pression, délai/résonance et routage audio |
@@ -52,16 +52,17 @@ de frottement, d'ECU et de simulation restent en C++ standard testable.
 - `EngineSimulator` orchestre ces modèles et utilise la pression cylindre comme
   source de couple. Il ne crée aucun thread.
 - `EngineRuntime` est l'unique propriétaire du thread de simulation.
-- `FiringEvent` est l'unique payload événementiel vers l'audio ; les grandeurs
-  continues utilisent des atomiques lock-free.
+- `FiringEvent` transporte les impulsions discrètes. `CylinderPressureSample`
+  transporte les pressions intra-cycle par une seconde SPSC ; les télémétries
+  lentes utilisent des atomiques lock-free.
 - `RealtimeConvolutionBank` alloue et prépare hors callback, puis ne fait que du
   traitement borné dans le callback.
 
 ## Configuration
 
 YAML et JSON restent les formats canoniques. Les nouveaux paramètres de rail,
-film, vaporisation, chaleur latente, refroidissement DI/port et friction
-Stribeck sont sérialisés et validés. Les anciens fichiers port-injection sans
+film, vaporisation, chaleur latente, refroidissement DI/port, friction
+Stribeck et transmission dynamique sont sérialisés et validés. Les anciens fichiers port-injection sans
 ces champs reçoivent des valeurs physiques rétrocompatibles ; aucune branche
 spécifique à un moteur n'est ajoutée au solveur.
 

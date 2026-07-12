@@ -12,6 +12,7 @@ namespace enginelab {
 EngineRuntime::EngineRuntime(EngineConfig config)
     : config_(std::move(config)), exhaust_(ExhaustGraph::makeForEngine(config_)),
       simulator_(config_, ecu_, physics_, eventGenerator_, exhaust_) {
+    simulator_.setPressureSamplingEnabled(true);
     audioState_.cylinderCount.store(static_cast<float>(config_.cylinders.size()), std::memory_order_relaxed);
     const auto displacement = engineDisplacementLitres(config_);
     double boreSum = 0.0;
@@ -73,10 +74,48 @@ void EngineRuntime::adjustDynoHoldRpm(double delta) noexcept {
 }
 
 double EngineRuntime::updateDriveline(double dtSeconds, const EngineState& engineState, double requestedLoad) noexcept {
-    const auto gear = gear_.load(std::memory_order_relaxed);
-    const auto clutch = clutchPressure_.load(std::memory_order_relaxed);
+    auto requestedGear = gear_.load(std::memory_order_relaxed);
+    const auto pedalClutch = clutchPressure_.load(std::memory_order_relaxed);
     const auto vehicle = config_.vehicle;
-    const auto transmission = config_.transmission;
+    const auto& transmission = config_.transmission;
+    const auto maximumGear = static_cast<int>(transmission.gearRatios.size()) - 1;
+
+    if (transmission.automaticShifting && !shiftInProgress_ && engagedGear_ >= 0) {
+        if (engineState.rpm >= transmission.automaticUpshiftRpm && engagedGear_ < maximumGear
+                && engineState.throttle > 0.12)
+            gear_.store(requestedGear = engagedGear_ + 1, std::memory_order_relaxed);
+        else if (engineState.rpm <= transmission.automaticDownshiftRpm && engagedGear_ > 0)
+            gear_.store(requestedGear = engagedGear_ - 1, std::memory_order_relaxed);
+    }
+    if (!shiftInProgress_ && requestedGear != engagedGear_) {
+        shiftInProgress_ = true;
+        shiftFromGear_ = engagedGear_;
+        shiftTargetGear_ = requestedGear;
+        shiftElapsedSeconds_ = 0.0;
+    }
+    effectiveClutchPressure_ = pedalClutch;
+    if (shiftInProgress_) {
+        shiftElapsedSeconds_ += std::max(0.0, dtSeconds);
+        shiftProgress_ = std::clamp(shiftElapsedSeconds_
+            / std::max(0.01, transmission.shiftDurationSeconds), 0.0, 1.0);
+        // Torque interruption follows a real disengage/synchronise/re-engage
+        // envelope. The ratio changes only while the clutch is open.
+        if (shiftProgress_ < 0.38)
+            effectiveClutchPressure_ *= 1.0 - shiftProgress_ / 0.38;
+        else if (shiftProgress_ < 0.58)
+            effectiveClutchPressure_ = 0.0;
+        else
+            effectiveClutchPressure_ *= (shiftProgress_ - 0.58) / 0.42;
+        if (shiftProgress_ >= 0.48) engagedGear_ = shiftTargetGear_;
+        if (shiftProgress_ >= 1.0) {
+            engagedGear_ = shiftTargetGear_;
+            shiftInProgress_ = false;
+            shiftProgress_ = 0.0;
+        }
+    } else {
+        shiftProgress_ = 0.0;
+    }
+
     const auto aeroForce = 0.5 * 1.225 * vehicle.dragCoefficient * vehicle.frontalAreaM2 * vehicleSpeedMps_ * vehicleSpeedMps_;
     const auto rollingForce = vehicleSpeedMps_ > 0.01
         ? vehicle.massKg * 9.80665 * vehicle.rollingResistanceCoefficient : 0.0;
@@ -84,22 +123,40 @@ double EngineRuntime::updateDriveline(double dtSeconds, const EngineState& engin
     drivelineLoadTorqueNm_ = 0.0;
     engineClutchTorqueNm_ = 0.0;
     wheelTorqueNm_ = 0.0;
-    if (gear >= 0 && gear < static_cast<int>(transmission.gearRatios.size()) && clutch > 0.001) {
-        const auto totalRatio = transmission.gearRatios[static_cast<std::size_t>(gear)] * transmission.finalDriveRatio;
+    clutchSlipRpm_ = 0.0;
+    if (engagedGear_ >= 0 && engagedGear_ <= maximumGear && effectiveClutchPressure_ > 0.001) {
+        const auto totalRatio = transmission.gearRatios[static_cast<std::size_t>(engagedGear_)] * transmission.finalDriveRatio;
         const auto wheelAngularVelocity = vehicleSpeedMps_ / vehicle.tireRadiusM;
         const auto expectedEngineRpm = wheelAngularVelocity * totalRatio * 60.0 / (2.0 * std::numbers::pi);
-        const auto slipRpm = engineState.rpm - expectedEngineRpm;
-        const auto clutchTorque = std::clamp(slipRpm * 0.16 * clutch,
-            -transmission.maxClutchTorqueNm * clutch, transmission.maxClutchTorqueNm * clutch);
+        clutchSlipRpm_ = engineState.rpm - expectedEngineRpm;
+        const auto slipOmega = clutchSlipRpm_ * 2.0 * std::numbers::pi / 60.0;
+        const auto capacity = transmission.maxClutchTorqueNm * effectiveClutchPressure_;
+        const auto equivalentWheelInertia = std::max(0.01,
+            vehicle.massKg * vehicle.tireRadiusM * vehicle.tireRadiusM
+                + transmission.drivenWheelInertiaKgM2);
+        const auto synchronisingDenominator = std::max(1.0e-8, dtSeconds
+            * (1.0 / config_.rotatingInertiaKgM2
+                + totalRatio * totalRatio * transmission.drivelineEfficiency / equivalentWheelInertia));
+        double clutchTorque = 0.0;
+        if (std::abs(clutchSlipRpm_) <= transmission.clutchLockSpeedRpm) {
+            clutchTorque = std::clamp(slipOmega / synchronisingDenominator, -capacity, capacity);
+        } else {
+            const auto slidingMagnitude = std::min(capacity,
+                capacity * 0.15 + std::abs(clutchSlipRpm_)
+                    * transmission.clutchSlipStiffnessNmPerRpm * effectiveClutchPressure_);
+            clutchTorque = std::copysign(slidingMagnitude, slipOmega);
+        }
         // clutchTorque is applied to the vehicle. The equal and opposite
         // reaction is injected into the crankshaft, preserving overrun and
         // engine-braking behaviour instead of clipping it away.
         engineClutchTorqueNm_ = -clutchTorque;
         drivelineLoadTorqueNm_ = clutchTorque;
-        wheelTorqueNm_ = clutchTorque * totalRatio * 0.88;
+        wheelTorqueNm_ = clutchTorque * totalRatio * transmission.drivelineEfficiency;
         driveForce = wheelTorqueNm_ / vehicle.tireRadiusM;
     }
-    const auto acceleration = (driveForce - aeroForce - rollingForce) / vehicle.massKg;
+    const auto effectiveVehicleMass = vehicle.massKg
+        + transmission.drivenWheelInertiaKgM2 / (vehicle.tireRadiusM * vehicle.tireRadiusM);
+    const auto acceleration = (driveForce - aeroForce - rollingForce) / effectiveVehicleMass;
     vehicleSpeedMps_ = std::max(0.0, vehicleSpeedMps_ + acceleration * dtSeconds);
     vehicleDistanceM_ += vehicleSpeedMps_ * dtSeconds;
     // The clutch reaction is already injected as a signed external crankshaft
@@ -218,6 +275,17 @@ void EngineRuntime::run(std::stop_token stopToken) {
                 const auto fraction = std::clamp((frame.firingEvents[index].timeSeconds - simulationStart) / simulationDt, 0.0, 1.0);
                 frame.firingEvents[index].timeSeconds = realtimeSeconds + fraction * baseStep.count();
             }
+            CylinderPressureSample pressureSample;
+            while (simulator_.tryPopCylinderPressureSample(pressureSample)) {
+                const auto fraction = std::clamp((pressureSample.timeSeconds
+                    - simulationStart) / simulationDt, 0.0, 1.0);
+                pressureSample.timeSeconds = realtimeSeconds + fraction * baseStep.count();
+                if (!pressureQueue_.tryPush(pressureSample))
+                    droppedPressureSamples_.fetch_add(1, std::memory_order_relaxed);
+            }
+            if (frame.droppedCylinderPressureSampleCount > 0)
+                droppedPressureSamples_.fetch_add(frame.droppedCylinderPressureSampleCount,
+                                                  std::memory_order_relaxed);
         }
         audioState_.rpm.store(isPaused ? 0.0F : static_cast<float>(frame.state.rpm), std::memory_order_relaxed);
         audioState_.throttle.store(isPaused ? 0.0F : static_cast<float>(frame.state.throttle), std::memory_order_relaxed);
@@ -292,7 +360,7 @@ void EngineRuntime::run(std::stop_token stopToken) {
         if (frame.droppedFiringEventCount > 0)
             droppedEvents_.fetch_add(frame.droppedFiringEventCount, std::memory_order_relaxed);
         {
-            frame.state.gear = gear_.load(std::memory_order_relaxed);
+            frame.state.gear = engagedGear_;
             frame.state.gearCount = static_cast<int>(config_.transmission.gearRatios.size());
             frame.state.clutchPressure = clutchPressure_.load(std::memory_order_relaxed);
             frame.state.vehicleSpeedMps = vehicleSpeedMps_;
@@ -301,6 +369,10 @@ void EngineRuntime::run(std::stop_token stopToken) {
                 ? frame.state.fuelConsumedLitres * 100'000.0 / vehicleDistanceM_ : 0.0;
             frame.state.wheelTorqueNm = wheelTorqueNm_;
             frame.state.drivelineLoadTorqueNm = drivelineLoadTorqueNm_;
+            frame.state.clutchTorqueNm = -engineClutchTorqueNm_;
+            frame.state.clutchSlipRpm = clutchSlipRpm_;
+            frame.state.shiftProgress = shiftProgress_;
+            frame.state.shiftInProgress = shiftInProgress_;
             frame.state.dynoHoldRpm = dynoHoldRpm_.load(std::memory_order_relaxed);
             frame.state.dynoHoldEnabled = dynoHoldEnabled_.load(std::memory_order_relaxed);
             const std::scoped_lock lock(snapshotMutex_);

@@ -142,6 +142,8 @@ struct InjectionConfig final {
     InjectionMode mode { InjectionMode::direct };
     double startAngleDegrees { 570.0 };
     double endAngleDegrees { 690.0 };
+    // Per-injector mass flow. At 0.745 kg/L, 400 cc/min is about 4,970 mg/s;
+    // the larger DI default reflects its high pressure and short open window.
     double injectorFlowMgPerSecond { 20'000.0 };
     double fuelTemperatureC { 25.0 };
     double railPressureBar { 200.0 };
@@ -164,6 +166,14 @@ struct TransmissionConfig final {
     std::vector<double> gearRatios { 2.97, 2.07, 1.43, 1.00, 0.84, 0.56 };
     double finalDriveRatio { 3.42 };
     double maxClutchTorqueNm { 1'356.0 };
+    double drivelineEfficiency { 0.88 };
+    double drivenWheelInertiaKgM2 { 3.6 };
+    double clutchSlipStiffnessNmPerRpm { 0.16 };
+    double clutchLockSpeedRpm { 35.0 };
+    double shiftDurationSeconds { 0.18 };
+    bool automaticShifting { false };
+    double automaticUpshiftRpm { 6'400.0 };
+    double automaticDownshiftRpm { 1'650.0 };
 };
 
 struct VehicleConfig final {
@@ -257,6 +267,7 @@ struct CylinderState final {
     double flameSpeedMps { 0.0 };
     double burnedFraction { 0.0 };
     double combustionEfficiency { 0.0 };
+    double endGasKnockLevel { 0.0 };
     bool combustionActive { false };
     bool misfiring { false };
 };
@@ -325,6 +336,10 @@ struct EngineState final {
     double vehicleDistanceM { 0.0 };
     double wheelTorqueNm { 0.0 };
     double drivelineLoadTorqueNm { 0.0 };
+    double clutchTorqueNm { 0.0 };
+    double clutchSlipRpm { 0.0 };
+    double shiftProgress { 0.0 };
+    bool shiftInProgress { false };
     double dynoHoldRpm { 0.0 };
     bool dynoHoldEnabled { false };
     RunningState runningState { RunningState::stopped };

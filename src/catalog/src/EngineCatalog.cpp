@@ -77,6 +77,14 @@ template <typename T>
     assignIfPresent(node, "gear_ratios", value.gearRatios);
     assignIfPresent(node, "final_drive_ratio", value.finalDriveRatio);
     assignIfPresent(node, "max_clutch_torque_nm", value.maxClutchTorqueNm);
+    assignIfPresent(node, "driveline_efficiency", value.drivelineEfficiency);
+    assignIfPresent(node, "driven_wheel_inertia_kg_m2", value.drivenWheelInertiaKgM2);
+    assignIfPresent(node, "clutch_slip_stiffness_nm_per_rpm", value.clutchSlipStiffnessNmPerRpm);
+    assignIfPresent(node, "clutch_lock_speed_rpm", value.clutchLockSpeedRpm);
+    assignIfPresent(node, "shift_duration_s", value.shiftDurationSeconds);
+    assignIfPresent(node, "automatic_shifting", value.automaticShifting);
+    assignIfPresent(node, "automatic_upshift_rpm", value.automaticUpshiftRpm);
+    assignIfPresent(node, "automatic_downshift_rpm", value.automaticDownshiftRpm);
     return value;
 }
 
@@ -130,6 +138,9 @@ template <typename T>
     const auto mode = node["mode"].as<std::string>("direct");
     if (mode == "port") {
         value.mode = InjectionMode::port;
+        value.startAngleDegrees = 250.0;
+        value.endAngleDegrees = 620.0;
+        value.injectorFlowMgPerSecond = 5'000.0;
         value.railPressureBar = 4.0;
         value.referencePressureBar = 4.0;
         value.wallFilmFraction = 0.22;

@@ -457,6 +457,108 @@ GasFlowResult ConservativeGasSystem::flow(const FlowParameters& params) noexcept
     return result;
 }
 
+SimultaneousGasFlowResult ConservativeGasSystem::flowSimultaneous(
+    const FlowParameters& firstParams, const FlowParameters& secondParams) noexcept {
+    if (!firstParams.system0 || !firstParams.system1 || !secondParams.system0
+            || !secondParams.system1 || firstParams.system1 != secondParams.system0)
+        return {};
+    const auto firstOpen = firstParams.effectiveAreaM2 > 0.0
+        && firstParams.dischargeCoefficient > 0.0 && firstParams.dtSeconds > 0.0;
+    const auto secondOpen = secondParams.effectiveAreaM2 > 0.0
+        && secondParams.dischargeCoefficient > 0.0 && secondParams.dtSeconds > 0.0;
+    if (!firstOpen && !secondOpen) return {};
+    if (!firstOpen) return { {}, flow(secondParams) };
+    if (!secondOpen) return { flow(firstParams), {} };
+
+    auto left = *firstParams.system0;
+    const auto middleOriginal = *firstParams.system1;
+    auto middleForFirst = middleOriginal;
+    auto middleForSecond = middleOriginal;
+    auto right = *secondParams.system1;
+
+    auto firstPreview = firstParams;
+    firstPreview.system0 = &left;
+    firstPreview.system1 = &middleForFirst;
+    auto secondPreview = secondParams;
+    secondPreview.system0 = &middleForSecond;
+    secondPreview.system1 = &right;
+    auto result = SimultaneousGasFlowResult { flow(firstPreview), flow(secondPreview) };
+
+    const auto deltaSpecies = [](double firstValue, double secondValue, double original) {
+        return (firstValue - original) + (secondValue - original);
+    };
+    const GasMixture middleDelta {
+        deltaSpecies(middleForFirst.mixture_.oxygenMoles, middleForSecond.mixture_.oxygenMoles,
+                     middleOriginal.mixture_.oxygenMoles),
+        deltaSpecies(middleForFirst.mixture_.inertMoles, middleForSecond.mixture_.inertMoles,
+                     middleOriginal.mixture_.inertMoles),
+        deltaSpecies(middleForFirst.mixture_.fuelMoles, middleForSecond.mixture_.fuelMoles,
+                     middleOriginal.mixture_.fuelMoles),
+        deltaSpecies(middleForFirst.mixture_.burnedMoles, middleForSecond.mixture_.burnedMoles,
+                     middleOriginal.mixture_.burnedMoles) };
+    const auto energyDelta = deltaSpecies(middleForFirst.internalEnergyJ_, middleForSecond.internalEnergyJ_,
+                                          middleOriginal.internalEnergyJ_);
+    const auto momentumXDelta = deltaSpecies(middleForFirst.momentumXKgMps_, middleForSecond.momentumXKgMps_,
+                                             middleOriginal.momentumXKgMps_);
+    const auto momentumYDelta = deltaSpecies(middleForFirst.momentumYKgMps_, middleForSecond.momentumYKgMps_,
+                                             middleOriginal.momentumYKgMps_);
+
+    // A very large caller time step could ask both restrictions to remove the
+    // same inventory. Scale both preview transactions identically so species
+    // and energy remain non-negative without losing conservation.
+    auto commitScale = 1.0;
+    const auto constrain = [&commitScale](double original, double delta) {
+        if (delta < 0.0) commitScale = std::min(commitScale,
+            original * 0.999 / std::max(1.0e-30, -delta));
+    };
+    constrain(middleOriginal.mixture_.oxygenMoles, middleDelta.oxygenMoles);
+    constrain(middleOriginal.mixture_.inertMoles, middleDelta.inertMoles);
+    constrain(middleOriginal.mixture_.fuelMoles, middleDelta.fuelMoles);
+    constrain(middleOriginal.mixture_.burnedMoles, middleDelta.burnedMoles);
+    constrain(middleOriginal.internalEnergyJ_, energyDelta);
+    commitScale = std::clamp(commitScale, 0.0, 1.0);
+
+    const auto blendCell = [commitScale](GasCell& destination, const GasCell& original,
+                                         const GasCell& preview) {
+        destination = original;
+        destination.mixture_.oxygenMoles += commitScale
+            * (preview.mixture_.oxygenMoles - original.mixture_.oxygenMoles);
+        destination.mixture_.inertMoles += commitScale
+            * (preview.mixture_.inertMoles - original.mixture_.inertMoles);
+        destination.mixture_.fuelMoles += commitScale
+            * (preview.mixture_.fuelMoles - original.mixture_.fuelMoles);
+        destination.mixture_.burnedMoles += commitScale
+            * (preview.mixture_.burnedMoles - original.mixture_.burnedMoles);
+        destination.internalEnergyJ_ += commitScale
+            * (preview.internalEnergyJ_ - original.internalEnergyJ_);
+        destination.momentumXKgMps_ += commitScale
+            * (preview.momentumXKgMps_ - original.momentumXKgMps_);
+        destination.momentumYKgMps_ += commitScale
+            * (preview.momentumYKgMps_ - original.momentumYKgMps_);
+    };
+    const auto leftOriginal = *firstParams.system0;
+    const auto rightOriginal = *secondParams.system1;
+    blendCell(*firstParams.system0, leftOriginal, left);
+    blendCell(*secondParams.system1, rightOriginal, right);
+    auto& middle = *firstParams.system1;
+    middle = middleOriginal;
+    middle.mixture_.oxygenMoles += commitScale * middleDelta.oxygenMoles;
+    middle.mixture_.inertMoles += commitScale * middleDelta.inertMoles;
+    middle.mixture_.fuelMoles += commitScale * middleDelta.fuelMoles;
+    middle.mixture_.burnedMoles += commitScale * middleDelta.burnedMoles;
+    middle.internalEnergyJ_ += commitScale * energyDelta;
+    middle.momentumXKgMps_ += commitScale * momentumXDelta;
+    middle.momentumYKgMps_ += commitScale * momentumYDelta;
+    firstParams.system0->dissipateExcessVelocity();
+    middle.dissipateExcessVelocity();
+    secondParams.system1->dissipateExcessVelocity();
+    result.first.transferredMoles *= commitScale;
+    result.first.transferredMassKg *= commitScale;
+    result.second.transferredMoles *= commitScale;
+    result.second.transferredMassKg *= commitScale;
+    return result;
+}
+
 // ---------------------------------------------------------------------------
 // ConservativeGasSystem::flowFromBoundary
 // ---------------------------------------------------------------------------

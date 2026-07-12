@@ -171,7 +171,8 @@ void MainComponent::applyConfig(const EngineConfig& newConfig) {
     audio_.reset(); runtime_.reset();
     config_ = newConfig;
     runtime_ = std::move(replacement);
-    audio_ = std::make_unique<RealtimeEngineAudio>(runtime_->audioEvents(), runtime_->audioState());
+    audio_ = std::make_unique<RealtimeEngineAudio>(runtime_->audioEvents(), runtime_->audioState(),
+                                                   &runtime_->cylinderPressureSamples());
     importedRunCount_ = 0;
     telemetryWrite_ = 0; telemetryCount_ = 0;
     runtime_->setThrottle(throttleSlider_.getValue() / 100.0);

@@ -2,7 +2,8 @@ add_library(EngineLabPhysics STATIC
     src/SimplifiedGasolinePhysics.cpp
     src/ConservativeGasSystem.cpp
     src/FlamePhysicsModel.cpp
-    src/FuelInjectionModel.cpp)
+    src/FuelInjectionModel.cpp
+    src/EndGasKnockModel.cpp)
 add_library(EngineLab::Physics ALIAS EngineLabPhysics)
 target_include_directories(EngineLabPhysics PUBLIC include)
 target_link_libraries(EngineLabPhysics PUBLIC EngineLab::Foundation)

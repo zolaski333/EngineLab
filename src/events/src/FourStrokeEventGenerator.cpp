@@ -67,8 +67,8 @@ std::size_t FourStrokeEventGenerator::generate(
                     * variation * fuelDelivery * (0.65F + resolvedPulse * 0.35F), 0.001F, 1.0F),
                 resolvedPressureBar,
                 resolvedCombustionDurationMs,
-                static_cast<float>(combustion.actualAirFuelRatio), static_cast<float>(ecu.ignitionAdvanceDegrees),
-                static_cast<float>(combustion.knockLevel), stereoPosition,
+                static_cast<float>(state.airFuelRatio), static_cast<float>(ecu.ignitionAdvanceDegrees),
+                static_cast<float>(hasCylinderState ? cylinderState->endGasKnockLevel : state.knockLevel), stereoPosition,
                 cylinderState != state.cylinderStates.begin() + static_cast<std::ptrdiff_t>(state.cylinderStateCount)
                     ? static_cast<float>(cylinderState->exhaustFlowMgPerCycle) : 0.0F,
                 cylinderState != state.cylinderStates.begin() + static_cast<std::ptrdiff_t>(state.cylinderStateCount)
