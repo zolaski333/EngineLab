@@ -7,6 +7,11 @@
 #include <enginelab/physics/FlamePhysicsModel.hpp>
 #include <enginelab/physics/FuelInjectionModel.hpp>
 #include <enginelab/physics/EndGasKnockModel.hpp>
+#include <enginelab/physics/MechanicalKinematics.hpp>
+#include <enginelab/physics/IndicatedWorkModel.hpp>
+#include <enginelab/physics/ValveTrainModel.hpp>
+#include <enginelab/physics/HelmholtzRunnerModel.hpp>
+#include <enginelab/runtime/DrivelineModel.hpp>
 #include <enginelab/serialization/JsonEngineSerializer.hpp>
 #include <enginelab/serialization/YamlEngineSerializer.hpp>
 #include <enginelab/simulation/EngineSimulator.hpp>
@@ -24,6 +29,7 @@
 #include <limits>
 #include <memory>
 #include <numeric>
+#include <numbers>
 #include <set>
 #include <cmath>
 #include <stdexcept>
@@ -36,6 +42,130 @@ void require(bool condition, const char* message) {
 }
 
 int main() {
+    {
+        enginelab::IndicatedWorkState work;
+        enginelab::IndicatedWorkModel::advance(work, 100.0, 1.0, 100.0, false);
+        enginelab::IndicatedWorkModel::advance(work, 200.0, 1.0, 100.0, false);
+        enginelab::IndicatedWorkModel::advance(work, 200.0, 2.0, 100.0, false);
+        enginelab::IndicatedWorkModel::advance(work, 100.0, 2.0, 100.0, false);
+        enginelab::IndicatedWorkModel::advance(work, 100.0, 1.0, 100.0, true);
+        require(std::abs(work.completedCycleJoules - 100.0) < 1.0e-9,
+                "P-dV integration must recover the signed area of a known pressure-volume loop");
+
+        enginelab::CamshaftConfig cam;
+        cam.intakeFlowCurve = { { 0.0, 0.0 }, { 5.0, 0.52 }, { 10.0, 0.68 } };
+        cam.exhaustFlowCurve = { { 0.0, 0.0 }, { 10.0, 0.64 } };
+        cam.continuousControl.enabled = true;
+        cam.continuousControl.responseFrequencyHz = 20.0;
+        cam.continuousControl.samples = { { 1'000.0, 0.2, 4.0, -2.0, 0.90 },
+                                          { 6'000.0, 1.0, 26.0, 12.0, 1.16 } };
+        enginelab::ValveTrainState valveState;
+        enginelab::ValveTrainResult valveResult;
+        for (int step = 0; step < 100; ++step)
+            valveResult = enginelab::ValveTrainModel::evaluate(cam, false, valveState,
+                470.0, 6'000.0, 1.0, 0.001);
+        require(valveResult.intakeAdvanceDegrees > 20.0 && valveResult.liftMultiplier > 1.10,
+                "continuous VVT/VVL actuator must converge toward its calibrated operating point");
+        require(std::abs(enginelab::valveFlowCoefficient(2.5, 0.6, cam.intakeFlowCurve) - 0.26) < 1.0e-9,
+                "valve discharge coefficient must interpolate the configured lift curve");
+
+        enginelab::RunnerAcousticsConfig acoustics;
+        enginelab::IntakeConfig intake;
+        enginelab::CylinderConfig shortRunner;
+        shortRunner.intakeRunnerLengthMm = 180.0;
+        auto longRunner = shortRunner;
+        longRunner.intakeRunnerLengthMm = 720.0;
+        enginelab::HelmholtzRunnerState shortState;
+        enginelab::HelmholtzRunnerState longState;
+        const auto shortResult = enginelab::HelmholtzRunnerModel::advance(acoustics, shortState,
+            shortRunner, intake, 300.0, 100.0, 80.0, 0.001);
+        const auto longResult = enginelab::HelmholtzRunnerModel::advance(acoustics, longState,
+            longRunner, intake, 300.0, 100.0, 80.0, 0.001);
+        require(shortResult.resonanceFrequencyHz > longResult.resonanceFrequencyHz
+                && std::isfinite(shortResult.flowAdmittance),
+                "Helmholtz frequency must respond physically to runner length");
+    }
+    {
+        const auto drivelineConfig = enginelab::makeDefaultInlineFour();
+        enginelab::DrivelineModel driveline(drivelineConfig);
+        enginelab::EngineState engine;
+        engine.rpm = 2'000.0;
+        engine.angularVelocityRadPerSecond = engine.rpm * 2.0 * std::numbers::pi / 60.0;
+        engine.throttle = 0.5;
+        driveline.requestGear(-2);
+        enginelab::DrivelineOutput output;
+        for (int step = 0; step < 300; ++step)
+            output = driveline.advance(0.001, engine, 0.0, step < 220 ? 0.0 : 1.0, 0.0);
+        require(output.engagedGear == -2 && output.vehicleSpeedMps < 0.0
+                && output.clutchDissipatedEnergyJoules > 0.0,
+                "reverse gear must drive backward through the same energy-coupled clutch model");
+        const auto speedBeforeBrake = std::abs(output.vehicleSpeedMps);
+        for (int step = 0; step < 500; ++step)
+            output = driveline.advance(0.001, engine, 0.0, 0.0, 1.0);
+        require(std::abs(output.vehicleSpeedMps) < speedBeforeBrake && output.brakeForceN > 0.0,
+                "wheel brake must dissipate speed without applying an artificial engine load");
+
+        enginelab::DrivelineModel coarseStepDriveline(drivelineConfig);
+        coarseStepDriveline.requestGear(0);
+        for (int step = 0; step < 40; ++step)
+            output = coarseStepDriveline.advance(0.05, engine, 0.0, 1.0, step > 30 ? 0.4 : 0.0);
+        require(std::isfinite(output.vehicleSpeedMps) && std::abs(output.vehicleSpeedMps) < 100.0
+                && std::isfinite(output.clutchTemperatureC)
+                && std::isfinite(output.energyResidualJoules),
+                "stiff tire and clutch coupling must remain finite at the maximum public time step");
+    }
+    {
+        auto topology = enginelab::makeDefaultInlineFour();
+        topology.intake.plenumVolumeLitres = 4.75;
+        topology.intake.throttleDiameterMm = 68.0;
+        topology.rotatingInertiaKgM2 = 0.41;
+        enginelab::normaliseEngineConfig(topology);
+        require(topology.plenumVolumeLitres == 4.75 && topology.throttleDiameterMm == 68.0
+                && topology.intakePaths.front().geometry.plenumVolumeLitres == 4.75,
+                "normalisation must keep one canonical intake representation");
+        require(enginelab::effectiveRotatingInertiaKgM2(topology) > 0.41,
+                "effective inertia must include the migrated crankshaft and rotating connecting-rod mass");
+        const auto expectedRunnerLitres = std::numbers::pi
+            * std::pow(topology.intake.runnerDiameterMm * 0.5, 2.0)
+            * topology.intake.runnerLengthMm / 1'000'000.0;
+        require(std::abs(enginelab::intakeRunnerVolumeLitres(topology.cylinders.front(), topology.intake)
+            - expectedRunnerLitres) < 1.0e-12,
+            "runner control-volume size must come from configured length and diameter");
+        const auto tdc = enginelab::evaluateCylinderKinematics(topology, 0, 0.0, 100.0);
+        const auto bdc = enginelab::evaluateCylinderKinematics(topology, 0, 180.0, 100.0);
+        require(std::abs(tdc.pistonTravelMm) < 0.01
+                && std::abs(bdc.pistonTravelMm - topology.cylinders.front().strokeMm) < 0.05,
+                "shared mechanical kinematics must resolve configured TDC and stroke");
+        require(tdc.connectingRodObliquityDegrees < 0.01
+                && bdc.connectingRodObliquityDegrees < 0.01,
+                "an aligned connecting rod must produce zero lateral-thrust angle at dead centres");
+        auto sharedPinVtwin = enginelab::makeDefaultInlineTwo();
+        sharedPinVtwin.layout = enginelab::EngineLayout::vLayout;
+        sharedPinVtwin.bankAngleDegrees = 45.0;
+        sharedPinVtwin.crankJournals = { { 1, 0.0,
+            sharedPinVtwin.cylinders.front().strokeMm * 0.5, 1 } };
+        sharedPinVtwin.banks = {
+            { 1, -22.5, { 1 }, sharedPinVtwin.camshafts, 1, 1 },
+            { 2, 22.5, { 2 }, sharedPinVtwin.camshafts, 1, 1 } };
+        sharedPinVtwin.cylinders[0].crankJournalId = 1;
+        sharedPinVtwin.cylinders[0].bankId = 1;
+        sharedPinVtwin.cylinders[1].crankJournalId = 1;
+        sharedPinVtwin.cylinders[1].bankId = 2;
+        const auto sharedLeft = enginelab::evaluateCylinderKinematics(sharedPinVtwin, 0, 123.0, 100.0);
+        const auto sharedRight = enginelab::evaluateCylinderKinematics(sharedPinVtwin, 1, 123.0, 100.0);
+        require(std::abs(sharedLeft.crankPinXMm - sharedRight.crankPinXMm) < 1.0e-9
+                && std::abs(sharedLeft.crankPinYMm - sharedRight.crankPinYMm) < 1.0e-9,
+                "cylinders sharing a V-engine journal must resolve one global crankpin position");
+        auto invalidThrow = topology;
+        invalidThrow.crankJournals.front().throwMm += 2.0;
+        require(enginelab::validateEngineConfig(invalidThrow).has_value(),
+                "journal throw inconsistent with stroke must be rejected");
+        const auto radial = enginelab::makeDefaultRadialFive();
+        require(!enginelab::validateEngineConfig(radial), "master/articulated radial topology must validate");
+        const auto articulated = enginelab::evaluateCylinderKinematics(radial, 1, 97.0, 140.0);
+        require(std::isfinite(articulated.pistonPositionMm) && articulated.crankJournalId == 1,
+                "articulated-rod geometry must produce finite shared simulation/render state");
+    }
     {
         enginelab::GasCell intake;
         enginelab::GasCell cylinder;
@@ -252,6 +382,12 @@ int main() {
                     && (cylinder.intakeValveLiftMm > 0.0 || cylinder.exhaustValveLiftMm > 0.0);
             });
     }
+    if (simulator.state().rpm <= 500.0)
+        std::cerr << "startup diagnostic: rpm=" << simulator.state().rpm
+                  << " work=" << simulator.state().indicatedWorkJoulesPerCycle
+                  << " pressure=" << simulator.state().cylinderStates[0].pressureEstimateBar
+                  << " afr=" << simulator.state().airFuelRatio
+                  << " heat=" << simulator.state().resolvedHeatReleaseKw << '\n';
     require(simulator.state().rpm > 500.0, "engine should start");
     require(firedCylinders == std::set<std::uint32_t>({ 1, 2, 3, 4 }), "all cylinders should fire");
     require(simulator.state().intakeRunnerPressureKpa > 0.0 && simulator.state().exhaustRunnerPressureKpa > 0.0,
@@ -277,6 +413,15 @@ int main() {
     require(std::isfinite(simulator.state().cycleAveragedTorqueNm)
             && std::isfinite(simulator.state().cycleAveragedPowerKw),
             "cycle-averaged output must remain finite for UI and dyno consumers");
+    require(simulator.state().indicatedWorkJoulesPerCycle > 0.0
+            && simulator.state().indicatedMeanEffectivePressureBar > 0.0
+            && simulator.state().indicatedPowerKw > 0.0,
+            "running engine must expose positive cycle-integrated P-dV work, IMEP and indicated power");
+    require(std::any_of(simulator.state().cylinderStates.begin(),
+            simulator.state().cylinderStates.begin() + static_cast<std::ptrdiff_t>(simulator.state().cylinderStateCount),
+            [](const auto& cylinder) { return cylinder.indicatedWorkJoulesPerCycle > 0.0
+                && cylinder.intakeResonanceFrequencyHz > 0.0; }),
+            "cylinder telemetry must expose P-dV work and runner resonance state");
 
     {
         enginelab::SimpleEcuModel drivenEcu;
@@ -304,7 +449,7 @@ int main() {
             auto crankingExhaust = enginelab::ExhaustGraph::makeForEngine(crankingConfig);
             enginelab::EngineSimulator crankingSimulator(crankingConfig, crankingEcu, crankingPhysics,
                                                          crankingEvents, crankingExhaust);
-            for (int step = 0; step < 360; ++step)
+            for (int step = 0; step < 960; ++step)
                 (void)crankingSimulator.step(1.0 / 240.0, { false, true, 0.0, 0.0 });
             return crankingSimulator.state().manifoldPressureKpa;
         };
@@ -372,6 +517,20 @@ int main() {
     extendedPhysicsConfig.injection.portChargeCoolingEfficiency = 0.31;
     extendedPhysicsConfig.cylinders.front().pistonFrictionCoefficient = 0.067;
     extendedPhysicsConfig.cylinders.front().pistonBreakawayForceN = 61.0;
+    extendedPhysicsConfig.combustionCalibration.baseIgnitionDelaySeconds = 0.00062;
+    extendedPhysicsConfig.runnerAcoustics.dampingRatio = 0.21;
+    extendedPhysicsConfig.forcedInduction.enabled = true;
+    extendedPhysicsConfig.forcedInduction.designShaftSpeedRpm = 145'000.0;
+    extendedPhysicsConfig.forcedInduction.bearingFrictionPowerWatts = 360.0;
+    extendedPhysicsConfig.forcedInduction.turbineFlowAreaMm2 = 640.0;
+    extendedPhysicsConfig.forcedInduction.wastegateFlowAreaMm2 = 410.0;
+    extendedPhysicsConfig.transmission.reverseRatio = 3.55;
+    extendedPhysicsConfig.transmission.clutchThermalCapacityJPerC = 24'000.0;
+    extendedPhysicsConfig.vehicle.tireFrictionCoefficient = 1.15;
+    extendedPhysicsConfig.camshafts.intakeFlowCurve = { { 0.0, 0.0 }, { 5.0, 0.50 }, { 10.2, 0.68 } };
+    extendedPhysicsConfig.camshafts.continuousControl.enabled = true;
+    extendedPhysicsConfig.camshafts.continuousControl.samples = { { 1'000.0, 0.2, 2.0, 0.0, 0.9 },
+                                                                  { 6'000.0, 1.0, 24.0, 10.0, 1.1 } };
     const auto extendedJsonRoundTrip = json.decode(json.encode(extendedPhysicsConfig));
     require(extendedJsonRoundTrip
             && std::abs(extendedJsonRoundTrip.config->injection.railPressureBar - 155.0) < 0.001
@@ -380,13 +539,27 @@ int main() {
             && std::abs(extendedJsonRoundTrip.config->cylinders.front().pistonFrictionCoefficient - 0.067) < 0.001
             && std::abs(extendedJsonRoundTrip.config->cylinders.front().pistonBreakawayForceN - 61.0) < 0.001,
             "JSON must preserve injection thermodynamics and per-cylinder Stribeck friction");
+    require(extendedJsonRoundTrip
+            && std::abs(extendedJsonRoundTrip.config->forcedInduction.designShaftSpeedRpm - 145'000.0) < 0.001
+            && std::abs(extendedJsonRoundTrip.config->forcedInduction.turbineFlowAreaMm2 - 640.0) < 0.001
+            && std::abs(extendedJsonRoundTrip.config->forcedInduction.wastegateFlowAreaMm2 - 410.0) < 0.001,
+            "JSON must preserve turbo shaft and flow-area calibration");
+    require(extendedJsonRoundTrip
+            && std::abs(extendedJsonRoundTrip.config->combustionCalibration.baseIgnitionDelaySeconds - 0.00062) < 1.0e-9
+            && std::abs(extendedJsonRoundTrip.config->transmission.reverseRatio - 3.55) < 0.001
+            && extendedJsonRoundTrip.config->camshafts.intakeFlowCurve.size() == 3
+            && extendedJsonRoundTrip.config->camshafts.continuousControl.samples.size() == 2,
+            "JSON must preserve Phase 3-5 combustion, driveline and valvetrain calibration");
     const auto v8JsonRoundTrip = json.decode(json.encode(enginelab::makeDefaultV8()));
     require(v8JsonRoundTrip && v8JsonRoundTrip.config->layout == enginelab::EngineLayout::vLayout,
             "JSON must preserve V engine layout");
     const auto radialJsonRoundTrip = json.decode(json.encode(enginelab::makeDefaultRadialFive()));
     require(radialJsonRoundTrip && radialJsonRoundTrip.config->layout == enginelab::EngineLayout::radial
-            && radialJsonRoundTrip.config->crankJournals.size() == 1,
-            "JSON must preserve radial layout and shared crank journal");
+            && radialJsonRoundTrip.config->crankJournals.size() == 1
+            && radialJsonRoundTrip.config->crankshafts.size() == 1
+            && radialJsonRoundTrip.config->cylinders[1].connectingRodType == enginelab::ConnectingRodType::articulated
+            && radialJsonRoundTrip.config->cylinders[1].masterCylinderId == 1,
+            "JSON must preserve radial crankshaft and master/articulated rod topology");
     require(!json.decode(R"({"schema_version":1,"engine":{"name":"bad","cycle":"steam","fuel":"gasoline"}})"),
             "JSON must reject unknown enum values");
 
@@ -400,11 +573,25 @@ int main() {
             && std::abs(extendedYamlRoundTrip.config->injection.directChargeCoolingEfficiency - 0.74) < 0.001
             && std::abs(extendedYamlRoundTrip.config->cylinders.front().pistonFrictionCoefficient - 0.067) < 0.001,
             "YAML must preserve injection thermodynamics and per-cylinder friction");
+    require(extendedYamlRoundTrip
+            && std::abs(extendedYamlRoundTrip.config->forcedInduction.designShaftSpeedRpm - 145'000.0) < 0.001
+            && std::abs(extendedYamlRoundTrip.config->forcedInduction.bearingFrictionPowerWatts - 360.0) < 0.001,
+            "YAML must preserve turbo inertia, bearing and speed calibration");
+    require(extendedYamlRoundTrip
+            && std::abs(extendedYamlRoundTrip.config->runnerAcoustics.dampingRatio - 0.21) < 0.001
+            && std::abs(extendedYamlRoundTrip.config->transmission.clutchThermalCapacityJPerC - 24'000.0) < 0.001
+            && std::abs(extendedYamlRoundTrip.config->vehicle.tireFrictionCoefficient - 1.15) < 0.001
+            && extendedYamlRoundTrip.config->camshafts.continuousControl.enabled,
+            "YAML must preserve Phase 3-5 acoustics, clutch, tire and continuous valve control");
     require(yamlRoundTrip.config->cylinders.size() == 4, "YAML must preserve cylinders");
     const auto v8YamlRoundTrip = yaml.decode(yaml.encode(enginelab::makeDefaultV8()));
     require(v8YamlRoundTrip && v8YamlRoundTrip.config->layout == enginelab::EngineLayout::vLayout,
             "YAML must preserve V engine layout");
     const auto radialYamlRoundTrip = yaml.decode(yaml.encode(enginelab::makeDefaultRadialFive()));
+    require(radialYamlRoundTrip && radialYamlRoundTrip.config->crankshafts.size() == 1
+            && radialYamlRoundTrip.config->cylinders[0].connectingRodType == enginelab::ConnectingRodType::master
+            && radialYamlRoundTrip.config->cylinders[4].connectingRodType == enginelab::ConnectingRodType::articulated,
+            "YAML must preserve master/articulated rod and crankshaft topology");
     require(radialYamlRoundTrip && radialYamlRoundTrip.config->layout == enginelab::EngineLayout::radial
             && radialYamlRoundTrip.config->cylinders.front().crankJournalId == 1,
             "YAML must preserve radial layout and cylinder journal references");
@@ -600,6 +787,12 @@ int main() {
                 && std::isfinite(fullDelivery.meanWorkTorqueNm)
                 && std::isfinite(fullDelivery.cylinderPressureTorqueNm),
                 "resolved cylinder pressure must be the operating torque source while mean-work remains telemetry");
+        if (fullDelivery.solverResolutionLimited
+                || fullDelivery.crankDegreesPerSolverStep
+                    > config.solver.maximumCrankDegreesPerStep + 1.0e-6)
+            std::cerr << "solver diagnostic: rpm=" << fullDelivery.rpm
+                      << " hz=" << fullDelivery.solverFrequencyHz
+                      << " crank_step=" << fullDelivery.crankDegreesPerSolverStep << '\n';
         require(!fullDelivery.solverResolutionLimited
                 && fullDelivery.crankDegreesPerSolverStep
                     <= config.solver.maximumCrankDegreesPerStep + 1.0e-6,
@@ -645,6 +838,7 @@ int main() {
         // Keep the chamber warm so cold-start enrichment does not turn this
         // deliberately lean flammability test back into a stoichiometric run.
         misfireConfig.ambientTemperatureC = 60.0;
+        misfireConfig.injection.injectorFlowMgPerSecond = 20.0;
         enginelab::SimplifiedGasolinePhysics misfirePhysics;
         enginelab::FourStrokeEventGenerator misfireEvents;
         auto misfireExhaust = enginelab::ExhaustGraph::makeForEngine(misfireConfig);
@@ -885,6 +1079,9 @@ int main() {
         manyCylinderConfig.firingOrder.clear();
         manyCylinderConfig.banks.clear();
         manyCylinderConfig.exhaustPaths.clear();
+        manyCylinderConfig.crankJournals.clear();
+        manyCylinderConfig.crankshafts.clear();
+        manyCylinderConfig.intakePaths.clear();
         manyCylinderConfig.rotatingInertiaKgM2 = 1.5;
         for (std::uint32_t index = 0; index < 32; ++index) {
             auto cylinder = config.cylinders.front();
@@ -892,6 +1089,7 @@ int main() {
             manyCylinderConfig.cylinders.push_back(cylinder);
             manyCylinderConfig.firingOrder.push_back(cylinder.id);
         }
+        enginelab::normaliseEngineConfig(manyCylinderConfig);
         require(!enginelab::validateEngineConfig(manyCylinderConfig), "32-cylinder stress configuration must be valid");
         enginelab::FourStrokeEventGenerator stressGenerator;
         enginelab::EngineState stressState;
@@ -1181,8 +1379,12 @@ int main() {
                 && runs.front().points.front().airFlowGramsPerSecond > 0.0
                 && runs.front().points.front().lambda > 0.0,
                 "dyno points must retain the physical telemetry needed to explain a result");
-        require(std::abs(restored.throttle - 0.31) < 0.01 && std::abs(restored.load - 0.27) < 0.001,
-                "dyno must restore the user's manual throttle and load");
+        const auto restoredBrakeTorque = 0.27 * 2'500'000.0
+            * enginelab::engineDisplacementLitres(enginelab::makeDefaultInlineTwo()) * 0.001
+            / (4.0 * std::numbers::pi);
+        require(std::abs(restored.throttle - 0.31) < 0.01
+                && std::abs(restored.loadTorqueNm - restoredBrakeTorque) < 0.5,
+                "dyno must restore the user's throttle and external brake command");
     }
 
     {

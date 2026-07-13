@@ -16,12 +16,13 @@ public:
     void setTargetAirFuelRatio(double value) noexcept {
         targetAfr_.store(std::isfinite(value) ? std::clamp(value, 8.0, 30.0) : 14.2);
     }
-    void setIgnitionAdvanceDegrees(double value) noexcept {
-        ignitionAdvance_.store(std::isfinite(value) ? std::clamp(value, -30.0, 80.0) : 18.0);
+    void setIgnitionTrimDegrees(double value) noexcept {
+        ignitionTrimDegrees_.store(std::isfinite(value) ? std::clamp(value, -30.0, 30.0) : 0.0);
     }
+    void setIgnitionAdvanceDegrees(double value) noexcept { setIgnitionTrimDegrees(value); }
 private:
     std::atomic<double> targetAfr_ { 14.2 };
-    std::atomic<double> ignitionAdvance_ { 18.0 };
+    std::atomic<double> ignitionTrimDegrees_ { 0.0 };
     mutable std::atomic<bool> limiterLatched_ { false };
     mutable std::atomic<double> limiterReleaseTime_ { 0.0 };
     mutable std::atomic<double> previousThrottle_ { 0.0 };

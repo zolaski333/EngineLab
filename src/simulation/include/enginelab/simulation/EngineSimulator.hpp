@@ -7,6 +7,9 @@
 #include <enginelab/physics/FlamePhysicsModel.hpp>
 #include <enginelab/physics/FuelInjectionModel.hpp>
 #include <enginelab/physics/EndGasKnockModel.hpp>
+#include <enginelab/physics/IndicatedWorkModel.hpp>
+#include <enginelab/physics/ValveTrainModel.hpp>
+#include <enginelab/physics/HelmholtzRunnerModel.hpp>
 #include <enginelab/simulation/IEngineSimulation.hpp>
 #include <enginelab/events/CylinderPressureSample.hpp>
 #include <enginelab/foundation/SpscQueue.hpp>
@@ -39,7 +42,8 @@ private:
     std::array<double, 32> intakeFlowMgPerCycle_ {};
     std::array<double, 32> exhaustFlowMgPerCycle_ {};
     std::array<double, 32> cylinderWallTemperatureC_ {};
-    GasCell manifoldGas_ {};
+    std::array<GasCell, 32> intakePlenumGas_ {};
+    std::size_t intakePlenumCount_ { 1 };
     std::array<GasCell, 32> exhaustCollectorGas_ {};
     std::size_t exhaustCollectorCount_ { 1 };
     std::array<GasCell, 32> intakeRunnerGas_ {};
@@ -50,10 +54,19 @@ private:
     std::array<double, 32> deliveredFuelMolesLastCycle_ {};
     std::array<double, 32> requestedFuelMolesThisCycle_ {};
     std::array<double, 32> trappedAirMassMgLastCycle_ {};
+    std::array<double, 32> actualAfrLastCycle_ {};
     std::array<double, 32> fuelDeliveryRatio_ {};
+    std::array<double, 32> closedLoopFuelTrim_ {};
     std::array<FlameEvent, 32> flameEvents_ {};
     std::array<FuelInjectionState, 32> injectionStates_ {};
     std::array<EndGasKnockState, 32> endGasKnockStates_ {};
+    std::array<IndicatedWorkState, 32> indicatedWorkStates_ {};
+    std::array<ValveTrainState, 32> valveTrainStates_ {};
+    std::array<ValveTrainResult, 32> valveTrainResults_ {};
+    std::array<HelmholtzRunnerState, 32> runnerAcousticStates_ {};
+    std::array<HelmholtzRunnerResult, 32> runnerAcousticResults_ {};
+    std::array<double, 32> ignitionDelayRemainingSeconds_ {};
+    std::array<bool, 32> ignitionPending_ {};
     FlamePhysicsModel flamePhysics_ {};
     std::array<bool, 32> cylinderMisfires_ {};
     std::unique_ptr<SpscQueue<CylinderPressureSample, 1'024>> pressureSamples_;

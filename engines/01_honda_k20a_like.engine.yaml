@@ -26,8 +26,8 @@ engine:
     timing_curve:
       - { rpm: 0, advance_deg: 8 }
       - { rpm: 1200, advance_deg: 13 }
-      - { rpm: 3500, advance_deg: 25 }
-      - { rpm: 6200, advance_deg: 31 }
+      - { rpm: 3500, advance_deg: 29 }
+      - { rpm: 6200, advance_deg: 34 }
       - { rpm: 8700, advance_deg: 27 }
   solver:
     mechanical_frequency_hz: 2000

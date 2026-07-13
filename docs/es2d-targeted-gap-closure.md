@@ -1,6 +1,6 @@
 # Passe ciblée ES2D — gaz, combustion, injection et audio
 
-Date de référence : 12 juillet 2026.
+Date de référence : 13 juillet 2026.
 
 Ce document trace la passe d'implémentation issue de l'analyse comparative
 jointe. Il distingue le code livré des écarts volontairement laissés à une
@@ -37,6 +37,21 @@ prochaine passe.
 - knock par intégrale d'auto-inflammation Livengood-Wu du gaz de fin de
   combustion, alimentée par la pression et la température réelles de chaque
   `GasCell` ; l'auto-inflammation libère effectivement l'énergie du reliquat.
+- intégration signée P·dV par cylindre, avec travail par cycle, IMEP, puissance
+  indiquée et couple équivalent observables ;
+- délai d'inflammation propre à chaque cylindre, calibré par pression,
+  température, mélange et gaz résiduels ;
+- pertes aux parois et sensibilité à la dilution exposées dans la configuration.
+
+### Culasses, distribution et admission
+
+- profils de levée arbitraires et courbes coefficient de décharge/levée par
+  came et par banque ;
+- actionneurs continus VVT admission, VVT échappement et VVL pilotés par une
+  calibration RPM/charge ;
+- volume géométrique et mode Helmholtz amorti propres à chaque runner ;
+- couplage de la pression résonante au transfert gazeux conservatif, sans bonus
+  artificiel de couple ou de masse.
 
 ### Injection
 
@@ -69,16 +84,16 @@ prochaine passe.
 
 ### Transmission
 
-- le runtime existant utilisait déjà les rapports, l'embrayage et le véhicule :
-  `TransmissionConfig` n'était donc pas une structure morte ;
-- glissement d'embrayage avec capacité de couple, zone de verrouillage et
-  synchronisation calculée avec l'inertie moteur et l'inertie réfléchie ;
-- inertie totale des roues motrices ajoutée à la masse équivalente du véhicule ;
-- passage manuel temporisé avec débrayage, changement de rapport puis
-  réembrayage, et passage automatique optionnel avec seuils montée/descente ;
-- réaction signée sur le vilebrequin : un embrayage engagé à l'arrêt peut
-  caler le moteur ; glissement, couple et progression du changement sont
-  exposés dans `EngineState`.
+- modèle dédié possédant l'état de l'embrayage, de la boîte, du différentiel,
+  de la roue motrice et du véhicule ;
+- marche arrière, point mort, rapports avant, passage temporisé et réduction de
+  couple dans une même machine d'état manuelle ou automatique ;
+- inerties de boîte, différentiel, roues, vilebrequin et bielles prises en
+  compte à leur niveau physique ;
+- échauffement, refroidissement, fading et énergie dissipée de l'embrayage ;
+- glissement longitudinal, limite d'adhérence, frein de roue, traînée et
+  roulement, avec sous-pas mécanique stable de 1 ms ;
+- réaction signée sur le vilebrequin et télémétrie du bilan d'énergie.
 
 ## Hors périmètre de cette passe
 
@@ -86,7 +101,7 @@ Conformément à la demande, les éléments suivants n'ont pas été implément�
 
 - remplacement de la vue JUCE 2D par des meshes ou un rendu 3D ;
 - scripting Piranha/Lua ou expressions conditionnelles dans les configs ;
-- bielle maîtresse et bielles articulées pour les moteurs radiaux ;
+- degrés de liberté torsionnels indépendants entre plusieurs vilebrequins ;
 - export/enregistrement WAV depuis l'UI ;
 - import de profils de soupape depuis un fichier CSV externe ;
 - diagnostics OBD-II et nouvelles normes de correction dyno.
@@ -94,12 +109,14 @@ Conformément à la demande, les éléments suivants n'ont pas été implément�
 ## Limites restantes dans le périmètre physique
 
 - le réseau gazeux reste un réseau de volumes 0D et non un solveur CFD/ondes 1D
-  maillé ;
+  maillé ; la résonance runner est un mode Helmholtz agrégé ;
 - la chimie reste une réaction globale essence/oxygène ;
 - le spray et le film sont des modèles agrégés, sans gouttelettes 3D ;
 - le délai d'auto-inflammation end-gas est une corrélation globale calibrée,
   pas une cinétique chimique multi-espèces ni un champ spatial 3D ;
 - les transferts thermiques restent semi-empiriques ;
+- le pneu reste longitudinal et agrégé, sans transfert de charge, suspension,
+  ABS ou synchroniseurs de boîte détaillés ;
 - huit chemins convolutifs maximum et 262 144 échantillons chargés par IR ;
 - l'égalité perceptuelle absolue avec un exécutable ES2D n'est pas revendiquée
   sans scénario A/B exécuté sur les deux applications.

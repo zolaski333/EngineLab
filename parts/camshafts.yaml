@@ -20,6 +20,25 @@ sport_na:
   high_exhaust_duration_deg: 286
   high_intake_lift_mm: 13.2
   high_exhaust_lift_mm: 12.4
+  intake_flow_curve:
+    - { lift_mm: 0.0, discharge_coefficient: 0.0 }
+    - { lift_mm: 2.0, discharge_coefficient: 0.34 }
+    - { lift_mm: 5.0, discharge_coefficient: 0.55 }
+    - { lift_mm: 9.0, discharge_coefficient: 0.68 }
+    - { lift_mm: 13.2, discharge_coefficient: 0.72 }
+  exhaust_flow_curve:
+    - { lift_mm: 0.0, discharge_coefficient: 0.0 }
+    - { lift_mm: 2.0, discharge_coefficient: 0.31 }
+    - { lift_mm: 6.0, discharge_coefficient: 0.57 }
+    - { lift_mm: 12.4, discharge_coefficient: 0.69 }
+  continuous_control:
+    enabled: true
+    response_frequency_hz: 10.0
+    samples:
+      - { rpm: 900, load: 0.15, intake_advance_deg: 0.0, exhaust_advance_deg: 0.0, lift_multiplier: 0.88 }
+      - { rpm: 3000, load: 0.55, intake_advance_deg: 18.0, exhaust_advance_deg: 6.0, lift_multiplier: 0.98 }
+      - { rpm: 6000, load: 1.00, intake_advance_deg: 28.0, exhaust_advance_deg: 12.0, lift_multiplier: 1.10 }
+      - { rpm: 8500, load: 1.00, intake_advance_deg: 12.0, exhaust_advance_deg: 5.0, lift_multiplier: 1.16 }
 
 turbo_street:
   intake_duration_deg: 248
@@ -28,6 +47,16 @@ turbo_street:
   exhaust_lift_mm: 9.8
   intake_centerline_deg: 112
   exhaust_centerline_deg: 116
+  intake_flow_curve:
+    - { lift_mm: 0.0, discharge_coefficient: 0.0 }
+    - { lift_mm: 3.0, discharge_coefficient: 0.42 }
+    - { lift_mm: 7.0, discharge_coefficient: 0.61 }
+    - { lift_mm: 10.4, discharge_coefficient: 0.68 }
+  exhaust_flow_curve:
+    - { lift_mm: 0.0, discharge_coefficient: 0.0 }
+    - { lift_mm: 3.0, discharge_coefficient: 0.40 }
+    - { lift_mm: 7.0, discharge_coefficient: 0.60 }
+    - { lift_mm: 9.8, discharge_coefficient: 0.66 }
 
 big_v8_street:
   intake_duration_deg: 260
@@ -36,6 +65,16 @@ big_v8_street:
   exhaust_lift_mm: 12.4
   intake_centerline_deg: 110
   exhaust_centerline_deg: 112
+  intake_flow_curve:
+    - { lift_mm: 0.0, discharge_coefficient: 0.0 }
+    - { lift_mm: 3.0, discharge_coefficient: 0.38 }
+    - { lift_mm: 8.0, discharge_coefficient: 0.63 }
+    - { lift_mm: 12.8, discharge_coefficient: 0.70 }
+  exhaust_flow_curve:
+    - { lift_mm: 0.0, discharge_coefficient: 0.0 }
+    - { lift_mm: 3.0, discharge_coefficient: 0.36 }
+    - { lift_mm: 8.0, discharge_coefficient: 0.61 }
+    - { lift_mm: 12.4, discharge_coefficient: 0.68 }
 
 motorcycle_high_rpm:
   intake_duration_deg: 284
@@ -80,3 +119,13 @@ radial_aircraft:
   exhaust_centerline_deg: 110
   intake_flow_coefficient: 0.58
   exhaust_flow_coefficient: 0.60
+  intake_flow_curve:
+    - { lift_mm: 0.0, discharge_coefficient: 0.0 }
+    - { lift_mm: 3.0, discharge_coefficient: 0.35 }
+    - { lift_mm: 7.0, discharge_coefficient: 0.53 }
+    - { lift_mm: 11.6, discharge_coefficient: 0.61 }
+  exhaust_flow_curve:
+    - { lift_mm: 0.0, discharge_coefficient: 0.0 }
+    - { lift_mm: 3.0, discharge_coefficient: 0.36 }
+    - { lift_mm: 7.0, discharge_coefficient: 0.55 }
+    - { lift_mm: 11.2, discharge_coefficient: 0.62 }

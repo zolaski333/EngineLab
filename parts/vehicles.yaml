@@ -4,6 +4,9 @@ compact_coupe:
   frontal_area_m2: 2.05
   tire_radius_m: 0.305
   rolling_resistance_coefficient: 0.013
+  tire_friction_coefficient: 1.05
+  driven_axle_weight_fraction: 0.61
+  maximum_brake_force_n: 14500
 
 jdm_gt:
   mass_kg: 1560
@@ -11,6 +14,9 @@ jdm_gt:
   frontal_area_m2: 2.12
   tire_radius_m: 0.323
   rolling_resistance_coefficient: 0.014
+  tire_friction_coefficient: 1.02
+  driven_axle_weight_fraction: 0.52
+  maximum_brake_force_n: 16500
 
 muscle_car:
   mass_kg: 1660
@@ -18,6 +24,9 @@ muscle_car:
   frontal_area_m2: 2.22
   tire_radius_m: 0.335
   rolling_resistance_coefficient: 0.015
+  tire_friction_coefficient: 0.98
+  driven_axle_weight_fraction: 0.53
+  maximum_brake_force_n: 17000
 
 rally_sedan:
   mass_kg: 1450

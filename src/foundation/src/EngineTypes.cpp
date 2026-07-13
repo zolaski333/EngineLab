@@ -8,6 +8,14 @@
 namespace enginelab {
 
 namespace {
+[[nodiscard]] IntakePathConfig makeDefaultIntakePath(const EngineConfig& config) {
+    IntakePathConfig path;
+    path.id = 1;
+    path.geometry = config.intake;
+    for (const auto& cylinder : config.cylinders) path.cylinderIds.push_back(cylinder.id);
+    return path;
+}
+
 EngineConfig makeEngine(std::string name, EngineLayout layout, std::uint32_t count,
                         std::vector<std::uint32_t> order, double bore, double stroke,
                         double idle, double redline, double inertia, CamshaftConfig cams) {
@@ -46,18 +54,19 @@ EngineConfig makeEngine(std::string name, EngineLayout layout, std::uint32_t cou
         } else if (layout == EngineLayout::flat) {
             cylinder.bankOffsetDegrees = id % 2U == 0U ? 90.0 : -90.0;
         }
-        config.crankJournals.push_back({ id, cylinder.crankOffsetDegrees, stroke * 0.5 });
+        config.crankJournals.push_back({ id,
+            cylinder.crankOffsetDegrees - cylinder.bankOffsetDegrees, stroke * 0.5, 1 });
         config.cylinders.push_back(cylinder);
     }
     config.firingOrder = std::move(order);
     if (layout == EngineLayout::vLayout || layout == EngineLayout::flat) {
-        CylinderBankConfig left { 1, -config.bankAngleDegrees * 0.5, {}, cams, 0, 1 };
-        CylinderBankConfig right { 2, config.bankAngleDegrees * 0.5, {}, cams, 0, 1 };
+        CylinderBankConfig left { 1, -config.bankAngleDegrees * 0.5, {}, cams, 1, 1 };
+        CylinderBankConfig right { 2, config.bankAngleDegrees * 0.5, {}, cams, 1, 1 };
         for (const auto& cylinder : config.cylinders)
             (cylinder.id % 2U == 0U ? right.cylinderIds : left.cylinderIds).push_back(cylinder.id);
         config.banks = { std::move(left), std::move(right) };
     } else {
-        CylinderBankConfig bank { 1, 0.0, {}, cams, 0, 1 };
+        CylinderBankConfig bank { 1, 0.0, {}, cams, 1, 1 };
         for (const auto& cylinder : config.cylinders) bank.cylinderIds.push_back(cylinder.id);
         config.banks.push_back(std::move(bank));
     }
@@ -66,6 +75,7 @@ EngineConfig makeEngine(std::string name, EngineLayout layout, std::uint32_t cou
     path.geometry = config.exhaust;
     for (const auto& cylinder : config.cylinders) path.cylinderIds.push_back(cylinder.id);
     config.exhaustPaths.push_back(std::move(path));
+    normaliseEngineConfig(config);
     return config;
 }
 }
@@ -124,6 +134,7 @@ EngineConfig makeDefaultRadialFive() {
     config.firingOrder = { 1, 3, 5, 2, 4 };
     config.idleRpm = 640.0;
     config.redlineRpm = 3'200.0;
+    config.ignition.revLimitRpm = 3'200.0;
     config.rotatingInertiaKgM2 = 0.86;
     config.frictionCoefficient = 0.19;
     config.octaneRating = 92.0;
@@ -136,7 +147,7 @@ EngineConfig makeDefaultRadialFive() {
     config.transmission = { { 1.0 }, 1.0, 6'800.0 };
     config.vehicle = { 1'000.0, 0.30, 2.0, 0.320, 0.014 };
     config.thermal = { 820.0, 430.0, 0.24, 0.16, 0.92, 0.46 };
-    config.crankJournals.push_back({ 1, 0.0, 63.5 });
+    config.crankJournals.push_back({ 1, 0.0, 63.5, 1 });
     constexpr std::uint32_t count = 5;
     for (std::uint32_t id = 1; id <= count; ++id) {
         CylinderConfig cylinder;
@@ -151,9 +162,14 @@ EngineConfig makeDefaultRadialFive() {
         cylinder.crankOffsetDegrees = order == config.firingOrder.end() ? 0.0
             : static_cast<double>(std::distance(config.firingOrder.begin(), order)) * (720.0 / static_cast<double>(count));
         cylinder.crankJournalId = 1;
+        cylinder.connectingRodType = id == 1 ? ConnectingRodType::master : ConnectingRodType::articulated;
+        cylinder.masterCylinderId = id == 1 ? 0 : 1;
+        cylinder.articulatedJournalRadiusMm = id == 1 ? 0.0 : 34.0;
+        cylinder.articulatedJournalAngleDegrees = static_cast<double>(id - 1U) * 72.0;
         cylinder.bankOffsetDegrees = static_cast<double>(id - 1U) * (360.0 / static_cast<double>(count));
         config.cylinders.push_back(cylinder);
     }
+    normaliseEngineConfig(config);
     return config;
 }
 
@@ -167,6 +183,122 @@ double engineDisplacementLitres(const EngineConfig& config) noexcept {
     for (const auto& cylinder : config.cylinders)
         cubicMillimetres += std::numbers::pi * cylinder.boreMm * cylinder.boreMm * 0.25 * cylinder.strokeMm;
     return cubicMillimetres / 1'000'000.0;
+}
+
+double intakeRunnerVolumeLitres(const CylinderConfig& cylinder, const IntakeConfig& fallback) noexcept {
+    const auto diameterMm = cylinder.intakeRunnerDiameterMm > 0.0
+        ? cylinder.intakeRunnerDiameterMm : fallback.runnerDiameterMm;
+    const auto lengthMm = cylinder.intakeRunnerLengthMm > 0.0
+        ? cylinder.intakeRunnerLengthMm : fallback.runnerLengthMm;
+    const auto radiusMm = std::max(0.0, diameterMm * 0.5);
+    return std::max(0.001, std::numbers::pi * radiusMm * radiusMm
+        * std::max(0.0, lengthMm) / 1'000'000.0);
+}
+
+double effectiveRotatingInertiaKgM2(const EngineConfig& config) noexcept {
+    if (config.crankshafts.empty()) return std::max(0.001, config.rotatingInertiaKgM2);
+    double inertia = 0.0;
+    for (const auto& crankshaft : config.crankshafts)
+        inertia += std::max(0.0, crankshaft.momentOfInertiaKgM2)
+            * crankshaft.rotationRatio * crankshaft.rotationRatio;
+    for (const auto& cylinder : config.cylinders) {
+        if (cylinder.connectingRodMomentOfInertiaKgM2 > 0.0) {
+            inertia += cylinder.connectingRodMomentOfInertiaKgM2;
+        } else {
+            const auto radiusM = cylinder.strokeMm * 0.0005;
+            inertia += cylinder.connectingRodMassGrams * 0.001 * (2.0 / 3.0) * radiusM * radiusM;
+        }
+    }
+    return inertia > 0.0 ? inertia : std::max(0.001, config.rotatingInertiaKgM2);
+}
+
+double valveFlowCoefficient(double liftMm, double fallback,
+                            const std::vector<ValveFlowSample>& samples) noexcept {
+    if (samples.empty()) return std::max(0.0, fallback);
+    if (liftMm <= samples.front().liftMm) return std::max(0.0, samples.front().dischargeCoefficient);
+    if (liftMm >= samples.back().liftMm) return std::max(0.0, samples.back().dischargeCoefficient);
+    for (std::size_t index = 1; index < samples.size(); ++index) {
+        if (liftMm <= samples[index].liftMm) {
+            const auto span = std::max(1.0e-12, samples[index].liftMm - samples[index - 1].liftMm);
+            const auto amount = std::clamp((liftMm - samples[index - 1].liftMm) / span, 0.0, 1.0);
+            return std::max(0.0, std::lerp(samples[index - 1].dischargeCoefficient,
+                                           samples[index].dischargeCoefficient, amount));
+        }
+    }
+    return std::max(0.0, fallback);
+}
+
+ValveControlSample interpolateValveControl(const ValveControlConfig& control, double rpm,
+                                           double load) noexcept {
+    ValveControlSample result;
+    result.rpm = rpm;
+    result.load = load;
+    if (!control.enabled || control.samples.empty()) return result;
+    const auto [minimumRpm, maximumRpm] = std::minmax_element(control.samples.begin(), control.samples.end(),
+        [](const auto& left, const auto& right) { return left.rpm < right.rpm; });
+    const auto [minimumLoad, maximumLoad] = std::minmax_element(control.samples.begin(), control.samples.end(),
+        [](const auto& left, const auto& right) { return left.load < right.load; });
+    const auto rpmScale = std::max(1.0, maximumRpm->rpm - minimumRpm->rpm);
+    const auto loadScale = std::max(0.01, maximumLoad->load - minimumLoad->load);
+    double weightSum = 0.0;
+    result.intakeAdvanceDegrees = 0.0;
+    result.exhaustAdvanceDegrees = 0.0;
+    result.liftMultiplier = 0.0;
+    for (const auto& sample : control.samples) {
+        const auto rpmDistance = (rpm - sample.rpm) / rpmScale;
+        const auto loadDistance = (load - sample.load) / loadScale;
+        const auto squaredDistance = rpmDistance * rpmDistance + loadDistance * loadDistance;
+        if (squaredDistance < 1.0e-12) return sample;
+        const auto weight = 1.0 / squaredDistance;
+        weightSum += weight;
+        result.intakeAdvanceDegrees += sample.intakeAdvanceDegrees * weight;
+        result.exhaustAdvanceDegrees += sample.exhaustAdvanceDegrees * weight;
+        result.liftMultiplier += sample.liftMultiplier * weight;
+    }
+    if (weightSum > 0.0) {
+        result.intakeAdvanceDegrees /= weightSum;
+        result.exhaustAdvanceDegrees /= weightSum;
+        result.liftMultiplier /= weightSum;
+    }
+    return result;
+}
+
+void normaliseEngineConfig(EngineConfig& config) noexcept {
+    // `intake` is the canonical representation. Legacy scalar fields remain
+    // mirrored so schema-v1 files and old catalog overrides remain compatible.
+    if (config.intake.plenumVolumeLitres == IntakeConfig {}.plenumVolumeLitres
+        && config.plenumVolumeLitres != EngineConfig {}.plenumVolumeLitres)
+        config.intake.plenumVolumeLitres = config.plenumVolumeLitres;
+    if (config.intake.throttleDiameterMm == IntakeConfig {}.throttleDiameterMm
+        && config.throttleDiameterMm != EngineConfig {}.throttleDiameterMm)
+        config.intake.throttleDiameterMm = config.throttleDiameterMm;
+    config.plenumVolumeLitres = config.intake.plenumVolumeLitres;
+    config.throttleDiameterMm = config.intake.throttleDiameterMm;
+
+    if (config.crankshafts.empty()) {
+        CrankshaftConfig crankshaft;
+        crankshaft.momentOfInertiaKgM2 = config.rotatingInertiaKgM2;
+        config.crankshafts.push_back(crankshaft);
+    } else if (config.crankshafts.size() == 1) {
+        config.crankshafts.front().momentOfInertiaKgM2 = config.rotatingInertiaKgM2;
+    }
+    if (config.crankJournals.empty()) {
+        for (auto& cylinder : config.cylinders) {
+            cylinder.crankJournalId = cylinder.id;
+            config.crankJournals.push_back({ cylinder.id,
+                cylinder.crankOffsetDegrees - cylinder.bankOffsetDegrees,
+                cylinder.strokeMm * 0.5, config.crankshafts.front().id });
+        }
+    }
+    for (auto& journal : config.crankJournals) {
+        if (journal.crankshaftId == 0) journal.crankshaftId = config.crankshafts.front().id;
+    }
+    if (config.intakePaths.empty()) config.intakePaths.push_back(makeDefaultIntakePath(config));
+    else if (config.intakePaths.size() == 1)
+        config.intakePaths.front().geometry = config.intake;
+    for (auto& bank : config.banks) {
+        if (bank.intakeId == 0 && !config.intakePaths.empty()) bank.intakeId = config.intakePaths.front().id;
+    }
 }
 
 double valveLiftMm(double crankAngleDegrees, double centerlineDegrees,
@@ -248,6 +380,13 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
         || !inRange(config.forcedInduction.fullBoostRpm, 200.0, 20'000.0)
         || !inRange(config.forcedInduction.compressorEfficiency, 0.35, 0.95)
         || !inRange(config.forcedInduction.chargeTemperatureRiseC, 0.0, 160.0)
+        || !inRange(config.forcedInduction.turbineEfficiency, 0.20, 0.95)
+        || !inRange(config.forcedInduction.shaftInertiaKgM2, 0.000001, 0.1)
+        || !inRange(config.forcedInduction.wastegatePressureRatio, 1.0, 3.5)
+        || !inRange(config.forcedInduction.designShaftSpeedRpm, 10'000.0, 400'000.0)
+        || !inRange(config.forcedInduction.bearingFrictionPowerWatts, 0.0, 20'000.0)
+        || !inRange(config.forcedInduction.turbineFlowAreaMm2, 10.0, 20'000.0)
+        || !inRange(config.forcedInduction.wastegateFlowAreaMm2, 0.0, 20'000.0)
         || !inRange(config.thermal.coolantMassKjPerC, 20.0, 5'000.0)
         || !inRange(config.thermal.oilMassKjPerC, 10.0, 2'500.0)
         || !inRange(config.thermal.coolantHeatShare, 0.0, 1.0)
@@ -278,11 +417,31 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
         || !inRange(config.transmission.shiftDurationSeconds, 0.01, 3.0)
         || !inRange(config.transmission.automaticUpshiftRpm, 250.0, 50'000.0)
         || !inRange(config.transmission.automaticDownshiftRpm, 100.0, 30'000.0)
+        || !inRange(config.transmission.reverseRatio, 0.1, 10.0)
+        || !inRange(config.transmission.gearboxInputInertiaKgM2, 0.0, 20.0)
+        || !inRange(config.transmission.differentialInertiaKgM2, 0.0, 50.0)
+        || !inRange(config.transmission.clutchThermalCapacityJPerC, 100.0, 2'000'000.0)
+        || !inRange(config.transmission.clutchCoolingWPerC, 0.0, 2'000.0)
+        || !inRange(config.transmission.clutchFadeStartTemperatureC, 50.0, 800.0)
+        || !inRange(config.transmission.clutchFailureTemperatureC,
+                    config.transmission.clutchFadeStartTemperatureC + 1.0, 1'200.0)
+        || !inRange(config.transmission.shiftTorqueCutFraction, 0.0, 1.0)
         || !inRange(config.vehicle.massKg, 50.0, 20'000.0)
         || !inRange(config.vehicle.dragCoefficient, 0.05, 2.0)
         || !inRange(config.vehicle.frontalAreaM2, 0.1, 20.0)
         || !inRange(config.vehicle.tireRadiusM, 0.05, 2.0)
         || !inRange(config.vehicle.rollingResistanceCoefficient, 0.0, 0.20)
+        || !inRange(config.vehicle.tireFrictionCoefficient, 0.05, 3.0)
+        || !inRange(config.vehicle.drivenAxleWeightFraction, 0.05, 1.0)
+        || !inRange(config.vehicle.maximumBrakeForceN, 0.0, 200'000.0)
+        || !inRange(config.combustionCalibration.baseIgnitionDelaySeconds, 0.0, 0.02)
+        || !inRange(config.combustionCalibration.ignitionDelayTemperatureExponent, 0.0, 5.0)
+        || !inRange(config.combustionCalibration.ignitionDelayPressureExponent, 0.0, 3.0)
+        || !inRange(config.combustionCalibration.wallHeatTransferCoefficientWPerK, 0.0, 5'000.0)
+        || !inRange(config.combustionCalibration.residualDilutionSensitivity, 0.0, 3.0)
+        || !inRange(config.runnerAcoustics.dampingRatio, 0.01, 2.0)
+        || !inRange(config.runnerAcoustics.couplingGain, 0.0, 2.0)
+        || !inRange(config.runnerAcoustics.maximumPressureAmplitudeKpa, 0.1, 200.0)
         || !inRange(config.intake.plenumVolumeLitres, 0.1, 50.0)
         || !inRange(config.intake.throttleDiameterMm, 15.0, 150.0)
         || !inRange(config.intake.throttleDischargeCoefficient, 0.05, 1.5)
@@ -322,11 +481,30 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
         if (!inRange(gearRatio, 0.05, 10.0)) return "Transmission gear ratios must be finite and positive";
     if (config.transmission.automaticDownshiftRpm >= config.transmission.automaticUpshiftRpm)
         return "Automatic transmission downshift RPM must be lower than upshift RPM";
-    if (config.crankJournals.size() > 64) return "Crank journal table must contain at most 64 entries";
+    if (std::abs(config.plenumVolumeLitres - config.intake.plenumVolumeLitres) > 1.0e-9
+        || std::abs(config.throttleDiameterMm - config.intake.throttleDiameterMm) > 1.0e-9)
+        return "Legacy plenum and throttle fields must match the canonical intake configuration";
+    if (config.crankshafts.empty() || config.crankshafts.size() > 8)
+        return "Mechanical topology must define between 1 and 8 crankshafts";
+    std::unordered_set<std::uint32_t> crankshaftIds;
+    for (const auto& crankshaft : config.crankshafts) {
+        if (crankshaft.id == 0 || !crankshaftIds.insert(crankshaft.id).second
+            || !inRange(crankshaft.positionXMm, -10'000.0, 10'000.0)
+            || !inRange(crankshaft.positionYMm, -10'000.0, 10'000.0)
+            || !inRange(crankshaft.phaseOffsetDegrees, -720.0, 720.0)
+            || !inRange(crankshaft.rotationRatio, -8.0, 8.0) || std::abs(crankshaft.rotationRatio) < 0.01
+            || !inRange(crankshaft.massKg, 0.01, 2'000.0)
+            || !inRange(crankshaft.flywheelMassKg, 0.0, 2'000.0)
+            || !inRange(crankshaft.momentOfInertiaKgM2, 0.001, 50.0)
+            || !inRange(crankshaft.frictionTorqueNm, 0.0, 10'000.0))
+            return "Crankshaft IDs, ratios, positions, masses and inertia must be finite and valid";
+    }
+    if (config.crankJournals.empty() || config.crankJournals.size() > 64)
+        return "Crank journal table must contain between 1 and 64 entries";
     std::unordered_set<std::uint32_t> journalIds;
     for (const auto& journal : config.crankJournals) {
         if (journal.id == 0 || !inRange(journal.angleDegrees, -360.0, 720.0)
-            || !inRange(journal.throwMm, 1.0, 120.0))
+            || !inRange(journal.throwMm, 1.0, 120.0) || !crankshaftIds.contains(journal.crankshaftId))
             return "Crank journals must have finite IDs, angles and throws";
         journalIds.insert(journal.id);
     }
@@ -341,7 +519,27 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
         }
         return true;
     };
-    const auto validateCamshaft = [&inRange, &validateLiftProfile](const CamshaftConfig& cam) {
+    const auto validateFlowCurve = [&inRange](const std::vector<ValveFlowSample>& curve) {
+        if (curve.size() > 64) return false;
+        double previousLift = -1.0;
+        for (const auto& sample : curve) {
+            if (!inRange(sample.liftMm, 0.0, 40.0)
+                || !inRange(sample.dischargeCoefficient, 0.0, 1.5)
+                || sample.liftMm <= previousLift) return false;
+            previousLift = sample.liftMm;
+        }
+        return true;
+    };
+    const auto validateCamshaft = [&inRange, &validateLiftProfile, &validateFlowCurve](const CamshaftConfig& cam) {
+        if (!inRange(cam.continuousControl.responseFrequencyHz, 0.1, 100.0)
+            || (cam.continuousControl.enabled && cam.continuousControl.samples.empty())
+            || cam.continuousControl.samples.size() > 128
+            || !validateFlowCurve(cam.intakeFlowCurve) || !validateFlowCurve(cam.exhaustFlowCurve)) return false;
+        for (const auto& sample : cam.continuousControl.samples)
+            if (!inRange(sample.rpm, 0.0, 30'000.0) || !inRange(sample.load, 0.0, 1.5)
+                || !inRange(sample.intakeAdvanceDegrees, -90.0, 90.0)
+                || !inRange(sample.exhaustAdvanceDegrees, -90.0, 90.0)
+                || !inRange(sample.liftMultiplier, 0.1, 2.0)) return false;
         return inRange(cam.intakeDurationDegrees, 1.0, 720.0)
             && inRange(cam.exhaustDurationDegrees, 1.0, 720.0)
             && inRange(cam.intakeLiftMm, 0.0, 30.0)
@@ -384,8 +582,10 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
             || !inRange(cylinder.efficiencyOffset, -0.5, 0.5)
             || !inRange(cylinder.crankOffsetDegrees, -360.0, 720.0)
             || !inRange(cylinder.bankOffsetDegrees, -360.0, 360.0)
-            || !inRange(cylinder.intakeRunnerLengthMm, 20.0, 2'000.0)
-            || !inRange(cylinder.intakeRunnerDiameterMm, 10.0, 150.0)
+            || !(cylinder.intakeRunnerLengthMm == 0.0
+                || inRange(cylinder.intakeRunnerLengthMm, 20.0, 2'000.0))
+            || !(cylinder.intakeRunnerDiameterMm == 0.0
+                || inRange(cylinder.intakeRunnerDiameterMm, 10.0, 150.0))
             || !inRange(cylinder.exhaustPrimaryLengthMm, 0.0, 3'000.0)
             || !inRange(cylinder.soundAttenuation, 0.0, 4.0)
             || !inRange(cylinder.blowByCoefficient, 0.0, 0.1)
@@ -393,21 +593,88 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
             || !inRange(cylinder.pistonFrictionCoefficient, 0.0, 0.5)
             || !inRange(cylinder.pistonBreakawayForceN, 0.0, 5'000.0)
             || !inRange(cylinder.pistonBreakawayVelocityMps, 0.001, 5.0)
-            || !inRange(cylinder.pistonViscousFrictionNsPerM, 0.0, 2'000.0))
+            || !inRange(cylinder.pistonViscousFrictionNsPerM, 0.0, 2'000.0)
+            || !inRange(cylinder.articulatedJournalRadiusMm, 0.0, 250.0)
+            || !inRange(cylinder.articulatedJournalAngleDegrees, -720.0, 720.0)
+            || !inRange(cylinder.deckHeightMm, 0.0, 1'000.0)
+            || !inRange(cylinder.compressionHeightMm, 0.0, 250.0)
+            || !inRange(cylinder.wristPinOffsetMm, -20.0, 20.0)
+            || !inRange(cylinder.pistonCrownVolumeCc, -250.0, 250.0)
+            || !inRange(cylinder.headChamberVolumeCc, 0.0, 500.0)
+            || !inRange(cylinder.headGasketThicknessMm, 0.0, 10.0)
+            || !inRange(cylinder.connectingRodMomentOfInertiaKgM2, 0.0, 1.0))
             return "Cylinder IDs and dimensions must be finite and physically valid";
         if (cylinder.crankJournalId != 0 && !journalIds.empty() && !journalIds.contains(cylinder.crankJournalId))
             return "Cylinder crankJournalId must reference a configured crank journal";
+        if (cylinder.crankJournalId != 0) {
+            const auto journal = std::find_if(config.crankJournals.begin(), config.crankJournals.end(),
+                [&cylinder](const auto& candidate) { return candidate.id == cylinder.crankJournalId; });
+            if (journal != config.crankJournals.end()
+                && std::abs(journal->throwMm * 2.0 - cylinder.strokeMm) > 0.05)
+                return "Crank journal throw must equal half of the referenced cylinder stroke";
+        }
+        const auto explicitDeckGeometry = cylinder.deckHeightMm > 0.0 || cylinder.compressionHeightMm > 0.0
+            || cylinder.headChamberVolumeCc > 0.0 || cylinder.headGasketThicknessMm > 0.0
+            || cylinder.pistonCrownVolumeCc != 0.0;
+        if (explicitDeckGeometry && (cylinder.deckHeightMm <= 0.0 || cylinder.compressionHeightMm <= 0.0
+            || cylinder.headChamberVolumeCc <= 0.0))
+            return "Explicit chamber geometry requires positive deck height, compression height and head chamber volume";
+        if (explicitDeckGeometry) {
+            const auto areaMm2 = std::numbers::pi * cylinder.boreMm * cylinder.boreMm * 0.25;
+            const auto deckClearanceMm = cylinder.deckHeightMm - cylinder.strokeMm * 0.5
+                - cylinder.connectingRodMm - cylinder.compressionHeightMm;
+            const auto clearanceCc = cylinder.headChamberVolumeCc - cylinder.pistonCrownVolumeCc
+                + areaMm2 * (cylinder.headGasketThicknessMm + deckClearanceMm) / 1'000.0;
+            const auto sweptCc = areaMm2 * cylinder.strokeMm / 1'000.0;
+            if (clearanceCc <= 0.1 || std::abs((1.0 + sweptCc / clearanceCc) - cylinder.compressionRatio) > 0.25)
+                return "Explicit chamber geometry must yield positive clearance and match compressionRatio";
+        }
         cylinderIds.insert(cylinder.id);
     }
     const std::unordered_set<std::uint32_t> firingIds(config.firingOrder.begin(), config.firingOrder.end());
     if (cylinderIds.size() != config.cylinders.size()) return "Cylinder IDs must be unique";
     if (firingIds != cylinderIds) return "Firing order must contain every cylinder ID exactly once";
+    for (const auto& cylinder : config.cylinders) {
+        if (cylinder.connectingRodType == ConnectingRodType::articulated) {
+            if (cylinder.masterCylinderId == 0 || cylinder.masterCylinderId == cylinder.id
+                || !cylinderIds.contains(cylinder.masterCylinderId) || cylinder.articulatedJournalRadiusMm <= 0.0)
+                return "Articulated rods must reference a distinct master cylinder and a positive articulation radius";
+            const auto master = std::find_if(config.cylinders.begin(), config.cylinders.end(),
+                [&cylinder](const auto& candidate) { return candidate.id == cylinder.masterCylinderId; });
+            if (master == config.cylinders.end() || master->connectingRodType == ConnectingRodType::articulated)
+                return "An articulated rod master must be a conventional or master rod";
+        } else if (cylinder.masterCylinderId != 0 || cylinder.articulatedJournalRadiusMm != 0.0) {
+            return "Only articulated rods may define a master cylinder or articulation radius";
+        }
+    }
+    if (config.intakePaths.empty() || config.intakePaths.size() > 32)
+        return "Intake topology must contain between 1 and 32 paths";
+    std::unordered_set<std::uint32_t> intakePathIds;
+    std::unordered_set<std::uint32_t> assignedIntakeCylinders;
+    for (const auto& path : config.intakePaths) {
+        const auto& intake = path.geometry;
+        if (path.id == 0 || path.cylinderIds.empty() || !intakePathIds.insert(path.id).second
+            || !inRange(intake.plenumVolumeLitres, 0.05, 100.0)
+            || !inRange(intake.throttleDiameterMm, 5.0, 250.0)
+            || !inRange(intake.throttleDischargeCoefficient, 0.05, 1.5)
+            || !inRange(intake.runnerLengthMm, 20.0, 2'000.0)
+            || !inRange(intake.runnerDiameterMm, 10.0, 150.0)
+            || !inRange(intake.idleBypassAreaMm2, 0.0, 1'000.0)
+            || !inRange(intake.throttleGamma, 0.2, 5.0))
+            return "Intake path IDs and geometry must be valid";
+        for (const auto cylinderId : path.cylinderIds)
+            if (!cylinderIds.contains(cylinderId) || !assignedIntakeCylinders.insert(cylinderId).second)
+                return "Intake paths must reference every cylinder exactly once";
+    }
+    if (assignedIntakeCylinders != cylinderIds)
+        return "Configured intake paths must assign every cylinder exactly once";
     if (config.banks.size() > 32) return "Bank topology may contain at most 32 banks";
     std::unordered_set<std::uint32_t> assignedBankCylinders;
     std::unordered_set<std::uint32_t> bankIds;
     for (const auto& bank : config.banks) {
         if (bank.id == 0 || bank.cylinderIds.empty() || !bankIds.insert(bank.id).second || !inRange(bank.angleDegrees, -180.0, 180.0)
             || !validateCamshaft(bank.camshafts)) return "Bank IDs, angles and camshafts must be valid";
+        if (!intakePathIds.contains(bank.intakeId)) return "Bank intakeId must reference a configured intake path";
         for (const auto cylinderId : bank.cylinderIds) {
             if (!cylinderIds.contains(cylinderId) || !assignedBankCylinders.insert(cylinderId).second)
                 return "Bank cylinder references must be unique and valid";
@@ -415,7 +682,7 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
     }
     if (!config.banks.empty() && assignedBankCylinders != cylinderIds)
         return "Configured banks must assign every cylinder exactly once";
-    if (config.exhaustPaths.size() > 32) return "Exhaust topology may contain at most 32 paths";
+    if (config.exhaustPaths.size() > 8) return "Exhaust topology may contain at most 8 paths supported by audio";
     std::unordered_set<std::uint32_t> exhaustPathIds;
     std::unordered_set<std::uint32_t> assignedExhaustCylinders;
     for (const auto& path : config.exhaustPaths) {

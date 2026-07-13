@@ -6,13 +6,29 @@ engine:
   bank_angle_deg: 72
   firing_order: [1, 3, 5, 2, 4]
   idle_rpm: 640
-  redline_rpm: 3200
+  redline_rpm: 2400
   rotating_inertia_kg_m2: 0.86
   friction_coefficient: 0.19
   octane_rating: 92
   cooling_efficiency: 2.6
   plenum_volume_l: 6.4
   throttle_diameter_mm: 82
+  intake:
+    plenum_volume_l: 6.4
+    throttle_diameter_mm: 82
+    runner_length_mm: 600
+    runner_diameter_mm: 50
+    idle_bypass_area_mm2: 36
+    throttle_gamma: 1.45
+  ignition:
+    rev_limit_rpm: 2450
+    limiter_duration_s: 0.100
+    timing_curve:
+      - { rpm: 0, advance_deg: 3 }
+      - { rpm: 700, advance_deg: 8 }
+      - { rpm: 1400, advance_deg: 15 }
+      - { rpm: 2100, advance_deg: 21 }
+      - { rpm: 2450, advance_deg: 18 }
   uses:
     injection: continuous_manifold
     camshafts: radial_aircraft
@@ -29,8 +45,8 @@ engine:
   crank_journals:
     - { id: 1, angle_deg: 0.0, throw_mm: 63.5 }
   cylinders:
-    - { id: 1, bore_mm: 114.0, stroke_mm: 127.0, connecting_rod_mm: 228.0, piston_mass_g: 1050, compression_ratio: 7.0, crank_offset_deg: 0.0, crank_journal_id: 1, bank_offset_deg: 0.0 }
-    - { id: 2, bore_mm: 114.0, stroke_mm: 127.0, connecting_rod_mm: 228.0, piston_mass_g: 1050, compression_ratio: 7.0, crank_offset_deg: 432.0, crank_journal_id: 1, bank_offset_deg: 72.0 }
-    - { id: 3, bore_mm: 114.0, stroke_mm: 127.0, connecting_rod_mm: 228.0, piston_mass_g: 1050, compression_ratio: 7.0, crank_offset_deg: 144.0, crank_journal_id: 1, bank_offset_deg: 144.0 }
-    - { id: 4, bore_mm: 114.0, stroke_mm: 127.0, connecting_rod_mm: 228.0, piston_mass_g: 1050, compression_ratio: 7.0, crank_offset_deg: 576.0, crank_journal_id: 1, bank_offset_deg: 216.0 }
-    - { id: 5, bore_mm: 114.0, stroke_mm: 127.0, connecting_rod_mm: 228.0, piston_mass_g: 1050, compression_ratio: 7.0, crank_offset_deg: 288.0, crank_journal_id: 1, bank_offset_deg: 288.0 }
+    - { id: 1, bore_mm: 114.0, stroke_mm: 127.0, connecting_rod_mm: 228.0, piston_mass_g: 1050, compression_ratio: 7.0, crank_offset_deg: 0.0, crank_journal_id: 1, bank_offset_deg: 0.0, connecting_rod_type: master }
+    - { id: 2, bore_mm: 114.0, stroke_mm: 127.0, connecting_rod_mm: 228.0, piston_mass_g: 1050, compression_ratio: 7.0, crank_offset_deg: 432.0, crank_journal_id: 1, bank_offset_deg: 72.0, connecting_rod_type: articulated, master_cylinder_id: 1, articulated_journal_radius_mm: 34.0, articulated_journal_angle_deg: 72.0 }
+    - { id: 3, bore_mm: 114.0, stroke_mm: 127.0, connecting_rod_mm: 228.0, piston_mass_g: 1050, compression_ratio: 7.0, crank_offset_deg: 144.0, crank_journal_id: 1, bank_offset_deg: 144.0, connecting_rod_type: articulated, master_cylinder_id: 1, articulated_journal_radius_mm: 34.0, articulated_journal_angle_deg: 144.0 }
+    - { id: 4, bore_mm: 114.0, stroke_mm: 127.0, connecting_rod_mm: 228.0, piston_mass_g: 1050, compression_ratio: 7.0, crank_offset_deg: 576.0, crank_journal_id: 1, bank_offset_deg: 216.0, connecting_rod_type: articulated, master_cylinder_id: 1, articulated_journal_radius_mm: 34.0, articulated_journal_angle_deg: 216.0 }
+    - { id: 5, bore_mm: 114.0, stroke_mm: 127.0, connecting_rod_mm: 228.0, piston_mass_g: 1050, compression_ratio: 7.0, crank_offset_deg: 288.0, crank_journal_id: 1, bank_offset_deg: 288.0, connecting_rod_type: articulated, master_cylinder_id: 1, articulated_journal_radius_mm: 34.0, articulated_journal_angle_deg: 288.0 }

@@ -7,6 +7,7 @@
 #include <enginelab/foundation/SpscQueue.hpp>
 #include <enginelab/physics/SimplifiedGasolinePhysics.hpp>
 #include <enginelab/simulation/EngineSimulator.hpp>
+#include <enginelab/runtime/DrivelineModel.hpp>
 #include <algorithm>
 #include <atomic>
 #include <cmath>
@@ -33,6 +34,7 @@ struct RealtimeAudioState final {
     std::atomic<float> cylinderDisplacementLitres { 0.5F };
     std::atomic<float> boreStrokeRatio { 1.0F };
     std::atomic<float> bankSeparation { 0.0F };
+    std::array<std::atomic<float>, 32> cylinderPan {};
     std::atomic<float> exhaustOpenness { 0.5F };
     std::atomic<float> manifoldPressureKpa { 101.325F };
     std::atomic<float> exhaustPressureKpa { 101.325F };
@@ -66,6 +68,7 @@ public:
     void setThrottle(double value) noexcept { throttle_.store(std::isfinite(value) ? std::clamp(value, 0.0, 1.0) : 0.0); }
     void setLoad(double value) noexcept { load_.store(std::isfinite(value) ? std::clamp(value, 0.0, 1.0) : 0.0); }
     void setClutchPressure(double value) noexcept { clutchPressure_.store(std::isfinite(value) ? std::clamp(value, 0.0, 1.0) : 1.0); }
+    void setBrakePressure(double value) noexcept { brakePressure_.store(std::isfinite(value) ? std::clamp(value, 0.0, 1.0) : 0.0); }
     void shiftUp() noexcept;
     void shiftDown() noexcept;
     void setGear(int gear) noexcept;
@@ -83,7 +86,8 @@ public:
     void setExhaustPreset(AudioExhaustPreset value) noexcept { audioState_.exhaustPreset.store(static_cast<int>(value), std::memory_order_relaxed); }
     [[nodiscard]] bool dynoHoldEnabled() const noexcept { return dynoHoldEnabled_.load(); }
     void setTargetAirFuelRatio(double value) noexcept { ecu_.setTargetAirFuelRatio(value); }
-    void setIgnitionAdvanceDegrees(double value) noexcept { ecu_.setIgnitionAdvanceDegrees(value); }
+    void setIgnitionTrimDegrees(double value) noexcept { ecu_.setIgnitionTrimDegrees(value); }
+    void setIgnitionAdvanceDegrees(double value) noexcept { setIgnitionTrimDegrees(value); }
     void setPaused(bool value) noexcept { paused_.store(value); }
     void setTimeScale(double value) noexcept { timeScale_.store(std::isfinite(value) ? std::clamp(value, 0.25, 4.0) : 1.0); }
     [[nodiscard]] bool paused() const noexcept { return paused_.load(); }
@@ -110,6 +114,8 @@ private:
     FourStrokeEventGenerator eventGenerator_;
     ExhaustGraph exhaust_;
     EngineSimulator simulator_;
+    DrivelineModel driveline_;
+    DrivelineOutput drivelineOutput_;
     FiringEventQueue eventQueue_;
     CylinderPressureQueue pressureQueue_;
     RealtimeAudioState audioState_;
@@ -120,6 +126,7 @@ private:
     std::atomic<double> throttle_ { 0.12 };
     std::atomic<double> load_ { 0.08 };
     std::atomic<double> clutchPressure_ { 1.0 };
+    std::atomic<double> brakePressure_ { 0.0 };
     std::atomic<int> gear_ { -1 };
     std::atomic<bool> dynoHoldEnabled_ { false };
     std::atomic<double> dynoHoldRpm_ { 2'500.0 };
@@ -154,9 +161,6 @@ private:
     double clutchSlipRpm_ { 0.0 };
     double effectiveClutchPressure_ { 0.0 };
     int engagedGear_ { -1 };
-    int shiftFromGear_ { -1 };
-    int shiftTargetGear_ { -1 };
-    double shiftElapsedSeconds_ { 0.0 };
     double shiftProgress_ { 0.0 };
     bool shiftInProgress_ { false };
     std::atomic<bool> dynoSweeping_ { false };

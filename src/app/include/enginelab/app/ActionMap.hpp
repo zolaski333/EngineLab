@@ -7,9 +7,9 @@ namespace enginelab {
 
 enum class AppAction : std::size_t {
     ignition, starter, dyno, dynoHold, fullscreen, dynoStats, pause, nextScreen,
-    shiftUp, shiftDown, throttleIdle, throttleQuarter, throttleHalf, throttleFull,
+    shiftUp, shiftDown, brake, throttleIdle, throttleQuarter, throttleHalf, throttleFull,
     timeQuarter, timeHalf, timeNormal, timeDouble, timeQuadruple,
-    layerUp, layerDown, exhaustPreset, clutchDecrease, clutchIncrease,
+    layerUp, layerDown, exhaustPreset, clutchHold, clutchDecrease, clutchIncrease,
     wheelDynoRpm, wheelVolume, wheelConvolution, wheelHighGain, wheelLowNoise,
     wheelHighNoise, wheelCombustion, wheelExhaust, wheelIntake, wheelMechanical,
     wheelSimulationRate, wheelFineThrottle, count

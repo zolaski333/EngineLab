@@ -1,6 +1,7 @@
 #include <enginelab/events/FourStrokeEventGenerator.hpp>
 #include <algorithm>
 #include <cmath>
+#include <numbers>
 
 namespace enginelab {
 std::size_t FourStrokeEventGenerator::generate(
@@ -21,16 +22,16 @@ std::size_t FourStrokeEventGenerator::generate(
         if (cylinder == config.cylinders.end()) continue;
         const auto cylinderIndex = static_cast<std::size_t>(std::distance(config.cylinders.begin(), cylinder));
         float stereoPosition = 0.0F;
-        if (config.layout == EngineLayout::vLayout)
-            stereoPosition = (cylinderIndex % 2U == 0U ? -0.52F : 0.52F);
-        else if (config.layout == EngineLayout::flat) {
-            const auto bankColumns = std::max(1.0, static_cast<double>((config.cylinders.size() + 1U) / 2U));
-            stereoPosition = (cylinderIndex % 2U == 0U ? -0.64F : 0.64F)
-                + static_cast<float>((static_cast<double>(cylinderIndex / 2U) / std::max(1.0, bankColumns - 1.0)) - 0.5) * 0.18F;
-        }
-        else if (config.layout == EngineLayout::radial)
-            stereoPosition = static_cast<float>(std::sin(static_cast<double>(cylinderIndex)
-                / static_cast<double>(config.cylinders.size()) * 6.283185307179586) * 0.74);
+        const auto bank = std::find_if(config.banks.begin(), config.banks.end(), [&cylinder](const auto& item) {
+            return item.id == cylinder->bankId
+                || std::find(item.cylinderIds.begin(), item.cylinderIds.end(), cylinder->id) != item.cylinderIds.end();
+        });
+        if (config.layout == EngineLayout::radial)
+            stereoPosition = static_cast<float>(std::sin(cylinder->bankOffsetDegrees
+                * std::numbers::pi / 180.0) * 0.74);
+        else if (bank != config.banks.end() && std::abs(bank->angleDegrees) > 0.1)
+            stereoPosition = static_cast<float>(std::sin(bank->angleDegrees
+                * std::numbers::pi / 180.0) * 0.78);
         else if (config.cylinders.size() > 1)
             stereoPosition = static_cast<float>(-0.72 + 1.44 * static_cast<double>(cylinderIndex)
                 / static_cast<double>(config.cylinders.size() - 1));
@@ -53,7 +54,7 @@ std::size_t FourStrokeEventGenerator::generate(
             const auto fuelDelivery = hasCylinderState
                 ? static_cast<float>(std::clamp(cylinderState->fuelDeliveryRatio, 0.0, 1.0)) : 1.0F;
             const auto resolvedPulse = hasCylinderState
-                ? static_cast<float>(std::clamp(cylinderState->combustionPulse / 1.4, 0.20, 1.35)) : 1.0F;
+                ? static_cast<float>(std::clamp(cylinderState->combustionPulse / 1.4, 0.0, 1.35)) : 1.0F;
             const auto resolvedPressureBar = hasCylinderState && cylinderState->pressureEstimateBar > 1.0
                 ? static_cast<float>(cylinderState->pressureEstimateBar)
                 : static_cast<float>(combustion.pressureEstimateBar);
@@ -62,6 +63,18 @@ std::size_t FourStrokeEventGenerator::generate(
                 ? static_cast<float>(std::clamp(cylinder->boreMm * 0.5
                     / cylinderState->flameSpeedMps, 1.0, 45.0))
                 : static_cast<float>(1.4 + 10.0 / std::max(1.0, state.rpm / 1'000.0));
+            const auto bankCam = bank != config.banks.end() ? &bank->camshafts : &config.camshafts;
+            const auto highProfile = bankCam->variableProfileEnabled
+                && state.rpm >= bankCam->switchRpm && state.throttle >= bankCam->switchThrottle;
+            const auto exhaustDuration = highProfile
+                ? bankCam->highExhaustDurationDegrees : bankCam->exhaustDurationDegrees;
+            const auto exhaustOpenCylinderPhase = std::fmod(360.0 - bankCam->exhaustCenterlineDegrees
+                - exhaustDuration * 0.5 + cycle, cycle);
+            const auto exhaustOpenGlobalAngle = std::fmod(cylinder->crankOffsetDegrees
+                + exhaustOpenCylinderPhase + cycle, cycle);
+            const auto crankDegreesToExhaustOpen = std::fmod(exhaustOpenGlobalAngle - target + cycle, cycle);
+            const auto valveEventDelaySeconds = state.rpm > 20.0
+                ? static_cast<float>(crankDegreesToExhaustOpen / (state.rpm * 6.0)) : 0.0F;
             FiringEvent event { eventTime, cylinderId, target,
                 misfire ? 0.04F : std::clamp(static_cast<float>(state.throttle * combustion.combustionQuality)
                     * variation * fuelDelivery * (0.65F + resolvedPulse * 0.35F), 0.001F, 1.0F),
@@ -73,7 +86,7 @@ std::size_t FourStrokeEventGenerator::generate(
                     ? static_cast<float>(cylinderState->exhaustFlowMgPerCycle) : 0.0F,
                 cylinderState != state.cylinderStates.begin() + static_cast<std::ptrdiff_t>(state.cylinderStateCount)
                     ? static_cast<float>(cylinderState->runnerPressureKpa) : static_cast<float>(state.exhaustRunnerPressureKpa),
-                0.0F, 0.0F,
+                valveEventDelaySeconds, 0.0F,
                 misfire, cylinderId, cylinderId };
             if (written < output.size()) {
                 auto insertion = written;

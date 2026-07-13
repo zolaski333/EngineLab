@@ -9,6 +9,8 @@ namespace enginelab {
 struct CylinderPressureSample final {
     double timeSeconds { 0.0 };
     std::array<float, 32> pressureBar {};
+    std::array<float, 32> exhaustRunnerPressureKpa {};
+    std::array<float, 32> exhaustFlowMgPerCycle {};
     std::size_t cylinderCount { 0 };
 };
 

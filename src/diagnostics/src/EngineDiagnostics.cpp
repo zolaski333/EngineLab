@@ -37,6 +37,12 @@ std::vector<Diagnostic> EngineDiagnostics::evaluate(const EngineConfig& config, 
     if (state.meanPistonSpeedMps > 25.0) result.push_back({ DiagnosticSeverity::warning, "mechanical.piston_speed", "Vitesse moyenne des pistons elevee." });
     if (state.peakPistonAccelerationG > 5'500.0)
         result.push_back({ DiagnosticSeverity::critical, "mechanical.piston_acceleration", "Acceleration piston critique pour l'equipage mobile." });
+    if (state.clutchTemperatureC >= config.transmission.clutchFailureTemperatureC)
+        result.push_back({ DiagnosticSeverity::critical, "driveline.clutch_failure", "Embrayage en surchauffe critique : capacite de couple perdue." });
+    else if (state.clutchTemperatureC >= config.transmission.clutchFadeStartTemperatureC)
+        result.push_back({ DiagnosticSeverity::warning, "driveline.clutch_fade", "Embrayage surchauffe : la capacite de couple diminue." });
+    if (state.tractionLimited && state.throttle > 0.2)
+        result.push_back({ DiagnosticSeverity::information, "vehicle.traction_limit", "Force longitudinale limitee par l'adherence disponible." });
     return result;
 }
 } // namespace enginelab

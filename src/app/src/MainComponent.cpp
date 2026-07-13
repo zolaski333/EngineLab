@@ -47,6 +47,11 @@ constexpr std::array<std::uint32_t, 8> curveColours {
     }
     return "CUSTOM";
 }
+[[nodiscard]] juce::String gearName(int gear) {
+    if (gear == -2) return "R";
+    if (gear == -1) return "N";
+    return juce::String(gear + 1);
+}
 
 [[nodiscard]] double crankThrowMmFor(const EngineConfig& config, const CylinderConfig& cylinder) noexcept {
     if (cylinder.crankJournalId != 0) {
@@ -127,23 +132,23 @@ MainComponent::MainComponent() {
     };
     addAndMakeVisible(historySelector_); addAndMakeVisible(deleteRunButton_);
 
-    throttleLabel_.setText(utf8("ACCÉLÉRATEUR  [W 25% / E 50% / R 100%]"), juce::dontSendNotification);
+    throttleLabel_.setText(utf8("ACCÉLÉRATEUR  [W 10% / E 20% / R 100%]"), juce::dontSendNotification);
     loadLabel_.setText("CHARGE MANUELLE", juce::dontSendNotification);
     afrLabel_.setText(utf8("INJECTION IDÉALISÉE — AFR"), juce::dontSendNotification);
-    advanceLabel_.setText("AVANCE ALLUMAGE", juce::dontSendNotification);
+    advanceLabel_.setText(utf8("TRIM ALLUMAGE (CARTE + °)"), juce::dontSendNotification);
     for (auto* label : { &throttleLabel_, &loadLabel_, &afrLabel_, &advanceLabel_ }) {
         label->setColour(juce::Label::textColourId, juce::Colour(0xff87948f));
         label->setFont(juce::FontOptions(12.0F));
         addAndMakeVisible(*label);
     }
     configureSlider(throttleSlider_, 0.0, 100.0, 12.0, " %");
-    configureSlider(loadSlider_, 0.0, 100.0, 8.0, " %");
+    configureSlider(loadSlider_, 0.0, 100.0, 0.0, " %");
     configureSlider(afrSlider_, 10.0, 18.0, 14.7, "");
-    configureSlider(advanceSlider_, -5.0, 40.0, 18.0, utf8("°"));
+    configureSlider(advanceSlider_, -15.0, 15.0, 0.0, utf8("°"));
     throttleSlider_.onValueChange = [this] { if (runtime_) runtime_->setThrottle(throttleSlider_.getValue() / 100.0); };
     loadSlider_.onValueChange = [this] { if (runtime_) runtime_->setLoad(loadSlider_.getValue() / 100.0); };
     afrSlider_.onValueChange = [this] { if (runtime_) runtime_->setTargetAirFuelRatio(afrSlider_.getValue()); };
-    advanceSlider_.onValueChange = [this] { if (runtime_) runtime_->setIgnitionAdvanceDegrees(advanceSlider_.getValue()); };
+    advanceSlider_.onValueChange = [this] { if (runtime_) runtime_->setIgnitionTrimDegrees(advanceSlider_.getValue()); };
 
     selectEngine(std::min(1, static_cast<int>(presets_.size()) - 1));
     startTimerHz(30);
@@ -178,7 +183,7 @@ void MainComponent::applyConfig(const EngineConfig& newConfig) {
     runtime_->setThrottle(throttleSlider_.getValue() / 100.0);
     runtime_->setLoad(loadSlider_.getValue() / 100.0);
     runtime_->setTargetAirFuelRatio(afrSlider_.getValue());
-    runtime_->setIgnitionAdvanceDegrees(advanceSlider_.getValue());
+    runtime_->setIgnitionTrimDegrees(advanceSlider_.getValue());
     runtime_->setIgnitionEnabled(ignitionButton_.getToggleState());
     runtime_->setAudioVolume(audioVolume_);
     runtime_->setAudioConvolution(audioConvolution_);
@@ -567,8 +572,8 @@ bool MainComponent::keyPressed(const juce::KeyPress& key) {
     }
     if (actionMap_.matches(AppAction::throttleIdle, key)) { setThrottlePreset(0.01); return true; }
     if (actionMap_.matches(AppAction::throttleFull, key)) { setThrottlePreset(1.0); return true; }
-    if (actionMap_.matches(AppAction::throttleQuarter, key)) { setThrottlePreset(0.25); return true; }
-    if (actionMap_.matches(AppAction::throttleHalf, key)) { setThrottlePreset(0.50); return true; }
+    if (actionMap_.matches(AppAction::throttleQuarter, key)) { setThrottlePreset(0.10); return true; }
+    if (actionMap_.matches(AppAction::throttleHalf, key)) { setThrottlePreset(0.20); return true; }
     if (actionMap_.matches(AppAction::dyno, key)) { toggleDyno(); return true; }
     if (actionMap_.matches(AppAction::dynoHold, key)) { if (runtime_) runtime_->setDynoHoldEnabled(!runtime_->dynoHoldEnabled()); return true; }
     if (actionMap_.matches(AppAction::clutchDecrease, key)) {
@@ -589,7 +594,13 @@ bool MainComponent::keyStateChanged(bool) {
         if (runtime_) runtime_->setStarterEngaged(down || starterButton_.getState() == juce::Button::buttonDown);
         starterButton_.setToggleState(down, juce::dontSendNotification);
     }
-    return down || juce::ModifierKeys::getCurrentModifiersRealtime().isShiftDown();
+    const auto brakeDown = actionMap_.isDown(AppAction::brake);
+    if (brakeDown != brakeKeyDown_) {
+        brakeKeyDown_ = brakeDown;
+        if (runtime_) runtime_->setBrakePressure(brakeDown ? 1.0 : 0.0);
+    }
+    return down || brakeDown || actionMap_.isDown(AppAction::clutchHold)
+        || juce::ModifierKeys::getCurrentModifiersRealtime().isShiftDown();
 }
 
 void MainComponent::mouseWheelMove(const juce::MouseEvent&, const juce::MouseWheelDetails& wheel) {
@@ -626,7 +637,8 @@ void MainComponent::mouseDoubleClick(const juce::MouseEvent& event) {
 
 void MainComponent::timerCallback() {
     if (!runtime_) return;
-    const auto clutchTarget = juce::ModifierKeys::getCurrentModifiersRealtime().isShiftDown()
+    const auto clutchTarget = (actionMap_.isDown(AppAction::clutchHold)
+        || juce::ModifierKeys::getCurrentModifiersRealtime().isShiftDown())
         ? 0.0 : targetClutchPressure_;
     const auto slowClutch = actionMap_.isDown(AppAction::wheelFineThrottle);
     const auto clutchRate = slowClutch ? 2.2 : 12.0;
@@ -697,7 +709,7 @@ void MainComponent::paint(juce::Graphics& g) {
         utf8("Piston ") + juce::String(visibleState_.meanPistonSpeedMps, 1) + " m/s · "
             + juce::String(visibleState_.peakPistonAccelerationG, 0) + " g",
         "V " + juce::String(visibleState_.vehicleSpeedMps * 3.6, 1) + " km/h · G "
-            + (visibleState_.gear < 0 ? juce::String("N") : juce::String(visibleState_.gear + 1))
+            + gearName(visibleState_.gear)
     };
     auto detailBody = details.reduced(12.0F, 8.0F);
     const auto detailWidth = detailBody.getWidth() / 3.0F;
@@ -764,19 +776,23 @@ void MainComponent::drawLoadSimulationPanel(juce::Graphics& g, juce::Rectangle<f
     auto body = area.reduced(18.0F);
     g.setColour(juce::Colour(0xffdce5e1)); g.setFont(juce::FontOptions(16.0F, juce::Font::bold));
     g.drawText("LOAD / TRANSMISSION", body.removeFromTop(34.0F), juce::Justification::centredLeft);
-    const auto gearText = visibleState_.gear < 0 ? juce::String("N") : juce::String(visibleState_.gear + 1);
-    const std::array<juce::String, 8> values {
+    const auto gearText = gearName(visibleState_.gear);
+    const std::array<juce::String, 12> values {
         "GEAR  " + gearText + " / " + juce::String(visibleState_.gearCount),
         "CLUTCH  " + juce::String(visibleState_.clutchPressure * 100.0, 0) + " %",
         "SPEED  " + juce::String(visibleState_.vehicleSpeedMps * 3.6, 1) + " km/h",
         "DIST  " + juce::String(visibleState_.vehicleDistanceM / 1'000.0, 3) + " km",
         "WHEEL  " + juce::String(visibleState_.wheelTorqueNm, 0) + " Nm",
         "DRAG LOAD  " + juce::String(visibleState_.drivelineLoadTorqueNm, 0) + " Nm",
+        "CLUTCH TEMP  " + juce::String(visibleState_.clutchTemperatureC, 1) + utf8("°C"),
+        "CLUTCH LOSS  " + juce::String(visibleState_.clutchPowerLossKw, 2) + " kW",
+        "BRAKE  " + juce::String(visibleState_.brakePressure * 100.0, 0) + " %",
+        "TIRE FORCE  " + juce::String(visibleState_.tireLongitudinalForceN, 0) + " N",
         "DYNO HOLD  " + juce::String(visibleState_.dynoHoldEnabled ? "ON" : "OFF"),
         "HOLD RPM  " + juce::String(visibleState_.dynoHoldRpm, 0)
     };
     const auto columns = 2;
-    const auto cellHeight = std::min(58.0F, body.getHeight() / 4.0F);
+    const auto cellHeight = std::min(58.0F, body.getHeight() / 6.0F);
     const auto cellWidth = body.getWidth() / static_cast<float>(columns);
     for (std::size_t index = 0; index < values.size(); ++index) {
         const auto row = static_cast<float>(index / columns);
@@ -784,7 +800,7 @@ void MainComponent::drawLoadSimulationPanel(juce::Graphics& g, juce::Rectangle<f
         auto cell = juce::Rectangle<float>(body.getX() + column * cellWidth, body.getY() + row * cellHeight,
                                            cellWidth - 10.0F, cellHeight - 8.0F);
         g.setColour(juce::Colour(0xff17231f)); g.fillRoundedRectangle(cell, 7.0F);
-        g.setColour(index == 6 && visibleState_.dynoHoldEnabled ? juce::Colour(0xff79b89f) : juce::Colour(0xffc4cfca));
+        g.setColour(index == 10 && visibleState_.dynoHoldEnabled ? juce::Colour(0xff79b89f) : juce::Colour(0xffc4cfca));
         g.setFont(juce::FontOptions(14.0F, juce::Font::bold));
         g.drawFittedText(values[index], cell.reduced(10.0F, 5.0F).toNearestInt(), juce::Justification::centredLeft, 1);
     }
@@ -830,7 +846,7 @@ void MainComponent::drawGaugeCluster(juce::Graphics& g, juce::Rectangle<float> a
     g.setColour(juce::Colour(0xff2b3834)); g.drawRoundedRectangle(area, 8.0F, 1.0F);
     auto body = area.reduced(10.0F, 8.0F);
     struct Gauge { juce::String label; juce::String value; double normalized; juce::Colour colour; };
-    const auto gearText = visibleState_.gear < 0 ? juce::String("N") : juce::String(visibleState_.gear + 1);
+    const auto gearText = gearName(visibleState_.gear);
     const std::array<Gauge, 8> gauges {{
         { "RPM", juce::String(visibleState_.rpm, 0), visibleState_.rpm / std::max(1.0, config_.redlineRpm), juce::Colour(0xffef6f3c) },
         { "MAP", juce::String(visibleState_.manifoldPressureKpa, 0) + " kPa", visibleState_.manifoldPressureKpa / std::max(1.0, config_.ambientPressureKpa), juce::Colour(0xff41b6d7) },
@@ -915,6 +931,9 @@ void MainComponent::drawDebugPanel(juce::Graphics& g, juce::Rectangle<float> are
     double flameSpeed = 0.0;
     double burnedFraction = 0.0;
     double fuelDelivery = 0.0;
+    double intakeAdvance = 0.0;
+    double liftMultiplier = 0.0;
+    double runnerResonanceHz = 0.0;
     for (std::size_t index = 0; index < cylCount; ++index) {
         maxPressure = std::max(maxPressure, visibleState_.cylinderStates[index].pressureEstimateBar);
         intakeLift = std::max(intakeLift, visibleState_.cylinderStates[index].intakeValveLiftMm);
@@ -922,15 +941,23 @@ void MainComponent::drawDebugPanel(juce::Graphics& g, juce::Rectangle<float> are
         flameSpeed = std::max(flameSpeed, visibleState_.cylinderStates[index].flameSpeedMps);
         burnedFraction = std::max(burnedFraction, visibleState_.cylinderStates[index].burnedFraction);
         fuelDelivery += visibleState_.cylinderStates[index].fuelDeliveryRatio;
+        intakeAdvance = std::max(intakeAdvance, visibleState_.cylinderStates[index].intakeValveAdvanceDegrees);
+        liftMultiplier = std::max(liftMultiplier, visibleState_.cylinderStates[index].valveLiftMultiplier);
+        runnerResonanceHz = std::max(runnerResonanceHz, visibleState_.cylinderStates[index].intakeResonanceFrequencyHz);
     }
     fuelDelivery /= static_cast<double>(cylCount);
-    const std::array<juce::String, 35> values {
+    const std::array<juce::String, 46> values {
         "Net torque       " + juce::String(visibleState_.netTorqueNm, 2),
         "Indicated torque " + juce::String(visibleState_.indicatedTorqueNm, 2),
         "Mean-work torque " + juce::String(visibleState_.meanWorkTorqueNm, 2),
         "Pressure torque  " + juce::String(visibleState_.cylinderPressureTorqueNm, 2),
         "Pressure active  " + juce::String(visibleState_.cylinderPressureTorqueBlend > 0.5 ? "YES" : "startup"),
+        "P-dV work J/cyc  " + juce::String(visibleState_.indicatedWorkJoulesPerCycle, 2),
+        "IMEP bar         " + juce::String(visibleState_.indicatedMeanEffectivePressureBar, 3),
+        "Indicated kW     " + juce::String(visibleState_.indicatedPowerKw, 3),
+        "P-dV mean torque " + juce::String(visibleState_.pdvTorqueNm, 3),
         "Friction torque  " + juce::String(visibleState_.frictionTorqueNm, 2),
+        "FMEP friction  " + juce::String(visibleState_.frictionMeanEffectivePressureBar, 2) + " bar",
         "Recip torque     " + juce::String(visibleState_.reciprocatingTorqueNm, 2),
         "Load torque      " + juce::String(visibleState_.loadTorqueNm, 2),
         "Starter torque   " + juce::String(visibleState_.starterTorqueNm, 2),
@@ -956,6 +983,12 @@ void MainComponent::drawDebugPanel(juce::Graphics& g, juce::Rectangle<float> are
         "Flame speed m/s  " + juce::String(flameSpeed, 3),
         "Burned fraction  " + juce::String(burnedFraction * 100.0, 1) + " %",
         "Fuel delivery    " + juce::String(fuelDelivery * 100.0, 1) + " %",
+        "VVT intake deg   " + juce::String(intakeAdvance, 2),
+        "VVL multiplier   " + juce::String(liftMultiplier, 3),
+        "Runner resonance " + juce::String(runnerResonanceHz, 1) + " Hz",
+        "Clutch temp C    " + juce::String(visibleState_.clutchTemperatureC, 2),
+        "Clutch energy J  " + juce::String(visibleState_.clutchDissipatedEnergyJoules, 1),
+        "Tire limited     " + juce::String(visibleState_.tractionLimited ? "YES" : "no"),
         "Damage/wear      " + juce::String(visibleState_.damage, 4) + " / " + juce::String(visibleState_.wear, 4),
         "SPSC drops       " + juce::String(runtime_ ? runtime_->droppedEventCount() : 0),
         "Runtime overruns " + juce::String(runtime_ ? runtime_->timingOverrunCount() : 0),
@@ -1046,6 +1079,8 @@ void MainComponent::drawEngine(juce::Graphics& g, juce::Rectangle<float> area) c
 
         for (int index = 0; index < count; ++index) {
             const auto& cylinder = config_.cylinders[static_cast<std::size_t>(index)];
+            const auto* liveCylinder = static_cast<std::size_t>(index) < visibleState_.cylinderStateCount
+                ? &visibleState_.cylinderStates[static_cast<std::size_t>(index)] : nullptr;
             const auto mechanicalPhase = std::fmod(visibleState_.crankAngleDegrees
                 - mechanicalCrankOffsetDegreesFor(config_, cylinder) + 720.0, 360.0);
             const auto pistonAngle = mechanicalPhase * std::numbers::pi / 180.0;
@@ -1054,18 +1089,24 @@ void MainComponent::drawEngine(juce::Graphics& g, juce::Rectangle<float> area) c
             const auto sliderTravel = crankRadius * (1.0 - std::cos(pistonAngle)) + rodLength
                 - std::sqrt(std::max(0.0, rodLength * rodLength
                     - crankRadius * crankRadius * std::sin(pistonAngle) * std::sin(pistonAngle)));
-            const auto travel = static_cast<float>(std::clamp(sliderTravel / cylinder.strokeMm, 0.0, 1.0));
+            const auto travel = static_cast<float>(std::clamp(liveCylinder != nullptr
+                ? liveCylinder->pistonTravelMm / cylinder.strokeMm : sliderTravel / cylinder.strokeMm, 0.0, 1.0));
             const auto angle = -std::numbers::pi * 0.5
                 + cylinder.bankOffsetDegrees * std::numbers::pi / 180.0;
             const auto unitX = static_cast<float>(std::cos(angle));
             const auto unitY = static_cast<float>(std::sin(angle));
-            const auto pistonCenterX = center.x + unitX * (radius + travel * strokeTravel);
-            const auto pistonCenterY = center.y + unitY * (radius + travel * strokeTravel);
+            auto pistonCenterX = center.x + unitX * (radius + travel * strokeTravel);
+            auto pistonCenterY = center.y + unitY * (radius + travel * strokeTravel);
             const auto sharedCrankAngle = visibleState_.crankAngleDegrees * std::numbers::pi / 180.0;
-            const auto crankPinX = center.x + static_cast<float>(std::cos(sharedCrankAngle)) * diameter * 0.060F;
-            const auto crankPinY = center.y + static_cast<float>(std::sin(sharedCrankAngle)) * diameter * 0.060F;
-            const auto* liveCylinder = static_cast<std::size_t>(index) < visibleState_.cylinderStateCount
-                ? &visibleState_.cylinderStates[static_cast<std::size_t>(index)] : nullptr;
+            auto crankPinX = center.x + static_cast<float>(std::cos(sharedCrankAngle)) * diameter * 0.060F;
+            auto crankPinY = center.y + static_cast<float>(std::sin(sharedCrankAngle)) * diameter * 0.060F;
+            if (liveCylinder != nullptr) {
+                const auto mechanicalScale = radius / static_cast<float>(rodLength + crankRadius);
+                crankPinX = center.x + static_cast<float>(liveCylinder->crankPinXMm) * mechanicalScale;
+                crankPinY = center.y + static_cast<float>(liveCylinder->crankPinYMm) * mechanicalScale;
+                pistonCenterX = center.x + static_cast<float>(liveCylinder->wristPinXMm) * mechanicalScale;
+                pistonCenterY = center.y + static_cast<float>(liveCylinder->wristPinYMm) * mechanicalScale;
+            }
             if (showFlow && liveCylinder != nullptr) {
                 const auto intakePulse = static_cast<float>(std::clamp(liveCylinder->intakeFlowMgPerCycle / 55.0, 0.0, 1.0));
                 const auto exhaustPulse = static_cast<float>(std::clamp(liveCylinder->exhaustFlowMgPerCycle / 55.0, 0.0, 1.0));
@@ -1145,6 +1186,8 @@ void MainComponent::drawEngine(juce::Graphics& g, juce::Rectangle<float> area) c
 
     for (int index = 0; index < count; ++index) {
         const auto& cylinder = config_.cylinders[static_cast<std::size_t>(index)];
+        const auto* liveCylinder = static_cast<std::size_t>(index) < visibleState_.cylinderStateCount
+            ? &visibleState_.cylinderStates[static_cast<std::size_t>(index)] : nullptr;
         std::size_t bankIndex = 0;
         int column = index;
         const CylinderBankConfig* bankConfig = nullptr;
@@ -1168,7 +1211,8 @@ void MainComponent::drawEngine(juce::Graphics& g, juce::Rectangle<float> area) c
         const auto sliderTravel = crankRadius * (1.0 - std::cos(pistonAngle)) + rodLength
             - std::sqrt(std::max(0.0, rodLength * rodLength
                 - crankRadius * crankRadius * std::sin(pistonAngle) * std::sin(pistonAngle)));
-        const auto travel = static_cast<float>(std::clamp(sliderTravel / cylinder.strokeMm, 0.0, 1.0));
+        const auto travel = static_cast<float>(std::clamp(liveCylinder != nullptr
+            ? liveCylinder->pistonTravelMm / cylinder.strokeMm : sliderTravel / cylinder.strokeMm, 0.0, 1.0));
         const auto x = startX + static_cast<float>(column) * (cylinderWidth + spacing);
         const auto top = area.getY() + 20.0F + static_cast<float>(bankIndex) * (bankHeight + bankGap);
         const auto height = bankHeight - 18.0F;
@@ -1183,8 +1227,6 @@ void MainComponent::drawEngine(juce::Graphics& g, juce::Rectangle<float> area) c
         }
         g.setColour(juce::Colour(0xff111817)); g.fillRoundedRectangle(x, top, cylinderWidth, height, 7.0F);
         g.setColour(juce::Colour(0xff3a4743)); g.drawRoundedRectangle(x, top, cylinderWidth, height, 7.0F, 1.5F);
-        const auto* liveCylinder = static_cast<std::size_t>(index) < visibleState_.cylinderStateCount
-            ? &visibleState_.cylinderStates[static_cast<std::size_t>(index)] : nullptr;
         const auto fallbackIntakeLift = profiledValveLiftMm(phase, 360.0 + config_.camshafts.intakeCenterlineDegrees,
             config_.camshafts.intakeDurationDegrees, config_.camshafts.intakeLiftMm, config_.camshafts.intakeLiftProfile);
         const auto fallbackExhaustLift = profiledValveLiftMm(phase, 360.0 - config_.camshafts.exhaustCenterlineDegrees,

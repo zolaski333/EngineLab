@@ -55,6 +55,8 @@ EcuCommand SimpleEcuModel::evaluate(const EngineConfig& config, const EngineStat
         : 0.0;
     const auto effectiveThrottle = std::max(std::clamp(controls.throttle, 0.0, 1.0), idleThrottle);
     const auto warmupCorrection = std::clamp(1.0 + (70.0 - state.coolantTemperatureC) * 0.0025, 1.0, 1.12);
+    const auto crankingCorrection = controls.starterEngaged
+        ? 1.0 + std::clamp((700.0 - state.rpm) / 700.0, 0.0, 1.0) * 0.38 : 1.0;
     const auto normalizedLoad = std::clamp(state.manifoldPressureKpa / std::max(1.0, config.ambientPressureKpa), 0.0, 1.0);
     constexpr CalibrationTable afrCorrection {{
         {{ 0.0, 0.0, -0.3 }}, {{ 0.7, 0.1, -1.0 }},
@@ -65,7 +67,7 @@ EcuCommand SimpleEcuModel::evaluate(const EngineConfig& config, const EngineStat
     auto mappedAfr = std::clamp(targetAfr_.load(std::memory_order_relaxed)
         + interpolate(afrCorrection, state.rpm, normalizedLoad), 10.5, 18.0);
     const auto configuredAdvance = interpolateTimingCurve(config.ignition.timingCurve, state.rpm);
-    const auto liveTrim = ignitionAdvance_.load(std::memory_order_relaxed) - 18.0;
+    const auto liveTrim = ignitionTrimDegrees_.load(std::memory_order_relaxed);
     auto mappedAdvance = std::clamp(configuredAdvance + liveTrim
         + interpolate(advanceCorrection, state.rpm, normalizedLoad), -10.0, 55.0);
     const auto previousThrottle = previousThrottle_.exchange(effectiveThrottle, std::memory_order_relaxed);
@@ -78,7 +80,7 @@ EcuCommand SimpleEcuModel::evaluate(const EngineConfig& config, const EngineStat
     const auto alternatingCut = softLimit && (static_cast<std::uint64_t>(state.simulationTimeSeconds * 120.0) & 1U) != 0U;
     const auto enabled = controls.ignitionEnabled && !limiterActive;
     return { mappedAfr, mappedAdvance,
-             effectiveThrottle, warmupCorrection, enabled,
+             effectiveThrottle, warmupCorrection * crankingCorrection, enabled,
              enabled && !alternatingCut };
 }
 } // namespace enginelab

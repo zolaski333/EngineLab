@@ -14,6 +14,7 @@ struct FlameConditions final {
     double burnedGasFraction { 0.0 };
     double meanPistonSpeedMps { 0.0 };
     double load { 0.0 };
+    double residualDilutionSensitivity { 0.78 };
 };
 
 /** Persistent state of the flame kernel for one cylinder and one cycle. */
@@ -50,6 +51,8 @@ public:
     [[nodiscard]] static double turbulentFlameSpeedMps(const FuelConfig& fuel,
                                                         const FlameConditions& conditions) noexcept;
     [[nodiscard]] static double combustionEfficiency(const FlameConditions& conditions) noexcept;
+    [[nodiscard]] static double ignitionDelaySeconds(const CombustionCalibrationConfig&,
+                                                      const FlameConditions&) noexcept;
 
     void ignite(FlameEvent& event, const FuelConfig& fuel,
                 const FlameConditions& conditions,

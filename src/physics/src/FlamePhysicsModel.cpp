@@ -33,11 +33,29 @@ double FlamePhysicsModel::turbulentFlameSpeedMps(const FuelConfig& fuel,
     const auto turbulence = std::max(0.0, conditions.meanPistonSpeedMps)
         * std::clamp(fuel.turbulenceFlameSpeedGain, 0.0, 8.0)
         * (0.28 + 0.72 * std::clamp(conditions.load, 0.0, 1.5));
-    const auto turbulenceRatio = turbulence / std::max(0.01, laminar);
-    const auto wrinkling = 1.0 + 0.62 * std::sqrt(std::max(0.0, turbulenceRatio));
-    const auto dilutionAttenuation = std::clamp(1.0 - 0.78
+    const auto dilutionAttenuation = std::clamp(1.0 - conditions.residualDilutionSensitivity
         * std::clamp(conditions.burnedGasFraction, 0.0, 0.85), 0.25, 1.0);
-    return std::clamp(laminar * wrinkling * dilutionAttenuation, laminar, 35.0);
+    // In a running SI engine the integral turbulent flame speed scales with
+    // turbulence intensity (u'), not with sqrt(u'/S_L).  The previous square-
+    // root closure limited high-speed flames to a few m/s and left most fuel
+    // unburned at EVO. The coefficient represents the fraction of the bulk
+    // piston-driven turbulence effective at wrinkling the flame front.
+    const auto turbulentContribution = turbulence * 1.12;
+    return std::clamp((laminar + turbulentContribution) * dilutionAttenuation,
+                      laminar, 42.0);
+}
+
+double FlamePhysicsModel::ignitionDelaySeconds(const CombustionCalibrationConfig& calibration,
+                                                const FlameConditions& conditions) noexcept {
+    const auto temperatureRatio = std::clamp(700.0 / std::max(250.0, conditions.temperatureK), 0.25, 3.0);
+    const auto pressureRatio = std::clamp(101'325.0 / std::max(20'000.0, conditions.pressurePa), 0.05, 5.0);
+    const auto mixturePenalty = 1.0 + std::pow(std::abs(conditions.equivalenceRatio - 1.05), 1.35) * 1.8;
+    const auto residualPenalty = 1.0 + std::clamp(conditions.burnedGasFraction, 0.0, 0.9)
+        * calibration.residualDilutionSensitivity;
+    return std::clamp(calibration.baseIgnitionDelaySeconds
+        * std::pow(temperatureRatio, calibration.ignitionDelayTemperatureExponent)
+        * std::pow(pressureRatio, calibration.ignitionDelayPressureExponent)
+        * mixturePenalty * residualPenalty, 0.0, 0.02);
 }
 
 double FlamePhysicsModel::combustionEfficiency(const FlameConditions& conditions) noexcept {
@@ -88,6 +106,10 @@ FlameStepResult FlamePhysicsModel::advance(FlameEvent& event, const FuelConfig& 
     event.elapsedSeconds += dtSeconds;
     event.lastChamberVolumeM3 = conditions.chamberVolumeM3;
 
+    // The propagation coordinates span the chamber radius and its instantaneous
+    // axial height.  pi*r^2*h therefore reaches exactly the chamber volume at
+    // both geometric limits; the previous 4/3 factor completed combustion
+    // before the front had traversed the chamber.
     const auto burnedVolumeM3 = std::numbers::pi * event.radialTravelM
         * event.radialTravelM * event.axialTravelM;
     const auto geometricFraction = std::clamp(burnedVolumeM3

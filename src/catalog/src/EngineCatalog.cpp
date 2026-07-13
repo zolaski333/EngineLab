@@ -57,6 +57,22 @@ template <typename T>
         for (const auto& sample : node["exhaust_lift_profile"])
             value.exhaustLiftProfile.push_back({ sample["angle_deg"].as<double>(), sample["lift_mm"].as<double>() });
     }
+    if (node["high_intake_lift_profile"]) for (const auto& sample : node["high_intake_lift_profile"])
+        value.highIntakeLiftProfile.push_back({ sample["angle_deg"].as<double>(), sample["lift_mm"].as<double>() });
+    if (node["high_exhaust_lift_profile"]) for (const auto& sample : node["high_exhaust_lift_profile"])
+        value.highExhaustLiftProfile.push_back({ sample["angle_deg"].as<double>(), sample["lift_mm"].as<double>() });
+    if (node["intake_flow_curve"]) for (const auto& sample : node["intake_flow_curve"])
+        value.intakeFlowCurve.push_back({ sample["lift_mm"].as<double>(), sample["discharge_coefficient"].as<double>() });
+    if (node["exhaust_flow_curve"]) for (const auto& sample : node["exhaust_flow_curve"])
+        value.exhaustFlowCurve.push_back({ sample["lift_mm"].as<double>(), sample["discharge_coefficient"].as<double>() });
+    if (const auto control = node["continuous_control"]) {
+        assignIfPresent(control, "enabled", value.continuousControl.enabled);
+        assignIfPresent(control, "response_frequency_hz", value.continuousControl.responseFrequencyHz);
+        if (control["samples"]) for (const auto& sample : control["samples"])
+            value.continuousControl.samples.push_back({ sample["rpm"].as<double>(), sample["load"].as<double>(),
+                sample["intake_advance_deg"].as<double>(), sample["exhaust_advance_deg"].as<double>(),
+                sample["lift_multiplier"].as<double>() });
+    }
     return value;
 }
 
@@ -85,6 +101,14 @@ template <typename T>
     assignIfPresent(node, "automatic_shifting", value.automaticShifting);
     assignIfPresent(node, "automatic_upshift_rpm", value.automaticUpshiftRpm);
     assignIfPresent(node, "automatic_downshift_rpm", value.automaticDownshiftRpm);
+    assignIfPresent(node, "reverse_ratio", value.reverseRatio);
+    assignIfPresent(node, "gearbox_input_inertia_kg_m2", value.gearboxInputInertiaKgM2);
+    assignIfPresent(node, "differential_inertia_kg_m2", value.differentialInertiaKgM2);
+    assignIfPresent(node, "clutch_thermal_capacity_j_per_c", value.clutchThermalCapacityJPerC);
+    assignIfPresent(node, "clutch_cooling_w_per_c", value.clutchCoolingWPerC);
+    assignIfPresent(node, "clutch_fade_start_temperature_c", value.clutchFadeStartTemperatureC);
+    assignIfPresent(node, "clutch_failure_temperature_c", value.clutchFailureTemperatureC);
+    assignIfPresent(node, "shift_torque_cut_fraction", value.shiftTorqueCutFraction);
     return value;
 }
 
@@ -95,16 +119,29 @@ template <typename T>
     assignIfPresent(node, "frontal_area_m2", value.frontalAreaM2);
     assignIfPresent(node, "tire_radius_m", value.tireRadiusM);
     assignIfPresent(node, "rolling_resistance_coefficient", value.rollingResistanceCoefficient);
+    assignIfPresent(node, "tire_friction_coefficient", value.tireFrictionCoefficient);
+    assignIfPresent(node, "driven_axle_weight_fraction", value.drivenAxleWeightFraction);
+    assignIfPresent(node, "maximum_brake_force_n", value.maximumBrakeForceN);
     return value;
 }
 
 [[nodiscard]] ForcedInductionConfig decodeForcedInduction(const YAML::Node& node) {
     ForcedInductionConfig value;
     assignIfPresent(node, "enabled", value.enabled);
+    const auto type = node["type"].as<std::string>("turbocharger");
+    if (type == "supercharger") value.type = ForcedInductionType::supercharger;
+    else if (type != "turbocharger") throw std::runtime_error("Unknown forced-induction type: " + type);
     assignIfPresent(node, "pressure_ratio", value.pressureRatio);
     assignIfPresent(node, "full_boost_rpm", value.fullBoostRpm);
     assignIfPresent(node, "compressor_efficiency", value.compressorEfficiency);
     assignIfPresent(node, "charge_temperature_rise_c", value.chargeTemperatureRiseC);
+    assignIfPresent(node, "turbine_efficiency", value.turbineEfficiency);
+    assignIfPresent(node, "shaft_inertia_kg_m2", value.shaftInertiaKgM2);
+    assignIfPresent(node, "wastegate_pressure_ratio", value.wastegatePressureRatio);
+    assignIfPresent(node, "design_shaft_speed_rpm", value.designShaftSpeedRpm);
+    assignIfPresent(node, "bearing_friction_power_w", value.bearingFrictionPowerWatts);
+    assignIfPresent(node, "turbine_flow_area_mm2", value.turbineFlowAreaMm2);
+    assignIfPresent(node, "wastegate_flow_area_mm2", value.wastegateFlowAreaMm2);
     return value;
 }
 
@@ -207,6 +244,20 @@ void applyPart(const std::map<std::string, T>& parts, const YAML::Node& uses, co
             assignIfPresent(item, "piston_breakaway_force_n", cylinder.pistonBreakawayForceN);
             assignIfPresent(item, "piston_breakaway_velocity_mps", cylinder.pistonBreakawayVelocityMps);
             assignIfPresent(item, "piston_viscous_friction_ns_per_m", cylinder.pistonViscousFrictionNsPerM);
+            const auto rodType = item["connecting_rod_type"].as<std::string>("conventional");
+            if (rodType == "master") cylinder.connectingRodType = ConnectingRodType::master;
+            else if (rodType == "articulated") cylinder.connectingRodType = ConnectingRodType::articulated;
+            else if (rodType != "conventional") throw std::runtime_error("Unknown connecting-rod type: " + rodType);
+            assignIfPresent(item, "master_cylinder_id", cylinder.masterCylinderId);
+            assignIfPresent(item, "articulated_journal_radius_mm", cylinder.articulatedJournalRadiusMm);
+            assignIfPresent(item, "articulated_journal_angle_deg", cylinder.articulatedJournalAngleDegrees);
+            assignIfPresent(item, "deck_height_mm", cylinder.deckHeightMm);
+            assignIfPresent(item, "compression_height_mm", cylinder.compressionHeightMm);
+            assignIfPresent(item, "wrist_pin_offset_mm", cylinder.wristPinOffsetMm);
+            assignIfPresent(item, "piston_crown_volume_cc", cylinder.pistonCrownVolumeCc);
+            assignIfPresent(item, "head_chamber_volume_cc", cylinder.headChamberVolumeCc);
+            assignIfPresent(item, "head_gasket_thickness_mm", cylinder.headGasketThicknessMm);
+            assignIfPresent(item, "connecting_rod_inertia_kg_m2", cylinder.connectingRodMomentOfInertiaKgM2);
             cylinders.push_back(cylinder);
         }
         return cylinders;
@@ -239,6 +290,13 @@ void applyPart(const std::map<std::string, T>& parts, const YAML::Node& uses, co
         assignIfPresent(cylinderNode, "piston_breakaway_force_n", cylinder.pistonBreakawayForceN);
         assignIfPresent(cylinderNode, "piston_breakaway_velocity_mps", cylinder.pistonBreakawayVelocityMps);
         assignIfPresent(cylinderNode, "piston_viscous_friction_ns_per_m", cylinder.pistonViscousFrictionNsPerM);
+        assignIfPresent(cylinderNode, "connecting_rod_inertia_kg_m2", cylinder.connectingRodMomentOfInertiaKgM2);
+        assignIfPresent(cylinderNode, "deck_height_mm", cylinder.deckHeightMm);
+        assignIfPresent(cylinderNode, "compression_height_mm", cylinder.compressionHeightMm);
+        assignIfPresent(cylinderNode, "wrist_pin_offset_mm", cylinder.wristPinOffsetMm);
+        assignIfPresent(cylinderNode, "piston_crown_volume_cc", cylinder.pistonCrownVolumeCc);
+        assignIfPresent(cylinderNode, "head_chamber_volume_cc", cylinder.headChamberVolumeCc);
+        assignIfPresent(cylinderNode, "head_gasket_thickness_mm", cylinder.headGasketThicknessMm);
         cylinders.push_back(cylinder);
     }
     return cylinders;
@@ -333,12 +391,60 @@ void applyCrankOffsets(EngineConfig& config) {
     if (engine["vehicle"]) config.vehicle = decodeVehicle(engine["vehicle"]);
     if (engine["forced_induction"]) config.forcedInduction = decodeForcedInduction(engine["forced_induction"]);
     if (engine["thermal"]) config.thermal = decodeThermal(engine["thermal"]);
+    if (const auto calibration = engine["combustion_calibration"]) {
+        assignIfPresent(calibration, "base_ignition_delay_s", config.combustionCalibration.baseIgnitionDelaySeconds);
+        assignIfPresent(calibration, "ignition_delay_temperature_exponent", config.combustionCalibration.ignitionDelayTemperatureExponent);
+        assignIfPresent(calibration, "ignition_delay_pressure_exponent", config.combustionCalibration.ignitionDelayPressureExponent);
+        assignIfPresent(calibration, "wall_heat_transfer_w_per_k", config.combustionCalibration.wallHeatTransferCoefficientWPerK);
+        assignIfPresent(calibration, "residual_dilution_sensitivity", config.combustionCalibration.residualDilutionSensitivity);
+    }
+    if (const auto acoustics = engine["runner_acoustics"]) {
+        assignIfPresent(acoustics, "enabled", config.runnerAcoustics.enabled);
+        assignIfPresent(acoustics, "damping_ratio", config.runnerAcoustics.dampingRatio);
+        assignIfPresent(acoustics, "coupling_gain", config.runnerAcoustics.couplingGain);
+        assignIfPresent(acoustics, "maximum_pressure_amplitude_kpa", config.runnerAcoustics.maximumPressureAmplitudeKpa);
+    }
     if (engine["fuel_properties"]) config.fuelProperties = decodeFuel(engine["fuel_properties"]);
     if (const auto crankJournals = engine["crank_journals"]) {
         config.crankJournals.clear();
         for (const auto& journal : crankJournals)
             config.crankJournals.push_back({ journal["id"].as<std::uint32_t>(),
-                journal["angle_deg"].as<double>(), journal["throw_mm"].as<double>() });
+                journal["angle_deg"].as<double>(), journal["throw_mm"].as<double>(),
+                journal["crankshaft_id"].as<std::uint32_t>(1) });
+    }
+    if (const auto crankshafts = engine["crankshafts"]) {
+        config.crankshafts.clear();
+        for (const auto& item : crankshafts) {
+            CrankshaftConfig crankshaft;
+            crankshaft.id = item["id"].as<std::uint32_t>();
+            assignIfPresent(item, "position_x_mm", crankshaft.positionXMm);
+            assignIfPresent(item, "position_y_mm", crankshaft.positionYMm);
+            assignIfPresent(item, "phase_offset_deg", crankshaft.phaseOffsetDegrees);
+            assignIfPresent(item, "rotation_ratio", crankshaft.rotationRatio);
+            assignIfPresent(item, "mass_kg", crankshaft.massKg);
+            assignIfPresent(item, "flywheel_mass_kg", crankshaft.flywheelMassKg);
+            assignIfPresent(item, "moment_of_inertia_kg_m2", crankshaft.momentOfInertiaKgM2);
+            assignIfPresent(item, "friction_torque_nm", crankshaft.frictionTorqueNm);
+            config.crankshafts.push_back(crankshaft);
+        }
+    }
+    if (const auto paths = engine["intake_paths"]) {
+        config.intakePaths.clear();
+        for (const auto& item : paths) {
+            IntakePathConfig pathConfig;
+            pathConfig.id = item["id"].as<std::uint32_t>();
+            pathConfig.cylinderIds = item["cylinder_ids"].as<std::vector<std::uint32_t>>();
+            if (const auto geometry = item["geometry"]) {
+                assignIfPresent(geometry, "plenum_volume_l", pathConfig.geometry.plenumVolumeLitres);
+                assignIfPresent(geometry, "throttle_diameter_mm", pathConfig.geometry.throttleDiameterMm);
+                assignIfPresent(geometry, "throttle_discharge_coefficient", pathConfig.geometry.throttleDischargeCoefficient);
+                assignIfPresent(geometry, "runner_length_mm", pathConfig.geometry.runnerLengthMm);
+                assignIfPresent(geometry, "runner_diameter_mm", pathConfig.geometry.runnerDiameterMm);
+                assignIfPresent(geometry, "idle_bypass_area_mm2", pathConfig.geometry.idleBypassAreaMm2);
+                assignIfPresent(geometry, "throttle_gamma", pathConfig.geometry.throttleGamma);
+            }
+            config.intakePaths.push_back(std::move(pathConfig));
+        }
     }
     if (const auto banks = engine["banks"]) {
         config.banks.clear();
@@ -390,6 +496,7 @@ void applyCrankOffsets(EngineConfig& config) {
         config.exhaustPaths.push_back(std::move(pathConfig));
     }
 
+    normaliseEngineConfig(config);
     if (const auto error = validateEngineConfig(config)) throw std::runtime_error(*error);
     return config;
 }

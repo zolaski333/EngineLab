@@ -6,6 +6,11 @@ target_link_libraries(EngineLabCoreTests PRIVATE EngineLab::Audio)
 target_compile_definitions(EngineLabCoreTests PRIVATE ENGINELAB_CATALOG_ROOT="${CMAKE_SOURCE_DIR}")
 enginelab_set_warnings(EngineLabCoreTests)
 add_test(NAME EngineLab.Core COMMAND EngineLabCoreTests)
+if(TARGET EngineLabComparisonHarness)
+    add_test(NAME EngineLab.CatalogPhysics COMMAND EngineLabComparisonHarness
+        --output "${CMAKE_BINARY_DIR}/catalog-physics-test"
+        --catalog-root "${CMAKE_SOURCE_DIR}")
+endif()
 if(MSVC)
     target_link_options(EngineLabCoreTests PRIVATE /STACK:8388608)
 endif()

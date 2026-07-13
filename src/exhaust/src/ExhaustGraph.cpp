@@ -103,7 +103,7 @@ void ExhaustGraph::process(FiringEvent& event) const noexcept {
         if (edge == edges_.end()) break;
         currentId = edge->to;
     }
-    event.exhaustDelaySeconds = static_cast<float>(pathLengthMm / 520'000.0);
+    event.exhaustDelaySeconds += static_cast<float>(pathLengthMm / 520'000.0);
     event.exhaustResonanceHz = static_cast<float>(resonanceHz);
     event.intensity *= static_cast<float>(std::clamp(audioGain, 0.0, 8.0));
 }

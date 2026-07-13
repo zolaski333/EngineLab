@@ -7,6 +7,14 @@ using Json = nlohmann::json;
 [[nodiscard]] std::string cycleName(EngineCycle value) { return value == EngineCycle::fourStroke ? "four_stroke" : "two_stroke"; }
 [[nodiscard]] std::string fuelName(FuelType value) { return value == FuelType::gasoline ? "gasoline" : "diesel"; }
 [[nodiscard]] std::string injectionModeName(InjectionMode value) { return value == InjectionMode::port ? "port" : "direct"; }
+[[nodiscard]] std::string rodTypeName(ConnectingRodType value) {
+    if (value == ConnectingRodType::master) return "master";
+    if (value == ConnectingRodType::articulated) return "articulated";
+    return "conventional";
+}
+[[nodiscard]] std::string forcedInductionTypeName(ForcedInductionType value) {
+    return value == ForcedInductionType::supercharger ? "supercharger" : "turbocharger";
+}
 [[nodiscard]] std::string layoutName(EngineLayout value) {
     switch (value) {
     case EngineLayout::inlineLayout: return "inline";
@@ -34,6 +42,17 @@ using Json = nlohmann::json;
 }
 
 [[nodiscard]] Json camshaftJson(const CamshaftConfig& cams) {
+    Json intakeFlowCurve = Json::array();
+    for (const auto& sample : cams.intakeFlowCurve)
+        intakeFlowCurve.push_back({ { "lift_mm", sample.liftMm }, { "discharge_coefficient", sample.dischargeCoefficient } });
+    Json exhaustFlowCurve = Json::array();
+    for (const auto& sample : cams.exhaustFlowCurve)
+        exhaustFlowCurve.push_back({ { "lift_mm", sample.liftMm }, { "discharge_coefficient", sample.dischargeCoefficient } });
+    Json continuousSamples = Json::array();
+    for (const auto& sample : cams.continuousControl.samples)
+        continuousSamples.push_back({ { "rpm", sample.rpm }, { "load", sample.load },
+            { "intake_advance_deg", sample.intakeAdvanceDegrees },
+            { "exhaust_advance_deg", sample.exhaustAdvanceDegrees }, { "lift_multiplier", sample.liftMultiplier } });
     return { {"intake_duration_deg", cams.intakeDurationDegrees}, {"exhaust_duration_deg", cams.exhaustDurationDegrees},
         {"intake_lift_mm", cams.intakeLiftMm}, {"exhaust_lift_mm", cams.exhaustLiftMm},
         {"intake_centerline_deg", cams.intakeCenterlineDegrees}, {"exhaust_centerline_deg", cams.exhaustCenterlineDegrees},
@@ -45,7 +64,10 @@ using Json = nlohmann::json;
         {"high_exhaust_duration_deg", cams.highExhaustDurationDegrees}, {"high_intake_lift_mm", cams.highIntakeLiftMm},
         {"high_exhaust_lift_mm", cams.highExhaustLiftMm},
         {"high_intake_lift_profile", liftProfileJson(cams.highIntakeLiftProfile)},
-        {"high_exhaust_lift_profile", liftProfileJson(cams.highExhaustLiftProfile)} };
+        {"high_exhaust_lift_profile", liftProfileJson(cams.highExhaustLiftProfile)},
+        {"intake_flow_curve", intakeFlowCurve}, {"exhaust_flow_curve", exhaustFlowCurve},
+        {"continuous_control", {{"enabled", cams.continuousControl.enabled},
+            {"response_frequency_hz", cams.continuousControl.responseFrequencyHz}, {"samples", continuousSamples}}} };
 }
 
 [[nodiscard]] CamshaftConfig decodeCamshaft(const Json& cams) {
@@ -69,6 +91,18 @@ using Json = nlohmann::json;
     if (cams.contains("exhaust_lift_profile")) value.exhaustLiftProfile = decodeLiftProfile(cams.at("exhaust_lift_profile"));
     if (cams.contains("high_intake_lift_profile")) value.highIntakeLiftProfile = decodeLiftProfile(cams.at("high_intake_lift_profile"));
     if (cams.contains("high_exhaust_lift_profile")) value.highExhaustLiftProfile = decodeLiftProfile(cams.at("high_exhaust_lift_profile"));
+    if (cams.contains("intake_flow_curve")) for (const auto& sample : cams.at("intake_flow_curve"))
+        value.intakeFlowCurve.push_back({ sample.at("lift_mm"), sample.at("discharge_coefficient") });
+    if (cams.contains("exhaust_flow_curve")) for (const auto& sample : cams.at("exhaust_flow_curve"))
+        value.exhaustFlowCurve.push_back({ sample.at("lift_mm"), sample.at("discharge_coefficient") });
+    if (cams.contains("continuous_control")) {
+        const auto& control = cams.at("continuous_control");
+        value.continuousControl.enabled = control.value("enabled", false);
+        value.continuousControl.responseFrequencyHz = control.value("response_frequency_hz", value.continuousControl.responseFrequencyHz);
+        if (control.contains("samples")) for (const auto& sample : control.at("samples"))
+            value.continuousControl.samples.push_back({ sample.at("rpm"), sample.at("load"),
+                sample.at("intake_advance_deg"), sample.at("exhaust_advance_deg"), sample.at("lift_multiplier") });
+    }
     return value;
 }
 }
@@ -89,10 +123,34 @@ std::string JsonEngineSerializer::encode(const EngineConfig& config) const {
         {"piston_friction_coefficient", cylinder.pistonFrictionCoefficient},
         {"piston_breakaway_force_n", cylinder.pistonBreakawayForceN},
         {"piston_breakaway_velocity_mps", cylinder.pistonBreakawayVelocityMps},
-        {"piston_viscous_friction_ns_per_m", cylinder.pistonViscousFrictionNsPerM} });
+        {"piston_viscous_friction_ns_per_m", cylinder.pistonViscousFrictionNsPerM},
+        {"connecting_rod_type", rodTypeName(cylinder.connectingRodType)},
+        {"master_cylinder_id", cylinder.masterCylinderId},
+        {"articulated_journal_radius_mm", cylinder.articulatedJournalRadiusMm},
+        {"articulated_journal_angle_deg", cylinder.articulatedJournalAngleDegrees},
+        {"deck_height_mm", cylinder.deckHeightMm}, {"compression_height_mm", cylinder.compressionHeightMm},
+        {"wrist_pin_offset_mm", cylinder.wristPinOffsetMm}, {"piston_crown_volume_cc", cylinder.pistonCrownVolumeCc},
+        {"head_chamber_volume_cc", cylinder.headChamberVolumeCc},
+        {"head_gasket_thickness_mm", cylinder.headGasketThicknessMm},
+        {"connecting_rod_inertia_kg_m2", cylinder.connectingRodMomentOfInertiaKgM2} });
     Json crankJournals = Json::array();
     for (const auto& journal : config.crankJournals) crankJournals.push_back({
-        {"id", journal.id}, {"angle_deg", journal.angleDegrees}, {"throw_mm", journal.throwMm} });
+        {"id", journal.id}, {"angle_deg", journal.angleDegrees}, {"throw_mm", journal.throwMm},
+        {"crankshaft_id", journal.crankshaftId} });
+    Json crankshafts = Json::array();
+    for (const auto& crankshaft : config.crankshafts) crankshafts.push_back({
+        {"id", crankshaft.id}, {"position_x_mm", crankshaft.positionXMm}, {"position_y_mm", crankshaft.positionYMm},
+        {"phase_offset_deg", crankshaft.phaseOffsetDegrees}, {"rotation_ratio", crankshaft.rotationRatio},
+        {"mass_kg", crankshaft.massKg}, {"flywheel_mass_kg", crankshaft.flywheelMassKg},
+        {"moment_of_inertia_kg_m2", crankshaft.momentOfInertiaKgM2},
+        {"friction_torque_nm", crankshaft.frictionTorqueNm} });
+    Json intakePaths = Json::array();
+    for (const auto& path : config.intakePaths) intakePaths.push_back({ {"id", path.id},
+        {"cylinder_ids", path.cylinderIds}, {"geometry", {{"plenum_volume_l", path.geometry.plenumVolumeLitres},
+            {"throttle_diameter_mm", path.geometry.throttleDiameterMm},
+            {"throttle_discharge_coefficient", path.geometry.throttleDischargeCoefficient},
+            {"runner_length_mm", path.geometry.runnerLengthMm}, {"runner_diameter_mm", path.geometry.runnerDiameterMm},
+            {"idle_bypass_area_mm2", path.geometry.idleBypassAreaMm2}, {"throttle_gamma", path.geometry.throttleGamma}}} });
     Json banks = Json::array();
     for (const auto& bank : config.banks) banks.push_back({ {"id", bank.id}, {"angle_deg", bank.angleDegrees},
         {"cylinder_ids", bank.cylinderIds}, {"intake_id", bank.intakeId}, {"exhaust_path_id", bank.exhaustPathId},
@@ -129,23 +187,40 @@ std::string JsonEngineSerializer::encode(const EngineConfig& config) const {
         {"throttle_diameter_mm", config.throttleDiameterMm},
         {"bank_angle_deg", config.bankAngleDegrees},
         {"forced_induction", {{"enabled", config.forcedInduction.enabled},
+                               {"type", forcedInductionTypeName(config.forcedInduction.type)},
                                {"pressure_ratio", config.forcedInduction.pressureRatio},
                                {"full_boost_rpm", config.forcedInduction.fullBoostRpm},
                                {"compressor_efficiency", config.forcedInduction.compressorEfficiency},
-                               {"charge_temperature_rise_c", config.forcedInduction.chargeTemperatureRiseC}}},
+                               {"charge_temperature_rise_c", config.forcedInduction.chargeTemperatureRiseC},
+                               {"turbine_efficiency", config.forcedInduction.turbineEfficiency},
+                               {"shaft_inertia_kg_m2", config.forcedInduction.shaftInertiaKgM2},
+                               {"wastegate_pressure_ratio", config.forcedInduction.wastegatePressureRatio},
+                               {"design_shaft_speed_rpm", config.forcedInduction.designShaftSpeedRpm},
+                               {"bearing_friction_power_w", config.forcedInduction.bearingFrictionPowerWatts},
+                               {"turbine_flow_area_mm2", config.forcedInduction.turbineFlowAreaMm2},
+                               {"wastegate_flow_area_mm2", config.forcedInduction.wastegateFlowAreaMm2}}},
         {"thermal", {{"coolant_mass_kj_per_c", config.thermal.coolantMassKjPerC},
                       {"oil_mass_kj_per_c", config.thermal.oilMassKjPerC},
                       {"coolant_heat_share", config.thermal.coolantHeatShare},
                       {"oil_heat_share", config.thermal.oilHeatShare},
                       {"cooling_power_kw_per_c", config.thermal.coolingPowerKwPerC},
                       {"oil_cooling_power_kw_per_c", config.thermal.oilCoolingPowerKwPerC}}},
+        {"combustion_calibration", {{"base_ignition_delay_s", config.combustionCalibration.baseIgnitionDelaySeconds},
+                      {"ignition_delay_temperature_exponent", config.combustionCalibration.ignitionDelayTemperatureExponent},
+                      {"ignition_delay_pressure_exponent", config.combustionCalibration.ignitionDelayPressureExponent},
+                      {"wall_heat_transfer_w_per_k", config.combustionCalibration.wallHeatTransferCoefficientWPerK},
+                      {"residual_dilution_sensitivity", config.combustionCalibration.residualDilutionSensitivity}}},
+        {"runner_acoustics", {{"enabled", config.runnerAcoustics.enabled},
+                      {"damping_ratio", config.runnerAcoustics.dampingRatio},
+                      {"coupling_gain", config.runnerAcoustics.couplingGain},
+                      {"maximum_pressure_amplitude_kpa", config.runnerAcoustics.maximumPressureAmplitudeKpa}}},
         {"camshafts", camshaftJson(config.camshafts)},
         {"intake", {{"plenum_volume_l", config.intake.plenumVolumeLitres},
                      {"throttle_diameter_mm", config.intake.throttleDiameterMm},
                      {"throttle_discharge_coefficient", config.intake.throttleDischargeCoefficient},
                      {"runner_length_mm", config.intake.runnerLengthMm}, {"runner_diameter_mm", config.intake.runnerDiameterMm},
                      {"idle_bypass_area_mm2", config.intake.idleBypassAreaMm2}, {"throttle_gamma", config.intake.throttleGamma}}},
-        {"banks", banks}, {"exhaust_paths", exhaustPaths},
+        {"intake_paths", intakePaths}, {"banks", banks}, {"exhaust_paths", exhaustPaths},
         {"ignition", {{"rev_limit_rpm", config.ignition.revLimitRpm},
                         {"limiter_duration_s", config.ignition.limiterDurationSeconds}, {"timing_curve", timingCurve}}},
         {"injection", {{"mode", injectionModeName(config.injection.mode)},
@@ -164,7 +239,7 @@ std::string JsonEngineSerializer::encode(const EngineConfig& config) const {
                      {"maximum_frequency_hz", config.solver.maximumMechanicalFrequencyHz},
                      {"maximum_crank_deg_per_step", config.solver.maximumCrankDegreesPerStep},
                      {"gas_substeps", config.solver.gasSubsteps}}},
-        {"crank_journals", crankJournals},
+        {"crankshafts", crankshafts}, {"crank_journals", crankJournals},
         {"exhaust", {{"primary_length_mm", config.exhaust.primaryLengthMm},
                       {"primary_diameter_mm", config.exhaust.primaryDiameterMm},
                       {"collector_diameter_mm", config.exhaust.collectorDiameterMm},
@@ -182,12 +257,23 @@ std::string JsonEngineSerializer::encode(const EngineConfig& config) const {
                            {"shift_duration_s", config.transmission.shiftDurationSeconds},
                            {"automatic_shifting", config.transmission.automaticShifting},
                            {"automatic_upshift_rpm", config.transmission.automaticUpshiftRpm},
-                           {"automatic_downshift_rpm", config.transmission.automaticDownshiftRpm}}},
+                           {"automatic_downshift_rpm", config.transmission.automaticDownshiftRpm},
+                           {"reverse_ratio", config.transmission.reverseRatio},
+                           {"gearbox_input_inertia_kg_m2", config.transmission.gearboxInputInertiaKgM2},
+                           {"differential_inertia_kg_m2", config.transmission.differentialInertiaKgM2},
+                           {"clutch_thermal_capacity_j_per_c", config.transmission.clutchThermalCapacityJPerC},
+                           {"clutch_cooling_w_per_c", config.transmission.clutchCoolingWPerC},
+                           {"clutch_fade_start_temperature_c", config.transmission.clutchFadeStartTemperatureC},
+                           {"clutch_failure_temperature_c", config.transmission.clutchFailureTemperatureC},
+                           {"shift_torque_cut_fraction", config.transmission.shiftTorqueCutFraction}}},
         {"vehicle", {{"mass_kg", config.vehicle.massKg},
                       {"drag_coefficient", config.vehicle.dragCoefficient},
                       {"frontal_area_m2", config.vehicle.frontalAreaM2},
                       {"tire_radius_m", config.vehicle.tireRadiusM},
-                      {"rolling_resistance_coefficient", config.vehicle.rollingResistanceCoefficient}}} }} };
+                      {"rolling_resistance_coefficient", config.vehicle.rollingResistanceCoefficient},
+                      {"tire_friction_coefficient", config.vehicle.tireFrictionCoefficient},
+                      {"driven_axle_weight_fraction", config.vehicle.drivenAxleWeightFraction},
+                      {"maximum_brake_force_n", config.vehicle.maximumBrakeForceN}}} }} };
     return document.dump(2);
 }
 
@@ -248,10 +334,21 @@ EngineDecodeResult JsonEngineSerializer::decode(std::string_view text) const noe
         if (engine.contains("forced_induction")) {
             const auto& forced = engine.at("forced_induction");
             config.forcedInduction.enabled = forced.value("enabled", false);
+            const auto type = forced.value("type", std::string { "turbocharger" });
+            if (type == "turbocharger") config.forcedInduction.type = ForcedInductionType::turbocharger;
+            else if (type == "supercharger") config.forcedInduction.type = ForcedInductionType::supercharger;
+            else return { std::nullopt, "Unknown forced-induction type: " + type };
             config.forcedInduction.pressureRatio = forced.value("pressure_ratio", 1.0);
             config.forcedInduction.fullBoostRpm = forced.value("full_boost_rpm", 3'500.0);
             config.forcedInduction.compressorEfficiency = forced.value("compressor_efficiency", 0.68);
             config.forcedInduction.chargeTemperatureRiseC = forced.value("charge_temperature_rise_c", 35.0);
+            config.forcedInduction.turbineEfficiency = forced.value("turbine_efficiency", config.forcedInduction.turbineEfficiency);
+            config.forcedInduction.shaftInertiaKgM2 = forced.value("shaft_inertia_kg_m2", config.forcedInduction.shaftInertiaKgM2);
+            config.forcedInduction.wastegatePressureRatio = forced.value("wastegate_pressure_ratio", config.forcedInduction.wastegatePressureRatio);
+            config.forcedInduction.designShaftSpeedRpm = forced.value("design_shaft_speed_rpm", config.forcedInduction.designShaftSpeedRpm);
+            config.forcedInduction.bearingFrictionPowerWatts = forced.value("bearing_friction_power_w", config.forcedInduction.bearingFrictionPowerWatts);
+            config.forcedInduction.turbineFlowAreaMm2 = forced.value("turbine_flow_area_mm2", config.forcedInduction.turbineFlowAreaMm2);
+            config.forcedInduction.wastegateFlowAreaMm2 = forced.value("wastegate_flow_area_mm2", config.forcedInduction.wastegateFlowAreaMm2);
         }
         if (engine.contains("thermal")) {
             const auto& thermal = engine.at("thermal");
@@ -261,6 +358,21 @@ EngineDecodeResult JsonEngineSerializer::decode(std::string_view text) const noe
             config.thermal.oilHeatShare = thermal.value("oil_heat_share", config.thermal.oilHeatShare);
             config.thermal.coolingPowerKwPerC = thermal.value("cooling_power_kw_per_c", config.thermal.coolingPowerKwPerC);
             config.thermal.oilCoolingPowerKwPerC = thermal.value("oil_cooling_power_kw_per_c", config.thermal.oilCoolingPowerKwPerC);
+        }
+        if (engine.contains("combustion_calibration")) {
+            const auto& calibration = engine.at("combustion_calibration");
+            config.combustionCalibration.baseIgnitionDelaySeconds = calibration.value("base_ignition_delay_s", config.combustionCalibration.baseIgnitionDelaySeconds);
+            config.combustionCalibration.ignitionDelayTemperatureExponent = calibration.value("ignition_delay_temperature_exponent", config.combustionCalibration.ignitionDelayTemperatureExponent);
+            config.combustionCalibration.ignitionDelayPressureExponent = calibration.value("ignition_delay_pressure_exponent", config.combustionCalibration.ignitionDelayPressureExponent);
+            config.combustionCalibration.wallHeatTransferCoefficientWPerK = calibration.value("wall_heat_transfer_w_per_k", config.combustionCalibration.wallHeatTransferCoefficientWPerK);
+            config.combustionCalibration.residualDilutionSensitivity = calibration.value("residual_dilution_sensitivity", config.combustionCalibration.residualDilutionSensitivity);
+        }
+        if (engine.contains("runner_acoustics")) {
+            const auto& acoustics = engine.at("runner_acoustics");
+            config.runnerAcoustics.enabled = acoustics.value("enabled", config.runnerAcoustics.enabled);
+            config.runnerAcoustics.dampingRatio = acoustics.value("damping_ratio", config.runnerAcoustics.dampingRatio);
+            config.runnerAcoustics.couplingGain = acoustics.value("coupling_gain", config.runnerAcoustics.couplingGain);
+            config.runnerAcoustics.maximumPressureAmplitudeKpa = acoustics.value("maximum_pressure_amplitude_kpa", config.runnerAcoustics.maximumPressureAmplitudeKpa);
         }
         if (engine.contains("camshafts")) {
             const auto& cams = engine.at("camshafts");
@@ -278,10 +390,26 @@ EngineDecodeResult JsonEngineSerializer::decode(std::string_view text) const noe
             config.intake.idleBypassAreaMm2 = intake.value("idle_bypass_area_mm2", config.intake.idleBypassAreaMm2);
             config.intake.throttleGamma = intake.value("throttle_gamma", config.intake.throttleGamma);
         }
+        if (engine.contains("crankshafts")) {
+            for (const auto& item : engine.at("crankshafts")) {
+                CrankshaftConfig crankshaft;
+                crankshaft.id = item.at("id");
+                crankshaft.positionXMm = item.value("position_x_mm", 0.0);
+                crankshaft.positionYMm = item.value("position_y_mm", 0.0);
+                crankshaft.phaseOffsetDegrees = item.value("phase_offset_deg", 0.0);
+                crankshaft.rotationRatio = item.value("rotation_ratio", 1.0);
+                crankshaft.massKg = item.value("mass_kg", crankshaft.massKg);
+                crankshaft.flywheelMassKg = item.value("flywheel_mass_kg", crankshaft.flywheelMassKg);
+                crankshaft.momentOfInertiaKgM2 = item.value("moment_of_inertia_kg_m2", config.rotatingInertiaKgM2);
+                crankshaft.frictionTorqueNm = item.value("friction_torque_nm", 0.0);
+                config.crankshafts.push_back(crankshaft);
+            }
+        }
         if (engine.contains("crank_journals")) {
             for (const auto& journal : engine.at("crank_journals"))
                 config.crankJournals.push_back({ journal.at("id").get<std::uint32_t>(),
-                    journal.at("angle_deg").get<double>(), journal.at("throw_mm").get<double>() });
+                    journal.at("angle_deg").get<double>(), journal.at("throw_mm").get<double>(),
+                    journal.value("crankshaft_id", std::uint32_t { 1 }) });
         }
         if (engine.contains("exhaust")) {
             const auto& exhaust = engine.at("exhaust");
@@ -303,6 +431,14 @@ EngineDecodeResult JsonEngineSerializer::decode(std::string_view text) const noe
             config.transmission.automaticShifting = transmission.value("automatic_shifting", config.transmission.automaticShifting);
             config.transmission.automaticUpshiftRpm = transmission.value("automatic_upshift_rpm", config.transmission.automaticUpshiftRpm);
             config.transmission.automaticDownshiftRpm = transmission.value("automatic_downshift_rpm", config.transmission.automaticDownshiftRpm);
+            config.transmission.reverseRatio = transmission.value("reverse_ratio", config.transmission.reverseRatio);
+            config.transmission.gearboxInputInertiaKgM2 = transmission.value("gearbox_input_inertia_kg_m2", config.transmission.gearboxInputInertiaKgM2);
+            config.transmission.differentialInertiaKgM2 = transmission.value("differential_inertia_kg_m2", config.transmission.differentialInertiaKgM2);
+            config.transmission.clutchThermalCapacityJPerC = transmission.value("clutch_thermal_capacity_j_per_c", config.transmission.clutchThermalCapacityJPerC);
+            config.transmission.clutchCoolingWPerC = transmission.value("clutch_cooling_w_per_c", config.transmission.clutchCoolingWPerC);
+            config.transmission.clutchFadeStartTemperatureC = transmission.value("clutch_fade_start_temperature_c", config.transmission.clutchFadeStartTemperatureC);
+            config.transmission.clutchFailureTemperatureC = transmission.value("clutch_failure_temperature_c", config.transmission.clutchFailureTemperatureC);
+            config.transmission.shiftTorqueCutFraction = transmission.value("shift_torque_cut_fraction", config.transmission.shiftTorqueCutFraction);
         }
         if (engine.contains("vehicle")) {
             const auto& vehicle = engine.at("vehicle");
@@ -312,6 +448,9 @@ EngineDecodeResult JsonEngineSerializer::decode(std::string_view text) const noe
             config.vehicle.tireRadiusM = vehicle.value("tire_radius_m", config.vehicle.tireRadiusM);
             config.vehicle.rollingResistanceCoefficient = vehicle.value("rolling_resistance_coefficient",
                                                                         config.vehicle.rollingResistanceCoefficient);
+            config.vehicle.tireFrictionCoefficient = vehicle.value("tire_friction_coefficient", config.vehicle.tireFrictionCoefficient);
+            config.vehicle.drivenAxleWeightFraction = vehicle.value("driven_axle_weight_fraction", config.vehicle.drivenAxleWeightFraction);
+            config.vehicle.maximumBrakeForceN = vehicle.value("maximum_brake_force_n", config.vehicle.maximumBrakeForceN);
         }
         if (engine.contains("ignition")) {
             const auto& ignition = engine.at("ignition");
@@ -369,6 +508,24 @@ EngineDecodeResult JsonEngineSerializer::decode(std::string_view text) const noe
                 config.banks.push_back(std::move(bank));
             }
         }
+        if (engine.contains("intake_paths")) {
+            for (const auto& item : engine.at("intake_paths")) {
+                IntakePathConfig path;
+                path.id = item.at("id");
+                path.cylinderIds = item.value("cylinder_ids", std::vector<std::uint32_t> {});
+                if (item.contains("geometry")) {
+                    const auto& geometry = item.at("geometry");
+                    path.geometry.plenumVolumeLitres = geometry.value("plenum_volume_l", path.geometry.plenumVolumeLitres);
+                    path.geometry.throttleDiameterMm = geometry.value("throttle_diameter_mm", path.geometry.throttleDiameterMm);
+                    path.geometry.throttleDischargeCoefficient = geometry.value("throttle_discharge_coefficient", path.geometry.throttleDischargeCoefficient);
+                    path.geometry.runnerLengthMm = geometry.value("runner_length_mm", path.geometry.runnerLengthMm);
+                    path.geometry.runnerDiameterMm = geometry.value("runner_diameter_mm", path.geometry.runnerDiameterMm);
+                    path.geometry.idleBypassAreaMm2 = geometry.value("idle_bypass_area_mm2", path.geometry.idleBypassAreaMm2);
+                    path.geometry.throttleGamma = geometry.value("throttle_gamma", path.geometry.throttleGamma);
+                }
+                config.intakePaths.push_back(std::move(path));
+            }
+        }
         if (engine.contains("exhaust_paths")) {
             for (const auto& item : engine.at("exhaust_paths")) {
                 ExhaustPathConfig path;
@@ -418,8 +575,24 @@ EngineDecodeResult JsonEngineSerializer::decode(std::string_view text) const noe
             cylinder.pistonBreakawayForceN = item.value("piston_breakaway_force_n", cylinder.pistonBreakawayForceN);
             cylinder.pistonBreakawayVelocityMps = item.value("piston_breakaway_velocity_mps", cylinder.pistonBreakawayVelocityMps);
             cylinder.pistonViscousFrictionNsPerM = item.value("piston_viscous_friction_ns_per_m", cylinder.pistonViscousFrictionNsPerM);
+            const auto rodType = item.value("connecting_rod_type", std::string { "conventional" });
+            if (rodType == "conventional") cylinder.connectingRodType = ConnectingRodType::conventional;
+            else if (rodType == "master") cylinder.connectingRodType = ConnectingRodType::master;
+            else if (rodType == "articulated") cylinder.connectingRodType = ConnectingRodType::articulated;
+            else return { std::nullopt, "Unknown connecting-rod type: " + rodType };
+            cylinder.masterCylinderId = item.value("master_cylinder_id", std::uint32_t { 0 });
+            cylinder.articulatedJournalRadiusMm = item.value("articulated_journal_radius_mm", 0.0);
+            cylinder.articulatedJournalAngleDegrees = item.value("articulated_journal_angle_deg", 0.0);
+            cylinder.deckHeightMm = item.value("deck_height_mm", 0.0);
+            cylinder.compressionHeightMm = item.value("compression_height_mm", 0.0);
+            cylinder.wristPinOffsetMm = item.value("wrist_pin_offset_mm", 0.0);
+            cylinder.pistonCrownVolumeCc = item.value("piston_crown_volume_cc", 0.0);
+            cylinder.headChamberVolumeCc = item.value("head_chamber_volume_cc", 0.0);
+            cylinder.headGasketThicknessMm = item.value("head_gasket_thickness_mm", 0.0);
+            cylinder.connectingRodMomentOfInertiaKgM2 = item.value("connecting_rod_inertia_kg_m2", 0.0);
             config.cylinders.push_back(cylinder);
         }
+        normaliseEngineConfig(config);
         if (const auto error = validateEngineConfig(config)) return { std::nullopt, *error };
         return { std::move(config), {} };
     } catch (const std::exception& error) { return { std::nullopt, error.what() }; }

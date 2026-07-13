@@ -48,6 +48,14 @@ void RealtimeEngineAudio::release() noexcept {
     currentPressureSample_ = {}; nextPressureSample_ = {};
     hasCurrentPressureSample_ = hasNextPressureSample_ = false;
     pressureRawPrevious_ = pressureHighPass_ = pressureHighPassPrevious_ = pressureBandLimited_ = 0.0F;
+    cylinderPressureRawPrevious_.fill(0.0F);
+    cylinderPressureHighPass_.fill(0.0F);
+    cylinderPressureHighPassPrevious_.fill(0.0F);
+    cylinderPressureBandLimited_.fill(0.0F);
+    exhaustPressureRawPrevious_.fill(0.0F);
+    exhaustPressureHighPass_.fill(0.0F);
+    exhaustPressureHighPassPrevious_.fill(0.0F);
+    exhaustPressureBandLimited_.fill(0.0F);
     convolutionBank_.reset();
 }
 
@@ -141,7 +149,10 @@ void RealtimeEngineAudio::render(juce::AudioBuffer<float>& output, int startSamp
         float intakeRight = 0.0F;
         float mechanicalLeft = 0.0F;
         float mechanicalRight = 0.0F;
-        float physicalCylinderPressure = 0.0F;
+        float physicalCylinderPressureLeft = 0.0F;
+        float physicalCylinderPressureRight = 0.0F;
+        float physicalBlowdownLeft = 0.0F;
+        float physicalBlowdownRight = 0.0F;
         if (pressureQueue_ && hasCurrentPressureSample_) {
             const auto pressureTime = audioTimeSeconds_ - eventLatencySeconds_;
             while (hasNextPressureSample_ && nextPressureSample_.timeSeconds <= pressureTime) {
@@ -158,30 +169,68 @@ void RealtimeEngineAudio::render(juce::AudioBuffer<float>& output, int startSamp
                 const auto fraction = denominator > 1.0e-9
                     ? std::clamp((pressureTime - currentPressureSample_.timeSeconds) / denominator, 0.0, 1.0)
                     : 0.0;
-                float meanPressureBar = 0.0F;
                 for (std::size_t index = 0; index < count; ++index) {
                     const auto nextPressure = hasNextPressureSample_
                         && index < nextPressureSample_.cylinderCount
                         ? nextPressureSample_.pressureBar[index]
                         : currentPressureSample_.pressureBar[index];
-                    meanPressureBar += std::lerp(currentPressureSample_.pressureBar[index],
-                                                 nextPressure, static_cast<float>(fraction));
+                    const auto pressureBar = std::lerp(currentPressureSample_.pressureBar[index],
+                                                       nextPressure, static_cast<float>(fraction));
+                    const auto rawGaugePressure = pressureBar - 1.01325F;
+                    cylinderPressureHighPass_[index] = pressureHighPassPole_
+                        * (cylinderPressureHighPass_[index] + rawGaugePressure
+                            - cylinderPressureRawPrevious_[index]);
+                    cylinderPressureRawPrevious_[index] = rawGaugePressure;
+                    const auto derivative = cylinderPressureHighPass_[index]
+                        - cylinderPressureHighPassPrevious_[index];
+                    cylinderPressureHighPassPrevious_[index] = cylinderPressureHighPass_[index];
+                    const auto pressureTarget = cylinderPressureHighPass_[index] * 0.0085F
+                        + derivative * 0.085F;
+                    cylinderPressureBandLimited_[index] += pressureBandCoefficient_
+                        * (pressureTarget - cylinderPressureBandLimited_[index]);
+                    const auto physicalPressure = std::clamp(cylinderPressureBandLimited_[index], -0.65F, 0.65F)
+                        / std::sqrt(static_cast<float>(count));
+                    const auto pan = std::clamp(realtimeState_.cylinderPan[index].load(std::memory_order_relaxed),
+                                                -0.82F, 0.82F);
+                    physicalCylinderPressureLeft += physicalPressure * std::sqrt((1.0F - pan) * 0.5F);
+                    physicalCylinderPressureRight += physicalPressure * std::sqrt((1.0F + pan) * 0.5F);
+                    const auto nextExhaustPressure = hasNextPressureSample_
+                        && index < nextPressureSample_.cylinderCount
+                        ? nextPressureSample_.exhaustRunnerPressureKpa[index]
+                        : currentPressureSample_.exhaustRunnerPressureKpa[index];
+                    const auto runnerExhaustPressureKpa = std::lerp(
+                        currentPressureSample_.exhaustRunnerPressureKpa[index],
+                        nextExhaustPressure, static_cast<float>(fraction));
+                    const auto exhaustGaugePressure = runnerExhaustPressureKpa - 101.325F;
+                    exhaustPressureHighPass_[index] = pressureHighPassPole_
+                        * (exhaustPressureHighPass_[index] + exhaustGaugePressure
+                            - exhaustPressureRawPrevious_[index]);
+                    exhaustPressureRawPrevious_[index] = exhaustGaugePressure;
+                    const auto exhaustDerivative = exhaustPressureHighPass_[index]
+                        - exhaustPressureHighPassPrevious_[index];
+                    exhaustPressureHighPassPrevious_[index] = exhaustPressureHighPass_[index];
+                    const auto nextExhaustFlow = hasNextPressureSample_
+                        && index < nextPressureSample_.cylinderCount
+                        ? nextPressureSample_.exhaustFlowMgPerCycle[index]
+                        : currentPressureSample_.exhaustFlowMgPerCycle[index];
+                    const auto exhaustFlow = std::lerp(currentPressureSample_.exhaustFlowMgPerCycle[index],
+                        nextExhaustFlow, static_cast<float>(fraction));
+                    const auto flowGain = std::clamp(exhaustFlow / 75.0F, 0.08F, 1.8F);
+                    const auto exhaustTarget = (exhaustPressureHighPass_[index] * 0.0028F
+                        + exhaustDerivative * 0.032F) * flowGain;
+                    exhaustPressureBandLimited_[index] += pressureBandCoefficient_
+                        * (exhaustTarget - exhaustPressureBandLimited_[index]);
+                    const auto physicalBlowdown = std::clamp(exhaustPressureBandLimited_[index],
+                        -0.48F, 0.48F) / std::sqrt(static_cast<float>(count));
+                    physicalBlowdownLeft += physicalBlowdown * std::sqrt((1.0F - pan) * 0.5F);
+                    physicalBlowdownRight += physicalBlowdown * std::sqrt((1.0F + pan) * 0.5F);
                 }
-                meanPressureBar /= static_cast<float>(count);
-                const auto rawGaugePressure = meanPressureBar - 1.01325F;
-                pressureHighPass_ = pressureHighPassPole_
-                    * (pressureHighPass_ + rawGaugePressure - pressureRawPrevious_);
-                pressureRawPrevious_ = rawGaugePressure;
-                const auto derivative = pressureHighPass_ - pressureHighPassPrevious_;
-                pressureHighPassPrevious_ = pressureHighPass_;
-                const auto pressureTarget = pressureHighPass_ * 0.0085F + derivative * 0.085F;
-                pressureBandLimited_ += pressureBandCoefficient_
-                    * (pressureTarget - pressureBandLimited_);
-                physicalCylinderPressure = std::clamp(pressureBandLimited_, -0.65F, 0.65F);
             }
         }
-        combustionLeft += physicalCylinderPressure * combustionGain;
-        combustionRight += physicalCylinderPressure * combustionGain * 0.97F;
+        combustionLeft += physicalCylinderPressureLeft;
+        combustionRight += physicalCylinderPressureRight;
+        exhaustLeft += physicalBlowdownLeft;
+        exhaustRight += physicalBlowdownRight;
         const auto audibleRpm = targetRpm * timeScale;
         smoothedRpm_ += rpmFilterCoefficient_ * (audibleRpm - smoothedRpm_);
         const auto rotationHz = std::max(0.0F, smoothedRpm_) / 60.0F;
@@ -320,8 +369,13 @@ void RealtimeEngineAudio::render(juce::AudioBuffer<float>& output, int startSamp
         const auto magnitude = 0.5F * (std::abs(left) + std::abs(right));
         const auto envelopeCoefficient = magnitude > levelEnvelope_ ? 0.0025F : 0.00012F;
         levelEnvelope_ += envelopeCoefficient * (magnitude - levelEnvelope_);
-        const auto targetGain = std::clamp(0.16F / std::max(0.025F, levelEnvelope_), 0.45F, 2.2F);
-        levelGain_ += 0.00035F * (targetGain - levelGain_);
+        // Safety limiting must not normalise every engine to the same envelope.
+        // Preserve real pressure/flow level differences and attenuate only when
+        // the mixed signal approaches the nonlinear output ceiling.
+        const auto targetGain = levelEnvelope_ > 0.32F
+            ? std::clamp(0.32F / levelEnvelope_, 0.45F, 1.0F) : 1.0F;
+        const auto levelRate = targetGain < levelGain_ ? 0.0020F : 0.00012F;
+        levelGain_ += levelRate * (targetGain - levelGain_);
         left *= levelGain_;
         right *= levelGain_;
 

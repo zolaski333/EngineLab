@@ -75,6 +75,7 @@ private:
     std::size_t importedRunCount_ { 0 };
     std::uint64_t nextUiRunId_ { 1 };
     bool starterKeyDown_ { false };
+    bool brakeKeyDown_ { false };
     double targetClutchPressure_ { 1.0 };
     double currentClutchPressure_ { 1.0 };
     int screen_ { 0 };

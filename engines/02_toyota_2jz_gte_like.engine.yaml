@@ -12,6 +12,33 @@ engine:
   octane_rating: 98
   plenum_volume_l: 4.2
   throttle_diameter_mm: 74
+  intake:
+    plenum_volume_l: 4.2
+    throttle_diameter_mm: 74
+    runner_length_mm: 330
+    runner_diameter_mm: 44
+    idle_bypass_area_mm2: 22
+    throttle_gamma: 1.45
+  forced_induction:
+    enabled: true
+    type: turbocharger
+    pressure_ratio: 1.85
+    full_boost_rpm: 3600
+    compressor_efficiency: 0.72
+    turbine_efficiency: 0.70
+    shaft_inertia_kg_m2: 0.00016
+    wastegate_pressure_ratio: 1.82
+    charge_temperature_rise_c: 42
+  ignition:
+    rev_limit_rpm: 7000
+    limiter_duration_s: 0.070
+    timing_curve:
+      - { rpm: 0, advance_deg: 7 }
+      - { rpm: 1200, advance_deg: 12 }
+      - { rpm: 2400, advance_deg: 18 }
+      - { rpm: 3600, advance_deg: 15 }
+      - { rpm: 5200, advance_deg: 18 }
+      - { rpm: 7000, advance_deg: 16 }
   uses:
     injection: sequential_port
     camshafts: turbo_street

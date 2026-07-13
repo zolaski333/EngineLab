@@ -3,7 +3,10 @@ add_library(EngineLabPhysics STATIC
     src/ConservativeGasSystem.cpp
     src/FlamePhysicsModel.cpp
     src/FuelInjectionModel.cpp
-    src/EndGasKnockModel.cpp)
+    src/EndGasKnockModel.cpp
+    src/MechanicalKinematics.cpp)
+target_sources(EngineLabPhysics PRIVATE src/IndicatedWorkModel.cpp)
+target_sources(EngineLabPhysics PRIVATE src/ValveTrainModel.cpp src/HelmholtzRunnerModel.cpp)
 add_library(EngineLab::Physics ALIAS EngineLabPhysics)
 target_include_directories(EngineLabPhysics PUBLIC include)
 target_link_libraries(EngineLabPhysics PUBLIC EngineLab::Foundation)
