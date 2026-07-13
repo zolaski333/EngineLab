@@ -61,6 +61,21 @@ EngineRuntime::EngineRuntime(EngineConfig config)
     const auto pathLengthMm = config_.exhaust.primaryLengthMm + 120.0 + 450.0 + 180.0;
     audioState_.exhaustReflectionSeconds.store(static_cast<float>(2.0 * pathLengthMm / 520'000.0),
                                                std::memory_order_relaxed);
+    audioState_.meanBoreMm.store(static_cast<float>(std::max(20.0, meanBore)), std::memory_order_relaxed);
+    audioState_.forcedInductionKind.store(config_.forcedInduction.enabled
+        ? (config_.forcedInduction.type == ForcedInductionType::supercharger ? 2 : 1) : 0,
+        std::memory_order_relaxed);
+    // Per-cylinder acoustic runner delay (port -> collector) for the exhaust
+    // waveguide. Hot-gas sound speed matches the ExhaustGraph convention.
+    constexpr double exhaustSoundSpeedMmPerSecond = 520'000.0;
+    for (std::size_t index = 0; index < config_.cylinders.size() && index < 32; ++index) {
+        const auto& cylinder = config_.cylinders[index];
+        const auto runnerLengthMm = cylinder.exhaustPrimaryLengthMm > 0.0
+            ? cylinder.exhaustPrimaryLengthMm : config_.exhaust.primaryLengthMm;
+        audioState_.runnerDelaySeconds[index].store(
+            static_cast<float>(std::max(0.0, runnerLengthMm) / exhaustSoundSpeedMmPerSecond),
+            std::memory_order_relaxed);
+    }
 }
 EngineRuntime::~EngineRuntime() { stop(); }
 
@@ -254,6 +269,28 @@ void EngineRuntime::run(std::stop_token stopToken) {
         audioState_.boostPressureRatio.store(static_cast<float>(frame.state.boostPressureRatio), std::memory_order_relaxed);
         audioState_.mechanicalStress.store(static_cast<float>(std::clamp(frame.state.peakPistonAccelerationG / 7'000.0, 0.0, 1.0)),
                                            std::memory_order_relaxed);
+        audioState_.peakPistonAccelerationG.store(static_cast<float>(std::max(0.0, frame.state.peakPistonAccelerationG)),
+                                                  std::memory_order_relaxed);
+        audioState_.forcedInductionShaftRpm.store(static_cast<float>(std::max(0.0, frame.state.forcedInductionShaftSpeedRpm)),
+                                                  std::memory_order_relaxed);
+        audioState_.wastegateOpening.store(static_cast<float>(std::clamp(frame.state.wastegateOpening, 0.0, 1.0)),
+                                           std::memory_order_relaxed);
+        {
+            // Aggregate the dominant (highest-amplitude) intake runner resonance
+            // across cylinders for the induction audio layer.
+            double dominantAmplitude = 0.0;
+            double dominantFrequency = 0.0;
+            for (std::size_t index = 0; index < frame.state.cylinderStateCount; ++index) {
+                const auto& cylinder = frame.state.cylinderStates[index];
+                if (cylinder.intakeResonancePressureKpa > dominantAmplitude) {
+                    dominantAmplitude = cylinder.intakeResonancePressureKpa;
+                    dominantFrequency = cylinder.intakeResonanceFrequencyHz;
+                }
+            }
+            audioState_.intakeRunnerResonanceHz.store(static_cast<float>(dominantFrequency), std::memory_order_relaxed);
+            audioState_.intakeRunnerAmplitudeKpa.store(static_cast<float>(isPaused ? 0.0 : dominantAmplitude),
+                                                       std::memory_order_relaxed);
+        }
         audioState_.starter.store(controls.starterEngaged && !isPaused ? 1.0F : 0.0F, std::memory_order_relaxed);
         audioState_.timeScale.store(isPaused ? 0.0F : static_cast<float>(dynoRunning_.load(std::memory_order_relaxed)
             ? 1.0 : timeScale_.load(std::memory_order_relaxed)), std::memory_order_relaxed);

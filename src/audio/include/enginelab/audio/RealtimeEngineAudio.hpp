@@ -5,6 +5,7 @@
 #include <array>
 #include <atomic>
 #include <cstdint>
+#include <memory>
 #include <span>
 namespace enginelab {
 /** Allocation-free layered combustion/exhaust renderer with stereo spatialisation. */
@@ -27,9 +28,9 @@ public:
     [[nodiscard]] std::uint64_t droppedPendingEventCount() const noexcept { return droppedPendingEvents_.load(std::memory_order_relaxed); }
 private:
     struct Voice {
-        double bodyPhase {}, crackPhase {}, pipePhase {};
+        double bodyPhase {}, crackPhase {}, pipePhase {}, knockPhase {};
         float amplitude {}, decay {}, ageSeconds {}, attackSeconds {}, blowdownSeconds {};
-        float bodyFrequency {}, crackFrequency {}, pipeFrequency {};
+        float bodyFrequency {}, crackFrequency {}, pipeFrequency {}, knockFrequency {};
         float leftGain {}, rightGain {}, filterState {}, turbulence {}, knock {};
         float massFlow {}, runnerPressure {}, jetBandState {}, jetLowState {}, jetHighState {};
         std::uint32_t exhaustPathIndex {};
@@ -39,14 +40,18 @@ private:
     struct PendingEvent { FiringEvent event {}; double scheduledTimeSeconds {}; bool exhaust {}; };
     void trigger(const FiringEvent&, bool exhaust) noexcept;
     void updateExhaustPreset(int preset) noexcept;
+    [[nodiscard]] float processExhaustWaveguide(const std::array<float, 32>& pulse, std::size_t count) noexcept;
     [[nodiscard]] float processMufflerFdn(float sample) noexcept;
     [[nodiscard]] float saturateCollector(float sample, float drive) const noexcept;
+    [[nodiscard]] static float softLimit(float sample) noexcept;
     [[nodiscard]] float noise() noexcept;
     FiringEventQueue& queue_;
     RealtimeAudioState& realtimeState_;
     CylinderPressureQueue* pressureQueue_ { nullptr };
+    CylinderPressureSample previousPressureSample_ {};
     CylinderPressureSample currentPressureSample_ {};
     CylinderPressureSample nextPressureSample_ {};
+    bool hasPreviousPressureSample_ { false };
     bool hasCurrentPressureSample_ { false };
     bool hasNextPressureSample_ { false };
     std::array<Voice, 48> voices_ {};
@@ -54,8 +59,18 @@ private:
     std::size_t pendingEventCount_ { 0 };
     double sampleRate_ { 48'000.0 };
     double audioTimeSeconds_ { 0.0 };
+    double producerClock_ { 0.0 };
     double eventLatencySeconds_ { 0.020 };
     std::uint32_t noiseState_ { 0x92d68ca2U };
+    static constexpr std::size_t maxRunners = 32;
+    static constexpr std::size_t runnerLineLength = 256;
+    // Per-runner bidirectional digital waveguide (port <-> collector) with an
+    // N-port scattering junction that couples cylinders sharing a collector.
+    std::array<std::array<float, runnerLineLength>, maxRunners> runnerForward_ {};
+    std::array<std::array<float, runnerLineLength>, maxRunners> runnerBackward_ {};
+    std::array<std::size_t, maxRunners> runnerWrite_ {};
+    std::array<std::size_t, maxRunners> runnerDelaySamples_ {};
+    float collectorReturn_ { 0.0F };
     std::array<float, 4'096> forwardWave_ {};
     std::array<float, 4'096> reverseWave_ {};
     std::array<float, 1'493> fdnA_ {};
@@ -63,6 +78,8 @@ private:
     std::array<float, 2'791> fdnC_ {};
     std::array<float, 3'557> fdnD_ {};
     RealtimeConvolutionBank convolutionBank_;
+    std::unique_ptr<juce::dsp::Oversampling<float>> oversampler_;
+    int oversamplerLatency_ { 0 };
     std::array<float, 64> jitterHistory_ {};
     std::size_t jitterWrite_ { 0 };
     std::size_t waveWrite_ { 0 };
@@ -119,8 +136,14 @@ private:
     double mechanicalPhase_ { 0.0 };
     double valvetrainPhase_ { 0.0 };
     double starterPhase_ { 0.0 };
+    double fiWhistlePhase_ { 0.0 };
     float smoothedRpm_ { 0.0F };
     float intakeFilter_ { 0.0F };
+    float intakeSvfLow_ { 0.0F };
+    float intakeSvfBand_ { 0.0F };
+    float bovEnvelope_ { 0.0F };
+    float bovNoiseState_ { 0.0F };
+    float previousThrottleForBov_ { 0.0F };
     std::atomic<std::uint64_t> lateEvents_ { 0 };
     std::atomic<std::uint64_t> stolenVoices_ { 0 };
     std::atomic<std::uint64_t> droppedPendingEvents_ { 0 };

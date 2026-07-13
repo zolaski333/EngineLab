@@ -208,47 +208,70 @@ void MainComponent::configureImpulseResponse() {
     juce::AudioFormatManager formats;
     formats.registerBasicFormats();
     constexpr juce::int64 maximumIrSamples = 262'144;
-    const auto pathCount = std::min(config_.exhaustPaths.size(),
-                                    RealtimeConvolutionBank::maximumPaths);
+
+    const auto tryLoadIr = [&](const juce::File& file, std::size_t pathIndex) -> bool {
+        if (!file.existsAsFile()) return false;
+        std::unique_ptr<juce::AudioFormatReader> reader(formats.createReaderFor(file));
+        if (!reader) return false;
+        const auto count = static_cast<int>(std::min(reader->lengthInSamples, maximumIrSamples));
+        if (count <= 0) return false;
+        juce::AudioBuffer<float> decoded(std::clamp(static_cast<int>(reader->numChannels), 1, 2), count);
+        if (!reader->read(&decoded, 0, count, 0, true, true)) return false;
+        audio_->setImpulseResponse(std::move(decoded), reader->sampleRate, pathIndex);
+        return true;
+    };
+
+    const auto catalogRootFile = juce::File(juce::String(catalogRoot_.string()));
+    const auto irDir = catalogRootFile.getChildFile("assets").getChildFile("ir");
+    // Each exhaust preset maps to a distinct real recorded IR (reused from es2d,
+    // MIT). The engine-specific character still comes from the simulated pressure
+    // waveform that excites the IR; the preset picks the muffler/system voicing.
+    constexpr std::array<const char*, 5> presetIrFiles {
+        "exhaust_street.wav", "exhaust_open.wav", "exhaust_turbo.wav",
+        "exhaust_longtube.wav", "exhaust_moto.wav" };
+    const auto presetIr = irDir.getChildFile(
+        presetIrFiles[static_cast<std::size_t>(std::clamp(exhaustPresetIndex_, 0, 4))]);
+    const auto defaultIr = irDir.getChildFile("exhaust_default.wav");
+
+    const auto configuredPaths = std::min(config_.exhaustPaths.size(),
+                                          RealtimeConvolutionBank::maximumPaths);
+    const auto pathCount = std::max<std::size_t>(1, configuredPaths);
     for (std::size_t pathIndex = 0; pathIndex < pathCount; ++pathIndex) {
-        const auto& path = config_.exhaustPaths[pathIndex];
-        if (!path.impulseResponsePath.empty()) {
-            const auto configuredPath = juce::String::fromUTF8(path.impulseResponsePath.c_str());
-            auto file = juce::File::isAbsolutePath(configuredPath)
-                ? juce::File(configuredPath)
-                : juce::File(juce::String(catalogRoot_.string())).getChildFile(configuredPath);
-            if (file.existsAsFile()) {
-                std::unique_ptr<juce::AudioFormatReader> reader(formats.createReaderFor(file));
-                if (reader) {
-                    const auto count = static_cast<int>(std::min(reader->lengthInSamples, maximumIrSamples));
-                    if (count > 0) {
-                        juce::AudioBuffer<float> decoded(std::clamp(static_cast<int>(reader->numChannels), 1, 2), count);
-                        if (reader->read(&decoded, 0, count, 0, true, true)) {
-                            audio_->setImpulseResponse(std::move(decoded), reader->sampleRate, pathIndex);
-                            continue;
-                        }
-                    }
-                }
+        // 1. Explicit per-path IR declared in the engine configuration.
+        if (pathIndex < configuredPaths) {
+            const auto& path = config_.exhaustPaths[pathIndex];
+            if (!path.impulseResponsePath.empty()) {
+                const auto configuredPath = juce::String::fromUTF8(path.impulseResponsePath.c_str());
+                const auto file = juce::File::isAbsolutePath(configuredPath)
+                    ? juce::File(configuredPath)
+                    : catalogRootFile.getChildFile(configuredPath);
+                if (tryLoadIr(file, pathIndex)) continue;
             }
         }
 
-        // Asset-free fallback: derive a deterministic path-specific IR from
-        // the configured primary, collector and muffler geometry.
+        // 2. Preset-voiced recorded exhaust IR (falls back to the generic one).
+        if (tryLoadIr(presetIr, pathIndex)) continue;
+        if (tryLoadIr(defaultIr, pathIndex)) continue;
+
+        // 3. Last-resort asset-free fallback: a deterministic geometry-derived
+        //    IR, only used if the recorded asset is missing.
+        const auto& geometry = pathIndex < configuredPaths
+            ? config_.exhaustPaths[pathIndex].geometry : config_.exhaust;
         constexpr double generatedSampleRate = 48'000.0;
         constexpr int generatedSamples = 4'096;
         juce::AudioBuffer<float> generated(1, generatedSamples);
         generated.clear();
         generated.setSample(0, 0, 0.72F);
         const auto pathDelay = std::clamp(static_cast<int>(generatedSampleRate
-            * path.geometry.primaryLengthMm / 520'000.0), 8, 1'200);
+            * geometry.primaryLengthMm / 520'000.0), 8, 1'200);
         const auto resonanceHz = std::clamp(520'000.0
-            / std::max(200.0, 4.0 * path.geometry.primaryLengthMm), 45.0, 1'800.0);
-        const auto reflection = std::clamp(0.18 + path.geometry.mufflerRestriction * 0.48
-            + (58.0 / path.geometry.collectorDiameterMm - 1.0) * 0.12, 0.08, 0.78);
+            / std::max(200.0, 4.0 * geometry.primaryLengthMm), 45.0, 1'800.0);
+        const auto reflection = std::clamp(0.18 + geometry.mufflerRestriction * 0.48
+            + (58.0 / geometry.collectorDiameterMm - 1.0) * 0.12, 0.08, 0.78);
         for (int sample = 1; sample < generatedSamples; ++sample) {
             const auto time = static_cast<double>(sample) / generatedSampleRate;
             const auto body = std::sin(2.0 * std::numbers::pi * resonanceHz * time)
-                * std::exp(-time * (32.0 + path.geometry.mufflerRestriction * 75.0)) * 0.10;
+                * std::exp(-time * (32.0 + geometry.mufflerRestriction * 75.0)) * 0.10;
             generated.addSample(0, sample, static_cast<float>(body));
         }
         for (int echo = 1; echo <= 3; ++echo) {
@@ -489,6 +512,9 @@ void MainComponent::toggleDyno() {
 void MainComponent::applyExhaustPreset(int presetIndex) {
     exhaustPresetIndex_ = std::clamp(presetIndex, 0, 4);
     if (runtime_) runtime_->setExhaustPreset(static_cast<AudioExhaustPreset>(exhaustPresetIndex_));
+    // Reload the preset-voiced exhaust IR so the muffler/system character follows
+    // the selected preset (skipped for engines that pin their own per-path IR).
+    configureImpulseResponse();
     repaint();
 }
 
