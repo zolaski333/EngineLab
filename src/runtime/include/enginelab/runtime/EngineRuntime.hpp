@@ -51,6 +51,16 @@ struct RealtimeAudioState final {
     std::atomic<float> intakeGain { 0.85F };
     std::atomic<float> mechanicalGain { 0.70F };
     std::atomic<int> exhaustPreset { static_cast<int>(AudioExhaustPreset::street) };
+    // Extended physical telemetry for the intake/forced-induction/mechanical and
+    // waveguide audio layers (populated once at construction or per sim frame).
+    std::atomic<float> intakeRunnerResonanceHz { 0.0F };
+    std::atomic<float> intakeRunnerAmplitudeKpa { 0.0F };
+    std::atomic<float> forcedInductionShaftRpm { 0.0F };
+    std::atomic<float> wastegateOpening { 0.0F };
+    std::atomic<int> forcedInductionKind { 0 };  // 0 none, 1 turbocharger, 2 supercharger
+    std::atomic<float> meanBoreMm { 84.0F };
+    std::atomic<float> peakPistonAccelerationG { 0.0F };
+    std::array<std::atomic<float>, 32> runnerDelaySeconds {};
 };
 static_assert(std::atomic<float>::is_always_lock_free, "Realtime audio telemetry requires lock-free float atomics");
 

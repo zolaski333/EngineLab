@@ -66,7 +66,7 @@ endif()
 install(TARGETS EngineLabApp
     RUNTIME DESTINATION . COMPONENT EngineLab
     BUNDLE DESTINATION . COMPONENT EngineLab)
-install(DIRECTORY engines parts DESTINATION . COMPONENT EngineLab)
+install(DIRECTORY engines parts assets DESTINATION . COMPONENT EngineLab)
 install(DIRECTORY docs DESTINATION . COMPONENT EngineLab)
 install(FILES README.md LICENSE.md DESTINATION . COMPONENT EngineLab)
 set(CPACK_PACKAGE_NAME "EngineLab")
