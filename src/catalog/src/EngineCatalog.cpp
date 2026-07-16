@@ -88,6 +88,47 @@ template <typename T>
     return value;
 }
 
+[[nodiscard]] ExhaustComponentType parseExhaustComponentType(const std::string& value) {
+    if (value == "pipe") return ExhaustComponentType::pipe;
+    if (value == "merge") return ExhaustComponentType::merge;
+    if (value == "splitter") return ExhaustComponentType::splitter;
+    if (value == "resonator") return ExhaustComponentType::resonator;
+    if (value == "muffler") return ExhaustComponentType::muffler;
+    if (value == "catalyst") return ExhaustComponentType::catalyst;
+    if (value == "outlet") return ExhaustComponentType::outlet;
+    throw std::runtime_error("Unknown exhaust component type: " + value);
+}
+
+[[nodiscard]] ExhaustNetworkConfig decodeExhaustNetwork(const YAML::Node& node) {
+    ExhaustNetworkConfig network;
+    if (const auto components = node["components"]) {
+        for (const auto& encoded : components) {
+            ExhaustComponentConfig component;
+            component.id = encoded["id"].as<std::uint32_t>();
+            component.type = parseExhaustComponentType(encoded["type"].as<std::string>());
+            assignIfPresent(encoded, "length_mm", component.lengthMm);
+            assignIfPresent(encoded, "diameter_mm", component.diameterMm);
+            assignIfPresent(encoded, "volume_l", component.volumeLitres);
+            assignIfPresent(encoded, "restriction", component.restriction);
+            assignIfPresent(encoded, "resonance_hz", component.resonanceHz);
+            assignIfPresent(encoded, "acoustic_gain", component.acousticGain);
+            assignIfPresent(encoded, "discharge_coefficient", component.dischargeCoefficient);
+            network.components.push_back(component);
+        }
+    }
+    if (const auto cylinderConnections = node["cylinder_connections"]) {
+        for (const auto& encoded : cylinderConnections)
+            network.cylinderConnections.push_back({ encoded["cylinder_id"].as<std::uint32_t>(),
+                encoded["to_component_id"].as<std::uint32_t>() });
+    }
+    if (const auto connections = node["connections"]) {
+        for (const auto& encoded : connections)
+            network.connections.push_back({ encoded["from_component_id"].as<std::uint32_t>(),
+                encoded["to_component_id"].as<std::uint32_t>() });
+    }
+    return network;
+}
+
 [[nodiscard]] TransmissionConfig decodeTransmission(const YAML::Node& node) {
     TransmissionConfig value;
     assignIfPresent(node, "gear_ratios", value.gearRatios);
@@ -468,6 +509,8 @@ void applyCrankOffsets(EngineConfig& config) {
             pathConfig.geometry = pathNode["geometry"] ? decodeExhaust(pathNode["geometry"]) : config.exhaust;
             pathConfig.impulseResponsePath = pathNode["impulse_response"].as<std::string>("");
             pathConfig.audioVolume = pathNode["audio_volume"].as<double>(1.0);
+            if (const auto graph = pathNode["graph"])
+                pathConfig.network = decodeExhaustNetwork(graph);
             config.exhaustPaths.push_back(std::move(pathConfig));
         }
     }
@@ -492,6 +535,7 @@ void applyCrankOffsets(EngineConfig& config) {
         ExhaustPathConfig pathConfig;
         pathConfig.id = 1;
         pathConfig.geometry = config.exhaust;
+        pathConfig.inheritsGlobalGeometry = true;
         for (const auto& cylinder : config.cylinders) pathConfig.cylinderIds.push_back(cylinder.id);
         config.exhaustPaths.push_back(std::move(pathConfig));
     }

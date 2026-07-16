@@ -12,6 +12,7 @@
 #include <enginelab/physics/ValveTrainModel.hpp>
 #include <enginelab/physics/HelmholtzRunnerModel.hpp>
 #include <enginelab/runtime/DrivelineModel.hpp>
+#include <enginelab/runtime/MonotonicPublicationTimeline.hpp>
 #include <enginelab/serialization/JsonEngineSerializer.hpp>
 #include <enginelab/serialization/YamlEngineSerializer.hpp>
 #include <enginelab/simulation/EngineSimulator.hpp>
@@ -113,6 +114,35 @@ int main() {
                 && std::isfinite(output.clutchTemperatureC)
                 && std::isfinite(output.energyResidualJoules),
                 "stiff tire and clutch coupling must remain finite at the maximum public time step");
+
+        enginelab::DrivelineModel unloadedDriveline(drivelineConfig);
+        enginelab::DrivelineModel loadedDriveline(drivelineConfig);
+        unloadedDriveline.requestGear(0);
+        loadedDriveline.requestGear(0);
+        enginelab::DrivelineOutput unloadedOutput;
+        enginelab::DrivelineOutput loadedOutput;
+        for (int step = 0; step < 1'000; ++step) {
+            unloadedOutput = unloadedDriveline.advance(0.001, engine, 0.0, 1.0, 0.0);
+            loadedOutput = loadedDriveline.advance(0.001, engine, 0.15, 1.0, 0.0);
+        }
+        require(loadedOutput.roadLoadForceN > 0.0
+                && loadedOutput.vehicleSpeedMps < unloadedOutput.vehicleSpeedMps
+                && std::isfinite(loadedOutput.energyResidualJoules),
+                "manual vehicle load must dissipate road work through the driveline energy path");
+    }
+    {
+        enginelab::MonotonicPublicationTimeline timeline;
+        constexpr double frameDuration = 1.0 / 240.0;
+        const auto first = timeline.beginWindow(0.0, frameDuration);
+        const auto late = timeline.beginWindow(0.006, frameDuration);
+        const auto catchingUp = timeline.beginWindow(0.008, frameDuration);
+        require(first.endSeconds() <= late.startSeconds
+                && late.endSeconds() <= catchingUp.startSeconds,
+                "catch-up publication windows must never overlap");
+        const auto previousLastTimestamp = late.mapSimulationTime(2.0, 1.0, 1.0);
+        const auto nextFirstTimestamp = catchingUp.mapSimulationTime(2.0, 2.0, 1.0);
+        require(previousLastTimestamp <= nextFirstTimestamp,
+                "successive realtime event timestamps must remain monotonic after a late frame");
     }
     {
         auto topology = enginelab::makeDefaultInlineFour();
@@ -336,6 +366,7 @@ int main() {
         auto port = direct;
         port.mode = enginelab::InjectionMode::port;
         port.railPressureBar = port.referencePressureBar = 4.0;
+        port.injectorFlowMgPerSecond = 100.0;
         port.wallFilmFraction = 0.7;
         port.vaporisationTimeConstantSeconds = 0.08;
         enginelab::FuelInjectionState portState;
@@ -347,6 +378,37 @@ int main() {
         require(firstPort.meteredMoles > firstPort.vaporisedMoles && filmAfterInjection > 0.0
                 && laterPort.vaporisedMoles > 0.0 && portState.liquidFilmMoles < filmAfterInjection,
                 "port injection must retain and subsequently evaporate a wall film");
+
+        enginelab::GasCell boostedPortCell;
+        boostedPortCell.initialise(180.0, 0.18, 320.0);
+        enginelab::FuelInjectionState boostedPortState;
+        const auto boostedPort = enginelab::FuelInjectionModel::deliver(port, fuel, boostedPortState,
+            boostedPortCell, 2.0e-5, 0.001);
+        require(std::abs(boostedPort.meteredMoles - firstPort.meteredMoles) < 1.0e-12,
+                "manifold-referenced port injection must retain its rated flow under boost");
+
+        auto lowPressureDirect = direct;
+        lowPressureDirect.railPressureBar = lowPressureDirect.referencePressureBar = 12.0;
+        lowPressureDirect.injectorFlowMgPerSecond = 100.0;
+        enginelab::GasCell lowCylinderPressureCell;
+        lowCylinderPressureCell.initialise(100.0, 0.18, 320.0);
+        enginelab::FuelInjectionState lowCylinderPressureState;
+        const auto lowCylinderPressureDirect = enginelab::FuelInjectionModel::deliver(
+            lowPressureDirect, fuel, lowCylinderPressureState, lowCylinderPressureCell, 1.0e-3, 0.001);
+        enginelab::GasCell boostedDirectCell;
+        boostedDirectCell.initialise(800.0, 0.18, 320.0);
+        enginelab::FuelInjectionState lowPressureDirectState;
+        const auto boostedDirect = enginelab::FuelInjectionModel::deliver(lowPressureDirect, fuel,
+            lowPressureDirectState, boostedDirectCell, 1.0e-3, 0.001);
+        require(boostedDirect.meteredMoles < 0.75 * lowCylinderPressureDirect.meteredMoles,
+                "direct-injection flow must still fall as cylinder pressure approaches rail pressure");
+
+        const auto delayedPortTrim = enginelab::FuelInjectionModel::updateClosedLoopTrim(
+            port, 3'000.0, 18.0, 13.0, 1.0);
+        const auto directTrim = enginelab::FuelInjectionModel::updateClosedLoopTrim(
+            direct, 3'000.0, 18.0, 13.0, 1.0);
+        require(delayedPortTrim > 1.0 && delayedPortTrim < directTrim && directTrim < 1.06,
+                "closed-loop fuel control must respect port-film transport delay and bounded gain");
     }
 
     auto config = enginelab::makeDefaultInlineFour();
@@ -368,6 +430,8 @@ int main() {
     enginelab::FourStrokeEventGenerator events;
     auto exhaust = enginelab::ExhaustGraph::makeForEngine(config);
     enginelab::EngineSimulator simulator(config, ecu, physics, events, exhaust);
+    require(ecu.calibrationStore()->snapshot()->revision() > 0,
+            "simulator construction must initialise the ECU maps used by offline and runtime callers");
     std::set<std::uint32_t> firedCylinders;
     bool observedCylinderTelemetry = false;
     for (int step = 0; step < 2'400; ++step) {
@@ -553,6 +617,15 @@ int main() {
     const auto v8JsonRoundTrip = json.decode(json.encode(enginelab::makeDefaultV8()));
     require(v8JsonRoundTrip && v8JsonRoundTrip.config->layout == enginelab::EngineLayout::vLayout,
             "JSON must preserve V engine layout");
+    auto legacyJson = json.encode(config);
+    const auto schemaMarker = legacyJson.find("\"schema_version\": 2");
+    require(schemaMarker != std::string::npos, "JSON writer must emit the current schema version");
+    legacyJson.replace(schemaMarker, std::string("\"schema_version\": 2").size(),
+                       "\"schema_version\": 1");
+    const auto migratedJson = json.decode(legacyJson);
+    require(migratedJson
+            && migratedJson.config->schemaVersion == enginelab::currentEngineSchemaVersion,
+            "schema-v1 JSON must migrate to the current in-memory schema");
     const auto radialJsonRoundTrip = json.decode(json.encode(enginelab::makeDefaultRadialFive()));
     require(radialJsonRoundTrip && radialJsonRoundTrip.config->layout == enginelab::EngineLayout::radial
             && radialJsonRoundTrip.config->crankJournals.size() == 1
@@ -1054,7 +1127,8 @@ int main() {
         longEvent.exhaustPortId = 3; longEvent.intensity = 1.0F;
         splitGraph.process(shortEvent); splitGraph.process(longEvent);
         require(longEvent.exhaustDelaySeconds > shortEvent.exhaustDelaySeconds + 0.001F
-                && longEvent.intensity < shortEvent.intensity,
+                && longEvent.exhaustTransmissionGain < shortEvent.exhaustTransmissionGain
+                && longEvent.intensity == shortEvent.intensity,
                 "per-path exhaust geometry and audio attenuation must affect timing and level");
 
         auto arbitraryIds = config;
@@ -1117,13 +1191,18 @@ int main() {
         for (std::size_t index = 1; index < tinyCount; ++index)
             require(tinyEventBuffer[index - 1].timeSeconds <= tinyEventBuffer[index].timeSeconds,
                     "truncated event output must retain the earliest chronological events");
+        stressGenerator.reset();
+        const auto emptyCount = stressGenerator.generate(manyCylinderConfig, stressState, stressCommand,
+            stressCombustion, 0.0, 0.0, 6'000.0, 0.05, std::span<enginelab::FiringEvent> {});
+        require(emptyCount == 0 && stressGenerator.droppedEventCountLastGenerate() == stressCount,
+                "a saturated caller must still count every subsequent firing crossing as dropped");
     }
 
     {
         enginelab::FiringEventQueue audioQueue;
         enginelab::RealtimeAudioState audioState;
         enginelab::RealtimeEngineAudio renderer(audioQueue, audioState);
-        renderer.prepare(48'000.0, 1'200);
+        renderer.prepare(48'000.0, 256);
         enginelab::FiringEvent event;
         event.timeSeconds = 0.0;
         event.intensity = 0.8F;
@@ -1149,7 +1228,7 @@ int main() {
         scaledState.rpm.store(3'000.0F);
         scaledState.timeScale.store(1.0F);
         enginelab::RealtimeEngineAudio scaledRenderer(scaledQueue, scaledState);
-        scaledRenderer.prepare(48'000.0, 4'800);
+        scaledRenderer.prepare(48'000.0, 256);
         juce::AudioBuffer<float> audible(2, 4'800);
         scaledRenderer.render(audible, 0, audible.getNumSamples());
         require(audible.getMagnitude(0, 0, audible.getNumSamples()) > 1.0e-5F,
@@ -1160,7 +1239,7 @@ int main() {
         pausedState.rpm.store(3'000.0F);
         pausedState.timeScale.store(0.0F);
         enginelab::RealtimeEngineAudio pausedRenderer(pausedQueue, pausedState);
-        pausedRenderer.prepare(48'000.0, 4'800);
+        pausedRenderer.prepare(48'000.0, 256);
         juce::AudioBuffer<float> silent(2, 4'800);
         pausedRenderer.render(silent, 0, silent.getNumSamples());
         require(silent.getMagnitude(0, 0, silent.getNumSamples()) < 1.0e-7F,
@@ -1186,7 +1265,7 @@ int main() {
         flowAudioState.exhaustFlowGramsPerSecond.store(120.0F);
         flowAudioState.exhaustPressureKpa.store(155.0F);
         enginelab::RealtimeEngineAudio flowRenderer(flowQueue, flowAudioState);
-        flowRenderer.prepare(48'000.0, 4'800);
+        flowRenderer.prepare(48'000.0, 256);
         juce::AudioBuffer<float> physicalFlowAudio(2, 4'800);
         flowRenderer.render(physicalFlowAudio, 0, physicalFlowAudio.getNumSamples());
         require(physicalFlowAudio.getMagnitude(0, 0, physicalFlowAudio.getNumSamples()) > 1.0e-6F,
@@ -1212,7 +1291,7 @@ int main() {
 
         presetState.exhaustPreset.store(static_cast<int>(enginelab::AudioExhaustPreset::openHeaders));
         enginelab::RealtimeEngineAudio openRenderer(presetQueue, presetState);
-        openRenderer.prepare(48'000.0, 4'800);
+        openRenderer.prepare(48'000.0, 256);
         require(presetQueue.tryPush(event), "open-header fixture event must enter queue");
         juce::AudioBuffer<float> openBuffer(2, 4'800);
         openRenderer.render(openBuffer, 0, openBuffer.getNumSamples());
@@ -1225,7 +1304,7 @@ int main() {
         mutedState.intakeGain.store(0.0F);
         mutedState.mechanicalGain.store(0.0F);
         enginelab::RealtimeEngineAudio mutedRenderer(mutedQueue, mutedState);
-        mutedRenderer.prepare(48'000.0, 4'800);
+        mutedRenderer.prepare(48'000.0, 256);
         require(mutedQueue.tryPush(event), "muted fixture event must enter queue");
         juce::AudioBuffer<float> mutedBuffer(2, 4'800);
         mutedRenderer.render(mutedBuffer, 0, mutedBuffer.getNumSamples());
@@ -1241,7 +1320,7 @@ int main() {
         turboState.mechanicalGain.store(0.0F);
         turboState.exhaustPreset.store(static_cast<int>(enginelab::AudioExhaustPreset::turboMuffled));
         enginelab::RealtimeEngineAudio turboRenderer(turboQueue, turboState);
-        turboRenderer.prepare(48'000.0, 4'800);
+        turboRenderer.prepare(48'000.0, 256);
         require(turboQueue.tryPush(event), "turbo fixture event must enter queue");
         juce::AudioBuffer<float> turboBuffer(2, 4'800);
         turboRenderer.render(turboBuffer, 0, turboBuffer.getNumSamples());
@@ -1256,7 +1335,7 @@ int main() {
         enginelab::RealtimeEngineAudio directIrRenderer(directIrQueue, directIrState);
         const std::array<float, 1> directIr { 1.0F };
         directIrRenderer.setImpulseResponse(directIr);
-        directIrRenderer.prepare(48'000.0, 4'800);
+        directIrRenderer.prepare(48'000.0, 256);
         require(directIrQueue.tryPush(event), "direct IR fixture event must enter queue");
         juce::AudioBuffer<float> directIrBuffer(2, 4'800);
         directIrRenderer.render(directIrBuffer, 0, directIrBuffer.getNumSamples());
@@ -1270,7 +1349,7 @@ int main() {
         delayedIr[0] = 0.15F;
         delayedIr[96] = 0.85F;
         delayedIrRenderer.setImpulseResponse(delayedIr, 48'000.0, 1);
-        delayedIrRenderer.prepare(48'000.0, 4'800);
+        delayedIrRenderer.prepare(48'000.0, 256);
         auto secondPathEvent = event;
         secondPathEvent.exhaustPathIndex = 1;
         require(delayedIrQueue.tryPush(secondPathEvent), "delayed IR fixture event must enter queue");
@@ -1379,12 +1458,10 @@ int main() {
                 && runs.front().points.front().airFlowGramsPerSecond > 0.0
                 && runs.front().points.front().lambda > 0.0,
                 "dyno points must retain the physical telemetry needed to explain a result");
-        const auto restoredBrakeTorque = 0.27 * 2'500'000.0
-            * enginelab::engineDisplacementLitres(enginelab::makeDefaultInlineTwo()) * 0.001
-            / (4.0 * std::numbers::pi);
         require(std::abs(restored.throttle - 0.31) < 0.01
-                && std::abs(restored.loadTorqueNm - restoredBrakeTorque) < 0.5,
-                "dyno must restore the user's throttle and external brake command");
+                && std::abs(restored.requestedRoadLoad - 0.27) < 0.01
+                && std::abs(restored.loadTorqueNm) < 0.5,
+                "dyno must restore throttle and road load without reapplying it at the crank");
     }
 
     {

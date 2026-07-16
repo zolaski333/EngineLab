@@ -1,0 +1,261 @@
+# Concevoir un échappement personnalisé
+
+Chaque `ExhaustPathConfig` peut contenir un `graph` optionnel. Ce graphe décrit
+un réseau orienté acyclique de composants entre les cylindres et une ou
+plusieurs sorties. Il est sérialisé en JSON et YAML et compilé par
+`ExhaustGraph` en routes utilisées pour la contre-pression, le délai, le gain et
+la résonance des événements. Le réseau est aussi réduit en propriétés physiques
+agrégées injectées dans le solveur gazeux ; ce n'est pas encore la résolution
+d'un volume distinct par composant.
+
+Le bouton **ECHAP. PRO** ouvre un concepteur graphique pour les opérations les
+plus courantes. JSON/YAML reste le format de persistance et permet encore les
+modifications structurelles que l'interface ne couvre pas. Un script `.els`
+peut utiliser ce fichier comme `base`, mais le DSL ne crée pas encore les nœuds
+du graphe lui-même.
+
+## Utiliser le concepteur
+
+La fenêtre charge une copie de travail : ajouter, supprimer ou modifier un
+composant ne touche pas le moteur qui tourne tant que la copie n'est pas
+appliquée.
+
+1. Choisir un chemin dans la liste. **+ CHEMIN** extrait le cylindre choisi avec
+   sa branche de graphe ; **- CHEMIN** transfère ses cylindres vers une
+   destination avant suppression. Le sélecteur **DEPLACER** réaffecte un
+   cylindre entre deux chemins sans créer de doublon. L'IR reste dans le fichier
+   moteur.
+2. Si le chemin n'a pas encore de graphe, sélectionner **GENERER DEPUIS
+   LEGACY**. Un primaire par cylindre, une jonction, un silencieux et une sortie
+   sont créés à partir de `geometry`.
+3. Ajouter les composants, puis éditer leur type, ID, dimensions, restriction,
+   résonance, gain et coefficient de décharge. Le canevas utilise un placement
+   automatique et un clic sur un nœud sélectionne le composant correspondant.
+4. Créer les connexions orientées dans l'ordre du flux et affecter chaque
+   cylindre à son premier composant.
+5. Sélectionner **VALIDER ET APPLIQUER**. La validation complète décrite plus
+   bas s'exécute avant toute modification du moteur.
+6. Utiliser **EXPORTER** dans la fenêtre principale pour enregistrer la
+   configuration appliquée en JSON ou YAML.
+
+Une erreur conserve la copie pour correction et laisse le runtime courant
+inchangé. Une application valide est un changement structurel : elle remplace
+le runtime, réinitialise le régime et les états thermiques, et n'est pas
+autorisée pendant un passage au banc. Ce n'est donc pas le hot reload sans reset
+du tuner ECU.
+
+## Exemple YAML
+
+Le bloc suivant remplace `engine.exhaust_paths` pour un I4 dont les cylindres
+ont les identifiants 1 à 4 :
+
+```yaml
+exhaust_paths:
+  - id: 1
+    cylinder_ids: [1, 2, 3, 4]
+    impulse_response: "assets/ir/exhaust_default.wav"
+    audio_volume: 1.0
+    geometry:
+      primary_length_mm: 480
+      primary_diameter_mm: 42
+      collector_diameter_mm: 60
+      muffler_restriction: 0.25
+      outlet_diameter_mm: 70
+      collector_volume_l: 2.5
+      outlet_discharge_coefficient: 0.78
+    graph:
+      components:
+        - { id: 101, type: pipe,     length_mm: 480, diameter_mm: 42, restriction: 0.00, resonance_hz: 0, acoustic_gain: 1.00 }
+        - { id: 102, type: pipe,     length_mm: 480, diameter_mm: 42, restriction: 0.00, resonance_hz: 0, acoustic_gain: 1.00 }
+        - { id: 103, type: pipe,     length_mm: 480, diameter_mm: 42, restriction: 0.00, resonance_hz: 0, acoustic_gain: 1.00 }
+        - { id: 104, type: pipe,     length_mm: 480, diameter_mm: 42, restriction: 0.00, resonance_hz: 0, acoustic_gain: 1.00 }
+        - { id: 201, type: merge,    length_mm: 0,   diameter_mm: 60, restriction: 0.03, resonance_hz: 0, acoustic_gain: 1.00 }
+        - { id: 301, type: catalyst, length_mm: 180, diameter_mm: 60, restriction: 0.18, resonance_hz: 0, acoustic_gain: 0.92 }
+        - { id: 401, type: muffler,  length_mm: 520, diameter_mm: 65, volume_l: 8.0, restriction: 0.20, resonance_hz: 95, acoustic_gain: 0.82 }
+        - { id: 501, type: outlet,   length_mm: 120, diameter_mm: 70, restriction: 0.00, resonance_hz: 0, acoustic_gain: 1.00, discharge_coefficient: 0.78 }
+      cylinder_connections:
+        - { cylinder_id: 1, to_component_id: 101 }
+        - { cylinder_id: 2, to_component_id: 102 }
+        - { cylinder_id: 3, to_component_id: 103 }
+        - { cylinder_id: 4, to_component_id: 104 }
+      connections:
+        - { from_component_id: 101, to_component_id: 201 }
+        - { from_component_id: 102, to_component_id: 201 }
+        - { from_component_id: 103, to_component_id: 201 }
+        - { from_component_id: 104, to_component_id: 201 }
+        - { from_component_id: 201, to_component_id: 301 }
+        - { from_component_id: 301, to_component_id: 401 }
+        - { from_component_id: 401, to_component_id: 501 }
+```
+
+Les mêmes clés existent en JSON sous `engine.exhaust_paths[].graph`.
+
+## Types de composant
+
+| Type | Rôle compilé |
+|---|---|
+| `pipe` | longueur, diamètre, perte géométrique et résonance quart d'onde |
+| `merge` | rassemble au moins deux entrées vers une sortie |
+| `splitter` | partage une entrée vers au moins deux branches |
+| `resonator` | longueur et résonance explicite ou estimation de Helmholtz avec `volume_l` |
+| `muffler` | perte, longueur, gain et résonance de silencieux |
+| `catalyst` | perte de charge concentrée avec longueur physique |
+| `outlet` | termine une route et applique diamètre/coefficient de décharge |
+
+Chaque composant possède :
+
+- `id`, unique à l'intérieur du chemin ;
+- `length_mm`, `diameter_mm` et éventuellement `volume_l` ;
+- `restriction`, coefficient de perte additionnel sans dimension ;
+- `resonance_hz`, où zéro demande une estimation lorsque le type le permet ;
+- `acoustic_gain`, multiplié le long de la route ;
+- `discharge_coefficient`, principalement utilisé par la sortie.
+
+La restriction finale additionne la perte géométrique calculée et
+`restriction`. Modifier seulement `acoustic_gain` change la transmission
+acoustique des événements et du signal continu, pas la contre-pression.
+
+## Règles de connexion
+
+La validation impose :
+
+- un à huit chemins, chaque cylindre affecté exactement une fois ;
+- 1 à 256 composants et au plus 1 024 connexions par graphe ;
+- au plus 4 096 routes développées entre cylindres et sorties ;
+- un ID de composant unique et des arêtes uniques sans auto-boucle ;
+- un mapping unique pour chaque cylindre du chemin ;
+- une entrée et une sortie pour `pipe`, `resonator`, `muffler` et `catalyst` ;
+- au moins deux entrées et exactement une sortie pour `merge` ;
+- exactement une entrée et au moins deux sorties pour `splitter` ;
+- au moins une entrée et aucune sortie pour `outlet` ;
+- aucun cycle, aucun composant inaccessible et chaque branche terminée par une
+  sortie.
+
+Une erreur fait échouer l'import complet ; l'application ne lance pas un
+réseau partiellement valide.
+
+## Séries, branches et routes
+
+Pour la perte de charge, les composants communs sont en série. Les branches
+aval d'un splitter sont combinées en parallèle avec :
+
+```text
+K_parallèle = 1 / (Σ 1 / √K_branche)²
+```
+
+La restriction équivalente de chaque cylindre contribue à la conductance
+physique du chemin et à l'atténuation de l'événement. Toutes les routes
+cylindre-sortie sont également énumérées. Leur délai utilise
+`c = √(γRT)` à une température d'échappement de référence (ambiante + 405 °C
+par défaut, ou une température explicitement fournie au compilateur). Chaque
+route conserve jusqu'à huit modes : modes impairs quart d'onde de la route,
+résonateurs et silencieux locaux. Les modes proches sont fusionnés et classés
+par énergie, au lieu de retenir simplement la fréquence maximale rencontrée.
+
+À une séparation, l'énergie est répartie selon l'admittance aval approximée
+`A / √(1 + K_aval)`. L'amplitude de la branche reçoit la racine de cette part
+d'énergie. Les produits de gains sont accumulés en domaine logarithmique et
+bornés à 8 afin de rester finis même sur un grand DAG.
+
+Pour un DAG auteur, la fermeture gazeuse est compilée ainsi :
+
+- la section et le coefficient de décharge du premier composant relié à chaque
+  cylindre deviennent la gorge runner → collecteur de ce cylindre ;
+- le volume du collecteur agrégé est la somme des `volume_l` explicites et, à
+  défaut, des volumes géométriques `π(d/2)²L` des composants, avec un plancher de
+  0,01 litre ;
+- les sorties parallèles additionnent leurs conductances `A × Cd`, puis la perte
+  équivalente du réseau est appliquée une seule fois :
+
+```text
+A_sortie_effective = Σ(A_sortie × Cd_sortie) / √(1 + K_équivalent)
+```
+
+- la longueur du composant racine commande la dissipation de son runner ; la
+  longueur moyenne des routes commande celle du collecteur.
+
+La surface effective est passée à `ConservativeGasSystem` avec un coefficient
+unitaire, de sorte que le `K` ne soit pas compté deux fois. Diamètre, longueur,
+restriction ou coefficient de décharge d'un composant auteur ont donc un effet
+sur les débits et la pression du collecteur, pas seulement sur le son.
+
+Pour un cylindre, la transmission publiée vaut :
+
+```text
+G_transmission = 1 / √(1 + K_équivalent) × min(8, √(Σ G_route²))
+```
+
+`G_route` contient déjà `audio_volume`, `sound_attenuation`, les gains des
+composants et les parts d'énergie des séparations. Le guide continu borne ses
+délais à 80 ms. La ligne primaire utilise la longueur du premier composant ; la
+ligne collecteur → sortie utilise la longueur moyenne restante. Une onde
+réfléchie parcourt naturellement cette seconde ligne deux fois. À l'exécution,
+ces délais sont corrigés avec la température simulée des gaz et `timeScale`.
+L'ouverture reste bornée entre 0,15 et 1,45 autour de
+`1 / √(1 + 1,35 × K_moyen)`.
+
+Cette transmission possède son propre champ dans `FiringEvent`. Elle module la
+voix d'échappement sans réduire artificiellement l'intensité de combustion ou
+les autres couches du même événement.
+
+Le runtime ne duplique toutefois pas encore l'événement à chaque sortie. Pour
+un cylindre, le délai scalaire est celui de la route audible la plus énergétique
+(la plus courte en cas d'égalité), tandis que moyenne, première arrivée,
+dernière arrivée et dispersion RMS restent disponibles comme diagnostics. Les
+modes de toutes les routes sont combinés avec une pondération énergétique et
+le mode dominant alimente encore le champ scalaire historique de l'événement.
+Deux sorties d'un splitter ne deviennent donc pas deux sources audio
+spatialisées indépendantes.
+
+Cette métrique combinée est partagée avec le signal continu : `audio_volume`,
+l'atténuation du cylindre, les gains de composants, le partage d'énergie et
+l'atténuation due à la restriction sont appliqués une seule fois à sa source.
+La longueur compilée commande son délai ; la moyenne des longueurs et pertes
+du chemin commande ensuite réflexion et ouverture du guide d'onde. Le gain de
+sortie du chemin reste unitaire afin de ne pas multiplier deux fois ces mêmes
+paramètres.
+
+## Chemins multiples
+
+Un V ou un flat peut déclarer deux `exhaust_paths`, chacun avec ses cylindres,
+son graphe, son `audio_volume` et son IR. L'audio conserve ces chemins séparés.
+Les indices runtime suivent l'ordre du tableau, tandis que les IDs auteur
+restent les références des banques et de la sérialisation.
+
+## Compatibilité avec les configurations existantes
+
+`graph` est optionnel. En son absence, EngineLab compile les anciens champs de
+géométrie en primaires, merge, silencieux et sortie. Les fichiers moteur de
+schéma 1 restent lisibles et sont migrés en mémoire vers le schéma 2. Tout
+nouvel export JSON/YAML porte `schema_version: 2`. Les fichiers historiques du
+catalogue restent volontairement des fixtures de migration.
+
+Même avec un graphe, le bloc `geometry` reste utile : il fournit les valeurs de
+secours du chemin, le diamètre de port et les paramètres de génération d'IR si
+aucun WAV n'est disponible.
+
+## Ce que le graphe ne simule pas
+
+Le graphe produit des métriques agrégées de route et de perte. Le réseau gazeux
+ne crée pas une `GasCell` par composant, et le renderer audio n'exécute pas un
+solveur thermoacoustique non linéaire sur chaque arête. Ses guides d'onde
+primaires/collecteur, FDN et convolution restent des modèles DSP par chemin.
+Un chemin auteur entier devient un volume collecteur, une gorge par cylindre et
+une conductance de sortie équivalente. Les pressions locales, températures et
+ondes entre deux composants ne sont donc pas résolues séparément. Pour les
+anciens chemins sans DAG, le solveur conserve `geometry` et la fermeture
+analytique historique de contre-pression ; pour un DAG auteur, le `K` est déjà
+fermé dans la conductance physique et n'est pas ajouté une seconde fois par
+`backPressureKpa`.
+
+Le DAG personnalisé pilote maintenant le gain, les modes et les délais continus
+ainsi que l'ouverture, les sections acoustiques et la réflexion agrégées, mais
+il n'est toujours pas propagé nœud par nœud dans le DSP. Ses sorties parallèles
+sont recombinées avant un unique guide d'onde et une unique IR par chemin.
+
+Pour atteindre un niveau d'ingénierie acoustique supérieur, il faudra encore
+une discrétisation 1D de chaque composant, des propriétés de gaz locales, des
+pertes dépendantes de la fréquence, une bibliothèque de composants mesurés et
+une évolution du concepteur avec glisser-déposer, undo/redo, prévisualisation
+des routes, comparaison et audition A/B. La sélection et l'écoute des réponses
+impulsionnelles restent également à ajouter à l'interface.

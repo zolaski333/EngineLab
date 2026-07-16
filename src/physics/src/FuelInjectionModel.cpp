@@ -15,8 +15,14 @@ FuelInjectionResult FuelInjectionModel::deliver(const InjectionConfig& injection
     if (dtSeconds <= 0.0 || !std::isfinite(dtSeconds)) return result;
     const auto fuelMolarMassKg = fuel.molarMassGramsPerMole * 0.001;
     const auto railPressureKpa = injection.railPressureBar * 100.0;
-    const auto referenceDeltaKpa = std::max(10.0, injection.referencePressureBar * 100.0 - 101.325);
-    const auto actualDeltaKpa = std::max(0.0, railPressureKpa - target.pressureKpa());
+    // Port-fuel rails are manifold referenced: their configured pressure is the
+    // regulated pressure drop across the injector, not an absolute rail
+    // pressure. Direct-injection rails remain absolute because the injector
+    // discharges into a cylinder whose pressure changes throughout the cycle.
+    const auto referenceDeltaKpa = std::max(10.0, injection.referencePressureBar * 100.0);
+    const auto actualDeltaKpa = injection.mode == InjectionMode::port
+        ? std::max(0.0, railPressureKpa)
+        : std::max(0.0, railPressureKpa - target.pressureKpa());
     const auto pressureFlowRatio = std::sqrt(actualDeltaKpa / referenceDeltaKpa);
     const auto capacityMoles = injection.injectorFlowMgPerSecond * pressureFlowRatio
         * dtSeconds * 1.0e-6 / std::max(1.0e-9, fuelMolarMassKg);
@@ -48,6 +54,33 @@ FuelInjectionResult FuelInjectionModel::deliver(const InjectionConfig& injection
     }
     result.vaporisedMoles = newlyVaporisedMoles;
     return result;
+}
+
+double FuelInjectionModel::updateClosedLoopTrim(const InjectionConfig& injection,
+                                                double rpm,
+                                                double measuredAirFuelRatio,
+                                                double targetAirFuelRatio,
+                                                double currentTrim) noexcept {
+    if (!std::isfinite(currentTrim)) return 1.0;
+    if (!std::isfinite(rpm) || !std::isfinite(measuredAirFuelRatio)
+            || !std::isfinite(targetAirFuelRatio)
+            || rpm <= 0.0 || measuredAirFuelRatio <= 0.0
+            || targetAirFuelRatio <= 0.0 || currentTrim <= 0.0) {
+        return std::clamp(currentTrim, 0.55, 2.20);
+    }
+
+    const auto cycleDurationSeconds = 120.0 / std::max(450.0, rpm);
+    const auto transportDelaySeconds = injection.mode == InjectionMode::port
+        ? std::max(0.0, injection.vaporisationTimeConstantSeconds) : 0.0;
+    const auto loopTimeConstantSeconds = injection.mode == InjectionMode::port
+        ? std::max(0.45, transportDelaySeconds * 8.0)
+        : 0.25;
+    const auto integralGain = std::clamp(
+        cycleDurationSeconds / loopTimeConstantSeconds, 0.015, 0.15);
+    const auto logarithmicError = std::clamp(
+        std::log(measuredAirFuelRatio / targetAirFuelRatio), -0.70, 0.70);
+    const auto correction = std::clamp(logarithmicError * integralGain, -0.05, 0.05);
+    return std::clamp(currentTrim * std::exp(correction), 0.55, 2.20);
 }
 
 } // namespace enginelab

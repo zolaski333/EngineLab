@@ -1,65 +1,160 @@
 # Audio temps réel
 
+L'audio d'EngineLab est un renderer hybride : les formes continues viennent de
+la simulation thermodynamique, les événements apportent les transitoires et la
+spatialisation, et les couches DSP représentent la propagation et la couleur
+perceptuelle. Il ne s'agit pas d'une simulation acoustique CFD.
+
+## Pont simulation-audio
+
+Le runtime publie deux flux SPSC distincts :
+
+- `FiringEvent` transporte étincelle, raté, pression, intensité, cylindre,
+  panorama, chemin, délai, résonance et transmission d'échappement ;
+- `CylinderPressureSample` transporte, à chaque sous-pas produit lorsque
+  l'audio est actif, la pression cylindre, la pression runner, le débit
+  d'échappement, l'ouverture de soupape et l'indice de chemin de chaque
+  cylindre.
+
+Les horodatages utilisent le temps de simulation publié par le producteur. Le
+renderer les convertit dans sa propre chronologie audio, limite le look-ahead
+et compte les événements tardifs ou abandonnés. Une réinitialisation du
+simulateur vide les trames de pression restantes pour éviter de rejouer un état
+ancien.
+
+Le look-ahead vaut au minimum 20 ms et augmente jusqu'à couvrir un bloc hôte
+complet plus 5 ms de marge. La file de pression conserve plus de 85 ms au débit
+maximal de publication (96 kHz), ce qui couvre les blocs testés jusqu'à 2 048
+échantillons à 48, 96 et 192 kHz.
+
+Les atomiques de `RealtimeAudioState` publient les grandeurs lentes : régime,
+papillon, charge, pression ambiante, boost, résonance admission, cinématique,
+température des gaz, sections acoustiques, gains de mix et paramètres par
+chemin.
+
 ## Contrat du callback
 
 `RealtimeEngineAudio::render` n'effectue aucune entrée/sortie, journalisation,
-attente ou prise de mutex. Les voix, événements en attente, lignes de retard et
-buffers de convolution sont préparés avant le démarrage. Les événements
-arrivent par `SpscQueue<FiringEvent, 2048>` et conservent leur temps interpolé.
-Une seconde file `SpscQueue<CylinderPressureSample, 2048>` transporte, sans
-mutex ni allocation, les pressions de tous les cylindres à chaque sous-pas.
+attente ou acquisition de mutex. Voix, tableaux de délais, buffers de guides
+d'onde, FDN et buffers de convolution sont alloués pendant la préparation.
+Chaque bloc respecte le segment `startSample/numSamples` fourni par JUCE.
 
-## Sources sonores
+Les coefficients dépendant du temps sont convertis à la fréquence réelle du
+périphérique. Les constantes de décroissance, filtres et délais ne sont donc
+pas supposés valables uniquement à 48 kHz. Les lignes de 131 072 échantillons
+conservent les 80 ms physiques à 192 kHz, y compris au ralenti temporel 0,25×
+et pendant un échappement froid.
 
-Chaque allumage crée une couche bloc moteur immédiate et une couche échappement
-retardée par le chemin port-collecteur-silencieux-sortie. Pression cylindre,
-vitesse de flamme, débit, pression runner, géométrie, banque et chemin
-d'échappement modulent attaque, durée, spectre et panorama. Les couches
-continues admission, mécanique, distribution et démarreur suivent les atomiques
-du runtime.
+## Sources et mixage
 
-Le signal de chambre n'est plus reconstruit à partir du seul instant
-d'allumage. Les trames de pression sont interpolées à la fréquence audio,
-centrées par un passe-haut, dérivées puis limitées en bande avant le mixage.
-Les `FiringEvent` restent utiles pour la spatialisation, le blowdown et les
-chemins d'échappement, mais la forme intra-cycle vient de la thermodynamique.
+La trame de pression est interpolée vers la fréquence audio. Le signal de
+chambre est recentré, dérivé et filtré ; la pression runner et son débit
+alimentent le blowdown. La bande passante de reconstruction suit la cadence
+adaptative réellement publiée par le solveur et reste sous sa zone de Nyquist,
+au lieu de forcer un filtre fixe sur une source sous-échantillonnée.
+Contrairement à un synthétiseur uniquement déclenché à l'étincelle, un raté
+conserve ici la forme de pression réellement calculée.
 
-Le signal d'échappement combine :
+Les `FiringEvent` ajoutent des voix bornées pour le corps moteur, le choc
+d'échappement, les composantes de knock et la spatialisation par cylindre. Le
+renderer limite et compte les vols de voix lorsque le pool est saturé. La
+transmission du DAG ne module que la voix d'échappement ; elle ne change pas
+l'intensité de combustion portée par l'événement.
 
-- ondes aller/retour et délai géométrique ;
-- réseau FDN du silencieux ;
-- bandes de choc, jet et turbulence ;
-- mélange du signal de pression et de sa dérivée ;
-- jitter à retard fractionnaire dépendant du débit ;
-- bruit d'air filtré ;
-- leveler attaque/relâchement borné ;
-- filtre anti-alias après les non-linéarités.
+Les autres couches utilisent :
 
-## Convolution par chemin
+- bruit et mode Helmholtz mesuré pour l'admission ;
+- harmoniques liées au régime, accélération piston et charge pour la mécanique ;
+- activité de distribution pour le haut du spectre ;
+- couche dédiée au démarreur ;
+- sifflement ou composante mécanique de suralimentation selon le type configuré.
 
-`RealtimeConvolutionBank` fournit jusqu'à huit convolutions partitionnées JUCE
-DSP indépendantes. `FiringEvent::exhaustPathIndex` route chaque impulsion vers
-la bonne réponse. Un WAV mono ou stéréo est décodé hors callback, conservé
-jusqu'à 262 144 échantillons, puis ré-échantillonné par le moteur de convolution
-à la fréquence du périphérique.
+Les gains combustion, échappement, admission et mécanique restent séparés
+jusqu'au mix final stéréo.
 
-Quand aucun fichier n'est fourni, l'application génère une IR déterministe à
-partir de la longueur primaire, du diamètre collecteur et de la restriction du
-silencieux. Chaque chemin conserve donc une signature propre sans dépendre des
-cinq presets génériques. Les presets restent un réglage de matériau/ouverture,
-pas un remplacement des IR moteur.
+## Traitement par chemin d'échappement
 
-## Observabilité
+Jusqu'à huit chemins physiques sont conservés. Une trame de cylindre et un
+événement n'excitent que le chemin auquel leur cylindre est affecté ; le signal
+continu n'est plus rabattu arbitrairement vers le chemin zéro.
 
-Les compteurs d'événements tardifs, événements perdus, trames de pression
-perdues, voix volées et saturation
-du planning restent exposés. Les tests vérifient le routage par chemin, la
-différence entre IR, le respect des tranches de buffer, les gains du mixeur et
-l'absence de sortie non finie.
+Chaque chemin possède :
+
+- les lignes aller/retour de ses primaires et une jonction de collecteur à
+  admittances pondérées par les sections réelles ;
+- un délai de réflexion et un filtrage de sortie ;
+- un réseau FDN de silencieux ;
+- un jitter fractionnaire dépendant du débit, du bruit d'air et un corps
+  résonant ;
+- son gain, son ouverture et sa réponse impulsionnelle.
+
+La réflexion côté port varie avec l'ouverture de la soupape. Le retour de la
+ligne de sortie rejoint réellement la jonction des primaires, au lieu d'être
+simulé par une boucle instantanée. Les vitesses d'onde suivent
+`c = √(γRT)` avec la température d'échappement simulée, et tous les délais
+physiques suivent aussi `timeScale`.
+
+Ce guide d'onde est un modèle DSP agrégé primaire/collecteur. Il ne résout pas
+encore chaque coude, changement de section ou composant comme une cellule 1D
+non linéaire. Pour un DAG personnalisé, le runtime publie néanmoins par
+cylindre le gain, la longueur primaire et les modes combinés des routes. La
+route la plus énergétique fournit le délai scalaire historique ; moyenne,
+première/dernière arrivée et dispersion RMS restent disponibles. Le signal
+continu traverse primaire, collecteur puis sortie, tandis que la voix
+événementielle déjà retardée n'est pas propagée une seconde fois. Les branches
+restent ramenées à un chemin acoustique par sortie configurée, pas à plusieurs
+sources spatialisées issues d'un même splitter.
+
+## Réponses impulsionnelles
+
+`RealtimeConvolutionBank` contient huit convolutions partitionnées JUCE
+indépendantes. L'application essaie, dans l'ordre :
+
+1. le WAV déclaré par le chemin moteur ;
+2. l'IR du preset acoustique courant ;
+3. l'IR générique `assets/ir/exhaust_default.wav` ;
+4. une IR déterministe générée depuis la géométrie si aucun asset n'est lisible.
+
+Les WAV mono ou stéréo sont décodés hors callback, limités à 262 144
+échantillons et ré-échantillonnés par la convolution à la fréquence du
+périphérique. Le preset **Street/Open/Turbo/Long tube/Moto** règle aussi la
+matière et l'ouverture du modèle ; il ne change pas l'affectation physique des
+cylindres.
+
+## Conditionnement de sortie
+
+Le chemin sec et la convolution sont combinés avant un véritable shelf aigu,
+un bloqueur DC et le filtre de reconstruction. Le volume maître est appliqué
+avant un leveler de sécurité lent, puis un unique limiteur doux à seuil est
+exécuté en suréchantillonnage 2×. En régime normal, le collecteur, les guides et
+le FDN restent linéaires ; leurs anciennes saturations successives ont été
+retirées. Le limiteur conserve une marge inter-échantillon et la dernière borne
+ne sert qu'à empêcher une valeur non finie ou pathologique d'atteindre le
+buffer.
+
+## Validation
+
+`EngineLab.RealtimeRegression` couvre notamment le routage continu par chemin,
+les limites de segment, les blocs 1 024/2 048 à 48/96/192 kHz, la transmission
+du DAG, l'atmosphère et les valeurs finies. `EngineLab.AudioRender` rend plusieurs
+moteurs hors ligne à un pourcentage de régime commun et vérifie énergie,
+dynamique, offset DC, plateaux de clipping, équilibre spectral, temps passé au
+plafond du limiteur et finitude. Une similarité spectrale trop forte entre
+moteurs est désormais un échec. Le harnais de comparaison produit également un
+WAV directement depuis les trames de pression afin de détecter une source
+silencieuse.
+
+Ces portes sont des régressions techniques. Elles ne remplacent pas :
+
+- des tests d'écoute en aveugle et à sonie égalisée ;
+- des enregistrements multi-microphones de référence ;
+- des mesures de latence bout en bout sur plusieurs périphériques ;
+- une validation des signatures de collecteurs réels.
 
 ## Limites
 
-- huit chemins convolutifs maximum dans le renderer courant ;
-- 262 144 échantillons maximum par fichier chargé depuis l'UI ;
-- acoustique de l'habitacle et position micro réduites à l'IR fournie ;
-- pas encore d'enregistrement WAV depuis l'interface.
+- huit chemins et 32 cylindres maximum dans le renderer courant ;
+- acoustique d'habitacle et position micro réduites aux IR fournies ;
+- pas de modèle thermoacoustique 1D maillé ou de rayonnement extérieur ;
+- pas d'enregistrement WAV depuis l'interface ;
+- aucune revendication actuelle de supériorité perceptuelle prouvée sur ES2D.

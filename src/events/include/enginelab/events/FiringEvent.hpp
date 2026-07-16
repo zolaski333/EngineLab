@@ -24,6 +24,10 @@ struct FiringEvent final {
     std::uint32_t exhaustPortId { 0 };
     std::uint32_t intakePortId { 0 };
     std::uint32_t exhaustPathIndex { 0 };
+    // Acoustic transmission from the exhaust topology only. Keeping this
+    // separate from intensity prevents a muffler/tailpipe edit from changing
+    // the direct in-cylinder combustion layer rendered from the same event.
+    float exhaustTransmissionGain { 1.0F };
 };
 
 } // namespace enginelab

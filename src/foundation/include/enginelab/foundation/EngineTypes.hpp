@@ -7,6 +7,9 @@
 #include <array>
 
 namespace enginelab {
+inline constexpr std::uint32_t minimumSupportedEngineSchemaVersion { 1 };
+inline constexpr std::uint32_t currentEngineSchemaVersion { 2 };
+
 
 enum class EngineCycle : std::uint8_t { fourStroke, twoStroke };
 enum class FuelType : std::uint8_t { gasoline, diesel };
@@ -14,6 +17,9 @@ enum class InjectionMode : std::uint8_t { port, direct };
 enum class EngineLayout : std::uint8_t { inlineLayout, vLayout, flat, radial, custom };
 enum class ConnectingRodType : std::uint8_t { conventional, master, articulated };
 enum class ForcedInductionType : std::uint8_t { turbocharger, supercharger };
+enum class ExhaustComponentType : std::uint8_t {
+    pipe, merge, splitter, resonator, muffler, catalyst, outlet
+};
 enum class RunningState : std::uint8_t {
     stopped, cranking, idling, running, unstable, knocking, overheating, damaged, destroyed
 };
@@ -86,6 +92,9 @@ struct CrankshaftConfig final {
     double flywheelMassKg { 8.0 };
     double momentOfInertiaKgM2 { 0.0 };
     double frictionTorqueNm { 0.0 };
+    // Runtime migration provenance; deliberately not part of schema v1.
+    // Explicitly decoded crankshafts keep the default false value.
+    bool inheritsLegacyInertia { false };
 };
 
 struct ValveLiftSample final {
@@ -161,6 +170,9 @@ struct IntakePathConfig final {
     std::uint32_t id { 1 };
     std::vector<std::uint32_t> cylinderIds;
     IntakeConfig geometry;
+    // True only for a path synthesized from the legacy/global intake fields.
+    // Explicit paths are authoritative and retain the default false value.
+    bool inheritsGlobalGeometry { false };
 };
 
 struct CylinderBankConfig final {
@@ -172,12 +184,51 @@ struct CylinderBankConfig final {
     std::uint32_t exhaustPathId { 0 };
 };
 
+/** A user-authored component in one exhaust path's directed acyclic graph. */
+struct ExhaustComponentConfig final {
+    // Component IDs are local to the containing exhaust path.
+    std::uint32_t id { 0 };
+    ExhaustComponentType type { ExhaustComponentType::pipe };
+    double lengthMm { 300.0 };
+    double diameterMm { 42.0 };
+    double volumeLitres { 0.0 };
+    // Dimensionless pressure-loss coefficient added to the geometric loss.
+    double restriction { 0.0 };
+    // Zero lets the runtime derive the dominant quarter-wave resonance.
+    double resonanceHz { 0.0 };
+    double acousticGain { 1.0 };
+    double dischargeCoefficient { 0.72 };
+};
+
+struct ExhaustCylinderConnectionConfig final {
+    std::uint32_t cylinderId { 0 };
+    std::uint32_t componentId { 0 };
+};
+
+struct ExhaustComponentConnectionConfig final {
+    std::uint32_t fromComponentId { 0 };
+    std::uint32_t toComponentId { 0 };
+};
+
+/**
+ * Optional custom topology for an exhaust path. When absent, the legacy
+ * geometry fields are compiled to a primary/collector/muffler/outlet graph.
+ */
+struct ExhaustNetworkConfig final {
+    std::vector<ExhaustComponentConfig> components;
+    std::vector<ExhaustCylinderConnectionConfig> cylinderConnections;
+    std::vector<ExhaustComponentConnectionConfig> connections;
+};
+
 struct ExhaustPathConfig final {
     std::uint32_t id { 0 };
     std::vector<std::uint32_t> cylinderIds;
     ExhaustConfig geometry;
     std::string impulseResponsePath;
     double audioVolume { 1.0 };
+    std::optional<ExhaustNetworkConfig> network;
+    // Runtime migration provenance; deliberately not part of schema v1.
+    bool inheritsGlobalGeometry { false };
 };
 
 struct IgnitionMapSample final {
@@ -202,7 +253,10 @@ struct InjectionConfig final {
     // the larger DI default reflects its high pressure and short open window.
     double injectorFlowMgPerSecond { 20'000.0 };
     double fuelTemperatureC { 25.0 };
+    // Port injection: regulated differential pressure relative to the intake
+    // manifold. Direct injection: absolute rail pressure.
     double railPressureBar { 200.0 };
+    // Differential pressure at which injectorFlowMgPerSecond is specified.
     double referencePressureBar { 200.0 };
     double wallFilmFraction { 0.0 };
     double vaporisationTimeConstantSeconds { 0.035 };
@@ -292,7 +346,7 @@ struct RunnerAcousticsConfig final {
 };
 
 struct EngineConfig final {
-    std::uint32_t schemaVersion { 1 };
+    std::uint32_t schemaVersion { currentEngineSchemaVersion };
     std::string name { "Untitled engine" };
     EngineCycle cycle { EngineCycle::fourStroke };
     FuelType fuel { FuelType::gasoline };
@@ -379,6 +433,10 @@ struct CylinderState final {
     std::uint32_t crankJournalId { 0 };
     double indicatedWorkJoulesPerCycle { 0.0 };
     double residualGasFraction { 0.0 };
+    double airFuelRatio { 14.7 };
+    double requestedFuelMgPerCycle { 0.0 };
+    double deliveredFuelMgPerCycle { 0.0 };
+    double closedLoopFuelTrim { 1.0 };
     double intakeValveAdvanceDegrees { 0.0 };
     double exhaustValveAdvanceDegrees { 0.0 };
     double valveLiftMultiplier { 1.0 };
@@ -430,6 +488,7 @@ struct EngineState final {
     double volumetricEfficiency { 0.0 };
     double airMassMgPerCycle { 0.0 };
     double injectedFuelMgPerCycle { 0.0 };
+    double deliveredFuelMgPerCycle { 0.0 };
     double fuelFlowGramsPerSecond { 0.0 };
     double fuelConsumedGrams { 0.0 };
     double fuelConsumedLitres { 0.0 };
@@ -466,6 +525,8 @@ struct EngineState final {
     bool shiftInProgress { false };
     double brakePressure { 0.0 };
     double brakeForceN { 0.0 };
+    double requestedRoadLoad { 0.0 };
+    double roadLoadForceN { 0.0 };
     double tireLongitudinalForceN { 0.0 };
     bool tractionLimited { false };
     double clutchTemperatureC { 22.0 };
@@ -549,7 +610,7 @@ struct DynoRun final {
 [[nodiscard]] double engineDisplacementLitres(const EngineConfig&) noexcept;
 [[nodiscard]] double effectiveRotatingInertiaKgM2(const EngineConfig&) noexcept;
 [[nodiscard]] double intakeRunnerVolumeLitres(const CylinderConfig&, const IntakeConfig&) noexcept;
-void normaliseEngineConfig(EngineConfig&) noexcept;
+void normaliseEngineConfig(EngineConfig&);
 [[nodiscard]] double valveFlowCoefficient(double liftMm, double fallback,
                                           const std::vector<ValveFlowSample>&) noexcept;
 [[nodiscard]] ValveControlSample interpolateValveControl(const ValveControlConfig&, double rpm,

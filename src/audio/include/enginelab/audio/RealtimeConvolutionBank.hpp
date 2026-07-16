@@ -2,6 +2,7 @@
 
 #include <juce_dsp/juce_dsp.h>
 #include <array>
+#include <atomic>
 #include <cstddef>
 #include <span>
 
@@ -28,7 +29,9 @@ public:
 private:
     std::array<juce::dsp::Convolution, maximumPaths> convolvers_;
     std::array<juce::AudioBuffer<float>, maximumPaths> buffers_;
-    std::array<bool, maximumPaths> loaded_ {};
+    // JUCE's Convolution accepts asynchronous IR replacement. Keep the small
+    // project-side publication flag atomic as it crosses UI/audio threads too.
+    std::array<std::atomic<bool>, maximumPaths> loaded_ {};
     int preparedChannels_ { 2 };
     int maximumBlockSize_ { 0 };
 };

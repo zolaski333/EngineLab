@@ -1,111 +1,166 @@
-# 🏎️ EngineLab
+# EngineLab
 
-EngineLab is a real-time, high-fidelity internal combustion engine simulation and audio synthesis application built in modern C++20 and the JUCE framework. It targets a perceptual and acoustically rich simulation driven by coherent, physically motivated simplified equations rather than a 1:1 thermodynamic calculation.
+EngineLab est un simulateur de moteur à combustion interne quatre temps et un
+synthétiseur audio temps réel écrits en C++20 avec JUCE. Le projet vise une
+simulation cohérente, observable et agréable à écouter. Il ne remplace ni un
+logiciel de calcul thermodynamique validé, ni un banc moteur, ni un outil de
+calibration destiné à un véhicule réel.
 
----
+## État actuel
 
-## 🌟 Key Features
+Le moteur de simulation relie un réseau gazeux à volumes de contrôle, la
+cinématique bielle-manivelle, l'injection, la propagation de flamme, le couple
+issu de la pression cylindre, les pertes, le turbocompresseur et la chaîne
+cinématique jusqu'au véhicule. La cadence interne s'adapte au régime et à la
+résolution angulaire configurée.
 
-### 1. Advanced Engine Physics Simulation
-- **Pressure-Derived Torque Balance:** Resolved cylinder pressure is the operating crank-torque source. The former mean-work estimate remains visible as diagnostic telemetry, but is no longer blended into normal operation.
-- **Measured Indicated Work:** Signed per-cylinder P·dV loops publish indicated work, IMEP, indicated power and equivalent mean torque without feeding a synthetic torque map back into the crankshaft.
-- **Exact Piston Kinematics:** Exact geometric slider-crank calculations for piston speed, acceleration, and reciprocating mass inertia forces.
-- **Compressible Throttle Flow:** Isentropic sonic (choked flow) and subsonic restriction equations for manifold air mass calculations.
-- **Validated Adaptive Solver:** Integration runs at 2 kHz by default and scales up to 60 kHz. Engine files are rejected when their maximum cadence cannot honour the requested crank-angle resolution at the limiter; live telemetry reports both the actual angle step and any over-speed saturation.
-- **Closed Conservative Gas Network:** Intake, runners, cylinders, exhaust runners and per-path collectors exchange gas through choked/subsonic restrictions while conserving species, stagnation enthalpy, total energy and both momentum components. Variable mixture heat capacity and gamma, isentropic stagnation pressure, sonic velocity limiting and analytical pressure-equilibrium bounds make runner inertia and reversion causal without an arbitrary per-call mass clamp.
-- **Propagating Flame Front:** A standalone Metghalchi-Keck model resolves laminar speed from equivalence ratio, temperature and pressure, adds piston-driven turbulence and burned-gas dilution, then advances an ellipsoidal flame kernel through each moving chamber.
-- **Stribeck Piston Friction:** Per-cylinder Coulomb, breakaway and viscous friction uses actual piston speed and connecting-rod side load instead of a single engine-wide loss multiplier.
-- **Energy-Coupled Driveline:** Reverse, neutral and forward gears share a timed shift state machine with torque cut. A thermal clutch, gearbox/differential/wheel inertias, longitudinal tire traction, road loads and wheel braking feed signed torque back to the crankshaft and expose an energy balance.
+L'audio stéréo combine les pressions intra-cycle, les événements d'allumage et
+de blowdown, l'admission, la distribution, la mécanique et le démarreur. Les
+chemins d'échappement restent séparés jusqu'à leurs délais, guides d'onde,
+réseaux de réverbération et réponses impulsionnelles respectifs. Le callback
+audio ne réalise ni accès fichier, ni attente, ni allocation dynamique.
 
-### 2. Physical Engine Configurations
-- **Uneven-Firing & Layout Support:** Fully customizable bank angles and per-cylinder crank offset degrees (`crankOffsetDegrees`), allowing modeling of I2, I4, I5, V6, crossplane/flatplane V8s, and custom designs.
-- **Exotic Geometry Catalog:** Built-in flat-six and radial-five examples use explicit crank journals, per-cylinder bank offsets, and preserved YAML/JSON round trips so non-standard layouts are first-class configs.
-- **Flow-Resolved Variable Valvetrain:** Per-bank sampled lift and lift/flow curves drive cylinder filling. Continuous RPM/load VVT and VVL actuators coexist with legacy switched high-lift profiles.
-- **Runner Resonance:** Every intake runner has its own geometric volume and a configurable damped Helmholtz mode coupled conservatively to plenum flow.
-- **Fuel and Injection Calibration:** Reusable fuel parts define density, heating value, stoichiometric AFR, molar chemistry and flame speed. Port and direct injection use rail-to-cylinder pressure differential, injector capacity, latent heat and fuel temperature; port injection also retains and evaporates a persistent wall film, while DI applies configurable charge cooling.
-- **Data-driven Topology:** Independent intake/exhaust paths, multiple rigidly coupled crankshafts, crank journals, conventional/master/articulated rods, explicit deck/chamber geometry, ignition maps and solver fidelity are serializable in YAML and JSON.
+L'application fournit également :
 
-### 3. Real-Time Audio Synthesis
-- **Hybrid Stereo Synthesis:** Lock-free, allocation-free callback rendering combines pressure-driven combustion, intake, valvetrain, mechanical and starter layers with a partitioned convolution bank. Every exhaust path can use its own full WAV IR (resampled by JUCE DSP); geometry-derived path IRs are generated when no asset is supplied.
-- **Continuous Chamber/Blowdown Audio:** Every thermodynamic substep sends chamber pressure, exhaust-runner pressure and cylinder mass flow through a dedicated lock-free queue. The renderer resamples and filters those physical waveforms; firing events retain valve-opening timing, spatialisation, path delay and resonance.
-- **Measured Mixture and Calibrated Ignition:** Port-film transport is corrected cycle-to-cycle from the lambda actually trapped in each cylinder. The UI ignition control is an explicit trim around each engine's own timing map, not a misleading absolute advance override.
-- **Energy-Balance Turbocharger:** Turbo boost follows turbine/compressor power, shaft inertia, bearing loss, turbine throat and wastegate flow area. Shaft speed, wastegate opening and friction MEP are exposed as diagnostics and covered by the catalog physics gate.
-- **Exhaust Graph Resonance:** Multi-node exhaust delay paths modeling piping length delays, primary pipe acoustic resonances, wave reflections, and an internal IR-style muffler network.
-- **Realtime Signal Conditioning:** Pressure-derivative/raw blending, flow-dependent sub-sample jitter, turbulent air noise, attack/release leveling and post-nonlinearity anti-alias filtering complete the exhaust synthesis chain.
+- un catalogue de moteurs et des imports/exports JSON ou YAML ;
+- un concepteur **ECHAP. PRO** pour éditer des graphes validés avec branches,
+  jonctions, résonateurs, silencieux, catalyseurs et sorties ;
+- un DSL déclaratif et typé par unités (`.els` ou `.engine`) avec surveillance
+  automatique des dépendances ;
+- un tuner ECU pour les tables AFR et avance ainsi que le rupteur, appliqués à
+  chaud par snapshots transactionnels ;
+- un banc automatique avec historique, courbes et export CSV ;
+- une vue JUCE 2D et un contrat de scène 3D indépendant du backend graphique.
 
-### 4. Interactive Dyno Sweep
-- **Automated Dyno Sweep:** Automatic brake sweep mapping torque/power curves across the engine speed range.
-- **Data Export & Analysis:** CSV curve export, comparison overlay plots, and complete engine configuration serialization (JSON/YAML).
+OpenGL n'est pas implémenté. Le module `render` prépare les transformations 3D,
+les identifiants stables, les limites de scène, l'interpolation de snapshots et
+l'interface `IEngineRenderer`. La vue actuelle reste un rendu 2D direct. Voir
+[l'architecture](docs/architecture.md#préparation-du-rendu-3d) pour le travail
+qui reste avant un backend OpenGL.
 
-The targeted ES2D gap-closure record, including explicit remaining limits and
-out-of-scope work, is maintained in
-[`docs/es2d-targeted-gap-closure.md`](docs/es2d-targeted-gap-closure.md).
-The verified Phase 0–2 delivery contract and its remaining limits are in
-[`docs/phase-0-1-2.md`](docs/phase-0-1-2.md).
-The verified Phase 3–5 delivery contract, including the remaining physical
-limits, is in [`docs/phase-3-4-5.md`](docs/phase-3-4-5.md).
+## Démarrage rapide
 
----
-
-## ⌨️ Controls & Navigation
-
-- **`A`:** Toggle ignition.
-- **`S` (Hold):** Starter motor engagement.
-- **`W`:** 10% Throttle.
-- **`E`:** 20% Throttle.
-- **`R`:** 100% Throttle.
-- **`D`:** Start/Stop Automated Dyno Sweep.
-- **`F1` to `F12`:** Load available catalog engines.
-- **`P`:** Pause/Resume simulation.
-- **`Tab`:** Cycle engine, load/transmission, mixer, oscilloscope, and debug views.
-- **`1` to `5`:** Set simulation speed scale (0.25x, 0.5x, 1x, 2x, 4x).
-- **Up / Down arrows:** Shift up / down. Downshifting through neutral selects reverse.
-- **Left arrow:** Apply the wheel brake while held.
-- **`T` / `U`:** Adjust the clutch target; hold rebindable `Y` (or compatibility `Shift`) to disengage the clutch and `Space` for a slower clutch transition. `;` cycles the exhaust preset.
-- **Mouse wheel / drag / double-click:** Zoom, pan and reset the engine view.
-
-Every application action is defined in the persistent action map. Use the **TOUCHES** button to edit and validate `keybindings.json`; duplicate or unknown bindings are rejected instead of silently shadowing another action. `Escape`, `Enter` and `F1`–`F12` remain reserved application shortcuts.
-
----
-
-## 🛠️ Build Requirements
-
-- **Windows 10/11** (64-bit)
-- **Visual Studio 2022 or 2026** (with **Desktop development with C++** workload)
-- **CMake 3.24 or higher**
-- **Git**
-
-All dependencies (JUCE, nlohmann_json, yaml-cpp) are managed directly by CMake via `FetchContent` and will be downloaded and compiled during the initial configuration.
-
----
-
-## 🚀 Compiling the Project
-
-Run the following commands in a PowerShell terminal:
+Prérequis Windows : Visual Studio 2022 ou 2026 avec le workload C++ desktop,
+CMake 3.24 ou plus récent et Git. JUCE, nlohmann-json et yaml-cpp sont récupérés
+par CMake à des révisions épinglées.
 
 ```powershell
-# 1. Configure the build directory
-cmake -S . -B build -G "Visual Studio 18 2026" -A x64
-
-# 2. Build the application in Release mode
+cmake -S . -B build -G "Visual Studio 17 2022" -A x64
 cmake --build build --config Release --target EngineLabApp
-
-# 3. Build and execute the test suite
-cmake --build build --config Release --target EngineLabCoreTests
-ctest --test-dir build -C Release --output-on-failure
-
-# 4. Produce deterministic Phase-0 comparison traces and WAV metrics
-cmake --build build --config Release --target EngineLabComparisonHarness
-build\tools\Release\EngineLabComparisonHarness.exe --output comparison-output
 ```
 
-*Note: For Visual Studio 2022, replace the generator option with `-G "Visual Studio 17 2022"`.*
+Avec Visual Studio 2026, utiliser `-G "Visual Studio 18 2026"`. L'exécutable est
+produit dans `build/src/app/EngineLabApp_artefacts/Release/EngineLab.exe`.
 
-The compiled executable will be located at:
-`build/src/app/EngineLabApp_artefacts/Release/EngineLab.exe`
+Pour compiler et exécuter toute la validation :
 
----
+```powershell
+cmake --build build --config Release
+ctest --test-dir build -C Release --output-on-failure
+```
 
-## ⚖️ License & Contributions
+Les détails des tests, des harnais déterministes et des builds avec sanitizers
+sont dans [docs/phase-0-1-2.md](docs/phase-0-1-2.md).
 
-Please refer to [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) for community guidelines. This repository is licensed under the MIT License.
+## Créer et modifier un moteur
+
+Trois niveaux sont volontairement séparés :
+
+1. JSON/YAML décrit toute la structure moteur. L'appliquer remplace l'instance
+   de simulation et réinitialise son état dynamique.
+2. Un script `.els` choisit un preset ou un fichier JSON/YAML de base, puis
+   applique des modifications avec unités. L'application surveille le script,
+   ses inclusions et son fichier de base. Une sauvegarde valide remplace le
+   runtime ; une sauvegarde invalide laisse tourner la dernière configuration
+   valide et affiche les diagnostics.
+3. Le tuner ECU publie une calibration sans remplacer le runtime. Une cellule
+   validée devient visible par l'ECU au prochain calcul, sans arrêter le moteur.
+   Les documents `.ecu.json` chargés ou enregistrés sont ensuite surveillés.
+
+Le bouton **ECHAP. PRO** travaille sur une copie du moteur. Il permet de générer
+un réseau de départ, d'ajouter et paramétrer ses composants, de relier les
+nœuds et d'affecter chaque cylindre. **VALIDER ET APPLIQUER** refuse les cycles,
+les branches incomplètes et les cardinalités incohérentes. Comme la topologie
+d'échappement appartient à la structure moteur, une application valide remplace
+le runtime et réinitialise son état ; elle est refusée pendant un passage au
+banc. Utiliser ensuite **EXPORTER** pour persister le résultat en JSON ou YAML.
+
+Cette distinction est importante : le hot reload ECU conserve le moteur, son
+régime et ses états thermiques ; un changement structurel de cylindrée,
+topologie ou géométrie nécessite une nouvelle instance et repart de son état
+initial. Les remplacements issus du script live, de l'éditeur JSON et du
+concepteur d'échappement réutilisent toutefois le même magasin ECU : les cartes,
+la fenêtre tuner et son fichier surveillé restent actifs. Choisir ou importer
+un autre moteur crée volontairement sa calibration par défaut.
+
+- [Guide du DSL EngineLab](docs/engine-scripting.md)
+- [Guide du tuner et du format ECU](docs/ecu-tuning.md)
+- [Guide de l'échappement personnalisé](docs/custom-exhaust.md)
+- [Modèle de simulation](docs/simulation-model.md)
+- [Architecture audio temps réel](docs/realtime-audio.md)
+
+Un exemple de script prêt à importer est disponible dans
+`examples/street-turbo.els`.
+
+## Commandes principales
+
+Les touches par défaut sont modifiables depuis le bouton **TOUCHES**. Le fichier
+`keybindings.json` refuse les actions inconnues, les doublons et les raccourcis
+réservés.
+
+| Entrée | Action par défaut |
+|---|---|
+| `A` / `S` maintenu | contact / démarreur |
+| `Q`, `W`, `E`, `R` | papillon 1 %, 10 %, 20 %, 100 % |
+| `D` / `H` | banc automatique / maintien de régime |
+| `P` / `Tab` | pause / écran suivant |
+| `1` à `5` | temps 0,25×, 0,5×, 1×, 2×, 4× |
+| flèches haut/bas/gauche | rapport supérieur, inférieur, frein de roue |
+| `Y` ou `Shift` maintenu | débrayer ; `T`/`U` ajustent la consigne |
+| `;` | preset acoustique d'échappement suivant |
+| molette / glisser / double-clic | zoom, déplacement et recentrage de la vue moteur |
+
+Les modificateurs `G`, `Z`, `X`, `C`, `V`, `B`, `J`, `K`, `L`, `O`, `N` et
+`Espace` associés à la molette règlent respectivement le maintien de régime, le
+volume, la convolution, les bandes/bruits, les couches du mix, la vitesse de
+simulation et le papillon fin.
+
+## Positionnement face à ES2D
+
+EngineLab possède maintenant un socle plus transactionnel et plus instrumenté,
+mais il ne revendique pas encore une supériorité globale sur ES2D. ES2D conserve
+un avantage net en maturité du langage `.mr`, en richesse de bibliothèque et
+en recul perceptuel sur le son. EngineLab dispose d'un réseau gazeux et d'une
+télémétrie plus détaillés, d'un audio multi-chemin moderne et d'un vrai hot
+reload ECU, mais ces avantages techniques doivent encore être étalonnés contre
+des mesures et des écoutes contrôlées.
+
+La comparaison critère par critère, ses conditions et la feuille de route vers
+un niveau égal ou supérieur sont dans
+[docs/es2d-targeted-gap-closure.md](docs/es2d-targeted-gap-closure.md).
+
+## Limites à connaître
+
+- essence quatre temps uniquement dans le runtime actuel ;
+- volumes gazeux 0D et acoustique par guides d'onde agrégés, pas CFD ni solveur
+  d'ondes 1D maillé par composant ;
+- le DAG d'échappement est réduit en gorges, volumes et conductances qui pilotent
+  le réseau conservatif, mais il ne crée pas une `GasCell` par composant et ne
+  constitue pas un solveur d'ondes 1D ;
+- chimie globale et modèles semi-empiriques de flamme, knock et transferts
+  thermiques ;
+- huit chemins d'échappement audio au maximum ;
+- les branches d'un graphe d'échappement sont combinées énergétiquement en une
+  source par cylindre/chemin et ne deviennent pas encore des sorties audio
+  indépendantes ;
+- concepteur d'échappement sans glisser-déposer, undo/redo, audition A/B ni
+  sélection d'IR ; les chemins et cylindres sont gérés dans l'interface, tandis
+  que l'IR reste éditable en JSON/YAML ;
+- pas de validation sur banc moteur ni de preuve A/B d'une supériorité audio ;
+- pas de backend 3D, d'enregistrement WAV depuis l'interface, ni de diagnostic
+  OBD destiné à une ECU réelle.
+
+## Licence
+
+Consultez [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) pour les règles de
+contribution. Le projet est distribué sous licence MIT ; voir [LICENSE.md](LICENSE.md).

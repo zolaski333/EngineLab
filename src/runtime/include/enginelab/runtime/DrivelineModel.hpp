@@ -19,6 +19,7 @@ struct DrivelineOutput final {
     bool shiftInProgress { false };
     double brakePressure { 0.0 };
     double brakeForceN { 0.0 };
+    double roadLoadForceN { 0.0 };
     double tireForceN { 0.0 };
     bool tractionLimited { false };
     double clutchTemperatureC { 22.0 };

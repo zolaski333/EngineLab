@@ -4,12 +4,54 @@
 #include <numbers>
 
 namespace enginelab {
+namespace {
+constexpr double referenceSampleRate = 48'000.0;
+
+[[nodiscard]] float exhaustSoundSpeedMps(float temperatureC) noexcept {
+    constexpr float heatCapacityRatio = 1.33F;
+    constexpr float specificGasConstant = 287.05F;
+    const auto kelvin = std::clamp(temperatureC + 273.15F, 220.0F, 2'200.0F);
+    return std::sqrt(heatCapacityRatio * specificGasConstant * kelvin);
+}
+
+[[nodiscard]] float finiteState(float value, float absoluteLimit = 12.0F) noexcept {
+    return std::isfinite(value) ? std::clamp(value, -absoluteLimit, absoluteLimit) : 0.0F;
+}
+
+[[nodiscard]] float rateInvariantPole(float referencePole, double sampleRate) noexcept {
+    return static_cast<float>(std::pow(std::clamp(referencePole, 0.0F, 0.999999F),
+                                       referenceSampleRate / sampleRate));
+}
+
+[[nodiscard]] float rateInvariantCoefficient(float referenceCoefficient,
+                                             double sampleRate) noexcept {
+    return 1.0F - rateInvariantPole(1.0F - referenceCoefficient, sampleRate);
+}
+}
+
+RealtimeEngineAudio::RealtimeEngineAudio(FiringEventQueue& queue,
+                                         RealtimeAudioState& state,
+                                         CylinderPressureQueue* pressureQueue)
+    : queue_(queue), realtimeState_(state), pressureQueue_(pressureQueue),
+      runners_(std::make_unique<RunnerWaveguides>()),
+      exhaustPaths_(std::make_unique<ExhaustPathState[]>(maximumPaths)) {}
+
+std::size_t RealtimeEngineAudio::runnerDelaySamples(double delaySeconds,
+                                                    double sampleRate) noexcept {
+    const auto safeRate = std::isfinite(sampleRate) && sampleRate > 0.0 ? sampleRate : referenceSampleRate;
+    const auto safeDelay = std::isfinite(delaySeconds) ? std::clamp(delaySeconds, 0.0, 0.080) : 0.0;
+    return std::clamp<std::size_t>(
+        static_cast<std::size_t>(std::llround(safeDelay * safeRate)), 1, runnerLineLength - 1);
+}
+
 void RealtimeEngineAudio::prepare(double sampleRate, int maximumBlockSize) noexcept {
     sampleRate_ = sampleRate > 0.0 ? sampleRate : 48'000.0;
-    const auto reflectionSeconds = std::clamp(realtimeState_.exhaustReflectionSeconds.load(std::memory_order_relaxed),
-                                               0.001F, 0.080F);
-    reflectionDelaySamples_ = std::clamp(static_cast<std::size_t>(sampleRate_ * reflectionSeconds),
-                                         std::size_t { 1 }, forwardWave_.size() - 1);
+    maximumBlockSize_ = std::max(1, maximumBlockSize);
+    // Keep the audio cursor at least one complete host callback plus a small
+    // scheduling margin behind the producer. A fixed 20 ms look-ahead starves
+    // the end of 1024/2048-sample blocks at lower sample rates.
+    eventLatencySeconds_ = std::max(0.020,
+        static_cast<double>(maximumBlockSize_) / sampleRate_ + 0.005);
     lowPassCoefficient_ = static_cast<float>(1.0 - std::exp(-2.0 * std::numbers::pi * 11'500.0 / sampleRate_));
     voiceFilterCoefficient_ = static_cast<float>(1.0 - std::exp(-2.0 * std::numbers::pi * 2'100.0 / sampleRate_));
     intakeFilterCoefficient_ = static_cast<float>(1.0 - std::exp(-2.0 * std::numbers::pi * 637.0 / sampleRate_));
@@ -17,49 +59,93 @@ void RealtimeEngineAudio::prepare(double sampleRate, int maximumBlockSize) noexc
     reflectionFilterCoefficient_ = static_cast<float>(1.0 - std::exp(-2.0 * std::numbers::pi * 980.0 / sampleRate_));
     antiAliasCoefficient_ = static_cast<float>(1.0 - std::exp(-2.0 * std::numbers::pi
         * std::min(18'000.0, sampleRate_ * 0.42) / sampleRate_));
+    dcBlockPole_ = static_cast<float>(std::exp(-2.0 * std::numbers::pi * 12.0 / sampleRate_));
+    toneCoefficient_ = static_cast<float>(1.0 - std::exp(-2.0 * std::numbers::pi
+        * std::min(1'800.0, sampleRate_ * 0.10) / sampleRate_));
     pressureHighPassPole_ = static_cast<float>(std::exp(-2.0 * std::numbers::pi * 18.0 / sampleRate_));
     pressureBandCoefficient_ = static_cast<float>(1.0 - std::exp(-2.0 * std::numbers::pi
         * std::min(9'500.0, sampleRate_ * 0.38) / sampleRate_));
-    if (!convolutionBank_.hasAnyImpulseResponse()) {
-        std::array<float, 384> physicalIr {};
-        physicalIr[0] = 0.72F;
-        for (std::size_t index = 1; index < physicalIr.size(); ++index) {
-            const auto time = static_cast<float>(index) / static_cast<float>(sampleRate_);
-            physicalIr[index] = std::exp(-time * 4'800.0F)
-                * (std::sin(static_cast<float>(2.0 * std::numbers::pi * 1'150.0) * time) * 0.16F
-                   + std::sin(static_cast<float>(2.0 * std::numbers::pi * 310.0) * time) * 0.09F);
-        }
-        setImpulseResponse(physicalIr, sampleRate_, 0);
+    pressureTailDecay_ = rateInvariantPole(0.992F, sampleRate_);
+    pressureTailInputCoefficient_ = 0.010F * (1.0F - pressureTailDecay_) / (1.0F - 0.992F);
+    bovDecay_ = rateInvariantPole(0.9994F, sampleRate_);
+    bovNoiseCoefficient_ = rateInvariantCoefficient(0.08F, sampleRate_);
+    jitterCoefficient_ = rateInvariantCoefficient(0.015F, sampleRate_);
+    collectorCoefficient_ = rateInvariantCoefficient(0.18F, sampleRate_);
+    levelAttackCoefficient_ = rateInvariantCoefficient(0.0025F, sampleRate_);
+    levelReleaseCoefficient_ = rateInvariantCoefficient(0.00012F, sampleRate_);
+    gainAttackCoefficient_ = rateInvariantCoefficient(0.0020F, sampleRate_);
+    gainReleaseCoefficient_ = levelReleaseCoefficient_;
+    fdnDelaySamples_[0] = std::clamp<std::size_t>(
+        static_cast<std::size_t>(std::lround(1'493.0 * sampleRate_ / referenceSampleRate)),
+        1, exhaustPaths_[0].fdnA.size());
+    fdnDelaySamples_[1] = std::clamp<std::size_t>(
+        static_cast<std::size_t>(std::lround(2'111.0 * sampleRate_ / referenceSampleRate)),
+        1, exhaustPaths_[0].fdnB.size());
+    fdnDelaySamples_[2] = std::clamp<std::size_t>(
+        static_cast<std::size_t>(std::lround(2'791.0 * sampleRate_ / referenceSampleRate)),
+        1, exhaustPaths_[0].fdnC.size());
+    fdnDelaySamples_[3] = std::clamp<std::size_t>(
+        static_cast<std::size_t>(std::lround(3'557.0 * sampleRate_ / referenceSampleRate)),
+        1, exhaustPaths_[0].fdnD.size());
+    std::array<float, 1'536> physicalIr {};
+    const auto physicalIrSamples = std::clamp<std::size_t>(
+        static_cast<std::size_t>(std::lround(sampleRate_ * 0.008)), 2, physicalIr.size());
+    physicalIr[0] = 0.72F;
+    for (std::size_t index = 1; index < physicalIrSamples; ++index) {
+        const auto time = static_cast<float>(index) / static_cast<float>(sampleRate_);
+        physicalIr[index] = std::exp(-time * 4'800.0F)
+            * (std::sin(static_cast<float>(2.0 * std::numbers::pi * 1'150.0) * time) * 0.16F
+               + std::sin(static_cast<float>(2.0 * std::numbers::pi * 310.0) * time) * 0.09F);
     }
-    convolutionBank_.prepare(sampleRate_, maximumBlockSize, 2);
+    const auto activePathCount = std::clamp<std::size_t>(
+        realtimeState_.exhaustPathCount.load(std::memory_order_relaxed), 1, maximumPaths);
+    for (std::size_t path = 0; path < activePathCount; ++path) {
+        if (!convolutionBank_.hasImpulseResponse(path)) {
+            setImpulseResponse(std::span<const float>(physicalIr.data(), physicalIrSamples),
+                               sampleRate_, path);
+        }
+    }
+    convolutionBank_.prepare(sampleRate_, maximumBlockSize_, 2);
     // 2x oversampling for the master soft-clip so its harmonics do not alias
     // back down at high RPM (where fundamentals are already high).
     oversampler_ = std::make_unique<juce::dsp::Oversampling<float>>(
         2, 1, juce::dsp::Oversampling<float>::filterHalfBandPolyphaseIIR, true);
-    oversampler_->initProcessing(static_cast<std::size_t>(std::max(1, maximumBlockSize)));
+    oversampler_->initProcessing(static_cast<std::size_t>(maximumBlockSize_));
     oversampler_->reset();
-    oversamplerLatency_ = static_cast<int>(std::lround(oversampler_->getLatencyInSamples()));
     release();
     updateExhaustPreset(realtimeState_.exhaustPreset.load(std::memory_order_relaxed));
 }
 void RealtimeEngineAudio::release() noexcept {
-    voices_.fill({}); pendingEvents_.fill({}); pendingEventCount_ = 0; audioTimeSeconds_ = 0.0; producerClock_ = 0.0;
-    forwardWave_.fill(0.0F); reverseWave_.fill(0.0F); fdnA_.fill(0.0F); fdnB_.fill(0.0F); fdnC_.fill(0.0F); fdnD_.fill(0.0F);
-    for (auto& line : runnerForward_) line.fill(0.0F);
-    for (auto& line : runnerBackward_) line.fill(0.0F);
-    runnerWrite_.fill(0); collectorReturn_ = 0.0F;
-    waveWrite_ = 0; fdnWriteA_ = 0; fdnWriteB_ = 0; fdnWriteC_ = 0; fdnWriteD_ = 0; lowPassLeft_ = 0.0F; lowPassRight_ = 0.0F;
-    pressureTailLeft_ = 0.0F; pressureTailRight_ = 0.0F; exhaustBodyLeft_ = 0.0F; exhaustBodyRight_ = 0.0F;
-    exhaustAirLeft_ = 0.0F; exhaustAirRight_ = 0.0F; mechanicalPhase_ = 0.0; valvetrainPhase_ = 0.0;
-    starterPhase_ = 0.0; smoothedRpm_ = 0.0F; intakeFilter_ = 0.0F; reflectedLowPass_ = 0.0F; collectorState_ = 0.0F;
+    voices_.fill({}); pendingEvents_.fill({}); pendingEventCount_ = 0;
+    observedExhaustPathCount_ = 1;
+    audioTimeSeconds_ = -eventLatencySeconds_; producerClock_ = 0.0;
+    for (auto& line : runners_->forward) line.fill(0.0F);
+    for (auto& line : runners_->backward) line.fill(0.0F);
+    runners_->write.fill(0);
+    for (std::size_t pathIndex = 0; pathIndex < maximumPaths; ++pathIndex) {
+        auto& path = exhaustPaths_[pathIndex];
+        path.collectorReturn = 0.0F;
+        path.forwardWave.fill(0.0F); path.reverseWave.fill(0.0F);
+        path.fdnA.fill(0.0F); path.fdnB.fill(0.0F); path.fdnC.fill(0.0F); path.fdnD.fill(0.0F);
+        path.jitterHistory.fill(0.0F);
+        path.waveWrite = path.fdnWriteA = path.fdnWriteB = path.fdnWriteC = path.fdnWriteD = 0;
+        path.jitterWrite = 0; path.reflectionDelaySamples = 1;
+        path.reflectedLowPass = path.collectorState = path.previousCollectorInput = 0.0F;
+        path.jitterDelaySamples = path.exhaustBodyLeft = path.exhaustBodyRight = 0.0F;
+        path.exhaustAirLeft = path.exhaustAirRight = 0.0F;
+    }
+    lowPassLeft_ = 0.0F; lowPassRight_ = 0.0F;
+    pressureTailLeft_ = 0.0F; pressureTailRight_ = 0.0F;
+    mechanicalPhase_ = 0.0; valvetrainPhase_ = 0.0;
+    starterPhase_ = 0.0; smoothedRpm_ = 0.0F; intakeFilter_ = 0.0F;
     intakeSvfLow_ = 0.0F; intakeSvfBand_ = 0.0F; bovEnvelope_ = 0.0F; bovNoiseState_ = 0.0F;
     previousThrottleForBov_ = 0.0F; fiWhistlePhase_ = 0.0;
-    previousCollectorInput_ = 0.0F; jitterDelaySamples_ = 0.0F; jitterHistory_.fill(0.0F); jitterWrite_ = 0;
     levelEnvelope_ = 0.0F; levelGain_ = 1.0F;
     antiAliasLeftA_ = antiAliasLeftB_ = antiAliasRightA_ = antiAliasRightB_ = 0.0F;
-    previousPressureSample_ = {}; currentPressureSample_ = {}; nextPressureSample_ = {};
-    hasPreviousPressureSample_ = hasCurrentPressureSample_ = hasNextPressureSample_ = false;
-    pressureRawPrevious_ = pressureHighPass_ = pressureHighPassPrevious_ = pressureBandLimited_ = 0.0F;
+    dcInputLeft_ = dcInputRight_ = dcOutputLeft_ = dcOutputRight_ = 0.0F;
+    toneLowLeft_ = toneLowRight_ = 0.0F;
+    currentPressureSample_ = {}; nextPressureSample_ = {};
+    hasCurrentPressureSample_ = hasNextPressureSample_ = false;
     cylinderPressureRawPrevious_.fill(0.0F);
     cylinderPressureHighPass_.fill(0.0F);
     cylinderPressureHighPassPrevious_.fill(0.0F);
@@ -68,6 +154,7 @@ void RealtimeEngineAudio::release() noexcept {
     exhaustPressureHighPass_.fill(0.0F);
     exhaustPressureHighPassPrevious_.fill(0.0F);
     exhaustPressureBandLimited_.fill(0.0F);
+    pressureSampleIntervalSeconds_ = 0.0;
     convolutionBank_.reset();
     if (oversampler_) oversampler_->reset();
 }
@@ -85,6 +172,13 @@ void RealtimeEngineAudio::setImpulseResponse(juce::AudioBuffer<float>&& samples,
 }
 
 void RealtimeEngineAudio::render(juce::AudioBuffer<float>& output, int startSample, int sampleCount) noexcept {
+    if (sampleCount <= 0 || startSample < 0 || startSample >= output.getNumSamples()) return;
+    sampleCount = std::min(sampleCount, output.getNumSamples() - startSample);
+    if (sampleCount > maximumBlockSize_) {
+        for (int offset = 0; offset < sampleCount; offset += maximumBlockSize_)
+            render(output, startSample + offset, std::min(maximumBlockSize_, sampleCount - offset));
+        return;
+    }
     // Flush denormals to zero for the whole callback. The exhaust body, muffler
     // FDN, waveguide and dozens of pressure/one-pole states decay toward zero
     // whenever the engine quietens; without this, denormal arithmetic on x86
@@ -92,10 +186,28 @@ void RealtimeEngineAudio::render(juce::AudioBuffer<float>& output, int startSamp
     const juce::ScopedNoDenormals noDenormals;
     output.clear(startSample, sampleCount);
     convolutionBank_.beginBlock(std::min(2, output.getNumChannels()), sampleCount);
+    const auto publishedTimeScale = realtimeState_.timeScale.load(std::memory_order_relaxed);
+    const auto acousticTimeScale = std::clamp(
+        publishedTimeScale > 0.01F ? publishedTimeScale : 1.0F, 0.25F, 4.0F);
+    const auto exhaustTemperatureC = realtimeState_.exhaustTemperatureC.load(std::memory_order_relaxed);
+    const auto exhaustSoundSpeed = exhaustSoundSpeedMps(exhaustTemperatureC);
+    const auto referenceExhaustSoundSpeed = std::clamp(
+        realtimeState_.exhaustReferenceSoundSpeedMps.load(std::memory_order_relaxed),
+        300.0F, 900.0F);
+    // Simulation timestamps are already compressed/expanded by timeScale. Pipe
+    // propagation must follow the same clock, while temperature changes its
+    // physical wave speed relative to the graph's design-temperature reference.
+    const auto acousticDelayScale = referenceExhaustSoundSpeed
+        / exhaustSoundSpeed / acousticTimeScale;
     FiringEvent event;
     std::size_t drained = 0;
+    double latestPayloadTime = 0.0;
+    bool receivedTimestampedPayload = false;
     while (drained++ < 512 && queue_.tryPop(event)) {
-        producerClock_ = std::max(producerClock_, event.timeSeconds);
+        latestPayloadTime = std::max(latestPayloadTime, event.timeSeconds);
+        receivedTimestampedPayload = true;
+        observedExhaustPathCount_ = std::max(observedExhaustPathCount_,
+            std::min<std::size_t>(static_cast<std::size_t>(event.exhaustPathIndex) + 1U, maximumPaths));
         const auto hasExhaustPulse = event.exhaustDelaySeconds > 0.00005F;
         const auto required = hasExhaustPulse ? std::size_t { 2 } : std::size_t { 1 };
         if (pendingEventCount_ + required > pendingEvents_.size()) {
@@ -103,12 +215,13 @@ void RealtimeEngineAudio::render(juce::AudioBuffer<float>& output, int startSamp
             continue;
         }
         auto& direct = pendingEvents_[pendingEventCount_++];
-        direct = { event, event.timeSeconds + eventLatencySeconds_, false };
+        direct = { event, event.timeSeconds, false };
         if (direct.scheduledTimeSeconds + 1.0 / sampleRate_ < audioTimeSeconds_)
             lateEvents_.fetch_add(1, std::memory_order_relaxed);
         if (hasExhaustPulse) {
             auto& exhaust = pendingEvents_[pendingEventCount_++];
-            exhaust = { event, event.timeSeconds + eventLatencySeconds_ + event.exhaustDelaySeconds, true };
+            exhaust = { event, event.timeSeconds
+                + static_cast<double>(event.exhaustDelaySeconds * acousticDelayScale), true };
             if (exhaust.scheduledTimeSeconds + 1.0 / sampleRate_ < audioTimeSeconds_)
                 lateEvents_.fetch_add(1, std::memory_order_relaxed);
         }
@@ -119,9 +232,20 @@ void RealtimeEngineAudio::render(juce::AudioBuffer<float>& output, int startSamp
         if (hasCurrentPressureSample_ && !hasNextPressureSample_)
             hasNextPressureSample_ = pressureQueue_->tryPop(nextPressureSample_);
         if (hasCurrentPressureSample_)
-            producerClock_ = std::max(producerClock_, currentPressureSample_.timeSeconds);
+            latestPayloadTime = std::max(latestPayloadTime, currentPressureSample_.timeSeconds);
         if (hasNextPressureSample_)
-            producerClock_ = std::max(producerClock_, nextPressureSample_.timeSeconds);
+            latestPayloadTime = std::max(latestPayloadTime, nextPressureSample_.timeSeconds);
+        receivedTimestampedPayload = receivedTimestampedPayload
+            || hasCurrentPressureSample_ || hasNextPressureSample_;
+    }
+    const auto publishedProducerNanoseconds = realtimeState_.producerTimeNanoseconds.load(std::memory_order_acquire);
+    if (publishedProducerNanoseconds > 0) {
+        // The runtime's steady-clock epoch is authoritative. Payload timestamps
+        // can extend a few milliseconds into the frame being produced and must
+        // not shorten the configured look-ahead latency.
+        producerClock_ = static_cast<double>(publishedProducerNanoseconds) * 1.0e-9;
+    } else if (receivedTimestampedPayload) {
+        producerClock_ = std::max(producerClock_, latestPayloadTime);
     }
     // Fractional-rate clock recovery (software PLL). The simulation timestamps
     // events/pressure on its steady_clock; the audio callback advances on the
@@ -137,7 +261,10 @@ void RealtimeEngineAudio::render(juce::AudioBuffer<float>& output, int startSamp
     // per-sample correction is capped to ~0.25% of the sample period, which
     // comfortably exceeds real sound-card drift (<0.1%) while staying far too
     // small to disturb sample-accurate event placement within a block.
-    if (std::abs(clockDrift) > 0.25) { audioTimeSeconds_ = producerTarget; clockDrift = 0.0; }
+    // Never jump backwards: on pause/device teardown a stale producer epoch must
+    // not replay already-consumed pressure or events. Forward discontinuities
+    // (restart/overrun) are safe to catch up immediately.
+    if (clockDrift > 0.040) { audioTimeSeconds_ = producerTarget; clockDrift = 0.0; }
     const auto maxClockCorrection = 0.0025 / sampleRate_;
     const auto clockCorrectionPerSample = std::clamp(clockDrift / (0.1 * sampleRate_),
                                                      -maxClockCorrection, maxClockCorrection);
@@ -147,10 +274,12 @@ void RealtimeEngineAudio::render(juce::AudioBuffer<float>& output, int startSamp
     const auto load = realtimeState_.load.load(std::memory_order_relaxed);
     const auto stress = realtimeState_.mechanicalStress.load(std::memory_order_relaxed);
     const auto starter = realtimeState_.starter.load(std::memory_order_relaxed);
-    const auto timeScale = realtimeState_.timeScale.load(std::memory_order_relaxed);
-    const auto volume = realtimeState_.volume.load(std::memory_order_relaxed);
-    const auto convolution = realtimeState_.convolution.load(std::memory_order_relaxed);
-    const auto highGain = realtimeState_.highFrequencyGain.load(std::memory_order_relaxed);
+    const auto timeScale = std::clamp(publishedTimeScale, 0.0F, 4.0F);
+    const auto volume = std::clamp(realtimeState_.volume.load(std::memory_order_relaxed), 0.0F, 2.0F);
+    const auto convolution = std::clamp(
+        realtimeState_.convolution.load(std::memory_order_relaxed), 0.0F, 1.0F);
+    const auto highGain = std::clamp(
+        realtimeState_.highFrequencyGain.load(std::memory_order_relaxed), 0.2F, 2.5F);
     const auto lowNoise = realtimeState_.lowFrequencyNoise.load(std::memory_order_relaxed);
     const auto highNoise = realtimeState_.highFrequencyNoise.load(std::memory_order_relaxed);
     const auto combustionGain = realtimeState_.combustionGain.load(std::memory_order_relaxed);
@@ -159,12 +288,13 @@ void RealtimeEngineAudio::render(juce::AudioBuffer<float>& output, int startSamp
     const auto mechanicalGain = realtimeState_.mechanicalGain.load(std::memory_order_relaxed);
     const auto redline = std::max(500.0F, realtimeState_.redlineRpm.load(std::memory_order_relaxed));
     const auto bankSeparation = std::clamp(realtimeState_.bankSeparation.load(std::memory_order_relaxed), 0.0F, 1.0F);
-    const auto exhaustOpenness = std::clamp(realtimeState_.exhaustOpenness.load(std::memory_order_relaxed), 0.15F, 1.45F);
+    const auto ambientPressureKpa = std::clamp(
+        realtimeState_.ambientPressureKpa.load(std::memory_order_relaxed), 50.0F, 120.0F);
     const auto manifoldPressureKpa = realtimeState_.manifoldPressureKpa.load(std::memory_order_relaxed);
     const auto exhaustPressureKpa = realtimeState_.exhaustPressureKpa.load(std::memory_order_relaxed);
     const auto exhaustFlowGramsPerSecond = realtimeState_.exhaustFlowGramsPerSecond.load(std::memory_order_relaxed);
-    const auto intakeDepression = std::clamp((101.325F - manifoldPressureKpa) / 75.0F, 0.0F, 1.2F);
-    const auto physicalExhaustPressure = std::clamp((exhaustPressureKpa - 101.325F) / 120.0F, 0.0F, 1.5F);
+    const auto intakeDepression = std::clamp((ambientPressureKpa - manifoldPressureKpa) / 75.0F, 0.0F, 1.2F);
+    const auto physicalExhaustPressure = std::clamp((exhaustPressureKpa - ambientPressureKpa) / 120.0F, 0.0F, 1.5F);
     const auto physicalExhaustFlow = std::clamp(exhaustFlowGramsPerSecond / 150.0F, 0.0F, 1.8F);
     const auto boostRatio = std::clamp(realtimeState_.boostPressureRatio.load(std::memory_order_relaxed), 1.0F, 3.5F);
     const auto peakPistonAccelG = realtimeState_.peakPistonAccelerationG.load(std::memory_order_relaxed);
@@ -173,10 +303,55 @@ void RealtimeEngineAudio::render(juce::AudioBuffer<float>& output, int startSamp
     const auto fiKind = realtimeState_.forcedInductionKind.load(std::memory_order_relaxed);
     const auto fiShaftRpm = realtimeState_.forcedInductionShaftRpm.load(std::memory_order_relaxed);
     const auto wastegateOpening = std::clamp(realtimeState_.wastegateOpening.load(std::memory_order_relaxed), 0.0F, 1.0F);
+    const auto exhaustPathCount = std::max(observedExhaustPathCount_, std::clamp<std::size_t>(
+        realtimeState_.exhaustPathCount.load(std::memory_order_relaxed), 1, maximumPaths));
+    const auto pathCountGain = 1.0F / std::sqrt(static_cast<float>(exhaustPathCount));
+    std::array<float, maximumPaths> pathOpenness {};
+    std::array<float, maximumPaths> pathGain {};
+    std::array<float, maximumPaths> outletAdmittance {};
+    std::array<float, maximumPaths> collectorReflection {};
+    for (std::size_t path = 0; path < exhaustPathCount; ++path) {
+        pathOpenness[path] = std::clamp(
+            realtimeState_.exhaustPathOpenness[path].load(std::memory_order_relaxed), 0.15F, 1.45F);
+        pathGain[path] = std::clamp(
+            realtimeState_.exhaustPathGain[path].load(std::memory_order_relaxed), 0.0F, 4.0F) * pathCountGain;
+        const auto configuredReflection = std::clamp(
+            realtimeState_.exhaustPathReflectionSeconds[path].load(std::memory_order_relaxed), 0.001F, 0.080F);
+        exhaustPaths_[path].reflectionDelaySamples = std::clamp<std::size_t>(
+            static_cast<std::size_t>(std::lround(sampleRate_ * configuredReflection * acousticDelayScale)),
+            1, exhaustPaths_[path].forwardWave.size() - 1);
+        const auto publishedArea = realtimeState_.exhaustPathOutletAreaM2[path]
+            .load(std::memory_order_relaxed);
+        outletAdmittance[path] = std::isfinite(publishedArea) && publishedArea > 1.0e-6F
+            ? std::clamp(publishedArea, 1.0e-5F, 0.080F) : 0.0020F;
+        collectorReflection[path] = std::clamp(
+            presetReflection_ * (1.12F - pathOpenness[path] * 0.30F), 0.04F, 0.78F);
+    }
+    constexpr std::array<double, 4> referenceFdnSamples { 1'493.0, 2'111.0, 2'791.0, 3'557.0 };
+    const auto fdnScale = sampleRate_ / referenceSampleRate * acousticDelayScale;
+    fdnDelaySamples_[0] = std::clamp<std::size_t>(static_cast<std::size_t>(
+        std::llround(referenceFdnSamples[0] * fdnScale)), 1, exhaustPaths_[0].fdnA.size());
+    fdnDelaySamples_[1] = std::clamp<std::size_t>(static_cast<std::size_t>(
+        std::llround(referenceFdnSamples[1] * fdnScale)), 1, exhaustPaths_[0].fdnB.size());
+    fdnDelaySamples_[2] = std::clamp<std::size_t>(static_cast<std::size_t>(
+        std::llround(referenceFdnSamples[2] * fdnScale)), 1, exhaustPaths_[0].fdnC.size());
+    fdnDelaySamples_[3] = std::clamp<std::size_t>(static_cast<std::size_t>(
+        std::llround(referenceFdnSamples[3] * fdnScale)), 1, exhaustPaths_[0].fdnD.size());
+    std::array<float, maxRunners> runnerAdmittance {};
+    std::array<float, maxRunners> portReflection {};
+    portReflection.fill(0.92F);
     for (std::size_t runner = 0; runner < maxRunners; ++runner) {
         const auto seconds = realtimeState_.runnerDelaySeconds[runner].load(std::memory_order_relaxed);
-        runnerDelaySamples_[runner] = std::clamp<std::size_t>(
-            static_cast<std::size_t>(static_cast<double>(seconds) * sampleRate_), 1, runnerLineLength - 1);
+        runners_->delaySamples[runner] = runnerDelaySamples(seconds * acousticDelayScale, sampleRate_);
+        const auto publishedArea = realtimeState_.cylinderExhaustAreaM2[runner]
+            .load(std::memory_order_relaxed);
+        runnerAdmittance[runner] = std::isfinite(publishedArea) && publishedArea > 1.0e-6F
+            ? std::clamp(publishedArea, 1.0e-5F, 0.040F) : 0.00125F;
+    }
+    std::array<float, maxRunners> cylinderExhaustGain {};
+    for (std::size_t runner = 0; runner < maxRunners; ++runner) {
+        cylinderExhaustGain[runner] = std::clamp(
+            realtimeState_.cylinderExhaustGain[runner].load(std::memory_order_relaxed), 0.0F, 8.0F);
     }
     for (int sample = 0; sample < sampleCount; ++sample) {
         const auto preset = realtimeState_.exhaustPreset.load(std::memory_order_relaxed);
@@ -199,15 +374,18 @@ void RealtimeEngineAudio::render(juce::AudioBuffer<float>& output, int startSamp
         float mechanicalRight = 0.0F;
         float physicalCylinderPressureLeft = 0.0F;
         float physicalCylinderPressureRight = 0.0F;
-        float physicalBlowdownLeft = 0.0F;
-        float physicalBlowdownRight = 0.0F;
+        std::array<float, maximumPaths> pathCollectorLeft {};
+        std::array<float, maximumPaths> pathCollectorRight {};
+        std::array<float, maximumPaths> pathExhaustLeft {};
+        std::array<float, maximumPaths> pathExhaustRight {};
+        std::array<float, maximumPaths> physicalBlowdownLeft {};
+        std::array<float, maximumPaths> physicalBlowdownRight {};
         std::array<float, 32> cylinderExhaustPulse {};
+        std::array<std::uint8_t, 32> cylinderExhaustPath {};
         std::size_t activeCylinderCount = 0;
         if (pressureQueue_ && hasCurrentPressureSample_) {
-            const auto pressureTime = audioTimeSeconds_ - eventLatencySeconds_;
+            const auto pressureTime = audioTimeSeconds_;
             while (hasNextPressureSample_ && nextPressureSample_.timeSeconds <= pressureTime) {
-                previousPressureSample_ = currentPressureSample_;
-                hasPreviousPressureSample_ = true;
                 currentPressureSample_ = nextPressureSample_;
                 hasNextPressureSample_ = pressureQueue_->tryPop(nextPressureSample_);
             }
@@ -219,30 +397,35 @@ void RealtimeEngineAudio::render(juce::AudioBuffer<float>& output, int startSamp
                 activeCylinderCount = count;
                 const auto denominator = hasNextPressureSample_
                     ? nextPressureSample_.timeSeconds - currentPressureSample_.timeSeconds : 0.0;
+                if (denominator > 1.0e-7
+                    && std::abs(denominator - pressureSampleIntervalSeconds_) > 1.0e-9) {
+                    pressureSampleIntervalSeconds_ = denominator;
+                    // The solver publishes an adaptive cadence.  Restrict the
+                    // reconstructed pressure bandwidth to its actual Nyquist
+                    // region instead of applying a fixed 9.5 kHz cutoff to a
+                    // potentially 2-4 kHz source stream.
+                    const auto telemetryRate = 1.0 / denominator;
+                    const auto cutoffHz = std::clamp(telemetryRate * 0.42, 180.0,
+                        std::min(9'500.0, sampleRate_ * 0.38));
+                    pressureBandCoefficient_ = static_cast<float>(1.0 - std::exp(
+                        -2.0 * std::numbers::pi * cutoffHz / sampleRate_));
+                }
                 const auto fraction = denominator > 1.0e-9
                     ? std::clamp((pressureTime - currentPressureSample_.timeSeconds) / denominator, 0.0, 1.0)
                     : 0.0;
-                // 3-point quadratic (Lagrange) interpolation using the previous,
-                // current and next substep. It reconstructs the curvature of the
-                // pressure pulse instead of the straight-line kink linear interp
-                // leaves, so blow-down edges stay crisp between sparse substeps.
+                // Adaptive solver samples are not equally spaced. Linear
+                // interpolation is monotonic and cannot manufacture pressure
+                // overshoot when a substep cadence changes or a queue sample was
+                // deliberately rate-limited by the runtime.
                 const auto f = static_cast<float>(fraction);
-                const auto quadPrevWeight = 0.5F * f * (f - 1.0F);
-                const auto quadCurrentWeight = 1.0F - f * f;
-                const auto quadNextWeight = 0.5F * f * (f + 1.0F);
                 for (std::size_t index = 0; index < count; ++index) {
-                    const auto prevPressure = hasPreviousPressureSample_
-                        && index < previousPressureSample_.cylinderCount
-                        ? previousPressureSample_.pressureBar[index]
-                        : currentPressureSample_.pressureBar[index];
                     const auto nextPressure = hasNextPressureSample_
                         && index < nextPressureSample_.cylinderCount
                         ? nextPressureSample_.pressureBar[index]
                         : currentPressureSample_.pressureBar[index];
-                    const auto pressureBar = quadPrevWeight * prevPressure
-                        + quadCurrentWeight * currentPressureSample_.pressureBar[index]
-                        + quadNextWeight * nextPressure;
-                    const auto rawGaugePressure = pressureBar - 1.01325F;
+                    const auto pressureBar = std::lerp(currentPressureSample_.pressureBar[index],
+                                                       nextPressure, f);
+                    const auto rawGaugePressure = pressureBar - ambientPressureKpa * 0.01F;
                     cylinderPressureHighPass_[index] = pressureHighPassPole_
                         * (cylinderPressureHighPass_[index] + rawGaugePressure
                             - cylinderPressureRawPrevious_[index]);
@@ -250,28 +433,23 @@ void RealtimeEngineAudio::render(juce::AudioBuffer<float>& output, int startSamp
                     const auto derivative = cylinderPressureHighPass_[index]
                         - cylinderPressureHighPassPrevious_[index];
                     cylinderPressureHighPassPrevious_[index] = cylinderPressureHighPass_[index];
-                    const auto pressureTarget = cylinderPressureHighPass_[index] * 0.0085F
-                        + derivative * 0.085F;
+                    const auto pressureTarget = cylinderPressureHighPass_[index] * 0.0065F
+                        + derivative * static_cast<float>(sampleRate_ / referenceSampleRate) * 0.075F;
                     cylinderPressureBandLimited_[index] += pressureBandCoefficient_
                         * (pressureTarget - cylinderPressureBandLimited_[index]);
-                    const auto physicalPressure = std::clamp(cylinderPressureBandLimited_[index], -0.65F, 0.65F)
+                    const auto physicalPressure = finiteState(cylinderPressureBandLimited_[index], 4.0F)
                         / std::sqrt(static_cast<float>(count));
                     const auto pan = std::clamp(realtimeState_.cylinderPan[index].load(std::memory_order_relaxed),
                                                 -0.82F, 0.82F);
                     physicalCylinderPressureLeft += physicalPressure * std::sqrt((1.0F - pan) * 0.5F);
                     physicalCylinderPressureRight += physicalPressure * std::sqrt((1.0F + pan) * 0.5F);
-                    const auto prevExhaustPressure = hasPreviousPressureSample_
-                        && index < previousPressureSample_.cylinderCount
-                        ? previousPressureSample_.exhaustRunnerPressureKpa[index]
-                        : currentPressureSample_.exhaustRunnerPressureKpa[index];
                     const auto nextExhaustPressure = hasNextPressureSample_
                         && index < nextPressureSample_.cylinderCount
                         ? nextPressureSample_.exhaustRunnerPressureKpa[index]
                         : currentPressureSample_.exhaustRunnerPressureKpa[index];
-                    const auto runnerExhaustPressureKpa = quadPrevWeight * prevExhaustPressure
-                        + quadCurrentWeight * currentPressureSample_.exhaustRunnerPressureKpa[index]
-                        + quadNextWeight * nextExhaustPressure;
-                    const auto exhaustGaugePressure = runnerExhaustPressureKpa - 101.325F;
+                    const auto runnerExhaustPressureKpa = std::lerp(
+                        currentPressureSample_.exhaustRunnerPressureKpa[index], nextExhaustPressure, f);
+                    const auto exhaustGaugePressure = runnerExhaustPressureKpa - ambientPressureKpa;
                     exhaustPressureHighPass_[index] = pressureHighPassPole_
                         * (exhaustPressureHighPass_[index] + exhaustGaugePressure
                             - exhaustPressureRawPrevious_[index]);
@@ -288,16 +466,37 @@ void RealtimeEngineAudio::render(juce::AudioBuffer<float>& output, int startSamp
                     // Runner gauge pressure (AC component) is the real acoustic
                     // exhaust pulse. It is the dominant exhaust source now, with a
                     // light derivative blend for edge (cf. es2d dF_F_mix).
-                    const auto exhaustTarget = (exhaustPressureHighPass_[index] * 0.044F
-                        + exhaustDerivative * 0.022F) * flowGain;
+                    const auto exhaustTarget = (exhaustPressureHighPass_[index] * 0.0038F
+                        + exhaustDerivative * static_cast<float>(sampleRate_ / referenceSampleRate) * 0.012F)
+                        * flowGain;
                     exhaustPressureBandLimited_[index] += pressureBandCoefficient_
                         * (exhaustTarget - exhaustPressureBandLimited_[index]);
                     // Per-cylinder runner pulse (undivided) feeds the waveguide,
                     // where the junction performs the physical averaging.
-                    cylinderExhaustPulse[index] = std::clamp(exhaustPressureBandLimited_[index], -1.35F, 1.35F);
+                    // Match the event path exactly: graph transmission is
+                    // applied once at the cylinder source, before runner delay,
+                    // collector scattering, reflection and per-path IR.
+                    cylinderExhaustPulse[index] = finiteState(
+                        exhaustPressureBandLimited_[index] * cylinderExhaustGain[index], 6.0F);
+                    const auto nextValveOpening = hasNextPressureSample_
+                        && index < nextPressureSample_.cylinderCount
+                        ? nextPressureSample_.exhaustValveOpening[index]
+                        : currentPressureSample_.exhaustValveOpening[index];
+                    const auto valveOpening = std::clamp(std::lerp(
+                        currentPressureSample_.exhaustValveOpening[index], nextValveOpening, f), 0.0F, 1.0F);
+                    // A closed valve is close to a pressure-rigid termination;
+                    // an open valve couples the primary to the cylinder and
+                    // therefore returns much less wave energy.
+                    portReflection[index] = 0.92F - 0.70F * std::sqrt(valveOpening);
+                    const auto configuredPath = realtimeState_.cylinderExhaustPathIndex[index]
+                        .load(std::memory_order_relaxed);
+                    const auto samplePath = static_cast<std::size_t>(currentPressureSample_.exhaustPathIndex[index]);
+                    const auto resolvedPath = samplePath > 0 && samplePath < exhaustPathCount
+                        ? samplePath : std::min<std::size_t>(configuredPath, exhaustPathCount - 1U);
+                    cylinderExhaustPath[index] = static_cast<std::uint8_t>(resolvedPath);
                     const auto physicalBlowdown = cylinderExhaustPulse[index] / std::sqrt(static_cast<float>(count));
-                    physicalBlowdownLeft += physicalBlowdown * std::sqrt((1.0F - pan) * 0.5F);
-                    physicalBlowdownRight += physicalBlowdown * std::sqrt((1.0F + pan) * 0.5F);
+                    physicalBlowdownLeft[resolvedPath] += physicalBlowdown * std::sqrt((1.0F - pan) * 0.5F);
+                    physicalBlowdownRight[resolvedPath] += physicalBlowdown * std::sqrt((1.0F + pan) * 0.5F);
                 }
             }
         }
@@ -306,18 +505,23 @@ void RealtimeEngineAudio::render(juce::AudioBuffer<float>& output, int startSamp
         // Runner waveguide + collector scattering junction: the collector output
         // carries cross-talk between cylinders and runner-length tuning. A small
         // direct (pre-collector) component adds stereo width from cylinder pan.
-        const auto collectorOut = processExhaustWaveguide(cylinderExhaustPulse, activeCylinderCount);
-        constexpr auto directWidth = 0.22F;
-        const auto exhaustExciteLeft = collectorOut * 0.72F + physicalBlowdownLeft * directWidth;
-        const auto exhaustExciteRight = collectorOut * 0.72F + physicalBlowdownRight * directWidth;
-        exhaustLeft += exhaustExciteLeft;
-        exhaustRight += exhaustExciteRight;
-        // Excite the recorded exhaust impulse response with the engine's own
-        // collector pressure. This is what makes a V8 and an inline-four differ:
-        // the exhaust timbre comes from the physical waveform + runner geometry
-        // run through a real IR, not from shared synthetic oscillators.
-        convolutionBank_.addInput(0, 0, sample, exhaustExciteLeft);
-        convolutionBank_.addInput(0, 1, sample, exhaustExciteRight);
+        const auto collectorOut = processExhaustWaveguides(
+            cylinderExhaustPulse, cylinderExhaustPath, runnerAdmittance, portReflection,
+            outletAdmittance, activeCylinderCount, exhaustPathCount);
+        constexpr auto directWidth = 0.34F;
+        for (std::size_t path = 0; path < exhaustPathCount; ++path) {
+            const auto exhaustExciteLeft = collectorOut[path] * 0.64F
+                + physicalBlowdownLeft[path] * directWidth;
+            const auto exhaustExciteRight = collectorOut[path] * 0.64F
+                + physicalBlowdownRight[path] * directWidth;
+            pathCollectorLeft[path] += exhaustExciteLeft;
+            pathCollectorRight[path] += exhaustExciteRight;
+            // Every physical collector drives only its own measured IR. This
+            // preserves independent banks/tailpipes instead of folding all
+            // pressure into path zero before convolution.
+            convolutionBank_.addInput(path, 0, sample, exhaustExciteLeft * pathGain[path]);
+            convolutionBank_.addInput(path, 1, sample, exhaustExciteRight * pathGain[path]);
+        }
         const auto audibleRpm = targetRpm * timeScale;
         smoothedRpm_ += rpmFilterCoefficient_ * (audibleRpm - smoothedRpm_);
         const auto rotationHz = std::max(0.0F, smoothedRpm_) / 60.0F;
@@ -341,8 +545,9 @@ void RealtimeEngineAudio::render(juce::AudioBuffer<float>& output, int startSamp
         // band excited by induction turbulence).
         intakeFilter_ += intakeFilterCoefficient_ * (noise() * throttle * speedGain * lowNoise - intakeFilter_);
         const auto whoosh = intakeFilter_ * (0.018F + load * 0.028F + intakeDepression * 0.030F);
-        const auto intakeResonanceHz = std::clamp(intakeRunnerResonanceHz, 30.0F, 1'400.0F);
-        const auto intakeResonanceAmp = std::clamp(intakeRunnerAmplitudeKpa / 12.0F, 0.0F, 1.5F);
+        const auto intakeResonanceHz = std::clamp(intakeRunnerResonanceHz * acousticTimeScale,
+                                                  20.0F, 5'600.0F);
+        const auto intakeResonanceAmp = std::clamp(intakeRunnerAmplitudeKpa / 12.0F, -1.5F, 1.5F);
         const auto intakeF = std::clamp(2.0F * std::sin(static_cast<float>(std::numbers::pi)
             * intakeResonanceHz / static_cast<float>(sampleRate_)), 0.0002F, 1.35F);
         const auto intakeExcite = (noise() * 0.7F + intakeFilter_) * (0.4F + throttle * 0.6F) * speedGain;
@@ -357,7 +562,8 @@ void RealtimeEngineAudio::render(juce::AudioBuffer<float>& output, int startSamp
         float induced = 0.0F;
         if (fiKind != 0) {
             const auto passMultiplier = fiKind == 2 ? 3.0F : 9.0F; // rotor lobes vs turbine blades
-            const auto whistleHz = std::clamp(fiShaftRpm / 60.0F * passMultiplier, 200.0F, 12'000.0F);
+            const auto whistleHz = std::clamp(fiShaftRpm / 60.0F * passMultiplier
+                * acousticTimeScale, 80.0F, static_cast<float>(sampleRate_ * 0.42));
             fiWhistlePhase_ += 2.0 * std::numbers::pi * static_cast<double>(whistleHz) / sampleRate_;
             if (fiWhistlePhase_ >= 2.0 * std::numbers::pi) fiWhistlePhase_ -= 2.0 * std::numbers::pi;
             const auto boostExcess = std::clamp(boostRatio - 1.0F, 0.0F, 2.5F);
@@ -369,10 +575,10 @@ void RealtimeEngineAudio::render(juce::AudioBuffer<float>& output, int startSamp
             const auto throttleDrop = std::max(0.0F, previousThrottleForBov_ - throttle);
             if (fiKind == 1 && throttleDrop > 0.05F && boostExcess > 0.15F)
                 bovEnvelope_ = std::min(1.0F, bovEnvelope_ + throttleDrop * boostExcess * 4.0F);
-            bovEnvelope_ *= 0.9994F;
-            bovNoiseState_ += 0.08F * (noise() - bovNoiseState_);
+            bovEnvelope_ *= bovDecay_;
+            bovNoiseState_ += bovNoiseCoefficient_ * (noise() - bovNoiseState_);
             const auto bov = bovNoiseState_ * bovEnvelope_ * 0.22F;
-            induced = whistle + wastegate + bov;
+            induced = (whistle + wastegate + bov) * (timeScale > 0.01F ? 1.0F : 0.0F);
         }
         previousThrottleForBov_ = throttle;
         const auto starterSound = starter * (static_cast<float>(std::sin(starterPhase_)) * 0.028F + noise() * 0.006F);
@@ -388,7 +594,7 @@ void RealtimeEngineAudio::render(juce::AudioBuffer<float>& output, int startSamp
                 * std::exp(-voice.ageSeconds / blowdown);
             const auto flowEnvelope = std::exp(-voice.ageSeconds / (blowdown * 1.85F));
             const auto flow = std::clamp(voice.massFlow / 75.0F, 0.0F, 1.8F);
-            const auto pressure = std::clamp((voice.runnerPressure - 101.325F) / 120.0F, 0.0F, 1.4F);
+            const auto pressure = std::clamp((voice.runnerPressure - ambientPressureKpa) / 120.0F, 0.0F, 1.4F);
             const auto body = static_cast<float>(std::sin(voice.bodyPhase));
             const auto harmonic = static_cast<float>(std::sin(voice.bodyPhase * 2.01)) * 0.32F
                                 + static_cast<float>(std::sin(voice.bodyPhase * 3.97)) * 0.13F;
@@ -409,12 +615,13 @@ void RealtimeEngineAudio::render(juce::AudioBuffer<float>& output, int startSamp
             const auto raw = (shock + jet) * voice.amplitude;
             voice.filterState += voiceFilterCoefficient_ * (raw - voice.filterState);
             if (voice.exhaust) {
+                const auto path = std::min<std::size_t>(voice.exhaustPathIndex, exhaustPathCount - 1U);
                 const auto pathLeft = voice.filterState * voice.leftGain;
                 const auto pathRight = voice.filterState * voice.rightGain;
-                exhaustLeft += pathLeft;
-                exhaustRight += pathRight;
-                convolutionBank_.addInput(voice.exhaustPathIndex, 0, sample, pathLeft);
-                convolutionBank_.addInput(voice.exhaustPathIndex, 1, sample, pathRight);
+                pathExhaustLeft[path] += pathLeft;
+                pathExhaustRight[path] += pathRight;
+                convolutionBank_.addInput(path, 0, sample, pathLeft * pathGain[path]);
+                convolutionBank_.addInput(path, 1, sample, pathRight * pathGain[path]);
             } else {
                 combustionLeft += voice.filterState * voice.leftGain;
                 combustionRight += voice.filterState * voice.rightGain;
@@ -431,56 +638,98 @@ void RealtimeEngineAudio::render(juce::AudioBuffer<float>& output, int startSamp
             voice.ageSeconds += static_cast<float>(1.0 / sampleRate_);
             if (voice.amplitude < 0.0001F || voice.ageSeconds > blowdown * 8.0F) voice.active = false;
         }
-        // Tamed so the collector only reaches its non-linear region under real
-        // load/flow instead of living permanently in the tanh flat zone.
-        const auto collectorDrive = presetDrive_ * (0.42F + exhaustOpenness * 0.10F + load * 0.26F
-            + speedGain * 0.20F + physicalExhaustPressure * 0.30F + physicalExhaustFlow * 0.18F
-            + (boostRatio - 1.0F) * 0.12F);
-        const auto continuousJet = noise() * physicalExhaustFlow
-            * (0.0018F + physicalExhaustPressure * 0.0045F) * timeScale;
-        const auto collectorInput = (exhaustLeft + exhaustRight) * 0.5F + continuousJet;
-        const auto pressureDerivative = collectorInput - previousCollectorInput_;
-        previousCollectorInput_ = collectorInput;
-        const auto conditionedCollector = collectorInput + pressureDerivative
-            * std::clamp(0.08F + physicalExhaustPressure * 0.06F, 0.04F, 0.20F);
-        jitterHistory_[jitterWrite_] = conditionedCollector;
-        const auto targetJitter = std::clamp(std::abs(noise())
-            * (0.35F + physicalExhaustFlow * 1.4F), 0.0F, 5.5F);
-        jitterDelaySamples_ += 0.015F * (targetJitter - jitterDelaySamples_);
-        const auto delay0 = static_cast<std::size_t>(jitterDelaySamples_);
-        const auto delay1 = std::min(delay0 + 1U, jitterHistory_.size() - 1U);
-        const auto fraction = jitterDelaySamples_ - static_cast<float>(delay0);
-        const auto read0 = (jitterWrite_ + jitterHistory_.size() - delay0) % jitterHistory_.size();
-        const auto read1 = (jitterWrite_ + jitterHistory_.size() - delay1) % jitterHistory_.size();
-        const auto jitteredCollector = jitterHistory_[read0] * (1.0F - fraction)
-            + jitterHistory_[read1] * fraction;
-        jitterWrite_ = (jitterWrite_ + 1) % jitterHistory_.size();
-        const auto exhaustMono = saturateCollector(jitteredCollector, collectorDrive);
-        collectorState_ += 0.18F * (exhaustMono - collectorState_);
-        const auto waveRead = (waveWrite_ + forwardWave_.size() - reflectionDelaySamples_) % forwardWave_.size();
-        const auto outletPressure = forwardWave_[waveRead];
-        reflectedLowPass_ += reflectionFilterCoefficient_ * (outletPressure - reflectedLowPass_);
-        const auto highReflection = outletPressure - reflectedLowPass_;
-        const auto radiated = reflectedLowPass_ * (0.58F + (1.0F - presetReflection_) * 0.20F)
-            + highReflection * (0.16F + highGain * 0.05F);
-        const auto returned = reverseWave_[waveRead];
-        reverseWave_[waveWrite_] = std::clamp(highReflection * presetReflection_ - returned * 0.10F, -1.8F, 1.8F);
-        forwardWave_[waveWrite_] = std::clamp(exhaustMono + returned * 0.24F + collectorState_ * 0.06F, -1.8F, 1.8F);
-        waveWrite_ = (waveWrite_ + 1) % forwardWave_.size();
-        const auto fdnWet = processMufflerFdn(radiated + exhaustMono * 0.28F) * convolution * presetWet_;
-        exhaustBodyLeft_ = exhaustBodyLeft_ * presetDamping_ + (radiated + fdnWet) * (0.005F + convolution * 0.030F);
-        exhaustBodyRight_ = exhaustBodyRight_ * (presetDamping_ - 0.001F) + (radiated * 0.76F + fdnWet * 0.91F) * (0.004F + convolution * 0.026F);
-        exhaustAirLeft_ += static_cast<float>(1.0 - std::exp(-2.0 * std::numbers::pi * presetToneHz_ / sampleRate_))
-            * (exhaustLeft - exhaustAirLeft_);
-        exhaustAirRight_ += static_cast<float>(1.0 - std::exp(-2.0 * std::numbers::pi * presetToneHz_ / sampleRate_))
-            * (exhaustRight - exhaustAirRight_);
-        pressureTailLeft_ = pressureTailLeft_ * 0.992F + (combustionLeft + exhaustLeft) * 0.010F;
-        pressureTailRight_ = pressureTailRight_ * 0.992F + (combustionRight + exhaustRight) * 0.010F;
         const auto bankWidth = 1.0F + bankSeparation * 0.18F;
-        exhaustLeft += (radiated + fdnWet + exhaustBodyLeft_) * bankWidth + exhaustAirLeft_ * (0.13F + exhaustOpenness * 0.05F)
-            + pressureTailLeft_ * (0.20F + convolution * 0.46F) + noise() * highNoise * speedGain * 0.002F;
-        exhaustRight += (radiated * 0.82F + fdnWet * 0.88F + exhaustBodyRight_) * bankWidth + exhaustAirRight_ * (0.13F + exhaustOpenness * 0.05F)
-            + pressureTailRight_ * (0.20F + convolution * 0.46F) + noise() * highNoise * speedGain * 0.002F;
+        const auto airCoefficient = static_cast<float>(1.0 - std::exp(
+            -2.0 * std::numbers::pi * presetToneHz_ * acousticTimeScale / sampleRate_));
+        for (std::size_t pathIndex = 0; pathIndex < exhaustPathCount; ++pathIndex) {
+            auto& path = exhaustPaths_[pathIndex];
+            // Nonlinear and reflective state is deliberately private to this
+            // tailpipe. Only cylinders assigned to the path can excite it.
+            const auto collectorDrive = presetDrive_ * (0.42F + pathOpenness[pathIndex] * 0.10F
+                + load * 0.26F + speedGain * 0.20F + physicalExhaustPressure * 0.30F
+                + physicalExhaustFlow * 0.18F + (boostRatio - 1.0F) * 0.12F);
+            const auto continuousJet = noise() * physicalExhaustFlow
+                * (0.0018F + physicalExhaustPressure * 0.0045F)
+                * (timeScale > 0.01F ? 1.0F : 0.0F) * pathCountGain;
+            const auto collectorInput = (pathCollectorLeft[pathIndex] + pathCollectorRight[pathIndex])
+                * 0.5F + continuousJet;
+            const auto pressureDerivative = collectorInput - path.previousCollectorInput;
+            path.previousCollectorInput = collectorInput;
+            const auto conditionedCollector = collectorInput + pressureDerivative
+                * static_cast<float>(sampleRate_ / referenceSampleRate)
+                * std::clamp(0.025F + physicalExhaustPressure * 0.025F, 0.02F, 0.08F);
+            path.jitterHistory[path.jitterWrite] = finiteState(conditionedCollector);
+            const auto maximumJitterSamples = std::min(5.5F
+                    * static_cast<float>(sampleRate_ / referenceSampleRate * acousticDelayScale),
+                static_cast<float>(path.jitterHistory.size() - 2U));
+            const auto targetJitter = std::clamp(std::abs(noise())
+                * (0.35F + physicalExhaustFlow * 1.4F)
+                * static_cast<float>(sampleRate_ / referenceSampleRate * acousticDelayScale),
+                0.0F, maximumJitterSamples);
+            path.jitterDelaySamples += jitterCoefficient_ * (targetJitter - path.jitterDelaySamples);
+            const auto delay0 = static_cast<std::size_t>(path.jitterDelaySamples);
+            const auto delay1 = std::min(delay0 + 1U, path.jitterHistory.size() - 1U);
+            const auto jitterFraction = path.jitterDelaySamples - static_cast<float>(delay0);
+            const auto read0 = (path.jitterWrite + path.jitterHistory.size() - delay0)
+                % path.jitterHistory.size();
+            const auto read1 = (path.jitterWrite + path.jitterHistory.size() - delay1)
+                % path.jitterHistory.size();
+            const auto jitteredCollector = path.jitterHistory[read0] * (1.0F - jitterFraction)
+                + path.jitterHistory[read1] * jitterFraction;
+            path.jitterWrite = (path.jitterWrite + 1) % path.jitterHistory.size();
+            const auto exhaustMono = saturateCollector(jitteredCollector, collectorDrive);
+            path.collectorState += collectorCoefficient_ * (exhaustMono - path.collectorState);
+            const auto waveRead = (path.waveWrite + path.forwardWave.size()
+                - path.reflectionDelaySamples) % path.forwardWave.size();
+            const auto outletPressure = path.forwardWave[waveRead];
+            path.reflectedLowPass += reflectionFilterCoefficient_
+                * (outletPressure - path.reflectedLowPass);
+            const auto highReflection = outletPressure - path.reflectedLowPass;
+            const auto radiated = path.reflectedLowPass * (0.58F + (1.0F - presetReflection_) * 0.20F)
+                + highReflection * (0.16F + highGain * 0.05F);
+            const auto returned = path.reverseWave[waveRead];
+            path.reverseWave[path.waveWrite] = finiteState(
+                highReflection * collectorReflection[pathIndex] - returned * 0.10F);
+            path.forwardWave[path.waveWrite] = finiteState(
+                exhaustMono + path.collectorState * 0.06F);
+            // The reverse line has now completed outlet -> collector travel;
+            // expose it to the primary junction on the following sample.
+            path.collectorReturn = finiteState(returned);
+            path.waveWrite = (path.waveWrite + 1) % path.forwardWave.size();
+            const auto fdnWet = processMufflerFdn(path, radiated + exhaustMono * 0.28F)
+                * convolution * presetWet_;
+            path.exhaustBodyLeft = path.exhaustBodyLeft * presetDamping_
+                + (radiated + fdnWet) * (0.005F + convolution * 0.030F) * bodyExcitationScale_;
+            path.exhaustBodyRight = path.exhaustBodyRight * presetDamping_
+                + (radiated * 0.76F + fdnWet * 0.91F)
+                    * (0.004F + convolution * 0.026F) * bodyExcitationScale_;
+            path.exhaustAirLeft += airCoefficient
+                * (pathExhaustLeft[pathIndex] + radiated - path.exhaustAirLeft);
+            path.exhaustAirRight += airCoefficient
+                * (pathExhaustRight[pathIndex] + radiated * 0.82F - path.exhaustAirRight);
+            // Event voices have already traversed the complete graph delay.
+            // Continuous pressure instead travels primary -> collector ->
+            // outlet here. Keeping those paths distinct avoids propagating and
+            // summing the same exhaust pulse twice.
+            exhaustLeft += (pathExhaustLeft[pathIndex]
+                + (radiated + fdnWet + path.exhaustBodyLeft) * bankWidth
+                + path.exhaustAirLeft * (0.13F + pathOpenness[pathIndex] * 0.05F)) * pathGain[pathIndex];
+            exhaustRight += (pathExhaustRight[pathIndex]
+                + (radiated * 0.82F + fdnWet * 0.88F + path.exhaustBodyRight) * bankWidth
+                + path.exhaustAirRight * (0.13F + pathOpenness[pathIndex] * 0.05F)) * pathGain[pathIndex];
+        }
+        // A short chamber-pressure tail restores body to the combustion layer.
+        // Exhaust already has runner, outlet, FDN and IR memory; feeding it back
+        // here duplicated the same pulse and produced the former low-frequency
+        // pile-up.
+        pressureTailLeft_ = pressureTailLeft_ * pressureTailDecay_
+            + combustionLeft * pressureTailInputCoefficient_;
+        pressureTailRight_ = pressureTailRight_ * pressureTailDecay_
+            + combustionRight * pressureTailInputCoefficient_;
+        combustionLeft += pressureTailLeft_ * 0.08F;
+        combustionRight += pressureTailRight_ * 0.08F;
+        exhaustLeft += noise() * highNoise * speedGain * 0.002F;
+        exhaustRight += noise() * highNoise * speedGain * 0.002F;
         auto left = combustionLeft * combustionGain + exhaustLeft * exhaustGain + intakeLeft * intakeGain
             + mechanicalLeft * mechanicalGain;
         auto right = combustionRight * combustionGain + exhaustRight * exhaustGain + intakeRight * intakeGain
@@ -493,26 +742,49 @@ void RealtimeEngineAudio::render(juce::AudioBuffer<float>& output, int startSamp
     }
 
     convolutionBank_.process(sampleCount);
-    const auto irMix = std::clamp(convolution * 0.76F, 0.0F, 0.90F);
-    const auto brightness = 1.0F + highGain * 0.22F;
-    // Pass 1: mix dry + convolution wet and apply the leveler, still linear.
+    const auto irMix = std::clamp(convolution * 0.50F, 0.0F, 0.78F);
+    // Pass 1: dry/wet sum, a genuine high shelf, DC removal, reconstruction
+    // filtering and calibrated gain staging.  Master volume is deliberately
+    // before the only output limiter, so volume=2 can never create >0 dBFS.
     for (int sample = 0; sample < sampleCount; ++sample) {
         const auto dryLeft = output.getNumChannels() > 0
             ? output.getSample(0, startSample + sample) : 0.0F;
         const auto dryRight = output.getNumChannels() > 1
             ? output.getSample(1, startSample + sample) : dryLeft;
-        auto left = (dryLeft + convolutionBank_.wetSample(0, sample) * irMix * exhaustGain) * brightness;
-        auto right = (dryRight + convolutionBank_.wetSample(1, sample) * irMix * exhaustGain) * brightness;
+        auto left = finiteState(dryLeft
+            + convolutionBank_.wetSample(0, sample) * irMix * exhaustGain, 24.0F);
+        auto right = finiteState(dryRight
+            + convolutionBank_.wetSample(1, sample) * irMix * exhaustGain, 24.0F);
 
-        const auto magnitude = 0.5F * (std::abs(left) + std::abs(right));
-        const auto envelopeCoefficient = magnitude > levelEnvelope_ ? 0.0025F : 0.00012F;
+        toneLowLeft_ += toneCoefficient_ * (left - toneLowLeft_);
+        toneLowRight_ += toneCoefficient_ * (right - toneLowRight_);
+        left = toneLowLeft_ + (left - toneLowLeft_) * highGain;
+        right = toneLowRight_ + (right - toneLowRight_) * highGain;
+
+        const auto dcLeft = left - dcInputLeft_ + dcBlockPole_ * dcOutputLeft_;
+        const auto dcRight = right - dcInputRight_ + dcBlockPole_ * dcOutputRight_;
+        dcInputLeft_ = left;
+        dcInputRight_ = right;
+        dcOutputLeft_ = finiteState(dcLeft, 24.0F);
+        dcOutputRight_ = finiteState(dcRight, 24.0F);
+
+        antiAliasLeftA_ += antiAliasCoefficient_ * (dcOutputLeft_ - antiAliasLeftA_);
+        antiAliasLeftB_ += antiAliasCoefficient_ * (antiAliasLeftA_ - antiAliasLeftB_);
+        antiAliasRightA_ += antiAliasCoefficient_ * (dcOutputRight_ - antiAliasRightA_);
+        antiAliasRightB_ += antiAliasCoefficient_ * (antiAliasRightA_ - antiAliasRightB_);
+        left = antiAliasLeftB_ * 0.72F * volume;
+        right = antiAliasRightB_ * 0.72F * volume;
+
+        const auto magnitude = std::max(std::abs(left), std::abs(right));
+        const auto envelopeCoefficient = magnitude > levelEnvelope_
+            ? levelAttackCoefficient_ : levelReleaseCoefficient_;
         levelEnvelope_ += envelopeCoefficient * (magnitude - levelEnvelope_);
-        // Safety limiting must not normalise every engine to the same envelope.
-        // Preserve real pressure/flow level differences and attenuate only when
-        // the mixed signal approaches the nonlinear output ceiling.
-        const auto targetGain = levelEnvelope_ > 0.32F
-            ? std::clamp(0.32F / levelEnvelope_, 0.45F, 1.0F) : 1.0F;
-        const auto levelRate = targetGain < levelGain_ ? 0.0020F : 0.00012F;
+        // Slow safety gain only: normal engine dynamics remain untouched.  The
+        // oversampled limiter below catches isolated peaks without pumping.
+        const auto targetGain = levelEnvelope_ > 0.78F
+            ? std::clamp(0.78F / levelEnvelope_, 0.20F, 1.0F) : 1.0F;
+        const auto levelRate = targetGain < levelGain_
+            ? gainAttackCoefficient_ : gainReleaseCoefficient_;
         levelGain_ += levelRate * (targetGain - levelGain_);
         if (output.getNumChannels() > 0) output.setSample(0, startSample + sample, left * levelGain_);
         if (output.getNumChannels() > 1) output.setSample(1, startSample + sample, right * levelGain_);
@@ -538,16 +810,12 @@ void RealtimeEngineAudio::render(juce::AudioBuffer<float>& output, int startSamp
                 output.setSample(1, startSample + sample, softLimit(output.getSample(1, startSample + sample)));
         }
     }
-    // Pass 3: gentle anti-alias tone shaping, master volume, downmix extras.
+    // Pass 3: leave inter-sample headroom after downsampling and downmix extras.
     for (int sample = 0; sample < sampleCount; ++sample) {
         const auto left = output.getNumChannels() > 0 ? output.getSample(0, startSample + sample) : 0.0F;
         const auto right = output.getNumChannels() > 1 ? output.getSample(1, startSample + sample) : left;
-        antiAliasLeftA_ += antiAliasCoefficient_ * (left - antiAliasLeftA_);
-        antiAliasLeftB_ += antiAliasCoefficient_ * (antiAliasLeftA_ - antiAliasLeftB_);
-        antiAliasRightA_ += antiAliasCoefficient_ * (right - antiAliasRightA_);
-        antiAliasRightB_ += antiAliasCoefficient_ * (antiAliasRightA_ - antiAliasRightB_);
-        const auto outLeft = antiAliasLeftB_ * 0.72F * volume;
-        const auto outRight = antiAliasRightB_ * 0.72F * volume;
+        const auto outLeft = std::clamp(finiteState(left, 1.0F), -0.999F, 0.999F);
+        const auto outRight = std::clamp(finiteState(right, 1.0F), -0.999F, 0.999F);
         if (output.getNumChannels() > 0) output.setSample(0, startSample + sample, outLeft);
         if (output.getNumChannels() > 1) output.setSample(1, startSample + sample, outRight);
         for (int channel = 2; channel < output.getNumChannels(); ++channel)
@@ -562,7 +830,11 @@ void RealtimeEngineAudio::trigger(const FiringEvent& event, bool exhaust) noexce
             [](const Voice& left, const Voice& right) { return left.amplitude < right.amplitude; });
         stolenVoices_.fetch_add(1, std::memory_order_relaxed);
     }
-    const auto durationSeconds = std::max(0.004F, event.combustionDurationMs * 0.001F);
+    const auto publishedScale = realtimeState_.timeScale.load(std::memory_order_relaxed);
+    const auto audibleScale = std::clamp(publishedScale > 0.01F ? publishedScale : 1.0F,
+                                         0.25F, 4.0F);
+    const auto durationSeconds = std::max(0.004F, event.combustionDurationMs * 0.001F)
+        / audibleScale;
     voice->bodyPhase = 0.0;
     voice->crackPhase = 0.0;
     voice->pipePhase = 0.0;
@@ -576,15 +848,20 @@ void RealtimeEngineAudio::trigger(const FiringEvent& event, bool exhaust) noexce
     const auto redline = std::max(500.0F, realtimeState_.redlineRpm.load(std::memory_order_relaxed));
     const auto cylinderDisplacement = std::max(0.03F, realtimeState_.cylinderDisplacementLitres.load(std::memory_order_relaxed));
     const auto boreStroke = std::clamp(realtimeState_.boreStrokeRatio.load(std::memory_order_relaxed), 0.55F, 1.65F);
-    const auto exhaustOpenness = std::clamp(realtimeState_.exhaustOpenness.load(std::memory_order_relaxed), 0.15F, 1.45F);
+    const auto eventPath = std::min<std::size_t>(event.exhaustPathIndex, maximumPaths - 1U);
+    const auto exhaustOpenness = std::clamp(
+        realtimeState_.exhaustPathOpenness[eventPath].load(std::memory_order_relaxed), 0.15F, 1.45F);
     const auto boostRatio = std::clamp(realtimeState_.boostPressureRatio.load(std::memory_order_relaxed), 1.0F, 3.5F);
     const auto cylinderNormalization = std::clamp(std::pow(4.0F / cylinders, 0.32F), 0.68F, 1.32F);
     const auto chamberScale = std::clamp(std::sqrt(cylinderDisplacement / 0.5F), 0.45F, 2.25F);
     // Exhaust voices are now only crack/transient accents on top of the
     // pressure-driven exhaust body, so they sit well below the physical source.
     const auto layerGain = exhaust ? 0.12F : 0.13F;
-    voice->amplitude = std::max(0.001F, event.intensity * (event.misfire ? 0.07F : layerGain)
-        * cylinderNormalization);
+    const auto exhaustTransmission = exhaust
+        ? std::clamp(event.exhaustTransmissionGain, 0.0F, 8.0F) : 1.0F;
+    voice->amplitude = std::max(0.001F, event.intensity
+        * (event.misfire ? 0.07F : layerGain) * cylinderNormalization)
+        * exhaustTransmission;
     voice->attackSeconds = exhaust ? 0.00018F : 0.00042F;
     voice->blowdownSeconds = std::clamp(durationSeconds * (exhaust ? 0.42F : 0.70F), 0.0015F, 0.014F);
     voice->decay = std::exp(std::log(0.0001F) / static_cast<float>(sampleRate_ * (durationSeconds * 1.35F)));
@@ -596,10 +873,13 @@ void RealtimeEngineAudio::trigger(const FiringEvent& event, bool exhaust) noexce
         + static_cast<float>(event.cylinderId % 32U) * 13.0F + (redline / 7'000.0F - 1.0F) * 360.0F;
     voice->pipeFrequency = std::clamp(event.exhaustResonanceHz > 1.0F ? event.exhaustResonanceHz
         : 110.0F + event.pressureEstimateBar * 1.35F, 45.0F, 1'400.0F) * std::clamp(1.18F - cylinderDisplacement * 0.18F, 0.64F, 1.25F);
+    voice->bodyFrequency *= audibleScale;
+    voice->crackFrequency *= audibleScale;
+    voice->pipeFrequency *= audibleScale;
     const auto leanCrackle = std::clamp(std::abs(event.airFuelRatio - 13.2F) / 7.5F, 0.0F, 1.0F);
     voice->massFlow = std::max(0.0F, event.exhaustFlowMgPerCycle);
     voice->runnerPressure = std::max(80.0F, event.exhaustRunnerPressureKpa);
-    voice->exhaustPathIndex = event.exhaustPathIndex;
+    voice->exhaustPathIndex = static_cast<std::uint32_t>(eventPath);
     const auto flowTone = std::clamp(voice->massFlow / 58.0F, 0.0F, 1.7F);
     voice->turbulence = (exhaust ? 0.11F + exhaustOpenness * 0.07F : 0.07F)
         + leanCrackle * 0.08F + event.knockAmount * 0.12F + flowTone * 0.16F + (boostRatio - 1.0F) * 0.06F;
@@ -608,7 +888,12 @@ void RealtimeEngineAudio::trigger(const FiringEvent& event, bool exhaust) noexce
     // gas sound speed ~= 900 m/s. Larger bores knock lower, smaller bores higher.
     const auto boreMm = std::clamp(realtimeState_.meanBoreMm.load(std::memory_order_relaxed), 40.0F, 160.0F);
     voice->knockFrequency = std::clamp(1.841F * 900'000.0F
-        / (static_cast<float>(std::numbers::pi) * boreMm), 2'000.0F, 9'000.0F);
+        / (static_cast<float>(std::numbers::pi) * boreMm), 2'000.0F, 9'000.0F) * audibleScale;
+    const auto maximumVoiceHz = static_cast<float>(std::min(18'000.0, sampleRate_ * 0.42));
+    voice->bodyFrequency = std::clamp(voice->bodyFrequency, 12.0F, maximumVoiceHz);
+    voice->crackFrequency = std::clamp(voice->crackFrequency, 40.0F, maximumVoiceHz);
+    voice->pipeFrequency = std::clamp(voice->pipeFrequency, 12.0F, maximumVoiceHz);
+    voice->knockFrequency = std::clamp(voice->knockFrequency, 200.0F, maximumVoiceHz);
     const auto panValue = std::clamp(event.stereoPosition, -0.82F, 0.82F);
     voice->leftGain = std::sqrt((1.0F - panValue) * 0.5F);
     voice->rightGain = std::sqrt((1.0F + panValue) * 0.5F);
@@ -618,27 +903,33 @@ void RealtimeEngineAudio::trigger(const FiringEvent& event, bool exhaust) noexce
 
 void RealtimeEngineAudio::updateExhaustPreset(int preset) noexcept {
     activeExhaustPreset_ = std::clamp(preset, 0, 4);
-    struct PresetValues { float drive; float damping; float wet; float tone; float delay; float reflection; float fdn; };
+    struct PresetValues { float drive; float damping; float wet; float tone; float reflection; float fdn; };
     constexpr std::array<PresetValues, 5> presets {{
-        { 1.02F, 0.986F, 0.42F, 1'450.0F, 0.006F, 0.36F, 0.56F },
-        { 1.42F, 0.974F, 0.24F, 2'650.0F, 0.003F, 0.24F, 0.42F },
-        { 0.76F, 0.992F, 0.72F, 920.0F, 0.012F, 0.48F, 0.68F },
-        { 1.14F, 0.989F, 0.58F, 1'700.0F, 0.010F, 0.41F, 0.62F },
-        { 1.30F, 0.982F, 0.31F, 2'250.0F, 0.004F, 0.30F, 0.48F }
+        { 1.02F, 0.986F, 0.42F, 1'450.0F, 0.36F, 0.56F },
+        { 1.42F, 0.974F, 0.24F, 2'650.0F, 0.24F, 0.42F },
+        { 0.76F, 0.992F, 0.72F, 920.0F, 0.48F, 0.68F },
+        { 1.14F, 0.989F, 0.58F, 1'700.0F, 0.41F, 0.62F },
+        { 1.30F, 0.982F, 0.31F, 2'250.0F, 0.30F, 0.48F }
     }};
     const auto values = presets[static_cast<std::size_t>(activeExhaustPreset_)];
     presetDrive_ = values.drive;
-    presetDamping_ = values.damping;
+    presetDamping_ = rateInvariantPole(values.damping, sampleRate_);
+    bodyExcitationScale_ = (1.0F - presetDamping_) / std::max(1.0e-6F, 1.0F - values.damping);
     presetWet_ = values.wet;
     presetToneHz_ = values.tone;
     presetReflection_ = std::clamp(values.reflection, 0.08F, 0.72F);
-    presetFdngain_ = std::clamp(values.fdn, 0.20F, 0.76F);
-    const auto baseReflection = realtimeState_.exhaustReflectionSeconds.load(std::memory_order_relaxed);
-    reflectionDelaySamples_ = std::clamp(static_cast<std::size_t>(sampleRate_ * std::max(baseReflection, values.delay)),
-                                         std::size_t { 1 }, forwardWave_.size() - 1);
+    // This is a per-delay-loop feedback value. The FDN delays themselves are
+    // scaled with sample rate, so its decay in seconds remains invariant.
+    presetFdngain_ = std::clamp(values.fdn * values.damping, 0.20F, 0.76F);
 }
 
-float RealtimeEngineAudio::processExhaustWaveguide(const std::array<float, 32>& pulse, std::size_t count) noexcept {
+std::array<float, RealtimeEngineAudio::maximumPaths> RealtimeEngineAudio::processExhaustWaveguides(
+    const std::array<float, maxRunners>& pulse,
+    const std::array<std::uint8_t, maxRunners>& pathIndex,
+    const std::array<float, maxRunners>& runnerAdmittance,
+    const std::array<float, maxRunners>& portReflection,
+    const std::array<float, maximumPaths>& outletAdmittance,
+    std::size_t count, std::size_t pathCount) noexcept {
     // Bidirectional digital waveguide: each cylinder's blow-down pulse travels
     // its runner (a delay line) to a shared collector. The N-port scattering
     // junction reflects part of every runner's wave back into all the others,
@@ -646,65 +937,102 @@ float RealtimeEngineAudio::processExhaustWaveguide(const std::array<float, 32>& 
     // (e.g. flat-plane vs cross-plane V8 character emerges from firing order +
     // runner lengths, not from a preset).
     const auto n = std::min(count, maxRunners);
-    if (n == 0) { collectorReturn_ *= 0.5F; return 0.0F; }
-    std::array<float, maxRunners> arrived {};
-    float junctionSum = 0.0F;
-    for (std::size_t i = 0; i < n; ++i) {
-        const auto delay = std::clamp<std::size_t>(runnerDelaySamples_[i], 1, runnerLineLength - 1);
-        const auto readIdx = (runnerWrite_[i] + runnerLineLength - delay) % runnerLineLength;
-        arrived[i] = runnerForward_[i][readIdx];
-        junctionSum += arrived[i];
+    pathCount = std::clamp<std::size_t>(pathCount, 1, maximumPaths);
+    std::array<float, maximumPaths> output {};
+    if (n == 0) {
+        for (std::size_t path = 0; path < pathCount; ++path)
+            exhaustPaths_[path].collectorReturn = 0.0F;
+        return output;
     }
-    // Equal-impedance pressure junction across the N runners plus the collector
-    // outlet: p_J = 2*(sum of incident waves)/(N+1).
-    const auto junctionPressure = 2.0F * (junctionSum + collectorReturn_) / static_cast<float>(n + 1);
+    std::array<float, maxRunners> arrived {};
+    std::array<float, maximumPaths> weightedIncidentSum {};
+    std::array<float, maximumPaths> junctionAdmittance {};
+    std::array<std::size_t, maximumPaths> runnerCount {};
     for (std::size_t i = 0; i < n; ++i) {
-        const auto delay = std::clamp<std::size_t>(runnerDelaySamples_[i], 1, runnerLineLength - 1);
-        const auto readIdx = (runnerWrite_[i] + runnerLineLength - delay) % runnerLineLength;
+        const auto delay = std::clamp<std::size_t>(runners_->delaySamples[i], 1, runnerLineLength - 1);
+        const auto readIdx = (runners_->write[i] + runnerLineLength - delay) % runnerLineLength;
+        arrived[i] = runners_->forward[i][readIdx];
+        const auto path = std::min<std::size_t>(pathIndex[i], pathCount - 1U);
+        const auto admittance = std::clamp(runnerAdmittance[i], 1.0e-5F, 0.040F);
+        weightedIncidentSum[path] += admittance * arrived[i];
+        junctionAdmittance[path] += admittance;
+        ++runnerCount[path];
+    }
+    // Lossless pressure scattering junction.  Characteristic acoustic
+    // admittance is proportional to tube area (rho*c is common here), hence
+    // unequal primaries and collectors no longer behave as identical pipes.
+    std::array<float, maximumPaths> junctionPressure {};
+    for (std::size_t path = 0; path < pathCount; ++path) {
+        auto& collectorReturn = exhaustPaths_[path].collectorReturn;
+        if (runnerCount[path] == 0) {
+            collectorReturn = 0.0F;
+            continue;
+        }
+        const auto outletY = std::clamp(outletAdmittance[path], 1.0e-5F, 0.080F);
+        const auto totalY = std::max(1.0e-6F, junctionAdmittance[path] + outletY);
+        junctionPressure[path] = 2.0F
+            * (weightedIncidentSum[path] + outletY * collectorReturn) / totalY;
+        output[path] = finiteState(junctionPressure[path] - collectorReturn);
+    }
+    for (std::size_t i = 0; i < n; ++i) {
+        const auto path = std::min<std::size_t>(pathIndex[i], pathCount - 1U);
+        const auto delay = std::clamp<std::size_t>(runners_->delaySamples[i], 1, runnerLineLength - 1);
+        const auto readIdx = (runners_->write[i] + runnerLineLength - delay) % runnerLineLength;
         // Wave that left the junction 'delay' samples ago now reaches the port
         // and reflects off the (mostly closed during exhaust) valve/port end.
-        const auto portReturn = runnerBackward_[i][readIdx] * 0.85F;
-        runnerForward_[i][runnerWrite_[i]] = std::clamp(pulse[i] + portReturn, -2.0F, 2.0F);
-        runnerBackward_[i][runnerWrite_[i]] = std::clamp(junctionPressure - arrived[i], -2.0F, 2.0F);
-        runnerWrite_[i] = (runnerWrite_[i] + 1) % runnerLineLength;
+        const auto portReturn = runners_->backward[i][readIdx]
+            * std::clamp(portReflection[i], 0.05F, 0.98F);
+        runners_->forward[i][runners_->write[i]] = finiteState(pulse[i] + portReturn);
+        runners_->backward[i][runners_->write[i]] = finiteState(junctionPressure[path] - arrived[i]);
+        runners_->write[i] = (runners_->write[i] + 1) % runnerLineLength;
     }
-    const auto collectorOut = std::clamp(junctionPressure - collectorReturn_, -2.0F, 2.0F);
-    // Partial reflection back from the downstream muffler/outlet discontinuity.
-    collectorReturn_ = collectorOut * 0.2F;
-    return collectorOut;
+    return output;
 }
 
-float RealtimeEngineAudio::processMufflerFdn(float sample) noexcept {
-    const auto a = fdnA_[fdnWriteA_];
-    const auto b = fdnB_[fdnWriteB_];
-    const auto c = fdnC_[fdnWriteC_];
-    const auto d = fdnD_[fdnWriteD_];
-    const auto feedback = std::clamp(presetFdngain_ * presetDamping_, 0.12F, 0.74F);
-    fdnA_[fdnWriteA_] = std::clamp(sample + (a + b + c + d) * 0.25F * feedback, -1.6F, 1.6F);
-    fdnB_[fdnWriteB_] = std::clamp(sample * 0.71F + (a - b + c - d) * 0.25F * feedback, -1.6F, 1.6F);
-    fdnC_[fdnWriteC_] = std::clamp(sample * 0.53F + (a + b - c - d) * 0.25F * feedback, -1.6F, 1.6F);
-    fdnD_[fdnWriteD_] = std::clamp(sample * 0.39F + (a - b - c + d) * 0.25F * feedback, -1.6F, 1.6F);
-    fdnWriteA_ = (fdnWriteA_ + 1) % fdnA_.size();
-    fdnWriteB_ = (fdnWriteB_ + 1) % fdnB_.size();
-    fdnWriteC_ = (fdnWriteC_ + 1) % fdnC_.size();
-    fdnWriteD_ = (fdnWriteD_ + 1) % fdnD_.size();
+float RealtimeEngineAudio::processMufflerFdn(ExhaustPathState& path, float sample) noexcept {
+    const auto a = path.fdnA[path.fdnWriteA];
+    const auto b = path.fdnB[path.fdnWriteB];
+    const auto c = path.fdnC[path.fdnWriteC];
+    const auto d = path.fdnD[path.fdnWriteD];
+    const auto feedback = std::clamp(presetFdngain_, 0.12F, 0.74F);
+    // Normalised Hadamard feedback is energy preserving before the explicit
+    // feedback coefficient.  No per-line saturation is needed (or desirable):
+    // it used to create four independent distortion stages before the master.
+    path.fdnA[path.fdnWriteA] = finiteState(sample + (a + b + c + d) * 0.25F * feedback);
+    path.fdnB[path.fdnWriteB] = finiteState(sample * 0.71F + (a - b + c - d) * 0.25F * feedback);
+    path.fdnC[path.fdnWriteC] = finiteState(sample * 0.53F + (a + b - c - d) * 0.25F * feedback);
+    path.fdnD[path.fdnWriteD] = finiteState(sample * 0.39F + (a - b - c + d) * 0.25F * feedback);
+    path.fdnWriteA = (path.fdnWriteA + 1) % fdnDelaySamples_[0];
+    path.fdnWriteB = (path.fdnWriteB + 1) % fdnDelaySamples_[1];
+    path.fdnWriteC = (path.fdnWriteC + 1) % fdnDelaySamples_[2];
+    path.fdnWriteD = (path.fdnWriteD + 1) % fdnDelaySamples_[3];
     return (a * 0.42F + b * 0.31F + c * 0.23F + d * 0.17F) * 0.34F;
 }
 
 float RealtimeEngineAudio::saturateCollector(float sample, float drive) const noexcept {
-    const auto pushed = sample * std::clamp(drive, 0.35F, 3.4F);
-    const auto asymmetric = pushed >= 0.0F ? pushed * 1.08F : pushed * 0.78F;
-    const auto folded = std::tanh(asymmetric);
-    return std::clamp(folded + 0.08F * std::tanh(pushed * pushed * pushed), -1.0F, 1.0F);
+    // Symmetric, identity-through-normal-range collector compression.  Presets
+    // vary the acoustic drive slightly but cannot introduce a DC component.
+    const auto driveGain = std::lerp(0.92F, 1.18F,
+        std::clamp((drive - 0.35F) / (3.4F - 0.35F), 0.0F, 1.0F));
+    const auto pushed = finiteState(sample * driveGain);
+    constexpr float knee = 1.40F;
+    constexpr float ceiling = 3.20F;
+    const auto magnitude = std::abs(pushed);
+    if (magnitude <= knee) return pushed;
+    const auto shaped = knee + (ceiling - knee)
+        * std::tanh((magnitude - knee) / (ceiling - knee));
+    return std::copysign(shaped, pushed);
 }
 
 float RealtimeEngineAudio::softLimit(float sample) noexcept {
-    // Identity below the knee, smooth compression above, hard-bounded to 1.0.
-    constexpr float knee = 0.72F;
+    // Identity below the knee, smooth compression above, with headroom for the
+    // oversampling down-filter's small inter-sample overshoot.
+    constexpr float knee = 0.82F;
+    constexpr float ceiling = 0.985F;
     const auto magnitude = std::abs(sample);
     if (magnitude <= knee) return sample;
-    const auto over = (magnitude - knee) / (1.0F - knee);
-    const auto shaped = knee + (1.0F - knee) * std::tanh(over);
+    const auto over = (magnitude - knee) / (ceiling - knee);
+    const auto shaped = knee + (ceiling - knee) * std::tanh(over);
     return std::copysign(shaped, sample);
 }
 

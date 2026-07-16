@@ -1,0 +1,28 @@
+# EngineLab Script (.els) — sauvegarder ce fichier déclenche le hot reload.
+preset inline_four
+name "Street Turbo I4"
+
+let runner = 32 cm
+let primary = 48 cm
+
+set idle_rpm = 900 rpm
+set engine.redline_rpm = 7200 rpm
+set ignition.rev_limit_rpm = 7350 rpm
+set intake.runner_length_mm = runner
+set intake.runner_diameter_mm = 42 mm
+set exhaust.primary_length_mm = primary
+set exhaust.primary_diameter_mm = 44 mm
+set exhaust.outlet_diameter_mm = 70 mm
+set forced_induction.enabled = true
+set forced_induction.type = turbo
+set forced_induction.pressure_ratio = 1.35
+
+set cylinder.all.bore_mm = 86 mm
+set cylinder.all.stroke_mm = 86 mm
+
+ignition clear
+ignition point 800 rpm, 10 deg
+ignition point 2000 rpm, 20 deg
+ignition point 3500 rpm, 29 deg
+ignition point 5500 rpm, 32 deg
+ignition point 7350 rpm, 28 deg

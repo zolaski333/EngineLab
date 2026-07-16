@@ -21,7 +21,7 @@ void RealtimeConvolutionBank::load(std::size_t pathIndex,
         ? juce::dsp::Convolution::Stereo::yes : juce::dsp::Convolution::Stereo::no;
     convolvers_[pathIndex].loadImpulseResponse(std::move(samples), sourceSampleRate, stereo,
         juce::dsp::Convolution::Trim::no, juce::dsp::Convolution::Normalise::yes);
-    loaded_[pathIndex] = true;
+    loaded_[pathIndex].store(true, std::memory_order_release);
 }
 
 void RealtimeConvolutionBank::prepare(double sampleRate, int maximumBlockSize, int channels) {
@@ -46,14 +46,14 @@ void RealtimeConvolutionBank::beginBlock(int channels, int sampleCount) noexcept
     const auto activeChannels = std::min({ channels, preparedChannels_, 2 });
     const auto activeSamples = std::min(sampleCount, maximumBlockSize_);
     for (std::size_t path = 0; path < maximumPaths; ++path)
-        if (loaded_[path])
+        if (loaded_[path].load(std::memory_order_acquire))
             for (int channel = 0; channel < activeChannels; ++channel)
                 buffers_[path].clear(channel, 0, activeSamples);
 }
 
 void RealtimeConvolutionBank::addInput(std::size_t pathIndex, int channel,
                                        int sample, float value) noexcept {
-    if (pathIndex >= maximumPaths || !loaded_[pathIndex]
+    if (pathIndex >= maximumPaths || !loaded_[pathIndex].load(std::memory_order_acquire)
         || channel < 0 || channel >= preparedChannels_
         || sample < 0 || sample >= maximumBlockSize_) return;
     buffers_[pathIndex].addSample(channel, sample, value);
@@ -62,7 +62,7 @@ void RealtimeConvolutionBank::addInput(std::size_t pathIndex, int channel,
 void RealtimeConvolutionBank::process(int sampleCount) noexcept {
     const auto activeSamples = std::min(sampleCount, maximumBlockSize_);
     for (std::size_t path = 0; path < maximumPaths; ++path) {
-        if (!loaded_[path]) continue;
+        if (!loaded_[path].load(std::memory_order_acquire)) continue;
         juce::dsp::AudioBlock<float> fullBlock(buffers_[path]);
         auto block = fullBlock.getSubBlock(0, static_cast<std::size_t>(activeSamples));
         juce::dsp::ProcessContextReplacing<float> context(block);
@@ -74,16 +74,20 @@ float RealtimeConvolutionBank::wetSample(int channel, int sample) const noexcept
     if (channel < 0 || channel >= preparedChannels_ || sample < 0 || sample >= maximumBlockSize_) return 0.0F;
     float result = 0.0F;
     for (std::size_t path = 0; path < maximumPaths; ++path)
-        if (loaded_[path]) result += buffers_[path].getSample(channel, sample);
+        if (loaded_[path].load(std::memory_order_acquire))
+            result += buffers_[path].getSample(channel, sample);
     return result;
 }
 
 bool RealtimeConvolutionBank::hasImpulseResponse(std::size_t pathIndex) const noexcept {
-    return pathIndex < maximumPaths && loaded_[pathIndex];
+    return pathIndex < maximumPaths
+        && loaded_[pathIndex].load(std::memory_order_acquire);
 }
 
 bool RealtimeConvolutionBank::hasAnyImpulseResponse() const noexcept {
-    return std::any_of(loaded_.begin(), loaded_.end(), [](bool value) { return value; });
+    return std::any_of(loaded_.begin(), loaded_.end(), [](const std::atomic<bool>& value) {
+        return value.load(std::memory_order_acquire);
+    });
 }
 
 } // namespace enginelab

@@ -1,6 +1,7 @@
 #include <enginelab/physics/ValveTrainModel.hpp>
 #include <algorithm>
 #include <cmath>
+#include <numbers>
 
 namespace enginelab {
 
@@ -9,7 +10,7 @@ ValveTrainResult ValveTrainModel::evaluate(const CamshaftConfig& cam, bool highP
                                            double load, double dtSeconds) noexcept {
     const auto target = interpolateValveControl(cam.continuousControl, rpm, load);
     const auto response = 1.0 - std::exp(-std::max(0.0, dtSeconds)
-        * cam.continuousControl.responseFrequencyHz);
+        * 2.0 * std::numbers::pi * cam.continuousControl.responseFrequencyHz);
     state.intakeAdvanceDegrees = std::lerp(state.intakeAdvanceDegrees,
         cam.continuousControl.enabled ? target.intakeAdvanceDegrees : 0.0, response);
     state.exhaustAdvanceDegrees = std::lerp(state.exhaustAdvanceDegrees,

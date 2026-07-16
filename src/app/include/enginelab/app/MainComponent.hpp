@@ -1,10 +1,14 @@
 #pragma once
 #include <enginelab/audio/RealtimeEngineAudio.hpp>
 #include <enginelab/app/ActionMap.hpp>
+#include <enginelab/app/EcuTunerWindow.hpp>
+#include <enginelab/app/ExhaustDesignerWindow.hpp>
 #include <enginelab/catalog/EngineCatalog.hpp>
 #include <enginelab/diagnostics/EngineDiagnostics.hpp>
 #include <enginelab/foundation/EngineTypes.hpp>
+#include <enginelab/render/RenderSnapshot.hpp>
 #include <enginelab/runtime/EngineRuntime.hpp>
+#include <enginelab/scripting/EngineScriptHotReloader.hpp>
 #include <enginelab/serialization/JsonEngineSerializer.hpp>
 #include <enginelab/serialization/YamlEngineSerializer.hpp>
 #include <juce_audio_utils/juce_audio_utils.h>
@@ -34,10 +38,16 @@ private:
     void timerCallback() override;
     void configureSlider(juce::Slider&, double minimum, double maximum, double value, const juce::String& suffix);
     void selectEngine(int presetIndex);
-    void applyConfig(const EngineConfig&);
+    bool applyConfig(const EngineConfig&, bool preserveScriptWatcher = false,
+                     bool preserveCalibration = false);
     void showConfigEditor();
     void showConfigEditor(const juce::String& initialText);
     void showKeyBindingsEditor();
+    void showEcuTuner();
+    void showExhaustDesigner();
+    void startEngineScriptWatcher(const std::filesystem::path&);
+    void stopEngineScriptWatcher() noexcept;
+    void pollEngineScript();
     void importEngine();
     void exportEngine();
     void exportDynoCsv();
@@ -69,6 +79,9 @@ private:
     JsonEngineSerializer jsonSerializer_;
     YamlEngineSerializer yamlSerializer_;
     EngineState visibleState_;
+    std::unique_ptr<RenderSnapshotBuilder> renderSnapshotBuilder_;
+    RenderSnapshotInterpolator renderSnapshotInterpolator_;
+    RenderSnapshot visibleRenderSnapshot_;
     DynoRun visibleCurrentRun_;
     std::vector<DynoRun> archivedRuns_;
     std::vector<Diagnostic> visibleDiagnostics_;
@@ -101,6 +114,11 @@ private:
     std::unique_ptr<juce::FileChooser> fileChooser_;
     std::unique_ptr<juce::AlertWindow> configEditor_;
     std::unique_ptr<juce::AlertWindow> keyBindingsEditor_;
+    std::unique_ptr<EcuTunerWindow> ecuTunerWindow_;
+    std::unique_ptr<ExhaustDesignerWindow> exhaustDesignerWindow_;
+    std::unique_ptr<scripting::EngineScriptHotReloader> scriptReloader_;
+    std::uint64_t scriptRevision_ {};
+    std::uint64_t scriptAttempt_ {};
 
     juce::Label title_;
     juce::ComboBox engineSelector_;
@@ -109,6 +127,8 @@ private:
     juce::TextButton exportButton_ { "EXPORTER" };
     juce::TextButton csvButton_ { "CSV DYNO" };
     juce::TextButton keyBindingsButton_ { "TOUCHES" };
+    juce::TextButton ecuTunerButton_ { "ECU" };
+    juce::TextButton exhaustDesignerButton_ { "ECHAP. PRO" };
     juce::ComboBox exhaustPresetSelector_;
     juce::TextButton ignitionButton_ { "CONTACT" };
     juce::TextButton starterButton_;

@@ -12,6 +12,7 @@
 #include <enginelab/simulation/EngineSimulator.hpp>
 
 #include <juce_audio_basics/juce_audio_basics.h>
+#include <juce_dsp/juce_dsp.h>
 
 #include <algorithm>
 #include <array>
@@ -88,69 +89,107 @@ void writeWav(const std::filesystem::path& path, const std::vector<float>& sampl
     }
 }
 
-// Replicates the config-derived audio telemetry that EngineRuntime sets up once.
-void configureStaticAudioState(const EngineConfig& config, RealtimeAudioState& state) {
-    const auto cylinders = std::max<std::size_t>(1, config.cylinders.size());
-    const auto displacement = engineDisplacementLitres(config);
-    state.cylinderCount.store(static_cast<float>(cylinders));
-    state.redlineRpm.store(static_cast<float>(config.redlineRpm));
-    state.displacementLitres.store(static_cast<float>(displacement));
-    state.cylinderDisplacementLitres.store(static_cast<float>(displacement / static_cast<double>(cylinders)));
-    const auto bankSeparation = config.layout == EngineLayout::vLayout ? 1.0F
-        : (config.layout == EngineLayout::flat ? 0.92F : (config.layout == EngineLayout::radial ? 0.74F : 0.0F));
-    state.bankSeparation.store(bankSeparation);
-    for (std::size_t i = 0; i < cylinders; ++i) {
-        const auto pan = cylinders > 1
-            ? static_cast<float>(-0.72 + 1.44 * static_cast<double>(i) / static_cast<double>(cylinders - 1)) : 0.0F;
-        state.cylinderPan[i].store(std::clamp(pan, -0.82F, 0.82F));
-    }
-    state.exhaustOpenness.store(static_cast<float>(std::clamp(
-        (config.exhaust.outletDiameterMm / std::max(20.0, config.exhaust.collectorDiameterMm))
-            * (1.0 - config.exhaust.mufflerRestriction * 0.72), 0.15, 1.45)));
-    double boreSum = 0.0;
-    for (const auto& c : config.cylinders) boreSum += c.boreMm;
-    state.meanBoreMm.store(static_cast<float>(std::max(20.0, boreSum / static_cast<double>(cylinders))));
-    state.forcedInductionKind.store(config.forcedInduction.enabled
-        ? (config.forcedInduction.type == ForcedInductionType::supercharger ? 2 : 1) : 0);
-    constexpr double exhaustSoundSpeedMmPerSecond = 520'000.0;
-    for (std::size_t i = 0; i < cylinders && i < 32; ++i) {
-        const auto len = config.cylinders[i].exhaustPrimaryLengthMm > 0.0
-            ? config.cylinders[i].exhaustPrimaryLengthMm : config.exhaust.primaryLengthMm;
-        state.runnerDelaySeconds[i].store(static_cast<float>(std::max(0.0, len) / exhaustSoundSpeedMmPerSecond));
-    }
-}
+struct Metrics {
+    double mean {};
+    double rms {};
+    double peak {};
+    double crest {};
+    double brightness {};
+    double nearFullScaleFraction {};
+    double lowBandFraction {};
+    double midBandFraction {};
+    double highBandFraction {};
+    double finalRpm {};
+    std::size_t longestFlatTop {};
+    std::array<double, 32> spectrum {};
+    bool finite { true };
+};
 
-struct Metrics { double rms {}, peak {}, crest {}, brightness {}; std::array<double, 24> spectrum {}; bool finite { true }; };
-
-// Log-spaced magnitude spectrum (naive DFT) over the analysis window, unit-normalised.
+// Analyse the final steady-state window. The FFT is used both for broad energy
+// balance and for a log-band engine fingerprint; this is less phase-sensitive
+// than probing a handful of individual DFT frequencies.
 void fingerprint(const std::vector<float>& x, std::size_t begin, double sampleRate, Metrics& m) {
     const auto n = x.size() - begin;
-    double sumSq = 0.0, diffSq = 0.0, peak = 0.0;
+    double sum = 0.0, sumSq = 0.0, diffSq = 0.0, peak = 0.0;
+    std::size_t nearFullScaleSamples = 0;
     for (std::size_t i = begin; i < x.size(); ++i) {
         const auto v = static_cast<double>(x[i]);
         if (!std::isfinite(v)) m.finite = false;
+        sum += v;
         sumSq += v * v; peak = std::max(peak, std::abs(v));
+        if (std::abs(v) >= 0.98) ++nearFullScaleSamples;
         if (i > begin) { const auto d = v - x[i - 1]; diffSq += d * d; }
     }
+    m.mean = sum / static_cast<double>(std::max<std::size_t>(1, n));
     m.rms = std::sqrt(sumSq / std::max<std::size_t>(1, n));
     m.peak = peak;
     m.crest = m.rms > 1e-12 ? m.peak / m.rms : 0.0;
     m.brightness = sumSq > 1e-12 ? std::sqrt(diffSq / sumSq) : 0.0;
-    double norm = 0.0;
-    for (std::size_t b = 0; b < m.spectrum.size(); ++b) {
-        const auto freq = 40.0 * std::pow(8000.0 / 40.0, static_cast<double>(b) / (m.spectrum.size() - 1));
-        const auto w = 2.0 * std::numbers::pi * freq / sampleRate;
-        double re = 0.0, im = 0.0;
-        const std::size_t stride = std::max<std::size_t>(1, n / 4000); // ~4k point DFT is plenty
-        for (std::size_t i = begin; i < x.size(); i += stride) {
-            const auto ph = w * static_cast<double>(i - begin);
-            re += x[i] * std::cos(ph); im += x[i] * std::sin(ph);
-        }
-        m.spectrum[b] = std::sqrt(re * re + im * im);
-        norm += m.spectrum[b] * m.spectrum[b];
+    m.nearFullScaleFraction = static_cast<double>(nearFullScaleSamples)
+        / static_cast<double>(std::max<std::size_t>(1, n));
+
+    const auto flatTolerance = std::max(2.0e-6, m.peak * 2.0e-5);
+    const auto highLevel = std::max(0.90, m.peak * 0.995);
+    std::size_t flatRun = 0;
+    for (std::size_t i = begin + 1; i < x.size(); ++i) {
+        const auto current = static_cast<double>(x[i]);
+        const auto previous = static_cast<double>(x[i - 1]);
+        const auto isFlatTop = std::abs(current) >= highLevel
+            && std::signbit(current) == std::signbit(previous)
+            && std::abs(current - previous) <= flatTolerance;
+        flatRun = isFlatTop ? flatRun + 1 : 0;
+        m.longestFlatTop = std::max(m.longestFlatTop, flatRun);
     }
-    norm = std::sqrt(std::max(norm, 1e-18));
-    for (auto& v : m.spectrum) v /= norm;
+
+    constexpr int fftOrder = 15;
+    constexpr std::size_t fftSize = std::size_t { 1 } << fftOrder;
+    std::vector<float> fftData(fftSize * 2, 0.0F);
+    const auto available = std::min(n, fftSize);
+    const auto sourceBegin = x.size() - available;
+    const auto destinationBegin = fftSize - available;
+    for (std::size_t i = 0; i < available; ++i) {
+        const auto fftIndex = destinationBegin + i;
+        const auto window = 0.5 - 0.5 * std::cos(2.0 * std::numbers::pi
+            * static_cast<double>(fftIndex) / static_cast<double>(fftSize - 1));
+        fftData[fftIndex] = static_cast<float>(
+            (static_cast<double>(x[sourceBegin + i]) - m.mean) * window);
+    }
+    juce::dsp::FFT fft(fftOrder);
+    fft.performFrequencyOnlyForwardTransform(fftData.data());
+
+    constexpr double minimumFingerprintHz = 40.0;
+    constexpr double maximumFingerprintHz = 8'000.0;
+    const auto fingerprintOctaves = std::log(maximumFingerprintHz / minimumFingerprintHz);
+    double lowPower = 0.0, midPower = 0.0, highPower = 0.0;
+    for (std::size_t bin = 1; bin <= fftSize / 2; ++bin) {
+        const auto frequency = static_cast<double>(bin) * sampleRate / static_cast<double>(fftSize);
+        const auto magnitude = static_cast<double>(fftData[bin]);
+        const auto power = magnitude * magnitude;
+        if (frequency >= 20.0 && frequency <= 12'000.0) {
+            if (frequency < 250.0) lowPower += power;
+            else if (frequency < 4'000.0) midPower += power;
+            else highPower += power;
+        }
+
+        if (frequency >= minimumFingerprintHz && frequency <= maximumFingerprintHz) {
+            const auto position = std::log(frequency / minimumFingerprintHz) / fingerprintOctaves;
+            const auto band = std::min(m.spectrum.size() - 1,
+                static_cast<std::size_t>(position * static_cast<double>(m.spectrum.size())));
+            m.spectrum[band] += power;
+        }
+    }
+    const auto audiblePower = std::max(lowPower + midPower + highPower, 1.0e-18);
+    m.lowBandFraction = lowPower / audiblePower;
+    m.midBandFraction = midPower / audiblePower;
+    m.highBandFraction = highPower / audiblePower;
+
+    double fingerprintNorm = 0.0;
+    for (auto& value : m.spectrum) {
+        value = std::sqrt(value);
+        fingerprintNorm += value * value;
+    }
+    fingerprintNorm = std::sqrt(std::max(fingerprintNorm, 1.0e-18));
+    for (auto& value : m.spectrum) value /= fingerprintNorm;
 }
 
 double cosineSimilarity(const Metrics& a, const Metrics& b) {
@@ -174,8 +213,11 @@ Metrics renderEngine(const EngineConfig& baseConfig, const WavData& ir,
     auto pressureQueuePtr = std::make_unique<CylinderPressureQueue>();
     auto& eventQueue = *eventQueuePtr;
     auto& pressureQueue = *pressureQueuePtr;
-    RealtimeAudioState audioState;
-    configureStaticAudioState(config, audioState);
+    // Use the production runtime's exact graph/geometry-to-audio mapping. A
+    // hand-maintained copy here previously drifted and made this regression
+    // harness test a different renderer configuration than the application.
+    auto audioConfiguration = std::make_unique<EngineRuntime>(config);
+    auto& audioState = audioConfiguration->audioState();
 
     constexpr double audioRate = 48'000.0;
     constexpr double dt = 1.0 / 240.0;
@@ -191,14 +233,22 @@ Metrics renderEngine(const EngineConfig& baseConfig, const WavData& ir,
     audio.reserve(static_cast<std::size_t>(seconds * audioRate));
     juce::AudioBuffer<float> block(2, samplesPerStep);
     double realtimeSeconds = 0.0;
+    double dynoLoadIntegral = 0.0;
+    const auto dynoTargetRpm = std::max(config.idleRpm * 1.50, config.redlineRpm * 0.55);
     const auto steps = static_cast<std::size_t>(seconds / dt);
     for (std::size_t step = 0; step < steps; ++step) {
         const auto t = static_cast<double>(step) * dt;
         EngineControls controls;
         controls.ignitionEnabled = true;
         controls.starterEngaged = t < 1.1;
-        controls.throttle = t < 0.9 ? 0.2 : std::clamp(0.35 + (t - 0.9) * 0.25, 0.0, 0.9);
-        controls.load = t < 1.5 ? 0.0 : 0.35;
+        controls.throttle = t < 0.9 ? 0.2 : 0.72;
+        if (t >= 1.2) {
+            const auto speedError = (simulator.state().rpm - dynoTargetRpm)
+                / std::max(1.0, dynoTargetRpm);
+            dynoLoadIntegral = std::clamp(
+                dynoLoadIntegral + speedError * dt * 1.20, 0.0, 0.92);
+            controls.load = std::clamp(dynoLoadIntegral + speedError * 0.70, 0.0, 1.0);
+        }
         auto frame = simulator.step(dt, controls);
         const auto simStart = frame.state.simulationTimeSeconds - dt;
         for (std::size_t i = 0; i < frame.firingEventCount; ++i) {
@@ -218,6 +268,7 @@ Metrics renderEngine(const EngineConfig& baseConfig, const WavData& ir,
         audioState.manifoldPressureKpa.store(static_cast<float>(frame.state.manifoldPressureKpa));
         audioState.exhaustPressureKpa.store(static_cast<float>(frame.state.exhaustPressureKpa));
         audioState.exhaustFlowGramsPerSecond.store(static_cast<float>(frame.state.exhaustFlowGramsPerSecond));
+        audioState.exhaustTemperatureC.store(static_cast<float>(frame.state.exhaustTemperatureC));
         audioState.boostPressureRatio.store(static_cast<float>(frame.state.boostPressureRatio));
         audioState.peakPistonAccelerationG.store(static_cast<float>(std::max(0.0, frame.state.peakPistonAccelerationG)));
         audioState.forcedInductionShaftRpm.store(static_cast<float>(std::max(0.0, frame.state.forcedInductionShaftSpeedRpm)));
@@ -226,7 +277,10 @@ Metrics renderEngine(const EngineConfig& baseConfig, const WavData& ir,
             double domAmp = 0.0, domFreq = 0.0;
             for (std::size_t i = 0; i < frame.state.cylinderStateCount; ++i) {
                 const auto& c = frame.state.cylinderStates[i];
-                if (c.intakeResonancePressureKpa > domAmp) { domAmp = c.intakeResonancePressureKpa; domFreq = c.intakeResonanceFrequencyHz; }
+                if (std::abs(c.intakeResonancePressureKpa) > std::abs(domAmp)) {
+                    domAmp = c.intakeResonancePressureKpa;
+                    domFreq = c.intakeResonanceFrequencyHz;
+                }
             }
             audioState.intakeRunnerResonanceHz.store(static_cast<float>(domFreq));
             audioState.intakeRunnerAmplitudeKpa.store(static_cast<float>(domAmp));
@@ -257,13 +311,20 @@ Metrics renderEngine(const EngineConfig& baseConfig, const WavData& ir,
     const auto analysisBegin = audio.size() > static_cast<std::size_t>(1.0 * audioRate)
         ? audio.size() - static_cast<std::size_t>(1.0 * audioRate) : 0;
     fingerprint(audio, analysisBegin, audioRate, m);
+    m.finalRpm = simulator.state().rpm;
     if (!stabilityRun)
         writeWav(outDir / (config.name + ".wav"), audio, static_cast<int>(audioRate));
     std::cout << std::left << std::setw(26) << config.name
               << " rms="   << std::fixed << std::setprecision(4) << m.rms
               << " peak="  << m.peak
               << " crest=" << std::setprecision(2) << m.crest
+              << " rpm=" << std::setprecision(0) << m.finalRpm
               << " brightness=" << std::setprecision(3) << m.brightness
+              << " dc=" << std::showpos << m.mean << std::noshowpos
+              << " bands=" << std::setprecision(1) << m.lowBandFraction * 100.0
+              << '/' << m.midBandFraction * 100.0 << '/' << m.highBandFraction * 100.0 << '%'
+              << " nearFS=" << std::setprecision(4) << m.nearFullScaleFraction
+              << " flat=" << m.longestFlatTop
               << " dropped=" << renderer.droppedPendingEventCount()
               << " late="   << renderer.lateEventCount()
               << " finite=" << (m.finite ? "yes" : "NO")
@@ -319,15 +380,37 @@ int main(int argc, char** argv) {
     const auto stability = renderEngine(makeDefaultInlineFour(), ir, outDir, 25.0, true);
 
     bool ok = true;
-    for (const auto& m : metrics) {
-        if (!m.finite) { std::cerr << "FAIL: non-finite audio produced\n"; ok = false; }
-        if (m.crest < 2.0) { std::cerr << "FAIL: crest factor too low (over-saturated): " << m.crest << '\n'; ok = false; }
+    const auto validate = [&ok](const Metrics& m, const std::string& label,
+                                bool requireSpectralBalance) {
+        const auto fail = [&ok, &label](const std::string& reason) {
+            std::cerr << "FAIL: " << label << ": " << reason << '\n';
+            ok = false;
+        };
+        if (!m.finite) fail("non-finite audio produced");
+        if (m.rms <= 1.0e-5) fail("analysis window is unexpectedly silent");
+        if (m.peak > 1.00001) fail("output exceeds digital full scale");
+        if (m.crest < 1.50) fail("insufficient waveform dynamics");
+        if (m.crest > 16.0) fail("isolated spikes dominate the waveform");
+        if (std::abs(m.mean) > std::max(0.0025, m.rms * 0.08))
+            fail("post-transient DC offset exceeds 8% of RMS");
+        if (m.nearFullScaleFraction > 0.002)
+            fail("output spends too long near digital full scale");
+        if (m.longestFlatTop > 8)
+            fail("waveform contains a sustained flat clipping plateau");
+        if (requireSpectralBalance && m.lowBandFraction > 0.985)
+            fail("more than 98.5% of analysed energy is below 250 Hz");
+        if (requireSpectralBalance && m.highBandFraction > 0.70)
+            fail("upper-band noise dominates the engine signal");
+    };
+    for (std::size_t index = 0; index < metrics.size(); ++index)
+        validate(metrics[index], engines[index].label, true);
+    validate(turbo, "synthetic turbo", true);
+    validate(stability, "long-run inline4", true);
+    if (worstSimilarity > 0.985) {
+        std::cerr << "FAIL: engines are not spectrally differentiated (max similarity "
+                  << worstSimilarity << ")\n";
+        ok = false;
     }
-    if (!stability.finite) { std::cerr << "FAIL: long run produced non-finite audio\n"; ok = false; }
-    if (!turbo.finite) { std::cerr << "FAIL: forced-induction layer produced non-finite audio\n"; ok = false; }
-    if (turbo.crest < 2.0) { std::cerr << "FAIL: forced-induction crest too low: " << turbo.crest << '\n'; ok = false; }
-    if (worstSimilarity > 0.985) { std::cerr << "WARN: engines not well differentiated (max similarity "
-                                             << worstSimilarity << ")\n"; }
     std::cout << "\nResult: " << (ok ? "PASS" : "FAIL")
               << " (max spectral similarity " << std::setprecision(3) << worstSimilarity << ")\n";
     return ok ? 0 : 1;

@@ -15,6 +15,8 @@ class SpscQueue final {
     static_assert(std::is_trivially_copyable_v<T>,
                   "Realtime queue payloads must be trivially copyable");
 public:
+    static constexpr std::size_t usableCapacity = Capacity - 1;
+
     [[nodiscard]] bool tryPush(const T& value) noexcept {
         const auto write = writeIndex_.load(std::memory_order_relaxed);
         const auto next = (write + 1) & mask;

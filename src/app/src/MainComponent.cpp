@@ -1,7 +1,10 @@
 #include <enginelab/app/MainComponent.hpp>
+#include <enginelab/calibration/EcuCalibrationKeys.hpp>
 #include <algorithm>
 #include <cmath>
 #include <numbers>
+#include <stdexcept>
+#include <utility>
 
 namespace enginelab {
 namespace {
@@ -99,7 +102,11 @@ MainComponent::MainComponent() {
     exportButton_.onClick = [this] { exportEngine(); };
     csvButton_.onClick = [this] { exportDynoCsv(); };
     keyBindingsButton_.onClick = [this] { showKeyBindingsEditor(); };
-    for (auto* button : { &editButton_, &importButton_, &exportButton_, &csvButton_, &keyBindingsButton_ }) addAndMakeVisible(*button);
+    ecuTunerButton_.onClick = [this] { showEcuTuner(); };
+    exhaustDesignerButton_.onClick = [this] { showExhaustDesigner(); };
+    for (auto* button : { &editButton_, &importButton_, &exportButton_, &csvButton_,
+                          &keyBindingsButton_, &ecuTunerButton_, &exhaustDesignerButton_ })
+        addAndMakeVisible(*button);
     const std::array<const char*, 5> exhaustPresets { "Street", "Open", "Turbo", "Long tube", "Moto" };
     for (int index = 0; index < static_cast<int>(exhaustPresets.size()); ++index)
         exhaustPresetSelector_.addItem(exhaustPresets[static_cast<std::size_t>(index)], index + 1);
@@ -134,7 +141,7 @@ MainComponent::MainComponent() {
 
     throttleLabel_.setText(utf8("ACCÉLÉRATEUR  [W 10% / E 20% / R 100%]"), juce::dontSendNotification);
     loadLabel_.setText("CHARGE MANUELLE", juce::dontSendNotification);
-    afrLabel_.setText(utf8("INJECTION IDÉALISÉE — AFR"), juce::dontSendNotification);
+    afrLabel_.setText(utf8("TRIM AFR (CARTE ±)"), juce::dontSendNotification);
     advanceLabel_.setText(utf8("TRIM ALLUMAGE (CARTE + °)"), juce::dontSendNotification);
     for (auto* label : { &throttleLabel_, &loadLabel_, &afrLabel_, &advanceLabel_ }) {
         label->setColour(juce::Label::textColourId, juce::Colour(0xff87948f));
@@ -143,11 +150,11 @@ MainComponent::MainComponent() {
     }
     configureSlider(throttleSlider_, 0.0, 100.0, 12.0, " %");
     configureSlider(loadSlider_, 0.0, 100.0, 0.0, " %");
-    configureSlider(afrSlider_, 10.0, 18.0, 14.7, "");
+    configureSlider(afrSlider_, -3.0, 3.0, 0.0, " AFR");
     configureSlider(advanceSlider_, -15.0, 15.0, 0.0, utf8("°"));
     throttleSlider_.onValueChange = [this] { if (runtime_) runtime_->setThrottle(throttleSlider_.getValue() / 100.0); };
     loadSlider_.onValueChange = [this] { if (runtime_) runtime_->setLoad(loadSlider_.getValue() / 100.0); };
-    afrSlider_.onValueChange = [this] { if (runtime_) runtime_->setTargetAirFuelRatio(afrSlider_.getValue()); };
+    afrSlider_.onValueChange = [this] { if (runtime_) runtime_->setAirFuelRatioTrim(afrSlider_.getValue()); };
     advanceSlider_.onValueChange = [this] { if (runtime_) runtime_->setIgnitionTrimDegrees(advanceSlider_.getValue()); };
 
     selectEngine(std::min(1, static_cast<int>(presets_.size()) - 1));
@@ -155,26 +162,51 @@ MainComponent::MainComponent() {
     juce::MessageManager::callAsync([safe = juce::Component::SafePointer<MainComponent>(this)] { if (safe) safe->grabKeyboardFocus(); });
 }
 
-MainComponent::~MainComponent() { stopTimer(); shutdownAudio(); if (runtime_) runtime_->stop(); }
+MainComponent::~MainComponent() {
+    stopTimer();
+    stopEngineScriptWatcher();
+    exhaustDesignerWindow_.reset();
+    ecuTunerWindow_.reset();
+    shutdownAudio();
+    if (runtime_) runtime_->stop();
+}
 
 void MainComponent::selectEngine(int presetIndex) {
     if (presetIndex < 0 || presetIndex >= static_cast<int>(presets_.size())) return;
     applyConfig(presets_[static_cast<std::size_t>(presetIndex)]);
 }
 
-void MainComponent::applyConfig(const EngineConfig& newConfig) {
+bool MainComponent::applyConfig(const EngineConfig& newConfig, bool preserveScriptWatcher,
+                                bool preserveCalibration) {
+    if (runtime_ && runtime_->dynoRunning()) {
+        showError(utf8("Modification refusée"),
+            utf8("Arrêtez le banc de puissance avant de remplacer la configuration moteur."));
+        return false;
+    }
     std::unique_ptr<EngineRuntime> replacement;
+    EngineConfig canonicalConfig = newConfig;
+    auto retainedCalibration = preserveCalibration && runtime_
+        ? runtime_->calibrationStore() : std::shared_ptr<calibration::CalibrationStore> {};
     try {
-        replacement = std::make_unique<EngineRuntime>(newConfig);
+        normaliseEngineConfig(canonicalConfig);
+        if (const auto error = validateEngineConfig(canonicalConfig))
+            throw std::invalid_argument(*error);
+        replacement = std::make_unique<EngineRuntime>(canonicalConfig, retainedCalibration);
     } catch (const std::exception& error) {
         showError(utf8("Configuration moteur invalide"), juce::String::fromUTF8(error.what()));
-        return;
+        return false;
     }
-    collectFinishedRuns();
+    if (!preserveScriptWatcher) stopEngineScriptWatcher();
+    if (!retainedCalibration) ecuTunerWindow_.reset();
     shutdownAudio();
     if (runtime_) runtime_->stop();
+    collectFinishedRuns();
     audio_.reset(); runtime_.reset();
-    config_ = newConfig;
+    config_ = std::move(canonicalConfig);
+    if (exhaustDesignerWindow_) exhaustDesignerWindow_->setConfig(config_);
+    renderSnapshotBuilder_ = std::make_unique<RenderSnapshotBuilder>(config_);
+    renderSnapshotInterpolator_.reset();
+    visibleRenderSnapshot_ = {};
     runtime_ = std::move(replacement);
     audio_ = std::make_unique<RealtimeEngineAudio>(runtime_->audioEvents(), runtime_->audioState(),
                                                    &runtime_->cylinderPressureSamples());
@@ -182,7 +214,7 @@ void MainComponent::applyConfig(const EngineConfig& newConfig) {
     telemetryWrite_ = 0; telemetryCount_ = 0;
     runtime_->setThrottle(throttleSlider_.getValue() / 100.0);
     runtime_->setLoad(loadSlider_.getValue() / 100.0);
-    runtime_->setTargetAirFuelRatio(afrSlider_.getValue());
+    runtime_->setAirFuelRatioTrim(afrSlider_.getValue());
     runtime_->setIgnitionTrimDegrees(advanceSlider_.getValue());
     runtime_->setIgnitionEnabled(ignitionButton_.getToggleState());
     runtime_->setAudioVolume(audioVolume_);
@@ -201,6 +233,7 @@ void MainComponent::applyConfig(const EngineConfig& newConfig) {
     title_.setText("EngineLab   /   " + juce::String(config_.name) + "   /   "
                    + juce::String(engineDisplacementLitres(config_), 2) + " L", juce::dontSendNotification);
     engineSelector_.setText(juce::String(config_.name), juce::dontSendNotification);
+    return true;
 }
 
 void MainComponent::configureImpulseResponse() {
@@ -295,7 +328,7 @@ void MainComponent::showConfigEditor() {
 void MainComponent::showConfigEditor(const juce::String& initialText) {
     if (configEditor_) return;
     configEditor_ = std::make_unique<juce::AlertWindow>(utf8("Éditeur moteur JSON"),
-        utf8("Tous les paramètres sont éditables. Appliquer redémarre la simulation."),
+        utf8("La topologie remplace l'instance de simulation. Les cartes ECU s'éditent à chaud via ECU."),
         juce::MessageBoxIconType::NoIcon);
     configEditor_->addTextEditor("json", initialText, {}, false);
     if (auto* editor = configEditor_->getTextEditor("json")) {
@@ -315,7 +348,7 @@ void MainComponent::showConfigEditor(const juce::String& initialText) {
                 retryText = editor->getText();
                 const auto utf8Text = retryText.toRawUTF8();
                 const auto decoded = safe->jsonSerializer_.decode(utf8Text);
-                if (decoded) safe->applyConfig(*decoded.config);
+                if (decoded) safe->applyConfig(*decoded.config, false, true);
                 else safe->showError(utf8("JSON invalide"), juce::String::fromUTF8(decoded.error.c_str()));
             }
         }
@@ -360,8 +393,77 @@ void MainComponent::showKeyBindingsEditor() {
     }), true);
 }
 
+void MainComponent::showEcuTuner() {
+    if (!runtime_) return;
+    if (!ecuTunerWindow_)
+        ecuTunerWindow_ = std::make_unique<EcuTunerWindow>(runtime_->calibrationStore());
+    ecuTunerWindow_->setVisible(true);
+    ecuTunerWindow_->toFront(true);
+}
+
+void MainComponent::showExhaustDesigner() {
+    if (!runtime_) return;
+    if (!exhaustDesignerWindow_) {
+        auto safe = juce::Component::SafePointer<MainComponent>(this);
+        exhaustDesignerWindow_ = std::make_unique<ExhaustDesignerWindow>(config_,
+            [safe](const EngineConfig& editedConfig) {
+                if (!safe) return false;
+                // applyConfig intentionally keeps the designer alive. Its content
+                // invokes this callback synchronously and resumes afterwards.
+                return safe->applyConfig(editedConfig, false, true);
+            });
+    }
+    exhaustDesignerWindow_->setVisible(true);
+    exhaustDesignerWindow_->toFront(true);
+}
+
+void MainComponent::startEngineScriptWatcher(const std::filesystem::path& path) {
+    stopEngineScriptWatcher();
+    scriptReloader_ = std::make_unique<scripting::EngineScriptHotReloader>(path);
+    scriptRevision_ = 0;
+    scriptAttempt_ = 0;
+    scriptReloader_->start();
+}
+
+void MainComponent::stopEngineScriptWatcher() noexcept {
+    if (scriptReloader_) scriptReloader_->stop();
+    scriptReloader_.reset();
+    scriptRevision_ = 0;
+    scriptAttempt_ = 0;
+}
+
+void MainComponent::pollEngineScript() {
+    if (!scriptReloader_) return;
+    const auto reload = scriptReloader_->poll();
+    if (!reload || reload->attempt <= scriptAttempt_) return;
+    if (reload->lastAttemptSucceeded && reload->config && reload->revision > scriptRevision_) {
+        // A structural replacement is deliberately forbidden during a dyno
+        // run. Do not consume the successful attempt: the timer will apply it
+        // once the run has stopped, without requiring another file save.
+        if (runtime_ && runtime_->dynoRunning()) return;
+        scriptAttempt_ = reload->attempt;
+        if (applyConfig(*reload->config, true, true)) scriptRevision_ = reload->revision;
+        return;
+    }
+    scriptAttempt_ = reload->attempt;
+    if (reload->lastAttemptSucceeded || reload->diagnostics.empty()) return;
+    juce::String message;
+    const auto count = std::min<std::size_t>(reload->diagnostics.size(), 8);
+    for (std::size_t index = 0; index < count; ++index) {
+        const auto& diagnostic = reload->diagnostics[index];
+        if (message.isNotEmpty()) message << "\n";
+        message << juce::String(diagnostic.location.source.string()) << ':'
+                << juce::String(static_cast<int>(diagnostic.location.line)) << ':'
+                << juce::String(static_cast<int>(diagnostic.location.column)) << "  "
+                << juce::String(diagnostic.code) << "  " << juce::String(diagnostic.message);
+    }
+    message << "\n\nLa dernière configuration valide reste active.";
+    showError("Script moteur refusé", message);
+}
+
 void MainComponent::importEngine() {
-    fileChooser_ = std::make_unique<juce::FileChooser>(utf8("Importer un moteur"), juce::File {}, "*.json;*.yaml;*.yml");
+    fileChooser_ = std::make_unique<juce::FileChooser>(utf8("Importer un moteur"), juce::File {},
+                                                       "*.json;*.yaml;*.yml;*.els;*.engine");
     auto safe = juce::Component::SafePointer<MainComponent>(this);
     fileChooser_->launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
         [safe](const juce::FileChooser& chooser) {
@@ -370,6 +472,11 @@ void MainComponent::importEngine() {
             if (file.existsAsFile()) {
                 if (file.getSize() > 2 * 1024 * 1024) {
                     safe->showError(utf8("Import impossible"), utf8("Le fichier dépasse la limite de 2 Mio."));
+                    safe->fileChooser_.reset();
+                    return;
+                }
+                if (file.hasFileExtension("els;engine")) {
+                    safe->startEngineScriptWatcher(file.getFullPathName().toStdString());
                     safe->fileChooser_.reset();
                     return;
                 }
@@ -458,7 +565,7 @@ void MainComponent::reloadEngine() {
             return;
         }
     }
-    applyConfig(config_);
+    applyConfig(config_, false, true);
 }
 
 void MainComponent::prepareToPlay(int blockSize, double sampleRate) { if (audio_) audio_->prepare(sampleRate, blockSize); }
@@ -662,6 +769,7 @@ void MainComponent::mouseDoubleClick(const juce::MouseEvent& event) {
 }
 
 void MainComponent::timerCallback() {
+    pollEngineScript();
     if (!runtime_) return;
     const auto clutchTarget = (actionMap_.isDown(AppAction::clutchHold)
         || juce::ModifierKeys::getCurrentModifiersRealtime().isShiftDown())
@@ -671,6 +779,17 @@ void MainComponent::timerCallback() {
     currentClutchPressure_ += (clutchTarget - currentClutchPressure_) * (1.0 - std::exp(-clutchRate / 30.0));
     runtime_->setClutchPressure(currentClutchPressure_);
     visibleState_ = runtime_->snapshot();
+    if (ecuTunerWindow_) {
+        const auto normalizedLoad = std::clamp(visibleState_.manifoldPressureKpa
+            / std::max(1.0, config_.ambientPressureKpa),
+            calibration::ecuLimits::minimumNormalizedLoad,
+            calibration::ecuLimits::maximumNormalizedLoad);
+        ecuTunerWindow_->setOperatingPoint(visibleState_.rpm, normalizedLoad);
+    }
+    if (renderSnapshotBuilder_) {
+        renderSnapshotInterpolator_.push(renderSnapshotBuilder_->build(visibleState_));
+        visibleRenderSnapshot_ = renderSnapshotInterpolator_.sample(visibleState_.simulationTimeSeconds);
+    }
     telemetryHistory_[telemetryWrite_] = visibleState_;
     telemetryWrite_ = (telemetryWrite_ + 1) % telemetryHistory_.size();
     telemetryCount_ = std::min(telemetryCount_ + 1, telemetryHistory_.size());
@@ -680,7 +799,8 @@ void MainComponent::timerCallback() {
     const auto running = runtime_->dynoRunning();
     title_.setText("EngineLab   /   " + juce::String(config_.name) + "   /   "
         + juce::String(engineDisplacementLitres(config_), 2) + " L   /   "
-        + (runtime_->paused() ? juce::String("PAUSE") : "x" + juce::String(runtime_->timeScale(), 1)),
+        + (runtime_->paused() ? juce::String("PAUSE") : "x" + juce::String(runtime_->timeScale(), 1))
+        + (scriptReloader_ ? "   /   SCRIPT LIVE r" + juce::String(scriptRevision_) : juce::String {}),
         juce::dontSendNotification);
     dynoButton_.setButtonText(running ? utf8("D  ARRÊTER DYNO") : juce::String("D  LANCER DYNO"));
     dynoButton_.setToggleState(running, juce::dontSendNotification);
@@ -689,6 +809,7 @@ void MainComponent::timerCallback() {
     engineSelector_.setEnabled(!running);
     exhaustPresetSelector_.setEnabled(true);
     editButton_.setEnabled(!running); importButton_.setEnabled(!running);
+    exhaustDesignerButton_.setEnabled(!running);
     for (auto* slider : { &throttleSlider_, &loadSlider_, &afrSlider_, &advanceSlider_ }) slider->setEnabled(!running);
     repaint();
 }
@@ -1372,16 +1493,19 @@ void MainComponent::drawDynoChart(juce::Graphics& g, juce::Rectangle<float> area
 }
 
 void MainComponent::resized() {
-    title_.setBounds(22, 12, getWidth() - 770, 42);
+    const auto toolbarXStart = std::max(300, getWidth() - 1'100);
+    title_.setBounds(22, 12, std::max(250, toolbarXStart - 34), 42);
     engineSelector_.setBounds(getWidth() - 260, 17, 230, 32);
     exhaustPresetSelector_.setBounds(getWidth() - 415, 17, 145, 32);
-    auto toolbarX = getWidth() - 827;
+    auto toolbarX = toolbarXStart;
     editButton_.setBounds(toolbarX, 17, 98, 32); toolbarX += 102;
     importButton_.setBounds(toolbarX, 17, 92, 32); toolbarX += 96;
     exportButton_.setBounds(toolbarX, 17, 92, 32); toolbarX += 96;
     csvButton_.setBounds(toolbarX, 17, 92, 32);
     toolbarX += 96;
-    keyBindingsButton_.setBounds(toolbarX, 17, 86, 32);
+    keyBindingsButton_.setBounds(toolbarX, 17, 86, 32); toolbarX += 90;
+    ecuTunerButton_.setBounds(toolbarX, 17, 64, 32); toolbarX += 68;
+    exhaustDesignerButton_.setBounds(toolbarX, 17, 88, 32);
     const auto compact = getHeight() < 740;
     const auto buttonHeight = compact ? 38 : 42;
     const auto labelHeight = compact ? 20 : 23;

@@ -15,7 +15,10 @@ private:
             : DocumentWindow(name, juce::Colour(0xff090d0c), DocumentWindow::allButtons) {
             setUsingNativeTitleBar(true); setContentOwned(new MainComponent(), true);
             setResizable(true, true);
-            setResizeLimits(1'180, 700, 2'560, 1'440);
+            // The top toolbar, exhaust preset and engine selector require this
+            // width; allowing a narrower window made the new ECU/exhaust
+            // buttons overlap the selectors.
+            setResizeLimits(1'400, 700, 2'560, 1'440);
             centreWithSize(getWidth(), getHeight()); setVisible(true);
         }
         void closeButtonPressed() override { juce::JUCEApplication::getInstance()->systemRequestedQuit(); }

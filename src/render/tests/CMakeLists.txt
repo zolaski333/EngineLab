@@ -1,0 +1,4 @@
+add_executable(EngineLabRenderTests RenderSnapshotTests.cpp)
+target_link_libraries(EngineLabRenderTests PRIVATE EngineLab::Render)
+enginelab_set_warnings(EngineLabRenderTests)
+add_test(NAME EngineLab.RenderSnapshot COMMAND EngineLabRenderTests)

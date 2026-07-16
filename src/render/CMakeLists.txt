@@ -1,0 +1,5 @@
+add_library(EngineLabRender STATIC src/RenderSnapshot.cpp)
+add_library(EngineLab::Render ALIAS EngineLabRender)
+target_include_directories(EngineLabRender PUBLIC include)
+target_link_libraries(EngineLabRender PUBLIC EngineLab::Foundation)
+enginelab_set_warnings(EngineLabRender)

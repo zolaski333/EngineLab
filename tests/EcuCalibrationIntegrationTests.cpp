@@ -1,0 +1,69 @@
+#include <enginelab/calibration/EcuCalibration.hpp>
+#include <enginelab/calibration/EcuCalibrationKeys.hpp>
+#include <enginelab/ecu/SimpleEcuModel.hpp>
+#include <enginelab/foundation/EngineTypes.hpp>
+
+#include <algorithm>
+#include <cmath>
+#include <cstdlib>
+#include <iostream>
+#include <variant>
+
+namespace {
+
+void require(bool condition, const char* message) {
+    if (condition) return;
+    std::cerr << "ECU calibration integration failure: " << message << '\n';
+    std::exit(EXIT_FAILURE);
+}
+
+void requireNear(double actual, double expected, double tolerance, const char* message) {
+    require(std::isfinite(actual) && std::abs(actual - expected) <= tolerance, message);
+}
+
+} // namespace
+
+int main() {
+    auto config = enginelab::makeDefaultInlineFour();
+    enginelab::SimpleEcuModel ecu;
+    ecu.initialiseCalibration(config);
+    auto draft = enginelab::calibration::makeDraft(*ecu.calibrationStore()->snapshot());
+
+    auto afr = *draft.find(enginelab::calibration::keys::targetAirFuelRatio);
+    auto& afrTable = std::get<enginelab::calibration::CalibrationTable2D>(afr);
+    std::fill(afrTable.values.begin(), afrTable.values.end(), 12.5);
+    draft.set(std::move(afr));
+    auto advance = *draft.find(enginelab::calibration::keys::ignitionAdvance);
+    auto& advanceTable = std::get<enginelab::calibration::CalibrationTable2D>(advance);
+    std::fill(advanceTable.values.begin(), advanceTable.values.end(), 5.0);
+    draft.set(std::move(advance));
+    auto limiter = *draft.find(enginelab::calibration::keys::revLimit);
+    std::get<enginelab::calibration::ScalarCalibration>(limiter).value = 2'500.0;
+    draft.set(std::move(limiter));
+    require(ecu.calibrationStore()->publish(draft).published,
+            "edited tables should publish atomically");
+    ecu.beginFrame();
+
+    enginelab::EngineState state;
+    state.rpm = 2'000.0;
+    state.manifoldPressureKpa = config.ambientPressureKpa * 0.63;
+    state.coolantTemperatureC = 90.0;
+    enginelab::EngineControls controls;
+    controls.ignitionEnabled = true;
+    controls.throttle = 0.35;
+    (void)ecu.evaluate(config, state, controls); // settle transient enrichment
+    const auto command = ecu.evaluate(config, state, controls);
+    requireNear(command.targetAirFuelRatio, 12.5, 1.0e-12,
+                "ECU should consume the live AFR table");
+    requireNear(command.ignitionAdvanceDegrees, 5.0, 1.0e-12,
+                "ECU should consume the live ignition table");
+    require(command.sparkEnabled, "spark should remain enabled below the calibrated limiter");
+
+    state.rpm = 2'600.0;
+    state.simulationTimeSeconds = 1.0;
+    const auto limited = ecu.evaluate(config, state, controls);
+    require(!limited.sparkEnabled, "calibrated rev limiter should apply without rebuilding the ECU");
+
+    std::cout << "EngineLab ECU calibration integration tests passed\n";
+    return EXIT_SUCCESS;
+}

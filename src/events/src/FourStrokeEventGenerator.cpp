@@ -9,7 +9,7 @@ std::size_t FourStrokeEventGenerator::generate(
     const CombustionResult& combustion, double stepStartTime, double previousAngle,
     double travelledDegrees, double dtSeconds, std::span<FiringEvent> output) noexcept {
     lastDroppedEventCount_ = 0;
-    if (!ecu.fuelEnabled || !ecu.sparkEnabled || output.empty() || config.firingOrder.empty()
+    if (!ecu.fuelEnabled || !ecu.sparkEnabled || config.firingOrder.empty()
         || travelledDegrees <= 0.0)
         return 0;
 
@@ -98,7 +98,7 @@ std::size_t FourStrokeEventGenerator::generate(
                 ++written;
             } else {
                 ++lastDroppedEventCount_;
-                if (event.timeSeconds < output[written - 1].timeSeconds) {
+                if (!output.empty() && event.timeSeconds < output[written - 1].timeSeconds) {
                     auto insertion = written - 1;
                     while (insertion > 0 && output[insertion - 1].timeSeconds > event.timeSeconds) {
                         output[insertion] = output[insertion - 1];

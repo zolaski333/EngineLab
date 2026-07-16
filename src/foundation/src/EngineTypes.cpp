@@ -2,6 +2,8 @@
 #include <algorithm>
 #include <cmath>
 #include <numbers>
+#include <functional>
+#include <unordered_map>
 #include <unordered_set>
 #include <limits>
 
@@ -12,6 +14,16 @@ namespace {
     IntakePathConfig path;
     path.id = 1;
     path.geometry = config.intake;
+    path.inheritsGlobalGeometry = true;
+    for (const auto& cylinder : config.cylinders) path.cylinderIds.push_back(cylinder.id);
+    return path;
+}
+
+[[nodiscard]] ExhaustPathConfig makeDefaultExhaustPath(const EngineConfig& config) {
+    ExhaustPathConfig path;
+    path.id = 1;
+    path.geometry = config.exhaust;
+    path.inheritsGlobalGeometry = true;
     for (const auto& cylinder : config.cylinders) path.cylinderIds.push_back(cylinder.id);
     return path;
 }
@@ -73,6 +85,7 @@ EngineConfig makeEngine(std::string name, EngineLayout layout, std::uint32_t cou
     ExhaustPathConfig path;
     path.id = 1;
     path.geometry = config.exhaust;
+    path.inheritsGlobalGeometry = true;
     for (const auto& cylinder : config.cylinders) path.cylinderIds.push_back(cylinder.id);
     config.exhaustPaths.push_back(std::move(path));
     normaliseEngineConfig(config);
@@ -107,10 +120,17 @@ EngineConfig makeDefaultV8() {
     config.bankAngleDegrees = 90.0;
     for (auto& cylinder : config.cylinders)
         cylinder.bankOffsetDegrees = cylinder.id % 2U == 0U ? 45.0 : -45.0;
+    for (auto& journal : config.crankJournals) {
+        const auto cylinder = std::find_if(config.cylinders.begin(), config.cylinders.end(),
+            [&journal](const CylinderConfig& item) { return item.crankJournalId == journal.id; });
+        if (cylinder != config.cylinders.end())
+            journal.angleDegrees = cylinder->crankOffsetDegrees - cylinder->bankOffsetDegrees;
+    }
     if (config.banks.size() == 2) {
         config.banks[0].angleDegrees = -45.0;
         config.banks[1].angleDegrees = 45.0;
     }
+    normaliseEngineConfig(config);
     return config;
 }
 
@@ -119,11 +139,14 @@ EngineConfig makeDefaultFlatSix() {
                              97.0, 81.5, 780.0, 7'600.0, 0.33,
                              { 270.0, 266.0, 12.3, 11.9, 106.0, 109.0 });
     config.frictionCoefficient = 0.13;
-    config.plenumVolumeLitres = 4.2;
-    config.throttleDiameterMm = 74.0;
+    config.intake.plenumVolumeLitres = 4.2;
+    config.intake.throttleDiameterMm = 74.0;
+    if (config.intakePaths.size() == 1) config.intakePaths.front().geometry = config.intake;
     config.exhaust = { 720.0, 42.0, 66.0, 0.22, 74.0 };
+    if (config.exhaustPaths.size() == 1) config.exhaustPaths.front().geometry = config.exhaust;
     config.transmission = { { 3.82, 2.20, 1.52, 1.22, 1.02, 0.84 }, 3.44, 980.0 };
     config.vehicle = { 1'430.0, 0.30, 2.04, 0.325, 0.013 };
+    normaliseEngineConfig(config);
     return config;
 }
 
@@ -238,6 +261,57 @@ ValveControlSample interpolateValveControl(const ValveControlConfig& control, do
         [](const auto& left, const auto& right) { return left.rpm < right.rpm; });
     const auto [minimumLoad, maximumLoad] = std::minmax_element(control.samples.begin(), control.samples.end(),
         [](const auto& left, const auto& right) { return left.load < right.load; });
+    const auto clampedRpm = std::clamp(rpm, minimumRpm->rpm, maximumRpm->rpm);
+    const auto clampedLoad = std::clamp(load, minimumLoad->load, maximumLoad->load);
+    auto lowerRpm = minimumRpm->rpm;
+    auto upperRpm = maximumRpm->rpm;
+    auto lowerLoad = minimumLoad->load;
+    auto upperLoad = maximumLoad->load;
+    for (const auto& sample : control.samples) {
+        if (sample.rpm <= clampedRpm) lowerRpm = std::max(lowerRpm, sample.rpm);
+        if (sample.rpm >= clampedRpm) upperRpm = std::min(upperRpm, sample.rpm);
+        if (sample.load <= clampedLoad) lowerLoad = std::max(lowerLoad, sample.load);
+        if (sample.load >= clampedLoad) upperLoad = std::min(upperLoad, sample.load);
+    }
+    const auto sampleAt = [&control](double sampleRpm, double sampleLoad) noexcept
+        -> const ValveControlSample* {
+        const auto item = std::find_if(control.samples.begin(), control.samples.end(),
+            [sampleRpm, sampleLoad](const ValveControlSample& sample) {
+                return std::abs(sample.rpm - sampleRpm) <= 1.0e-9
+                    && std::abs(sample.load - sampleLoad) <= 1.0e-12;
+            });
+        return item == control.samples.end() ? nullptr : &*item;
+    };
+    const auto* lowerLower = sampleAt(lowerRpm, lowerLoad);
+    const auto* upperLower = sampleAt(upperRpm, lowerLoad);
+    const auto* lowerUpper = sampleAt(lowerRpm, upperLoad);
+    const auto* upperUpper = sampleAt(upperRpm, upperLoad);
+    if (lowerLower != nullptr && upperLower != nullptr
+            && lowerUpper != nullptr && upperUpper != nullptr) {
+        const auto rpmAmount = upperRpm > lowerRpm
+            ? (clampedRpm - lowerRpm) / (upperRpm - lowerRpm) : 0.0;
+        const auto loadAmount = upperLoad > lowerLoad
+            ? (clampedLoad - lowerLoad) / (upperLoad - lowerLoad) : 0.0;
+        const auto bilinear = [rpmAmount, loadAmount](double ll, double ul,
+                                                       double lu, double uu) noexcept {
+            return std::lerp(std::lerp(ll, ul, rpmAmount),
+                             std::lerp(lu, uu, rpmAmount), loadAmount);
+        };
+        result.intakeAdvanceDegrees = bilinear(lowerLower->intakeAdvanceDegrees,
+            upperLower->intakeAdvanceDegrees, lowerUpper->intakeAdvanceDegrees,
+            upperUpper->intakeAdvanceDegrees);
+        result.exhaustAdvanceDegrees = bilinear(lowerLower->exhaustAdvanceDegrees,
+            upperLower->exhaustAdvanceDegrees, lowerUpper->exhaustAdvanceDegrees,
+            upperUpper->exhaustAdvanceDegrees);
+        result.liftMultiplier = bilinear(lowerLower->liftMultiplier,
+            upperLower->liftMultiplier, lowerUpper->liftMultiplier,
+            upperUpper->liftMultiplier);
+        return result;
+    }
+
+    // Schema-v1 accepted sparse point clouds. Retain a deterministic fallback
+    // for those files, but clamp at the calibrated axes so extrapolation can
+    // never drift beyond the edge cells of a tuning table.
     const auto rpmScale = std::max(1.0, maximumRpm->rpm - minimumRpm->rpm);
     const auto loadScale = std::max(0.01, maximumLoad->load - minimumLoad->load);
     double weightSum = 0.0;
@@ -245,10 +319,15 @@ ValveControlSample interpolateValveControl(const ValveControlConfig& control, do
     result.exhaustAdvanceDegrees = 0.0;
     result.liftMultiplier = 0.0;
     for (const auto& sample : control.samples) {
-        const auto rpmDistance = (rpm - sample.rpm) / rpmScale;
-        const auto loadDistance = (load - sample.load) / loadScale;
+        const auto rpmDistance = (clampedRpm - sample.rpm) / rpmScale;
+        const auto loadDistance = (clampedLoad - sample.load) / loadScale;
         const auto squaredDistance = rpmDistance * rpmDistance + loadDistance * loadDistance;
-        if (squaredDistance < 1.0e-12) return sample;
+        if (squaredDistance < 1.0e-12) {
+            result.intakeAdvanceDegrees = sample.intakeAdvanceDegrees;
+            result.exhaustAdvanceDegrees = sample.exhaustAdvanceDegrees;
+            result.liftMultiplier = sample.liftMultiplier;
+            return result;
+        }
         const auto weight = 1.0 / squaredDistance;
         weightSum += weight;
         result.intakeAdvanceDegrees += sample.intakeAdvanceDegrees * weight;
@@ -263,7 +342,11 @@ ValveControlSample interpolateValveControl(const ValveControlConfig& control, do
     return result;
 }
 
-void normaliseEngineConfig(EngineConfig& config) noexcept {
+void normaliseEngineConfig(EngineConfig& config) {
+    // Schema 2 adds the optional authored exhaust DAG and explicit topology
+    // provenance. Schema-1 documents are structurally compatible and migrate
+    // in memory before validation or re-encoding.
+    if (config.schemaVersion == 1) config.schemaVersion = currentEngineSchemaVersion;
     // `intake` is the canonical representation. Legacy scalar fields remain
     // mirrored so schema-v1 files and old catalog overrides remain compatible.
     if (config.intake.plenumVolumeLitres == IntakeConfig {}.plenumVolumeLitres
@@ -278,9 +361,35 @@ void normaliseEngineConfig(EngineConfig& config) noexcept {
     if (config.crankshafts.empty()) {
         CrankshaftConfig crankshaft;
         crankshaft.momentOfInertiaKgM2 = config.rotatingInertiaKgM2;
+        crankshaft.inheritsLegacyInertia = true;
         config.crankshafts.push_back(crankshaft);
-    } else if (config.crankshafts.size() == 1) {
-        config.crankshafts.front().momentOfInertiaKgM2 = config.rotatingInertiaKgM2;
+    } else {
+        // Explicit topology is authoritative. The scalar is a schema-v1
+        // migration field and must never erase a deliberately configured
+        // crankshaft inertia.
+        if (config.crankshafts.size() == 1
+                && config.crankshafts.front().inheritsLegacyInertia)
+            config.crankshafts.front().momentOfInertiaKgM2 = config.rotatingInertiaKgM2;
+        double configuredInertia = 0.0;
+        double missingRatioSquared = 0.0;
+        for (const auto& crankshaft : config.crankshafts) {
+            const auto ratioSquared = crankshaft.rotationRatio * crankshaft.rotationRatio;
+            if (crankshaft.momentOfInertiaKgM2 > 0.0)
+                configuredInertia += crankshaft.momentOfInertiaKgM2 * ratioSquared;
+            else
+                missingRatioSquared += ratioSquared;
+        }
+        const auto inertiaPerMissingRatio = missingRatioSquared > 0.0
+            ? std::max(0.001, (config.rotatingInertiaKgM2 - configuredInertia)
+                / missingRatioSquared)
+            : 0.0;
+        for (auto& crankshaft : config.crankshafts)
+            if (!(crankshaft.momentOfInertiaKgM2 > 0.0))
+                crankshaft.momentOfInertiaKgM2 = inertiaPerMissingRatio;
+        config.rotatingInertiaKgM2 = 0.0;
+        for (const auto& crankshaft : config.crankshafts)
+            config.rotatingInertiaKgM2 += crankshaft.momentOfInertiaKgM2
+                * crankshaft.rotationRatio * crankshaft.rotationRatio;
     }
     if (config.crankJournals.empty()) {
         for (auto& cylinder : config.cylinders) {
@@ -293,11 +402,31 @@ void normaliseEngineConfig(EngineConfig& config) noexcept {
     for (auto& journal : config.crankJournals) {
         if (journal.crankshaftId == 0) journal.crankshaftId = config.crankshafts.front().id;
     }
-    if (config.intakePaths.empty()) config.intakePaths.push_back(makeDefaultIntakePath(config));
-    else if (config.intakePaths.size() == 1)
-        config.intakePaths.front().geometry = config.intake;
+    if (config.intakePaths.empty()) {
+        config.intakePaths.push_back(makeDefaultIntakePath(config));
+    } else if (config.intakePaths.size() == 1) {
+        // As with crankshafts, a serialised path is an explicit topology. Keep
+        // the legacy/global view mirrored from it instead of silently
+        // overwriting the path during every validation or hot reload.
+        if (config.intakePaths.front().inheritsGlobalGeometry)
+            config.intakePaths.front().geometry = config.intake;
+        else
+            config.intake = config.intakePaths.front().geometry;
+        config.plenumVolumeLitres = config.intake.plenumVolumeLitres;
+        config.throttleDiameterMm = config.intake.throttleDiameterMm;
+    }
     for (auto& bank : config.banks) {
         if (bank.intakeId == 0 && !config.intakePaths.empty()) bank.intakeId = config.intakePaths.front().id;
+    }
+    if (config.exhaustPaths.empty()) {
+        config.exhaustPaths.push_back(makeDefaultExhaustPath(config));
+    } else if (config.exhaustPaths.size() == 1) {
+        // Generated preset paths continue to mirror the legacy/global
+        // geometry. A decoded or authored path is explicit and authoritative.
+        if (config.exhaustPaths.front().inheritsGlobalGeometry)
+            config.exhaustPaths.front().geometry = config.exhaust;
+        else
+            config.exhaust = config.exhaustPaths.front().geometry;
     }
 }
 
@@ -345,7 +474,9 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
     const auto inRange = [](double value, double minimum, double maximum) {
         return std::isfinite(value) && value >= minimum && value <= maximum;
     };
-    if (config.schemaVersion != 1) return "Unsupported engine schema version";
+    if (config.schemaVersion < minimumSupportedEngineSchemaVersion
+            || config.schemaVersion > currentEngineSchemaVersion)
+        return "Unsupported engine schema version";
     if (config.name.empty() || config.name.size() > 128) return "Engine name must contain between 1 and 128 bytes";
     if (config.cycle != EngineCycle::fourStroke || config.fuel != FuelType::gasoline)
         return "Only four-stroke gasoline engines are currently supported";
@@ -535,11 +666,17 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
             || (cam.continuousControl.enabled && cam.continuousControl.samples.empty())
             || cam.continuousControl.samples.size() > 128
             || !validateFlowCurve(cam.intakeFlowCurve) || !validateFlowCurve(cam.exhaustFlowCurve)) return false;
-        for (const auto& sample : cam.continuousControl.samples)
+        for (std::size_t index = 0; index < cam.continuousControl.samples.size(); ++index) {
+            const auto& sample = cam.continuousControl.samples[index];
             if (!inRange(sample.rpm, 0.0, 30'000.0) || !inRange(sample.load, 0.0, 1.5)
                 || !inRange(sample.intakeAdvanceDegrees, -90.0, 90.0)
                 || !inRange(sample.exhaustAdvanceDegrees, -90.0, 90.0)
                 || !inRange(sample.liftMultiplier, 0.1, 2.0)) return false;
+            for (std::size_t other = index + 1; other < cam.continuousControl.samples.size(); ++other)
+                if (std::abs(sample.rpm - cam.continuousControl.samples[other].rpm) <= 1.0e-9
+                    && std::abs(sample.load - cam.continuousControl.samples[other].load) <= 1.0e-12)
+                    return false;
+        }
         return inRange(cam.intakeDurationDegrees, 1.0, 720.0)
             && inRange(cam.exhaustDurationDegrees, 1.0, 720.0)
             && inRange(cam.intakeLiftMm, 0.0, 30.0)
@@ -700,6 +837,158 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
         for (const auto cylinderId : path.cylinderIds)
             if (!cylinderIds.contains(cylinderId) || !assignedExhaustCylinders.insert(cylinderId).second)
                 return "Exhaust paths must reference every cylinder at most once";
+
+        if (path.network) {
+            const auto& network = *path.network;
+            if (network.components.empty() || network.components.size() > 256)
+                return "Custom exhaust graphs must contain between 1 and 256 components";
+            if (network.connections.size() > 1'024)
+                return "Custom exhaust graphs may contain at most 1024 component connections";
+
+            std::unordered_map<std::uint32_t, const ExhaustComponentConfig*> components;
+            std::unordered_map<std::uint32_t, std::vector<std::uint32_t>> outgoing;
+            std::unordered_map<std::uint32_t, std::size_t> componentIncoming;
+            std::unordered_map<std::uint32_t, std::size_t> cylinderIncoming;
+            components.reserve(network.components.size());
+            outgoing.reserve(network.components.size());
+            componentIncoming.reserve(network.components.size());
+            cylinderIncoming.reserve(network.components.size());
+            for (const auto& component : network.components) {
+                const auto requiresLength = component.type == ExhaustComponentType::pipe
+                    || component.type == ExhaustComponentType::resonator
+                    || component.type == ExhaustComponentType::muffler
+                    || component.type == ExhaustComponentType::catalyst;
+                if (static_cast<std::uint8_t>(component.type)
+                        > static_cast<std::uint8_t>(ExhaustComponentType::outlet)
+                    || component.id == 0 || !components.emplace(component.id, &component).second
+                    || !inRange(component.lengthMm, requiresLength ? 1.0 : 0.0, 10'000.0)
+                    || !inRange(component.diameterMm, 5.0, 500.0)
+                    || !inRange(component.volumeLitres, 0.0, 1'000.0)
+                    || !inRange(component.restriction, 0.0, 20.0)
+                    || !inRange(component.resonanceHz, 0.0, 20'000.0)
+                    || !inRange(component.acousticGain, 0.0, 8.0)
+                    || !inRange(component.dischargeCoefficient, 0.02, 1.5))
+                    return "Custom exhaust component IDs and dimensions must be finite, unique and valid";
+                outgoing.try_emplace(component.id);
+                componentIncoming.try_emplace(component.id, 0U);
+                cylinderIncoming.try_emplace(component.id, 0U);
+            }
+
+            std::unordered_set<std::uint64_t> uniqueConnections;
+            for (const auto& connection : network.connections) {
+                if (!components.contains(connection.fromComponentId)
+                    || !components.contains(connection.toComponentId)
+                    || connection.fromComponentId == connection.toComponentId)
+                    return "Custom exhaust connections must reference two distinct configured components";
+                const auto key = (static_cast<std::uint64_t>(connection.fromComponentId) << 32U)
+                    | connection.toComponentId;
+                if (!uniqueConnections.insert(key).second)
+                    return "Custom exhaust component connections must be unique";
+                outgoing[connection.fromComponentId].push_back(connection.toComponentId);
+                ++componentIncoming[connection.toComponentId];
+            }
+
+            std::unordered_set<std::uint32_t> pathCylinderIds(path.cylinderIds.begin(), path.cylinderIds.end());
+            std::unordered_set<std::uint32_t> connectedCylinderIds;
+            for (const auto& connection : network.cylinderConnections) {
+                if (!pathCylinderIds.contains(connection.cylinderId)
+                    || !components.contains(connection.componentId)
+                    || !connectedCylinderIds.insert(connection.cylinderId).second)
+                    return "Custom exhaust graphs must map each path cylinder to one configured component";
+                ++cylinderIncoming[connection.componentId];
+            }
+            if (connectedCylinderIds != pathCylinderIds)
+                return "Custom exhaust graphs must map every path cylinder exactly once";
+
+            for (const auto& component : network.components) {
+                const auto incoming = componentIncoming[component.id] + cylinderIncoming[component.id];
+                const auto outputCount = outgoing[component.id].size();
+                switch (component.type) {
+                case ExhaustComponentType::merge:
+                    if (incoming < 2 || outputCount != 1)
+                        return "An exhaust merge requires at least two inputs and exactly one output";
+                    break;
+                case ExhaustComponentType::splitter:
+                    if (incoming != 1 || outputCount < 2)
+                        return "An exhaust splitter requires exactly one input and at least two outputs";
+                    break;
+                case ExhaustComponentType::outlet:
+                    if (incoming < 1 || outputCount != 0)
+                        return "An exhaust outlet requires at least one input and cannot have outputs";
+                    break;
+                default:
+                    if (incoming != 1 || outputCount != 1)
+                        return "Pipe, resonator, muffler and catalyst components require one input and one output";
+                    break;
+                }
+            }
+
+            // Kahn's algorithm rejects cycles independently of cylinder roots.
+            auto remainingIncoming = componentIncoming;
+            std::vector<std::uint32_t> ready;
+            ready.reserve(network.components.size());
+            for (const auto& component : network.components)
+                if (remainingIncoming[component.id] == 0) ready.push_back(component.id);
+            std::size_t visitedCount = 0;
+            for (std::size_t index = 0; index < ready.size(); ++index) {
+                const auto componentId = ready[index];
+                ++visitedCount;
+                for (const auto nextId : outgoing[componentId])
+                    if (--remainingIncoming[nextId] == 0) ready.push_back(nextId);
+            }
+            if (visitedCount != network.components.size())
+                return "Custom exhaust component connections must form an acyclic graph";
+
+            std::unordered_set<std::uint32_t> reachable;
+            std::vector<std::uint32_t> frontier;
+            for (const auto& connection : network.cylinderConnections)
+                if (reachable.insert(connection.componentId).second) frontier.push_back(connection.componentId);
+            for (std::size_t index = 0; index < frontier.size(); ++index)
+                for (const auto nextId : outgoing[frontier[index]])
+                    if (reachable.insert(nextId).second) frontier.push_back(nextId);
+            if (reachable.size() != network.components.size())
+                return "Every custom exhaust component must be reachable from a mapped cylinder";
+
+            std::unordered_map<std::uint32_t, bool> reachesOutletMemo;
+            std::function<bool(std::uint32_t)> everyRouteReachesOutlet = [&](std::uint32_t componentId) {
+                if (const auto found = reachesOutletMemo.find(componentId); found != reachesOutletMemo.end())
+                    return found->second;
+                const auto component = components.at(componentId);
+                if (component->type == ExhaustComponentType::outlet)
+                    return reachesOutletMemo.emplace(componentId, true).first->second;
+                const auto& outputs = outgoing[componentId];
+                const auto valid = !outputs.empty() && std::all_of(outputs.begin(), outputs.end(),
+                    [&everyRouteReachesOutlet](std::uint32_t nextId) { return everyRouteReachesOutlet(nextId); });
+                reachesOutletMemo.emplace(componentId, valid);
+                return valid;
+            };
+            for (const auto& connection : network.cylinderConnections)
+                if (!everyRouteReachesOutlet(connection.componentId))
+                    return "Every route from a cylinder in a custom exhaust graph must reach an outlet";
+
+            // Bound path expansion so a valid-looking splitter DAG cannot
+            // cause exponential work or memory use in the runtime compiler.
+            constexpr std::size_t maximumRoutes = 4'096;
+            std::unordered_map<std::uint32_t, std::size_t> routeCounts;
+            routeCounts.reserve(network.components.size());
+            for (auto iterator = ready.rbegin(); iterator != ready.rend(); ++iterator) {
+                const auto componentId = *iterator;
+                if (components.at(componentId)->type == ExhaustComponentType::outlet) {
+                    routeCounts[componentId] = 1;
+                    continue;
+                }
+                std::size_t count = 0;
+                for (const auto nextId : outgoing[componentId])
+                    count = std::min(maximumRoutes + 1, count + routeCounts[nextId]);
+                routeCounts[componentId] = count;
+            }
+            std::size_t totalRoutes = 0;
+            for (const auto& connection : network.cylinderConnections)
+                totalRoutes = std::min(maximumRoutes + 1,
+                    totalRoutes + routeCounts[connection.componentId]);
+            if (totalRoutes > maximumRoutes)
+                return "Custom exhaust graph expands to more than 4096 cylinder-to-outlet routes";
+        }
     }
     if (!config.exhaustPaths.empty() && assignedExhaustCylinders != cylinderIds)
         return "Configured exhaust paths must assign every cylinder exactly once";

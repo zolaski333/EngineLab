@@ -10,6 +10,7 @@
 #include <enginelab/physics/IndicatedWorkModel.hpp>
 #include <enginelab/physics/ValveTrainModel.hpp>
 #include <enginelab/physics/HelmholtzRunnerModel.hpp>
+#include <enginelab/physics/MechanicalKinematics.hpp>
 #include <enginelab/simulation/IEngineSimulation.hpp>
 #include <enginelab/events/CylinderPressureSample.hpp>
 #include <enginelab/foundation/SpscQueue.hpp>
@@ -29,7 +30,11 @@ public:
     void reset() noexcept override;
 private:
     [[nodiscard]] RunningState determineRunningState(const EngineControls&) const noexcept;
+    void accumulateCycleTelemetry(double previousAngleDegrees, double travelledDegrees,
+                                  double dtSeconds, double indicatedTorqueNm,
+                                  double brakeTorqueNm) noexcept;
     EngineConfig config_;
+    EngineKinematicsReference kinematicsReference_;
     IEcuModel& ecu_;
     IPhysicsModel& physics_;
     IFiringEventGenerator& eventGenerator_;
@@ -41,6 +46,9 @@ private:
     std::array<double, 32> chamberPressureBar_ {};
     std::array<double, 32> intakeFlowMgPerCycle_ {};
     std::array<double, 32> exhaustFlowMgPerCycle_ {};
+    std::array<double, 32> intakeFlowMgThisCycle_ {};
+    std::array<double, 32> exhaustFlowMgThisCycle_ {};
+    std::array<bool, 32> cylinderFlowCycleStarted_ {};
     std::array<double, 32> cylinderWallTemperatureC_ {};
     std::array<GasCell, 32> intakePlenumGas_ {};
     std::size_t intakePlenumCount_ { 1 };
@@ -51,6 +59,7 @@ private:
     std::array<GasCell, 32> exhaustRunnerGas_ {};
     std::array<double, 32> instantaneousCombustionPulse_ {};
     std::array<double, 32> injectedFuelMolesThisCycle_ {};
+    std::array<double, 32> meteredFuelMolesLastCycle_ {};
     std::array<double, 32> deliveredFuelMolesLastCycle_ {};
     std::array<double, 32> requestedFuelMolesThisCycle_ {};
     std::array<double, 32> trappedAirMassMgLastCycle_ {};
@@ -71,5 +80,11 @@ private:
     std::array<bool, 32> cylinderMisfires_ {};
     std::unique_ptr<SpscQueue<CylinderPressureSample, 1'024>> pressureSamples_;
     std::uint32_t randomState_ { 0x6d2b79f5U };
+    double eventEvaluationAngleDegrees_ { 719.9 };
+    double eventEvaluationTimeSeconds_ { 0.0 };
+    double indicatedWorkThisCycleJoules_ { 0.0 };
+    double brakeWorkThisCycleJoules_ { 0.0 };
+    double cycleElapsedSeconds_ { 0.0 };
+    bool cycleTelemetryStarted_ { false };
 };
 } // namespace enginelab

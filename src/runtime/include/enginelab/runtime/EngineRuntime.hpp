@@ -18,7 +18,10 @@
 
 namespace enginelab {
 using FiringEventQueue = SpscQueue<FiringEvent, 2'048>;
-using CylinderPressureQueue = SpscQueue<CylinderPressureSample, 2'048>;
+// The runtime publishes at most 96 kHz of pressure telemetry. 8,191 usable
+// slots retain more than 85 ms, covering the adaptive look-ahead plus a full
+// 2,048-sample callback at every supported sample rate.
+using CylinderPressureQueue = SpscQueue<CylinderPressureSample, 8'192>;
 enum class AudioExhaustPreset : int { street = 0, openHeaders = 1, turboMuffled = 2, longTube = 3, motorcycle = 4 };
 
 struct RealtimeAudioState final {
@@ -39,8 +42,32 @@ struct RealtimeAudioState final {
     std::atomic<float> manifoldPressureKpa { 101.325F };
     std::atomic<float> exhaustPressureKpa { 101.325F };
     std::atomic<float> exhaustFlowGramsPerSecond { 0.0F };
+    std::atomic<float> exhaustTemperatureC { 20.0F };
+    std::atomic<float> exhaustReferenceSoundSpeedMps { 520.0F };
     std::atomic<float> boostPressureRatio { 1.0F };
     std::atomic<float> exhaustReflectionSeconds { 0.006F };
+    std::atomic<float> ambientPressureKpa { 101.325F };
+    std::atomic<std::uint64_t> producerTimeNanoseconds { 0 };
+    std::atomic<std::uint32_t> exhaustPathCount { 1 };
+    std::array<std::atomic<float>, 8> exhaustPathOpenness {
+        0.5F, 0.5F, 0.5F, 0.5F, 0.5F, 0.5F, 0.5F, 0.5F
+    };
+    std::array<std::atomic<float>, 8> exhaustPathReflectionSeconds {
+        0.006F, 0.006F, 0.006F, 0.006F, 0.006F, 0.006F, 0.006F, 0.006F
+    };
+    std::array<std::atomic<float>, 8> exhaustPathGain {
+        1.0F, 1.0F, 1.0F, 1.0F, 1.0F, 1.0F, 1.0F, 1.0F
+    };
+    std::array<std::atomic<std::uint32_t>, 32> cylinderExhaustPathIndex {};
+    // Per-cylinder graph transmission. The pressure renderer applies it before
+    // the runner waveguide; firing events carry the same metric in their own
+    // payload, so neither source is multiplied again at the path output.
+    std::array<std::atomic<float>, 32> cylinderExhaustGain {
+        1.0F, 1.0F, 1.0F, 1.0F, 1.0F, 1.0F, 1.0F, 1.0F,
+        1.0F, 1.0F, 1.0F, 1.0F, 1.0F, 1.0F, 1.0F, 1.0F,
+        1.0F, 1.0F, 1.0F, 1.0F, 1.0F, 1.0F, 1.0F, 1.0F,
+        1.0F, 1.0F, 1.0F, 1.0F, 1.0F, 1.0F, 1.0F, 1.0F
+    };
     std::atomic<float> volume { 1.0F };
     std::atomic<float> convolution { 0.45F };
     std::atomic<float> highFrequencyGain { 1.0F };
@@ -61,13 +88,20 @@ struct RealtimeAudioState final {
     std::atomic<float> meanBoreMm { 84.0F };
     std::atomic<float> peakPistonAccelerationG { 0.0F };
     std::array<std::atomic<float>, 32> runnerDelaySeconds {};
+    // Acoustic scattering uses cross-sectional admittance instead of assuming
+    // that every primary and outlet has the same impedance.
+    std::array<std::atomic<float>, 32> cylinderExhaustAreaM2 {};
+    std::array<std::atomic<float>, 8> exhaustPathOutletAreaM2 {};
 };
 static_assert(std::atomic<float>::is_always_lock_free, "Realtime audio telemetry requires lock-free float atomics");
+static_assert(std::atomic<std::uint64_t>::is_always_lock_free,
+              "Realtime audio clock publication requires a lock-free 64-bit atomic");
 
 /** Owns the fixed-rate simulation thread and the simulation-to-audio event queue. */
 class EngineRuntime final {
 public:
-    explicit EngineRuntime(EngineConfig);
+    explicit EngineRuntime(EngineConfig,
+                           std::shared_ptr<calibration::CalibrationStore> calibrations = {});
     ~EngineRuntime();
     EngineRuntime(const EngineRuntime&) = delete;
     EngineRuntime& operator=(const EngineRuntime&) = delete;
@@ -95,6 +129,7 @@ public:
     void setMechanicalGain(double value) noexcept { audioState_.mechanicalGain.store(static_cast<float>(std::clamp(value, 0.0, 2.0))); }
     void setExhaustPreset(AudioExhaustPreset value) noexcept { audioState_.exhaustPreset.store(static_cast<int>(value), std::memory_order_relaxed); }
     [[nodiscard]] bool dynoHoldEnabled() const noexcept { return dynoHoldEnabled_.load(); }
+    void setAirFuelRatioTrim(double value) noexcept { ecu_.setAirFuelRatioTrim(value); }
     void setTargetAirFuelRatio(double value) noexcept { ecu_.setTargetAirFuelRatio(value); }
     void setIgnitionTrimDegrees(double value) noexcept { ecu_.setIgnitionTrimDegrees(value); }
     void setIgnitionAdvanceDegrees(double value) noexcept { setIgnitionTrimDegrees(value); }
@@ -104,20 +139,28 @@ public:
     [[nodiscard]] double timeScale() const noexcept { return timeScale_.load(); }
     void startDyno();
     void stopDyno();
-    [[nodiscard]] bool dynoRunning() const noexcept { return dynoRunning_.load(); }
+    [[nodiscard]] bool dynoRunning() const noexcept {
+        return dynoRequestedRunning_.load(std::memory_order_acquire);
+    }
     [[nodiscard]] DynoRun currentDynoRun() const;
     [[nodiscard]] std::vector<DynoRun> dynoHistory() const;
     void deleteDynoRun(std::uint64_t id);
     [[nodiscard]] EngineState snapshot() const;
     [[nodiscard]] FiringEventQueue& audioEvents() noexcept { return eventQueue_; }
-    [[nodiscard]] CylinderPressureQueue& cylinderPressureSamples() noexcept { return pressureQueue_; }
+    [[nodiscard]] CylinderPressureQueue& cylinderPressureSamples() noexcept { return *pressureQueue_; }
     [[nodiscard]] RealtimeAudioState& audioState() noexcept { return audioState_; }
+    [[nodiscard]] std::shared_ptr<calibration::CalibrationStore> calibrationStore() const noexcept {
+        return ecu_.calibrationStore();
+    }
     [[nodiscard]] std::uint64_t droppedEventCount() const noexcept { return droppedEvents_.load(); }
     [[nodiscard]] std::uint64_t droppedPressureSampleCount() const noexcept { return droppedPressureSamples_.load(); }
     [[nodiscard]] std::uint64_t timingOverrunCount() const noexcept { return timingOverruns_.load(); }
 private:
     void run(std::stop_token stopToken);
-    [[nodiscard]] double updateDriveline(double dtSeconds, const EngineState& engineState, double requestedLoad) noexcept;
+    void beginDynoSession();
+    void finishDynoSession();
+    void updateDriveline(double dtSeconds, const EngineState& engineState,
+                         double requestedLoad) noexcept;
     EngineConfig config_;
     SimpleEcuModel ecu_;
     SimplifiedGasolinePhysics physics_;
@@ -127,7 +170,9 @@ private:
     DrivelineModel driveline_;
     DrivelineOutput drivelineOutput_;
     FiringEventQueue eventQueue_;
-    CylinderPressureQueue pressureQueue_;
+    // Large enough for adaptive audio look-ahead; heap storage keeps
+    // EngineRuntime safe to instantiate in stack-based tools/tests.
+    std::unique_ptr<CylinderPressureQueue> pressureQueue_;
     RealtimeAudioState audioState_;
     mutable std::mutex snapshotMutex_;
     EngineState snapshot_;
@@ -138,6 +183,7 @@ private:
     std::atomic<double> clutchPressure_ { 1.0 };
     std::atomic<double> brakePressure_ { 0.0 };
     std::atomic<int> gear_ { -1 };
+    std::atomic<std::uint64_t> gearCommandGeneration_ { 0 };
     std::atomic<bool> dynoHoldEnabled_ { false };
     std::atomic<double> dynoHoldRpm_ { 2'500.0 };
     std::atomic<std::uint64_t> droppedEvents_ { 0 };
@@ -145,12 +191,16 @@ private:
     std::atomic<std::uint64_t> timingOverruns_ { 0 };
     std::atomic<bool> paused_ { false };
     std::atomic<double> timeScale_ { 1.0 };
-    std::atomic<bool> dynoRunning_ { false };
+    // UI writes only the desired state. The simulation thread owns all mutable
+    // session fields below and reconciles this mailbox once per tick.
+    std::atomic<bool> dynoRequestedRunning_ { false };
+    bool dynoActive_ { false };
     mutable std::mutex dynoMutex_;
     DynoRun currentRun_;
     std::vector<DynoRun> dynoHistory_;
     std::uint64_t nextDynoId_ { 1 };
     double dynoElapsed_ { 0.0 };
+    double dynoStartupElapsed_ { 0.0 };
     double nextSampleRpm_ { 0.0 };
     double dynoTargetRpm_ { 0.0 };
     double dynoStableElapsed_ { 0.0 };

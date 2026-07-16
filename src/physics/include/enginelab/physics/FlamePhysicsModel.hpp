@@ -40,7 +40,7 @@ struct FlameStepResult final {
 
 /**
  * Metghalchi-Keck laminar flame speed augmented by piston-driven turbulence,
- * dilution and an ellipsoidal flame-front geometry.
+ * dilution and an effective cylindrical flame-front geometry (pi * r^2 * h).
  */
 class FlamePhysicsModel final {
 public:

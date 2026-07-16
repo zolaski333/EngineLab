@@ -15,6 +15,28 @@ using Json = nlohmann::json;
 [[nodiscard]] std::string forcedInductionTypeName(ForcedInductionType value) {
     return value == ForcedInductionType::supercharger ? "supercharger" : "turbocharger";
 }
+[[nodiscard]] const char* exhaustComponentTypeName(ExhaustComponentType value) noexcept {
+    switch (value) {
+    case ExhaustComponentType::pipe: return "pipe";
+    case ExhaustComponentType::merge: return "merge";
+    case ExhaustComponentType::splitter: return "splitter";
+    case ExhaustComponentType::resonator: return "resonator";
+    case ExhaustComponentType::muffler: return "muffler";
+    case ExhaustComponentType::catalyst: return "catalyst";
+    case ExhaustComponentType::outlet: return "outlet";
+    }
+    return "pipe";
+}
+[[nodiscard]] std::optional<ExhaustComponentType> decodeExhaustComponentType(std::string_view value) noexcept {
+    if (value == "pipe") return ExhaustComponentType::pipe;
+    if (value == "merge") return ExhaustComponentType::merge;
+    if (value == "splitter") return ExhaustComponentType::splitter;
+    if (value == "resonator") return ExhaustComponentType::resonator;
+    if (value == "muffler") return ExhaustComponentType::muffler;
+    if (value == "catalyst") return ExhaustComponentType::catalyst;
+    if (value == "outlet") return ExhaustComponentType::outlet;
+    return std::nullopt;
+}
 [[nodiscard]] std::string layoutName(EngineLayout value) {
     switch (value) {
     case EngineLayout::inlineLayout: return "inline";
@@ -156,17 +178,42 @@ std::string JsonEngineSerializer::encode(const EngineConfig& config) const {
         {"cylinder_ids", bank.cylinderIds}, {"intake_id", bank.intakeId}, {"exhaust_path_id", bank.exhaustPathId},
         {"camshafts", camshaftJson(bank.camshafts)} });
     Json exhaustPaths = Json::array();
-    for (const auto& path : config.exhaustPaths) exhaustPaths.push_back({ {"id", path.id},
-        {"cylinder_ids", path.cylinderIds}, {"impulse_response", path.impulseResponsePath},
-        {"audio_volume", path.audioVolume}, {"geometry", {{"primary_length_mm", path.geometry.primaryLengthMm},
-            {"primary_diameter_mm", path.geometry.primaryDiameterMm}, {"collector_diameter_mm", path.geometry.collectorDiameterMm},
-            {"muffler_restriction", path.geometry.mufflerRestriction}, {"outlet_diameter_mm", path.geometry.outletDiameterMm},
-            {"collector_volume_l", path.geometry.collectorVolumeLitres},
-            {"outlet_discharge_coefficient", path.geometry.outletDischargeCoefficient}}} });
+    for (const auto& path : config.exhaustPaths) {
+        Json encodedPath = { {"id", path.id}, {"cylinder_ids", path.cylinderIds},
+            {"impulse_response", path.impulseResponsePath}, {"audio_volume", path.audioVolume},
+            {"geometry", {{"primary_length_mm", path.geometry.primaryLengthMm},
+                {"primary_diameter_mm", path.geometry.primaryDiameterMm},
+                {"collector_diameter_mm", path.geometry.collectorDiameterMm},
+                {"muffler_restriction", path.geometry.mufflerRestriction},
+                {"outlet_diameter_mm", path.geometry.outletDiameterMm},
+                {"collector_volume_l", path.geometry.collectorVolumeLitres},
+                {"outlet_discharge_coefficient", path.geometry.outletDischargeCoefficient}}} };
+        if (path.network) {
+            Json components = Json::array();
+            for (const auto& component : path.network->components)
+                components.push_back({ {"id", component.id}, {"type", exhaustComponentTypeName(component.type)},
+                    {"length_mm", component.lengthMm}, {"diameter_mm", component.diameterMm},
+                    {"volume_l", component.volumeLitres}, {"restriction", component.restriction},
+                    {"resonance_hz", component.resonanceHz}, {"acoustic_gain", component.acousticGain},
+                    {"discharge_coefficient", component.dischargeCoefficient} });
+            Json cylinderConnections = Json::array();
+            for (const auto& connection : path.network->cylinderConnections)
+                cylinderConnections.push_back({ {"cylinder_id", connection.cylinderId},
+                    {"to_component_id", connection.componentId} });
+            Json connections = Json::array();
+            for (const auto& connection : path.network->connections)
+                connections.push_back({ {"from_component_id", connection.fromComponentId},
+                    {"to_component_id", connection.toComponentId} });
+            encodedPath["graph"] = { {"components", std::move(components)},
+                {"cylinder_connections", std::move(cylinderConnections)},
+                {"connections", std::move(connections)} };
+        }
+        exhaustPaths.push_back(std::move(encodedPath));
+    }
     Json timingCurve = Json::array();
     for (const auto& sample : config.ignition.timingCurve)
         timingCurve.push_back({ {"rpm", sample.rpm}, {"advance_deg", sample.advanceDegrees} });
-    Json document = { {"schema_version", config.schemaVersion}, {"engine", {
+    Json document = { {"schema_version", currentEngineSchemaVersion}, {"engine", {
         {"name", config.name}, {"cycle", cycleName(config.cycle)}, {"fuel", fuelName(config.fuel)},
         {"fuel_properties", {{"name", config.fuelProperties.name},
                              {"lower_heating_value_mj_per_kg", config.fuelProperties.lowerHeatingValueMjPerKg},
@@ -283,7 +330,9 @@ EngineDecodeResult JsonEngineSerializer::decode(std::string_view text) const noe
         const auto& engine = document.at("engine");
         EngineConfig config;
         config.schemaVersion = document.at("schema_version").get<std::uint32_t>();
-        if (config.schemaVersion != 1) return { std::nullopt, "Unsupported schema version" };
+        if (config.schemaVersion < minimumSupportedEngineSchemaVersion
+                || config.schemaVersion > currentEngineSchemaVersion)
+            return { std::nullopt, "Unsupported schema version" };
         config.name = engine.at("name").get<std::string>();
         const auto cycle = engine.at("cycle").get<std::string>();
         if (cycle == "four_stroke") config.cycle = EngineCycle::fourStroke;
@@ -542,6 +591,34 @@ EngineDecodeResult JsonEngineSerializer::decode(std::string_view text) const noe
                     path.geometry.outletDiameterMm = geometry.value("outlet_diameter_mm", path.geometry.outletDiameterMm);
                     path.geometry.collectorVolumeLitres = geometry.value("collector_volume_l", path.geometry.collectorVolumeLitres);
                     path.geometry.outletDischargeCoefficient = geometry.value("outlet_discharge_coefficient", path.geometry.outletDischargeCoefficient);
+                }
+                if (item.contains("graph") && !item.at("graph").is_null()) {
+                    const auto& encodedGraph = item.at("graph");
+                    ExhaustNetworkConfig network;
+                    for (const auto& encodedComponent : encodedGraph.at("components")) {
+                        const auto typeName = encodedComponent.at("type").get<std::string>();
+                        const auto type = decodeExhaustComponentType(typeName);
+                        if (!type) return { std::nullopt, "Unknown exhaust component type: " + typeName };
+                        ExhaustComponentConfig component;
+                        component.id = encodedComponent.at("id");
+                        component.type = *type;
+                        component.lengthMm = encodedComponent.value("length_mm", component.lengthMm);
+                        component.diameterMm = encodedComponent.value("diameter_mm", component.diameterMm);
+                        component.volumeLitres = encodedComponent.value("volume_l", component.volumeLitres);
+                        component.restriction = encodedComponent.value("restriction", component.restriction);
+                        component.resonanceHz = encodedComponent.value("resonance_hz", component.resonanceHz);
+                        component.acousticGain = encodedComponent.value("acoustic_gain", component.acousticGain);
+                        component.dischargeCoefficient = encodedComponent.value(
+                            "discharge_coefficient", component.dischargeCoefficient);
+                        network.components.push_back(component);
+                    }
+                    for (const auto& encodedConnection : encodedGraph.at("cylinder_connections"))
+                        network.cylinderConnections.push_back({ encodedConnection.at("cylinder_id"),
+                            encodedConnection.at("to_component_id") });
+                    for (const auto& encodedConnection : encodedGraph.at("connections"))
+                        network.connections.push_back({ encodedConnection.at("from_component_id"),
+                            encodedConnection.at("to_component_id") });
+                    path.network = std::move(network);
                 }
                 config.exhaustPaths.push_back(std::move(path));
             }

@@ -1,0 +1,16 @@
+add_executable(EngineLabExhaustTests ExhaustGraphTests.cpp)
+target_link_libraries(EngineLabExhaustTests PRIVATE EngineLab::Exhaust EngineLab::Serialization)
+enginelab_set_warnings(EngineLabExhaustTests)
+add_test(NAME EngineLab.Exhaust COMMAND EngineLabExhaustTests)
+
+add_executable(EngineLabExhaustPathTopologyEditorTests ExhaustPathTopologyEditorTests.cpp)
+target_link_libraries(EngineLabExhaustPathTopologyEditorTests PRIVATE EngineLab::Exhaust)
+enginelab_set_warnings(EngineLabExhaustPathTopologyEditorTests)
+add_test(NAME EngineLab.ExhaustPathTopologyEditor COMMAND EngineLabExhaustPathTopologyEditorTests)
+
+add_executable(EngineLabExhaustSimulationTests ExhaustSimulationTests.cpp)
+target_link_libraries(EngineLabExhaustSimulationTests PRIVATE
+    EngineLab::Foundation EngineLab::Calibration EngineLab::Events EngineLab::Physics
+    EngineLab::Ecu EngineLab::Exhaust EngineLab::Simulation)
+enginelab_set_warnings(EngineLabExhaustSimulationTests)
+add_test(NAME EngineLab.ExhaustSimulation COMMAND EngineLabExhaustSimulationTests)

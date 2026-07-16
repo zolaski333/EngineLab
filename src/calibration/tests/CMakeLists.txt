@@ -1,0 +1,6 @@
+find_package(Threads REQUIRED)
+add_executable(EngineLabCalibrationTests CalibrationTests.cpp)
+target_link_libraries(EngineLabCalibrationTests PRIVATE EngineLab::Calibration Threads::Threads)
+enginelab_set_warnings(EngineLabCalibrationTests)
+add_test(NAME EngineLab.Calibration COMMAND EngineLabCalibrationTests)
+

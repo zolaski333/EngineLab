@@ -255,7 +255,9 @@ public:
                                                         double boundaryTemperatureK,
                                                         double effectiveAreaM2,
                                                         double dischargeCoefficient,
-                                                        double dtSeconds) noexcept;
+                                                        double dtSeconds,
+                                                        double targetToBoundaryDirectionX = 1.0,
+                                                        double targetToBoundaryDirectionY = 0.0) noexcept;
     [[nodiscard]] static CombustionReaction reactGasoline(GasCell& cell, double requestedFraction,
                                                            double efficiency) noexcept;
     [[nodiscard]] static CombustionReaction reactFuel(GasCell& cell, double requestedFraction,
@@ -286,11 +288,14 @@ public:
 
 private:
     static GasFlowResult transfer(GasCell& source, GasCell& sink, double moles) noexcept;
+    static void restorePairEnergy(GasCell& first, GasCell& second,
+                                  double targetEnergyJoules) noexcept;
     [[nodiscard]] static double pressureEquilibriumMoles(const GasCell& source,
                                                          const GasCell& sink,
                                                          double directionX,
                                                          double directionY,
-                                                         double requestedMoles) noexcept;
+                                                         double requestedMoles,
+                                                         bool includeDynamicPressure) noexcept;
 
     /**
      * Core isentropic mass-flow equation.

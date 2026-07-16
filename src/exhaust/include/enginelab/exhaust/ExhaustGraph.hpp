@@ -1,8 +1,23 @@
 #pragma once
 #include <enginelab/exhaust/IExhaustModel.hpp>
+#include <array>
+#include <cstddef>
 #include <cstdint>
 #include <vector>
 namespace enginelab {
+
+inline constexpr std::size_t maximumExhaustAcousticModes = 8;
+
+/** One resonance retained by the topology compiler.
+ *
+ * relativeEnergy is normalised within its containing route or cylinder. It is
+ * an acoustic energy share, not an amplitude gain.
+ */
+struct ExhaustAcousticMode final {
+    double frequencyHz { 0.0 };
+    double relativeEnergy { 0.0 };
+};
+
 enum class ExhaustNodeType : std::uint8_t { port, pipe, merge, splitter, resonator, muffler, catalyst, outlet };
 struct ExhaustNode final {
     std::uint32_t id {};
@@ -13,20 +28,95 @@ struct ExhaustNode final {
     double resonanceHz { 0.0 };
     double audioGain { 1.0 };
     std::uint32_t pathIndex { 0 };
+    // Zero for generated legacy nodes; otherwise the path-local config ID.
+    std::uint32_t sourceComponentId { 0 };
+    // Relative coupling of this component's local resonance. Route-length
+    // modes are compiled separately and therefore do not use this value.
+    double resonanceStrength { 0.0 };
 };
 struct ExhaustEdge final { std::uint32_t from {}; std::uint32_t to {}; };
+
+/** Precomputed metrics for one cylinder-to-outlet route through the DAG. */
+struct ExhaustRoute final {
+    std::uint32_t cylinderId { 0 };
+    std::uint32_t pathIndex { 0 };
+    std::uint32_t outletNodeId { 0 };
+    double lengthMm { 0.0 };
+    double delaySeconds { 0.0 };
+    double restriction { 0.0 };
+    double resonanceHz { 0.0 };
+    double audioGain { 1.0 };
+    std::size_t modeCount { 0 };
+    std::array<ExhaustAcousticMode, maximumExhaustAcousticModes> modes {};
+};
+
+/** Energy-combined acoustic metrics for all routes from one cylinder. */
+struct ExhaustCylinderAcoustics final {
+    std::uint32_t cylinderId { 0 };
+    std::uint32_t pathIndex { 0 };
+    std::size_t routeCount { 0 };
+    double meanLengthMm { 0.0 };
+    // Delay of the highest-energy route (shortest route on an exact tie).
+    // This is the best causal scalar proxy for consumers that cannot render
+    // the individually retained routes.
+    double delaySeconds { 0.0 };
+    double resonanceHz { 0.0 };
+    double equivalentRestriction { 0.0 };
+    // Includes path volume, cylinder/component acoustic gains, splitter
+    // energy distribution and restriction attenuation exactly once.
+    double transmissionGain { 1.0 };
+    // Appended diagnostics preserve positional aggregate initialisation of
+    // the original scalar API.
+    double meanDelaySeconds { 0.0 };
+    double firstArrivalDelaySeconds { 0.0 };
+    double lastArrivalDelaySeconds { 0.0 };
+    double rmsDelaySpreadSeconds { 0.0 };
+    std::size_t modeCount { 0 };
+    std::array<ExhaustAcousticMode, maximumExhaustAcousticModes> modes {};
+};
 
 /** Directed exhaust topology shared by back-pressure and acoustic event propagation. */
 class ExhaustGraph final : public IExhaustModel {
 public:
     [[nodiscard]] static ExhaustGraph makeForEngine(const EngineConfig&);
+    /** Compile with an explicit representative exhaust-gas temperature.
+     *
+     * The graph is static, so callers with a measured or simulated design
+     * temperature can use this overload. The legacy overload selects a
+     * conservative nominal temperature derived from ambient conditions.
+     */
+    [[nodiscard]] static ExhaustGraph makeForEngine(
+        const EngineConfig&, double referenceExhaustTemperatureC);
     [[nodiscard]] double backPressureKpa(const EngineState&) const noexcept override;
     void process(FiringEvent&) const noexcept override;
     [[nodiscard]] const std::vector<ExhaustNode>& nodes() const noexcept { return nodes_; }
+    [[nodiscard]] const std::vector<ExhaustEdge>& edges() const noexcept { return edges_; }
+    [[nodiscard]] const std::vector<ExhaustRoute>& routes() const noexcept { return routes_; }
+    [[nodiscard]] double effectiveRestriction() const noexcept { return effectiveRestriction_; }
+    [[nodiscard]] double referenceWaveSpeedMps() const noexcept {
+        return waveSpeedMmPerSecond_ * 0.001;
+    }
+    [[nodiscard]] ExhaustCylinderAcoustics acousticsForCylinder(
+        std::uint32_t cylinderId) const noexcept;
+    [[nodiscard]] ExhaustPathFlowProperties pathFlowProperties(
+        std::size_t pathIndex) const noexcept override;
+    [[nodiscard]] ExhaustCylinderFlowProperties cylinderFlowProperties(
+        std::uint32_t cylinderId) const noexcept override;
 private:
+    struct CylinderRestriction final {
+        std::uint32_t cylinderId { 0 };
+        std::uint32_t pathIndex { 0 };
+        double equivalentRestriction { 0.0 };
+    };
     std::vector<ExhaustNode> nodes_;
     std::vector<ExhaustEdge> edges_;
+    std::vector<ExhaustRoute> routes_;
+    std::vector<CylinderRestriction> cylinderRestrictions_;
+    std::vector<ExhaustPathFlowProperties> pathFlowProperties_;
+    std::vector<ExhaustCylinderFlowProperties> cylinderFlowProperties_;
     double effectiveRestriction_ { 0.0 };
+    double legacyEffectiveRestriction_ { 0.0 };
     double ambientPressureKpa_ { 101.325 };
+    double waveSpeedMmPerSecond_ { 520'000.0 };
 };
 } // namespace enginelab

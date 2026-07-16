@@ -1,4 +1,5 @@
 #include <enginelab/runtime/EngineRuntime.hpp>
+#include <enginelab/runtime/MonotonicPublicationTimeline.hpp>
 #include <algorithm>
 #include <chrono>
 #include <numbers>
@@ -10,14 +11,41 @@
 
 namespace enginelab {
 namespace {
+constexpr std::size_t maximumAudioExhaustPaths = 8;
+
 [[nodiscard]] EngineConfig normalised(EngineConfig config) {
     normaliseEngineConfig(config);
     return config;
 }
+
+[[nodiscard]] std::size_t exhaustPathIndexFor(const EngineConfig& config,
+                                              const CylinderConfig& cylinder) noexcept {
+    const auto path = std::find_if(config.exhaustPaths.begin(), config.exhaustPaths.end(),
+        [&cylinder](const ExhaustPathConfig& item) {
+            return std::find(item.cylinderIds.begin(), item.cylinderIds.end(), cylinder.id)
+                != item.cylinderIds.end();
+        });
+    return path != config.exhaustPaths.end()
+        ? static_cast<std::size_t>(std::distance(config.exhaustPaths.begin(), path)) : 0U;
 }
-EngineRuntime::EngineRuntime(EngineConfig config)
-    : config_(normalised(std::move(config))), exhaust_(ExhaustGraph::makeForEngine(config_)),
-      simulator_(config_, ecu_, physics_, eventGenerator_, exhaust_), driveline_(config_) {
+
+[[nodiscard]] const ExhaustConfig& exhaustGeometryAt(const EngineConfig& config,
+                                                     std::size_t pathIndex) noexcept {
+    return pathIndex < config.exhaustPaths.size()
+        ? config.exhaustPaths[pathIndex].geometry : config.exhaust;
+}
+
+[[nodiscard]] double circularAreaM2(double diameterMm) noexcept {
+    const auto radiusM = std::max(1.0, diameterMm) * 0.0005;
+    return std::numbers::pi * radiusM * radiusM;
+}
+}
+EngineRuntime::EngineRuntime(EngineConfig config,
+                             std::shared_ptr<calibration::CalibrationStore> calibrations)
+    : config_(normalised(std::move(config))), ecu_(std::move(calibrations)),
+      exhaust_(ExhaustGraph::makeForEngine(config_)),
+      simulator_(config_, ecu_, physics_, eventGenerator_, exhaust_), driveline_(config_),
+      pressureQueue_(std::make_unique<CylinderPressureQueue>()) {
     simulator_.setPressureSamplingEnabled(true);
     audioState_.cylinderCount.store(static_cast<float>(config_.cylinders.size()), std::memory_order_relaxed);
     const auto displacement = engineDisplacementLitres(config_);
@@ -37,7 +65,8 @@ EngineRuntime::EngineRuntime(EngineConfig config)
     const auto bankSeparation = config_.layout == EngineLayout::vLayout ? 1.0F
         : (config_.layout == EngineLayout::flat ? 0.92F : (config_.layout == EngineLayout::radial ? 0.74F : 0.0F));
     audioState_.bankSeparation.store(bankSeparation, std::memory_order_relaxed);
-    for (std::size_t index = 0; index < config_.cylinders.size(); ++index) {
+    for (std::size_t index = 0;
+         index < config_.cylinders.size() && index < audioState_.cylinderPan.size(); ++index) {
         const auto& cylinder = config_.cylinders[index];
         float pan = 0.0F;
         const auto bank = std::find_if(config_.banks.begin(), config_.banks.end(), [&cylinder](const auto& item) {
@@ -53,29 +82,114 @@ EngineRuntime::EngineRuntime(EngineConfig config)
                 / static_cast<double>(config_.cylinders.size() - 1));
         audioState_.cylinderPan[index].store(std::clamp(pan, -0.82F, 0.82F), std::memory_order_relaxed);
     }
-    audioState_.exhaustOpenness.store(static_cast<float>(std::clamp(
-        (config_.exhaust.outletDiameterMm / std::max(20.0, config_.exhaust.collectorDiameterMm))
-            * (1.0 - config_.exhaust.mufflerRestriction * 0.72), 0.15, 1.45)), std::memory_order_relaxed);
+    audioState_.ambientPressureKpa.store(static_cast<float>(config_.ambientPressureKpa),
+                                         std::memory_order_relaxed);
+    const auto pathCount = std::clamp<std::size_t>(config_.exhaustPaths.empty()
+        ? 1U : config_.exhaustPaths.size(), 1U, maximumAudioExhaustPaths);
+    audioState_.exhaustPathCount.store(static_cast<std::uint32_t>(pathCount), std::memory_order_relaxed);
+    const auto exhaustSoundSpeedMps = std::clamp(exhaust_.referenceWaveSpeedMps(), 300.0, 900.0);
+    const auto exhaustSoundSpeedMmPerSecond = exhaustSoundSpeedMps * 1'000.0;
+    audioState_.exhaustReferenceSoundSpeedMps.store(
+        static_cast<float>(exhaustSoundSpeedMps), std::memory_order_relaxed);
+    audioState_.exhaustTemperatureC.store(
+        static_cast<float>(config_.ambientTemperatureC), std::memory_order_relaxed);
+    std::array<double, maximumAudioExhaustPaths> pathLengthSum {};
+    std::array<double, maximumAudioExhaustPaths> pathRestrictionSum {};
+    std::array<std::size_t, maximumAudioExhaustPaths> pathCylinderCount {};
+
+    // Publish the exact energy-combined graph transmission used by firing
+    // events. Continuous runner pressure consumes this value before entering
+    // the waveguide, while the path output remains unity-gain.
+    for (std::size_t index = 0;
+         index < config_.cylinders.size() && index < audioState_.cylinderExhaustGain.size(); ++index) {
+        const auto& cylinder = config_.cylinders[index];
+        const auto acoustics = exhaust_.acousticsForCylinder(cylinder.id);
+        const auto fallbackPathIndex = exhaustPathIndexFor(config_, cylinder);
+        const auto compiledPathIndex = acoustics.routeCount > 0
+            ? static_cast<std::size_t>(acoustics.pathIndex) : fallbackPathIndex;
+        const auto pathIndex = std::min(compiledPathIndex, pathCount - 1U);
+        audioState_.cylinderExhaustPathIndex[index].store(static_cast<std::uint32_t>(pathIndex),
+                                                          std::memory_order_relaxed);
+        audioState_.cylinderExhaustGain[index].store(static_cast<float>(std::clamp(
+            acoustics.transmissionGain, 0.0, 8.0)), std::memory_order_relaxed);
+
+        const auto& fallbackGeometry = exhaustGeometryAt(config_, pathIndex);
+        const auto flowProperties = exhaust_.cylinderFlowProperties(cylinder.id);
+        const auto runnerAreaM2 = flowProperties.inletAreaM2 > 1.0e-8
+            ? flowProperties.inletAreaM2
+            : circularAreaM2(fallbackGeometry.primaryDiameterMm);
+        audioState_.cylinderExhaustAreaM2[index].store(
+            static_cast<float>(std::clamp(runnerAreaM2, 1.0e-5, 0.040)),
+            std::memory_order_relaxed);
+        const auto fallbackRunnerLengthMm = cylinder.exhaustPrimaryLengthMm > 0.0
+            ? cylinder.exhaustPrimaryLengthMm : fallbackGeometry.primaryLengthMm;
+        const auto runnerLengthMm = flowProperties.runnerLengthMm > 0.0
+            ? flowProperties.runnerLengthMm : fallbackRunnerLengthMm;
+        const auto runnerDelaySeconds = std::max(0.0, runnerLengthMm)
+            / exhaustSoundSpeedMmPerSecond;
+        audioState_.runnerDelaySeconds[index].store(
+            static_cast<float>(std::clamp(runnerDelaySeconds, 0.0, 0.080)),
+            std::memory_order_relaxed);
+
+        if (acoustics.routeCount > 0) {
+            // The per-cylinder line above already propagates through the
+            // primary.  The shared outlet line starts at the collector, so its
+            // delay must contain only the remaining route length.
+            pathLengthSum[pathIndex] += std::max(0.0,
+                acoustics.meanLengthMm - runnerLengthMm);
+            pathRestrictionSum[pathIndex] += acoustics.equivalentRestriction;
+            ++pathCylinderCount[pathIndex];
+        }
+    }
+
+    for (std::size_t pathIndex = 0; pathIndex < maximumAudioExhaustPaths; ++pathIndex) {
+        const auto& geometry = exhaustGeometryAt(config_, pathIndex);
+        const auto flowProperties = exhaust_.pathFlowProperties(pathIndex);
+        const auto outletAreaM2 = flowProperties.effectiveOutletAreaM2 > 1.0e-8
+            ? flowProperties.effectiveOutletAreaM2
+            : circularAreaM2(geometry.outletDiameterMm)
+                * std::clamp(geometry.outletDischargeCoefficient, 0.05, 1.5);
+        audioState_.exhaustPathOutletAreaM2[pathIndex].store(
+            static_cast<float>(std::clamp(outletAreaM2, 1.0e-5, 0.080)),
+            std::memory_order_relaxed);
+        auto openness = std::clamp(
+            (geometry.outletDiameterMm / std::max(20.0, geometry.collectorDiameterMm))
+                * (1.0 - geometry.mufflerRestriction * 0.72), 0.15, 1.45);
+        auto pathLengthMm = 120.0 + 450.0 + 180.0;
+        if (pathCylinderCount[pathIndex] > 0) {
+            const auto count = static_cast<double>(pathCylinderCount[pathIndex]);
+            pathLengthMm = pathLengthSum[pathIndex] / count;
+            const auto equivalentRestriction = pathRestrictionSum[pathIndex] / count;
+            // K is dimensionless: acoustic conductance is proportional to
+            // 1/sqrt(1 + K). The factor keeps legacy presets close to their old
+            // diameter heuristic while custom catalysts/mufflers close the path.
+            openness = std::clamp(1.0 / std::sqrt(1.0 + 1.35 * equivalentRestriction),
+                                  0.15, 1.45);
+        }
+        // One-way collector-to-outlet propagation. The bidirectional delay
+        // line naturally makes a reflected wave's full trip twice this value.
+        const auto reflectionSeconds = std::clamp(
+            pathLengthMm / exhaustSoundSpeedMmPerSecond, 0.001, 0.080);
+        audioState_.exhaustPathOpenness[pathIndex].store(
+            static_cast<float>(openness), std::memory_order_relaxed);
+        audioState_.exhaustPathReflectionSeconds[pathIndex].store(
+            static_cast<float>(reflectionSeconds), std::memory_order_relaxed);
+        // All configured gain is already present per cylinder (and in each
+        // firing event). Leaving the path at unity removes the historical
+        // audioVolume double multiplication.
+        audioState_.exhaustPathGain[pathIndex].store(1.0F, std::memory_order_relaxed);
+    }
+    audioState_.exhaustOpenness.store(audioState_.exhaustPathOpenness[0].load(std::memory_order_relaxed),
+                                      std::memory_order_relaxed);
     audioState_.boostPressureRatio.store(static_cast<float>(config_.forcedInduction.enabled
         ? config_.forcedInduction.pressureRatio : 1.0), std::memory_order_relaxed);
-    const auto pathLengthMm = config_.exhaust.primaryLengthMm + 120.0 + 450.0 + 180.0;
-    audioState_.exhaustReflectionSeconds.store(static_cast<float>(2.0 * pathLengthMm / 520'000.0),
-                                               std::memory_order_relaxed);
+    audioState_.exhaustReflectionSeconds.store(
+        audioState_.exhaustPathReflectionSeconds[0].load(std::memory_order_relaxed),
+        std::memory_order_relaxed);
     audioState_.meanBoreMm.store(static_cast<float>(std::max(20.0, meanBore)), std::memory_order_relaxed);
     audioState_.forcedInductionKind.store(config_.forcedInduction.enabled
         ? (config_.forcedInduction.type == ForcedInductionType::supercharger ? 2 : 1) : 0,
         std::memory_order_relaxed);
-    // Per-cylinder acoustic runner delay (port -> collector) for the exhaust
-    // waveguide. Hot-gas sound speed matches the ExhaustGraph convention.
-    constexpr double exhaustSoundSpeedMmPerSecond = 520'000.0;
-    for (std::size_t index = 0; index < config_.cylinders.size() && index < 32; ++index) {
-        const auto& cylinder = config_.cylinders[index];
-        const auto runnerLengthMm = cylinder.exhaustPrimaryLengthMm > 0.0
-            ? cylinder.exhaustPrimaryLengthMm : config_.exhaust.primaryLengthMm;
-        audioState_.runnerDelaySeconds[index].store(
-            static_cast<float>(std::max(0.0, runnerLengthMm) / exhaustSoundSpeedMmPerSecond),
-            std::memory_order_relaxed);
-    }
 }
 EngineRuntime::~EngineRuntime() { stop(); }
 
@@ -83,8 +197,9 @@ void EngineRuntime::start() {
     if (!thread_.joinable()) thread_ = std::jthread([this](std::stop_token token) { run(token); });
 }
 void EngineRuntime::stop() {
+    dynoRequestedRunning_.store(false, std::memory_order_release);
     if (thread_.joinable()) { thread_.request_stop(); thread_.join(); }
-    if (dynoRunning_.load()) stopDyno();
+    if (dynoActive_) finishDynoSession();
 }
 EngineState EngineRuntime::snapshot() const {
     const std::scoped_lock lock(snapshotMutex_);
@@ -95,7 +210,7 @@ void EngineRuntime::setGear(int gear) noexcept {
     const auto maxGear = static_cast<int>(config_.transmission.gearRatios.size()) - 1;
     const auto selected = std::clamp(gear, -2, maxGear);
     gear_.store(selected, std::memory_order_relaxed);
-    driveline_.requestGear(selected);
+    gearCommandGeneration_.fetch_add(1, std::memory_order_release);
 }
 
 void EngineRuntime::shiftUp() noexcept {
@@ -112,11 +227,11 @@ void EngineRuntime::adjustDynoHoldRpm(double delta) noexcept {
                        std::memory_order_relaxed);
 }
 
-double EngineRuntime::updateDriveline(double dtSeconds, const EngineState& engineState, double requestedLoad) noexcept {
+void EngineRuntime::updateDriveline(double dtSeconds, const EngineState& engineState,
+                                    double requestedLoad) noexcept {
     drivelineOutput_ = driveline_.advance(dtSeconds, engineState, requestedLoad,
         clutchPressure_.load(std::memory_order_relaxed), brakePressure_.load(std::memory_order_relaxed));
     engagedGear_ = drivelineOutput_.engagedGear;
-    gear_.store(driveline_.requestedGear(), std::memory_order_relaxed);
     effectiveClutchPressure_ = drivelineOutput_.clutchPressure;
     engineClutchTorqueNm_ = drivelineOutput_.engineReactionTorqueNm;
     drivelineLoadTorqueNm_ = drivelineOutput_.clutchTorqueNm;
@@ -126,16 +241,26 @@ double EngineRuntime::updateDriveline(double dtSeconds, const EngineState& engin
     vehicleDistanceM_ = drivelineOutput_.vehicleDistanceM;
     shiftProgress_ = drivelineOutput_.shiftProgress;
     shiftInProgress_ = drivelineOutput_.shiftInProgress;
-    return drivelineOutput_.requestedLoad;
 }
 
 void EngineRuntime::startDyno() {
-    const std::scoped_lock lock(dynoMutex_);
-    if (dynoRunning_.load()) return;
-    currentRun_ = {};
-    currentRun_.id = nextDynoId_++;
-    currentRun_.engineName = config_.name;
+    dynoRequestedRunning_.store(true, std::memory_order_release);
+}
+
+void EngineRuntime::stopDyno() {
+    dynoRequestedRunning_.store(false, std::memory_order_release);
+}
+
+void EngineRuntime::beginDynoSession() {
+    if (dynoActive_) return;
+    {
+        const std::scoped_lock lock(dynoMutex_);
+        currentRun_ = {};
+        currentRun_.id = nextDynoId_++;
+        currentRun_.engineName = config_.name;
+    }
     dynoElapsed_ = 0.0;
+    dynoStartupElapsed_ = 0.0;
     nextSampleRpm_ = std::max(1'000.0, config_.idleRpm);
     dynoTargetRpm_ = nextSampleRpm_;
     dynoStableElapsed_ = 0.0;
@@ -153,18 +278,21 @@ void EngineRuntime::startDyno() {
     throttle_.store(0.18);
     dynoSweeping_ = false;
     dynoCompleted_ = false;
-    dynoRunning_.store(true);
+    dynoActive_ = true;
 }
 
-void EngineRuntime::stopDyno() {
-    const std::scoped_lock lock(dynoMutex_);
-    if (!dynoRunning_.exchange(false)) return;
-    if (currentRun_.points.size() >= 3) dynoHistory_.push_back(currentRun_);
-    currentRun_ = {};
+void EngineRuntime::finishDynoSession() {
+    if (!dynoActive_) return;
+    {
+        const std::scoped_lock lock(dynoMutex_);
+        if (currentRun_.points.size() >= 3) dynoHistory_.push_back(currentRun_);
+        currentRun_ = {};
+    }
     ignition_.store(savedIgnition_);
     starter_.store(savedStarter_);
     throttle_.store(savedThrottle_);
     load_.store(savedLoad_);
+    dynoActive_ = false;
 }
 
 DynoRun EngineRuntime::currentDynoRun() const {
@@ -188,17 +316,33 @@ void EngineRuntime::run(std::stop_token stopToken) {
 #if defined(_WIN32)
     SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_ABOVE_NORMAL);
 #endif
-    auto deadline = Clock::now();
-    double realtimeSeconds = 0.0;
+    const auto clockEpoch = Clock::now();
+    auto deadline = clockEpoch;
+    auto consumedGearGeneration = std::uint64_t { 0 };
+    auto consumedGearCommand = gear_.load(std::memory_order_relaxed);
+    double nextPressurePublishTime = 0.0;
+    MonotonicPublicationTimeline publicationTimeline;
+    constexpr double maximumPressurePublishRateHz = 96'000.0;
+    constexpr double minimumPressurePublishInterval = 1.0 / maximumPressurePublishRateHz;
     while (!stopToken.stop_requested()) {
+        const auto iterationStart = Clock::now();
+        const auto realtimeSeconds = std::chrono::duration<double>(iterationStart - clockEpoch).count();
+        audioState_.producerTimeNanoseconds.store(static_cast<std::uint64_t>(std::max(0.0, realtimeSeconds) * 1.0e9),
+                                                  std::memory_order_release);
         deadline += std::chrono::duration_cast<Clock::duration>(baseStep);
-        const auto isPaused = paused_.load(std::memory_order_relaxed) && !dynoRunning_.load(std::memory_order_relaxed);
-        const auto simulationScale = dynoRunning_.load(std::memory_order_relaxed)
+        const auto dynoDesired = dynoRequestedRunning_.load(std::memory_order_acquire);
+        if (dynoDesired && !dynoActive_) beginDynoSession();
+        else if (!dynoDesired && dynoActive_) finishDynoSession();
+        const auto isPaused = paused_.load(std::memory_order_relaxed) && !dynoActive_;
+        const auto simulationScale = dynoActive_
             ? 1.0 : std::clamp(timeScale_.load(std::memory_order_relaxed), 0.0, 8.0);
         const auto simulationDt = isPaused ? 0.0 : baseStep.count() * simulationScale;
         auto requestedLoad = std::clamp(load_.load(), 0.0, 1.0);
         double dynoElapsed = 0.0;
-        if (dynoRunning_.load()) {
+        double dynoStartupElapsed = 0.0;
+        if (dynoActive_) {
+            dynoStartupElapsed_ += baseStep.count();
+            dynoStartupElapsed = dynoStartupElapsed_;
             if (!dynoSweeping_ && simulator_.state().rpm >= std::max(650.0, config_.idleRpm * 0.82)) {
                 dynoSweeping_ = true;
                 dynoElapsed_ = 0.0;
@@ -228,27 +372,50 @@ void EngineRuntime::run(std::stop_token stopToken) {
                 requestedLoad = 0.0;
             }
         }
-        if (!dynoRunning_.load(std::memory_order_relaxed) && simulationDt > 0.0)
-            requestedLoad = updateDriveline(simulationDt, simulator_.state(), requestedLoad);
+        const auto gearGeneration = gearCommandGeneration_.load(std::memory_order_acquire);
+        if (gearGeneration != consumedGearGeneration) {
+            consumedGearCommand = gear_.load(std::memory_order_relaxed);
+            driveline_.requestGear(consumedGearCommand);
+            consumedGearGeneration = gearGeneration;
+        }
+        if (!dynoActive_ && simulationDt > 0.0) {
+            updateDriveline(simulationDt, simulator_.state(), requestedLoad);
+            // Reflect automatic shifts without ever overwriting a concurrent UI
+            // command. A new generation is consumed on the next simulation tick.
+            if (gearCommandGeneration_.load(std::memory_order_acquire) == consumedGearGeneration) {
+                const auto modelRequest = driveline_.requestedGear();
+                auto expected = consumedGearCommand;
+                if (gear_.compare_exchange_strong(expected, modelRequest,
+                                                  std::memory_order_relaxed,
+                                                  std::memory_order_relaxed))
+                    consumedGearCommand = modelRequest;
+            }
+        }
+        const auto torqueCutMultiplier = dynoActive_
+            ? 1.0 : drivelineOutput_.torqueCutMultiplier;
         const EngineControls controls { ignition_.load(), starter_.load(),
-            (dynoRunning_.load() ? (dynoSweeping_ ? 1.0 : 0.18) : std::clamp(throttle_.load(), 0.0, 1.0))
-                * drivelineOutput_.torqueCutMultiplier,
-            requestedLoad, dynoRunning_.load() ? 0.0 : engineClutchTorqueNm_,
-            dynoRunning_.load() ? 0.0 : brakePressure_.load(std::memory_order_relaxed) };
+            (dynoActive_ ? (dynoSweeping_ ? 1.0 : 0.18) : std::clamp(throttle_.load(), 0.0, 1.0))
+                * torqueCutMultiplier,
+            dynoActive_ ? requestedLoad : 0.0, dynoActive_ ? 0.0 : engineClutchTorqueNm_,
+            dynoActive_ ? 0.0 : brakePressure_.load(std::memory_order_relaxed) };
         auto frame = simulationDt > 0.0 ? simulator_.step(simulationDt, controls) : SimulationFrame { simulator_.state() };
         if (simulationDt > 0.0) {
             const auto simulationStart = frame.state.simulationTimeSeconds - simulationDt;
+            const auto publicationWindow = publicationTimeline.beginWindow(
+                realtimeSeconds, baseStep.count());
             for (std::size_t index = 0; index < frame.firingEventCount; ++index) {
-                const auto fraction = std::clamp((frame.firingEvents[index].timeSeconds - simulationStart) / simulationDt, 0.0, 1.0);
-                frame.firingEvents[index].timeSeconds = realtimeSeconds + fraction * baseStep.count();
+                frame.firingEvents[index].timeSeconds = publicationWindow.mapSimulationTime(
+                    frame.firingEvents[index].timeSeconds, simulationStart, simulationDt);
             }
             CylinderPressureSample pressureSample;
             while (simulator_.tryPopCylinderPressureSample(pressureSample)) {
-                const auto fraction = std::clamp((pressureSample.timeSeconds
-                    - simulationStart) / simulationDt, 0.0, 1.0);
-                pressureSample.timeSeconds = realtimeSeconds + fraction * baseStep.count();
-                if (!pressureQueue_.tryPush(pressureSample))
-                    droppedPressureSamples_.fetch_add(1, std::memory_order_relaxed);
+                pressureSample.timeSeconds = publicationWindow.mapSimulationTime(
+                    pressureSample.timeSeconds, simulationStart, simulationDt);
+                if (pressureSample.timeSeconds + 1.0e-12 >= nextPressurePublishTime) {
+                    if (!pressureQueue_->tryPush(pressureSample))
+                        droppedPressureSamples_.fetch_add(1, std::memory_order_relaxed);
+                    nextPressurePublishTime = pressureSample.timeSeconds + minimumPressurePublishInterval;
+                }
             }
             if (frame.droppedCylinderPressureSampleCount > 0)
                 droppedPressureSamples_.fetch_add(frame.droppedCylinderPressureSampleCount,
@@ -266,6 +433,8 @@ void EngineRuntime::run(std::stop_token stopToken) {
                                              std::memory_order_relaxed);
         audioState_.exhaustFlowGramsPerSecond.store(static_cast<float>(frame.state.exhaustFlowGramsPerSecond),
                                                     std::memory_order_relaxed);
+        audioState_.exhaustTemperatureC.store(static_cast<float>(std::clamp(
+            frame.state.exhaustTemperatureC, -50.0, 1'800.0)), std::memory_order_relaxed);
         audioState_.boostPressureRatio.store(static_cast<float>(frame.state.boostPressureRatio), std::memory_order_relaxed);
         audioState_.mechanicalStress.store(static_cast<float>(std::clamp(frame.state.peakPistonAccelerationG / 7'000.0, 0.0, 1.0)),
                                            std::memory_order_relaxed);
@@ -276,13 +445,13 @@ void EngineRuntime::run(std::stop_token stopToken) {
         audioState_.wastegateOpening.store(static_cast<float>(std::clamp(frame.state.wastegateOpening, 0.0, 1.0)),
                                            std::memory_order_relaxed);
         {
-            // Aggregate the dominant (highest-amplitude) intake runner resonance
-            // across cylinders for the induction audio layer.
+            // Aggregate the dominant absolute intake-runner resonance while
+            // preserving its sign/phase for the induction audio layer.
             double dominantAmplitude = 0.0;
             double dominantFrequency = 0.0;
             for (std::size_t index = 0; index < frame.state.cylinderStateCount; ++index) {
                 const auto& cylinder = frame.state.cylinderStates[index];
-                if (cylinder.intakeResonancePressureKpa > dominantAmplitude) {
+                if (std::abs(cylinder.intakeResonancePressureKpa) > std::abs(dominantAmplitude)) {
                     dominantAmplitude = cylinder.intakeResonancePressureKpa;
                     dominantFrequency = cylinder.intakeResonanceFrequencyHz;
                 }
@@ -292,9 +461,9 @@ void EngineRuntime::run(std::stop_token stopToken) {
                                                        std::memory_order_relaxed);
         }
         audioState_.starter.store(controls.starterEngaged && !isPaused ? 1.0F : 0.0F, std::memory_order_relaxed);
-        audioState_.timeScale.store(isPaused ? 0.0F : static_cast<float>(dynoRunning_.load(std::memory_order_relaxed)
+        audioState_.timeScale.store(isPaused ? 0.0F : static_cast<float>(dynoActive_
             ? 1.0 : timeScale_.load(std::memory_order_relaxed)), std::memory_order_relaxed);
-        if (dynoRunning_.load() && dynoSweeping_) {
+        if (dynoActive_ && dynoSweeping_) {
             if (std::abs(dynoFilteredRpm_ - dynoTargetRpm_) <= 80.0) {
                 dynoTorqueAccumulator_ += frame.state.cycleAveragedTorqueNm;
                 dynoPowerAccumulator_ += frame.state.cycleAveragedPowerKw;
@@ -366,6 +535,8 @@ void EngineRuntime::run(std::stop_token stopToken) {
             frame.state.shiftInProgress = shiftInProgress_;
             frame.state.brakePressure = drivelineOutput_.brakePressure;
             frame.state.brakeForceN = drivelineOutput_.brakeForceN;
+            frame.state.requestedRoadLoad = drivelineOutput_.requestedLoad;
+            frame.state.roadLoadForceN = drivelineOutput_.roadLoadForceN;
             frame.state.tireLongitudinalForceN = drivelineOutput_.tireForceN;
             frame.state.tractionLimited = drivelineOutput_.tractionLimited;
             frame.state.clutchTemperatureC = drivelineOutput_.clutchTemperatureC;
@@ -380,10 +551,17 @@ void EngineRuntime::run(std::stop_token stopToken) {
             const std::scoped_lock lock(snapshotMutex_);
             snapshot_ = frame.state;
         }
-        if (dynoRunning_.load() && (dynoCompleted_.load(std::memory_order_relaxed) || dynoElapsed >= 30.0))
-            stopDyno();
-        realtimeSeconds += baseStep.count();
+        const auto dynoStartupTimedOut = !dynoSweeping_.load(std::memory_order_relaxed)
+            && dynoStartupElapsed >= 30.0;
+        if (dynoActive_ && (dynoCompleted_.load(std::memory_order_relaxed)
+            || dynoElapsed >= 30.0 || dynoStartupTimedOut)) {
+            dynoRequestedRunning_.store(false, std::memory_order_release);
+            finishDynoSession();
+        }
         const auto now = Clock::now();
+        const auto producerTime = std::chrono::duration<double>(now - clockEpoch).count();
+        audioState_.producerTimeNanoseconds.store(static_cast<std::uint64_t>(std::max(0.0, producerTime) * 1.0e9),
+                                                  std::memory_order_release);
         if (now > deadline + std::chrono::duration_cast<Clock::duration>(baseStep * 4.0)) {
             timingOverruns_.fetch_add(1, std::memory_order_relaxed);
             deadline = now;

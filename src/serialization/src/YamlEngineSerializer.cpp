@@ -18,6 +18,28 @@ namespace {
     if (value == ConnectingRodType::articulated) return "articulated";
     return "conventional";
 }
+[[nodiscard]] const char* exhaustComponentTypeName(ExhaustComponentType value) noexcept {
+    switch (value) {
+    case ExhaustComponentType::pipe: return "pipe";
+    case ExhaustComponentType::merge: return "merge";
+    case ExhaustComponentType::splitter: return "splitter";
+    case ExhaustComponentType::resonator: return "resonator";
+    case ExhaustComponentType::muffler: return "muffler";
+    case ExhaustComponentType::catalyst: return "catalyst";
+    case ExhaustComponentType::outlet: return "outlet";
+    }
+    return "pipe";
+}
+[[nodiscard]] std::optional<ExhaustComponentType> decodeExhaustComponentType(std::string_view value) noexcept {
+    if (value == "pipe") return ExhaustComponentType::pipe;
+    if (value == "merge") return ExhaustComponentType::merge;
+    if (value == "splitter") return ExhaustComponentType::splitter;
+    if (value == "resonator") return ExhaustComponentType::resonator;
+    if (value == "muffler") return ExhaustComponentType::muffler;
+    if (value == "catalyst") return ExhaustComponentType::catalyst;
+    if (value == "outlet") return ExhaustComponentType::outlet;
+    return std::nullopt;
+}
 
 void emitLiftProfile(YAML::Emitter& out, const char* key, const std::vector<ValveLiftSample>& profile) {
     out << YAML::Key << key << YAML::Value << YAML::BeginSeq;
@@ -78,7 +100,7 @@ void decodeExtendedCamshaft(CamshaftConfig& cam, const YAML::Node& node) {
 
 std::string YamlEngineSerializer::encode(const EngineConfig& config) const {
     YAML::Emitter out;
-    out << YAML::BeginMap << YAML::Key << "schema_version" << YAML::Value << config.schemaVersion
+    out << YAML::BeginMap << YAML::Key << "schema_version" << YAML::Value << currentEngineSchemaVersion
         << YAML::Key << "engine" << YAML::Value << YAML::BeginMap
         << YAML::Key << "name" << YAML::Value << config.name
         << YAML::Key << "cycle" << YAML::Value << (config.cycle == EngineCycle::fourStroke ? "four_stroke" : "two_stroke")
@@ -302,7 +324,7 @@ std::string YamlEngineSerializer::encode(const EngineConfig& config) const {
         out << YAML::EndMap << YAML::EndMap;
     }
     out << YAML::EndSeq << YAML::Key << "exhaust_paths" << YAML::Value << YAML::BeginSeq;
-    for (const auto& path : config.exhaustPaths)
+    for (const auto& path : config.exhaustPaths) {
         out << YAML::BeginMap << YAML::Key << "id" << YAML::Value << path.id
             << YAML::Key << "cylinder_ids" << YAML::Value << YAML::Flow << path.cylinderIds
             << YAML::Key << "impulse_response" << YAML::Value << path.impulseResponsePath
@@ -315,7 +337,38 @@ std::string YamlEngineSerializer::encode(const EngineConfig& config) const {
             << YAML::Key << "outlet_diameter_mm" << YAML::Value << path.geometry.outletDiameterMm
             << YAML::Key << "collector_volume_l" << YAML::Value << path.geometry.collectorVolumeLitres
             << YAML::Key << "outlet_discharge_coefficient" << YAML::Value << path.geometry.outletDischargeCoefficient
-            << YAML::EndMap << YAML::EndMap;
+            << YAML::EndMap;
+        if (path.network) {
+            out << YAML::Key << "graph" << YAML::Value << YAML::BeginMap
+                << YAML::Key << "components" << YAML::Value << YAML::BeginSeq;
+            for (const auto& component : path.network->components)
+                out << YAML::BeginMap
+                    << YAML::Key << "id" << YAML::Value << component.id
+                    << YAML::Key << "type" << YAML::Value << exhaustComponentTypeName(component.type)
+                    << YAML::Key << "length_mm" << YAML::Value << component.lengthMm
+                    << YAML::Key << "diameter_mm" << YAML::Value << component.diameterMm
+                    << YAML::Key << "volume_l" << YAML::Value << component.volumeLitres
+                    << YAML::Key << "restriction" << YAML::Value << component.restriction
+                    << YAML::Key << "resonance_hz" << YAML::Value << component.resonanceHz
+                    << YAML::Key << "acoustic_gain" << YAML::Value << component.acousticGain
+                    << YAML::Key << "discharge_coefficient" << YAML::Value << component.dischargeCoefficient
+                    << YAML::EndMap;
+            out << YAML::EndSeq << YAML::Key << "cylinder_connections" << YAML::Value << YAML::BeginSeq;
+            for (const auto& connection : path.network->cylinderConnections)
+                out << YAML::BeginMap
+                    << YAML::Key << "cylinder_id" << YAML::Value << connection.cylinderId
+                    << YAML::Key << "to_component_id" << YAML::Value << connection.componentId
+                    << YAML::EndMap;
+            out << YAML::EndSeq << YAML::Key << "connections" << YAML::Value << YAML::BeginSeq;
+            for (const auto& connection : path.network->connections)
+                out << YAML::BeginMap
+                    << YAML::Key << "from_component_id" << YAML::Value << connection.fromComponentId
+                    << YAML::Key << "to_component_id" << YAML::Value << connection.toComponentId
+                    << YAML::EndMap;
+            out << YAML::EndSeq << YAML::EndMap;
+        }
+        out << YAML::EndMap;
+    }
     out << YAML::EndSeq
         << YAML::Key << "firing_order" << YAML::Value << YAML::Flow << config.firingOrder
         << YAML::Key << "cylinders" << YAML::Value << YAML::BeginSeq;
@@ -359,7 +412,9 @@ EngineDecodeResult YamlEngineSerializer::decode(std::string_view text) const noe
         const auto document = YAML::Load(std::string(text));
         EngineConfig config;
         config.schemaVersion = document["schema_version"].as<std::uint32_t>();
-        if (config.schemaVersion != 1) return { std::nullopt, "Unsupported schema version" };
+        if (config.schemaVersion < minimumSupportedEngineSchemaVersion
+                || config.schemaVersion > currentEngineSchemaVersion)
+            return { std::nullopt, "Unsupported schema version" };
         const auto engine = document["engine"];
         config.name = engine["name"].as<std::string>();
         const auto cycle = engine["cycle"].as<std::string>();
@@ -631,6 +686,35 @@ EngineDecodeResult YamlEngineSerializer::decode(std::string_view text) const noe
                     geometry["collector_diameter_mm"].as<double>(58.0), geometry["muffler_restriction"].as<double>(0.28),
                     geometry["outlet_diameter_mm"].as<double>(65.0), geometry["collector_volume_l"].as<double>(2.0),
                     geometry["outlet_discharge_coefficient"].as<double>(0.72) };
+                if (const auto encodedGraph = item["graph"]) {
+                    ExhaustNetworkConfig network;
+                    for (const auto& encodedComponent : encodedGraph["components"]) {
+                        const auto typeName = encodedComponent["type"].as<std::string>();
+                        const auto type = decodeExhaustComponentType(typeName);
+                        if (!type) return { std::nullopt, "Unknown exhaust component type: " + typeName };
+                        ExhaustComponentConfig component;
+                        component.id = encodedComponent["id"].as<std::uint32_t>();
+                        component.type = *type;
+                        component.lengthMm = encodedComponent["length_mm"].as<double>(component.lengthMm);
+                        component.diameterMm = encodedComponent["diameter_mm"].as<double>(component.diameterMm);
+                        component.volumeLitres = encodedComponent["volume_l"].as<double>(component.volumeLitres);
+                        component.restriction = encodedComponent["restriction"].as<double>(component.restriction);
+                        component.resonanceHz = encodedComponent["resonance_hz"].as<double>(component.resonanceHz);
+                        component.acousticGain = encodedComponent["acoustic_gain"].as<double>(component.acousticGain);
+                        component.dischargeCoefficient = encodedComponent["discharge_coefficient"].as<double>(
+                            component.dischargeCoefficient);
+                        network.components.push_back(component);
+                    }
+                    for (const auto& encodedConnection : encodedGraph["cylinder_connections"])
+                        network.cylinderConnections.push_back({
+                            encodedConnection["cylinder_id"].as<std::uint32_t>(),
+                            encodedConnection["to_component_id"].as<std::uint32_t>() });
+                    for (const auto& encodedConnection : encodedGraph["connections"])
+                        network.connections.push_back({
+                            encodedConnection["from_component_id"].as<std::uint32_t>(),
+                            encodedConnection["to_component_id"].as<std::uint32_t>() });
+                    path.network = std::move(network);
+                }
                 config.exhaustPaths.push_back(std::move(path));
             }
         }

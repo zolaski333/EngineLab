@@ -1,119 +1,142 @@
-# Livraison des phases 3, 4 et 5
+# Authoring, calibration et préparation graphique
 
-État vérifié le 13 juillet 2026. Ce document décrit ce qui est réellement
-implémenté dans EngineLab et les limites qui restent ouvertes. Il complète
-[`phase-0-1-2.md`](phase-0-1-2.md).
+Le nom de ce fichier est conservé pour les liens historiques. Il résume les
+outils d'auteur ajoutés autour du simulateur et sépare clairement ce qui est
+opérationnel de ce qui reste à construire.
 
-## Phase 3 — Couple issu du travail cylindre
+## Livré : calibration ECU transactionnelle
 
-Le couple de fonctionnement reste calculé cylindre par cylindre depuis la
-pression résolue et la géométrie bielle-manivelle. `IndicatedWorkModel` intègre
-en plus la boucle signée `∮(P cylindre - P ambiante) dV` de chaque cylindre par
-trapèzes. À la fin de chaque cycle, EngineLab publie :
+`EngineLabCalibration` introduit des métadonnées, unités et quantités d'axes
+typées, des scalaires, courbes 1D et tables 2D. Les interpolations sont clampées
+aux bords ; une coordonnée de mauvaise quantité ou unité est refusée.
 
-- le travail indiqué par cycle et par cylindre ;
-- le travail total du moteur, l'IMEP, la puissance indiquée et le couple moyen
-  équivalent P·dV ;
-- l'écart avec le couple instantané de pression, utile pour diagnostiquer les
-  pertes mécaniques et le remplissage.
+Un brouillon mutable n'est jamais lu directement par le runtime. Après
+validation complète, `CalibrationStore` publie un snapshot immuable versionné
+par échange atomique. Le contrôle de révision empêche deux éditeurs de
+s'écraser. Une transaction invalide conserve exactement le pointeur actif. Les
+epochs lecteurs reportent la destruction des snapshots remplacés sur le thread
+de publication.
 
-L'ancien modèle de couple moyen n'est jamais réinjecté dans le vilebrequin. Il
-reste une référence de diagnostic uniquement.
+La fenêtre JUCE **ECU** permet d'éditer les cartes AFR/avance et le rupteur,
+affiche la cellule proche du point de fonctionnement et charge/enregistre le
+schéma `.ecu.json`. Une modification de cellule ou de fichier valide est
+appliquée sans recréer le moteur. Les axes de charge normalisée couvrent jusqu'à
+400 % pour ne pas écraser les zones de suralimentation sur la colonne 100 %.
 
-L'allumage est maintenant réellement individuel : l'ECU programme une
-étincelle par cylindre, puis un délai d'inflammation calibré dépendant de la
-température, de la pression, de la richesse et des gaz résiduels précède la
-naissance du noyau de flamme. Le front Metghalchi-Keck existant conserve une
-propagation explicite et prend en compte mélange, turbulence, dilution,
-pertes aux parois, avance et raté. Les coefficients de délai, de dilution et
-de transfert thermique sont configurables, sérialisés et validés.
+Voir [ecu-tuning.md](ecu-tuning.md) pour le format, les effets actifs et les
+limites.
 
-Conséquence importante : arbre à cames, écoulement de culasse, longueur de
-runner, richesse, résiduels et avance agissent par la charge piégée, la pression
-et la combustion. Aucun multiplicateur de couple spécifique à un preset ne
-simule artificiellement ces effets.
+## Livré : DSL moteur et watcher de dépendances
 
-## Phase 4 — Chaîne mécanique et transmission énergétique
+`EngineLabScripting` compile un langage déclaratif avec :
 
-`DrivelineModel` possède l'état mécanique de l'embrayage, de la boîte, du
-différentiel, des roues motrices et du véhicule. Il résout une chaîne d'énergie
-signée entre le vilebrequin et la route :
+- presets ou base JSON/YAML ;
+- inclusions relatives et suivi déterministe des dépendances ;
+- variables, expressions simples et unités contrôlées ;
+- affectations globales ou par identifiant de cylindre ;
+- remplacement de la courbe d'allumage ;
+- diagnostics fichier/ligne/colonne, limites de taille/profondeur et détection
+  des cycles.
 
-- inerties de vilebrequin, bielles, volant, arbre d'entrée de boîte,
-  différentiel et roues ;
-- marche arrière, point mort et rapports avant dans la même machine d'état ;
-- passage temporisé avec débrayage, changement de rapport, réembrayage et
-  réduction de couple pendant le passage ;
-- embrayage limité par sa capacité physique, échauffement par glissement,
-  refroidissement, fading puis perte de capacité à haute température ;
-- roue motrice comme degré de liberté, glissement longitudinal du pneu, limite
-  d'adhérence, traînée, roulement et masse du véhicule ;
-- frein de roue commandé par la flèche gauche ;
-- télémétrie de puissance dissipée, énergie cumulée, énergie stockée et résidu
-  du bilan énergétique.
+Le watcher compile sur son worker et publie un `EngineScriptReloadState`
+immuable. Une erreur conserve la dernière configuration valide. L'application
+importe `.els` et `.engine`, surveille le script, ses inclusions et son fichier
+de base puis applique les nouvelles révisions.
 
-Le couplage raide pneu–roue–véhicule est intégré par sous-pas mécaniques de
-1 ms. Cela permet aux vitesses de simulation élevées de rester stables sans
-affaiblir la raideur du pneu ni masquer une divergence avec un clamp arbitraire.
-Les limites de couple d'embrayage et d'effort du pneu sont des capacités
-physiques configurées, pas des correctifs numériques.
+Ce reload remplace le runtime : il évite de relancer l'application, pas de
+réinitialiser le moteur. Le détail et la comparaison avec `.mr` sont dans
+[engine-scripting.md](engine-scripting.md).
 
-## Phase 5 — Culasses, distribution et admission résonante
+## Livré : scène prête pour un backend 3D
 
-Chaque arbre à cames, global ou propre à une banque, peut définir :
+`EngineLabRender` convertit une configuration et un état en scène bornée, sans
+dépendance graphique. Vilebrequin, journaux, cylindres, pistons, bielles et
+soupapes reçoivent identifiants et transformations 3D. Les cylindres sont
+distribués sur l'axe Z et un interpolateur à deux snapshots traite les angles
+circulaires correctement.
 
-- des profils de levée admission et échappement échantillonnés arbitrairement ;
-- des courbes coefficient de décharge/levée distinctes pour admission et
-  échappement ;
-- une calibration continue RPM/charge d'avance admission, d'avance
-  échappement et de multiplicateur de levée ;
-- la fréquence de réponse de l'actionneur VVT/VVL.
+L'application construit déjà ces snapshots à son rythme UI. Toutefois, la vue
+visible reste le dessin JUCE 2D existant et ne consomme pas encore
+`IEngineRenderer`. Aucun contexte, shader, mesh ou appel OpenGL n'est présent.
 
-`ValveTrainModel` interpole ces données, fait évoluer les actionneurs de façon
-continue et fournit au réseau gazeux la levée, la phase et le coefficient de
-décharge réellement atteints. Le profil haut discret reste compatible avec
-les anciens presets, mais n'est plus la seule manière de faire varier la
-distribution.
+La base rend le passage en 3D raisonnable : le futur backend pourra rester un
+consommateur de snapshots au lieu d'accéder au simulateur. Elle n'élimine pas
+le travail graphique listé dans
+[architecture.md#préparation-du-rendu-3d](architecture.md#préparation-du-rendu-3d).
 
-Chaque runner d'admission possède déjà son volume géométrique. Il est désormais
-couplé au plénum par `HelmholtzRunnerModel`, un oscillateur acoustique amorti
-dont la fréquence dépend de la section, de la longueur, du volume et de la
-vitesse locale du son. Sa pression résonante modifie l'admittance du transfert
-conservatif ; elle n'ajoute ni masse ni couple. Amortissement, couplage et
-amplitude maximale sont configurables.
+## Livré : séparation audio renforcée
 
-Le catalogue fournit des courbes de débit cohérentes pour les cames livrées et
-une calibration VVT/VVL continue pour la came sportive atmosphérique. Tous les
-nouveaux champs ont un round-trip JSON/YAML et une validation de plage et
-d'ordre des échantillons.
+Les cylindres, événements et trames de pression conservent leur indice de
+chemin. Chaque chemin possède ses états de guide d'onde, réflexion, FDN et
+convolution. Pression ambiante, fréquence du périphérique et temps producteur
+sont pris en compte explicitement. Des tests de régression isolent les chemins
+et comparent les délais à 48, 96 et 192 kHz.
 
-## Vérifications exécutées
+Le résultat technique est plus robuste que l'ancienne sommation globale, mais
+la supériorité sonore ne sera considérée acquise qu'après un corpus de référence
+et des écoutes à niveau égalisé. Voir [realtime-audio.md](realtime-audio.md).
 
-- boucle P·dV rectangulaire connue : aire signée retrouvée exactement ;
-- interpolation d'une courbe de débit et convergence de l'actionneur VVT/VVL ;
-- fréquence Helmholtz plus élevée pour un runner court que pour un runner long ;
-- marche arrière signée, dissipation d'embrayage et freinage ;
-- simulation complète : travail indiqué, IMEP, puissance et résonance finis et
-  positifs quand le moteur fonctionne ;
-- round-trips JSON/YAML des nouveaux contrats ;
-- chargement et simulation de tout le catalogue ;
-- harnais déterministe I4, V8, V-twin et radial avec comparaison de référence.
+## Livré : topologie d'échappement auteur
 
-## Ce qui n'est pas livré par les phases 3 à 5
+Chaque chemin peut désormais porter un DAG sérialisable de pipes, merges,
+splitters, résonateurs, silencieux, catalyseurs et sorties. La validation impose
+des identifiants uniques, les cardinalités de jonction, l'absence de cycle,
+l'accessibilité de tous les composants et une sortie pour chaque route.
 
-- pas de solveur d'ondes 1D maillé dans les runners ou l'échappement : le
-  modèle Helmholtz est un premier ordre 0D physiquement paramétré ;
-- pas de CFD de culasse, de chambre ou de spray, ni de données flowbench
-  certifiées pour tous les presets ;
-- pas d'import CSV de profils de came depuis l'interface ; les profils
-  arbitraires sont décrits dans la configuration YAML/JSON ;
-- pas de torsion multi-vilebrequin indépendante, de jeu d'engrenage, de
-  synchroniseurs détaillés, d'ABS, de suspension ou de transfert de charge ;
-- le pneu est un modèle longitudinal agrégé, pas un modèle Pacejka complet ;
-- pas de validation A/B exécutée contre ES2D ni contre un banc moteur réel ;
-- pas de refonte complète de l'éditeur de configuration et de l'UI au niveau
-  d'ES2D, ni de scripting Piranha/Lua ;
-- pas d'export WAV hors ligne du renderer JUCE complet.
+Le compilateur calcule les pertes en série/parallèle et les métriques de chaque
+route cylindre-sortie. Les fichiers moteur v1 restent acceptés et migrés ; les
+exports utilisent le schéma v2. Le mode géométrique historique reste le fallback
+quand aucun graphe auteur n'est présent.
 
-Ces limites sont déclarées. Elles ne sont pas compensées par des coefficients
-cachés, des valeurs forcées par moteur ou des branches propres à un preset.
+Ces pertes servent à l'atténuation audio et à la physique. Un DAG auteur est
+réduit en gorge d'entrée par cylindre, volume/longueur par chemin et conductance
+de sorties parallèles corrigée par son `K` ; ces valeurs reparamètrent les
+transferts conservatifs. La résolution reste toutefois agrégée à une cellule
+runner par cylindre et une cellule collecteur par chemin.
+
+La fenêtre **ECHAP. PRO** édite une copie de travail : génération depuis les
+champs historiques, ajout et paramétrage des sept types de composant,
+connexions, affectations cylindre et vue du flux. Une validation complète est
+requise avant l'application, qui remplace le runtime comme tout changement
+structurel. JSON/YAML reste le format de persistance et le moyen de gérer les
+chemins, leurs cylindres et leurs IR. Le format, le workflow et ses limites
+sont décrits dans [custom-exhaust.md](custom-exhaust.md).
+
+## Encore limité
+
+### ECU
+
+Seules deux tables et un scalaire pilotent actuellement le runtime. Il manque
+les cartes VE, lambda en boucle fermée, démarrage, enrichissements, VVT/VVL,
+boost, wastegate, torque management, datalogging, sélection multi-cellules,
+lissage et historique/undo d'un tuner complet.
+
+### Script
+
+Le DSL ne crée pas encore une bibliothèque de types composables comparable à
+Piranha. Il ne possède ni nœuds utilisateurs, ni fonctions, boucles,
+conditions, tableaux de pièces ou génération arbitraire de topologie. Les
+fichiers `.mr` ne sont pas importables.
+
+### Audio et échappement
+
+Le renderer reste un modèle perceptuel agrégé. Il manque un solveur 1D par
+segments/composants, le glisser-déposer et l'undo/redo dans le concepteur, une
+bibliothèque de pièces mesurées, des positions de microphone et un workflow A/B
+automatisé. Gain, délai, ouverture et réflexion du signal continu suivent les
+métriques combinées du DAG, mais ses branches restent agrégées avant un unique
+guide d'onde et une unique IR par chemin.
+
+### Rendu
+
+Le contrat de scène ne contient pas encore admissions, collecteurs, turbo,
+accessoires, matériaux ou effets. Aucun backend GPU n'est livré et les
+performances d'une future scène 3D ne sont pas mesurées.
+
+## Critère de sortie honnête
+
+Ces modules rendent l'architecture extensible et les modifications utilisateur
+plus sûres. Ils ne suffisent pas à conclure qu'EngineLab égale ES2D sur son
+écosystème de scripts, son catalogue ou son rendu sonore. La grille de
+comparaison et les jalons restants sont maintenus dans
+[es2d-targeted-gap-closure.md](es2d-targeted-gap-closure.md).

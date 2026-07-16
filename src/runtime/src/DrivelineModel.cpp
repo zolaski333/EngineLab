@@ -11,7 +11,15 @@ DrivelineModel::DrivelineModel(const EngineConfig& config) : config_(config) {
 
 void DrivelineModel::requestGear(int gear) noexcept {
     const auto maximum = static_cast<int>(config_.transmission.gearRatios.size()) - 1;
-    requestedGear_ = std::clamp(gear, -2, maximum);
+    const auto selected = std::clamp(gear, -2, maximum);
+    // A real selector cannot engage a ratio that would instantly reverse a
+    // moving driveline. Neutral remains available so the vehicle can coast to
+    // the low-speed interlock before reverse/forward is requested again.
+    constexpr double directionInterlockMps = 0.5;
+    if ((selected == -2 && vehicleSpeedMps_ > directionInterlockMps)
+        || (selected >= 0 && vehicleSpeedMps_ < -directionInterlockMps))
+        return;
+    requestedGear_ = selected;
 }
 
 void DrivelineModel::shiftUp() noexcept { requestGear(requestedGear_ + 1); }
@@ -28,9 +36,10 @@ DrivelineOutput DrivelineModel::advance(double dt, const EngineState& engineStat
                                         double requestedLoad, double clutchPedal,
                                         double brakePressure) noexcept {
     DrivelineOutput output;
-    dt = std::clamp(dt, 0.0, 0.05);
-    clutchPedal = std::clamp(clutchPedal, 0.0, 1.0);
-    brakePressure = std::clamp(brakePressure, 0.0, 1.0);
+    dt = std::isfinite(dt) ? std::clamp(dt, 0.0, 0.05) : 0.0;
+    requestedLoad = std::isfinite(requestedLoad) ? std::clamp(requestedLoad, 0.0, 1.0) : 0.0;
+    clutchPedal = std::isfinite(clutchPedal) ? std::clamp(clutchPedal, 0.0, 1.0) : 0.0;
+    brakePressure = std::isfinite(brakePressure) ? std::clamp(brakePressure, 0.0, 1.0) : 0.0;
     const auto& transmission = config_.transmission;
     const auto& vehicle = config_.vehicle;
     const auto maximumGear = static_cast<int>(transmission.gearRatios.size()) - 1;
@@ -80,9 +89,11 @@ DrivelineOutput DrivelineModel::advance(double dt, const EngineState& engineStat
     double wheelInputWork = 0.0;
     double roadWork = 0.0;
     double brakeWork = 0.0;
+    double roadLoadWork = 0.0;
     double tireSlipWork = 0.0;
     double lastSlipRpm = 0.0;
     double lastTireForce = 0.0;
+    double lastRoadLoadForce = 0.0;
     bool tractionLimited = false;
     for (int step = 0; step < mechanicalStepCount; ++step) {
         const auto previousWheelOmega = wheelAngularVelocityRadPerSecond_;
@@ -120,7 +131,25 @@ DrivelineOutput DrivelineModel::advance(double dt, const EngineState& engineStat
         const auto aeroForce = 0.5 * 1.225 * vehicle.dragCoefficient * vehicle.frontalAreaM2
             * speedSquared * speedSign;
         const auto rollingForce = vehicle.massKg * 9.80665 * vehicle.rollingResistanceCoefficient * speedSign;
-        vehicleSpeedMps_ += (lastTireForce - aeroForce - rollingForce) / vehicle.massKg * mechanicalDt;
+        // The manual vehicle load is an external longitudinal retarder. Its
+        // reaction reaches the crank only through tire, gearbox and clutch;
+        // applying the same command directly at the crank would count it twice.
+        const auto unretardedForce = lastTireForce - aeroForce - rollingForce;
+        constexpr double roadLoadDirectionThresholdMps = 1.0e-6;
+        const auto vehicleIsMoving = std::abs(previousVehicleSpeed)
+            > roadLoadDirectionThresholdMps;
+        const auto loadDirection = vehicleIsMoving
+            ? std::copysign(1.0, previousVehicleSpeed)
+            : (std::abs(unretardedForce) > 1.0e-6 ? std::copysign(1.0, unretardedForce) : 0.0);
+        const auto roadLoadCapacity = requestedLoad * vehicle.maximumBrakeForceN;
+        const auto roadLoadMagnitude = vehicleIsMoving
+            ? roadLoadCapacity : std::min(roadLoadCapacity, std::abs(unretardedForce));
+        const auto roadLoadForce = roadLoadMagnitude * loadDirection;
+        lastRoadLoadForce = roadLoadForce;
+        vehicleSpeedMps_ += (lastTireForce - aeroForce - rollingForce - roadLoadForce)
+            / vehicle.massKg * mechanicalDt;
+        if (loadDirection != 0.0 && vehicleSpeedMps_ * loadDirection < 0.0)
+            vehicleSpeedMps_ = 0.0;
         if (brakePressure > 0.0 && previousVehicleSpeed * vehicleSpeedMps_ < 0.0) vehicleSpeedMps_ = 0.0;
         vehicleDistanceM_ += std::abs(0.5 * (previousVehicleSpeed + vehicleSpeedMps_)) * mechanicalDt;
 
@@ -137,6 +166,7 @@ DrivelineOutput DrivelineModel::advance(double dt, const EngineState& engineStat
         clutchLossEnergy += clutchLossW * mechanicalDt;
         wheelInputWork += wheelTorque * meanWheelOmega * mechanicalDt;
         roadWork += (std::abs(aeroForce) + std::abs(rollingForce)) * std::abs(meanVehicleSpeed) * mechanicalDt;
+        roadLoadWork += std::abs(roadLoadForce * meanVehicleSpeed) * mechanicalDt;
         brakeWork += brakeForceCapacity * vehicle.tireRadiusM * std::abs(meanWheelOmega) * mechanicalDt;
         tireSlipWork += std::abs(lastTireForce * slipVelocity) * mechanicalDt;
     }
@@ -151,11 +181,12 @@ DrivelineOutput DrivelineModel::advance(double dt, const EngineState& engineStat
     const auto storedEnergy = 0.5 * wheelInertia * wheelAngularVelocityRadPerSecond_
         * wheelAngularVelocityRadPerSecond_ + 0.5 * vehicle.massKg * vehicleSpeedMps_ * vehicleSpeedMps_;
     const auto energyResidual = energyInitialised_
-        ? storedEnergy - previousStoredEnergyJoules_ - wheelInputWork + roadWork + brakeWork + tireSlipWork : 0.0;
+        ? storedEnergy - previousStoredEnergyJoules_ - wheelInputWork + roadWork + roadLoadWork
+            + brakeWork + tireSlipWork : 0.0;
     previousStoredEnergyJoules_ = storedEnergy;
     energyInitialised_ = true;
 
-    output.requestedLoad = std::clamp(requestedLoad, 0.0, 1.0);
+    output.requestedLoad = requestedLoad;
     output.engagedGear = engagedGear_;
     output.clutchPressure = effectiveClutch;
     output.vehicleSpeedMps = vehicleSpeedMps_;
@@ -164,6 +195,7 @@ DrivelineOutput DrivelineModel::advance(double dt, const EngineState& engineStat
     output.shiftInProgress = shiftInProgress_;
     output.brakePressure = brakePressure;
     output.brakeForceN = brakeForceCapacity;
+    output.roadLoadForceN = std::abs(lastRoadLoadForce);
     output.clutchTemperatureC = clutchTemperatureC_;
     output.clutchDissipatedEnergyJoules = clutchDissipatedEnergyJoules_;
     output.clutchPowerLossKw = clutchLossEnergy * inverseDt * 0.001;

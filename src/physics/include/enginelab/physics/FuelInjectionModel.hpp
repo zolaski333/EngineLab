@@ -24,6 +24,17 @@ public:
                                                        GasCell& target,
                                                        double commandedMoles,
                                                        double dtSeconds) noexcept;
+
+    /**
+     * Advance the per-cylinder closed-loop fuel trim once per engine cycle.
+     * The controller bandwidth follows both cycle time and port-film delay so
+     * slow manifold injection cannot oscillate like a delay-free DI system.
+     */
+    [[nodiscard]] static double updateClosedLoopTrim(const InjectionConfig& injection,
+                                                     double rpm,
+                                                     double measuredAirFuelRatio,
+                                                     double targetAirFuelRatio,
+                                                     double currentTrim) noexcept;
 };
 
 } // namespace enginelab
