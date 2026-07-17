@@ -180,11 +180,21 @@ solveur thermodynamique d'ondes.
 et véhicule. Marche arrière, point mort et rapports avant partagent une machine
 d'état avec débrayage, changement, réembrayage et réduction de couple.
 
-La capacité de l'embrayage borne son couple. Le travail de glissement le
-chauffe ; refroidissement et fading font évoluer cette capacité. La roue reste
-un degré de liberté distinct de la vitesse véhicule. Son glissement génère une
-force longitudinale bornée par l'adhérence, puis traînée, roulement et frein
-dissipent l'énergie. Le runtime sous-échantillonne ce couplage à 1 ms.
+L'embrayage est un frein sec à loi collé/glissé (Karnopp), pas un coupleur
+visqueux. Hors de la fenêtre de verrouillage `clutch_lock_speed_rpm`, il glisse
+et transmet toute sa capacité en s'opposant au glissement (frottement cinétique,
+indépendant de l'amplitude) : c'est ce qui démarre le véhicule et échauffe le
+disque. Dans la fenêtre, il colle : vilebrequin et arbre primaire forment un
+seul corps et l'on résout leur accélération commune à partir des deux inerties,
+du couple propre du moteur et de la charge route ramenée ; on en déduit le couple
+exact qui tient le synchronisme. Comme c'est la solution de la contrainte et non
+une pente raide, la réaction ne peut pas dépasser sur un pas, donc un embrayage
+engagé tient le couple moteur à quelques tr/min de glissement résiduel au lieu de
+patiner sans fin. La capacité — bornée puis dégradée par l'échauffement et le
+fading — le limite toujours : au-delà, il décroche et glisse. La roue reste un
+degré de liberté distinct de la vitesse véhicule. Son glissement génère une force
+longitudinale bornée par l'adhérence, puis traînée, roulement et frein dissipent
+l'énergie. Le runtime sous-échantillonne ce couplage à 1 ms.
 
 En mode véhicule, la charge manuelle est une force résistante longitudinale ;
 elle revient au vilebrequin uniquement par la roue, la boîte et l'embrayage. En

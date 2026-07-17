@@ -305,7 +305,6 @@ std::string JsonEngineSerializer::encode(const EngineConfig& config) const {
                            {"max_clutch_torque_nm", config.transmission.maxClutchTorqueNm},
                            {"driveline_efficiency", config.transmission.drivelineEfficiency},
                            {"driven_wheel_inertia_kg_m2", config.transmission.drivenWheelInertiaKgM2},
-                           {"clutch_slip_stiffness_nm_per_rpm", config.transmission.clutchSlipStiffnessNmPerRpm},
                            {"clutch_lock_speed_rpm", config.transmission.clutchLockSpeedRpm},
                            {"shift_duration_s", config.transmission.shiftDurationSeconds},
                            {"automatic_shifting", config.transmission.automaticShifting},
@@ -481,7 +480,6 @@ EngineDecodeResult JsonEngineSerializer::decode(std::string_view text) const noe
             config.transmission.maxClutchTorqueNm = transmission.value("max_clutch_torque_nm", config.transmission.maxClutchTorqueNm);
             config.transmission.drivelineEfficiency = transmission.value("driveline_efficiency", config.transmission.drivelineEfficiency);
             config.transmission.drivenWheelInertiaKgM2 = transmission.value("driven_wheel_inertia_kg_m2", config.transmission.drivenWheelInertiaKgM2);
-            config.transmission.clutchSlipStiffnessNmPerRpm = transmission.value("clutch_slip_stiffness_nm_per_rpm", config.transmission.clutchSlipStiffnessNmPerRpm);
             config.transmission.clutchLockSpeedRpm = transmission.value("clutch_lock_speed_rpm", config.transmission.clutchLockSpeedRpm);
             config.transmission.shiftDurationSeconds = transmission.value("shift_duration_s", config.transmission.shiftDurationSeconds);
             config.transmission.automaticShifting = transmission.value("automatic_shifting", config.transmission.automaticShifting);

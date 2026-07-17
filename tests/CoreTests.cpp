@@ -131,6 +131,38 @@ int main() {
                 && loadedOutput.vehicleSpeedMps < unloadedOutput.vehicleSpeedMps
                 && std::isfinite(loadedOutput.energyResidualJoules),
                 "manual vehicle load must dissipate road work through the driveline energy path");
+
+        // A fully engaged dry clutch must lock and carry the crank's torque at a few
+        // rpm of slip, not slip endlessly like a fluid coupling. Close the loop with a
+        // single-DOF crank flywheel driven by a constant torque, exactly the way the
+        // runtime couples the simulator to the driveline, and let it settle in gear.
+        {
+            const auto lockConfig = enginelab::makeDefaultInlineFour();
+            enginelab::DrivelineModel lockDriveline(lockConfig);
+            lockDriveline.requestGear(3);
+            const auto crankInertia = enginelab::effectiveRotatingInertiaKgM2(lockConfig);
+            const auto rpmToRad = [](double rpm) { return rpm * 2.0 * std::numbers::pi / 60.0; };
+            constexpr double crankTorqueNm = 150.0;
+            constexpr double lockDt = 1.0 / 200.0;
+            double crankOmega = rpmToRad(2'600.0);
+            enginelab::DrivelineOutput lockOutput;
+            for (int step = 0; step < 3'000; ++step) {
+                enginelab::EngineState crank;
+                crank.angularVelocityRadPerSecond = crankOmega;
+                crank.rpm = crankOmega * 60.0 / (2.0 * std::numbers::pi);
+                crank.throttle = 1.0;
+                crank.torqueNm = crankTorqueNm;
+                lockOutput = lockDriveline.advance(lockDt, crank, 0.0, 1.0, 0.0);
+                crankOmega += (crankTorqueNm + lockOutput.engineReactionTorqueNm) / crankInertia * lockDt;
+                crankOmega = std::max(crankOmega, rpmToRad(700.0));
+            }
+            require(std::abs(lockOutput.clutchSlipRpm) < 2.0 * lockConfig.transmission.clutchLockSpeedRpm,
+                    "an engaged clutch must lock to within its lock-speed band, not slip by hundreds of rpm");
+            require(std::abs(lockOutput.clutchTorqueNm - crankTorqueNm) < 0.2 * crankTorqueNm,
+                    "a locked clutch must carry the crank torque, not a fraction of it");
+            require(lockOutput.clutchPowerLossKw < 1.0,
+                    "a locked clutch must stop dissipating, unlike a permanently slipping coupling");
+        }
     }
     {
         enginelab::MonotonicPublicationTimeline timeline;

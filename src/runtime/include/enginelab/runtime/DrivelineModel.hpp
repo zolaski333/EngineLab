@@ -42,6 +42,9 @@ public:
 private:
     [[nodiscard]] double selectedRatio() const noexcept;
     EngineConfig config_;
+    // Engine + flywheel rotating inertia, cached so the locked-clutch constraint can
+    // share one acceleration between the crank and the driveline.
+    double engineInertiaKgM2_ { 0.24 };
     int requestedGear_ { -1 };
     int engagedGear_ { -1 };
     int shiftTargetGear_ { -1 };

@@ -7,6 +7,7 @@ namespace enginelab {
 
 DrivelineModel::DrivelineModel(const EngineConfig& config) : config_(config) {
     clutchTemperatureC_ = config_.ambientTemperatureC;
+    engineInertiaKgM2_ = std::max(0.001, effectiveRotatingInertiaKgM2(config_));
 }
 
 void DrivelineModel::requestGear(int gear) noexcept {
@@ -71,6 +72,10 @@ DrivelineOutput DrivelineModel::advance(double dt, const EngineState& engineStat
 
     const auto totalRatio = selectedRatio();
     const auto engineOmega = engineState.angularVelocityRadPerSecond;
+    // The crank's own torque this tick (combustion brake torque plus any starter),
+    // used by the locked-clutch constraint. It is a one-tick estimate of a quantity
+    // that changes slowly next to the tick, and the friction capacity bounds it.
+    const auto engineDriveTorque = engineState.torqueNm + engineState.starterTorqueNm;
     const auto wheelInertia = std::max(0.01, transmission.drivenWheelInertiaKgM2
         + transmission.differentialInertiaKgM2
         + transmission.gearboxInputInertiaKgM2 * totalRatio * totalRatio);
@@ -104,12 +109,9 @@ DrivelineOutput DrivelineModel::advance(double dt, const EngineState& engineStat
         const auto fade = std::clamp((transmission.clutchFailureTemperatureC - clutchTemperatureC_)
             / (transmission.clutchFailureTemperatureC - transmission.clutchFadeStartTemperatureC), 0.0, 1.0);
         const auto capacity = transmission.maxClutchTorqueNm * effectiveClutch * fade;
-        double clutchTorque = 0.0;
-        if (totalRatio != 0.0 && effectiveClutch > 0.0)
-            clutchTorque = std::clamp(lastSlipRpm * transmission.clutchSlipStiffnessNmPerRpm,
-                                      -capacity, capacity);
-        const auto wheelTorque = clutchTorque * totalRatio * transmission.drivelineEfficiency;
 
+        // Driven-tyre longitudinal force and wheel-brake torque are resolved before
+        // the clutch, because the lock solver needs the road load it must react.
         const auto tireSurfaceSpeed = previousWheelOmega * vehicle.tireRadiusM;
         const auto slipVelocity = tireSurfaceSpeed - previousVehicleSpeed;
         const auto unconstrainedTireForce = slipVelocity * tireStiffnessNPerMps;
@@ -119,6 +121,36 @@ DrivelineOutput DrivelineModel::advance(double dt, const EngineState& engineStat
             ? std::copysign(1.0, previousWheelOmega)
             : (std::abs(previousVehicleSpeed) > 0.01 ? std::copysign(1.0, previousVehicleSpeed) : 0.0);
         const auto brakeTorque = brakeForceCapacity * vehicle.tireRadiusM * motionSign;
+        const auto wheelLoadTorque = lastTireForce * vehicle.tireRadiusM + brakeTorque;
+
+        // Dry-friction clutch with a Karnopp stick/slip law.
+        //  * |slip| outside the lock window -> kinetic friction: it transmits its full
+        //    capacity opposing the slip, independent of slip magnitude. This launches
+        //    the car and is what dissipates energy and heats the disc.
+        //  * inside the lock window -> stick: crank and gearbox input are one rigid
+        //    body. We solve their shared acceleration from both inertias, the engine's
+        //    own torque and the reflected road load, then read off the coupling torque
+        //    that holds synchronism. Being the constraint solution rather than a stiff
+        //    slope, this reaction cannot overshoot within a tick, so an engaged clutch
+        //    holds the engine's torque at a few rpm of residual slip instead of
+        //    slipping without end. The friction capacity still bounds it: when the
+        //    demanded stick torque exceeds capacity the clutch breaks away into slip.
+        double clutchTorque = 0.0;
+        if (totalRatio != 0.0 && effectiveClutch > 0.0) {
+            const auto lockBandRpm = std::max(1.0, transmission.clutchLockSpeedRpm);
+            if (std::abs(lastSlipRpm) > lockBandRpm) {
+                clutchTorque = std::copysign(capacity, slipOmega);
+            } else {
+                const auto coupledInertia = wheelInertia
+                    + engineInertiaKgM2_ * totalRatio * totalRatio * transmission.drivelineEfficiency;
+                const auto stickTorque = coupledInertia > 0.0
+                    ? (wheelInertia * engineDriveTorque
+                       + engineInertiaKgM2_ * totalRatio * wheelLoadTorque) / coupledInertia
+                    : 0.0;
+                clutchTorque = std::clamp(stickTorque, -capacity, capacity);
+            }
+        }
+        const auto wheelTorque = clutchTorque * totalRatio * transmission.drivelineEfficiency;
         const auto wheelAcceleration = (wheelTorque - lastTireForce * vehicle.tireRadiusM - brakeTorque)
             / wheelInertia;
         wheelAngularVelocityRadPerSecond_ += wheelAcceleration * mechanicalDt;

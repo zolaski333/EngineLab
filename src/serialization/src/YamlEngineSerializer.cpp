@@ -220,7 +220,6 @@ std::string YamlEngineSerializer::encode(const EngineConfig& config) const {
         << YAML::Key << "max_clutch_torque_nm" << YAML::Value << config.transmission.maxClutchTorqueNm
         << YAML::Key << "driveline_efficiency" << YAML::Value << config.transmission.drivelineEfficiency
         << YAML::Key << "driven_wheel_inertia_kg_m2" << YAML::Value << config.transmission.drivenWheelInertiaKgM2
-        << YAML::Key << "clutch_slip_stiffness_nm_per_rpm" << YAML::Value << config.transmission.clutchSlipStiffnessNmPerRpm
         << YAML::Key << "clutch_lock_speed_rpm" << YAML::Value << config.transmission.clutchLockSpeedRpm
         << YAML::Key << "shift_duration_s" << YAML::Value << config.transmission.shiftDurationSeconds
         << YAML::Key << "automatic_shifting" << YAML::Value << config.transmission.automaticShifting
@@ -551,7 +550,6 @@ EngineDecodeResult YamlEngineSerializer::decode(std::string_view text) const noe
             if (transmission["max_clutch_torque_nm"]) config.transmission.maxClutchTorqueNm = transmission["max_clutch_torque_nm"].as<double>();
             if (transmission["driveline_efficiency"]) config.transmission.drivelineEfficiency = transmission["driveline_efficiency"].as<double>();
             if (transmission["driven_wheel_inertia_kg_m2"]) config.transmission.drivenWheelInertiaKgM2 = transmission["driven_wheel_inertia_kg_m2"].as<double>();
-            if (transmission["clutch_slip_stiffness_nm_per_rpm"]) config.transmission.clutchSlipStiffnessNmPerRpm = transmission["clutch_slip_stiffness_nm_per_rpm"].as<double>();
             if (transmission["clutch_lock_speed_rpm"]) config.transmission.clutchLockSpeedRpm = transmission["clutch_lock_speed_rpm"].as<double>();
             if (transmission["shift_duration_s"]) config.transmission.shiftDurationSeconds = transmission["shift_duration_s"].as<double>();
             if (transmission["automatic_shifting"]) config.transmission.automaticShifting = transmission["automatic_shifting"].as<bool>();

@@ -568,7 +568,6 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
         || !inRange(config.transmission.maxClutchTorqueNm, 10.0, 10'000.0)
         || !inRange(config.transmission.drivelineEfficiency, 0.2, 1.0)
         || !inRange(config.transmission.drivenWheelInertiaKgM2, 0.0, 200.0)
-        || !inRange(config.transmission.clutchSlipStiffnessNmPerRpm, 0.001, 20.0)
         || !inRange(config.transmission.clutchLockSpeedRpm, 0.1, 500.0)
         || !inRange(config.transmission.shiftDurationSeconds, 0.01, 3.0)
         || !inRange(config.transmission.automaticUpshiftRpm, 250.0, 50'000.0)

@@ -136,7 +136,6 @@ template <typename T>
     assignIfPresent(node, "max_clutch_torque_nm", value.maxClutchTorqueNm);
     assignIfPresent(node, "driveline_efficiency", value.drivelineEfficiency);
     assignIfPresent(node, "driven_wheel_inertia_kg_m2", value.drivenWheelInertiaKgM2);
-    assignIfPresent(node, "clutch_slip_stiffness_nm_per_rpm", value.clutchSlipStiffnessNmPerRpm);
     assignIfPresent(node, "clutch_lock_speed_rpm", value.clutchLockSpeedRpm);
     assignIfPresent(node, "shift_duration_s", value.shiftDurationSeconds);
     assignIfPresent(node, "automatic_shifting", value.automaticShifting);

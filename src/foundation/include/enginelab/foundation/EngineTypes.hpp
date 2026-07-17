@@ -285,7 +285,8 @@ struct TransmissionConfig final {
     double maxClutchTorqueNm { 1'356.0 };
     double drivelineEfficiency { 0.88 };
     double drivenWheelInertiaKgM2 { 3.6 };
-    double clutchSlipStiffnessNmPerRpm { 0.16 };
+    // Half-width of the clutch lock window in slip rpm: inside it the disc sticks
+    // and carries torque up to capacity, outside it slips at capacity (kinetic).
     double clutchLockSpeedRpm { 35.0 };
     double shiftDurationSeconds { 0.18 };
     bool automaticShifting { false };
