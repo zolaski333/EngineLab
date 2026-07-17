@@ -123,11 +123,13 @@ public:
     }
 
     /**
-     * Effective heat-capacity ratio γ = Cp/Cv.
-     * Linearly interpolates between air (1.40) and burned combustion products
-     * (1.26) based on the burned-gas mole fraction.  This corrects ~8-12 %
-     * over-prediction of peak pressure that arises from using γ_air = 1.40
-     * for hot post-combustion gases.
+     * Effective heat-capacity ratio γ = Cp/Cv = 1 + R/Cv, evaluated on the
+     * current species-mole-weighted Cv (see molarHeatCapacityCvEffective).
+     * This is the exact thermodynamic identity, NOT a linear interpolation in
+     * burned fraction: the mixture Cv carries the non-linearity, so γ falls
+     * smoothly from 1.40 (air) toward ~1.26 (fully burned products) as their
+     * higher Cv comes to dominate. Corrects the ~8-12 % peak-pressure
+     * over-prediction of holding γ_air = 1.40 for hot post-combustion gas.
      */
     [[nodiscard]] double heatCapacityRatioEffective() const noexcept;
     [[nodiscard]] double molarHeatCapacityCvEffective() const noexcept;

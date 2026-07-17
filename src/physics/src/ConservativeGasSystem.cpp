@@ -255,7 +255,11 @@ double GasCell::molarHeatCapacityCvEffective() const noexcept {
 double GasCell::heatCapacityRatioEffective() const noexcept {
     const auto n = totalMoles();
     if (n <= 1.0e-15) return gammaAir;
-    // Linear blend: γ_air = 1.40 → γ_burned = 1.26 as burned fraction → 1
+    // Exact thermodynamic identity gamma = 1 + R/Cv, evaluated on the current
+    // species-mole-weighted Cv (molarHeatCapacityCvEffective). This is NOT a
+    // linear blend in burned fraction: as combustion products (higher Cv)
+    // replace air, Cv rises, so gamma falls smoothly from 1.40 (air) toward
+    // ~1.26 (fully burned). The mixture Cv carries the non-linearity.
     return std::clamp(1.0 + universalGasConstant / molarHeatCapacityCvEffective(), 1.05, gammaAir);
 }
 
