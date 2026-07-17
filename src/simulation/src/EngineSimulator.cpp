@@ -804,6 +804,12 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
 
         const auto meanPistonSpeed = pistonSpeedSum / static_cast<double>(config_.cylinders.size());
         const auto displacementM3 = engineDisplacementLitres(config_) * 0.001;
+        // Lumped non-piston friction MEP (bearings + valvetrain + accessories),
+        // a Chen-Flynn-style polynomial in displacement and speed. Piston-skirt
+        // and ring friction are NOT in here: they are resolved separately below
+        // via stribeckFrictionForce. The two are complementary; their sum tracks
+        // the gasoline FMEP band (~0.6 bar idle -> ~2.1 bar redline), verified by
+        // the friction-MEP sweep in CoreTests.
         const auto bearingFriction = state_.rpm > 1.0
             ? displacement * (1.4 + config_.frictionCoefficient * 10.0 + state_.rpm * 0.00055
                               + state_.rpm * state_.rpm * 0.000000035) : 0.0;

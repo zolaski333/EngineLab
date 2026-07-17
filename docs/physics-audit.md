@@ -102,6 +102,7 @@ raté d'allumage et le cliquetis. Corriger la thermodynamique de
 | 0 | Figer cette baseline | — | aucun | ✅ fait |
 | 1 | Bielle articulée : `rodAngle` calculé puis jeté (`MechanicalKinematics.cpp`) | ~~bug~~ → nettoyage | PhysicsRegression | ✅ fait |
 | 2 | Embrayage verrouillé : couplage retardé une frame | ~~bug~~ → non-problème | Core (garde catalogue) | ✅ fait |
+| 3 | Double comptage frottement paliers/piston | ~~bug~~ → non-problème | Core (garde FMEP) | ✅ fait |
 | 2 | Embrayage verrouillé : couplage retardé 2 ticks, pas une contrainte | bug/à mesurer | Core + assert résidu énergétique |
 | 3 | Double comptage frottement paliers/piston | à mesurer | garde FMEP + CombustionPhasing IMEP |
 | 4 | Nettoyages doc (γ, modèle moyen vestigial) | clarté | build vert, baselines identiques |
@@ -152,6 +153,45 @@ catalogue** (`tests/CoreTests.cpp`) : chaque preset, en prise, à dt=1/60 s, doi
 converger sans chatter (ripple couplage < 25 Nm) et rester dans sa bande de
 verrouillage. Le test existant ne couvrait qu'une seule inertie (I=0.41) à
 dt=1/200 s ; celui-ci couvre tout le catalogue à la pire cadence.
+
+## Phase 3 — résultat (hypothèse renversée par la mesure)
+
+Hypothèse : `bearingFriction` (polynomiale empirique) et le frottement piston
+Stribeck résolu couvrent le même mécanisme -> double comptage possible.
+
+Mesure : balayage FMEP total (`state.frictionMeanEffectivePressureBar`) sur
+inline4 en WOT avec charge, du ralenti au rupteur :
+
+| rpm  | 750  | 1750 | 2750 | 3250 | 4750 | 6250 | 7250 |
+| ---- | ---- | ---- | ---- | ---- | ---- | ---- | ---- |
+| FMEP | 0.56 | 0.77 | 0.99 | 1.11 | 1.48 | 1.92 | 2.14 |
+
+Courbe FMEP **de manuel** : montée quasi linéaire de ~0.6 bar au ralenti à
+~2.1 bar au rupteur, en plein dans la bande essence (idle 0.5-0.8, mid 1.0-1.3,
+haut 1.8-2.5). Décomposition à 3000 rpm : polynomiale ~0.59 bar, piston résolu
+~0.46 bar — **complémentaires, pas de recouvrement**. Le total est bien calibré ;
+re-répartir sans références dyno régresserait une courbe correcte.
+
+Actions livrées (comportement inchangé) :
+
+- **aucun changement de calcul** ;
+- commentaire clarifiant que `bearingFriction` est en fait le FMEP non-piston
+  agrégé (paliers + distribution + accessoires), le piston étant résolu à part
+  (`EngineSimulator.cpp`) ;
+- test de garde FMEP (`tests/CoreTests.cpp`) : la courbe FMEP inline4 doit rester
+  dans l'enveloppe littérature et croître avec le régime. Non-vacuité prouvée :
+  en doublant le frottement, le test échoue sur l'enveloppe.
+
+## Bilan de l'audit (Phases 1-3)
+
+Les trois hypothèses de lecture — maneton articulé faux, embrayage qui broute,
+double comptage de frottement — ont **toutes été infirmées par la mesure**. C'est
+exactement l'avertissement de `CLAUDE.md` : « This codebase reads as if it is full
+of bugs. Several of them are not. » Aucun bug expédiable trouvé dans ces zones ;
+la valeur livrée est la **couverture de régression** (trace articulée, anti-chatter
+catalogue, enveloppe FMEP) qui verrouille le comportement mesuré-correct, plus le
+retrait d'un code mort. Restent à traiter, si besoin produit : Phase 4 (clarté doc)
+et Phase 5 (fraction volumique/1.12, fermée par défaut).
 
 Actions livrées (comportement inchangé, baselines identiques, 13/13 vert) :
 

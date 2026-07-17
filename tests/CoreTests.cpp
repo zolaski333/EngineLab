@@ -46,6 +46,56 @@ void require(bool condition, const char* message) {
 int main() {
     try {
     {
+        // Total friction mean effective pressure must track the gasoline
+        // literature band across the whole rev range, not just be finite. The
+        // model sums an empirical non-piston polynomial (bearings + valvetrain +
+        // accessories, misleadingly named bearingFriction) with a resolved
+        // Stribeck piston friction; this guards their sum against a future
+        // double-count or miscalibration. Reference FMEP for a small gasoline
+        // four: ~0.5-0.8 bar near idle, ~1.0-1.3 bar mid, ~1.8-2.5 bar at redline.
+        // Measured baseline: 0.56 @750, 0.99 @2750, 1.11 @3250, 2.14 @7250.
+        auto cfg = enginelab::makeDefaultInlineFour();
+        enginelab::normaliseEngineConfig(cfg);
+        enginelab::SimpleEcuModel ecu;
+        enginelab::SimplifiedGasolinePhysics physics;
+        enginelab::FourStrokeEventGenerator events;
+        auto exhaust = enginelab::ExhaustGraph::makeForEngine(cfg);
+        enginelab::EngineSimulator sim(cfg, ecu, physics, events, exhaust);
+        constexpr double dt = 1.0 / 2000.0;
+        std::array<double, 16> fmepSum {}; std::array<int, 16> fmepN {};
+        for (int step = 0; step < static_cast<int>(8.0 / dt); ++step) {
+            const auto time = step * dt;
+            enginelab::EngineControls c;
+            c.ignitionEnabled = true;
+            c.starterEngaged = time < 1.2;
+            c.throttle = time < 1.2 ? 0.5 : 1.0;
+            c.load = time > 2.0 ? 0.80 : 0.0; // load sweep so one run spans idle..redline
+            const auto f = sim.step(dt, c);
+            const auto bin = static_cast<int>(f.state.rpm / 500.0);
+            if (time > 1.5 && bin >= 0 && bin < 16) {
+                fmepSum[bin] += f.state.frictionMeanEffectivePressureBar; ++fmepN[bin];
+            }
+        }
+        const auto binFmep = [&](int b) { return fmepN[b] > 0 ? fmepSum[b] / fmepN[b] : -1.0; };
+        // Every populated running bin must stay inside a physical FMEP envelope.
+        for (int b = 1; b < 16; ++b) { // skip bin 0 (<500 rpm, cranking/stall)
+            if (fmepN[b] == 0) continue;
+            const auto fmep = binFmep(b);
+            require(fmep > 0.35 && fmep < 2.7,
+                    "friction MEP must stay within the gasoline literature envelope across rpm");
+        }
+        // Friction must rise with speed (idle < mid < high), the FMEP signature.
+        const auto idleFmep = binFmep(1) > 0 ? binFmep(1) : binFmep(2);   // ~500-1000 rpm
+        const auto midFmep = binFmep(6) > 0 ? binFmep(6) : binFmep(5);    // ~2750-3000 rpm
+        const auto highFmep = binFmep(12) > 0 ? binFmep(12) : binFmep(11);// ~5750-6250 rpm
+        require(idleFmep > 0.0 && midFmep > 0.0 && highFmep > 0.0,
+                "FMEP sweep must populate idle, mid and high rpm bins");
+        require(midFmep > idleFmep && highFmep > midFmep,
+                "friction MEP must increase monotonically with engine speed");
+        require(midFmep > 0.8 && midFmep < 1.4,
+                "mid-range friction MEP must match the gasoline reference (~1.0-1.3 bar)");
+    }
+    {
         enginelab::IndicatedWorkState work;
         enginelab::IndicatedWorkModel::advance(work, 100.0, 1.0, 100.0, false);
         enginelab::IndicatedWorkModel::advance(work, 200.0, 1.0, 100.0, false);
