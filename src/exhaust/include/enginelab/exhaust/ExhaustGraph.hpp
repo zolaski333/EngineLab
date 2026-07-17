@@ -36,6 +36,31 @@ struct ExhaustNode final {
 };
 struct ExhaustEdge final { std::uint32_t from {}; std::uint32_t to {}; };
 
+/** A condition the topology compiler had to work around.
+ *
+ * The compiler always yields a usable graph so the audio and solver paths stay
+ * safe, but every fallback it takes silently discards or truncates authored
+ * intent. Emitting them lets the application tell the user why their exhaust
+ * does not sound like what they drew, instead of substituting a default.
+ */
+enum class ExhaustCompileIssue : std::uint8_t {
+    /// Cylinders were not covered exactly once; the authored paths were replaced
+    /// by a single generated fallback path. relatedId is the offending cylinder.
+    topologyRejected,
+    /// maximumCompiledRoutes was reached; further routes were not compiled.
+    routeLimitReached,
+    /// The generated node-ID space was exhausted. relatedId is 0.
+    nodeIdSpaceExhausted,
+    /// A node has no finite equivalent restriction (dangling branch or cycle);
+    /// it was charged the maximum. relatedId is the cylinder whose route failed.
+    unresolvedRestriction,
+};
+
+struct ExhaustCompileDiagnostic final {
+    ExhaustCompileIssue issue { ExhaustCompileIssue::topologyRejected };
+    std::uint32_t relatedId { 0 };
+};
+
 /** Precomputed metrics for one cylinder-to-outlet route through the DAG. */
 struct ExhaustRoute final {
     std::uint32_t cylinderId { 0 };
@@ -102,6 +127,11 @@ public:
         std::size_t pathIndex) const noexcept override;
     [[nodiscard]] ExhaustCylinderFlowProperties cylinderFlowProperties(
         std::uint32_t cylinderId) const noexcept override;
+    /** Conditions the compiler worked around. Empty means the authored topology
+     *  was compiled as written. */
+    [[nodiscard]] const std::vector<ExhaustCompileDiagnostic>& diagnostics() const noexcept {
+        return diagnostics_;
+    }
 private:
     struct CylinderRestriction final {
         std::uint32_t cylinderId { 0 };
@@ -114,6 +144,7 @@ private:
     std::vector<CylinderRestriction> cylinderRestrictions_;
     std::vector<ExhaustPathFlowProperties> pathFlowProperties_;
     std::vector<ExhaustCylinderFlowProperties> cylinderFlowProperties_;
+    std::vector<ExhaustCompileDiagnostic> diagnostics_;
     double effectiveRestriction_ { 0.0 };
     double legacyEffectiveRestriction_ { 0.0 };
     double ambientPressureKpa_ { 101.325 };

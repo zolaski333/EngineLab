@@ -77,14 +77,12 @@ public:
         momentumXKgMps_ += deltaX;
         momentumYKgMps_ += deltaY;
     }
-    void dissipateMomentum(double timeConstantSeconds, double dtSeconds) noexcept;
-
-    /**
-     * If the bulk gas velocity exceeds the local speed of sound, clamp it to c
-     * and deposit the excess kinetic energy back as heat.  Call after each
-     * flow step to keep the 0-D model well-behaved.
+    /** Apply Darcy-Weisbach distributed and local flow losses to bulk momentum.
+     *  Lost kinetic energy is returned to the gas as heat.
      */
-    void dissipateExcessVelocity() noexcept;
+    void applyFlowResistance(double lengthM, double hydraulicDiameterM,
+                             double absoluteRoughnessM, double localLossCoefficient,
+                             double dtSeconds) noexcept;
 
     // --- Derived quantities -----------------------------------------------
     [[nodiscard]] double volumeLitres() const noexcept { return volumeM3_ * 1'000.0; }
@@ -238,7 +236,7 @@ public:
 
     /**
      * Full physics-aware flow: includes dynamic pressure contribution and
-     * directional jet-momentum injection (see FlowParameters documentation).
+     * directional bulk-momentum injection (see FlowParameters documentation).
      */
     [[nodiscard]] static GasFlowResult flow(const FlowParameters& params) noexcept;
 

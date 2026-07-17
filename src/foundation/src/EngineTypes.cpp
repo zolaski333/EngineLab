@@ -74,12 +74,17 @@ EngineConfig makeEngine(std::string name, EngineLayout layout, std::uint32_t cou
     if (layout == EngineLayout::vLayout || layout == EngineLayout::flat) {
         CylinderBankConfig left { 1, -config.bankAngleDegrees * 0.5, {}, cams, 1, 1 };
         CylinderBankConfig right { 2, config.bankAngleDegrees * 0.5, {}, cams, 1, 1 };
-        for (const auto& cylinder : config.cylinders)
+        for (auto& cylinder : config.cylinders) {
+            cylinder.bankId = cylinder.id % 2U == 0U ? right.id : left.id;
             (cylinder.id % 2U == 0U ? right.cylinderIds : left.cylinderIds).push_back(cylinder.id);
+        }
         config.banks = { std::move(left), std::move(right) };
     } else {
         CylinderBankConfig bank { 1, 0.0, {}, cams, 1, 1 };
-        for (const auto& cylinder : config.cylinders) bank.cylinderIds.push_back(cylinder.id);
+        for (auto& cylinder : config.cylinders) {
+            cylinder.bankId = bank.id;
+            bank.cylinderIds.push_back(cylinder.id);
+        }
         config.banks.push_back(std::move(bank));
     }
     ExhaustPathConfig path;
@@ -118,8 +123,11 @@ EngineConfig makeDefaultV8() {
                              94.0, 90.0, 720.0, 6'600.0, 0.46, { 268.0, 264.0, 12.0, 11.5, 108.0, 110.0 });
     config.frictionCoefficient = 0.15;
     config.bankAngleDegrees = 90.0;
-    for (auto& cylinder : config.cylinders)
+    for (auto& cylinder : config.cylinders) {
         cylinder.bankOffsetDegrees = cylinder.id % 2U == 0U ? 45.0 : -45.0;
+        cylinder.intakeValveCount = 1;
+        cylinder.exhaustValveCount = 1;
+    }
     for (auto& journal : config.crankJournals) {
         const auto cylinder = std::find_if(config.cylinders.begin(), config.cylinders.end(),
             [&journal](const CylinderConfig& item) { return item.crankJournalId == journal.id; });
@@ -180,6 +188,10 @@ EngineConfig makeDefaultRadialFive() {
         cylinder.connectingRodMm = 228.0;
         cylinder.pistonMassGrams = 1'050.0;
         cylinder.compressionRatio = 7.0;
+        cylinder.intakeValveCount = 1;
+        cylinder.exhaustValveCount = 1;
+        cylinder.intakeValveDiameterMm = 49.0;
+        cylinder.exhaustValveDiameterMm = 42.0;
         cylinder.efficiencyOffset = (static_cast<double>(id) - 3.0) * 0.004;
         const auto order = std::find(config.firingOrder.begin(), config.firingOrder.end(), id);
         cylinder.crankOffsetDegrees = order == config.firingOrder.end() ? 0.0
@@ -343,10 +355,11 @@ ValveControlSample interpolateValveControl(const ValveControlConfig& control, do
 }
 
 void normaliseEngineConfig(EngineConfig& config) {
-    // Schema 2 adds the optional authored exhaust DAG and explicit topology
-    // provenance. Schema-1 documents are structurally compatible and migrate
-    // in memory before validation or re-encoding.
-    if (config.schemaVersion == 1) config.schemaVersion = currentEngineSchemaVersion;
+    // Schema 2 added authored exhaust DAGs/topology provenance; schema 3 adds
+    // explicit valve count and diameter. Older documents are structurally
+    // compatible because zero diameters request bore-derived geometry.
+    if (config.schemaVersion < currentEngineSchemaVersion)
+        config.schemaVersion = currentEngineSchemaVersion;
     // `intake` is the canonical representation. Legacy scalar fields remain
     // mirrored so schema-v1 files and old catalog overrides remain compatible.
     if (config.intake.plenumVolumeLitres == IntakeConfig {}.plenumVolumeLitres
@@ -417,6 +430,18 @@ void normaliseEngineConfig(EngineConfig& config) {
     }
     for (auto& bank : config.banks) {
         if (bank.intakeId == 0 && !config.intakePaths.empty()) bank.intakeId = config.intakePaths.front().id;
+    }
+    // A zero bank ID is legacy/unspecified and can be inferred without
+    // ambiguity from the authoritative membership lists. Non-zero IDs remain
+    // untouched so validation can expose contradictory authored topology.
+    for (auto& cylinder : config.cylinders) {
+        if (cylinder.bankId != 0) continue;
+        const auto bank = std::find_if(config.banks.begin(), config.banks.end(),
+            [&cylinder](const auto& candidate) {
+                return std::find(candidate.cylinderIds.begin(), candidate.cylinderIds.end(), cylinder.id)
+                    != candidate.cylinderIds.end();
+            });
+        if (bank != config.banks.end()) cylinder.bankId = bank->id;
     }
     if (config.exhaustPaths.empty()) {
         config.exhaustPaths.push_back(makeDefaultExhaustPath(config));
@@ -575,6 +600,7 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
         || !inRange(config.runnerAcoustics.maximumPressureAmplitudeKpa, 0.1, 200.0)
         || !inRange(config.intake.plenumVolumeLitres, 0.1, 50.0)
         || !inRange(config.intake.throttleDiameterMm, 15.0, 150.0)
+        || config.intake.throttleCount < 1 || config.intake.throttleCount > 16
         || !inRange(config.intake.throttleDischargeCoefficient, 0.05, 1.5)
         || !inRange(config.intake.runnerLengthMm, 20.0, 2'000.0)
         || !inRange(config.intake.runnerDiameterMm, 10.0, 150.0)
@@ -739,17 +765,23 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
             || !inRange(cylinder.pistonCrownVolumeCc, -250.0, 250.0)
             || !inRange(cylinder.headChamberVolumeCc, 0.0, 500.0)
             || !inRange(cylinder.headGasketThicknessMm, 0.0, 10.0)
-            || !inRange(cylinder.connectingRodMomentOfInertiaKgM2, 0.0, 1.0))
+            || !inRange(cylinder.connectingRodMomentOfInertiaKgM2, 0.0, 1.0)
+            || cylinder.intakeValveCount < 1 || cylinder.intakeValveCount > 4
+            || cylinder.exhaustValveCount < 1 || cylinder.exhaustValveCount > 4
+            || !(cylinder.intakeValveDiameterMm == 0.0
+                || inRange(cylinder.intakeValveDiameterMm, 10.0, 80.0))
+            || !(cylinder.exhaustValveDiameterMm == 0.0
+                || inRange(cylinder.exhaustValveDiameterMm, 10.0, 80.0)))
             return "Cylinder IDs and dimensions must be finite and physically valid";
-        if (cylinder.crankJournalId != 0 && !journalIds.empty() && !journalIds.contains(cylinder.crankJournalId))
+        if (cylinder.crankJournalId == 0)
+            return "Every cylinder must explicitly reference a configured crank journal";
+        if (!journalIds.contains(cylinder.crankJournalId))
             return "Cylinder crankJournalId must reference a configured crank journal";
-        if (cylinder.crankJournalId != 0) {
-            const auto journal = std::find_if(config.crankJournals.begin(), config.crankJournals.end(),
-                [&cylinder](const auto& candidate) { return candidate.id == cylinder.crankJournalId; });
-            if (journal != config.crankJournals.end()
-                && std::abs(journal->throwMm * 2.0 - cylinder.strokeMm) > 0.05)
-                return "Crank journal throw must equal half of the referenced cylinder stroke";
-        }
+        const auto journal = std::find_if(config.crankJournals.begin(), config.crankJournals.end(),
+            [&cylinder](const auto& candidate) { return candidate.id == cylinder.crankJournalId; });
+        if (journal != config.crankJournals.end()
+            && std::abs(journal->throwMm * 2.0 - cylinder.strokeMm) > 0.05)
+            return "Crank journal throw must equal half of the referenced cylinder stroke";
         const auto explicitDeckGeometry = cylinder.deckHeightMm > 0.0 || cylinder.compressionHeightMm > 0.0
             || cylinder.headChamberVolumeCc > 0.0 || cylinder.headGasketThicknessMm > 0.0
             || cylinder.pistonCrownVolumeCc != 0.0;
@@ -793,6 +825,7 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
         if (path.id == 0 || path.cylinderIds.empty() || !intakePathIds.insert(path.id).second
             || !inRange(intake.plenumVolumeLitres, 0.05, 100.0)
             || !inRange(intake.throttleDiameterMm, 5.0, 250.0)
+            || intake.throttleCount < 1 || intake.throttleCount > 16
             || !inRange(intake.throttleDischargeCoefficient, 0.05, 1.5)
             || !inRange(intake.runnerLengthMm, 20.0, 2'000.0)
             || !inRange(intake.runnerDiameterMm, 10.0, 150.0)
@@ -815,6 +848,10 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
         for (const auto cylinderId : bank.cylinderIds) {
             if (!cylinderIds.contains(cylinderId) || !assignedBankCylinders.insert(cylinderId).second)
                 return "Bank cylinder references must be unique and valid";
+            const auto cylinder = std::find_if(config.cylinders.begin(), config.cylinders.end(),
+                [cylinderId](const auto& candidate) { return candidate.id == cylinderId; });
+            if (cylinder == config.cylinders.end() || cylinder->bankId != bank.id)
+                return "Cylinder bankId must match the bank that contains the cylinder";
         }
     }
     if (!config.banks.empty() && assignedBankCylinders != cylinderIds)

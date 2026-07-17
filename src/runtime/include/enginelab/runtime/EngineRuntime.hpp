@@ -97,6 +97,28 @@ static_assert(std::atomic<float>::is_always_lock_free, "Realtime audio telemetry
 static_assert(std::atomic<std::uint64_t>::is_always_lock_free,
               "Realtime audio clock publication requires a lock-free 64-bit atomic");
 
+/** Per-frame audio context that EngineState does not itself carry. */
+struct AudioFramePublication final {
+    bool paused { false };
+    bool starterEngaged { false };
+    /// Driveline clutch load; the published load is the max of this and EngineState::load.
+    double drivelineLoad { 0.0 };
+    double timeScale { 1.0 };
+};
+
+/**
+ * Map one simulation frame onto the realtime audio telemetry.
+ *
+ * This is the only definition of the per-frame simulation-to-audio mapping.
+ * EngineRuntime calls it from its simulation thread and the offline render
+ * harness calls it with the frames it steps itself, so a regression run
+ * exercises the mapping the application ships rather than a parallel copy.
+ * Static, configuration-derived telemetry (geometry, pan, path areas, runner
+ * delays) is published once by the EngineRuntime constructor instead.
+ */
+void publishAudioFrame(RealtimeAudioState& state, const EngineState& engineState,
+                       const AudioFramePublication& context) noexcept;
+
 /** Owns the fixed-rate simulation thread and the simulation-to-audio event queue. */
 class EngineRuntime final {
 public:
@@ -155,6 +177,9 @@ public:
     [[nodiscard]] std::uint64_t droppedEventCount() const noexcept { return droppedEvents_.load(); }
     [[nodiscard]] std::uint64_t droppedPressureSampleCount() const noexcept { return droppedPressureSamples_.load(); }
     [[nodiscard]] std::uint64_t timingOverrunCount() const noexcept { return timingOverruns_.load(); }
+    [[nodiscard]] double maximumTimingLatenessSeconds() const noexcept {
+        return maximumTimingLatenessSeconds_.load();
+    }
 private:
     void run(std::stop_token stopToken);
     void beginDynoSession();
@@ -178,7 +203,7 @@ private:
     EngineState snapshot_;
     std::atomic<bool> ignition_ { false };
     std::atomic<bool> starter_ { false };
-    std::atomic<double> throttle_ { 0.12 };
+    std::atomic<double> throttle_ { 0.0 };
     std::atomic<double> load_ { 0.08 };
     std::atomic<double> clutchPressure_ { 1.0 };
     std::atomic<double> brakePressure_ { 0.0 };
@@ -189,6 +214,7 @@ private:
     std::atomic<std::uint64_t> droppedEvents_ { 0 };
     std::atomic<std::uint64_t> droppedPressureSamples_ { 0 };
     std::atomic<std::uint64_t> timingOverruns_ { 0 };
+    std::atomic<double> maximumTimingLatenessSeconds_ { 0.0 };
     std::atomic<bool> paused_ { false };
     std::atomic<double> timeScale_ { 1.0 };
     // UI writes only the desired state. The simulation thread owns all mutable
@@ -204,14 +230,17 @@ private:
     double nextSampleRpm_ { 0.0 };
     double dynoTargetRpm_ { 0.0 };
     double dynoStableElapsed_ { 0.0 };
-    double dynoLoadCommand_ { 0.34 };
+    double dynoBrakeTorqueNm_ { 0.0 };
+    double dynoControllerIntegralNm_ { 0.0 };
+    double dynoFeedForwardTorqueNm_ { 0.0 };
     double dynoFilteredRpm_ { 0.0 };
+    double dynoFilteredAccelerationRpmPerSecond_ { 0.0 };
     double dynoTorqueAccumulator_ { 0.0 };
     double dynoPowerAccumulator_ { 0.0 };
     std::uint32_t dynoSampleCount_ { 0 };
     bool savedIgnition_ { false };
     bool savedStarter_ { false };
-    double savedThrottle_ { 0.12 };
+    double savedThrottle_ { 0.0 };
     double savedLoad_ { 0.08 };
     double vehicleSpeedMps_ { 0.0 };
     double vehicleDistanceM_ { 0.0 };

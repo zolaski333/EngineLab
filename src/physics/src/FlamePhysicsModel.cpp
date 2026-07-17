@@ -41,8 +41,10 @@ double FlamePhysicsModel::turbulentFlameSpeedMps(const FuelConfig& fuel,
     // unburned at EVO. The coefficient represents the fraction of the bulk
     // piston-driven turbulence effective at wrinkling the flame front.
     const auto turbulentContribution = turbulence * 1.12;
+    // Dilution must attenuate the laminar component too.  Using S_L as the
+    // lower clamp silently cancelled the residual-gas term at low turbulence.
     return std::clamp((laminar + turbulentContribution) * dilutionAttenuation,
-                      laminar, 42.0);
+                      laminar * 0.25, 42.0);
 }
 
 double FlamePhysicsModel::ignitionDelaySeconds(const CombustionCalibrationConfig& calibration,

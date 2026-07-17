@@ -33,6 +33,7 @@
 #include <numbers>
 #include <set>
 #include <cmath>
+#include <tuple>
 #include <stdexcept>
 #include <thread>
 
@@ -43,6 +44,7 @@ void require(bool condition, const char* message) {
 }
 
 int main() {
+    try {
     {
         enginelab::IndicatedWorkState work;
         enginelab::IndicatedWorkModel::advance(work, 100.0, 1.0, 100.0, false);
@@ -148,10 +150,12 @@ int main() {
         auto topology = enginelab::makeDefaultInlineFour();
         topology.intake.plenumVolumeLitres = 4.75;
         topology.intake.throttleDiameterMm = 68.0;
+        topology.intake.throttleCount = 2;
         topology.rotatingInertiaKgM2 = 0.41;
         enginelab::normaliseEngineConfig(topology);
         require(topology.plenumVolumeLitres == 4.75 && topology.throttleDiameterMm == 68.0
-                && topology.intakePaths.front().geometry.plenumVolumeLitres == 4.75,
+                && topology.intakePaths.front().geometry.plenumVolumeLitres == 4.75
+                && topology.intakePaths.front().geometry.throttleCount == 2,
                 "normalisation must keep one canonical intake representation");
         require(enginelab::effectiveRotatingInertiaKgM2(topology) > 0.41,
                 "effective inertia must include the migrated crankshaft and rotating connecting-rod mass");
@@ -252,8 +256,8 @@ int main() {
                 < initialMoles * 1.0e-10, "gas transfers must conserve moles");
         require(std::abs(enginelab::ConservativeGasSystem::totalEnergy(highPressure, lowPressure) - initialEnergy)
                 < std::max(1.0, initialEnergy) * 1.0e-10, "gas transfers must conserve internal energy");
-        require(std::abs(enginelab::ConservativeGasSystem::totalMomentum(highPressure, lowPressure) - initialMomentum)
-                < 1.0e-10, "gas transfers must conserve vector momentum");
+        require(enginelab::ConservativeGasSystem::totalMomentum(highPressure, lowPressure) > initialMomentum,
+                "the pressure gradient must accelerate the gas toward the low-pressure volume");
         require(highPressure.pressureKpa() < 220.0 && lowPressure.pressureKpa() > 85.0,
                 "gas transfer must move both control volumes toward equilibrium");
 
@@ -295,6 +299,23 @@ int main() {
         require(std::abs(combustible.massKg() - massBeforeReaction) < massBeforeReaction * 1.0e-12,
                 "global gasoline reaction must conserve reactant mass");
 
+        enginelab::GasCell completeChemistry;
+        completeChemistry.initialise(100.0, 0.5, 330.0);
+        completeChemistry.injectFuelMoles(completeChemistry.mixture().oxygenMoles / 12.5);
+        auto incompleteChemistry = completeChemistry;
+        const auto requestedFuel = completeChemistry.mixture().fuelMoles * 0.4;
+        const auto completeReaction = enginelab::ConservativeGasSystem::reactFuelMoles(
+            completeChemistry, requestedFuel, 1.0, 44'000'000.0);
+        const auto incompleteReaction = enginelab::ConservativeGasSystem::reactFuelMoles(
+            incompleteChemistry, requestedFuel, 0.5, 44'000'000.0);
+        require(std::abs(incompleteReaction.burnedFuelMoles
+                    - 0.5 * completeReaction.burnedFuelMoles) < requestedFuel * 1.0e-12
+                && std::abs(incompleteReaction.releasedEnergyJoules
+                    - 0.5 * completeReaction.releasedEnergyJoules)
+                    < completeReaction.releasedEnergyJoules * 1.0e-12
+                && incompleteChemistry.mixture().fuelMoles > completeChemistry.mixture().fuelMoles,
+                "combustion efficiency must leave unreacted fuel instead of deleting its chemical energy");
+
         enginelab::GasCell calibratedFuel;
         calibratedFuel.configureFuelChemistry(0.100, 10.0, 14.0);
         calibratedFuel.initialise(100.0, 0.5, 330.0);
@@ -318,9 +339,9 @@ int main() {
         const auto vectorEnergyBefore = enginelab::ConservativeGasSystem::totalEnergy(vectorSource, vectorSink);
         (void)enginelab::ConservativeGasSystem::flow({ &vectorSource, &vectorSink,
             1.2e-5, 0.76, 1.0 / 10'000.0, 0.6, 0.8, 8.0e-5, 8.0e-5 });
-        require(std::abs(enginelab::ConservativeGasSystem::totalMomentumX(vectorSource, vectorSink) - pxBefore) < 1.0e-10
-                && std::abs(enginelab::ConservativeGasSystem::totalMomentumY(vectorSource, vectorSink) - pyBefore) < 1.0e-10,
-                "directional gas flow must conserve both momentum components");
+        require(enginelab::ConservativeGasSystem::totalMomentumX(vectorSource, vectorSink) > pxBefore
+                && enginelab::ConservativeGasSystem::totalMomentumY(vectorSource, vectorSink) > pyBefore,
+                "duct pressure forces must accelerate both gas volumes in the configured flow direction");
         require(std::abs(enginelab::ConservativeGasSystem::totalEnergy(vectorSource, vectorSink) - vectorEnergyBefore)
                     < std::max(1.0, vectorEnergyBefore) * 1.0e-8,
                 "directional gas flow must conserve internal plus bulk kinetic energy");
@@ -339,6 +360,13 @@ int main() {
         const auto leanSpeed = enginelab::FlamePhysicsModel::laminarFlameSpeedMps(fuel, 0.55, 650.0, 101'325.0);
         require(hotSpeed > coldSpeed && leanSpeed < hotSpeed,
                 "Metghalchi-Keck flame speed must respond to temperature and mixture strength");
+        enginelab::FlameConditions cleanConditions { 0.086, 0.000055, 650.0, 500'000.0,
+                                                      1.05, 0.0, 0.0, 0.5 };
+        auto dilutedConditions = cleanConditions;
+        dilutedConditions.burnedGasFraction = 0.5;
+        require(enginelab::FlamePhysicsModel::turbulentFlameSpeedMps(fuel, dilutedConditions)
+                    < enginelab::FlamePhysicsModel::turbulentFlameSpeedMps(fuel, cleanConditions),
+                "residual-gas dilution must attenuate flame speed even at low turbulence");
         enginelab::FlameEvent event;
         enginelab::FlameConditions conditions { 0.086, 0.000055, 700.0, 900'000.0,
                                                  1.05, 0.04, 12.0, 0.9 };
@@ -412,6 +440,28 @@ int main() {
     }
 
     auto config = enginelab::makeDefaultInlineFour();
+
+    {
+        enginelab::SimpleEcuModel idleEcu;
+        idleEcu.initialise(config);
+        enginelab::EngineControls closedThrottle { true, false, 0.0, 0.0 };
+        enginelab::EngineState belowIdle;
+        belowIdle.simulationTimeSeconds = 0.1;
+        belowIdle.rpm = config.idleRpm * 0.45;
+        belowIdle.manifoldPressureKpa = 35.0;
+        const auto recovery = idleEcu.evaluate(config, belowIdle, closedThrottle);
+        require(recovery.effectiveThrottle == 0.0,
+                "idle control must not hold the driver's throttle open");
+        require(recovery.idleAirOpening > 0.5,
+                "idle actuator must provide recovery air below the target speed");
+
+        auto aboveIdle = belowIdle;
+        aboveIdle.simulationTimeSeconds += 0.01;
+        aboveIdle.rpm = config.idleRpm * 1.55;
+        const auto overspeed = idleEcu.evaluate(config, aboveIdle, closedThrottle);
+        require(overspeed.effectiveThrottle == 0.0 && overspeed.idleAirOpening < 0.05,
+                "idle actuator must close when engine speed is above target");
+    }
 
     {
         enginelab::SimpleEcuModel noStartEcu;
@@ -618,9 +668,11 @@ int main() {
     require(v8JsonRoundTrip && v8JsonRoundTrip.config->layout == enginelab::EngineLayout::vLayout,
             "JSON must preserve V engine layout");
     auto legacyJson = json.encode(config);
-    const auto schemaMarker = legacyJson.find("\"schema_version\": 2");
+    const auto currentSchemaMarker = std::string("\"schema_version\": ")
+        + std::to_string(enginelab::currentEngineSchemaVersion);
+    const auto schemaMarker = legacyJson.find(currentSchemaMarker);
     require(schemaMarker != std::string::npos, "JSON writer must emit the current schema version");
-    legacyJson.replace(schemaMarker, std::string("\"schema_version\": 2").size(),
+    legacyJson.replace(schemaMarker, currentSchemaMarker.size(),
                        "\"schema_version\": 1");
     const auto migratedJson = json.decode(legacyJson);
     require(migratedJson
@@ -811,8 +863,6 @@ int main() {
         bankGeometryConfig.cylinders[1].crankOffsetDegrees = 0.0;
         bankGeometryConfig.cylinders[0].bankOffsetDegrees = -45.0;
         bankGeometryConfig.cylinders[1].bankOffsetDegrees = 45.0;
-        bankGeometryConfig.cylinders[0].crankJournalId = 0;
-        bankGeometryConfig.cylinders[1].crankJournalId = 0;
         enginelab::SimpleEcuModel bankEcu;
         enginelab::SimplifiedGasolinePhysics bankPhysics;
         enginelab::FourStrokeEventGenerator bankEvents;
@@ -839,22 +889,32 @@ int main() {
             enginelab::EngineSimulator injectionSimulator(injectionConfig, injectionEcu, injectionPhysics,
                                                           injectionEvents, injectionExhaust);
             bool observedPreTdcBurn = false;
+            double maximumInjectedFuelMgPerCycle = 0.0;
             for (int step = 0; step < 720; ++step) {
                 const auto frame = injectionSimulator.step(1.0 / 240.0,
                     { true, step < 360, 0.55, 0.04 });
+                maximumInjectedFuelMgPerCycle = std::max(
+                    maximumInjectedFuelMgPerCycle, frame.state.injectedFuelMgPerCycle);
                 for (std::size_t index = 0; index < frame.state.cylinderStateCount; ++index) {
                     const auto& cylinder = frame.state.cylinderStates[index];
                     observedPreTdcBurn = observedPreTdcBurn
                         || (cylinder.cyclePhaseDegrees > 650.0 && cylinder.combustionPulse > 1.0e-5);
                 }
             }
-            return std::pair { injectionSimulator.state(), observedPreTdcBurn };
+            return std::tuple {
+                injectionSimulator.state(), observedPreTdcBurn, maximumInjectedFuelMgPerCycle
+            };
         };
-        const auto [fullDelivery, observedPreTdcBurn] = simulateInjection(20'000.0);
-        const auto [flowLimited, ignoredBurnObservation] = simulateInjection(10.0);
+        const auto [fullDelivery, observedPreTdcBurn, maximumFullDelivery] = simulateInjection(20'000.0);
+        const auto [flowLimited, ignoredBurnObservation, maximumFlowLimitedDelivery] = simulateInjection(10.0);
         (void)ignoredBurnObservation;
         require(observedPreTdcBurn, "resolved combustion must begin at the advanced spark angle before firing TDC");
-        require(fullDelivery.injectedFuelMgPerCycle > flowLimited.injectedFuelMgPerCycle * 20.0,
+        if (!(maximumFullDelivery > maximumFlowLimitedDelivery * 20.0))
+            std::cerr << "injector diagnostic: full=" << maximumFullDelivery
+                      << " limited=" << maximumFlowLimitedDelivery
+                      << " full_rpm=" << fullDelivery.rpm
+                      << " limited_rpm=" << flowLimited.rpm << '\n';
+        require(maximumFullDelivery > maximumFlowLimitedDelivery * 20.0,
                 "injector flow capacity must physically limit delivered fuel per cycle");
         require(fullDelivery.cylinderPressureTorqueBlend == 1.0
                 && std::isfinite(fullDelivery.meanWorkTorqueNm)
@@ -1042,12 +1102,18 @@ int main() {
         customCrankConfig.cylinders[0].crankOffsetDegrees = 90.0;
         customCrankConfig.cylinders[0].crankJournalId = 10;
         customCrankConfig.cylinders[0].bankOffsetDegrees = -12.0;
+        customCrankConfig.cylinders[0].intakeValveCount = 2;
+        customCrankConfig.cylinders[0].exhaustValveCount = 2;
+        customCrankConfig.cylinders[0].intakeValveDiameterMm = 34.5;
+        customCrankConfig.cylinders[0].exhaustValveDiameterMm = 29.0;
         customCrankConfig.cylinders[1].crankOffsetDegrees = 270.0;
         customCrankConfig.cylinders[1].crankJournalId = 20;
         customCrankConfig.cylinders[2].crankOffsetDegrees = 450.0;
         customCrankConfig.cylinders[2].crankJournalId = 30;
         customCrankConfig.cylinders[3].crankOffsetDegrees = 630.0;
         customCrankConfig.cylinders[3].crankJournalId = 40;
+        customCrankConfig.intake.throttleCount = 4;
+        customCrankConfig.intakePaths.front().geometry.throttleCount = 4;
         customCrankConfig.camshafts.intakeFlowCoefficient = 0.70;
         customCrankConfig.camshafts.exhaustFlowCoefficient = 0.66;
         customCrankConfig.camshafts.intakeLiftProfile = {
@@ -1059,15 +1125,21 @@ int main() {
                 "JSON round trip must preserve custom crankOffsetDegrees");
         require(jsonRt && jsonRt.config->cylinders[0].crankJournalId == 10
                 && std::abs(jsonRt.config->cylinders[0].bankOffsetDegrees + 12.0) < 0.01
+                && jsonRt.config->cylinders[0].intakeValveCount == 2
+                && jsonRt.config->intake.throttleCount == 4
+                && std::abs(jsonRt.config->cylinders[0].intakeValveDiameterMm - 34.5) < 0.01
                 && jsonRt.config->camshafts.intakeLiftProfile.size() == 5,
-                "JSON round trip must preserve es2d-style journals, bank offsets and lift tables");
+                "JSON round trip must preserve journals, banks, valve geometry and lift tables");
         const enginelab::YamlEngineSerializer yamlSer;
         const auto yamlRt = yamlSer.decode(yamlSer.encode(customCrankConfig));
         require(yamlRt && std::abs(yamlRt.config->cylinders[1].crankOffsetDegrees - 270.0) < 0.01,
                 "YAML round trip must preserve custom crankOffsetDegrees");
         require(yamlRt && yamlRt.config->cylinders[1].crankJournalId == 20
+                && yamlRt.config->cylinders[0].exhaustValveCount == 2
+                && yamlRt.config->intake.throttleCount == 4
+                && std::abs(yamlRt.config->cylinders[0].exhaustValveDiameterMm - 29.0) < 0.01
                 && std::abs(yamlRt.config->camshafts.intakeFlowCoefficient - 0.70) < 0.001,
-                "YAML round trip must preserve es2d-style journals and flow coefficients");
+                "YAML round trip must preserve journals, valve geometry and flow coefficients");
     }
 
     {
@@ -1512,6 +1584,11 @@ int main() {
                 && stalled.runningState == enginelab::RunningState::stopped,
                 "engaging the clutch at zero vehicle speed without throttle must be able to stall the engine");
     }
-    std::cout << "EngineLab core tests passed\n";
-    return EXIT_SUCCESS;
+        std::cout << "EngineLab core tests passed\n";
+        return EXIT_SUCCESS;
+    }
+    catch (const std::exception& exception) {
+        std::cerr << "Unhandled core test exception: " << exception.what() << '\n';
+        return EXIT_FAILURE;
+    }
 }

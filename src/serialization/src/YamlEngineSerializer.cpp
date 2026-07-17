@@ -246,6 +246,7 @@ std::string YamlEngineSerializer::encode(const EngineConfig& config) const {
         << YAML::Key << "intake" << YAML::Value << YAML::BeginMap
         << YAML::Key << "plenum_volume_l" << YAML::Value << config.intake.plenumVolumeLitres
         << YAML::Key << "throttle_diameter_mm" << YAML::Value << config.intake.throttleDiameterMm
+        << YAML::Key << "throttle_count" << YAML::Value << config.intake.throttleCount
         << YAML::Key << "throttle_discharge_coefficient" << YAML::Value << config.intake.throttleDischargeCoefficient
         << YAML::Key << "runner_length_mm" << YAML::Value << config.intake.runnerLengthMm
         << YAML::Key << "runner_diameter_mm" << YAML::Value << config.intake.runnerDiameterMm
@@ -258,6 +259,7 @@ std::string YamlEngineSerializer::encode(const EngineConfig& config) const {
             << YAML::Key << "geometry" << YAML::Value << YAML::BeginMap
             << YAML::Key << "plenum_volume_l" << YAML::Value << path.geometry.plenumVolumeLitres
             << YAML::Key << "throttle_diameter_mm" << YAML::Value << path.geometry.throttleDiameterMm
+            << YAML::Key << "throttle_count" << YAML::Value << path.geometry.throttleCount
             << YAML::Key << "throttle_discharge_coefficient" << YAML::Value << path.geometry.throttleDischargeCoefficient
             << YAML::Key << "runner_length_mm" << YAML::Value << path.geometry.runnerLengthMm
             << YAML::Key << "runner_diameter_mm" << YAML::Value << path.geometry.runnerDiameterMm
@@ -402,6 +404,10 @@ std::string YamlEngineSerializer::encode(const EngineConfig& config) const {
         << YAML::Key << "head_chamber_volume_cc" << YAML::Value << cylinder.headChamberVolumeCc
         << YAML::Key << "head_gasket_thickness_mm" << YAML::Value << cylinder.headGasketThicknessMm
         << YAML::Key << "connecting_rod_inertia_kg_m2" << YAML::Value << cylinder.connectingRodMomentOfInertiaKgM2
+        << YAML::Key << "intake_valve_count" << YAML::Value << cylinder.intakeValveCount
+        << YAML::Key << "exhaust_valve_count" << YAML::Value << cylinder.exhaustValveCount
+        << YAML::Key << "intake_valve_diameter_mm" << YAML::Value << cylinder.intakeValveDiameterMm
+        << YAML::Key << "exhaust_valve_diameter_mm" << YAML::Value << cylinder.exhaustValveDiameterMm
         << YAML::EndMap;
     out << YAML::EndSeq << YAML::EndMap << YAML::EndMap;
     return out.c_str();
@@ -576,6 +582,7 @@ EngineDecodeResult YamlEngineSerializer::decode(std::string_view text) const noe
         if (const auto intake = engine["intake"]) {
             config.intake.plenumVolumeLitres = intake["plenum_volume_l"].as<double>(config.intake.plenumVolumeLitres);
             config.intake.throttleDiameterMm = intake["throttle_diameter_mm"].as<double>(config.intake.throttleDiameterMm);
+            config.intake.throttleCount = intake["throttle_count"].as<std::uint32_t>(config.intake.throttleCount);
             config.intake.throttleDischargeCoefficient = intake["throttle_discharge_coefficient"].as<double>(config.intake.throttleDischargeCoefficient);
             config.intake.runnerLengthMm = intake["runner_length_mm"].as<double>(config.intake.runnerLengthMm);
             config.intake.runnerDiameterMm = intake["runner_diameter_mm"].as<double>(config.intake.runnerDiameterMm);
@@ -590,6 +597,7 @@ EngineDecodeResult YamlEngineSerializer::decode(std::string_view text) const noe
                 if (const auto geometry = item["geometry"]) {
                     path.geometry.plenumVolumeLitres = geometry["plenum_volume_l"].as<double>(path.geometry.plenumVolumeLitres);
                     path.geometry.throttleDiameterMm = geometry["throttle_diameter_mm"].as<double>(path.geometry.throttleDiameterMm);
+                    path.geometry.throttleCount = geometry["throttle_count"].as<std::uint32_t>(path.geometry.throttleCount);
                     path.geometry.throttleDischargeCoefficient = geometry["throttle_discharge_coefficient"].as<double>(path.geometry.throttleDischargeCoefficient);
                     path.geometry.runnerLengthMm = geometry["runner_length_mm"].as<double>(path.geometry.runnerLengthMm);
                     path.geometry.runnerDiameterMm = geometry["runner_diameter_mm"].as<double>(path.geometry.runnerDiameterMm);
@@ -763,6 +771,10 @@ EngineDecodeResult YamlEngineSerializer::decode(std::string_view text) const noe
             cylinder.headChamberVolumeCc = item["head_chamber_volume_cc"].as<double>(0.0);
             cylinder.headGasketThicknessMm = item["head_gasket_thickness_mm"].as<double>(0.0);
             cylinder.connectingRodMomentOfInertiaKgM2 = item["connecting_rod_inertia_kg_m2"].as<double>(0.0);
+            cylinder.intakeValveCount = item["intake_valve_count"].as<std::uint32_t>(cylinder.intakeValveCount);
+            cylinder.exhaustValveCount = item["exhaust_valve_count"].as<std::uint32_t>(cylinder.exhaustValveCount);
+            cylinder.intakeValveDiameterMm = item["intake_valve_diameter_mm"].as<double>(0.0);
+            cylinder.exhaustValveDiameterMm = item["exhaust_valve_diameter_mm"].as<double>(0.0);
             config.cylinders.push_back(cylinder);
         }
         normaliseEngineConfig(config);

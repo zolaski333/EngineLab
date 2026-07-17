@@ -1,8 +1,12 @@
 #pragma once
 
+#include <array>
+#include <cstddef>
 #include <cstdint>
 
 namespace enginelab {
+
+inline constexpr std::size_t maximumExhaustEventComponents = 4;
 
 /** Immutable payload crossing from simulation to realtime audio. */
 struct FiringEvent final {
@@ -28,6 +32,15 @@ struct FiringEvent final {
     // separate from intensity prevents a muffler/tailpipe edit from changing
     // the direct in-cylinder combustion layer rendered from the same event.
     float exhaustTransmissionGain { 1.0F };
+    // Strongest route/mode components retained by the exhaust DAG compiler.
+    // Each component has its own causal arrival, energy-derived amplitude,
+    // resonance and physical output path. The scalar fields above remain the
+    // dominant-route compatibility view for older renderers.
+    std::uint8_t exhaustComponentCount { 0 };
+    std::array<float, maximumExhaustEventComponents> exhaustComponentDelaySeconds {};
+    std::array<float, maximumExhaustEventComponents> exhaustComponentGain {};
+    std::array<float, maximumExhaustEventComponents> exhaustComponentResonanceHz {};
+    std::array<std::uint8_t, maximumExhaustEventComponents> exhaustComponentPathIndex {};
 };
 
 } // namespace enginelab

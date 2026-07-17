@@ -58,10 +58,10 @@ constexpr double gasolineEnergyJPerKg = 44'000'000.0;
 /**
  * Inject jet momentum into a cell after mass transfer at a throat.
  *
- * When gas flows through a restriction at throat velocity v_jet, the
- * momentum carried by the flowing mass is m·v_jet.  The source "kicks back"
- * (Newton's 3rd law) and the sink is accelerated.  Velocity is signed by
- * signedDirection: +1 source→sink, -1 sink→source.
+ * When gas flows through a restriction at throat velocity v_jet, the pressure
+ * gradient accelerates the resolved bulk gas on both sides in the direction
+ * of flow.  The equal-and-opposite reaction is borne by the duct walls, not by
+ * an artificial recoil of the upstream gas control volume.
  *
  * The jet velocity is capped at the speed of sound of the source cell so
  * that we never inject supersonic momentum from a single throat event.
@@ -101,11 +101,8 @@ void injectJetMomentum(GasCell& source, GasCell& sink,
     const auto length = std::hypot(dirX, dirY);
     const auto nx = length > 1.0e-12 ? dirX / length : 1.0;
     const auto ny = length > 1.0e-12 ? dirY / length : 0.0;
-    const auto kineticBefore = source.bulkKineticEnergyJoules() + sink.bulkKineticEnergyJoules();
-    source.addMomentumKgMps(-jetMomentum * nx, -jetMomentum * ny);
+    source.addMomentumKgMps(jetMomentum * nx, jetMomentum * ny);
     sink.addMomentumKgMps(jetMomentum * nx, jetMomentum * ny);
-    const auto kineticAfter = source.bulkKineticEnergyJoules() + sink.bulkKineticEnergyJoules();
-    source.addHeatJoules(-(kineticAfter - kineticBefore));
 }
 } // anonymous namespace
 
@@ -147,11 +144,12 @@ void GasCell::setVolumeAdiabatic(double volumeLitres) noexcept {
     const auto newVolume = std::max(minimumVolumeM3, volumeLitres * 0.001);
     if (std::abs(newVolume - volumeM3_) <= std::numeric_limits<double>::epsilon()) return;
     const auto gamma = heatCapacityRatioEffective();
-    const auto oldPressurePa = pressureKpa() * 1'000.0;
     const auto ratio = volumeM3_ / newVolume;
-    const auto predictedPressurePa = oldPressurePa * std::pow(ratio, gamma);
-    const auto averagePressurePa = 0.5 * (oldPressurePa + predictedPressurePa);
-    internalEnergyJ_ = std::max(0.0, internalEnergyJ_ - averagePressurePa * (newVolume - volumeM3_));
+    // Exact finite change for a closed ideal-gas control mass with frozen
+    // composition: U2/U1 = (V1/V2)^(gamma-1).  A trapezoidal P dV estimate
+    // violates P*V^gamma for the large volume changes of an engine cylinder.
+    internalEnergyJ_ = std::max(0.0,
+        internalEnergyJ_ * std::pow(ratio, gamma - 1.0));
     volumeM3_ = newVolume;
 }
 
@@ -176,26 +174,51 @@ void GasCell::configureFuelChemistry(double fuelMolarMassKg, double oxygenMolesP
         + oxygenMolesPerFuelMole_ * oxygenMolarMassKg) / productMolesPerFuelMole_;
 }
 
-void GasCell::dissipateMomentum(double timeConstantSeconds, double dtSeconds) noexcept {
-    const auto timeConstant = std::max(1.0e-6, timeConstantSeconds);
-    const auto decay = std::exp(-std::max(0.0, dtSeconds) / timeConstant);
+void GasCell::applyFlowResistance(double lengthM, double hydraulicDiameterM,
+                                  double absoluteRoughnessM, double localLossCoefficient,
+                                  double dtSeconds) noexcept {
+    const auto mass = massKg();
+    const auto velocity = std::hypot(velocityXMps(), velocityYMps());
+    if (!(mass > 1.0e-12) || !(velocity > 1.0e-9) || !(dtSeconds > 0.0)
+            || !(lengthM > 0.0) || !(hydraulicDiameterM > 0.0))
+        return;
+    const auto density = mass / std::max(minimumVolumeM3, volumeM3_);
+    const auto temperature = std::max(80.0, temperatureK());
+    // Sutherland correlation for gas dynamic viscosity.
+    constexpr double referenceViscosityPaS = 1.716e-5;
+    constexpr double referenceTemperatureK = 273.15;
+    constexpr double sutherlandTemperatureK = 110.4;
+    const auto viscosity = referenceViscosityPaS
+        * std::pow(temperature / referenceTemperatureK, 1.5)
+        * (referenceTemperatureK + sutherlandTemperatureK)
+        / (temperature + sutherlandTemperatureK);
+    const auto reynolds = density * velocity * hydraulicDiameterM
+        / std::max(1.0e-9, viscosity);
+    double frictionFactor = 0.0;
+    if (reynolds > 1.0) {
+        if (reynolds < 2'300.0) {
+            frictionFactor = 64.0 / reynolds;
+        } else {
+            // Haaland explicit approximation of Colebrook-White.
+            const auto inverseRoot = -1.8 * std::log10(
+                std::pow(std::max(0.0, absoluteRoughnessM) / hydraulicDiameterM / 3.7, 1.11)
+                + 6.9 / reynolds);
+            frictionFactor = 1.0 / (inverseRoot * inverseRoot);
+        }
+    }
+    const auto lossCoefficient = std::max(0.0, localLossCoefficient)
+        + frictionFactor * lengthM / hydraulicDiameterM;
+    const auto area = characteristicAreaM2_ > 0.0
+        ? characteristicAreaM2_ : volumeM3_ / lengthM;
+    const auto pressureLossPa = lossCoefficient * 0.5 * density * velocity * velocity;
+    const auto resistingImpulse = pressureLossPa * area * dtSeconds;
+    const auto momentumMagnitude = mass * velocity;
+    const auto retained = 1.0 - std::clamp(
+        resistingImpulse / momentumMagnitude, 0.0, 1.0);
     const auto kineticBefore = bulkKineticEnergyJoules();
-    momentumXKgMps_ *= decay;
-    momentumYKgMps_ *= decay;
+    momentumXKgMps_ *= retained;
+    momentumYKgMps_ *= retained;
     internalEnergyJ_ += std::max(0.0, kineticBefore - bulkKineticEnergyJoules());
-}
-
-void GasCell::dissipateExcessVelocity() noexcept {
-    const auto m = massKg();
-    if (m <= 1.0e-12) { momentumXKgMps_ = momentumYKgMps_ = 0.0; return; }
-    const auto velocitySquared = velocityXMps() * velocityXMps() + velocityYMps() * velocityYMps();
-    const auto c = speedOfSoundMps();
-    if (velocitySquared <= c * c || velocitySquared <= 0.0) return;
-    const auto scale = c / std::sqrt(velocitySquared);
-    const auto excessKineticJ = bulkKineticEnergyJoules() * (1.0 - scale * scale);
-    internalEnergyJ_ = std::max(0.0, internalEnergyJ_ + excessKineticJ);
-    momentumXKgMps_ *= scale;
-    momentumYKgMps_ *= scale;
 }
 
 double GasCell::pressureKpa() const noexcept {
@@ -210,12 +233,12 @@ double GasCell::temperatureK() const noexcept {
     // H2O: Cv ≈ 25.2 J/mol/K) compared to diatomic air (Cv = 20.8 J/mol/K).
     // Species-weighted heat capacity keeps fuel vapour and products distinct.
     const auto n = totalMoles();
-    if (n <= 1.0e-15) return minimumTemperatureK;
+    if (n <= 1.0e-15) return 0.0;
     const auto heatCapacity = n * molarHeatCapacityCvEffective();
     // Do not cap the derived temperature: internalEnergyJ_ is the conserved
     // sensible energy. Capping only this view would hide energy above the cap
     // and make pressure inconsistent with the cell's thermodynamic state.
-    return std::max(minimumTemperatureK, internalEnergyJ_ / heatCapacity);
+    return std::max(0.0, internalEnergyJ_ / heatCapacity);
 }
 
 double GasCell::molarHeatCapacityCvEffective() const noexcept {
@@ -353,7 +376,7 @@ double ConservativeGasSystem::pressureEquilibriumMoles(const GasCell& source,
             ? cell.dynamicPressureKpa(dx, dy) : 0.0);
     };
     const auto sourceEffective = effectivePressure(source, directionX, directionY);
-    const auto sinkEffective = effectivePressure(sink, -directionX, -directionY);
+    const auto sinkEffective = effectivePressure(sink, directionX, directionY);
     if (sourceEffective <= sinkEffective || source.totalMoles() <= 1.0e-15) return 0.0;
     auto low = 0.0;
     auto high = std::min(std::max(0.0, requestedMoles), source.totalMoles() * 0.95);
@@ -363,7 +386,7 @@ double ConservativeGasSystem::pressureEquilibriumMoles(const GasCell& source,
     const auto requestedSourcePressure = effectivePressure(
         sourceAtRequested, directionX, directionY);
     const auto requestedSinkPressure = effectivePressure(
-        sinkAtRequested, -directionX, -directionY);
+        sinkAtRequested, directionX, directionY);
     if (requestedSourcePressure >= requestedSinkPressure) return high;
     // Keep `low` on the non-crossed side: a committed transfer may approach
     // equilibrium but must never reverse the pressure gradient.
@@ -373,7 +396,7 @@ double ConservativeGasSystem::pressureEquilibriumMoles(const GasCell& source,
         auto sinkCopy = sink;
         (void)transfer(sourceCopy, sinkCopy, middle);
         const auto sourcePressure = effectivePressure(sourceCopy, directionX, directionY);
-        const auto sinkPressure = effectivePressure(sinkCopy, -directionX, -directionY);
+        const auto sinkPressure = effectivePressure(sinkCopy, directionX, directionY);
         if (sourcePressure > sinkPressure) low = middle;
         else high = middle;
     }
@@ -431,9 +454,6 @@ GasFlowResult ConservativeGasSystem::flow(GasCell& first, GasCell& second,
                       area, sourceCharArea, sinkCharArea,
                        directionX, directionY);
     restorePairEnergy(*source, *sink, energyBeforeJet);
-    // Clamp velocities to speed of sound.
-    source->dissipateExcessVelocity();
-    sink->dissipateExcessVelocity();
     result.choked = choked;
     if (source == &second) {
         result.transferredMoles  = -result.transferredMoles;
@@ -458,11 +478,14 @@ GasFlowResult ConservativeGasSystem::flow(const FlowParameters& params) noexcept
 
     // Effective pressures include dynamic pressure contribution.
     //  P_eff(first)  = P_static(first)  + q(first  in flow direction)
-    //  P_eff(second) = P_static(second) + q(second in reverse direction)
+    //  P_eff(second) = P_static(second) + q(second on the same interface normal)
     // This models gas inertia: a runner with momentum toward the cylinder
     // effectively raises the inlet pressure seen by the valve.
     const auto pEff0 = first.pressureKpa()  + first.dynamicPressureKpa( dirX,  dirY);
-    const auto pEff1 = second.pressureKpa() + second.dynamicPressureKpa(-dirX, -dirY);
+    // Both cells must be projected on the same interface normal. Reversing the
+    // second normal changes +rho*v^2 into -rho*v^2 and invents a pressure drop
+    // even for two equal co-flowing cells.
+    const auto pEff1 = second.pressureKpa() + second.dynamicPressureKpa(dirX, dirY);
 
     auto* source = &first;
     auto* sink   = &second;
@@ -487,7 +510,10 @@ GasFlowResult ConservativeGasSystem::flow(const FlowParameters& params) noexcept
         choked, gamma, specificR);
 
     const auto requestedMoles = massRate * params.dtSeconds / source->meanMolarMassKg();
-    const auto equilibriumMoles = pressureEquilibriumMoles(*source, *sink, flowDirX, flowDirY,
+    // Pressure comparison remains on the canonical interface normal even when
+    // the material flow reverses; flipping this normal a second time reverses
+    // the signed momentum flux and can suppress a legitimate reverse flow.
+    const auto equilibriumMoles = pressureEquilibriumMoles(*source, *sink, dirX, dirY,
                                                             requestedMoles, true);
     auto result = transfer(*source, *sink, std::min(requestedMoles, equilibriumMoles));
 
@@ -504,9 +530,6 @@ GasFlowResult ConservativeGasSystem::flow(const FlowParameters& params) noexcept
                       params.effectiveAreaM2, sourceCS, sinkCS,
                       flowDirX, flowDirY);
     restorePairEnergy(*source, *sink, energyBeforeJet);
-
-    source->dissipateExcessVelocity();
-    sink->dissipateExcessVelocity();
 
     result.choked = choked;
     if (source == &second) {
@@ -529,79 +552,140 @@ SimultaneousGasFlowResult ConservativeGasSystem::flowSimultaneous(
     if (!firstOpen) return { {}, flow(secondParams) };
     if (!secondOpen) return { flow(firstParams), {} };
 
-    struct Branch final {
-        GasCell left;
-        GasCell middle;
-        GasCell right;
-        SimultaneousGasFlowResult flowResult;
+    const auto leftBefore = *firstParams.system0;
+    const auto middleBefore = *firstParams.system1;
+    const auto rightBefore = *secondParams.system1;
+    const auto threeCellEnergy = [](const GasCell& left, const GasCell& middle,
+                                    const GasCell& right) noexcept {
+        return left.internalEnergyJ_ + middle.internalEnergyJ_ + right.internalEnergyJ_
+            + left.bulkKineticEnergyJoules() + middle.bulkKineticEnergyJoules()
+            + right.bulkKineticEnergyJoules();
     };
-    const auto runBranch = [&firstParams, &secondParams](bool firstThenSecond) noexcept {
-        Branch branch { *firstParams.system0, *firstParams.system1, *secondParams.system1, {} };
-        auto first = firstParams;
-        first.system0 = &branch.left;
-        first.system1 = &branch.middle;
-        auto second = secondParams;
-        second.system0 = &branch.middle;
-        second.system1 = &branch.right;
-        if (firstThenSecond) {
-            branch.flowResult.first = flow(first);
-            branch.flowResult.second = flow(second);
-        } else {
-            branch.flowResult.second = flow(second);
-            branch.flowResult.first = flow(first);
+    const auto targetEnergy = threeCellEnergy(leftBefore, middleBefore, rightBefore);
+
+    // Evaluate each restriction independently from exactly the same middle-cell
+    // pre-state.  No branch is allowed to observe inventory delivered or removed
+    // by the other branch during this explicit time step.
+    auto leftAfter = leftBefore;
+    auto middleAfterFirst = middleBefore;
+    auto first = firstParams;
+    first.system0 = &leftAfter;
+    first.system1 = &middleAfterFirst;
+    auto firstResult = flow(first);
+
+    auto middleAfterSecond = middleBefore;
+    auto rightAfter = rightBefore;
+    auto second = secondParams;
+    second.system0 = &middleAfterSecond;
+    second.system1 = &rightAfter;
+    auto secondResult = flow(second);
+
+    struct CellDelta final {
+        GasMixture mixture;
+        double internalEnergyJ { 0.0 };
+        double momentumXKgMps { 0.0 };
+        double momentumYKgMps { 0.0 };
+    };
+    const auto difference = [](const GasCell& after, const GasCell& before) noexcept {
+        return CellDelta {
+            { after.mixture_.oxygenMoles - before.mixture_.oxygenMoles,
+              after.mixture_.inertMoles - before.mixture_.inertMoles,
+              after.mixture_.fuelMoles - before.mixture_.fuelMoles,
+              after.mixture_.burnedMoles - before.mixture_.burnedMoles },
+            after.internalEnergyJ_ - before.internalEnergyJ_,
+            after.momentumXKgMps_ - before.momentumXKgMps_,
+            after.momentumYKgMps_ - before.momentumYKgMps_
+        };
+    };
+    const auto leftDelta = difference(leftAfter, leftBefore);
+    const auto middleFirstDelta = difference(middleAfterFirst, middleBefore);
+    const auto middleSecondDelta = difference(middleAfterSecond, middleBefore);
+    const auto rightDelta = difference(rightAfter, rightBefore);
+
+    auto commonScale = 1.0;
+    const auto firstRemovesMiddle = middleFirstDelta.mixture.totalMoles() < -1.0e-15;
+    const auto secondRemovesMiddle = middleSecondDelta.mixture.totalMoles() < -1.0e-15;
+    if (firstRemovesMiddle && secondRemovesMiddle) {
+        const auto constrainOutgoing = [&commonScale](double inventory,
+                                                       double firstDelta,
+                                                       double secondDelta) noexcept {
+            const auto outgoing = std::max(0.0, -firstDelta) + std::max(0.0, -secondDelta);
+            if (outgoing > 1.0e-15)
+                commonScale = std::min(commonScale, 0.95 * inventory / outgoing);
+        };
+        constrainOutgoing(middleBefore.mixture_.oxygenMoles,
+            middleFirstDelta.mixture.oxygenMoles, middleSecondDelta.mixture.oxygenMoles);
+        constrainOutgoing(middleBefore.mixture_.inertMoles,
+            middleFirstDelta.mixture.inertMoles, middleSecondDelta.mixture.inertMoles);
+        constrainOutgoing(middleBefore.mixture_.fuelMoles,
+            middleFirstDelta.mixture.fuelMoles, middleSecondDelta.mixture.fuelMoles);
+        constrainOutgoing(middleBefore.mixture_.burnedMoles,
+            middleFirstDelta.mixture.burnedMoles, middleSecondDelta.mixture.burnedMoles);
+        constrainOutgoing(middleBefore.internalEnergyJ_,
+            middleFirstDelta.internalEnergyJ, middleSecondDelta.internalEnergyJ);
+        commonScale = std::clamp(commonScale, 0.0, 1.0);
+    }
+
+    const auto applyDelta = [](GasCell& cell, const CellDelta& delta, double scale) noexcept {
+        cell.mixture_.oxygenMoles += delta.mixture.oxygenMoles * scale;
+        cell.mixture_.inertMoles += delta.mixture.inertMoles * scale;
+        cell.mixture_.fuelMoles += delta.mixture.fuelMoles * scale;
+        cell.mixture_.burnedMoles += delta.mixture.burnedMoles * scale;
+        cell.internalEnergyJ_ += delta.internalEnergyJ * scale;
+        cell.momentumXKgMps_ += delta.momentumXKgMps * scale;
+        cell.momentumYKgMps_ += delta.momentumYKgMps * scale;
+    };
+    auto left = leftBefore;
+    auto middle = middleBefore;
+    auto right = rightBefore;
+    applyDelta(left, leftDelta, commonScale);
+    applyDelta(middle, middleFirstDelta, commonScale);
+    applyDelta(middle, middleSecondDelta, commonScale);
+    applyDelta(right, rightDelta, commonScale);
+
+    // The linear branch deltas conserve transported internal energy.  Their
+    // jointly committed momenta have a nonlinear kinetic-energy cross term;
+    // resolve that term conservatively instead of averaging two execution orders.
+    auto correction = targetEnergy - threeCellEnergy(left, middle, right);
+    if (correction >= 0.0) {
+        middle.internalEnergyJ_ += correction;
+    } else {
+        auto excess = -correction;
+        const auto internalTotal = left.internalEnergyJ_ + middle.internalEnergyJ_
+            + right.internalEnergyJ_;
+        if (internalTotal > 0.0) {
+            const auto removed = std::min(excess, internalTotal);
+            const auto retainedFraction = (internalTotal - removed) / internalTotal;
+            left.internalEnergyJ_ *= retainedFraction;
+            middle.internalEnergyJ_ *= retainedFraction;
+            right.internalEnergyJ_ *= retainedFraction;
+            excess -= removed;
         }
-        return branch;
-    };
-
-    const auto forward = runBranch(true);
-    const auto reverse = runBranch(false);
-    const auto averageCell = [](const GasCell& first, const GasCell& second) noexcept {
-        auto result = first;
-        result.mixture_.oxygenMoles = 0.5
-            * (first.mixture_.oxygenMoles + second.mixture_.oxygenMoles);
-        result.mixture_.inertMoles = 0.5
-            * (first.mixture_.inertMoles + second.mixture_.inertMoles);
-        result.mixture_.fuelMoles = 0.5
-            * (first.mixture_.fuelMoles + second.mixture_.fuelMoles);
-        result.mixture_.burnedMoles = 0.5
-            * (first.mixture_.burnedMoles + second.mixture_.burnedMoles);
-        result.internalEnergyJ_ = 0.5 * (first.internalEnergyJ_ + second.internalEnergyJ_);
-        result.momentumXKgMps_ = 0.5 * (first.momentumXKgMps_ + second.momentumXKgMps_);
-        result.momentumYKgMps_ = 0.5 * (first.momentumYKgMps_ + second.momentumYKgMps_);
-        return result;
-    };
-    auto left = averageCell(forward.left, reverse.left);
-    auto middle = averageCell(forward.middle, reverse.middle);
-    auto right = averageCell(forward.right, reverse.right);
-
-    const auto branchEnergy = [](const Branch& branch) noexcept {
-        return branch.left.internalEnergyJ_ + branch.middle.internalEnergyJ_
-            + branch.right.internalEnergyJ_ + branch.left.bulkKineticEnergyJoules()
-            + branch.middle.bulkKineticEnergyJoules() + branch.right.bulkKineticEnergyJoules();
-    };
-    const auto targetEnergy = 0.5 * (branchEnergy(forward) + branchEnergy(reverse));
-    const auto averagedEnergy = left.internalEnergyJ_ + middle.internalEnergyJ_
-        + right.internalEnergyJ_ + left.bulkKineticEnergyJoules()
-        + middle.bulkKineticEnergyJoules() + right.bulkKineticEnergyJoules();
-    // Averaging momentum converts the unresolved order-dependent component
-    // into heat. This is the conservative finite-volume mixing term.
-    const auto mixingEnergy = targetEnergy - averagedEnergy;
-    if (mixingEnergy >= 0.0)
-        middle.internalEnergyJ_ += mixingEnergy;
-    else
-        middle.internalEnergyJ_ = std::max(0.0, middle.internalEnergyJ_ + mixingEnergy);
+        if (excess > 1.0e-12) {
+            const auto kineticTotal = left.bulkKineticEnergyJoules()
+                + middle.bulkKineticEnergyJoules() + right.bulkKineticEnergyJoules();
+            if (kineticTotal > 0.0) {
+                const auto scale = std::sqrt(std::max(0.0, kineticTotal - excess) / kineticTotal);
+                left.momentumXKgMps_ *= scale;
+                left.momentumYKgMps_ *= scale;
+                middle.momentumXKgMps_ *= scale;
+                middle.momentumYKgMps_ *= scale;
+                right.momentumXKgMps_ *= scale;
+                right.momentumYKgMps_ *= scale;
+            }
+        }
+        correction = targetEnergy - threeCellEnergy(left, middle, right);
+        if (correction > 0.0) middle.internalEnergyJ_ += correction;
+    }
 
     *firstParams.system0 = left;
     *firstParams.system1 = middle;
     *secondParams.system1 = right;
-    const auto averageResult = [](const GasFlowResult& first,
-                                  const GasFlowResult& second) noexcept {
-        return GasFlowResult { 0.5 * (first.transferredMoles + second.transferredMoles),
-                               0.5 * (first.transferredMassKg + second.transferredMassKg),
-                               first.choked || second.choked };
-    };
-    return { averageResult(forward.flowResult.first, reverse.flowResult.first),
-             averageResult(forward.flowResult.second, reverse.flowResult.second) };
+    firstResult.transferredMoles *= commonScale;
+    firstResult.transferredMassKg *= commonScale;
+    secondResult.transferredMoles *= commonScale;
+    secondResult.transferredMassKg *= commonScale;
+    return { firstResult, secondResult };
 }
 
 // ---------------------------------------------------------------------------
@@ -648,16 +732,21 @@ CombustionReaction ConservativeGasSystem::reactFuelMoles(GasCell& cell,
                                                            double lowerHeatingValueJPerKg) noexcept {
     const auto availableFuel = cell.mixture_.fuelMoles;
     const auto oxygenLimitedFuel = cell.mixture_.oxygenMoles / cell.oxygenMolesPerFuelMole_;
+    // Efficiency is chemical completeness: inefficient combustion leaves a
+    // corresponding fraction of fuel unreacted.  Every mole which does react
+    // releases the fuel's full lower heating value; scaling heat alone would
+    // destroy chemical energy while incorrectly consuming all reactants.
+    const auto chemicallyReactingFuel = std::max(0.0, requestedFuelMoles)
+        * std::clamp(efficiency, 0.0, 1.0);
     const auto burned = std::min({ availableFuel, oxygenLimitedFuel,
-                                   std::max(0.0, requestedFuelMoles) });
+                                   chemicallyReactingFuel });
     if (burned <= 1.0e-15) return {};
     cell.mixture_.fuelMoles   -= burned;
     cell.mixture_.oxygenMoles -= burned * cell.oxygenMolesPerFuelMole_;
     // Product pseudo-species: mass-conserving surrogate derived from chemistry config.
     cell.mixture_.burnedMoles += burned * cell.productMolesPerFuelMole_;
     const auto energy = burned * cell.fuelMolarMassKg_
-        * std::clamp(lowerHeatingValueJPerKg, 10'000'000.0, 60'000'000.0)
-        * std::clamp(efficiency, 0.0, 1.0);
+        * std::clamp(lowerHeatingValueJPerKg, 10'000'000.0, 60'000'000.0);
     cell.internalEnergyJ_ += energy;
     return { burned, energy, availableFuel > 1.0e-15 ? burned / availableFuel : 0.0 };
 }

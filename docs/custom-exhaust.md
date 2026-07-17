@@ -115,6 +115,12 @@ La restriction finale additionne la perte géométrique calculée et
 `restriction`. Modifier seulement `acoustic_gain` change la transmission
 acoustique des événements et du signal continu, pas la contre-pression.
 
+Le `discharge_coefficient` de la sortie est un coefficient de contraction
+d'écoulement. Il est appliqué une seule fois, comme section effective `A·Cd` de
+la sortie, et n'entre donc plus comme facteur `1/Cd²` dans la restriction : ce
+double comptage réduisait une seconde fois la même section effective et
+sous-estimait le débit de sortie.
+
 ## Règles de connexion
 
 La validation impose :
@@ -133,6 +139,34 @@ La validation impose :
 
 Une erreur fait échouer l'import complet ; l'application ne lance pas un
 réseau partiellement valide.
+
+## Diagnostics du compilateur
+
+`ExhaustGraph::makeForEngine` rend toujours un graphe exploitable, y compris
+lorsqu'il reçoit une topologie que la validation applicative aurait refusée : le
+solveur gazeux et l'audio doivent rester sûrs en toute circonstance. Mais chaque
+repli qu'il prend écarte une partie de l'intention de l'auteur, et il le signale
+désormais au lieu de substituer un défaut en silence. `ExhaustGraph::diagnostics()`
+est vide quand la topologie a été compilée telle qu'elle est écrite.
+
+| Diagnostic | Sens | `relatedId` |
+|---|---|---|
+| `topologyRejected` | un cylindre n'est pas couvert exactement une fois ; les chemins écrits ont été remplacés par un chemin unique généré | le cylindre fautif |
+| `routeLimitReached` | la limite de 4 096 routes est atteinte ; les routes suivantes ne sont pas compilées | le cylindre en cours |
+| `unresolvedRestriction` | une route n'a pas de restriction équivalente finie (branche pendante ou cycle) et s'est vu imputer le maximum | le cylindre concerné |
+| `nodeIdSpaceExhausted` | l'espace d'ID générés est épuisé | 0 |
+
+`topologyRejected` est le cas à surveiller : il fait disparaître tout un
+échappement personnalisé au profit d'un collecteur générique. À l'oreille, c'est
+indiscernable d'une conception simplement décevante.
+
+## Valeurs non finies
+
+Un champ non fini (NaN, infini) issu d'un fichier mal formé ne rend plus le pire
+résultat possible. Une `restriction` non finie retombe sur « aucune restriction
+additionnelle » et laisse la perte géométrique seule, au lieu d'imputer le
+maximum et de museler la ligne sans symptôme. Un `acoustic_gain` non fini est
+traité comme un silence, jamais comme un gain maximal.
 
 ## Séries, branches et routes
 
@@ -226,8 +260,8 @@ restent les références des banques et de la sérialisation.
 
 `graph` est optionnel. En son absence, EngineLab compile les anciens champs de
 géométrie en primaires, merge, silencieux et sortie. Les fichiers moteur de
-schéma 1 restent lisibles et sont migrés en mémoire vers le schéma 2. Tout
-nouvel export JSON/YAML porte `schema_version: 2`. Les fichiers historiques du
+schémas 1 et 2 restent lisibles et sont migrés en mémoire vers le schéma 3. Tout
+nouvel export JSON/YAML porte `schema_version: 3`. Les fichiers historiques du
 catalogue restent volontairement des fixtures de migration.
 
 Même avec un graphe, le bloc `geometry` reste utile : il fournit les valeurs de

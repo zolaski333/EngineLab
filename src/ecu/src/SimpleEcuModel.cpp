@@ -94,11 +94,43 @@ EcuCommand SimpleEcuModel::evaluate(const EngineConfig& config, const EngineStat
     }
     limiterLatched_.store(limiterActive, std::memory_order_relaxed);
 
-    const auto idleError = std::max(0.0, config.idleRpm - state.rpm);
-    const auto idleThrottle = state.rpm >= 250.0
-        ? std::clamp(0.055 + idleError / std::max(1'500.0, config.idleRpm * 3.0), 0.0, 0.28)
-        : 0.0;
-    const auto effectiveThrottle = std::max(std::clamp(controls.throttle, 0.0, 1.0), idleThrottle);
+    // The driver's throttle and the idle-air actuator are separate physical
+    // controls.  The former must be able to close completely; using a minimum
+    // throttle opening as an idle controller made every engine idle high and
+    // made a released keyboard throttle remain physically open.
+    const auto effectiveThrottle = std::clamp(controls.throttle, 0.0, 1.0);
+    const auto previousIdleTime = previousIdleEvaluationTime_.exchange(
+        state.simulationTimeSeconds, std::memory_order_relaxed);
+    const auto idleDt = previousIdleTime > 0.0
+        ? std::clamp(state.simulationTimeSeconds - previousIdleTime, 0.0, 0.02) : 0.0;
+    auto idleIntegral = idleIntegral_.load(std::memory_order_relaxed);
+    auto idleAirOpening = 0.0;
+    if (controls.ignitionEnabled || controls.starterEngaged) {
+        const auto targetRpm = std::max(300.0, config.idleRpm);
+        const auto normalizedError = (targetRpm - state.rpm) / targetRpm;
+        constexpr double feedForward = 0.42;
+        constexpr double proportionalGain = 0.90;
+        constexpr double integralGain = 0.55;
+        const auto proposedIntegral = std::clamp(
+            idleIntegral + normalizedError * integralGain * idleDt, -0.42, 0.58);
+        const auto proposedCommand = feedForward
+            + proportionalGain * normalizedError + proposedIntegral;
+        // Conditional integration prevents wind-up when the actuator is on a
+        // stop and the error would push it farther into saturation.
+        if ((proposedCommand > 0.0 && proposedCommand < 1.0)
+            || (proposedCommand <= 0.0 && normalizedError > 0.0)
+            || (proposedCommand >= 1.0 && normalizedError < 0.0))
+            idleIntegral = proposedIntegral;
+
+        const auto crankingAir = state.rpm < 350.0 ? 0.88 : 0.0;
+        const auto driverOverride = std::clamp(1.0 - effectiveThrottle * 12.0, 0.0, 1.0);
+        idleAirOpening = std::max(crankingAir,
+            std::clamp(feedForward + proportionalGain * normalizedError + idleIntegral,
+                       0.0, 1.0) * driverOverride);
+    } else {
+        idleIntegral *= std::exp(-idleDt * 5.0);
+    }
+    idleIntegral_.store(idleIntegral, std::memory_order_relaxed);
     const auto warmupCorrection = std::clamp(1.0 + (70.0 - state.coolantTemperatureC) * 0.0025, 1.0, 1.12);
     const auto crankingCorrection = controls.starterEngaged
         ? 1.0 + std::clamp((700.0 - state.rpm) / 700.0, 0.0, 1.0) * 0.38 : 1.0;
@@ -149,7 +181,8 @@ EcuCommand SimpleEcuModel::evaluate(const EngineConfig& config, const EngineStat
     const auto alternatingCut = softLimit && (static_cast<std::uint64_t>(state.simulationTimeSeconds * 120.0) & 1U) != 0U;
     const auto enabled = controls.ignitionEnabled && !limiterActive;
     return { mappedAfr, mappedAdvance,
-             effectiveThrottle, warmupCorrection * crankingCorrection, enabled,
+             effectiveThrottle, idleAirOpening,
+             warmupCorrection * crankingCorrection, enabled,
              enabled && !alternatingCut };
 }
 } // namespace enginelab

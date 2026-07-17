@@ -101,6 +101,19 @@ void testValidationAndRouting() {
         "event and continuous-pressure graph metrics must share one transmission gain");
     require(event.exhaustTransmissionGain > 0.0F && event.exhaustTransmissionGain <= 8.0F,
         "event route gain or attenuation is invalid");
+    require(event.exhaustComponentCount >= 2,
+        "split exhaust routes and modes must survive into the realtime event payload");
+    double retainedComponentEnergy = 0.0;
+    for (std::size_t index = 0; index < event.exhaustComponentCount; ++index) {
+        retainedComponentEnergy += event.exhaustComponentGain[index]
+            * event.exhaustComponentGain[index];
+        require(event.exhaustComponentDelaySeconds[index] > 0.0F
+                && event.exhaustComponentResonanceHz[index] > 0.0F,
+            "every retained exhaust component must have causal timing and a physical mode");
+    }
+    require(std::abs(retainedComponentEnergy
+                - event.exhaustTransmissionGain * event.exhaustTransmissionGain) < 1.0e-5,
+        "bounded route/mode retention must preserve the compiled acoustic energy");
 }
 
 void testAcousticGainEnergyAccounting() {
@@ -411,10 +424,60 @@ void testLegacyGeometryInheritance() {
     require(static_cast<bool>(decoded) && !decoded.config->exhaustPaths.front().inheritsGlobalGeometry,
         "runtime-only exhaust geometry provenance must not leak into schema v1");
 }
+[[nodiscard]] bool reports(const ExhaustGraph& graph, ExhaustCompileIssue issue) {
+    const auto& diagnostics = graph.diagnostics();
+    return std::any_of(diagnostics.begin(), diagnostics.end(),
+        [issue](const ExhaustCompileDiagnostic& item) { return item.issue == issue; });
+}
+
+// A non-finite authored field must never make the exhaust louder or quieter than
+// the same graph with the field absent: both used to pick the worst extreme.
+void testNonFiniteAuthoredFieldsFailSafe() {
+    const auto transmissionFor = [](auto&& mutate) {
+        auto config = makeCustomExhaust();
+        mutate(config.exhaustPaths.front().network->components);
+        const auto graph = ExhaustGraph::makeForEngine(config);
+        return graph.acousticsForCylinder(config.cylinders.front().id).transmissionGain;
+    };
+    const auto reference = transmissionFor([](auto&) {});
+    require(reference > 0.0, "reference custom exhaust must transmit sound");
+
+    const auto nanRestriction = transmissionFor([](auto& components) {
+        components.front().restriction = std::numeric_limits<double>::quiet_NaN();
+    });
+    require(std::abs(nanRestriction - reference) < 1.0e-9,
+        "a non-finite restriction must fall back to no restriction, not to the maximum");
+
+    const auto nanGain = transmissionFor([](auto& components) {
+        for (auto& item : components) item.acousticGain = std::numeric_limits<double>::quiet_NaN();
+    });
+    require(nanGain == 0.0, "a non-finite acoustic gain must be silent, not maximum gain");
+}
+
+// Replacing an authored topology with a generated fallback is a real loss of the
+// user's design, so it has to be reported rather than silently substituted.
+void testTopologyRejectionIsReported() {
+    auto valid = makeCustomExhaust();
+    const auto validGraph = ExhaustGraph::makeForEngine(valid);
+    require(validGraph.diagnostics().empty(),
+        "a well-formed topology must compile without diagnostics");
+
+    auto duplicated = makeDefaultInlineFour();
+    // The same cylinder claimed by two paths: coverage is no longer exactly one.
+    duplicated.exhaustPaths.front().cylinderIds.push_back(
+        duplicated.exhaustPaths.front().cylinderIds.front());
+    const auto rejected = ExhaustGraph::makeForEngine(duplicated);
+    require(reports(rejected, ExhaustCompileIssue::topologyRejected),
+        "a cylinder covered twice must report topologyRejected");
+    require(rejected.routes().size() > 0,
+        "a rejected topology must still compile a usable fallback graph");
+}
 } // namespace
 
 int main() {
     try {
+        testNonFiniteAuthoredFieldsFailSafe();
+        testTopologyRejectionIsReported();
         testValidationAndRouting();
         testAcousticGainEnergyAccounting();
         testModalRoutesAndAdmittanceWeightedBranches();

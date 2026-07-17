@@ -3,6 +3,16 @@
 // physics simulator, feeds the firing-event and cylinder-pressure queues exactly
 // like EngineRuntime does, renders through the real convolution IR, and reports
 // objective metrics (level, crest factor, spectral fingerprint, stability).
+//
+// Two kinds of measurement live here:
+//  - renderEngine(): steady-state fingerprint and safety gates for a running
+//    engine. Safety gates (finiteness, peak, clipping plateaus) scan the whole
+//    rendered signal; the spectral/level fingerprint uses the final steady-state
+//    window only. Both channels are analysed.
+//  - measureExhaustDecay(): drives a single exhaust impulse through a quiet
+//    renderer and reports the reverberation time of the tailpipe chain. This is
+//    the instrument for calibrating the muffler FDN and its presets against a
+//    measured RT60 instead of by ear.
 
 #include <enginelab/audio/RealtimeEngineAudio.hpp>
 #include <enginelab/ecu/SimpleEcuModel.hpp>
@@ -74,72 +84,116 @@ bool loadWav(const std::filesystem::path& path, WavData& out) {
     return false;
 }
 
-void writeWav(const std::filesystem::path& path, const std::vector<float>& samples, int sampleRate) {
+void writeWav(const std::filesystem::path& path, const std::vector<float>& left,
+              const std::vector<float>& right, int sampleRate) {
     std::ofstream out(path, std::ios::binary);
-    const auto dataBytes = static_cast<std::uint32_t>(samples.size() * sizeof(std::int16_t));
+    const auto frames = std::min(left.size(), right.size());
+    const auto dataBytes = static_cast<std::uint32_t>(frames * 2 * sizeof(std::int16_t));
     const auto put32 = [&](std::uint32_t v) { for (int i = 0; i < 4; ++i) out.put(static_cast<char>((v >> (8 * i)) & 0xffU)); };
     const auto put16 = [&](std::uint16_t v) { for (int i = 0; i < 2; ++i) out.put(static_cast<char>((v >> (8 * i)) & 0xffU)); };
     out.write("RIFF", 4); put32(36U + dataBytes); out.write("WAVEfmt ", 8);
-    put32(16U); put16(1U); put16(1U); put32(static_cast<std::uint32_t>(sampleRate));
-    put32(static_cast<std::uint32_t>(sampleRate * 2)); put16(2U); put16(16U);
+    put32(16U); put16(1U); put16(2U); put32(static_cast<std::uint32_t>(sampleRate));
+    put32(static_cast<std::uint32_t>(sampleRate * 4)); put16(4U); put16(16U);
     out.write("data", 4); put32(dataBytes);
-    for (const auto s : samples) {
-        const auto v = static_cast<std::int16_t>(std::lrint(std::clamp(s, -1.0F, 1.0F) * 32767.0F));
-        put16(static_cast<std::uint16_t>(v));
-    }
+    const auto encode = [&](float s) {
+        put16(static_cast<std::uint16_t>(static_cast<std::int16_t>(
+            std::lrint(std::clamp(s, -1.0F, 1.0F) * 32767.0F))));
+    };
+    for (std::size_t i = 0; i < frames; ++i) { encode(left[i]); encode(right[i]); }
 }
 
-struct Metrics {
+// Safety scan over the complete rendered signal. These are the properties that
+// must hold at every instant, so restricting them to an analysis window would
+// defeat their purpose: a divergence at t=12s of a 25s stability run has to fail.
+struct SafetyScan final {
+    bool finite { true };
+    double peak {};
+    double nearFullScaleFraction {};
+    std::size_t longestFlatTop {};
+};
+
+// Steady-state fingerprint over the final analysis window.
+struct WindowAnalysis final {
     double mean {};
     double rms {};
     double peak {};
     double crest {};
     double brightness {};
-    double nearFullScaleFraction {};
     double lowBandFraction {};
     double midBandFraction {};
     double highBandFraction {};
-    double finalRpm {};
-    std::size_t longestFlatTop {};
     std::array<double, 32> spectrum {};
-    bool finite { true };
 };
+
+struct ChannelMetrics final {
+    SafetyScan scan {};
+    WindowAnalysis window {};
+};
+
+struct Metrics {
+    ChannelMetrics left {};
+    ChannelMetrics right {};
+    // 1.0 means the two channels are identical: a stereo renderer that silently
+    // collapses to mono is a regression the old single-channel harness could not see.
+    double channelCorrelation { 1.0 };
+    double finalRpm {};
+    std::uint64_t droppedEvents {};
+    std::uint64_t droppedPressureSamples {};
+    std::uint64_t lateEvents {};
+    std::uint64_t stolenVoices {};
+    std::uint64_t delayTruncations {};
+};
+
+SafetyScan scanSignal(const std::vector<float>& x) {
+    SafetyScan s;
+    for (const auto value : x) {
+        const auto v = static_cast<double>(value);
+        if (!std::isfinite(v)) { s.finite = false; continue; }
+        s.peak = std::max(s.peak, std::abs(v));
+    }
+    std::size_t nearFullScaleSamples = 0;
+    for (const auto value : x)
+        if (std::isfinite(value) && std::abs(static_cast<double>(value)) >= 0.98) ++nearFullScaleSamples;
+    s.nearFullScaleFraction = static_cast<double>(nearFullScaleSamples)
+        / static_cast<double>(std::max<std::size_t>(1, x.size()));
+
+    const auto flatTolerance = std::max(2.0e-6, s.peak * 2.0e-5);
+    const auto highLevel = std::max(0.90, s.peak * 0.995);
+    std::size_t flatRun = 0;
+    for (std::size_t i = 1; i < x.size(); ++i) {
+        const auto current = static_cast<double>(x[i]);
+        const auto previous = static_cast<double>(x[i - 1]);
+        const auto isFlatTop = std::isfinite(current) && std::isfinite(previous)
+            && std::abs(current) >= highLevel
+            && std::signbit(current) == std::signbit(previous)
+            && std::abs(current - previous) <= flatTolerance;
+        flatRun = isFlatTop ? flatRun + 1 : 0;
+        s.longestFlatTop = std::max(s.longestFlatTop, flatRun);
+    }
+    return s;
+}
 
 // Analyse the final steady-state window. The FFT is used both for broad energy
 // balance and for a log-band engine fingerprint; this is less phase-sensitive
 // than probing a handful of individual DFT frequencies.
-void fingerprint(const std::vector<float>& x, std::size_t begin, double sampleRate, Metrics& m) {
+WindowAnalysis analyseWindow(const std::vector<float>& x, std::size_t begin, double sampleRate) {
+    WindowAnalysis m;
+    if (begin >= x.size()) return m;
     const auto n = x.size() - begin;
     double sum = 0.0, sumSq = 0.0, diffSq = 0.0, peak = 0.0;
-    std::size_t nearFullScaleSamples = 0;
     for (std::size_t i = begin; i < x.size(); ++i) {
         const auto v = static_cast<double>(x[i]);
-        if (!std::isfinite(v)) m.finite = false;
+        if (!std::isfinite(v)) continue;
         sum += v;
-        sumSq += v * v; peak = std::max(peak, std::abs(v));
-        if (std::abs(v) >= 0.98) ++nearFullScaleSamples;
-        if (i > begin) { const auto d = v - x[i - 1]; diffSq += d * d; }
+        sumSq += v * v;
+        peak = std::max(peak, std::abs(v));
+        if (i > begin) { const auto d = v - static_cast<double>(x[i - 1]); diffSq += d * d; }
     }
     m.mean = sum / static_cast<double>(std::max<std::size_t>(1, n));
     m.rms = std::sqrt(sumSq / std::max<std::size_t>(1, n));
     m.peak = peak;
     m.crest = m.rms > 1e-12 ? m.peak / m.rms : 0.0;
     m.brightness = sumSq > 1e-12 ? std::sqrt(diffSq / sumSq) : 0.0;
-    m.nearFullScaleFraction = static_cast<double>(nearFullScaleSamples)
-        / static_cast<double>(std::max<std::size_t>(1, n));
-
-    const auto flatTolerance = std::max(2.0e-6, m.peak * 2.0e-5);
-    const auto highLevel = std::max(0.90, m.peak * 0.995);
-    std::size_t flatRun = 0;
-    for (std::size_t i = begin + 1; i < x.size(); ++i) {
-        const auto current = static_cast<double>(x[i]);
-        const auto previous = static_cast<double>(x[i - 1]);
-        const auto isFlatTop = std::abs(current) >= highLevel
-            && std::signbit(current) == std::signbit(previous)
-            && std::abs(current - previous) <= flatTolerance;
-        flatRun = isFlatTop ? flatRun + 1 : 0;
-        m.longestFlatTop = std::max(m.longestFlatTop, flatRun);
-    }
 
     constexpr int fftOrder = 15;
     constexpr std::size_t fftSize = std::size_t { 1 } << fftOrder;
@@ -151,8 +205,9 @@ void fingerprint(const std::vector<float>& x, std::size_t begin, double sampleRa
         const auto fftIndex = destinationBegin + i;
         const auto window = 0.5 - 0.5 * std::cos(2.0 * std::numbers::pi
             * static_cast<double>(fftIndex) / static_cast<double>(fftSize - 1));
+        const auto value = static_cast<double>(x[sourceBegin + i]);
         fftData[fftIndex] = static_cast<float>(
-            (static_cast<double>(x[sourceBegin + i]) - m.mean) * window);
+            (std::isfinite(value) ? value - m.mean : 0.0) * window);
     }
     juce::dsp::FFT fft(fftOrder);
     fft.performFrequencyOnlyForwardTransform(fftData.data());
@@ -190,16 +245,31 @@ void fingerprint(const std::vector<float>& x, std::size_t begin, double sampleRa
     }
     fingerprintNorm = std::sqrt(std::max(fingerprintNorm, 1.0e-18));
     for (auto& value : m.spectrum) value /= fingerprintNorm;
+    return m;
+}
+
+double normalisedCorrelation(const std::vector<float>& a, const std::vector<float>& b,
+                             std::size_t begin) {
+    double dot = 0.0, normA = 0.0, normB = 0.0;
+    for (std::size_t i = begin; i < a.size() && i < b.size(); ++i) {
+        const auto x = static_cast<double>(a[i]);
+        const auto y = static_cast<double>(b[i]);
+        if (!std::isfinite(x) || !std::isfinite(y)) continue;
+        dot += x * y; normA += x * x; normB += y * y;
+    }
+    const auto denominator = std::sqrt(normA * normB);
+    return denominator > 1.0e-18 ? dot / denominator : 1.0;
 }
 
 double cosineSimilarity(const Metrics& a, const Metrics& b) {
     double dot = 0.0;
-    for (std::size_t i = 0; i < a.spectrum.size(); ++i) dot += a.spectrum[i] * b.spectrum[i];
+    for (std::size_t i = 0; i < a.left.window.spectrum.size(); ++i)
+        dot += a.left.window.spectrum[i] * b.left.window.spectrum[i];
     return dot;
 }
 
 Metrics renderEngine(const EngineConfig& baseConfig, const WavData& ir,
-                     const std::filesystem::path& outDir, double seconds, bool stabilityRun,
+                     const std::filesystem::path& outDir, double seconds, bool writeOutput,
                      bool syntheticTurbo = false) {
     auto config = baseConfig;
     normaliseEngineConfig(config);
@@ -213,9 +283,10 @@ Metrics renderEngine(const EngineConfig& baseConfig, const WavData& ir,
     auto pressureQueuePtr = std::make_unique<CylinderPressureQueue>();
     auto& eventQueue = *eventQueuePtr;
     auto& pressureQueue = *pressureQueuePtr;
-    // Use the production runtime's exact graph/geometry-to-audio mapping. A
-    // hand-maintained copy here previously drifted and made this regression
-    // harness test a different renderer configuration than the application.
+    // Constructing the runtime publishes the production static geometry-to-audio
+    // mapping; publishAudioFrame() below is the same per-frame mapping the
+    // runtime thread uses. The harness steps the simulator itself so the run
+    // stays deterministic, but neither mapping is duplicated here.
     auto audioConfiguration = std::make_unique<EngineRuntime>(config);
     auto& audioState = audioConfiguration->audioState();
 
@@ -229,11 +300,14 @@ Metrics renderEngine(const EngineConfig& baseConfig, const WavData& ir,
     // Let the convolver's background IR load settle before rendering.
     std::this_thread::sleep_for(std::chrono::milliseconds(300));
 
-    std::vector<float> audio;
-    audio.reserve(static_cast<std::size_t>(seconds * audioRate));
+    std::vector<float> audioLeft, audioRight;
+    audioLeft.reserve(static_cast<std::size_t>(seconds * audioRate));
+    audioRight.reserve(static_cast<std::size_t>(seconds * audioRate));
     juce::AudioBuffer<float> block(2, samplesPerStep);
     double realtimeSeconds = 0.0;
     double dynoLoadIntegral = 0.0;
+    std::uint64_t droppedEvents = 0;
+    std::uint64_t droppedPressureSamples = 0;
     const auto dynoTargetRpm = std::max(config.idleRpm * 1.50, config.redlineRpm * 0.55);
     const auto steps = static_cast<std::size_t>(seconds / dt);
     for (std::size_t step = 0; step < steps; ++step) {
@@ -250,42 +324,25 @@ Metrics renderEngine(const EngineConfig& baseConfig, const WavData& ir,
             controls.load = std::clamp(dynoLoadIntegral + speedError * 0.70, 0.0, 1.0);
         }
         auto frame = simulator.step(dt, controls);
+        droppedEvents += frame.droppedFiringEventCount;
+        droppedPressureSamples += frame.droppedCylinderPressureSampleCount;
         const auto simStart = frame.state.simulationTimeSeconds - dt;
         for (std::size_t i = 0; i < frame.firingEventCount; ++i) {
             const auto fraction = std::clamp((frame.firingEvents[i].timeSeconds - simStart) / dt, 0.0, 1.0);
             frame.firingEvents[i].timeSeconds = realtimeSeconds + fraction * dt;
-            (void)eventQueue.tryPush(frame.firingEvents[i]);
+            if (!eventQueue.tryPush(frame.firingEvents[i])) ++droppedEvents;
         }
         CylinderPressureSample ps;
         while (simulator.tryPopCylinderPressureSample(ps)) {
             const auto fraction = std::clamp((ps.timeSeconds - simStart) / dt, 0.0, 1.0);
             ps.timeSeconds = realtimeSeconds + fraction * dt;
-            (void)pressureQueue.tryPush(ps);
+            if (!pressureQueue.tryPush(ps)) ++droppedPressureSamples;
         }
-        audioState.rpm.store(static_cast<float>(frame.state.rpm));
-        audioState.throttle.store(static_cast<float>(frame.state.throttle));
-        audioState.load.store(static_cast<float>(frame.state.load));
-        audioState.manifoldPressureKpa.store(static_cast<float>(frame.state.manifoldPressureKpa));
-        audioState.exhaustPressureKpa.store(static_cast<float>(frame.state.exhaustPressureKpa));
-        audioState.exhaustFlowGramsPerSecond.store(static_cast<float>(frame.state.exhaustFlowGramsPerSecond));
-        audioState.exhaustTemperatureC.store(static_cast<float>(frame.state.exhaustTemperatureC));
-        audioState.boostPressureRatio.store(static_cast<float>(frame.state.boostPressureRatio));
-        audioState.peakPistonAccelerationG.store(static_cast<float>(std::max(0.0, frame.state.peakPistonAccelerationG)));
-        audioState.forcedInductionShaftRpm.store(static_cast<float>(std::max(0.0, frame.state.forcedInductionShaftSpeedRpm)));
-        audioState.wastegateOpening.store(static_cast<float>(std::clamp(frame.state.wastegateOpening, 0.0, 1.0)));
-        {
-            double domAmp = 0.0, domFreq = 0.0;
-            for (std::size_t i = 0; i < frame.state.cylinderStateCount; ++i) {
-                const auto& c = frame.state.cylinderStates[i];
-                if (std::abs(c.intakeResonancePressureKpa) > std::abs(domAmp)) {
-                    domAmp = c.intakeResonancePressureKpa;
-                    domFreq = c.intakeResonanceFrequencyHz;
-                }
-            }
-            audioState.intakeRunnerResonanceHz.store(static_cast<float>(domFreq));
-            audioState.intakeRunnerAmplitudeKpa.store(static_cast<float>(domAmp));
-        }
-        audioState.starter.store(controls.starterEngaged ? 1.0F : 0.0F);
+        publishAudioFrame(audioState, frame.state,
+            { false, controls.starterEngaged, 0.0, 1.0 });
+        audioState.producerTimeNanoseconds.store(
+            static_cast<std::uint64_t>(std::max(0.0, realtimeSeconds + dt) * 1.0e9),
+            std::memory_order_release);
         if (syntheticTurbo) {
             // Synthetic spool profile: ramp shaft speed + boost, then a lift-off
             // near the end to exercise the blow-off transient.
@@ -300,40 +357,220 @@ Metrics renderEngine(const EngineConfig& baseConfig, const WavData& ir,
 
         block.clear();
         renderer.render(block, 0, samplesPerStep);
-        if (!stabilityRun)
-            for (int s = 0; s < samplesPerStep; ++s) audio.push_back(block.getSample(0, s));
-        else
-            for (int s = 0; s < samplesPerStep; ++s) audio.push_back(block.getSample(0, s)); // keep for finite/peak scan
+        for (int s = 0; s < samplesPerStep; ++s) {
+            audioLeft.push_back(block.getSample(0, s));
+            audioRight.push_back(block.getSample(1, s));
+        }
         realtimeSeconds += dt;
     }
 
     Metrics m;
-    const auto analysisBegin = audio.size() > static_cast<std::size_t>(1.0 * audioRate)
-        ? audio.size() - static_cast<std::size_t>(1.0 * audioRate) : 0;
-    fingerprint(audio, analysisBegin, audioRate, m);
+    // Safety properties scan the complete signal; only the fingerprint uses the
+    // final steady-state window.
+    m.left.scan = scanSignal(audioLeft);
+    m.right.scan = scanSignal(audioRight);
+    const auto analysisBegin = audioLeft.size() > static_cast<std::size_t>(1.0 * audioRate)
+        ? audioLeft.size() - static_cast<std::size_t>(1.0 * audioRate) : 0;
+    m.left.window = analyseWindow(audioLeft, analysisBegin, audioRate);
+    m.right.window = analyseWindow(audioRight, analysisBegin, audioRate);
+    m.channelCorrelation = normalisedCorrelation(audioLeft, audioRight, analysisBegin);
     m.finalRpm = simulator.state().rpm;
-    if (!stabilityRun)
-        writeWav(outDir / (config.name + ".wav"), audio, static_cast<int>(audioRate));
+    m.droppedEvents = droppedEvents + renderer.droppedPendingEventCount();
+    m.droppedPressureSamples = droppedPressureSamples;
+    m.lateEvents = renderer.lateEventCount();
+    m.stolenVoices = renderer.stolenVoiceCount();
+    m.delayTruncations = renderer.delayTruncationCount();
+    if (writeOutput)
+        writeWav(outDir / (config.name + ".wav"), audioLeft, audioRight, static_cast<int>(audioRate));
     std::cout << std::left << std::setw(26) << config.name
-              << " rms="   << std::fixed << std::setprecision(4) << m.rms
-              << " peak="  << m.peak
-              << " crest=" << std::setprecision(2) << m.crest
+              << " rms="   << std::fixed << std::setprecision(4) << m.left.window.rms
+              << '/' << m.right.window.rms
+              << " peak="  << m.left.scan.peak << '/' << m.right.scan.peak
+              << " crest=" << std::setprecision(2) << m.left.window.crest
               << " rpm=" << std::setprecision(0) << m.finalRpm
-              << " brightness=" << std::setprecision(3) << m.brightness
-              << " dc=" << std::showpos << m.mean << std::noshowpos
-              << " bands=" << std::setprecision(1) << m.lowBandFraction * 100.0
-              << '/' << m.midBandFraction * 100.0 << '/' << m.highBandFraction * 100.0 << '%'
-              << " nearFS=" << std::setprecision(4) << m.nearFullScaleFraction
-              << " flat=" << m.longestFlatTop
-              << " dropped=" << renderer.droppedPendingEventCount()
-              << " late="   << renderer.lateEventCount()
-              << " finite=" << (m.finite ? "yes" : "NO")
+              << " brightness=" << std::setprecision(3) << m.left.window.brightness
+              << " dc=" << std::showpos << m.left.window.mean << std::noshowpos
+              << " bands=" << std::setprecision(1) << m.left.window.lowBandFraction * 100.0
+              << '/' << m.left.window.midBandFraction * 100.0
+              << '/' << m.left.window.highBandFraction * 100.0 << '%'
+              << " LRcorr=" << std::setprecision(3) << m.channelCorrelation
+              << " nearFS=" << std::setprecision(4) << m.left.scan.nearFullScaleFraction
+              << " flat=" << m.left.scan.longestFlatTop
+              << " dropped=" << m.droppedEvents
+              << " pressureDrops=" << m.droppedPressureSamples
+              << " late="   << m.lateEvents
+              << " stolen=" << m.stolenVoices
+              << " truncated=" << m.delayTruncations
+              << " finite=" << (m.left.scan.finite && m.right.scan.finite ? "yes" : "NO")
               << '\n';
     return m;
+}
+
+// ---------------------------------------------------------------------------
+// Exhaust decay instrument
+// ---------------------------------------------------------------------------
+
+struct DecayMeasurement final {
+    double rt60Seconds { 0.0 };
+    double peak { 0.0 };
+    double tailFloorDb { 0.0 };
+    bool finite { true };
+    bool valid { false };
+};
+
+/**
+ * Reverberation time from Schroeder backward integration of an impulse tail.
+ *
+ * The energy decay curve is integrated from the end of the capture back to the
+ * impulse peak, then RT60 is extrapolated from the -5 dB to -25 dB slope (RT20).
+ * Starting at -5 dB skips the direct impulse; extrapolating from RT20 keeps the
+ * estimate above the capture's noise/truncation floor.
+ */
+DecayMeasurement measureDecay(const std::vector<float>& x, double sampleRate) {
+    DecayMeasurement result;
+    if (x.empty() || !(sampleRate > 0.0)) return result;
+    std::size_t peakIndex = 0;
+    for (std::size_t i = 0; i < x.size(); ++i) {
+        const auto v = static_cast<double>(x[i]);
+        if (!std::isfinite(v)) { result.finite = false; continue; }
+        if (std::abs(v) > result.peak) { result.peak = std::abs(v); peakIndex = i; }
+    }
+    if (!result.finite || !(result.peak > 1.0e-9)) return result;
+
+    const auto n = x.size() - peakIndex;
+    std::vector<double> energy(n, 0.0);
+    double running = 0.0;
+    for (std::size_t i = n; i-- > 0;) {
+        const auto v = static_cast<double>(x[peakIndex + i]);
+        running += std::isfinite(v) ? v * v : 0.0;
+        energy[i] = running;
+    }
+    if (!(energy[0] > 0.0)) return result;
+    const auto levelDb = [&](std::size_t i) {
+        return 10.0 * std::log10(std::max(energy[i], 1.0e-300) / energy[0]);
+    };
+    result.tailFloorDb = levelDb(n - 1);
+
+    std::size_t start = 0, end = 0;
+    bool haveStart = false, haveEnd = false;
+    for (std::size_t i = 0; i < n; ++i) {
+        const auto db = levelDb(i);
+        if (!haveStart && db <= -5.0) { start = i; haveStart = true; }
+        if (haveStart && db <= -25.0) { end = i; haveEnd = true; break; }
+    }
+    if (!haveStart || !haveEnd || end <= start) return result;
+    result.rt60Seconds = static_cast<double>(end - start) / sampleRate * 3.0;
+    result.valid = true;
+    return result;
+}
+
+/**
+ * Drive one runner-pressure impulse through an otherwise silent renderer and
+ * measure the exhaust chain's decay for a given preset.
+ *
+ * The impulse is injected as cylinder-pressure telemetry rather than as a firing
+ * event on purpose. Firing-event voices are summed straight onto the exhaust bus
+ * and into the per-path IR; they never enter the collector. Only the pressure
+ * stream reaches the runner waveguide, collector junction, outlet reflection line
+ * and muffler FDN, so only a pressure-driven impulse can measure them.
+ *
+ * Everything but the exhaust bus is muted and the engine is held at rest, so no
+ * continuous source (jet, induction, mechanical, high-frequency noise) adds a
+ * floor that would flatten the Schroeder integral. The impulse amplitude keeps
+ * the safety leveler and the master soft-limiter at identity, so the measured
+ * decay is the acoustic model's own and not a compressor's release.
+ *
+ * convolutionMix selects what is measured: at 0 the per-path IR is muted and the
+ * decay is the model's own. Note that `convolution` also scales the muffler FDN
+ * wet and the exhaust-body excitation, so 0 removes those too; the pair of
+ * measurements brackets the model rather than isolating one stage.
+ */
+DecayMeasurement measureExhaustDecay(const EngineConfig& baseConfig, const WavData& ir,
+                                     int preset, double seconds, float convolutionMix) {
+    auto config = baseConfig;
+    normaliseEngineConfig(config);
+    auto audioConfiguration = std::make_unique<EngineRuntime>(config);
+    auto& audioState = audioConfiguration->audioState();
+
+    constexpr double audioRate = 48'000.0;
+    constexpr int samplesPerStep = 200;
+    constexpr double telemetryRate = 4'000.0;
+    auto eventQueuePtr = std::make_unique<FiringEventQueue>();
+    auto pressureQueuePtr = std::make_unique<CylinderPressureQueue>();
+    auto& eventQueue = *eventQueuePtr;
+    auto& pressureQueue = *pressureQueuePtr;
+    auto rendererPtr = std::make_unique<RealtimeEngineAudio>(eventQueue, audioState, &pressureQueue);
+    auto& renderer = *rendererPtr;
+    if (!ir.samples.empty()) renderer.setImpulseResponse(ir.samples, ir.sampleRate, 0);
+    renderer.prepare(audioRate, samplesPerStep);
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+
+    const auto ambientKpa = static_cast<float>(config.ambientPressureKpa);
+    audioState.exhaustPreset.store(preset, std::memory_order_relaxed);
+    audioState.combustionGain.store(0.0F);
+    audioState.intakeGain.store(0.0F);
+    audioState.mechanicalGain.store(0.0F);
+    audioState.exhaustGain.store(1.0F);
+    audioState.convolution.store(std::clamp(convolutionMix, 0.0F, 1.0F));
+    audioState.volume.store(1.0F);
+    audioState.timeScale.store(1.0F);
+    audioState.rpm.store(0.0F);
+    audioState.throttle.store(0.0F);
+    audioState.load.store(0.0F);
+    audioState.starter.store(0.0F);
+    audioState.lowFrequencyNoise.store(0.0F);
+    audioState.highFrequencyNoise.store(0.0F);
+    audioState.exhaustFlowGramsPerSecond.store(0.0F);
+
+    // A 1 ms raised-cosine blowdown pulse on one cylinder, well after the
+    // renderer's look-ahead so the whole pulse is scheduled rather than clipped.
+    constexpr double pulseCentreSeconds = 0.050;
+    constexpr double pulseWidthSeconds = 0.001;
+    // Sized to keep the rendered peak far below the safety leveler's 0.78
+    // threshold and the limiter's 0.82 knee, so both stay at identity and the
+    // measured decay stays amplitude-invariant.
+    constexpr float pulseAmplitudeKpa = 60.0F;
+    const auto pulseAt = [&](double t) {
+        const auto offset = t - pulseCentreSeconds;
+        if (std::abs(offset) >= pulseWidthSeconds * 0.5) return 0.0F;
+        return pulseAmplitudeKpa * static_cast<float>(
+            0.5 * (1.0 + std::cos(2.0 * std::numbers::pi * offset / pulseWidthSeconds)));
+    };
+
+    std::vector<float> tail;
+    const auto steps = static_cast<std::size_t>(seconds * audioRate / samplesPerStep);
+    tail.reserve(steps * samplesPerStep);
+    juce::AudioBuffer<float> block(2, samplesPerStep);
+    double nextPressureTime = 0.0;
+    for (std::size_t step = 0; step < steps; ++step) {
+        const auto blockEnd = static_cast<double>(step + 1) * samplesPerStep / audioRate;
+        // Publish telemetry slightly ahead of the block being rendered, exactly
+        // as the runtime's producer does.
+        while (nextPressureTime < blockEnd + 0.010) {
+            CylinderPressureSample sample;
+            sample.timeSeconds = nextPressureTime;
+            sample.cylinderCount = 1;
+            sample.pressureBar[0] = ambientKpa * 0.01F;
+            sample.exhaustRunnerPressureKpa[0] = ambientKpa + pulseAt(nextPressureTime);
+            sample.exhaustFlowMgPerCycle[0] = 60.0F;
+            // A closed port is the reflective termination the primary rings against.
+            sample.exhaustValveOpening[0] = 0.0F;
+            sample.exhaustPathIndex[0] = 0;
+            if (!pressureQueue.tryPush(sample)) break;
+            nextPressureTime += 1.0 / telemetryRate;
+        }
+        audioState.producerTimeNanoseconds.store(
+            static_cast<std::uint64_t>(blockEnd * 1.0e9), std::memory_order_release);
+        block.clear();
+        renderer.render(block, 0, samplesPerStep);
+        for (int s = 0; s < samplesPerStep; ++s) tail.push_back(block.getSample(0, s));
+    }
+    return measureDecay(tail, audioRate);
 }
 } // namespace
 
 int main(int argc, char** argv) {
+    std::cout << std::unitbuf;
     std::filesystem::path outDir = "audio-render-output";
     std::filesystem::path irPath = std::filesystem::path(ENGINELAB_CATALOG_ROOT) / "assets" / "ir" / "exhaust_default.wav";
     for (int i = 1; i < argc; ++i) {
@@ -360,7 +597,7 @@ int main(int argc, char** argv) {
 
     std::cout << "\n--- Per-engine render (3.0 s) ---\n";
     std::vector<Metrics> metrics;
-    for (auto& e : engines) metrics.push_back(renderEngine(e.config, ir, outDir, 3.0, false));
+    for (auto& e : engines) metrics.push_back(renderEngine(e.config, ir, outDir, 3.0, true));
 
     std::cout << "\n--- Spectral differentiation (cosine similarity, lower = more distinct) ---\n";
     double worstSimilarity = 0.0;
@@ -374,10 +611,31 @@ int main(int argc, char** argv) {
         }
 
     std::cout << "\n--- Forced-induction layer (inline4 + synthetic turbo, 3.0 s) ---\n";
-    const auto turbo = renderEngine(makeDefaultInlineFour(), ir, outDir, 3.0, false, true);
+    const auto turbo = renderEngine(makeDefaultInlineFour(), ir, outDir, 3.0, true, true);
 
     std::cout << "\n--- Long-run stability (inline4, 25 s) ---\n";
-    const auto stability = renderEngine(makeDefaultInlineFour(), ir, outDir, 25.0, true);
+    const auto stability = renderEngine(makeDefaultInlineFour(), ir, outDir, 25.0, false);
+
+    // Instrument, not a gate: the correct RT60 per preset is not yet established,
+    // so this reports the measurement and only fails if the tail is unmeasurable.
+    // Calibrating the muffler FDN and its presets against these numbers is the
+    // next step; recording the values here is what makes that step falsifiable.
+    std::cout << "\n--- Exhaust decay per preset (inline4, Schroeder RT60) ---\n";
+    constexpr std::array<const char*, 5> presetNames {
+        "street", "openHeaders", "turboMuffled", "longTube", "motorcycle" };
+    bool decayMeasurable = true;
+    for (int preset = 0; preset < 5; ++preset) {
+        const auto dry = measureExhaustDecay(makeDefaultInlineFour(), ir, preset, 6.0, 0.0F);
+        const auto wet = measureExhaustDecay(makeDefaultInlineFour(), ir, preset, 6.0, 1.0F);
+        std::cout << "  " << std::left << std::setw(14) << presetNames[static_cast<std::size_t>(preset)]
+                  << " rt60(noIR/FDN)=" << std::fixed << std::setprecision(3) << dry.rt60Seconds << " s"
+                  << " rt60(full)=" << wet.rt60Seconds << " s"
+                  << " peak=" << std::setprecision(4) << dry.peak << '/' << wet.peak
+                  << " tailFloor=" << std::setprecision(1) << wet.tailFloorDb << " dB"
+                  << " finite=" << (dry.finite && wet.finite ? "yes" : "NO")
+                  << (dry.valid && wet.valid ? "" : "  [UNMEASURABLE]") << '\n';
+        if (!dry.finite || !dry.valid || !wet.finite || !wet.valid) decayMeasurable = false;
+    }
 
     bool ok = true;
     const auto validate = [&ok](const Metrics& m, const std::string& label,
@@ -386,21 +644,38 @@ int main(int argc, char** argv) {
             std::cerr << "FAIL: " << label << ": " << reason << '\n';
             ok = false;
         };
-        if (!m.finite) fail("non-finite audio produced");
-        if (m.rms <= 1.0e-5) fail("analysis window is unexpectedly silent");
-        if (m.peak > 1.00001) fail("output exceeds digital full scale");
-        if (m.crest < 1.50) fail("insufficient waveform dynamics");
-        if (m.crest > 16.0) fail("isolated spikes dominate the waveform");
-        if (std::abs(m.mean) > std::max(0.0025, m.rms * 0.08))
-            fail("post-transient DC offset exceeds 8% of RMS");
-        if (m.nearFullScaleFraction > 0.002)
-            fail("output spends too long near digital full scale");
-        if (m.longestFlatTop > 8)
-            fail("waveform contains a sustained flat clipping plateau");
-        if (requireSpectralBalance && m.lowBandFraction > 0.985)
-            fail("more than 98.5% of analysed energy is below 250 Hz");
-        if (requireSpectralBalance && m.highBandFraction > 0.70)
-            fail("upper-band noise dominates the engine signal");
+        const auto channels = { std::pair { "left", &m.left }, std::pair { "right", &m.right } };
+        for (const auto& [name, channel] : channels) {
+            const std::string suffix = std::string(" (") + name + " channel)";
+            // Safety properties hold over the whole render, not just the window.
+            if (!channel->scan.finite) fail("non-finite audio produced" + suffix);
+            if (channel->scan.peak > 1.00001) fail("output exceeds digital full scale" + suffix);
+            if (channel->scan.nearFullScaleFraction > 0.002)
+                fail("output spends too long near digital full scale" + suffix);
+            if (channel->scan.longestFlatTop > 8)
+                fail("waveform contains a sustained flat clipping plateau" + suffix);
+            if (channel->window.rms < 0.045)
+                fail("nominal output is below the calibrated -27 dBFS RMS floor" + suffix);
+            if (channel->window.rms > 0.32)
+                fail("nominal output exceeds the calibrated -10 dBFS RMS ceiling" + suffix);
+            if (channel->window.crest < 1.50) fail("insufficient waveform dynamics" + suffix);
+            if (channel->window.crest > 16.0) fail("isolated spikes dominate the waveform" + suffix);
+            if (std::abs(channel->window.mean) > std::max(0.0025, channel->window.rms * 0.08))
+                fail("post-transient DC offset exceeds 8% of RMS" + suffix);
+            if (requireSpectralBalance && channel->window.lowBandFraction > 0.985)
+                fail("more than 98.5% of analysed energy is below 250 Hz" + suffix);
+            if (requireSpectralBalance && channel->window.highBandFraction > 0.70)
+                fail("upper-band noise dominates the engine signal" + suffix);
+        }
+        if (m.droppedEvents != 0) fail("firing events were dropped");
+        if (m.droppedPressureSamples != 0) fail("cylinder-pressure samples were dropped");
+        if (m.lateEvents != 0) fail("audio events missed their scheduled render time");
+        if (m.stolenVoices != 0) fail("polyphony exhaustion stole active combustion voices");
+        // Delay lines are sized in prepare() from the published geometry, so a
+        // clamp here means the rendered acoustic length is shorter than configured.
+        if (m.delayTruncations != 0) fail("a delay line was too short and truncated");
+        if (m.channelCorrelation > 0.999)
+            fail("left and right are effectively identical: stereo image collapsed to mono");
     };
     for (std::size_t index = 0; index < metrics.size(); ++index)
         validate(metrics[index], engines[index].label, true);
@@ -409,6 +684,10 @@ int main(int argc, char** argv) {
     if (worstSimilarity > 0.985) {
         std::cerr << "FAIL: engines are not spectrally differentiated (max similarity "
                   << worstSimilarity << ")\n";
+        ok = false;
+    }
+    if (!decayMeasurable) {
+        std::cerr << "FAIL: exhaust decay could not be measured for at least one preset\n";
         ok = false;
     }
     std::cout << "\nResult: " << (ok ? "PASS" : "FAIL")

@@ -45,3 +45,7 @@ engine:
     connecting_rod_mm: 155.0
     piston_mass_g: 520
     compression_ratio: 10.7
+    intake_valve_count: 1
+    exhaust_valve_count: 1
+    intake_valve_diameter_mm: 55.0
+    exhaust_valve_diameter_mm: 40.4

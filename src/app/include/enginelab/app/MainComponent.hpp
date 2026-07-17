@@ -30,6 +30,7 @@ public:
     void resized() override;
     bool keyPressed(const juce::KeyPress&) override;
     bool keyStateChanged(bool isKeyDown) override;
+    void focusLost(FocusChangeType cause) override;
     void mouseWheelMove(const juce::MouseEvent&, const juce::MouseWheelDetails&) override;
     void mouseDown(const juce::MouseEvent&) override;
     void mouseDrag(const juce::MouseEvent&) override;
@@ -56,6 +57,7 @@ private:
     void collectFinishedRuns();
     void updateHistorySelector();
     void setThrottlePreset(double value);
+    void updateMomentaryThrottle();
     void toggleDyno();
     void applyExhaustPreset(int presetIndex);
     void configureImpulseResponse();
@@ -89,6 +91,7 @@ private:
     std::uint64_t nextUiRunId_ { 1 };
     bool starterKeyDown_ { false };
     bool brakeKeyDown_ { false };
+    bool throttleKeyActive_ { false };
     double targetClutchPressure_ { 1.0 };
     double currentClutchPressure_ { 1.0 };
     int screen_ { 0 };

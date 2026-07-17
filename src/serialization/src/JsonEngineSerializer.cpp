@@ -154,7 +154,11 @@ std::string JsonEngineSerializer::encode(const EngineConfig& config) const {
         {"wrist_pin_offset_mm", cylinder.wristPinOffsetMm}, {"piston_crown_volume_cc", cylinder.pistonCrownVolumeCc},
         {"head_chamber_volume_cc", cylinder.headChamberVolumeCc},
         {"head_gasket_thickness_mm", cylinder.headGasketThicknessMm},
-        {"connecting_rod_inertia_kg_m2", cylinder.connectingRodMomentOfInertiaKgM2} });
+        {"connecting_rod_inertia_kg_m2", cylinder.connectingRodMomentOfInertiaKgM2},
+        {"intake_valve_count", cylinder.intakeValveCount},
+        {"exhaust_valve_count", cylinder.exhaustValveCount},
+        {"intake_valve_diameter_mm", cylinder.intakeValveDiameterMm},
+        {"exhaust_valve_diameter_mm", cylinder.exhaustValveDiameterMm} });
     Json crankJournals = Json::array();
     for (const auto& journal : config.crankJournals) crankJournals.push_back({
         {"id", journal.id}, {"angle_deg", journal.angleDegrees}, {"throw_mm", journal.throwMm},
@@ -170,6 +174,7 @@ std::string JsonEngineSerializer::encode(const EngineConfig& config) const {
     for (const auto& path : config.intakePaths) intakePaths.push_back({ {"id", path.id},
         {"cylinder_ids", path.cylinderIds}, {"geometry", {{"plenum_volume_l", path.geometry.plenumVolumeLitres},
             {"throttle_diameter_mm", path.geometry.throttleDiameterMm},
+            {"throttle_count", path.geometry.throttleCount},
             {"throttle_discharge_coefficient", path.geometry.throttleDischargeCoefficient},
             {"runner_length_mm", path.geometry.runnerLengthMm}, {"runner_diameter_mm", path.geometry.runnerDiameterMm},
             {"idle_bypass_area_mm2", path.geometry.idleBypassAreaMm2}, {"throttle_gamma", path.geometry.throttleGamma}}} });
@@ -264,6 +269,7 @@ std::string JsonEngineSerializer::encode(const EngineConfig& config) const {
         {"camshafts", camshaftJson(config.camshafts)},
         {"intake", {{"plenum_volume_l", config.intake.plenumVolumeLitres},
                      {"throttle_diameter_mm", config.intake.throttleDiameterMm},
+                     {"throttle_count", config.intake.throttleCount},
                      {"throttle_discharge_coefficient", config.intake.throttleDischargeCoefficient},
                      {"runner_length_mm", config.intake.runnerLengthMm}, {"runner_diameter_mm", config.intake.runnerDiameterMm},
                      {"idle_bypass_area_mm2", config.intake.idleBypassAreaMm2}, {"throttle_gamma", config.intake.throttleGamma}}},
@@ -433,6 +439,7 @@ EngineDecodeResult JsonEngineSerializer::decode(std::string_view text) const noe
             const auto& intake = engine.at("intake");
             config.intake.plenumVolumeLitres = intake.value("plenum_volume_l", config.intake.plenumVolumeLitres);
             config.intake.throttleDiameterMm = intake.value("throttle_diameter_mm", config.intake.throttleDiameterMm);
+            config.intake.throttleCount = intake.value("throttle_count", config.intake.throttleCount);
             config.intake.throttleDischargeCoefficient = intake.value("throttle_discharge_coefficient", config.intake.throttleDischargeCoefficient);
             config.intake.runnerLengthMm = intake.value("runner_length_mm", config.intake.runnerLengthMm);
             config.intake.runnerDiameterMm = intake.value("runner_diameter_mm", config.intake.runnerDiameterMm);
@@ -566,6 +573,7 @@ EngineDecodeResult JsonEngineSerializer::decode(std::string_view text) const noe
                     const auto& geometry = item.at("geometry");
                     path.geometry.plenumVolumeLitres = geometry.value("plenum_volume_l", path.geometry.plenumVolumeLitres);
                     path.geometry.throttleDiameterMm = geometry.value("throttle_diameter_mm", path.geometry.throttleDiameterMm);
+                    path.geometry.throttleCount = geometry.value("throttle_count", path.geometry.throttleCount);
                     path.geometry.throttleDischargeCoefficient = geometry.value("throttle_discharge_coefficient", path.geometry.throttleDischargeCoefficient);
                     path.geometry.runnerLengthMm = geometry.value("runner_length_mm", path.geometry.runnerLengthMm);
                     path.geometry.runnerDiameterMm = geometry.value("runner_diameter_mm", path.geometry.runnerDiameterMm);
@@ -667,6 +675,10 @@ EngineDecodeResult JsonEngineSerializer::decode(std::string_view text) const noe
             cylinder.headChamberVolumeCc = item.value("head_chamber_volume_cc", 0.0);
             cylinder.headGasketThicknessMm = item.value("head_gasket_thickness_mm", 0.0);
             cylinder.connectingRodMomentOfInertiaKgM2 = item.value("connecting_rod_inertia_kg_m2", 0.0);
+            cylinder.intakeValveCount = item.value("intake_valve_count", cylinder.intakeValveCount);
+            cylinder.exhaustValveCount = item.value("exhaust_valve_count", cylinder.exhaustValveCount);
+            cylinder.intakeValveDiameterMm = item.value("intake_valve_diameter_mm", 0.0);
+            cylinder.exhaustValveDiameterMm = item.value("exhaust_valve_diameter_mm", 0.0);
             config.cylinders.push_back(cylinder);
         }
         normaliseEngineConfig(config);

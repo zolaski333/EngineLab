@@ -23,6 +23,8 @@ public:
         limiterLatched_.store(false, std::memory_order_relaxed);
         limiterReleaseTime_.store(0.0, std::memory_order_relaxed);
         previousThrottle_.store(0.0, std::memory_order_relaxed);
+        idleIntegral_.store(0.0, std::memory_order_relaxed);
+        previousIdleEvaluationTime_.store(0.0, std::memory_order_relaxed);
     }
     void setAirFuelRatioTrim(double value) noexcept {
         afrTrim_.store(std::isfinite(value) ? std::clamp(value, -3.0, 3.0) : 0.0);
@@ -42,5 +44,7 @@ private:
     mutable std::atomic<bool> limiterLatched_ { false };
     mutable std::atomic<double> limiterReleaseTime_ { 0.0 };
     mutable std::atomic<double> previousThrottle_ { 0.0 };
+    mutable std::atomic<double> idleIntegral_ { 0.0 };
+    mutable std::atomic<double> previousIdleEvaluationTime_ { 0.0 };
 };
 } // namespace enginelab

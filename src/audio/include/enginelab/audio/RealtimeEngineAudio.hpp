@@ -2,11 +2,13 @@
 #include <enginelab/audio/IAudioRenderer.hpp>
 #include <enginelab/audio/RealtimeConvolutionBank.hpp>
 #include <enginelab/runtime/EngineRuntime.hpp>
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <cstdint>
 #include <memory>
 #include <span>
+#include <vector>
 namespace enginelab {
 /** Allocation-free layered combustion/exhaust renderer with stereo spatialisation. */
 class RealtimeEngineAudio final : public IAudioRenderer {
@@ -25,6 +27,13 @@ public:
     [[nodiscard]] std::uint64_t lateEventCount() const noexcept { return lateEvents_.load(std::memory_order_relaxed); }
     [[nodiscard]] std::uint64_t stolenVoiceCount() const noexcept { return stolenVoices_.load(std::memory_order_relaxed); }
     [[nodiscard]] std::uint64_t droppedPendingEventCount() const noexcept { return droppedPendingEvents_.load(std::memory_order_relaxed); }
+    /** Times a requested delay exceeded its allocated line and was clamped.
+     *
+     * Lines are sized in prepare() from the delays the runtime published, so a
+     * non-zero count means a delay grew afterwards and the acoustic geometry is
+     * silently shorter than configured. Non-zero is a defect, not a warning.
+     */
+    [[nodiscard]] std::uint64_t delayTruncationCount() const noexcept { return delayTruncations_.load(std::memory_order_relaxed); }
     [[nodiscard]] double eventLatencySeconds() const noexcept { return eventLatencySeconds_; }
     /** Sample-rate invariant quantisation used by the physical runner lines. */
     [[nodiscard]] static std::size_t runnerDelaySamples(double delaySeconds,
@@ -41,30 +50,62 @@ private:
         bool active {};
     };
     struct PendingEvent { FiringEvent event {}; double scheduledTimeSeconds {}; bool exhaust {}; };
+    // Compile-time upper bounds. These size only small per-block scratch arrays
+    // and the published-telemetry views; the delay lines below are sized at
+    // prepare() from the engine actually loaded.
     static constexpr std::size_t maximumPaths = RealtimeConvolutionBank::maximumPaths;
     static constexpr std::size_t maxRunners = 32;
-    // 80 ms at 192 kHz becomes 320 ms when auditioned at quarter speed.
-    // Power-of-two capacities retain the full physical delay across the
-    // supported sample-rate and time-scale range.
-    static constexpr std::size_t runnerLineLength = 131'072;
-    static constexpr std::size_t outletLineLength = 131'072;
-    static_assert(runnerLineLength > 192'000 * 80 / 1'000);
+
+    // Every physical delay is stretched at render time by
+    //   acousticDelayScale = referenceSoundSpeed / exhaustSoundSpeed / timeScale
+    // whose render-time clamps bound it at 900 / 289.8 / 0.25 = 12.42: a cold
+    // exhaust auditioned at quarter speed. Lines are sized for this worst case,
+    // so temperature and time-scale changes never reach the clamp.
+    static constexpr double maximumAcousticDelayScale = 12.5;
+    // Ceiling EngineRuntime applies to every published physical delay. It is a
+    // safety clamp, not a physical bound: 80 ms of primary would be a 41 m pipe.
+    // Sizing lines from it would waste ~87x, so prepare() sizes from the delays
+    // actually published and render() reports any residual truncation.
+    static constexpr double maximumPublishedDelaySeconds = 0.080;
+    static constexpr std::size_t minimumLineLength = 64;
+    // Reference delays of the muffler FDN's four lines, in samples at 48 kHz
+    // before the acoustic scale is applied. Mutually prime so their modes do
+    // not coincide.
+    static constexpr std::array<double, 4> referenceFdnSamples {
+        1'493.0, 2'111.0, 2'791.0, 3'557.0 };
+
+    /** A bank of `count` power-of-two delay lines held contiguously.
+     *
+     * One allocation per bank keeps a runner's read and write cursors on the
+     * same pages, and the power-of-two stride turns the per-sample wrap into a
+     * mask instead of an integer division.
+     */
+    struct DelayLineBank final {
+        std::vector<float> data;
+        std::size_t stride { 0 };
+        std::size_t mask { 0 };
+        void allocate(std::size_t lines, std::size_t lengthPowerOfTwo) {
+            stride = lengthPowerOfTwo;
+            mask = lengthPowerOfTwo - 1;
+            data.assign(lines * lengthPowerOfTwo, 0.0F);
+        }
+        void clear() noexcept { std::fill(data.begin(), data.end(), 0.0F); }
+        [[nodiscard]] float* line(std::size_t index) noexcept {
+            return data.data() + index * stride;
+        }
+    };
+
     struct ExhaustPathState final {
         float collectorReturn {};
-        std::array<float, outletLineLength> forwardWave {};
-        std::array<float, outletLineLength> reverseWave {};
-        std::array<float, 49'152> fdnA {};
-        std::array<float, 65'536> fdnB {};
-        std::array<float, 81'920> fdnC {};
-        std::array<float, 98'304> fdnD {};
+        std::vector<float> forwardWave;
+        std::vector<float> reverseWave;
+        std::array<std::vector<float>, 4> fdn {};
         std::array<float, 64> jitterHistory {};
         std::size_t waveWrite {};
-        std::size_t fdnWriteA {};
-        std::size_t fdnWriteB {};
-        std::size_t fdnWriteC {};
-        std::size_t fdnWriteD {};
+        std::size_t waveMask {};
+        std::array<std::size_t, 4> fdnWrite {};
         std::size_t jitterWrite {};
-        std::size_t reflectionDelaySamples { 1 };
+        float reflectionDelaySamples { 1.0F };
         float reflectedLowPass {};
         float collectorState {};
         float previousCollectorInput {};
@@ -75,11 +116,14 @@ private:
         float exhaustAirRight {};
     };
     struct RunnerWaveguides final {
-        std::array<std::array<float, runnerLineLength>, maxRunners> forward {};
-        std::array<std::array<float, runnerLineLength>, maxRunners> backward {};
+        DelayLineBank forward;
+        DelayLineBank backward;
         std::array<std::size_t, maxRunners> write {};
-        std::array<std::size_t, maxRunners> delaySamples {};
+        std::array<float, maxRunners> delaySamples {};
     };
+    /** Size and zero every delay line for the engine currently published.
+     *  Allocates, so it is called only from prepare(). */
+    void allocateDelayLines();
     void trigger(const FiringEvent&, bool exhaust) noexcept;
     void updateExhaustPreset(int preset) noexcept;
     [[nodiscard]] std::array<float, maximumPaths> processExhaustWaveguides(
@@ -112,9 +156,12 @@ private:
     // Per-runner bidirectional digital waveguide (port <-> collector) with an
     // N-port scattering junction that couples cylinders sharing a collector.
     std::unique_ptr<RunnerWaveguides> runners_;
-    // Path delay networks are large by design (80 ms at 192 kHz). Keep them
-    // off the UI/test stack while retaining fixed, allocation-free callback state.
-    std::unique_ptr<ExhaustPathState[]> exhaustPaths_;
+    // Sized in prepare() to the cylinders and paths the loaded engine actually
+    // has. Allocation stays off the callback; only the capacity is no longer a
+    // worst-case guess paid for by every engine.
+    std::vector<ExhaustPathState> exhaustPaths_;
+    std::size_t allocatedRunners_ { 0 };
+    std::size_t allocatedPaths_ { 0 };
     std::array<std::size_t, 4> fdnDelaySamples_ { 1, 1, 1, 1 };
     RealtimeConvolutionBank convolutionBank_;
     std::unique_ptr<juce::dsp::Oversampling<float>> oversampler_;
@@ -153,12 +200,15 @@ private:
     float antiAliasCoefficient_ { 0.5F };
     float dcBlockPole_ { 0.998F };
     float toneCoefficient_ { 0.1F };
+    float radiationLowCoefficient_ { 0.03F };
     float dcInputLeft_ { 0.0F };
     float dcInputRight_ { 0.0F };
     float dcOutputLeft_ { 0.0F };
     float dcOutputRight_ { 0.0F };
     float toneLowLeft_ { 0.0F };
     float toneLowRight_ { 0.0F };
+    float radiationLowLeft_ { 0.0F };
+    float radiationLowRight_ { 0.0F };
     float pressureTailLeft_ { 0.0F };
     float pressureTailRight_ { 0.0F };
     std::array<float, 32> cylinderPressureRawPrevious_ {};
@@ -186,5 +236,6 @@ private:
     std::atomic<std::uint64_t> lateEvents_ { 0 };
     std::atomic<std::uint64_t> stolenVoices_ { 0 };
     std::atomic<std::uint64_t> droppedPendingEvents_ { 0 };
+    std::atomic<std::uint64_t> delayTruncations_ { 0 };
 };
 } // namespace enginelab

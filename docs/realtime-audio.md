@@ -39,11 +39,41 @@ attente ou acquisition de mutex. Voix, tableaux de délais, buffers de guides
 d'onde, FDN et buffers de convolution sont alloués pendant la préparation.
 Chaque bloc respecte le segment `startSample/numSamples` fourni par JUCE.
 
+`prepare()` alloue et lit la géométrie statique publiée par le constructeur de
+`EngineRuntime`, qui précède toujours celui du renderer. Un changement structurel
+de moteur reconstruit les deux objets, si bien que ce dimensionnement n'observe
+jamais un moteur périmé.
+
 Les coefficients dépendant du temps sont convertis à la fréquence réelle du
 périphérique. Les constantes de décroissance, filtres et délais ne sont donc
-pas supposés valables uniquement à 48 kHz. Les lignes de 131 072 échantillons
-conservent les 80 ms physiques à 192 kHz, y compris au ralenti temporel 0,25×
-et pendant un échappement froid.
+pas supposés valables uniquement à 48 kHz.
+
+### Dimensionnement des lignes à retard
+
+Les lignes sont allouées dans `prepare()`, à la taille du moteur réellement
+chargé : nombre de cylindres et de chemins publiés, et longueur déduite des
+délais effectivement publiés par le runtime. Elles ne sont plus des tableaux
+fixes dimensionnés au pire cas et payés par tous les moteurs.
+
+Chaque délai physique est étiré au rendu par
+`acousticDelayScale = c_référence / c_échappement / timeScale`, borné par les
+clamps du rendu à `900 / 289,8 / 0,25 = 12,42`. Les lignes intègrent ce pire cas,
+si bien qu'un échappement froid écouté au quart de vitesse ne les atteint jamais.
+
+Le runtime borne les délais publiés à 80 ms, mais c'est une clamp de sécurité et
+non une borne physique : 80 ms de primaire correspondraient à un tube de 41 m.
+Dimensionner sur cette valeur gaspillerait environ 87×, et l'ancien
+dimensionnement fixe était de toute façon **trop court** pour son propre pire cas
+(0,080 × 12,42 × 192 000 = 190 764 pour 131 072 alloués) : les lignes tronquaient
+en silence dans ce coin, comme les lignes FDN.
+
+Les longueurs sont des puissances de deux, ce qui remplace le modulo par échantillon
+par un masque. Une troncature résiduelle — un délai qui grandirait après
+`prepare()` — est comptée par `delayTruncationCount()` et fait échouer
+`EngineLab.AudioRender`. Elle n'est plus silencieuse.
+
+Les maxima de compilation (huit chemins, 32 cylindres) ne dimensionnent plus que
+de petits tableaux de travail par bloc.
 
 ## Sources et mixage
 
@@ -94,6 +124,27 @@ simulé par une boucle instantanée. Les vitesses d'onde suivent
 `c = √(γRT)` avec la température d'échappement simulée, et tous les délais
 physiques suivent aussi `timeScale`.
 
+Cette vitesse d'onde provient d'une source unique
+(`enginelab/foundation/ExhaustGasAcoustics.hpp`) partagée avec le compilateur de
+topologie : les lignes à retard audio et les modes de résonance du graphe ne
+peuvent plus supposer des célérités différentes. Les propriétés retenues
+(γ ≈ 1,33, R ≈ 287 J/kg/K) sont un point de fonctionnement représentatif du gaz
+chaud, distinct du γ par cellule et dépendant de la composition que calcule le
+solveur thermodynamique.
+
+Le réseau FDN de silencieux utilise une matrice de Hadamard 4×4 normalisée à
+`H/2` (facteur 0,5), donc réellement sans perte : le coefficient de rebouclage
+du preset est désormais le gain de boucle effectif qui fixe la décroissance.
+L'ancienne normalisation à 0,25 appliquait `H/4`, dont les valeurs singulières
+valent 0,5 : elle divisait l'énergie par deux à chaque tour, et le gain de preset
+ne valait que la moitié de sa valeur affichée.
+
+Le réseau FDN et le corps résonant font partie du modèle d'échappement et ne
+suivent plus le potentiomètre `convolution`, qui ne règle que le mélange de la
+réponse impulsionnelle. Baisser l'IR ne coupe donc plus la simulation de
+silencieux comme auparavant ; le niveau humide par preset intègre la valeur par
+défaut de ce potentiomètre, si bien que le rendu par défaut est inchangé.
+
 Ce guide d'onde est un modèle DSP agrégé primaire/collecteur. Il ne résout pas
 encore chaque coude, changement de section ou composant comme une cellule 1D
 non linéaire. Pour un DAG personnalisé, le runtime publie néanmoins par
@@ -136,13 +187,50 @@ buffer.
 
 `EngineLab.RealtimeRegression` couvre notamment le routage continu par chemin,
 les limites de segment, les blocs 1 024/2 048 à 48/96/192 kHz, la transmission
-du DAG, l'atmosphère et les valeurs finies. `EngineLab.AudioRender` rend plusieurs
-moteurs hors ligne à un pourcentage de régime commun et vérifie énergie,
-dynamique, offset DC, plateaux de clipping, équilibre spectral, temps passé au
-plafond du limiteur et finitude. Une similarité spectrale trop forte entre
-moteurs est désormais un échec. Le harnais de comparaison produit également un
-WAV directement depuis les trames de pression afin de détecter une source
-silencieuse.
+du DAG, l'atmosphère et les valeurs finies.
+
+`EngineLab.AudioRender` rend plusieurs moteurs hors ligne à un pourcentage de
+régime commun. Les propriétés de sûreté — finitude, dépassement de pleine
+échelle, temps passé au plafond, plateaux de clipping — sont vérifiées sur
+**toute** la durée rendue, y compris les 25 s du test de stabilité longue ; une
+divergence en milieu de course est donc un échec. L'empreinte spectrale, le RMS,
+le facteur de crête et l'offset DC sont mesurés sur la fenêtre stationnaire
+finale. Les deux canaux sont analysés séparément, et une corrélation L/R trop
+proche de 1 échoue : un effondrement de l'image stéréo vers le mono est une
+régression. Une similarité spectrale trop forte entre moteurs échoue également.
+
+Le harnais mesure aussi le temps de réverbération de l'échappement par
+intégration inverse de Schroeder, sur la queue d'une impulsion injectée dans un
+renderer par ailleurs silencieux.
+
+L'impulsion est injectée comme **télémétrie de pression runner**, pas comme
+`FiringEvent`, et ce choix est structurel. Une voix d'événement est sommée
+directement sur le bus d'échappement et dans l'IR du chemin : elle n'entre jamais
+dans le collecteur. Seul le flux de pression atteint le guide d'onde, la jonction
+de collecteur, la ligne de réflexion de sortie et le FDN. Une impulsion
+événementielle ne mesure donc que l'enveloppe de la voix, et donne une
+décroissance identique pour tous les presets — l'erreur est silencieuse et
+crédible, d'où cette note.
+
+L'amplitude est dimensionnée sous le seuil du leveler et le coude du limiteur,
+qui restent à l'identité : la décroissance mesurée est celle du modèle acoustique
+et non celle d'un compresseur. La mesure est vérifiée amplitude-invariante.
+
+Deux valeurs sont rapportées par preset, avec et sans la couche `convolution`.
+Ce n'est pas une isolation du FDN mais un encadrement : `convolution` pilote à la
+fois le mix d'IR, le niveau humide du FDN et l'excitation du corps d'échappement,
+si bien qu'aucun réglage actuel ne permet d'écouter le modèle sans l'IR.
+
+C'est l'instrument de calibration du FDN de silencieux ; il ne constitue pas
+encore une porte, la valeur de référence par preset n'étant pas établie. Le test
+échoue seulement si une queue devient non mesurable ou non finie.
+
+Le harnais de comparaison produit également un WAV directement depuis les trames
+de pression afin de détecter une source silencieuse.
+
+Le harnais partage avec l'application la fonction `publishAudioFrame`, seule
+définition du mappage simulation-vers-audio par trame ; il pilote le simulateur
+lui-même pour rester déterministe, sans dupliquer ce mappage.
 
 Ces portes sont des régressions techniques. Elles ne remplacent pas :
 

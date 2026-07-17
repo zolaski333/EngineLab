@@ -346,6 +346,11 @@ void setEveryExhaust(EngineConfig& config, Member ExhaustConfig::* member, doubl
 
 void setIntakePlenum(EngineConfig& config, double value) { setEveryIntake(config, &IntakeConfig::plenumVolumeLitres, value); }
 void setIntakeThrottleDiameter(EngineConfig& config, double value) { setEveryIntake(config, &IntakeConfig::throttleDiameterMm, value); }
+void setIntakeThrottleCount(EngineConfig& config, double value) {
+    const auto count = static_cast<std::uint32_t>(std::clamp(std::llround(value), 1LL, 16LL));
+    config.intake.throttleCount = count;
+    for (auto& path : config.intakePaths) path.geometry.throttleCount = count;
+}
 void setIntakeThrottleCoefficient(EngineConfig& config, double value) { setEveryIntake(config, &IntakeConfig::throttleDischargeCoefficient, value); }
 void setIntakeRunnerLength(EngineConfig& config, double value) { setEveryIntake(config, &IntakeConfig::runnerLengthMm, value); }
 void setIntakeRunnerDiameter(EngineConfig& config, double value) { setEveryIntake(config, &IntakeConfig::runnerDiameterMm, value); }
@@ -390,6 +395,7 @@ const GlobalNumericProperty* findGlobalNumericProperty(std::string_view path) no
         { "engine.bank_angle_deg", Dimension::angle, [](auto& c, double v) { c.bankAngleDegrees = v; } },
         { "intake.plenum_volume_l", Dimension::volume, setIntakePlenum },
         { "intake.throttle_diameter_mm", Dimension::length, setIntakeThrottleDiameter },
+        { "intake.throttle_count", Dimension::dimensionless, setIntakeThrottleCount, true },
         { "intake.throttle_discharge_coefficient", Dimension::dimensionless, setIntakeThrottleCoefficient },
         { "intake.runner_length_mm", Dimension::length, setIntakeRunnerLength },
         { "intake.runner_diameter_mm", Dimension::length, setIntakeRunnerDiameter },
@@ -468,7 +474,11 @@ const CylinderNumericProperty* findCylinderNumericProperty(std::string_view path
         { "piston_crown_volume_cc", Dimension::volume, [](auto& c, double v) { c.pistonCrownVolumeCc = v * 1'000.0; } },
         { "head_chamber_volume_cc", Dimension::volume, [](auto& c, double v) { c.headChamberVolumeCc = v * 1'000.0; } },
         { "head_gasket_thickness_mm", Dimension::length, [](auto& c, double v) { c.headGasketThicknessMm = v; } },
-        { "connecting_rod_inertia_kg_m2", Dimension::inertia, [](auto& c, double v) { c.connectingRodMomentOfInertiaKgM2 = v; } }
+        { "connecting_rod_inertia_kg_m2", Dimension::inertia, [](auto& c, double v) { c.connectingRodMomentOfInertiaKgM2 = v; } },
+        { "intake_valve_count", Dimension::dimensionless, [](auto& c, double v) { c.intakeValveCount = static_cast<std::uint32_t>(v); }, true },
+        { "exhaust_valve_count", Dimension::dimensionless, [](auto& c, double v) { c.exhaustValveCount = static_cast<std::uint32_t>(v); }, true },
+        { "intake_valve_diameter_mm", Dimension::length, [](auto& c, double v) { c.intakeValveDiameterMm = v; } },
+        { "exhaust_valve_diameter_mm", Dimension::length, [](auto& c, double v) { c.exhaustValveDiameterMm = v; } }
     };
     for (const auto& property : properties) if (property.path == path) return &property;
     return nullptr;

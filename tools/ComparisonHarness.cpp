@@ -170,13 +170,141 @@ std::map<std::string, Metrics> readReference(const std::filesystem::path& path) 
     return result;
 }
 
-bool runCatalogAcceptance(const std::filesystem::path& root, const std::string& engineFilter) {
+struct DynoSweepPoint final {
+    double targetRpm {};
+    double measuredRpm {};
+    double torqueNm {};
+    double powerKw {};
+    bool stable {};
+};
+
+std::vector<DynoSweepPoint> runSteadyDyno(const enginelab::EngineConfig& config,
+                                         const std::filesystem::path& output) {
+    enginelab::SimpleEcuModel ecu;
+    enginelab::SimplifiedGasolinePhysics physics;
+    enginelab::FourStrokeEventGenerator events;
+    auto exhaust = enginelab::ExhaustGraph::makeForEngine(config);
+    enginelab::EngineSimulator simulator(config, ecu, physics, events, exhaust);
+    constexpr double dt = 1.0 / 240.0;
+    for (int step = 0; step < static_cast<int>(10.0 / dt); ++step) {
+        enginelab::EngineControls controls;
+        controls.ignitionEnabled = true;
+        controls.starterEngaged = step < static_cast<int>(1.50 / dt);
+        controls.throttle = controls.starterEngaged ? 0.72 : 0.0;
+        (void)simulator.step(dt, controls);
+    }
+    std::cout << "Steady dyno run-up: closed-throttle speed=" << simulator.state().rpm << " rpm\n";
+
+    const auto displacementM3 = enginelab::engineDisplacementLitres(config) * 0.001;
+    const auto controllerTorqueScaleNm = 2'500'000.0 * displacementM3
+        / (4.0 * std::numbers::pi);
+    const auto maximumBrakeTorqueNm = 10'000'000.0 * displacementM3
+        / (4.0 * std::numbers::pi);
+    const auto firstTargetRpm = std::max(2'000.0, config.idleRpm * 1.45);
+    const auto finalTargetRpm = std::min(config.redlineRpm,
+        config.ignition.revLimitRpm) * 0.95;
+    std::vector<double> targets;
+    for (auto target = firstTargetRpm; target < finalTargetRpm - 200.0; target += 1'000.0)
+        targets.push_back(target);
+    targets.push_back(finalTargetRpm);
+
+    std::vector<DynoSweepPoint> points;
+    double filteredRpm = simulator.state().rpm;
+    double filteredAcceleration = 0.0;
+    double feedForwardTorque = std::max(0.0, simulator.state().torqueNm);
+    for (const auto targetRpm : targets) {
+        double integralTorque = 0.0;
+        double brakeTorque = 0.0;
+        double rpmSum = 0.0;
+        double torqueSum = 0.0;
+        double powerSum = 0.0;
+        std::size_t samples = 0;
+        for (int step = 0; step < static_cast<int>(3.0 / dt); ++step) {
+            const auto previousFilteredRpm = filteredRpm;
+            filteredRpm += (simulator.state().rpm - filteredRpm)
+                * (1.0 - std::exp(-dt * 3.0));
+            const auto rawAcceleration = (filteredRpm - previousFilteredRpm) / dt;
+            filteredAcceleration += (rawAcceleration - filteredAcceleration)
+                * (1.0 - std::exp(-dt * 2.0));
+            feedForwardTorque += (std::max(0.0, simulator.state().torqueNm) - feedForwardTorque)
+                * (1.0 - std::exp(-dt * 5.0));
+            const auto error = filteredRpm - targetRpm;
+            if (simulator.state().rpm < targetRpm - 120.0 && error < 0.0) {
+                integralTorque = 0.0;
+                brakeTorque = 0.0;
+            } else {
+                const auto proportionalGain = controllerTorqueScaleNm / 500.0;
+                const auto integralGain = controllerTorqueScaleNm / 1'200.0;
+                const auto accelerationGain = controllerTorqueScaleNm / 6'000.0;
+                const auto candidate = integralTorque + error * integralGain * dt;
+                const auto requested = feedForwardTorque + candidate
+                    + error * proportionalGain + filteredAcceleration * accelerationGain;
+                const auto saturated = std::clamp(requested, 0.0, maximumBrakeTorqueNm);
+                if (requested == saturated
+                    || (requested < 0.0 && error > 0.0)
+                    || (requested > maximumBrakeTorqueNm && error < 0.0))
+                    integralTorque = candidate;
+                integralTorque = std::clamp(integralTorque,
+                    -maximumBrakeTorqueNm, maximumBrakeTorqueNm);
+                brakeTorque = std::clamp(feedForwardTorque + integralTorque
+                    + error * proportionalGain + filteredAcceleration * accelerationGain,
+                    0.0, maximumBrakeTorqueNm);
+            }
+            enginelab::EngineControls controls;
+            controls.ignitionEnabled = true;
+            controls.starterEngaged = points.empty()
+                && simulator.state().rpm < std::max(650.0, config.idleRpm * 0.82);
+            controls.throttle = 1.0;
+            controls.dynamometerTorqueNm = brakeTorque;
+            const auto frame = simulator.step(dt, controls);
+            if (step >= static_cast<int>(1.5 / dt)
+                    && std::abs(filteredRpm - targetRpm) <= 100.0
+                    && std::abs(filteredAcceleration) <= 180.0) {
+                rpmSum += frame.state.rpm;
+                torqueSum += frame.state.loadTorqueNm;
+                powerSum += frame.state.loadTorqueNm
+                    * frame.state.angularVelocityRadPerSecond / 1'000.0;
+                ++samples;
+            } else if (step >= static_cast<int>(1.5 / dt)) {
+                rpmSum = 0.0;
+                torqueSum = 0.0;
+                powerSum = 0.0;
+                samples = 0;
+            }
+        }
+        DynoSweepPoint point;
+        point.targetRpm = targetRpm;
+        point.stable = samples >= static_cast<std::size_t>(0.25 / dt);
+        if (samples > 0) {
+            const auto divisor = static_cast<double>(samples);
+            point.measuredRpm = rpmSum / divisor;
+            point.torqueNm = torqueSum / divisor;
+            point.powerKw = powerSum / divisor;
+        } else {
+            point.measuredRpm = simulator.state().rpm;
+        }
+        points.push_back(point);
+    }
+
+    std::ofstream curve(output / "catalog-dyno.csv");
+    curve << "engine,target_rpm,measured_rpm,torque_nm,power_kw,stable\n";
+    curve << std::setprecision(10);
+    for (const auto& point : points)
+        curve << std::quoted(config.name) << ',' << point.targetRpm << ',' << point.measuredRpm
+              << ',' << point.torqueNm << ',' << point.powerKw << ',' << (point.stable ? 1 : 0) << '\n';
+    return points;
+}
+
+bool runCatalogAcceptance(const std::filesystem::path& root, const std::string& engineFilter,
+                          const std::filesystem::path& output) {
     const auto catalog = enginelab::loadEngineCatalog(root);
     bool failed = !catalog.errors.empty() || catalog.entries.empty();
+    bool matchedFilter = engineFilter.empty();
     for (const auto& error : catalog.errors) std::cerr << error << '\n';
     for (const auto& entry : catalog.entries) {
         auto config = entry.config;
         if (!engineFilter.empty() && config.name.find(engineFilter) == std::string::npos) continue;
+        matchedFilter = true;
         enginelab::SimpleEcuModel ecu;
         enginelab::SimplifiedGasolinePhysics physics;
         enginelab::FourStrokeEventGenerator events;
@@ -276,6 +404,26 @@ bool runCatalogAcceptance(const std::filesystem::path& root, const std::string& 
             std::cerr << "Catalog physics gate failed: " << config.name << '\n';
             failed = true;
         }
+        if (!engineFilter.empty()) {
+            const auto curve = runSteadyDyno(config, output);
+            const auto peakPower = std::max_element(curve.begin(), curve.end(),
+                [](const DynoSweepPoint& left, const DynoSweepPoint& right) {
+                    return left.powerKw < right.powerKw;
+                });
+            if (peakPower != curve.end())
+                std::cout << "Steady dyno: peak power=" << peakPower->powerKw
+                          << " kW at " << peakPower->measuredRpm
+                          << " rpm (target " << peakPower->targetRpm << ")\n";
+            if (curve.empty() || std::none_of(curve.begin(), curve.end(),
+                    [](const DynoSweepPoint& point) { return point.stable; })) {
+                std::cerr << "Steady dyno failed to acquire a stable point: " << config.name << '\n';
+                failed = true;
+            }
+        }
+    }
+    if (!matchedFilter) {
+        std::cerr << "No catalog engine matched filter: " << engineFilter << '\n';
+        failed = true;
     }
     return !failed;
 }
@@ -339,6 +487,6 @@ int main(int argc, char** argv) {
         }
         if (failed) return 1;
     }
-    const auto catalogAccepted = runCatalogAcceptance(catalogRoot, catalogEngineFilter);
+    const auto catalogAccepted = runCatalogAcceptance(catalogRoot, catalogEngineFilter, output);
     return !deterministicFailed && catalogAccepted ? 0 : 1;
 }

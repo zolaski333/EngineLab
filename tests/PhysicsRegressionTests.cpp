@@ -37,6 +37,16 @@ int main() {
                 "normalisation must retain explicit crankshaft inertia");
         require(std::abs(explicitTopology.intakePaths.front().geometry.runnerDiameterMm - 51.0) < 1.0e-12,
                 "normalisation must retain explicit intake-path geometry");
+
+        auto missingJournal = explicitTopology;
+        missingJournal.cylinders.front().crankJournalId = 0;
+        require(enginelab::validateEngineConfig(missingJournal).has_value(),
+                "an explicit mechanical topology must reject cylinders without a journal reference");
+
+        auto mismatchedBank = explicitTopology;
+        mismatchedBank.cylinders.front().bankId = 99;
+        require(enginelab::validateEngineConfig(mismatchedBank).has_value(),
+                "cylinder bank IDs must agree with bank membership");
     }
 
     {
@@ -68,6 +78,40 @@ int main() {
     }
 
     {
+        enginelab::GasCell upstream;
+        enginelab::GasCell downstream;
+        upstream.initialise(101.325, 1.0, 300.0);
+        downstream.initialise(101.325, 1.0, 300.0);
+        upstream.setBulkVelocityMps(80.0, 0.0);
+        downstream.setBulkVelocityMps(80.0, 0.0);
+        const auto transfer = enginelab::ConservativeGasSystem::flow({
+            &upstream, &downstream, 8.0e-4, 0.72, 0.01,
+            1.0, 0.0, 8.0e-4, 8.0e-4 });
+        require(std::abs(transfer.transferredMassKg) < 1.0e-15,
+                "equal-pressure co-flowing cells must not create a fictitious dynamic-pressure gradient");
+    }
+
+    {
+        enginelab::GasCell smoothPipe;
+        smoothPipe.initialise(130.0, 0.75, 500.0);
+        smoothPipe.setGeometry(1.2e-3, 1.0, 0.0);
+        smoothPipe.setBulkVelocityMps(110.0, 0.0);
+        auto roughPipe = smoothPipe;
+        const auto totalEnergyBefore = smoothPipe.internalEnergyJoules()
+            + smoothPipe.bulkKineticEnergyJoules();
+        smoothPipe.applyFlowResistance(0.8, 0.04, 1.5e-6, 0.0, 0.01);
+        roughPipe.applyFlowResistance(0.8, 0.04, 4.5e-5, 0.0, 0.01);
+        const auto totalEnergyAfter = smoothPipe.internalEnergyJoules()
+            + smoothPipe.bulkKineticEnergyJoules();
+        require(smoothPipe.bulkVelocityMps() < 110.0
+                && roughPipe.bulkVelocityMps() < smoothPipe.bulkVelocityMps(),
+                "Darcy-Weisbach losses must oppose flow and respond to wall roughness");
+        require(std::abs(totalEnergyAfter - totalEnergyBefore)
+                    < std::max(1.0, totalEnergyBefore) * 1.0e-12,
+                "resolved pipe friction must convert kinetic energy to heat conservatively");
+    }
+
+    {
         enginelab::GasCell cell;
         cell.initialise(101.325, 1.0, 300.0);
         constexpr double targetTemperatureK = 12'000.0;
@@ -85,6 +129,24 @@ int main() {
     }
 
     {
+        enginelab::GasCell cell;
+        cell.initialise(101.325, 0.62, 340.0);
+        const auto gamma = cell.heatCapacityRatioEffective();
+        const auto invariantBefore = cell.pressureKpa()
+            * std::pow(cell.volumeM3(), gamma);
+        cell.setVolumeAdiabatic(cell.volumeLitres() * 0.37);
+        const auto invariantAfter = cell.pressureKpa()
+            * std::pow(cell.volumeM3(), gamma);
+        require(std::abs(invariantAfter - invariantBefore)
+                    < std::max(1.0, std::abs(invariantBefore)) * 1.0e-11,
+                "finite adiabatic volume changes must preserve P*V^gamma");
+
+        cell.addHeatJoules(-cell.internalEnergyJoules());
+        require(cell.temperatureK() == 0.0 && cell.pressureKpa() == 0.0,
+                "a zero-energy gas cell must not create a hidden temperature or pressure floor");
+    }
+
+    {
         enginelab::GasCell lowPressure;
         enginelab::GasCell highPressure;
         lowPressure.initialise(90.0, 0.25, 300.0);
@@ -95,8 +157,8 @@ int main() {
             lowPressure, highPressure, 1.0e-4, 0.75, 2.0e-4);
         require(reverse.transferredMassKg < 0.0
                 && lowPressure.momentumXKgMps() < 0.0
-                && highPressure.momentumXKgMps() > 0.0,
-                "reverse simple flow must inject jet momentum from the second cell toward the first");
+                && highPressure.momentumXKgMps() < 0.0,
+                "reverse flow must accelerate both adjacent gas volumes from high to low pressure");
     }
 
     {
@@ -135,8 +197,8 @@ int main() {
         const auto exhaust = enginelab::ConservativeGasSystem::flowFromBoundary(
             exhaustCollector, 101.325, 300.0, 1.0e-4, 0.75, 2.0e-4,
             1.0, 0.0); // target -> downstream boundary
-        require(exhaust.transferredMassKg > 0.0 && exhaustCollector.momentumXKgMps() < 0.0,
-            "a downstream boundary must retain the outlet's geometric direction and recoil");
+        require(exhaust.transferredMassKg > 0.0 && exhaustCollector.momentumXKgMps() > 0.0,
+            "a downstream boundary must accelerate collector gas toward the outlet");
     }
 
     {
@@ -158,6 +220,31 @@ int main() {
         require(std::abs(molesAfter - molesBefore) < 1.0e-12
                 && std::abs(energyAfter - energyBefore) < std::max(1.0, energyBefore) * 1.0e-10,
                 "simultaneous overlap must conserve inventory and total energy");
+
+        enginelab::GasCell mirroredRight;
+        enginelab::GasCell mirroredCylinder;
+        enginelab::GasCell mirroredLeft;
+        mirroredRight.initialise(78.0, 0.45, 580.0);
+        mirroredCylinder.initialise(108.0, 0.060, 500.0);
+        mirroredLeft.initialise(145.0, 0.40, 320.0);
+        const auto mirroredFlow = enginelab::ConservativeGasSystem::flowSimultaneous(
+            { &mirroredRight, &mirroredCylinder, 1.0e-4, 0.68, 1.0e-4,
+              0.0, 1.0, 2.0e-4, 8.0e-4 },
+            { &mirroredCylinder, &mirroredLeft, 1.2e-4, 0.72, 1.0e-4,
+              0.0, -1.0, 8.0e-4, 2.0e-4 });
+        const auto sameState = [](const enginelab::GasCell& first,
+                                  const enginelab::GasCell& second) {
+            return std::abs(first.totalMoles() - second.totalMoles()) < 1.0e-12
+                && std::abs(first.internalEnergyJoules() - second.internalEnergyJoules()) < 1.0e-9
+                && std::abs(first.momentumXKgMps() - second.momentumXKgMps()) < 1.0e-12
+                && std::abs(first.momentumYKgMps() - second.momentumYKgMps()) < 1.0e-12;
+        };
+        require(mirroredFlow.first.transferredMassKg < 0.0
+                && mirroredFlow.second.transferredMassKg < 0.0
+                && sameState(intake, mirroredLeft)
+                && sameState(cylinder, mirroredCylinder)
+                && sameState(exhaust, mirroredRight),
+                "simultaneous flow must be invariant when the two restrictions are permuted");
     }
 
     {

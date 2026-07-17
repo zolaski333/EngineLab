@@ -148,7 +148,7 @@ MainComponent::MainComponent() {
         label->setFont(juce::FontOptions(12.0F));
         addAndMakeVisible(*label);
     }
-    configureSlider(throttleSlider_, 0.0, 100.0, 12.0, " %");
+    configureSlider(throttleSlider_, 0.0, 100.0, 0.0, " %");
     configureSlider(loadSlider_, 0.0, 100.0, 0.0, " %");
     configureSlider(afrSlider_, -3.0, 3.0, 0.0, " AFR");
     configureSlider(advanceSlider_, -15.0, 15.0, 0.0, utf8("°"));
@@ -611,6 +611,16 @@ void MainComponent::setThrottlePreset(double value) {
     throttleSlider_.setValue(value * 100.0, juce::sendNotificationSync);
 }
 
+void MainComponent::updateMomentaryThrottle() {
+    double target = 0.0;
+    if (actionMap_.isDown(AppAction::throttleFull)) target = 1.0;
+    else if (actionMap_.isDown(AppAction::throttleHalf)) target = 0.20;
+    else if (actionMap_.isDown(AppAction::throttleQuarter)) target = 0.10;
+    else if (actionMap_.isDown(AppAction::throttleIdle)) target = 0.01;
+    throttleKeyActive_ = target > 0.0;
+    setThrottlePreset(target);
+}
+
 void MainComponent::toggleDyno() {
     if (!runtime_) return;
     if (runtime_->dynoRunning()) runtime_->stopDyno(); else runtime_->startDyno();
@@ -703,10 +713,13 @@ bool MainComponent::keyPressed(const juce::KeyPress& key) {
         ignitionButton_.setToggleState(!ignitionButton_.getToggleState(), juce::sendNotificationSync);
         return true;
     }
-    if (actionMap_.matches(AppAction::throttleIdle, key)) { setThrottlePreset(0.01); return true; }
-    if (actionMap_.matches(AppAction::throttleFull, key)) { setThrottlePreset(1.0); return true; }
-    if (actionMap_.matches(AppAction::throttleQuarter, key)) { setThrottlePreset(0.10); return true; }
-    if (actionMap_.matches(AppAction::throttleHalf, key)) { setThrottlePreset(0.20); return true; }
+    if (actionMap_.matches(AppAction::throttleIdle, key)
+        || actionMap_.matches(AppAction::throttleFull, key)
+        || actionMap_.matches(AppAction::throttleQuarter, key)
+        || actionMap_.matches(AppAction::throttleHalf, key)) {
+        updateMomentaryThrottle();
+        return true;
+    }
     if (actionMap_.matches(AppAction::dyno, key)) { toggleDyno(); return true; }
     if (actionMap_.matches(AppAction::dynoHold, key)) { if (runtime_) runtime_->setDynoHoldEnabled(!runtime_->dynoHoldEnabled()); return true; }
     if (actionMap_.matches(AppAction::clutchDecrease, key)) {
@@ -721,6 +734,11 @@ bool MainComponent::keyPressed(const juce::KeyPress& key) {
 }
 
 bool MainComponent::keyStateChanged(bool) {
+    const auto anyThrottleDown = actionMap_.isDown(AppAction::throttleIdle)
+        || actionMap_.isDown(AppAction::throttleQuarter)
+        || actionMap_.isDown(AppAction::throttleHalf)
+        || actionMap_.isDown(AppAction::throttleFull);
+    if (anyThrottleDown || throttleKeyActive_) updateMomentaryThrottle();
     const auto down = actionMap_.isDown(AppAction::starter);
     if (down != starterKeyDown_) {
         starterKeyDown_ = down;
@@ -732,8 +750,19 @@ bool MainComponent::keyStateChanged(bool) {
         brakeKeyDown_ = brakeDown;
         if (runtime_) runtime_->setBrakePressure(brakeDown ? 1.0 : 0.0);
     }
-    return down || brakeDown || actionMap_.isDown(AppAction::clutchHold)
+    return down || brakeDown || anyThrottleDown || actionMap_.isDown(AppAction::clutchHold)
         || juce::ModifierKeys::getCurrentModifiersRealtime().isShiftDown();
+}
+
+void MainComponent::focusLost(FocusChangeType) {
+    throttleKeyActive_ = false;
+    setThrottlePreset(0.0);
+    if (runtime_) {
+        runtime_->setStarterEngaged(false);
+        runtime_->setBrakePressure(0.0);
+    }
+    starterKeyDown_ = false;
+    brakeKeyDown_ = false;
 }
 
 void MainComponent::mouseWheelMove(const juce::MouseEvent&, const juce::MouseWheelDetails& wheel) {
@@ -771,6 +800,7 @@ void MainComponent::mouseDoubleClick(const juce::MouseEvent& event) {
 void MainComponent::timerCallback() {
     pollEngineScript();
     if (!runtime_) return;
+    if (throttleKeyActive_) updateMomentaryThrottle();
     const auto clutchTarget = (actionMap_.isDown(AppAction::clutchHold)
         || juce::ModifierKeys::getCurrentModifiersRealtime().isShiftDown())
         ? 0.0 : targetClutchPressure_;

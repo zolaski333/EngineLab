@@ -40,6 +40,53 @@ constexpr std::size_t maximumAudioExhaustPaths = 8;
     return std::numbers::pi * radiusM * radiusM;
 }
 }
+
+void publishAudioFrame(RealtimeAudioState& state, const EngineState& engineState,
+                       const AudioFramePublication& context) noexcept {
+    const auto paused = context.paused;
+    state.rpm.store(paused ? 0.0F : static_cast<float>(engineState.rpm), std::memory_order_relaxed);
+    state.throttle.store(paused ? 0.0F : static_cast<float>(engineState.throttle),
+                         std::memory_order_relaxed);
+    state.load.store(static_cast<float>(std::max(engineState.load,
+        std::clamp(context.drivelineLoad, 0.0, 1.0))), std::memory_order_relaxed);
+    state.manifoldPressureKpa.store(static_cast<float>(engineState.manifoldPressureKpa),
+                                    std::memory_order_relaxed);
+    state.exhaustPressureKpa.store(static_cast<float>(engineState.exhaustPressureKpa),
+                                   std::memory_order_relaxed);
+    state.exhaustFlowGramsPerSecond.store(static_cast<float>(engineState.exhaustFlowGramsPerSecond),
+                                          std::memory_order_relaxed);
+    state.exhaustTemperatureC.store(static_cast<float>(std::clamp(
+        engineState.exhaustTemperatureC, -50.0, 1'800.0)), std::memory_order_relaxed);
+    state.boostPressureRatio.store(static_cast<float>(engineState.boostPressureRatio),
+                                   std::memory_order_relaxed);
+    state.mechanicalStress.store(static_cast<float>(std::clamp(
+        engineState.peakPistonAccelerationG / 7'000.0, 0.0, 1.0)), std::memory_order_relaxed);
+    state.peakPistonAccelerationG.store(static_cast<float>(std::max(0.0,
+        engineState.peakPistonAccelerationG)), std::memory_order_relaxed);
+    state.forcedInductionShaftRpm.store(static_cast<float>(std::max(0.0,
+        engineState.forcedInductionShaftSpeedRpm)), std::memory_order_relaxed);
+    state.wastegateOpening.store(static_cast<float>(std::clamp(
+        engineState.wastegateOpening, 0.0, 1.0)), std::memory_order_relaxed);
+    // Aggregate the dominant absolute intake-runner resonance while preserving
+    // its sign/phase for the induction audio layer.
+    double dominantAmplitude = 0.0;
+    double dominantFrequency = 0.0;
+    for (std::size_t index = 0; index < engineState.cylinderStateCount; ++index) {
+        const auto& cylinder = engineState.cylinderStates[index];
+        if (std::abs(cylinder.intakeResonancePressureKpa) > std::abs(dominantAmplitude)) {
+            dominantAmplitude = cylinder.intakeResonancePressureKpa;
+            dominantFrequency = cylinder.intakeResonanceFrequencyHz;
+        }
+    }
+    state.intakeRunnerResonanceHz.store(static_cast<float>(dominantFrequency),
+                                        std::memory_order_relaxed);
+    state.intakeRunnerAmplitudeKpa.store(static_cast<float>(paused ? 0.0 : dominantAmplitude),
+                                         std::memory_order_relaxed);
+    state.starter.store(context.starterEngaged && !paused ? 1.0F : 0.0F, std::memory_order_relaxed);
+    state.timeScale.store(paused ? 0.0F : static_cast<float>(context.timeScale),
+                          std::memory_order_relaxed);
+}
+
 EngineRuntime::EngineRuntime(EngineConfig config,
                              std::shared_ptr<calibration::CalibrationStore> calibrations)
     : config_(normalised(std::move(config))), ecu_(std::move(calibrations)),
@@ -264,8 +311,11 @@ void EngineRuntime::beginDynoSession() {
     nextSampleRpm_ = std::max(1'000.0, config_.idleRpm);
     dynoTargetRpm_ = nextSampleRpm_;
     dynoStableElapsed_ = 0.0;
-    dynoLoadCommand_ = 0.34;
+    dynoBrakeTorqueNm_ = 0.0;
+    dynoControllerIntegralNm_ = 0.0;
+    dynoFeedForwardTorqueNm_ = 0.0;
     dynoFilteredRpm_ = simulator_.state().rpm;
+    dynoFilteredAccelerationRpmPerSecond_ = 0.0;
     dynoTorqueAccumulator_ = 0.0;
     dynoPowerAccumulator_ = 0.0;
     dynoSampleCount_ = 0;
@@ -350,8 +400,11 @@ void EngineRuntime::run(std::stop_token stopToken) {
                     ? dynoHoldRpm_.load(std::memory_order_relaxed) : std::max(1'000.0, config_.idleRpm);
                 dynoTargetRpm_ = nextSampleRpm_;
                 dynoStableElapsed_ = 0.0;
-                dynoLoadCommand_ = 0.34;
+                dynoBrakeTorqueNm_ = 0.0;
+                dynoControllerIntegralNm_ = 0.0;
+                dynoFeedForwardTorqueNm_ = std::max(0.0, simulator_.state().torqueNm);
                 dynoFilteredRpm_ = simulator_.state().rpm;
+                dynoFilteredAccelerationRpmPerSecond_ = 0.0;
                 dynoTorqueAccumulator_ = 0.0;
                 dynoPowerAccumulator_ = 0.0;
                 dynoSampleCount_ = 0;
@@ -361,15 +414,65 @@ void EngineRuntime::run(std::stop_token stopToken) {
             if (dynoSweeping_) {
                 dynoElapsed_ += baseStep.count();
                 dynoElapsed = dynoElapsed_;
+                const auto previousFilteredRpm = dynoFilteredRpm_;
+                // Control against cycle-scale speed rather than individual firing
+                // pulses.  A two-cylinder engine can otherwise look permanently
+                // unstable even when its mean speed is stationary.
                 dynoFilteredRpm_ += (simulator_.state().rpm - dynoFilteredRpm_)
-                    * (1.0 - std::exp(-baseStep.count() * 12.0));
+                    * (1.0 - std::exp(-baseStep.count() * 3.0));
+                const auto rawAcceleration = (dynoFilteredRpm_ - previousFilteredRpm)
+                    / baseStep.count();
+                dynoFilteredAccelerationRpmPerSecond_ +=
+                    (rawAcceleration - dynoFilteredAccelerationRpmPerSecond_)
+                    * (1.0 - std::exp(-baseStep.count() * 2.0));
                 if (dynoHoldEnabled_.load(std::memory_order_relaxed))
                     dynoTargetRpm_ = dynoHoldRpm_.load(std::memory_order_relaxed);
                 const auto error = dynoFilteredRpm_ - dynoTargetRpm_;
-                dynoLoadCommand_ = std::clamp(dynoLoadCommand_ + error * 0.0022 * baseStep.count(), 0.02, 0.98);
-                requestedLoad = std::clamp(dynoLoadCommand_ + error / 900.0, 0.02, 0.98);
+                const auto displacementM3 = engineDisplacementLitres(config_) * 0.001;
+                // Controller scaling follows a strong naturally aspirated engine,
+                // while the absorber itself has four times that capacity. A dyno
+                // must be able to pull an engine below its torque peak; its limit
+                // is an equipment rating, not a prediction of engine output.
+                constexpr double controllerBrakeMeanEffectivePressurePa = 2'500'000.0;
+                constexpr double absorberBrakeMeanEffectivePressurePa = 10'000'000.0;
+                const auto controllerTorqueScaleNm = controllerBrakeMeanEffectivePressurePa
+                    * displacementM3 / (4.0 * std::numbers::pi);
+                const auto maximumBrakeTorqueNm = absorberBrakeMeanEffectivePressurePa
+                    * displacementM3 / (4.0 * std::numbers::pi);
+                dynoFeedForwardTorqueNm_ += (std::max(0.0, simulator_.state().torqueNm)
+                    - dynoFeedForwardTorqueNm_) * (1.0 - std::exp(-baseStep.count() * 5.0));
+                const auto proportionalGain = controllerTorqueScaleNm / 500.0;
+                const auto integralGain = controllerTorqueScaleNm / 1'200.0;
+                const auto accelerationGain = controllerTorqueScaleNm / 6'000.0;
+                // An absorption dyno is unidirectional: while the engine is
+                // materially below the setpoint it must be completely unloaded.
+                // This also prevents a firing-pulse feed-forward estimate from
+                // dragging a low-inertia engine through stall during run-up.
+                if (simulator_.state().rpm < dynoTargetRpm_ - 120.0 && error < 0.0) {
+                    dynoControllerIntegralNm_ = 0.0;
+                    dynoBrakeTorqueNm_ = 0.0;
+                } else {
+                    const auto integralCandidate = dynoControllerIntegralNm_
+                        + error * integralGain * baseStep.count();
+                    const auto unsaturated = dynoFeedForwardTorqueNm_ + integralCandidate
+                        + error * proportionalGain
+                        + dynoFilteredAccelerationRpmPerSecond_ * accelerationGain;
+                    const auto saturated = std::clamp(unsaturated, 0.0, maximumBrakeTorqueNm);
+                    if (unsaturated == saturated
+                        || (unsaturated < 0.0 && error > 0.0)
+                        || (unsaturated > maximumBrakeTorqueNm && error < 0.0))
+                        dynoControllerIntegralNm_ = integralCandidate;
+                    dynoControllerIntegralNm_ = std::clamp(
+                        dynoControllerIntegralNm_, -maximumBrakeTorqueNm, maximumBrakeTorqueNm);
+                    dynoBrakeTorqueNm_ = std::clamp(dynoFeedForwardTorqueNm_
+                        + dynoControllerIntegralNm_ + error * proportionalGain
+                        + dynoFilteredAccelerationRpmPerSecond_ * accelerationGain,
+                        0.0, maximumBrakeTorqueNm);
+                }
+                requestedLoad = 0.0;
             } else {
                 requestedLoad = 0.0;
+                dynoBrakeTorqueNm_ = 0.0;
             }
         }
         const auto gearGeneration = gearCommandGeneration_.load(std::memory_order_acquire);
@@ -397,7 +500,8 @@ void EngineRuntime::run(std::stop_token stopToken) {
             (dynoActive_ ? (dynoSweeping_ ? 1.0 : 0.18) : std::clamp(throttle_.load(), 0.0, 1.0))
                 * torqueCutMultiplier,
             dynoActive_ ? requestedLoad : 0.0, dynoActive_ ? 0.0 : engineClutchTorqueNm_,
-            dynoActive_ ? 0.0 : brakePressure_.load(std::memory_order_relaxed) };
+            dynoActive_ ? 0.0 : brakePressure_.load(std::memory_order_relaxed),
+            dynoActive_ ? dynoBrakeTorqueNm_ : 0.0 };
         auto frame = simulationDt > 0.0 ? simulator_.step(simulationDt, controls) : SimulationFrame { simulator_.state() };
         if (simulationDt > 0.0) {
             const auto simulationStart = frame.state.simulationTimeSeconds - simulationDt;
@@ -421,52 +525,17 @@ void EngineRuntime::run(std::stop_token stopToken) {
                 droppedPressureSamples_.fetch_add(frame.droppedCylinderPressureSampleCount,
                                                   std::memory_order_relaxed);
         }
-        audioState_.rpm.store(isPaused ? 0.0F : static_cast<float>(frame.state.rpm), std::memory_order_relaxed);
-        audioState_.throttle.store(isPaused ? 0.0F : static_cast<float>(frame.state.throttle), std::memory_order_relaxed);
-        const auto drivelineAudioLoad = std::clamp(std::abs(engineClutchTorqueNm_)
-            / std::max(20.0, config_.transmission.maxClutchTorqueNm), 0.0, 1.0);
-        audioState_.load.store(static_cast<float>(std::max(frame.state.load, drivelineAudioLoad)),
-                               std::memory_order_relaxed);
-        audioState_.manifoldPressureKpa.store(static_cast<float>(frame.state.manifoldPressureKpa),
-                                              std::memory_order_relaxed);
-        audioState_.exhaustPressureKpa.store(static_cast<float>(frame.state.exhaustPressureKpa),
-                                             std::memory_order_relaxed);
-        audioState_.exhaustFlowGramsPerSecond.store(static_cast<float>(frame.state.exhaustFlowGramsPerSecond),
-                                                    std::memory_order_relaxed);
-        audioState_.exhaustTemperatureC.store(static_cast<float>(std::clamp(
-            frame.state.exhaustTemperatureC, -50.0, 1'800.0)), std::memory_order_relaxed);
-        audioState_.boostPressureRatio.store(static_cast<float>(frame.state.boostPressureRatio), std::memory_order_relaxed);
-        audioState_.mechanicalStress.store(static_cast<float>(std::clamp(frame.state.peakPistonAccelerationG / 7'000.0, 0.0, 1.0)),
-                                           std::memory_order_relaxed);
-        audioState_.peakPistonAccelerationG.store(static_cast<float>(std::max(0.0, frame.state.peakPistonAccelerationG)),
-                                                  std::memory_order_relaxed);
-        audioState_.forcedInductionShaftRpm.store(static_cast<float>(std::max(0.0, frame.state.forcedInductionShaftSpeedRpm)),
-                                                  std::memory_order_relaxed);
-        audioState_.wastegateOpening.store(static_cast<float>(std::clamp(frame.state.wastegateOpening, 0.0, 1.0)),
-                                           std::memory_order_relaxed);
-        {
-            // Aggregate the dominant absolute intake-runner resonance while
-            // preserving its sign/phase for the induction audio layer.
-            double dominantAmplitude = 0.0;
-            double dominantFrequency = 0.0;
-            for (std::size_t index = 0; index < frame.state.cylinderStateCount; ++index) {
-                const auto& cylinder = frame.state.cylinderStates[index];
-                if (std::abs(cylinder.intakeResonancePressureKpa) > std::abs(dominantAmplitude)) {
-                    dominantAmplitude = cylinder.intakeResonancePressureKpa;
-                    dominantFrequency = cylinder.intakeResonanceFrequencyHz;
-                }
-            }
-            audioState_.intakeRunnerResonanceHz.store(static_cast<float>(dominantFrequency), std::memory_order_relaxed);
-            audioState_.intakeRunnerAmplitudeKpa.store(static_cast<float>(isPaused ? 0.0 : dominantAmplitude),
-                                                       std::memory_order_relaxed);
-        }
-        audioState_.starter.store(controls.starterEngaged && !isPaused ? 1.0F : 0.0F, std::memory_order_relaxed);
-        audioState_.timeScale.store(isPaused ? 0.0F : static_cast<float>(dynoActive_
-            ? 1.0 : timeScale_.load(std::memory_order_relaxed)), std::memory_order_relaxed);
+        publishAudioFrame(audioState_, frame.state, {
+            isPaused, controls.starterEngaged,
+            std::abs(engineClutchTorqueNm_)
+                / std::max(20.0, config_.transmission.maxClutchTorqueNm),
+            dynoActive_ ? 1.0 : timeScale_.load(std::memory_order_relaxed) });
         if (dynoActive_ && dynoSweeping_) {
-            if (std::abs(dynoFilteredRpm_ - dynoTargetRpm_) <= 80.0) {
-                dynoTorqueAccumulator_ += frame.state.cycleAveragedTorqueNm;
-                dynoPowerAccumulator_ += frame.state.cycleAveragedPowerKw;
+            if (std::abs(dynoFilteredRpm_ - dynoTargetRpm_) <= 60.0
+                    && std::abs(dynoFilteredAccelerationRpmPerSecond_) <= 120.0) {
+                dynoTorqueAccumulator_ += frame.state.loadTorqueNm;
+                dynoPowerAccumulator_ += frame.state.loadTorqueNm
+                    * frame.state.angularVelocityRadPerSecond / 1'000.0;
                 ++dynoSampleCount_;
                 dynoStableElapsed_ += baseStep.count();
             } else {
@@ -507,7 +576,7 @@ void EngineRuntime::run(std::stop_token stopToken) {
                 if (!dynoHoldEnabled_.load(std::memory_order_relaxed) && point.rpm >= config_.redlineRpm)
                     dynoCompleted_.store(true, std::memory_order_relaxed);
                 if (!dynoHoldEnabled_.load(std::memory_order_relaxed))
-                    dynoTargetRpm_ = std::min(config_.redlineRpm, dynoTargetRpm_ + 100.0);
+                    dynoTargetRpm_ = std::min(config_.redlineRpm, dynoTargetRpm_ + 250.0);
                 nextSampleRpm_ = dynoTargetRpm_;
                 dynoTorqueAccumulator_ = 0.0;
                 dynoPowerAccumulator_ = 0.0;
@@ -562,8 +631,15 @@ void EngineRuntime::run(std::stop_token stopToken) {
         const auto producerTime = std::chrono::duration<double>(now - clockEpoch).count();
         audioState_.producerTimeNanoseconds.store(static_cast<std::uint64_t>(std::max(0.0, producerTime) * 1.0e9),
                                                   std::memory_order_release);
-        if (now > deadline + std::chrono::duration_cast<Clock::duration>(baseStep * 4.0)) {
+        if (now > deadline) {
             timingOverruns_.fetch_add(1, std::memory_order_relaxed);
+            const auto lateness = std::chrono::duration<double>(now - deadline).count();
+            auto previousMaximum = maximumTimingLatenessSeconds_.load(std::memory_order_relaxed);
+            while (lateness > previousMaximum
+                && !maximumTimingLatenessSeconds_.compare_exchange_weak(
+                    previousMaximum, lateness, std::memory_order_relaxed)) {}
+        }
+        if (now > deadline + std::chrono::duration_cast<Clock::duration>(baseStep * 4.0)) {
             deadline = now;
         }
         std::this_thread::sleep_until(deadline);

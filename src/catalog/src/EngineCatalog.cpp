@@ -299,6 +299,10 @@ void applyPart(const std::map<std::string, T>& parts, const YAML::Node& uses, co
             assignIfPresent(item, "head_chamber_volume_cc", cylinder.headChamberVolumeCc);
             assignIfPresent(item, "head_gasket_thickness_mm", cylinder.headGasketThicknessMm);
             assignIfPresent(item, "connecting_rod_inertia_kg_m2", cylinder.connectingRodMomentOfInertiaKgM2);
+            assignIfPresent(item, "intake_valve_count", cylinder.intakeValveCount);
+            assignIfPresent(item, "exhaust_valve_count", cylinder.exhaustValveCount);
+            assignIfPresent(item, "intake_valve_diameter_mm", cylinder.intakeValveDiameterMm);
+            assignIfPresent(item, "exhaust_valve_diameter_mm", cylinder.exhaustValveDiameterMm);
             cylinders.push_back(cylinder);
         }
         return cylinders;
@@ -332,6 +336,10 @@ void applyPart(const std::map<std::string, T>& parts, const YAML::Node& uses, co
         assignIfPresent(cylinderNode, "piston_breakaway_velocity_mps", cylinder.pistonBreakawayVelocityMps);
         assignIfPresent(cylinderNode, "piston_viscous_friction_ns_per_m", cylinder.pistonViscousFrictionNsPerM);
         assignIfPresent(cylinderNode, "connecting_rod_inertia_kg_m2", cylinder.connectingRodMomentOfInertiaKgM2);
+        assignIfPresent(cylinderNode, "intake_valve_count", cylinder.intakeValveCount);
+        assignIfPresent(cylinderNode, "exhaust_valve_count", cylinder.exhaustValveCount);
+        assignIfPresent(cylinderNode, "intake_valve_diameter_mm", cylinder.intakeValveDiameterMm);
+        assignIfPresent(cylinderNode, "exhaust_valve_diameter_mm", cylinder.exhaustValveDiameterMm);
         assignIfPresent(cylinderNode, "deck_height_mm", cylinder.deckHeightMm);
         assignIfPresent(cylinderNode, "compression_height_mm", cylinder.compressionHeightMm);
         assignIfPresent(cylinderNode, "wrist_pin_offset_mm", cylinder.wristPinOffsetMm);
@@ -389,6 +397,7 @@ void applyCrankOffsets(EngineConfig& config) {
     if (const auto intake = engine["intake"]) {
         assignIfPresent(intake, "plenum_volume_l", config.intake.plenumVolumeLitres);
         assignIfPresent(intake, "throttle_diameter_mm", config.intake.throttleDiameterMm);
+        assignIfPresent(intake, "throttle_count", config.intake.throttleCount);
         assignIfPresent(intake, "throttle_discharge_coefficient", config.intake.throttleDischargeCoefficient);
         assignIfPresent(intake, "runner_length_mm", config.intake.runnerLengthMm);
         assignIfPresent(intake, "runner_diameter_mm", config.intake.runnerDiameterMm);
@@ -478,6 +487,7 @@ void applyCrankOffsets(EngineConfig& config) {
             if (const auto geometry = item["geometry"]) {
                 assignIfPresent(geometry, "plenum_volume_l", pathConfig.geometry.plenumVolumeLitres);
                 assignIfPresent(geometry, "throttle_diameter_mm", pathConfig.geometry.throttleDiameterMm);
+                assignIfPresent(geometry, "throttle_count", pathConfig.geometry.throttleCount);
                 assignIfPresent(geometry, "throttle_discharge_coefficient", pathConfig.geometry.throttleDischargeCoefficient);
                 assignIfPresent(geometry, "runner_length_mm", pathConfig.geometry.runnerLengthMm);
                 assignIfPresent(geometry, "runner_diameter_mm", pathConfig.geometry.runnerDiameterMm);

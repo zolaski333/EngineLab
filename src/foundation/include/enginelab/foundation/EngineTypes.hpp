@@ -8,7 +8,7 @@
 
 namespace enginelab {
 inline constexpr std::uint32_t minimumSupportedEngineSchemaVersion { 1 };
-inline constexpr std::uint32_t currentEngineSchemaVersion { 2 };
+inline constexpr std::uint32_t currentEngineSchemaVersion { 3 };
 
 
 enum class EngineCycle : std::uint8_t { fourStroke, twoStroke };
@@ -73,6 +73,11 @@ struct CylinderConfig final {
     double headChamberVolumeCc { 0.0 };
     double headGasketThicknessMm { 0.0 };
     double connectingRodMomentOfInertiaKgM2 { 0.0 };
+    std::uint32_t intakeValveCount { 2 };
+    std::uint32_t exhaustValveCount { 2 };
+    // Zero selects a physically proportioned diameter from bore and count.
+    double intakeValveDiameterMm { 0.0 };
+    double exhaustValveDiameterMm { 0.0 };
 };
 
 struct CrankJournalConfig final {
@@ -159,6 +164,8 @@ struct ExhaustConfig final {
 struct IntakeConfig final {
     double plenumVolumeLitres { 3.0 };
     double throttleDiameterMm { 60.0 };
+    /** Number of equal throttle bores feeding this intake path. */
+    std::uint32_t throttleCount { 1 };
     double throttleDischargeCoefficient { 0.72 };
     double runnerLengthMm { 300.0 };
     double runnerDiameterMm { 38.0 };
@@ -388,9 +395,12 @@ struct EngineControls final {
     bool ignitionEnabled { false };
     bool starterEngaged { false };
     double throttle { 0.0 };
+    // Legacy normalized absorber command retained for existing integrations.
+    // New dynamometer code should command a calibrated reaction torque below.
     double load { 0.0 };
     double externalTorqueNm { 0.0 };
     double brake { 0.0 };
+    double dynamometerTorqueNm { 0.0 };
 };
 
 struct CylinderState final {
@@ -545,6 +555,8 @@ struct EcuCommand final {
     double targetAirFuelRatio { 14.2 };
     double ignitionAdvanceDegrees { 18.0 };
     double effectiveThrottle { 0.0 };
+    /** Normalised command for the configured idle-air bypass actuator. */
+    double idleAirOpening { 0.0 };
     double fuelCorrection { 1.0 };
     bool fuelEnabled { true };
     bool sparkEnabled { true };

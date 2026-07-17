@@ -15,6 +15,7 @@ engine:
   intake:
     plenum_volume_l: 1.2
     throttle_diameter_mm: 46
+    throttle_count: 4
     runner_length_mm: 190
     runner_diameter_mm: 36
     idle_bypass_area_mm2: 18
@@ -41,3 +42,7 @@ engine:
     connecting_rod_mm: 119.0
     piston_mass_g: 195
     compression_ratio: 12.5
+    intake_valve_count: 2
+    exhaust_valve_count: 2
+    intake_valve_diameter_mm: 33.0
+    exhaust_valve_diameter_mm: 27.5

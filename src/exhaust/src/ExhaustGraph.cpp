@@ -1,4 +1,5 @@
 #include <enginelab/exhaust/ExhaustGraph.hpp>
+#include <enginelab/foundation/ExhaustGasAcoustics.hpp>
 
 #include <algorithm>
 #include <cmath>
@@ -13,8 +14,6 @@ namespace enginelab {
 namespace {
 constexpr std::size_t maximumCompiledRoutes = 4'096;
 constexpr std::size_t maximumTraversalDepth = 512;
-constexpr double exhaustHeatCapacityRatio = 1.33;
-constexpr double exhaustSpecificGasConstantJPerKgK = 287.05;
 // A static topology needs a representative gas temperature. Retain the old
 // 520 m/s behaviour near standard ambient conditions while making the model
 // temperature-aware and allowing callers to supply a measured design value.
@@ -28,9 +27,9 @@ constexpr double modeMergeRatio = 1.03;
 }
 
 [[nodiscard]] double exhaustWaveSpeedMmPerSecond(double temperatureC) noexcept {
-    const auto temperatureK = finiteClamped(temperatureC + 273.15, 223.15, 2'500.0, 700.0);
-    return std::sqrt(exhaustHeatCapacityRatio * exhaustSpecificGasConstantJPerKgK
-        * temperatureK) * 1'000.0;
+    // Shared exhaust-gas acoustics: identical wave speed to the realtime audio
+    // delay lines, expressed here in mm/s for the compiler's length units.
+    return exhaustSpeedOfSoundMps(temperatureC) * 1'000.0;
 }
 
 struct ModeSet final {
@@ -128,11 +127,20 @@ struct ComponentResonance final {
         loss = 0.10 * std::pow(diameterRatio42, 4.0);
         break;
     case ExhaustComponentType::outlet:
-        loss = 0.01 * std::pow(65.0 / diameterMm, 4.0)
-            / std::pow(finiteClamped(component.dischargeCoefficient, 0.02, 1.5, 0.72), 2.0);
+        // The discharge coefficient is a flow-contraction term. It is already
+        // applied once as the outlet's effective area (A*Cd) when the authored
+        // network's outlet conductance is summed, so it must not reappear here
+        // as a 1/Cd^2 pressure-loss factor: that scaled the same effective area
+        // by sqrt(1+K) a second time and understated outlet flow. Only the
+        // diameter-derived geometric loss belongs to the restriction.
+        loss = 0.01 * std::pow(65.0 / diameterMm, 4.0);
         break;
     }
-    return loss + finiteClamped(component.restriction, 0.0, 100.0, 100.0);
+    // A non-finite authored restriction must not silently choke the path: the
+    // maximum is the worst possible guess, and it mutes the exhaust without a
+    // single symptom. Fall back to no additional restriction and let the
+    // geometric loss above stand alone.
+    return loss + finiteClamped(component.restriction, 0.0, 100.0, 0.0);
 }
 
 [[nodiscard]] ComponentResonance componentResonance(
@@ -185,7 +193,11 @@ struct ComponentResonance final {
 
 [[nodiscard]] double amplitudeFromLog(double logAmplitude) noexcept {
     if (logAmplitude == -std::numeric_limits<double>::infinity()) return 0.0;
-    if (!std::isfinite(logAmplitude)) return maximumCompiledAmplitudeGain;
+    // A deliberate mute is the -inf above. Anything else non-finite is a NaN
+    // that reached us through an authored gain: silence is the only safe
+    // reading. Returning the maximum gain instead made a corrupt field the
+    // loudest route in the graph.
+    if (!std::isfinite(logAmplitude)) return 0.0;
     const auto maximumLog = std::log(maximumCompiledAmplitudeGain);
     if (logAmplitude >= maximumLog) return maximumCompiledAmplitudeGain;
     if (logAmplitude <= std::log(std::numeric_limits<double>::min())) return 0.0;
@@ -213,15 +225,25 @@ ExhaustGraph ExhaustGraph::makeForEngine(
     graph.waveSpeedMmPerSecond_ = exhaustWaveSpeedMmPerSecond(finiteClamped(
         referenceExhaustTemperatureC, -50.0, 2'226.85, fallbackTemperatureC));
     std::vector<ExhaustPathConfig> paths = config.exhaustPaths;
+    const auto occurrencesOf = [&paths](std::uint32_t cylinderId) {
+        std::size_t occurrences = 0;
+        for (const auto& path : paths)
+            occurrences += static_cast<std::size_t>(std::count(
+                path.cylinderIds.begin(), path.cylinderIds.end(), cylinderId));
+        return occurrences;
+    };
     const auto topologyCoversCylinders = std::all_of(config.cylinders.begin(), config.cylinders.end(),
-        [&paths](const CylinderConfig& cylinder) {
-            std::size_t occurrences = 0;
-            for (const auto& path : paths)
-                occurrences += static_cast<std::size_t>(std::count(
-                    path.cylinderIds.begin(), path.cylinderIds.end(), cylinder.id));
-            return occurrences == 1;
+        [&occurrencesOf](const CylinderConfig& cylinder) {
+            return occurrencesOf(cylinder.id) == 1;
         });
     if (paths.empty() || !topologyCoversCylinders) {
+        // Replacing the authored topology is a real loss of user intent, so name
+        // every cylinder responsible rather than substituting a default in silence.
+        if (!topologyCoversCylinders)
+            for (const auto& cylinder : config.cylinders)
+                if (occurrencesOf(cylinder.id) != 1)
+                    graph.diagnostics_.push_back(
+                        { ExhaustCompileIssue::topologyRejected, cylinder.id });
         paths.clear();
         ExhaustPathConfig fallback;
         fallback.id = 1;
@@ -240,8 +262,15 @@ ExhaustGraph ExhaustGraph::makeForEngine(
     std::unordered_set<std::uint32_t> usedNodeIds;
     for (const auto& cylinder : config.cylinders) usedNodeIds.insert(cylinder.id);
     auto nextGeneratedId = std::numeric_limits<std::uint32_t>::max();
-    const auto allocateNodeId = [&usedNodeIds, &nextGeneratedId]() {
+    auto nodeIdSpaceExhausted = false;
+    const auto allocateNodeId = [&usedNodeIds, &nextGeneratedId, &nodeIdSpaceExhausted, &graph]() {
         while (nextGeneratedId != 0 && usedNodeIds.contains(nextGeneratedId)) --nextGeneratedId;
+        // Reaching 0 used to hand out the same ID forever, silently fusing
+        // unrelated nodes into one. Report it once instead of corrupting the graph.
+        if (nextGeneratedId == 0 && !nodeIdSpaceExhausted) {
+            nodeIdSpaceExhausted = true;
+            graph.diagnostics_.push_back({ ExhaustCompileIssue::nodeIdSpaceExhausted, 0 });
+        }
         const auto result = nextGeneratedId;
         usedNodeIds.insert(result);
         if (nextGeneratedId != 0) --nextGeneratedId;
@@ -367,13 +396,15 @@ ExhaustGraph ExhaustGraph::makeForEngine(
         graph.edges_.push_back({ mufflerId, outletId });
     }
 
-    std::unordered_map<std::uint32_t, const ExhaustNode*> nodesById;
+    // Indices, not pointers: graph.nodes_ is a vector, and a pointer map would
+    // turn any later push_back into silent use-after-free.
+    std::unordered_map<std::uint32_t, std::size_t> nodesById;
     std::unordered_map<std::uint32_t, std::vector<std::uint32_t>> outgoing;
     nodesById.reserve(graph.nodes_.size());
     outgoing.reserve(graph.nodes_.size());
-    for (const auto& node : graph.nodes_) {
-        nodesById.emplace(node.id, &node);
-        outgoing.try_emplace(node.id);
+    for (std::size_t index = 0; index < graph.nodes_.size(); ++index) {
+        nodesById.emplace(graph.nodes_[index].id, index);
+        outgoing.try_emplace(graph.nodes_[index].id);
     }
     for (const auto& edge : graph.edges_) outgoing[edge.from].push_back(edge.to);
 
@@ -381,19 +412,24 @@ ExhaustGraph ExhaustGraph::makeForEngine(
     // branches are parallel: K_eq = K_node + 1/(sum(1/sqrt(K_branch)))^2.
     // The active set and depth bound also make this compiler safe when it is
     // handed an invalid graph before application-level validation runs.
+    // A result reached through a cycle or a depth cut-off depends on which root
+    // the traversal started from, so it must not be cached: a node found invalid
+    // because of a back edge on one branch would stay invalid for every other.
+    struct RestrictionResult final { double value { 0.0 }; bool pathDependent { false }; };
     std::unordered_map<std::uint32_t, double> equivalentMemo;
     std::unordered_set<std::uint32_t> equivalentActive;
     const auto invalidRestriction = std::numeric_limits<double>::infinity();
-    std::function<double(std::uint32_t, std::size_t)> equivalentRestriction =
-        [&](std::uint32_t nodeId, std::size_t depth) -> double {
-            if (depth > maximumTraversalDepth) return invalidRestriction;
+    std::function<RestrictionResult(std::uint32_t, std::size_t)> equivalentRestriction =
+        [&](std::uint32_t nodeId, std::size_t depth) -> RestrictionResult {
+            if (depth > maximumTraversalDepth) return { invalidRestriction, true };
             if (const auto memo = equivalentMemo.find(nodeId); memo != equivalentMemo.end())
-                return memo->second;
+                return { memo->second, false };
             const auto foundNode = nodesById.find(nodeId);
-            if (foundNode == nodesById.end() || !equivalentActive.insert(nodeId).second)
-                return invalidRestriction;
-            const auto& node = *foundNode->second;
+            if (foundNode == nodesById.end()) return { invalidRestriction, false };
+            if (!equivalentActive.insert(nodeId).second) return { invalidRestriction, true };
+            const auto& node = graph.nodes_[foundNode->second];
             double result = node.restriction;
+            auto pathDependent = false;
             if (!std::isfinite(result) || result < 0.0) {
                 result = invalidRestriction;
             } else if (node.type != ExhaustNodeType::outlet) {
@@ -403,14 +439,15 @@ ExhaustGraph ExhaustGraph::makeForEngine(
                 } else {
                     double downstreamConductance = 0.0;
                     for (const auto nextNodeId : foundOutputs->second) {
-                        const auto branchRestriction = equivalentRestriction(nextNodeId, depth + 1);
-                        if (!std::isfinite(branchRestriction) || branchRestriction < 0.0) {
+                        const auto branch = equivalentRestriction(nextNodeId, depth + 1);
+                        pathDependent = pathDependent || branch.pathDependent;
+                        if (!std::isfinite(branch.value) || branch.value < 0.0) {
                             downstreamConductance = 0.0;
                             result = invalidRestriction;
                             break;
                         }
                         downstreamConductance += 1.0
-                            / std::sqrt(std::max(1.0e-9, branchRestriction));
+                            / std::sqrt(std::max(1.0e-9, branch.value));
                     }
                     if (std::isfinite(result)) {
                         if (downstreamConductance <= 0.0) result = invalidRestriction;
@@ -419,15 +456,20 @@ ExhaustGraph ExhaustGraph::makeForEngine(
                 }
             }
             equivalentActive.erase(nodeId);
-            equivalentMemo.emplace(nodeId, result);
-            return result;
+            if (!pathDependent) equivalentMemo.emplace(nodeId, result);
+            return { result, pathDependent };
         };
 
     double totalRestriction = 0.0;
     for (const auto& root : roots) {
-        const auto compiled = equivalentRestriction(root.nodeId, 0);
+        const auto compiled = equivalentRestriction(root.nodeId, 0).value;
         // A malformed topology is rejected by validation immediately after
-        // construction. Until then, keep all transient state finite and safe.
+        // construction. Until then, keep all transient state finite and safe --
+        // but say so, because charging a route the maximum restriction is
+        // indistinguishable by ear from a deliberately restrictive exhaust.
+        if (!std::isfinite(compiled))
+            graph.diagnostics_.push_back(
+                { ExhaustCompileIssue::unresolvedRestriction, root.cylinderId });
         const auto safeRestriction = std::isfinite(compiled)
             ? std::clamp(compiled, 0.0, 100.0) : 100.0;
         graph.cylinderRestrictions_.push_back({ root.cylinderId, root.pathIndex, safeRestriction });
@@ -439,10 +481,10 @@ ExhaustGraph ExhaustGraph::makeForEngine(
     const auto acousticAdmittance = [&](std::uint32_t nodeId) noexcept {
         const auto foundNode = nodesById.find(nodeId);
         if (foundNode == nodesById.end()) return 0.0;
-        const auto restriction = equivalentRestriction(nodeId, 0);
+        const auto restriction = equivalentRestriction(nodeId, 0).value;
         if (!std::isfinite(restriction) || restriction < 0.0) return 0.0;
         const auto diameterMm = finiteClamped(
-            foundNode->second->diameterMm, 5.0, 500.0, 42.0);
+            graph.nodes_[foundNode->second].diameterMm, 5.0, 500.0, 42.0);
         const auto areaMm2 = std::numbers::pi * diameterMm * diameterMm * 0.25;
         // Characteristic admittance is proportional to area/(rho*c). rho and
         // c are common at a junction; the equivalent K supplies a bounded
@@ -450,17 +492,29 @@ ExhaustGraph ExhaustGraph::makeForEngine(
         return areaMm2 / std::sqrt(1.0 + restriction);
     };
 
+    auto routeLimitReported = false;
     for (const auto& root : roots) {
         std::unordered_set<std::uint32_t> activeNodes;
-        std::function<void(std::uint32_t, double, double, double, ModeSet)> visit =
+        // ModeSet carries a fixed mode array; taking it by const reference and
+        // copying once per node keeps the per-branch copy the algorithm needs
+        // without also copying it on every call.
+        std::function<void(std::uint32_t, double, double, double, const ModeSet&)> visit =
             [&](std::uint32_t nodeId, double lengthMm, double restriction,
-                double logAmplitudeGain, ModeSet modes) {
-                if (graph.routes_.size() >= maximumCompiledRoutes) return;
+                double logAmplitudeGain, const ModeSet& inheritedModes) {
+                if (graph.routes_.size() >= maximumCompiledRoutes) {
+                    if (!routeLimitReported) {
+                        routeLimitReported = true;
+                        graph.diagnostics_.push_back(
+                            { ExhaustCompileIssue::routeLimitReached, root.cylinderId });
+                    }
+                    return;
+                }
                 const auto foundNode = nodesById.find(nodeId);
                 if (foundNode == nodesById.end()) return;
                 if (activeNodes.size() >= maximumTraversalDepth
                     || !activeNodes.insert(nodeId).second) return;
-                const auto& node = *foundNode->second;
+                const auto& node = graph.nodes_[foundNode->second];
+                auto modes = inheritedModes;
                 lengthMm += node.lengthMm;
                 restriction += node.restriction;
                 if (node.resonanceStrength > 0.0)
@@ -694,11 +748,71 @@ ExhaustCylinderFlowProperties ExhaustGraph::cylinderFlowProperties(
 void ExhaustGraph::process(FiringEvent& event) const noexcept {
     const auto cylinderId = event.exhaustPortId != 0 ? event.exhaustPortId : event.cylinderId;
     const auto acoustics = acousticsForCylinder(cylinderId);
+    const auto baseDelaySeconds = event.exhaustDelaySeconds;
+    const auto baseTransmissionGain = event.exhaustTransmissionGain;
     if (acoustics.routeCount > 0) {
         event.exhaustPathIndex = acoustics.pathIndex;
         event.exhaustDelaySeconds += static_cast<float>(acoustics.delaySeconds);
         event.exhaustResonanceHz = static_cast<float>(acoustics.resonanceHz);
     }
     event.exhaustTransmissionGain *= static_cast<float>(acoustics.transmissionGain);
+
+    struct Component final {
+        double energy { 0.0 };
+        double delaySeconds { 0.0 };
+        double amplitude { 0.0 };
+        double resonanceHz { 0.0 };
+        std::uint32_t pathIndex { 0 };
+    };
+    std::array<Component, maximumExhaustEventComponents> strongest {};
+    std::size_t strongestCount = 0;
+    const auto retain = [&strongest, &strongestCount](Component candidate) noexcept {
+        if (!(candidate.energy > 0.0) || !std::isfinite(candidate.energy)) return;
+        if (strongestCount < strongest.size()) {
+            strongest[strongestCount++] = candidate;
+            return;
+        }
+        const auto weakest = std::min_element(strongest.begin(), strongest.end(),
+            [](const auto& left, const auto& right) { return left.energy < right.energy; });
+        if (candidate.energy > weakest->energy) *weakest = candidate;
+    };
+    for (const auto& route : routes_) {
+        if (route.cylinderId != cylinderId || !(route.audioGain > 0.0)) continue;
+        if (route.modeCount == 0) {
+            retain({ route.audioGain * route.audioGain, route.delaySeconds,
+                route.audioGain, route.resonanceHz, route.pathIndex });
+            continue;
+        }
+        for (std::size_t index = 0; index < route.modeCount; ++index) {
+            const auto modeAmplitude = route.audioGain
+                * std::sqrt(std::max(0.0, route.modes[index].relativeEnergy));
+            retain({ modeAmplitude * modeAmplitude, route.delaySeconds,
+                modeAmplitude, route.modes[index].frequencyHz, route.pathIndex });
+        }
+    }
+    std::sort(strongest.begin(), strongest.begin() + static_cast<std::ptrdiff_t>(strongestCount),
+        [](const auto& left, const auto& right) {
+            if (left.delaySeconds != right.delaySeconds)
+                return left.delaySeconds < right.delaySeconds;
+            return left.energy > right.energy;
+        });
+    double retainedEnergy = 0.0;
+    for (std::size_t index = 0; index < strongestCount; ++index)
+        retainedEnergy += strongest[index].energy;
+    const auto componentScale = retainedEnergy > 0.0
+        ? static_cast<double>(baseTransmissionGain) * acoustics.transmissionGain
+            / std::sqrt(retainedEnergy)
+        : 0.0;
+    event.exhaustComponentCount = static_cast<std::uint8_t>(strongestCount);
+    for (std::size_t index = 0; index < strongestCount; ++index) {
+        event.exhaustComponentDelaySeconds[index] = baseDelaySeconds
+            + static_cast<float>(strongest[index].delaySeconds);
+        event.exhaustComponentGain[index] = static_cast<float>(
+            strongest[index].amplitude * componentScale);
+        event.exhaustComponentResonanceHz[index] = static_cast<float>(
+            strongest[index].resonanceHz);
+        event.exhaustComponentPathIndex[index] = static_cast<std::uint8_t>(
+            std::min<std::uint32_t>(strongest[index].pathIndex, 255U));
+    }
 }
 } // namespace enginelab
