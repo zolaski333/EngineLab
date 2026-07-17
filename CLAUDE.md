@@ -1,0 +1,95 @@
+# Working on EngineLab
+
+Guidance for AI agents. It is not a codebase tour — it is the set of things that
+were learned the hard way here and are not visible from reading the code.
+
+## Build and test
+
+```
+cmake --build out/build/windows-vs2022 --config Release            # whole project
+ctest  --test-dir out/build/windows-vs2022 -C Release              # all tests
+```
+
+Warnings are errors. A green build and `ctest` run are the bar for any change.
+
+## The one rule that matters most: measure before you "fix"
+
+This codebase reads as if it is full of bugs. Several of them are not — they are
+deliberate compensations that deliver correct *observable* behaviour, and
+"fixing" them in isolation regresses a working calibration. Reading the code will
+mislead you. Measuring will not.
+
+Worked examples from this project, where a confident code-reading hypothesis was
+overturned by measurement:
+
+- **Flame model uses a volume burn fraction where a mass fraction is arguably
+  correct.** Looks like it must mis-time combustion and dump heat too early. It
+  does not: `EngineLab.CombustionPhasing` measures peak-pressure location at
+  18-22 deg ATDC and CA50 at 9-11 deg ATDC, stable across 2300-4200 rpm — in the
+  MBT window. The internal representation is absorbed by the spark map and the
+  turbulent-flame calibration. Correcting it would shift phasing later and force
+  a re-tune, with no observable gain.
+- **The exhaust "voice" layer re-synthesises a blowdown body that the
+  pressure-driven collector/FDN path already produces.** Looks like a redundant
+  double model to delete. Measured, its contribution is ~1-2 spectral points
+  (already tamed by a 0.20 layer gain), and it is the *only* thing that
+  differentiates presets when there is no pressure telemetry — a real fallback.
+  Removing it broke `EngineLab.Core` for a negligible gain.
+
+The pattern: this codebase tends to fix a symptom downstream of its cause
+(muffler presets tuned around a mis-normalised FDN matrix; a 1.12 turbulent-flame
+factor compensating the volume fraction; a safety AGC masking a level offset).
+When you find a "bug", first ask what downstream already compensates for it, and
+whether fixing it alone makes the delivered behaviour worse. When two such
+corrections are coupled, change them together, guarded by a measurement.
+
+Preserve the default audio voicing exactly unless a change is explicitly a
+voicing change: the audio-path corrections here were verified bit-identical at
+the default `convolution` setting via the harness before and after.
+
+## Use the instruments; do not judge audio or combustion by eye
+
+- **`tools/AudioRenderHarness.cpp`** (`EngineLab.AudioRender`) renders the real
+  realtime path offline and reports RMS/crest/DC/spectral-band balance per
+  channel over the whole signal, plus a Schroeder RT60 of the exhaust chain. It
+  is deterministic. It is how you prove an audio change did what you intended.
+  Note: the exhaust chain is only excited by the cylinder-pressure telemetry
+  stream, never by a lone firing event — an event-only impulse measures the voice
+  envelope, not the muffler.
+- **`tests/CombustionPhasingTests.cpp`** (`EngineLab.CombustionPhasing`) drives a
+  known engine across an rpm sweep and reports LPP / CA10-50-90 / IMEP. Peak
+  pressure location is the bug-independent physical truth; a single operating
+  point cannot tell a correct model from a compensated one, so it sweeps.
+
+Reference numbers for these gates come from engine/DSP literature, never from the
+simulator's current output, so tightening a gate later cannot re-calibrate the
+test onto the behaviour it is meant to catch. Keep it that way.
+
+`docs/realtime-audio.md` and `docs/custom-exhaust.md` document the audio and
+exhaust models and the corrections already made — read them before touching those
+areas.
+
+## Two concrete traps that cost time here
+
+- **CMake target names, and the stale-binary trap.** `cmake --build --target X`
+  with a wrong `X` fails with `MSB1009: project file does not exist`, builds
+  nothing, and then `ctest` happily reruns the *previous* binary — so a test can
+  appear to pass (or fail) against code you did not compile. The test executables
+  are `EngineLabCoreTests`, `EngineLabExhaustTests`, `EngineLabPhysicsRegressionTests`,
+  `EngineLabCombustionPhasingTests`, `EngineLabRealtimeRegressionTests`,
+  `EngineLabComparisonHarness`, `EngineLabAudioRenderHarness` (note: not
+  `EngineLabTests`). Do not filter build output so narrowly (`error C...`) that
+  you hide an `MSB` error; confirm the target actually relinked.
+- **Non-vacuous tests.** After adding a regression test, verify it fails without
+  the fix — but rebuild the *correct* target first, or you will be testing a
+  stale binary and conclude wrongly.
+
+## Physics vs audio priority
+
+The exhaust/audio path is the maintained priority. Physics-loop changes
+(combustion phasing, legacy back-pressure) affect all catalogue engines and
+cannot be validated to a shippable standard without dyno-curve references, so
+they are deferred unless explicitly requested. `EngineLab.CatalogPhysics` checks
+that engines run, stay finite and stable, and produce non-silent audio; it does
+*not* assert absolute torque/power, so passing it is necessary but not sufficient
+for a physics change.

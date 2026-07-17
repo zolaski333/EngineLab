@@ -12,6 +12,13 @@ target_link_libraries(EngineLabPhysicsRegressionTests PRIVATE EngineLab::Foundat
 enginelab_set_warnings(EngineLabPhysicsRegressionTests)
 add_test(NAME EngineLab.PhysicsRegression COMMAND EngineLabPhysicsRegressionTests)
 
+add_executable(EngineLabCombustionPhasingTests CombustionPhasingTests.cpp)
+target_link_libraries(EngineLabCombustionPhasingTests PRIVATE
+    EngineLab::Foundation EngineLab::Events EngineLab::Physics EngineLab::Ecu
+    EngineLab::Exhaust EngineLab::Simulation)
+enginelab_set_warnings(EngineLabCombustionPhasingTests)
+add_test(NAME EngineLab.CombustionPhasing COMMAND EngineLabCombustionPhasingTests)
+
 add_executable(EngineLabEcuCalibrationIntegrationTests EcuCalibrationIntegrationTests.cpp)
 target_link_libraries(EngineLabEcuCalibrationIntegrationTests PRIVATE
     EngineLab::Foundation EngineLab::Calibration EngineLab::Ecu)
