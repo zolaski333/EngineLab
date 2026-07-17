@@ -1147,6 +1147,52 @@ int main() {
     }
 
     {
+        // Phase 6 characterization: lock which CombustionResult fields the event
+        // generator actually reads, so a future rewrite of the mean-value model
+        // cannot silently unwire the audio path. A default EngineState carries no
+        // resolved per-cylinder state (cylinderStateCount == 0), forcing the
+        // generator onto the CombustionResult scalar fallbacks:
+        //   combustionQuality  -> firing intensity (unconditional, linear)
+        //   pressureEstimateBar -> firing pressure (fallback branch)
+        enginelab::EngineState fallbackState;
+        fallbackState.simulationTimeSeconds = 1.0;
+        fallbackState.rpm = 3'000.0;
+        fallbackState.throttle = 0.6;
+        enginelab::EcuCommand fallbackCommand;
+        fallbackCommand.fuelEnabled = true;
+        fallbackCommand.sparkEnabled = true;
+        const auto makeCombustion = [](double quality) {
+            enginelab::CombustionResult result;
+            result.combustionEnabled = true;
+            result.combustionQuality = quality;
+            result.misfireProbability = 0.0; // deterministic: misfire draw never trips
+            result.pressureEstimateBar = 70.0;
+            return result;
+        };
+        // Two generators freshly seeded to the same state -> identical variation
+        // sequence, so the only difference between the runs is combustionQuality.
+        enginelab::FourStrokeEventGenerator fullQualityEvents;
+        enginelab::FourStrokeEventGenerator halfQualityEvents;
+        std::array<enginelab::FiringEvent, 64> fullQualityGenerated {};
+        std::array<enginelab::FiringEvent, 64> halfQualityGenerated {};
+        const auto fullCount = fullQualityEvents.generate(config, fallbackState, fallbackCommand,
+            makeCombustion(1.0), 0.95, 680.0, 1'500.0, 0.05, fullQualityGenerated);
+        const auto halfCount = halfQualityEvents.generate(config, fallbackState, fallbackCommand,
+            makeCombustion(0.5), 0.95, 680.0, 1'500.0, 0.05, halfQualityGenerated);
+        require(fullCount > 0 && fullCount == halfCount,
+                "characterization run must generate a matching set of firings");
+        for (std::size_t index = 0; index < fullCount; ++index) {
+            require(fullQualityGenerated[index].intensity > 0.01F,
+                    "combustionQuality must drive a non-trivial firing intensity");
+            require(std::abs(halfQualityGenerated[index].intensity
+                        - 0.5F * fullQualityGenerated[index].intensity) < 1.0e-3F,
+                    "firing intensity must scale linearly with combustionQuality (audio amplitude wiring)");
+            require(std::abs(fullQualityGenerated[index].pressureEstimateBar - 70.0F) < 1.0e-2F,
+                    "with no resolved cylinder state, firing pressure must fall back to combustion.pressureEstimateBar");
+        }
+    }
+
+    {
         auto v8Exhaust = enginelab::ExhaustGraph::makeForEngine(enginelab::makeDefaultV8());
         require(v8Exhaust.nodes().size() == 11, "exhaust graph must contain one primary per V8 cylinder");
         enginelab::FiringEvent event;

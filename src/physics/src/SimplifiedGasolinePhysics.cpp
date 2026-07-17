@@ -199,9 +199,26 @@ CombustionResult SimplifiedGasolinePhysics::evaluateCombustion(
         ? fuelMassMg * 1.0e-6 * cyclesPerSecond * fuelEnergyJPerKg / 1'000.0 : 0.0;
     const auto heatPowerKw = fuelPowerKw * (1.0 - thermalEfficiency);
     (void)controls;
-    return { indicatedTorque, combustionEnabled ? std::clamp(std::max(imepBar * 5.5, idealPressureBar), 2.0, 160.0) : 0.0,
-             combustionEnabled ? afrEfficiency * timingEfficiency : 0.0,
-             heatOutput, knock, misfire, volumetricEfficiency, airMassMg, fuelMassMg, thermalEfficiency,
-             actualAfr, heatPowerKw, combustionEnabled };
+    // Telemetry, not the crank-driving model. Each field is annotated with its
+    // sole downstream reader (measured in Phase 6; see CombustionResult in
+    // EngineTypes.hpp and docs/physics-audit.md). Designated init keeps the wiring
+    // legible; order still matches the struct declaration (C++20 requirement).
+    return CombustionResult {
+        .indicatedTorqueNm = indicatedTorque,                                   // -> meanWorkTorqueNm display
+        .pressureEstimateBar = combustionEnabled
+            ? std::clamp(std::max(imepBar * 5.5, idealPressureBar), 2.0, 160.0)
+            : 0.0,                                                              // -> event-gen pressure fallback
+        .combustionQuality = combustionEnabled ? afrEfficiency * timingEfficiency : 0.0, // -> audio amplitude
+        .heatOutput = heatOutput,                                               // -> cylinder wall temperature
+        .knockLevel = knock,                                                    // unread (knock resolved per-cylinder)
+        .misfireProbability = misfire,                                          // -> event-gen misfire fallback
+        .volumetricEfficiency = volumetricEfficiency,                           // unread (telemetry)
+        .airMassMgPerCycle = airMassMg,                                         // -> breathingQuality display
+        .fuelMassMgPerCycle = fuelMassMg,                                       // unread (telemetry)
+        .thermalEfficiency = thermalEfficiency,                                 // unread (telemetry)
+        .actualAirFuelRatio = actualAfr,                                        // read only by EngineLab.Core
+        .heatPowerKw = heatPowerKw,                                             // read only by EngineLab.Core
+        .combustionEnabled = combustionEnabled,                                 // gates injection/combustion/event-gen
+    };
 }
 } // namespace enginelab

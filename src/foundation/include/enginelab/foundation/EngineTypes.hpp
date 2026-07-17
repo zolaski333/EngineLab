@@ -563,20 +563,44 @@ struct EcuCommand final {
     bool sparkEnabled { true };
 };
 
+// Output of the mean-value model SimplifiedGasolinePhysics::evaluateCombustion.
+// It is telemetry, NOT the crank-driving model: the crankshaft is integrated
+// from the 0-D solver's chamber pressure (see that model's header and
+// docs/physics-audit.md). This is the *measured* consumption map (Phase 6): the
+// only production readers are EngineSimulator and FourStrokeEventGenerator, plus
+// the EngineLab.Core characterization test. Field order is load-bearing (used by
+// designated/positional init in the model); do not reorder to "tidy" the groups.
+//
+//   Drives live behaviour:
+//     combustionEnabled   gates injection/combustion/event generation
+//     combustionQuality   exhaust-audio firing amplitude (read unconditionally)
+//     heatOutput          cylinder wall temperature -> wall heat transfer
+//     pressureEstimateBar firing pressure, event-gen fallback when no resolved
+//                         per-cylinder state exists
+//     misfireProbability  misfire draw, event-gen fallback (same condition)
+//     airMassMgPerCycle   breathingQuality display
+//   Telemetry / test-only (no production reader):
+//     indicatedTorqueNm   copied to state.meanWorkTorqueNm for display only
+//     actualAirFuelRatio  read only by EngineLab.Core (characterization)
+//     heatPowerKw         read only by EngineLab.Core (characterization)
+//   Unread anywhere (kept as struct-stable telemetry; the value is still a
+//   necessary local intermediate inside the model, so the field is cheap):
+//     knockLevel (forced 0.0), volumetricEfficiency, fuelMassMgPerCycle,
+//     thermalEfficiency
 struct CombustionResult final {
-    double indicatedTorqueNm { 0.0 };
-    double pressureEstimateBar { 0.0 };
-    double combustionQuality { 0.0 };
-    double heatOutput { 0.0 };
-    double knockLevel { 0.0 };
-    double misfireProbability { 0.0 };
-    double volumetricEfficiency { 0.0 };
-    double airMassMgPerCycle { 0.0 };
-    double fuelMassMgPerCycle { 0.0 };
-    double thermalEfficiency { 0.0 };
-    double actualAirFuelRatio { 14.7 };
-    double heatPowerKw { 0.0 };
-    bool combustionEnabled { false };
+    double indicatedTorqueNm { 0.0 };     // telemetry -> state.meanWorkTorqueNm (display)
+    double pressureEstimateBar { 0.0 };   // event-gen firing-pressure fallback
+    double combustionQuality { 0.0 };     // exhaust-audio amplitude (live, unconditional)
+    double heatOutput { 0.0 };            // cylinder wall temperature (live)
+    double knockLevel { 0.0 };            // unread; knock resolved per-cylinder in EngineSimulator
+    double misfireProbability { 0.0 };    // event-gen misfire fallback
+    double volumetricEfficiency { 0.0 };  // unread (intermediate exposed as telemetry)
+    double airMassMgPerCycle { 0.0 };     // breathingQuality display (live)
+    double fuelMassMgPerCycle { 0.0 };    // unread (intermediate exposed as telemetry)
+    double thermalEfficiency { 0.0 };     // unread (intermediate exposed as telemetry)
+    double actualAirFuelRatio { 14.7 };   // read only by EngineLab.Core characterization
+    double heatPowerKw { 0.0 };           // read only by EngineLab.Core characterization
+    bool combustionEnabled { false };     // gates injection/combustion/event-gen (live)
 };
 
 struct DynoPoint final {

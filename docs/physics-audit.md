@@ -105,6 +105,7 @@ raté d'allumage et le cliquetis. Corriger la thermodynamique de
 | 3 | Double comptage frottement paliers/piston | ~~bug~~ → non-problème | Core (garde FMEP) | ✅ fait |
 | 4 | Clarté doc (γ, modèle moyen vestigial, `bearingFriction`) | clarté | build vert, baselines identiques | ✅ fait |
 | 5 | Fraction volumique + facteur 1.12 (couplés) | hack calibré | CombustionPhasing + AudioRender | ⏸ fermée par défaut |
+| 6 | Modèle moyen vestigial : ~150 lignes de « thermo morte » à extraire/supprimer | ~~code mort~~ → thermo vivante | Core + AudioRender + Catalog | ✅ fait (quarantaine doc) |
 
 Ordre suivi : 0 → 1 → 2 → 3 → 4. La Phase 5 reste fermée : `CLAUDE.md` prévient
 que corriger ces deux hacks isolément régresse la calibration MBT, et aucune
@@ -216,6 +217,55 @@ agent) ne reparte pas sur une fausse piste :
   d'audit numéro un du dépôt.
 - `EngineSimulator` : commentaire clarifiant que `bearingFriction` est le FMEP
   non-piston agrégé (déjà livré en Phase 3).
+
+## Phase 6 — résultat (hypothèse renversée par la mesure)
+
+Hypothèse : `SimplifiedGasolinePhysics::evaluateCombustion` (modèle moyen) contient
+~150 lignes de thermo morte — **avance optimale**, **rendement de timing**,
+**pression idéale par les moles brûlées** — qui « ne pilotent rien » et pourraient
+être extraites/supprimées.
+
+Mesure décisive : grep exhaustif de **tous** les consommateurs de `CombustionResult`
+(la struct n'a que deux sites de lecture en prod, `EngineSimulator` et
+`FourStrokeEventGenerator`, plus le gate `EngineLab.Core`), croisé avec le graphe
+de dépendances du modèle. Carte de consommation des 13 champs :
+
+| champ | lu en prod | lu par test Core | rôle |
+| ----- | ---------- | ---------------- | ---- |
+| `combustionEnabled` | ✅ | ✅ | gate injection/combustion/event-gen (vivant) |
+| `combustionQuality` | ✅ (inconditionnel) | — | amplitude audio (vivant) |
+| `heatOutput` | ✅ | — | température de paroi (vivant) |
+| `airMassMgPerCycle` | ✅ | — | `breathingQuality` (affichage) |
+| `misfireProbability` | ✅ (fallback) | — | fallback event-gen |
+| `pressureEstimateBar` | ✅ (fallback) | ✅ | fallback event-gen + caractérisé |
+| `indicatedTorqueNm` | ✅ → `meanWorkTorqueNm` | ✅ | télémétrie d'affichage |
+| `actualAirFuelRatio` | ❌ | ✅ | verrouillé par le gate Core |
+| `heatPowerKw` | ❌ | ✅ | verrouillé par le gate Core |
+| `knockLevel` | ❌ | ❌ | constante 0.0 neutralisée |
+| `volumetricEfficiency` | ❌ | ❌ | intermédiaire exposé (→ `airMassMg`) |
+| `fuelMassMgPerCycle` | ❌ | ❌ | intermédiaire exposé (→ `heatOutput`) |
+| `thermalEfficiency` | ❌ | ❌ | intermédiaire exposé (→ `indicatedTorque`) |
+
+Les trois calculs nommés comme « morts » alimentent en réalité des champs
+consommés : `optimumAdvance` → `timingEfficiency` → **`combustionQuality`** (audio) ;
+`idealPressureBar` → **`pressureEstimateBar`** (fallback event-gen + test Core).
+**Il n'y a pas de bloc de ~150 lignes mort** — 4ᵉ hypothèse de lecture infirmée
+par la mesure. Le seul mort prouvé est 4 champs de struct, dont 3 restent des
+intermédiaires nécessaires ; `actualAirFuelRatio`/`heatPowerKw` casseraient le gate
+Core. La suppression/extraction régresserait l'audio et un gate pour un gain nul.
+
+Action livrée (option A — quarantaine documentaire, comportement strictement
+inchangé, baselines identiques, 13/13 vert) :
+
+- carte de consommation annotée sur `CombustionResult` (`EngineTypes.hpp`), un
+  commentaire par champ pointant son lecteur unique ;
+- `return` du modèle réécrit en initialiseurs désignés C++20 groupés/annotés
+  (`SimplifiedGasolinePhysics.cpp`), valeurs et ordre identiques ;
+- **test de caractérisation** (`tests/CoreTests.cpp`) qui fige le câblage audio :
+  sans état cylindre résolu, l'intensité de tir doit être linéaire en
+  `combustionQuality` et la pression doit retomber sur `pressureEstimateBar`.
+  Non-vacuité prouvée : en débranchant `combustionQuality` de l'event-gen, le test
+  échoue sur « intensity must scale linearly with combustionQuality ».
 
 ---
 
