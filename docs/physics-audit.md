@@ -101,6 +101,7 @@ raté d'allumage et le cliquetis. Corriger la thermodynamique de
 | ----- | ----- | ------- | ---------------- |
 | 0 | Figer cette baseline | — | aucun | ✅ fait |
 | 1 | Bielle articulée : `rodAngle` calculé puis jeté (`MechanicalKinematics.cpp`) | ~~bug~~ → nettoyage | PhysicsRegression | ✅ fait |
+| 2 | Embrayage verrouillé : couplage retardé une frame | ~~bug~~ → non-problème | Core (garde catalogue) | ✅ fait |
 | 2 | Embrayage verrouillé : couplage retardé 2 ticks, pas une contrainte | bug/à mesurer | Core + assert résidu énergétique |
 | 3 | Double comptage frottement paliers/piston | à mesurer | garde FMEP + CombustionPhasing IMEP |
 | 4 | Nettoyages doc (γ, modèle moyen vestigial) | clarté | build vert, baselines identiques |
@@ -124,6 +125,33 @@ balayage 0-720 deg du maneton articulé (cylindres 2-5 du radial) donne :
 La géométrie est donc **correcte** : la rotation encodée par `rodAngle` est déjà
 appliquée, en ligne, sous forme matricielle `R * Rot(A) * û` dans le calcul du
 point d'articulation. `rodAngle` n'était que du **code mort**.
+
+## Phase 2 — résultat (hypothèse renversée par la mesure)
+
+Hypothèse : le couplage vilebrequin<->embrayage verrouillé est retardé d'une
+frame (la driveline sous-cycle la roue à 1 ms mais garde `engineOmega` figé sur
+tout l'`advance()`), donc pour un volant léger la loi Karnopp stick/kinetic
+pourrait entrer en cycle limite.
+
+Mesure décisive : en pilotant **chaque moteur du catalogue avec sa propre
+configuration** (inertie, capacité embrayage, rapports) en prise, à la cadence
+de couplage la plus grossière expédiée (timeScale 4x -> pas public 1/60 s), le
+couple de couplage en régime établi a une amplitude crête-à-crête **< 1 Nm** et
+un glissement stabilisé dans la bande de verrouillage (~33 rpm) pour **tous** les
+moteurs, EL-09 I2 (le plus léger, I=0.131) compris (0.20 Nm).
+
+Le « chatter » initial (±capacité, 2000+ Nm) n'apparaissait que dans un banc de
+test **mal apparié** : la transmission/véhicule de l'inline4 couplée à une
+inertie vilebrequin étrangère artificiellement faible. Aucun moteur réel ne se
+trouve dans ce régime. **Il n'y a donc pas de bug expédiable** ; le couplage
+retardé d'une frame est un no-op sur les configurations réelles.
+
+Action livrée : **aucune modification du solveur** (ne pas toucher un sous-système
+en cours de mise au point pour un non-problème). Ajout d'un **test de garde
+catalogue** (`tests/CoreTests.cpp`) : chaque preset, en prise, à dt=1/60 s, doit
+converger sans chatter (ripple couplage < 25 Nm) et rester dans sa bande de
+verrouillage. Le test existant ne couvrait qu'une seule inertie (I=0.41) à
+dt=1/200 s ; celui-ci couvre tout le catalogue à la pire cadence.
 
 Actions livrées (comportement inchangé, baselines identiques, 13/13 vert) :
 

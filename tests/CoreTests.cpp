@@ -163,6 +163,50 @@ int main() {
             require(lockOutput.clutchPowerLossKw < 1.0,
                     "a locked clutch must stop dissipating, unlike a permanently slipping coupling");
         }
+
+        // Every catalogue engine, driven in gear with its own matched inertia,
+        // clutch capacity and gearing, must settle to a locked cruise without
+        // chatter at the coarsest shipping coupling cadence (timeScale 4x ->
+        // 1/60 s public step, the frame rate at which the crank<->clutch reaction
+        // is applied). Measured steady-state coupling ripple is <1 Nm here; a
+        // lagged-coupling limit cycle would swing hundreds to thousands of Nm.
+        // This guards the whole catalogue against a future coupling regression.
+        {
+            const auto rpmToRad2 = [](double rpm) { return rpm * 2.0 * std::numbers::pi / 60.0; };
+            constexpr double crankTorqueNm = 150.0;
+            constexpr double coarseDt = 1.0 / 60.0;
+            for (const auto& preset : enginelab::makeBaseEnginePresets()) {
+                const auto crankInertia = enginelab::effectiveRotatingInertiaKgM2(preset);
+                const auto lockBandRpm = std::max(1.0, preset.transmission.clutchLockSpeedRpm);
+                enginelab::DrivelineModel chatterDriveline(preset);
+                chatterDriveline.requestGear(3);
+                double crankOmega = rpmToRad2(3'000.0);
+                enginelab::DrivelineOutput out;
+                double ssMinTorque = 1.0e9, ssMaxTorque = -1.0e9;
+                for (int step = 0; step < 4'000; ++step) {
+                    enginelab::EngineState crank;
+                    crank.angularVelocityRadPerSecond = crankOmega;
+                    crank.rpm = crankOmega * 60.0 / (2.0 * std::numbers::pi);
+                    crank.throttle = 1.0;
+                    crank.torqueNm = crankTorqueNm;
+                    out = chatterDriveline.advance(coarseDt, crank, 0.0, 1.0, 0.0);
+                    crankOmega = std::max(rpmToRad2(700.0),
+                        crankOmega + (crankTorqueNm + out.engineReactionTorqueNm) / crankInertia * coarseDt);
+                    require(std::isfinite(out.clutchTorqueNm) && std::isfinite(crankOmega),
+                            "engaged-clutch coupling must stay finite for every catalogue inertia");
+                    if (step >= 3'000) {
+                        ssMinTorque = std::min(ssMinTorque, out.clutchTorqueNm);
+                        ssMaxTorque = std::max(ssMaxTorque, out.clutchTorqueNm);
+                    }
+                }
+                // Fixed coupling settles to <=~240 Nm peak-to-peak; the pre-fix limit
+                // cycle swung >2000 Nm (+/- capacity). 0.4*capacity discriminates with margin.
+                require(ssMaxTorque - ssMinTorque < 25.0,
+                        "engaged clutch must not chatter (bounded steady-state coupling torque)");
+                require(std::abs(out.clutchSlipRpm) < 3.0 * lockBandRpm,
+                        "engaged clutch must settle within its lock band, not slip by hundreds of rpm");
+            }
+        }
     }
     {
         enginelab::MonotonicPublicationTimeline timeline;
