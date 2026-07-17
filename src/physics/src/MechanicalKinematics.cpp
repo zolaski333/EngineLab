@@ -80,8 +80,9 @@ struct CylinderReference final {
     const auto rodDx = master.wrist.x - master.crank.x;
     const auto rodDy = master.wrist.y - master.crank.y;
     const auto rodLength = std::max(1.0e-9, std::hypot(rodDx, rodDy));
-    const auto rodAngle = std::atan2(rodDy, rodDx)
-        + cylinder.articulatedJournalAngleDegrees * std::numbers::pi / 180.0;
+    // The knuckle pin sits at radius articulatedJournalRadiusMm from the master
+    // crankpin, offset by articulatedJournalAngleDegrees from the master rod
+    // centreline: articulation = master.crank + R * Rot(A) * (unit master rod).
     const Point articulation { master.crank.x + rodDx / rodLength * cylinder.articulatedJournalRadiusMm * std::cos(
                                     cylinder.articulatedJournalAngleDegrees * std::numbers::pi / 180.0)
                                 - rodDy / rodLength * cylinder.articulatedJournalRadiusMm * std::sin(
@@ -104,7 +105,6 @@ struct CylinderReference final {
         cylinder.connectingRodMm * cylinder.connectingRodMm - lateral * lateral));
     const Point wrist { origin.x + axis.x * piston + normal.x * cylinder.wristPinOffsetMm,
                         origin.y + axis.y * piston + normal.y * cylinder.wristPinOffsetMm };
-    (void)rodAngle;
     return { articulation, wrist, piston, std::atan2(wrist.y - articulation.y, wrist.x - articulation.x) };
 }
 

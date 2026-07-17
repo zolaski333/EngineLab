@@ -262,6 +262,62 @@ int main() {
         }
     }
 
+    {
+        // Articulated crankpin (knuckle-pin) trace over a full cycle. The
+        // articulation is fixed to the master rod at radius R and angular
+        // offset A, so its distance from the crank centre must sweep the whole
+        // [throw-R, throw+R] band as the master rod swings, trace a smooth
+        // once-per-revolution closed loop, and drive a near-nominal stroke.
+        // TDC-only checks above cannot catch a corrupted articulation rotation.
+        const auto radial = enginelab::makeDefaultRadialFive();
+        const auto reference = enginelab::buildEngineKinematicsReference(radial);
+        constexpr double masterThrowMm = 63.5;   // crankJournals[0].throwMm
+        constexpr double articulationRadiusMm = 34.0; // cylinders[1..].articulatedJournalRadiusMm
+        constexpr double nominalStrokeMm = 127.0;
+        const double innerBand = masterThrowMm - articulationRadiusMm; // 29.5
+        const double outerBand = masterThrowMm + articulationRadiusMm; // 97.5
+        for (std::size_t idx = 1; idx < radial.cylinders.size(); ++idx) {
+            double prevX = 0.0, prevY = 0.0;
+            double maxPinStep = 0.0;
+            double minPiston = 1.0e9, maxPiston = -1.0e9;
+            double minPinR = 1.0e9, maxPinR = -1.0e9;
+            double maxPeriodicityErr = 0.0;
+            for (int a = 0; a <= 720; ++a) {
+                const auto k = enginelab::evaluateCylinderKinematics(radial, reference, idx,
+                    static_cast<double>(a), 1.0);
+                require(std::isfinite(k.crankPinXMm) && std::isfinite(k.crankPinYMm)
+                        && std::isfinite(k.pistonPositionMm),
+                        "articulated kinematics must stay finite over the whole cycle");
+                const auto pinR = std::hypot(k.crankPinXMm, k.crankPinYMm);
+                minPinR = std::min(minPinR, pinR); maxPinR = std::max(maxPinR, pinR);
+                minPiston = std::min(minPiston, k.pistonPositionMm);
+                maxPiston = std::max(maxPiston, k.pistonPositionMm);
+                if (a > 0)
+                    maxPinStep = std::max(maxPinStep,
+                        std::hypot(k.crankPinXMm - prevX, k.crankPinYMm - prevY));
+                if (a >= 360) {
+                    const auto base = enginelab::evaluateCylinderKinematics(radial, reference,
+                        idx, static_cast<double>(a - 360), 1.0);
+                    maxPeriodicityErr = std::max(maxPeriodicityErr,
+                        std::hypot(k.crankPinXMm - base.crankPinXMm,
+                                   k.crankPinYMm - base.crankPinYMm));
+                }
+                prevX = k.crankPinXMm; prevY = k.crankPinYMm;
+            }
+            require(minPinR > innerBand - 0.5 && maxPinR < outerBand + 0.5,
+                    "articulated crankpin must stay within [throw-R, throw+R] of the crank centre");
+            require(minPinR < innerBand + 3.0 && maxPinR > outerBand - 3.0,
+                    "articulated crankpin must actually sweep the articulation band (not degenerate)");
+            require(maxPinStep < 3.0,
+                    "articulated crankpin trace must be continuous (no jump at 1 deg resolution)");
+            require(maxPeriodicityErr < 1.0e-6,
+                    "articulated crankpin must be 360 deg periodic on a single crank throw");
+            const auto stroke = maxPiston - minPiston;
+            require(stroke > nominalStrokeMm * 0.9 && stroke < nominalStrokeMm * 1.12,
+                    "articulated piston stroke must stay near the nominal crank stroke");
+        }
+    }
+
     std::cout << "Physics regression tests passed\n";
     return EXIT_SUCCESS;
 }
