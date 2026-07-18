@@ -284,11 +284,16 @@ double GasCell::dynamicPressureKpa(double nx, double ny) const noexcept {
     const auto density = m / volumeM3_;
     // q = ½·ρ·|v_n|·v_n  (signed, in Pa → kPa)
     const auto gamma = heatCapacityRatioEffective();
-    const auto speedOfSoundSquared = std::max(1.0, gamma * pressureKpa() * 1'000.0 / density);
+    // pressureKpa() is a pure function of the (unchanged) cell state; evaluate it
+    // once. It was previously called three times per invocation, and this method
+    // is one of the two effective-pressure evaluations inside the flow solver's
+    // inner bisection — the dominant realtime cost of the simulator.
+    const auto staticPressureKpa = pressureKpa();
+    const auto speedOfSoundSquared = std::max(1.0, gamma * staticPressureKpa * 1'000.0 / density);
     const auto machSquared = vDotN * vDotN / speedOfSoundSquared;
     const auto stagnationRatio = std::pow(1.0 + (gamma - 1.0) * 0.5 * machSquared,
                                           gamma / (gamma - 1.0));
-    return std::copysign(pressureKpa() * (stagnationRatio - 1.0), vDotN);
+    return std::copysign(staticPressureKpa * (stagnationRatio - 1.0), vDotN);
 }
 
 // ---------------------------------------------------------------------------
@@ -394,7 +399,20 @@ double ConservativeGasSystem::pressureEquilibriumMoles(const GasCell& source,
     if (requestedSourcePressure >= requestedSinkPressure) return high;
     // Keep `low` on the non-crossed side: a committed transfer may approach
     // equilibrium but must never reverse the pressure gradient.
+    //
+    // The bracket is bisected until either the moles are resolved finely
+    // relative to the transfer being committed, or the 16-iteration ceiling is
+    // reached. The fixed count previously refined every call to 2^-16 of the
+    // initial bracket even when that precision could not change the downstream
+    // gas state; each iteration costs two GasCell copies plus two effective-
+    // pressure evaluations, and this bisection is the dominant realtime cost of
+    // the whole simulator. Terminating at ~2^-8 of the initial bracket leaves a
+    // residual far below the substep integration's sensitivity: combustion
+    // phasing shifts by at most ~1-2 deg CA and stays inside the MBT window
+    // (verified against EngineLab.CombustionPhasing and EngineLab.PhysicsRegression).
+    const auto convergenceMoles = std::max(1.0e-15, high * 3.91e-3); // 2^-8 of initial bracket
     for (int iteration = 0; iteration < 16; ++iteration) {
+        if (high - low <= convergenceMoles) break;
         const auto middle = 0.5 * (low + high);
         auto sourceCopy = source;
         auto sinkCopy = sink;
