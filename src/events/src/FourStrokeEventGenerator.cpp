@@ -75,9 +75,21 @@ std::size_t FourStrokeEventGenerator::generate(
             const auto crankDegreesToExhaustOpen = std::fmod(exhaustOpenGlobalAngle - target + cycle, cycle);
             const auto valveEventDelaySeconds = state.rpm > 20.0
                 ? static_cast<float>(crankDegreesToExhaustOpen / (state.rpm * 6.0)) : 0.0F;
+            // Driver pedal position is not cylinder charge: at closed-throttle
+            // idle the separate bypass supplies a real combustible load while
+            // state.throttle is exactly zero.  Using thermodynamic load keeps
+            // the transient accent proportional to the charge that fired.
+            // Misfires retain that physical reference intensity and are
+            // attenuated once by the renderer's misfire path; the former fixed
+            // 0.04 value could make an idle misfire louder than a valid firing.
+            const auto thermodynamicLoad = static_cast<float>(
+                std::clamp(state.load, 0.0, 1.35));
+            const auto eventIntensity = std::clamp(thermodynamicLoad
+                * static_cast<float>(combustion.combustionQuality)
+                * variation * fuelDelivery * (0.65F + resolvedPulse * 0.35F),
+                0.001F, 1.0F);
             FiringEvent event { eventTime, cylinderId, target,
-                misfire ? 0.04F : std::clamp(static_cast<float>(state.throttle * combustion.combustionQuality)
-                    * variation * fuelDelivery * (0.65F + resolvedPulse * 0.35F), 0.001F, 1.0F),
+                eventIntensity,
                 resolvedPressureBar,
                 resolvedCombustionDurationMs,
                 static_cast<float>(state.airFuelRatio), static_cast<float>(ecu.ignitionAdvanceDegrees),

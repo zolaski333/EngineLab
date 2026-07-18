@@ -201,7 +201,8 @@ void RealtimeEngineAudio::release() noexcept {
     antiAliasLeftA_ = antiAliasLeftB_ = antiAliasRightA_ = antiAliasRightB_ = 0.0F;
     dcInputLeft_ = dcInputRight_ = dcOutputLeft_ = dcOutputRight_ = 0.0F;
     toneLowLeft_ = toneLowRight_ = 0.0F;
-    radiationLowLeft_ = radiationLowRight_ = 0.0F;
+    exhaustRadiationLowLeft_ = exhaustRadiationLowRight_ = 0.0F;
+    wetExhaustRadiationLowLeft_ = wetExhaustRadiationLowRight_ = 0.0F;
     currentPressureSample_ = {}; nextPressureSample_ = {};
     hasCurrentPressureSample_ = hasNextPressureSample_ = false;
     cylinderPressureRawPrevious_.fill(0.0F);
@@ -849,9 +850,25 @@ void RealtimeEngineAudio::render(juce::AudioBuffer<float>& output, int startSamp
         combustionRight += pressureTailRight_ * 0.08F;
         exhaustLeft += noise() * highNoise * speedGain * 0.002F;
         exhaustRight += noise() * highNoise * speedGain * 0.002F;
-        auto left = (combustionLeft * combustionGain + exhaustLeft * exhaustGain
+
+        // Only pressure/flow emerging from the exhaust termination receives
+        // the open-pipe radiation shelf.  Applying it after the master mix used
+        // to attenuate combustion, intake and mechanical fundamentals by about
+        // 11 dB at idle even though those sources do not radiate from the
+        // tailpipe.  Dry and IR-wet exhaust are filtered independently; the
+        // shelf is linear, so their sum is equivalent to filtering one exhaust
+        // bus without touching the other layers.
+        exhaustRadiationLowLeft_ += radiationLowCoefficient_
+            * (exhaustLeft - exhaustRadiationLowLeft_);
+        exhaustRadiationLowRight_ += radiationLowCoefficient_
+            * (exhaustRight - exhaustRadiationLowRight_);
+        const auto radiatedExhaustLeft = exhaustLeft
+            - exhaustRadiationLowLeft_ * 0.78F;
+        const auto radiatedExhaustRight = exhaustRight
+            - exhaustRadiationLowRight_ * 0.78F;
+        auto left = (combustionLeft * combustionGain + radiatedExhaustLeft * exhaustGain
             + intakeLeft * intakeGain + mechanicalLeft * mechanicalGain) * acousticDisplacementScale;
-        auto right = (combustionRight * combustionGain + exhaustRight * exhaustGain
+        auto right = (combustionRight * combustionGain + radiatedExhaustRight * exhaustGain
             + intakeRight * intakeGain + mechanicalRight * mechanicalGain) * acousticDisplacementScale;
         lowPassLeft_ += lowPassCoefficient_ * (left - lowPassLeft_);
         lowPassRight_ += lowPassCoefficient_ * (right - lowPassRight_);
@@ -872,10 +889,20 @@ void RealtimeEngineAudio::render(juce::AudioBuffer<float>& output, int startSamp
             ? output.getSample(0, startSample + sample) : 0.0F;
         const auto dryRight = output.getNumChannels() > 1
             ? output.getSample(1, startSample + sample) : dryLeft;
+        const auto wetExhaustLeft = convolutionBank_.wetSample(0, sample);
+        const auto wetExhaustRight = convolutionBank_.wetSample(1, sample);
+        wetExhaustRadiationLowLeft_ += radiationLowCoefficient_
+            * (wetExhaustLeft - wetExhaustRadiationLowLeft_);
+        wetExhaustRadiationLowRight_ += radiationLowCoefficient_
+            * (wetExhaustRight - wetExhaustRadiationLowRight_);
+        const auto radiatedWetExhaustLeft = wetExhaustLeft
+            - wetExhaustRadiationLowLeft_ * 0.78F;
+        const auto radiatedWetExhaustRight = wetExhaustRight
+            - wetExhaustRadiationLowRight_ * 0.78F;
         auto left = finiteState(dryLeft
-            + convolutionBank_.wetSample(0, sample) * irMix * exhaustGain, 24.0F);
+            + radiatedWetExhaustLeft * irMix * exhaustGain, 24.0F);
         auto right = finiteState(dryRight
-            + convolutionBank_.wetSample(1, sample) * irMix * exhaustGain, 24.0F);
+            + radiatedWetExhaustRight * irMix * exhaustGain, 24.0F);
 
         toneLowLeft_ += toneCoefficient_ * (left - toneLowLeft_);
         toneLowRight_ += toneCoefficient_ * (right - toneLowRight_);
@@ -889,19 +916,9 @@ void RealtimeEngineAudio::render(juce::AudioBuffer<float>& output, int startSamp
         dcOutputLeft_ = finiteState(dcLeft, 24.0F);
         dcOutputRight_ = finiteState(dcRight, 24.0F);
 
-        // A pressure/flow waveform inside a tailpipe is not yet the pressure at
-        // a listener.  The radiation impedance of the open termination and
-        // finite microphone distance form a low shelf: sub-250 Hz energy is
-        // retained, but no longer behaves like an impossible pressure probe
-        // mounted inside the collector.
-        radiationLowLeft_ += radiationLowCoefficient_ * (dcOutputLeft_ - radiationLowLeft_);
-        radiationLowRight_ += radiationLowCoefficient_ * (dcOutputRight_ - radiationLowRight_);
-        const auto radiatedLeft = dcOutputLeft_ - radiationLowLeft_ * 0.78F;
-        const auto radiatedRight = dcOutputRight_ - radiationLowRight_ * 0.78F;
-
-        antiAliasLeftA_ += antiAliasCoefficient_ * (radiatedLeft - antiAliasLeftA_);
+        antiAliasLeftA_ += antiAliasCoefficient_ * (dcOutputLeft_ - antiAliasLeftA_);
         antiAliasLeftB_ += antiAliasCoefficient_ * (antiAliasLeftA_ - antiAliasLeftB_);
-        antiAliasRightA_ += antiAliasCoefficient_ * (radiatedRight - antiAliasRightA_);
+        antiAliasRightA_ += antiAliasCoefficient_ * (dcOutputRight_ - antiAliasRightA_);
         antiAliasRightB_ += antiAliasCoefficient_ * (antiAliasRightA_ - antiAliasRightB_);
         left = antiAliasLeftB_ * physicalReferenceLevel * volume;
         right = antiAliasRightB_ * physicalReferenceLevel * volume;

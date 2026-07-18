@@ -15,6 +15,7 @@
 //    measured RT60 instead of by ear.
 
 #include <enginelab/audio/RealtimeEngineAudio.hpp>
+#include <enginelab/catalog/EngineCatalog.hpp>
 #include <enginelab/ecu/SimpleEcuModel.hpp>
 #include <enginelab/events/FourStrokeEventGenerator.hpp>
 #include <enginelab/exhaust/ExhaustGraph.hpp>
@@ -417,6 +418,185 @@ Metrics renderEngine(const EngineConfig& baseConfig, const WavData& ir,
     return m;
 }
 
+struct IdleCycleMetrics final {
+    double initialIdleRpm {};
+    double initialIdleRms {};
+    double revPeakRpm {};
+    double returnedIdleRpm {};
+    double returnedIdleRms {};
+    SafetyScan scan {};
+    std::uint64_t droppedEvents {};
+    std::uint64_t droppedPressureSamples {};
+    std::uint64_t lateEvents {};
+    std::uint64_t levelLimitedSamples {};
+    float minLevelGain { 1.0F };
+};
+
+IdleCycleMetrics renderIdleCycle(const EngineConfig& baseConfig, const WavData& ir,
+                                 const std::filesystem::path& outDir) {
+    auto config = baseConfig;
+    normaliseEngineConfig(config);
+    SimpleEcuModel ecu;
+    SimplifiedGasolinePhysics physics;
+    FourStrokeEventGenerator events;
+    auto exhaust = ExhaustGraph::makeForEngine(config);
+    EngineSimulator simulator(config, ecu, physics, events, exhaust);
+    simulator.setPressureSamplingEnabled(true);
+
+    FiringEventQueue eventQueue;
+    CylinderPressureQueue pressureQueue;
+    EngineRuntime audioConfiguration(config);
+    auto& audioState = audioConfiguration.audioState();
+    RealtimeEngineAudio renderer(eventQueue, audioState, &pressureQueue);
+    if (!ir.samples.empty()) renderer.setImpulseResponse(ir.samples, ir.sampleRate, 0);
+    constexpr double audioRate = 48'000.0;
+    constexpr double dt = 1.0 / 240.0;
+    constexpr int samplesPerStep = 200;
+    constexpr double durationSeconds = 12.0;
+    renderer.prepare(audioRate, samplesPerStep);
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+
+    std::vector<float> left;
+    std::vector<float> right;
+    left.reserve(static_cast<std::size_t>(durationSeconds * audioRate));
+    right.reserve(left.capacity());
+    juce::AudioBuffer<float> block(2, samplesPerStep);
+    IdleCycleMetrics metrics;
+    double initialRpmSum = 0.0;
+    double returnedRpmSum = 0.0;
+    double initialSquareSum = 0.0;
+    double returnedSquareSum = 0.0;
+    std::size_t initialStateSamples = 0;
+    std::size_t returnedStateSamples = 0;
+    std::size_t initialAudioSamples = 0;
+    std::size_t returnedAudioSamples = 0;
+    double realtimeSeconds = 0.0;
+
+    const auto steps = static_cast<std::size_t>(durationSeconds / dt);
+    for (std::size_t step = 0; step < steps; ++step) {
+        const auto t = static_cast<double>(step) * dt;
+        EngineControls controls;
+        controls.ignitionEnabled = true;
+        controls.starterEngaged = t < 1.5;
+        if (t >= 4.0 && t < 4.4) controls.throttle = (t - 4.0) * 0.55;
+        else if (t >= 4.4 && t < 4.7) controls.throttle = 0.22;
+        else if (t >= 4.7 && t < 5.0) controls.throttle = (5.0 - t) * (0.22 / 0.30);
+
+        auto frame = simulator.step(dt, controls);
+        metrics.droppedEvents += frame.droppedFiringEventCount;
+        metrics.droppedPressureSamples += frame.droppedCylinderPressureSampleCount;
+        const auto simulationStart = frame.state.simulationTimeSeconds - dt;
+        for (std::size_t index = 0; index < frame.firingEventCount; ++index) {
+            auto event = frame.firingEvents[index];
+            const auto fraction = std::clamp(
+                (event.timeSeconds - simulationStart) / dt, 0.0, 1.0);
+            event.timeSeconds = realtimeSeconds + fraction * dt;
+            if (!eventQueue.tryPush(event)) ++metrics.droppedEvents;
+        }
+        CylinderPressureSample pressureSample;
+        while (simulator.tryPopCylinderPressureSample(pressureSample)) {
+            const auto fraction = std::clamp(
+                (pressureSample.timeSeconds - simulationStart) / dt, 0.0, 1.0);
+            pressureSample.timeSeconds = realtimeSeconds + fraction * dt;
+            if (!pressureQueue.tryPush(pressureSample)) ++metrics.droppedPressureSamples;
+        }
+        publishAudioFrame(audioState, frame.state,
+            { false, controls.starterEngaged, 0.0, 1.0 });
+        audioState.producerTimeNanoseconds.store(
+            static_cast<std::uint64_t>((realtimeSeconds + dt) * 1.0e9),
+            std::memory_order_release);
+        block.clear();
+        renderer.render(block, 0, samplesPerStep);
+
+        if (t >= 2.5 && t < 4.0) {
+            initialRpmSum += frame.state.rpm;
+            ++initialStateSamples;
+        }
+        if (t >= 4.0 && t < 7.0)
+            metrics.revPeakRpm = std::max(metrics.revPeakRpm, frame.state.rpm);
+        if (t >= 10.0) {
+            returnedRpmSum += frame.state.rpm;
+            ++returnedStateSamples;
+        }
+        for (int sample = 0; sample < samplesPerStep; ++sample) {
+            const auto leftSample = block.getSample(0, sample);
+            const auto rightSample = block.getSample(1, sample);
+            left.push_back(leftSample);
+            right.push_back(rightSample);
+            if (t >= 2.5 && t < 4.0) {
+                initialSquareSum += static_cast<double>(leftSample) * leftSample;
+                ++initialAudioSamples;
+            }
+            if (t >= 10.0) {
+                returnedSquareSum += static_cast<double>(leftSample) * leftSample;
+                ++returnedAudioSamples;
+            }
+        }
+        realtimeSeconds += dt;
+    }
+
+    if (initialStateSamples != 0)
+        metrics.initialIdleRpm = initialRpmSum / static_cast<double>(initialStateSamples);
+    if (returnedStateSamples != 0)
+        metrics.returnedIdleRpm = returnedRpmSum / static_cast<double>(returnedStateSamples);
+    if (initialAudioSamples != 0)
+        metrics.initialIdleRms = std::sqrt(initialSquareSum
+            / static_cast<double>(initialAudioSamples));
+    if (returnedAudioSamples != 0)
+        metrics.returnedIdleRms = std::sqrt(returnedSquareSum
+            / static_cast<double>(returnedAudioSamples));
+    metrics.scan = scanSignal(left);
+    metrics.droppedEvents += renderer.droppedPendingEventCount();
+    metrics.lateEvents = renderer.lateEventCount();
+    metrics.levelLimitedSamples = renderer.levelLimitedSampleCount();
+    metrics.minLevelGain = renderer.minObservedLevelGain();
+    writeWav(outDir / "idle-start-rev-return.wav", left, right,
+             static_cast<int>(audioRate));
+    std::cout << std::left << std::setw(26) << config.name
+              << " initial=" << std::fixed << std::setprecision(0)
+              << metrics.initialIdleRpm << " rpm/" << std::setprecision(4)
+              << metrics.initialIdleRms << " RMS"
+              << " revPeak=" << std::setprecision(0) << metrics.revPeakRpm
+              << " returned=" << metrics.returnedIdleRpm << " rpm/"
+              << std::setprecision(4) << metrics.returnedIdleRms << " RMS"
+              << " peak=" << metrics.scan.peak
+              << " dropped=" << metrics.droppedEvents << '/'
+              << metrics.droppedPressureSamples
+              << " late=" << metrics.lateEvents
+              << " levelLimited=" << metrics.levelLimitedSamples
+              << '\n';
+    return metrics;
+}
+
+bool validateIdleCycle(const IdleCycleMetrics& metrics,
+                       const EngineConfig& config) {
+    auto ok = true;
+    const auto fail = [&ok](const std::string& reason) {
+        std::cerr << "FAIL: true idle cycle: " << reason << '\n';
+        ok = false;
+    };
+    if (!metrics.scan.finite || metrics.scan.peak > 1.00001)
+        fail("non-finite or out-of-range audio");
+    if (metrics.scan.nearFullScaleFraction > 0.002
+            || metrics.scan.longestFlatTop > 8)
+        fail("rev transient clips or spends too long near digital full scale");
+    if (metrics.initialIdleRpm < config.idleRpm * 0.65
+            || metrics.returnedIdleRpm < config.idleRpm * 0.65)
+        fail("engine did not sustain idle before and after the rev");
+    if (metrics.returnedIdleRpm > config.idleRpm * 1.60)
+        fail("engine did not return to the idle-speed region");
+    if (metrics.revPeakRpm < metrics.initialIdleRpm * 1.40)
+        fail("throttle phase did not produce a meaningful rev");
+    if (metrics.initialIdleRms < 0.012 || metrics.returnedIdleRms < 0.012)
+        fail("idle audio is below the calibrated -38.4 dBFS RMS floor");
+    if (metrics.droppedEvents != 0 || metrics.droppedPressureSamples != 0
+            || metrics.lateEvents != 0)
+        fail("realtime telemetry or events were dropped/late");
+    if (metrics.levelLimitedSamples != 0 || metrics.minLevelGain < 0.99999F)
+        fail("safety leveler engaged during the idle cycle");
+    return ok;
+}
+
 // ---------------------------------------------------------------------------
 // Exhaust decay instrument
 // ---------------------------------------------------------------------------
@@ -584,10 +764,12 @@ int main(int argc, char** argv) {
     std::cout << std::unitbuf;
     std::filesystem::path outDir = "audio-render-output";
     std::filesystem::path irPath = std::filesystem::path(ENGINELAB_CATALOG_ROOT) / "assets" / "ir" / "exhaust_default.wav";
+    bool idleOnly = false;
     for (int i = 1; i < argc; ++i) {
         const std::string a = argv[i];
         if (a == "--output" && i + 1 < argc) outDir = argv[++i];
         else if (a == "--ir" && i + 1 < argc) irPath = argv[++i];
+        else if (a == "--idle-only") idleOnly = true;
     }
     std::filesystem::create_directories(outDir);
 
@@ -597,6 +779,17 @@ int main(int argc, char** argv) {
                   << " samples @ " << ir.sampleRate << " Hz)\n";
     else
         std::cout << "WARNING: could not load IR at " << irPath.string() << " (using renderer fallback)\n";
+
+    if (idleOnly) {
+        const auto catalog = loadEngineCatalog(std::filesystem::path(ENGINELAB_CATALOG_ROOT));
+        const auto idleEngine = std::find_if(catalog.entries.begin(), catalog.entries.end(),
+            [](const auto& entry) {
+                return entry.config.name.find("Big Twin") != std::string::npos;
+            });
+        if (idleEngine == catalog.entries.end()) return 2;
+        const auto idleCycle = renderIdleCycle(idleEngine->config, ir, outDir);
+        return validateIdleCycle(idleCycle, idleEngine->config) ? 0 : 1;
+    }
 
     struct Named { std::string label; EngineConfig config; };
     std::vector<Named> engines {
@@ -626,6 +819,15 @@ int main(int argc, char** argv) {
 
     std::cout << "\n--- Long-run stability (inline4, 25 s) ---\n";
     const auto stability = renderEngine(makeDefaultInlineFour(), ir, outDir, 25.0, false);
+
+    const auto catalog = loadEngineCatalog(std::filesystem::path(ENGINELAB_CATALOG_ROOT));
+    const auto idleEngine = std::find_if(catalog.entries.begin(), catalog.entries.end(),
+        [](const auto& entry) {
+            return entry.config.name.find("Big Twin") != std::string::npos;
+        });
+    std::cout << "\n--- True idle start/rev/return (catalog Big Twin, 12 s) ---\n";
+    const auto idleCycle = idleEngine != catalog.entries.end()
+        ? renderIdleCycle(idleEngine->config, ir, outDir) : IdleCycleMetrics {};
 
     // Instrument, not a gate: the correct RT60 per preset is not yet established,
     // so this reports the measurement and only fails if the tail is unmeasurable.
@@ -697,6 +899,10 @@ int main(int argc, char** argv) {
         validate(metrics[index], engines[index].label, true);
     validate(turbo, "synthetic turbo", true);
     validate(stability, "long-run inline4", true);
+    if (idleEngine == catalog.entries.end()) {
+        std::cerr << "FAIL: catalog Big Twin fixture is missing\n";
+        ok = false;
+    } else if (!validateIdleCycle(idleCycle, idleEngine->config)) ok = false;
     if (worstSimilarity > 0.985) {
         std::cerr << "FAIL: engines are not spectrally differentiated (max similarity "
                   << worstSimilarity << ")\n";

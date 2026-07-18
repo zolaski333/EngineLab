@@ -308,6 +308,9 @@ void latencyAndBlockSizeRegression() {
             "event latency must be applied exactly once at 48 kHz");
     require(std::abs(static_cast<double>(onset96) / 96'000.0 - 0.020) < 0.001,
             "event latency must be invariant at 96 kHz");
+    const auto isolatedCombustion = analyseWaveform(at48k, onset48);
+    require(isolatedCombustion.rms > 0.008 && isolatedCombustion.peak > 0.05,
+            "tailpipe radiation filtering must not attenuate the isolated combustion bus");
 
     const auto oversized = renderEvent(48'000.0, 256, 2'400, true);
     const auto chunked = renderEvent(48'000.0, 256, 2'400, false);

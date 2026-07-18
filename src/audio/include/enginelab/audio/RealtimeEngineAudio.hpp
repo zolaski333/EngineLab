@@ -212,8 +212,10 @@ private:
     float dcOutputRight_ { 0.0F };
     float toneLowLeft_ { 0.0F };
     float toneLowRight_ { 0.0F };
-    float radiationLowLeft_ { 0.0F };
-    float radiationLowRight_ { 0.0F };
+    float exhaustRadiationLowLeft_ { 0.0F };
+    float exhaustRadiationLowRight_ { 0.0F };
+    float wetExhaustRadiationLowLeft_ { 0.0F };
+    float wetExhaustRadiationLowRight_ { 0.0F };
     float pressureTailLeft_ { 0.0F };
     float pressureTailRight_ { 0.0F };
     std::array<float, 32> cylinderPressureRawPrevious_ {};

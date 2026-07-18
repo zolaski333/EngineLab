@@ -13,7 +13,7 @@ enginelab_set_warnings(EngineLabPhysicsPerfHarness)
 add_executable(EngineLabAudioRenderHarness AudioRenderHarness.cpp)
 target_link_libraries(EngineLabAudioRenderHarness PRIVATE
     EngineLab::Audio EngineLab::Simulation EngineLab::Foundation EngineLab::Physics
-    EngineLab::Ecu EngineLab::Events EngineLab::Exhaust)
+    EngineLab::Ecu EngineLab::Events EngineLab::Exhaust EngineLab::Catalog)
 target_compile_definitions(EngineLabAudioRenderHarness PRIVATE ENGINELAB_CATALOG_ROOT="${CMAKE_SOURCE_DIR}")
 if(MSVC)
     target_link_options(EngineLabAudioRenderHarness PRIVATE /STACK:8388608)

@@ -587,6 +587,79 @@ int main() {
         const auto overspeed = idleEcu.evaluate(config, aboveIdle, closedThrottle);
         require(overspeed.effectiveThrottle == 0.0 && overspeed.idleAirOpening < 0.05,
                 "idle actuator must close when engine speed is above target");
+
+        enginelab::EngineControls driverRev { true, false, 0.30, 0.0 };
+        aboveIdle.throttle = driverRev.throttle;
+        for (int step = 0; step < 300; ++step) {
+            aboveIdle.simulationTimeSeconds += 0.01;
+            (void)idleEcu.evaluate(config, aboveIdle, driverRev);
+        }
+        aboveIdle.simulationTimeSeconds += 0.01;
+        aboveIdle.rpm = config.idleRpm;
+        aboveIdle.throttle = 0.0;
+        const auto liftOff = idleEcu.evaluate(config, aboveIdle, closedThrottle);
+        require(liftOff.idleAirOpening > 0.35,
+                "driver override must not wind the idle integral shut before lift-off");
+
+        aboveIdle.rpm = config.idleRpm * 3.0;
+        for (int step = 0; step < 600; ++step) {
+            aboveIdle.simulationTimeSeconds += 0.01;
+            (void)idleEcu.evaluate(config, aboveIdle, closedThrottle);
+        }
+        aboveIdle.simulationTimeSeconds += 0.01;
+        aboveIdle.rpm = config.idleRpm;
+        const auto decelerationCatch = idleEcu.evaluate(config, aboveIdle, closedThrottle);
+        require(decelerationCatch.idleAirOpening > 0.20,
+                "overspeed correction must preserve enough idle air to catch a falling engine");
+    }
+
+    {
+        enginelab::SimpleEcuModel transientEcu;
+        transientEcu.initialise(config);
+        enginelab::EngineState transientState;
+        transientState.simulationTimeSeconds = 1.0;
+        transientState.rpm = config.idleRpm;
+        transientState.coolantTemperatureC = 90.0;
+        enginelab::EngineControls transientControls { true, false, 0.0, 0.0 };
+        (void)transientEcu.evaluate(config, transientState, transientControls);
+        transientState.simulationTimeSeconds += 0.01;
+        transientControls.throttle = 0.40;
+        const auto tipIn = transientEcu.evaluate(config, transientState, transientControls);
+        require(tipIn.fuelCorrection > 1.8,
+                "tip-in must command a solver-rate-independent transient fuel reserve");
+        for (int step = 0; step < 300; ++step) {
+            transientState.simulationTimeSeconds += 0.01;
+            (void)transientEcu.evaluate(config, transientState, transientControls);
+        }
+        transientState.simulationTimeSeconds += 0.01;
+        const auto settledThrottle = transientEcu.evaluate(
+            config, transientState, transientControls);
+        require(settledThrottle.fuelCorrection < 1.02,
+                "acceleration fuel reserve must decay back to the steady-state map");
+
+        transientState.simulationTimeSeconds += 0.01;
+        transientState.rpm = config.idleRpm * 2.0;
+        transientState.throttle = 0.0;
+        transientControls.throttle = 0.0;
+        const auto overrun = transientEcu.evaluate(
+            config, transientState, transientControls);
+        require(!overrun.fuelEnabled && overrun.sparkEnabled,
+                "closed-throttle overrun must cut fuel without disabling ignition");
+        transientState.simulationTimeSeconds += 0.01;
+        transientState.rpm = config.idleRpm * 1.10;
+        const auto fuelResume = transientEcu.evaluate(
+            config, transientState, transientControls);
+        require(fuelResume.fuelEnabled && fuelResume.fuelCorrection < 0.10,
+                "deceleration fuel cut must release before the idle catch region");
+        for (int step = 0; step < 40; ++step) {
+            transientState.simulationTimeSeconds += 0.01;
+            (void)transientEcu.evaluate(config, transientState, transientControls);
+        }
+        transientState.simulationTimeSeconds += 0.01;
+        const auto resumedFuel = transientEcu.evaluate(
+            config, transientState, transientControls);
+        require(resumedFuel.fuelCorrection > 0.98,
+                "post-overrun fuel ramp must return to the steady-state command");
     }
 
     {
@@ -1158,6 +1231,7 @@ int main() {
         fallbackState.simulationTimeSeconds = 1.0;
         fallbackState.rpm = 3'000.0;
         fallbackState.throttle = 0.6;
+        fallbackState.load = 0.6;
         enginelab::EcuCommand fallbackCommand;
         fallbackCommand.fuelEnabled = true;
         fallbackCommand.sparkEnabled = true;
@@ -1190,6 +1264,32 @@ int main() {
             require(std::abs(fullQualityGenerated[index].pressureEstimateBar - 70.0F) < 1.0e-2F,
                     "with no resolved cylinder state, firing pressure must fall back to combustion.pressureEstimateBar");
         }
+
+        auto idleState = fallbackState;
+        idleState.rpm = config.idleRpm;
+        idleState.throttle = 0.0;
+        idleState.load = 0.18;
+        enginelab::FourStrokeEventGenerator idleEvents;
+        std::array<enginelab::FiringEvent, 64> idleGenerated {};
+        const auto idleCount = idleEvents.generate(config, idleState, fallbackCommand,
+            makeCombustion(1.0), 0.95, 680.0, 1'500.0, 0.05, idleGenerated);
+        require(idleCount > 0 && idleGenerated[0].intensity > 0.05F,
+                "idle-bypass load must produce audible events with the driver throttle closed");
+
+        auto misfireCombustion = makeCombustion(1.0);
+        misfireCombustion.misfireProbability = 1.0;
+        enginelab::FourStrokeEventGenerator healthyEvents;
+        enginelab::FourStrokeEventGenerator misfireEvents;
+        std::array<enginelab::FiringEvent, 64> healthyGenerated {};
+        std::array<enginelab::FiringEvent, 64> misfireGenerated {};
+        const auto healthyCount = healthyEvents.generate(config, idleState, fallbackCommand,
+            makeCombustion(1.0), 0.95, 680.0, 1'500.0, 0.05, healthyGenerated);
+        const auto misfireCount = misfireEvents.generate(config, idleState, fallbackCommand,
+            misfireCombustion, 0.95, 680.0, 1'500.0, 0.05, misfireGenerated);
+        require(healthyCount > 0 && healthyCount == misfireCount
+                && !healthyGenerated[0].misfire && misfireGenerated[0].misfire
+                && std::abs(healthyGenerated[0].intensity - misfireGenerated[0].intensity) < 1.0e-6F,
+                "misfire intensity must retain its physical reference and be attenuated only by the renderer");
     }
 
     {
@@ -1522,6 +1622,7 @@ int main() {
         presetState.rpm.store(3'600.0F);
         presetState.throttle.store(0.8F);
         presetState.load.store(0.5F);
+        presetState.combustionGain.store(0.0F);
         presetState.intakeGain.store(0.0F);
         presetState.mechanicalGain.store(0.0F);
         enginelab::FiringEvent event;
@@ -1560,6 +1661,7 @@ int main() {
         turboState.rpm.store(3'600.0F);
         turboState.throttle.store(0.8F);
         turboState.load.store(0.5F);
+        turboState.combustionGain.store(0.0F);
         turboState.intakeGain.store(0.0F);
         turboState.mechanicalGain.store(0.0F);
         turboState.exhaustPreset.store(static_cast<int>(enginelab::AudioExhaustPreset::turboMuffled));
@@ -1574,6 +1676,7 @@ int main() {
 
         enginelab::FiringEventQueue directIrQueue;
         enginelab::RealtimeAudioState directIrState;
+        directIrState.combustionGain.store(0.0F);
         directIrState.intakeGain.store(0.0F);
         directIrState.mechanicalGain.store(0.0F);
         enginelab::RealtimeEngineAudio directIrRenderer(directIrQueue, directIrState);
@@ -1586,6 +1689,7 @@ int main() {
 
         enginelab::FiringEventQueue delayedIrQueue;
         enginelab::RealtimeAudioState delayedIrState;
+        delayedIrState.combustionGain.store(0.0F);
         delayedIrState.intakeGain.store(0.0F);
         delayedIrState.mechanicalGain.store(0.0F);
         enginelab::RealtimeEngineAudio delayedIrRenderer(delayedIrQueue, delayedIrState);
