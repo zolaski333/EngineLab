@@ -142,6 +142,13 @@ struct Metrics {
     std::uint64_t lateEvents {};
     std::uint64_t stolenVoices {};
     std::uint64_t delayTruncations {};
+    // Safety-leveler engagement. The slow AGC is a safety net, not a level
+    // control: in a shipped voice it must stay at identity (0 limited samples,
+    // min gain 1.0). A non-zero count means the default level is hot enough that
+    // the leveler is silently doing steady-state gain work -- exactly the kind of
+    // downstream compensation this harness exists to make visible.
+    std::uint64_t levelLimitedSamples {};
+    float minLevelGain { 1.0F };
 };
 
 SafetyScan scanSignal(const std::vector<float>& x) {
@@ -380,6 +387,8 @@ Metrics renderEngine(const EngineConfig& baseConfig, const WavData& ir,
     m.lateEvents = renderer.lateEventCount();
     m.stolenVoices = renderer.stolenVoiceCount();
     m.delayTruncations = renderer.delayTruncationCount();
+    m.levelLimitedSamples = renderer.levelLimitedSampleCount();
+    m.minLevelGain = renderer.minObservedLevelGain();
     if (writeOutput)
         writeWav(outDir / (config.name + ".wav"), audioLeft, audioRight, static_cast<int>(audioRate));
     std::cout << std::left << std::setw(26) << config.name
@@ -401,6 +410,8 @@ Metrics renderEngine(const EngineConfig& baseConfig, const WavData& ir,
               << " late="   << m.lateEvents
               << " stolen=" << m.stolenVoices
               << " truncated=" << m.delayTruncations
+              << " levelLimited=" << m.levelLimitedSamples
+              << " minLevelGain=" << std::setprecision(4) << m.minLevelGain
               << " finite=" << (m.left.scan.finite && m.right.scan.finite ? "yes" : "NO")
               << '\n';
     return m;
@@ -676,6 +687,11 @@ int main(int argc, char** argv) {
         if (m.delayTruncations != 0) fail("a delay line was too short and truncated");
         if (m.channelCorrelation > 0.999)
             fail("left and right are effectively identical: stereo image collapsed to mono");
+        // The safety leveler must be safety-only in a shipped voice: if it is
+        // pulling gain below identity here, the default level is set too hot and
+        // the AGC is silently masking that offset. Keep the level honest instead.
+        if (m.levelLimitedSamples != 0 || m.minLevelGain < 0.99999F)
+            fail("safety leveler engaged at the default voice (AGC masking a level offset)");
     };
     for (std::size_t index = 0; index < metrics.size(); ++index)
         validate(metrics[index], engines[index].label, true);

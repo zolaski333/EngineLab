@@ -35,6 +35,11 @@ public:
      */
     [[nodiscard]] std::uint64_t delayTruncationCount() const noexcept { return delayTruncations_.load(std::memory_order_relaxed); }
     [[nodiscard]] double eventLatencySeconds() const noexcept { return eventLatencySeconds_; }
+    // Read-only observers of the safety leveler, so a harness can prove whether the
+    // slow AGC actually engages in a given voice (gain < 1) or stays at identity
+    // (safety-only). These do not affect the audio path.
+    [[nodiscard]] std::uint64_t levelLimitedSampleCount() const noexcept { return levelLimitedSamples_.load(std::memory_order_relaxed); }
+    [[nodiscard]] float minObservedLevelGain() const noexcept { return minObservedLevelGain_.load(std::memory_order_relaxed); }
     /** Sample-rate invariant quantisation used by the physical runner lines. */
     [[nodiscard]] static std::size_t runnerDelaySamples(double delaySeconds,
                                                         double sampleRate) noexcept;
@@ -237,5 +242,8 @@ private:
     std::atomic<std::uint64_t> stolenVoices_ { 0 };
     std::atomic<std::uint64_t> droppedPendingEvents_ { 0 };
     std::atomic<std::uint64_t> delayTruncations_ { 0 };
+    // Safety-leveler observers (measurement only; updated once per block).
+    std::atomic<std::uint64_t> levelLimitedSamples_ { 0 };
+    std::atomic<float> minObservedLevelGain_ { 1.0F };
 };
 } // namespace enginelab

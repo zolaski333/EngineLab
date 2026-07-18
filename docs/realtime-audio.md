@@ -183,6 +183,40 @@ retirées. Le limiteur conserve une marge inter-échantillon et la dernière bor
 ne sert qu'à empêcher une valeur non finie ou pathologique d'atteindre le
 buffer.
 
+## Audit d'honnêteté du voicing
+
+Quatre compensations « fragiles » étaient signalées comme risquant de rendre les
+paramètres menteurs (un réglage qui ne fait pas ce qu'il prétend). Chacune a été
+**mesurée** au réglage `convolution` par défaut via `AudioRenderHarness` avant
+toute intervention, selon la règle « measure before you fix » de `CLAUDE.md`. Le
+résultat : trois des quatre sont déjà résolues dans le code actuel, la quatrième
+est hors du chemin audio. La preuve métrique est donnée pour chacune.
+
+| Compensation | Cause racine | État mesuré | Preuve |
+|---|---|---|---|
+| Flamme turbulente ×1.12 | Fermeture de vitesse de flamme intégrale (∝ u', pas √(u'/S_L)) dans `FlamePhysicsModel`. Physique de combustion, **pas** le chemin audio. | Load-bearing et in-spec : le calage est dans la fenêtre MBT. La « corriger » isolément décalerait le phasing sans gain observable. Hors périmètre voicing. | `EngineLab.CombustionPhasing` PASS (LPP 18–22° ATDC, CA50 9–11°). Non modifiée. |
+| AGC de sécurité masquant un offset de niveau | Leveler lent en aval de `physicalReferenceLevel = 3.50`. Le doute : le niveau serait trop chaud et l'AGC le rabattrait en silence. | **Faux au voicing par défaut** : le leveler reste à l'identité exacte. Les pics (0,29–0,70) restent sous le seuil 0,78 ; l'AGC ne fait aucun travail de gain permanent. C'est réellement un filet de sécurité. | `minLevelGain = 1.0000`, `levelLimited = 0` sur les 4 moteurs, le turbo et les 25 s de stabilité. |
+| Presets de silencieux réglés sur une matrice FDN mal normalisée | Hadamard normalisée `H/4` (0,25) divisant l'énergie par deux à chaque tour → le gain de preset valait la moitié de sa valeur affichée. | Corrigée en `H/2` (0,5, sans perte) ; les valeurs `fdn` ont été divisées par deux et `presetFdngain_` est désormais le **vrai** gain de boucle. | RT60 Schroeder par preset stable et fini (street 0,123 s, turbo 0,136 s, long-tube 0,131 s). |
+| Couplage `convolution` ↔ modèle de silencieux | Baisser l'IR coupait aussi le FDN et l'excitation du corps. | Découplé : `fdnWet = processMufflerFdn(...) * presetWet_` **sans** facteur `convolution` ; `irMix = convolution·0,5` ne pilote que le mélange d'IR. Résiduel : les `presetWet_` sont calibrés à la main en intégrant le défaut 0,45 — c'est une provenance de valeur, plus un couplage runtime. | Le harness encadre la décroissance dry (FDN seul) vs full (IR) par preset ; baisser `convolution` ne change plus la queue du FDN. |
+
+**Contribution concrète de cette session.** L'AGC était affirmée « safety-only »
+par un commentaire, sans preuve. Elle est désormais **mesurée et gardée** :
+`RealtimeEngineAudio` expose `levelLimitedSampleCount()` et
+`minObservedLevelGain()` (observateurs en lecture seule, publiés une fois par
+bloc, sans effet sur l'audio), et `EngineLab.AudioRender` échoue si le leveler
+s'engage au voicing par défaut. Vérifié non-vacuous : porter
+`physicalReferenceLevel` à 30 engage le leveler (`minLevelGain ≈ 0,40`) et fait
+échouer le gate ; le retour à 3,50 le repasse à l'identité. Le paramètre déclare
+donc maintenant ce qu'il est, au lieu qu'un commentaire l'affirme.
+
+**Preuve d'absence de changement de son.** L'instrumentation ci-dessus est
+purement observatrice : les métriques audio (RMS, pic, crête, bandes, RT60) sont
+**bit-identiques** au baseline capturé avant modification (diff vide au réglage
+par défaut). Aucun refactor supplémentaire n'a été fait sur les trois
+compensations déjà résolues : leurs valeurs de preset sont calibrées (non des
+multiples ronds), et les « ré-honnêtiser » cosmétiquement risquerait un écart de
+voicing pour zéro gain mesurable — précisément ce que `CLAUDE.md` interdit.
+
 ## Validation
 
 `EngineLab.RealtimeRegression` couvre notamment le routage continu par chemin,

@@ -865,6 +865,8 @@ void RealtimeEngineAudio::render(juce::AudioBuffer<float>& output, int startSamp
     // Pass 1: dry/wet sum, a genuine high shelf, DC removal, reconstruction
     // filtering and calibrated gain staging.  Master volume is deliberately
     // before the only output limiter, so volume=2 can never create >0 dBFS.
+    std::uint64_t levelLimitedBlockSamples = 0;
+    float levelGainBlockMin = 1.0F;
     for (int sample = 0; sample < sampleCount; ++sample) {
         const auto dryLeft = output.getNumChannels() > 0
             ? output.getSample(0, startSample + sample) : 0.0F;
@@ -915,9 +917,16 @@ void RealtimeEngineAudio::render(juce::AudioBuffer<float>& output, int startSamp
         const auto levelRate = targetGain < levelGain_
             ? gainAttackCoefficient_ : gainReleaseCoefficient_;
         levelGain_ += levelRate * (targetGain - levelGain_);
+        if (levelGain_ < 0.99999F) ++levelLimitedBlockSamples;
+        levelGainBlockMin = std::min(levelGainBlockMin, levelGain_);
         if (output.getNumChannels() > 0) output.setSample(0, startSample + sample, left * levelGain_);
         if (output.getNumChannels() > 1) output.setSample(1, startSample + sample, right * levelGain_);
     }
+    // Publish the leveler observers once per block (measurement only).
+    if (levelLimitedBlockSamples != 0)
+        levelLimitedSamples_.fetch_add(levelLimitedBlockSamples, std::memory_order_relaxed);
+    if (levelGainBlockMin < minObservedLevelGain_.load(std::memory_order_relaxed))
+        minObservedLevelGain_.store(levelGainBlockMin, std::memory_order_relaxed);
     // Pass 2: single transparent soft-limiter (identity below the knee), run at
     // 2x oversampling so the peak-shaping harmonics do not alias back down.
     if (oversampler_ && output.getNumChannels() >= 2) {

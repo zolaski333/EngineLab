@@ -14,3 +14,9 @@ compile_commands.json
 .DS_Store
 .agents/
 
+# Throwaway measurement artifacts (baselines, WAV clips, CSVs) from the audio harnesses
+scratch-ab/
+audio-render-output/
+audio-ab-output/
+listening-test/
+
