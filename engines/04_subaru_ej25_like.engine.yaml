@@ -18,7 +18,7 @@ engine:
     throttle_diameter_mm: 65
     runner_length_mm: 340
     runner_diameter_mm: 42
-    idle_bypass_area_mm2: 20
+    idle_bypass_area_mm2: 40
     throttle_gamma: 1.50
   forced_induction:
     enabled: true

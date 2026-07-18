@@ -104,33 +104,64 @@ EcuCommand SimpleEcuModel::evaluate(const EngineConfig& config, const EngineStat
     const auto idleDt = previousIdleTime > 0.0
         ? std::clamp(state.simulationTimeSeconds - previousIdleTime, 0.0, 0.02) : 0.0;
     auto idleIntegral = idleIntegral_.load(std::memory_order_relaxed);
+    auto idleDashpot = idleDashpot_.load(std::memory_order_relaxed);
     auto idleAirOpening = 0.0;
     if (controls.ignitionEnabled || controls.starterEngaged) {
         const auto targetRpm = std::max(300.0, config.idleRpm);
         const auto normalizedError = (targetRpm - state.rpm) / targetRpm;
+        // Cross-fade against the physical (smoothed) throttle plate, not the
+        // driver's instantaneous request. Otherwise the bypass snaps shut one
+        // integration step before the plate has opened and creates a real air
+        // gap during tip-in.
+        const auto driverOverride = std::clamp(1.0 - state.throttle * 12.0, 0.0, 1.0);
         constexpr double feedForward = 0.42;
         constexpr double proportionalGain = 0.90;
         constexpr double integralGain = 0.55;
-        const auto proposedIntegral = std::clamp(
-            idleIntegral + normalizedError * integralGain * idleDt, -0.42, 0.58);
-        const auto proposedCommand = feedForward
-            + proportionalGain * normalizedError + proposedIntegral;
-        // Conditional integration prevents wind-up when the actuator is on a
-        // stop and the error would push it farther into saturation.
-        if ((proposedCommand > 0.0 && proposedCommand < 1.0)
-            || (proposedCommand <= 0.0 && normalizedError > 0.0)
-            || (proposedCommand >= 1.0 && normalizedError < 0.0))
-            idleIntegral = proposedIntegral;
+        constexpr double minimumIntegral = -0.20;
+        if (effectiveThrottle > 0.02) {
+            // A real throttle/idle system does not snap from a driven opening
+            // to the closed-throttle stop. Preserve a short deceleration-air
+            // dashpot so manifold filling and fuel transport can settle before
+            // the PI loop resumes sole authority.
+            idleDashpot = std::max(idleDashpot,
+                std::clamp(effectiveThrottle * 2.0, 0.0, 0.65));
+        } else {
+            idleDashpot *= std::exp(-idleDt * 1.25);
+        }
+        if (driverOverride < 0.999) {
+            // The driver's pedal is physically closing the bypass downstream of
+            // this PI controller.  Integrating an overspeed error while the
+            // actuator is overridden used to wind the state down to -0.42; on
+            // lift-off the bypass then stayed shut until the engine had already
+            // fallen through its combustion threshold.  Track the neutral
+            // feed-forward state while overridden so returning to idle is
+            // bumpless even after a long rev.
+            idleIntegral *= std::exp(-idleDt * 3.0);
+        } else {
+            const auto proposedIntegral = std::clamp(
+                idleIntegral + normalizedError * integralGain * idleDt,
+                minimumIntegral, 0.58);
+            const auto proposedCommand = feedForward
+                + proportionalGain * normalizedError + proposedIntegral;
+            // Conditional integration prevents wind-up when the actuator is on
+            // either stop and the error would push it farther into saturation.
+            if ((proposedCommand > 0.0 && proposedCommand < 1.0)
+                || (proposedCommand <= 0.0 && normalizedError > 0.0)
+                || (proposedCommand >= 1.0 && normalizedError < 0.0))
+                idleIntegral = proposedIntegral;
+        }
 
         const auto crankingAir = state.rpm < 350.0 ? 0.88 : 0.0;
-        const auto driverOverride = std::clamp(1.0 - effectiveThrottle * 12.0, 0.0, 1.0);
         idleAirOpening = std::max(crankingAir,
-            std::clamp(feedForward + proportionalGain * normalizedError + idleIntegral,
-                       0.0, 1.0) * driverOverride);
+            std::max(std::clamp(feedForward + proportionalGain * normalizedError
+                                    + idleIntegral, 0.0, 1.0),
+                     idleDashpot) * driverOverride);
     } else {
         idleIntegral *= std::exp(-idleDt * 5.0);
+        idleDashpot *= std::exp(-idleDt * 5.0);
     }
     idleIntegral_.store(idleIntegral, std::memory_order_relaxed);
+    idleDashpot_.store(idleDashpot, std::memory_order_relaxed);
     const auto warmupCorrection = std::clamp(1.0 + (70.0 - state.coolantTemperatureC) * 0.0025, 1.0, 1.12);
     const auto crankingCorrection = controls.starterEngaged
         ? 1.0 + std::clamp((700.0 - state.rpm) / 700.0, 0.0, 1.0) * 0.38 : 1.0;
@@ -168,8 +199,20 @@ EcuCommand SimpleEcuModel::evaluate(const EngineConfig& config, const EngineStat
         calibration::ecuLimits::minimumIgnitionAdvanceDegrees,
         calibration::ecuLimits::maximumIgnitionAdvanceDegrees);
     const auto previousThrottle = previousThrottle_.exchange(effectiveThrottle, std::memory_order_relaxed);
-    const auto accelerationEnrichment = std::clamp(effectiveThrottle - previousThrottle, 0.0, 0.35);
-    mappedAfr = std::clamp(mappedAfr - accelerationEnrichment * 2.2
+    const auto throttleIncrease = std::clamp(effectiveThrottle - previousThrottle, 0.0, 0.35);
+    auto accelerationFuelEnrichment = accelerationFuelEnrichment_.load(std::memory_order_relaxed);
+    if (throttleIncrease > 0.0) {
+        // Accumulate the complete pedal movement even though evaluate() runs at
+        // the solver substep rate. The former one-substep AFR trim vanished on
+        // the next substep and made tip-in behaviour depend on solver frequency.
+        accelerationFuelEnrichment = std::clamp(
+            accelerationFuelEnrichment + throttleIncrease * 2.0, 0.0, 0.80);
+    } else {
+        accelerationFuelEnrichment *= std::exp(-idleDt * 1.8);
+    }
+    accelerationFuelEnrichment_.store(accelerationFuelEnrichment,
+                                      std::memory_order_relaxed);
+    mappedAfr = std::clamp(mappedAfr - throttleIncrease * 2.2
         - std::max(0.0, state.coolantTemperatureC - 108.0) * 0.025,
         calibration::ecuLimits::minimumAirFuelRatio,
         calibration::ecuLimits::maximumAirFuelRatio);
@@ -180,9 +223,38 @@ EcuCommand SimpleEcuModel::evaluate(const EngineConfig& config, const EngineStat
     const auto softLimit = state.rpm > revLimit - 220.0;
     const auto alternatingCut = softLimit && (static_cast<std::uint64_t>(state.simulationTimeSeconds * 120.0) & 1U) != 0U;
     const auto enabled = controls.ignitionEnabled && !limiterActive;
+    auto decelerationFuelCut = decelerationFuelCutLatched_.load(
+        std::memory_order_relaxed);
+    const auto idleTargetRpm = std::max(300.0, config.idleRpm);
+    if (controls.starterEngaged || effectiveThrottle > 0.02
+            || state.rpm < idleTargetRpm * 1.25) {
+        decelerationFuelCut = false;
+    } else if (state.throttle < 0.02 && state.rpm > idleTargetRpm * 1.65) {
+        // Stop metering fuel on closed-throttle overrun so port film and
+        // residual chamber inventory cannot flood the charge that must catch
+        // the engine at idle. Hysteresis keeps the injector command stable.
+        decelerationFuelCut = true;
+    }
+    decelerationFuelCutLatched_.store(decelerationFuelCut,
+                                      std::memory_order_relaxed);
+    auto decelerationFuelResume = decelerationFuelResume_.load(
+        std::memory_order_relaxed);
+    if (decelerationFuelCut) {
+        decelerationFuelResume = 0.0;
+    } else if (controls.starterEngaged || effectiveThrottle > 0.02) {
+        decelerationFuelResume = 1.0;
+    } else {
+        decelerationFuelResume = std::min(1.0,
+            decelerationFuelResume + idleDt * 3.0);
+    }
+    decelerationFuelResume_.store(decelerationFuelResume,
+                                  std::memory_order_relaxed);
     return { mappedAfr, mappedAdvance,
              effectiveThrottle, idleAirOpening,
-             warmupCorrection * crankingCorrection, enabled,
+             warmupCorrection * crankingCorrection
+                 * (1.0 + accelerationFuelEnrichment * 1.40)
+                 * decelerationFuelResume,
+             enabled && !decelerationFuelCut,
              enabled && !alternatingCut };
 }
 } // namespace enginelab

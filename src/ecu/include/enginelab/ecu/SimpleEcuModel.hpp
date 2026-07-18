@@ -21,9 +21,13 @@ public:
     }
     void reset() noexcept override {
         limiterLatched_.store(false, std::memory_order_relaxed);
+        decelerationFuelCutLatched_.store(false, std::memory_order_relaxed);
+        decelerationFuelResume_.store(1.0, std::memory_order_relaxed);
         limiterReleaseTime_.store(0.0, std::memory_order_relaxed);
         previousThrottle_.store(0.0, std::memory_order_relaxed);
+        accelerationFuelEnrichment_.store(0.0, std::memory_order_relaxed);
         idleIntegral_.store(0.0, std::memory_order_relaxed);
+        idleDashpot_.store(0.0, std::memory_order_relaxed);
         previousIdleEvaluationTime_.store(0.0, std::memory_order_relaxed);
     }
     void setAirFuelRatioTrim(double value) noexcept {
@@ -42,9 +46,13 @@ private:
     std::atomic<double> afrTrim_ { 0.0 };
     std::atomic<double> ignitionTrimDegrees_ { 0.0 };
     mutable std::atomic<bool> limiterLatched_ { false };
+    mutable std::atomic<bool> decelerationFuelCutLatched_ { false };
+    mutable std::atomic<double> decelerationFuelResume_ { 1.0 };
     mutable std::atomic<double> limiterReleaseTime_ { 0.0 };
     mutable std::atomic<double> previousThrottle_ { 0.0 };
+    mutable std::atomic<double> accelerationFuelEnrichment_ { 0.0 };
     mutable std::atomic<double> idleIntegral_ { 0.0 };
+    mutable std::atomic<double> idleDashpot_ { 0.0 };
     mutable std::atomic<double> previousIdleEvaluationTime_ { 0.0 };
 };
 } // namespace enginelab

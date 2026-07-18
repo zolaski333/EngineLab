@@ -407,6 +407,8 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
         state_.exhaustPressureKpa = collectorPressureKpa;
         const auto backPressure = std::max(state_.exhaustPressureKpa, exhaust_.backPressureKpa(state_));
         const auto combustion = physics_.evaluateCombustion(config_, state_, safeControls, ecuCommand, backPressure);
+        const auto sparkCombustionAvailable = ecuCommand.sparkEnabled
+            && state_.rpm >= 220.0 && state_.damage < 1.0;
         const auto cranking = safeControls.starterEngaged && state_.rpm < 620.0 && state_.damage < 1.0;
         const auto displacement = engineDisplacementLitres(config_);
         double pistonSpeedSum = 0.0;
@@ -509,10 +511,12 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
             const auto measuredChargeMassMg = config_.injection.mode == InjectionMode::direct
                 ? oxygenEquivalentAirMassMg
                 : std::max(oxygenEquivalentAirMassMg, trappedAirMassMgLastCycle_[cylinderIndex]);
-            const auto physicalFuelTargetMoles = measuredChargeMassMg
-                / std::clamp(ecuCommand.targetAirFuelRatio, 5.0, 30.0)
-                * ecuCommand.fuelCorrection * closedLoopFuelTrim_[cylinderIndex]
-                * 1.0e-6 / fuelMolarMassKg;
+            const auto physicalFuelTargetMoles = ecuCommand.fuelEnabled
+                ? measuredChargeMassMg
+                    / std::clamp(ecuCommand.targetAirFuelRatio, 5.0, 30.0)
+                    * ecuCommand.fuelCorrection * closedLoopFuelTrim_[cylinderIndex]
+                    * 1.0e-6 / fuelMolarMassKg
+                : 0.0;
             requestedFuelMolesThisCycle_[cylinderIndex] = std::max(
                 requestedFuelMolesThisCycle_[cylinderIndex], physicalFuelTargetMoles);
             const auto requestedFuelMoles = requestedFuelMolesThisCycle_[cylinderIndex];
@@ -558,7 +562,7 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 commandedFuelMoles, subDt);
             injectedFuelMolesThisCycle_[cylinderIndex] += injectionResult.meteredMoles;
             contribution.meteredFuelMassKg += injectionResult.meteredMoles * fuelMolarMassKg;
-            if (!combustion.combustionEnabled) {
+            if (!sparkCombustionAvailable) {
                 cylinderMisfires_[cylinderIndex] = false;
                 flameEvents_[cylinderIndex] = {};
                 ignitionPending_[cylinderIndex] = false;
@@ -663,7 +667,7 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
             const auto pulse = phaseTravel > 1.0e-6
                 ? std::clamp(burnAdvance / phaseTravel * 90.0, 0.0, 3.5) : 0.0;
             instantaneousCombustionPulse_[cylinderIndex] = pulse * fuelDeliveryRatio_[cylinderIndex];
-            if (burnAdvance > 0.0 && combustion.combustionEnabled && !cylinderMisfires_[cylinderIndex]) {
+            if (burnAdvance > 0.0 && sparkCombustionAvailable && !cylinderMisfires_[cylinderIndex]) {
                 const auto reaction = ConservativeGasSystem::reactFuelMoles(cylinderGas_[cylinderIndex],
                     flameEvents_[cylinderIndex].initialBurnableFuelMoles * burnAdvance,
                     flameStep.efficiency,
@@ -676,7 +680,7 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 cylinderGas_[cylinderIndex].temperatureK(),
                 flameConditions.equivalenceRatio, flameEvents_[cylinderIndex].burnedFraction,
                 config_.octaneRating,
-                combustion.combustionEnabled && flameEvents_[cylinderIndex].active
+                sparkCombustionAvailable && flameEvents_[cylinderIndex].active
                     && !cylinderMisfires_[cylinderIndex] }, combustionDt);
             if (endGas.autoIgnited && endGas.autoIgnitedFuelFraction > 0.0) {
                 const auto reaction = ConservativeGasSystem::reactFuelMoles(cylinderGas_[cylinderIndex],

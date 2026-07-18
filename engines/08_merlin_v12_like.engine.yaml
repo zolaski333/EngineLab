@@ -6,7 +6,7 @@ engine:
   bank_angle_deg: 60
   cylinder_count: 12
   firing_order: [1, 8, 5, 10, 3, 7, 6, 11, 2, 9, 4, 12]
-  idle_rpm: 600
+  idle_rpm: 800
   redline_rpm: 3800
   rotating_inertia_kg_m2: 1.85
   friction_coefficient: 0.13
@@ -19,7 +19,7 @@ engine:
     throttle_diameter_mm: 120
     runner_length_mm: 520
     runner_diameter_mm: 58
-    idle_bypass_area_mm2: 70
+    idle_bypass_area_mm2: 140
     throttle_gamma: 1.30
   forced_induction:
     enabled: true

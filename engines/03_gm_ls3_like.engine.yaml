@@ -18,7 +18,7 @@ engine:
     throttle_diameter_mm: 90
     runner_length_mm: 280
     runner_diameter_mm: 50
-    idle_bypass_area_mm2: 30
+    idle_bypass_area_mm2: 60
     throttle_gamma: 1.35
   ignition:
     rev_limit_rpm: 6700
