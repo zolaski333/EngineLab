@@ -3,6 +3,7 @@
 #include <enginelab/physics/MechanicalKinematics.hpp>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdlib>
 #include <iostream>
@@ -316,6 +317,96 @@ int main() {
             require(stroke > nominalStrokeMm * 0.9 && stroke < nominalStrokeMm * 1.12,
                     "articulated piston stroke must stay near the nominal crank stroke");
         }
+    }
+
+    {
+        // Four branches independently see the same small, high-pressure shared
+        // cell. Their combined candidate outflow deliberately exceeds its
+        // inventory, exercising the N-way overdraw limiter as well as the
+        // nonlinear kinetic-energy correction used by the threaded simulator.
+        const auto runJacobiTransaction = [] {
+            enginelab::GasCell shared;
+            shared.initialise(400.0, 0.08, 500.0);
+            shared.setGeometry(1.0e-3, 1.0, 0.0);
+            std::array<enginelab::GasCell, 4> branches;
+            for (auto& branch : branches) {
+                branch.initialise(20.0, 1.0, 280.0);
+                branch.setGeometry(1.0e-3, 1.0, 0.0);
+            }
+            const auto frozen = shared;
+            auto molesBefore = shared.totalMoles();
+            auto energyBefore = shared.internalEnergyJoules() + shared.bulkKineticEnergyJoules();
+            auto momentumXBefore = shared.momentumXKgMps();
+            for (const auto& branch : branches) {
+                molesBefore += branch.totalMoles();
+                energyBefore += branch.internalEnergyJoules() + branch.bulkKineticEnergyJoules();
+                momentumXBefore += branch.momentumXKgMps();
+            }
+
+            std::array<enginelab::JacobiGasFlowBranch, 4> transactions;
+            auto candidateSharedOxygenDelta = 0.0;
+            auto candidateMomentumXDelta = 0.0;
+            for (std::size_t index = 0; index < branches.size(); ++index) {
+                const auto branchBefore = branches[index];
+                auto sharedCandidate = frozen;
+                (void)enginelab::ConservativeGasSystem::flow({
+                    &sharedCandidate, &branches[index], 5.0e-3, 0.9, 0.01,
+                    1.0, 0.0, 1.0e-3, 1.0e-3 });
+                auto& transaction = transactions[index];
+                transaction.counterpart = &branches[index];
+                transaction.sharedDelta = enginelab::ConservativeGasSystem::inventoryDelta(
+                    sharedCandidate, frozen);
+                transaction.counterpartDelta = enginelab::ConservativeGasSystem::inventoryDelta(
+                    branches[index], branchBefore);
+                transaction.sharedTotalEnergyDeltaJ =
+                    sharedCandidate.internalEnergyJoules() + sharedCandidate.bulkKineticEnergyJoules()
+                    - frozen.internalEnergyJoules() - frozen.bulkKineticEnergyJoules();
+                candidateSharedOxygenDelta += transaction.sharedDelta.mixture.oxygenMoles;
+                candidateMomentumXDelta += transaction.sharedDelta.momentumXKgMps
+                    + transaction.counterpartDelta.momentumXKgMps;
+            }
+            enginelab::ConservativeGasSystem::commitJacobiFlows(shared, transactions);
+
+            auto molesAfter = shared.totalMoles();
+            auto energyAfter = shared.internalEnergyJoules() + shared.bulkKineticEnergyJoules();
+            auto momentumXAfter = shared.momentumXKgMps();
+            for (const auto& branch : branches) {
+                molesAfter += branch.totalMoles();
+                energyAfter += branch.internalEnergyJoules() + branch.bulkKineticEnergyJoules();
+                momentumXAfter += branch.momentumXKgMps();
+            }
+            const auto appliedScale = (shared.mixture().oxygenMoles - frozen.mixture().oxygenMoles)
+                / candidateSharedOxygenDelta;
+            require(appliedScale > 0.0 && appliedScale < 1.0,
+                    "N-way Jacobi transaction must constrain an aggregate shared-volume overdraw");
+            require(shared.mixture().oxygenMoles >= 0.0 && shared.mixture().inertMoles >= 0.0
+                    && shared.mixture().fuelMoles >= 0.0 && shared.mixture().burnedMoles >= 0.0
+                    && shared.internalEnergyJoules() >= 0.0,
+                    "N-way Jacobi commit must leave every shared inventory non-negative");
+            require(std::abs(molesAfter - molesBefore) < std::max(1.0, molesBefore) * 1.0e-12,
+                    "N-way Jacobi overdraw limiting must conserve total moles");
+            require(std::abs(energyAfter - energyBefore) < std::max(1.0, energyBefore) * 1.0e-10,
+                    "N-way Jacobi commit must conserve sensible plus bulk kinetic energy");
+            require(std::abs(momentumXAfter
+                        - (momentumXBefore + appliedScale * candidateMomentumXDelta)) < 1.0e-10,
+                    "N-way Jacobi commit must apply every branch momentum delta at the common scale");
+
+            std::array<double, 17> result {
+                shared.mixture().oxygenMoles, shared.mixture().inertMoles,
+                shared.internalEnergyJoules(), shared.momentumXKgMps(), shared.momentumYKgMps()
+            };
+            auto output = std::size_t { 5 };
+            for (const auto& branch : branches) {
+                result[output++] = branch.totalMoles();
+                result[output++] = branch.internalEnergyJoules();
+                result[output++] = branch.momentumXKgMps();
+            }
+            return result;
+        };
+        const auto first = runJacobiTransaction();
+        const auto second = runJacobiTransaction();
+        require(first == second,
+                "fixed-order N-way Jacobi commits must be bit-identical between runs");
     }
 
     std::cout << "Physics regression tests passed\n";

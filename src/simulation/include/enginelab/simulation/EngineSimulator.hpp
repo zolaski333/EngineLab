@@ -80,6 +80,13 @@ private:
     std::array<bool, 32> cylinderMisfires_ {};
     std::unique_ptr<SpscQueue<CylinderPressureSample, 1'024>> pressureSamples_;
     std::uint32_t randomState_ { 0x6d2b79f5U };
+    // Engines below the threading threshold retain randomState_ and therefore
+    // their historical misfire sequence. Thread-eligible engines use independent
+    // seeded streams: a shared xorshift would race and its advance order would
+    // depend on worker scheduling. This intentionally changes the exact misfire
+    // sequence for 8+ cylinders while keeping it deterministic across runs and
+    // across machines with different hardware concurrency.
+    std::array<std::uint32_t, 32> cylinderRandomState_ {};
     double eventEvaluationAngleDegrees_ { 719.9 };
     double eventEvaluationTimeSeconds_ { 0.0 };
     double indicatedWorkThisCycleJoules_ { 0.0 };

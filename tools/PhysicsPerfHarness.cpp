@@ -1,0 +1,151 @@
+#include <enginelab/catalog/EngineCatalog.hpp>
+#include <enginelab/ecu/SimpleEcuModel.hpp>
+#include <enginelab/events/FourStrokeEventGenerator.hpp>
+#include <enginelab/exhaust/ExhaustGraph.hpp>
+#include <enginelab/foundation/EngineTypes.hpp>
+#include <enginelab/physics/SimplifiedGasolinePhysics.hpp>
+#include <enginelab/simulation/EngineSimulator.hpp>
+
+#include <algorithm>
+#include <array>
+#include <cctype>
+#include <chrono>
+#include <cmath>
+#include <cstddef>
+#include <cstdlib>
+#include <filesystem>
+#include <iomanip>
+#include <iostream>
+#include <string>
+#include <vector>
+
+namespace {
+struct StepMetrics final {
+    double actualRpm {};
+    double meanMicroseconds {};
+    double p50Microseconds {};
+    double p95Microseconds {};
+    double maximumMicroseconds {};
+    double meanSubsteps {};
+};
+
+bool containsCaseInsensitive(const std::string& text, const std::string& filter) {
+    const auto lower = [](unsigned char value) { return static_cast<char>(std::tolower(value)); };
+    std::string loweredText(text.size(), '\0');
+    std::string loweredFilter(filter.size(), '\0');
+    std::transform(text.begin(), text.end(), loweredText.begin(), lower);
+    std::transform(filter.begin(), filter.end(), loweredFilter.begin(), lower);
+    return loweredText.find(loweredFilter) != std::string::npos;
+}
+
+StepMetrics measurePoint(enginelab::EngineSimulator& simulator, double targetRpm) {
+    constexpr double dt = 1.0 / 240.0;
+    constexpr int settleSteps = static_cast<int>(3.0 / dt);
+    constexpr int sampleSteps = static_cast<int>(1.25 / dt);
+    auto dynoIntegral = 0.0;
+    std::vector<double> timings;
+    timings.reserve(sampleSteps);
+    auto rpmSum = 0.0;
+    auto substepSum = 0.0;
+    for (int step = 0; step < settleSteps + sampleSteps; ++step) {
+        const auto speedError = (simulator.state().rpm - targetRpm) / std::max(1.0, targetRpm);
+        dynoIntegral = std::clamp(dynoIntegral + speedError * dt * 1.20, 0.0, 0.95);
+        enginelab::EngineControls controls;
+        controls.ignitionEnabled = true;
+        controls.starterEngaged = simulator.state().rpm < 550.0;
+        controls.throttle = 1.0;
+        controls.load = std::clamp(dynoIntegral + speedError * 0.70, 0.0, 1.0);
+        const auto begin = std::chrono::steady_clock::now();
+        const auto frame = simulator.step(dt, controls);
+        const auto end = std::chrono::steady_clock::now();
+        if (step >= settleSteps) {
+            timings.push_back(std::chrono::duration<double, std::micro>(end - begin).count());
+            rpmSum += frame.state.rpm;
+            substepSum += static_cast<double>(frame.state.solverSubsteps);
+        }
+    }
+    std::sort(timings.begin(), timings.end());
+    auto mean = 0.0;
+    for (const auto timing : timings) mean += timing;
+    mean /= static_cast<double>(timings.size());
+    const auto percentile = [&timings](double fraction) {
+        const auto index = static_cast<std::size_t>(fraction * static_cast<double>(timings.size() - 1));
+        return timings[index];
+    };
+    return {
+        rpmSum / static_cast<double>(timings.size()),
+        mean,
+        percentile(0.50),
+        percentile(0.95),
+        timings.back(),
+        substepSum / static_cast<double>(timings.size())
+    };
+}
+
+void measureEngine(const enginelab::EngineConfig& baseConfig, int run) {
+    auto config = baseConfig;
+    enginelab::normaliseEngineConfig(config);
+    enginelab::SimpleEcuModel ecu;
+    enginelab::SimplifiedGasolinePhysics physics;
+    enginelab::FourStrokeEventGenerator events;
+    auto exhaust = enginelab::ExhaustGraph::makeForEngine(config);
+    enginelab::EngineSimulator simulator(config, ecu, physics, events, exhaust);
+    constexpr double dt = 1.0 / 240.0;
+    for (int step = 0; step < static_cast<int>(2.0 / dt); ++step) {
+        const auto time = static_cast<double>(step) * dt;
+        (void)simulator.step(dt, { true, time < 1.5, 0.72, 0.0 });
+    }
+    const auto maximumRpm = std::min(config.redlineRpm, config.ignition.revLimitRpm);
+    const std::array targets {
+        std::max(config.idleRpm * 1.5, maximumRpm * 0.55),
+        std::max(config.idleRpm * 1.5, maximumRpm * 0.90)
+    };
+    for (const auto target : targets) {
+        const auto result = measurePoint(simulator, target);
+        std::cout << std::quoted(config.name) << ',' << config.cylinders.size() << ',' << run
+                  << ',' << target << ',' << result.actualRpm << ',' << result.meanMicroseconds
+                  << ',' << result.p50Microseconds << ',' << result.p95Microseconds
+                  << ',' << result.maximumMicroseconds << ',' << result.meanSubsteps << '\n';
+    }
+}
+}
+
+int main(int argc, char** argv) {
+    std::filesystem::path catalogRoot = std::filesystem::current_path();
+    std::string filter;
+    auto runs = 3;
+    for (int index = 1; index < argc; ++index) {
+        const std::string argument = argv[index];
+        if (argument == "--catalog-root" && index + 1 < argc) catalogRoot = argv[++index];
+        else if (argument == "--filter" && index + 1 < argc) filter = argv[++index];
+        else if (argument == "--runs" && index + 1 < argc) runs = std::max(1, std::stoi(argv[++index]));
+        else {
+            std::cerr << "usage: EngineLabPhysicsPerfHarness [--catalog-root dir]"
+                         " [--filter name-fragment] [--runs count]\n";
+            return EXIT_FAILURE;
+        }
+    }
+
+    std::vector<enginelab::EngineConfig> engines {
+        enginelab::makeDefaultInlineTwo(), enginelab::makeDefaultV8()
+    };
+    const auto catalog = enginelab::loadEngineCatalog(catalogRoot);
+    for (const auto& entry : catalog.entries)
+        if (containsCaseInsensitive(entry.config.name, "LS3")
+                || containsCaseInsensitive(entry.config.name, "Merlin"))
+            engines.push_back(entry.config);
+    if (!filter.empty())
+        std::erase_if(engines, [&filter](const auto& config) {
+            return !containsCaseInsensitive(config.name, filter);
+        });
+    if (engines.empty()) {
+        std::cerr << "no matching engine\n";
+        return EXIT_FAILURE;
+    }
+
+    std::cout << std::fixed << std::setprecision(3);
+    std::cout << "engine,cylinders,run,target_rpm,actual_rpm,mean_us,p50_us,p95_us,max_us,mean_substeps\n";
+    for (int run = 1; run <= runs; ++run)
+        for (const auto& engine : engines) measureEngine(engine, run);
+    return EXIT_SUCCESS;
+}

@@ -710,6 +710,121 @@ SimultaneousGasFlowResult ConservativeGasSystem::flowSimultaneous(
     return { firstResult, secondResult };
 }
 
+GasInventoryDelta ConservativeGasSystem::inventoryDelta(
+    const GasCell& after, const GasCell& before) noexcept {
+    return {
+        { after.mixture_.oxygenMoles - before.mixture_.oxygenMoles,
+          after.mixture_.inertMoles - before.mixture_.inertMoles,
+          after.mixture_.fuelMoles - before.mixture_.fuelMoles,
+          after.mixture_.burnedMoles - before.mixture_.burnedMoles },
+        after.internalEnergyJ_ - before.internalEnergyJ_,
+        after.momentumXKgMps_ - before.momentumXKgMps_,
+        after.momentumYKgMps_ - before.momentumYKgMps_
+    };
+}
+
+void ConservativeGasSystem::commitJacobiFlows(
+    GasCell& shared, std::span<const JacobiGasFlowBranch> branches) noexcept {
+    if (branches.empty()) return;
+
+    const auto cellEnergy = [](const GasCell& cell) noexcept {
+        return cell.internalEnergyJ_ + cell.bulkKineticEnergyJoules();
+    };
+    auto energyBefore = cellEnergy(shared);
+    auto desiredEnergyChange = 0.0;
+    GasMixture outgoingMoles {};
+    auto outgoingEnergy = 0.0;
+    for (const auto& branch : branches) {
+        if (!branch.counterpart) continue;
+        energyBefore += cellEnergy(*branch.counterpart);
+        desiredEnergyChange += branch.sharedTotalEnergyDeltaJ;
+        if (branch.sharedDelta.mixture.totalMoles() < -1.0e-15) {
+            outgoingMoles.oxygenMoles += std::max(0.0, -branch.sharedDelta.mixture.oxygenMoles);
+            outgoingMoles.inertMoles += std::max(0.0, -branch.sharedDelta.mixture.inertMoles);
+            outgoingMoles.fuelMoles += std::max(0.0, -branch.sharedDelta.mixture.fuelMoles);
+            outgoingMoles.burnedMoles += std::max(0.0, -branch.sharedDelta.mixture.burnedMoles);
+            outgoingEnergy += std::max(0.0, -branch.sharedDelta.internalEnergyJ);
+        }
+    }
+
+    auto outgoingScale = 1.0;
+    const auto constrainOutgoing = [&outgoingScale](double inventory, double outgoing) noexcept {
+        if (outgoing > 1.0e-15)
+            outgoingScale = std::min(outgoingScale, 0.95 * inventory / outgoing);
+    };
+    constrainOutgoing(shared.mixture_.oxygenMoles, outgoingMoles.oxygenMoles);
+    constrainOutgoing(shared.mixture_.inertMoles, outgoingMoles.inertMoles);
+    constrainOutgoing(shared.mixture_.fuelMoles, outgoingMoles.fuelMoles);
+    constrainOutgoing(shared.mixture_.burnedMoles, outgoingMoles.burnedMoles);
+    constrainOutgoing(shared.internalEnergyJ_, outgoingEnergy);
+    outgoingScale = std::clamp(outgoingScale, 0.0, 1.0);
+
+    const auto applyDelta = [](GasCell& cell, const GasInventoryDelta& delta,
+                               double scale) noexcept {
+        cell.mixture_.oxygenMoles += delta.mixture.oxygenMoles * scale;
+        cell.mixture_.inertMoles += delta.mixture.inertMoles * scale;
+        cell.mixture_.fuelMoles += delta.mixture.fuelMoles * scale;
+        cell.mixture_.burnedMoles += delta.mixture.burnedMoles * scale;
+        cell.internalEnergyJ_ += delta.internalEnergyJ * scale;
+        cell.momentumXKgMps_ += delta.momentumXKgMps * scale;
+        cell.momentumYKgMps_ += delta.momentumYKgMps * scale;
+    };
+    for (const auto& branch : branches) {
+        if (!branch.counterpart) continue;
+        const auto removesShared = branch.sharedDelta.mixture.totalMoles() < -1.0e-15;
+        const auto scale = removesShared ? outgoingScale : 1.0;
+        // The branch cell already contains the full candidate delta. If the
+        // shared inventory constrains it, remove the same fraction from the
+        // current branch state before committing the scaled shared delta.
+        applyDelta(*branch.counterpart, branch.counterpartDelta, scale - 1.0);
+        applyDelta(shared, branch.sharedDelta, scale);
+    }
+
+    const auto currentEnergy = [&]() noexcept {
+        auto total = cellEnergy(shared);
+        for (const auto& branch : branches)
+            if (branch.counterpart) total += cellEnergy(*branch.counterpart);
+        return total;
+    };
+    const auto targetEnergy = energyBefore + desiredEnergyChange;
+    const auto energyAfterCommit = currentEnergy();
+    if (!std::isfinite(targetEnergy) || !std::isfinite(energyAfterCommit)) return;
+    auto correction = targetEnergy - energyAfterCommit;
+    if (correction >= 0.0) {
+        shared.internalEnergyJ_ += correction;
+        return;
+    }
+
+    auto excess = -correction;
+    const auto removeInternalEnergy = [&excess](GasCell& cell) noexcept {
+        const auto removed = std::min(excess, cell.internalEnergyJ_);
+        cell.internalEnergyJ_ -= removed;
+        excess -= removed;
+    };
+    removeInternalEnergy(shared);
+    for (const auto& branch : branches)
+        if (branch.counterpart && excess > 0.0) removeInternalEnergy(*branch.counterpart);
+    if (excess > 1.0e-12) {
+        auto kineticEnergy = shared.bulkKineticEnergyJoules();
+        for (const auto& branch : branches)
+            if (branch.counterpart) kineticEnergy += branch.counterpart->bulkKineticEnergyJoules();
+        if (kineticEnergy > 0.0) {
+            const auto momentumScale = std::sqrt(std::max(0.0, kineticEnergy - excess) / kineticEnergy);
+            shared.momentumXKgMps_ *= momentumScale;
+            shared.momentumYKgMps_ *= momentumScale;
+            for (const auto& branch : branches) {
+                if (!branch.counterpart) continue;
+                branch.counterpart->momentumXKgMps_ *= momentumScale;
+                branch.counterpart->momentumYKgMps_ *= momentumScale;
+            }
+        }
+    }
+    const auto energyAfterRemoval = currentEnergy();
+    if (!std::isfinite(energyAfterRemoval)) return;
+    correction = targetEnergy - energyAfterRemoval;
+    if (correction > 0.0) shared.internalEnergyJ_ += correction;
+}
+
 // ---------------------------------------------------------------------------
 // ConservativeGasSystem::flowFromBoundary
 // ---------------------------------------------------------------------------

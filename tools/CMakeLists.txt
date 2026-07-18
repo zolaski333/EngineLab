@@ -4,6 +4,12 @@ target_link_libraries(EngineLabComparisonHarness PRIVATE
     EngineLab::Ecu EngineLab::Events EngineLab::Exhaust EngineLab::Catalog)
 enginelab_set_warnings(EngineLabComparisonHarness)
 
+add_executable(EngineLabPhysicsPerfHarness PhysicsPerfHarness.cpp)
+target_link_libraries(EngineLabPhysicsPerfHarness PRIVATE
+    EngineLab::Simulation EngineLab::Foundation EngineLab::Physics
+    EngineLab::Ecu EngineLab::Events EngineLab::Exhaust EngineLab::Catalog)
+enginelab_set_warnings(EngineLabPhysicsPerfHarness)
+
 add_executable(EngineLabAudioRenderHarness AudioRenderHarness.cpp)
 target_link_libraries(EngineLabAudioRenderHarness PRIVATE
     EngineLab::Audio EngineLab::Simulation EngineLab::Foundation EngineLab::Physics

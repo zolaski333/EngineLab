@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <span>
 
 namespace enginelab {
 
@@ -175,6 +176,29 @@ private:
     double burnedGasMolarMassKg_ { burnedGasMolarMassKg };
 };
 
+/** Change in all extensive state carried by one frozen-state flow branch. */
+struct GasInventoryDelta final {
+    GasMixture mixture {};
+    double internalEnergyJ { 0.0 };
+    double momentumXKgMps { 0.0 };
+    double momentumYKgMps { 0.0 };
+};
+
+/** One branch of an N-way Jacobi flow around a shared control volume.
+ *
+ * `counterpartDelta` is captured immediately after evaluating the branch, while
+ * `counterpart` points at that branch cell's current state when the shared deltas
+ * are committed. `sharedTotalEnergyDeltaJ` includes sensible and bulk kinetic
+ * energy and is used to remove the nonlinear kinetic-energy cross term created
+ * when several momentum deltas are combined in the shared cell. Counterpart
+ * pointers in one transaction must be non-null and unique. */
+struct JacobiGasFlowBranch final {
+    GasCell* counterpart { nullptr };
+    GasInventoryDelta sharedDelta {};
+    GasInventoryDelta counterpartDelta {};
+    double sharedTotalEnergyDeltaJ { 0.0 };
+};
+
 struct GasFlowResult final {
     double transferredMoles { 0.0 };
     double transferredMassKg { 0.0 };
@@ -250,6 +274,19 @@ public:
      */
     [[nodiscard]] static SimultaneousGasFlowResult flowSimultaneous(
         const FlowParameters& first, const FlowParameters& second) noexcept;
+
+    [[nodiscard]] static GasInventoryDelta inventoryDelta(
+        const GasCell& after, const GasCell& before) noexcept;
+
+    /** Commit N branches evaluated against the same frozen shared cell.
+     *
+     * Outgoing branches are scaled together if their aggregate request would
+     * overdraw any species or sensible energy. The matching correction is
+     * applied to each counterpart, so mass is never created by a zero floor.
+     * The final shared/counterpart energy is corrected for the nonlinear kinetic
+     * cross term while the fixed input order determines every reduction. */
+    static void commitJacobiFlows(GasCell& shared,
+                                  std::span<const JacobiGasFlowBranch> branches) noexcept;
 
     [[nodiscard]] static GasFlowResult flowFromBoundary(GasCell& target, double boundaryPressureKpa,
                                                         double boundaryTemperatureK,

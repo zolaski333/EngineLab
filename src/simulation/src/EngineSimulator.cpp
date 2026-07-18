@@ -1,9 +1,13 @@
 #include <enginelab/simulation/EngineSimulator.hpp>
+#include <enginelab/simulation/SubstepParallel.hpp>
 #include <enginelab/physics/MechanicalKinematics.hpp>
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <numbers>
 #include <numeric>
+#include <optional>
+#include <span>
 #include <span>
 #include <stdexcept>
 
@@ -12,6 +16,42 @@ namespace {
 [[nodiscard]] double smooth(double current, double target, double dt, double rate) noexcept {
     return current + (target - current) * (1.0 - std::exp(-dt * rate));
 }
+
+// Below this cylinder count the per-cylinder loop runs serially: the fork-join
+// dispatch latency outweighs the work, and the serial path stays bit-identical.
+constexpr std::size_t parallelCylinderThreshold = 8;
+
+// Private per-cylinder scratch for one gas sub-step. Every cross-cylinder result
+// the loop used to accumulate into a shared scalar (or into a shared plenum /
+// collector) is written here per cylinder instead, so the per-cylinder body has
+// no shared write and can run in any order. The fixed-order reductions after the
+// loop reproduce the original serial sums bit-for-bit.
+struct CylinderSubstepScratch final {
+    double reciprocatingTorque {};
+    double combustionPulse {};
+    double gasIndicatedTorque {};
+    double intakeRunnerPressure {};
+    double exhaustRunnerPressure {};
+    double exhaustTemperatureK {};
+    double pistonFrictionPowerW {};
+    double pistonBreakawayTorqueNm {};
+    double pistonSpeed {};
+    double peakPistonAcceleration {};
+    double endGasKnockLevel {};
+    double releasedEnergyJoules {};
+    double meteredFuelMassKg {};
+    // Jacobi branches against the frozen shared volumes (committed after the loop).
+    JacobiGasFlowBranch plenumFlow {};
+    JacobiGasFlowBranch collectorFlow {};
+    std::size_t intakePath {};
+    std::size_t exhaustPath {};
+};
+
+struct ParallelSubstepState final {
+    std::array<GasCell, 32> frozenPlenum {};
+    std::array<GasCell, 32> frozenCollector {};
+    std::array<CylinderSubstepScratch, 32> scratch {};
+};
 
 [[nodiscard]] double valveAreaMm2(double boreMm, double liftMm,
                                   std::uint32_t valveCount,
@@ -383,7 +423,50 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
         double meteredFuelMassKg = 0.0;
         double exhaustTemperatureSumK = 0.0;
 
-        for (std::size_t cylinderIndex = 0; cylinderIndex < config_.cylinders.size(); ++cylinderIndex) {
+        // Engines below the parallel threshold retain the original serial
+        // Gauss-Seidel shared-volume updates and shared PRNG sequence. Larger
+        // engines use a Jacobi snapshot even if this machine has only one usable
+        // participant, so their physics and PRNG sequence do not depend on the
+        // host's hardware concurrency.
+        const auto decoupleSharedVolumes =
+            config_.cylinders.size() >= parallelCylinderThreshold;
+        // Freeze both shared control volumes at the start of the sub-step so that
+        // every parallel cylinder evaluates the same upstream/downstream state.
+        // ConservativeGasSystem commits the fixed-order N-way branch transaction
+        // after the loop, including overdraw scaling and kinetic-energy correction.
+        std::optional<ParallelSubstepState> parallelState;
+        if (decoupleSharedVolumes) {
+            parallelState.emplace();
+            for (std::size_t path = 0; path < intakePlenumCount_; ++path)
+                parallelState->frozenPlenum[path] = intakePlenumGas_[path];
+            for (std::size_t path = 0; path < exhaustCollectorCount_; ++path)
+                parallelState->frozenCollector[path] = exhaustCollectorGas_[path];
+        }
+        const auto totalCellEnergy = [](const GasCell& cell) noexcept {
+            return cell.internalEnergyJoules() + cell.bulkKineticEnergyJoules();
+        };
+        const auto accumulateContribution = [&](const CylinderSubstepScratch& contribution) noexcept {
+            reciprocatingTorque += contribution.reciprocatingTorque;
+            combustionPulseSum += contribution.combustionPulse;
+            gasIndicatedTorque += contribution.gasIndicatedTorque;
+            intakeRunnerPressureSum += contribution.intakeRunnerPressure;
+            exhaustRunnerPressureSum += contribution.exhaustRunnerPressure;
+            exhaustTemperatureSumK += contribution.exhaustTemperatureK;
+            pistonFrictionPowerW += contribution.pistonFrictionPowerW;
+            pistonBreakawayTorqueNm += contribution.pistonBreakawayTorqueNm;
+            pistonSpeedSum += contribution.pistonSpeed;
+            peakPistonAcceleration = std::max(
+                peakPistonAcceleration, contribution.peakPistonAcceleration);
+            physicalEndGasKnockLevel = std::max(
+                physicalEndGasKnockLevel, contribution.endGasKnockLevel);
+            releasedEnergyJoules += contribution.releasedEnergyJoules;
+            meteredFuelMassKg += contribution.meteredFuelMassKg;
+        };
+
+        const auto processCylinder = [&](std::size_t cylinderIndex) {
+            CylinderSubstepScratch serialScratch {};
+            auto& contribution = decoupleSharedVolumes
+                ? parallelState->scratch[cylinderIndex] : serialScratch;
             const auto& cylinder = config_.cylinders[cylinderIndex];
             const auto crankOffset = crankOffsetDegreesFor(config_, cylinder);
             const auto cyclePhase = std::fmod(state_.crankAngleDegrees - crankOffset + 1'440.0, 720.0);
@@ -474,7 +557,7 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 config_.fuelProperties, injectionStates_[cylinderIndex], injectionTarget,
                 commandedFuelMoles, subDt);
             injectedFuelMolesThisCycle_[cylinderIndex] += injectionResult.meteredMoles;
-            meteredFuelMassKg += injectionResult.meteredMoles * fuelMolarMassKg;
+            contribution.meteredFuelMassKg += injectionResult.meteredMoles * fuelMolarMassKg;
             if (!combustion.combustionEnabled) {
                 cylinderMisfires_[cylinderIndex] = false;
                 flameEvents_[cylinderIndex] = {};
@@ -513,10 +596,12 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                     + (requestedFuelMoles > 1.0e-15
                         ? std::max(0.0, 0.55 - fuelDeliveryRatio_[cylinderIndex]) * 0.65 : 0.0),
                     0.0, 0.92);
-                randomState_ ^= randomState_ << 13U;
-                randomState_ ^= randomState_ >> 17U;
-                randomState_ ^= randomState_ << 5U;
-                const auto randomUnit = static_cast<double>(randomState_) / static_cast<double>(0xffffffffU);
+                auto& rng = decoupleSharedVolumes
+                    ? cylinderRandomState_[cylinderIndex] : randomState_;
+                rng ^= rng << 13U;
+                rng ^= rng >> 17U;
+                rng ^= rng << 5U;
+                const auto randomUnit = static_cast<double>(rng) / static_cast<double>(0xffffffffU);
                 cylinderMisfires_[cylinderIndex] = randomUnit < actualMisfireProbability;
                 const auto totalMoles = cylinderGas_[cylinderIndex].totalMoles();
                 const FlameConditions flameConditions {
@@ -583,7 +668,7 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                     flameEvents_[cylinderIndex].initialBurnableFuelMoles * burnAdvance,
                     flameStep.efficiency,
                     config_.fuelProperties.lowerHeatingValueMjPerKg * 1'000'000.0);
-                releasedEnergyJoules += reaction.releasedEnergyJoules;
+                contribution.releasedEnergyJoules += reaction.releasedEnergyJoules;
             }
 
             const auto endGas = EndGasKnockModel::advance(endGasKnockStates_[cylinderIndex], {
@@ -599,14 +684,14 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                         * endGas.autoIgnitedFuelFraction,
                     std::max(0.72, flameStep.efficiency),
                     config_.fuelProperties.lowerHeatingValueMjPerKg * 1'000'000.0);
-                releasedEnergyJoules += reaction.releasedEnergyJoules;
+                contribution.releasedEnergyJoules += reaction.releasedEnergyJoules;
                 flameEvents_[cylinderIndex].burnedFraction = std::clamp(
                     flameEvents_[cylinderIndex].burnedFraction + endGas.autoIgnitedFuelFraction,
                     0.0, 1.0);
                 if (flameEvents_[cylinderIndex].burnedFraction >= 0.999)
                     flameEvents_[cylinderIndex].active = false;
             }
-            physicalEndGasKnockLevel = std::max(physicalEndGasKnockLevel, endGas.level);
+            contribution.endGasKnockLevel = std::max(contribution.endGasKnockLevel, endGas.level);
             if (exhaustOpenedThisStep) {
                 // A premixed flame cannot propagate into the following
                 // gas-exchange strokes. Only the part of this integration
@@ -637,10 +722,13 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 ? exhaustFlowProperties.inletDischargeCoefficient : 0.74;
             const auto pistonAreaM2 = std::numbers::pi * std::pow(cylinder.boreMm * 0.0005, 2.0);
             const auto exhaustPathIndex = exhaustPathIndexFor(config_, cylinder);
+            const auto plenumPressureKpa = decoupleSharedVolumes
+                ? parallelState->frozenPlenum[intakePathIndex].pressureKpa()
+                : intakePlenumGas_[intakePathIndex].pressureKpa();
             runnerAcousticResults_[cylinderIndex] = HelmholtzRunnerModel::advance(config_.runnerAcoustics,
                 runnerAcousticStates_[cylinderIndex], cylinder, cylinderIntake,
                 intakeRunnerGas_[cylinderIndex].temperatureK(),
-                intakePlenumGas_[intakePathIndex].pressureKpa(), intakeRunnerGas_[cylinderIndex].pressureKpa(), subDt);
+                plenumPressureKpa, intakeRunnerGas_[cylinderIndex].pressureKpa(), subDt);
 
             // ----------------------------------------------------------------
             // Gas flow — full physics variant with dynamic pressure and jet
@@ -649,11 +737,31 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
             // the exhaust to the collector.
             // ----------------------------------------------------------------
 
-            // (1) Manifold → intake runner
-            (void)ConservativeGasSystem::flow({ &intakePlenumGas_[intakePathIndex], &intakeRunnerGas_[cylinderIndex],
+            // (1) Manifold → intake runner. Large engines evaluate against the
+            // frozen plenum; small engines update the real plenum serially.
+            GasCell plenumWork;
+            auto* plenumFlowCell = &intakePlenumGas_[intakePathIndex];
+            GasCell intakeRunnerBefore;
+            if (decoupleSharedVolumes) {
+                plenumWork = parallelState->frozenPlenum[intakePathIndex];
+                plenumFlowCell = &plenumWork;
+                intakeRunnerBefore = intakeRunnerGas_[cylinderIndex];
+            }
+            (void)ConservativeGasSystem::flow({ plenumFlowCell, &intakeRunnerGas_[cylinderIndex],
                 runnerAreaM2, 0.78 * runnerAcousticResults_[cylinderIndex].flowAdmittance, subDt,
                 /*dirX=*/0.0, /*dirY=*/1.0,   // downward into runner
                 /*csArea0=*/0.0, /*csArea1=*/runnerAreaM2 });
+            if (decoupleSharedVolumes) {
+                auto& branch = contribution.plenumFlow;
+                branch.counterpart = &intakeRunnerGas_[cylinderIndex];
+                branch.sharedDelta = ConservativeGasSystem::inventoryDelta(
+                    plenumWork, parallelState->frozenPlenum[intakePathIndex]);
+                branch.counterpartDelta = ConservativeGasSystem::inventoryDelta(
+                    intakeRunnerGas_[cylinderIndex], intakeRunnerBefore);
+                branch.sharedTotalEnergyDeltaJ = totalCellEnergy(plenumWork)
+                    - totalCellEnergy(parallelState->frozenPlenum[intakePathIndex]);
+                contribution.intakePath = intakePathIndex;
+            }
 
             // (2) Intake runner → cylinder (intake valve)
             const FlowParameters intakeValveFlow {
@@ -673,12 +781,32 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
             const auto& intakeTransfer = valveTransfers.first;
             const auto& exhaustTransfer = valveTransfers.second;
 
-            // (4) Exhaust runner → collector
+            // (4) Exhaust runner → collector, with the same thresholded Jacobi
+            // treatment as the intake side.
+            GasCell collectorWork;
+            auto* collectorFlowCell = &exhaustCollectorGas_[exhaustPathIndex];
+            GasCell exhaustRunnerBefore;
+            if (decoupleSharedVolumes) {
+                collectorWork = parallelState->frozenCollector[exhaustPathIndex];
+                collectorFlowCell = &collectorWork;
+                exhaustRunnerBefore = exhaustRunnerGas_[cylinderIndex];
+            }
             (void)ConservativeGasSystem::flow({
-                &exhaustRunnerGas_[cylinderIndex], &exhaustCollectorGas_[exhaustPathIndex],
+                &exhaustRunnerGas_[cylinderIndex], collectorFlowCell,
                 primaryAreaM2, primaryDischargeCoefficient, subDt,
                 /*dirX=*/1.0, /*dirY=*/0.0,   // outward to collector
                 /*csArea0=*/primaryAreaM2, /*csArea1=*/0.0 });
+            if (decoupleSharedVolumes) {
+                auto& branch = contribution.collectorFlow;
+                branch.counterpart = &exhaustRunnerGas_[cylinderIndex];
+                branch.sharedDelta = ConservativeGasSystem::inventoryDelta(
+                    collectorWork, parallelState->frozenCollector[exhaustPathIndex]);
+                branch.counterpartDelta = ConservativeGasSystem::inventoryDelta(
+                    exhaustRunnerGas_[cylinderIndex], exhaustRunnerBefore);
+                branch.sharedTotalEnergyDeltaJ = totalCellEnergy(collectorWork)
+                    - totalCellEnergy(parallelState->frozenCollector[exhaustPathIndex]);
+                contribution.exhaustPath = exhaustPathIndex;
+            }
 
             const auto intakeRunnerLengthM = (cylinder.intakeRunnerLengthMm > 0.0
                 ? cylinder.intakeRunnerLengthMm : cylinderIntake.runnerLengthMm) * 0.001;
@@ -719,13 +847,13 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
             (void)runnerPulse;
             cylinderWallTemperatureC_[cylinderIndex] = smooth(cylinderWallTemperatureC_[cylinderIndex],
                 config_.ambientTemperatureC + combustion.heatOutput * 175.0 + pulse * 95.0, subDt, 0.22);
-            intakeRunnerPressureSum += intakeRunnerPressureKpa_[cylinderIndex];
-            exhaustRunnerPressureSum += exhaustRunnerPressureKpa_[cylinderIndex];
-            exhaustTemperatureSumK += exhaustRunnerGas_[cylinderIndex].temperatureK();
+            contribution.intakeRunnerPressure += intakeRunnerPressureKpa_[cylinderIndex];
+            contribution.exhaustRunnerPressure += exhaustRunnerPressureKpa_[cylinderIndex];
+            contribution.exhaustTemperatureK += exhaustRunnerGas_[cylinderIndex].temperatureK();
             const auto breathingQuality = std::clamp(intakeFlowMgPerCycle_[cylinderIndex]
                 / std::max(1.0, combustion.airMassMgPerCycle / static_cast<double>(config_.cylinders.size())),
                 0.45, 1.35);
-            combustionPulseSum += pulse * std::clamp(1.0 + cylinder.efficiencyOffset, 0.8, 1.2)
+            contribution.combustionPulse += pulse * std::clamp(1.0 + cylinder.efficiencyOffset, 0.8, 1.2)
                 * breathingQuality * fuelDeliveryRatio_[cylinderIndex];
             // One third of the connecting rod mass is a standard equivalent
             // reciprocating-mass approximation; the remainder contributes to
@@ -734,10 +862,10 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 + cylinder.connectingRodMassGrams / 3.0) * 0.001;
             const auto inertiaForce = massKg * kinematics.pistonAccelerationMps2;
             const auto leverArm = kinematics.displacementDerivativeMPerRadian;
-            reciprocatingTorque += inertiaForce * leverArm;
+            contribution.reciprocatingTorque += inertiaForce * leverArm;
             // pistonAreaM2 is already defined above for the gas flow calls (same scope).
             const auto gasForceN = (chamberKpa - config_.ambientPressureKpa) * 1'000.0 * pistonAreaM2;
-            gasIndicatedTorque += gasForceN * leverArm;
+            contribution.gasIndicatedTorque += gasForceN * leverArm;
             // The side thrust is governed by the acute angle between the rod
             // and the cylinder axis.  Treating an aligned rod as 90 degrees
             // multiplies skirt/ring friction by tan(77 deg) and consumes most
@@ -751,10 +879,57 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
             const auto pistonVelocityMps = kinematics.pistonVelocityMps;
             const auto pistonFrictionForceN = stribeckFrictionForce(cylinder, pistonVelocityMps,
                                                                     cylinderWallForceN);
-            pistonFrictionPowerW += pistonFrictionForceN * std::abs(pistonVelocityMps);
-            pistonBreakawayTorqueNm += pistonFrictionForceN * std::abs(leverArm);
-            peakPistonAcceleration = std::max(peakPistonAcceleration, std::abs(kinematics.pistonAccelerationMps2));
-            pistonSpeedSum += 2.0 * cylinder.strokeMm * 0.001 * state_.rpm / 60.0;
+            contribution.pistonFrictionPowerW += pistonFrictionForceN * std::abs(pistonVelocityMps);
+            contribution.pistonBreakawayTorqueNm += pistonFrictionForceN * std::abs(leverArm);
+            contribution.peakPistonAcceleration = std::max(
+                contribution.peakPistonAcceleration, std::abs(kinematics.pistonAccelerationMps2));
+            contribution.pistonSpeed += 2.0 * cylinder.strokeMm * 0.001 * state_.rpm / 60.0;
+            if (!decoupleSharedVolumes) accumulateContribution(contribution);
+        };
+        // The per-cylinder body writes only cylinder-private state (per-index
+        // arrays plus its own scratch entry), so it is safe to run across threads.
+        // A stopped engine stays inline so an idle application neither constructs
+        // nor repeatedly wakes the pool. The Jacobi/RNG choice above remains tied
+        // only to cylinder count, not to whether this particular sub-step threaded.
+        auto ranParallel = false;
+        if (decoupleSharedVolumes && !stationary) {
+            auto& executor = SubstepParallelExecutor::shared();
+            if (executor.participantCount() > 1) {
+                executor.parallelFor(config_.cylinders.size(), processCylinder,
+                    subStep + 1 < subStepCount);
+                ranParallel = true;
+            }
+        }
+        if (!ranParallel) {
+            for (std::size_t cylinderIndex = 0; cylinderIndex < config_.cylinders.size(); ++cylinderIndex)
+                processCylinder(cylinderIndex);
+        }
+        // Fixed-order reduction of the per-cylinder scratch. Small engines retain
+        // their original serial sum; large-engine output is independent of worker
+        // scheduling because the same cylinder order is always used here.
+        if (decoupleSharedVolumes) {
+            for (std::size_t index = 0; index < config_.cylinders.size(); ++index)
+                accumulateContribution(parallelState->scratch[index]);
+            // Gather and commit each shared path in cylinder order. This order is
+            // independent of worker scheduling and therefore fixes every floating-
+            // point reduction, including the N-way conservation correction.
+            std::array<JacobiGasFlowBranch, 32> pathBranches {};
+            for (std::size_t path = 0; path < intakePlenumCount_; ++path) {
+                auto branchCount = std::size_t { 0 };
+                for (std::size_t index = 0; index < config_.cylinders.size(); ++index)
+                    if (parallelState->scratch[index].intakePath == path)
+                        pathBranches[branchCount++] = parallelState->scratch[index].plenumFlow;
+                ConservativeGasSystem::commitJacobiFlows(intakePlenumGas_[path],
+                    std::span<const JacobiGasFlowBranch>(pathBranches.data(), branchCount));
+            }
+            for (std::size_t path = 0; path < exhaustCollectorCount_; ++path) {
+                auto branchCount = std::size_t { 0 };
+                for (std::size_t index = 0; index < config_.cylinders.size(); ++index)
+                    if (parallelState->scratch[index].exhaustPath == path)
+                        pathBranches[branchCount++] = parallelState->scratch[index].collectorFlow;
+                ConservativeGasSystem::commitJacobiFlows(exhaustCollectorGas_[path],
+                    std::span<const JacobiGasFlowBranch>(pathBranches.data(), branchCount));
+            }
         }
         // Discharge the shared collector exactly once per gas sub-step. This
         // closes the open-system mass/energy balance and makes outlet diameter
@@ -1160,6 +1335,9 @@ void EngineSimulator::reset() noexcept {
     state_.intakeRunnerPressureKpa = config_.ambientPressureKpa;
     state_.exhaustRunnerPressureKpa = config_.ambientPressureKpa;
     randomState_ = 0x6d2b79f5U;
+    for (std::size_t index = 0; index < cylinderRandomState_.size(); ++index)
+        cylinderRandomState_[index] = 0x6d2b79f5U
+            + 0x9e3779b9U * static_cast<std::uint32_t>(index + 1);
     cylinderMisfires_.fill(false);
     intakeFlowMgPerCycle_.fill(0.0);
     exhaustFlowMgPerCycle_.fill(0.0);
