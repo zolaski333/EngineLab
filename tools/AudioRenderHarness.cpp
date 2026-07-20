@@ -14,6 +14,7 @@
 //    the instrument for calibrating the muffler FDN and its presets against a
 //    measured RT60 instead of by ear.
 
+#include <enginelab/audio/AcousticMonitorCalibration.hpp>
 #include <enginelab/audio/RealtimeEngineAudio.hpp>
 #include <enginelab/catalog/EngineCatalog.hpp>
 #include <enginelab/ecu/SimpleEcuModel.hpp>
@@ -683,8 +684,19 @@ bool validateIdleCycle(const IdleCycleMetrics& metrics,
         fail("engine did not return to the idle-speed region");
     if (metrics.revPeakRpm < metrics.initialIdleRpm * 1.40)
         fail("throttle phase did not produce a meaningful rev");
-    if (metrics.initialIdleRms < 0.012 || metrics.returnedIdleRms < 0.012)
-        fail("idle audio is below the calibrated -38.4 dBFS RMS floor");
+    // Stated in SI for the same reason as the running-engine gate above: what
+    // matters is that an idling engine radiates an audible sound pressure at
+    // the observer, not that it hits a dBFS number the monitor calibration
+    // could move on its own. 85 dB SPL at one metre is a quiet idle.
+    const auto idleSplDb = [](double rms) {
+        const auto pressurePa = rms * AcousticMonitorCalibration::sinePeakPressurePa(
+            AcousticMonitorCalibration::defaultFullScaleSplDb);
+        return 20.0 * std::log10(std::max(pressurePa, 1.0e-12)
+            / AcousticMonitorCalibration::referenceRmsPressurePa);
+    };
+    if (idleSplDb(metrics.initialIdleRms) < 85.0
+            || idleSplDb(metrics.returnedIdleRms) < 85.0)
+        fail("idle radiates below 85 dB SPL at the one-metre observer");
     if (metrics.droppedEvents != 0 || metrics.droppedPressureSamples != 0
             || metrics.lateEvents != 0)
         fail("realtime telemetry or events were dropped/late");
@@ -965,10 +977,40 @@ int main(int argc, char** argv) {
                 fail("output spends too long near digital full scale" + suffix);
             if (channel->scan.longestFlatTop > 8)
                 fail("waveform contains a sustained flat clipping plateau" + suffix);
-            if (channel->window.rms < 0.045)
-                fail("nominal output is below the calibrated -27 dBFS RMS floor" + suffix);
-            if (channel->window.rms > 0.32)
-                fail("nominal output exceeds the calibrated -10 dBFS RMS ceiling" + suffix);
+            // Level is gated in SI, not in dBFS.
+            //
+            // The former gate was a fixed dBFS window (-27 to -10 dBFS RMS) for
+            // every engine. That was appropriate when per-voice gains normalised
+            // every engine to roughly the same loudness, but the physical path
+            // has no such gain: a small twin and a big V8 radiate genuinely
+            // different sound power, and forcing them into a common dBFS window
+            // would mean re-introducing exactly the normalisation this path
+            // exists to remove.
+            //
+            // A dBFS window is also unfalsifiable here, because the monitor
+            // calibration alone can move it. Converting back to pascals through
+            // that same calibration states the invariant where it is physical:
+            // a running engine one metre from its tailpipe must radiate a
+            // plausible sound pressure level. The bounds are wide, and taken
+            // from what exhaust systems measure at one metre -- roughly 90 dB
+            // for a quiet engine idling through a muffler up to about 130 dB
+            // for open headers at power. Anything outside that is a modelling
+            // error, and no choice of preamp gain can hide it.
+            const auto rmsPressurePa = channel->window.rms
+                * AcousticMonitorCalibration::sinePeakPressurePa(
+                    AcousticMonitorCalibration::defaultFullScaleSplDb);
+            const auto soundPressureLevelDb = 20.0 * std::log10(
+                std::max(rmsPressurePa, 1.0e-12)
+                / AcousticMonitorCalibration::referenceRmsPressurePa);
+            if (soundPressureLevelDb < 90.0)
+                fail("radiated level is below 90 dB SPL at the one-metre observer ("
+                     + std::to_string(static_cast<int>(soundPressureLevelDb)) + " dB)" + suffix);
+            if (soundPressureLevelDb > 130.0)
+                fail("radiated level exceeds 130 dB SPL at the one-metre observer ("
+                     + std::to_string(static_cast<int>(soundPressureLevelDb)) + " dB)" + suffix);
+            // Digital safety is separate and still absolute.
+            if (channel->window.rms > 0.40)
+                fail("monitor level leaves too little headroom for transients" + suffix);
             if (channel->window.crest < 1.50) fail("insufficient waveform dynamics" + suffix);
             if (channel->window.crest > 16.0) fail("isolated spikes dominate the waveform" + suffix);
             if (std::abs(channel->window.mean) > std::max(0.0025, channel->window.rms * 0.08))
@@ -985,8 +1027,22 @@ int main(int argc, char** argv) {
         // Delay lines are sized in prepare() from the published geometry, so a
         // clamp here means the rendered acoustic length is shorter than configured.
         if (m.delayTruncations != 0) fail("a delay line was too short and truncated");
-        if (m.channelCorrelation > 0.999)
-            fail("left and right are effectively identical: stereo image collapsed to mono");
+        // Channel correlation is reported, not gated.
+        //
+        // The former gate required the two channels to differ. That was a
+        // meaningful check when the output was built from per-cylinder voices
+        // carrying authored stereo pan values: a collapse to mono then meant the
+        // panning had stopped working. Those pan values were a mixing decision,
+        // not a measurement, and the voices they belonged to are gone.
+        //
+        // The physical path radiates every exhaust outlet to a single documented
+        // observer point, because outlet positions are not part of the published
+        // geometry. A mono result is therefore the correct output of the model
+        // as it currently stands, and a gate demanding stereo would only be
+        // satisfiable by inventing a pan -- which is precisely the kind of
+        // decoration this path is meant to exclude. Genuine stereo needs outlet
+        // positions and a two-microphone observer; until then this is a known
+        // and documented limitation, not a regression to catch here.
         // The safety leveler must be safety-only in a shipped voice: if it is
         // pulling gain below identity here, the default level is set too hot and
         // the AGC is silently masking that offset. Keep the level honest instead.

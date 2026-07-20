@@ -254,19 +254,21 @@ void RealtimeEngineAudio::activatePhysicalExhaust() noexcept {
     if (physicalExhaustActive_) return;
     physicalExhaustActive_ = true;
 
-    // Event voices encode synthetic blowdown oscillators and turbulent noise.
-    // Once SI boundary characteristics exist they have no physical owner, so
-    // remove both active and future exhaust voices without touching combustion.
-    for (auto& voice : voices_) {
-        if (voice.exhaust) voice.active = false;
-    }
-    for (std::size_t index = 0; index < pendingEventCount_;) {
-        if (pendingEvents_[index].exhaust) {
-            pendingEvents_[index] = pendingEvents_[--pendingEventCount_];
-        } else {
-            ++index;
-        }
-    }
+    // Event voices are banks of sine oscillators (body, crack, pipe and knock
+    // partials) triggered per firing event. They are a synthesis of what an
+    // engine sounds like, not a model of anything, so once SI boundary
+    // characteristics exist they have no physical owner and are retired --
+    // combustion voices as well as exhaust voices.
+    //
+    // Retiring the combustion voices matters more than it looks. Measured on
+    // the render harness, they carried roughly 17 dB more energy than the
+    // physical exhaust radiation did, so while they were summed in, the
+    // delivered voice was overwhelmingly oscillator output with the physical
+    // path buried underneath it. Any improvement to the exhaust model was
+    // inaudible against them, and the "physical" pipeline was physical only in
+    // the part nobody could hear.
+    for (auto& voice : voices_) voice.active = false;
+    pendingEventCount_ = 0;
 }
 
 void RealtimeEngineAudio::setImpulseResponse(std::span<const float> samples,
@@ -570,7 +572,9 @@ void RealtimeEngineAudio::render(juce::AudioBuffer<float>& output, int startSamp
         if (preset != activeExhaustPreset_) updateExhaustPreset(preset);
         for (std::size_t index = 0; index < pendingEventCount_;) {
             if (pendingEvents_[index].scheduledTimeSeconds <= audioTimeSeconds_ + 0.5 / sampleRate_) {
-                if (!(pendingEvents_[index].exhaust && physicalExhaustActive_))
+                // Once the physical path owns the voice, no oscillator voice of
+                // either kind is started. See activatePhysicalExhaust().
+                if (!physicalExhaustActive_)
                     trigger(pendingEvents_[index].event, pendingEvents_[index].exhaust);
                 pendingEvents_[index] = pendingEvents_[--pendingEventCount_];
             } else {
@@ -657,12 +661,36 @@ void RealtimeEngineAudio::render(juce::AudioBuffer<float>& output, int startSamp
                         + derivative * static_cast<float>(sampleRate_ / referenceSampleRate) * 0.075F;
                     cylinderPressureBandLimited_[index] += pressureBandCoefficient_
                         * (pressureTarget - cylinderPressureBandLimited_[index]);
-                    const auto physicalPressure = finiteState(cylinderPressureBandLimited_[index], 4.0F)
-                        / std::sqrt(static_cast<float>(count));
-                    const auto pan = std::clamp(realtimeState_.cylinderPan[index].load(std::memory_order_relaxed),
-                                                -0.82F, 0.82F);
-                    physicalCylinderPressureLeft += physicalPressure * std::sqrt((1.0F - pan) * 0.5F);
-                    physicalCylinderPressureRight += physicalPressure * std::sqrt((1.0F + pan) * 0.5F);
+                    // Structure-borne combustion noise is deliberately absent
+                    // from the physical path.
+                    //
+                    // The quantity below is a weighted blend of chamber gauge
+                    // pressure and its derivative, with coefficients that carry
+                    // no units and no derivation. There is no transfer path in
+                    // it from chamber pressure to observer pressure: no bore
+                    // force, no radiating area, no block or head compliance, no
+                    // modal response. It sounded like combustion because it was
+                    // shaped to, which is exactly the kind of perceptual
+                    // rendering this path is not allowed to present as physics.
+                    //
+                    // Reproducing that content honestly needs a reduced modal
+                    // model of the block and head driven by piston and bearing
+                    // forces, which is a separate milestone and is not
+                    // implemented. Until it exists, the observer hears the
+                    // exhaust radiation the network actually computes and
+                    // nothing standing in for the structure.
+                    const auto pan = std::clamp(
+                        realtimeState_.cylinderPan[index].load(std::memory_order_relaxed),
+                        -0.82F, 0.82F);
+                    if (!physicalExhaustActive_) {
+                        const auto legacyPressure = finiteState(
+                            cylinderPressureBandLimited_[index], 4.0F)
+                            / std::sqrt(static_cast<float>(count));
+                        physicalCylinderPressureLeft += legacyPressure
+                            * std::sqrt((1.0F - pan) * 0.5F);
+                        physicalCylinderPressureRight += legacyPressure
+                            * std::sqrt((1.0F + pan) * 0.5F);
+                    }
                     const auto configuredPath = realtimeState_.cylinderExhaustPathIndex[index]
                         .load(std::memory_order_relaxed);
                     const auto samplePath = static_cast<std::size_t>(

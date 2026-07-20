@@ -863,8 +863,21 @@ void ductWallLossRegression() {
             "hotter gas must attenuate more at equal density and geometry");
 }
 
+// The runtime's published calibration default is duplicated from the audio
+// module's documented constant (audio depends on runtime, so it cannot be
+// included there). If they drift apart the delivered level stops matching the
+// calibration the documentation derives, silently.
+void monitorCalibrationDefaultRegression() {
+    enginelab::RealtimeAudioState state;
+    require(std::abs(static_cast<double>(
+                state.acousticFullScaleSplDb.load())
+            - enginelab::AcousticMonitorCalibration::defaultFullScaleSplDb) < 1.0e-6,
+        "runtime full-scale SPL default must match the documented calibration");
+}
+
 int main() {
     try {
+        monitorCalibrationDefaultRegression();
         ductWallLossRegression();
         valvePortTerminationRegression();
         latencyAndBlockSizeRegression();

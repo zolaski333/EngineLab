@@ -80,7 +80,12 @@ struct RealtimeAudioState final {
     // Microphone/preamp calibration for SI exhaust pressure. dBFS has no
     // intrinsic pressure unit; keeping the capture-chain headroom explicit
     // avoids disguising a fixed voicing gain as acoustics.
-    std::atomic<float> acousticFullScaleSplDb { 144.0F };
+    // Derived from what the model actually radiates at the observer, not chosen
+    // by ear. Must track AcousticMonitorCalibration::defaultFullScaleSplDb,
+    // which documents the measurement it comes from; the constant is duplicated
+    // rather than included because audio depends on runtime, not the reverse.
+    // RealtimeRegressionTests asserts the two stay equal.
+    std::atomic<float> acousticFullScaleSplDb { 134.0F };
     std::atomic<int> exhaustPreset { static_cast<int>(AudioExhaustPreset::street) };
     // Extended physical telemetry for the intake/forced-induction/mechanical and
     // waveguide audio layers (populated once at construction or per sim frame).
