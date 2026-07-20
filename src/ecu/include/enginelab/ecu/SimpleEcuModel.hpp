@@ -29,6 +29,7 @@ public:
         idleIntegral_.store(0.0, std::memory_order_relaxed);
         idleDashpot_.store(0.0, std::memory_order_relaxed);
         previousIdleEvaluationTime_.store(0.0, std::memory_order_relaxed);
+        postStartAirOpening_.store(0.0, std::memory_order_relaxed);
     }
     void setAirFuelRatioTrim(double value) noexcept {
         afrTrim_.store(std::isfinite(value) ? std::clamp(value, -3.0, 3.0) : 0.0);
@@ -54,5 +55,7 @@ private:
     mutable std::atomic<double> idleIntegral_ { 0.0 };
     mutable std::atomic<double> idleDashpot_ { 0.0 };
     mutable std::atomic<double> previousIdleEvaluationTime_ { 0.0 };
+    /** Decaying post-start idle air opening. See evaluate(). */
+    mutable std::atomic<double> postStartAirOpening_ { 0.0 };
 };
 } // namespace enginelab

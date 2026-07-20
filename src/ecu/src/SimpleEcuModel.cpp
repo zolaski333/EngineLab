@@ -151,8 +151,42 @@ EcuCommand SimpleEcuModel::evaluate(const EngineConfig& config, const EngineStat
                 idleIntegral = proposedIntegral;
         }
 
-        const auto crankingAir = state.rpm < 350.0 ? 0.88 : 0.0;
-        idleAirOpening = std::max(crankingAir,
+        // Post-start air.
+        //
+        // Cranking air was commanded only below 350 rpm, so it vanished the
+        // instant the engine caught. The idle PI then saw a speed far above its
+        // target -- the post-start flare every engine has -- and closed the
+        // bypass completely. With the plate also shut the engine had almost no
+        // air path at all: measured on the catalogue, manifold pressure fell to
+        // about 10 kPa, cycle torque went to roughly -75 Nm as the engine pumped
+        // against the vacuum it had created, and it died before the PI could
+        // reopen. Only the two engines whose flare stayed near their idle target
+        // survived.
+        //
+        // Real engine management does not hand the idle valve to the governor at
+        // the moment of catch. It holds an elevated opening after start and bleeds
+        // it out over seconds, so the engine breathes while its speed settles and
+        // while the port fuel film is still building. That schedule is what is
+        // modelled here: charged during cranking, then decaying with a time
+        // constant, and always a floor under the governor rather than a
+        // replacement for it. The governor still has full authority to open
+        // further, and once the schedule has bled away it has sole authority.
+        //
+        // Cold engines need it for longer, because a cold port wets more fuel and
+        // a cold engine has more friction to overcome.
+        const auto postStartDecaySeconds = std::clamp(
+            2.5 + (70.0 - state.coolantTemperatureC) * 0.045, 2.5, 6.0);
+        auto postStartAir = postStartAirOpening_.load(std::memory_order_relaxed);
+        if (controls.starterEngaged || state.rpm < 350.0) {
+            // Cranking: hold the schedule charged, so it starts full at catch.
+            postStartAir = 0.88;
+        } else {
+            postStartAir *= std::exp(-idleDt / postStartDecaySeconds);
+            if (postStartAir < 1.0e-4) postStartAir = 0.0;
+        }
+        postStartAirOpening_.store(postStartAir, std::memory_order_relaxed);
+
+        idleAirOpening = std::max(postStartAir,
             std::max(std::clamp(feedForward + proportionalGain * normalizedError
                                     + idleIntegral, 0.0, 1.0),
                      idleDashpot) * driverOverride);
