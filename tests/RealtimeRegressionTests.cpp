@@ -1,6 +1,7 @@
 #include <enginelab/audio/AcousticMonitorCalibration.hpp>
 #include <enginelab/audio/RealtimeEngineAudio.hpp>
 #include <enginelab/audio/PipeRadiationModel.hpp>
+#include <enginelab/audio/ValvePortTermination.hpp>
 #include <enginelab/foundation/ExhaustGasAcoustics.hpp>
 
 #include <juce_audio_basics/juce_audio_basics.h>
@@ -12,6 +13,7 @@
 #include <cstdint>
 #include <complex>
 #include <iostream>
+#include <limits>
 #include <memory>
 #include <numbers>
 #include <stdexcept>
@@ -670,8 +672,116 @@ void acousticMonitorCalibrationRegression() {
 
 } // namespace
 
+// ---------------------------------------------------------------------------
+// Valve port termination
+// ---------------------------------------------------------------------------
+
+// Magnitude of the port reflection filter at one frequency, from its
+// coefficients, so the physical invariants below are stated in the frequency
+// domain where they are meaningful.
+double portReflectionMagnitude(const enginelab::ValvePortTermination::Coefficients& c,
+                               double frequencyHz, double sampleRateHz) {
+    const auto z = std::polar(1.0, -2.0 * std::numbers::pi * frequencyHz / sampleRateHz);
+    const auto numerator = c.b0 + c.b1 * z;
+    const auto denominator = 1.0 + c.a1 * z;
+    return std::abs(denominator) > 1.0e-15 ? std::abs(numerator / denominator) : 0.0;
+}
+
+void valvePortTerminationRegression() {
+    using Termination = enginelab::ValvePortTermination;
+    constexpr double sampleRate = 48'000.0;
+    // Representative hot-exhaust port: 40 mm runner, 800 K gas.
+    constexpr double density = 0.45;
+    constexpr double soundSpeed = 550.0;
+    constexpr double runnerArea = 1.257e-3;
+    constexpr double characteristicImpedance = density * soundSpeed / runnerArea;
+
+    // A shut valve is a rigid end: R = +1 at every frequency, so the runner
+    // reflects in phase. The previous mean-flow-only model returned -1 here.
+    const auto shut = Termination::compute(0.0, 0.0, 0.0, density,
+                                           characteristicImpedance, sampleRate);
+    for (const auto frequency : { 100.0, 1'000.0, 4'000.0, 12'000.0 })
+        require(std::abs(portReflectionMagnitude(shut, frequency, sampleRate) - 1.0) < 1.0e-4,
+                "a shut valve must reflect with unit magnitude");
+    require(shut.b0 > 0.0, "a shut valve must reflect in phase (rigid, not pressure-release)");
+
+    // A nearly shut valve must approach the rigid end rather than invert. This
+    // is the limit the linearised mean-flow resistance had backwards.
+    const auto nearlyShut = Termination::compute(2.0e-6, 0.0, 0.0, density,
+                                                 characteristicImpedance, sampleRate);
+    require(portReflectionMagnitude(nearlyShut, 1'000.0, sampleRate) > 0.95,
+            "a nearly shut valve must still be strongly reflective");
+    require(nearlyShut.b0 > 0.0, "a nearly shut valve must not behave as an open end");
+
+    // The physical defect that made the exhaust ring: with an open valve and no
+    // mean flow, the port must still absorb, because the acoustic velocity
+    // through the orifice sheds vortices. Mean-flow-only resistance gave |R| = 1
+    // and therefore an undamped runner at idle.
+    //
+    // Amplitudes are stated as in-runner acoustic pressure and converted through
+    // the runner's own characteristic impedance, so they are physically legible:
+    // a blowdown pulse in a primary reaches several kPa.
+    constexpr double openArea = 5.0e-4;
+    const auto volumeVelocityFor = [&](double pressurePa) {
+        return pressurePa / characteristicImpedance;
+    };
+    const auto quiescent = Termination::compute(openArea, 0.0, 0.0, density,
+                                                characteristicImpedance, sampleRate);
+    const auto excited = Termination::compute(openArea, 0.0, volumeVelocityFor(5'000.0),
+                                              density, characteristicImpedance, sampleRate);
+    const auto quiescentMagnitude = portReflectionMagnitude(quiescent, 2'000.0, sampleRate);
+    const auto excitedMagnitude = portReflectionMagnitude(excited, 2'000.0, sampleRate);
+    require(excitedMagnitude < quiescentMagnitude,
+            "acoustic velocity through an open port must dissipate");
+    // A 5 kPa pulse against a 0.5e-3 m^2 opening loses of order 15% of its
+    // amplitude per reflection. The bound is deliberately loose -- the point is
+    // that the loss is a significant fraction, not that it hits a tuned number.
+    require(excitedMagnitude < 0.90,
+            "an open port excited at realistic runner amplitude must absorb strongly");
+
+    // Louder excitation must damp harder: this is what bounds a growing mode.
+    const auto louder = Termination::compute(openArea, 0.0, volumeVelocityFor(20'000.0),
+                                             density, characteristicImpedance, sampleRate);
+    require(portReflectionMagnitude(louder, 2'000.0, sampleRate) < excitedMagnitude,
+            "orifice resistance must rise with acoustic amplitude");
+
+    // Mean flow damps as well, and the two contributions are the same mechanism.
+    const auto flowing = Termination::compute(openArea, 0.05, 0.0, density,
+                                              characteristicImpedance, sampleRate);
+    require(portReflectionMagnitude(flowing, 2'000.0, sampleRate) < quiescentMagnitude,
+            "mean flow through an open port must dissipate");
+
+    // Passivity: a termination may never return more energy than it receives, at
+    // any frequency, for any state. A filter that did would make the waveguide
+    // grow without bound.
+    for (const auto area : { 1.0e-6, 1.0e-4, 5.0e-4, 3.0e-3 })
+        for (const auto flow : { 0.0, 0.005, 0.05, 0.4 })
+            for (const auto acoustic : { 0.0, 1.0e-3, 1.0e-2 }) {
+                const auto c = Termination::compute(area, flow, acoustic, density,
+                                                    characteristicImpedance, sampleRate);
+                for (int step = 0; step <= 48; ++step) {
+                    const auto frequency = static_cast<double>(step) / 48.0
+                        * sampleRate * 0.5;
+                    require(portReflectionMagnitude(c, frequency, sampleRate) <= 1.0 + 1.0e-6,
+                            "port reflection must be passive at every frequency");
+                }
+            }
+
+    // Non-finite inputs must fall back to the rigid end, never to a divergent
+    // filter, and the filter itself must stay finite under a non-finite sample.
+    Termination::State state;
+    const auto guarded = Termination::compute(
+        std::nan(""), 0.0, 0.0, density, characteristicImpedance, sampleRate);
+    require(std::isfinite(Termination::process(guarded, state, 1.0F)),
+            "a non-finite boundary must not produce a non-finite reflection");
+    (void) Termination::process(shut, state, std::numeric_limits<float>::infinity());
+    require(std::isfinite(state.previousOutput),
+            "filter state must remain finite after a non-finite sample");
+}
+
 int main() {
     try {
+        valvePortTerminationRegression();
         latencyAndBlockSizeRegression();
         runnerDelaySampleRateRegression();
         exhaustPathIsolationRegression();
