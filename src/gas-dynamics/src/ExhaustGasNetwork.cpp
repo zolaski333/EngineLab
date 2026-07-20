@@ -72,6 +72,103 @@ namespace {
     return result;
 }
 
+/**
+ * Quasi-steady flux through a compact valve aperture.
+ *
+ * A cylinder valve is a converging nozzle, not a zero-length continuation of
+ * the runner. A plain shock-tube Riemann flux is appropriate between adjacent
+ * duct cells but substantially under-predicts reservoir blowdown once the
+ * pressure ratio is choked. This boundary uses the isentropic nozzle solution;
+ * the separately supplied effective area already contains the measured valve
+ * discharge coefficient. Species and stagnation enthalpy are transported from
+ * the upstream state, so the finite cylinder reservoir and network remain one
+ * conservative mass/energy system. Valve-wall reaction carries the unresolved
+ * momentum, as it must for a zero-dimensional cylinder reservoir.
+ */
+[[nodiscard]] EulerFlux compressibleValveFlux(
+    const ConservativeState& leftState,
+    const PrimitiveState& left,
+    const ConservativeState& rightState,
+    const PrimitiveState& right) noexcept {
+    EulerFlux result;
+    const auto meanPressure = 0.5 * (left.pressurePa + right.pressurePa);
+    result.momentumFluxPa = meanPressure;
+
+    const auto pressureScale = std::max({ left.pressurePa, right.pressurePa, 1.0 });
+    if (std::abs(left.pressurePa - right.pressurePa)
+            <= pressureScale * 32.0 * std::numeric_limits<double>::epsilon())
+        return result;
+
+    const auto forward = left.pressurePa > right.pressurePa;
+    const auto& upstreamState = forward ? leftState : rightState;
+    const auto& upstream = forward ? left : right;
+    const auto& downstream = forward ? right : left;
+    const auto direction = forward ? 1.0 : -1.0;
+    const auto gamma = std::clamp(upstream.heatCapacityRatio, 1.01, 2.0);
+    const auto gasConstant = upstream.pressurePa
+        / (upstream.densityKgPerM3 * upstream.temperatureK);
+    if (!(gasConstant > 0.0) || !finite(gasConstant)) return result;
+
+    // The selected upstream cell supplies the quasi-steady reservoir pressure
+    // and temperature for this compact aperture. Cylinder momentum is zero by
+    // construction; for reverse flow the transported total enthalpy below also
+    // retains the runner's resolved kinetic energy.
+    const auto upstreamPressurePa = upstream.pressurePa;
+    const auto upstreamTemperatureK = upstream.temperatureK;
+    const auto pressureRatio = std::clamp(
+        downstream.pressurePa / upstreamPressurePa, 0.0, 1.0);
+    const auto criticalPressureRatio = std::pow(
+        2.0 / (gamma + 1.0), gamma / (gamma - 1.0));
+
+    double massFluxMagnitude = 0.0;
+    double exitPressurePa = downstream.pressurePa;
+    double exitTemperatureK = upstreamTemperatureK;
+    if (pressureRatio <= criticalPressureRatio) {
+        const auto criticalTemperatureRatio = 2.0 / (gamma + 1.0);
+        exitPressurePa = upstreamPressurePa * criticalPressureRatio;
+        exitTemperatureK = upstreamTemperatureK * criticalTemperatureRatio;
+        massFluxMagnitude = upstreamPressurePa
+            / std::sqrt(gasConstant * upstreamTemperatureK)
+            * std::sqrt(gamma)
+            * std::pow(criticalTemperatureRatio,
+                (gamma + 1.0) / (2.0 * (gamma - 1.0)));
+    } else {
+        const auto firstPower = std::pow(pressureRatio, 2.0 / gamma);
+        const auto secondPower = std::pow(
+            pressureRatio, (gamma + 1.0) / gamma);
+        massFluxMagnitude = upstreamPressurePa
+            / std::sqrt(gasConstant * upstreamTemperatureK)
+            * std::sqrt(std::max(0.0,
+                2.0 * gamma / (gamma - 1.0) * (firstPower - secondPower)));
+        exitTemperatureK = upstreamTemperatureK
+            * std::pow(pressureRatio, (gamma - 1.0) / gamma);
+    }
+    if (!(massFluxMagnitude >= 0.0) || !finite(massFluxMagnitude)
+        || !(exitTemperatureK > 0.0) || !finite(exitTemperatureK))
+        return result;
+
+    const auto signedMassFlux = direction * massFluxMagnitude;
+    const auto upstreamDensity = upstream.densityKgPerM3;
+    for (std::size_t species = 0; species < gasSpeciesCount; ++species) {
+        result.speciesMassFluxKgPerM2S[species] = signedMassFlux
+            * upstreamState.speciesMassDensityKgPerM3[species]
+            / upstreamDensity;
+    }
+    const auto totalSpecificEnthalpy =
+        (upstreamState.totalEnergyDensityJPerM3 + upstream.pressurePa)
+        / upstreamDensity;
+    result.totalEnergyFluxWPerM2 = signedMassFlux * totalSpecificEnthalpy;
+
+    const auto exitDensity = exitPressurePa / (gasConstant * exitTemperatureK);
+    const auto exitVelocityMagnitude = exitDensity > 0.0
+        ? massFluxMagnitude / exitDensity : 0.0;
+    // rho*u^2 is positive in either direction. Pressure is evaluated at the
+    // nozzle exit (critical section if choked, downstream static pressure if not).
+    result.momentumFluxPa = exitPressurePa
+        + massFluxMagnitude * exitVelocityMagnitude;
+    return result;
+}
+
 } // namespace
 
 bool ExhaustGasNetworkConfig::valid() const noexcept {
@@ -352,7 +449,7 @@ bool ExhaustGasNetwork::sampleCylinderBoundaries(
                 * std::clamp(supplied->dischargeCoefficient, 0.0, 1.5),
             port.runnerConnectionAreaM2 * port.dischargeCoefficient);
         if (openingAreaM2 > 0.0) {
-            const auto flux = mixtureModel_.riemannFluxPrepared(
+            const auto flux = compressibleValveFlux(
                 supplied->cylinderState, *cylinderPrimitive,
                 endpointState(port.networkEndpoint), networkPrimitive);
             sample.massFlowKgPerSecond = openingAreaM2
@@ -628,7 +725,7 @@ bool ExhaustGasNetwork::evaluateStage(
             ? cylinderReservoirStage_[index] : cylinderReservoirStates_[index];
         const auto networkState = endpointState(port.networkEndpoint);
         const auto rawFlux = openingArea > 0.0
-            ? mixtureModel_.riemannFluxPrepared(
+            ? compressibleValveFlux(
                 activeCylinderState, cylinderPrimitives[index],
                 networkState, endpointPrimitive(port.networkEndpoint))
             : EulerFlux {};

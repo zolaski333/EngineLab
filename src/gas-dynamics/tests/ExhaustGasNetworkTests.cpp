@@ -160,6 +160,58 @@ void testValveExchangeIsTwoWayAndConservative() {
                              network.cylinderExchanges(), network.outletSamples(), 2.0e-9);
 }
 
+void testChokedValveMatchesIsentropicNozzleFlow() {
+    ExhaustGasNetworkConfig configuration;
+    configuration.initialPressurePa = 120'000.0;
+    configuration.initialTemperatureK = 500.0;
+    auto network = makeNetwork(makeDefaultInlineFour(), configuration);
+    const auto cylinderId = network.layout().cylinderPorts().front().cylinderId;
+    GasComposition burnedMixture;
+    burnedMixture.massFractions = { 0.02, 0.58, 0.0, 0.40 };
+    const auto cylinderState = network.mixtureModel().conservativeFromPressureTemperature(
+        360'000.0, 1'050.0, 0.0, burnedMixture);
+    requireNetwork(cylinderState.has_value(), "choked-valve reservoir must be physical");
+    const auto cylinderPrimitive = network.mixtureModel().primitiveFromConservative(
+        *cylinderState);
+    requireNetwork(cylinderPrimitive.has_value(),
+        "choked-valve reservoir primitive must be recoverable");
+
+    constexpr double valveAreaM2 = 1.8e-4;
+    constexpr double valveDischargeCoefficient = 0.78;
+    const CylinderValveBoundary boundary {
+        cylinderId, *cylinderState, 5.0e-4,
+        valveAreaM2, valveDischargeCoefficient
+    };
+    std::vector<CylinderBoundaryFlowSample> samples(
+        network.layout().cylinderPorts().size());
+    requireNetwork(network.sampleCylinderBoundaries(
+        std::span<const CylinderValveBoundary>(&boundary, 1), samples),
+        "choked-valve boundary sample must succeed");
+
+    const auto port = network.layout().cylinderPorts().front();
+    const auto effectiveAreaM2 = std::min(
+        valveAreaM2 * valveDischargeCoefficient,
+        port.runnerConnectionAreaM2 * port.dischargeCoefficient);
+    const auto gamma = cylinderPrimitive->heatCapacityRatio;
+    const auto gasConstant = cylinderPrimitive->pressurePa
+        / (cylinderPrimitive->densityKgPerM3 * cylinderPrimitive->temperatureK);
+    const auto criticalTemperatureRatio = 2.0 / (gamma + 1.0);
+    const auto criticalPressureRatio = std::pow(
+        criticalTemperatureRatio, gamma / (gamma - 1.0));
+    requireNetwork(configuration.initialPressurePa / cylinderPrimitive->pressurePa
+            < criticalPressureRatio,
+        "analytic valve fixture must be in the choked regime");
+    const auto expectedMassFlowKgPerSecond = effectiveAreaM2
+        * cylinderPrimitive->pressurePa
+        / std::sqrt(gasConstant * cylinderPrimitive->temperatureK)
+        * std::sqrt(gamma)
+        * std::pow(criticalTemperatureRatio,
+            (gamma + 1.0) / (2.0 * (gamma - 1.0)));
+    requireNetwork(relativeError(samples.front().massFlowKgPerSecond,
+                                 expectedMassFlowKgPerSecond) < 2.0e-12,
+        "valve boundary must reproduce the analytic choked-nozzle mass flow");
+}
+
 void testInstantaneousBoundarySamplingIsSignedAndNonMutating() {
     ExhaustGasNetworkConfig configuration;
     configuration.initialPressurePa = 150'000.0;
@@ -385,6 +437,7 @@ void testBoundaryInputOrderIsIrrelevant() {
 void runExhaustGasNetworkTests() {
     testUniformClosedNetworkIsInvariant();
     testValveExchangeIsTwoWayAndConservative();
+    testChokedValveMatchesIsentropicNozzleFlow();
     testInstantaneousBoundarySamplingIsSignedAndNonMutating();
     testResetIsAllocationFreeStateReinitialisation();
     testOutletFlowIsPhysicalAndConservative();
