@@ -246,6 +246,8 @@ void RealtimeEngineAudio::release() noexcept {
     levelLimitedSamples_.store(0, std::memory_order_relaxed);
     minObservedLevelGain_.store(1.0F, std::memory_order_relaxed);
     maxObservedExhaustPressurePa_.store(0.0F, std::memory_order_relaxed);
+    legacyPathSamples_.store(0, std::memory_order_relaxed);
+    invalidBoundarySamples_.store(0, std::memory_order_relaxed);
     convolutionBank_.reset();
     if (oversampler_) oversampler_->reset();
 }
@@ -567,6 +569,8 @@ void RealtimeEngineAudio::render(juce::AudioBuffer<float>& output, int startSamp
             realtimeState_.cylinderExhaustGain[runner].load(std::memory_order_relaxed), 0.0F, 8.0F);
     }
     float blockPeakObservedExhaustPressurePa = 0.0F;
+    std::uint64_t legacySamplesThisBlock = 0;
+    std::uint64_t invalidBoundarySamplesThisBlock = 0;
     for (int sample = 0; sample < sampleCount; ++sample) {
         const auto preset = realtimeState_.exhaustPreset.load(std::memory_order_relaxed);
         if (preset != activeExhaustPreset_) updateExhaustPreset(preset);
@@ -605,7 +609,8 @@ void RealtimeEngineAudio::render(juce::AudioBuffer<float>& output, int startSamp
         // Once established, the SI path is latched. A missing producer sample
         // lets the passive network ring down; it must never resurrect noise and
         // oscillators for a callback and hide the telemetry dropout.
-        auto sampleUsesPhysicalExhaust = physicalExhaustActive_;
+        auto sampleUsesPhysicalExhaust = physicalExhaustActive_.load(
+            std::memory_order_relaxed);
         std::size_t activeCylinderCount = 0;
         if (pressureQueue_ && hasCurrentPressureSample_) {
             const auto pressureTime = audioTimeSeconds_;
@@ -1177,6 +1182,15 @@ void RealtimeEngineAudio::render(juce::AudioBuffer<float>& output, int startSamp
                 + (radiated * 0.82F + fdnWet * 0.88F + path.exhaustBodyRight) * bankWidth
                 + path.exhaustAirRight * (0.13F + pathOpenness[pathIndex] * 0.05F)) * pathGain[pathIndex];
         }
+        // Record which path actually produced this sample. A physical path that
+        // never activates, or that drops back after activating, is otherwise
+        // indistinguishable from a physical path that simply sounds unchanged.
+        if (!sampleUsesPhysicalExhaust) {
+            ++legacySamplesThisBlock;
+            if (physicalExhaustActive_.load(std::memory_order_relaxed))
+                ++invalidBoundarySamplesThisBlock;
+        }
+
         // A short chamber-pressure tail restores body to the combustion layer.
         // Exhaust already has runner, outlet, FDN and IR memory; feeding it back
         // here duplicated the same pulse and produced the former low-frequency
@@ -1230,6 +1244,11 @@ void RealtimeEngineAudio::render(juce::AudioBuffer<float>& output, int startSamp
         maxObservedExhaustPressurePa_.store(
             blockPeakObservedExhaustPressurePa, std::memory_order_relaxed);
     }
+    if (legacySamplesThisBlock != 0)
+        legacyPathSamples_.fetch_add(legacySamplesThisBlock, std::memory_order_relaxed);
+    if (invalidBoundarySamplesThisBlock != 0)
+        invalidBoundarySamples_.fetch_add(
+            invalidBoundarySamplesThisBlock, std::memory_order_relaxed);
 
     convolutionBank_.process(sampleCount);
     const auto irMix = std::clamp(convolution * 0.50F, 0.0F, 0.78F);

@@ -172,6 +172,11 @@ struct Metrics {
     // downstream compensation this harness exists to make visible.
     std::uint64_t levelLimitedSamples {};
     float minLevelGain { 1.0F };
+    // Which path produced the audio. A physical path that never activated would
+    // otherwise be reported as an unchanged-sounding physical path.
+    bool physicalActive { false };
+    std::uint64_t legacyPathSamples {};
+    std::uint64_t invalidBoundarySamples {};
 };
 
 SafetyScan scanSignal(const std::vector<float>& x) {
@@ -458,6 +463,9 @@ Metrics renderEngine(const EngineConfig& baseConfig, const WavData& ir,
     m.delayTruncations = renderer.delayTruncationCount();
     m.levelLimitedSamples = renderer.levelLimitedSampleCount();
     m.minLevelGain = renderer.minObservedLevelGain();
+    m.physicalActive = renderer.physicalExhaustActive();
+    m.legacyPathSamples = renderer.legacyPathSampleCount();
+    m.invalidBoundarySamples = renderer.invalidBoundarySampleCount();
     if (writeOutput)
         writeWav(outDir / (config.name + ".wav"), audioLeft, audioRight, static_cast<int>(audioRate));
     std::cout << std::left << std::setw(26) << config.name
@@ -468,6 +476,9 @@ Metrics renderEngine(const EngineConfig& baseConfig, const WavData& ir,
               << " rpm=" << std::setprecision(0) << m.finalRpm
               << " brightness=" << std::setprecision(3) << m.left.window.brightness
               << " dc=" << std::showpos << m.left.window.mean << std::noshowpos
+              << " physical=" << (m.physicalActive ? "yes" : "NO")
+              << " legacySamples=" << m.legacyPathSamples
+              << " boundaryDropouts=" << m.invalidBoundarySamples
               << " solverHz=" << std::setprecision(0) << m.solverFrequencyHz
               << " substeps=" << m.solverSubsteps
               << " resonance=" << std::setprecision(1) << m.left.window.maxResonanceProminenceDb
@@ -868,6 +879,109 @@ DecayMeasurement measureExhaustDecay(const EngineConfig& baseConfig, const WavDa
 }
 } // namespace
 
+/**
+ * Drive a real EngineRuntime exactly as the application wires it, and report
+ * which audio path ends up producing sound.
+ *
+ * Every other measurement in this harness steps the simulator by hand and feeds
+ * the queues itself. That is deterministic and good for spectra, but it is not
+ * the wiring the user hears: the application constructs an EngineRuntime, lets
+ * its own thread publish telemetry, and renders from the queues that thread
+ * fills. A defect confined to that wiring -- telemetry never published, rate
+ * limited away, or a boundary the runtime marks invalid -- would leave the
+ * offline measurements looking healthy while the delivered application quietly
+ * ran the legacy procedural path instead. This closes that gap.
+ */
+bool runtimePathCheck(const EngineConfig& baseConfig, const WavData& ir) {
+    auto config = baseConfig;
+    normaliseEngineConfig(config);
+    auto runtime = std::make_unique<EngineRuntime>(config);
+    auto renderer = std::make_unique<RealtimeEngineAudio>(
+        runtime->audioEvents(), runtime->audioState(),
+        &runtime->cylinderPressureSamples());
+    if (!ir.samples.empty()) renderer->setImpulseResponse(ir.samples, ir.sampleRate, 0);
+
+    constexpr double audioRate = 48'000.0;
+    constexpr int blockSize = 256;
+    renderer->prepare(audioRate, blockSize);
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+
+    runtime->setIgnitionEnabled(true);
+    runtime->setStarterEngaged(true);
+    runtime->start();
+
+    juce::AudioBuffer<float> block(2, blockSize);
+    double rendered = 0.0;
+    double peak = 0.0;
+    double squareSum = 0.0;
+    std::size_t sampleCount = 0;
+    const auto blockSeconds = static_cast<double>(blockSize) / audioRate;
+    // Pace against an absolute deadline, not by sleeping a block's worth per
+    // iteration. A 256-sample block at 48 kHz is 5.3 ms, which is below the
+    // granularity of a Windows sleep: sleeping per block would run the render
+    // clock at a fraction of real time, starve the renderer against the
+    // runtime's wall-clock telemetry, and produce a starvation artefact
+    // belonging to this harness rather than to the application.
+    const auto startTime = std::chrono::steady_clock::now();
+    while (rendered < 6.0) {
+        if (rendered > 1.5) runtime->setStarterEngaged(false);
+        if (rendered > 3.0) runtime->setThrottle(0.5);
+        block.clear();
+        renderer->render(block, 0, blockSize);
+        for (int s = 0; s < blockSize; ++s) {
+            const auto value = static_cast<double>(block.getSample(0, s));
+            if (!std::isfinite(value)) continue;
+            peak = std::max(peak, std::abs(value));
+            if (rendered > 3.5) { squareSum += value * value; ++sampleCount; }
+        }
+        rendered += blockSeconds;
+        const auto deadline = startTime + std::chrono::microseconds(
+            static_cast<long long>(rendered * 1.0e6));
+        // Sleep the bulk of the wait, then spin the remainder, so the render
+        // clock tracks the runtime's clock to well under one block.
+        const auto coarse = deadline - std::chrono::milliseconds(2);
+        if (coarse > std::chrono::steady_clock::now())
+            std::this_thread::sleep_until(coarse);
+        while (std::chrono::steady_clock::now() < deadline) std::this_thread::yield();
+    }
+    runtime->stop();
+
+    const auto rms = sampleCount != 0
+        ? std::sqrt(squareSum / static_cast<double>(sampleCount)) : 0.0;
+    const auto physical = renderer->physicalExhaustActive();
+    // Engine speed at the end of the run. A silent render means nothing until
+    // it is known whether the engine was still turning: a stalled engine is a
+    // physics defect, not an audio one.
+    const auto finalRpm = runtime->audioState().rpm.load(std::memory_order_relaxed);
+    std::cout << "  " << std::left << std::setw(26) << config.name
+              << " finalRpm=" << std::fixed << std::setprecision(0) << finalRpm
+              << " physical=" << (physical ? "yes" : "NO")
+              << " legacySamples=" << renderer->legacyPathSampleCount()
+              << " boundaryDropouts=" << renderer->invalidBoundarySampleCount()
+              << " rms=" << std::fixed << std::setprecision(4) << rms
+              << " peak=" << peak
+              << " observerPeak=" << std::setprecision(1)
+              << renderer->maxObservedExhaustPressurePa() << " Pa"
+              << " droppedPressure=" << runtime->droppedPressureSampleCount()
+              << '\n';
+    auto ok = physical;
+    if (!physical)
+        std::cerr << "FAIL: runtime wiring: " << config.name
+                  << " never activated the physical exhaust path\n";
+    // An engine that has stopped turning cannot produce engine sound, and no
+    // amount of audio work will change that. This is checked here rather than in
+    // the offline renders because those drive throttle and a dyno load
+    // themselves and so hold the engine up artificially; only this path runs the
+    // engine the way the application does, on its idle governor alone.
+    if (!(finalRpm > config.idleRpm * 0.5)) {
+        std::cerr << "FAIL: runtime wiring: " << config.name
+                  << " stalled (final rpm " << std::fixed << std::setprecision(0)
+                  << finalRpm << ", idle target " << config.idleRpm << ")\n";
+        ok = false;
+    }
+    return ok;
+}
+
 int main(int argc, char** argv) {
     std::cout << std::unitbuf;
     std::filesystem::path outDir = "audio-render-output";
@@ -908,6 +1022,22 @@ int main(int argc, char** argv) {
         { "inline2", makeDefaultInlineTwo() },
         { "radial5", makeDefaultRadialFive() },
     };
+
+    std::cout << "\n--- Application wiring: real EngineRuntime path check ---\n";
+    auto runtimePathOk = true;
+    {
+        const auto runtimeCatalog = loadEngineCatalog(
+            std::filesystem::path(ENGINELAB_CATALOG_ROOT));
+        std::size_t checked = 0;
+        for (const auto& entry : runtimeCatalog.entries) {
+            if (!runtimePathCheck(entry.config, ir)) runtimePathOk = false;
+            if (++checked >= 4) break;
+        }
+        if (checked == 0) {
+            std::cerr << "FAIL: no catalogue engines available for the runtime check\n";
+            runtimePathOk = false;
+        }
+    }
 
     std::cout << "\n--- Per-engine render (3.0 s) ---\n";
     std::vector<Metrics> metrics;
@@ -1066,6 +1196,10 @@ int main(int argc, char** argv) {
         std::cerr << "FAIL: exhaust decay could not be measured for at least one preset\n";
         ok = false;
     }
+    // A physical path that never activates under the application's own wiring is
+    // a silent downgrade to the legacy procedural voice, which is exactly the
+    // fallback this architecture is not allowed to have.
+    if (!runtimePathOk) ok = false;
     std::cout << "\nResult: " << (ok ? "PASS" : "FAIL")
               << " (max spectral similarity " << std::setprecision(3) << worstSimilarity << ")\n";
     return ok ? 0 : 1;

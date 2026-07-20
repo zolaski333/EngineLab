@@ -49,6 +49,28 @@ public:
     // (safety-only). These do not affect the audio path.
     [[nodiscard]] std::uint64_t levelLimitedSampleCount() const noexcept { return levelLimitedSamples_.load(std::memory_order_relaxed); }
     [[nodiscard]] float minObservedLevelGain() const noexcept { return minObservedLevelGain_.load(std::memory_order_relaxed); }
+    /** Whether the physical thermoacoustic path has taken ownership of the voice.
+     *
+     * False means every rendered sample is coming from the legacy procedural
+     * exhaust instead. That is a silent downgrade in audible quality, so it must
+     * be observable rather than inferred: a caller that cannot distinguish the
+     * two paths cannot tell a physical-path improvement from a physical path
+     * that never activated. */
+    [[nodiscard]] bool physicalExhaustActive() const noexcept {
+        return physicalExhaustActive_.load(std::memory_order_relaxed);
+    }
+    /** Samples rendered on the legacy procedural path.
+     *
+     * Non-zero after start-up means the physical boundary was unavailable or
+     * rejected and the renderer fell back. Start-up itself contributes a bounded
+     * number before the first valid telemetry arrives. */
+    [[nodiscard]] std::uint64_t legacyPathSampleCount() const noexcept {
+        return legacyPathSamples_.load(std::memory_order_relaxed);
+    }
+    /** Telemetry samples whose thermoacoustic boundary was published invalid. */
+    [[nodiscard]] std::uint64_t invalidBoundarySampleCount() const noexcept {
+        return invalidBoundarySamples_.load(std::memory_order_relaxed);
+    }
     /** Peak SI pressure delivered by the free-field exhaust observer. */
     [[nodiscard]] float maxObservedExhaustPressurePa() const noexcept {
         return maxObservedExhaustPressurePa_.load(std::memory_order_relaxed);
@@ -290,7 +312,9 @@ private:
     std::array<DuctWallLoss::State, maxRunners> runnerWallLossToPort_ {};
     std::array<bool, 32> thermoacousticMeanInitialised_ {};
     float thermoacousticMeanCoefficient_ { 0.0F };
-    bool physicalExhaustActive_ { false };
+    // Atomic so a monitoring thread can observe which path is producing audio
+    // without racing the renderer.
+    std::atomic<bool> physicalExhaustActive_ { false };
     float pressureHighPassPole_ { 0.997F };
     float pressureBandCoefficient_ { 0.5F };
     double pressureSampleIntervalSeconds_ { 0.0 };
@@ -313,5 +337,7 @@ private:
     std::atomic<std::uint64_t> levelLimitedSamples_ { 0 };
     std::atomic<float> minObservedLevelGain_ { 1.0F };
     std::atomic<float> maxObservedExhaustPressurePa_ { 0.0F };
+    std::atomic<std::uint64_t> legacyPathSamples_ { 0 };
+    std::atomic<std::uint64_t> invalidBoundarySamples_ { 0 };
 };
 } // namespace enginelab
