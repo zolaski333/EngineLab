@@ -1,4 +1,5 @@
 #include <enginelab/audio/RealtimeEngineAudio.hpp>
+#include <enginelab/audio/PipeRadiationModel.hpp>
 
 #include <juce_audio_basics/juce_audio_basics.h>
 
@@ -7,8 +8,10 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <complex>
 #include <iostream>
 #include <memory>
+#include <numbers>
 #include <stdexcept>
 #include <span>
 #include <string>
@@ -440,6 +443,55 @@ void ambientPressureRegression() {
             "configured ambient pressure must be acoustic zero, including at altitude");
 }
 
+void pipeRadiationRegression() {
+    constexpr double sampleRateHz = 48'000.0;
+    constexpr double radiusM = 0.032;
+    constexpr double densityKgPerM3 = 0.62;
+    constexpr double soundSpeedMps = 548.0;
+    enginelab::UnflangedPipeRadiation radiation;
+    require(!radiation.prepare(0.0, radiusM, 1.0)
+            && radiation.prepare(sampleRateHz, radiusM, 1.0)
+            && radiation.setMedium(densityKgPerM3, soundSpeedMps),
+            "unflanged radiation model must validate geometry and medium");
+
+    const auto expectedImpedance = densityKgPerM3 * soundSpeedMps
+        / (std::numbers::pi * radiusM * radiusM);
+    require(std::abs(radiation.characteristicImpedancePaSPerM3()
+                     / expectedImpedance - 1.0) < 1.0e-12,
+            "pipe characteristic impedance must be rho*c/area");
+    require(std::abs(radiation.reflectionCoefficient(0.0).real() + 1.0) < 1.0e-12,
+            "an unflanged mouth must approach a pressure-release reflection at DC");
+
+    constexpr double n1 = 0.167;
+    constexpr double d1 = 1.393;
+    constexpr double d2 = 0.457;
+    for (int index = 1; index <= 200; ++index) {
+        const auto frequencyHz = sampleRateHz * 0.49
+            * static_cast<double>(index) / 200.0;
+        const auto digital = radiation.reflectionCoefficient(frequencyHz);
+        require(std::abs(digital) <= 1.0 + 1.0e-12,
+                "causal unflanged radiation filter must remain passive");
+        const auto warpedAngularFrequency = 2.0 * sampleRateHz
+            * std::tan(std::numbers::pi * frequencyHz / sampleRateHz);
+        const std::complex<double> jKa {
+            0.0, warpedAngularFrequency * radiusM / soundSpeedMps
+        };
+        const auto continuous = -(1.0 + n1 * jKa)
+            / (1.0 + d1 * jKa + d2 * jKa * jKa);
+        require(std::abs(digital - continuous) < 2.0e-12,
+                "bilinear radiation filter must match the published Pade load");
+    }
+
+    enginelab::PipeRadiationSample settled;
+    for (int index = 0; index < 4'096; ++index)
+        settled = radiation.process(2'000.0);
+    require(std::abs(settled.reflectedPressurePa + 2'000.0) < 1.0e-7
+            && std::abs(settled.farFieldPressurePa) < 1.0e-7,
+            "steady pressure must reflect at the open end without radiating DC energy");
+    require(radiation.planeModeCutoffHz() > 9'000.0,
+            "fixture must remain inside the plane-mode validity band over audible midrange");
+}
+
 } // namespace
 
 int main() {
@@ -449,6 +501,7 @@ int main() {
         exhaustPathIsolationRegression();
         customGraphRuntimeTelemetryRegression();
         ambientPressureRegression();
+        pipeRadiationRegression();
         outputQualityRegression();
         std::cout << "Realtime audio/runtime regression tests passed\n";
         return 0;
