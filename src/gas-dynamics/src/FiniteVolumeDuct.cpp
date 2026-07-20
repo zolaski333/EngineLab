@@ -261,6 +261,30 @@ std::optional<ConservativeState> EulerMixtureModel::conservativeFromPrimitive(
     return result;
 }
 
+std::optional<ConservativeState> EulerMixtureModel::conservativeFromPressureTemperature(
+    double pressure, double temperature, double velocity,
+    GasComposition composition) const noexcept {
+    if (!model_.valid() || !finite(pressure) || !(pressure > 0.0)
+        || !finite(temperature) || !(temperature > 0.0) || !finite(velocity))
+        return std::nullopt;
+    auto fractionSum = 0.0;
+    auto molesPerKg = 0.0;
+    for (std::size_t index = 0; index < gasSpeciesCount; ++index) {
+        const auto fraction = composition.massFractions[index];
+        if (!finite(fraction) || fraction < 0.0) return std::nullopt;
+        fractionSum += fraction;
+    }
+    if (!(fractionSum > 0.0)) return std::nullopt;
+    for (std::size_t index = 0; index < gasSpeciesCount; ++index) {
+        const auto normalisedFraction = composition.massFractions[index] / fractionSum;
+        molesPerKg += normalisedFraction / model_.species[index].molarMassKgPerMol;
+    }
+    if (!(molesPerKg > 0.0) || !finite(molesPerKg)) return std::nullopt;
+    const auto density = pressure
+        / (molesPerKg * universalGasConstantJPerMolK * temperature);
+    return conservativeFromPrimitive(density, velocity, pressure, composition);
+}
+
 std::optional<PrimitiveState> EulerMixtureModel::primitiveFromConservative(
     const ConservativeState& state) const noexcept {
     if (!model_.valid()) return std::nullopt;
@@ -312,6 +336,31 @@ std::optional<PrimitiveState> EulerMixtureModel::primitiveFromConservative(
 
 bool EulerMixtureModel::isPhysical(const ConservativeState& state) const noexcept {
     return primitiveFromConservative(state).has_value();
+}
+
+bool EulerMixtureModel::canonicaliseSpeciesRoundoff(ConservativeState& state) const noexcept {
+    auto targetDensity = 0.0;
+    auto positiveDensity = 0.0;
+    auto needsRepair = false;
+    for (const auto speciesDensity : state.speciesMassDensityKgPerM3) {
+        if (!finite(speciesDensity)) return false;
+        targetDensity += speciesDensity;
+        if (speciesDensity >= 0.0) positiveDensity += speciesDensity;
+        else needsRepair = true;
+    }
+    if (!needsRepair) return true;
+    if (!(targetDensity > minimumDensityKgPerM3) || !(positiveDensity > 0.0)) return false;
+    const auto roundoffTolerance = 128.0 * std::numeric_limits<double>::epsilon()
+        * std::max(targetDensity, minimumDensityKgPerM3);
+    for (const auto speciesDensity : state.speciesMassDensityKgPerM3)
+        if (speciesDensity < -roundoffTolerance) return false;
+
+    const auto retainedFraction = targetDensity / positiveDensity;
+    for (auto& speciesDensity : state.speciesMassDensityKgPerM3) {
+        speciesDensity = speciesDensity > 0.0
+            ? speciesDensity * retainedFraction : 0.0;
+    }
+    return true;
 }
 
 EulerFlux EulerMixtureModel::physicalFlux(const ConservativeState& state) const noexcept {
@@ -406,6 +455,7 @@ EulerFlux EulerMixtureModel::riemannFlux(const ConservativeState& left,
 }
 
 double DuctGeometry::areaM2() const noexcept {
+    if (crossSectionAreaM2 > 0.0) return crossSectionAreaM2;
     const auto radius = 0.5 * diameterM;
     return std::numbers::pi * radius * radius;
 }
@@ -415,7 +465,9 @@ double DuctGeometry::cellLengthM() const noexcept {
 }
 
 bool DuctGeometry::valid() const noexcept {
-    return finite(lengthM) && lengthM > 0.0 && finite(diameterM) && diameterM > 0.0
+    return finite(lengthM) && lengthM > 0.0
+        && finite(crossSectionAreaM2) && crossSectionAreaM2 >= 0.0
+        && finite(diameterM) && diameterM > 0.0
         && cellCount >= 2 && cellCount <= 1'000'000
         && finite(absoluteRoughnessM) && absoluteRoughnessM >= 0.0
         && finite(localLossCoefficient) && localLossCoefficient >= 0.0
@@ -705,7 +757,11 @@ DuctAdvanceResult FiniteVolumeDuct::advance(
             computeResidual(cells_, left, right, residual_, faceFluxes_);
             for (std::size_t index = 0; index < cells_.size(); ++index)
                 stage_[index] = addScaled(cells_[index], residual_[index], trialStep);
-            if (!allStatesPhysical(stage_)) {
+            const auto stageRoundoffIsValid = std::all_of(
+                stage_.begin(), stage_.end(), [this](ConservativeState& state) {
+                    return mixtureModel_.canonicaliseSpeciesRoundoff(state);
+                });
+            if (!stageRoundoffIsValid || !allStatesPhysical(stage_)) {
                 ++result.rejectedSubsteps;
                 trialStep *= 0.5;
                 if (!(trialStep > std::numeric_limits<double>::epsilon()
@@ -720,7 +776,11 @@ DuctAdvanceResult FiniteVolumeDuct::advance(
                 candidate_[index] = addScaled(cells_[index],
                     difference(forwardEuler, cells_[index]), 0.5);
             }
-            if (!allStatesPhysical(candidate_)) {
+            const auto candidateRoundoffIsValid = std::all_of(
+                candidate_.begin(), candidate_.end(), [this](ConservativeState& state) {
+                    return mixtureModel_.canonicaliseSpeciesRoundoff(state);
+                });
+            if (!candidateRoundoffIsValid || !allStatesPhysical(candidate_)) {
                 ++result.rejectedSubsteps;
                 trialStep *= 0.5;
                 if (!(trialStep > std::numeric_limits<double>::epsilon()

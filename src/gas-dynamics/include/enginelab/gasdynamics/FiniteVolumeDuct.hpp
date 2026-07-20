@@ -8,6 +8,8 @@
 
 namespace enginelab::gasdynamics {
 
+class ExhaustGasNetwork;
+
 inline constexpr std::size_t gasSpeciesCount = 4;
 inline constexpr double universalGasConstantJPerMolK = 8.31446261815324;
 
@@ -106,11 +108,20 @@ public:
         double densityKgPerM3, double velocityMps, double pressurePa,
         GasComposition composition = GasComposition::dryAir()) const noexcept;
 
+    [[nodiscard]] std::optional<ConservativeState> conservativeFromPressureTemperature(
+        double pressurePa, double temperatureK, double velocityMps = 0.0,
+        GasComposition composition = GasComposition::dryAir()) const noexcept;
+
     /** Recover pressure and temperature without thermodynamic floors. */
     [[nodiscard]] std::optional<PrimitiveState> primitiveFromConservative(
         const ConservativeState& state) const noexcept;
 
     [[nodiscard]] bool isPhysical(const ConservativeState& state) const noexcept;
+    /** Remove only signed species residue within floating-point roundoff.
+     * Positive species are rescaled to preserve the cell's original total
+     * density. Significant negativity is rejected and left untouched.
+     */
+    [[nodiscard]] bool canonicaliseSpeciesRoundoff(ConservativeState& state) const noexcept;
     [[nodiscard]] EulerFlux physicalFlux(const ConservativeState& state) const noexcept;
 
     /** HLLC contact-resolving flux with an HLLE safety fallback.
@@ -125,6 +136,9 @@ private:
 
 struct DuctGeometry final {
     double lengthM { 1.0 };
+    /** Zero derives a circular area from diameterM. */
+    double crossSectionAreaM2 { 0.0 };
+    /** Hydraulic diameter used by wall friction and heat transfer. */
     double diameterM { 0.05 };
     std::size_t cellCount { 32 };
     bool wallFrictionEnabled { true };
@@ -208,6 +222,7 @@ public:
         std::size_t maximumSubsteps = 100'000) noexcept;
 
 private:
+    friend class ExhaustGasNetwork;
     [[nodiscard]] bool allStatesPhysical(std::span<const ConservativeState> states) const noexcept;
     void computeResidual(std::span<const ConservativeState> states,
                          const DuctBoundaryCondition& left,

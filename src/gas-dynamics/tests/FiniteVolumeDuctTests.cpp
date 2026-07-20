@@ -96,6 +96,21 @@ void testEquationOfStateRoundTrip() {
     invalidComposition.massFractions[0] = -0.1;
     require(!model.conservativeFromPrimitive(1.0, 0.0, 101'325.0, invalidComposition),
             "negative species fractions must be rejected, not clamped");
+
+    auto roundoffState = state;
+    const auto densityBeforeRepair = roundoffState.densityKgPerM3();
+    roundoffState.speciesMassDensityKgPerM3[2] = -1.0e-16;
+    const auto targetDensity = roundoffState.densityKgPerM3();
+    require(model.canonicaliseSpeciesRoundoff(roundoffState)
+            && roundoffState.speciesMassDensityKgPerM3[2] == 0.0
+            && relativeError(roundoffState.densityKgPerM3(), targetDensity) < 2.0e-16,
+        "roundoff repair must remove ulp-scale negativity without changing total density");
+    roundoffState = state;
+    roundoffState.speciesMassDensityKgPerM3[2] = -1.0e-6;
+    require(!model.canonicaliseSpeciesRoundoff(roundoffState)
+            && roundoffState.speciesMassDensityKgPerM3[2] == -1.0e-6
+            && densityBeforeRepair > 0.0,
+        "roundoff repair must reject physically significant species negativity");
 }
 
 void testUniformStatePreservation() {
@@ -354,6 +369,7 @@ void testStrongExpansionRemainsPositive() {
 } // namespace
 
 void runExhaustNetworkLayoutTests();
+void runExhaustGasNetworkTests();
 
 int main() {
     testEquationOfStateRoundTrip();
@@ -365,6 +381,7 @@ int main() {
     testFrictionConvertsResolvedMotionToHeat();
     testStrongExpansionRemainsPositive();
     runExhaustNetworkLayoutTests();
+    runExhaustGasNetworkTests();
     std::cout << "EngineLab gas-dynamics tests passed\n";
     return EXIT_SUCCESS;
 }
