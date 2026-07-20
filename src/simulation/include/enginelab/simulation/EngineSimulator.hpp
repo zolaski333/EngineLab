@@ -48,6 +48,32 @@ private:
     std::array<double, 32> exhaustRunnerPressureKpa_ {};
     std::array<double, 32> exhaustRunnerVelocityMps_ {};
     std::array<double, 32> exhaustRunnerTemperatureK_ {};
+    /** Network-side exhaust boundary at the two most recent network solutions.
+     *
+     * The exhaust network is integrated on a multirate stride, so its state is
+     * only new on the substeps where it is flushed. Holding that state on the
+     * substeps in between makes the published boundary a zero-order-hold
+     * staircase clocked at the coupling rate, which for a running engine lands
+     * between roughly 2 and 4 kHz -- squarely audible, and heard as a metallic
+     * tone unrelated to the engine. Keeping the last two solutions lets the
+     * published boundary be reconstructed by linear interpolation across the
+     * stride instead, at the cost of one coupling interval (at most 500 us) of
+     * group delay on the exhaust boundary alone.
+     */
+    struct ExhaustNetworkBoundary final {
+        double pressureKpa {};
+        double velocityMps {};
+        double temperatureK {};
+        double massFlowKgPerSecond {};
+        double densityKgPerM3 {};
+        double speedOfSoundMps {};
+        bool valid { false };
+    };
+    std::array<ExhaustNetworkBoundary, 32> exhaustBoundaryAtPreviousFlush_ {};
+    std::array<ExhaustNetworkBoundary, 32> exhaustBoundaryAtLastFlush_ {};
+    bool exhaustBoundaryHistoryPrimed_ { false };
+    /** Substeps elapsed since the last network flush, for the reconstruction. */
+    std::size_t exhaustBoundarySubstepsSinceFlush_ { 0 };
     std::array<double, 32> chamberPressureBar_ {};
     std::array<double, 32> intakeFlowMgPerCycle_ {};
     std::array<double, 32> exhaustFlowMgPerCycle_ {};

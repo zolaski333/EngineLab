@@ -1169,18 +1169,66 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
             const auto index = exhaustNetworkCylinderIndex_[portIndex];
             const auto& sample = boundarySamples[portIndex];
             if (sampled) {
-                exhaustRunnerPressureKpa_[index] = sample.networkPressurePa * 0.001;
-                exhaustRunnerVelocityMps_[index] = sample.networkVelocityMps;
-                exhaustRunnerTemperatureK_[index] = sample.networkTemperatureK;
+                // The network state behind this sample is only new on a flush
+                // substep. Record it as a knot of the boundary's time history
+                // rather than publishing it directly: publishing it on every
+                // substep would hold it flat between flushes, which is a
+                // zero-order hold clocked at the coupling rate and lands in the
+                // audible band. See ExhaustNetworkBoundary.
+                if (flushExhaustNetwork) {
+                    exhaustBoundaryAtPreviousFlush_[index] =
+                        exhaustBoundaryAtLastFlush_[index];
+                    exhaustBoundaryAtLastFlush_[index] = {
+                        sample.networkPressurePa * 0.001,
+                        sample.networkVelocityMps,
+                        sample.networkTemperatureK,
+                        sample.massFlowKgPerSecond,
+                        sample.networkDensityKgPerM3,
+                        sample.networkSpeedOfSoundMps,
+                        true,
+                    };
+                    if (!exhaustBoundaryHistoryPrimed_)
+                        exhaustBoundaryAtPreviousFlush_[index] =
+                            exhaustBoundaryAtLastFlush_[index];
+                }
+                // Reconstruct the boundary between knots by linear
+                // interpolation. Until two flushes have been seen the history
+                // holds a single state and this reduces to that state.
+                const auto& from = exhaustBoundaryAtPreviousFlush_[index];
+                const auto& to = exhaustBoundaryAtLastFlush_[index];
+                const auto phase = exhaustCouplingStride > 0
+                    ? std::clamp(static_cast<double>(exhaustBoundarySubstepsSinceFlush_)
+                        / static_cast<double>(exhaustCouplingStride), 0.0, 1.0)
+                    : 1.0;
+                const auto blend = [phase](double a, double b) {
+                    return a + (b - a) * phase;
+                };
+                exhaustRunnerPressureKpa_[index] = blend(from.pressureKpa, to.pressureKpa);
+                exhaustRunnerVelocityMps_[index] = blend(from.velocityMps, to.velocityMps);
+                exhaustRunnerTemperatureK_[index] = blend(from.temperatureK, to.temperatureK);
+                exhaustPortDensityKgPerM3[index] =
+                    blend(from.densityKgPerM3, to.densityKgPerM3);
+                exhaustPortSpeedOfSoundMps[index] =
+                    blend(from.speedOfSoundMps, to.speedOfSoundMps);
+                // Mass flow is a valve-plane quantity recomputed from the
+                // instantaneous cylinder state every substep, so it is already
+                // at mechanical cadence and must not be smoothed.
                 exhaustMassFlowKgPerSecond[index] = sample.massFlowKgPerSecond;
-                exhaustPortDensityKgPerM3[index] = sample.networkDensityKgPerM3;
-                exhaustPortSpeedOfSoundMps[index] = sample.networkSpeedOfSoundMps;
             }
             thermoacousticBoundaryValid[index] = static_cast<std::uint8_t>(sampled
                 && sample.valid && exhaustNetworkCompleted
+                && exhaustBoundaryAtLastFlush_[index].valid
                 && exhaustExchangeApplied[index] != 0);
             collectorPressureKpa = std::max(
                 collectorPressureKpa, exhaustRunnerPressureKpa_[index]);
+        }
+        if (sampled) {
+            if (flushExhaustNetwork) {
+                exhaustBoundaryHistoryPrimed_ = true;
+                exhaustBoundarySubstepsSinceFlush_ = 0;
+            } else if (exhaustBoundarySubstepsSinceFlush_ < exhaustCouplingStride) {
+                ++exhaustBoundarySubstepsSinceFlush_;
+            }
         }
         for (std::size_t index = 0; index < config_.cylinders.size(); ++index) {
             if (decoupleSharedVolumes) {
@@ -1569,6 +1617,8 @@ void EngineSimulator::accumulateCycleTelemetry(double previousAngleDegrees,
 void EngineSimulator::reset() noexcept {
     ecu_.reset();
     eventGenerator_.reset();
+    exhaustBoundaryHistoryPrimed_ = false;
+    exhaustBoundarySubstepsSinceFlush_ = 0;
     if (pressureSamples_) {
         CylinderPressureSample discarded;
         while (pressureSamples_->tryPop(discarded)) {}
@@ -1646,6 +1696,8 @@ void EngineSimulator::reset() noexcept {
             - crankOffsetDegreesFor(config_, config_.cylinders[index]) + 1'440.0, 720.0);
         intakeRunnerPressureKpa_[index] = config_.ambientPressureKpa;
         exhaustRunnerPressureKpa_[index] = config_.ambientPressureKpa;
+        exhaustBoundaryAtPreviousFlush_[index] = {};
+        exhaustBoundaryAtLastFlush_[index] = {};
         chamberPressureBar_[index] = config_.ambientPressureKpa / 100.0;
         cylinderWallTemperatureC_[index] = config_.ambientTemperatureC;
         configureFuel(intakeRunnerGas_[index]);
