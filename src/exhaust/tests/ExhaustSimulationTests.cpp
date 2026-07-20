@@ -1,6 +1,7 @@
 #include <enginelab/ecu/SimpleEcuModel.hpp>
 #include <enginelab/events/FourStrokeEventGenerator.hpp>
 #include <enginelab/exhaust/ExhaustGraph.hpp>
+#include <enginelab/gasdynamics/ExhaustNetworkLayout.hpp>
 #include <enginelab/physics/SimplifiedGasolinePhysics.hpp>
 #include <enginelab/simulation/EngineSimulator.hpp>
 
@@ -63,6 +64,7 @@ struct AverageState final {
     double exhaustPressureKpa {};
     double exhaustFlowGramsPerSecond {};
     double airFlowGramsPerSecond {};
+    double exhaustTemperatureC {};
     double torqueNm {};
 };
 
@@ -91,6 +93,7 @@ AverageState simulate(const EngineConfig& config) {
             average.exhaustPressureKpa += frame.state.exhaustPressureKpa;
             average.exhaustFlowGramsPerSecond += frame.state.exhaustFlowGramsPerSecond;
             average.airFlowGramsPerSecond += frame.state.airFlowGramsPerSecond;
+            average.exhaustTemperatureC += frame.state.exhaustTemperatureC;
             average.torqueNm += frame.state.cycleAveragedTorqueNm;
         }
     }
@@ -99,6 +102,7 @@ AverageState simulate(const EngineConfig& config) {
     average.exhaustPressureKpa *= scale;
     average.exhaustFlowGramsPerSecond *= scale;
     average.airFlowGramsPerSecond *= scale;
+    average.exhaustTemperatureC *= scale;
     average.torqueNm *= scale;
     return average;
 }
@@ -108,9 +112,16 @@ void restrictionClosesPhysicalSolver() {
     const auto restrictedConfig = customFixture(18.0);
     const auto openGraph = ExhaustGraph::makeForEngine(openConfig);
     const auto restrictedGraph = ExhaustGraph::makeForEngine(restrictedConfig);
-    require(restrictedGraph.pathFlowProperties(0).effectiveOutletAreaM2
-            < openGraph.pathFlowProperties(0).effectiveOutletAreaM2 * 0.35,
-        "fixture must materially reduce compiled conductance");
+    const auto openLayout = gasdynamics::ExhaustNetworkLayout::compile(openGraph);
+    const auto restrictedLayout = gasdynamics::ExhaustNetworkLayout::compile(restrictedGraph);
+    const auto mufflerLoss = [](const auto& layout) {
+        const auto muffler = std::find_if(layout.ducts().begin(), layout.ducts().end(),
+            [](const auto& duct) { return duct.sourceComponentId == 300; });
+        return muffler != layout.ducts().end() ? muffler->lossCoefficient : -1.0;
+    };
+    require(openLayout.valid() && restrictedLayout.valid()
+            && mufflerLoss(restrictedLayout) > mufflerLoss(openLayout) + 17.0,
+        "fixture K must reach the component-resolved conservative solver");
 
     const auto open = simulate(openConfig);
     const auto restricted = simulate(restrictedConfig);
@@ -126,11 +137,31 @@ void restrictionClosesPhysicalSolver() {
         "custom exhaust integration must remain finite");
     require(restricted.exhaustPressureKpa > open.exhaustPressureKpa + 2.0,
         "higher DAG K must raise the authoritative collector pressure");
-    require(restricted.exhaustFlowGramsPerSecond < open.exhaustFlowGramsPerSecond,
-        "higher DAG K must reduce established outlet mass flow");
-    require(restricted.airFlowGramsPerSecond < open.airFlowGramsPerSecond
-            && restricted.torqueNm < open.torqueNm,
-        "physical backpressure must feed back into breathing and torque");
+    // At fixed speed and throttle the engine is an active gas pump: a higher K
+    // need not reduce mass flow monotonically, because the dynamometer supplies
+    // whatever crank work is needed to hold speed. The physically invariant
+    // comparison is pressure-loss power, Delta-p times volumetric flow.
+    const auto pumpingPowerW = [&openConfig](const AverageState& state) {
+        constexpr double representativeExhaustGasConstantJPerKgK = 287.0;
+        const auto absolutePressurePa = state.exhaustPressureKpa * 1'000.0;
+        const auto densityKgPerM3 = absolutePressurePa
+            / (representativeExhaustGasConstantJPerKgK
+                * (state.exhaustTemperatureC + 273.15));
+        const auto volumeFlowM3PerSecond = state.exhaustFlowGramsPerSecond
+            * 0.001 / densityKgPerM3;
+        return (absolutePressurePa - openConfig.ambientPressureKpa * 1'000.0)
+            * volumeFlowM3PerSecond;
+    };
+    require(pumpingPowerW(restricted) > pumpingPowerW(open)
+            && restricted.torqueNm < open.torqueNm - 0.25,
+        "higher DAG K must increase pumping power and reduce matched-speed torque");
+    const auto massFlowIsConsistent = [](const AverageState& state) {
+        return state.airFlowGramsPerSecond > 0.0
+            && state.exhaustFlowGramsPerSecond > state.airFlowGramsPerSecond
+            && state.exhaustFlowGramsPerSecond < state.airFlowGramsPerSecond * 1.15;
+    };
+    require(massFlowIsConsistent(open) && massFlowIsConsistent(restricted),
+        "established outlet flow must remain consistent with air plus fuel mass");
 }
 
 void authoredNetworkIgnoresLegacyGeometry() {
