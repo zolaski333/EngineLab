@@ -1,5 +1,9 @@
 # Audit physique — baseline mesurée et plan de correction
 
+> **Archive de provenance.** Les sections audio de cet audit décrivent le chemin
+> antérieur au réseau gaz quasi-1D et au rayonnement passif. Les décisions encore
+> actives sont documentées dans `thermoacoustic-architecture.md`.
+
 Ce document fige la **baseline instrumentée** du moteur physique avant les
 correctifs d'audit, et sert de référence anti-régression. Les valeurs
 proviennent des instruments déterministes du dépôt, **jamais** d'une intuition

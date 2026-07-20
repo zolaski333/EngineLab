@@ -36,7 +36,7 @@ catalog + diagnostics + serialization + scripting
 | `EngineLabExhaust` | Compilation de la topologie, routes, propriétés gazeuses agrégées et métadonnées acoustiques |
 | `EngineLabSimulation` | Orchestration déterministe des modèles et intégration de l'état ; aucun thread |
 | `EngineLabRuntime` | Thread de simulation, transmission/véhicule, banc, snapshots et pont vers l'audio |
-| `EngineLabAudio` | Renderer stéréo temps réel, guides d'onde, voix, FDN et convolution par chemin |
+| `EngineLabAudio` | Caractéristiques d’échappement SI, rayonnement passif, convolution explicite et couches non-échappement |
 | `EngineLabSerialization` | Round-trip JSON/YAML en schéma moteur 2 et migration des fichiers v1 |
 | `EngineLabScripting` | Compilation sûre du DSL `.els` et watcher de dépendances en arrière-plan |
 | `EngineLabCatalog` | Chargement des moteurs et pièces livrés |
@@ -114,14 +114,12 @@ Le choix ou l'import explicite d'un autre moteur crée son jeu par défaut.
 - `IndicatedWorkModel` intègre les boucles signées P·dV comme télémétrie. Le
   vilebrequin reçoit le couple instantané issu de la pression, pas un couple
   moyen réinjecté.
-- `ExhaustGraph` transforme une configuration en routes bornées. Pour un réseau
-  auteur, il compile la gorge d'entrée de chaque cylindre ainsi que le volume,
-  la longueur moyenne et la conductance de sortie de chaque chemin ; ces valeurs
-  alimentent les `GasCell` et `FlowParameters` agrégés de la simulation. Il ne
-  discrétise toutefois pas le réseau composant par composant. Le graphe publie
-  aussi par cylindre une transmission, un délai et des métriques combinées pour
-  l'audio continu et événementiel. Le renderer conserve ensuite la séparation
-  des chemins.
+- `ExhaustGraph` transforme une configuration en DAG borné, puis
+  `ExhaustNetworkLayout` discrétise chaque composant en conduits quasi-1D et
+  jonctions finies. `ExhaustGasNetwork` conserve espèces, quantité de mouvement
+  et énergie, y compris aux soupapes et sorties. Le renderer reçoit une frontière
+  SI signée et propage sa haute bande par caractéristiques passives, séparément
+  pour chaque chemin.
 
 ## Préparation du rendu 3D
 

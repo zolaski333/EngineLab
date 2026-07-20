@@ -14,11 +14,12 @@ issu de la pression cylindre, les pertes, le turbocompresseur et la chaîne
 cinématique jusqu'au véhicule. La cadence interne s'adapte au régime et à la
 résolution angulaire configurée.
 
-L'audio stéréo combine les pressions intra-cycle, les événements d'allumage et
-de blowdown, l'admission, la distribution, la mécanique et le démarreur. Les
-chemins d'échappement restent séparés jusqu'à leurs délais, guides d'onde,
-réseaux de réverbération et réponses impulsionnelles respectifs. Le callback
-audio ne réalise ni accès fichier, ni attente, ni allocation dynamique.
+L'échappement audio part d'un réseau gazeux quasi-1D conservatif, d'un débit SI
+signé aux soupapes, de guides caractéristiques et d'une charge de rayonnement
+passive. Aucun preset, bruit ou oscillateur de blowdown n'est mélangé à ce chemin
+physique. Admission, distribution, mécanique et démarreur restent des couches
+hybrides distinctes. Le callback audio ne réalise ni accès fichier, ni attente,
+ni allocation dynamique.
 
 L'application fournit également :
 
@@ -97,6 +98,7 @@ un autre moteur crée volontairement sa calibration par défaut.
 - [Guide du tuner et du format ECU](docs/ecu-tuning.md)
 - [Guide de l'échappement personnalisé](docs/custom-exhaust.md)
 - [Modèle de simulation](docs/simulation-model.md)
+- [Architecture thermoacoustique physique](docs/thermoacoustic-architecture.md)
 - [Architecture audio temps réel](docs/realtime-audio.md)
 - [Livraison et mesures des phases 0 à 3](docs/phase-0-3-delivery.md)
 
@@ -143,21 +145,20 @@ un niveau égal ou supérieur sont dans
 ## Limites à connaître
 
 - essence quatre temps uniquement dans le runtime actuel ;
-- volumes gazeux 0D et acoustique par guides d'onde agrégés, pas CFD ni solveur
-  d'ondes 1D maillé par composant ;
-- le DAG d'échappement est réduit en gorges, volumes et conductances qui pilotent
-  le réseau conservatif, mais il ne crée pas une `GasCell` par composant et ne
-  constitue pas un solveur d'ondes 1D ;
+- chambres cylindres 0D et réseau d'échappement quasi-1D basse bande, pas CFD 3D ;
+- propagation audible linéaire par caractéristiques agrégées par chemin : les
+  modes transverses, les coudes 3D et la correction de rayonnement par écoulement
+  moyen ne sont pas résolus ;
 - chimie globale et modèles semi-empiriques de flamme, knock et transferts
   thermiques ;
 - huit chemins d'échappement audio au maximum ;
-- les branches d'un graphe d'échappement sont combinées énergétiquement en une
-  source par cylindre/chemin et ne deviennent pas encore des sorties audio
-  indépendantes ;
+- les branches sont conservées dans le solveur gaz, mais leurs sorties ne
+  possèdent pas encore des positions audio 3D indépendantes ;
 - concepteur d'échappement sans glisser-déposer, undo/redo, audition A/B ni
   sélection d'IR ; les chemins et cylindres sont gérés dans l'interface, tandis
   que l'IR reste éditable en JSON/YAML ;
-- pas de validation sur banc moteur ni de preuve A/B d'une supériorité audio ;
+- admission et bruit structurel/mécanique encore procéduraux ; pas de modèle
+  modal réduit du bloc ni de validation sur banc/multi-microphones ;
 - pas de backend 3D, d'enregistrement WAV depuis l'interface, ni de diagnostic
   OBD destiné à une ECU réelle.
 

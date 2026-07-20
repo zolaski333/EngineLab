@@ -1,5 +1,8 @@
 # Comparaison EngineLab / ES2D et trajectoire de parité
 
+> **État antérieur à la refonte thermoacoustique.** Les tableaux audio ci-dessous
+> servent de trace d’audit, pas de description du renderer actuel.
+
 Date de l'analyse : 15 juillet 2026.
 
 Cette comparaison porte sur EngineLab et sur le code présent dans

@@ -1,5 +1,9 @@
 # EngineLab vs ES2D — comparaison audio A/B objective
 
+> **Baseline historique.** Cette campagne mesure l’ancien renderer hybride.
+> Ses chiffres ne qualifient pas la chaîne thermoacoustique physique actuelle et
+> doivent être régénérés avant toute nouvelle conclusion perceptuelle.
+
 Date de la mesure : 18 juillet 2026. Branche : `fix/clutch-lockup`.
 
 Cette étude répond à une question précise : l'architecture audio d'EngineLab est

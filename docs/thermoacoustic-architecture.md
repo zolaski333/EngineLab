@@ -1,150 +1,218 @@
 # Architecture thermoacoustique physique
 
-Ce document fixe le contrat de la nouvelle chaîne gaz/acoustique. Il ne décrit
-pas un preset sonore : il définit les grandeurs physiques qui ont le droit de
-devenir du son, leur propriétaire et les validations exigées avant de retirer le
-chemin historique.
+Ce document décrit l’implémentation livrée et son contrat physique. La chaîne
+d’échappement par défaut n’est plus un voicing de presets : sa source, sa
+propagation et son rayonnement dérivent de grandeurs SI produites par la
+simulation. Toute modification future doit préserver cette séparation.
 
-## Objectif
-
-Le rendu cible doit être la conséquence de la simulation, y compris lorsque la
-charge, le régime, la température, le croisement de soupapes ou la géométrie de
-l'échappement changent. Le renderer peut représenter la propagation entre la
-sortie et le microphone ainsi que la pièce d'écoute. Il ne doit pas reconstruire
-un « faux » blowdown avec des oscillateurs, du bruit ou une enveloppe accordée à
-la main.
-
-Le chemin physique est :
+## Chaîne active
 
 ```text
-combustion 0D du cylindre
-        ↕ flux conservatif à la soupape
-réseau gaz 1D non linéaire, composant par composant
-        ↕ impédance de rayonnement
-pression acoustique au microphone
-        → propagation spatiale / réponse de la pièce
+combustion et chambre 0D (GasCell)
+        ↕ flux de Riemann conservatif à chaque soupape
+réseau gaz quasi-1D non linéaire (DAG complet, bande de retour physique)
+        → frontière SI instantanée p, ρ, c, ṁ, CdA
+décomposition en caractéristiques p+ / p−
+        ↔ guides d’onde + jonctions à admittance
+charge passive de rayonnement de la sortie
+        → pression libre à 1 m + retard r/c
+        → IR mesurée explicitement fournie, facultative
 ```
 
-Chaque flèche avant le microphone est bidirectionnelle ou conserve explicitement
-la masse et l'énergie. Une réponse de pièce reste un traitement acoustique aval ;
-elle ne corrige jamais une dynamique de gaz insuffisante.
+Il n’existe aucun repli runner/collecteur 0D dans `EngineSimulator`. Une
+topologie physique invalide empêche la construction du simulateur. Dès qu’une
+frontière SI valide atteint le renderer, le chemin physique est verrouillé :
+les voix d’échappement procédurales actives et planifiées sont retirées et une
+perte ultérieure de télémétrie ne les réactive jamais.
 
-## Responsabilités des modules
+## 1. Réseau gaz non linéaire
 
-### Thermodynamique cylindre
+`EngineLabGasDynamics` transporte, par volume fini :
 
-`GasCell` reste, dans un premier temps, le volume de contrôle 0D du cylindre. Il
-fournit pression, température, composition et énergie. La soupape d'échappement
-ne transfère plus un débit calculé vers un runner 0D indépendant : elle devient
-une condition de bord conservative du réseau 1D. Le flux retourné au cylindre
-doit inclure les inversions de débit et la contre-pression instantanée.
+- la masse de chaque espèce (`O₂`, inerte, carburant, gaz brûlés) ;
+- la quantité de mouvement axiale ;
+- l’énergie totale.
 
-La loi de combustion actuelle est compatible avec cette première étape. Elle
-calcule déjà une histoire de pression et d'énergie utile au blowdown. Une
-validation par pression cylindre mesurée améliorerait l'exactitude absolue, mais
-n'est pas une condition structurelle au passage de 0D à 1D.
+Le noyau utilise un flux HLLC avec repli de sûreté HLLE, une reconstruction TVD,
+SSP-RK2 et un pas CFL. Une tentative non physique est rejetée puis reprise avec
+un pas réduit ; aucune masse ni énergie n’est créée par un plancher numérique.
+Les pertes locales, le frottement de paroi et le transfert thermique sont des
+termes sources déclarés. Les parois du réseau moteur sont actuellement
+adiabatiques, car leur inertie thermique n’est pas encore un sous-système
+conservé.
 
-### Dynamique des gaz 1D
+`ExhaustNetworkLayout` compile chaque composant auteur : tubes, catalyseurs,
+silencieux, résonateurs et sorties deviennent des conduits ; merges et splitters
+deviennent des volumes de jonction finis. Longueur, volume, section de connexion,
+diamètre hydraulique, perte et coefficient de décharge gardent leur unité et
+leur propriétaire. L’ordre du tableau de frontières ne change pas le résultat.
 
-Le module `EngineLabGasDynamics` résout les équations d'Euler quasi-1D sous
-forme volumes finis : masses des espèces, quantité de mouvement axiale et
-énergie totale. Il utilise un flux de Riemann capturant les chocs, une
-reconstruction TVD et un pas borné par CFL. Frottement de paroi et transfert
-thermique sont des termes sources explicites ; une restriction géométrique
-n'est jamais convertie en gain audio.
+### Séparation d’échelles temps réel
 
-Le graphe d'échappement est compilé sans réduction acoustique :
+Résoudre tout le spectre audible par volumes finis imposerait des dizaines de
+milliers de mises à jour par seconde et par cellule. L’implémentation adopte une
+décomposition multirate physique :
 
-- les tubes, catalyseurs et sorties deviennent des conduits discrétisés ;
-- les merges, splitters, résonateurs et chambres de silencieux deviennent des
-  jonctions ou volumes de contrôle ;
-- longueurs, sections, volumes, pertes et coefficients de décharge conservent
-  leur sens physique ;
-- toutes les cellules et zones de travail sont allouées à la construction.
+- le maillage non linéaire a une longueur de cellule maximale de 300 mm ; il
+  résout le débit moyen, la contre-pression et les fondamentales d’allumage
+  jusqu’à environ 330–360 Hz dans les gaz chauds ;
+- un composant plus court reste un volume de contrôle conservatif unique, avec
+  son volume, ses ports et ses pertes exacts ; son délai audio appartient au
+  réseau caractéristique ;
+- la frontière macro est intégrée au minimum 16 fois par période d’allumage,
+  avec une fenêtre absolue de 500 µs au démarrage ;
+- état conservatif, volume de chambre, `CdA` de soupape et ouverture de sortie
+  sont intégrés dans le temps sur chaque fenêtre ;
+- chaque échange macro reste bidirectionnel et ferme exactement les bilans de
+  masse d’espèces et d’énergie ;
+- le débit de Riemann instantané est néanmoins observé à chaque sous-pas
+  mécanique pour ne pas décimer l’excitation audio.
 
-### Rayonnement et renderer
+Ce n’est pas un saut de trame ni un cache de waveform. C’est un couplage
+partitionné de deux bandes dont les domaines de validité sont explicites.
 
-Une sortie publie au minimum la pression statique, la température, le débit
-massique, la vitesse axiale, la section et la direction. Le rayonnement convertit
-pression et vitesse de volume en pression acoustique en respectant la charge
-d'impédance de l'ouverture et la distance du microphone.
+## 2. Contrat simulation → audio
 
-Le renderer physique peut encore appliquer :
+Pour chaque cylindre, `CylinderPressureSample` publie :
 
-- retard et atténuation de propagation dans l'air ;
-- directivité de la bouche ;
-- HRTF, réponse de cabine ou de pièce ;
-- protection de sortie transparente contre les valeurs non finies.
+| Grandeur | Unité | Convention |
+|---|---:|---|
+| pression chambre | bar | absolue |
+| pression au runner | kPa | absolue |
+| débit massique | kg/s | positif cylindre → réseau, négatif en réversion |
+| masse volumique | kg/m³ | état local réseau |
+| célérité | m/s | état local réseau |
+| conductance de soupape | m² | aire géométrique × coefficient de décharge |
+| indice de chemin | — | route d’échappement compilée |
+| validité thermoacoustique | booléen | toutes les grandeurs ci-dessus sont physiques |
 
-Il ne peut pas ajouter d'oscillateur accordé au régime, de « crack » aléatoire,
-de résonateur de silencieux synthétique ni de bruit de jet servant à masquer
-une bande manquante. Ces couches peuvent survivre temporairement derrière un
-chemin de comparaison explicite, jamais dans le rendu physique par défaut.
+Le runtime publie une trame par sous-pas mécanique lorsque l’audio est actif.
+Les files SPSC sont bornées et le callback n’alloue pas.
 
-### Son mécanique et structurel
+## 3. Réseau caractéristique audible
 
-La pression cylindre seule ne décrit pas le bruit rayonné par le bloc. Une
-implémentation honnête exige un modèle modal réduit du bloc, de la culasse et des
-carters, excité par les efforts calculés : force gazeuse sur piston, efforts
-d'inertie, réactions de paliers, impacts de distribution et contacts. Le signal
-de chaque mode est ensuite rayonné par sa surface et sa directivité.
+Le renderer retire une moyenne lente de la pression et du débit, puis construit
+les caractéristiques planes à partir de la frontière mesurée :
 
-Ce volet demande donc une extension de la physique mécanique actuelle. Garder
-les sinusoïdes de vilebrequin ou le bruit de distribution et les rebaptiser
-« physique » violerait ce contrat.
+```text
+Zc = ρ c / A
+U′ = ṁ′ / ρ
+p+ = 1/2 (p′ + Zc U′)
+p− = 1/2 (p′ − Zc U′)
+```
 
-## Invariants numériques
+La réflexion au port n’est pas déduite d’un preset d’ouverture. Elle vient de la
+linéarisation locale de la loi d’orifice autour du débit moyen. Les runners et
+collecteurs sont des guides bidirectionnels ; les jonctions N-ports diffusent
+les ondes selon les admittances `A/(ρc)`. Firing order, longueurs, sections et
+température déterminent donc naturellement la phase, le croisement entre
+cylindres et les résonances.
 
-Toute évolution du solveur doit conserver les propriétés suivantes :
+La haute bande caractéristique est linéaire et passive. Elle propage le signal
+audio mais ses réflexions haute fréquence ne sont pas réinjectées dans la
+chambre 0D ; le réseau non linéaire basse bande reste propriétaire de la
+contre-pression physique.
 
-1. Une solution uniforme reste uniforme à l'arrondi près.
-2. Sans frontière ouverte ni source thermique, masses d'espèces et énergie
-   totale sont conservées.
-3. La densité, l'énergie interne et la pression restent strictement positives
-   sans ajout arbitraire de masse ou d'énergie.
-4. Le sens et le temps de transit d'une onde suivent les caractéristiques
-   `u ± c`.
-5. Une discontinuité forte converge vers la solution de Riemann de référence
-   sans oscillations non physiques.
-6. Le bilan aux soupapes et jonctions est calculé depuis un état gelé commun,
-   afin que l'ordre d'itération ne crée aucun débit.
-7. Une correction de positivité réduit ou rejette le pas fautif ; elle ne
-   « clamp » jamais une espèce en créant de l'inventaire.
+## 4. Rayonnement et calibration
 
-Les tests analytiques du module sont obligatoires et indépendants du voicing
-audio.
+La sortie est terminée par `UnflangedPipeRadiation`, approximation causale de
+Padé (1,2) de la solution de Levine–Schwinger ajustée par Silva et al. Le filtre
+retourne la pression réfléchie dans le guide. La vitesse de volume nette à la
+bouche puis son accélération donnent la pression monopolaire en champ libre.
 
-## Temps réel et déterminisme
+Le renderer applique le retard acoustique air `r/c` jusqu’à un observateur à
+1 m. La conversion numérique est explicite : 20 Pa RMS, soit 28,284 Pa crête,
+correspondent à 0 dBFS (120 dB SPL pour la pression de référence 20 µPa). Il
+n’existe pas de gain caché de « réalisme » sur le bus d’échappement physique.
 
-La boucle hôte reste à 240 Hz, mais le réseau 1D choisit ses sous-pas d'après
-le CFL local. La topologie, les cellules, les faces et les buffers RK sont
-précompilés. Aucun verrou, allocation, I/O ou parcours du graphe auteur ne doit
-se produire dans la boucle chaude.
+Références :
 
-Les réductions aux jonctions emploient un ordre stable. Le même moteur, les
-mêmes commandes et le même pas produisent les mêmes trames bit à bit sur une
-même cible. Le budget de performance est mesuré sur le V8 de référence ; le
-nouveau réseau remplace l'ancien chemin runner/collector au lieu de s'y ajouter
-durablement.
+- [H. Levine et J. Schwinger, *On the Radiation of Sound from an Unflanged
+  Circular Pipe*](https://doi.org/10.1103/PhysRev.73.383), Physical Review 73
+  (1948), 383–406 ;
+- [F. Silva et al., *Approximation formulae for the acoustic radiation impedance
+  of a cylindrical pipe*](https://doi.org/10.1016/j.jsv.2008.11.008), Journal of
+  Sound and Vibration 322 (2009), 255–263.
 
-## Migration et critères de retrait du chemin historique
+## 5. Réponses impulsionnelles
 
-1. Valider le noyau 1D seul : uniforme, tube à choc de Sod, conservation,
-   transit acoustique, réflexion et positivité.
-2. Compiler le DAG et tester chaque type de composant, les branches et les
-   bilans de jonction.
-3. Raccorder les soupapes en aller-retour et vérifier phasing, scavenging,
-   contre-pression, stabilité et déterminisme sur le catalogue.
-4. Publier les sorties physiques puis remplacer le blowdown DSP par le
-   rayonnement.
-5. Comparer l'ancien et le nouveau chemin par mesures de pression, spectre,
-   cohérence de phase, niveau, performance et écoute en aveugle.
-6. Activer le nouveau chemin par défaut seulement quand tous les tests sont
-   verts, puis supprimer les couches synthétiques devenues sans propriétaire.
-7. Ajouter le modèle structurel modal avant de retirer les anciennes couches
-   mécaniques.
+Le champ libre est le défaut. L’application ne charge plus d’IR de preset,
+d’IR générique ni d’IR synthétisée depuis la géométrie. Une convolution est
+active uniquement si `exhaust_paths[].impulse_response` désigne explicitement
+un WAV. Cette IR doit représenter une mesure aval — cabine, pièce, microphone
+ou système complet identifié — et non remplacer une dynamique de gaz absente.
 
-Un drapeau de comparaison pendant cette migration sert à mesurer et revenir en
-arrière en cas de régression. Il n'est pas une excuse pour mélanger les deux
-modèles dans la sortie livrée.
+## 6. Ce qui a été volontairement retiré du chemin physique
 
+Une fois la frontière SI active, l’échappement n’utilise plus :
+
+- oscillateurs de blowdown ou de « crack » ;
+- bruit aléatoire de jet ;
+- jitter de débit ;
+- FDN de silencieux ;
+- coloration de preset, saturation de collecteur ou gain de transmission audio
+  du DAG ;
+- IR implicite ou générée.
+
+Le code historique reste isolé pour certains harnais de compatibilité sans
+frontière SI. Il n’est pas mélangé à la sortie livrée par `EngineRuntime`.
+
+## 7. Compatibilité physique — réponse honnête
+
+La physique précédente n’était pas suffisante pour ce saut qualitatif. Il a
+fallu ajouter le réseau quasi-1D conservatif, les réservoirs cylindres finis, les
+flux bidirectionnels aux soupapes, les jonctions globales, le débit signé et les
+états SI locaux. La combustion 0D existante était structurellement compatible :
+elle fournit déjà pression, énergie, composition et volume à la frontière.
+
+Elle n’est cependant pas une validation absolue. Pour corréler un moteur réel,
+il reste nécessaire de comparer pression cylindre, pression de runner, débit et
+température à des mesures, puis d’améliorer au besoin combustion, transferts
+thermiques, coefficients de soupape et géométrie.
+
+Le son global n’est pas encore entièrement physique : admission, bloc,
+distribution, démarreur et suralimentation conservent des couches procédurales.
+Retirer honnêtement la mécanique synthétique exige un modèle modal réduit du
+bloc/culasse/carters, excité par les forces gazeuses, inerties, réactions de
+paliers et impacts de distribution. Revoicer quelques harmoniques ne remplirait
+pas cette lacune.
+
+Autres limites explicites : acoustique plane linéaire dans la haute bande,
+sortie circulaire non bridée, correction d’écoulement moyen au rayonnement non
+modélisée, positions 3D des sorties non publiées, modes transverses et acoustique
+de coudes non résolus.
+
+## 8. Carte du code pour les prochains agents
+
+| Responsabilité | Fichiers principaux |
+|---|---|
+| volumes finis et thermodynamique | `src/gas-dynamics/*/FiniteVolumeDuct.*` |
+| compilation du DAG | `src/gas-dynamics/*/ExhaustNetworkLayout.*` |
+| couplage global/jonctions/soupapes | `src/gas-dynamics/*/ExhaustGasNetwork.*` |
+| orchestration multirate et télémétrie | `src/simulation/src/EngineSimulator.cpp` |
+| radiation passive | `src/audio/*/PipeRadiationModel.*` |
+| caractéristiques et rendu | `src/audio/*/RealtimeEngineAudio.*` |
+| chargement d’IR explicite | `src/app/src/MainComponent.cpp` |
+
+Ne pas réintroduire un fallback silencieux si le réseau échoue. Une erreur de
+configuration doit être observable ; une limite de résolution doit alimenter
+`solverResolutionLimited`.
+
+## 9. Validation obligatoire
+
+Les tests couvrent notamment : état uniforme, tube à choc de Sod, positivité,
+conservation espèce/énergie, volume unique, propagation, interfaces directes,
+ordre des frontières, soufflage/réversion, rayonnement passif, déterminisme,
+invariance aux presets/bruits/gains hérités, géométrie et invariance 48/96 kHz.
+
+Avant livraison :
+
+```powershell
+cmake --build out/build/windows-vs2022 --config Release --parallel 4
+ctest --test-dir out/build/windows-vs2022 -C Release --output-on-failure
+```
+
+Le harnais LS3 doit aussi rester sous les 4,167 ms de la boucle 240 Hz. La
+mesure de référence de cette implémentation donne environ 2,9–3,1 ms de moyenne
+à 3630 tr/min et 3,84–3,92 ms à haut régime, avec un p95 maximal observé de
+4,139 ms sur trois passages.

@@ -156,23 +156,22 @@ fermeture distincte, sans prétendre modéliser une carte compresseur complète.
 
 ## Échappement
 
-Chaque `ExhaustPathConfig` peut contenir un DAG personnalisé. Pipes, jonctions,
-résonateurs, silencieux, catalyseurs et sorties sont compilés en routes ; les
-pertes des segments communs sont en série et les branches aval en parallèle.
-Les routes fournissent longueur, délai, restriction, résonance et gain aux
-événements audio. Pour le gaz, le compilateur réduit le DAG en une gorge d'entrée
-par cylindre, un volume et une longueur moyenne par chemin, puis une conductance
-de sorties parallèles atténuée par `1 / √(1 + K_équivalent)`. Ces propriétés
-alimentent réellement les transferts runner/collecteur/atmosphère. Aucune
-`GasCell` n'est cependant créée par nœud : les branches restent une fermeture
-0D agrégée. Sans graphe, la géométrie historique pilote le débit et est aussi
-convertie en primaires, collecteur, silencieux et sortie pour les métriques de
-route. Voir [custom-exhaust.md](custom-exhaust.md).
+Chaque `ExhaustPathConfig` peut contenir un DAG personnalisé. Le compilateur
+physique conserve composant par composant tubes, résonateurs, silencieux,
+catalyseurs et sorties sous forme de conduits quasi-1D ; merges et splitters
+deviennent des volumes de jonction finis. Les interfaces, soupapes et sorties
+échangent un flux de Riemann bidirectionnel commun. Pressions, températures,
+composition, débit et contre-pression viennent donc du réseau conservatif et non
+d'une gorge ou d'un collecteur 0D équivalent. Sans graphe, la géométrie
+historique est d'abord développée en un DAG physique compatible. Voir
+[custom-exhaust.md](custom-exhaust.md).
 
-Le réseau thermodynamique et le renderer audio n'ont pas la même discrétisation :
-le premier utilise des volumes agrégés, le second des délais/guides d'onde et
-une convolution. Cette séparation évite de présenter l'acoustique DSP comme un
-solveur thermodynamique d'ondes.
+Le réseau thermodynamique et le renderer audio ont volontairement deux échelles :
+un maillage non linéaire basse bande pour débit/contre-pression et un réseau de
+caractéristiques linéaire pour la propagation audible. Le débit instantané SI
+relie les deux à chaque sous-pas mécanique. La charge de sortie est un modèle de
+rayonnement passif ; une IR n'est utilisée que si elle est explicitement fournie.
+Voir [thermoacoustic-architecture.md](thermoacoustic-architecture.md).
 
 ## Transmission et véhicule
 

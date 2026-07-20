@@ -191,68 +191,38 @@ par énergie, au lieu de retenir simplement la fréquence maximale rencontrée.
 d'énergie. Les produits de gains sont accumulés en domaine logarithmique et
 bornés à 8 afin de rester finis même sur un grand DAG.
 
-Pour un DAG auteur, la fermeture gazeuse est compilée ainsi :
+Pour un DAG auteur, `ExhaustNetworkLayout` conserve chaque composant physique :
 
-- la section et le coefficient de décharge du premier composant relié à chaque
-  cylindre deviennent la gorge runner → collecteur de ce cylindre ;
-- le volume du collecteur agrégé est la somme des `volume_l` explicites et, à
-  défaut, des volumes géométriques `π(d/2)²L` des composants, avec un plancher de
-  0,01 litre ;
-- les sorties parallèles additionnent leurs conductances `A × Cd`, puis la perte
-  équivalente du réseau est appliquée une seule fois :
+- tubes, catalyseurs, silencieux, résonateurs et sorties deviennent des conduits
+  quasi-1D avec longueur, volume, section, diamètre hydraulique et perte ;
+- merges et splitters deviennent des volumes de jonction finis ;
+- chaque soupape et chaque sortie garde sa section et son coefficient de
+  décharge ;
+- les interfaces partagent un unique flux de Riemann, donc une branche ne peut
+  créer ni masse ni énergie selon l'ordre d'itération.
 
-```text
-A_sortie_effective = Σ(A_sortie × Cd_sortie) / √(1 + K_équivalent)
-```
+Le solveur basse bande calcule directement pression, température, composition,
+débit et réversion dans chaque composant. Les anciennes conductances agrégées et
+la fermeture analytique de contre-pression ne sont plus utilisées par
+`EngineSimulator`.
 
-- la longueur du composant racine commande la dissipation de son runner ; la
-  longueur moyenne des routes commande celle du collecteur.
+Pour l'audio physique, les routes servent à construire longueurs et sections des
+guides caractéristiques. Les métriques historiques `audio_volume`,
+`sound_attenuation`, gains de composants, modes de preset et transmission de
+`FiringEvent` ne colorent pas la frontière SI. Firing order, pression, débit,
+température et géométrie suffisent à produire les caractéristiques acoustiques.
 
-La surface effective est passée à `ConservativeGasSystem` avec un coefficient
-unitaire, de sorte que le `K` ne soit pas compté deux fois. Diamètre, longueur,
-restriction ou coefficient de décharge d'un composant auteur ont donc un effet
-sur les débits et la pression du collecteur, pas seulement sur le son.
-
-Pour un cylindre, la transmission publiée vaut :
-
-```text
-G_transmission = 1 / √(1 + K_équivalent) × min(8, √(Σ G_route²))
-```
-
-`G_route` contient déjà `audio_volume`, `sound_attenuation`, les gains des
-composants et les parts d'énergie des séparations. Le guide continu borne ses
-délais à 80 ms. La ligne primaire utilise la longueur du premier composant ; la
-ligne collecteur → sortie utilise la longueur moyenne restante. Une onde
-réfléchie parcourt naturellement cette seconde ligne deux fois. À l'exécution,
-ces délais sont corrigés avec la température simulée des gaz et `timeScale`.
-L'ouverture reste bornée entre 0,15 et 1,45 autour de
-`1 / √(1 + 1,35 × K_moyen)`.
-
-Cette transmission possède son propre champ dans `FiringEvent`. Elle module la
-voix d'échappement sans réduire artificiellement l'intensité de combustion ou
-les autres couches du même événement.
-
-Le runtime ne duplique toutefois pas encore l'événement à chaque sortie. Pour
-un cylindre, le délai scalaire est celui de la route audible la plus énergétique
-(la plus courte en cas d'égalité), tandis que moyenne, première arrivée,
-dernière arrivée et dispersion RMS restent disponibles comme diagnostics. Les
-modes de toutes les routes sont combinés avec une pondération énergétique et
-le mode dominant alimente encore le champ scalaire historique de l'événement.
-Deux sorties d'un splitter ne deviennent donc pas deux sources audio
-spatialisées indépendantes.
-
-Cette métrique combinée est partagée avec le signal continu : `audio_volume`,
-l'atténuation du cylindre, les gains de composants, le partage d'énergie et
-l'atténuation due à la restriction sont appliqués une seule fois à sa source.
-La longueur compilée commande son délai ; la moyenne des longueurs et pertes
-du chemin commande ensuite réflexion et ouverture du guide d'onde. Le gain de
-sortie du chemin reste unitaire afin de ne pas multiplier deux fois ces mêmes
-paramètres.
+Une branche complète n'est toutefois pas encore propagée nœud par nœud dans la
+haute bande : les runners se rencontrent dans une jonction de collecteur par
+chemin, puis un guide rejoint la sortie. Le réseau volumes finis conserve la
+topologie détaillée pour la contre-pression ; le réseau audio en conserve une
+réduction caractéristique passive.
 
 ## Chemins multiples
 
 Un V ou un flat peut déclarer deux `exhaust_paths`, chacun avec ses cylindres,
-son graphe, son `audio_volume` et son IR. L'audio conserve ces chemins séparés.
+son graphe et, facultativement, une IR mesurée explicite. Le gaz et l'audio
+conservent ces chemins séparés.
 Les indices runtime suivent l'ordre du tableau, tandis que les IDs auteur
 restent les références des banques et de la sérialisation.
 
@@ -265,31 +235,20 @@ nouvel export JSON/YAML porte `schema_version: 3`. Les fichiers historiques du
 catalogue restent volontairement des fixtures de migration.
 
 Même avec un graphe, le bloc `geometry` reste utile : il fournit les valeurs de
-secours du chemin, le diamètre de port et les paramètres de génération d'IR si
-aucun WAV n'est disponible.
+secours nécessaires à la compilation physique d'une ancienne configuration.
+L'absence de WAV signifie désormais champ libre ; aucune IR n'est générée.
 
 ## Ce que le graphe ne simule pas
 
-Le graphe produit des métriques agrégées de route et de perte. Le réseau gazeux
-ne crée pas une `GasCell` par composant, et le renderer audio n'exécute pas un
-solveur thermoacoustique non linéaire sur chaque arête. Ses guides d'onde
-primaires/collecteur, FDN et convolution restent des modèles DSP par chemin.
-Un chemin auteur entier devient un volume collecteur, une gorge par cylindre et
-une conductance de sortie équivalente. Les pressions locales, températures et
-ondes entre deux composants ne sont donc pas résolues séparément. Pour les
-anciens chemins sans DAG, le solveur conserve `geometry` et la fermeture
-analytique historique de contre-pression ; pour un DAG auteur, le `K` est déjà
-fermé dans la conductance physique et n'est pas ajouté une seconde fois par
-`backPressureKpa`.
+Le solveur non linéaire résout bien chaque composant, mais seulement dans la
+bande nécessaire au débit et à la contre-pression temps réel. La haute bande
+audio reste linéaire, plane et agrégée par chemin. Elle ne résout pas les modes
+transverses, les coudes 3D, la directivité ni la correction du rayonnement par
+écoulement moyen. Deux sorties d'un splitter ne possèdent pas encore des
+positions micro indépendantes.
 
-Le DAG personnalisé pilote maintenant le gain, les modes et les délais continus
-ainsi que l'ouverture, les sections acoustiques et la réflexion agrégées, mais
-il n'est toujours pas propagé nœud par nœud dans le DSP. Ses sorties parallèles
-sont recombinées avant un unique guide d'onde et une unique IR par chemin.
-
-Pour atteindre un niveau d'ingénierie acoustique supérieur, il faudra encore
-une discrétisation 1D de chaque composant, des propriétés de gaz locales, des
-pertes dépendantes de la fréquence, une bibliothèque de composants mesurés et
-une évolution du concepteur avec glisser-déposer, undo/redo, prévisualisation
-des routes, comparaison et audition A/B. La sélection et l'écoute des réponses
-impulsionnelles restent également à ajouter à l'interface.
+Les réflexions haute fréquence du guide ne reviennent pas dans le cylindre 0D ;
+le retour physique est fourni par le réseau non linéaire basse bande. Les IR ne
+sont chargées que par `impulse_response` explicite et doivent représenter une
+mesure aval. Voir [thermoacoustic-architecture.md](thermoacoustic-architecture.md)
+pour les équations, invariants et fichiers propriétaires.
