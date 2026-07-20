@@ -1192,6 +1192,28 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 boundarySamples.data(), physicalExhaustNetwork.layout().cylinderPorts().size()));
         collectorPressureKpa = config_.ambientPressureKpa;
         if (!sampled) state_.solverResolutionLimited = true;
+        // The interpolation phase must be advanced BEFORE the boundary is
+        // published, so that the flush substep publishes phase 0 against the
+        // knots that were just rolled, and the following substeps publish
+        // 1/stride .. (stride-1)/stride. The published series is then
+        // continuous and monotone in time, delayed by exactly one coupling
+        // interval, which is the correct causal linear reconstruction.
+        //
+        // Updating the counter after publishing -- the previous order -- made
+        // the flush substep publish phase (stride-1)/stride against the NEW
+        // knots and the next substep publish phase 0, a jump backwards in time
+        // of nearly a full interval. The reconstruction time base itself was a
+        // full-amplitude sawtooth at the coupling rate. That discontinuity is
+        // shared by every blended quantity, so making pressure and flow
+        // mutually consistent could not remove it; it is the dominant source
+        // of the images above the coupling Nyquist.
+        if (sampled) {
+            if (flushExhaustNetwork) {
+                exhaustBoundarySubstepsSinceFlush_ = 0;
+            } else if (exhaustBoundarySubstepsSinceFlush_ < exhaustCouplingStride) {
+                ++exhaustBoundarySubstepsSinceFlush_;
+            }
+        }
         for (std::size_t portIndex = 0;
              portIndex < physicalExhaustNetwork.layout().cylinderPorts().size(); ++portIndex) {
             const auto index = exhaustNetworkCylinderIndex_[portIndex];
@@ -1265,14 +1287,10 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
             collectorPressureKpa = std::max(
                 collectorPressureKpa, exhaustRunnerPressureKpa_[index]);
         }
-        if (sampled) {
-            if (flushExhaustNetwork) {
-                exhaustBoundaryHistoryPrimed_ = true;
-                exhaustBoundarySubstepsSinceFlush_ = 0;
-            } else if (exhaustBoundarySubstepsSinceFlush_ < exhaustCouplingStride) {
-                ++exhaustBoundarySubstepsSinceFlush_;
-            }
-        }
+        // Primed only after the port loop: the first flush ever must see the
+        // unprimed state inside the loop so both knots start from the same
+        // sample instead of blending against a default-initialised one.
+        if (sampled && flushExhaustNetwork) exhaustBoundaryHistoryPrimed_ = true;
         for (std::size_t index = 0; index < config_.cylinders.size(); ++index) {
             if (decoupleSharedVolumes) {
                 parallelState->scratch[index].exhaustRunnerPressure +=
