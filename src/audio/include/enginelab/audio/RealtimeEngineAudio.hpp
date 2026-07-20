@@ -47,6 +47,10 @@ public:
     // (safety-only). These do not affect the audio path.
     [[nodiscard]] std::uint64_t levelLimitedSampleCount() const noexcept { return levelLimitedSamples_.load(std::memory_order_relaxed); }
     [[nodiscard]] float minObservedLevelGain() const noexcept { return minObservedLevelGain_.load(std::memory_order_relaxed); }
+    /** Peak SI pressure delivered by the free-field exhaust observer. */
+    [[nodiscard]] float maxObservedExhaustPressurePa() const noexcept {
+        return maxObservedExhaustPressurePa_.load(std::memory_order_relaxed);
+    }
     /** Sample-rate invariant quantisation used by the physical runner lines. */
     [[nodiscard]] static std::size_t runnerDelaySamples(double delaySeconds,
                                                         double sampleRate) noexcept;
@@ -271,5 +275,6 @@ private:
     // Safety-leveler observers (measurement only; updated once per block).
     std::atomic<std::uint64_t> levelLimitedSamples_ { 0 };
     std::atomic<float> minObservedLevelGain_ { 1.0F };
+    std::atomic<float> maxObservedExhaustPressurePa_ { 0.0F };
 };
 } // namespace enginelab

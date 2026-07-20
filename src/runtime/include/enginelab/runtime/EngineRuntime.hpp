@@ -77,6 +77,10 @@ struct RealtimeAudioState final {
     std::atomic<float> exhaustGain { 1.0F };
     std::atomic<float> intakeGain { 0.85F };
     std::atomic<float> mechanicalGain { 0.70F };
+    // Microphone/preamp calibration for SI exhaust pressure. dBFS has no
+    // intrinsic pressure unit; keeping the capture-chain headroom explicit
+    // avoids disguising a fixed voicing gain as acoustics.
+    std::atomic<float> acousticFullScaleSplDb { 144.0F };
     std::atomic<int> exhaustPreset { static_cast<int>(AudioExhaustPreset::street) };
     // Extended physical telemetry for the intake/forced-induction/mechanical and
     // waveguide audio layers (populated once at construction or per sim frame).
@@ -149,6 +153,10 @@ public:
     void setExhaustGain(double value) noexcept { audioState_.exhaustGain.store(static_cast<float>(std::clamp(value, 0.0, 2.0))); }
     void setIntakeGain(double value) noexcept { audioState_.intakeGain.store(static_cast<float>(std::clamp(value, 0.0, 2.0))); }
     void setMechanicalGain(double value) noexcept { audioState_.mechanicalGain.store(static_cast<float>(std::clamp(value, 0.0, 2.0))); }
+    void setAcousticFullScaleSplDb(double value) noexcept {
+        audioState_.acousticFullScaleSplDb.store(
+            static_cast<float>(std::clamp(value, 100.0, 180.0)));
+    }
     void setExhaustPreset(AudioExhaustPreset value) noexcept { audioState_.exhaustPreset.store(static_cast<int>(value), std::memory_order_relaxed); }
     [[nodiscard]] bool dynoHoldEnabled() const noexcept { return dynoHoldEnabled_.load(); }
     void setAirFuelRatioTrim(double value) noexcept { ecu_.setAirFuelRatioTrim(value); }

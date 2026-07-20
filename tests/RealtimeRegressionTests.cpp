@@ -1,3 +1,4 @@
+#include <enginelab/audio/AcousticMonitorCalibration.hpp>
 #include <enginelab/audio/RealtimeEngineAudio.hpp>
 #include <enginelab/audio/PipeRadiationModel.hpp>
 #include <enginelab/foundation/ExhaustGasAcoustics.hpp>
@@ -648,6 +649,21 @@ void pipeRadiationRegression() {
             "fixture must remain inside the plane-mode validity band over audible midrange");
 }
 
+void acousticMonitorCalibrationRegression() {
+    constexpr auto fullScaleSplDb = 144.0;
+    const auto fullScalePeakPressurePa =
+        enginelab::AcousticMonitorCalibration::sinePeakPressurePa(fullScaleSplDb);
+    require(std::abs(enginelab::AcousticMonitorCalibration::normalisePeakPressure(
+                         fullScalePeakPressurePa, fullScaleSplDb) - 1.0) < 1.0e-12,
+        "configured full-scale acoustic pressure must map exactly to 0 dBFS");
+    require(std::abs(enginelab::AcousticMonitorCalibration::rmsPressurePa(120.0)
+                     - 20.0) < 1.0e-12,
+        "SPL calibration must retain the 20 micropascal reference");
+    require(enginelab::AcousticMonitorCalibration::normalisePeakPressure(
+                1.0, std::numeric_limits<double>::quiet_NaN()) == 0.0,
+        "invalid monitor calibration must fail silent rather than poison audio");
+}
+
 } // namespace
 
 int main() {
@@ -659,6 +675,7 @@ int main() {
         ambientPressureRegression();
         physicalThermoacousticPathRegression();
         pipeRadiationRegression();
+        acousticMonitorCalibrationRegression();
         outputQualityRegression();
         std::cout << "Realtime audio/runtime regression tests passed\n";
         return 0;

@@ -577,6 +577,8 @@ IdleCycleMetrics renderIdleCycle(const EngineConfig& baseConfig, const WavData& 
               << metrics.droppedPressureSamples
               << " late=" << metrics.lateEvents
               << " levelLimited=" << metrics.levelLimitedSamples
+              << " minLevelGain=" << metrics.minLevelGain
+              << " observerPeak=" << renderer.maxObservedExhaustPressurePa() << " Pa"
               << '\n';
     return metrics;
 }

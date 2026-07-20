@@ -1,4 +1,5 @@
 #include <enginelab/audio/RealtimeEngineAudio.hpp>
+#include <enginelab/audio/AcousticMonitorCalibration.hpp>
 #include <enginelab/foundation/ExhaustGasAcoustics.hpp>
 #include <algorithm>
 #include <cmath>
@@ -12,11 +13,6 @@ constexpr double referenceSampleRate = 48'000.0;
 // pressure is calibrated independently below, so changing engine displacement
 // or a legacy voicing constant cannot silently change a pascal at the observer.
 constexpr float legacyReferenceLevel = 3.50F;
-// IEC-style acoustic monitor calibration at one metre. A 20 Pa RMS sine is
-// 120 dB SPL, hence 20*sqrt(2) Pa peak maps to digital full scale. This is a
-// unit conversion, not a voicing gain; the output safety limiter still protects
-// pathological simulated states.
-constexpr float fullScalePeakPressurePa = 28.2842712474619F;
 constexpr double observerDistanceM = 1.0;
 constexpr double ambientSoundSpeedMps = 343.0;
 
@@ -234,6 +230,9 @@ void RealtimeEngineAudio::release() noexcept {
     thermoacousticMeanInitialised_.fill(false);
     physicalExhaustActive_ = false;
     pressureSampleIntervalSeconds_ = 0.0;
+    levelLimitedSamples_.store(0, std::memory_order_relaxed);
+    minObservedLevelGain_.store(1.0F, std::memory_order_relaxed);
+    maxObservedExhaustPressurePa_.store(0.0F, std::memory_order_relaxed);
     convolutionBank_.reset();
     if (oversampler_) oversampler_->reset();
 }
@@ -416,6 +415,9 @@ void RealtimeEngineAudio::render(juce::AudioBuffer<float>& output, int startSamp
     const auto exhaustGain = realtimeState_.exhaustGain.load(std::memory_order_relaxed);
     const auto intakeGain = realtimeState_.intakeGain.load(std::memory_order_relaxed);
     const auto mechanicalGain = realtimeState_.mechanicalGain.load(std::memory_order_relaxed);
+    const auto acousticFullScaleSplDb = std::clamp(
+        realtimeState_.acousticFullScaleSplDb.load(std::memory_order_relaxed),
+        100.0F, 180.0F);
     const auto redline = std::max(500.0F, realtimeState_.redlineRpm.load(std::memory_order_relaxed));
     // Equal pressure does not imply equal acoustic power: the radiating volume
     // velocity grows with cylinder displacement. Square-root scaling preserves
@@ -521,6 +523,7 @@ void RealtimeEngineAudio::render(juce::AudioBuffer<float>& output, int startSamp
         cylinderExhaustGain[runner] = std::clamp(
             realtimeState_.cylinderExhaustGain[runner].load(std::memory_order_relaxed), 0.0F, 8.0F);
     }
+    float blockPeakObservedExhaustPressurePa = 0.0F;
     for (int sample = 0; sample < sampleCount; ++sample) {
         const auto preset = realtimeState_.exhaustPreset.load(std::memory_order_relaxed);
         if (preset != activeExhaustPreset_) updateExhaustPreset(preset);
@@ -978,12 +981,15 @@ void RealtimeEngineAudio::render(juce::AudioBuffer<float>& output, int startSamp
                 const auto observerPressurePa = std::lerp(
                     path.observerPressure[observerRead0],
                     path.observerPressure[observerRead1], observerFraction);
+                blockPeakObservedExhaustPressurePa = std::max(
+                    blockPeakObservedExhaustPressurePa, std::abs(observerPressurePa));
                 path.observerPressure[path.observerWrite] = mouthPressure;
                 path.observerWrite = (path.observerWrite + 1U)
                     & path.observerMask;
 
-                const auto calibrated = observerPressurePa
-                    / fullScalePeakPressurePa;
+                const auto calibrated = static_cast<float>(
+                    AcousticMonitorCalibration::normalisePeakPressure(
+                        observerPressurePa, acousticFullScaleSplDb));
                 // Outlet positions are not yet published, so free-field paths
                 // are summed at one co-located mono observer. Inventing a stereo
                 // pan would be less honest; a measured stereo IR can spatialise
@@ -1128,6 +1134,11 @@ void RealtimeEngineAudio::render(juce::AudioBuffer<float>& output, int startSamp
         if (output.getNumChannels() > 0) output.setSample(0, startSample + sample, lowPassLeft_);
         if (output.getNumChannels() > 1) output.setSample(1, startSample + sample, lowPassRight_);
         audioTimeSeconds_ += audioTimeStep;
+    }
+    if (blockPeakObservedExhaustPressurePa
+            > maxObservedExhaustPressurePa_.load(std::memory_order_relaxed)) {
+        maxObservedExhaustPressurePa_.store(
+            blockPeakObservedExhaustPressurePa, std::memory_order_relaxed);
     }
 
     convolutionBank_.process(sampleCount);
