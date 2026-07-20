@@ -44,6 +44,8 @@ void require(bool condition, const std::string& message) {
     network.components.push_back(component(200, ExhaustComponentType::merge, 0.0, 60.0));
     network.components.push_back(component(300, ExhaustComponentType::splitter, 0.0, 60.0));
     network.components.push_back(component(400, ExhaustComponentType::muffler, 480.0, 62.0, 0.20));
+    network.components.back().volumeLitres = 7.3;
+    network.components.back().dischargeCoefficient = 0.64;
     network.components.push_back(component(401, ExhaustComponentType::catalyst, 180.0, 58.0, 0.08));
     network.components.push_back(component(500, ExhaustComponentType::outlet, 160.0, 70.0));
     network.components.push_back(component(501, ExhaustComponentType::outlet, 210.0, 58.0));
@@ -63,6 +65,12 @@ void testValidationAndRouting() {
     const auto graph = ExhaustGraph::makeForEngine(config);
     require(graph.nodes().size() == 14, "explicit graph did not preserve ports and components");
     require(graph.edges().size() == 13, "explicit graph connections were not compiled");
+    const auto physicalMuffler = std::find_if(graph.nodes().begin(), graph.nodes().end(),
+        [](const ExhaustNode& node) { return node.sourceComponentId == 400; });
+    require(physicalMuffler != graph.nodes().end()
+            && std::abs(physicalMuffler->volumeLitres - 7.3) < 1.0e-12
+            && std::abs(physicalMuffler->dischargeCoefficient - 0.64) < 1.0e-12,
+        "compiled topology must retain physical volume and discharge metadata");
     require(graph.routes().size() == 8, "splitter must create two routes per cylinder");
     for (const auto& cylinder : config.cylinders) {
         const auto routeCount = std::count_if(graph.routes().begin(), graph.routes().end(),

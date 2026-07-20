@@ -316,7 +316,9 @@ ExhaustGraph ExhaustGraph::makeForEngine(
                     finiteClamped(component.diameterMm, 5.0, 500.0, 42.0),
                     geometricRestriction(component), resonance.frequencyHz,
                     finiteClamped(component.acousticGain, 0.0, 8.0, 0.0),
-                    runtimePathIndex, component.id, resonance.strength });
+                    runtimePathIndex, component.id, resonance.strength,
+                    componentVolumeLitres(component),
+                    finiteClamped(component.dischargeCoefficient, 0.02, 1.5, 0.72) });
             }
             std::unordered_set<std::uint64_t> compiledConnections;
             for (const auto& connection : path.network->connections) {
@@ -368,8 +370,12 @@ ExhaustGraph ExhaustGraph::makeForEngine(
         const auto collectorDiameter = finiteClamped(geometry.collectorDiameterMm, 20.0, 500.0, 58.0);
         const auto outletDiameter = finiteClamped(geometry.outletDiameterMm, 20.0, 500.0, 65.0);
         const auto collectorRestriction = 0.055 * std::pow(58.0 / collectorDiameter, 4.0);
+        const auto collectorVolumeLitres = finiteClamped(
+            geometry.collectorVolumeLitres, 0.01, 1'000.0, 2.5);
+        const auto outletDischargeCoefficient = finiteClamped(
+            geometry.outletDischargeCoefficient, 0.02, 1.5, 0.72);
         const auto outletRestriction = 0.01 * std::pow(65.0 / outletDiameter, 4.0)
-            / std::pow(finiteClamped(geometry.outletDischargeCoefficient, 0.02, 1.5, 0.72), 2.0);
+            / std::pow(outletDischargeCoefficient, 2.0);
         for (const auto cylinderId : path.cylinderIds) {
             const auto cylinder = findCylinder(config, cylinderId);
             if (cylinder == nullptr) continue;
@@ -381,17 +387,27 @@ ExhaustGraph ExhaustGraph::makeForEngine(
                 restriction, 0.0,
                 finiteClamped(path.audioVolume, 0.0, 8.0, 0.0)
                     * finiteClamped(cylinder->soundAttenuation, 0.0, 4.0, 0.0),
-                runtimePathIndex, 0 });
+                runtimePathIndex, 0, 0.0,
+                std::numbers::pi * std::pow(primaryDiameter * 0.0005, 2.0)
+                    * (length * 0.001) * 1'000.0,
+                1.0 });
             graph.edges_.push_back({ cylinder->id, mergeId });
             roots.push_back({ cylinder->id, cylinder->id, runtimePathIndex });
         }
         graph.nodes_.push_back({ mergeId, ExhaustNodeType::merge, 120.0, collectorDiameter,
-            collectorRestriction, 0.0, 1.0, runtimePathIndex, 0 });
+            collectorRestriction, 0.0, 1.0, runtimePathIndex, 0, 0.0,
+            collectorVolumeLitres, 1.0 });
         graph.nodes_.push_back({ mufflerId, ExhaustNodeType::muffler, 450.0, collectorDiameter,
             finiteClamped(geometry.mufflerRestriction, 0.0, 1.0, 1.0) * 0.62,
-            82.0, 1.0, runtimePathIndex, 0, 0.55 });
+            82.0, 1.0, runtimePathIndex, 0, 0.55,
+            std::numbers::pi * std::pow(collectorDiameter * 0.0005, 2.0)
+                * 0.450 * 1'000.0,
+            1.0 });
         graph.nodes_.push_back({ outletId, ExhaustNodeType::outlet, 180.0, outletDiameter,
-            outletRestriction, 0.0, 1.0, runtimePathIndex, 0 });
+            outletRestriction, 0.0, 1.0, runtimePathIndex, 0, 0.0,
+            std::numbers::pi * std::pow(outletDiameter * 0.0005, 2.0)
+                * 0.180 * 1'000.0,
+            outletDischargeCoefficient });
         graph.edges_.push_back({ mergeId, mufflerId });
         graph.edges_.push_back({ mufflerId, outletId });
     }

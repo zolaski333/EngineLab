@@ -33,6 +33,11 @@ struct ExhaustNode final {
     // Relative coupling of this component's local resonance. Route-length
     // modes are compiled separately and therefore do not use this value.
     double resonanceStrength { 0.0 };
+    // Physical metadata retained for the component-resolved gas network.
+    // volumeLitres is explicit when authored, otherwise it is the geometric
+    // volume of the compiled component.
+    double volumeLitres { 0.0 };
+    double dischargeCoefficient { 1.0 };
 };
 struct ExhaustEdge final { std::uint32_t from {}; std::uint32_t to {}; };
 
