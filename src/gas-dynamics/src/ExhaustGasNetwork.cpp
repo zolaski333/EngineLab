@@ -127,21 +127,27 @@ namespace {
         const auto criticalTemperatureRatio = 2.0 / (gamma + 1.0);
         exitPressurePa = upstreamPressurePa * criticalPressureRatio;
         exitTemperatureK = upstreamTemperatureK * criticalTemperatureRatio;
+        // Algebraically reuse the critical pressure ratio:
+        // t^((gamma+1)/(2(gamma-1))) = t^(gamma/(gamma-1))/sqrt(t).
+        // This is the exact nozzle relation with one transcendental evaluation,
+        // which matters because every open valve is sampled at solver cadence.
         massFluxMagnitude = upstreamPressurePa
             / std::sqrt(gasConstant * upstreamTemperatureK)
             * std::sqrt(gamma)
-            * std::pow(criticalTemperatureRatio,
-                (gamma + 1.0) / (2.0 * (gamma - 1.0)));
+            * criticalPressureRatio / std::sqrt(criticalTemperatureRatio);
     } else {
-        const auto firstPower = std::pow(pressureRatio, 2.0 / gamma);
-        const auto secondPower = std::pow(
-            pressureRatio, (gamma + 1.0) / gamma);
+        // Let q=r^(1/gamma). Then r^(2/gamma)=q^2,
+        // r^((gamma+1)/gamma)=r*q and r^((gamma-1)/gamma)=r/q.
+        // One pow therefore supplies all three exact isentropic terms.
+        const auto pressureRoot = std::pow(pressureRatio, 1.0 / gamma);
+        const auto firstPower = pressureRoot * pressureRoot;
+        const auto secondPower = pressureRatio * pressureRoot;
         massFluxMagnitude = upstreamPressurePa
             / std::sqrt(gasConstant * upstreamTemperatureK)
             * std::sqrt(std::max(0.0,
                 2.0 * gamma / (gamma - 1.0) * (firstPower - secondPower)));
         exitTemperatureK = upstreamTemperatureK
-            * std::pow(pressureRatio, (gamma - 1.0) / gamma);
+            * pressureRatio / pressureRoot;
     }
     if (!(massFluxMagnitude >= 0.0) || !finite(massFluxMagnitude)
         || !(exitTemperatureK > 0.0) || !finite(exitTemperatureK))
