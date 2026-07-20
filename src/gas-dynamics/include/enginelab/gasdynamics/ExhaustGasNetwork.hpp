@@ -28,6 +28,8 @@ struct ExhaustGasNetworkConfig final {
 struct CylinderValveBoundary final {
     std::uint32_t cylinderId { 0 };
     ConservativeState cylinderState {};
+    /** Physical chamber volume used to evolve the reservoir during subcycling. */
+    double cylinderVolumeM3 { 0.0 };
     /** Geometric curtain/seat area before the valve discharge coefficient. */
     double effectiveValveAreaM2 { 0.0 };
     double dischargeCoefficient { 1.0 };
@@ -47,6 +49,11 @@ struct CylinderGasExchange final {
     std::array<double, gasSpeciesCount> speciesMassKg {};
     double totalEnergyJ { 0.0 };
     double axialMomentumImpulseNs { 0.0 };
+    double cylinderPressurePaAfter { 0.0 };
+    double cylinderTemperatureKAfter { 0.0 };
+    double networkPressurePa { 0.0 };
+    double networkTemperatureK { 0.0 };
+    double networkVelocityMps { 0.0 };
 
     [[nodiscard]] double totalMassKg() const noexcept;
 };
@@ -151,6 +158,13 @@ private:
     std::vector<ConservativeState> junctionResidual_;
     std::vector<ConservativeState> junctionStageResidual_;
     std::vector<double> junctionPortAreaSums_;
+    std::vector<ConservativeState> cylinderReservoirStates_;
+    std::vector<ConservativeState> cylinderReservoirStage_;
+    std::vector<ConservativeState> cylinderReservoirCandidate_;
+    std::vector<ConservativeState> cylinderReservoirResidual_;
+    std::vector<ConservativeState> cylinderReservoirStageResidual_;
+    std::vector<double> cylinderReservoirVolumesM3_;
+    std::vector<std::uint8_t> cylinderReservoirActive_;
     std::vector<std::uint8_t> ductInletAssigned_;
     std::vector<std::uint8_t> ductOutletAssigned_;
     std::vector<ConservedFlowRate> cylinderFirstStageFlow_;

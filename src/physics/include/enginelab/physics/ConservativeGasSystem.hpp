@@ -17,6 +17,8 @@ struct GasMixture final {
     }
 };
 
+struct GasInventoryDelta;
+
 /**
  * A zero-dimensional gas control volume. Mass and internal energy only move
  * through explicit transfer/reaction operations; pressure and temperature are
@@ -78,6 +80,12 @@ public:
         momentumXKgMps_ += deltaX;
         momentumYKgMps_ += deltaY;
     }
+    /** Atomically apply an externally solved conservative transfer.
+     * Returns false and leaves the cell unchanged if species or sensible
+     * energy would become physically negative.
+     */
+    [[nodiscard]] bool tryApplyInventoryDelta(const GasInventoryDelta& delta) noexcept;
+
     /** Apply Darcy-Weisbach distributed and local flow losses to bulk momentum.
      *  Lost kinetic energy is returned to the gas as heat.
      */
@@ -157,6 +165,10 @@ public:
     [[nodiscard]] double characteristicAreaM2() const noexcept { return characteristicAreaM2_; }
     [[nodiscard]] double orientationDx() const noexcept { return dx_; }
     [[nodiscard]] double orientationDy() const noexcept { return dy_; }
+    [[nodiscard]] double configuredFuelMolarMassKg() const noexcept { return fuelMolarMassKg_; }
+    [[nodiscard]] double configuredBurnedGasMolarMassKg() const noexcept {
+        return burnedGasMolarMassKg_;
+    }
 
 private:
     friend class ConservativeGasSystem;

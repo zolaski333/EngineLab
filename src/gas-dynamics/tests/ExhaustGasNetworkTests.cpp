@@ -110,7 +110,7 @@ void testValveExchangeIsTwoWayAndConservative() {
         360'000.0, 1'050.0, 0.0, burnedMixture);
     requireNetwork(highCylinderState.has_value(), "hot cylinder boundary must be physical");
     const CylinderValveBoundary blowingDown {
-        cylinderId, *highCylinderState, 1.8e-4, 0.78
+        cylinderId, *highCylinderState, 5.0e-4, 1.8e-4, 0.78
     };
     const auto closedAmbient = ambientFor(network, 101'325.0, 300.0, 0.0);
     const auto beforeBlowdown = network.inventory();
@@ -129,7 +129,8 @@ void testValveExchangeIsTwoWayAndConservative() {
     requireNetwork(forwardExchange != network.cylinderExchanges().end()
             && forwardExchange->totalMassKg() > 0.0
             && forwardExchange->speciesMassKg[static_cast<std::size_t>(GasSpecies::burned)] > 0.0
-            && forwardExchange->totalEnergyJ > 0.0,
+            && forwardExchange->totalEnergyJ > 0.0
+            && forwardExchange->cylinderPressurePaAfter < 360'000.0,
         "blowdown must transport hot burned gas and its energy into the network");
     requireMassEnergyBalance(beforeBlowdown, network.inventory(),
                              network.cylinderExchanges(), network.outletSamples(), 2.0e-9);
@@ -138,7 +139,7 @@ void testValveExchangeIsTwoWayAndConservative() {
         55'000.0, 420.0);
     requireNetwork(lowCylinderState.has_value(), "low-pressure cylinder fixture must be physical");
     const CylinderValveBoundary reversion {
-        cylinderId, *lowCylinderState, 1.8e-4, 0.78
+        cylinderId, *lowCylinderState, 5.0e-4, 1.8e-4, 0.78
     };
     const auto beforeReversion = network.inventory();
     const auto reversed = network.advance(0.00020,
@@ -150,7 +151,8 @@ void testValveExchangeIsTwoWayAndConservative() {
         });
     requireNetwork(reverseExchange != network.cylinderExchanges().end()
             && reverseExchange->totalMassKg() < 0.0
-            && reverseExchange->totalEnergyJ < 0.0,
+            && reverseExchange->totalEnergyJ < 0.0
+            && reverseExchange->cylinderPressurePaAfter > 55'000.0,
         "network backpressure must be able to return mass and energy to a cylinder");
     requireMassEnergyBalance(beforeReversion, network.inventory(),
                              network.cylinderExchanges(), network.outletSamples(), 2.0e-9);
@@ -274,7 +276,7 @@ void testBoundaryInputOrderIsIrrelevant() {
         const auto state = first.mixtureModel().conservativeFromPressureTemperature(
             pressure, 720.0);
         requireNetwork(state.has_value(), "order-independence cylinder state must be physical");
-        boundaries.push_back({ port.cylinderId, *state, 8.0e-5, 0.75 });
+        boundaries.push_back({ port.cylinderId, *state, 5.0e-4, 8.0e-5, 0.75 });
     }
     auto reversed = boundaries;
     std::reverse(reversed.begin(), reversed.end());

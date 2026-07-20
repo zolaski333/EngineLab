@@ -157,6 +157,56 @@ void GasCell::addHeatJoules(double joules) noexcept {
     if (std::isfinite(joules)) internalEnergyJ_ = std::max(0.0, internalEnergyJ_ + joules);
 }
 
+bool GasCell::tryApplyInventoryDelta(const GasInventoryDelta& delta) noexcept {
+    auto candidateMixture = GasMixture {
+        mixture_.oxygenMoles + delta.mixture.oxygenMoles,
+        mixture_.inertMoles + delta.mixture.inertMoles,
+        mixture_.fuelMoles + delta.mixture.fuelMoles,
+        mixture_.burnedMoles + delta.mixture.burnedMoles,
+    };
+    auto candidateEnergy = internalEnergyJ_ + delta.internalEnergyJ;
+    const auto candidateMomentumX = momentumXKgMps_ + delta.momentumXKgMps;
+    const auto candidateMomentumY = momentumYKgMps_ + delta.momentumYKgMps;
+    if (!std::isfinite(candidateMixture.oxygenMoles)
+        || !std::isfinite(candidateMixture.inertMoles)
+        || !std::isfinite(candidateMixture.fuelMoles)
+        || !std::isfinite(candidateMixture.burnedMoles)
+        || !std::isfinite(candidateEnergy)
+        || !std::isfinite(candidateMomentumX)
+        || !std::isfinite(candidateMomentumY))
+        return false;
+
+    const auto totalMoles = candidateMixture.totalMoles();
+    const auto moleTolerance = 128.0 * std::numeric_limits<double>::epsilon()
+        * std::max(1.0e-15, totalMoles);
+    const auto significantNegative = [moleTolerance](double moles) noexcept {
+        return moles < -moleTolerance;
+    };
+    if (!(totalMoles > 1.0e-15)
+        || significantNegative(candidateMixture.oxygenMoles)
+        || significantNegative(candidateMixture.inertMoles)
+        || significantNegative(candidateMixture.fuelMoles)
+        || significantNegative(candidateMixture.burnedMoles))
+        return false;
+    const auto repairRoundoff = [](double value) noexcept {
+        return value < 0.0 ? 0.0 : value;
+    };
+    candidateMixture.oxygenMoles = repairRoundoff(candidateMixture.oxygenMoles);
+    candidateMixture.inertMoles = repairRoundoff(candidateMixture.inertMoles);
+    candidateMixture.fuelMoles = repairRoundoff(candidateMixture.fuelMoles);
+    candidateMixture.burnedMoles = repairRoundoff(candidateMixture.burnedMoles);
+    const auto energyTolerance = 128.0 * std::numeric_limits<double>::epsilon()
+        * std::max(1.0, internalEnergyJ_);
+    if (candidateEnergy < -energyTolerance) return false;
+    if (candidateEnergy < 0.0) candidateEnergy = 0.0;
+
+    mixture_ = candidateMixture;
+    internalEnergyJ_ = candidateEnergy;
+    momentumXKgMps_ = candidateMomentumX;
+    momentumYKgMps_ = candidateMomentumY;
+    return true;
+}
+
 void GasCell::injectFuelMoles(double moles, double temperature) noexcept {
     const auto added = std::max(0.0, moles);
     mixture_.fuelMoles += added;

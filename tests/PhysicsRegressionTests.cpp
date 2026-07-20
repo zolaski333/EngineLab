@@ -26,6 +26,33 @@ double threeCellEnergy(const enginelab::GasCell& first,
 
 int main() {
     {
+        enginelab::GasCell cell;
+        cell.initialise(180.0, 0.55, 620.0);
+        const auto before = cell;
+        const enginelab::GasInventoryDelta valid {
+            { -before.mixture().oxygenMoles * 0.08,
+              -before.mixture().inertMoles * 0.08, 0.0, 0.0 },
+            -before.internalEnergyJoules() * 0.08,
+            0.0,
+            0.0,
+        };
+        require(cell.tryApplyInventoryDelta(valid),
+                "external conservative inventory transfer must apply atomically");
+        require(std::abs(cell.mixture().oxygenMoles
+                    - before.mixture().oxygenMoles * 0.92) < 1.0e-14
+                && std::abs(cell.internalEnergyJoules()
+                    - before.internalEnergyJoules() * 0.92) < 1.0e-10,
+                "accepted inventory transfer must preserve the requested species and energy delta");
+        const auto accepted = cell;
+        auto invalid = valid;
+        invalid.mixture.oxygenMoles = -accepted.mixture().oxygenMoles * 2.0;
+        require(!cell.tryApplyInventoryDelta(invalid)
+                && cell.mixture().oxygenMoles == accepted.mixture().oxygenMoles
+                && cell.internalEnergyJoules() == accepted.internalEnergyJoules(),
+                "an overdrawn external transfer must leave the complete cell unchanged");
+    }
+
+    {
         auto explicitTopology = enginelab::makeDefaultInlineFour();
         explicitTopology.crankshafts.front().inheritsLegacyInertia = false;
         explicitTopology.crankshafts.front().momentOfInertiaKgM2 = 0.73;
