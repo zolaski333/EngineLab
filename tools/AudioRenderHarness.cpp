@@ -124,6 +124,15 @@ struct WindowAnalysis final {
     double lowBandFraction {};
     double midBandFraction {};
     double highBandFraction {};
+    // Worst isolated narrowband resonance between 300 Hz and 9 kHz, in dB above
+    // the local spectral baseline. This is the objective measure of "metallic":
+    // a real exhaust radiates a dense harmonic series whose envelope falls off
+    // smoothly, so every partial sits close to its neighbours. An undamped
+    // waveguide mode instead stands 20+ dB proud of the surrounding spectrum and
+    // rings at a frequency unrelated to the firing series. Judging that by ear is
+    // exactly what this harness exists to avoid.
+    double maxResonanceProminenceDb {};
+    double maxResonanceFrequencyHz {};
     std::array<double, 32> spectrum {};
 };
 
@@ -246,6 +255,48 @@ WindowAnalysis analyseWindow(const std::vector<float>& x, std::size_t begin, dou
     m.lowBandFraction = lowPower / audiblePower;
     m.midBandFraction = midPower / audiblePower;
     m.highBandFraction = highPower / audiblePower;
+
+    // Narrowband resonance prominence. The baseline is a wide running mean of the
+    // log spectrum, so a broad tilt (which the ear reads as tone) contributes
+    // nothing while a single high-Q mode (which the ear reads as metallic) stands
+    // proud of it. Bins are compared against the mean of a surrounding window
+    // that excludes the immediate neighbourhood of the bin itself, so a genuine
+    // firing harmonic broadened by the analysis window is not counted as a mode.
+    {
+        const auto binHz = sampleRate / static_cast<double>(fftSize);
+        const auto firstBin = static_cast<std::size_t>(std::ceil(300.0 / binHz));
+        const auto lastBin = std::min(fftSize / 2,
+            static_cast<std::size_t>(9'000.0 / binHz));
+        // ~200 Hz of context either side, skipping +/-25 Hz around the bin.
+        const auto contextBins = std::max<std::size_t>(8,
+            static_cast<std::size_t>(200.0 / binHz));
+        const auto guardBins = std::max<std::size_t>(2,
+            static_cast<std::size_t>(25.0 / binHz));
+        const auto powerAt = [&](std::size_t bin) {
+            const auto magnitude = static_cast<double>(fftData[bin]);
+            return magnitude * magnitude;
+        };
+        for (std::size_t bin = firstBin; bin < lastBin; ++bin) {
+            const auto low = bin > contextBins ? bin - contextBins : std::size_t { 1 };
+            const auto high = std::min(lastBin, bin + contextBins);
+            double contextPower = 0.0;
+            std::size_t contextCount = 0;
+            for (std::size_t other = low; other < high; ++other) {
+                if (other + guardBins >= bin && other <= bin + guardBins) continue;
+                contextPower += powerAt(other);
+                ++contextCount;
+            }
+            if (contextCount < 8) continue;
+            const auto baseline = contextPower / static_cast<double>(contextCount);
+            if (!(baseline > 1.0e-24)) continue;
+            const auto prominenceDb = 10.0 * std::log10(
+                std::max(powerAt(bin), 1.0e-30) / baseline);
+            if (prominenceDb > m.maxResonanceProminenceDb) {
+                m.maxResonanceProminenceDb = prominenceDb;
+                m.maxResonanceFrequencyHz = static_cast<double>(bin) * binHz;
+            }
+        }
+    }
 
     double fingerprintNorm = 0.0;
     for (auto& value : m.spectrum) {
@@ -401,6 +452,8 @@ Metrics renderEngine(const EngineConfig& baseConfig, const WavData& ir,
               << " rpm=" << std::setprecision(0) << m.finalRpm
               << " brightness=" << std::setprecision(3) << m.left.window.brightness
               << " dc=" << std::showpos << m.left.window.mean << std::noshowpos
+              << " resonance=" << std::setprecision(1) << m.left.window.maxResonanceProminenceDb
+              << "dB@" << std::setprecision(0) << m.left.window.maxResonanceFrequencyHz << "Hz"
               << " bands=" << std::setprecision(1) << m.left.window.lowBandFraction * 100.0
               << '/' << m.left.window.midBandFraction * 100.0
               << '/' << m.left.window.highBandFraction * 100.0 << '%'
@@ -426,6 +479,7 @@ struct IdleCycleMetrics final {
     double returnedIdleRpm {};
     double returnedIdleRms {};
     SafetyScan scan {};
+    WindowAnalysis idleWindow {};
     std::uint64_t droppedEvents {};
     std::uint64_t droppedPressureSamples {};
     std::uint64_t lateEvents {};
@@ -559,6 +613,13 @@ IdleCycleMetrics renderIdleCycle(const EngineConfig& baseConfig, const WavData& 
         metrics.returnedIdleRms = std::sqrt(returnedSquareSum
             / static_cast<double>(returnedAudioSamples));
     metrics.scan = scanSignal(left);
+    // Analyse the settled idle plateau (the last second before the throttle
+    // ramp), which is where an undamped runner mode is most audible: there is
+    // no broadband combustion energy to mask it.
+    metrics.idleWindow = analyseWindow(
+        std::vector<float>(left.begin(),
+            left.begin() + static_cast<std::ptrdiff_t>(4.0 * audioRate)),
+        static_cast<std::size_t>(3.0 * audioRate), audioRate);
     metrics.droppedEvents += renderer.droppedPendingEventCount();
     metrics.lateEvents = renderer.lateEventCount();
     metrics.levelLimitedSamples = renderer.levelLimitedSampleCount();
@@ -573,6 +634,9 @@ IdleCycleMetrics renderIdleCycle(const EngineConfig& baseConfig, const WavData& 
               << " returned=" << metrics.returnedIdleRpm << " rpm/"
               << std::setprecision(4) << metrics.returnedIdleRms << " RMS"
               << " peak=" << metrics.scan.peak
+              << " idleResonance=" << std::setprecision(1)
+              << metrics.idleWindow.maxResonanceProminenceDb << "dB@"
+              << std::setprecision(0) << metrics.idleWindow.maxResonanceFrequencyHz << "Hz"
               << " dropped=" << metrics.droppedEvents << '/'
               << metrics.droppedPressureSamples
               << " late=" << metrics.lateEvents
