@@ -236,8 +236,53 @@ cmake --build out/build/windows-vs2022 --config Release --parallel 4
 ctest --test-dir out/build/windows-vs2022 -C Release --output-on-failure
 ```
 
-Le harnais LS3 doit aussi rester sous les 4,167 ms de la boucle 240 Hz. La
-mesure Release finale donne 2,71–2,82 ms de moyenne à 3630 tr/min et
-3,70–3,82 ms à 5940 tr/min sur trois passages. Le p95 maximal observé est
-4,203 ms ; la moyenne haute charge conserve 8,3 % de marge sur la cadence
-temps réel malgré les pointes ponctuelles de l’ordonnanceur Windows.
+Le harnais LS3 doit aussi rester sous les 4,167 ms de la boucle 240 Hz.
+
+## 10. État mesuré et limites connues
+
+Cette section enregistre ce qui a été **mesuré**, y compris ce qui ne tient pas
+le budget. Elle prime sur toute affirmation antérieure de ce document.
+
+### Performance (`EngineLabPhysicsPerfHarness`, Release, 3 passages)
+
+| Moteur | tr/min | moyenne | p50 | p95 | max |
+|---|---|---|---|---|---|
+| LS3 V8 | 3630 | 2,38–2,44 ms | 2,37–2,42 | 2,55–2,74 | 2,79–3,27 |
+| LS3 V8 | 5940 | 3,22–3,32 ms | 3,19–3,25 | 3,48–3,75 | 3,83–**5,09** |
+| Merlin V12 | 1760 | 3,95–4,02 ms | 3,93–4,01 | **4,17–4,26** | 4,40–4,63 |
+| Merlin V12 | 2880 | **4,94–5,08 ms** | 5,01–5,15 | **5,26–5,39** | 5,50–6,05 |
+
+Le LS3 tient le budget en moyenne mais son maximum atteint 5,09 ms, soit 22 %
+au-dessus de la cadence. **Le Merlin V12 dépasse le budget sur la moyenne** à
+2880 tr/min et son p95 dépasse déjà à 1760 tr/min : ce moteur ne soutient pas
+le temps réel. Ne pas citer les seules moyennes LS3 comme preuve de conformité.
+
+### Chemin audio
+
+La voix par défaut est désormais **entièrement** le rayonnement physique
+calculé. Ont été retirés du chemin physique : les voix à oscillateurs
+(échappement *et* combustion) et le bus de pression chambre, qui ne comportait
+aucune fonction de transfert vers l’observateur.
+
+Limites réelles, à ne pas présenter comme résolues :
+
+- **Bruit structurel absent.** Le rayonnement du bloc et de la culasse sous les
+  forces de piston et de paliers n’est pas modélisé. Rien ne le remplace : le
+  contenu de combustion audible provient uniquement de l’échappement.
+- **Sortie monophonique.** Les positions des sorties d’échappement ne font pas
+  partie de la géométrie publiée, donc tous les chemins rayonnent vers un
+  unique observateur documenté à 1 m. Une vraie stéréo demande ces positions et
+  un couple de microphones ; inventer un panoramique serait une décoration.
+- **Résonances étroites non résolues.** Le harnais mesure encore des pics
+  isolés de 18 à 39 dB au-dessus du plancher spectral local (pire cas : V8 à
+  4081 Hz). Leur origine n’est pas entièrement expliquée. Les pertes de paroi
+  et la terminaison à orifice les ont réduites sans les supprimer.
+- **Admission non physique.** Aucun réseau d’admission 1D.
+
+### Niveaux mesurés à l’observateur 1 m
+
+107–117 dB SPL RMS selon le moteur en charge, pointes ~128 dB ; ralenti Big
+Twin ~102 dB. Le plein échelle du moniteur est fixé à 134 dB SPL, dérivé de ces
+mesures. Les seuils du harnais sont exprimés en SI (90–130 dB SPL en charge,
+≥ 85 dB au ralenti) précisément pour qu’aucun réglage de gain ne puisse les
+satisfaire à la place du modèle.
