@@ -171,6 +171,37 @@ struct IntakeConfig final {
     double runnerDiameterMm { 38.0 };
     double idleBypassAreaMm2 { 12.0 };
     double throttleGamma { 1.7 };
+    /**
+     * Flow area still open with the throttle plate fully closed, per bore.
+     *
+     * A throttle plate is a disc in a bore and cannot seal against it: it runs
+     * with a working clearance, and production throttle bodies additionally
+     * carry a deliberate minimum air path (a stop screw or a machined notch) so
+     * the engine can breathe with the pedal released and the idle actuator shut.
+     * The closed-plate leakage of a typical 60 mm body is a few square
+     * millimetres, which is the order of this default.
+     *
+     * Without it the intake has literally zero flow area whenever the driver
+     * throttle and the idle bypass command are both zero, and the engine pumps
+     * against a sealed manifold. Measured on the catalogue before this existed,
+     * manifold pressure fell to about 10 kPa during the post-start speed flare
+     * -- a vacuum no throttled engine can produce -- torque went to about
+     * -75 Nm, and every larger engine stalled within a second of the starter
+     * releasing.
+     *
+     * This is intake hardware, not a control command. It deliberately does not
+     * live in the ECU: the driver's throttle and the idle actuator must both
+     * still be able to close completely, which is why a minimum *commanded*
+     * throttle opening was previously removed. The floor belongs to the bore.
+     *
+     * The default is a genuine leak and not an idle air supply. It is small
+     * enough that the idle actuator still governs idle: at 3 mm2 per bore a
+     * four-throttle 1.3 litre engine idled at 1945 rpm against a 1250 rpm
+     * target, because leakage alone exceeded its idle air demand. What keeps an
+     * engine alive through the post-start flare is the ECU's post-start air
+     * schedule, not this.
+     */
+    double closedThrottleLeakageAreaMm2 { 0.6 };
 };
 
 struct IntakePathConfig final {

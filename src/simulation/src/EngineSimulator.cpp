@@ -80,6 +80,24 @@ namespace {
 // dispatch latency outweighs the work, and the serial path stays bit-identical.
 constexpr std::size_t parallelCylinderThreshold = 8;
 
+/**
+ * Flow area an intake still presents with the throttle plate fully closed.
+ *
+ * Scaled by the number of bores, exactly as the plate area is: leakage is a
+ * property of each plate-in-bore fit, so a four-throttle intake leaks four
+ * times as much as a single-throttle one of the same bore size. Clamped
+ * non-negative so an authored configuration cannot subtract flow area.
+ *
+ * See IntakeConfig::closedThrottleLeakageAreaMm2 for why this belongs to the
+ * hardware rather than to the ECU's idle command.
+ */
+[[nodiscard]] double closedThrottleLeakageAreaM2(const IntakeConfig& intake) noexcept {
+    const auto perBoreMm2 = std::isfinite(intake.closedThrottleLeakageAreaMm2)
+        ? std::max(0.0, intake.closedThrottleLeakageAreaMm2) : 0.0;
+    return perBoreMm2 * static_cast<double>(std::max<std::uint32_t>(1, intake.throttleCount))
+        * 1.0e-6;
+}
+
 // Private per-cylinder scratch for one gas sub-step. Every cross-cylinder result
 // the loop used to accumulate into a shared scalar (or into a shared plenum /
 // collector) is written here per cylinder instead, so the per-cylinder body has
@@ -393,8 +411,8 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 const auto throttleRadiusM = intake.throttleDiameterMm * 0.0005;
                 const auto throttlePlateAreaM2 = static_cast<double>(intake.throttleCount)
                     * std::numbers::pi * throttleRadiusM * throttleRadiusM;
-                const auto throttleAreaM2 = intake.idleBypassAreaMm2
-                        * ecuCommand.idleAirOpening * 1.0e-6
+                const auto throttleAreaM2 = closedThrottleLeakageAreaM2(intake)
+                    + intake.idleBypassAreaMm2 * ecuCommand.idleAirOpening * 1.0e-6
                     + throttlePlateAreaM2 * std::pow(state_.throttle, intake.throttleGamma);
                 (void)ConservativeGasSystem::flowFromBoundary(intakePlenumGas_[pathIndex],
                     config_.ambientPressureKpa, config_.ambientTemperatureC + 273.15,
@@ -486,7 +504,8 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                     * std::numbers::pi * throttleRadiusM * throttleRadiusM;
                 const auto idleBypassAreaM2 = intake.idleBypassAreaMm2
                     * ecuCommand.idleAirOpening * 1.0e-6;
-                const auto throttleAreaM2 = idleBypassAreaM2
+                const auto throttleAreaM2 = closedThrottleLeakageAreaM2(intake)
+                    + idleBypassAreaM2
                     + throttlePlateAreaM2 * std::pow(state_.throttle, intake.throttleGamma);
                 (void)ConservativeGasSystem::flowFromBoundary(intakePlenumGas_[pathIndex], intakeSourcePressureKpa,
                     temperatureK, throttleAreaM2, intake.throttleDischargeCoefficient, subDt,
