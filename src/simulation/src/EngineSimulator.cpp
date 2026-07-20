@@ -576,6 +576,7 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
         std::array<double, 32> chamberPressureBeforeNetworkKpa {};
         std::array<double, 32> gasTorqueLeverArmM {};
         std::array<double, 32> exhaustMassFlowKgPerSecond {};
+        std::array<double, 32> exhaustAcousticMassFlowKgPerSecond {};
         std::array<double, 32> exhaustPortDensityKgPerM3 {};
         std::array<double, 32> exhaustPortSpeedOfSoundMps {};
         std::array<std::uint8_t, 32> thermoacousticBoundaryValid {};
@@ -1237,9 +1238,24 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                     blend(from.densityKgPerM3, to.densityKgPerM3);
                 exhaustPortSpeedOfSoundMps[index] =
                     blend(from.speedOfSoundMps, to.speedOfSoundMps);
-                // Mass flow is a valve-plane quantity recomputed from the
-                // instantaneous cylinder state every substep, so it is already
-                // at mechanical cadence and must not be smoothed.
+                // Two mass flows, deliberately, because two consumers need
+                // different things and one field cannot honestly serve both.
+                //
+                // The acoustic one is reconstructed with the same phase as the
+                // pressure, density and sound speed above. The audio path splits
+                // these into characteristics as 0.5*(p' +- Zc*U'), which only
+                // means anything if p' and U' describe the same instant of the
+                // same field. Blending pressure between two network knots while
+                // taking flow from just the latest one leaves a residual of
+                // (1 - phase) * (to.p - from.p): a sawtooth clocked at the
+                // coupling rate, whose harmonics reach well above the coupling
+                // Nyquist and are audible there as images.
+                exhaustAcousticMassFlowKgPerSecond[index] =
+                    blend(from.massFlowKgPerSecond, to.massFlowKgPerSecond);
+                // The instantaneous one is recomputed from the live cylinder
+                // state every substep and keeps valve-plane detail the network
+                // state does not carry. Mass accounting wants exactly that, and
+                // smoothing it would degrade the flow balance, so it stays raw.
                 exhaustMassFlowKgPerSecond[index] = sample.massFlowKgPerSecond;
             }
             thermoacousticBoundaryValid[index] = static_cast<std::uint8_t>(sampled
@@ -1538,6 +1554,8 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 pressureSample.exhaustRunnerPressureKpa[index] = static_cast<float>(exhaustRunnerPressureKpa_[index]);
                 pressureSample.exhaustMassFlowKgPerSecond[index] =
                     static_cast<float>(exhaustMassFlowKgPerSecond[index]);
+                pressureSample.exhaustAcousticMassFlowKgPerSecond[index] =
+                    static_cast<float>(exhaustAcousticMassFlowKgPerSecond[index]);
                 pressureSample.exhaustPortDensityKgPerM3[index] =
                     static_cast<float>(exhaustPortDensityKgPerM3[index]);
                 pressureSample.exhaustPortSpeedOfSoundMps[index] =

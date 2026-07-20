@@ -733,6 +733,16 @@ void RealtimeEngineAudio::render(juce::AudioBuffer<float>& output, int startSamp
                         : currentPressureSample_.exhaustValveConductanceAreaM2[index];
                     const auto massFlowKgPerSecond = std::lerp(
                         currentPressureSample_.exhaustMassFlowKgPerSecond[index], nextMassFlow, f);
+                    const auto nextAcousticMassFlow = hasNextPressureSample_
+                        && index < nextPressureSample_.cylinderCount
+                        ? nextPressureSample_.exhaustAcousticMassFlowKgPerSecond[index]
+                        : currentPressureSample_.exhaustAcousticMassFlowKgPerSecond[index];
+                    // Partner of the runner pressure below. Both are reconstructed
+                    // from the same exhaust network knots at the same phase, which
+                    // is what makes the characteristic split valid.
+                    const auto acousticMassFlowKgPerSecond = std::lerp(
+                        currentPressureSample_.exhaustAcousticMassFlowKgPerSecond[index],
+                        nextAcousticMassFlow, f);
                     const auto densityKgPerM3 = std::lerp(
                         currentPressureSample_.exhaustPortDensityKgPerM3[index], nextDensity, f);
                     const auto soundSpeedMps = std::lerp(
@@ -742,6 +752,7 @@ void RealtimeEngineAudio::render(juce::AudioBuffer<float>& output, int startSamp
                     physicalBoundaryIsValid = physicalBoundaryIsValid
                         && std::isfinite(runnerExhaustPressureKpa)
                         && std::isfinite(massFlowKgPerSecond)
+                        && std::isfinite(acousticMassFlowKgPerSecond)
                         && std::isfinite(densityKgPerM3) && densityKgPerM3 > 0.0F
                         && std::isfinite(soundSpeedMps) && soundSpeedMps > 0.0F;
                     if (physicalBoundaryIsValid) {
@@ -760,20 +771,23 @@ void RealtimeEngineAudio::render(juce::AudioBuffer<float>& output, int startSamp
                                     .outletAcousticAdmittance;
                         }
                         const auto pressurePa = runnerExhaustPressureKpa * 1'000.0F;
+                        // The mean is subtracted from each partner to leave the
+                        // acoustic perturbation, so it has to track the same
+                        // signal the perturbation is taken from.
                         if (!thermoacousticMeanInitialised_[index]) {
                             exhaustMeanPressurePa_[index] = pressurePa;
-                            exhaustMeanMassFlowKgPerSecond_[index] = massFlowKgPerSecond;
+                            exhaustMeanMassFlowKgPerSecond_[index] = acousticMassFlowKgPerSecond;
                             thermoacousticMeanInitialised_[index] = true;
                         } else {
                             exhaustMeanPressurePa_[index] += thermoacousticMeanCoefficient_
                                 * (pressurePa - exhaustMeanPressurePa_[index]);
                             exhaustMeanMassFlowKgPerSecond_[index] +=
-                                thermoacousticMeanCoefficient_ * (massFlowKgPerSecond
+                                thermoacousticMeanCoefficient_ * (acousticMassFlowKgPerSecond
                                     - exhaustMeanMassFlowKgPerSecond_[index]);
                         }
                         const auto pressurePerturbationPa = pressurePa
                             - exhaustMeanPressurePa_[index];
-                        const auto massFlowPerturbationKgPerSecond = massFlowKgPerSecond
+                        const auto massFlowPerturbationKgPerSecond = acousticMassFlowKgPerSecond
                             - exhaustMeanMassFlowKgPerSecond_[index];
                         const auto areaM2 = runnerAreaM2[index];
                         const auto characteristicImpedance = densityKgPerM3

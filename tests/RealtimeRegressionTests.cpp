@@ -167,7 +167,13 @@ std::vector<float> renderPhysicalExhaust(const PhysicalExhaustFixture& fixture) 
         sample.cylinderCount = 1;
         sample.pressureBar[0] = 1.01325F;
         sample.exhaustRunnerPressureKpa[0] = pressureKpa;
+        // This fixture authors one self-consistent boundary instant directly,
+        // with no multirate reconstruction between network knots to make the two
+        // published flows differ. The valve-plane flow and its acoustic partner
+        // therefore coincide here, and both are set so the characteristic source
+        // sees the signed flow this case exists to exercise.
         sample.exhaustMassFlowKgPerSecond[0] = massFlowKgPerSecond;
+        sample.exhaustAcousticMassFlowKgPerSecond[0] = massFlowKgPerSecond;
         sample.exhaustPortDensityKgPerM3[0] = 0.65F;
         sample.exhaustPortSpeedOfSoundMps[0] = 540.0F;
         sample.exhaustValveConductanceAreaM2[0] = conductanceAreaM2;
