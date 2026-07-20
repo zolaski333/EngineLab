@@ -286,3 +286,61 @@ Twin ~102 dB. Le plein échelle du moniteur est fixé à 134 dB SPL, dérivé de
 mesures. Les seuils du harnais sont exprimés en SI (90–130 dB SPL en charge,
 ≥ 85 dB au ralenti) précisément pour qu’aucun réglage de gain ne puisse les
 satisfaire à la place du modèle.
+
+## 11. Cadence de couplage : ce qui a été mesuré, et pourquoi elle n'a pas bougé
+
+La frontière d'échappement qui excite le guide d'ondes est échantillonnée à la
+cadence de couplage multirate. Tout contenu spectral au-dessus de la moitié de
+cette cadence ne peut pas venir de la frontière : c'est une image de
+reconstruction. `EngineState` publie désormais `exhaustCouplingFrequencyHz` et
+`exhaustNetworkSubstepFrequencyHz` pour que la comparaison soit directe au lieu
+d'être devinée, et le harnais de rendu les rapporte par moteur.
+
+Deux corrections ont été distinguées, et une seule a été retenue.
+
+**Retenue — cohérence de la frontière.** Pression, densité et vitesse du son
+étaient reconstruites en mélangeant deux nœuds du réseau, tandis que le débit
+massique venait du seul nœud le plus récent. La décomposition caractéristique
+`0.5 (p' ± Zc U')` exige que les deux décrivent le même instant du même champ.
+L'écart valait `(1 − phase) (to.p − from.p)` : une dent de scie cadencée au
+couplage, dont les harmoniques dépassent largement le Nyquist de couplage. Elle
+était injectée dans le terme source, donc aucune correction du guide d'ondes ne
+pouvait l'atteindre. Corrigée en publiant deux débits aux contrats distincts.
+Coût CPU nul.
+
+**Écartée — relèvement de la cadence.** Acoustiquement, cela fonctionne. Mesuré
+en couplant à chaque sous-pas mécanique, tous les pics repassent sous le Nyquist
+de couplage pour la première fois (674–1583 Hz, donc des modes réellement
+représentables), la fraction de haute bande de l'I4 tombe de 3.8 % à 0.5 % et
+celle du V8 de 7.9 % à 0.8 %.
+
+Le budget l'interdit. Le LS3 passe de ~3.76 ms à ~4.55 ms pour une trame de
+4.167 ms à 3630 tr/min, soit de dedans à dehors ; à 5940 tr/min il va de 5.13 à
+7.14 ms. Le surcoût n'est pas le sous-cyclage CFL — dont le nombre total de
+sous-pas dépend du temps physique parcouru, pas du nombre d'appels — mais le
+travail fixe par couplage : moyennage de frontière sur tous les cylindres et
+mise en place de l'avance. À stride 1 ce coût fixe se paie à chaque sous-pas.
+
+Une borne absolue sur la cadence a aussi été essayée, pour épargner les moteurs
+à beaucoup de cylindres. Elle **dégrade** : le V8 remonte à 36.1 dB @ 5754 Hz,
+une image de premier rang sur son propre couplage. Le contenu de la bouffée de
+détente suit bien la cadence d'allumage, donc la règle par période d'allumage
+est physiquement fondée et une borne en Hz absolus la casse. Ne pas réessayer
+sans traiter d'abord le coût fixe par couplage.
+
+Le chemin praticable est donc de réduire ce coût fixe, pas de relever la cadence
+telle quelle.
+
+### Limite honnête qui subsiste
+
+Les pics étroits ne sont pas éliminés. Après la correction de cohérence, le
+harnais mesure encore 16–32 dB au-dessus du plancher local, pire cas V8 à
+31.9 dB @ 3833 Hz, et plusieurs restent au-dessus du Nyquist de couplage : il
+demeure de l'imagerie que cette correction n'explique pas. La bande réellement
+physique reste bornée à ~1.1–2 kHz par le couplage. C'est une limite
+structurelle, pas un réglage.
+
+Aucun test de non-régression ne garde cette correction. Le seul invariant propre
+envisagé — « pas d'énergie au-dessus du Nyquist de couplage » — est faux en
+toute rigueur, la terminaison de soupape étant non linéaire et créant
+légitimement des harmoniques. Un seuil inventé aurait été pire que rien.
