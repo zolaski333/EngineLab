@@ -255,64 +255,21 @@ void MainComponent::configureImpulseResponse() {
     };
 
     const auto catalogRootFile = juce::File(juce::String(catalogRoot_.string()));
-    const auto irDir = catalogRootFile.getChildFile("assets").getChildFile("ir");
-    // Each exhaust preset maps to a distinct real recorded IR (reused from es2d,
-    // MIT). The engine-specific character still comes from the simulated pressure
-    // waveform that excites the IR; the preset picks the muffler/system voicing.
-    constexpr std::array<const char*, 5> presetIrFiles {
-        "exhaust_street.wav", "exhaust_open.wav", "exhaust_turbo.wav",
-        "exhaust_longtube.wav", "exhaust_moto.wav" };
-    const auto presetIr = irDir.getChildFile(
-        presetIrFiles[static_cast<std::size_t>(std::clamp(exhaustPresetIndex_, 0, 4))]);
-    const auto defaultIr = irDir.getChildFile("exhaust_default.wav");
-
     const auto configuredPaths = std::min(config_.exhaustPaths.size(),
                                           RealtimeConvolutionBank::maximumPaths);
-    const auto pathCount = std::max<std::size_t>(1, configuredPaths);
-    for (std::size_t pathIndex = 0; pathIndex < pathCount; ++pathIndex) {
-        // 1. Explicit per-path IR declared in the engine configuration.
-        if (pathIndex < configuredPaths) {
-            const auto& path = config_.exhaustPaths[pathIndex];
-            if (!path.impulseResponsePath.empty()) {
-                const auto configuredPath = juce::String::fromUTF8(path.impulseResponsePath.c_str());
-                const auto file = juce::File::isAbsolutePath(configuredPath)
-                    ? juce::File(configuredPath)
-                    : catalogRootFile.getChildFile(configuredPath);
-                if (tryLoadIr(file, pathIndex)) continue;
-            }
-        }
-
-        // 2. Preset-voiced recorded exhaust IR (falls back to the generic one).
-        if (tryLoadIr(presetIr, pathIndex)) continue;
-        if (tryLoadIr(defaultIr, pathIndex)) continue;
-
-        // 3. Last-resort asset-free fallback: a deterministic geometry-derived
-        //    IR, only used if the recorded asset is missing.
-        const auto& geometry = pathIndex < configuredPaths
-            ? config_.exhaustPaths[pathIndex].geometry : config_.exhaust;
-        constexpr double generatedSampleRate = 48'000.0;
-        constexpr int generatedSamples = 4'096;
-        juce::AudioBuffer<float> generated(1, generatedSamples);
-        generated.clear();
-        generated.setSample(0, 0, 0.72F);
-        const auto pathDelay = std::clamp(static_cast<int>(generatedSampleRate
-            * geometry.primaryLengthMm / 520'000.0), 8, 1'200);
-        const auto resonanceHz = std::clamp(520'000.0
-            / std::max(200.0, 4.0 * geometry.primaryLengthMm), 45.0, 1'800.0);
-        const auto reflection = std::clamp(0.18 + geometry.mufflerRestriction * 0.48
-            + (58.0 / geometry.collectorDiameterMm - 1.0) * 0.12, 0.08, 0.78);
-        for (int sample = 1; sample < generatedSamples; ++sample) {
-            const auto time = static_cast<double>(sample) / generatedSampleRate;
-            const auto body = std::sin(2.0 * std::numbers::pi * resonanceHz * time)
-                * std::exp(-time * (32.0 + geometry.mufflerRestriction * 75.0)) * 0.10;
-            generated.addSample(0, sample, static_cast<float>(body));
-        }
-        for (int echo = 1; echo <= 3; ++echo) {
-            const auto sample = pathDelay * echo;
-            if (sample < generatedSamples)
-                generated.addSample(0, sample, static_cast<float>(std::pow(reflection, echo) * 0.42));
-        }
-        audio_->setImpulseResponse(std::move(generated), generatedSampleRate, pathIndex);
+    // The physical renderer already owns pipe propagation and radiation. An IR
+    // is therefore a measured downstream environment/system response, never a
+    // preset or geometry-shaped substitute for missing gas physics. Load only
+    // paths explicitly authored by the user; absence means true free field.
+    for (std::size_t pathIndex = 0; pathIndex < configuredPaths; ++pathIndex) {
+        const auto& path = config_.exhaustPaths[pathIndex];
+        if (path.impulseResponsePath.empty()) continue;
+        const auto configuredPath = juce::String::fromUTF8(
+            path.impulseResponsePath.c_str());
+        const auto file = juce::File::isAbsolutePath(configuredPath)
+            ? juce::File(configuredPath)
+            : catalogRootFile.getChildFile(configuredPath);
+        (void) tryLoadIr(file, pathIndex);
     }
 }
 
