@@ -340,13 +340,21 @@ bool ExhaustGasNetwork::evaluateStage(
         const auto states = useStageState
             ? std::span<const ConservativeState>(duct.stage_)
             : std::span<const ConservativeState>(duct.cells_);
+        const auto primitives = useStageState
+            ? std::span<const PrimitiveState>(duct.stagePrimitives_)
+            : std::span<const PrimitiveState>(duct.cellPrimitives_);
+        const auto sourceTerms = useStageState
+            ? std::span<const ConservativeState>(duct.stageSourceTerms_)
+            : std::span<const ConservativeState>(duct.cellSourceTerms_);
         auto residual = useStageState
             ? std::span<ConservativeState>(duct.stageResidual_)
             : std::span<ConservativeState>(duct.residual_);
         auto faceFluxes = useStageState
             ? std::span<EulerFlux>(duct.stageFaceFluxes_)
             : std::span<EulerFlux>(duct.faceFluxes_);
-        duct.computeResidual(states, transmissive, transmissive, residual, faceFluxes);
+        if (!duct.computeResidual(states, primitives, sourceTerms,
+                                  transmissive, transmissive, residual, faceFluxes))
+            return false;
     }
 
     const auto& junctionStates = useStageState ? junctionStage_ : junctionStates_;
@@ -533,10 +541,21 @@ bool ExhaustGasNetwork::evaluateStage(
                [](std::uint8_t assigned) { return assigned != 0; });
 }
 
-bool ExhaustGasNetwork::allStageStatesPhysical(bool candidateStage) const noexcept {
-    for (const auto& duct : ducts_) {
+bool ExhaustGasNetwork::prepareStageStates(bool candidateStage) noexcept {
+    for (auto& duct : ducts_) {
         const auto& states = candidateStage ? duct.candidate_ : duct.stage_;
-        if (!duct.allStatesPhysical(states)) return false;
+        auto& primitives = candidateStage
+            ? duct.candidatePrimitives_ : duct.stagePrimitives_;
+        auto& sourceTerms = candidateStage
+            ? duct.candidateSourceTerms_ : duct.stageSourceTerms_;
+        auto& maximumSignalSpeed = candidateStage
+            ? duct.maximumCandidateSignalSpeedMps_ : duct.maximumStageSignalSpeedMps_;
+        auto& sourceLimitedTimeStep = candidateStage
+            ? duct.candidateSourceLimitedTimeStepSeconds_
+            : duct.stageSourceLimitedTimeStepSeconds_;
+        if (!duct.prepareStateCache(states, primitives, sourceTerms,
+                maximumSignalSpeed, sourceLimitedTimeStep))
+            return false;
     }
     const auto& states = candidateStage ? junctionCandidate_ : junctionStage_;
     for (const auto& state : states)
@@ -658,7 +677,7 @@ ExhaustNetworkAdvanceResult ExhaustGasNetwork::advance(
                 if (cylinderReservoirActive_[index] != 0)
                     (void) mixtureModel_.canonicaliseSpeciesRoundoff(
                         cylinderReservoirStage_[index]);
-            if (!allStageStatesPhysical(false)) {
+            if (!prepareStageStates(false)) {
                 ++result.rejectedSubsteps;
                 trialStep *= 0.5;
                 if (!(trialStep > std::numeric_limits<double>::epsilon()
@@ -700,7 +719,7 @@ ExhaustNetworkAdvanceResult ExhaustGasNetwork::advance(
                 if (cylinderReservoirActive_[index] != 0)
                     (void) mixtureModel_.canonicaliseSpeciesRoundoff(
                         cylinderReservoirCandidate_[index]);
-            if (!allStageStatesPhysical(true)) {
+            if (!prepareStageStates(true)) {
                 ++result.rejectedSubsteps;
                 trialStep *= 0.5;
                 if (!(trialStep > std::numeric_limits<double>::epsilon()
@@ -734,7 +753,16 @@ ExhaustNetworkAdvanceResult ExhaustGasNetwork::advance(
                        + outletSecondStageFlow_[index].totalEnergyW);
             }
 
-            for (auto& duct : ducts_) duct.cells_.swap(duct.candidate_);
+            for (auto& duct : ducts_) {
+                duct.cells_.swap(duct.candidate_);
+                duct.cellPrimitives_.swap(duct.candidatePrimitives_);
+                duct.cellSourceTerms_.swap(duct.candidateSourceTerms_);
+                std::swap(duct.maximumCellSignalSpeedMps_,
+                          duct.maximumCandidateSignalSpeedMps_);
+                std::swap(duct.cellSourceLimitedTimeStepSeconds_,
+                          duct.candidateSourceLimitedTimeStepSeconds_);
+                duct.cellStateCacheIsValid_ = true;
+            }
             junctionStates_.swap(junctionCandidate_);
             cylinderReservoirStates_.swap(cylinderReservoirCandidate_);
             remaining -= trialStep;

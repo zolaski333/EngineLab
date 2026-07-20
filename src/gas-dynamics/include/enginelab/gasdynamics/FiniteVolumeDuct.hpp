@@ -131,7 +131,28 @@ public:
                                         const ConservativeState& right) const noexcept;
 
 private:
+    friend class FiniteVolumeDuct;
+    friend class ExhaustGasNetwork;
+
+    /** Recover a primitive state into caller-owned storage. This is the hot-path
+     * counterpart of primitiveFromConservative(); both enforce exactly the
+     * same physical admissibility conditions.
+     */
+    [[nodiscard]] bool recoverPrimitive(const ConservativeState& state,
+                                        PrimitiveState& primitive) const noexcept;
+    [[nodiscard]] EulerFlux physicalFluxPrepared(
+        const ConservativeState& state,
+        const PrimitiveState& primitive) const noexcept;
+    [[nodiscard]] EulerFlux riemannFluxPrepared(
+        const ConservativeState& left,
+        const PrimitiveState& leftPrimitive,
+        const ConservativeState& right,
+        const PrimitiveState& rightPrimitive) const noexcept;
+
     ThermodynamicModel model_;
+    std::array<double, gasSpeciesCount> inverseMolarMassKg_ {};
+    std::array<double, gasSpeciesCount> specificHeatCapacityCvJPerKgK_ {};
+    bool modelIsValid_ { false };
 };
 
 struct DuctGeometry final {
@@ -200,7 +221,14 @@ public:
     [[nodiscard]] const DuctGeometry& geometry() const noexcept { return geometry_; }
     [[nodiscard]] const EulerMixtureModel& mixtureModel() const noexcept { return mixtureModel_; }
     [[nodiscard]] std::span<const ConservativeState> cells() const noexcept { return cells_; }
-    [[nodiscard]] std::span<ConservativeState> cells() noexcept { return cells_; }
+    /** Mutable access is intended for initial-condition and test setup only.
+     * It invalidates derived thermodynamic/source caches; the next advance or
+     * CFL query rebuilds them before using the modified states.
+     */
+    [[nodiscard]] std::span<ConservativeState> cells() noexcept {
+        cellStateCacheIsValid_ = false;
+        return cells_;
+    }
     [[nodiscard]] double cellCentreM(std::size_t index) const noexcept;
     [[nodiscard]] ConservedInventory inventory() const noexcept;
 
@@ -223,12 +251,21 @@ public:
 
 private:
     friend class ExhaustGasNetwork;
-    [[nodiscard]] bool allStatesPhysical(std::span<const ConservativeState> states) const noexcept;
-    void computeResidual(std::span<const ConservativeState> states,
-                         const DuctBoundaryCondition& left,
-                         const DuctBoundaryCondition& right,
-                         std::span<ConservativeState> residual,
-                         std::span<EulerFlux> faceFluxes) noexcept;
+    [[nodiscard]] bool prepareStateCache(
+        std::span<const ConservativeState> states,
+        std::span<PrimitiveState> primitives,
+        std::span<ConservativeState> sourceTerms,
+        double& maximumSignalSpeed,
+        double& sourceLimitedTimeStep) const noexcept;
+    [[nodiscard]] bool refreshCellStateCache() const noexcept;
+    [[nodiscard]] bool computeResidual(
+        std::span<const ConservativeState> states,
+        std::span<const PrimitiveState> primitives,
+        std::span<const ConservativeState> sourceTerms,
+        const DuctBoundaryCondition& left,
+        const DuctBoundaryCondition& right,
+        std::span<ConservativeState> residual,
+        std::span<EulerFlux> faceFluxes) noexcept;
 
     EulerMixtureModel mixtureModel_;
     DuctGeometry geometry_ {};
@@ -238,8 +275,25 @@ private:
     std::vector<ConservativeState> residual_;
     std::vector<ConservativeState> stageResidual_;
     std::vector<ConservativeState> slopes_;
+    mutable std::vector<PrimitiveState> cellPrimitives_;
+    std::vector<PrimitiveState> stagePrimitives_;
+    std::vector<PrimitiveState> candidatePrimitives_;
+    mutable std::vector<ConservativeState> cellSourceTerms_;
+    std::vector<ConservativeState> stageSourceTerms_;
+    std::vector<ConservativeState> candidateSourceTerms_;
+    std::vector<ConservativeState> reconstructedLeft_;
+    std::vector<ConservativeState> reconstructedRight_;
+    std::vector<PrimitiveState> reconstructedLeftPrimitives_;
+    std::vector<PrimitiveState> reconstructedRightPrimitives_;
     std::vector<EulerFlux> faceFluxes_;
     std::vector<EulerFlux> stageFaceFluxes_;
+    mutable double maximumCellSignalSpeedMps_ { 0.0 };
+    mutable double cellSourceLimitedTimeStepSeconds_ { 0.0 };
+    double maximumStageSignalSpeedMps_ { 0.0 };
+    double stageSourceLimitedTimeStepSeconds_ { 0.0 };
+    double maximumCandidateSignalSpeedMps_ { 0.0 };
+    double candidateSourceLimitedTimeStepSeconds_ { 0.0 };
+    mutable bool cellStateCacheIsValid_ { false };
 };
 
 } // namespace enginelab::gasdynamics

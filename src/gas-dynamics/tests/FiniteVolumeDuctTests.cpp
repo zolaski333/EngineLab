@@ -142,6 +142,25 @@ void testUniformStatePreservation() {
                          "uniform periodic inventory");
 }
 
+void testMutableInitialConditionRefreshesDerivedState() {
+    EulerMixtureModel model;
+    const auto cold = makeState(model, 1.20, 0.0, 101'325.0, GasComposition::dryAir());
+    const auto hot = makeState(model, 0.30, 0.0, 101'325.0, GasComposition::dryAir());
+    FiniteVolumeDuct duct;
+    require(duct.configure(losslessGeometry(0.8, 40), cold),
+            "cache-refresh duct must configure");
+    const auto coldStableStep = duct.maximumStableTimeStep(0.5);
+    for (auto& cell : duct.cells()) cell = hot;
+    const auto hotStableStep = duct.maximumStableTimeStep(0.5);
+    require(coldStableStep > 0.0 && hotStableStep > 0.0
+            && hotStableStep < coldStableStep * 0.55,
+            "mutable initial conditions must invalidate cached sound speed and CFL data");
+    const auto result = duct.advance(hotStableStep,
+        DuctBoundaryCondition::periodic(), DuctBoundaryCondition::periodic(), 0.5);
+    require(result.completed && result.rejectedSubsteps == 0,
+            "refreshed state cache must drive the following residual consistently");
+}
+
 void testPeriodicConservation() {
     EulerMixtureModel model;
     const auto geometry = losslessGeometry(1.0, 192);
@@ -374,6 +393,7 @@ void runExhaustGasNetworkTests();
 int main() {
     testEquationOfStateRoundTrip();
     testUniformStatePreservation();
+    testMutableInitialConditionRefreshesDerivedState();
     testPeriodicConservation();
     testSodShockTube();
     testAcousticTransitSpeed();

@@ -81,6 +81,44 @@ constexpr double reconstructionBias = 1.5;
     return result;
 }
 
+[[nodiscard]] PrimitiveState mirrored(const PrimitiveState& state) noexcept {
+    auto result = state;
+    result.velocityMps = -result.velocityMps;
+    return result;
+}
+
+[[nodiscard]] bool identical(const ConservativeState& first,
+                             const ConservativeState& second) noexcept {
+    return first.speciesMassDensityKgPerM3 == second.speciesMassDensityKgPerM3
+        && first.momentumDensityKgPerM2S == second.momentumDensityKgPerM2S
+        && first.totalEnergyDensityJPerM3 == second.totalEnergyDensityJPerM3;
+}
+
+[[nodiscard]] bool isZero(const ConservativeState& state) noexcept {
+    return state.speciesMassDensityKgPerM3
+            == std::array<double, gasSpeciesCount> {}
+        && state.momentumDensityKgPerM2S == 0.0
+        && state.totalEnergyDensityJPerM3 == 0.0;
+}
+
+[[nodiscard]] bool hasPositiveDensityAndInternalEnergy(
+    const ConservativeState& state) noexcept {
+    auto density = 0.0;
+    for (const auto speciesDensity : state.speciesMassDensityKgPerM3) {
+        if (!std::isfinite(speciesDensity) || speciesDensity < 0.0) return false;
+        density += speciesDensity;
+    }
+    if (!(density > minimumDensityKgPerM3)
+        || !std::isfinite(state.momentumDensityKgPerM2S)
+        || !std::isfinite(state.totalEnergyDensityJPerM3))
+        return false;
+    const auto kineticEnergyDensity = 0.5 * state.momentumDensityKgPerM2S
+        * state.momentumDensityKgPerM2S / density;
+    return std::isfinite(kineticEnergyDensity)
+        && state.totalEnergyDensityJPerM3 - kineticEnergyDensity
+            > minimumInternalEnergyDensityJPerM3;
+}
+
 [[nodiscard]] EulerFlux fluxDifferenceStateScaled(
     const EulerFlux& flux,
     const ConservativeState& first,
@@ -223,7 +261,15 @@ double ConservativeState::densityKgPerM3() const noexcept {
 }
 
 EulerMixtureModel::EulerMixtureModel(ThermodynamicModel model) noexcept
-    : model_(model) {}
+    : model_(model), modelIsValid_(model.valid()) {
+    if (!modelIsValid_) return;
+    for (std::size_t index = 0; index < gasSpeciesCount; ++index) {
+        inverseMolarMassKg_[index] = 1.0 / model_.species[index].molarMassKgPerMol;
+        specificHeatCapacityCvJPerKgK_[index] =
+            model_.species[index].molarHeatCapacityCvJPerMolK
+            * inverseMolarMassKg_[index];
+    }
+}
 
 std::optional<ConservativeState> EulerMixtureModel::conservativeFromPrimitive(
     double density, double velocity, double pressure,
@@ -287,30 +333,37 @@ std::optional<ConservativeState> EulerMixtureModel::conservativeFromPressureTemp
 
 std::optional<PrimitiveState> EulerMixtureModel::primitiveFromConservative(
     const ConservativeState& state) const noexcept {
-    if (!model_.valid()) return std::nullopt;
+    PrimitiveState result;
+    if (!recoverPrimitive(state, result)) return std::nullopt;
+    return result;
+}
+
+bool EulerMixtureModel::recoverPrimitive(const ConservativeState& state,
+                                         PrimitiveState& result) const noexcept {
+    if (!modelIsValid_) return false;
     auto density = 0.0;
     auto molarDensity = 0.0;
     auto heatCapacityDensity = 0.0;
     for (std::size_t index = 0; index < gasSpeciesCount; ++index) {
         const auto speciesDensity = state.speciesMassDensityKgPerM3[index];
-        if (!finite(speciesDensity) || speciesDensity < 0.0) return std::nullopt;
+        if (!finite(speciesDensity) || speciesDensity < 0.0) return false;
         density += speciesDensity;
-        const auto molesPerM3 = speciesDensity / model_.species[index].molarMassKgPerMol;
+        const auto molesPerM3 = speciesDensity * inverseMolarMassKg_[index];
         molarDensity += molesPerM3;
-        heatCapacityDensity += molesPerM3
-            * model_.species[index].molarHeatCapacityCvJPerMolK;
+        heatCapacityDensity += speciesDensity
+            * specificHeatCapacityCvJPerKgK_[index];
     }
     if (!(density > minimumDensityKgPerM3) || !(molarDensity > 0.0)
         || !(heatCapacityDensity > 0.0) || !finite(state.momentumDensityKgPerM2S)
         || !finite(state.totalEnergyDensityJPerM3))
-        return std::nullopt;
+        return false;
 
     const auto velocity = state.momentumDensityKgPerM2S / density;
     const auto kineticEnergyDensity = 0.5 * density * velocity * velocity;
     const auto internalEnergyDensity = state.totalEnergyDensityJPerM3 - kineticEnergyDensity;
     if (!(internalEnergyDensity > minimumInternalEnergyDensityJPerM3)
         || !finite(internalEnergyDensity))
-        return std::nullopt;
+        return false;
 
     const auto temperature = internalEnergyDensity / heatCapacityDensity;
     const auto pressure = molarDensity * universalGasConstantJPerMolK * temperature;
@@ -320,9 +373,8 @@ std::optional<PrimitiveState> EulerMixtureModel::primitiveFromConservative(
     if (!(temperature > 0.0) || !(pressure > 0.0) || !(gamma > 1.0)
         || !(soundSpeedSquared > 0.0) || !finite(temperature) || !finite(pressure)
         || !finite(gamma) || !finite(soundSpeedSquared))
-        return std::nullopt;
+        return false;
 
-    PrimitiveState result;
     result.densityKgPerM3 = density;
     result.velocityMps = velocity;
     result.pressurePa = pressure;
@@ -331,11 +383,12 @@ std::optional<PrimitiveState> EulerMixtureModel::primitiveFromConservative(
     result.speedOfSoundMps = std::sqrt(soundSpeedSquared);
     for (std::size_t index = 0; index < gasSpeciesCount; ++index)
         result.massFractions[index] = state.speciesMassDensityKgPerM3[index] / density;
-    return result;
+    return true;
 }
 
 bool EulerMixtureModel::isPhysical(const ConservativeState& state) const noexcept {
-    return primitiveFromConservative(state).has_value();
+    PrimitiveState primitive;
+    return recoverPrimitive(state, primitive);
 }
 
 bool EulerMixtureModel::canonicaliseSpeciesRoundoff(ConservativeState& state) const noexcept {
@@ -364,27 +417,46 @@ bool EulerMixtureModel::canonicaliseSpeciesRoundoff(ConservativeState& state) co
 }
 
 EulerFlux EulerMixtureModel::physicalFlux(const ConservativeState& state) const noexcept {
-    const auto primitive = primitiveFromConservative(state);
-    if (!primitive) return {};
+    PrimitiveState primitive;
+    if (!recoverPrimitive(state, primitive)) return {};
+    return physicalFluxPrepared(state, primitive);
+}
+
+EulerFlux EulerMixtureModel::physicalFluxPrepared(
+    const ConservativeState& state,
+    const PrimitiveState& primitive) const noexcept {
     EulerFlux result;
     for (std::size_t index = 0; index < gasSpeciesCount; ++index) {
         result.speciesMassFluxKgPerM2S[index] =
-            state.speciesMassDensityKgPerM3[index] * primitive->velocityMps;
+            state.speciesMassDensityKgPerM3[index] * primitive.velocityMps;
     }
-    result.momentumFluxPa = state.momentumDensityKgPerM2S * primitive->velocityMps
-        + primitive->pressurePa;
+    result.momentumFluxPa = state.momentumDensityKgPerM2S * primitive.velocityMps
+        + primitive.pressurePa;
     result.totalEnergyFluxWPerM2 =
-        (state.totalEnergyDensityJPerM3 + primitive->pressurePa) * primitive->velocityMps;
+        (state.totalEnergyDensityJPerM3 + primitive.pressurePa) * primitive.velocityMps;
     return result;
 }
 
 EulerFlux EulerMixtureModel::riemannFlux(const ConservativeState& left,
                                          const ConservativeState& right) const noexcept {
-    const auto leftPrimitive = primitiveFromConservative(left);
-    const auto rightPrimitive = primitiveFromConservative(right);
-    if (!leftPrimitive || !rightPrimitive) return {};
-    const auto leftPhysicalFlux = physicalFlux(left);
-    const auto rightPhysicalFlux = physicalFlux(right);
+    PrimitiveState leftPrimitive;
+    PrimitiveState rightPrimitive;
+    if (!recoverPrimitive(left, leftPrimitive)
+        || !recoverPrimitive(right, rightPrimitive))
+        return {};
+    return riemannFluxPrepared(left, leftPrimitive, right, rightPrimitive);
+}
+
+EulerFlux EulerMixtureModel::riemannFluxPrepared(
+    const ConservativeState& left,
+    const PrimitiveState& leftPrimitiveValue,
+    const ConservativeState& right,
+    const PrimitiveState& rightPrimitiveValue) const noexcept {
+    if (identical(left, right)) return physicalFluxPrepared(left, leftPrimitiveValue);
+    const auto* leftPrimitive = &leftPrimitiveValue;
+    const auto* rightPrimitive = &rightPrimitiveValue;
+    const auto leftPhysicalFlux = physicalFluxPrepared(left, *leftPrimitive);
+    const auto rightPhysicalFlux = physicalFluxPrepared(right, *rightPrimitive);
     const auto leftWave = std::min(leftPrimitive->velocityMps - leftPrimitive->speedOfSoundMps,
                                    rightPrimitive->velocityMps - rightPrimitive->speedOfSoundMps);
     const auto rightWave = std::max(leftPrimitive->velocityMps + leftPrimitive->speedOfSoundMps,
@@ -443,11 +515,11 @@ EulerFlux EulerMixtureModel::riemannFlux(const ConservativeState& left,
 
     if (contactWave >= 0.0) {
         const auto star = starState(left, *leftPrimitive, leftWave);
-        if (star && isPhysical(*star))
+        if (star && hasPositiveDensityAndInternalEnergy(*star))
             return fluxDifferenceStateScaled(leftPhysicalFlux, *star, left, leftWave);
     } else {
         const auto star = starState(right, *rightPrimitive, rightWave);
-        if (star && isPhysical(*star))
+        if (star && hasPositiveDensityAndInternalEnergy(*star))
             return fluxDifferenceStateScaled(rightPhysicalFlux, *star, right, rightWave);
     }
     return hlleFlux(left, right, *leftPrimitive, *rightPrimitive,
@@ -505,9 +577,21 @@ bool FiniteVolumeDuct::configure(const DuctGeometry& geometry,
     residual_.resize(geometry.cellCount);
     stageResidual_.resize(geometry.cellCount);
     slopes_.resize(geometry.cellCount);
+    cellPrimitives_.resize(geometry.cellCount);
+    stagePrimitives_.resize(geometry.cellCount);
+    candidatePrimitives_.resize(geometry.cellCount);
+    cellSourceTerms_.resize(geometry.cellCount);
+    stageSourceTerms_.resize(geometry.cellCount);
+    candidateSourceTerms_.resize(geometry.cellCount);
+    reconstructedLeft_.resize(geometry.cellCount);
+    reconstructedRight_.resize(geometry.cellCount);
+    reconstructedLeftPrimitives_.resize(geometry.cellCount);
+    reconstructedRightPrimitives_.resize(geometry.cellCount);
     faceFluxes_.resize(geometry.cellCount + 1);
     stageFaceFluxes_.resize(geometry.cellCount + 1);
-    return true;
+    cellStateCacheIsValid_ = prepareStateCache(cells_, cellPrimitives_, cellSourceTerms_,
+        maximumCellSignalSpeedMps_, cellSourceLimitedTimeStepSeconds_);
+    return cellStateCacheIsValid_;
 }
 
 double FiniteVolumeDuct::cellCentreM(std::size_t index) const noexcept {
@@ -532,25 +616,53 @@ double FiniteVolumeDuct::maximumStableTimeStep(double maximumCourantNumber) cons
     if (cells_.empty() || !finite(maximumCourantNumber)
         || !(maximumCourantNumber > 0.0) || !(maximumCourantNumber <= 1.0))
         return 0.0;
-    auto maximumSignalSpeed = 0.0;
-    auto sourceLimitedStep = std::numeric_limits<double>::infinity();
-    for (const auto& cell : cells_) {
-        const auto primitive = mixtureModel_.primitiveFromConservative(cell);
-        if (!primitive) return 0.0;
+    if (!refreshCellStateCache()) return 0.0;
+    if (!(maximumCellSignalSpeedMps_ > 0.0)
+        || !finite(maximumCellSignalSpeedMps_)
+        || !(cellSourceLimitedTimeStepSeconds_ > 0.0))
+        return 0.0;
+    return std::min(maximumCourantNumber * geometry_.cellLengthM()
+                        / maximumCellSignalSpeedMps_,
+                    cellSourceLimitedTimeStepSeconds_);
+}
+
+bool FiniteVolumeDuct::prepareStateCache(
+    std::span<const ConservativeState> states,
+    std::span<PrimitiveState> primitives,
+    std::span<ConservativeState> sourceTerms,
+    double& maximumSignalSpeed,
+    double& sourceLimitedTimeStep) const noexcept {
+    if (states.size() != primitives.size() || states.size() != sourceTerms.size())
+        return false;
+    maximumSignalSpeed = 0.0;
+    sourceLimitedTimeStep = std::numeric_limits<double>::infinity();
+    constexpr double referenceViscosityPaS = 1.716e-5;
+    constexpr double referenceTemperatureK = 273.15;
+    constexpr double sutherlandTemperatureK = 110.4;
+    const auto turbulentRoughnessTerm = std::pow(
+        geometry_.absoluteRoughnessM / geometry_.diameterM / 3.7, 1.11);
+    const auto localLossGradient = geometry_.localLossCoefficient / geometry_.lengthM;
+    const auto wallHeatConductancePerVolume = geometry_.wallHeatTransferWPerM2K
+        * (4.0 / geometry_.diameterM);
+    for (std::size_t index = 0; index < states.size(); ++index) {
+        const auto& state = states[index];
+        auto& primitive = primitives[index];
+        auto& source = sourceTerms[index];
+        source = {};
+        if (!mixtureModel_.recoverPrimitive(state, primitive)) return false;
         maximumSignalSpeed = std::max(maximumSignalSpeed,
-            std::abs(primitive->velocityMps) + primitive->speedOfSoundMps);
+            std::abs(primitive.velocityMps) + primitive.speedOfSoundMps);
 
         if (geometry_.wallFrictionEnabled
-            && std::abs(primitive->velocityMps) > 1.0e-9) {
-            constexpr double referenceViscosityPaS = 1.716e-5;
-            constexpr double referenceTemperatureK = 273.15;
-            constexpr double sutherlandTemperatureK = 110.4;
+            && std::abs(primitive.velocityMps) > 1.0e-9) {
+            const auto temperatureRatio = primitive.temperatureK
+                / referenceTemperatureK;
             const auto viscosity = referenceViscosityPaS
-                * std::pow(primitive->temperatureK / referenceTemperatureK, 1.5)
+                * temperatureRatio * std::sqrt(temperatureRatio)
                 * (referenceTemperatureK + sutherlandTemperatureK)
-                / (primitive->temperatureK + sutherlandTemperatureK);
-            const auto reynolds = primitive->densityKgPerM3
-                * std::abs(primitive->velocityMps) * geometry_.diameterM
+                / (primitive.temperatureK + sutherlandTemperatureK);
+            const auto reynolds = primitive.densityKgPerM3
+                * std::abs(primitive.velocityMps) * geometry_.diameterM
                 / std::max(1.0e-12, viscosity);
             auto frictionFactor = 0.0;
             if (reynolds > 1.0) {
@@ -558,57 +670,61 @@ double FiniteVolumeDuct::maximumStableTimeStep(double maximumCourantNumber) cons
                     frictionFactor = 64.0 / reynolds;
                 } else {
                     const auto inverseRoot = -1.8 * std::log10(
-                        std::pow(geometry_.absoluteRoughnessM
-                                     / geometry_.diameterM / 3.7,
-                                 1.11)
-                        + 6.9 / reynolds);
+                        turbulentRoughnessTerm + 6.9 / reynolds);
                     frictionFactor = 1.0 / (inverseRoot * inverseRoot);
                 }
             }
             const auto lossGradient = frictionFactor / geometry_.diameterM
-                + geometry_.localLossCoefficient / geometry_.lengthM;
-            const auto momentumSource = -0.5 * lossGradient
-                * primitive->densityKgPerM3 * primitive->velocityMps
-                * std::abs(primitive->velocityMps);
-            if (std::abs(momentumSource) > 1.0e-12) {
-                sourceLimitedStep = std::min(sourceLimitedStep,
-                    0.5 * std::abs(cell.momentumDensityKgPerM2S / momentumSource));
+                + localLossGradient;
+            source.momentumDensityKgPerM2S = -0.5 * lossGradient
+                * primitive.densityKgPerM3 * primitive.velocityMps
+                * std::abs(primitive.velocityMps);
+            if (std::abs(source.momentumDensityKgPerM2S) > 1.0e-12) {
+                sourceLimitedTimeStep = std::min(sourceLimitedTimeStep,
+                    0.5 * std::abs(state.momentumDensityKgPerM2S
+                                   / source.momentumDensityKgPerM2S));
             }
         }
 
-        if (geometry_.wallHeatTransferWPerM2K > 0.0
-            && primitive->temperatureK > geometry_.wallTemperatureK) {
-            const auto heatSource = geometry_.wallHeatTransferWPerM2K
-                * (4.0 / geometry_.diameterM)
-                * (geometry_.wallTemperatureK - primitive->temperatureK);
-            const auto kineticEnergy = 0.5 * primitive->densityKgPerM3
-                * primitive->velocityMps * primitive->velocityMps;
-            const auto internalEnergy = cell.totalEnergyDensityJPerM3 - kineticEnergy;
-            if (heatSource < -1.0e-12) {
-                sourceLimitedStep = std::min(sourceLimitedStep,
-                    0.5 * internalEnergy / -heatSource);
+        if (wallHeatConductancePerVolume > 0.0) {
+            source.totalEnergyDensityJPerM3 = wallHeatConductancePerVolume
+                * (geometry_.wallTemperatureK - primitive.temperatureK);
+            if (source.totalEnergyDensityJPerM3 < -1.0e-12) {
+                const auto kineticEnergy = 0.5 * primitive.densityKgPerM3
+                    * primitive.velocityMps * primitive.velocityMps;
+                const auto internalEnergy = state.totalEnergyDensityJPerM3 - kineticEnergy;
+                sourceLimitedTimeStep = std::min(sourceLimitedTimeStep,
+                    0.5 * internalEnergy / -source.totalEnergyDensityJPerM3);
             }
         }
     }
-    if (!(maximumSignalSpeed > 0.0) || !finite(maximumSignalSpeed)) return 0.0;
-    return std::min(maximumCourantNumber * geometry_.cellLengthM() / maximumSignalSpeed,
-                    sourceLimitedStep);
-}
-
-bool FiniteVolumeDuct::allStatesPhysical(
-    std::span<const ConservativeState> states) const noexcept {
-    for (const auto& state : states)
-        if (!mixtureModel_.isPhysical(state)) return false;
+    if (!(maximumSignalSpeed > 0.0) || !finite(maximumSignalSpeed)
+        || !(sourceLimitedTimeStep > 0.0))
+        return false;
     return true;
 }
 
-void FiniteVolumeDuct::computeResidual(
+bool FiniteVolumeDuct::refreshCellStateCache() const noexcept {
+    if (cellStateCacheIsValid_) return true;
+    cellStateCacheIsValid_ = prepareStateCache(
+        cells_, cellPrimitives_, cellSourceTerms_, maximumCellSignalSpeedMps_,
+        cellSourceLimitedTimeStepSeconds_);
+    return cellStateCacheIsValid_;
+}
+
+bool FiniteVolumeDuct::computeResidual(
     std::span<const ConservativeState> states,
+    std::span<const PrimitiveState> primitives,
+    std::span<const ConservativeState> sourceTerms,
     const DuctBoundaryCondition& leftBoundary,
     const DuctBoundaryCondition& rightBoundary,
     std::span<ConservativeState> residual,
     std::span<EulerFlux> faceFluxes) noexcept {
     const auto count = states.size();
+    if (primitives.size() != count || sourceTerms.size() != count
+        || residual.size() != count
+        || faceFluxes.size() != count + 1)
+        return false;
     const auto periodic = leftBoundary.type == DuctBoundaryType::periodic;
     std::fill(slopes_.begin(), slopes_.end(), ConservativeState {});
     if (periodic) {
@@ -624,40 +740,67 @@ void FiniteVolumeDuct::computeResidual(
                 states[index - 1], states[index], states[index + 1]);
     }
 
-    const auto reconstructed = [this](const ConservativeState& cell,
-                                      const ConservativeState& slope,
-                                      double sign) noexcept {
-        const auto candidate = addScaled(cell, slope, 0.5 * sign);
-        return mixtureModel_.isPhysical(candidate) ? candidate : cell;
-    };
+    for (std::size_t index = 0; index < count; ++index) {
+        if (isZero(slopes_[index])) {
+            reconstructedLeft_[index] = states[index];
+            reconstructedRight_[index] = states[index];
+            reconstructedLeftPrimitives_[index] = primitives[index];
+            reconstructedRightPrimitives_[index] = primitives[index];
+            continue;
+        }
+        reconstructedLeft_[index] = addScaled(states[index], slopes_[index], -0.5);
+        if (!mixtureModel_.recoverPrimitive(
+                reconstructedLeft_[index], reconstructedLeftPrimitives_[index])) {
+            reconstructedLeft_[index] = states[index];
+            reconstructedLeftPrimitives_[index] = primitives[index];
+        }
+        reconstructedRight_[index] = addScaled(states[index], slopes_[index], 0.5);
+        if (!mixtureModel_.recoverPrimitive(
+                reconstructedRight_[index], reconstructedRightPrimitives_[index])) {
+            reconstructedRight_[index] = states[index];
+            reconstructedRightPrimitives_[index] = primitives[index];
+        }
+    }
 
     if (periodic) {
-        const auto faceLeft = reconstructed(states[count - 1], slopes_[count - 1], 1.0);
-        const auto faceRight = reconstructed(states[0], slopes_[0], -1.0);
-        faceFluxes[0] = mixtureModel_.riemannFlux(faceLeft, faceRight);
+        faceFluxes[0] = mixtureModel_.riemannFluxPrepared(
+            reconstructedRight_[count - 1], reconstructedRightPrimitives_[count - 1],
+            reconstructedLeft_[0], reconstructedLeftPrimitives_[0]);
         faceFluxes[count] = faceFluxes[0];
     } else {
-        const auto insideLeft = reconstructed(states[0], slopes_[0], -1.0);
+        const auto& insideLeft = reconstructedLeft_[0];
+        const auto& insideLeftPrimitive = reconstructedLeftPrimitives_[0];
         auto outsideLeft = insideLeft;
-        if (leftBoundary.type == DuctBoundaryType::reflective)
+        auto outsideLeftPrimitive = insideLeftPrimitive;
+        if (leftBoundary.type == DuctBoundaryType::reflective) {
             outsideLeft = mirrored(insideLeft);
-        else if (leftBoundary.type == DuctBoundaryType::prescribed)
+            outsideLeftPrimitive = mirrored(insideLeftPrimitive);
+        } else if (leftBoundary.type == DuctBoundaryType::prescribed) {
             outsideLeft = leftBoundary.prescribedState;
-        faceFluxes[0] = mixtureModel_.riemannFlux(outsideLeft, insideLeft);
+            if (!mixtureModel_.recoverPrimitive(outsideLeft, outsideLeftPrimitive)) return false;
+        }
+        faceFluxes[0] = mixtureModel_.riemannFluxPrepared(
+            outsideLeft, outsideLeftPrimitive, insideLeft, insideLeftPrimitive);
 
-        const auto insideRight = reconstructed(states[count - 1], slopes_[count - 1], 1.0);
+        const auto& insideRight = reconstructedRight_[count - 1];
+        const auto& insideRightPrimitive = reconstructedRightPrimitives_[count - 1];
         auto outsideRight = insideRight;
-        if (rightBoundary.type == DuctBoundaryType::reflective)
+        auto outsideRightPrimitive = insideRightPrimitive;
+        if (rightBoundary.type == DuctBoundaryType::reflective) {
             outsideRight = mirrored(insideRight);
-        else if (rightBoundary.type == DuctBoundaryType::prescribed)
+            outsideRightPrimitive = mirrored(insideRightPrimitive);
+        } else if (rightBoundary.type == DuctBoundaryType::prescribed) {
             outsideRight = rightBoundary.prescribedState;
-        faceFluxes[count] = mixtureModel_.riemannFlux(insideRight, outsideRight);
+            if (!mixtureModel_.recoverPrimitive(outsideRight, outsideRightPrimitive)) return false;
+        }
+        faceFluxes[count] = mixtureModel_.riemannFluxPrepared(
+            insideRight, insideRightPrimitive, outsideRight, outsideRightPrimitive);
     }
 
     for (std::size_t face = 1; face < count; ++face) {
-        const auto faceLeft = reconstructed(states[face - 1], slopes_[face - 1], 1.0);
-        const auto faceRight = reconstructed(states[face], slopes_[face], -1.0);
-        faceFluxes[face] = mixtureModel_.riemannFlux(faceLeft, faceRight);
+        faceFluxes[face] = mixtureModel_.riemannFluxPrepared(
+            reconstructedRight_[face - 1], reconstructedRightPrimitives_[face - 1],
+            reconstructedLeft_[face], reconstructedLeftPrimitives_[face]);
     }
 
     const auto inverseCellLength = 1.0 / geometry_.cellLengthM();
@@ -675,45 +818,12 @@ void FiniteVolumeDuct::computeResidual(
             * (faceFluxes[index + 1].totalEnergyFluxWPerM2
                - faceFluxes[index].totalEnergyFluxWPerM2);
 
-        const auto primitive = mixtureModel_.primitiveFromConservative(states[index]);
-        if (!primitive) continue;
-        if (geometry_.wallFrictionEnabled
-            && std::abs(primitive->velocityMps) > 1.0e-9) {
-            constexpr double referenceViscosityPaS = 1.716e-5;
-            constexpr double referenceTemperatureK = 273.15;
-            constexpr double sutherlandTemperatureK = 110.4;
-            const auto viscosity = referenceViscosityPaS
-                * std::pow(primitive->temperatureK / referenceTemperatureK, 1.5)
-                * (referenceTemperatureK + sutherlandTemperatureK)
-                / (primitive->temperatureK + sutherlandTemperatureK);
-            const auto reynolds = primitive->densityKgPerM3
-                * std::abs(primitive->velocityMps) * geometry_.diameterM
-                / std::max(1.0e-12, viscosity);
-            auto frictionFactor = 0.0;
-            if (reynolds > 1.0) {
-                if (reynolds < 2'300.0) {
-                    frictionFactor = 64.0 / reynolds;
-                } else {
-                    const auto inverseRoot = -1.8 * std::log10(
-                        std::pow(geometry_.absoluteRoughnessM
-                                     / geometry_.diameterM / 3.7,
-                                 1.11)
-                        + 6.9 / reynolds);
-                    frictionFactor = 1.0 / (inverseRoot * inverseRoot);
-                }
-            }
-            const auto lossGradient = frictionFactor / geometry_.diameterM
-                + geometry_.localLossCoefficient / geometry_.lengthM;
-            cellResidual.momentumDensityKgPerM2S -= 0.5 * lossGradient
-                * primitive->densityKgPerM3 * primitive->velocityMps
-                * std::abs(primitive->velocityMps);
-        }
-        if (geometry_.wallHeatTransferWPerM2K > 0.0) {
-            cellResidual.totalEnergyDensityJPerM3 +=
-                geometry_.wallHeatTransferWPerM2K * (4.0 / geometry_.diameterM)
-                * (geometry_.wallTemperatureK - primitive->temperatureK);
-        }
+        cellResidual.momentumDensityKgPerM2S +=
+            sourceTerms[index].momentumDensityKgPerM2S;
+        cellResidual.totalEnergyDensityJPerM3 +=
+            sourceTerms[index].totalEnergyDensityJPerM3;
     }
+    return true;
 }
 
 DuctAdvanceResult FiniteVolumeDuct::advance(
@@ -754,14 +864,21 @@ DuctAdvanceResult FiniteVolumeDuct::advance(
         auto accepted = false;
         while (!accepted && attempts < maximumSubsteps) {
             ++attempts;
-            computeResidual(cells_, left, right, residual_, faceFluxes_);
+            if (!computeResidual(cells_, cellPrimitives_, cellSourceTerms_, left, right,
+                                 residual_, faceFluxes_)) {
+                result.completed = false;
+                break;
+            }
             for (std::size_t index = 0; index < cells_.size(); ++index)
                 stage_[index] = addScaled(cells_[index], residual_[index], trialStep);
             const auto stageRoundoffIsValid = std::all_of(
                 stage_.begin(), stage_.end(), [this](ConservativeState& state) {
                     return mixtureModel_.canonicaliseSpeciesRoundoff(state);
                 });
-            if (!stageRoundoffIsValid || !allStatesPhysical(stage_)) {
+            if (!stageRoundoffIsValid
+                || !prepareStateCache(stage_, stagePrimitives_, stageSourceTerms_,
+                    maximumStageSignalSpeedMps_,
+                    stageSourceLimitedTimeStepSeconds_)) {
                 ++result.rejectedSubsteps;
                 trialStep *= 0.5;
                 if (!(trialStep > std::numeric_limits<double>::epsilon()
@@ -770,7 +887,11 @@ DuctAdvanceResult FiniteVolumeDuct::advance(
                 continue;
             }
 
-            computeResidual(stage_, left, right, stageResidual_, stageFaceFluxes_);
+            if (!computeResidual(stage_, stagePrimitives_, stageSourceTerms_, left, right,
+                                 stageResidual_, stageFaceFluxes_)) {
+                result.completed = false;
+                break;
+            }
             for (std::size_t index = 0; index < cells_.size(); ++index) {
                 const auto forwardEuler = addScaled(stage_[index], stageResidual_[index], trialStep);
                 candidate_[index] = addScaled(cells_[index],
@@ -780,7 +901,10 @@ DuctAdvanceResult FiniteVolumeDuct::advance(
                 candidate_.begin(), candidate_.end(), [this](ConservativeState& state) {
                     return mixtureModel_.canonicaliseSpeciesRoundoff(state);
                 });
-            if (!candidateRoundoffIsValid || !allStatesPhysical(candidate_)) {
+            if (!candidateRoundoffIsValid
+                || !prepareStateCache(candidate_, candidatePrimitives_,
+                    candidateSourceTerms_, maximumCandidateSignalSpeedMps_,
+                    candidateSourceLimitedTimeStepSeconds_)) {
                 ++result.rejectedSubsteps;
                 trialStep *= 0.5;
                 if (!(trialStep > std::numeric_limits<double>::epsilon()
@@ -794,6 +918,12 @@ DuctAdvanceResult FiniteVolumeDuct::advance(
             accumulateFluxIntegral(result.rightBoundaryFlux,
                 faceFluxes_.back(), stageFaceFluxes_.back(), trialStep);
             cells_.swap(candidate_);
+            cellPrimitives_.swap(candidatePrimitives_);
+            cellSourceTerms_.swap(candidateSourceTerms_);
+            std::swap(maximumCellSignalSpeedMps_, maximumCandidateSignalSpeedMps_);
+            std::swap(cellSourceLimitedTimeStepSeconds_,
+                      candidateSourceLimitedTimeStepSeconds_);
+            cellStateCacheIsValid_ = true;
             remaining -= trialStep;
             result.advancedTimeSeconds += trialStep;
             ++result.acceptedSubsteps;
