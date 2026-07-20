@@ -65,6 +65,8 @@ private:
     std::array<double, 32> deliveredFuelMolesLastCycle_ {};
     std::array<double, 32> requestedFuelMolesThisCycle_ {};
     std::array<double, 32> trappedAirMassMgLastCycle_ {};
+    std::array<double, 32> trappedAirSourcePressureKpaLastCycle_ {};
+    std::array<double, 32> trappedAirSourceTemperatureKLastCycle_ {};
     std::array<double, 32> actualAfrLastCycle_ {};
     std::array<double, 32> fuelDeliveryRatio_ {};
     std::array<double, 32> closedLoopFuelTrim_ {};

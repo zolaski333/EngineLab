@@ -1,5 +1,6 @@
 #include <enginelab/simulation/EngineSimulator.hpp>
 #include <enginelab/simulation/SubstepParallel.hpp>
+#include <enginelab/simulation/TransientChargeEstimator.hpp>
 #include <enginelab/exhaust/ExhaustGraph.hpp>
 #include <enginelab/physics/MechanicalKinematics.hpp>
 #include <algorithm>
@@ -599,6 +600,7 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
             auto& contribution = decoupleSharedVolumes
                 ? parallelState->scratch[cylinderIndex] : serialScratch;
             const auto& cylinder = config_.cylinders[cylinderIndex];
+            const auto intakePathIndex = intakePathIndexFor(config_, cylinder);
             const auto crankOffset = crankOffsetDegreesFor(config_, cylinder);
             const auto cyclePhase = std::fmod(state_.crankAngleDegrees - crankOffset + 1'440.0, 720.0);
             const auto cams = activeCamshaft(config_, cylinder, state_.rpm, state_.throttle);
@@ -637,9 +639,20 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
             const auto fuelMolarMassKg = config_.fuelProperties.molarMassGramsPerMole * 0.001;
             const auto oxygenEquivalentAirMassMg = cylinderGas_[cylinderIndex].mixture().oxygenMoles
                 / 0.21 * GasCell::airMolarMassKg * 1.0e6;
+            const auto& chargeSource = decoupleSharedVolumes
+                ? parallelState->frozenPlenum[intakePathIndex]
+                : intakePlenumGas_[intakePathIndex];
+            const auto predictedPortChargeMassMg = TransientChargeEstimator::estimateFreshAirMassMg(
+                oxygenEquivalentAirMassMg,
+                {
+                    trappedAirMassMgLastCycle_[cylinderIndex],
+                    trappedAirSourcePressureKpaLastCycle_[cylinderIndex],
+                    trappedAirSourceTemperatureKLastCycle_[cylinderIndex],
+                },
+                chargeSource.pressureKpa(), chargeSource.temperatureK());
             const auto measuredChargeMassMg = config_.injection.mode == InjectionMode::direct
                 ? oxygenEquivalentAirMassMg
-                : std::max(oxygenEquivalentAirMassMg, trappedAirMassMgLastCycle_[cylinderIndex]);
+                : predictedPortChargeMassMg;
             const auto physicalFuelTargetMoles = ecuCommand.fuelEnabled
                 ? measuredChargeMassMg
                     / std::clamp(ecuCommand.targetAirFuelRatio, 5.0, 30.0)
@@ -840,7 +853,6 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 cylinder.intakeValveCount, cylinder.intakeValveDiameterMm, 0.40, 0.50);
             const auto exhaustArea = valveAreaMm2(cylinder.boreMm, exhaustLift,
                 cylinder.exhaustValveCount, cylinder.exhaustValveDiameterMm, 0.34, 0.41);
-            const auto intakePathIndex = intakePathIndexFor(config_, cylinder);
             const auto& cylinderIntake = intakeGeometryAt(config_, intakePathIndex);
             const auto runnerDiameterMm = cylinder.intakeRunnerDiameterMm > 0.0
                 ? cylinder.intakeRunnerDiameterMm : cylinderIntake.runnerDiameterMm;
@@ -1110,6 +1122,12 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
             if (intakeCloseForTrappedAir[index]) {
                 trappedAirMassMgLastCycle_[index] = cylinderGas_[index]
                     .mixture().oxygenMoles / 0.21 * GasCell::airMolarMassKg * 1.0e6;
+                const auto intakePathIndex = intakePathIndexFor(
+                    config_, config_.cylinders[index]);
+                trappedAirSourcePressureKpaLastCycle_[index] =
+                    intakePlenumGas_[intakePathIndex].pressureKpa();
+                trappedAirSourceTemperatureKLastCycle_[index] =
+                    intakePlenumGas_[intakePathIndex].temperatureK();
             }
             const auto finalChamberPressureKpa = cylinderGas_[index].pressureKpa();
             chamberPressureBar_[index] = finalChamberPressureKpa / 100.0;
@@ -1584,6 +1602,8 @@ void EngineSimulator::reset() noexcept {
     deliveredFuelMolesLastCycle_.fill(0.0);
     requestedFuelMolesThisCycle_.fill(0.0);
     trappedAirMassMgLastCycle_.fill(0.0);
+    trappedAirSourcePressureKpaLastCycle_.fill(config_.ambientPressureKpa);
+    trappedAirSourceTemperatureKLastCycle_.fill(config_.ambientTemperatureC + 273.15);
     actualAfrLastCycle_.fill(config_.fuelProperties.stoichiometricAirFuelRatio);
     fuelDeliveryRatio_.fill(0.0);
     closedLoopFuelTrim_.fill(1.0);

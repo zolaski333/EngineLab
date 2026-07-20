@@ -16,6 +16,7 @@
 #include <enginelab/serialization/JsonEngineSerializer.hpp>
 #include <enginelab/serialization/YamlEngineSerializer.hpp>
 #include <enginelab/simulation/EngineSimulator.hpp>
+#include <enginelab/simulation/TransientChargeEstimator.hpp>
 #include <enginelab/runtime/EngineRuntime.hpp>
 #include <enginelab/audio/RealtimeEngineAudio.hpp>
 #include <enginelab/catalog/EngineCatalog.hpp>
@@ -45,6 +46,31 @@ void require(bool condition, const char* message) {
 
 int main() {
     try {
+    {
+        const enginelab::TrappedChargeReference reference {
+            120.0, 50.0, 300.0
+        };
+        const auto doubledDensityCharge =
+            enginelab::TransientChargeEstimator::estimateFreshAirMassMg(
+                40.0, reference, 100.0, 300.0);
+        require(std::abs(doubledDensityCharge - 240.0) < 1.0e-12,
+            "transient charge estimate must follow the ideal-gas density ratio");
+        const auto warmerCharge =
+            enginelab::TransientChargeEstimator::estimateFreshAirMassMg(
+                40.0, reference, 50.0, 360.0);
+        require(std::abs(warmerCharge - 100.0) < 1.0e-12,
+            "transient charge estimate must account for source temperature");
+        const auto resolvedLowerBound =
+            enginelab::TransientChargeEstimator::estimateFreshAirMassMg(
+                130.0, reference, 50.0, 360.0);
+        require(std::abs(resolvedLowerBound - 130.0) < 1.0e-12,
+            "resolved chamber oxygen must bound the predicted charge from below");
+        const auto invalidFallback =
+            enginelab::TransientChargeEstimator::estimateFreshAirMassMg(
+                73.0, {}, 100.0, 300.0);
+        require(std::abs(invalidFallback - 73.0) < 1.0e-12,
+            "invalid charge history must fall back to resolved chamber oxygen");
+    }
     {
         // Total friction mean effective pressure must track the gasoline
         // literature band across the whole rev range, not just be finite. The
