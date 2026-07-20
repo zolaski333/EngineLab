@@ -1,5 +1,6 @@
-add_executable(EngineLabGasDynamicsTests FiniteVolumeDuctTests.cpp)
+add_executable(EngineLabGasDynamicsTests
+    FiniteVolumeDuctTests.cpp
+    ExhaustNetworkLayoutTests.cpp)
 target_link_libraries(EngineLabGasDynamicsTests PRIVATE EngineLab::GasDynamics)
 enginelab_set_warnings(EngineLabGasDynamicsTests)
 add_test(NAME EngineLab.GasDynamics COMMAND EngineLabGasDynamicsTests)
-

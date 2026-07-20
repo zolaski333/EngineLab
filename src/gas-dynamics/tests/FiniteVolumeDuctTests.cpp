@@ -353,6 +353,8 @@ void testStrongExpansionRemainsPositive() {
 
 } // namespace
 
+void runExhaustNetworkLayoutTests();
+
 int main() {
     testEquationOfStateRoundTrip();
     testUniformStatePreservation();
@@ -362,6 +364,7 @@ int main() {
     testRigidEndReflection();
     testFrictionConvertsResolvedMotionToHeat();
     testStrongExpansionRemainsPositive();
+    runExhaustNetworkLayoutTests();
     std::cout << "EngineLab gas-dynamics tests passed\n";
     return EXIT_SUCCESS;
 }

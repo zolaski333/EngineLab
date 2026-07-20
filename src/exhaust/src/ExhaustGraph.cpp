@@ -318,7 +318,8 @@ ExhaustGraph ExhaustGraph::makeForEngine(
                     finiteClamped(component.acousticGain, 0.0, 8.0, 0.0),
                     runtimePathIndex, component.id, resonance.strength,
                     componentVolumeLitres(component),
-                    finiteClamped(component.dischargeCoefficient, 0.02, 1.5, 0.72) });
+                    finiteClamped(component.dischargeCoefficient, 0.02, 1.5, 0.72),
+                    finiteClamped(component.restriction, 0.0, 100.0, 0.0) });
             }
             std::unordered_set<std::uint64_t> compiledConnections;
             for (const auto& connection : path.network->connections) {
@@ -390,24 +391,24 @@ ExhaustGraph ExhaustGraph::makeForEngine(
                 runtimePathIndex, 0, 0.0,
                 std::numbers::pi * std::pow(primaryDiameter * 0.0005, 2.0)
                     * (length * 0.001) * 1'000.0,
-                1.0 });
+                1.0, 0.0 });
             graph.edges_.push_back({ cylinder->id, mergeId });
             roots.push_back({ cylinder->id, cylinder->id, runtimePathIndex });
         }
         graph.nodes_.push_back({ mergeId, ExhaustNodeType::merge, 120.0, collectorDiameter,
             collectorRestriction, 0.0, 1.0, runtimePathIndex, 0, 0.0,
-            collectorVolumeLitres, 1.0 });
+            collectorVolumeLitres, 1.0, 0.0 });
         graph.nodes_.push_back({ mufflerId, ExhaustNodeType::muffler, 450.0, collectorDiameter,
             finiteClamped(geometry.mufflerRestriction, 0.0, 1.0, 1.0) * 0.62,
             82.0, 1.0, runtimePathIndex, 0, 0.55,
             std::numbers::pi * std::pow(collectorDiameter * 0.0005, 2.0)
                 * 0.450 * 1'000.0,
-            1.0 });
+            1.0, finiteClamped(geometry.mufflerRestriction, 0.0, 1.0, 1.0) });
         graph.nodes_.push_back({ outletId, ExhaustNodeType::outlet, 180.0, outletDiameter,
             outletRestriction, 0.0, 1.0, runtimePathIndex, 0, 0.0,
             std::numbers::pi * std::pow(outletDiameter * 0.0005, 2.0)
                 * 0.180 * 1'000.0,
-            outletDischargeCoefficient });
+            outletDischargeCoefficient, 0.0 });
         graph.edges_.push_back({ mergeId, mufflerId });
         graph.edges_.push_back({ mufflerId, outletId });
     }

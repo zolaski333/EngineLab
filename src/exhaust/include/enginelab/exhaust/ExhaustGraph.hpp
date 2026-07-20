@@ -38,6 +38,10 @@ struct ExhaustNode final {
     // volume of the compiled component.
     double volumeLitres { 0.0 };
     double dischargeCoefficient { 1.0 };
+    // Authored concentrated loss only. `restriction` above is the legacy
+    // reduced K (geometry + local loss) and must not be reused by a duct that
+    // already resolves Darcy friction from its dimensions.
+    double localLossCoefficient { 0.0 };
 };
 struct ExhaustEdge final { std::uint32_t from {}; std::uint32_t to {}; };
 
