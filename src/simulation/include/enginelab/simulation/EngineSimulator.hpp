@@ -47,6 +47,7 @@ private:
     std::array<double, 32> intakeRunnerPressureKpa_ {};
     std::array<double, 32> exhaustRunnerPressureKpa_ {};
     std::array<double, 32> exhaustRunnerVelocityMps_ {};
+    std::array<double, 32> exhaustRunnerTemperatureK_ {};
     std::array<double, 32> chamberPressureBar_ {};
     std::array<double, 32> intakeFlowMgPerCycle_ {};
     std::array<double, 32> exhaustFlowMgPerCycle_ {};

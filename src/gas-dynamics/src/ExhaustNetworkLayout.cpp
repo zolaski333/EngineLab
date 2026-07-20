@@ -41,7 +41,7 @@ struct ElementReference final {
 bool ExhaustNetworkDiscretisation::valid() const noexcept {
     return finite(targetCellLengthM) && targetCellLengthM > 0.0
         && finite(minimumResolvedLengthM) && minimumResolvedLengthM > 0.0
-        && minimumCellsPerDuct >= 2
+        && minimumCellsPerDuct >= 1
         && maximumCellsPerDuct >= minimumCellsPerDuct
         && maximumTotalCells >= minimumCellsPerDuct;
 }
@@ -284,4 +284,3 @@ ExhaustNetworkLayout ExhaustNetworkLayout::compile(
 }
 
 } // namespace enginelab::gasdynamics
-

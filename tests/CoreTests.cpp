@@ -63,16 +63,21 @@ int main() {
         enginelab::EngineSimulator sim(cfg, ecu, physics, events, exhaust);
         constexpr double dt = 1.0 / 2000.0;
         std::array<double, 16> fmepSum {}; std::array<int, 16> fmepN {};
+        double maximumSweepRpm = 0.0;
         for (int step = 0; step < static_cast<int>(8.0 / dt); ++step) {
             const auto time = step * dt;
             enginelab::EngineControls c;
             c.ignitionEnabled = true;
             c.starterEngaged = time < 1.2;
             c.throttle = time < 1.2 ? 0.5 : 1.0;
-            c.load = time > 2.0 ? 0.80 : 0.0; // load sweep so one run spans idle..redline
+            // This fixture validates speed-dependent friction, not maximum-load
+            // output. An unladen acceleration traverses the requested bins even
+            // when the exhaust model resolves physical pumping work.
+            c.load = 0.0;
             const auto f = sim.step(dt, c);
+            maximumSweepRpm = std::max(maximumSweepRpm, f.state.rpm);
             const auto bin = static_cast<int>(f.state.rpm / 500.0);
-            if (time > 1.5 && bin >= 0 && bin < 16) {
+            if (time > 0.3 && bin >= 0 && bin < 16) {
                 fmepSum[bin] += f.state.frictionMeanEffectivePressureBar; ++fmepN[bin];
             }
         }
@@ -88,6 +93,10 @@ int main() {
         const auto idleFmep = binFmep(1) > 0 ? binFmep(1) : binFmep(2);   // ~500-1000 rpm
         const auto midFmep = binFmep(6) > 0 ? binFmep(6) : binFmep(5);    // ~2750-3000 rpm
         const auto highFmep = binFmep(12) > 0 ? binFmep(12) : binFmep(11);// ~5750-6250 rpm
+        if (!(idleFmep > 0.0 && midFmep > 0.0 && highFmep > 0.0))
+            std::cerr << "FMEP sweep diagnostics: max_rpm=" << maximumSweepRpm
+                      << " idle=" << idleFmep << " mid=" << midFmep
+                      << " high=" << highFmep << '\n';
         require(idleFmep > 0.0 && midFmep > 0.0 && highFmep > 0.0,
                 "FMEP sweep must populate idle, mid and high rpm bins");
         require(midFmep > idleFmep && highFmep > midFmep,
@@ -1760,6 +1769,21 @@ int main() {
     require(pressureFrame.cylinderPressureSampleCount > 0
             && pressureFrame.cylinderPressureSampleCount == pressureFrame.state.solverSubsteps,
             "simulator must publish one chamber-pressure frame per thermodynamic substep");
+    bool observedPhysicalExhaustBoundary = false;
+    enginelab::CylinderPressureSample physicalPressureSample;
+    while (simulator.tryPopCylinderPressureSample(physicalPressureSample)) {
+        for (std::size_t index = 0; index < physicalPressureSample.cylinderCount; ++index) {
+            if (physicalPressureSample.thermoacousticBoundaryValid[index] == 0) continue;
+            observedPhysicalExhaustBoundary = true;
+            require(std::isfinite(physicalPressureSample.exhaustMassFlowKgPerSecond[index])
+                    && physicalPressureSample.exhaustRunnerPressureKpa[index] > 0.0F
+                    && physicalPressureSample.exhaustPortDensityKgPerM3[index] > 0.0F
+                    && physicalPressureSample.exhaustPortSpeedOfSoundMps[index] > 0.0F,
+                "every valid thermoacoustic boundary must contain finite SI gas state");
+        }
+    }
+    require(observedPhysicalExhaustBoundary,
+        "multirate exhaust coupling must retain a physical boundary sample at mechanical cadence");
 
     {
         auto invalidConfig = config;

@@ -142,6 +142,29 @@ void testUniformStatePreservation() {
                          "uniform periodic inventory");
 }
 
+void testSingleControlVolumePreservesUniformConservation() {
+    EulerMixtureModel model;
+    GasComposition composition;
+    composition.massFractions = { 0.08, 0.57, 0.0, 0.35 };
+    const auto uniform = makeState(model, 0.74, 31.0, 142'000.0, composition);
+    FiniteVolumeDuct duct;
+    require(duct.configure(losslessGeometry(0.12, 1), uniform),
+        "a sub-wavelength component must support one finite control volume");
+    const auto before = duct.inventory();
+    const auto result = duct.advance(0.003,
+        DuctBoundaryCondition::periodic(), DuctBoundaryCondition::periodic());
+    require(result.completed && result.rejectedSubsteps == 0,
+        "one-cell periodic control volume must advance without a positivity retry");
+    requireInventoryNear(duct.inventory(), before, 2.0e-13,
+        "one-cell periodic inventory");
+    const auto& after = duct.cells().front();
+    require(relativeError(after.momentumDensityKgPerM2S,
+                          uniform.momentumDensityKgPerM2S) < 2.0e-13
+            && relativeError(after.totalEnergyDensityJPerM3,
+                             uniform.totalEnergyDensityJPerM3) < 2.0e-13,
+        "one finite control volume must preserve uniform momentum and energy");
+}
+
 void testMutableInitialConditionRefreshesDerivedState() {
     EulerMixtureModel model;
     const auto cold = makeState(model, 1.20, 0.0, 101'325.0, GasComposition::dryAir());
@@ -393,6 +416,7 @@ void runExhaustGasNetworkTests();
 int main() {
     testEquationOfStateRoundTrip();
     testUniformStatePreservation();
+    testSingleControlVolumePreservesUniformConservation();
     testMutableInitialConditionRefreshesDerivedState();
     testPeriodicConservation();
     testSodShockTube();

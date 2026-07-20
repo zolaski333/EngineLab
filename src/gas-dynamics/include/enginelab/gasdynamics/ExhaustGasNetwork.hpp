@@ -60,6 +60,26 @@ struct CylinderGasExchange final {
     [[nodiscard]] double totalMassKg() const noexcept;
 };
 
+/** Instantaneous valve-plane flow evaluated against the current network state.
+ *
+ * Unlike CylinderGasExchange this is not a time-integrated transfer and does
+ * not mutate either reservoir. It exists so a faster mechanical/audio cadence
+ * can observe the same Riemann boundary used by a multirate network advance.
+ * Samples are returned in compiled cylinder-port order.
+ */
+struct CylinderBoundaryFlowSample final {
+    std::uint32_t cylinderId { 0 };
+    std::uint32_t pathIndex { 0 };
+    /** Positive from the cylinder into the exhaust network. */
+    double massFlowKgPerSecond { 0.0 };
+    double networkPressurePa { 0.0 };
+    double networkTemperatureK { 0.0 };
+    double networkDensityKgPerM3 { 0.0 };
+    double networkVelocityMps { 0.0 };
+    double networkSpeedOfSoundMps { 0.0 };
+    bool valid { false };
+};
+
 /** Physical state and mean transfer at one terminal opening.
  * Transfer signs are positive from the network into the environment.
  */
@@ -135,6 +155,16 @@ public:
         std::span<const CylinderValveBoundary> cylinderBoundaries,
         const ExhaustAmbientBoundary& ambient) noexcept;
 
+    /** Evaluate current signed valve flow without advancing the network.
+     *
+     * The output span must have room for every compiled cylinder port. Missing
+     * boundaries are reported as invalid/closed samples. Unknown or duplicate
+     * supplied cylinder IDs reject the complete observation.
+     */
+    [[nodiscard]] bool sampleCylinderBoundaries(
+        std::span<const CylinderValveBoundary> cylinderBoundaries,
+        std::span<CylinderBoundaryFlowSample> samples) const noexcept;
+
     [[nodiscard]] std::span<const CylinderGasExchange> cylinderExchanges() const noexcept {
         return cylinderExchanges_;
     }
@@ -168,14 +198,22 @@ private:
     std::vector<ConservativeState> junctionCandidate_;
     std::vector<ConservativeState> junctionResidual_;
     std::vector<ConservativeState> junctionStageResidual_;
+    std::vector<PrimitiveState> junctionPrimitives_;
+    std::vector<PrimitiveState> junctionStagePrimitives_;
+    std::vector<PrimitiveState> junctionCandidatePrimitives_;
     std::vector<double> junctionPortAreaSums_;
     std::vector<ConservativeState> cylinderReservoirStates_;
     std::vector<ConservativeState> cylinderReservoirStage_;
     std::vector<ConservativeState> cylinderReservoirCandidate_;
     std::vector<ConservativeState> cylinderReservoirResidual_;
     std::vector<ConservativeState> cylinderReservoirStageResidual_;
+    std::vector<PrimitiveState> cylinderReservoirPrimitives_;
+    std::vector<PrimitiveState> cylinderReservoirStagePrimitives_;
+    std::vector<PrimitiveState> cylinderReservoirCandidatePrimitives_;
     std::vector<double> cylinderReservoirVolumesM3_;
     std::vector<std::uint8_t> cylinderReservoirActive_;
+    /** Port-order lookup into the caller's boundary span, rebuilt once/advance. */
+    std::vector<std::size_t> cylinderBoundaryIndices_;
     std::vector<std::uint8_t> ductInletAssigned_;
     std::vector<std::uint8_t> ductOutletAssigned_;
     std::vector<ConservedFlowRate> cylinderFirstStageFlow_;
@@ -184,6 +222,7 @@ private:
     std::vector<ConservedFlowRate> outletSecondStageFlow_;
     std::vector<CylinderGasExchange> cylinderExchanges_;
     std::vector<ExhaustOutletFlowSample> outletSamples_;
+    PrimitiveState ambientPrimitive_ {};
     bool configured_ { false };
 };
 

@@ -160,6 +160,49 @@ void testValveExchangeIsTwoWayAndConservative() {
                              network.cylinderExchanges(), network.outletSamples(), 2.0e-9);
 }
 
+void testInstantaneousBoundarySamplingIsSignedAndNonMutating() {
+    ExhaustGasNetworkConfig configuration;
+    configuration.initialPressurePa = 150'000.0;
+    configuration.initialTemperatureK = 620.0;
+    auto network = makeNetwork(makeDefaultInlineFour(), configuration);
+    const auto portCount = network.layout().cylinderPorts().size();
+    std::vector<CylinderBoundaryFlowSample> samples(portCount);
+    const auto cylinderId = network.layout().cylinderPorts().front().cylinderId;
+    const auto highState = network.mixtureModel().conservativeFromPressureTemperature(
+        310'000.0, 980.0);
+    const auto lowState = network.mixtureModel().conservativeFromPressureTemperature(
+        70'000.0, 430.0);
+    requireNetwork(highState && lowState, "sampling fixtures must be physical");
+    const auto before = network.inventory();
+
+    CylinderValveBoundary boundary {
+        cylinderId, *highState, 5.0e-4, 1.4e-4, 0.78
+    };
+    requireNetwork(network.sampleCylinderBoundaries(
+            std::span<const CylinderValveBoundary>(&boundary, 1), samples),
+        "instantaneous forward sampling must succeed");
+    requireNetwork(samples.front().valid && samples.front().cylinderId == cylinderId
+            && samples.front().massFlowKgPerSecond > 0.0
+            && samples.front().networkPressurePa > 0.0
+            && samples.front().networkDensityKgPerM3 > 0.0
+            && samples.front().networkSpeedOfSoundMps > 0.0,
+        "higher cylinder pressure must produce a positive physical boundary flow");
+
+    boundary.cylinderState = *lowState;
+    requireNetwork(network.sampleCylinderBoundaries(
+            std::span<const CylinderValveBoundary>(&boundary, 1), samples)
+            && samples.front().valid && samples.front().massFlowKgPerSecond < 0.0,
+        "higher network pressure must produce signed exhaust reversion");
+    const auto after = network.inventory();
+    requireNetwork(before.speciesMassKg == after.speciesMassKg
+            && before.totalEnergyJ == after.totalEnergyJ,
+        "instantaneous sampling must not mutate conservative network inventory");
+
+    std::array<CylinderBoundaryFlowSample, 1> tooSmall {};
+    requireNetwork(!network.sampleCylinderBoundaries({}, tooSmall),
+        "sampling must reject an output span smaller than the compiled port count");
+}
+
 void testResetIsAllocationFreeStateReinitialisation() {
     auto network = makeNetwork(makeDefaultInlineFour());
     const auto hotState = network.mixtureModel().conservativeFromPressureTemperature(
@@ -342,6 +385,7 @@ void testBoundaryInputOrderIsIrrelevant() {
 void runExhaustGasNetworkTests() {
     testUniformClosedNetworkIsInvariant();
     testValveExchangeIsTwoWayAndConservative();
+    testInstantaneousBoundarySamplingIsSignedAndNonMutating();
     testResetIsAllocationFreeStateReinitialisation();
     testOutletFlowIsPhysicalAndConservative();
     testDirectDuctInterfaceTransmitsWavesWithoutInventoryLoss();

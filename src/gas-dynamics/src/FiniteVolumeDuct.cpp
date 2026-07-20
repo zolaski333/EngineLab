@@ -540,7 +540,7 @@ bool DuctGeometry::valid() const noexcept {
     return finite(lengthM) && lengthM > 0.0
         && finite(crossSectionAreaM2) && crossSectionAreaM2 >= 0.0
         && finite(diameterM) && diameterM > 0.0
-        && cellCount >= 2 && cellCount <= 1'000'000
+        && cellCount >= 1 && cellCount <= 1'000'000
         && finite(absoluteRoughnessM) && absoluteRoughnessM >= 0.0
         && finite(localLossCoefficient) && localLossCoefficient >= 0.0
         && finite(wallHeatTransferWPerM2K) && wallHeatTransferWPerM2K >= 0.0
