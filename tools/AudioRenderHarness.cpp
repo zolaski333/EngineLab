@@ -52,6 +52,10 @@ struct WavData { std::vector<float> samples; double sampleRate { 44'100.0 }; };
 // others. Diagnostic only: the shipped voice renders every layer.
 bool muteCombustionLayer = false;
 bool muteMechanicalLayer = false;
+bool muteIntakeLayer = false;
+// Render chunk size within each simulation step; see the invariance probe at
+// the render call. 200 reproduces the historical single-call behaviour.
+int audioChunkSamples = 200;
 
 std::uint32_t readU32(const unsigned char* p) {
     return static_cast<std::uint32_t>(p[0]) | (static_cast<std::uint32_t>(p[1]) << 8)
@@ -389,6 +393,7 @@ Metrics renderEngine(const EngineConfig& baseConfig, const WavData& ir,
     juce::AudioBuffer<float> block(2, samplesPerStep);
     double realtimeSeconds = 0.0;
     double dynoLoadIntegral = 0.0;
+    double dynoLoadApplied = 0.0;
     std::uint64_t droppedEvents = 0;
     std::uint64_t droppedPressureSamples = 0;
     const auto dynoTargetRpm = std::max(config.idleRpm * 1.50, config.redlineRpm * 0.55);
@@ -404,7 +409,17 @@ Metrics renderEngine(const EngineConfig& baseConfig, const WavData& ir,
                 / std::max(1.0, dynoTargetRpm);
             dynoLoadIntegral = std::clamp(
                 dynoLoadIntegral + speedError * dt * 1.20, 0.0, 0.92);
-            controls.load = std::clamp(dynoLoadIntegral + speedError * 0.70, 0.0, 1.0);
+            // A water-brake or eddy-current dyno has a torque bandwidth of a
+            // few hertz; commanding a raw step every frame applied a brake
+            // torque square wave at the 240 Hz frame rate. The engine responds
+            // to that excitation physically, so the renders carried a comb at
+            // exact frame-rate multiples that no renderer fix could remove:
+            // the measurement rig was exciting the artefact it measured.
+            const auto targetLoad = std::clamp(
+                dynoLoadIntegral + speedError * 0.70, 0.0, 1.0);
+            dynoLoadApplied += (1.0 - std::exp(
+                -2.0 * std::numbers::pi * 2.0 * dt)) * (targetLoad - dynoLoadApplied);
+            controls.load = dynoLoadApplied;
         }
         auto frame = simulator.step(dt, controls);
         droppedEvents += frame.droppedFiringEventCount;
@@ -425,6 +440,7 @@ Metrics renderEngine(const EngineConfig& baseConfig, const WavData& ir,
             { false, controls.starterEngaged, 0.0, 1.0 });
         if (muteCombustionLayer) audioState.combustionGain.store(0.0F);
         if (muteMechanicalLayer) audioState.mechanicalGain.store(0.0F);
+        if (muteIntakeLayer) audioState.intakeGain.store(0.0F);
         audioState.producerTimeNanoseconds.store(
             static_cast<std::uint64_t>(std::max(0.0, realtimeSeconds + dt) * 1.0e9),
             std::memory_order_release);
@@ -441,7 +457,14 @@ Metrics renderEngine(const EngineConfig& baseConfig, const WavData& ir,
         }
 
         block.clear();
-        renderer.render(block, 0, samplesPerStep);
+        // Block-size invariance probe: a correct realtime renderer must produce
+        // the same signal whatever callback size the host chooses. Rendering
+        // each simulation step in smaller chunks moves any per-block parameter
+        // step to a different comb frequency (sampleRate / chunk), which
+        // separates render-block artefacts from simulation-frame artefacts.
+        for (int offset = 0; offset < samplesPerStep; offset += audioChunkSamples)
+            renderer.render(block, offset,
+                std::min(audioChunkSamples, samplesPerStep - offset));
         for (int s = 0; s < samplesPerStep; ++s) {
             audioLeft.push_back(block.getSample(0, s));
             audioRight.push_back(block.getSample(1, s));
@@ -1005,6 +1028,9 @@ int main(int argc, char** argv) {
         else if (a == "--idle-only") idleOnly = true;
         else if (a == "--mute-combustion") muteCombustionLayer = true;
         else if (a == "--mute-mechanical") muteMechanicalLayer = true;
+        else if (a == "--mute-intake") muteIntakeLayer = true;
+        else if (a == "--audio-chunk" && i + 1 < argc)
+            audioChunkSamples = std::clamp(std::atoi(argv[++i]), 1, 200);
     }
     std::filesystem::create_directories(outDir);
 
