@@ -651,6 +651,10 @@ void pipeRadiationRegression() {
 
 void acousticMonitorCalibrationRegression() {
     constexpr auto fullScaleSplDb = 144.0;
+    enginelab::RealtimeAudioState defaultState;
+    require(std::abs(defaultState.acousticFullScaleSplDb.load()
+                     - enginelab::AcousticMonitorCalibration::defaultFullScaleSplDb) < 1.0e-12,
+        "runtime and SI monitor calibration defaults must not drift apart");
     const auto fullScalePeakPressurePa =
         enginelab::AcousticMonitorCalibration::sinePeakPressurePa(fullScaleSplDb);
     require(std::abs(enginelab::AcousticMonitorCalibration::normalisePeakPressure(

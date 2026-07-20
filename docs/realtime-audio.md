@@ -57,11 +57,20 @@ bridée. L’onde réfléchie retourne au collecteur ; l’accélération de vit
 volume donne la pression monopolaire à 1 m. Un retard supplémentaire `r/c` dans
 l’air conserve sa phase par rapport aux sources mécaniques.
 
-Le signal reste en pascals jusqu’à la conversion de monitoring :
+Le signal reste en pascals jusqu’à la conversion de monitoring. Puisque les
+dBFS décrivent une chaîne électrique/numérique et non une pression universelle,
+la pleine échelle SPL du micro/préampli est publiée explicitement dans
+`RealtimeAudioState::acousticFullScaleSplDb`. Par défaut :
 
 ```text
-28,284 Pa crête = 20 Pa RMS = 120 dB SPL = 0 dBFS
+448,275 Pa crête = 316,979 Pa RMS = 144 dB SPL = 0 dBFS
 ```
+
+La conversion utilise toujours la référence acoustique de 20 µPa. Modifier
+cette calibration simule le gain/la marge de la chaîne de capture ; cela ne
+modifie ni la pression physique calculée, ni la propagation, ni le volume
+d’écoute. Le pic de pression SI observé et l’activité du leveler sont exposés
+séparément aux harnais de validation.
 
 Les sorties ne possédant pas encore de position 3D publiée, le champ libre est
 mono et co-localisé. Une IR stéréo mesurée peut spatialiser ce signal en aval.
@@ -118,6 +127,7 @@ compteurs sont observables par les harnais.
 - invariance aux presets, événements et bruits hérités ;
 - dépendance aux longueurs de tailpipe ;
 - cohérence de délai à 48 et 96 kHz ;
+- exactitude de la conversion SPL ↔ pression ↔ dBFS ;
 - absence de réactivation du chemin procédural après verrouillage physique.
 
 `EngineLab.Core` vérifie en plus qu’une frontière SI finie est publiée à chaque

@@ -41,6 +41,13 @@ termes sources déclarés. Les parois du réseau moteur sont actuellement
 adiabatiques, car leur inertie thermique n’est pas encore un sous-système
 conservé.
 
+Une soupape n’est pas traitée comme la continuation sans épaisseur d’un tube.
+Son `CdA` alimente une loi de tuyère compressible isentropique, subcritique ou
+étranglée selon le rapport de pression. La composition et l’enthalpie totale de
+l’amont sont transportées dans les deux sens. Le débit sonique fait l’objet d’un
+test analytique indépendant ; cette correction était nécessaire, car un flux de
+tube HLLC sous-estimait fortement le soufflage d’un réservoir cylindre.
+
 `ExhaustNetworkLayout` compile chaque composant auteur : tubes, catalyseurs,
 silencieux, résonateurs et sorties deviennent des conduits ; merges et splitters
 deviennent des volumes de jonction finis. Longueur, volume, section de connexion,
@@ -121,9 +128,14 @@ retourne la pression réfléchie dans le guide. La vitesse de volume nette à la
 bouche puis son accélération donnent la pression monopolaire en champ libre.
 
 Le renderer applique le retard acoustique air `r/c` jusqu’à un observateur à
-1 m. La conversion numérique est explicite : 20 Pa RMS, soit 28,284 Pa crête,
-correspondent à 0 dBFS (120 dB SPL pour la pression de référence 20 µPa). Il
-n’existe pas de gain caché de « réalisme » sur le bus d’échappement physique.
+1 m. Les pascals n’ont pas de correspondance universelle en dBFS : celle-ci
+dépend nécessairement du microphone et du préamplificateur. La chaîne de capture
+est donc un objet de calibration explicite (`AcousticMonitorCalibration`), avec
+20 µPa comme pression SPL de référence et 144 dB SPL RMS à 0 dBFS par défaut.
+Ce choix donne la marge d’un enregistrement moteur à fort niveau ; il est
+modifiable indépendamment de la physique et du volume d’écoute. Il n’existe pas
+de gain caché de « réalisme » sur le bus d’échappement physique, et le limiteur
+de sécurité reste à gain unitaire dans les scénarios de validation.
 
 Références :
 
@@ -165,6 +177,14 @@ flux bidirectionnels aux soupapes, les jonctions globales, le débit signé et l
 états SI locaux. La combustion 0D existante était structurellement compatible :
 elle fournit déjà pression, énergie, composition et volume à la frontière.
 
+Le débit de soupape corrigé a également révélé le retard d’un cycle de
+l’injection indirecte pendant une remontée rapide de pression admission. Il ne
+a pas été masqué par un enrichissement. `TransientChargeEstimator` conserve la
+dernière masse d’air réellement piégée à la fermeture admission — donc le vrai
+remplissage et les ondes du moteur — puis la projette par le seul rapport de
+densité idéal-gaz `p/T` du plénum. L’oxygène déjà résolu dans la chambre reste une
+borne inférieure et la boucle fermée conserve son rôle de correction.
+
 Elle n’est cependant pas une validation absolue. Pour corréler un moteur réel,
 il reste nécessaire de comparer pression cylindre, pression de runner, débit et
 température à des mesures, puis d’améliorer au besoin combustion, transferts
@@ -190,7 +210,9 @@ de coudes non résolus.
 | compilation du DAG | `src/gas-dynamics/*/ExhaustNetworkLayout.*` |
 | couplage global/jonctions/soupapes | `src/gas-dynamics/*/ExhaustGasNetwork.*` |
 | orchestration multirate et télémétrie | `src/simulation/src/EngineSimulator.cpp` |
+| anticipation physique de charge PFI | `src/simulation/*/TransientChargeEstimator.hpp` |
 | radiation passive | `src/audio/*/PipeRadiationModel.*` |
+| calibration Pa → dBFS | `src/audio/*/AcousticMonitorCalibration.hpp` |
 | caractéristiques et rendu | `src/audio/*/RealtimeEngineAudio.*` |
 | chargement d’IR explicite | `src/app/src/MainComponent.cpp` |
 
@@ -202,8 +224,10 @@ configuration doit être observable ; une limite de résolution doit alimenter
 
 Les tests couvrent notamment : état uniforme, tube à choc de Sod, positivité,
 conservation espèce/énergie, volume unique, propagation, interfaces directes,
-ordre des frontières, soufflage/réversion, rayonnement passif, déterminisme,
-invariance aux presets/bruits/gains hérités, géométrie et invariance 48/96 kHz.
+ordre des frontières, tuyère subcritique et sonique, soufflage/réversion,
+projection de charge par densité, calibration SPL, rayonnement passif,
+déterminisme, invariance aux presets/bruits/gains hérités, géométrie et
+invariance 48/96 kHz.
 
 Avant livraison :
 
@@ -213,6 +237,7 @@ ctest --test-dir out/build/windows-vs2022 -C Release --output-on-failure
 ```
 
 Le harnais LS3 doit aussi rester sous les 4,167 ms de la boucle 240 Hz. La
-mesure de référence de cette implémentation donne environ 2,9–3,1 ms de moyenne
-à 3630 tr/min et 3,84–3,92 ms à haut régime, avec un p95 maximal observé de
-4,139 ms sur trois passages.
+mesure Release finale donne 2,71–2,82 ms de moyenne à 3630 tr/min et
+3,70–3,82 ms à 5940 tr/min sur trois passages. Le p95 maximal observé est
+4,203 ms ; la moyenne haute charge conserve 8,3 % de marge sur la cadence
+temps réel malgré les pointes ponctuelles de l’ordonnanceur Windows.
