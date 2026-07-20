@@ -1,5 +1,6 @@
 #pragma once
 #include <enginelab/audio/IAudioRenderer.hpp>
+#include <enginelab/audio/PipeRadiationModel.hpp>
 #include <enginelab/audio/RealtimeConvolutionBank.hpp>
 #include <enginelab/runtime/EngineRuntime.hpp>
 #include <algorithm>
@@ -10,7 +11,13 @@
 #include <span>
 #include <vector>
 namespace enginelab {
-/** Allocation-free layered combustion/exhaust renderer with stereo spatialisation. */
+/** Allocation-free engine renderer with an SI-unit thermoacoustic exhaust path.
+ *
+ * When CylinderPressureSample publishes a valid thermoacoustic boundary, the
+ * exhaust is a passive characteristic network terminated by a radiation load.
+ * The historical procedural exhaust remains available only for old producers
+ * that never publish that boundary; the two paths are never mixed.
+ */
 class RealtimeEngineAudio final : public IAudioRenderer {
 public:
     RealtimeEngineAudio(FiringEventQueue& queue, RealtimeAudioState& state,
@@ -101,13 +108,21 @@ private:
     };
 
     struct ExhaustPathState final {
+        UnflangedPipeRadiation radiation;
+        /** Characteristic admittance A/(rho*c), in m^3/(Pa*s). */
+        float outletAcousticAdmittance {};
         float collectorReturn {};
         std::vector<float> forwardWave;
         std::vector<float> reverseWave;
+        /** Free-field propagation from the mouth to the calibrated observer. */
+        std::vector<float> observerPressure;
         std::array<std::vector<float>, 4> fdn {};
         std::array<float, 64> jitterHistory {};
         std::size_t waveWrite {};
         std::size_t waveMask {};
+        std::size_t observerWrite {};
+        std::size_t observerMask {};
+        float observerDelaySamples { 1.0F };
         std::array<std::size_t, 4> fdnWrite {};
         std::size_t jitterWrite {};
         float reflectionDelaySamples { 1.0F };
@@ -129,6 +144,8 @@ private:
     /** Size and zero every delay line for the engine currently published.
      *  Allocates, so it is called only from prepare(). */
     void allocateDelayLines();
+    /** Latch the physical path and retire already-scheduled procedural exhaust. */
+    void activatePhysicalExhaust() noexcept;
     void trigger(const FiringEvent&, bool exhaust) noexcept;
     void updateExhaustPreset(int preset) noexcept;
     [[nodiscard]] std::array<float, maximumPaths> processExhaustWaveguides(
@@ -226,6 +243,13 @@ private:
     std::array<float, 32> exhaustPressureHighPass_ {};
     std::array<float, 32> exhaustPressureHighPassPrevious_ {};
     std::array<float, 32> exhaustPressureBandLimited_ {};
+    std::array<float, 32> exhaustMeanPressurePa_ {};
+    std::array<float, 32> exhaustMeanMassFlowKgPerSecond_ {};
+    std::array<float, 32> thermoacousticRunnerAdmittance_ {};
+    std::array<float, 32> thermoacousticPortReflection_ {};
+    std::array<bool, 32> thermoacousticMeanInitialised_ {};
+    float thermoacousticMeanCoefficient_ { 0.0F };
+    bool physicalExhaustActive_ { false };
     float pressureHighPassPole_ { 0.997F };
     float pressureBandCoefficient_ { 0.5F };
     double pressureSampleIntervalSeconds_ { 0.0 };

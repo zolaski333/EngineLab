@@ -1,5 +1,6 @@
 #include <enginelab/audio/RealtimeEngineAudio.hpp>
 #include <enginelab/audio/PipeRadiationModel.hpp>
+#include <enginelab/foundation/ExhaustGasAcoustics.hpp>
 
 #include <juce_audio_basics/juce_audio_basics.h>
 
@@ -101,6 +102,103 @@ std::vector<float> renderContinuousPressure(std::uint32_t cylinderPath,
     renderer->render(output, 0, output.getNumSamples());
     std::vector<float> result(static_cast<std::size_t>(output.getNumSamples()));
     std::copy_n(output.getReadPointer(0), output.getNumSamples(), result.begin());
+    return result;
+}
+
+struct PhysicalExhaustFixture final {
+    double sampleRateHz { 48'000.0 };
+    float tailpipeDelaySeconds { 0.001F };
+    float transientMassFlowKgPerSecond { 0.080F };
+    float cylinderTransmissionGain { 1.0F };
+    float pathGain { 1.0F };
+    float highFrequencyNoise { 0.0F };
+    int exhaustPreset { 0 };
+    bool transient { true };
+    bool proceduralExhaustEvent { false };
+};
+
+std::vector<float> renderPhysicalExhaust(const PhysicalExhaustFixture& fixture) {
+    constexpr int blockSize = 256;
+    const auto sampleCount = static_cast<int>(std::lround(
+        fixture.sampleRateHz * 0.050));
+    enginelab::FiringEventQueue eventQueue;
+    enginelab::RealtimeAudioState state;
+    state.cylinderCount.store(1.0F);
+    state.exhaustPathCount.store(1);
+    state.cylinderExhaustAreaM2[0].store(0.00150F);
+    state.cylinderExhaustGain[0].store(fixture.cylinderTransmissionGain);
+    state.cylinderExhaustPathIndex[0].store(0);
+    state.runnerDelaySeconds[0].store(0.00050F);
+    state.exhaustPathOutletAreaM2[0].store(0.00320F);
+    state.exhaustPathReflectionSeconds[0].store(fixture.tailpipeDelaySeconds);
+    state.exhaustPathGain[0].store(fixture.pathGain);
+    constexpr float exhaustTemperatureC = 600.0F;
+    state.exhaustTemperatureC.store(exhaustTemperatureC);
+    state.exhaustReferenceSoundSpeedMps.store(static_cast<float>(
+        enginelab::exhaustSpeedOfSoundMps(exhaustTemperatureC)));
+    state.exhaustPreset.store(fixture.exhaustPreset);
+    state.highFrequencyNoise.store(fixture.highFrequencyNoise);
+    state.combustionGain.store(0.0F);
+    state.intakeGain.store(0.0F);
+    state.mechanicalGain.store(0.0F);
+    state.exhaustGain.store(1.0F);
+    state.convolution.store(0.0F);
+
+    if (fixture.proceduralExhaustEvent) {
+        auto event = eventFixture();
+        event.timeSeconds = -0.008;
+        event.exhaustDelaySeconds = 0.0001F;
+        event.exhaustFlowMgPerCycle = 400.0F;
+        event.exhaustRunnerPressureKpa = 500.0F;
+        event.exhaustResonanceHz = 1'900.0F;
+        require(eventQueue.tryPush(event),
+            "procedural exhaust proof event must enter its queue");
+    }
+
+    auto pressureQueue = std::make_unique<enginelab::CylinderPressureQueue>();
+    const auto boundary = [](double timeSeconds, float pressureKpa,
+                             float massFlowKgPerSecond, float conductanceAreaM2) {
+        enginelab::CylinderPressureSample sample;
+        sample.timeSeconds = timeSeconds;
+        sample.cylinderCount = 1;
+        sample.pressureBar[0] = 1.01325F;
+        sample.exhaustRunnerPressureKpa[0] = pressureKpa;
+        sample.exhaustMassFlowKgPerSecond[0] = massFlowKgPerSecond;
+        sample.exhaustPortDensityKgPerM3[0] = 0.65F;
+        sample.exhaustPortSpeedOfSoundMps[0] = 540.0F;
+        sample.exhaustValveConductanceAreaM2[0] = conductanceAreaM2;
+        sample.exhaustPathIndex[0] = 0;
+        sample.thermoacousticBoundaryValid[0] = 1;
+        // Deliberately extreme legacy observables: a correct physical render
+        // never consumes them after seeing the SI validity flag.
+        sample.exhaustFlowMgPerCycle[0] = 900.0F;
+        sample.exhaustValveOpening[0] = 1.0F;
+        return sample;
+    };
+    const auto ambient = boundary(-0.015, 101.325F, 0.0F, 0.0F);
+    require(pressureQueue->tryPush(ambient),
+        "physical ambient boundary must enter its queue");
+    if (fixture.transient) {
+        require(pressureQueue->tryPush(boundary(-0.008, 151.325F,
+                    fixture.transientMassFlowKgPerSecond, 0.00045F))
+                && pressureQueue->tryPush(boundary(-0.005, 124.0F,
+                    fixture.transientMassFlowKgPerSecond * 0.35F, 0.00030F))
+                && pressureQueue->tryPush(boundary(0.000, 101.325F, 0.0F, 0.0F)),
+            "physical transient boundaries must enter their queue");
+    } else {
+        require(pressureQueue->tryPush(boundary(0.010, 101.325F, 0.0F, 0.0F)),
+            "physical steady boundary must enter its queue");
+    }
+
+    auto renderer = std::make_unique<enginelab::RealtimeEngineAudio>(
+        eventQueue, state, pressureQueue.get());
+    renderer->prepare(fixture.sampleRateHz, blockSize);
+    juce::AudioBuffer<float> output(2, sampleCount);
+    for (int offset = 0; offset < sampleCount; offset += blockSize)
+        renderer->render(output, offset,
+            std::min(blockSize, sampleCount - offset));
+    std::vector<float> result(static_cast<std::size_t>(sampleCount));
+    std::copy_n(output.getReadPointer(0), sampleCount, result.begin());
     return result;
 }
 
@@ -443,6 +541,64 @@ void ambientPressureRegression() {
             "configured ambient pressure must be acoustic zero, including at altitude");
 }
 
+void physicalThermoacousticPathRegression() {
+    const PhysicalExhaustFixture referenceFixture;
+    const auto reference = renderPhysicalExhaust(referenceFixture);
+    const auto referenceMetrics = analyseWaveform(reference);
+    require(referenceMetrics.finite && referenceMetrics.rms > 1.0e-4
+            && referenceMetrics.peak > 1.0e-3,
+        "an SI pressure/flow transient must radiate a finite audible waveform");
+
+    auto forbiddenVoicing = referenceFixture;
+    forbiddenVoicing.cylinderTransmissionGain = 0.0F;
+    forbiddenVoicing.pathGain = 0.0F;
+    forbiddenVoicing.highFrequencyNoise = 100.0F;
+    forbiddenVoicing.exhaustPreset = 4;
+    forbiddenVoicing.proceduralExhaustEvent = true;
+    const auto uncoloured = renderPhysicalExhaust(forbiddenVoicing);
+    require(absoluteDifference(reference, uncoloured) < 1.0e-7,
+        "SI exhaust must be invariant to procedural presets, noise, events and legacy gains");
+
+    const auto repeated = renderPhysicalExhaust(referenceFixture);
+    require(absoluteDifference(reference, repeated) == 0.0,
+        "physical thermoacoustic rendering must be deterministic");
+
+    auto reverseFlowFixture = referenceFixture;
+    reverseFlowFixture.transientMassFlowKgPerSecond *= -1.0F;
+    const auto reverseFlow = renderPhysicalExhaust(reverseFlowFixture);
+    require(absoluteDifference(reference, reverseFlow) > 0.01,
+        "signed reverse flow must change the characteristic source instead of being clamped away");
+
+    auto steadyFixture = forbiddenVoicing;
+    steadyFixture.transient = false;
+    const auto steady = renderPhysicalExhaust(steadyFixture);
+    require(std::all_of(steady.begin(), steady.end(), [](float value) {
+        return std::abs(value) < 1.0e-7F;
+    }), "steady SI pressure/flow must not manufacture exhaust sound");
+
+    auto longTailFixture = referenceFixture;
+    longTailFixture.tailpipeDelaySeconds = 0.003F;
+    const auto longTail = renderPhysicalExhaust(longTailFixture);
+    const auto shortOnset = firstAudibleSample(reference);
+    const auto longOnset = firstAudibleSample(longTail);
+    require(shortOnset < reference.size() && longOnset < longTail.size(),
+        "both physical tailpipe geometries must radiate their transient");
+    const auto measuredExtraDelay = static_cast<double>(longOnset - shortOnset)
+        / referenceFixture.sampleRateHz;
+    require(std::abs(measuredExtraDelay - 0.002) <= 3.0 / referenceFixture.sampleRateHz,
+        "collector-to-mouth onset must follow the authored one-way tailpipe delay");
+
+    auto highRateFixture = referenceFixture;
+    highRateFixture.sampleRateHz = 96'000.0;
+    const auto highRate = renderPhysicalExhaust(highRateFixture);
+    const auto onset48Seconds = static_cast<double>(shortOnset)
+        / referenceFixture.sampleRateHz;
+    const auto onset96Seconds = static_cast<double>(firstAudibleSample(highRate))
+        / highRateFixture.sampleRateHz;
+    require(std::abs(onset48Seconds - onset96Seconds) < 0.00015,
+        "physical propagation time must remain invariant across sample rates");
+}
+
 void pipeRadiationRegression() {
     constexpr double sampleRateHz = 48'000.0;
     constexpr double radiusM = 0.032;
@@ -501,6 +657,7 @@ int main() {
         exhaustPathIsolationRegression();
         customGraphRuntimeTelemetryRegression();
         ambientPressureRegression();
+        physicalThermoacousticPathRegression();
         pipeRadiationRegression();
         outputQualityRegression();
         std::cout << "Realtime audio/runtime regression tests passed\n";
