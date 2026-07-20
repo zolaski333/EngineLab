@@ -212,6 +212,43 @@ bool ExhaustGasNetwork::configure(const ExhaustNetworkLayout& layout,
     return true;
 }
 
+bool ExhaustGasNetwork::reset(double pressurePa,
+                              double temperatureK,
+                              GasComposition composition) noexcept {
+    if (!configured_) return false;
+    const auto initialState = mixtureModel_.conservativeFromPressureTemperature(
+        pressurePa, temperatureK, 0.0, composition);
+    if (!initialState) return false;
+
+    config_.initialPressurePa = pressurePa;
+    config_.initialTemperatureK = temperatureK;
+    config_.initialComposition = composition;
+    for (auto& duct : ducts_) {
+        auto cells = duct.cells();
+        std::fill(cells.begin(), cells.end(), *initialState);
+    }
+    std::fill(junctionStates_.begin(), junctionStates_.end(), *initialState);
+    for (auto& state : junctionStates_) state.momentumDensityKgPerM2S = 0.0;
+    std::fill(cylinderReservoirStates_.begin(), cylinderReservoirStates_.end(),
+              ConservativeState {});
+    std::fill(cylinderReservoirVolumesM3_.begin(), cylinderReservoirVolumesM3_.end(), 0.0);
+    std::fill(cylinderReservoirActive_.begin(), cylinderReservoirActive_.end(),
+              std::uint8_t { 0 });
+    for (std::size_t index = 0; index < cylinderExchanges_.size(); ++index) {
+        cylinderExchanges_[index] = {};
+        cylinderExchanges_[index].cylinderId = layout_.cylinderPorts()[index].cylinderId;
+        cylinderExchanges_[index].pathIndex = layout_.cylinderPorts()[index].pathIndex;
+    }
+    for (std::size_t index = 0; index < outletSamples_.size(); ++index) {
+        outletSamples_[index] = {};
+        outletSamples_[index].outletNodeId = layout_.outlets()[index].outletNodeId;
+        outletSamples_[index].pathIndex = layout_.outlets()[index].pathIndex;
+        outletSamples_[index].openingAreaM2 = layout_.outlets()[index].openingAreaM2;
+    }
+    updateOutletSamples(0.0);
+    return true;
+}
+
 ExhaustNetworkInventory ExhaustGasNetwork::inventory() const noexcept {
     ExhaustNetworkInventory result;
     for (const auto& duct : ducts_) {
@@ -805,7 +842,9 @@ void ExhaustGasNetwork::updateOutletSamples(double durationSeconds) noexcept {
         if (primitive) {
             cylinderExchanges_[index].networkPressurePa = primitive->pressurePa;
             cylinderExchanges_[index].networkTemperatureK = primitive->temperatureK;
+            cylinderExchanges_[index].networkDensityKgPerM3 = primitive->densityKgPerM3;
             cylinderExchanges_[index].networkVelocityMps = primitive->velocityMps;
+            cylinderExchanges_[index].networkSpeedOfSoundMps = primitive->speedOfSoundMps;
         }
     }
     for (std::size_t index = 0; index < outletSamples_.size(); ++index) {

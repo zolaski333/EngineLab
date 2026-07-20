@@ -130,7 +130,9 @@ void testValveExchangeIsTwoWayAndConservative() {
             && forwardExchange->totalMassKg() > 0.0
             && forwardExchange->speciesMassKg[static_cast<std::size_t>(GasSpecies::burned)] > 0.0
             && forwardExchange->totalEnergyJ > 0.0
-            && forwardExchange->cylinderPressurePaAfter < 360'000.0,
+            && forwardExchange->cylinderPressurePaAfter < 360'000.0
+            && forwardExchange->networkDensityKgPerM3 > 0.0
+            && forwardExchange->networkSpeedOfSoundMps > 0.0,
         "blowdown must transport hot burned gas and its energy into the network");
     requireMassEnergyBalance(beforeBlowdown, network.inventory(),
                              network.cylinderExchanges(), network.outletSamples(), 2.0e-9);
@@ -156,6 +158,39 @@ void testValveExchangeIsTwoWayAndConservative() {
         "network backpressure must be able to return mass and energy to a cylinder");
     requireMassEnergyBalance(beforeReversion, network.inventory(),
                              network.cylinderExchanges(), network.outletSamples(), 2.0e-9);
+}
+
+void testResetIsAllocationFreeStateReinitialisation() {
+    auto network = makeNetwork(makeDefaultInlineFour());
+    const auto hotState = network.mixtureModel().conservativeFromPressureTemperature(
+        280'000.0, 920.0);
+    requireNetwork(hotState.has_value(), "reset fixture reservoir state must be physical");
+    const CylinderValveBoundary cylinder { 1, *hotState, 0.00050, 0.00030, 0.78 };
+    const auto ambient = ambientFor(network, 101'325.0, 300.0, 0.0);
+    const auto advance = network.advance(0.0004,
+        std::span<const CylinderValveBoundary>(&cylinder, 1), ambient);
+    requireNetwork(advance.completed && network.inventory().totalEnergyJ > 0.0,
+        "reset fixture must first perturb the network");
+
+    requireNetwork(network.reset(93'000.0, 305.0),
+        "a configured network must accept a physical uniform reset state");
+    for (const auto& duct : network.ducts()) {
+        for (const auto& state : duct.cells()) {
+            const auto primitive = network.mixtureModel().primitiveFromConservative(state);
+            requireNetwork(primitive.has_value()
+                    && std::abs(primitive->pressurePa - 93'000.0) < 1.0e-8
+                    && std::abs(primitive->temperatureK - 305.0) < 1.0e-10
+                    && std::abs(primitive->velocityMps) < 1.0e-14,
+                "reset must restore every duct cell to the requested quiescent state");
+        }
+    }
+    requireNetwork(std::all_of(network.cylinderExchanges().begin(),
+                        network.cylinderExchanges().end(),
+        [](const CylinderGasExchange& exchange) {
+            return exchange.totalMassKg() == 0.0 && exchange.totalEnergyJ == 0.0;
+        }), "reset must clear prior cylinder exchange integrals");
+    requireNetwork(!network.reset(-1.0, 305.0),
+        "reset must reject a non-physical pressure without altering topology");
 }
 
 void testOutletFlowIsPhysicalAndConservative() {
@@ -307,6 +342,7 @@ void testBoundaryInputOrderIsIrrelevant() {
 void runExhaustGasNetworkTests() {
     testUniformClosedNetworkIsInvariant();
     testValveExchangeIsTwoWayAndConservative();
+    testResetIsAllocationFreeStateReinitialisation();
     testOutletFlowIsPhysicalAndConservative();
     testDirectDuctInterfaceTransmitsWavesWithoutInventoryLoss();
     testBoundaryInputOrderIsIrrelevant();

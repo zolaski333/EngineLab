@@ -1,13 +1,14 @@
 #include <enginelab/simulation/EngineSimulator.hpp>
 #include <enginelab/simulation/SubstepParallel.hpp>
+#include <enginelab/exhaust/ExhaustGraph.hpp>
 #include <enginelab/physics/MechanicalKinematics.hpp>
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <exception>
 #include <numbers>
 #include <numeric>
 #include <optional>
-#include <span>
 #include <span>
 #include <stdexcept>
 
@@ -15,6 +16,63 @@ namespace enginelab {
 namespace {
 [[nodiscard]] double smooth(double current, double target, double dt, double rate) noexcept {
     return current + (target - current) * (1.0 - std::exp(-dt * rate));
+}
+
+[[nodiscard]] gasdynamics::ThermodynamicModel exhaustThermodynamicsFor(
+    const EngineConfig& config) noexcept {
+    auto model = gasdynamics::ThermodynamicModel::standardCombustionGas();
+    const auto fuelIndex = static_cast<std::size_t>(gasdynamics::GasSpecies::fuel);
+    const auto burnedIndex = static_cast<std::size_t>(gasdynamics::GasSpecies::burned);
+    const auto fuelMolarMassKg = config.fuelProperties.molarMassGramsPerMole * 0.001;
+    model.species[fuelIndex].molarMassKgPerMol = fuelMolarMassKg;
+    model.species[burnedIndex].molarMassKgPerMol =
+        (fuelMolarMassKg
+         + config.fuelProperties.oxygenMolesPerFuelMole * GasCell::oxygenMolarMassKg)
+        / config.fuelProperties.productMolesPerFuelMole;
+    return model;
+}
+
+[[nodiscard]] gasdynamics::ConservativeState networkStateForGasCell(
+    const GasCell& cell) noexcept {
+    gasdynamics::ConservativeState result;
+    const auto inverseVolume = 1.0 / cell.volumeM3();
+    result.speciesMassDensityKgPerM3[
+        static_cast<std::size_t>(gasdynamics::GasSpecies::oxygen)] =
+        cell.mixture().oxygenMoles * GasCell::oxygenMolarMassKg * inverseVolume;
+    result.speciesMassDensityKgPerM3[
+        static_cast<std::size_t>(gasdynamics::GasSpecies::inert)] =
+        cell.mixture().inertMoles * GasCell::inertMolarMassKg * inverseVolume;
+    result.speciesMassDensityKgPerM3[
+        static_cast<std::size_t>(gasdynamics::GasSpecies::fuel)] =
+        cell.mixture().fuelMoles * cell.configuredFuelMolarMassKg() * inverseVolume;
+    result.speciesMassDensityKgPerM3[
+        static_cast<std::size_t>(gasdynamics::GasSpecies::burned)] =
+        cell.mixture().burnedMoles * cell.configuredBurnedGasMolarMassKg() * inverseVolume;
+    // The chamber is a zero-dimensional reservoir. Its resolved bulk momentum
+    // has no unique exhaust-axis projection; valve-wall reactions carry it.
+    result.momentumDensityKgPerM2S = 0.0;
+    result.totalEnergyDensityJPerM3 = cell.internalEnergyJoules() * inverseVolume;
+    return result;
+}
+
+[[nodiscard]] GasInventoryDelta cylinderDeltaForExchange(
+    const gasdynamics::CylinderGasExchange& exchange,
+    const GasCell& cell) noexcept {
+    const auto oxygen = static_cast<std::size_t>(gasdynamics::GasSpecies::oxygen);
+    const auto inert = static_cast<std::size_t>(gasdynamics::GasSpecies::inert);
+    const auto fuel = static_cast<std::size_t>(gasdynamics::GasSpecies::fuel);
+    const auto burned = static_cast<std::size_t>(gasdynamics::GasSpecies::burned);
+    return {
+        {
+            -exchange.speciesMassKg[oxygen] / GasCell::oxygenMolarMassKg,
+            -exchange.speciesMassKg[inert] / GasCell::inertMolarMassKg,
+            -exchange.speciesMassKg[fuel] / cell.configuredFuelMolarMassKg(),
+            -exchange.speciesMassKg[burned] / cell.configuredBurnedGasMolarMassKg(),
+        },
+        -exchange.totalEnergyJ,
+        0.0,
+        0.0,
+    };
 }
 
 // Below this cylinder count the per-cylinder loop runs serially: the fork-join
@@ -40,16 +98,13 @@ struct CylinderSubstepScratch final {
     double endGasKnockLevel {};
     double releasedEnergyJoules {};
     double meteredFuelMassKg {};
-    // Jacobi branches against the frozen shared volumes (committed after the loop).
+    // Jacobi branch against the frozen shared intake plenum.
     JacobiGasFlowBranch plenumFlow {};
-    JacobiGasFlowBranch collectorFlow {};
     std::size_t intakePath {};
-    std::size_t exhaustPath {};
 };
 
 struct ParallelSubstepState final {
     std::array<GasCell, 32> frozenPlenum {};
-    std::array<GasCell, 32> frozenCollector {};
     std::array<CylinderSubstepScratch, 32> scratch {};
 };
 
@@ -77,16 +132,6 @@ struct ParallelSubstepState final {
     return cylinder.crankOffsetDegrees;
 }
 
-[[nodiscard]] const ExhaustConfig& exhaustGeometryFor(const EngineConfig& config,
-                                                       const CylinderConfig& cylinder) noexcept {
-    const auto path = std::find_if(config.exhaustPaths.begin(), config.exhaustPaths.end(),
-        [&cylinder](const ExhaustPathConfig& item) {
-            return std::find(item.cylinderIds.begin(), item.cylinderIds.end(), cylinder.id)
-                != item.cylinderIds.end();
-        });
-    return path != config.exhaustPaths.end() ? path->geometry : config.exhaust;
-}
-
 [[nodiscard]] std::size_t exhaustPathIndexFor(const EngineConfig& config,
                                               const CylinderConfig& cylinder) noexcept {
     const auto path = std::find_if(config.exhaustPaths.begin(), config.exhaustPaths.end(),
@@ -112,11 +157,6 @@ struct ParallelSubstepState final {
 [[nodiscard]] const IntakeConfig& intakeGeometryAt(const EngineConfig& config,
                                                    std::size_t pathIndex) noexcept {
     return pathIndex < config.intakePaths.size() ? config.intakePaths[pathIndex].geometry : config.intake;
-}
-
-[[nodiscard]] const ExhaustConfig& exhaustGeometryAt(const EngineConfig& config,
-                                                      std::size_t pathIndex) noexcept {
-    return pathIndex < config.exhaustPaths.size() ? config.exhaustPaths[pathIndex].geometry : config.exhaust;
 }
 
 [[nodiscard]] double forwardPhaseDegrees(double previous, double current) noexcept {
@@ -195,7 +235,56 @@ EngineSimulator::EngineSimulator(EngineConfig config, IEcuModel& ecu, IPhysicsMo
     if (const auto error = validateEngineConfig(config_)) throw std::invalid_argument(*error);
     ecu_.initialise(config_);
     kinematicsReference_ = buildEngineKinematicsReference(config_);
+    configurePhysicalExhaustNetwork();
     reset();
+}
+
+void EngineSimulator::configurePhysicalExhaustNetwork() {
+    const auto physicalGraph = ExhaustGraph::makeForEngine(config_);
+    gasdynamics::ExhaustNetworkDiscretisation feedbackMesh;
+    // The realtime FV mesh owns nonlinear mean-flow/back-pressure feedback,
+    // not audio-band propagation. 75 mm retains at least six cells per
+    // wavelength through ~650 Hz at the cold-gas sound speed, covering the
+    // firing fundamentals of the shipped engines. The characteristic audio
+    // network transports the remaining band without asking every exhaust cell
+    // to run at more than 100 kHz.
+    feedbackMesh.targetCellLengthM = 0.075;
+    feedbackMesh.maximumCellsPerDuct = 64;
+    feedbackMesh.maximumTotalCells = 1'024;
+    const auto layout = gasdynamics::ExhaustNetworkLayout::compile(
+        physicalGraph, feedbackMesh);
+    auto network = std::make_unique<gasdynamics::ExhaustGasNetwork>(
+        exhaustThermodynamicsFor(config_));
+    gasdynamics::ExhaustGasNetworkConfig networkConfig;
+    networkConfig.initialPressurePa = config_.ambientPressureKpa * 1'000.0;
+    networkConfig.initialTemperatureK = config_.ambientTemperatureC + 273.15;
+    networkConfig.absoluteRoughnessM = 4.5e-5;
+    networkConfig.maximumCourantNumber = 0.8;
+    // Wall thermal inertia belongs to a separate conserved subsystem. Until it
+    // exists, adiabatic walls are more honest than a fixed fabricated wall
+    // temperature which would create or destroy untracked energy.
+    networkConfig.wallHeatTransferWPerM2K = 0.0;
+    if (!network->configure(layout, networkConfig))
+        throw std::runtime_error("failed to configure conservative exhaust network");
+    const auto ambientState = network->mixtureModel().conservativeFromPressureTemperature(
+        config_.ambientPressureKpa * 1'000.0,
+        config_.ambientTemperatureC + 273.15);
+    if (!ambientState)
+        throw std::runtime_error("failed to construct physical exhaust ambient state");
+    physicalExhaustAmbientState_ = *ambientState;
+    for (std::size_t portIndex = 0;
+         portIndex < layout.cylinderPorts().size(); ++portIndex) {
+        const auto cylinderId = layout.cylinderPorts()[portIndex].cylinderId;
+        const auto cylinder = std::find_if(config_.cylinders.begin(), config_.cylinders.end(),
+            [cylinderId](const CylinderConfig& candidate) {
+                return candidate.id == cylinderId;
+            });
+        if (cylinder == config_.cylinders.end())
+            throw std::runtime_error("exhaust network references an unknown cylinder");
+        exhaustNetworkCylinderIndex_[portIndex] = static_cast<std::size_t>(
+            std::distance(config_.cylinders.begin(), cylinder));
+    }
+    physicalExhaustNetwork_ = std::move(network);
 }
 
 void EngineSimulator::setPressureSamplingEnabled(bool enabled) {
@@ -395,17 +484,15 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
             state_.manifoldPressureKpa += intakePlenumGas_[pathIndex].pressureKpa();
         state_.manifoldPressureKpa /= static_cast<double>(intakePlenumCount_);
 
-        // The collector is a real control volume. Its pressure is the engine's
-        // downstream boundary; the exhaust policy adds only the restriction
-        // associated with pipes/mufflers which are not spatially discretised.
+        // The nonlinear network is mandatory and is compiled by the
+        // constructor. There is intentionally no lumped-exhaust fallback.
+        auto& physicalExhaustNetwork = *physicalExhaustNetwork_;
         double collectorPressureKpa = config_.ambientPressureKpa;
-        for (std::size_t pathIndex = 0; pathIndex < exhaustCollectorCount_; ++pathIndex) {
-            const auto& collector = exhaustCollectorGas_[pathIndex];
-            collectorPressureKpa = std::max(collectorPressureKpa,
-                collector.pressureKpa() + std::max(0.0, collector.dynamicPressureKpa(1.0, 0.0)));
-        }
+        for (const auto& exchange : physicalExhaustNetwork.cylinderExchanges())
+            collectorPressureKpa = std::max(
+                collectorPressureKpa, exchange.networkPressurePa * 0.001);
         state_.exhaustPressureKpa = collectorPressureKpa;
-        const auto backPressure = std::max(state_.exhaustPressureKpa, exhaust_.backPressureKpa(state_));
+        const auto backPressure = state_.exhaustPressureKpa;
         const auto combustion = physics_.evaluateCombustion(config_, state_, safeControls, ecuCommand, backPressure);
         const auto sparkCombustionAvailable = ecuCommand.sparkEnabled
             && state_.rpm >= 220.0 && state_.damage < 1.0;
@@ -424,6 +511,21 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
         double releasedEnergyJoules = 0.0;
         double meteredFuelMassKg = 0.0;
         double exhaustTemperatureSumK = 0.0;
+        std::array<double, 32> exhaustValveAreaM2 {};
+        std::array<double, 32> exhaustValveDischargeCoefficient {};
+        std::array<double, 32> intakeValveAreaM2 {};
+        std::array<double, 32> intakeValveDischargeCoefficient {};
+        std::array<double, 32> intakeRunnerAreaM2ForSplit {};
+        std::array<double, 32> pistonAreaM2ForSplit {};
+        std::array<double, 32> chamberVolumeLitresForWork {};
+        std::array<double, 32> chamberPressureBeforeNetworkKpa {};
+        std::array<double, 32> gasTorqueLeverArmM {};
+        std::array<double, 32> exhaustMassFlowKgPerSecond {};
+        std::array<double, 32> exhaustPortDensityKgPerM3 {};
+        std::array<double, 32> exhaustPortSpeedOfSoundMps {};
+        std::array<std::uint8_t, 32> thermoacousticBoundaryValid {};
+        std::array<bool, 32> cycleBoundaryForWork {};
+        std::array<bool, 32> intakeCloseForTrappedAir {};
 
         // Engines below the parallel threshold retain the original serial
         // Gauss-Seidel shared-volume updates and shared PRNG sequence. Larger
@@ -441,8 +543,6 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
             parallelState.emplace();
             for (std::size_t path = 0; path < intakePlenumCount_; ++path)
                 parallelState->frozenPlenum[path] = intakePlenumGas_[path];
-            for (std::size_t path = 0; path < exhaustCollectorCount_; ++path)
-                parallelState->frozenCollector[path] = exhaustCollectorGas_[path];
         }
         const auto totalCellEnergy = [](const GasCell& cell) noexcept {
             return cell.internalEnergyJoules() + cell.bulkKineticEnergyJoules();
@@ -716,16 +816,17 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
             const auto runnerDiameterMm = cylinder.intakeRunnerDiameterMm > 0.0
                 ? cylinder.intakeRunnerDiameterMm : cylinderIntake.runnerDiameterMm;
             const auto runnerAreaM2 = std::numbers::pi * std::pow(runnerDiameterMm * 0.0005, 2.0);
-            const auto& cylinderExhaust = exhaustGeometryFor(config_, cylinder);
-            const auto legacyPrimaryAreaM2 = std::numbers::pi
-                * std::pow(cylinderExhaust.primaryDiameterMm * 0.0005, 2.0);
-            const auto exhaustFlowProperties = exhaust_.cylinderFlowProperties(cylinder.id);
-            const auto primaryAreaM2 = exhaustFlowProperties.authoredNetwork
-                ? exhaustFlowProperties.inletAreaM2 : legacyPrimaryAreaM2;
-            const auto primaryDischargeCoefficient = exhaustFlowProperties.authoredNetwork
-                ? exhaustFlowProperties.inletDischargeCoefficient : 0.74;
             const auto pistonAreaM2 = std::numbers::pi * std::pow(cylinder.boreMm * 0.0005, 2.0);
-            const auto exhaustPathIndex = exhaustPathIndexFor(config_, cylinder);
+            exhaustValveAreaM2[cylinderIndex] = exhaustArea * 1.0e-6;
+            exhaustValveDischargeCoefficient[cylinderIndex] =
+                valveTrain.exhaustDischargeCoefficient;
+            intakeValveAreaM2[cylinderIndex] = intakeArea * 1.0e-6;
+            intakeValveDischargeCoefficient[cylinderIndex] =
+                valveTrain.intakeDischargeCoefficient;
+            intakeRunnerAreaM2ForSplit[cylinderIndex] = runnerAreaM2;
+            pistonAreaM2ForSplit[cylinderIndex] = pistonAreaM2;
+            chamberVolumeLitresForWork[cylinderIndex] = chamberVolume;
+            cycleBoundaryForWork[cylinderIndex] = cycleBoundaryCrossed;
             const auto plenumPressureKpa = decoupleSharedVolumes
                 ? parallelState->frozenPlenum[intakePathIndex].pressureKpa()
                 : intakePlenumGas_[intakePathIndex].pressureKpa();
@@ -770,60 +871,23 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
             // (2) Intake runner → cylinder (intake valve)
             const FlowParameters intakeValveFlow {
                 &intakeRunnerGas_[cylinderIndex], &cylinderGas_[cylinderIndex],
-                intakeArea * 1.0e-6, valveTrain.intakeDischargeCoefficient, subDt,
+                intakeArea * 1.0e-6, valveTrain.intakeDischargeCoefficient,
+                subDt * 0.5,
                 /*dirX=*/0.0, /*dirY=*/1.0,   // downward through valve
                 /*csArea0=*/runnerAreaM2, /*csArea1=*/pistonAreaM2 };
 
             // (3) Cylinder → exhaust runner (exhaust valve)
-            const FlowParameters exhaustValveFlow {
-                &cylinderGas_[cylinderIndex], &exhaustRunnerGas_[cylinderIndex],
-                exhaustArea * 1.0e-6, valveTrain.exhaustDischargeCoefficient, subDt,
-                /*dirX=*/0.0, /*dirY=*/-1.0,  // upward out of cylinder
-                /*csArea0=*/pistonAreaM2, /*csArea1=*/primaryAreaM2 };
-            const auto valveTransfers = ConservativeGasSystem::flowSimultaneous(
-                intakeValveFlow, exhaustValveFlow);
-            const auto& intakeTransfer = valveTransfers.first;
-            const auto& exhaustTransfer = valveTransfers.second;
+            const auto intakeTransfer = ConservativeGasSystem::flow(intakeValveFlow);
 
             // (4) Exhaust runner → collector, with the same thresholded Jacobi
             // treatment as the intake side.
-            GasCell collectorWork;
-            auto* collectorFlowCell = &exhaustCollectorGas_[exhaustPathIndex];
-            GasCell exhaustRunnerBefore;
-            if (decoupleSharedVolumes) {
-                collectorWork = parallelState->frozenCollector[exhaustPathIndex];
-                collectorFlowCell = &collectorWork;
-                exhaustRunnerBefore = exhaustRunnerGas_[cylinderIndex];
-            }
-            (void)ConservativeGasSystem::flow({
-                &exhaustRunnerGas_[cylinderIndex], collectorFlowCell,
-                primaryAreaM2, primaryDischargeCoefficient, subDt,
-                /*dirX=*/1.0, /*dirY=*/0.0,   // outward to collector
-                /*csArea0=*/primaryAreaM2, /*csArea1=*/0.0 });
-            if (decoupleSharedVolumes) {
-                auto& branch = contribution.collectorFlow;
-                branch.counterpart = &exhaustRunnerGas_[cylinderIndex];
-                branch.sharedDelta = ConservativeGasSystem::inventoryDelta(
-                    collectorWork, parallelState->frozenCollector[exhaustPathIndex]);
-                branch.counterpartDelta = ConservativeGasSystem::inventoryDelta(
-                    exhaustRunnerGas_[cylinderIndex], exhaustRunnerBefore);
-                branch.sharedTotalEnergyDeltaJ = totalCellEnergy(collectorWork)
-                    - totalCellEnergy(parallelState->frozenCollector[exhaustPathIndex]);
-                contribution.exhaustPath = exhaustPathIndex;
-            }
+            // Exhaust transfer is solved simultaneously for all cylinders by
+            // the conservative 1D network after this private-state pass.
 
             const auto intakeRunnerLengthM = (cylinder.intakeRunnerLengthMm > 0.0
                 ? cylinder.intakeRunnerLengthMm : cylinderIntake.runnerLengthMm) * 0.001;
             intakeRunnerGas_[cylinderIndex].applyFlowResistance(
                 intakeRunnerLengthM, runnerDiameterMm * 0.001, 1.5e-6, 0.0, subDt);
-            const auto exhaustRunnerLengthM = (exhaustFlowProperties.authoredNetwork
-                ? exhaustFlowProperties.runnerLengthMm
-                : (cylinder.exhaustPrimaryLengthMm > 0.0 ? cylinder.exhaustPrimaryLengthMm
-                                                         : cylinderExhaust.primaryLengthMm)) * 0.001;
-            const auto exhaustHydraulicDiameterM = 2.0
-                * std::sqrt(primaryAreaM2 / std::numbers::pi);
-            exhaustRunnerGas_[cylinderIndex].applyFlowResistance(
-                exhaustRunnerLengthM, exhaustHydraulicDiameterM, 4.5e-5, 0.0, subDt);
             const auto wallHeatTransfer = std::clamp((cylinderWallTemperatureC_[cylinderIndex] + 273.15
                 - cylinderGas_[cylinderIndex].temperatureK())
                 * config_.combustionCalibration.wallHeatTransferCoefficientWPerK * subDt, -120.0, 35.0);
@@ -835,25 +899,18 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                     0.65, subDt);
             chamberKpa = cylinderGas_[cylinderIndex].pressureKpa();
             chamberPressureBar_[cylinderIndex] = chamberKpa / 100.0;
-            IndicatedWorkModel::advance(indicatedWorkStates_[cylinderIndex], chamberKpa,
-                chamberVolume, config_.ambientPressureKpa, cycleBoundaryCrossed);
             const auto intakeClosePhase = std::fmod(360.0 + cams.config->intakeCenterlineDegrees
                 - valveTrain.intakeAdvanceDegrees
                 + cams.intakeDuration() * 0.5 + 720.0, 720.0);
-            if (crossedPhase(previousPhase, cyclePhase, intakeClosePhase))
-                trappedAirMassMgLastCycle_[cylinderIndex] = cylinderGas_[cylinderIndex]
-                    .mixture().oxygenMoles / 0.21 * GasCell::airMolarMassKg * 1.0e6;
+            intakeCloseForTrappedAir[cylinderIndex] = crossedPhase(
+                previousPhase, cyclePhase, intakeClosePhase);
             intakeFlowMgThisCycle_[cylinderIndex] += intakeTransfer.transferredMassKg * 1.0e6;
-            exhaustFlowMgThisCycle_[cylinderIndex] += exhaustTransfer.transferredMassKg * 1.0e6;
             const auto runnerPulse = std::sin(cyclePhase * std::numbers::pi / 180.0);
             intakeRunnerPressureKpa_[cylinderIndex] = intakeRunnerGas_[cylinderIndex].pressureKpa();
-            exhaustRunnerPressureKpa_[cylinderIndex] = exhaustRunnerGas_[cylinderIndex].pressureKpa();
             (void)runnerPulse;
             cylinderWallTemperatureC_[cylinderIndex] = smooth(cylinderWallTemperatureC_[cylinderIndex],
                 config_.ambientTemperatureC + combustion.heatOutput * 175.0 + pulse * 95.0, subDt, 0.22);
             contribution.intakeRunnerPressure += intakeRunnerPressureKpa_[cylinderIndex];
-            contribution.exhaustRunnerPressure += exhaustRunnerPressureKpa_[cylinderIndex];
-            contribution.exhaustTemperatureK += exhaustRunnerGas_[cylinderIndex].temperatureK();
             const auto breathingQuality = std::clamp(intakeFlowMgPerCycle_[cylinderIndex]
                 / std::max(1.0, combustion.airMassMgPerCycle / static_cast<double>(config_.cylinders.size())),
                 0.45, 1.35);
@@ -869,6 +926,8 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
             contribution.reciprocatingTorque += inertiaForce * leverArm;
             // pistonAreaM2 is already defined above for the gas flow calls (same scope).
             const auto gasForceN = (chamberKpa - config_.ambientPressureKpa) * 1'000.0 * pistonAreaM2;
+            chamberPressureBeforeNetworkKpa[cylinderIndex] = chamberKpa;
+            gasTorqueLeverArmM[cylinderIndex] = leverArm;
             contribution.gasIndicatedTorque += gasForceN * leverArm;
             // The side thrust is governed by the acute angle between the rod
             // and the cylinder axis.  Treating an aligned rod as 90 degrees
@@ -908,6 +967,114 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
             for (std::size_t cylinderIndex = 0; cylinderIndex < config_.cylinders.size(); ++cylinderIndex)
                 processCylinder(cylinderIndex);
         }
+
+        double outletMassKg = 0.0;
+        {
+            auto exhaustNetworkCompleted = false;
+            std::array<gasdynamics::CylinderValveBoundary, 32> cylinderBoundaries {};
+            for (std::size_t index = 0; index < config_.cylinders.size(); ++index) {
+                cylinderBoundaries[index] = {
+                    config_.cylinders[index].id,
+                    networkStateForGasCell(cylinderGas_[index]),
+                    cylinderGas_[index].volumeM3(),
+                    exhaustValveAreaM2[index],
+                    exhaustValveDischargeCoefficient[index],
+                };
+            }
+            auto outletOpeningScale = 1.0;
+            if (config_.forcedInduction.enabled
+                && config_.forcedInduction.type == ForcedInductionType::turbocharger) {
+                const auto turbineAreaM2 = (config_.forcedInduction.turbineFlowAreaMm2
+                    + state_.wastegateOpening
+                        * config_.forcedInduction.wastegateFlowAreaMm2) * 1.0e-6;
+                auto configuredOutletConductanceM2 = 0.0;
+                for (const auto& outlet : physicalExhaustNetwork.layout().outlets())
+                    configuredOutletConductanceM2 +=
+                        outlet.openingAreaM2 * outlet.dischargeCoefficient;
+                outletOpeningScale = std::clamp(turbineAreaM2
+                    / std::max(1.0e-12, configuredOutletConductanceM2), 0.0, 1.0);
+            }
+            const gasdynamics::ExhaustAmbientBoundary ambient {
+                physicalExhaustAmbientState_, outletOpeningScale
+            };
+            const auto networkAdvance = physicalExhaustNetwork.advance(
+                subDt,
+                std::span<const gasdynamics::CylinderValveBoundary>(
+                    cylinderBoundaries.data(), config_.cylinders.size()),
+                ambient);
+            exhaustNetworkCompleted = networkAdvance.completed;
+            if (!networkAdvance.completed)
+                state_.solverResolutionLimited = true;
+
+            collectorPressureKpa = config_.ambientPressureKpa;
+            const auto cylinderExchanges = physicalExhaustNetwork.cylinderExchanges();
+            for (std::size_t exchangeIndex = 0;
+                 exchangeIndex < cylinderExchanges.size(); ++exchangeIndex) {
+                const auto& exchange = cylinderExchanges[exchangeIndex];
+                const auto index = exhaustNetworkCylinderIndex_[exchangeIndex];
+                const auto applied = cylinderGas_[index].tryApplyInventoryDelta(
+                    cylinderDeltaForExchange(exchange, cylinderGas_[index]));
+                if (!applied) state_.solverResolutionLimited = true;
+                exhaustFlowMgThisCycle_[index] += exchange.totalMassKg() * 1.0e6;
+                exhaustRunnerPressureKpa_[index] = exchange.networkPressurePa * 0.001;
+                exhaustRunnerVelocityMps_[index] = exchange.networkVelocityMps;
+                exhaustMassFlowKgPerSecond[index] = exchange.totalMassKg() / subDt;
+                exhaustPortDensityKgPerM3[index] = exchange.networkDensityKgPerM3;
+                exhaustPortSpeedOfSoundMps[index] = exchange.networkSpeedOfSoundMps;
+                thermoacousticBoundaryValid[index] = static_cast<std::uint8_t>(
+                    exhaustNetworkCompleted && applied
+                    && std::isfinite(exhaustMassFlowKgPerSecond[index])
+                    && exhaustPortDensityKgPerM3[index] > 0.0
+                    && exhaustPortSpeedOfSoundMps[index] > 0.0);
+                collectorPressureKpa = std::max(
+                    collectorPressureKpa, exhaustRunnerPressureKpa_[index]);
+
+                // Symmetric operator split around the exhaust-network solve:
+                // the second intake half-step sees the pressure returned by
+                // the exhaust valve and removes first-order overlap bias.
+                const FlowParameters secondIntakeHalfStep {
+                    &intakeRunnerGas_[index], &cylinderGas_[index],
+                    intakeValveAreaM2[index], intakeValveDischargeCoefficient[index],
+                    subDt * 0.5,
+                    0.0, 1.0,
+                    intakeRunnerAreaM2ForSplit[index], pistonAreaM2ForSplit[index],
+                };
+                const auto secondIntakeTransfer = ConservativeGasSystem::flow(
+                    secondIntakeHalfStep);
+                intakeFlowMgThisCycle_[index] +=
+                    secondIntakeTransfer.transferredMassKg * 1.0e6;
+                if (intakeCloseForTrappedAir[index]) {
+                    trappedAirMassMgLastCycle_[index] = cylinderGas_[index]
+                        .mixture().oxygenMoles / 0.21 * GasCell::airMolarMassKg * 1.0e6;
+                }
+
+                const auto finalChamberPressureKpa = cylinderGas_[index].pressureKpa();
+                chamberPressureBar_[index] = finalChamberPressureKpa / 100.0;
+                IndicatedWorkModel::advance(indicatedWorkStates_[index],
+                    finalChamberPressureKpa, chamberVolumeLitresForWork[index],
+                    config_.ambientPressureKpa, cycleBoundaryForWork[index]);
+                const auto torqueCorrection = (finalChamberPressureKpa
+                        - chamberPressureBeforeNetworkKpa[index]) * 1'000.0
+                    * pistonAreaM2ForSplit[index] * gasTorqueLeverArmM[index];
+                if (decoupleSharedVolumes) {
+                    parallelState->scratch[index].gasIndicatedTorque += torqueCorrection;
+                    parallelState->scratch[index].exhaustRunnerPressure +=
+                        exhaustRunnerPressureKpa_[index];
+                    parallelState->scratch[index].exhaustTemperatureK +=
+                        exchange.networkTemperatureK;
+                } else {
+                    gasIndicatedTorque += torqueCorrection;
+                    exhaustRunnerPressureSum += exhaustRunnerPressureKpa_[index];
+                    exhaustTemperatureSumK += exchange.networkTemperatureK;
+                }
+            }
+            for (const auto& outlet : physicalExhaustNetwork.outletSamples()) {
+                auto transferredMassKg = 0.0;
+                for (const auto speciesMassKg : outlet.speciesMassKg)
+                    transferredMassKg += speciesMassKg;
+                outletMassKg += std::max(0.0, transferredMassKg);
+            }
+        }
         // Fixed-order reduction of the per-cylinder scratch. Small engines retain
         // their original serial sum; large-engine output is independent of worker
         // scheduling because the same cylinder order is always used here.
@@ -926,59 +1093,6 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 ConservativeGasSystem::commitJacobiFlows(intakePlenumGas_[path],
                     std::span<const JacobiGasFlowBranch>(pathBranches.data(), branchCount));
             }
-            for (std::size_t path = 0; path < exhaustCollectorCount_; ++path) {
-                auto branchCount = std::size_t { 0 };
-                for (std::size_t index = 0; index < config_.cylinders.size(); ++index)
-                    if (parallelState->scratch[index].exhaustPath == path)
-                        pathBranches[branchCount++] = parallelState->scratch[index].collectorFlow;
-                ConservativeGasSystem::commitJacobiFlows(exhaustCollectorGas_[path],
-                    std::span<const JacobiGasFlowBranch>(pathBranches.data(), branchCount));
-            }
-        }
-        // Discharge the shared collector exactly once per gas sub-step. This
-        // closes the open-system mass/energy balance and makes outlet diameter
-        // and muffler restriction affect the physical collector pressure.
-        double outletMassKg = 0.0;
-        collectorPressureKpa = config_.ambientPressureKpa;
-        for (std::size_t pathIndex = 0; pathIndex < exhaustCollectorCount_; ++pathIndex) {
-            const auto& geometry = exhaustGeometryAt(config_, pathIndex);
-            const auto pathFlowProperties = exhaust_.pathFlowProperties(pathIndex);
-            const auto outletRadiusM = geometry.outletDiameterMm * 0.0005;
-            auto outletAreaM2 = pathFlowProperties.authoredNetwork
-                ? pathFlowProperties.effectiveOutletAreaM2
-                : std::numbers::pi * outletRadiusM * outletRadiusM;
-            if (config_.forcedInduction.enabled
-                    && config_.forcedInduction.type == ForcedInductionType::turbocharger) {
-                // The turbine throat and wastegate are the physical outlet of
-                // the collector. This produces the pressure ratio from which
-                // the turbine extracts shaft work instead of assuming boost
-                // directly from engine RPM.
-                const auto turboOutletAreaM2 = (config_.forcedInduction.turbineFlowAreaMm2
-                    + state_.wastegateOpening * config_.forcedInduction.wastegateFlowAreaMm2) * 1.0e-6;
-                outletAreaM2 = std::min(outletAreaM2, turboOutletAreaM2);
-            }
-            const auto outletCoefficient = pathFlowProperties.authoredNetwork
-                ? pathFlowProperties.outletDischargeCoefficient
-                : std::clamp(geometry.outletDischargeCoefficient
-                    * (1.0 - geometry.mufflerRestriction * 0.72), 0.02, 1.2);
-            const auto outletFlow = ConservativeGasSystem::flowFromBoundary(exhaustCollectorGas_[pathIndex],
-                config_.ambientPressureKpa, config_.ambientTemperatureC + 273.15,
-                outletAreaM2, outletCoefficient, subDt,
-                1.0, 0.0); // collector -> downstream atmosphere
-            outletMassKg += std::max(0.0, outletFlow.transferredMassKg);
-            const auto collectorLengthM = std::max(1.0,
-                pathFlowProperties.authoredNetwork
-                    ? pathFlowProperties.meanFlowLengthMm : geometry.primaryLengthMm) * 0.001;
-            const auto collectorHydraulicDiameterM = pathFlowProperties.authoredNetwork
-                ? 2.0 * std::sqrt((pathFlowProperties.collectorVolumeLitres * 0.001
-                    / collectorLengthM) / std::numbers::pi)
-                : geometry.collectorDiameterMm * 0.001;
-            exhaustCollectorGas_[pathIndex].applyFlowResistance(
-                collectorLengthM, collectorHydraulicDiameterM,
-                4.5e-5, 0.0, subDt);
-            const auto& collector = exhaustCollectorGas_[pathIndex];
-            collectorPressureKpa = std::max(collectorPressureKpa,
-                collector.pressureKpa() + std::max(0.0, collector.dynamicPressureKpa(1.0, 0.0)));
         }
 
         const auto meanPistonSpeed = pistonSpeedSum / static_cast<double>(config_.cylinders.size());
@@ -1113,12 +1227,11 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
             state_.manifoldGasMassGrams += intakePlenumGas_[pathIndex].massKg() * 1'000.0;
             state_.gasInternalEnergyJoules += intakePlenumGas_[pathIndex].internalEnergyJoules();
         }
-        for (std::size_t pathIndex = 0; pathIndex < exhaustCollectorCount_; ++pathIndex)
-            state_.gasInternalEnergyJoules += exhaustCollectorGas_[pathIndex].internalEnergyJoules();
+        state_.gasInternalEnergyJoules += physicalExhaustNetwork.inventory().totalEnergyJ;
         for (std::size_t index = 0; index < config_.cylinders.size(); ++index) {
             state_.cylinderGasMassGrams += cylinderGas_[index].massKg() * 1'000.0;
             state_.gasInternalEnergyJoules += cylinderGas_[index].internalEnergyJoules()
-                + intakeRunnerGas_[index].internalEnergyJoules() + exhaustRunnerGas_[index].internalEnergyJoules();
+                + intakeRunnerGas_[index].internalEnergyJoules();
         }
         state_.powerKw = state_.torqueNm * state_.angularVelocityRadPerSecond / 1'000.0;
         state_.brakeSpecificFuelConsumptionGPerKwh = state_.cycleAveragedPowerKw > 1.0
@@ -1178,7 +1291,8 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                     + (cylinderWallTemperatureC_[index] - config_.ambientTemperatureC) * 0.18,
                 gas.temperatureK() - 273.15, gas.massKg() * 1.0e6,
                 gas.mixture().oxygenMoles, gas.mixture().fuelMoles, gas.mixture().burnedMoles,
-                intakeRunnerGas_[index].bulkVelocityMps(), exhaustRunnerGas_[index].bulkVelocityMps(),
+                intakeRunnerGas_[index].bulkVelocityMps(),
+                exhaustRunnerVelocityMps_[index],
                 fuelDeliveryRatio_[index],
                 flameEvents_[index].flameSpeedMps, flameEvents_[index].burnedFraction,
                 flameEvents_[index].efficiency,
@@ -1225,6 +1339,14 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
             for (std::size_t index = 0; index < config_.cylinders.size(); ++index) {
                 pressureSample.pressureBar[index] = static_cast<float>(chamberPressureBar_[index]);
                 pressureSample.exhaustRunnerPressureKpa[index] = static_cast<float>(exhaustRunnerPressureKpa_[index]);
+                pressureSample.exhaustMassFlowKgPerSecond[index] =
+                    static_cast<float>(exhaustMassFlowKgPerSecond[index]);
+                pressureSample.exhaustPortDensityKgPerM3[index] =
+                    static_cast<float>(exhaustPortDensityKgPerM3[index]);
+                pressureSample.exhaustPortSpeedOfSoundMps[index] =
+                    static_cast<float>(exhaustPortSpeedOfSoundMps[index]);
+                pressureSample.exhaustValveConductanceAreaM2[index] = static_cast<float>(
+                    exhaustValveAreaM2[index] * exhaustValveDischargeCoefficient[index]);
                 pressureSample.exhaustFlowMgPerCycle[index] = static_cast<float>(exhaustFlowMgPerCycle_[index]);
                 const auto cams = activeCamshaft(config_, config_.cylinders[index],
                                                   state_.rpm, state_.throttle);
@@ -1233,6 +1355,8 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                     valveTrainResults_[index].exhaustLiftMm / maximumExhaustLiftMm, 0.0, 1.0));
                 pressureSample.exhaustPathIndex[index] = static_cast<std::uint8_t>(
                     exhaustPathIndexFor(config_, config_.cylinders[index]));
+                pressureSample.thermoacousticBoundaryValid[index] =
+                    thermoacousticBoundaryValid[index];
             }
             if (pressureSamples_->tryPush(pressureSample))
                 ++frame.cylinderPressureSampleCount;
@@ -1347,6 +1471,7 @@ void EngineSimulator::reset() noexcept {
     exhaustFlowMgPerCycle_.fill(0.0);
     intakeFlowMgThisCycle_.fill(0.0);
     exhaustFlowMgThisCycle_.fill(0.0);
+    exhaustRunnerVelocityMps_.fill(0.0);
     cylinderFlowCycleStarted_.fill(false);
     instantaneousCombustionPulse_.fill(0.0);
     injectedFuelMolesThisCycle_.fill(0.0);
@@ -1391,23 +1516,6 @@ void EngineSimulator::reset() noexcept {
         intakePlenumGas_[pathIndex].setGeometry(throttleArea, 0.0, 1.0);
     }
 
-    exhaustCollectorCount_ = std::max<std::size_t>(1,
-        std::min<std::size_t>(config_.exhaustPaths.size(), exhaustCollectorGas_.size()));
-    for (std::size_t pathIndex = 0; pathIndex < exhaustCollectorCount_; ++pathIndex) {
-        const auto& geometry = exhaustGeometryAt(config_, pathIndex);
-        const auto pathFlowProperties = exhaust_.pathFlowProperties(pathIndex);
-        configureFuel(exhaustCollectorGas_[pathIndex]);
-        exhaustCollectorGas_[pathIndex].initialise(config_.ambientPressureKpa,
-            pathFlowProperties.authoredNetwork ? pathFlowProperties.collectorVolumeLitres
-                                               : geometry.collectorVolumeLitres,
-            config_.ambientTemperatureC + 273.15);
-        // Collector flows toward the outlet (positive x direction by convention).
-        const auto collectorRadiusM = geometry.collectorDiameterMm * 0.0005;
-        exhaustCollectorGas_[pathIndex].setGeometry(
-            pathFlowProperties.authoredNetwork ? pathFlowProperties.effectiveOutletAreaM2
-                                               : std::numbers::pi * collectorRadiusM * collectorRadiusM,
-            1.0, 0.0);
-    }
     for (std::size_t index = 0; index < config_.cylinders.size(); ++index) {
         previousCylinderPhases_[index] = std::fmod(state_.crankAngleDegrees
             - crankOffsetDegreesFor(config_, config_.cylinders[index]) + 1'440.0, 720.0);
@@ -1417,7 +1525,6 @@ void EngineSimulator::reset() noexcept {
         cylinderWallTemperatureC_[index] = config_.ambientTemperatureC;
         configureFuel(intakeRunnerGas_[index]);
         configureFuel(cylinderGas_[index]);
-        configureFuel(exhaustRunnerGas_[index]);
 
         const auto& cyl = config_.cylinders[index];
         const auto intakePathIndex = intakePathIndexFor(config_, cyl);
@@ -1426,17 +1533,11 @@ void EngineSimulator::reset() noexcept {
             ? cyl.intakeRunnerDiameterMm : cylinderIntake.runnerDiameterMm;
         const auto runnerAreaM2 = std::numbers::pi * std::pow(runnerDiamMm * 0.0005, 2.0);
         const auto pistonAreaM2 = std::numbers::pi * std::pow(cyl.boreMm * 0.0005, 2.0);
-        const auto& cylExhaust = exhaustGeometryFor(config_, cyl);
-        const auto exhaustFlowProperties = exhaust_.cylinderFlowProperties(cyl.id);
-        const auto primaryAreaM2 = exhaustFlowProperties.authoredNetwork
-            ? exhaustFlowProperties.inletAreaM2
-            : std::numbers::pi * std::pow(cylExhaust.primaryDiameterMm * 0.0005, 2.0);
 
         // Geometry: positive momentum means gas flowing downward into the cylinder
         // for intake, and upward out of the cylinder for exhaust.
         intakeRunnerGas_[index].setGeometry(runnerAreaM2, 0.0,  1.0); // downward
         cylinderGas_[index].setGeometry(pistonAreaM2,    0.0, -1.0); // upward toward head
-        exhaustRunnerGas_[index].setGeometry(primaryAreaM2, 0.0, -1.0); // upward/outward
 
         intakeRunnerGas_[index].initialise(config_.ambientPressureKpa,
                                            intakeRunnerVolumeLitres(cyl, cylinderIntake),
@@ -1445,16 +1546,15 @@ void EngineSimulator::reset() noexcept {
             evaluateCylinderKinematics(config_, kinematicsReference_, index,
                 state_.crankAngleDegrees, 0.0).chamberVolumeLitres,
             config_.ambientTemperatureC + 273.15);
-        const auto& cylinderExhaust = exhaustGeometryFor(config_, config_.cylinders[index]);
-        const auto primaryLengthMm = config_.cylinders[index].exhaustPrimaryLengthMm > 0.0
-            ? config_.cylinders[index].exhaustPrimaryLengthMm : cylinderExhaust.primaryLengthMm;
-        exhaustRunnerGas_[index].initialise(config_.ambientPressureKpa,
-            exhaustFlowProperties.authoredNetwork
-                ? exhaustFlowProperties.runnerVolumeLitres
-                : std::max(0.10, primaryLengthMm * std::numbers::pi
-                    * std::pow(cylinderExhaust.primaryDiameterMm * 0.5, 2.0) / 1.0e6),
-            config_.ambientTemperatureC + 273.15);
     }
+
+    // Construction guarantees this invariant. reset() cannot report failure
+    // through IEngineSimulation and must not silently revive the old lumped
+    // exhaust, so an invariant violation is deliberately fatal.
+    if (!physicalExhaustNetwork_
+        || !physicalExhaustNetwork_->reset(config_.ambientPressureKpa * 1'000.0,
+                                            config_.ambientTemperatureC + 273.15))
+        std::terminate();
 }
 
 RunningState EngineSimulator::determineRunningState(const EngineControls& controls) const noexcept {

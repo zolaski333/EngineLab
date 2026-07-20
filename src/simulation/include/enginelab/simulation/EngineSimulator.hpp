@@ -14,6 +14,7 @@
 #include <enginelab/simulation/IEngineSimulation.hpp>
 #include <enginelab/events/CylinderPressureSample.hpp>
 #include <enginelab/foundation/SpscQueue.hpp>
+#include <enginelab/gasdynamics/ExhaustGasNetwork.hpp>
 #include <array>
 #include <memory>
 namespace enginelab {
@@ -29,6 +30,8 @@ public:
     void setPressureSamplingEnabled(bool enabled);
     void reset() noexcept override;
 private:
+    /** Compile and allocate the mandatory nonlinear exhaust network. */
+    void configurePhysicalExhaustNetwork();
     [[nodiscard]] RunningState determineRunningState(const EngineControls&) const noexcept;
     void accumulateCycleTelemetry(double previousAngleDegrees, double travelledDegrees,
                                   double dtSeconds, double indicatedTorqueNm,
@@ -43,6 +46,7 @@ private:
     std::array<double, 32> previousCylinderPhases_ {};
     std::array<double, 32> intakeRunnerPressureKpa_ {};
     std::array<double, 32> exhaustRunnerPressureKpa_ {};
+    std::array<double, 32> exhaustRunnerVelocityMps_ {};
     std::array<double, 32> chamberPressureBar_ {};
     std::array<double, 32> intakeFlowMgPerCycle_ {};
     std::array<double, 32> exhaustFlowMgPerCycle_ {};
@@ -52,11 +56,8 @@ private:
     std::array<double, 32> cylinderWallTemperatureC_ {};
     std::array<GasCell, 32> intakePlenumGas_ {};
     std::size_t intakePlenumCount_ { 1 };
-    std::array<GasCell, 32> exhaustCollectorGas_ {};
-    std::size_t exhaustCollectorCount_ { 1 };
     std::array<GasCell, 32> intakeRunnerGas_ {};
     std::array<GasCell, 32> cylinderGas_ {};
-    std::array<GasCell, 32> exhaustRunnerGas_ {};
     std::array<double, 32> instantaneousCombustionPulse_ {};
     std::array<double, 32> injectedFuelMolesThisCycle_ {};
     std::array<double, 32> meteredFuelMolesLastCycle_ {};
@@ -78,6 +79,10 @@ private:
     std::array<bool, 32> ignitionPending_ {};
     FlamePhysicsModel flamePhysics_ {};
     std::array<bool, 32> cylinderMisfires_ {};
+    std::unique_ptr<gasdynamics::ExhaustGasNetwork> physicalExhaustNetwork_;
+    gasdynamics::ConservativeState physicalExhaustAmbientState_ {};
+    /** Network-port order -> EngineConfig cylinder order, compiled once. */
+    std::array<std::size_t, 32> exhaustNetworkCylinderIndex_ {};
     std::unique_ptr<SpscQueue<CylinderPressureSample, 1'024>> pressureSamples_;
     std::uint32_t randomState_ { 0x6d2b79f5U };
     // Engines below the threading threshold retain randomState_ and therefore

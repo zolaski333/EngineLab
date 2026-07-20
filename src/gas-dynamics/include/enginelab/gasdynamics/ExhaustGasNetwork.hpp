@@ -53,7 +53,9 @@ struct CylinderGasExchange final {
     double cylinderTemperatureKAfter { 0.0 };
     double networkPressurePa { 0.0 };
     double networkTemperatureK { 0.0 };
+    double networkDensityKgPerM3 { 0.0 };
     double networkVelocityMps { 0.0 };
+    double networkSpeedOfSoundMps { 0.0 };
 
     [[nodiscard]] double totalMassKg() const noexcept;
 };
@@ -104,6 +106,15 @@ public:
     /** Build all duct meshes and work arrays. Not realtime-safe. */
     [[nodiscard]] bool configure(const ExhaustNetworkLayout& layout,
                                  ExhaustGasNetworkConfig config = {});
+
+    /** Restore a configured network to a uniform quiescent state.
+     *
+     * No topology or work buffers are rebuilt, so this operation is
+     * allocation-free and safe for an EngineSimulator::reset() boundary.
+     */
+    [[nodiscard]] bool reset(double pressurePa,
+                             double temperatureK,
+                             GasComposition composition = GasComposition::dryAir()) noexcept;
 
     [[nodiscard]] bool configured() const noexcept { return configured_; }
     [[nodiscard]] const EulerMixtureModel& mixtureModel() const noexcept { return mixtureModel_; }
