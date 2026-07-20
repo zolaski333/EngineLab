@@ -34,6 +34,7 @@
 #include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <memory>
 #include <numbers>
 #include <string>
 #include <thread>
@@ -440,14 +441,26 @@ IdleCycleMetrics renderIdleCycle(const EngineConfig& baseConfig, const WavData& 
     SimplifiedGasolinePhysics physics;
     FourStrokeEventGenerator events;
     auto exhaust = ExhaustGraph::makeForEngine(config);
-    EngineSimulator simulator(config, ecu, physics, events, exhaust);
+    // These owners deliberately live on the heap. EngineSimulator, EngineRuntime,
+    // the lock-free telemetry queues, and RealtimeEngineAudio each retain sizeable
+    // fixed-capacity realtime storage; putting all of them in this one stack frame
+    // exceeds the default Windows thread stack before the function body starts.
+    // Heap ownership preserves deterministic lifetimes without changing the code
+    // under test or allocating from the realtime render loop.
+    auto simulatorOwner = std::make_unique<EngineSimulator>(
+        config, ecu, physics, events, exhaust);
+    auto& simulator = *simulatorOwner;
     simulator.setPressureSamplingEnabled(true);
 
-    FiringEventQueue eventQueue;
-    CylinderPressureQueue pressureQueue;
-    EngineRuntime audioConfiguration(config);
-    auto& audioState = audioConfiguration.audioState();
-    RealtimeEngineAudio renderer(eventQueue, audioState, &pressureQueue);
+    auto eventQueueOwner = std::make_unique<FiringEventQueue>();
+    auto pressureQueueOwner = std::make_unique<CylinderPressureQueue>();
+    auto audioConfiguration = std::make_unique<EngineRuntime>(config);
+    auto& eventQueue = *eventQueueOwner;
+    auto& pressureQueue = *pressureQueueOwner;
+    auto& audioState = audioConfiguration->audioState();
+    auto rendererOwner = std::make_unique<RealtimeEngineAudio>(
+        eventQueue, audioState, &pressureQueue);
+    auto& renderer = *rendererOwner;
     if (!ir.samples.empty()) renderer.setImpulseResponse(ir.samples, ir.sampleRate, 0);
     constexpr double audioRate = 48'000.0;
     constexpr double dt = 1.0 / 240.0;
