@@ -154,6 +154,10 @@ void RealtimeEngineAudio::prepare(double sampleRate, int maximumBlockSize) noexc
         * std::min(9'500.0, sampleRate_ * 0.38) / sampleRate_));
     thermoacousticMeanCoefficient_ = static_cast<float>(1.0 - std::exp(
         -2.0 * std::numbers::pi * 8.0 / sampleRate_));
+    // 10 Hz: fast enough to track real temperature drift and rpm sweeps, slow
+    // enough to attenuate frame-rate telemetry steps by about 28 dB at 240 Hz.
+    controlRampCoefficient_ = static_cast<float>(1.0 - std::exp(
+        -2.0 * std::numbers::pi * 10.0 / sampleRate_));
     pressureTailDecay_ = rateInvariantPole(0.992F, sampleRate_);
     pressureTailInputCoefficient_ = 0.010F * (1.0F - pressureTailDecay_) / (1.0F - 0.992F);
     bovDecay_ = rateInvariantPole(0.9994F, sampleRate_);
@@ -241,6 +245,10 @@ void RealtimeEngineAudio::release() noexcept {
     runnerWallLoss_.fill({});
     for (auto& state : runnerWallLossToJunction_) state.reset();
     for (auto& state : runnerWallLossToPort_) state.reset();
+    boundaryReconstruction_ = {};
+    boundaryReconstructionCouplingHz_ = 0.0;
+    for (auto& state : boundaryReconstructionPressure_) state.reset();
+    for (auto& state : boundaryReconstructionFlow_) state.reset();
     physicalExhaustActive_ = false;
     pressureSampleIntervalSeconds_ = 0.0;
     levelLimitedSamples_.store(0, std::memory_order_relaxed);
@@ -486,8 +494,12 @@ void RealtimeEngineAudio::render(juce::AudioBuffer<float>& output, int startSamp
         const auto reflectionLimit = static_cast<float>(exhaustPaths_[path].forwardWave.size() - 2);
         if (requestedReflection > reflectionLimit)
             delayTruncations_.fetch_add(1, std::memory_order_relaxed);
-        exhaustPaths_[path].reflectionDelaySamples = std::clamp(
+        // Target only; ramped per sample. See RunnerWaveguides::delayTargetSamples.
+        exhaustPaths_[path].reflectionDelayTargetSamples = std::clamp(
             requestedReflection, 1.0F, reflectionLimit);
+        if (exhaustPaths_[path].reflectionDelaySamples <= 1.0F)
+            exhaustPaths_[path].reflectionDelaySamples =
+                exhaustPaths_[path].reflectionDelayTargetSamples;
         const auto publishedArea = realtimeState_.exhaustPathOutletAreaM2[path]
             .load(std::memory_order_relaxed);
         outletAreaM2[path] = std::isfinite(publishedArea) && publishedArea > 1.0e-6F
@@ -529,8 +541,13 @@ void RealtimeEngineAudio::render(juce::AudioBuffer<float>& output, int startSamp
             ? seconds * acousticDelayScale * static_cast<float>(sampleRate_) : 1.0F;
         if (exactDelaySamples > runnerDelayLimit)
             delayTruncations_.fetch_add(1, std::memory_order_relaxed);
-        runners_->delaySamples[runner] = std::clamp(
+        // Target only; the per-sample ramp lives in processExhaustWaveguides.
+        // See RunnerWaveguides::delayTargetSamples. A line that has not yet
+        // carried a wave snaps, so startup incurs no sweep from zero.
+        runners_->delayTargetSamples[runner] = std::clamp(
             exactDelaySamples, 1.0F, runnerDelayLimit);
+        if (runners_->delaySamples[runner] < 1.0F)
+            runners_->delaySamples[runner] = runners_->delayTargetSamples[runner];
         const auto publishedArea = realtimeState_.cylinderExhaustAreaM2[runner]
             .load(std::memory_order_relaxed);
         runnerAreaM2[runner] = std::isfinite(publishedArea) && publishedArea > 1.0e-6F
@@ -638,6 +655,17 @@ void RealtimeEngineAudio::render(juce::AudioBuffer<float>& output, int startSamp
                         std::min(9'500.0, sampleRate_ * 0.38));
                     pressureBandCoefficient_ = static_cast<float>(1.0 - std::exp(
                         -2.0 * std::numbers::pi * cutoffHz / sampleRate_));
+                }
+                // Track the producer's boundary sampling rate and refit the
+                // anti-imaging reconstruction when it moves by more than 1%.
+                // The rate follows engine speed, so refits are rare relative to
+                // the audio rate and the transcendental cost is amortised away.
+                const auto couplingHz = currentPressureSample_.exhaustCouplingFrequencyHz;
+                if (std::abs(couplingHz - boundaryReconstructionCouplingHz_)
+                    > 0.01 * std::max(couplingHz, boundaryReconstructionCouplingHz_)) {
+                    boundaryReconstruction_ = BoundaryReconstructionFilter::compute(
+                        couplingHz, sampleRate_);
+                    boundaryReconstructionCouplingHz_ = couplingHz;
                 }
                 const auto fraction = denominator > 1.0e-9
                     ? std::clamp((pressureTime - currentPressureSample_.timeSeconds) / denominator, 0.0, 1.0)
@@ -785,10 +813,22 @@ void RealtimeEngineAudio::render(juce::AudioBuffer<float>& output, int startSamp
                                 thermoacousticMeanCoefficient_ * (acousticMassFlowKgPerSecond
                                     - exhaustMeanMassFlowKgPerSecond_[index]);
                         }
-                        const auto pressurePerturbationPa = pressurePa
-                            - exhaustMeanPressurePa_[index];
-                        const auto massFlowPerturbationKgPerSecond = acousticMassFlowKgPerSecond
-                            - exhaustMeanMassFlowKgPerSecond_[index];
+                        // Both characteristic partners pass through the same
+                        // reconstruction low-pass, so their ratio -- and with
+                        // it the characteristic split -- is untouched inside
+                        // the physical band. Everything removed lies above the
+                        // producer's sampling Nyquist and cannot be signal.
+                        const auto pressurePerturbationPa = static_cast<float>(
+                            BoundaryReconstructionFilter::process(
+                                boundaryReconstruction_,
+                                boundaryReconstructionPressure_[index],
+                                pressurePa - exhaustMeanPressurePa_[index]));
+                        const auto massFlowPerturbationKgPerSecond = static_cast<float>(
+                            BoundaryReconstructionFilter::process(
+                                boundaryReconstruction_,
+                                boundaryReconstructionFlow_[index],
+                                acousticMassFlowKgPerSecond
+                                    - exhaustMeanMassFlowKgPerSecond_[index]));
                         const auto areaM2 = runnerAreaM2[index];
                         const auto characteristicImpedance = densityKgPerM3
                             * soundSpeedMps / areaM2;
@@ -1038,6 +1078,10 @@ void RealtimeEngineAudio::render(juce::AudioBuffer<float>& output, int startSamp
             -2.0 * std::numbers::pi * presetToneHz_ * acousticTimeScale / sampleRate_));
         for (std::size_t pathIndex = 0; pathIndex < exhaustPathCount; ++pathIndex) {
             auto& path = exhaustPaths_[pathIndex];
+            // Same control-rate ramp as the runner delays; see
+            // RunnerWaveguides::delayTargetSamples.
+            path.reflectionDelaySamples += controlRampCoefficient_
+                * (path.reflectionDelayTargetSamples - path.reflectionDelaySamples);
             const auto collectorInput = (pathCollectorLeft[pathIndex]
                 + pathCollectorRight[pathIndex]) * 0.5F;
 
@@ -1506,6 +1550,12 @@ std::array<float, RealtimeEngineAudio::maximumPaths> RealtimeEngineAudio::proces
     std::array<float, maximumPaths> junctionAdmittance {};
     std::array<std::size_t, maximumPaths> runnerCount {};
     for (std::size_t i = 0; i < n; ++i) {
+        // Ramp the delay toward its block-rate target; applying the target
+        // directly phase-jumps the line at every telemetry frame. See
+        // RunnerWaveguides::delayTargetSamples. The ramped value is shared by
+        // this loop and the port loop below within the same sample.
+        runners_->delaySamples[i] += controlRampCoefficient_
+            * (runners_->delayTargetSamples[i] - runners_->delaySamples[i]);
         const auto exactDelay = std::clamp(runners_->delaySamples[i], 1.0F,
             static_cast<float>(stride - 2));
         const auto delay0 = static_cast<std::size_t>(exactDelay);

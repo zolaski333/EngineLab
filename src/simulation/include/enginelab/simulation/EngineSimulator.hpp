@@ -67,13 +67,52 @@ private:
         double massFlowKgPerSecond {};
         double densityKgPerM3 {};
         double speedOfSoundMps {};
+        /** Simulation time this knot was sampled at. */
+        double timeSeconds {};
         bool valid { false };
     };
-    std::array<ExhaustNetworkBoundary, 32> exhaustBoundaryAtPreviousFlush_ {};
-    std::array<ExhaustNetworkBoundary, 32> exhaustBoundaryAtLastFlush_ {};
-    bool exhaustBoundaryHistoryPrimed_ { false };
-    /** Substeps elapsed since the last network flush, for the reconstruction. */
-    std::size_t exhaustBoundarySubstepsSinceFlush_ { 0 };
+    /** Timestamped ring of boundary knots, reconstructed at a CONSTANT delay.
+     *
+     * Coupling intervals are not uniform: the end of every frame forces a
+     * flush, so the frame's last interval is short whenever the substep count
+     * is not a multiple of the stride; the stride changes with engine speed;
+     * and the substep duration drifts frame to frame. Any reconstruction whose
+     * delay follows the current interval -- a substep counter, or even a phase
+     * over the latest pair of knot times -- therefore jumps at every interval
+     * change, and the frame-rate repetition of those jumps was measured as a
+     * comb at exact multiples of 240 Hz across the catalogue, engine
+     * independent, with firing sidebands: the dominant metallic residue.
+     *
+     * Publishing the boundary at one fixed delay behind now, interpolated
+     * between whichever ring knots bracket that instant, is continuous by
+     * construction through every interval change. The delay must exceed the
+     * longest coupling interval so a bracketing pair always exists.
+     */
+    static constexpr std::size_t exhaustBoundaryKnotCount = 8;
+    /** Above the 500 us low-speed coupling cap with slack, and about 0.6 ms of
+     * group delay on the exhaust boundary alone -- inaudible as latency. */
+    static constexpr double exhaustBoundaryReconstructionDelaySeconds = 625.0e-6;
+    /** Multirate coupling accumulators, carried ACROSS frames.
+     *
+     * The network flush used to be forced on the last substep of every frame,
+     * which cut the final averaging window short whenever the frame's substep
+     * count was not a multiple of the coupling stride. That repeats the same
+     * irregular window pattern every frame, so the network's own solution --
+     * not merely its reconstruction -- was modulated at the frame rate. It was
+     * measured as a comb at exact multiples of 240 Hz that survived muting
+     * every other layer, replacing the IR with a unit impulse, ramping every
+     * delay, and smoothing the harness dyno. Keeping the accumulation in
+     * members and flushing on accumulated duration alone decouples the
+     * network's integration grid from the frame grid entirely.
+     */
+    std::array<double, 32> exhaustValveConductanceTimeIntegralM2S_ {};
+    std::array<gasdynamics::ConservativeState, 32> exhaustBoundaryStateTimeIntegral_ {};
+    std::array<double, 32> exhaustBoundaryVolumeTimeIntegralM3S_ {};
+    double exhaustCouplingDurationSeconds_ { 0.0 };
+    double outletOpeningScaleTimeIntegralSeconds_ { 0.0 };
+    std::array<std::array<ExhaustNetworkBoundary, exhaustBoundaryKnotCount>, 32>
+        exhaustBoundaryKnots_ {};
+    std::size_t exhaustBoundaryKnotWrite_ { 0 };
     std::array<double, 32> chamberPressureBar_ {};
     std::array<double, 32> intakeFlowMgPerCycle_ {};
     std::array<double, 32> exhaustFlowMgPerCycle_ {};

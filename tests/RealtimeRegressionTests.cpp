@@ -1,4 +1,5 @@
 #include <enginelab/audio/AcousticMonitorCalibration.hpp>
+#include <enginelab/audio/BoundaryReconstructionFilter.hpp>
 #include <enginelab/audio/RealtimeEngineAudio.hpp>
 #include <enginelab/audio/DuctWallLoss.hpp>
 #include <enginelab/audio/PipeRadiationModel.hpp>
@@ -869,6 +870,91 @@ void ductWallLossRegression() {
             "hotter gas must attenuate more at equal density and geometry");
 }
 
+// ---------------------------------------------------------------------------
+// Boundary reconstruction filter
+// ---------------------------------------------------------------------------
+
+// Cascade magnitude at one frequency from the section coefficients, so the
+// invariants below are stated in the frequency domain where they belong. Two
+// identical sections, hence the square.
+double reconstructionMagnitude(
+    const enginelab::BoundaryReconstructionFilter::Coefficients& c,
+    double frequencyHz, double sampleRateHz) {
+    const auto z1 = std::polar(1.0, -2.0 * std::numbers::pi * frequencyHz / sampleRateHz);
+    const auto z2 = z1 * z1;
+    const auto section = std::abs(
+        (c.b0 + c.b1 * z1 + c.b2 * z2) / (1.0 + c.a1 * z1 + c.a2 * z2));
+    return section * section;
+}
+
+// Invariants come from sampled-data theory, not from the simulator's output:
+// a boundary sampled at rate fc carries nothing above fc/2, so the filter must
+// preserve the band below and establish its stopband at the image lines, which
+// sit at multiples of fc. Thresholds are the analytic response of a 4th-order
+// Butterworth cascade cut at 0.45 fc, with margin.
+void boundaryReconstructionRegression() {
+    using Filter = enginelab::BoundaryReconstructionFilter;
+    constexpr double sampleRate = 48'000.0;
+
+    // A zero coupling rate means the boundary was never sampled -- authored
+    // directly, as this suite's own fixtures do. Passthrough must be exact,
+    // not merely close: nothing may be "compensated" that never happened.
+    {
+        Filter::State state;
+        const auto inactive = Filter::compute(0.0, sampleRate);
+        require(!inactive.active, "an unsampled boundary must disable the filter");
+        require(Filter::process(inactive, state, 0.37) == 0.37,
+                "an inactive reconstruction must be an exact passthrough");
+    }
+
+    // Representative coupling rates measured across the catalogue.
+    for (const auto couplingHz : { 2'000.0, 2'900.0, 3'920.0, 5'800.0 }) {
+        const auto c = Filter::compute(couplingHz, sampleRate);
+        require(c.active, "a sampled boundary must enable the filter");
+        require(std::abs(reconstructionMagnitude(c, 0.0, sampleRate) - 1.0) < 1.0e-9,
+                "mean back-pressure must pass the reconstruction at unity");
+        require(reconstructionMagnitude(c, couplingHz * 0.25, sampleRate) > 0.89,
+                "content well inside the physical band must pass within 1 dB");
+        require(reconstructionMagnitude(c, couplingHz, sampleRate) < 0.0631,
+                "the first image line must be attenuated by at least 24 dB");
+        if (couplingHz * 2.0 < sampleRate * 0.5)
+            require(reconstructionMagnitude(c, couplingHz * 2.0, sampleRate) < 0.01,
+                    "the second image line must be attenuated by at least 40 dB");
+
+        // Stability: the impulse response must decay. Prime at zero first so
+        // the steady-state initialisation does not swallow the impulse.
+        Filter::State state;
+        (void) Filter::process(c, state, 0.0);
+        (void) Filter::process(c, state, 1.0);
+        auto tail = 0.0;
+        for (int n = 0; n < 4'000; ++n) {
+            const auto y = Filter::process(c, state, 0.0);
+            if (n >= 3'900) tail = std::max(tail, std::abs(y));
+        }
+        require(tail < 1.0e-9, "the reconstruction filter must be stable");
+    }
+
+    // The cutoff clamp must keep the bilinear design finite and stable even for
+    // absurd coupling rates, and a non-finite rate must disable rather than
+    // produce a divergent filter.
+    {
+        const auto clamped = Filter::compute(1.0e6, sampleRate);
+        require(clamped.active && std::isfinite(clamped.b0) && std::isfinite(clamped.a2),
+                "an extreme coupling rate must clamp to a finite design");
+        require(!Filter::compute(std::nan(""), sampleRate).active,
+                "a non-finite coupling rate must disable the filter");
+    }
+
+    // Enabling the filter mid-stream must settle to the running input instead
+    // of ringing in from zero: the first active sample primes the state.
+    {
+        Filter::State state;
+        const auto c = Filter::compute(2'900.0, sampleRate);
+        require(std::abs(Filter::process(c, state, 42.0) - 42.0) < 1.0e-9,
+                "the first filtered sample must reproduce its input exactly");
+    }
+}
+
 // The runtime's published calibration default is duplicated from the audio
 // module's documented constant (audio depends on runtime, so it cannot be
 // included there). If they drift apart the delivered level stops matching the
@@ -886,6 +972,7 @@ int main() {
         monitorCalibrationDefaultRegression();
         ductWallLossRegression();
         valvePortTerminationRegression();
+        boundaryReconstructionRegression();
         latencyAndBlockSizeRegression();
         runnerDelaySampleRateRegression();
         exhaustPathIsolationRegression();

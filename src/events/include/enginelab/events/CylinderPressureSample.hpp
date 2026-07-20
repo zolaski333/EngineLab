@@ -51,6 +51,13 @@ struct CylinderPressureSample final {
     std::array<std::uint8_t, 32> exhaustPathIndex {};
     /** 1 only when all SI thermoacoustic boundary fields above are valid. */
     std::array<std::uint8_t, 32> thermoacousticBoundaryValid {};
+    /** Rate at which the acoustic boundary group was actually sampled from the
+     * exhaust network, Hz. The renderer's reconstruction filter tracks it to
+     * remove imaging above half this rate. Zero means the boundary was authored
+     * directly rather than sampled, in which case there is no imaging to remove
+     * and the filter stays disabled -- exactness, not a fallback.
+     */
+    double exhaustCouplingFrequencyHz { 0.0 };
     std::size_t cylinderCount { 0 };
 };
 

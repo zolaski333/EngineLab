@@ -1,6 +1,7 @@
 #pragma once
 #include <enginelab/audio/IAudioRenderer.hpp>
 #include <enginelab/audio/PipeRadiationModel.hpp>
+#include <enginelab/audio/BoundaryReconstructionFilter.hpp>
 #include <enginelab/audio/DuctWallLoss.hpp>
 #include <enginelab/audio/RealtimeConvolutionBank.hpp>
 #include <enginelab/audio/ValvePortTermination.hpp>
@@ -154,6 +155,8 @@ private:
         std::array<std::size_t, 4> fdnWrite {};
         std::size_t jitterWrite {};
         float reflectionDelaySamples { 1.0F };
+        /** Block-rate target reflectionDelaySamples ramps toward per sample. */
+        float reflectionDelayTargetSamples { 1.0F };
         float reflectedLowPass {};
         float collectorState {};
         float previousCollectorInput {};
@@ -178,7 +181,21 @@ private:
         DelayLineBank backward;
         std::array<std::size_t, maxRunners> write {};
         std::array<float, maxRunners> delaySamples {};
+        /** Block-rate targets delaySamples ramps toward per sample.
+         *
+         * Every delay in the network scales with the published exhaust sound
+         * speed, which is frame-rate telemetry: it aliases the engine cycle's
+         * temperature swing into a step at every frame. Applying such a step
+         * directly phase-jumps all delay lines at once, which was measured as
+         * an engine-independent comb at exact multiples of the frame rate with
+         * firing sidebands. The physical quantity is continuous; the step is
+         * a telemetry artefact, so control-rate values are ramped at audio
+         * rate instead of applied instantaneously.
+         */
+        std::array<float, maxRunners> delayTargetSamples {};
     };
+    /** One-pole coefficient for control-rate parameter ramps (about 10 Hz). */
+    float controlRampCoefficient_ { 0.0F };
     /** Size and zero every delay line for the engine currently published.
      *  Allocates, so it is called only from prepare(). */
     void allocateDelayLines();
@@ -310,6 +327,14 @@ private:
     std::array<DuctWallLoss::Coefficients, maxRunners> runnerWallLoss_ {};
     std::array<DuctWallLoss::State, maxRunners> runnerWallLossToJunction_ {};
     std::array<DuctWallLoss::State, maxRunners> runnerWallLossToPort_ {};
+    /** Anti-imaging reconstruction of the sampled boundary. One shared
+     *  coefficient set (the coupling rate is global), per-cylinder state for
+     *  each of the two characteristic partners. See
+     *  BoundaryReconstructionFilter. */
+    BoundaryReconstructionFilter::Coefficients boundaryReconstruction_ {};
+    double boundaryReconstructionCouplingHz_ { 0.0 };
+    std::array<BoundaryReconstructionFilter::State, 32> boundaryReconstructionPressure_ {};
+    std::array<BoundaryReconstructionFilter::State, 32> boundaryReconstructionFlow_ {};
     std::array<bool, 32> thermoacousticMeanInitialised_ {};
     float thermoacousticMeanCoefficient_ { 0.0F };
     // Atomic so a monitoring thread can observe which path is producing audio
