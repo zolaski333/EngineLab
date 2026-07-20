@@ -45,6 +45,13 @@ using namespace enginelab;
 
 struct WavData { std::vector<float> samples; double sampleRate { 44'100.0 }; };
 
+// Layer isolation switches (--mute-combustion / --mute-mechanical). The exhaust
+// is only one of several layers summed into the output, so attributing a
+// measured artefact to the exhaust model requires being able to silence the
+// others. Diagnostic only: the shipped voice renders every layer.
+bool muteCombustionLayer = false;
+bool muteMechanicalLayer = false;
+
 std::uint32_t readU32(const unsigned char* p) {
     return static_cast<std::uint32_t>(p[0]) | (static_cast<std::uint32_t>(p[1]) << 8)
         | (static_cast<std::uint32_t>(p[2]) << 16) | (static_cast<std::uint32_t>(p[3]) << 24);
@@ -148,6 +155,10 @@ struct Metrics {
     // collapses to mono is a regression the old single-channel harness could not see.
     double channelCorrelation { 1.0 };
     double finalRpm {};
+    // Solver cadence, reported so an audible artefact can be checked against the
+    // rates the simulator actually ran at rather than against a guess.
+    double solverFrequencyHz {};
+    std::uint32_t solverSubsteps {};
     std::uint64_t droppedEvents {};
     std::uint64_t droppedPressureSamples {};
     std::uint64_t lateEvents {};
@@ -400,6 +411,8 @@ Metrics renderEngine(const EngineConfig& baseConfig, const WavData& ir,
         }
         publishAudioFrame(audioState, frame.state,
             { false, controls.starterEngaged, 0.0, 1.0 });
+        if (muteCombustionLayer) audioState.combustionGain.store(0.0F);
+        if (muteMechanicalLayer) audioState.mechanicalGain.store(0.0F);
         audioState.producerTimeNanoseconds.store(
             static_cast<std::uint64_t>(std::max(0.0, realtimeSeconds + dt) * 1.0e9),
             std::memory_order_release);
@@ -435,6 +448,8 @@ Metrics renderEngine(const EngineConfig& baseConfig, const WavData& ir,
     m.right.window = analyseWindow(audioRight, analysisBegin, audioRate);
     m.channelCorrelation = normalisedCorrelation(audioLeft, audioRight, analysisBegin);
     m.finalRpm = simulator.state().rpm;
+    m.solverFrequencyHz = simulator.state().solverFrequencyHz;
+    m.solverSubsteps = simulator.state().solverSubsteps;
     m.droppedEvents = droppedEvents + renderer.droppedPendingEventCount();
     m.droppedPressureSamples = droppedPressureSamples;
     m.lateEvents = renderer.lateEventCount();
@@ -452,6 +467,8 @@ Metrics renderEngine(const EngineConfig& baseConfig, const WavData& ir,
               << " rpm=" << std::setprecision(0) << m.finalRpm
               << " brightness=" << std::setprecision(3) << m.left.window.brightness
               << " dc=" << std::showpos << m.left.window.mean << std::noshowpos
+              << " solverHz=" << std::setprecision(0) << m.solverFrequencyHz
+              << " substeps=" << m.solverSubsteps
               << " resonance=" << std::setprecision(1) << m.left.window.maxResonanceProminenceDb
               << "dB@" << std::setprecision(0) << m.left.window.maxResonanceFrequencyHz << "Hz"
               << " bands=" << std::setprecision(1) << m.left.window.lowBandFraction * 100.0
@@ -849,6 +866,8 @@ int main(int argc, char** argv) {
         if (a == "--output" && i + 1 < argc) outDir = argv[++i];
         else if (a == "--ir" && i + 1 < argc) irPath = argv[++i];
         else if (a == "--idle-only") idleOnly = true;
+        else if (a == "--mute-combustion") muteCombustionLayer = true;
+        else if (a == "--mute-mechanical") muteMechanicalLayer = true;
     }
     std::filesystem::create_directories(outDir);
 
