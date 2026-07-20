@@ -310,6 +310,7 @@ bool runCatalogAcceptance(const std::filesystem::path& root, const std::string& 
         enginelab::FourStrokeEventGenerator events;
         auto exhaust = enginelab::ExhaustGraph::makeForEngine(config);
         enginelab::EngineSimulator simulator(config, ecu, physics, events, exhaust);
+        simulator.setPressureSamplingEnabled(!engineFilter.empty());
         constexpr double dt = 1.0 / 240.0;
         double peakRpm = 0.0;
         double peakBoost = 1.0;
@@ -324,6 +325,12 @@ bool runCatalogAcceptance(const std::filesystem::path& root, const std::string& 
         double closedLoopTrimSum = 0.0;
         double fmepSum = 0.0;
         std::size_t settledSamples = 0;
+        std::array<double, 32> sampledForwardMassKg {};
+        std::array<double, 32> sampledReverseMassKg {};
+        std::array<double, 32> sampledPeakForwardKgPerSecond {};
+        std::array<double, 32> sampledPeakReverseKgPerSecond {};
+        std::array<std::uint64_t, 32> sampledInvalidBoundaries {};
+        double previousPressureSampleTime = 0.0;
         double dynoLoadIntegral = 0.0;
         const auto dynoTargetRpm = std::max(config.idleRpm * 1.55,
                                             config.ignition.revLimitRpm * 0.65);
@@ -340,6 +347,28 @@ bool runCatalogAcceptance(const std::filesystem::path& root, const std::string& 
             const auto frame = simulator.step(dt,
                 { true, time < 1.5, 0.72, dynoLoad });
             const auto& state = frame.state;
+            enginelab::CylinderPressureSample pressureSample;
+            while (simulator.tryPopCylinderPressureSample(pressureSample)) {
+                const auto sampleDt = previousPressureSampleTime > 0.0
+                    ? std::clamp(pressureSample.timeSeconds - previousPressureSampleTime,
+                                 0.0, 0.01)
+                    : 0.0;
+                previousPressureSampleTime = pressureSample.timeSeconds;
+                if (pressureSample.timeSeconds < 4.0) continue;
+                for (std::size_t cylinderIndex = 0;
+                     cylinderIndex < pressureSample.cylinderCount; ++cylinderIndex) {
+                    const auto massFlow = static_cast<double>(
+                        pressureSample.exhaustMassFlowKgPerSecond[cylinderIndex]);
+                    sampledForwardMassKg[cylinderIndex] += std::max(0.0, massFlow) * sampleDt;
+                    sampledReverseMassKg[cylinderIndex] += std::min(0.0, massFlow) * sampleDt;
+                    sampledPeakForwardKgPerSecond[cylinderIndex] = std::max(
+                        sampledPeakForwardKgPerSecond[cylinderIndex], massFlow);
+                    sampledPeakReverseKgPerSecond[cylinderIndex] = std::min(
+                        sampledPeakReverseKgPerSecond[cylinderIndex], massFlow);
+                    sampledInvalidBoundaries[cylinderIndex] += static_cast<std::uint64_t>(
+                        pressureSample.thermoacousticBoundaryValid[cylinderIndex] == 0);
+                }
+            }
             peakRpm = std::max(peakRpm, state.rpm);
             peakBoost = std::max(peakBoost, state.boostPressureRatio);
             peakShaftRpm = std::max(peakShaftRpm, state.forcedInductionShaftSpeedRpm);
@@ -391,13 +420,39 @@ bool runCatalogAcceptance(const std::filesystem::path& root, const std::string& 
                   << " bar, boost=" << peakBoost << '\n';
         if (!engineFilter.empty()) {
             const auto& state = simulator.state();
+            std::cout << "  final state: rpm=" << state.rpm
+                      << ", MAP=" << state.manifoldPressureKpa
+                      << " kPa, exhaust=" << state.exhaustPressureKpa
+                      << '/' << state.exhaustRunnerPressureKpa
+                      << " kPa, exhaust flow=" << state.exhaustFlowGramsPerSecond
+                      << " g/s, torque indicated/friction/net="
+                      << state.indicatedTorqueNm << '/' << state.frictionTorqueNm
+                      << '/' << state.netTorqueNm
+                      << " Nm, cycle torque=" << state.cycleAveragedTorqueNm
+                      << " Nm, IMEP=" << state.indicatedMeanEffectivePressureBar
+                      << " bar, heat=" << state.resolvedHeatReleaseKw << " kW"
+                      << ", solver=" << state.solverFrequencyHz
+                      << " Hz" << (state.solverResolutionLimited ? " (limited)" : "")
+                      << '\n';
             for (std::size_t cylinderIndex = 0; cylinderIndex < state.cylinderStateCount; ++cylinderIndex) {
                 const auto& cylinder = state.cylinderStates[cylinderIndex];
                 std::cout << "  cylinder " << cylinder.id << ": AFR=" << cylinder.airFuelRatio
                           << ", requested=" << cylinder.requestedFuelMgPerCycle
-                          << " mg, delivered=" << cylinder.deliveredFuelMgPerCycle
-                          << " mg, ratio=" << cylinder.fuelDeliveryRatio
-                          << ", trim=" << cylinder.closedLoopFuelTrim << '\n';
+                           << " mg, delivered=" << cylinder.deliveredFuelMgPerCycle
+                           << " mg, ratio=" << cylinder.fuelDeliveryRatio
+                           << ", trim=" << cylinder.closedLoopFuelTrim
+                           << ", gas=" << cylinder.trappedMassMg << " mg"
+                           << ", residual=" << cylinder.residualGasFraction
+                           << ", exhaust=" << cylinder.exhaustFlowMgPerCycle
+                           << " mg/cycle @ " << cylinder.runnerPressureKpa << " kPa, "
+                           << cylinder.exhaustVelocityMps << " m/s"
+                           << ", sampled +/-="
+                           << sampledForwardMassKg[cylinderIndex] * 1'000.0 << '/'
+                           << sampledReverseMassKg[cylinderIndex] * 1'000.0 << " g"
+                           << ", peak +/-="
+                           << sampledPeakForwardKgPerSecond[cylinderIndex] * 1'000.0 << '/'
+                           << sampledPeakReverseKgPerSecond[cylinderIndex] * 1'000.0 << " g/s"
+                           << ", invalid=" << sampledInvalidBoundaries[cylinderIndex] << '\n';
             }
         }
         if (engineFailed) {
