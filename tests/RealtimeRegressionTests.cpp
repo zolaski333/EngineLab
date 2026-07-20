@@ -1,5 +1,6 @@
 #include <enginelab/audio/AcousticMonitorCalibration.hpp>
 #include <enginelab/audio/RealtimeEngineAudio.hpp>
+#include <enginelab/audio/DuctWallLoss.hpp>
 #include <enginelab/audio/PipeRadiationModel.hpp>
 #include <enginelab/audio/ValvePortTermination.hpp>
 #include <enginelab/foundation/ExhaustGasAcoustics.hpp>
@@ -779,8 +780,92 @@ void valvePortTerminationRegression() {
             "filter state must remain finite after a non-finite sample");
 }
 
+void ductWallLossRegression() {
+    using Loss = enginelab::DuctWallLoss;
+    constexpr double sampleRate = 48'000.0;
+    // Hot exhaust primary: 20 mm radius, 800 K gas, 3 ms of duct (about 1.6 m).
+    constexpr double density = 0.45;
+    constexpr double soundSpeed = 550.0;
+    constexpr double radius = 0.020;
+    constexpr double traversal = 0.003;
+
+    // Attenuation must rise with frequency. This is the property that damps a
+    // metallic high mode harder than the firing fundamental.
+    const auto atLow = Loss::traversalGain(100.0, traversal, radius, density, soundSpeed);
+    const auto atMid = Loss::traversalGain(1'000.0, traversal, radius, density, soundSpeed);
+    const auto atHigh = Loss::traversalGain(8'000.0, traversal, radius, density, soundSpeed);
+    require(atLow > atMid && atMid > atHigh,
+            "wall attenuation must increase with frequency");
+    require(atHigh > 0.0 && atLow < 1.0, "attenuation must be positive and lossy");
+
+    // The sqrt(f) law: an eightfold frequency increase must raise the exponent
+    // by sqrt(8), so ln(gain) scales accordingly.
+    const auto exponentAt1k = -std::log(atMid);
+    const auto exponentAt8k = -std::log(atHigh);
+    require(std::abs(exponentAt8k / exponentAt1k - std::sqrt(8.0)) < 0.02,
+            "attenuation must follow the sqrt(f) boundary-layer law");
+
+    // Narrower ducts and longer ducts attenuate more.
+    require(Loss::traversalGain(1'000.0, traversal, radius * 0.5, density, soundSpeed) < atMid,
+            "a narrower duct must attenuate more");
+    require(Loss::traversalGain(1'000.0, traversal * 2.0, radius, density, soundSpeed) < atMid,
+            "a longer duct must attenuate more");
+
+    // Passive at every frequency, and exact at DC (a static pressure difference
+    // is not attenuated by a boundary layer).
+    require(Loss::traversalGain(0.0, traversal, radius, density, soundSpeed) == 1.0,
+            "there is no boundary-layer loss at zero frequency");
+
+    // The fitted one-pole must reproduce the exact gain at the reference
+    // frequency, and must be stable and passive.
+    const auto coefficients = Loss::fit(traversal, radius, density, soundSpeed, sampleRate);
+    require(coefficients.pole >= 0.0F && coefficients.pole < 1.0F,
+            "fitted pole must be inside the unit circle");
+    {
+        const auto omega = 2.0 * std::numbers::pi * Loss::referenceFrequencyHz / sampleRate;
+        const auto z = std::polar(1.0, -omega);
+        const auto pole = static_cast<double>(coefficients.pole);
+        const auto magnitude = std::abs((1.0 - pole) / (1.0 - pole * z));
+        const auto exact = Loss::traversalGain(Loss::referenceFrequencyHz, traversal,
+                                               radius, density, soundSpeed);
+        require(std::abs(magnitude - exact) < 1.0e-6,
+                "the one-pole must match the exact attenuation at its reference");
+    }
+    // Monotone and bounded by unity across the band.
+    {
+        const auto pole = static_cast<double>(coefficients.pole);
+        auto previous = 1.1;
+        for (int step = 0; step <= 64; ++step) {
+            const auto frequency = static_cast<double>(step) / 64.0 * sampleRate * 0.5;
+            const auto z = std::polar(1.0, -2.0 * std::numbers::pi * frequency / sampleRate);
+            const auto magnitude = std::abs((1.0 - pole) / (1.0 - pole * z));
+            require(magnitude <= 1.0 + 1.0e-9, "wall loss must never amplify");
+            require(magnitude <= previous + 1.0e-9, "wall loss must be monotone in frequency");
+            previous = magnitude;
+        }
+    }
+
+    // A lossless or degenerate configuration must pass through untouched rather
+    // than produce a silent or divergent line.
+    Loss::State state;
+    const auto degenerate = Loss::fit(0.0, radius, density, soundSpeed, sampleRate);
+    require(std::abs(Loss::process(degenerate, state, 1.0F) - 1.0F) < 1.0e-6,
+            "a zero-length duct must not attenuate");
+    state.reset();
+    (void) Loss::process(coefficients, state, std::numeric_limits<float>::infinity());
+    require(std::isfinite(state.previousOutput),
+            "wall-loss state must stay finite after a non-finite sample");
+
+    // Hotter gas is more viscous, so a hotter duct attenuates more for the same
+    // geometry. Sound speed carries the temperature.
+    require(Loss::traversalGain(1'000.0, traversal, radius, density, 700.0)
+                < Loss::traversalGain(1'000.0, traversal, radius, density, 400.0),
+            "hotter gas must attenuate more at equal density and geometry");
+}
+
 int main() {
     try {
+        ductWallLossRegression();
         valvePortTerminationRegression();
         latencyAndBlockSizeRegression();
         runnerDelaySampleRateRegression();

@@ -1,7 +1,9 @@
 #pragma once
 #include <enginelab/audio/IAudioRenderer.hpp>
 #include <enginelab/audio/PipeRadiationModel.hpp>
+#include <enginelab/audio/DuctWallLoss.hpp>
 #include <enginelab/audio/RealtimeConvolutionBank.hpp>
+#include <enginelab/audio/ValvePortTermination.hpp>
 #include <enginelab/runtime/EngineRuntime.hpp>
 #include <algorithm>
 #include <array>
@@ -138,6 +140,16 @@ private:
         float exhaustBodyRight {};
         float exhaustAirLeft {};
         float exhaustAirRight {};
+        /** Thermoviscous attenuation over one collector-to-outlet traversal,
+         *  applied independently in each direction. Refitted per block from the
+         *  path's own gas state; see DuctWallLoss. */
+        DuctWallLoss::Coefficients wallLoss {};
+        DuctWallLoss::State wallLossOutbound {};
+        DuctWallLoss::State wallLossReturn {};
+        /** Path-average gas state, cached from the last physical sample so the
+         *  per-block wall-loss fit does not need per-sample transcendentals. */
+        float mediumDensityKgPerM3 { 1.2F };
+        float mediumSoundSpeedMps { 343.0F };
     };
     struct RunnerWaveguides final {
         DelayLineBank forward;
@@ -152,11 +164,26 @@ private:
     void activatePhysicalExhaust() noexcept;
     void trigger(const FiringEvent&, bool exhaust) noexcept;
     void updateExhaustPreset(int preset) noexcept;
+    /** Instantaneous physical state of one exhaust port's valve.
+     *
+     * Carried per runner so the port's orifice termination can be recomputed
+     * every sample: its resistance depends on the acoustic velocity through the
+     * opening, which is only known inside the waveguide.
+     */
+    struct PortBoundary final {
+        float conductanceAreaM2 {};
+        float meanMassFlowKgPerSecond {};
+        float densityKgPerM3 {};
+        float characteristicImpedancePaSPerM3 {};
+        /** False until the runtime publishes a valid thermoacoustic boundary. */
+        bool physical { false };
+    };
     [[nodiscard]] std::array<float, maximumPaths> processExhaustWaveguides(
         const std::array<float, maxRunners>& pulse,
         const std::array<std::uint8_t, maxRunners>& pathIndex,
         const std::array<float, maxRunners>& runnerAdmittance,
         const std::array<float, maxRunners>& portReflection,
+        const std::array<PortBoundary, maxRunners>& portBoundary,
         const std::array<float, maximumPaths>& outletAdmittance,
         std::size_t count, std::size_t pathCount) noexcept;
     [[nodiscard]] float processMufflerFdn(ExhaustPathState&, float sample) noexcept;
@@ -251,6 +278,16 @@ private:
     std::array<float, 32> exhaustMeanMassFlowKgPerSecond_ {};
     std::array<float, 32> thermoacousticRunnerAdmittance_ {};
     std::array<float, 32> thermoacousticPortReflection_ {};
+    /** Latest published valve state per runner, and the two filter memories the
+     *  orifice termination needs: one for the wave reflecting inside the runner,
+     *  one for separating the measured boundary into source and reflection. */
+    std::array<PortBoundary, maxRunners> portBoundary_ {};
+    std::array<ValvePortTermination::State, maxRunners> portReflectionState_ {};
+    std::array<ValvePortTermination::State, maxRunners> portSourceState_ {};
+    /** Thermoviscous attenuation over one runner traversal, per direction. */
+    std::array<DuctWallLoss::Coefficients, maxRunners> runnerWallLoss_ {};
+    std::array<DuctWallLoss::State, maxRunners> runnerWallLossToJunction_ {};
+    std::array<DuctWallLoss::State, maxRunners> runnerWallLossToPort_ {};
     std::array<bool, 32> thermoacousticMeanInitialised_ {};
     float thermoacousticMeanCoefficient_ { 0.0F };
     bool physicalExhaustActive_ { false };

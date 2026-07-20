@@ -199,6 +199,11 @@ void RealtimeEngineAudio::release() noexcept {
         path.reflectedLowPass = path.collectorState = path.previousCollectorInput = 0.0F;
         path.jitterDelaySamples = path.exhaustBodyLeft = path.exhaustBodyRight = 0.0F;
         path.exhaustAirLeft = path.exhaustAirRight = 0.0F;
+        path.wallLoss = {};
+        path.wallLossOutbound.reset();
+        path.wallLossReturn.reset();
+        path.mediumDensityKgPerM3 = 1.2F;
+        path.mediumSoundSpeedMps = 343.0F;
         path.radiation.reset();
     }
     lowPassLeft_ = 0.0F; lowPassRight_ = 0.0F;
@@ -228,6 +233,14 @@ void RealtimeEngineAudio::release() noexcept {
     thermoacousticRunnerAdmittance_.fill(0.0F);
     thermoacousticPortReflection_.fill(0.999F);
     thermoacousticMeanInitialised_.fill(false);
+    // A stale boundary would let a new engine's runner reflect off the previous
+    // engine's valve until the first pressure sample arrives.
+    portBoundary_.fill({});
+    for (auto& state : portReflectionState_) state.reset();
+    for (auto& state : portSourceState_) state.reset();
+    runnerWallLoss_.fill({});
+    for (auto& state : runnerWallLossToJunction_) state.reset();
+    for (auto& state : runnerWallLossToPort_) state.reset();
     physicalExhaustActive_ = false;
     pressureSampleIntervalSeconds_ = 0.0;
     levelLimitedSamples_.store(0, std::memory_order_relaxed);
@@ -480,6 +493,18 @@ void RealtimeEngineAudio::render(juce::AudioBuffer<float>& output, int startSamp
             : outletAreaM2[path];
         collectorReflection[path] = std::clamp(
             presetReflection_ * (1.12F - pathOpenness[path] * 0.30F), 0.04F, 0.78F);
+        // Refit the collector-to-outlet wall loss once per block. The gas state
+        // moves on a far slower timescale than a block, and the fit needs
+        // transcendentals that have no place in the per-sample loop.
+        if (physicalExhaustActive_) {
+            auto& state = exhaustPaths_[path];
+            state.wallLoss = DuctWallLoss::fit(
+                static_cast<double>(state.reflectionDelaySamples) / sampleRate_,
+                std::sqrt(static_cast<double>(outletAreaM2[path]) / std::numbers::pi),
+                static_cast<double>(state.mediumDensityKgPerM3),
+                static_cast<double>(state.mediumSoundSpeedMps),
+                sampleRate_);
+        }
     }
     const auto fdnScale = sampleRate_ / referenceSampleRate * acousticDelayScale;
     for (std::size_t line = 0; line < referenceFdnSamples.size(); ++line) {
@@ -512,6 +537,22 @@ void RealtimeEngineAudio::render(juce::AudioBuffer<float>& output, int startSamp
                 ? cachedAdmittance
                 : runnerAreaM2[runner] / static_cast<float>(1.2 * ambientSoundSpeedMps);
             portReflection[runner] = thermoacousticPortReflection_[runner];
+            // Refit the runner wall loss once per block, from the port's own gas
+            // state. A runner is narrow and hot, so its boundary-layer loss is
+            // the strongest damping any high mode in the network sees.
+            const auto& boundary = portBoundary_[runner];
+            if (boundary.physical)
+                runnerWallLoss_[runner] = DuctWallLoss::fit(
+                    static_cast<double>(runners_->delaySamples[runner]) / sampleRate_,
+                    std::sqrt(static_cast<double>(runnerAreaM2[runner]) / std::numbers::pi),
+                    static_cast<double>(boundary.densityKgPerM3),
+                    boundary.characteristicImpedancePaSPerM3 > 0.0F
+                        && boundary.densityKgPerM3 > 0.0F
+                        ? static_cast<double>(boundary.characteristicImpedancePaSPerM3)
+                            * static_cast<double>(runnerAreaM2[runner])
+                            / static_cast<double>(boundary.densityKgPerM3)
+                        : 343.0,
+                    sampleRate_);
         } else {
             // Legacy scattering used area-proportional weights because it did
             // not carry a medium state. It remains isolated to that path.
@@ -711,21 +752,32 @@ void RealtimeEngineAudio::render(juce::AudioBuffer<float>& output, int startSamp
                         const auto incomingMeasured = 0.5F * (pressurePerturbationPa
                             - characteristicImpedance * volumeVelocityPerturbation);
 
-                        auto reflection = 1.0F;
-                        if (valveConductanceAreaM2 > 1.0e-10F) {
-                            // Linearisation of dp = rho/2 * (U/CdA)^2 about the
-                            // instantaneous mean flow. This is the valve's real
-                            // small-signal resistance, not an opening heuristic.
-                            const auto valveResistance = std::abs(massFlowKgPerSecond)
-                                / (valveConductanceAreaM2 * valveConductanceAreaM2);
-                            reflection = (valveResistance - characteristicImpedance)
-                                / (valveResistance + characteristicImpedance);
-                        }
-                        reflection = std::clamp(reflection, -0.999F, 0.999F);
-                        portReflection[index] = reflection;
-                        thermoacousticPortReflection_[index] = reflection;
+                        // Publish the valve state; the termination itself is
+                        // evaluated inside the waveguide, where the acoustic
+                        // velocity through the orifice that sets its resistance
+                        // is known. See ValvePortTermination.
+                        auto& boundary = portBoundary_[index];
+                        boundary.conductanceAreaM2 = valveConductanceAreaM2;
+                        boundary.meanMassFlowKgPerSecond = massFlowKgPerSecond;
+                        boundary.densityKgPerM3 = densityKgPerM3;
+                        boundary.characteristicImpedancePaSPerM3 = characteristicImpedance;
+                        boundary.physical = true;
+
+                        // Separate the measured boundary into the part the
+                        // cylinder is driving and the part that is merely the
+                        // runner's own returning wave reflecting off the port,
+                        // so the waveguide is not fed its own reflection twice.
+                        // The mean-flow term alone is used here: this filter sees
+                        // the telemetry stream, not the in-runner wave.
+                        const auto sourceCoefficients = ValvePortTermination::compute(
+                            valveConductanceAreaM2, massFlowKgPerSecond, 0.0,
+                            densityKgPerM3, characteristicImpedance, sampleRate_);
+                        const auto reflectedIncoming = ValvePortTermination::process(
+                            sourceCoefficients, portSourceState_[index], incomingMeasured);
+                        thermoacousticPortReflection_[index] = static_cast<float>(
+                            sourceCoefficients.b0);
                         cylinderExhaustPulse[index] = std::isfinite(outgoingMeasured)
-                            ? outgoingMeasured - reflection * incomingMeasured : 0.0F;
+                            ? outgoingMeasured - reflectedIncoming : 0.0F;
                         runnerAdmittance[index] = areaM2
                             / (densityKgPerM3 * soundSpeedMps);
                         thermoacousticRunnerAdmittance_[index] = runnerAdmittance[index];
@@ -787,12 +839,15 @@ void RealtimeEngineAudio::render(juce::AudioBuffer<float>& output, int startSamp
                 const auto soundSpeed = pathSoundSpeedSum[path] / pathMediumWeight[path];
                 outletAdmittance[path] = outletAreaM2[path] / (density * soundSpeed);
                 exhaustPaths_[path].outletAcousticAdmittance = outletAdmittance[path];
+                // Cached for the next block's wall-loss fit.
+                exhaustPaths_[path].mediumDensityKgPerM3 = density;
+                exhaustPaths_[path].mediumSoundSpeedMps = soundSpeed;
                 (void) exhaustPaths_[path].radiation.setMedium(density, soundSpeed);
             }
         }
         const auto collectorOut = processExhaustWaveguides(
             cylinderExhaustPulse, cylinderExhaustPath, runnerAdmittance, portReflection,
-            outletAdmittance, activeCylinderCount, exhaustPathCount);
+            portBoundary_, outletAdmittance, activeCylinderCount, exhaustPathCount);
         constexpr auto directWidth = 0.34F;
         for (std::size_t path = 0; path < exhaustPathCount; ++path) {
             const auto exhaustExciteLeft = sampleUsesPhysicalExhaust
@@ -950,10 +1005,17 @@ void RealtimeEngineAudio::render(juce::AudioBuffer<float>& output, int startSamp
                     - delay0) & path.waveMask;
                 const auto read1 = (path.waveWrite + path.forwardWave.size()
                     - delay0 - 1U) & path.waveMask;
-                const auto incidentAtMouth = std::lerp(path.forwardWave[read0],
-                    path.forwardWave[read1], fraction);
-                const auto returnedAtCollector = std::lerp(path.reverseWave[read0],
-                    path.reverseWave[read1], fraction);
+                // Both legs have travelled the collector-to-outlet length, so
+                // both are attenuated by the duct wall. Without this the only
+                // loss in the whole path was the radiation load, which reflects
+                // almost perfectly at low frequency -- the network's modes then
+                // rang far above the firing harmonics.
+                const auto incidentAtMouth = DuctWallLoss::process(
+                    path.wallLoss, path.wallLossOutbound,
+                    std::lerp(path.forwardWave[read0], path.forwardWave[read1], fraction));
+                const auto returnedAtCollector = DuctWallLoss::process(
+                    path.wallLoss, path.wallLossReturn,
+                    std::lerp(path.reverseWave[read0], path.reverseWave[read1], fraction));
                 const auto radiation = path.radiation.process(incidentAtMouth);
                 path.reverseWave[path.waveWrite] = finiteState(
                     static_cast<float>(radiation.reflectedPressurePa), 5.0e6F);
@@ -1359,6 +1421,7 @@ std::array<float, RealtimeEngineAudio::maximumPaths> RealtimeEngineAudio::proces
     const std::array<std::uint8_t, maxRunners>& pathIndex,
     const std::array<float, maxRunners>& runnerAdmittance,
     const std::array<float, maxRunners>& portReflection,
+    const std::array<PortBoundary, maxRunners>& portBoundary,
     const std::array<float, maximumPaths>& outletAdmittance,
     std::size_t count, std::size_t pathCount) noexcept {
     // Bidirectional digital waveguide: each cylinder's blow-down pulse travels
@@ -1389,7 +1452,11 @@ std::array<float, RealtimeEngineAudio::maximumPaths> RealtimeEngineAudio::proces
         const auto read0 = (runners_->write[i] + stride - delay0) & mask;
         const auto read1 = (runners_->write[i] + stride - delay0 - 1U) & mask;
         const auto* forward = runners_->forward.line(i);
-        arrived[i] = std::lerp(forward[read0], forward[read1], fraction);
+        // The wave has just travelled the runner's full length to reach the
+        // junction, so it arrives attenuated by the duct's boundary layer.
+        arrived[i] = DuctWallLoss::process(runnerWallLoss_[i],
+            runnerWallLossToJunction_[i],
+            std::lerp(forward[read0], forward[read1], fraction));
         const auto path = std::min<std::size_t>(pathIndex[i], pathCount - 1U);
         const auto admittance = std::clamp(runnerAdmittance[i], 1.0e-10F, 0.10F);
         weightedIncidentSum[path] += admittance * arrived[i];
@@ -1423,9 +1490,35 @@ std::array<float, RealtimeEngineAudio::maximumPaths> RealtimeEngineAudio::proces
         auto* forward = runners_->forward.line(i);
         auto* backward = runners_->backward.line(i);
         // Wave that left the junction 'delay' samples ago now reaches the port
-        // and reflects off the (mostly closed during exhaust) valve/port end.
-        const auto portReturn = std::lerp(backward[read0], backward[read1], fraction)
-            * std::clamp(portReflection[i], -0.999F, 0.999F);
+        // and reflects off the valve.
+        // Likewise for the return leg, junction back down to the port.
+        const auto portIncident = DuctWallLoss::process(runnerWallLoss_[i],
+            runnerWallLossToPort_[i],
+            std::lerp(backward[read0], backward[read1], fraction));
+        float portReturn = 0.0F;
+        if (portBoundary[i].physical) {
+            // The orifice resistance is set by the total velocity through the
+            // opening, so the acoustic volume velocity has to be evaluated here,
+            // from the wave state, rather than precomputed from telemetry. The
+            // previous sample's reflection is used, which is the standard
+            // explicit treatment of a nonlinear termination and keeps the
+            // waveguide causal.
+            const auto& boundary = portBoundary[i];
+            const auto impedance = static_cast<double>(
+                boundary.characteristicImpedancePaSPerM3);
+            const auto acousticVolumeVelocity = impedance > 0.0
+                ? (static_cast<double>(portIncident)
+                    - portReflectionState_[i].previousOutput) / impedance
+                : 0.0;
+            const auto coefficients = ValvePortTermination::compute(
+                boundary.conductanceAreaM2, boundary.meanMassFlowKgPerSecond,
+                acousticVolumeVelocity, boundary.densityKgPerM3, impedance,
+                sampleRate_);
+            portReturn = ValvePortTermination::process(
+                coefficients, portReflectionState_[i], portIncident);
+        } else {
+            portReturn = portIncident * std::clamp(portReflection[i], -0.999F, 0.999F);
+        }
         forward[runners_->write[i]] = finiteState(pulse[i] + portReturn, 5.0e6F);
         backward[runners_->write[i]] = finiteState(
             junctionPressure[path] - arrived[i], 5.0e6F);
