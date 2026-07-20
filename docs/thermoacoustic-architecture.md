@@ -344,3 +344,43 @@ Aucun test de non-régression ne garde cette correction. Le seul invariant propr
 envisagé — « pas d'énergie au-dessus du Nyquist de couplage » — est faux en
 toute rigueur, la terminaison de soupape étant non linéaire et créant
 légitimement des harmoniques. Un seuil inventé aurait été pire que rien.
+
+## 12. Le peigne de trame : la vraie origine du « métallique » (résolu)
+
+La section 11 laissait des pics « au-dessus du Nyquist de couplage » inexpliqués.
+Leur origine est désormais établie et corrigée. Les pics dominants de tout le
+catalogue tombaient sur des multiples exacts de 240.07 Hz — la cadence de trame
+— identiques d'un moteur à l'autre (4081 Hz sur le V8 **et** l'I2), avec des
+bandes latérales au taux d'allumage de chaque moteur. Le repliage synchrone à
+200 échantillons (fold) a mesuré la composante verrouillée trame à ~−32 dB du
+RMS total.
+
+Attribution par élimination, chaque étape mesurée : couches synthétiques
+coupées (`--mute-combustion/-mechanical/-intake`) → persiste ; IR remplacée par
+un Dirac → persiste ; refits par bloc gelés → persiste ; dyno du harnais lissé
+à 2 Hz → persiste ; sous-blocs de rendu de 100 (`--audio-chunk`) → le peigne ne
+suit pas la taille de bloc. Conclusion forcée : le peigne entre par la
+télémétrie — la **solution du réseau elle-même** était modulée à la trame.
+
+Cause : la vidange du réseau était forcée au dernier sous-pas de chaque trame.
+Quand le nombre de sous-pas n'est pas multiple du stride (V8 : 49 sous-pas,
+stride 2), la dernière fenêtre de moyennage est tronquée — le même motif
+irrégulier répété à 240 Hz. Quatre corrections, par ordre d'élimination :
+filtre de reconstruction anti-imagerie suivant la cadence publiée ;
+reconstruction à délai constant (625 µs) sur anneau de nœuds horodatés ;
+rampes à 10 Hz sur les délais pilotés par télémétrie de trame ; et la décisive,
+une **grille d'intégration réseau libre** (accumulateurs membres, vidange par
+durée accumulée, plus jamais par fin de trame).
+
+Résultat en configuration d'usine : plus aucun pic dominant sur le peigne.
+I4 16.5 dB @ 2241 Hz (mode réel), V8 34.6 dB @ 983 Hz (4e harmonique
+d'allumage — contenu moteur), I2 12.1 dB @ 678 Hz, Radial 17.7 dB @ 523 Hz.
+Haute bande 0.2–0.6 % (contre 3–15 % en début de chantier). La suppression de
+la fenêtre dégénérée rend en outre ~20 % de CPU : LS3 3.73 → 2.89 ms à
+3630 tr/min, 5.13 → 4.15 ms à 5940 — de retour dans le budget.
+
+Résidu documenté : le radial garde une raie faible à 32×240 Hz, sa grille de
+couplage étant réellement commensurable avec la trame (8 vidanges par trame
+exactement) ; énergie haute bande 0.0 %. La composante verrouillée trame
+restante est concentrée à 240/480 Hz — la réponse authentique du moteur aux
+commandes par trame — et non plus dans l'aigu.
