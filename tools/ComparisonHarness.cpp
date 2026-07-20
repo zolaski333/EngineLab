@@ -295,6 +295,144 @@ std::vector<DynoSweepPoint> runSteadyDyno(const enginelab::EngineConfig& config,
     return points;
 }
 
+/**
+ * Result of starting an engine and then leaving it entirely alone.
+ *
+ * Everything else in this harness drives the engine: the dyno sweep holds
+ * throttle at 1.0 against a brake, and the acceptance run holds 0.72 against a
+ * load controller. Both keep the engine turning by construction, so neither can
+ * observe whether an engine can hold its own idle. An engine that stalls the
+ * moment it is released passes every one of those checks and is still useless.
+ */
+struct IdleStability final {
+    double meanIdleRpm {};
+    double minimumIdleRpm {};
+    double maximumIdleRpm {};
+    double finalRpm {};
+    bool everStarted { false };
+    bool stalled { false };
+    // Engine state captured at the last moment the engine was still turning
+    // above half its idle target. For an engine that dies this is the state on
+    // the way down, which is what identifies the torque that killed it.
+    double peakRpm {};
+    double stallTimeSeconds {};
+    double stallManifoldKpa {};
+    double stallExhaustKpa {};
+    double stallIndicatedTorqueNm {};
+    double stallFrictionTorqueNm {};
+    double stallPumpingTorqueNm {};
+    double stallNetTorqueNm {};
+    double stallAirFuelRatio {};
+    double stallTrappedMassMg {};
+    double stallRequestedFuelMg {};
+    double stallDeliveredFuelMg {};
+    double stallFuelDeliveryRatio {};
+    double stallResidualFraction {};
+};
+
+/**
+ * Start the engine on the starter, release it, and hold a closed throttle.
+ *
+ * No dynamometer torque, no clutch reaction, no brake: the only things acting on
+ * the crank are the engine's own combustion, its friction and pumping work, and
+ * whatever idle control the ECU applies. This is the weakest condition an engine
+ * has to survive, and the one the application puts it in the moment it is
+ * loaded, so it is the right place to assert idle stability.
+ */
+IdleStability runIdleStability(const enginelab::EngineConfig& config,
+                               bool trace = false) {
+    enginelab::SimpleEcuModel ecu;
+    enginelab::SimplifiedGasolinePhysics physics;
+    enginelab::FourStrokeEventGenerator events;
+    auto exhaust = enginelab::ExhaustGraph::makeForEngine(config);
+    auto simulator = std::make_unique<enginelab::EngineSimulator>(
+        config, ecu, physics, events, exhaust);
+
+    constexpr double dt = 1.0 / 240.0;
+    constexpr double starterReleaseSeconds = 2.0;
+    // The post-start air schedule decays over up to six seconds after catch, and
+    // an engine running an elevated fast idle during that time is behaving
+    // correctly, not failing to hold idle. Judge only after it has bled away, so
+    // this measures governed idle rather than the start transient.
+    constexpr double settleSeconds = 10.0;
+    constexpr double totalSeconds = 16.0;
+    // The engine is considered to have caught once it exceeds the speed a
+    // starter alone can sustain.
+    const auto startedRpm = std::max(400.0, config.idleRpm * 0.60);
+
+    IdleStability result;
+    result.minimumIdleRpm = std::numeric_limits<double>::max();
+    double rpmSum = 0.0;
+    std::size_t samples = 0;
+
+    for (int step = 0; step < static_cast<int>(totalSeconds / dt); ++step) {
+        const auto time = static_cast<double>(step) * dt;
+        enginelab::EngineControls controls;
+        controls.ignitionEnabled = true;
+        controls.starterEngaged = time < starterReleaseSeconds;
+        controls.throttle = 0.0;
+        const auto frame = simulator->step(dt, controls);
+        const auto rpm = frame.state.rpm;
+        if (rpm > startedRpm) result.everStarted = true;
+        result.peakRpm = std::max(result.peakRpm, rpm);
+        // Latch the state while the engine is still alive and unaided, so a
+        // stall can be attributed rather than merely observed.
+        if (!controls.starterEngaged && rpm > config.idleRpm * 0.50) {
+            result.stallTimeSeconds = time;
+            result.stallManifoldKpa = frame.state.manifoldPressureKpa;
+            result.stallExhaustKpa = frame.state.exhaustPressureKpa;
+            result.stallIndicatedTorqueNm = frame.state.indicatedTorqueNm;
+            result.stallFrictionTorqueNm = frame.state.frictionTorqueNm;
+            result.stallPumpingTorqueNm = frame.state.pdvTorqueNm;
+            result.stallNetTorqueNm = frame.state.netTorqueNm;
+            if (frame.state.cylinderStateCount > 0) {
+                const auto& cylinder = frame.state.cylinderStates[0];
+                result.stallAirFuelRatio = cylinder.airFuelRatio;
+                result.stallTrappedMassMg = cylinder.trappedMassMg;
+                result.stallRequestedFuelMg = cylinder.requestedFuelMgPerCycle;
+                result.stallDeliveredFuelMg = cylinder.deliveredFuelMgPerCycle;
+                result.stallFuelDeliveryRatio = cylinder.fuelDeliveryRatio;
+                result.stallResidualFraction = cylinder.residualGasFraction;
+            }
+        }
+        // Only judge the settled window, so the start transient and the
+        // starter-release dip are not mistaken for an unstable idle.
+        if (time >= settleSeconds) {
+            rpmSum += rpm;
+            ++samples;
+            result.minimumIdleRpm = std::min(result.minimumIdleRpm, rpm);
+            result.maximumIdleRpm = std::max(result.maximumIdleRpm, rpm);
+        }
+        result.finalRpm = rpm;
+        // Time trace. Whether the mixture goes lean before the speed collapses
+        // or after it is the difference between a fuelling cause and a fuelling
+        // symptom, and a single sample at the moment of death cannot tell them
+        // apart.
+        if (trace && frame.state.cylinderStateCount > 0
+                && step % static_cast<int>(0.10 / dt) == 0) {
+            const auto& cylinder = frame.state.cylinderStates[0];
+            std::cout << "    t=" << std::fixed << std::setprecision(2) << time
+                      << " starter=" << (controls.starterEngaged ? 1 : 0)
+                      << " rpm=" << std::setprecision(1) << rpm
+                      << " MAP=" << frame.state.manifoldPressureKpa
+                      << " AFR=" << std::setprecision(2) << cylinder.airFuelRatio
+                      << " req/del=" << cylinder.requestedFuelMgPerCycle << '/'
+                      << cylinder.deliveredFuelMgPerCycle
+                      << " trapped=" << cylinder.trappedMassMg
+                      << " cycTq=" << frame.state.cycleAveragedTorqueNm
+                      << " fric=" << frame.state.frictionTorqueNm
+                      << '\n';
+        }
+    }
+    if (samples != 0) result.meanIdleRpm = rpmSum / static_cast<double>(samples);
+    if (result.minimumIdleRpm == std::numeric_limits<double>::max())
+        result.minimumIdleRpm = 0.0;
+    // Stalled means it caught and then died, or never caught at all.
+    result.stalled = !result.everStarted
+        || result.finalRpm < config.idleRpm * 0.50;
+    return result;
+}
+
 bool runCatalogAcceptance(const std::filesystem::path& root, const std::string& engineFilter,
                           const std::filesystem::path& output) {
     const auto catalog = enginelab::loadEngineCatalog(root);
@@ -457,6 +595,47 @@ bool runCatalogAcceptance(const std::filesystem::path& root, const std::string& 
         }
         if (engineFailed) {
             std::cerr << "Catalog physics gate failed: " << config.name << '\n';
+            failed = true;
+        }
+
+        // Idle stability, measured with the engine released rather than driven.
+        const auto idle = runIdleStability(config, !engineFilter.empty());
+        std::cout << "  idle " << config.name
+                  << ": started=" << (idle.everStarted ? "yes" : "NO")
+                  << " peak=" << idle.peakRpm
+                  << " mean=" << idle.meanIdleRpm
+                  << " min=" << idle.minimumIdleRpm
+                  << " final=" << idle.finalRpm
+                  << " target=" << config.idleRpm
+                  << (idle.stalled ? "  [STALLED]" : "") << '\n';
+        std::cout << "       last-alive t=" << idle.stallTimeSeconds
+                  << "s MAP=" << idle.stallManifoldKpa
+                  << " exh=" << idle.stallExhaustKpa
+                  << " kPa torque ind/fric/pump/net="
+                  << idle.stallIndicatedTorqueNm << '/'
+                  << idle.stallFrictionTorqueNm << '/'
+                  << idle.stallPumpingTorqueNm << '/'
+                  << idle.stallNetTorqueNm
+                  << " Nm AFR=" << idle.stallAirFuelRatio
+                  << " trapped=" << idle.stallTrappedMassMg << " mg"
+                  << " fuel req/del=" << idle.stallRequestedFuelMg << '/'
+                  << idle.stallDeliveredFuelMg
+                  << " ratio=" << idle.stallFuelDeliveryRatio
+                  << " residual=" << idle.stallResidualFraction << '\n';
+        if (!idle.everStarted) {
+            std::cerr << "Idle gate failed: " << config.name
+                      << " never started on the starter\n";
+            failed = true;
+        } else if (idle.stalled) {
+            std::cerr << "Idle gate failed: " << config.name
+                      << " stalled after the starter was released (final rpm "
+                      << idle.finalRpm << ", idle target " << config.idleRpm << ")\n";
+            failed = true;
+        } else if (idle.meanIdleRpm < config.idleRpm * 0.70
+                   || idle.meanIdleRpm > config.idleRpm * 1.45) {
+            std::cerr << "Idle gate failed: " << config.name
+                      << " does not hold its idle target (mean " << idle.meanIdleRpm
+                      << " rpm, target " << config.idleRpm << ")\n";
             failed = true;
         }
         if (!engineFilter.empty()) {
