@@ -379,11 +379,17 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
         : maximumLowSpeedCouplingSeconds;
     const auto exhaustCouplingStride = std::max(std::size_t { 1 },
         static_cast<std::size_t>(std::floor(maximumExhaustCouplingSeconds / subDt)));
+    state_.exhaustCouplingFrequencyHz = subDt > 0.0
+        ? 1.0 / (subDt * static_cast<double>(exhaustCouplingStride)) : 0.0;
     std::array<double, 32> exhaustValveConductanceTimeIntegralM2S {};
     std::array<gasdynamics::ConservativeState, 32> exhaustBoundaryStateTimeIntegral {};
     std::array<double, 32> exhaustBoundaryVolumeTimeIntegralM3S {};
     double exhaustCouplingDurationSeconds = 0.0;
     double outletOpeningScaleTimeIntegralSeconds = 0.0;
+    // Diagnostic only: how much acoustic bandwidth the network resolves against
+    // how much the audio boundary is allowed to observe. See EngineState.
+    std::uint64_t exhaustNetworkAcceptedSubsteps = 0;
+    double exhaustNetworkAdvancedSeconds = 0.0;
 
     for (std::size_t subStep = 0; subStep < subStepCount; ++subStep) {
         const auto subStepStartTime = state_.simulationTimeSeconds;
@@ -1097,6 +1103,8 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 ambient);
             exhaustNetworkCompleted = networkAdvance.completed;
             exhaustAdvanceDurationSeconds = networkAdvance.advancedTimeSeconds;
+            exhaustNetworkAcceptedSubsteps += networkAdvance.acceptedSubsteps;
+            exhaustNetworkAdvancedSeconds += networkAdvance.advancedTimeSeconds;
             if (!networkAdvance.completed) state_.solverResolutionLimited = true;
 
             const auto cylinderExchanges = physicalExhaustNetwork.cylinderExchanges();
@@ -1580,6 +1588,13 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
     state_.crankDegreesPerSolverStep = maximumIntegratedCrankStep;
     state_.solverResolutionLimited = state_.solverResolutionLimited
         || maximumIntegratedCrankStep > config_.solver.maximumCrankDegreesPerStep + 1.0e-9;
+    // Rate the network resolved at, over the network time it actually advanced.
+    // Dividing by frame dt instead would dilute it on frames where the coupling
+    // stride left the network held, and understate the resolved bandwidth.
+    state_.exhaustNetworkAcceptedSubsteps = exhaustNetworkAcceptedSubsteps;
+    state_.exhaustNetworkSubstepFrequencyHz = exhaustNetworkAdvancedSeconds > 0.0
+        ? static_cast<double>(exhaustNetworkAcceptedSubsteps) / exhaustNetworkAdvancedSeconds
+        : 0.0;
     frame.state = state_;
     return frame;
 }

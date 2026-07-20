@@ -160,6 +160,12 @@ struct Metrics {
     // rates the simulator actually ran at rather than against a guess.
     double solverFrequencyHz {};
     std::uint32_t solverSubsteps {};
+    // Bandwidth accounting. The network resolves the acoustic field at
+    // networkSubstepHz; the audio boundary only observes it at couplingHz.
+    // Spectral content above couplingHz/2 cannot be physical, so any reported
+    // resonance above that line is a reconstruction image, not a mode.
+    double networkSubstepHz {};
+    double couplingHz {};
     std::uint64_t droppedEvents {};
     std::uint64_t droppedPressureSamples {};
     std::uint64_t lateEvents {};
@@ -456,6 +462,8 @@ Metrics renderEngine(const EngineConfig& baseConfig, const WavData& ir,
     m.finalRpm = simulator.state().rpm;
     m.solverFrequencyHz = simulator.state().solverFrequencyHz;
     m.solverSubsteps = simulator.state().solverSubsteps;
+    m.networkSubstepHz = simulator.state().exhaustNetworkSubstepFrequencyHz;
+    m.couplingHz = simulator.state().exhaustCouplingFrequencyHz;
     m.droppedEvents = droppedEvents + renderer.droppedPendingEventCount();
     m.droppedPressureSamples = droppedPressureSamples;
     m.lateEvents = renderer.lateEventCount();
@@ -481,6 +489,9 @@ Metrics renderEngine(const EngineConfig& baseConfig, const WavData& ir,
               << " boundaryDropouts=" << m.invalidBoundarySamples
               << " solverHz=" << std::setprecision(0) << m.solverFrequencyHz
               << " substeps=" << m.solverSubsteps
+              << " networkHz=" << std::setprecision(0) << m.networkSubstepHz
+              << " couplingHz=" << std::setprecision(0) << m.couplingHz
+              << " couplingNyq=" << std::setprecision(0) << m.couplingHz * 0.5
               << " resonance=" << std::setprecision(1) << m.left.window.maxResonanceProminenceDb
               << "dB@" << std::setprecision(0) << m.left.window.maxResonanceFrequencyHz << "Hz"
               << " bands=" << std::setprecision(1) << m.left.window.lowBandFraction * 100.0

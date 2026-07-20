@@ -527,6 +527,23 @@ struct EngineState final {
     double crankDegreesPerSolverStep { 0.0 };
     std::uint32_t solverSubsteps { 0 };
     bool solverResolutionLimited { false };
+    /** CFL substeps the exhaust network accepted internally over the last frame.
+     *
+     * The network resolves the acoustic field at this cadence, which is far
+     * above the multirate coupling cadence that the audio boundary is sampled
+     * at. Published so the ratio between the two is observable: bandwidth the
+     * solver has already paid for but that nothing downstream reads is invisible
+     * from any other measurement.
+     */
+    std::uint64_t exhaustNetworkAcceptedSubsteps { 0 };
+    /** Wall-clock rate of those substeps, Hz. Compare against the coupling
+     * cadence to see how much resolved bandwidth reaches the audio path.
+     */
+    double exhaustNetworkSubstepFrequencyHz { 0.0 };
+    /** Cadence at which the audio boundary is actually sampled, Hz. Content
+     * above half this frequency cannot be physical.
+     */
+    double exhaustCouplingFrequencyHz { 0.0 };
     double volumetricEfficiency { 0.0 };
     double airMassMgPerCycle { 0.0 };
     double injectedFuelMgPerCycle { 0.0 };
