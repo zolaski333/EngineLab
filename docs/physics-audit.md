@@ -394,3 +394,81 @@ comportement courant : ça re-calibrerait le test sur ce qu'il est censé attrap
 - Quand des courbes dyno de référence seront disponibles, valider le couple/
   puissance absolus (aujourd'hui `CatalogPhysics` vérifie la stabilité, pas les
   valeurs absolues).
+
+
+## Étage fautif du remplissage : la soupape d'admission n'étrangle pas (mesuré)
+
+Mesuré au `EngineLabPhysicsPerfHarness` (plein gaz, moteur tenu au régime), LS3
+à 5940 tr/min. Chaque étage de la chaîne de remplissage a été relâché **seul**,
+et le seul critère est le déplacement de la VE.
+
+| variante | VE | couple | EGT |
+|---|---|---|---|
+| référence | 0.328 | 92 Nm | 948 °C |
+| soupape adm. x1.4 (section x2) | **0.326** | 94 Nm | 949 °C |
+| levée adm. x1.5 | 0.347 | 109 Nm | 925 °C |
+| durée adm. +60° | 0.340 | 110 Nm | 894 °C |
+| soupape éch. x1.4 | 0.340 | 110 Nm | 931 °C |
+| échappement grand ouvert | 0.341 | 144 Nm | 876 °C |
+| papillon + plénum x2 | 0.343 | 103 Nm | 930 °C |
+| **runner adm. x1.6** | **0.439** | 138 Nm | 808 °C |
+| **runner adm. x2.0** | **0.613** | 29 Nm | 422 °C |
+
+**Le diagnostic est dans l'asymétrie, pas dans un chiffre isolé.** Doubler la
+section de la soupape d'admission ne change **rien** (0.328 → 0.326), et ne
+change toujours rien quand on l'ajoute par-dessus un runner doublé
+(0.613 → 0.610). Doubler le diamètre du runner fait **+87 %** de VE, sans
+saturation.
+
+Or dans un moteur réel à 5900 tr/min la soupape *est* la restriction : c'est
+l'ouverture la plus petite et la plus brève de tout le conduit. Ici, pour le
+LS3, la section de passage moyenne à la soupape (~775 mm² sur l'événement,
+55 mm de diamètre, 12.8 mm de levée, Cd 0.70) est **inférieure à la moitié** de
+la section du runner (1963 mm² pour 50 mm) — et pourtant c'est le runner qui
+mesure le débit. **Le rapport de restriction est inversé.**
+
+### Ce que ça coûte, en chaîne
+
+VE 0.33 (au lieu de 0.85-1.05) → IMEP 3.5 bar (au lieu de 9-12) → **91 Nm là où
+le moteur modélisé en fait ~520** → la chaleur qui aurait dû devenir du travail
+part à l'échappement, d'où **EGT 1256 °C** (au lieu de 800-950).
+
+Côté audio, deux conséquences distinctes :
+
+1. **Désaccord global.** c = sqrt(gamma R T) : 770 m/s à 1256 °C contre 674 à
+   900 °C. Tous les retards du guide d'ondes sont 14 % trop courts, donc tout
+   l'échappement sonne ~2.3 demi-tons trop haut. L'erreur est du même ordre au
+   ralenti (15 %), donc c'est un désaccord quasi constant.
+2. **Excitation inversée.** L'IMEP chute d'un facteur 3 du ralenti à la zone
+   rouge, et c'est la détente qui excite tout le guide d'ondes. Un vrai
+   échappement durcit en montant ; celui-ci s'éteint. C'est probablement une
+   part importante du « ça manque de rage en haut » et du « ils se ressemblent »,
+   puisque tous les moteurs convergent vers une excitation faible et similaire
+   là où ils devraient le plus se distinguer.
+
+### Deux fausses pistes écartées par la mesure
+
+- **`state_.exhaustPressureKpa` est un `max` sur tous les ports** (le pic de
+  détente d'un cylindre quelconque), pas une moyenne. Ça *semble* être la cause
+  de la contre-pression apparente de 0.87 à 1.74 bar. Remplacé par une moyenne :
+  la pression rapportée baisse, **la VE, le couple et l'EGT ne bougent pas d'un
+  chiffre**. C'est de la télémétrie ; le remplissage vient du réseau de gaz
+  résolu, pas de cette valeur.
+- **Le plafond apparent à VE ~0.43** ("tout relâché" n'allait pas plus haut)
+  n'existe pas : cette variante n'ouvrait le runner qu'à x1.6. À x2.0 la VE
+  passe à 0.613 sans saturer.
+
+### Limite honnête
+
+La localisation est **empirique**. Le mécanisme exact — pourquoi la section
+effective de soupape ne borne pas le débit dans le couplage runner/soupape —
+n'a pas été lu dans le code, délibérément : ce dépôt punit les hypothèses de
+lecture. C'est la prochaine étape, et elle doit commencer par le couplage
+frontière soupape ↔ maille de runner.
+
+Corriger ceci change le couple, le niveau sonore et l'accord de **tous** les
+moteurs du catalogue. Les références existent désormais (LS3 : 430 ch à
+5900 tr/min, 575 Nm à 4600 ; VE 0.85-1.05 plein gaz ; EGT 800-950 °C) et
+l'instrument aussi, donc la règle « pas de changement physique sans référence
+dyno » est satisfaite — mais la mesure doit précéder le correctif, pas le
+suivre.
