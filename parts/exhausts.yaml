@@ -40,12 +40,18 @@ short_v_twin:
   muffler_restriction: 0.18
   outlet_diameter_mm: 60
 
+# Short individual ejector stacks, near-open to atmosphere. A Merlin-style
+# aircraft V12 exhausts each cylinder through its own ~150 mm stack with no
+# collector or silencer; the previous 980 mm primaries into a 128 mm manifold
+# buried the blowdown crack in a low-frequency boom (and cost ~3x the FV cells,
+# pushing the V12 past the realtime budget). The wide "collector" here stands
+# in for the shared atmosphere-side merge the model topology requires.
 aircraft_manifold:
-  primary_length_mm: 980
-  primary_diameter_mm: 64
-  collector_diameter_mm: 128
-  muffler_restriction: 0.04
-  outlet_diameter_mm: 145
+  primary_length_mm: 150
+  primary_diameter_mm: 52
+  collector_diameter_mm: 130
+  muffler_restriction: 0.02
+  outlet_diameter_mm: 140
 
 flat6_equal_length:
   primary_length_mm: 720
