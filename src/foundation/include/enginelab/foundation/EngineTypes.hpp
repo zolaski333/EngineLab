@@ -491,6 +491,14 @@ struct CylinderState final {
     double valveLiftMultiplier { 1.0 };
     double intakeResonancePressureKpa { 0.0 };
     double intakeResonanceFrequencyHz { 0.0 };
+    /** Charge state in this cylinder's own intake runner, at the valve.
+     *
+     * What an IAT sensor in the port would read, and the direct determinant of
+     * charge density and therefore of volumetric efficiency. Reported per
+     * cylinder rather than per plenum because reversion through the intake
+     * valve heats one runner at a time. */
+    double intakeRunnerTemperatureC { 22.0 };
+    double intakeRunnerChargePressureKpa { 101.325 };
 };
 
 struct EngineState final {

@@ -1548,6 +1548,9 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 state_.crankAngleDegrees, state_.angularVelocityRadPerSecond,
                 state_.netTorqueNm / effectiveRotatingInertiaKgM2(config_));
             auto& cylinderState = state_.cylinderStates[index];
+            cylinderState.intakeRunnerTemperatureC =
+                intakeRunnerGas_[index].temperatureK() - 273.15;
+            cylinderState.intakeRunnerChargePressureKpa = intakeRunnerPressureKpa_[index];
             cylinderState.airFuelRatio = actualAfrLastCycle_[index];
             cylinderState.requestedFuelMgPerCycle = requestedFuelMolesThisCycle_[index]
                 * config_.fuelProperties.molarMassGramsPerMole * 1'000.0;

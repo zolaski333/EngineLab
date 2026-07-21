@@ -140,6 +140,68 @@ StepMetrics measurePoint(enginelab::EngineSimulator& simulator, double targetRpm
 }
 
 
+/**
+ * Dump one cylinder's gas-exchange cycle at crank resolution (`--trace rpm`).
+ *
+ * The swept CSV above reports cycle averages, and a cycle average cannot tell a
+ * healthy engine from one that fills with hot gas: it reports what went in, not
+ * what state it was in. This mode settles the engine at a speed under the same
+ * wide-open dyno as measurePoint(), then continues at 1/48 of the frame step so
+ * consecutive rows are ~2 deg of crank apart, and prints the charge state on
+ * both sides of the intake valve.
+ *
+ * Reading it: the columns that matter are `irt_c` (intake runner charge
+ * temperature) against `cyl_mass_mg` (trapped mass). Filling failures show up
+ * there as a density problem long before they show up as a pressure one -- the
+ * runner sitting at 333 degC while the manifold reads a healthy 96 kPa is what
+ * exposed the jet-momentum defect in docs/physics-audit.md.
+ *
+ * Note the fine step is a diagnostic instrument, not the delivered cadence: it
+ * changes the solver substep structure, so read trends and ratios from it and
+ * take absolute figures from the swept CSV.
+ */
+void traceEngine(const enginelab::EngineConfig& baseConfig, double targetRpm) {
+    auto config = baseConfig;
+    enginelab::normaliseEngineConfig(config);
+    enginelab::SimpleEcuModel ecu;
+    enginelab::SimplifiedGasolinePhysics physics;
+    enginelab::FourStrokeEventGenerator events;
+    auto exhaust = enginelab::ExhaustGraph::makeForEngine(config);
+    enginelab::EngineSimulator simulator(config, ecu, physics, events, exhaust);
+    constexpr double dt = 1.0 / 240.0;
+    auto dynoIntegral = 0.0;
+    const auto drive = [&](double stepDt) {
+        const auto speedError = (simulator.state().rpm - targetRpm) / std::max(1.0, targetRpm);
+        dynoIntegral = std::clamp(dynoIntegral + speedError * stepDt * 1.20, 0.0, 0.95);
+        enginelab::EngineControls controls;
+        controls.ignitionEnabled = true;
+        controls.starterEngaged = simulator.state().rpm < 550.0;
+        controls.throttle = 1.0;
+        controls.load = std::clamp(dynoIntegral + speedError * 0.70, 0.0, 1.0);
+        return simulator.step(stepDt, controls);
+    };
+    for (int step = 0; step < static_cast<int>(4.0 / dt); ++step) (void)drive(dt);
+    std::cout << "phase,rpm,cyl_p_bar,cyl_t_c,cyl_mass_mg,runner_kpa,lift_mm,"
+                 "intake_v_mps,intake_mg,residual,exh_gps,net_hz,limited,irt_c,irp_kpa\n";
+    const auto fineDt = dt / 48.0;
+    const auto cycleSeconds = 120.0 / std::max(1.0, simulator.state().rpm);
+    const auto fineSteps = static_cast<int>(1.2 * cycleSeconds / fineDt);
+    for (int step = 0; step < fineSteps; ++step) {
+        const auto frame = drive(fineDt);
+        const auto& c = frame.state.cylinderStates[0];
+        std::cout << c.cyclePhaseDegrees << ',' << frame.state.rpm << ',' << c.pressureEstimateBar
+                  << ',' << c.gasTemperatureC << ',' << c.trappedMassMg
+                  << ',' << c.runnerPressureKpa << ',' << c.intakeValveLiftMm
+                  << ',' << c.intakeVelocityMps << ',' << c.intakeFlowMgPerCycle
+                  << ',' << c.residualGasFraction
+                  << ',' << frame.state.exhaustFlowGramsPerSecond
+                  << ',' << frame.state.exhaustNetworkSubstepFrequencyHz
+                  << ',' << (frame.state.solverResolutionLimited ? 1 : 0)
+                  << ',' << c.intakeRunnerTemperatureC
+                  << ',' << c.intakeRunnerChargePressureKpa << '\n';
+    }
+}
+
 void measureEngine(const enginelab::EngineConfig& baseConfig, int run) {
     auto config = baseConfig;
     enginelab::normaliseEngineConfig(config);
@@ -184,14 +246,16 @@ int main(int argc, char** argv) {
     std::filesystem::path catalogRoot = std::filesystem::current_path();
     std::string filter;
     auto runs = 3;
+    auto traceRpm = 0.0;
     for (int index = 1; index < argc; ++index) {
         const std::string argument = argv[index];
         if (argument == "--catalog-root" && index + 1 < argc) catalogRoot = argv[++index];
         else if (argument == "--filter" && index + 1 < argc) filter = argv[++index];
+        else if (argument == "--trace" && index + 1 < argc) traceRpm = std::stod(argv[++index]);
         else if (argument == "--runs" && index + 1 < argc) runs = std::max(1, std::stoi(argv[++index]));
         else {
             std::cerr << "usage: EngineLabPhysicsPerfHarness [--catalog-root dir]"
-                         " [--filter name-fragment] [--runs count]\n";
+                         " [--filter name-fragment] [--runs count] [--trace rpm]\n";
             return EXIT_FAILURE;
         }
     }
@@ -214,6 +278,11 @@ int main(int argc, char** argv) {
     }
 
     std::cout << std::fixed << std::setprecision(3);
+    // --trace is a single-engine instrument: pair it with --filter.
+    if (traceRpm > 0.0) {
+        traceEngine(engines.front(), traceRpm);
+        return EXIT_SUCCESS;
+    }
     std::cout << "engine,cylinders,run,target_rpm,actual_rpm,mean_us,p50_us,p95_us,max_us,mean_substeps,"
                  "exhaust_c,imep_bar,peak_cyl_bar,lambda,torque_nm,power_kw,ve,"
                  "map_kpa,exh_kpa,runner_kpa,intake_mg,trapped_mg,residual,air_mg\n";
