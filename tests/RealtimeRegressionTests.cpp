@@ -1,5 +1,6 @@
 #include <enginelab/audio/AcousticMonitorCalibration.hpp>
 #include <enginelab/audio/BoundaryReconstructionFilter.hpp>
+#include <enginelab/audio/NonlinearDuctAcoustics.hpp>
 #include <enginelab/audio/RealtimeEngineAudio.hpp>
 #include <enginelab/audio/DuctWallLoss.hpp>
 #include <enginelab/audio/PipeRadiationModel.hpp>
@@ -955,6 +956,128 @@ void boundaryReconstructionRegression() {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Finite-amplitude duct propagation (steepening)
+// ---------------------------------------------------------------------------
+
+// References are analytic, not simulator output. A finite-amplitude simple wave
+// steepens as it propagates, and to leading order in the acoustic Mach number
+// its second harmonic grows as
+//     B_2 / B_1 -> sigma / 2,   sigma = beta * (p / rho c^2) * omega * T,
+// which is the O(sigma) term of the exact pre-shock Fubini series
+//     B_n / B_1 = [J_n(n sigma) / (n sigma)] / [J_1(sigma) / sigma].
+// The single-probe steepened read is a FIRST-ORDER scheme: it reproduces that
+// O(sigma) second-harmonic law but deliberately under-generates the O(sigma^2)
+// third harmonic (an exact match there needs a shock-capturing characteristics
+// solver, which is out of scope for an audio-band effect). The invariants below
+// therefore assert exactly what first-order theory guarantees -- the leading
+// second-harmonic law, a present and monotonically decreasing cascade, growth
+// with drive, and passivity -- and nothing the scheme is not built to deliver.
+void nonlinearDuctAcousticsRegression() {
+    namespace Duct = enginelab::NonlinearDuctAcoustics;
+
+    // Transparency invariants: zero amplitude, an invalid medium, or a
+    // non-finite sample must reproduce the linear read exactly.
+    require(Duct::delayScale(0.0F, 150'000.0F) == 1.0F,
+            "zero amplitude must propagate at exactly the linear speed");
+    require(Duct::delayScale(5'000.0F, 0.0F) == 1.0F,
+            "an unpublished medium must disable the correction");
+    require(Duct::delayScale(std::numeric_limits<float>::quiet_NaN(), 150'000.0F) == 1.0F,
+            "a non-finite sample must not corrupt the read position");
+    // Sign: compressions travel faster than c, rarefactions slower.
+    require(Duct::delayScale(10'000.0F, 150'000.0F) < 1.0F,
+            "a compression must arrive earlier than the linear wave");
+    require(Duct::delayScale(-10'000.0F, 150'000.0F) > 1.0F,
+            "a rarefaction must arrive later than the linear wave");
+    // The Mach clamp bounds the correction for absurd amplitudes.
+    require(std::abs(Duct::delayScale(1.0e9F, 150'000.0F) - 1.0F / 1.3F) < 1.0e-4F,
+            "the compression clamp must bound the correction at +30% Mach");
+
+    // Hot-exhaust medium, 400 Hz tone, 2 ms transit. Drive a pure sine through
+    // the steepened read and project the output onto its first harmonics
+    // (integer FFT bins, so no window is needed). Returns B1..B4 magnitudes and
+    // the input/output power, for a requested normalised distance sigma.
+    constexpr double sampleRate = 48'000.0;
+    constexpr double toneHz = 400.0;
+    constexpr float rhoC2 = 0.52F * 550.0F * 550.0F; // 157.3 kPa
+    constexpr float nominalDelay = 96.0F;             // 2 ms transit
+    constexpr int warmupSamples = 2 * static_cast<int>(nominalDelay);
+    constexpr int analysisSamples = 4'800;            // exact tone periods
+    struct Cascade { std::array<double, 4> b; double inPow, outPow; };
+    const auto runCascade = [&](double sigma, bool steepen) {
+        const auto amplitudePa = static_cast<float>(sigma * rhoC2
+            / (Duct::coefficientOfNonlinearity * 2.0 * std::numbers::pi * toneHz
+               * (nominalDelay / sampleRate)));
+        std::vector<float> line(256, 0.0F);
+        const std::size_t mask = line.size() - 1;
+        std::size_t write = 0;
+        const auto readDelayed = [&line, &write, mask](float delaySamples) {
+            const auto delay0 = static_cast<std::size_t>(delaySamples);
+            const auto fraction = delaySamples - static_cast<float>(delay0);
+            const auto read0 = (write + line.size() - delay0) & mask;
+            const auto read1 = (write + line.size() - delay0 - 1U) & mask;
+            return std::lerp(line[read0], line[read1], fraction);
+        };
+        std::array<std::complex<double>, 4> bins {};
+        double inPow = 0.0, outPow = 0.0;
+        for (int n = 0; n < warmupSamples + analysisSamples; ++n) {
+            const auto phase = 2.0 * std::numbers::pi * toneHz
+                * static_cast<double>(n) / sampleRate;
+            const auto input = amplitudePa * static_cast<float>(std::sin(phase));
+            line[write] = input;
+            write = (write + 1U) & mask;
+            const auto output = Duct::steepenedRead(readDelayed, nominalDelay,
+                static_cast<float>(line.size() - 2), steepen ? rhoC2 : 0.0F);
+            if (n < warmupSamples) continue;
+            inPow += static_cast<double>(input) * static_cast<double>(input);
+            outPow += static_cast<double>(output) * static_cast<double>(output);
+            for (std::size_t h = 0; h < bins.size(); ++h)
+                bins[h] += static_cast<double>(output)
+                    * std::polar(1.0, -phase * static_cast<double>(h + 1));
+        }
+        Cascade result { {}, inPow, outPow };
+        for (std::size_t h = 0; h < bins.size(); ++h) result.b[h] = std::abs(bins[h]);
+        return result;
+    };
+
+    // Leading-order law: at a small normalised distance where first-order
+    // theory is accurate, B2/B1 must approach sigma/2. sigma = 0.3 -> 0.15.
+    {
+        const auto c = runCascade(0.3, true);
+        require(c.b[0] > 0.0, "the fundamental must survive the read");
+        const auto second = c.b[1] / c.b[0];
+        require(std::abs(second - 0.15) < 0.15 * 0.30,
+                "second-harmonic growth must follow the leading-order sigma/2 law");
+        // A real steepening cascade: harmonics present and monotonically
+        // decreasing, not a single spurious tone.
+        require(c.b[1] > c.b[2] && c.b[2] > c.b[3] && c.b[3] > 0.0,
+                "the harmonic cascade must decrease monotonically and be fully populated");
+    }
+
+    // Amplitude dependence is the signature of nonlinearity: doubling the drive
+    // must roughly double B2/B1 (a linear delay line would leave it at zero).
+    {
+        const auto low = runCascade(0.25, true);
+        const auto high = runCascade(0.50, true);
+        const auto ratioLow = low.b[1] / low.b[0];
+        const auto ratioHigh = high.b[1] / high.b[0];
+        require(ratioHigh > ratioLow * 1.6,
+                "second-harmonic content must grow with drive level");
+        // Passivity: the read is a pure time warp and cannot add energy.
+        require(high.outPow <= high.inPow * 1.02,
+                "steepening must not amplify the wave");
+    }
+
+    // Control: with the medium disabled the identical drive must leave the tone
+    // undistorted, proving the cascade came from the model, not the fractional
+    // interpolation in the read.
+    {
+        const auto linear = runCascade(0.50, false);
+        require(linear.b[1] / linear.b[0] < 1.0e-4,
+                "the linear read must not distort the tone");
+    }
+}
+
 // The runtime's published calibration default is duplicated from the audio
 // module's documented constant (audio depends on runtime, so it cannot be
 // included there). If they drift apart the delivered level stops matching the
@@ -973,6 +1096,7 @@ int main() {
         ductWallLossRegression();
         valvePortTerminationRegression();
         boundaryReconstructionRegression();
+        nonlinearDuctAcousticsRegression();
         latencyAndBlockSizeRegression();
         runnerDelaySampleRateRegression();
         exhaustPathIsolationRegression();

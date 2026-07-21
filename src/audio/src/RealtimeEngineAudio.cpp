@@ -1,5 +1,6 @@
 #include <enginelab/audio/RealtimeEngineAudio.hpp>
 #include <enginelab/audio/AcousticMonitorCalibration.hpp>
+#include <enginelab/audio/NonlinearDuctAcoustics.hpp>
 #include <enginelab/foundation/ExhaustGasAcoustics.hpp>
 #include <algorithm>
 #include <cmath>
@@ -34,6 +35,28 @@ constexpr double ambientSoundSpeedMps = 343.0;
 [[nodiscard]] float rateInvariantCoefficient(float referenceCoefficient,
                                              double sampleRate) noexcept {
     return 1.0F - rateInvariantPole(1.0F - referenceCoefficient, sampleRate);
+}
+
+/** Interpolated read at a fractional delay behind a masked ring's write cursor. */
+[[nodiscard]] float readWaveDelayed(const std::vector<float>& line, std::size_t write,
+                                    std::size_t mask, float delaySamples) noexcept {
+    const auto delay0 = static_cast<std::size_t>(delaySamples);
+    const auto fraction = delaySamples - static_cast<float>(delay0);
+    const auto read0 = (write + line.size() - delay0) & mask;
+    const auto read1 = (write + line.size() - delay0 - 1U) & mask;
+    return std::lerp(line[read0], line[read1], fraction);
+}
+
+/** Finite-amplitude read: probe at the nominal delay, re-read at the
+ *  amplitude-corrected arrival time. See NonlinearDuctAcoustics. */
+[[nodiscard]] float readWaveSteepened(const std::vector<float>& line, std::size_t write,
+                                      std::size_t mask, float delaySamples,
+                                      float delayLimit, float stiffnessRhoC2) noexcept {
+    return NonlinearDuctAcoustics::steepenedRead(
+        [&line, write, mask](float delay) {
+            return readWaveDelayed(line, write, mask, delay);
+        },
+        delaySamples, delayLimit, stiffnessRhoC2);
 }
 
 /** Smallest power of two >= value, floored at a usable minimum. */
@@ -236,6 +259,7 @@ void RealtimeEngineAudio::release() noexcept {
     exhaustMeanMassFlowKgPerSecond_.fill(0.0F);
     thermoacousticRunnerAdmittance_.fill(0.0F);
     thermoacousticPortReflection_.fill(0.999F);
+    runnerStiffnessRhoC2_.fill(0.0F);
     thermoacousticMeanInitialised_.fill(false);
     // A stale boundary would let a new engine's runner reflect off the previous
     // engine's valve until the first pressure sample arrives.
@@ -868,6 +892,8 @@ void RealtimeEngineAudio::render(juce::AudioBuffer<float>& output, int startSamp
                         runnerAdmittance[index] = areaM2
                             / (densityKgPerM3 * soundSpeedMps);
                         thermoacousticRunnerAdmittance_[index] = runnerAdmittance[index];
+                        runnerStiffnessRhoC2_[index] = densityKgPerM3
+                            * soundSpeedMps * soundSpeedMps;
                         pathDensitySum[resolvedPath] += densityKgPerM3 * areaM2;
                         pathSoundSpeedSum[resolvedPath] += soundSpeedMps * areaM2;
                         pathMediumWeight[resolvedPath] += areaM2;
@@ -1089,13 +1115,14 @@ void RealtimeEngineAudio::render(juce::AudioBuffer<float>& output, int startSamp
                 // Collector -> outlet characteristic, passive unflanged load,
                 // then the reflected characteristic returns to the collector.
                 // Every value on these two delay lines remains pressure in Pa.
-                const auto delay0 = static_cast<std::size_t>(path.reflectionDelaySamples);
-                const auto fraction = path.reflectionDelaySamples
-                    - static_cast<float>(delay0);
-                const auto read0 = (path.waveWrite + path.forwardWave.size()
-                    - delay0) & path.waveMask;
-                const auto read1 = (path.waveWrite + path.forwardWave.size()
-                    - delay0 - 1U) & path.waveMask;
+                // Finite-amplitude propagation over the collector-to-outlet
+                // duct: strong compressions arrive early, so wavefronts steepen
+                // and repopulate the harmonics above the telemetry band. See
+                // NonlinearDuctAcoustics for the model and its clamps.
+                const auto stiffnessRhoC2 = path.mediumDensityKgPerM3
+                    * path.mediumSoundSpeedMps * path.mediumSoundSpeedMps;
+                const auto waveDelayLimit = static_cast<float>(
+                    path.forwardWave.size() - 2);
                 // Both legs have travelled the collector-to-outlet length, so
                 // both are attenuated by the duct wall. Without this the only
                 // loss in the whole path was the radiation load, which reflects
@@ -1103,10 +1130,12 @@ void RealtimeEngineAudio::render(juce::AudioBuffer<float>& output, int startSamp
                 // rang far above the firing harmonics.
                 const auto incidentAtMouth = DuctWallLoss::process(
                     path.wallLoss, path.wallLossOutbound,
-                    std::lerp(path.forwardWave[read0], path.forwardWave[read1], fraction));
+                    readWaveSteepened(path.forwardWave, path.waveWrite, path.waveMask,
+                        path.reflectionDelaySamples, waveDelayLimit, stiffnessRhoC2));
                 const auto returnedAtCollector = DuctWallLoss::process(
                     path.wallLoss, path.wallLossReturn,
-                    std::lerp(path.reverseWave[read0], path.reverseWave[read1], fraction));
+                    readWaveSteepened(path.reverseWave, path.waveWrite, path.waveMask,
+                        path.reflectionDelaySamples, waveDelayLimit, stiffnessRhoC2));
                 const auto radiation = path.radiation.process(incidentAtMouth);
                 path.reverseWave[path.waveWrite] = finiteState(
                     static_cast<float>(radiation.reflectedPressurePa), 5.0e6F);
@@ -1549,6 +1578,27 @@ std::array<float, RealtimeEngineAudio::maximumPaths> RealtimeEngineAudio::proces
     std::array<float, maximumPaths> weightedIncidentSum {};
     std::array<float, maximumPaths> junctionAdmittance {};
     std::array<std::size_t, maximumPaths> runnerCount {};
+    // Interpolated read at a fractional delay behind a line's write cursor.
+    const auto readDelayed = [stride, mask](const float* line, std::size_t write,
+                                            float delaySamples) {
+        const auto delay0 = static_cast<std::size_t>(delaySamples);
+        const auto fraction = delaySamples - static_cast<float>(delay0);
+        const auto read0 = (write + stride - delay0) & mask;
+        const auto read1 = (write + stride - delay0 - 1U) & mask;
+        return std::lerp(line[read0], line[read1], fraction);
+    };
+    // Finite-amplitude propagation: legacy runners publish rho*c^2 = 0 and
+    // therefore read at exactly the nominal delay. See NonlinearDuctAcoustics.
+    const auto readSteepened = [&readDelayed](const float* line, std::size_t write,
+                                              float delaySamples, float delayLimit,
+                                              float stiffnessRhoC2) {
+        return NonlinearDuctAcoustics::steepenedRead(
+            [&readDelayed, line, write](float delay) {
+                return readDelayed(line, write, delay);
+            },
+            delaySamples, delayLimit, stiffnessRhoC2);
+    };
+    const auto delayLimit = static_cast<float>(stride - 2);
     for (std::size_t i = 0; i < n; ++i) {
         // Ramp the delay toward its block-rate target; applying the target
         // directly phase-jumps the line at every telemetry frame. See
@@ -1556,18 +1606,14 @@ std::array<float, RealtimeEngineAudio::maximumPaths> RealtimeEngineAudio::proces
         // this loop and the port loop below within the same sample.
         runners_->delaySamples[i] += controlRampCoefficient_
             * (runners_->delayTargetSamples[i] - runners_->delaySamples[i]);
-        const auto exactDelay = std::clamp(runners_->delaySamples[i], 1.0F,
-            static_cast<float>(stride - 2));
-        const auto delay0 = static_cast<std::size_t>(exactDelay);
-        const auto fraction = exactDelay - static_cast<float>(delay0);
-        const auto read0 = (runners_->write[i] + stride - delay0) & mask;
-        const auto read1 = (runners_->write[i] + stride - delay0 - 1U) & mask;
+        const auto exactDelay = std::clamp(runners_->delaySamples[i], 1.0F, delayLimit);
         const auto* forward = runners_->forward.line(i);
         // The wave has just travelled the runner's full length to reach the
         // junction, so it arrives attenuated by the duct's boundary layer.
         arrived[i] = DuctWallLoss::process(runnerWallLoss_[i],
             runnerWallLossToJunction_[i],
-            std::lerp(forward[read0], forward[read1], fraction));
+            readSteepened(forward, runners_->write[i], exactDelay, delayLimit,
+                          runnerStiffnessRhoC2_[i]));
         const auto path = std::min<std::size_t>(pathIndex[i], pathCount - 1U);
         const auto admittance = std::clamp(runnerAdmittance[i], 1.0e-10F, 0.10F);
         weightedIncidentSum[path] += admittance * arrived[i];
@@ -1592,12 +1638,7 @@ std::array<float, RealtimeEngineAudio::maximumPaths> RealtimeEngineAudio::proces
     }
     for (std::size_t i = 0; i < n; ++i) {
         const auto path = std::min<std::size_t>(pathIndex[i], pathCount - 1U);
-        const auto exactDelay = std::clamp(runners_->delaySamples[i], 1.0F,
-            static_cast<float>(stride - 2));
-        const auto delay0 = static_cast<std::size_t>(exactDelay);
-        const auto fraction = exactDelay - static_cast<float>(delay0);
-        const auto read0 = (runners_->write[i] + stride - delay0) & mask;
-        const auto read1 = (runners_->write[i] + stride - delay0 - 1U) & mask;
+        const auto exactDelay = std::clamp(runners_->delaySamples[i], 1.0F, delayLimit);
         auto* forward = runners_->forward.line(i);
         auto* backward = runners_->backward.line(i);
         // Wave that left the junction 'delay' samples ago now reaches the port
@@ -1605,7 +1646,8 @@ std::array<float, RealtimeEngineAudio::maximumPaths> RealtimeEngineAudio::proces
         // Likewise for the return leg, junction back down to the port.
         const auto portIncident = DuctWallLoss::process(runnerWallLoss_[i],
             runnerWallLossToPort_[i],
-            std::lerp(backward[read0], backward[read1], fraction));
+            readSteepened(backward, runners_->write[i], exactDelay, delayLimit,
+                          runnerStiffnessRhoC2_[i]));
         float portReturn = 0.0F;
         if (portBoundary[i].physical) {
             // The orifice resistance is set by the total velocity through the

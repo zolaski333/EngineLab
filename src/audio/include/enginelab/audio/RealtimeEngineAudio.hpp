@@ -317,6 +317,10 @@ private:
     std::array<float, 32> exhaustMeanMassFlowKgPerSecond_ {};
     std::array<float, 32> thermoacousticRunnerAdmittance_ {};
     std::array<float, 32> thermoacousticPortReflection_ {};
+    /** rho*c^2 of each runner's gas, for the finite-amplitude (steepening)
+     *  propagation correction. Zero until physical telemetry arrives, which
+     *  NonlinearDuctAcoustics::delayScale treats as exactly linear. */
+    std::array<float, 32> runnerStiffnessRhoC2_ {};
     /** Latest published valve state per runner, and the two filter memories the
      *  orifice termination needs: one for the wave reflecting inside the runner,
      *  one for separating the measured boundary into source and reflection. */
