@@ -369,7 +369,18 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
     // while the instantaneous Riemann boundary remains sampled at that faster
     // cadence for audio. The absolute cap also resolves cranking transients where
     // firing frequency alone approaches zero.
-    constexpr auto maximumLowSpeedCouplingSeconds = 500.0e-6;
+    //
+    // The cap sets the audio bandwidth of the exhaust boundary wherever the
+    // per-firing-period rule is slower than it -- i.e. at idle and low rpm,
+    // and across the whole range of low-cylinder-count engines. At 500 us the
+    // published coupling Nyquist was ~1 kHz there, which listeners reported as
+    // a muffled, undifferentiated exhaust: every engine's blowdown edge was
+    // smeared by the same reconstruction cutoff. 250 us doubles that headroom.
+    // The extra cost is per-flush overhead only (the network's internal CFL
+    // substep count per second is unchanged), and the low-speed regime where
+    // this cap binds is far below the redline load case that sets the budget.
+    // Measured before committing: see docs/thermoacoustic-architecture.md.
+    constexpr auto maximumLowSpeedCouplingSeconds = 250.0e-6;
     constexpr auto couplingSamplesPerFiringPeriod = 16.0;
     const auto firingFrequencyHz = std::abs(state_.rpm)
         * static_cast<double>(config_.cylinders.size()) / 120.0;
