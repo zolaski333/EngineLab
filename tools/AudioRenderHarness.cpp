@@ -37,6 +37,7 @@
 #include <iostream>
 #include <memory>
 #include <numbers>
+#include <numeric>
 #include <string>
 #include <thread>
 #include <vector>
@@ -950,6 +951,14 @@ bool runtimePathCheck(const EngineConfig& baseConfig, const WavData& ir) {
     double squareSum = 0.0;
     std::size_t sampleCount = 0;
     const auto blockSeconds = static_cast<double>(blockSize) / audioRate;
+    // Cost of the audio callback itself, against the wall-clock time the block
+    // represents. This is the only number that says whether the delivered
+    // renderer fits a real device callback: the offline spectra all pass on a
+    // renderer that is twice too slow to run. Measured here rather than in the
+    // hand-stepped renders because only this path has the runtime thread
+    // competing for cores, which is what a user's machine actually does.
+    std::vector<double> renderMicroseconds;
+    renderMicroseconds.reserve(static_cast<std::size_t>(6.0 / blockSeconds) + 1U);
     // Pace against an absolute deadline, not by sleeping a block's worth per
     // iteration. A 256-sample block at 48 kHz is 5.3 ms, which is below the
     // granularity of a Windows sleep: sleeping per block would run the render
@@ -961,7 +970,12 @@ bool runtimePathCheck(const EngineConfig& baseConfig, const WavData& ir) {
         if (rendered > 1.5) runtime->setStarterEngaged(false);
         if (rendered > 3.0) runtime->setThrottle(0.5);
         block.clear();
+        const auto renderBegin = std::chrono::steady_clock::now();
         renderer->render(block, 0, blockSize);
+        const auto renderEnd = std::chrono::steady_clock::now();
+        if (rendered > 1.5)
+            renderMicroseconds.push_back(
+                std::chrono::duration<double, std::micro>(renderEnd - renderBegin).count());
         for (int s = 0; s < blockSize; ++s) {
             const auto value = static_cast<double>(block.getSample(0, s));
             if (!std::isfinite(value)) continue;
@@ -982,6 +996,16 @@ bool runtimePathCheck(const EngineConfig& baseConfig, const WavData& ir) {
 
     const auto rms = sampleCount != 0
         ? std::sqrt(squareSum / static_cast<double>(sampleCount)) : 0.0;
+    // A device callback must return within the block period, every time; the
+    // p95 is therefore the number that matters, not the mean.
+    std::sort(renderMicroseconds.begin(), renderMicroseconds.end());
+    const auto renderMean = renderMicroseconds.empty() ? 0.0
+        : std::accumulate(renderMicroseconds.begin(), renderMicroseconds.end(), 0.0)
+            / static_cast<double>(renderMicroseconds.size());
+    const auto renderP95 = renderMicroseconds.empty() ? 0.0
+        : renderMicroseconds[static_cast<std::size_t>(
+            0.95 * static_cast<double>(renderMicroseconds.size() - 1U))];
+    const auto blockBudgetMicroseconds = blockSeconds * 1.0e6;
     const auto physical = renderer->physicalExhaustActive();
     // Engine speed at the end of the run. A silent render means nothing until
     // it is known whether the engine was still turning: a stalled engine is a
@@ -997,7 +1021,22 @@ bool runtimePathCheck(const EngineConfig& baseConfig, const WavData& ir) {
               << " observerPeak=" << std::setprecision(1)
               << renderer->maxObservedExhaustPressurePa() << " Pa"
               << " droppedPressure=" << runtime->droppedPressureSampleCount()
-              << '\n';
+              << '\n'
+              << "  " << std::setw(26) << " "
+              << " callback mean=" << std::setprecision(1) << renderMean << "us"
+              << " p95=" << renderP95 << "us"
+              << " max=" << (renderMicroseconds.empty() ? 0.0 : renderMicroseconds.back()) << "us"
+              << " budget=" << blockBudgetMicroseconds << "us"
+              << " load(p95)=" << std::setprecision(1)
+              << renderP95 / blockBudgetMicroseconds * 100.0 << "%"
+              // The other realtime thread. A comfortable audio callback proves
+              // nothing on its own: if the 240 Hz physics loop misses its
+              // deadline the telemetry stream stalls, and the exhaust chain --
+              // which is driven only by that telemetry -- is what degrades.
+              << " physicsOverruns=" << runtime->timingOverrunCount()
+              << "/" << static_cast<std::uint64_t>(rendered * 240.0)
+              << " maxLate=" << std::setprecision(2)
+              << runtime->maximumTimingLatenessSeconds() * 1.0e3 << "ms\n";
     auto ok = physical;
     if (!physical)
         std::cerr << "FAIL: runtime wiring: " << config.name
@@ -1065,11 +1104,27 @@ int main(int argc, char** argv) {
     {
         const auto runtimeCatalog = loadEngineCatalog(
             std::filesystem::path(ENGINELAB_CATALOG_ROOT));
-        std::size_t checked = 0;
-        for (const auto& entry : runtimeCatalog.entries) {
-            if (!runtimePathCheck(entry.config, ir)) runtimePathOk = false;
-            if (++checked >= 4) break;
+        // The first entries in catalogue order, plus the engine with the most
+        // cylinders. Cost scales with cylinder count, so a fixed "first four"
+        // window measured the cheap end of the catalogue and never the worst
+        // case -- the check reported a comfortable callback load for engines
+        // nobody was worried about.
+        std::vector<std::size_t> selected;
+        for (std::size_t index = 0; index < runtimeCatalog.entries.size() && index < 3; ++index)
+            selected.push_back(index);
+        const auto widest = std::max_element(runtimeCatalog.entries.begin(),
+            runtimeCatalog.entries.end(), [](const auto& left, const auto& right) {
+                return left.config.cylinders.size() < right.config.cylinders.size();
+            });
+        if (widest != runtimeCatalog.entries.end()) {
+            const auto widestIndex = static_cast<std::size_t>(
+                std::distance(runtimeCatalog.entries.begin(), widest));
+            if (std::find(selected.begin(), selected.end(), widestIndex) == selected.end())
+                selected.push_back(widestIndex);
         }
+        const auto checked = selected.size();
+        for (const auto index : selected)
+            if (!runtimePathCheck(runtimeCatalog.entries[index].config, ir)) runtimePathOk = false;
         if (checked == 0) {
             std::cerr << "FAIL: no catalogue engines available for the runtime check\n";
             runtimePathOk = false;
