@@ -98,11 +98,14 @@ test onto the behaviour it is meant to catch. Keep it that way.
 - **The realtime bottleneck is the physics thread, not the audio callback.**
   Measured on a recent 8-core laptop: the callback uses 15-33% of a 256-sample
   budget, while the 240 Hz `EngineRuntime` loop misses 35% of its deadlines on a
-  V8 at 6500 rpm (17.5 ms worst lateness) and exceeds its budget at *idle* for
-  the V12. Nothing is dropped, but the telemetry that is the exhaust chain's
-  only excitation arrives late and jittery — which is why a heavy engine's
-  render is not reproducible run to run. Optimising the audio path is aiming at
-  the wrong thread. §18 of the same document has the numbers.
+  V8 at 6500 rpm (17.5 ms worst lateness). Nothing is dropped, but the telemetry
+  that is the exhaust chain's only excitation arrives late and jittery — which is
+  why a heavy engine's render is not reproducible run to run. Optimising the
+  audio path is aiming at the wrong thread. Profiled, the binding case (V8 at
+  high rpm, ~99% of budget) is 41% per-cylinder physics, 29% exhaust FV network,
+  30% unparallelised "rest"; the V12 is the opposite (52% network). And **never
+  compare a perf CSV across an exhaust-geometry change** — doing so once put the
+  V12 at 158% of budget in these docs when it is at 77%. §18 has the numbers.
 
 `docs/realtime-audio.md` and `docs/custom-exhaust.md` document the audio and
 exhaust models and the corrections already made — read them before touching those

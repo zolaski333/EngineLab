@@ -585,9 +585,42 @@ du runtime (`physicsOverruns`) pendant que l'audio rend :
 | Merlin V12 (3100 tr/min) | 162 (11 %) | 1.9 ms |
 | **LS3 V8 (6500 tr/min)** | **498 (35 %)** | **17.5 ms** |
 
-`EngineLabPhysicsPerfHarness` le confirme au banc, pleine charge : V8 à
-5940 tr/min ≈ 4.1–5.1 ms/pas (99–123 % du budget), Merlin à 2880 tr/min
-≈ 6.6–6.8 ms/pas (158–164 %), et le V12 dépasse déjà le budget **au ralenti**.
+`EngineLabPhysicsPerfHarness` au banc, pleine charge, médiane du p50 sur trois
+passages (budget 4167 us/pas) :
+
+| moteur | ralenti | mi-régime | haut régime |
+|---|---|---|---|
+| I2 | 7 % | 17 % | 25 % |
+| V8 EL-50 | 24 % | 63 % | **96 %** |
+| LS3 V8 | 26 % | 69 % | **99 %** |
+| Merlin V12 | 49 % | 72 % | 77 % |
+
+**Correctif de mesure, à retenir.** Une première version de ce tableau donnait le
+V12 à 158-164 % du budget et le disait hors budget au ralenti. C'était un CSV
+capturé **avant** le passage du Merlin aux stacks courts (§16), qui a divisé son
+coût par deux comme le commit l'annonçait. Le V12 n'est pas le cas critique ; le
+V8 à haut régime l'est. Ne pas comparer un CSV de perf à travers un changement de
+géométrie d'échappement.
+
+### Où va le temps (sonde de phase temporaire, part de la trame)
+
+| moteur | cylindres | réseau FV | reste | sous-pas FV/trame |
+|---|---|---|---|---|
+| I2 | 53 % | 16 % | 31 % | 31.1 |
+| LS3 V8 | 41 % | 29 % | 30 % | 31.5 |
+| Merlin V12 | 20 % | **52 %** | 28 % | **60.7** |
+
+Trois lectures :
+
+1. **Le cas qui borde le budget (V8 à haut régime) est dominé par la physique
+   par cylindre (41 %)**, déjà parallélisée. Le réseau FV n'y est que 29 %.
+2. **Le V12 est l'inverse** : le réseau FV y prend la moitié de la trame, avec
+   presque le double de sous-pas acceptés du V8 alors qu'il tourne deux fois
+   moins vite. C'est le maillage des 12 runners plus le collecteur large.
+3. **Un ~30 % de "reste" existe sur les trois moteurs**, indépendamment de leur
+   taille : environ 800 us par trame sur le V8. C'est du travail hors cylindres
+   et hors réseau (transmission, télémétrie, génération d'événements), et il
+   n'est pas parallélisé. C'est la piste la moins explorée.
 
 Rien n'est *perdu* (`droppedPressure=0`, `boundaryDropouts=0`) : le flux de
 télémétrie arrive en retard et irrégulièrement, pas amputé. Mais c'est ce flux,
