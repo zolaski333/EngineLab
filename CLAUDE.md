@@ -82,6 +82,22 @@ test onto the behaviour it is meant to catch. Keep it that way.
   leading-order law, monotone cascade, growth, and passivity — never an exact
   higher-harmonic match, which would have to be calibrated onto the simulator's
   own output.
+- **The muffler does not exist acoustically.** `muffler_restriction` is a
+  pressure-loss term. The physical exhaust branch never reads it, never reads
+  `openness`, and never runs the FDN — measured, driving it from 0.30 to 0.95
+  (sports exhaust to nearly blocked) moves the delivered spectrum by under
+  1.4 dB in any third octave. Every engine is rendered as a straight open pipe.
+  Do not "re-tune" `parts/exhausts.yaml` to differentiate road engines; there is
+  no transmission-loss element for those numbers to drive. See
+  `docs/thermoacoustic-architecture.md` §17.
+- **The realtime bottleneck is the physics thread, not the audio callback.**
+  Measured on a recent 8-core laptop: the callback uses 15-33% of a 256-sample
+  budget, while the 240 Hz `EngineRuntime` loop misses 35% of its deadlines on a
+  V8 at 6500 rpm (17.5 ms worst lateness) and exceeds its budget at *idle* for
+  the V12. Nothing is dropped, but the telemetry that is the exhaust chain's
+  only excitation arrives late and jittery — which is why a heavy engine's
+  render is not reproducible run to run. Optimising the audio path is aiming at
+  the wrong thread. §18 of the same document has the numbers.
 
 `docs/realtime-audio.md` and `docs/custom-exhaust.md` document the audio and
 exhaust models and the corrections already made — read them before touching those

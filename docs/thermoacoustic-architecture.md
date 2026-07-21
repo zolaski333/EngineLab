@@ -505,3 +505,99 @@ fidèle, pas un maquillage. Mesuré : contenu 500–1500 Hz du Merlin ~triplé, 
 transitoire le plus élevé du catalogue (3.13). Le V12 reste le moteur le plus
 sombre — c'est en partie physique pour un 19.8 L tournant à 3800 tr/min — mais il
 crache désormais au lieu de bourdonner.
+
+## 17. Le silencieux est acoustiquement inerte sur le chemin physique (mesuré)
+
+Constat le plus important pour qui veut différencier les moteurs de route :
+**`muffler_restriction` ne filtre rien dans le chemin physique livré.**
+
+La branche physique de `RealtimeEngineAudio::render` (`sampleUsesPhysicalExhaust`,
+`RealtimeEngineAudio.cpp` §« Collector -> outlet characteristic ») enchaîne
+exactement : ligne aller → `DuctWallLoss` → raidissement → `PipeRadiationModel`
+→ ligne retour → observateur → calibration → `continue`. Elle ne lit ni
+`pathOpenness`, ni `collectorReflection`, ni le FDN. Le `continue` saute toute la
+branche héritée, qui est la *seule* à consommer `openness` (lignes ~1188, ~1239,
+~1267/1270) et la seule à appeler `processMufflerFdn`.
+
+Conséquences, dans l'ordre d'importance :
+
+1. **Aucun élément silencieux n'existe dans le guide d'ondes.** Le nœud
+   `muffler` du DAG (`ExhaustGraph.cpp`) n'apporte qu'une *longueur* (450 mm) et
+   une perte de charge pour la physique. Acoustiquement, chaque moteur est un
+   tuyau droit terminé par une charge de rayonnement non baffée. Pas de chambre
+   d'expansion, pas de discontinuité de section, pas de perte par transmission.
+2. **Le FDN, lui, est indépendant de la géométrie.** `referenceFdnSamples`
+   (1493/2111/2791/3557) est constant pour tous les moteurs ; seul
+   `presetFdngain_` varie, et il vient de la table de voicing, pas du YAML.
+   De toute façon il n'est pas atteint quand la télémétrie est présente.
+3. **`openness` a une dynamique dérisoire même là où il agit.** Calculé sur les
+   neuf presets de `parts/exhausts.yaml`, `1/sqrt(1 + 1.35*K)` vaut 0.80 à 0.87
+   pour sept d'entre eux ; seuls `aircraft_manifold` (0.99) et `radial_collector`
+   (0.95) s'en écartent. Ses usages sont des interpolations plates
+   (`0.42 + 0.10*o`, `0.13 + 0.05*o`, `1.12 − 0.30*o`).
+
+### La mesure qui tranche
+
+`scratchpad/muffdiff.py` compare deux rendus `EngineLabAbClipRenderer` à graine
+identique, seul `muffler_restriction` changeant : LS3 0.30 → 0.95 et K20
+0.25 → 0.95, c'est-à-dire d'un échappement sport à un conduit quasi bouché.
+
+| moteur | segment | écart max par tiers d'octave | écart global |
+|---|---|---|---|
+| K20 | ralenti / montée / limiter | ≤ 0.52 dB | +0.02 / +0.04 / +0.07 dB |
+| LS3 | ralenti / montée / limiter | ≤ 1.39 dB | −0.16 / −0.00 / +0.16 dB |
+
+Un vrai silencieux de série, c'est 20 à 30 dB de perte par transmission dans la
+bande d'allumage. Le résidu mesuré ici est de la contre-pression qui remonte par
+la physique, plus le jitter d'ordonnancement de §18 — pas de l'acoustique.
+
+**Ce que cela explique.** Les moteurs jugés réussis à l'écoute (Merlin V12,
+flat-6, radial) sont précisément ceux dont l'échappement réel *est* un tuyau
+quasi ouvert : le modèle est fortuitement juste pour eux. Tous les moteurs de
+route sont rendus comme des tuyaux droits, d'où la convergence vers un timbre
+générique. Ce n'est donc **pas** une erreur de valeurs dans `parts/exhausts.yaml` :
+c'est un composant absent du modèle. Corriger les chiffres du YAML ne peut rien
+donner tant qu'un élément de perte par transmission n'existe pas dans le guide
+d'ondes.
+
+## 18. Budget temps réel de bout en bout : l'audio va bien, la physique déborde
+
+Mesuré sur AMD Ryzen 7 8840U (8c/16t, portable récent), build Release.
+
+**Rappel audio** (`EngineLabAudioRenderHarness`, bloc 256 à 48 kHz, budget
+5333 µs, fil physique concurrent) — le callback est confortable :
+
+| moteur | callback p95 | charge |
+|---|---|---|
+| K20 I4 | 804 µs | 15 % |
+| 2JZ I6 | 877 µs | 16 % |
+| LS3 V8 | 1543 µs | 29 % |
+| Merlin V12 | 1755 µs | 33 % |
+
+**La boucle physique, elle, rate ses échéances.** `EngineRuntime::run` tourne à
+240 Hz, soit 4167 µs par pas. Le même harnais rapporte désormais les dépassements
+du runtime (`physicsOverruns`) pendant que l'audio rend :
+
+| moteur | pas en retard / 1440 | retard max |
+|---|---|---|
+| 2JZ I6 | 21 (1.5 %) | 0.7 ms |
+| K20 I4 | 134 (9 %) | 1.2 ms |
+| Merlin V12 (3100 tr/min) | 162 (11 %) | 1.9 ms |
+| **LS3 V8 (6500 tr/min)** | **498 (35 %)** | **17.5 ms** |
+
+`EngineLabPhysicsPerfHarness` le confirme au banc, pleine charge : V8 à
+5940 tr/min ≈ 4.1–5.1 ms/pas (99–123 % du budget), Merlin à 2880 tr/min
+≈ 6.6–6.8 ms/pas (158–164 %), et le V12 dépasse déjà le budget **au ralenti**.
+
+Rien n'est *perdu* (`droppedPressure=0`, `boundaryDropouts=0`) : le flux de
+télémétrie arrive en retard et irrégulièrement, pas amputé. Mais c'est ce flux,
+et lui seul, qui excite la chaîne d'échappement — le rendu du LS3 n'est
+d'ailleurs pas reproductible d'un passage à l'autre (RMS 0.073 à 0.090 sur trois
+rendus identiques), ce que ne montrent pas les moteurs qui tiennent leur cadence.
+
+**À retenir pour la suite : le goulot est le fil physique, jamais le callback
+audio.** Toute optimisation qui vise le rendu audio se trompe de cible ; c'est le
+coût par sous-pas de `EngineSimulator::step` (et le nombre de sous-pas) qu'il
+faut réduire. Le pool `SubstepParallel` est déjà correct — il ne spinne qu'entre
+sous-pas d'une même trame et part sur variable de condition ensuite — donc le
+levier n'est pas là non plus.
