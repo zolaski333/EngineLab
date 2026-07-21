@@ -27,6 +27,13 @@ struct StepMetrics final {
     double p95Microseconds {};
     double maximumMicroseconds {};
     double meanSubsteps {};
+    double meanExhaustTemperatureC {};
+    double meanImepBar {};
+    double peakCylinderPressureBar {};
+    double meanLambda {};
+    double meanTorqueNm {};
+    double meanPowerKw {};
+    double meanVolumetricEfficiency {};
 };
 
 bool containsCaseInsensitive(const std::string& text, const std::string& filter) {
@@ -47,6 +54,13 @@ StepMetrics measurePoint(enginelab::EngineSimulator& simulator, double targetRpm
     timings.reserve(sampleSteps);
     auto rpmSum = 0.0;
     auto substepSum = 0.0;
+    auto exhaustSum = 0.0;
+    auto imepSum = 0.0;
+    auto lambdaSum = 0.0;
+    auto peakCylinderBar = 0.0;
+    auto torqueSum = 0.0;
+    auto powerSum = 0.0;
+    auto veSum = 0.0;
     for (int step = 0; step < settleSteps + sampleSteps; ++step) {
         const auto speedError = (simulator.state().rpm - targetRpm) / std::max(1.0, targetRpm);
         dynoIntegral = std::clamp(dynoIntegral + speedError * dt * 1.20, 0.0, 0.95);
@@ -62,6 +76,15 @@ StepMetrics measurePoint(enginelab::EngineSimulator& simulator, double targetRpm
             timings.push_back(std::chrono::duration<double, std::micro>(end - begin).count());
             rpmSum += frame.state.rpm;
             substepSum += static_cast<double>(frame.state.solverSubsteps);
+            exhaustSum += frame.state.exhaustTemperatureC;
+            imepSum += frame.state.indicatedMeanEffectivePressureBar;
+            lambdaSum += frame.state.lambda;
+            torqueSum += frame.state.cycleAveragedTorqueNm;
+            powerSum += frame.state.cycleAveragedPowerKw;
+            veSum += frame.state.volumetricEfficiency;
+            for (std::size_t c = 0; c < frame.state.cylinderStateCount; ++c)
+                peakCylinderBar = std::max(peakCylinderBar,
+                    frame.state.cylinderStates[c].pressureEstimateBar);
         }
     }
     std::sort(timings.begin(), timings.end());
@@ -78,7 +101,14 @@ StepMetrics measurePoint(enginelab::EngineSimulator& simulator, double targetRpm
         percentile(0.50),
         percentile(0.95),
         timings.back(),
-        substepSum / static_cast<double>(timings.size())
+        substepSum / static_cast<double>(timings.size()),
+        exhaustSum / static_cast<double>(timings.size()),
+        imepSum / static_cast<double>(timings.size()),
+        peakCylinderBar,
+        lambdaSum / static_cast<double>(timings.size()),
+        torqueSum / static_cast<double>(timings.size()),
+        powerSum / static_cast<double>(timings.size()),
+        veSum / static_cast<double>(timings.size())
     };
 }
 
@@ -109,7 +139,11 @@ void measureEngine(const enginelab::EngineConfig& baseConfig, int run) {
         std::cout << std::quoted(config.name) << ',' << config.cylinders.size() << ',' << run
                   << ',' << target << ',' << result.actualRpm << ',' << result.meanMicroseconds
                   << ',' << result.p50Microseconds << ',' << result.p95Microseconds
-                  << ',' << result.maximumMicroseconds << ',' << result.meanSubsteps << '\n';
+                  << ',' << result.maximumMicroseconds << ',' << result.meanSubsteps
+                  << ',' << result.meanExhaustTemperatureC << ',' << result.meanImepBar
+                  << ',' << result.peakCylinderPressureBar << ',' << result.meanLambda
+                  << ',' << result.meanTorqueNm << ',' << result.meanPowerKw
+                  << ',' << result.meanVolumetricEfficiency << '\n';
     }
 }
 }
@@ -148,7 +182,8 @@ int main(int argc, char** argv) {
     }
 
     std::cout << std::fixed << std::setprecision(3);
-    std::cout << "engine,cylinders,run,target_rpm,actual_rpm,mean_us,p50_us,p95_us,max_us,mean_substeps\n";
+    std::cout << "engine,cylinders,run,target_rpm,actual_rpm,mean_us,p50_us,p95_us,max_us,mean_substeps,"
+                 "exhaust_c,imep_bar,peak_cyl_bar,lambda,torque_nm,power_kw,ve\n";
     for (int run = 1; run <= runs; ++run)
         for (const auto& engine : engines) measureEngine(engine, run);
     return EXIT_SUCCESS;
