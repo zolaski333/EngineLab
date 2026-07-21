@@ -65,6 +65,24 @@ Reference numbers for these gates come from engine/DSP literature, never from th
 simulator's current output, so tightening a gate later cannot re-calibrate the
 test onto the behaviour it is meant to catch. Keep it that way.
 
+- **Separate the audio complaints; they have unrelated causes.** "Muffled" is a
+  bandwidth problem (the exhaust boundary coupling caps the physical band at low
+  speed — see `docs/thermoacoustic-architecture.md` §14). "All engines sound the
+  same" is *not*: measured per-third-octave, the catalogue engines differ by
+  15-30 dB in every band (`overlay.py`), and the crossplane V8 carries its
+  uneven-bank burble at 10x an even I4 (`burble.py`). The engines are
+  differentiated; muffling was masking it. Beware: making every engine brighter
+  raises the coarse spectral-shape *correlation* even though it improves the
+  sound — that metric penalises "everyone gained treble", so do not chase it
+  down. Character lives in the firing-pattern envelope, not the steady spectrum.
+- **First-order models get first-order tests.** The finite-amplitude duct
+  steepening (`NonlinearDuctAcoustics.hpp`) reproduces the Fubini second-harmonic
+  law `B2/B1 -> sigma/2` but deliberately under-generates the third harmonic
+  (single-probe scheme, ~44% of exact Fubini). Its regression asserts the
+  leading-order law, monotone cascade, growth, and passivity — never an exact
+  higher-harmonic match, which would have to be calibrated onto the simulator's
+  own output.
+
 `docs/realtime-audio.md` and `docs/custom-exhaust.md` document the audio and
 exhaust models and the corrections already made — read them before touching those
 areas.

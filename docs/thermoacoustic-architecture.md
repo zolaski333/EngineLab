@@ -213,6 +213,7 @@ de coudes non résolus.
 | anticipation physique de charge PFI | `src/simulation/*/TransientChargeEstimator.hpp` |
 | radiation passive | `src/audio/*/PipeRadiationModel.*` |
 | calibration Pa → dBFS | `src/audio/*/AcousticMonitorCalibration.hpp` |
+| raidissement de conduit (amplitude finie) | `src/audio/*/NonlinearDuctAcoustics.hpp` |
 | caractéristiques et rendu | `src/audio/*/RealtimeEngineAudio.*` |
 | chargement d’IR explicite | `src/app/src/MainComponent.cpp` |
 
@@ -384,3 +385,123 @@ couplage étant réellement commensurable avec la trame (8 vidanges par trame
 exactement) ; énergie haute bande 0.0 %. La composante verrouillée trame
 restante est concentrée à 240/480 Hz — la réponse authentique du moteur aux
 commandes par trame — et non plus dans l'aigu.
+
+## 13. « Étouffé » et « tous pareils » : ce qui a été mesuré, et la distinction qui compte
+
+Deux plaintes d'écoute distinctes ont été confondues au départ, et il faut les
+garder séparées parce que **leurs causes n'ont rien à voir** :
+
+- **« étouffé / muffled »** — le haut du spectre manque. Cause réelle : la bande
+  physique était bornée par le couplage.
+- **« tous les moteurs sonnent pareil »** — le caractère par moteur ne ressort
+  pas. Ce n'est **pas** un problème de bande passante.
+
+### La mesure qui a tranché « tous pareils »
+
+La corrélation de forme spectrale (log-spectre, 80–6000 Hz) entre moteurs vaut
+0.55–0.74. Le réflexe est de conclure « ils se ressemblent trop ». C'est faux, et
+la mesure qui le prouve est le **spread par tiers d'octave** : dans chaque bande,
+l'écart entre le moteur le plus fort et le plus faible est de **15 à 30 dB**
+(`scratchpad overlay.py`). Les moteurs diffèrent énormément bande par bande. La
+corrélation de 0.55–0.74 ne capture que la **tendance commune** — tout roule vers
+l'aigu — qui est physiquement universelle et correcte. Il n'y a **aucune**
+résonance commune parasite (la seule bande à faible spread, 160 Hz, est à 14 dB ;
+tout le reste ≥ 17 dB). Donc : pas de bug d'homogénéisation à corriger.
+
+Piège à éviter pour le prochain agent : **la corrélation de forme spectrale
+monte quand tous les moteurs deviennent plus brillants « de la même façon »**.
+Élargir la bande (§14) et ajouter le raidissement (§15) font *monter* cette
+corrélation de ~0.02–0.03 chacun (attribution isolée par A/B, `meancorr.py`),
+alors même qu'ils *améliorent* le son. C'est un artefact de métrique, pas une
+régression : la métrique pénalise « tout le monde a gagné de l'aigu » même quand
+cet aigu est souhaitable. Ne pas « corriger » cette hausse.
+
+### Ce que la différenciation est réellement
+
+Le caractère par moteur vit surtout dans le **motif d'allumage** (l'enveloppe),
+pas dans la forme spectrale stationnaire. Deux sondes le confirment :
+
+- **Spectre de modulation d'enveveloppe au ralenti** (`character.py`) : chaque
+  moteur a une signature de pics distincte (K20 62.5 Hz, LS3 196 Hz, Hayabusa
+  82 Hz, Big Twin 20.5 Hz…). Ces « rythmes » d'échappement sont bien distincts.
+- **Burble du V8 crossplane** (`burble.py`) : l'énergie de modulation
+  sous-allumage rapportée à l'allumage vaut **0.09 pour le LS3** contre **0.00**
+  pour les I4 à allumage régulier — le grondement « rageur » issu de l'allumage
+  inégal par banc (intervalles 180/270/180/90° dans chaque banc) est présent.
+
+Conclusion mesurée : les moteurs **sont** différenciés ; l'étouffement masquait
+cette différence. Retirer l'étouffement (§14, §15) rend la différence audible
+sans avoir à « forcer » une différenciation artificielle — ce qui aurait été un
+hack.
+
+## 14. Doubler la bande physique à bas régime (cap de couplage 500 → 250 µs)
+
+`EngineSimulator::step` borne l'intervalle de couplage par
+`maximumLowSpeedCouplingSeconds`. Ce cap ne mord **que là où la règle par période
+d'allumage est plus lente que lui** : au ralenti, à bas régime, et sur toute la
+plage des moteurs à peu de cylindres. C'est exactement le régime où l'auditeur
+entendait « étouffé », parce que le Nyquist de couplage y valait ~1 kHz et que la
+reconstruction anti-imagerie lissait chaque front de détente au même endroit pour
+tous les moteurs. À 250 µs le Nyquist passe à ~2 kHz.
+
+**Pourquoi ceci ne rouvre pas le mur de budget de la §11.** La §11 a écarté le
+*stride 1* (coupler à chaque sous-pas mécanique), qui paie le coût fixe par
+couplage à chaque sous-pas et fait exploser le LS3 à haut régime. Le cap 250 µs
+est différent : au régime maxi, la règle par période d'allumage donne déjà un
+intervalle plus court que 250 µs (LS3 à 5940 tr/min : ~158 µs), donc **le cap ne
+mord pas là où le budget est tendu**. Mesuré : à 5940 tr/min le nombre de sous-pas
+de couplage est identique à 250 et 500 µs (`perf-*.csv`, colonne substeps
+inchangée) — le travail physique à haut régime est le même. Le cap n'ajoute des
+vidanges qu'au ralenti/bas régime, où il reste ~3–5 % du budget de trame. Un point
+de mesure explicite à `idle_rpm × 1.1` a été ajouté à `PhysicsPerfHarness` pour
+que cette région, où le cap agit, soit suivie indépendamment des points de charge.
+
+## 15. Raidissement de front : la propagation à amplitude finie dans les conduits
+
+`src/audio/include/enginelab/audio/NonlinearDuctAcoustics.hpp` (nouveau) ajoute la
+seule non-linéarité de propagation que le chemin physique n'avait pas. Les niveaux
+en conduit derrière une bouffée de détente sont de l'ordre du kilopascal
+(150–175 dB SPL) : la vitesse locale d'une onde simple y dépend de l'amplitude
+(`dx/dt = c + β·u`, `β = (γ+1)/2`). Les crêtes rattrapent les creux, les fronts
+se raidissent, et ce raidissement peuple les harmoniques au-dessus de la bande de
+télémétrie — l'origine physique du « bark »/crackle d'un échappement libre, le
+même mécanisme que le cuivrage des cuivres (Hirschberg 1996, Msallam 2000).
+
+Implémentation : une **lecture à retard modulé par l'amplitude** sur les lignes de
+guide d'ondes existantes (runners et collecteur). Un échantillon lu à un retard
+nominal `D` est relu à `D · delayScale(p')`, où `delayScale = 1/(1 + β·p'/(ρc²))`.
+Pur gauchissement temporel : ne crée pas d'énergie (passif par construction),
+exactement transparent quand `p' → 0`, capture de choc implicite par
+l'interpolation fractionnaire. Le milieu (`ρc²`) vient de l'état de gaz déjà suivi
+par runner et par collecteur ; les runners hérités publient `ρc² = 0` et lisent
+donc exactement au retard nominal (bit-identique à l'ancien chemin).
+
+**Non-vacuité et référence littérature.** Le test `nonlinearDuctAcousticsRegression`
+(dans `RealtimeRegressionTests.cpp`) vérifie ce que la théorie au **premier ordre**
+garantit, pas la sortie du simulateur : la loi de croissance du 2e harmonique
+`B₂/B₁ → σ/2` (terme dominant de la série de Fubini), une cascade harmonique
+présente et décroissante, la croissance avec le niveau, la passivité, et un
+contrôle linéaire (milieu désactivé → pas de distorsion). **Piège documenté** : le
+schéma à sonde unique est d'ordre 1 ; il reproduit le 2e harmonique mais
+sous-génère le 3e (~44 % de Fubini, mesuré `fubini_probe.cpp`). Ne pas resserrer le
+test sur une correspondance Fubini exacte du 3e harmonique — ce schéma ne peut pas
+la livrer, et un seuil calé sur la sortie mesurée violerait la règle « références
+issues de la littérature ». Une correspondance exacte exigerait un solveur de
+caractéristiques à capture de choc, hors sujet pour un effet de bande audio.
+
+Effet mesuré (limiter, `character.py`) : le contenu 1.5–4 kHz bondit (Hayabusa
+10.9 → 34.2 %, K20 2.8 → 37.8 %, EJ25 1.5 → 25.0 %) et le 4 kHz+ suit. Effet sur la
+différenciation : neutre (§13). Ajouter la carte : `raidissement de conduit` →
+`src/audio/*/NonlinearDuctAcoustics.hpp`.
+
+## 16. Voix du Merlin V12 : stacks courts au lieu d'un collecteur long
+
+`parts/exhausts.yaml`, preset `aircraft_manifold` : les primaires de 980 mm dans
+un collecteur de 128 mm enterraient le crack de détente dans un boom grave et
+coûtaient ~3× les mailles FV (poussant le V12 hors budget). Un vrai Merlin
+échappe chaque cylindre par son propre stack d'éjection court (~150 mm) sans
+silencieux. La géométrie corrigée (primaire 150 mm, restriction 0.02) est **plus**
+fidèle, pas un maquillage. Mesuré : contenu 500–1500 Hz du Merlin ~triplé, punch
+transitoire le plus élevé du catalogue (3.13). Le V12 reste le moteur le plus
+sombre — c'est en partie physique pour un 19.8 L tournant à 3800 tr/min — mais il
+crache désormais au lieu de bourdonner.
