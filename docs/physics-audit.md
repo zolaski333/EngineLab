@@ -458,17 +458,107 @@ Côté audio, deux conséquences distinctes :
   n'existe pas : cette variante n'ouvrait le runner qu'à x1.6. À x2.0 la VE
   passe à 0.613 sans saturer.
 
-### Limite honnête
+### Limite de cette localisation (levée depuis — voir la section suivante)
 
-La localisation est **empirique**. Le mécanisme exact — pourquoi la section
-effective de soupape ne borne pas le débit dans le couplage runner/soupape —
-n'a pas été lu dans le code, délibérément : ce dépôt punit les hypothèses de
-lecture. C'est la prochaine étape, et elle doit commencer par le couplage
-frontière soupape ↔ maille de runner.
+La localisation ci-dessus est **empirique** : elle dit *quel réglage déplace la
+VE*, pas *pourquoi*. Le mécanisme a été trouvé ensuite, et il corrige la lecture
+« rapport de restriction inversé » : le runner ne mesure pas le débit parce
+qu'il serait trop étroit, mais parce que sa **quantité de mouvement** était
+fausse. Le diamètre du runner était le seul levier efficace parce que c'est le
+seul qui change la vitesse du gaz dans la maille.
 
-Corriger ceci change le couple, le niveau sonore et l'accord de **tous** les
-moteurs du catalogue. Les références existent désormais (LS3 : 430 ch à
-5900 tr/min, 575 Nm à 4600 ; VE 0.85-1.05 plein gaz ; EGT 800-950 °C) et
-l'instrument aussi, donc la règle « pas de changement physique sans référence
-dyno » est satisfaite — mais la mesure doit précéder le correctif, pas le
-suivre.
+## Mécanisme du défaut de remplissage : la quantité de mouvement du jet (mesuré)
+
+Le traceur `--trace` du `EngineLabPhysicsPerfHarness` (une ligne tous les ~2°
+vilebrequin, avec l'état de la charge des **deux** côtés de la soupape) a montré
+que la panne n'est ni une pression ni une section, mais une **densité** :
+
+| LS3 plein gaz | ralenti 786 | zone rouge 5949 |
+|---|---|---|
+| pression runner admission | 100.7 kPa | 95.7 kPa |
+| **température charge runner** | **71 °C** | **333 °C** (pics à 753) |
+| vitesse gaz runner, moyenne | 35 m/s | **172 m/s** |
+| masse piégée | 798 mg | 366 mg |
+
+La continuité donne ~54 m/s de moyenne pendant l'événement d'admission pour ce
+runner. Le modèle en portait **172**, et ne descendait jamais sous 115 m/s
+**même soupape fermée**.
+
+`injectJetMomentum()` ajoutait `masse_transférée x v_jet` à la maille à chaque
+appel de flux — **en plus** de l'advection de quantité de mouvement que
+`transfer()` fait déjà. Une maille traversée comme un runner voit passer
+plusieurs fois sa propre masse pendant un seul événement de soupape, donc les
+incréments s'accumulent jusqu'à `(débit traversant / masse de la maille)` fois
+la valeur physique — ici x3.2, ce qui colle au 172 / 54 mesuré.
+
+Chaîne de conséquences, chacune mesurée dans le traceur :
+
+1. quantité de mouvement gonflée → `dynamicPressureKpa()` gonflée (7 à 23 kPa
+   fictifs) → **elle s'oppose au remplissage plénum → runner** ;
+2. le runner tombe sous l'ambiante (85 kPa mini) ;
+3. à l'IVO, le cylindre est donc systématiquement au-dessus du runner et y
+   refoule du gaz à ~1000 °C : la charge du runner monte à 753 °C et ne
+   redescend jamais sous 289 °C avant l'admission suivante ;
+4. le moteur respire de l'air à 333 °C sous 96 kPa — **densité 2.6x trop
+   faible**. C'est toute la VE manquante, en un seul chiffre.
+
+**Le correctif** (`injectJetMomentum`) fait *relaxer* chaque maille vers la
+vitesse de continuité du jet au lieu de lui ajouter un incrément, au taux de la
+fraction de sa propre masse échangée dans le pas. C'est la formulation en volume
+de contrôle de la même physique, et elle coïncide avec l'ancien incrément tant
+que cette fraction est petite : une maille en régime établi s'arrête à la
+vitesse du jet au lieu de la dépasser.
+
+### Ce que la correction délivre (mesuré)
+
+| LS3 plein gaz | avant | après | littérature |
+|---|---|---|---|
+| vitesse runner (5949) | 172 m/s | **48 m/s** | ~54 (continuité) |
+| température runner (5949) | 333 °C | **84 °C** | 40-80 |
+| VE ralenti / 3640 / 5990 | 0.75 / 0.47 / 0.33 | **0.94 / 0.78 / 0.59** | 0.85-1.05 |
+| couple 5990 | 91 Nm | **278 Nm** | ~520 |
+| EGT 5990 | 1256 °C | **1019 °C** | 800-950 |
+
+Et à la sortie du rendu audio livré, pression au micro à 1 m :
+
+| moteur | avant | après |
+|---|---|---|
+| LS3 V8 | 32.6 Pa | **255.2 Pa** (+17.9 dB) |
+| K20 I4 | 99.8 Pa | 207.6 Pa |
+| 2JZ I6 turbo | 105.8 Pa | 222.3 Pa |
+| **Merlin V12 (compresseur)** | 101.6 Pa | 129.6 Pa |
+
+**C'est la signature du défaut** : le V12 est suralimenté (MAP 130-176 kPa), donc
+le plénum poussait la charge quoi qu'il arrive et il bouge à peine. Tous les
+atmosphériques étaient affamés. C'est exactement le rapport d'écoute qui a lancé
+cette recherche (« le V12 sonne très bien, les autres restent assez moyens »).
+
+Reste : la VE tombe encore à 0.59 en zone rouge au lieu de rester plate, et
+l'EGT reste ~100 °C trop haute. La panne suivante est en aval de celle-ci, pas
+résolue par elle.
+
+### Garde-fou
+
+`EngineLab.PhysicsRegression` contient désormais une sonde d'écoulement établi
+qui exige qu'une maille de conduit ne dépasse pas sa vitesse de continuité, et
+surtout que **passer 8x plus de masse à travers elle ne la fasse pas tourner
+plus vite**. La référence est la continuité — une identité, pas un étalonnage —
+donc ce garde-fou ne peut pas être re-calibré sur la sortie du simulateur.
+Vérifié non vacu : sans le correctif il échoue.
+
+### Deux fausses pistes de plus, écartées par la mesure
+
+- **La contre-pression d'échappement.** Le runner d'échappement ne descendait
+  jamais sous 164 kPa à 5949 tr/min (contre 105 au ralenti), et le cylindre
+  était encore à 4.4 bar / 1964 °C à l'ouverture de l'admission. Hypothèse
+  évidente : le cylindre ne se vide pas, donc il refoule à l'admission. Testé en
+  ouvrant tout l'échappement (primaires x2, collecteur x2.6, sortie x3.7) : la
+  contre-pression tombe à 109 kPa, la pression à l'IVO à 2.30 bar, et la masse
+  piégée **ne bouge pas** (366.6 → 365.9 mg). Le runner d'admission chauffe même
+  un peu plus. Ce n'était pas la cause.
+- **Le recouvrement de soupapes.** Testé proprement (durée 260 → 210 *et*
+  centrale 110 → 135, donc IVO retardé de 50° avec **IVC inchangé**) : plus
+  aucun recouvrement, pression à l'IVO 1.16 bar au lieu de 4.37 — et le runner
+  monte à 405 °C au lieu de 333. Le recouvrement n'était pas la source de
+  chaleur. (Un premier essai qui ne bougeait que la centrale était confondu :
+  il déplaçait l'IVC en même temps.)

@@ -95,6 +95,25 @@ test onto the behaviour it is meant to catch. Keep it that way.
   fundamental, and loudness normalisation then exposed the renderer's own
   high-frequency floor, which looked exactly like the element generating hiss.
   See `docs/thermoacoustic-architecture.md` §17 and §19.
+- **A cycle average cannot tell a healthy engine from one filling with hot gas.**
+  `EngineLabPhysicsPerfHarness --filter X --trace <rpm>` prints one cylinder's
+  gas exchange every ~2 deg of crank, with the charge state on *both* sides of
+  the intake valve. Filling failures are density failures, and they are invisible
+  in pressure: the LS3 read a healthy 96 kPa in the intake runner while the
+  charge sat at 333 degC, which is 2.6x too little mass. Read `irt_c` against
+  `cyl_mass_mg` before blaming a valve or a duct area. The fine step changes the
+  substep structure, so take trends from it and absolutes from the swept CSV.
+- **A 0-D cell in through-flow must not exceed its own continuity velocity.**
+  `injectJetMomentum` used to *add* `movedMass * v_jet` on top of the momentum
+  advection `transfer()` already does; a runner passes several of its own masses
+  per valve event, so the increments accumulated to ~3x the physical velocity.
+  That inflated `dynamicPressureKpa()`, which then opposed the plenum-to-runner
+  refill, pulled the runner below ambient, and made every IVO revert 1000 degC
+  cylinder gas into the intake. Naturally aspirated engines lost two thirds of
+  their air; the supercharged V12 barely noticed, which is exactly why it was
+  the one engine that already sounded right. The jet term now *relaxes* each
+  cell toward the continuity velocity. `EngineLab.PhysicsRegression` gates it on
+  continuity, never on a simulator output. See `docs/physics-audit.md`.
 - **The realtime bottleneck is the physics thread, not the audio callback.**
   Measured on a recent 8-core laptop: the callback uses 15-33% of a 256-sample
   budget, while the 240 Hz `EngineRuntime` loop misses 35% of its deadlines on a
