@@ -92,17 +92,40 @@ void injectJetMomentum(GasCell& source, GasCell& sink,
     const auto sinkVelocity = sinkCharAreaM2 > 0.0
         ? std::clamp(massFlowRate / std::max(1.0e-12, sinkDensity * sinkCharAreaM2),
                      0.0, sinkC) : 0.0;
-    const auto activeSections = static_cast<double>(sourceCharAreaM2 > 0.0)
-        + static_cast<double>(sinkCharAreaM2 > 0.0);
-    const auto jetMomentum = movedMassKg * (sourceVelocity + sinkVelocity)
-        / std::max(1.0, activeSections);
-
     if (sourceCharAreaM2 <= 0.0 && sinkCharAreaM2 <= 0.0) return;
     const auto length = std::hypot(dirX, dirY);
     const auto nx = length > 1.0e-12 ? dirX / length : 1.0;
     const auto ny = length > 1.0e-12 ? dirY / length : 0.0;
-    source.addMomentumKgMps(jetMomentum * nx, jetMomentum * ny);
-    sink.addMomentumKgMps(jetMomentum * nx, jetMomentum * ny);
+
+    // Relax each adjoining volume toward the jet's continuity velocity rather
+    // than adding an increment to whatever it already carries.
+    //
+    // transfer() already advects momentum with mass, so this term only models
+    // the extra acceleration the throat jet imparts. Adding movedMass*v_jet on
+    // top of that is unbounded: a flow-through volume such as an intake runner
+    // passes several of its own masses through itself during one valve event,
+    // so the increments accumulate to (throughflow / cell mass) times the
+    // physical bulk velocity. Measured on the LS3 at 5940 rpm, the runner
+    // carried 172 m/s mean where continuity gives ~54, and never fell below
+    // 115 m/s even with the intake valve shut. That inflated momentum feeds
+    // dynamicPressureKpa(), which opposes the plenum->runner refill, so the
+    // runner sat below ambient and reverted hot cylinder gas at every IVO.
+    //
+    // The relaxation rate is the fraction of the volume's own mass exchanged
+    // this step, which is the control-volume statement of the same physics and
+    // agrees with the previous increment while that fraction is small. A cell
+    // in steady through-flow now settles at the jet velocity instead of past it.
+    const auto relaxTowardJet = [movedMassKg, nx, ny](GasCell& cell,
+                                                      double sectionVelocity) noexcept {
+        const auto mass = cell.massKg();
+        if (!(mass > 1.0e-12)) return;
+        const auto along = cell.momentumXKgMps() * nx + cell.momentumYKgMps() * ny;
+        const auto rate = std::clamp(movedMassKg / mass, 0.0, 1.0);
+        const auto delta = rate * (mass * sectionVelocity - along);
+        cell.addMomentumKgMps(delta * nx, delta * ny);
+    };
+    if (sourceCharAreaM2 > 0.0) relaxTowardJet(source, sourceVelocity);
+    if (sinkCharAreaM2 > 0.0) relaxTowardJet(sink, sinkVelocity);
 }
 } // anonymous namespace
 

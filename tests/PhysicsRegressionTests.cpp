@@ -7,6 +7,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <iostream>
+#include <utility>
 
 namespace {
 void require(bool condition, const char* message) {
@@ -434,6 +435,65 @@ int main() {
         const auto second = runJacobiTransaction();
         require(first == second,
                 "fixed-order N-way Jacobi commits must be bit-identical between runs");
+    }
+
+    {
+        // Steady through-flow must not spin a duct cell past its own continuity
+        // velocity.
+        //
+        // A 0-D duct such as an intake runner passes several of its own masses
+        // through itself during one valve event. Any per-transfer momentum term
+        // that adds to the cell instead of relaxing it toward the throat jet
+        // therefore accumulates in proportion to how much mass has flowed
+        // through, and the bulk velocity leaves the physical value behind. The
+        // reference here is continuity, v = mdot / (rho * A) -- an identity, not
+        // a calibration -- so this gate cannot be re-tuned onto the simulator's
+        // own behaviour. It caught a runner carrying 172 m/s where continuity
+        // gave 54, which starved every naturally aspirated engine in the
+        // catalogue (docs/physics-audit.md).
+        constexpr auto runnerAreaM2 = 1.963e-3;   // 50 mm bore duct
+        constexpr auto runnerVolumeLitres = 0.55;
+        constexpr auto valveAreaM2 = 7.75e-4;
+        constexpr auto pistonAreaM2 = 8.37e-3;
+        constexpr auto dtSeconds = 5.0e-5;
+        const auto steadyThroughFlow = [&](int steps) {
+            enginelab::GasCell plenum, runner, sink;
+            runner.setGeometry(runnerAreaM2, 0.0, 1.0);
+            plenum.initialise(200.0, 6.0, 320.0);
+            runner.initialise(200.0, runnerVolumeLitres, 320.0);
+            sink.initialise(80.0, 0.78, 320.0);
+            auto throughMassKg = 0.0;
+            for (int step = 0; step < steps; ++step) {
+                // Both ends are held at fixed state so the probe measures the
+                // duct's own response to a sustained flow rather than a
+                // blow-down transient.
+                plenum.reset(200.0, 320.0);
+                sink.reset(80.0, 320.0);
+                (void)enginelab::ConservativeGasSystem::flow({ &plenum, &runner,
+                    runnerAreaM2, 0.78, dtSeconds, 0.0, 1.0, 0.0, runnerAreaM2 });
+                const auto valve = enginelab::ConservativeGasSystem::flow({ &runner, &sink,
+                    valveAreaM2, 0.70, dtSeconds, 0.0, 1.0, runnerAreaM2, pistonAreaM2 });
+                throughMassKg += std::abs(valve.transferredMassKg);
+            }
+            const auto density = runner.massKg() / runner.volumeM3();
+            const auto continuityVelocity = throughMassKg
+                / (static_cast<double>(steps) * dtSeconds) / (density * runnerAreaM2);
+            return std::pair { std::abs(runner.bulkVelocityMps()), continuityVelocity };
+        };
+
+        const auto [shortVelocity, shortContinuity] = steadyThroughFlow(200);
+        const auto [longVelocity, longContinuity] = steadyThroughFlow(1'600);
+        require(shortContinuity > 1.0 && longContinuity > 1.0,
+                "steady through-flow probe must actually move gas");
+        require(longVelocity <= longContinuity * 1.5,
+                "a duct cell in steady through-flow must not exceed its continuity velocity");
+        require(shortVelocity <= shortContinuity * 1.5,
+                "duct bulk velocity must respect continuity from the first cell-mass on");
+        // The sharpest form of the same statement, and the one free of any
+        // chosen margin: passing eight times as much mass through the duct must
+        // not leave it spinning faster.
+        require(longVelocity <= shortVelocity * 1.2,
+                "duct bulk velocity must not accumulate with the mass passed through it");
     }
 
     std::cout << "Physics regression tests passed\n";
