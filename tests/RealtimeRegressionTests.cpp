@@ -3,6 +3,7 @@
 #include <enginelab/audio/NonlinearDuctAcoustics.hpp>
 #include <enginelab/audio/RealtimeEngineAudio.hpp>
 #include <enginelab/audio/DuctWallLoss.hpp>
+#include <enginelab/audio/ExpansionChamberMuffler.hpp>
 #include <enginelab/audio/PipeRadiationModel.hpp>
 #include <enginelab/audio/ValvePortTermination.hpp>
 #include <enginelab/foundation/ExhaustGasAcoustics.hpp>
@@ -1078,6 +1079,127 @@ void nonlinearDuctAcousticsRegression() {
     }
 }
 
+/**
+ * The expansion-chamber silencer against Munjal's transmission loss.
+ *
+ * The reference is the closed-form single-expansion-chamber result
+ *     TL = 10 log10 [ 1 + 1/4 (m - 1/m)^2 sin^2(k L) ]
+ * (Munjal, *Acoustics of Ducts and Mufflers*, ch. 2) -- literature, not the
+ * simulator's own output, so tightening this gate later cannot recalibrate it
+ * onto the behaviour it exists to catch.
+ *
+ * Unlike the first-order duct steepening, this element is an *exact* structural
+ * realisation of the theory: two Kelly-Lochbaum junctions and an integer delay
+ * reproduce the transfer function term for term. It is therefore held to a
+ * tight tolerance, and a loose one here would mean a wiring mistake.
+ */
+void expansionChamberMufflerRegression() {
+    using Muffler = enginelab::ExpansionChamberMuffler;
+    constexpr double sampleRate = 48'000.0;
+    constexpr std::size_t traversalSamples = 40;
+    constexpr double traversalSeconds = traversalSamples / sampleRate;
+
+    // Steady-state pressure transmission at one frequency, with both ports
+    // anechoic: nothing is fed back in from the outlet side, and the wave
+    // returning to the collector is discarded.
+    const auto measureTransmissionDb = [&](double expansionRatio, double frequencyHz) {
+        Muffler::State state;
+        state.prepare(256);
+        Muffler::Coefficients c;
+        c.enabled = true;
+        c.reflection = Muffler::reflectionCoefficient(1.0, expansionRatio);
+        c.delaySamples = static_cast<float>(traversalSamples);
+
+        constexpr std::size_t settle = 20'000;
+        constexpr std::size_t window = 4'800; // 0.1 s: every test tone is a whole
+                                              // number of cycles in this window.
+        const auto omega = 2.0 * std::numbers::pi * frequencyHz / sampleRate;
+        std::complex<double> transmitted { 0.0, 0.0 };
+        for (std::size_t n = 0; n < settle + window; ++n) {
+            const auto phase = omega * static_cast<double>(n);
+            const auto out = Muffler::process(state, c,
+                static_cast<float>(std::sin(phase)), 0.0F);
+            if (n >= settle)
+                transmitted += std::complex<double>(out.towardOutlet, 0.0)
+                    * std::exp(std::complex<double>(0.0, -phase));
+        }
+        // The window holds an integer number of cycles, so the analysis bin
+        // carries half the amplitude of a unit sine.
+        const auto amplitude = 2.0 * std::abs(transmitted)
+            / static_cast<double>(window);
+        return -20.0 * std::log10(std::max(amplitude, 1.0e-12));
+    };
+
+    // A 2.5:1 diameter step, the order of a real road silencer.
+    constexpr double expansionRatio = 6.25;
+    // Stop-band peak (kL = pi/2), a partial band, and the pass-band (kL = pi).
+    for (const auto frequencyHz : { 150.0, 300.0, 450.0, 600.0 }) {
+        const auto expected = Muffler::transmissionLossDb(
+            expansionRatio, frequencyHz, traversalSeconds);
+        const auto measured = measureTransmissionDb(expansionRatio, frequencyHz);
+        require(std::abs(measured - expected) < 0.25,
+            "a lossless chamber must reproduce Munjal's transmission loss");
+    }
+
+    // The pass-band is the signature of a reactive chamber: at kL = pi the
+    // chamber is acoustically transparent however large the expansion.
+    require(measureTransmissionDb(expansionRatio, 600.0) < 0.25,
+        "a lossless chamber must be transparent in its pass-band");
+    require(measureTransmissionDb(16.0, 600.0) < 0.25,
+        "the pass-band must not depend on the expansion ratio");
+
+    // Deeper stop-band with a larger expansion ratio, which is the whole reason
+    // geometry differentiates one engine's silencer from another's.
+    require(measureTransmissionDb(16.0, 300.0)
+            > measureTransmissionDb(6.25, 300.0) + 3.0,
+        "a larger expansion ratio must deepen the stop-band");
+
+    // Passivity. A silencer may never return more energy than it is given, in
+    // either direction, or the waveguide it sits in can run away.
+    {
+        Muffler::State state;
+        state.prepare(256);
+        Muffler::Coefficients c;
+        c.enabled = true;
+        c.reflection = Muffler::reflectionCoefficient(1.0, expansionRatio);
+        c.delaySamples = static_cast<float>(traversalSamples);
+        auto inPower = 0.0;
+        auto outPower = 0.0;
+        std::uint32_t noise = 12'345U;
+        for (std::size_t n = 0; n < 200'000; ++n) {
+            noise ^= noise << 13U; noise ^= noise >> 17U; noise ^= noise << 5U;
+            const auto drive = static_cast<float>(noise) / 2'147'483'648.0F - 1.0F;
+            const auto fromOutlet = n < 100'000 ? 0.0F : drive * 0.5F;
+            const auto out = Muffler::process(state, c, drive, fromOutlet);
+            inPower += static_cast<double>(drive) * drive
+                + static_cast<double>(fromOutlet) * fromOutlet;
+            outPower += static_cast<double>(out.towardOutlet) * out.towardOutlet
+                + static_cast<double>(out.towardCollector) * out.towardCollector;
+        }
+        require(outPower <= inPower * 1.02,
+            "the chamber must be passive in both directions");
+    }
+
+    // Transparency. An engine with no chamber must render exactly as it did
+    // before this element existed -- not approximately.
+    {
+        Muffler::State state;
+        state.prepare(256);
+        const Muffler::Coefficients disabled {};
+        for (std::size_t n = 0; n < 64; ++n) {
+            const auto a = static_cast<float>(n) * 0.37F - 5.0F;
+            const auto b = static_cast<float>(n) * -0.11F + 2.0F;
+            const auto out = Muffler::process(state, disabled, a, b);
+            require(out.towardOutlet == a && out.towardCollector == b,
+                "a disabled chamber must be an exact through-connection");
+        }
+    }
+
+    // A unit expansion ratio is a straight pipe, so it must not attenuate.
+    require(measureTransmissionDb(1.0, 300.0) < 1.0e-6,
+        "a chamber with no expansion must be acoustically absent");
+}
+
 // The runtime's published calibration default is duplicated from the audio
 // module's documented constant (audio depends on runtime, so it cannot be
 // included there). If they drift apart the delivered level stops matching the
@@ -1097,6 +1219,7 @@ int main() {
         valvePortTerminationRegression();
         boundaryReconstructionRegression();
         nonlinearDuctAcousticsRegression();
+        expansionChamberMufflerRegression();
         latencyAndBlockSizeRegression();
         runnerDelaySampleRateRegression();
         exhaustPathIsolationRegression();

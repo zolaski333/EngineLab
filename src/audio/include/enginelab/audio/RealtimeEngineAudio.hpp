@@ -3,6 +3,7 @@
 #include <enginelab/audio/PipeRadiationModel.hpp>
 #include <enginelab/audio/BoundaryReconstructionFilter.hpp>
 #include <enginelab/audio/DuctWallLoss.hpp>
+#include <enginelab/audio/ExpansionChamberMuffler.hpp>
 #include <enginelab/audio/RealtimeConvolutionBank.hpp>
 #include <enginelab/audio/ValvePortTermination.hpp>
 #include <enginelab/runtime/EngineRuntime.hpp>
@@ -175,6 +176,20 @@ private:
          *  per-block wall-loss fit does not need per-sample transcendentals. */
         float mediumDensityKgPerM3 { 1.2F };
         float mediumSoundSpeedMps { 343.0F };
+        /** Expansion-chamber silencer at the collector end of the duct.
+         *  Disabled until the engine publishes a chamber, in which state it is
+         *  an exact through-connection. See ExpansionChamberMuffler. */
+        ExpansionChamberMuffler::State muffler {};
+        ExpansionChamberMuffler::Coefficients mufflerCoefficients {};
+        /** Block-rate target the chamber traversal ramps toward per sample.
+         *
+         * The chamber delay is stretched by the published exhaust sound speed
+         * exactly like every other physical delay, so it inherits the same
+         * frame-rate step; see RunnerWaveguides::delayTargetSamples. Applying
+         * it directly was measured as broadband hash reaching 28 % of the
+         * signal energy in the top octave -- block-boundary discontinuities,
+         * not silencing. */
+        float mufflerDelayTargetSamples { 0.0F };
     };
     struct RunnerWaveguides final {
         DelayLineBank forward;

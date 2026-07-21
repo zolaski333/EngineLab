@@ -85,6 +85,8 @@ template <typename T>
     assignIfPresent(node, "outlet_diameter_mm", value.outletDiameterMm);
     assignIfPresent(node, "collector_volume_l", value.collectorVolumeLitres);
     assignIfPresent(node, "outlet_discharge_coefficient", value.outletDischargeCoefficient);
+    assignIfPresent(node, "muffler_chamber_diameter_mm", value.mufflerChamberDiameterMm);
+    assignIfPresent(node, "muffler_chamber_length_mm", value.mufflerChamberLengthMm);
     return value;
 }
 

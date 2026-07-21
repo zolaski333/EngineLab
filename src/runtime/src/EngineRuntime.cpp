@@ -221,6 +221,29 @@ EngineRuntime::EngineRuntime(EngineConfig config,
             static_cast<float>(openness), std::memory_order_relaxed);
         audioState_.exhaustPathReflectionSeconds[pathIndex].store(
             static_cast<float>(reflectionSeconds), std::memory_order_relaxed);
+        // The chamber sits on the collector-to-outlet duct, so the duct area it
+        // steps up from is the collector's. Geometry is published as the bare
+        // expansion ratio and traversal time; turning those into scattering
+        // coefficients is the audio layer's job, and Runtime cannot include an
+        // audio header anyway -- Audio links Runtime, not the reverse. Both
+        // fields must be present: a chamber with no length is not a chamber,
+        // and neither is one with no expansion.
+        const auto ductAreaM2 = circularAreaM2(geometry.collectorDiameterMm);
+        const auto chamberAreaM2 = circularAreaM2(geometry.mufflerChamberDiameterMm);
+        const auto chamberTraversalSeconds = geometry.mufflerChamberLengthMm
+            / exhaustSoundSpeedMmPerSecond;
+        const auto chamberConfigured = geometry.mufflerChamberDiameterMm > 1.0
+            && geometry.mufflerChamberLengthMm > 1.0 && ductAreaM2 > 1.0e-9;
+        audioState_.exhaustPathMufflerExpansionRatio[pathIndex].store(
+            chamberConfigured
+                ? static_cast<float>(std::clamp(chamberAreaM2 / ductAreaM2, 0.05, 100.0))
+                : 0.0F,
+            std::memory_order_relaxed);
+        audioState_.exhaustPathMufflerTraversalSeconds[pathIndex].store(
+            chamberConfigured
+                ? static_cast<float>(std::clamp(chamberTraversalSeconds, 0.0, 0.020))
+                : 0.0F,
+            std::memory_order_relaxed);
         // All configured gain is already present per cylinder (and in each
         // firing event). Leaving the path at unity removes the historical
         // audioVolume double multiplication.

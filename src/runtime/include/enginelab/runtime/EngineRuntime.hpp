@@ -58,6 +58,13 @@ struct RealtimeAudioState final {
     std::array<std::atomic<float>, 8> exhaustPathGain {
         1.0F, 1.0F, 1.0F, 1.0F, 1.0F, 1.0F, 1.0F, 1.0F
     };
+    // Expansion-chamber silencer on each collector-to-outlet duct, published as
+    // bare geometry: the expansion ratio (chamber area / duct area) and the
+    // one-way traversal time. A zero on either means "no chamber", which the
+    // audio element renders as an exact through-connection -- the correct model
+    // for an open stack, and what every engine gets until it configures one.
+    std::array<std::atomic<float>, 8> exhaustPathMufflerExpansionRatio {};
+    std::array<std::atomic<float>, 8> exhaustPathMufflerTraversalSeconds {};
     std::array<std::atomic<std::uint32_t>, 32> cylinderExhaustPathIndex {};
     // Per-cylinder graph transmission. The pressure renderer applies it before
     // the runner waveguide; firing events carry the same metric in their own

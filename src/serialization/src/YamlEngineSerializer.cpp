@@ -213,7 +213,9 @@ std::string YamlEngineSerializer::encode(const EngineConfig& config) const {
         << YAML::Key << "muffler_restriction" << YAML::Value << config.exhaust.mufflerRestriction
         << YAML::Key << "outlet_diameter_mm" << YAML::Value << config.exhaust.outletDiameterMm
         << YAML::Key << "collector_volume_l" << YAML::Value << config.exhaust.collectorVolumeLitres
-        << YAML::Key << "outlet_discharge_coefficient" << YAML::Value << config.exhaust.outletDischargeCoefficient << YAML::EndMap
+        << YAML::Key << "outlet_discharge_coefficient" << YAML::Value << config.exhaust.outletDischargeCoefficient
+        << YAML::Key << "muffler_chamber_diameter_mm" << YAML::Value << config.exhaust.mufflerChamberDiameterMm
+        << YAML::Key << "muffler_chamber_length_mm" << YAML::Value << config.exhaust.mufflerChamberLengthMm << YAML::EndMap
         << YAML::Key << "transmission" << YAML::Value << YAML::BeginMap
         << YAML::Key << "gear_ratios" << YAML::Value << YAML::Flow << config.transmission.gearRatios
         << YAML::Key << "final_drive_ratio" << YAML::Value << config.transmission.finalDriveRatio
@@ -338,6 +340,8 @@ std::string YamlEngineSerializer::encode(const EngineConfig& config) const {
             << YAML::Key << "outlet_diameter_mm" << YAML::Value << path.geometry.outletDiameterMm
             << YAML::Key << "collector_volume_l" << YAML::Value << path.geometry.collectorVolumeLitres
             << YAML::Key << "outlet_discharge_coefficient" << YAML::Value << path.geometry.outletDischargeCoefficient
+            << YAML::Key << "muffler_chamber_diameter_mm" << YAML::Value << path.geometry.mufflerChamberDiameterMm
+            << YAML::Key << "muffler_chamber_length_mm" << YAML::Value << path.geometry.mufflerChamberLengthMm
             << YAML::EndMap;
         if (path.network) {
             out << YAML::Key << "graph" << YAML::Value << YAML::BeginMap
@@ -543,7 +547,9 @@ EngineDecodeResult YamlEngineSerializer::decode(std::string_view text) const noe
             exhaust["primary_length_mm"].as<double>(480.0), exhaust["primary_diameter_mm"].as<double>(42.0),
             exhaust["collector_diameter_mm"].as<double>(58.0), exhaust["muffler_restriction"].as<double>(0.28),
             exhaust["outlet_diameter_mm"].as<double>(65.0), exhaust["collector_volume_l"].as<double>(2.0),
-            exhaust["outlet_discharge_coefficient"].as<double>(0.72) };
+            exhaust["outlet_discharge_coefficient"].as<double>(0.72),
+            exhaust["muffler_chamber_diameter_mm"].as<double>(0.0),
+            exhaust["muffler_chamber_length_mm"].as<double>(0.0) };
         if (const auto transmission = engine["transmission"]) {
             if (transmission["gear_ratios"]) config.transmission.gearRatios = transmission["gear_ratios"].as<std::vector<double>>();
             if (transmission["final_drive_ratio"]) config.transmission.finalDriveRatio = transmission["final_drive_ratio"].as<double>();
@@ -691,7 +697,9 @@ EngineDecodeResult YamlEngineSerializer::decode(std::string_view text) const noe
                     geometry["primary_length_mm"].as<double>(480.0), geometry["primary_diameter_mm"].as<double>(42.0),
                     geometry["collector_diameter_mm"].as<double>(58.0), geometry["muffler_restriction"].as<double>(0.28),
                     geometry["outlet_diameter_mm"].as<double>(65.0), geometry["collector_volume_l"].as<double>(2.0),
-                    geometry["outlet_discharge_coefficient"].as<double>(0.72) };
+                    geometry["outlet_discharge_coefficient"].as<double>(0.72),
+                    geometry["muffler_chamber_diameter_mm"].as<double>(0.0),
+                    geometry["muffler_chamber_length_mm"].as<double>(0.0) };
                 if (const auto encodedGraph = item["graph"]) {
                     ExhaustNetworkConfig network;
                     for (const auto& encodedComponent : encodedGraph["components"]) {

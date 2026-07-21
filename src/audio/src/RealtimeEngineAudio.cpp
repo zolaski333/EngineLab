@@ -106,6 +106,10 @@ void RealtimeEngineAudio::allocateDelayLines() {
     for (std::size_t path = 0; path < allocatedPaths_; ++path)
         longestReflectionSeconds = std::max(longestReflectionSeconds,
             publishedSeconds(realtimeState_.exhaustPathReflectionSeconds[path]));
+    auto longestMufflerSeconds = 0.0;
+    for (std::size_t path = 0; path < allocatedPaths_; ++path)
+        longestMufflerSeconds = std::max(longestMufflerSeconds,
+            publishedSeconds(realtimeState_.exhaustPathMufflerTraversalSeconds[path]));
 
     // Every line carries its physical delay stretched by the worst acoustic
     // scale, plus two samples for the fractional read's second tap.
@@ -114,6 +118,7 @@ void RealtimeEngineAudio::allocateDelayLines() {
     };
     const auto runnerLength = delayLineLength(scaled(longestRunnerSeconds), minimumLineLength);
     const auto waveLength = delayLineLength(scaled(longestReflectionSeconds), minimumLineLength);
+    const auto mufflerLength = delayLineLength(scaled(longestMufflerSeconds), minimumLineLength);
     const auto observerDelaySamples = observerDistanceM / ambientSoundSpeedMps * sampleRate_;
     const auto observerLineLength = delayLineLength(
         observerDelaySamples + 4.0, minimumLineLength);
@@ -127,6 +132,7 @@ void RealtimeEngineAudio::allocateDelayLines() {
         path.forwardWave.assign(waveLength, 0.0F);
         path.reverseWave.assign(waveLength, 0.0F);
         path.waveMask = waveLength - 1;
+        path.muffler.prepare(mufflerLength);
         path.observerPressure.assign(observerLineLength, 0.0F);
         path.observerMask = observerLineLength - 1;
         path.observerDelaySamples = static_cast<float>(observerDelaySamples);
@@ -229,6 +235,7 @@ void RealtimeEngineAudio::release() noexcept {
         path.wallLoss = {};
         path.wallLossOutbound.reset();
         path.wallLossReturn.reset();
+        path.muffler.reset();
         path.mediumDensityKgPerM3 = 1.2F;
         path.mediumSoundSpeedMps = 343.0F;
         path.radiation.reset();
@@ -533,6 +540,39 @@ void RealtimeEngineAudio::render(juce::AudioBuffer<float>& output, int startSamp
             : outletAreaM2[path];
         collectorReflection[path] = std::clamp(
             presetReflection_ * (1.12F - pathOpenness[path] * 0.30F), 0.04F, 0.78F);
+        // Expansion-chamber silencer, refit per block from published geometry.
+        // The chamber's own traversal is stretched by the same acoustic scale
+        // as every other physical delay, so a cold exhaust or a slowed-down
+        // audition moves its comb spacing with the rest of the network.
+        {
+            auto& muffler = exhaustPaths_[path].mufflerCoefficients;
+            const auto expansionRatio = realtimeState_
+                .exhaustPathMufflerExpansionRatio[path].load(std::memory_order_relaxed);
+            const auto traversalSeconds = realtimeState_
+                .exhaustPathMufflerTraversalSeconds[path].load(std::memory_order_relaxed);
+            const auto requested = static_cast<float>(
+                sampleRate_ * static_cast<double>(traversalSeconds) * acousticDelayScale);
+            const auto limit = static_cast<float>(exhaustPaths_[path].muffler
+                .towardOutlet.size() - 2U);
+            muffler.enabled = std::isfinite(expansionRatio) && expansionRatio > 0.05F
+                && std::isfinite(traversalSeconds) && requested >= 1.0F && limit >= 1.0F;
+            if (muffler.enabled) {
+                if (requested > limit) delayTruncations_.fetch_add(1, std::memory_order_relaxed);
+                // Areas enter the junction only as their ratio, so the duct is
+                // taken as unit area and the chamber as the published ratio.
+                muffler.reflection = ExpansionChamberMuffler::reflectionCoefficient(
+                    1.0, static_cast<double>(expansionRatio));
+                // Target only; ramped per sample. Stepping this at the block
+                // boundary phase-jumps the chamber lines every block.
+                exhaustPaths_[path].mufflerDelayTargetSamples =
+                    std::clamp(requested, 1.0F, limit);
+                if (muffler.delaySamples < 1.0F)
+                    muffler.delaySamples = exhaustPaths_[path].mufflerDelayTargetSamples;
+            } else {
+                muffler = ExpansionChamberMuffler::Coefficients {};
+                exhaustPaths_[path].mufflerDelayTargetSamples = 0.0F;
+            }
+        }
         // Refit the collector-to-outlet wall loss once per block. The gas state
         // moves on a far slower timescale than a block, and the fit needs
         // transcendentals that have no place in the per-sample loop.
@@ -1108,6 +1148,8 @@ void RealtimeEngineAudio::render(juce::AudioBuffer<float>& output, int startSamp
             // RunnerWaveguides::delayTargetSamples.
             path.reflectionDelaySamples += controlRampCoefficient_
                 * (path.reflectionDelayTargetSamples - path.reflectionDelaySamples);
+            path.mufflerCoefficients.delaySamples += controlRampCoefficient_
+                * (path.mufflerDelayTargetSamples - path.mufflerCoefficients.delaySamples);
             const auto collectorInput = (pathCollectorLeft[pathIndex]
                 + pathCollectorRight[pathIndex]) * 0.5F;
 
@@ -1139,8 +1181,19 @@ void RealtimeEngineAudio::render(juce::AudioBuffer<float>& output, int startSamp
                 const auto radiation = path.radiation.process(incidentAtMouth);
                 path.reverseWave[path.waveWrite] = finiteState(
                     static_cast<float>(radiation.reflectedPressurePa), 5.0e6F);
-                path.forwardWave[path.waveWrite] = finiteState(collectorInput, 5.0e6F);
-                path.collectorReturn = finiteState(returnedAtCollector, 5.0e6F);
+                // The silencer sits at the collector end of the duct, so both
+                // of its ports are available on the same sample: what the
+                // collector sends out, and what the duct has just returned. A
+                // chamber at the mouth end would need the radiation load's
+                // reflection one sample early. Disabled, this is an exact
+                // through-connection, so an engine with no chamber renders
+                // bit-identically to before the element existed.
+                const auto scattered = ExpansionChamberMuffler::process(
+                    path.muffler, path.mufflerCoefficients,
+                    collectorInput, returnedAtCollector);
+                path.forwardWave[path.waveWrite] = finiteState(
+                    scattered.towardOutlet, 5.0e6F);
+                path.collectorReturn = finiteState(scattered.towardCollector, 5.0e6F);
                 path.waveWrite = (path.waveWrite + 1U) & path.waveMask;
 
                 // The monopole expression returns the correct far-field

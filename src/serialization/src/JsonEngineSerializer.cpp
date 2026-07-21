@@ -192,7 +192,9 @@ std::string JsonEngineSerializer::encode(const EngineConfig& config) const {
                 {"muffler_restriction", path.geometry.mufflerRestriction},
                 {"outlet_diameter_mm", path.geometry.outletDiameterMm},
                 {"collector_volume_l", path.geometry.collectorVolumeLitres},
-                {"outlet_discharge_coefficient", path.geometry.outletDischargeCoefficient}}} };
+                {"outlet_discharge_coefficient", path.geometry.outletDischargeCoefficient},
+                {"muffler_chamber_diameter_mm", path.geometry.mufflerChamberDiameterMm},
+                {"muffler_chamber_length_mm", path.geometry.mufflerChamberLengthMm}}} };
         if (path.network) {
             Json components = Json::array();
             for (const auto& component : path.network->components)
@@ -299,7 +301,9 @@ std::string JsonEngineSerializer::encode(const EngineConfig& config) const {
                       {"muffler_restriction", config.exhaust.mufflerRestriction},
                       {"outlet_diameter_mm", config.exhaust.outletDiameterMm},
                       {"collector_volume_l", config.exhaust.collectorVolumeLitres},
-                      {"outlet_discharge_coefficient", config.exhaust.outletDischargeCoefficient}}},
+                      {"outlet_discharge_coefficient", config.exhaust.outletDischargeCoefficient},
+                      {"muffler_chamber_diameter_mm", config.exhaust.mufflerChamberDiameterMm},
+                      {"muffler_chamber_length_mm", config.exhaust.mufflerChamberLengthMm}}},
         {"transmission", {{"gear_ratios", config.transmission.gearRatios},
                            {"final_drive_ratio", config.transmission.finalDriveRatio},
                            {"max_clutch_torque_nm", config.transmission.maxClutchTorqueNm},
@@ -471,7 +475,9 @@ EngineDecodeResult JsonEngineSerializer::decode(std::string_view text) const noe
             config.exhaust = { exhaust.value("primary_length_mm", 480.0), exhaust.value("primary_diameter_mm", 42.0),
                 exhaust.value("collector_diameter_mm", 58.0), exhaust.value("muffler_restriction", 0.28),
                 exhaust.value("outlet_diameter_mm", 65.0), exhaust.value("collector_volume_l", 2.0),
-                exhaust.value("outlet_discharge_coefficient", 0.72) };
+                exhaust.value("outlet_discharge_coefficient", 0.72),
+                exhaust.value("muffler_chamber_diameter_mm", 0.0),
+                exhaust.value("muffler_chamber_length_mm", 0.0) };
         }
         if (engine.contains("transmission")) {
             const auto& transmission = engine.at("transmission");
@@ -597,6 +603,8 @@ EngineDecodeResult JsonEngineSerializer::decode(std::string_view text) const noe
                     path.geometry.outletDiameterMm = geometry.value("outlet_diameter_mm", path.geometry.outletDiameterMm);
                     path.geometry.collectorVolumeLitres = geometry.value("collector_volume_l", path.geometry.collectorVolumeLitres);
                     path.geometry.outletDischargeCoefficient = geometry.value("outlet_discharge_coefficient", path.geometry.outletDischargeCoefficient);
+                    path.geometry.mufflerChamberDiameterMm = geometry.value("muffler_chamber_diameter_mm", path.geometry.mufflerChamberDiameterMm);
+                    path.geometry.mufflerChamberLengthMm = geometry.value("muffler_chamber_length_mm", path.geometry.mufflerChamberLengthMm);
                 }
                 if (item.contains("graph") && !item.at("graph").is_null()) {
                     const auto& encodedGraph = item.at("graph");

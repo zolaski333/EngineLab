@@ -159,6 +159,13 @@ struct ExhaustConfig final {
     double outletDiameterMm { 65.0 };
     double collectorVolumeLitres { 2.0 };
     double outletDischargeCoefficient { 0.72 };
+    /** Single expansion chamber on the collector-to-outlet duct. Zero on either
+     *  field means "no silencer": the audio element becomes an exact
+     *  through-connection, which is the correct model for an open stack and
+     *  keeps every engine that predates these fields rendering unchanged. See
+     *  `enginelab/audio/ExpansionChamberMuffler.hpp`. */
+    double mufflerChamberDiameterMm { 0.0 };
+    double mufflerChamberLengthMm { 0.0 };
 };
 
 struct IntakeConfig final {
