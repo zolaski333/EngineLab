@@ -34,6 +34,13 @@ struct StepMetrics final {
     double meanTorqueNm {};
     double meanPowerKw {};
     double meanVolumetricEfficiency {};
+    double meanManifoldKpa {};
+    double meanExhaustKpa {};
+    double meanIntakeRunnerKpa {};
+    double meanIntakeMgPerCycle {};
+    double meanTrappedMg {};
+    double meanResidualFraction {};
+    double meanAirMgPerCycle {};
 };
 
 bool containsCaseInsensitive(const std::string& text, const std::string& filter) {
@@ -61,6 +68,9 @@ StepMetrics measurePoint(enginelab::EngineSimulator& simulator, double targetRpm
     auto torqueSum = 0.0;
     auto powerSum = 0.0;
     auto veSum = 0.0;
+    auto mapSum = 0.0, exhSum = 0.0, runnerSum = 0.0;
+    auto intakeMgSum = 0.0, trappedSum = 0.0, residualSum = 0.0, airMgSum = 0.0;
+    auto cylSamples = 0.0;
     for (int step = 0; step < settleSteps + sampleSteps; ++step) {
         const auto speedError = (simulator.state().rpm - targetRpm) / std::max(1.0, targetRpm);
         dynoIntegral = std::clamp(dynoIntegral + speedError * dt * 1.20, 0.0, 0.95);
@@ -82,6 +92,16 @@ StepMetrics measurePoint(enginelab::EngineSimulator& simulator, double targetRpm
             torqueSum += frame.state.cycleAveragedTorqueNm;
             powerSum += frame.state.cycleAveragedPowerKw;
             veSum += frame.state.volumetricEfficiency;
+            mapSum += frame.state.manifoldPressureKpa;
+            exhSum += frame.state.exhaustPressureKpa;
+            runnerSum += frame.state.intakeRunnerPressureKpa;
+            airMgSum += frame.state.airMassMgPerCycle;
+            for (std::size_t c = 0; c < frame.state.cylinderStateCount; ++c) {
+                intakeMgSum += frame.state.cylinderStates[c].intakeFlowMgPerCycle;
+                trappedSum += frame.state.cylinderStates[c].trappedMassMg;
+                residualSum += frame.state.cylinderStates[c].residualGasFraction;
+                cylSamples += 1.0;
+            }
             for (std::size_t c = 0; c < frame.state.cylinderStateCount; ++c)
                 peakCylinderBar = std::max(peakCylinderBar,
                     frame.state.cylinderStates[c].pressureEstimateBar);
@@ -108,9 +128,17 @@ StepMetrics measurePoint(enginelab::EngineSimulator& simulator, double targetRpm
         lambdaSum / static_cast<double>(timings.size()),
         torqueSum / static_cast<double>(timings.size()),
         powerSum / static_cast<double>(timings.size()),
-        veSum / static_cast<double>(timings.size())
+        veSum / static_cast<double>(timings.size()),
+        mapSum / static_cast<double>(timings.size()),
+        exhSum / static_cast<double>(timings.size()),
+        runnerSum / static_cast<double>(timings.size()),
+        intakeMgSum / std::max(1.0, cylSamples),
+        trappedSum / std::max(1.0, cylSamples),
+        residualSum / std::max(1.0, cylSamples),
+        airMgSum / static_cast<double>(timings.size())
     };
 }
+
 
 void measureEngine(const enginelab::EngineConfig& baseConfig, int run) {
     auto config = baseConfig;
@@ -143,7 +171,11 @@ void measureEngine(const enginelab::EngineConfig& baseConfig, int run) {
                   << ',' << result.meanExhaustTemperatureC << ',' << result.meanImepBar
                   << ',' << result.peakCylinderPressureBar << ',' << result.meanLambda
                   << ',' << result.meanTorqueNm << ',' << result.meanPowerKw
-                  << ',' << result.meanVolumetricEfficiency << '\n';
+                  << ',' << result.meanVolumetricEfficiency
+                  << ',' << result.meanManifoldKpa << ',' << result.meanExhaustKpa
+                  << ',' << result.meanIntakeRunnerKpa << ',' << result.meanIntakeMgPerCycle
+                  << ',' << result.meanTrappedMg << ',' << result.meanResidualFraction
+                  << ',' << result.meanAirMgPerCycle << '\n';
     }
 }
 }
@@ -183,7 +215,8 @@ int main(int argc, char** argv) {
 
     std::cout << std::fixed << std::setprecision(3);
     std::cout << "engine,cylinders,run,target_rpm,actual_rpm,mean_us,p50_us,p95_us,max_us,mean_substeps,"
-                 "exhaust_c,imep_bar,peak_cyl_bar,lambda,torque_nm,power_kw,ve\n";
+                 "exhaust_c,imep_bar,peak_cyl_bar,lambda,torque_nm,power_kw,ve,"
+                 "map_kpa,exh_kpa,runner_kpa,intake_mg,trapped_mg,residual,air_mg\n";
     for (int run = 1; run <= runs; ++run)
         for (const auto& engine : engines) measureEngine(engine, run);
     return EXIT_SUCCESS;
