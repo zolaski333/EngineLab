@@ -82,14 +82,19 @@ test onto the behaviour it is meant to catch. Keep it that way.
   leading-order law, monotone cascade, growth, and passivity — never an exact
   higher-harmonic match, which would have to be calibrated onto the simulator's
   own output.
-- **The muffler does not exist acoustically.** `muffler_restriction` is a
-  pressure-loss term. The physical exhaust branch never reads it, never reads
-  `openness`, and never runs the FDN — measured, driving it from 0.30 to 0.95
-  (sports exhaust to nearly blocked) moves the delivered spectrum by under
-  1.4 dB in any third octave. Every engine is rendered as a straight open pipe.
-  Do not "re-tune" `parts/exhausts.yaml` to differentiate road engines; there is
-  no transmission-loss element for those numbers to drive. See
-  `docs/thermoacoustic-architecture.md` §17.
+- **The silencer is `muffler_chamber_*`, not `muffler_restriction`.** The
+  restriction is still only a pressure-loss term: the physical exhaust branch
+  never reads it, never reads `openness`, never runs the FDN. What silences is
+  the expansion chamber (`ExpansionChamberMuffler.hpp`), driven by the chamber
+  diameter and length. Zero on either means "no chamber" and the element is an
+  exact through-connection — verified in the delivered render, not just in the
+  test: the Merlin measures +0.00 dB in every band. **Do not put broadband loss
+  back inside that element.** It sits in the collector-outlet feedback loop, so
+  a couple of dB per traversal compounds and collapses the low-frequency
+  resonance; an earlier absorption term cost the EJ25 11 dB at its rev-range
+  fundamental, and loudness normalisation then exposed the renderer's own
+  high-frequency floor, which looked exactly like the element generating hiss.
+  See `docs/thermoacoustic-architecture.md` §17 and §19.
 - **The realtime bottleneck is the physics thread, not the audio callback.**
   Measured on a recent 8-core laptop: the callback uses 15-33% of a 256-sample
   budget, while the 240 Hz `EngineRuntime` loop misses 35% of its deadlines on a

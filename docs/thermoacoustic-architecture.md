@@ -506,7 +506,7 @@ transitoire le plus élevé du catalogue (3.13). Le V12 reste le moteur le plus
 sombre — c'est en partie physique pour un 19.8 L tournant à 3800 tr/min — mais il
 crache désormais au lieu de bourdonner.
 
-## 17. Le silencieux est acoustiquement inerte sur le chemin physique (mesuré)
+## 17. Le silencieux est acoustiquement inerte sur le chemin physique (mesuré — corrigé en §19)
 
 Constat le plus important pour qui veut différencier les moteurs de route :
 **`muffler_restriction` ne filtre rien dans le chemin physique livré.**
@@ -601,3 +601,61 @@ coût par sous-pas de `EngineSimulator::step` (et le nombre de sous-pas) qu'il
 faut réduire. Le pool `SubstepParallel` est déjà correct — il ne spinne qu'entre
 sous-pas d'une même trame et part sur variable de condition ensuite — donc le
 levier n'est pas là non plus.
+
+
+## 19. Le silencieux physique : chambre d'expansion (correction de §17)
+
+`src/audio/include/enginelab/audio/ExpansionChamberMuffler.hpp`. Deux jonctions
+de Kelly-Lochbaum et une ligne de retard bidirectionnelle sur le conduit
+collecteur -> sortie. La perte par transmission est la forme fermée de Munjal,
+
+    TL = 10 log10 [ 1 + 1/4 (m - 1/m)^2 sin^2(kL) ],   m = S_chambre / S_conduit
+
+et `expansionChamberMufflerRegression` pilote l'élément par sinus pour vérifier
+la loi, ses bandes passantes, sa passivité et sa transparence. Non vacuité
+vérifiée : inverser un signe de jonction fait tomber le test.
+
+**Garantie de transparence.** Sans chambre configurée, `process` est une
+connexion traversante exacte. Vérifié dans le rendu livré, pas seulement dans le
+test : le Merlin mesure **+0.00 dB dans chaque bande et chaque segment**.
+
+### Deux corrections que seule la mesure a trouvées
+
+- **L'absorption inventée était le vrai problème.** Une première version
+  dissipait dans la chambre via un gain et un pôle pilotés par
+  `muffler_restriction`. Cette correspondance était inventée (la restriction est
+  un coefficient de perte de charge, pas d'absorption) et, **dans la boucle de
+  réaction collecteur <-> sortie, une perte de 2 dB par traversée se compose et
+  effondre la résonance basse fréquence** : l'EJ25 perdait 11 dB sur son
+  fondamental en montée. La normalisation de loudness remontait alors le clip et
+  démasquait le plancher HF préexistant du rendu -- 40 % de l'énergie au-dessus
+  de 4 kHz. La chambre ne fabriquait pas de souffle : elle effaçait le moteur.
+  L'élément est désormais purement réactif ; tout découle de deux aires et d'une
+  longueur.
+  **Piège pour la suite : ne pas remettre de perte large bande dans cette
+  boucle sans mesurer le grave.**
+- **Fausse piste, notée pour ne pas être refaite.** La première hypothèse était
+  le retard appliqué en marche d'escalier au bloc (le piège documenté en §12).
+  Le rampage a été ajouté -- c'est l'invariant que suivent déjà les retards de
+  runner et de réflexion -- mais **mesuré, il ne change rien** sur ces clips. Il
+  est conservé comme prévention, pas comme correctif.
+
+### Géométrie et effet mesuré
+
+Rapports d'expansion volontairement modestes (TL crête 1.6 à 7.0 dB, pas les
+10-13 dB d'un gros corps d'origine) : c'est une chambre **unique**, et un vrai
+silencieux multi-chambres est conçu pour que ses creux évitent les ordres
+d'allumage. À profondeur d'origine, le modèle creusait un notch sur le
+fondamental de l'EJ25 et divisait par deux le haut du spectre du K20 et du LS3.
+
+Au limiteur, contenu 1.5-4 kHz sans -> avec chambre : Hayabusa 41.9 -> 43.2 %,
+Big Twin 12.1 -> 13.1, K20 34.8 -> 28.3, LS3 11.2 -> 9.2. L'écart-type
+inter-moteurs par tiers d'octave monte au ralenti (8.01 -> 8.24 dB) et au
+limiteur (6.31 -> 6.48 dB). Coût CPU : nul (LS3 p95 29.8 % contre 28.9 % avant).
+
+### Limite honnête qui subsiste
+
+L'EJ25 garde un plancher HF élevé en montée (20.9 % au-dessus de 4 kHz contre
+7.1 % sans chambre) : ce plancher **préexiste** à la chambre, celle-ci le
+démasque en retirant du grave. C'est la prochaine chose à regarder sur ce
+moteur, et c'est un problème de couche turbo, pas de silencieux.
