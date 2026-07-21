@@ -1,9 +1,33 @@
+# muffler_chamber_* is the single expansion chamber the audio waveguide
+# scatters through (see enginelab/audio/ExpansionChamberMuffler.hpp). Body
+# diameter and length are the real silencer's, because they set what a listener
+# hears: the chamber's transmission loss combs the exhaust with pass-bands
+# every c/(2L) and stop-bands between, deep in proportion to (chamber area /
+# collector area). Omitting both fields means "no silencer" -- the correct model
+# for an open stack, and what the aircraft, radial and flat-six presets keep.
+# muffler_restriction now also drives how absorptive the chamber is, so a
+# heavily packed OEM box no longer has transparent pass-bands.
+#
+# Expansion ratios sit at the modest end of what real hardware uses (peak
+# transmission loss 1.5-6.5 dB rather than the 10-13 dB a full-size OEM body
+# gives). That is deliberate and measured, not timidity: this is a *single*
+# chamber, and a real multi-chamber silencer is designed precisely so its
+# notches do not land on a firing order. Modelling one chamber at OEM depth put
+# a 16 dB notch on the EJ25's rev-range fundamental and halved the K20 and LS3
+# top end -- claiming more silencing than a one-chamber topology can honestly
+# justify. Chamber lengths are staggered per engine because c/(2L) is what
+# sets each exhaust's comb spacing, and that is where the character lives.
+
 compact_sport:
   primary_length_mm: 520
   primary_diameter_mm: 42
   collector_diameter_mm: 58
   muffler_restriction: 0.34
   outlet_diameter_mm: 63
+  # Cat-back sports rear box: small body, short, so its pass-bands sit high and
+  # it keeps the rasp a Subaru flat-four is known for.
+  muffler_chamber_diameter_mm: 112
+  muffler_chamber_length_mm: 330
 
 turbo_downpipe:
   primary_length_mm: 430
@@ -11,6 +35,11 @@ turbo_downpipe:
   collector_diameter_mm: 64
   muffler_restriction: 0.46
   outlet_diameter_mm: 76
+  # The quietest exhaust in the catalogue and it should be: a large, long,
+  # heavily packed OEM box behind a turbine that has already absorbed the
+  # blowdown edge. Long body means closely spaced, low pass-bands.
+  muffler_chamber_diameter_mm: 132
+  muffler_chamber_length_mm: 470
 
 equal_length_header:
   primary_length_mm: 760
@@ -18,6 +47,10 @@ equal_length_header:
   collector_diameter_mm: 63
   muffler_restriction: 0.25
   outlet_diameter_mm: 70
+  # High-revving naturally aspirated four: a modest, lightly packed box, so the
+  # VTEC top end keeps its edge instead of being boxed in.
+  muffler_chamber_diameter_mm: 114
+  muffler_chamber_length_mm: 300
 
 crossplane_dual:
   primary_length_mm: 690
@@ -25,6 +58,11 @@ crossplane_dual:
   collector_diameter_mm: 76
   muffler_restriction: 0.30
   outlet_diameter_mm: 82
+  # American chambered V8 muffler: wide body, short, lightly packed. The wide
+  # spacing of its pass-bands is exactly what lets the uneven-bank burble
+  # through instead of averaging it away.
+  muffler_chamber_diameter_mm: 142
+  muffler_chamber_length_mm: 400
 
 motorcycle_4_2_1:
   primary_length_mm: 610
@@ -32,6 +70,10 @@ motorcycle_4_2_1:
   collector_diameter_mm: 48
   muffler_restriction: 0.20
   outlet_diameter_mm: 52
+  # A can, not a box: small expansion and barely packed, so the first pass-band
+  # is high and the litre-bike top end stays bright.
+  muffler_chamber_diameter_mm: 84
+  muffler_chamber_length_mm: 250
 
 short_v_twin:
   primary_length_mm: 880
@@ -39,6 +81,11 @@ short_v_twin:
   collector_diameter_mm: 60
   muffler_restriction: 0.18
   outlet_diameter_mm: 60
+  # Slip-on straight-through: the smallest expansion in the catalogue, because
+  # a big twin's character is the uneven firing gap and a real silencer would
+  # be the first thing its owner removed.
+  muffler_chamber_diameter_mm: 82
+  muffler_chamber_length_mm: 430
 
 # Short individual ejector stacks, near-open to atmosphere. A Merlin-style
 # aircraft V12 exhausts each cylinder through its own ~150 mm stack with no
@@ -53,6 +100,10 @@ aircraft_manifold:
   muffler_restriction: 0.02
   outlet_diameter_mm: 140
 
+# No muffler_chamber_* below: these three exhaust to atmosphere through a
+# near-open pipe in reality, which is why they already sounded right when the
+# straight-pipe model was all there was. Giving them a chamber would be adding
+# hardware they do not have.
 flat6_equal_length:
   primary_length_mm: 720
   primary_diameter_mm: 42
