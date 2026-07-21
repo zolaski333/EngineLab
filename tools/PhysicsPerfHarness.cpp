@@ -96,7 +96,11 @@ void measureEngine(const enginelab::EngineConfig& baseConfig, int run) {
         (void)simulator.step(dt, { true, time < 1.5, 0.72, 0.0 });
     }
     const auto maximumRpm = std::min(config.redlineRpm, config.ignition.revLimitRpm);
+    // Near-idle is measured explicitly: it is where the exhaust-coupling
+    // low-speed cap binds (firing frequency below 1/(16*cap)), so its cost
+    // moves independently of the load points whenever that cap changes.
     const std::array targets {
+        config.idleRpm * 1.1,
         std::max(config.idleRpm * 1.5, maximumRpm * 0.55),
         std::max(config.idleRpm * 1.5, maximumRpm * 0.90)
     };

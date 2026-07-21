@@ -287,12 +287,24 @@ int main(int argc, char** argv) {
     double targetLufs = -20.0;
     unsigned seed = 20260718U;
     std::map<std::string, std::filesystem::path> refs; // engine name substring -> reference wav
+    std::vector<std::string> requestedEngines; // name substrings; empty -> default trio
     for (int i = 1; i < argc; ++i) {
         const std::string a = argv[i];
         if (a == "--output" && i + 1 < argc) outRoot = argv[++i];
         else if (a == "--root" && i + 1 < argc) root = argv[++i];
         else if (a == "--target-lufs" && i + 1 < argc) targetLufs = std::stod(argv[++i]);
         else if (a == "--seed" && i + 1 < argc) seed = static_cast<unsigned>(std::stoul(argv[++i]));
+        else if (a == "--engines" && i + 1 < argc) {
+            // Comma-separated catalogue-name substrings, e.g. "LS3,Merlin,Twin".
+            std::string list = argv[++i];
+            for (std::size_t pos = 0; pos <= list.size();) {
+                const auto comma = list.find(',', pos);
+                const auto token = list.substr(pos, comma == std::string::npos ? std::string::npos : comma - pos);
+                if (!token.empty()) requestedEngines.push_back(token);
+                if (comma == std::string::npos) break;
+                pos = comma + 1;
+            }
+        }
         else if (a == "--ref" && i + 1 < argc) {
             const std::string kv = argv[++i]; const auto eq = kv.find('=');
             if (eq != std::string::npos) refs[kv.substr(0, eq)] = kv.substr(eq + 1);
@@ -304,14 +316,15 @@ int main(int argc, char** argv) {
     auto catalog = loadEngineCatalog(root);
     if (catalog.entries.empty()) { std::cerr << "No catalogue engines.\n"; return 1; }
 
-    // The three near-equivalent archetypes present in both catalogues.
-    const std::array<std::string, 3> wanted { "2JZ", "LS3", "Hayabusa" };
+    // Default: the three near-equivalent archetypes present in both catalogues.
+    std::vector<std::string> wanted { "2JZ", "LS3", "Hayabusa" };
+    if (!requestedEngines.empty()) wanted = requestedEngines;
     struct Selected { std::string label; const EngineConfig* config; };
     std::vector<Selected> selected;
     for (const auto& key : wanted)
         for (const auto& e : catalog.entries)
             if (e.config.name.find(key) != std::string::npos) { selected.push_back({ key, &e.config }); break; }
-    if (selected.size() != wanted.size()) { std::cerr << "Could not resolve all three archetypes.\n"; return 1; }
+    if (selected.size() != wanted.size()) { std::cerr << "Could not resolve all requested engines.\n"; return 1; }
 
     constexpr double sampleRate = 48'000.0;
     std::mt19937 rng(seed);
