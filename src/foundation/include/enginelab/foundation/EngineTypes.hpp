@@ -251,8 +251,8 @@ struct AcousticPoint3M final {
 };
 
 struct AcousticObserverConfig final {
-    AcousticPoint3M leftMicrophoneM { -0.18, 3.0, 0.8 };
-    AcousticPoint3M rightMicrophoneM { 0.18, 3.0, 0.8 };
+    AcousticPoint3M leftMicrophoneM { -0.18, 4.0, 0.8 };
+    AcousticPoint3M rightMicrophoneM { 0.18, 4.0, 0.8 };
     /** Zero derives local sound speed from the acoustic medium. */
     double soundSpeedMps { 0.0 };
 };

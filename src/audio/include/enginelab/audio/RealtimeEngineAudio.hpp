@@ -382,6 +382,7 @@ private:
      *  BoundaryReconstructionFilter. */
     BoundaryReconstructionFilter::Coefficients boundaryReconstruction_ {};
     double boundaryReconstructionCouplingHz_ { 0.0 };
+    double valveFlowSourceSamplingHz_ { 0.0 };
     std::array<BoundaryReconstructionFilter::State, 32> boundaryReconstructionPressure_ {};
     std::array<BoundaryReconstructionFilter::State, 32> boundaryReconstructionFlow_ {};
     ValveFlowAcousticSource::Coefficients valveFlowAcousticSource_ {};

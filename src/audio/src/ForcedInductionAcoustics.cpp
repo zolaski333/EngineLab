@@ -16,8 +16,10 @@ namespace {
 } // namespace
 
 ForcedInductionAcoustics::ForcedInductionAcoustics(
-    const ForcedInductionConfig& config) noexcept
-    : config_(config) {
+    const ForcedInductionConfig& config, double observerDistanceM) noexcept
+    : config_(config), configuredObserverDistanceM_(
+        std::isfinite(observerDistanceM) && observerDistanceM >= 0.05
+            ? observerDistanceM : 1.0) {
     valid_ = config_.enabled && (
         (config_.type == ForcedInductionType::turbocharger
             && (config_.compressorBladeCount > 0
@@ -32,6 +34,8 @@ ForcedInductionAcoustics::ForcedInductionAcoustics(
 
 bool ForcedInductionAcoustics::prepare(double sampleRateHz,
                                        double observerDistanceM) noexcept {
+    if (!(observerDistanceM > 0.0))
+        observerDistanceM = configuredObserverDistanceM_;
     if (!valid_ || !(sampleRateHz > 1'000.0) || !std::isfinite(sampleRateHz)
         || !(observerDistanceM > 0.0) || !std::isfinite(observerDistanceM))
         return false;

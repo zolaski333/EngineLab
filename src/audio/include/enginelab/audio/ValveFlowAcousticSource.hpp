@@ -32,7 +32,13 @@ public:
         double b2 {};
         double a1 {};
         double a2 {};
+        double lowB0 {};
+        double lowB1 {};
+        double lowB2 {};
+        double lowA1 {};
+        double lowA2 {};
         bool active { false };
+        bool upperBandLimited { false };
     };
 
     struct SectionState final {
@@ -45,6 +51,8 @@ public:
     struct State final {
         SectionState first {};
         SectionState second {};
+        SectionState upperFirst {};
+        SectionState upperSecond {};
         bool primed { false };
         void reset() noexcept { *this = State {}; }
     };
@@ -56,7 +64,8 @@ public:
     };
 
     [[nodiscard]] static Coefficients compute(
-        double couplingFrequencyHz, double sampleRateHz) noexcept {
+        double couplingFrequencyHz, double sampleRateHz,
+        double sourceSamplingFrequencyHz = 0.0) noexcept {
         Coefficients coefficients;
         const auto cutoffHz = BoundaryReconstructionFilter::crossoverFrequencyHz(
             couplingFrequencyHz, sampleRateHz);
@@ -72,6 +81,26 @@ public:
         coefficients.a1 = -2.0 * cosW0 / a0;
         coefficients.a2 = (1.0 - alpha) / a0;
         coefficients.active = true;
+        // The instantaneous source is still sampled by the mechanical solver.
+        // Its complementary band ends at that producer's Nyquist frequency;
+        // without this reconstruction low-pass, first-order-hold images pass
+        // through the radiation derivative as isolated clicks. Two identical
+        // Butterworth sections form a fourth-order Linkwitz-Riley upper edge.
+        const auto upperHz = std::min(0.42 * sourceSamplingFrequencyHz,
+            0.45 * sampleRateHz);
+        if (upperHz > cutoffHz * 1.05 && upperHz > 0.0) {
+            const auto upperW0 = 2.0 * std::numbers::pi * upperHz / sampleRateHz;
+            const auto upperCos = std::cos(upperW0);
+            const auto upperAlpha = std::sin(upperW0)
+                * (0.5 * std::numbers::sqrt2);
+            const auto upperA0 = 1.0 + upperAlpha;
+            coefficients.lowB0 = 0.5 * (1.0 - upperCos) / upperA0;
+            coefficients.lowB1 = (1.0 - upperCos) / upperA0;
+            coefficients.lowB2 = coefficients.lowB0;
+            coefficients.lowA1 = -2.0 * upperCos / upperA0;
+            coefficients.lowA2 = (1.0 - upperAlpha) / upperA0;
+            coefficients.upperBandLimited = true;
+        }
         return coefficients;
     }
 
@@ -93,8 +122,13 @@ public:
             state.second = {};
             state.primed = true;
         }
-        const auto highBandMassFlow = processSection(coefficients, state.second,
+        auto highBandMassFlow = processSection(coefficients, state.second,
             processSection(coefficients, state.first, input));
+        if (coefficients.upperBandLimited) {
+            highBandMassFlow = processLowSection(coefficients, state.upperSecond,
+                processLowSection(coefficients, state.upperFirst,
+                    highBandMassFlow));
+        }
         if (!(densityKgPerM3 > 0.0) || !std::isfinite(densityKgPerM3)
             || !(characteristicImpedancePaSPerM3 > 0.0)
             || !std::isfinite(characteristicImpedancePaSPerM3)
@@ -111,6 +145,17 @@ private:
         const Coefficients& c, SectionState& s, double x) noexcept {
         const auto y = c.b0 * x + c.b1 * s.x1 + c.b2 * s.x2
             - c.a1 * s.y1 - c.a2 * s.y2;
+        s.x2 = s.x1;
+        s.x1 = x;
+        s.y2 = s.y1;
+        s.y1 = y;
+        return y;
+    }
+
+    [[nodiscard]] static double processLowSection(
+        const Coefficients& c, SectionState& s, double x) noexcept {
+        const auto y = c.lowB0 * x + c.lowB1 * s.x1 + c.lowB2 * s.x2
+            - c.lowA1 * s.y1 - c.lowA2 * s.y2;
         s.x2 = s.x1;
         s.x1 = x;
         s.y2 = s.y1;

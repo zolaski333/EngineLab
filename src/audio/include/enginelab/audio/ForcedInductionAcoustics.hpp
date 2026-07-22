@@ -31,10 +31,11 @@ public:
         float acousticTimeScale { 1.0F };
     };
 
-    explicit ForcedInductionAcoustics(const ForcedInductionConfig& config) noexcept;
+    explicit ForcedInductionAcoustics(const ForcedInductionConfig& config,
+        double observerDistanceM = 1.0) noexcept;
 
     [[nodiscard]] bool prepare(double sampleRateHz,
-                               double observerDistanceM = 1.0) noexcept;
+                               double observerDistanceM = 0.0) noexcept;
     void reset() noexcept;
     [[nodiscard]] float process(const Input& input, float whiteNoise) noexcept;
 
@@ -59,6 +60,7 @@ private:
     ForcedInductionConfig config_;
     double sampleRateHz_ { 48'000.0 };
     double observerDistanceM_ { 1.0 };
+    double configuredObserverDistanceM_ { 1.0 };
     double compressorPhase_ {};
     double turbinePhase_ {};
     BandNoiseState compressorNoise_ {};

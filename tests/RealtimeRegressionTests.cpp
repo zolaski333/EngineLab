@@ -1313,6 +1313,22 @@ void valveFlowAcousticSourceRegression() {
     require(high.active && low.active,
         "a sampled boundary must enable both halves of the crossover");
 
+    const auto bandLimited = Source::compute(
+        couplingRate, sampleRate, 10'000.0);
+    require(bandLimited.upperBandLimited,
+        "a mechanically sampled valve source must publish a finite upper band");
+    {
+        constexpr double imageFrequencyHz = 12'000.0;
+        const auto z1 = std::polar(1.0, -2.0 * std::numbers::pi
+            * imageFrequencyHz / sampleRate);
+        const auto z2 = z1 * z1;
+        const auto section = (bandLimited.lowB0 + bandLimited.lowB1 * z1
+            + bandLimited.lowB2 * z2)
+            / (1.0 + bandLimited.lowA1 * z1 + bandLimited.lowA2 * z2);
+        require(std::norm(section * section) < 0.01,
+            "the source reconstruction filter must reject images above mechanical Nyquist");
+    }
+
     // Two cascaded Butterworth sections form a fourth-order Linkwitz-Riley
     // crossover. Its low and high outputs have a flat coherent sum, so the
     // transition neither duplicates nor removes a band when both inputs agree.

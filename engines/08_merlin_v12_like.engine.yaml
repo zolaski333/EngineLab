@@ -14,7 +14,7 @@ engine:
   cooling_efficiency: 3.2
   plenum_volume_l: 18.0
   throttle_diameter_mm: 120
-  acoustic_observer: { left_microphone_m: { x: -0.6, y: 12.0, z: 2.0 }, right_microphone_m: { x: 0.6, y: 12.0, z: 2.0 }, sound_speed_mps: 0 }
+  acoustic_observer: { left_microphone_m: { x: -1.0, y: 24.0, z: 3.0 }, right_microphone_m: { x: 1.0, y: 24.0, z: 3.0 }, sound_speed_mps: 0 }
   intake:
     plenum_volume_l: 18.0
     throttle_diameter_mm: 120
