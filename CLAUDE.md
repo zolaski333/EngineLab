@@ -114,6 +114,20 @@ test onto the behaviour it is meant to catch. Keep it that way.
   the one engine that already sounded right. The jet term now *relaxes* each
   cell toward the continuity velocity. `EngineLab.PhysicsRegression` gates it on
   continuity, never on a simulator output. See `docs/physics-audit.md`.
+- **An open pipe end is a reservoir, not a neighbouring cell.** The exhaust
+  network used to take a Riemann flux between the last duct state and a cell of
+  ambient air, so the exhaust had to shove a semi-infinite column of cold dense
+  gas aside and the flux was capped by the *ambient* impedance. The tailpipe sat
+  79 kPa over ambient while discharging at 68 m/s where free expansion gives
+  699. Widening primaries, collector, outlet and exhaust valve each moved VE by
+  0.02-0.04; the boundary moved it by 0.08 and dropped EGT 143 degC into the
+  literature window. It was also reflecting with the sign of a *closed* end, so
+  fixing it is deliberately a voicing change. Terminal openings now impose the
+  reservoir pressure at the exit plane via the outgoing invariant, used as a
+  Riemann ghost cell. Do **not** take the boundary state's physical flux
+  directly, and do **not** continue the invariant across the contact on
+  backflow: both stalled every catalogue engine but one. See
+  `docs/physics-audit.md`.
 - **The realtime bottleneck is the physics thread, not the audio callback.**
   Measured on a recent 8-core laptop: the callback uses 15-33% of a 256-sample
   budget, while the 240 Hz `EngineRuntime` loop misses 35% of its deadlines on a

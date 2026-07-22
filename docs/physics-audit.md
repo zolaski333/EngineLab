@@ -546,6 +546,90 @@ plus vite**. La référence est la continuité — une identité, pas un étalon
 donc ce garde-fou ne peut pas être re-calibré sur la sortie du simulateur.
 Vérifié non vacu : sans le correctif il échoue.
 
+## Le verrou suivant : la frontière de sortie du réseau (mesuré)
+
+Après le correctif de quantité de mouvement, la VE tombait encore de 0.94 à
+0.59 entre le ralenti et la zone rouge, et l'EGT restait à 1019 °C. Le traceur
+donne la cause en une image : le cylindre arrive au PMH d'échappement à
+**6.1 bar et 1942 K**, et garde donc **87 mg de résiduels** là où un moteur réel
+en garde ~25. Détendus, ces 87 mg occupent **62 % de la cylindrée** (13 % au
+ralenti) : il ne reste pas de place pour l'air.
+
+Le cylindre ne se vide pas parce que le runner d'échappement est à 2.1 bar. Et
+cette contre-pression n'est ni une géométrie ni une soupape :
+
+| étage relâché (LS3, 5940) | VE |
+|---|---|
+| référence | 0.68 |
+| primaires x2 | 0.70 |
+| collecteur x2.6 | 0.69 |
+| sortie x3.7 | 0.71 |
+| soupape d'échappement 40.4 → 52 mm | 0.72 |
+
+Le débit passant la soupape colle d'ailleurs à ±20 % de la capacité d'un orifice
+sonique de sa section instantanée : elle n'est pas bridée. La mesure décisive est
+la pression **le long** du réseau :
+
+| rpm | port | sortie | chute interne | vitesse en sortie |
+|---|---|---|---|---|
+| 824 | 119.4 | 117.6 | 1.8 kPa | 17 m/s |
+| 5994 | 210.1 | **180.1** | 30 kPa | **68 m/s** |
+
+**La sortie elle-même est 79 kPa au-dessus de l'ambiante en ne débitant qu'à
+68 m/s**, alors qu'une détente libre vers 101.3 kPa en donnerait 699. Seuls 30
+des 109 kPa se perdent dans les tuyaux. Confirmation directe : en allégeant le
+réservoir ambiant d'un facteur 17 à pression inchangée, la sortie tombe à
+117 kPa. **C'était la condition aux limites, pas la tuyauterie.**
+
+L'atmosphère à un bout ouvert est un *réservoir*. Résoudre un problème de Riemann
+entre la dernière maille du conduit et une *maille* d'air ambiant oblige
+l'échappement à pousser une colonne semi-infinie de gaz froid et dense : le flux
+est alors borné par l'impédance acoustique **de l'ambiante**, `rho_a*c_a`, qui
+pour de l'air à 22 °C dépasse celle du gaz d'échappement chaud. C'est faux
+acoustiquement pour la même raison : un bout ouvert doit renvoyer une compression
+en dépression, et contre un réservoir plus dense il réfléchissait avec le signe
+d'un bout **fermé** (r ≈ +0.15).
+
+Le correctif applique le traitement caractéristique standard : imposer la
+pression statique du réservoir au plan de sortie et prendre tout le reste de
+l'invariant sortant `u + 2c/(gamma-1)`, seule information que l'intérieur envoie
+à la frontière tant que l'écoulement y est subsonique ; au blocage sonique
+l'état intérieur reste tel quel.
+
+| LS3 plein gaz | jet seul | + bout ouvert | littérature |
+|---|---|---|---|
+| VE ralenti / 3640 / 6070 | 0.94 / 0.78 / 0.59 | **0.95 / 0.83 / 0.67** | 0.85-1.05 |
+| couple | 621 / 497 / 278 Nm | **626 / 570 / 367 Nm** | ~470 / 575 / 520 |
+| EGT | 478 / 800 / 1019 °C | **426 / 712 / 876 °C** | 800-950 |
+| contre-pression crête | 127 / 201 / 231 kPa | **110 / 139 / 154 kPa** | ~110-150 |
+
+L'EGT en haut est désormais **dans la fenêtre de la littérature**, et le couple
+de pointe tombe à 570 Nm contre 575 pour la référence.
+
+### Deux départs ratés, gardés en commentaire dans le code
+
+Les deux ont fait **caler tout le catalogue sauf un moteur**, ce qui est la seule
+raison pour laquelle ils sont documentés plutôt que oubliés :
+
+- **Prendre le flux physique de l'état frontière directement.** Correct sur le
+  papier (c'est la formulation NSCBC), mais la maille terminale n'est pas
+  uniformément à l'état de sortie : une détente de blowdown la vide entièrement
+  en un sous-pas. La forme *ghost cell* repasse par le solveur de Riemann, qui
+  garde ses vitesses d'onde et ses garde-fous de positivité.
+- **Prolonger l'invariant à travers le contact au reflux.** L'invariant
+  `u + 2c/(gamma-1)` ne vaut que dans un même gamma et une même entropie.
+  L'évaluer sur la vitesse du son du gaz chaud (~700 m/s) tout en lui attribuant
+  la densité de l'ambiante produisait **+2 km/s dans la branche censée modéliser
+  une entrée d'air**. Au reflux, le réservoir ambiant au repos est la bonne
+  réponse, simplement.
+
+Une fausse alerte de perf aussi, et c'est exactement le piège que ce dépôt
+documente : le coût semblait exploser jusqu'à ce que la comparaison soit refaite
+contre une base de la **même session**. À géométrie et session identiques le
+surcoût est de **+3.7 %** (LS3 à 6070 : 4565 → 4734 µs). La trame dépassait déjà
+son budget avant ce changement ; c'est le problème connu et distinct du fil
+physique.
+
 ### Deux fausses pistes de plus, écartées par la mesure
 
 - **La contre-pression d'échappement.** Le runner d'échappement ne descendait
