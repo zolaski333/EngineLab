@@ -567,7 +567,7 @@ Metrics renderEngine(const EngineConfig& baseConfig, const WavData& ir,
               << " topology=" << (m.compiledTopologyActive ? "full" : "LEGACY")
               << " structure=" << (m.structuralRadiationActive ? "modal" : "LEGACY")
               << " intake=" << (m.intakeTopologyActive ? "wave" : "LEGACY")
-              << " forced=" << (m.forcedInductionAcousticsActive ? "physical" : "none")
+              << " forced=" << (m.forcedInductionAcousticsActive ? "semi-empirical" : "none")
               << " legacySamples=" << m.legacyPathSamples
               << " boundaryDropouts=" << m.invalidBoundarySamples
               << " solverHz=" << std::setprecision(0) << m.solverFrequencyHz
@@ -1311,7 +1311,7 @@ int main(int argc, char** argv) {
         if (!m.intakeTopologyActive)
             fail("the intake wave network was not active");
         if (requireForcedInduction && !m.forcedInductionAcousticsActive)
-            fail("the physical forced-induction source was not active");
+            fail("the solver-driven forced-induction source was not active");
         const auto channels = { std::pair { "left", &m.left }, std::pair { "right", &m.right } };
         for (const auto& [name, channel] : channels) {
             const std::string suffix = std::string(" (") + name + " channel)";

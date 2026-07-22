@@ -765,3 +765,50 @@ Les tests imposent silence exact sans force, paramètres physiques finis,
 amplification à la résonance calculée et décroissance de l'énergie avec un
 amortissement positif. Le harnais catalogue impose aussi que ce chemin soit
 réellement actif dans le câblage de l'application.
+
+## 22. Admission complète et suralimentation
+
+`CylinderPressureSample` transporte désormais le débit massique instantané
+signé de chaque soupape d'admission, la pression, la masse volumique, la vitesse
+du son et la section conductrice réellement employée par le solveur. Le débit
+publié est l'intégrale des deux demi-pas symétriques divisée par la durée du
+sous-pas : la source audio et le bilan de masse décrivent donc exactement le
+même échange, sans reconstruire une impulsion depuis le régime moteur.
+
+`AcousticIntakeNetwork` compile chaque chemin d'admission en runners
+bidirectionnels individuels, compliance WDF de plénum, étranglement de papillon
+à admittance variable, compliance optionnelle de boîte à air, conduit d'entrée
+avec pertes thermovisqueuses, puis charge de rayonnement de pavillon/embouchure
+et retard jusqu'à l'observateur. Les volumes, longueurs, diamètres et sections
+viennent exclusivement de `EngineConfig`. Une valeur nulle de boîte à air ou de
+conduit signifie que la pièce est absente ; elle ne déclenche aucune géométrie
+inventée. Le réseau ne transporte que la perturbation acoustique : une moyenne
+glissante à 5 Hz retire le débit conservé, si bien qu'un débit parfaitement
+stationnaire depuis `reset()` produit un silence exact.
+
+`ForcedInductionAcoustics` emploie les ordres de passage écrits dans la
+configuration : nombre de pales du compresseur et de la turbine, nombre de
+lobes d'un compresseur volumétrique, vitesse d'arbre et rapport d'entraînement.
+La pression des raies est issue de la puissance d'arbre résolue et d'un
+rendement acoustique explicite. Les composantes larges bandes du compresseur,
+de la turbine, de la wastegate et de la dump valve suivent une loi de jet
+compact en U^8, centrée par un Strouhal de 0,2, avec débit corrigé, débit
+d'échappement et sections physiques.
+
+La dump valve n'est plus une enveloppe déclenchée par une fermeture de pédale.
+Le solveur l'ouvre lorsque le rapport de pression entre le réservoir de sortie
+compresseur et le collecteur dépasse le seuil configuré ; son débit est calculé
+par une loi d'orifice compressible, sous-critique ou étranglée. Seul ce débit
+peut exciter son rayonnement. Le réservoir amont reste toutefois le réservoir
+zéro-dimensionnel du modèle de boost : il n'existe pas encore de conduit de
+suralimentation discrétisé ni de CFD de roue.
+
+La fréquence des ordres de pales/lobes et les puissances thermodynamiques sont
+calculées. Les nombres de pales, diamètres et coefficients ajoutés aux moteurs
+« like » du catalogue sont explicitement des estimations de famille. Les
+niveaux absolus de suralimentation restent donc semi-empiriques ; une carte
+compresseur et des mesures acoustiques propres au turbo pourraient remplacer
+ces paramètres sans modifier l'architecture. Les tests imposent fréquence de
+passage exacte, pression proportionnelle à la racine de la puissance, silence
+sans puissance/débit, et absence exacte de wastegate ou dump valve lorsque son
+débit physique est nul.
