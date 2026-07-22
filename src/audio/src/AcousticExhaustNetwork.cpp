@@ -83,10 +83,11 @@ struct AcousticExhaustNetwork::Impl final {
         std::size_t endpointOrJunction {};
         float incidentToJunction {};
         UnflangedPipeRadiation radiation;
-        std::vector<float> observerPressure;
-        std::size_t observerWrite {};
-        std::size_t observerMask {};
-        float observerDelaySamples { 1.0F };
+        FreeFieldObserver observer;
+        AcousticPoint3M acousticPositionM {};
+        AcousticPoint3M acousticAxis { 0.0, 1.0, 0.0 };
+        AcousticTerminationType acousticTermination {
+            AcousticTerminationType::unflanged };
     };
 
     gasdynamics::ExhaustNetworkLayout layout;
@@ -101,12 +102,14 @@ struct AcousticExhaustNetwork::Impl final {
     double sampleRateHz { 48'000.0 };
     double maximumDelayScale { 12.5 };
     double observerDistanceM { 1.0 };
+    AcousticObserverConfig observerConfig;
     bool configured { false };
     bool prepared { false };
 
     explicit Impl(const ExhaustGraph& graph,
                   std::span<const std::uint32_t> cylinderIds)
-        : layout(gasdynamics::ExhaustNetworkLayout::compile(graph)) {
+        : layout(gasdynamics::ExhaustNetworkLayout::compile(graph)),
+          observerConfig(graph.acousticObserver()) {
         if (!layout.valid()) return;
         ducts.reserve(layout.ducts().size());
         for (const auto& descriptor : layout.ducts()) {
@@ -213,6 +216,9 @@ struct AcousticExhaustNetwork::Impl final {
             Outlet compiled;
             compiled.pathIndex = outlet.pathIndex;
             compiled.areaM2 = outlet.openingAreaM2;
+            compiled.acousticPositionM = outlet.acousticPositionM;
+            compiled.acousticAxis = outlet.acousticAxis;
+            compiled.acousticTermination = outlet.acousticTermination;
             const auto outletIndex = outlets.size();
             if (outlet.networkEndpoint.type == gasdynamics::ExhaustEndpointType::junction) {
                 compiled.virtualTerminal = true;
@@ -299,22 +305,6 @@ struct AcousticExhaustNetwork::Impl final {
                 * static_cast<double>(medium.soundSpeedMps)));
     }
 
-    [[nodiscard]] float delayedObserverPressure(Outlet& outlet,
-                                                float pressurePa) noexcept {
-        const auto delay0 = static_cast<std::size_t>(outlet.observerDelaySamples);
-        const auto fraction = outlet.observerDelaySamples
-            - static_cast<float>(delay0);
-        const auto read0 = (outlet.observerWrite
-            + outlet.observerPressure.size() - delay0) & outlet.observerMask;
-        const auto read1 = (outlet.observerWrite
-            + outlet.observerPressure.size() - delay0 - 1U) & outlet.observerMask;
-        const auto observed = std::lerp(
-            outlet.observerPressure[read0], outlet.observerPressure[read1], fraction);
-        outlet.observerPressure[outlet.observerWrite] =
-            std::isfinite(pressurePa) ? pressurePa : 0.0F;
-        outlet.observerWrite = (outlet.observerWrite + 1U) & outlet.observerMask;
-        return observed;
-    }
 };
 
 AcousticExhaustNetwork::AcousticExhaustNetwork(
@@ -345,18 +335,15 @@ bool AcousticExhaustNetwork::prepare(double sampleRateHz,
         duct.reverse.assign(length, 0.0F);
         duct.mask = length - 1U;
     }
-    const auto observerSamples = static_cast<std::size_t>(std::ceil(
-        observerDistanceM / minimumExhaustSoundSpeedMps * sampleRateHz)) + 4U;
-    const auto observerLength = std::max<std::size_t>(64U,
-        nextPowerOfTwo(observerSamples));
     for (auto& outlet : impl_->outlets) {
         const auto radiusM = std::sqrt(outlet.areaM2 / std::numbers::pi);
-        if (!outlet.radiation.prepare(sampleRateHz, radiusM, observerDistanceM))
+        // Radiation produces its reference pressure at one metre. Geometric
+        // propagation, directivity and arrival time belong to the observer.
+        if (!outlet.radiation.prepare(sampleRateHz, radiusM, 1.0)
+            || !outlet.observer.prepare(sampleRateHz, radiusM,
+                outlet.acousticPositionM, outlet.acousticAxis,
+                outlet.acousticTermination, impl_->observerConfig))
             return false;
-        outlet.observerPressure.assign(observerLength, 0.0F);
-        outlet.observerMask = observerLength - 1U;
-        outlet.observerDelaySamples = static_cast<float>(
-            observerDistanceM / 343.0 * sampleRateHz);
     }
     impl_->prepared = true;
     reset();
@@ -380,9 +367,7 @@ void AcousticExhaustNetwork::reset() noexcept {
     for (auto& outlet : impl_->outlets) {
         outlet.incidentToJunction = 0.0F;
         outlet.radiation.reset();
-        std::fill(outlet.observerPressure.begin(),
-                  outlet.observerPressure.end(), 0.0F);
-        outlet.observerWrite = 0;
+        outlet.observer.reset();
     }
     std::fill(impl_->incident.begin(), impl_->incident.end(), 0.0F);
     std::fill(impl_->outgoing.begin(), impl_->outgoing.end(), 0.0F);
@@ -423,12 +408,12 @@ void AcousticExhaustNetwork::beginBlock(
     }
 }
 
-std::array<float, AcousticExhaustNetwork::maximumPaths>
+std::array<StereoPressure, AcousticExhaustNetwork::maximumPaths>
 AcousticExhaustNetwork::process(
     std::span<const float> cylinderSourcePressurePa,
     std::span<const CylinderBoundary> cylinderBoundaries,
     float delayRampCoefficient) noexcept {
-    std::array<float, maximumPaths> result {};
+    std::array<StereoPressure, maximumPaths> result {};
     if (!impl_->prepared) return result;
     const auto ramp = std::clamp(delayRampCoefficient, 0.0F, 1.0F);
     for (std::size_t index = 0; index < impl_->ducts.size(); ++index) {
@@ -492,8 +477,10 @@ AcousticExhaustNetwork::process(
                 radiation.reflectedPressurePa);
             const auto path = std::min<std::size_t>(
                 outlet.pathIndex, result.size() - 1U);
-            result[path] += impl_->delayedObserverPressure(
-                outlet, static_cast<float>(radiation.farFieldPressurePa));
+            const auto observed = outlet.observer.process(
+                static_cast<float>(radiation.farFieldPressurePa));
+            result[path].leftPa += observed.leftPa;
+            result[path].rightPa += observed.rightPa;
         }
     }
 
@@ -512,8 +499,10 @@ AcousticExhaustNetwork::process(
         impl_->outgoing[key] = static_cast<float>(radiation.reflectedPressurePa);
         const auto path = std::min<std::size_t>(
             outlet.pathIndex, result.size() - 1U);
-        result[path] += impl_->delayedObserverPressure(
-            outlet, static_cast<float>(radiation.farFieldPressurePa));
+        const auto observed = outlet.observer.process(
+            static_cast<float>(radiation.farFieldPressurePa));
+        result[path].leftPa += observed.leftPa;
+        result[path].rightPa += observed.rightPa;
     }
 
     for (std::size_t index = 0; index < impl_->ducts.size(); ++index) {

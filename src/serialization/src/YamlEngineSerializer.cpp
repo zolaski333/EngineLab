@@ -40,6 +40,20 @@ namespace {
     if (value == "outlet") return ExhaustComponentType::outlet;
     return std::nullopt;
 }
+[[nodiscard]] const char* terminationName(AcousticTerminationType value) noexcept {
+    return value == AcousticTerminationType::flanged ? "flanged" : "unflanged";
+}
+void emitPoint(YAML::Emitter& out, const AcousticPoint3M& point) {
+    out << YAML::Flow << YAML::BeginMap
+        << YAML::Key << "x" << YAML::Value << point.x
+        << YAML::Key << "y" << YAML::Value << point.y
+        << YAML::Key << "z" << YAML::Value << point.z << YAML::EndMap;
+}
+[[nodiscard]] AcousticPoint3M decodePoint(
+    const YAML::Node& node, AcousticPoint3M fallback = {}) {
+    return { node["x"].as<double>(fallback.x), node["y"].as<double>(fallback.y),
+        node["z"].as<double>(fallback.z) };
+}
 
 void emitLiftProfile(YAML::Emitter& out, const char* key, const std::vector<ValveLiftSample>& profile) {
     out << YAML::Key << key << YAML::Value << YAML::BeginSeq;
@@ -345,12 +359,26 @@ std::string YamlEngineSerializer::encode(const EngineConfig& config) const {
         emitValveControl(out, bank.camshafts.continuousControl);
         out << YAML::EndMap << YAML::EndMap;
     }
-    out << YAML::EndSeq << YAML::Key << "exhaust_paths" << YAML::Value << YAML::BeginSeq;
+    out << YAML::EndSeq
+        << YAML::Key << "acoustic_observer" << YAML::Value << YAML::BeginMap
+        << YAML::Key << "left_microphone_m" << YAML::Value;
+    emitPoint(out, config.acousticObserver.leftMicrophoneM);
+    out << YAML::Key << "right_microphone_m" << YAML::Value;
+    emitPoint(out, config.acousticObserver.rightMicrophoneM);
+    out << YAML::Key << "sound_speed_mps" << YAML::Value
+        << config.acousticObserver.soundSpeedMps << YAML::EndMap
+        << YAML::Key << "exhaust_paths" << YAML::Value << YAML::BeginSeq;
     for (const auto& path : config.exhaustPaths) {
         out << YAML::BeginMap << YAML::Key << "id" << YAML::Value << path.id
             << YAML::Key << "cylinder_ids" << YAML::Value << YAML::Flow << path.cylinderIds
             << YAML::Key << "impulse_response" << YAML::Value << path.impulseResponsePath
             << YAML::Key << "audio_volume" << YAML::Value << path.audioVolume
+            << YAML::Key << "acoustic_position_m" << YAML::Value;
+        emitPoint(out, path.acousticPositionM);
+        out << YAML::Key << "acoustic_axis" << YAML::Value;
+        emitPoint(out, path.acousticAxis);
+        out << YAML::Key << "acoustic_termination" << YAML::Value
+            << terminationName(path.acousticTermination)
             << YAML::Key << "geometry" << YAML::Value << YAML::BeginMap
             << YAML::Key << "primary_length_mm" << YAML::Value << path.geometry.primaryLengthMm
             << YAML::Key << "primary_diameter_mm" << YAML::Value << path.geometry.primaryDiameterMm
@@ -365,7 +393,7 @@ std::string YamlEngineSerializer::encode(const EngineConfig& config) const {
         if (path.network) {
             out << YAML::Key << "graph" << YAML::Value << YAML::BeginMap
                 << YAML::Key << "components" << YAML::Value << YAML::BeginSeq;
-            for (const auto& component : path.network->components)
+            for (const auto& component : path.network->components) {
                 out << YAML::BeginMap
                     << YAML::Key << "id" << YAML::Value << component.id
                     << YAML::Key << "type" << YAML::Value << exhaustComponentTypeName(component.type)
@@ -376,7 +404,14 @@ std::string YamlEngineSerializer::encode(const EngineConfig& config) const {
                     << YAML::Key << "resonance_hz" << YAML::Value << component.resonanceHz
                     << YAML::Key << "acoustic_gain" << YAML::Value << component.acousticGain
                     << YAML::Key << "discharge_coefficient" << YAML::Value << component.dischargeCoefficient
+                    << YAML::Key << "acoustic_position_m" << YAML::Value;
+                emitPoint(out, component.acousticPositionM);
+                out << YAML::Key << "acoustic_axis" << YAML::Value;
+                emitPoint(out, component.acousticAxis);
+                out << YAML::Key << "acoustic_termination" << YAML::Value
+                    << terminationName(component.acousticTermination)
                     << YAML::EndMap;
+            }
             out << YAML::EndSeq << YAML::Key << "cylinder_connections" << YAML::Value << YAML::BeginSeq;
             for (const auto& connection : path.network->cylinderConnections)
                 out << YAML::BeginMap
@@ -724,6 +759,18 @@ EngineDecodeResult YamlEngineSerializer::decode(std::string_view text) const noe
                 config.banks.push_back(std::move(bank));
             }
         }
+        if (const auto observer = engine["acoustic_observer"]) {
+            if (observer["left_microphone_m"])
+                config.acousticObserver.leftMicrophoneM = decodePoint(
+                    observer["left_microphone_m"],
+                    config.acousticObserver.leftMicrophoneM);
+            if (observer["right_microphone_m"])
+                config.acousticObserver.rightMicrophoneM = decodePoint(
+                    observer["right_microphone_m"],
+                    config.acousticObserver.rightMicrophoneM);
+            config.acousticObserver.soundSpeedMps = observer["sound_speed_mps"]
+                .as<double>(config.acousticObserver.soundSpeedMps);
+        }
         if (const auto paths = engine["exhaust_paths"]) {
             for (const auto& item : paths) {
                 ExhaustPathConfig path;
@@ -731,6 +778,15 @@ EngineDecodeResult YamlEngineSerializer::decode(std::string_view text) const noe
                 path.cylinderIds = item["cylinder_ids"].as<std::vector<std::uint32_t>>();
                 path.impulseResponsePath = item["impulse_response"].as<std::string>("");
                 path.audioVolume = item["audio_volume"].as<double>(1.0);
+                if (item["acoustic_position_m"])
+                    path.acousticPositionM = decodePoint(item["acoustic_position_m"]);
+                if (item["acoustic_axis"])
+                    path.acousticAxis = decodePoint(
+                        item["acoustic_axis"], path.acousticAxis);
+                path.acousticTermination = item["acoustic_termination"]
+                    .as<std::string>("unflanged") == "flanged"
+                    ? AcousticTerminationType::flanged
+                    : AcousticTerminationType::unflanged;
                 if (const auto geometry = item["geometry"]) path.geometry = {
                     geometry["primary_length_mm"].as<double>(480.0), geometry["primary_diameter_mm"].as<double>(42.0),
                     geometry["collector_diameter_mm"].as<double>(58.0), geometry["muffler_restriction"].as<double>(0.28),
@@ -755,6 +811,17 @@ EngineDecodeResult YamlEngineSerializer::decode(std::string_view text) const noe
                         component.acousticGain = encodedComponent["acoustic_gain"].as<double>(component.acousticGain);
                         component.dischargeCoefficient = encodedComponent["discharge_coefficient"].as<double>(
                             component.dischargeCoefficient);
+                        if (encodedComponent["acoustic_position_m"])
+                            component.acousticPositionM = decodePoint(
+                                encodedComponent["acoustic_position_m"]);
+                        if (encodedComponent["acoustic_axis"])
+                            component.acousticAxis = decodePoint(
+                                encodedComponent["acoustic_axis"], component.acousticAxis);
+                        component.acousticTermination =
+                            encodedComponent["acoustic_termination"].as<std::string>(
+                                "unflanged") == "flanged"
+                                ? AcousticTerminationType::flanged
+                                : AcousticTerminationType::unflanged;
                         network.components.push_back(component);
                     }
                     for (const auto& encodedConnection : encodedGraph["cylinder_connections"])

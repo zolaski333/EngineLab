@@ -95,10 +95,7 @@ struct AcousticIntakeNetwork::Impl final {
         float inletOutgoingAtAirbox {};
         float radiationIncidentAtAirbox {};
         UnflangedPipeRadiation radiation;
-        std::vector<float> observerPressure;
-        std::size_t observerWrite {};
-        std::size_t observerMask {};
-        float observerDelaySamples { 1.0F };
+        FreeFieldObserver observer;
         PathBoundary medium;
     };
 
@@ -106,11 +103,13 @@ struct AcousticIntakeNetwork::Impl final {
     std::vector<Path> paths;
     double sampleRateHz { 48'000.0 };
     double observerDistanceM { 1.0 };
+    AcousticObserverConfig observerConfig;
     float meanFlowCoefficient { 0.0F };
     bool configured { false };
     bool prepared { false };
 
-    explicit Impl(const EngineConfig& config) {
+    explicit Impl(const EngineConfig& config)
+        : observerConfig(config.acousticObserver) {
         if (config.cylinders.empty()) return;
         const auto count = std::clamp<std::size_t>(
             config.intakePaths.empty() ? 1U : config.intakePaths.size(), 1U,
@@ -180,20 +179,6 @@ struct AcousticIntakeNetwork::Impl final {
         duct.mask = size - 1U;
     }
 
-    [[nodiscard]] float observer(Path& path, float pressurePa) noexcept {
-        const auto delay0 = static_cast<std::size_t>(path.observerDelaySamples);
-        const auto fraction = path.observerDelaySamples - static_cast<float>(delay0);
-        const auto read0 = (path.observerWrite + path.observerPressure.size() - delay0)
-            & path.observerMask;
-        const auto read1 = (path.observerWrite + path.observerPressure.size()
-            - delay0 - 1U) & path.observerMask;
-        const auto result = std::lerp(
-            path.observerPressure[read0], path.observerPressure[read1], fraction);
-        path.observerPressure[path.observerWrite] = std::isfinite(pressurePa)
-            ? pressurePa : 0.0F;
-        path.observerWrite = (path.observerWrite + 1U) & path.observerMask;
-        return result;
-    }
 };
 
 AcousticIntakeNetwork::AcousticIntakeNetwork(const EngineConfig& config)
@@ -214,11 +199,6 @@ bool AcousticIntakeNetwork::prepare(double sampleRateHz,
     impl_->meanFlowCoefficient = static_cast<float>(1.0 - std::exp(
         -2.0 * std::numbers::pi * 5.0 / sampleRateHz));
     for (auto& runner : impl_->runners) impl_->prepareDuct(runner.duct);
-    constexpr double minimumSoundSpeedMps = 300.0;
-    const auto observerSamples = static_cast<std::size_t>(std::ceil(
-        observerDistanceM / minimumSoundSpeedMps * sampleRateHz)) + 4U;
-    const auto observerSize = std::max<std::size_t>(64U,
-        nextPowerOfTwo(observerSamples));
     for (auto& path : impl_->paths) {
         if (path.hasInletDuct) impl_->prepareDuct(path.inletDuct);
         const auto inletDiameterMm = path.geometry.bellmouthDiameterMm > 1.0
@@ -226,13 +206,12 @@ bool AcousticIntakeNetwork::prepare(double sampleRateHz,
             : path.geometry.inletDuctDiameterMm > 1.0
                 ? path.geometry.inletDuctDiameterMm
                 : path.geometry.throttleDiameterMm;
-        if (!path.radiation.prepare(sampleRateHz,
-                inletDiameterMm * 0.0005, observerDistanceM))
+        const auto radiusM = inletDiameterMm * 0.0005;
+        if (!path.radiation.prepare(sampleRateHz, radiusM, 1.0)
+            || !path.observer.prepare(sampleRateHz, radiusM, {},
+                { 0.0, 1.0, 0.0 }, AcousticTerminationType::unflanged,
+                impl_->observerConfig))
             return false;
-        path.observerPressure.assign(observerSize, 0.0F);
-        path.observerMask = observerSize - 1U;
-        path.observerDelaySamples = static_cast<float>(
-            observerDistanceM / 343.0 * sampleRateHz);
     }
     impl_->prepared = true;
     reset();
@@ -275,8 +254,7 @@ void AcousticIntakeNetwork::reset() noexcept {
         path.inletOutgoingAtAirbox = 0.0F;
         path.radiationIncidentAtAirbox = 0.0F;
         path.radiation.reset();
-        std::fill(path.observerPressure.begin(), path.observerPressure.end(), 0.0F);
-        path.observerWrite = 0;
+        path.observer.reset();
     }
 }
 
@@ -323,11 +301,11 @@ void AcousticIntakeNetwork::beginBlock(
     }
 }
 
-std::array<float, AcousticIntakeNetwork::maximumPaths>
+std::array<StereoPressure, AcousticIntakeNetwork::maximumPaths>
 AcousticIntakeNetwork::process(
     std::span<const CylinderBoundary> cylinders,
     float delayRampCoefficient) noexcept {
-    std::array<float, maximumPaths> result {};
+    std::array<StereoPressure, maximumPaths> result {};
     if (!impl_->prepared) return result;
     const auto ramp = std::clamp(delayRampCoefficient, 0.0F, 1.0F);
     for (auto& runner : impl_->runners) {
@@ -401,8 +379,10 @@ AcousticIntakeNetwork::process(
             const auto radiation = path.radiation.process(towardMouth);
             path.radiationIncidentAtAirbox = static_cast<float>(
                 radiation.reflectedPressurePa);
-            result[pathIndex] += impl_->observer(path,
+            const auto observed = path.observer.process(
                 static_cast<float>(radiation.farFieldPressurePa));
+            result[pathIndex].leftPa += observed.leftPa;
+            result[pathIndex].rightPa += observed.rightPa;
         }
         if (path.airbox.admittanceM3PerPaSecond > 0.0F)
             path.airbox.incident = airboxPressure - path.airbox.incident;
@@ -435,7 +415,17 @@ AcousticIntakeNetwork::process(
                 - runner.meanMassFlowKgPerSecond;
             const auto impedance = boundary.densityKgPerM3
                 * boundary.soundSpeedMps / static_cast<float>(runner.duct.areaM2);
-            sourcePressurePa = impedance * perturbationKgPerSecond
+            // The valve-flow telemetry is a Norton source located between the
+            // cylinder control volume and the acoustic runner.  Its volume
+            // velocity launches two characteristic partners; only the runner-
+            // travelling half belongs in this one-way acoustic network.  Using
+            // Zc*U here injected the complete two-sided source into the runner
+            // and then reflected it at the valve a second time.  Besides being
+            // non-passive, that doubled every intake pulse before the plenum
+            // could distribute its energy and drove the monitor limiter on the
+            // catalogue engines.  This is the same characteristic split used
+            // by ValveFlowAcousticSource on the exhaust boundary.
+            sourcePressurePa = 0.5F * impedance * perturbationKgPerSecond
                 / boundary.densityKgPerM3;
             const auto acousticVolumeVelocity = impedance > 0.0F
                 ? (runner.incidentAtValve - runner.reflectionState.previousOutput)
@@ -458,8 +448,10 @@ AcousticIntakeNetwork::process(
             const auto radiation = path.radiation.process(path.inletIncidentAtMouth);
             path.inletOutgoingAtMouth = static_cast<float>(
                 radiation.reflectedPressurePa);
-            result[pathIndex] += impl_->observer(path,
+            const auto observed = path.observer.process(
                 static_cast<float>(radiation.farFieldPressurePa));
+            result[pathIndex].leftPa += observed.leftPa;
+            result[pathIndex].rightPa += observed.rightPa;
             auto& duct = path.inletDuct;
             duct.forward[duct.write] = std::isfinite(path.inletOutgoingAtMouth)
                 ? path.inletOutgoingAtMouth : 0.0F;

@@ -8,7 +8,7 @@
 
 namespace enginelab {
 inline constexpr std::uint32_t minimumSupportedEngineSchemaVersion { 1 };
-inline constexpr std::uint32_t currentEngineSchemaVersion { 3 };
+inline constexpr std::uint32_t currentEngineSchemaVersion { 4 };
 
 
 enum class EngineCycle : std::uint8_t { fourStroke, twoStroke };
@@ -20,6 +20,7 @@ enum class ForcedInductionType : std::uint8_t { turbocharger, supercharger };
 enum class ExhaustComponentType : std::uint8_t {
     pipe, merge, splitter, resonator, muffler, catalyst, outlet
 };
+enum class AcousticTerminationType : std::uint8_t { unflanged, flanged };
 enum class RunningState : std::uint8_t {
     stopped, cranking, idling, running, unstable, knocking, overheating, damaged, destroyed
 };
@@ -237,6 +238,25 @@ struct CylinderBankConfig final {
     std::uint32_t exhaustPathId { 0 };
 };
 
+/** Engine-fixed free-field acoustic coordinates, in metres.
+ *
+ * +X is the engine's right side, +Y points out of the nominal tailpipe and +Z
+ * points upward. These are geometry and measurement-chain data, never pan or
+ * gain controls.
+ */
+struct AcousticPoint3M final {
+    double x { 0.0 };
+    double y { 0.0 };
+    double z { 0.0 };
+};
+
+struct AcousticObserverConfig final {
+    AcousticPoint3M leftMicrophoneM { -0.18, 3.0, 0.8 };
+    AcousticPoint3M rightMicrophoneM { 0.18, 3.0, 0.8 };
+    /** Zero derives local sound speed from the acoustic medium. */
+    double soundSpeedMps { 0.0 };
+};
+
 /** A user-authored component in one exhaust path's directed acyclic graph. */
 struct ExhaustComponentConfig final {
     // Component IDs are local to the containing exhaust path.
@@ -251,6 +271,11 @@ struct ExhaustComponentConfig final {
     double resonanceHz { 0.0 };
     double acousticGain { 1.0 };
     double dischargeCoefficient { 0.72 };
+    /** Radiation geometry, used only when type==outlet. */
+    AcousticPoint3M acousticPositionM {};
+    AcousticPoint3M acousticAxis { 0.0, 1.0, 0.0 };
+    AcousticTerminationType acousticTermination {
+        AcousticTerminationType::unflanged };
 };
 
 struct ExhaustCylinderConnectionConfig final {
@@ -282,6 +307,11 @@ struct ExhaustPathConfig final {
     std::optional<ExhaustNetworkConfig> network;
     // Runtime migration provenance; deliberately not part of schema v1.
     bool inheritsGlobalGeometry { false };
+    /** Radiation geometry for the outlet synthesized from scalar path data. */
+    AcousticPoint3M acousticPositionM {};
+    AcousticPoint3M acousticAxis { 0.0, 1.0, 0.0 };
+    AcousticTerminationType acousticTermination {
+        AcousticTerminationType::unflanged };
 };
 
 struct IgnitionMapSample final {
@@ -441,6 +471,7 @@ struct EngineConfig final {
     std::vector<IntakePathConfig> intakePaths;
     std::vector<CylinderBankConfig> banks;
     std::vector<ExhaustPathConfig> exhaustPaths;
+    AcousticObserverConfig acousticObserver;
     IgnitionConfig ignition;
     InjectionConfig injection;
     SolverConfig solver;

@@ -3,6 +3,7 @@
 #include <enginelab/audio/AcousticIntakeNetwork.hpp>
 #include <enginelab/audio/BoundaryReconstructionFilter.hpp>
 #include <enginelab/audio/ForcedInductionAcoustics.hpp>
+#include <enginelab/audio/FreeFieldObserver.hpp>
 #include <enginelab/audio/NonlinearDuctAcoustics.hpp>
 #include <enginelab/audio/RealtimeEngineAudio.hpp>
 #include <enginelab/audio/StructuralModalRadiator.hpp>
@@ -326,9 +327,11 @@ void branchedAcousticTopologyRegression() {
                 std::numbers::pi * static_cast<double>(sample + 1U) / 129.0))
             : 0.0F;
         const auto output = acoustics.process(sources, boundaries, 1.0F);
-        require(std::isfinite(output[0]),
+        require(std::isfinite(output[0].leftPa)
+                && std::isfinite(output[0].rightPa),
             "a branched acoustic graph must remain finite");
-        radiatedEnergy += static_cast<double>(output[0]) * output[0];
+        radiatedEnergy += static_cast<double>(output[0].leftPa)
+            * output[0].leftPa;
     }
     require(radiatedEnergy > 1.0e-10,
         "a source must reach the independently retained outlets");
@@ -337,7 +340,7 @@ void branchedAcousticTopologyRegression() {
     sources.fill(0.0F);
     for (std::size_t sample = 0; sample < 512; ++sample) {
         const auto output = acoustics.process(sources, boundaries, 1.0F);
-        require(output[0] == 0.0F,
+        require(output[0].leftPa == 0.0F && output[0].rightPa == 0.0F,
             "a reset source-free network must be exactly silent");
     }
 }
@@ -441,9 +444,10 @@ void acousticIntakeNetworkRegression() {
                 std::numbers::pi * static_cast<double>(sample + 1U) / 193.0))
             : 0.0F;
         const auto output = intake.process(cylinders, 1.0F);
-        require(std::isfinite(output[0]),
+        require(std::isfinite(output[0].leftPa)
+                && std::isfinite(output[0].rightPa),
             "the complete intake network must remain finite");
-        energy += static_cast<double>(output[0]) * output[0];
+        energy += static_cast<double>(output[0].leftPa) * output[0].leftPa;
     }
     require(energy > 1.0e-10,
         "an intake-valve flow pulse must reach the inlet radiation load");
@@ -451,7 +455,7 @@ void acousticIntakeNetworkRegression() {
     intake.reset();
     for (auto& cylinder : cylinders) cylinder.massFlowKgPerSecond = 0.0F;
     for (std::size_t sample = 0; sample < 1'024; ++sample)
-        require(intake.process(cylinders, 1.0F)[0] == 0.0F,
+        require(intake.process(cylinders, 1.0F)[0].leftPa == 0.0F,
             "a reset intake with no flow perturbation must be exactly silent");
 
     intake.reset();
@@ -459,7 +463,7 @@ void acousticIntakeNetworkRegression() {
     auto lateEnergy = 0.0;
     for (std::size_t sample = 0; sample < 96'000; ++sample) {
         cylinders[0].massFlowKgPerSecond = 0.030F;
-        const auto pressure = intake.process(cylinders, 1.0F)[0];
+        const auto pressure = intake.process(cylinders, 1.0F)[0].leftPa;
         if (sample < 12'000)
             earlyEnergy += static_cast<double>(pressure) * pressure;
         if (sample >= 84'000)
@@ -1618,9 +1622,56 @@ void monitorCalibrationDefaultRegression() {
         "runtime full-scale SPL default must match the documented calibration");
 }
 
+void freeFieldObserverRegression() {
+    constexpr double sampleRate = 48'000.0;
+    enginelab::AcousticObserverConfig geometry;
+    geometry.leftMicrophoneM = { 0.0, 1.0, 0.0 };
+    geometry.rightMicrophoneM = { 0.0, 2.0, 0.0 };
+    geometry.soundSpeedMps = 343.0;
+    enginelab::FreeFieldObserver observer;
+    require(observer.prepare(sampleRate, 0.04, {}, { 0.0, 1.0, 0.0 },
+            enginelab::AcousticTerminationType::unflanged, geometry),
+        "valid SI observer geometry must prepare");
+    auto leftEnergy = 0.0;
+    auto rightEnergy = 0.0;
+    for (std::size_t sample = 0; sample < 8'192; ++sample) {
+        const auto drive = static_cast<float>(std::sin(
+            2.0 * std::numbers::pi * 500.0
+                * static_cast<double>(sample) / sampleRate));
+        const auto output = observer.process(drive);
+        if (sample > 1'024) {
+            leftEnergy += static_cast<double>(output.leftPa) * output.leftPa;
+            rightEnergy += static_cast<double>(output.rightPa) * output.rightPa;
+        }
+    }
+    require(std::abs(std::sqrt(leftEnergy / rightEnergy) - 2.0) < 0.02,
+        "free-field pressure must decay exactly as inverse distance");
+
+    geometry.leftMicrophoneM = { 0.0, 1.0, 0.0 };
+    geometry.rightMicrophoneM = { 0.0, -1.0, 0.0 };
+    require(observer.prepare(sampleRate, 0.04, {}, { 0.0, 1.0, 0.0 },
+            enginelab::AcousticTerminationType::flanged, geometry),
+        "flanged observer geometry must prepare");
+    leftEnergy = 0.0;
+    rightEnergy = 0.0;
+    for (std::size_t sample = 0; sample < 8'192; ++sample) {
+        const auto drive = static_cast<float>(std::sin(
+            2.0 * std::numbers::pi * 8'000.0
+                * static_cast<double>(sample) / sampleRate));
+        const auto output = observer.process(drive);
+        if (sample > 1'024) {
+            leftEnergy += static_cast<double>(output.leftPa) * output.leftPa;
+            rightEnergy += static_cast<double>(output.rightPa) * output.rightPa;
+        }
+    }
+    require(rightEnergy < leftEnergy * 0.15,
+        "a rigid flange must suppress the rear high-frequency hemisphere");
+}
+
 int main() {
     try {
         monitorCalibrationDefaultRegression();
+        freeFieldObserverRegression();
         ductWallLossRegression();
         valvePortTerminationRegression();
         boundaryReconstructionRegression();

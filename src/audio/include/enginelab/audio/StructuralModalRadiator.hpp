@@ -37,7 +37,7 @@ public:
     explicit StructuralModalRadiator(const EngineConfig& config);
 
     [[nodiscard]] bool prepare(double sampleRateHz,
-                               double observerDistanceM = 1.0) noexcept;
+                               double observerDistanceM = 0.0) noexcept;
     void reset() noexcept;
 
     /** Return signed far-field structure pressure at the observer, Pa. */
@@ -63,12 +63,17 @@ private:
         double sine {};
         double displacementM {};
         double velocityMps {};
+        // RMS surface velocity divided by the modal antinode velocity.  Modal
+        // coordinates use unit antinode displacement, whereas radiated power
+        // depends on the area integral of velocity squared.
+        double surfaceVelocityRmsScale { 1.0 };
     };
 
     std::vector<Mode> modes_;
     Provenance provenance_ { Provenance::estimatedFamily };
     double sampleRateHz_ { 48'000.0 };
     double observerDistanceM_ { 1.0 };
+    double configuredObserverDistanceM_ { 1.0 };
 };
 
 } // namespace enginelab

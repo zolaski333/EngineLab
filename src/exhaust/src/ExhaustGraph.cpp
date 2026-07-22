@@ -220,6 +220,7 @@ ExhaustGraph ExhaustGraph::makeForEngine(const EngineConfig& config) {
 ExhaustGraph ExhaustGraph::makeForEngine(
     const EngineConfig& config, double referenceExhaustTemperatureC) {
     ExhaustGraph graph;
+    graph.acousticObserver_ = config.acousticObserver;
     const auto fallbackTemperatureC = finiteClamped(
         config.ambientTemperatureC, -50.0, 60.0, 22.0) + nominalExhaustTemperatureRiseC;
     graph.waveSpeedMmPerSecond_ = exhaustWaveSpeedMmPerSecond(finiteClamped(
@@ -319,7 +320,9 @@ ExhaustGraph ExhaustGraph::makeForEngine(
                     runtimePathIndex, component.id, resonance.strength,
                     componentVolumeLitres(component),
                     finiteClamped(component.dischargeCoefficient, 0.02, 1.5, 0.72),
-                    finiteClamped(component.restriction, 0.0, 100.0, 0.0) });
+                    finiteClamped(component.restriction, 0.0, 100.0, 0.0),
+                    component.acousticPositionM, component.acousticAxis,
+                    component.acousticTermination });
             }
             std::unordered_set<std::uint64_t> compiledConnections;
             for (const auto& connection : path.network->connections) {
@@ -424,6 +427,9 @@ ExhaustGraph ExhaustGraph::makeForEngine(
             std::numbers::pi * std::pow(outletDiameter * 0.0005, 2.0)
                 * 0.180 * 1'000.0,
             outletDischargeCoefficient, 0.0 });
+        graph.nodes_.back().acousticPositionM = path.acousticPositionM;
+        graph.nodes_.back().acousticAxis = path.acousticAxis;
+        graph.nodes_.back().acousticTermination = path.acousticTermination;
         graph.edges_.push_back({ mergeId, mufflerId });
         graph.edges_.push_back({ mufflerId, outletId });
     }

@@ -87,6 +87,10 @@ struct CompiledExhaustOutlet final {
     ExhaustEndpoint networkEndpoint {};
     double openingAreaM2 { 0.0 };
     double dischargeCoefficient { 1.0 };
+    AcousticPoint3M acousticPositionM {};
+    AcousticPoint3M acousticAxis { 0.0, 1.0, 0.0 };
+    AcousticTerminationType acousticTermination {
+        AcousticTerminationType::unflanged };
 };
 
 enum class ExhaustNetworkLayoutIssue : std::uint8_t {
@@ -150,4 +154,3 @@ private:
 };
 
 } // namespace enginelab::gasdynamics
-

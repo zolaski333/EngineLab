@@ -1,6 +1,7 @@
 #pragma once
 
 #include <enginelab/audio/ValvePortTermination.hpp>
+#include <enginelab/audio/FreeFieldObserver.hpp>
 #include <enginelab/exhaust/ExhaustGraph.hpp>
 
 #include <array>
@@ -53,8 +54,8 @@ public:
     void beginBlock(std::span<const Medium> pathMedia,
                     double acousticTimeScale) noexcept;
 
-    /** Propagate one audio sample and return far-field pressure per path, Pa. */
-    [[nodiscard]] std::array<float, maximumPaths> process(
+    /** Propagate one sample and return each path at the two microphones, Pa. */
+    [[nodiscard]] std::array<StereoPressure, maximumPaths> process(
         std::span<const float> cylinderSourcePressurePa,
         std::span<const CylinderBoundary> cylinderBoundaries,
         float delayRampCoefficient) noexcept;

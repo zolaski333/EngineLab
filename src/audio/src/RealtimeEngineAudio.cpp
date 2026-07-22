@@ -327,6 +327,9 @@ void RealtimeEngineAudio::release() noexcept {
     levelLimitedSamples_.store(0, std::memory_order_relaxed);
     minObservedLevelGain_.store(1.0F, std::memory_order_relaxed);
     maxObservedExhaustPressurePa_.store(0.0F, std::memory_order_relaxed);
+    maxObservedIntakePressurePa_.store(0.0F, std::memory_order_relaxed);
+    maxObservedStructuralPressurePa_.store(0.0F, std::memory_order_relaxed);
+    maxPreLimiterMagnitude_.store(0.0F, std::memory_order_relaxed);
     legacyPathSamples_.store(0, std::memory_order_relaxed);
     invalidBoundarySamples_.store(0, std::memory_order_relaxed);
     convolutionBank_.reset();
@@ -747,6 +750,8 @@ void RealtimeEngineAudio::render(juce::AudioBuffer<float>& output, int startSamp
         acousticIntakeNetwork_->beginBlock(paths, acousticTimeScale);
     }
     float blockPeakObservedExhaustPressurePa = 0.0F;
+    float blockPeakObservedIntakePressurePa = 0.0F;
+    float blockPeakObservedStructuralPressurePa = 0.0F;
     std::uint64_t legacySamplesThisBlock = 0;
     std::uint64_t invalidBoundarySamplesThisBlock = 0;
     for (int sample = 0; sample < sampleCount; ++sample) {
@@ -772,7 +777,8 @@ void RealtimeEngineAudio::render(juce::AudioBuffer<float>& output, int startSamp
         float mechanicalLeft = 0.0F;
         float mechanicalRight = 0.0F;
         float physicalStructural = 0.0F;
-        float physicalIntake = 0.0F;
+        float physicalIntakeLeft = 0.0F;
+        float physicalIntakeRight = 0.0F;
         float physicalForcedInduction = 0.0F;
         float physicalCylinderPressureLeft = 0.0F;
         float physicalCylinderPressureRight = 0.0F;
@@ -1138,20 +1144,30 @@ void RealtimeEngineAudio::render(juce::AudioBuffer<float>& output, int startSamp
             }
         }
         if (structuralModalRadiator_ && structuralExcitation.cylinderCount > 0) {
+            const auto pressurePa = structuralModalRadiator_->process(
+                structuralExcitation);
+            blockPeakObservedStructuralPressurePa = std::max(
+                blockPeakObservedStructuralPressurePa, std::abs(pressurePa));
             physicalStructural = static_cast<float>(
                 AcousticMonitorCalibration::normalisePeakPressure(
-                    structuralModalRadiator_->process(structuralExcitation),
-                    acousticFullScaleSplDb));
+                    pressurePa, acousticFullScaleSplDb));
         }
         if (acousticIntakeNetwork_ && activeCylinderCount > 0) {
             const auto inletPressure = acousticIntakeNetwork_->process(
                 std::span<const AcousticIntakeNetwork::CylinderBoundary>(
                     intakeBoundaries.data(), activeCylinderCount),
                 controlRampCoefficient_);
-            for (const auto pressurePa : inletPressure) {
-                physicalIntake += static_cast<float>(
+            for (const auto pressure : inletPressure) {
+                blockPeakObservedIntakePressurePa = std::max(
+                    blockPeakObservedIntakePressurePa,
+                    std::max(std::abs(pressure.leftPa),
+                        std::abs(pressure.rightPa)));
+                physicalIntakeLeft += static_cast<float>(
                     AcousticMonitorCalibration::normalisePeakPressure(
-                        pressurePa, acousticFullScaleSplDb));
+                        pressure.leftPa, acousticFullScaleSplDb));
+                physicalIntakeRight += static_cast<float>(
+                    AcousticMonitorCalibration::normalisePeakPressure(
+                        pressure.rightPa, acousticFullScaleSplDb));
             }
         }
         if (forcedInductionAcoustics_) {
@@ -1220,17 +1236,18 @@ void RealtimeEngineAudio::render(juce::AudioBuffer<float>& output, int startSamp
             for (std::size_t path = 0; path < exhaustPathCount; ++path) {
                 blockPeakObservedExhaustPressurePa = std::max(
                     blockPeakObservedExhaustPressurePa,
-                    std::abs(observerPressure[path]));
-                const auto calibrated = static_cast<float>(
+                    std::max(std::abs(observerPressure[path].leftPa),
+                        std::abs(observerPressure[path].rightPa)));
+                const auto calibratedLeft = static_cast<float>(
                     AcousticMonitorCalibration::normalisePeakPressure(
-                        observerPressure[path], acousticFullScaleSplDb));
-                // Outlet positions are not authored yet. Multiple physical
-                // mouths therefore sum coherently at the same mono observer;
-                // a measured stereo IR may spatialise this pressure downstream.
-                exhaustLeft += calibrated;
-                exhaustRight += calibrated;
-                convolutionBank_.addInput(path, 0, sample, calibrated);
-                convolutionBank_.addInput(path, 1, sample, calibrated);
+                        observerPressure[path].leftPa, acousticFullScaleSplDb));
+                const auto calibratedRight = static_cast<float>(
+                    AcousticMonitorCalibration::normalisePeakPressure(
+                        observerPressure[path].rightPa, acousticFullScaleSplDb));
+                exhaustLeft += calibratedLeft;
+                exhaustRight += calibratedRight;
+                convolutionBank_.addInput(path, 0, sample, calibratedLeft);
+                convolutionBank_.addInput(path, 1, sample, calibratedRight);
             }
         } else {
             const auto collectorOut = processExhaustWaveguides(
@@ -1593,13 +1610,13 @@ void RealtimeEngineAudio::render(juce::AudioBuffer<float>& output, int startSamp
         auto left = (combustionLeft * combustionGain + intakeLeft * intakeGain
             + mechanicalLeft * mechanicalGain) * legacyMonitorScale
             + physicalStructural * mechanicalGain
-            + physicalIntake * intakeGain
+            + physicalIntakeLeft * intakeGain
             + physicalForcedInduction * intakeGain
             + radiatedExhaustLeft * exhaustGain * exhaustMonitorScale;
         auto right = (combustionRight * combustionGain + intakeRight * intakeGain
             + mechanicalRight * mechanicalGain) * legacyMonitorScale
             + physicalStructural * mechanicalGain
-            + physicalIntake * intakeGain
+            + physicalIntakeRight * intakeGain
             + physicalForcedInduction * intakeGain
             + radiatedExhaustRight * exhaustGain * exhaustMonitorScale;
         lowPassLeft_ += lowPassCoefficient_ * (left - lowPassLeft_);
@@ -1613,6 +1630,14 @@ void RealtimeEngineAudio::render(juce::AudioBuffer<float>& output, int startSamp
         maxObservedExhaustPressurePa_.store(
             blockPeakObservedExhaustPressurePa, std::memory_order_relaxed);
     }
+    if (blockPeakObservedIntakePressurePa
+            > maxObservedIntakePressurePa_.load(std::memory_order_relaxed))
+        maxObservedIntakePressurePa_.store(
+            blockPeakObservedIntakePressurePa, std::memory_order_relaxed);
+    if (blockPeakObservedStructuralPressurePa
+            > maxObservedStructuralPressurePa_.load(std::memory_order_relaxed))
+        maxObservedStructuralPressurePa_.store(
+            blockPeakObservedStructuralPressurePa, std::memory_order_relaxed);
     if (legacySamplesThisBlock != 0)
         legacyPathSamples_.fetch_add(legacySamplesThisBlock, std::memory_order_relaxed);
     if (invalidBoundarySamplesThisBlock != 0)
@@ -1626,6 +1651,7 @@ void RealtimeEngineAudio::render(juce::AudioBuffer<float>& output, int startSamp
     // before the only output limiter, so volume=2 can never create >0 dBFS.
     std::uint64_t levelLimitedBlockSamples = 0;
     float levelGainBlockMin = 1.0F;
+    float preLimiterBlockPeak = 0.0F;
     for (int sample = 0; sample < sampleCount; ++sample) {
         const auto dryLeft = output.getNumChannels() > 0
             ? output.getSample(0, startSample + sample) : 0.0F;
@@ -1670,6 +1696,7 @@ void RealtimeEngineAudio::render(juce::AudioBuffer<float>& output, int startSamp
         right = antiAliasRightB_ * volume;
 
         const auto magnitude = std::max(std::abs(left), std::abs(right));
+        preLimiterBlockPeak = std::max(preLimiterBlockPeak, magnitude);
         const auto envelopeCoefficient = magnitude > levelEnvelope_
             ? levelAttackCoefficient_ : levelReleaseCoefficient_;
         levelEnvelope_ += envelopeCoefficient * (magnitude - levelEnvelope_);
@@ -1690,6 +1717,8 @@ void RealtimeEngineAudio::render(juce::AudioBuffer<float>& output, int startSamp
         levelLimitedSamples_.fetch_add(levelLimitedBlockSamples, std::memory_order_relaxed);
     if (levelGainBlockMin < minObservedLevelGain_.load(std::memory_order_relaxed))
         minObservedLevelGain_.store(levelGainBlockMin, std::memory_order_relaxed);
+    if (preLimiterBlockPeak > maxPreLimiterMagnitude_.load(std::memory_order_relaxed))
+        maxPreLimiterMagnitude_.store(preLimiterBlockPeak, std::memory_order_relaxed);
     // Pass 2: single transparent soft-limiter (identity below the knee), run at
     // 2x oversampling so the peak-shaping harmonics do not alias back down.
     if (oversampler_ && output.getNumChannels() >= 2) {

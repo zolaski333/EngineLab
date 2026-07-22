@@ -1,6 +1,7 @@
 #pragma once
 
 #include <enginelab/foundation/EngineTypes.hpp>
+#include <enginelab/audio/FreeFieldObserver.hpp>
 
 #include <array>
 #include <cstddef>
@@ -46,8 +47,8 @@ public:
     void beginBlock(std::span<const PathBoundary> paths,
                     double acousticTimeScale) noexcept;
 
-    /** Return far-field inlet pressure per intake path, Pa. */
-    [[nodiscard]] std::array<float, maximumPaths> process(
+    /** Return inlet pressure at both microphones per intake path, Pa. */
+    [[nodiscard]] std::array<StereoPressure, maximumPaths> process(
         std::span<const CylinderBoundary> cylinders,
         float delayRampCoefficient) noexcept;
 

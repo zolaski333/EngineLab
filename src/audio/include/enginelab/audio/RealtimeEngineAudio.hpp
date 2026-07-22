@@ -98,6 +98,15 @@ public:
     [[nodiscard]] float maxObservedExhaustPressurePa() const noexcept {
         return maxObservedExhaustPressurePa_.load(std::memory_order_relaxed);
     }
+    [[nodiscard]] float maxObservedIntakePressurePa() const noexcept {
+        return maxObservedIntakePressurePa_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] float maxObservedStructuralPressurePa() const noexcept {
+        return maxObservedStructuralPressurePa_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] float maxPreLimiterMagnitude() const noexcept {
+        return maxPreLimiterMagnitude_.load(std::memory_order_relaxed);
+    }
     /** Sample-rate invariant quantisation used by the physical runner lines. */
     [[nodiscard]] static std::size_t runnerDelaySamples(double delaySeconds,
                                                         double sampleRate) noexcept;
@@ -400,6 +409,9 @@ private:
     std::atomic<std::uint64_t> levelLimitedSamples_ { 0 };
     std::atomic<float> minObservedLevelGain_ { 1.0F };
     std::atomic<float> maxObservedExhaustPressurePa_ { 0.0F };
+    std::atomic<float> maxObservedIntakePressurePa_ { 0.0F };
+    std::atomic<float> maxObservedStructuralPressurePa_ { 0.0F };
+    std::atomic<float> maxPreLimiterMagnitude_ { 0.0F };
     std::atomic<std::uint64_t> legacyPathSamples_ { 0 };
     std::atomic<std::uint64_t> invalidBoundarySamples_ { 0 };
 };

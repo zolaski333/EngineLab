@@ -356,8 +356,8 @@ ValveControlSample interpolateValveControl(const ValveControlConfig& control, do
 
 void normaliseEngineConfig(EngineConfig& config) {
     // Schema 2 added authored exhaust DAGs/topology provenance; schema 3 adds
-    // explicit valve count and diameter. Older documents are structurally
-    // compatible because zero diameters request bore-derived geometry.
+    // explicit valve geometry; schema 4 adds SI outlet/observer coordinates.
+    // Older documents migrate to the documented free-field observer below.
     if (config.schemaVersion < currentEngineSchemaVersion)
         config.schemaVersion = currentEngineSchemaVersion;
     // `intake` is the canonical representation. Legacy scalar fields remain
@@ -370,6 +370,13 @@ void normaliseEngineConfig(EngineConfig& config) {
         config.intake.throttleDiameterMm = config.throttleDiameterMm;
     config.plenumVolumeLitres = config.intake.plenumVolumeLitres;
     config.throttleDiameterMm = config.intake.throttleDiameterMm;
+    if (!(config.acousticObserver.soundSpeedMps > 0.0)
+        || !std::isfinite(config.acousticObserver.soundSpeedMps)) {
+        constexpr double dryAirGamma = 1.4;
+        constexpr double dryAirGasConstantJPerKgK = 287.05;
+        config.acousticObserver.soundSpeedMps = std::sqrt(dryAirGamma
+            * dryAirGasConstantJPerKgK * (config.ambientTemperatureC + 273.15));
+    }
 
     if (config.crankshafts.empty()) {
         CrankshaftConfig crankshaft;
@@ -499,6 +506,11 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
     const auto inRange = [](double value, double minimum, double maximum) {
         return std::isfinite(value) && value >= minimum && value <= maximum;
     };
+    const auto validPoint = [&inRange](const AcousticPoint3M& point) {
+        return inRange(point.x, -100.0, 100.0)
+            && inRange(point.y, -100.0, 100.0)
+            && inRange(point.z, -100.0, 100.0);
+    };
     if (config.schemaVersion < minimumSupportedEngineSchemaVersion
             || config.schemaVersion > currentEngineSchemaVersion)
         return "Unsupported engine schema version";
@@ -532,6 +544,10 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
         || !inRange(config.plenumVolumeLitres, 0.1, 50.0)
         || !inRange(config.throttleDiameterMm, 15.0, 150.0)
         || !inRange(config.bankAngleDegrees, 0.0, 180.0)
+        || !validPoint(config.acousticObserver.leftMicrophoneM)
+        || !validPoint(config.acousticObserver.rightMicrophoneM)
+        || !(config.acousticObserver.soundSpeedMps == 0.0
+            || inRange(config.acousticObserver.soundSpeedMps, 250.0, 450.0))
         || !inRange(config.forcedInduction.pressureRatio, 1.0, 3.5)
         || !inRange(config.forcedInduction.fullBoostRpm, 200.0, 20'000.0)
         || !inRange(config.forcedInduction.compressorEfficiency, 0.35, 0.95)
@@ -891,7 +907,12 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
             || !inRange(exhaust.collectorVolumeLitres, 0.05, 200.0)
             || !inRange(exhaust.outletDischargeCoefficient, 0.02, 1.5)
             || !inRange(exhaust.mufflerChamberDiameterMm, 0.0, 600.0)
-            || !inRange(exhaust.mufflerChamberLengthMm, 0.0, 3'000.0))
+            || !inRange(exhaust.mufflerChamberLengthMm, 0.0, 3'000.0)
+            || !validPoint(path.acousticPositionM)
+            || !validPoint(path.acousticAxis)
+            || path.acousticAxis.x * path.acousticAxis.x
+                + path.acousticAxis.y * path.acousticAxis.y
+                + path.acousticAxis.z * path.acousticAxis.z < 1.0e-12)
             return "Exhaust path IDs and audio volumes must be valid";
         for (const auto cylinderId : path.cylinderIds)
             if (!cylinderIds.contains(cylinderId) || !assignedExhaustCylinders.insert(cylinderId).second)
@@ -926,7 +947,14 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
                     || !inRange(component.restriction, 0.0, 20.0)
                     || !inRange(component.resonanceHz, 0.0, 20'000.0)
                     || !inRange(component.acousticGain, 0.0, 8.0)
-                    || !inRange(component.dischargeCoefficient, 0.02, 1.5))
+                    || !inRange(component.dischargeCoefficient, 0.02, 1.5)
+                    || !validPoint(component.acousticPositionM)
+                    || !validPoint(component.acousticAxis)
+                    || (component.type == ExhaustComponentType::outlet
+                        && component.acousticAxis.x * component.acousticAxis.x
+                            + component.acousticAxis.y * component.acousticAxis.y
+                            + component.acousticAxis.z * component.acousticAxis.z
+                            < 1.0e-12))
                     return "Custom exhaust component IDs and dimensions must be finite, unique and valid";
                 outgoing.try_emplace(component.id);
                 componentIncoming.try_emplace(component.id, 0U);

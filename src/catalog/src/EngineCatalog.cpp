@@ -13,6 +13,12 @@ void assignIfPresent(const YAML::Node& node, const char* key, T& value) {
     if (node && node[key]) value = node[key].as<T>();
 }
 
+[[nodiscard]] AcousticPoint3M decodePoint(
+    const YAML::Node& node, AcousticPoint3M fallback = {}) {
+    return { node["x"].as<double>(fallback.x), node["y"].as<double>(fallback.y),
+        node["z"].as<double>(fallback.z) };
+}
+
 [[nodiscard]] EngineLayout parseLayout(const std::string& value) {
     if (value == "inline") return EngineLayout::inlineLayout;
     if (value == "v") return EngineLayout::vLayout;
@@ -115,6 +121,15 @@ template <typename T>
             assignIfPresent(encoded, "resonance_hz", component.resonanceHz);
             assignIfPresent(encoded, "acoustic_gain", component.acousticGain);
             assignIfPresent(encoded, "discharge_coefficient", component.dischargeCoefficient);
+            if (encoded["acoustic_position_m"])
+                component.acousticPositionM = decodePoint(encoded["acoustic_position_m"]);
+            if (encoded["acoustic_axis"])
+                component.acousticAxis = decodePoint(
+                    encoded["acoustic_axis"], component.acousticAxis);
+            component.acousticTermination = encoded["acoustic_termination"]
+                .as<std::string>("unflanged") == "flanged"
+                ? AcousticTerminationType::flanged
+                : AcousticTerminationType::unflanged;
             network.components.push_back(component);
         }
     }
@@ -530,6 +545,18 @@ void applyCrankOffsets(EngineConfig& config) {
             config.banks.push_back(std::move(bank));
         }
     }
+    if (const auto observer = engine["acoustic_observer"]) {
+        if (observer["left_microphone_m"])
+            config.acousticObserver.leftMicrophoneM = decodePoint(
+                observer["left_microphone_m"],
+                config.acousticObserver.leftMicrophoneM);
+        if (observer["right_microphone_m"])
+            config.acousticObserver.rightMicrophoneM = decodePoint(
+                observer["right_microphone_m"],
+                config.acousticObserver.rightMicrophoneM);
+        assignIfPresent(observer, "sound_speed_mps",
+            config.acousticObserver.soundSpeedMps);
+    }
     if (const auto paths = engine["exhaust_paths"]) {
         config.exhaustPaths.clear();
         for (const auto& pathNode : paths) {
@@ -539,6 +566,16 @@ void applyCrankOffsets(EngineConfig& config) {
             pathConfig.geometry = pathNode["geometry"] ? decodeExhaust(pathNode["geometry"]) : config.exhaust;
             pathConfig.impulseResponsePath = pathNode["impulse_response"].as<std::string>("");
             pathConfig.audioVolume = pathNode["audio_volume"].as<double>(1.0);
+            if (pathNode["acoustic_position_m"])
+                pathConfig.acousticPositionM = decodePoint(
+                    pathNode["acoustic_position_m"]);
+            if (pathNode["acoustic_axis"])
+                pathConfig.acousticAxis = decodePoint(
+                    pathNode["acoustic_axis"], pathConfig.acousticAxis);
+            pathConfig.acousticTermination = pathNode["acoustic_termination"]
+                .as<std::string>("unflanged") == "flanged"
+                ? AcousticTerminationType::flanged
+                : AcousticTerminationType::unflanged;
             if (const auto graph = pathNode["graph"])
                 pathConfig.network = decodeExhaustNetwork(graph);
             config.exhaustPaths.push_back(std::move(pathConfig));

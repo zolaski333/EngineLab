@@ -83,6 +83,11 @@ set intake.runner_length_mm = runner
 set intake.runner_diameter_mm = 4.2 cm
 set exhaust.primary_length_mm = 0.52 m
 set exhaust.collector_volume_l = 2200 cc
+set acoustic_observer.left_x_m = -0.2 m
+set acoustic_observer.left_y_m = 3 m
+set acoustic_observer.right_x_m = 0.2 m
+set acoustic_observer.right_y_m = 3 m
+set acoustic_observer.sound_speed_mps = 343 m_s
 set injection.mode = direct
 set injection.rail_pressure_bar = 20 MPa
 set injection.wall_film_fraction = 8 percent
@@ -134,6 +139,12 @@ ignition point 1000 rpm, 14 deg
     requireNear(config.intake.runnerLengthMm, 320.0, 1.0e-12, "mixed length units should add");
     requireNear(config.intake.runnerDiameterMm, 42.0, 1.0e-12, "centimetres should convert to millimetres");
     requireNear(config.exhaust.collectorVolumeLitres, 2.2, 1.0e-12, "cc should convert to litres");
+    requireNear(config.acousticObserver.leftMicrophoneM.x, -0.2, 1.0e-12,
+                "observer coordinates must remain SI metres after script unit conversion");
+    requireNear(config.acousticObserver.rightMicrophoneM.y, 3.0, 1.0e-12,
+                "observer distance must remain SI metres after script unit conversion");
+    requireNear(config.acousticObserver.soundSpeedMps, 343.0, 1.0e-12,
+                "observer sound speed must be script-authorable in SI");
     requireNear(config.injection.railPressureBar, 200.0, 1.0e-12, "pressure should convert back to bar field units");
     requireNear(config.injection.wallFilmFraction, 0.08, 1.0e-12, "percent should convert to a ratio");
     require(config.solver.gasSubsteps == 3, "integer property should be assigned exactly");

@@ -269,6 +269,9 @@ ExhaustNetworkLayout ExhaustNetworkLayout::compile(
             *endpoint,
             openingAreaM2,
             std::clamp(node.dischargeCoefficient, 0.02, 1.5),
+            node.acousticPositionM,
+            node.acousticAxis,
+            node.acousticTermination,
         });
     }
 

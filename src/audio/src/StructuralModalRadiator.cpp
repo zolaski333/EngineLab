@@ -37,6 +37,17 @@ constexpr double airSoundSpeedMps = 343.0;
 StructuralModalRadiator::StructuralModalRadiator(const EngineConfig& config) {
     if (config.cylinders.empty()) return;
 
+    const auto distance = [](const AcousticPoint3M& point) {
+        return std::sqrt(point.x * point.x + point.y * point.y
+            + point.z * point.z);
+    };
+    configuredObserverDistanceM_ = 0.5 * (
+        distance(config.acousticObserver.leftMicrophoneM)
+        + distance(config.acousticObserver.rightMicrophoneM));
+    if (!(configuredObserverDistanceM_ >= 0.05)
+        || !std::isfinite(configuredObserverDistanceM_))
+        configuredObserverDistanceM_ = 1.0;
+
     double meanBoreM = 0.0;
     double meanStrokeM = 0.0;
     double meanRodM = 0.0;
@@ -93,6 +104,8 @@ StructuralModalRadiator::StructuralModalRadiator(const EngineConfig& config) {
                 blockRadiatingAreaM2,
                 modeRadiationEfficiency(frequencyHz, blockRadiatingAreaM2) };
             compiled.drive = drive;
+            // Integral of sin²(n*pi*x/L) over the beam length.
+            compiled.surfaceVelocityRmsScale = 1.0 / std::sqrt(2.0);
             for (std::size_t cylinder = 0; cylinder < cylinderCount; ++cylinder) {
                 const auto local = (static_cast<double>(cylinder %
                     static_cast<std::size_t>(cylindersPerBank)) + 0.5)
@@ -126,6 +139,9 @@ StructuralModalRadiator::StructuralModalRadiator(const EngineConfig& config) {
             compiled.info = { frequencyHz, 0.045, std::max(0.5, headMassKg * 0.25),
                 headAreaM2, modeRadiationEfficiency(frequencyHz, headAreaM2) };
             compiled.drive = Drive::headGas;
+            // A simply-supported sin(m*pi*x/a)sin(n*pi*y/b) plate has one
+            // quarter of its antinode mean-square velocity over its surface.
+            compiled.surfaceVelocityRmsScale = 0.5;
             for (std::size_t cylinder = 0; cylinder < cylinderCount; ++cylinder) {
                 const auto local = (static_cast<double>(cylinder %
                     static_cast<std::size_t>(cylindersPerBank)) + 0.5)
@@ -152,6 +168,7 @@ StructuralModalRadiator::StructuralModalRadiator(const EngineConfig& config) {
             blockRadiatingAreaM2,
             modeRadiationEfficiency(frequencyHz, blockRadiatingAreaM2) };
         compiled.drive = Drive::torsion;
+        compiled.surfaceVelocityRmsScale = 1.0 / std::sqrt(2.0);
         compiled.torqueRadiusM = std::max(0.025, 0.5 * blockWidthM);
         for (std::size_t cylinder = 0; cylinder < cylinderCount; ++cylinder) {
             const auto local = (static_cast<double>(cylinder %
@@ -166,6 +183,8 @@ StructuralModalRadiator::StructuralModalRadiator(const EngineConfig& config) {
 
 bool StructuralModalRadiator::prepare(double sampleRateHz,
                                       double observerDistanceM) noexcept {
+    if (!(observerDistanceM > 0.0))
+        observerDistanceM = configuredObserverDistanceM_;
     if (!(sampleRateHz > 1'000.0) || !std::isfinite(sampleRateHz)
         || !(observerDistanceM > 0.0) || !std::isfinite(observerDistanceM)
         || modes_.empty())
@@ -258,7 +277,8 @@ float StructuralModalRadiator::process(
                 * mode.info.radiatingAreaM2
                 / (4.0 * std::numbers::pi
                     * observerDistanceM_ * observerDistanceM_));
-        pressurePa += pressurePerVelocity * nextVelocityMps;
+        pressurePa += pressurePerVelocity * mode.surfaceVelocityRmsScale
+            * nextVelocityMps;
     }
     if (!std::isfinite(pressurePa)) {
         reset();

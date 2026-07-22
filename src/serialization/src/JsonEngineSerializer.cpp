@@ -37,6 +37,21 @@ using Json = nlohmann::json;
     if (value == "outlet") return ExhaustComponentType::outlet;
     return std::nullopt;
 }
+[[nodiscard]] const char* terminationName(AcousticTerminationType value) noexcept {
+    return value == AcousticTerminationType::flanged ? "flanged" : "unflanged";
+}
+[[nodiscard]] AcousticTerminationType decodeTermination(std::string_view value) noexcept {
+    return value == "flanged" ? AcousticTerminationType::flanged
+                              : AcousticTerminationType::unflanged;
+}
+[[nodiscard]] Json pointJson(const AcousticPoint3M& point) {
+    return { { "x", point.x }, { "y", point.y }, { "z", point.z } };
+}
+[[nodiscard]] AcousticPoint3M decodePoint(
+    const Json& value, AcousticPoint3M fallback = {}) {
+    return { value.value("x", fallback.x), value.value("y", fallback.y),
+        value.value("z", fallback.z) };
+}
 [[nodiscard]] std::string layoutName(EngineLayout value) {
     switch (value) {
     case EngineLayout::inlineLayout: return "inline";
@@ -190,6 +205,9 @@ std::string JsonEngineSerializer::encode(const EngineConfig& config) const {
     for (const auto& path : config.exhaustPaths) {
         Json encodedPath = { {"id", path.id}, {"cylinder_ids", path.cylinderIds},
             {"impulse_response", path.impulseResponsePath}, {"audio_volume", path.audioVolume},
+            {"acoustic_position_m", pointJson(path.acousticPositionM)},
+            {"acoustic_axis", pointJson(path.acousticAxis)},
+            {"acoustic_termination", terminationName(path.acousticTermination)},
             {"geometry", {{"primary_length_mm", path.geometry.primaryLengthMm},
                 {"primary_diameter_mm", path.geometry.primaryDiameterMm},
                 {"collector_diameter_mm", path.geometry.collectorDiameterMm},
@@ -206,7 +224,10 @@ std::string JsonEngineSerializer::encode(const EngineConfig& config) const {
                     {"length_mm", component.lengthMm}, {"diameter_mm", component.diameterMm},
                     {"volume_l", component.volumeLitres}, {"restriction", component.restriction},
                     {"resonance_hz", component.resonanceHz}, {"acoustic_gain", component.acousticGain},
-                    {"discharge_coefficient", component.dischargeCoefficient} });
+                    {"discharge_coefficient", component.dischargeCoefficient},
+                    {"acoustic_position_m", pointJson(component.acousticPositionM)},
+                    {"acoustic_axis", pointJson(component.acousticAxis)},
+                    {"acoustic_termination", terminationName(component.acousticTermination)} });
             Json cylinderConnections = Json::array();
             for (const auto& connection : path.network->cylinderConnections)
                 cylinderConnections.push_back({ {"cylinder_id", connection.cylinderId},
@@ -295,6 +316,10 @@ std::string JsonEngineSerializer::encode(const EngineConfig& config) const {
                      {"bellmouth_diameter_mm", config.intake.bellmouthDiameterMm},
                      {"idle_bypass_area_mm2", config.intake.idleBypassAreaMm2}, {"throttle_gamma", config.intake.throttleGamma}}},
         {"intake_paths", intakePaths}, {"banks", banks}, {"exhaust_paths", exhaustPaths},
+        {"acoustic_observer", {
+            {"left_microphone_m", pointJson(config.acousticObserver.leftMicrophoneM)},
+            {"right_microphone_m", pointJson(config.acousticObserver.rightMicrophoneM)},
+            {"sound_speed_mps", config.acousticObserver.soundSpeedMps}}},
         {"ignition", {{"rev_limit_rpm", config.ignition.revLimitRpm},
                         {"limiter_duration_s", config.ignition.limiterDurationSeconds}, {"timing_curve", timingCurve}}},
         {"injection", {{"mode", injectionModeName(config.injection.mode)},
@@ -625,6 +650,19 @@ EngineDecodeResult JsonEngineSerializer::decode(std::string_view text) const noe
                 config.intakePaths.push_back(std::move(path));
             }
         }
+        if (engine.contains("acoustic_observer")) {
+            const auto& observer = engine.at("acoustic_observer");
+            if (observer.contains("left_microphone_m"))
+                config.acousticObserver.leftMicrophoneM = decodePoint(
+                    observer.at("left_microphone_m"),
+                    config.acousticObserver.leftMicrophoneM);
+            if (observer.contains("right_microphone_m"))
+                config.acousticObserver.rightMicrophoneM = decodePoint(
+                    observer.at("right_microphone_m"),
+                    config.acousticObserver.rightMicrophoneM);
+            config.acousticObserver.soundSpeedMps = observer.value(
+                "sound_speed_mps", config.acousticObserver.soundSpeedMps);
+        }
         if (engine.contains("exhaust_paths")) {
             for (const auto& item : engine.at("exhaust_paths")) {
                 ExhaustPathConfig path;
@@ -632,6 +670,13 @@ EngineDecodeResult JsonEngineSerializer::decode(std::string_view text) const noe
                 path.cylinderIds = item.value("cylinder_ids", std::vector<std::uint32_t> {});
                 path.impulseResponsePath = item.value("impulse_response", std::string {});
                 path.audioVolume = item.value("audio_volume", 1.0);
+                if (item.contains("acoustic_position_m"))
+                    path.acousticPositionM = decodePoint(item.at("acoustic_position_m"));
+                if (item.contains("acoustic_axis"))
+                    path.acousticAxis = decodePoint(
+                        item.at("acoustic_axis"), path.acousticAxis);
+                path.acousticTermination = decodeTermination(item.value(
+                    "acoustic_termination", std::string("unflanged")));
                 if (item.contains("geometry")) {
                     const auto& geometry = item.at("geometry");
                     path.geometry.primaryLengthMm = geometry.value("primary_length_mm", path.geometry.primaryLengthMm);
@@ -662,6 +707,16 @@ EngineDecodeResult JsonEngineSerializer::decode(std::string_view text) const noe
                         component.acousticGain = encodedComponent.value("acoustic_gain", component.acousticGain);
                         component.dischargeCoefficient = encodedComponent.value(
                             "discharge_coefficient", component.dischargeCoefficient);
+                        if (encodedComponent.contains("acoustic_position_m"))
+                            component.acousticPositionM = decodePoint(
+                                encodedComponent.at("acoustic_position_m"));
+                        if (encodedComponent.contains("acoustic_axis"))
+                            component.acousticAxis = decodePoint(
+                                encodedComponent.at("acoustic_axis"),
+                                component.acousticAxis);
+                        component.acousticTermination = decodeTermination(
+                            encodedComponent.value("acoustic_termination",
+                                std::string("unflanged")));
                         network.components.push_back(component);
                     }
                     for (const auto& encodedConnection : encodedGraph.at("cylinder_connections"))
