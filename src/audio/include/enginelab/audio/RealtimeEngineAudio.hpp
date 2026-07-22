@@ -6,6 +6,7 @@
 #include <enginelab/audio/DuctWallLoss.hpp>
 #include <enginelab/audio/ExpansionChamberMuffler.hpp>
 #include <enginelab/audio/RealtimeConvolutionBank.hpp>
+#include <enginelab/audio/StructuralModalRadiator.hpp>
 #include <enginelab/audio/ValveFlowAcousticSource.hpp>
 #include <enginelab/audio/ValvePortTermination.hpp>
 #include <enginelab/runtime/EngineRuntime.hpp>
@@ -28,7 +29,8 @@ class RealtimeEngineAudio final : public IAudioRenderer {
 public:
     RealtimeEngineAudio(FiringEventQueue& queue, RealtimeAudioState& state,
                         CylinderPressureQueue* pressureQueue = nullptr,
-                        const ExhaustGraph* exhaustGraph = nullptr);
+                        const ExhaustGraph* exhaustGraph = nullptr,
+                        const EngineConfig* engineConfig = nullptr);
     void prepare(double sampleRate, int maximumBlockSize) noexcept override;
     void release() noexcept override;
     void render(juce::AudioBuffer<float>& output, int startSample, int sampleCount) noexcept override;
@@ -68,6 +70,9 @@ public:
      * runner/path reduction, was compiled successfully. */
     [[nodiscard]] bool compiledExhaustTopologyActive() const noexcept {
         return acousticExhaustNetwork_ != nullptr;
+    }
+    [[nodiscard]] bool structuralRadiationActive() const noexcept {
+        return structuralModalRadiator_ != nullptr;
     }
     /** Samples rendered on the legacy procedural path.
      *
@@ -267,6 +272,8 @@ private:
     /** Complete compiled DAG used by production engines. Null only for legacy
      * producers/tests that did not supply topology. */
     std::unique_ptr<AcousticExhaustNetwork> acousticExhaustNetwork_;
+    /** Block/head modes compiled from immutable engine geometry. */
+    std::unique_ptr<StructuralModalRadiator> structuralModalRadiator_;
     // Sized in prepare() to the cylinders and paths the loaded engine actually
     // has. Allocation stays off the callback; only the capacity is no longer a
     // worst-case guess paid for by every engine.

@@ -194,6 +194,7 @@ public:
     [[nodiscard]] FiringEventQueue& audioEvents() noexcept { return eventQueue_; }
     [[nodiscard]] CylinderPressureQueue& cylinderPressureSamples() noexcept { return *pressureQueue_; }
     [[nodiscard]] RealtimeAudioState& audioState() noexcept { return audioState_; }
+    [[nodiscard]] const EngineConfig& engineConfig() const noexcept { return config_; }
     [[nodiscard]] const ExhaustGraph& exhaustGraph() const noexcept { return exhaust_; }
     [[nodiscard]] std::shared_ptr<calibration::CalibrationStore> calibrationStore() const noexcept {
         return ecu_.calibrationStore();

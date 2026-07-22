@@ -209,7 +209,8 @@ bool MainComponent::applyConfig(const EngineConfig& newConfig, bool preserveScri
     visibleRenderSnapshot_ = {};
     runtime_ = std::move(replacement);
     audio_ = std::make_unique<RealtimeEngineAudio>(runtime_->audioEvents(), runtime_->audioState(),
-        &runtime_->cylinderPressureSamples(), &runtime_->exhaustGraph());
+        &runtime_->cylinderPressureSamples(), &runtime_->exhaustGraph(),
+        &runtime_->engineConfig());
     importedRunCount_ = 0;
     telemetryWrite_ = 0; telemetryCount_ = 0;
     runtime_->setThrottle(throttleSlider_.getValue() / 100.0);

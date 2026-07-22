@@ -204,7 +204,8 @@ Clip renderTrajectory(const EngineConfig& baseConfig, double sampleRate) {
     constexpr double dt = 1.0 / 240.0;
     const auto samplesPerStep = static_cast<int>(std::lround(sampleRate / 240.0));
     auto rendererPtr = std::make_unique<RealtimeEngineAudio>(
-        eventQueue, audioState, &pressureQueue, &audioConfiguration->exhaustGraph());
+        eventQueue, audioState, &pressureQueue, &audioConfiguration->exhaustGraph(),
+        &audioConfiguration->engineConfig());
     auto& renderer = *rendererPtr;
     renderer.prepare(sampleRate, samplesPerStep);
     std::this_thread::sleep_for(std::chrono::milliseconds(300));

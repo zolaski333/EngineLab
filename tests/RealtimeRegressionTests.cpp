@@ -3,6 +3,7 @@
 #include <enginelab/audio/BoundaryReconstructionFilter.hpp>
 #include <enginelab/audio/NonlinearDuctAcoustics.hpp>
 #include <enginelab/audio/RealtimeEngineAudio.hpp>
+#include <enginelab/audio/StructuralModalRadiator.hpp>
 #include <enginelab/audio/DuctWallLoss.hpp>
 #include <enginelab/audio/ExpansionChamberMuffler.hpp>
 #include <enginelab/audio/PipeRadiationModel.hpp>
@@ -337,6 +338,71 @@ void branchedAcousticTopologyRegression() {
         require(output[0] == 0.0F,
             "a reset source-free network must be exactly silent");
     }
+}
+
+void structuralModalRadiatorRegression() {
+    const auto config = enginelab::makeDefaultInlineFour();
+    enginelab::StructuralModalRadiator radiator(config);
+    require(radiator.valid(),
+        "a normal engine geometry must produce a structural mode set");
+    require(radiator.modeCount() >= 8 && radiator.modeCount() <= 24,
+        "the reduced structural model must retain 8 to 24 modes");
+    require(radiator.provenance()
+            == enginelab::StructuralModalRadiator::Provenance::estimatedFamily,
+        "schema-v1 engines must identify their block modes as family estimates");
+    for (std::size_t index = 0; index < radiator.modeCount(); ++index) {
+        const auto mode = radiator.mode(index);
+        require(std::isfinite(mode.frequencyHz) && mode.frequencyHz > 0.0
+                && mode.dampingRatio > 0.0 && mode.dampingRatio < 1.0
+                && mode.modalMassKg > 0.0 && mode.radiatingAreaM2 > 0.0
+                && mode.radiationEfficiency >= 0.0
+                && mode.radiationEfficiency <= 1.0,
+            "every estimated mode must expose finite physical parameters");
+    }
+    require(radiator.prepare(48'000.0),
+        "a valid modal set must prepare at audio rate");
+
+    enginelab::StructuralExcitationSample excitation;
+    excitation.cylinderCount = config.cylinders.size();
+    for (std::size_t sample = 0; sample < 512; ++sample)
+        require(radiator.process(excitation) == 0.0F,
+            "a reset unforced structure must be exactly silent");
+
+    const auto resonanceHz = radiator.mode(0).frequencyHz;
+    const auto measure = [&](double frequencyHz) {
+        radiator.reset();
+        auto energy = 0.0;
+        for (std::size_t sample = 0; sample < 48'000; ++sample) {
+            const auto force = 1'000.0F * static_cast<float>(std::sin(
+                2.0 * std::numbers::pi * frequencyHz
+                    * static_cast<double>(sample) / 48'000.0));
+            excitation.bearingReactionForceN[0] = force;
+            const auto pressure = radiator.process(excitation);
+            require(std::isfinite(pressure),
+                "modal integration must remain finite under resonant forcing");
+            if (sample >= 24'000)
+                energy += static_cast<double>(pressure) * pressure;
+        }
+        return std::sqrt(energy / 24'000.0);
+    };
+    const auto resonantRms = measure(resonanceHz);
+    const auto offResonantRms = measure(resonanceHz * 0.63);
+    require(resonantRms > offResonantRms * 1.5,
+        "solver-resolved bearing force must excite the calculated block mode");
+
+    excitation = {};
+    excitation.cylinderCount = config.cylinders.size();
+    auto earlyDecayEnergy = 0.0;
+    auto lateDecayEnergy = 0.0;
+    for (std::size_t sample = 0; sample < 48'000; ++sample) {
+        const auto pressure = radiator.process(excitation);
+        if (sample < 2'000)
+            earlyDecayEnergy += static_cast<double>(pressure) * pressure;
+        if (sample >= 24'000)
+            lateDecayEnergy += static_cast<double>(pressure) * pressure;
+    }
+    require(earlyDecayEnergy > 0.0 && lateDecayEnergy < earlyDecayEnergy * 1.0e-4,
+        "positive modal damping must dissipate stored structural energy");
 }
 
 double absoluteDifference(const std::vector<float>& left, const std::vector<float>& right) {
@@ -1376,6 +1442,7 @@ int main() {
         runnerDelaySampleRateRegression();
         exhaustPathIsolationRegression();
         branchedAcousticTopologyRegression();
+        structuralModalRadiatorRegression();
         customGraphRuntimeTelemetryRegression();
         ambientPressureRegression();
         physicalThermoacousticPathRegression();

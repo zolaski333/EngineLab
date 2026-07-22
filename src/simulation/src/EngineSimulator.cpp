@@ -608,6 +608,8 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
         std::array<double, 32> chamberVolumeLitresForWork {};
         std::array<double, 32> chamberPressureBeforeNetworkKpa {};
         std::array<double, 32> gasTorqueLeverArmM {};
+        std::array<double, 32> structuralInertiaForceN {};
+        std::array<double, 32> structuralSideRatio {};
         std::array<double, 32> exhaustMassFlowKgPerSecond {};
         std::array<double, 32> exhaustAcousticMassFlowKgPerSecond {};
         std::array<double, 32> exhaustPortDensityKgPerM3 {};
@@ -1079,6 +1081,7 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
             const auto massKg = (cylinder.pistonMassGrams
                 + cylinder.connectingRodMassGrams / 3.0) * 0.001;
             const auto inertiaForce = massKg * kinematics.pistonAccelerationMps2;
+            structuralInertiaForceN[cylinderIndex] = inertiaForce;
             const auto leverArm = kinematics.displacementDerivativeMPerRadian;
             contribution.reciprocatingTorque += inertiaForce * leverArm;
             // pistonAreaM2 is already defined above for the gas flow calls (same scope).
@@ -1095,6 +1098,9 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 kinematics.connectingRodObliquityDegrees * std::numbers::pi / 180.0,
                 0.0, 1.35);
             const auto rodSideRatio = std::abs(std::tan(rodObliquityRadians));
+            const auto sideDirection = kinematics.crankPinXMm >= kinematics.wristPinXMm
+                ? 1.0 : -1.0;
+            structuralSideRatio[cylinderIndex] = rodSideRatio * sideDirection;
             const auto cylinderWallForceN = std::abs(gasForceN - inertiaForce) * rodSideRatio;
             const auto pistonVelocityMps = kinematics.pistonVelocityMps;
             const auto pistonFrictionForceN = stribeckFrictionForce(cylinder, pistonVelocityMps,
@@ -1670,9 +1676,24 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
             CylinderPressureSample pressureSample;
             pressureSample.timeSeconds = state_.simulationTimeSeconds;
             pressureSample.cylinderCount = config_.cylinders.size();
+            pressureSample.structural.cylinderCount = config_.cylinders.size();
             pressureSample.exhaustCouplingFrequencyHz = state_.exhaustCouplingFrequencyHz;
             for (std::size_t index = 0; index < config_.cylinders.size(); ++index) {
                 pressureSample.pressureBar[index] = static_cast<float>(chamberPressureBar_[index]);
+                const auto pistonRadiusM = config_.cylinders[index].boreMm * 0.0005;
+                const auto pistonAreaM2 = std::numbers::pi * pistonRadiusM * pistonRadiusM;
+                const auto gasForceN = (chamberPressureBar_[index] * 100.0
+                    - config_.ambientPressureKpa) * 1'000.0 * pistonAreaM2;
+                const auto inertiaForceN = structuralInertiaForceN[index];
+                const auto bearingReactionForceN = gasForceN - inertiaForceN;
+                pressureSample.structural.gasForceN[index] = static_cast<float>(gasForceN);
+                pressureSample.structural.inertiaForceN[index] = static_cast<float>(inertiaForceN);
+                pressureSample.structural.bearingReactionForceN[index] =
+                    static_cast<float>(bearingReactionForceN);
+                pressureSample.structural.sideThrustForceN[index] = static_cast<float>(
+                    bearingReactionForceN * structuralSideRatio[index]);
+                pressureSample.structural.crankReactionTorqueNm[index] = static_cast<float>(
+                    bearingReactionForceN * gasTorqueLeverArmM[index]);
                 pressureSample.exhaustRunnerPressureKpa[index] = static_cast<float>(exhaustRunnerPressureKpa_[index]);
                 pressureSample.exhaustMassFlowKgPerSecond[index] =
                     static_cast<float>(exhaustMassFlowKgPerSecond[index]);

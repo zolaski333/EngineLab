@@ -72,7 +72,8 @@ constexpr double ambientSoundSpeedMps = 343.0;
 RealtimeEngineAudio::RealtimeEngineAudio(FiringEventQueue& queue,
                                          RealtimeAudioState& state,
                                          CylinderPressureQueue* pressureQueue,
-                                         const ExhaustGraph* exhaustGraph)
+                                         const ExhaustGraph* exhaustGraph,
+                                         const EngineConfig* engineConfig)
     : queue_(queue), realtimeState_(state), pressureQueue_(pressureQueue),
       runners_(std::make_unique<RunnerWaveguides>()) {
     if (exhaustGraph != nullptr) {
@@ -87,6 +88,10 @@ RealtimeEngineAudio::RealtimeEngineAudio(FiringEventQueue& queue,
             *exhaustGraph,
             std::span<const std::uint32_t>(cylinderIds.data(), count));
         if (compiled->valid()) acousticExhaustNetwork_ = std::move(compiled);
+    }
+    if (engineConfig != nullptr) {
+        auto structural = std::make_unique<StructuralModalRadiator>(*engineConfig);
+        if (structural->valid()) structuralModalRadiator_ = std::move(structural);
     }
 }
 
@@ -217,6 +222,9 @@ void RealtimeEngineAudio::prepare(double sampleRate, int maximumBlockSize) noexc
         && !acousticExhaustNetwork_->prepare(
             sampleRate_, maximumAcousticDelayScale, observerDistanceM))
         acousticExhaustNetwork_.reset();
+    if (structuralModalRadiator_
+        && !structuralModalRadiator_->prepare(sampleRate_, observerDistanceM))
+        structuralModalRadiator_.reset();
     // No fabricated default IR. A user-supplied measured room/cabin response is
     // legitimate downstream propagation; inventing one here would make the
     // exhaust sound larger without improving the simulated source.
@@ -302,6 +310,7 @@ void RealtimeEngineAudio::release() noexcept {
     valveFlowAcousticSource_ = {};
     for (auto& state : valveFlowAcousticSourceState_) state.reset();
     if (acousticExhaustNetwork_) acousticExhaustNetwork_->reset();
+    if (structuralModalRadiator_) structuralModalRadiator_->reset();
     physicalExhaustActive_ = false;
     pressureSampleIntervalSeconds_ = 0.0;
     levelLimitedSamples_.store(0, std::memory_order_relaxed);
@@ -709,6 +718,7 @@ void RealtimeEngineAudio::render(juce::AudioBuffer<float>& output, int startSamp
         float intakeRight = 0.0F;
         float mechanicalLeft = 0.0F;
         float mechanicalRight = 0.0F;
+        float physicalStructural = 0.0F;
         float physicalCylinderPressureLeft = 0.0F;
         float physicalCylinderPressureRight = 0.0F;
         std::array<float, maximumPaths> pathCollectorLeft {};
@@ -722,6 +732,7 @@ void RealtimeEngineAudio::render(juce::AudioBuffer<float>& output, int startSamp
         std::array<float, maximumPaths> pathDensitySum {};
         std::array<float, maximumPaths> pathSoundSpeedSum {};
         std::array<float, maximumPaths> pathMediumWeight {};
+        StructuralExcitationSample structuralExcitation;
         // Once established, the SI path is latched. A missing producer sample
         // lets the passive network ring down; it must never resurrect noise and
         // oscillators for a callback and hide the telemetry dropout.
@@ -740,6 +751,7 @@ void RealtimeEngineAudio::render(juce::AudioBuffer<float>& output, int startSamp
                 currentPressureSample_.pressureBar.size());
             if (count > 0) {
                 activeCylinderCount = count;
+                structuralExcitation.cylinderCount = count;
                 const auto denominator = hasNextPressureSample_
                     ? nextPressureSample_.timeSeconds - currentPressureSample_.timeSeconds : 0.0;
                 if (denominator > 1.0e-7
@@ -783,6 +795,23 @@ void RealtimeEngineAudio::render(juce::AudioBuffer<float>& output, int startSamp
                         : currentPressureSample_.pressureBar[index];
                     const auto pressureBar = std::lerp(currentPressureSample_.pressureBar[index],
                                                        nextPressure, f);
+                    const auto interpolateStructural = [&, index](const auto& member) {
+                        const auto current = member(currentPressureSample_.structural)[index];
+                        const auto next = hasNextPressureSample_
+                            && index < nextPressureSample_.structural.cylinderCount
+                            ? member(nextPressureSample_.structural)[index] : current;
+                        return std::lerp(current, next, f);
+                    };
+                    structuralExcitation.gasForceN[index] = interpolateStructural(
+                        [](const auto& value) -> const auto& { return value.gasForceN; });
+                    structuralExcitation.inertiaForceN[index] = interpolateStructural(
+                        [](const auto& value) -> const auto& { return value.inertiaForceN; });
+                    structuralExcitation.bearingReactionForceN[index] = interpolateStructural(
+                        [](const auto& value) -> const auto& { return value.bearingReactionForceN; });
+                    structuralExcitation.sideThrustForceN[index] = interpolateStructural(
+                        [](const auto& value) -> const auto& { return value.sideThrustForceN; });
+                    structuralExcitation.crankReactionTorqueNm[index] = interpolateStructural(
+                        [](const auto& value) -> const auto& { return value.crankReactionTorqueNm; });
                     const auto rawGaugePressure = pressureBar - ambientPressureKpa * 0.01F;
                     cylinderPressureHighPass_[index] = pressureHighPassPole_
                         * (cylinderPressureHighPass_[index] + rawGaugePressure
@@ -1024,6 +1053,12 @@ void RealtimeEngineAudio::render(juce::AudioBuffer<float>& output, int startSamp
                 }
             }
         }
+        if (structuralModalRadiator_ && structuralExcitation.cylinderCount > 0) {
+            physicalStructural = static_cast<float>(
+                AcousticMonitorCalibration::normalisePeakPressure(
+                    structuralModalRadiator_->process(structuralExcitation),
+                    acousticFullScaleSplDb));
+        }
         combustionLeft += physicalCylinderPressureLeft;
         combustionRight += physicalCylinderPressureRight;
         // Runner waveguide + collector scattering junction: the collector output
@@ -1097,14 +1132,18 @@ void RealtimeEngineAudio::render(juce::AudioBuffer<float>& output, int startSamp
         if (valvetrainPhase_ >= 2.0 * std::numbers::pi) valvetrainPhase_ -= 2.0 * std::numbers::pi;
         if (starterPhase_ >= 2.0 * std::numbers::pi) starterPhase_ -= 2.0 * std::numbers::pi;
         const auto speedGain = std::clamp(smoothedRpm_ / redline, 0.0F, 1.25F);
-        // Mechanical: crank rumble scaled by real piston slap (peak piston
-        // acceleration) plus valvetrain clatter (tonal + noisy) that grows with
-        // mechanical stress, instead of two fixed sines.
-        const auto pistonSlap = std::clamp(peakPistonAccelG / 6'000.0F, 0.0F, 1.4F);
-        const auto valvetrainClatter = (static_cast<float>(std::sin(valvetrainPhase_ * 3.03)) * 0.5F
-            + noise() * 0.5F) * (0.006F + stress * 0.011F);
-        const auto mechanical = (static_cast<float>(std::sin(mechanicalPhase_)) * 0.016F * (0.6F + pistonSlap * 0.9F)
-            + valvetrainClatter) * speedGain;
+        // Production engines use solver-resolved gas, inertia, bearing and
+        // torque excitation through StructuralModalRadiator. The old shaped
+        // oscillators remain only for graph-less compatibility producers.
+        auto mechanical = 0.0F;
+        if (!structuralModalRadiator_) {
+            const auto pistonSlap = std::clamp(peakPistonAccelG / 6'000.0F, 0.0F, 1.4F);
+            const auto valvetrainClatter = (
+                static_cast<float>(std::sin(valvetrainPhase_ * 3.03)) * 0.5F
+                + noise() * 0.5F) * (0.006F + stress * 0.011F);
+            mechanical = (static_cast<float>(std::sin(mechanicalPhase_)) * 0.016F
+                * (0.6F + pistonSlap * 0.9F) + valvetrainClatter) * speedGain;
+        }
         // Induction: broadband throttle-body whoosh plus a resonant runner "honk"
         // at the simulated intake runner resonance frequency (state-variable
         // band excited by induction turbulence).
@@ -1438,9 +1477,11 @@ void RealtimeEngineAudio::render(juce::AudioBuffer<float>& output, int startSamp
             ? 1.0F : legacyMonitorScale;
         auto left = (combustionLeft * combustionGain + intakeLeft * intakeGain
             + mechanicalLeft * mechanicalGain) * legacyMonitorScale
+            + physicalStructural * mechanicalGain
             + radiatedExhaustLeft * exhaustGain * exhaustMonitorScale;
         auto right = (combustionRight * combustionGain + intakeRight * intakeGain
             + mechanicalRight * mechanicalGain) * legacyMonitorScale
+            + physicalStructural * mechanicalGain
             + radiatedExhaustRight * exhaustGain * exhaustMonitorScale;
         lowPassLeft_ += lowPassCoefficient_ * (left - lowPassLeft_);
         lowPassRight_ += lowPassCoefficient_ * (right - lowPassRight_);

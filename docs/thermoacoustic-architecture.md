@@ -732,3 +732,36 @@ sans compliance concentrée propre. Les volumes finis qui ont une longueur
 publiée deviennent bien des conduits ; modéliser ultérieurement un plénum
 compact sans longueur exigera un élément de compliance dédié, pas un gain de
 voicing.
+
+## 21. Rayonnement modal du bloc et des culasses
+
+`StructuralExcitationSample` publie à chaque sous-pas mécanique, par cylindre et
+en unités SI, la force gazeuse sur le piston, la force d'inertie de l'ensemble
+alternatif, leur réaction signée au palier, la poussée latérale et le couple de
+réaction au vilebrequin. Ces grandeurs partagent exactement l'horodatage de la
+pression cylindre ; le renderer les interpole donc sans reconstruire une force
+depuis le régime ou le niveau audio.
+
+`StructuralModalRadiator` fait évoluer 8 à 24 oscillateurs amortis selon
+
+    q'' + 2*zeta*omega*q' + omega^2*q = F_modal / m_modal
+
+avec une transition analytique exacte pour une force tenue sur un échantillon.
+La pression à un mètre vient ensuite de la puissance rayonnée par la vitesse de
+surface du mode, son aire et l'efficacité de rayonnement du piston bafflé. Le
+chemin de production ne contient plus le sinus de vilebrequin, le cliquetis
+bruité ou le « piston slap » façonné qui tenaient auparavant lieu de structure.
+
+Le schéma moteur actuel ne publie ni maillage de bloc, ni épaisseurs, ni modes
+mesurés. Les fréquences livrées sont donc explicitement marquées
+`estimatedFamily` : bloc assimilé à une coque creuse, culasses à des plaques
+minces, dimensions déduites de l'alésage, de la course, de la bielle et de la
+famille d'implantation. Ce modèle est le meilleur compromis temps réel avec les
+données disponibles, mais il ne doit pas être présenté comme une corrélation
+NVH constructeur. Une future configuration mesurée pourra remplacer les modes
+sans changer le solveur.
+
+Les tests imposent silence exact sans force, paramètres physiques finis,
+amplification à la résonance calculée et décroissance de l'énergie avec un
+amortissement positif. Le harnais catalogue impose aussi que ce chemin soit
+réellement actif dans le câblage de l'application.

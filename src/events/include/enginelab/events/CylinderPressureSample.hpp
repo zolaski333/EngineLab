@@ -1,5 +1,7 @@
 #pragma once
 
+#include <enginelab/events/StructuralExcitationSample.hpp>
+
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -58,6 +60,8 @@ struct CylinderPressureSample final {
      * and the filter stays disabled -- exactness, not a fallback.
      */
     double exhaustCouplingFrequencyHz { 0.0 };
+    /** Structure-borne excitation sampled on the same mechanical substep. */
+    StructuralExcitationSample structural;
     std::size_t cylinderCount { 0 };
 };
 
