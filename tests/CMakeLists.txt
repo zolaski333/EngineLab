@@ -25,6 +25,16 @@ target_link_libraries(EngineLabCombustionPhasingTests PRIVATE
 enginelab_set_warnings(EngineLabCombustionPhasingTests)
 add_test(NAME EngineLab.CombustionPhasing COMMAND EngineLabCombustionPhasingTests)
 
+add_executable(EngineLabOverrunThermalRegressionTests OverrunThermalRegressionTests.cpp)
+target_link_libraries(EngineLabOverrunThermalRegressionTests PRIVATE
+    EngineLab::Foundation EngineLab::Events EngineLab::Physics EngineLab::Ecu
+    EngineLab::Exhaust EngineLab::Simulation EngineLab::Catalog)
+target_compile_definitions(EngineLabOverrunThermalRegressionTests PRIVATE
+    ENGINELAB_CATALOG_ROOT="${CMAKE_SOURCE_DIR}")
+enginelab_set_warnings(EngineLabOverrunThermalRegressionTests)
+add_test(NAME EngineLab.OverrunThermalRegression
+    COMMAND EngineLabOverrunThermalRegressionTests)
+
 add_executable(EngineLabEcuCalibrationIntegrationTests EcuCalibrationIntegrationTests.cpp)
 target_link_libraries(EngineLabEcuCalibrationIntegrationTests PRIVATE
     EngineLab::Foundation EngineLab::Calibration EngineLab::Ecu)
