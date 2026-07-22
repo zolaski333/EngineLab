@@ -120,6 +120,18 @@ audio mais ses réflexions haute fréquence ne sont pas réinjectées dans la
 chambre 0D ; le réseau non linéaire basse bande reste propriétaire de la
 contre-pression physique.
 
+Le débit de soupape possède désormais deux propriétaires spectraux explicites.
+La paire pression/débit issue du réseau passe dans un passe-bas
+Linkwitz–Riley d’ordre 4 à `0,45 × fréquence de couplage`. Le débit de Riemann
+instantané passe dans le passe-haut complémentaire, calculé à la cadence
+mécanique. Cette seconde branche n’est jamais associée à la pression plus lente :
+elle devient une source de vitesse de volume au port, soit les caractéristiques
+antisymétriques `(+Zc U/2, -Zc U/2)`, puis traverse la même impédance physique de
+soupape que les ondes du runner. Les deux filtres ont une somme cohérente
+all-pass ; il n’existe donc ni bande doublée, ni gain de timbre caché. Si la
+frontière est déjà publiée pleine bande (`fréquence de couplage = 0`), la source
+complémentaire est exactement nulle.
+
 ## 4. Rayonnement et calibration
 
 La sortie est terminée par `UnflangedPipeRadiation`, approximation causale de

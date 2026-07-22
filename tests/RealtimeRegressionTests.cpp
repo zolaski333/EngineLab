@@ -6,6 +6,7 @@
 #include <enginelab/audio/ExpansionChamberMuffler.hpp>
 #include <enginelab/audio/PipeRadiationModel.hpp>
 #include <enginelab/audio/ValvePortTermination.hpp>
+#include <enginelab/audio/ValveFlowAcousticSource.hpp>
 #include <enginelab/foundation/ExhaustGasAcoustics.hpp>
 
 #include <juce_audio_basics/juce_audio_basics.h>
@@ -958,6 +959,74 @@ void boundaryReconstructionRegression() {
 }
 
 // ---------------------------------------------------------------------------
+// Complementary high-band valve-flow source
+// ---------------------------------------------------------------------------
+
+void valveFlowAcousticSourceRegression() {
+    using Source = enginelab::ValveFlowAcousticSource;
+    using LowPass = enginelab::BoundaryReconstructionFilter;
+    constexpr double sampleRate = 48'000.0;
+    constexpr double couplingRate = 4'000.0;
+    const auto high = Source::compute(couplingRate, sampleRate);
+    const auto low = LowPass::compute(couplingRate, sampleRate);
+    require(high.active && low.active,
+        "a sampled boundary must enable both halves of the crossover");
+
+    // Two cascaded Butterworth sections form a fourth-order Linkwitz-Riley
+    // crossover. Its low and high outputs have a flat coherent sum, so the
+    // transition neither duplicates nor removes a band when both inputs agree.
+    for (int step = 0; step <= 96; ++step) {
+        const auto frequency = static_cast<double>(step) / 96.0
+            * sampleRate * 0.5;
+        const auto z1 = std::polar(
+            1.0, -2.0 * std::numbers::pi * frequency / sampleRate);
+        const auto z2 = z1 * z1;
+        const auto lowSection = (low.b0 + low.b1 * z1 + low.b2 * z2)
+            / (1.0 + low.a1 * z1 + low.a2 * z2);
+        const auto highSection = (high.b0 + high.b1 * z1 + high.b2 * z2)
+            / (1.0 + high.a1 * z1 + high.a2 * z2);
+        const auto coherentSum = lowSection * lowSection
+            + highSection * highSection;
+        require(std::abs(std::abs(coherentSum) - 1.0) < 1.0e-9,
+            "the low/high crossover sum must remain all-pass");
+    }
+
+    // An authored full-band boundary has no sampled-data gap, so the supplement
+    // must be exactly absent. A steady mean flow must likewise produce no
+    // acoustic source when the crossover is active.
+    Source::State state;
+    const auto disabled = Source::process(Source::compute(0.0, sampleRate), state,
+        0.05, 0.5, 200'000.0);
+    require(disabled.outgoingPressurePa == 0.0
+            && disabled.incomingPressurePa == 0.0
+            && disabled.highBandMassFlowKgPerSecond == 0.0,
+        "an unsampled full-band boundary must not receive a duplicate source");
+    state.reset();
+    const auto steady = Source::process(high, state, 0.05, 0.5, 200'000.0);
+    require(std::abs(steady.highBandMassFlowKgPerSecond) < 1.0e-15,
+        "steady valve flow must not create a high-band source");
+
+    // The source is a pure volume-velocity contribution: its characteristic
+    // pressure components are antisymmetric and recover the filtered signed
+    // mass flow exactly through U=(p+ - p-)/Zc and mdot=rho*U.
+    const auto transient = Source::process(high, state, -0.025, 0.5, 200'000.0);
+    require(std::abs(transient.outgoingPressurePa
+                     + transient.incomingPressurePa) < 1.0e-12,
+        "a valve-flow source must add no fabricated pressure boundary");
+    const auto recoveredMassFlow = 0.5
+        * (transient.outgoingPressurePa - transient.incomingPressurePa)
+        / 200'000.0;
+    require(std::abs(recoveredMassFlow
+                     - transient.highBandMassFlowKgPerSecond) < 1.0e-12,
+        "characteristic source waves must preserve signed volume flow");
+
+    const auto guarded = Source::process(high, state, std::nan(""), 0.0, 0.0);
+    require(guarded.outgoingPressurePa == 0.0
+            && guarded.incomingPressurePa == 0.0,
+        "invalid valve medium data must fail silent without non-finite waves");
+}
+
+// ---------------------------------------------------------------------------
 // Finite-amplitude duct propagation (steepening)
 // ---------------------------------------------------------------------------
 
@@ -1218,6 +1287,7 @@ int main() {
         ductWallLossRegression();
         valvePortTerminationRegression();
         boundaryReconstructionRegression();
+        valveFlowAcousticSourceRegression();
         nonlinearDuctAcousticsRegression();
         expansionChamberMufflerRegression();
         latencyAndBlockSizeRegression();

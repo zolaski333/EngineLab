@@ -69,6 +69,22 @@ public:
         void reset() noexcept { *this = State {}; }
     };
 
+    /** Shared Linkwitz-Riley crossover frequency.
+     *
+     * The complementary valve-flow source uses the matching fourth-order high
+     * pass. Keeping the frequency policy here guarantees that the two physical
+     * bands meet at one crossover rather than drifting through duplicated
+     * constants.
+     */
+    [[nodiscard]] static double crossoverFrequencyHz(
+        double couplingFrequencyHz, double sampleRateHz) noexcept {
+        if (!(couplingFrequencyHz > 0.0) || !(sampleRateHz > 0.0)
+            || !std::isfinite(couplingFrequencyHz) || !std::isfinite(sampleRateHz))
+            return 0.0;
+        return std::clamp(
+            0.45 * couplingFrequencyHz, 150.0, 0.40 * sampleRateHz);
+    }
+
     /** Butterworth section for a cutoff at 0.45x the coupling rate.
      *
      * The 0.45 factor places the corner just below the coupling Nyquist: the
@@ -80,11 +96,9 @@ public:
     [[nodiscard]] static Coefficients compute(double couplingFrequencyHz,
                                               double sampleRateHz) noexcept {
         Coefficients coefficients;
-        if (!(couplingFrequencyHz > 0.0) || !(sampleRateHz > 0.0)
-            || !std::isfinite(couplingFrequencyHz) || !std::isfinite(sampleRateHz))
-            return coefficients;
-        const auto cutoffHz = std::clamp(
-            0.45 * couplingFrequencyHz, 150.0, 0.40 * sampleRateHz);
+        const auto cutoffHz = crossoverFrequencyHz(
+            couplingFrequencyHz, sampleRateHz);
+        if (!(cutoffHz > 0.0)) return coefficients;
         const auto w0 = 2.0 * std::numbers::pi * cutoffHz / sampleRateHz;
         const auto cosW0 = std::cos(w0);
         // sin(w0) / (2 Q) with Q = 1/sqrt(2): a maximally flat section.

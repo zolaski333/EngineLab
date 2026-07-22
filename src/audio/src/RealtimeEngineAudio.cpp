@@ -280,6 +280,8 @@ void RealtimeEngineAudio::release() noexcept {
     boundaryReconstructionCouplingHz_ = 0.0;
     for (auto& state : boundaryReconstructionPressure_) state.reset();
     for (auto& state : boundaryReconstructionFlow_) state.reset();
+    valveFlowAcousticSource_ = {};
+    for (auto& state : valveFlowAcousticSourceState_) state.reset();
     physicalExhaustActive_ = false;
     pressureSampleIntervalSeconds_ = 0.0;
     levelLimitedSamples_.store(0, std::memory_order_relaxed);
@@ -729,6 +731,8 @@ void RealtimeEngineAudio::render(juce::AudioBuffer<float>& output, int startSamp
                     > 0.01 * std::max(couplingHz, boundaryReconstructionCouplingHz_)) {
                     boundaryReconstruction_ = BoundaryReconstructionFilter::compute(
                         couplingHz, sampleRate_);
+                    valveFlowAcousticSource_ = ValveFlowAcousticSource::compute(
+                        couplingHz, sampleRate_);
                     boundaryReconstructionCouplingHz_ = couplingHz;
                 }
                 const auto fraction = denominator > 1.0e-9
@@ -898,10 +902,17 @@ void RealtimeEngineAudio::render(juce::AudioBuffer<float>& output, int startSamp
                             * soundSpeedMps / areaM2;
                         const auto volumeVelocityPerturbation =
                             massFlowPerturbationKgPerSecond / densityKgPerM3;
+                        const auto highBandSource = ValveFlowAcousticSource::process(
+                            valveFlowAcousticSource_,
+                            valveFlowAcousticSourceState_[index],
+                            massFlowKgPerSecond, densityKgPerM3,
+                            characteristicImpedance);
                         const auto outgoingMeasured = 0.5F * (pressurePerturbationPa
-                            + characteristicImpedance * volumeVelocityPerturbation);
+                            + characteristicImpedance * volumeVelocityPerturbation)
+                            + static_cast<float>(highBandSource.outgoingPressurePa);
                         const auto incomingMeasured = 0.5F * (pressurePerturbationPa
-                            - characteristicImpedance * volumeVelocityPerturbation);
+                            - characteristicImpedance * volumeVelocityPerturbation)
+                            + static_cast<float>(highBandSource.incomingPressurePa);
 
                         // Publish the valve state; the termination itself is
                         // evaluated inside the waveguide, where the acoustic

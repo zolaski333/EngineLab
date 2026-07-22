@@ -5,6 +5,7 @@
 #include <enginelab/audio/DuctWallLoss.hpp>
 #include <enginelab/audio/ExpansionChamberMuffler.hpp>
 #include <enginelab/audio/RealtimeConvolutionBank.hpp>
+#include <enginelab/audio/ValveFlowAcousticSource.hpp>
 #include <enginelab/audio/ValvePortTermination.hpp>
 #include <enginelab/runtime/EngineRuntime.hpp>
 #include <algorithm>
@@ -354,6 +355,8 @@ private:
     double boundaryReconstructionCouplingHz_ { 0.0 };
     std::array<BoundaryReconstructionFilter::State, 32> boundaryReconstructionPressure_ {};
     std::array<BoundaryReconstructionFilter::State, 32> boundaryReconstructionFlow_ {};
+    ValveFlowAcousticSource::Coefficients valveFlowAcousticSource_ {};
+    std::array<ValveFlowAcousticSource::State, 32> valveFlowAcousticSourceState_ {};
     std::array<bool, 32> thermoacousticMeanInitialised_ {};
     float thermoacousticMeanCoefficient_ { 0.0F };
     // Atomic so a monitoring thread can observe which path is producing audio
