@@ -182,7 +182,8 @@ void traceEngine(const enginelab::EngineConfig& baseConfig, double targetRpm) {
     };
     for (int step = 0; step < static_cast<int>(4.0 / dt); ++step) (void)drive(dt);
     std::cout << "phase,rpm,cyl_p_bar,cyl_t_c,cyl_mass_mg,runner_kpa,lift_mm,"
-                 "intake_v_mps,intake_mg,residual,exh_gps,net_hz,limited,irt_c,irp_kpa\n";
+                 "intake_v_mps,intake_mg,residual,exh_gps,net_hz,limited,irt_c,irp_kpa,"
+                 "exh_lift_mm\n";
     const auto fineDt = dt / 48.0;
     const auto cycleSeconds = 120.0 / std::max(1.0, simulator.state().rpm);
     const auto fineSteps = static_cast<int>(1.2 * cycleSeconds / fineDt);
@@ -198,7 +199,8 @@ void traceEngine(const enginelab::EngineConfig& baseConfig, double targetRpm) {
                   << ',' << frame.state.exhaustNetworkSubstepFrequencyHz
                   << ',' << (frame.state.solverResolutionLimited ? 1 : 0)
                   << ',' << c.intakeRunnerTemperatureC
-                  << ',' << c.intakeRunnerChargePressureKpa << '\n';
+                  << ',' << c.intakeRunnerChargePressureKpa
+                  << ',' << c.exhaustValveLiftMm << '\n';
     }
 }
 
