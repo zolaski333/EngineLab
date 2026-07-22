@@ -76,7 +76,7 @@ int main() {
         settleAtWideOpenThrottle(simulator, hotRpm);
         const auto liftOffTemperatureC = simulator.state().exhaustTemperatureC;
 
-        constexpr double overrunDurationSeconds = 8.0;
+        constexpr double overrunDurationSeconds = 20.0;
         const auto finalRpm = std::max(config.idleRpm * 2.0, hotRpm * 0.45);
         auto motoringTorqueNm = 0.0;
         auto peakExhaustTemperatureC = liftOffTemperatureC;
@@ -108,7 +108,8 @@ int main() {
             }
         }
 
-        if (peakExhaustTemperatureC >= 1'200.0)
+        if (peakExhaustTemperatureC >= 900.0
+            || peakExhaustTemperatureC >= liftOffTemperatureC + 250.0)
             std::cerr << "overrun thermal diagnostic: lift_off_c="
                       << liftOffTemperatureC << " peak_c="
                       << peakExhaustTemperatureC << " final_rpm="
@@ -119,8 +120,10 @@ int main() {
             "the regression fixture must keep the unfuelled engine driven through the crankshaft");
         require(std::isfinite(peakExhaustTemperatureC),
             "overrun exhaust temperature must remain finite");
-        require(peakExhaustTemperatureC < 1'200.0,
+        require(peakExhaustTemperatureC < 900.0,
             "an unfuelled motored engine must not create combustion-range exhaust temperature");
+        require(peakExhaustTemperatureC < liftOffTemperatureC + 250.0,
+            "closed-throttle overrun must not amplify lift-off EGT through adiabatic heat recirculation");
     } catch (const std::exception& error) {
         std::cerr << "FAILED: " << error.what() << '\n';
         return EXIT_FAILURE;

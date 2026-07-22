@@ -391,6 +391,66 @@ void testFrictionConvertsResolvedMotionToHeat() {
             "adiabatic friction must conserve total gas energy");
 }
 
+void testDynamicWallConservesGasAndMetalEnergy() {
+    EulerMixtureModel model;
+    auto geometry = losslessGeometry(0.8, 32);
+    geometry.dynamicWallHeatTransferEnabled = true;
+    geometry.wallTemperatureK = 330.0;
+    geometry.wallThicknessM = 0.0015;
+    geometry.wallDensityKgPerM3 = 7'900.0;
+    geometry.wallSpecificHeatJPerKgK = 500.0;
+    geometry.externalWallHeatTransferWPerM2K = 0.0;
+    geometry.externalTemperatureK = 300.0;
+    FiniteVolumeDuct duct;
+    const auto initial = makeState(
+        model, 0.55, 65.0, 180'000.0, GasComposition::dryAir());
+    require(duct.configure(geometry, initial),
+            "finite-capacity wall duct must configure");
+    const auto beforeGasEnergyJ = duct.inventory().totalEnergyJ;
+    const auto beforeWallEnergyJ = duct.wallThermalEnergyJ();
+    const auto beforeTemperature =
+        model.primitiveFromConservative(duct.cells().front());
+
+    const auto result = duct.advance(0.010,
+        DuctBoundaryCondition::periodic(), DuctBoundaryCondition::periodic());
+    const auto afterGasEnergyJ = duct.inventory().totalEnergyJ;
+    const auto afterWallEnergyJ = duct.wallThermalEnergyJ();
+    const auto afterTemperature =
+        model.primitiveFromConservative(duct.cells().front());
+    const auto gasEnergyLostJ = beforeGasEnergyJ - afterGasEnergyJ;
+    const auto wallEnergyGainedJ = afterWallEnergyJ - beforeWallEnergyJ;
+    require(result.completed && beforeTemperature && afterTemperature,
+            "finite-capacity wall exchange must remain physical");
+    require(afterTemperature->temperatureK < beforeTemperature->temperatureK
+            && duct.wallStates().front().temperatureK > geometry.wallTemperatureK,
+            "hot gas must warm the resolved duct wall instead of losing hidden energy");
+    require(gasEnergyLostJ > 0.0
+            && std::abs(gasEnergyLostJ - wallEnergyGainedJ)
+                < std::max(1.0, gasEnergyLostJ) * 1.0e-9,
+            "adiabatic gas-wall exchange must conserve the combined energy inventory");
+    require(std::abs(result.wallHeatRejectedJ) < 1.0e-12,
+            "an insulated dynamic wall must not reject energy to an implicit reservoir");
+
+    auto cooledGeometry = geometry;
+    cooledGeometry.wallTemperatureK = 650.0;
+    cooledGeometry.externalWallHeatTransferWPerM2K = 22.0;
+    FiniteVolumeDuct cooledDuct;
+    require(cooledDuct.configure(cooledGeometry, initial),
+            "externally cooled finite-capacity wall must configure");
+    const auto combinedEnergyBeforeJ = cooledDuct.inventory().totalEnergyJ
+        + cooledDuct.wallThermalEnergyJ();
+    const auto cooledResult = cooledDuct.advance(0.010,
+        DuctBoundaryCondition::periodic(), DuctBoundaryCondition::periodic());
+    const auto combinedEnergyAfterJ = cooledDuct.inventory().totalEnergyJ
+        + cooledDuct.wallThermalEnergyJ();
+    require(cooledResult.completed && cooledResult.wallHeatRejectedJ > 0.0,
+            "a hot duct wall must reject explicit heat to cooler surroundings");
+    require(std::abs(combinedEnergyBeforeJ - combinedEnergyAfterJ
+                - cooledResult.wallHeatRejectedJ)
+            < std::max(1.0, cooledResult.wallHeatRejectedJ) * 1.0e-8,
+            "gas plus wall energy loss must equal reported external heat rejection");
+}
+
 void testStrongExpansionRemainsPositive() {
     EulerMixtureModel model;
     const auto high = makeState(model, 4.0, 0.0, 1'200'000.0);
@@ -423,6 +483,7 @@ int main() {
     testAcousticTransitSpeed();
     testRigidEndReflection();
     testFrictionConvertsResolvedMotionToHeat();
+    testDynamicWallConservesGasAndMetalEnergy();
     testStrongExpansionRemainsPositive();
     runExhaustNetworkLayoutTests();
     runExhaustGasNetworkTests();

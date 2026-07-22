@@ -544,7 +544,14 @@ bool DuctGeometry::valid() const noexcept {
         && finite(absoluteRoughnessM) && absoluteRoughnessM >= 0.0
         && finite(localLossCoefficient) && localLossCoefficient >= 0.0
         && finite(wallHeatTransferWPerM2K) && wallHeatTransferWPerM2K >= 0.0
-        && finite(wallTemperatureK) && wallTemperatureK > 0.0;
+        && finite(wallTemperatureK) && wallTemperatureK > 0.0
+        && (!dynamicWallHeatTransferEnabled || wallHeatTransferWPerM2K == 0.0)
+        && finite(wallThicknessM) && wallThicknessM > 0.0
+        && finite(wallDensityKgPerM3) && wallDensityKgPerM3 > 0.0
+        && finite(wallSpecificHeatJPerKgK) && wallSpecificHeatJPerKgK > 0.0
+        && finite(externalWallHeatTransferWPerM2K)
+        && externalWallHeatTransferWPerM2K >= 0.0
+        && finite(externalTemperatureK) && externalTemperatureK > 0.0;
 }
 
 DuctBoundaryCondition DuctBoundaryCondition::transmissive() noexcept {
@@ -589,6 +596,8 @@ bool FiniteVolumeDuct::configure(const DuctGeometry& geometry,
     reconstructedRightPrimitives_.resize(geometry.cellCount);
     faceFluxes_.resize(geometry.cellCount + 1);
     stageFaceFluxes_.resize(geometry.cellCount + 1);
+    wallStates_.assign(geometry.cellCount,
+        DuctWallThermalState { geometry.wallTemperatureK });
     cellStateCacheIsValid_ = prepareStateCache(cells_, cellPrimitives_, cellSourceTerms_,
         maximumCellSignalSpeedMps_, cellSourceLimitedTimeStepSeconds_);
     return cellStateCacheIsValid_;
@@ -610,6 +619,69 @@ ConservedInventory FiniteVolumeDuct::inventory() const noexcept {
         result.totalEnergyJ += cell.totalEnergyDensityJPerM3 * cellVolume;
     }
     return result;
+}
+
+double FiniteVolumeDuct::wallThermalEnergyJ() const noexcept {
+    if (!geometry_.dynamicWallHeatTransferEnabled) return 0.0;
+    const auto innerRadiusM = geometry_.diameterM * 0.5;
+    const auto outerRadiusM = innerRadiusM + geometry_.wallThicknessM;
+    const auto wallVolumePerCellM3 = std::numbers::pi * geometry_.cellLengthM()
+        * (outerRadiusM * outerRadiusM - innerRadiusM * innerRadiusM);
+    const auto heatCapacityPerCellJPerK = wallVolumePerCellM3
+        * geometry_.wallDensityKgPerM3 * geometry_.wallSpecificHeatJPerKgK;
+    auto energyJ = 0.0;
+    for (const auto& wall : wallStates_)
+        energyJ += heatCapacityPerCellJPerK * wall.temperatureK;
+    return energyJ;
+}
+
+void FiniteVolumeDuct::resetWallTemperature(double temperatureK) noexcept {
+    const auto safeTemperatureK = finite(temperatureK) && temperatureK > 0.0
+        ? temperatureK : geometry_.wallTemperatureK;
+    for (auto& wall : wallStates_) wall.temperatureK = safeTemperatureK;
+}
+
+bool FiniteVolumeDuct::applyDynamicWallHeatTransfer(
+    double durationSeconds, double& heatRejectedJ) noexcept {
+    if (!geometry_.dynamicWallHeatTransferEnabled || durationSeconds == 0.0)
+        return true;
+    if (wallStates_.size() != cells_.size()
+        || cellPrimitives_.size() != cells_.size()
+        || !finite(durationSeconds) || !(durationSeconds > 0.0))
+        return false;
+
+    const auto cellVolumeM3 = geometry_.areaM2() * geometry_.cellLengthM();
+    for (std::size_t index = 0; index < cells_.size(); ++index) {
+        const auto& primitive = cellPrimitives_[index];
+        const auto specificGasConstantJPerKgK = primitive.pressurePa
+            / (primitive.densityKgPerM3 * primitive.temperatureK);
+        const auto specificHeatCvJPerKgK = specificGasConstantJPerKgK
+            / (primitive.heatCapacityRatio - 1.0);
+        const auto result = DuctWallHeatTransferModel::advance(
+            wallStates_[index], {
+                geometry_.diameterM,
+                geometry_.cellLengthM(),
+                geometry_.wallThicknessM,
+                geometry_.wallDensityKgPerM3,
+                geometry_.wallSpecificHeatJPerKgK,
+                geometry_.externalWallHeatTransferWPerM2K,
+                geometry_.externalTemperatureK,
+                primitive.densityKgPerM3,
+                primitive.velocityMps,
+                specificHeatCvJPerKgK + specificGasConstantJPerKgK,
+                primitive.densityKgPerM3 * cellVolumeM3 * specificHeatCvJPerKgK,
+                primitive.temperatureK,
+                durationSeconds,
+            });
+        if (!(result.wallHeatCapacityJPerK > 0.0)
+            || !finite(result.heatToGasJ) || !finite(result.heatRejectedJ))
+            return false;
+        cells_[index].totalEnergyDensityJPerM3 +=
+            result.heatToGasJ / cellVolumeM3;
+        heatRejectedJ += result.heatRejectedJ;
+    }
+    cellStateCacheIsValid_ = false;
+    return refreshCellStateCache();
 }
 
 double FiniteVolumeDuct::maximumStableTimeStep(double maximumCourantNumber) const noexcept {
@@ -924,6 +996,11 @@ DuctAdvanceResult FiniteVolumeDuct::advance(
             std::swap(cellSourceLimitedTimeStepSeconds_,
                       candidateSourceLimitedTimeStepSeconds_);
             cellStateCacheIsValid_ = true;
+            if (!applyDynamicWallHeatTransfer(
+                    trialStep, result.wallHeatRejectedJ)) {
+                result.completed = false;
+                break;
+            }
             remaining -= trialStep;
             result.advancedTimeSeconds += trialStep;
             ++result.acceptedSubsteps;

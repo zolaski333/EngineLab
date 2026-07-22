@@ -242,6 +242,13 @@ bool ExhaustGasNetworkConfig::valid() const noexcept {
         && finite(absoluteRoughnessM) && absoluteRoughnessM >= 0.0
         && finite(wallHeatTransferWPerM2K) && wallHeatTransferWPerM2K >= 0.0
         && finite(wallTemperatureK) && wallTemperatureK > 0.0
+        && (!dynamicWallHeatTransferEnabled || wallHeatTransferWPerM2K == 0.0)
+        && finite(wallThicknessM) && wallThicknessM > 0.0
+        && finite(wallDensityKgPerM3) && wallDensityKgPerM3 > 0.0
+        && finite(wallSpecificHeatJPerKgK) && wallSpecificHeatJPerKgK > 0.0
+        && finite(externalWallHeatTransferWPerM2K)
+        && externalWallHeatTransferWPerM2K >= 0.0
+        && finite(externalTemperatureK) && externalTemperatureK > 0.0
         && finite(maximumCourantNumber) && maximumCourantNumber > 0.0
         && maximumCourantNumber <= 1.0 && maximumSubstepsPerAdvance > 0;
 }
@@ -277,6 +284,14 @@ bool ExhaustGasNetwork::configure(const ExhaustNetworkLayout& layout,
         geometry.localLossCoefficient = descriptor.lossCoefficient;
         geometry.wallHeatTransferWPerM2K = config.wallHeatTransferWPerM2K;
         geometry.wallTemperatureK = config.wallTemperatureK;
+        geometry.dynamicWallHeatTransferEnabled =
+            config.dynamicWallHeatTransferEnabled;
+        geometry.wallThicknessM = config.wallThicknessM;
+        geometry.wallDensityKgPerM3 = config.wallDensityKgPerM3;
+        geometry.wallSpecificHeatJPerKgK = config.wallSpecificHeatJPerKgK;
+        geometry.externalWallHeatTransferWPerM2K =
+            config.externalWallHeatTransferWPerM2K;
+        geometry.externalTemperatureK = config.externalTemperatureK;
         ducts_.emplace_back(mixtureModel_.thermodynamics());
         if (!ducts_.back().configure(geometry, *initialState)) {
             ducts_.clear();
@@ -399,6 +414,7 @@ bool ExhaustGasNetwork::reset(double pressurePa,
     for (auto& duct : ducts_) {
         auto cells = duct.cells();
         std::fill(cells.begin(), cells.end(), *initialState);
+        duct.resetWallTemperature(temperatureK);
     }
     std::fill(junctionStates_.begin(), junctionStates_.end(), *initialState);
     for (auto& state : junctionStates_) state.momentumDensityKgPerM2S = 0.0;
@@ -431,6 +447,7 @@ ExhaustNetworkInventory ExhaustGasNetwork::inventory() const noexcept {
             result.speciesMassKg[index] += ductInventory.speciesMassKg[index];
         result.totalEnergyJ += ductInventory.totalEnergyJ;
         result.resolvedAxialMomentumKgMps += ductInventory.axialMomentumKgMps;
+        result.wallThermalEnergyJ += duct.wallThermalEnergyJ();
     }
     for (std::size_t index = 0; index < junctionStates_.size(); ++index) {
         const auto volume = layout_.junctions()[index].volumeM3;
@@ -1114,7 +1131,13 @@ ExhaustNetworkAdvanceResult ExhaustGasNetwork::advance(
                 std::swap(duct.cellSourceLimitedTimeStepSeconds_,
                           duct.candidateSourceLimitedTimeStepSeconds_);
                 duct.cellStateCacheIsValid_ = true;
+                if (!duct.applyDynamicWallHeatTransfer(
+                        trialStep, result.wallHeatRejectedJ)) {
+                    result.completed = false;
+                    break;
+                }
             }
+            if (!result.completed) break;
             junctionStates_.swap(junctionCandidate_);
             junctionPrimitives_.swap(junctionCandidatePrimitives_);
             cylinderReservoirStates_.swap(cylinderReservoirCandidate_);

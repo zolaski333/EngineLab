@@ -3,6 +3,8 @@
 #include <enginelab/simulation/TransientChargeEstimator.hpp>
 #include <enginelab/exhaust/ExhaustGraph.hpp>
 #include <enginelab/physics/MechanicalKinematics.hpp>
+#include <enginelab/physics/CylinderHeatTransferModel.hpp>
+#include <enginelab/physics/DuctWallHeatTransferModel.hpp>
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -79,6 +81,18 @@ namespace {
 // Below this cylinder count the per-cylinder loop runs serially: the fork-join
 // dispatch latency outweighs the work, and the serial path stays bit-identical.
 constexpr std::size_t parallelCylinderThreshold = 8;
+
+// Representative metal defaults for thermal walls. They describe
+// geometry/material, never a target gas temperature: both wall temperatures
+// emerge from conserved exchange with the simulated gas.
+constexpr double aluminiumRunnerWallThicknessM = 0.003;
+constexpr double aluminiumDensityKgPerM3 = 2'700.0;
+constexpr double aluminiumSpecificHeatJPerKgK = 900.0;
+constexpr double runnerExternalHeatTransferWPerM2K = 12.0;
+constexpr double stainlessExhaustWallThicknessM = 0.0015;
+constexpr double stainlessDensityKgPerM3 = 7'900.0;
+constexpr double stainlessSpecificHeatJPerKgK = 500.0;
+constexpr double exhaustExternalHeatTransferWPerM2K = 18.0;
 
 /**
  * Flow area an intake still presents with the throttle plate fully closed.
@@ -286,10 +300,18 @@ void EngineSimulator::configurePhysicalExhaustNetwork() {
     networkConfig.initialTemperatureK = config_.ambientTemperatureC + 273.15;
     networkConfig.absoluteRoughnessM = 4.5e-5;
     networkConfig.maximumCourantNumber = 0.8;
-    // Wall thermal inertia belongs to a separate conserved subsystem. Until it
-    // exists, adiabatic walls are more honest than a fixed fabricated wall
-    // temperature which would create or destroy untracked energy.
+    // Exhaust-wall temperature is a finite-capacity state. Internal exchange
+    // conserves gas plus metal energy; only the explicit outside convection
+    // below rejects heat from that combined subsystem to the environment.
     networkConfig.wallHeatTransferWPerM2K = 0.0;
+    networkConfig.wallTemperatureK = config_.ambientTemperatureC + 273.15;
+    networkConfig.dynamicWallHeatTransferEnabled = true;
+    networkConfig.wallThicknessM = stainlessExhaustWallThicknessM;
+    networkConfig.wallDensityKgPerM3 = stainlessDensityKgPerM3;
+    networkConfig.wallSpecificHeatJPerKgK = stainlessSpecificHeatJPerKgK;
+    networkConfig.externalWallHeatTransferWPerM2K =
+        exhaustExternalHeatTransferWPerM2K;
+    networkConfig.externalTemperatureK = config_.ambientTemperatureC + 273.15;
     if (!network->configure(layout, networkConfig))
         throw std::runtime_error("failed to configure conservative exhaust network");
     const auto ambientState = network->mixtureModel().conservativeFromPressureTemperature(
@@ -928,7 +950,8 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 plenumFlowCell = &plenumWork;
                 intakeRunnerBefore = intakeRunnerGas_[cylinderIndex];
             }
-            (void)ConservativeGasSystem::flow({ plenumFlowCell, &intakeRunnerGas_[cylinderIndex],
+            const auto plenumTransfer = ConservativeGasSystem::flow({
+                plenumFlowCell, &intakeRunnerGas_[cylinderIndex],
                 runnerAreaM2, 0.78 * runnerAcousticResults_[cylinderIndex].flowAdmittance, subDt,
                 /*dirX=*/0.0, /*dirY=*/1.0,   // downward into runner
                 /*csArea0=*/0.0, /*csArea1=*/runnerAreaM2 });
@@ -964,10 +987,66 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 ? cylinder.intakeRunnerLengthMm : cylinderIntake.runnerLengthMm) * 0.001;
             intakeRunnerGas_[cylinderIndex].applyFlowResistance(
                 intakeRunnerLengthM, runnerDiameterMm * 0.001, 1.5e-6, 0.0, subDt);
-            const auto wallHeatTransfer = std::clamp((cylinderWallTemperatureC_[cylinderIndex] + 273.15
-                - cylinderGas_[cylinderIndex].temperatureK())
-                * config_.combustionCalibration.wallHeatTransferCoefficientWPerK * subDt, -120.0, 35.0);
-            cylinderGas_[cylinderIndex].addHeatJoules(wallHeatTransfer);
+            const auto runnerGasHeatCapacityJPerK =
+                intakeRunnerGas_[cylinderIndex].totalMoles()
+                * intakeRunnerGas_[cylinderIndex].molarHeatCapacityCvEffective();
+            const auto runnerGasSpecificHeatCpJPerKgK =
+                (intakeRunnerGas_[cylinderIndex].molarHeatCapacityCvEffective()
+                    + GasCell::universalGasConstant)
+                / intakeRunnerGas_[cylinderIndex].meanMolarMassKg();
+            const auto runnerGasDensityKgPerM3 =
+                intakeRunnerGas_[cylinderIndex].massKg()
+                / intakeRunnerGas_[cylinderIndex].volumeM3();
+            // A zero-dimensional runner's stored momentum is its NET motion.
+            // Pulsating port flow can reverse within a crank cycle and leave
+            // that net near zero while substantial mass still sweeps the wall.
+            // Recover the corresponding through-flow speed from the conserved
+            // mass crossings at both ends instead of making heat transfer
+            // disappear whenever their momenta cancel.
+            const auto runnerFlowDenominator =
+                2.0 * subDt * runnerGasDensityKgPerM3 * runnerAreaM2;
+            const auto runnerThroughFlowVelocityMps = runnerFlowDenominator > 0.0
+                ? (std::abs(plenumTransfer.transferredMassKg)
+                    + std::abs(intakeTransfer.transferredMassKg))
+                    / runnerFlowDenominator
+                : 0.0;
+            const auto runnerHeatTransferVelocityMps = std::max(
+                std::abs(intakeRunnerGas_[cylinderIndex].bulkVelocityMps()),
+                runnerThroughFlowVelocityMps);
+            const auto runnerWallHeatTransfer = DuctWallHeatTransferModel::advance(
+                intakeRunnerWallStates_[cylinderIndex], {
+                    runnerDiameterMm * 0.001,
+                    intakeRunnerLengthM,
+                    aluminiumRunnerWallThicknessM,
+                    aluminiumDensityKgPerM3,
+                    aluminiumSpecificHeatJPerKgK,
+                    runnerExternalHeatTransferWPerM2K,
+                    config_.ambientTemperatureC + 273.15,
+                    runnerGasDensityKgPerM3,
+                    runnerHeatTransferVelocityMps,
+                    runnerGasSpecificHeatCpJPerKgK,
+                    runnerGasHeatCapacityJPerK,
+                    intakeRunnerGas_[cylinderIndex].temperatureK(),
+                    subDt,
+                });
+            intakeRunnerGas_[cylinderIndex].addHeatJoules(
+                runnerWallHeatTransfer.heatToGasJ);
+            const auto cylinderGasTemperatureK = cylinderGas_[cylinderIndex].temperatureK();
+            const auto cylinderGasHeatCapacityJPerK = cylinderGas_[cylinderIndex].totalMoles()
+                * cylinderGas_[cylinderIndex].molarHeatCapacityCvEffective();
+            const auto wallHeatTransfer = CylinderHeatTransferModel::evaluate({
+                cylinder.boreMm * 0.001,
+                kinematics.pistonTravelMm * 0.001,
+                2.0 * cylinder.strokeMm * 0.001 * state_.rpm / 60.0,
+                cylinderGas_[cylinderIndex].pressureKpa(),
+                cylinderGasTemperatureK,
+                cylinderWallTemperatureC_[cylinderIndex] + 273.15,
+                cylinderGasHeatCapacityJPerK,
+                config_.combustionCalibration.wallHeatTransferCoefficientWPerK,
+                subDt,
+                intakeLift > 0.01 || exhaustLift > 0.01,
+            });
+            cylinderGas_[cylinderIndex].addHeatJoules(wallHeatTransfer.heatToGasJ);
             if (cylinder.blowByCoefficient > 0.0)
                 (void)ConservativeGasSystem::flowFromBoundary(cylinderGas_[cylinderIndex],
                     config_.ambientPressureKpa, config_.ambientTemperatureC + 273.15,
@@ -1792,6 +1871,8 @@ void EngineSimulator::reset() noexcept {
         exhaustBoundaryKnots_[index].fill({});
         chamberPressureBar_[index] = config_.ambientPressureKpa / 100.0;
         cylinderWallTemperatureC_[index] = config_.ambientTemperatureC;
+        intakeRunnerWallStates_[index].temperatureK =
+            config_.ambientTemperatureC + 273.15;
         configureFuel(intakeRunnerGas_[index]);
         configureFuel(cylinderGas_[index]);
 

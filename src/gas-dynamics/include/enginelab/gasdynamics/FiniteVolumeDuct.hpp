@@ -1,5 +1,7 @@
 #pragma once
 
+#include <enginelab/physics/DuctWallHeatTransferModel.hpp>
+
 #include <array>
 #include <cstddef>
 #include <optional>
@@ -169,6 +171,13 @@ struct DuctGeometry final {
     /** Zero disables wall heat exchange. */
     double wallHeatTransferWPerM2K { 0.0 };
     double wallTemperatureK { 300.0 };
+    /** Enable a finite-capacity wall instead of the fixed-temperature source. */
+    bool dynamicWallHeatTransferEnabled { false };
+    double wallThicknessM { 0.0015 };
+    double wallDensityKgPerM3 { 7'900.0 };
+    double wallSpecificHeatJPerKgK { 500.0 };
+    double externalWallHeatTransferWPerM2K { 0.0 };
+    double externalTemperatureK { 300.0 };
 
     [[nodiscard]] double areaM2() const noexcept;
     [[nodiscard]] double cellLengthM() const noexcept;
@@ -200,6 +209,7 @@ struct DuctAdvanceResult final {
     bool completed { true };
     EulerFluxIntegral leftBoundaryFlux {};
     EulerFluxIntegral rightBoundaryFlux {};
+    double wallHeatRejectedJ { 0.0 };
 };
 
 /** Preallocated second-order finite-volume solver for one constant-area duct.
@@ -231,6 +241,10 @@ public:
     }
     [[nodiscard]] double cellCentreM(std::size_t index) const noexcept;
     [[nodiscard]] ConservedInventory inventory() const noexcept;
+    [[nodiscard]] std::span<const DuctWallThermalState> wallStates() const noexcept {
+        return wallStates_;
+    }
+    [[nodiscard]] double wallThermalEnergyJ() const noexcept;
 
     /** CFL/source-limited stable step for the current cell state. */
     [[nodiscard]] double maximumStableTimeStep(double maximumCourantNumber = 0.45) const noexcept;
@@ -258,6 +272,9 @@ private:
         double& maximumSignalSpeed,
         double& sourceLimitedTimeStep) const noexcept;
     [[nodiscard]] bool refreshCellStateCache() const noexcept;
+    [[nodiscard]] bool applyDynamicWallHeatTransfer(
+        double durationSeconds, double& heatRejectedJ) noexcept;
+    void resetWallTemperature(double temperatureK) noexcept;
     [[nodiscard]] bool computeResidual(
         std::span<const ConservativeState> states,
         std::span<const PrimitiveState> primitives,
@@ -287,6 +304,7 @@ private:
     std::vector<PrimitiveState> reconstructedRightPrimitives_;
     std::vector<EulerFlux> faceFluxes_;
     std::vector<EulerFlux> stageFaceFluxes_;
+    std::vector<DuctWallThermalState> wallStates_;
     mutable double maximumCellSignalSpeedMps_ { 0.0 };
     mutable double cellSourceLimitedTimeStepSeconds_ { 0.0 };
     double maximumStageSignalSpeedMps_ { 0.0 };

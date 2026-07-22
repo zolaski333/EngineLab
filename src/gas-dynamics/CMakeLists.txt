@@ -4,5 +4,6 @@ add_library(EngineLabGasDynamics STATIC
     src/ExhaustGasNetwork.cpp)
 add_library(EngineLab::GasDynamics ALIAS EngineLabGasDynamics)
 target_include_directories(EngineLabGasDynamics PUBLIC include)
-target_link_libraries(EngineLabGasDynamics PUBLIC EngineLab::Foundation EngineLab::Exhaust)
+target_link_libraries(EngineLabGasDynamics PUBLIC
+    EngineLab::Foundation EngineLab::Exhaust EngineLab::Physics)
 enginelab_set_warnings(EngineLabGasDynamics)

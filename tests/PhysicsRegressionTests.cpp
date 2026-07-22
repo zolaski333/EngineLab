@@ -1,6 +1,8 @@
 #include <enginelab/foundation/EngineTypes.hpp>
 #include <enginelab/physics/ConservativeGasSystem.hpp>
 #include <enginelab/physics/MechanicalKinematics.hpp>
+#include <enginelab/physics/CylinderHeatTransferModel.hpp>
+#include <enginelab/physics/DuctWallHeatTransferModel.hpp>
 
 #include <algorithm>
 #include <array>
@@ -26,6 +28,52 @@ double threeCellEnergy(const enginelab::GasCell& first,
 }
 
 int main() {
+    {
+        const enginelab::CylinderHeatTransferConditions closedValve {
+            0.097, 0.040, 18.0, 320.0, 1'100.0, 430.0, 0.85, 0.42, 0.001, false
+        };
+        const auto closed = enginelab::CylinderHeatTransferModel::evaluate(closedValve);
+        auto exchanging = closedValve;
+        exchanging.gasExchangeStroke = true;
+        const auto open = enginelab::CylinderHeatTransferModel::evaluate(exchanging);
+        auto faster = exchanging;
+        faster.meanPistonSpeedMps *= 2.0;
+        const auto highSpeed = enginelab::CylinderHeatTransferModel::evaluate(faster);
+        require(closed.coefficientWPerM2K > 0.0
+                && open.coefficientWPerM2K > closed.coefficientWPerM2K
+                && highSpeed.coefficientWPerM2K > open.coefficientWPerM2K,
+                "cylinder convection must respond to valve phase and mean piston speed");
+        require(open.exposedAreaM2 > 0.0 && open.conductanceWPerK > 0.42
+                && open.heatToGasJ < 0.0,
+                "a hot cylinder charge must reject heat through its resolved chamber area");
+        const auto maximumRejectableHeatJ = exchanging.gasHeatCapacityJPerK
+            * (exchanging.gasTemperatureK - exchanging.wallTemperatureK);
+        require(-open.heatToGasJ < maximumRejectableHeatJ,
+                "finite cylinder heat exchange must not cool gas through the wall temperature");
+    }
+
+    {
+        enginelab::DuctWallThermalState wall { 330.0 };
+        const enginelab::DuctWallHeatTransferConditions conditions {
+            0.044, 0.310, 0.003, 2'700.0, 900.0, 0.0, 295.0,
+            0.45, 80.0, 1'010.0, 0.16, 1'100.0, 0.002
+        };
+        const auto wallTemperatureBeforeK = wall.temperatureK;
+        const auto transfer = enginelab::DuctWallHeatTransferModel::advance(
+            wall, conditions);
+        const auto wallEnergyGainJ = transfer.wallHeatCapacityJPerK
+            * (wall.temperatureK - wallTemperatureBeforeK);
+        require(transfer.reynoldsNumber > 4'000.0
+                && transfer.nusseltNumber > 3.66
+                && transfer.internalCoefficientWPerM2K > 0.0,
+                "duct-wall convection must resolve turbulent forced flow from gas state");
+        require(transfer.heatToGasJ < 0.0 && wall.temperatureK > wallTemperatureBeforeK,
+                "hot runner gas must transfer sensible energy into its finite wall mass");
+        require(std::abs(wallEnergyGainJ + transfer.heatToGasJ)
+                    < std::max(1.0, std::abs(transfer.heatToGasJ)) * 1.0e-10,
+                "internal duct-wall exchange must conserve gas plus solid energy");
+    }
+
     {
         enginelab::GasCell cell;
         cell.initialise(180.0, 0.55, 620.0);

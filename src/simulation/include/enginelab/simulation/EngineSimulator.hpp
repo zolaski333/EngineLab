@@ -11,6 +11,7 @@
 #include <enginelab/physics/ValveTrainModel.hpp>
 #include <enginelab/physics/HelmholtzRunnerModel.hpp>
 #include <enginelab/physics/MechanicalKinematics.hpp>
+#include <enginelab/physics/DuctWallHeatTransferModel.hpp>
 #include <enginelab/simulation/IEngineSimulation.hpp>
 #include <enginelab/events/CylinderPressureSample.hpp>
 #include <enginelab/foundation/SpscQueue.hpp>
@@ -123,6 +124,7 @@ private:
     std::array<GasCell, 32> intakePlenumGas_ {};
     std::size_t intakePlenumCount_ { 1 };
     std::array<GasCell, 32> intakeRunnerGas_ {};
+    std::array<DuctWallThermalState, 32> intakeRunnerWallStates_ {};
     std::array<GasCell, 32> cylinderGas_ {};
     std::array<double, 32> instantaneousCombustionPulse_ {};
     std::array<double, 32> injectedFuelMolesThisCycle_ {};

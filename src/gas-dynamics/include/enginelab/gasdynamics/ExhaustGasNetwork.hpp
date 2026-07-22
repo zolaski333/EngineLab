@@ -18,6 +18,12 @@ struct ExhaustGasNetworkConfig final {
     double absoluteRoughnessM { 1.5e-6 };
     double wallHeatTransferWPerM2K { 0.0 };
     double wallTemperatureK { 450.0 };
+    bool dynamicWallHeatTransferEnabled { false };
+    double wallThicknessM { 0.0015 };
+    double wallDensityKgPerM3 { 7'900.0 };
+    double wallSpecificHeatJPerKgK { 500.0 };
+    double externalWallHeatTransferWPerM2K { 0.0 };
+    double externalTemperatureK { 300.0 };
     double maximumCourantNumber { 0.42 };
     std::size_t maximumSubstepsPerAdvance { 100'000 };
 
@@ -102,6 +108,7 @@ struct ExhaustNetworkInventory final {
     std::array<double, gasSpeciesCount> speciesMassKg {};
     double totalEnergyJ { 0.0 };
     double resolvedAxialMomentumKgMps { 0.0 };
+    double wallThermalEnergyJ { 0.0 };
 };
 
 struct ExhaustNetworkAdvanceResult final {
@@ -109,6 +116,7 @@ struct ExhaustNetworkAdvanceResult final {
     std::size_t acceptedSubsteps { 0 };
     std::size_t rejectedSubsteps { 0 };
     bool completed { true };
+    double wallHeatRejectedJ { 0.0 };
 };
 
 /** Globally coupled finite-volume exhaust network.

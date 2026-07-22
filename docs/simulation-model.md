@@ -166,6 +166,14 @@ d'une gorge ou d'un collecteur 0D équivalent. Sans graphe, la géométrie
 historique est d'abord développée en un DAG physique compatible. Voir
 [custom-exhaust.md](custom-exhaust.md).
 
+Les cylindres emploient la corrélation convective instantanée de Woschni plutôt
+qu'une conductance constante. Les conduits d'admission et chaque cellule du
+réseau d'échappement possèdent une paroi métallique à capacité thermique finie.
+L'échange interne est intégré analytiquement et conserve l'énergie gaz + paroi ;
+seule la convection extérieure explicitement comptabilisée rejette de l'énergie
+vers l'ambiance. Le modèle ne borne donc jamais l'EGT pour masquer une énergie
+excédentaire.
+
 Le réseau thermodynamique et le renderer audio ont volontairement deux échelles :
 un maillage non linéaire basse bande pour débit/contre-pression et un réseau de
 caractéristiques linéaire pour la propagation audible. Le débit instantané SI
