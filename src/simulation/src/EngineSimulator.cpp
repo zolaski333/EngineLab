@@ -1172,14 +1172,16 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
         exhaustExchangeApplied.fill(1);
         if (flushExhaustNetwork) {
             std::array<gasdynamics::CylinderValveBoundary, 32> averagedBoundaries {};
-            for (std::size_t index = 0; index < config_.cylinders.size(); ++index) {
+            const auto cylinderPorts = physicalExhaustNetwork.layout().cylinderPorts();
+            for (std::size_t portIndex = 0; portIndex < cylinderPorts.size(); ++portIndex) {
+                const auto index = exhaustNetworkCylinderIndex_[portIndex];
                 auto averagedState = exhaustBoundaryStateTimeIntegral_[index];
                 for (auto& speciesDensity : averagedState.speciesMassDensityKgPerM3)
                     speciesDensity /= exhaustCouplingDurationSeconds_;
                 averagedState.momentumDensityKgPerM2S /= exhaustCouplingDurationSeconds_;
                 averagedState.totalEnergyDensityJPerM3 /= exhaustCouplingDurationSeconds_;
-                averagedBoundaries[index] = {
-                    config_.cylinders[index].id,
+                averagedBoundaries[portIndex] = {
+                    cylinderPorts[portIndex].cylinderId,
                     averagedState,
                     exhaustBoundaryVolumeTimeIntegralM3S_[index]
                         / exhaustCouplingDurationSeconds_,
@@ -1195,7 +1197,7 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
             const auto networkAdvance = physicalExhaustNetwork.advance(
                 exhaustCouplingDurationSeconds_,
                 std::span<const gasdynamics::CylinderValveBoundary>(
-                    averagedBoundaries.data(), config_.cylinders.size()),
+                    averagedBoundaries.data(), cylinderPorts.size()),
                 ambient);
             exhaustNetworkCompleted = networkAdvance.completed;
             exhaustAdvanceDurationSeconds = networkAdvance.advancedTimeSeconds;
@@ -1270,9 +1272,11 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
         // operators. This preserves signed high-rate thermoacoustic forcing even
         // though conservative low-band state exchange is deliberately multirate.
         std::array<gasdynamics::CylinderValveBoundary, 32> instantaneousBoundaries {};
-        for (std::size_t index = 0; index < config_.cylinders.size(); ++index) {
-            instantaneousBoundaries[index] = {
-                config_.cylinders[index].id,
+        const auto cylinderPorts = physicalExhaustNetwork.layout().cylinderPorts();
+        for (std::size_t portIndex = 0; portIndex < cylinderPorts.size(); ++portIndex) {
+            const auto index = exhaustNetworkCylinderIndex_[portIndex];
+            instantaneousBoundaries[portIndex] = {
+                cylinderPorts[portIndex].cylinderId,
                 networkStateForGasCell(cylinderGas_[index]),
                 cylinderGas_[index].volumeM3(),
                 exhaustValveAreaM2[index],
@@ -1282,7 +1286,7 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
         std::array<gasdynamics::CylinderBoundaryFlowSample, 32> boundarySamples {};
         const auto sampled = physicalExhaustNetwork.sampleCylinderBoundaries(
             std::span<const gasdynamics::CylinderValveBoundary>(
-                instantaneousBoundaries.data(), config_.cylinders.size()),
+                instantaneousBoundaries.data(), cylinderPorts.size()),
             std::span<gasdynamics::CylinderBoundaryFlowSample>(
                 boundarySamples.data(), physicalExhaustNetwork.layout().cylinderPorts().size()));
         collectorPressureKpa = config_.ambientPressureKpa;
@@ -1314,7 +1318,7 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 // interpolated between whichever knots bracket that instant.
                 // See exhaustBoundaryKnots_ for why the delay must not follow
                 // the current coupling interval. The delay exceeds the longest
-                // interval (the 500 us low-speed cap plus slack), so a
+                // interval (the 250 us low-speed cap plus slack), so a
                 // bracketing pair exists whenever the ring holds history;
                 // until then the reconstruction holds the nearest knot, which
                 // only occurs while the network itself is still priming.
