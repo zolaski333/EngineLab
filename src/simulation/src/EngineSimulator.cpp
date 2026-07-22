@@ -406,10 +406,12 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
     constexpr auto couplingSamplesPerFiringPeriod = 16.0;
     const auto firingFrequencyHz = std::abs(state_.rpm)
         * static_cast<double>(config_.cylinders.size()) / 120.0;
-    const auto maximumExhaustCouplingSeconds = firingFrequencyHz > 1.0e-9
+    const auto productionExhaustCouplingSeconds = firingFrequencyHz > 1.0e-9
         ? std::min(maximumLowSpeedCouplingSeconds,
             1.0 / (couplingSamplesPerFiringPeriod * firingFrequencyHz))
         : maximumLowSpeedCouplingSeconds;
+    const auto maximumExhaustCouplingSeconds = exhaustCouplingEverySubstep_
+        ? subDt : productionExhaustCouplingSeconds;
     // Telemetry: the duration-based flush lands on the substep nearest the
     // target interval, so the actual knot cadence rounds to the substep grid.
     const auto couplingSubsteps = std::max<long long>(1,

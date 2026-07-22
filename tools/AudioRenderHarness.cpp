@@ -54,6 +54,9 @@ struct WavData { std::vector<float> samples; double sampleRate { 44'100.0 }; };
 bool muteCombustionLayer = false;
 bool muteMechanicalLayer = false;
 bool muteIntakeLayer = false;
+// Offline oracle only. Large engines are not expected to meet realtime when the
+// complete nonlinear network is advanced on every mechanical substep.
+bool referenceCouplingEverySubstep = false;
 // Render chunk size within each simulation step; see the invariance probe at
 // the render call. 200 reproduces the historical single-call behaviour.
 int audioChunkSamples = 200;
@@ -171,6 +174,14 @@ struct Metrics {
     // resonance above that line is a reconstruction image, not a mode.
     double networkSubstepHz {};
     double couplingHz {};
+    // Coherence of the two valve-flow contracts. The instantaneous flow owns
+    // mass accounting; the network flow is the matched partner of runner
+    // pressure used by the characteristic split. Their residual is the source
+    // energy phase 2 must recover without pairing mismatched states.
+    double instantaneousValveFlowRmsKgPerSecond {};
+    double acousticValveFlowRmsKgPerSecond {};
+    double valveFlowResidualRmsKgPerSecond {};
+    double valveFlowSimilarity {};
     std::uint64_t droppedEvents {};
     std::uint64_t droppedPressureSamples {};
     std::uint64_t lateEvents {};
@@ -366,6 +377,7 @@ Metrics renderEngine(const EngineConfig& baseConfig, const WavData& ir,
     auto simulatorPtr = std::make_unique<EngineSimulator>(config, ecu, physics, events, exhaust);
     auto& simulator = *simulatorPtr;
     simulator.setPressureSamplingEnabled(true);
+    simulator.setExhaustCouplingEverySubstep(referenceCouplingEverySubstep);
 
     auto eventQueuePtr = std::make_unique<FiringEventQueue>();
     auto pressureQueuePtr = std::make_unique<CylinderPressureQueue>();
@@ -397,6 +409,11 @@ Metrics renderEngine(const EngineConfig& baseConfig, const WavData& ir,
     double dynoLoadApplied = 0.0;
     std::uint64_t droppedEvents = 0;
     std::uint64_t droppedPressureSamples = 0;
+    double instantaneousValveFlowSquareSum = 0.0;
+    double acousticValveFlowSquareSum = 0.0;
+    double valveFlowResidualSquareSum = 0.0;
+    double valveFlowCrossSum = 0.0;
+    std::uint64_t valveFlowSampleCount = 0;
     const auto dynoTargetRpm = std::max(config.idleRpm * 1.50, config.redlineRpm * 0.55);
     const auto steps = static_cast<std::size_t>(seconds / dt);
     for (std::size_t step = 0; step < steps; ++step) {
@@ -433,6 +450,22 @@ Metrics renderEngine(const EngineConfig& baseConfig, const WavData& ir,
         }
         CylinderPressureSample ps;
         while (simulator.tryPopCylinderPressureSample(ps)) {
+            const auto count = std::min(ps.cylinderCount,
+                ps.exhaustMassFlowKgPerSecond.size());
+            for (std::size_t index = 0; index < count; ++index) {
+                const auto instantaneous = static_cast<double>(
+                    ps.exhaustMassFlowKgPerSecond[index]);
+                const auto acoustic = static_cast<double>(
+                    ps.exhaustAcousticMassFlowKgPerSecond[index]);
+                if (!std::isfinite(instantaneous) || !std::isfinite(acoustic))
+                    continue;
+                const auto residual = instantaneous - acoustic;
+                instantaneousValveFlowSquareSum += instantaneous * instantaneous;
+                acousticValveFlowSquareSum += acoustic * acoustic;
+                valveFlowResidualSquareSum += residual * residual;
+                valveFlowCrossSum += instantaneous * acoustic;
+                ++valveFlowSampleCount;
+            }
             const auto fraction = std::clamp((ps.timeSeconds - simStart) / dt, 0.0, 1.0);
             ps.timeSeconds = realtimeSeconds + fraction * dt;
             if (!pressureQueue.tryPush(ps)) ++droppedPressureSamples;
@@ -488,6 +521,18 @@ Metrics renderEngine(const EngineConfig& baseConfig, const WavData& ir,
     m.solverSubsteps = simulator.state().solverSubsteps;
     m.networkSubstepHz = simulator.state().exhaustNetworkSubstepFrequencyHz;
     m.couplingHz = simulator.state().exhaustCouplingFrequencyHz;
+    const auto flowSampleDivisor = static_cast<double>(
+        std::max<std::uint64_t>(1, valveFlowSampleCount));
+    m.instantaneousValveFlowRmsKgPerSecond = std::sqrt(
+        instantaneousValveFlowSquareSum / flowSampleDivisor);
+    m.acousticValveFlowRmsKgPerSecond = std::sqrt(
+        acousticValveFlowSquareSum / flowSampleDivisor);
+    m.valveFlowResidualRmsKgPerSecond = std::sqrt(
+        valveFlowResidualSquareSum / flowSampleDivisor);
+    const auto flowSimilarityDenominator = std::sqrt(
+        instantaneousValveFlowSquareSum * acousticValveFlowSquareSum);
+    m.valveFlowSimilarity = flowSimilarityDenominator > 1.0e-18
+        ? valveFlowCrossSum / flowSimilarityDenominator : 1.0;
     m.droppedEvents = droppedEvents + renderer.droppedPendingEventCount();
     m.droppedPressureSamples = droppedPressureSamples;
     m.lateEvents = renderer.lateEventCount();
@@ -516,6 +561,12 @@ Metrics renderEngine(const EngineConfig& baseConfig, const WavData& ir,
               << " networkHz=" << std::setprecision(0) << m.networkSubstepHz
               << " couplingHz=" << std::setprecision(0) << m.couplingHz
               << " couplingNyq=" << std::setprecision(0) << m.couplingHz * 0.5
+              << " mechanicalNyq=" << std::setprecision(0) << m.solverFrequencyHz * 0.5
+              << " valveFlowRms(inst/macro/res)=" << std::setprecision(5)
+              << m.instantaneousValveFlowRmsKgPerSecond << '/'
+              << m.acousticValveFlowRmsKgPerSecond << '/'
+              << m.valveFlowResidualRmsKgPerSecond
+              << " flowSimilarity=" << std::setprecision(3) << m.valveFlowSimilarity
               << " resonance=" << std::setprecision(1) << m.left.window.maxResonanceProminenceDb
               << "dB@" << std::setprecision(0) << m.left.window.maxResonanceFrequencyHz << "Hz"
               << " bands=" << std::setprecision(1) << m.left.window.lowBandFraction * 100.0
@@ -1060,11 +1111,14 @@ int main(int argc, char** argv) {
     std::filesystem::path outDir = "audio-render-output";
     std::filesystem::path irPath = std::filesystem::path(ENGINELAB_CATALOG_ROOT) / "assets" / "ir" / "exhaust_default.wav";
     bool idleOnly = false;
+    std::string referenceFilter;
     for (int i = 1; i < argc; ++i) {
         const std::string a = argv[i];
         if (a == "--output" && i + 1 < argc) outDir = argv[++i];
         else if (a == "--ir" && i + 1 < argc) irPath = argv[++i];
         else if (a == "--idle-only") idleOnly = true;
+        else if (a == "--reference-filter" && i + 1 < argc)
+            referenceFilter = argv[++i];
         else if (a == "--mute-combustion") muteCombustionLayer = true;
         else if (a == "--mute-mechanical") muteMechanicalLayer = true;
         else if (a == "--mute-intake") muteIntakeLayer = true;
@@ -1079,6 +1133,29 @@ int main(int argc, char** argv) {
                   << " samples @ " << ir.sampleRate << " Hz)\n";
     else
         std::cout << "WARNING: could not load IR at " << irPath.string() << " (using renderer fallback)\n";
+
+    if (!referenceFilter.empty()) {
+        const auto catalog = loadEngineCatalog(
+            std::filesystem::path(ENGINELAB_CATALOG_ROOT));
+        const auto selected = std::find_if(catalog.entries.begin(), catalog.entries.end(),
+            [&referenceFilter](const auto& entry) {
+                return entry.config.name.find(referenceFilter) != std::string::npos;
+            });
+        if (selected == catalog.entries.end()) {
+            std::cerr << "FAIL: no catalogue engine matches reference filter '"
+                      << referenceFilter << "'\n";
+            return 2;
+        }
+        referenceCouplingEverySubstep = true;
+        std::cout << "\n--- Full-coupling offline reference (not realtime) ---\n";
+        const auto metrics = renderEngine(
+            selected->config, ir, outDir, 3.0, true);
+        const auto valid = metrics.physicalActive
+            && metrics.left.scan.finite && metrics.right.scan.finite
+            && metrics.droppedPressureSamples == 0
+            && metrics.invalidBoundarySamples == 0;
+        return valid ? 0 : 1;
+    }
 
     if (idleOnly) {
         const auto catalog = loadEngineCatalog(std::filesystem::path(ENGINELAB_CATALOG_ROOT));

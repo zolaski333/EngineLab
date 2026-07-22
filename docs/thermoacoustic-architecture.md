@@ -37,9 +37,9 @@ Le noyau utilise un flux HLLC avec repli de sûreté HLLE, une reconstruction TV
 SSP-RK2 et un pas CFL. Une tentative non physique est rejetée puis reprise avec
 un pas réduit ; aucune masse ni énergie n’est créée par un plancher numérique.
 Les pertes locales, le frottement de paroi et le transfert thermique sont des
-termes sources déclarés. Les parois du réseau moteur sont actuellement
-adiabatiques, car leur inertie thermique n’est pas encore un sous-système
-conservé.
+termes sources déclarés. Les parois du réseau moteur possèdent désormais une
+capacité thermique finie : l’échange gaz-métal conserve l’énergie combinée et
+seule la convection externe rejette explicitement la chaleur vers l’ambiance.
 
 Une soupape n’est pas traitée comme la continuation sans épaisseur d’un tube.
 Son `CdA` alimente une loi de tuyère compressible isentropique, subcritique ou
@@ -67,7 +67,7 @@ décomposition multirate physique :
   son volume, ses ports et ses pertes exacts ; son délai audio appartient au
   réseau caractéristique ;
 - la frontière macro est intégrée au minimum 16 fois par période d’allumage,
-  avec une fenêtre absolue de 500 µs au démarrage ;
+  avec une fenêtre absolue maximale de 250 µs à bas régime ;
 - état conservatif, volume de chambre, `CdA` de soupape et ouverture de sortie
   sont intégrés dans le temps sur chaque fenêtre ;
 - chaque échange macro reste bidirectionnel et ferme exactement les bilans de
