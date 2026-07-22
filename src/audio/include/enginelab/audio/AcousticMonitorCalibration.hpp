@@ -17,11 +17,10 @@ namespace enginelab {
  * for close exhaust miking with a measurement microphone.
  *
  * That figure is chosen from what the model actually radiates, not to taste.
- * Measured at the one-metre observer, a catalogue four-cylinder under load
- * delivers about 6.8 Pa RMS (110 dB SPL) with peaks near 52 Pa (128 dB SPL),
- * which is a realistic tailpipe level. 134 dB at full scale therefore puts the
- * loudest catalogue engine's peaks a few dB below clipping and its RMS in the
- * mid minus-twenties dBFS, which is where a recording of it would sit.
+ * Catalogue validation converts the signal back to pascals at each engine's
+ * explicitly authored microphone pair and requires physical layer peaks to
+ * remain below the safety limiter. The calibration therefore remains a capture
+ * property; it is never adjusted per engine to normalise model output.
  *
  * The previous 144 dB left 33 dB of unused headroom above anything the model
  * produced. That was harmless while synthetic oscillator voices dominated the

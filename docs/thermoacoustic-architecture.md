@@ -14,16 +14,17 @@ réseau gaz quasi-1D non linéaire (DAG complet, bande de retour physique)
         → frontière SI instantanée p, ρ, c, ṁ, CdA
 décomposition en caractéristiques p+ / p−
         ↔ guides d’onde + jonctions à admittance
-charge passive de rayonnement de la sortie
-        → pression libre à 1 m + retard r/c
+charge passive de rayonnement de chaque sortie
+        → pression libre vers deux microphones + retard r/c + directivité
         → IR mesurée explicitement fournie, facultative
 ```
 
 Il n’existe aucun repli runner/collecteur 0D dans `EngineSimulator`. Une
 topologie physique invalide empêche la construction du simulateur. Dès qu’une
-frontière SI valide atteint le renderer, le chemin physique est verrouillé :
-les voix d’échappement procédurales actives et planifiées sont retirées et une
-perte ultérieure de télémétrie ne les réactive jamais.
+topologie SI valide est compilée, le chemin physique possède la sortie dès le
+premier échantillon : il propage le silence jusqu’à la première frontière, puis
+reste verrouillé. Les voix procédurales ne peuvent donc ni apparaître pendant
+le démarrage, ni revenir lors d’une perte ultérieure de télémétrie.
 
 ## 1. Réseau gaz non linéaire
 
@@ -132,6 +133,15 @@ all-pass ; il n’existe donc ni bande doublée, ni gain de timbre caché. Si la
 frontière est déjà publiée pleine bande (`fréquence de couplage = 0`), la source
 complémentaire est exactement nulle.
 
+Cette branche instantanée reste elle-même un signal échantillonné par le solveur
+mécanique. Deux sections Butterworth passe-bas bornent donc sa reconstruction à
+`0,42 × cadence mécanique` (Linkwitz–Riley d’ordre 4). Sans cette borne haute,
+les images de l’interpolation au-dessus du Nyquist mécanique étaient amplifiées
+par la dérivée de rayonnement et produisaient des clics isolés — le grésillement
+observé surtout sur le Merlin et le 2JZ. Ce filtre ne retire aucune fréquence
+représentable par le producteur ; il interdit uniquement à l’audio d’inventer
+une bande que la simulation n’a jamais échantillonnée.
+
 ## 4. Rayonnement et calibration
 
 La sortie est terminée par `UnflangedPipeRadiation`, approximation causale de
@@ -139,8 +149,14 @@ Padé (1,2) de la solution de Levine–Schwinger ajustée par Silva et al. Le fi
 retourne la pression réfléchie dans le guide. La vitesse de volume nette à la
 bouche puis son accélération donnent la pression monopolaire en champ libre.
 
-Le renderer applique le retard acoustique air `r/c` jusqu’à un observateur à
-1 m. Les pascals n’ont pas de correspondance universelle en dBFS : celle-ci
+Chaque sortie publie désormais sa position, son axe, son diamètre et son type de
+terminaison (libre ou bridée). `FreeFieldObserver` calcule séparément les deux
+distances sortie–microphone, les retards `r/c`, la décroissance `1/r` et la
+directivité fréquentielle liée à `ka`. Une sortie centrée peut légitimement
+rester presque mono ; deux sorties séparées acquièrent leur largeur par leurs
+temps d’arrivée et non par un panoramique inventé.
+
+Les pascals n’ont pas de correspondance universelle en dBFS : celle-ci
 dépend nécessairement du microphone et du préamplificateur. La chaîne de capture
 est donc un objet de calibration explicite (`AcousticMonitorCalibration`), avec
 20 µPa comme pression SPL de référence et 144 dB SPL RMS à 0 dBFS par défaut.
@@ -202,17 +218,17 @@ il reste nécessaire de comparer pression cylindre, pression de runner, débit e
 température à des mesures, puis d’améliorer au besoin combustion, transferts
 thermiques, coefficients de soupape et géométrie.
 
-Le son global n’est pas encore entièrement physique : admission, bloc,
-distribution, démarreur et suralimentation conservent des couches procédurales.
-Retirer honnêtement la mécanique synthétique exige un modèle modal réduit du
-bloc/culasse/carters, excité par les forces gazeuses, inerties, réactions de
-paliers et impacts de distribution. Revoicer quelques harmoniques ne remplirait
-pas cette lacune.
+L’échappement, l’admission et le rayonnement du bloc/culasses sont désormais des
+chemins physiques pilotés par le solveur. La suralimentation est solver-driven
+mais reste semi-empirique sur son rendement acoustique ; distribution,
+démarreur et transmission ne disposent pas encore tous d’un modèle rayonnant
+identifié. Ces limites ne sont remplacées par aucun oscillateur dans un chemin
+physique déjà disponible.
 
 Autres limites explicites : acoustique plane linéaire dans la haute bande,
-sortie circulaire non bridée, correction d’écoulement moyen au rayonnement non
-modélisée, positions 3D des sorties non publiées, modes transverses et acoustique
-de coudes non résolus.
+correction d’écoulement moyen au rayonnement non modélisée, modes transverses et
+acoustique de coudes non résolus, modes structurels estimés tant qu’aucune mesure
+NVH n’est fournie.
 
 ## 8. Carte du code pour les prochains agents
 
@@ -224,6 +240,10 @@ de coudes non résolus.
 | orchestration multirate et télémétrie | `src/simulation/src/EngineSimulator.cpp` |
 | anticipation physique de charge PFI | `src/simulation/*/TransientChargeEstimator.hpp` |
 | radiation passive | `src/audio/*/PipeRadiationModel.*` |
+| sorties et microphones stéréo | `src/audio/*/FreeFieldObserver.*` |
+| réseau d’admission | `src/audio/*/AcousticIntakeNetwork.*` |
+| rayonnement structurel | `src/audio/*/StructuralModalRadiator.*` |
+| acoustique de suralimentation | `src/audio/*/ForcedInductionAcoustics.*` |
 | calibration Pa → dBFS | `src/audio/*/AcousticMonitorCalibration.hpp` |
 | raidissement de conduit (amplitude finie) | `src/audio/*/NonlinearDuctAcoustics.hpp` |
 | caractéristiques et rendu | `src/audio/*/RealtimeEngineAudio.*` |
@@ -272,33 +292,23 @@ le temps réel. Ne pas citer les seules moyennes LS3 comme preuve de conformité
 
 ### Chemin audio
 
-La voix par défaut est désormais **entièrement** le rayonnement physique
-calculé. Ont été retirés du chemin physique : les voix à oscillateurs
-(échappement *et* combustion) et le bus de pression chambre, qui ne comportait
-aucune fonction de transfert vers l’observateur.
+La voix de production est la somme de chemins physiques séparément mesurables :
+réseau d’échappement complet, réseau d’admission, modes structurels et, lorsque
+présente, suralimentation solver-driven. Les étapes correspondantes sont
+détaillées aux §20–23. Les voix à oscillateurs historiques restent disponibles
+uniquement pour les harnais de compatibilité dépourvus de configuration
+physique ; le catalogue et `EngineRuntime` exigent zéro échantillon de ce chemin.
 
-Limites réelles, à ne pas présenter comme résolues :
+### Niveaux mesurés aux observateurs publiés
 
-- **Bruit structurel absent.** Le rayonnement du bloc et de la culasse sous les
-  forces de piston et de paliers n’est pas modélisé. Rien ne le remplace : le
-  contenu de combustion audible provient uniquement de l’échappement.
-- **Sortie monophonique.** Les positions des sorties d’échappement ne font pas
-  partie de la géométrie publiée, donc tous les chemins rayonnent vers un
-  unique observateur documenté à 1 m. Une vraie stéréo demande ces positions et
-  un couple de microphones ; inventer un panoramique serait une décoration.
-- **Résonances étroites non résolues.** Le harnais mesure encore des pics
-  isolés de 18 à 39 dB au-dessus du plancher spectral local (pire cas : V8 à
-  4081 Hz). Leur origine n’est pas entièrement expliquée. Les pertes de paroi
-  et la terminaison à orifice les ont réduites sans les supprimer.
-- **Admission non physique.** Aucun réseau d’admission 1D.
-
-### Niveaux mesurés à l’observateur 1 m
-
-107–117 dB SPL RMS selon le moteur en charge, pointes ~128 dB ; ralenti Big
-Twin ~102 dB. Le plein échelle du moniteur est fixé à 134 dB SPL, dérivé de ces
-mesures. Les seuils du harnais sont exprimés en SI (90–130 dB SPL en charge,
-≥ 85 dB au ralenti) précisément pour qu’aucun réglage de gain ne puisse les
-satisfaire à la place du modèle.
+Le plein échelle du moniteur reste fixé à 134 dB SPL. Le rendu emploie la position
+de microphone publiée par chaque moteur ; la garde de puissance extrapole cette
+pression à un mètre par la même loi `1/r` avant d’appliquer 90–130 dB SPL. Elle ne
+confond donc pas un observateur lointain avec une source faible. Le harnais impose
+en plus que la somme des
+couches physiques reste sous le genou du limiteur (`0,82`) avec gain de sécurité
+strictement unitaire. Un changement de calibration ou un AGC ne peut donc pas
+faire passer un moteur mal dimensionné.
 
 ## 11. Cadence de couplage : ce qui a été mesuré, et pourquoi elle n'a pas bougé
 
@@ -747,8 +757,10 @@ depuis le régime ou le niveau audio.
     q'' + 2*zeta*omega*q' + omega^2*q = F_modal / m_modal
 
 avec une transition analytique exacte pour une force tenue sur un échantillon.
-La pression à un mètre vient ensuite de la puissance rayonnée par la vitesse de
-surface du mode, son aire et l'efficacité de rayonnement du piston bafflé. Le
+La pression à l’observateur publié vient ensuite de la puissance rayonnée par la
+vitesse RMS de surface du mode, son aire et l'efficacité de rayonnement du
+piston bafflé. Le passage vitesse d’antinœud → vitesse RMS emploie la forme
+modale (poutre/torsion ou plaque), sans gain de calibration caché. Le
 chemin de production ne contient plus le sinus de vilebrequin, le cliquetis
 bruité ou le « piston slap » façonné qui tenaient auparavant lieu de structure.
 
@@ -812,3 +824,50 @@ ces paramètres sans modifier l'architecture. Les tests imposent fréquence de
 passage exacte, pression proportionnelle à la racine de la puissance, silence
 sans puissance/débit, et absence exacte de wastegate ou dump valve lorsque son
 débit physique est nul.
+
+## 23. Sorties physiques, directivité et observateur stéréo
+
+Le schéma moteur 4 ajoute, en unités SI, un couple de microphones, la célérité
+locale facultative, ainsi que pour chaque sortie sa position, son axe, son
+diamètre et sa terminaison libre/bridée. YAML, JSON, catalogue, script et graphe
+compilé transportent ces valeurs sans conversion implicite. Les documents plus
+anciens migrent vers une géométrie de champ libre documentée.
+
+`FreeFieldObserver` est un opérateur causal par sortie et par canal. Il réserve
+ses lignes de retard dans `prepare()`, puis applique :
+
+- la distance géométrique exacte et le temps d’arrivée `r/c` ;
+- la décroissance sphérique `1/r` ;
+- une directivité dépendante de l’angle et de `ka`, séparée en bandes basse et
+  haute autour de `ka = 1` ;
+- le comportement avant/arrière propre à une terminaison libre ou bridée.
+
+L’échappement et l’admission renvoient donc directement une pression stéréo en
+pascals. Structure et suralimentation emploient la distance moyenne du même
+couple de microphones tant que leur configuration ne publie pas encore une
+position de source complète. Une IR de pièce ou de cabine reste un élément aval
+explicitement mesuré ; le champ libre est toujours le défaut.
+
+## 24. Validation catalogue et suppression des anciens chemins
+
+La validation Release rend désormais **chaque moteur du catalogue**, et pas
+seulement quelques fixtures synthétiques. Pour chaque rendu, elle impose :
+
+- activation réelle des réseaux échappement/admission et du rayonnement modal ;
+- zéro événement, frontière ou échantillon de pression perdu ;
+- zéro échantillon issu du chemin procédural de compatibilité ;
+- valeurs finies, absence de plateau d’écrêtage et dynamique non impulsionnelle ;
+- gain du limiteur de sécurité exactement unitaire et pic avant limiteur `< 0,82` ;
+- niveau SPL plausible aux microphones publiés et équilibre spectral borné.
+
+Les observateurs de pression par couche (`exhaust`, `intake`, `structure`) et le
+pic pré-limiteur sont des mesures atomiques en lecture seule : ils n’agissent
+jamais sur le rendu. Les tests analytiques couvrent en outre décroissance `1/r`,
+directivité arrière bridée, rejet des images au-dessus du Nyquist mécanique,
+passivité et conservation des éléments réseau.
+
+Le chemin procédural n’a pas été supprimé aveuglément : il reste isolé pour une
+API de compatibilité sans graphe physique. En production, la présence d’un
+graphe compilé lui retire la propriété de la sortie dès le premier échantillon.
+Cette séparation permet encore un diagnostic A/B explicite sans maintenir deux
+voix concurrentes dans l’application livrée.

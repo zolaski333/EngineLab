@@ -1,9 +1,9 @@
 # Audio temps réel
 
-Le chemin d’échappement livré par `EngineRuntime` est un renderer
-thermoacoustique en unités SI. Les autres familles sonores — admission,
-mécanique, distribution, démarreur et suralimentation — restent hybrides ou
-procédurales. La description physique complète et ses limites se trouvent dans
+Le mix livré par `EngineRuntime` assemble des renderers en unités SI pour
+l’échappement, l’admission et le rayonnement modal du bloc/culasses. La
+suralimentation est pilotée par le solveur mais son rendement acoustique reste
+semi-empirique. La description physique complète et ses limites se trouvent dans
 [thermoacoustic-architecture.md](thermoacoustic-architecture.md).
 
 ## Flux simulation → callback
@@ -20,11 +20,11 @@ réelle du réseau vers le cylindre. Les horodatages utilisent le temps de
 simulation ; une PLL logicielle lente compense la dérive entre horloge producteur
 et horloge de la carte son sans déplacer brutalement les événements.
 
-Lorsque la première frontière thermoacoustique valide est consommée,
-`RealtimeEngineAudio` verrouille `physicalExhaustActive_`. Il supprime toutes les
-voix d’échappement procédurales déjà actives ou planifiées. Si la télémétrie
-devient ensuite invalide, les guides physiques se vident naturellement ; le
-synthétiseur historique ne revient pas.
+Lorsqu’un graphe thermoacoustique valide est compilé, il possède la sortie dès le
+premier échantillon et propage le silence jusqu’à la première frontière. Si la
+télémétrie devient ensuite invalide, les guides physiques se vident
+naturellement ; le synthétiseur historique n’apparaît ni au démarrage ni après
+une perte de producteur.
 
 ## Source physique
 
@@ -52,10 +52,11 @@ invariance.
 
 ## Sortie, rayonnement et niveau
 
-Chaque chemin aboutit à une charge causale passive d’ouverture circulaire non
-bridée. L’onde réfléchie retourne au collecteur ; l’accélération de vitesse de
-volume donne la pression monopolaire à 1 m. Un retard supplémentaire `r/c` dans
-l’air conserve sa phase par rapport aux sources mécaniques.
+Chaque sortie aboutit à une charge causale passive d’ouverture circulaire libre
+ou bridée. L’onde réfléchie retourne au collecteur ; l’accélération de vitesse
+de volume donne une pression monopolaire de référence. `FreeFieldObserver`
+propage ensuite séparément vers les microphones gauche et droit avec distance
+exacte, décroissance `1/r`, retard `r/c` et directivité dépendante de `ka`.
 
 Le signal reste en pascals jusqu’à la conversion de monitoring. Puisque les
 dBFS décrivent une chaîne électrique/numérique et non une pression universelle,
@@ -63,7 +64,7 @@ la pleine échelle SPL du micro/préampli est publiée explicitement dans
 `RealtimeAudioState::acousticFullScaleSplDb`. Par défaut :
 
 ```text
-448,275 Pa crête = 316,979 Pa RMS = 144 dB SPL = 0 dBFS
+141,589 Pa crête = 100,237 Pa RMS = 134 dB SPL = 0 dBFS
 ```
 
 La conversion utilise toujours la référence acoustique de 20 µPa. Modifier
@@ -72,8 +73,10 @@ modifie ni la pression physique calculée, ni la propagation, ni le volume
 d’écoute. Le pic de pression SI observé et l’activité du leveler sont exposés
 séparément aux harnais de validation.
 
-Les sorties ne possédant pas encore de position 3D publiée, le champ libre est
-mono et co-localisé. Une IR stéréo mesurée peut spatialiser ce signal en aval.
+Les positions/axes 3D des sorties et le couple de microphones sont publiés par
+le schéma moteur 4. La stéréo provient donc des différences physiques de trajet,
+pas d’un panoramique. Une IR stéréo mesurée peut ajouter la pièce ou la cabine en
+aval.
 
 ## Réponses impulsionnelles
 
@@ -89,15 +92,12 @@ réponse du tube déjà simulée.
 
 ## Autres couches
 
-La pression chambre alimente encore une couche combustion/structure
-conditionnée. Admission, mécanique, distribution, démarreur et suralimentation
-utilisent les modèles historiques. Ils sont séparés du bus d’échappement et de
-son étalonnage SI, mais ils empêchent encore de qualifier le mix complet de
-modèle acoustique entièrement physique.
-
-Le remplacement honnête de la mécanique requiert un modèle modal réduit du
-bloc, de la culasse et des carters. Voir la section « Compatibilité physique » du
-document d’architecture.
+`AcousticIntakeNetwork` propage les débits de soupapes dans les runners, le
+plénum, le papillon et l’entrée d’air. `StructuralModalRadiator` reçoit forces
+gazeuses, inerties et réactions de paliers en SI. La suralimentation emploie
+puissance d’arbre, ordres de pales/lobes et débits de wastegate/dump valve ; ses
+niveaux absolus restent semi-empiriques tant qu’aucune mesure composant ne les
+remplace. Voir les §21–24 du document d’architecture.
 
 ## Contrat du callback
 
@@ -138,6 +138,6 @@ sous-pas mécanique malgré le couplage multirate du réseau non linéaire.
 - huit chemins et 32 cylindres maximum ;
 - acoustique plane et linéaire pour la bande audio ;
 - pas de correction de rayonnement par écoulement moyen ;
-- pas de position ni directivité 3D par sortie ;
-- pas de modèle structurel modal ;
-- pas de validation perceptuelle ni de corrélation multi-microphone achevée.
+- modes structurels estimés lorsque aucune mesure NVH n’est fournie ;
+- rendement acoustique de suralimentation encore semi-empirique ;
+- corrélation multi-microphone réelle encore à effectuer moteur par moteur.

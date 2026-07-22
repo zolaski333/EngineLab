@@ -1455,7 +1455,7 @@ void RealtimeEngineAudio::render(juce::AudioBuffer<float>& output, int startSamp
                 // The monopole expression returns the correct far-field
                 // amplitude but is evaluated at source time. Apply r/c in air
                 // explicitly so its phase relative to the mechanical source is
-                // also physical at the calibrated one-metre observer.
+                // also physical at the configured observer.
                 const auto mouthPressure = std::isfinite(radiation.farFieldPressurePa)
                     ? static_cast<float>(radiation.farFieldPressurePa)
                     : 0.0F;
