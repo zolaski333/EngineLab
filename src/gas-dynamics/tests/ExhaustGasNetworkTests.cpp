@@ -360,6 +360,52 @@ void testOutletFlowIsPhysicalAndConservative() {
                              network.cylinderExchanges(), network.outletSamples(), 3.0e-9);
 }
 
+void testOpenEndDischargesTowardFreeExpansion() {
+    // A terminal opening vents into the atmosphere, which is a reservoir and not
+    // a neighbouring cell of cold dense air. The reference is Saint-Venant's
+    // isentropic discharge velocity for the pressure ratio actually present --
+    // a closed-form identity, so this gate cannot drift onto the simulator's own
+    // output the way a recorded mass flow would.
+    //
+    // The bound is deliberately loose in both directions. A 0-D reservoir
+    // boundary on a duct that is still filling cannot reach the ideal figure,
+    // and a Riemann ghost cell deliberately stops short of it; what this catches
+    // is the order-of-magnitude error the previous boundary made, which
+    // discharged a 180 kPa tailpipe at 68 m/s where free expansion gives 699 and
+    // left the whole exhaust 79 kPa above ambient (docs/physics-audit.md).
+    ExhaustGasNetworkConfig configuration;
+    configuration.initialPressurePa = 180'000.0;
+    configuration.initialTemperatureK = 1'580.0;
+    auto network = makeNetwork(makeDefaultInlineFour(), configuration);
+    const auto ambient = ambientFor(network, 101'325.0, 295.0, 1.0);
+    const auto before = network.inventory();
+    const auto result = network.advance(0.0004, {}, ambient);
+    requireNetwork(result.completed, "pressurised open-end discharge must complete");
+    requireNetwork(network.outletSamples().size() == 1,
+        "inline-four fixture must expose one outlet sample");
+    const auto& sample = network.outletSamples().front();
+    requireNetwork(sample.densityKgPerM3 > 0.0 && sample.temperatureK > 0.0,
+        "outlet telemetry must stay physical while discharging");
+
+    constexpr auto gamma = 1.3;
+    constexpr auto gasConstant = 287.0;
+    const auto pressureRatio = std::min(1.0, 101'325.0 / sample.staticPressurePa);
+    const auto heatCapacityCp = gamma * gasConstant / (gamma - 1.0);
+    const auto freeExpansionVelocity = std::sqrt(std::max(0.0,
+        2.0 * heatCapacityCp * sample.temperatureK
+            * (1.0 - std::pow(pressureRatio, (gamma - 1.0) / gamma))));
+    requireNetwork(freeExpansionVelocity > 1.0,
+        "the discharge fixture must actually hold a pressure ratio");
+    const auto attained = sample.axialVelocityMps / freeExpansionVelocity;
+    requireNetwork(attained > 0.25,
+        "an open end must discharge at a substantial fraction of free expansion, "
+        "not against the ambient acoustic impedance");
+    requireNetwork(attained < 2.0,
+        "an open-end discharge must not exceed free expansion");
+    requireMassEnergyBalance(before, network.inventory(),
+                             network.cylinderExchanges(), network.outletSamples(), 3.0e-9);
+}
+
 [[nodiscard]] EngineConfig directChainConfig() {
     auto config = makeDefaultInlineFour();
     auto& path = config.exhaustPaths.front();
@@ -494,6 +540,7 @@ void runExhaustGasNetworkTests() {
     testInstantaneousBoundarySamplingIsSignedAndNonMutating();
     testResetIsAllocationFreeStateReinitialisation();
     testOutletFlowIsPhysicalAndConservative();
+    testOpenEndDischargesTowardFreeExpansion();
     testDirectDuctInterfaceTransmitsWavesWithoutInventoryLoss();
     testBoundaryInputOrderIsIrrelevant();
 }

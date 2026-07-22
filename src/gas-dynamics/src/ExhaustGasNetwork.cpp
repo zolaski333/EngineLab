@@ -3,12 +3,71 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <optional>
 
 namespace enginelab::gasdynamics {
 namespace {
 
 [[nodiscard]] bool finite(double value) noexcept {
     return std::isfinite(value);
+}
+
+/**
+ * Boundary state at a terminal opening discharging into open atmosphere.
+ *
+ * The atmosphere is a reservoir, not a neighbouring cell. Solving a Riemann
+ * problem between the last duct state and a cell of ambient air makes the
+ * exhaust push a semi-infinite column of cold dense gas out of the way: the
+ * flux is then limited by the *ambient* acoustic impedance rho_a*c_a, which for
+ * 22 degC air is larger than the hot exhaust's own. Measured on the LS3 at
+ * 5990 rpm, the tailpipe sat 79 kPa above ambient while discharging at only
+ * 68 m/s where a free expansion gives 699, and lightening the ambient reservoir
+ * by 17x dropped that to 16 kPa -- the back pressure was the boundary, not the
+ * pipe. It is wrong acoustically for the same reason: an open end must reflect
+ * a compression as a rarefaction, and against a denser reservoir it reflected
+ * with the sign of a closed one.
+ *
+ * The standard characteristic treatment instead imposes the reservoir's static
+ * pressure at the exit plane and takes everything else from the outgoing
+ * invariant u + 2c/(gamma-1), which is the only information the interior sends
+ * to the boundary while the flow there is subsonic. Once the exit is sonic no
+ * information travels upstream at all and the interior state stands unchanged.
+ * Entropy and composition come from whichever side the gas actually arrives
+ * from, so backflow draws air rather than re-inhaling its own exhaust.
+ */
+[[nodiscard]] std::optional<PrimitiveState> openEndBoundaryPrimitive(
+    const PrimitiveState& interior, const PrimitiveState& ambient) noexcept {
+    const auto gamma = interior.heatCapacityRatio;
+    if (!(gamma > 1.0) || !(interior.pressurePa > 0.0)
+        || !(interior.densityKgPerM3 > 0.0) || !(interior.speedOfSoundMps > 0.0)
+        || !(ambient.pressurePa > 0.0) || !(ambient.densityKgPerM3 > 0.0)
+        || !(ambient.speedOfSoundMps > 0.0))
+        return std::nullopt;
+    // Sonic or supersonic outflow: the exit plane is determined entirely from
+    // inside, so the interior state is already the boundary state.
+    if (interior.velocityMps >= interior.speedOfSoundMps) return interior;
+
+    PrimitiveState boundary = interior;
+    boundary.pressurePa = ambient.pressurePa;
+    // Isentropic along the interior's own entropy, which is what an outflowing
+    // particle carries with it to the exit plane.
+    boundary.densityKgPerM3 = interior.densityKgPerM3
+        * std::pow(ambient.pressurePa / interior.pressurePa, 1.0 / gamma);
+    if (!(boundary.densityKgPerM3 > 0.0)) return std::nullopt;
+    boundary.speedOfSoundMps = std::sqrt(gamma * boundary.pressurePa
+        / boundary.densityKgPerM3);
+    boundary.velocityMps = interior.velocityMps
+        + 2.0 * (interior.speedOfSoundMps - boundary.speedOfSoundMps) / (gamma - 1.0);
+    // Backflow: the duct is drawing from the atmosphere, which is a reservoir at
+    // rest. The invariant above cannot be continued across that contact -- it
+    // holds only within one gamma and one entropy, and evaluating it on the hot
+    // gas's sound speed while assigning it the atmosphere's produced a 2 km/s
+    // outflow in the branch meant to model an inflow. Every catalogue engine but
+    // one stalled on that.
+    if (boundary.velocityMps < 0.0) return ambient;
+    if (!finite(boundary.velocityMps) || !finite(boundary.speedOfSoundMps))
+        return std::nullopt;
+    return boundary;
 }
 
 [[nodiscard]] ConservativeState addScaled(const ConservativeState& first,
@@ -762,12 +821,37 @@ bool ExhaustGasNetwork::evaluateStage(
             openingArea /= std::sqrt(1.0
                 + layout_.junctions()[outlet.networkEndpoint.elementIndex].lossCoefficient);
         }
-        const auto rawFlux = openingArea > 0.0
-            ? mixtureModel_.riemannFluxPrepared(
-                endpointState(outlet.networkEndpoint),
-                endpointPrimitive(outlet.networkEndpoint),
-                ambient.reservoirState, ambientPrimitive_)
-            : EulerFlux {};
+        // Terminal openings use the characteristic open-end boundary rather
+        // than a Riemann problem against a cell of ambient air; see
+        // openEndBoundaryPrimitive. The Riemann form is kept as the fallback
+        // for a state the characteristic reconstruction cannot represent, so an
+        // unphysical corner degrades to the previous behaviour instead of
+        // producing no flux at all.
+        auto rawFlux = EulerFlux {};
+        if (openingArea > 0.0) {
+            const auto& interiorPrimitive = endpointPrimitive(outlet.networkEndpoint);
+            const auto boundary = openEndBoundaryPrimitive(
+                interiorPrimitive, ambientPrimitive_);
+            const auto boundaryState = boundary
+                ? mixtureModel_.conservativeFromPrimitive(
+                    boundary->densityKgPerM3, boundary->velocityMps, boundary->pressurePa,
+                    GasComposition { boundary->massFractions })
+                : std::nullopt;
+            // Ghost-cell form deliberately, not the boundary state's physical
+            // flux: the terminal cell is not uniformly at the exit state, and
+            // taking the raw flux there let a blowdown drain the whole cell in
+            // one substep. Going back through the Riemann solver keeps its wave
+            // speeds and positivity safeguards while the ghost still carries the
+            // atmosphere's pressure with the exhaust's own density, so the duct
+            // no longer has to shove a column of cold dense air aside.
+            rawFlux = boundaryState && mixtureModel_.isPhysical(*boundaryState)
+                ? mixtureModel_.riemannFluxPrepared(
+                    endpointState(outlet.networkEndpoint), interiorPrimitive,
+                    *boundaryState, *boundary)
+                : mixtureModel_.riemannFluxPrepared(
+                    endpointState(outlet.networkEndpoint), interiorPrimitive,
+                    ambient.reservoirState, ambientPrimitive_);
+        }
         outletFlows[index] = makeFlowRate(rawFlux, openingArea);
         if (outlet.networkEndpoint.type == ExhaustEndpointType::junction) {
             addJunctionFlow(outlet.networkEndpoint.elementIndex, outletFlows[index], -1.0);
