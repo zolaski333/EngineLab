@@ -1,4 +1,5 @@
 #include <enginelab/audio/AcousticMonitorCalibration.hpp>
+#include <enginelab/audio/AcousticExhaustNetwork.hpp>
 #include <enginelab/audio/BoundaryReconstructionFilter.hpp>
 #include <enginelab/audio/NonlinearDuctAcoustics.hpp>
 #include <enginelab/audio/RealtimeEngineAudio.hpp>
@@ -255,6 +256,87 @@ enginelab::EngineConfig customRuntimeExhaustFixture() {
     path.network = std::move(network);
     enginelab::normaliseEngineConfig(config);
     return config;
+}
+
+void branchedAcousticTopologyRegression() {
+    auto config = enginelab::makeDefaultInlineFour();
+    auto& path = config.exhaustPaths.front();
+    enginelab::ExhaustNetworkConfig network;
+    for (std::size_t index = 0; index < config.cylinders.size(); ++index) {
+        enginelab::ExhaustComponentConfig primary;
+        primary.id = static_cast<std::uint32_t>(100 + index);
+        primary.type = enginelab::ExhaustComponentType::pipe;
+        primary.lengthMm = 360.0 + 20.0 * static_cast<double>(index);
+        primary.diameterMm = 40.0;
+        network.components.push_back(primary);
+        network.cylinderConnections.push_back({
+            config.cylinders[index].id, primary.id });
+        network.connections.push_back({ primary.id, 200 });
+    }
+    enginelab::ExhaustComponentConfig merge;
+    merge.id = 200;
+    merge.type = enginelab::ExhaustComponentType::merge;
+    merge.diameterMm = 55.0;
+    network.components.push_back(merge);
+    enginelab::ExhaustComponentConfig splitter;
+    splitter.id = 210;
+    splitter.type = enginelab::ExhaustComponentType::splitter;
+    splitter.diameterMm = 55.0;
+    network.components.push_back(splitter);
+    for (const auto [id, length] : std::array {
+             std::pair { 300U, 240.0 }, std::pair { 301U, 510.0 } }) {
+        enginelab::ExhaustComponentConfig outlet;
+        outlet.id = id;
+        outlet.type = enginelab::ExhaustComponentType::outlet;
+        outlet.lengthMm = length;
+        outlet.diameterMm = id == 300U ? 52.0 : 46.0;
+        network.components.push_back(outlet);
+        network.connections.push_back({ 210, id });
+    }
+    network.connections.push_back({ 200, 210 });
+    path.network = std::move(network);
+    enginelab::normaliseEngineConfig(config);
+
+    const auto graph = enginelab::ExhaustGraph::makeForEngine(config);
+    std::array<std::uint32_t, 4> cylinderIds {};
+    for (std::size_t index = 0; index < cylinderIds.size(); ++index)
+        cylinderIds[index] = config.cylinders[index].id;
+    enginelab::AcousticExhaustNetwork acoustics(graph, cylinderIds);
+    require(acoustics.valid(),
+        "a valid branched exhaust DAG must compile for audio");
+    require(acoustics.ductCount() == 6 && acoustics.outletCount() == 2
+            && acoustics.junctionCount() >= 1,
+        "the acoustic compiler must retain every primary, branch and outlet");
+    require(acoustics.prepare(48'000.0),
+        "the compiled exhaust must allocate its realtime lines");
+    const std::array<enginelab::AcousticExhaustNetwork::Medium, 1> medium {{
+        { 0.55F, 535.0F }
+    }};
+    acoustics.beginBlock(medium, 1.0);
+
+    std::array<float, 4> sources {};
+    std::array<enginelab::AcousticExhaustNetwork::CylinderBoundary, 4> boundaries {};
+    auto radiatedEnergy = 0.0;
+    for (std::size_t sample = 0; sample < 4'096; ++sample) {
+        sources[0] = sample < 128
+            ? 5'000.0F * static_cast<float>(std::sin(
+                std::numbers::pi * static_cast<double>(sample + 1U) / 129.0))
+            : 0.0F;
+        const auto output = acoustics.process(sources, boundaries, 1.0F);
+        require(std::isfinite(output[0]),
+            "a branched acoustic graph must remain finite");
+        radiatedEnergy += static_cast<double>(output[0]) * output[0];
+    }
+    require(radiatedEnergy > 1.0e-10,
+        "a source must reach the independently retained outlets");
+
+    acoustics.reset();
+    sources.fill(0.0F);
+    for (std::size_t sample = 0; sample < 512; ++sample) {
+        const auto output = acoustics.process(sources, boundaries, 1.0F);
+        require(output[0] == 0.0F,
+            "a reset source-free network must be exactly silent");
+    }
 }
 
 double absoluteDifference(const std::vector<float>& left, const std::vector<float>& right) {
@@ -1293,6 +1375,7 @@ int main() {
         latencyAndBlockSizeRegression();
         runnerDelaySampleRateRegression();
         exhaustPathIsolationRegression();
+        branchedAcousticTopologyRegression();
         customGraphRuntimeTelemetryRegression();
         ambientPressureRegression();
         physicalThermoacousticPathRegression();

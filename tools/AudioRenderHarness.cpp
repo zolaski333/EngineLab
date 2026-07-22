@@ -197,6 +197,7 @@ struct Metrics {
     // Which path produced the audio. A physical path that never activated would
     // otherwise be reported as an unchanged-sounding physical path.
     bool physicalActive { false };
+    bool compiledTopologyActive { false };
     std::uint64_t legacyPathSamples {};
     std::uint64_t invalidBoundarySamples {};
 };
@@ -393,7 +394,8 @@ Metrics renderEngine(const EngineConfig& baseConfig, const WavData& ir,
     constexpr double audioRate = 48'000.0;
     constexpr double dt = 1.0 / 240.0;
     constexpr int samplesPerStep = 200; // 48000 / 240
-    auto rendererPtr = std::make_unique<RealtimeEngineAudio>(eventQueue, audioState, &pressureQueue);
+    auto rendererPtr = std::make_unique<RealtimeEngineAudio>(
+        eventQueue, audioState, &pressureQueue, &audioConfiguration->exhaustGraph());
     auto& renderer = *rendererPtr;
     if (!ir.samples.empty()) renderer.setImpulseResponse(ir.samples, ir.sampleRate, 0);
     renderer.prepare(audioRate, samplesPerStep);
@@ -541,6 +543,7 @@ Metrics renderEngine(const EngineConfig& baseConfig, const WavData& ir,
     m.levelLimitedSamples = renderer.levelLimitedSampleCount();
     m.minLevelGain = renderer.minObservedLevelGain();
     m.physicalActive = renderer.physicalExhaustActive();
+    m.compiledTopologyActive = renderer.compiledExhaustTopologyActive();
     m.legacyPathSamples = renderer.legacyPathSampleCount();
     m.invalidBoundarySamples = renderer.invalidBoundarySampleCount();
     if (writeOutput)
@@ -554,6 +557,7 @@ Metrics renderEngine(const EngineConfig& baseConfig, const WavData& ir,
               << " brightness=" << std::setprecision(3) << m.left.window.brightness
               << " dc=" << std::showpos << m.left.window.mean << std::noshowpos
               << " physical=" << (m.physicalActive ? "yes" : "NO")
+              << " topology=" << (m.compiledTopologyActive ? "full" : "LEGACY")
               << " legacySamples=" << m.legacyPathSamples
               << " boundaryDropouts=" << m.invalidBoundarySamples
               << " solverHz=" << std::setprecision(0) << m.solverFrequencyHz
@@ -628,7 +632,7 @@ IdleCycleMetrics renderIdleCycle(const EngineConfig& baseConfig, const WavData& 
     auto& pressureQueue = *pressureQueueOwner;
     auto& audioState = audioConfiguration->audioState();
     auto rendererOwner = std::make_unique<RealtimeEngineAudio>(
-        eventQueue, audioState, &pressureQueue);
+        eventQueue, audioState, &pressureQueue, &audioConfiguration->exhaustGraph());
     auto& renderer = *rendererOwner;
     if (!ir.samples.empty()) renderer.setImpulseResponse(ir.samples, ir.sampleRate, 0);
     constexpr double audioRate = 48'000.0;
@@ -895,7 +899,8 @@ DecayMeasurement measureExhaustDecay(const EngineConfig& baseConfig, const WavDa
     auto pressureQueuePtr = std::make_unique<CylinderPressureQueue>();
     auto& eventQueue = *eventQueuePtr;
     auto& pressureQueue = *pressureQueuePtr;
-    auto rendererPtr = std::make_unique<RealtimeEngineAudio>(eventQueue, audioState, &pressureQueue);
+    auto rendererPtr = std::make_unique<RealtimeEngineAudio>(
+        eventQueue, audioState, &pressureQueue, &audioConfiguration->exhaustGraph());
     auto& renderer = *rendererPtr;
     if (!ir.samples.empty()) renderer.setImpulseResponse(ir.samples, ir.sampleRate, 0);
     renderer.prepare(audioRate, samplesPerStep);
@@ -984,7 +989,7 @@ bool runtimePathCheck(const EngineConfig& baseConfig, const WavData& ir) {
     auto runtime = std::make_unique<EngineRuntime>(config);
     auto renderer = std::make_unique<RealtimeEngineAudio>(
         runtime->audioEvents(), runtime->audioState(),
-        &runtime->cylinderPressureSamples());
+        &runtime->cylinderPressureSamples(), &runtime->exhaustGraph());
     if (!ir.samples.empty()) renderer->setImpulseResponse(ir.samples, ir.sampleRate, 0);
 
     constexpr double audioRate = 48'000.0;
@@ -1058,6 +1063,7 @@ bool runtimePathCheck(const EngineConfig& baseConfig, const WavData& ir) {
             0.95 * static_cast<double>(renderMicroseconds.size() - 1U))];
     const auto blockBudgetMicroseconds = blockSeconds * 1.0e6;
     const auto physical = renderer->physicalExhaustActive();
+    const auto fullTopology = renderer->compiledExhaustTopologyActive();
     // Engine speed at the end of the run. A silent render means nothing until
     // it is known whether the engine was still turning: a stalled engine is a
     // physics defect, not an audio one.
@@ -1065,6 +1071,7 @@ bool runtimePathCheck(const EngineConfig& baseConfig, const WavData& ir) {
     std::cout << "  " << std::left << std::setw(26) << config.name
               << " finalRpm=" << std::fixed << std::setprecision(0) << finalRpm
               << " physical=" << (physical ? "yes" : "NO")
+              << " topology=" << (fullTopology ? "full" : "LEGACY")
               << " legacySamples=" << renderer->legacyPathSampleCount()
               << " boundaryDropouts=" << renderer->invalidBoundarySampleCount()
               << " rms=" << std::fixed << std::setprecision(4) << rms
@@ -1088,10 +1095,13 @@ bool runtimePathCheck(const EngineConfig& baseConfig, const WavData& ir) {
               << "/" << static_cast<std::uint64_t>(rendered * 240.0)
               << " maxLate=" << std::setprecision(2)
               << runtime->maximumTimingLatenessSeconds() * 1.0e3 << "ms\n";
-    auto ok = physical;
+    auto ok = physical && fullTopology;
     if (!physical)
         std::cerr << "FAIL: runtime wiring: " << config.name
                   << " never activated the physical exhaust path\n";
+    if (!fullTopology)
+        std::cerr << "FAIL: runtime wiring: " << config.name
+                  << " did not compile the complete exhaust topology\n";
     // An engine that has stopped turning cannot produce engine sound, and no
     // amount of audio work will change that. This is checked here rather than in
     // the offline renders because those drive throttle and a dyno load
@@ -1151,6 +1161,7 @@ int main(int argc, char** argv) {
         const auto metrics = renderEngine(
             selected->config, ir, outDir, 3.0, true);
         const auto valid = metrics.physicalActive
+            && metrics.compiledTopologyActive
             && metrics.left.scan.finite && metrics.right.scan.finite
             && metrics.droppedPressureSamples == 0
             && metrics.invalidBoundarySamples == 0;
@@ -1266,6 +1277,9 @@ int main(int argc, char** argv) {
             std::cerr << "FAIL: " << label << ": " << reason << '\n';
             ok = false;
         };
+        if (!m.physicalActive) fail("physical exhaust rendering was not active");
+        if (!m.compiledTopologyActive)
+            fail("the complete exhaust topology was not active");
         const auto channels = { std::pair { "left", &m.left }, std::pair { "right", &m.right } };
         for (const auto& [name, channel] : channels) {
             const std::string suffix = std::string(" (") + name + " channel)";

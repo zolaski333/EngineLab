@@ -704,3 +704,31 @@ L'EJ25 garde un plancher HF élevé en montée (20.9 % au-dessus de 4 kHz contre
 7.1 % sans chambre) : ce plancher **préexiste** à la chambre, celle-ci le
 démasque en retirant du grave. C'est la prochaine chose à regarder sur ce
 moteur, et c'est un problème de couche turbo, pas de silencieux.
+
+## 20. Réseau acoustique complet compilé depuis le DAG
+
+`AcousticExhaustNetwork` compile désormais l'`ExhaustGraph` exact en réseau
+d'ondes temps réel. Chaque conduit conserve sa longueur et sa section dans une
+ligne bidirectionnelle avec pertes de paroi et propagation à amplitude finie ;
+les merges et splitters utilisent une diffusion N-ports pondérée par les
+admittances. Chaque sortie possède sa propre charge de rayonnement et son retard
+jusqu'à l'observateur. Une topologie 4-vers-1-vers-2 reste donc six conduits et
+deux sorties, au lieu d'être réduite à un runner moyen et un collecteur moyen.
+
+La chambre d'expansion est elle aussi issue de sa géométrie publiée : son volume
+et sa longueur donnent sa section interne, tandis que le diamètre de connexion
+conserve les deux discontinuités réelles. `muffler_restriction` reste une perte
+de charge de l'écoulement moyen ; elle n'est volontairement pas transformée en
+gain acoustique large bande sans loi physique d'absorption.
+
+Toute la mémoire des conduits, jonctions, sorties et retards est réservée dans
+`prepare()`. `process()` n'alloue pas et le harnais de rendu refuse maintenant
+un moteur de production si le DAG complet n'est pas actif. Le réseau réduit
+historique ne subsiste que comme chemin de compatibilité pour les producteurs
+et tests qui ne fournissent pas encore d'`ExhaustGraph`.
+
+Limite assumée : les jonctions sont des diffuseurs acoustiques instantanés,
+sans compliance concentrée propre. Les volumes finis qui ont une longueur
+publiée deviennent bien des conduits ; modéliser ultérieurement un plénum
+compact sans longueur exigera un élément de compliance dédié, pas un gain de
+voicing.

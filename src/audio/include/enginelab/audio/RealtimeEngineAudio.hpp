@@ -1,4 +1,5 @@
 #pragma once
+#include <enginelab/audio/AcousticExhaustNetwork.hpp>
 #include <enginelab/audio/IAudioRenderer.hpp>
 #include <enginelab/audio/PipeRadiationModel.hpp>
 #include <enginelab/audio/BoundaryReconstructionFilter.hpp>
@@ -26,7 +27,8 @@ namespace enginelab {
 class RealtimeEngineAudio final : public IAudioRenderer {
 public:
     RealtimeEngineAudio(FiringEventQueue& queue, RealtimeAudioState& state,
-                        CylinderPressureQueue* pressureQueue = nullptr);
+                        CylinderPressureQueue* pressureQueue = nullptr,
+                        const ExhaustGraph* exhaustGraph = nullptr);
     void prepare(double sampleRate, int maximumBlockSize) noexcept override;
     void release() noexcept override;
     void render(juce::AudioBuffer<float>& output, int startSample, int sampleCount) noexcept override;
@@ -61,6 +63,11 @@ public:
      * that never activated. */
     [[nodiscard]] bool physicalExhaustActive() const noexcept {
         return physicalExhaustActive_.load(std::memory_order_relaxed);
+    }
+    /** True only when the complete ExhaustGraph, rather than the compatibility
+     * runner/path reduction, was compiled successfully. */
+    [[nodiscard]] bool compiledExhaustTopologyActive() const noexcept {
+        return acousticExhaustNetwork_ != nullptr;
     }
     /** Samples rendered on the legacy procedural path.
      *
@@ -225,14 +232,7 @@ private:
      * every sample: its resistance depends on the acoustic velocity through the
      * opening, which is only known inside the waveguide.
      */
-    struct PortBoundary final {
-        float conductanceAreaM2 {};
-        float meanMassFlowKgPerSecond {};
-        float densityKgPerM3 {};
-        float characteristicImpedancePaSPerM3 {};
-        /** False until the runtime publishes a valid thermoacoustic boundary. */
-        bool physical { false };
-    };
+    using PortBoundary = AcousticExhaustNetwork::CylinderBoundary;
     [[nodiscard]] std::array<float, maximumPaths> processExhaustWaveguides(
         const std::array<float, maxRunners>& pulse,
         const std::array<std::uint8_t, maxRunners>& pathIndex,
@@ -264,6 +264,9 @@ private:
     // Per-runner bidirectional digital waveguide (port <-> collector) with an
     // N-port scattering junction that couples cylinders sharing a collector.
     std::unique_ptr<RunnerWaveguides> runners_;
+    /** Complete compiled DAG used by production engines. Null only for legacy
+     * producers/tests that did not supply topology. */
+    std::unique_ptr<AcousticExhaustNetwork> acousticExhaustNetwork_;
     // Sized in prepare() to the cylinders and paths the loaded engine actually
     // has. Allocation stays off the callback; only the capacity is no longer a
     // worst-case guess paid for by every engine.

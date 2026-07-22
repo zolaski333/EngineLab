@@ -71,9 +71,24 @@ constexpr double ambientSoundSpeedMps = 343.0;
 
 RealtimeEngineAudio::RealtimeEngineAudio(FiringEventQueue& queue,
                                          RealtimeAudioState& state,
-                                         CylinderPressureQueue* pressureQueue)
+                                         CylinderPressureQueue* pressureQueue,
+                                         const ExhaustGraph* exhaustGraph)
     : queue_(queue), realtimeState_(state), pressureQueue_(pressureQueue),
-      runners_(std::make_unique<RunnerWaveguides>()) {}
+      runners_(std::make_unique<RunnerWaveguides>()) {
+    if (exhaustGraph != nullptr) {
+        std::array<std::uint32_t, maxRunners> cylinderIds {};
+        const auto count = std::clamp<std::size_t>(static_cast<std::size_t>(
+            std::lround(realtimeState_.cylinderCount.load(std::memory_order_relaxed))),
+            1U, maxRunners);
+        for (std::size_t index = 0; index < count; ++index)
+            cylinderIds[index] = realtimeState_.cylinderId[index].load(
+                std::memory_order_relaxed);
+        auto compiled = std::make_unique<AcousticExhaustNetwork>(
+            *exhaustGraph,
+            std::span<const std::uint32_t>(cylinderIds.data(), count));
+        if (compiled->valid()) acousticExhaustNetwork_ = std::move(compiled);
+    }
+}
 
 std::size_t RealtimeEngineAudio::runnerDelaySamples(double delaySeconds,
                                                     double sampleRate) noexcept {
@@ -198,6 +213,10 @@ void RealtimeEngineAudio::prepare(double sampleRate, int maximumBlockSize) noexc
     gainAttackCoefficient_ = rateInvariantCoefficient(0.0020F, sampleRate_);
     gainReleaseCoefficient_ = levelReleaseCoefficient_;
     allocateDelayLines();
+    if (acousticExhaustNetwork_
+        && !acousticExhaustNetwork_->prepare(
+            sampleRate_, maximumAcousticDelayScale, observerDistanceM))
+        acousticExhaustNetwork_.reset();
     // No fabricated default IR. A user-supplied measured room/cabin response is
     // legitimate downstream propagation; inventing one here would make the
     // exhaust sound larger without improving the simulated source.
@@ -282,6 +301,7 @@ void RealtimeEngineAudio::release() noexcept {
     for (auto& state : boundaryReconstructionFlow_) state.reset();
     valveFlowAcousticSource_ = {};
     for (auto& state : valveFlowAcousticSourceState_) state.reset();
+    if (acousticExhaustNetwork_) acousticExhaustNetwork_->reset();
     physicalExhaustActive_ = false;
     pressureSampleIntervalSeconds_ = 0.0;
     levelLimitedSamples_.store(0, std::memory_order_relaxed);
@@ -651,6 +671,19 @@ void RealtimeEngineAudio::render(juce::AudioBuffer<float>& output, int startSamp
         cylinderExhaustGain[runner] = std::clamp(
             realtimeState_.cylinderExhaustGain[runner].load(std::memory_order_relaxed), 0.0F, 8.0F);
     }
+    if (acousticExhaustNetwork_) {
+        std::array<AcousticExhaustNetwork::Medium, maximumPaths> media {};
+        for (std::size_t path = 0; path < exhaustPathCount; ++path) {
+            media[path] = {
+                exhaustPaths_[path].mediumDensityKgPerM3,
+                exhaustPaths_[path].mediumSoundSpeedMps,
+            };
+        }
+        acousticExhaustNetwork_->beginBlock(
+            std::span<const AcousticExhaustNetwork::Medium>(
+                media.data(), exhaustPathCount),
+            acousticTimeScale);
+    }
     float blockPeakObservedExhaustPressurePa = 0.0F;
     std::uint64_t legacySamplesThisBlock = 0;
     std::uint64_t invalidBoundarySamplesThisBlock = 0;
@@ -1009,25 +1042,49 @@ void RealtimeEngineAudio::render(juce::AudioBuffer<float>& output, int startSamp
                 (void) exhaustPaths_[path].radiation.setMedium(density, soundSpeed);
             }
         }
-        const auto collectorOut = processExhaustWaveguides(
-            cylinderExhaustPulse, cylinderExhaustPath, runnerAdmittance, portReflection,
-            portBoundary_, outletAdmittance, activeCylinderCount, exhaustPathCount);
-        constexpr auto directWidth = 0.34F;
-        for (std::size_t path = 0; path < exhaustPathCount; ++path) {
-            const auto exhaustExciteLeft = sampleUsesPhysicalExhaust
-                ? collectorOut[path]
-                : collectorOut[path] * 0.64F + physicalBlowdownLeft[path] * directWidth;
-            const auto exhaustExciteRight = sampleUsesPhysicalExhaust
-                ? collectorOut[path]
-                : collectorOut[path] * 0.64F + physicalBlowdownRight[path] * directWidth;
-            pathCollectorLeft[path] += exhaustExciteLeft;
-            pathCollectorRight[path] += exhaustExciteRight;
-            // Every physical collector drives only its own measured IR. This
-            // preserves independent banks/tailpipes instead of folding all
-            // pressure into path zero before convolution.
-            if (!sampleUsesPhysicalExhaust) {
-                convolutionBank_.addInput(path, 0, sample, exhaustExciteLeft * pathGain[path]);
-                convolutionBank_.addInput(path, 1, sample, exhaustExciteRight * pathGain[path]);
+        const auto useCompiledTopology = sampleUsesPhysicalExhaust
+            && acousticExhaustNetwork_ != nullptr;
+        if (useCompiledTopology) {
+            const auto observerPressure = acousticExhaustNetwork_->process(
+                std::span<const float>(cylinderExhaustPulse.data(), activeCylinderCount),
+                std::span<const PortBoundary>(portBoundary_.data(), activeCylinderCount),
+                controlRampCoefficient_);
+            for (std::size_t path = 0; path < exhaustPathCount; ++path) {
+                blockPeakObservedExhaustPressurePa = std::max(
+                    blockPeakObservedExhaustPressurePa,
+                    std::abs(observerPressure[path]));
+                const auto calibrated = static_cast<float>(
+                    AcousticMonitorCalibration::normalisePeakPressure(
+                        observerPressure[path], acousticFullScaleSplDb));
+                // Outlet positions are not authored yet. Multiple physical
+                // mouths therefore sum coherently at the same mono observer;
+                // a measured stereo IR may spatialise this pressure downstream.
+                exhaustLeft += calibrated;
+                exhaustRight += calibrated;
+                convolutionBank_.addInput(path, 0, sample, calibrated);
+                convolutionBank_.addInput(path, 1, sample, calibrated);
+            }
+        } else {
+            const auto collectorOut = processExhaustWaveguides(
+                cylinderExhaustPulse, cylinderExhaustPath, runnerAdmittance, portReflection,
+                portBoundary_, outletAdmittance, activeCylinderCount, exhaustPathCount);
+            constexpr auto directWidth = 0.34F;
+            for (std::size_t path = 0; path < exhaustPathCount; ++path) {
+                const auto exhaustExciteLeft = sampleUsesPhysicalExhaust
+                    ? collectorOut[path]
+                    : collectorOut[path] * 0.64F + physicalBlowdownLeft[path] * directWidth;
+                const auto exhaustExciteRight = sampleUsesPhysicalExhaust
+                    ? collectorOut[path]
+                    : collectorOut[path] * 0.64F + physicalBlowdownRight[path] * directWidth;
+                pathCollectorLeft[path] += exhaustExciteLeft;
+                pathCollectorRight[path] += exhaustExciteRight;
+                // Every physical collector drives only its own measured IR. This
+                // preserves independent banks/tailpipes instead of folding all
+                // pressure into path zero before convolution.
+                if (!sampleUsesPhysicalExhaust) {
+                    convolutionBank_.addInput(path, 0, sample, exhaustExciteLeft * pathGain[path]);
+                    convolutionBank_.addInput(path, 1, sample, exhaustExciteRight * pathGain[path]);
+                }
             }
         }
         const auto audibleRpm = targetRpm * timeScale;
@@ -1154,6 +1211,7 @@ void RealtimeEngineAudio::render(juce::AudioBuffer<float>& output, int startSamp
         const auto airCoefficient = static_cast<float>(1.0 - std::exp(
             -2.0 * std::numbers::pi * presetToneHz_ * acousticTimeScale / sampleRate_));
         for (std::size_t pathIndex = 0; pathIndex < exhaustPathCount; ++pathIndex) {
+            if (useCompiledTopology) continue;
             auto& path = exhaustPaths_[pathIndex];
             // Same control-rate ramp as the runner delays; see
             // RunnerWaveguides::delayTargetSamples.

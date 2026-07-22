@@ -66,6 +66,9 @@ struct RealtimeAudioState final {
     std::array<std::atomic<float>, 8> exhaustPathMufflerExpansionRatio {};
     std::array<std::atomic<float>, 8> exhaustPathMufflerTraversalSeconds {};
     std::array<std::atomic<std::uint32_t>, 32> cylinderExhaustPathIndex {};
+    /** Stable IDs let a compiled acoustic graph map its port order back to the
+     * configuration-order pressure telemetry without assuming either order. */
+    std::array<std::atomic<std::uint32_t>, 32> cylinderId {};
     // Per-cylinder graph transmission. The pressure renderer applies it before
     // the runner waveguide; firing events carry the same metric in their own
     // payload, so neither source is multiplied again at the path output.
@@ -191,6 +194,7 @@ public:
     [[nodiscard]] FiringEventQueue& audioEvents() noexcept { return eventQueue_; }
     [[nodiscard]] CylinderPressureQueue& cylinderPressureSamples() noexcept { return *pressureQueue_; }
     [[nodiscard]] RealtimeAudioState& audioState() noexcept { return audioState_; }
+    [[nodiscard]] const ExhaustGraph& exhaustGraph() const noexcept { return exhaust_; }
     [[nodiscard]] std::shared_ptr<calibration::CalibrationStore> calibrationStore() const noexcept {
         return ecu_.calibrationStore();
     }

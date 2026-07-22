@@ -1,0 +1,546 @@
+#include <enginelab/audio/AcousticExhaustNetwork.hpp>
+
+#include <enginelab/audio/DuctWallLoss.hpp>
+#include <enginelab/audio/NonlinearDuctAcoustics.hpp>
+#include <enginelab/audio/PipeRadiationModel.hpp>
+#include <enginelab/gasdynamics/ExhaustNetworkLayout.hpp>
+
+#include <algorithm>
+#include <cmath>
+#include <limits>
+#include <numbers>
+#include <unordered_map>
+#include <utility>
+#include <vector>
+
+namespace enginelab {
+namespace {
+
+[[nodiscard]] std::size_t nextPowerOfTwo(std::size_t value) noexcept {
+    auto result = std::size_t { 1 };
+    while (result < value && result <= std::numeric_limits<std::size_t>::max() / 2)
+        result <<= 1U;
+    return result;
+}
+
+[[nodiscard]] bool isDuctEndpoint(
+    gasdynamics::ExhaustEndpointType type) noexcept {
+    return type != gasdynamics::ExhaustEndpointType::junction;
+}
+
+[[nodiscard]] std::size_t endpointKey(
+    const gasdynamics::ExhaustEndpoint& endpoint) noexcept {
+    return endpoint.elementIndex * 2U
+        + (endpoint.type == gasdynamics::ExhaustEndpointType::ductOutlet ? 1U : 0U);
+}
+
+} // namespace
+
+struct AcousticExhaustNetwork::Impl final {
+    enum class OwnerType : std::uint8_t { none, junction, cylinder, outlet };
+
+    struct EndpointOwner final {
+        OwnerType type { OwnerType::none };
+        std::size_t index {};
+    };
+
+    struct Duct final {
+        std::uint32_t pathIndex {};
+        double lengthM {};
+        double areaM2 {};
+        double radiusM {};
+        std::vector<float> forward;
+        std::vector<float> reverse;
+        std::size_t write {};
+        std::size_t mask {};
+        float delaySamples { 1.0F };
+        float delayTargetSamples { 1.0F };
+        DuctWallLoss::Coefficients wallLoss {};
+        DuctWallLoss::State forwardLoss {};
+        DuctWallLoss::State reverseLoss {};
+    };
+
+    struct Junction final {
+        std::vector<std::size_t> ductEndpoints;
+        std::vector<std::size_t> cylinderTerminals;
+        std::vector<std::size_t> outletTerminals;
+    };
+
+    struct CylinderPort final {
+        std::size_t audioCylinderIndex {};
+        std::uint32_t pathIndex {};
+        double areaM2 {};
+        bool virtualTerminal { false };
+        std::size_t endpointOrJunction {};
+        float incidentToJunction {};
+        ValvePortTermination::State reflectionState {};
+    };
+
+    struct Outlet final {
+        std::uint32_t pathIndex {};
+        double areaM2 {};
+        bool virtualTerminal { false };
+        std::size_t endpointOrJunction {};
+        float incidentToJunction {};
+        UnflangedPipeRadiation radiation;
+        std::vector<float> observerPressure;
+        std::size_t observerWrite {};
+        std::size_t observerMask {};
+        float observerDelaySamples { 1.0F };
+    };
+
+    gasdynamics::ExhaustNetworkLayout layout;
+    std::vector<Duct> ducts;
+    std::vector<Junction> junctions;
+    std::vector<CylinderPort> cylinderPorts;
+    std::vector<Outlet> outlets;
+    std::vector<EndpointOwner> owners;
+    std::vector<float> incident;
+    std::vector<float> outgoing;
+    std::array<Medium, maximumPaths> media {};
+    double sampleRateHz { 48'000.0 };
+    double maximumDelayScale { 12.5 };
+    double observerDistanceM { 1.0 };
+    bool configured { false };
+    bool prepared { false };
+
+    explicit Impl(const ExhaustGraph& graph,
+                  std::span<const std::uint32_t> cylinderIds)
+        : layout(gasdynamics::ExhaustNetworkLayout::compile(graph)) {
+        if (!layout.valid()) return;
+        ducts.reserve(layout.ducts().size());
+        for (const auto& descriptor : layout.ducts()) {
+            const auto area = std::max(1.0e-10, descriptor.flowAreaM2);
+            ducts.push_back({
+                descriptor.pathIndex,
+                descriptor.lengthM,
+                area,
+                std::sqrt(area / std::numbers::pi),
+            });
+        }
+        owners.resize(ducts.size() * 2U);
+        incident.resize(owners.size());
+        outgoing.resize(owners.size());
+
+        // Junction-to-junction edges are zero-length connections and therefore
+        // one physical scattering node. Union them before attaching duct faces.
+        std::vector<std::size_t> parent(layout.junctions().size());
+        for (std::size_t index = 0; index < parent.size(); ++index) parent[index] = index;
+        const auto rootOf = [&parent](std::size_t index) {
+            auto root = index;
+            while (parent[root] != root) root = parent[root];
+            while (parent[index] != index) {
+                const auto next = parent[index];
+                parent[index] = root;
+                index = next;
+            }
+            return root;
+        };
+        for (const auto& interface : layout.interfaces()) {
+            if (interface.upstream.type == gasdynamics::ExhaustEndpointType::junction
+                && interface.downstream.type == gasdynamics::ExhaustEndpointType::junction) {
+                const auto left = rootOf(interface.upstream.elementIndex);
+                const auto right = rootOf(interface.downstream.elementIndex);
+                if (left != right) parent[right] = left;
+            }
+        }
+        std::unordered_map<std::size_t, std::size_t> groupForRoot;
+        std::vector<std::size_t> groupForJunction(layout.junctions().size());
+        for (std::size_t index = 0; index < layout.junctions().size(); ++index) {
+            const auto root = rootOf(index);
+            const auto [found, inserted] = groupForRoot.emplace(root, junctions.size());
+            if (inserted) junctions.emplace_back();
+            groupForJunction[index] = found->second;
+        }
+
+        const auto assignEndpoint = [this](std::size_t key, OwnerType type,
+                                            std::size_t index) {
+            if (key >= owners.size() || owners[key].type != OwnerType::none)
+                return false;
+            owners[key] = { type, index };
+            return true;
+        };
+        for (const auto& interface : layout.interfaces()) {
+            const auto upstreamDuct = isDuctEndpoint(interface.upstream.type);
+            const auto downstreamDuct = isDuctEndpoint(interface.downstream.type);
+            if (!upstreamDuct && !downstreamDuct) continue;
+            std::size_t groupIndex {};
+            if (!upstreamDuct) {
+                groupIndex = groupForJunction[interface.upstream.elementIndex];
+            } else if (!downstreamDuct) {
+                groupIndex = groupForJunction[interface.downstream.elementIndex];
+            } else {
+                groupIndex = junctions.size();
+                junctions.emplace_back();
+            }
+            if (upstreamDuct) {
+                const auto key = endpointKey(interface.upstream);
+                if (!assignEndpoint(key, OwnerType::junction, groupIndex)) return;
+                junctions[groupIndex].ductEndpoints.push_back(key);
+            }
+            if (downstreamDuct) {
+                const auto key = endpointKey(interface.downstream);
+                if (!assignEndpoint(key, OwnerType::junction, groupIndex)) return;
+                junctions[groupIndex].ductEndpoints.push_back(key);
+            }
+        }
+
+        cylinderPorts.reserve(layout.cylinderPorts().size());
+        for (const auto& port : layout.cylinderPorts()) {
+            const auto found = std::find(cylinderIds.begin(), cylinderIds.end(), port.cylinderId);
+            if (found == cylinderIds.end()) return;
+            CylinderPort compiled;
+            compiled.audioCylinderIndex = static_cast<std::size_t>(
+                std::distance(cylinderIds.begin(), found));
+            compiled.pathIndex = port.pathIndex;
+            compiled.areaM2 = port.runnerConnectionAreaM2;
+            const auto portIndex = cylinderPorts.size();
+            if (port.networkEndpoint.type == gasdynamics::ExhaustEndpointType::junction) {
+                compiled.virtualTerminal = true;
+                compiled.endpointOrJunction = groupForJunction[
+                    port.networkEndpoint.elementIndex];
+                junctions[compiled.endpointOrJunction].cylinderTerminals.push_back(portIndex);
+            } else {
+                compiled.endpointOrJunction = endpointKey(port.networkEndpoint);
+                if (!assignEndpoint(compiled.endpointOrJunction,
+                        OwnerType::cylinder, portIndex)) return;
+            }
+            cylinderPorts.push_back(compiled);
+        }
+
+        outlets.reserve(layout.outlets().size());
+        for (const auto& outlet : layout.outlets()) {
+            Outlet compiled;
+            compiled.pathIndex = outlet.pathIndex;
+            compiled.areaM2 = outlet.openingAreaM2;
+            const auto outletIndex = outlets.size();
+            if (outlet.networkEndpoint.type == gasdynamics::ExhaustEndpointType::junction) {
+                compiled.virtualTerminal = true;
+                compiled.endpointOrJunction = groupForJunction[
+                    outlet.networkEndpoint.elementIndex];
+                junctions[compiled.endpointOrJunction].outletTerminals.push_back(outletIndex);
+            } else {
+                compiled.endpointOrJunction = endpointKey(outlet.networkEndpoint);
+                if (!assignEndpoint(compiled.endpointOrJunction,
+                        OwnerType::outlet, outletIndex)) return;
+            }
+            outlets.push_back(std::move(compiled));
+        }
+        configured = std::all_of(owners.begin(), owners.end(), [](const auto& owner) {
+            return owner.type != OwnerType::none;
+        }) && !ducts.empty() && !cylinderPorts.empty() && !outlets.empty();
+    }
+
+    [[nodiscard]] float readDelayed(const std::vector<float>& line,
+                                    std::size_t write,
+                                    float delaySamples,
+                                    float stiffnessRhoC2) const noexcept {
+        const auto linearRead = [&line, write](float delay) {
+            const auto delay0 = static_cast<std::size_t>(delay);
+            const auto fraction = delay - static_cast<float>(delay0);
+            const auto mask = line.size() - 1U;
+            const auto read0 = (write + line.size() - delay0) & mask;
+            const auto read1 = (write + line.size() - delay0 - 1U) & mask;
+            return std::lerp(line[read0], line[read1], fraction);
+        };
+        return NonlinearDuctAcoustics::steepenedRead(
+            linearRead, delaySamples, static_cast<float>(line.size() - 2U),
+            stiffnessRhoC2);
+    }
+
+    [[nodiscard]] float portReflection(std::size_t portIndex,
+                                       float incidentPressurePa,
+                                       std::span<const float> sources,
+                                       std::span<const CylinderBoundary> boundaries) noexcept {
+        auto& port = cylinderPorts[portIndex];
+        const auto audioIndex = port.audioCylinderIndex;
+        const auto source = audioIndex < sources.size()
+            && std::isfinite(sources[audioIndex]) ? sources[audioIndex] : 0.0F;
+        if (audioIndex >= boundaries.size() || !boundaries[audioIndex].physical)
+            return source + incidentPressurePa;
+        const auto& boundary = boundaries[audioIndex];
+        const auto impedance = static_cast<double>(
+            boundary.characteristicImpedancePaSPerM3);
+        const auto acousticVolumeVelocity = impedance > 0.0
+            ? (static_cast<double>(incidentPressurePa)
+                - port.reflectionState.previousOutput) / impedance
+            : 0.0;
+        const auto coefficients = ValvePortTermination::compute(
+            boundary.conductanceAreaM2, boundary.meanMassFlowKgPerSecond,
+            acousticVolumeVelocity, boundary.densityKgPerM3, impedance,
+            sampleRateHz);
+        return source + ValvePortTermination::process(
+            coefficients, port.reflectionState, incidentPressurePa);
+    }
+
+    [[nodiscard]] float endpointAdmittance(std::size_t key) const noexcept {
+        const auto& duct = ducts[key / 2U];
+        const auto& medium = media[std::min<std::size_t>(
+            duct.pathIndex, media.size() - 1U)];
+        return static_cast<float>(duct.areaM2
+            / (static_cast<double>(medium.densityKgPerM3)
+                * static_cast<double>(medium.soundSpeedMps)));
+    }
+
+    [[nodiscard]] float portAdmittance(std::size_t portIndex,
+                                       std::span<const CylinderBoundary> boundaries) const noexcept {
+        const auto& port = cylinderPorts[portIndex];
+        const auto audioIndex = port.audioCylinderIndex;
+        if (audioIndex < boundaries.size()) {
+            const auto impedance = boundaries[audioIndex]
+                .characteristicImpedancePaSPerM3;
+            if (std::isfinite(impedance) && impedance > 0.0F)
+                return 1.0F / impedance;
+        }
+        const auto& medium = media[std::min<std::size_t>(
+            port.pathIndex, media.size() - 1U)];
+        return static_cast<float>(port.areaM2
+            / (static_cast<double>(medium.densityKgPerM3)
+                * static_cast<double>(medium.soundSpeedMps)));
+    }
+
+    [[nodiscard]] float delayedObserverPressure(Outlet& outlet,
+                                                float pressurePa) noexcept {
+        const auto delay0 = static_cast<std::size_t>(outlet.observerDelaySamples);
+        const auto fraction = outlet.observerDelaySamples
+            - static_cast<float>(delay0);
+        const auto read0 = (outlet.observerWrite
+            + outlet.observerPressure.size() - delay0) & outlet.observerMask;
+        const auto read1 = (outlet.observerWrite
+            + outlet.observerPressure.size() - delay0 - 1U) & outlet.observerMask;
+        const auto observed = std::lerp(
+            outlet.observerPressure[read0], outlet.observerPressure[read1], fraction);
+        outlet.observerPressure[outlet.observerWrite] =
+            std::isfinite(pressurePa) ? pressurePa : 0.0F;
+        outlet.observerWrite = (outlet.observerWrite + 1U) & outlet.observerMask;
+        return observed;
+    }
+};
+
+AcousticExhaustNetwork::AcousticExhaustNetwork(
+    const ExhaustGraph& graph, std::span<const std::uint32_t> cylinderIds)
+    : impl_(std::make_unique<Impl>(graph, cylinderIds)) {}
+
+AcousticExhaustNetwork::~AcousticExhaustNetwork() = default;
+
+bool AcousticExhaustNetwork::prepare(double sampleRateHz,
+                                     double maximumDelayScale,
+                                     double observerDistanceM) {
+    if (!impl_->configured || !(sampleRateHz > 1'000.0)
+        || !(maximumDelayScale >= 1.0) || !(observerDistanceM > 0.0)
+        || !std::isfinite(sampleRateHz) || !std::isfinite(maximumDelayScale)
+        || !std::isfinite(observerDistanceM))
+        return false;
+    impl_->sampleRateHz = sampleRateHz;
+    impl_->maximumDelayScale = maximumDelayScale;
+    impl_->observerDistanceM = observerDistanceM;
+    constexpr double minimumExhaustSoundSpeedMps = 289.8;
+    for (auto& duct : impl_->ducts) {
+        const auto maximumSamples = static_cast<std::size_t>(std::ceil(
+            duct.lengthM / minimumExhaustSoundSpeedMps
+                * sampleRateHz * maximumDelayScale)) + 4U;
+        const auto length = std::max<std::size_t>(64U,
+            nextPowerOfTwo(maximumSamples));
+        duct.forward.assign(length, 0.0F);
+        duct.reverse.assign(length, 0.0F);
+        duct.mask = length - 1U;
+    }
+    const auto observerSamples = static_cast<std::size_t>(std::ceil(
+        observerDistanceM / minimumExhaustSoundSpeedMps * sampleRateHz)) + 4U;
+    const auto observerLength = std::max<std::size_t>(64U,
+        nextPowerOfTwo(observerSamples));
+    for (auto& outlet : impl_->outlets) {
+        const auto radiusM = std::sqrt(outlet.areaM2 / std::numbers::pi);
+        if (!outlet.radiation.prepare(sampleRateHz, radiusM, observerDistanceM))
+            return false;
+        outlet.observerPressure.assign(observerLength, 0.0F);
+        outlet.observerMask = observerLength - 1U;
+        outlet.observerDelaySamples = static_cast<float>(
+            observerDistanceM / 343.0 * sampleRateHz);
+    }
+    impl_->prepared = true;
+    reset();
+    beginBlock(impl_->media, 1.0);
+    return true;
+}
+
+void AcousticExhaustNetwork::reset() noexcept {
+    if (!impl_) return;
+    for (auto& duct : impl_->ducts) {
+        std::fill(duct.forward.begin(), duct.forward.end(), 0.0F);
+        std::fill(duct.reverse.begin(), duct.reverse.end(), 0.0F);
+        duct.write = 0;
+        duct.forwardLoss.reset();
+        duct.reverseLoss.reset();
+    }
+    for (auto& port : impl_->cylinderPorts) {
+        port.incidentToJunction = 0.0F;
+        port.reflectionState.reset();
+    }
+    for (auto& outlet : impl_->outlets) {
+        outlet.incidentToJunction = 0.0F;
+        outlet.radiation.reset();
+        std::fill(outlet.observerPressure.begin(),
+                  outlet.observerPressure.end(), 0.0F);
+        outlet.observerWrite = 0;
+    }
+    std::fill(impl_->incident.begin(), impl_->incident.end(), 0.0F);
+    std::fill(impl_->outgoing.begin(), impl_->outgoing.end(), 0.0F);
+}
+
+void AcousticExhaustNetwork::beginBlock(
+    std::span<const Medium> pathMedia, double acousticTimeScale) noexcept {
+    if (!impl_->prepared) return;
+    for (std::size_t path = 0; path < impl_->media.size(); ++path) {
+        if (path < pathMedia.size()
+            && std::isfinite(pathMedia[path].densityKgPerM3)
+            && pathMedia[path].densityKgPerM3 > 0.0F
+            && std::isfinite(pathMedia[path].soundSpeedMps)
+            && pathMedia[path].soundSpeedMps > 0.0F)
+            impl_->media[path] = pathMedia[path];
+    }
+    const auto timeScale = std::clamp(
+        std::isfinite(acousticTimeScale) ? acousticTimeScale : 1.0, 0.25, 4.0);
+    for (auto& duct : impl_->ducts) {
+        const auto& medium = impl_->media[std::min<std::size_t>(
+            duct.pathIndex, impl_->media.size() - 1U)];
+        const auto traversalSeconds = duct.lengthM
+            / static_cast<double>(medium.soundSpeedMps) / timeScale;
+        const auto limit = static_cast<float>(duct.forward.size() - 2U);
+        duct.delayTargetSamples = std::clamp(static_cast<float>(
+            traversalSeconds * impl_->sampleRateHz), 1.0F, limit);
+        if (duct.delaySamples <= 1.0F)
+            duct.delaySamples = duct.delayTargetSamples;
+        duct.wallLoss = DuctWallLoss::fit(
+            traversalSeconds, duct.radiusM, medium.densityKgPerM3,
+            medium.soundSpeedMps, impl_->sampleRateHz);
+    }
+    for (auto& outlet : impl_->outlets) {
+        const auto& medium = impl_->media[std::min<std::size_t>(
+            outlet.pathIndex, impl_->media.size() - 1U)];
+        (void) outlet.radiation.setMedium(
+            medium.densityKgPerM3, medium.soundSpeedMps);
+    }
+}
+
+std::array<float, AcousticExhaustNetwork::maximumPaths>
+AcousticExhaustNetwork::process(
+    std::span<const float> cylinderSourcePressurePa,
+    std::span<const CylinderBoundary> cylinderBoundaries,
+    float delayRampCoefficient) noexcept {
+    std::array<float, maximumPaths> result {};
+    if (!impl_->prepared) return result;
+    const auto ramp = std::clamp(delayRampCoefficient, 0.0F, 1.0F);
+    for (std::size_t index = 0; index < impl_->ducts.size(); ++index) {
+        auto& duct = impl_->ducts[index];
+        duct.delaySamples += ramp
+            * (duct.delayTargetSamples - duct.delaySamples);
+        const auto& medium = impl_->media[std::min<std::size_t>(
+            duct.pathIndex, impl_->media.size() - 1U)];
+        const auto stiffness = medium.densityKgPerM3
+            * medium.soundSpeedMps * medium.soundSpeedMps;
+        impl_->incident[index * 2U] = DuctWallLoss::process(
+            duct.wallLoss, duct.reverseLoss,
+            impl_->readDelayed(duct.reverse, duct.write,
+                duct.delaySamples, stiffness));
+        impl_->incident[index * 2U + 1U] = DuctWallLoss::process(
+            duct.wallLoss, duct.forwardLoss,
+            impl_->readDelayed(duct.forward, duct.write,
+                duct.delaySamples, stiffness));
+    }
+    std::fill(impl_->outgoing.begin(), impl_->outgoing.end(), 0.0F);
+
+    for (auto& junction : impl_->junctions) {
+        double weightedIncident = 0.0;
+        double totalAdmittance = 0.0;
+        for (const auto key : junction.ductEndpoints) {
+            const auto admittance = impl_->endpointAdmittance(key);
+            weightedIncident += admittance * impl_->incident[key];
+            totalAdmittance += admittance;
+        }
+        for (const auto portIndex : junction.cylinderTerminals) {
+            const auto admittance = impl_->portAdmittance(
+                portIndex, cylinderBoundaries);
+            weightedIncident += admittance
+                * impl_->cylinderPorts[portIndex].incidentToJunction;
+            totalAdmittance += admittance;
+        }
+        for (const auto outletIndex : junction.outletTerminals) {
+            const auto& outlet = impl_->outlets[outletIndex];
+            const auto impedance = outlet.radiation
+                .characteristicImpedancePaSPerM3();
+            const auto admittance = impedance > 0.0 ? 1.0 / impedance : 0.0;
+            weightedIncident += admittance * outlet.incidentToJunction;
+            totalAdmittance += admittance;
+        }
+        const auto junctionPressure = totalAdmittance > 1.0e-15
+            ? static_cast<float>(2.0 * weightedIncident / totalAdmittance) : 0.0F;
+        for (const auto key : junction.ductEndpoints)
+            impl_->outgoing[key] = junctionPressure - impl_->incident[key];
+        for (const auto portIndex : junction.cylinderTerminals) {
+            auto& port = impl_->cylinderPorts[portIndex];
+            const auto towardBoundary = junctionPressure - port.incidentToJunction;
+            port.incidentToJunction = impl_->portReflection(
+                portIndex, towardBoundary, cylinderSourcePressurePa,
+                cylinderBoundaries);
+        }
+        for (const auto outletIndex : junction.outletTerminals) {
+            auto& outlet = impl_->outlets[outletIndex];
+            const auto towardMouth = junctionPressure - outlet.incidentToJunction;
+            const auto radiation = outlet.radiation.process(towardMouth);
+            outlet.incidentToJunction = static_cast<float>(
+                radiation.reflectedPressurePa);
+            const auto path = std::min<std::size_t>(
+                outlet.pathIndex, result.size() - 1U);
+            result[path] += impl_->delayedObserverPressure(
+                outlet, static_cast<float>(radiation.farFieldPressurePa));
+        }
+    }
+
+    for (std::size_t index = 0; index < impl_->cylinderPorts.size(); ++index) {
+        auto& port = impl_->cylinderPorts[index];
+        if (port.virtualTerminal) continue;
+        const auto key = port.endpointOrJunction;
+        impl_->outgoing[key] = impl_->portReflection(
+            index, impl_->incident[key], cylinderSourcePressurePa,
+            cylinderBoundaries);
+    }
+    for (auto& outlet : impl_->outlets) {
+        if (outlet.virtualTerminal) continue;
+        const auto key = outlet.endpointOrJunction;
+        const auto radiation = outlet.radiation.process(impl_->incident[key]);
+        impl_->outgoing[key] = static_cast<float>(radiation.reflectedPressurePa);
+        const auto path = std::min<std::size_t>(
+            outlet.pathIndex, result.size() - 1U);
+        result[path] += impl_->delayedObserverPressure(
+            outlet, static_cast<float>(radiation.farFieldPressurePa));
+    }
+
+    for (std::size_t index = 0; index < impl_->ducts.size(); ++index) {
+        auto& duct = impl_->ducts[index];
+        duct.forward[duct.write] = std::isfinite(impl_->outgoing[index * 2U])
+            ? impl_->outgoing[index * 2U] : 0.0F;
+        duct.reverse[duct.write] = std::isfinite(impl_->outgoing[index * 2U + 1U])
+            ? impl_->outgoing[index * 2U + 1U] : 0.0F;
+        duct.write = (duct.write + 1U) & duct.mask;
+    }
+    return result;
+}
+
+bool AcousticExhaustNetwork::valid() const noexcept {
+    return impl_ && impl_->configured;
+}
+
+std::size_t AcousticExhaustNetwork::ductCount() const noexcept {
+    return impl_ ? impl_->ducts.size() : 0U;
+}
+
+std::size_t AcousticExhaustNetwork::junctionCount() const noexcept {
+    return impl_ ? impl_->junctions.size() : 0U;
+}
+
+std::size_t AcousticExhaustNetwork::outletCount() const noexcept {
+    return impl_ ? impl_->outlets.size() : 0U;
+}
+
+} // namespace enginelab
