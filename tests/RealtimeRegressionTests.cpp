@@ -1,6 +1,8 @@
 #include <enginelab/audio/AcousticMonitorCalibration.hpp>
 #include <enginelab/audio/AcousticExhaustNetwork.hpp>
+#include <enginelab/audio/AcousticIntakeNetwork.hpp>
 #include <enginelab/audio/BoundaryReconstructionFilter.hpp>
+#include <enginelab/audio/ForcedInductionAcoustics.hpp>
 #include <enginelab/audio/NonlinearDuctAcoustics.hpp>
 #include <enginelab/audio/RealtimeEngineAudio.hpp>
 #include <enginelab/audio/StructuralModalRadiator.hpp>
@@ -403,6 +405,193 @@ void structuralModalRadiatorRegression() {
     }
     require(earlyDecayEnergy > 0.0 && lateDecayEnergy < earlyDecayEnergy * 1.0e-4,
         "positive modal damping must dissipate stored structural energy");
+}
+
+void acousticIntakeNetworkRegression() {
+    auto config = enginelab::makeDefaultInlineFour();
+    config.intake.airboxVolumeLitres = 4.0;
+    config.intake.inletDuctLengthMm = 280.0;
+    config.intake.inletDuctDiameterMm = 72.0;
+    config.intake.bellmouthDiameterMm = 96.0;
+    for (auto& path : config.intakePaths) path.geometry = config.intake;
+    enginelab::normaliseEngineConfig(config);
+
+    enginelab::AcousticIntakeNetwork intake(config);
+    require(intake.valid() && intake.runnerCount() == config.cylinders.size()
+            && intake.pathCount() >= 1,
+        "the intake compiler must retain every runner and intake path");
+    require(intake.prepare(48'000.0),
+        "a valid intake topology must allocate outside the callback");
+    std::array<enginelab::AcousticIntakeNetwork::PathBoundary, 1> paths {{
+        { 0.0025F, 1.15F, 350.0F }
+    }};
+    intake.beginBlock(paths, 1.0);
+    std::array<enginelab::AcousticIntakeNetwork::CylinderBoundary, 4> cylinders {};
+    for (auto& cylinder : cylinders) {
+        cylinder.conductanceAreaM2 = 0.00045F;
+        cylinder.densityKgPerM3 = 1.15F;
+        cylinder.soundSpeedMps = 350.0F;
+        cylinder.physical = true;
+    }
+
+    auto energy = 0.0;
+    for (std::size_t sample = 0; sample < 12'000; ++sample) {
+        cylinders[0].massFlowKgPerSecond = sample < 192
+            ? 0.075F * static_cast<float>(std::sin(
+                std::numbers::pi * static_cast<double>(sample + 1U) / 193.0))
+            : 0.0F;
+        const auto output = intake.process(cylinders, 1.0F);
+        require(std::isfinite(output[0]),
+            "the complete intake network must remain finite");
+        energy += static_cast<double>(output[0]) * output[0];
+    }
+    require(energy > 1.0e-10,
+        "an intake-valve flow pulse must reach the inlet radiation load");
+
+    intake.reset();
+    for (auto& cylinder : cylinders) cylinder.massFlowKgPerSecond = 0.0F;
+    for (std::size_t sample = 0; sample < 1'024; ++sample)
+        require(intake.process(cylinders, 1.0F)[0] == 0.0F,
+            "a reset intake with no flow perturbation must be exactly silent");
+
+    intake.reset();
+    auto earlyEnergy = 0.0;
+    auto lateEnergy = 0.0;
+    for (std::size_t sample = 0; sample < 96'000; ++sample) {
+        cylinders[0].massFlowKgPerSecond = 0.030F;
+        const auto pressure = intake.process(cylinders, 1.0F)[0];
+        if (sample < 12'000)
+            earlyEnergy += static_cast<double>(pressure) * pressure;
+        if (sample >= 84'000)
+            lateEnergy += static_cast<double>(pressure) * pressure;
+    }
+    require(earlyEnergy == 0.0 && lateEnergy == 0.0,
+        "a flow that is stationary from reset must create no acoustic source");
+}
+
+void forcedInductionAcousticsRegression() {
+    using Acoustics = enginelab::ForcedInductionAcoustics;
+    constexpr double sampleRate = 48'000.0;
+    enginelab::ForcedInductionConfig toneConfig;
+    toneConfig.enabled = true;
+    toneConfig.type = enginelab::ForcedInductionType::turbocharger;
+    toneConfig.compressorBladeCount = 6;
+    toneConfig.turbineBladeCount = 0;
+    toneConfig.compressorInducerDiameterMm = 0.0;
+    toneConfig.turbineExducerDiameterMm = 0.0;
+    toneConfig.wastegateFlowAreaMm2 = 0.0;
+
+    Acoustics tone(toneConfig);
+    require(tone.valid() && tone.semiEmpirical() && tone.prepare(sampleRate),
+        "configured rotor geometry must compile a semi-empirical FI source");
+    Acoustics::Input input;
+    for (std::size_t sample = 0; sample < 512; ++sample)
+        require(tone.process(input, 0.0F) == 0.0F,
+            "zero shaft power and flow must be exactly silent");
+
+    // 6 blades at 6,000 rpm is an exact 600 Hz blade-passing order. Correlate
+    // against the physical order rather than accepting any convenient whistle.
+    input.shaftSpeedRpm = 6'000.0F;
+    input.pressureRatio = 1.8F;
+    input.compressorPowerWatts = 10'000.0F;
+    auto atBladeOrder = std::complex<double> {};
+    auto offBladeOrder = std::complex<double> {};
+    auto energy = 0.0;
+    constexpr std::size_t sampleCount = 48'000;
+    for (std::size_t sample = 0; sample < sampleCount; ++sample) {
+        const auto pressure = tone.process(input, 0.0F);
+        require(std::isfinite(pressure),
+            "forced-induction pressure must remain finite");
+        const auto time = static_cast<double>(sample) / sampleRate;
+        atBladeOrder += static_cast<double>(pressure) * std::exp(
+            std::complex<double>(0.0, -2.0 * std::numbers::pi * 600.0 * time));
+        offBladeOrder += static_cast<double>(pressure) * std::exp(
+            std::complex<double>(0.0, -2.0 * std::numbers::pi * 500.0 * time));
+        energy += static_cast<double>(pressure) * pressure;
+    }
+    require(std::abs(atBladeOrder) > std::abs(offBladeOrder) * 100.0,
+        "FI tone frequency must be shaft speed times authored blade count");
+    const auto lowPowerRms = std::sqrt(energy / sampleCount);
+
+    Acoustics highPower(toneConfig);
+    require(highPower.prepare(sampleRate),
+        "a second FI source must prepare independently");
+    input.compressorPowerWatts = 40'000.0F;
+    energy = 0.0;
+    for (std::size_t sample = 0; sample < sampleCount; ++sample) {
+        const auto pressure = highPower.process(input, 0.0F);
+        energy += static_cast<double>(pressure) * pressure;
+    }
+    const auto highPowerRms = std::sqrt(energy / sampleCount);
+    require(std::abs(highPowerRms / lowPowerRms - 2.0) < 0.01,
+        "radiated pressure must scale with the square root of shaft power");
+
+    // Broadband compressor and wastegate radiation remain flow-driven even at
+    // zero shaft speed. This prevents a telemetry dropout from muting real jet
+    // flow, while a closed wastegate remains exactly absent.
+    enginelab::ForcedInductionConfig jetConfig;
+    jetConfig.enabled = true;
+    jetConfig.type = enginelab::ForcedInductionType::turbocharger;
+    jetConfig.compressorInducerDiameterMm = 50.0;
+    jetConfig.wastegateFlowAreaMm2 = 400.0;
+    Acoustics jets(jetConfig);
+    require(jets.valid() && jets.prepare(sampleRate),
+        "authored flow geometry must compile broadband FI radiation");
+    Acoustics::Input jetInput;
+    jetInput.correctedAirFlowKgPerSecond = 0.20F;
+    jetInput.exhaustMassFlowKgPerSecond = 0.18F;
+    jetInput.wastegateOpening = 0.0F;
+    std::uint32_t random = 0x9182'7364U;
+    auto compressorJetEnergy = 0.0;
+    for (std::size_t sample = 0; sample < 8'192; ++sample) {
+        random ^= random << 13U; random ^= random >> 17U; random ^= random << 5U;
+        const auto white = static_cast<float>(random) / 2'147'483'648.0F - 1.0F;
+        const auto pressure = jets.process(jetInput, white);
+        compressorJetEnergy += static_cast<double>(pressure) * pressure;
+    }
+    require(compressorJetEnergy > 0.0,
+        "corrected compressor flow must radiate broadband noise at zero shaft speed");
+
+    jetConfig.compressorInducerDiameterMm = 0.0;
+    Acoustics wastegate(jetConfig);
+    require(wastegate.valid() && wastegate.prepare(sampleRate),
+        "wastegate geometry alone must compile a flow source");
+    jetInput.correctedAirFlowKgPerSecond = 0.0F;
+    jetInput.wastegateOpening = 0.0F;
+    for (std::size_t sample = 0; sample < 512; ++sample)
+        require(wastegate.process(jetInput, 0.5F) == 0.0F,
+            "a physically closed wastegate must be exactly silent");
+    jetInput.wastegateOpening = 1.0F;
+    auto wastegateEnergy = 0.0;
+    for (std::size_t sample = 0; sample < 8'192; ++sample) {
+        random ^= random << 13U; random ^= random >> 17U; random ^= random << 5U;
+        const auto white = static_cast<float>(random) / 2'147'483'648.0F - 1.0F;
+        const auto pressure = wastegate.process(jetInput, white);
+        wastegateEnergy += static_cast<double>(pressure) * pressure;
+    }
+    require(wastegateEnergy > 0.0,
+        "resolved wastegate mass flow must radiate through its authored area");
+
+    jetConfig.wastegateFlowAreaMm2 = 0.0;
+    jetConfig.blowOffValveFlowAreaMm2 = 350.0;
+    Acoustics blowOff(jetConfig);
+    require(blowOff.valid() && blowOff.prepare(sampleRate),
+        "authored blow-off geometry must compile a flow source");
+    jetInput.exhaustMassFlowKgPerSecond = 0.0F;
+    jetInput.blowOffMassFlowKgPerSecond = 0.0F;
+    for (std::size_t sample = 0; sample < 512; ++sample)
+        require(blowOff.process(jetInput, 0.5F) == 0.0F,
+            "a blow-off valve without resolved mass flow must be exactly silent");
+    jetInput.blowOffMassFlowKgPerSecond = 0.08F;
+    auto blowOffEnergy = 0.0;
+    for (std::size_t sample = 0; sample < 8'192; ++sample) {
+        random ^= random << 13U; random ^= random >> 17U; random ^= random << 5U;
+        const auto white = static_cast<float>(random) / 2'147'483'648.0F - 1.0F;
+        const auto pressure = blowOff.process(jetInput, white);
+        blowOffEnergy += static_cast<double>(pressure) * pressure;
+    }
+    require(blowOffEnergy > 0.0,
+        "resolved blow-off mass flow must radiate through its authored area");
 }
 
 double absoluteDifference(const std::vector<float>& left, const std::vector<float>& right) {
@@ -1443,6 +1632,8 @@ int main() {
         exhaustPathIsolationRegression();
         branchedAcousticTopologyRegression();
         structuralModalRadiatorRegression();
+        acousticIntakeNetworkRegression();
+        forcedInductionAcousticsRegression();
         customGraphRuntimeTelemetryRegression();
         ambientPressureRegression();
         physicalThermoacousticPathRegression();

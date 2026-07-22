@@ -1,5 +1,7 @@
 add_library(EngineLabAudio STATIC
     src/AcousticExhaustNetwork.cpp
+    src/AcousticIntakeNetwork.cpp
+    src/ForcedInductionAcoustics.cpp
     src/PipeRadiationModel.cpp
     src/RealtimeEngineAudio.cpp
     src/RealtimeConvolutionBank.cpp

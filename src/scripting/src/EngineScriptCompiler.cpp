@@ -354,6 +354,10 @@ void setIntakeThrottleCount(EngineConfig& config, double value) {
 void setIntakeThrottleCoefficient(EngineConfig& config, double value) { setEveryIntake(config, &IntakeConfig::throttleDischargeCoefficient, value); }
 void setIntakeRunnerLength(EngineConfig& config, double value) { setEveryIntake(config, &IntakeConfig::runnerLengthMm, value); }
 void setIntakeRunnerDiameter(EngineConfig& config, double value) { setEveryIntake(config, &IntakeConfig::runnerDiameterMm, value); }
+void setIntakeAirboxVolume(EngineConfig& config, double value) { setEveryIntake(config, &IntakeConfig::airboxVolumeLitres, value); }
+void setIntakeInletLength(EngineConfig& config, double value) { setEveryIntake(config, &IntakeConfig::inletDuctLengthMm, value); }
+void setIntakeInletDiameter(EngineConfig& config, double value) { setEveryIntake(config, &IntakeConfig::inletDuctDiameterMm, value); }
+void setIntakeBellmouthDiameter(EngineConfig& config, double value) { setEveryIntake(config, &IntakeConfig::bellmouthDiameterMm, value); }
 void setIntakeIdleArea(EngineConfig& config, double value) { setEveryIntake(config, &IntakeConfig::idleBypassAreaMm2, value); }
 void setIntakeThrottleGamma(EngineConfig& config, double value) { setEveryIntake(config, &IntakeConfig::throttleGamma, value); }
 void setExhaustPrimaryLength(EngineConfig& config, double value) { setEveryExhaust(config, &ExhaustConfig::primaryLengthMm, value); }
@@ -399,6 +403,10 @@ const GlobalNumericProperty* findGlobalNumericProperty(std::string_view path) no
         { "intake.throttle_discharge_coefficient", Dimension::dimensionless, setIntakeThrottleCoefficient },
         { "intake.runner_length_mm", Dimension::length, setIntakeRunnerLength },
         { "intake.runner_diameter_mm", Dimension::length, setIntakeRunnerDiameter },
+        { "intake.airbox_volume_l", Dimension::volume, setIntakeAirboxVolume },
+        { "intake.inlet_duct_length_mm", Dimension::length, setIntakeInletLength },
+        { "intake.inlet_duct_diameter_mm", Dimension::length, setIntakeInletDiameter },
+        { "intake.bellmouth_diameter_mm", Dimension::length, setIntakeBellmouthDiameter },
         { "intake.idle_bypass_area_mm2", Dimension::area, setIntakeIdleArea },
         { "intake.throttle_gamma", Dimension::dimensionless, setIntakeThrottleGamma },
         { "exhaust.primary_length_mm", Dimension::length, setExhaustPrimaryLength },
@@ -436,7 +444,21 @@ const GlobalNumericProperty* findGlobalNumericProperty(std::string_view path) no
         { "forced_induction.design_shaft_speed_rpm", Dimension::engineSpeed, [](auto& c, double v) { c.forcedInduction.designShaftSpeedRpm = v; } },
         { "forced_induction.bearing_friction_power_w", Dimension::power, [](auto& c, double v) { c.forcedInduction.bearingFrictionPowerWatts = v; } },
         { "forced_induction.turbine_flow_area_mm2", Dimension::area, [](auto& c, double v) { c.forcedInduction.turbineFlowAreaMm2 = v; } },
-        { "forced_induction.wastegate_flow_area_mm2", Dimension::area, [](auto& c, double v) { c.forcedInduction.wastegateFlowAreaMm2 = v; } }
+        { "forced_induction.wastegate_flow_area_mm2", Dimension::area, [](auto& c, double v) { c.forcedInduction.wastegateFlowAreaMm2 = v; } },
+        { "forced_induction.compressor_blade_count", Dimension::dimensionless,
+          [](auto& c, double v) { c.forcedInduction.compressorBladeCount = static_cast<std::uint32_t>(v); }, true },
+        { "forced_induction.turbine_blade_count", Dimension::dimensionless,
+          [](auto& c, double v) { c.forcedInduction.turbineBladeCount = static_cast<std::uint32_t>(v); }, true },
+        { "forced_induction.supercharger_lobe_count", Dimension::dimensionless,
+          [](auto& c, double v) { c.forcedInduction.superchargerLobeCount = static_cast<std::uint32_t>(v); }, true },
+        { "forced_induction.supercharger_drive_ratio", Dimension::dimensionless, [](auto& c, double v) { c.forcedInduction.superchargerDriveRatio = v; } },
+        { "forced_induction.compressor_inducer_diameter_mm", Dimension::length, [](auto& c, double v) { c.forcedInduction.compressorInducerDiameterMm = v; } },
+        { "forced_induction.turbine_exducer_diameter_mm", Dimension::length, [](auto& c, double v) { c.forcedInduction.turbineExducerDiameterMm = v; } },
+        { "forced_induction.blow_off_valve_flow_area_mm2", Dimension::area, [](auto& c, double v) { c.forcedInduction.blowOffValveFlowAreaMm2 = v; } },
+        { "forced_induction.blow_off_valve_opening_pressure_ratio", Dimension::dimensionless, [](auto& c, double v) { c.forcedInduction.blowOffValveOpeningPressureRatio = v; } },
+        { "forced_induction.blow_off_valve_discharge_coefficient", Dimension::dimensionless, [](auto& c, double v) { c.forcedInduction.blowOffValveDischargeCoefficient = v; } },
+        { "forced_induction.tonal_acoustic_efficiency", Dimension::dimensionless, [](auto& c, double v) { c.forcedInduction.tonalAcousticEfficiency = v; } },
+        { "forced_induction.turbulent_jet_noise_coefficient", Dimension::dimensionless, [](auto& c, double v) { c.forcedInduction.turbulentJetNoiseCoefficient = v; } }
     };
     for (const auto& property : properties) if (property.path == path) return &property;
     return nullptr;

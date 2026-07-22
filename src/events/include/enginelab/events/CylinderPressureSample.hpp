@@ -46,6 +46,16 @@ struct CylinderPressureSample final {
     std::array<float, 32> exhaustAcousticMassFlowKgPerSecond {};
     /** Valve curtain area multiplied by its discharge coefficient. */
     std::array<float, 32> exhaustValveConductanceAreaM2 {};
+    /** Signed instantaneous intake-valve flow; positive runner -> cylinder. */
+    std::array<float, 32> intakeMassFlowKgPerSecond {};
+    std::array<float, 32> intakeRunnerPressureKpa {};
+    std::array<float, 32> intakeRunnerDensityKgPerM3 {};
+    std::array<float, 32> intakeRunnerSpeedOfSoundMps {};
+    std::array<float, 32> intakeValveConductanceAreaM2 {};
+    std::array<std::uint8_t, 32> intakePathIndex {};
+    /** Effective throttle conductance actually used by the gas solver. */
+    std::array<float, 8> intakeThrottleConductanceAreaM2 {};
+    std::size_t intakePathCount { 0 };
     std::array<float, 32> exhaustFlowMgPerCycle {};
     /** Normalised exhaust-valve opening used by the acoustic port reflection. */
     std::array<float, 32> exhaustValveOpening {};

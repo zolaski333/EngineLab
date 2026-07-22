@@ -184,6 +184,17 @@ template <typename T>
     assignIfPresent(node, "bearing_friction_power_w", value.bearingFrictionPowerWatts);
     assignIfPresent(node, "turbine_flow_area_mm2", value.turbineFlowAreaMm2);
     assignIfPresent(node, "wastegate_flow_area_mm2", value.wastegateFlowAreaMm2);
+    assignIfPresent(node, "compressor_blade_count", value.compressorBladeCount);
+    assignIfPresent(node, "turbine_blade_count", value.turbineBladeCount);
+    assignIfPresent(node, "supercharger_lobe_count", value.superchargerLobeCount);
+    assignIfPresent(node, "supercharger_drive_ratio", value.superchargerDriveRatio);
+    assignIfPresent(node, "compressor_inducer_diameter_mm", value.compressorInducerDiameterMm);
+    assignIfPresent(node, "turbine_exducer_diameter_mm", value.turbineExducerDiameterMm);
+    assignIfPresent(node, "blow_off_valve_flow_area_mm2", value.blowOffValveFlowAreaMm2);
+    assignIfPresent(node, "blow_off_valve_opening_pressure_ratio", value.blowOffValveOpeningPressureRatio);
+    assignIfPresent(node, "blow_off_valve_discharge_coefficient", value.blowOffValveDischargeCoefficient);
+    assignIfPresent(node, "tonal_acoustic_efficiency", value.tonalAcousticEfficiency);
+    assignIfPresent(node, "turbulent_jet_noise_coefficient", value.turbulentJetNoiseCoefficient);
     return value;
 }
 
@@ -402,6 +413,10 @@ void applyCrankOffsets(EngineConfig& config) {
         assignIfPresent(intake, "throttle_discharge_coefficient", config.intake.throttleDischargeCoefficient);
         assignIfPresent(intake, "runner_length_mm", config.intake.runnerLengthMm);
         assignIfPresent(intake, "runner_diameter_mm", config.intake.runnerDiameterMm);
+        assignIfPresent(intake, "airbox_volume_l", config.intake.airboxVolumeLitres);
+        assignIfPresent(intake, "inlet_duct_length_mm", config.intake.inletDuctLengthMm);
+        assignIfPresent(intake, "inlet_duct_diameter_mm", config.intake.inletDuctDiameterMm);
+        assignIfPresent(intake, "bellmouth_diameter_mm", config.intake.bellmouthDiameterMm);
         assignIfPresent(intake, "idle_bypass_area_mm2", config.intake.idleBypassAreaMm2);
         assignIfPresent(intake, "throttle_gamma", config.intake.throttleGamma);
         config.plenumVolumeLitres = config.intake.plenumVolumeLitres;
@@ -492,6 +507,10 @@ void applyCrankOffsets(EngineConfig& config) {
                 assignIfPresent(geometry, "throttle_discharge_coefficient", pathConfig.geometry.throttleDischargeCoefficient);
                 assignIfPresent(geometry, "runner_length_mm", pathConfig.geometry.runnerLengthMm);
                 assignIfPresent(geometry, "runner_diameter_mm", pathConfig.geometry.runnerDiameterMm);
+                assignIfPresent(geometry, "airbox_volume_l", pathConfig.geometry.airboxVolumeLitres);
+                assignIfPresent(geometry, "inlet_duct_length_mm", pathConfig.geometry.inletDuctLengthMm);
+                assignIfPresent(geometry, "inlet_duct_diameter_mm", pathConfig.geometry.inletDuctDiameterMm);
+                assignIfPresent(geometry, "bellmouth_diameter_mm", pathConfig.geometry.bellmouthDiameterMm);
                 assignIfPresent(geometry, "idle_bypass_area_mm2", pathConfig.geometry.idleBypassAreaMm2);
                 assignIfPresent(geometry, "throttle_gamma", pathConfig.geometry.throttleGamma);
             }

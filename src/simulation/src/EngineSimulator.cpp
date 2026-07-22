@@ -112,6 +112,42 @@ constexpr double exhaustExternalHeatTransferWPerM2K = 18.0;
         * 1.0e-6;
 }
 
+/** Isentropic ideal-gas orifice flow from an upstream reservoir.
+ *
+ * Used for the compressor bypass valve, whose upstream charge pipe is a
+ * boundary reservoir in the current zero-dimensional boost model. This is the
+ * same choked/subcritical law used by the conservative gas solver, exposed
+ * here without fabricating a control-volume inventory that the schema does not
+ * yet provide.
+ */
+[[nodiscard]] double reservoirOrificeMassFlowKgPerSecond(
+    double upstreamPressureKpa, double downstreamPressureKpa,
+    double temperatureK, double effectiveAreaM2,
+    double dischargeCoefficient) noexcept {
+    if (!(upstreamPressureKpa > downstreamPressureKpa)
+        || !(downstreamPressureKpa > 0.0) || !(temperatureK > 0.0)
+        || !(effectiveAreaM2 > 0.0) || !(dischargeCoefficient > 0.0))
+        return 0.0;
+    constexpr double gamma = 1.4;
+    constexpr double specificGasConstant = 287.05;
+    const auto pressureRatio = downstreamPressureKpa / upstreamPressureKpa;
+    const auto criticalRatio = std::pow(2.0 / (gamma + 1.0),
+        gamma / (gamma - 1.0));
+    const auto upstreamPressurePa = upstreamPressureKpa * 1'000.0;
+    if (pressureRatio <= criticalRatio) {
+        return dischargeCoefficient * effectiveAreaM2 * upstreamPressurePa
+            * std::sqrt(gamma / (specificGasConstant * temperatureK))
+            * std::pow(2.0 / (gamma + 1.0),
+                (gamma + 1.0) / (2.0 * (gamma - 1.0)));
+    }
+    const auto pressureTerm = 2.0 * gamma / (gamma - 1.0)
+        * (std::pow(pressureRatio, 2.0 / gamma)
+            - std::pow(pressureRatio, (gamma + 1.0) / gamma));
+    return dischargeCoefficient * effectiveAreaM2 * upstreamPressurePa
+        / std::sqrt(specificGasConstant * temperatureK)
+        * std::sqrt(std::max(0.0, pressureTerm));
+}
+
 // Private per-cylinder scratch for one gas sub-step. Every cross-cylinder result
 // the loop used to accumulate into a shared scalar (or into a shared plenum /
 // collector) is written here per cylinder instead, so the per-cylinder body has
@@ -428,6 +464,7 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
         const auto subStepStartTime = state_.simulationTimeSeconds;
         const auto subPreviousRpm = state_.rpm;
         const auto subPreviousAngle = state_.crankAngleDegrees;
+        std::array<double, 8> intakeThrottleConductanceAreaM2 {};
 
         // Engine load is a thermodynamic state (approximately MAP / ambient
         // for a naturally aspirated SI engine), not the operator's brake
@@ -443,6 +480,7 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
             state_.boostPressureRatio = 1.0;
             state_.forcedInductionShaftSpeedRpm = 0.0;
             state_.wastegateOpening = 0.0;
+            state_.blowOffMassFlowKgPerSecond = 0.0;
             state_.compressorPowerKw = 0.0;
             state_.turbinePowerKw = 0.0;
             for (std::size_t pathIndex = 0; pathIndex < intakePlenumCount_; ++pathIndex) {
@@ -453,6 +491,8 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 const auto throttleAreaM2 = closedThrottleLeakageAreaM2(intake)
                     + intake.idleBypassAreaMm2 * ecuCommand.idleAirOpening * 1.0e-6
                     + throttlePlateAreaM2 * std::pow(state_.throttle, intake.throttleGamma);
+                intakeThrottleConductanceAreaM2[pathIndex] = throttleAreaM2
+                    * intake.throttleDischargeCoefficient;
                 (void)ConservativeGasSystem::flowFromBoundary(intakePlenumGas_[pathIndex],
                     config_.ambientPressureKpa, config_.ambientTemperatureC + 273.15,
                     throttleAreaM2, intake.throttleDischargeCoefficient, subDt,
@@ -464,6 +504,8 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
             constexpr double compressorExponent = 0.285714285714;
             const auto ambientTemperatureK = config_.ambientTemperatureC + 273.15;
             const auto airMassFlowKgPerSecond = std::max(0.0, state_.airFlowGramsPerSecond) * 0.001;
+            const auto compressorMassFlowKgPerSecond = airMassFlowKgPerSecond
+                + std::max(0.0, state_.blowOffMassFlowKgPerSecond);
             const auto exhaustMassFlowKgPerSecond = std::max(0.0, state_.exhaustFlowGramsPerSecond) * 0.001;
             auto pressureRatioTarget = 1.0;
             auto desiredCompressorPowerW = 0.0;
@@ -476,7 +518,8 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 const auto drive = speedRatio * std::clamp(std::pow(state_.throttle, 0.72), 0.0, 1.0);
                 pressureRatioTarget = 1.0
                     + (config_.forcedInduction.pressureRatio - 1.0) * drive;
-                state_.forcedInductionShaftSpeedRpm = 0.0;
+                state_.forcedInductionShaftSpeedRpm = state_.rpm
+                    * config_.forcedInduction.superchargerDriveRatio;
                 state_.wastegateOpening = 0.0;
             } else if (config_.forcedInduction.enabled) {
                 const auto designOmega = config_.forcedInduction.designShaftSpeedRpm
@@ -490,7 +533,7 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 turbinePowerW = exhaustMassFlowKgPerSecond * exhaustCpJPerKgK * exhaustTemperatureK
                     * (1.0 - std::pow(turbineExpansionRatio, -compressorExponent))
                     * config_.forcedInduction.turbineEfficiency;
-                desiredCompressorPowerW = airMassFlowKgPerSecond * airCpJPerKgK * ambientTemperatureK
+                desiredCompressorPowerW = compressorMassFlowKgPerSecond * airCpJPerKgK * ambientTemperatureK
                     * (std::pow(std::max(1.0, state_.boostPressureRatio), compressorExponent) - 1.0)
                     / std::max(0.35, config_.forcedInduction.compressorEfficiency);
                 state_.wastegateOpening = std::clamp((state_.boostPressureRatio
@@ -515,7 +558,7 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 pressureRatioTarget = std::min(pressureRatioTarget,
                     config_.forcedInduction.wastegatePressureRatio + 0.04);
             }
-            desiredCompressorPowerW = airMassFlowKgPerSecond * airCpJPerKgK * ambientTemperatureK
+            desiredCompressorPowerW = compressorMassFlowKgPerSecond * airCpJPerKgK * ambientTemperatureK
                 * (std::pow(std::max(1.0, pressureRatioTarget), compressorExponent) - 1.0)
                 / std::max(0.35, config_.forcedInduction.compressorEfficiency);
             state_.compressorPowerKw = desiredCompressorPowerW * 0.001;
@@ -525,6 +568,7 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
             if (!config_.forcedInduction.enabled) {
                 state_.forcedInductionShaftSpeedRpm = 0.0;
                 state_.wastegateOpening = 0.0;
+                state_.blowOffMassFlowKgPerSecond = 0.0;
             }
             const auto boostBlend = std::clamp((state_.boostPressureRatio - 1.0)
                 / std::max(0.01, config_.forcedInduction.pressureRatio - 1.0), 0.0, 1.0);
@@ -535,6 +579,23 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
             const auto chargeTemperatureC = config_.ambientTemperatureC + isentropicRiseC
                 + config_.forcedInduction.chargeTemperatureRiseC * 0.15 * boostBlend;
             const auto temperatureK = std::max(240.0, chargeTemperatureC + 273.15);
+            if (config_.forcedInduction.enabled
+                    && config_.forcedInduction.blowOffValveFlowAreaMm2 > 0.0) {
+                const auto referencePressureRatio = intakeSourcePressureKpa
+                    / std::max(1.0, state_.manifoldPressureKpa);
+                const auto opening = std::clamp((referencePressureRatio
+                    - config_.forcedInduction.blowOffValveOpeningPressureRatio)
+                    / 0.08, 0.0, 1.0);
+                state_.blowOffMassFlowKgPerSecond =
+                    reservoirOrificeMassFlowKgPerSecond(
+                        intakeSourcePressureKpa, config_.ambientPressureKpa,
+                        temperatureK,
+                        config_.forcedInduction.blowOffValveFlowAreaMm2
+                            * opening * 1.0e-6,
+                        config_.forcedInduction.blowOffValveDischargeCoefficient);
+            } else {
+                state_.blowOffMassFlowKgPerSecond = 0.0;
+            }
 
             for (std::size_t pathIndex = 0; pathIndex < intakePlenumCount_; ++pathIndex) {
                 const auto& intake = intakeGeometryAt(config_, pathIndex);
@@ -546,6 +607,8 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 const auto throttleAreaM2 = closedThrottleLeakageAreaM2(intake)
                     + idleBypassAreaM2
                     + throttlePlateAreaM2 * std::pow(state_.throttle, intake.throttleGamma);
+                intakeThrottleConductanceAreaM2[pathIndex] = throttleAreaM2
+                    * intake.throttleDischargeCoefficient;
                 (void)ConservativeGasSystem::flowFromBoundary(intakePlenumGas_[pathIndex], intakeSourcePressureKpa,
                     temperatureK, throttleAreaM2, intake.throttleDischargeCoefficient, subDt,
                     0.0, -1.0); // plenum -> upstream compressor/atmosphere
@@ -610,6 +673,7 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
         std::array<double, 32> gasTorqueLeverArmM {};
         std::array<double, 32> structuralInertiaForceN {};
         std::array<double, 32> structuralSideRatio {};
+        std::array<double, 32> instantaneousIntakeTransferredMassKg {};
         std::array<double, 32> exhaustMassFlowKgPerSecond {};
         std::array<double, 32> exhaustAcousticMassFlowKgPerSecond {};
         std::array<double, 32> exhaustPortDensityKgPerM3 {};
@@ -981,6 +1045,8 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
 
             // (3) Cylinder → exhaust runner (exhaust valve)
             const auto intakeTransfer = ConservativeGasSystem::flow(intakeValveFlow);
+            instantaneousIntakeTransferredMassKg[cylinderIndex] =
+                intakeTransfer.transferredMassKg;
 
             // (4) Exhaust runner → collector, with the same thresholded Jacobi
             // treatment as the intake side.
@@ -1248,6 +1314,8 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
             };
             const auto secondIntakeTransfer = ConservativeGasSystem::flow(
                 secondIntakeHalfStep);
+            instantaneousIntakeTransferredMassKg[index] +=
+                secondIntakeTransfer.transferredMassKg;
             intakeFlowMgThisCycle_[index] +=
                 secondIntakeTransfer.transferredMassKg * 1.0e6;
             if (intakeCloseForTrappedAir[index]) {
@@ -1677,6 +1745,11 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
             pressureSample.timeSeconds = state_.simulationTimeSeconds;
             pressureSample.cylinderCount = config_.cylinders.size();
             pressureSample.structural.cylinderCount = config_.cylinders.size();
+            pressureSample.intakePathCount = intakePlenumCount_;
+            for (std::size_t path = 0; path < intakePlenumCount_; ++path) {
+                pressureSample.intakeThrottleConductanceAreaM2[path] =
+                    static_cast<float>(intakeThrottleConductanceAreaM2[path]);
+            }
             pressureSample.exhaustCouplingFrequencyHz = state_.exhaustCouplingFrequencyHz;
             for (std::size_t index = 0; index < config_.cylinders.size(); ++index) {
                 pressureSample.pressureBar[index] = static_cast<float>(chamberPressureBar_[index]);
@@ -1694,6 +1767,26 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                     bearingReactionForceN * structuralSideRatio[index]);
                 pressureSample.structural.crankReactionTorqueNm[index] = static_cast<float>(
                     bearingReactionForceN * gasTorqueLeverArmM[index]);
+                const auto& intakeRunner = intakeRunnerGas_[index];
+                const auto intakeDensityKgPerM3 = intakeRunner.massKg()
+                    / intakeRunner.volumeM3();
+                const auto intakeSpecificGasConstant = GasCell::universalGasConstant
+                    / intakeRunner.meanMolarMassKg();
+                const auto intakeSoundSpeedMps = std::sqrt(std::max(0.0,
+                    intakeRunner.heatCapacityRatioEffective()
+                        * intakeSpecificGasConstant * intakeRunner.temperatureK()));
+                pressureSample.intakeMassFlowKgPerSecond[index] = static_cast<float>(
+                    instantaneousIntakeTransferredMassKg[index] / subDt);
+                pressureSample.intakeRunnerPressureKpa[index] = static_cast<float>(
+                    intakeRunner.pressureKpa());
+                pressureSample.intakeRunnerDensityKgPerM3[index] = static_cast<float>(
+                    intakeDensityKgPerM3);
+                pressureSample.intakeRunnerSpeedOfSoundMps[index] = static_cast<float>(
+                    intakeSoundSpeedMps);
+                pressureSample.intakeValveConductanceAreaM2[index] = static_cast<float>(
+                    intakeValveAreaM2[index] * intakeValveDischargeCoefficient[index]);
+                pressureSample.intakePathIndex[index] = static_cast<std::uint8_t>(
+                    intakePathIndexFor(config_, config_.cylinders[index]));
                 pressureSample.exhaustRunnerPressureKpa[index] = static_cast<float>(exhaustRunnerPressureKpa_[index]);
                 pressureSample.exhaustMassFlowKgPerSecond[index] =
                     static_cast<float>(exhaustMassFlowKgPerSecond[index]);
@@ -1830,6 +1923,7 @@ void EngineSimulator::reset() noexcept {
     state_.boostPressureRatio = 1.0;
     state_.forcedInductionShaftSpeedRpm = 0.0;
     state_.wastegateOpening = 0.0;
+    state_.blowOffMassFlowKgPerSecond = 0.0;
     state_.exhaustPressureKpa = config_.ambientPressureKpa;
     state_.intakeRunnerPressureKpa = config_.ambientPressureKpa;
     state_.exhaustRunnerPressureKpa = config_.ambientPressureKpa;

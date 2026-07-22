@@ -177,6 +177,10 @@ std::string JsonEngineSerializer::encode(const EngineConfig& config) const {
             {"throttle_count", path.geometry.throttleCount},
             {"throttle_discharge_coefficient", path.geometry.throttleDischargeCoefficient},
             {"runner_length_mm", path.geometry.runnerLengthMm}, {"runner_diameter_mm", path.geometry.runnerDiameterMm},
+            {"airbox_volume_l", path.geometry.airboxVolumeLitres},
+            {"inlet_duct_length_mm", path.geometry.inletDuctLengthMm},
+            {"inlet_duct_diameter_mm", path.geometry.inletDuctDiameterMm},
+            {"bellmouth_diameter_mm", path.geometry.bellmouthDiameterMm},
             {"idle_bypass_area_mm2", path.geometry.idleBypassAreaMm2}, {"throttle_gamma", path.geometry.throttleGamma}}} });
     Json banks = Json::array();
     for (const auto& bank : config.banks) banks.push_back({ {"id", bank.id}, {"angle_deg", bank.angleDegrees},
@@ -252,7 +256,18 @@ std::string JsonEngineSerializer::encode(const EngineConfig& config) const {
                                {"design_shaft_speed_rpm", config.forcedInduction.designShaftSpeedRpm},
                                {"bearing_friction_power_w", config.forcedInduction.bearingFrictionPowerWatts},
                                {"turbine_flow_area_mm2", config.forcedInduction.turbineFlowAreaMm2},
-                               {"wastegate_flow_area_mm2", config.forcedInduction.wastegateFlowAreaMm2}}},
+                               {"wastegate_flow_area_mm2", config.forcedInduction.wastegateFlowAreaMm2},
+                               {"compressor_blade_count", config.forcedInduction.compressorBladeCount},
+                               {"turbine_blade_count", config.forcedInduction.turbineBladeCount},
+                               {"supercharger_lobe_count", config.forcedInduction.superchargerLobeCount},
+                               {"supercharger_drive_ratio", config.forcedInduction.superchargerDriveRatio},
+                               {"compressor_inducer_diameter_mm", config.forcedInduction.compressorInducerDiameterMm},
+                               {"turbine_exducer_diameter_mm", config.forcedInduction.turbineExducerDiameterMm},
+                               {"blow_off_valve_flow_area_mm2", config.forcedInduction.blowOffValveFlowAreaMm2},
+                               {"blow_off_valve_opening_pressure_ratio", config.forcedInduction.blowOffValveOpeningPressureRatio},
+                               {"blow_off_valve_discharge_coefficient", config.forcedInduction.blowOffValveDischargeCoefficient},
+                               {"tonal_acoustic_efficiency", config.forcedInduction.tonalAcousticEfficiency},
+                               {"turbulent_jet_noise_coefficient", config.forcedInduction.turbulentJetNoiseCoefficient}}},
         {"thermal", {{"coolant_mass_kj_per_c", config.thermal.coolantMassKjPerC},
                       {"oil_mass_kj_per_c", config.thermal.oilMassKjPerC},
                       {"coolant_heat_share", config.thermal.coolantHeatShare},
@@ -274,6 +289,10 @@ std::string JsonEngineSerializer::encode(const EngineConfig& config) const {
                      {"throttle_count", config.intake.throttleCount},
                      {"throttle_discharge_coefficient", config.intake.throttleDischargeCoefficient},
                      {"runner_length_mm", config.intake.runnerLengthMm}, {"runner_diameter_mm", config.intake.runnerDiameterMm},
+                     {"airbox_volume_l", config.intake.airboxVolumeLitres},
+                     {"inlet_duct_length_mm", config.intake.inletDuctLengthMm},
+                     {"inlet_duct_diameter_mm", config.intake.inletDuctDiameterMm},
+                     {"bellmouth_diameter_mm", config.intake.bellmouthDiameterMm},
                      {"idle_bypass_area_mm2", config.intake.idleBypassAreaMm2}, {"throttle_gamma", config.intake.throttleGamma}}},
         {"intake_paths", intakePaths}, {"banks", banks}, {"exhaust_paths", exhaustPaths},
         {"ignition", {{"rev_limit_rpm", config.ignition.revLimitRpm},
@@ -407,6 +426,17 @@ EngineDecodeResult JsonEngineSerializer::decode(std::string_view text) const noe
             config.forcedInduction.bearingFrictionPowerWatts = forced.value("bearing_friction_power_w", config.forcedInduction.bearingFrictionPowerWatts);
             config.forcedInduction.turbineFlowAreaMm2 = forced.value("turbine_flow_area_mm2", config.forcedInduction.turbineFlowAreaMm2);
             config.forcedInduction.wastegateFlowAreaMm2 = forced.value("wastegate_flow_area_mm2", config.forcedInduction.wastegateFlowAreaMm2);
+            config.forcedInduction.compressorBladeCount = forced.value("compressor_blade_count", config.forcedInduction.compressorBladeCount);
+            config.forcedInduction.turbineBladeCount = forced.value("turbine_blade_count", config.forcedInduction.turbineBladeCount);
+            config.forcedInduction.superchargerLobeCount = forced.value("supercharger_lobe_count", config.forcedInduction.superchargerLobeCount);
+            config.forcedInduction.superchargerDriveRatio = forced.value("supercharger_drive_ratio", config.forcedInduction.superchargerDriveRatio);
+            config.forcedInduction.compressorInducerDiameterMm = forced.value("compressor_inducer_diameter_mm", config.forcedInduction.compressorInducerDiameterMm);
+            config.forcedInduction.turbineExducerDiameterMm = forced.value("turbine_exducer_diameter_mm", config.forcedInduction.turbineExducerDiameterMm);
+            config.forcedInduction.blowOffValveFlowAreaMm2 = forced.value("blow_off_valve_flow_area_mm2", config.forcedInduction.blowOffValveFlowAreaMm2);
+            config.forcedInduction.blowOffValveOpeningPressureRatio = forced.value("blow_off_valve_opening_pressure_ratio", config.forcedInduction.blowOffValveOpeningPressureRatio);
+            config.forcedInduction.blowOffValveDischargeCoefficient = forced.value("blow_off_valve_discharge_coefficient", config.forcedInduction.blowOffValveDischargeCoefficient);
+            config.forcedInduction.tonalAcousticEfficiency = forced.value("tonal_acoustic_efficiency", config.forcedInduction.tonalAcousticEfficiency);
+            config.forcedInduction.turbulentJetNoiseCoefficient = forced.value("turbulent_jet_noise_coefficient", config.forcedInduction.turbulentJetNoiseCoefficient);
         }
         if (engine.contains("thermal")) {
             const auto& thermal = engine.at("thermal");
@@ -446,6 +476,10 @@ EngineDecodeResult JsonEngineSerializer::decode(std::string_view text) const noe
             config.intake.throttleDischargeCoefficient = intake.value("throttle_discharge_coefficient", config.intake.throttleDischargeCoefficient);
             config.intake.runnerLengthMm = intake.value("runner_length_mm", config.intake.runnerLengthMm);
             config.intake.runnerDiameterMm = intake.value("runner_diameter_mm", config.intake.runnerDiameterMm);
+            config.intake.airboxVolumeLitres = intake.value("airbox_volume_l", config.intake.airboxVolumeLitres);
+            config.intake.inletDuctLengthMm = intake.value("inlet_duct_length_mm", config.intake.inletDuctLengthMm);
+            config.intake.inletDuctDiameterMm = intake.value("inlet_duct_diameter_mm", config.intake.inletDuctDiameterMm);
+            config.intake.bellmouthDiameterMm = intake.value("bellmouth_diameter_mm", config.intake.bellmouthDiameterMm);
             config.intake.idleBypassAreaMm2 = intake.value("idle_bypass_area_mm2", config.intake.idleBypassAreaMm2);
             config.intake.throttleGamma = intake.value("throttle_gamma", config.intake.throttleGamma);
         }
@@ -581,6 +615,10 @@ EngineDecodeResult JsonEngineSerializer::decode(std::string_view text) const noe
                     path.geometry.throttleDischargeCoefficient = geometry.value("throttle_discharge_coefficient", path.geometry.throttleDischargeCoefficient);
                     path.geometry.runnerLengthMm = geometry.value("runner_length_mm", path.geometry.runnerLengthMm);
                     path.geometry.runnerDiameterMm = geometry.value("runner_diameter_mm", path.geometry.runnerDiameterMm);
+                    path.geometry.airboxVolumeLitres = geometry.value("airbox_volume_l", path.geometry.airboxVolumeLitres);
+                    path.geometry.inletDuctLengthMm = geometry.value("inlet_duct_length_mm", path.geometry.inletDuctLengthMm);
+                    path.geometry.inletDuctDiameterMm = geometry.value("inlet_duct_diameter_mm", path.geometry.inletDuctDiameterMm);
+                    path.geometry.bellmouthDiameterMm = geometry.value("bellmouth_diameter_mm", path.geometry.bellmouthDiameterMm);
                     path.geometry.idleBypassAreaMm2 = geometry.value("idle_bypass_area_mm2", path.geometry.idleBypassAreaMm2);
                     path.geometry.throttleGamma = geometry.value("throttle_gamma", path.geometry.throttleGamma);
                 }

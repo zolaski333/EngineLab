@@ -176,6 +176,14 @@ struct IntakeConfig final {
     double throttleDischargeCoefficient { 0.72 };
     double runnerLengthMm { 300.0 };
     double runnerDiameterMm { 38.0 };
+    /** Optional upstream acoustic hardware. Zero volume/length means the
+     * throttle mouth is directly exposed rather than inventing an airbox. */
+    double airboxVolumeLitres { 0.0 };
+    double inletDuctLengthMm { 0.0 };
+    /** Zero inherits the throttle diameter. */
+    double inletDuctDiameterMm { 0.0 };
+    /** Zero inherits the inlet-duct diameter; used by inlet radiation. */
+    double bellmouthDiameterMm { 0.0 };
     double idleBypassAreaMm2 { 12.0 };
     double throttleGamma { 1.7 };
     /**
@@ -365,6 +373,22 @@ struct ForcedInductionConfig final {
     double bearingFrictionPowerWatts { 280.0 };
     double turbineFlowAreaMm2 { 700.0 };
     double wastegateFlowAreaMm2 { 520.0 };
+    /** Rotor geometry used by aeroacoustics. Zero count disables the
+     * corresponding blade/lobe-passing tone rather than inventing one. */
+    std::uint32_t compressorBladeCount { 0 };
+    std::uint32_t turbineBladeCount { 0 };
+    std::uint32_t superchargerLobeCount { 0 };
+    double superchargerDriveRatio { 1.0 };
+    double compressorInducerDiameterMm { 0.0 };
+    double turbineExducerDiameterMm { 0.0 };
+    /** Vent-to-ambient compressor bypass. Zero area means absent. The valve
+     * opens from upstream/downstream pressure ratio, never throttle gestures. */
+    double blowOffValveFlowAreaMm2 { 0.0 };
+    double blowOffValveOpeningPressureRatio { 1.12 };
+    double blowOffValveDischargeCoefficient { 0.72 };
+    /** Measurable/semi-empirical conversion parameters, not mix gains. */
+    double tonalAcousticEfficiency { 1.0e-6 };
+    double turbulentJetNoiseCoefficient { 1.0e-5 };
 };
 
 struct ThermalConfig final {
@@ -578,6 +602,7 @@ struct EngineState final {
     double turbinePowerKw { 0.0 };
     double forcedInductionShaftSpeedRpm { 0.0 };
     double wastegateOpening { 0.0 };
+    double blowOffMassFlowKgPerSecond { 0.0 };
     double indicatedWorkJoulesPerCycle { 0.0 };
     double indicatedMeanEffectivePressureBar { 0.0 };
     double indicatedPowerKw { 0.0 };

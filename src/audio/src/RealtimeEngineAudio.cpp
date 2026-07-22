@@ -92,6 +92,12 @@ RealtimeEngineAudio::RealtimeEngineAudio(FiringEventQueue& queue,
     if (engineConfig != nullptr) {
         auto structural = std::make_unique<StructuralModalRadiator>(*engineConfig);
         if (structural->valid()) structuralModalRadiator_ = std::move(structural);
+        auto intake = std::make_unique<AcousticIntakeNetwork>(*engineConfig);
+        if (intake->valid()) acousticIntakeNetwork_ = std::move(intake);
+        auto forcedInduction = std::make_unique<ForcedInductionAcoustics>(
+            engineConfig->forcedInduction);
+        if (forcedInduction->valid())
+            forcedInductionAcoustics_ = std::move(forcedInduction);
     }
 }
 
@@ -209,8 +215,6 @@ void RealtimeEngineAudio::prepare(double sampleRate, int maximumBlockSize) noexc
         -2.0 * std::numbers::pi * 10.0 / sampleRate_));
     pressureTailDecay_ = rateInvariantPole(0.992F, sampleRate_);
     pressureTailInputCoefficient_ = 0.010F * (1.0F - pressureTailDecay_) / (1.0F - 0.992F);
-    bovDecay_ = rateInvariantPole(0.9994F, sampleRate_);
-    bovNoiseCoefficient_ = rateInvariantCoefficient(0.08F, sampleRate_);
     jitterCoefficient_ = rateInvariantCoefficient(0.015F, sampleRate_);
     collectorCoefficient_ = rateInvariantCoefficient(0.18F, sampleRate_);
     levelAttackCoefficient_ = rateInvariantCoefficient(0.0025F, sampleRate_);
@@ -225,6 +229,12 @@ void RealtimeEngineAudio::prepare(double sampleRate, int maximumBlockSize) noexc
     if (structuralModalRadiator_
         && !structuralModalRadiator_->prepare(sampleRate_, observerDistanceM))
         structuralModalRadiator_.reset();
+    if (acousticIntakeNetwork_
+        && !acousticIntakeNetwork_->prepare(sampleRate_, observerDistanceM))
+        acousticIntakeNetwork_.reset();
+    if (forcedInductionAcoustics_
+        && !forcedInductionAcoustics_->prepare(sampleRate_, observerDistanceM))
+        forcedInductionAcoustics_.reset();
     // No fabricated default IR. A user-supplied measured room/cabin response is
     // legitimate downstream propagation; inventing one here would make the
     // exhaust sound larger without improving the simulated source.
@@ -271,8 +281,7 @@ void RealtimeEngineAudio::release() noexcept {
     pressureTailLeft_ = 0.0F; pressureTailRight_ = 0.0F;
     mechanicalPhase_ = 0.0; valvetrainPhase_ = 0.0;
     starterPhase_ = 0.0; smoothedRpm_ = 0.0F; intakeFilter_ = 0.0F;
-    intakeSvfLow_ = 0.0F; intakeSvfBand_ = 0.0F; bovEnvelope_ = 0.0F; bovNoiseState_ = 0.0F;
-    previousThrottleForBov_ = 0.0F; fiWhistlePhase_ = 0.0;
+    intakeSvfLow_ = 0.0F; intakeSvfBand_ = 0.0F;
     levelEnvelope_ = 0.0F; levelGain_ = 1.0F;
     antiAliasLeftA_ = antiAliasLeftB_ = antiAliasRightA_ = antiAliasRightB_ = 0.0F;
     dcInputLeft_ = dcInputRight_ = dcOutputLeft_ = dcOutputRight_ = 0.0F;
@@ -311,6 +320,8 @@ void RealtimeEngineAudio::release() noexcept {
     for (auto& state : valveFlowAcousticSourceState_) state.reset();
     if (acousticExhaustNetwork_) acousticExhaustNetwork_->reset();
     if (structuralModalRadiator_) structuralModalRadiator_->reset();
+    if (acousticIntakeNetwork_) acousticIntakeNetwork_->reset();
+    if (forcedInductionAcoustics_) forcedInductionAcoustics_->reset();
     physicalExhaustActive_ = false;
     pressureSampleIntervalSeconds_ = 0.0;
     levelLimitedSamples_.store(0, std::memory_order_relaxed);
@@ -527,9 +538,16 @@ void RealtimeEngineAudio::render(juce::AudioBuffer<float>& output, int startSamp
     const auto peakPistonAccelG = realtimeState_.peakPistonAccelerationG.load(std::memory_order_relaxed);
     const auto intakeRunnerResonanceHz = realtimeState_.intakeRunnerResonanceHz.load(std::memory_order_relaxed);
     const auto intakeRunnerAmplitudeKpa = realtimeState_.intakeRunnerAmplitudeKpa.load(std::memory_order_relaxed);
-    const auto fiKind = realtimeState_.forcedInductionKind.load(std::memory_order_relaxed);
     const auto fiShaftRpm = realtimeState_.forcedInductionShaftRpm.load(std::memory_order_relaxed);
     const auto wastegateOpening = std::clamp(realtimeState_.wastegateOpening.load(std::memory_order_relaxed), 0.0F, 1.0F);
+    const auto correctedAirFlow = std::max(0.0F, realtimeState_
+        .correctedAirFlowKgPerSecond.load(std::memory_order_relaxed));
+    const auto compressorPowerWatts = std::max(0.0F, realtimeState_
+        .compressorPowerWatts.load(std::memory_order_relaxed));
+    const auto turbinePowerWatts = std::max(0.0F, realtimeState_
+        .turbinePowerWatts.load(std::memory_order_relaxed));
+    const auto blowOffMassFlow = std::max(0.0F, realtimeState_
+        .blowOffMassFlowKgPerSecond.load(std::memory_order_relaxed));
     // Only paths that were allocated in prepare() have state to drive. The
     // runtime publishes the same count this was sized from, so clamping here is
     // a guard against a mismatched producer, not a routine narrowing.
@@ -693,6 +711,41 @@ void RealtimeEngineAudio::render(juce::AudioBuffer<float>& output, int startSamp
                 media.data(), exhaustPathCount),
             acousticTimeScale);
     }
+    if (acousticIntakeNetwork_) {
+        std::array<AcousticIntakeNetwork::PathBoundary, maximumPaths> paths {};
+        std::array<float, maximumPaths> densitySum {};
+        std::array<float, maximumPaths> soundSpeedSum {};
+        std::array<float, maximumPaths> weights {};
+        if (hasCurrentPressureSample_) {
+            const auto count = std::min<std::size_t>(
+                currentPressureSample_.cylinderCount,
+                currentPressureSample_.intakePathIndex.size());
+            for (std::size_t cylinder = 0; cylinder < count; ++cylinder) {
+                const auto path = std::min<std::size_t>(
+                    currentPressureSample_.intakePathIndex[cylinder], maximumPaths - 1U);
+                const auto density = currentPressureSample_
+                    .intakeRunnerDensityKgPerM3[cylinder];
+                const auto soundSpeed = currentPressureSample_
+                    .intakeRunnerSpeedOfSoundMps[cylinder];
+                if (std::isfinite(density) && density > 0.0F
+                    && std::isfinite(soundSpeed) && soundSpeed > 0.0F) {
+                    densitySum[path] += density;
+                    soundSpeedSum[path] += soundSpeed;
+                    weights[path] += 1.0F;
+                }
+            }
+            for (std::size_t path = 0; path < maximumPaths; ++path) {
+                if (weights[path] > 0.0F) {
+                    paths[path].densityKgPerM3 = densitySum[path] / weights[path];
+                    paths[path].soundSpeedMps = soundSpeedSum[path] / weights[path];
+                }
+                if (path < currentPressureSample_.intakePathCount)
+                    paths[path].throttleConductanceAreaM2 = currentPressureSample_
+                        .intakeThrottleConductanceAreaM2[path];
+            }
+        }
+        acousticIntakeNetwork_->beginBlock(paths, acousticTimeScale);
+    }
     float blockPeakObservedExhaustPressurePa = 0.0F;
     std::uint64_t legacySamplesThisBlock = 0;
     std::uint64_t invalidBoundarySamplesThisBlock = 0;
@@ -719,6 +772,8 @@ void RealtimeEngineAudio::render(juce::AudioBuffer<float>& output, int startSamp
         float mechanicalLeft = 0.0F;
         float mechanicalRight = 0.0F;
         float physicalStructural = 0.0F;
+        float physicalIntake = 0.0F;
+        float physicalForcedInduction = 0.0F;
         float physicalCylinderPressureLeft = 0.0F;
         float physicalCylinderPressureRight = 0.0F;
         std::array<float, maximumPaths> pathCollectorLeft {};
@@ -733,6 +788,7 @@ void RealtimeEngineAudio::render(juce::AudioBuffer<float>& output, int startSamp
         std::array<float, maximumPaths> pathSoundSpeedSum {};
         std::array<float, maximumPaths> pathMediumWeight {};
         StructuralExcitationSample structuralExcitation;
+        std::array<AcousticIntakeNetwork::CylinderBoundary, 32> intakeBoundaries {};
         // Once established, the SI path is latched. A missing producer sample
         // lets the passive network ring down; it must never resurrect noise and
         // oscillators for a callback and hide the telemetry dropout.
@@ -812,6 +868,34 @@ void RealtimeEngineAudio::render(juce::AudioBuffer<float>& output, int startSamp
                         [](const auto& value) -> const auto& { return value.sideThrustForceN; });
                     structuralExcitation.crankReactionTorqueNm[index] = interpolateStructural(
                         [](const auto& value) -> const auto& { return value.crankReactionTorqueNm; });
+                    const auto interpolatePressureField = [&, index](const auto& member) {
+                        const auto current = member(currentPressureSample_)[index];
+                        const auto next = hasNextPressureSample_
+                            && index < nextPressureSample_.cylinderCount
+                            ? member(nextPressureSample_)[index] : current;
+                        return std::lerp(current, next, f);
+                    };
+                    auto& intakeBoundary = intakeBoundaries[index];
+                    intakeBoundary.massFlowKgPerSecond = interpolatePressureField(
+                        [](const auto& value) -> const auto& {
+                            return value.intakeMassFlowKgPerSecond;
+                        });
+                    intakeBoundary.conductanceAreaM2 = interpolatePressureField(
+                        [](const auto& value) -> const auto& {
+                            return value.intakeValveConductanceAreaM2;
+                        });
+                    intakeBoundary.densityKgPerM3 = interpolatePressureField(
+                        [](const auto& value) -> const auto& {
+                            return value.intakeRunnerDensityKgPerM3;
+                        });
+                    intakeBoundary.soundSpeedMps = interpolatePressureField(
+                        [](const auto& value) -> const auto& {
+                            return value.intakeRunnerSpeedOfSoundMps;
+                        });
+                    intakeBoundary.physical = std::isfinite(
+                        intakeBoundary.massFlowKgPerSecond)
+                        && intakeBoundary.densityKgPerM3 > 0.0F
+                        && intakeBoundary.soundSpeedMps > 0.0F;
                     const auto rawGaugePressure = pressureBar - ambientPressureKpa * 0.01F;
                     cylinderPressureHighPass_[index] = pressureHighPassPole_
                         * (cylinderPressureHighPass_[index] + rawGaugePressure
@@ -1059,6 +1143,55 @@ void RealtimeEngineAudio::render(juce::AudioBuffer<float>& output, int startSamp
                     structuralModalRadiator_->process(structuralExcitation),
                     acousticFullScaleSplDb));
         }
+        if (acousticIntakeNetwork_ && activeCylinderCount > 0) {
+            const auto inletPressure = acousticIntakeNetwork_->process(
+                std::span<const AcousticIntakeNetwork::CylinderBoundary>(
+                    intakeBoundaries.data(), activeCylinderCount),
+                controlRampCoefficient_);
+            for (const auto pressurePa : inletPressure) {
+                physicalIntake += static_cast<float>(
+                    AcousticMonitorCalibration::normalisePeakPressure(
+                        pressurePa, acousticFullScaleSplDb));
+            }
+        }
+        if (forcedInductionAcoustics_) {
+            auto density = 1.2F;
+            auto soundSpeed = static_cast<float>(ambientSoundSpeedMps);
+            auto mediumCount = 0.0F;
+            auto densitySum = 0.0F;
+            auto soundSpeedSum = 0.0F;
+            for (std::size_t cylinder = 0;
+                 cylinder < activeCylinderCount; ++cylinder) {
+                const auto& boundary = intakeBoundaries[cylinder];
+                if (boundary.physical) {
+                    densitySum += boundary.densityKgPerM3;
+                    soundSpeedSum += boundary.soundSpeedMps;
+                    mediumCount += 1.0F;
+                }
+            }
+            if (mediumCount > 0.0F) {
+                density = densitySum / mediumCount;
+                soundSpeed = soundSpeedSum / mediumCount;
+            }
+            const ForcedInductionAcoustics::Input input {
+                .shaftSpeedRpm = fiShaftRpm,
+                .correctedAirFlowKgPerSecond = correctedAirFlow,
+                .pressureRatio = boostRatio,
+                .compressorPowerWatts = compressorPowerWatts,
+                .turbinePowerWatts = turbinePowerWatts,
+                .exhaustMassFlowKgPerSecond = std::max(
+                    0.0F, exhaustFlowGramsPerSecond * 0.001F),
+                .wastegateOpening = wastegateOpening,
+                .blowOffMassFlowKgPerSecond = blowOffMassFlow,
+                .densityKgPerM3 = density,
+                .soundSpeedMps = soundSpeed,
+                .acousticTimeScale = acousticTimeScale
+            };
+            physicalForcedInduction = static_cast<float>(
+                AcousticMonitorCalibration::normalisePeakPressure(
+                    forcedInductionAcoustics_->process(input, noise()),
+                    acousticFullScaleSplDb));
+        }
         combustionLeft += physicalCylinderPressureLeft;
         combustionRight += physicalCylinderPressureRight;
         // Runner waveguide + collector scattering junction: the collector output
@@ -1144,52 +1277,34 @@ void RealtimeEngineAudio::render(juce::AudioBuffer<float>& output, int startSamp
             mechanical = (static_cast<float>(std::sin(mechanicalPhase_)) * 0.016F
                 * (0.6F + pistonSlap * 0.9F) + valvetrainClatter) * speedGain;
         }
-        // Induction: broadband throttle-body whoosh plus a resonant runner "honk"
-        // at the simulated intake runner resonance frequency (state-variable
-        // band excited by induction turbulence).
-        intakeFilter_ += intakeFilterCoefficient_ * (noise() * throttle * speedGain * lowNoise - intakeFilter_);
-        const auto whoosh = intakeFilter_ * (0.018F + load * 0.028F + intakeDepression * 0.030F);
-        const auto intakeResonanceHz = std::clamp(intakeRunnerResonanceHz * acousticTimeScale,
-                                                  20.0F, 5'600.0F);
-        const auto intakeResonanceAmp = std::clamp(intakeRunnerAmplitudeKpa / 12.0F, -1.5F, 1.5F);
-        const auto intakeF = std::clamp(2.0F * std::sin(static_cast<float>(std::numbers::pi)
-            * intakeResonanceHz / static_cast<float>(sampleRate_)), 0.0002F, 1.35F);
-        const auto intakeExcite = (noise() * 0.7F + intakeFilter_) * (0.4F + throttle * 0.6F) * speedGain;
-        intakeSvfLow_ += intakeF * intakeSvfBand_;
-        const auto intakeHigh = intakeExcite - intakeSvfLow_ - intakeSvfBand_ * 0.32F;
-        intakeSvfBand_ += intakeF * intakeHigh;
-        const auto intakeHonk = std::clamp(intakeSvfBand_, -2.0F, 2.0F)
-            * intakeResonanceAmp * (0.05F + intakeDepression * 0.05F);
-        const auto intake = whoosh + intakeHonk;
-        // Forced induction: spool whistle / blower whine (blade/rotor pass tone
-        // from shaft speed), wastegate flutter, and a blow-off burst on lift-off.
-        float induced = 0.0F;
-        if (fiKind != 0) {
-            const auto passMultiplier = fiKind == 2 ? 3.0F : 9.0F; // rotor lobes vs turbine blades
-            const auto whistleHz = std::clamp(fiShaftRpm / 60.0F * passMultiplier
-                * acousticTimeScale, 80.0F, static_cast<float>(sampleRate_ * 0.42));
-            fiWhistlePhase_ += 2.0 * std::numbers::pi * static_cast<double>(whistleHz) / sampleRate_;
-            if (fiWhistlePhase_ >= 2.0 * std::numbers::pi) fiWhistlePhase_ -= 2.0 * std::numbers::pi;
-            const auto boostExcess = std::clamp(boostRatio - 1.0F, 0.0F, 2.5F);
-            const auto whistleLevel = boostExcess * (fiKind == 2 ? 0.055F : 0.038F) * (0.35F + speedGain * 0.65F);
-            const auto whistle = (static_cast<float>(std::sin(fiWhistlePhase_))
-                + 0.3F * static_cast<float>(std::sin(fiWhistlePhase_ * 2.0))) * whistleLevel;
-            const auto wastegate = fiKind == 1 ? noise() * wastegateOpening * boostExcess * 0.055F : 0.0F;
-            // Trigger the blow-off envelope on a sharp closing throttle while boosted.
-            const auto throttleDrop = std::max(0.0F, previousThrottleForBov_ - throttle);
-            if (fiKind == 1 && throttleDrop > 0.05F && boostExcess > 0.15F)
-                bovEnvelope_ = std::min(1.0F, bovEnvelope_ + throttleDrop * boostExcess * 4.0F);
-            bovEnvelope_ *= bovDecay_;
-            bovNoiseState_ += bovNoiseCoefficient_ * (noise() - bovNoiseState_);
-            const auto bov = bovNoiseState_ * bovEnvelope_ * 0.22F;
-            induced = (whistle + wastegate + bov) * (timeScale > 0.01F ? 1.0F : 0.0F);
+        auto intake = 0.0F;
+        if (!acousticIntakeNetwork_) {
+            intakeFilter_ += intakeFilterCoefficient_
+                * (noise() * throttle * speedGain * lowNoise - intakeFilter_);
+            const auto whoosh = intakeFilter_
+                * (0.018F + load * 0.028F + intakeDepression * 0.030F);
+            const auto intakeResonanceHz = std::clamp(
+                intakeRunnerResonanceHz * acousticTimeScale, 20.0F, 5'600.0F);
+            const auto intakeResonanceAmp = std::clamp(
+                intakeRunnerAmplitudeKpa / 12.0F, -1.5F, 1.5F);
+            const auto intakeF = std::clamp(2.0F * std::sin(
+                static_cast<float>(std::numbers::pi) * intakeResonanceHz
+                    / static_cast<float>(sampleRate_)), 0.0002F, 1.35F);
+            const auto intakeExcite = (noise() * 0.7F + intakeFilter_)
+                * (0.4F + throttle * 0.6F) * speedGain;
+            intakeSvfLow_ += intakeF * intakeSvfBand_;
+            const auto intakeHigh = intakeExcite - intakeSvfLow_
+                - intakeSvfBand_ * 0.32F;
+            intakeSvfBand_ += intakeF * intakeHigh;
+            const auto intakeHonk = std::clamp(intakeSvfBand_, -2.0F, 2.0F)
+                * intakeResonanceAmp * (0.05F + intakeDepression * 0.05F);
+            intake = whoosh + intakeHonk;
         }
-        previousThrottleForBov_ = throttle;
         const auto starterSound = starter * (static_cast<float>(std::sin(starterPhase_)) * 0.028F + noise() * 0.006F);
         mechanicalLeft += mechanical + starterSound;
         mechanicalRight += mechanical * 0.96F + starterSound * 0.94F;
-        intakeLeft += intake * 0.92F + induced * 0.94F;
-        intakeRight += intake + induced;
+        intakeLeft += intake * 0.92F;
+        intakeRight += intake;
         for (auto& voice : voices_) {
             if (!voice.active) continue;
             if (voice.exhaust && physicalExhaustActive_) {
@@ -1478,10 +1593,14 @@ void RealtimeEngineAudio::render(juce::AudioBuffer<float>& output, int startSamp
         auto left = (combustionLeft * combustionGain + intakeLeft * intakeGain
             + mechanicalLeft * mechanicalGain) * legacyMonitorScale
             + physicalStructural * mechanicalGain
+            + physicalIntake * intakeGain
+            + physicalForcedInduction * intakeGain
             + radiatedExhaustLeft * exhaustGain * exhaustMonitorScale;
         auto right = (combustionRight * combustionGain + intakeRight * intakeGain
             + mechanicalRight * mechanicalGain) * legacyMonitorScale
             + physicalStructural * mechanicalGain
+            + physicalIntake * intakeGain
+            + physicalForcedInduction * intakeGain
             + radiatedExhaustRight * exhaustGain * exhaustMonitorScale;
         lowPassLeft_ += lowPassCoefficient_ * (left - lowPassLeft_);
         lowPassRight_ += lowPassCoefficient_ * (right - lowPassRight_);

@@ -47,6 +47,7 @@ struct RealtimeAudioState final {
     std::atomic<float> boostPressureRatio { 1.0F };
     std::atomic<float> exhaustReflectionSeconds { 0.006F };
     std::atomic<float> ambientPressureKpa { 101.325F };
+    std::atomic<float> ambientTemperatureC { 20.0F };
     std::atomic<std::uint64_t> producerTimeNanoseconds { 0 };
     std::atomic<std::uint32_t> exhaustPathCount { 1 };
     std::array<std::atomic<float>, 8> exhaustPathOpenness {
@@ -103,6 +104,10 @@ struct RealtimeAudioState final {
     std::atomic<float> intakeRunnerAmplitudeKpa { 0.0F };
     std::atomic<float> forcedInductionShaftRpm { 0.0F };
     std::atomic<float> wastegateOpening { 0.0F };
+    std::atomic<float> correctedAirFlowKgPerSecond { 0.0F };
+    std::atomic<float> compressorPowerWatts { 0.0F };
+    std::atomic<float> turbinePowerWatts { 0.0F };
+    std::atomic<float> blowOffMassFlowKgPerSecond { 0.0F };
     std::atomic<int> forcedInductionKind { 0 };  // 0 none, 1 turbocharger, 2 supercharger
     std::atomic<float> meanBoreMm { 84.0F };
     std::atomic<float> peakPistonAccelerationG { 0.0F };

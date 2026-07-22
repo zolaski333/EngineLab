@@ -142,6 +142,17 @@ std::string YamlEngineSerializer::encode(const EngineConfig& config) const {
         << YAML::Key << "bearing_friction_power_w" << YAML::Value << config.forcedInduction.bearingFrictionPowerWatts
         << YAML::Key << "turbine_flow_area_mm2" << YAML::Value << config.forcedInduction.turbineFlowAreaMm2
         << YAML::Key << "wastegate_flow_area_mm2" << YAML::Value << config.forcedInduction.wastegateFlowAreaMm2
+        << YAML::Key << "compressor_blade_count" << YAML::Value << config.forcedInduction.compressorBladeCount
+        << YAML::Key << "turbine_blade_count" << YAML::Value << config.forcedInduction.turbineBladeCount
+        << YAML::Key << "supercharger_lobe_count" << YAML::Value << config.forcedInduction.superchargerLobeCount
+        << YAML::Key << "supercharger_drive_ratio" << YAML::Value << config.forcedInduction.superchargerDriveRatio
+        << YAML::Key << "compressor_inducer_diameter_mm" << YAML::Value << config.forcedInduction.compressorInducerDiameterMm
+        << YAML::Key << "turbine_exducer_diameter_mm" << YAML::Value << config.forcedInduction.turbineExducerDiameterMm
+        << YAML::Key << "blow_off_valve_flow_area_mm2" << YAML::Value << config.forcedInduction.blowOffValveFlowAreaMm2
+        << YAML::Key << "blow_off_valve_opening_pressure_ratio" << YAML::Value << config.forcedInduction.blowOffValveOpeningPressureRatio
+        << YAML::Key << "blow_off_valve_discharge_coefficient" << YAML::Value << config.forcedInduction.blowOffValveDischargeCoefficient
+        << YAML::Key << "tonal_acoustic_efficiency" << YAML::Value << config.forcedInduction.tonalAcousticEfficiency
+        << YAML::Key << "turbulent_jet_noise_coefficient" << YAML::Value << config.forcedInduction.turbulentJetNoiseCoefficient
         << YAML::EndMap
         << YAML::Key << "thermal" << YAML::Value << YAML::BeginMap
         << YAML::Key << "coolant_mass_kj_per_c" << YAML::Value << config.thermal.coolantMassKjPerC
@@ -251,6 +262,10 @@ std::string YamlEngineSerializer::encode(const EngineConfig& config) const {
         << YAML::Key << "throttle_discharge_coefficient" << YAML::Value << config.intake.throttleDischargeCoefficient
         << YAML::Key << "runner_length_mm" << YAML::Value << config.intake.runnerLengthMm
         << YAML::Key << "runner_diameter_mm" << YAML::Value << config.intake.runnerDiameterMm
+        << YAML::Key << "airbox_volume_l" << YAML::Value << config.intake.airboxVolumeLitres
+        << YAML::Key << "inlet_duct_length_mm" << YAML::Value << config.intake.inletDuctLengthMm
+        << YAML::Key << "inlet_duct_diameter_mm" << YAML::Value << config.intake.inletDuctDiameterMm
+        << YAML::Key << "bellmouth_diameter_mm" << YAML::Value << config.intake.bellmouthDiameterMm
         << YAML::Key << "idle_bypass_area_mm2" << YAML::Value << config.intake.idleBypassAreaMm2
         << YAML::Key << "throttle_gamma" << YAML::Value << config.intake.throttleGamma << YAML::EndMap
         << YAML::Key << "intake_paths" << YAML::Value << YAML::BeginSeq;
@@ -264,6 +279,10 @@ std::string YamlEngineSerializer::encode(const EngineConfig& config) const {
             << YAML::Key << "throttle_discharge_coefficient" << YAML::Value << path.geometry.throttleDischargeCoefficient
             << YAML::Key << "runner_length_mm" << YAML::Value << path.geometry.runnerLengthMm
             << YAML::Key << "runner_diameter_mm" << YAML::Value << path.geometry.runnerDiameterMm
+            << YAML::Key << "airbox_volume_l" << YAML::Value << path.geometry.airboxVolumeLitres
+            << YAML::Key << "inlet_duct_length_mm" << YAML::Value << path.geometry.inletDuctLengthMm
+            << YAML::Key << "inlet_duct_diameter_mm" << YAML::Value << path.geometry.inletDuctDiameterMm
+            << YAML::Key << "bellmouth_diameter_mm" << YAML::Value << path.geometry.bellmouthDiameterMm
             << YAML::Key << "idle_bypass_area_mm2" << YAML::Value << path.geometry.idleBypassAreaMm2
             << YAML::Key << "throttle_gamma" << YAML::Value << path.geometry.throttleGamma
             << YAML::EndMap << YAML::EndMap;
@@ -480,6 +499,17 @@ EngineDecodeResult YamlEngineSerializer::decode(std::string_view text) const noe
             config.forcedInduction.bearingFrictionPowerWatts = forced["bearing_friction_power_w"].as<double>(config.forcedInduction.bearingFrictionPowerWatts);
             config.forcedInduction.turbineFlowAreaMm2 = forced["turbine_flow_area_mm2"].as<double>(config.forcedInduction.turbineFlowAreaMm2);
             config.forcedInduction.wastegateFlowAreaMm2 = forced["wastegate_flow_area_mm2"].as<double>(config.forcedInduction.wastegateFlowAreaMm2);
+            config.forcedInduction.compressorBladeCount = forced["compressor_blade_count"].as<std::uint32_t>(config.forcedInduction.compressorBladeCount);
+            config.forcedInduction.turbineBladeCount = forced["turbine_blade_count"].as<std::uint32_t>(config.forcedInduction.turbineBladeCount);
+            config.forcedInduction.superchargerLobeCount = forced["supercharger_lobe_count"].as<std::uint32_t>(config.forcedInduction.superchargerLobeCount);
+            config.forcedInduction.superchargerDriveRatio = forced["supercharger_drive_ratio"].as<double>(config.forcedInduction.superchargerDriveRatio);
+            config.forcedInduction.compressorInducerDiameterMm = forced["compressor_inducer_diameter_mm"].as<double>(config.forcedInduction.compressorInducerDiameterMm);
+            config.forcedInduction.turbineExducerDiameterMm = forced["turbine_exducer_diameter_mm"].as<double>(config.forcedInduction.turbineExducerDiameterMm);
+            config.forcedInduction.blowOffValveFlowAreaMm2 = forced["blow_off_valve_flow_area_mm2"].as<double>(config.forcedInduction.blowOffValveFlowAreaMm2);
+            config.forcedInduction.blowOffValveOpeningPressureRatio = forced["blow_off_valve_opening_pressure_ratio"].as<double>(config.forcedInduction.blowOffValveOpeningPressureRatio);
+            config.forcedInduction.blowOffValveDischargeCoefficient = forced["blow_off_valve_discharge_coefficient"].as<double>(config.forcedInduction.blowOffValveDischargeCoefficient);
+            config.forcedInduction.tonalAcousticEfficiency = forced["tonal_acoustic_efficiency"].as<double>(config.forcedInduction.tonalAcousticEfficiency);
+            config.forcedInduction.turbulentJetNoiseCoefficient = forced["turbulent_jet_noise_coefficient"].as<double>(config.forcedInduction.turbulentJetNoiseCoefficient);
         }
         if (const auto thermal = engine["thermal"]) {
             config.thermal.coolantMassKjPerC = thermal["coolant_mass_kj_per_c"].as<double>(config.thermal.coolantMassKjPerC);
@@ -590,6 +620,10 @@ EngineDecodeResult YamlEngineSerializer::decode(std::string_view text) const noe
             config.intake.throttleDischargeCoefficient = intake["throttle_discharge_coefficient"].as<double>(config.intake.throttleDischargeCoefficient);
             config.intake.runnerLengthMm = intake["runner_length_mm"].as<double>(config.intake.runnerLengthMm);
             config.intake.runnerDiameterMm = intake["runner_diameter_mm"].as<double>(config.intake.runnerDiameterMm);
+            config.intake.airboxVolumeLitres = intake["airbox_volume_l"].as<double>(config.intake.airboxVolumeLitres);
+            config.intake.inletDuctLengthMm = intake["inlet_duct_length_mm"].as<double>(config.intake.inletDuctLengthMm);
+            config.intake.inletDuctDiameterMm = intake["inlet_duct_diameter_mm"].as<double>(config.intake.inletDuctDiameterMm);
+            config.intake.bellmouthDiameterMm = intake["bellmouth_diameter_mm"].as<double>(config.intake.bellmouthDiameterMm);
             config.intake.idleBypassAreaMm2 = intake["idle_bypass_area_mm2"].as<double>(config.intake.idleBypassAreaMm2);
             config.intake.throttleGamma = intake["throttle_gamma"].as<double>(config.intake.throttleGamma);
         }
@@ -605,6 +639,10 @@ EngineDecodeResult YamlEngineSerializer::decode(std::string_view text) const noe
                     path.geometry.throttleDischargeCoefficient = geometry["throttle_discharge_coefficient"].as<double>(path.geometry.throttleDischargeCoefficient);
                     path.geometry.runnerLengthMm = geometry["runner_length_mm"].as<double>(path.geometry.runnerLengthMm);
                     path.geometry.runnerDiameterMm = geometry["runner_diameter_mm"].as<double>(path.geometry.runnerDiameterMm);
+                    path.geometry.airboxVolumeLitres = geometry["airbox_volume_l"].as<double>(path.geometry.airboxVolumeLitres);
+                    path.geometry.inletDuctLengthMm = geometry["inlet_duct_length_mm"].as<double>(path.geometry.inletDuctLengthMm);
+                    path.geometry.inletDuctDiameterMm = geometry["inlet_duct_diameter_mm"].as<double>(path.geometry.inletDuctDiameterMm);
+                    path.geometry.bellmouthDiameterMm = geometry["bellmouth_diameter_mm"].as<double>(path.geometry.bellmouthDiameterMm);
                     path.geometry.idleBypassAreaMm2 = geometry["idle_bypass_area_mm2"].as<double>(path.geometry.idleBypassAreaMm2);
                     path.geometry.throttleGamma = geometry["throttle_gamma"].as<double>(path.geometry.throttleGamma);
                 }

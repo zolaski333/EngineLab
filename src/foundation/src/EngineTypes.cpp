@@ -599,12 +599,27 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
         || !inRange(config.runnerAcoustics.dampingRatio, 0.01, 2.0)
         || !inRange(config.runnerAcoustics.couplingGain, 0.0, 2.0)
         || !inRange(config.runnerAcoustics.maximumPressureAmplitudeKpa, 0.1, 200.0)
+        || config.forcedInduction.compressorBladeCount > 100
+        || config.forcedInduction.turbineBladeCount > 100
+        || config.forcedInduction.superchargerLobeCount > 20
+        || !inRange(config.forcedInduction.superchargerDriveRatio, 0.1, 30.0)
+        || !inRange(config.forcedInduction.compressorInducerDiameterMm, 0.0, 500.0)
+        || !inRange(config.forcedInduction.turbineExducerDiameterMm, 0.0, 500.0)
+        || !inRange(config.forcedInduction.blowOffValveFlowAreaMm2, 0.0, 5'000.0)
+        || !inRange(config.forcedInduction.blowOffValveOpeningPressureRatio, 1.001, 3.0)
+        || !inRange(config.forcedInduction.blowOffValveDischargeCoefficient, 0.05, 1.5)
+        || !inRange(config.forcedInduction.tonalAcousticEfficiency, 0.0, 0.01)
+        || !inRange(config.forcedInduction.turbulentJetNoiseCoefficient, 0.0, 0.1)
         || !inRange(config.intake.plenumVolumeLitres, 0.1, 50.0)
         || !inRange(config.intake.throttleDiameterMm, 15.0, 150.0)
         || config.intake.throttleCount < 1 || config.intake.throttleCount > 16
         || !inRange(config.intake.throttleDischargeCoefficient, 0.05, 1.5)
         || !inRange(config.intake.runnerLengthMm, 20.0, 2'000.0)
         || !inRange(config.intake.runnerDiameterMm, 10.0, 150.0)
+        || !inRange(config.intake.airboxVolumeLitres, 0.0, 100.0)
+        || !inRange(config.intake.inletDuctLengthMm, 0.0, 5'000.0)
+        || !inRange(config.intake.inletDuctDiameterMm, 0.0, 500.0)
+        || !inRange(config.intake.bellmouthDiameterMm, 0.0, 1'000.0)
         || !inRange(config.intake.idleBypassAreaMm2, 0.0, 1'000.0)
         || !inRange(config.intake.throttleGamma, 0.2, 5.0)
         || !inRange(config.ignition.revLimitRpm, config.idleRpm + 100.0, 25'000.0)
@@ -830,6 +845,10 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
             || !inRange(intake.throttleDischargeCoefficient, 0.05, 1.5)
             || !inRange(intake.runnerLengthMm, 20.0, 2'000.0)
             || !inRange(intake.runnerDiameterMm, 10.0, 150.0)
+            || !inRange(intake.airboxVolumeLitres, 0.0, 100.0)
+            || !inRange(intake.inletDuctLengthMm, 0.0, 5'000.0)
+            || !inRange(intake.inletDuctDiameterMm, 0.0, 500.0)
+            || !inRange(intake.bellmouthDiameterMm, 0.0, 1'000.0)
             || !inRange(intake.idleBypassAreaMm2, 0.0, 1'000.0)
             || !inRange(intake.throttleGamma, 0.2, 5.0))
             return "Intake path IDs and geometry must be valid";

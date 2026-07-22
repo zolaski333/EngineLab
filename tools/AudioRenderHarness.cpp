@@ -199,6 +199,8 @@ struct Metrics {
     bool physicalActive { false };
     bool compiledTopologyActive { false };
     bool structuralRadiationActive { false };
+    bool intakeTopologyActive { false };
+    bool forcedInductionAcousticsActive { false };
     std::uint64_t legacyPathSamples {};
     std::uint64_t invalidBoundarySamples {};
 };
@@ -371,8 +373,19 @@ double cosineSimilarity(const Metrics& a, const Metrics& b) {
 
 Metrics renderEngine(const EngineConfig& baseConfig, const WavData& ir,
                      const std::filesystem::path& outDir, double seconds, bool writeOutput,
-                     bool syntheticTurbo = false) {
+    bool syntheticTurbo = false) {
     auto config = baseConfig;
+    if (syntheticTurbo) {
+        config.name += " Synthetic Turbo";
+        config.forcedInduction.enabled = true;
+        config.forcedInduction.type = ForcedInductionType::turbocharger;
+        config.forcedInduction.pressureRatio = 1.8;
+        config.forcedInduction.compressorBladeCount = 6;
+        config.forcedInduction.turbineBladeCount = 9;
+        config.forcedInduction.compressorInducerDiameterMm = 48.0;
+        config.forcedInduction.turbineExducerDiameterMm = 42.0;
+        config.forcedInduction.blowOffValveFlowAreaMm2 = 350.0;
+    }
     normaliseEngineConfig(config);
     SimpleEcuModel ecu; SimplifiedGasolinePhysics physics; FourStrokeEventGenerator events;
     auto exhaust = ExhaustGraph::makeForEngine(config);
@@ -425,7 +438,8 @@ Metrics renderEngine(const EngineConfig& baseConfig, const WavData& ir,
         EngineControls controls;
         controls.ignitionEnabled = true;
         controls.starterEngaged = t < 1.1;
-        controls.throttle = t < 0.9 ? 0.2 : 0.72;
+        controls.throttle = t < 0.9 ? 0.2
+            : (syntheticTurbo && t >= 2.4 && t < 2.65 ? 0.08 : 0.72);
         if (t >= 1.2) {
             const auto speedError = (simulator.state().rpm - dynoTargetRpm)
                 / std::max(1.0, dynoTargetRpm);
@@ -482,18 +496,6 @@ Metrics renderEngine(const EngineConfig& baseConfig, const WavData& ir,
         audioState.producerTimeNanoseconds.store(
             static_cast<std::uint64_t>(std::max(0.0, realtimeSeconds + dt) * 1.0e9),
             std::memory_order_release);
-        if (syntheticTurbo) {
-            // Synthetic spool profile: ramp shaft speed + boost, then a lift-off
-            // near the end to exercise the blow-off transient.
-            const auto spool = std::clamp((t - 0.5) / 1.6, 0.0, 1.0);
-            const auto liftOff = t > 2.4 && t < 2.5;
-            audioState.forcedInductionKind.store(1);
-            audioState.forcedInductionShaftRpm.store(static_cast<float>(20'000.0 + spool * 95'000.0));
-            audioState.boostPressureRatio.store(static_cast<float>(1.0 + spool * 0.8));
-            audioState.wastegateOpening.store(static_cast<float>(spool * 0.25));
-            audioState.throttle.store(liftOff ? 0.1F : static_cast<float>(std::clamp(0.4 + spool * 0.5, 0.0, 0.95)));
-        }
-
         block.clear();
         // Block-size invariance probe: a correct realtime renderer must produce
         // the same signal whatever callback size the host chooses. Rendering
@@ -547,6 +549,8 @@ Metrics renderEngine(const EngineConfig& baseConfig, const WavData& ir,
     m.physicalActive = renderer.physicalExhaustActive();
     m.compiledTopologyActive = renderer.compiledExhaustTopologyActive();
     m.structuralRadiationActive = renderer.structuralRadiationActive();
+    m.intakeTopologyActive = renderer.compiledIntakeTopologyActive();
+    m.forcedInductionAcousticsActive = renderer.forcedInductionAcousticsActive();
     m.legacyPathSamples = renderer.legacyPathSampleCount();
     m.invalidBoundarySamples = renderer.invalidBoundarySampleCount();
     if (writeOutput)
@@ -562,6 +566,8 @@ Metrics renderEngine(const EngineConfig& baseConfig, const WavData& ir,
               << " physical=" << (m.physicalActive ? "yes" : "NO")
               << " topology=" << (m.compiledTopologyActive ? "full" : "LEGACY")
               << " structure=" << (m.structuralRadiationActive ? "modal" : "LEGACY")
+              << " intake=" << (m.intakeTopologyActive ? "wave" : "LEGACY")
+              << " forced=" << (m.forcedInductionAcousticsActive ? "physical" : "none")
               << " legacySamples=" << m.legacyPathSamples
               << " boundaryDropouts=" << m.invalidBoundarySamples
               << " solverHz=" << std::setprecision(0) << m.solverFrequencyHz
@@ -1072,6 +1078,7 @@ bool runtimePathCheck(const EngineConfig& baseConfig, const WavData& ir) {
     const auto physical = renderer->physicalExhaustActive();
     const auto fullTopology = renderer->compiledExhaustTopologyActive();
     const auto modalStructure = renderer->structuralRadiationActive();
+    const auto intakeTopology = renderer->compiledIntakeTopologyActive();
     // Engine speed at the end of the run. A silent render means nothing until
     // it is known whether the engine was still turning: a stalled engine is a
     // physics defect, not an audio one.
@@ -1081,6 +1088,7 @@ bool runtimePathCheck(const EngineConfig& baseConfig, const WavData& ir) {
               << " physical=" << (physical ? "yes" : "NO")
               << " topology=" << (fullTopology ? "full" : "LEGACY")
               << " structure=" << (modalStructure ? "modal" : "LEGACY")
+              << " intake=" << (intakeTopology ? "wave" : "LEGACY")
               << " legacySamples=" << renderer->legacyPathSampleCount()
               << " boundaryDropouts=" << renderer->invalidBoundarySampleCount()
               << " rms=" << std::fixed << std::setprecision(4) << rms
@@ -1104,7 +1112,7 @@ bool runtimePathCheck(const EngineConfig& baseConfig, const WavData& ir) {
               << "/" << static_cast<std::uint64_t>(rendered * 240.0)
               << " maxLate=" << std::setprecision(2)
               << runtime->maximumTimingLatenessSeconds() * 1.0e3 << "ms\n";
-    auto ok = physical && fullTopology && modalStructure;
+    auto ok = physical && fullTopology && modalStructure && intakeTopology;
     if (!physical)
         std::cerr << "FAIL: runtime wiring: " << config.name
                   << " never activated the physical exhaust path\n";
@@ -1114,6 +1122,9 @@ bool runtimePathCheck(const EngineConfig& baseConfig, const WavData& ir) {
     if (!modalStructure)
         std::cerr << "FAIL: runtime wiring: " << config.name
                   << " did not compile modal structural radiation\n";
+    if (!intakeTopology)
+        std::cerr << "FAIL: runtime wiring: " << config.name
+                  << " did not compile the intake wave network\n";
     // An engine that has stopped turning cannot produce engine sound, and no
     // amount of audio work will change that. This is checked here rather than in
     // the offline renders because those drive throttle and a dyno load
@@ -1175,6 +1186,7 @@ int main(int argc, char** argv) {
         const auto valid = metrics.physicalActive
             && metrics.compiledTopologyActive
             && metrics.structuralRadiationActive
+            && metrics.intakeTopologyActive
             && metrics.left.scan.finite && metrics.right.scan.finite
             && metrics.droppedPressureSamples == 0
             && metrics.invalidBoundarySamples == 0;
@@ -1285,7 +1297,8 @@ int main(int argc, char** argv) {
 
     bool ok = true;
     const auto validate = [&ok](const Metrics& m, const std::string& label,
-                                bool requireSpectralBalance) {
+                                bool requireSpectralBalance,
+                                bool requireForcedInduction = false) {
         const auto fail = [&ok, &label](const std::string& reason) {
             std::cerr << "FAIL: " << label << ": " << reason << '\n';
             ok = false;
@@ -1295,6 +1308,10 @@ int main(int argc, char** argv) {
             fail("the complete exhaust topology was not active");
         if (!m.structuralRadiationActive)
             fail("modal block/head radiation was not active");
+        if (!m.intakeTopologyActive)
+            fail("the intake wave network was not active");
+        if (requireForcedInduction && !m.forcedInductionAcousticsActive)
+            fail("the physical forced-induction source was not active");
         const auto channels = { std::pair { "left", &m.left }, std::pair { "right", &m.right } };
         for (const auto& [name, channel] : channels) {
             const std::string suffix = std::string(" (") + name + " channel)";
@@ -1379,7 +1396,7 @@ int main(int argc, char** argv) {
     };
     for (std::size_t index = 0; index < metrics.size(); ++index)
         validate(metrics[index], engines[index].label, true);
-    validate(turbo, "synthetic turbo", true);
+    validate(turbo, "synthetic turbo", true, true);
     validate(stability, "long-run inline4", true);
     if (idleEngine == catalog.entries.end()) {
         std::cerr << "FAIL: catalog Big Twin fixture is missing\n";

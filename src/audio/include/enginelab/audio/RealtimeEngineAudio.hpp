@@ -1,5 +1,7 @@
 #pragma once
 #include <enginelab/audio/AcousticExhaustNetwork.hpp>
+#include <enginelab/audio/AcousticIntakeNetwork.hpp>
+#include <enginelab/audio/ForcedInductionAcoustics.hpp>
 #include <enginelab/audio/IAudioRenderer.hpp>
 #include <enginelab/audio/PipeRadiationModel.hpp>
 #include <enginelab/audio/BoundaryReconstructionFilter.hpp>
@@ -73,6 +75,12 @@ public:
     }
     [[nodiscard]] bool structuralRadiationActive() const noexcept {
         return structuralModalRadiator_ != nullptr;
+    }
+    [[nodiscard]] bool compiledIntakeTopologyActive() const noexcept {
+        return acousticIntakeNetwork_ != nullptr;
+    }
+    [[nodiscard]] bool forcedInductionAcousticsActive() const noexcept {
+        return forcedInductionAcoustics_ != nullptr;
     }
     /** Samples rendered on the legacy procedural path.
      *
@@ -274,6 +282,10 @@ private:
     std::unique_ptr<AcousticExhaustNetwork> acousticExhaustNetwork_;
     /** Block/head modes compiled from immutable engine geometry. */
     std::unique_ptr<StructuralModalRadiator> structuralModalRadiator_;
+    /** Runners/plenums/throttles/inlets compiled from EngineConfig. */
+    std::unique_ptr<AcousticIntakeNetwork> acousticIntakeNetwork_;
+    /** Rotor-order tones and jet radiation, parameterised by physical geometry. */
+    std::unique_ptr<ForcedInductionAcoustics> forcedInductionAcoustics_;
     // Sized in prepare() to the cylinders and paths the loaded engine actually
     // has. Allocation stays off the callback; only the capacity is no longer a
     // worst-case guess paid for by every engine.
@@ -300,8 +312,6 @@ private:
     float lowPassRight_ { 0.0F };
     float pressureTailDecay_ { 0.992F };
     float pressureTailInputCoefficient_ { 0.010F };
-    float bovDecay_ { 0.9994F };
-    float bovNoiseCoefficient_ { 0.08F };
     float jitterCoefficient_ { 0.015F };
     float collectorCoefficient_ { 0.18F };
     float levelAttackCoefficient_ { 0.0025F };
@@ -378,14 +388,10 @@ private:
     double mechanicalPhase_ { 0.0 };
     double valvetrainPhase_ { 0.0 };
     double starterPhase_ { 0.0 };
-    double fiWhistlePhase_ { 0.0 };
     float smoothedRpm_ { 0.0F };
     float intakeFilter_ { 0.0F };
     float intakeSvfLow_ { 0.0F };
     float intakeSvfBand_ { 0.0F };
-    float bovEnvelope_ { 0.0F };
-    float bovNoiseState_ { 0.0F };
-    float previousThrottleForBov_ { 0.0F };
     std::atomic<std::uint64_t> lateEvents_ { 0 };
     std::atomic<std::uint64_t> stolenVoices_ { 0 };
     std::atomic<std::uint64_t> droppedPendingEvents_ { 0 };
