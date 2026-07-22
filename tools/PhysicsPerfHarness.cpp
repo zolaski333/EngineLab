@@ -204,6 +204,79 @@ void traceEngine(const enginelab::EngineConfig& baseConfig, double targetRpm) {
     }
 }
 
+/**
+ * Drive a hot engine through closed-throttle fuel cut at a prescribed speed.
+ *
+ * This isolates exhaust thermodynamics from vehicle mass and gearing while
+ * preserving the important boundary condition of in-gear overrun: the wheels
+ * keep doing positive work on a non-firing engine. The virtual motoring torque
+ * is derived from the completed-cycle crank torque, not from an authored EGT or
+ * flow target, and the speed command falls linearly just as it does while a car
+ * coasts in one gear.
+ */
+void traceOverrun(const enginelab::EngineConfig& baseConfig, double durationSeconds) {
+    auto config = baseConfig;
+    enginelab::normaliseEngineConfig(config);
+    enginelab::SimpleEcuModel ecu;
+    enginelab::SimplifiedGasolinePhysics physics;
+    enginelab::FourStrokeEventGenerator events;
+    auto exhaust = enginelab::ExhaustGraph::makeForEngine(config);
+    enginelab::EngineSimulator simulator(config, ecu, physics, events, exhaust);
+    constexpr double dt = 1.0 / 240.0;
+    const auto hotRpm = std::min(config.redlineRpm, config.ignition.revLimitRpm) * 0.90;
+
+    for (int step = 0; step < static_cast<int>(2.0 / dt); ++step) {
+        const auto time = static_cast<double>(step) * dt;
+        (void)simulator.step(dt, { true, time < 1.5, 0.72, 0.0 });
+    }
+    (void)measurePoint(simulator, hotRpm);
+
+    std::cout << "time_s,rpm,egt_c,map_kpa,exhaust_kpa,exhaust_g_s,fuel_g_s,"
+                 "lambda,cycle_torque_nm,motoring_torque_nm,gas_energy_j,"
+                 "cylinder_phase_deg,cylinder_pressure_bar,cylinder_temperature_c,"
+                 "cylinder_mass_mg,intake_runner_temperature_c,intake_lift_mm,"
+                 "exhaust_lift_mm,limited\n";
+    auto peakEgtC = simulator.state().exhaustTemperatureC;
+    auto motoringTorqueNm = 0.0;
+    const auto finalRpm = std::max(config.idleRpm * 2.0, hotRpm * 0.45);
+    const auto stepCount = static_cast<int>(durationSeconds / dt);
+    for (int step = 0; step < stepCount; ++step) {
+        const auto time = static_cast<double>(step) * dt;
+        const auto phase = std::clamp(time / std::max(dt, durationSeconds), 0.0, 1.0);
+        const auto targetRpm = std::lerp(hotRpm, finalRpm, phase);
+        const auto speedErrorRpm = targetRpm - simulator.state().rpm;
+        const auto requiredTorqueNm = std::max(0.0,
+            -simulator.state().cycleAveragedTorqueNm + speedErrorRpm * 0.20);
+        motoringTorqueNm += (requiredTorqueNm - motoringTorqueNm)
+            * (1.0 - std::exp(-dt * 18.0));
+
+        enginelab::EngineControls controls;
+        controls.ignitionEnabled = true;
+        controls.throttle = 0.0;
+        controls.externalTorqueNm = motoringTorqueNm;
+        const auto frame = simulator.step(dt, controls);
+        peakEgtC = std::max(peakEgtC, frame.state.exhaustTemperatureC);
+        if (step % static_cast<int>(0.25 / dt) == 0 || step + 1 == stepCount) {
+            const auto& cylinder = frame.state.cylinderStates[0];
+            std::cout << time << ',' << frame.state.rpm << ','
+                      << frame.state.exhaustTemperatureC << ','
+                      << frame.state.manifoldPressureKpa << ','
+                      << frame.state.exhaustPressureKpa << ','
+                      << frame.state.exhaustFlowGramsPerSecond << ','
+                      << frame.state.fuelFlowGramsPerSecond << ','
+                      << frame.state.lambda << ','
+                      << frame.state.cycleAveragedTorqueNm << ','
+                      << motoringTorqueNm << ',' << frame.state.gasInternalEnergyJoules << ','
+                      << cylinder.cyclePhaseDegrees << ',' << cylinder.pressureEstimateBar << ','
+                      << cylinder.gasTemperatureC << ',' << cylinder.trappedMassMg << ','
+                      << cylinder.intakeRunnerTemperatureC << ','
+                      << cylinder.intakeValveLiftMm << ',' << cylinder.exhaustValveLiftMm << ','
+                      << (frame.state.solverResolutionLimited ? 1 : 0) << '\n';
+        }
+    }
+    std::cerr << "overrun peak EGT: " << peakEgtC << " degC\n";
+}
+
 void measureEngine(const enginelab::EngineConfig& baseConfig, int run) {
     auto config = baseConfig;
     enginelab::normaliseEngineConfig(config);
@@ -249,15 +322,18 @@ int main(int argc, char** argv) {
     std::string filter;
     auto runs = 3;
     auto traceRpm = 0.0;
+    auto overrunSeconds = 0.0;
     for (int index = 1; index < argc; ++index) {
         const std::string argument = argv[index];
         if (argument == "--catalog-root" && index + 1 < argc) catalogRoot = argv[++index];
         else if (argument == "--filter" && index + 1 < argc) filter = argv[++index];
         else if (argument == "--trace" && index + 1 < argc) traceRpm = std::stod(argv[++index]);
+        else if (argument == "--overrun" && index + 1 < argc) overrunSeconds = std::stod(argv[++index]);
         else if (argument == "--runs" && index + 1 < argc) runs = std::max(1, std::stoi(argv[++index]));
         else {
             std::cerr << "usage: EngineLabPhysicsPerfHarness [--catalog-root dir]"
-                         " [--filter name-fragment] [--runs count] [--trace rpm]\n";
+                         " [--filter name-fragment] [--runs count] [--trace rpm]"
+                         " [--overrun seconds]\n";
             return EXIT_FAILURE;
         }
     }
@@ -268,7 +344,8 @@ int main(int argc, char** argv) {
     const auto catalog = enginelab::loadEngineCatalog(catalogRoot);
     for (const auto& entry : catalog.entries)
         if (containsCaseInsensitive(entry.config.name, "LS3")
-                || containsCaseInsensitive(entry.config.name, "Merlin"))
+                || containsCaseInsensitive(entry.config.name, "Merlin")
+                || (!filter.empty() && containsCaseInsensitive(entry.config.name, filter)))
             engines.push_back(entry.config);
     if (!filter.empty())
         std::erase_if(engines, [&filter](const auto& config) {
@@ -283,6 +360,10 @@ int main(int argc, char** argv) {
     // --trace is a single-engine instrument: pair it with --filter.
     if (traceRpm > 0.0) {
         traceEngine(engines.front(), traceRpm);
+        return EXIT_SUCCESS;
+    }
+    if (overrunSeconds > 0.0) {
+        traceOverrun(engines.front(), overrunSeconds);
         return EXIT_SUCCESS;
     }
     std::cout << "engine,cylinders,run,target_rpm,actual_rpm,mean_us,p50_us,p95_us,max_us,mean_substeps,"
