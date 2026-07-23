@@ -125,9 +125,21 @@ EcuCommand SimpleEcuModel::evaluate(const EngineConfig& config, const EngineStat
             // the PI loop resumes sole authority.
             idleDashpot = std::max(idleDashpot,
                 std::clamp(effectiveThrottle * 2.0, 0.0, 0.65));
-        } else {
+        } else if (state.rpm < targetRpm * 1.30) {
+            // Near idle: hand back to the governor, bleeding the dashpot out.
             idleDashpot *= std::exp(-idleDt * 1.25);
         }
+        // Above ~1.3x idle at a shut throttle the dashpot is HELD, not decayed.
+        // A tip-out from a rev coasts down over seconds; the former fixed ~0.8 s
+        // decay expired while the engine was still far above idle, so the bypass
+        // was already shut when it finally arrived. With the plate shut too, the
+        // manifold had pumped down to vacuum, the first fired cycles after the
+        // fuel cut released made almost no torque, and the engine sagged straight
+        // through idle and stalled (measured: LS3 to 314 rpm, Merlin to a full
+        // stall on a 0.5 s blip recovery). Holding the dashpot through the coast
+        // keeps a live manifold charge so combustion re-establishes at idle. It
+        // only ever charges from a throttle-open condition, so a pure motoring
+        // overrun (throttle never opened) is unaffected.
         if (driverOverride < 0.999) {
             // The driver's pedal is physically closing the bypass downstream of
             // this PI controller.  Integrating an overspeed error while the

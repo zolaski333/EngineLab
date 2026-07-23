@@ -35,6 +35,16 @@ enginelab_set_warnings(EngineLabOverrunThermalRegressionTests)
 add_test(NAME EngineLab.OverrunThermalRegression
     COMMAND EngineLabOverrunThermalRegressionTests)
 
+add_executable(EngineLabIdleStabilityRegressionTests IdleStabilityRegressionTests.cpp)
+target_link_libraries(EngineLabIdleStabilityRegressionTests PRIVATE
+    EngineLab::Foundation EngineLab::Events EngineLab::Physics EngineLab::Ecu
+    EngineLab::Exhaust EngineLab::Simulation EngineLab::Catalog)
+target_compile_definitions(EngineLabIdleStabilityRegressionTests PRIVATE
+    ENGINELAB_CATALOG_ROOT="${CMAKE_SOURCE_DIR}")
+enginelab_set_warnings(EngineLabIdleStabilityRegressionTests)
+add_test(NAME EngineLab.IdleStabilityRegression
+    COMMAND EngineLabIdleStabilityRegressionTests)
+
 add_executable(EngineLabEcuCalibrationIntegrationTests EcuCalibrationIntegrationTests.cpp)
 target_link_libraries(EngineLabEcuCalibrationIntegrationTests PRIVATE
     EngineLab::Foundation EngineLab::Calibration EngineLab::Ecu)
