@@ -10,6 +10,13 @@ target_link_libraries(EngineLabPhysicsPerfHarness PRIVATE
     EngineLab::Ecu EngineLab::Events EngineLab::Exhaust EngineLab::Catalog)
 enginelab_set_warnings(EngineLabPhysicsPerfHarness)
 
+add_executable(EngineLabShiftTransientHarness ShiftTransientHarness.cpp)
+target_link_libraries(EngineLabShiftTransientHarness PRIVATE
+    EngineLab::Runtime EngineLab::Simulation EngineLab::Foundation EngineLab::Physics
+    EngineLab::Ecu EngineLab::Events EngineLab::Exhaust EngineLab::Catalog)
+target_compile_definitions(EngineLabShiftTransientHarness PRIVATE ENGINELAB_CATALOG_ROOT="${CMAKE_SOURCE_DIR}")
+enginelab_set_warnings(EngineLabShiftTransientHarness)
+
 add_executable(EngineLabAudioRenderHarness AudioRenderHarness.cpp)
 target_link_libraries(EngineLabAudioRenderHarness PRIVATE
     EngineLab::Audio EngineLab::Simulation EngineLab::Foundation EngineLab::Physics
