@@ -206,6 +206,10 @@ private:
          *  per-block wall-loss fit does not need per-sample transcendentals. */
         float mediumDensityKgPerM3 { 1.2F };
         float mediumSoundSpeedMps { 343.0F };
+        /** Total mean exhaust mass flow leaving this path, cached from the last
+         *  physical sample. Drives the outlet mean-flow convective loss so the
+         *  wave network is not a quiescent (near-lossless) pipe. */
+        float meanExhaustMassFlowKgPerSecond { 0.0F };
         /** Expansion-chamber silencer at the collector end of the duct.
          *  Disabled until the engine publishes a chamber, in which state it is
          *  an exact through-connection. See ExpansionChamberMuffler. */

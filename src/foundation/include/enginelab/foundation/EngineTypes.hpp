@@ -517,6 +517,10 @@ struct CylinderState final {
     double intakeVelocityMps { 0.0 };
     double exhaustVelocityMps { 0.0 };
     double fuelDeliveryRatio { 0.0 };
+    /** Fraction of the commanded injector pulse actually metered this cycle.
+     *  1.0 means the injector kept up; a low value is real capacity saturation,
+     *  independent of the closed-loop trim (unlike fuelDeliveryRatio). */
+    double injectorCapacityRatio { 1.0 };
     double flameSpeedMps { 0.0 };
     double burnedFraction { 0.0 };
     double combustionEfficiency { 0.0 };

@@ -106,12 +106,22 @@ float ForcedInductionAcoustics::process(
     const auto shaftHz = std::max(0.0,
         static_cast<double>(input.shaftSpeedRpm)) / 60.0 * spectralScale;
     const auto advanceTone = [&](double frequencyHz, double& phase) {
-        if (!(frequencyHz > 0.0) || frequencyHz >= sampleRateHz_ * 0.45)
-            return 0.0F;
+        if (!(frequencyHz > 0.0)) return 0.0F;
+        // Always advance the phase so the tone stays coherent across the audible
+        // limit. Freezing it (the previous behaviour) meant a blade rate that
+        // dipped back below the limit resumed from a stale phase -- a click. The
+        // amplitude is faded smoothly to zero over the last octave-fraction below
+        // the Nyquist guard rather than hard-muted, which itself stepped.
         phase += 2.0 * std::numbers::pi * frequencyHz / sampleRateHz_;
         if (phase >= 2.0 * std::numbers::pi)
             phase = std::fmod(phase, 2.0 * std::numbers::pi);
-        return static_cast<float>(std::sin(phase));
+        const auto upperHz = sampleRateHz_ * 0.45;
+        if (frequencyHz >= upperHz) return 0.0F;
+        const auto fadeStartHz = sampleRateHz_ * 0.40;
+        const auto taper = frequencyHz > fadeStartHz
+            ? std::clamp((upperHz - frequencyHz) / (upperHz - fadeStartHz), 0.0, 1.0)
+            : 1.0;
+        return static_cast<float>(std::sin(phase) * taper);
     };
     const auto rho = std::clamp(static_cast<double>(input.densityKgPerM3), 0.1, 5.0);
     const auto c = std::clamp(static_cast<double>(input.soundSpeedMps), 250.0, 800.0);

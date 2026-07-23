@@ -50,9 +50,12 @@ public:
                                double observerDistanceM = 1.0);
     void reset() noexcept;
 
-    /** Refit delays and wall losses once per callback block. */
+    /** Refit delays and wall losses once per callback block. The optional
+     *  per-path mean exhaust mass flow drives the outlet mean-flow convective
+     *  loss; an empty span leaves every outlet quiescent. */
     void beginBlock(std::span<const Medium> pathMedia,
-                    double acousticTimeScale) noexcept;
+                    double acousticTimeScale,
+                    std::span<const float> pathMeanMassFlowKgPerSecond = {}) noexcept;
 
     /** Propagate one sample and return each path at the two microphones, Pa. */
     [[nodiscard]] std::array<StereoPressure, maximumPaths> process(

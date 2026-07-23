@@ -760,6 +760,7 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
             if (injectionStartCrossed) {
                 injectedFuelMolesThisCycle_[cylinderIndex] = 0.0;
                 requestedFuelMolesThisCycle_[cylinderIndex] = 0.0;
+                commandedFuelMolesMaxThisCycle_[cylinderIndex] = 0.0;
             }
             const auto fuelMolarMassKg = config_.fuelProperties.molarMassGramsPerMole * 0.001;
             const auto oxygenEquivalentAirMassMg = cylinderGas_[cylinderIndex].mixture().oxygenMoles
@@ -824,6 +825,12 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 commandedFuelMoles = std::max(0.0,
                     requestedFuelMoles - existingFuelInventory);
             }
+            // The largest single-substep command is the whole new pulse the
+            // injector must place before the window closes; delivery is metered
+            // per substep at the injector's flow limit, so a healthy injector
+            // reaches it and a saturated one does not.
+            commandedFuelMolesMaxThisCycle_[cylinderIndex] = std::max(
+                commandedFuelMolesMaxThisCycle_[cylinderIndex], commandedFuelMoles);
             const auto injectionResult = FuelInjectionModel::deliver(config_.injection,
                 config_.fuelProperties, injectionStates_[cylinderIndex], injectionTarget,
                 commandedFuelMoles, subDt);
@@ -841,6 +848,16 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 deliveredFuelMolesLastCycle_[cylinderIndex] = chamberFuelMoles;
                 fuelDeliveryRatio_[cylinderIndex] = requestedFuelMoles > 1.0e-15
                     ? std::clamp(chamberFuelMoles / requestedFuelMoles, 0.0, 1.0) : 0.0;
+                // Delivered fraction of the commanded pulse. Unlike the ratio
+                // above it does not carry the closed-loop trim in its reference,
+                // so a well-regulated engine reads ~1.0 and only a genuinely
+                // undersized injector (or a pulse wider than its window) falls
+                // short. This is what the injector-capacity diagnostic must read.
+                injectorCapacityRatio_[cylinderIndex] =
+                    commandedFuelMolesMaxThisCycle_[cylinderIndex] > 1.0e-15
+                    ? std::clamp(injectedFuelMolesThisCycle_[cylinderIndex]
+                        / commandedFuelMolesMaxThisCycle_[cylinderIndex], 0.0, 1.0)
+                    : 1.0;
                 const auto mixtureAfr = airFuelRatioForCell(cylinderGas_[cylinderIndex], config_.fuelProperties);
                 actualAfrLastCycle_[cylinderIndex] = mixtureAfr;
                 // Closed-loop lambda correction is based on the mixture that
@@ -1699,6 +1716,7 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 intakeRunnerGas_[index].bulkVelocityMps(),
                 exhaustRunnerVelocityMps_[index],
                 fuelDeliveryRatio_[index],
+                injectorCapacityRatio_[index],
                 flameEvents_[index].flameSpeedMps, flameEvents_[index].burnedFraction,
                 flameEvents_[index].efficiency,
                 endGasKnockStates_[index].filteredLevel,
@@ -1949,6 +1967,8 @@ void EngineSimulator::reset() noexcept {
     trappedAirSourceTemperatureKLastCycle_.fill(config_.ambientTemperatureC + 273.15);
     actualAfrLastCycle_.fill(config_.fuelProperties.stoichiometricAirFuelRatio);
     fuelDeliveryRatio_.fill(0.0);
+    commandedFuelMolesMaxThisCycle_.fill(0.0);
+    injectorCapacityRatio_.fill(1.0);
     closedLoopFuelTrim_.fill(1.0);
     flameEvents_.fill({});
     injectionStates_.fill({});

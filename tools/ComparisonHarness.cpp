@@ -460,6 +460,7 @@ bool runCatalogAcceptance(const std::filesystem::path& root, const std::string& 
         double injectedFuelSum = 0.0;
         double airMassSum = 0.0;
         double deliveryRatioSum = 0.0;
+        double injectorCapacitySum = 0.0;
         double closedLoopTrimSum = 0.0;
         double fmepSum = 0.0;
         std::size_t settledSamples = 0;
@@ -521,6 +522,7 @@ bool runCatalogAcceptance(const std::filesystem::path& root, const std::string& 
                 airMassSum += state.airMassMgPerCycle;
                 for (std::size_t cylinderIndex = 0; cylinderIndex < state.cylinderStateCount; ++cylinderIndex) {
                     deliveryRatioSum += state.cylinderStates[cylinderIndex].fuelDeliveryRatio;
+                    injectorCapacitySum += state.cylinderStates[cylinderIndex].injectorCapacityRatio;
                     closedLoopTrimSum += state.cylinderStates[cylinderIndex].closedLoopFuelTrim;
                 }
                 fmepSum += state.frictionMeanEffectivePressureBar;
@@ -550,6 +552,9 @@ bool runCatalogAcceptance(const std::filesystem::path& root, const std::string& 
                         ? airMassSum / static_cast<double>(settledSamples) : 0.0)
                   << " mg/cycle, delivery=" << (settledSamples > 0
                         ? deliveryRatioSum / (static_cast<double>(settledSamples)
+                            * static_cast<double>(config.cylinders.size())) : 0.0)
+                  << ", injectorCapacity=" << (settledSamples > 0
+                        ? injectorCapacitySum / (static_cast<double>(settledSamples)
                             * static_cast<double>(config.cylinders.size())) : 0.0)
                   << ", trim=" << (settledSamples > 0
                         ? closedLoopTrimSum / (static_cast<double>(settledSamples)

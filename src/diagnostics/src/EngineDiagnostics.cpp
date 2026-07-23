@@ -18,11 +18,16 @@ std::vector<Diagnostic> EngineDiagnostics::evaluate(const EngineConfig& config, 
     if (state.solverResolutionLimited)
         result.push_back({ DiagnosticSeverity::critical, "solver.resolution", "Resolution angulaire du solveur insuffisante au regime actuel." });
     if (state.load > 0.40 && state.rpm > config.idleRpm * 1.2 && state.cylinderStateCount > 0) {
-        double fuelDelivery = 0.0;
+        // Injector capacity, not the trim-referenced delivery ratio: the latter
+        // is depressed by the closed-loop trim (which exists to compensate normal
+        // port-film transport), so a well-regulated engine read below threshold
+        // and raised a permanent false alarm. This fires only when the injector
+        // physically cannot meter the commanded pulse within its window.
+        double injectorCapacity = 0.0;
         for (std::size_t index = 0; index < state.cylinderStateCount; ++index)
-            fuelDelivery += state.cylinderStates[index].fuelDeliveryRatio;
-        fuelDelivery /= static_cast<double>(state.cylinderStateCount);
-        if (fuelDelivery < 0.82)
+            injectorCapacity += state.cylinderStates[index].injectorCapacityRatio;
+        injectorCapacity /= static_cast<double>(state.cylinderStateCount);
+        if (injectorCapacity < 0.90)
             result.push_back({ DiagnosticSeverity::warning, "injection.capacity", "Debit injecteur ou transfert carburant insuffisant sous charge." });
     }
     const auto exhaustDeltaKpa = state.exhaustPressureKpa - config.ambientPressureKpa;

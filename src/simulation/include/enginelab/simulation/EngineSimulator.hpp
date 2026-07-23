@@ -147,6 +147,13 @@ private:
     std::array<double, 32> trappedAirSourceTemperatureKLastCycle_ {};
     std::array<double, 32> actualAfrLastCycle_ {};
     std::array<double, 32> fuelDeliveryRatio_ {};
+    // Largest pulse the injector was asked to deliver this cycle, and the
+    // fraction of it that actually metered before the window closed. The latter
+    // isolates real injector-capacity saturation from closed-loop trim: it reads
+    // 1.0 whenever the injector keeps up with its command, however large the
+    // trim, and only falls when the injector physically runs out of time.
+    std::array<double, 32> commandedFuelMolesMaxThisCycle_ {};
+    std::array<double, 32> injectorCapacityRatio_ {};
     std::array<double, 32> closedLoopFuelTrim_ {};
     std::array<FlameEvent, 32> flameEvents_ {};
     std::array<FuelInjectionState, 32> injectionStates_ {};

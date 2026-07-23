@@ -710,16 +710,19 @@ void RealtimeEngineAudio::render(juce::AudioBuffer<float>& output, int startSamp
     }
     if (acousticExhaustNetwork_) {
         std::array<AcousticExhaustNetwork::Medium, maximumPaths> media {};
+        std::array<float, maximumPaths> meanMassFlow {};
         for (std::size_t path = 0; path < exhaustPathCount; ++path) {
             media[path] = {
                 exhaustPaths_[path].mediumDensityKgPerM3,
                 exhaustPaths_[path].mediumSoundSpeedMps,
             };
+            meanMassFlow[path] = exhaustPaths_[path].meanExhaustMassFlowKgPerSecond;
         }
         acousticExhaustNetwork_->beginBlock(
             std::span<const AcousticExhaustNetwork::Medium>(
                 media.data(), exhaustPathCount),
-            acousticTimeScale);
+            acousticTimeScale,
+            std::span<const float>(meanMassFlow.data(), exhaustPathCount));
     }
     if (acousticIntakeNetwork_) {
         std::array<AcousticIntakeNetwork::PathBoundary, maximumPaths> paths {};
@@ -800,6 +803,7 @@ void RealtimeEngineAudio::render(juce::AudioBuffer<float>& output, int startSamp
         std::array<float, maximumPaths> pathDensitySum {};
         std::array<float, maximumPaths> pathSoundSpeedSum {};
         std::array<float, maximumPaths> pathMediumWeight {};
+        std::array<float, maximumPaths> pathMeanMassFlowSum {};
         StructuralExcitationSample structuralExcitation;
         std::array<AcousticIntakeNetwork::CylinderBoundary, 32> intakeBoundaries {};
         // Once established, the SI path is latched. A missing producer sample
@@ -1116,6 +1120,10 @@ void RealtimeEngineAudio::render(juce::AudioBuffer<float>& output, int startSamp
                         pathDensitySum[resolvedPath] += densityKgPerM3 * areaM2;
                         pathSoundSpeedSum[resolvedPath] += soundSpeedMps * areaM2;
                         pathMediumWeight[resolvedPath] += areaM2;
+                        // Total mean outflow leaving this path (all its ports),
+                        // for the outlet mean-flow convective loss.
+                        pathMeanMassFlowSum[resolvedPath] += std::abs(
+                            exhaustMeanMassFlowKgPerSecond_[index]);
                         sampleUsesPhysicalExhaust = true;
                     } else if (!acousticExhaustNetwork_) {
                         const auto exhaustGaugePressure = runnerExhaustPressureKpa
@@ -1239,6 +1247,8 @@ void RealtimeEngineAudio::render(juce::AudioBuffer<float>& output, int startSamp
                 // Cached for the next block's wall-loss fit.
                 exhaustPaths_[path].mediumDensityKgPerM3 = density;
                 exhaustPaths_[path].mediumSoundSpeedMps = soundSpeed;
+                exhaustPaths_[path].meanExhaustMassFlowKgPerSecond =
+                    pathMeanMassFlowSum[path];
                 (void) exhaustPaths_[path].radiation.setMedium(density, soundSpeed);
             }
         }

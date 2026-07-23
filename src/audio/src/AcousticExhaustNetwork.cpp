@@ -56,6 +56,7 @@ struct AcousticExhaustNetwork::Impl final {
         float delaySamples { 1.0F };
         float delayTargetSamples { 1.0F };
         DuctWallLoss::Coefficients wallLoss {};
+        DuctWallLoss::Coefficients wallLossTarget {};
         DuctWallLoss::State forwardLoss {};
         DuctWallLoss::State reverseLoss {};
     };
@@ -84,6 +85,14 @@ struct AcousticExhaustNetwork::Impl final {
         float incidentToJunction {};
         UnflangedPipeRadiation radiation;
         FreeFieldObserver observer;
+        double radiationDensityKgPerM3 { 1.2 };
+        double radiationSoundSpeedMps { 343.0 };
+        double radiationTargetDensityKgPerM3 { 1.2 };
+        double radiationTargetSoundSpeedMps { 343.0 };
+        // Mean-flow convective loss at the open termination: |R| -> (1-M)/(1+M).
+        double outletMach { 0.0 };
+        double outletMachTarget { 0.0 };
+        double convectiveReflection { 1.0 };
         AcousticPoint3M acousticPositionM {};
         AcousticPoint3M acousticAxis { 0.0, 1.0, 0.0 };
         AcousticTerminationType acousticTermination {
@@ -99,9 +108,14 @@ struct AcousticExhaustNetwork::Impl final {
     std::vector<float> incident;
     std::vector<float> outgoing;
     std::array<Medium, maximumPaths> media {};
+    std::array<Medium, maximumPaths> mediaTarget {};
+    bool mediaInitialised { false };
     double sampleRateHz { 48'000.0 };
     double maximumDelayScale { 12.5 };
-    double observerDistanceM { 1.0 };
+    // Note: the observer distance is validated as an API contract in prepare()
+    // but not stored here. Radiation spreading to the observer is owned by each
+    // path's PipeRadiationModel (prepared separately in RealtimeEngineAudio),
+    // never by this network, so a stored copy here would be dead state.
     AcousticObserverConfig observerConfig;
     bool configured { false };
     bool prepared { false };
@@ -323,7 +337,6 @@ bool AcousticExhaustNetwork::prepare(double sampleRateHz,
         return false;
     impl_->sampleRateHz = sampleRateHz;
     impl_->maximumDelayScale = maximumDelayScale;
-    impl_->observerDistanceM = observerDistanceM;
     constexpr double minimumExhaustSoundSpeedMps = 289.8;
     for (auto& duct : impl_->ducts) {
         const auto maximumSamples = static_cast<std::size_t>(std::ceil(
@@ -347,7 +360,12 @@ bool AcousticExhaustNetwork::prepare(double sampleRateHz,
     }
     impl_->prepared = true;
     reset();
+    // Seed delay/loss targets from the default medium so the network is ready
+    // before the first block, then clear the init flag so the first *real*
+    // beginBlock snaps the live medium straight to the true gas state instead of
+    // sweeping up from cold air.
     beginBlock(impl_->media, 1.0);
+    impl_->mediaInitialised = false;
     return true;
 }
 
@@ -371,24 +389,40 @@ void AcousticExhaustNetwork::reset() noexcept {
     }
     std::fill(impl_->incident.begin(), impl_->incident.end(), 0.0F);
     std::fill(impl_->outgoing.begin(), impl_->outgoing.end(), 0.0F);
+    impl_->mediaInitialised = false;
 }
 
 void AcousticExhaustNetwork::beginBlock(
-    std::span<const Medium> pathMedia, double acousticTimeScale) noexcept {
+    std::span<const Medium> pathMedia, double acousticTimeScale,
+    std::span<const float> pathMeanMassFlowKgPerSecond) noexcept {
     if (!impl_->prepared) return;
-    for (std::size_t path = 0; path < impl_->media.size(); ++path) {
+    for (std::size_t path = 0; path < impl_->mediaTarget.size(); ++path) {
         if (path < pathMedia.size()
             && std::isfinite(pathMedia[path].densityKgPerM3)
             && pathMedia[path].densityKgPerM3 > 0.0F
             && std::isfinite(pathMedia[path].soundSpeedMps)
             && pathMedia[path].soundSpeedMps > 0.0F)
-            impl_->media[path] = pathMedia[path];
+            impl_->mediaTarget[path] = pathMedia[path];
+    }
+    // The gas state is sampled at the block boundary but drives per-sample
+    // scattering coefficients: junction admittance, duct stiffness, the
+    // wall-loss pole and the outlet radiation load all read the medium. Stepping
+    // it here phase-jumps every one of them once per block, which aliases into a
+    // comb at the block rate (fs/blockSize) and is the metallic fizz that scales
+    // with the host buffer size. Only the *targets* are set here; process()
+    // ramps the live medium and its derived coefficients toward them at the
+    // control rate, exactly as the delay lengths are already ramped. The first
+    // block snaps so startup carries no sweep.
+    const auto snap = !impl_->mediaInitialised;
+    if (snap) {
+        impl_->media = impl_->mediaTarget;
+        impl_->mediaInitialised = true;
     }
     const auto timeScale = std::clamp(
         std::isfinite(acousticTimeScale) ? acousticTimeScale : 1.0, 0.25, 4.0);
     for (auto& duct : impl_->ducts) {
-        const auto& medium = impl_->media[std::min<std::size_t>(
-            duct.pathIndex, impl_->media.size() - 1U)];
+        const auto& medium = impl_->mediaTarget[std::min<std::size_t>(
+            duct.pathIndex, impl_->mediaTarget.size() - 1U)];
         const auto traversalSeconds = duct.lengthM
             / static_cast<double>(medium.soundSpeedMps) / timeScale;
         const auto limit = static_cast<float>(duct.forward.size() - 2U);
@@ -396,15 +430,43 @@ void AcousticExhaustNetwork::beginBlock(
             traversalSeconds * impl_->sampleRateHz), 1.0F, limit);
         if (duct.delaySamples <= 1.0F)
             duct.delaySamples = duct.delayTargetSamples;
-        duct.wallLoss = DuctWallLoss::fit(
+        duct.wallLossTarget = DuctWallLoss::fit(
             traversalSeconds, duct.radiusM, medium.densityKgPerM3,
             medium.soundSpeedMps, impl_->sampleRateHz);
+        if (snap) duct.wallLoss = duct.wallLossTarget;
     }
     for (auto& outlet : impl_->outlets) {
-        const auto& medium = impl_->media[std::min<std::size_t>(
-            outlet.pathIndex, impl_->media.size() - 1U)];
-        (void) outlet.radiation.setMedium(
-            medium.densityKgPerM3, medium.soundSpeedMps);
+        const auto& medium = impl_->mediaTarget[std::min<std::size_t>(
+            outlet.pathIndex, impl_->mediaTarget.size() - 1U)];
+        outlet.radiationTargetDensityKgPerM3 = medium.densityKgPerM3;
+        outlet.radiationTargetSoundSpeedMps = medium.soundSpeedMps;
+        // A quiescent open pipe end reflects almost fully below its radiation
+        // cutoff, so a purely reactive network rings for seconds. The real
+        // exhaust loses that low-frequency energy because the mean outflow
+        // convects it downstream out of the standing wave. The low-frequency
+        // plane-wave reflection at a subsonic outflow falls to (1-M)/(1+M), so
+        // the outlet Mach number sets a real, physically scaled dissipation at
+        // the termination -- not a broadband gain inside the collector loop.
+        auto mach = 0.0;
+        if (outlet.pathIndex < pathMeanMassFlowKgPerSecond.size()) {
+            const auto massFlow = std::abs(static_cast<double>(
+                pathMeanMassFlowKgPerSecond[outlet.pathIndex]));
+            const auto density = static_cast<double>(medium.densityKgPerM3);
+            const auto soundSpeed = static_cast<double>(medium.soundSpeedMps);
+            if (outlet.areaM2 > 0.0 && std::isfinite(massFlow)
+                && density > 0.0 && soundSpeed > 0.0)
+                mach = massFlow / (density * outlet.areaM2 * soundSpeed);
+        }
+        outlet.outletMachTarget = std::clamp(mach, 0.0, 0.9);
+        if (snap) {
+            outlet.radiationDensityKgPerM3 = medium.densityKgPerM3;
+            outlet.radiationSoundSpeedMps = medium.soundSpeedMps;
+            outlet.outletMach = outlet.outletMachTarget;
+            outlet.convectiveReflection =
+                (1.0 - outlet.outletMach) / (1.0 + outlet.outletMach);
+            (void) outlet.radiation.setMedium(
+                outlet.radiationDensityKgPerM3, outlet.radiationSoundSpeedMps);
+        }
     }
 }
 
@@ -416,10 +478,38 @@ AcousticExhaustNetwork::process(
     std::array<StereoPressure, maximumPaths> result {};
     if (!impl_->prepared) return result;
     const auto ramp = std::clamp(delayRampCoefficient, 0.0F, 1.0F);
+    // Slew the gas medium toward the block target so every derived scattering
+    // coefficient moves continuously. Junction admittance (endpointAdmittance)
+    // and duct stiffness read impl_->media directly and so become continuous for
+    // free; the wall-loss pole and the outlet radiation medium are slewed
+    // explicitly here and below. See beginBlock.
+    for (std::size_t path = 0; path < impl_->media.size(); ++path) {
+        impl_->media[path].densityKgPerM3 += ramp
+            * (impl_->mediaTarget[path].densityKgPerM3
+                - impl_->media[path].densityKgPerM3);
+        impl_->media[path].soundSpeedMps += ramp
+            * (impl_->mediaTarget[path].soundSpeedMps
+                - impl_->media[path].soundSpeedMps);
+    }
+    for (auto& outlet : impl_->outlets) {
+        outlet.radiationDensityKgPerM3 += ramp
+            * (outlet.radiationTargetDensityKgPerM3
+                - outlet.radiationDensityKgPerM3);
+        outlet.radiationSoundSpeedMps += ramp
+            * (outlet.radiationTargetSoundSpeedMps
+                - outlet.radiationSoundSpeedMps);
+        (void) outlet.radiation.setMedium(
+            outlet.radiationDensityKgPerM3, outlet.radiationSoundSpeedMps);
+        outlet.outletMach += ramp * (outlet.outletMachTarget - outlet.outletMach);
+        outlet.convectiveReflection =
+            (1.0 - outlet.outletMach) / (1.0 + outlet.outletMach);
+    }
     for (std::size_t index = 0; index < impl_->ducts.size(); ++index) {
         auto& duct = impl_->ducts[index];
         duct.delaySamples += ramp
             * (duct.delayTargetSamples - duct.delaySamples);
+        duct.wallLoss.pole += ramp
+            * (duct.wallLossTarget.pole - duct.wallLoss.pole);
         const auto& medium = impl_->media[std::min<std::size_t>(
             duct.pathIndex, impl_->media.size() - 1U)];
         const auto stiffness = medium.densityKgPerM3
@@ -473,8 +563,10 @@ AcousticExhaustNetwork::process(
             auto& outlet = impl_->outlets[outletIndex];
             const auto towardMouth = junctionPressure - outlet.incidentToJunction;
             const auto radiation = outlet.radiation.process(towardMouth);
+            // Convective loss removes energy from the wave returning into the
+            // pipe; the radiated far field is the radiation model's own output.
             outlet.incidentToJunction = static_cast<float>(
-                radiation.reflectedPressurePa);
+                radiation.reflectedPressurePa * outlet.convectiveReflection);
             const auto path = std::min<std::size_t>(
                 outlet.pathIndex, result.size() - 1U);
             const auto observed = outlet.observer.process(
@@ -496,7 +588,8 @@ AcousticExhaustNetwork::process(
         if (outlet.virtualTerminal) continue;
         const auto key = outlet.endpointOrJunction;
         const auto radiation = outlet.radiation.process(impl_->incident[key]);
-        impl_->outgoing[key] = static_cast<float>(radiation.reflectedPressurePa);
+        impl_->outgoing[key] = static_cast<float>(
+            radiation.reflectedPressurePa * outlet.convectiveReflection);
         const auto path = std::min<std::size_t>(
             outlet.pathIndex, result.size() - 1U);
         const auto observed = outlet.observer.process(

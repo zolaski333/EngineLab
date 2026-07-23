@@ -86,6 +86,10 @@ public:
         // without this reconstruction low-pass, first-order-hold images pass
         // through the radiation derivative as isolated clicks. Two identical
         // Butterworth sections form a fourth-order Linkwitz-Riley upper edge.
+        // Upper edge of the complementary band. 0.42x the source rate keeps the
+        // Linkwitz-Riley transition below the source Nyquist (0.5x) so its
+        // stop-band is established before the first first-order-hold image; it is
+        // clamped by the audio-rate limit for very fast source streams.
         const auto upperHz = std::min(0.42 * sourceSamplingFrequencyHz,
             0.45 * sampleRateHz);
         if (upperHz > cutoffHz * 1.05 && upperHz > 0.0) {
@@ -100,6 +104,16 @@ public:
             coefficients.lowA1 = -2.0 * upperCos / upperA0;
             coefficients.lowA2 = (1.0 - upperAlpha) / upperA0;
             coefficients.upperBandLimited = true;
+        } else if (sourceSamplingFrequencyHz > 0.0) {
+            // A real source rate was published but it does not clear the
+            // reconstruction crossover, so the complementary band is empty (its
+            // upper edge is at or below the lower edge). Leaving the high-pass
+            // running with no upper edge would radiate only first-order-hold
+            // image content above the source Nyquist. Disable the source
+            // entirely: the reconstructed low band already carries everything
+            // the producer can resolve. (When no source rate is given the band
+            // stays open, the historical behaviour for rate-agnostic callers.)
+            coefficients.active = false;
         }
         return coefficients;
     }

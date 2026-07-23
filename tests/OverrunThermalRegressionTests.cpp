@@ -80,6 +80,7 @@ int main() {
         const auto finalRpm = std::max(config.idleRpm * 2.0, hotRpm * 0.45);
         auto motoringTorqueNm = 0.0;
         auto peakExhaustTemperatureC = liftOffTemperatureC;
+        auto finalExhaustTemperatureC = liftOffTemperatureC;
         auto observedFuelCut = false;
         auto observedMotoredOverrun = false;
         for (int step = 0;
@@ -100,6 +101,7 @@ int main() {
             const auto frame = simulator.step(stepSeconds, controls);
             peakExhaustTemperatureC = std::max(
                 peakExhaustTemperatureC, frame.state.exhaustTemperatureC);
+            finalExhaustTemperatureC = frame.state.exhaustTemperatureC;
             if (time > 0.5) {
                 observedFuelCut = observedFuelCut
                     || frame.state.fuelFlowGramsPerSecond < 1.0e-9;
@@ -108,11 +110,21 @@ int main() {
             }
         }
 
+        // NOTE: an unfuelled overrun still amplifies EGT by ~+180 C at high rpm
+        // before decaying (a low-MAP intake<->exhaust thermal recirculation the
+        // wall models do not break). Correcting it is a gas-exchange/breathing
+        // change that touches every engine's volumetric efficiency and cannot be
+        // validated against this suite alone, so it is diagnosed but deferred.
+        // Until then the gates below hold the line: the peak stays out of the
+        // combustion range and is a bounded, *decaying* transient rather than a
+        // monotonic runaway. Both are physical truths and both catch a worse
+        // recirculation regressing in.
         if (peakExhaustTemperatureC >= 900.0
-            || peakExhaustTemperatureC >= liftOffTemperatureC + 250.0)
+            || peakExhaustTemperatureC >= liftOffTemperatureC + 210.0)
             std::cerr << "overrun thermal diagnostic: lift_off_c="
                       << liftOffTemperatureC << " peak_c="
-                      << peakExhaustTemperatureC << " final_rpm="
+                      << peakExhaustTemperatureC << " final_c="
+                      << finalExhaustTemperatureC << " final_rpm="
                       << simulator.state().rpm << '\n';
         require(observedFuelCut,
             "closed-throttle high-rpm overrun must enter deceleration fuel cut");
@@ -122,8 +134,13 @@ int main() {
             "overrun exhaust temperature must remain finite");
         require(peakExhaustTemperatureC < 900.0,
             "an unfuelled motored engine must not create combustion-range exhaust temperature");
-        require(peakExhaustTemperatureC < liftOffTemperatureC + 250.0,
+        require(peakExhaustTemperatureC < liftOffTemperatureC + 210.0,
             "closed-throttle overrun must not amplify lift-off EGT through adiabatic heat recirculation");
+        // The physical invariant the +250 C window used to hide: with no fuel the
+        // engine must ultimately shed heat. A monotonic climb that never turns
+        // over would be a genuine energy-balance failure, not just a hot transient.
+        require(finalExhaustTemperatureC < peakExhaustTemperatureC - 30.0,
+            "an unfuelled overrun must cool back down, not sustain or amplify EGT to the end");
     } catch (const std::exception& error) {
         std::cerr << "FAILED: " << error.what() << '\n';
         return EXIT_FAILURE;
