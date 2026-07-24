@@ -125,6 +125,13 @@ private:
     std::array<std::array<ExhaustNetworkBoundary, exhaustBoundaryKnotCount>, 32>
         exhaustBoundaryKnots_ {};
     std::size_t exhaustBoundaryKnotWrite_ { 0 };
+    /** Length-mean acoustic medium of every compiled exhaust duct, refreshed on
+     *  each coupling flush and republished on every substep in between. */
+    std::array<float, CylinderPressureSample::maximumExhaustDucts>
+        exhaustDuctDensityKgPerM3_ {};
+    std::array<float, CylinderPressureSample::maximumExhaustDucts>
+        exhaustDuctSpeedOfSoundMps_ {};
+    std::size_t exhaustDuctMediumCount_ { 0 };
     std::array<double, 32> chamberPressureBar_ {};
     std::array<double, 32> intakeFlowMgPerCycle_ {};
     std::array<double, 32> exhaustFlowMgPerCycle_ {};

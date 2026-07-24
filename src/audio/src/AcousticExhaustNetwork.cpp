@@ -56,6 +56,15 @@ struct AcousticExhaustNetwork::Impl final {
         double lengthM {};
         double areaM2 {};
         double radiusM {};
+        /** Compiled ducts whose gas state describes this one, as indices into
+         *  the layout's duct list. A duct of the layout resolves to itself; a
+         *  branch trunk, which the layout carries as a junction, resolves to the
+         *  ducts on either side of it. Empty means fall back to the path. */
+        std::vector<std::size_t> mediumSources;
+        /** Live and target gas state of this duct. Held per duct rather than per
+         *  path because delay, wall loss and plane-mode cutoff are all local. */
+        Medium medium {};
+        Medium mediumTarget {};
         std::vector<float> forward;
         std::vector<float> reverse;
         std::size_t write {};
@@ -139,12 +148,13 @@ struct AcousticExhaustNetwork::Impl final {
         ducts.reserve(layout.ducts().size() + layout.junctions().size());
         for (const auto& descriptor : layout.ducts()) {
             const auto area = std::max(1.0e-10, descriptor.flowAreaM2);
-            ducts.push_back({
-                descriptor.pathIndex,
-                descriptor.lengthM,
-                area,
-                std::sqrt(area / std::numbers::pi),
-            });
+            Duct duct;
+            duct.pathIndex = descriptor.pathIndex;
+            duct.lengthM = descriptor.lengthM;
+            duct.areaM2 = area;
+            duct.radiusM = std::sqrt(area / std::numbers::pi);
+            duct.mediumSources.push_back(ducts.size());
+            ducts.push_back(std::move(duct));
         }
 
         // Junction-to-junction edges connect two branches directly. When neither
@@ -270,12 +280,12 @@ struct AcousticExhaustNetwork::Impl final {
             const auto area = std::max(1.0e-10,
                 geometry.sweptVolumeM3 / geometry.lengthM);
             plan.trunkDuctIndex = ducts.size();
-            ducts.push_back({
-                geometry.pathIndex,
-                geometry.lengthM,
-                area,
-                std::sqrt(area / std::numbers::pi),
-            });
+            Duct trunk;
+            trunk.pathIndex = geometry.pathIndex;
+            trunk.lengthM = geometry.lengthM;
+            trunk.areaM2 = area;
+            trunk.radiusM = std::sqrt(area / std::numbers::pi);
+            ducts.push_back(std::move(trunk));
             plan.singleNode = slotCount++;
             plan.trunkOnOutflow = trunkOnOutflow;
             plan.hasTrunk = true;
@@ -419,6 +429,25 @@ struct AcousticExhaustNetwork::Impl final {
             }
             outlets.push_back(std::move(compiled));
         }
+        // A trunk has no entry of its own in the layout, because the layout
+        // carries the branch as a junction. Its gas is what passes between the
+        // ducts on either side of it, so read their state: the mean is a linear
+        // interpolation along the chain, which is the shape of the temperature
+        // gradient through a real exhaust.
+        const auto compiledDuctCount = layout.ducts().size();
+        for (std::size_t group = 0; group < groupCount; ++group) {
+            const auto& plan = groupPlans[group];
+            if (!plan.hasTrunk) continue;
+            auto& trunk = ducts[plan.trunkDuctIndex];
+            for (const auto inflowSide : { true, false }) {
+                for (const auto key : junctions[nodeFor(group, inflowSide)].ductEndpoints) {
+                    const auto ductIndex = key / 2U;
+                    if (ductIndex != plan.trunkDuctIndex && ductIndex < compiledDuctCount)
+                        trunk.mediumSources.push_back(ductIndex);
+                }
+            }
+        }
+
         configured = std::all_of(owners.begin(), owners.end(), [](const auto& owner) {
             return owner.type != OwnerType::none;
         }) && !ducts.empty() && !cylinderPorts.empty() && !outlets.empty();
@@ -468,11 +497,13 @@ struct AcousticExhaustNetwork::Impl final {
 
     [[nodiscard]] float endpointAdmittance(std::size_t key) const noexcept {
         const auto& duct = ducts[key / 2U];
-        const auto& medium = media[std::min<std::size_t>(
-            duct.pathIndex, media.size() - 1U)];
+        // The characteristic admittance A/(rho c) is a property of this duct and
+        // the gas in it, so a hot primary and a cool tailpipe of equal bore
+        // scatter differently -- which is the area-and-temperature step that
+        // makes a collector and a chamber do their work.
         return static_cast<float>(duct.areaM2
-            / (static_cast<double>(medium.densityKgPerM3)
-                * static_cast<double>(medium.soundSpeedMps)));
+            / (static_cast<double>(duct.medium.densityKgPerM3)
+                * static_cast<double>(duct.medium.soundSpeedMps)));
     }
 
     [[nodiscard]] float portAdmittance(std::size_t portIndex,
@@ -569,7 +600,8 @@ void AcousticExhaustNetwork::reset() noexcept {
 
 void AcousticExhaustNetwork::beginBlock(
     std::span<const Medium> pathMedia, double acousticTimeScale,
-    std::span<const float> pathMeanMassFlowKgPerSecond) noexcept {
+    std::span<const float> pathMeanMassFlowKgPerSecond,
+    std::span<const Medium> ductMedia) noexcept {
     if (!impl_->prepared) return;
     for (std::size_t path = 0; path < impl_->mediaTarget.size(); ++path) {
         if (path < pathMedia.size()
@@ -595,9 +627,30 @@ void AcousticExhaustNetwork::beginBlock(
     }
     const auto timeScale = std::clamp(
         std::isfinite(acousticTimeScale) ? acousticTimeScale : 1.0, 0.25, 4.0);
+    const auto usable = [](const Medium& candidate) {
+        return std::isfinite(candidate.densityKgPerM3) && candidate.densityKgPerM3 > 0.0F
+            && std::isfinite(candidate.soundSpeedMps) && candidate.soundSpeedMps > 0.0F;
+    };
     for (auto& duct : impl_->ducts) {
-        const auto& medium = impl_->mediaTarget[std::min<std::size_t>(
+        // Resolve this duct's own gas state, falling back to its path wherever
+        // the solver did not supply one. A trunk averages the ducts it joins.
+        duct.mediumTarget = impl_->mediaTarget[std::min<std::size_t>(
             duct.pathIndex, impl_->mediaTarget.size() - 1U)];
+        auto densitySum = 0.0F;
+        auto soundSpeedSum = 0.0F;
+        auto resolved = std::size_t { 0 };
+        for (const auto source : duct.mediumSources) {
+            if (source >= ductMedia.size() || !usable(ductMedia[source])) continue;
+            densitySum += ductMedia[source].densityKgPerM3;
+            soundSpeedSum += ductMedia[source].soundSpeedMps;
+            ++resolved;
+        }
+        if (resolved > 0) {
+            const auto count = static_cast<float>(resolved);
+            duct.mediumTarget = { densitySum / count, soundSpeedSum / count };
+        }
+        if (snap) duct.medium = duct.mediumTarget;
+        const auto& medium = duct.mediumTarget;
         const auto traversalSeconds = duct.lengthM
             / static_cast<double>(medium.soundSpeedMps) / timeScale;
         const auto limit = static_cast<float>(duct.forward.size() - 2U);
@@ -701,10 +754,12 @@ AcousticExhaustNetwork::process(
         // directly; only its resolved denominator has to be rebuilt.
         duct.modeCutoff.g += ramp * (duct.modeCutoffTarget.g - duct.modeCutoff.g);
         duct.modeCutoff.renormalise();
-        const auto& medium = impl_->media[std::min<std::size_t>(
-            duct.pathIndex, impl_->media.size() - 1U)];
-        const auto stiffness = medium.densityKgPerM3
-            * medium.soundSpeedMps * medium.soundSpeedMps;
+        duct.medium.densityKgPerM3 += ramp
+            * (duct.mediumTarget.densityKgPerM3 - duct.medium.densityKgPerM3);
+        duct.medium.soundSpeedMps += ramp
+            * (duct.mediumTarget.soundSpeedMps - duct.medium.soundSpeedMps);
+        const auto stiffness = duct.medium.densityKgPerM3
+            * duct.medium.soundSpeedMps * duct.medium.soundSpeedMps;
         // Order matters only for arithmetic, not for physics: both sections are
         // linear. Wall loss first keeps the band limit operating on the same
         // amplitude scale the delay line stores.

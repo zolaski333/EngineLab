@@ -455,6 +455,84 @@ void branchTrunkDelayRegression() {
         "an authored branch length must add its own propagation time to the path");
 }
 
+// The renderer used to take one gas state per path, sampled at the exhaust port
+// -- the hottest point in the system -- and apply it to primary, chamber and
+// tailpipe alike. Every duct now carries its own. Verify that a duct's delay
+// follows the gas in that duct and not the gas at the valve.
+void ductMediumRegression() {
+    using Medium = enginelab::AcousticExhaustNetwork::Medium;
+    constexpr double sampleRate = 48'000.0;
+    constexpr float hotSoundSpeedMps = 620.0F;   // at the valve
+    constexpr float coolSoundSpeedMps = 430.0F;  // at the tailpipe
+
+    auto config = enginelab::makeDefaultInlineFour();
+    std::array<std::uint32_t, 4> cylinderIds {};
+    for (std::size_t index = 0; index < cylinderIds.size(); ++index)
+        cylinderIds[index] = config.cylinders[index].id;
+    const auto graph = enginelab::ExhaustGraph::makeForEngine(config);
+
+    const auto onsetSample = [&](float pathSoundSpeedMps, float ductSoundSpeedMps,
+                                 bool supplyDuctMedia) {
+        enginelab::AcousticExhaustNetwork acoustics(graph, cylinderIds);
+        require(acoustics.valid() && acoustics.prepare(sampleRate),
+            "the medium fixture must compile and allocate");
+        const std::array<Medium, 1> pathMedia {{ { 0.45F, pathSoundSpeedMps } }};
+        std::vector<Medium> ductMedia(acoustics.ductCount(),
+                                      Medium { 0.45F, ductSoundSpeedMps });
+        acoustics.beginBlock(pathMedia, 1.0, {},
+            supplyDuctMedia ? std::span<const Medium>(ductMedia)
+                            : std::span<const Medium> {});
+
+        std::array<float, 4> sources {};
+        std::array<enginelab::AcousticExhaustNetwork::CylinderBoundary, 4> boundaries {};
+        for (std::size_t sample = 0; sample < 8'192; ++sample) {
+            sources[0] = sample < 16
+                ? 5'000.0F * static_cast<float>(std::sin(
+                    std::numbers::pi * static_cast<double>(sample + 1U) / 17.0))
+                : 0.0F;
+            const auto output = acoustics.process(sources, boundaries, 1.0F);
+            require(std::isfinite(output[0].leftPa),
+                "the medium fixture must stay finite");
+            if (std::abs(output[0].leftPa) > 0.0F) return sample;
+        }
+        require(false, "the source must reach the outlet");
+        return std::size_t { 0 };
+    };
+
+    // Supplying every duct the cool state must reproduce, exactly, the network
+    // that was told the whole path is cool. The duct state governs the delay.
+    const auto coolPath = onsetSample(coolSoundSpeedMps, coolSoundSpeedMps, false);
+    const auto coolDucts = onsetSample(hotSoundSpeedMps, coolSoundSpeedMps, true);
+    require(coolPath == coolDucts,
+        "a duct's propagation must follow its own gas state, not its path's");
+
+    // And it must be a real dependence, not a no-op: hot gas is faster, so the
+    // same geometry has to arrive earlier.
+    const auto hotPath = onsetSample(hotSoundSpeedMps, hotSoundSpeedMps, false);
+    require(hotPath < coolPath,
+        "hotter gas must carry the wave through the same geometry sooner");
+
+    // Ducts left unresolved by the solver fall back to the path rather than to
+    // silence or to a zero medium.
+    {
+        enginelab::AcousticExhaustNetwork acoustics(graph, cylinderIds);
+        require(acoustics.valid() && acoustics.prepare(sampleRate),
+            "the fallback fixture must compile and allocate");
+        const std::array<Medium, 1> pathMedia {{ { 0.45F, hotSoundSpeedMps } }};
+        const std::array<Medium, 3> partial {{
+            { 0.0F, 0.0F }, { 0.45F, coolSoundSpeedMps }, { -1.0F, 900.0F } }};
+        acoustics.beginBlock(pathMedia, 1.0, {}, partial);
+        std::array<float, 4> sources {};
+        std::array<enginelab::AcousticExhaustNetwork::CylinderBoundary, 4> boundaries {};
+        for (std::size_t sample = 0; sample < 512; ++sample) {
+            sources[0] = sample == 0 ? 5'000.0F : 0.0F;
+            const auto output = acoustics.process(sources, boundaries, 1.0F);
+            require(std::isfinite(output[0].leftPa) && std::isfinite(output[0].rightPa),
+                "an unusable duct medium must fall back, not poison the network");
+        }
+    }
+}
+
 void structuralModalRadiatorRegression() {
     const auto config = enginelab::makeDefaultInlineFour();
     enginelab::StructuralModalRadiator radiator(config);
@@ -2067,6 +2145,7 @@ int main() {
         exhaustPathIsolationRegression();
         branchedAcousticTopologyRegression();
         branchTrunkDelayRegression();
+        ductMediumRegression();
         structuralModalRadiatorRegression();
         acousticIntakeNetworkRegression();
         forcedInductionAcousticsRegression();

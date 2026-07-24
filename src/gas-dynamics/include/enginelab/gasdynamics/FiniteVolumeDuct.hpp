@@ -241,6 +241,26 @@ public:
     }
     [[nodiscard]] double cellCentreM(std::size_t index) const noexcept;
     [[nodiscard]] ConservedInventory inventory() const noexcept;
+
+    /** Primitive state of every cell, recovered from the conservative state.
+     *
+     * Returns an empty span if the recovery fails, which is the same condition
+     * that stops an advance. The cache is refreshed on demand and shared with
+     * the solver, so repeated queries between advances cost nothing.
+     */
+    [[nodiscard]] std::span<const PrimitiveState> cellPrimitives() const noexcept {
+        return refreshCellStateCache() ? std::span<const PrimitiveState>(cellPrimitives_)
+                                       : std::span<const PrimitiveState> {};
+    }
+
+    /** Length-mean density and speed of sound over the duct.
+     *
+     * This is the acoustic medium of the duct as a whole: what a wave travelling
+     * its length actually propagates through. Returns false and leaves the
+     * outputs untouched when the state cannot be recovered.
+     */
+    [[nodiscard]] bool meanAcousticMedium(double& densityKgPerM3,
+                                          double& speedOfSoundMps) const noexcept;
     [[nodiscard]] std::span<const DuctWallThermalState> wallStates() const noexcept {
         return wallStates_;
     }

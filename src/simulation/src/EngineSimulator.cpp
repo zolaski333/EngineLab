@@ -1311,6 +1311,27 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                     transferredMassKg += speciesMassKg;
                 outletMassKg += std::max(0.0, transferredMassKg);
             }
+            // Publish the acoustic medium of each duct, not just of the valve.
+            // The waveguide's delays, wall losses and plane-mode band limits all
+            // read the local gas state, and it varies by hundreds of kelvin
+            // between the port and the tailpipe.
+            const auto networkDucts = physicalExhaustNetwork.ducts();
+            exhaustDuctMediumCount_ = std::min(networkDucts.size(),
+                CylinderPressureSample::maximumExhaustDucts);
+            for (std::size_t index = 0; index < exhaustDuctMediumCount_; ++index) {
+                auto densityKgPerM3 = 0.0;
+                auto speedOfSoundMps = 0.0;
+                if (!networkDucts[index].meanAcousticMedium(
+                        densityKgPerM3, speedOfSoundMps)) {
+                    // Leave the previous sample in place rather than publish a
+                    // zero the renderer would have to special-case; an
+                    // unrecoverable duct state already flags resolution limited.
+                    continue;
+                }
+                exhaustDuctDensityKgPerM3_[index] = static_cast<float>(densityKgPerM3);
+                exhaustDuctSpeedOfSoundMps_[index] = static_cast<float>(speedOfSoundMps);
+            }
+
             exhaustValveConductanceTimeIntegralM2S_.fill(0.0);
             exhaustBoundaryStateTimeIntegral_.fill({});
             exhaustBoundaryVolumeTimeIntegralM3S_.fill(0.0);
@@ -1826,6 +1847,13 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                     exhaustPathIndexFor(config_, config_.cylinders[index]));
                 pressureSample.thermoacousticBoundaryValid[index] =
                     thermoacousticBoundaryValid[index];
+            }
+            pressureSample.exhaustDuctCount = exhaustDuctMediumCount_;
+            for (std::size_t index = 0; index < exhaustDuctMediumCount_; ++index) {
+                pressureSample.exhaustDuctDensityKgPerM3[index] =
+                    exhaustDuctDensityKgPerM3_[index];
+                pressureSample.exhaustDuctSpeedOfSoundMps[index] =
+                    exhaustDuctSpeedOfSoundMps_[index];
             }
             if (pressureSamples_->tryPush(pressureSample))
                 ++frame.cylinderPressureSampleCount;

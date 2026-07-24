@@ -718,11 +718,31 @@ void RealtimeEngineAudio::render(juce::AudioBuffer<float>& output, int startSamp
             };
             meanMassFlow[path] = exhaustPaths_[path].meanExhaustMassFlowKgPerSecond;
         }
+        // Per-duct gas state where the solver published it. The path medium
+        // above is sampled at the valve, the hottest point in the system;
+        // applying it to a tailpipe several hundred kelvin cooler ran that duct
+        // 20-25% fast and moved its resonances with it. Held between coupling
+        // flushes and slewed per sample inside the network, so the step at each
+        // flush never reaches a scattering coefficient.
+        std::array<AcousticExhaustNetwork::Medium,
+                   CylinderPressureSample::maximumExhaustDucts> ductMedia {};
+        auto ductMediumCount = std::size_t { 0 };
+        if (hasCurrentPressureSample_) {
+            ductMediumCount = std::min(currentPressureSample_.exhaustDuctCount,
+                                       ductMedia.size());
+            for (std::size_t duct = 0; duct < ductMediumCount; ++duct)
+                ductMedia[duct] = {
+                    currentPressureSample_.exhaustDuctDensityKgPerM3[duct],
+                    currentPressureSample_.exhaustDuctSpeedOfSoundMps[duct],
+                };
+        }
         acousticExhaustNetwork_->beginBlock(
             std::span<const AcousticExhaustNetwork::Medium>(
                 media.data(), exhaustPathCount),
             acousticTimeScale,
-            std::span<const float>(meanMassFlow.data(), exhaustPathCount));
+            std::span<const float>(meanMassFlow.data(), exhaustPathCount),
+            std::span<const AcousticExhaustNetwork::Medium>(
+                ductMedia.data(), ductMediumCount));
     }
     if (acousticIntakeNetwork_) {
         std::array<AcousticIntakeNetwork::PathBoundary, maximumPaths> paths {};

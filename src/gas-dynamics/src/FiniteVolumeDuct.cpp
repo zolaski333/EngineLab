@@ -608,6 +608,26 @@ double FiniteVolumeDuct::cellCentreM(std::size_t index) const noexcept {
     return (static_cast<double>(index) + 0.5) * geometry_.cellLengthM();
 }
 
+bool FiniteVolumeDuct::meanAcousticMedium(double& densityKgPerM3,
+                                          double& speedOfSoundMps) const noexcept {
+    const auto primitives = cellPrimitives();
+    if (primitives.empty()) return false;
+    auto densitySum = 0.0;
+    auto soundSpeedSum = 0.0;
+    for (const auto& primitive : primitives) {
+        if (!finite(primitive.densityKgPerM3) || !(primitive.densityKgPerM3 > 0.0)
+            || !finite(primitive.speedOfSoundMps) || !(primitive.speedOfSoundMps > 0.0))
+            return false;
+        densitySum += primitive.densityKgPerM3;
+        soundSpeedSum += primitive.speedOfSoundMps;
+    }
+    // Cells are uniform in length, so an unweighted mean is the length mean.
+    const auto count = static_cast<double>(primitives.size());
+    densityKgPerM3 = densitySum / count;
+    speedOfSoundMps = soundSpeedSum / count;
+    return true;
+}
+
 ConservedInventory FiniteVolumeDuct::inventory() const noexcept {
     ConservedInventory result;
     const auto cellVolume = geometry_.areaM2() * geometry_.cellLengthM();
