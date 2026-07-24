@@ -726,10 +726,16 @@ jusqu'à l'observateur. Une topologie 4-vers-1-vers-2 reste donc six conduits et
 deux sorties, au lieu d'être réduite à un runner moyen et un collecteur moyen.
 
 La chambre d'expansion est elle aussi issue de sa géométrie publiée : son volume
-et sa longueur donnent sa section interne, tandis que le diamètre de connexion
-conserve les deux discontinuités réelles. `muffler_restriction` reste une perte
+et sa longueur donnent sa section interne. `muffler_restriction` reste une perte
 de charge de l'écoulement moyen ; elle n'est volontairement pas transformée en
 gain acoustique large bande sans loi physique d'absorption.
+
+> **Correction (§25).** Cette section affirmait que « le diamètre de connexion
+> conserve les deux discontinuités réelles ». C'était faux : `connectionAreaM2`
+> est calculé par `ExhaustNetworkLayout` mais n'a jamais été lu par
+> `AcousticExhaustNetwork`, qui ne voit que `flowAreaM2`. Les deux vraies
+> discontinuités viennent maintenant du tronc de collecteur, réalisé depuis la
+> longueur authorée de la jonction — voir §25.
 
 Toute la mémoire des conduits, jonctions, sorties et retards est réservée dans
 `prepare()`. `process()` n'alloue pas et le harnais de rendu refuse maintenant
@@ -871,3 +877,187 @@ API de compatibilité sans graphe physique. En production, la présence d’un
 graphe compilé lui retire la propriété de la sortie dès le premier échantillon.
 Cette séparation permet encore un diagnostic A/B explicite sans maintenir deux
 voix concurrentes dans l’application livrée.
+
+## 25. Audit échappement : la loi de paroi, le tronc de collecteur, le milieu par conduit
+
+Audit du seul système d'échappement, puis correction. Cinq défauts, tous mesurés
+avant et après. Ce sont des changements de voicing assumés.
+
+### 25.1 `DuctWallLoss` n'appliquait pas la loi qu'elle implémente
+
+La classe dérive l'atténuation de Kirchhoff-Rayleigh en `exp(-k*sqrt(f))` puis
+l'approximait par **un simple pôle calé à 1 kHz**. Un pôle ne peut pas suivre
+`sqrt(f)` : sa pente file vers 6 dB/octave alors que la cible est une inclinaison
+très douce (0,2 à 2,5 dB sur toute la bande audio pour un conduit du catalogue).
+Mesuré contre sa propre loi, la chaîne LS3 livrée sur-atténuait de **1,0 dB à
+2 kHz, 4,2 dB à 4 kHz et 11,1 dB à 8 kHz**, par traversée simple, dans un réseau
+bidirectionnel. Pire, le pôle ajusté tombait entre 0,31 et 0,67 pour *tous* les
+moteurs : le haut de la bande était façonné par le coin du filtre, pas par la
+géométrie — exactement ce qui aplatit les différences entre moteurs.
+
+Remplacé par un **shelf un pôle / un zéro**. En normalisant le gain continu, le
+module carré se réduit à une fonction de Möbius de `s = sin^2(w/2)` :
+
+```
+|H(w)|^2 = (1 + Z s) / (1 + P s),   Z = 4z/(1-z)^2,  P = 4p/(1-p)^2
+```
+
+Caler deux points est donc un système **linéaire 2x2**, et les paramètres
+déformés s'inversent en forme close, `z = (sqrt(1+Z) - 1)^2 / Z`. Ni itération ni
+recherche, et la passivité s'écrit `0 <= Z <= P`. Calé à 2,5 et 15 kHz, le shelf
+suit la loi exacte à **0,35 dB** de 80 Hz à Nyquist, contre 11,9 dB au pire pour
+le pôle seul. Au-delà d'environ 9,4 dB de perte par traversée au point bas,
+aucun shelf passif du premier ordre ne joint les deux points ; `fit()` retombe
+alors sur le pôle pur. Le conduit le plus long et le plus étroit du catalogue est
+à 7 % de ce seuil.
+
+### 25.2 Le mécanisme qui manquait : la coupure du mode plan
+
+Corriger 25.1 a retiré un amortissement dont le réseau dépendait sans le dire :
+K20 et Hayabusa ont attaqué le limiteur de sécurité. Le mécanisme manquant est
+celui que `DuctWallLoss` citait déjà comme excuse pour sur-atténuer.
+
+Au-dessus de `f_c = 1,8412 c / (2 pi a)` un conduit circulaire porte des modes
+d'ordre supérieur, et chaque discontinuité y diffuse de l'énergie du mode plan —
+où elle ne suit plus la ligne à retard. `DuctModeCutoff` applique un
+**Butterworth d'ordre 4 à `f_c`, une fois par traversée**. Aucune profondeur
+réglable : rayon et célérité sont les seules entrées. Ordre 4 parce que la
+section vit dans la boucle collecteur-sortie où toute perte par traversée
+s'accumule (elle est à 0,017 dB une octave sous la coupure, là où l'ordre 2
+serait à 0,264 dB), et parce que l'apparition modale est réellement abrupte. Le
+filtre est un état-variable TPT, stable pour tout `g > 0`, donc l'interpolation
+par échantillon de la coupure est sûre par construction.
+
+La bande est maintenant fixée par la géométrie, et le catalogue la balaye :
+**2,1 à 2,9 kHz dans une chambre d'expansion contre 7 à 11 kHz dans un primaire**.
+
+### 25.3 Le collecteur n'existait pas dans le guide d'ondes
+
+`ExhaustNetworkLayout` routait tout `merge`/`splitter` vers une jonction sans
+jamais lire son `lengthMm`, et `AcousticExhaustNetwork` traitait une jonction
+comme un point sans étendue. Le compilateur historique authore pourtant un
+collecteur de 120 mm au diamètre de collecteur pour **les dix moteurs du
+catalogue**, et rien n'en arrivait à l'audio : quatre primaires diffusaient
+directement dans le corps du silencieux. Mesuré sur le LS3, un primaire voyait
+une réflexion de **-0,843 au lieu de -0,693**, et l'entrée de chambre un rapport
+d'expansion de **2,19 au lieu de 3,49** — une perte par transmission de Munjal
+de 2,4 dB là où la géométrie en décrit 5,5.
+
+Une bifurcation est un point de diffusion **et** un tuyau. La longueur authorée
+est publiée en `CompiledExhaustJunction::trunkLengthM` et réalisée comme conduit
+du côté de la bifurcation qui porte exactement une connexion — le tuyau commun
+d'un collecteur est en aval d'un merge, celui d'une sortie double en amont d'un
+splitter. Avec plus d'une connexion des deux côtés la longueur n'est
+attribuable à aucun côté et la jonction reste un point.
+
+Le réseau volumes finis est **délibérément inchangé** : il modélise une jonction
+comme un plénum bien mélangé et replie l'étendue dans `volumeM3`, ce qui est le
+bon choix localisé aux fréquences qu'il résout. Un guide d'ondes ne le peut pas,
+parce que la longueur y est un retard. Les deux discrétisations lisent
+maintenant la même géométrie authorée.
+
+### 25.4 Un seul milieu par chemin, pris au point le plus chaud
+
+Le renderer prenait un `(rho, c)` par chemin, construit depuis l'état **au
+port**, et l'appliquait à tous les conduits. Le solveur résolvait la température
+par conduit depuis toujours : `outletSamples()` n'était lu que pour la
+comptabilité de masse, et `ducts()` pas du tout.
+
+Mesuré sur le K20 au-dessus de 3000 tr/min, état au port contre état par conduit :
+
+| élément | c (m/s) | rho (kg/m3) |
+|---|---:|---:|
+| port (ce que tout conduit recevait) | 562,8 | 0,505 |
+| primaires | 561,7 / 580,7 / 568,0 / 571,9 | |
+| chambre | 554,0 | 0,444 |
+| tuyau de sortie | 545,8 | 0,459 |
+
+Cela **corrige l'estimation de l'audit lui-même**, qui supposait un gradient
+bien plus raide. L'erreur de retard est d'environ 3 % par conduit et 6,4 % sur
+la chaîne, pas 20-25 % — soit ~20 Hz sur le peigne d'une chambre de 400 mm, pas
+165 Hz. L'erreur importante était ailleurs : dans l'impédance caractéristique
+`rho*c`, qui fixe la diffusion aux jonctions — 284 au port contre 246 en chambre
+et 250 en sortie, donc **12 à 14 % d'erreur sur tous les coefficients de
+diffusion en aval**, cumulée au rapport d'expansion à l'entrée de chambre.
+
+### 25.5 Reconstruction de frontière : ordre 8
+
+Le filtre anti-imagerie était un Linkwitz-Riley d'ordre 4 à 0,45x la cadence de
+couplage, ce que sa propre docstring décrivait comme laissant la première raie
+d'image à seulement 28 dB — au-dessus du seuil « métallique » de 20 dB que le
+harnais utilise lui-même. Passé à l'ordre 8 avec le coin porté à 0,47x :
+
+| | 0,25x couplage | 0,5x couplage | 1,0x couplage |
+|---|---:|---:|---:|
+| LR4 à 0,45x | -0,79 dB | -8,0 dB | -28,1 dB |
+| LR8 à 0,47x | -0,06 dB | -8,4 dB | -52,5 dB |
+
+Meilleur des deux côtés à la fois : un filtre plus raide peut placer son coin
+plus près du bord de bande. La somme des deux moitiés reste all-pass, donc
+aucune des deux bandes physiques n'a eu besoin d'être réaccordée.
+
+### 25.6 Ce qui n'est toujours pas résolu, et pourquoi ce n'est pas gaté
+
+Le harnais mesure et **affiche** maintenant `outOfBandResonance`, la proéminence
+d'une raie étroite au-dessus du Nyquist de couplage. Elle n'est délibérément
+**pas** transformée en critère de succès.
+
+L'argument tentant — « au-dessus du Nyquist de couplage la frontière ne porte
+aucune information, donc rien ne peut y être un mode » — est vrai de la
+*frontière* et faux du *réseau* : les modes du guide d'ondes ne s'arrêtent pas
+là, et la source complémentaire de débit de soupape les excite. Mesuré sur le
+quatre-cylindres de référence, couper cette source fait tomber le pic de 4107 Hz
+de **31,2 à 22,1 dB** : ce n'est donc ni purement une image ni purement un mode.
+Et ce moteur de référence, en géométrie par défaut sans chambre, est un
+échappement droit ouvert — qui résonne réellement.
+
+Passer la reconstruction à l'ordre 8 ne l'a pas déplacé, ce qui **écarte** le
+chemin de reconstruction comme cause principale. Piste restante, non poursuivie
+ici : le milieu au port, la conductance de soupape et la levée sont des flux
+bloqués d'ordre zéro à la cadence de couplage qui **multiplient** la frontière au
+lieu de s'y ajouter, et que le filtre de reconstruction ne voit donc jamais.
+
+Ce qui est gatable sainement, c'est le filtre lui-même, et sa régression exige
+maintenant 40 dB sur la première image et 80 dB sur la seconde (contre 24 et 40).
+
+### 25.7 Correction : `ExpansionChamberMuffler` n'est pas du code mort
+
+L'audit affirmait que `RealtimeEngineAudio.cpp:1431` (`if (useCompiledTopology)
+continue;`) rendait cet élément inaccessible. C'est trop fort :
+`useCompiledTopology = sampleUsesPhysicalExhaust && acousticExhaustNetwork_`, et
+`sampleUsesPhysicalExhaust` est faux tant qu'aucun cylindre n'a de frontière
+thermoacoustique valide. Le chemin réduit est donc un vrai repli, pas du code
+mort. Il reste que le catalogue livré rapporte `legacySamples=0` partout : les
+chiffres de §19 décrivent le repli, pas la voix livrée.
+
+### 25.8 Mesures livrées
+
+Base de comparaison : l'état avant cette passe.
+
+- Résonance au ralenti du Big Twin **27,0 dB -> 15,7 dB**, et elle n'est plus une
+  raie étroite à 439 Hz. Plancher de queue d'échappement **-70,0 -> -80,3 dB**.
+- Tous les pics étroits situés au-dessus du Nyquist de couplage de leur moteur
+  ont disparu : LS3 19,1 dB@4156 Hz -> 498 Hz, K20 18,3 dB@4128 -> 967 Hz,
+  Flat-6 14,6 dB@4312 -> 492 Hz. C'étaient bien du contenu hors modèle.
+- Différenciation en progrès sur quatre paires du catalogue sur six ; V8 contre
+  radial 0,308 -> 0,228, I2 contre radial 0,679 -> 0,616.
+- La brillance monte sur les moteurs à conduits étroits et baisse sur ceux à
+  chambre large : c'est la géométrie qui travaille.
+
+### 25.9 Tests ajoutés
+
+Tous non vacués (vérifiés en cassant délibérément le code testé) :
+
+- `ductWallLossRegression` borne désormais l'erreur d'ajustement **sur toute la
+  bande** au lieu du seul point où l'ajustement est exact par construction, et
+  vérifie l'équation aux différences contre le module analytique. Un simple pôle
+  rate la nouvelle borne de 1,6 à 6,6 dB sur chaque conduit du catalogue.
+- `ductModeCutoffRegression`, ancré sur la valeur de manuel : un conduit de
+  50 mm dans l'air coupe à 4 kHz.
+- `branchTrunkDelayRegression` mesure l'attaque causale à la sortie avec et sans
+  tronc de 400 mm : **35 échantillons mesurés contre 35,9 prédits**.
+- `ductMediumRegression` exige que donner à chaque conduit l'état froid
+  reproduise exactement le réseau à qui l'on dit que tout le chemin est froid.
+- `areaStepScatteringRegression` cale la diffusion d'un saut de section sur la
+  forme close `T(m) = 4m/(1+m)^2` — la limite basse fréquence de la perte par
+  transmission de Munjal — à 0,05 près pour m = 2, 4 et 9.

@@ -533,6 +533,113 @@ void ductMediumRegression() {
     }
 }
 
+// Nothing asserted what a junction does with an area step, which is the whole
+// mechanism by which a collector tunes and an expansion chamber silences. Pin
+// it against the closed form rather than against a render.
+//
+// A lossless admittance junction between two ducts transmits 2*Y1/(Y1+Y2). With
+// one medium throughout, Y is proportional to area, so a pipe of area A feeding
+// a chamber of area m*A and then an equal pipe transmits, on the direct path
+// before any reflection returns,
+//
+//     T(m) = 2/(1+m) * 2m/(1+m) = 4m/(1+m)^2,
+//
+// which is the low-frequency limit of Munjal's expansion-chamber transmission
+// loss. The excitation is well below every element's plane-mode cutoff and the
+// ducts are long enough that the direct arrival is complete before the first
+// reflection returns, so nothing else is in the measurement.
+void areaStepScatteringRegression() {
+    constexpr double sampleRate = 48'000.0;
+    constexpr float soundSpeedMps = 550.0F;
+    constexpr double pipeDiameterMm = 40.0;
+    constexpr double excitationHz = 300.0;
+
+    const auto directArrivalPeak = [&](double expansionRatio) {
+        auto config = enginelab::makeDefaultInlineFour();
+        config.cylinders.resize(1);
+        auto& path = config.exhaustPaths.front();
+        path.cylinderIds = { config.cylinders.front().id };
+        enginelab::ExhaustNetworkConfig network;
+        enginelab::ExhaustComponentConfig primary;
+        primary.id = 100;
+        primary.type = enginelab::ExhaustComponentType::pipe;
+        primary.lengthMm = 2'000.0;
+        primary.diameterMm = pipeDiameterMm;
+        network.components.push_back(primary);
+        network.cylinderConnections.push_back({ config.cylinders.front().id, 100 });
+
+        enginelab::ExhaustComponentConfig chamber;
+        chamber.id = 200;
+        chamber.type = enginelab::ExhaustComponentType::pipe;
+        chamber.lengthMm = 500.0;
+        chamber.diameterMm = pipeDiameterMm * std::sqrt(expansionRatio);
+        network.components.push_back(chamber);
+        network.connections.push_back({ 100, 200 });
+
+        enginelab::ExhaustComponentConfig outlet;
+        outlet.id = 300;
+        outlet.type = enginelab::ExhaustComponentType::outlet;
+        outlet.lengthMm = 2'000.0;
+        outlet.diameterMm = pipeDiameterMm;
+        network.components.push_back(outlet);
+        network.connections.push_back({ 200, 300 });
+        path.network = std::move(network);
+        enginelab::normaliseEngineConfig(config);
+
+        const auto graph = enginelab::ExhaustGraph::makeForEngine(config);
+        const std::array<std::uint32_t, 1> cylinderIds {
+            config.cylinders.front().id };
+        enginelab::AcousticExhaustNetwork acoustics(graph, cylinderIds);
+        require(acoustics.valid() && acoustics.prepare(sampleRate),
+            "the area-step fixture must compile and allocate");
+        const std::array<enginelab::AcousticExhaustNetwork::Medium, 1> medium {{
+            { 0.50F, soundSpeedMps } }};
+        acoustics.beginBlock(medium, 1.0);
+
+        // One cycle at 300 Hz: low enough that the widest chamber here stays
+        // two octaves inside its plane-mode band, short enough to finish before
+        // the reflection off the chamber inlet returns to the outlet.
+        const auto burstSamples = static_cast<std::size_t>(sampleRate / excitationHz);
+        std::array<float, 1> sources {};
+        std::array<enginelab::AcousticExhaustNetwork::CylinderBoundary, 1> boundaries {};
+        std::vector<float> response(3'000, 0.0F);
+        for (std::size_t sample = 0; sample < response.size(); ++sample) {
+            sources[0] = sample < burstSamples
+                ? 5'000.0F * static_cast<float>(std::sin(
+                    2.0 * std::numbers::pi * static_cast<double>(sample)
+                        / static_cast<double>(burstSamples)))
+                : 0.0F;
+            const auto output = acoustics.process(sources, boundaries, 1.0F);
+            require(std::isfinite(output[0].leftPa),
+                "the area-step fixture must stay finite");
+            response[sample] = output[0].leftPa;
+        }
+        const auto onset = std::find_if(response.begin(), response.end(),
+            [](float value) { return value != 0.0F; });
+        require(onset != response.end(), "the burst must reach the outlet");
+        // The direct arrival occupies one burst length from the onset. The
+        // shortest return path adds two traversals of the outlet pipe, which is
+        // far longer than that, so this window holds the direct wave alone.
+        const auto begin = static_cast<std::size_t>(
+            std::distance(response.begin(), onset));
+        auto peak = 0.0F;
+        for (std::size_t sample = begin;
+             sample < std::min(begin + burstSamples, response.size()); ++sample)
+            peak = std::max(peak, std::abs(response[sample]));
+        require(peak > 0.0F, "the direct arrival must carry energy");
+        return static_cast<double>(peak);
+    };
+
+    const auto reference = directArrivalPeak(1.0);
+    for (const auto expansionRatio : { 2.0, 4.0, 9.0 }) {
+        const auto expected = 4.0 * expansionRatio
+            / ((1.0 + expansionRatio) * (1.0 + expansionRatio));
+        const auto measured = directArrivalPeak(expansionRatio) / reference;
+        require(std::abs(measured - expected) < 0.05,
+            "an area step must scatter with the lossless admittance ratio");
+    }
+}
+
 void structuralModalRadiatorRegression() {
     const auto config = enginelab::makeDefaultInlineFour();
     enginelab::StructuralModalRadiator radiator(config);
@@ -2168,6 +2275,7 @@ int main() {
         branchedAcousticTopologyRegression();
         branchTrunkDelayRegression();
         ductMediumRegression();
+        areaStepScatteringRegression();
         structuralModalRadiatorRegression();
         acousticIntakeNetworkRegression();
         forcedInductionAcousticsRegression();
