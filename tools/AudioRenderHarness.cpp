@@ -147,6 +147,30 @@ struct WindowAnalysis final {
     // exactly what this harness exists to avoid.
     double maxResonanceProminenceDb {};
     double maxResonanceFrequencyHz {};
+    // The same measurement restricted to above the coupling Nyquist. Reported,
+    // deliberately not gated -- neither this nor the figure above can carry a
+    // pass/fail on its own, and it is worth being explicit about why, because
+    // the obvious gate is wrong in both directions.
+    //
+    // Below the coupling Nyquist a tall narrow peak is usually just the engine.
+    // A strong second or third firing order stands as proud as any mode; the
+    // catalogue reads 25-40 dB there on content that is exactly what the engine
+    // should sound like.
+    //
+    // Above it the tempting argument is that the boundary carried no
+    // information, so nothing there can be a mode. That is true of the
+    // *boundary* and false of the *network*: the waveguide's own modes do not
+    // stop at the coupling Nyquist, and the complementary valve-flow source
+    // excites them. Measured on the reference inline four, muting that source
+    // took the 4107 Hz peak from 31.2 dB to 22.1 dB -- so it is neither purely
+    // an image nor purely a mode. A default-geometry fixture with no muffler
+    // chamber is also a straight-through open header, which genuinely rings.
+    //
+    // What can be gated is the filter that is supposed to suppress the image
+    // component, and that is asserted analytically in the boundary
+    // reconstruction regression rather than read back off a render.
+    double maxOutOfBandResonanceProminenceDb {};
+    double maxOutOfBandResonanceFrequencyHz {};
     std::array<double, 32> spectrum {};
 };
 
@@ -240,7 +264,8 @@ SafetyScan scanSignal(const std::vector<float>& x) {
 // Analyse the final steady-state window. The FFT is used both for broad energy
 // balance and for a log-band engine fingerprint; this is less phase-sensitive
 // than probing a handful of individual DFT frequencies.
-WindowAnalysis analyseWindow(const std::vector<float>& x, std::size_t begin, double sampleRate) {
+WindowAnalysis analyseWindow(const std::vector<float>& x, std::size_t begin,
+                             double sampleRate, double outOfBandFloorHz = 0.0) {
     WindowAnalysis m;
     if (begin >= x.size()) return m;
     const auto n = x.size() - begin;
@@ -337,9 +362,15 @@ WindowAnalysis analyseWindow(const std::vector<float>& x, std::size_t begin, dou
             if (!(baseline > 1.0e-24)) continue;
             const auto prominenceDb = 10.0 * std::log10(
                 std::max(powerAt(bin), 1.0e-30) / baseline);
+            const auto frequencyHz = static_cast<double>(bin) * binHz;
             if (prominenceDb > m.maxResonanceProminenceDb) {
                 m.maxResonanceProminenceDb = prominenceDb;
-                m.maxResonanceFrequencyHz = static_cast<double>(bin) * binHz;
+                m.maxResonanceFrequencyHz = frequencyHz;
+            }
+            if (outOfBandFloorHz > 0.0 && frequencyHz > outOfBandFloorHz
+                && prominenceDb > m.maxOutOfBandResonanceProminenceDb) {
+                m.maxOutOfBandResonanceProminenceDb = prominenceDb;
+                m.maxOutOfBandResonanceFrequencyHz = frequencyHz;
             }
         }
     }
@@ -522,8 +553,9 @@ Metrics renderEngine(const EngineConfig& baseConfig, const WavData& ir,
     m.right.scan = scanSignal(audioRight);
     const auto analysisBegin = audioLeft.size() > static_cast<std::size_t>(1.0 * audioRate)
         ? audioLeft.size() - static_cast<std::size_t>(1.0 * audioRate) : 0;
-    m.left.window = analyseWindow(audioLeft, analysisBegin, audioRate);
-    m.right.window = analyseWindow(audioRight, analysisBegin, audioRate);
+    const auto couplingNyquistHz = simulator.state().exhaustCouplingFrequencyHz * 0.5;
+    m.left.window = analyseWindow(audioLeft, analysisBegin, audioRate, couplingNyquistHz);
+    m.right.window = analyseWindow(audioRight, analysisBegin, audioRate, couplingNyquistHz);
     m.channelCorrelation = normalisedCorrelation(audioLeft, audioRight, analysisBegin);
     m.finalRpm = simulator.state().rpm;
     m.solverFrequencyHz = simulator.state().solverFrequencyHz;
@@ -597,6 +629,10 @@ Metrics renderEngine(const EngineConfig& baseConfig, const WavData& ir,
               << " flowSimilarity=" << std::setprecision(3) << m.valveFlowSimilarity
               << " resonance=" << std::setprecision(1) << m.left.window.maxResonanceProminenceDb
               << "dB@" << std::setprecision(0) << m.left.window.maxResonanceFrequencyHz << "Hz"
+              << " outOfBandResonance=" << std::setprecision(1)
+              << m.left.window.maxOutOfBandResonanceProminenceDb
+              << "dB@" << std::setprecision(0)
+              << m.left.window.maxOutOfBandResonanceFrequencyHz << "Hz"
               << " bands=" << std::setprecision(1) << m.left.window.lowBandFraction * 100.0
               << '/' << m.left.window.midBandFraction * 100.0
               << '/' << m.left.window.highBandFraction * 100.0 << '%'
@@ -766,7 +802,8 @@ IdleCycleMetrics renderIdleCycle(const EngineConfig& baseConfig, const WavData& 
     metrics.idleWindow = analyseWindow(
         std::vector<float>(left.begin(),
             left.begin() + static_cast<std::ptrdiff_t>(4.0 * audioRate)),
-        static_cast<std::size_t>(3.0 * audioRate), audioRate);
+        static_cast<std::size_t>(3.0 * audioRate), audioRate,
+        simulator.state().exhaustCouplingFrequencyHz * 0.5);
     metrics.droppedEvents += renderer.droppedPendingEventCount();
     metrics.lateEvents = renderer.lateEventCount();
     metrics.levelLimitedSamples = renderer.levelLimitedSampleCount();

@@ -1,7 +1,9 @@
 #pragma once
 
 #include <algorithm>
+#include <array>
 #include <cmath>
+#include <cstddef>
 #include <numbers>
 
 namespace enginelab {
@@ -25,11 +27,30 @@ namespace enginelab {
  * theory, not a voicing choice. Its passband is flat (Butterworth), so it does
  * not shape the physical band it preserves.
  *
- * Topology: two cascaded identical second-order Butterworth sections
- * (Linkwitz-Riley style), -6 dB at the cutoff, 24 dB/octave beyond. With the
- * cutoff at 0.45x the coupling rate this leaves the first image line about
- * 28 dB down and the second about 52 dB down, while the top of the physical
- * band (half the coupling rate) loses about 4 dB.
+ * Topology: two cascaded fourth-order Butterworth filters, which is an
+ * eighth-order Linkwitz-Riley low-pass -- four biquads, -6 dB at the cutoff and
+ * 48 dB/octave beyond.
+ *
+ * This was a fourth-order Linkwitz-Riley at 0.45x the coupling rate, which left
+ * the first image line only 28 dB down. That is not enough: the render harness
+ * defines an audibly metallic resonance as one standing 20 dB proud of its
+ * spectral neighbourhood, and in the quiet top of the band a 28 dB image clears
+ * that easily. Measured on the reference inline four it stood 30 dB proud at
+ * 4107 Hz, and raising the coupling rate with the offline oracle moved it, which
+ * is what identifies it as an image rather than a duct mode.
+ *
+ * Doubling the order and moving the corner from 0.45x to 0.47x of the coupling
+ * rate is better in both directions at once, because a steeper filter can afford
+ * a corner closer to the band edge:
+ *
+ *                        0.25x coupling   0.5x coupling   1.0x coupling
+ *     LR4 at 0.45x           -0.79 dB        -8.0 dB         -28.1 dB
+ *     LR8 at 0.47x           -0.06 dB        -8.4 dB         -52.5 dB
+ *
+ * So the resolved band is thirteen times less attenuated where the physics
+ * actually lives, the band edge is unchanged to within half a dB, and the first
+ * image is 24 dB further down. The cost is two more biquads per boundary in a
+ * callback that measures at 15-33% of its budget.
  *
  * A coupling rate of zero disables the filter and it passes the input through
  * exactly. That is correct, not a fallback: a boundary authored directly at the
@@ -42,12 +63,23 @@ namespace enginelab {
  */
 class BoundaryReconstructionFilter final {
 public:
-    struct Coefficients final {
+    /** Quality factors of a fourth-order Butterworth, 1/(2 cos(pi(2k+1)/8)).
+     *  The Linkwitz-Riley cascade runs this pair twice. */
+    static constexpr std::array<double, 2> butterworthQ { 0.541196100146197,
+                                                          1.306562964876377 };
+    /** Four biquads: the Butterworth pair above, applied twice. */
+    static constexpr std::size_t sectionCount = 2 * butterworthQ.size();
+
+    struct Biquad final {
         double b0 { 1.0 };
         double b1 { 0.0 };
         double b2 { 0.0 };
         double a1 { 0.0 };
         double a2 { 0.0 };
+    };
+
+    struct Coefficients final {
+        std::array<Biquad, butterworthQ.size()> stage {};
         /** False disables filtering entirely (exact passthrough). */
         bool active { false };
     };
@@ -60,8 +92,7 @@ public:
     };
 
     struct State final {
-        SectionState first {};
-        SectionState second {};
+        std::array<SectionState, sectionCount> sections {};
         /** Primed on first active sample so enabling the filter mid-stream
          * settles to the current input instead of ringing from zero. */
         bool primed { false };
@@ -82,16 +113,23 @@ public:
             || !std::isfinite(couplingFrequencyHz) || !std::isfinite(sampleRateHz))
             return 0.0;
         return std::clamp(
-            0.45 * couplingFrequencyHz, 150.0, 0.40 * sampleRateHz);
+            crossoverFraction * couplingFrequencyHz, 150.0, 0.40 * sampleRateHz);
     }
 
-    /** Butterworth section for a cutoff at 0.45x the coupling rate.
+    /** Corner as a fraction of the coupling rate.
      *
-     * The 0.45 factor places the corner just below the coupling Nyquist: the
-     * image lines start at 1.0x the coupling rate, so the stopband must be
-     * established there, while the passband should reach as close to 0.5x as
-     * the rolloff allows. The cutoff is clamped away from both DC and the
-     * audio Nyquist so the bilinear prewarp stays well conditioned.
+     * The image lines start at 1.0x the coupling rate, so the stopband has to be
+     * established there, while the passband should reach as close to 0.5x as the
+     * rolloff allows. An eighth-order transition affords a corner nearer the
+     * band edge than a fourth-order one did, which is why this is 0.47 and not
+     * the 0.45 that went with the shallower filter.
+     */
+    static constexpr double crossoverFraction = 0.47;
+
+    /** The four Butterworth biquads for that corner.
+     *
+     * The cutoff is clamped away from both DC and the audio Nyquist by
+     * crossoverFrequencyHz so the bilinear prewarp stays well conditioned.
      */
     [[nodiscard]] static Coefficients compute(double couplingFrequencyHz,
                                               double sampleRateHz) noexcept {
@@ -101,14 +139,17 @@ public:
         if (!(cutoffHz > 0.0)) return coefficients;
         const auto w0 = 2.0 * std::numbers::pi * cutoffHz / sampleRateHz;
         const auto cosW0 = std::cos(w0);
-        // sin(w0) / (2 Q) with Q = 1/sqrt(2): a maximally flat section.
-        const auto alpha = std::sin(w0) * (0.5 * std::numbers::sqrt2);
-        const auto a0 = 1.0 + alpha;
-        coefficients.b0 = 0.5 * (1.0 - cosW0) / a0;
-        coefficients.b1 = (1.0 - cosW0) / a0;
-        coefficients.b2 = coefficients.b0;
-        coefficients.a1 = -2.0 * cosW0 / a0;
-        coefficients.a2 = (1.0 - alpha) / a0;
+        const auto sinW0 = std::sin(w0);
+        for (std::size_t index = 0; index < butterworthQ.size(); ++index) {
+            const auto alpha = sinW0 / (2.0 * butterworthQ[index]);
+            const auto a0 = 1.0 + alpha;
+            auto& stage = coefficients.stage[index];
+            stage.b0 = 0.5 * (1.0 - cosW0) / a0;
+            stage.b1 = (1.0 - cosW0) / a0;
+            stage.b2 = stage.b0;
+            stage.a1 = -2.0 * cosW0 / a0;
+            stage.a2 = (1.0 - alpha) / a0;
+        }
         coefficients.active = true;
         return coefficients;
     }
@@ -117,18 +158,21 @@ public:
                                         State& state, double input) noexcept {
         if (!coefficients.active) return input;
         if (!state.primed) {
-            // Steady-state initialisation: both sections have unity DC gain, so
-            // holding every delay element at the input reproduces the input.
-            state.first = { input, input, input, input };
-            state.second = { input, input, input, input };
+            // Steady-state initialisation: every section has unity DC gain, so
+            // holding all delay elements at the input reproduces the input.
+            for (auto& section : state.sections)
+                section = { input, input, input, input };
             state.primed = true;
         }
-        return processSection(coefficients, state.second,
-            processSection(coefficients, state.first, input));
+        auto signal = input;
+        for (std::size_t index = 0; index < sectionCount; ++index)
+            signal = processSection(coefficients.stage[index % butterworthQ.size()],
+                                    state.sections[index], signal);
+        return signal;
     }
 
 private:
-    [[nodiscard]] static double processSection(const Coefficients& c,
+    [[nodiscard]] static double processSection(const Biquad& c,
                                                SectionState& s, double x) noexcept {
         const auto y = c.b0 * x + c.b1 * s.x1 + c.b2 * s.x2
             - c.a1 * s.y1 - c.a2 * s.y2;

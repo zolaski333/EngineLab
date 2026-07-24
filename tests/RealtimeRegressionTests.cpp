@@ -1516,27 +1516,9 @@ void ductWallLossRegression() {
 }
 
 // ---------------------------------------------------------------------------
-// Boundary reconstruction filter
+// Duct plane-mode band limit
 // ---------------------------------------------------------------------------
 
-// Cascade magnitude at one frequency from the section coefficients, so the
-// invariants below are stated in the frequency domain where they belong. Two
-// identical sections, hence the square.
-double reconstructionMagnitude(
-    const enginelab::BoundaryReconstructionFilter::Coefficients& c,
-    double frequencyHz, double sampleRateHz) {
-    const auto z1 = std::polar(1.0, -2.0 * std::numbers::pi * frequencyHz / sampleRateHz);
-    const auto z2 = z1 * z1;
-    const auto section = std::abs(
-        (c.b0 + c.b1 * z1 + c.b2 * z2) / (1.0 + c.a1 * z1 + c.a2 * z2));
-    return section * section;
-}
-
-// Invariants come from sampled-data theory, not from the simulator's output:
-// a boundary sampled at rate fc carries nothing above fc/2, so the filter must
-// preserve the band below and establish its stopband at the image lines, which
-// sit at multiples of fc. Thresholds are the analytic response of a 4th-order
-// Butterworth cascade cut at 0.45 fc, with margin.
 void ductModeCutoffRegression() {
     using Cutoff = enginelab::DuctModeCutoff;
     constexpr double sampleRate = 48'000.0;
@@ -1681,6 +1663,32 @@ void ductModeCutoffRegression() {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Boundary reconstruction filter
+// ---------------------------------------------------------------------------
+
+// Cascade magnitude at one frequency from the stage coefficients, so the
+// invariants below are stated in the frequency domain where they belong. An
+// eighth-order Linkwitz-Riley is a fourth-order Butterworth run twice, so this
+// is the product of both stages, squared.
+double reconstructionMagnitude(
+    const enginelab::BoundaryReconstructionFilter::Coefficients& c,
+    double frequencyHz, double sampleRateHz) {
+    const auto z1 = std::polar(1.0, -2.0 * std::numbers::pi * frequencyHz / sampleRateHz);
+    const auto z2 = z1 * z1;
+    auto butterworth = 1.0;
+    for (const auto& stage : c.stage)
+        butterworth *= std::abs(
+            (stage.b0 + stage.b1 * z1 + stage.b2 * z2)
+                / (1.0 + stage.a1 * z1 + stage.a2 * z2));
+    return butterworth * butterworth;
+}
+
+// Invariants come from sampled-data theory, not from the simulator's output:
+// a boundary sampled at rate fc carries nothing above fc/2, so the filter must
+// preserve the band below and establish its stopband at the image lines, which
+// sit at multiples of fc. Thresholds are the analytic response of an
+// eighth-order Linkwitz-Riley cut at 0.47 fc, with margin.
 void boundaryReconstructionRegression() {
     using Filter = enginelab::BoundaryReconstructionFilter;
     constexpr double sampleRate = 48'000.0;
@@ -1702,13 +1710,16 @@ void boundaryReconstructionRegression() {
         require(c.active, "a sampled boundary must enable the filter");
         require(std::abs(reconstructionMagnitude(c, 0.0, sampleRate) - 1.0) < 1.0e-9,
                 "mean back-pressure must pass the reconstruction at unity");
-        require(reconstructionMagnitude(c, couplingHz * 0.25, sampleRate) > 0.89,
-                "content well inside the physical band must pass within 1 dB");
-        require(reconstructionMagnitude(c, couplingHz, sampleRate) < 0.0631,
-                "the first image line must be attenuated by at least 24 dB");
+        require(reconstructionMagnitude(c, couplingHz * 0.25, sampleRate) > 0.98,
+                "content well inside the physical band must pass within 0.2 dB");
+        // The first image has to clear the harness's metallic threshold with
+        // room to spare, or it is heard as a whine that tracks rpm. A
+        // fourth-order crossover left it at 28 dB and did not.
+        require(reconstructionMagnitude(c, couplingHz, sampleRate) < 0.01,
+                "the first image line must be attenuated by at least 40 dB");
         if (couplingHz * 2.0 < sampleRate * 0.5)
-            require(reconstructionMagnitude(c, couplingHz * 2.0, sampleRate) < 0.01,
-                    "the second image line must be attenuated by at least 40 dB");
+            require(reconstructionMagnitude(c, couplingHz * 2.0, sampleRate) < 1.0e-4,
+                    "the second image line must be attenuated by at least 80 dB");
 
         // Stability: the impulse response must decay. Prime at zero first so
         // the steady-state initialisation does not swallow the impulse.
@@ -1728,7 +1739,11 @@ void boundaryReconstructionRegression() {
     // produce a divergent filter.
     {
         const auto clamped = Filter::compute(1.0e6, sampleRate);
-        require(clamped.active && std::isfinite(clamped.b0) && std::isfinite(clamped.a2),
+        require(clamped.active
+                    && std::all_of(clamped.stage.begin(), clamped.stage.end(),
+                        [](const Filter::Biquad& stage) {
+                            return std::isfinite(stage.b0) && std::isfinite(stage.a2);
+                        }),
                 "an extreme coupling rate must clamp to a finite design");
         require(!Filter::compute(std::nan(""), sampleRate).active,
                 "a non-finite coupling rate must disable the filter");
@@ -1762,31 +1777,38 @@ void valveFlowAcousticSourceRegression() {
         couplingRate, sampleRate, 10'000.0);
     require(bandLimited.upperBandLimited,
         "a mechanically sampled valve source must publish a finite upper band");
-    {
-        constexpr double imageFrequencyHz = 12'000.0;
-        const auto z1 = std::polar(1.0, -2.0 * std::numbers::pi
-            * imageFrequencyHz / sampleRate);
+    // Butterworth cascade response at one frequency, from a stage pair.
+    const auto butterworthResponse = [](const auto& stages, double frequencyHz) {
+        const auto z1 = std::polar(
+            1.0, -2.0 * std::numbers::pi * frequencyHz / sampleRate);
         const auto z2 = z1 * z1;
-        const auto section = (bandLimited.lowB0 + bandLimited.lowB1 * z1
-            + bandLimited.lowB2 * z2)
-            / (1.0 + bandLimited.lowA1 * z1 + bandLimited.lowA2 * z2);
-        require(std::norm(section * section) < 0.01,
+        auto response = std::complex<double> { 1.0, 0.0 };
+        for (const auto& stage : stages)
+            response *= (stage.b0 + stage.b1 * z1 + stage.b2 * z2)
+                / (1.0 + stage.a1 * z1 + stage.a2 * z2);
+        return response;
+    };
+    {
+        // Above the mechanical solver's Nyquist the source stream carries only
+        // first-order-hold images, and the derivative in the radiation path
+        // turns them into clicks. Eighth order puts the first one 80 dB down.
+        constexpr double imageFrequencyHz = 12'000.0;
+        const auto section = butterworthResponse(
+            bandLimited.upperStage, imageFrequencyHz);
+        require(std::norm(section * section) < 1.0e-4,
             "the source reconstruction filter must reject images above mechanical Nyquist");
     }
 
-    // Two cascaded Butterworth sections form a fourth-order Linkwitz-Riley
-    // crossover. Its low and high outputs have a flat coherent sum, so the
-    // transition neither duplicates nor removes a band when both inputs agree.
+    // An eighth-order Linkwitz-Riley is a fourth-order Butterworth run twice.
+    // Its low and high outputs have a flat coherent sum, so the transition
+    // neither duplicates nor removes a band when both inputs agree. This is the
+    // property that lets the crossover order be raised without retuning either
+    // physical band.
     for (int step = 0; step <= 96; ++step) {
         const auto frequency = static_cast<double>(step) / 96.0
             * sampleRate * 0.5;
-        const auto z1 = std::polar(
-            1.0, -2.0 * std::numbers::pi * frequency / sampleRate);
-        const auto z2 = z1 * z1;
-        const auto lowSection = (low.b0 + low.b1 * z1 + low.b2 * z2)
-            / (1.0 + low.a1 * z1 + low.a2 * z2);
-        const auto highSection = (high.b0 + high.b1 * z1 + high.b2 * z2)
-            / (1.0 + high.a1 * z1 + high.a2 * z2);
+        const auto lowSection = butterworthResponse(low.stage, frequency);
+        const auto highSection = butterworthResponse(high.highStage, frequency);
         const auto coherentSum = lowSection * lowSection
             + highSection * highSection;
         require(std::abs(std::abs(coherentSum) - 1.0) < 1.0e-9,
