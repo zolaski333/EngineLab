@@ -7,6 +7,7 @@
 #include <enginelab/audio/NonlinearDuctAcoustics.hpp>
 #include <enginelab/audio/RealtimeEngineAudio.hpp>
 #include <enginelab/audio/StructuralModalRadiator.hpp>
+#include <enginelab/audio/DuctModeCutoff.hpp>
 #include <enginelab/audio/DuctWallLoss.hpp>
 #include <enginelab/audio/ExpansionChamberMuffler.hpp>
 #include <enginelab/audio/PipeRadiationModel.hpp>
@@ -1167,33 +1168,146 @@ void ductWallLossRegression() {
     require(Loss::traversalGain(0.0, traversal, radius, density, soundSpeed) == 1.0,
             "there is no boundary-layer loss at zero frequency");
 
-    // The fitted one-pole must reproduce the exact gain at the reference
-    // frequency, and must be stable and passive.
     const auto coefficients = Loss::fit(traversal, radius, density, soundSpeed, sampleRate);
     require(coefficients.pole >= 0.0F && coefficients.pole < 1.0F,
             "fitted pole must be inside the unit circle");
+    require(coefficients.zero >= 0.0F && coefficients.zero <= coefficients.pole,
+            "the zero must sit inside the pole, which is what makes the shelf passive");
+
+    // The difference equation must actually realise the magnitude the fit
+    // claims. Everything below reasons about Loss::magnitude, so measure the
+    // impulse response once and hold the analytic form to it.
     {
-        const auto omega = 2.0 * std::numbers::pi * Loss::referenceFrequencyHz / sampleRate;
-        const auto z = std::polar(1.0, -omega);
-        const auto pole = static_cast<double>(coefficients.pole);
-        const auto magnitude = std::abs((1.0 - pole) / (1.0 - pole * z));
-        const auto exact = Loss::traversalGain(Loss::referenceFrequencyHz, traversal,
-                                               radius, density, soundSpeed);
-        require(std::abs(magnitude - exact) < 1.0e-6,
-                "the one-pole must match the exact attenuation at its reference");
+        constexpr std::size_t impulseLength = 16'384;
+        std::vector<double> impulse(impulseLength, 0.0);
+        Loss::State state;
+        impulse[0] = Loss::process(coefficients, state, 1.0F);
+        for (std::size_t n = 1; n < impulseLength; ++n)
+            impulse[n] = Loss::process(coefficients, state, 0.0F);
+
+        auto directCurrentGain = 0.0;
+        for (const auto sample : impulse) directCurrentGain += sample;
+        require(std::abs(directCurrentGain - 1.0) < 1.0e-6,
+                "a boundary layer must not attenuate a static pressure difference");
+
+        for (const auto frequency : { 120.0, 900.0, 2'500.0, 7'000.0, 15'000.0, 21'000.0 }) {
+            const auto omega = 2.0 * std::numbers::pi * frequency / sampleRate;
+            auto response = std::complex<double> {};
+            for (std::size_t n = 0; n < impulseLength; ++n)
+                response += impulse[n] * std::polar(1.0, -omega * static_cast<double>(n));
+            require(std::abs(std::abs(response)
+                        - Loss::magnitude(coefficients, frequency, sampleRate)) < 1.0e-6,
+                    "the measured response must match the analytic shelf magnitude");
+        }
     }
-    // Monotone and bounded by unity across the band.
+
+    // The fit must be exact where it is designed to be exact. The solve is
+    // closed-form and exact in double; the residual here is the cost of storing
+    // the two coefficients as float, about 3e-8.
+    for (const auto frequency : { Loss::lowerDesignFrequencyHz, Loss::upperDesignFrequencyHz }) {
+        const auto exact = Loss::traversalGain(frequency, traversal, radius,
+                                               density, soundSpeed);
+        require(std::abs(Loss::magnitude(coefficients, frequency, sampleRate) - exact) < 1.0e-6,
+                "the shelf must match the exact attenuation at both design points");
+    }
+
+    // The property the fit exists for: track the Kirchhoff law across the whole
+    // band, not only where it is pinned. The bound is the accuracy claimed in
+    // DuctWallLoss's own documentation, derived from the sqrt(f) law rather than
+    // from any rendered output, so it cannot drift onto the simulator. A pole
+    // alone cannot hold it -- the one-pole this replaced was 11.9 dB out.
     {
-        const auto pole = static_cast<double>(coefficients.pole);
+        // Geometry and gas state spanning the catalogue: primaries from a
+        // 34 mm motorcycle header to a 142 mm expansion chamber, cold ambient
+        // air through to 1200 K exhaust.
+        struct DuctCase final {
+            double traversalSeconds;
+            double radiusM;
+            double densityKgPerM3;
+            double soundSpeedMps;
+        };
+        constexpr std::array<DuctCase, 8> cases { {
+            { 0.690 / 600.0, 0.024, 0.38, 600.0 },   // LS3 primary
+            { 0.400 / 550.0, 0.071, 0.45, 550.0 },   // LS3 expansion chamber
+            { 0.180 / 520.0, 0.041, 0.50, 520.0 },   // LS3 tailpipe
+            { 0.760 / 600.0, 0.0225, 0.38, 600.0 },  // K20 primary
+            { 0.610 / 620.0, 0.017, 0.36, 620.0 },   // Hayabusa primary
+            { 0.150 / 640.0, 0.026, 0.35, 640.0 },   // Merlin stack
+            { 0.120 / 580.0, 0.038, 0.42, 580.0 },   // collector trunk
+            { 0.500 / 340.0, 0.020, 1.20, 340.0 },   // cold, dense
+        } };
+        constexpr double toleranceDb = 0.40;
+        for (const auto& duct : cases) {
+            const auto fitted = Loss::fit(duct.traversalSeconds, duct.radiusM,
+                                          duct.densityKgPerM3, duct.soundSpeedMps,
+                                          sampleRate);
+            for (int step = 0; step <= 240; ++step) {
+                const auto frequency = 80.0
+                    * std::pow(sampleRate * 0.47 / 80.0, static_cast<double>(step) / 240.0);
+                const auto exact = Loss::traversalGain(frequency, duct.traversalSeconds,
+                                                       duct.radiusM, duct.densityKgPerM3,
+                                                       duct.soundSpeedMps);
+                const auto fittedGain = Loss::magnitude(fitted, frequency, sampleRate);
+                const auto errorDb = 20.0 * std::log10(fittedGain / exact);
+                require(std::abs(errorDb) < toleranceDb,
+                        "the shelf must track the Kirchhoff law across the whole band");
+            }
+        }
+    }
+
+    // Monotone and bounded by unity across the band: the network runs this
+    // filter inside a feedback loop, so amplification anywhere is fatal.
+    {
         auto previous = 1.1;
-        for (int step = 0; step <= 64; ++step) {
-            const auto frequency = static_cast<double>(step) / 64.0 * sampleRate * 0.5;
-            const auto z = std::polar(1.0, -2.0 * std::numbers::pi * frequency / sampleRate);
-            const auto magnitude = std::abs((1.0 - pole) / (1.0 - pole * z));
+        for (int step = 0; step <= 256; ++step) {
+            const auto frequency = static_cast<double>(step) / 256.0 * sampleRate * 0.5;
+            const auto magnitude = Loss::magnitude(coefficients, frequency, sampleRate);
             require(magnitude <= 1.0 + 1.0e-9, "wall loss must never amplify");
             require(magnitude <= previous + 1.0e-9, "wall loss must be monotone in frequency");
             previous = magnitude;
         }
+    }
+
+    // A duct too lossy for any passive first-order shelf must degrade to the
+    // documented fallback rather than place the zero outside the pole, which
+    // would amplify. Past the envelope the sqrt(f) law is steeper than a
+    // first-order section can be, so the fallback's error is not sign-definite;
+    // what must survive is passivity, monotonicity, and exactness where the
+    // audible content of such a duct still is.
+    {
+        constexpr double lossyTraversal = 4.0 / 750.0;
+        constexpr double lossyRadius = 0.005;
+        const auto pathological = Loss::fit(lossyTraversal, lossyRadius, 0.25, 750.0,
+                                            sampleRate);
+        require(pathological.zero == 0.0F,
+                "the fallback must drop the zero rather than place it outside the pole");
+        require(std::abs(Loss::magnitude(pathological, Loss::lowerDesignFrequencyHz, sampleRate)
+                    - Loss::traversalGain(Loss::lowerDesignFrequencyHz, lossyTraversal,
+                                          lossyRadius, 0.25, 750.0)) < 1.0e-6,
+                "the fallback must stay exact at the lower design frequency");
+        auto previous = 1.1;
+        for (int step = 0; step <= 128; ++step) {
+            const auto frequency = static_cast<double>(step) / 128.0 * sampleRate * 0.5;
+            const auto magnitude = Loss::magnitude(pathological, frequency, sampleRate);
+            require(magnitude <= 1.0 + 1.0e-9, "the fallback must never amplify");
+            require(magnitude <= previous + 1.0e-9, "the fallback must stay monotone");
+            previous = magnitude;
+        }
+    }
+
+    // The fallback must stay a guard on the extremes rather than quietly
+    // swallowing real geometry: every duct the catalogue actually builds has to
+    // be inside the envelope where the two-point shelf exists.
+    {
+        constexpr std::array<std::pair<double, double>, 4> catalogueExtremes { {
+            { 0.760 / 600.0, 0.0225 },  // longest primary
+            { 0.610 / 620.0, 0.017 },   // narrowest primary
+            { 2.000 / 700.0, 0.0125 },  // beyond anything the catalogue authors
+            { 0.400 / 550.0, 0.071 },   // widest chamber
+        } };
+        for (const auto& [traversalSeconds, radiusM] : catalogueExtremes)
+            require(Loss::fit(traversalSeconds, radiusM, 0.30, 700.0, sampleRate).zero > 0.0F,
+                    "catalogue geometry must be inside the shelf's fit envelope");
     }
 
     // A lossless or degenerate configuration must pass through untouched rather
@@ -1236,6 +1350,150 @@ double reconstructionMagnitude(
 // preserve the band below and establish its stopband at the image lines, which
 // sit at multiples of fc. Thresholds are the analytic response of a 4th-order
 // Butterworth cascade cut at 0.45 fc, with margin.
+void ductModeCutoffRegression() {
+    using Cutoff = enginelab::DuctModeCutoff;
+    constexpr double sampleRate = 48'000.0;
+
+    // The cutoff is the (1,0) mode of a rigid circular duct. Anchor it on the
+    // textbook value rather than on anything this project produces: a 50 mm
+    // duct in air at 343 m/s cuts on just above 4 kHz.
+    {
+        const auto textbook = Cutoff::cutoffFrequencyHz(0.025, 343.0);
+        require(std::abs(textbook - 4'019.0) < 5.0,
+                "a 50 mm duct in air must cut on at about 4 kHz");
+    }
+    // f_c scales with c and inversely with radius; those two dependences are
+    // what make this a geometric differentiator rather than a tone control.
+    require(std::abs(Cutoff::cutoffFrequencyHz(0.0125, 343.0)
+                - 2.0 * Cutoff::cutoffFrequencyHz(0.025, 343.0)) < 1.0e-6,
+            "halving the radius must double the cutoff");
+    require(std::abs(Cutoff::cutoffFrequencyHz(0.025, 686.0)
+                - 2.0 * Cutoff::cutoffFrequencyHz(0.025, 343.0)) < 1.0e-6,
+            "doubling the sound speed must double the cutoff");
+    // Degenerate geometry must not invent a band.
+    require(Cutoff::cutoffFrequencyHz(0.0, 550.0) == 0.0
+                && Cutoff::cutoffFrequencyHz(0.024, 0.0) == 0.0,
+            "degenerate geometry must report no cutoff");
+
+    // A 142 mm expansion chamber and a 34 mm header primary must land more than
+    // two octaves apart. This is the separation the delivered network was
+    // missing when the band limit came from a fitted filter corner instead.
+    {
+        const auto chamber = Cutoff::cutoffFrequencyHz(0.071, 550.0);
+        const auto primary = Cutoff::cutoffFrequencyHz(0.017, 620.0);
+        require(primary / chamber > 4.0,
+                "chamber and primary cutoffs must differ by more than two octaves");
+    }
+
+    // Response of a representative expansion chamber.
+    const auto chamberCutoffHz = Cutoff::cutoffFrequencyHz(0.071, 550.0);
+    const auto coefficients = Cutoff::fit(0.071, 550.0, sampleRate);
+
+    // The difference equation must realise the magnitude the class claims.
+    {
+        constexpr std::size_t impulseLength = 8'192;
+        std::vector<double> impulse(impulseLength, 0.0);
+        Cutoff::State state;
+        impulse[0] = Cutoff::process(coefficients, state, 1.0F);
+        for (std::size_t n = 1; n < impulseLength; ++n)
+            impulse[n] = Cutoff::process(coefficients, state, 0.0F);
+        for (const auto frequency : { 120.0, 600.0, 1'135.0, 2'270.0, 6'000.0, 12'000.0 }) {
+            const auto omega = 2.0 * std::numbers::pi * frequency / sampleRate;
+            auto response = std::complex<double> {};
+            for (std::size_t n = 0; n < impulseLength; ++n)
+                response += impulse[n] * std::polar(1.0, -omega * static_cast<double>(n));
+            require(std::abs(std::abs(response)
+                        - Cutoff::magnitude(coefficients, frequency, sampleRate)) < 1.0e-5,
+                    "the measured response must match the analytic Butterworth magnitude");
+        }
+    }
+
+    // Exactly -3 dB at the cutoff: the corner is the physical cutoff, not a
+    // corner placed near it.
+    {
+        const auto atCutoff = Cutoff::magnitude(coefficients, chamberCutoffHz, sampleRate);
+        require(std::abs(20.0 * std::log10(atCutoff) + 3.0103) < 1.0e-3,
+                "the section must be 3 dB down exactly at the plane-mode cutoff");
+    }
+
+    // Transparent below cutoff. Evanescent modes store energy but dissipate
+    // none, so the passband must not attenuate. This is the property that lets
+    // the section run inside the collector-to-outlet feedback loop, where any
+    // per-traversal loss compounds, and it is why the cascade is fourth order:
+    // a second-order section would be 0.264 dB down an octave below cutoff.
+    require(-20.0 * std::log10(Cutoff::magnitude(coefficients, chamberCutoffHz * 0.5,
+                                                 sampleRate)) < 0.02,
+            "one octave below cutoff must be transparent to 0.02 dB");
+    for (const auto divisor : { 4.0, 8.0 }) {
+        const auto lossDb = -20.0 * std::log10(
+            Cutoff::magnitude(coefficients, chamberCutoffHz / divisor, sampleRate));
+        require(lossDb < 0.001, "two or more octaves below cutoff must be lossless");
+    }
+
+    // Butterworth asymptote: 24 dB per octave. Measured on a deliberately low
+    // corner, where both probe octaves sit far enough below Nyquist that the
+    // bilinear frequency warping has not yet bent the slope.
+    {
+        const auto lowCorner = Cutoff::fit(0.3224, 550.0, sampleRate);
+        const auto cornerHz = Cutoff::cutoffFrequencyHz(0.3224, 550.0);
+        const auto atTwo = 20.0 * std::log10(
+            Cutoff::magnitude(lowCorner, cornerHz * 2.0, sampleRate));
+        const auto atFour = 20.0 * std::log10(
+            Cutoff::magnitude(lowCorner, cornerHz * 4.0, sampleRate));
+        require(std::abs((atTwo - atFour) - 24.0) < 1.0,
+                "the stopband must fall at the fourth-order rate");
+    }
+    // Nearer Nyquist the bilinear map compresses the frequency axis, so the
+    // realised slope is steeper than the analog prototype, never shallower. The
+    // band limit is therefore at least as sharp as it claims everywhere.
+    {
+        const auto atTwo = 20.0 * std::log10(
+            Cutoff::magnitude(coefficients, chamberCutoffHz * 2.0, sampleRate));
+        const auto atFour = 20.0 * std::log10(
+            Cutoff::magnitude(coefficients, chamberCutoffHz * 4.0, sampleRate));
+        require(atTwo - atFour >= 24.0,
+                "warping must only steepen the realised stopband");
+    }
+
+    // Passive and monotone: this runs in a feedback loop.
+    {
+        auto previous = 1.1;
+        for (int step = 0; step <= 256; ++step) {
+            const auto frequency = static_cast<double>(step) / 256.0 * sampleRate * 0.5;
+            const auto magnitude = Cutoff::magnitude(coefficients, frequency, sampleRate);
+            require(magnitude <= 1.0 + 1.0e-9, "the band limit must never amplify");
+            require(magnitude <= previous + 1.0e-9, "the band limit must be monotone");
+            previous = magnitude;
+        }
+    }
+
+    // A duct narrow enough that its physical cutoff runs past Nyquist must clamp
+    // to a transparent section rather than switch off discontinuously.
+    {
+        const auto narrow = Cutoff::fit(0.002, 620.0, sampleRate);
+        require(narrow.g > 0.0F, "the clamped section must stay well formed");
+        for (const auto frequency : { 500.0, 4'000.0, 12'000.0 }) {
+            const auto lossDb = -20.0 * std::log10(
+                Cutoff::magnitude(narrow, frequency, sampleRate));
+            require(lossDb < 0.01,
+                    "a duct whose cutoff exceeds Nyquist must pass the band untouched");
+        }
+    }
+
+    // Numerical hygiene: a non-finite sample must not poison the integrators.
+    {
+        Cutoff::State state;
+        (void) Cutoff::process(coefficients, state,
+                               std::numeric_limits<float>::infinity());
+        for (std::size_t section = 0; section < Cutoff::sectionCount; ++section)
+            require(std::isfinite(state.integrator1[section])
+                        && std::isfinite(state.integrator2[section]),
+                    "band-limit state must stay finite after a non-finite sample");
+        require(std::isfinite(Cutoff::process(coefficients, state, 1.0F)),
+                "the section must recover after a non-finite sample");
+    }
+}
+
 void boundaryReconstructionRegression() {
     using Filter = enginelab::BoundaryReconstructionFilter;
     constexpr double sampleRate = 48'000.0;
@@ -1689,6 +1947,7 @@ int main() {
         monitorCalibrationDefaultRegression();
         freeFieldObserverRegression();
         ductWallLossRegression();
+        ductModeCutoffRegression();
         valvePortTerminationRegression();
         boundaryReconstructionRegression();
         valveFlowAcousticSourceRegression();

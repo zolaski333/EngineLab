@@ -1,5 +1,6 @@
 #include <enginelab/audio/AcousticExhaustNetwork.hpp>
 
+#include <enginelab/audio/DuctModeCutoff.hpp>
 #include <enginelab/audio/DuctWallLoss.hpp>
 #include <enginelab/audio/NonlinearDuctAcoustics.hpp>
 #include <enginelab/audio/PipeRadiationModel.hpp>
@@ -59,6 +60,10 @@ struct AcousticExhaustNetwork::Impl final {
         DuctWallLoss::Coefficients wallLossTarget {};
         DuctWallLoss::State forwardLoss {};
         DuctWallLoss::State reverseLoss {};
+        DuctModeCutoff::Coefficients modeCutoff {};
+        DuctModeCutoff::Coefficients modeCutoffTarget {};
+        DuctModeCutoff::State forwardCutoff {};
+        DuctModeCutoff::State reverseCutoff {};
     };
 
     struct Junction final {
@@ -377,6 +382,8 @@ void AcousticExhaustNetwork::reset() noexcept {
         duct.write = 0;
         duct.forwardLoss.reset();
         duct.reverseLoss.reset();
+        duct.forwardCutoff.reset();
+        duct.reverseCutoff.reset();
     }
     for (auto& port : impl_->cylinderPorts) {
         port.incidentToJunction = 0.0F;
@@ -433,7 +440,12 @@ void AcousticExhaustNetwork::beginBlock(
         duct.wallLossTarget = DuctWallLoss::fit(
             traversalSeconds, duct.radiusM, medium.densityKgPerM3,
             medium.soundSpeedMps, impl_->sampleRateHz);
-        if (snap) duct.wallLoss = duct.wallLossTarget;
+        duct.modeCutoffTarget = DuctModeCutoff::fit(
+            duct.radiusM, medium.soundSpeedMps, impl_->sampleRateHz);
+        if (snap) {
+            duct.wallLoss = duct.wallLossTarget;
+            duct.modeCutoff = duct.modeCutoffTarget;
+        }
     }
     for (auto& outlet : impl_->outlets) {
         const auto& medium = impl_->mediaTarget[std::min<std::size_t>(
@@ -510,18 +522,36 @@ AcousticExhaustNetwork::process(
             * (duct.delayTargetSamples - duct.delaySamples);
         duct.wallLoss.pole += ramp
             * (duct.wallLossTarget.pole - duct.wallLoss.pole);
+        duct.wallLoss.zero += ramp
+            * (duct.wallLossTarget.zero - duct.wallLoss.zero);
+        // The shelf's DC gain is a function of both coefficients, so it has to
+        // be rebuilt after the slew moves them; interpolating it independently
+        // would let the duct pass DC gain while the medium is changing.
+        duct.wallLoss.renormalise();
+        // The plane-mode cutoff moves with the gas state too. The TPT form is
+        // stable for any positive g, so the prewarped cutoff interpolates
+        // directly; only its resolved denominator has to be rebuilt.
+        duct.modeCutoff.g += ramp * (duct.modeCutoffTarget.g - duct.modeCutoff.g);
+        duct.modeCutoff.renormalise();
         const auto& medium = impl_->media[std::min<std::size_t>(
             duct.pathIndex, impl_->media.size() - 1U)];
         const auto stiffness = medium.densityKgPerM3
             * medium.soundSpeedMps * medium.soundSpeedMps;
-        impl_->incident[index * 2U] = DuctWallLoss::process(
-            duct.wallLoss, duct.reverseLoss,
-            impl_->readDelayed(duct.reverse, duct.write,
-                duct.delaySamples, stiffness));
-        impl_->incident[index * 2U + 1U] = DuctWallLoss::process(
-            duct.wallLoss, duct.forwardLoss,
-            impl_->readDelayed(duct.forward, duct.write,
-                duct.delaySamples, stiffness));
+        // Order matters only for arithmetic, not for physics: both sections are
+        // linear. Wall loss first keeps the band limit operating on the same
+        // amplitude scale the delay line stores.
+        impl_->incident[index * 2U] = DuctModeCutoff::process(
+            duct.modeCutoff, duct.reverseCutoff,
+            DuctWallLoss::process(
+                duct.wallLoss, duct.reverseLoss,
+                impl_->readDelayed(duct.reverse, duct.write,
+                    duct.delaySamples, stiffness)));
+        impl_->incident[index * 2U + 1U] = DuctModeCutoff::process(
+            duct.modeCutoff, duct.forwardCutoff,
+            DuctWallLoss::process(
+                duct.wallLoss, duct.forwardLoss,
+                impl_->readDelayed(duct.forward, duct.write,
+                    duct.delaySamples, stiffness)));
     }
     std::fill(impl_->outgoing.begin(), impl_->outgoing.end(), 0.0F);
 
