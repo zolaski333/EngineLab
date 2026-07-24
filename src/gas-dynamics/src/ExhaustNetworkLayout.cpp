@@ -88,6 +88,8 @@ ExhaustNetworkLayout ExhaustNetworkLayout::compile(
                 volumeM3,
                 diameterM,
                 std::max(0.0, node.localLossCoefficient),
+                finite(node.lengthMm) && node.lengthMm > 0.0
+                    ? node.lengthMm * 0.001 : 0.0,
                 derived,
             });
             elements.emplace(node.id, ElementReference { true, index });

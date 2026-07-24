@@ -51,6 +51,18 @@ struct CompiledExhaustJunction final {
     double volumeM3 { 0.0 };
     double characteristicDiameterM { 0.0 };
     double lossCoefficient { 0.0 };
+    /** Authored length of the trunk this junction carries, metres; zero when the
+     *  author drew a branch with no extent.
+     *
+     *  A merge is not only a scattering point. A 4-into-1 collector, a Y-piece
+     *  or a tailpipe split all have a common trunk of real length on their
+     *  single-port side, and the graph schema lets the author state it. The
+     *  finite-volume solver models a junction as a well-mixed plenum and folds
+     *  that extent into volumeM3, which is the right lumped choice at the low
+     *  frequencies it resolves. A waveguide cannot: length is delay there, and
+     *  dropping it deletes the collector from the acoustic model entirely.
+     *  Published here so the two discretisations read the same geometry. */
+    double trunkLengthM { 0.0 };
     bool volumeWasDerived { false };
 };
 

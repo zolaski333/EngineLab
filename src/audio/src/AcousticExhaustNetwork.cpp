@@ -10,6 +10,7 @@
 #include <cmath>
 #include <limits>
 #include <numbers>
+#include <optional>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -33,6 +34,11 @@ namespace {
     const gasdynamics::ExhaustEndpoint& endpoint) noexcept {
     return endpoint.elementIndex * 2U
         + (endpoint.type == gasdynamics::ExhaustEndpointType::ductOutlet ? 1U : 0U);
+}
+
+[[nodiscard]] double circularArea(double diameterM) noexcept {
+    const auto radiusM = 0.5 * diameterM;
+    return std::numbers::pi * radiusM * radiusM;
 }
 
 } // namespace
@@ -130,7 +136,7 @@ struct AcousticExhaustNetwork::Impl final {
         : layout(gasdynamics::ExhaustNetworkLayout::compile(graph)),
           observerConfig(graph.acousticObserver()) {
         if (!layout.valid()) return;
-        ducts.reserve(layout.ducts().size());
+        ducts.reserve(layout.ducts().size() + layout.junctions().size());
         for (const auto& descriptor : layout.ducts()) {
             const auto area = std::max(1.0e-10, descriptor.flowAreaM2);
             ducts.push_back({
@@ -140,12 +146,11 @@ struct AcousticExhaustNetwork::Impl final {
                 std::sqrt(area / std::numbers::pi),
             });
         }
-        owners.resize(ducts.size() * 2U);
-        incident.resize(owners.size());
-        outgoing.resize(owners.size());
 
-        // Junction-to-junction edges are zero-length connections and therefore
-        // one physical scattering node. Union them before attaching duct faces.
+        // Junction-to-junction edges connect two branches directly. When neither
+        // carries an authored trunk they are coincident and form one physical
+        // scattering node, so union them. When either does, the two branches are
+        // separated by that pipe and have to stay distinct.
         std::vector<std::size_t> parent(layout.junctions().size());
         for (std::size_t index = 0; index < parent.size(); ++index) parent[index] = index;
         const auto rootOf = [&parent](std::size_t index) {
@@ -158,22 +163,166 @@ struct AcousticExhaustNetwork::Impl final {
             }
             return root;
         };
+        const auto junctionTrunkLengthM = [this](std::size_t index) {
+            return layout.junctions()[index].trunkLengthM;
+        };
         for (const auto& interface : layout.interfaces()) {
-            if (interface.upstream.type == gasdynamics::ExhaustEndpointType::junction
-                && interface.downstream.type == gasdynamics::ExhaustEndpointType::junction) {
-                const auto left = rootOf(interface.upstream.elementIndex);
-                const auto right = rootOf(interface.downstream.elementIndex);
-                if (left != right) parent[right] = left;
-            }
+            if (interface.upstream.type != gasdynamics::ExhaustEndpointType::junction
+                || interface.downstream.type != gasdynamics::ExhaustEndpointType::junction)
+                continue;
+            if (junctionTrunkLengthM(interface.upstream.elementIndex) > 0.0
+                || junctionTrunkLengthM(interface.downstream.elementIndex) > 0.0)
+                continue;
+            const auto left = rootOf(interface.upstream.elementIndex);
+            const auto right = rootOf(interface.downstream.elementIndex);
+            if (left != right) parent[right] = left;
         }
         std::unordered_map<std::size_t, std::size_t> groupForRoot;
         std::vector<std::size_t> groupForJunction(layout.junctions().size());
+        auto groupCount = std::size_t { 0 };
         for (std::size_t index = 0; index < layout.junctions().size(); ++index) {
-            const auto root = rootOf(index);
-            const auto [found, inserted] = groupForRoot.emplace(root, junctions.size());
-            if (inserted) junctions.emplace_back();
+            const auto [found, inserted] = groupForRoot.emplace(rootOf(index), groupCount);
+            if (inserted) ++groupCount;
             groupForJunction[index] = found->second;
         }
+
+        // Resolve each group's trunk before any storage is sized, because a
+        // junction carrying an authored length becomes a duct of its own.
+        struct GroupGeometry final {
+            double lengthM { 0.0 };
+            /** Sum of area * length over the group, so a chain of unioned
+             *  junctions recovers a single length-weighted mean area. */
+            double sweptVolumeM3 { 0.0 };
+            std::uint32_t pathIndex { 0 };
+            std::size_t inflowCount { 0 };
+            std::size_t outflowCount { 0 };
+        };
+        std::vector<GroupGeometry> groupGeometry(groupCount);
+        for (std::size_t index = 0; index < layout.junctions().size(); ++index) {
+            const auto& descriptor = layout.junctions()[index];
+            auto& geometry = groupGeometry[groupForJunction[index]];
+            geometry.lengthM += descriptor.trunkLengthM;
+            geometry.sweptVolumeM3 += circularArea(descriptor.characteristicDiameterM)
+                * descriptor.trunkLengthM;
+            geometry.pathIndex = descriptor.pathIndex;
+        }
+        // A trunk belongs on whichever side of the branch carries exactly one
+        // connection: the common pipe of a collector is downstream of the merge,
+        // the common pipe of a tailpipe split is upstream of the splitter. With
+        // more than one connection on both sides the length cannot be attributed
+        // to either, so the junction stays a point.
+        //
+        // Group of the junction on each side of an interface, if any. A merge
+        // feeding a splitter counts on both, which is how the pipe between a
+        // 4-into-1 and a tailpipe split is attributed.
+        const auto groupOf = [&groupForJunction](const gasdynamics::ExhaustEndpoint& endpoint)
+            -> std::optional<std::size_t> {
+            if (endpoint.type != gasdynamics::ExhaustEndpointType::junction)
+                return std::nullopt;
+            return groupForJunction[endpoint.elementIndex];
+        };
+        for (const auto& interface : layout.interfaces()) {
+            const auto upstream = groupOf(interface.upstream);
+            const auto downstream = groupOf(interface.downstream);
+            if (upstream && downstream) {
+                if (*upstream == *downstream) continue; // Internal to one node.
+                ++groupGeometry[*upstream].outflowCount;
+                ++groupGeometry[*downstream].inflowCount;
+            } else if (downstream) {
+                ++groupGeometry[*downstream].inflowCount;
+            } else if (upstream) {
+                ++groupGeometry[*upstream].outflowCount;
+            }
+        }
+        for (const auto& port : layout.cylinderPorts())
+            if (port.networkEndpoint.type == gasdynamics::ExhaustEndpointType::junction)
+                ++groupGeometry[groupForJunction[port.networkEndpoint.elementIndex]]
+                     .inflowCount;
+        for (const auto& outlet : layout.outlets())
+            if (outlet.networkEndpoint.type == gasdynamics::ExhaustEndpointType::junction)
+                ++groupGeometry[groupForJunction[outlet.networkEndpoint.elementIndex]]
+                     .outflowCount;
+
+        struct GroupPlan final {
+            std::size_t manyNode { 0 };
+            std::size_t singleNode { 0 };
+            std::size_t trunkDuctIndex { 0 };
+            bool trunkOnOutflow { false };
+            bool hasTrunk { false };
+        };
+        // Allocate a scattering slot for each side of every group. A group with
+        // a trunk needs two: the branch itself, and the far end of its common
+        // pipe. They are only slots here -- adjacent branches merge some of them
+        // below -- so the real Junction objects are built afterwards.
+        std::vector<GroupPlan> groupPlans(groupCount);
+        auto slotCount = std::size_t { 0 };
+        for (std::size_t group = 0; group < groupCount; ++group) {
+            const auto& geometry = groupGeometry[group];
+            auto& plan = groupPlans[group];
+            plan.manyNode = slotCount++;
+            plan.singleNode = plan.manyNode;
+            const auto trunkOnOutflow =
+                geometry.outflowCount == 1 && geometry.inflowCount >= 1;
+            const auto trunkOnInflow = !trunkOnOutflow
+                && geometry.inflowCount == 1 && geometry.outflowCount >= 1;
+            if (!(geometry.lengthM > 0.0) || !(trunkOnOutflow || trunkOnInflow))
+                continue;
+            const auto area = std::max(1.0e-10,
+                geometry.sweptVolumeM3 / geometry.lengthM);
+            plan.trunkDuctIndex = ducts.size();
+            ducts.push_back({
+                geometry.pathIndex,
+                geometry.lengthM,
+                area,
+                std::sqrt(area / std::numbers::pi),
+            });
+            plan.singleNode = slotCount++;
+            plan.trunkOnOutflow = trunkOnOutflow;
+            plan.hasTrunk = true;
+        }
+
+        // A group with a trunk presents its many side to everything flowing
+        // towards the branch and its single side to the common pipe beyond it.
+        const auto slotFor = [&groupPlans](std::size_t group, bool inflowToGroup) {
+            const auto& plan = groupPlans[group];
+            if (!plan.hasTrunk) return plan.manyNode;
+            return inflowToGroup == plan.trunkOnOutflow ? plan.manyNode
+                                                        : plan.singleNode;
+        };
+        // Two branches wired directly to each other meet at one scattering node,
+        // whether that is the branch point itself or the far end of a trunk.
+        std::vector<std::size_t> slotParent(slotCount);
+        for (std::size_t slot = 0; slot < slotCount; ++slot) slotParent[slot] = slot;
+        const auto slotRootOf = [&slotParent](std::size_t slot) {
+            auto root = slot;
+            while (slotParent[root] != root) root = slotParent[root];
+            while (slotParent[slot] != slot) {
+                const auto next = slotParent[slot];
+                slotParent[slot] = root;
+                slot = next;
+            }
+            return root;
+        };
+        for (const auto& interface : layout.interfaces()) {
+            const auto upstream = groupOf(interface.upstream);
+            const auto downstream = groupOf(interface.downstream);
+            if (!upstream || !downstream || *upstream == *downstream) continue;
+            const auto left = slotRootOf(slotFor(*upstream, false));
+            const auto right = slotRootOf(slotFor(*downstream, true));
+            if (left != right) slotParent[right] = left;
+        }
+        std::unordered_map<std::size_t, std::size_t> junctionForSlotRoot;
+        const auto nodeFor = [&](std::size_t group, bool inflowToGroup) {
+            const auto root = slotRootOf(slotFor(group, inflowToGroup));
+            const auto [found, inserted] =
+                junctionForSlotRoot.emplace(root, junctions.size());
+            if (inserted) junctions.emplace_back();
+            return found->second;
+        };
+
+        owners.resize(ducts.size() * 2U);
+        incident.resize(owners.size());
+        outgoing.resize(owners.size());
 
         const auto assignEndpoint = [this](std::size_t key, OwnerType type,
                                             std::size_t index) {
@@ -182,15 +331,34 @@ struct AcousticExhaustNetwork::Impl final {
             owners[key] = { type, index };
             return true;
         };
+        // Attach each trunk between the two nodes its group resolved to,
+        // oriented so the wave crosses it in the direction of mean flow.
+        for (std::size_t group = 0; group < groupCount; ++group) {
+            const auto& plan = groupPlans[group];
+            if (!plan.hasTrunk) continue;
+            // Whichever side the trunk sits on, its inlet faces the same node as
+            // everything flowing towards the branch from that side, and its
+            // outlet faces the node beyond it. slotFor resolves both.
+            const auto inletKey = plan.trunkDuctIndex * 2U;
+            const auto nearNode = nodeFor(group, true);
+            const auto farNode = nodeFor(group, false);
+            if (!assignEndpoint(inletKey, OwnerType::junction, nearNode)
+                || !assignEndpoint(inletKey + 1U, OwnerType::junction, farNode))
+                return;
+            junctions[nearNode].ductEndpoints.push_back(inletKey);
+            junctions[farNode].ductEndpoints.push_back(inletKey + 1U);
+        }
         for (const auto& interface : layout.interfaces()) {
             const auto upstreamDuct = isDuctEndpoint(interface.upstream.type);
             const auto downstreamDuct = isDuctEndpoint(interface.downstream.type);
             if (!upstreamDuct && !downstreamDuct) continue;
             std::size_t groupIndex {};
             if (!upstreamDuct) {
-                groupIndex = groupForJunction[interface.upstream.elementIndex];
+                groupIndex = nodeFor(
+                    groupForJunction[interface.upstream.elementIndex], false);
             } else if (!downstreamDuct) {
-                groupIndex = groupForJunction[interface.downstream.elementIndex];
+                groupIndex = nodeFor(
+                    groupForJunction[interface.downstream.elementIndex], true);
             } else {
                 groupIndex = junctions.size();
                 junctions.emplace_back();
@@ -219,8 +387,8 @@ struct AcousticExhaustNetwork::Impl final {
             const auto portIndex = cylinderPorts.size();
             if (port.networkEndpoint.type == gasdynamics::ExhaustEndpointType::junction) {
                 compiled.virtualTerminal = true;
-                compiled.endpointOrJunction = groupForJunction[
-                    port.networkEndpoint.elementIndex];
+                compiled.endpointOrJunction = nodeFor(
+                    groupForJunction[port.networkEndpoint.elementIndex], true);
                 junctions[compiled.endpointOrJunction].cylinderTerminals.push_back(portIndex);
             } else {
                 compiled.endpointOrJunction = endpointKey(port.networkEndpoint);
@@ -241,8 +409,8 @@ struct AcousticExhaustNetwork::Impl final {
             const auto outletIndex = outlets.size();
             if (outlet.networkEndpoint.type == gasdynamics::ExhaustEndpointType::junction) {
                 compiled.virtualTerminal = true;
-                compiled.endpointOrJunction = groupForJunction[
-                    outlet.networkEndpoint.elementIndex];
+                compiled.endpointOrJunction = nodeFor(
+                    groupForJunction[outlet.networkEndpoint.elementIndex], false);
                 junctions[compiled.endpointOrJunction].outletTerminals.push_back(outletIndex);
             } else {
                 compiled.endpointOrJunction = endpointKey(outlet.networkEndpoint);

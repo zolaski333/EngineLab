@@ -278,15 +278,19 @@ void branchedAcousticTopologyRegression() {
             config.cylinders[index].id, primary.id });
         network.connections.push_back({ primary.id, 200 });
     }
+    // Both branches carry an authored trunk: the collector's common pipe runs
+    // downstream of the merge, the split's common pipe upstream of the splitter.
     enginelab::ExhaustComponentConfig merge;
     merge.id = 200;
     merge.type = enginelab::ExhaustComponentType::merge;
     merge.diameterMm = 55.0;
+    merge.lengthMm = 130.0;
     network.components.push_back(merge);
     enginelab::ExhaustComponentConfig splitter;
     splitter.id = 210;
     splitter.type = enginelab::ExhaustComponentType::splitter;
     splitter.diameterMm = 55.0;
+    splitter.lengthMm = 90.0;
     network.components.push_back(splitter);
     for (const auto [id, length] : std::array {
              std::pair { 300U, 240.0 }, std::pair { 301U, 510.0 } }) {
@@ -309,9 +313,26 @@ void branchedAcousticTopologyRegression() {
     enginelab::AcousticExhaustNetwork acoustics(graph, cylinderIds);
     require(acoustics.valid(),
         "a valid branched exhaust DAG must compile for audio");
-    require(acoustics.ductCount() == 6 && acoustics.outletCount() == 2
+    // Four primaries and two outlets, plus one trunk for each authored branch
+    // length. A branch is a scattering point *and* a pipe; dropping the pipe
+    // deleted the collector from the waveguide and let the primaries scatter
+    // straight into whatever followed the merge.
+    require(acoustics.ductCount() == 8 && acoustics.outletCount() == 2
             && acoustics.junctionCount() >= 1,
-        "the acoustic compiler must retain every primary, branch and outlet");
+        "the acoustic compiler must retain every primary, branch trunk and outlet");
+    {
+        // Same graph with the trunks unauthored: the two ducts must disappear,
+        // so the count above is carried by the lengths and not by the topology.
+        auto pointBranches = config;
+        for (auto& component : pointBranches.exhaustPaths.front().network->components)
+            if (component.type == enginelab::ExhaustComponentType::merge
+                || component.type == enginelab::ExhaustComponentType::splitter)
+                component.lengthMm = 0.0;
+        const auto pointGraph = enginelab::ExhaustGraph::makeForEngine(pointBranches);
+        enginelab::AcousticExhaustNetwork pointAcoustics(pointGraph, cylinderIds);
+        require(pointAcoustics.valid() && pointAcoustics.ductCount() == 6,
+            "a branch with no authored length must stay a point");
+    }
     require(acoustics.prepare(48'000.0),
         "the compiled exhaust must allocate its realtime lines");
     const std::array<enginelab::AcousticExhaustNetwork::Medium, 1> medium {{
@@ -344,6 +365,94 @@ void branchedAcousticTopologyRegression() {
         require(output[0].leftPa == 0.0F && output[0].rightPa == 0.0F,
             "a reset source-free network must be exactly silent");
     }
+}
+
+// A merge is a scattering point *and* a pipe. The audio network used to keep
+// only the point, so a 4-into-1 collector contributed no delay and the primaries
+// scattered straight into whatever followed the merge. Measure the thing that
+// was missing: the trunk's propagation time must appear at the outlet.
+void branchTrunkDelayRegression() {
+    constexpr double sampleRate = 48'000.0;
+    constexpr float soundSpeedMps = 535.0F;
+    constexpr double trunkLengthMm = 400.0;
+
+    const auto firstArrivalSample = [&](double mergeLengthMm) {
+        auto config = enginelab::makeDefaultInlineFour();
+        auto& path = config.exhaustPaths.front();
+        enginelab::ExhaustNetworkConfig network;
+        for (std::size_t index = 0; index < config.cylinders.size(); ++index) {
+            enginelab::ExhaustComponentConfig primary;
+            primary.id = static_cast<std::uint32_t>(100 + index);
+            primary.type = enginelab::ExhaustComponentType::pipe;
+            primary.lengthMm = 420.0;
+            primary.diameterMm = 42.0;
+            network.components.push_back(primary);
+            network.cylinderConnections.push_back({
+                config.cylinders[index].id, primary.id });
+            network.connections.push_back({ primary.id, 200 });
+        }
+        enginelab::ExhaustComponentConfig merge;
+        merge.id = 200;
+        merge.type = enginelab::ExhaustComponentType::merge;
+        merge.diameterMm = 60.0;
+        merge.lengthMm = mergeLengthMm;
+        network.components.push_back(merge);
+        enginelab::ExhaustComponentConfig outlet;
+        outlet.id = 300;
+        outlet.type = enginelab::ExhaustComponentType::outlet;
+        outlet.lengthMm = 200.0;
+        outlet.diameterMm = 60.0;
+        network.components.push_back(outlet);
+        network.connections.push_back({ 200, 300 });
+        path.network = std::move(network);
+        enginelab::normaliseEngineConfig(config);
+
+        const auto graph = enginelab::ExhaustGraph::makeForEngine(config);
+        std::array<std::uint32_t, 4> cylinderIds {};
+        for (std::size_t index = 0; index < cylinderIds.size(); ++index)
+            cylinderIds[index] = config.cylinders[index].id;
+        enginelab::AcousticExhaustNetwork acoustics(graph, cylinderIds);
+        require(acoustics.valid() && acoustics.prepare(sampleRate),
+            "the trunk fixture must compile and allocate");
+        const std::array<enginelab::AcousticExhaustNetwork::Medium, 1> medium {{
+            { 0.55F, soundSpeedMps } }};
+        acoustics.beginBlock(medium, 1.0);
+
+        std::array<float, 4> sources {};
+        std::array<enginelab::AcousticExhaustNetwork::CylinderBoundary, 4> boundaries {};
+        std::vector<float> response(4'096, 0.0F);
+        for (std::size_t sample = 0; sample < response.size(); ++sample) {
+            sources[0] = sample < 16
+                ? 5'000.0F * static_cast<float>(std::sin(
+                    std::numbers::pi * static_cast<double>(sample + 1U) / 17.0))
+                : 0.0F;
+            const auto output = acoustics.process(sources, boundaries, 1.0F);
+            require(std::isfinite(output[0].leftPa),
+                "the trunk fixture must stay finite");
+            response[sample] = std::abs(output[0].leftPa);
+        }
+        require(*std::max_element(response.begin(), response.end()) > 0.0F,
+            "the source must reach the outlet");
+        // Causal onset, not the loudest sample. The loudest sample sits inside
+        // the resonant build-up, which a longer trunk also lengthens, so it
+        // would conflate the one-way delay with the round trip. Every element
+        // here starts from zeroed state and is causal, so the output is exactly
+        // zero until the direct path arrives, and the first non-zero sample is
+        // that arrival with no threshold to choose.
+        const auto onset = std::find_if(response.begin(), response.end(),
+            [](float magnitude) { return magnitude > 0.0F; });
+        require(onset != response.end(), "the direct arrival must be detectable");
+        return static_cast<std::size_t>(std::distance(response.begin(), onset));
+    };
+
+    const auto withoutTrunk = firstArrivalSample(0.0);
+    const auto withTrunk = firstArrivalSample(trunkLengthMm);
+    const auto expected = trunkLengthMm * 0.001 / static_cast<double>(soundSpeedMps)
+        * sampleRate;
+    const auto measured = static_cast<double>(withTrunk)
+        - static_cast<double>(withoutTrunk);
+    require(std::abs(measured - expected) < 3.0,
+        "an authored branch length must add its own propagation time to the path");
 }
 
 void structuralModalRadiatorRegression() {
@@ -1957,6 +2066,7 @@ int main() {
         runnerDelaySampleRateRegression();
         exhaustPathIsolationRegression();
         branchedAcousticTopologyRegression();
+        branchTrunkDelayRegression();
         structuralModalRadiatorRegression();
         acousticIntakeNetworkRegression();
         forcedInductionAcousticsRegression();
