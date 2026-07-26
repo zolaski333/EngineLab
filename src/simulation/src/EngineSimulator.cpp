@@ -1643,8 +1643,33 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
         // whose ambient reservoir is its path's plenum, so cylinders still
         // interact only through the shared plenum cell, and the serial
         // cylinder order keeps every floating-point reduction fixed.
-        const auto advanceIntakeRunners = [&](double durationSeconds) noexcept {
+        //
+        // The split is taken ONLY while a cylinder's intake valve is open. That
+        // is where it earns its cost: the valve is the stiff, fast-moving
+        // boundary term, and halving the step there is what keeps volumetric
+        // efficiency converged. With the valve shut the runner is an isolated
+        // column ringing at its own acoustic rate, well inside the mesh CFL
+        // limit, and the second half-step buys almost nothing.
+        //
+        // Measured, LS3: collapsing the split for ALL cylinders is worth 41% of
+        // the sub-step but costs 2.3% of VE and 2.6% of torque at 3,628 rpm --
+        // refused, see docs/physics-audit.md. Gating it on the valve keeps the
+        // resolution where that error lives.
+        //
+        // `openIntakeValve` reads the same `intakeValveAreaM2` array in both
+        // passes, and nothing writes that array between them, so every cylinder
+        // advances exactly `subDt` per sub-step whichever branch it takes. That
+        // is a conservation requirement, not a nicety: a cylinder that took the
+        // first pass and then failed the predicate would silently lose half a
+        // sub-step of mass and energy transfer.
+        const auto advanceIntakeRunners = [&](double halfStepSeconds,
+                                              bool firstHalf) noexcept {
             for (std::size_t index = 0; index < config_.cylinders.size(); ++index) {
+                const auto openIntakeValve = intakeValveAreaM2[index] > 0.0;
+                const auto durationSeconds = openIntakeValve
+                    ? halfStepSeconds
+                    : (firstHalf ? 0.0 : halfStepSeconds * 2.0);
+                if (!(durationSeconds > 0.0)) continue;
                 auto& network = *intakeRunnerNetworks_[index];
                 const auto intakePathIndex =
                     intakePathIndexByCylinder_[index];
@@ -1693,7 +1718,7 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 intakeValveColumnVelocityMps_[index] = -exchange.networkVelocityMps;
             }
         };
-        advanceIntakeRunners(subDt * 0.5);
+        advanceIntakeRunners(subDt * 0.5, true);
 
         auto instantaneousOutletOpeningScale = 1.0;
         if (config_.forcedInduction.enabled
@@ -1823,7 +1848,7 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
         // Symmetric intake split around the exhaust coupling. This remains at
         // mechanical cadence even on substeps where the slower network state is
         // held, so valve overlap and trapped charge are never decimated.
-        advanceIntakeRunners(subDt * 0.5);
+        advanceIntakeRunners(subDt * 0.5, false);
         for (std::size_t index = 0; index < config_.cylinders.size(); ++index) {
             if (intakeInjectionRefused[index] != 0)
                 state_.solverResolutionLimited = true;

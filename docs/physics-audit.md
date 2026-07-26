@@ -1981,3 +1981,60 @@ viennent de la littérature et ne doivent pas être élargis.
 Rappel : **ne pas** multirater l'admission comme l'échappement. Cela importerait
 le biais de moyennage documenté plus haut (23-29 % de la perte de pompage cote
 échappement) sur le côté qui fixe la VE.
+
+### Fractionner l'admission seulement soupape ouverte : le compromis retenu
+
+La section précédente refusait la fusion brutale des deux demi-avancées (-41 % de
+coût, mais -2.3 % de VE). Le raffinement proposé y a été mesuré et **retenu** :
+prendre le demi-pas symétrique uniquement pendant que la soupape d'admission du
+cylindre est ouverte, et un pas entier quand elle est fermée.
+
+Le raisonnement physique : le demi-pas est là pour la condition limite raide et
+rapide qu'est la soupape. Soupape fermée, le runner est une colonne isolée qui
+sonne à son propre rythme acoustique, largement dans la limite CFL du maillage —
+le second demi-pas n'y achète presque rien. La soupape est ouverte ~35 % du cycle,
+donc le nombre moyen d'appels tombe de 2.0 à ~1.35.
+
+**Contrainte de conservation, pas de confort** : le prédicat lit le même tableau
+`intakeValveAreaM2` dans les deux passes, et rien n'écrit ce tableau entre elles,
+donc chaque cylindre avance exactement `subDt` par sous-pas quelle que soit la
+branche prise. Un cylindre qui aurait pris la première passe puis échoué au
+prédicat perdrait silencieusement un demi-sous-pas de transfert de masse et
+d'énergie.
+
+Écart de physique, LS3, contre la référence — et contre la fusion brutale :
+
+| tr/min | grandeur | référence | soupape-conditionné | écart | fusion brutale |
+|---|---|---|---|---|---|
+| 792 | couple | 557.732 | 556.973 | -0.14 % | +0.49 % |
+| 3628 | couple | 539.704 | 539.360 | **-0.06 %** | -2.63 % |
+| 3628 | VE | 0.839 | 0.838 | **-0.12 %** | -2.26 % |
+| 5939 | couple | 423.614 | 427.009 | +0.80 % | +0.05 % |
+| 5939 | VE | 0.805 | 0.803 | -0.25 % | -0.87 % |
+| 5939 | coût du pas | 11 635 us | **7 889 us** | **-32 %** | -41 % |
+
+78 % du gain de la fusion brutale, pour 5 % de son coût en précision. L'écart
+maximal est +0.80 % sur un point de couple ; en milieu de plage, là où la fusion
+brutale dérapait de 2.6 %, on reste sous 0.1 %. Cela confirme au passage la
+localisation supposée : **l'erreur de troncature vit bien au passage de soupape**,
+pas dans le ballottement acoustique.
+
+Facteur temps réel, catalogue complet, maintien dyno 5000 tr/min, cumul des deux
+correctifs de cette session :
+
+| moteur | départ | après retrait du fork-join | après fractionnement conditionné |
+|---|---|---|---|
+| LS3 V8 | 0.266 | 0.345 | **0.484** |
+| Merlin V12 | 0.286 | 0.371 | **0.403** |
+| K20A I4 | 0.437 | 0.411 | **0.558** |
+| 2JZ I6 | 0.402 | 0.380 | **0.544** |
+| Flat-6 | 0.399 | 0.384 | **0.540** |
+| EJ25 | 0.597 | 0.553 | **0.794** |
+| TDI | 0.683 | 0.645 | **0.842** |
+| Hayabusa | 0.822 | 0.779 | **0.992** |
+
+Le V8 gagne +82 % sur la session, la Hayabusa repasse au temps réel. Les V8 et V12
+restent **sous** le temps réel : leur audio restera partiellement affamée.
+
+`EngineLab.IntakeTuning`, `EngineLab.GasExchange` et
+`EngineLab.CombustionPhasing` passent, puis la suite complète.
