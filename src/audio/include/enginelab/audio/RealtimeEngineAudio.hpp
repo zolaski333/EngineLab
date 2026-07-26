@@ -101,6 +101,17 @@ public:
     [[nodiscard]] float maxObservedIntakePressurePa() const noexcept {
         return maxObservedIntakePressurePa_.load(std::memory_order_relaxed);
     }
+    [[nodiscard]] AcousticIntakeNetwork::Diagnostics
+    intakeNetworkDiagnostics() const noexcept {
+        return {
+            maxIntakeSourcePressurePa_.load(std::memory_order_relaxed),
+            maxIntakeRunnerPressurePa_.load(std::memory_order_relaxed),
+            maxIntakePlenumPressurePa_.load(std::memory_order_relaxed),
+            maxIntakeAirboxPressurePa_.load(std::memory_order_relaxed),
+            maxIntakeMouthPressurePa_.load(std::memory_order_relaxed),
+            maxIntakeRadiatedPressurePa_.load(std::memory_order_relaxed)
+        };
+    }
     [[nodiscard]] float maxObservedStructuralPressurePa() const noexcept {
         return maxObservedStructuralPressurePa_.load(std::memory_order_relaxed);
     }
@@ -415,6 +426,12 @@ private:
     std::atomic<float> minObservedLevelGain_ { 1.0F };
     std::atomic<float> maxObservedExhaustPressurePa_ { 0.0F };
     std::atomic<float> maxObservedIntakePressurePa_ { 0.0F };
+    std::atomic<float> maxIntakeSourcePressurePa_ { 0.0F };
+    std::atomic<float> maxIntakeRunnerPressurePa_ { 0.0F };
+    std::atomic<float> maxIntakePlenumPressurePa_ { 0.0F };
+    std::atomic<float> maxIntakeAirboxPressurePa_ { 0.0F };
+    std::atomic<float> maxIntakeMouthPressurePa_ { 0.0F };
+    std::atomic<float> maxIntakeRadiatedPressurePa_ { 0.0F };
     std::atomic<float> maxObservedStructuralPressurePa_ { 0.0F };
     std::atomic<float> maxPreLimiterMagnitude_ { 0.0F };
     std::atomic<std::uint64_t> legacyPathSamples_ { 0 };

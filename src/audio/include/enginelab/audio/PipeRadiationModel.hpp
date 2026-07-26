@@ -42,6 +42,15 @@ public:
     [[nodiscard]] bool setMedium(double densityKgPerM3,
                                  double speedOfSoundMps) noexcept;
 
+    /** Add a passive amplitude-dependent series resistance at the open edge.
+     *
+     * The dimensionless resistance is coefficient * |u| / c, where u is mouth
+     * particle velocity. Zero preserves the linear model exactly. For a
+     * thin-wall unflanged edge, quasi-steady vortex shedding gives
+     * coefficient = 4/(3*pi).
+     */
+    [[nodiscard]] bool setNonlinearLossCoefficient(double coefficient) noexcept;
+
     void reset() noexcept;
 
     /** Terminate one incident pressure-wave sample, in SI units. */
@@ -76,6 +85,7 @@ private:
     double output1_ { 0.0 };
     double output2_ { 0.0 };
     double previousVolumeVelocityM3PerS_ { 0.0 };
+    double nonlinearLossCoefficient_ { 0.0 };
     bool prepared_ { false };
 };
 

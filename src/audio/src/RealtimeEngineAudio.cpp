@@ -335,6 +335,12 @@ void RealtimeEngineAudio::release() noexcept {
     minObservedLevelGain_.store(1.0F, std::memory_order_relaxed);
     maxObservedExhaustPressurePa_.store(0.0F, std::memory_order_relaxed);
     maxObservedIntakePressurePa_.store(0.0F, std::memory_order_relaxed);
+    maxIntakeSourcePressurePa_.store(0.0F, std::memory_order_relaxed);
+    maxIntakeRunnerPressurePa_.store(0.0F, std::memory_order_relaxed);
+    maxIntakePlenumPressurePa_.store(0.0F, std::memory_order_relaxed);
+    maxIntakeAirboxPressurePa_.store(0.0F, std::memory_order_relaxed);
+    maxIntakeMouthPressurePa_.store(0.0F, std::memory_order_relaxed);
+    maxIntakeRadiatedPressurePa_.store(0.0F, std::memory_order_relaxed);
     maxObservedStructuralPressurePa_.store(0.0F, std::memory_order_relaxed);
     maxPreLimiterMagnitude_.store(0.0F, std::memory_order_relaxed);
     legacyPathSamples_.store(0, std::memory_order_relaxed);
@@ -1680,6 +1686,21 @@ void RealtimeEngineAudio::render(juce::AudioBuffer<float>& output, int startSamp
             > maxObservedIntakePressurePa_.load(std::memory_order_relaxed))
         maxObservedIntakePressurePa_.store(
             blockPeakObservedIntakePressurePa, std::memory_order_relaxed);
+    if (acousticIntakeNetwork_) {
+        const auto diagnostics = acousticIntakeNetwork_->diagnostics();
+        maxIntakeSourcePressurePa_.store(
+            diagnostics.sourcePressurePa, std::memory_order_relaxed);
+        maxIntakeRunnerPressurePa_.store(
+            diagnostics.runnerPressurePa, std::memory_order_relaxed);
+        maxIntakePlenumPressurePa_.store(
+            diagnostics.plenumPressurePa, std::memory_order_relaxed);
+        maxIntakeAirboxPressurePa_.store(
+            diagnostics.airboxPressurePa, std::memory_order_relaxed);
+        maxIntakeMouthPressurePa_.store(
+            diagnostics.mouthPressurePa, std::memory_order_relaxed);
+        maxIntakeRadiatedPressurePa_.store(
+            diagnostics.radiatedPressurePa, std::memory_order_relaxed);
+    }
     if (blockPeakObservedStructuralPressurePa
             > maxObservedStructuralPressurePa_.load(std::memory_order_relaxed))
         maxObservedStructuralPressurePa_.store(

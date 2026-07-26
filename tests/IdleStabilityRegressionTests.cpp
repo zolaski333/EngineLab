@@ -40,6 +40,7 @@ struct IdleResult final {
     double minRpm { 0.0 };        // minimum over the final steady window
     double maxRpm { 0.0 };        // maximum over the final steady window
     double stdRpm { 0.0 };        // rpm std-dev over the final steady window (hunt)
+    double driftRpm { 0.0 };      // second-half mean minus first-half mean
 };
 
 IdleResult measureIdle(const enginelab::EngineConfig& config, double blipThrottle) {
@@ -69,7 +70,16 @@ IdleResult measureIdle(const enginelab::EngineConfig& config, double blipThrottl
     }
 
     // Phase 2: free idle -- starter released, throttle shut, no load.
-    constexpr double idleSeconds = 8.0;
+    //
+    // 16 s, not the 8 s this originally used. The ECU's post-start air schedule
+    // decays exponentially with a 2.5-6 s time constant and is only dropped
+    // below 1e-4, so its tail runs past 20 s; at 8 s the "steady" window was
+    // still measuring the start transient on the largest-cylinder engines, and
+    // the drift check below fails outright at 8 s (Big Twin -66.8 rpm). This is
+    // a longer settle time paired with a STRICTER settled-ness assertion, not a
+    // relaxation: at 16 s every catalogue engine converges onto its configured
+    // target to within a few rpm.
+    constexpr double idleSeconds = 16.0;
     constexpr double steadyWindowSeconds = 4.0; // measure only the settled tail
     std::vector<double> steadyRpm;
     const auto steadyStartStep =
@@ -116,6 +126,24 @@ IdleResult measureIdle(const enginelab::EngineConfig& config, double blipThrottl
             variance += d * d;
         }
         result.stdRpm = std::sqrt(variance / static_cast<double>(steadyRpm.size()));
+        // Drift across the window: the mean of its second half minus the mean of
+        // its first. A std-dev alone cannot tell a settled idle from one that is
+        // still swinging, because a slow oscillation sampled over part of a
+        // period looks quiet at some phases -- which is exactly how a real
+        // integral-windup fault survived this gate while every engine was
+        // ringing 130-180 rpm peak-to-peak. Drift is phase-sensitive where the
+        // std-dev is not, so the pair catches both.
+        const auto half = steadyRpm.size() / 2;
+        if (half > 0) {
+            double firstSum = 0.0;
+            double secondSum = 0.0;
+            for (std::size_t index = 0; index < half; ++index)
+                firstSum += steadyRpm[index];
+            for (std::size_t index = steadyRpm.size() - half;
+                 index < steadyRpm.size(); ++index)
+                secondSum += steadyRpm[index];
+            result.driftRpm = (secondSum - firstSum) / static_cast<double>(half);
+        }
     }
     return result;
 }
@@ -128,26 +156,71 @@ void traceIdle(const enginelab::EngineConfig& config) {
     auto exhaust = enginelab::ExhaustGraph::makeForEngine(config);
     enginelab::EngineSimulator simulator(config, ecu, physics, events, exhaust);
     std::printf("== TRACE %s (idle target %.0f) ==\n", config.name.c_str(), config.idleRpm);
-    std::printf("    t   thr     rpm     MAP  fuel_g/s  cycTq  fricTq  AFR\n");
+    std::printf("    t   thr     rpm     MAP  fuel_g/s  cycTq  fricTq  AFR"
+                "   iac  postSt  integ cut resume  air_mg  req_mg del_mg"
+                " fDel trim phiSp  misf combEff\n");
     double t = 0.0;
-    const auto blipStart = 8.0;
-    const auto blipEnd = 8.5;
-    for (int step = 0; step < static_cast<int>(14.0 / stepSeconds); ++step, t += stepSeconds) {
+    // Mirrors measureIdle's schedule exactly, and is DERIVED from the same
+    // constants so it cannot drift out of step with the gate again: crank
+    // `startSeconds`, free idle for `idleSeconds` (the asserted window being its
+    // last `steadyWindowSeconds`), then a 0.5 s blip and a 4 s recovery. These
+    // were hard-coded at 14.0/14.5/18.5 and stayed there when the idle phase was
+    // lengthened from 8 s to 16 s, so the trace was blipping at 14 s off an
+    // unsettled idle while the gate blipped at 22 s off a settled one -- the
+    // instrument was explaining a different experiment from the one that failed.
+    constexpr double traceStartSeconds = 6.0;
+    constexpr double traceIdleSeconds = 16.0;
+    const auto blipStart = traceStartSeconds + traceIdleSeconds;
+    const auto blipEnd = blipStart + 0.5;
+    const auto traceEnd = blipEnd + 4.0;
+    for (int step = 0; step < static_cast<int>(traceEnd / stepSeconds); ++step, t += stepSeconds) {
         enginelab::EngineControls controls;
         controls.ignitionEnabled = true;
-        controls.starterEngaged = t < 6.0 && simulator.state().rpm < config.idleRpm * 0.85;
+        controls.starterEngaged =
+            t < traceStartSeconds && simulator.state().rpm < config.idleRpm * 0.85;
         controls.throttle = (t >= blipStart && t < blipEnd) ? 0.5 : 0.0;
         controls.load = 0.0;
         const auto frame = simulator.step(stepSeconds, controls);
-        // Fine cadence through the blip recovery, coarse elsewhere.
-        const auto fine = t >= blipStart - 0.25 && t < blipStart + 3.0;
-        const auto cadence = fine ? 0.05 : 0.5;
+        // Fine cadence through the catch and the blip recovery, coarse between.
+        const auto fine = t < 8.0 || (t >= blipStart - 0.25 && t < blipStart + 3.0);
+        const auto cadence = fine ? 0.10 : 0.25;
         if (step % std::max(1, static_cast<int>(cadence / stepSeconds)) == 0) {
             const auto& s = frame.state;
-            std::printf(" %5.2f %4.2f %7.1f %6.1f %8.4f %6.1f %7.1f %5.1f\n",
+            // Combustion efficiency is per cylinder, not on EngineState; the
+            // mean is what an idle diagnosis needs (a partial misfire shows as a
+            // dip here before it shows in rpm).
+            auto combustionSum = 0.0;
+            auto requestedFuelSum = 0.0;
+            auto deliveredFuelSum = 0.0;
+            auto fuelDeliverySum = 0.0;
+            auto fuelTrimSum = 0.0;
+            auto equivalenceRatioSum = 0.0;
+            for (std::size_t c = 0; c < s.cylinderStateCount; ++c) {
+                combustionSum += s.cylinderStates[c].combustionEfficiency;
+                requestedFuelSum += s.cylinderStates[c].requestedFuelMgPerCycle;
+                deliveredFuelSum += s.cylinderStates[c].deliveredFuelMgPerCycle;
+                fuelDeliverySum += s.cylinderStates[c].fuelDeliveryRatio;
+                fuelTrimSum += s.cylinderStates[c].closedLoopFuelTrim;
+                equivalenceRatioSum += s.cylinderStates[c].equivalenceRatioAtSpark;
+            }
+            const auto cylinderCount = static_cast<double>(
+                std::max<std::size_t>(1, s.cylinderStateCount));
+            const auto meanCombustion = combustionSum / cylinderCount;
+            std::printf(" %5.2f %4.2f %7.1f %6.1f %8.4f %6.1f %7.1f %5.1f"
+                        " %5.3f %6.3f %6.3f %3d %6.3f %7.1f %7.1f %6.1f"
+                        " %4.2f %4.2f %5.2f %5.2f %7.3f\n",
                 t, controls.throttle, s.rpm, s.manifoldPressureKpa,
                 s.fuelFlowGramsPerSecond, s.cycleAveragedTorqueNm,
-                s.frictionTorqueNm, s.airFuelRatio);
+                s.frictionTorqueNm, s.airFuelRatio,
+                ecu.idleAirOpening(), ecu.postStartAirOpening(), ecu.idleIntegral(),
+                ecu.decelerationFuelCutActive() ? 1 : 0,
+                ecu.decelerationFuelResume(), s.airMassMgPerCycle,
+                requestedFuelSum / cylinderCount,
+                deliveredFuelSum / cylinderCount,
+                fuelDeliverySum / cylinderCount,
+                fuelTrimSum / cylinderCount,
+                equivalenceRatioSum / cylinderCount,
+                s.misfireRate, meanCombustion);
         }
     }
 }
@@ -162,12 +235,19 @@ int main(int argc, char** argv) {
         }
 
         if (argc > 1 && std::string(argv[1]) == "--trace") {
+            // `--trace [name-substring ...]`; with no substring, the two engines
+            // this mode was first written for.
+            std::vector<std::string> wanted;
+            for (int index = 2; index < argc; ++index) wanted.emplace_back(argv[index]);
+            if (wanted.empty()) wanted = { "Merlin", "LS3" };
             for (const auto& entry : catalog.entries) {
                 auto config = entry.config;
                 enginelab::normaliseEngineConfig(config);
-                if (config.name.find("Merlin") != std::string::npos
-                    || config.name.find("LS3") != std::string::npos)
-                    traceIdle(config);
+                const auto matches = std::any_of(wanted.begin(), wanted.end(),
+                    [&](const std::string& token) {
+                        return config.name.find(token) != std::string::npos;
+                    });
+                if (matches) traceIdle(config);
             }
             return EXIT_SUCCESS;
         }
@@ -175,7 +255,7 @@ int main(int argc, char** argv) {
         const auto blipThrottle = argc > 1 ? std::atof(argv[1]) : 0.5;
         std::printf("idle stability measurement (free idle; blip=%.2f)\n", blipThrottle);
         std::cout << "  engine                              target   mean    min    max"
-                     "   std  caught steadyStall blipStall\n";
+                     "   std  drift  caught steadyStall blipStall\n";
 
         // A known, separately-tracked deficiency: on a throttle blip the very
         // largest / highest-motoring-drag engines relight from the decel fuel cut
@@ -186,16 +266,20 @@ int main(int argc, char** argv) {
         // every engine's combustion, so it is tracked on its own. This allowlist
         // exists so that a NEW engine regressing into a blip stall still fails the
         // suite -- it is not a blanket pass.
-        const std::vector<std::string> knownBlipStallAllow { "Merlin" };
+        // Was { "Merlin" }. Emptied deliberately once the idle governor's
+        // anti-windup was corrected: the V12 now recovers from the blip without
+        // stalling (measured blipStall = 0), so the exemption was masking
+        // nothing and keeping it would only hide a future regression.
+        const std::vector<std::string> knownBlipStallAllow {};
 
         std::vector<std::string> failures;
         for (const auto& entry : catalog.entries) {
             auto config = entry.config;
             enginelab::normaliseEngineConfig(config);
             const auto r = measureIdle(config, blipThrottle);
-            std::printf("  %-34s %6.0f %6.0f %6.0f %6.0f %5.1f    %d       %d         %d\n",
+            std::printf("  %-34s %6.0f %6.0f %6.0f %6.0f %5.1f %6.1f    %d       %d         %d\n",
                 r.name.c_str(), r.idleRpm, r.settledMeanRpm, r.minRpm, r.maxRpm,
-                r.stdRpm, r.caught ? 1 : 0, r.steadyStalled ? 1 : 0,
+                r.stdRpm, r.driftRpm, r.caught ? 1 : 0, r.steadyStalled ? 1 : 0,
                 r.blipStalled ? 1 : 0);
 
             // (1) Every engine must catch during start.
@@ -215,6 +299,17 @@ int main(int argc, char** argv) {
                 failures.push_back(r.name + ": steady idle dips toward stall");
             if (r.stdRpm > 0.06 * r.idleRpm)
                 failures.push_back(r.name + ": steady idle hunts excessively");
+            // (2b) The window must be measuring a SETTLED idle. Without this the
+            //      gate cannot distinguish a stable engine from one still
+            //      swinging through the window, and its verdict depends on the
+            //      phase it happens to sample -- which is how an idle integral
+            //      pinned at its stop passed here for eleven engines at once.
+            //      The bound comes from production idle-control practice
+            //      (holding idle within about +/-50 rpm of target), not from
+            //      anything this simulator currently produces.
+            if (std::abs(r.driftRpm) > 0.05 * r.idleRpm)
+                failures.push_back(r.name + ": steady idle has not settled (drift "
+                    + std::to_string(static_cast<int>(r.driftRpm)) + " rpm)");
             // (3) Returning to idle from a throttle blip must not stall, except
             //     for the documented, separately-tracked outliers above.
             const auto allowed = std::any_of(knownBlipStallAllow.begin(),

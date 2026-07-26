@@ -132,13 +132,52 @@ int main() {
     }
     {
         enginelab::IndicatedWorkState work;
-        enginelab::IndicatedWorkModel::advance(work, 100.0, 1.0, 100.0, false);
-        enginelab::IndicatedWorkModel::advance(work, 200.0, 1.0, 100.0, false);
-        enginelab::IndicatedWorkModel::advance(work, 200.0, 2.0, 100.0, false);
-        enginelab::IndicatedWorkModel::advance(work, 100.0, 2.0, 100.0, false);
-        enginelab::IndicatedWorkModel::advance(work, 100.0, 1.0, 100.0, true);
+        enginelab::IndicatedWorkModel::advance(work, 100.0, 1.0, 100.0, false, false, false);
+        enginelab::IndicatedWorkModel::advance(work, 200.0, 1.0, 100.0, false, false, false);
+        enginelab::IndicatedWorkModel::advance(work, 200.0, 2.0, 100.0, false, false, false);
+        enginelab::IndicatedWorkModel::advance(work, 100.0, 2.0, 100.0, false, false, false);
+        enginelab::IndicatedWorkModel::advance(work, 100.0, 1.0, 100.0, true, false, false);
         require(std::abs(work.completedCycleJoules - 100.0) < 1.0e-9,
                 "P-dV integration must recover the signed area of a known pressure-volume loop");
+        require(work.completedPumpingCycleJoules == 0.0,
+                "a loop walked entirely outside the gas-exchange strokes must have no pumping share");
+
+        // The same loop again, but with the two constant-pressure legs flagged
+        // as gas exchange. Those legs are where all the volume change happens,
+        // so the split must attribute the whole +100 J: the expansion leg at
+        // 200 kPa gives +100 J and the return leg at 100 kPa gives 0 J against
+        // a 100 kPa ambient. This is the non-vacuous half -- it fails if the
+        // flag is ignored, and it fails differently if the share is integrated
+        // separately rather than taken from the same increment.
+        // The expansion leg is additionally flagged as the exhaust stroke, so the
+        // exhaust-stroke sub-share must take the whole +100 J and the intake half
+        // (pumping minus exhaust) must come out at zero.
+        enginelab::IndicatedWorkState split;
+        enginelab::IndicatedWorkModel::advance(split, 100.0, 1.0, 100.0, false, false, false);
+        enginelab::IndicatedWorkModel::advance(split, 200.0, 1.0, 100.0, false, false, false);
+        enginelab::IndicatedWorkModel::advance(split, 200.0, 2.0, 100.0, false, true, true);
+        enginelab::IndicatedWorkModel::advance(split, 100.0, 2.0, 100.0, false, false, false);
+        enginelab::IndicatedWorkModel::advance(split, 100.0, 1.0, 100.0, true, true, false);
+        require(std::abs(split.completedCycleJoules - 100.0) < 1.0e-9,
+                "flagging strokes must not change the total indicated work of the loop");
+        require(std::abs(split.completedPumpingCycleJoules - 100.0) < 1.0e-9,
+                "the pumping share must be the part of the same integral flagged as gas exchange");
+        require(std::abs(split.completedExhaustStrokeCycleJoules - 100.0) < 1.0e-9,
+                "the exhaust-stroke sub-share must be the part flagged as exhaust stroke");
+
+        // The same loop with the exhaust flag moved to the other gas-exchange
+        // leg. Without this the assertion above would also pass if the sub-share
+        // simply copied the pumping accumulator and ignored its own flag.
+        enginelab::IndicatedWorkState moved;
+        enginelab::IndicatedWorkModel::advance(moved, 100.0, 1.0, 100.0, false, false, false);
+        enginelab::IndicatedWorkModel::advance(moved, 200.0, 1.0, 100.0, false, false, false);
+        enginelab::IndicatedWorkModel::advance(moved, 200.0, 2.0, 100.0, false, true, false);
+        enginelab::IndicatedWorkModel::advance(moved, 100.0, 2.0, 100.0, false, false, false);
+        enginelab::IndicatedWorkModel::advance(moved, 100.0, 1.0, 100.0, true, true, true);
+        require(std::abs(moved.completedPumpingCycleJoules - 100.0) < 1.0e-9,
+                "moving the exhaust flag must not change the pumping share");
+        require(std::abs(moved.completedExhaustStrokeCycleJoules) < 1.0e-9,
+                "the exhaust-stroke sub-share must follow its own flag, not the pumping one");
 
         enginelab::CamshaftConfig cam;
         cam.intakeFlowCurve = { { 0.0, 0.0 }, { 5.0, 0.52 }, { 10.0, 0.68 } };
@@ -156,6 +195,36 @@ int main() {
                 "continuous VVT/VVL actuator must converge toward its calibrated operating point");
         require(std::abs(enginelab::valveFlowCoefficient(2.5, 0.6, cam.intakeFlowCurve) - 0.26) < 1.0e-9,
                 "valve discharge coefficient must interpolate the configured lift curve");
+
+        // A sparse phaser table is a schedule and must be followed as one. The
+        // shape that matters is a peak with a fall-back above it -- every real
+        // cam phaser retards again at high speed -- and it is exactly the shape
+        // an isotropic distance weighting destroys, because the peak sample
+        // keeps pulling on queries far above it. Asserted on the authored
+        // points (which must be reproduced exactly), on the midpoints (which
+        // must be the linear blend), and on the fall-back leg (which must
+        // actually descend).
+        enginelab::ValveControlConfig schedule;
+        schedule.enabled = true;
+        schedule.samples = { { 1'000.0, 0.2, 2.0, 0.0, 0.90 },
+                             { 3'000.0, 1.0, 22.0, 0.0, 1.00 },
+                             { 8'000.0, 1.0, 6.0, 0.0, 1.00 } };
+        const auto scheduleAt = [&schedule](double rpm) {
+            return enginelab::interpolateValveControl(schedule, rpm, 1.0).intakeAdvanceDegrees;
+        };
+        require(std::abs(scheduleAt(3'000.0) - 22.0) < 1.0e-9
+                    && std::abs(scheduleAt(8'000.0) - 6.0) < 1.0e-9,
+                "an authored phaser point must be reproduced exactly at its own rpm");
+        require(std::abs(scheduleAt(2'000.0) - 12.0) < 1.0e-9,
+                "between two authored points the phaser must interpolate linearly in rpm");
+        require(std::abs(scheduleAt(5'500.0) - 14.0) < 1.0e-9,
+                "the fall-back leg must descend linearly, not be dragged up by the peak sample");
+        require(scheduleAt(7'000.0) < scheduleAt(5'000.0)
+                    && scheduleAt(5'000.0) < scheduleAt(3'500.0),
+                "phaser advance must fall monotonically above the scheduled peak");
+        require(std::abs(scheduleAt(12'000.0) - 6.0) < 1.0e-9
+                    && std::abs(scheduleAt(200.0) - 2.0) < 1.0e-9,
+                "queries outside the table must clamp to its ends, never extrapolate");
 
         enginelab::RunnerAcousticsConfig acoustics;
         enginelab::IntakeConfig intake;
@@ -680,6 +749,7 @@ int main() {
             config, transientState, transientControls);
         require(!overrun.fuelEnabled && overrun.sparkEnabled,
                 "closed-throttle overrun must cut fuel without disabling ignition");
+
         transientState.simulationTimeSeconds += 0.01;
         transientState.rpm = config.idleRpm * 1.10;
         const auto fuelResume = transientEcu.evaluate(
@@ -695,6 +765,35 @@ int main() {
             config, transientState, transientControls);
         require(resumedFuel.fuelCorrection > 0.98,
                 "post-overrun fuel ramp must return to the steady-state command");
+    }
+
+    {
+        // A fuel-cut strategy is not safe merely because it eventually turns
+        // the injectors back on.  The port film must be replenished before the
+        // crank reaches idle.  Follow a representative 1,000 rpm/s coast-down
+        // instead of teleporting directly into the catch region, and require
+        // useful metering authority at the target. This is deliberately
+        // independent of any one catalogue engine and leaves the exact refill
+        // window proportional to the calibrated idle speed.
+        enginelab::SimpleEcuModel coastEcu;
+        coastEcu.initialise(config);
+        enginelab::EngineControls closedThrottle { true, false, 0.0, 0.0 };
+        enginelab::EngineState coastDown;
+        coastDown.simulationTimeSeconds = 1.0;
+        coastDown.rpm = config.idleRpm * 2.0;
+        coastDown.throttle = 0.0;
+        auto coastCommand = coastEcu.evaluate(config, coastDown, closedThrottle);
+        require(!coastCommand.fuelEnabled,
+                "coast-down fixture must enter deceleration fuel cut");
+        constexpr double coastRateRpmPerSecond = 1'000.0;
+        while (coastDown.rpm > config.idleRpm) {
+            coastDown.simulationTimeSeconds += 0.01;
+            coastDown.rpm = std::max(config.idleRpm,
+                coastDown.rpm - coastRateRpmPerSecond * 0.01);
+            coastCommand = coastEcu.evaluate(config, coastDown, closedThrottle);
+        }
+        require(coastCommand.fuelEnabled && coastCommand.fuelCorrection > 0.50,
+                "deceleration fuel must resume early enough to refill the port film before idle");
     }
 
     {
@@ -1384,22 +1483,70 @@ int main() {
 
     {
         auto zeroLiftConfig = config;
-        zeroLiftConfig.camshafts.intakeLiftMm = 0.0;
-        zeroLiftConfig.camshafts.exhaustLiftMm = 0.0;
+        // Zero the lift everywhere the valve train can resolve it. Setting only
+        // the global camshaft does not produce a zero-lift engine: activeCamshaft
+        // prefers a BANK camshaft whenever the cylinder belongs to one, so the
+        // banks kept their own lift and the engine went on breathing.
+        const auto zeroCamLift = [](enginelab::CamshaftConfig& cam) {
+            cam.intakeLiftMm = 0.0;
+            cam.exhaustLiftMm = 0.0;
+            cam.highIntakeLiftMm = 0.0;
+            cam.highExhaustLiftMm = 0.0;
+        };
+        zeroCamLift(zeroLiftConfig.camshafts);
+        for (auto& bank : zeroLiftConfig.banks) zeroCamLift(bank.camshafts);
         enginelab::SimpleEcuModel zeroLiftEcu;
         enginelab::SimplifiedGasolinePhysics zeroLiftPhysics;
         enginelab::FourStrokeEventGenerator zeroLiftEvents;
         auto zeroLiftExhaust = enginelab::ExhaustGraph::makeForEngine(zeroLiftConfig);
         enginelab::EngineSimulator zeroLiftSim(zeroLiftConfig, zeroLiftEcu, zeroLiftPhysics, zeroLiftEvents, zeroLiftExhaust);
+        auto zeroLiftManifoldMeanKpa = 0.0;
+        auto zeroLiftManifoldSamples = 0.0;
         for (int step = 0; step < 100; ++step) {
-            (void)zeroLiftSim.step(1.0 / 240.0, { true, step < 20, 0.5, 0.0 });
+            const auto frame = zeroLiftSim.step(1.0 / 240.0, { true, step < 20, 0.5, 0.0 });
+            if (step >= 76) {
+                zeroLiftManifoldMeanKpa += frame.state.manifoldPressureKpa;
+                zeroLiftManifoldSamples += 1.0;
+            }
         }
-        require(zeroLiftSim.state().volumetricEfficiency == 0.0,
-                "zero valve lift must result in zero volumetric efficiency");
+        zeroLiftManifoldMeanKpa /= std::max(1.0, zeroLiftManifoldSamples);
+        // Non-vacuity guard, and it is not hypothetical: this block used to
+        // assert `volumetricEfficiency == 0` and passed for the wrong reason
+        // entirely -- the starter was too weak to turn a zero-lift engine over
+        // at all (measured: rpm 0.00), so the assertion was satisfied by the
+        // `rpm > 20` guard rather than by anything about induction. A sealed
+        // cylinder is a gas spring that returns the work put into it, so a
+        // starter SHOULD spin it; once it did, the same assertion failed at
+        // VE = 1.031. Requiring rotation keeps the real claim below honest.
+        require(zeroLiftSim.state().rpm > 20.0,
+                "zero-lift engine must still be turned by the starter, or the "
+                "induction assertion below is vacuous");
+        // The physical claim is that a cam with no lift cannot breathe. The
+        // quantity that expresses it is what crossed the valve, not volumetric
+        // efficiency: VE is computed from the oxygen TRAPPED in the chamber,
+        // which for a sealed cylinder is the standing charge it was built with
+        // and has never renewed. That VE definition is a real defect, tracked
+        // separately -- it is deliberately not asserted here, because asserting
+        // it on this quantity is what made the test misleading.
+        require(zeroLiftSim.state().inductedChargeMassMgPerCycle == 0.0,
+                "zero valve lift must induct no charge at all");
         require(zeroLiftSim.state().rpm < 300.0,
                 "engine must not start and run with zero valve lift");
-        require(std::abs(zeroLiftSim.state().manifoldPressureKpa - config.ambientPressureKpa) < 0.01,
-                "zero valve lift must not drop manifold pressure");
+        // Guard intent: closed valves must not DRAIN (or feed) the manifold —
+        // the failure this catches is kPa-scale. It is asserted on a time
+        // average with a 0.25 kPa allowance because two centi-kPa effects are
+        // physical, not leaks, since the intake runners became resolved 1-D
+        // ducts: (1) the fuel injected during cranking equilibrates through
+        // the open runner mouth, and ~10 mg of vapour in ~3 L of intake volume
+        // is a real ~0.07 kPa partial pressure (the lumped runner cell used to
+        // trap it, which is why an instantaneous 0.01 kPa bound ever held);
+        // (2) the runner-plenum Helmholtz mode rings near-undamped at rest
+        // (~±0.14 kPa on the manifold), so an instantaneous sample reads the
+        // phase of a wave, not the inventory.
+        std::cout << "zero-lift manifold mean: " << zeroLiftManifoldMeanKpa
+                  << " kPa vs ambient " << config.ambientPressureKpa << " kPa\n";
+        require(std::abs(zeroLiftManifoldMeanKpa - config.ambientPressureKpa) < 0.25,
+                "zero valve lift must not drain or feed the manifold");
     }
 
     {

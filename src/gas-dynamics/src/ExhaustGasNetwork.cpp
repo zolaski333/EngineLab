@@ -34,6 +34,25 @@ namespace {
  * information travels upstream at all and the interior state stands unchanged.
  * Entropy and composition come from whichever side the gas actually arrives
  * from, so backflow draws air rather than re-inhaling its own exhaust.
+ *
+ * When the invariant says the end is DRAWING from the reservoir, the ghost
+ * must not be the reservoir at rest: a Riemann flux against a RESTING
+ * reservoir cell meters the inflow by the acoustic impedance rho*c, a
+ * linearised small-signal law. Measured on a 250 mm intake runner at steady
+ * draw, the duct had to sit 10.5 kPa below a 101.3 kPa reservoir to pull
+ * 26 m/s where the isentropic (Bernoulli) entry needs 0.4 kPa — a 13 % steady
+ * mass-flow deficit through the downstream valve, which is what capped every
+ * engine's high-rpm breathing once the intake runners became resolved ducts.
+ * The inflow ghost is therefore the reservoir gas isentropically accelerated
+ * from rest to the INTERIOR's static pressure (sonic-capped). Pressure is the
+ * one interior quantity that is continuous across the inflow contact, so
+ * reading it does not repeat the invariant-across-the-contact catastrophe
+ * recorded below; entropy, gamma and composition all stay the reservoir's
+ * own, and the species/entropy jump is left to the Riemann solver, which is
+ * built for exactly that. A quasi-steady full-face nozzle flux was tried here
+ * instead and rejected: its free-jet momentum stress (P_exit + rho*u_exit^2,
+ * u_exit sized by the whole pressure drop) rammed the interior 10 kPa ABOVE
+ * the reservoir because the duct entry is not a compact aperture.
  */
 [[nodiscard]] std::optional<PrimitiveState> openEndBoundaryPrimitive(
     const PrimitiveState& interior, const PrimitiveState& ambient) noexcept {
@@ -63,8 +82,35 @@ namespace {
     // holds only within one gamma and one entropy, and evaluating it on the hot
     // gas's sound speed while assigning it the atmosphere's produced a 2 km/s
     // outflow in the branch meant to model an inflow. Every catalogue engine but
-    // one stalled on that.
-    if (boundary.velocityMps < 0.0) return ambient;
+    // one stalled on that. Build the inflow ghost from RESERVOIR quantities
+    // alone, sized by the interior's static pressure (see the header comment).
+    if (boundary.velocityMps < 0.0) {
+        const auto reservoirGamma = std::clamp(ambient.heatCapacityRatio, 1.01, 2.0);
+        // Isentropic acceleration from rest cannot expand past the sonic
+        // (critical) pressure ratio; below it the entry is choked.
+        const auto criticalPressureRatio = std::pow(2.0 / (reservoirGamma + 1.0),
+            reservoirGamma / (reservoirGamma - 1.0));
+        const auto pressureRatio = std::clamp(
+            interior.pressurePa / ambient.pressurePa, criticalPressureRatio, 1.0);
+        PrimitiveState inflow = ambient;
+        inflow.pressurePa = ambient.pressurePa * pressureRatio;
+        inflow.densityKgPerM3 = ambient.densityKgPerM3
+            * std::pow(pressureRatio, 1.0 / reservoirGamma);
+        if (!(inflow.densityKgPerM3 > 0.0)) return std::nullopt;
+        inflow.temperatureK = ambient.temperatureK
+            * pressureRatio / std::pow(pressureRatio, 1.0 / reservoirGamma);
+        inflow.speedOfSoundMps = std::sqrt(reservoirGamma * inflow.pressurePa
+            / inflow.densityKgPerM3);
+        // Energy: c0^2 = c^2 + (gamma-1)/2 u^2 along the reservoir isentrope.
+        const auto acceleratedSquared = 2.0
+            * (ambient.speedOfSoundMps * ambient.speedOfSoundMps
+               - inflow.speedOfSoundMps * inflow.speedOfSoundMps)
+            / (reservoirGamma - 1.0);
+        inflow.velocityMps = -std::sqrt(std::max(0.0, acceleratedSquared));
+        if (!finite(inflow.velocityMps) || !finite(inflow.speedOfSoundMps))
+            return std::nullopt;
+        return inflow;
+    }
     if (!finite(boundary.velocityMps) || !finite(boundary.speedOfSoundMps))
         return std::nullopt;
     return boundary;
@@ -871,8 +917,10 @@ bool ExhaustGasNetwork::evaluateStage(
             // taking the raw flux there let a blowdown drain the whole cell in
             // one substep. Going back through the Riemann solver keeps its wave
             // speeds and positivity safeguards while the ghost still carries the
-            // atmosphere's pressure with the exhaust's own density, so the duct
-            // no longer has to shove a column of cold dense air aside.
+            // atmosphere's pressure with the exhaust's own density (or, on
+            // inflow, the reservoir's own gas already moving at its isentropic
+            // entry speed), so the duct neither shoves a column of cold dense
+            // air aside nor meters its intake by the acoustic impedance.
             rawFlux = boundaryState && mixtureModel_.isPhysical(*boundaryState)
                 ? mixtureModel_.riemannFluxPrepared(
                     endpointState(outlet.networkEndpoint), interiorPrimitive,
@@ -1177,6 +1225,59 @@ ExhaustNetworkAdvanceResult ExhaustGasNetwork::advance(
     if (remaining > completionTolerance) result.completed = false;
     updateOutletSamples(result.advancedTimeSeconds);
     return result;
+}
+
+bool ExhaustGasNetwork::injectSpeciesAtPort(std::size_t portIndex,
+                                            GasSpecies species,
+                                            double massKg,
+                                            double temperatureK,
+                                            double additionalHeatJ) noexcept {
+    if (!configured_ || portIndex >= layout_.cylinderPorts().size()) return false;
+    if (!finite(massKg) || massKg < 0.0 || !finite(temperatureK)
+        || temperatureK <= 0.0 || !finite(additionalHeatJ))
+        return false;
+    if (massKg == 0.0 && additionalHeatJ == 0.0) return true;
+    const auto& endpoint = layout_.cylinderPorts()[portIndex].networkEndpoint;
+    if (endpoint.type == ExhaustEndpointType::junction) return false;
+    auto& duct = ducts_[endpoint.elementIndex];
+    // The source is spread over the spray-and-film footprint next to the
+    // valve, not concentrated in the single adjacent cell. An injector cone
+    // and its wall film physically wet several centimetres of port, and with
+    // the valve shut the adjacent cell is a near-stagnant sliver of gas: on a
+    // large cylinder one cycle's evaporation cooling dumped there chills it
+    // by hundreds of kelvin (measured on the 2.25 L/cyl V12 at idle: the port
+    // reading fell 62 -> 27 degC within one valve event and kept falling,
+    // which starved vaporisation and stalled the engine).
+    const auto spreadCells = std::min<std::size_t>(3, duct.cells_.size());
+    const auto cellVolumeM3 = duct.geometry_.areaM2() * duct.geometry_.cellLengthM();
+    if (!(cellVolumeM3 > 0.0) || spreadCells == 0) return false;
+    const auto speciesIndex = static_cast<std::size_t>(species);
+    const auto specificHeatCv =
+        mixtureModel_.specificHeatCapacityCvJPerKgK_[speciesIndex];
+    const auto share = 1.0 / static_cast<double>(spreadCells);
+    const auto massDensityShare = massKg * share / cellVolumeM3;
+    const auto energyDensityShare =
+        (massKg * specificHeatCv * temperatureK + additionalHeatJ) * share
+        / cellVolumeM3;
+    // All-or-nothing: every touched cell must stay admissible before any is
+    // committed, so a pathological command cannot half-apply.
+    std::array<ConservativeState, 3> candidates {};
+    for (std::size_t offset = 0; offset < spreadCells; ++offset) {
+        const auto cellIndex = endpoint.type == ExhaustEndpointType::ductInlet
+            ? offset : duct.cells_.size() - 1 - offset;
+        auto candidate = duct.cells_[cellIndex];
+        candidate.speciesMassDensityKgPerM3[speciesIndex] += massDensityShare;
+        candidate.totalEnergyDensityJPerM3 += energyDensityShare;
+        if (!mixtureModel_.isPhysical(candidate)) return false;
+        candidates[offset] = candidate;
+    }
+    for (std::size_t offset = 0; offset < spreadCells; ++offset) {
+        const auto cellIndex = endpoint.type == ExhaustEndpointType::ductInlet
+            ? offset : duct.cells_.size() - 1 - offset;
+        duct.cells_[cellIndex] = candidates[offset];
+    }
+    duct.cellStateCacheIsValid_ = false;
+    return true;
 }
 
 void ExhaustGasNetwork::updateOutletSamples(double durationSeconds) noexcept {

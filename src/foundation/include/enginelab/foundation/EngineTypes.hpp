@@ -341,7 +341,15 @@ struct InjectionConfig final {
     double railPressureBar { 200.0 };
     // Differential pressure at which injectorFlowMgPerSecond is specified.
     double referencePressureBar { 200.0 };
-    double wallFilmFraction { 0.0 };
+    // Fraction of a port-injection pulse that wets the port wall as liquid
+    // film instead of vaporising in flight (the X of the X-tau wall-film
+    // model; Aquino). Port-injection literature puts it at 0.3-0.6 warm and
+    // higher cold; the catalogue loader applies 0.22 to port-injected
+    // engines. Note, measured: the film does NOT by itself prevent the
+    // flooded-misfire lock-in a big-cylinder engine can enter at idle catch
+    // with a resolved 1-D runner (the V12 flooded identically at 0.22), so
+    // do not reach for this knob to fix an idle. DI ignores this field.
+    double wallFilmFraction { 0.35 };
     double vaporisationTimeConstantSeconds { 0.035 };
     double latentHeatKjPerKg { 350.0 };
     double directChargeCoolingEfficiency { 0.82 };
@@ -438,6 +446,18 @@ struct CombustionCalibrationConfig final {
     double residualDilutionSensitivity { 0.78 };
 };
 
+/**
+ * Intake-runner acoustics (see HelmholtzRunnerModel).
+ *
+ * `couplingGain` scales a forcing term -- `(plenum - runner)` -- that the 0-D
+ * intake topology has already flattened to a few kPa, so it is an amplitude knob
+ * and NOT a tuning parameter: raising it lifts the whole VE curve without moving
+ * its peak, and on an engine whose low-speed torque is already at or above the
+ * real one (the LS3: 596 Nm at 2000 rpm, real peak 575 at 4600) that is a
+ * regression dressed as a calibration. Measured numbers in
+ * HelmholtzRunnerModel's header and docs/physics-audit.md. Leave it at 0.45
+ * until the runner has a real inertance to force against.
+ */
 struct RunnerAcousticsConfig final {
     bool enabled { true };
     double dampingRatio { 0.16 };
@@ -527,6 +547,26 @@ struct CylinderState final {
     double endGasKnockLevel { 0.0 };
     bool combustionActive { false };
     bool misfiring { false };
+    // NOTE: `misfiring` is the last member reached by the positional aggregate
+    // initialiser in EngineSimulator::publishCylinderStates. Add new members
+    // BELOW this line and assign them by name, or every field after the
+    // insertion point silently receives the wrong value.
+    /**
+     * Burned mole fraction in the chamber at the instant of ignition -- i.e. the
+     * residual the gas exchange failed to expel, since nothing has burned yet.
+     *
+     * The flame model has always consumed this (it sets both the ignition-delay
+     * residual penalty and the dilution factor of `combustionEfficiency`), but
+     * it was only ever passed positionally into `FlameConditions` and never
+     * published, so a residual failure could only be seen through its downstream
+     * symptom: efficiency collapsing with no visible cause.
+     *
+     * Literature (Heywood ch. 6.4): 3-7 % at wide-open throttle, rising towards
+     * 20 % at idle where the pressure ratio across the overlap is adverse. A WOT
+     * figure above ~0.15 is a gas-exchange failure, not a calibration choice.
+     *
+     * Declared further down, next to the other named-assignment members.
+     */
     double pistonTravelMm { 0.0 };
     double pistonPositionMm { 0.0 };
     double pistonVelocityMps { 0.0 };
@@ -540,7 +580,40 @@ struct CylinderState final {
     std::uint32_t crankshaftId { 1 };
     std::uint32_t crankJournalId { 0 };
     double indicatedWorkJoulesPerCycle { 0.0 };
+    /**
+     * INSTANTANEOUS burned mole fraction, despite the name. Immediately after
+     * combustion it is ~1.0, so a cycle average of it is not a residual figure
+     * and cannot show a gas-exchange failure. Kept with this meaning because the
+     * comparison harness's stall diagnostic and the perf harness CSV both read
+     * it that way. For the residual, use `residualGasFractionAtSpark` below.
+     */
     double residualGasFraction { 0.0 };
+    /**
+     * Burned mole fraction sampled at the instant of ignition -- i.e. the
+     * residual the gas exchange failed to expel, since nothing has burned yet.
+     *
+     * The flame model has always consumed this quantity: it sets the
+     * ignition-delay residual penalty and the dilution factor of
+     * `combustionEfficiency`. But it was only ever passed positionally into
+     * `FlameConditions` and never published, so a residual failure could only be
+     * seen through its downstream symptom -- efficiency collapsing with no
+     * visible cause -- while the field named `residualGasFraction` reported
+     * something else entirely.
+     *
+     * Literature (Heywood ch. 6.4): 3-7 % at wide-open throttle, rising towards
+     * 20 % at idle where the pressure ratio across the overlap is adverse. A WOT
+     * figure above ~0.15 is a gas-exchange failure, not a calibration choice.
+     */
+    double residualGasFractionAtSpark { 0.0 };
+    /**
+     * Equivalence ratio in the chamber at the instant of ignition -- the mixture
+     * the flame model actually evaluated, which is what sets the mixture factor
+     * of `combustionEfficiency`. Distinct from `airFuelRatio`, a completed-cycle
+     * figure: a fixed crank-angle injection window occupies more crank degrees
+     * as speed rises, so at high rpm the charge can still be arriving when the
+     * spark fires and the flame sees a leaner mixture than the cycle reports.
+     */
+    double equivalenceRatioAtSpark { 0.0 };
     double airFuelRatio { 14.7 };
     double requestedFuelMgPerCycle { 0.0 };
     double deliveredFuelMgPerCycle { 0.0 };
@@ -550,6 +623,23 @@ struct CylinderState final {
     double valveLiftMultiplier { 1.0 };
     double intakeResonancePressureKpa { 0.0 };
     double intakeResonanceFrequencyHz { 0.0 };
+    /** Stagnation head of the arriving intake runner column, rho*u^2/2, in kPa.
+     *
+     * The charging pressure a column moving at `intakePortColumnVelocityMps` would
+     * present at the valve, over and above the port's static pressure. DIAGNOSTIC
+     * ONLY -- nothing reads it for flow. It peaks at full lift and is ~3 % of peak
+     * by the time the valve seats, which is why biasing the fill with it loses
+     * charge instead of trapping it; see the intake-valve comment in
+     * EngineSimulator.cpp and docs/physics-audit.md. Published because it is the
+     * quantity to watch when evaluating any future ram mechanism. */
+    double intakePortRamPressureKpa { 0.0 };
+    /** Runner column velocity at the valve plane, u = mdot_valve/(rho*A_runner).
+     *
+     * Referred to the runner cross-section, so it is the speed of the gas column
+     * whose momentum `intakePortRamPressureKpa` differentiates. Distinct from
+     * `intakeVelocityMps` (the valve-throat speed) and from the runner cell's own
+     * bulk velocity, which does not collapse at IVC. */
+    double intakePortColumnVelocityMps { 0.0 };
     /** Charge state in this cylinder's own intake runner, at the valve.
      *
      * What an IAT sensor in the port would read, and the direct determinant of
@@ -620,6 +710,51 @@ struct EngineState final {
     double exhaustCouplingFrequencyHz { 0.0 };
     double volumetricEfficiency { 0.0 };
     double airMassMgPerCycle { 0.0 };
+    /**
+     * Charge mass that actually crossed the intake valves last cycle.
+     *
+     * Distinct from `airMassMgPerCycle`, which is the oxygen-equivalent air
+     * TRAPPED in the chambers -- the right quantity to meter fuel against,
+     * because it is what can burn, but not a measure of breathing: a chamber
+     * holding unburned oxygen (a misfire, a motored cylinder, or a cam with no
+     * lift at all) reports a full charge it never inducted. Measured on a
+     * zero-lift engine that the starter can now turn: `volumetricEfficiency`
+     * reads 1.031 while nothing whatsoever passes the valve. Induction is the
+     * quantity that is genuinely zero there.
+     *
+     * Note this is total charge mass, not air alone -- with port injection it
+     * carries the fuel vapour picked up in the runner -- so it is NOT a drop-in
+     * numerator for volumetric efficiency. See docs/physics-audit.md.
+     */
+    double inductedChargeMassMgPerCycle { 0.0 };
+    /**
+     * Fresh air DELIVERED past the intake valves last cycle, and the volumetric
+     * efficiency built on it.
+     *
+     * `volumetricEfficiency` above is a *trapping* figure: oxygen-equivalent air
+     * still in the chamber at IVC. Heywood's definition (ch. 2.10) is the mass
+     * of fresh air *inducted* per cycle over the ambient-density displacement --
+     * a delivery figure, and the one a dyno's air meter reads. The two differ by
+     * exactly the fresh charge that entered and was then pushed back out before
+     * the valve shut, so
+     *
+     *     trapping efficiency = volumetricEfficiency / deliveredVolumetricEfficiency
+     *
+     * and a ratio below 1 is charge the engine paid to accelerate and did not
+     * keep. That is not a bookkeeping curiosity: it is the direct per-cylinder
+     * read-out of the overlap backflow that the pumping loop
+     * (`pumpingMeanEffectivePressureBar`) shows in aggregate.
+     *
+     * Both are oxygen-derived, so both are fresh air on the same basis and their
+     * ratio is meaningful. Do NOT use `inductedChargeMassMgPerCycle` as the
+     * numerator instead -- it is total charge and carries port fuel vapour.
+     *
+     * A reverting cylinder can drive the net delivery negative over a cycle; the
+     * figure is published signed for that reason, and only the VE built on it is
+     * clamped non-negative.
+     */
+    double deliveredAirMassMgPerCycle { 0.0 };
+    double deliveredVolumetricEfficiency { 0.0 };
     double injectedFuelMgPerCycle { 0.0 };
     double deliveredFuelMgPerCycle { 0.0 };
     double fuelFlowGramsPerSecond { 0.0 };
@@ -640,6 +775,42 @@ struct EngineState final {
     double blowOffMassFlowKgPerSecond { 0.0 };
     double indicatedWorkJoulesPerCycle { 0.0 };
     double indicatedMeanEffectivePressureBar { 0.0 };
+    /**
+     * The two loops of the indicated diagram, published separately.
+     *
+     * `indicatedMeanEffectivePressureBar` above is the NET figure and already
+     * contains the gas-exchange loop; these two split it, and
+     * gross + pumping == net up to the difference between the engine-level
+     * torque accumulation and the per-cylinder p-dV integrals they come from.
+     *
+     * `pumpingMeanEffectivePressureBar` is SIGNED, not a loss magnitude:
+     * negative is the normal case (the piston spends work moving gas), and a
+     * supercharged engine whose intake stroke is pressurised can legitimately
+     * read positive. At wide-open throttle a healthy naturally aspirated engine
+     * sits around -0.2 to -0.6 bar, the loss growing with speed; a throttled
+     * one reaches -0.8 bar or worse, which is where the throttling loss lives.
+     *
+     * This is the number that exposes a gas-exchange failure. A cycle-averaged
+     * IMEP cannot: an engine that cannot evacuate its cylinder reports a
+     * perfectly healthy IMEP while paying twice, once in pumping work and once
+     * in the residual it re-inducts on the next intake stroke.
+     */
+    double pumpingMeanEffectivePressureBar { 0.0 };
+    /**
+     * The exhaust-stroke half of `pumpingMeanEffectivePressureBar`; the intake
+     * half is the remainder (`pumping - exhaustStroke`). Same sign convention.
+     *
+     * A single PMEP figure says an engine pumps too hard but not which side is
+     * at fault, and the two have unrelated causes: the exhaust half is back
+     * pressure (a duct, a collector, an exhaust-valve area, a terminal boundary
+     * condition), the intake half is depression (a plate, a runner, an
+     * intake-valve area). They are also of opposite physical sign at the pump --
+     * the exhaust stroke pushes against a positive gauge pressure while the
+     * intake stroke pulls against a negative one -- so a pair of errors on the
+     * two sides can partly cancel in the total and hide from a PMEP gate.
+     */
+    double exhaustStrokeMeanEffectivePressureBar { 0.0 };
+    double grossIndicatedMeanEffectivePressureBar { 0.0 };
     double indicatedPowerKw { 0.0 };
     double pdvTorqueNm { 0.0 };
     double powerKw { 0.0 };

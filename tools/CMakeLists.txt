@@ -10,6 +10,23 @@ target_link_libraries(EngineLabPhysicsPerfHarness PRIVATE
     EngineLab::Ecu EngineLab::Events EngineLab::Exhaust EngineLab::Catalog)
 enginelab_set_warnings(EngineLabPhysicsPerfHarness)
 
+add_executable(EngineLabDynoSweepHarness DynoSweepHarness.cpp)
+target_link_libraries(EngineLabDynoSweepHarness PRIVATE
+    EngineLab::Simulation EngineLab::Foundation EngineLab::Physics
+    EngineLab::Ecu EngineLab::Events EngineLab::Exhaust EngineLab::Catalog)
+enginelab_set_warnings(EngineLabDynoSweepHarness)
+
+add_executable(EngineLabIntakeDuctBench IntakeDuctBench.cpp)
+target_link_libraries(EngineLabIntakeDuctBench PRIVATE
+    EngineLab::GasDynamics EngineLab::Physics EngineLab::Foundation)
+enginelab_set_warnings(EngineLabIntakeDuctBench)
+
+add_executable(EngineLabExhaustFlowBench ExhaustFlowBench.cpp)
+target_link_libraries(EngineLabExhaustFlowBench PRIVATE
+    EngineLab::GasDynamics EngineLab::Exhaust EngineLab::Foundation
+    EngineLab::Physics EngineLab::Catalog)
+enginelab_set_warnings(EngineLabExhaustFlowBench)
+
 add_executable(EngineLabShiftTransientHarness ShiftTransientHarness.cpp)
 target_link_libraries(EngineLabShiftTransientHarness PRIVATE
     EngineLab::Runtime EngineLab::Simulation EngineLab::Foundation EngineLab::Physics

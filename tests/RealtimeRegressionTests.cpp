@@ -1296,6 +1296,45 @@ void pipeRadiationRegression() {
             "steady pressure must reflect at the open end without radiating DC energy");
     require(radiation.planeModeCutoffHz() > 9'000.0,
             "fixture must remain inside the plane-mode validity band over audible midrange");
+
+    // High-amplitude open-end flow separates and sheds vortices. Verify the
+    // optional quasi-steady resistance as an energy sink, not an output clamp:
+    // the same incident sine still crosses the radiation load, but less of its
+    // energy is returned to the duct. The default above remains bit-for-bit
+    // linear when the coefficient is zero.
+    enginelab::UnflangedPipeRadiation linearHighLevel;
+    enginelab::UnflangedPipeRadiation lossyHighLevel;
+    require(linearHighLevel.prepare(sampleRateHz, radiusM, 1.0)
+            && lossyHighLevel.prepare(sampleRateHz, radiusM, 1.0)
+            && linearHighLevel.setMedium(densityKgPerM3, soundSpeedMps)
+            && lossyHighLevel.setMedium(densityKgPerM3, soundSpeedMps)
+            && !lossyHighLevel.setNonlinearLossCoefficient(-1.0)
+            && lossyHighLevel.setNonlinearLossCoefficient(
+                4.0 / (3.0 * std::numbers::pi)),
+            "nonlinear mouth resistance must accept only finite passive coefficients");
+    double incidentEnergy = 0.0;
+    double linearReflectedEnergy = 0.0;
+    double lossyReflectedEnergy = 0.0;
+    for (int index = 0; index < 48'000; ++index) {
+        const auto incident = 40'000.0 * std::sin(
+            2.0 * std::numbers::pi * 500.0 * index / sampleRateHz);
+        const auto linearSample = linearHighLevel.process(incident);
+        const auto lossySample = lossyHighLevel.process(incident);
+        require(std::isfinite(lossySample.reflectedPressurePa)
+                && std::isfinite(lossySample.farFieldPressurePa),
+                "nonlinear mouth loss must remain finite at extreme acoustic level");
+        if (index >= 4'800) {
+            incidentEnergy += incident * incident;
+            linearReflectedEnergy += linearSample.reflectedPressurePa
+                * linearSample.reflectedPressurePa;
+            lossyReflectedEnergy += lossySample.reflectedPressurePa
+                * lossySample.reflectedPressurePa;
+        }
+    }
+    require(lossyReflectedEnergy < linearReflectedEnergy * 0.90,
+            "vortex shedding must dissipate returned wave energy at high level");
+    require(lossyReflectedEnergy <= incidentEnergy * (1.0 + 1.0e-9),
+            "positive nonlinear resistance must never reflect more energy than arrives");
 }
 
 void acousticMonitorCalibrationRegression() {

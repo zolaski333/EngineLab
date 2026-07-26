@@ -95,6 +95,40 @@ test onto the behaviour it is meant to catch. Keep it that way.
   fundamental, and loudness normalisation then exposed the renderer's own
   high-frequency floor, which looked exactly like the element generating hiss.
   See `docs/thermoacoustic-architecture.md` §17 and §19.
+- **A WOT "hold point" was not held, and the top of every sweep was the rev
+  limiter.** Two independent defects in the absorber that all four WOT
+  instruments copied. First, integral gain 1.20/s at 1/240 s steps cannot wind up
+  inside a settle window: a steady 7% error reaches only ~0.25 of full load, less
+  brake torque than a 2 L engine makes at 7000 rpm, so above ~5000 rpm the engine
+  drifted upward instead of being held — a 6500 rpm target was measured at 6958,
+  and the 15% tolerance passed it. Gain is now 12.0 with a 1.0 ceiling and the
+  gate asserts 2%. Second, `maxRpm = min(redline, revLimit)` put the last target
+  *on* the latched-with-hysteresis rev limiter, and `flameEvents_[i] = {}` on a
+  missing spark zeroes the published combustion efficiency: the same 7000 rpm
+  point read combEff 0.167 / IMEP 4.8 bar on the limiter and 0.911 / 13.0 bar
+  with the limiter moved to 9000. Both instruments now stop at
+  `0.95 * min(redline, revLimit)`. **Never trust a high-rpm number from a CSV
+  produced before this**, and recognise the signature: the last row of an engine
+  shows absurd torque (the 2JZ read 2.15 Nm). I reported a "combustion cliff"
+  twice from these artefacts; both are retracted in `docs/physics-audit.md`.
+- **VE here is a trapping figure; `deliveredVolumetricEfficiency` is Heywood's.**
+  `volumetricEfficiency` is oxygen-equivalent air present at IVC, which is the
+  right thing to meter fuel against but is not what a dyno's air meter reads. The
+  two agree to under 1% on a healthy engine, and their ratio going *above* 1 is a
+  reliable detector of incomplete combustion (unburned oxygen stays in the
+  chamber and inflates the trapped figure while delivery tells the truth) — that
+  is how the limiter contamination above was found. Also note
+  `CylinderState::residualGasFraction` is the *instantaneous* burned fraction
+  despite its name (≈1.0 just after combustion); the residual is
+  `residualGasFractionAtSpark`.
+- **A grep by field name proves nothing about an aggregate initialised by
+  position.** `FlameConditions::burnedGasFraction` appears nowhere outside a unit
+  test, so I concluded the flame model's residual-dilution term was dead. It is
+  not: it is filled positionally in `EngineSimulator.cpp`. The same trap bites in
+  the other direction — `state_.cylinderStates[index] = { ... }` reaches as far
+  as `misfiring`, so inserting a `CylinderState` member above that point silently
+  shifts every later field. Add members below the marker comment there and assign
+  them by name.
 - **A cycle average cannot tell a healthy engine from one filling with hot gas.**
   `EngineLabPhysicsPerfHarness --filter X --trace <rpm>` prints one cylinder's
   gas exchange every ~2 deg of crank, with the charge state on *both* sides of
@@ -128,6 +162,26 @@ test onto the behaviour it is meant to catch. Keep it that way.
   directly, and do **not** continue the invariant across the contact on
   backflow: both stalled every catalogue engine but one. See
   `docs/physics-audit.md`.
+- **A flow bias must be a state, never a derivative of the flow it drives.**
+  `ConservativeGasSystem::flow` already sets mass flow from ΔP through an orifice,
+  so a `biasKpa*` computed from that flow's own `du/dt` over-determines it, with a
+  feedback gain ~`rho*L/dt` that **grows as the substep shrinks** — refining the
+  timestep or shrinking a coefficient makes it worse, not better. The intake
+  runner's textbook inertial reaction `-rho*L*du/dt` was measured alternating
+  between the ±clamp rails on consecutive substeps and stalled eleven catalogue
+  engines outright. `rho*u^2/2` from the same velocity is stable (0% saturated) —
+  but was *still* wrong, on phase. Four ram formulations have now been measured and
+  refuted; read `docs/physics-audit.md` "L'inertance de runner" before proposing a
+  fifth. What remains is a relaxation inside the flow law, not an added pressure.
+- **`--trace <low rpm>` is WOT lugging, not idle.** The perf harness's dyno
+  controller commands whatever load holds the target rpm, the ECU answers that load
+  by reopening the plate, and the manifold lands within 1 kPa of the WOT value
+  (98.3 vs 99.1 kPa). `--throttle` does not fix it. Use `--trace 1 --idle`, which
+  mirrors `EngineLab.IdleStabilityRegression`'s phase 2 (shut throttle, no load) and
+  produces real vacuums — CP4 33 kPa, LS3 17 kPa. Any idle claim measured otherwise
+  is void; one such claim in `docs/physics-audit.md` had to be retracted. Note the
+  Radial R5 idles near ambient (95.6 kPa) and is the one engine sensitive to intake
+  terms, but its baseline is healthy, so a failure there is the change's fault.
 - **The realtime bottleneck is the physics thread, not the audio callback.**
   Measured on a recent 8-core laptop: the callback uses 15-33% of a 256-sample
   budget, while the 240 Hz `EngineRuntime` loop misses 35% of its deadlines on a
@@ -157,7 +211,24 @@ areas.
   you hide an `MSB` error; confirm the target actually relinked.
 - **Non-vacuous tests.** After adding a regression test, verify it fails without
   the fix — but rebuild the *correct* target first, or you will be testing a
-  stale binary and conclude wrongly.
+  stale binary and conclude wrongly. Existing green tests deserve the same
+  suspicion: `EngineLab.Core`'s "zero valve lift must result in zero volumetric
+  efficiency" was green for two unrelated wrong reasons at once — the config
+  zeroed only `config.camshafts` while `activeCamshaft()` prefers a **bank**
+  camshaft (so the engine still had lift), and the assertion was then satisfied
+  by the `rpm > 20` guard because the starter could not turn that engine at all
+  (measured rpm 0.00). It only surfaced when an unrelated starter change made
+  the crank rotate. **A config knob set at the top level may be shadowed
+  per-bank or per-cylinder; and an assertion on a quantity that is force-zeroed
+  below a threshold proves nothing until you assert the engine reached it.**
+- **A gate that averages a fixed window cannot see an unsettled signal.** The
+  idle gate measured t=10-14 s and eleven engines "passed" while all of them
+  were ringing 130-180 rpm peak-to-peak; the verdict depended on the phase the
+  window caught. It now also asserts drift (second-half mean minus first-half).
+  Symptom to recognise: disabling either of two unrelated changes reproduces the
+  same failure with near-identical numbers, while disabling both passes — that
+  is one fragile attractor, not two causes. The simulator is deterministic
+  (sequential runs are bit-identical), so such a pattern is never noise.
 
 ## Physics vs audio priority
 

@@ -36,6 +36,20 @@ public:
         float soundSpeedMps { 343.0F };
     };
 
+    /** Cumulative absolute pressure peaks since reset(), in pascals.
+     *
+     * These taps are measurement-only and make it possible to distinguish an
+     * over-driven valve source from gain created by a resonant network stage.
+     */
+    struct Diagnostics final {
+        float sourcePressurePa {};
+        float runnerPressurePa {};
+        float plenumPressurePa {};
+        float airboxPressurePa {};
+        float mouthPressurePa {};
+        float radiatedPressurePa {};
+    };
+
     explicit AcousticIntakeNetwork(const EngineConfig& config);
     ~AcousticIntakeNetwork();
     AcousticIntakeNetwork(const AcousticIntakeNetwork&) = delete;
@@ -55,6 +69,7 @@ public:
     [[nodiscard]] bool valid() const noexcept;
     [[nodiscard]] std::size_t runnerCount() const noexcept;
     [[nodiscard]] std::size_t pathCount() const noexcept;
+    [[nodiscard]] Diagnostics diagnostics() const noexcept;
 
 private:
     struct Impl;

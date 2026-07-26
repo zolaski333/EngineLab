@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdlib>
 namespace enginelab {
 namespace {
 constexpr std::array<double, 4> rpmAxis { 0.0, 2'000.0, 4'500.0, 8'000.0 };
@@ -140,29 +141,6 @@ EcuCommand SimpleEcuModel::evaluate(const EngineConfig& config, const EngineStat
         // keeps a live manifold charge so combustion re-establishes at idle. It
         // only ever charges from a throttle-open condition, so a pure motoring
         // overrun (throttle never opened) is unaffected.
-        if (driverOverride < 0.999) {
-            // The driver's pedal is physically closing the bypass downstream of
-            // this PI controller.  Integrating an overspeed error while the
-            // actuator is overridden used to wind the state down to -0.42; on
-            // lift-off the bypass then stayed shut until the engine had already
-            // fallen through its combustion threshold.  Track the neutral
-            // feed-forward state while overridden so returning to idle is
-            // bumpless even after a long rev.
-            idleIntegral *= std::exp(-idleDt * 3.0);
-        } else {
-            const auto proposedIntegral = std::clamp(
-                idleIntegral + normalizedError * integralGain * idleDt,
-                minimumIntegral, 0.58);
-            const auto proposedCommand = feedForward
-                + proportionalGain * normalizedError + proposedIntegral;
-            // Conditional integration prevents wind-up when the actuator is on
-            // either stop and the error would push it farther into saturation.
-            if ((proposedCommand > 0.0 && proposedCommand < 1.0)
-                || (proposedCommand <= 0.0 && normalizedError > 0.0)
-                || (proposedCommand >= 1.0 && normalizedError < 0.0))
-                idleIntegral = proposedIntegral;
-        }
-
         // Post-start air.
         //
         // Cranking air was commanded only below 350 rpm, so it vanished the
@@ -198,16 +176,77 @@ EcuCommand SimpleEcuModel::evaluate(const EngineConfig& config, const EngineStat
         }
         postStartAirOpening_.store(postStartAir, std::memory_order_relaxed);
 
-        idleAirOpening = std::max(postStartAir,
-            std::max(std::clamp(feedForward + proportionalGain * normalizedError
-                                    + idleIntegral, 0.0, 1.0),
-                     idleDashpot) * driverOverride);
+        // The governor's own command, and the position the actuator will
+        // actually take. They are NOT the same signal: the post-start floor and
+        // the deceleration dashpot each override the governor from below, so
+        // for seconds after a catch the valve is held open by the schedule
+        // while the governor's output is ignored.
+        const auto governorCommand = [&](double integral) noexcept {
+            return feedForward + proportionalGain * normalizedError + integral;
+        };
+        const auto deliveredFor = [&](double integral) noexcept {
+            return std::max(postStartAir,
+                std::max(std::clamp(governorCommand(integral), 0.0, 1.0), idleDashpot)
+                    * driverOverride);
+        };
+
+        if (driverOverride < 0.999) {
+            // The driver's pedal is physically closing the bypass downstream of
+            // this PI controller.  Integrating an overspeed error while the
+            // actuator is overridden used to wind the state down to -0.42; on
+            // lift-off the bypass then stayed shut until the engine had already
+            // fallen through its combustion threshold.  Track the neutral
+            // feed-forward state while overridden so returning to idle is
+            // bumpless even after a long rev.
+            idleIntegral *= std::exp(-idleDt * 3.0);
+        } else {
+            const auto proposedIntegral = std::clamp(
+                idleIntegral + normalizedError * integralGain * idleDt,
+                minimumIntegral, 0.58);
+            const auto proposedCommand = governorCommand(proposedIntegral);
+            // Anti-windup has to test the DELIVERED actuator position, not the
+            // governor's own command, and this is the difference between an
+            // idle that settles and one that hunts.
+            //
+            // While the post-start floor holds the valve open, the engine sits
+            // ABOVE its idle target (that is what a post-start flare is), so
+            // the error is negative and the integral winds down -- even though
+            // the governor is not moving the actuator at all. The old guard
+            // could not see this, because it compared the governor's own
+            // command against 0 and 1 and that command sits mid-range.
+            // Measured on the 2JZ: from t=5.0 s to t=9.25 s the delivered
+            // opening equalled the floor to three decimals while the integral
+            // was driven to its -0.20 stop and pinned there for two seconds.
+            // The floor then bled below the governor and handed over to a
+            // controller with no authority left; the engine sagged from 847 to
+            // 571 rpm while the integral climbed back at 0.11/s, overshot, and
+            // rang at ~0.2 Hz for the rest of the run. That ringing is what the
+            // idle gate was sampling -- whether a run "passed" depended on
+            // which phase of it the 4 s measurement window happened to catch.
+            //
+            // So: when something other than the governor owns the actuator,
+            // the governor is saturated LOW and may only integrate in the
+            // direction that takes it back into control (error > 0, engine
+            // below target). Otherwise it holds its authority.
+            const auto governorOwnsActuator =
+                std::clamp(proposedCommand, 0.0, 1.0) * driverOverride
+                    >= deliveredFor(proposedIntegral) - 1.0e-9;
+            const auto admissible = governorOwnsActuator
+                ? ((proposedCommand > 0.0 && proposedCommand < 1.0)
+                    || (proposedCommand <= 0.0 && normalizedError > 0.0)
+                    || (proposedCommand >= 1.0 && normalizedError < 0.0))
+                : normalizedError > 0.0;
+            if (admissible) idleIntegral = proposedIntegral;
+        }
+
+        idleAirOpening = deliveredFor(idleIntegral);
     } else {
         idleIntegral *= std::exp(-idleDt * 5.0);
         idleDashpot *= std::exp(-idleDt * 5.0);
     }
     idleIntegral_.store(idleIntegral, std::memory_order_relaxed);
     idleDashpot_.store(idleDashpot, std::memory_order_relaxed);
+    idleAirOpening_.store(idleAirOpening, std::memory_order_relaxed);
     const auto warmupCorrection = std::clamp(1.0 + (70.0 - state.coolantTemperatureC) * 0.0025, 1.0, 1.12);
     const auto crankingCorrection = controls.starterEngaged
         ? 1.0 + std::clamp((700.0 - state.rpm) / 700.0, 0.0, 1.0) * 0.38 : 1.0;
@@ -266,14 +305,30 @@ EcuCommand SimpleEcuModel::evaluate(const EngineConfig& config, const EngineStat
         - std::max(0.0, state.coolantTemperatureC - 108.0) * 0.20,
         calibration::ecuLimits::minimumIgnitionAdvanceDegrees,
         calibration::ecuLimits::maximumIgnitionAdvanceDegrees);
+    // A cranking-retard clamp (`rpm < 500 -> advance <= 4 deg`) was tried here
+    // to cure the radial R5's start kickback and is deliberately NOT kept: the
+    // real cause was starter sizing (see EngineSimulator), and measured with
+    // that fixed the clamp is unnecessary -- the R5 starts and idles without
+    // it. It is not free either. A bare rpm threshold is inside the normal
+    // operating envelope of a low-idling engine, so it fires on an ordinary
+    // idle dip and yanks the advance exactly when the engine needs torque to
+    // recover: it alone took the 2JZ idle from 728/709 rpm (sigma 12.1) to
+    // 682/559 (sigma 52.8) and the Audi I5 from 760/737 to 718/594. A real
+    // start-mode retard is gated on the ECU's run/start state, not on speed.
     const auto softLimit = state.rpm > revLimit - 220.0;
     const auto alternatingCut = softLimit && (static_cast<std::uint64_t>(state.simulationTimeSeconds * 120.0) & 1U) != 0U;
     const auto enabled = controls.ignitionEnabled && !limiterActive;
     auto decelerationFuelCut = decelerationFuelCutLatched_.load(
         std::memory_order_relaxed);
     const auto idleTargetRpm = std::max(300.0, config.idleRpm);
+    // The ratio scales the refill window with each engine's idle speed while
+    // retaining real hysteresis against the 1.65-times-idle entry threshold.
+    // An additive margin was tested here, but it changed the start-up DFCO
+    // sequence of low-idle, uneven-firing engines and could destabilise their
+    // learned idle mixture long after the initial coast event.
+    const auto decelerationFuelResumeRpm = idleTargetRpm * 1.25;
     if (controls.starterEngaged || effectiveThrottle > 0.02
-            || state.rpm < idleTargetRpm * 1.25) {
+            || state.rpm < decelerationFuelResumeRpm) {
         decelerationFuelCut = false;
     } else if (state.throttle < 0.02 && state.rpm > idleTargetRpm * 1.65) {
         // Stop metering fuel on closed-throttle overrun so port film and

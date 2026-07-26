@@ -472,6 +472,7 @@ void testStrongExpansionRemainsPositive() {
 
 void runExhaustNetworkLayoutTests();
 void runExhaustGasNetworkTests();
+void runIntakeNetworkTests();
 
 int main() {
     testEquationOfStateRoundTrip();
@@ -487,6 +488,7 @@ int main() {
     testStrongExpansionRemainsPositive();
     runExhaustNetworkLayoutTests();
     runExhaustGasNetworkTests();
+    runIntakeNetworkTests();
     std::cout << "EngineLab gas-dynamics tests passed\n";
     return EXIT_SUCCESS;
 }

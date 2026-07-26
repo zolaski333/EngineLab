@@ -105,6 +105,7 @@ struct AcousticIntakeNetwork::Impl final {
     double observerDistanceM { 1.0 };
     AcousticObserverConfig observerConfig;
     float meanFlowCoefficient { 0.0F };
+    Diagnostics diagnostics;
     bool configured { false };
     bool prepared { false };
 
@@ -212,6 +213,16 @@ bool AcousticIntakeNetwork::prepare(double sampleRateHz,
                 { 0.0, 1.0, 0.0 }, AcousticTerminationType::unflanged,
                 impl_->observerConfig))
             return false;
+        // A sharp unflanged mouth sheds vortices once acoustic particle
+        // velocity is no longer infinitesimal. The quasi-steady termination
+        // resistance is Znl/Zc = 2*Cd/(3*pi) * |u|/c with Cd=2 for a
+        // thin-wall edge (Peters et al.; Atig et al.). Without this passive
+        // loss, a linear Helmholtz mode can grow beyond its own validity range.
+        constexpr double unflangedVortexLoss = 4.0
+            / (3.0 * std::numbers::pi);
+        if (!path.radiation.setNonlinearLossCoefficient(
+                unflangedVortexLoss))
+            return false;
     }
     impl_->prepared = true;
     reset();
@@ -223,6 +234,7 @@ bool AcousticIntakeNetwork::prepare(double sampleRateHz,
 
 void AcousticIntakeNetwork::reset() noexcept {
     if (!impl_) return;
+    impl_->diagnostics = {};
     const auto resetDuct = [](Impl::Duct& duct) {
         std::fill(duct.forward.begin(), duct.forward.end(), 0.0F);
         std::fill(duct.reverse.begin(), duct.reverse.end(), 0.0F);
@@ -315,6 +327,10 @@ AcousticIntakeNetwork::process(
             duct.wallLoss, duct.reverseLoss, impl_->readDelayed(duct, duct.reverse));
         runner.incidentAtPlenum = DuctWallLoss::process(
             duct.wallLoss, duct.forwardLoss, impl_->readDelayed(duct, duct.forward));
+        impl_->diagnostics.runnerPressurePa = std::max(
+            impl_->diagnostics.runnerPressurePa,
+            std::max(std::abs(runner.incidentAtValve),
+                std::abs(runner.incidentAtPlenum)));
     }
     for (auto& path : impl_->paths) {
         if (!path.hasInletDuct) continue;
@@ -345,6 +361,8 @@ AcousticIntakeNetwork::process(
         }
         const auto plenumPressure = admittance > 1.0e-15
             ? static_cast<float>(2.0 * weighted / admittance) : 0.0F;
+        impl_->diagnostics.plenumPressurePa = std::max(
+            impl_->diagnostics.plenumPressurePa, std::abs(plenumPressure));
         for (const auto runnerIndex : path.runners) {
             auto& runner = impl_->runners[runnerIndex];
             runner.outgoingAtPlenum = plenumPressure - runner.incidentAtPlenum;
@@ -370,6 +388,8 @@ AcousticIntakeNetwork::process(
             + path.airbox.admittanceM3PerPaSecond;
         const auto airboxPressure = admittance > 1.0e-15
             ? static_cast<float>(2.0 * weighted / admittance) : 0.0F;
+        impl_->diagnostics.airboxPressurePa = std::max(
+            impl_->diagnostics.airboxPressurePa, std::abs(airboxPressure));
         const auto throttleOutgoingFromAirbox = airboxPressure
             - path.throttleIncidentAtAirbox;
         if (path.hasInletDuct)
@@ -377,6 +397,11 @@ AcousticIntakeNetwork::process(
         else {
             const auto towardMouth = airboxPressure - path.radiationIncidentAtAirbox;
             const auto radiation = path.radiation.process(towardMouth);
+            impl_->diagnostics.mouthPressurePa = std::max(
+                impl_->diagnostics.mouthPressurePa, std::abs(towardMouth));
+            impl_->diagnostics.radiatedPressurePa = std::max(
+                impl_->diagnostics.radiatedPressurePa,
+                static_cast<float>(std::abs(radiation.farFieldPressurePa)));
             path.radiationIncidentAtAirbox = static_cast<float>(
                 radiation.reflectedPressurePa);
             const auto observed = path.observer.process(
@@ -427,6 +452,8 @@ AcousticIntakeNetwork::process(
             // by ValveFlowAcousticSource on the exhaust boundary.
             sourcePressurePa = 0.5F * impedance * perturbationKgPerSecond
                 / boundary.densityKgPerM3;
+            impl_->diagnostics.sourcePressurePa = std::max(
+                impl_->diagnostics.sourcePressurePa, std::abs(sourcePressurePa));
             const auto acousticVolumeVelocity = impedance > 0.0F
                 ? (runner.incidentAtValve - runner.reflectionState.previousOutput)
                     / impedance : 0.0F;
@@ -446,6 +473,12 @@ AcousticIntakeNetwork::process(
         auto& path = impl_->paths[pathIndex];
         if (path.hasInletDuct) {
             const auto radiation = path.radiation.process(path.inletIncidentAtMouth);
+            impl_->diagnostics.mouthPressurePa = std::max(
+                impl_->diagnostics.mouthPressurePa,
+                std::abs(path.inletIncidentAtMouth));
+            impl_->diagnostics.radiatedPressurePa = std::max(
+                impl_->diagnostics.radiatedPressurePa,
+                static_cast<float>(std::abs(radiation.farFieldPressurePa)));
             path.inletOutgoingAtMouth = static_cast<float>(
                 radiation.reflectedPressurePa);
             const auto observed = path.observer.process(
@@ -481,6 +514,11 @@ std::size_t AcousticIntakeNetwork::runnerCount() const noexcept {
 
 std::size_t AcousticIntakeNetwork::pathCount() const noexcept {
     return impl_ ? impl_->paths.size() : 0U;
+}
+
+AcousticIntakeNetwork::Diagnostics
+AcousticIntakeNetwork::diagnostics() const noexcept {
+    return impl_ ? impl_->diagnostics : Diagnostics {};
 }
 
 } // namespace enginelab

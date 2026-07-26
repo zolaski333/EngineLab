@@ -27,9 +27,34 @@ public:
         previousThrottle_.store(0.0, std::memory_order_relaxed);
         accelerationFuelEnrichment_.store(0.0, std::memory_order_relaxed);
         idleIntegral_.store(0.0, std::memory_order_relaxed);
+        idleAirOpening_.store(0.0, std::memory_order_relaxed);
         idleDashpot_.store(0.0, std::memory_order_relaxed);
         previousIdleEvaluationTime_.store(0.0, std::memory_order_relaxed);
         postStartAirOpening_.store(0.0, std::memory_order_relaxed);
+    }
+    /**
+     * Read-only view of the idle governor's internal state, for diagnostics.
+     *
+     * The idle actuator is the sum of a PI governor and a decaying post-start
+     * floor, and an idle fault is usually a handoff between the two rather than
+     * either one alone. That is invisible from rpm/MAP telemetry, so these
+     * expose the three states an idle trace needs. They are observations only;
+     * nothing in the control path reads them back.
+     */
+    [[nodiscard]] double idleIntegral() const noexcept {
+        return idleIntegral_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] double postStartAirOpening() const noexcept {
+        return postStartAirOpening_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] double idleAirOpening() const noexcept {
+        return idleAirOpening_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] bool decelerationFuelCutActive() const noexcept {
+        return decelerationFuelCutLatched_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] double decelerationFuelResume() const noexcept {
+        return decelerationFuelResume_.load(std::memory_order_relaxed);
     }
     void setAirFuelRatioTrim(double value) noexcept {
         afrTrim_.store(std::isfinite(value) ? std::clamp(value, -3.0, 3.0) : 0.0);
@@ -53,6 +78,7 @@ private:
     mutable std::atomic<double> previousThrottle_ { 0.0 };
     mutable std::atomic<double> accelerationFuelEnrichment_ { 0.0 };
     mutable std::atomic<double> idleIntegral_ { 0.0 };
+    mutable std::atomic<double> idleAirOpening_ { 0.0 };
     mutable std::atomic<double> idleDashpot_ { 0.0 };
     mutable std::atomic<double> previousIdleEvaluationTime_ { 0.0 };
     /** Decaying post-start idle air opening. See evaluate(). */

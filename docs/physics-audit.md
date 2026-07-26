@@ -373,6 +373,18 @@ comportement courant : ça re-calibrerait le test sur ce qu'il est censé attrap
 - **Noms trompeurs.** `bearingFriction` = FMEP non-piston agrégé (pas seulement
   les paliers). Le modèle « moyen » n'est pas le modèle principal. Lis les
   commentaires ajoutés en Phase 4 avant de conclure.
+- **`CylinderState::runnerPressureKpa` est le runner d'ÉCHAPPEMENT.** Le nom ne
+  le dit pas, et un `grep "runnerPressureKpa ="` ne trouve **aucune** écriture :
+  le champ est rempli **positionnellement** par l'initialiseur agrégé de
+  `EngineSimulator.cpp` (~l. 1740, `exhaustRunnerPressureKpa_[index]`). Le côté
+  admission est `intakeRunnerChargePressureKpa` (colonne `irp_kpa` de la trace).
+  Coût vécu : la colonne s'appelait `runner_kpa` dans `--trace` ; lue comme le
+  port d'admission elle donne 112-176 kPa et on conclut que le runner
+  d'admission est 30 kPa au-dessus de l'ambiante, alors qu'il est à ±5 kPa
+  d'elle — diagnostic inversé. La colonne s'appelle maintenant
+  `exh_runner_kpa`. Corollaire général : dans ce dépôt, un champ sans écriture
+  visible au grep est probablement rempli par un initialiseur positionnel —
+  compte les champs, ne fais pas confiance au nom.
 
 ## 6. Zones à NE PAS toucher sans mesure ni raison produit
 
@@ -646,3 +658,991 @@ physique.
   monte à 405 °C au lieu de 333. Le recouvrement n'était pas la source de
   chaleur. (Un premier essai qui ne bougeait que la centrale était confondu :
   il déplaçait l'IVC en même temps.)
+
+## Le plafond haut-régime : pas de suralimentation par inertie/résonance (mesuré)
+
+Le « verrou aval » que les deux sections précédentes signalent sans le résoudre
+(« la VE tombe encore à 0.59-0.67 en zone rouge au lieu de rester plate ») a été
+localisé et quantifié en portant au catalogue trois moteurs moto à haut régime
+— Yamaha CP2/CP3/CP4 (`engines/11-13`, calage crossplane authentique via
+`crank_offset_deg`) — et en les passant au banc plein-gaz
+(`EngineLabDynoSweepHarness`, balayage régime→couple, réutilise le contrôleur
+d'absorbeur de `measurePoint`).
+
+### Symptôme livré (banc vs données constructeur)
+
+| moteur | puissance pic sim / réel | couple pic sim / réel | régime couple pic sim / réel |
+|---|---|---|---|
+| CP2 (MT-07) | 36 / 55 kW (**66 %**) | 66 / 67 Nm (99 %) | **3500** / 6500 |
+| CP3 (MT-09) | 51 / 87 kW (**58 %**) | 81 / 93 Nm (87 %) | **3500** / 7000 |
+| CP4 (MT-10) | 56 / 118 kW (**48 %**) | 82 / 111 Nm (74 %) | **5000** / 9000 |
+
+Le couple de pointe est presque juste quand il tombe bas dans les tours (CP2,
+99 %) mais **le pic est systématiquement 1500-4000 tr/min trop tôt**, et la
+puissance plafonne à 48-66 % parce que le couple s'est effondré avant d'atteindre
+le régime de puissance. La VE décroît de façon **monotone dès le plus bas régime**
+(CP4 : 0.82 à 2000 → 0.69 à 11500) au lieu de culminer haut. Plus un moteur
+dépend de sa respiration à haut régime, plus le simulateur le sous-évalue.
+
+### Localisation (méthode « relâcher chaque étage », CP4 à 10800 tr/min)
+
+| variante | VE | Δ |
+|---|---|---|
+| référence | 0.722 | — |
+| soupape adm. Ø ×1.6 | 0.744 | +0.022 |
+| runner Ø ×1.6 | 0.749 | +0.027 |
+| **longueur runner ÷2** | **0.719** | **~0** |
+| runner + soupape ×1.6 | 0.789 | +0.067 |
+
+Contrairement à l'audit LS3 d'**avant** le correctif de quantité de mouvement (où
+le runner seul donnait +87 %), **la géométrie n'est plus le levier dominant** :
+×2.5 de section (runner+soupape) ne rend que +0.067 de VE, et le plafond persiste.
+Surtout, **la longueur de runner est inerte** (0.719 vs 0.722) — or c'est LE
+levier d'accord d'admission d'un vrai moteur (il déplace le pic de VE de
+±2000 tr/min). Un accord d'admission sans effet sur le remplissage est la
+signature du défaut.
+
+### Deux fausses pistes écartées par la mesure
+
+- **Résolution du solveur.** Hypothèse : la cadence livrée sous-résout l'échange
+  gazeux à haut régime (la trace `--trace` à sous-pas ×48 remplit mieux). Testé
+  proprement : `gas_substeps` 1→8 et `maximum_crank_deg_per_step` 2.0→0.8
+  (144 → 361 sous-pas à 10800). La VE **ne bouge pas** (0.722 → 0.722 puis 0.716,
+  soit très légèrement pire). Le rolloff est un comportement du **modèle**, pas
+  un artefact numérique ; le meilleur remplissage de la trace était une différence
+  de définition de VE, pas de physique. À noter au passage : la validation
+  plafonne `maximum_mechanical_frequency_hz` à 100 kHz, ce qui à 12500 tr/min de
+  rupteur borne déjà la résolution à ~0.8°/pas.
+- **Surchauffe de charge à bas régime.** À 3000 tr/min la charge runner est à
+  25 °C, résiduels 1.5 %, le cylindre atteint la pression collecteur : le bas
+  régime respire correctement (couple ≈ réel). La surchauffe n'apparaît qu'en
+  montant (runner 40-100 °C à 9000) et reste secondaire.
+
+### Mécanisme (code + trace)
+
+Le cylindre se remplit jusqu'à la densité **statique** du collecteur, pas au-delà.
+Aucune suralimentation par inertie ni par résonance n'atteint le remplissage :
+
+1. La seule résonance d'admission (`HelmholtzRunnerModel`) ne module que le Cd du
+   flux **plénum→runner** (`EngineSimulator.cpp`, `0.78 * flowAdmittance`). Elle
+   n'atteint jamais le flux **runner→cylindre** (la soupape). D'où l'inertie
+   mesurée de la longueur de runner : la fréquence de résonance en dépend, mais
+   son seul effet est en amont du remplissage.
+2. Le terme de pression dynamique (ram) existe mais est borné par le solveur
+   d'équilibre par sous-pas (`ConservativeGasSystem::pressureEquilibriumMoles`),
+   qui interdit au cylindre de dépasser la pression **effective** du runner dans
+   un pas — donc pas de remplissage au-dessus du statique collecteur.
+
+Conséquence à l'IVC (trace CP4 3000 tr/min) : la masse piégée culmine à 304 mg
+puis **retombe à 289** avant fermeture — la charge est refoulée faute de colonne
+d'admission en mouvement pour la retenir. La VE ne peut donc ni dépasser le
+plafond densité-collecteur (~0.80-0.85) ni **culminer** à haut régime.
+
+### Portée et plan (mesure-gaté, non implémenté)
+
+C'est une limite **générale**, pas propre aux motos : tout moteur dont la courbe
+réelle de VE repose sur l'accord admission/échappement pour respirer haut
+(sportives, moteurs de course, motos) sera sous-évalué de ~50 % en puissance de
+pointe avec un pic de couple trop bas. Séquence de correction proposée, chaque
+étage gaté (littérature, jamais la sortie du simulateur) :
+
+0. **Gate d'abord.** Promouvoir `EngineLabDynoSweepHarness` en régression VE(rpm)
+   / BMEP(rpm) : pour un moteur haut-régime de référence, la VE doit rester
+   ≥ 0.90 jusqu'à ~85 % du rupteur, et le **pic de VE doit se déplacer ≥ 1000
+   tr/min quand la longueur de runner double** (cibles Heywood, accord
+   inertiel/acoustique).
+1. **Router la pression de résonance vers le remplissage.** Ajouter l'amplitude
+   `HelmholtzRunnerModel` à la pression effective du runner **vue par la soupape**
+   (flux runner→cylindre), phasée au cycle — rend la longueur de runner active et
+   laisse la VE culminer au régime accordé.
+2. **Autoriser le sur-remplissage inertiel après le PMB.** Assouplir le plafond
+   `pressureEquilibriumMoles` sur la soupape d'admission pour que la quantité de
+   mouvement de la colonne (pression dynamique) pousse la charge au-dessus du
+   statique collecteur jusqu'à l'IVC. À faire sous garde de conservation/positivité
+   (ce plafond a été ajouté pour la stabilité).
+3. **Inertance de runner physique.** Modéliser la colonne de gaz du runner comme
+   une vraie inertance 1D (`L·dṁ/dt = ΔP·A`, ou un runner à deux mailles), version
+   robuste du point 2 et voie standard pour obtenir VE > 1.
+4. **Secondaire.** Une fois le ram en place, revoir la prise de chaleur runner et
+   la FMEP au-delà de 8000 tr/min contre la littérature (FMEP CP4 ≈ 2.2 bar à
+   9000) pour que la VE corrigée ne soit pas re-mangée.
+
+Risque : ces points touchent le solveur gaz cœur ; l'historique de ce document
+montre qu'un changement isolé y régresse la calibration (voicing audio, fenêtre
+MBT). D'où gate-d'abord et étage-par-étage, exactement comme les correctifs de
+remplissage précédents.
+
+### Localisation fine : le résonateur est bien accordé, il est mal forcé (mesuré)
+
+La section ci-dessus dit « la résonance ne module que le Cd amont ». C'est vrai
+mais incomplet, et la partie manquante change le correctif. Avec la trace
+instrumentée (`res_kpa` = amplitude `HelmholtzRunnerModel`, `res_hz` = sa
+fréquence propre), CP4 à 9013 tr/min :
+
+| grandeur | mesure | attendu (littérature) |
+|---|---|---|
+| `res_hz` fréquence propre | **138.8 Hz** | — |
+| fréquence d'événement soupape (rpm/120) | 75.1 Hz | — |
+| **nombre de Helmholtz** (res/événement) | **1.85** | ~2 (optimum Engelman) |
+| `res_kpa` amplitude ram délivrée | **−2.4 … +4.8 kPa** | ±25-40 kPa |
+| `irp_kpa` pression au port d'admission | **95.4 … 105.8** | ±25-40 kPa d'excursion |
+| `irp_kpa` à l'IVC | **101.3 kPa (= ambiante exactement)** | 110-135 kPa au régime accordé |
+| forçage `(plénum − runner)` | **−4.0 … +6.4 kPa** | — |
+
+**L'accord est bon** (nombre de Helmholtz 1.85, en plein dans l'optimum) : ce
+n'est donc pas le modèle de fréquence qui est en cause. Ce qui manque, c'est
+l'amplitude, et elle est bornée par le **signal de forçage** : le modèle était
+forcé par `(plénum − runner)`, qui ne vaut lui-même que ±5 kPa. Raison
+topologique et non paramétrique : un runner 0-D est relié au plénum par un
+orifice de **pleine section** (`0.78 * runnerAreaM2`), donc il s'égalise avec lui
+presque instantanément — d'où un port à exactement l'ambiante à l'IVC, c'est-à-dire
+zéro ram, quelle que soit la valeur de `coupling_gain`.
+
+**Piège majeur, et c'est celui qui coûte le plus de temps ici :** monter
+`coupling_gain` *a l'air* de calibrer quelque chose. Sur CP4 le pic de VE passe
+bien de 0.843 (gain 0.45) à 0.887 (gain 1.2), et à gain 2.0 / amortissement 0.10
+on obtient même une VE de 1.04 avec un pic qui se déplace correctement avec la
+longueur de runner. **Ce n'est pas une calibration, c'est l'amplification d'un
+signal que la topologie a déjà aplati** : la grandeur amplifiée n'a pas la
+dépendance physique en régime (le ram croît en rpm², pas linéairement), et le
+même gain appliqué au LS3 gonfle son couple à 2000 tr/min (596 → 618 Nm) là où il
+est **déjà au-dessus** du réel, en laissant son pic de couple à 2000 tr/min au
+lieu de 4600. On déplace le niveau, jamais la forme de la courbe.
+
+### Le forçage inertiel via le résonateur : implémenté, mesuré PIRE, annulé
+
+Le forçage qui *paraît* correct se dérive de l'équation de quantité de mouvement
+1-D de la colonne, sans gain libre :
+
+    rho * l_eff * du/dt = P_plénum − P_port    =>    dP_port = − rho * l_eff * du/dt
+
+Sur le papier tout est bon : bon zéro (débit permanent → `du/dt = 0` → pas de
+ram), bon signe (décélération à l'IVC → ram positif), bon ordre de grandeur
+(`rho*c*u = 1.2*343*65 = 27 kPa`, ~6× l'ancien forçage, magnitude des relevés de
+port réels), bonne dépendance en régime (`u ∝ rpm`, temps ∝ `1/rpm`, donc
+`du/dt ∝ rpm²`), et la longueur de runner devient un levier deux fois (dans
+`l_eff` du forçage *et* dans la fréquence propre). Implémenté avec `u` =
+`intakeRunnerGas_.bulkVelocityMps()`, `coupling_gain` 1.0, admittance retirée.
+
+**Mesuré : c'est pire.** CP4, échelle de longueur de runner, balayage complet :
+
+| variante | VE @2000 | pic VE | VE @9000 | VE @11000 | ch pic |
+|---|---|---|---|---|---|
+| **référence (forçage `plénum−runner`, gain 0.45)** | 0.819 | 0.843 @5000-6000 | **0.790** | **0.725** | **80.7** |
+| forçage inertiel, runner 95 mm | 0.821 | 0.846 @4000-5000 | 0.754 | 0.697 | 75.4 |
+| forçage inertiel, runner 190 mm | 0.825 | 0.852 @4000 | 0.759 | 0.694 | 75.3 |
+| forçage inertiel, runner 48 mm | 0.816 | 0.836 @5000 | 0.767 | 0.697 | 77.1 |
+| `runner_acoustics.enabled: false` | 0.821 | 0.839 @4000 | 0.767 | 0.704 | 76.5 |
+
+Trois enseignements, tous contre l'hypothèse :
+
+1. **Le pic de VE ne se déplace pas** avec la longueur (95 → 190 mm : pic
+   4000-5000 → 4000). Test de non-vacuité échoué, le levier d'accord reste inerte.
+2. **Le forçage inertiel est net négatif** : 0.754 (ram actif) contre 0.767 (ram
+   coupé) à 9000 tr/min.
+3. **L'admittance n'était pas un double comptage.** La retirer coûte 0.790 → 0.767
+   de VE à 9000 (les deux avec l'amplitude routée à la soupape). Elle *ressemble*
+   à un substitut redondant du ram et n'en est pas un — cas d'école de la règle
+   « demande ce qui compense déjà en aval » de `CLAUDE.md`.
+
+**Pourquoi ça échoue**, lu dans la trace (`res_kpa` contre `lift_mm`) — le signal
+est cohérent, pas bruité (4 changements de signe sur le cycle, sinusoïde propre),
+donc l'échec n'est pas numérique. Deux causes de fond :
+
+- **Phase.** Le résonateur a une période de 7.2 ms (138.8 Hz) alors que
+  l'événement d'admission dure 3.3 ms à 9000 tr/min. Un terme **instantané** passé
+  dans un passe-bas d'ordre 2 en ressort retardé d'un angle énorme, et ici
+  carrément inversé : `res_kpa` vaut **−3.40 kPa à pleine levée**, où il s'oppose
+  au remplissage, et **+0.02 kPa à l'IVC**, où le ram devrait culminer.
+- **Signal.** `intakeRunnerGas_.bulkVelocityMps()` est une **moyenne de maille**
+  qui ne s'effondre pas quand la soupape se ferme (40.9 → 40.3 m/s à l'IVC). Or
+  c'est précisément cet arrêt de la colonne qui *crée* le ram inertiel. L'événement
+  physique est absent de `du/dt`, donc aucune reformulation du forçage à partir de
+  ce signal ne produira un ram correctement phasé.
+
+**Conséquence pour la suite.** Le ram correctement phasé demande soit une vitesse
+au **plan de soupape** (dérivée du débit massique de la soupape, qui lui s'annule
+bien à l'IVC), soit une vraie inertance de runner (maille double / `L·dṁ/dt`) —
+pas un résonateur side-car sur une moyenne de maille. Le point 3 du plan reste
+donc le seul chemin viable, et les points 1-2 ne suffisent pas seuls. Annulé :
+forçage, `coupling_gain` (revenu à 0.45), suppression d'admittance. **Conservé** :
+la capacité de biais dans le solveur (`FlowParameters::biasKpa0/1` + passage dans
+`pressureEquilibriumMoles`), no-op documenté par défaut, et qui est ce qui rend
+VE > 1 atteignable — vérifié : à `coupling_gain` 2.0 la VE du CP4 culmine à 1.04,
+et avec un runner de 190 mm le pic se déplace à 6000 tr/min pour 1.095. Le
+mécanisme d'application est bon ; c'est la **source** du signal qui manque.
+
+### Le routage à la soupape casse le ralenti (mesuré, retiré)
+
+Câbler l'amplitude du résonateur sur le biais de la soupape d'admission — même à
+`coupling_gain` 0.45, même sans toucher au forçage — fait **échouer
+`EngineLab.IdleStabilityRegression`** sur le **Radial R5** : 417 tr/min de minimum
+pour une cible de 640, écart-type 52.3 (les autres moteurs : 2 à 18). Isolé
+proprement : biais remis à 0.0 aux deux sites d'appel, tout le reste inchangé →
+**la porte repasse**. Le routage est donc bien la cause, pas une coïncidence.
+
+> **Correction (mesurée après coup).** Cette section affirmait d'abord que le
+> forçage `(plénum − runner)` « atteint son maximum au ralenti » et valait « 11 %
+> de perturbation par cycle contre 35 kPa de MAP ». **C'est faux.** Mesuré au vrai
+> ralenti avec `--trace 1 --idle` (voir plus bas pourquoi `--throttle` ne suffit
+> pas), `res_kpa` vaut **0.16 kPa** sur le R5 et 0.19 kPa sur le CP4, et il
+> *croît* légèrement avec le régime (1.09 kPa au CP4 à 9000). Le chiffre de 11 %
+> était une estimation, pas une mesure. Le **fait** que le routage cassait la porte
+> reste établi (le remettre à zéro la réparait) ; le **mécanisme** de cet échec,
+> lui, n'est pas établi. Ne pas réutiliser cette explication comme si elle l'était.
+
+**Critère pour la prochaine tentative :** tout forçage candidat doit être vérifié
+**petit au ralenti et grand au régime accordé** *avant* d'être câblé — c'est un
+test à deux points, pas un seul. Et surtout : ne pas câbler puis aller chasser
+l'échec de ralenti en aval dans le régulateur de ralenti. Ce serait précisément le
+motif « corriger un symptôme en aval de sa cause » que ce document documente
+depuis le début.
+
+État livré : **17/17 portes vertes**, routage retiré, capacité solveur conservée.
+
+### L'inertance de runner : deux formulations de plus, mesurées, réfutées
+
+Suite directe de la section précédente, avec le test à deux points enfin fait pour
+de vrai. Trois sources candidates pour le biais de remplissage ont maintenant été
+mesurées ; **les trois sont fausses**, chacune pour une raison différente et
+instructive. À lire avant d'en proposer une quatrième.
+
+#### D'abord : un instrument manquait, et son absence invalidait le test
+
+Le test « petit au ralenti » que j'avais posé comme critère **ne pouvait pas être
+fait** avec les instruments existants. `--trace 1300` n'est pas un ralenti : c'est
+du **plein gaz en sous-régime**. Le contrôleur de charge du banc commande la charge
+qui tient le régime cible, l'ECU répond à cette charge en rouvrant le papillon via
+`effectiveThrottle`, et la MAP se retrouve **à 1 kPa de la valeur pleine charge**
+(mesuré : 98.3 kPa au « ralenti » CP4 contre 99.1 à 9000 tr/min). Ajouter
+`--throttle 0.06` ne change rien, pour la même raison.
+
+D'où **`--trace 1 --idle`** : papillon fermé, charge nulle, démarreur jusqu'à
+l'accrochage — exactement la phase 2 de `EngineLab.IdleStabilityRegression`. Il
+produit enfin de vraies dépressions (CP4 33.0 kPa, LS3 17.3 kPa). Toute mesure de
+ralenti faite autrement est à jeter.
+
+Note au passage : le **Radial R5 idle à 95.6 kPa de MAP**, quasiment l'ambiante,
+là où tous les autres moteurs du catalogue idlent sous vraie dépression. Son
+ralenti n'est donc pas stabilisé par la dépression collecteur, ce qui explique
+qu'il soit le seul moteur sensible aux termes d'admission — mais **pas** qu'il
+échoue : sa ligne de base est saine (voir plus bas).
+
+#### Formulation 2 : la réaction inertielle −ρ·L·du/dt, appliquée en biais
+
+C'est le terme du manuel, dérivé de l'équation de quantité de mouvement de la
+colonne, sans gain libre. Pris **au plan de soupape** (`u = ṁ_valve/(ρ·A_runner)`)
+il corrige le défaut de la tentative précédente : cette vitesse-là **s'effondre
+bien** à l'IVC — 82.5 → −2.8 m/s, soit 3 % du pic, contre 40.9 → 40.3 pour la
+vitesse de maille. Et le test à deux points passe largement :
+
+| CP4 | ram fin d'événement (pondéré levée) | vitesse colonne, pic |
+| --- | --- | --- |
+| vrai ralenti, 1288 tr/min, MAP 33 kPa | **+0.04 kPa** (0.12 % de la MAP) | 45.4 m/s |
+| 9000 tr/min pleine charge | **+6.43 kPa** | 82.5 m/s |
+
+Rapport 160×, au-delà de la loi `rpm²` prédite parce que la densité du runner
+chute aussi. LS3 au vrai ralenti : +0.03 kPa. Le signal a donc exactement la forme
+qu'un ram doit avoir.
+
+**Et pourtant c'est instable par construction.** Un orifice fixe déjà le débit à
+partir de ΔP ; ajouter un ΔP dérivé de la dérivée *de ce même débit*
+**sur-détermine** le système. Le gain de la boucle vaut ~`ρL/dt` et **croît quand
+le sous-pas diminue** — ce n'est donc pas réglable, c'est structurel. Prédit puis
+mesuré :
+
+```
+first 26 ram (CP4 9000):  35.0 -35.0 35.0 -35.0 35.0 -35.0 ...
+saturé à la borne 34.2 % des échantillons, 38 % de changements de signe
+vitesse colonne 82 -> 140 m/s
+```
+
+`EngineLab.IdleStabilityRegression` : **onze moteurs calent purement et
+simplement** (0 tr/min), pas un ralenti qui chasse. C'est la signature d'une
+divergence numérique, pas d'un terme trop fort.
+
+**Leçon générale, qui dépasse ce terme :** dans ce solveur, un biais de pression ne
+peut jamais être une dérivée de la grandeur qu'il pilote. Seul un **état** est
+admissible.
+
+#### Formulation 3 : la tête de stagnation ρu²/2 (un état, donc stable)
+
+Une colonne arrivant à `u` peut charger le cylindre jusqu'à sa pression d'arrêt,
+pas seulement jusqu'à la pression statique du port. C'est un **état**, donc pas de
+gain en `1/dt` — et effectivement **aucune oscillation** : 0 % de saturation, 0
+changement de signe, pic 4.00 kPa au CP4 à 9000 (conforme au calcul à la main),
+0.29 kPa au ralenti R5.
+
+Elle échoue sur la **phase**, et le diagnostic est net :
+
+| Radial R5, porte de ralenti | moyenne | min | écart-type | verdict |
+| --- | --- | --- | --- | --- |
+| ligne de base (biais isolé à 0) | 637 | 546 | **27.7** | passe |
+| avec la tête de stagnation | 567 | 431 | **52.6** | échoue |
+
+Le **signe** de l'erreur est le tell : la moyenne **baisse de 70 tr/min**. Un terme
+de remplissage ne peut qu'ajouter du couple. Il en perd, donc le mécanisme est
+faux, pas son dosage. La cause : `u` suit l'aire de soupape, donc la tête culmine
+**à pleine levée** et ne vaut plus que 3 % du pic à l'assise. Un sur-remplissage de
+milieu d'événement est **réversible** — quand la tête retombe, la borne d'équilibre
+redevient statique et le solveur rechasse l'excédent par la soupape encore
+ouverte, avec les pertes du passage. Bilan net négatif.
+
+Et cela réfute au passage l'argument « le R5 est de toute façon marginal » :
+**mesuré, sa ligne de base est saine** (écart-type 27.7, la porte passe
+confortablement). La régression est bien la mienne. Les 12 autres moteurs passaient
+avec cette formulation — n'en conclure ni que le terme est presque bon, ni que le
+R5 est fautif.
+
+#### Ce qui reste, et pourquoi c'est la seule voie identifiée
+
+La formulation 3 démontre que **la physique manquante n'est pas une pression du
+tout**. Le ram réel est irréversible parce que la colonne **arrive encore** au
+moment où la soupape se ferme : c'est la fermeture qui **piège** la surpression.
+Il faut donc que le **débit retarde** sur sa valeur quasi-statique, c'est-à-dire un
+état de quantité de mouvement porté par la colonne :
+
+```
+ṁ ← ṁ + (ṁ_quasi-statique − ṁ)·(1 − exp(−dt/τ)),   τ = L_eff/u  (temps de transit)
+```
+
+Propriétés, toutes vérifiables avant câblage :
+
+- **Inconditionnellement stable** : le facteur de mélange est borné dans [0, 1],
+  contrairement au gain `ρL/dt` de la formulation 2.
+- **τ est dérivé, pas ajusté** : la linéarisation de `ρ(L/A)·dQ/dt = ΔP − K·Q|Q|`
+  donne `τ = ρ·L·ṁ/(2·A·ΔP)`, fini même au repos.
+- **La bonne échelle en régime** : estimé `τ/t_event` ≈ 0.4 % au ralenti CP4 contre
+  ≈ 9 % à 9000 tr/min.
+- **La bonne phase** : `u` reste élevée quand la soupape se ferme, donc la charge
+  arrive encore à l'IVC — c'est exactement ce qui manque à la formulation 3.
+
+Ce n'est plus un terme ajouté : cela **remplace** une partie de la loi de débit, et
+demande de traiter l'inversion de sens à partir du signe de l'état (une colonne
+lancée continue contre un gradient adverse). C'est donc un changement de topologie
+du solveur gaz, avec un **risque réel sur le voicing audio** — la pression cylindre
+est la seule excitation de la chaîne d'échappement — et sur la fenêtre MBT.
+
+**Non implémenté.** L'arbre est rendu vert avec les instruments et les mesures, et
+ce choix appartient au produit.
+
+État livré : **17/17 portes vertes** (352.7 s), aucun câblage, capacité solveur
+conservée, trois formulations réfutées et documentées. Gain net d'instruments :
+`--idle`, `--throttle`, et les colonnes `ram_kpa` / `col_mps` de la trace.
+
+## Le diagnostic architectural : l'admission n'a pas de dimension (topologie, vérifiée)
+
+Après quatre formulations mesurées et réfutées, la question a changé : ce n'est
+plus « quel terme manque ? » mais « pourquoi chaque terme candidat échoue-t-il
+d'une façon différente ? ». La réponse est une asymétrie de **topologie**, lisible
+dans le code sans ambiguïté :
+
+- **Échappement** : un vrai solveur gaz-dynamique 1-D
+  (`src/gas-dynamics/FiniteVolumeDuct.hpp`) — volumes finis second ordre,
+  reconstruction TVD monotonisée, flux de Riemann HLLC, SSP-RK2, sous-pas CFL
+  avec rejet des états non physiques, 4 espèces, γ variable spatialement —
+  assemblé en réseau globalement couplé (`ExhaustGasNetwork.hpp`), où la soupape
+  est une **condition limite de Riemann** (`CylinderValveBoundary`).
+- **Admission** : `intakePlenumGas_` = **une** cellule 0-D ; `intakeRunnerGas_` =
+  **une** cellule 0-D par cylindre (`EngineSimulator.hpp:155-157`) ; puis un
+  orifice quasi-statique avec clamp d'équilibre par sous-pas.
+- Le détail qui achève le diagnostic : `AcousticIntakeNetwork` existe — **dans le
+  module audio**. L'admission est modélisée comme réseau d'ondes pour produire du
+  *son*, jamais pour faire passer de l'*air*.
+
+L'accord d'admission est un phénomène d'**ondes**. Une cellule unique n'a aucun
+délai de propagation : rien ne peut arriver « à la bonne phase » parce que rien
+ne voyage. Les quatre formulations tentaient de contrefaire une onde par une
+pression algébrique, et c'est pour cela qu'elles ont échoué de quatre façons
+différentes (instabilité, phase, réversibilité) : il ne manque pas un
+coefficient, il manque une **dimension**. La seule dépendance au régime d'un
+orifice quasi-statique est « moins de temps pour remplir à travers une
+restriction fixe », donc la VE ne peut que décroître de façon monotone — ce qui
+prédit exactement la signature banc : couple 74-99 % (un modèle localisé remplit
+bien à bas régime), pic 1500-4000 tr/min trop tôt (aucune bosse de résonance à
+placer), puissance 48-66 % (la bosse est précisément ce qui fait le haut du
+régime). Trois symptômes, un seul terme absent.
+
+### L'instrument écrit AVANT le fix : `EngineLab.IntakeTuning` (mesuré)
+
+`tests/IntakeTuningTests.cpp` balaye l'EL-20 I4 à pleins gaz sous absorbeur de
+banc (le contrôleur exact du DynoSweepHarness) et évalue quatre critères ancrés
+littérature — jamais sur la sortie du simulateur — figés avant tout changement
+du solveur : pic de VE dans [0.85, 1.15] (Heywood) ; pic à ≥ 40 % du rupteur ;
+VE à ~85 % du rupteur ≥ 0.80 × pic ; et le critère décisif, **doubler la
+longueur de runner doit déplacer le pic de VE vers le bas d'au moins 15 %**
+(Helmholtz/quart d'onde : la vitesse accordée varie en 1/√L à 1/L, soit
+−29 à −50 % physiques ; 15 % ne présuppose aucun modèle d'accord précis).
+
+Mesuré le 2026-07-25 (23 s, invariants verts, MAP ~100-101 kPa donc le WOT est
+réel) :
+
+| Critère | Mesure | Verdict |
+|---|---|---|
+| 1. pic VE ∈ [0.85, 1.15] | 0.886 | OK — le remplissage bas régime est sain |
+| 2. pic à ≥ 2880 tr/min | **2000 (plancher du balayage)** | échec — la courbe ne sait que décroître |
+| 3. VE(6000) ≥ 0.709 | 0.769 | OK sur ce moteur modeste |
+| 4. décalage du pic à 2×L ≥ 15 % | **0.000 %** | échec — la longueur n'existe pas pour le remplissage |
+
+Le critère 4 est la preuve directe : la courbe 2×L est légèrement *plus haute*
+partout à bas régime (0.897 contre 0.886 à 2000) — pur effet de volume tampon de
+la cellule agrandie — et son pic ne bouge pas d'un tour/minute. Les critères
+sont **rapportés** par défaut et gatés sous `--enforce-tuning` (vérifié
+non-vacuux : exit 1 aujourd'hui, sur le critère 2). Quand l'admission 1-D
+arrivera, l'enregistrement ctest gagne le drapeau et les critères deviennent des
+portes dures. **Ne pas affaiblir un critère pour faire passer cette promotion** :
+ils encodent le comportement d'un moteur réel, pas un objectif que le simulateur
+ait jamais atteint.
+
+### Le plan, gaté par étapes
+
+- **A (fait)** : l'instrument ci-dessus, écrit et mesuré avant le changement.
+- **B** : spike CPU (`tools/IntakeDuctBench.cpp`) — un `FiniteVolumeDuct` en
+  conditions d'admission (froid, 0.20-0.30 m, excitation à cadence de soupape),
+  chiffré contre le budget 240 Hz **sur machine au repos** ; le thread physique
+  est déjà à ~99 % du budget sur le V8 à 6500, donc le verdict porte sur le
+  budget restant et sur la nécessité du parallélisme par cylindre. Go/no-go.
+- **C** : `IntakeGasNetwork` réutilisant la machinerie existante (un conduit 1-D
+  par runner, plénum en jonction, papillon en `localLossCoefficient`, frontière
+  réservoir déjà corrigée, `CylinderValveBoundary` tel quel), remplaçant les
+  cellules localisées et le clamp statique. **Changement de voicing déclaré** —
+  la pression cylindre est la seule excitation de la chaîne d'échappement.
+- **D** : recalibration du catalogue et des 17 portes, re-banc CP2/CP3/CP4
+  contre constructeur, gains indépendants (chauffage de charge 55 K → BDC,
+  ~15 % de densité) repris au passage.
+
+### Stage B mesuré : le spike CPU dit GO, avec le parallélisme par cylindre pour les gros moteurs
+
+`EngineLabIntakeDuctBench`, machine au repos, trois runs à ±2 % (budget d'une
+frame 240 Hz = 4.167 ms ; excitation volontairement dure — tirage de 23 kPa
+soutenu 2 frames sur 5, donc ces chiffres ne sont pas flattés) :
+
+| cellules | L (m) | ms/runner | sous-pas | ×4 runners | ×8 | ×12 |
+|---|---|---|---|---|---|---|
+| 8 | 0.20 | 0.42 | 133 | 41 % | 81 % | 122 % |
+| 8 | 0.30 | 0.29 | 90 | 27 % | 55 % | 82 % |
+| 12 | 0.20 | 0.97 | 200 | 93 % | 186 % | 279 % |
+| 12 | 0.30 | 0.66 | 134 | 64 % | 128 % | 191 % |
+
+Lecture :
+
+- **8 cellules par runner est le bon défaut.** La résonance qui fait la VE est
+  le fondamental quart-d'onde (λ ≈ 4L), donc 8 cellules ≈ 32 cellules par
+  longueur d'onde — largement au-dessus des 10-20 requis au second ordre. Passer
+  à 12 cellules coûte 2.3× pour ne raffiner que des harmoniques secondaires.
+- **GO série pour les moteurs cibles** (CP2/CP3/CP4, 2-4 cylindres) :
+  0.6-1.7 ms ajoutées, alors que le cas liant du budget est le V8 à 6500
+  (~99 %) — les petits moteurs ont la marge.
+- **Les V8/V12 exigent le parallélisme par cylindre**, qui existe déjà : la
+  section Jacobi `decoupleSharedVolumes` (`EngineSimulator.cpp:1608-1622`)
+  avance chaque cylindre contre un plénum gelé dans un scratch de worker et
+  commet ensuite des flux conservatifs à N voies. Un conduit de runner par
+  cylindre entre exactement dans ce motif ; sur 8 cœurs, 8 runners en parallèle
+  ≈ le coût d'un seul + le commit, soit ~8-10 % de budget pour le V8.
+- Deux biais de mesure, en sens opposés, non chiffrés : l'excitation du banc est
+  plus dure que les dépressions réelles de port (moins de sous-pas en vrai), et
+  le réseau réel ajoute jonction plénum + papillon + frontières de Riemann aux
+  soupapes (plus de coût que N conduits indépendants). Décisionnel quand même :
+  l'ordre de grandeur est net et la voie parallèle est éprouvée.
+
+## Stage C : l'admission 1-D est câblée, la porte d'accord passe (mesuré)
+
+`EngineSimulator` remplace la cellule-runner 0-D et l'orifice de soupape
+quasi-statique par **un réseau `ExhaustGasNetwork` mono-conduit par cylindre**
+(assemblé programmatiquement via `ExhaustNetworkLayout::assemble`, nouveau) :
+soupape = port cylindre de Riemann à l'entrée du conduit, embouchure = « outlet »
+dont le réservoir d'ambiance est le plénum du chemin, avancé en deux
+demi-sous-pas symétriques autour du couplage échappement, exactement comme
+l'orifice qu'il remplace. Le plénum reste 0-D (une compliance est un élément
+localisé — c'est le runner qui est le tuyau d'orgue). L'injection port dépose la
+vapeur et son refroidissement dans les 3 cellules côté soupape
+(`injectSpeciesAtPort`, tout-ou-rien) ; le modèle de film est inchangé. Le
+Helmholtz ne module plus aucun débit : télémétrie seulement.
+
+### Deux défauts de frontière, trouvés par un test stationnaire, pas par relecture
+
+Le premier essai livrait des courbes de VE PIRES qu'avant (0.886→0.829 au
+plancher, courbes base/2×L identiques au-dessus de 4000 : un étranglement
+indépendant de la longueur). L'instrument décisif : un tirage **stationnaire**
+à travers une soupape ouverte, comparé à la tuyère isentropique du même ΔP
+(`testSteadyDrawMatchesIsentropicValveFlow`).
+
+1. **L'aspiration à une extrémité ouverte était comptée à l'impédance
+   acoustique.** La branche backflow de `openEndBoundaryPrimitive` renvoyait le
+   réservoir *au repos* comme fantôme ; le flux de Riemann contre une cellule
+   statique impose u ≈ ΔP/(ρc). Mesuré : le conduit devait s'affaisser de
+   10.5 kPa sous un réservoir à 101.3 pour tirer 26 m/s là où Bernoulli demande
+   0.4 kPa — déficit stationnaire de 13 %. C'est le pendant côté aspiration du
+   défaut « une extrémité ouverte est un réservoir » déjà corrigé côté
+   refoulement ; l'échappement ne le voyait pas (réversion brève), l'admission
+   y vit en permanence.
+2. **Le remplacement « évident » était aussi faux.** Utiliser la tuyère
+   compacte (`compressibleValveFlux`) à pleine section impose la contrainte
+   d'un jet libre (P_exit + ρu²_exit, u_exit dimensionné par tout le ΔP) sur
+   une face dont l'intérieur ne porte qu'une fraction de cette vitesse :
+   mesuré, l'intérieur se faisait pomper à 111 kPa AU-DESSUS d'un réservoir à
+   101.3 (ratio de débit 1.064). Une entrée de conduit n'est pas une ouverture
+   compacte.
+
+La forme correcte garde la structure fantôme→Riemann de la sortie : **le
+fantôme d'aspiration est le gaz du réservoir accéléré isentropiquement jusqu'à
+la pression statique intérieure** (bornée au rapport critique). La pression est
+la seule grandeur intérieure continue à travers le contact, donc la lire ne
+répète pas la catastrophe « invariant à travers le contact » (2 km/s, onze
+moteurs calés) documentée plus haut ; le saut d'entropie/composition reste dans
+le solveur de Riemann. Mesuré : ratio 0.963 (le manque est l'entrée + friction,
+physique), intérieur à 0.3 kPa sous le réservoir = Bernoulli exact. Le test
+verrouille [0.90, 1.05] avec les deux modes d'échec en dehors.
+
+### Résultat : les quatre critères littérature passent, la porte est promue
+
+| Critère (gelé avant le changement) | Avant (0-D) | Après (1-D) |
+|---|---|---|
+| pic VE ∈ [0.85, 1.15] | 0.886 | **1.012** — suralimentation par résonance réelle |
+| pic à ≥ 40 % du rupteur | plancher (2000) | **5142 tr/min = 71 %** |
+| VE(85 % rupteur) ≥ 0.80×pic | OK (courbe plate) | OK (0.923) |
+| décalage du pic à 2×L ≥ 15 % | 0.000 % | **23.7 %**, pic 2×L à 4000 avec VE 1.113 |
+
+La courbe a la physionomie d'une vraie courbe d'accord : creux
+d'anti-résonance à ~2450, bosse au régime accordé, chute au-delà. La longueur
+de runner est enfin un paramètre de conception qui agit. `EngineLab.IntakeTuning`
+est enregistrée avec `--enforce-tuning` : portes dures désormais.
+
+### Ouvert (étage D) : trois ralentis de gros cylindres
+
+CP2/CP3/CP4/Hayabusa/LS3 tournent au ralenti (σ 9-20). Échouent : Big Twin
+(chasse), R5 (chasse, recentré après l'étalement de l'injection sur 3
+cellules), et le **Merlin V12 qui cale — mesuré au `--watch` (nouveau) : ce
+n'est pas une panne pauvre mais une noyade verrouillée**. Séquence : le moteur
+attrape (AFR 9.3, 1000 tr/min), le papillon se ferme, la charge chute 4×
+(1700→470 mg), l'inventaire de carburant du démarrage reste debout près de la
+soupape, le cycle suivant l'avale entier (AFR ~3), misfire, et la réversion à
+l'IVO recycle l'imbrûlé vers le port — piège circulant que la rétention de 45 %
+de la charge entretient. Réfuté par la mesure : ni le refroidissement de charge
+(sonde à zéro : noyade identique), ni le film mural (le catalogue applique déjà
+0.22 ; identique). Le runner 0-D survivait au même excédent parce que sa
+cellule unique était un tampon de dilution numérique. C'est un nœud
+calibration-dosage (l'enrichissement était réglé sur un transport retardé) —
+étage D, avec `--watch` comme instrument.
+
+### Le déverrouillage du ralenti : une asymétrie de comptabilité, pas un défaut du réseau
+
+Trois sondes ont réduit le nœud (chacune mesurée, deux réfutées) :
+le refroidissement de charge mis à zéro → noyade identique ; le film mural
+(0.22 via le chargeur catalogue) → identique ; puis la trace `--watch` a montré
+`fuel req/del = 106/201 mg` pour une charge réelle de ~500 : **la requête
+elle-même doublait**.
+
+La cause : `TransientChargeEstimator` prend `max(O2 résolu du cylindre,
+prédiction vitesse-densité)`. Ce plancher suppose que la charge précédente a
+brûlé — moteur allumé, l'O2 résiduel ≈ 0 et le plancher ne mord jamais ; après
+un raté, le cylindre garde son air imbrûlé ET son carburant imbrûlé, mais le
+dosage ne comptait le carburant que soupape ouverte. L'air noyé comptait
+toujours, le carburant noyé presque jamais : sur-requête → AFR 3 → raté →
+rétention (45 % de la charge) → verrou.
+
+Deux corrections couplées, changées ENSEMBLE comme l'exige la règle des
+compensations appariées :
+
+1. Le plancher est conservé — il est aussi un enrichissement anti-calage réel :
+   sa suppression seule a fait plonger les ralentis des deux turbos (2JZ min
+   567, Audi min 596), mesuré avant d'être annulé.
+2. `trappedCylinderFuel` compte désormais le carburant du cylindre aussi
+   **quand le cycle précédent a raté** (`cylinderMisfires_`), symétriquement à
+   l'air que le plancher compte.
+
+Résultat mesuré (porte de ralenti) : Merlin **σ = 4.0 à 796/800** (il calait à
+0), 2JZ σ 12.1, Audi σ 9.9, Big Twin σ 27.6 — tous verts. Le gate d'injection
+sur rotation réelle (`rpm > 20`) a aussi été posé : une phase gelée dans la
+fenêtre d'injection modélisait un injecteur coincé ouvert sur moteur arrêté.
+
+### Le test zéro-levée mesurait un artefact du 0-D
+
+`EngineLab.Core` exigeait la MAP instantanée à ±10 Pa de l'ambiante soupapes
+fermées. Deux effets **physiques** du runner résolu la déplacent : (1) la
+vapeur de carburant injectée pendant le lancement s'équilibre par l'embouchure
+ouverte — ~10 mg dans ~3 L = ~67 Pa de pression partielle réelle (la cellule
+0-D la piégeait, voilà pourquoi 10 Pa tenaient) ; (2) le mode de Helmholtz
+runner-plénum sonne quasi non amorti au repos (±140 Pa sur la MAP) — un
+échantillon instantané lit la phase d'une onde, pas un inventaire. Le test
+assert désormais la **moyenne temporelle à ±0.25 kPa** : l'intention (pas de
+drainage du collecteur, un défaut à l'échelle du kPa) est conservée, l'acoustique
+résolue ne déclenche plus.
+
+## Le vrai défaut du ralenti : l'anti-windup regardait le mauvais signal (mesuré)
+
+Ce qui suit annule et remplace la section R5 ci-dessous, deux « correctifs » que
+j'avais posés, et l'idée que le ralenti du catalogue était sain avant.
+
+### La porte de ralenti mesurait la phase d'une oscillation, pas une stabilité
+
+`EngineLab.IdleStabilityRegression` moyenne une fenêtre de 4 s (t = 10-14 s).
+Onze moteurs y « passaient ». La trace montre qu'ils **oscillaient tous** à
+~0.2 Hz avec 130-180 tr/min crête-à-crête, faiblement amorties, encore vivantes
+à t = 14 s. Passer ou échouer dépendait de la phase que la fenêtre attrapait.
+
+C'est ce qui m'a fait tourner en rond : j'ai attribué à mes propres
+modifications une régression 2JZ/Audi/Big Twin qui n'était qu'un **déplacement
+de phase** d'un défaut déjà présent. Preuve : désactiver l'un OU l'autre de mes
+deux changements faisait échouer le 2JZ avec des chiffres quasi identiques
+(682/559 σ52.8 et 688/560 σ45.8) alors que désactiver les deux le faisait
+passer — signature d'un attracteur fragile, pas de deux causes.
+
+Le simulateur est déterministe (deux exécutions séquentielles identiques au
+bit ; l'exécution concurrente aussi) : la confusion ne venait pas du bruit.
+
+### La cause : l'intégrale se dévidait pendant que le plancher tenait la vanne
+
+L'ouverture réellement livrée vaut
+`max(postStartAir, max(clamp(PI,0,1), dashpot) * driverOverride)`.
+La garde d'anti-windup, elle, testait **la commande propre du gouverneur**
+contre 0 et 1. Or cette commande est en plein milieu de sa plage pendant que le
+plancher post-démarrage possède l'actionneur : la garde ne voyait donc jamais
+la saturation.
+
+Conséquence, mesurée sur le 2JZ (colonnes `iac`/`postSt`/`integ` ajoutées à
+`--trace`) : de t = 5.0 s à t = 9.25 s, **`iac` égale `postSt` à trois
+décimales** — le gouverneur ne bouge rien — pendant que le flare tient le
+régime au-dessus de la cible, que l'erreur reste négative et que l'intégrale
+descend jusqu'à sa butée `-0.20`, où elle reste collée deux secondes. Le
+plancher passe ensuite sous la commande et rend la main à un régulateur sans
+autorité : le moteur s'affaisse de 847 à 571 tr/min pendant que l'intégrale
+remonte à 0.11/s, dépasse, et sonne à 0.2 Hz jusqu'à la fin.
+
+Ce n'était pas qu'un transitoire : la butée imposait un **biais permanent**.
+Presque tout le catalogue tournait *sous* sa cible — LS3 665 pour 720,
+Aircooled 706 pour 780, R5 685 pour 800.
+
+### Le correctif : tester la position livrée, pas la commande
+
+Règle d'anti-windup classique, appliquée au vrai actionneur : quand autre chose
+que le gouverneur possède la vanne, celui-ci est saturé BAS et ne peut intégrer
+que dans le sens qui le ramène aux commandes (`normalizedError > 0`, moteur sous
+la cible) ; sinon il **conserve** son autorité. Le passage de témoin devient
+continu par construction.
+
+Mesuré, porte de ralenti complète (cible / moyenne / min / σ) :
+
+| moteur | avant | après |
+|---|---|---|
+| LS3 (720) | 665 / 595 / 30.6 | **721 / 714 / 3.3** |
+| Aircooled (780) | 706 / 630 / 37.3 | **776 / 763 / 6.0** |
+| 2JZ (760) | 728 / 709 / 12.1 | **755 / 748 / 3.0** |
+| Audi (780) | 760 / 737 / 9.9 | 778 / 744 / 9.4 |
+| R5 (640) | échec | **639 / 553 / 27.2** |
+| K20A (950) | 944 / 931 / 5.1 | 954 / 946 / 3.9 |
+
+13/13 moteurs au vert, chacun **à** sa cible et non plus dessous.
+
+### Deux de mes propres correctifs, réfutés par cette mesure
+
+- **Le clamp d'avance au démarrage (`rpm < 500 → avance ≤ 4°`) : retiré.** Le
+  vrai remède du coup de recul du R5 était le dimensionnement du démarreur ; le
+  clamp mesuré seul coûtait au 2JZ 728/709 → 682/559. Un seuil en régime nu est
+  *dans* l'enveloppe normale d'un moteur qui ralentit bas : il mordait sur un
+  creux de ralenti ordinaire et coupait le couple juste quand il fallait le
+  rendre. Un vrai retard de démarrage est conditionné à l'état run/start.
+- **Le `idle_rpm: 640 → 800` du R5 : annulé.** J'avais écrit que « le régime
+  naturel papillon fermé était monté à 770-800 et qu'un gouverneur qui ne sait
+  qu'ajouter de l'air ne peut pas réguler en dessous ». Faux : c'était la butée
+  d'intégrale. Avec l'anti-windup corrigé le R5 tient **639 pour 640**. La
+  config est revenue à l'identique.
+
+Ce qui reste vrai et gardé : le démarreur dimensionné sur la cylindrée
+**unitaire** (pic de compression), vérifié encore nécessaire — sans lui le R5
+rechasse (σ 47.9).
+
+### Le test « levée nulle » passait pour deux mauvaises raisons à la fois
+
+Piège à signaler tel quel aux futurs agents. `EngineLab.Core` affirmait
+« zero valve lift must result in zero volumetric efficiency ». Vert depuis
+toujours. Il ne testait rien :
+
+1. **Le moteur n'était pas à levée nulle.** Le test ne mettait à zéro que
+   `config.camshafts` ; or `activeCamshaft()` préfère la came du **banc** dès
+   que le cylindre appartient à un banc. Les bancs gardaient leur levée.
+2. **L'assertion était satisfaite par un garde-fou, pas par la physique.** Le
+   démarreur d'alors était trop faible pour entraîner ce moteur (mesuré :
+   rpm 0.00), et `volumetricEfficiency` est forcé à 0 sous 20 tr/min. Zéro
+   parce que rien ne tournait, pas parce que rien n'entrait.
+
+Le démarreur redimensionné a fait tourner le vilebrequin (correct : un cylindre
+scellé est un ressort à gaz qui restitue le travail), les bancs encore levés ont
+respiré, et l'assertion est tombée — révélant les deux défauts d'un coup.
+Corrigé : levée annulée sur la came globale **et** sur chaque banc, plus une
+garde de non-vacuité `rpm > 20` pour que l'assertion ne puisse plus jamais
+passer moteur à l'arrêt.
+
+### Défaut réel mis au jour au passage : la VE compte l'oxygène *piégé*, pas l'air *admis*
+
+`state_.volumetricEfficiency` se calcule sur `trappedAirMassMgLastCycle_`,
+c'est-à-dire l'oxygène présent dans la chambre à l'IVC. Pour un moteur sain les
+deux coïncident (les gaz résiduels sont brûlés, sans O2). Ils divergent dès que
+la chambre garde de l'oxygène imbrûlé : raté d'allumage, cylindre entraîné, ou
+came sans levée. Mesuré sur le moteur à levée nulle : **VE = 0.596 alors que
+l'admission vaut exactement 0** — la charge initiale, jamais renouvelée, est
+comptée comme respiration.
+
+Non corrigé volontairement, et il faut savoir pourquoi avant d'y toucher :
+- `trappedAirMassMgLastCycle_` est aussi la référence de dosage, et là
+  l'oxygène piégé est la **bonne** grandeur (c'est ce qui peut brûler).
+- `EngineLab.IntakeTuning`, la porte durcie de l'étage A, est calibrée sur
+  cette VE. Le remplaçant naturel (`intakeFlowMgPerCycle_`) est une masse
+  **totale**, carburant vaporisé compris : en injection indirecte cela décale
+  la VE d'environ +6.7 % et déplacerait la porte.
+
+Ce qui est fait : `EngineState::inductedChargeMassMgPerCycle` expose la masse
+qui a réellement franchi les soupapes d'admission, ce qui rend le test
+ci-dessus non vacuous sans toucher à la définition porteuse. Séparer proprement
+« air frais admis » de « masse totale admise » est un chantier d'étage D.
+
+### La porte durcie : dérive, fenêtre allongée, exemption supprimée
+
+La porte teste maintenant aussi la **dérive** (moyenne de la seconde moitié de
+la fenêtre moins celle de la première). Un écart-type seul ne distingue pas un
+ralenti stabilisé d'un ralenti encore en train de balayer ; la dérive, elle, est
+sensible à la phase. Elle a immédiatement pris un vrai défaut : douze moteurs
+entre -7.5 et +10.6 tr/min, et le **Big Twin à -66.8** — encore en descente
+pendant toute la fenêtre.
+
+Cause mesurée : le schedule d'air post-démarrage décroît en exponentielle
+(τ 2.5-6 s) et n'est coupé qu'en dessous de 1e-4, donc sa traîne dépasse 20 s.
+À 8 s de ralenti libre la fenêtre « stabilisée » mesurait encore le transitoire
+de démarrage des gros cylindres. Phase portée à **16 s** — durcissement net, pas
+relâchement, puisqu'elle est appariée à l'assertion de dérive. Résultat : les
+treize moteurs convergent **sur** leur cible à quelques tr/min près.
+
+| moteur | cible | moyenne | σ | dérive |
+|---|---|---|---|---|
+| K20A | 950 | 950 | 3.4 | -0.1 |
+| 2JZ | 760 | 760 | 2.7 | +0.2 |
+| LS3 | 720 | 720 | 2.4 | -0.1 |
+| Merlin V12 | 800 | 800 | 0.4 | -0.0 |
+| Big Twin | 760 | 764 | 17.7 | -3.3 |
+| R5 | 640 | 641 | 28.7 | -10.0 |
+| CP2 / CP3 / CP4 | 1400 / 1300 / 1300 | idem | 16.4 / 14.8 / 20.7 | ≤ 2.9 |
+
+Le Big Twin passe de σ 45.1 à 17.7 : il n'avait pas un défaut de régulation,
+il n'avait pas fini de converger. Et l'exemption `knownBlipStallAllow` du
+Merlin est **supprimée** — le V12 récupère désormais son ralenti après un coup
+d'accélérateur sans caler, donc la garder ne masquait plus rien et empêchait
+seulement de voir une régression future.
+
+### ~~Reste ouvert : le ralenti du R5 radial~~ (PÉRIMÉ — résolu par l'anti-windup)
+
+> Conservé pour la trace du raisonnement. La conclusion « la vanne de ralenti
+> perd son autorité » était la bonne observation avec la mauvaise cause :
+> l'autorité était perdue parce que l'intégrale était collée à sa butée `-0.20`,
+> pas parce que la MAP traversait l'ambiante. Le R5 tient 639 pour 640 depuis la
+> correction d'anti-windup, sans toucher ni à `idle_bypass_area_mm2` ni à
+> `idle_rpm`. Voir la section ci-dessus.
+
+AFR sain (~13.5), carburant stable — le mélange n'est plus en cause. Chasse
+lente ~0.25 Hz, ±180 tr/min, avec la **MAP oscillant 86→103 kPa papillon
+fermé** : la réversion des cinq gros cylindres atteint maintenant physiquement
+le plénum (les radiaux réels rotent dans leur admission), la MAP traverse
+l'ambiante et la vanne de ralenti perd son autorité (aucun ΔP). Le 0-D retenait
+cette masse dans sa cellule. La config porte un `idle_bypass_area_mm2: 180`
+(un trou de 15 mm — dimensionné pour faire respirer l'ancien modèle) : c'est la
+recalibration catalogue de l'étage D, à mesurer à la porte de ralenti.
+
+## L'absorbeur du banc ne tenait pas ses points, et balayait dans le rupteur (mesuré)
+
+Ce qui suit **annule et remplace** tous les chiffres haut-régime que j'ai
+publiés dans cette session avant cette section, dont deux « falaises de
+combustion » que j'ai annoncées et qui n'existent pas. Les deux venaient du
+même instrument.
+
+### Le défaut 1 : le gain intégral ne pouvait pas se charger
+
+Les quatre instruments WOT du dépôt (`DynoSweepHarness`, les deux points de
+`PhysicsPerfHarness`, `IntakeTuningTests`) partagent le même contrôleur copié :
+
+```
+dynoIntegral = clamp(dynoIntegral + speedError * dt * 1.20, 0.0, 0.95);
+load         = clamp(dynoIntegral + speedError * 0.70, 0.0, 1.0);
+```
+
+Avec `dt = 1/240 s` et une erreur stationnaire de 7 %, l'intégrale n'atteint que
+~0.25 en deux secondes de stabilisation, soit ~119 Nm de frein — moins que le
+couple d'un 2 L à 7000 tr/min. **L'absorbeur ne sature jamais : il ne se charge
+jamais.** Aux bas régimes il converge (peu de charge suffit) ; au-delà de
+~5000 tr/min le moteur dérive vers le haut jusqu'à ce que son propre couple
+s'écroule ou que le rupteur l'attrape.
+
+Mesuré sur le I4 par défaut, cible 6500 tr/min : le point rendu était à
+**6958 tr/min**, bande [6914, 7001], rupteur à 7200. La garde de l'époque
+tolérait 15 % d'écart, donc elle passait. Gain porté à 12.0 et plafond à 1.0 :
+tous les points tiennent à moins de 0.5 %.
+
+### Le défaut 2 : le sommet du balayage EST le rupteur
+
+`maxRpm = min(redline, revLimit)` place la dernière cible **exactement sur** le
+rupteur. Or le rupteur de `SimpleEcuModel` est verrouillé avec hystérésis (coupe
+à `revLimit`, ne relâche qu'à `revLimit - 180`), et `EngineSimulator` fait
+`flameEvents_[i] = {}` dès que l'étincelle manque — ce qui **met à zéro
+l'efficacité de combustion publiée** à chaque cycle coupé.
+
+Isolation décisive, même point à 7000 tr/min tenu à 0.04 % :
+
+| rupteur | combEff | IMEP net | trap | VE livrée |
+|---|---|---|---|---|
+| 7200 (balayage sur le rupteur) | 0.167 | 4.81 bar | 1.165 | 0.826 |
+| 9000 (rupteur écarté) | **0.911** | **13.02 bar** | 1.006 | 0.922 |
+
+Un constructeur annonce sa puissance nominale **sous** le rupteur ; un balayage
+WOT doit donc s'arrêter sous lui. Les deux instruments plafonnent maintenant à
+`0.95 * min(redline, revLimit)`. Signature à reconnaître dans un ancien CSV : la
+dernière ligne d'un moteur donne un couple absurde (le 2JZ y lisait 2.15 Nm et
+1.56 kW).
+
+### Les quatre hypothèses réfutées en route
+
+Chacune paraissait solide et chacune est tombée sur une mesure directe. La
+falaise à 6958/7080 tr/min mettait `combEff` à 0.337 puis 0.129 :
+
+| hypothèse | prédiction | mesure | verdict |
+|---|---|---|---|
+| coupure d'allumage / ratés | `misfireRate` élevé | 0.000 et 0.007 | réfutée |
+| dilution par les gaz résiduels | résiduel ≫ 7 % | 0.011-0.016 partout | réfutée |
+| saturation d'injecteur | `injectorCapacityRatio` < 1 | 1.000 et 0.999 | réfutée |
+| mélange faux à l'étincelle | φ très écarté de 1.08 | 1.136 vs 1.139 | réfutée |
+
+Le résiduel mérite une note : j'ai d'abord conclu que `burnedGasFraction`
+n'était **jamais** affecté, parce qu'un grep par nom ne trouvait rien hors des
+tests. Faux — il est rempli **positionnellement** dans l'agrégat
+`FlameConditions` (`burnedMoles / totalMoles`). Le terme de dilution est bien
+vivant. Un grep par nom ne prouve rien sur un agrégat initialisé par position.
+
+### Ce que le fractionnement de la VE a rendu visible
+
+`volumetricEfficiency` est une efficacité de **piégeage** (air équivalent-oxygène
+présent à la fermeture admission). La définition de Heywood est une efficacité
+de **livraison**. `deliveredVolumetricEfficiency` publie maintenant la seconde,
+sur la même base oxygène, donc leur rapport est un rendement de piégeage.
+
+Le rapport vaut 1.002-1.008 sur toute la plage saine — les deux comptabilités,
+qui n'empruntent pas le même chemin, se recoupent à moins de 1 %. Et il **passe
+au-dessus de 1** exactement là où l'étincelle est coupée : l'oxygène imbrûlé
+reste en chambre et gonfle le chiffre piégé, tandis que le chiffre livré, lui,
+dit la vérité (0.973 contre 0.810 au point rupté). Le rapport trap > 1 est donc
+un **détecteur de combustion incomplète**, et c'est la garde toujours active du
+nouvel instrument.
+
+### PMEP : le chiffre corrigé
+
+L'excès de pompage reste réel mais il est **plus petit que ce que j'ai annoncé**.
+Mes « 3 à 4× » incluaient des points contaminés par le rupteur. Mesuré propre
+sur le I4 par défaut :
+
+| régime | PMEP | littérature (Heywood ch. 13) |
+|---|---|---|
+| 2000 | -0.350 bar | -0.2 à -0.4 |
+| 2500 | -0.525 bar | -0.2 à -0.4 |
+| 6000 | -1.522 bar | -0.4 à -0.6 |
+
+Soit ~1.5× en milieu de plage et ~2.0× près du régime nominal, pas 3-4×.
+`EngineLab.GasExchange` est enregistrée **report-only** : les deux plafonds
+littérature sont gelés, les gardes de signe/croissance/réconciliation
+(`net == gross + pmep`) sont actives. La promotion est l'ajout de
+`--enforce-gas-exchange` dans `tests/CMakeLists.txt`, jamais l'assouplissement
+d'un plafond.
+
+### Ce qui reste non tenu, et donc non promu
+
+La bande de régime **dans** un point n'est pas encore gatée : l'absorbeur reste
+sous-amorti en milieu de plage (le point 4500 tr/min oscille sur [4074, 4990]
+autour d'une moyenne juste de 4518). La moyenne est bonne, le signal n'est pas
+établi. C'est le même piège que la porte de ralenti (§ ci-dessus) : une fenêtre
+moyennée ne voit pas un signal non établi. La bande est **rapportée** ;
+resserrer le contrôleur est un changement distinct de rendre la dérive visible.
+
+## D.1 — le catalogue contre les constructeurs, mesuré proprement (mesuré)
+
+Balayage à pas de 250 tr/min, absorbeur corrigé, plafond sous le rupteur
+(`dyno_fix5`). Les trois Yamaha sont les moteurs demandés ; K20A, LS3 et 2JZ sont
+des **témoins** écrits bien avant eux, donc ils datent d'avant tout ce travail.
+
+| moteur | couple sim | couple réel | puiss. sim | puiss. réelle | % puiss. |
+|---|---|---|---|---|---|
+| Yamaha CP2 | 72.7 @4750 | 67 @6500 | 57.4 @9243 | 54.0 @8750 | **106 %** |
+| Yamaha CP3 | 85.1 @4000 | 93 @7000 | 75.4 @10004 | 87.5 @10000 | 86 % |
+| Yamaha CP4 | 85.6 @5750 | 111 @9000 | 76.7 @11009 | 118 @11500 | 65 % |
+| Honda K20A | 222.0 @3249 | 206 @7000 | 134.4 @7495 | 162 @8000 | 83 % |
+| GM LS3 | 624.4 @2500 | 575 @4600 | 281.3 @5253 | 321 @5900 | 88 % |
+| Toyota 2JZ | 437.7 @2750 | 427 @4000 | 198.6 @5488 | 239 @5600 | 83 % |
+
+Ce qui a changé depuis le début de la session, et ce qui reste :
+
+* **Le régime de puissance maximale est maintenant juste.** Le CP3 tombe à
+  10004 tr/min contre 10000 annoncés, le CP4 à 11009 contre 11500. Avant les
+  correctifs le CP3 culminait à 7178. C'est le gain du plateau de port, des
+  diamètres de soupape et de l'interpolation du déphaseur.
+* **Le couple maximal arrive toujours 1750-3750 tr/min trop tôt, sur les six
+  moteurs**, témoins compris. C'est le défaut principal restant et il n'est pas
+  dans les fichiers moteur : il est cohérent avec l'excès de pompage, qui croît
+  avec le régime et rabat donc la BMEP haut-régime.
+* **La valeur du couple maximal est bonne à 93-109 %.** Le simulateur sait faire
+  la bonne quantité de couple ; il ne sait pas encore la placer au bon régime.
+
+### Les deux correctifs qui ont produit ces gains
+
+**Plateau de port.** L'aire efficace de soupape était
+`min(courtine, 0.48 x aire_de_tête)` **puis** multipliée par le Cd en aval : la
+contraction au siège était donc comptée deux fois. Elle vaut maintenant
+`min(Cd x courtine, plateau x aire_de_tête)` avec 0.58 (adm.) et 0.51 (éch.),
+milieu de la fourchette de production (Heywood ch. 6), et le Cd qui voyage en
+aval devient 1.0. Gain seul, mesuré : CP2 39.0 -> 41.7 kW, CP3 56.4 -> 60.2,
+CP4 62.9 -> 66.7, K20A 129.2 -> 134.8, et les pics de VE remontent en régime.
+
+**Interpolation du déphaseur.** Une table `continuous_control` non rectangulaire
+tombait dans une pondération inverse-distance (Shepard), qui n'est pas monotone
+entre voisins : la table `sport_na` du K20A demande 28 deg d'avance admission à
+6000 tr/min et 12 deg à 8500, et l'ancien repli livrait encore 26 deg à
+5000 tr/min sans jamais redescendre. Remplacé par un linéaire par morceaux en
+régime (la charge ne départage que les points de même régime). Effet mesuré :
+le régime de puissance maximale monte sur **tous** les moteurs (K20A
+7331 -> 7705, LS3 5149 -> 5419, 2JZ 5287 -> 5576) sans changer la puissance
+maximale — un gain de forme de courbe, pas de niveau.
+
+### Couplage à connaître : le plateau tient le ralenti du Big Twin
+
+`EngineLab.IdleStabilityRegression` échoue maintenant sur **un** moteur : le
+Merlin cale en revenant d'un coup de gaz. Isolation mesurée :
+
+| état | Merlin | Big Twin |
+|---|---|---|
+| plateau corrigé (actuel) | cale après un blip | sain |
+| plateau d'origine (0.48, Cd en aval) | sain | **cale à ralenti établi** (4 symptômes) |
+
+Aucun des deux états n'est vert. Au dernier passage vert (01:46) le Big Twin
+tenait 764 tr/min pour une cible de 760 avec un minimum à 725 : il passait, mais
+il était déjà fragile. Le ralenti des gros cylindres du catalogue est donc
+**marginal**, et le plateau ne crée pas le défaut : il déplace le moteur qui
+bascule, parce que son surplus d'aire est ce qui maintient aujourd'hui le Big
+Twin en vie.
+
+Le plateau **ne doit pas** être annulé pour faire passer la porte : c'est une
+correction juste (double comptage supprimé), mesurée, et qui vaut ~7 % de
+puissance sur tout le catalogue. Ce qui doit être corrigé, c'est le ralenti des
+gros cylindres — le « verrouillage par noyade » déjà ouvert sur le Merlin. Le
+déphaseur n'y est pour rien : `v12_aircraft` et `v_twin_torque` n'ont pas de
+table `continuous_control`, et la fonction sort avant tout calcul quand la table
+est vide.
+
+### Deux observations que le nouveau télémètre rend lisibles
+
+**Le rapport de piégeage est sain partout.** `ve / delivered_ve` vaut 1.003-1.017
+sur les six moteurs et sur toute leur plage. Les deux comptabilités n'empruntent
+pas le même chemin jusqu'à `EngineState`, donc leur accord est un contrôle vivant
+du bilan d'oxygène, et aucun moteur ne montre la signature > 1.05 d'une
+combustion incomplète.
+
+**Le 2JZ suralimenté a la pire boucle de pompage du catalogue**, ce qui est
+physiquement à l'envers : -2.32 bar à 5000 tr/min et -3.12 bar à 6000, contre
+-1.76 pour le K20A atmosphérique au même régime relatif. Un moteur suraliminté
+paie bien la contre-pression de turbine à l'échappement, mais la suralimentation
+pousse le piston pendant l'admission, donc sa PMEP nette au WOT doit être petite,
+voire positive. Un déficit cinq fois trop grand sur le seul moteur boosté du
+catalogue désigne le couplage compresseur/plénum, pas les soupapes. À instrumenter
+séparément — ce n'est pas le même défaut que l'excès de pompage atmosphérique.

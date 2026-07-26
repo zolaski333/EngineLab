@@ -180,6 +180,24 @@ public:
         return outletSamples_;
     }
 
+    /** Add species mass as a source in the duct cell adjacent to a cylinder
+     * port, together with its sensible internal energy at temperatureK and an
+     * optional additional heat term (negative for evaporation charge cooling).
+     *
+     * This is the network-side half of a port fuel injector or secondary-air
+     * source: the mass appears with zero axial momentum, exactly like a wall
+     * film evaporating into the stream. The candidate state is committed only
+     * if it stays physically admissible, so a pathological command degrades to
+     * a refused injection instead of a poisoned solve. Ports attached to a
+     * junction are not supported (no compiled layout produces one for a runner
+     * and a junction's primitive cache is not owned by the duct).
+     */
+    [[nodiscard]] bool injectSpeciesAtPort(std::size_t portIndex,
+                                           GasSpecies species,
+                                           double massKg,
+                                           double temperatureK,
+                                           double additionalHeatJ) noexcept;
+
 private:
     struct ConservedFlowRate final {
         std::array<double, gasSpeciesCount> speciesMassKgPerS {};

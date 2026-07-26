@@ -451,14 +451,22 @@ double ConservativeGasSystem::pressureEquilibriumMoles(const GasCell& source,
                                                          double directionX,
                                                          double directionY,
                                                          double requestedMoles,
-                                                         bool includeDynamicPressure) noexcept {
+                                                         bool includeDynamicPressure,
+                                                         double biasSourceKpa,
+                                                         double biasSinkKpa) noexcept {
+    // The bias travels with each cell so the equilibrium the bisection converges
+    // to is the *biased* one: source is willing to give up moles until its static
+    // pressure plus its ram bias equals the sink's, which lets the sink (cylinder)
+    // fill above the source's static pressure by (biasSource - biasSink). Without
+    // threading it here the un-biased clamp would cancel the ram entirely.
     const auto effectivePressure = [includeDynamicPressure](const GasCell& cell,
-                                                             double dx, double dy) noexcept {
-        return cell.pressureKpa() + (includeDynamicPressure
+                                                             double dx, double dy,
+                                                             double bias) noexcept {
+        return cell.pressureKpa() + bias + (includeDynamicPressure
             ? cell.dynamicPressureKpa(dx, dy) : 0.0);
     };
-    const auto sourceEffective = effectivePressure(source, directionX, directionY);
-    const auto sinkEffective = effectivePressure(sink, directionX, directionY);
+    const auto sourceEffective = effectivePressure(source, directionX, directionY, biasSourceKpa);
+    const auto sinkEffective = effectivePressure(sink, directionX, directionY, biasSinkKpa);
     if (sourceEffective <= sinkEffective || source.totalMoles() <= 1.0e-15) return 0.0;
     auto low = 0.0;
     auto high = std::min(std::max(0.0, requestedMoles), source.totalMoles() * 0.95);
@@ -466,9 +474,9 @@ double ConservativeGasSystem::pressureEquilibriumMoles(const GasCell& source,
     auto sinkAtRequested = sink;
     (void)transfer(sourceAtRequested, sinkAtRequested, high);
     const auto requestedSourcePressure = effectivePressure(
-        sourceAtRequested, directionX, directionY);
+        sourceAtRequested, directionX, directionY, biasSourceKpa);
     const auto requestedSinkPressure = effectivePressure(
-        sinkAtRequested, directionX, directionY);
+        sinkAtRequested, directionX, directionY, biasSinkKpa);
     if (requestedSourcePressure >= requestedSinkPressure) return high;
     // Keep `low` on the non-crossed side: a committed transfer may approach
     // equilibrium but must never reverse the pressure gradient.
@@ -490,8 +498,8 @@ double ConservativeGasSystem::pressureEquilibriumMoles(const GasCell& source,
         auto sourceCopy = source;
         auto sinkCopy = sink;
         (void)transfer(sourceCopy, sinkCopy, middle);
-        const auto sourcePressure = effectivePressure(sourceCopy, directionX, directionY);
-        const auto sinkPressure = effectivePressure(sinkCopy, directionX, directionY);
+        const auto sourcePressure = effectivePressure(sourceCopy, directionX, directionY, biasSourceKpa);
+        const auto sinkPressure = effectivePressure(sinkCopy, directionX, directionY, biasSinkKpa);
         if (sourcePressure > sinkPressure) low = middle;
         else high = middle;
     }
@@ -576,11 +584,13 @@ GasFlowResult ConservativeGasSystem::flow(const FlowParameters& params) noexcept
     //  P_eff(second) = P_static(second) + q(second on the same interface normal)
     // This models gas inertia: a runner with momentum toward the cylinder
     // effectively raises the inlet pressure seen by the valve.
-    const auto pEff0 = first.pressureKpa()  + first.dynamicPressureKpa( dirX,  dirY);
+    const auto pEff0 = first.pressureKpa()  + first.dynamicPressureKpa( dirX,  dirY)
+        + params.biasKpa0;
     // Both cells must be projected on the same interface normal. Reversing the
     // second normal changes +rho*v^2 into -rho*v^2 and invents a pressure drop
     // even for two equal co-flowing cells.
-    const auto pEff1 = second.pressureKpa() + second.dynamicPressureKpa(dirX, dirY);
+    const auto pEff1 = second.pressureKpa() + second.dynamicPressureKpa(dirX, dirY)
+        + params.biasKpa1;
 
     auto* source = &first;
     auto* sink   = &second;
@@ -608,8 +618,13 @@ GasFlowResult ConservativeGasSystem::flow(const FlowParameters& params) noexcept
     // Pressure comparison remains on the canonical interface normal even when
     // the material flow reverses; flipping this normal a second time reverses
     // the signed momentum flux and can suppress a legitimate reverse flow.
+    // The bias follows whichever cell became the source so the equilibrium bound
+    // is computed against the same effective pressures as the mass-flow driver.
+    const auto biasSource = (source == &first) ? params.biasKpa0 : params.biasKpa1;
+    const auto biasSink   = (source == &first) ? params.biasKpa1 : params.biasKpa0;
     const auto equilibriumMoles = pressureEquilibriumMoles(*source, *sink, dirX, dirY,
-                                                            requestedMoles, true);
+                                                            requestedMoles, true,
+                                                            biasSource, biasSink);
     auto result = transfer(*source, *sink, std::min(requestedMoles, equilibriumMoles));
 
     // Jet momentum injection with explicit cross-section overrides.

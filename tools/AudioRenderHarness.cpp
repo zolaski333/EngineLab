@@ -220,6 +220,7 @@ struct Metrics {
     float maxExhaustPressurePa {};
     float maxIntakePressurePa {};
     float maxStructuralPressurePa {};
+    AcousticIntakeNetwork::Diagnostics intakeDiagnostics {};
     double observerDistanceM { 1.0 };
     // Which path produced the audio. A physical path that never activated would
     // otherwise be reported as an unchanged-sounding physical path.
@@ -585,6 +586,7 @@ Metrics renderEngine(const EngineConfig& baseConfig, const WavData& ir,
     m.maxExhaustPressurePa = renderer.maxObservedExhaustPressurePa();
     m.maxIntakePressurePa = renderer.maxObservedIntakePressurePa();
     m.maxStructuralPressurePa = renderer.maxObservedStructuralPressurePa();
+    m.intakeDiagnostics = renderer.intakeNetworkDiagnostics();
     const auto microphoneDistance = [](const AcousticPoint3M& point) {
         return std::sqrt(point.x * point.x + point.y * point.y
             + point.z * point.z);
@@ -649,6 +651,12 @@ Metrics renderEngine(const EngineConfig& baseConfig, const WavData& ir,
               << " preLimiter=" << m.maxPreLimiterMagnitude
               << " layerPa=" << std::setprecision(1) << m.maxExhaustPressurePa
               << '/' << m.maxIntakePressurePa << '/' << m.maxStructuralPressurePa
+              << " intakeStagesPa=" << m.intakeDiagnostics.sourcePressurePa
+              << '/' << m.intakeDiagnostics.runnerPressurePa
+              << '/' << m.intakeDiagnostics.plenumPressurePa
+              << '/' << m.intakeDiagnostics.airboxPressurePa
+              << '/' << m.intakeDiagnostics.mouthPressurePa
+              << '/' << m.intakeDiagnostics.radiatedPressurePa
               << " finite=" << (m.left.scan.finite && m.right.scan.finite ? "yes" : "NO")
               << '\n';
     return m;

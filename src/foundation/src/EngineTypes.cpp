@@ -324,33 +324,57 @@ ValveControlSample interpolateValveControl(const ValveControlConfig& control, do
     // Schema-v1 accepted sparse point clouds. Retain a deterministic fallback
     // for those files, but clamp at the calibrated axes so extrapolation can
     // never drift beyond the edge cells of a tuning table.
-    const auto rpmScale = std::max(1.0, maximumRpm->rpm - minimumRpm->rpm);
-    const auto loadScale = std::max(0.01, maximumLoad->load - minimumLoad->load);
-    double weightSum = 0.0;
-    result.intakeAdvanceDegrees = 0.0;
-    result.exhaustAdvanceDegrees = 0.0;
-    result.liftMultiplier = 0.0;
-    for (const auto& sample : control.samples) {
-        const auto rpmDistance = (clampedRpm - sample.rpm) / rpmScale;
-        const auto loadDistance = (clampedLoad - sample.load) / loadScale;
-        const auto squaredDistance = rpmDistance * rpmDistance + loadDistance * loadDistance;
-        if (squaredDistance < 1.0e-12) {
-            result.intakeAdvanceDegrees = sample.intakeAdvanceDegrees;
-            result.exhaustAdvanceDegrees = sample.exhaustAdvanceDegrees;
-            result.liftMultiplier = sample.liftMultiplier;
-            return result;
-        }
-        const auto weight = 1.0 / squaredDistance;
-        weightSum += weight;
-        result.intakeAdvanceDegrees += sample.intakeAdvanceDegrees * weight;
-        result.exhaustAdvanceDegrees += sample.exhaustAdvanceDegrees * weight;
-        result.liftMultiplier += sample.liftMultiplier * weight;
+    // A sparse table is a SCHEDULE, so interpolate along it in rpm rather than
+    // averaging it isotropically.
+    //
+    // This used to be inverse-distance (Shepard) weighting over all samples in a
+    // normalised rpm/load plane. That is wrong for a cam-phaser map in a way
+    // that is invisible until it is measured: Shepard weighting is not monotone
+    // between neighbours, so every sample pulls on every query, and a schedule
+    // whose author wrote "advance hard in the midrange, then fall back at the
+    // top" instead gets the midrange value smeared across the whole upper range.
+    // Measured on the K20A, whose sport_na table asks for 28 deg of intake
+    // advance at 6000 rpm and 12 deg at 8500: the old fallback still delivered
+    // 26 deg at 5000 and never came back, holding intake valve closing ~30 deg
+    // early through the entire power band. Disabling the phaser outright was
+    // worth +16 % peak power, which is the size of the error being corrected
+    // here. See docs/physics-audit.md.
+    //
+    // Piecewise-linear in rpm is monotone between authored points, reproduces
+    // the authored value exactly at each of them, and cannot extrapolate past
+    // the ends (rpm is clamped above). Samples sharing an rpm are blended by
+    // load first, so a table that does vary load at fixed rpm still works.
+    auto lowerIndex = control.samples.size();
+    auto upperIndex = control.samples.size();
+    for (std::size_t index = 0; index < control.samples.size(); ++index) {
+        const auto& sample = control.samples[index];
+        if (sample.rpm <= clampedRpm
+            && (lowerIndex == control.samples.size()
+                || sample.rpm > control.samples[lowerIndex].rpm
+                || (sample.rpm == control.samples[lowerIndex].rpm
+                    && std::abs(sample.load - clampedLoad)
+                        < std::abs(control.samples[lowerIndex].load - clampedLoad))))
+            lowerIndex = index;
+        if (sample.rpm >= clampedRpm
+            && (upperIndex == control.samples.size()
+                || sample.rpm < control.samples[upperIndex].rpm
+                || (sample.rpm == control.samples[upperIndex].rpm
+                    && std::abs(sample.load - clampedLoad)
+                        < std::abs(control.samples[upperIndex].load - clampedLoad))))
+            upperIndex = index;
     }
-    if (weightSum > 0.0) {
-        result.intakeAdvanceDegrees /= weightSum;
-        result.exhaustAdvanceDegrees /= weightSum;
-        result.liftMultiplier /= weightSum;
-    }
+    if (lowerIndex == control.samples.size()) lowerIndex = upperIndex;
+    if (upperIndex == control.samples.size()) upperIndex = lowerIndex;
+    if (lowerIndex == control.samples.size()) return result;
+    const auto& lower = control.samples[lowerIndex];
+    const auto& upper = control.samples[upperIndex];
+    const auto amount = upper.rpm > lower.rpm
+        ? (clampedRpm - lower.rpm) / (upper.rpm - lower.rpm) : 0.0;
+    result.intakeAdvanceDegrees = std::lerp(lower.intakeAdvanceDegrees,
+        upper.intakeAdvanceDegrees, amount);
+    result.exhaustAdvanceDegrees = std::lerp(lower.exhaustAdvanceDegrees,
+        upper.exhaustAdvanceDegrees, amount);
+    result.liftMultiplier = std::lerp(lower.liftMultiplier, upper.liftMultiplier, amount);
     return result;
 }
 

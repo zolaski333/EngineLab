@@ -288,4 +288,107 @@ ExhaustNetworkLayout ExhaustNetworkLayout::compile(
     return layout;
 }
 
+ExhaustNetworkLayout ExhaustNetworkLayout::assemble(
+    std::vector<CompiledExhaustDuct> ducts,
+    std::vector<CompiledExhaustJunction> junctions,
+    std::vector<CompiledExhaustInterface> interfaces,
+    std::vector<CompiledCylinderPort> cylinderPorts,
+    std::vector<CompiledExhaustOutlet> outlets,
+    ExhaustNetworkDiscretisation discretisation) {
+    ExhaustNetworkLayout layout;
+    layout.discretisation_ = discretisation;
+    if (!discretisation.valid()) {
+        layout.diagnostics_.push_back(
+            { ExhaustNetworkLayoutIssue::invalidDiscretisation, 0 });
+        return layout;
+    }
+    layout.ducts_ = std::move(ducts);
+    layout.junctions_ = std::move(junctions);
+    layout.interfaces_ = std::move(interfaces);
+    layout.cylinderPorts_ = std::move(cylinderPorts);
+    layout.outlets_ = std::move(outlets);
+
+    const auto finitePositive = [](double value) {
+        return std::isfinite(value) && value > 0.0;
+    };
+    for (const auto& duct : layout.ducts_) {
+        if (!finitePositive(duct.lengthM) || !finitePositive(duct.flowAreaM2)
+            || !finitePositive(duct.connectionAreaM2)
+            || !finitePositive(duct.hydraulicDiameterM)
+            || !(duct.lossCoefficient >= 0.0) || !std::isfinite(duct.lossCoefficient)
+            || duct.cellCount < 1
+            || duct.cellCount > discretisation.maximumCellsPerDuct) {
+            layout.diagnostics_.push_back(
+                { ExhaustNetworkLayoutIssue::unresolvedEndpoint, duct.nodeId });
+        }
+        layout.totalCellCount_ += duct.cellCount;
+    }
+    for (const auto& junction : layout.junctions_) {
+        if (!finitePositive(junction.volumeM3)
+            || !finitePositive(junction.characteristicDiameterM)) {
+            layout.diagnostics_.push_back(
+                { ExhaustNetworkLayoutIssue::unresolvedEndpoint, junction.nodeId });
+        }
+    }
+    if (layout.totalCellCount_ > discretisation.maximumTotalCells) {
+        layout.diagnostics_.push_back(
+            { ExhaustNetworkLayoutIssue::cellBudgetExceeded, 0 });
+    }
+
+    // Exact face coverage: every duct face is claimed exactly once, and every
+    // element sits at the face orientation whose flux sign `evaluateStage`
+    // actually applies (see the header comment).
+    std::vector<std::uint8_t> inletClaims(layout.ducts_.size(), 0);
+    std::vector<std::uint8_t> outletClaims(layout.ducts_.size(), 0);
+    const auto endpointInRange = [&layout](const ExhaustEndpoint& endpoint) {
+        return endpoint.type == ExhaustEndpointType::junction
+            ? endpoint.elementIndex < layout.junctions_.size()
+            : endpoint.elementIndex < layout.ducts_.size();
+    };
+    const auto claim = [&](const ExhaustEndpoint& endpoint) {
+        if (endpoint.type == ExhaustEndpointType::junction) return true;
+        auto& claims = endpoint.type == ExhaustEndpointType::ductInlet
+            ? inletClaims[endpoint.elementIndex]
+            : outletClaims[endpoint.elementIndex];
+        ++claims;
+        return claims == 1;
+    };
+    const auto reject = [&layout](std::uint32_t nodeId) {
+        layout.diagnostics_.push_back(
+            { ExhaustNetworkLayoutIssue::unresolvedEndpoint, nodeId });
+    };
+    for (const auto& connection : layout.interfaces_) {
+        if (!endpointInRange(connection.upstream)
+            || !endpointInRange(connection.downstream)
+            || connection.upstream.type == ExhaustEndpointType::ductInlet
+            || connection.downstream.type == ExhaustEndpointType::ductOutlet
+            || !claim(connection.upstream) || !claim(connection.downstream))
+            reject(connection.upstream.nodeId);
+    }
+    for (const auto& port : layout.cylinderPorts_) {
+        if (!endpointInRange(port.networkEndpoint)
+            || port.networkEndpoint.type == ExhaustEndpointType::ductOutlet
+            || !finitePositive(port.runnerConnectionAreaM2)
+            || !(port.dischargeCoefficient > 0.0)
+            || !claim(port.networkEndpoint))
+            reject(port.cylinderId);
+    }
+    for (const auto& outlet : layout.outlets_) {
+        if (!endpointInRange(outlet.networkEndpoint)
+            || outlet.networkEndpoint.type == ExhaustEndpointType::ductInlet
+            || !finitePositive(outlet.openingAreaM2)
+            || !(outlet.dischargeCoefficient > 0.0)
+            || !claim(outlet.networkEndpoint))
+            reject(outlet.outletNodeId);
+    }
+    for (std::size_t index = 0; index < layout.ducts_.size(); ++index) {
+        if (inletClaims[index] != 1 || outletClaims[index] != 1)
+            reject(layout.ducts_[index].nodeId);
+    }
+
+    layout.valid_ = layout.diagnostics_.empty() && !layout.ducts_.empty()
+        && !layout.cylinderPorts_.empty() && !layout.outlets_.empty();
+    return layout;
+}
+
 } // namespace enginelab::gasdynamics

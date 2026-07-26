@@ -55,6 +55,18 @@ public:
             * previous.sourceTemperatureK
             / (previous.sourcePressureKpa * currentSourceTemperatureK);
         const auto predicted = previous.freshAirMassMg * densityRatio;
+        // The resolved-oxygen floor is deliberately double-edged, and it must
+        // stay paired with symmetric FUEL accounting at the metering site.
+        // After a lean or misfired cycle the chamber keeps its unburned air;
+        // flooring the request on that oxygen is a real anti-stall enrichment
+        // (removing it made two turbo idles dip toward stall). But the same
+        // retained charge keeps its unburned FUEL, and if the metering only
+        // counts that fuel while the intake valve is open, the floor doubles
+        // the request exactly when the engine is flooded — measured on the
+        // V12 at idle catch: 106 mg requested for a ~500 mg charge, an AFR-3
+        // misfire spiral that stalled it. The pairing lives in
+        // EngineSimulator's `trappedCylinderFuel`: after a misfire the
+        // chamber's fuel counts against the request even with the valve shut.
         return std::isfinite(predicted) && predicted >= 0.0
             ? std::max(resolved, predicted) : resolved;
     }

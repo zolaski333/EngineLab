@@ -131,6 +131,34 @@ public:
         const ExhaustGraph& graph,
         ExhaustNetworkDiscretisation discretisation = {});
 
+    /** Assemble a layout from explicit elements, without an authored graph.
+     *
+     * This exists for networks whose topology is owned by the simulator rather
+     * than by an exhaust author — the first user is the 1-D intake runner
+     * network, which is one duct per cylinder with the plenum as the ambient
+     * reservoir. The solver itself is duct-direction agnostic, but the
+     * boundary flux conventions are not: `compressibleValveFlux` treats the
+     * cylinder as the left state and the open-end characteristic treats the
+     * interior as the left state, and `evaluateStage` applies both without an
+     * endpoint-type sign inversion. Compiled exhaust layouts therefore only
+     * ever attach cylinder ports at duct INLETS and outlets at duct OUTLETS,
+     * and this factory enforces the same orientation (junctions are
+     * orientation-free and accepted for either). Interfaces must run
+     * ductOutlet/junction -> ductInlet/junction for the same reason.
+     *
+     * Every duct face must be covered exactly once by an interface, port or
+     * outlet: `evaluateStage` refuses to advance a network with an uncovered
+     * face, so a layout that under- or over-covers is rejected here with an
+     * `unresolvedEndpoint` diagnostic instead of failing every advance later.
+     */
+    [[nodiscard]] static ExhaustNetworkLayout assemble(
+        std::vector<CompiledExhaustDuct> ducts,
+        std::vector<CompiledExhaustJunction> junctions,
+        std::vector<CompiledExhaustInterface> interfaces,
+        std::vector<CompiledCylinderPort> cylinderPorts,
+        std::vector<CompiledExhaustOutlet> outlets,
+        ExhaustNetworkDiscretisation discretisation = {});
+
     [[nodiscard]] bool valid() const noexcept { return valid_; }
     [[nodiscard]] std::span<const CompiledExhaustDuct> ducts() const noexcept { return ducts_; }
     [[nodiscard]] std::span<const CompiledExhaustJunction> junctions() const noexcept {
