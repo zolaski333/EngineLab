@@ -1716,10 +1716,55 @@ encore ouverte de 13 à 4 mm et que le piston chasse. Le gaz est comprimé au li
 d'être évacué. La vidange n'est pas non plus terminée au PMB (~3.1 bar à 180°
 contre 1.64 bar dans le tube).
 
-Les deux hypothèses vivantes, non mesurées : la vidange qui traîne au-delà du PMB
-paie très cher le début du temps d'échappement, et le réseau qui n'encaisse pas
-le **pic** d'impulsion même s'il encaisse la moyenne. Elles ne sont pas
-indépendantes. Le critère de réussite est la promotion de `EngineLab.GasExchange`
-en bloquant (`--enforce-gas-exchange` dans `tests/CMakeLists.txt`) : ses deux
-plafonds sont gelés depuis la littérature et **ne doivent jamais être élargis**
-pour obtenir du vert.
+### La soupape est définitivement hors de cause (mesuré, expérience décisive)
+
+L'oracle mesuré sur la **moitié échappement** seule, et non plus sur la PMEP
+totale, retire un **23-26 % constant au-dessus de 2500 tr/min** (et 11 % de
+*plus* de perte à 2000, où le couplage n'est pas le problème) :
+
+| tr/min | production | oracle | oracle + aire soupape x6 |
+|---|---|---|---|
+| 2000 | -0.148 | -0.165 | -0.107 |
+| 4000 | -0.560 | -0.398 | -0.377 |
+| 6000 | -1.214 | -0.933 | -0.893 |
+| 6500 | -1.280 | -0.988 | -0.941 |
+
+La troisième colonne est l'expérience décisive : plateau d'échappement porté de
+0.51 à **3.00** de l'aire de tête — six fois, géométriquement impossible — *avec*
+l'oracle actif. À 6000 tr/min cela ne retire que **4 %**. À 2000 tr/min cela en
+retire 35 %, ce qui confirme au passage que l'aire gouverne bien le bas régime,
+là où le défaut n'est pas.
+
+La preuve positive vient avec : à couplage identique, ouvrir la soupape six fois
+ne fait pas *baisser* la pression du tube primaire, elle la fait légèrement
+**monter** (170.3 -> 172.6 kPa de crête à 6000). Le cylindre ne peut pas
+descendre sous son tube, et la pression du tube est fixée par le réseau, pas par
+la soupape.
+
+**Conclusion : la perte de pompage du temps d'échappement est fixée en aval de la
+soupape.** Les trois hypothèses « côté cylindre » (aire, loi de débit, phasage de
+la vidange) sont toutes tombées. Le banc stationnaire n'avait réfuté qu'une
+restriction au débit **moyen** ; le pic de vidange vaut plusieurs fois la moyenne
+et le banc ne peut pas le voir.
+
+### Ce qui reste à faire, dans l'ordre
+
+1. **Corriger la quadrature du couplage.** Les 23-26 % sont réels et ce n'est pas
+   un artefact d'oracle : c'est la bonne intégrale contre une moyenne. Avancer le
+   réseau à chaque sous-pas est trop cher (le réseau vaut 29-52 % du pas), mais
+   la *formule d'orifice* est bon marché. Sous-échantillonner le **flux** à
+   chaque sous-pas mécanique, accumuler masse et énergie transférées, et ne
+   remettre au réseau qu'une seule fois par intervalle de couplage donne la même
+   quadrature sans le coût. Attention : cela change la voix d'échappement, donc
+   c'est un changement de sonorité assumé, à mesurer au harnais audio.
+   *Ne pas reprendre la pondération par la conductance de soupape : elle a été
+   mesurée et ne change rien (-1.522 -> -1.525 bar à 6000). Le biais est sur
+   l'état moyenné, pas sur l'aire moyennée.*
+2. **Instrumenter le réseau en régime pulsé**, pas stationnaire. C'est le seul
+   endroit où le facteur ~3.5 restant peut vivre.
+
+Le critère de réussite est la promotion de `EngineLab.GasExchange` en bloquant
+(`--enforce-gas-exchange` dans `tests/CMakeLists.txt`) : ses deux plafonds sont
+gelés depuis la littérature et **ne doivent jamais être élargis** pour obtenir du
+vert. État actuel, pour mémoire : crit3 0.525 contre 0.350, crit4 1.522 contre
+0.750.
