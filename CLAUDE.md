@@ -60,6 +60,16 @@ the default `convolution` setting via the harness before and after.
   known engine across an rpm sweep and reports LPP / CA10-50-90 / IMEP. Peak
   pressure location is the bug-independent physical truth; a single operating
   point cannot tell a correct model from a compensated one, so it sweeps.
+- **`tools/RealtimeBudgetHarness.cpp`** (`EngineLabRealtimeBudgetHarness`) runs the
+  real `EngineRuntime` thread, at real thread priority, holding each catalogue
+  engine at a commanded speed, and reports the **realtime factor**: simulated
+  seconds produced per wall second. 1.0 is healthy; below 1.0 the whole simulation
+  is in slow motion. This is the only instrument that can see that failure —
+  `PhysicsPerfHarness` measures CPU per step and cannot know whether the step fit
+  in its slot, and the overrun counter says a deadline was missed but not by how
+  much work. `--rpm N --seconds S --filter NAME`, and `--enforce F` makes it a
+  gate. It deliberately does not report dropped telemetry: no audio thread drains
+  the queue here, so that count overflows on every engine and would mean nothing.
 
 Reference numbers for these gates come from engine/DSP literature, never from the
 simulator's current output, so tightening a gate later cannot re-calibrate the
@@ -182,17 +192,53 @@ test onto the behaviour it is meant to catch. Keep it that way.
   is void; one such claim in `docs/physics-audit.md` had to be retracted. Note the
   Radial R5 idles near ambient (95.6 kPa) and is the one engine sensitive to intake
   terms, but its baseline is healthy, so a failure there is the change's fault.
-- **The realtime bottleneck is the physics thread, not the audio callback.**
-  Measured on a recent 8-core laptop: the callback uses 15-33% of a 256-sample
-  budget, while the 240 Hz `EngineRuntime` loop misses 35% of its deadlines on a
-  V8 at 6500 rpm (17.5 ms worst lateness). Nothing is dropped, but the telemetry
-  that is the exhaust chain's only excitation arrives late and jittery — which is
-  why a heavy engine's render is not reproducible run to run. Optimising the
-  audio path is aiming at the wrong thread. Profiled, the binding case (V8 at
-  high rpm, ~99% of budget) is 41% per-cylinder physics, 29% exhaust FV network,
-  30% unparallelised "rest"; the V12 is the opposite (52% network). And **never
-  compare a perf CSV across an exhaust-geometry change** — doing so once put the
-  V12 at 158% of budget in these docs when it is at 77%. §18 has the numbers.
+- **The realtime bottleneck is the physics thread, not the audio callback**, and
+  the failure mode is not a dropped frame — it is *slow motion*. `EngineRuntime::run`
+  advances a fixed `1/240 s` of simulated time per iteration and sleeps to a wall
+  deadline; there is no accumulator, and past four steps of lateness it sets
+  `deadline = now` and discards the debt. So when a step costs more wall time than
+  it advances, simulated time falls behind real time permanently. Measure it with
+  **`EngineLabRealtimeBudgetHarness`**, which reports the *realtime factor*
+  (simulated seconds produced per wall second) from the real runtime thread —
+  neither CPU-time-per-step nor the overrun count can see this. On a 16-thread
+  laptop at a 5000 rpm dyno hold, after the fork-join removal below: CP2 twin
+  0.999, CP3 0.993, Hayabusa 0.803, K20A I4 **0.433**, Merlin V12 0.388, LS3 V8
+  **0.357**. The V8 therefore runs at about a third of real time. Two user-visible
+  consequences follow directly, and both were reported from the app before being
+  measured: controls respond late in proportion to cylinder count, and the
+  cylinder-pressure telemetry — the exhaust chain's *only* excitation — is
+  produced far slower than the audio thread consumes it, so the biggest engines
+  render nearly silent. **A silent V8 or V12 is a physics-thread symptom; do not
+  go looking for it in the audio path.**
+- **The sub-step cost is the 1-D intake network, by an order of magnitude.**
+  Measured per-block inside the sub-step loop (K20A / LS3 / Merlin / CP4):
+  intake 1-D **83.5 / 81.9 / 83.6 / 75.3%**, per-cylinder physics 7.3 / 7.3 / 4.9 /
+  10.3%, exhaust 1-D 4.2 / 7.1 / 8.9 / 6.4%, ECU under 0.6%. This **supersedes the
+  41% cylinder / 29% exhaust / 30% rest profile** previously recorded here, which
+  predates the 1-D intake runners. It is not CFL thrashing — `accepted/call` is
+  1.09 and `rejected/call` is 0.000 — it is ~8.1 us of largely fixed per-call cost
+  to advance one 6-12 cell runner, paid twice per mechanical sub-step per cylinder.
+  The runner mesh is ~30 mm cells whose own CFL limit allows ~66 us while the
+  mechanical sub-step calls it every ~26 us, so it is driven ~2.5x finer than its
+  own stability needs. Cutting that cost is the single highest-value performance
+  work left; note that multirating it the way the exhaust is multirated would
+  import the same averaging bias documented above, on the side that sets VE.
+- **A per-cylinder fork-join cannot pay for itself here, and was removed.** One
+  barrier per gas sub-step is ~19,000 dispatches/s on a V8 at 5,940 rpm. Four
+  variants were measured (realtime factor, LS3 / Merlin): broadcast wake plus a
+  2048-yield spin 0.266 / 0.286; per-worker targeted wake plus spin 0.249 / 0.256;
+  per-worker wake, no spin 0.282 / 0.336; **inline 0.343 / 0.396**. Every threaded
+  variant lost, and the spin actively stole cycles from the thread the barrier was
+  waiting on. Removal was verified bit-identical (LS3 torque, IMEP, VE, air_mg to
+  every printed digit). A real parallelisation would have to keep workers resident
+  *across* sub-steps — a different architecture, not a tuning of that one. Note
+  `decoupledSharedVolumeCylinderThreshold` (8) survives and is now purely the
+  Jacobi/Gauss-Seidel shared-volume choice: changing it moves large-engine
+  calibration for real.
+- **Never compare a perf CSV across an exhaust-geometry change** — doing so once
+  put the V12 at 158% of budget in these docs when it is at 77%. §18 has the
+  numbers. The audio callback itself remains comfortable at 15-33% of a
+  256-sample budget; that thread is not the problem.
 
 - **An idle failure is usually not caused by the commit that exposed it.** The
   catalogue's idles are marginal attractors and the simulator is deterministic,
@@ -225,7 +271,35 @@ test onto the behaviour it is meant to catch. Keep it that way.
   over cylinders of the *instantaneous exhaust runner* pressure — a blowdown peak
   envelope, not a collector mean. The `exh_kpa` column of every swept CSV reads
   like a mean and is not one. Any back-pressure or pumping argument built on it
-  is void; one was, and was withdrawn.
+  is void; one was, and was withdrawn. The GUI's own back-pressure warning was
+  built on it too and was therefore a **false positive by construction** — a
+  healthy LS3 peaks at 172 kPa against ~101 ambient while discharging freely, so
+  the message latched on and never cleared. Use `exhaustBackPressureKpa`, the
+  port mean damped over ~3 firing periods, which is what a manifold gauge reads.
+  The local variable feeding the peak is still called `collectorPressureKpa`;
+  it is not a collector value.
+- **The GUI diagnostics panel had two permanent false alarms, and each had a
+  different cause than it looked.** "Contre-pression excessive" was the peak/mean
+  confusion above. "Limitée par l'adhérence" was a *sticky OR* across the
+  driveline's mechanical sub-steps: one clipped sub-step out of five latched the
+  indicator for the whole frame, and with a slip-velocity tyre spring at
+  `normalForce * 7.5` N/(m/s) one clipped sub-step happens on every gearshift. It
+  now requires a majority of sub-steps. `tractionLimited` is display-only — no
+  physics reads it — so refining it is free.
+- **A motorcycle has three reductions and the primary was missing.** Crank →
+  clutch basket (1.6-2.0), gearbox, then chain. `TransmissionConfig` has no
+  primary field, so it must be folded into `final_drive_ratio` — "everything
+  outside the gearbox". `motorcycle_6_speed` shipped at `2.62 x 2.75 = 7.21` in
+  1st where an MT-07 is `1.925 x 2.846 x 2.688 = 14.73`, i.e. every bike was
+  geared ~1.6-2.0x too tall in every gear, halving wheel torque. Recognise it by
+  arithmetic, not by feel: 1st gear reached **141 km/h at 9,000 rpm** (real: 69)
+  and 6th reached 314 (real: ~189). Check any new vehicle the same way before
+  believing a torque or acceleration complaint.
+- **Longitudinal weight transfer is NOT modelled, and the traction limit is
+  static.** `tractionLimit = mu * m * g * drivenAxleWeightFraction` with the
+  fraction fixed at 0.55. A motorcycle accelerating hard transfers to ~0.9+ on
+  the rear, so rear grip is under-estimated by ~1.7x; a RWD car likewise. Adding
+  it needs wheelbase and CG height, which `VehicleConfig` does not carry. Open.
 - **Cell-centre primitives are not a profile at the shipped mesh.**
   `targetCellLengthM = 0.300` with `minimumCellsPerDuct = 1` gives a 760 mm
   primary three cells, and with the high-order reconstruction `rho*u` varies 2.4x

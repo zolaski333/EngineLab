@@ -422,3 +422,41 @@ The gate now scores compression ignition one-sided: only running *richer* than
 the smoke limit counts as an error. That is strictly tighter than the old
 two-sided band on the rich side, which is where the real failure -- sooting past
 the smoke limit -- lives. The tolerance was not widened.
+
+## 2026-07-27 — Le son des gros moteurs était un problème de thread physique
+
+Entrée courte : le détail complet, les tableaux et les hypothèses réfutées sont
+dans `docs/physics-audit.md`, section « Le simulateur tournait au ralenti, et le
+son en découlait ».
+
+Point de départ : plainte utilisateur sur l'audio (« plus il y a de cylindres,
+moins ça va », Merlin V12 et LS3 V8 quasi muets, décalage entrées/effet), avec la
+consigne explicite de ne pas corriger la génération du son avant d'avoir examiné
+tout ce qui la précède. Aucun des défauts trouvés n'est dans la chaîne audio.
+
+- **Nouvel instrument** `EngineLabRealtimeBudgetHarness` : facteur temps réel
+  (secondes simulées produites par seconde murale) mesuré sur le vrai thread
+  `EngineRuntime`. Le LS3 produisait 0.266, le Merlin 0.286. La boucle avance un
+  pas fixe de 1/240 s sans accumulateur et abandonne sa dette au-delà de quatre
+  pas de retard : la surcharge ne saute pas une trame, elle met tout au ralenti.
+- **Fork-join par cylindre retiré** : net loss, quatre variantes mesurées, toutes
+  perdantes. LS3 0.266 -> 0.343, Merlin 0.286 -> 0.396, **bit-identique**.
+  Une hypothèse intermédiaire (réveil `notify_all` des non-participants) a été
+  implémentée, mesurée, et **réfutée** : elle dégradait le résultat.
+- **Profil de coût remplacé** : l'admission 1-D vaut 75-84 % du sous-pas, la
+  physique cylindre 5-10 %. L'ancien 41/29/30 de `CLAUDE.md` est obsolète.
+- **Deux fausses alarmes GUI corrigées** : contre-pression (un pic lu comme une
+  moyenne ; nouveau champ `exhaustBackPressureKpa`) et adhérence (OU collant sur
+  les sous-pas). Ce qui alerte encore est vrai et pointe le pompage excessif déjà
+  documenté comme non résolu.
+- **Moto sans réduction primaire** : 7.21 en première au lieu de 14.73, donc
+  couple à la roue divisé par deux dans tous les rapports. Corrigé, contre-vérifié
+  sur la vitesse de pointe.
+
+Suite complète verte (19 tests ; le test du fork-join disparaît avec lui).
+
+**Non résolu et assumé** : après retrait du fork-join le facteur temps réel reste
+à 0.33-0.43 sur tous les moteurs de 4 cylindres et plus. Le fork-join ne valait
+qu'un tiers du déficit du V8. Tant que le coût de l'admission 1-D n'est pas
+réduit, le son des gros moteurs restera affamé, et aucune correction de la chaîne
+audio ne peut compenser ça.

@@ -30,12 +30,36 @@ std::vector<Diagnostic> EngineDiagnostics::evaluate(const EngineConfig& config, 
         if (injectorCapacity < 0.90)
             result.push_back({ DiagnosticSeverity::warning, "injection.capacity", "Debit injecteur ou transfert carburant insuffisant sous charge." });
     }
-    const auto exhaustDeltaKpa = state.exhaustPressureKpa - config.ambientPressureKpa;
-    const auto flowAllowance = 28.0 + engineDisplacementLitres(config) * 1.4
-        + config.exhaust.collectorDiameterMm * 0.10 + config.exhaust.outletDiameterMm * 0.06;
+    // Back pressure is a MEAN. This test used to read `exhaustPressureKpa`,
+    // which is the max over cylinders of the instantaneous runner pressure -- a
+    // blowdown peak envelope -- and compare it against an allowance sized for a
+    // mean. A healthy LS3 at 5,940 rpm peaks at 172 kPa against ~101 ambient
+    // while discharging freely, so the warning latched on and never cleared: it
+    // was a false positive by construction, not a reading. It now uses the
+    // damped port mean.
+    //
+    // Threshold from engine literature rather than from this simulator's own
+    // output: a production naturally aspirated exhaust runs roughly 15-30 kPa of
+    // mean back pressure at rated power, and a turbocharged one more because the
+    // turbine is a deliberate restriction. 40 kPa over ambient is therefore
+    // genuinely excessive for an NA engine; a turbo engine is allowed its turbine
+    // pressure ratio before the same complaint applies.
+    const auto backPressureDeltaKpa =
+        state.exhaustBackPressureKpa - config.ambientPressureKpa;
+    // A turbine is a deliberate restriction, and the pressure it needs upstream
+    // tracks the boost it is producing: for a matched turbo at comparable
+    // stage efficiencies the expansion ratio is of the same order as the
+    // compressor pressure ratio. So the allowance scales with delivered boost
+    // rather than sitting at some flat number that is simultaneously too tight
+    // at full boost and too loose off boost.
+    const auto turbocharged = config.forcedInduction.enabled
+        && config.forcedInduction.type == ForcedInductionType::turbocharger;
+    const auto boostAboveAmbientKpa = turbocharged
+        ? std::max(0.0, (state.boostPressureRatio - 1.0) * config.ambientPressureKpa)
+        : 0.0;
+    const auto allowanceKpa = 40.0 + boostAboveAmbientKpa;
     const auto stableHighLoad = state.load > 0.45 && state.rpm > config.idleRpm * 1.25;
-    if (stableHighLoad && exhaustDeltaKpa > flowAllowance
-        && state.exhaustPressureKpa / std::max(1.0, config.ambientPressureKpa) > 1.32)
+    if (stableHighLoad && backPressureDeltaKpa > allowanceKpa)
         result.push_back({ DiagnosticSeverity::warning, "exhaust.back_pressure", "Contre-pression d'echappement excessive." });
     if (state.damage > 0.5) result.push_back({ DiagnosticSeverity::critical, "mechanical.damage", "Dommages mecaniques importants : puissance et fiabilite degradees." });
     else if (state.wear > 0.35) result.push_back({ DiagnosticSeverity::warning, "mechanical.wear", "Usure mecanique mesurable." });

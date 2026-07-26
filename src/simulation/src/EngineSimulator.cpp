@@ -1,5 +1,4 @@
 #include <enginelab/simulation/EngineSimulator.hpp>
-#include <enginelab/simulation/SubstepParallel.hpp>
 #include <enginelab/simulation/TransientChargeEstimator.hpp>
 #include <enginelab/exhaust/ExhaustGraph.hpp>
 #include <enginelab/physics/MechanicalKinematics.hpp>
@@ -106,9 +105,30 @@ namespace {
     };
 }
 
-// Below this cylinder count the per-cylinder loop runs serially: the fork-join
-// dispatch latency outweighs the work, and the serial path stays bit-identical.
-constexpr std::size_t parallelCylinderThreshold = 8;
+// From this cylinder count up, the shared intake plenum is frozen at the start of
+// each gas sub-step and every cylinder reads that snapshot (Jacobi) instead of
+// seeing the previous cylinder's writes (Gauss-Seidel).
+//
+// The threshold originally existed to make a per-cylinder fork-join safe, and was
+// named for it. That fork-join has been REMOVED, and its removal is not an
+// optimisation to be reversed on a faster machine: the dispatch rate is one
+// barrier per gas sub-step, which at 5,940 rpm on a V8 is ~19,000/s, and no
+// condition-variable barrier can amortise a body that small. Measured on a
+// 16-thread laptop, realtime factor (simulated seconds produced per wall second,
+// EngineLabRealtimeBudgetHarness), LS3 V8 / Merlin V12:
+//
+//   fork-join, broadcast wake + 2048-yield spin   0.266 / 0.286
+//   fork-join, per-worker targeted wake + spin    0.249 / 0.256
+//   fork-join, per-worker wake, no spin           0.282 / 0.336
+//   inline (shipped)                              0.343 / 0.396
+//
+// Every threaded variant lost, and the spin actively stole cycles from the very
+// thread the barrier was waiting on. A real parallelisation here would have to
+// keep the worker threads resident ACROSS sub-steps, synchronising only where the
+// shared plenum is touched -- a different architecture, not a tuning of this one.
+// The removal was verified bit-identical on the LS3 (torque, IMEP, VE and
+// air_mg agree to every printed digit).
+constexpr std::size_t decoupledSharedVolumeCylinderThreshold = 8;
 
 // Representative metal defaults for thermal walls. They describe
 // geometry/material, never a target gas temperature: both wall temperatures
@@ -832,10 +852,29 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
         // constructor. There is intentionally no lumped-exhaust fallback.
         auto& physicalExhaustNetwork = *physicalExhaustNetwork_;
         double collectorPressureKpa = config_.ambientPressureKpa;
-        for (const auto& exchange : physicalExhaustNetwork.cylinderExchanges())
-            collectorPressureKpa = std::max(
-                collectorPressureKpa, exchange.networkPressurePa * 0.001);
+        // Spatial mean over the ports, taken in the same sweep as the peak. The
+        // peak is what audio and blowdown telemetry need; the mean is what back
+        // pressure means, and conflating them made a free-flowing engine look
+        // restricted. See EngineState::exhaustPressureKpa.
+        double portPressureSumKpa = 0.0;
+        std::size_t portPressureCount = 0;
+        for (const auto& exchange : physicalExhaustNetwork.cylinderExchanges()) {
+            const auto portKpa = exchange.networkPressurePa * 0.001;
+            collectorPressureKpa = std::max(collectorPressureKpa, portKpa);
+            portPressureSumKpa += portKpa;
+            ++portPressureCount;
+        }
         state_.exhaustPressureKpa = collectorPressureKpa;
+        // Damp the spatial mean over ~3 firing periods so the published figure is
+        // a gauge reading rather than a snapshot of wherever in the blowdown the
+        // sub-step happened to land. Floored so a cranking or stalled engine still
+        // converges instead of freezing at its initial value.
+        if (portPressureCount > 0) {
+            const auto instantaneousMeanKpa = portPressureSumKpa
+                / static_cast<double>(portPressureCount);
+            state_.exhaustBackPressureKpa = smooth(state_.exhaustBackPressureKpa,
+                instantaneousMeanKpa, subDt, std::max(4.0, firingFrequencyHz / 3.0));
+        }
         const auto backPressure = state_.exhaustPressureKpa;
         const auto combustion = physics_.evaluateCombustion(config_, state_, safeControls, ecuCommand, backPressure);
         const auto sparkCombustionAvailable =
@@ -894,18 +933,23 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
         std::array<bool, 32> exhaustStrokeForWork {};
         std::array<bool, 32> intakeCloseForTrappedAir {};
 
-        // Engines below the parallel threshold retain the original serial
-        // Gauss-Seidel shared-volume updates and shared PRNG sequence. Larger
-        // engines use a Jacobi snapshot even if this machine has only one usable
-        // participant, so their physics and PRNG sequence do not depend on the
-        // host's hardware concurrency.
+        // Small engines retain Gauss-Seidel shared-volume updates and a shared
+        // PRNG sequence; from this cylinder count up, the sub-step switches to a
+        // Jacobi snapshot instead.
+        //
+        // This is purely a PHYSICS choice and is keyed only to cylinder count, so
+        // that an engine integrates identically on every machine. It used to also
+        // gate a per-cylinder fork-join, which has been removed: see the note on
+        // `decoupledSharedVolumeCylinderThreshold` for the measurements. Do not
+        // re-couple the two -- changing this threshold changes the shared-volume
+        // solver for real, and would move every large engine's calibration.
         const auto decoupleSharedVolumes =
-            config_.cylinders.size() >= parallelCylinderThreshold;
+            config_.cylinders.size() >= decoupledSharedVolumeCylinderThreshold;
         // Freeze both shared control volumes at the start of the sub-step so that
-        // every parallel cylinder evaluates the same upstream/downstream state.
-        // The plenum snapshot keeps every parallel cylinder reading the same
-        // upstream state; writes to the plenum happen only in the serial
-        // intake-network advances, so no commit transaction is needed anymore.
+        // every cylinder evaluates the same upstream/downstream state.
+        // The plenum snapshot keeps every cylinder in the sub-step reading the
+        // same upstream state; writes to the plenum happen only in the
+        // intake-network advances, so no commit transaction is needed.
         std::optional<ParallelSubstepState> parallelState;
         if (decoupleSharedVolumes) {
             parallelState.emplace();
@@ -1584,24 +1628,13 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
             contribution.pistonSpeed += 2.0 * cylinder.strokeMm * 0.001 * state_.rpm / 60.0;
             if (!decoupleSharedVolumes) accumulateContribution(contribution);
         };
-        // The per-cylinder body writes only cylinder-private state (per-index
-        // arrays plus its own scratch entry), so it is safe to run across threads.
-        // A stopped engine stays inline so an idle application neither constructs
-        // nor repeatedly wakes the pool. The Jacobi/RNG choice above remains tied
-        // only to cylinder count, not to whether this particular sub-step threaded.
-        auto ranParallel = false;
-        if (decoupleSharedVolumes && !stationary) {
-            auto& executor = SubstepParallelExecutor::shared();
-            if (executor.participantCount() > 1) {
-                executor.parallelFor(config_.cylinders.size(), processCylinder,
-                    subStep + 1 < subStepCount);
-                ranParallel = true;
-            }
-        }
-        if (!ranParallel) {
-            for (std::size_t cylinderIndex = 0; cylinderIndex < config_.cylinders.size(); ++cylinderIndex)
-                processCylinder(cylinderIndex);
-        }
+        // Run inline. The body writes only cylinder-private state, so it *could*
+        // be threaded; it was, and the fork-join measured slower than this loop on
+        // every engine in the catalogue. See
+        // `decoupledSharedVolumeCylinderThreshold` above for the four measured
+        // variants before reaching for a thread pool here again.
+        for (std::size_t cylinderIndex = 0; cylinderIndex < config_.cylinders.size(); ++cylinderIndex)
+            processCylinder(cylinderIndex);
 
         // The 1-D intake runners advance in a symmetric split around the
         // exhaust coupling, exactly like the lumped valve orifice they
@@ -2519,6 +2552,7 @@ void EngineSimulator::reset() noexcept {
     state_.wastegateOpening = 0.0;
     state_.blowOffMassFlowKgPerSecond = 0.0;
     state_.exhaustPressureKpa = config_.ambientPressureKpa;
+    state_.exhaustBackPressureKpa = config_.ambientPressureKpa;
     state_.intakeRunnerPressureKpa = config_.ambientPressureKpa;
     state_.exhaustRunnerPressureKpa = config_.ambientPressureKpa;
     randomState_ = 0x6d2b79f5U;

@@ -12,12 +12,6 @@ target_link_libraries(EngineLabPhysicsRegressionTests PRIVATE EngineLab::Foundat
 enginelab_set_warnings(EngineLabPhysicsRegressionTests)
 add_test(NAME EngineLab.PhysicsRegression COMMAND EngineLabPhysicsRegressionTests)
 
-add_executable(EngineLabSubstepParallelTests SubstepParallelTests.cpp)
-target_link_libraries(EngineLabSubstepParallelTests PRIVATE EngineLab::Simulation)
-enginelab_set_warnings(EngineLabSubstepParallelTests)
-add_test(NAME EngineLab.SubstepParallel COMMAND EngineLabSubstepParallelTests)
-set_tests_properties(EngineLab.SubstepParallel PROPERTIES TIMEOUT 30)
-
 add_executable(EngineLabCombustionPhasingTests CombustionPhasingTests.cpp)
 target_link_libraries(EngineLabCombustionPhasingTests PRIVATE
     EngineLab::Foundation EngineLab::Events EngineLab::Physics EngineLab::Ecu

@@ -760,7 +760,22 @@ struct EngineState final {
     double ignitionAdvanceDegrees { 0.0 };
     double manifoldPressureKpa { 28.0 };
     double boostPressureRatio { 1.0 };
+    /**
+     * NOT back pressure. This is the `max` over cylinder ports of the
+     * INSTANTANEOUS exhaust-runner pressure -- a blowdown peak envelope. It
+     * reads like a mean and is not one: on a healthy V8 at 5,940 rpm it sits at
+     * 172 kPa while the gas is discharging freely. Audio and telemetry want the
+     * peak, so it stays; any back-pressure, pumping or restriction argument
+     * built on it is void. Use `exhaustBackPressureKpa` for that.
+     */
     double exhaustPressureKpa { 101.325 };
+    /**
+     * Cycle-mean exhaust back pressure: the port pressures averaged over the
+     * cylinders and then damped over several firing periods, which is what a
+     * real back-pressure gauge on a manifold boss reads. This is the quantity a
+     * restriction warning must be built on.
+     */
+    double exhaustBackPressureKpa { 101.325 };
     double intakeRunnerPressureKpa { 101.325 };
     double exhaustRunnerPressureKpa { 101.325 };
     double exhaustFlowGramsPerSecond { 0.0 };

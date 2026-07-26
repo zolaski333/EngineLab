@@ -44,6 +44,14 @@ if(MSVC)
 endif()
 enginelab_set_warnings(EngineLabAudioRenderHarness)
 
+add_executable(EngineLabRealtimeBudgetHarness RealtimeBudgetHarness.cpp)
+target_link_libraries(EngineLabRealtimeBudgetHarness PRIVATE
+    EngineLab::Runtime EngineLab::Simulation EngineLab::Foundation EngineLab::Physics
+    EngineLab::Ecu EngineLab::Events EngineLab::Exhaust EngineLab::Catalog
+    EngineLab::Diagnostics)
+target_compile_definitions(EngineLabRealtimeBudgetHarness PRIVATE ENGINELAB_CATALOG_ROOT="${CMAKE_SOURCE_DIR}")
+enginelab_set_warnings(EngineLabRealtimeBudgetHarness)
+
 add_executable(EngineLabAbClipRenderer AbClipRenderer.cpp)
 target_link_libraries(EngineLabAbClipRenderer PRIVATE
     EngineLab::Audio EngineLab::Simulation EngineLab::Foundation EngineLab::Physics

@@ -76,6 +76,15 @@ DuctWallHeatTransferResult DuctWallHeatTransferModel::advancePrepared(
     constexpr double referenceTemperatureK = 273.15;
     constexpr double sutherlandTemperatureK = 110.4;
     constexpr double prandtlNumber = 0.71;
+    // Gnielinski's Prandtl term is a compile-time constant, but `std::pow` is not
+    // constexpr, so it was being computed by a real libm call for every cell of
+    // every duct on every network sub-step -- tens of thousands of times a second,
+    // always to the same value, and with a non-integer exponent it is the most
+    // expensive call in this function. Evaluated once here instead. Deliberately
+    // `std::pow` rather than a literal, so the bits are exactly what the per-call
+    // version produced and the change stays bit-identical.
+    static const double prandtlTwoThirdsMinusOne =
+        std::pow(prandtlNumber, 2.0 / 3.0) - 1.0;
     // Gas properties at the film temperature: Sutherland viscosity and the
     // Eucken identity k = mu*Cp/Pr keep conductivity consistent with the
     // caller's mixture heat capacity instead of assuming room-temperature air.
@@ -95,12 +104,18 @@ DuctWallHeatTransferResult DuctWallHeatTransferModel::advancePrepared(
     // friction factor. Blend only across the transitional Reynolds interval.
     constexpr double laminarNusselt = 3.66;
     const auto turbulentReynolds = std::max(3'000.0, result.reynoldsNumber);
+    // Left as std::pow deliberately. Rewriting it as `logTerm * logTerm` was
+    // measured NOT bit-identical on this toolchain -- the LS3 moved from 423.614
+    // to 423.437 Nm and 5934.833 to 5932.104 mg of air at 5,940 rpm -- so MSVC's
+    // pow(x, 2.0) is not a single multiply. That is a physics change, not an
+    // optimisation, and the idles here are ULP-sensitive attractors. Not worth it
+    // for one integer-exponent call.
     const auto frictionFactor = 1.0 / std::pow(
         0.79 * std::log(turbulentReynolds) - 1.64, 2.0);
     const auto turbulentNusselt = (frictionFactor / 8.0)
         * (turbulentReynolds - 1'000.0) * prandtlNumber
         / (1.0 + 12.7 * std::sqrt(frictionFactor / 8.0)
-            * (std::pow(prandtlNumber, 2.0 / 3.0) - 1.0));
+            * prandtlTwoThirdsMinusOne);
     const auto turbulentBlend = std::clamp(
         (result.reynoldsNumber - 2'300.0) / (4'000.0 - 2'300.0), 0.0, 1.0);
     result.nusseltNumber = std::lerp(

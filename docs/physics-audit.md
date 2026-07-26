@@ -1768,3 +1768,171 @@ Le critère de réussite est la promotion de `EngineLab.GasExchange` en bloquant
 gelés depuis la littérature et **ne doivent jamais être élargis** pour obtenir du
 vert. État actuel, pour mémoire : crit3 0.525 contre 0.350, crit4 1.522 contre
 0.750.
+
+## Le simulateur tournait au ralenti, et le son en découlait (2026-07-26)
+
+Plainte utilisateur : « plus il y a de cylindres, moins ça va » ; le Merlin V12 et
+le LS3 V8 « presque aucun son » ; « il y a un décalage entre mes inputs et ce qui
+se passe » ; et deux messages permanents dans l'encart diagnostic. La consigne
+était de ne **pas** toucher à la génération du son avant d'avoir regardé tout ce
+qui la précède. C'était la bonne consigne : rien de ce qui suit n'est dans la
+chaîne audio.
+
+### La quantité qui manquait : le facteur temps réel
+
+`EngineRuntime::run` avance un pas **fixe** de `1/240 s` de temps simulé par
+itération, puis dort jusqu'à une échéance d'horloge murale. Il n'y a pas
+d'accumulateur, et au-delà de quatre pas de retard la boucle fait
+`deadline = now`, ce qui **abandonne la dette** au lieu de la rattraper. Dès
+qu'une itération coûte plus de temps mural qu'elle n'avance de temps simulé, la
+simulation entière passe au ralenti, définitivement.
+
+Aucun instrument existant ne pouvait le voir. `PhysicsPerfHarness` mesure le CPU
+par pas sans savoir si le pas tenait dans son créneau ; le compteur d'`overruns`
+dit qu'une échéance a été manquée, pas de combien de travail. D'où
+`tools/RealtimeBudgetHarness.cpp` (`EngineLabRealtimeBudgetHarness`), qui fait
+tourner le **vrai** thread `EngineRuntime` et rapporte
+`simulationTimeSeconds / temps mural`.
+
+Mesuré sur un portable 16 threads, maintien dyno à 5000 tr/min, avant correction :
+
+| moteur | cyl | facteur | moteur | cyl | facteur |
+|---|---|---|---|---|---|
+| CP2 twin | 2 | 1.000 | Audi I5 | 5 | 0.416 |
+| CP3 triple | 3 | 1.000 | 2JZ I6 | 6 | 0.402 |
+| Big Twin | 2 | 0.998 | Flat-6 | 6 | 0.399 |
+| Hayabusa I4 | 4 | 0.822 | Merlin V12 | 12 | 0.286 |
+| CP4 I4 | 4 | 0.824 | **LS3 V8** | 8 | **0.266** |
+| K20A I4 | 4 | 0.437 | | | |
+
+Le V8 produisait **un quart** de temps réel. Les deux pires moteurs du tableau
+sont exactement les deux que l'utilisateur avait nommés comme silencieux, et il
+les avait nommés avant que la mesure existe. Le mécanisme est direct : la
+télémétrie de pression cylindre est la *seule* excitation de la chaîne acoustique
+d'échappement ; produite à 0.27x la cadence à laquelle le thread audio la
+consomme, elle affame le modèle. **Un V8 muet est un symptôme du thread physique,
+pas un défaut audio.**
+
+### Le parallélisme coûtait plus qu'il ne rapportait
+
+`SubstepParallelExecutor` dispatchait un fork-join **par sous-pas gaz**, soit
+~19 000 barrières par seconde sur un V8 à 5940 tr/min. Quatre variantes mesurées
+(facteur temps réel, LS3 / Merlin) :
+
+| variante | LS3 | Merlin |
+|---|---|---|
+| origine : `notify_all` + spin 2048 `yield` | 0.266 | 0.286 |
+| réveil ciblé par worker + spin | 0.249 | 0.256 |
+| réveil ciblé, sans spin | 0.282 | 0.336 |
+| **en ligne (retenu)** | **0.343** | **0.396** |
+
+Toutes les variantes filées perdent. Mon hypothèse initiale — que `notify_all`
+réveillait les non-participants, qui brûlaient ensuite 2048 `yield()` (des appels
+système sous Windows) — était **fausse** : la corriger a *dégradé* le résultat. Le
+spin volait bien des cycles au thread même que la barrière attendait, mais le
+supprimer ne suffit pas non plus. Le problème est la cadence : aucune barrière à
+condition-variable ne s'amortit sur un corps aussi petit.
+
+L'exécuteur est retiré, ainsi que son test. Vérifié **bit-identique** sur le LS3 :
+couple 557.732 / 539.704 / 423.614, IMEP 11.964 / 12.130 / 10.306, VE
+0.895 / 0.839 / 0.805, air 6598.852 / 6179.919 / 5934.833 — tous les chiffres
+imprimés inchangés. Le coût du pas à 5940 tr/min passe de 15 062 à 10 541 us.
+
+`decoupledSharedVolumeCylinderThreshold` (8) survit et n'est **plus** lié au
+threading : c'est uniquement le choix Jacobi / Gauss-Seidel sur le volume
+partagé. Le déplacer déplace pour de vrai la calibration des gros moteurs.
+
+Une vraie parallélisation devrait garder les workers résidents **à travers** les
+sous-pas, en ne se synchronisant que là où le plénum partagé est touché. C'est une
+autre architecture, pas un réglage de celle-ci.
+
+### Où part réellement le temps : l'admission 1-D, à 80 %
+
+Instrumentation par bloc à l'intérieur du sous-pas (K20A / LS3 / Merlin / CP4) :
+
+| bloc | K20A | LS3 | Merlin | CP4 |
+|---|---|---|---|---|
+| **admission 1-D** | **83.5 %** | **81.9 %** | **83.6 %** | **75.3 %** |
+| physique cylindre | 7.3 % | 7.3 % | 4.9 % | 10.3 % |
+| échappement 1-D | 4.2 % | 7.1 % | 8.9 % | 6.4 % |
+| ECU | 0.4 % | 0.2 % | 0.1 % | 0.6 % |
+| reste | 4.6 % | 3.8 % | 2.5 % | 7.4 % |
+
+Ceci **remplace** le profil 41 % cylindres / 29 % échappement / 30 % reste qui
+figurait dans `CLAUDE.md` : ce profil précède les runners 1-D et n'est plus vrai.
+
+Ce n'est pas un emballement CFL : `accepted/call` vaut 1.09 et `rejected/call`
+0.000. C'est **8.1 us de coût largement fixe** pour avancer un runner de 6 à 12
+cellules, payé deux fois par sous-pas mécanique et par cylindre. Répartition
+interne d'un `advance` : flux 47 % (deux étages RK2), parois 24 %, préparation des
+primitives 12 %, pas stable 4 %, setup 1 %.
+
+Le maillage runner est en cellules de ~30 mm, dont la limite CFL propre autorise
+~66 us, alors que le sous-pas mécanique l'appelle tous les ~26 us : **le réseau
+est sollicité ~2.5x plus finement que sa propre stabilité ne l'exige.**
+
+Piste principale restante, par ordre de préférence :
+
+1. **Réduire le coût fixe par appel** — bit-identique si c'est fait proprement,
+   donc sans risque pour les attracteurs de ralenti. Les parois (24 %) ont une
+   constante de temps en *secondes* (masse d'aluminium) et sont intégrées
+   ~38 000 fois par seconde ; leur sous-cyclage est presque gratuit
+   physiquement. À mesurer, pas à supposer.
+2. **Ne pas** multirater l'admission comme l'échappement sans mesure : cela
+   importerait exactement le biais de moyennage documenté plus haut, du côté qui
+   fixe la VE.
+
+### Deux fausses alarmes dans l'encart diagnostic
+
+**« Contre-pression d'échappement excessive »** : le test lisait
+`state.exhaustPressureKpa` et le comparait à une tolérance dimensionnée pour une
+*moyenne*. Or ce champ est le `max` sur cylindres de la pression **instantanée**
+du tube — une enveloppe de pic de vidange, ce que `CLAUDE.md` documentait déjà
+sans que le diagnostic en tienne compte. Un LS3 sain culmine à 172 kPa contre
+~101 ambiants **en vidangeant librement** : le message s'allumait par
+construction et ne s'éteignait jamais. Un vrai champ moyen est désormais publié,
+`exhaustBackPressureKpa` (moyenne sur les ports, amortie sur ~3 périodes
+d'allumage : ce que lit un manomètre sur un piquage de collecteur), et le seuil
+vient de la littérature — ~15-30 kPa de contre-pression moyenne pour un
+atmosphérique à la puissance nominale, donc 40 kPa au-dessus de l'ambiant est
+franchement excessif ; 90 kPa pour un turbo, dont la turbine est une restriction
+voulue. Noter que la variable locale s'appelle toujours `collectorPressureKpa`
+alors qu'elle ne vaut pas une valeur de collecteur.
+
+**« Force longitudinale limitée par l'adhérence »** : `tractionLimited` était un
+OU **collant** sur les sous-pas mécaniques de la transmission. Un seul sous-pas
+écrêté sur cinq allumait le voyant pour toute la trame — et avec un ressort de
+pneu en *vitesse* de glissement à `normalForce * 7.5` N/(m/s), un sous-pas écrêté
+arrive à chaque passage de rapport. Il faut maintenant une majorité de sous-pas.
+Le champ n'est lu que par l'affichage, donc l'affiner ne touche à aucune physique.
+
+### La moto n'avait pas de réduction primaire
+
+Une moto a **trois** réductions : vilebrequin vers cloche d'embrayage (1.6-2.0),
+boîte, puis chaîne. `TransmissionConfig` n'a pas de champ primaire, il faut donc
+le replier dans `final_drive_ratio` — « tout ce qui est en dehors de la boîte ».
+`motorcycle_6_speed` sortait à `2.62 x 2.75 = 7.21` en première alors qu'un MT-07
+est à `1.925 x 2.846 x 2.688 = 14.73`.
+
+Reconnaissable à l'arithmétique, pas au ressenti : avec le rapport livré, la
+**première** atteignait 141 km/h à 9000 tr/min (réel : 69) et la sixième 314 km/h
+(réel : ~189). Toutes les motos étaient surmultipliées de 1.6 à 2.0x dans chaque
+rapport, donc le couple à la roue divisé par deux partout — exactement la plainte
+« très lent, peu importe le rapport, même avec le CP2 ». Le `cruiser_6_speed`
+avait le même défaut.
+
+**Reste ouvert** : le transfert de charge longitudinal n'est pas modélisé.
+`tractionLimit = mu * m * g * drivenAxleWeightFraction` avec la fraction figée à
+0.55. Une moto en accélération franche transfère à ~0.9 et plus sur l'arrière,
+donc l'adhérence arrière est sous-estimée d'un facteur ~1.7 ; une propulsion
+aussi. L'ajouter demande empattement et hauteur de centre de gravité, que
+`VehicleConfig` ne porte pas.
+
+### Ce qui n'est PAS encore expliqué
+
+Le facteur temps réel après retrait du fork-join reste très en dessous de 1.0 :
+LS3 0.357, Merlin 0.388, K20A 0.433, 2JZ 0.398, Flat-6 0.396, TDI 0.679,
+Hayabusa 0.803, CP4 0.809, et seuls les 2 et 3 cylindres tiennent le temps réel.
+Le fork-join ne valait qu'environ un tiers du déficit du V8. **Le reste est
+l'admission 1-D**, et tant qu'il n'est pas traité, le son des gros moteurs restera
+affamé. Aucune correction de la chaîne audio ne peut compenser ça.
