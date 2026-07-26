@@ -1392,6 +1392,15 @@ void RealtimeEngineAudio::render(juce::AudioBuffer<float>& output, int startSamp
                                 + static_cast<float>(std::sin(voice.bodyPhase * 3.97)) * 0.13F;
             const auto pipe = static_cast<float>(std::sin(voice.pipePhase)) * 0.48F
                             + static_cast<float>(std::sin(voice.pipePhase * 0.503)) * 0.19F;
+            // Compression ignition is not rendered as arbitrary "diesel
+            // noise". A short, steep heat release excites more of the head
+            // and block's upper modes than a slower premixed flame. The
+            // simulator publishes that pressure-rise proxy as sharpness, so
+            // the fallback voice uses it only to shorten the attack and drive
+            // this deterministic bending-mode component. The full acoustic
+            // path instead receives the resolved cylinder-pressure trace.
+            const auto compressionRise = voice.compressionIgnition
+                ? std::clamp(voice.combustionSharpness, 0.0F, 1.0F) : 0.0F;
             const auto jetCenter = std::clamp(520.0F + flow * 2'700.0F + pressure * 1'300.0F, 260.0F, 6'800.0F);
             const auto jetLowCoeff = static_cast<float>(1.0 - std::exp(-2.0 * std::numbers::pi * (jetCenter * 0.45F) / sampleRate_));
             const auto jetHighCoeff = static_cast<float>(1.0 - std::exp(-2.0 * std::numbers::pi * jetCenter / sampleRate_));
@@ -1399,7 +1408,9 @@ void RealtimeEngineAudio::render(juce::AudioBuffer<float>& output, int startSamp
             voice.jetLowState += std::clamp(jetLowCoeff, 0.001F, 0.82F) * (turbulentNoise - voice.jetLowState);
             voice.jetHighState += std::clamp(jetHighCoeff, 0.001F, 0.92F) * (voice.jetLowState - voice.jetHighState);
             voice.jetBandState = std::clamp((voice.jetLowState - voice.jetHighState) * (0.42F + flow * 0.48F), -2.0F, 2.0F);
-            const auto crack = static_cast<float>(std::sin(voice.crackPhase)) * (0.10F + voice.knock * 0.30F + pressure * 0.11F);
+            const auto crack = static_cast<float>(std::sin(voice.crackPhase))
+                * (0.10F + voice.knock * 0.30F + pressure * 0.11F
+                    + compressionRise * 0.48F);
             // Bore-dependent knock resonance (Draper first circumferential mode).
             const auto knockTone = static_cast<float>(std::sin(voice.knockPhase)) * voice.knock * 0.55F;
             const auto shock = (body * 0.35F + harmonic * 0.42F + pipe * 0.52F + crack + knockTone) * shockEnvelope;
@@ -1830,7 +1841,9 @@ void RealtimeEngineAudio::trigger(const FiringEvent& event, bool exhaust) noexce
     const auto publishedScale = realtimeState_.timeScale.load(std::memory_order_relaxed);
     const auto audibleScale = std::clamp(publishedScale > 0.01F ? publishedScale : 1.0F,
                                          0.25F, 4.0F);
-    const auto durationSeconds = std::max(0.004F, event.combustionDurationMs * 0.001F)
+    const auto minimumDurationSeconds = event.compressionIgnition ? 0.0012F : 0.004F;
+    const auto durationSeconds = std::max(
+        minimumDurationSeconds, event.combustionDurationMs * 0.001F)
         / audibleScale;
     voice->bodyPhase = 0.0;
     voice->crackPhase = 0.0;
@@ -1860,15 +1873,23 @@ void RealtimeEngineAudio::trigger(const FiringEvent& event, bool exhaust) noexce
     voice->amplitude = std::max(0.001F, event.intensity
         * (event.misfire ? 0.07F : layerGain) * cylinderNormalization)
         * exhaustTransmission;
-    voice->attackSeconds = exhaust ? 0.00018F : 0.00042F;
+    const auto combustionSharpness = std::clamp(event.combustionSharpness, 0.0F, 1.0F);
+    voice->attackSeconds = exhaust ? 0.00018F
+        : 0.00042F / (1.0F + (event.compressionIgnition
+            ? combustionSharpness * 3.5F : 0.0F));
     voice->blowdownSeconds = std::clamp(durationSeconds * (exhaust ? 0.42F : 0.70F), 0.0015F, 0.014F);
     voice->decay = std::exp(std::log(0.0001F) / static_cast<float>(sampleRate_ * (durationSeconds * 1.35F)));
     voice->bodyFrequency = exhaust
         ? (30.0F + event.pressureEstimateBar * 0.55F + event.exhaustResonanceHz * 0.16F)
             / std::clamp(chamberScale, 0.7F, 1.8F)
         : (88.0F + event.pressureEstimateBar * 1.35F) * std::clamp(boreStroke, 0.75F, 1.28F);
-    voice->crackFrequency = (exhaust ? 620.0F : 1'050.0F) + event.intensity * (exhaust ? 1'250.0F : 1'700.0F)
-        + static_cast<float>(event.cylinderId % 32U) * 13.0F + (redline / 7'000.0F - 1.0F) * 360.0F;
+    voice->crackFrequency = (exhaust ? 620.0F
+        : (event.compressionIgnition
+            ? 1'650.0F + combustionSharpness * 1'350.0F
+            : 1'050.0F))
+        + event.intensity * (exhaust ? 1'250.0F : 1'700.0F)
+        + static_cast<float>(event.cylinderId % 32U) * 13.0F
+        + (redline / 7'000.0F - 1.0F) * 360.0F;
     voice->pipeFrequency = std::clamp(event.exhaustResonanceHz > 1.0F ? event.exhaustResonanceHz
         : 110.0F + event.pressureEstimateBar * 1.35F, 45.0F, 1'400.0F) * std::clamp(1.18F - cylinderDisplacement * 0.18F, 0.64F, 1.25F);
     voice->bodyFrequency *= audibleScale;
@@ -1882,6 +1903,8 @@ void RealtimeEngineAudio::trigger(const FiringEvent& event, bool exhaust) noexce
     voice->turbulence = (exhaust ? 0.11F + exhaustOpenness * 0.07F : 0.07F)
         + leanCrackle * 0.08F + event.knockAmount * 0.12F + flowTone * 0.16F + (boostRatio - 1.0F) * 0.06F;
     voice->knock = std::clamp(event.knockAmount, 0.0F, 1.0F);
+    voice->combustionSharpness = combustionSharpness;
+    voice->compressionIgnition = event.compressionIgnition;
     // Draper first circumferential knock mode: f ~= 1.841 c / (pi B), hot burned
     // gas sound speed ~= 900 m/s. Larger bores knock lower, smaller bores higher.
     const auto boreMm = std::clamp(realtimeState_.meanBoreMm.load(std::memory_order_relaxed), 40.0F, 160.0F);

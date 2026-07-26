@@ -49,3 +49,32 @@ direct_injection:
   vaporisation_time_constant_s: 0.010
   latent_heat_kj_per_kg: 350
   direct_charge_cooling_efficiency: 0.82
+
+common_rail_diesel:
+  mode: direct
+  # Pilot/main injection represented as one conservative pulse spanning late
+  # compression through early expansion. Angles wrap around firing TDC.
+  start_angle_deg: 700
+  end_angle_deg: 74
+  injector_flow_mg_s: 80000
+  fuel_temperature_c: 45
+  rail_pressure_bar: 2000
+  reference_pressure_bar: 2000
+  wall_film_fraction: 0.0
+  vaporisation_time_constant_s: 0.010
+  latent_heat_kj_per_kg: 270
+  direct_charge_cooling_efficiency: 0.70
+  direct_spray_vaporisation_time_constant_s: 0.00035
+  direct_spray_entrainment_time_constant_s: 0.00018
+  # Per cylinder. This is the ECU's smoke/torque limiter, not an injector
+  # capacity shortcut: injector_capacity remains 1.0 when hardware can meter it.
+  full_load_fuel_limit:
+    - { rpm: 800, mg_per_cycle: 42 }
+    - { rpm: 1750, mg_per_cycle: 52.5 }
+    - { rpm: 2000, mg_per_cycle: 52.5 }
+    - { rpm: 2500, mg_per_cycle: 54 }
+    - { rpm: 3000, mg_per_cycle: 54 }
+    - { rpm: 3500, mg_per_cycle: 50 }
+    - { rpm: 4000, mg_per_cycle: 47 }
+    - { rpm: 4500, mg_per_cycle: 39 }
+    - { rpm: 5000, mg_per_cycle: 30 }

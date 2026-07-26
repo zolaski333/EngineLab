@@ -236,6 +236,7 @@ template <typename T>
     assignIfPresent(node, "product_moles_per_fuel_mole", value.productMolesPerFuelMole);
     assignIfPresent(node, "laminar_flame_speed_mps", value.laminarFlameSpeedMps);
     assignIfPresent(node, "turbulence_flame_speed_gain", value.turbulenceFlameSpeedGain);
+    assignIfPresent(node, "cetane_number", value.cetaneNumber);
     return value;
 }
 
@@ -265,6 +266,17 @@ template <typename T>
     assignIfPresent(node, "latent_heat_kj_per_kg", value.latentHeatKjPerKg);
     assignIfPresent(node, "direct_charge_cooling_efficiency", value.directChargeCoolingEfficiency);
     assignIfPresent(node, "port_charge_cooling_efficiency", value.portChargeCoolingEfficiency);
+    assignIfPresent(node, "direct_spray_vaporisation_time_constant_s",
+                    value.directSprayVaporisationTimeConstantSeconds);
+    assignIfPresent(node, "direct_spray_entrainment_time_constant_s",
+                    value.directSprayEntrainmentTimeConstantSeconds);
+    if (const auto limit = node["full_load_fuel_limit"]) {
+        value.fullLoadFuelLimit.clear();
+        for (const auto& sample : limit)
+            value.fullLoadFuelLimit.push_back({
+                sample["rpm"].as<double>(),
+                sample["mg_per_cycle"].as<double>() });
+    }
     return value;
 }
 
@@ -404,6 +416,14 @@ void applyCrankOffsets(EngineConfig& config) {
     EngineConfig config;
     config.schemaVersion = document["schema_version"].as<std::uint32_t>(1);
     config.name = engine["name"].as<std::string>();
+    const auto cycle = engine["cycle"].as<std::string>("four_stroke");
+    if (cycle == "four_stroke") config.cycle = EngineCycle::fourStroke;
+    else if (cycle == "two_stroke") config.cycle = EngineCycle::twoStroke;
+    else throw std::runtime_error("Unknown engine cycle: " + cycle);
+    const auto fuelType = engine["fuel"].as<std::string>("gasoline");
+    if (fuelType == "gasoline") config.fuel = FuelType::gasoline;
+    else if (fuelType == "diesel") config.fuel = FuelType::diesel;
+    else throw std::runtime_error("Unknown fuel type: " + fuelType);
     config.layout = parseLayout(engine["layout"].as<std::string>("inline"));
     config.firingOrder = engine["firing_order"].as<std::vector<std::uint32_t>>();
     const auto hasExplicitCylinders = static_cast<bool>(engine["cylinders"]);
@@ -482,6 +502,9 @@ void applyCrankOffsets(EngineConfig& config) {
         assignIfPresent(calibration, "residual_dilution_sensitivity", config.combustionCalibration.residualDilutionSensitivity);
         assignIfPresent(calibration, "chamber_turbulence_intensity_ratio", config.combustionCalibration.chamberTurbulenceIntensityRatio);
         assignIfPresent(calibration, "ignition_site_count", config.combustionCalibration.ignitionSiteCount);
+        assignIfPresent(calibration, "compression_ignition_delay_scale", config.combustionCalibration.compressionIgnitionDelayScale);
+        assignIfPresent(calibration, "compression_ignition_mixing_time_s", config.combustionCalibration.compressionIgnitionMixingTimeSeconds);
+        assignIfPresent(calibration, "compression_ignition_premixed_fraction", config.combustionCalibration.compressionIgnitionPremixedFraction);
     }
     if (const auto acoustics = engine["runner_acoustics"]) {
         assignIfPresent(acoustics, "enabled", config.runnerAcoustics.enabled);

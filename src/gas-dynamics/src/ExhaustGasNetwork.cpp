@@ -642,7 +642,7 @@ double ExhaustGasNetwork::maximumStableTimeStep(
         const auto& duct = ducts_[endpoint.elementIndex];
         const auto cellIndex = endpoint.type == ExhaustEndpointType::ductInlet
             ? std::size_t { 0 } : duct.cells().size() - 1;
-        return duct.geometry().cellVolumeM3(cellIndex);
+        return duct.cellVolumesM3_[cellIndex];
     };
     const auto constrainBoundary = [this, &stableStep, &endpointPrimitive, &endpointVolume](
         const PrimitiveState& reservoir,
@@ -798,9 +798,9 @@ bool ExhaustGasNetwork::evaluateStage(
         const auto residualIndex = endpoint.type == ExhaustEndpointType::ductInlet
             ? std::size_t { 0 } : residual.size() - 1;
         const auto sign = endpoint.type == ExhaustEndpointType::ductInlet ? 1.0 : -1.0;
-        const auto faceAreaM2 = duct.geometry_.faceAreaM2(faceIndex);
+        const auto faceAreaM2 = duct.faceAreasM2_[faceIndex];
         const auto inverseCellVolumeM3 =
-            1.0 / duct.geometry_.cellVolumeM3(residualIndex);
+            duct.inverseCellVolumesM3_[residualIndex];
         const auto& oldFlux = faceFluxes[faceIndex];
         for (std::size_t species = 0; species < gasSpeciesCount; ++species) {
             residual[residualIndex].speciesMassDensityKgPerM3[species] +=
@@ -821,11 +821,12 @@ bool ExhaustGasNetwork::evaluateStage(
         const ExhaustEndpoint& endpoint,
         const EulerFlux& apertureFlux,
         double apertureAreaM2) noexcept {
-        const auto& geometry = ducts_[endpoint.elementIndex].geometry();
+        const auto& duct = ducts_[endpoint.elementIndex];
+        const auto& geometry = duct.geometry();
         const auto faceIndex = endpoint.type == ExhaustEndpointType::ductInlet
             ? std::size_t { 0 } : geometry.cellCount;
         return areaAveragedBoundaryFlux(apertureFlux, apertureAreaM2,
-            geometry.faceAreaM2(faceIndex),
+            duct.faceAreasM2_[faceIndex],
             endpointPrimitive(endpoint).pressurePa);
     };
     const auto connect = [&](const ExhaustEndpoint& upstream,
@@ -962,7 +963,9 @@ bool ExhaustGasNetwork::evaluateStage(
                [](std::uint8_t assigned) { return assigned != 0; });
 }
 
-bool ExhaustGasNetwork::prepareStageStates(bool candidateStage) noexcept {
+bool ExhaustGasNetwork::prepareStageStates(
+    bool candidateStage,
+    bool deferDynamicWallSources) noexcept {
     for (auto& duct : ducts_) {
         const auto& states = candidateStage ? duct.candidate_ : duct.stage_;
         auto& primitives = candidateStage
@@ -974,9 +977,14 @@ bool ExhaustGasNetwork::prepareStageStates(bool candidateStage) noexcept {
         auto& sourceLimitedTimeStep = candidateStage
             ? duct.candidateSourceLimitedTimeStepSeconds_
             : duct.stageSourceLimitedTimeStepSeconds_;
-        if (!duct.prepareStateCache(states, primitives, sourceTerms,
-                maximumSignalSpeed, sourceLimitedTimeStep))
-            return false;
+        if (candidateStage && deferDynamicWallSources
+            && duct.geometry_.dynamicWallHeatTransferEnabled) {
+            if (!duct.recoverPrimitiveStates(states, primitives)) return false;
+        } else {
+            if (!duct.prepareStateCache(states, primitives, sourceTerms,
+                    maximumSignalSpeed, sourceLimitedTimeStep))
+                return false;
+        }
     }
     const auto& states = candidateStage ? junctionCandidate_ : junctionStage_;
     auto& junctionPrimitives = candidateStage
@@ -1175,7 +1183,34 @@ ExhaustNetworkAdvanceResult ExhaustGasNetwork::advance(
                 if (cylinderReservoirActive_[index] != 0)
                     (void) mixtureModel_.canonicaliseSpeciesRoundoff(
                         cylinderReservoirCandidate_[index]);
-            if (!prepareStageStates(true)) {
+            if (!prepareStageStates(true, true)) {
+                ++result.rejectedSubsteps;
+                trialStep *= 0.5;
+                if (!(trialStep > std::numeric_limits<double>::epsilon()
+                                  * std::max(1.0, durationSeconds)))
+                    break;
+                continue;
+            }
+
+            auto candidateWallHeatRejectedJ = 0.0;
+            auto candidateWallsAreValid = true;
+            for (auto& duct : ducts_) {
+                if (!duct.geometry_.dynamicWallHeatTransferEnabled) continue;
+                duct.candidateWallStates_ = duct.wallStates_;
+                if (!duct.applyDynamicWallHeatTransfer(
+                        duct.candidate_, duct.candidatePrimitives_,
+                        duct.candidateWallStates_, trialStep,
+                        candidateWallHeatRejectedJ)
+                    || !duct.prepareStateCache(
+                        duct.candidate_, duct.candidatePrimitives_,
+                        duct.candidateSourceTerms_,
+                        duct.maximumCandidateSignalSpeedMps_,
+                        duct.candidateSourceLimitedTimeStepSeconds_)) {
+                    candidateWallsAreValid = false;
+                    break;
+                }
+            }
+            if (!candidateWallsAreValid) {
                 ++result.rejectedSubsteps;
                 trialStep *= 0.5;
                 if (!(trialStep > std::numeric_limits<double>::epsilon()
@@ -1218,12 +1253,10 @@ ExhaustNetworkAdvanceResult ExhaustGasNetwork::advance(
                 std::swap(duct.cellSourceLimitedTimeStepSeconds_,
                           duct.candidateSourceLimitedTimeStepSeconds_);
                 duct.cellStateCacheIsValid_ = true;
-                if (!duct.applyDynamicWallHeatTransfer(
-                        trialStep, result.wallHeatRejectedJ)) {
-                    result.completed = false;
-                    break;
-                }
+                if (duct.geometry_.dynamicWallHeatTransferEnabled)
+                    duct.wallStates_.swap(duct.candidateWallStates_);
             }
+            result.wallHeatRejectedJ += candidateWallHeatRejectedJ;
             if (!result.completed) break;
             junctionStates_.swap(junctionCandidate_);
             junctionPrimitives_.swap(junctionCandidatePrimitives_);

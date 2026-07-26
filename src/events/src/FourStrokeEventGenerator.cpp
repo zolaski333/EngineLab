@@ -9,7 +9,9 @@ std::size_t FourStrokeEventGenerator::generate(
     const CombustionResult& combustion, double stepStartTime, double previousAngle,
     double travelledDegrees, double dtSeconds, std::span<FiringEvent> output) noexcept {
     lastDroppedEventCount_ = 0;
-    if (!ecu.fuelEnabled || !ecu.sparkEnabled || config.firingOrder.empty()
+    if (!ecu.fuelEnabled
+        || (config.fuel == FuelType::gasoline && !ecu.sparkEnabled)
+        || config.firingOrder.empty()
         || travelledDegrees <= 0.0)
         return 0;
 
@@ -35,22 +37,34 @@ std::size_t FourStrokeEventGenerator::generate(
         else if (config.cylinders.size() > 1)
             stereoPosition = static_cast<float>(-0.72 + 1.44 * static_cast<double>(cylinderIndex)
                 / static_cast<double>(config.cylinders.size() - 1));
+        const auto cylinderState = std::find_if(state.cylinderStates.begin(),
+            state.cylinderStates.begin()
+                + static_cast<std::ptrdiff_t>(state.cylinderStateCount),
+            [cylinderId](const CylinderState& item) {
+                return item.id == cylinderId;
+            });
+        const auto hasCylinderState = cylinderState
+            != state.cylinderStates.begin()
+                + static_cast<std::ptrdiff_t>(state.cylinderStateCount);
+        if (config.fuel == FuelType::diesel
+                && (!hasCylinderState
+                    || !cylinderState->compressionIgnition))
+            continue;
+        const auto combustionPhase = config.fuel == FuelType::diesel
+            ? cylinderState->combustionStartPhaseDegrees
+            : cylinder->ignitionOffsetDegrees
+                - ecu.ignitionAdvanceDegrees;
         const auto target = std::fmod(cylinder->crankOffsetDegrees
-            + cylinder->ignitionOffsetDegrees - ecu.ignitionAdvanceDegrees + cycle * 2.0, cycle);
+            + combustionPhase + cycle * 2.0, cycle);
         auto distance = std::fmod(target - previousAngle + cycle, cycle);
         if (distance < 1.0e-9) distance = cycle;
         while (distance <= travelledDegrees + 1.0e-9) {
-            const auto cylinderState = std::find_if(state.cylinderStates.begin(),
-                state.cylinderStates.begin() + static_cast<std::ptrdiff_t>(state.cylinderStateCount),
-                [cylinderId](const CylinderState& item) { return item.id == cylinderId; });
             const auto misfire = cylinderState != state.cylinderStates.begin()
                     + static_cast<std::ptrdiff_t>(state.cylinderStateCount)
                 ? cylinderState->misfiring
                 : randomUnit() < static_cast<float>(combustion.misfireProbability);
             const auto variation = 0.97F + randomUnit() * 0.06F + static_cast<float>(cylinder->efficiencyOffset);
             const auto eventTime = stepStartTime + dtSeconds * std::clamp(distance / travelledDegrees, 0.0, 1.0);
-            const auto hasCylinderState = cylinderState != state.cylinderStates.begin()
-                + static_cast<std::ptrdiff_t>(state.cylinderStateCount);
             const auto fuelDelivery = hasCylinderState
                 ? static_cast<float>(std::clamp(cylinderState->fuelDeliveryRatio, 0.0, 1.0)) : 1.0F;
             const auto resolvedPulse = hasCylinderState
@@ -58,11 +72,15 @@ std::size_t FourStrokeEventGenerator::generate(
             const auto resolvedPressureBar = hasCylinderState && cylinderState->pressureEstimateBar > 1.0
                 ? static_cast<float>(cylinderState->pressureEstimateBar)
                 : static_cast<float>(combustion.pressureEstimateBar);
-            const auto resolvedCombustionDurationMs = hasCylinderState
-                && cylinderState->flameSpeedMps > 0.01
-                ? static_cast<float>(std::clamp(cylinder->boreMm * 0.5
-                    / cylinderState->flameSpeedMps, 1.0, 45.0))
-                : static_cast<float>(1.4 + 10.0 / std::max(1.0, state.rpm / 1'000.0));
+            const auto resolvedCombustionDurationMs =
+                hasCylinderState && cylinderState->compressionIgnition
+                ? static_cast<float>(std::clamp(
+                    cylinderState->combustionDurationMs, 0.2, 45.0))
+                : hasCylinderState && cylinderState->flameSpeedMps > 0.01
+                    ? static_cast<float>(std::clamp(cylinder->boreMm * 0.5
+                        / cylinderState->flameSpeedMps, 1.0, 45.0))
+                    : static_cast<float>(1.4 + 10.0
+                        / std::max(1.0, state.rpm / 1'000.0));
             const auto bankCam = bank != config.banks.end() ? &bank->camshafts : &config.camshafts;
             const auto highProfile = bankCam->variableProfileEnabled
                 && state.rpm >= bankCam->switchRpm && state.throttle >= bankCam->switchThrottle;
@@ -100,6 +118,12 @@ std::size_t FourStrokeEventGenerator::generate(
                     ? static_cast<float>(cylinderState->runnerPressureKpa) : static_cast<float>(state.exhaustRunnerPressureKpa),
                 valveEventDelaySeconds, 0.0F,
                 misfire, cylinderId, cylinderId };
+            event.compressionIgnition = hasCylinderState
+                && cylinderState->compressionIgnition;
+            event.combustionSharpness = hasCylinderState
+                ? static_cast<float>(std::clamp(
+                    cylinderState->combustionSharpness, 0.0, 1.0))
+                : 0.0F;
             if (written < output.size()) {
                 auto insertion = written;
                 while (insertion > 0 && output[insertion - 1].timeSeconds > event.timeSeconds) {

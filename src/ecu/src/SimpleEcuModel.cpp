@@ -71,7 +71,10 @@ EcuCommand SimpleEcuModel::evaluate(const EngineConfig& config, const EngineStat
         state.rpm
     };
     const auto normalizedLoad = std::clamp(
-        state.manifoldPressureKpa / std::max(1.0, config.ambientPressureKpa),
+        config.fuel == FuelType::diesel
+            ? std::max(controls.throttle, state.load)
+            : state.manifoldPressureKpa
+                / std::max(1.0, config.ambientPressureKpa),
         calibration::ecuLimits::minimumNormalizedLoad,
         calibration::ecuLimits::maximumNormalizedLoad);
     const calibration::AxisCoordinate loadCoordinate {

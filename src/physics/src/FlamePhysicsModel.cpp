@@ -44,8 +44,24 @@ double FlamePhysicsModel::turbulentFlameSpeedMps(const FuelConfig& fuel,
     const auto turbulentContribution = turbulence * 1.12;
     // Dilution must attenuate the laminar component too.  Using S_L as the
     // lower clamp silently cancelled the residual-gas term at low turbulence.
+    //
+    // The old fixed 42 m/s ceiling clipped every high-speed pent-roof engine
+    // to the same burn rate, regardless of its authored tumble intensity. At
+    // 11,000 rpm that forced a 79 mm chamber to burn for about 60 crank
+    // degrees even though the correlation itself predicted roughly 53 m/s.
+    // Bound the deflagration by a conservative fraction of the unburned-gas
+    // acoustic speed instead. The closure stays subsonic under every accepted
+    // state while retaining the engine-speed and chamber-turbulence response.
+    constexpr double representativeGamma = 1.35;
+    constexpr double representativeGasConstantJPerKgK = 287.05;
+    constexpr double maximumDeflagrationMach = 0.18;
+    const auto acousticSpeedMps = std::sqrt(
+        representativeGamma * representativeGasConstantJPerKgK
+        * std::clamp(conditions.temperatureK, 250.0, 3'500.0));
+    const auto maximumFlameSpeedMps =
+        maximumDeflagrationMach * acousticSpeedMps;
     return std::clamp((laminar + turbulentContribution) * dilutionAttenuation,
-                      laminar * 0.25, 42.0);
+                      laminar * 0.25, maximumFlameSpeedMps);
 }
 
 double FlamePhysicsModel::ignitionDelaySeconds(const CombustionCalibrationConfig& calibration,

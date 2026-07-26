@@ -29,7 +29,7 @@ engine:
     plenum_volume_l: 1.4
     throttle_diameter_mm: 45
     throttle_count: 4
-    runner_length_mm: 95
+    runner_length_mm: 180
     runner_diameter_mm: 37
     airbox_volume_l: 9.0
     idle_bypass_area_mm2: 16
@@ -54,6 +54,21 @@ engine:
     exhaust: motorcycle_4_2_1
     transmission: motorcycle_6_speed
     vehicle: motorcycle
+  # The legacy shared motorcycle preset terminates a 52 mm tailpipe as a
+  # sharp-edged orifice (Cd 0.72). A real open tailpipe carries its developed
+  # stream through the exit plane, so the finite-volume boundary uses the
+  # physical area. Dimensions scale the stock CP4 system independently of the
+  # smaller CP2/CP3 systems; they are not a torque correction.
+  exhaust:
+    primary_length_mm: 610
+    primary_diameter_mm: 36
+    collector_diameter_mm: 55
+    muffler_restriction: 0.16
+    outlet_diameter_mm: 60
+    collector_volume_l: 2.0
+    outlet_discharge_coefficient: 1.0
+    muffler_chamber_diameter_mm: 90
+    muffler_chamber_length_mm: 250
   # Valve diameters intentionally left to the derived fallback (0.40 / 0.34 x
   # bore per valve for a multi-valve head -> 31.6 / 26.9 mm). The explicit
   # 25.0 / 22.0 authored here originally was a guess, and it was far too small.

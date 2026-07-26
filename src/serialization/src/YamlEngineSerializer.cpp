@@ -129,6 +129,7 @@ std::string YamlEngineSerializer::encode(const EngineConfig& config) const {
         << YAML::Key << "product_moles_per_fuel_mole" << YAML::Value << config.fuelProperties.productMolesPerFuelMole
         << YAML::Key << "laminar_flame_speed_mps" << YAML::Value << config.fuelProperties.laminarFlameSpeedMps
         << YAML::Key << "turbulence_flame_speed_gain" << YAML::Value << config.fuelProperties.turbulenceFlameSpeedGain
+        << YAML::Key << "cetane_number" << YAML::Value << config.fuelProperties.cetaneNumber
         << YAML::EndMap
         << YAML::Key << "layout" << YAML::Value << layoutName(config.layout)
         << YAML::Key << "idle_rpm" << YAML::Value << config.idleRpm
@@ -184,6 +185,9 @@ std::string YamlEngineSerializer::encode(const EngineConfig& config) const {
         << YAML::Key << "residual_dilution_sensitivity" << YAML::Value << config.combustionCalibration.residualDilutionSensitivity
         << YAML::Key << "chamber_turbulence_intensity_ratio" << YAML::Value << config.combustionCalibration.chamberTurbulenceIntensityRatio
         << YAML::Key << "ignition_site_count" << YAML::Value << config.combustionCalibration.ignitionSiteCount
+        << YAML::Key << "compression_ignition_delay_scale" << YAML::Value << config.combustionCalibration.compressionIgnitionDelayScale
+        << YAML::Key << "compression_ignition_mixing_time_s" << YAML::Value << config.combustionCalibration.compressionIgnitionMixingTimeSeconds
+        << YAML::Key << "compression_ignition_premixed_fraction" << YAML::Value << config.combustionCalibration.compressionIgnitionPremixedFraction
         << YAML::EndMap
         << YAML::Key << "runner_acoustics" << YAML::Value << YAML::BeginMap
         << YAML::Key << "enabled" << YAML::Value << config.runnerAcoustics.enabled
@@ -325,7 +329,15 @@ std::string YamlEngineSerializer::encode(const EngineConfig& config) const {
         << YAML::Key << "latent_heat_kj_per_kg" << YAML::Value << config.injection.latentHeatKjPerKg
         << YAML::Key << "direct_charge_cooling_efficiency" << YAML::Value << config.injection.directChargeCoolingEfficiency
         << YAML::Key << "port_charge_cooling_efficiency" << YAML::Value << config.injection.portChargeCoolingEfficiency
-        << YAML::EndMap
+        << YAML::Key << "direct_spray_vaporisation_time_constant_s" << YAML::Value << config.injection.directSprayVaporisationTimeConstantSeconds
+        << YAML::Key << "direct_spray_entrainment_time_constant_s" << YAML::Value << config.injection.directSprayEntrainmentTimeConstantSeconds
+        << YAML::Key << "full_load_fuel_limit" << YAML::Value << YAML::BeginSeq;
+    for (const auto& sample : config.injection.fullLoadFuelLimit)
+        out << YAML::BeginMap
+            << YAML::Key << "rpm" << YAML::Value << sample.rpm
+            << YAML::Key << "mg_per_cycle" << YAML::Value
+            << sample.milligramsPerCycle << YAML::EndMap;
+    out << YAML::EndSeq << YAML::EndMap
         << YAML::Key << "solver" << YAML::Value << YAML::BeginMap
         << YAML::Key << "mechanical_frequency_hz" << YAML::Value << config.solver.mechanicalFrequencyHz
         << YAML::Key << "maximum_frequency_hz" << YAML::Value << config.solver.maximumMechanicalFrequencyHz
@@ -504,6 +516,7 @@ EngineDecodeResult YamlEngineSerializer::decode(std::string_view text) const noe
             config.fuelProperties.productMolesPerFuelMole = properties["product_moles_per_fuel_mole"].as<double>(config.fuelProperties.productMolesPerFuelMole);
             config.fuelProperties.laminarFlameSpeedMps = properties["laminar_flame_speed_mps"].as<double>(config.fuelProperties.laminarFlameSpeedMps);
             config.fuelProperties.turbulenceFlameSpeedGain = properties["turbulence_flame_speed_gain"].as<double>(config.fuelProperties.turbulenceFlameSpeedGain);
+            config.fuelProperties.cetaneNumber = properties["cetane_number"].as<double>(config.fuelProperties.cetaneNumber);
         }
         const auto layout = engine["layout"] ? engine["layout"].as<std::string>() : "inline";
         if (layout == "inline") config.layout = EngineLayout::inlineLayout;
@@ -568,6 +581,9 @@ EngineDecodeResult YamlEngineSerializer::decode(std::string_view text) const noe
             config.combustionCalibration.residualDilutionSensitivity = calibration["residual_dilution_sensitivity"].as<double>(config.combustionCalibration.residualDilutionSensitivity);
             config.combustionCalibration.chamberTurbulenceIntensityRatio = calibration["chamber_turbulence_intensity_ratio"].as<double>(config.combustionCalibration.chamberTurbulenceIntensityRatio);
             config.combustionCalibration.ignitionSiteCount = calibration["ignition_site_count"].as<std::uint32_t>(config.combustionCalibration.ignitionSiteCount);
+            config.combustionCalibration.compressionIgnitionDelayScale = calibration["compression_ignition_delay_scale"].as<double>(config.combustionCalibration.compressionIgnitionDelayScale);
+            config.combustionCalibration.compressionIgnitionMixingTimeSeconds = calibration["compression_ignition_mixing_time_s"].as<double>(config.combustionCalibration.compressionIgnitionMixingTimeSeconds);
+            config.combustionCalibration.compressionIgnitionPremixedFraction = calibration["compression_ignition_premixed_fraction"].as<double>(config.combustionCalibration.compressionIgnitionPremixedFraction);
         }
         if (const auto acoustics = engine["runner_acoustics"]) {
             config.runnerAcoustics.enabled = acoustics["enabled"].as<bool>(config.runnerAcoustics.enabled);
@@ -729,6 +745,15 @@ EngineDecodeResult YamlEngineSerializer::decode(std::string_view text) const noe
             config.injection.latentHeatKjPerKg = injection["latent_heat_kj_per_kg"].as<double>(config.injection.latentHeatKjPerKg);
             config.injection.directChargeCoolingEfficiency = injection["direct_charge_cooling_efficiency"].as<double>(config.injection.directChargeCoolingEfficiency);
             config.injection.portChargeCoolingEfficiency = injection["port_charge_cooling_efficiency"].as<double>(config.injection.portChargeCoolingEfficiency);
+            config.injection.directSprayVaporisationTimeConstantSeconds = injection["direct_spray_vaporisation_time_constant_s"].as<double>(config.injection.directSprayVaporisationTimeConstantSeconds);
+            config.injection.directSprayEntrainmentTimeConstantSeconds = injection["direct_spray_entrainment_time_constant_s"].as<double>(config.injection.directSprayEntrainmentTimeConstantSeconds);
+            if (const auto limit = injection["full_load_fuel_limit"]) {
+                config.injection.fullLoadFuelLimit.clear();
+                for (const auto& sample : limit)
+                    config.injection.fullLoadFuelLimit.push_back({
+                        sample["rpm"].as<double>(),
+                        sample["mg_per_cycle"].as<double>() });
+            }
         }
         if (const auto solver = engine["solver"]) {
             config.solver.mechanicalFrequencyHz = solver["mechanical_frequency_hz"].as<double>(config.solver.mechanicalFrequencyHz);

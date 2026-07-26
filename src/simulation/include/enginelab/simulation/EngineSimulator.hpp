@@ -5,6 +5,7 @@
 #include <enginelab/physics/IPhysicsModel.hpp>
 #include <enginelab/physics/ConservativeGasSystem.hpp>
 #include <enginelab/physics/FlamePhysicsModel.hpp>
+#include <enginelab/physics/CompressionIgnitionModel.hpp>
 #include <enginelab/physics/FuelInjectionModel.hpp>
 #include <enginelab/physics/EndGasKnockModel.hpp>
 #include <enginelab/physics/IndicatedWorkModel.hpp>
@@ -66,6 +67,11 @@ private:
     IFiringEventGenerator& eventGenerator_;
     IExhaustModel& exhaust_;
     EngineState state_;
+    /** Immutable authored topology compiled once. Path/bank searches used to
+     * run several times per cylinder per gas substep, despite none of their
+     * inputs changing during a simulation. */
+    std::array<std::size_t, 32> intakePathIndexByCylinder_ {};
+    std::array<std::size_t, 32> exhaustPathIndexByCylinder_ {};
     std::array<double, 32> previousCylinderPhases_ {};
     std::array<double, 32> intakeRunnerPressureKpa_ {};
     /** Intake runner column velocity at the valve plane, and the stagnation head
@@ -189,6 +195,7 @@ private:
     std::array<GasCell, 32> cylinderGas_ {};
     std::array<double, 32> instantaneousCombustionPulse_ {};
     std::array<double, 32> injectedFuelMolesThisCycle_ {};
+    std::array<double, 32> entrainedFuelMolesThisCycle_ {};
     std::array<double, 32> meteredFuelMolesLastCycle_ {};
     std::array<double, 32> deliveredFuelMolesLastCycle_ {};
     std::array<double, 32> requestedFuelMolesThisCycle_ {};
@@ -212,6 +219,8 @@ private:
      *  the already learned low-load value, then let both regions diverge. */
     std::array<bool, 32> highLoadClosedLoopFuelTrimSeeded_ {};
     std::array<FlameEvent, 32> flameEvents_ {};
+    std::array<CompressionIgnitionState, 32> compressionIgnitionStates_ {};
+    std::array<CompressionIgnitionResult, 32> compressionIgnitionResults_ {};
     std::array<FuelInjectionState, 32> injectionStates_ {};
     std::array<EndGasKnockState, 32> endGasKnockStates_ {};
     std::array<IndicatedWorkState, 32> indicatedWorkStates_ {};

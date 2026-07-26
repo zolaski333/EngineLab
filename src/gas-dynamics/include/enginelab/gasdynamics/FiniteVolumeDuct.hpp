@@ -312,9 +312,16 @@ private:
         std::span<ConservativeState> sourceTerms,
         double& maximumSignalSpeed,
         double& sourceLimitedTimeStep) const noexcept;
+    [[nodiscard]] bool recoverPrimitiveStates(
+        std::span<const ConservativeState> states,
+        std::span<PrimitiveState> primitives) const noexcept;
     [[nodiscard]] bool refreshCellStateCache() const noexcept;
     [[nodiscard]] bool applyDynamicWallHeatTransfer(
-        double durationSeconds, double& heatRejectedJ) noexcept;
+        std::span<ConservativeState> states,
+        std::span<const PrimitiveState> primitives,
+        std::span<DuctWallThermalState> wallStates,
+        double durationSeconds,
+        double& heatRejectedJ) const noexcept;
     void resetWallTemperature(double temperatureK) noexcept;
     [[nodiscard]] bool computeResidual(
         std::span<const ConservativeState> states,
@@ -346,6 +353,19 @@ private:
     std::vector<EulerFlux> faceFluxes_;
     std::vector<EulerFlux> stageFaceFluxes_;
     std::vector<DuctWallThermalState> wallStates_;
+    std::vector<DuctWallThermalState> candidateWallStates_;
+    std::vector<DuctWallHeatTransferGeometry> wallHeatTransferGeometries_;
+    // Geometry is immutable after configure(). Cache every per-cell term used
+    // by the RK hot path so a conical duct does not repeat sqrt/pow/lerp work
+    // for each cell, each stage and every acoustic substep.
+    std::vector<double> faceAreasM2_;
+    std::vector<double> cellVolumesM3_;
+    std::vector<double> inverseCellVolumesM3_;
+    std::vector<double> hydraulicDiametersM_;
+    std::vector<double> turbulentRoughnessTerms_;
+    std::vector<double> wallHeatConductancePerVolumes_;
+    double cellLengthM_ { 0.0 };
+    double localLossGradientPerM_ { 0.0 };
     mutable double maximumCellSignalSpeedMps_ { 0.0 };
     mutable double cellSourceLimitedTimeStepSeconds_ { 0.0 };
     double maximumStageSignalSpeedMps_ { 0.0 };

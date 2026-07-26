@@ -232,8 +232,9 @@ int main(int argc, char** argv) {
     if (schemaOnly) return EXIT_SUCCESS;
 
     const auto catalog = enginelab::loadEngineCatalog(catalogRoot);
+    for (const auto& error : catalog.errors)
+        std::cerr << "catalog error: " << error << '\n';
     if (catalog.entries.empty()) {
-        for (const auto& error : catalog.errors) std::cerr << error << '\n';
         std::cerr << "no engines loaded\n";
         return EXIT_FAILURE;
     }

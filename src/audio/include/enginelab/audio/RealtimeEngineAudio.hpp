@@ -127,9 +127,11 @@ private:
         float amplitude {}, decay {}, ageSeconds {}, attackSeconds {}, blowdownSeconds {};
         float bodyFrequency {}, crackFrequency {}, pipeFrequency {}, knockFrequency {};
         float leftGain {}, rightGain {}, filterState {}, turbulence {}, knock {};
+        float combustionSharpness {};
         float massFlow {}, runnerPressure {}, jetBandState {}, jetLowState {}, jetHighState {};
         std::uint32_t exhaustPathIndex {};
         bool exhaust {};
+        bool compressionIgnition {};
         bool active {};
     };
     struct PendingEvent { FiringEvent event {}; double scheduledTimeSeconds {}; bool exhaust {}; };

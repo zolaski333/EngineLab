@@ -247,6 +247,11 @@ std::string JsonEngineSerializer::encode(const EngineConfig& config) const {
     Json timingCurve = Json::array();
     for (const auto& sample : config.ignition.timingCurve)
         timingCurve.push_back({ {"rpm", sample.rpm}, {"advance_deg", sample.advanceDegrees} });
+    Json fullLoadFuelLimit = Json::array();
+    for (const auto& sample : config.injection.fullLoadFuelLimit)
+        fullLoadFuelLimit.push_back({
+            { "rpm", sample.rpm },
+            { "mg_per_cycle", sample.milligramsPerCycle } });
     Json document = { {"schema_version", currentEngineSchemaVersion}, {"engine", {
         {"name", config.name}, {"cycle", cycleName(config.cycle)}, {"fuel", fuelName(config.fuel)},
         {"fuel_properties", {{"name", config.fuelProperties.name},
@@ -257,7 +262,8 @@ std::string JsonEngineSerializer::encode(const EngineConfig& config) const {
                              {"oxygen_moles_per_fuel_mole", config.fuelProperties.oxygenMolesPerFuelMole},
                              {"product_moles_per_fuel_mole", config.fuelProperties.productMolesPerFuelMole},
                              {"laminar_flame_speed_mps", config.fuelProperties.laminarFlameSpeedMps},
-                             {"turbulence_flame_speed_gain", config.fuelProperties.turbulenceFlameSpeedGain}}},
+                             {"turbulence_flame_speed_gain", config.fuelProperties.turbulenceFlameSpeedGain},
+                             {"cetane_number", config.fuelProperties.cetaneNumber}}},
         {"layout", layoutName(config.layout)},
         {"cylinders", cylinders}, {"firing_order", config.firingOrder}, {"idle_rpm", config.idleRpm},
         {"redline_rpm", config.redlineRpm}, {"rotating_inertia_kg_m2", config.rotatingInertiaKgM2},
@@ -303,7 +309,10 @@ std::string JsonEngineSerializer::encode(const EngineConfig& config) const {
                       {"wall_heat_transfer_w_per_k", config.combustionCalibration.wallHeatTransferCoefficientWPerK},
                       {"residual_dilution_sensitivity", config.combustionCalibration.residualDilutionSensitivity},
                       {"chamber_turbulence_intensity_ratio", config.combustionCalibration.chamberTurbulenceIntensityRatio},
-                      {"ignition_site_count", config.combustionCalibration.ignitionSiteCount}}},
+                      {"ignition_site_count", config.combustionCalibration.ignitionSiteCount},
+                      {"compression_ignition_delay_scale", config.combustionCalibration.compressionIgnitionDelayScale},
+                      {"compression_ignition_mixing_time_s", config.combustionCalibration.compressionIgnitionMixingTimeSeconds},
+                      {"compression_ignition_premixed_fraction", config.combustionCalibration.compressionIgnitionPremixedFraction}}},
         {"runner_acoustics", {{"enabled", config.runnerAcoustics.enabled},
                       {"damping_ratio", config.runnerAcoustics.dampingRatio},
                       {"coupling_gain", config.runnerAcoustics.couplingGain},
@@ -338,7 +347,10 @@ std::string JsonEngineSerializer::encode(const EngineConfig& config) const {
                         {"vaporisation_time_constant_s", config.injection.vaporisationTimeConstantSeconds},
                         {"latent_heat_kj_per_kg", config.injection.latentHeatKjPerKg},
                         {"direct_charge_cooling_efficiency", config.injection.directChargeCoolingEfficiency},
-                        {"port_charge_cooling_efficiency", config.injection.portChargeCoolingEfficiency}}},
+                        {"port_charge_cooling_efficiency", config.injection.portChargeCoolingEfficiency},
+                        {"direct_spray_vaporisation_time_constant_s", config.injection.directSprayVaporisationTimeConstantSeconds},
+                        {"direct_spray_entrainment_time_constant_s", config.injection.directSprayEntrainmentTimeConstantSeconds},
+                        {"full_load_fuel_limit", fullLoadFuelLimit}}},
         {"solver", {{"mechanical_frequency_hz", config.solver.mechanicalFrequencyHz},
                      {"maximum_frequency_hz", config.solver.maximumMechanicalFrequencyHz},
                      {"maximum_crank_deg_per_step", config.solver.maximumCrankDegreesPerStep},
@@ -419,6 +431,8 @@ EngineDecodeResult JsonEngineSerializer::decode(std::string_view text) const noe
                 "laminar_flame_speed_mps", config.fuelProperties.laminarFlameSpeedMps);
             config.fuelProperties.turbulenceFlameSpeedGain = properties.value(
                 "turbulence_flame_speed_gain", config.fuelProperties.turbulenceFlameSpeedGain);
+            config.fuelProperties.cetaneNumber = properties.value(
+                "cetane_number", config.fuelProperties.cetaneNumber);
         }
         const auto layout = engine.value("layout", "inline");
         if (layout == "inline") config.layout = EngineLayout::inlineLayout;
@@ -486,6 +500,9 @@ EngineDecodeResult JsonEngineSerializer::decode(std::string_view text) const noe
             config.combustionCalibration.residualDilutionSensitivity = calibration.value("residual_dilution_sensitivity", config.combustionCalibration.residualDilutionSensitivity);
             config.combustionCalibration.chamberTurbulenceIntensityRatio = calibration.value("chamber_turbulence_intensity_ratio", config.combustionCalibration.chamberTurbulenceIntensityRatio);
             config.combustionCalibration.ignitionSiteCount = calibration.value("ignition_site_count", config.combustionCalibration.ignitionSiteCount);
+            config.combustionCalibration.compressionIgnitionDelayScale = calibration.value("compression_ignition_delay_scale", config.combustionCalibration.compressionIgnitionDelayScale);
+            config.combustionCalibration.compressionIgnitionMixingTimeSeconds = calibration.value("compression_ignition_mixing_time_s", config.combustionCalibration.compressionIgnitionMixingTimeSeconds);
+            config.combustionCalibration.compressionIgnitionPremixedFraction = calibration.value("compression_ignition_premixed_fraction", config.combustionCalibration.compressionIgnitionPremixedFraction);
         }
         if (engine.contains("runner_acoustics")) {
             const auto& acoustics = engine.at("runner_acoustics");
@@ -615,6 +632,15 @@ EngineDecodeResult JsonEngineSerializer::decode(std::string_view text) const noe
             config.injection.latentHeatKjPerKg = injection.value("latent_heat_kj_per_kg", config.injection.latentHeatKjPerKg);
             config.injection.directChargeCoolingEfficiency = injection.value("direct_charge_cooling_efficiency", config.injection.directChargeCoolingEfficiency);
             config.injection.portChargeCoolingEfficiency = injection.value("port_charge_cooling_efficiency", config.injection.portChargeCoolingEfficiency);
+            config.injection.directSprayVaporisationTimeConstantSeconds = injection.value("direct_spray_vaporisation_time_constant_s", config.injection.directSprayVaporisationTimeConstantSeconds);
+            config.injection.directSprayEntrainmentTimeConstantSeconds = injection.value("direct_spray_entrainment_time_constant_s", config.injection.directSprayEntrainmentTimeConstantSeconds);
+            if (injection.contains("full_load_fuel_limit")) {
+                config.injection.fullLoadFuelLimit.clear();
+                for (const auto& sample : injection.at("full_load_fuel_limit"))
+                    config.injection.fullLoadFuelLimit.push_back({
+                        sample.at("rpm").get<double>(),
+                        sample.at("mg_per_cycle").get<double>() });
+            }
         }
         if (engine.contains("solver")) {
             const auto& solver = engine.at("solver");

@@ -25,7 +25,7 @@ enum class RunningState : std::uint8_t {
     stopped, cranking, idling, running, unstable, knocking, overheating, damaged, destroyed
 };
 
-/** Calibrated properties of the gasoline surrogate used by this engine. */
+/** Calibrated thermochemical properties of the fuel surrogate. */
 struct FuelConfig final {
     std::string name { "Pump gasoline" };
     double lowerHeatingValueMjPerKg { 43.0 };
@@ -36,6 +36,10 @@ struct FuelConfig final {
     double productMolesPerFuelMole { 17.0 };
     double laminarFlameSpeedMps { 0.38 };
     double turbulenceFlameSpeedGain { 1.55 };
+    /** Ignition quality for compression-ignition fuel. Zero explicitly means
+     *  "not a compression-ignition fuel"; diesel configurations use 30-80.
+     */
+    double cetaneNumber { 0.0 };
 };
 
 struct CylinderConfig final {
@@ -362,6 +366,24 @@ struct InjectionConfig final {
     double latentHeatKjPerKg { 350.0 };
     double directChargeCoolingEfficiency { 0.82 };
     double portChargeCoolingEfficiency { 0.28 };
+    /** Direct-injection liquid-droplet vaporisation time at the reference
+     *  chamber temperature. Zero preserves the legacy, fully-vaporised pulse.
+     */
+    double directSprayVaporisationTimeConstantSeconds { 0.0 };
+    /** Time for vaporised spray parcels to entrain sufficient chamber gas to
+     *  become part of the locally combustible mixture. Zero is instantaneous.
+     */
+    double directSprayEntrainmentTimeConstantSeconds { 0.0 };
+    struct FuelQuantityLimitSample final {
+        double rpm { 0.0 };
+        /** Per-cylinder maximum metered fuel at full driver demand. */
+        double milligramsPerCycle { 0.0 };
+    };
+    /** Compression-ignition full-load smoke/torque limiter. Empty means the
+     *  oxygen-based target alone governs quantity. The driver-demand fraction
+     *  scales this limit before it is applied.
+     */
+    std::vector<FuelQuantityLimitSample> fullLoadFuelLimit;
 };
 
 struct SolverConfig final {
@@ -465,6 +487,16 @@ struct CombustionCalibrationConfig final {
      * important for large-bore dual-ignition aircraft engines.
      */
     std::uint32_t ignitionSiteCount { 1 };
+    /** Multiplier on the pressure/temperature/cetane ignition-delay
+     *  correlation used by the compression-ignition model.
+     */
+    double compressionIgnitionDelayScale { 1.0 };
+    /** Mixing-controlled diffusion-burn time constant after autoignition. */
+    double compressionIgnitionMixingTimeSeconds { 0.0014 };
+    /** Fraction of fuel accumulated during ignition delay which burns in the
+     *  initial premixed phase; the remainder is mixing controlled.
+     */
+    double compressionIgnitionPremixedFraction { 0.20 };
 };
 
 /**
@@ -681,6 +713,21 @@ struct CylinderState final {
      * valve heats one runner at a time. */
     double intakeRunnerTemperatureC { 22.0 };
     double intakeRunnerChargePressureKpa { 101.325 };
+    /** True when heat release is governed by compression ignition instead of
+     *  a spark-initiated flame front.
+     */
+    bool compressionIgnition { false };
+    /** Resolved start of combustion in cylinder-cycle coordinates, where
+     *  firing TDC is zero. Negative means before firing TDC.
+     */
+    double combustionStartPhaseDegrees { 0.0 };
+    double combustionDurationMs { 0.0 };
+    /** Normalised initial pressure-rise propensity, used by diagnostics and
+     *  the physically distinct diesel combustion-noise renderer.
+     */
+    double combustionSharpness { 0.0 };
+    double directLiquidSprayFuelMg { 0.0 };
+    double directDispersingFuelMg { 0.0 };
 };
 
 struct EngineState final {

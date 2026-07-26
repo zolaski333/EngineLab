@@ -24,7 +24,9 @@ engine:
     plenum_volume_l: 1.2
     throttle_diameter_mm: 41
     throttle_count: 3
-    runner_length_mm: 110
+    # Acoustic length from bellmouth to valve, including the port cast into
+    # the cylinder head (not just the visible velocity stack).
+    runner_length_mm: 180
     runner_diameter_mm: 36
     airbox_volume_l: 7.0
     idle_bypass_area_mm2: 15
@@ -48,6 +50,20 @@ engine:
     exhaust: motorcycle_4_2_1
     transmission: motorcycle_6_speed
     vehicle: motorcycle
+  # Yamaha describes the production system as a compact 3-into-1 with
+  # connecting pipes for pulse tuning. The legacy shared preset already
+  # compiles a 3-into-1 for this cylinder count; these CP3-sized sections and
+  # an open-pipe exit plane replace the smaller CP2-scale throat.
+  exhaust:
+    primary_length_mm: 610
+    primary_diameter_mm: 35
+    collector_diameter_mm: 52
+    muffler_restriction: 0.16
+    outlet_diameter_mm: 58
+    collector_volume_l: 1.7
+    outlet_discharge_coefficient: 1.0
+    muffler_chamber_diameter_mm: 88
+    muffler_chamber_length_mm: 260
   # Valve diameters are deliberately NOT authored here. They were, at 25.5/21.5,
   # and that was the single biggest error in this file: it is roughly a 4-valve
   # head's worth of area short, and it capped the engine at 64 % of the

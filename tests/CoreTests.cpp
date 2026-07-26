@@ -5,6 +5,7 @@
 #include <enginelab/physics/SimplifiedGasolinePhysics.hpp>
 #include <enginelab/physics/ConservativeGasSystem.hpp>
 #include <enginelab/physics/FlamePhysicsModel.hpp>
+#include <enginelab/physics/CompressionIgnitionModel.hpp>
 #include <enginelab/physics/FuelInjectionModel.hpp>
 #include <enginelab/physics/EndGasKnockModel.hpp>
 #include <enginelab/physics/MechanicalKinematics.hpp>
@@ -617,6 +618,19 @@ int main() {
                     > enginelab::FlamePhysicsModel::turbulentFlameSpeedMps(
                         fuel, cleanConditions),
                 "chamber tumble must increase turbulent flame speed independently of fuel chemistry");
+        auto highSpeedPentRoof = cleanConditions;
+        highSpeedPentRoof.temperatureK = 650.0;
+        highSpeedPentRoof.meanPistonSpeedMps = 21.0;
+        highSpeedPentRoof.chamberTurbulenceIntensityRatio = 1.55;
+        highSpeedPentRoof.load = 1.0;
+        const auto highSpeedFlame =
+            enginelab::FlamePhysicsModel::turbulentFlameSpeedMps(
+                fuel, highSpeedPentRoof);
+        require(highSpeedFlame > 42.0 && highSpeedFlame < 0.18
+                    * std::sqrt(1.35 * 287.05
+                        * highSpeedPentRoof.temperatureK) + 1.0e-12,
+                "high-speed pent-roof combustion must retain calibrated tumble "
+                "while remaining a subsonic deflagration");
         enginelab::FlameEvent event;
         enginelab::FlameConditions conditions { 0.086, 0.000055, 700.0, 900'000.0,
                                                  1.05, 0.04, 12.0, 0.9 };
@@ -648,8 +662,40 @@ int main() {
         const auto directResult = enginelab::FuelInjectionModel::deliver(direct, fuel, directState,
             directCell, 2.0e-5, 0.002);
         require(directResult.meteredMoles > 0.0 && directResult.chargeCoolingJoules > 0.0
+                && directResult.entrainedMoles == directResult.vaporisedMoles
                 && directCell.temperatureK() < directTemperatureBefore,
                 "direct injection must be pressure-limited and apply latent charge cooling");
+
+        auto dispersedDirect = direct;
+        dispersedDirect.directSprayVaporisationTimeConstantSeconds = 0.004;
+        dispersedDirect.directSprayEntrainmentTimeConstantSeconds = 0.0008;
+        enginelab::GasCell dispersedCell;
+        dispersedCell.initialise(900.0, 0.055, 650.0);
+        enginelab::FuelInjectionState dispersedState;
+        const auto fuelBefore = dispersedCell.mixture().fuelMoles;
+        const auto dispersed = enginelab::FuelInjectionModel::deliver(
+            dispersedDirect, fuel, dispersedState, dispersedCell, 2.0e-5, 0.0001);
+        const auto representedFuel = dispersedCell.mixture().fuelMoles - fuelBefore
+            + dispersedState.directLiquidSprayMoles
+            + dispersedState.directDispersingVapourMoles;
+        require(dispersed.meteredMoles > 0.0
+                && dispersed.vaporisedMoles < dispersed.meteredMoles
+                && dispersed.entrainedMoles < dispersed.vaporisedMoles
+                && std::abs(representedFuel - dispersed.meteredMoles) < 1.0e-15,
+                "direct spray must delay homogeneous fuel availability while conserving every metered mole");
+
+        enginelab::GasCell coldSprayCell;
+        enginelab::GasCell hotSprayCell;
+        coldSprayCell.initialise(900.0, 0.055, 450.0);
+        hotSprayCell.initialise(900.0, 0.055, 950.0);
+        enginelab::FuelInjectionState coldSprayState;
+        enginelab::FuelInjectionState hotSprayState;
+        const auto coldSpray = enginelab::FuelInjectionModel::deliver(
+            dispersedDirect, fuel, coldSprayState, coldSprayCell, 2.0e-5, 0.0001);
+        const auto hotSpray = enginelab::FuelInjectionModel::deliver(
+            dispersedDirect, fuel, hotSprayState, hotSprayCell, 2.0e-5, 0.0001);
+        require(hotSpray.vaporisedMoles > coldSpray.vaporisedMoles,
+                "direct-spray vaporisation must accelerate in a hotter compressed charge");
 
         enginelab::GasCell portCell;
         portCell.initialise(80.0, 0.18, 320.0);
@@ -699,6 +745,98 @@ int main() {
             direct, 3'000.0, 18.0, 13.0, 1.0);
         require(delayedPortTrim > 1.0 && delayedPortTrim < directTrim && directTrim < 1.06,
                 "closed-loop fuel control must respect port-film transport delay and bounded gain");
+    }
+
+    {
+        enginelab::FuelConfig diesel;
+        diesel.name = "C12H23 diesel surrogate";
+        diesel.lowerHeatingValueMjPerKg = 42.6;
+        diesel.molarMassGramsPerMole = 167.31;
+        diesel.oxygenMolesPerFuelMole = 17.75;
+        diesel.productMolesPerFuelMole = 23.5;
+        diesel.stoichiometricAirFuelRatio = 14.65;
+        diesel.cetaneNumber = 51.0;
+        enginelab::CombustionCalibrationConfig calibration;
+
+        const auto lowCetaneDelay =
+            enginelab::CompressionIgnitionModel::ignitionDelaySeconds(
+                calibration, 40.0, 45.0, 850.0, 0.75);
+        const auto highCetaneDelay =
+            enginelab::CompressionIgnitionModel::ignitionDelaySeconds(
+                calibration, 60.0, 45.0, 850.0, 0.75);
+        require(highCetaneDelay < lowCetaneDelay
+                && highCetaneDelay > 20.0e-6,
+                "higher cetane quality must shorten the finite compression-ignition delay");
+
+        enginelab::GasCell hotChamber;
+        hotChamber.configureFuelChemistry(
+            diesel.molarMassGramsPerMole * 0.001,
+            diesel.oxygenMolesPerFuelMole,
+            diesel.productMolesPerFuelMole);
+        hotChamber.initialise(5'000.0, 0.055, 850.0,
+            { 0.002, 0.00752, 0.00008, 0.0 });
+        enginelab::CompressionIgnitionState hotState;
+        const auto energyBefore = hotChamber.internalEnergyJoules();
+        double releasedEnergy = 0.0;
+        double burnedFuel = 0.0;
+        double usefulBurnDuration = 0.0;
+        bool ignited = false;
+        for (int step = 0; step < 400; ++step) {
+            const auto result = enginelab::CompressionIgnitionModel::advance(
+                hotState, hotChamber, diesel, calibration,
+                { 700.0 + static_cast<double>(step) * 0.2, 9.0, true },
+                25.0e-6);
+            releasedEnergy += result.reaction.releasedEnergyJoules;
+            burnedFuel += result.reaction.burnedFuelMoles;
+            usefulBurnDuration = std::max(
+                usefulBurnDuration, result.durationSeconds);
+            ignited = ignited || result.autoIgnited;
+        }
+        require(ignited && burnedFuel > 0.0
+                && std::abs((hotChamber.internalEnergyJoules() - energyBefore)
+                    - releasedEnergy) < std::max(1.0, releasedEnergy) * 1.0e-12,
+                "compression ignition must release exactly the chemical energy added to the conservative chamber");
+        require(usefulBurnDuration > 0.0 && usefulBurnDuration < 0.008,
+                "compression-ignition duration must exclude the negligible numerical burn tail");
+
+        enginelab::GasCell coldChamber;
+        coldChamber.configureFuelChemistry(
+            diesel.molarMassGramsPerMole * 0.001,
+            diesel.oxygenMolesPerFuelMole,
+            diesel.productMolesPerFuelMole);
+        coldChamber.initialise(300.0, 0.55, 360.0,
+            { 0.002, 0.00752, 0.00008, 0.0 });
+        enginelab::CompressionIgnitionState coldState;
+        for (int step = 0; step < 400; ++step)
+            (void)enginelab::CompressionIgnitionModel::advance(
+                coldState, coldChamber, diesel, calibration,
+                { 700.0 + static_cast<double>(step) * 0.2, 2.0, true },
+                25.0e-6);
+        require(!coldState.autoIgnited
+                && coldChamber.mixture().fuelMoles > 0.0,
+                "a cold low-pressure diesel mixture must not autoignite");
+
+        enginelab::GasCell oxygenLimited;
+        oxygenLimited.configureFuelChemistry(
+            diesel.molarMassGramsPerMole * 0.001,
+            diesel.oxygenMolesPerFuelMole,
+            diesel.productMolesPerFuelMole);
+        oxygenLimited.initialise(6'000.0, 0.055, 900.0,
+            { 0.0002, 0.00075, 0.0002, 0.0 });
+        const auto initialOxygen = oxygenLimited.mixture().oxygenMoles;
+        enginelab::CompressionIgnitionState oxygenLimitedState;
+        double oxygenLimitedBurn = 0.0;
+        for (int step = 0; step < 1'000; ++step) {
+            const auto result = enginelab::CompressionIgnitionModel::advance(
+                oxygenLimitedState, oxygenLimited, diesel, calibration,
+                { std::fmod(650.0 + static_cast<double>(step) * 0.2, 720.0),
+                  10.0, true }, 25.0e-6);
+            oxygenLimitedBurn += result.reaction.burnedFuelMoles;
+        }
+        require(oxygenLimitedBurn
+                    <= initialOxygen / diesel.oxygenMolesPerFuelMole + 1.0e-15
+                && oxygenLimited.mixture().oxygenMoles >= -1.0e-15,
+                "compression ignition must remain strictly oxygen limited");
     }
 
     auto config = enginelab::makeDefaultInlineFour();
@@ -994,11 +1132,16 @@ int main() {
     extendedPhysicsConfig.injection.latentHeatKjPerKg = 315.0;
     extendedPhysicsConfig.injection.directChargeCoolingEfficiency = 0.74;
     extendedPhysicsConfig.injection.portChargeCoolingEfficiency = 0.31;
+    extendedPhysicsConfig.injection.directSprayVaporisationTimeConstantSeconds = 0.00042;
+    extendedPhysicsConfig.injection.directSprayEntrainmentTimeConstantSeconds = 0.00019;
     extendedPhysicsConfig.cylinders.front().pistonFrictionCoefficient = 0.067;
     extendedPhysicsConfig.cylinders.front().pistonBreakawayForceN = 61.0;
     extendedPhysicsConfig.combustionCalibration.baseIgnitionDelaySeconds = 0.00062;
     extendedPhysicsConfig.combustionCalibration.chamberTurbulenceIntensityRatio = 1.37;
     extendedPhysicsConfig.combustionCalibration.ignitionSiteCount = 2;
+    extendedPhysicsConfig.combustionCalibration.compressionIgnitionDelayScale = 1.8;
+    extendedPhysicsConfig.combustionCalibration.compressionIgnitionMixingTimeSeconds = 0.0017;
+    extendedPhysicsConfig.combustionCalibration.compressionIgnitionPremixedFraction = 0.16;
     extendedPhysicsConfig.runnerAcoustics.dampingRatio = 0.21;
     extendedPhysicsConfig.intake.runnerPlenumDiameterMm = 49.0;
     extendedPhysicsConfig.intakePaths.front().geometry.runnerPlenumDiameterMm = 49.0;
@@ -1032,6 +1175,8 @@ int main() {
             && std::abs(extendedJsonRoundTrip.config->injection.railPressureBar - 155.0) < 0.001
             && std::abs(extendedJsonRoundTrip.config->injection.wallFilmFraction - 0.13) < 0.001
             && std::abs(extendedJsonRoundTrip.config->injection.latentHeatKjPerKg - 315.0) < 0.001
+            && std::abs(extendedJsonRoundTrip.config->injection.directSprayVaporisationTimeConstantSeconds - 0.00042) < 1.0e-9
+            && std::abs(extendedJsonRoundTrip.config->injection.directSprayEntrainmentTimeConstantSeconds - 0.00019) < 1.0e-9
             && std::abs(extendedJsonRoundTrip.config->cylinders.front().pistonFrictionCoefficient - 0.067) < 0.001
             && std::abs(extendedJsonRoundTrip.config->cylinders.front().pistonBreakawayForceN - 61.0) < 0.001,
             "JSON must preserve injection thermodynamics and per-cylinder Stribeck friction");
@@ -1044,6 +1189,9 @@ int main() {
             && std::abs(extendedJsonRoundTrip.config->combustionCalibration.baseIgnitionDelaySeconds - 0.00062) < 1.0e-9
             && std::abs(extendedJsonRoundTrip.config->combustionCalibration.chamberTurbulenceIntensityRatio - 1.37) < 0.001
             && extendedJsonRoundTrip.config->combustionCalibration.ignitionSiteCount == 2
+            && std::abs(extendedJsonRoundTrip.config->combustionCalibration.compressionIgnitionDelayScale - 1.8) < 0.001
+            && std::abs(extendedJsonRoundTrip.config->combustionCalibration.compressionIgnitionMixingTimeSeconds - 0.0017) < 1.0e-9
+            && std::abs(extendedJsonRoundTrip.config->combustionCalibration.compressionIgnitionPremixedFraction - 0.16) < 0.001
             && std::abs(extendedJsonRoundTrip.config->intake
                     .runnerPlenumDiameterMm - 49.0) < 0.001
             && std::abs(extendedJsonRoundTrip.config->transmission.reverseRatio - 3.55) < 0.001
@@ -1085,6 +1233,7 @@ int main() {
             && std::abs(extendedYamlRoundTrip.config->injection.referencePressureBar - 180.0) < 0.001
             && std::abs(extendedYamlRoundTrip.config->injection.vaporisationTimeConstantSeconds - 0.027) < 0.001
             && std::abs(extendedYamlRoundTrip.config->injection.directChargeCoolingEfficiency - 0.74) < 0.001
+            && std::abs(extendedYamlRoundTrip.config->injection.directSprayVaporisationTimeConstantSeconds - 0.00042) < 1.0e-9
             && std::abs(extendedYamlRoundTrip.config->cylinders.front().pistonFrictionCoefficient - 0.067) < 0.001,
             "YAML must preserve injection thermodynamics and per-cylinder friction");
     require(extendedYamlRoundTrip
@@ -1102,6 +1251,36 @@ int main() {
             && std::abs(extendedYamlRoundTrip.config->exhaustPaths.front()
                     .network->components.front().outletDiameterMm - 68.0) < 0.001,
             "YAML must preserve Phase 3-5 acoustics, clutch, tire and continuous valve control");
+    auto dieselConfig = config;
+    dieselConfig.fuel = enginelab::FuelType::diesel;
+    dieselConfig.injection.mode = enginelab::InjectionMode::direct;
+    dieselConfig.fuelProperties.name = "EN 590 C12H23 surrogate";
+    dieselConfig.fuelProperties.lowerHeatingValueMjPerKg = 42.6;
+    dieselConfig.fuelProperties.densityKgPerL = 0.832;
+    dieselConfig.fuelProperties.stoichiometricAirFuelRatio = 14.65;
+    dieselConfig.fuelProperties.molarMassGramsPerMole = 167.31;
+    dieselConfig.fuelProperties.oxygenMolesPerFuelMole = 17.75;
+    dieselConfig.fuelProperties.productMolesPerFuelMole = 23.5;
+    dieselConfig.fuelProperties.laminarFlameSpeedMps = 0.0;
+    dieselConfig.fuelProperties.turbulenceFlameSpeedGain = 0.0;
+    dieselConfig.fuelProperties.cetaneNumber = 51.0;
+    dieselConfig.injection.fullLoadFuelLimit = {
+        { 1'000.0, 55.0 }, { 4'000.0, 44.0 } };
+    require(!enginelab::validateEngineConfig(dieselConfig),
+            "a four-stroke direct-injected diesel configuration must validate");
+    const auto dieselJsonRoundTrip = json.decode(json.encode(dieselConfig));
+    const auto dieselYamlRoundTrip = yaml.decode(yaml.encode(dieselConfig));
+    require(dieselJsonRoundTrip && dieselYamlRoundTrip
+            && dieselJsonRoundTrip.config->fuel == enginelab::FuelType::diesel
+            && dieselYamlRoundTrip.config->fuelProperties.cetaneNumber == 51.0
+            && dieselJsonRoundTrip.config->injection.fullLoadFuelLimit.size() == 2
+            && std::abs(dieselYamlRoundTrip.config->injection
+                    .fullLoadFuelLimit.back().milligramsPerCycle - 44.0) < 0.001,
+            "JSON and YAML must preserve diesel chemistry and the physical full-load fuel schedule");
+    auto invalidPortDiesel = dieselConfig;
+    invalidPortDiesel.injection.mode = enginelab::InjectionMode::port;
+    require(enginelab::validateEngineConfig(invalidPortDiesel).has_value(),
+            "compression ignition must reject port injection");
     require(yamlRoundTrip.config->cylinders.size() == 4, "YAML must preserve cylinders");
     const auto v8YamlRoundTrip = yaml.decode(yaml.encode(enginelab::makeDefaultV8()));
     require(v8YamlRoundTrip && v8YamlRoundTrip.config->layout == enginelab::EngineLayout::vLayout,
@@ -1186,6 +1365,7 @@ int main() {
     bool foundRadialBanks = false;
     bool foundCalibratedVtec = false;
     bool foundCalibratedAvgas = false;
+    bool foundCompressionIgnition = false;
     for (const auto& entry : catalog.entries) {
         found2jz = found2jz || entry.config.name.find("2JZ") != std::string::npos;
         foundV8 = foundV8 || (entry.config.layout == enginelab::EngineLayout::vLayout && entry.config.cylinders.size() == 8);
@@ -1214,6 +1394,10 @@ int main() {
         foundCalibratedAvgas = foundCalibratedAvgas || (entry.config.name.find("Merlin") != std::string::npos
             && entry.config.fuelProperties.name.find("100LL") != std::string::npos
             && entry.config.fuelProperties.lowerHeatingValueMjPerKg > 43.0);
+        foundCompressionIgnition = foundCompressionIgnition
+            || (entry.config.fuel == enginelab::FuelType::diesel
+                && entry.config.fuelProperties.cetaneNumber >= 40.0
+                && !entry.config.injection.fullLoadFuelLimit.empty());
         require(!enginelab::validateEngineConfig(entry.config), "every catalog engine must validate");
         require(!entry.sourcePath.empty(), "catalog entries must retain their source path");
     }
@@ -1222,6 +1406,8 @@ int main() {
     require(foundRadialBanks,
             "catalog radial cylinders must retain their independent spatial bank angles");
     require(foundCalibratedAvgas, "catalog parts must apply an explicit fuel calibration to aviation engines");
+    require(foundCompressionIgnition,
+            "catalog must include a cetane-calibrated compression-ignition engine");
 
     {
         const auto simulate = [](const enginelab::EngineConfig& testConfig, double dt) {

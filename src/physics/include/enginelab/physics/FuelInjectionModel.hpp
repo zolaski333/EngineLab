@@ -7,15 +7,26 @@ namespace enginelab {
 
 struct FuelInjectionState final {
     double liquidFilmMoles { 0.0 };
+    double directLiquidSprayMoles { 0.0 };
+    double directDispersingVapourMoles { 0.0 };
 };
 
 struct FuelInjectionResult final {
     double meteredMoles { 0.0 };
     double vaporisedMoles { 0.0 };
+    double entrainedMoles { 0.0 };
     double chargeCoolingJoules { 0.0 };
+    double liquidSprayMoles { 0.0 };
+    double dispersingVapourMoles { 0.0 };
 };
 
-/** Pressure-aware injector delivery with port wall-film and DI charge cooling. */
+/** Pressure-aware delivery with port wall film or a two-stage direct spray.
+ *
+ * Direct-injected fuel remains in explicit liquid and vapor-cloud inventories
+ * until vaporisation and turbulent entrainment make it available to the gas
+ * chemistry. This keeps fuel mass conservative without pretending that a rail
+ * pulse is an instantly homogeneous chamber mixture.
+ */
 class FuelInjectionModel final {
 public:
     [[nodiscard]] static FuelInjectionResult deliver(const InjectionConfig& injection,

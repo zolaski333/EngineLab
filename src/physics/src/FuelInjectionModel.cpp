@@ -29,6 +29,7 @@ FuelInjectionResult FuelInjectionModel::deliver(const InjectionConfig& injection
     result.meteredMoles = std::min(std::max(0.0, commandedMoles), capacityMoles);
 
     double newlyVaporisedMoles = 0.0;
+    double newlyEntrainedMoles = 0.0;
     if (injection.mode == InjectionMode::port) {
         const auto filmFraction = std::clamp(injection.wallFilmFraction, 0.0, 0.98);
         state.liquidFilmMoles += result.meteredMoles * filmFraction;
@@ -39,12 +40,44 @@ FuelInjectionResult FuelInjectionModel::deliver(const InjectionConfig& injection
             * (1.0 - std::exp(-dtSeconds * temperatureFactor / timeConstant));
         state.liquidFilmMoles = std::max(0.0, state.liquidFilmMoles - evaporatedFilm);
         newlyVaporisedMoles += evaporatedFilm;
+        newlyEntrainedMoles = newlyVaporisedMoles;
     } else {
-        newlyVaporisedMoles = result.meteredMoles;
+        state.directLiquidSprayMoles += result.meteredMoles;
+        const auto vaporisationTime =
+            injection.directSprayVaporisationTimeConstantSeconds;
+        if (vaporisationTime <= 0.0) {
+            newlyVaporisedMoles = state.directLiquidSprayMoles;
+        } else {
+            // Droplet heating and vaporisation accelerate strongly as the
+            // compressed charge warms. The bounded factor retains finite cold
+            // operation while avoiding a solver-rate-dependent threshold.
+            const auto temperatureFactor = std::clamp(
+                (target.temperatureK() - 240.0) / 560.0, 0.04, 2.5);
+            newlyVaporisedMoles = state.directLiquidSprayMoles
+                * (1.0 - std::exp(-dtSeconds * temperatureFactor
+                    / vaporisationTime));
+        }
+        newlyVaporisedMoles = std::clamp(newlyVaporisedMoles, 0.0,
+                                          state.directLiquidSprayMoles);
+        state.directLiquidSprayMoles -= newlyVaporisedMoles;
+        state.directDispersingVapourMoles += newlyVaporisedMoles;
+
+        const auto entrainmentTime =
+            injection.directSprayEntrainmentTimeConstantSeconds;
+        newlyEntrainedMoles = entrainmentTime <= 0.0
+            ? state.directDispersingVapourMoles
+            : state.directDispersingVapourMoles
+                * (1.0 - std::exp(-dtSeconds / entrainmentTime));
+        newlyEntrainedMoles = std::clamp(newlyEntrainedMoles, 0.0,
+                                          state.directDispersingVapourMoles);
+        state.directDispersingVapourMoles -= newlyEntrainedMoles;
     }
 
+    if (newlyEntrainedMoles > 0.0) {
+        target.injectFuelMoles(newlyEntrainedMoles,
+                               injection.fuelTemperatureC + 273.15);
+    }
     if (newlyVaporisedMoles > 0.0) {
-        target.injectFuelMoles(newlyVaporisedMoles, injection.fuelTemperatureC + 273.15);
         const auto latentHeatJ = newlyVaporisedMoles * fuelMolarMassKg
             * injection.latentHeatKjPerKg * 1'000.0;
         const auto coolingEfficiency = injection.mode == InjectionMode::direct
@@ -53,6 +86,9 @@ FuelInjectionResult FuelInjectionModel::deliver(const InjectionConfig& injection
         target.addHeatJoules(-result.chargeCoolingJoules);
     }
     result.vaporisedMoles = newlyVaporisedMoles;
+    result.entrainedMoles = newlyEntrainedMoles;
+    result.liquidSprayMoles = state.directLiquidSprayMoles;
+    result.dispersingVapourMoles = state.directDispersingVapourMoles;
     return result;
 }
 

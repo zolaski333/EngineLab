@@ -49,7 +49,8 @@ enginelab::FiringEvent eventFixture() {
 }
 
 std::vector<float> renderEvent(double sampleRate, int preparedBlockSize,
-                               int sampleCount, bool renderAsOneCall) {
+                               int sampleCount, bool renderAsOneCall,
+                               const enginelab::FiringEvent& event = eventFixture()) {
     enginelab::FiringEventQueue queue;
     enginelab::RealtimeAudioState state;
     state.exhaustGain.store(0.0F);
@@ -58,7 +59,7 @@ std::vector<float> renderEvent(double sampleRate, int preparedBlockSize,
     state.convolution.store(0.0F);
     auto renderer = std::make_unique<enginelab::RealtimeEngineAudio>(queue, state);
     renderer->prepare(sampleRate, preparedBlockSize);
-    require(queue.tryPush(eventFixture()), "event fixture must enter the realtime queue");
+    require(queue.tryPush(event), "event fixture must enter the realtime queue");
     juce::AudioBuffer<float> output(2, sampleCount);
     if (renderAsOneCall) {
         renderer->render(output, 0, sampleCount);
@@ -901,6 +902,33 @@ double absoluteDifference(const std::vector<float>& left, const std::vector<floa
     return difference;
 }
 
+double spectralBandEnergy(std::span<const float> samples, double sampleRate,
+                          double lowHz, double highHz, std::size_t begin) {
+    begin = std::min(begin, samples.size());
+    const auto count = std::min<std::size_t>(2'048, samples.size() - begin);
+    if (count < 2) return 0.0;
+    const auto firstBin = static_cast<std::size_t>(std::ceil(
+        lowHz * static_cast<double>(count) / sampleRate));
+    const auto lastBin = std::min<std::size_t>(count / 2,
+        static_cast<std::size_t>(std::floor(
+            highHz * static_cast<double>(count) / sampleRate)));
+    auto energy = 0.0;
+    for (auto bin = firstBin; bin <= lastBin; ++bin) {
+        std::complex<double> spectrum {};
+        for (std::size_t sample = 0; sample < count; ++sample) {
+            const auto window = 0.5 - 0.5 * std::cos(
+                2.0 * std::numbers::pi * static_cast<double>(sample)
+                / static_cast<double>(count - 1));
+            const auto phase = -2.0 * std::numbers::pi
+                * static_cast<double>(bin * sample) / static_cast<double>(count);
+            spectrum += static_cast<double>(samples[begin + sample]) * window
+                * std::exp(std::complex<double>(0.0, phase));
+        }
+        energy += std::norm(spectrum);
+    }
+    return energy;
+}
+
 struct WaveformMetrics final {
     double mean {};
     double rms {};
@@ -1084,6 +1112,39 @@ void latencyAndBlockSizeRegression() {
                 "pressure queue retention must exceed the adaptive look-ahead");
         }
     }
+}
+
+void compressionIgnitionTimbreRegression() {
+    constexpr double sampleRate = 48'000.0;
+    auto spark = eventFixture();
+    spark.compressionIgnition = false;
+    spark.combustionSharpness = 0.0F;
+    auto diesel = spark;
+    diesel.compressionIgnition = true;
+    diesel.combustionSharpness = 0.85F;
+
+    const auto sparkWave = renderEvent(sampleRate, 256, 3'600, true, spark);
+    const auto dieselWave = renderEvent(sampleRate, 256, 3'600, true, diesel);
+    const auto sparkOnset = firstAudibleSample(sparkWave);
+    const auto dieselOnset = firstAudibleSample(dieselWave);
+    require(sparkOnset < sparkWave.size() && dieselOnset < dieselWave.size(),
+        "spark and compression-ignition events must both remain audible");
+
+    const auto sparkHigh = spectralBandEnergy(
+        sparkWave, sampleRate, 1'800.0, 5'200.0, sparkOnset);
+    const auto sparkLow = spectralBandEnergy(
+        sparkWave, sampleRate, 120.0, 1'200.0, sparkOnset);
+    const auto dieselHigh = spectralBandEnergy(
+        dieselWave, sampleRate, 1'800.0, 5'200.0, dieselOnset);
+    const auto dieselLow = spectralBandEnergy(
+        dieselWave, sampleRate, 120.0, 1'200.0, dieselOnset);
+    require(sparkLow > 0.0 && dieselLow > 0.0,
+        "combustion timbre fixture must contain a resolved low-frequency body");
+    require(dieselHigh / dieselLow > (sparkHigh / sparkLow) * 1.35,
+        "resolved compression-ignition sharpness must increase upper-mode energy");
+    const auto dieselMetrics = analyseWaveform(dieselWave);
+    require(dieselMetrics.finite && dieselMetrics.peak < 0.999,
+        "diesel pressure-rise timbre must remain finite and below the safety limiter");
 }
 
 void runnerDelaySampleRateRegression() {
@@ -2310,6 +2371,7 @@ int main() {
         nonlinearDuctAcousticsRegression();
         expansionChamberMufflerRegression();
         latencyAndBlockSizeRegression();
+        compressionIgnitionTimbreRegression();
         runnerDelaySampleRateRegression();
         exhaustPathIsolationRegression();
         branchedAcousticTopologyRegression();

@@ -546,8 +546,11 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
             || config.schemaVersion > currentEngineSchemaVersion)
         return "Unsupported engine schema version";
     if (config.name.empty() || config.name.size() > 128) return "Engine name must contain between 1 and 128 bytes";
-    if (config.cycle != EngineCycle::fourStroke || config.fuel != FuelType::gasoline)
-        return "Only four-stroke gasoline engines are currently supported";
+    if (config.cycle != EngineCycle::fourStroke)
+        return "Only four-stroke engines are currently supported";
+    if (config.fuel == FuelType::diesel
+            && config.injection.mode != InjectionMode::direct)
+        return "Compression-ignition diesel engines require direct injection";
     if (config.fuelProperties.name.empty() || config.fuelProperties.name.size() > 128
         || !inRange(config.fuelProperties.lowerHeatingValueMjPerKg, 10.0, 60.0)
         || !inRange(config.fuelProperties.densityKgPerL, 0.30, 1.50)
@@ -555,9 +558,14 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
         || !inRange(config.fuelProperties.molarMassGramsPerMole, 20.0, 300.0)
         || !inRange(config.fuelProperties.oxygenMolesPerFuelMole, 1.0, 40.0)
         || !inRange(config.fuelProperties.productMolesPerFuelMole, 1.0, 60.0)
-        || !inRange(config.fuelProperties.laminarFlameSpeedMps, 0.05, 2.0)
-        || !inRange(config.fuelProperties.turbulenceFlameSpeedGain, 0.0, 10.0))
-        return "Fuel properties must define finite gasoline chemistry and thermodynamic values";
+        || !inRange(config.fuelProperties.laminarFlameSpeedMps,
+            config.fuel == FuelType::diesel ? 0.0 : 0.05, 2.0)
+        || !inRange(config.fuelProperties.turbulenceFlameSpeedGain, 0.0, 10.0)
+        || (config.fuel == FuelType::gasoline
+            && config.fuelProperties.cetaneNumber != 0.0)
+        || (config.fuel == FuelType::diesel
+            && !inRange(config.fuelProperties.cetaneNumber, 30.0, 80.0)))
+        return "Fuel properties must define finite chemistry, ignition quality and thermodynamic values";
     const auto chemistryStoichiometricAfr = config.fuelProperties.oxygenMolesPerFuelMole * 31.9988
         / config.fuelProperties.molarMassGramsPerMole / 0.232;
     if (std::abs(config.fuelProperties.stoichiometricAirFuelRatio / chemistryStoichiometricAfr - 1.0) > 0.25)
@@ -568,7 +576,8 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
         || !inRange(config.redlineRpm, config.idleRpm + 100.0, 20'000.0)
         || !inRange(config.rotatingInertiaKgM2, 0.01, 5.0)
         || !inRange(config.frictionCoefficient, 0.0, 1.0)
-        || !inRange(config.octaneRating, 70.0, 130.0)
+        || (config.fuel == FuelType::gasoline
+            && !inRange(config.octaneRating, 70.0, 130.0))
         || !inRange(config.ambientPressureKpa, 50.0, 120.0)
         || !inRange(config.ambientTemperatureC, -50.0, 60.0)
         || !inRange(config.coolingEfficiency, 0.1, 5.0)
@@ -646,6 +655,11 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
         || !inRange(config.combustionCalibration.chamberTurbulenceIntensityRatio, 0.1, 4.0)
         || config.combustionCalibration.ignitionSiteCount < 1
         || config.combustionCalibration.ignitionSiteCount > 4
+        || !inRange(config.combustionCalibration.compressionIgnitionDelayScale, 0.2, 5.0)
+        || !inRange(config.combustionCalibration.compressionIgnitionMixingTimeSeconds,
+                    0.00005, 0.02)
+        || !inRange(config.combustionCalibration.compressionIgnitionPremixedFraction,
+                    0.0, 0.8)
         || !inRange(config.runnerAcoustics.dampingRatio, 0.01, 2.0)
         || !inRange(config.runnerAcoustics.couplingGain, 0.0, 2.0)
         || !inRange(config.runnerAcoustics.maximumPressureAmplitudeKpa, 0.1, 200.0)
@@ -688,11 +702,27 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
         || !inRange(config.injection.latentHeatKjPerKg, 10.0, 1'000.0)
         || !inRange(config.injection.directChargeCoolingEfficiency, 0.0, 1.0)
         || !inRange(config.injection.portChargeCoolingEfficiency, 0.0, 1.0)
+        || !inRange(config.injection.directSprayVaporisationTimeConstantSeconds,
+                    0.0, 0.02)
+        || !inRange(config.injection.directSprayEntrainmentTimeConstantSeconds,
+                    0.0, 0.02)
         || !inRange(config.solver.mechanicalFrequencyHz, 240.0, 50'000.0)
         || !inRange(config.solver.maximumMechanicalFrequencyHz, config.solver.mechanicalFrequencyHz, 100'000.0)
         || !inRange(config.solver.maximumCrankDegreesPerStep, 0.1, 30.0)
         || config.solver.gasSubsteps < 1 || config.solver.gasSubsteps > 32)
         return "Engine configuration contains non-finite or physically invalid values";
+    if (config.injection.fullLoadFuelLimit.size() > 64
+            || (config.fuel != FuelType::diesel
+                && !config.injection.fullLoadFuelLimit.empty()))
+        return "Full-load fuel quantity limits are only valid for compression-ignition engines";
+    auto previousFuelLimitRpm = -1.0;
+    for (const auto& sample : config.injection.fullLoadFuelLimit) {
+        if (!inRange(sample.rpm, 0.0, 25'000.0)
+                || !inRange(sample.milligramsPerCycle, 0.0, 1'000.0)
+                || sample.rpm <= previousFuelLimitRpm)
+            return "Full-load fuel quantity limits must be finite and ordered by RPM";
+        previousFuelLimitRpm = sample.rpm;
+    }
     const auto maximumCalibratedRpm = std::max(config.redlineRpm, config.ignition.revLimitRpm);
     const auto requiredAngleFrequency = maximumCalibratedRpm * 6.0
         / config.solver.maximumCrankDegreesPerStep;

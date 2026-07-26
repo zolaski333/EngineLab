@@ -212,7 +212,9 @@ private:
         bool useStageState,
         std::span<const CylinderValveBoundary> cylinderBoundaries,
         const ExhaustAmbientBoundary& ambient) noexcept;
-    [[nodiscard]] bool prepareStageStates(bool candidateStage) noexcept;
+    [[nodiscard]] bool prepareStageStates(
+        bool candidateStage,
+        bool deferDynamicWallSources = false) noexcept;
     void updateOutletSamples(double durationSeconds) noexcept;
 
     EulerMixtureModel mixtureModel_;

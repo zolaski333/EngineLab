@@ -266,7 +266,9 @@ void traceEngine(const enginelab::EngineConfig& baseConfig, double targetRpm,
                  "intake_v_mps,intake_mg,residual,exh_gps,net_hz,limited,irt_c,irp_kpa,"
                  "exh_lift_mm,exh_cda_mm2,exh_valve_gps,res_kpa,res_hz,ram_kpa,"
                  "col_mps,afr,fuel_mg,oxygen_mmol,burned_mmol,flame_mps,"
-                 "burned_fraction,combustion_efficiency,phi_at_spark\n";
+                 "burned_fraction,combustion_efficiency,phi_at_spark,"
+                 "compression_ignition,soc_deg,burn_ms,sharpness,"
+                 "liquid_spray_mg,dispersing_spray_mg,injector_capacity\n";
     const auto fineDt = dt / 48.0;
     const auto cycleSeconds = 120.0 / std::max(1.0, simulator.state().rpm);
     const auto fineSteps = static_cast<int>(1.2 * cycleSeconds / fineDt);
@@ -297,7 +299,14 @@ void traceEngine(const enginelab::EngineConfig& baseConfig, double targetRpm,
                   << ',' << c.flameSpeedMps
                   << ',' << c.burnedFraction
                   << ',' << c.combustionEfficiency
-                  << ',' << c.equivalenceRatioAtSpark << '\n';
+                  << ',' << c.equivalenceRatioAtSpark
+                  << ',' << (c.compressionIgnition ? 1 : 0)
+                  << ',' << c.combustionStartPhaseDegrees
+                  << ',' << c.combustionDurationMs
+                  << ',' << c.combustionSharpness
+                  << ',' << c.directLiquidSprayFuelMg
+                  << ',' << c.directDispersingFuelMg
+                  << ',' << c.injectorCapacityRatio << '\n';
     }
 }
 
