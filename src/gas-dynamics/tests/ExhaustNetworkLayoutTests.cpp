@@ -6,6 +6,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <iostream>
+#include <numbers>
 #include <numeric>
 #include <string_view>
 
@@ -152,6 +153,39 @@ void testLegacyTopologyCompilation() {
         }), "legacy cylinder IDs must map to primary inlets, not artificial plenums");
 }
 
+void testAuthoredTaperSurvivesTopologyCompilation() {
+    auto config = customNetworkConfig();
+    auto& taperedPrimary =
+        config.exhaustPaths.front().network->components.front();
+    taperedPrimary.outletDiameterMm = 55.0;
+    requireLayout(!validateEngineConfig(config),
+        "an authored outlet diameter must be valid exhaust geometry");
+    const auto layout =
+        ExhaustNetworkLayout::compile(ExhaustGraph::makeForEngine(config));
+    const auto compiled = std::find_if(
+        layout.ducts().begin(), layout.ducts().end(),
+        [&taperedPrimary](const CompiledExhaustDuct& duct) {
+            return duct.sourceComponentId == taperedPrimary.id;
+        });
+    const auto circularArea = [](double diameterMm) {
+        return std::numbers::pi
+            * std::pow(diameterMm * 0.0005, 2.0);
+    };
+    const auto inletAreaM2 = circularArea(41.0);
+    const auto outletAreaM2 = circularArea(55.0);
+    requireLayout(layout.valid() && compiled != layout.ducts().end(),
+        "an authored tapered component must compile to one physical duct");
+    requireLayout(std::abs(compiled->inletFlowAreaM2 - inletAreaM2) < 1.0e-14
+            && std::abs(compiled->outletFlowAreaM2 - outletAreaM2) < 1.0e-14
+            && std::abs(compiled->inletConnectionAreaM2 - inletAreaM2) < 1.0e-14
+            && std::abs(compiled->outletConnectionAreaM2 - outletAreaM2) < 1.0e-14
+            && std::abs(compiled->volumeM3
+                - (inletAreaM2 + std::sqrt(inletAreaM2 * outletAreaM2)
+                    + outletAreaM2) / 3.0 * 0.44) < 1.0e-14
+            && !compiled->areaWasDerivedFromVolume,
+        "topology compilation must preserve both taper faces and exact frustum volume");
+}
+
 void testZeroLengthResolutionAndHardCellBudget() {
     auto config = customNetworkConfig();
     auto& outlet = config.exhaustPaths.front().network->components.back();
@@ -183,6 +217,6 @@ void runExhaustNetworkLayoutTests() {
     testAuthoredTopologyCompilation();
     testAudioFieldsCannotChangePhysicalLayout();
     testLegacyTopologyCompilation();
+    testAuthoredTaperSurvivesTopologyCompilation();
     testZeroLengthResolutionAndHardCellBudget();
 }
-

@@ -46,6 +46,8 @@ struct ExhaustNode final {
     AcousticPoint3M acousticAxis { 0.0, 1.0, 0.0 };
     AcousticTerminationType acousticTermination {
         AcousticTerminationType::unflanged };
+    /** Optional component outlet diameter; zero means diameterMm at both ends. */
+    double outletDiameterMm { 0.0 };
 };
 struct ExhaustEdge final { std::uint32_t from {}; std::uint32_t to {}; };
 

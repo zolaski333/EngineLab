@@ -39,25 +39,35 @@ void requireIntake(bool condition, std::string_view message) {
 
 // One 250 mm x 38 mm runner duct with 8 cells: valve port at the inlet,
 // runner mouth at the outlet. This mirrors what the simulator assembles.
-[[nodiscard]] ExhaustNetworkLayout makeRunnerLayout(std::size_t cellCount = 8) {
+[[nodiscard]] ExhaustNetworkLayout makeRunnerLayout(
+    std::size_t cellCount = 8, double outletRadiusM = 0.019) {
     CompiledExhaustDuct runner;
     runner.nodeId = 100;
     runner.lengthM = 0.25;
     const auto radiusM = 0.019;
-    runner.flowAreaM2 = 3.14159265358979323846 * radiusM * radiusM;
+    runner.inletFlowAreaM2 =
+        3.14159265358979323846 * radiusM * radiusM;
+    runner.outletFlowAreaM2 =
+        3.14159265358979323846 * outletRadiusM * outletRadiusM;
+    runner.flowAreaM2 = (runner.inletFlowAreaM2
+        + std::sqrt(runner.inletFlowAreaM2 * runner.outletFlowAreaM2)
+        + runner.outletFlowAreaM2) / 3.0;
+    runner.inletConnectionAreaM2 = runner.inletFlowAreaM2;
+    runner.outletConnectionAreaM2 = runner.outletFlowAreaM2;
     runner.connectionAreaM2 = runner.flowAreaM2;
-    runner.hydraulicDiameterM = 2.0 * radiusM;
+    runner.hydraulicDiameterM =
+        2.0 * std::sqrt(runner.flowAreaM2 / 3.14159265358979323846);
     runner.volumeM3 = runner.flowAreaM2 * runner.lengthM;
     runner.cellCount = cellCount;
     CompiledCylinderPort port;
     port.cylinderId = 1;
     port.networkEndpoint = { ExhaustEndpointType::ductInlet, 0, 100 };
-    port.runnerConnectionAreaM2 = runner.connectionAreaM2;
+    port.runnerConnectionAreaM2 = runner.inletConnectionAreaM2;
     port.dischargeCoefficient = 1.0;
     CompiledExhaustOutlet mouth;
     mouth.outletNodeId = 200;
     mouth.networkEndpoint = { ExhaustEndpointType::ductOutlet, 0, 100 };
-    mouth.openingAreaM2 = runner.connectionAreaM2;
+    mouth.openingAreaM2 = runner.outletConnectionAreaM2;
     mouth.dischargeCoefficient = 1.0;
     return ExhaustNetworkLayout::assemble({ runner }, {}, {}, { port }, { mouth });
 }
@@ -235,8 +245,8 @@ void testSteadyDrawMatchesIsentropicValveFlow() {
 void testPortSpeciesInjectionIsConservativeAndGuarded() {
     ExhaustGasNetworkConfig configuration;
     ExhaustGasNetwork network;
-    requireIntake(network.configure(makeRunnerLayout(), configuration),
-                  "runner network must configure for injection");
+    requireIntake(network.configure(makeRunnerLayout(8, 0.027), configuration),
+                  "tapered runner network must configure for injection");
 
     const auto before = network.inventory();
     const auto fuelKg = 2.5e-6;

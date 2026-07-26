@@ -370,19 +370,31 @@ void EngineSimulator::configurePhysicalIntakeNetworks() {
         const auto& intake = intakeGeometryAt(config_, intakePathIndex);
         const auto lengthM = (cylinder.intakeRunnerLengthMm > 0.0
             ? cylinder.intakeRunnerLengthMm : intake.runnerLengthMm) * 0.001;
-        const auto diameterM = (cylinder.intakeRunnerDiameterMm > 0.0
+        const auto inletDiameterM = (cylinder.intakeRunnerDiameterMm > 0.0
             ? cylinder.intakeRunnerDiameterMm : intake.runnerDiameterMm) * 0.001;
-        const auto areaM2 = std::numbers::pi * diameterM * diameterM * 0.25;
+        const auto outletDiameterM = (intake.runnerPlenumDiameterMm > 0.0
+            ? intake.runnerPlenumDiameterMm : inletDiameterM * 1'000.0) * 0.001;
+        const auto inletAreaM2 =
+            std::numbers::pi * inletDiameterM * inletDiameterM * 0.25;
+        const auto outletAreaM2 =
+            std::numbers::pi * outletDiameterM * outletDiameterM * 0.25;
+        const auto meanAreaM2 = (inletAreaM2
+            + std::sqrt(inletAreaM2 * outletAreaM2) + outletAreaM2) / 3.0;
 
         gasdynamics::CompiledExhaustDuct runner;
         runner.nodeId = cylinder.id;
         runner.sourceComponentId = cylinder.id;
         runner.pathIndex = static_cast<std::uint32_t>(intakePathIndex);
         runner.lengthM = std::max(0.03, lengthM);
-        runner.flowAreaM2 = areaM2;
-        runner.connectionAreaM2 = areaM2;
-        runner.hydraulicDiameterM = diameterM;
-        runner.volumeM3 = areaM2 * runner.lengthM;
+        runner.flowAreaM2 = meanAreaM2;
+        runner.inletFlowAreaM2 = inletAreaM2;
+        runner.outletFlowAreaM2 = outletAreaM2;
+        runner.connectionAreaM2 = meanAreaM2;
+        runner.inletConnectionAreaM2 = inletAreaM2;
+        runner.outletConnectionAreaM2 = outletAreaM2;
+        runner.hydraulicDiameterM =
+            2.0 * std::sqrt(meanAreaM2 / std::numbers::pi);
+        runner.volumeM3 = meanAreaM2 * runner.lengthM;
         // ~30 mm cells: the tuning physics is the quarter-wave fundamental
         // (lambda ~ 4L), so even the floor of 6 cells resolves it at ~24 cells
         // per wavelength for a second-order scheme. The ceiling holds the cost
@@ -396,14 +408,14 @@ void EngineSimulator::configurePhysicalIntakeNetworks() {
         port.pathIndex = runner.pathIndex;
         port.networkEndpoint = {
             gasdynamics::ExhaustEndpointType::ductInlet, 0, cylinder.id };
-        port.runnerConnectionAreaM2 = areaM2;
+        port.runnerConnectionAreaM2 = inletAreaM2;
         port.dischargeCoefficient = 1.0; // the valve Cd arrives per advance
         gasdynamics::CompiledExhaustOutlet mouth;
         mouth.outletNodeId = cylinder.id;
         mouth.pathIndex = runner.pathIndex;
         mouth.networkEndpoint = {
             gasdynamics::ExhaustEndpointType::ductOutlet, 0, cylinder.id };
-        mouth.openingAreaM2 = areaM2;
+        mouth.openingAreaM2 = outletAreaM2;
         mouth.dischargeCoefficient = 1.0; // a runner mouth is a bellmouth
 
         const auto layout = gasdynamics::ExhaustNetworkLayout::assemble(

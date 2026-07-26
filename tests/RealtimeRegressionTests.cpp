@@ -711,6 +711,7 @@ void acousticIntakeNetworkRegression() {
     config.intake.inletDuctLengthMm = 280.0;
     config.intake.inletDuctDiameterMm = 72.0;
     config.intake.bellmouthDiameterMm = 96.0;
+    config.intake.runnerPlenumDiameterMm = 52.0;
     for (auto& path : config.intakePaths) path.geometry = config.intake;
     enginelab::normaliseEngineConfig(config);
 

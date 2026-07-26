@@ -354,6 +354,7 @@ void setIntakeThrottleCount(EngineConfig& config, double value) {
 void setIntakeThrottleCoefficient(EngineConfig& config, double value) { setEveryIntake(config, &IntakeConfig::throttleDischargeCoefficient, value); }
 void setIntakeRunnerLength(EngineConfig& config, double value) { setEveryIntake(config, &IntakeConfig::runnerLengthMm, value); }
 void setIntakeRunnerDiameter(EngineConfig& config, double value) { setEveryIntake(config, &IntakeConfig::runnerDiameterMm, value); }
+void setIntakeRunnerPlenumDiameter(EngineConfig& config, double value) { setEveryIntake(config, &IntakeConfig::runnerPlenumDiameterMm, value); }
 void setIntakeAirboxVolume(EngineConfig& config, double value) { setEveryIntake(config, &IntakeConfig::airboxVolumeLitres, value); }
 void setIntakeInletLength(EngineConfig& config, double value) { setEveryIntake(config, &IntakeConfig::inletDuctLengthMm, value); }
 void setIntakeInletDiameter(EngineConfig& config, double value) { setEveryIntake(config, &IntakeConfig::inletDuctDiameterMm, value); }
@@ -410,6 +411,7 @@ const GlobalNumericProperty* findGlobalNumericProperty(std::string_view path) no
         { "intake.throttle_discharge_coefficient", Dimension::dimensionless, setIntakeThrottleCoefficient },
         { "intake.runner_length_mm", Dimension::length, setIntakeRunnerLength },
         { "intake.runner_diameter_mm", Dimension::length, setIntakeRunnerDiameter },
+        { "intake.runner_plenum_diameter_mm", Dimension::length, setIntakeRunnerPlenumDiameter },
         { "intake.airbox_volume_l", Dimension::volume, setIntakeAirboxVolume },
         { "intake.inlet_duct_length_mm", Dimension::length, setIntakeInletLength },
         { "intake.inlet_duct_diameter_mm", Dimension::length, setIntakeInletDiameter },

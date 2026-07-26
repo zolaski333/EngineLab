@@ -278,6 +278,7 @@ std::string YamlEngineSerializer::encode(const EngineConfig& config) const {
         << YAML::Key << "throttle_discharge_coefficient" << YAML::Value << config.intake.throttleDischargeCoefficient
         << YAML::Key << "runner_length_mm" << YAML::Value << config.intake.runnerLengthMm
         << YAML::Key << "runner_diameter_mm" << YAML::Value << config.intake.runnerDiameterMm
+        << YAML::Key << "runner_plenum_diameter_mm" << YAML::Value << config.intake.runnerPlenumDiameterMm
         << YAML::Key << "airbox_volume_l" << YAML::Value << config.intake.airboxVolumeLitres
         << YAML::Key << "inlet_duct_length_mm" << YAML::Value << config.intake.inletDuctLengthMm
         << YAML::Key << "inlet_duct_diameter_mm" << YAML::Value << config.intake.inletDuctDiameterMm
@@ -295,6 +296,7 @@ std::string YamlEngineSerializer::encode(const EngineConfig& config) const {
             << YAML::Key << "throttle_discharge_coefficient" << YAML::Value << path.geometry.throttleDischargeCoefficient
             << YAML::Key << "runner_length_mm" << YAML::Value << path.geometry.runnerLengthMm
             << YAML::Key << "runner_diameter_mm" << YAML::Value << path.geometry.runnerDiameterMm
+            << YAML::Key << "runner_plenum_diameter_mm" << YAML::Value << path.geometry.runnerPlenumDiameterMm
             << YAML::Key << "airbox_volume_l" << YAML::Value << path.geometry.airboxVolumeLitres
             << YAML::Key << "inlet_duct_length_mm" << YAML::Value << path.geometry.inletDuctLengthMm
             << YAML::Key << "inlet_duct_diameter_mm" << YAML::Value << path.geometry.inletDuctDiameterMm
@@ -401,6 +403,8 @@ std::string YamlEngineSerializer::encode(const EngineConfig& config) const {
                     << YAML::Key << "type" << YAML::Value << exhaustComponentTypeName(component.type)
                     << YAML::Key << "length_mm" << YAML::Value << component.lengthMm
                     << YAML::Key << "diameter_mm" << YAML::Value << component.diameterMm
+                    << YAML::Key << "outlet_diameter_mm" << YAML::Value
+                    << component.outletDiameterMm
                     << YAML::Key << "volume_l" << YAML::Value << component.volumeLitres
                     << YAML::Key << "restriction" << YAML::Value << component.restriction
                     << YAML::Key << "resonance_hz" << YAML::Value << component.resonanceHz
@@ -659,6 +663,7 @@ EngineDecodeResult YamlEngineSerializer::decode(std::string_view text) const noe
             config.intake.throttleDischargeCoefficient = intake["throttle_discharge_coefficient"].as<double>(config.intake.throttleDischargeCoefficient);
             config.intake.runnerLengthMm = intake["runner_length_mm"].as<double>(config.intake.runnerLengthMm);
             config.intake.runnerDiameterMm = intake["runner_diameter_mm"].as<double>(config.intake.runnerDiameterMm);
+            config.intake.runnerPlenumDiameterMm = intake["runner_plenum_diameter_mm"].as<double>(config.intake.runnerPlenumDiameterMm);
             config.intake.airboxVolumeLitres = intake["airbox_volume_l"].as<double>(config.intake.airboxVolumeLitres);
             config.intake.inletDuctLengthMm = intake["inlet_duct_length_mm"].as<double>(config.intake.inletDuctLengthMm);
             config.intake.inletDuctDiameterMm = intake["inlet_duct_diameter_mm"].as<double>(config.intake.inletDuctDiameterMm);
@@ -678,6 +683,7 @@ EngineDecodeResult YamlEngineSerializer::decode(std::string_view text) const noe
                     path.geometry.throttleDischargeCoefficient = geometry["throttle_discharge_coefficient"].as<double>(path.geometry.throttleDischargeCoefficient);
                     path.geometry.runnerLengthMm = geometry["runner_length_mm"].as<double>(path.geometry.runnerLengthMm);
                     path.geometry.runnerDiameterMm = geometry["runner_diameter_mm"].as<double>(path.geometry.runnerDiameterMm);
+                    path.geometry.runnerPlenumDiameterMm = geometry["runner_plenum_diameter_mm"].as<double>(path.geometry.runnerPlenumDiameterMm);
                     path.geometry.airboxVolumeLitres = geometry["airbox_volume_l"].as<double>(path.geometry.airboxVolumeLitres);
                     path.geometry.inletDuctLengthMm = geometry["inlet_duct_length_mm"].as<double>(path.geometry.inletDuctLengthMm);
                     path.geometry.inletDuctDiameterMm = geometry["inlet_duct_diameter_mm"].as<double>(path.geometry.inletDuctDiameterMm);
@@ -809,6 +815,9 @@ EngineDecodeResult YamlEngineSerializer::decode(std::string_view text) const noe
                         component.type = *type;
                         component.lengthMm = encodedComponent["length_mm"].as<double>(component.lengthMm);
                         component.diameterMm = encodedComponent["diameter_mm"].as<double>(component.diameterMm);
+                        component.outletDiameterMm = encodedComponent[
+                            "outlet_diameter_mm"].as<double>(
+                                component.outletDiameterMm);
                         component.volumeLitres = encodedComponent["volume_l"].as<double>(component.volumeLitres);
                         component.restriction = encodedComponent["restriction"].as<double>(component.restriction);
                         component.resonanceHz = encodedComponent["resonance_hz"].as<double>(component.resonanceHz);

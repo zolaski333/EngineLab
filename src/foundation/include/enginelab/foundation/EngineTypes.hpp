@@ -176,7 +176,10 @@ struct IntakeConfig final {
     std::uint32_t throttleCount { 1 };
     double throttleDischargeCoefficient { 0.72 };
     double runnerLengthMm { 300.0 };
+    /** Runner diameter at the cylinder-head/valve end. */
     double runnerDiameterMm { 38.0 };
+    /** Optional diameter at the plenum end. Zero keeps a constant runner. */
+    double runnerPlenumDiameterMm { 0.0 };
     /** Optional upstream acoustic hardware. Zero volume/length means the
      * throttle mouth is directly exposed rather than inventing an airbox. */
     double airboxVolumeLitres { 0.0 };
@@ -263,7 +266,12 @@ struct ExhaustComponentConfig final {
     std::uint32_t id { 0 };
     ExhaustComponentType type { ExhaustComponentType::pipe };
     double lengthMm { 300.0 };
+    /** Diameter at the component inlet. */
     double diameterMm { 42.0 };
+    /** Optional outlet diameter. Zero keeps a constant section. A non-zero
+     * value forms a linear-area taper in the quasi-1D gas solver.
+     */
+    double outletDiameterMm { 0.0 };
     double volumeLitres { 0.0 };
     // Dimensionless pressure-loss coefficient added to the geometric loss.
     double restriction { 0.0 };

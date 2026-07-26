@@ -527,9 +527,67 @@ EulerFlux EulerMixtureModel::riemannFluxPrepared(
 }
 
 double DuctGeometry::areaM2() const noexcept {
+    const auto inlet = inletAreaM2();
+    const auto outlet = outletAreaM2();
+    if (inlet == outlet) return inlet;
+    // Exact length-mean area of a conical frustum:
+    // V/L = pi/3 * (r0^2 + r0*r1 + r1^2).
+    return (inlet + std::sqrt(inlet * outlet) + outlet) / 3.0;
+}
+
+double DuctGeometry::inletAreaM2() const noexcept {
+    if (inletCrossSectionAreaM2 > 0.0) return inletCrossSectionAreaM2;
     if (crossSectionAreaM2 > 0.0) return crossSectionAreaM2;
     const auto radius = 0.5 * diameterM;
     return std::numbers::pi * radius * radius;
+}
+
+double DuctGeometry::outletAreaM2() const noexcept {
+    if (outletCrossSectionAreaM2 > 0.0) return outletCrossSectionAreaM2;
+    if (crossSectionAreaM2 > 0.0) return crossSectionAreaM2;
+    const auto radius = 0.5 * diameterM;
+    return std::numbers::pi * radius * radius;
+}
+
+double DuctGeometry::faceAreaM2(std::size_t faceIndex) const noexcept {
+    if (cellCount == 0) return 0.0;
+    const auto inlet = inletAreaM2();
+    const auto outlet = outletAreaM2();
+    if (inlet == outlet) return inlet;
+    const auto bounded = std::min(faceIndex, cellCount);
+    const auto fraction =
+        static_cast<double>(bounded) / static_cast<double>(cellCount);
+    const auto inletRadius = std::sqrt(inlet / std::numbers::pi);
+    const auto outletRadius = std::sqrt(outlet / std::numbers::pi);
+    const auto radius = std::lerp(inletRadius, outletRadius, fraction);
+    return std::numbers::pi * radius * radius;
+}
+
+double DuctGeometry::cellAreaM2(std::size_t cellIndex) const noexcept {
+    if (cellCount == 0) return 0.0;
+    const auto bounded = std::min(cellIndex, cellCount - 1);
+    const auto left = faceAreaM2(bounded);
+    const auto right = faceAreaM2(bounded + 1);
+    if (left == right) return left;
+    return (left + std::sqrt(left * right) + right) / 3.0;
+}
+
+double DuctGeometry::cellVolumeM3(std::size_t cellIndex) const noexcept {
+    return cellAreaM2(cellIndex) * cellLengthM();
+}
+
+double DuctGeometry::cellHydraulicDiameterM(
+    std::size_t cellIndex) const noexcept {
+    const auto meanArea = areaM2();
+    return meanArea > 0.0
+        ? diameterM * std::sqrt(cellAreaM2(cellIndex) / meanArea)
+        : 0.0;
+}
+
+bool DuctGeometry::hasVariableArea() const noexcept {
+    const auto scale = std::max(inletAreaM2(), outletAreaM2());
+    return std::abs(inletAreaM2() - outletAreaM2())
+        > std::max(1.0e-15, scale * 1.0e-12);
 }
 
 double DuctGeometry::cellLengthM() const noexcept {
@@ -539,6 +597,10 @@ double DuctGeometry::cellLengthM() const noexcept {
 bool DuctGeometry::valid() const noexcept {
     return finite(lengthM) && lengthM > 0.0
         && finite(crossSectionAreaM2) && crossSectionAreaM2 >= 0.0
+        && finite(inletCrossSectionAreaM2) && inletCrossSectionAreaM2 >= 0.0
+        && finite(outletCrossSectionAreaM2) && outletCrossSectionAreaM2 >= 0.0
+        && finite(inletAreaM2()) && inletAreaM2() > 0.0
+        && finite(outletAreaM2()) && outletAreaM2() > 0.0
         && finite(diameterM) && diameterM > 0.0
         && cellCount >= 1 && cellCount <= 1'000'000
         && finite(absoluteRoughnessM) && absoluteRoughnessM >= 0.0
@@ -630,8 +692,9 @@ bool FiniteVolumeDuct::meanAcousticMedium(double& densityKgPerM3,
 
 ConservedInventory FiniteVolumeDuct::inventory() const noexcept {
     ConservedInventory result;
-    const auto cellVolume = geometry_.areaM2() * geometry_.cellLengthM();
-    for (const auto& cell : cells_) {
+    for (std::size_t cellIndex = 0; cellIndex < cells_.size(); ++cellIndex) {
+        const auto& cell = cells_[cellIndex];
+        const auto cellVolume = geometry_.cellVolumeM3(cellIndex);
         for (std::size_t index = 0; index < gasSpeciesCount; ++index)
             result.speciesMassKg[index] +=
                 cell.speciesMassDensityKgPerM3[index] * cellVolume;
@@ -643,15 +706,20 @@ ConservedInventory FiniteVolumeDuct::inventory() const noexcept {
 
 double FiniteVolumeDuct::wallThermalEnergyJ() const noexcept {
     if (!geometry_.dynamicWallHeatTransferEnabled) return 0.0;
-    const auto innerRadiusM = geometry_.diameterM * 0.5;
-    const auto outerRadiusM = innerRadiusM + geometry_.wallThicknessM;
-    const auto wallVolumePerCellM3 = std::numbers::pi * geometry_.cellLengthM()
-        * (outerRadiusM * outerRadiusM - innerRadiusM * innerRadiusM);
-    const auto heatCapacityPerCellJPerK = wallVolumePerCellM3
-        * geometry_.wallDensityKgPerM3 * geometry_.wallSpecificHeatJPerKgK;
     auto energyJ = 0.0;
-    for (const auto& wall : wallStates_)
-        energyJ += heatCapacityPerCellJPerK * wall.temperatureK;
+    for (std::size_t index = 0; index < wallStates_.size(); ++index) {
+        const auto innerRadiusM =
+            geometry_.cellHydraulicDiameterM(index) * 0.5;
+        const auto outerRadiusM = innerRadiusM + geometry_.wallThicknessM;
+        const auto wallVolumePerCellM3 = std::numbers::pi
+            * geometry_.cellLengthM()
+            * (outerRadiusM * outerRadiusM - innerRadiusM * innerRadiusM);
+        const auto heatCapacityPerCellJPerK = wallVolumePerCellM3
+            * geometry_.wallDensityKgPerM3
+            * geometry_.wallSpecificHeatJPerKgK;
+        energyJ += heatCapacityPerCellJPerK
+            * wallStates_[index].temperatureK;
+    }
     return energyJ;
 }
 
@@ -670,16 +738,16 @@ bool FiniteVolumeDuct::applyDynamicWallHeatTransfer(
         || !finite(durationSeconds) || !(durationSeconds > 0.0))
         return false;
 
-    const auto cellVolumeM3 = geometry_.areaM2() * geometry_.cellLengthM();
     for (std::size_t index = 0; index < cells_.size(); ++index) {
         const auto& primitive = cellPrimitives_[index];
+        const auto cellVolumeM3 = geometry_.cellVolumeM3(index);
         const auto specificGasConstantJPerKgK = primitive.pressurePa
             / (primitive.densityKgPerM3 * primitive.temperatureK);
         const auto specificHeatCvJPerKgK = specificGasConstantJPerKgK
             / (primitive.heatCapacityRatio - 1.0);
         const auto result = DuctWallHeatTransferModel::advance(
             wallStates_[index], {
-                geometry_.diameterM,
+                geometry_.cellHydraulicDiameterM(index),
                 geometry_.cellLengthM(),
                 geometry_.wallThicknessM,
                 geometry_.wallDensityKgPerM3,
@@ -731,15 +799,18 @@ bool FiniteVolumeDuct::prepareStateCache(
     constexpr double referenceViscosityPaS = 1.716e-5;
     constexpr double referenceTemperatureK = 273.15;
     constexpr double sutherlandTemperatureK = 110.4;
-    const auto turbulentRoughnessTerm = std::pow(
-        geometry_.absoluteRoughnessM / geometry_.diameterM / 3.7, 1.11);
     const auto localLossGradient = geometry_.localLossCoefficient / geometry_.lengthM;
-    const auto wallHeatConductancePerVolume = geometry_.wallHeatTransferWPerM2K
-        * (4.0 / geometry_.diameterM);
     for (std::size_t index = 0; index < states.size(); ++index) {
         const auto& state = states[index];
         auto& primitive = primitives[index];
         auto& source = sourceTerms[index];
+        const auto hydraulicDiameterM =
+            geometry_.cellHydraulicDiameterM(index);
+        const auto turbulentRoughnessTerm = std::pow(
+            geometry_.absoluteRoughnessM / hydraulicDiameterM / 3.7, 1.11);
+        const auto wallHeatConductancePerVolume =
+            geometry_.wallHeatTransferWPerM2K
+            * (4.0 / hydraulicDiameterM);
         source = {};
         if (!mixtureModel_.recoverPrimitive(state, primitive)) return false;
         maximumSignalSpeed = std::max(maximumSignalSpeed,
@@ -754,7 +825,7 @@ bool FiniteVolumeDuct::prepareStateCache(
                 * (referenceTemperatureK + sutherlandTemperatureK)
                 / (primitive.temperatureK + sutherlandTemperatureK);
             const auto reynolds = primitive.densityKgPerM3
-                * std::abs(primitive.velocityMps) * geometry_.diameterM
+                * std::abs(primitive.velocityMps) * hydraulicDiameterM
                 / std::max(1.0e-12, viscosity);
             auto frictionFactor = 0.0;
             if (reynolds > 1.0) {
@@ -766,7 +837,7 @@ bool FiniteVolumeDuct::prepareStateCache(
                     frictionFactor = 1.0 / (inverseRoot * inverseRoot);
                 }
             }
-            const auto lossGradient = frictionFactor / geometry_.diameterM
+            const auto lossGradient = frictionFactor / hydraulicDiameterM
                 + localLossGradient;
             source.momentumDensityKgPerM2S = -0.5 * lossGradient
                 * primitive.densityKgPerM3 * primitive.velocityMps
@@ -895,20 +966,36 @@ bool FiniteVolumeDuct::computeResidual(
             reconstructedLeft_[face], reconstructedLeftPrimitives_[face]);
     }
 
-    const auto inverseCellLength = 1.0 / geometry_.cellLengthM();
     for (std::size_t index = 0; index < count; ++index) {
         auto& cellResidual = residual[index];
+        const auto leftAreaM2 = geometry_.faceAreaM2(index);
+        const auto rightAreaM2 = geometry_.faceAreaM2(index + 1);
+        const auto inverseCellVolumeM3 =
+            1.0 / geometry_.cellVolumeM3(index);
         for (std::size_t species = 0; species < gasSpeciesCount; ++species) {
-            cellResidual.speciesMassDensityKgPerM3[species] = -inverseCellLength
-                * (faceFluxes[index + 1].speciesMassFluxKgPerM2S[species]
-                   - faceFluxes[index].speciesMassFluxKgPerM2S[species]);
+            cellResidual.speciesMassDensityKgPerM3[species] =
+                -inverseCellVolumeM3
+                * (rightAreaM2
+                        * faceFluxes[index + 1]
+                              .speciesMassFluxKgPerM2S[species]
+                   - leftAreaM2
+                        * faceFluxes[index]
+                              .speciesMassFluxKgPerM2S[species]);
         }
-        cellResidual.momentumDensityKgPerM2S = -inverseCellLength
-            * (faceFluxes[index + 1].momentumFluxPa
-               - faceFluxes[index].momentumFluxPa);
-        cellResidual.totalEnergyDensityJPerM3 = -inverseCellLength
-            * (faceFluxes[index + 1].totalEnergyFluxWPerM2
-               - faceFluxes[index].totalEnergyFluxWPerM2);
+        cellResidual.momentumDensityKgPerM2S =
+            -inverseCellVolumeM3
+                * (rightAreaM2 * faceFluxes[index + 1].momentumFluxPa
+                   - leftAreaM2 * faceFluxes[index].momentumFluxPa)
+            // Quasi-1D wall pressure force. It cancels the pressure part of
+            // the face-flux divergence exactly for a stationary uniform gas.
+            + primitives[index].pressurePa
+                * (rightAreaM2 - leftAreaM2) * inverseCellVolumeM3;
+        cellResidual.totalEnergyDensityJPerM3 =
+            -inverseCellVolumeM3
+            * (rightAreaM2
+                    * faceFluxes[index + 1].totalEnergyFluxWPerM2
+               - leftAreaM2
+                    * faceFluxes[index].totalEnergyFluxWPerM2);
 
         cellResidual.momentumDensityKgPerM2S +=
             sourceTerms[index].momentumDensityKgPerM2S;
@@ -935,6 +1022,7 @@ DuctAdvanceResult FiniteVolumeDuct::advance(
     const auto leftPeriodic = left.type == DuctBoundaryType::periodic;
     const auto rightPeriodic = right.type == DuctBoundaryType::periodic;
     if (leftPeriodic != rightPeriodic
+        || (leftPeriodic && geometry_.hasVariableArea())
         || (left.type == DuctBoundaryType::prescribed
             && !mixtureModel_.isPhysical(left.prescribedState))
         || (right.type == DuctBoundaryType::prescribed

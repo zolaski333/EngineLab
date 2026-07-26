@@ -395,6 +395,18 @@ int main() {
         require(std::abs(enginelab::intakeRunnerVolumeLitres(topology.cylinders.front(), topology.intake)
             - expectedRunnerLitres) < 1.0e-12,
             "runner control-volume size must come from configured length and diameter");
+        topology.intake.runnerPlenumDiameterMm = 52.0;
+        const auto inletRadiusMm = topology.intake.runnerDiameterMm * 0.5;
+        const auto outletRadiusMm = topology.intake.runnerPlenumDiameterMm * 0.5;
+        const auto expectedTaperedRunnerLitres = std::numbers::pi
+            * topology.intake.runnerLengthMm / 3.0
+            * (inletRadiusMm * inletRadiusMm
+                + inletRadiusMm * outletRadiusMm
+                + outletRadiusMm * outletRadiusMm) / 1'000'000.0;
+        require(std::abs(enginelab::intakeRunnerVolumeLitres(
+                    topology.cylinders.front(), topology.intake)
+                - expectedTaperedRunnerLitres) < 1.0e-12,
+            "a tapered intake runner must use exact conical-frustum volume");
         const auto tdc = enginelab::evaluateCylinderKinematics(topology, 0, 0.0, 100.0);
         const auto bdc = enginelab::evaluateCylinderKinematics(topology, 0, 180.0, 100.0);
         require(std::abs(tdc.pistonTravelMm) < 0.01
@@ -988,6 +1000,8 @@ int main() {
     extendedPhysicsConfig.combustionCalibration.chamberTurbulenceIntensityRatio = 1.37;
     extendedPhysicsConfig.combustionCalibration.ignitionSiteCount = 2;
     extendedPhysicsConfig.runnerAcoustics.dampingRatio = 0.21;
+    extendedPhysicsConfig.intake.runnerPlenumDiameterMm = 49.0;
+    extendedPhysicsConfig.intakePaths.front().geometry.runnerPlenumDiameterMm = 49.0;
     extendedPhysicsConfig.forcedInduction.enabled = true;
     extendedPhysicsConfig.forcedInduction.designShaftSpeedRpm = 145'000.0;
     extendedPhysicsConfig.forcedInduction.bearingFrictionPowerWatts = 360.0;
@@ -1000,6 +1014,19 @@ int main() {
     extendedPhysicsConfig.camshafts.continuousControl.enabled = true;
     extendedPhysicsConfig.camshafts.continuousControl.samples = { { 1'000.0, 0.2, 2.0, 0.0, 0.9 },
                                                                   { 6'000.0, 1.0, 24.0, 10.0, 1.1 } };
+    enginelab::ExhaustNetworkConfig taperedExhaust;
+    enginelab::ExhaustComponentConfig taperedOutlet;
+    taperedOutlet.id = 1;
+    taperedOutlet.type = enginelab::ExhaustComponentType::outlet;
+    taperedOutlet.lengthMm = 320.0;
+    taperedOutlet.diameterMm = 42.0;
+    taperedOutlet.outletDiameterMm = 68.0;
+    taperedExhaust.components.push_back(taperedOutlet);
+    for (const auto& cylinder : extendedPhysicsConfig.cylinders)
+        taperedExhaust.cylinderConnections.push_back(
+            { cylinder.id, taperedOutlet.id });
+    extendedPhysicsConfig.exhaustPaths.front().network =
+        std::move(taperedExhaust);
     const auto extendedJsonRoundTrip = json.decode(json.encode(extendedPhysicsConfig));
     require(extendedJsonRoundTrip
             && std::abs(extendedJsonRoundTrip.config->injection.railPressureBar - 155.0) < 0.001
@@ -1017,9 +1044,14 @@ int main() {
             && std::abs(extendedJsonRoundTrip.config->combustionCalibration.baseIgnitionDelaySeconds - 0.00062) < 1.0e-9
             && std::abs(extendedJsonRoundTrip.config->combustionCalibration.chamberTurbulenceIntensityRatio - 1.37) < 0.001
             && extendedJsonRoundTrip.config->combustionCalibration.ignitionSiteCount == 2
+            && std::abs(extendedJsonRoundTrip.config->intake
+                    .runnerPlenumDiameterMm - 49.0) < 0.001
             && std::abs(extendedJsonRoundTrip.config->transmission.reverseRatio - 3.55) < 0.001
             && extendedJsonRoundTrip.config->camshafts.intakeFlowCurve.size() == 3
-            && extendedJsonRoundTrip.config->camshafts.continuousControl.samples.size() == 2,
+            && extendedJsonRoundTrip.config->camshafts.continuousControl.samples.size() == 2
+            && extendedJsonRoundTrip.config->exhaustPaths.front().network
+            && std::abs(extendedJsonRoundTrip.config->exhaustPaths.front()
+                    .network->components.front().outletDiameterMm - 68.0) < 0.001,
             "JSON must preserve Phase 3-5 combustion, driveline and valvetrain calibration");
     const auto v8JsonRoundTrip = json.decode(json.encode(enginelab::makeDefaultV8()));
     require(v8JsonRoundTrip && v8JsonRoundTrip.config->layout == enginelab::EngineLayout::vLayout,
@@ -1061,9 +1093,14 @@ int main() {
             "YAML must preserve turbo inertia, bearing and speed calibration");
     require(extendedYamlRoundTrip
             && std::abs(extendedYamlRoundTrip.config->runnerAcoustics.dampingRatio - 0.21) < 0.001
+            && std::abs(extendedYamlRoundTrip.config->intake
+                    .runnerPlenumDiameterMm - 49.0) < 0.001
             && std::abs(extendedYamlRoundTrip.config->transmission.clutchThermalCapacityJPerC - 24'000.0) < 0.001
             && std::abs(extendedYamlRoundTrip.config->vehicle.tireFrictionCoefficient - 1.15) < 0.001
-            && extendedYamlRoundTrip.config->camshafts.continuousControl.enabled,
+            && extendedYamlRoundTrip.config->camshafts.continuousControl.enabled
+            && extendedYamlRoundTrip.config->exhaustPaths.front().network
+            && std::abs(extendedYamlRoundTrip.config->exhaustPaths.front()
+                    .network->components.front().outletDiameterMm - 68.0) < 0.001,
             "YAML must preserve Phase 3-5 acoustics, clutch, tire and continuous valve control");
     require(yamlRoundTrip.config->cylinders.size() == 4, "YAML must preserve cylinders");
     const auto v8YamlRoundTrip = yaml.decode(yaml.encode(enginelab::makeDefaultV8()));

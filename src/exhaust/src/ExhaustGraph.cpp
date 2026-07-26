@@ -176,12 +176,25 @@ struct ComponentResonance final {
     return std::numbers::pi * radiusM * radiusM;
 }
 
+[[nodiscard]] double componentOutletAreaM2(
+    const ExhaustComponentConfig& component) noexcept {
+    const auto outletDiameterMm = component.outletDiameterMm > 0.0
+        ? component.outletDiameterMm : component.diameterMm;
+    const auto radiusM =
+        finiteClamped(outletDiameterMm, 5.0, 500.0, 42.0) * 0.0005;
+    return std::numbers::pi * radiusM * radiusM;
+}
+
 [[nodiscard]] double componentVolumeLitres(const ExhaustComponentConfig& component) noexcept {
     if (std::isfinite(component.volumeLitres) && component.volumeLitres > 0.0)
         return std::clamp(component.volumeLitres, 0.001, 1'000.0);
-    const auto areaMm2 = std::numbers::pi
-        * std::pow(finiteClamped(component.diameterMm, 5.0, 500.0, 42.0) * 0.5, 2.0);
-    return areaMm2 * finiteClamped(component.lengthMm, 0.0, 10'000.0, 0.0) / 1.0e6;
+    // Radius varies linearly, so use the exact conical-frustum mean area.
+    const auto inletAreaM2 = componentAreaM2(component);
+    const auto outletAreaM2 = componentOutletAreaM2(component);
+    const auto meanAreaM2 = (inletAreaM2
+        + std::sqrt(inletAreaM2 * outletAreaM2) + outletAreaM2) / 3.0;
+    return meanAreaM2
+        * finiteClamped(component.lengthMm, 0.0, 10'000.0, 0.0);
 }
 
 [[nodiscard]] const CylinderConfig* findCylinder(const EngineConfig& config,
@@ -291,7 +304,7 @@ ExhaustGraph ExhaustGraph::makeForEngine(
                     continue;
                 pathFlow.collectorVolumeLitres += componentVolumeLitres(component);
                 if (component.type == ExhaustComponentType::outlet) {
-                    outletConductanceM2 += componentAreaM2(component)
+                    outletConductanceM2 += componentOutletAreaM2(component)
                         * finiteClamped(component.dischargeCoefficient, 0.02, 1.5, 0.72);
                 }
             }
@@ -322,7 +335,11 @@ ExhaustGraph ExhaustGraph::makeForEngine(
                     finiteClamped(component.dischargeCoefficient, 0.02, 1.5, 0.72),
                     finiteClamped(component.restriction, 0.0, 100.0, 0.0),
                     component.acousticPositionM, component.acousticAxis,
-                    component.acousticTermination });
+                    component.acousticTermination,
+                    component.outletDiameterMm > 0.0
+                        ? finiteClamped(component.outletDiameterMm,
+                            5.0, 500.0, component.diameterMm)
+                        : 0.0 });
             }
             std::unordered_set<std::uint64_t> compiledConnections;
             for (const auto& connection : path.network->connections) {
@@ -568,7 +585,10 @@ ExhaustGraph ExhaustGraph::makeForEngine(
                     // quarter-wave resonator. Retain its first odd modes and
                     // any explicitly authored/local component modes instead
                     // of selecting the largest component frequency.
-                    const auto effectiveLengthMm = lengthMm + 0.3 * node.diameterMm;
+                    const auto radiationDiameterMm = node.outletDiameterMm > 0.0
+                        ? node.outletDiameterMm : node.diameterMm;
+                    const auto effectiveLengthMm =
+                        lengthMm + 0.3 * radiationDiameterMm;
                     if (effectiveLengthMm > 0.0) {
                         const auto fundamentalHz = graph.waveSpeedMmPerSecond_
                             / (4.0 * effectiveLengthMm);

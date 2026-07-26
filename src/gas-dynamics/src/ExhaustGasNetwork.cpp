@@ -323,6 +323,8 @@ bool ExhaustGasNetwork::configure(const ExhaustNetworkLayout& layout,
         DuctGeometry geometry;
         geometry.lengthM = descriptor.lengthM;
         geometry.crossSectionAreaM2 = descriptor.flowAreaM2;
+        geometry.inletCrossSectionAreaM2 = descriptor.inletFlowAreaM2;
+        geometry.outletCrossSectionAreaM2 = descriptor.outletFlowAreaM2;
         geometry.diameterM = descriptor.hydraulicDiameterM;
         geometry.cellCount = descriptor.cellCount;
         geometry.wallFrictionEnabled = true;
@@ -375,7 +377,10 @@ bool ExhaustGasNetwork::configure(const ExhaustNetworkLayout& layout,
                 .characteristicDiameterM;
             return 0.25 * std::acos(-1.0) * diameter * diameter;
         }
-        return layout_.ducts()[endpoint.elementIndex].connectionAreaM2;
+        const auto& duct = layout_.ducts()[endpoint.elementIndex];
+        return endpoint.type == ExhaustEndpointType::ductInlet
+            ? duct.inletConnectionAreaM2
+            : duct.outletConnectionAreaM2;
     };
     for (const auto& connection : layout_.interfaces()) {
         const auto area = std::min(endpointArea(connection.upstream),
@@ -635,7 +640,9 @@ double ExhaustGasNetwork::maximumStableTimeStep(
         if (endpoint.type == ExhaustEndpointType::junction)
             return layout_.junctions()[endpoint.elementIndex].volumeM3;
         const auto& duct = ducts_[endpoint.elementIndex];
-        return duct.geometry().areaM2() * duct.geometry().cellLengthM();
+        const auto cellIndex = endpoint.type == ExhaustEndpointType::ductInlet
+            ? std::size_t { 0 } : duct.cells().size() - 1;
+        return duct.geometry().cellVolumeM3(cellIndex);
     };
     const auto constrainBoundary = [this, &stableStep, &endpointPrimitive, &endpointVolume](
         const PrimitiveState& reservoir,
@@ -748,7 +755,10 @@ bool ExhaustGasNetwork::evaluateStage(
                 .characteristicDiameterM;
             return 0.25 * std::acos(-1.0) * diameter * diameter;
         }
-        return layout_.ducts()[endpoint.elementIndex].connectionAreaM2;
+        const auto& duct = layout_.ducts()[endpoint.elementIndex];
+        return endpoint.type == ExhaustEndpointType::ductInlet
+            ? duct.inletConnectionAreaM2
+            : duct.outletConnectionAreaM2;
     };
     const auto makeFlowRate = [](const EulerFlux& flux, double areaM2) noexcept {
         ConservedFlowRate result;
@@ -783,21 +793,26 @@ bool ExhaustGasNetwork::evaluateStage(
         assigned = 1;
         auto& residual = useStageState ? duct.stageResidual_ : duct.residual_;
         auto& faceFluxes = useStageState ? duct.stageFaceFluxes_ : duct.faceFluxes_;
-        const auto inverseDx = 1.0 / duct.geometry_.cellLengthM();
         const auto faceIndex = endpoint.type == ExhaustEndpointType::ductInlet
             ? std::size_t { 0 } : faceFluxes.size() - 1;
         const auto residualIndex = endpoint.type == ExhaustEndpointType::ductInlet
             ? std::size_t { 0 } : residual.size() - 1;
         const auto sign = endpoint.type == ExhaustEndpointType::ductInlet ? 1.0 : -1.0;
+        const auto faceAreaM2 = duct.geometry_.faceAreaM2(faceIndex);
+        const auto inverseCellVolumeM3 =
+            1.0 / duct.geometry_.cellVolumeM3(residualIndex);
         const auto& oldFlux = faceFluxes[faceIndex];
         for (std::size_t species = 0; species < gasSpeciesCount; ++species) {
-            residual[residualIndex].speciesMassDensityKgPerM3[species] += sign * inverseDx
+            residual[residualIndex].speciesMassDensityKgPerM3[species] +=
+                sign * faceAreaM2 * inverseCellVolumeM3
                 * (newFlux.speciesMassFluxKgPerM2S[species]
                    - oldFlux.speciesMassFluxKgPerM2S[species]);
         }
-        residual[residualIndex].momentumDensityKgPerM2S += sign * inverseDx
+        residual[residualIndex].momentumDensityKgPerM2S +=
+            sign * faceAreaM2 * inverseCellVolumeM3
             * (newFlux.momentumFluxPa - oldFlux.momentumFluxPa);
-        residual[residualIndex].totalEnergyDensityJPerM3 += sign * inverseDx
+        residual[residualIndex].totalEnergyDensityJPerM3 +=
+            sign * faceAreaM2 * inverseCellVolumeM3
             * (newFlux.totalEnergyFluxWPerM2 - oldFlux.totalEnergyFluxWPerM2);
         faceFluxes[faceIndex] = newFlux;
         return true;
@@ -806,8 +821,11 @@ bool ExhaustGasNetwork::evaluateStage(
         const ExhaustEndpoint& endpoint,
         const EulerFlux& apertureFlux,
         double apertureAreaM2) noexcept {
+        const auto& geometry = ducts_[endpoint.elementIndex].geometry();
+        const auto faceIndex = endpoint.type == ExhaustEndpointType::ductInlet
+            ? std::size_t { 0 } : geometry.cellCount;
         return areaAveragedBoundaryFlux(apertureFlux, apertureAreaM2,
-            ducts_[endpoint.elementIndex].geometry().areaM2(),
+            geometry.faceAreaM2(faceIndex),
             endpointPrimitive(endpoint).pressurePa);
     };
     const auto connect = [&](const ExhaustEndpoint& upstream,
@@ -1249,25 +1267,25 @@ bool ExhaustGasNetwork::injectSpeciesAtPort(std::size_t portIndex,
     // reading fell 62 -> 27 degC within one valve event and kept falling,
     // which starved vaporisation and stalled the engine).
     const auto spreadCells = std::min<std::size_t>(3, duct.cells_.size());
-    const auto cellVolumeM3 = duct.geometry_.areaM2() * duct.geometry_.cellLengthM();
-    if (!(cellVolumeM3 > 0.0) || spreadCells == 0) return false;
+    if (spreadCells == 0) return false;
     const auto speciesIndex = static_cast<std::size_t>(species);
     const auto specificHeatCv =
         mixtureModel_.specificHeatCapacityCvJPerKgK_[speciesIndex];
     const auto share = 1.0 / static_cast<double>(spreadCells);
-    const auto massDensityShare = massKg * share / cellVolumeM3;
-    const auto energyDensityShare =
-        (massKg * specificHeatCv * temperatureK + additionalHeatJ) * share
-        / cellVolumeM3;
+    const auto energyShareJ =
+        (massKg * specificHeatCv * temperatureK + additionalHeatJ) * share;
     // All-or-nothing: every touched cell must stay admissible before any is
     // committed, so a pathological command cannot half-apply.
     std::array<ConservativeState, 3> candidates {};
     for (std::size_t offset = 0; offset < spreadCells; ++offset) {
         const auto cellIndex = endpoint.type == ExhaustEndpointType::ductInlet
             ? offset : duct.cells_.size() - 1 - offset;
+        const auto cellVolumeM3 = duct.geometry_.cellVolumeM3(cellIndex);
+        if (!(cellVolumeM3 > 0.0)) return false;
         auto candidate = duct.cells_[cellIndex];
-        candidate.speciesMassDensityKgPerM3[speciesIndex] += massDensityShare;
-        candidate.totalEnergyDensityJPerM3 += energyDensityShare;
+        candidate.speciesMassDensityKgPerM3[speciesIndex] +=
+            massKg * share / cellVolumeM3;
+        candidate.totalEnergyDensityJPerM3 += energyShareJ / cellVolumeM3;
         if (!mixtureModel_.isPhysical(candidate)) return false;
         candidates[offset] = candidate;
     }

@@ -192,6 +192,7 @@ std::string JsonEngineSerializer::encode(const EngineConfig& config) const {
             {"throttle_count", path.geometry.throttleCount},
             {"throttle_discharge_coefficient", path.geometry.throttleDischargeCoefficient},
             {"runner_length_mm", path.geometry.runnerLengthMm}, {"runner_diameter_mm", path.geometry.runnerDiameterMm},
+            {"runner_plenum_diameter_mm", path.geometry.runnerPlenumDiameterMm},
             {"airbox_volume_l", path.geometry.airboxVolumeLitres},
             {"inlet_duct_length_mm", path.geometry.inletDuctLengthMm},
             {"inlet_duct_diameter_mm", path.geometry.inletDuctDiameterMm},
@@ -222,6 +223,7 @@ std::string JsonEngineSerializer::encode(const EngineConfig& config) const {
             for (const auto& component : path.network->components)
                 components.push_back({ {"id", component.id}, {"type", exhaustComponentTypeName(component.type)},
                     {"length_mm", component.lengthMm}, {"diameter_mm", component.diameterMm},
+                    {"outlet_diameter_mm", component.outletDiameterMm},
                     {"volume_l", component.volumeLitres}, {"restriction", component.restriction},
                     {"resonance_hz", component.resonanceHz}, {"acoustic_gain", component.acousticGain},
                     {"discharge_coefficient", component.dischargeCoefficient},
@@ -312,6 +314,7 @@ std::string JsonEngineSerializer::encode(const EngineConfig& config) const {
                      {"throttle_count", config.intake.throttleCount},
                      {"throttle_discharge_coefficient", config.intake.throttleDischargeCoefficient},
                      {"runner_length_mm", config.intake.runnerLengthMm}, {"runner_diameter_mm", config.intake.runnerDiameterMm},
+                     {"runner_plenum_diameter_mm", config.intake.runnerPlenumDiameterMm},
                      {"airbox_volume_l", config.intake.airboxVolumeLitres},
                      {"inlet_duct_length_mm", config.intake.inletDuctLengthMm},
                      {"inlet_duct_diameter_mm", config.intake.inletDuctDiameterMm},
@@ -505,6 +508,7 @@ EngineDecodeResult JsonEngineSerializer::decode(std::string_view text) const noe
             config.intake.throttleDischargeCoefficient = intake.value("throttle_discharge_coefficient", config.intake.throttleDischargeCoefficient);
             config.intake.runnerLengthMm = intake.value("runner_length_mm", config.intake.runnerLengthMm);
             config.intake.runnerDiameterMm = intake.value("runner_diameter_mm", config.intake.runnerDiameterMm);
+            config.intake.runnerPlenumDiameterMm = intake.value("runner_plenum_diameter_mm", config.intake.runnerPlenumDiameterMm);
             config.intake.airboxVolumeLitres = intake.value("airbox_volume_l", config.intake.airboxVolumeLitres);
             config.intake.inletDuctLengthMm = intake.value("inlet_duct_length_mm", config.intake.inletDuctLengthMm);
             config.intake.inletDuctDiameterMm = intake.value("inlet_duct_diameter_mm", config.intake.inletDuctDiameterMm);
@@ -644,6 +648,7 @@ EngineDecodeResult JsonEngineSerializer::decode(std::string_view text) const noe
                     path.geometry.throttleDischargeCoefficient = geometry.value("throttle_discharge_coefficient", path.geometry.throttleDischargeCoefficient);
                     path.geometry.runnerLengthMm = geometry.value("runner_length_mm", path.geometry.runnerLengthMm);
                     path.geometry.runnerDiameterMm = geometry.value("runner_diameter_mm", path.geometry.runnerDiameterMm);
+                    path.geometry.runnerPlenumDiameterMm = geometry.value("runner_plenum_diameter_mm", path.geometry.runnerPlenumDiameterMm);
                     path.geometry.airboxVolumeLitres = geometry.value("airbox_volume_l", path.geometry.airboxVolumeLitres);
                     path.geometry.inletDuctLengthMm = geometry.value("inlet_duct_length_mm", path.geometry.inletDuctLengthMm);
                     path.geometry.inletDuctDiameterMm = geometry.value("inlet_duct_diameter_mm", path.geometry.inletDuctDiameterMm);
@@ -705,6 +710,8 @@ EngineDecodeResult JsonEngineSerializer::decode(std::string_view text) const noe
                         component.type = *type;
                         component.lengthMm = encodedComponent.value("length_mm", component.lengthMm);
                         component.diameterMm = encodedComponent.value("diameter_mm", component.diameterMm);
+                        component.outletDiameterMm = encodedComponent.value(
+                            "outlet_diameter_mm", component.outletDiameterMm);
                         component.volumeLitres = encodedComponent.value("volume_l", component.volumeLitres);
                         component.restriction = encodedComponent.value("restriction", component.restriction);
                         component.resonanceHz = encodedComponent.value("resonance_hz", component.resonanceHz);

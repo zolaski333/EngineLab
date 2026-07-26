@@ -116,6 +116,7 @@ template <typename T>
             component.type = parseExhaustComponentType(encoded["type"].as<std::string>());
             assignIfPresent(encoded, "length_mm", component.lengthMm);
             assignIfPresent(encoded, "diameter_mm", component.diameterMm);
+            assignIfPresent(encoded, "outlet_diameter_mm", component.outletDiameterMm);
             assignIfPresent(encoded, "volume_l", component.volumeLitres);
             assignIfPresent(encoded, "restriction", component.restriction);
             assignIfPresent(encoded, "resonance_hz", component.resonanceHz);
@@ -428,6 +429,7 @@ void applyCrankOffsets(EngineConfig& config) {
         assignIfPresent(intake, "throttle_discharge_coefficient", config.intake.throttleDischargeCoefficient);
         assignIfPresent(intake, "runner_length_mm", config.intake.runnerLengthMm);
         assignIfPresent(intake, "runner_diameter_mm", config.intake.runnerDiameterMm);
+        assignIfPresent(intake, "runner_plenum_diameter_mm", config.intake.runnerPlenumDiameterMm);
         assignIfPresent(intake, "airbox_volume_l", config.intake.airboxVolumeLitres);
         assignIfPresent(intake, "inlet_duct_length_mm", config.intake.inletDuctLengthMm);
         assignIfPresent(intake, "inlet_duct_diameter_mm", config.intake.inletDuctDiameterMm);
@@ -524,6 +526,7 @@ void applyCrankOffsets(EngineConfig& config) {
                 assignIfPresent(geometry, "throttle_discharge_coefficient", pathConfig.geometry.throttleDischargeCoefficient);
                 assignIfPresent(geometry, "runner_length_mm", pathConfig.geometry.runnerLengthMm);
                 assignIfPresent(geometry, "runner_diameter_mm", pathConfig.geometry.runnerDiameterMm);
+                assignIfPresent(geometry, "runner_plenum_diameter_mm", pathConfig.geometry.runnerPlenumDiameterMm);
                 assignIfPresent(geometry, "airbox_volume_l", pathConfig.geometry.airboxVolumeLitres);
                 assignIfPresent(geometry, "inlet_duct_length_mm", pathConfig.geometry.inletDuctLengthMm);
                 assignIfPresent(geometry, "inlet_duct_diameter_mm", pathConfig.geometry.inletDuctDiameterMm);

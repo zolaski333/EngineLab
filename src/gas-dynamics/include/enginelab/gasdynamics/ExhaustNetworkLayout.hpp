@@ -29,8 +29,15 @@ struct CompiledExhaustDuct final {
     double lengthM { 0.0 };
     /** Cell volume divided by length; may exceed throat area for a chamber. */
     double flowAreaM2 { 0.0 };
-    /** Area presented to adjacent elements at both component ports. */
+    /** Length-mean area retained for compatibility and volume accounting. */
+    /** Areas used by the first and last quasi-1D faces. */
+    double inletFlowAreaM2 { 0.0 };
+    double outletFlowAreaM2 { 0.0 };
+    /** Mean area presented to adjacent elements, retained for old consumers. */
     double connectionAreaM2 { 0.0 };
+    /** Physical connection apertures at each component port. */
+    double inletConnectionAreaM2 { 0.0 };
+    double outletConnectionAreaM2 { 0.0 };
     double hydraulicDiameterM { 0.0 };
     double volumeM3 { 0.0 };
     double lossCoefficient { 0.0 };

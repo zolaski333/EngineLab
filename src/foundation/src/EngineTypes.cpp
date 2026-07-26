@@ -221,13 +221,20 @@ double engineDisplacementLitres(const EngineConfig& config) noexcept {
 }
 
 double intakeRunnerVolumeLitres(const CylinderConfig& cylinder, const IntakeConfig& fallback) noexcept {
-    const auto diameterMm = cylinder.intakeRunnerDiameterMm > 0.0
+    const auto inletDiameterMm = cylinder.intakeRunnerDiameterMm > 0.0
         ? cylinder.intakeRunnerDiameterMm : fallback.runnerDiameterMm;
+    const auto outletDiameterMm = fallback.runnerPlenumDiameterMm > 0.0
+        ? fallback.runnerPlenumDiameterMm : inletDiameterMm;
     const auto lengthMm = cylinder.intakeRunnerLengthMm > 0.0
         ? cylinder.intakeRunnerLengthMm : fallback.runnerLengthMm;
-    const auto radiusMm = std::max(0.0, diameterMm * 0.5);
-    return std::max(0.001, std::numbers::pi * radiusMm * radiusMm
-        * std::max(0.0, lengthMm) / 1'000'000.0);
+    const auto inletRadiusMm = std::max(0.0, inletDiameterMm * 0.5);
+    const auto outletRadiusMm = std::max(0.0, outletDiameterMm * 0.5);
+    // Exact circular-frustum volume with a radius-linear runner.
+    const auto volumeMm3 = std::numbers::pi * std::max(0.0, lengthMm) / 3.0
+        * (inletRadiusMm * inletRadiusMm
+            + inletRadiusMm * outletRadiusMm
+            + outletRadiusMm * outletRadiusMm);
+    return std::max(0.001, volumeMm3 / 1'000'000.0);
 }
 
 double effectiveRotatingInertiaKgM2(const EngineConfig& config) noexcept {
@@ -659,6 +666,8 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
         || !inRange(config.intake.throttleDischargeCoefficient, 0.05, 1.5)
         || !inRange(config.intake.runnerLengthMm, 20.0, 2'000.0)
         || !inRange(config.intake.runnerDiameterMm, 10.0, 150.0)
+        || !(config.intake.runnerPlenumDiameterMm == 0.0
+            || inRange(config.intake.runnerPlenumDiameterMm, 10.0, 150.0))
         || !inRange(config.intake.airboxVolumeLitres, 0.0, 100.0)
         || !inRange(config.intake.inletDuctLengthMm, 0.0, 5'000.0)
         || !inRange(config.intake.inletDuctDiameterMm, 0.0, 500.0)
@@ -888,6 +897,8 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
             || !inRange(intake.throttleDischargeCoefficient, 0.05, 1.5)
             || !inRange(intake.runnerLengthMm, 20.0, 2'000.0)
             || !inRange(intake.runnerDiameterMm, 10.0, 150.0)
+            || !(intake.runnerPlenumDiameterMm == 0.0
+                || inRange(intake.runnerPlenumDiameterMm, 10.0, 150.0))
             || !inRange(intake.airboxVolumeLitres, 0.0, 100.0)
             || !inRange(intake.inletDuctLengthMm, 0.0, 5'000.0)
             || !inRange(intake.inletDuctDiameterMm, 0.0, 500.0)
@@ -973,6 +984,8 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
                     || component.id == 0 || !components.emplace(component.id, &component).second
                     || !inRange(component.lengthMm, requiresLength ? 1.0 : 0.0, 10'000.0)
                     || !inRange(component.diameterMm, 5.0, 500.0)
+                    || !(component.outletDiameterMm == 0.0
+                        || inRange(component.outletDiameterMm, 5.0, 500.0))
                     || !inRange(component.volumeLitres, 0.0, 1'000.0)
                     || !inRange(component.restriction, 0.0, 20.0)
                     || !inRange(component.resonanceHz, 0.0, 20'000.0)

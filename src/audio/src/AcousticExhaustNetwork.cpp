@@ -54,7 +54,11 @@ struct AcousticExhaustNetwork::Impl final {
     struct Duct final {
         std::uint32_t pathIndex {};
         double lengthM {};
+        /** Length-mean area for wall/mode properties. */
         double areaM2 {};
+        /** Characteristic areas at the two scattering endpoints. */
+        double inletAreaM2 {};
+        double outletAreaM2 {};
         double radiusM {};
         /** Compiled ducts whose gas state describes this one, as indices into
          *  the layout's duct list. A duct of the layout resolves to itself; a
@@ -152,6 +156,10 @@ struct AcousticExhaustNetwork::Impl final {
             duct.pathIndex = descriptor.pathIndex;
             duct.lengthM = descriptor.lengthM;
             duct.areaM2 = area;
+            duct.inletAreaM2 = std::max(
+                1.0e-10, descriptor.inletFlowAreaM2);
+            duct.outletAreaM2 = std::max(
+                1.0e-10, descriptor.outletFlowAreaM2);
             duct.radiusM = std::sqrt(area / std::numbers::pi);
             duct.mediumSources.push_back(ducts.size());
             ducts.push_back(std::move(duct));
@@ -284,6 +292,8 @@ struct AcousticExhaustNetwork::Impl final {
             trunk.pathIndex = geometry.pathIndex;
             trunk.lengthM = geometry.lengthM;
             trunk.areaM2 = area;
+            trunk.inletAreaM2 = area;
+            trunk.outletAreaM2 = area;
             trunk.radiusM = std::sqrt(area / std::numbers::pi);
             ducts.push_back(std::move(trunk));
             plan.singleNode = slotCount++;
@@ -501,7 +511,9 @@ struct AcousticExhaustNetwork::Impl final {
         // the gas in it, so a hot primary and a cool tailpipe of equal bore
         // scatter differently -- which is the area-and-temperature step that
         // makes a collector and a chamber do their work.
-        return static_cast<float>(duct.areaM2
+        const auto endpointAreaM2 = key % 2U == 0U
+            ? duct.inletAreaM2 : duct.outletAreaM2;
+        return static_cast<float>(endpointAreaM2
             / (static_cast<double>(duct.medium.densityKgPerM3)
                 * static_cast<double>(duct.medium.soundSpeedMps)));
     }

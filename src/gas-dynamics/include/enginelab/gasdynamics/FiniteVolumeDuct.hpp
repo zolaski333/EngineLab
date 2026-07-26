@@ -159,8 +159,17 @@ private:
 
 struct DuctGeometry final {
     double lengthM { 1.0 };
-    /** Zero derives a circular area from diameterM. */
+    /** Reference/constant area. Zero derives a circular area from diameterM. */
     double crossSectionAreaM2 { 0.0 };
+    /** Optional end-face areas for a circular, linearly tapered quasi-1D duct.
+     *
+     * Zero inherits the reference area. Setting either value enables a real
+     * finite-volume area variation. Radius varies linearly between the end
+     * faces (a conical frustum), face fluxes are multiplied by local area and
+     * the momentum equation receives the p*dA/dx wall-force source.
+     */
+    double inletCrossSectionAreaM2 { 0.0 };
+    double outletCrossSectionAreaM2 { 0.0 };
     /** Hydraulic diameter used by wall friction and heat transfer. */
     double diameterM { 0.05 };
     std::size_t cellCount { 32 };
@@ -179,7 +188,16 @@ struct DuctGeometry final {
     double externalWallHeatTransferWPerM2K { 0.0 };
     double externalTemperatureK { 300.0 };
 
+    /** Length-mean area (and therefore volume / length). */
     [[nodiscard]] double areaM2() const noexcept;
+    [[nodiscard]] double inletAreaM2() const noexcept;
+    [[nodiscard]] double outletAreaM2() const noexcept;
+    [[nodiscard]] double faceAreaM2(std::size_t faceIndex) const noexcept;
+    [[nodiscard]] double cellAreaM2(std::size_t cellIndex) const noexcept;
+    [[nodiscard]] double cellVolumeM3(std::size_t cellIndex) const noexcept;
+    [[nodiscard]] double cellHydraulicDiameterM(
+        std::size_t cellIndex) const noexcept;
+    [[nodiscard]] bool hasVariableArea() const noexcept;
     [[nodiscard]] double cellLengthM() const noexcept;
     [[nodiscard]] bool valid() const noexcept;
 };
@@ -212,12 +230,14 @@ struct DuctAdvanceResult final {
     double wallHeatRejectedJ { 0.0 };
 };
 
-/** Preallocated second-order finite-volume solver for one constant-area duct.
+/** Preallocated second-order quasi-1D finite-volume solver.
  *
  * Spatial reconstruction is monotonised-central TVD. Time integration uses
  * SSP-RK2 and every accepted substep obeys a CFL limit. A non-physical trial
  * is rejected and retried at half step; no density, species or energy floor is
- * injected into the solution.
+ * injected into the solution. Constant-area ducts retain the exact legacy
+ * equations; a configured taper uses local face areas and the conservative
+ * geometric momentum source.
  */
 class FiniteVolumeDuct final {
 public:
@@ -273,8 +293,9 @@ public:
      *
      * Boundary integrals use the same RK quadrature as the state update. For a
      * source-free duct they therefore close the extensive conservation balance
-     * to roundoff when multiplied by geometry().areaM2(). Periodic boundaries
-     * must be selected on both ends.
+     * to roundoff when the left and right integrals are multiplied by their
+     * respective end-face areas. Periodic boundaries must be selected on both
+     * ends and require equal end-face areas.
      */
     [[nodiscard]] DuctAdvanceResult advance(
         double durationSeconds,

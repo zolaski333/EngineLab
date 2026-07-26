@@ -49,6 +49,8 @@ struct AcousticIntakeNetwork::Impl final {
         double lengthM {};
         double radiusM {};
         double areaM2 {};
+        double inletAreaM2 {};
+        double outletAreaM2 {};
         std::vector<float> forward;
         std::vector<float> reverse;
         std::size_t write {};
@@ -145,11 +147,18 @@ struct AcousticIntakeNetwork::Impl final {
             const auto diameterMm = config.cylinders[cylinder].intakeRunnerDiameterMm > 1.0
                 ? config.cylinders[cylinder].intakeRunnerDiameterMm
                 : geometry.runnerDiameterMm;
+            const auto plenumDiameterMm = geometry.runnerPlenumDiameterMm > 1.0
+                ? geometry.runnerPlenumDiameterMm : diameterMm;
             Runner runner;
             runner.cylinderIndex = cylinder;
             runner.pathIndex = path;
             runner.duct.lengthM = std::max(0.001, lengthMm * 0.001);
-            runner.duct.areaM2 = circularAreaM2(diameterMm);
+            runner.duct.inletAreaM2 = circularAreaM2(diameterMm);
+            runner.duct.outletAreaM2 = circularAreaM2(plenumDiameterMm);
+            runner.duct.areaM2 = (runner.duct.inletAreaM2
+                + std::sqrt(runner.duct.inletAreaM2
+                    * runner.duct.outletAreaM2)
+                + runner.duct.outletAreaM2) / 3.0;
             runner.duct.radiusM = std::sqrt(runner.duct.areaM2 / std::numbers::pi);
             paths[path].runners.push_back(runners.size());
             runners.push_back(std::move(runner));
@@ -355,7 +364,7 @@ AcousticIntakeNetwork::process(
         for (const auto runnerIndex : path.runners) {
             const auto& runner = impl_->runners[runnerIndex];
             const auto runnerAdmittance = static_cast<float>(
-                runner.duct.areaM2 / (rho * c));
+                runner.duct.outletAreaM2 / (rho * c));
             weighted += runnerAdmittance * runner.incidentAtPlenum;
             admittance += runnerAdmittance;
         }
@@ -439,7 +448,8 @@ AcousticIntakeNetwork::process(
             const auto perturbationKgPerSecond = signedFlow
                 - runner.meanMassFlowKgPerSecond;
             const auto impedance = boundary.densityKgPerM3
-                * boundary.soundSpeedMps / static_cast<float>(runner.duct.areaM2);
+                * boundary.soundSpeedMps
+                / static_cast<float>(runner.duct.inletAreaM2);
             // The valve-flow telemetry is a Norton source located between the
             // cylinder control volume and the acoustic runner.  Its volume
             // velocity launches two characteristic partners; only the runner-

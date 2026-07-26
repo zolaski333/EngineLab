@@ -237,3 +237,44 @@ completion moves from about 60 to 29 crank degrees and peak pressure from about
 48 bar at 10 degrees to 74.5 bar at 19.6 degrees. `EngineLabCoreTests` passes,
 including monotonic tests for increased turbulence, two independent kernels,
 serialization, validation, and radial catalogue topology.
+
+## Variable-area quasi-1D ducts
+
+### Implementation
+
+Exhaust components now accept an optional `outlet_diameter_mm`; intake paths
+accept `runner_plenum_diameter_mm`. Zero is backward-compatible constant area.
+A non-zero second diameter defines a circular conical frustum (linear radius):
+the exact frustum volume is used by inventory and topology compilation.
+
+The finite-volume residual now uses the local area of every face and the exact
+volume of every cell. Species, mass and energy remain conservative, while
+momentum receives the quasi-1D pressure-wall source `p (A_R - A_L) / V`.
+Friction, wall heat transfer, wall thermal capacity and source stability use
+the local hydraulic diameter/volume. Network boundaries use the correct end
+area instead of a mean area. The acoustic networks likewise scatter with the
+area at the relevant endpoint.
+
+During review, the port-fuel source exposed a genuine secondary bug: its
+three-cell distribution divided every share by cell zero's volume. That is
+correct only for a cylindrical mesh. It now divides each equal mass/energy
+share by that cell's own volume, and the conservation test deliberately injects
+into a tapered runner.
+
+### Proof
+
+- A stationary 4:1 taper remains at uniform pressure with relative density and
+  energy errors below `3e-13` and momentum below `2e-10 kg/(m2 s)`.
+- A moving 4:1 contraction closes every species inventory and total energy
+  against its unequal boundary areas to `3e-10` relative.
+- The exact conical volume is checked independently in the duct, exhaust-layout
+  and intake-runner tests.
+- The tapered port injection adds its requested fuel mass exactly once
+  (`<1e-15 kg` absolute error) and closes sensible plus latent energy.
+- The unchanged steady-runner benchmark still delivers `0.0352669 kg/s`
+  against an independent isentropic `0.0366292 kg/s` reference (ratio
+  `0.962808`), showing that backward-compatible cylindrical geometry did not
+  acquire an artificial restriction.
+- `EngineLabGasDynamicsTests`, `EngineLabCoreTests` and
+  `EngineLabRealtimeRegressionTests` all pass. The desktop application also
+  compiles with the new two-diameter editor.
