@@ -1127,7 +1127,9 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                     totalMoles > 1.0e-15
                         ? cylinderGas_[cylinderIndex].mixture().burnedMoles / totalMoles : 0.0,
                     2.0 * cylinder.strokeMm * 0.001 * state_.rpm / 60.0,
-                    state_.load, config_.combustionCalibration.residualDilutionSensitivity };
+                    state_.load, config_.combustionCalibration.residualDilutionSensitivity,
+                    config_.combustionCalibration.chamberTurbulenceIntensityRatio,
+                    config_.combustionCalibration.ignitionSiteCount };
                 ignitionPending_[cylinderIndex] = !cylinderMisfires_[cylinderIndex];
                 ignitionDelayRemainingSeconds_[cylinderIndex] = ignitionPending_[cylinderIndex]
                     ? FlamePhysicsModel::ignitionDelaySeconds(config_.combustionCalibration, flameConditions) : 0.0;
@@ -1160,7 +1162,9 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 totalMoles > 1.0e-15
                     ? cylinderGas_[cylinderIndex].mixture().burnedMoles / totalMoles : 0.0,
                 2.0 * cylinder.strokeMm * 0.001 * state_.rpm / 60.0,
-                state_.load, config_.combustionCalibration.residualDilutionSensitivity };
+                state_.load, config_.combustionCalibration.residualDilutionSensitivity,
+                config_.combustionCalibration.chamberTurbulenceIntensityRatio,
+                config_.combustionCalibration.ignitionSiteCount };
             if (ignitionPending_[cylinderIndex]) {
                 ignitionDelayRemainingSeconds_[cylinderIndex] -= combustionDt;
                 if (ignitionDelayRemainingSeconds_[cylinderIndex] <= 0.0) {
@@ -1986,6 +1990,14 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 state_.crankAngleDegrees, state_.angularVelocityRadPerSecond,
                 state_.netTorqueNm / effectiveRotatingInertiaKgM2(config_));
             auto& cylinderState = state_.cylinderStates[index];
+            cylinderState.exhaustValveConductanceAreaM2 =
+                exhaustValveAreaM2[index] * exhaustValveDischargeCoefficient[index];
+            cylinderState.exhaustMassFlowKgPerSecond =
+                exhaustMassFlowKgPerSecond[index];
+            cylinderState.trappedFreshAirMassMg =
+                trappedAirMassMgLastCycle_[index];
+            cylinderState.deliveredFreshAirMassMgPerCycle =
+                deliveredAirMgPerCycle_[index];
             cylinderState.intakeRunnerTemperatureC =
                 intakePortTemperatureK_[index] - 273.15;
             cylinderState.intakeRunnerChargePressureKpa = intakeRunnerPressureKpa_[index];

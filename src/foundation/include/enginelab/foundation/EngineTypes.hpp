@@ -444,6 +444,19 @@ struct CombustionCalibrationConfig final {
     double ignitionDelayPressureExponent { 0.35 };
     double wallHeatTransferCoefficientWPerK { 0.42 };
     double residualDilutionSensitivity { 0.78 };
+    /** Chamber-generated tumble/squish intensity relative to the legacy
+     * mean-piston-speed closure. This belongs to the cylinder head, not to the
+     * fuel chemistry: pent-roof/tumble ports and low-speed aircraft chambers
+     * do not create the same u' at equal piston speed.
+     */
+    double chamberTurbulenceIntensityRatio { 1.0 };
+    /** Independent flame kernels (normally spark plugs) per cylinder.
+     *
+     * Multiple kernels grow through disjoint chamber volume until their fronts
+     * meet. This is physically distinct from increasing flame speed and is
+     * important for large-bore dual-ignition aircraft engines.
+     */
+    std::uint32_t ignitionSiteCount { 1 };
 };
 
 /**
@@ -551,6 +564,18 @@ struct CylinderState final {
     // initialiser in EngineSimulator::publishCylinderStates. Add new members
     // BELOW this line and assign them by name, or every field after the
     // insertion point silently receives the wrong value.
+    /** Instantaneous compact-valve conductance Cd*A used by the gas solver. */
+    double exhaustValveConductanceAreaM2 { 0.0 };
+    /** Signed instantaneous flow; positive from chamber into exhaust runner. */
+    double exhaustMassFlowKgPerSecond { 0.0 };
+    /** Oxygen-equivalent fresh air latched when this cylinder's intake valve
+     * closed, on the same basis as EngineState::airMassMgPerCycle.
+     */
+    double trappedFreshAirMassMg { 0.0 };
+    /** Net oxygen-equivalent fresh air delivered through this intake valve
+     * during the most recently completed 720-degree cycle.
+     */
+    double deliveredFreshAirMassMgPerCycle { 0.0 };
     /**
      * Burned mole fraction in the chamber at the instant of ignition -- i.e. the
      * residual the gas exchange failed to expel, since nothing has burned yet.

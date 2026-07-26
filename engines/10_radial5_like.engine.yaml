@@ -30,6 +30,12 @@ engine:
       - { rpm: 1400, advance_deg: 15 }
       - { rpm: 2100, advance_deg: 21 }
       - { rpm: 2450, advance_deg: 18 }
+  # Large-bore certified aircraft cylinders use two independent spark plugs.
+  # Model the two propagating kernels explicitly instead of faking them with
+  # extra ignition advance or a hotter fuel.
+  combustion_calibration:
+    chamber_turbulence_intensity_ratio: 1.10
+    ignition_site_count: 2
   uses:
     injection: continuous_manifold
     camshafts: radial_aircraft

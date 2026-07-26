@@ -636,6 +636,9 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
         || !inRange(config.combustionCalibration.ignitionDelayPressureExponent, 0.0, 3.0)
         || !inRange(config.combustionCalibration.wallHeatTransferCoefficientWPerK, 0.0, 5'000.0)
         || !inRange(config.combustionCalibration.residualDilutionSensitivity, 0.0, 3.0)
+        || !inRange(config.combustionCalibration.chamberTurbulenceIntensityRatio, 0.1, 4.0)
+        || config.combustionCalibration.ignitionSiteCount < 1
+        || config.combustionCalibration.ignitionSiteCount > 4
         || !inRange(config.runnerAcoustics.dampingRatio, 0.01, 2.0)
         || !inRange(config.runnerAcoustics.couplingGain, 0.0, 2.0)
         || !inRange(config.runnerAcoustics.maximumPressureAmplitudeKpa, 0.1, 200.0)
@@ -902,7 +905,10 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
     std::unordered_set<std::uint32_t> assignedBankCylinders;
     std::unordered_set<std::uint32_t> bankIds;
     for (const auto& bank : config.banks) {
-        if (bank.id == 0 || bank.cylinderIds.empty() || !bankIds.insert(bank.id).second || !inRange(bank.angleDegrees, -180.0, 180.0)
+        // Radial layouts conventionally enumerate cylinder axes over
+        // [0, 360), whereas V/flat layouts commonly use signed angles.
+        // Both describe the same physical circle and must remain valid.
+        if (bank.id == 0 || bank.cylinderIds.empty() || !bankIds.insert(bank.id).second || !inRange(bank.angleDegrees, -360.0, 360.0)
             || !validateCamshaft(bank.camshafts)) return "Bank IDs, angles and camshafts must be valid";
         if (!intakePathIds.contains(bank.intakeId)) return "Bank intakeId must reference a configured intake path";
         for (const auto cylinderId : bank.cylinderIds) {

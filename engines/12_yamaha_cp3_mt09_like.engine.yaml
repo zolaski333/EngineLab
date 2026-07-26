@@ -39,6 +39,10 @@ engine:
       - { rpm: 7000, advance_deg: 35 }
       - { rpm: 10000, advance_deg: 33 }
       - { rpm: 11500, advance_deg: 30 }
+  # The CP3 pent-roof head deliberately generates tumble; this is a chamber
+  # property, separate from the gasoline's laminar flame-speed calibration.
+  combustion_calibration:
+    chamber_turbulence_intensity_ratio: 1.25
   uses:
     injection: high_flow_port
     exhaust: motorcycle_4_2_1

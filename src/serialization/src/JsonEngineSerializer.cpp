@@ -299,7 +299,9 @@ std::string JsonEngineSerializer::encode(const EngineConfig& config) const {
                       {"ignition_delay_temperature_exponent", config.combustionCalibration.ignitionDelayTemperatureExponent},
                       {"ignition_delay_pressure_exponent", config.combustionCalibration.ignitionDelayPressureExponent},
                       {"wall_heat_transfer_w_per_k", config.combustionCalibration.wallHeatTransferCoefficientWPerK},
-                      {"residual_dilution_sensitivity", config.combustionCalibration.residualDilutionSensitivity}}},
+                      {"residual_dilution_sensitivity", config.combustionCalibration.residualDilutionSensitivity},
+                      {"chamber_turbulence_intensity_ratio", config.combustionCalibration.chamberTurbulenceIntensityRatio},
+                      {"ignition_site_count", config.combustionCalibration.ignitionSiteCount}}},
         {"runner_acoustics", {{"enabled", config.runnerAcoustics.enabled},
                       {"damping_ratio", config.runnerAcoustics.dampingRatio},
                       {"coupling_gain", config.runnerAcoustics.couplingGain},
@@ -479,6 +481,8 @@ EngineDecodeResult JsonEngineSerializer::decode(std::string_view text) const noe
             config.combustionCalibration.ignitionDelayPressureExponent = calibration.value("ignition_delay_pressure_exponent", config.combustionCalibration.ignitionDelayPressureExponent);
             config.combustionCalibration.wallHeatTransferCoefficientWPerK = calibration.value("wall_heat_transfer_w_per_k", config.combustionCalibration.wallHeatTransferCoefficientWPerK);
             config.combustionCalibration.residualDilutionSensitivity = calibration.value("residual_dilution_sensitivity", config.combustionCalibration.residualDilutionSensitivity);
+            config.combustionCalibration.chamberTurbulenceIntensityRatio = calibration.value("chamber_turbulence_intensity_ratio", config.combustionCalibration.chamberTurbulenceIntensityRatio);
+            config.combustionCalibration.ignitionSiteCount = calibration.value("ignition_site_count", config.combustionCalibration.ignitionSiteCount);
         }
         if (engine.contains("runner_acoustics")) {
             const auto& acoustics = engine.at("runner_acoustics");

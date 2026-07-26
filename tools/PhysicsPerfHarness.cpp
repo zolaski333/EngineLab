@@ -193,6 +193,8 @@ void traceEngine(const enginelab::EngineConfig& baseConfig, double targetRpm,
                  double throttle, bool freeIdle, bool watchSettle) {
     auto config = baseConfig;
     enginelab::normaliseEngineConfig(config);
+    const auto kinematicsReference =
+        enginelab::buildEngineKinematicsReference(config);
     enginelab::SimpleEcuModel ecu;
     enginelab::SimplifiedGasolinePhysics physics;
     enginelab::FourStrokeEventGenerator events;
@@ -248,9 +250,23 @@ void traceEngine(const enginelab::EngineConfig& baseConfig, double targetRpm,
                       << ',' << c.pressureEstimateBar << '\n';
         }
     }
+    for (std::size_t index = 0;
+         index < simulator.state().cylinderStateCount; ++index) {
+        const auto& cylinder = simulator.state().cylinderStates[index];
+        std::cerr << "trace cylinder " << cylinder.id
+                  << ": phase=" << cylinder.cyclePhaseDegrees
+                  << " piston_travel_mm=" << cylinder.pistonTravelMm
+                  << " geometric_tdc_deg="
+                  << kinematicsReference.topDeadCentreAngleDegrees[index]
+                  << " trapped_fresh_air_mg=" << cylinder.trappedFreshAirMassMg
+                  << " delivered_fresh_air_mg="
+                  << cylinder.deliveredFreshAirMassMgPerCycle << '\n';
+    }
     std::cout << "phase,rpm,cyl_p_bar,cyl_t_c,cyl_mass_mg,exh_runner_kpa,lift_mm,"
                  "intake_v_mps,intake_mg,residual,exh_gps,net_hz,limited,irt_c,irp_kpa,"
-                 "exh_lift_mm,res_kpa,res_hz,ram_kpa,col_mps,afr,fuel_mg\n";
+                 "exh_lift_mm,exh_cda_mm2,exh_valve_gps,res_kpa,res_hz,ram_kpa,"
+                 "col_mps,afr,fuel_mg,oxygen_mmol,burned_mmol,flame_mps,"
+                 "burned_fraction,combustion_efficiency,phi_at_spark\n";
     const auto fineDt = dt / 48.0;
     const auto cycleSeconds = 120.0 / std::max(1.0, simulator.state().rpm);
     const auto fineSteps = static_cast<int>(1.2 * cycleSeconds / fineDt);
@@ -268,12 +284,20 @@ void traceEngine(const enginelab::EngineConfig& baseConfig, double targetRpm,
                   << ',' << c.intakeRunnerTemperatureC
                   << ',' << c.intakeRunnerChargePressureKpa
                   << ',' << c.exhaustValveLiftMm
+                  << ',' << c.exhaustValveConductanceAreaM2 * 1.0e6
+                  << ',' << c.exhaustMassFlowKgPerSecond * 1.0e3
                   << ',' << c.intakeResonancePressureKpa
                   << ',' << c.intakeResonanceFrequencyHz
                   << ',' << c.intakePortRamPressureKpa
                   << ',' << c.intakePortColumnVelocityMps
                   << ',' << c.airFuelRatio
-                  << ',' << c.deliveredFuelMgPerCycle << '\n';
+                  << ',' << c.deliveredFuelMgPerCycle
+                  << ',' << c.oxygenMoles * 1'000.0
+                  << ',' << c.burnedMoles * 1'000.0
+                  << ',' << c.flameSpeedMps
+                  << ',' << c.burnedFraction
+                  << ',' << c.combustionEfficiency
+                  << ',' << c.equivalenceRatioAtSpark << '\n';
     }
 }
 

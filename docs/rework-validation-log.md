@@ -175,9 +175,6 @@ must recommend a bounded job count on ordinary machines.
 
 ## Open observations for subsequent phases
 
-- The radial passes the dedicated idle/blip regression, but the 3-second
-  loaded audio catalogue scenario ends at 0 rpm. Its load/control trajectory
-  needs separate diagnosis; audio processing cannot repair a stopped engine.
 - CP2 torque magnitude is close to the intended real-engine envelope, but the
   simulated peak occurs roughly 1,500 rpm too early and high-rpm pumping loss
   is excessive.
@@ -185,3 +182,58 @@ must recommend a bounded job count on ordinary machines.
   a large fraction of frame deadlines. Optimisation claims must be based on
   isolated, repeated before/after runs rather than the contended validation
   executions above.
+
+## Radial bank topology and chamber flame calibration
+
+### Radial root cause
+
+Catalogue loading synthesized one zero-degree bank for every layout other than
+V and flat engines. `MechanicalKinematics::bankAngleFor()` correctly treats an
+explicit bank as authoritative, so the generated bank erased the radial
+cylinders' authored 0/72/144/216/288-degree axes. All five pistons consequently
+moved in phase although their valve and ignition schedules remained staggered
+over 720 degrees. This explains both the implausible 17 Nm loaded result and the
+loaded audio scenario that stopped: most cylinders exchanged gas on the wrong
+physical stroke.
+
+The catalogue now synthesizes one bank per radial cylinder, preserving the
+authored spatial axis. Bank validation accepts both the signed convention used
+by V/flat engines and the natural [0, 360] radial convention. A catalogue
+regression checks every radial cylinder-to-bank mapping.
+
+### In-cylinder model
+
+Two physical head properties are now explicit combustion calibration inputs:
+
+- chamber turbulence intensity relative to the mean-piston-speed closure;
+- the number of independent ignition kernels.
+
+Turbulence changes turbulent flame speed, while multiple ignition sites change
+initial burned-kernel volume; they are deliberately not represented as fuel
+energy, arbitrary torque multipliers, or extra spark advance. The shipped CP3
+and CP4 heads use progressively stronger tumble. The large-bore radial uses its
+realistic dual-plug topology. JSON/YAML round trips and range validation cover
+both fields.
+
+### Proof
+
+The same radial catalogue sweep at 2,000 rpm changed from 16.99 Nm / 3.56 kW /
+0.265 VE to 572.39 Nm / 119.86 kW / 0.909 VE. Its five resolved geometric TDC
+angles are now 0.00, 73.18, 145.99, 214.01 and 286.82 degrees, and all five
+cylinders trap useful fresh charge (1.36--1.67 g in the inspected cycle).
+This is evidence of repaired mechanics and gas exchange, rather than a
+catalogue torque correction.
+
+At unchanged displacement, fuel and ignition tables, chamber calibration moved
+the catalogue curves as follows:
+
+| Engine | baseline peak torque | calibrated peak torque | baseline peak power | calibrated peak power |
+|---|---:|---:|---:|---:|
+| Yamaha CP3-like | 84.26 Nm | 86.98 Nm | 75.54 kW | 78.49 kW |
+| Yamaha CP4-like | 84.37 Nm | 93.60 Nm | 77.21 kW | 87.32 kW |
+
+The CP4 pressure trace changes consistently with faster combustion: burn
+completion moves from about 60 to 29 crank degrees and peak pressure from about
+48 bar at 10 degrees to 74.5 bar at 19.6 degrees. `EngineLabCoreTests` passes,
+including monotonic tests for increased turbulence, two independent kernels,
+serialization, validation, and radial catalogue topology.

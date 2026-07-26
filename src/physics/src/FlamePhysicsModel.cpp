@@ -31,6 +31,7 @@ double FlamePhysicsModel::turbulentFlameSpeedMps(const FuelConfig& fuel,
     const auto laminar = laminarFlameSpeedMps(fuel, conditions.equivalenceRatio,
                                                conditions.temperatureK, conditions.pressurePa);
     const auto turbulence = std::max(0.0, conditions.meanPistonSpeedMps)
+        * std::clamp(conditions.chamberTurbulenceIntensityRatio, 0.1, 4.0)
         * std::clamp(fuel.turbulenceFlameSpeedGain, 0.0, 8.0)
         * (0.28 + 0.72 * std::clamp(conditions.load, 0.0, 1.5));
     const auto dilutionAttenuation = std::clamp(1.0 - conditions.residualDilutionSensitivity
@@ -112,8 +113,10 @@ FlameStepResult FlamePhysicsModel::advance(FlameEvent& event, const FuelConfig& 
     // axial height.  pi*r^2*h therefore reaches exactly the chamber volume at
     // both geometric limits; the previous 4/3 factor completed combustion
     // before the front had traversed the chamber.
-    const auto burnedVolumeM3 = std::numbers::pi * event.radialTravelM
-        * event.radialTravelM * event.axialTravelM;
+    const auto kernelCount = static_cast<double>(
+        std::clamp<std::uint32_t>(conditions.ignitionSiteCount, 1, 4));
+    const auto burnedVolumeM3 = kernelCount * std::numbers::pi
+        * event.radialTravelM * event.radialTravelM * event.axialTravelM;
     const auto geometricFraction = std::clamp(burnedVolumeM3
         / std::max(1.0e-12, conditions.chamberVolumeM3), 0.0, 1.0);
     const auto previousFraction = event.burnedFraction;

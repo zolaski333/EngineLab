@@ -182,6 +182,8 @@ std::string YamlEngineSerializer::encode(const EngineConfig& config) const {
         << YAML::Key << "ignition_delay_pressure_exponent" << YAML::Value << config.combustionCalibration.ignitionDelayPressureExponent
         << YAML::Key << "wall_heat_transfer_w_per_k" << YAML::Value << config.combustionCalibration.wallHeatTransferCoefficientWPerK
         << YAML::Key << "residual_dilution_sensitivity" << YAML::Value << config.combustionCalibration.residualDilutionSensitivity
+        << YAML::Key << "chamber_turbulence_intensity_ratio" << YAML::Value << config.combustionCalibration.chamberTurbulenceIntensityRatio
+        << YAML::Key << "ignition_site_count" << YAML::Value << config.combustionCalibration.ignitionSiteCount
         << YAML::EndMap
         << YAML::Key << "runner_acoustics" << YAML::Value << YAML::BeginMap
         << YAML::Key << "enabled" << YAML::Value << config.runnerAcoustics.enabled
@@ -560,6 +562,8 @@ EngineDecodeResult YamlEngineSerializer::decode(std::string_view text) const noe
             config.combustionCalibration.ignitionDelayPressureExponent = calibration["ignition_delay_pressure_exponent"].as<double>(config.combustionCalibration.ignitionDelayPressureExponent);
             config.combustionCalibration.wallHeatTransferCoefficientWPerK = calibration["wall_heat_transfer_w_per_k"].as<double>(config.combustionCalibration.wallHeatTransferCoefficientWPerK);
             config.combustionCalibration.residualDilutionSensitivity = calibration["residual_dilution_sensitivity"].as<double>(config.combustionCalibration.residualDilutionSensitivity);
+            config.combustionCalibration.chamberTurbulenceIntensityRatio = calibration["chamber_turbulence_intensity_ratio"].as<double>(config.combustionCalibration.chamberTurbulenceIntensityRatio);
+            config.combustionCalibration.ignitionSiteCount = calibration["ignition_site_count"].as<std::uint32_t>(config.combustionCalibration.ignitionSiteCount);
         }
         if (const auto acoustics = engine["runner_acoustics"]) {
             config.runnerAcoustics.enabled = acoustics["enabled"].as<bool>(config.runnerAcoustics.enabled);

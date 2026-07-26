@@ -597,9 +597,29 @@ int main() {
         require(enginelab::FlamePhysicsModel::turbulentFlameSpeedMps(fuel, dilutedConditions)
                     < enginelab::FlamePhysicsModel::turbulentFlameSpeedMps(fuel, cleanConditions),
                 "residual-gas dilution must attenuate flame speed even at low turbulence");
+        auto tumbleConditions = cleanConditions;
+        tumbleConditions.meanPistonSpeedMps = 8.0;
+        tumbleConditions.chamberTurbulenceIntensityRatio = 1.6;
+        require(enginelab::FlamePhysicsModel::turbulentFlameSpeedMps(
+                    fuel, tumbleConditions)
+                    > enginelab::FlamePhysicsModel::turbulentFlameSpeedMps(
+                        fuel, cleanConditions),
+                "chamber tumble must increase turbulent flame speed independently of fuel chemistry");
         enginelab::FlameEvent event;
         enginelab::FlameConditions conditions { 0.086, 0.000055, 700.0, 900'000.0,
                                                  1.05, 0.04, 12.0, 0.9 };
+        auto dualIgnitionConditions = conditions;
+        dualIgnitionConditions.ignitionSiteCount = 2;
+        enginelab::FlameEvent singleKernel;
+        enginelab::FlameEvent dualKernel;
+        flame.ignite(singleKernel, fuel, conditions, 1.0e-5);
+        flame.ignite(dualKernel, fuel, dualIgnitionConditions, 1.0e-5);
+        for (int step = 0; step < 40; ++step) {
+            (void)flame.advance(singleKernel, fuel, conditions, 1.0 / 40'000.0);
+            (void)flame.advance(dualKernel, fuel, dualIgnitionConditions, 1.0 / 40'000.0);
+        }
+        require(dualKernel.burnedFraction > singleKernel.burnedFraction,
+                "two ignition kernels must consume more chamber volume at equal flame speed and time");
         flame.ignite(event, fuel, conditions, 1.0e-5);
         double accumulated = 0.0;
         for (int step = 0; step < 2'000 && event.active; ++step)
@@ -965,6 +985,8 @@ int main() {
     extendedPhysicsConfig.cylinders.front().pistonFrictionCoefficient = 0.067;
     extendedPhysicsConfig.cylinders.front().pistonBreakawayForceN = 61.0;
     extendedPhysicsConfig.combustionCalibration.baseIgnitionDelaySeconds = 0.00062;
+    extendedPhysicsConfig.combustionCalibration.chamberTurbulenceIntensityRatio = 1.37;
+    extendedPhysicsConfig.combustionCalibration.ignitionSiteCount = 2;
     extendedPhysicsConfig.runnerAcoustics.dampingRatio = 0.21;
     extendedPhysicsConfig.forcedInduction.enabled = true;
     extendedPhysicsConfig.forcedInduction.designShaftSpeedRpm = 145'000.0;
@@ -993,6 +1015,8 @@ int main() {
             "JSON must preserve turbo shaft and flow-area calibration");
     require(extendedJsonRoundTrip
             && std::abs(extendedJsonRoundTrip.config->combustionCalibration.baseIgnitionDelaySeconds - 0.00062) < 1.0e-9
+            && std::abs(extendedJsonRoundTrip.config->combustionCalibration.chamberTurbulenceIntensityRatio - 1.37) < 0.001
+            && extendedJsonRoundTrip.config->combustionCalibration.ignitionSiteCount == 2
             && std::abs(extendedJsonRoundTrip.config->transmission.reverseRatio - 3.55) < 0.001
             && extendedJsonRoundTrip.config->camshafts.intakeFlowCurve.size() == 3
             && extendedJsonRoundTrip.config->camshafts.continuousControl.samples.size() == 2,
@@ -1122,6 +1146,7 @@ int main() {
     bool foundMotorcycle = false;
     bool foundFlatSix = false;
     bool foundRadial = false;
+    bool foundRadialBanks = false;
     bool foundCalibratedVtec = false;
     bool foundCalibratedAvgas = false;
     for (const auto& entry : catalog.entries) {
@@ -1131,6 +1156,19 @@ int main() {
         foundFlatSix = foundFlatSix || (entry.config.layout == enginelab::EngineLayout::flat && entry.config.cylinders.size() == 6);
         foundRadial = foundRadial || (entry.config.layout == enginelab::EngineLayout::radial
             && entry.config.cylinders.size() == 5 && entry.config.crankJournals.size() == 1);
+        if (entry.config.layout == enginelab::EngineLayout::radial) {
+            foundRadialBanks = entry.config.banks.size() == entry.config.cylinders.size();
+            for (const auto& cylinder : entry.config.cylinders) {
+                const auto bank = std::find_if(entry.config.banks.begin(),
+                    entry.config.banks.end(), [&cylinder](const auto& candidate) {
+                        return candidate.id == cylinder.bankId;
+                    });
+                foundRadialBanks = foundRadialBanks
+                    && bank != entry.config.banks.end()
+                    && std::abs(bank->angleDegrees
+                        - cylinder.bankOffsetDegrees) < 1.0e-9;
+            }
+        }
         foundCalibratedVtec = foundCalibratedVtec || (entry.config.name.find("K20A") != std::string::npos
             && entry.config.camshafts.variableProfileEnabled
             && entry.config.ignition.timingCurve.size() >= 5
@@ -1144,6 +1182,8 @@ int main() {
     }
     require(found2jz && foundV8 && foundMotorcycle && foundFlatSix && foundRadial && foundCalibratedVtec,
             "catalog must cover iconic layouts and an explicit variable-valvetrain calibration");
+    require(foundRadialBanks,
+            "catalog radial cylinders must retain their independent spatial bank angles");
     require(foundCalibratedAvgas, "catalog parts must apply an explicit fuel calibration to aviation engines");
 
     {

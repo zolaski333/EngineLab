@@ -478,6 +478,8 @@ void applyCrankOffsets(EngineConfig& config) {
         assignIfPresent(calibration, "ignition_delay_pressure_exponent", config.combustionCalibration.ignitionDelayPressureExponent);
         assignIfPresent(calibration, "wall_heat_transfer_w_per_k", config.combustionCalibration.wallHeatTransferCoefficientWPerK);
         assignIfPresent(calibration, "residual_dilution_sensitivity", config.combustionCalibration.residualDilutionSensitivity);
+        assignIfPresent(calibration, "chamber_turbulence_intensity_ratio", config.combustionCalibration.chamberTurbulenceIntensityRatio);
+        assignIfPresent(calibration, "ignition_site_count", config.combustionCalibration.ignitionSiteCount);
     }
     if (const auto acoustics = engine["runner_acoustics"]) {
         assignIfPresent(acoustics, "enabled", config.runnerAcoustics.enabled);
@@ -592,6 +594,26 @@ void applyCrankOffsets(EngineConfig& config) {
                 cylinder.bankId = bank.id;
             }
             config.banks = { std::move(left), std::move(right) };
+        } else if (config.layout == EngineLayout::radial) {
+            // A radial's bank angle is per cylinder. Grouping every cylinder
+            // into the generic zero-degree inline bank makes bankAngleFor()
+            // prefer that bank over each authored bank_offset_deg; all pistons
+            // then move in phase while their valve/firing phases remain spread
+            // around 720 degrees. The result is not a cosmetic layout error:
+            // most cylinders open their valves on the wrong piston stroke.
+            config.banks.reserve(config.cylinders.size());
+            for (auto& cylinder : config.cylinders) {
+                CylinderBankConfig bank {
+                    cylinder.id,
+                    cylinder.bankOffsetDegrees,
+                    { cylinder.id },
+                    config.camshafts,
+                    0,
+                    1,
+                };
+                cylinder.bankId = bank.id;
+                config.banks.push_back(std::move(bank));
+            }
         } else {
             CylinderBankConfig bank { 1, 0.0, {}, config.camshafts, 0, 1 };
             for (auto& cylinder : config.cylinders) { bank.cylinderIds.push_back(cylinder.id); cylinder.bankId = 1; }
