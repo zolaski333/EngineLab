@@ -1936,3 +1936,48 @@ Hayabusa 0.803, CP4 0.809, et seuls les 2 et 3 cylindres tiennent le temps réel
 Le fork-join ne valait qu'environ un tiers du déficit du V8. **Le reste est
 l'admission 1-D**, et tant qu'il n'est pas traité, le son des gros moteurs restera
 affamé. Aucune correction de la chaîne audio ne peut compenser ça.
+
+### Le coût de l'admission : l'arbitrage mesuré, et pourquoi il n'est pas pris
+
+La moitié du coût du sous-pas tient à ce que `advanceIntakeRunners` est appelé
+**deux fois** par sous-pas, en `subDt * 0.5`, symétriquement autour du couplage
+d'échappement. Vérification faite, ce couplage n'a lieu que tous les ~250 us : sur
+la grande majorité des sous-pas, la symétrie de Strang n'encadre rien du tout.
+
+Expérience : remplacer les deux demi-pas par un pas entier. Mesuré, LS3 / K20A —
+facteur temps réel **0.345 -> 0.571** et **0.411 -> 0.737**, coût du pas K20A à
+7740 tr/min de 9987 a 5823 us (**-42 %**).
+
+Mais la physique bouge, LS3 :
+
+| tr/min | grandeur | référence | fusionné | écart |
+|---|---|---|---|---|
+| 792 | couple | 557.732 | 560.473 | +0.5 % |
+| 3628 | couple | 539.704 | 525.521 | **-2.6 %** |
+| 3628 | VE | 0.839 | 0.820 | **-2.3 %** |
+| 3628 | air (mg) | 6179.919 | 6043.249 | -2.2 % |
+| 5939 | VE | 0.805 | 0.798 | -0.9 % |
+
+**Refusé en l'état.** 2.3 % de remplissage en milieu de plage déplacerait la
+concordance avec les courbes constructeur que les moteurs du catalogue viennent
+d'atteindre. Deux demi-pas d'un opérateur non linéaire ne valent pas un pas
+entier, et ici l'écart est loin d'être négligeable.
+
+**Ce que l'expérience apprend en passant, et qui compte davantage :** que diviser
+par deux la résolution temporelle de l'admission déplace la VE de 2.3 % veut dire
+que **le schéma d'admission n'est pas convergé** au maillage et à la cadence
+livrés. L'erreur de troncature actuelle est de l'ordre de 0.6 a 1.2 %. Ce n'est
+pas une raison de raffiner — le coût est déjà le problème — mais toute lecture de
+VE au pourcent près doit en tenir compte.
+
+**Piste suivante, non encore testée.** L'erreur devrait se concentrer là où la
+condition limite est raide, c'est-à-dire soupape ouverte (~35 % du cycle).
+Fractionner par cylindre : deux demi-pas quand sa soupape d'admission est ouverte,
+un pas entier quand elle est fermée. Cela ramènerait le nombre moyen d'appels de
+2.0 a ~1.35 (soit ~27 % du coût total du pas) tout en gardant la résolution là ou
+elle est payée. À mesurer contre `EngineLab.IntakeTuning`, dont les plafonds
+viennent de la littérature et ne doivent pas être élargis.
+
+Rappel : **ne pas** multirater l'admission comme l'échappement. Cela importerait
+le biais de moyennage documenté plus haut (23-29 % de la perte de pompage cote
+échappement) sur le côté qui fixe la VE.
