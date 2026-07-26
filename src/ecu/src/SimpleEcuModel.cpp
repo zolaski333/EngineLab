@@ -174,6 +174,14 @@ EcuCommand SimpleEcuModel::evaluate(const EngineConfig& config, const EngineStat
             // Cranking: hold the schedule charged, so it starts full at catch.
             postStartAir = 0.88;
         } else {
+            // Releasing this floor faster when the engine flares was measured
+            // and REJECTED. It does fix the two engines whose flare is worst
+            // (radial 0 -> 683 rpm, Big Twin sigma 57.7 -> 16.7), but the floor
+            // is precisely what keeps a flaring engine breathing: bleeding it on
+            // overspeed at 6.0/s took the Audi I5 from a settled 780/746 rpm
+            // (sigma 9.3) to a full stall. The flare is not the destructive
+            // event -- the fuel cut that the flare triggers is. See the
+            // after-start DFCO inhibit below.
             postStartAir *= std::exp(-idleDt / postStartDecaySeconds);
             if (postStartAir < 1.0e-4) postStartAir = 0.0;
         }
@@ -330,7 +338,24 @@ EcuCommand SimpleEcuModel::evaluate(const EngineConfig& config, const EngineStat
     // sequence of low-idle, uneven-firing engines and could destabilise their
     // learned idle mixture long after the initial coast event.
     const auto decelerationFuelResumeRpm = idleTargetRpm * 1.25;
-    if (controls.starterEngaged || effectiveThrottle > 0.02
+    // Deceleration fuel cut is an OVERRUN function: it presumes a running,
+    // warmed engine coasting down under a shut throttle. The post-start flare
+    // satisfies its speed threshold while being the exact opposite condition --
+    // the engine is accelerating away from a catch with an empty port film --
+    // and cutting there is what makes a marginal idle unrecoverable. Measured
+    // on the radial: fuel was cut 0.3 s after catch at 1433 rpm against a 640
+    // target, cycle torque went from +209 to -70 Nm, the engine fell back
+    // through the catch threshold, re-cranked, and repeated. Every production
+    // ECU inhibits overrun cut through the after-start phase for this reason.
+    //
+    // The after-start air schedule IS that phase, already maintained above and
+    // already longer on a cold engine, which is exactly when a real inhibit
+    // lasts longest. Gate on it rather than adding a second timer -- the
+    // comment on the start-mode retard above makes the same point: this belongs
+    // on the ECU's run/start state, not on a speed threshold.
+    const auto afterStartPhase =
+        postStartAirOpening_.load(std::memory_order_relaxed) > 0.05;
+    if (controls.starterEngaged || effectiveThrottle > 0.02 || afterStartPhase
             || state.rpm < decelerationFuelResumeRpm) {
         decelerationFuelCut = false;
     } else if (state.throttle < 0.02 && state.rpm > idleTargetRpm * 1.65) {

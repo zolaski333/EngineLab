@@ -194,9 +194,64 @@ test onto the behaviour it is meant to catch. Keep it that way.
   compare a perf CSV across an exhaust-geometry change** — doing so once put the
   V12 at 158% of budget in these docs when it is at 77%. §18 has the numbers.
 
+- **An idle failure is usually not caused by the commit that exposed it.** The
+  catalogue's idles are marginal attractors and the simulator is deterministic,
+  so a change that is only *algebraically* equivalent still moves them. Measured:
+  after the solver-cache commit the Radial R5 stalled outright and the Big Twin
+  rang at sigma 57.7. Tracing both engines before and after and diffing line by
+  line, the runs first differ in the **last printed digit** of `air_mg` (636.4 vs
+  636.5 at t=0.40 s; 3782.8 vs 3782.9 at t=0.50 s) — a ULP, amplified over
+  seconds into opposite outcomes. **Do not hunt the ULP and do not revert the
+  optimisation**: bisect to confirm the boundary, then fix whatever makes the
+  idle that sensitive. Here that was deceleration fuel cut firing 0.3 s after
+  catch, during the after-start flare, with an empty port film. Corollary: a
+  green idle run proves less than it looks, and "engine X now fails" after an
+  unrelated change is the expected symptom, not a mystery.
+- **Bisecting is cheap here; guessing is not.** `cmake --build ... --target
+  EngineLabIdleStabilityRegressionTests` relinks in ~36 s even across a
+  `EngineSimulator.cpp` change, and the tree is normally clean, so
+  `git checkout <sha>` + build + run is a few minutes per point. Two bisect
+  points replaced an afternoon of reading diffs and killed three plausible
+  hypotheses (flame ceiling, ECU load axis, injection model) that a code-read had
+  ranked highly and that measurement showed to be diesel-guarded or inactive at
+  idle.
+- **`idleAirOpening` equal to `postStartAirOpening` in an idle trace is not a
+  duplicated column.** `idleAirOpening = max(postStartAir, governor, dashpot)`,
+  so while the after-start floor owns the actuator the two are equal *by
+  construction* — and that is the interesting reading: the governor has no
+  authority, and the anti-windup will not let it integrate down while the floor
+  wins. Whole seconds of a start transient can pass with the PI loop a spectator.
+- **`EngineState::exhaustPressureKpa` is not back pressure.** It is the `max`
+  over cylinders of the *instantaneous exhaust runner* pressure — a blowdown peak
+  envelope, not a collector mean. The `exh_kpa` column of every swept CSV reads
+  like a mean and is not one. Any back-pressure or pumping argument built on it
+  is void; one was, and was withdrawn.
+- **Cell-centre primitives are not a profile at the shipped mesh.**
+  `targetCellLengthM = 0.300` with `minimumCellsPerDuct = 1` gives a 760 mm
+  primary three cells, and with the high-order reconstruction `rho*u` varies 2.4x
+  along a *constant-area* duct in a state that is provably settled (bit-identical
+  at two settle times) and globally conservative. Trust fluxes and boundaries,
+  never cell centres. Reading that variation as "not converged" cost a retracted
+  claim.
+- **The exhaust coupling averages the cylinder state, then takes one flux from
+  the average.** The interval is `min(250 us, 1/(16*firingFrequencyHz))`. Because
+  the flux is concave in the pressure difference, averaging the state first
+  under-predicts transfer wherever the state moves inside an interval — worst
+  during blowdown. Measured with `EngineLabGasExchangeTests --oracle-coupling`
+  (which advances the network every substep): worth 23-29% of the exhaust-stroke
+  pumping loss above 2500 rpm. Generic lesson for this codebase: any state
+  averaged over an interval before entering a non-linear law biases the result in
+  the direction of the curvature.
+- **An unrestricted parallel Release build can exhaust the MSVC compiler heap**
+  (`C1060`) on the three large LTO translation units (`EngineLabCoreTests`,
+  `EngineLabAbClipRenderer`, `EngineLabAudioAbHarness`). They build fine with
+  `--parallel 1`. It is a build-memory limit, not a source error — do not go
+  looking for a code cause.
+
 `docs/realtime-audio.md` and `docs/custom-exhaust.md` document the audio and
 exhaust models and the corrections already made — read them before touching those
-areas.
+areas. `docs/rework-validation-log.md` is the running log of the 2026-07-26
+rework: measurements, and the hypotheses that were tried and refuted.
 
 ## Two concrete traps that cost time here
 

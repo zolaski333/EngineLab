@@ -278,3 +278,147 @@ into a tapered runner.
 - `EngineLabGasDynamicsTests`, `EngineLabCoreTests` and
   `EngineLabRealtimeRegressionTests` all pass. The desktop application also
   compiles with the new two-diameter editor.
+
+## Compression ignition, flame ceiling and solver caches (`790f772`)
+
+This commit shipped with an empty message body and no entry here. It is the
+largest model change of the series, so it is recorded now, after the fact, from
+its diff and from re-measurement on the committed state.
+
+### What it contains
+
+- `CompressionIgnitionModel`: Livengood-Wu induction integral over an Assanis
+  pressure/temperature/equivalence-ratio delay correlation with an explicit
+  cetane correction, then a rapid premixed fraction followed by a
+  mixing-controlled diffusion burn. It consumes fuel and oxygen only through
+  `ConservativeGasSystem`, so it keeps the same chemical invariants as spark
+  combustion.
+- Diesel fuelling: metered by an injected-quantity (smoke) map with the
+  closed-loop trim explicitly disabled, and `normalizedLoad` taken from
+  throttle/load rather than manifold pressure, because a quality-governed engine
+  has no throttle-derived load.
+- `engines/14_vw_2_0_tdi_like.engine.yaml` plus `road_diesel_en590`,
+  `common_rail_diesel` and `diesel_low_speed` parts.
+- **Flame speed ceiling.** The fixed 42 m/s clamp in
+  `FlamePhysicsModel::turbulentFlameSpeedMps` clipped every high-speed pent-roof
+  chamber to the same burn rate regardless of its authored tumble. It is now
+  `0.18 * a(T_unburned)`, a deflagration Mach bound. Note for anyone
+  investigating idle: at idle the laminar-plus-turbulent sum is around 5 m/s, so
+  neither the old bound nor the new one is active there. This change cannot
+  affect an idle, and that was verified before looking elsewhere.
+- **Solver caches.** Immutable duct geometry (roots, powers, cell volumes,
+  hydraulic diameters, roughness terms) was being recomputed per cell, per RK2
+  stage, per substep; it is now prepared once at configuration. Wall heat
+  transfer became transactional: the gas state and the wall state are validated
+  together and committed only if the whole substep is physical.
+
+### Measured effect
+
+Curves, on the committed state, against manufacturer figures:
+
+| Engine | sim torque | real | sim power | real |
+|---|---:|---:|---:|---:|
+| Yamaha CP2 | 65.9 Nm @6500 | 68 @6500 | 57.2 kW @9500 | 54 @8750 |
+| Yamaha CP3 | 96.1 Nm @7000 | 93 @7000 | 89.3 kW @9000 | 87.5 @10000 |
+| Yamaha CP4 | 111.9 Nm @9000 | 111 @9000 | 118.2 kW @10500 | 118 @11500 |
+| VW 2.0 TDI | 341.6 Nm @2000 | 340 @1750-3000 | 111.2 kW @4000 | 110 @3500-4000 |
+
+The CP4 was at 65% of rated power with its torque peak 3250 rpm early before
+this pass. Two physical corrections produced that: the intake runner length had
+counted only the visible bellmouth and omitted the head port, and the flame
+ceiling above. Performance, median of repeated runs against `e624b9e`: CP2
+-11.3/-7.5/-5.9%, LS3 -14.8/-18.9/-17.4%.
+
+### Rejected during that pass, and worth not repeating
+
+- A detailed 4-2-1 collector graph for the CP4. It raised back pressure from 166
+  to over 210 kPa, nearly doubled the CP4's step cost, and degraded the curve.
+  The equivalent collector measures better.
+- Parallelising four cylinders. Eighty synchronisations per frame cost more than
+  the four tasks return.
+- One float re-association inside the fuel-limit precomputation. It was small
+  enough to look harmless and was amplified by autoignition; reverting it
+  restored the bench bit for bit.
+
+## Idle robustness: a fragile attractor, not a regression (2026-07-26)
+
+### Symptom
+
+After `790f772`, `EngineLab.IdleStabilityRegression` failed on the Radial R5
+(complete stall, 0 rpm, steady and after a blip) and the Big Twin (mean 753, min
+576, sigma 57.7, drift 40.9 against a 760 target). Both passed at `e624b9e`.
+
+### Cause
+
+Not a model defect in `790f772`. Tracing both engines at `e624b9e` and at HEAD
+and diffing line by line, the two runs first differ at t = 0.40 s (Big Twin,
+`air_mg` 636.4 vs 636.5) and t = 0.50 s (radial, `air_mg` 3782.8 vs 3782.9) --
+the last printed digit. That is the solver-cache work of `790f772`: algebraically
+equivalent, not bit-identical. Everything after is amplification.
+
+An idle that a one-part-in-a-million air-mass difference flips between settling
+at 681 rpm and stalling is not a shippable idle, and it means every previous
+green run on those engines was luck. `CLAUDE.md` already names this signature.
+So the fix had to be robustness, not a hunt for the ULP.
+
+The destructive mechanism, from the radial trace: the after-start air floor is
+0.88 with no reference to the engine's idle target, so the radial flared to 1433
+rpm against a 640 target. That crossed the deceleration-fuel-cut entry threshold
+(1.65 x idle) 0.3 s after catch, all fuel was cut, cycle torque went from +209 to
+-70 Nm, the engine fell back below the catch threshold, the starter re-engaged
+and re-charged the floor to 0.88, and it repeated. While the floor owns the
+actuator the idle anti-windup deliberately forbids the governor from integrating
+down, so nothing could oppose it either.
+
+### Rejected hypothesis
+
+**Release the after-start floor in proportion to overspeed.** It fixes the two
+worst engines (radial 0 -> 683 rpm, Big Twin sigma 57.7 -> 16.7) and is
+physically defensible, but the floor is exactly what keeps a flaring engine
+breathing: at 6.0/s it took the Audi I5 from a settled 780/746 rpm (sigma 9.3) to
+a full stall. The flare is not the destructive event. Reverted, and the reason is
+recorded in the code so it is not proposed again.
+
+### Implemented
+
+Deceleration fuel cut is an overrun function: it presumes a running, warmed
+engine coasting down under a shut throttle. The after-start flare satisfies its
+speed threshold while being the opposite condition -- the engine is accelerating
+away from a catch with an empty port film. Production ECUs inhibit overrun cut
+through the after-start phase for exactly this reason. The after-start air
+schedule already *is* that phase, is already longer on a cold engine (which is
+when a real inhibit lasts longest), and is already maintained upstream, so the
+inhibit gates on it rather than introducing a second timer.
+
+### Proof
+
+All 14 catalogue engines pass, and every one is equal or better than its best
+previously recorded state:
+
+| Engine | at `e624b9e` (last all-green) | with the inhibit |
+|---|---|---|
+| Radial R5 | 681, sigma 14.5 | **684, sigma 5.0** |
+| Audi I5 | 780, sigma 9.3 | **780, sigma 5.1** |
+| Big Twin | 761, sigma 17.9 | **763, sigma 14.2** |
+| Yamaha CP3 | 1303, sigma 16.1 | **1301, sigma 14.9** |
+
+Non-vacuity: with the inhibit removed the radial stalls outright and the Big
+Twin fails three assertions, which is the failure this fixes.
+
+## The catalogue AFR gate could not read a diesel
+
+`EngineLab.CatalogPhysics` failed only on the 2.0 TDI: mean AFR error 5.41
+against a 2.5 ceiling, from AFR 22.41 measured versus a 16.99 "target".
+
+The physics is right and the gate was wrong. A quality-governed engine has no
+stoichiometric setpoint. What `EngineSimulator` publishes as a diesel's
+`targetAirFuelRatio` is a smoke-limit **floor** (stoichiometric * 1.16), and its
+fuel is metered by the injected-quantity map with the closed-loop trim disabled,
+so whichever binds first the delivered mixture is normally *leaner* than the
+floor. AFR 22.4 at the rated point is textbook, and it is the same calibration
+that reproduces 340 Nm / 110 kW.
+
+The gate now scores compression ignition one-sided: only running *richer* than
+the smoke limit counts as an error. That is strictly tighter than the old
+two-sided band on the rich side, which is where the real failure -- sooting past
+the smoke limit -- lives. The tolerance was not widened.

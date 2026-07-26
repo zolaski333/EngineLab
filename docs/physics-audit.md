@@ -1646,3 +1646,80 @@ pousse le piston pendant l'admission, donc sa PMEP nette au WOT doit être petit
 voire positive. Un déficit cinq fois trop grand sur le seul moteur boosté du
 catalogue désigne le couplage compresseur/plénum, pas les soupapes. À instrumenter
 séparément — ce n'est pas le même défaut que l'excès de pompage atmosphérique.
+
+## L'excès de pompage est le temps d'échappement, et quatre causes sont écartées
+
+`pumpingMeanEffectivePressureBar` disait « ce moteur pompe trop » sans dire de
+quel côté. La boucle est maintenant scindée en ses deux temps
+(`exhaustStrokeMeanEffectivePressureBar`, l'admission étant le reste), et la
+réponse est nette. Moteur de référence I4, pleine charge :
+
+| tr/min | PMEP | moitié échappement | moitié admission |
+|---|---|---|---|
+| 2000 | -0.351 | -0.148 | -0.203 |
+| 3000 | -0.627 | -0.392 | -0.235 |
+| 4000 | -0.682 | -0.560 | -0.122 |
+| 5000 | -1.108 | -0.902 | -0.207 |
+| 6000 | -1.522 | -1.214 | -0.308 |
+| 6500 | -1.584 | -1.280 | -0.304 |
+
+Littérature (Heywood ch. 13), atmosphérique pleine charge : PMEP **totale** -0.2
+à -0.4 bar en milieu de plage, -0.4 à -0.6 près du régime nominal. **L'admission
+est dans la bande.** Tout l'excès est sur le temps d'échappement, et il croît en
+rpm^1.8 (facteur 8.65 pour un rapport de régime de 3.25) — une signature de
+limitation de débit, pas d'un décalage statique. C'est cohérent avec le défaut de
+forme de courbe : une perte qui croît comme le carré du régime rabat la BMEP haut
+régime et fait tomber le pic de couple trop tôt.
+
+Ces chiffres sont **inchangés au millième** depuis la scission, à travers les
+quatre commits du rework : rien n'a touché à l'échange gazeux, et les courbes
+Yamaha ont été redressées *malgré* ce défaut, pas en le corrigeant.
+
+Quatre hypothèses ont été mesurées puis écartées. Ne pas les reprendre :
+
+1. **La géométrie d'échappement est trop restrictive.** Réfutée par
+   `EngineLabExhaustFlowBench`, banc d'écoulement stationnaire sur le réseau
+   réellement compilé (même maillage que le simulateur). À 0.139 kg/s — le K20A
+   en fait 0.154 à 8000 tr/min — l'orifice ne demande que ~34 kPa relatifs et le
+   silencieux tient 2.7 kPa. Bilans de masse et d'énergie bouclés, résultats
+   identiques au bit à deux temps de stabilisation. *Réserve honnête : un banc
+   stationnaire au débit **moyen** ne dit rien du pic de vidange, qui vaut
+   plusieurs fois la moyenne. Il réfute « le tuyau est trop petit », pas « le
+   tuyau n'encaisse pas l'impulsion ».*
+2. **L'aire efficace de soupape d'échappement est trop petite.** Réfutée : porter
+   le plateau de 0.51 à 0.95 (diagnostic, annulé depuis) ne retire que 12 % à
+   6000 tr/min. Beaucoup à 2000 (57 %), rien là où le défaut vit.
+3. **La loi de débit de soupape sous-débite.** Réfutée par la mesure, et c'est la
+   plus utile : avec `exh_cda_mm2` et `exh_valve_gps` publiés par
+   `EngineLabPhysicsPerfHarness --trace`, le rapport du débit réel à la capacité
+   isentropique quasi-stationnaire calculée depuis les mêmes états amont/aval et
+   la même aire vaut **≈ 1.00 aux fortes ouvertures**. La soupape délivre ce que
+   la thermodynamique permet.
+4. **De l'énergie est créée à la jonction du collecteur.** Réfutée : le bilan
+   d'énergie du banc boucle exactement (E_orifices == E_sortie à chaque point).
+   La jonction du K20A est à 1147 K contre un réservoir à 1050 K au repos, et
+   cette répartition reste inexpliquée, mais rien n'est créé. Une affirmation de
+   violation de conservation a été émise puis **retirée** sur cette base.
+
+Une cause partielle est confirmée : le **couplage multi-cadence** moyenne l'état
+du cylindre sur son intervalle puis calcule un seul flux depuis cette moyenne.
+Le flux étant concave en l'écart de pression, cela sous-estime le transfert
+partout où l'état bouge dans l'intervalle — donc pendant la vidange.
+`EngineLabGasExchangeTests --oracle-coupling` (réseau avancé à chaque sous-pas)
+retire **23-29 %** de la perte au-dessus de 2500 tr/min, et un peu *plus* mauvais
+à 2000. Cumulé avec l'aire, cela fait ~35 % : il reste 2 à 3 fois d'inexpliqué.
+
+Le symptôme brut, au trace K20A 8000 tr/min à travers le temps d'échappement : le
+cylindre reste entre 1.8 et 3.9 bar absolus contre un primaire à 1.5 bar, et la
+pression **remonte** de 1.79 bar à 260° à 3.86 bar à 334° alors que la soupape est
+encore ouverte de 13 à 4 mm et que le piston chasse. Le gaz est comprimé au lieu
+d'être évacué. La vidange n'est pas non plus terminée au PMB (~3.1 bar à 180°
+contre 1.64 bar dans le tube).
+
+Les deux hypothèses vivantes, non mesurées : la vidange qui traîne au-delà du PMB
+paie très cher le début du temps d'échappement, et le réseau qui n'encaisse pas
+le **pic** d'impulsion même s'il encaisse la moyenne. Elles ne sont pas
+indépendantes. Le critère de réussite est la promotion de `EngineLab.GasExchange`
+en bloquant (`--enforce-gas-exchange` dans `tests/CMakeLists.txt`) : ses deux
+plafonds sont gelés depuis la littérature et **ne doivent jamais être élargis**
+pour obtenir du vert.

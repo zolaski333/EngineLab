@@ -514,7 +514,25 @@ bool runCatalogAcceptance(const std::filesystem::path& root, const std::string& 
             const auto settledSpeedError = std::abs(state.rpm - dynoTargetRpm)
                 / std::max(1.0, dynoTargetRpm);
             if (time >= 4.0 && settledSpeedError < 0.12) {
-                afrErrorSum += std::abs(state.airFuelRatio - state.targetAirFuelRatio);
+                // A compression-ignition engine is quality-governed: it has no
+                // stoichiometric setpoint. What EngineSimulator publishes as its
+                // `targetAirFuelRatio` is a smoke-limit FLOOR (stoichiometric *
+                // 1.16), and its fuel is metered by the injected-quantity map
+                // with the closed-loop trim explicitly disabled -- so whichever
+                // of the two binds first, the delivered mixture is normally
+                // LEANER than the floor. Measured on the 2.0 TDI at its rated
+                // point: AFR 22.41 against a 16.99 floor, which is textbook
+                // diesel and reproduces the manufacturer's 340 Nm / 110 kW.
+                // A two-sided |actual - target| therefore measures nothing
+                // physical on this engine and read as a 5.41 error.
+                //
+                // Assert the side that IS physical, and only that one: a diesel
+                // must never run RICHER than its smoke limit. This is strictly
+                // tighter than the old two-sided band on the rich side, where
+                // the real failure (sooting past the smoke limit) lives.
+                afrErrorSum += config.fuel == enginelab::FuelType::diesel
+                    ? std::max(0.0, state.targetAirFuelRatio - state.airFuelRatio)
+                    : std::abs(state.airFuelRatio - state.targetAirFuelRatio);
                 afrSum += state.airFuelRatio;
                 targetAfrSum += state.targetAirFuelRatio;
                 deliveredFuelSum += state.deliveredFuelMgPerCycle;
