@@ -210,6 +210,21 @@ public:
     [[nodiscard]] double maximumTimingLatenessSeconds() const noexcept {
         return maximumTimingLatenessSeconds_.load();
     }
+    /**
+     * Instrumentation only. The loop normally sleeps to a wall deadline after
+     * each 1/240 s of simulated time, so the realtime factor it achieves
+     * saturates at 1.0 and cannot show how much CAPACITY is left above realtime
+     * -- an engine comfortably at 3x and one exactly at 1.0 both report 1.000.
+     * Disabling the throttle makes the loop produce simulated time as fast as
+     * the machine allows, so the same factor becomes the capacity headroom.
+     *
+     * Set before `start()`. Never enable this in the application: the audio
+     * thread, the telemetry queues and the dyno controller are all paced by
+     * that sleep.
+     */
+    void setRealtimeThrottleEnabled(bool enabled) noexcept {
+        realtimeThrottleEnabled_.store(enabled, std::memory_order_relaxed);
+    }
 private:
     void run(std::stop_token stopToken);
     void beginDynoSession();
@@ -246,6 +261,7 @@ private:
     std::atomic<std::uint64_t> timingOverruns_ { 0 };
     std::atomic<double> maximumTimingLatenessSeconds_ { 0.0 };
     std::atomic<bool> paused_ { false };
+    std::atomic<bool> realtimeThrottleEnabled_ { true };
     std::atomic<double> timeScale_ { 1.0 };
     // UI writes only the desired state. The simulation thread owns all mutable
     // session fields below and reconciles this mailbox once per tick.

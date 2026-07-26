@@ -685,6 +685,15 @@ void EngineRuntime::run(std::stop_token stopToken) {
         const auto producerTime = std::chrono::duration<double>(now - clockEpoch).count();
         audioState_.producerTimeNanoseconds.store(static_cast<std::uint64_t>(std::max(0.0, producerTime) * 1.0e9),
                                                   std::memory_order_release);
+        // Instrumentation escape hatch (see setRealtimeThrottleEnabled): with
+        // the throttle off the loop free-runs, so the realtime factor stops
+        // saturating at 1.0 and reads as capacity instead. The deadline is
+        // carried forward to `now` so the overrun counter does not fill with
+        // self-inflicted lateness that means nothing in this mode.
+        if (!realtimeThrottleEnabled_.load(std::memory_order_relaxed)) {
+            deadline = now;
+            continue;
+        }
         if (now > deadline) {
             timingOverruns_.fetch_add(1, std::memory_order_relaxed);
             const auto lateness = std::chrono::duration<double>(now - deadline).count();

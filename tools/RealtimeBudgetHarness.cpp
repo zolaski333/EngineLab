@@ -88,8 +88,13 @@ struct Measurement final {
 [[nodiscard]] Measurement measureEngine(const enginelab::EngineConfig& config,
                                         double holdRpm,
                                         double warmupSeconds,
-                                        double measureSeconds) {
+                                        double measureSeconds,
+                                        bool freeRun) {
     auto runtime = std::make_unique<enginelab::EngineRuntime>(config);
+    // Throttled, the loop sleeps to its wall deadline, so the factor saturates
+    // at 1.0 and an engine at 3x reads the same as one exactly breaking even.
+    // Free-running, the same ratio is the capacity headroom.
+    runtime->setRealtimeThrottleEnabled(!freeRun);
     runtime->setIgnitionEnabled(true);
     runtime->setStarterEngaged(true);
     runtime->setDynoHoldEnabled(true);
@@ -143,6 +148,7 @@ int main(int argc, char** argv) {
     // running the whole simulation in slow motion. 0.97 leaves room for
     // scheduler noise on a loaded desktop without admitting a real deficit.
     double failBelow = 0.0;
+    bool freeRun = false;
 
     for (int index = 1; index < argc; ++index) {
         const std::string argument = argv[index];
@@ -152,10 +158,13 @@ int main(int argc, char** argv) {
         else if (argument == "--warmup" && index + 1 < argc) warmupSeconds = std::stod(argv[++index]);
         else if (argument == "--seconds" && index + 1 < argc) measureSeconds = std::stod(argv[++index]);
         else if (argument == "--enforce" && index + 1 < argc) failBelow = std::stod(argv[++index]);
+        else if (argument == "--free-run") freeRun = true;
         else if (argument == "--help") {
             std::cout << "usage: EngineLabRealtimeBudgetHarness [--catalog-root DIR] "
                          "[--filter NAME] [--rpm N] [--warmup S] [--seconds S] "
-                         "[--enforce FACTOR]\n";
+                         "[--enforce FACTOR] [--free-run]\n"
+                         "  --free-run  remove the loop's wall-clock sleep, so the factor\n"
+                         "              reads capacity instead of saturating at 1.0.\n";
             return 0;
         }
     }
@@ -168,8 +177,12 @@ int main(int argc, char** argv) {
 
     std::cout << "Realtime budget: simulated seconds produced per wall second by the\n"
                  "240 Hz EngineRuntime thread, held at " << std::fixed
-              << std::setprecision(0) << holdRpm << " rpm.\n"
-                 "A factor below 1.0 means the simulation is running in slow motion.\n\n";
+              << std::setprecision(0) << holdRpm << " rpm.\n";
+    std::cout << (freeRun
+        ? "FREE-RUN: the wall-clock sleep is removed, so the factor is CAPACITY.\n"
+          "1.0 is exactly break-even and leaves no margin for scheduler jitter.\n\n"
+        : "A factor below 1.0 means the simulation is running in slow motion.\n"
+          "It saturates at 1.0; use --free-run to see the headroom above it.\n\n");
     std::cout << std::left << std::setw(26) << "engine"
               << std::right << std::setw(5) << "cyl"
               << std::setw(10) << "rpm"
@@ -188,7 +201,8 @@ int main(int argc, char** argv) {
     for (const auto& entry : catalog.entries) {
         if (!filter.empty() && lowercase(entry.config.name).find(filter) == std::string::npos)
             continue;
-        const auto measurement = measureEngine(entry.config, holdRpm, warmupSeconds, measureSeconds);
+        const auto measurement = measureEngine(entry.config, holdRpm, warmupSeconds,
+                                               measureSeconds, freeRun);
         const auto cylinders = static_cast<int>(entry.config.cylinders.size());
         std::cout << std::left << std::setw(26) << entry.config.name
                   << std::right << std::setw(5) << cylinders
