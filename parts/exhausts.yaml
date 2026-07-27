@@ -5,8 +5,10 @@
 # every c/(2L) and stop-bands between, deep in proportion to (chamber area /
 # collector area). Omitting both fields means "no silencer" -- the correct model
 # for an open stack, and what the aircraft, radial and flat-six presets keep.
-# muffler_restriction now also drives how absorptive the chamber is, so a
-# heavily packed OEM box no longer has transparent pass-bands.
+# muffler_restriction remains a mean-flow pressure-loss coefficient. It does
+# not drive acoustic absorption: overloading it previously collapsed the
+# low-frequency feedback loop. The chamber below is deliberately reactive;
+# absorptive packing requires a separate component with its own physical data.
 #
 # Expansion ratios sit at the modest end of what real hardware uses (peak
 # transmission loss 1.5-6.5 dB rather than the 10-13 dB a full-size OEM body

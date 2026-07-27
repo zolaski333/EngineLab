@@ -37,9 +37,9 @@ Le noyau utilise un flux HLLC avec repli de sûreté HLLE, une reconstruction TV
 SSP-RK2 et un pas CFL. Une tentative non physique est rejetée puis reprise avec
 un pas réduit ; aucune masse ni énergie n’est créée par un plancher numérique.
 Les pertes locales, le frottement de paroi et le transfert thermique sont des
-termes sources déclarés. Les parois du réseau moteur sont actuellement
-adiabatiques, car leur inertie thermique n’est pas encore un sous-système
-conservé.
+termes sources déclarés. Les parois du réseau moteur possèdent désormais une
+capacité thermique finie : l’échange gaz-métal conserve l’énergie combinée et
+seule la convection externe rejette explicitement la chaleur vers l’ambiance.
 
 Une soupape n’est pas traitée comme la continuation sans épaisseur d’un tube.
 Son `CdA` alimente une loi de tuyère compressible isentropique, subcritique ou
@@ -67,7 +67,7 @@ décomposition multirate physique :
   son volume, ses ports et ses pertes exacts ; son délai audio appartient au
   réseau caractéristique ;
 - la frontière macro est intégrée au minimum 16 fois par période d’allumage,
-  avec une fenêtre absolue de 500 µs au démarrage ;
+  avec une fenêtre absolue maximale de 250 µs à bas régime ;
 - état conservatif, volume de chambre, `CdA` de soupape et ouverture de sortie
   sont intégrés dans le temps sur chaque fenêtre ;
 - chaque échange macro reste bidirectionnel et ferme exactement les bilans de
@@ -119,6 +119,18 @@ La haute bande caractéristique est linéaire et passive. Elle propage le signal
 audio mais ses réflexions haute fréquence ne sont pas réinjectées dans la
 chambre 0D ; le réseau non linéaire basse bande reste propriétaire de la
 contre-pression physique.
+
+Le débit de soupape possède désormais deux propriétaires spectraux explicites.
+La paire pression/débit issue du réseau passe dans un passe-bas
+Linkwitz–Riley d’ordre 4 à `0,45 × fréquence de couplage`. Le débit de Riemann
+instantané passe dans le passe-haut complémentaire, calculé à la cadence
+mécanique. Cette seconde branche n’est jamais associée à la pression plus lente :
+elle devient une source de vitesse de volume au port, soit les caractéristiques
+antisymétriques `(+Zc U/2, -Zc U/2)`, puis traverse la même impédance physique de
+soupape que les ondes du runner. Les deux filtres ont une somme cohérente
+all-pass ; il n’existe donc ni bande doublée, ni gain de timbre caché. Si la
+frontière est déjà publiée pleine bande (`fréquence de couplage = 0`), la source
+complémentaire est exactement nulle.
 
 ## 4. Rayonnement et calibration
 
@@ -692,3 +704,31 @@ L'EJ25 garde un plancher HF élevé en montée (20.9 % au-dessus de 4 kHz contre
 7.1 % sans chambre) : ce plancher **préexiste** à la chambre, celle-ci le
 démasque en retirant du grave. C'est la prochaine chose à regarder sur ce
 moteur, et c'est un problème de couche turbo, pas de silencieux.
+
+## 20. Réseau acoustique complet compilé depuis le DAG
+
+`AcousticExhaustNetwork` compile désormais l'`ExhaustGraph` exact en réseau
+d'ondes temps réel. Chaque conduit conserve sa longueur et sa section dans une
+ligne bidirectionnelle avec pertes de paroi et propagation à amplitude finie ;
+les merges et splitters utilisent une diffusion N-ports pondérée par les
+admittances. Chaque sortie possède sa propre charge de rayonnement et son retard
+jusqu'à l'observateur. Une topologie 4-vers-1-vers-2 reste donc six conduits et
+deux sorties, au lieu d'être réduite à un runner moyen et un collecteur moyen.
+
+La chambre d'expansion est elle aussi issue de sa géométrie publiée : son volume
+et sa longueur donnent sa section interne, tandis que le diamètre de connexion
+conserve les deux discontinuités réelles. `muffler_restriction` reste une perte
+de charge de l'écoulement moyen ; elle n'est volontairement pas transformée en
+gain acoustique large bande sans loi physique d'absorption.
+
+Toute la mémoire des conduits, jonctions, sorties et retards est réservée dans
+`prepare()`. `process()` n'alloue pas et le harnais de rendu refuse maintenant
+un moteur de production si le DAG complet n'est pas actif. Le réseau réduit
+historique ne subsiste que comme chemin de compatibilité pour les producteurs
+et tests qui ne fournissent pas encore d'`ExhaustGraph`.
+
+Limite assumée : les jonctions sont des diffuseurs acoustiques instantanés,
+sans compliance concentrée propre. Les volumes finis qui ont une longueur
+publiée deviennent bien des conduits ; modéliser ultérieurement un plénum
+compact sans longueur exigera un élément de compliance dédié, pas un gain de
+voicing.

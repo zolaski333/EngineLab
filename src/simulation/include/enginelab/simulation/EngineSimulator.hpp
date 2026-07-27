@@ -29,6 +29,16 @@ public:
         return pressureSamples_ && pressureSamples_->tryPop(sample);
     }
     void setPressureSamplingEnabled(bool enabled);
+    /** Diagnostic oracle: advance the nonlinear exhaust network on every
+     * mechanical substep instead of using the production multirate interval.
+     *
+     * This is intentionally opt-in and is not realtime-safe on large engines.
+     * It exists so audio-band approximations can be compared with the more
+     * expensive physical solution rather than calibrated against themselves.
+     */
+    void setExhaustCouplingEverySubstep(bool enabled) noexcept {
+        exhaustCouplingEverySubstep_ = enabled;
+    }
     void reset() noexcept override;
 private:
     /** Compile and allocate the mandatory nonlinear exhaust network. */
@@ -58,7 +68,7 @@ private:
      * between roughly 2 and 4 kHz -- squarely audible, and heard as a metallic
      * tone unrelated to the engine. Keeping the last two solutions lets the
      * published boundary be reconstructed by linear interpolation across the
-     * stride instead, at the cost of one coupling interval (at most 500 us) of
+     * stride instead, at the cost of one coupling interval (at most 250 us) of
      * group delay on the exhaust boundary alone.
      */
     struct ExhaustNetworkBoundary final {
@@ -90,7 +100,7 @@ private:
      * longest coupling interval so a bracketing pair always exists.
      */
     static constexpr std::size_t exhaustBoundaryKnotCount = 8;
-    /** Above the 500 us low-speed coupling cap with slack, and about 0.6 ms of
+    /** Above the 250 us low-speed coupling cap with slack, and about 0.6 ms of
      * group delay on the exhaust boundary alone -- inaudible as latency. */
     static constexpr double exhaustBoundaryReconstructionDelaySeconds = 625.0e-6;
     /** Multirate coupling accumulators, carried ACROSS frames.
@@ -111,6 +121,7 @@ private:
     std::array<double, 32> exhaustBoundaryVolumeTimeIntegralM3S_ {};
     double exhaustCouplingDurationSeconds_ { 0.0 };
     double outletOpeningScaleTimeIntegralSeconds_ { 0.0 };
+    bool exhaustCouplingEverySubstep_ { false };
     std::array<std::array<ExhaustNetworkBoundary, exhaustBoundaryKnotCount>, 32>
         exhaustBoundaryKnots_ {};
     std::size_t exhaustBoundaryKnotWrite_ { 0 };

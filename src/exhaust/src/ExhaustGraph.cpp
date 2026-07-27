@@ -398,11 +398,26 @@ ExhaustGraph ExhaustGraph::makeForEngine(
         graph.nodes_.push_back({ mergeId, ExhaustNodeType::merge, 120.0, collectorDiameter,
             collectorRestriction, 0.0, 1.0, runtimePathIndex, 0, 0.0,
             collectorVolumeLitres, 1.0, 0.0 });
-        graph.nodes_.push_back({ mufflerId, ExhaustNodeType::muffler, 450.0, collectorDiameter,
+        const auto chamberConfigured = geometry.mufflerChamberDiameterMm > 1.0
+            && geometry.mufflerChamberLengthMm > 1.0;
+        const auto mufflerLengthMm = chamberConfigured
+            ? finiteClamped(geometry.mufflerChamberLengthMm, 1.0, 10'000.0, 450.0)
+            : 450.0;
+        const auto mufflerFlowDiameterMm = chamberConfigured
+            ? finiteClamped(geometry.mufflerChamberDiameterMm,
+                collectorDiameter, 1'000.0, collectorDiameter)
+            : collectorDiameter;
+        const auto mufflerVolumeLitres = std::numbers::pi
+            * std::pow(mufflerFlowDiameterMm * 0.0005, 2.0)
+            * (mufflerLengthMm * 0.001) * 1'000.0;
+        // Keep the connection diameter at the collector throat and publish the
+        // larger body through volume. ExhaustNetworkLayout then derives the
+        // chamber's internal flow area while retaining the two real area steps.
+        graph.nodes_.push_back({ mufflerId, ExhaustNodeType::muffler,
+            mufflerLengthMm, collectorDiameter,
             finiteClamped(geometry.mufflerRestriction, 0.0, 1.0, 1.0) * 0.62,
             82.0, 1.0, runtimePathIndex, 0, 0.55,
-            std::numbers::pi * std::pow(collectorDiameter * 0.0005, 2.0)
-                * 0.450 * 1'000.0,
+            mufflerVolumeLitres,
             1.0, finiteClamped(geometry.mufflerRestriction, 0.0, 1.0, 1.0) });
         graph.nodes_.push_back({ outletId, ExhaustNodeType::outlet, 180.0, outletDiameter,
             outletRestriction, 0.0, 1.0, runtimePathIndex, 0, 0.0,

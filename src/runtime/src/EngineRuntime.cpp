@@ -115,6 +115,7 @@ EngineRuntime::EngineRuntime(EngineConfig config,
     for (std::size_t index = 0;
          index < config_.cylinders.size() && index < audioState_.cylinderPan.size(); ++index) {
         const auto& cylinder = config_.cylinders[index];
+        audioState_.cylinderId[index].store(cylinder.id, std::memory_order_relaxed);
         float pan = 0.0F;
         const auto bank = std::find_if(config_.banks.begin(), config_.banks.end(), [&cylinder](const auto& item) {
             return item.id == cylinder.bankId
@@ -140,6 +141,10 @@ EngineRuntime::EngineRuntime(EngineConfig config,
         static_cast<float>(exhaustSoundSpeedMps), std::memory_order_relaxed);
     audioState_.exhaustTemperatureC.store(
         static_cast<float>(config_.ambientTemperatureC), std::memory_order_relaxed);
+    // These route averages remain part of RealtimeAudioState for compatibility
+    // with graph-less producers. Production audio receives exhaust_ directly
+    // and compiles every duct, junction and outlet instead of consuming this
+    // reduced path geometry.
     std::array<double, maximumAudioExhaustPaths> pathLengthSum {};
     std::array<double, maximumAudioExhaustPaths> pathRestrictionSum {};
     std::array<std::size_t, maximumAudioExhaustPaths> pathCylinderCount {};

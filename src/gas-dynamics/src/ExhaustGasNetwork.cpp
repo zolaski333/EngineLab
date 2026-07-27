@@ -415,6 +415,7 @@ bool ExhaustGasNetwork::reset(double pressurePa,
         auto cells = duct.cells();
         std::fill(cells.begin(), cells.end(), *initialState);
         duct.resetWallTemperature(temperatureK);
+        if (!duct.refreshCellStateCache()) return false;
     }
     std::fill(junctionStates_.begin(), junctionStates_.end(), *initialState);
     for (auto& state : junctionStates_) state.momentumDensityKgPerM2S = 0.0;
@@ -476,19 +477,28 @@ bool ExhaustGasNetwork::sampleCylinderBoundaries(
     for (const auto& duct : ducts_)
         if (!duct.refreshCellStateCache()) return false;
 
+    const auto suppliedInPortOrder = cylinderBoundaries.size() == ports.size()
+        && std::equal(cylinderBoundaries.begin(), cylinderBoundaries.end(),
+            ports.begin(), [](const CylinderValveBoundary& boundary,
+                              const CompiledCylinderPort& port) {
+                return boundary.cylinderId == port.cylinderId;
+            });
+
     for (std::size_t index = 0; index < cylinderBoundaries.size(); ++index) {
         const auto& boundary = cylinderBoundaries[index];
         if (!finite(boundary.cylinderVolumeM3) || !(boundary.cylinderVolumeM3 > 0.0)
             || !finite(boundary.effectiveValveAreaM2) || boundary.effectiveValveAreaM2 < 0.0
             || !finite(boundary.dischargeCoefficient) || boundary.dischargeCoefficient < 0.0)
             return false;
-        const auto known = std::find_if(ports.begin(), ports.end(),
-            [&boundary](const CompiledCylinderPort& port) {
-                return port.cylinderId == boundary.cylinderId;
-            });
-        if (known == ports.end()) return false;
-        for (std::size_t other = index + 1; other < cylinderBoundaries.size(); ++other)
-            if (boundary.cylinderId == cylinderBoundaries[other].cylinderId) return false;
+        if (!suppliedInPortOrder) {
+            const auto known = std::find_if(ports.begin(), ports.end(),
+                [&boundary](const CompiledCylinderPort& port) {
+                    return port.cylinderId == boundary.cylinderId;
+                });
+            if (known == ports.end()) return false;
+            for (std::size_t other = index + 1; other < cylinderBoundaries.size(); ++other)
+                if (boundary.cylinderId == cylinderBoundaries[other].cylinderId) return false;
+        }
     }
 
     const auto endpointState = [this](const ExhaustEndpoint& endpoint)
@@ -518,10 +528,12 @@ bool ExhaustGasNetwork::sampleCylinderBoundaries(
         sample.networkVelocityMps = networkPrimitive.velocityMps;
         sample.networkSpeedOfSoundMps = networkPrimitive.speedOfSoundMps;
 
-        const auto supplied = std::find_if(cylinderBoundaries.begin(),
-            cylinderBoundaries.end(), [&port](const CylinderValveBoundary& boundary) {
-                return boundary.cylinderId == port.cylinderId;
-            });
+        const auto supplied = suppliedInPortOrder
+            ? cylinderBoundaries.begin() + static_cast<std::ptrdiff_t>(portIndex)
+            : std::find_if(cylinderBoundaries.begin(), cylinderBoundaries.end(),
+                [&port](const CylinderValveBoundary& boundary) {
+                    return boundary.cylinderId == port.cylinderId;
+                });
         if (supplied == cylinderBoundaries.end()) continue;
         const auto cylinderPrimitive = mixtureModel_.primitiveFromConservative(
             supplied->cylinderState);
@@ -939,6 +951,13 @@ ExhaustNetworkAdvanceResult ExhaustGasNetwork::advance(
         return result;
     }
     ambientPrimitive_ = *ambientPrimitive;
+    const auto ports = layout_.cylinderPorts();
+    const auto suppliedInPortOrder = cylinderBoundaries.size() == ports.size()
+        && std::equal(cylinderBoundaries.begin(), cylinderBoundaries.end(),
+            ports.begin(), [](const CylinderValveBoundary& boundary,
+                              const CompiledCylinderPort& port) {
+                return boundary.cylinderId == port.cylinderId;
+            });
     std::fill(cylinderBoundaryIndices_.begin(), cylinderBoundaryIndices_.end(),
               cylinderBoundaries.size());
     for (std::size_t index = 0; index < cylinderBoundaries.size(); ++index) {
@@ -952,16 +971,18 @@ ExhaustNetworkAdvanceResult ExhaustGasNetwork::advance(
             result.completed = false;
             return result;
         }
-        const auto port = std::find_if(layout_.cylinderPorts().begin(),
-            layout_.cylinderPorts().end(), [&boundary](const CompiledCylinderPort& candidate) {
-                return candidate.cylinderId == boundary.cylinderId;
-            });
-        if (port == layout_.cylinderPorts().end()) {
+        const auto port = suppliedInPortOrder ? ports.begin()
+                + static_cast<std::ptrdiff_t>(index)
+            : std::find_if(ports.begin(), ports.end(),
+                [&boundary](const CompiledCylinderPort& candidate) {
+                    return candidate.cylinderId == boundary.cylinderId;
+                });
+        if (port == ports.end()) {
             result.completed = false;
             return result;
         }
-        const auto portIndex = static_cast<std::size_t>(
-            std::distance(layout_.cylinderPorts().begin(), port));
+        const auto portIndex = suppliedInPortOrder ? index
+            : static_cast<std::size_t>(std::distance(ports.begin(), port));
         if (cylinderBoundaryIndices_[portIndex] < cylinderBoundaries.size()) {
             result.completed = false;
             return result;
@@ -1159,53 +1180,38 @@ ExhaustNetworkAdvanceResult ExhaustGasNetwork::advance(
 }
 
 void ExhaustGasNetwork::updateOutletSamples(double durationSeconds) noexcept {
+    const auto endpointPrimitive = [this](const ExhaustEndpoint& endpoint)
+        -> const PrimitiveState& {
+        if (endpoint.type == ExhaustEndpointType::junction)
+            return junctionPrimitives_[endpoint.elementIndex];
+        const auto& primitives = ducts_[endpoint.elementIndex].cellPrimitives_;
+        return endpoint.type == ExhaustEndpointType::ductInlet
+            ? primitives.front() : primitives.back();
+    };
     for (std::size_t index = 0; index < cylinderExchanges_.size(); ++index) {
         if (cylinderReservoirActive_[index] != 0) {
-            const auto cylinderPrimitive = mixtureModel_.primitiveFromConservative(
-                cylinderReservoirStates_[index]);
-            if (cylinderPrimitive) {
-                cylinderExchanges_[index].cylinderPressurePaAfter =
-                    cylinderPrimitive->pressurePa;
-                cylinderExchanges_[index].cylinderTemperatureKAfter =
-                    cylinderPrimitive->temperatureK;
-            }
+            const auto& cylinderPrimitive = cylinderReservoirPrimitives_[index];
+            cylinderExchanges_[index].cylinderPressurePaAfter =
+                cylinderPrimitive.pressurePa;
+            cylinderExchanges_[index].cylinderTemperatureKAfter =
+                cylinderPrimitive.temperatureK;
         }
         const auto& endpoint = layout_.cylinderPorts()[index].networkEndpoint;
-        const ConservativeState* state = nullptr;
-        if (endpoint.type == ExhaustEndpointType::junction) {
-            state = &junctionStates_[endpoint.elementIndex];
-        } else {
-            const auto& cells = ducts_[endpoint.elementIndex].cells();
-            state = endpoint.type == ExhaustEndpointType::ductInlet
-                ? &cells.front() : &cells.back();
-        }
-        const auto primitive = mixtureModel_.primitiveFromConservative(*state);
-        if (primitive) {
-            cylinderExchanges_[index].networkPressurePa = primitive->pressurePa;
-            cylinderExchanges_[index].networkTemperatureK = primitive->temperatureK;
-            cylinderExchanges_[index].networkDensityKgPerM3 = primitive->densityKgPerM3;
-            cylinderExchanges_[index].networkVelocityMps = primitive->velocityMps;
-            cylinderExchanges_[index].networkSpeedOfSoundMps = primitive->speedOfSoundMps;
-        }
+        const auto& primitive = endpointPrimitive(endpoint);
+        cylinderExchanges_[index].networkPressurePa = primitive.pressurePa;
+        cylinderExchanges_[index].networkTemperatureK = primitive.temperatureK;
+        cylinderExchanges_[index].networkDensityKgPerM3 = primitive.densityKgPerM3;
+        cylinderExchanges_[index].networkVelocityMps = primitive.velocityMps;
+        cylinderExchanges_[index].networkSpeedOfSoundMps = primitive.speedOfSoundMps;
     }
     for (std::size_t index = 0; index < outletSamples_.size(); ++index) {
         auto& sample = outletSamples_[index];
         const auto& endpoint = layout_.outlets()[index].networkEndpoint;
-        const ConservativeState* state = nullptr;
-        if (endpoint.type == ExhaustEndpointType::junction) {
-            state = &junctionStates_[endpoint.elementIndex];
-        } else {
-            const auto& cells = ducts_[endpoint.elementIndex].cells();
-            state = endpoint.type == ExhaustEndpointType::ductInlet
-                ? &cells.front() : &cells.back();
-        }
-        const auto primitive = mixtureModel_.primitiveFromConservative(*state);
-        if (primitive) {
-            sample.staticPressurePa = primitive->pressurePa;
-            sample.temperatureK = primitive->temperatureK;
-            sample.axialVelocityMps = primitive->velocityMps;
-            sample.densityKgPerM3 = primitive->densityKgPerM3;
-        }
+        const auto& primitive = endpointPrimitive(endpoint);
+        sample.staticPressurePa = primitive.pressurePa;
+        sample.temperatureK = primitive.temperatureK;
+        sample.axialVelocityMps = primitive.velocityMps;
+        sample.densityKgPerM3 = primitive.densityKgPerM3;
         if (durationSeconds > 0.0) {
             sample.massFlowKgPerS = sumSpecies(sample.speciesMassKg) / durationSeconds;
             sample.totalEnergyFlowW = sample.transferredEnergyJ / durationSeconds;

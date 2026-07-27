@@ -508,6 +508,27 @@ void testBoundaryInputOrderIsIrrelevant() {
     }
     auto reversed = boundaries;
     std::reverse(reversed.begin(), reversed.end());
+    std::vector<CylinderBoundaryFlowSample> orderedSamples(
+        first.layout().cylinderPorts().size());
+    std::vector<CylinderBoundaryFlowSample> reversedSamples(
+        second.layout().cylinderPorts().size());
+    requireNetwork(first.sampleCylinderBoundaries(boundaries, orderedSamples)
+            && second.sampleCylinderBoundaries(reversed, reversedSamples),
+        "ordered and generic boundary sampling paths must both succeed");
+    for (std::size_t index = 0; index < orderedSamples.size(); ++index) {
+        const auto& ordered = orderedSamples[index];
+        const auto& generic = reversedSamples[index];
+        requireNetwork(ordered.cylinderId == generic.cylinderId
+                && ordered.pathIndex == generic.pathIndex
+                && ordered.massFlowKgPerSecond == generic.massFlowKgPerSecond
+                && ordered.networkPressurePa == generic.networkPressurePa
+                && ordered.networkTemperatureK == generic.networkTemperatureK
+                && ordered.networkDensityKgPerM3 == generic.networkDensityKgPerM3
+                && ordered.networkVelocityMps == generic.networkVelocityMps
+                && ordered.networkSpeedOfSoundMps == generic.networkSpeedOfSoundMps
+                && ordered.valid == generic.valid,
+            "ordered sampling must be bit-identical to ID-mapped sampling");
+    }
     const auto ambientFirst = ambientFor(first, 101'325.0, 300.0, 0.0);
     const auto ambientSecond = ambientFor(second, 101'325.0, 300.0, 0.0);
     const auto firstResult = first.advance(0.00025, boundaries, ambientFirst);

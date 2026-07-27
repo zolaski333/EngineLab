@@ -1,4 +1,5 @@
 #include <enginelab/audio/AcousticMonitorCalibration.hpp>
+#include <enginelab/audio/AcousticExhaustNetwork.hpp>
 #include <enginelab/audio/BoundaryReconstructionFilter.hpp>
 #include <enginelab/audio/NonlinearDuctAcoustics.hpp>
 #include <enginelab/audio/RealtimeEngineAudio.hpp>
@@ -6,6 +7,7 @@
 #include <enginelab/audio/ExpansionChamberMuffler.hpp>
 #include <enginelab/audio/PipeRadiationModel.hpp>
 #include <enginelab/audio/ValvePortTermination.hpp>
+#include <enginelab/audio/ValveFlowAcousticSource.hpp>
 #include <enginelab/foundation/ExhaustGasAcoustics.hpp>
 
 #include <juce_audio_basics/juce_audio_basics.h>
@@ -254,6 +256,87 @@ enginelab::EngineConfig customRuntimeExhaustFixture() {
     path.network = std::move(network);
     enginelab::normaliseEngineConfig(config);
     return config;
+}
+
+void branchedAcousticTopologyRegression() {
+    auto config = enginelab::makeDefaultInlineFour();
+    auto& path = config.exhaustPaths.front();
+    enginelab::ExhaustNetworkConfig network;
+    for (std::size_t index = 0; index < config.cylinders.size(); ++index) {
+        enginelab::ExhaustComponentConfig primary;
+        primary.id = static_cast<std::uint32_t>(100 + index);
+        primary.type = enginelab::ExhaustComponentType::pipe;
+        primary.lengthMm = 360.0 + 20.0 * static_cast<double>(index);
+        primary.diameterMm = 40.0;
+        network.components.push_back(primary);
+        network.cylinderConnections.push_back({
+            config.cylinders[index].id, primary.id });
+        network.connections.push_back({ primary.id, 200 });
+    }
+    enginelab::ExhaustComponentConfig merge;
+    merge.id = 200;
+    merge.type = enginelab::ExhaustComponentType::merge;
+    merge.diameterMm = 55.0;
+    network.components.push_back(merge);
+    enginelab::ExhaustComponentConfig splitter;
+    splitter.id = 210;
+    splitter.type = enginelab::ExhaustComponentType::splitter;
+    splitter.diameterMm = 55.0;
+    network.components.push_back(splitter);
+    for (const auto [id, length] : std::array {
+             std::pair { 300U, 240.0 }, std::pair { 301U, 510.0 } }) {
+        enginelab::ExhaustComponentConfig outlet;
+        outlet.id = id;
+        outlet.type = enginelab::ExhaustComponentType::outlet;
+        outlet.lengthMm = length;
+        outlet.diameterMm = id == 300U ? 52.0 : 46.0;
+        network.components.push_back(outlet);
+        network.connections.push_back({ 210, id });
+    }
+    network.connections.push_back({ 200, 210 });
+    path.network = std::move(network);
+    enginelab::normaliseEngineConfig(config);
+
+    const auto graph = enginelab::ExhaustGraph::makeForEngine(config);
+    std::array<std::uint32_t, 4> cylinderIds {};
+    for (std::size_t index = 0; index < cylinderIds.size(); ++index)
+        cylinderIds[index] = config.cylinders[index].id;
+    enginelab::AcousticExhaustNetwork acoustics(graph, cylinderIds);
+    require(acoustics.valid(),
+        "a valid branched exhaust DAG must compile for audio");
+    require(acoustics.ductCount() == 6 && acoustics.outletCount() == 2
+            && acoustics.junctionCount() >= 1,
+        "the acoustic compiler must retain every primary, branch and outlet");
+    require(acoustics.prepare(48'000.0),
+        "the compiled exhaust must allocate its realtime lines");
+    const std::array<enginelab::AcousticExhaustNetwork::Medium, 1> medium {{
+        { 0.55F, 535.0F }
+    }};
+    acoustics.beginBlock(medium, 1.0);
+
+    std::array<float, 4> sources {};
+    std::array<enginelab::AcousticExhaustNetwork::CylinderBoundary, 4> boundaries {};
+    auto radiatedEnergy = 0.0;
+    for (std::size_t sample = 0; sample < 4'096; ++sample) {
+        sources[0] = sample < 128
+            ? 5'000.0F * static_cast<float>(std::sin(
+                std::numbers::pi * static_cast<double>(sample + 1U) / 129.0))
+            : 0.0F;
+        const auto output = acoustics.process(sources, boundaries, 1.0F);
+        require(std::isfinite(output[0]),
+            "a branched acoustic graph must remain finite");
+        radiatedEnergy += static_cast<double>(output[0]) * output[0];
+    }
+    require(radiatedEnergy > 1.0e-10,
+        "a source must reach the independently retained outlets");
+
+    acoustics.reset();
+    sources.fill(0.0F);
+    for (std::size_t sample = 0; sample < 512; ++sample) {
+        const auto output = acoustics.process(sources, boundaries, 1.0F);
+        require(output[0] == 0.0F,
+            "a reset source-free network must be exactly silent");
+    }
 }
 
 double absoluteDifference(const std::vector<float>& left, const std::vector<float>& right) {
@@ -958,6 +1041,74 @@ void boundaryReconstructionRegression() {
 }
 
 // ---------------------------------------------------------------------------
+// Complementary high-band valve-flow source
+// ---------------------------------------------------------------------------
+
+void valveFlowAcousticSourceRegression() {
+    using Source = enginelab::ValveFlowAcousticSource;
+    using LowPass = enginelab::BoundaryReconstructionFilter;
+    constexpr double sampleRate = 48'000.0;
+    constexpr double couplingRate = 4'000.0;
+    const auto high = Source::compute(couplingRate, sampleRate);
+    const auto low = LowPass::compute(couplingRate, sampleRate);
+    require(high.active && low.active,
+        "a sampled boundary must enable both halves of the crossover");
+
+    // Two cascaded Butterworth sections form a fourth-order Linkwitz-Riley
+    // crossover. Its low and high outputs have a flat coherent sum, so the
+    // transition neither duplicates nor removes a band when both inputs agree.
+    for (int step = 0; step <= 96; ++step) {
+        const auto frequency = static_cast<double>(step) / 96.0
+            * sampleRate * 0.5;
+        const auto z1 = std::polar(
+            1.0, -2.0 * std::numbers::pi * frequency / sampleRate);
+        const auto z2 = z1 * z1;
+        const auto lowSection = (low.b0 + low.b1 * z1 + low.b2 * z2)
+            / (1.0 + low.a1 * z1 + low.a2 * z2);
+        const auto highSection = (high.b0 + high.b1 * z1 + high.b2 * z2)
+            / (1.0 + high.a1 * z1 + high.a2 * z2);
+        const auto coherentSum = lowSection * lowSection
+            + highSection * highSection;
+        require(std::abs(std::abs(coherentSum) - 1.0) < 1.0e-9,
+            "the low/high crossover sum must remain all-pass");
+    }
+
+    // An authored full-band boundary has no sampled-data gap, so the supplement
+    // must be exactly absent. A steady mean flow must likewise produce no
+    // acoustic source when the crossover is active.
+    Source::State state;
+    const auto disabled = Source::process(Source::compute(0.0, sampleRate), state,
+        0.05, 0.5, 200'000.0);
+    require(disabled.outgoingPressurePa == 0.0
+            && disabled.incomingPressurePa == 0.0
+            && disabled.highBandMassFlowKgPerSecond == 0.0,
+        "an unsampled full-band boundary must not receive a duplicate source");
+    state.reset();
+    const auto steady = Source::process(high, state, 0.05, 0.5, 200'000.0);
+    require(std::abs(steady.highBandMassFlowKgPerSecond) < 1.0e-15,
+        "steady valve flow must not create a high-band source");
+
+    // The source is a pure volume-velocity contribution: its characteristic
+    // pressure components are antisymmetric and recover the filtered signed
+    // mass flow exactly through U=(p+ - p-)/Zc and mdot=rho*U.
+    const auto transient = Source::process(high, state, -0.025, 0.5, 200'000.0);
+    require(std::abs(transient.outgoingPressurePa
+                     + transient.incomingPressurePa) < 1.0e-12,
+        "a valve-flow source must add no fabricated pressure boundary");
+    const auto recoveredMassFlow = 0.5
+        * (transient.outgoingPressurePa - transient.incomingPressurePa)
+        / 200'000.0;
+    require(std::abs(recoveredMassFlow
+                     - transient.highBandMassFlowKgPerSecond) < 1.0e-12,
+        "characteristic source waves must preserve signed volume flow");
+
+    const auto guarded = Source::process(high, state, std::nan(""), 0.0, 0.0);
+    require(guarded.outgoingPressurePa == 0.0
+            && guarded.incomingPressurePa == 0.0,
+        "invalid valve medium data must fail silent without non-finite waves");
+}
+
+// ---------------------------------------------------------------------------
 // Finite-amplitude duct propagation (steepening)
 // ---------------------------------------------------------------------------
 
@@ -1218,11 +1369,13 @@ int main() {
         ductWallLossRegression();
         valvePortTerminationRegression();
         boundaryReconstructionRegression();
+        valveFlowAcousticSourceRegression();
         nonlinearDuctAcousticsRegression();
         expansionChamberMufflerRegression();
         latencyAndBlockSizeRegression();
         runnerDelaySampleRateRegression();
         exhaustPathIsolationRegression();
+        branchedAcousticTopologyRegression();
         customGraphRuntimeTelemetryRegression();
         ambientPressureRegression();
         physicalThermoacousticPathRegression();
