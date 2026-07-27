@@ -25,6 +25,22 @@ struct ExhaustGasNetworkConfig final {
     double wallSpecificHeatJPerKgK { 500.0 };
     double externalWallHeatTransferWPerM2K { 0.0 };
     double externalTemperatureK { 300.0 };
+    /** See `FiniteVolumeDuctGeometry::wallHeatUpdateIntervalSeconds`. Zero
+     *  keeps the wall exchange on every solver sub-step. */
+    double wallHeatUpdateIntervalSeconds { 0.0 };
+    /**
+     * Ignore the interval above and run the wall exchange only when
+     * `requestWallHeatUpdate()` says so.
+     *
+     * Set this for networks advanced CONCURRENTLY with siblings. A network
+     * timing its own sub-rating from its own accepted sub-steps drifts out of
+     * phase with its siblings within a few mechanical sub-steps, and a barrier
+     * costs the maximum over participants rather than the mean: measured on
+     * the LS3, self-timed sub-rating made the duct solver 24% cheaper, gained
+     * 19% with the pool disabled, and still lost 13% with it enabled, because
+     * the wall burst landed on a different dispatch for every cylinder.
+     */
+    bool wallHeatUpdateExternallyTriggered { false };
     double maximumCourantNumber { 0.42 };
     std::size_t maximumSubstepsPerAdvance { 100'000 };
 
@@ -209,6 +225,18 @@ public:
         const ExhaustAmbientBoundary& ambient,
         double durationSeconds) const noexcept;
 
+    /**
+     * Run the sub-rated duct wall exchange on the next `advance`, carrying all
+     * the simulated time accumulated since the last one. Only consulted when
+     * `wallHeatUpdateExternallyTriggered` is set; the flag is cleared once the
+     * exchange has actually been applied to an accepted sub-step, so a request
+     * cannot be lost to a rejected trial.
+     *
+     * The caller owns this cadence because only the caller knows the phase.
+     * See the config field for what happens when a network times it alone.
+     */
+    void requestWallHeatUpdate() noexcept { wallHeatUpdateRequested_ = true; }
+
     /** Add species mass as a source in the duct cell adjacent to a cylinder
      * port, together with its sensible internal energy at temperatureK and an
      * optional additional heat term (negative for evaporation charge cooling).
@@ -249,6 +277,11 @@ private:
     EulerMixtureModel mixtureModel_;
     ExhaustNetworkLayout layout_;
     ExhaustGasNetworkConfig config_ {};
+    // The network drives every duct with one shared trial step, so the
+    // sub-rating accumulator is network-wide rather than per duct: the ducts
+    // would otherwise all hold the same value anyway.
+    double wallHeatPendingSeconds_ { 0.0 };
+    bool wallHeatUpdateRequested_ { false };
     std::vector<FiniteVolumeDuct> ducts_;
     std::vector<ConservativeState> junctionStates_;
     std::vector<ConservativeState> junctionStage_;

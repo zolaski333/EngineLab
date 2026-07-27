@@ -137,6 +137,17 @@ constexpr double aluminiumRunnerWallThicknessM = 0.003;
 constexpr double aluminiumDensityKgPerM3 = 2'700.0;
 constexpr double aluminiumSpecificHeatJPerKgK = 900.0;
 constexpr double runnerExternalHeatTransferWPerM2K = 12.0;
+// The duct wall exchange is sub-rated to this interval instead of running on
+// every solver sub-step. A runner cell moves about 0.04% of the gas-wall
+// equilibrium gap per sub-step -- a ~69 ms time constant integrated every
+// ~26 us -- so the exchange itself is resolved some three orders of magnitude
+// finer than it needs. What sets the floor is not that time constant but the
+// sampling of the heat-transfer coefficient, which follows the flow: the
+// binding scale is the cell residence time L/u, about 600 us at 50 m/s
+// through a 30 mm cell. 150 us keeps four samples inside the fastest
+// residence time and about thirty across an intake valve event at 7,000 rpm,
+// while cutting the wall work by four.
+constexpr double ductWallHeatUpdateIntervalSeconds = 150.0e-6;
 constexpr double stainlessExhaustWallThicknessM = 0.0015;
 constexpr double stainlessDensityKgPerM3 = 7'900.0;
 constexpr double stainlessSpecificHeatJPerKgK = 500.0;
@@ -521,6 +532,12 @@ void EngineSimulator::configurePhysicalIntakeNetworks() {
         networkConfig.externalWallHeatTransferWPerM2K =
             runnerExternalHeatTransferWPerM2K;
         networkConfig.externalTemperatureK = config_.ambientTemperatureC + 273.15;
+        // The runner networks are advanced concurrently, so the cadence is
+        // driven from `advanceIntakeRunners` on the second half-step, where
+        // every cylinder is dispatched together. A self-timed network would
+        // burst on a different dispatch from its siblings and the barrier
+        // would pay every burst.
+        networkConfig.wallHeatUpdateExternallyTriggered = true;
         if (!network->configure(layout, networkConfig))
             throw std::runtime_error("failed to configure intake runner network");
         intakeRunnerNetworks_[index] = std::move(network);
@@ -567,6 +584,8 @@ void EngineSimulator::configurePhysicalExhaustNetwork() {
     networkConfig.externalWallHeatTransferWPerM2K =
         exhaustExternalHeatTransferWPerM2K;
     networkConfig.externalTemperatureK = config_.ambientTemperatureC + 273.15;
+    networkConfig.wallHeatUpdateIntervalSeconds =
+        ductWallHeatUpdateIntervalSeconds;
     if (!network->configure(layout, networkConfig))
         throw std::runtime_error("failed to configure conservative exhaust network");
     const auto ambientState = network->mixtureModel().conservativeFromPressureTemperature(
@@ -1844,6 +1863,21 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
             for (std::size_t index = 0; index < cylinderCount; ++index) {
                 intakePhaseFailed[index] = 0;
                 intakePhaseProducedDelta[index] = 0;
+            }
+            // Sub-rated duct wall exchange, triggered on the SECOND half-step
+            // because that is the only pass where every cylinder is
+            // dispatched -- the first half advances only the runners whose
+            // intake valve is open. Firing it here keeps the burst on one
+            // shared dispatch instead of scattering it across cylinders,
+            // which is what a network timing itself would do.
+            if (!firstHalf) {
+                intakeWallHeatPendingSeconds_ += halfStepSeconds * 2.0;
+                if (intakeWallHeatPendingSeconds_
+                        >= ductWallHeatUpdateIntervalSeconds) {
+                    intakeWallHeatPendingSeconds_ = 0.0;
+                    for (auto& network : intakeRunnerNetworks_)
+                        if (network) network->requestWallHeatUpdate();
+                }
             }
             const auto groupCount = std::min(cylinderCount,
                 std::max<std::size_t>(1, intakePredictionGroupCount_));

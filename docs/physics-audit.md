@@ -2288,3 +2288,108 @@ Merlin affichait −22,3 % de couple à 3 000 tr/min. C'est sa dernière ligne, 
 le rupteur, avec `ve/delivered_ve = 1,16` et un IMEP de 4,7 bar contre 18,1 un
 pas plus tôt. Comparer deux lignes pareilles compare deux artefacts ; son vrai
 écart est −0,55 %.
+
+---
+
+## Le mur thermique du conduit : sous-cadencé, et pourquoi la barrière décide
+
+**Avertissement sur la table de capacité ci-dessus.** Ses valeurs absolues ont
+été relevées tôt dans une session ; le même commit relu deux heures plus tard,
+après une série de builds et de suites de tests, donnait 20 % de moins sur tous
+les moteurs. Les **rapports** y sont fiables (mesurés dos à dos), les
+**absolus** non. Voir plus bas.
+
+### Attribution : ce que coûte vraiment le modèle de paroi
+
+`EngineLabIntakeDuctBench` mesure et signe chaque variante. Par cellule et par
+sous-étape, sur la ligne de base à 530 ns :
+
+| bloc | ns | part du solveur |
+|---|---|---|
+| chaîne du coefficient (Sutherland, Reynolds, Nusselt de Gnielinski) | 31,3 | 6,2 % |
+| échange lui-même (`expm1`, `exp`, ~8 divisions) | 55,4 | 11,0 % |
+| passe `recoverPrimitiveStates` supplémentaire + copie d'état | ~55 | ~10,8 % |
+
+Le poste dominant n'est donc pas l'arithmétique de paroi. C'est qu'activer les
+parois force une **récupération complète des primitives** avant
+`prepareStateCache`, uniquement parce que l'étape de paroi modifie l'énergie des
+cellules entre les deux. Sauter l'échange saute aussi cette passe : le
+sous-cadençage rapporte davantage que ce qu'il évite en apparence.
+
+Accessoirement, `std::pow(x, 2.0)` dans le facteur de frottement **est** un vrai
+appel libm sur cette chaîne d'outils. Le remplacer par `x*x` vaut 5 % du solveur
+entier, et les six configurations du banc rendent un **checksum inchangé** — ce
+qui réfute le commentaire présent dans le source, qui affirmait la mesure
+contraire et défendait de le faire.
+
+### Pourquoi 150 µs, et pourquoi ce n'est pas le piège de la moyenne
+
+Une cellule de runner déplace ~0,04 % de l'écart d'équilibre gaz-paroi par
+sous-étape : une constante de temps de ~69 ms intégrée toutes les ~26 µs, soit
+trois ordres de grandeur plus fin que nécessaire. Mais ce n'est pas cette
+constante qui fixe le plancher — c'est **l'échantillonnage du coefficient
+d'échange**, qui suit l'écoulement. Le temps de séjour d'une cellule, L/u, vaut
+~600 µs à 50 m/s dans une maille de 30 mm. À 150 µs on garde quatre échantillons
+dans le séjour le plus rapide et une trentaine sur une levée d'admission à
+7 000 tr/min.
+
+Ce n'est **pas** le piège documenté ailleurs dans ce fichier (« un état moyenné
+avant d'entrer dans une loi non linéaire biaise le résultat dans le sens de la
+courbure ») : aucun état n'est moyenné. Le coefficient est *échantillonné* moins
+souvent, et l'échange qu'il pilote reste la solution exacte à deux capacités sur
+un intervalle plus long.
+
+Résultat : **530 → 402 ns/cellule/sous-étape, −24 %.**
+
+### Un sous-cadençage auto-déclenché se désynchronise derrière une barrière
+
+Première version : chaque réseau décidait seul, en accumulant ses propres
+sous-étapes acceptées. Elles sont fixées par le CFL, donc propres à l'état de
+chaque cylindre, et les réseaux se déphasent en quelques sous-étapes
+mécaniques. Une barrière coûte le **maximum** sur les participants, pas la
+moyenne : le pic de paroi tombait sur une répartition différente pour chaque
+cylindre et se payait sur presque toutes.
+
+La cadence appartient donc à l'appelant, qui seul connaît la phase.
+`EngineSimulator` déclenche `requestWallHeatUpdate()` sur le **second**
+demi-pas — le seul où *tous* les cylindres sont distribués, le premier
+n'avançant que les runners dont la soupape d'admission est ouverte. Vaut ~3 % de
+plus sur le V8. Leçon générale : **tout travail par cylindre rendu irrégulier
+doit l'être en phase, sinon la barrière mange l'économie.**
+
+### La dérive machine, qui a failli faire annuler ce travail
+
+Le facteur temps réel du commit `c03b6d3` a été relevé à LS3 0,762 / K20A 0,754
+en début de session et à **0,618 / 0,629** deux heures plus tard. Comparé à la
+table du matin, ce travail ressemblait à une **perte de 13 %**. Comparé à une
+base reconstruite dans l'heure, c'était un gain.
+
+**Seule une mesure entrelacée est valable** : copier les deux binaires côte à
+côte et les alterner. Ainsi mesuré, sur trois tours :
+
+| moteur | avant (3 essais) | après (3 essais) | gain |
+|---|---|---|---|
+| CP2 | 1,139 / 1,289 / 1,173 | 1,604 / 1,599 / 1,647 | **+35 %** |
+| LS3 V8 | 0,508 / 0,453 / 0,432 | 0,592 / 0,562 / 0,528 | **+21 %** |
+| Merlin V12 | 0,543 / 0,568 / 0,547 | 0,594 / 0,612 / 0,600 | **+9 %** |
+| K20A | 0,571 / 0,512 / 0,520 | 0,584 / 0,561 / 0,596 | **+9 %** |
+| Audi I5 | 0,672 / 0,657 / 0,705 | 0,730 / 0,750 / 0,668 | **+6 %** |
+
+L'« après » gagne dans 14 paires sur 15. Noter que les absolus baissent d'un
+tour à l'autre dans les deux colonnes : la machine se dégradait pendant la
+mesure, ce qui est exactement pourquoi l'appariement est nécessaire.
+
+### Physique déplacée
+
+Balayage dyno complet, lignes contaminées exclues (`ve / delivered_ve > 1,05`) :
+
+| grandeur | plage des moyennes par moteur | pire point isolé |
+|---|---|---|
+| couple | −0,17 % à +0,42 % | +2,62 % (2JZ à 2 000) |
+| VE | −0,06 % à +0,05 % | −0,94 % (K20A à 2 250) |
+| **EGT** | **+0,01 % à +0,14 %** | **+1,04 % (Radial à 2 000)** |
+
+L'EGT est la grandeur que ce modèle gouverne directement, et c'est celle qui
+bouge le moins en moyenne : sous-cadencer l'échange d'un facteur quatre ne
+déplace pas le résultat thermique. Suite complète verte, dont
+`OverrunThermalRegression` et `IdleStabilityRegression`.

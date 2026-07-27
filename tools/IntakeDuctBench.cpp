@@ -40,10 +40,14 @@ namespace {
 using namespace enginelab::gasdynamics;
 
 // Aluminium runner wall, matching EngineSimulator::configurePhysicalIntakeNetworks.
-constexpr double aluminiumRunnerWallThicknessM = 0.004;
+// Keep these in step with it: the point of this bench is to measure the duct the
+// simulator actually advances, and the thickness and external coefficient below
+// had drifted from it once already.
+constexpr double aluminiumRunnerWallThicknessM = 0.003;
 constexpr double aluminiumDensityKgPerM3 = 2'700.0;
 constexpr double aluminiumSpecificHeatJPerKgK = 900.0;
-constexpr double runnerExternalHeatTransferWPerM2K = 25.0;
+constexpr double runnerExternalHeatTransferWPerM2K = 12.0;
+constexpr double ductWallHeatUpdateIntervalSeconds = 150.0e-6;
 
 /**
  * Order-sensitive FNV-1a over the raw bits of every double of state. Bit
@@ -98,6 +102,7 @@ BenchResult benchDuct(std::size_t cellCount, double lengthM, double rpm,
     geometry.wallSpecificHeatJPerKgK = aluminiumSpecificHeatJPerKgK;
     geometry.externalWallHeatTransferWPerM2K = runnerExternalHeatTransferWPerM2K;
     geometry.externalTemperatureK = 300.0;
+    geometry.wallHeatUpdateIntervalSeconds = ductWallHeatUpdateIntervalSeconds;
 
     const auto& mixture = duct.mixtureModel();
     const auto ambient = mixture.conservativeFromPressureTemperature(101'325.0, 300.0);

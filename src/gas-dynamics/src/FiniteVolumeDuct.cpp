@@ -753,6 +753,7 @@ void FiniteVolumeDuct::resetWallTemperature(double temperatureK) noexcept {
     const auto safeTemperatureK = finite(temperatureK) && temperatureK > 0.0
         ? temperatureK : geometry_.wallTemperatureK;
     for (auto& wall : wallStates_) wall.temperatureK = safeTemperatureK;
+    wallHeatPendingSeconds_ = 0.0;
 }
 
 bool FiniteVolumeDuct::applyDynamicWallHeatTransfer(
@@ -1122,14 +1123,20 @@ DuctAdvanceResult FiniteVolumeDuct::advance(
                 });
             auto candidateHeatRejectedJ = 0.0;
             auto candidateIsValid = candidateRoundoffIsValid;
-            if (candidateIsValid && geometry_.dynamicWallHeatTransferEnabled) {
+            // Decided from `trialStep` before any work, so a halved retry
+            // re-decides consistently within its own attempt and nothing is
+            // committed until the sub-step is accepted.
+            const auto wallPendingSeconds = wallHeatPendingSeconds_ + trialStep;
+            const auto applyWallHeat = geometry_.dynamicWallHeatTransferEnabled
+                && wallPendingSeconds >= geometry_.wallHeatUpdateIntervalSeconds;
+            if (candidateIsValid && applyWallHeat) {
                 candidateIsValid = recoverPrimitiveStates(
                     candidate_, candidatePrimitives_);
                 if (candidateIsValid) {
                     candidateWallStates_ = wallStates_;
                     candidateIsValid = applyDynamicWallHeatTransfer(
                         candidate_, candidatePrimitives_, candidateWallStates_,
-                        trialStep, candidateHeatRejectedJ);
+                        wallPendingSeconds, candidateHeatRejectedJ);
                 }
             }
             if (candidateIsValid) {
@@ -1158,9 +1165,12 @@ DuctAdvanceResult FiniteVolumeDuct::advance(
             std::swap(cellSourceLimitedTimeStepSeconds_,
                       candidateSourceLimitedTimeStepSeconds_);
             cellStateCacheIsValid_ = true;
-            if (geometry_.dynamicWallHeatTransferEnabled) {
+            if (applyWallHeat) {
                 wallStates_.swap(candidateWallStates_);
                 result.wallHeatRejectedJ += candidateHeatRejectedJ;
+                wallHeatPendingSeconds_ = 0.0;
+            } else {
+                wallHeatPendingSeconds_ = wallPendingSeconds;
             }
             remaining -= trialStep;
             result.advancedTimeSeconds += trialStep;

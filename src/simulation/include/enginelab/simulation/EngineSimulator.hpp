@@ -206,6 +206,7 @@ private:
      * which is what an engine with no worker pool gets. Chosen from the
      * measured accuracy of the plenum staircase prediction, not from the thread
      * count -- see `configureIntakeWorkerPool`. */
+    double intakeWallHeatPendingSeconds_ { 0.0 };
     std::size_t intakePredictionGroupCount_ { 32 };
     /** Fixed-point rounds used to reconstruct the plenum drawdown staircase
      * before the concurrent runner advances. Each round costs one concurrent

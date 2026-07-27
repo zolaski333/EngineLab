@@ -187,6 +187,25 @@ struct DuctGeometry final {
     double wallSpecificHeatJPerKgK { 500.0 };
     double externalWallHeatTransferWPerM2K { 0.0 };
     double externalTemperatureK { 300.0 };
+    /**
+     * Advance the wall exchange only once this much simulated time has
+     * accumulated, in one lump carrying the accumulated duration. Zero keeps
+     * it on every solver sub-step.
+     *
+     * The exchange is a slow process sampled absurdly finely: a runner cell
+     * moves about 0.04% of the gas-wall equilibrium gap per sub-step, a time
+     * constant near 69 ms integrated every ~26 us. Sub-rating it is worth far
+     * more than the wall arithmetic itself, because skipping the exchange also
+     * skips the extra `recoverPrimitiveStates` pass that only exists to feed
+     * it -- measured at 6.2% (coefficient chain), 11.0% (exchange) and ~10.8%
+     * (the extra recover) of the duct solver respectively.
+     *
+     * This is NOT the averaging trap documented in CLAUDE.md: no state is
+     * averaged before entering a non-linear law. The heat-transfer
+     * coefficient is *sampled* less often, and the exchange it then drives is
+     * the same exact two-capacity solution over a longer interval.
+     */
+    double wallHeatUpdateIntervalSeconds { 0.0 };
 
     /** Length-mean area (and therefore volume / length). */
     [[nodiscard]] double areaM2() const noexcept;
@@ -372,6 +391,10 @@ private:
     double stageSourceLimitedTimeStepSeconds_ { 0.0 };
     double maximumCandidateSignalSpeedMps_ { 0.0 };
     double candidateSourceLimitedTimeStepSeconds_ { 0.0 };
+    // Simulated time advanced since the wall exchange last ran. Only ever
+    // committed on an accepted sub-step, so a rejected trial cannot leak into
+    // it and the sub-rating stays deterministic.
+    double wallHeatPendingSeconds_ { 0.0 };
     mutable bool cellStateCacheIsValid_ { false };
 };
 

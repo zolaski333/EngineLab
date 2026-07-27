@@ -104,14 +104,15 @@ DuctWallHeatTransferResult DuctWallHeatTransferModel::advancePrepared(
     // friction factor. Blend only across the transitional Reynolds interval.
     constexpr double laminarNusselt = 3.66;
     const auto turbulentReynolds = std::max(3'000.0, result.reynoldsNumber);
-    // Left as std::pow deliberately. Rewriting it as `logTerm * logTerm` was
-    // measured NOT bit-identical on this toolchain -- the LS3 moved from 423.614
-    // to 423.437 Nm and 5934.833 to 5932.104 mg of air at 5,940 rpm -- so MSVC's
-    // pow(x, 2.0) is not a single multiply. That is a physics change, not an
-    // optimisation, and the idles here are ULP-sensitive attractors. Not worth it
-    // for one integer-exponent call.
-    const auto frictionFactor = 1.0 / std::pow(
-        0.79 * std::log(turbulentReynolds) - 1.64, 2.0);
+    // This used to be `1.0 / std::pow(logTerm, 2.0)`, with a comment claiming
+    // the squaring below was measured NOT bit-identical on this toolchain. That
+    // is refuted: `EngineLabIntakeDuctBench` fingerprints every conservative
+    // variable and wall temperature, and all six of its configurations produce
+    // an unchanged checksum across this rewrite. What IS true is that MSVC's
+    // pow(x, 2.0) is a real libm call -- removing it is worth about 5% of the
+    // entire duct solver, which is not "one integer-exponent call" territory.
+    const auto frictionRoot = 0.79 * std::log(turbulentReynolds) - 1.64;
+    const auto frictionFactor = 1.0 / (frictionRoot * frictionRoot);
     const auto turbulentNusselt = (frictionFactor / 8.0)
         * (turbulentReynolds - 1'000.0) * prandtlNumber
         / (1.0 + 12.7 * std::sqrt(frictionFactor / 8.0)

@@ -340,6 +340,8 @@ bool ExhaustGasNetwork::configure(const ExhaustNetworkLayout& layout,
         geometry.externalWallHeatTransferWPerM2K =
             config.externalWallHeatTransferWPerM2K;
         geometry.externalTemperatureK = config.externalTemperatureK;
+        geometry.wallHeatUpdateIntervalSeconds =
+            config.wallHeatUpdateIntervalSeconds;
         ducts_.emplace_back(mixtureModel_.thermodynamics());
         if (!ducts_.back().configure(geometry, *initialState)) {
             ducts_.clear();
@@ -468,6 +470,7 @@ bool ExhaustGasNetwork::reset(double pressurePa,
         duct.resetWallTemperature(temperatureK);
         if (!duct.refreshCellStateCache()) return false;
     }
+    wallHeatPendingSeconds_ = 0.0;
     std::fill(junctionStates_.begin(), junctionStates_.end(), *initialState);
     for (auto& state : junctionStates_) state.momentumDensityKgPerM2S = 0.0;
     std::fill(junctionPrimitives_.begin(), junctionPrimitives_.end(), *initialPrimitive);
@@ -1183,7 +1186,18 @@ ExhaustNetworkAdvanceResult ExhaustGasNetwork::advance(
                 if (cylinderReservoirActive_[index] != 0)
                     (void) mixtureModel_.canonicaliseSpeciesRoundoff(
                         cylinderReservoirCandidate_[index]);
-            if (!prepareStageStates(true, true)) {
+            // Decided before any work from this attempt's own trial step, so a
+            // halved retry re-decides consistently and nothing is committed
+            // until the sub-step is accepted. `prepareStageStates` only defers
+            // the candidate cache when the walls are actually going to run;
+            // skipping the exchange therefore also skips the extra
+            // `recoverPrimitiveStates` pass that exists solely to feed it,
+            // which is the larger half of what sub-rating buys.
+            const auto wallPendingSeconds = wallHeatPendingSeconds_ + trialStep;
+            const auto applyWallHeat = config_.wallHeatUpdateExternallyTriggered
+                ? wallHeatUpdateRequested_
+                : wallPendingSeconds >= config_.wallHeatUpdateIntervalSeconds;
+            if (!prepareStageStates(true, applyWallHeat)) {
                 ++result.rejectedSubsteps;
                 trialStep *= 0.5;
                 if (!(trialStep > std::numeric_limits<double>::epsilon()
@@ -1195,11 +1209,12 @@ ExhaustNetworkAdvanceResult ExhaustGasNetwork::advance(
             auto candidateWallHeatRejectedJ = 0.0;
             auto candidateWallsAreValid = true;
             for (auto& duct : ducts_) {
+                if (!applyWallHeat) break;
                 if (!duct.geometry_.dynamicWallHeatTransferEnabled) continue;
                 duct.candidateWallStates_ = duct.wallStates_;
                 if (!duct.applyDynamicWallHeatTransfer(
                         duct.candidate_, duct.candidatePrimitives_,
-                        duct.candidateWallStates_, trialStep,
+                        duct.candidateWallStates_, wallPendingSeconds,
                         candidateWallHeatRejectedJ)
                     || !duct.prepareStateCache(
                         duct.candidate_, duct.candidatePrimitives_,
@@ -1253,8 +1268,15 @@ ExhaustNetworkAdvanceResult ExhaustGasNetwork::advance(
                 std::swap(duct.cellSourceLimitedTimeStepSeconds_,
                           duct.candidateSourceLimitedTimeStepSeconds_);
                 duct.cellStateCacheIsValid_ = true;
-                if (duct.geometry_.dynamicWallHeatTransferEnabled)
+                if (applyWallHeat
+                    && duct.geometry_.dynamicWallHeatTransferEnabled)
                     duct.wallStates_.swap(duct.candidateWallStates_);
+            }
+            if (applyWallHeat) {
+                wallHeatPendingSeconds_ = 0.0;
+                wallHeatUpdateRequested_ = false;
+            } else {
+                wallHeatPendingSeconds_ = wallPendingSeconds;
             }
             result.wallHeatRejectedJ += candidateWallHeatRejectedJ;
             if (!result.completed) break;

@@ -257,6 +257,20 @@ test onto the behaviour it is meant to catch. Keep it that way.
   CPU,StartTime`, not by waiting; and conversely a **short** time in a ctest
   line can be the bad news, since `EngineLab.Core` takes ~90 s when it passes
   and ~8 s when it aborts on a failure.
+- **`EngineLabRealtimeBudgetHarness` numbers are only comparable BACK TO BACK.**
+  The documented run-to-run spread of ~10% is the *within-minute* figure. Across
+  a working session the machine drifts far more: the same commit `c03b6d3`
+  measured LS3 0.762 / K20A 0.754 early on and **0.618 / 0.629 two hours later**,
+  after a run of builds and test suites — 20%, one way, on every engine. That is
+  enough to invent a regression that does not exist, and it did: a change
+  measured against the morning's table looked like a 13% loss and was, measured
+  against a baseline rebuilt in the same hour, an 11% gain. **Never compare a
+  factor to one recorded in a document, a commit message, or an earlier message
+  in your own session.** `git stash` + rebuild + measure + `git stash pop` costs
+  two builds and is the only valid A/B. The deterministic instruments
+  (`EngineLabIntakeDuctBench`, checksums, `EngineLab.CombustionPhasing`) do not
+  have this problem — prefer them, and use the realtime harness only for the
+  final ratio.
 - **The realtime factor saturates at 1.0; use `--free-run` for capacity.**
   `EngineRuntime::run` sleeps to a wall deadline, so an engine with 3x of margin
   and one exactly breaking even both report `1.000` — six catalogue engines were
@@ -295,6 +309,28 @@ test onto the behaviour it is meant to catch. Keep it that way.
   6 cells, ~533 ns per cell per sub-step and essentially all of it per-cell (no
   fixed per-call overhead left to remove): **walls 28%, MUSCL reconstruction
   25%, wall friction 6%**, the rest flux and RK2.
+- **The duct wall model is not 28% of wall arithmetic; most of it is a second
+  primitive recovery.** Measured with the bench, per cell per sub-step: the
+  coefficient chain (Sutherland viscosity, Reynolds, Gnielinski Nusselt) is
+  **6.2%**, the exchange itself (`expm1`/`exp` and ~8 divisions) **11.0%**, and
+  the remaining **~10.8%** is the extra full `recoverPrimitiveStates` pass that
+  exists only because the wall step mutates cell energy between the recovery and
+  `prepareStateCache`. Sub-rating the exchange therefore buys more than the wall
+  arithmetic it skips, because it skips that pass too. Also: `std::pow(x, 2.0)`
+  in the friction factor **is** a real libm call here, worth 5% of the whole duct
+  solver, and rewriting it as `x*x` is **bit-identical** on all six bench
+  configurations — the source comment claiming otherwise was wrong and is now
+  corrected.
+- **A self-timed sub-rate desynchronises across a barrier.** Each runner network
+  timing its own wall cadence from its own accepted sub-steps drifts out of phase
+  with its siblings within a few mechanical sub-steps, and a barrier costs the
+  *maximum* over participants, not the mean — so the burst lands on a different
+  dispatch for every cylinder and is paid on nearly all of them. The cadence is
+  therefore driven by `EngineSimulator` (`requestWallHeatUpdate`), fired on the
+  **second** half-step, which is the only pass where every cylinder is dispatched
+  — the first advances only the runners whose intake valve is open. Worth ~3% of
+  the V8 over the self-timed version. Generic: any per-cylinder work made bursty
+  must be made bursty *in phase*, or the barrier eats the saving.
 - **Widening SIMD is not the lever, and it is slower.** `/arch:AVX` measures
   616 ns/cell/sub-step and `/arch:AVX2` 578, against **533** for the shipped
   baseline, checksums identical in both. The duct solver is bound by the

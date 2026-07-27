@@ -504,7 +504,56 @@ audio ne peut compenser ça.
   secondes quand il échoue — un `require` interrompt le test. Une durée courte
   dans un relevé ctest n'est donc pas une bonne nouvelle.
 
-**Non résolu et assumé** : le V8 (0,76), le V12 (0,79), les six-cylindres
-(0,83-0,91), l'I5 (0,92) et le K20A (0,75) restent sous le temps réel. Le levier suivant est
-le modèle thermique de paroi du conduit, 28 % du coût, avec une constante de
-temps en secondes intégrée ~38 000 fois par seconde.
+**Non résolu et assumé** : le V8, le V12, les six-cylindres, l'I5 et le K20A
+restent sous le temps réel. Le levier suivant est le modèle thermique de paroi
+du conduit, avec une constante de temps en secondes intégrée ~38 000 fois par
+seconde.
+
+## 2026-07-27 (suite) — Sous-cadencer l'échange de paroi du conduit
+
+- **L'attribution « parois 28 % » était trompeuse.** Mesurée au banc bit-exact,
+  par cellule et par sous-étape : chaîne du coefficient (Sutherland, Reynolds,
+  Nusselt de Gnielinski) **6,2 %**, échange lui-même (`expm1`/`exp`, ~8
+  divisions) **11,0 %**, et le reste (**~10,8 %**) est une passe complète de
+  `recoverPrimitiveStates` qui n'existe que parce que l'étape de paroi modifie
+  l'énergie des cellules entre la récupération et `prepareStateCache`.
+  Sous-cadencer l'échange rapporte donc plus que l'arithmétique qu'il évite,
+  puisqu'il évite aussi cette passe.
+- **`std::pow(x, 2.0)` est bien un vrai appel libm ici**, dans le facteur de
+  frottement : le remplacer par `x*x` vaut 5 % du solveur entier et les six
+  configurations du banc rendent un checksum **inchangé**. Le commentaire du
+  source qui affirmait le contraire est corrigé.
+- **Sous-cadençage retenu : 150 µs.** Ce n'est pas la constante de temps
+  thermique (~69 ms) qui fixe le plancher, c'est l'échantillonnage du
+  coefficient, qui suit l'écoulement : le temps de séjour d'une cellule L/u vaut
+  ~600 µs à 50 m/s dans une maille de 30 mm. 150 µs garde quatre échantillons
+  dans le séjour le plus rapide et une trentaine sur une levée d'admission à
+  7 000 tr/min. Coût du solveur de conduit : 530 → 402 ns/cellule/sous-étape,
+  **−24 %**.
+- **Un sous-cadençage auto-déclenché se désynchronise derrière une barrière.**
+  Chaque réseau décidant à partir de son propre historique CFL, le pic de paroi
+  tombe sur une répartition différente pour chaque cylindre, et une barrière
+  coûte le *maximum*, pas la moyenne. La cadence est donc pilotée par
+  `EngineSimulator` (`requestWallHeatUpdate`), déclenchée sur le **second**
+  demi-pas — le seul où tous les cylindres sont distribués. Vaut ~3 % de plus
+  sur le V8.
+- **Piège de mesure, et il a failli faire annuler le changement.** Le facteur
+  temps réel du même commit `c03b6d3` a lu LS3 0,762 le matin et 0,618 deux
+  heures plus tard, après une série de builds et de suites de tests : 20 % de
+  dérive machine, dans un seul sens, sur tous les moteurs. Comparé à la table du
+  matin, ce travail ressemblait à une perte de 13 %. **Seule une mesure
+  entrelacée est valable** : les deux binaires côte à côte, alternés. Ainsi
+  mesuré, l'« après » gagne dans 14 paires sur 15 — CP2 +35 %, LS3 +21 %,
+  Merlin +9 %, K20A +9 %, Audi I5 +6 %.
+- **Physique déplacée, balayage complet, lignes contaminées exclues** : couple
+  entre −0,17 % et +0,42 % de moyenne par moteur (pire point +2,62 %), VE à
+  ±0,06 % (pire −0,94 %), et **EGT — la grandeur que ce modèle gouverne
+  directement — entre +0,01 % et +0,14 % de moyenne, pire point +1,04 %**.
+  Suite complète verte, `OverrunThermalRegression` et `IdleStabilityRegression`
+  comprises.
+
+**Non résolu et assumé** : les valeurs absolues de capacité de cette session ne
+valent rien, la machine ayant dérivé de 20 % pendant les mesures. Seuls les
+rapports entrelacés ci-dessus sont fiables. Une table absolue devra être reprise
+sur une machine reposée avant toute affirmation du type « N moteurs sur 14
+passent le temps réel ».
