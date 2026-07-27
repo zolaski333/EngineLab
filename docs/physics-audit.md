@@ -2393,3 +2393,98 @@ L'EGT est la grandeur que ce modèle gouverne directement, et c'est celle qui
 bouge le moins en moyenne : sous-cadencer l'échange d'un facteur quatre ne
 déplace pas le résultat thermique. Suite complète verte, dont
 `OverrunThermalRegression` et `IdleStabilityRegression`.
+
+### Le nombre de threads : non mesurable ce soir, et une leçon de protocole
+
+Le pool reçoit `min(cylindres - 1, threads_utilisables - 1)` workers, avec
+`threads_utilisables = hardware_concurrency / 2`. Sur une machine à 16 threads
+le plafond vaut 7, donc **il ne mord que pour un moteur de plus de 8 cylindres**
+— dans ce catalogue, le seul Merlin V12. Tous les autres sont limités par leur
+nombre de cylindres et ne verraient aucune différence. « Donner plus de threads
+au pool » n'est donc pas un levier général : c'est une question propre au V12.
+
+Trois protocoles ont été essayés, tous avec le **LS3 en témoin nul** — son
+nombre de workers vaut `min(7, 7)` avant comme après, il doit donc lire
+exactement 0 %.
+
+| protocole | Merlin | témoin LS3 (vérité : 0 %) |
+|---|---|---|
+| alterné simple, 3 tours | +23,0 % | +8,0 % |
+| alterné simple, 5 tours | +22,7 % | +7,7 % |
+| ABBA + échauffement jeté, contrebalancé | −17,2 % | **−18,7 %** |
+
+Le témoin a lu +20 % puis −19 % sur la même machine : la bande de bruit dépasse
+tout effet plausible, et **rien n'est établi**. Le changement n'a pas été livré.
+
+Deux leçons, elles, sont acquises :
+
+- **Toujours faire tourner un témoin nul** — un moteur que le changement ne peut
+  pas atteindre par construction — à côté de tout A/B sur cet instrument. Sans
+  lui, les deux premiers protocoles auraient été publiés comme « +23 % ».
+- **Un ordre `A, B, B, A` n'est pas contrebalancé.** La position 1 paie le
+  démarrage à froid (défauts de page, cache fichier du catalogue, montée en
+  fréquence) et revient toujours à A, tandis que B hérite des deux positions
+  centrales tièdes. C'était un biais mesuré de +8 % en faveur de B. Il faut un
+  passage d'échauffement jeté, et alterner la variante de tête d'un tour à
+  l'autre.
+
+Enfin, le banc temps réel **ne fait tourner ni callback audio ni interface**. Il
+ne peut donc pas voir le coût d'une sur-souscription de la machine sur laquelle
+l'application tourne réellement, ce qui est la raison de fond pour rester
+conservateur sur ce plafond.
+
+### #34 réfutée : ce ne sont pas les divisions
+
+L'hypothèse était que le solveur de conduit est étranglé par ~90 divisions
+dépendantes par cellule et par sous-étape, `recoverPrimitive` étant appelé sept
+fois (2 dans `prepareStateCache`, 4 pour les états reconstruits gauche et droite
+des deux `computeResidual`, 1 dans le chemin de paroi). Mesuré par ablation, le
+tout dans un même lot :
+
+| variante | ns/cellule | écart | checksum |
+|---|---|---|---|
+| base | 1404 | — | inchangé |
+| MUSCL désactivé (schéma d'ordre 1) | 1184 | −15,7 % | différent, attendu |
+| `massFractions` supprimées | 1384 | **−1,4 %** | **identique** |
+
+Les quatre divisions de `massFractions` représentent ~31 % de toutes les
+divisions du solveur, et les retirer vaut **1,4 %**. La prémisse est donc
+fausse : les divisions ne sont pas le coût.
+
+Les deux résultats se réconcilient sans contradiction. Ces quatre divisions sont
+**indépendantes entre elles**, donc elles se recouvrent dans le pipeline et
+coûtent le *débit* d'une division (~4 cycles), pas sa latence (~14). Ce qui est
+limité par la latence est la chaîne **dépendante** `density → velocity →
+énergie interne → température → pression → gamma → vitesse du son → sqrt`, et
+elle ne se raccourcit pas en supprimant du travail indépendant. C'est la même
+raison pour laquelle `/arch:AVX2` mesure plus lent : élargir les vecteurs
+n'aide pas une chaîne sérielle.
+
+Bénéfice dérivé : le checksum **identique** prouve au bit près que
+`PrimitiveState::massFractions` n'est jamais lu dans l'avance du conduit. Elles
+sont néanmoins conservées — elles sont lues ailleurs, notamment par
+`predictOutletTransfer`, et les séparer demanderait une seconde API de
+récupération pour 1,4 %.
+
+Le plus gros poste restant est le bloc MUSCL (limiteur, deux reconstructions,
+deux récupérations de primitives) à **16-29 % selon le nombre de cellules**, et
+il n'est **pas disponible** : annuler les pentes, c'est exactement retomber à
+l'ordre 1, alors que le maillage runner est déjà connu comme non convergé. Ce
+qui pourrait encore aider une chaîne limitée par la latence, c'est d'entrelacer
+les chaînes de deux cellules consécutives (déroulage / pipeline logiciel), ce
+que les retours anticipés de validation à l'intérieur de `recoverPrimitive`
+empêchent probablement le compilateur de faire seul. Non tenté.
+
+### Le matériel, qui explique toutes les dérives de cette session
+
+La machine est un **Ryzen 7 8840U** — une puce mobile de 15 à 28 W. Sous charge
+soutenue elle perd massivement en débit : le même banc, sur le même binaire, a
+mesuré **467 ns/cellule** en début de session et **1404** après plusieurs heures
+de builds et de suites de tests, soit un facteur trois. C'est la cause commune
+de la dérive de 20 % du banc temps réel documentée plus haut et du bruit de
+±20 % qui a rendu la mesure du nombre de threads impossible.
+
+Conséquence pratique pour tout travail de performance ici : mesurer par lots
+courts, comparer uniquement à l'intérieur d'un lot, et prendre le **minimum sur
+N essais** plutôt que la moyenne — le bruit ne peut qu'ajouter du temps. Le
+minimum sur six essais ramène la répétabilité du banc de ~16 % à 2-5 %.

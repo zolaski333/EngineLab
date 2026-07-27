@@ -381,6 +381,15 @@ bool EulerMixtureModel::recoverPrimitive(const ConservativeState& state,
     result.temperatureK = temperature;
     result.heatCapacityRatio = gamma;
     result.speedOfSoundMps = std::sqrt(soundSpeedSquared);
+    // Measured by ablation, and the result refutes an optimisation that looks
+    // obvious: these four divisions are ~31% of every division the duct solver
+    // performs, and removing them buys **1.4%** while leaving all six bench
+    // checksums bit-identical -- so they are provably unread on this path, and
+    // provably not where the time goes. They are independent of one another and
+    // therefore pipeline at division THROUGHPUT; what costs is the dependent
+    // chain above (density -> velocity -> internal energy -> temperature ->
+    // pressure -> gamma -> sound speed -> sqrt), which cannot be shortened by
+    // deleting independent work. Same reason `/arch:AVX2` measures slower.
     for (std::size_t index = 0; index < gasSpeciesCount; ++index)
         result.massFractions[index] = state.speciesMassDensityKgPerM3[index] / density;
     return true;
@@ -943,6 +952,12 @@ bool FiniteVolumeDuct::computeResidual(
                 states[index - 1], states[index], states[index + 1]);
     }
 
+    // This block -- the limiter, the two reconstructions and the two primitive
+    // recoveries they need -- is 16-29% of the duct solver depending on cell
+    // count, measured by forcing the slopes to zero. That is the largest single
+    // item left, and it is NOT available: zeroing the slopes is exactly
+    // dropping the scheme to first order, and the runner mesh is already known
+    // not to be converged (see the mesh note in CLAUDE.md).
     for (std::size_t index = 0; index < count; ++index) {
         if (isZero(slopes_[index])) {
             reconstructedLeft_[index] = states[index];

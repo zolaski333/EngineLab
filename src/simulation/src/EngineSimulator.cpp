@@ -439,10 +439,20 @@ void EngineSimulator::configureIntakeWorkerPool() {
     //    barrier to split two items; below three cylinders the phase runs
     //    inline.
     //  - the machine must have cores to spare. The audio callback and the UI
-    //    thread need one each, and on an SMT machine two workers sharing a
-    //    physical core mostly contend for its one FPU on a body this
-    //    arithmetic-bound. Half the reported concurrency, minus one for the
+    //    thread need one each. Half the reported concurrency, minus one for the
     //    calling thread, is deliberately conservative.
+    //
+    // Note before reaching for a bigger pool: `usableThreads - 1` only BINDS
+    // when the engine has more than that many cylinders. On a 16-thread machine
+    // it is 7, so every catalogue engine except the Merlin V12 is limited by
+    // `cylinderCount - 1` and would not notice a larger cap at all. Raising it
+    // is a V12-only question, and it is untested -- an attempt to measure it
+    // (docs/physics-audit.md, "Le nombre de threads : non mesurable ce soir")
+    // could not resolve it, because a null control that must read 0% read
+    // +20% and then -19% on the same machine. Do not raise it without a
+    // measurement carrying such a control, and remember that the realtime
+    // harness runs no audio callback and no UI, so it cannot see the cost of
+    // oversubscribing the machine the application actually runs on.
     const auto cylinderCount = config_.cylinders.size();
     if (cylinderCount < 3) return;
     const auto reportedConcurrency = std::thread::hardware_concurrency();

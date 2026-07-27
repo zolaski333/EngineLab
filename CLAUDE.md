@@ -270,7 +270,23 @@ test onto the behaviour it is meant to catch. Keep it that way.
   two builds and is the only valid A/B. The deterministic instruments
   (`EngineLabIntakeDuctBench`, checksums, `EngineLab.CombustionPhasing`) do not
   have this problem — prefer them, and use the realtime harness only for the
-  final ratio.
+  final ratio. Two corollaries, both learned by getting them wrong:
+  **always run a NULL CONTROL** — an engine the change cannot affect by
+  construction — beside any A/B on this harness. A thread-count experiment
+  produced "+23%, three rounds out of three" whose control, whose true value was
+  0%, read +8%; a later protocol put the same control at −19%. And
+  **`A, B, B, A` is not counterbalanced**: position 1 pays cold start (page
+  faults, catalogue file cache, frequency ramp) and always falls to A, while B
+  inherits the two warm middle slots — a measured +8% bias. Discard a warm-up
+  run and alternate which variant leads.
+- **The worker cap only binds above 8 cylinders.** The pool takes
+  `min(cylinderCount - 1, hardware_concurrency/2 - 1)` workers, so on a
+  16-thread machine every catalogue engine except the Merlin V12 is limited by
+  its own cylinder count, not by the thread cap. "Give the pool more threads" is
+  therefore a V12-only question, and it is **unresolved** — see
+  `docs/physics-audit.md`. Note also that `EngineLabRealtimeBudgetHarness` runs
+  neither the audio callback nor the UI, so it cannot see the cost of
+  oversubscribing the machine the application actually runs on.
 - **The realtime factor saturates at 1.0; use `--free-run` for capacity.**
   `EngineRuntime::run` sleeps to a wall deadline, so an engine with 3x of margin
   and one exactly breaking even both report `1.000` — six catalogue engines were
@@ -331,6 +347,27 @@ test onto the behaviour it is meant to catch. Keep it that way.
   — the first advances only the runners whose intake valve is open. Worth ~3% of
   the V8 over the self-timed version. Generic: any per-cylinder work made bursty
   must be made bursty *in phase*, or the barrier eats the saving.
+- **The divisions are not the lever either — that hypothesis was measured and
+  refuted.** `recoverPrimitive` runs 7 times per cell per sub-step and its four
+  `massFractions` divisions are ~31% of every division the duct solver performs.
+  Removing them buys **1.4%**, with all six bench checksums **bit-identical**
+  (which also proves those fields are unread on this path). The reconciliation:
+  those four divisions are *independent of one another*, so they pipeline at
+  division throughput (~4 cycles), not latency (~14). What is latency-bound is
+  the *dependent* chain `density → velocity → internal energy → temperature →
+  pressure → gamma → sound speed → sqrt`, and that cannot be shortened by
+  deleting independent work — the same reason AVX2 measures slower. The largest
+  item left is the MUSCL block (limiter + two reconstructions + the two
+  primitive recoveries they need) at **16-29%**, and it is not available:
+  zeroing the slopes *is* dropping to first order.
+- **This machine is a Ryzen 7 8840U — a 15-28 W mobile part — and it throttles
+  hard.** The same bench on the same binary measured **467 ns/cell** early in a
+  session and **1404** after hours of builds and test suites. That single fact
+  explains the realtime harness's 20% session drift and the ±20% noise that made
+  a thread-count experiment unmeasurable. Measure in short batches, compare only
+  within a batch, and take the **minimum of N runs** rather than the mean —
+  interference can only add time. Minimum-of-six takes the bench from ~16%
+  repeatability to 2-5%.
 - **Widening SIMD is not the lever, and it is slower.** `/arch:AVX` measures
   616 ns/cell/sub-step and `/arch:AVX2` 578, against **533** for the shipped
   baseline, checksums identical in both. The duct solver is bound by the
