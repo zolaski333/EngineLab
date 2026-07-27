@@ -1,0 +1,94 @@
+schema_version: 4
+family: turbo diesel
+engine:
+  name: VW EA288-like 2.0 TDI I4
+  cycle: four_stroke
+  fuel: diesel
+  layout: inline
+  cylinder_count: 4
+  firing_order: [1, 3, 4, 2]
+  idle_rpm: 800
+  redline_rpm: 5000
+  rotating_inertia_kg_m2: 0.27
+  friction_coefficient: 0.16
+  octane_rating: 98
+  plenum_volume_l: 3.2
+  throttle_diameter_mm: 58
+  acoustic_observer: { left_microphone_m: { x: -0.20, y: 4.5, z: 0.9 }, right_microphone_m: { x: 0.20, y: 4.5, z: 0.9 }, sound_speed_mps: 0 }
+  intake:
+    plenum_volume_l: 3.2
+    throttle_diameter_mm: 58
+    throttle_discharge_coefficient: 0.86
+    runner_length_mm: 310
+    runner_diameter_mm: 39
+    runner_plenum_diameter_mm: 44
+    airbox_volume_l: 6.0
+    inlet_duct_length_mm: 300
+    inlet_duct_diameter_mm: 72
+    bellmouth_diameter_mm: 88
+    idle_bypass_area_mm2: 0
+    throttle_gamma: 1.4
+  forced_induction:
+    enabled: true
+    type: turbocharger
+    pressure_ratio: 2.30
+    full_boost_rpm: 1900
+    compressor_efficiency: 0.74
+    turbine_efficiency: 0.72
+    shaft_inertia_kg_m2: 0.00004
+    wastegate_pressure_ratio: 2.25
+    design_shaft_speed_rpm: 165000
+    bearing_friction_power_w: 220
+    # Small effective VGT throat for low-speed spool; the larger bypass area
+    # represents vanes opening at the boost target.
+    turbine_flow_area_mm2: 320
+    wastegate_flow_area_mm2: 700
+    charge_temperature_rise_c: 28
+    compressor_blade_count: 6
+    turbine_blade_count: 11
+    compressor_inducer_diameter_mm: 39
+    turbine_exducer_diameter_mm: 36
+    tonal_acoustic_efficiency: 0.000001
+    turbulent_jet_noise_coefficient: 0.00001
+  combustion_calibration:
+    wall_heat_transfer_w_per_k: 0.58
+    compression_ignition_delay_scale: 3.0
+    compression_ignition_mixing_time_s: 0.0016
+    compression_ignition_premixed_fraction: 0.08
+  ignition:
+    # Retained as injection-controller phase telemetry; no spark is created.
+    rev_limit_rpm: 5000
+    limiter_duration_s: 0.070
+    timing_curve:
+      - { rpm: 0, advance_deg: 2 }
+      - { rpm: 1000, advance_deg: 4 }
+      - { rpm: 2000, advance_deg: 7 }
+      - { rpm: 3500, advance_deg: 9 }
+      - { rpm: 5000, advance_deg: 8 }
+  solver:
+    mechanical_frequency_hz: 2000
+    maximum_frequency_hz: 30000
+    maximum_crank_deg_per_step: 1.5
+    gas_substeps: 3
+  uses:
+    fuel: road_diesel_en590
+    injection: common_rail_diesel
+    camshafts: diesel_low_speed
+    exhaust: turbo_downpipe
+    transmission: jdm_6_speed
+    vehicle: jdm_gt
+  cylinder_template:
+    bore_mm: 81.0
+    stroke_mm: 95.5
+    connecting_rod_mm: 144.0
+    piston_mass_g: 510
+    connecting_rod_mass_g: 690
+    compression_ratio: 16.2
+    piston_friction_coefficient: 0.030
+    piston_breakaway_force_n: 58
+    piston_breakaway_velocity_mps: 0.09
+    piston_viscous_friction_ns_per_m: 5.2
+    intake_valve_count: 2
+    exhaust_valve_count: 2
+    intake_valve_diameter_mm: 31.0
+    exhaust_valve_diameter_mm: 27.0

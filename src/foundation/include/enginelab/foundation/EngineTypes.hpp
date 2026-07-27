@@ -8,7 +8,7 @@
 
 namespace enginelab {
 inline constexpr std::uint32_t minimumSupportedEngineSchemaVersion { 1 };
-inline constexpr std::uint32_t currentEngineSchemaVersion { 3 };
+inline constexpr std::uint32_t currentEngineSchemaVersion { 4 };
 
 
 enum class EngineCycle : std::uint8_t { fourStroke, twoStroke };
@@ -20,11 +20,12 @@ enum class ForcedInductionType : std::uint8_t { turbocharger, supercharger };
 enum class ExhaustComponentType : std::uint8_t {
     pipe, merge, splitter, resonator, muffler, catalyst, outlet
 };
+enum class AcousticTerminationType : std::uint8_t { unflanged, flanged };
 enum class RunningState : std::uint8_t {
     stopped, cranking, idling, running, unstable, knocking, overheating, damaged, destroyed
 };
 
-/** Calibrated properties of the gasoline surrogate used by this engine. */
+/** Calibrated thermochemical properties of the fuel surrogate. */
 struct FuelConfig final {
     std::string name { "Pump gasoline" };
     double lowerHeatingValueMjPerKg { 43.0 };
@@ -35,6 +36,10 @@ struct FuelConfig final {
     double productMolesPerFuelMole { 17.0 };
     double laminarFlameSpeedMps { 0.38 };
     double turbulenceFlameSpeedGain { 1.55 };
+    /** Ignition quality for compression-ignition fuel. Zero explicitly means
+     *  "not a compression-ignition fuel"; diesel configurations use 30-80.
+     */
+    double cetaneNumber { 0.0 };
 };
 
 struct CylinderConfig final {
@@ -175,7 +180,18 @@ struct IntakeConfig final {
     std::uint32_t throttleCount { 1 };
     double throttleDischargeCoefficient { 0.72 };
     double runnerLengthMm { 300.0 };
+    /** Runner diameter at the cylinder-head/valve end. */
     double runnerDiameterMm { 38.0 };
+    /** Optional diameter at the plenum end. Zero keeps a constant runner. */
+    double runnerPlenumDiameterMm { 0.0 };
+    /** Optional upstream acoustic hardware. Zero volume/length means the
+     * throttle mouth is directly exposed rather than inventing an airbox. */
+    double airboxVolumeLitres { 0.0 };
+    double inletDuctLengthMm { 0.0 };
+    /** Zero inherits the throttle diameter. */
+    double inletDuctDiameterMm { 0.0 };
+    /** Zero inherits the inlet-duct diameter; used by inlet radiation. */
+    double bellmouthDiameterMm { 0.0 };
     double idleBypassAreaMm2 { 12.0 };
     double throttleGamma { 1.7 };
     /**
@@ -229,13 +245,37 @@ struct CylinderBankConfig final {
     std::uint32_t exhaustPathId { 0 };
 };
 
+/** Engine-fixed free-field acoustic coordinates, in metres.
+ *
+ * +X is the engine's right side, +Y points out of the nominal tailpipe and +Z
+ * points upward. These are geometry and measurement-chain data, never pan or
+ * gain controls.
+ */
+struct AcousticPoint3M final {
+    double x { 0.0 };
+    double y { 0.0 };
+    double z { 0.0 };
+};
+
+struct AcousticObserverConfig final {
+    AcousticPoint3M leftMicrophoneM { -0.18, 4.0, 0.8 };
+    AcousticPoint3M rightMicrophoneM { 0.18, 4.0, 0.8 };
+    /** Zero derives local sound speed from the acoustic medium. */
+    double soundSpeedMps { 0.0 };
+};
+
 /** A user-authored component in one exhaust path's directed acyclic graph. */
 struct ExhaustComponentConfig final {
     // Component IDs are local to the containing exhaust path.
     std::uint32_t id { 0 };
     ExhaustComponentType type { ExhaustComponentType::pipe };
     double lengthMm { 300.0 };
+    /** Diameter at the component inlet. */
     double diameterMm { 42.0 };
+    /** Optional outlet diameter. Zero keeps a constant section. A non-zero
+     * value forms a linear-area taper in the quasi-1D gas solver.
+     */
+    double outletDiameterMm { 0.0 };
     double volumeLitres { 0.0 };
     // Dimensionless pressure-loss coefficient added to the geometric loss.
     double restriction { 0.0 };
@@ -243,6 +283,11 @@ struct ExhaustComponentConfig final {
     double resonanceHz { 0.0 };
     double acousticGain { 1.0 };
     double dischargeCoefficient { 0.72 };
+    /** Radiation geometry, used only when type==outlet. */
+    AcousticPoint3M acousticPositionM {};
+    AcousticPoint3M acousticAxis { 0.0, 1.0, 0.0 };
+    AcousticTerminationType acousticTermination {
+        AcousticTerminationType::unflanged };
 };
 
 struct ExhaustCylinderConnectionConfig final {
@@ -274,6 +319,11 @@ struct ExhaustPathConfig final {
     std::optional<ExhaustNetworkConfig> network;
     // Runtime migration provenance; deliberately not part of schema v1.
     bool inheritsGlobalGeometry { false };
+    /** Radiation geometry for the outlet synthesized from scalar path data. */
+    AcousticPoint3M acousticPositionM {};
+    AcousticPoint3M acousticAxis { 0.0, 1.0, 0.0 };
+    AcousticTerminationType acousticTermination {
+        AcousticTerminationType::unflanged };
 };
 
 struct IgnitionMapSample final {
@@ -303,11 +353,37 @@ struct InjectionConfig final {
     double railPressureBar { 200.0 };
     // Differential pressure at which injectorFlowMgPerSecond is specified.
     double referencePressureBar { 200.0 };
-    double wallFilmFraction { 0.0 };
+    // Fraction of a port-injection pulse that wets the port wall as liquid
+    // film instead of vaporising in flight (the X of the X-tau wall-film
+    // model; Aquino). Port-injection literature puts it at 0.3-0.6 warm and
+    // higher cold; the catalogue loader applies 0.22 to port-injected
+    // engines. Note, measured: the film does NOT by itself prevent the
+    // flooded-misfire lock-in a big-cylinder engine can enter at idle catch
+    // with a resolved 1-D runner (the V12 flooded identically at 0.22), so
+    // do not reach for this knob to fix an idle. DI ignores this field.
+    double wallFilmFraction { 0.35 };
     double vaporisationTimeConstantSeconds { 0.035 };
     double latentHeatKjPerKg { 350.0 };
     double directChargeCoolingEfficiency { 0.82 };
     double portChargeCoolingEfficiency { 0.28 };
+    /** Direct-injection liquid-droplet vaporisation time at the reference
+     *  chamber temperature. Zero preserves the legacy, fully-vaporised pulse.
+     */
+    double directSprayVaporisationTimeConstantSeconds { 0.0 };
+    /** Time for vaporised spray parcels to entrain sufficient chamber gas to
+     *  become part of the locally combustible mixture. Zero is instantaneous.
+     */
+    double directSprayEntrainmentTimeConstantSeconds { 0.0 };
+    struct FuelQuantityLimitSample final {
+        double rpm { 0.0 };
+        /** Per-cylinder maximum metered fuel at full driver demand. */
+        double milligramsPerCycle { 0.0 };
+    };
+    /** Compression-ignition full-load smoke/torque limiter. Empty means the
+     *  oxygen-based target alone governs quantity. The driver-demand fraction
+     *  scales this limit before it is applied.
+     */
+    std::vector<FuelQuantityLimitSample> fullLoadFuelLimit;
 };
 
 struct SolverConfig final {
@@ -365,6 +441,22 @@ struct ForcedInductionConfig final {
     double bearingFrictionPowerWatts { 280.0 };
     double turbineFlowAreaMm2 { 700.0 };
     double wastegateFlowAreaMm2 { 520.0 };
+    /** Rotor geometry used by aeroacoustics. Zero count disables the
+     * corresponding blade/lobe-passing tone rather than inventing one. */
+    std::uint32_t compressorBladeCount { 0 };
+    std::uint32_t turbineBladeCount { 0 };
+    std::uint32_t superchargerLobeCount { 0 };
+    double superchargerDriveRatio { 1.0 };
+    double compressorInducerDiameterMm { 0.0 };
+    double turbineExducerDiameterMm { 0.0 };
+    /** Vent-to-ambient compressor bypass. Zero area means absent. The valve
+     * opens from upstream/downstream pressure ratio, never throttle gestures. */
+    double blowOffValveFlowAreaMm2 { 0.0 };
+    double blowOffValveOpeningPressureRatio { 1.12 };
+    double blowOffValveDischargeCoefficient { 0.72 };
+    /** Measurable/semi-empirical conversion parameters, not mix gains. */
+    double tonalAcousticEfficiency { 1.0e-6 };
+    double turbulentJetNoiseCoefficient { 1.0e-5 };
 };
 
 struct ThermalConfig final {
@@ -382,8 +474,43 @@ struct CombustionCalibrationConfig final {
     double ignitionDelayPressureExponent { 0.35 };
     double wallHeatTransferCoefficientWPerK { 0.42 };
     double residualDilutionSensitivity { 0.78 };
+    /** Chamber-generated tumble/squish intensity relative to the legacy
+     * mean-piston-speed closure. This belongs to the cylinder head, not to the
+     * fuel chemistry: pent-roof/tumble ports and low-speed aircraft chambers
+     * do not create the same u' at equal piston speed.
+     */
+    double chamberTurbulenceIntensityRatio { 1.0 };
+    /** Independent flame kernels (normally spark plugs) per cylinder.
+     *
+     * Multiple kernels grow through disjoint chamber volume until their fronts
+     * meet. This is physically distinct from increasing flame speed and is
+     * important for large-bore dual-ignition aircraft engines.
+     */
+    std::uint32_t ignitionSiteCount { 1 };
+    /** Multiplier on the pressure/temperature/cetane ignition-delay
+     *  correlation used by the compression-ignition model.
+     */
+    double compressionIgnitionDelayScale { 1.0 };
+    /** Mixing-controlled diffusion-burn time constant after autoignition. */
+    double compressionIgnitionMixingTimeSeconds { 0.0014 };
+    /** Fraction of fuel accumulated during ignition delay which burns in the
+     *  initial premixed phase; the remainder is mixing controlled.
+     */
+    double compressionIgnitionPremixedFraction { 0.20 };
 };
 
+/**
+ * Intake-runner acoustics (see HelmholtzRunnerModel).
+ *
+ * `couplingGain` scales a forcing term -- `(plenum - runner)` -- that the 0-D
+ * intake topology has already flattened to a few kPa, so it is an amplitude knob
+ * and NOT a tuning parameter: raising it lifts the whole VE curve without moving
+ * its peak, and on an engine whose low-speed torque is already at or above the
+ * real one (the LS3: 596 Nm at 2000 rpm, real peak 575 at 4600) that is a
+ * regression dressed as a calibration. Measured numbers in
+ * HelmholtzRunnerModel's header and docs/physics-audit.md. Leave it at 0.45
+ * until the runner has a real inertance to force against.
+ */
 struct RunnerAcousticsConfig final {
     bool enabled { true };
     double dampingRatio { 0.16 };
@@ -417,6 +544,7 @@ struct EngineConfig final {
     std::vector<IntakePathConfig> intakePaths;
     std::vector<CylinderBankConfig> banks;
     std::vector<ExhaustPathConfig> exhaustPaths;
+    AcousticObserverConfig acousticObserver;
     IgnitionConfig ignition;
     InjectionConfig injection;
     SolverConfig solver;
@@ -462,12 +590,48 @@ struct CylinderState final {
     double intakeVelocityMps { 0.0 };
     double exhaustVelocityMps { 0.0 };
     double fuelDeliveryRatio { 0.0 };
+    /** Fraction of the commanded injector pulse actually metered this cycle.
+     *  1.0 means the injector kept up; a low value is real capacity saturation,
+     *  independent of the closed-loop trim (unlike fuelDeliveryRatio). */
+    double injectorCapacityRatio { 1.0 };
     double flameSpeedMps { 0.0 };
     double burnedFraction { 0.0 };
     double combustionEfficiency { 0.0 };
     double endGasKnockLevel { 0.0 };
     bool combustionActive { false };
     bool misfiring { false };
+    // NOTE: `misfiring` is the last member reached by the positional aggregate
+    // initialiser in EngineSimulator::publishCylinderStates. Add new members
+    // BELOW this line and assign them by name, or every field after the
+    // insertion point silently receives the wrong value.
+    /** Instantaneous compact-valve conductance Cd*A used by the gas solver. */
+    double exhaustValveConductanceAreaM2 { 0.0 };
+    /** Signed instantaneous flow; positive from chamber into exhaust runner. */
+    double exhaustMassFlowKgPerSecond { 0.0 };
+    /** Oxygen-equivalent fresh air latched when this cylinder's intake valve
+     * closed, on the same basis as EngineState::airMassMgPerCycle.
+     */
+    double trappedFreshAirMassMg { 0.0 };
+    /** Net oxygen-equivalent fresh air delivered through this intake valve
+     * during the most recently completed 720-degree cycle.
+     */
+    double deliveredFreshAirMassMgPerCycle { 0.0 };
+    /**
+     * Burned mole fraction in the chamber at the instant of ignition -- i.e. the
+     * residual the gas exchange failed to expel, since nothing has burned yet.
+     *
+     * The flame model has always consumed this (it sets both the ignition-delay
+     * residual penalty and the dilution factor of `combustionEfficiency`), but
+     * it was only ever passed positionally into `FlameConditions` and never
+     * published, so a residual failure could only be seen through its downstream
+     * symptom: efficiency collapsing with no visible cause.
+     *
+     * Literature (Heywood ch. 6.4): 3-7 % at wide-open throttle, rising towards
+     * 20 % at idle where the pressure ratio across the overlap is adverse. A WOT
+     * figure above ~0.15 is a gas-exchange failure, not a calibration choice.
+     *
+     * Declared further down, next to the other named-assignment members.
+     */
     double pistonTravelMm { 0.0 };
     double pistonPositionMm { 0.0 };
     double pistonVelocityMps { 0.0 };
@@ -481,7 +645,40 @@ struct CylinderState final {
     std::uint32_t crankshaftId { 1 };
     std::uint32_t crankJournalId { 0 };
     double indicatedWorkJoulesPerCycle { 0.0 };
+    /**
+     * INSTANTANEOUS burned mole fraction, despite the name. Immediately after
+     * combustion it is ~1.0, so a cycle average of it is not a residual figure
+     * and cannot show a gas-exchange failure. Kept with this meaning because the
+     * comparison harness's stall diagnostic and the perf harness CSV both read
+     * it that way. For the residual, use `residualGasFractionAtSpark` below.
+     */
     double residualGasFraction { 0.0 };
+    /**
+     * Burned mole fraction sampled at the instant of ignition -- i.e. the
+     * residual the gas exchange failed to expel, since nothing has burned yet.
+     *
+     * The flame model has always consumed this quantity: it sets the
+     * ignition-delay residual penalty and the dilution factor of
+     * `combustionEfficiency`. But it was only ever passed positionally into
+     * `FlameConditions` and never published, so a residual failure could only be
+     * seen through its downstream symptom -- efficiency collapsing with no
+     * visible cause -- while the field named `residualGasFraction` reported
+     * something else entirely.
+     *
+     * Literature (Heywood ch. 6.4): 3-7 % at wide-open throttle, rising towards
+     * 20 % at idle where the pressure ratio across the overlap is adverse. A WOT
+     * figure above ~0.15 is a gas-exchange failure, not a calibration choice.
+     */
+    double residualGasFractionAtSpark { 0.0 };
+    /**
+     * Equivalence ratio in the chamber at the instant of ignition -- the mixture
+     * the flame model actually evaluated, which is what sets the mixture factor
+     * of `combustionEfficiency`. Distinct from `airFuelRatio`, a completed-cycle
+     * figure: a fixed crank-angle injection window occupies more crank degrees
+     * as speed rises, so at high rpm the charge can still be arriving when the
+     * spark fires and the flame sees a leaner mixture than the cycle reports.
+     */
+    double equivalenceRatioAtSpark { 0.0 };
     double airFuelRatio { 14.7 };
     double requestedFuelMgPerCycle { 0.0 };
     double deliveredFuelMgPerCycle { 0.0 };
@@ -491,6 +688,23 @@ struct CylinderState final {
     double valveLiftMultiplier { 1.0 };
     double intakeResonancePressureKpa { 0.0 };
     double intakeResonanceFrequencyHz { 0.0 };
+    /** Stagnation head of the arriving intake runner column, rho*u^2/2, in kPa.
+     *
+     * The charging pressure a column moving at `intakePortColumnVelocityMps` would
+     * present at the valve, over and above the port's static pressure. DIAGNOSTIC
+     * ONLY -- nothing reads it for flow. It peaks at full lift and is ~3 % of peak
+     * by the time the valve seats, which is why biasing the fill with it loses
+     * charge instead of trapping it; see the intake-valve comment in
+     * EngineSimulator.cpp and docs/physics-audit.md. Published because it is the
+     * quantity to watch when evaluating any future ram mechanism. */
+    double intakePortRamPressureKpa { 0.0 };
+    /** Runner column velocity at the valve plane, u = mdot_valve/(rho*A_runner).
+     *
+     * Referred to the runner cross-section, so it is the speed of the gas column
+     * whose momentum `intakePortRamPressureKpa` differentiates. Distinct from
+     * `intakeVelocityMps` (the valve-throat speed) and from the runner cell's own
+     * bulk velocity, which does not collapse at IVC. */
+    double intakePortColumnVelocityMps { 0.0 };
     /** Charge state in this cylinder's own intake runner, at the valve.
      *
      * What an IAT sensor in the port would read, and the direct determinant of
@@ -499,6 +713,21 @@ struct CylinderState final {
      * valve heats one runner at a time. */
     double intakeRunnerTemperatureC { 22.0 };
     double intakeRunnerChargePressureKpa { 101.325 };
+    /** True when heat release is governed by compression ignition instead of
+     *  a spark-initiated flame front.
+     */
+    bool compressionIgnition { false };
+    /** Resolved start of combustion in cylinder-cycle coordinates, where
+     *  firing TDC is zero. Negative means before firing TDC.
+     */
+    double combustionStartPhaseDegrees { 0.0 };
+    double combustionDurationMs { 0.0 };
+    /** Normalised initial pressure-rise propensity, used by diagnostics and
+     *  the physically distinct diesel combustion-noise renderer.
+     */
+    double combustionSharpness { 0.0 };
+    double directLiquidSprayFuelMg { 0.0 };
+    double directDispersingFuelMg { 0.0 };
 };
 
 struct EngineState final {
@@ -531,7 +760,22 @@ struct EngineState final {
     double ignitionAdvanceDegrees { 0.0 };
     double manifoldPressureKpa { 28.0 };
     double boostPressureRatio { 1.0 };
+    /**
+     * NOT back pressure. This is the `max` over cylinder ports of the
+     * INSTANTANEOUS exhaust-runner pressure -- a blowdown peak envelope. It
+     * reads like a mean and is not one: on a healthy V8 at 5,940 rpm it sits at
+     * 172 kPa while the gas is discharging freely. Audio and telemetry want the
+     * peak, so it stays; any back-pressure, pumping or restriction argument
+     * built on it is void. Use `exhaustBackPressureKpa` for that.
+     */
     double exhaustPressureKpa { 101.325 };
+    /**
+     * Cycle-mean exhaust back pressure: the port pressures averaged over the
+     * cylinders and then damped over several firing periods, which is what a
+     * real back-pressure gauge on a manifold boss reads. This is the quantity a
+     * restriction warning must be built on.
+     */
+    double exhaustBackPressureKpa { 101.325 };
     double intakeRunnerPressureKpa { 101.325 };
     double exhaustRunnerPressureKpa { 101.325 };
     double exhaustFlowGramsPerSecond { 0.0 };
@@ -561,6 +805,51 @@ struct EngineState final {
     double exhaustCouplingFrequencyHz { 0.0 };
     double volumetricEfficiency { 0.0 };
     double airMassMgPerCycle { 0.0 };
+    /**
+     * Charge mass that actually crossed the intake valves last cycle.
+     *
+     * Distinct from `airMassMgPerCycle`, which is the oxygen-equivalent air
+     * TRAPPED in the chambers -- the right quantity to meter fuel against,
+     * because it is what can burn, but not a measure of breathing: a chamber
+     * holding unburned oxygen (a misfire, a motored cylinder, or a cam with no
+     * lift at all) reports a full charge it never inducted. Measured on a
+     * zero-lift engine that the starter can now turn: `volumetricEfficiency`
+     * reads 1.031 while nothing whatsoever passes the valve. Induction is the
+     * quantity that is genuinely zero there.
+     *
+     * Note this is total charge mass, not air alone -- with port injection it
+     * carries the fuel vapour picked up in the runner -- so it is NOT a drop-in
+     * numerator for volumetric efficiency. See docs/physics-audit.md.
+     */
+    double inductedChargeMassMgPerCycle { 0.0 };
+    /**
+     * Fresh air DELIVERED past the intake valves last cycle, and the volumetric
+     * efficiency built on it.
+     *
+     * `volumetricEfficiency` above is a *trapping* figure: oxygen-equivalent air
+     * still in the chamber at IVC. Heywood's definition (ch. 2.10) is the mass
+     * of fresh air *inducted* per cycle over the ambient-density displacement --
+     * a delivery figure, and the one a dyno's air meter reads. The two differ by
+     * exactly the fresh charge that entered and was then pushed back out before
+     * the valve shut, so
+     *
+     *     trapping efficiency = volumetricEfficiency / deliveredVolumetricEfficiency
+     *
+     * and a ratio below 1 is charge the engine paid to accelerate and did not
+     * keep. That is not a bookkeeping curiosity: it is the direct per-cylinder
+     * read-out of the overlap backflow that the pumping loop
+     * (`pumpingMeanEffectivePressureBar`) shows in aggregate.
+     *
+     * Both are oxygen-derived, so both are fresh air on the same basis and their
+     * ratio is meaningful. Do NOT use `inductedChargeMassMgPerCycle` as the
+     * numerator instead -- it is total charge and carries port fuel vapour.
+     *
+     * A reverting cylinder can drive the net delivery negative over a cycle; the
+     * figure is published signed for that reason, and only the VE built on it is
+     * clamped non-negative.
+     */
+    double deliveredAirMassMgPerCycle { 0.0 };
+    double deliveredVolumetricEfficiency { 0.0 };
     double injectedFuelMgPerCycle { 0.0 };
     double deliveredFuelMgPerCycle { 0.0 };
     double fuelFlowGramsPerSecond { 0.0 };
@@ -578,8 +867,45 @@ struct EngineState final {
     double turbinePowerKw { 0.0 };
     double forcedInductionShaftSpeedRpm { 0.0 };
     double wastegateOpening { 0.0 };
+    double blowOffMassFlowKgPerSecond { 0.0 };
     double indicatedWorkJoulesPerCycle { 0.0 };
     double indicatedMeanEffectivePressureBar { 0.0 };
+    /**
+     * The two loops of the indicated diagram, published separately.
+     *
+     * `indicatedMeanEffectivePressureBar` above is the NET figure and already
+     * contains the gas-exchange loop; these two split it, and
+     * gross + pumping == net up to the difference between the engine-level
+     * torque accumulation and the per-cylinder p-dV integrals they come from.
+     *
+     * `pumpingMeanEffectivePressureBar` is SIGNED, not a loss magnitude:
+     * negative is the normal case (the piston spends work moving gas), and a
+     * supercharged engine whose intake stroke is pressurised can legitimately
+     * read positive. At wide-open throttle a healthy naturally aspirated engine
+     * sits around -0.2 to -0.6 bar, the loss growing with speed; a throttled
+     * one reaches -0.8 bar or worse, which is where the throttling loss lives.
+     *
+     * This is the number that exposes a gas-exchange failure. A cycle-averaged
+     * IMEP cannot: an engine that cannot evacuate its cylinder reports a
+     * perfectly healthy IMEP while paying twice, once in pumping work and once
+     * in the residual it re-inducts on the next intake stroke.
+     */
+    double pumpingMeanEffectivePressureBar { 0.0 };
+    /**
+     * The exhaust-stroke half of `pumpingMeanEffectivePressureBar`; the intake
+     * half is the remainder (`pumping - exhaustStroke`). Same sign convention.
+     *
+     * A single PMEP figure says an engine pumps too hard but not which side is
+     * at fault, and the two have unrelated causes: the exhaust half is back
+     * pressure (a duct, a collector, an exhaust-valve area, a terminal boundary
+     * condition), the intake half is depression (a plate, a runner, an
+     * intake-valve area). They are also of opposite physical sign at the pump --
+     * the exhaust stroke pushes against a positive gauge pressure while the
+     * intake stroke pulls against a negative one -- so a pair of errors on the
+     * two sides can partly cancel in the total and hide from a PMEP gate.
+     */
+    double exhaustStrokeMeanEffectivePressureBar { 0.0 };
+    double grossIndicatedMeanEffectivePressureBar { 0.0 };
     double indicatedPowerKw { 0.0 };
     double pdvTorqueNm { 0.0 };
     double powerKw { 0.0 };

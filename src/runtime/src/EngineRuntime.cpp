@@ -67,6 +67,30 @@ void publishAudioFrame(RealtimeAudioState& state, const EngineState& engineState
         engineState.forcedInductionShaftSpeedRpm)), std::memory_order_relaxed);
     state.wastegateOpening.store(static_cast<float>(std::clamp(
         engineState.wastegateOpening, 0.0, 1.0)), std::memory_order_relaxed);
+    constexpr double referenceTemperatureK = 288.15;
+    constexpr double referencePressureKpa = 101.325;
+    // SAE-style compressor corrected flow is referenced at the compressor
+    // inlet, not at the boosted manifold. A venting bypass still traverses the
+    // compressor and is therefore part of its actual throughput.
+    const auto inletTemperatureK = std::max(150.0,
+        static_cast<double>(state.ambientTemperatureC.load(
+            std::memory_order_relaxed)) + 273.15);
+    const auto inletPressureKpa = std::max(1.0,
+        static_cast<double>(state.ambientPressureKpa.load(
+            std::memory_order_relaxed)));
+    const auto correctedFlowKgPerSecond = (std::max(0.0,
+        engineState.airFlowGramsPerSecond * 0.001)
+        + std::max(0.0, engineState.blowOffMassFlowKgPerSecond))
+        * std::sqrt(inletTemperatureK / referenceTemperatureK)
+        / (inletPressureKpa / referencePressureKpa);
+    state.correctedAirFlowKgPerSecond.store(
+        static_cast<float>(correctedFlowKgPerSecond), std::memory_order_relaxed);
+    state.compressorPowerWatts.store(static_cast<float>(std::max(
+        0.0, engineState.compressorPowerKw * 1'000.0)), std::memory_order_relaxed);
+    state.turbinePowerWatts.store(static_cast<float>(std::max(
+        0.0, engineState.turbinePowerKw * 1'000.0)), std::memory_order_relaxed);
+    state.blowOffMassFlowKgPerSecond.store(static_cast<float>(std::max(
+        0.0, engineState.blowOffMassFlowKgPerSecond)), std::memory_order_relaxed);
     // Aggregate the dominant absolute intake-runner resonance while preserving
     // its sign/phase for the induction audio layer.
     double dominantAmplitude = 0.0;
@@ -132,6 +156,8 @@ EngineRuntime::EngineRuntime(EngineConfig config,
     }
     audioState_.ambientPressureKpa.store(static_cast<float>(config_.ambientPressureKpa),
                                          std::memory_order_relaxed);
+    audioState_.ambientTemperatureC.store(static_cast<float>(config_.ambientTemperatureC),
+                                          std::memory_order_relaxed);
     const auto pathCount = std::clamp<std::size_t>(config_.exhaustPaths.empty()
         ? 1U : config_.exhaustPaths.size(), 1U, maximumAudioExhaustPaths);
     audioState_.exhaustPathCount.store(static_cast<std::uint32_t>(pathCount), std::memory_order_relaxed);
@@ -659,6 +685,15 @@ void EngineRuntime::run(std::stop_token stopToken) {
         const auto producerTime = std::chrono::duration<double>(now - clockEpoch).count();
         audioState_.producerTimeNanoseconds.store(static_cast<std::uint64_t>(std::max(0.0, producerTime) * 1.0e9),
                                                   std::memory_order_release);
+        // Instrumentation escape hatch (see setRealtimeThrottleEnabled): with
+        // the throttle off the loop free-runs, so the realtime factor stops
+        // saturating at 1.0 and reads as capacity instead. The deadline is
+        // carried forward to `now` so the overrun counter does not fill with
+        // self-inflicted lateness that means nothing in this mode.
+        if (!realtimeThrottleEnabled_.load(std::memory_order_relaxed)) {
+            deadline = now;
+            continue;
+        }
         if (now > deadline) {
             timingOverruns_.fetch_add(1, std::memory_order_relaxed);
             const auto lateness = std::chrono::duration<double>(now - deadline).count();

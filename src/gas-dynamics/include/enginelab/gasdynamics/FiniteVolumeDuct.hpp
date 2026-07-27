@@ -159,8 +159,17 @@ private:
 
 struct DuctGeometry final {
     double lengthM { 1.0 };
-    /** Zero derives a circular area from diameterM. */
+    /** Reference/constant area. Zero derives a circular area from diameterM. */
     double crossSectionAreaM2 { 0.0 };
+    /** Optional end-face areas for a circular, linearly tapered quasi-1D duct.
+     *
+     * Zero inherits the reference area. Setting either value enables a real
+     * finite-volume area variation. Radius varies linearly between the end
+     * faces (a conical frustum), face fluxes are multiplied by local area and
+     * the momentum equation receives the p*dA/dx wall-force source.
+     */
+    double inletCrossSectionAreaM2 { 0.0 };
+    double outletCrossSectionAreaM2 { 0.0 };
     /** Hydraulic diameter used by wall friction and heat transfer. */
     double diameterM { 0.05 };
     std::size_t cellCount { 32 };
@@ -178,8 +187,36 @@ struct DuctGeometry final {
     double wallSpecificHeatJPerKgK { 500.0 };
     double externalWallHeatTransferWPerM2K { 0.0 };
     double externalTemperatureK { 300.0 };
+    /**
+     * Advance the wall exchange only once this much simulated time has
+     * accumulated, in one lump carrying the accumulated duration. Zero keeps
+     * it on every solver sub-step.
+     *
+     * The exchange is a slow process sampled absurdly finely: a runner cell
+     * moves about 0.04% of the gas-wall equilibrium gap per sub-step, a time
+     * constant near 69 ms integrated every ~26 us. Sub-rating it is worth far
+     * more than the wall arithmetic itself, because skipping the exchange also
+     * skips the extra `recoverPrimitiveStates` pass that only exists to feed
+     * it -- measured at 6.2% (coefficient chain), 11.0% (exchange) and ~10.8%
+     * (the extra recover) of the duct solver respectively.
+     *
+     * This is NOT the averaging trap documented in CLAUDE.md: no state is
+     * averaged before entering a non-linear law. The heat-transfer
+     * coefficient is *sampled* less often, and the exchange it then drives is
+     * the same exact two-capacity solution over a longer interval.
+     */
+    double wallHeatUpdateIntervalSeconds { 0.0 };
 
+    /** Length-mean area (and therefore volume / length). */
     [[nodiscard]] double areaM2() const noexcept;
+    [[nodiscard]] double inletAreaM2() const noexcept;
+    [[nodiscard]] double outletAreaM2() const noexcept;
+    [[nodiscard]] double faceAreaM2(std::size_t faceIndex) const noexcept;
+    [[nodiscard]] double cellAreaM2(std::size_t cellIndex) const noexcept;
+    [[nodiscard]] double cellVolumeM3(std::size_t cellIndex) const noexcept;
+    [[nodiscard]] double cellHydraulicDiameterM(
+        std::size_t cellIndex) const noexcept;
+    [[nodiscard]] bool hasVariableArea() const noexcept;
     [[nodiscard]] double cellLengthM() const noexcept;
     [[nodiscard]] bool valid() const noexcept;
 };
@@ -212,12 +249,14 @@ struct DuctAdvanceResult final {
     double wallHeatRejectedJ { 0.0 };
 };
 
-/** Preallocated second-order finite-volume solver for one constant-area duct.
+/** Preallocated second-order quasi-1D finite-volume solver.
  *
  * Spatial reconstruction is monotonised-central TVD. Time integration uses
  * SSP-RK2 and every accepted substep obeys a CFL limit. A non-physical trial
  * is rejected and retried at half step; no density, species or energy floor is
- * injected into the solution.
+ * injected into the solution. Constant-area ducts retain the exact legacy
+ * equations; a configured taper uses local face areas and the conservative
+ * geometric momentum source.
  */
 class FiniteVolumeDuct final {
 public:
@@ -241,6 +280,26 @@ public:
     }
     [[nodiscard]] double cellCentreM(std::size_t index) const noexcept;
     [[nodiscard]] ConservedInventory inventory() const noexcept;
+
+    /** Primitive state of every cell, recovered from the conservative state.
+     *
+     * Returns an empty span if the recovery fails, which is the same condition
+     * that stops an advance. The cache is refreshed on demand and shared with
+     * the solver, so repeated queries between advances cost nothing.
+     */
+    [[nodiscard]] std::span<const PrimitiveState> cellPrimitives() const noexcept {
+        return refreshCellStateCache() ? std::span<const PrimitiveState>(cellPrimitives_)
+                                       : std::span<const PrimitiveState> {};
+    }
+
+    /** Length-mean density and speed of sound over the duct.
+     *
+     * This is the acoustic medium of the duct as a whole: what a wave travelling
+     * its length actually propagates through. Returns false and leaves the
+     * outputs untouched when the state cannot be recovered.
+     */
+    [[nodiscard]] bool meanAcousticMedium(double& densityKgPerM3,
+                                          double& speedOfSoundMps) const noexcept;
     [[nodiscard]] std::span<const DuctWallThermalState> wallStates() const noexcept {
         return wallStates_;
     }
@@ -253,8 +312,9 @@ public:
      *
      * Boundary integrals use the same RK quadrature as the state update. For a
      * source-free duct they therefore close the extensive conservation balance
-     * to roundoff when multiplied by geometry().areaM2(). Periodic boundaries
-     * must be selected on both ends.
+     * to roundoff when the left and right integrals are multiplied by their
+     * respective end-face areas. Periodic boundaries must be selected on both
+     * ends and require equal end-face areas.
      */
     [[nodiscard]] DuctAdvanceResult advance(
         double durationSeconds,
@@ -271,9 +331,16 @@ private:
         std::span<ConservativeState> sourceTerms,
         double& maximumSignalSpeed,
         double& sourceLimitedTimeStep) const noexcept;
+    [[nodiscard]] bool recoverPrimitiveStates(
+        std::span<const ConservativeState> states,
+        std::span<PrimitiveState> primitives) const noexcept;
     [[nodiscard]] bool refreshCellStateCache() const noexcept;
     [[nodiscard]] bool applyDynamicWallHeatTransfer(
-        double durationSeconds, double& heatRejectedJ) noexcept;
+        std::span<ConservativeState> states,
+        std::span<const PrimitiveState> primitives,
+        std::span<DuctWallThermalState> wallStates,
+        double durationSeconds,
+        double& heatRejectedJ) const noexcept;
     void resetWallTemperature(double temperatureK) noexcept;
     [[nodiscard]] bool computeResidual(
         std::span<const ConservativeState> states,
@@ -305,12 +372,29 @@ private:
     std::vector<EulerFlux> faceFluxes_;
     std::vector<EulerFlux> stageFaceFluxes_;
     std::vector<DuctWallThermalState> wallStates_;
+    std::vector<DuctWallThermalState> candidateWallStates_;
+    std::vector<DuctWallHeatTransferGeometry> wallHeatTransferGeometries_;
+    // Geometry is immutable after configure(). Cache every per-cell term used
+    // by the RK hot path so a conical duct does not repeat sqrt/pow/lerp work
+    // for each cell, each stage and every acoustic substep.
+    std::vector<double> faceAreasM2_;
+    std::vector<double> cellVolumesM3_;
+    std::vector<double> inverseCellVolumesM3_;
+    std::vector<double> hydraulicDiametersM_;
+    std::vector<double> turbulentRoughnessTerms_;
+    std::vector<double> wallHeatConductancePerVolumes_;
+    double cellLengthM_ { 0.0 };
+    double localLossGradientPerM_ { 0.0 };
     mutable double maximumCellSignalSpeedMps_ { 0.0 };
     mutable double cellSourceLimitedTimeStepSeconds_ { 0.0 };
     double maximumStageSignalSpeedMps_ { 0.0 };
     double stageSourceLimitedTimeStepSeconds_ { 0.0 };
     double maximumCandidateSignalSpeedMps_ { 0.0 };
     double candidateSourceLimitedTimeStepSeconds_ { 0.0 };
+    // Simulated time advanced since the wall exchange last ran. Only ever
+    // committed on an accepted sub-step, so a rejected trial cannot leak into
+    // it and the sub-rating stays deterministic.
+    double wallHeatPendingSeconds_ { 0.0 };
     mutable bool cellStateCacheIsValid_ { false };
 };
 

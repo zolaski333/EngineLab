@@ -6,6 +6,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <span>
 #include <vector>
 
@@ -24,6 +25,22 @@ struct ExhaustGasNetworkConfig final {
     double wallSpecificHeatJPerKgK { 500.0 };
     double externalWallHeatTransferWPerM2K { 0.0 };
     double externalTemperatureK { 300.0 };
+    /** See `FiniteVolumeDuctGeometry::wallHeatUpdateIntervalSeconds`. Zero
+     *  keeps the wall exchange on every solver sub-step. */
+    double wallHeatUpdateIntervalSeconds { 0.0 };
+    /**
+     * Ignore the interval above and run the wall exchange only when
+     * `requestWallHeatUpdate()` says so.
+     *
+     * Set this for networks advanced CONCURRENTLY with siblings. A network
+     * timing its own sub-rating from its own accepted sub-steps drifts out of
+     * phase with its siblings within a few mechanical sub-steps, and a barrier
+     * costs the maximum over participants rather than the mean: measured on
+     * the LS3, self-timed sub-rating made the duct solver 24% cheaper, gained
+     * 19% with the pool disabled, and still lost 13% with it enabled, because
+     * the wall burst landed on a different dispatch for every cylinder.
+     */
+    bool wallHeatUpdateExternallyTriggered { false };
     double maximumCourantNumber { 0.42 };
     std::size_t maximumSubstepsPerAdvance { 100'000 };
 
@@ -180,6 +197,64 @@ public:
         return outletSamples_;
     }
 
+    /**
+     * Predicts what one terminal opening would push into `ambient` over
+     * `durationSeconds`, from the network's CURRENT state, without advancing
+     * anything and without mutating the network.
+     *
+     * This exists so several networks that share one reservoir can be advanced
+     * CONCURRENTLY while still each seeing the reservoir drawn down by the ones
+     * ordered before them. The caller walks a scratch copy of the reservoir
+     * through these predictions in a fixed order, hands each network the state
+     * it should see, advances them all in parallel, and then commits the real
+     * transfers. Without it the only option is to freeze the reservoir, which
+     * on the engine's intake plenum was measured to converge to the wrong
+     * pressure -- see EngineSimulator's runner pass.
+     *
+     * It is deliberately the first-stage flux only, not the two-stage integral
+     * `advance` reports: the point is a same-instant estimate of the ORDERING
+     * correction, and the exact transfer replaces it afterwards. A lagged
+     * estimate would not do -- the reservoir/duct coupling responds in tens of
+     * microseconds and one sub-step of lag drives it into a limit cycle.
+     *
+     * Returns nullopt for an unknown outlet, a non-positive duration, or a
+     * state the primitive recovery rejects.
+     */
+    [[nodiscard]] std::optional<ExhaustOutletFlowSample> predictOutletTransfer(
+        std::size_t outletIndex,
+        const ExhaustAmbientBoundary& ambient,
+        double durationSeconds) const noexcept;
+
+    /**
+     * Run the sub-rated duct wall exchange on the next `advance`, carrying all
+     * the simulated time accumulated since the last one. Only consulted when
+     * `wallHeatUpdateExternallyTriggered` is set; the flag is cleared once the
+     * exchange has actually been applied to an accepted sub-step, so a request
+     * cannot be lost to a rejected trial.
+     *
+     * The caller owns this cadence because only the caller knows the phase.
+     * See the config field for what happens when a network times it alone.
+     */
+    void requestWallHeatUpdate() noexcept { wallHeatUpdateRequested_ = true; }
+
+    /** Add species mass as a source in the duct cell adjacent to a cylinder
+     * port, together with its sensible internal energy at temperatureK and an
+     * optional additional heat term (negative for evaporation charge cooling).
+     *
+     * This is the network-side half of a port fuel injector or secondary-air
+     * source: the mass appears with zero axial momentum, exactly like a wall
+     * film evaporating into the stream. The candidate state is committed only
+     * if it stays physically admissible, so a pathological command degrades to
+     * a refused injection instead of a poisoned solve. Ports attached to a
+     * junction are not supported (no compiled layout produces one for a runner
+     * and a junction's primitive cache is not owned by the duct).
+     */
+    [[nodiscard]] bool injectSpeciesAtPort(std::size_t portIndex,
+                                           GasSpecies species,
+                                           double massKg,
+                                           double temperatureK,
+                                           double additionalHeatJ) noexcept;
+
 private:
     struct ConservedFlowRate final {
         std::array<double, gasSpeciesCount> speciesMassKgPerS {};
@@ -194,12 +269,19 @@ private:
         bool useStageState,
         std::span<const CylinderValveBoundary> cylinderBoundaries,
         const ExhaustAmbientBoundary& ambient) noexcept;
-    [[nodiscard]] bool prepareStageStates(bool candidateStage) noexcept;
+    [[nodiscard]] bool prepareStageStates(
+        bool candidateStage,
+        bool deferDynamicWallSources = false) noexcept;
     void updateOutletSamples(double durationSeconds) noexcept;
 
     EulerMixtureModel mixtureModel_;
     ExhaustNetworkLayout layout_;
     ExhaustGasNetworkConfig config_ {};
+    // The network drives every duct with one shared trial step, so the
+    // sub-rating accumulator is network-wide rather than per duct: the ducts
+    // would otherwise all hold the same value anyway.
+    double wallHeatPendingSeconds_ { 0.0 };
+    bool wallHeatUpdateRequested_ { false };
     std::vector<FiniteVolumeDuct> ducts_;
     std::vector<ConservativeState> junctionStates_;
     std::vector<ConservativeState> junctionStage_;

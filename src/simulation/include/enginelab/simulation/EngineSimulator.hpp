@@ -5,6 +5,7 @@
 #include <enginelab/physics/IPhysicsModel.hpp>
 #include <enginelab/physics/ConservativeGasSystem.hpp>
 #include <enginelab/physics/FlamePhysicsModel.hpp>
+#include <enginelab/physics/CompressionIgnitionModel.hpp>
 #include <enginelab/physics/FuelInjectionModel.hpp>
 #include <enginelab/physics/EndGasKnockModel.hpp>
 #include <enginelab/physics/IndicatedWorkModel.hpp>
@@ -12,6 +13,7 @@
 #include <enginelab/physics/HelmholtzRunnerModel.hpp>
 #include <enginelab/physics/MechanicalKinematics.hpp>
 #include <enginelab/physics/DuctWallHeatTransferModel.hpp>
+#include <enginelab/simulation/CylinderWorkerPool.hpp>
 #include <enginelab/simulation/IEngineSimulation.hpp>
 #include <enginelab/events/CylinderPressureSample.hpp>
 #include <enginelab/foundation/SpscQueue.hpp>
@@ -43,6 +45,19 @@ public:
 private:
     /** Compile and allocate the mandatory nonlinear exhaust network. */
     void configurePhysicalExhaustNetwork();
+    /** Assemble one 1-D finite-volume runner duct per cylinder.
+     *
+     * Intake tuning is a wave phenomenon: a lumped runner cell has no
+     * propagation delay, so nothing can arrive at the valve in phase and the
+     * fill can never exceed static manifold density. Four algebraic bias
+     * formulations were measured and refuted before this (docs/physics-audit.md
+     * "L'inertance de runner"); what was missing is the dimension, not a
+     * coefficient. Each runner reuses the exhaust's FV network machinery with
+     * the intake valve as the cylinder Riemann port and the plenum as the
+     * ambient reservoir behind the runner mouth.
+     */
+    void configurePhysicalIntakeNetworks();
+    void configureIntakeWorkerPool();
     [[nodiscard]] RunningState determineRunningState(const EngineControls&) const noexcept;
     void accumulateCycleTelemetry(double previousAngleDegrees, double travelledDegrees,
                                   double dtSeconds, double indicatedTorqueNm,
@@ -54,8 +69,26 @@ private:
     IFiringEventGenerator& eventGenerator_;
     IExhaustModel& exhaust_;
     EngineState state_;
+    /** Immutable authored topology compiled once. Path/bank searches used to
+     * run several times per cylinder per gas substep, despite none of their
+     * inputs changing during a simulation. */
+    std::array<std::size_t, 32> intakePathIndexByCylinder_ {};
+    std::array<std::size_t, 32> exhaustPathIndexByCylinder_ {};
     std::array<double, 32> previousCylinderPhases_ {};
     std::array<double, 32> intakeRunnerPressureKpa_ {};
+    /** Intake runner column velocity at the valve plane, and the stagnation head
+     *  rho*u^2/2 it carries, per cylinder. Diagnostics; neither drives flow.
+     *
+     * A 0-D runner cell cannot represent its own inertance: the cell's
+     * `bulkVelocityMps()` is a net average that does not collapse when the valve
+     * shuts, so the event that actually creates ram charging is absent from it.
+     * These carry the velocity referred to the runner cross-section,
+     * u = mdot_valve / (rho * A_runner), which does collapse (measured 82.5 ->
+     * -2.8 m/s across IVC against 40.9 -> 40.3 for the cell average). See the
+     * second intake half-step in EngineSimulator.cpp for what was measured on
+     * top of them and why none of it is wired. */
+    std::array<double, 32> intakeValveColumnVelocityMps_ {};
+    std::array<double, 32> intakePortRamKpa_ {};
     std::array<double, 32> exhaustRunnerPressureKpa_ {};
     std::array<double, 32> exhaustRunnerVelocityMps_ {};
     std::array<double, 32> exhaustRunnerTemperatureK_ {};
@@ -125,20 +158,70 @@ private:
     std::array<std::array<ExhaustNetworkBoundary, exhaustBoundaryKnotCount>, 32>
         exhaustBoundaryKnots_ {};
     std::size_t exhaustBoundaryKnotWrite_ { 0 };
+    /** Length-mean acoustic medium of every compiled exhaust duct, refreshed on
+     *  each coupling flush and republished on every substep in between. */
+    std::array<float, CylinderPressureSample::maximumExhaustDucts>
+        exhaustDuctDensityKgPerM3_ {};
+    std::array<float, CylinderPressureSample::maximumExhaustDucts>
+        exhaustDuctSpeedOfSoundMps_ {};
+    std::size_t exhaustDuctMediumCount_ { 0 };
     std::array<double, 32> chamberPressureBar_ {};
     std::array<double, 32> intakeFlowMgPerCycle_ {};
     std::array<double, 32> exhaustFlowMgPerCycle_ {};
     std::array<double, 32> intakeFlowMgThisCycle_ {};
     std::array<double, 32> exhaustFlowMgThisCycle_ {};
+    /** Oxygen-equivalent fresh air across the intake valve, signed and NET, so
+     *  reversion subtracts what it carries back out. Latched per cycle beside
+     *  the total-charge accumulators above. */
+    std::array<double, 32> deliveredAirMgPerCycle_ {};
+    std::array<double, 32> deliveredAirMgThisCycle_ {};
     std::array<bool, 32> cylinderFlowCycleStarted_ {};
     std::array<double, 32> cylinderWallTemperatureC_ {};
     std::array<GasCell, 32> intakePlenumGas_ {};
     std::size_t intakePlenumCount_ { 1 };
-    std::array<GasCell, 32> intakeRunnerGas_ {};
-    std::array<DuctWallThermalState, 32> intakeRunnerWallStates_ {};
+    /** One 1-D finite-volume runner per cylinder (see
+     * configurePhysicalIntakeNetworks). The plenum stays a lumped cell — a
+     * plenum is physically a compliance — while the runner, which is the organ
+     * pipe intake tuning lives in, is resolved in space. Advanced twice per
+     * mechanical substep (a symmetric split around the exhaust coupling, like
+     * the lumped valve orifice it replaces), each network couples one cylinder
+     * boundary to its own path's plenum, so cylinders only interact through
+     * the shared plenum cell exactly as before. */
+    std::array<std::unique_ptr<gasdynamics::ExhaustGasNetwork>, 32> intakeRunnerNetworks_;
+    /** Workers for the per-cylinder half of the runner advance, which the
+     * profiler puts at 75-84% of the mechanical sub-step. Null when the engine
+     * is too small or the machine too narrow for a barrier to pay for itself,
+     * in which case the phase runs inline. Read CylinderWorkerPool's header
+     * before touching this: an earlier per-cylinder fork-join over a much
+     * smaller body was measured and removed. */
+    std::unique_ptr<CylinderWorkerPool> intakeWorkerPool_;
+    /** Scratch plenum cells the Gauss-Seidel staircase is walked through
+     * before the runner advances run concurrently. A member rather than a
+     * local so a V12 does not copy twelve gas cells onto the stack twice per
+     * mechanical sub-step. Nothing outside that pre-pass reads it, and it is
+     * fully overwritten at the start of every pass. */
+    std::array<GasCell, 32> plenumStaircaseScratch_ {};
+    /** How many serial groups the concurrent runner pass is split into. One is
+     * full concurrency; a group per cylinder is the old serial scheme exactly,
+     * which is what an engine with no worker pool gets. Chosen from the
+     * measured accuracy of the plenum staircase prediction, not from the thread
+     * count -- see `configureIntakeWorkerPool`. */
+    double intakeWallHeatPendingSeconds_ { 0.0 };
+    std::size_t intakePredictionGroupCount_ { 32 };
+    /** Fixed-point rounds used to reconstruct the plenum drawdown staircase
+     * before the concurrent runner advances. Each round costs one concurrent
+     * prediction dispatch and one cheap serial sweep. */
+    std::size_t intakeStaircaseRounds_ { 2 };
+    /** Port-end (valve-side) runner state published for telemetry, the
+     * Helmholtz telemetry model and the acoustic intake excitation. Refreshed
+     * from each network advance's exchange record. */
+    std::array<double, 32> intakePortTemperatureK_ {};
+    std::array<double, 32> intakePortDensityKgPerM3_ {};
+    std::array<double, 32> intakePortSpeedOfSoundMps_ {};
     std::array<GasCell, 32> cylinderGas_ {};
     std::array<double, 32> instantaneousCombustionPulse_ {};
     std::array<double, 32> injectedFuelMolesThisCycle_ {};
+    std::array<double, 32> entrainedFuelMolesThisCycle_ {};
     std::array<double, 32> meteredFuelMolesLastCycle_ {};
     std::array<double, 32> deliveredFuelMolesLastCycle_ {};
     std::array<double, 32> requestedFuelMolesThisCycle_ {};
@@ -147,8 +230,23 @@ private:
     std::array<double, 32> trappedAirSourceTemperatureKLastCycle_ {};
     std::array<double, 32> actualAfrLastCycle_ {};
     std::array<double, 32> fuelDeliveryRatio_ {};
+    // Largest pulse the injector was asked to deliver this cycle, and the
+    // fraction of it that actually metered before the window closed. The latter
+    // isolates real injector-capacity saturation from closed-loop trim: it reads
+    // 1.0 whenever the injector keeps up with its command, however large the
+    // trim, and only falls when the injector physically runs out of time.
+    std::array<double, 32> commandedFuelMolesMaxThisCycle_ {};
+    std::array<double, 32> injectorCapacityRatio_ {};
     std::array<double, 32> closedLoopFuelTrim_ {};
+    /** Separate high-throttle adaptation cell. A single scalar let a rich WOT
+     *  transient erase the low-load correction needed on return to idle. */
+    std::array<double, 32> highLoadClosedLoopFuelTrim_ {};
+    /** The first transition must be continuous: seed the high-load cell from
+     *  the already learned low-load value, then let both regions diverge. */
+    std::array<bool, 32> highLoadClosedLoopFuelTrimSeeded_ {};
     std::array<FlameEvent, 32> flameEvents_ {};
+    std::array<CompressionIgnitionState, 32> compressionIgnitionStates_ {};
+    std::array<CompressionIgnitionResult, 32> compressionIgnitionResults_ {};
     std::array<FuelInjectionState, 32> injectionStates_ {};
     std::array<EndGasKnockState, 32> endGasKnockStates_ {};
     std::array<IndicatedWorkState, 32> indicatedWorkStates_ {};
@@ -157,6 +255,14 @@ private:
     std::array<HelmholtzRunnerState, 32> runnerAcousticStates_ {};
     std::array<HelmholtzRunnerResult, 32> runnerAcousticResults_ {};
     std::array<double, 32> ignitionDelayRemainingSeconds_ {};
+    /** Burned mole fraction sampled at the instant of ignition. Nothing has
+     *  burned yet at that point, so it is the residual left by gas exchange --
+     *  the quantity the flame model has always consumed and nothing published. */
+    std::array<double, 32> residualGasFractionAtSpark_ {};
+    /** Equivalence ratio the flame actually saw at ignition. Not the same as
+     *  the cycle AFR the ECU reports: with a late injection window the charge
+     *  can still be arriving when the spark fires. */
+    std::array<double, 32> equivalenceRatioAtSpark_ {};
     std::array<bool, 32> ignitionPending_ {};
     FlamePhysicsModel flamePhysics_ {};
     std::array<bool, 32> cylinderMisfires_ {};

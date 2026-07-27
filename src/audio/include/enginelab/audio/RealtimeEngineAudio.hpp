@@ -1,11 +1,14 @@
 #pragma once
 #include <enginelab/audio/AcousticExhaustNetwork.hpp>
+#include <enginelab/audio/AcousticIntakeNetwork.hpp>
+#include <enginelab/audio/ForcedInductionAcoustics.hpp>
 #include <enginelab/audio/IAudioRenderer.hpp>
 #include <enginelab/audio/PipeRadiationModel.hpp>
 #include <enginelab/audio/BoundaryReconstructionFilter.hpp>
 #include <enginelab/audio/DuctWallLoss.hpp>
 #include <enginelab/audio/ExpansionChamberMuffler.hpp>
 #include <enginelab/audio/RealtimeConvolutionBank.hpp>
+#include <enginelab/audio/StructuralModalRadiator.hpp>
 #include <enginelab/audio/ValveFlowAcousticSource.hpp>
 #include <enginelab/audio/ValvePortTermination.hpp>
 #include <enginelab/runtime/EngineRuntime.hpp>
@@ -28,7 +31,8 @@ class RealtimeEngineAudio final : public IAudioRenderer {
 public:
     RealtimeEngineAudio(FiringEventQueue& queue, RealtimeAudioState& state,
                         CylinderPressureQueue* pressureQueue = nullptr,
-                        const ExhaustGraph* exhaustGraph = nullptr);
+                        const ExhaustGraph* exhaustGraph = nullptr,
+                        const EngineConfig* engineConfig = nullptr);
     void prepare(double sampleRate, int maximumBlockSize) noexcept override;
     void release() noexcept override;
     void render(juce::AudioBuffer<float>& output, int startSample, int sampleCount) noexcept override;
@@ -69,6 +73,15 @@ public:
     [[nodiscard]] bool compiledExhaustTopologyActive() const noexcept {
         return acousticExhaustNetwork_ != nullptr;
     }
+    [[nodiscard]] bool structuralRadiationActive() const noexcept {
+        return structuralModalRadiator_ != nullptr;
+    }
+    [[nodiscard]] bool compiledIntakeTopologyActive() const noexcept {
+        return acousticIntakeNetwork_ != nullptr;
+    }
+    [[nodiscard]] bool forcedInductionAcousticsActive() const noexcept {
+        return forcedInductionAcoustics_ != nullptr;
+    }
     /** Samples rendered on the legacy procedural path.
      *
      * Non-zero after start-up means the physical boundary was unavailable or
@@ -85,6 +98,26 @@ public:
     [[nodiscard]] float maxObservedExhaustPressurePa() const noexcept {
         return maxObservedExhaustPressurePa_.load(std::memory_order_relaxed);
     }
+    [[nodiscard]] float maxObservedIntakePressurePa() const noexcept {
+        return maxObservedIntakePressurePa_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] AcousticIntakeNetwork::Diagnostics
+    intakeNetworkDiagnostics() const noexcept {
+        return {
+            maxIntakeSourcePressurePa_.load(std::memory_order_relaxed),
+            maxIntakeRunnerPressurePa_.load(std::memory_order_relaxed),
+            maxIntakePlenumPressurePa_.load(std::memory_order_relaxed),
+            maxIntakeAirboxPressurePa_.load(std::memory_order_relaxed),
+            maxIntakeMouthPressurePa_.load(std::memory_order_relaxed),
+            maxIntakeRadiatedPressurePa_.load(std::memory_order_relaxed)
+        };
+    }
+    [[nodiscard]] float maxObservedStructuralPressurePa() const noexcept {
+        return maxObservedStructuralPressurePa_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] float maxPreLimiterMagnitude() const noexcept {
+        return maxPreLimiterMagnitude_.load(std::memory_order_relaxed);
+    }
     /** Sample-rate invariant quantisation used by the physical runner lines. */
     [[nodiscard]] static std::size_t runnerDelaySamples(double delaySeconds,
                                                         double sampleRate) noexcept;
@@ -94,9 +127,11 @@ private:
         float amplitude {}, decay {}, ageSeconds {}, attackSeconds {}, blowdownSeconds {};
         float bodyFrequency {}, crackFrequency {}, pipeFrequency {}, knockFrequency {};
         float leftGain {}, rightGain {}, filterState {}, turbulence {}, knock {};
+        float combustionSharpness {};
         float massFlow {}, runnerPressure {}, jetBandState {}, jetLowState {}, jetHighState {};
         std::uint32_t exhaustPathIndex {};
         bool exhaust {};
+        bool compressionIgnition {};
         bool active {};
     };
     struct PendingEvent { FiringEvent event {}; double scheduledTimeSeconds {}; bool exhaust {}; };
@@ -184,6 +219,10 @@ private:
          *  per-block wall-loss fit does not need per-sample transcendentals. */
         float mediumDensityKgPerM3 { 1.2F };
         float mediumSoundSpeedMps { 343.0F };
+        /** Total mean exhaust mass flow leaving this path, cached from the last
+         *  physical sample. Drives the outlet mean-flow convective loss so the
+         *  wave network is not a quiescent (near-lossless) pipe. */
+        float meanExhaustMassFlowKgPerSecond { 0.0F };
         /** Expansion-chamber silencer at the collector end of the duct.
          *  Disabled until the engine publishes a chamber, in which state it is
          *  an exact through-connection. See ExpansionChamberMuffler. */
@@ -267,6 +306,12 @@ private:
     /** Complete compiled DAG used by production engines. Null only for legacy
      * producers/tests that did not supply topology. */
     std::unique_ptr<AcousticExhaustNetwork> acousticExhaustNetwork_;
+    /** Block/head modes compiled from immutable engine geometry. */
+    std::unique_ptr<StructuralModalRadiator> structuralModalRadiator_;
+    /** Runners/plenums/throttles/inlets compiled from EngineConfig. */
+    std::unique_ptr<AcousticIntakeNetwork> acousticIntakeNetwork_;
+    /** Rotor-order tones and jet radiation, parameterised by physical geometry. */
+    std::unique_ptr<ForcedInductionAcoustics> forcedInductionAcoustics_;
     // Sized in prepare() to the cylinders and paths the loaded engine actually
     // has. Allocation stays off the callback; only the capacity is no longer a
     // worst-case guess paid for by every engine.
@@ -293,8 +338,6 @@ private:
     float lowPassRight_ { 0.0F };
     float pressureTailDecay_ { 0.992F };
     float pressureTailInputCoefficient_ { 0.010F };
-    float bovDecay_ { 0.9994F };
-    float bovNoiseCoefficient_ { 0.08F };
     float jitterCoefficient_ { 0.015F };
     float collectorCoefficient_ { 0.18F };
     float levelAttackCoefficient_ { 0.0025F };
@@ -356,6 +399,7 @@ private:
      *  BoundaryReconstructionFilter. */
     BoundaryReconstructionFilter::Coefficients boundaryReconstruction_ {};
     double boundaryReconstructionCouplingHz_ { 0.0 };
+    double valveFlowSourceSamplingHz_ { 0.0 };
     std::array<BoundaryReconstructionFilter::State, 32> boundaryReconstructionPressure_ {};
     std::array<BoundaryReconstructionFilter::State, 32> boundaryReconstructionFlow_ {};
     ValveFlowAcousticSource::Coefficients valveFlowAcousticSource_ {};
@@ -371,14 +415,10 @@ private:
     double mechanicalPhase_ { 0.0 };
     double valvetrainPhase_ { 0.0 };
     double starterPhase_ { 0.0 };
-    double fiWhistlePhase_ { 0.0 };
     float smoothedRpm_ { 0.0F };
     float intakeFilter_ { 0.0F };
     float intakeSvfLow_ { 0.0F };
     float intakeSvfBand_ { 0.0F };
-    float bovEnvelope_ { 0.0F };
-    float bovNoiseState_ { 0.0F };
-    float previousThrottleForBov_ { 0.0F };
     std::atomic<std::uint64_t> lateEvents_ { 0 };
     std::atomic<std::uint64_t> stolenVoices_ { 0 };
     std::atomic<std::uint64_t> droppedPendingEvents_ { 0 };
@@ -387,6 +427,15 @@ private:
     std::atomic<std::uint64_t> levelLimitedSamples_ { 0 };
     std::atomic<float> minObservedLevelGain_ { 1.0F };
     std::atomic<float> maxObservedExhaustPressurePa_ { 0.0F };
+    std::atomic<float> maxObservedIntakePressurePa_ { 0.0F };
+    std::atomic<float> maxIntakeSourcePressurePa_ { 0.0F };
+    std::atomic<float> maxIntakeRunnerPressurePa_ { 0.0F };
+    std::atomic<float> maxIntakePlenumPressurePa_ { 0.0F };
+    std::atomic<float> maxIntakeAirboxPressurePa_ { 0.0F };
+    std::atomic<float> maxIntakeMouthPressurePa_ { 0.0F };
+    std::atomic<float> maxIntakeRadiatedPressurePa_ { 0.0F };
+    std::atomic<float> maxObservedStructuralPressurePa_ { 0.0F };
+    std::atomic<float> maxPreLimiterMagnitude_ { 0.0F };
     std::atomic<std::uint64_t> legacyPathSamples_ { 0 };
     std::atomic<std::uint64_t> invalidBoundarySamples_ { 0 };
 };

@@ -99,7 +99,14 @@ DrivelineOutput DrivelineModel::advance(double dt, const EngineState& engineStat
     double lastSlipRpm = 0.0;
     double lastTireForce = 0.0;
     double lastRoadLoadForce = 0.0;
-    bool tractionLimited = false;
+    // Counted, not latched. This used to be a sticky OR across the mechanical
+    // sub-steps, so a single clipped sub-step out of five lit the indicator for
+    // the whole frame -- and with a slip-velocity spring this stiff, one clipped
+    // sub-step happens on every gearshift and every kerb-strength transient. The
+    // panel then showed a permanent "tyre limited" on an engine cruising far
+    // below the limit. Report saturation only when the tyre actually spent most
+    // of the frame on its friction limit. Display-only: no physics reads this.
+    std::size_t tractionLimitedSteps = 0;
     for (int step = 0; step < mechanicalStepCount; ++step) {
         const auto previousWheelOmega = wheelAngularVelocityRadPerSecond_;
         const auto previousVehicleSpeed = vehicleSpeedMps_;
@@ -116,7 +123,7 @@ DrivelineOutput DrivelineModel::advance(double dt, const EngineState& engineStat
         const auto slipVelocity = tireSurfaceSpeed - previousVehicleSpeed;
         const auto unconstrainedTireForce = slipVelocity * tireStiffnessNPerMps;
         lastTireForce = std::clamp(unconstrainedTireForce, -tractionLimit, tractionLimit);
-        tractionLimited = tractionLimited || std::abs(unconstrainedTireForce) > tractionLimit + 1.0e-6;
+        if (std::abs(unconstrainedTireForce) > tractionLimit + 1.0e-6) ++tractionLimitedSteps;
         const auto motionSign = std::abs(previousWheelOmega) > 0.01
             ? std::copysign(1.0, previousWheelOmega)
             : (std::abs(previousVehicleSpeed) > 0.01 ? std::copysign(1.0, previousVehicleSpeed) : 0.0);
@@ -209,7 +216,8 @@ DrivelineOutput DrivelineModel::advance(double dt, const EngineState& engineStat
     output.wheelTorqueNm = wheelTorqueIntegral * inverseDt;
     output.clutchSlipRpm = lastSlipRpm;
     output.tireForceN = lastTireForce;
-    output.tractionLimited = tractionLimited;
+    output.tractionLimited = mechanicalStepCount > 0
+        && tractionLimitedSteps * 2 > static_cast<std::size_t>(mechanicalStepCount);
     const auto storedEnergy = 0.5 * wheelInertia * wheelAngularVelocityRadPerSecond_
         * wheelAngularVelocityRadPerSecond_ + 0.5 * vehicle.massKg * vehicleSpeedMps_ * vehicleSpeedMps_;
     const auto energyResidual = energyInitialised_

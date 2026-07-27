@@ -38,8 +38,20 @@ ActionMap::ActionMap()
 
 bool ActionMap::matches(AppAction action, const juce::KeyPress& key) const noexcept {
     const auto& binding = entries_[static_cast<std::size_t>(action)].key;
-    return key.getKeyCode() == binding.getKeyCode()
-        && key.getModifiers().withoutMouseButtons() == binding.getModifiers().withoutMouseButtons();
+    if (key.getKeyCode() != binding.getKeyCode()) return false;
+    auto keyModifiers = key.getModifiers().withoutMouseButtons();
+    const auto bindingModifiers = binding.getModifiers().withoutMouseButtons();
+    // Shift doubles as the momentary clutch (see MainComponent), and JUCE stamps
+    // the Shift flag onto every key event generated while it is held. With an
+    // exact modifier comparison that made holding the clutch suppress every
+    // unmodified control -- including the gear-shift keys, so "hold the clutch
+    // and you cannot change gear". Unless a binding deliberately uses Shift,
+    // ignore the Shift flag here, matching the subset semantics isDown() already
+    // uses for held controls. Ctrl/Alt/Cmd stay exact so distinct modified
+    // bindings and OS shortcuts are unaffected.
+    if (!bindingModifiers.isShiftDown())
+        keyModifiers = keyModifiers.withoutFlags(juce::ModifierKeys::shiftModifier);
+    return keyModifiers == bindingModifiers;
 }
 
 bool ActionMap::isDown(AppAction action) const noexcept {

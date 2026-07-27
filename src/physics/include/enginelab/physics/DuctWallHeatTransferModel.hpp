@@ -33,9 +33,34 @@ struct DuctWallHeatTransferResult final {
     double heatRejectedJ { 0.0 };
 };
 
+/** Immutable circular-wall terms prepared once for a fixed duct cell. */
+struct DuctWallHeatTransferGeometry final {
+    double innerDiameterM { 0.0 };
+    double wallHeatCapacityJPerK { 0.0 };
+    double innerAreaM2 { 0.0 };
+    double externalConductanceWPerK { 0.0 };
+
+    [[nodiscard]] bool valid() const noexcept;
+};
+
 /** Conservative gas-to-solid heat exchange for a circular duct wall. */
 class DuctWallHeatTransferModel final {
 public:
+    [[nodiscard]] static DuctWallHeatTransferGeometry prepareGeometry(
+        double innerDiameterM,
+        double lengthM,
+        double wallThicknessM,
+        double wallDensityKgPerM3,
+        double wallSpecificHeatJPerKgK,
+        double externalHeatTransferWPerM2K) noexcept;
+
+    /** Advance using immutable geometry prepared outside the realtime loop. */
+    [[nodiscard]] static DuctWallHeatTransferResult advancePrepared(
+        DuctWallThermalState&,
+        const DuctWallHeatTransferGeometry&,
+        const DuctWallHeatTransferConditions&) noexcept;
+
+    /** Compatibility entry point that prepares the geometry for this call. */
     [[nodiscard]] static DuctWallHeatTransferResult advance(
         DuctWallThermalState&, const DuctWallHeatTransferConditions&) noexcept;
 };

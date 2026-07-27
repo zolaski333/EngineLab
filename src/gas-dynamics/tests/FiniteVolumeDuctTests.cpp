@@ -219,6 +219,85 @@ void testPeriodicConservation() {
                 "periodic face flux must be identical at both mesh ends");
 }
 
+void testVariableAreaQuasiOneDimensionalConservation() {
+    EulerMixtureModel model;
+    auto geometry = losslessGeometry(0.9, 180);
+    geometry.crossSectionAreaM2 = 0.0;
+    geometry.inletCrossSectionAreaM2 = 0.0080;
+    geometry.outletCrossSectionAreaM2 = 0.0020;
+    const auto uniform = makeState(
+        model, 1.12, 0.0, 128'000.0, GasComposition::dryAir());
+    FiniteVolumeDuct duct;
+    const auto exactFrustumMeanAreaM2 =
+        (0.0080 + std::sqrt(0.0080 * 0.0020) + 0.0020) / 3.0;
+    require(geometry.valid() && geometry.hasVariableArea()
+            && relativeError(geometry.areaM2(), exactFrustumMeanAreaM2)
+                < 1.0e-14,
+        "a conical taper must expose valid end areas and exact mean area");
+    require(duct.configure(geometry, uniform),
+        "variable-area quasi-1D duct must configure");
+    const auto expectedVolumeM3 =
+        exactFrustumMeanAreaM2 * geometry.lengthM;
+    const auto initialInventory = duct.inventory();
+    require(relativeError(initialInventory.totalEnergyJ,
+                uniform.totalEnergyDensityJPerM3 * expectedVolumeM3)
+            < 2.0e-14,
+        "taper inventory must use each control volume's physical area");
+
+    const auto equilibrium = duct.advance(
+        0.003, DuctBoundaryCondition::transmissive(),
+        DuctBoundaryCondition::transmissive());
+    require(equilibrium.completed && equilibrium.rejectedSubsteps == 0,
+        "stationary gas in a taper must remain a stable equilibrium");
+    for (const auto& cell : duct.cells()) {
+        require(relativeError(cell.densityKgPerM3(),
+                    uniform.densityKgPerM3()) < 3.0e-13
+                && std::abs(cell.momentumDensityKgPerM2S) < 2.0e-10
+                && relativeError(cell.totalEnergyDensityJPerM3,
+                    uniform.totalEnergyDensityJPerM3) < 3.0e-13,
+            "p*dA/dx must exactly balance pressure-flux divergence at rest");
+    }
+
+    const auto moving = makeState(
+        model, 1.05, 42.0, 118'000.0, GasComposition::dryAir());
+    require(duct.configure(geometry, moving),
+        "moving taper conservation fixture must configure");
+    const auto before = duct.inventory();
+    const auto result = duct.advance(
+        0.00035, DuctBoundaryCondition::transmissive(),
+        DuctBoundaryCondition::transmissive());
+    const auto after = duct.inventory();
+    require(result.completed,
+        "a moving flow must remain physical through a four-to-one contraction");
+    for (std::size_t index = 0; index < gasSpeciesCount; ++index) {
+        const auto expectedChange =
+            geometry.inletAreaM2()
+                * result.leftBoundaryFlux.speciesMassKgPerM2[index]
+            - geometry.outletAreaM2()
+                * result.rightBoundaryFlux.speciesMassKgPerM2[index];
+        require(std::abs((after.speciesMassKg[index]
+                    - before.speciesMassKg[index]) - expectedChange)
+                < std::max(1.0e-13,
+                    std::abs(before.speciesMassKg[index]) * 3.0e-10),
+            "taper mass inventory must close against its unequal face areas");
+    }
+    const auto expectedEnergyChange =
+        geometry.inletAreaM2()
+            * result.leftBoundaryFlux.totalEnergyJPerM2
+        - geometry.outletAreaM2()
+            * result.rightBoundaryFlux.totalEnergyJPerM2;
+    require(std::abs((after.totalEnergyJ - before.totalEnergyJ)
+                - expectedEnergyChange)
+            < std::max(1.0e-9, std::abs(before.totalEnergyJ) * 3.0e-10),
+        "taper energy inventory must close against its unequal face areas");
+
+    const auto rejectedPeriodic = duct.advance(
+        1.0e-5, DuctBoundaryCondition::periodic(),
+        DuctBoundaryCondition::periodic());
+    require(!rejectedPeriodic.completed,
+        "a non-periodic taper must reject a mathematically inconsistent periodic seam");
+}
+
 void testSodShockTube() {
     EulerMixtureModel model;
     constexpr double referencePressurePa = 100'000.0;
@@ -472,6 +551,7 @@ void testStrongExpansionRemainsPositive() {
 
 void runExhaustNetworkLayoutTests();
 void runExhaustGasNetworkTests();
+void runIntakeNetworkTests();
 
 int main() {
     testEquationOfStateRoundTrip();
@@ -479,6 +559,7 @@ int main() {
     testSingleControlVolumePreservesUniformConservation();
     testMutableInitialConditionRefreshesDerivedState();
     testPeriodicConservation();
+    testVariableAreaQuasiOneDimensionalConservation();
     testSodShockTube();
     testAcousticTransitSpeed();
     testRigidEndReflection();
@@ -487,6 +568,7 @@ int main() {
     testStrongExpansionRemainsPositive();
     runExhaustNetworkLayoutTests();
     runExhaustGasNetworkTests();
+    runIntakeNetworkTests();
     std::cout << "EngineLab gas-dynamics tests passed\n";
     return EXIT_SUCCESS;
 }

@@ -1,0 +1,65 @@
+schema_version: 4
+family: motorcycle
+# Yamaha CP2 (MT-07 / YZF-R7 / Ténéré 700) -- 689 cc parallel twin with a
+# 270-degree crank. The 270/450 firing gap is the whole point of the engine:
+# it is authored here as an explicit per-cylinder crank_offset_deg, because the
+# catalog loader only auto-spaces cylinders evenly (720/N) and would erase the
+# uneven firing. crank_offset 0 / 270 also places the two crankpins 270 deg
+# apart in the kinematics, so the reciprocating-torque signature is physical,
+# not just an audio label.
+#
+# Manufacturer reference (EU CP2): 54-55 kW (73-75 PS) @ 8750-9000 rpm,
+# 67-68 Nm @ 6500 rpm, 11.5:1, bore/stroke 80.0 x 68.6.
+engine:
+  name: Yamaha CP2 MT-07-like 689 Twin
+  layout: inline
+  firing_order: [1, 2]
+  idle_rpm: 1400
+  redline_rpm: 10000
+  rotating_inertia_kg_m2: 0.052
+  friction_coefficient: 0.09
+  octane_rating: 98
+  plenum_volume_l: 1.0
+  throttle_diameter_mm: 38
+  acoustic_observer: { left_microphone_m: { x: -0.16, y: 3.5, z: 0.7 }, right_microphone_m: { x: 0.16, y: 3.5, z: 0.7 }, sound_speed_mps: 0 }
+  intake:
+    plenum_volume_l: 1.0
+    throttle_diameter_mm: 38
+    throttle_count: 2
+    runner_length_mm: 120
+    runner_diameter_mm: 35
+    airbox_volume_l: 6.0
+    idle_bypass_area_mm2: 14
+    throttle_gamma: 1.3
+  ignition:
+    rev_limit_rpm: 10500
+    limiter_duration_s: 0.05
+    timing_curve:
+      - { rpm: 0, advance_deg: 10 }
+      - { rpm: 2000, advance_deg: 18 }
+      - { rpm: 4000, advance_deg: 30 }
+      - { rpm: 6500, advance_deg: 34 }
+      - { rpm: 8750, advance_deg: 33 }
+      - { rpm: 10500, advance_deg: 30 }
+  uses:
+    injection: high_flow_port
+    exhaust: motorcycle_4_2_1
+    transmission: motorcycle_6_speed
+    vehicle: motorcycle
+  # Valve diameters intentionally left to the derived fallback (0.40 / 0.34 x
+  # bore per valve for a multi-valve head -> 32.0 / 27.2 mm). The explicit
+  # 26.0 / 22.0 authored here originally was a guess, and it was far too small.
+  # See engines/12 for the measurement.
+  #
+  # Street-torque twin cam: modest duration/lift, matched to a 6500 rpm torque
+  # peak rather than the 284 deg race intake in the shared motorcycle part.
+  camshafts:
+    intake_duration_deg: 256
+    exhaust_duration_deg: 248
+    intake_lift_mm: 8.6
+    exhaust_lift_mm: 7.9
+    intake_centerline_deg: 106
+    exhaust_centerline_deg: 110
+  cylinders:
+    - { id: 1, bore_mm: 80.0, stroke_mm: 68.6, connecting_rod_mm: 115.0, piston_mass_g: 180, compression_ratio: 11.5, crank_offset_deg: 0,   intake_valve_count: 2, exhaust_valve_count: 2 }
+    - { id: 2, bore_mm: 80.0, stroke_mm: 68.6, connecting_rod_mm: 115.0, piston_mass_g: 180, compression_ratio: 11.5, crank_offset_deg: 270, intake_valve_count: 2, exhaust_valve_count: 2 }

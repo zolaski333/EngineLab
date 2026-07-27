@@ -30,3 +30,16 @@ avgas_100ll:
   product_moles_per_fuel_mole: 17.0
   laminar_flame_speed_mps: 0.40
   turbulence_flame_speed_gain: 1.45
+
+road_diesel_en590:
+  name: EN 590 road diesel C12H23 surrogate
+  lower_heating_value_mj_per_kg: 42.6
+  density_kg_per_l: 0.832
+  stoichiometric_afr: 14.65
+  molar_mass_g_per_mol: 167.31
+  oxygen_moles_per_fuel_mole: 17.75
+  product_moles_per_fuel_mole: 23.5
+  # Compression ignition does not use a premixed laminar flame speed.
+  laminar_flame_speed_mps: 0.0
+  turbulence_flame_speed_gain: 0.0
+  cetane_number: 51

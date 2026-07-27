@@ -41,6 +41,8 @@ struct FiringEvent final {
     std::array<float, maximumExhaustEventComponents> exhaustComponentGain {};
     std::array<float, maximumExhaustEventComponents> exhaustComponentResonanceHz {};
     std::array<std::uint8_t, maximumExhaustEventComponents> exhaustComponentPathIndex {};
+    bool compressionIgnition { false };
+    float combustionSharpness { 0.0F };
 };
 
 } // namespace enginelab

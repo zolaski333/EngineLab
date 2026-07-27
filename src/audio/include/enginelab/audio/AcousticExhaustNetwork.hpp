@@ -1,6 +1,7 @@
 #pragma once
 
 #include <enginelab/audio/ValvePortTermination.hpp>
+#include <enginelab/audio/FreeFieldObserver.hpp>
 #include <enginelab/exhaust/ExhaustGraph.hpp>
 
 #include <array>
@@ -49,12 +50,24 @@ public:
                                double observerDistanceM = 1.0);
     void reset() noexcept;
 
-    /** Refit delays and wall losses once per callback block. */
+    /** Refit delays and wall losses once per callback block.
+     *
+     *  The optional per-path mean exhaust mass flow drives the outlet mean-flow
+     *  convective loss; an empty span leaves every outlet quiescent.
+     *
+     *  `ductMedia` carries the gas state of each compiled duct, indexed as
+     *  ExhaustNetworkLayout::ducts(). Where it is supplied every duct resolves
+     *  its own delay, wall loss and plane-mode cutoff from the gas actually in
+     *  it, which differs by hundreds of kelvin between a header primary and a
+     *  tailpipe. Where it is absent, or an entry is not usable, the duct falls
+     *  back to its path medium. */
     void beginBlock(std::span<const Medium> pathMedia,
-                    double acousticTimeScale) noexcept;
+                    double acousticTimeScale,
+                    std::span<const float> pathMeanMassFlowKgPerSecond = {},
+                    std::span<const Medium> ductMedia = {}) noexcept;
 
-    /** Propagate one audio sample and return far-field pressure per path, Pa. */
-    [[nodiscard]] std::array<float, maximumPaths> process(
+    /** Propagate one sample and return each path at the two microphones, Pa. */
+    [[nodiscard]] std::array<StereoPressure, maximumPaths> process(
         std::span<const float> cylinderSourcePressurePa,
         std::span<const CylinderBoundary> cylinderBoundaries,
         float delayRampCoefficient) noexcept;

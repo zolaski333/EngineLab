@@ -13,6 +13,12 @@ void assignIfPresent(const YAML::Node& node, const char* key, T& value) {
     if (node && node[key]) value = node[key].as<T>();
 }
 
+[[nodiscard]] AcousticPoint3M decodePoint(
+    const YAML::Node& node, AcousticPoint3M fallback = {}) {
+    return { node["x"].as<double>(fallback.x), node["y"].as<double>(fallback.y),
+        node["z"].as<double>(fallback.z) };
+}
+
 [[nodiscard]] EngineLayout parseLayout(const std::string& value) {
     if (value == "inline") return EngineLayout::inlineLayout;
     if (value == "v") return EngineLayout::vLayout;
@@ -110,11 +116,21 @@ template <typename T>
             component.type = parseExhaustComponentType(encoded["type"].as<std::string>());
             assignIfPresent(encoded, "length_mm", component.lengthMm);
             assignIfPresent(encoded, "diameter_mm", component.diameterMm);
+            assignIfPresent(encoded, "outlet_diameter_mm", component.outletDiameterMm);
             assignIfPresent(encoded, "volume_l", component.volumeLitres);
             assignIfPresent(encoded, "restriction", component.restriction);
             assignIfPresent(encoded, "resonance_hz", component.resonanceHz);
             assignIfPresent(encoded, "acoustic_gain", component.acousticGain);
             assignIfPresent(encoded, "discharge_coefficient", component.dischargeCoefficient);
+            if (encoded["acoustic_position_m"])
+                component.acousticPositionM = decodePoint(encoded["acoustic_position_m"]);
+            if (encoded["acoustic_axis"])
+                component.acousticAxis = decodePoint(
+                    encoded["acoustic_axis"], component.acousticAxis);
+            component.acousticTermination = encoded["acoustic_termination"]
+                .as<std::string>("unflanged") == "flanged"
+                ? AcousticTerminationType::flanged
+                : AcousticTerminationType::unflanged;
             network.components.push_back(component);
         }
     }
@@ -184,6 +200,17 @@ template <typename T>
     assignIfPresent(node, "bearing_friction_power_w", value.bearingFrictionPowerWatts);
     assignIfPresent(node, "turbine_flow_area_mm2", value.turbineFlowAreaMm2);
     assignIfPresent(node, "wastegate_flow_area_mm2", value.wastegateFlowAreaMm2);
+    assignIfPresent(node, "compressor_blade_count", value.compressorBladeCount);
+    assignIfPresent(node, "turbine_blade_count", value.turbineBladeCount);
+    assignIfPresent(node, "supercharger_lobe_count", value.superchargerLobeCount);
+    assignIfPresent(node, "supercharger_drive_ratio", value.superchargerDriveRatio);
+    assignIfPresent(node, "compressor_inducer_diameter_mm", value.compressorInducerDiameterMm);
+    assignIfPresent(node, "turbine_exducer_diameter_mm", value.turbineExducerDiameterMm);
+    assignIfPresent(node, "blow_off_valve_flow_area_mm2", value.blowOffValveFlowAreaMm2);
+    assignIfPresent(node, "blow_off_valve_opening_pressure_ratio", value.blowOffValveOpeningPressureRatio);
+    assignIfPresent(node, "blow_off_valve_discharge_coefficient", value.blowOffValveDischargeCoefficient);
+    assignIfPresent(node, "tonal_acoustic_efficiency", value.tonalAcousticEfficiency);
+    assignIfPresent(node, "turbulent_jet_noise_coefficient", value.turbulentJetNoiseCoefficient);
     return value;
 }
 
@@ -209,6 +236,7 @@ template <typename T>
     assignIfPresent(node, "product_moles_per_fuel_mole", value.productMolesPerFuelMole);
     assignIfPresent(node, "laminar_flame_speed_mps", value.laminarFlameSpeedMps);
     assignIfPresent(node, "turbulence_flame_speed_gain", value.turbulenceFlameSpeedGain);
+    assignIfPresent(node, "cetane_number", value.cetaneNumber);
     return value;
 }
 
@@ -238,6 +266,17 @@ template <typename T>
     assignIfPresent(node, "latent_heat_kj_per_kg", value.latentHeatKjPerKg);
     assignIfPresent(node, "direct_charge_cooling_efficiency", value.directChargeCoolingEfficiency);
     assignIfPresent(node, "port_charge_cooling_efficiency", value.portChargeCoolingEfficiency);
+    assignIfPresent(node, "direct_spray_vaporisation_time_constant_s",
+                    value.directSprayVaporisationTimeConstantSeconds);
+    assignIfPresent(node, "direct_spray_entrainment_time_constant_s",
+                    value.directSprayEntrainmentTimeConstantSeconds);
+    if (const auto limit = node["full_load_fuel_limit"]) {
+        value.fullLoadFuelLimit.clear();
+        for (const auto& sample : limit)
+            value.fullLoadFuelLimit.push_back({
+                sample["rpm"].as<double>(),
+                sample["mg_per_cycle"].as<double>() });
+    }
     return value;
 }
 
@@ -377,6 +416,14 @@ void applyCrankOffsets(EngineConfig& config) {
     EngineConfig config;
     config.schemaVersion = document["schema_version"].as<std::uint32_t>(1);
     config.name = engine["name"].as<std::string>();
+    const auto cycle = engine["cycle"].as<std::string>("four_stroke");
+    if (cycle == "four_stroke") config.cycle = EngineCycle::fourStroke;
+    else if (cycle == "two_stroke") config.cycle = EngineCycle::twoStroke;
+    else throw std::runtime_error("Unknown engine cycle: " + cycle);
+    const auto fuelType = engine["fuel"].as<std::string>("gasoline");
+    if (fuelType == "gasoline") config.fuel = FuelType::gasoline;
+    else if (fuelType == "diesel") config.fuel = FuelType::diesel;
+    else throw std::runtime_error("Unknown fuel type: " + fuelType);
     config.layout = parseLayout(engine["layout"].as<std::string>("inline"));
     config.firingOrder = engine["firing_order"].as<std::vector<std::uint32_t>>();
     const auto hasExplicitCylinders = static_cast<bool>(engine["cylinders"]);
@@ -402,6 +449,11 @@ void applyCrankOffsets(EngineConfig& config) {
         assignIfPresent(intake, "throttle_discharge_coefficient", config.intake.throttleDischargeCoefficient);
         assignIfPresent(intake, "runner_length_mm", config.intake.runnerLengthMm);
         assignIfPresent(intake, "runner_diameter_mm", config.intake.runnerDiameterMm);
+        assignIfPresent(intake, "runner_plenum_diameter_mm", config.intake.runnerPlenumDiameterMm);
+        assignIfPresent(intake, "airbox_volume_l", config.intake.airboxVolumeLitres);
+        assignIfPresent(intake, "inlet_duct_length_mm", config.intake.inletDuctLengthMm);
+        assignIfPresent(intake, "inlet_duct_diameter_mm", config.intake.inletDuctDiameterMm);
+        assignIfPresent(intake, "bellmouth_diameter_mm", config.intake.bellmouthDiameterMm);
         assignIfPresent(intake, "idle_bypass_area_mm2", config.intake.idleBypassAreaMm2);
         assignIfPresent(intake, "throttle_gamma", config.intake.throttleGamma);
         config.plenumVolumeLitres = config.intake.plenumVolumeLitres;
@@ -448,6 +500,11 @@ void applyCrankOffsets(EngineConfig& config) {
         assignIfPresent(calibration, "ignition_delay_pressure_exponent", config.combustionCalibration.ignitionDelayPressureExponent);
         assignIfPresent(calibration, "wall_heat_transfer_w_per_k", config.combustionCalibration.wallHeatTransferCoefficientWPerK);
         assignIfPresent(calibration, "residual_dilution_sensitivity", config.combustionCalibration.residualDilutionSensitivity);
+        assignIfPresent(calibration, "chamber_turbulence_intensity_ratio", config.combustionCalibration.chamberTurbulenceIntensityRatio);
+        assignIfPresent(calibration, "ignition_site_count", config.combustionCalibration.ignitionSiteCount);
+        assignIfPresent(calibration, "compression_ignition_delay_scale", config.combustionCalibration.compressionIgnitionDelayScale);
+        assignIfPresent(calibration, "compression_ignition_mixing_time_s", config.combustionCalibration.compressionIgnitionMixingTimeSeconds);
+        assignIfPresent(calibration, "compression_ignition_premixed_fraction", config.combustionCalibration.compressionIgnitionPremixedFraction);
     }
     if (const auto acoustics = engine["runner_acoustics"]) {
         assignIfPresent(acoustics, "enabled", config.runnerAcoustics.enabled);
@@ -492,6 +549,11 @@ void applyCrankOffsets(EngineConfig& config) {
                 assignIfPresent(geometry, "throttle_discharge_coefficient", pathConfig.geometry.throttleDischargeCoefficient);
                 assignIfPresent(geometry, "runner_length_mm", pathConfig.geometry.runnerLengthMm);
                 assignIfPresent(geometry, "runner_diameter_mm", pathConfig.geometry.runnerDiameterMm);
+                assignIfPresent(geometry, "runner_plenum_diameter_mm", pathConfig.geometry.runnerPlenumDiameterMm);
+                assignIfPresent(geometry, "airbox_volume_l", pathConfig.geometry.airboxVolumeLitres);
+                assignIfPresent(geometry, "inlet_duct_length_mm", pathConfig.geometry.inletDuctLengthMm);
+                assignIfPresent(geometry, "inlet_duct_diameter_mm", pathConfig.geometry.inletDuctDiameterMm);
+                assignIfPresent(geometry, "bellmouth_diameter_mm", pathConfig.geometry.bellmouthDiameterMm);
                 assignIfPresent(geometry, "idle_bypass_area_mm2", pathConfig.geometry.idleBypassAreaMm2);
                 assignIfPresent(geometry, "throttle_gamma", pathConfig.geometry.throttleGamma);
             }
@@ -511,6 +573,18 @@ void applyCrankOffsets(EngineConfig& config) {
             config.banks.push_back(std::move(bank));
         }
     }
+    if (const auto observer = engine["acoustic_observer"]) {
+        if (observer["left_microphone_m"])
+            config.acousticObserver.leftMicrophoneM = decodePoint(
+                observer["left_microphone_m"],
+                config.acousticObserver.leftMicrophoneM);
+        if (observer["right_microphone_m"])
+            config.acousticObserver.rightMicrophoneM = decodePoint(
+                observer["right_microphone_m"],
+                config.acousticObserver.rightMicrophoneM);
+        assignIfPresent(observer, "sound_speed_mps",
+            config.acousticObserver.soundSpeedMps);
+    }
     if (const auto paths = engine["exhaust_paths"]) {
         config.exhaustPaths.clear();
         for (const auto& pathNode : paths) {
@@ -520,6 +594,16 @@ void applyCrankOffsets(EngineConfig& config) {
             pathConfig.geometry = pathNode["geometry"] ? decodeExhaust(pathNode["geometry"]) : config.exhaust;
             pathConfig.impulseResponsePath = pathNode["impulse_response"].as<std::string>("");
             pathConfig.audioVolume = pathNode["audio_volume"].as<double>(1.0);
+            if (pathNode["acoustic_position_m"])
+                pathConfig.acousticPositionM = decodePoint(
+                    pathNode["acoustic_position_m"]);
+            if (pathNode["acoustic_axis"])
+                pathConfig.acousticAxis = decodePoint(
+                    pathNode["acoustic_axis"], pathConfig.acousticAxis);
+            pathConfig.acousticTermination = pathNode["acoustic_termination"]
+                .as<std::string>("unflanged") == "flanged"
+                ? AcousticTerminationType::flanged
+                : AcousticTerminationType::unflanged;
             if (const auto graph = pathNode["graph"])
                 pathConfig.network = decodeExhaustNetwork(graph);
             config.exhaustPaths.push_back(std::move(pathConfig));
@@ -536,6 +620,26 @@ void applyCrankOffsets(EngineConfig& config) {
                 cylinder.bankId = bank.id;
             }
             config.banks = { std::move(left), std::move(right) };
+        } else if (config.layout == EngineLayout::radial) {
+            // A radial's bank angle is per cylinder. Grouping every cylinder
+            // into the generic zero-degree inline bank makes bankAngleFor()
+            // prefer that bank over each authored bank_offset_deg; all pistons
+            // then move in phase while their valve/firing phases remain spread
+            // around 720 degrees. The result is not a cosmetic layout error:
+            // most cylinders open their valves on the wrong piston stroke.
+            config.banks.reserve(config.cylinders.size());
+            for (auto& cylinder : config.cylinders) {
+                CylinderBankConfig bank {
+                    cylinder.id,
+                    cylinder.bankOffsetDegrees,
+                    { cylinder.id },
+                    config.camshafts,
+                    0,
+                    1,
+                };
+                cylinder.bankId = bank.id;
+                config.banks.push_back(std::move(bank));
+            }
         } else {
             CylinderBankConfig bank { 1, 0.0, {}, config.camshafts, 0, 1 };
             for (auto& cylinder : config.cylinders) { bank.cylinderIds.push_back(cylinder.id); cylinder.bankId = 1; }

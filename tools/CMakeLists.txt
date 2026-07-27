@@ -10,6 +10,30 @@ target_link_libraries(EngineLabPhysicsPerfHarness PRIVATE
     EngineLab::Ecu EngineLab::Events EngineLab::Exhaust EngineLab::Catalog)
 enginelab_set_warnings(EngineLabPhysicsPerfHarness)
 
+add_executable(EngineLabDynoSweepHarness DynoSweepHarness.cpp)
+target_link_libraries(EngineLabDynoSweepHarness PRIVATE
+    EngineLab::Simulation EngineLab::Foundation EngineLab::Physics
+    EngineLab::Ecu EngineLab::Events EngineLab::Exhaust EngineLab::Catalog)
+enginelab_set_warnings(EngineLabDynoSweepHarness)
+
+add_executable(EngineLabIntakeDuctBench IntakeDuctBench.cpp)
+target_link_libraries(EngineLabIntakeDuctBench PRIVATE
+    EngineLab::GasDynamics EngineLab::Physics EngineLab::Foundation)
+enginelab_set_warnings(EngineLabIntakeDuctBench)
+
+add_executable(EngineLabExhaustFlowBench ExhaustFlowBench.cpp)
+target_link_libraries(EngineLabExhaustFlowBench PRIVATE
+    EngineLab::GasDynamics EngineLab::Exhaust EngineLab::Foundation
+    EngineLab::Physics EngineLab::Catalog)
+enginelab_set_warnings(EngineLabExhaustFlowBench)
+
+add_executable(EngineLabShiftTransientHarness ShiftTransientHarness.cpp)
+target_link_libraries(EngineLabShiftTransientHarness PRIVATE
+    EngineLab::Runtime EngineLab::Simulation EngineLab::Foundation EngineLab::Physics
+    EngineLab::Ecu EngineLab::Events EngineLab::Exhaust EngineLab::Catalog)
+target_compile_definitions(EngineLabShiftTransientHarness PRIVATE ENGINELAB_CATALOG_ROOT="${CMAKE_SOURCE_DIR}")
+enginelab_set_warnings(EngineLabShiftTransientHarness)
+
 add_executable(EngineLabAudioRenderHarness AudioRenderHarness.cpp)
 target_link_libraries(EngineLabAudioRenderHarness PRIVATE
     EngineLab::Audio EngineLab::Simulation EngineLab::Foundation EngineLab::Physics
@@ -19,6 +43,14 @@ if(MSVC)
     target_link_options(EngineLabAudioRenderHarness PRIVATE /STACK:8388608)
 endif()
 enginelab_set_warnings(EngineLabAudioRenderHarness)
+
+add_executable(EngineLabRealtimeBudgetHarness RealtimeBudgetHarness.cpp)
+target_link_libraries(EngineLabRealtimeBudgetHarness PRIVATE
+    EngineLab::Runtime EngineLab::Simulation EngineLab::Foundation EngineLab::Physics
+    EngineLab::Ecu EngineLab::Events EngineLab::Exhaust EngineLab::Catalog
+    EngineLab::Diagnostics)
+target_compile_definitions(EngineLabRealtimeBudgetHarness PRIVATE ENGINELAB_CATALOG_ROOT="${CMAKE_SOURCE_DIR}")
+enginelab_set_warnings(EngineLabRealtimeBudgetHarness)
 
 add_executable(EngineLabAbClipRenderer AbClipRenderer.cpp)
 target_link_libraries(EngineLabAbClipRenderer PRIVATE

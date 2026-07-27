@@ -70,7 +70,7 @@ exhaust_paths:
         - { id: 103, type: pipe,     length_mm: 480, diameter_mm: 42, restriction: 0.00, resonance_hz: 0, acoustic_gain: 1.00 }
         - { id: 104, type: pipe,     length_mm: 480, diameter_mm: 42, restriction: 0.00, resonance_hz: 0, acoustic_gain: 1.00 }
         - { id: 201, type: merge,    length_mm: 0,   diameter_mm: 60, restriction: 0.03, resonance_hz: 0, acoustic_gain: 1.00 }
-        - { id: 301, type: catalyst, length_mm: 180, diameter_mm: 60, restriction: 0.18, resonance_hz: 0, acoustic_gain: 0.92 }
+        - { id: 301, type: catalyst, length_mm: 180, diameter_mm: 60, outlet_diameter_mm: 68, restriction: 0.18, resonance_hz: 0, acoustic_gain: 0.92 }
         - { id: 401, type: muffler,  length_mm: 520, diameter_mm: 65, volume_l: 8.0, restriction: 0.20, resonance_hz: 95, acoustic_gain: 0.82 }
         - { id: 501, type: outlet,   length_mm: 120, diameter_mm: 70, restriction: 0.00, resonance_hz: 0, acoustic_gain: 1.00, discharge_coefficient: 0.78 }
       cylinder_connections:
@@ -105,7 +105,8 @@ Les mêmes clés existent en JSON sous `engine.exhaust_paths[].graph`.
 Chaque composant possède :
 
 - `id`, unique à l'intérieur du chemin ;
-- `length_mm`, `diameter_mm` et éventuellement `volume_l` ;
+- `length_mm`, `diameter_mm`, éventuellement `outlet_diameter_mm` et
+  `volume_l` ;
 - `restriction`, coefficient de perte additionnel sans dimension ;
 - `resonance_hz`, où zéro demande une estimation lorsque le type le permet ;
 - `acoustic_gain`, multiplié le long de la route ;
@@ -120,6 +121,28 @@ d'écoulement. Il est appliqué une seule fois, comme section effective `A·Cd` 
 la sortie, et n'entre donc plus comme facteur `1/Cd²` dans la restriction : ce
 double comptage réduisait une seconde fois la même section effective et
 sous-estimait le débit de sortie.
+
+### Section variable
+
+`diameter_mm` est le diamètre à l'entrée du composant.
+`outlet_diameter_mm` est facultatif : zéro conserve une section constante,
+tandis qu'une valeur non nulle décrit un raccord conique dont le rayon varie
+linéairement. Le volume implicite est celui du tronc de cône,
+
+```text
+V = pi L (r_entree² + r_entree r_sortie + r_sortie²) / 3
+```
+
+et non une moyenne arbitraire des diamètres. Le maillage quasi-1D emploie les
+aires exactes de chaque face, pondère les flux conservatifs par ces aires et
+ajoute le terme géométrique `p dA/dx` à l'équation de quantité de mouvement.
+Une pression uniforme au repos reste donc un équilibre exact. Les aires
+d'entrée et de sortie sont aussi conservées jusqu'au réseau acoustique pour que
+chaque jonction utilise sa propre admittance `A/(rho c)`.
+
+Le concepteur graphique expose les deux diamètres. Les documents antérieurs
+qui ne possèdent pas `outlet_diameter_mm` gardent exactement leur conduit
+cylindrique historique.
 
 ## Règles de connexion
 

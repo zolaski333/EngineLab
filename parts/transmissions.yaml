@@ -28,14 +28,28 @@ muscle_6_speed:
   clutch_thermal_capacity_j_per_c: 32000
   clutch_cooling_w_per_c: 12.0
 
+# A motorcycle has THREE reductions, not two: a primary drive from crank to
+# clutch basket (typically 1.6-2.0), the gearbox, then the chain. There is no
+# primary field in TransmissionConfig, so it is folded into final_drive_ratio --
+# which is simply everything outside the gearbox.
+#
+# It used to be missing altogether, and the symptom was exactly what you would
+# predict: wheel torque halved in every gear, so every bike accelerated as if
+# braked, and 1st gear reached 141 km/h at 9,000 rpm. Cross-check against the
+# MT-07 it is modelled on (primary 68/41 = 1.925, chain 43/16 = 2.688, 0.300 m
+# tyre): total 1st 14.73 and 6th 5.38 give 69 km/h and 189 km/h at 9,000 rpm,
+# against 141 and 314 before. Keep gear_ratios as real GEARBOX ratios and any
+# primary reduction inside final_drive_ratio, or the arithmetic drifts back.
 motorcycle_6_speed:
-  gear_ratios: [2.62, 2.05, 1.68, 1.45, 1.30, 1.18]
-  final_drive_ratio: 2.75
+  gear_ratios: [2.846, 1.947, 1.500, 1.269, 1.111, 1.040]
+  final_drive_ratio: 5.174   # primary 1.925 x chain 2.688
   max_clutch_torque_nm: 320
 
+# Same correction: a big-twin cruiser runs a primary around 1.6 and a belt final
+# near 2.2, so the reduction outside the gearbox is ~3.5, not 2.10.
 cruiser_6_speed:
   gear_ratios: [3.34, 2.31, 1.72, 1.39, 1.19, 1.00]
-  final_drive_ratio: 2.10
+  final_drive_ratio: 3.52    # primary 1.60 x belt 2.20
   max_clutch_torque_nm: 420
 
 aircraft_direct:

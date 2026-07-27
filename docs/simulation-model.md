@@ -181,6 +181,13 @@ relie les deux à chaque sous-pas mécanique. La charge de sortie est un modèle
 rayonnement passif ; une IR n'est utilisée que si elle est explicitement fournie.
 Voir [thermoacoustic-architecture.md](thermoacoustic-architecture.md).
 
+Les runners d'admission peuvent également définir
+`runner_plenum_diameter_mm`. Le diamètre historique `runner_diameter_mm`
+désigne alors le côté soupape et le nouveau champ le côté plénum ; zéro garde
+une section constante. Admission et échappement partagent la même discrétisation
+conique conservatrice (volume exact, aires locales, frottement et échange
+thermique calculés avec le diamètre hydraulique local).
+
 ## Transmission et véhicule
 
 `DrivelineModel` possède embrayage, arbre de boîte, différentiel, roue motrice

@@ -47,6 +47,7 @@ struct RealtimeAudioState final {
     std::atomic<float> boostPressureRatio { 1.0F };
     std::atomic<float> exhaustReflectionSeconds { 0.006F };
     std::atomic<float> ambientPressureKpa { 101.325F };
+    std::atomic<float> ambientTemperatureC { 20.0F };
     std::atomic<std::uint64_t> producerTimeNanoseconds { 0 };
     std::atomic<std::uint32_t> exhaustPathCount { 1 };
     std::array<std::atomic<float>, 8> exhaustPathOpenness {
@@ -103,6 +104,10 @@ struct RealtimeAudioState final {
     std::atomic<float> intakeRunnerAmplitudeKpa { 0.0F };
     std::atomic<float> forcedInductionShaftRpm { 0.0F };
     std::atomic<float> wastegateOpening { 0.0F };
+    std::atomic<float> correctedAirFlowKgPerSecond { 0.0F };
+    std::atomic<float> compressorPowerWatts { 0.0F };
+    std::atomic<float> turbinePowerWatts { 0.0F };
+    std::atomic<float> blowOffMassFlowKgPerSecond { 0.0F };
     std::atomic<int> forcedInductionKind { 0 };  // 0 none, 1 turbocharger, 2 supercharger
     std::atomic<float> meanBoreMm { 84.0F };
     std::atomic<float> peakPistonAccelerationG { 0.0F };
@@ -194,6 +199,7 @@ public:
     [[nodiscard]] FiringEventQueue& audioEvents() noexcept { return eventQueue_; }
     [[nodiscard]] CylinderPressureQueue& cylinderPressureSamples() noexcept { return *pressureQueue_; }
     [[nodiscard]] RealtimeAudioState& audioState() noexcept { return audioState_; }
+    [[nodiscard]] const EngineConfig& engineConfig() const noexcept { return config_; }
     [[nodiscard]] const ExhaustGraph& exhaustGraph() const noexcept { return exhaust_; }
     [[nodiscard]] std::shared_ptr<calibration::CalibrationStore> calibrationStore() const noexcept {
         return ecu_.calibrationStore();
@@ -203,6 +209,21 @@ public:
     [[nodiscard]] std::uint64_t timingOverrunCount() const noexcept { return timingOverruns_.load(); }
     [[nodiscard]] double maximumTimingLatenessSeconds() const noexcept {
         return maximumTimingLatenessSeconds_.load();
+    }
+    /**
+     * Instrumentation only. The loop normally sleeps to a wall deadline after
+     * each 1/240 s of simulated time, so the realtime factor it achieves
+     * saturates at 1.0 and cannot show how much CAPACITY is left above realtime
+     * -- an engine comfortably at 3x and one exactly at 1.0 both report 1.000.
+     * Disabling the throttle makes the loop produce simulated time as fast as
+     * the machine allows, so the same factor becomes the capacity headroom.
+     *
+     * Set before `start()`. Never enable this in the application: the audio
+     * thread, the telemetry queues and the dyno controller are all paced by
+     * that sleep.
+     */
+    void setRealtimeThrottleEnabled(bool enabled) noexcept {
+        realtimeThrottleEnabled_.store(enabled, std::memory_order_relaxed);
     }
 private:
     void run(std::stop_token stopToken);
@@ -240,6 +261,7 @@ private:
     std::atomic<std::uint64_t> timingOverruns_ { 0 };
     std::atomic<double> maximumTimingLatenessSeconds_ { 0.0 };
     std::atomic<bool> paused_ { false };
+    std::atomic<bool> realtimeThrottleEnabled_ { true };
     std::atomic<double> timeScale_ { 1.0 };
     // UI writes only the desired state. The simulation thread owns all mutable
     // session fields below and reconciles this mailbox once per tick.

@@ -1,4 +1,4 @@
-schema_version: 1
+schema_version: 4
 family: radial aircraft
 engine:
   name: Radial-like 6.5 R5
@@ -13,6 +13,7 @@ engine:
   cooling_efficiency: 2.6
   plenum_volume_l: 6.4
   throttle_diameter_mm: 82
+  acoustic_observer: { left_microphone_m: { x: -0.3, y: 6.0, z: 1.2 }, right_microphone_m: { x: 0.3, y: 6.0, z: 1.2 }, sound_speed_mps: 0 }
   intake:
     plenum_volume_l: 6.4
     throttle_diameter_mm: 82
@@ -29,6 +30,12 @@ engine:
       - { rpm: 1400, advance_deg: 15 }
       - { rpm: 2100, advance_deg: 21 }
       - { rpm: 2450, advance_deg: 18 }
+  # Large-bore certified aircraft cylinders use two independent spark plugs.
+  # Model the two propagating kernels explicitly instead of faking them with
+  # extra ignition advance or a hotter fuel.
+  combustion_calibration:
+    chamber_turbulence_intensity_ratio: 1.10
+    ignition_site_count: 2
   uses:
     injection: continuous_manifold
     camshafts: radial_aircraft

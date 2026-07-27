@@ -58,6 +58,24 @@ turbo_street:
     - { lift_mm: 7.0, discharge_coefficient: 0.60 }
     - { lift_mm: 9.8, discharge_coefficient: 0.66 }
 
+diesel_low_speed:
+  intake_duration_deg: 224
+  exhaust_duration_deg: 228
+  intake_lift_mm: 9.2
+  exhaust_lift_mm: 8.8
+  intake_centerline_deg: 114
+  exhaust_centerline_deg: 116
+  intake_flow_curve:
+    - { lift_mm: 0.0, discharge_coefficient: 0.0 }
+    - { lift_mm: 2.0, discharge_coefficient: 0.36 }
+    - { lift_mm: 5.0, discharge_coefficient: 0.57 }
+    - { lift_mm: 9.2, discharge_coefficient: 0.66 }
+  exhaust_flow_curve:
+    - { lift_mm: 0.0, discharge_coefficient: 0.0 }
+    - { lift_mm: 2.0, discharge_coefficient: 0.34 }
+    - { lift_mm: 5.0, discharge_coefficient: 0.55 }
+    - { lift_mm: 8.8, discharge_coefficient: 0.64 }
+
 big_v8_street:
   intake_duration_deg: 260
   exhaust_duration_deg: 266

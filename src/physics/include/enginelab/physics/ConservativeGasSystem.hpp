@@ -257,6 +257,31 @@ struct FlowParameters final {
     // Override for jet-momentum cross-section (0 = use cell's stored geometry)
     double crossSectionArea0 { 0.0 };
     double crossSectionArea1 { 0.0 };
+    // Optional sub-grid ram/resonance pressure added to each cell's effective
+    // pressure at the interface (kPa). A 0-D runner cell stores only its net
+    // (static) state and cannot represent the inertial/acoustic pulse that keeps
+    // charge flowing into the cylinder past the point of static equilibrium. This
+    // bias raises the charging pressure the valve sees AND the equilibrium fill
+    // point together, so the cylinder can be filled above static manifold density
+    // at the tuned speed (inertia/resonance supercharging). It changes the driving
+    // pressure and the equilibrium bound only; every mole transferred still comes
+    // from the source cell's real inventory, so mass and energy stay conserved.
+    // Default 0.0 leaves every existing call site bit-identical.
+    //
+    // Currently NO caller passes a non-zero bias, and that is a measured result, not
+    // an oversight. Raising the equilibrium bound is a necessary half of intake ram
+    // charging, but it is not sufficient and it cannot be the whole mechanism: four
+    // candidate bias sources have been measured and refuted, including the textbook
+    // -rho*L*du/dt (unstable here by construction -- an orifice already sets flow
+    // from delta-P, so a bias built from that flow's derivative over-determines it
+    // with a gain that grows as dt shrinks) and rho*u^2/2 (stable, but it peaks at
+    // full lift and the surplus is expelled again before the valve seats). Ram is
+    // irreversible in a real engine because the flow LAGS and closure traps it, so
+    // the missing piece belongs in the flow law as a relaxation, with a bias like
+    // this one only permitting the overshoot. Read docs/physics-audit.md
+    // "L'inertance de runner" before using these fields.
+    double biasKpa0 { 0.0 };
+    double biasKpa1 { 0.0 };
 };
 
 class ConservativeGasSystem final {
@@ -344,7 +369,9 @@ private:
                                                          double directionX,
                                                          double directionY,
                                                          double requestedMoles,
-                                                         bool includeDynamicPressure) noexcept;
+                                                         bool includeDynamicPressure,
+                                                         double biasSourceKpa = 0.0,
+                                                         double biasSinkKpa = 0.0) noexcept;
 
     /**
      * Core isentropic mass-flow equation.

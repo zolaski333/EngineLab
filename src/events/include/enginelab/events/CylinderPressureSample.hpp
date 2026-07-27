@@ -1,5 +1,7 @@
 #pragma once
 
+#include <enginelab/events/StructuralExcitationSample.hpp>
+
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -44,11 +46,40 @@ struct CylinderPressureSample final {
     std::array<float, 32> exhaustAcousticMassFlowKgPerSecond {};
     /** Valve curtain area multiplied by its discharge coefficient. */
     std::array<float, 32> exhaustValveConductanceAreaM2 {};
+    /** Signed instantaneous intake-valve flow; positive runner -> cylinder. */
+    std::array<float, 32> intakeMassFlowKgPerSecond {};
+    std::array<float, 32> intakeRunnerPressureKpa {};
+    std::array<float, 32> intakeRunnerDensityKgPerM3 {};
+    std::array<float, 32> intakeRunnerSpeedOfSoundMps {};
+    std::array<float, 32> intakeValveConductanceAreaM2 {};
+    std::array<std::uint8_t, 32> intakePathIndex {};
+    /** Effective throttle conductance actually used by the gas solver. */
+    std::array<float, 8> intakeThrottleConductanceAreaM2 {};
+    std::size_t intakePathCount { 0 };
     std::array<float, 32> exhaustFlowMgPerCycle {};
     /** Normalised exhaust-valve opening used by the acoustic port reflection. */
     std::array<float, 32> exhaustValveOpening {};
     /** Index of the acoustic exhaust path fed by each cylinder. */
     std::array<std::uint8_t, 32> exhaustPathIndex {};
+    /** Largest exhaust duct count the acoustic medium field can carry. */
+    static constexpr std::size_t maximumExhaustDucts = 64;
+    /** Length-mean gas state of each compiled exhaust duct, indexed exactly as
+     * ExhaustNetworkLayout::ducts().
+     *
+     * The port group above describes the gas at the valve, which is the hottest
+     * point in the system. Applying it to the whole path put the tailpipe 20-25%
+     * too fast and moved every downstream resonance with it -- and the comb
+     * spacing c/(2L) of the expansion chamber is where a given exhaust's
+     * character lives. The solver already resolves temperature per duct, so
+     * publish it rather than making the renderer guess a gradient.
+     *
+     * Sampled on the exhaust coupling flush, so it shares the cadence of the
+     * port group but not its interpolation: these are duct means, not a boundary
+     * reconstruction, and must not be paired into a characteristic split. */
+    std::array<float, maximumExhaustDucts> exhaustDuctDensityKgPerM3 {};
+    std::array<float, maximumExhaustDucts> exhaustDuctSpeedOfSoundMps {};
+    /** Number of leading entries above that carry a resolved duct state. */
+    std::size_t exhaustDuctCount { 0 };
     /** 1 only when all SI thermoacoustic boundary fields above are valid. */
     std::array<std::uint8_t, 32> thermoacousticBoundaryValid {};
     /** Rate at which the acoustic boundary group was actually sampled from the
@@ -58,6 +89,8 @@ struct CylinderPressureSample final {
      * and the filter stays disabled -- exactness, not a fallback.
      */
     double exhaustCouplingFrequencyHz { 0.0 };
+    /** Structure-borne excitation sampled on the same mechanical substep. */
+    StructuralExcitationSample structural;
     std::size_t cylinderCount { 0 };
 };
 

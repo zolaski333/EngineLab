@@ -2,6 +2,7 @@ add_library(EngineLabPhysics STATIC
     src/SimplifiedGasolinePhysics.cpp
     src/ConservativeGasSystem.cpp
     src/FlamePhysicsModel.cpp
+    src/CompressionIgnitionModel.cpp
     src/FuelInjectionModel.cpp
     src/EndGasKnockModel.cpp
     src/MechanicalKinematics.cpp

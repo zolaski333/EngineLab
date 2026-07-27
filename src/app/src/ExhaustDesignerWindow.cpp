@@ -6,6 +6,7 @@
 #include <cmath>
 #include <cstdint>
 #include <exception>
+#include <initializer_list>
 #include <limits>
 #include <optional>
 #include <string>
@@ -460,8 +461,8 @@ public:
         auto leftColumn = propertyInner.removeFromLeft(columnWidth);
         propertyInner.removeFromLeft(columnGap);
         auto rightColumn = propertyInner;
-        layoutPropertyColumn(leftColumn, { 0, 1, 2, 3 });
-        layoutPropertyColumn(rightColumn, { 4, 5, 6, 7 });
+        layoutPropertyColumn(leftColumn, { 0, 1, 2, 3, 4 });
+        layoutPropertyColumn(rightColumn, { 5, 6, 7, 8 });
         updateComponentButton_.setBounds(propertyArea.getX() + 12, propertyArea.getBottom() - 42,
                                          propertyArea.getWidth() - 24, 30);
 
@@ -566,8 +567,9 @@ private:
         componentTypeLabel_.setText("Type", juce::dontSendNotification);
         componentTypeLabel_.setColour(juce::Label::textColourId, juce::Colour(0xffaebbb7));
         populateTypeSelector(componentTypeSelector_);
-        const std::array<const char*, 8> names {
-            "ID", "Longueur (mm)", "Diametre (mm)", "Volume (L)",
+        const std::array<const char*, 9> names {
+            "ID", "Longueur (mm)", "Diametre entree (mm)",
+            "Diametre sortie (mm, 0 = constant)", "Volume (L)",
             "Restriction", "Resonance (Hz)", "Gain acoustique", "Cd sortie"
         };
         for (std::size_t index = 0; index < propertyLabels_.size(); ++index) {
@@ -967,8 +969,11 @@ private:
     [[nodiscard]] juce::String componentText(int row) const {
         const auto* component = componentAt(row);
         if (component == nullptr) return {};
+        auto diameter = juce::String(component->diameterMm, 1);
+        if (component->outletDiameterMm > 0.0)
+            diameter += " -> " + juce::String(component->outletDiameterMm, 1);
         return "#" + juce::String(component->id) + "  " + componentTypeName(component->type)
-            + "  |  D " + juce::String(component->diameterMm, 1) + " mm";
+            + "  |  D " + diameter + " mm";
     }
 
     [[nodiscard]] int connectionCount() const {
@@ -1026,8 +1031,9 @@ private:
         }
         componentTypeSelector_.setSelectedItemIndex(static_cast<int>(component->type),
                                                      juce::dontSendNotification);
-        const std::array<double, 7> values {
-            component->lengthMm, component->diameterMm, component->volumeLitres,
+        const std::array<double, 8> values {
+            component->lengthMm, component->diameterMm, component->outletDiameterMm,
+            component->volumeLitres,
             component->restriction, component->resonanceHz, component->acousticGain,
             component->dischargeCoefficient
         };
@@ -1036,7 +1042,8 @@ private:
             propertyEditors_[index + 1].setText(juce::String(values[index], index == 0 ? 1 : 3), false);
     }
 
-    void layoutPropertyColumn(juce::Rectangle<int> bounds, std::array<int, 4> indices) {
+    void layoutPropertyColumn(juce::Rectangle<int> bounds,
+                              std::initializer_list<int> indices) {
         for (const auto index : indices) {
             auto row = bounds.removeFromTop(54);
             propertyLabels_[static_cast<std::size_t>(index)].setBounds(row.removeFromTop(20));
@@ -1133,7 +1140,7 @@ private:
             setStatus("Cet identifiant est deja utilise dans le chemin.", true);
             return;
         }
-        std::array<double, 7> values {};
+        std::array<double, 8> values {};
         for (std::size_t index = 0; index < values.size(); ++index) {
             if (!parseFinite(propertyEditors_[index + 1].getText(), values[index])) {
                 setStatus("Toutes les proprietes doivent etre des nombres finis.", true);
@@ -1153,12 +1160,13 @@ private:
             || type == ExhaustComponentType::catalyst;
         if (values[0] < (requiresLength ? 1.0 : 0.0) || values[0] > 10'000.0
             || values[1] < 5.0 || values[1] > 500.0
-            || values[2] < 0.0 || values[2] > 1'000.0
-            || values[3] < 0.0 || values[3] > 20.0
-            || values[4] < 0.0 || values[4] > 20'000.0
-            || values[5] < 0.0 || values[5] > 8.0
-            || values[6] < 0.02 || values[6] > 1.5) {
-            setStatus("Valeurs hors limites (L 0..10000, D 5..500, V 0..1000, restriction 0..20, "
+            || !(values[2] == 0.0 || (values[2] >= 5.0 && values[2] <= 500.0))
+            || values[3] < 0.0 || values[3] > 1'000.0
+            || values[4] < 0.0 || values[4] > 20.0
+            || values[5] < 0.0 || values[5] > 20'000.0
+            || values[6] < 0.0 || values[6] > 8.0
+            || values[7] < 0.02 || values[7] > 1.5) {
+            setStatus("Valeurs hors limites (L 0..10000, D entree 5..500, D sortie 0 ou 5..500, V 0..1000, restriction 0..20, "
                       "resonance 0..20000, gain 0..8, Cd 0.02..1.5).", true);
             return;
         }
@@ -1168,11 +1176,12 @@ private:
         component->type = type;
         component->lengthMm = values[0];
         component->diameterMm = values[1];
-        component->volumeLitres = values[2];
-        component->restriction = values[3];
-        component->resonanceHz = values[4];
-        component->acousticGain = values[5];
-        component->dischargeCoefficient = values[6];
+        component->outletDiameterMm = values[2];
+        component->volumeLitres = values[3];
+        component->restriction = values[4];
+        component->resonanceHz = values[5];
+        component->acousticGain = values[6];
+        component->dischargeCoefficient = values[7];
         if (newId != oldId) {
             for (auto& connection : network->connections) {
                 if (connection.fromComponentId == oldId) connection.fromComponentId = newId;
@@ -1340,8 +1349,8 @@ private:
 
     juce::Label componentTypeLabel_;
     juce::ComboBox componentTypeSelector_;
-    std::array<juce::Label, 8> propertyLabels_;
-    std::array<juce::TextEditor, 8> propertyEditors_;
+    std::array<juce::Label, 9> propertyLabels_;
+    std::array<juce::TextEditor, 9> propertyEditors_;
     juce::TextButton updateComponentButton_;
 
     juce::Label connectionTitle_;

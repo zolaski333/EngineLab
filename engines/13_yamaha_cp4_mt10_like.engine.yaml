@@ -1,0 +1,90 @@
+schema_version: 4
+family: motorcycle
+# Yamaha CP4 (YZF-R1 / MT-10) -- 998 cc inline four with the crossplane crank.
+# The crankpins sit 90 deg apart (0-90-270-180 in 360-deg terms), which in a
+# four-stroke gives the uneven 270-180-90-180 firing order and the V8-like
+# voice. Encoded here as firing TDCs in 720-deg terms:
+#   cyl1 = 0, cyl3 = 270, cyl2 = 450, cyl4 = 540   (order 1-3-2-4)
+# so crank_offset mod 360 reproduces the physical crankpins {0,90,270,180} and
+# the kinematics carries the crossplane's cancelled inertial torque. This MUST
+# be an explicit cylinder list: the loader's default even 180-deg spacing would
+# turn it back into a flat-plane screamer.
+#
+# This config is tuned as the MT-10 (detuned R1): ~118 kW (158 PS) @ 11500 rpm,
+# 111 Nm @ 9000 rpm, 12.0:1, bore/stroke 79.0 x 50.9. (The R1 shares the crank
+# but revs to ~14500 for ~147 kW.)
+engine:
+  name: Yamaha CP4 MT-10-like 998 Crossplane I4
+  layout: inline
+  firing_order: [1, 3, 2, 4]
+  idle_rpm: 1300
+  redline_rpm: 12000
+  rotating_inertia_kg_m2: 0.050
+  friction_coefficient: 0.095
+  octane_rating: 98
+  plenum_volume_l: 1.4
+  throttle_diameter_mm: 45
+  acoustic_observer: { left_microphone_m: { x: -0.18, y: 3.8, z: 0.75 }, right_microphone_m: { x: 0.18, y: 3.8, z: 0.75 }, sound_speed_mps: 0 }
+  intake:
+    plenum_volume_l: 1.4
+    throttle_diameter_mm: 45
+    throttle_count: 4
+    runner_length_mm: 180
+    runner_diameter_mm: 37
+    airbox_volume_l: 9.0
+    idle_bypass_area_mm2: 16
+    throttle_gamma: 1.3
+  ignition:
+    rev_limit_rpm: 12500
+    limiter_duration_s: 0.045
+    timing_curve:
+      - { rpm: 0, advance_deg: 10 }
+      - { rpm: 2500, advance_deg: 20 }
+      - { rpm: 5000, advance_deg: 32 }
+      - { rpm: 8000, advance_deg: 36 }
+      - { rpm: 11500, advance_deg: 34 }
+      - { rpm: 12500, advance_deg: 31 }
+  # The short-stroke, high-revving CP4 relies on a strong tumble field. Without
+  # it a mean-piston-speed-only closure burns for about 60 crank degrees at
+  # 9000 rpm, versus the 35-45 degree interval expected of this pent-roof head.
+  combustion_calibration:
+    chamber_turbulence_intensity_ratio: 1.55
+  uses:
+    injection: high_flow_port
+    exhaust: motorcycle_4_2_1
+    transmission: motorcycle_6_speed
+    vehicle: motorcycle
+  # The legacy shared motorcycle preset terminates a 52 mm tailpipe as a
+  # sharp-edged orifice (Cd 0.72). A real open tailpipe carries its developed
+  # stream through the exit plane, so the finite-volume boundary uses the
+  # physical area. Dimensions scale the stock CP4 system independently of the
+  # smaller CP2/CP3 systems; they are not a torque correction.
+  exhaust:
+    primary_length_mm: 610
+    primary_diameter_mm: 36
+    collector_diameter_mm: 55
+    muffler_restriction: 0.16
+    outlet_diameter_mm: 60
+    collector_volume_l: 2.0
+    outlet_discharge_coefficient: 1.0
+    muffler_chamber_diameter_mm: 90
+    muffler_chamber_length_mm: 250
+  # Valve diameters intentionally left to the derived fallback (0.40 / 0.34 x
+  # bore per valve for a multi-valve head -> 31.6 / 26.9 mm). The explicit
+  # 25.0 / 22.0 authored here originally was a guess, and it was far too small.
+  # See engines/12 for the measurement.
+  #
+  # Litre-superbike cam (detuned R1): long duration, big overlap, power to
+  # 11500. Short 50.9 mm stroke keeps mean piston speed sane at redline.
+  camshafts:
+    intake_duration_deg: 278
+    exhaust_duration_deg: 270
+    intake_lift_mm: 9.6
+    exhaust_lift_mm: 8.8
+    intake_centerline_deg: 104
+    exhaust_centerline_deg: 108
+  cylinders:
+    - { id: 1, bore_mm: 79.0, stroke_mm: 50.9, connecting_rod_mm: 98.0, piston_mass_g: 135, compression_ratio: 12.0, crank_offset_deg: 0,   intake_valve_count: 2, exhaust_valve_count: 2 }
+    - { id: 2, bore_mm: 79.0, stroke_mm: 50.9, connecting_rod_mm: 98.0, piston_mass_g: 135, compression_ratio: 12.0, crank_offset_deg: 450, intake_valve_count: 2, exhaust_valve_count: 2 }
+    - { id: 3, bore_mm: 79.0, stroke_mm: 50.9, connecting_rod_mm: 98.0, piston_mass_g: 135, compression_ratio: 12.0, crank_offset_deg: 270, intake_valve_count: 2, exhaust_valve_count: 2 }
+    - { id: 4, bore_mm: 79.0, stroke_mm: 50.9, connecting_rod_mm: 98.0, piston_mass_g: 135, compression_ratio: 12.0, crank_offset_deg: 540, intake_valve_count: 2, exhaust_valve_count: 2 }

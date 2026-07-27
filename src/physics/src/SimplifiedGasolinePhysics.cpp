@@ -102,7 +102,10 @@ CombustionResult SimplifiedGasolinePhysics::evaluateCombustion(
     const EngineConfig& config, const EngineState& state, const EngineControls& controls,
     const EcuCommand& ecu, double exhaustBackPressureKpa) const noexcept {
     if (config.cylinders.empty()) return {};
-    const auto combustionEnabled = ecu.fuelEnabled && ecu.sparkEnabled && state.rpm >= 220.0 && state.damage < 1.0;
+    const auto compressionIgnition = config.fuel == FuelType::diesel;
+    const auto combustionEnabled = ecu.fuelEnabled
+        && (compressionIgnition || ecu.sparkEnabled)
+        && state.rpm >= 220.0 && state.damage < 1.0;
 
     const auto compressionSum = std::accumulate(config.cylinders.begin(), config.cylinders.end(), 0.0,
         [](double sum, const CylinderConfig& cylinder) { return sum + cylinder.compressionRatio; });
@@ -112,7 +115,10 @@ CombustionResult SimplifiedGasolinePhysics::evaluateCombustion(
     // low-frequency calibration model aligned with the valves used by the gas
     // solver instead of silently falling back to the global camshaft.
     const auto cam = aggregateCamMetrics(config, rpmRatio, state.rpm, state.throttle);
-    const auto normalizedLoad = std::clamp(state.manifoldPressureKpa / std::max(1.0, config.ambientPressureKpa), 0.25, 1.0);
+    const auto normalizedLoad = compressionIgnition
+        ? std::clamp(state.load, 0.0, 1.0)
+        : std::clamp(state.manifoldPressureKpa
+            / std::max(1.0, config.ambientPressureKpa), 0.25, 1.0);
     const auto mappedVe = baseVolumetricEfficiency(rpmRatio - (cam.intakeAreaRatio - 1.0) * 0.12, normalizedLoad);
     const auto backPressureLoss = std::clamp((exhaustBackPressureKpa - config.ambientPressureKpa) / 90.0, 0.0, 0.32);
     const auto calibratedVolumetricEfficiency = std::clamp(mappedVe
@@ -129,18 +135,35 @@ CombustionResult SimplifiedGasolinePhysics::evaluateCombustion(
     const auto displacedVolumeM3 = engineDisplacementLitres(config) * 0.001;
     const auto airMassMg = hasResolvedCharge ? state.airMassMgPerCycle
         : displacedVolumeM3 * volumetricEfficiency * manifoldDensityKgM3 * 1'000'000.0;
-    const auto afr = std::clamp(ecu.targetAirFuelRatio, 5.0, 30.0);
-    const auto fuelMassMg = ecu.fuelEnabled ? airMassMg / afr * ecu.fuelCorrection : 0.0;
+    const auto afr = compressionIgnition
+        ? std::max(config.fuelProperties.stoichiometricAirFuelRatio * 1.16,
+                   ecu.targetAirFuelRatio)
+        : std::clamp(ecu.targetAirFuelRatio, 5.0, 30.0);
+    const auto fuelDemand = compressionIgnition
+        ? std::clamp(state.load, 0.0, 1.0) : 1.0;
+    const auto fuelMassMg = ecu.fuelEnabled
+        ? airMassMg / afr * ecu.fuelCorrection * fuelDemand : 0.0;
     const auto actualAfr = fuelMassMg > 1.0e-9 ? airMassMg / fuelMassMg : afr;
     const auto fuelEnergyJPerKg = config.fuelProperties.lowerHeatingValueMjPerKg * 1'000'000.0;
-    const auto bestPowerAfr = config.fuelProperties.stoichiometricAirFuelRatio * 0.87;
+    const auto bestPowerAfr = config.fuelProperties.stoichiometricAirFuelRatio
+        * (compressionIgnition ? 1.16 : 0.87);
 
-    const auto afrEfficiency = std::clamp(1.0 - std::abs(actualAfr - bestPowerAfr)
-        / config.fuelProperties.stoichiometricAirFuelRatio * 0.66, 0.35, 1.0);
-    const auto load = std::clamp(0.25 + state.manifoldPressureKpa / std::max(1.0, config.ambientPressureKpa) * 0.75, 0.0, 1.0);
+    const auto afrEfficiency = compressionIgnition
+        ? std::clamp(0.72 + 0.28 * config.fuelProperties.stoichiometricAirFuelRatio
+            / std::max(config.fuelProperties.stoichiometricAirFuelRatio,
+                       actualAfr) / 0.35, 0.72, 1.0)
+        : std::clamp(1.0 - std::abs(actualAfr - bestPowerAfr)
+            / config.fuelProperties.stoichiometricAirFuelRatio * 0.66,
+            0.35, 1.0);
+    const auto load = compressionIgnition
+        ? std::clamp(state.load, 0.0, 1.0)
+        : std::clamp(0.25 + state.manifoldPressureKpa
+            / std::max(1.0, config.ambientPressureKpa) * 0.75, 0.0, 1.0);
     const auto optimumAdvance = 8.0 + rpmRatio * 20.0 + (1.0 - load) * 12.0;
     const auto timingError = ecu.ignitionAdvanceDegrees - optimumAdvance;
-    const auto timingEfficiency = std::clamp(std::exp(-timingError * timingError / 450.0), 0.45, 1.0);
+    const auto timingEfficiency = compressionIgnition ? 1.0
+        : std::clamp(std::exp(-timingError * timingError / 450.0),
+                     0.45, 1.0);
     const auto chamberVolumeM3 = std::max(1.0e-6, displacedVolumeM3
         / (static_cast<double>(config.cylinders.size()) * std::max(1.0, compression - 1.0)));
     constexpr double universalGasConstant = 8.314462618;
@@ -155,7 +178,8 @@ CombustionResult SimplifiedGasolinePhysics::evaluateCombustion(
     const auto burnCompleteness = fuelMoles > 1.0e-12 ? burnedFuelMoles / fuelMoles : 0.0;
     const auto turbulence = std::clamp(state.meanPistonSpeedMps / 22.0, 0.0, 1.8);
     const auto pressureRatio = std::max(0.35, state.manifoldPressureKpa / std::max(1.0, config.ambientPressureKpa));
-    const auto flameSpeedMps = std::clamp(config.fuelProperties.laminarFlameSpeedMps
+    const auto flameSpeedMps = compressionIgnition ? 0.0
+        : std::clamp(config.fuelProperties.laminarFlameSpeedMps
         * (1.0 + turbulence * config.fuelProperties.turbulenceFlameSpeedGain)
         * std::clamp(1.0 - std::abs(actualAfr - bestPowerAfr)
             / config.fuelProperties.stoichiometricAirFuelRatio * 0.52, 0.25, 1.0)
@@ -187,7 +211,8 @@ CombustionResult SimplifiedGasolinePhysics::evaluateCombustion(
     // from each cylinder's actual pressure and temperature. The mean-value
     // policy must not create an independent empirical knock signal.
     constexpr double knock = 0.0;
-    const auto mixtureMisfire = std::max(0.0, std::abs(actualAfr - 14.0) - 2.6) * 0.055;
+    const auto mixtureMisfire = compressionIgnition ? 0.0
+        : std::max(0.0, std::abs(actualAfr - 14.0) - 2.6) * 0.055;
     const auto lowSpeedMisfire = std::max(0.0, 420.0 - state.rpm) / 1'500.0;
     const auto misfire = combustionEnabled ? std::clamp(mixtureMisfire + lowSpeedMisfire + knock * 0.07, 0.0, 0.85) : 0.0;
     const auto displacementM3 = std::max(1.0e-6, displacedVolumeM3);

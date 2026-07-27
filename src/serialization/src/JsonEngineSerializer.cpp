@@ -37,6 +37,21 @@ using Json = nlohmann::json;
     if (value == "outlet") return ExhaustComponentType::outlet;
     return std::nullopt;
 }
+[[nodiscard]] const char* terminationName(AcousticTerminationType value) noexcept {
+    return value == AcousticTerminationType::flanged ? "flanged" : "unflanged";
+}
+[[nodiscard]] AcousticTerminationType decodeTermination(std::string_view value) noexcept {
+    return value == "flanged" ? AcousticTerminationType::flanged
+                              : AcousticTerminationType::unflanged;
+}
+[[nodiscard]] Json pointJson(const AcousticPoint3M& point) {
+    return { { "x", point.x }, { "y", point.y }, { "z", point.z } };
+}
+[[nodiscard]] AcousticPoint3M decodePoint(
+    const Json& value, AcousticPoint3M fallback = {}) {
+    return { value.value("x", fallback.x), value.value("y", fallback.y),
+        value.value("z", fallback.z) };
+}
 [[nodiscard]] std::string layoutName(EngineLayout value) {
     switch (value) {
     case EngineLayout::inlineLayout: return "inline";
@@ -177,6 +192,11 @@ std::string JsonEngineSerializer::encode(const EngineConfig& config) const {
             {"throttle_count", path.geometry.throttleCount},
             {"throttle_discharge_coefficient", path.geometry.throttleDischargeCoefficient},
             {"runner_length_mm", path.geometry.runnerLengthMm}, {"runner_diameter_mm", path.geometry.runnerDiameterMm},
+            {"runner_plenum_diameter_mm", path.geometry.runnerPlenumDiameterMm},
+            {"airbox_volume_l", path.geometry.airboxVolumeLitres},
+            {"inlet_duct_length_mm", path.geometry.inletDuctLengthMm},
+            {"inlet_duct_diameter_mm", path.geometry.inletDuctDiameterMm},
+            {"bellmouth_diameter_mm", path.geometry.bellmouthDiameterMm},
             {"idle_bypass_area_mm2", path.geometry.idleBypassAreaMm2}, {"throttle_gamma", path.geometry.throttleGamma}}} });
     Json banks = Json::array();
     for (const auto& bank : config.banks) banks.push_back({ {"id", bank.id}, {"angle_deg", bank.angleDegrees},
@@ -186,6 +206,9 @@ std::string JsonEngineSerializer::encode(const EngineConfig& config) const {
     for (const auto& path : config.exhaustPaths) {
         Json encodedPath = { {"id", path.id}, {"cylinder_ids", path.cylinderIds},
             {"impulse_response", path.impulseResponsePath}, {"audio_volume", path.audioVolume},
+            {"acoustic_position_m", pointJson(path.acousticPositionM)},
+            {"acoustic_axis", pointJson(path.acousticAxis)},
+            {"acoustic_termination", terminationName(path.acousticTermination)},
             {"geometry", {{"primary_length_mm", path.geometry.primaryLengthMm},
                 {"primary_diameter_mm", path.geometry.primaryDiameterMm},
                 {"collector_diameter_mm", path.geometry.collectorDiameterMm},
@@ -200,9 +223,13 @@ std::string JsonEngineSerializer::encode(const EngineConfig& config) const {
             for (const auto& component : path.network->components)
                 components.push_back({ {"id", component.id}, {"type", exhaustComponentTypeName(component.type)},
                     {"length_mm", component.lengthMm}, {"diameter_mm", component.diameterMm},
+                    {"outlet_diameter_mm", component.outletDiameterMm},
                     {"volume_l", component.volumeLitres}, {"restriction", component.restriction},
                     {"resonance_hz", component.resonanceHz}, {"acoustic_gain", component.acousticGain},
-                    {"discharge_coefficient", component.dischargeCoefficient} });
+                    {"discharge_coefficient", component.dischargeCoefficient},
+                    {"acoustic_position_m", pointJson(component.acousticPositionM)},
+                    {"acoustic_axis", pointJson(component.acousticAxis)},
+                    {"acoustic_termination", terminationName(component.acousticTermination)} });
             Json cylinderConnections = Json::array();
             for (const auto& connection : path.network->cylinderConnections)
                 cylinderConnections.push_back({ {"cylinder_id", connection.cylinderId},
@@ -220,6 +247,11 @@ std::string JsonEngineSerializer::encode(const EngineConfig& config) const {
     Json timingCurve = Json::array();
     for (const auto& sample : config.ignition.timingCurve)
         timingCurve.push_back({ {"rpm", sample.rpm}, {"advance_deg", sample.advanceDegrees} });
+    Json fullLoadFuelLimit = Json::array();
+    for (const auto& sample : config.injection.fullLoadFuelLimit)
+        fullLoadFuelLimit.push_back({
+            { "rpm", sample.rpm },
+            { "mg_per_cycle", sample.milligramsPerCycle } });
     Json document = { {"schema_version", currentEngineSchemaVersion}, {"engine", {
         {"name", config.name}, {"cycle", cycleName(config.cycle)}, {"fuel", fuelName(config.fuel)},
         {"fuel_properties", {{"name", config.fuelProperties.name},
@@ -230,7 +262,8 @@ std::string JsonEngineSerializer::encode(const EngineConfig& config) const {
                              {"oxygen_moles_per_fuel_mole", config.fuelProperties.oxygenMolesPerFuelMole},
                              {"product_moles_per_fuel_mole", config.fuelProperties.productMolesPerFuelMole},
                              {"laminar_flame_speed_mps", config.fuelProperties.laminarFlameSpeedMps},
-                             {"turbulence_flame_speed_gain", config.fuelProperties.turbulenceFlameSpeedGain}}},
+                             {"turbulence_flame_speed_gain", config.fuelProperties.turbulenceFlameSpeedGain},
+                             {"cetane_number", config.fuelProperties.cetaneNumber}}},
         {"layout", layoutName(config.layout)},
         {"cylinders", cylinders}, {"firing_order", config.firingOrder}, {"idle_rpm", config.idleRpm},
         {"redline_rpm", config.redlineRpm}, {"rotating_inertia_kg_m2", config.rotatingInertiaKgM2},
@@ -252,7 +285,18 @@ std::string JsonEngineSerializer::encode(const EngineConfig& config) const {
                                {"design_shaft_speed_rpm", config.forcedInduction.designShaftSpeedRpm},
                                {"bearing_friction_power_w", config.forcedInduction.bearingFrictionPowerWatts},
                                {"turbine_flow_area_mm2", config.forcedInduction.turbineFlowAreaMm2},
-                               {"wastegate_flow_area_mm2", config.forcedInduction.wastegateFlowAreaMm2}}},
+                               {"wastegate_flow_area_mm2", config.forcedInduction.wastegateFlowAreaMm2},
+                               {"compressor_blade_count", config.forcedInduction.compressorBladeCount},
+                               {"turbine_blade_count", config.forcedInduction.turbineBladeCount},
+                               {"supercharger_lobe_count", config.forcedInduction.superchargerLobeCount},
+                               {"supercharger_drive_ratio", config.forcedInduction.superchargerDriveRatio},
+                               {"compressor_inducer_diameter_mm", config.forcedInduction.compressorInducerDiameterMm},
+                               {"turbine_exducer_diameter_mm", config.forcedInduction.turbineExducerDiameterMm},
+                               {"blow_off_valve_flow_area_mm2", config.forcedInduction.blowOffValveFlowAreaMm2},
+                               {"blow_off_valve_opening_pressure_ratio", config.forcedInduction.blowOffValveOpeningPressureRatio},
+                               {"blow_off_valve_discharge_coefficient", config.forcedInduction.blowOffValveDischargeCoefficient},
+                               {"tonal_acoustic_efficiency", config.forcedInduction.tonalAcousticEfficiency},
+                               {"turbulent_jet_noise_coefficient", config.forcedInduction.turbulentJetNoiseCoefficient}}},
         {"thermal", {{"coolant_mass_kj_per_c", config.thermal.coolantMassKjPerC},
                       {"oil_mass_kj_per_c", config.thermal.oilMassKjPerC},
                       {"coolant_heat_share", config.thermal.coolantHeatShare},
@@ -263,7 +307,12 @@ std::string JsonEngineSerializer::encode(const EngineConfig& config) const {
                       {"ignition_delay_temperature_exponent", config.combustionCalibration.ignitionDelayTemperatureExponent},
                       {"ignition_delay_pressure_exponent", config.combustionCalibration.ignitionDelayPressureExponent},
                       {"wall_heat_transfer_w_per_k", config.combustionCalibration.wallHeatTransferCoefficientWPerK},
-                      {"residual_dilution_sensitivity", config.combustionCalibration.residualDilutionSensitivity}}},
+                      {"residual_dilution_sensitivity", config.combustionCalibration.residualDilutionSensitivity},
+                      {"chamber_turbulence_intensity_ratio", config.combustionCalibration.chamberTurbulenceIntensityRatio},
+                      {"ignition_site_count", config.combustionCalibration.ignitionSiteCount},
+                      {"compression_ignition_delay_scale", config.combustionCalibration.compressionIgnitionDelayScale},
+                      {"compression_ignition_mixing_time_s", config.combustionCalibration.compressionIgnitionMixingTimeSeconds},
+                      {"compression_ignition_premixed_fraction", config.combustionCalibration.compressionIgnitionPremixedFraction}}},
         {"runner_acoustics", {{"enabled", config.runnerAcoustics.enabled},
                       {"damping_ratio", config.runnerAcoustics.dampingRatio},
                       {"coupling_gain", config.runnerAcoustics.couplingGain},
@@ -274,8 +323,17 @@ std::string JsonEngineSerializer::encode(const EngineConfig& config) const {
                      {"throttle_count", config.intake.throttleCount},
                      {"throttle_discharge_coefficient", config.intake.throttleDischargeCoefficient},
                      {"runner_length_mm", config.intake.runnerLengthMm}, {"runner_diameter_mm", config.intake.runnerDiameterMm},
+                     {"runner_plenum_diameter_mm", config.intake.runnerPlenumDiameterMm},
+                     {"airbox_volume_l", config.intake.airboxVolumeLitres},
+                     {"inlet_duct_length_mm", config.intake.inletDuctLengthMm},
+                     {"inlet_duct_diameter_mm", config.intake.inletDuctDiameterMm},
+                     {"bellmouth_diameter_mm", config.intake.bellmouthDiameterMm},
                      {"idle_bypass_area_mm2", config.intake.idleBypassAreaMm2}, {"throttle_gamma", config.intake.throttleGamma}}},
         {"intake_paths", intakePaths}, {"banks", banks}, {"exhaust_paths", exhaustPaths},
+        {"acoustic_observer", {
+            {"left_microphone_m", pointJson(config.acousticObserver.leftMicrophoneM)},
+            {"right_microphone_m", pointJson(config.acousticObserver.rightMicrophoneM)},
+            {"sound_speed_mps", config.acousticObserver.soundSpeedMps}}},
         {"ignition", {{"rev_limit_rpm", config.ignition.revLimitRpm},
                         {"limiter_duration_s", config.ignition.limiterDurationSeconds}, {"timing_curve", timingCurve}}},
         {"injection", {{"mode", injectionModeName(config.injection.mode)},
@@ -289,7 +347,10 @@ std::string JsonEngineSerializer::encode(const EngineConfig& config) const {
                         {"vaporisation_time_constant_s", config.injection.vaporisationTimeConstantSeconds},
                         {"latent_heat_kj_per_kg", config.injection.latentHeatKjPerKg},
                         {"direct_charge_cooling_efficiency", config.injection.directChargeCoolingEfficiency},
-                        {"port_charge_cooling_efficiency", config.injection.portChargeCoolingEfficiency}}},
+                        {"port_charge_cooling_efficiency", config.injection.portChargeCoolingEfficiency},
+                        {"direct_spray_vaporisation_time_constant_s", config.injection.directSprayVaporisationTimeConstantSeconds},
+                        {"direct_spray_entrainment_time_constant_s", config.injection.directSprayEntrainmentTimeConstantSeconds},
+                        {"full_load_fuel_limit", fullLoadFuelLimit}}},
         {"solver", {{"mechanical_frequency_hz", config.solver.mechanicalFrequencyHz},
                      {"maximum_frequency_hz", config.solver.maximumMechanicalFrequencyHz},
                      {"maximum_crank_deg_per_step", config.solver.maximumCrankDegreesPerStep},
@@ -370,6 +431,8 @@ EngineDecodeResult JsonEngineSerializer::decode(std::string_view text) const noe
                 "laminar_flame_speed_mps", config.fuelProperties.laminarFlameSpeedMps);
             config.fuelProperties.turbulenceFlameSpeedGain = properties.value(
                 "turbulence_flame_speed_gain", config.fuelProperties.turbulenceFlameSpeedGain);
+            config.fuelProperties.cetaneNumber = properties.value(
+                "cetane_number", config.fuelProperties.cetaneNumber);
         }
         const auto layout = engine.value("layout", "inline");
         if (layout == "inline") config.layout = EngineLayout::inlineLayout;
@@ -407,6 +470,17 @@ EngineDecodeResult JsonEngineSerializer::decode(std::string_view text) const noe
             config.forcedInduction.bearingFrictionPowerWatts = forced.value("bearing_friction_power_w", config.forcedInduction.bearingFrictionPowerWatts);
             config.forcedInduction.turbineFlowAreaMm2 = forced.value("turbine_flow_area_mm2", config.forcedInduction.turbineFlowAreaMm2);
             config.forcedInduction.wastegateFlowAreaMm2 = forced.value("wastegate_flow_area_mm2", config.forcedInduction.wastegateFlowAreaMm2);
+            config.forcedInduction.compressorBladeCount = forced.value("compressor_blade_count", config.forcedInduction.compressorBladeCount);
+            config.forcedInduction.turbineBladeCount = forced.value("turbine_blade_count", config.forcedInduction.turbineBladeCount);
+            config.forcedInduction.superchargerLobeCount = forced.value("supercharger_lobe_count", config.forcedInduction.superchargerLobeCount);
+            config.forcedInduction.superchargerDriveRatio = forced.value("supercharger_drive_ratio", config.forcedInduction.superchargerDriveRatio);
+            config.forcedInduction.compressorInducerDiameterMm = forced.value("compressor_inducer_diameter_mm", config.forcedInduction.compressorInducerDiameterMm);
+            config.forcedInduction.turbineExducerDiameterMm = forced.value("turbine_exducer_diameter_mm", config.forcedInduction.turbineExducerDiameterMm);
+            config.forcedInduction.blowOffValveFlowAreaMm2 = forced.value("blow_off_valve_flow_area_mm2", config.forcedInduction.blowOffValveFlowAreaMm2);
+            config.forcedInduction.blowOffValveOpeningPressureRatio = forced.value("blow_off_valve_opening_pressure_ratio", config.forcedInduction.blowOffValveOpeningPressureRatio);
+            config.forcedInduction.blowOffValveDischargeCoefficient = forced.value("blow_off_valve_discharge_coefficient", config.forcedInduction.blowOffValveDischargeCoefficient);
+            config.forcedInduction.tonalAcousticEfficiency = forced.value("tonal_acoustic_efficiency", config.forcedInduction.tonalAcousticEfficiency);
+            config.forcedInduction.turbulentJetNoiseCoefficient = forced.value("turbulent_jet_noise_coefficient", config.forcedInduction.turbulentJetNoiseCoefficient);
         }
         if (engine.contains("thermal")) {
             const auto& thermal = engine.at("thermal");
@@ -424,6 +498,11 @@ EngineDecodeResult JsonEngineSerializer::decode(std::string_view text) const noe
             config.combustionCalibration.ignitionDelayPressureExponent = calibration.value("ignition_delay_pressure_exponent", config.combustionCalibration.ignitionDelayPressureExponent);
             config.combustionCalibration.wallHeatTransferCoefficientWPerK = calibration.value("wall_heat_transfer_w_per_k", config.combustionCalibration.wallHeatTransferCoefficientWPerK);
             config.combustionCalibration.residualDilutionSensitivity = calibration.value("residual_dilution_sensitivity", config.combustionCalibration.residualDilutionSensitivity);
+            config.combustionCalibration.chamberTurbulenceIntensityRatio = calibration.value("chamber_turbulence_intensity_ratio", config.combustionCalibration.chamberTurbulenceIntensityRatio);
+            config.combustionCalibration.ignitionSiteCount = calibration.value("ignition_site_count", config.combustionCalibration.ignitionSiteCount);
+            config.combustionCalibration.compressionIgnitionDelayScale = calibration.value("compression_ignition_delay_scale", config.combustionCalibration.compressionIgnitionDelayScale);
+            config.combustionCalibration.compressionIgnitionMixingTimeSeconds = calibration.value("compression_ignition_mixing_time_s", config.combustionCalibration.compressionIgnitionMixingTimeSeconds);
+            config.combustionCalibration.compressionIgnitionPremixedFraction = calibration.value("compression_ignition_premixed_fraction", config.combustionCalibration.compressionIgnitionPremixedFraction);
         }
         if (engine.contains("runner_acoustics")) {
             const auto& acoustics = engine.at("runner_acoustics");
@@ -446,6 +525,11 @@ EngineDecodeResult JsonEngineSerializer::decode(std::string_view text) const noe
             config.intake.throttleDischargeCoefficient = intake.value("throttle_discharge_coefficient", config.intake.throttleDischargeCoefficient);
             config.intake.runnerLengthMm = intake.value("runner_length_mm", config.intake.runnerLengthMm);
             config.intake.runnerDiameterMm = intake.value("runner_diameter_mm", config.intake.runnerDiameterMm);
+            config.intake.runnerPlenumDiameterMm = intake.value("runner_plenum_diameter_mm", config.intake.runnerPlenumDiameterMm);
+            config.intake.airboxVolumeLitres = intake.value("airbox_volume_l", config.intake.airboxVolumeLitres);
+            config.intake.inletDuctLengthMm = intake.value("inlet_duct_length_mm", config.intake.inletDuctLengthMm);
+            config.intake.inletDuctDiameterMm = intake.value("inlet_duct_diameter_mm", config.intake.inletDuctDiameterMm);
+            config.intake.bellmouthDiameterMm = intake.value("bellmouth_diameter_mm", config.intake.bellmouthDiameterMm);
             config.intake.idleBypassAreaMm2 = intake.value("idle_bypass_area_mm2", config.intake.idleBypassAreaMm2);
             config.intake.throttleGamma = intake.value("throttle_gamma", config.intake.throttleGamma);
         }
@@ -548,6 +632,15 @@ EngineDecodeResult JsonEngineSerializer::decode(std::string_view text) const noe
             config.injection.latentHeatKjPerKg = injection.value("latent_heat_kj_per_kg", config.injection.latentHeatKjPerKg);
             config.injection.directChargeCoolingEfficiency = injection.value("direct_charge_cooling_efficiency", config.injection.directChargeCoolingEfficiency);
             config.injection.portChargeCoolingEfficiency = injection.value("port_charge_cooling_efficiency", config.injection.portChargeCoolingEfficiency);
+            config.injection.directSprayVaporisationTimeConstantSeconds = injection.value("direct_spray_vaporisation_time_constant_s", config.injection.directSprayVaporisationTimeConstantSeconds);
+            config.injection.directSprayEntrainmentTimeConstantSeconds = injection.value("direct_spray_entrainment_time_constant_s", config.injection.directSprayEntrainmentTimeConstantSeconds);
+            if (injection.contains("full_load_fuel_limit")) {
+                config.injection.fullLoadFuelLimit.clear();
+                for (const auto& sample : injection.at("full_load_fuel_limit"))
+                    config.injection.fullLoadFuelLimit.push_back({
+                        sample.at("rpm").get<double>(),
+                        sample.at("mg_per_cycle").get<double>() });
+            }
         }
         if (engine.contains("solver")) {
             const auto& solver = engine.at("solver");
@@ -581,11 +674,29 @@ EngineDecodeResult JsonEngineSerializer::decode(std::string_view text) const noe
                     path.geometry.throttleDischargeCoefficient = geometry.value("throttle_discharge_coefficient", path.geometry.throttleDischargeCoefficient);
                     path.geometry.runnerLengthMm = geometry.value("runner_length_mm", path.geometry.runnerLengthMm);
                     path.geometry.runnerDiameterMm = geometry.value("runner_diameter_mm", path.geometry.runnerDiameterMm);
+                    path.geometry.runnerPlenumDiameterMm = geometry.value("runner_plenum_diameter_mm", path.geometry.runnerPlenumDiameterMm);
+                    path.geometry.airboxVolumeLitres = geometry.value("airbox_volume_l", path.geometry.airboxVolumeLitres);
+                    path.geometry.inletDuctLengthMm = geometry.value("inlet_duct_length_mm", path.geometry.inletDuctLengthMm);
+                    path.geometry.inletDuctDiameterMm = geometry.value("inlet_duct_diameter_mm", path.geometry.inletDuctDiameterMm);
+                    path.geometry.bellmouthDiameterMm = geometry.value("bellmouth_diameter_mm", path.geometry.bellmouthDiameterMm);
                     path.geometry.idleBypassAreaMm2 = geometry.value("idle_bypass_area_mm2", path.geometry.idleBypassAreaMm2);
                     path.geometry.throttleGamma = geometry.value("throttle_gamma", path.geometry.throttleGamma);
                 }
                 config.intakePaths.push_back(std::move(path));
             }
+        }
+        if (engine.contains("acoustic_observer")) {
+            const auto& observer = engine.at("acoustic_observer");
+            if (observer.contains("left_microphone_m"))
+                config.acousticObserver.leftMicrophoneM = decodePoint(
+                    observer.at("left_microphone_m"),
+                    config.acousticObserver.leftMicrophoneM);
+            if (observer.contains("right_microphone_m"))
+                config.acousticObserver.rightMicrophoneM = decodePoint(
+                    observer.at("right_microphone_m"),
+                    config.acousticObserver.rightMicrophoneM);
+            config.acousticObserver.soundSpeedMps = observer.value(
+                "sound_speed_mps", config.acousticObserver.soundSpeedMps);
         }
         if (engine.contains("exhaust_paths")) {
             for (const auto& item : engine.at("exhaust_paths")) {
@@ -594,6 +705,13 @@ EngineDecodeResult JsonEngineSerializer::decode(std::string_view text) const noe
                 path.cylinderIds = item.value("cylinder_ids", std::vector<std::uint32_t> {});
                 path.impulseResponsePath = item.value("impulse_response", std::string {});
                 path.audioVolume = item.value("audio_volume", 1.0);
+                if (item.contains("acoustic_position_m"))
+                    path.acousticPositionM = decodePoint(item.at("acoustic_position_m"));
+                if (item.contains("acoustic_axis"))
+                    path.acousticAxis = decodePoint(
+                        item.at("acoustic_axis"), path.acousticAxis);
+                path.acousticTermination = decodeTermination(item.value(
+                    "acoustic_termination", std::string("unflanged")));
                 if (item.contains("geometry")) {
                     const auto& geometry = item.at("geometry");
                     path.geometry.primaryLengthMm = geometry.value("primary_length_mm", path.geometry.primaryLengthMm);
@@ -618,12 +736,24 @@ EngineDecodeResult JsonEngineSerializer::decode(std::string_view text) const noe
                         component.type = *type;
                         component.lengthMm = encodedComponent.value("length_mm", component.lengthMm);
                         component.diameterMm = encodedComponent.value("diameter_mm", component.diameterMm);
+                        component.outletDiameterMm = encodedComponent.value(
+                            "outlet_diameter_mm", component.outletDiameterMm);
                         component.volumeLitres = encodedComponent.value("volume_l", component.volumeLitres);
                         component.restriction = encodedComponent.value("restriction", component.restriction);
                         component.resonanceHz = encodedComponent.value("resonance_hz", component.resonanceHz);
                         component.acousticGain = encodedComponent.value("acoustic_gain", component.acousticGain);
                         component.dischargeCoefficient = encodedComponent.value(
                             "discharge_coefficient", component.dischargeCoefficient);
+                        if (encodedComponent.contains("acoustic_position_m"))
+                            component.acousticPositionM = decodePoint(
+                                encodedComponent.at("acoustic_position_m"));
+                        if (encodedComponent.contains("acoustic_axis"))
+                            component.acousticAxis = decodePoint(
+                                encodedComponent.at("acoustic_axis"),
+                                component.acousticAxis);
+                        component.acousticTermination = decodeTermination(
+                            encodedComponent.value("acoustic_termination",
+                                std::string("unflanged")));
                         network.components.push_back(component);
                     }
                     for (const auto& encodedConnection : encodedGraph.at("cylinder_connections"))

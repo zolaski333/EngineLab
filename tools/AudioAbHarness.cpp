@@ -267,7 +267,8 @@ DecayMeasurement measureExhaustDecay(const EngineConfig& baseConfig, const WavDa
     auto& eventQueue = *eventQueuePtr;
     auto& pressureQueue = *pressureQueuePtr;
     auto rendererPtr = std::make_unique<RealtimeEngineAudio>(
-        eventQueue, audioState, &pressureQueue, &audioConfiguration->exhaustGraph());
+        eventQueue, audioState, &pressureQueue, &audioConfiguration->exhaustGraph(),
+        &audioConfiguration->engineConfig());
     auto& renderer = *rendererPtr;
     if (!ir.samples.empty()) renderer.setImpulseResponse(ir.samples, ir.sampleRate, 0);
     renderer.prepare(audioRate, samplesPerStep);
@@ -378,7 +379,8 @@ SweepResult renderSweep(const EngineConfig& baseConfig, const WavData& ir,
     constexpr double dt = 1.0 / 240.0;
     constexpr int samplesPerStep = 200; // 48000 / 240
     auto rendererPtr = std::make_unique<RealtimeEngineAudio>(
-        eventQueue, audioState, &pressureQueue, &audioConfiguration->exhaustGraph());
+        eventQueue, audioState, &pressureQueue, &audioConfiguration->exhaustGraph(),
+        &audioConfiguration->engineConfig());
     auto& renderer = *rendererPtr;
     if (!ir.samples.empty()) renderer.setImpulseResponse(ir.samples, ir.sampleRate, 0);
     renderer.prepare(audioRate, samplesPerStep);

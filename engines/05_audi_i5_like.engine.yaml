@@ -1,4 +1,4 @@
-schema_version: 1
+schema_version: 4
 family: odd inline
 engine:
   name: Audi I5-like 2.5 Turbo
@@ -12,11 +12,16 @@ engine:
   octane_rating: 98
   plenum_volume_l: 3.6
   throttle_diameter_mm: 70
+  acoustic_observer: { left_microphone_m: { x: -0.18, y: 4.0, z: 0.8 }, right_microphone_m: { x: 0.18, y: 4.0, z: 0.8 }, sound_speed_mps: 0 }
   intake:
     plenum_volume_l: 3.6
     throttle_diameter_mm: 70
     runner_length_mm: 360
     runner_diameter_mm: 43
+    airbox_volume_l: 5.0
+    inlet_duct_length_mm: 300
+    inlet_duct_diameter_mm: 82
+    bellmouth_diameter_mm: 96
     idle_bypass_area_mm2: 21
     throttle_gamma: 1.45
   forced_induction:
@@ -29,6 +34,16 @@ engine:
     shaft_inertia_kg_m2: 0.00013
     wastegate_pressure_ratio: 1.76
     charge_temperature_rise_c: 43
+    # Family-level acoustic estimates; replace with measured turbo geometry.
+    compressor_blade_count: 7
+    turbine_blade_count: 9
+    compressor_inducer_diameter_mm: 52
+    turbine_exducer_diameter_mm: 45
+    blow_off_valve_flow_area_mm2: 360
+    blow_off_valve_opening_pressure_ratio: 1.12
+    blow_off_valve_discharge_coefficient: 0.72
+    tonal_acoustic_efficiency: 0.000001
+    turbulent_jet_noise_coefficient: 0.00001
   ignition:
     rev_limit_rpm: 7300
     limiter_duration_s: 0.065

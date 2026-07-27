@@ -40,6 +40,20 @@ namespace {
     if (value == "outlet") return ExhaustComponentType::outlet;
     return std::nullopt;
 }
+[[nodiscard]] const char* terminationName(AcousticTerminationType value) noexcept {
+    return value == AcousticTerminationType::flanged ? "flanged" : "unflanged";
+}
+void emitPoint(YAML::Emitter& out, const AcousticPoint3M& point) {
+    out << YAML::Flow << YAML::BeginMap
+        << YAML::Key << "x" << YAML::Value << point.x
+        << YAML::Key << "y" << YAML::Value << point.y
+        << YAML::Key << "z" << YAML::Value << point.z << YAML::EndMap;
+}
+[[nodiscard]] AcousticPoint3M decodePoint(
+    const YAML::Node& node, AcousticPoint3M fallback = {}) {
+    return { node["x"].as<double>(fallback.x), node["y"].as<double>(fallback.y),
+        node["z"].as<double>(fallback.z) };
+}
 
 void emitLiftProfile(YAML::Emitter& out, const char* key, const std::vector<ValveLiftSample>& profile) {
     out << YAML::Key << key << YAML::Value << YAML::BeginSeq;
@@ -115,6 +129,7 @@ std::string YamlEngineSerializer::encode(const EngineConfig& config) const {
         << YAML::Key << "product_moles_per_fuel_mole" << YAML::Value << config.fuelProperties.productMolesPerFuelMole
         << YAML::Key << "laminar_flame_speed_mps" << YAML::Value << config.fuelProperties.laminarFlameSpeedMps
         << YAML::Key << "turbulence_flame_speed_gain" << YAML::Value << config.fuelProperties.turbulenceFlameSpeedGain
+        << YAML::Key << "cetane_number" << YAML::Value << config.fuelProperties.cetaneNumber
         << YAML::EndMap
         << YAML::Key << "layout" << YAML::Value << layoutName(config.layout)
         << YAML::Key << "idle_rpm" << YAML::Value << config.idleRpm
@@ -142,6 +157,17 @@ std::string YamlEngineSerializer::encode(const EngineConfig& config) const {
         << YAML::Key << "bearing_friction_power_w" << YAML::Value << config.forcedInduction.bearingFrictionPowerWatts
         << YAML::Key << "turbine_flow_area_mm2" << YAML::Value << config.forcedInduction.turbineFlowAreaMm2
         << YAML::Key << "wastegate_flow_area_mm2" << YAML::Value << config.forcedInduction.wastegateFlowAreaMm2
+        << YAML::Key << "compressor_blade_count" << YAML::Value << config.forcedInduction.compressorBladeCount
+        << YAML::Key << "turbine_blade_count" << YAML::Value << config.forcedInduction.turbineBladeCount
+        << YAML::Key << "supercharger_lobe_count" << YAML::Value << config.forcedInduction.superchargerLobeCount
+        << YAML::Key << "supercharger_drive_ratio" << YAML::Value << config.forcedInduction.superchargerDriveRatio
+        << YAML::Key << "compressor_inducer_diameter_mm" << YAML::Value << config.forcedInduction.compressorInducerDiameterMm
+        << YAML::Key << "turbine_exducer_diameter_mm" << YAML::Value << config.forcedInduction.turbineExducerDiameterMm
+        << YAML::Key << "blow_off_valve_flow_area_mm2" << YAML::Value << config.forcedInduction.blowOffValveFlowAreaMm2
+        << YAML::Key << "blow_off_valve_opening_pressure_ratio" << YAML::Value << config.forcedInduction.blowOffValveOpeningPressureRatio
+        << YAML::Key << "blow_off_valve_discharge_coefficient" << YAML::Value << config.forcedInduction.blowOffValveDischargeCoefficient
+        << YAML::Key << "tonal_acoustic_efficiency" << YAML::Value << config.forcedInduction.tonalAcousticEfficiency
+        << YAML::Key << "turbulent_jet_noise_coefficient" << YAML::Value << config.forcedInduction.turbulentJetNoiseCoefficient
         << YAML::EndMap
         << YAML::Key << "thermal" << YAML::Value << YAML::BeginMap
         << YAML::Key << "coolant_mass_kj_per_c" << YAML::Value << config.thermal.coolantMassKjPerC
@@ -157,6 +183,11 @@ std::string YamlEngineSerializer::encode(const EngineConfig& config) const {
         << YAML::Key << "ignition_delay_pressure_exponent" << YAML::Value << config.combustionCalibration.ignitionDelayPressureExponent
         << YAML::Key << "wall_heat_transfer_w_per_k" << YAML::Value << config.combustionCalibration.wallHeatTransferCoefficientWPerK
         << YAML::Key << "residual_dilution_sensitivity" << YAML::Value << config.combustionCalibration.residualDilutionSensitivity
+        << YAML::Key << "chamber_turbulence_intensity_ratio" << YAML::Value << config.combustionCalibration.chamberTurbulenceIntensityRatio
+        << YAML::Key << "ignition_site_count" << YAML::Value << config.combustionCalibration.ignitionSiteCount
+        << YAML::Key << "compression_ignition_delay_scale" << YAML::Value << config.combustionCalibration.compressionIgnitionDelayScale
+        << YAML::Key << "compression_ignition_mixing_time_s" << YAML::Value << config.combustionCalibration.compressionIgnitionMixingTimeSeconds
+        << YAML::Key << "compression_ignition_premixed_fraction" << YAML::Value << config.combustionCalibration.compressionIgnitionPremixedFraction
         << YAML::EndMap
         << YAML::Key << "runner_acoustics" << YAML::Value << YAML::BeginMap
         << YAML::Key << "enabled" << YAML::Value << config.runnerAcoustics.enabled
@@ -251,6 +282,11 @@ std::string YamlEngineSerializer::encode(const EngineConfig& config) const {
         << YAML::Key << "throttle_discharge_coefficient" << YAML::Value << config.intake.throttleDischargeCoefficient
         << YAML::Key << "runner_length_mm" << YAML::Value << config.intake.runnerLengthMm
         << YAML::Key << "runner_diameter_mm" << YAML::Value << config.intake.runnerDiameterMm
+        << YAML::Key << "runner_plenum_diameter_mm" << YAML::Value << config.intake.runnerPlenumDiameterMm
+        << YAML::Key << "airbox_volume_l" << YAML::Value << config.intake.airboxVolumeLitres
+        << YAML::Key << "inlet_duct_length_mm" << YAML::Value << config.intake.inletDuctLengthMm
+        << YAML::Key << "inlet_duct_diameter_mm" << YAML::Value << config.intake.inletDuctDiameterMm
+        << YAML::Key << "bellmouth_diameter_mm" << YAML::Value << config.intake.bellmouthDiameterMm
         << YAML::Key << "idle_bypass_area_mm2" << YAML::Value << config.intake.idleBypassAreaMm2
         << YAML::Key << "throttle_gamma" << YAML::Value << config.intake.throttleGamma << YAML::EndMap
         << YAML::Key << "intake_paths" << YAML::Value << YAML::BeginSeq;
@@ -264,6 +300,11 @@ std::string YamlEngineSerializer::encode(const EngineConfig& config) const {
             << YAML::Key << "throttle_discharge_coefficient" << YAML::Value << path.geometry.throttleDischargeCoefficient
             << YAML::Key << "runner_length_mm" << YAML::Value << path.geometry.runnerLengthMm
             << YAML::Key << "runner_diameter_mm" << YAML::Value << path.geometry.runnerDiameterMm
+            << YAML::Key << "runner_plenum_diameter_mm" << YAML::Value << path.geometry.runnerPlenumDiameterMm
+            << YAML::Key << "airbox_volume_l" << YAML::Value << path.geometry.airboxVolumeLitres
+            << YAML::Key << "inlet_duct_length_mm" << YAML::Value << path.geometry.inletDuctLengthMm
+            << YAML::Key << "inlet_duct_diameter_mm" << YAML::Value << path.geometry.inletDuctDiameterMm
+            << YAML::Key << "bellmouth_diameter_mm" << YAML::Value << path.geometry.bellmouthDiameterMm
             << YAML::Key << "idle_bypass_area_mm2" << YAML::Value << path.geometry.idleBypassAreaMm2
             << YAML::Key << "throttle_gamma" << YAML::Value << path.geometry.throttleGamma
             << YAML::EndMap << YAML::EndMap;
@@ -288,7 +329,15 @@ std::string YamlEngineSerializer::encode(const EngineConfig& config) const {
         << YAML::Key << "latent_heat_kj_per_kg" << YAML::Value << config.injection.latentHeatKjPerKg
         << YAML::Key << "direct_charge_cooling_efficiency" << YAML::Value << config.injection.directChargeCoolingEfficiency
         << YAML::Key << "port_charge_cooling_efficiency" << YAML::Value << config.injection.portChargeCoolingEfficiency
-        << YAML::EndMap
+        << YAML::Key << "direct_spray_vaporisation_time_constant_s" << YAML::Value << config.injection.directSprayVaporisationTimeConstantSeconds
+        << YAML::Key << "direct_spray_entrainment_time_constant_s" << YAML::Value << config.injection.directSprayEntrainmentTimeConstantSeconds
+        << YAML::Key << "full_load_fuel_limit" << YAML::Value << YAML::BeginSeq;
+    for (const auto& sample : config.injection.fullLoadFuelLimit)
+        out << YAML::BeginMap
+            << YAML::Key << "rpm" << YAML::Value << sample.rpm
+            << YAML::Key << "mg_per_cycle" << YAML::Value
+            << sample.milligramsPerCycle << YAML::EndMap;
+    out << YAML::EndSeq << YAML::EndMap
         << YAML::Key << "solver" << YAML::Value << YAML::BeginMap
         << YAML::Key << "mechanical_frequency_hz" << YAML::Value << config.solver.mechanicalFrequencyHz
         << YAML::Key << "maximum_frequency_hz" << YAML::Value << config.solver.maximumMechanicalFrequencyHz
@@ -326,12 +375,26 @@ std::string YamlEngineSerializer::encode(const EngineConfig& config) const {
         emitValveControl(out, bank.camshafts.continuousControl);
         out << YAML::EndMap << YAML::EndMap;
     }
-    out << YAML::EndSeq << YAML::Key << "exhaust_paths" << YAML::Value << YAML::BeginSeq;
+    out << YAML::EndSeq
+        << YAML::Key << "acoustic_observer" << YAML::Value << YAML::BeginMap
+        << YAML::Key << "left_microphone_m" << YAML::Value;
+    emitPoint(out, config.acousticObserver.leftMicrophoneM);
+    out << YAML::Key << "right_microphone_m" << YAML::Value;
+    emitPoint(out, config.acousticObserver.rightMicrophoneM);
+    out << YAML::Key << "sound_speed_mps" << YAML::Value
+        << config.acousticObserver.soundSpeedMps << YAML::EndMap
+        << YAML::Key << "exhaust_paths" << YAML::Value << YAML::BeginSeq;
     for (const auto& path : config.exhaustPaths) {
         out << YAML::BeginMap << YAML::Key << "id" << YAML::Value << path.id
             << YAML::Key << "cylinder_ids" << YAML::Value << YAML::Flow << path.cylinderIds
             << YAML::Key << "impulse_response" << YAML::Value << path.impulseResponsePath
             << YAML::Key << "audio_volume" << YAML::Value << path.audioVolume
+            << YAML::Key << "acoustic_position_m" << YAML::Value;
+        emitPoint(out, path.acousticPositionM);
+        out << YAML::Key << "acoustic_axis" << YAML::Value;
+        emitPoint(out, path.acousticAxis);
+        out << YAML::Key << "acoustic_termination" << YAML::Value
+            << terminationName(path.acousticTermination)
             << YAML::Key << "geometry" << YAML::Value << YAML::BeginMap
             << YAML::Key << "primary_length_mm" << YAML::Value << path.geometry.primaryLengthMm
             << YAML::Key << "primary_diameter_mm" << YAML::Value << path.geometry.primaryDiameterMm
@@ -346,18 +409,27 @@ std::string YamlEngineSerializer::encode(const EngineConfig& config) const {
         if (path.network) {
             out << YAML::Key << "graph" << YAML::Value << YAML::BeginMap
                 << YAML::Key << "components" << YAML::Value << YAML::BeginSeq;
-            for (const auto& component : path.network->components)
+            for (const auto& component : path.network->components) {
                 out << YAML::BeginMap
                     << YAML::Key << "id" << YAML::Value << component.id
                     << YAML::Key << "type" << YAML::Value << exhaustComponentTypeName(component.type)
                     << YAML::Key << "length_mm" << YAML::Value << component.lengthMm
                     << YAML::Key << "diameter_mm" << YAML::Value << component.diameterMm
+                    << YAML::Key << "outlet_diameter_mm" << YAML::Value
+                    << component.outletDiameterMm
                     << YAML::Key << "volume_l" << YAML::Value << component.volumeLitres
                     << YAML::Key << "restriction" << YAML::Value << component.restriction
                     << YAML::Key << "resonance_hz" << YAML::Value << component.resonanceHz
                     << YAML::Key << "acoustic_gain" << YAML::Value << component.acousticGain
                     << YAML::Key << "discharge_coefficient" << YAML::Value << component.dischargeCoefficient
+                    << YAML::Key << "acoustic_position_m" << YAML::Value;
+                emitPoint(out, component.acousticPositionM);
+                out << YAML::Key << "acoustic_axis" << YAML::Value;
+                emitPoint(out, component.acousticAxis);
+                out << YAML::Key << "acoustic_termination" << YAML::Value
+                    << terminationName(component.acousticTermination)
                     << YAML::EndMap;
+            }
             out << YAML::EndSeq << YAML::Key << "cylinder_connections" << YAML::Value << YAML::BeginSeq;
             for (const auto& connection : path.network->cylinderConnections)
                 out << YAML::BeginMap
@@ -444,6 +516,7 @@ EngineDecodeResult YamlEngineSerializer::decode(std::string_view text) const noe
             config.fuelProperties.productMolesPerFuelMole = properties["product_moles_per_fuel_mole"].as<double>(config.fuelProperties.productMolesPerFuelMole);
             config.fuelProperties.laminarFlameSpeedMps = properties["laminar_flame_speed_mps"].as<double>(config.fuelProperties.laminarFlameSpeedMps);
             config.fuelProperties.turbulenceFlameSpeedGain = properties["turbulence_flame_speed_gain"].as<double>(config.fuelProperties.turbulenceFlameSpeedGain);
+            config.fuelProperties.cetaneNumber = properties["cetane_number"].as<double>(config.fuelProperties.cetaneNumber);
         }
         const auto layout = engine["layout"] ? engine["layout"].as<std::string>() : "inline";
         if (layout == "inline") config.layout = EngineLayout::inlineLayout;
@@ -480,6 +553,17 @@ EngineDecodeResult YamlEngineSerializer::decode(std::string_view text) const noe
             config.forcedInduction.bearingFrictionPowerWatts = forced["bearing_friction_power_w"].as<double>(config.forcedInduction.bearingFrictionPowerWatts);
             config.forcedInduction.turbineFlowAreaMm2 = forced["turbine_flow_area_mm2"].as<double>(config.forcedInduction.turbineFlowAreaMm2);
             config.forcedInduction.wastegateFlowAreaMm2 = forced["wastegate_flow_area_mm2"].as<double>(config.forcedInduction.wastegateFlowAreaMm2);
+            config.forcedInduction.compressorBladeCount = forced["compressor_blade_count"].as<std::uint32_t>(config.forcedInduction.compressorBladeCount);
+            config.forcedInduction.turbineBladeCount = forced["turbine_blade_count"].as<std::uint32_t>(config.forcedInduction.turbineBladeCount);
+            config.forcedInduction.superchargerLobeCount = forced["supercharger_lobe_count"].as<std::uint32_t>(config.forcedInduction.superchargerLobeCount);
+            config.forcedInduction.superchargerDriveRatio = forced["supercharger_drive_ratio"].as<double>(config.forcedInduction.superchargerDriveRatio);
+            config.forcedInduction.compressorInducerDiameterMm = forced["compressor_inducer_diameter_mm"].as<double>(config.forcedInduction.compressorInducerDiameterMm);
+            config.forcedInduction.turbineExducerDiameterMm = forced["turbine_exducer_diameter_mm"].as<double>(config.forcedInduction.turbineExducerDiameterMm);
+            config.forcedInduction.blowOffValveFlowAreaMm2 = forced["blow_off_valve_flow_area_mm2"].as<double>(config.forcedInduction.blowOffValveFlowAreaMm2);
+            config.forcedInduction.blowOffValveOpeningPressureRatio = forced["blow_off_valve_opening_pressure_ratio"].as<double>(config.forcedInduction.blowOffValveOpeningPressureRatio);
+            config.forcedInduction.blowOffValveDischargeCoefficient = forced["blow_off_valve_discharge_coefficient"].as<double>(config.forcedInduction.blowOffValveDischargeCoefficient);
+            config.forcedInduction.tonalAcousticEfficiency = forced["tonal_acoustic_efficiency"].as<double>(config.forcedInduction.tonalAcousticEfficiency);
+            config.forcedInduction.turbulentJetNoiseCoefficient = forced["turbulent_jet_noise_coefficient"].as<double>(config.forcedInduction.turbulentJetNoiseCoefficient);
         }
         if (const auto thermal = engine["thermal"]) {
             config.thermal.coolantMassKjPerC = thermal["coolant_mass_kj_per_c"].as<double>(config.thermal.coolantMassKjPerC);
@@ -495,6 +579,11 @@ EngineDecodeResult YamlEngineSerializer::decode(std::string_view text) const noe
             config.combustionCalibration.ignitionDelayPressureExponent = calibration["ignition_delay_pressure_exponent"].as<double>(config.combustionCalibration.ignitionDelayPressureExponent);
             config.combustionCalibration.wallHeatTransferCoefficientWPerK = calibration["wall_heat_transfer_w_per_k"].as<double>(config.combustionCalibration.wallHeatTransferCoefficientWPerK);
             config.combustionCalibration.residualDilutionSensitivity = calibration["residual_dilution_sensitivity"].as<double>(config.combustionCalibration.residualDilutionSensitivity);
+            config.combustionCalibration.chamberTurbulenceIntensityRatio = calibration["chamber_turbulence_intensity_ratio"].as<double>(config.combustionCalibration.chamberTurbulenceIntensityRatio);
+            config.combustionCalibration.ignitionSiteCount = calibration["ignition_site_count"].as<std::uint32_t>(config.combustionCalibration.ignitionSiteCount);
+            config.combustionCalibration.compressionIgnitionDelayScale = calibration["compression_ignition_delay_scale"].as<double>(config.combustionCalibration.compressionIgnitionDelayScale);
+            config.combustionCalibration.compressionIgnitionMixingTimeSeconds = calibration["compression_ignition_mixing_time_s"].as<double>(config.combustionCalibration.compressionIgnitionMixingTimeSeconds);
+            config.combustionCalibration.compressionIgnitionPremixedFraction = calibration["compression_ignition_premixed_fraction"].as<double>(config.combustionCalibration.compressionIgnitionPremixedFraction);
         }
         if (const auto acoustics = engine["runner_acoustics"]) {
             config.runnerAcoustics.enabled = acoustics["enabled"].as<bool>(config.runnerAcoustics.enabled);
@@ -590,6 +679,11 @@ EngineDecodeResult YamlEngineSerializer::decode(std::string_view text) const noe
             config.intake.throttleDischargeCoefficient = intake["throttle_discharge_coefficient"].as<double>(config.intake.throttleDischargeCoefficient);
             config.intake.runnerLengthMm = intake["runner_length_mm"].as<double>(config.intake.runnerLengthMm);
             config.intake.runnerDiameterMm = intake["runner_diameter_mm"].as<double>(config.intake.runnerDiameterMm);
+            config.intake.runnerPlenumDiameterMm = intake["runner_plenum_diameter_mm"].as<double>(config.intake.runnerPlenumDiameterMm);
+            config.intake.airboxVolumeLitres = intake["airbox_volume_l"].as<double>(config.intake.airboxVolumeLitres);
+            config.intake.inletDuctLengthMm = intake["inlet_duct_length_mm"].as<double>(config.intake.inletDuctLengthMm);
+            config.intake.inletDuctDiameterMm = intake["inlet_duct_diameter_mm"].as<double>(config.intake.inletDuctDiameterMm);
+            config.intake.bellmouthDiameterMm = intake["bellmouth_diameter_mm"].as<double>(config.intake.bellmouthDiameterMm);
             config.intake.idleBypassAreaMm2 = intake["idle_bypass_area_mm2"].as<double>(config.intake.idleBypassAreaMm2);
             config.intake.throttleGamma = intake["throttle_gamma"].as<double>(config.intake.throttleGamma);
         }
@@ -605,6 +699,11 @@ EngineDecodeResult YamlEngineSerializer::decode(std::string_view text) const noe
                     path.geometry.throttleDischargeCoefficient = geometry["throttle_discharge_coefficient"].as<double>(path.geometry.throttleDischargeCoefficient);
                     path.geometry.runnerLengthMm = geometry["runner_length_mm"].as<double>(path.geometry.runnerLengthMm);
                     path.geometry.runnerDiameterMm = geometry["runner_diameter_mm"].as<double>(path.geometry.runnerDiameterMm);
+                    path.geometry.runnerPlenumDiameterMm = geometry["runner_plenum_diameter_mm"].as<double>(path.geometry.runnerPlenumDiameterMm);
+                    path.geometry.airboxVolumeLitres = geometry["airbox_volume_l"].as<double>(path.geometry.airboxVolumeLitres);
+                    path.geometry.inletDuctLengthMm = geometry["inlet_duct_length_mm"].as<double>(path.geometry.inletDuctLengthMm);
+                    path.geometry.inletDuctDiameterMm = geometry["inlet_duct_diameter_mm"].as<double>(path.geometry.inletDuctDiameterMm);
+                    path.geometry.bellmouthDiameterMm = geometry["bellmouth_diameter_mm"].as<double>(path.geometry.bellmouthDiameterMm);
                     path.geometry.idleBypassAreaMm2 = geometry["idle_bypass_area_mm2"].as<double>(path.geometry.idleBypassAreaMm2);
                     path.geometry.throttleGamma = geometry["throttle_gamma"].as<double>(path.geometry.throttleGamma);
                 }
@@ -646,6 +745,15 @@ EngineDecodeResult YamlEngineSerializer::decode(std::string_view text) const noe
             config.injection.latentHeatKjPerKg = injection["latent_heat_kj_per_kg"].as<double>(config.injection.latentHeatKjPerKg);
             config.injection.directChargeCoolingEfficiency = injection["direct_charge_cooling_efficiency"].as<double>(config.injection.directChargeCoolingEfficiency);
             config.injection.portChargeCoolingEfficiency = injection["port_charge_cooling_efficiency"].as<double>(config.injection.portChargeCoolingEfficiency);
+            config.injection.directSprayVaporisationTimeConstantSeconds = injection["direct_spray_vaporisation_time_constant_s"].as<double>(config.injection.directSprayVaporisationTimeConstantSeconds);
+            config.injection.directSprayEntrainmentTimeConstantSeconds = injection["direct_spray_entrainment_time_constant_s"].as<double>(config.injection.directSprayEntrainmentTimeConstantSeconds);
+            if (const auto limit = injection["full_load_fuel_limit"]) {
+                config.injection.fullLoadFuelLimit.clear();
+                for (const auto& sample : limit)
+                    config.injection.fullLoadFuelLimit.push_back({
+                        sample["rpm"].as<double>(),
+                        sample["mg_per_cycle"].as<double>() });
+            }
         }
         if (const auto solver = engine["solver"]) {
             config.solver.mechanicalFrequencyHz = solver["mechanical_frequency_hz"].as<double>(config.solver.mechanicalFrequencyHz);
@@ -686,6 +794,18 @@ EngineDecodeResult YamlEngineSerializer::decode(std::string_view text) const noe
                 config.banks.push_back(std::move(bank));
             }
         }
+        if (const auto observer = engine["acoustic_observer"]) {
+            if (observer["left_microphone_m"])
+                config.acousticObserver.leftMicrophoneM = decodePoint(
+                    observer["left_microphone_m"],
+                    config.acousticObserver.leftMicrophoneM);
+            if (observer["right_microphone_m"])
+                config.acousticObserver.rightMicrophoneM = decodePoint(
+                    observer["right_microphone_m"],
+                    config.acousticObserver.rightMicrophoneM);
+            config.acousticObserver.soundSpeedMps = observer["sound_speed_mps"]
+                .as<double>(config.acousticObserver.soundSpeedMps);
+        }
         if (const auto paths = engine["exhaust_paths"]) {
             for (const auto& item : paths) {
                 ExhaustPathConfig path;
@@ -693,6 +813,15 @@ EngineDecodeResult YamlEngineSerializer::decode(std::string_view text) const noe
                 path.cylinderIds = item["cylinder_ids"].as<std::vector<std::uint32_t>>();
                 path.impulseResponsePath = item["impulse_response"].as<std::string>("");
                 path.audioVolume = item["audio_volume"].as<double>(1.0);
+                if (item["acoustic_position_m"])
+                    path.acousticPositionM = decodePoint(item["acoustic_position_m"]);
+                if (item["acoustic_axis"])
+                    path.acousticAxis = decodePoint(
+                        item["acoustic_axis"], path.acousticAxis);
+                path.acousticTermination = item["acoustic_termination"]
+                    .as<std::string>("unflanged") == "flanged"
+                    ? AcousticTerminationType::flanged
+                    : AcousticTerminationType::unflanged;
                 if (const auto geometry = item["geometry"]) path.geometry = {
                     geometry["primary_length_mm"].as<double>(480.0), geometry["primary_diameter_mm"].as<double>(42.0),
                     geometry["collector_diameter_mm"].as<double>(58.0), geometry["muffler_restriction"].as<double>(0.28),
@@ -711,12 +840,26 @@ EngineDecodeResult YamlEngineSerializer::decode(std::string_view text) const noe
                         component.type = *type;
                         component.lengthMm = encodedComponent["length_mm"].as<double>(component.lengthMm);
                         component.diameterMm = encodedComponent["diameter_mm"].as<double>(component.diameterMm);
+                        component.outletDiameterMm = encodedComponent[
+                            "outlet_diameter_mm"].as<double>(
+                                component.outletDiameterMm);
                         component.volumeLitres = encodedComponent["volume_l"].as<double>(component.volumeLitres);
                         component.restriction = encodedComponent["restriction"].as<double>(component.restriction);
                         component.resonanceHz = encodedComponent["resonance_hz"].as<double>(component.resonanceHz);
                         component.acousticGain = encodedComponent["acoustic_gain"].as<double>(component.acousticGain);
                         component.dischargeCoefficient = encodedComponent["discharge_coefficient"].as<double>(
                             component.dischargeCoefficient);
+                        if (encodedComponent["acoustic_position_m"])
+                            component.acousticPositionM = decodePoint(
+                                encodedComponent["acoustic_position_m"]);
+                        if (encodedComponent["acoustic_axis"])
+                            component.acousticAxis = decodePoint(
+                                encodedComponent["acoustic_axis"], component.acousticAxis);
+                        component.acousticTermination =
+                            encodedComponent["acoustic_termination"].as<std::string>(
+                                "unflanged") == "flanged"
+                                ? AcousticTerminationType::flanged
+                                : AcousticTerminationType::unflanged;
                         network.components.push_back(component);
                     }
                     for (const auto& encodedConnection : encodedGraph["cylinder_connections"])

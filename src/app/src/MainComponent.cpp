@@ -209,7 +209,8 @@ bool MainComponent::applyConfig(const EngineConfig& newConfig, bool preserveScri
     visibleRenderSnapshot_ = {};
     runtime_ = std::move(replacement);
     audio_ = std::make_unique<RealtimeEngineAudio>(runtime_->audioEvents(), runtime_->audioState(),
-        &runtime_->cylinderPressureSamples(), &runtime_->exhaustGraph());
+        &runtime_->cylinderPressureSamples(), &runtime_->exhaustGraph(),
+        &runtime_->engineConfig());
     importedRunCount_ = 0;
     telemetryWrite_ = 0; telemetryCount_ = 0;
     runtime_->setThrottle(throttleSlider_.getValue() / 100.0);
@@ -1064,7 +1065,7 @@ void MainComponent::drawDebugPanel(juce::Graphics& g, juce::Rectangle<float> are
     double exhaustLift = 0.0;
     double flameSpeed = 0.0;
     double burnedFraction = 0.0;
-    double fuelDelivery = 0.0;
+    double injectorCapacity = 0.0;
     double intakeAdvance = 0.0;
     double liftMultiplier = 0.0;
     double runnerResonanceHz = 0.0;
@@ -1074,12 +1075,12 @@ void MainComponent::drawDebugPanel(juce::Graphics& g, juce::Rectangle<float> are
         exhaustLift = std::max(exhaustLift, visibleState_.cylinderStates[index].exhaustValveLiftMm);
         flameSpeed = std::max(flameSpeed, visibleState_.cylinderStates[index].flameSpeedMps);
         burnedFraction = std::max(burnedFraction, visibleState_.cylinderStates[index].burnedFraction);
-        fuelDelivery += visibleState_.cylinderStates[index].fuelDeliveryRatio;
+        injectorCapacity += visibleState_.cylinderStates[index].injectorCapacityRatio;
         intakeAdvance = std::max(intakeAdvance, visibleState_.cylinderStates[index].intakeValveAdvanceDegrees);
         liftMultiplier = std::max(liftMultiplier, visibleState_.cylinderStates[index].valveLiftMultiplier);
         runnerResonanceHz = std::max(runnerResonanceHz, visibleState_.cylinderStates[index].intakeResonanceFrequencyHz);
     }
-    fuelDelivery /= static_cast<double>(cylCount);
+    injectorCapacity /= static_cast<double>(cylCount);
     const std::array<juce::String, 46> values {
         "Net torque       " + juce::String(visibleState_.netTorqueNm, 2),
         "Indicated torque " + juce::String(visibleState_.indicatedTorqueNm, 2),
@@ -1116,7 +1117,7 @@ void MainComponent::drawDebugPanel(juce::Graphics& g, juce::Rectangle<float> are
         "Exhaust lift max " + juce::String(exhaustLift, 3),
         "Flame speed m/s  " + juce::String(flameSpeed, 3),
         "Burned fraction  " + juce::String(burnedFraction * 100.0, 1) + " %",
-        "Fuel delivery    " + juce::String(fuelDelivery * 100.0, 1) + " %",
+        "Injector capacity" + juce::String(injectorCapacity * 100.0, 1) + " %",
         "VVT intake deg   " + juce::String(intakeAdvance, 2),
         "VVL multiplier   " + juce::String(liftMultiplier, 3),
         "Runner resonance " + juce::String(runnerResonanceHz, 1) + " Hz",

@@ -15,6 +15,8 @@ struct FlameConditions final {
     double meanPistonSpeedMps { 0.0 };
     double load { 0.0 };
     double residualDilutionSensitivity { 0.78 };
+    double chamberTurbulenceIntensityRatio { 1.0 };
+    std::uint32_t ignitionSiteCount { 1 };
 };
 
 /** Persistent state of the flame kernel for one cylinder and one cycle. */

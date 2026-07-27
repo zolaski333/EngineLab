@@ -354,6 +354,11 @@ void setIntakeThrottleCount(EngineConfig& config, double value) {
 void setIntakeThrottleCoefficient(EngineConfig& config, double value) { setEveryIntake(config, &IntakeConfig::throttleDischargeCoefficient, value); }
 void setIntakeRunnerLength(EngineConfig& config, double value) { setEveryIntake(config, &IntakeConfig::runnerLengthMm, value); }
 void setIntakeRunnerDiameter(EngineConfig& config, double value) { setEveryIntake(config, &IntakeConfig::runnerDiameterMm, value); }
+void setIntakeRunnerPlenumDiameter(EngineConfig& config, double value) { setEveryIntake(config, &IntakeConfig::runnerPlenumDiameterMm, value); }
+void setIntakeAirboxVolume(EngineConfig& config, double value) { setEveryIntake(config, &IntakeConfig::airboxVolumeLitres, value); }
+void setIntakeInletLength(EngineConfig& config, double value) { setEveryIntake(config, &IntakeConfig::inletDuctLengthMm, value); }
+void setIntakeInletDiameter(EngineConfig& config, double value) { setEveryIntake(config, &IntakeConfig::inletDuctDiameterMm, value); }
+void setIntakeBellmouthDiameter(EngineConfig& config, double value) { setEveryIntake(config, &IntakeConfig::bellmouthDiameterMm, value); }
 void setIntakeIdleArea(EngineConfig& config, double value) { setEveryIntake(config, &IntakeConfig::idleBypassAreaMm2, value); }
 void setIntakeThrottleGamma(EngineConfig& config, double value) { setEveryIntake(config, &IntakeConfig::throttleGamma, value); }
 void setExhaustPrimaryLength(EngineConfig& config, double value) { setEveryExhaust(config, &ExhaustConfig::primaryLengthMm, value); }
@@ -389,16 +394,29 @@ const GlobalNumericProperty* findGlobalNumericProperty(std::string_view path) no
         { "engine.rotating_inertia_kg_m2", Dimension::inertia, setRotatingInertia },
         { "engine.friction_coefficient", Dimension::dimensionless, [](auto& c, double v) { c.frictionCoefficient = v; } },
         { "engine.octane_rating", Dimension::dimensionless, [](auto& c, double v) { c.octaneRating = v; } },
+        { "fuel.cetane_number", Dimension::dimensionless, [](auto& c, double v) { c.fuelProperties.cetaneNumber = v; } },
         { "engine.ambient_pressure_kpa", Dimension::pressure, [](auto& c, double v) { c.ambientPressureKpa = v; } },
         { "engine.ambient_temperature_c", Dimension::temperature, [](auto& c, double v) { c.ambientTemperatureC = v; } },
         { "engine.cooling_efficiency", Dimension::dimensionless, [](auto& c, double v) { c.coolingEfficiency = v; } },
         { "engine.bank_angle_deg", Dimension::angle, [](auto& c, double v) { c.bankAngleDegrees = v; } },
+        { "acoustic_observer.left_x_m", Dimension::length, [](auto& c, double v) { c.acousticObserver.leftMicrophoneM.x = v * 0.001; } },
+        { "acoustic_observer.left_y_m", Dimension::length, [](auto& c, double v) { c.acousticObserver.leftMicrophoneM.y = v * 0.001; } },
+        { "acoustic_observer.left_z_m", Dimension::length, [](auto& c, double v) { c.acousticObserver.leftMicrophoneM.z = v * 0.001; } },
+        { "acoustic_observer.right_x_m", Dimension::length, [](auto& c, double v) { c.acousticObserver.rightMicrophoneM.x = v * 0.001; } },
+        { "acoustic_observer.right_y_m", Dimension::length, [](auto& c, double v) { c.acousticObserver.rightMicrophoneM.y = v * 0.001; } },
+        { "acoustic_observer.right_z_m", Dimension::length, [](auto& c, double v) { c.acousticObserver.rightMicrophoneM.z = v * 0.001; } },
+        { "acoustic_observer.sound_speed_mps", Dimension::velocity, [](auto& c, double v) { c.acousticObserver.soundSpeedMps = v; } },
         { "intake.plenum_volume_l", Dimension::volume, setIntakePlenum },
         { "intake.throttle_diameter_mm", Dimension::length, setIntakeThrottleDiameter },
         { "intake.throttle_count", Dimension::dimensionless, setIntakeThrottleCount, true },
         { "intake.throttle_discharge_coefficient", Dimension::dimensionless, setIntakeThrottleCoefficient },
         { "intake.runner_length_mm", Dimension::length, setIntakeRunnerLength },
         { "intake.runner_diameter_mm", Dimension::length, setIntakeRunnerDiameter },
+        { "intake.runner_plenum_diameter_mm", Dimension::length, setIntakeRunnerPlenumDiameter },
+        { "intake.airbox_volume_l", Dimension::volume, setIntakeAirboxVolume },
+        { "intake.inlet_duct_length_mm", Dimension::length, setIntakeInletLength },
+        { "intake.inlet_duct_diameter_mm", Dimension::length, setIntakeInletDiameter },
+        { "intake.bellmouth_diameter_mm", Dimension::length, setIntakeBellmouthDiameter },
         { "intake.idle_bypass_area_mm2", Dimension::area, setIntakeIdleArea },
         { "intake.throttle_gamma", Dimension::dimensionless, setIntakeThrottleGamma },
         { "exhaust.primary_length_mm", Dimension::length, setExhaustPrimaryLength },
@@ -421,6 +439,11 @@ const GlobalNumericProperty* findGlobalNumericProperty(std::string_view path) no
         { "injection.latent_heat_kj_kg", Dimension::energyPerMass, [](auto& c, double v) { c.injection.latentHeatKjPerKg = v; } },
         { "injection.direct_charge_cooling_efficiency", Dimension::dimensionless, [](auto& c, double v) { c.injection.directChargeCoolingEfficiency = v; } },
         { "injection.port_charge_cooling_efficiency", Dimension::dimensionless, [](auto& c, double v) { c.injection.portChargeCoolingEfficiency = v; } },
+        { "injection.direct_spray_vaporisation_time_s", Dimension::time, [](auto& c, double v) { c.injection.directSprayVaporisationTimeConstantSeconds = v; } },
+        { "injection.direct_spray_entrainment_time_s", Dimension::time, [](auto& c, double v) { c.injection.directSprayEntrainmentTimeConstantSeconds = v; } },
+        { "combustion.compression_ignition_delay_scale", Dimension::dimensionless, [](auto& c, double v) { c.combustionCalibration.compressionIgnitionDelayScale = v; } },
+        { "combustion.compression_ignition_mixing_time_s", Dimension::time, [](auto& c, double v) { c.combustionCalibration.compressionIgnitionMixingTimeSeconds = v; } },
+        { "combustion.compression_ignition_premixed_fraction", Dimension::dimensionless, [](auto& c, double v) { c.combustionCalibration.compressionIgnitionPremixedFraction = v; } },
         { "solver.mechanical_frequency_hz", Dimension::frequency, [](auto& c, double v) { c.solver.mechanicalFrequencyHz = v; } },
         { "solver.maximum_frequency_hz", Dimension::frequency, [](auto& c, double v) { c.solver.maximumMechanicalFrequencyHz = v; } },
         { "solver.maximum_crank_deg_per_step", Dimension::angle, [](auto& c, double v) { c.solver.maximumCrankDegreesPerStep = v; } },
@@ -436,7 +459,21 @@ const GlobalNumericProperty* findGlobalNumericProperty(std::string_view path) no
         { "forced_induction.design_shaft_speed_rpm", Dimension::engineSpeed, [](auto& c, double v) { c.forcedInduction.designShaftSpeedRpm = v; } },
         { "forced_induction.bearing_friction_power_w", Dimension::power, [](auto& c, double v) { c.forcedInduction.bearingFrictionPowerWatts = v; } },
         { "forced_induction.turbine_flow_area_mm2", Dimension::area, [](auto& c, double v) { c.forcedInduction.turbineFlowAreaMm2 = v; } },
-        { "forced_induction.wastegate_flow_area_mm2", Dimension::area, [](auto& c, double v) { c.forcedInduction.wastegateFlowAreaMm2 = v; } }
+        { "forced_induction.wastegate_flow_area_mm2", Dimension::area, [](auto& c, double v) { c.forcedInduction.wastegateFlowAreaMm2 = v; } },
+        { "forced_induction.compressor_blade_count", Dimension::dimensionless,
+          [](auto& c, double v) { c.forcedInduction.compressorBladeCount = static_cast<std::uint32_t>(v); }, true },
+        { "forced_induction.turbine_blade_count", Dimension::dimensionless,
+          [](auto& c, double v) { c.forcedInduction.turbineBladeCount = static_cast<std::uint32_t>(v); }, true },
+        { "forced_induction.supercharger_lobe_count", Dimension::dimensionless,
+          [](auto& c, double v) { c.forcedInduction.superchargerLobeCount = static_cast<std::uint32_t>(v); }, true },
+        { "forced_induction.supercharger_drive_ratio", Dimension::dimensionless, [](auto& c, double v) { c.forcedInduction.superchargerDriveRatio = v; } },
+        { "forced_induction.compressor_inducer_diameter_mm", Dimension::length, [](auto& c, double v) { c.forcedInduction.compressorInducerDiameterMm = v; } },
+        { "forced_induction.turbine_exducer_diameter_mm", Dimension::length, [](auto& c, double v) { c.forcedInduction.turbineExducerDiameterMm = v; } },
+        { "forced_induction.blow_off_valve_flow_area_mm2", Dimension::area, [](auto& c, double v) { c.forcedInduction.blowOffValveFlowAreaMm2 = v; } },
+        { "forced_induction.blow_off_valve_opening_pressure_ratio", Dimension::dimensionless, [](auto& c, double v) { c.forcedInduction.blowOffValveOpeningPressureRatio = v; } },
+        { "forced_induction.blow_off_valve_discharge_coefficient", Dimension::dimensionless, [](auto& c, double v) { c.forcedInduction.blowOffValveDischargeCoefficient = v; } },
+        { "forced_induction.tonal_acoustic_efficiency", Dimension::dimensionless, [](auto& c, double v) { c.forcedInduction.tonalAcousticEfficiency = v; } },
+        { "forced_induction.turbulent_jet_noise_coefficient", Dimension::dimensionless, [](auto& c, double v) { c.forcedInduction.turbulentJetNoiseCoefficient = v; } }
     };
     for (const auto& property : properties) if (property.path == path) return &property;
     return nullptr;

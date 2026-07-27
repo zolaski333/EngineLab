@@ -1,8 +1,13 @@
 #include <enginelab/audio/AcousticMonitorCalibration.hpp>
 #include <enginelab/audio/AcousticExhaustNetwork.hpp>
+#include <enginelab/audio/AcousticIntakeNetwork.hpp>
 #include <enginelab/audio/BoundaryReconstructionFilter.hpp>
+#include <enginelab/audio/ForcedInductionAcoustics.hpp>
+#include <enginelab/audio/FreeFieldObserver.hpp>
 #include <enginelab/audio/NonlinearDuctAcoustics.hpp>
 #include <enginelab/audio/RealtimeEngineAudio.hpp>
+#include <enginelab/audio/StructuralModalRadiator.hpp>
+#include <enginelab/audio/DuctModeCutoff.hpp>
 #include <enginelab/audio/DuctWallLoss.hpp>
 #include <enginelab/audio/ExpansionChamberMuffler.hpp>
 #include <enginelab/audio/PipeRadiationModel.hpp>
@@ -44,7 +49,8 @@ enginelab::FiringEvent eventFixture() {
 }
 
 std::vector<float> renderEvent(double sampleRate, int preparedBlockSize,
-                               int sampleCount, bool renderAsOneCall) {
+                               int sampleCount, bool renderAsOneCall,
+                               const enginelab::FiringEvent& event = eventFixture()) {
     enginelab::FiringEventQueue queue;
     enginelab::RealtimeAudioState state;
     state.exhaustGain.store(0.0F);
@@ -53,7 +59,7 @@ std::vector<float> renderEvent(double sampleRate, int preparedBlockSize,
     state.convolution.store(0.0F);
     auto renderer = std::make_unique<enginelab::RealtimeEngineAudio>(queue, state);
     renderer->prepare(sampleRate, preparedBlockSize);
-    require(queue.tryPush(eventFixture()), "event fixture must enter the realtime queue");
+    require(queue.tryPush(event), "event fixture must enter the realtime queue");
     juce::AudioBuffer<float> output(2, sampleCount);
     if (renderAsOneCall) {
         renderer->render(output, 0, sampleCount);
@@ -273,15 +279,19 @@ void branchedAcousticTopologyRegression() {
             config.cylinders[index].id, primary.id });
         network.connections.push_back({ primary.id, 200 });
     }
+    // Both branches carry an authored trunk: the collector's common pipe runs
+    // downstream of the merge, the split's common pipe upstream of the splitter.
     enginelab::ExhaustComponentConfig merge;
     merge.id = 200;
     merge.type = enginelab::ExhaustComponentType::merge;
     merge.diameterMm = 55.0;
+    merge.lengthMm = 130.0;
     network.components.push_back(merge);
     enginelab::ExhaustComponentConfig splitter;
     splitter.id = 210;
     splitter.type = enginelab::ExhaustComponentType::splitter;
     splitter.diameterMm = 55.0;
+    splitter.lengthMm = 90.0;
     network.components.push_back(splitter);
     for (const auto [id, length] : std::array {
              std::pair { 300U, 240.0 }, std::pair { 301U, 510.0 } }) {
@@ -304,9 +314,26 @@ void branchedAcousticTopologyRegression() {
     enginelab::AcousticExhaustNetwork acoustics(graph, cylinderIds);
     require(acoustics.valid(),
         "a valid branched exhaust DAG must compile for audio");
-    require(acoustics.ductCount() == 6 && acoustics.outletCount() == 2
+    // Four primaries and two outlets, plus one trunk for each authored branch
+    // length. A branch is a scattering point *and* a pipe; dropping the pipe
+    // deleted the collector from the waveguide and let the primaries scatter
+    // straight into whatever followed the merge.
+    require(acoustics.ductCount() == 8 && acoustics.outletCount() == 2
             && acoustics.junctionCount() >= 1,
-        "the acoustic compiler must retain every primary, branch and outlet");
+        "the acoustic compiler must retain every primary, branch trunk and outlet");
+    {
+        // Same graph with the trunks unauthored: the two ducts must disappear,
+        // so the count above is carried by the lengths and not by the topology.
+        auto pointBranches = config;
+        for (auto& component : pointBranches.exhaustPaths.front().network->components)
+            if (component.type == enginelab::ExhaustComponentType::merge
+                || component.type == enginelab::ExhaustComponentType::splitter)
+                component.lengthMm = 0.0;
+        const auto pointGraph = enginelab::ExhaustGraph::makeForEngine(pointBranches);
+        enginelab::AcousticExhaustNetwork pointAcoustics(pointGraph, cylinderIds);
+        require(pointAcoustics.valid() && pointAcoustics.ductCount() == 6,
+            "a branch with no authored length must stay a point");
+    }
     require(acoustics.prepare(48'000.0),
         "the compiled exhaust must allocate its realtime lines");
     const std::array<enginelab::AcousticExhaustNetwork::Medium, 1> medium {{
@@ -323,9 +350,11 @@ void branchedAcousticTopologyRegression() {
                 std::numbers::pi * static_cast<double>(sample + 1U) / 129.0))
             : 0.0F;
         const auto output = acoustics.process(sources, boundaries, 1.0F);
-        require(std::isfinite(output[0]),
+        require(std::isfinite(output[0].leftPa)
+                && std::isfinite(output[0].rightPa),
             "a branched acoustic graph must remain finite");
-        radiatedEnergy += static_cast<double>(output[0]) * output[0];
+        radiatedEnergy += static_cast<double>(output[0].leftPa)
+            * output[0].leftPa;
     }
     require(radiatedEnergy > 1.0e-10,
         "a source must reach the independently retained outlets");
@@ -334,9 +363,536 @@ void branchedAcousticTopologyRegression() {
     sources.fill(0.0F);
     for (std::size_t sample = 0; sample < 512; ++sample) {
         const auto output = acoustics.process(sources, boundaries, 1.0F);
-        require(output[0] == 0.0F,
+        require(output[0].leftPa == 0.0F && output[0].rightPa == 0.0F,
             "a reset source-free network must be exactly silent");
     }
+}
+
+// A merge is a scattering point *and* a pipe. The audio network used to keep
+// only the point, so a 4-into-1 collector contributed no delay and the primaries
+// scattered straight into whatever followed the merge. Measure the thing that
+// was missing: the trunk's propagation time must appear at the outlet.
+void branchTrunkDelayRegression() {
+    constexpr double sampleRate = 48'000.0;
+    constexpr float soundSpeedMps = 535.0F;
+    constexpr double trunkLengthMm = 400.0;
+
+    const auto firstArrivalSample = [&](double mergeLengthMm) {
+        auto config = enginelab::makeDefaultInlineFour();
+        auto& path = config.exhaustPaths.front();
+        enginelab::ExhaustNetworkConfig network;
+        for (std::size_t index = 0; index < config.cylinders.size(); ++index) {
+            enginelab::ExhaustComponentConfig primary;
+            primary.id = static_cast<std::uint32_t>(100 + index);
+            primary.type = enginelab::ExhaustComponentType::pipe;
+            primary.lengthMm = 420.0;
+            primary.diameterMm = 42.0;
+            network.components.push_back(primary);
+            network.cylinderConnections.push_back({
+                config.cylinders[index].id, primary.id });
+            network.connections.push_back({ primary.id, 200 });
+        }
+        enginelab::ExhaustComponentConfig merge;
+        merge.id = 200;
+        merge.type = enginelab::ExhaustComponentType::merge;
+        merge.diameterMm = 60.0;
+        merge.lengthMm = mergeLengthMm;
+        network.components.push_back(merge);
+        enginelab::ExhaustComponentConfig outlet;
+        outlet.id = 300;
+        outlet.type = enginelab::ExhaustComponentType::outlet;
+        outlet.lengthMm = 200.0;
+        outlet.diameterMm = 60.0;
+        network.components.push_back(outlet);
+        network.connections.push_back({ 200, 300 });
+        path.network = std::move(network);
+        enginelab::normaliseEngineConfig(config);
+
+        const auto graph = enginelab::ExhaustGraph::makeForEngine(config);
+        std::array<std::uint32_t, 4> cylinderIds {};
+        for (std::size_t index = 0; index < cylinderIds.size(); ++index)
+            cylinderIds[index] = config.cylinders[index].id;
+        enginelab::AcousticExhaustNetwork acoustics(graph, cylinderIds);
+        require(acoustics.valid() && acoustics.prepare(sampleRate),
+            "the trunk fixture must compile and allocate");
+        const std::array<enginelab::AcousticExhaustNetwork::Medium, 1> medium {{
+            { 0.55F, soundSpeedMps } }};
+        acoustics.beginBlock(medium, 1.0);
+
+        std::array<float, 4> sources {};
+        std::array<enginelab::AcousticExhaustNetwork::CylinderBoundary, 4> boundaries {};
+        std::vector<float> response(4'096, 0.0F);
+        for (std::size_t sample = 0; sample < response.size(); ++sample) {
+            sources[0] = sample < 16
+                ? 5'000.0F * static_cast<float>(std::sin(
+                    std::numbers::pi * static_cast<double>(sample + 1U) / 17.0))
+                : 0.0F;
+            const auto output = acoustics.process(sources, boundaries, 1.0F);
+            require(std::isfinite(output[0].leftPa),
+                "the trunk fixture must stay finite");
+            response[sample] = std::abs(output[0].leftPa);
+        }
+        require(*std::max_element(response.begin(), response.end()) > 0.0F,
+            "the source must reach the outlet");
+        // Causal onset, not the loudest sample. The loudest sample sits inside
+        // the resonant build-up, which a longer trunk also lengthens, so it
+        // would conflate the one-way delay with the round trip. Every element
+        // here starts from zeroed state and is causal, so the output is exactly
+        // zero until the direct path arrives, and the first non-zero sample is
+        // that arrival with no threshold to choose.
+        const auto onset = std::find_if(response.begin(), response.end(),
+            [](float magnitude) { return magnitude > 0.0F; });
+        require(onset != response.end(), "the direct arrival must be detectable");
+        return static_cast<std::size_t>(std::distance(response.begin(), onset));
+    };
+
+    const auto withoutTrunk = firstArrivalSample(0.0);
+    const auto withTrunk = firstArrivalSample(trunkLengthMm);
+    const auto expected = trunkLengthMm * 0.001 / static_cast<double>(soundSpeedMps)
+        * sampleRate;
+    const auto measured = static_cast<double>(withTrunk)
+        - static_cast<double>(withoutTrunk);
+    require(std::abs(measured - expected) < 3.0,
+        "an authored branch length must add its own propagation time to the path");
+}
+
+// The renderer used to take one gas state per path, sampled at the exhaust port
+// -- the hottest point in the system -- and apply it to primary, chamber and
+// tailpipe alike. Every duct now carries its own. Verify that a duct's delay
+// follows the gas in that duct and not the gas at the valve.
+void ductMediumRegression() {
+    using Medium = enginelab::AcousticExhaustNetwork::Medium;
+    constexpr double sampleRate = 48'000.0;
+    constexpr float hotSoundSpeedMps = 620.0F;   // at the valve
+    constexpr float coolSoundSpeedMps = 430.0F;  // at the tailpipe
+
+    auto config = enginelab::makeDefaultInlineFour();
+    std::array<std::uint32_t, 4> cylinderIds {};
+    for (std::size_t index = 0; index < cylinderIds.size(); ++index)
+        cylinderIds[index] = config.cylinders[index].id;
+    const auto graph = enginelab::ExhaustGraph::makeForEngine(config);
+
+    const auto onsetSample = [&](float pathSoundSpeedMps, float ductSoundSpeedMps,
+                                 bool supplyDuctMedia) {
+        enginelab::AcousticExhaustNetwork acoustics(graph, cylinderIds);
+        require(acoustics.valid() && acoustics.prepare(sampleRate),
+            "the medium fixture must compile and allocate");
+        const std::array<Medium, 1> pathMedia {{ { 0.45F, pathSoundSpeedMps } }};
+        std::vector<Medium> ductMedia(acoustics.ductCount(),
+                                      Medium { 0.45F, ductSoundSpeedMps });
+        acoustics.beginBlock(pathMedia, 1.0, {},
+            supplyDuctMedia ? std::span<const Medium>(ductMedia)
+                            : std::span<const Medium> {});
+
+        std::array<float, 4> sources {};
+        std::array<enginelab::AcousticExhaustNetwork::CylinderBoundary, 4> boundaries {};
+        for (std::size_t sample = 0; sample < 8'192; ++sample) {
+            sources[0] = sample < 16
+                ? 5'000.0F * static_cast<float>(std::sin(
+                    std::numbers::pi * static_cast<double>(sample + 1U) / 17.0))
+                : 0.0F;
+            const auto output = acoustics.process(sources, boundaries, 1.0F);
+            require(std::isfinite(output[0].leftPa),
+                "the medium fixture must stay finite");
+            if (std::abs(output[0].leftPa) > 0.0F) return sample;
+        }
+        require(false, "the source must reach the outlet");
+        return std::size_t { 0 };
+    };
+
+    // Supplying every duct the cool state must reproduce, exactly, the network
+    // that was told the whole path is cool. The duct state governs the delay.
+    const auto coolPath = onsetSample(coolSoundSpeedMps, coolSoundSpeedMps, false);
+    const auto coolDucts = onsetSample(hotSoundSpeedMps, coolSoundSpeedMps, true);
+    require(coolPath == coolDucts,
+        "a duct's propagation must follow its own gas state, not its path's");
+
+    // And it must be a real dependence, not a no-op: hot gas is faster, so the
+    // same geometry has to arrive earlier.
+    const auto hotPath = onsetSample(hotSoundSpeedMps, hotSoundSpeedMps, false);
+    require(hotPath < coolPath,
+        "hotter gas must carry the wave through the same geometry sooner");
+
+    // Ducts left unresolved by the solver fall back to the path rather than to
+    // silence or to a zero medium.
+    {
+        enginelab::AcousticExhaustNetwork acoustics(graph, cylinderIds);
+        require(acoustics.valid() && acoustics.prepare(sampleRate),
+            "the fallback fixture must compile and allocate");
+        const std::array<Medium, 1> pathMedia {{ { 0.45F, hotSoundSpeedMps } }};
+        const std::array<Medium, 3> partial {{
+            { 0.0F, 0.0F }, { 0.45F, coolSoundSpeedMps }, { -1.0F, 900.0F } }};
+        acoustics.beginBlock(pathMedia, 1.0, {}, partial);
+        std::array<float, 4> sources {};
+        std::array<enginelab::AcousticExhaustNetwork::CylinderBoundary, 4> boundaries {};
+        for (std::size_t sample = 0; sample < 512; ++sample) {
+            sources[0] = sample == 0 ? 5'000.0F : 0.0F;
+            const auto output = acoustics.process(sources, boundaries, 1.0F);
+            require(std::isfinite(output[0].leftPa) && std::isfinite(output[0].rightPa),
+                "an unusable duct medium must fall back, not poison the network");
+        }
+    }
+}
+
+// Nothing asserted what a junction does with an area step, which is the whole
+// mechanism by which a collector tunes and an expansion chamber silences. Pin
+// it against the closed form rather than against a render.
+//
+// A lossless admittance junction between two ducts transmits 2*Y1/(Y1+Y2). With
+// one medium throughout, Y is proportional to area, so a pipe of area A feeding
+// a chamber of area m*A and then an equal pipe transmits, on the direct path
+// before any reflection returns,
+//
+//     T(m) = 2/(1+m) * 2m/(1+m) = 4m/(1+m)^2,
+//
+// which is the low-frequency limit of Munjal's expansion-chamber transmission
+// loss. The excitation is well below every element's plane-mode cutoff and the
+// ducts are long enough that the direct arrival is complete before the first
+// reflection returns, so nothing else is in the measurement.
+void areaStepScatteringRegression() {
+    constexpr double sampleRate = 48'000.0;
+    constexpr float soundSpeedMps = 550.0F;
+    constexpr double pipeDiameterMm = 40.0;
+    constexpr double excitationHz = 300.0;
+
+    const auto directArrivalPeak = [&](double expansionRatio) {
+        auto config = enginelab::makeDefaultInlineFour();
+        config.cylinders.resize(1);
+        auto& path = config.exhaustPaths.front();
+        path.cylinderIds = { config.cylinders.front().id };
+        enginelab::ExhaustNetworkConfig network;
+        enginelab::ExhaustComponentConfig primary;
+        primary.id = 100;
+        primary.type = enginelab::ExhaustComponentType::pipe;
+        primary.lengthMm = 2'000.0;
+        primary.diameterMm = pipeDiameterMm;
+        network.components.push_back(primary);
+        network.cylinderConnections.push_back({ config.cylinders.front().id, 100 });
+
+        enginelab::ExhaustComponentConfig chamber;
+        chamber.id = 200;
+        chamber.type = enginelab::ExhaustComponentType::pipe;
+        chamber.lengthMm = 500.0;
+        chamber.diameterMm = pipeDiameterMm * std::sqrt(expansionRatio);
+        network.components.push_back(chamber);
+        network.connections.push_back({ 100, 200 });
+
+        enginelab::ExhaustComponentConfig outlet;
+        outlet.id = 300;
+        outlet.type = enginelab::ExhaustComponentType::outlet;
+        outlet.lengthMm = 2'000.0;
+        outlet.diameterMm = pipeDiameterMm;
+        network.components.push_back(outlet);
+        network.connections.push_back({ 200, 300 });
+        path.network = std::move(network);
+        enginelab::normaliseEngineConfig(config);
+
+        const auto graph = enginelab::ExhaustGraph::makeForEngine(config);
+        const std::array<std::uint32_t, 1> cylinderIds {
+            config.cylinders.front().id };
+        enginelab::AcousticExhaustNetwork acoustics(graph, cylinderIds);
+        require(acoustics.valid() && acoustics.prepare(sampleRate),
+            "the area-step fixture must compile and allocate");
+        const std::array<enginelab::AcousticExhaustNetwork::Medium, 1> medium {{
+            { 0.50F, soundSpeedMps } }};
+        acoustics.beginBlock(medium, 1.0);
+
+        // One cycle at 300 Hz: low enough that the widest chamber here stays
+        // two octaves inside its plane-mode band, short enough to finish before
+        // the reflection off the chamber inlet returns to the outlet.
+        const auto burstSamples = static_cast<std::size_t>(sampleRate / excitationHz);
+        std::array<float, 1> sources {};
+        std::array<enginelab::AcousticExhaustNetwork::CylinderBoundary, 1> boundaries {};
+        std::vector<float> response(3'000, 0.0F);
+        for (std::size_t sample = 0; sample < response.size(); ++sample) {
+            sources[0] = sample < burstSamples
+                ? 5'000.0F * static_cast<float>(std::sin(
+                    2.0 * std::numbers::pi * static_cast<double>(sample)
+                        / static_cast<double>(burstSamples)))
+                : 0.0F;
+            const auto output = acoustics.process(sources, boundaries, 1.0F);
+            require(std::isfinite(output[0].leftPa),
+                "the area-step fixture must stay finite");
+            response[sample] = output[0].leftPa;
+        }
+        const auto onset = std::find_if(response.begin(), response.end(),
+            [](float value) { return value != 0.0F; });
+        require(onset != response.end(), "the burst must reach the outlet");
+        // The direct arrival occupies one burst length from the onset. The
+        // shortest return path adds two traversals of the outlet pipe, which is
+        // far longer than that, so this window holds the direct wave alone.
+        const auto begin = static_cast<std::size_t>(
+            std::distance(response.begin(), onset));
+        auto peak = 0.0F;
+        for (std::size_t sample = begin;
+             sample < std::min(begin + burstSamples, response.size()); ++sample)
+            peak = std::max(peak, std::abs(response[sample]));
+        require(peak > 0.0F, "the direct arrival must carry energy");
+        return static_cast<double>(peak);
+    };
+
+    const auto reference = directArrivalPeak(1.0);
+    for (const auto expansionRatio : { 2.0, 4.0, 9.0 }) {
+        const auto expected = 4.0 * expansionRatio
+            / ((1.0 + expansionRatio) * (1.0 + expansionRatio));
+        const auto measured = directArrivalPeak(expansionRatio) / reference;
+        require(std::abs(measured - expected) < 0.05,
+            "an area step must scatter with the lossless admittance ratio");
+    }
+}
+
+void structuralModalRadiatorRegression() {
+    const auto config = enginelab::makeDefaultInlineFour();
+    enginelab::StructuralModalRadiator radiator(config);
+    require(radiator.valid(),
+        "a normal engine geometry must produce a structural mode set");
+    require(radiator.modeCount() >= 8 && radiator.modeCount() <= 24,
+        "the reduced structural model must retain 8 to 24 modes");
+    require(radiator.provenance()
+            == enginelab::StructuralModalRadiator::Provenance::estimatedFamily,
+        "schema-v1 engines must identify their block modes as family estimates");
+    for (std::size_t index = 0; index < radiator.modeCount(); ++index) {
+        const auto mode = radiator.mode(index);
+        require(std::isfinite(mode.frequencyHz) && mode.frequencyHz > 0.0
+                && mode.dampingRatio > 0.0 && mode.dampingRatio < 1.0
+                && mode.modalMassKg > 0.0 && mode.radiatingAreaM2 > 0.0
+                && mode.radiationEfficiency >= 0.0
+                && mode.radiationEfficiency <= 1.0,
+            "every estimated mode must expose finite physical parameters");
+    }
+    require(radiator.prepare(48'000.0),
+        "a valid modal set must prepare at audio rate");
+
+    enginelab::StructuralExcitationSample excitation;
+    excitation.cylinderCount = config.cylinders.size();
+    for (std::size_t sample = 0; sample < 512; ++sample)
+        require(radiator.process(excitation) == 0.0F,
+            "a reset unforced structure must be exactly silent");
+
+    const auto resonanceHz = radiator.mode(0).frequencyHz;
+    const auto measure = [&](double frequencyHz) {
+        radiator.reset();
+        auto energy = 0.0;
+        for (std::size_t sample = 0; sample < 48'000; ++sample) {
+            const auto force = 1'000.0F * static_cast<float>(std::sin(
+                2.0 * std::numbers::pi * frequencyHz
+                    * static_cast<double>(sample) / 48'000.0));
+            excitation.bearingReactionForceN[0] = force;
+            const auto pressure = radiator.process(excitation);
+            require(std::isfinite(pressure),
+                "modal integration must remain finite under resonant forcing");
+            if (sample >= 24'000)
+                energy += static_cast<double>(pressure) * pressure;
+        }
+        return std::sqrt(energy / 24'000.0);
+    };
+    const auto resonantRms = measure(resonanceHz);
+    const auto offResonantRms = measure(resonanceHz * 0.63);
+    require(resonantRms > offResonantRms * 1.5,
+        "solver-resolved bearing force must excite the calculated block mode");
+
+    excitation = {};
+    excitation.cylinderCount = config.cylinders.size();
+    auto earlyDecayEnergy = 0.0;
+    auto lateDecayEnergy = 0.0;
+    for (std::size_t sample = 0; sample < 48'000; ++sample) {
+        const auto pressure = radiator.process(excitation);
+        if (sample < 2'000)
+            earlyDecayEnergy += static_cast<double>(pressure) * pressure;
+        if (sample >= 24'000)
+            lateDecayEnergy += static_cast<double>(pressure) * pressure;
+    }
+    require(earlyDecayEnergy > 0.0 && lateDecayEnergy < earlyDecayEnergy * 1.0e-4,
+        "positive modal damping must dissipate stored structural energy");
+}
+
+void acousticIntakeNetworkRegression() {
+    auto config = enginelab::makeDefaultInlineFour();
+    config.intake.airboxVolumeLitres = 4.0;
+    config.intake.inletDuctLengthMm = 280.0;
+    config.intake.inletDuctDiameterMm = 72.0;
+    config.intake.bellmouthDiameterMm = 96.0;
+    config.intake.runnerPlenumDiameterMm = 52.0;
+    for (auto& path : config.intakePaths) path.geometry = config.intake;
+    enginelab::normaliseEngineConfig(config);
+
+    enginelab::AcousticIntakeNetwork intake(config);
+    require(intake.valid() && intake.runnerCount() == config.cylinders.size()
+            && intake.pathCount() >= 1,
+        "the intake compiler must retain every runner and intake path");
+    require(intake.prepare(48'000.0),
+        "a valid intake topology must allocate outside the callback");
+    std::array<enginelab::AcousticIntakeNetwork::PathBoundary, 1> paths {{
+        { 0.0025F, 1.15F, 350.0F }
+    }};
+    intake.beginBlock(paths, 1.0);
+    std::array<enginelab::AcousticIntakeNetwork::CylinderBoundary, 4> cylinders {};
+    for (auto& cylinder : cylinders) {
+        cylinder.conductanceAreaM2 = 0.00045F;
+        cylinder.densityKgPerM3 = 1.15F;
+        cylinder.soundSpeedMps = 350.0F;
+        cylinder.physical = true;
+    }
+
+    auto energy = 0.0;
+    for (std::size_t sample = 0; sample < 12'000; ++sample) {
+        cylinders[0].massFlowKgPerSecond = sample < 192
+            ? 0.075F * static_cast<float>(std::sin(
+                std::numbers::pi * static_cast<double>(sample + 1U) / 193.0))
+            : 0.0F;
+        const auto output = intake.process(cylinders, 1.0F);
+        require(std::isfinite(output[0].leftPa)
+                && std::isfinite(output[0].rightPa),
+            "the complete intake network must remain finite");
+        energy += static_cast<double>(output[0].leftPa) * output[0].leftPa;
+    }
+    require(energy > 1.0e-10,
+        "an intake-valve flow pulse must reach the inlet radiation load");
+
+    intake.reset();
+    for (auto& cylinder : cylinders) cylinder.massFlowKgPerSecond = 0.0F;
+    for (std::size_t sample = 0; sample < 1'024; ++sample)
+        require(intake.process(cylinders, 1.0F)[0].leftPa == 0.0F,
+            "a reset intake with no flow perturbation must be exactly silent");
+
+    intake.reset();
+    auto earlyEnergy = 0.0;
+    auto lateEnergy = 0.0;
+    for (std::size_t sample = 0; sample < 96'000; ++sample) {
+        cylinders[0].massFlowKgPerSecond = 0.030F;
+        const auto pressure = intake.process(cylinders, 1.0F)[0].leftPa;
+        if (sample < 12'000)
+            earlyEnergy += static_cast<double>(pressure) * pressure;
+        if (sample >= 84'000)
+            lateEnergy += static_cast<double>(pressure) * pressure;
+    }
+    require(earlyEnergy == 0.0 && lateEnergy == 0.0,
+        "a flow that is stationary from reset must create no acoustic source");
+}
+
+void forcedInductionAcousticsRegression() {
+    using Acoustics = enginelab::ForcedInductionAcoustics;
+    constexpr double sampleRate = 48'000.0;
+    enginelab::ForcedInductionConfig toneConfig;
+    toneConfig.enabled = true;
+    toneConfig.type = enginelab::ForcedInductionType::turbocharger;
+    toneConfig.compressorBladeCount = 6;
+    toneConfig.turbineBladeCount = 0;
+    toneConfig.compressorInducerDiameterMm = 0.0;
+    toneConfig.turbineExducerDiameterMm = 0.0;
+    toneConfig.wastegateFlowAreaMm2 = 0.0;
+
+    Acoustics tone(toneConfig);
+    require(tone.valid() && tone.semiEmpirical() && tone.prepare(sampleRate),
+        "configured rotor geometry must compile a semi-empirical FI source");
+    Acoustics::Input input;
+    for (std::size_t sample = 0; sample < 512; ++sample)
+        require(tone.process(input, 0.0F) == 0.0F,
+            "zero shaft power and flow must be exactly silent");
+
+    // 6 blades at 6,000 rpm is an exact 600 Hz blade-passing order. Correlate
+    // against the physical order rather than accepting any convenient whistle.
+    input.shaftSpeedRpm = 6'000.0F;
+    input.pressureRatio = 1.8F;
+    input.compressorPowerWatts = 10'000.0F;
+    auto atBladeOrder = std::complex<double> {};
+    auto offBladeOrder = std::complex<double> {};
+    auto energy = 0.0;
+    constexpr std::size_t sampleCount = 48'000;
+    for (std::size_t sample = 0; sample < sampleCount; ++sample) {
+        const auto pressure = tone.process(input, 0.0F);
+        require(std::isfinite(pressure),
+            "forced-induction pressure must remain finite");
+        const auto time = static_cast<double>(sample) / sampleRate;
+        atBladeOrder += static_cast<double>(pressure) * std::exp(
+            std::complex<double>(0.0, -2.0 * std::numbers::pi * 600.0 * time));
+        offBladeOrder += static_cast<double>(pressure) * std::exp(
+            std::complex<double>(0.0, -2.0 * std::numbers::pi * 500.0 * time));
+        energy += static_cast<double>(pressure) * pressure;
+    }
+    require(std::abs(atBladeOrder) > std::abs(offBladeOrder) * 100.0,
+        "FI tone frequency must be shaft speed times authored blade count");
+    const auto lowPowerRms = std::sqrt(energy / sampleCount);
+
+    Acoustics highPower(toneConfig);
+    require(highPower.prepare(sampleRate),
+        "a second FI source must prepare independently");
+    input.compressorPowerWatts = 40'000.0F;
+    energy = 0.0;
+    for (std::size_t sample = 0; sample < sampleCount; ++sample) {
+        const auto pressure = highPower.process(input, 0.0F);
+        energy += static_cast<double>(pressure) * pressure;
+    }
+    const auto highPowerRms = std::sqrt(energy / sampleCount);
+    require(std::abs(highPowerRms / lowPowerRms - 2.0) < 0.01,
+        "radiated pressure must scale with the square root of shaft power");
+
+    // Broadband compressor and wastegate radiation remain flow-driven even at
+    // zero shaft speed. This prevents a telemetry dropout from muting real jet
+    // flow, while a closed wastegate remains exactly absent.
+    enginelab::ForcedInductionConfig jetConfig;
+    jetConfig.enabled = true;
+    jetConfig.type = enginelab::ForcedInductionType::turbocharger;
+    jetConfig.compressorInducerDiameterMm = 50.0;
+    jetConfig.wastegateFlowAreaMm2 = 400.0;
+    Acoustics jets(jetConfig);
+    require(jets.valid() && jets.prepare(sampleRate),
+        "authored flow geometry must compile broadband FI radiation");
+    Acoustics::Input jetInput;
+    jetInput.correctedAirFlowKgPerSecond = 0.20F;
+    jetInput.exhaustMassFlowKgPerSecond = 0.18F;
+    jetInput.wastegateOpening = 0.0F;
+    std::uint32_t random = 0x9182'7364U;
+    auto compressorJetEnergy = 0.0;
+    for (std::size_t sample = 0; sample < 8'192; ++sample) {
+        random ^= random << 13U; random ^= random >> 17U; random ^= random << 5U;
+        const auto white = static_cast<float>(random) / 2'147'483'648.0F - 1.0F;
+        const auto pressure = jets.process(jetInput, white);
+        compressorJetEnergy += static_cast<double>(pressure) * pressure;
+    }
+    require(compressorJetEnergy > 0.0,
+        "corrected compressor flow must radiate broadband noise at zero shaft speed");
+
+    jetConfig.compressorInducerDiameterMm = 0.0;
+    Acoustics wastegate(jetConfig);
+    require(wastegate.valid() && wastegate.prepare(sampleRate),
+        "wastegate geometry alone must compile a flow source");
+    jetInput.correctedAirFlowKgPerSecond = 0.0F;
+    jetInput.wastegateOpening = 0.0F;
+    for (std::size_t sample = 0; sample < 512; ++sample)
+        require(wastegate.process(jetInput, 0.5F) == 0.0F,
+            "a physically closed wastegate must be exactly silent");
+    jetInput.wastegateOpening = 1.0F;
+    auto wastegateEnergy = 0.0;
+    for (std::size_t sample = 0; sample < 8'192; ++sample) {
+        random ^= random << 13U; random ^= random >> 17U; random ^= random << 5U;
+        const auto white = static_cast<float>(random) / 2'147'483'648.0F - 1.0F;
+        const auto pressure = wastegate.process(jetInput, white);
+        wastegateEnergy += static_cast<double>(pressure) * pressure;
+    }
+    require(wastegateEnergy > 0.0,
+        "resolved wastegate mass flow must radiate through its authored area");
+
+    jetConfig.wastegateFlowAreaMm2 = 0.0;
+    jetConfig.blowOffValveFlowAreaMm2 = 350.0;
+    Acoustics blowOff(jetConfig);
+    require(blowOff.valid() && blowOff.prepare(sampleRate),
+        "authored blow-off geometry must compile a flow source");
+    jetInput.exhaustMassFlowKgPerSecond = 0.0F;
+    jetInput.blowOffMassFlowKgPerSecond = 0.0F;
+    for (std::size_t sample = 0; sample < 512; ++sample)
+        require(blowOff.process(jetInput, 0.5F) == 0.0F,
+            "a blow-off valve without resolved mass flow must be exactly silent");
+    jetInput.blowOffMassFlowKgPerSecond = 0.08F;
+    auto blowOffEnergy = 0.0;
+    for (std::size_t sample = 0; sample < 8'192; ++sample) {
+        random ^= random << 13U; random ^= random >> 17U; random ^= random << 5U;
+        const auto white = static_cast<float>(random) / 2'147'483'648.0F - 1.0F;
+        const auto pressure = blowOff.process(jetInput, white);
+        blowOffEnergy += static_cast<double>(pressure) * pressure;
+    }
+    require(blowOffEnergy > 0.0,
+        "resolved blow-off mass flow must radiate through its authored area");
 }
 
 double absoluteDifference(const std::vector<float>& left, const std::vector<float>& right) {
@@ -344,6 +900,33 @@ double absoluteDifference(const std::vector<float>& left, const std::vector<floa
     for (std::size_t index = 0; index < std::min(left.size(), right.size()); ++index)
         difference += std::abs(static_cast<double>(left[index] - right[index]));
     return difference;
+}
+
+double spectralBandEnergy(std::span<const float> samples, double sampleRate,
+                          double lowHz, double highHz, std::size_t begin) {
+    begin = std::min(begin, samples.size());
+    const auto count = std::min<std::size_t>(2'048, samples.size() - begin);
+    if (count < 2) return 0.0;
+    const auto firstBin = static_cast<std::size_t>(std::ceil(
+        lowHz * static_cast<double>(count) / sampleRate));
+    const auto lastBin = std::min<std::size_t>(count / 2,
+        static_cast<std::size_t>(std::floor(
+            highHz * static_cast<double>(count) / sampleRate)));
+    auto energy = 0.0;
+    for (auto bin = firstBin; bin <= lastBin; ++bin) {
+        std::complex<double> spectrum {};
+        for (std::size_t sample = 0; sample < count; ++sample) {
+            const auto window = 0.5 - 0.5 * std::cos(
+                2.0 * std::numbers::pi * static_cast<double>(sample)
+                / static_cast<double>(count - 1));
+            const auto phase = -2.0 * std::numbers::pi
+                * static_cast<double>(bin * sample) / static_cast<double>(count);
+            spectrum += static_cast<double>(samples[begin + sample]) * window
+                * std::exp(std::complex<double>(0.0, phase));
+        }
+        energy += std::norm(spectrum);
+    }
+    return energy;
 }
 
 struct WaveformMetrics final {
@@ -529,6 +1112,39 @@ void latencyAndBlockSizeRegression() {
                 "pressure queue retention must exceed the adaptive look-ahead");
         }
     }
+}
+
+void compressionIgnitionTimbreRegression() {
+    constexpr double sampleRate = 48'000.0;
+    auto spark = eventFixture();
+    spark.compressionIgnition = false;
+    spark.combustionSharpness = 0.0F;
+    auto diesel = spark;
+    diesel.compressionIgnition = true;
+    diesel.combustionSharpness = 0.85F;
+
+    const auto sparkWave = renderEvent(sampleRate, 256, 3'600, true, spark);
+    const auto dieselWave = renderEvent(sampleRate, 256, 3'600, true, diesel);
+    const auto sparkOnset = firstAudibleSample(sparkWave);
+    const auto dieselOnset = firstAudibleSample(dieselWave);
+    require(sparkOnset < sparkWave.size() && dieselOnset < dieselWave.size(),
+        "spark and compression-ignition events must both remain audible");
+
+    const auto sparkHigh = spectralBandEnergy(
+        sparkWave, sampleRate, 1'800.0, 5'200.0, sparkOnset);
+    const auto sparkLow = spectralBandEnergy(
+        sparkWave, sampleRate, 120.0, 1'200.0, sparkOnset);
+    const auto dieselHigh = spectralBandEnergy(
+        dieselWave, sampleRate, 1'800.0, 5'200.0, dieselOnset);
+    const auto dieselLow = spectralBandEnergy(
+        dieselWave, sampleRate, 120.0, 1'200.0, dieselOnset);
+    require(sparkLow > 0.0 && dieselLow > 0.0,
+        "combustion timbre fixture must contain a resolved low-frequency body");
+    require(dieselHigh / dieselLow > (sparkHigh / sparkLow) * 1.35,
+        "resolved compression-ignition sharpness must increase upper-mode energy");
+    const auto dieselMetrics = analyseWaveform(dieselWave);
+    require(dieselMetrics.finite && dieselMetrics.peak < 0.999,
+        "diesel pressure-rise timbre must remain finite and below the safety limiter");
 }
 
 void runnerDelaySampleRateRegression() {
@@ -742,6 +1358,45 @@ void pipeRadiationRegression() {
             "steady pressure must reflect at the open end without radiating DC energy");
     require(radiation.planeModeCutoffHz() > 9'000.0,
             "fixture must remain inside the plane-mode validity band over audible midrange");
+
+    // High-amplitude open-end flow separates and sheds vortices. Verify the
+    // optional quasi-steady resistance as an energy sink, not an output clamp:
+    // the same incident sine still crosses the radiation load, but less of its
+    // energy is returned to the duct. The default above remains bit-for-bit
+    // linear when the coefficient is zero.
+    enginelab::UnflangedPipeRadiation linearHighLevel;
+    enginelab::UnflangedPipeRadiation lossyHighLevel;
+    require(linearHighLevel.prepare(sampleRateHz, radiusM, 1.0)
+            && lossyHighLevel.prepare(sampleRateHz, radiusM, 1.0)
+            && linearHighLevel.setMedium(densityKgPerM3, soundSpeedMps)
+            && lossyHighLevel.setMedium(densityKgPerM3, soundSpeedMps)
+            && !lossyHighLevel.setNonlinearLossCoefficient(-1.0)
+            && lossyHighLevel.setNonlinearLossCoefficient(
+                4.0 / (3.0 * std::numbers::pi)),
+            "nonlinear mouth resistance must accept only finite passive coefficients");
+    double incidentEnergy = 0.0;
+    double linearReflectedEnergy = 0.0;
+    double lossyReflectedEnergy = 0.0;
+    for (int index = 0; index < 48'000; ++index) {
+        const auto incident = 40'000.0 * std::sin(
+            2.0 * std::numbers::pi * 500.0 * index / sampleRateHz);
+        const auto linearSample = linearHighLevel.process(incident);
+        const auto lossySample = lossyHighLevel.process(incident);
+        require(std::isfinite(lossySample.reflectedPressurePa)
+                && std::isfinite(lossySample.farFieldPressurePa),
+                "nonlinear mouth loss must remain finite at extreme acoustic level");
+        if (index >= 4'800) {
+            incidentEnergy += incident * incident;
+            linearReflectedEnergy += linearSample.reflectedPressurePa
+                * linearSample.reflectedPressurePa;
+            lossyReflectedEnergy += lossySample.reflectedPressurePa
+                * lossySample.reflectedPressurePa;
+        }
+    }
+    require(lossyReflectedEnergy < linearReflectedEnergy * 0.90,
+            "vortex shedding must dissipate returned wave energy at high level");
+    require(lossyReflectedEnergy <= incidentEnergy * (1.0 + 1.0e-9),
+            "positive nonlinear resistance must never reflect more energy than arrives");
 }
 
 void acousticMonitorCalibrationRegression() {
@@ -908,33 +1563,146 @@ void ductWallLossRegression() {
     require(Loss::traversalGain(0.0, traversal, radius, density, soundSpeed) == 1.0,
             "there is no boundary-layer loss at zero frequency");
 
-    // The fitted one-pole must reproduce the exact gain at the reference
-    // frequency, and must be stable and passive.
     const auto coefficients = Loss::fit(traversal, radius, density, soundSpeed, sampleRate);
     require(coefficients.pole >= 0.0F && coefficients.pole < 1.0F,
             "fitted pole must be inside the unit circle");
+    require(coefficients.zero >= 0.0F && coefficients.zero <= coefficients.pole,
+            "the zero must sit inside the pole, which is what makes the shelf passive");
+
+    // The difference equation must actually realise the magnitude the fit
+    // claims. Everything below reasons about Loss::magnitude, so measure the
+    // impulse response once and hold the analytic form to it.
     {
-        const auto omega = 2.0 * std::numbers::pi * Loss::referenceFrequencyHz / sampleRate;
-        const auto z = std::polar(1.0, -omega);
-        const auto pole = static_cast<double>(coefficients.pole);
-        const auto magnitude = std::abs((1.0 - pole) / (1.0 - pole * z));
-        const auto exact = Loss::traversalGain(Loss::referenceFrequencyHz, traversal,
-                                               radius, density, soundSpeed);
-        require(std::abs(magnitude - exact) < 1.0e-6,
-                "the one-pole must match the exact attenuation at its reference");
+        constexpr std::size_t impulseLength = 16'384;
+        std::vector<double> impulse(impulseLength, 0.0);
+        Loss::State state;
+        impulse[0] = Loss::process(coefficients, state, 1.0F);
+        for (std::size_t n = 1; n < impulseLength; ++n)
+            impulse[n] = Loss::process(coefficients, state, 0.0F);
+
+        auto directCurrentGain = 0.0;
+        for (const auto sample : impulse) directCurrentGain += sample;
+        require(std::abs(directCurrentGain - 1.0) < 1.0e-6,
+                "a boundary layer must not attenuate a static pressure difference");
+
+        for (const auto frequency : { 120.0, 900.0, 2'500.0, 7'000.0, 15'000.0, 21'000.0 }) {
+            const auto omega = 2.0 * std::numbers::pi * frequency / sampleRate;
+            auto response = std::complex<double> {};
+            for (std::size_t n = 0; n < impulseLength; ++n)
+                response += impulse[n] * std::polar(1.0, -omega * static_cast<double>(n));
+            require(std::abs(std::abs(response)
+                        - Loss::magnitude(coefficients, frequency, sampleRate)) < 1.0e-6,
+                    "the measured response must match the analytic shelf magnitude");
+        }
     }
-    // Monotone and bounded by unity across the band.
+
+    // The fit must be exact where it is designed to be exact. The solve is
+    // closed-form and exact in double; the residual here is the cost of storing
+    // the two coefficients as float, about 3e-8.
+    for (const auto frequency : { Loss::lowerDesignFrequencyHz, Loss::upperDesignFrequencyHz }) {
+        const auto exact = Loss::traversalGain(frequency, traversal, radius,
+                                               density, soundSpeed);
+        require(std::abs(Loss::magnitude(coefficients, frequency, sampleRate) - exact) < 1.0e-6,
+                "the shelf must match the exact attenuation at both design points");
+    }
+
+    // The property the fit exists for: track the Kirchhoff law across the whole
+    // band, not only where it is pinned. The bound is the accuracy claimed in
+    // DuctWallLoss's own documentation, derived from the sqrt(f) law rather than
+    // from any rendered output, so it cannot drift onto the simulator. A pole
+    // alone cannot hold it -- the one-pole this replaced was 11.9 dB out.
     {
-        const auto pole = static_cast<double>(coefficients.pole);
+        // Geometry and gas state spanning the catalogue: primaries from a
+        // 34 mm motorcycle header to a 142 mm expansion chamber, cold ambient
+        // air through to 1200 K exhaust.
+        struct DuctCase final {
+            double traversalSeconds;
+            double radiusM;
+            double densityKgPerM3;
+            double soundSpeedMps;
+        };
+        constexpr std::array<DuctCase, 8> cases { {
+            { 0.690 / 600.0, 0.024, 0.38, 600.0 },   // LS3 primary
+            { 0.400 / 550.0, 0.071, 0.45, 550.0 },   // LS3 expansion chamber
+            { 0.180 / 520.0, 0.041, 0.50, 520.0 },   // LS3 tailpipe
+            { 0.760 / 600.0, 0.0225, 0.38, 600.0 },  // K20 primary
+            { 0.610 / 620.0, 0.017, 0.36, 620.0 },   // Hayabusa primary
+            { 0.150 / 640.0, 0.026, 0.35, 640.0 },   // Merlin stack
+            { 0.120 / 580.0, 0.038, 0.42, 580.0 },   // collector trunk
+            { 0.500 / 340.0, 0.020, 1.20, 340.0 },   // cold, dense
+        } };
+        constexpr double toleranceDb = 0.40;
+        for (const auto& duct : cases) {
+            const auto fitted = Loss::fit(duct.traversalSeconds, duct.radiusM,
+                                          duct.densityKgPerM3, duct.soundSpeedMps,
+                                          sampleRate);
+            for (int step = 0; step <= 240; ++step) {
+                const auto frequency = 80.0
+                    * std::pow(sampleRate * 0.47 / 80.0, static_cast<double>(step) / 240.0);
+                const auto exact = Loss::traversalGain(frequency, duct.traversalSeconds,
+                                                       duct.radiusM, duct.densityKgPerM3,
+                                                       duct.soundSpeedMps);
+                const auto fittedGain = Loss::magnitude(fitted, frequency, sampleRate);
+                const auto errorDb = 20.0 * std::log10(fittedGain / exact);
+                require(std::abs(errorDb) < toleranceDb,
+                        "the shelf must track the Kirchhoff law across the whole band");
+            }
+        }
+    }
+
+    // Monotone and bounded by unity across the band: the network runs this
+    // filter inside a feedback loop, so amplification anywhere is fatal.
+    {
         auto previous = 1.1;
-        for (int step = 0; step <= 64; ++step) {
-            const auto frequency = static_cast<double>(step) / 64.0 * sampleRate * 0.5;
-            const auto z = std::polar(1.0, -2.0 * std::numbers::pi * frequency / sampleRate);
-            const auto magnitude = std::abs((1.0 - pole) / (1.0 - pole * z));
+        for (int step = 0; step <= 256; ++step) {
+            const auto frequency = static_cast<double>(step) / 256.0 * sampleRate * 0.5;
+            const auto magnitude = Loss::magnitude(coefficients, frequency, sampleRate);
             require(magnitude <= 1.0 + 1.0e-9, "wall loss must never amplify");
             require(magnitude <= previous + 1.0e-9, "wall loss must be monotone in frequency");
             previous = magnitude;
         }
+    }
+
+    // A duct too lossy for any passive first-order shelf must degrade to the
+    // documented fallback rather than place the zero outside the pole, which
+    // would amplify. Past the envelope the sqrt(f) law is steeper than a
+    // first-order section can be, so the fallback's error is not sign-definite;
+    // what must survive is passivity, monotonicity, and exactness where the
+    // audible content of such a duct still is.
+    {
+        constexpr double lossyTraversal = 4.0 / 750.0;
+        constexpr double lossyRadius = 0.005;
+        const auto pathological = Loss::fit(lossyTraversal, lossyRadius, 0.25, 750.0,
+                                            sampleRate);
+        require(pathological.zero == 0.0F,
+                "the fallback must drop the zero rather than place it outside the pole");
+        require(std::abs(Loss::magnitude(pathological, Loss::lowerDesignFrequencyHz, sampleRate)
+                    - Loss::traversalGain(Loss::lowerDesignFrequencyHz, lossyTraversal,
+                                          lossyRadius, 0.25, 750.0)) < 1.0e-6,
+                "the fallback must stay exact at the lower design frequency");
+        auto previous = 1.1;
+        for (int step = 0; step <= 128; ++step) {
+            const auto frequency = static_cast<double>(step) / 128.0 * sampleRate * 0.5;
+            const auto magnitude = Loss::magnitude(pathological, frequency, sampleRate);
+            require(magnitude <= 1.0 + 1.0e-9, "the fallback must never amplify");
+            require(magnitude <= previous + 1.0e-9, "the fallback must stay monotone");
+            previous = magnitude;
+        }
+    }
+
+    // The fallback must stay a guard on the extremes rather than quietly
+    // swallowing real geometry: every duct the catalogue actually builds has to
+    // be inside the envelope where the two-point shelf exists.
+    {
+        constexpr std::array<std::pair<double, double>, 4> catalogueExtremes { {
+            { 0.760 / 600.0, 0.0225 },  // longest primary
+            { 0.610 / 620.0, 0.017 },   // narrowest primary
+            { 2.000 / 700.0, 0.0125 },  // beyond anything the catalogue authors
+            { 0.400 / 550.0, 0.071 },   // widest chamber
+        } };
+        for (const auto& [traversalSeconds, radiusM] : catalogueExtremes)
+            require(Loss::fit(traversalSeconds, radiusM, 0.30, 700.0, sampleRate).zero > 0.0F,
+                    "catalogue geometry must be inside the shelf's fit envelope");
     }
 
     // A lossless or degenerate configuration must pass through untouched rather
@@ -956,27 +1724,179 @@ void ductWallLossRegression() {
 }
 
 // ---------------------------------------------------------------------------
+// Duct plane-mode band limit
+// ---------------------------------------------------------------------------
+
+void ductModeCutoffRegression() {
+    using Cutoff = enginelab::DuctModeCutoff;
+    constexpr double sampleRate = 48'000.0;
+
+    // The cutoff is the (1,0) mode of a rigid circular duct. Anchor it on the
+    // textbook value rather than on anything this project produces: a 50 mm
+    // duct in air at 343 m/s cuts on just above 4 kHz.
+    {
+        const auto textbook = Cutoff::cutoffFrequencyHz(0.025, 343.0);
+        require(std::abs(textbook - 4'019.0) < 5.0,
+                "a 50 mm duct in air must cut on at about 4 kHz");
+    }
+    // f_c scales with c and inversely with radius; those two dependences are
+    // what make this a geometric differentiator rather than a tone control.
+    require(std::abs(Cutoff::cutoffFrequencyHz(0.0125, 343.0)
+                - 2.0 * Cutoff::cutoffFrequencyHz(0.025, 343.0)) < 1.0e-6,
+            "halving the radius must double the cutoff");
+    require(std::abs(Cutoff::cutoffFrequencyHz(0.025, 686.0)
+                - 2.0 * Cutoff::cutoffFrequencyHz(0.025, 343.0)) < 1.0e-6,
+            "doubling the sound speed must double the cutoff");
+    // Degenerate geometry must not invent a band.
+    require(Cutoff::cutoffFrequencyHz(0.0, 550.0) == 0.0
+                && Cutoff::cutoffFrequencyHz(0.024, 0.0) == 0.0,
+            "degenerate geometry must report no cutoff");
+
+    // A 142 mm expansion chamber and a 34 mm header primary must land more than
+    // two octaves apart. This is the separation the delivered network was
+    // missing when the band limit came from a fitted filter corner instead.
+    {
+        const auto chamber = Cutoff::cutoffFrequencyHz(0.071, 550.0);
+        const auto primary = Cutoff::cutoffFrequencyHz(0.017, 620.0);
+        require(primary / chamber > 4.0,
+                "chamber and primary cutoffs must differ by more than two octaves");
+    }
+
+    // Response of a representative expansion chamber.
+    const auto chamberCutoffHz = Cutoff::cutoffFrequencyHz(0.071, 550.0);
+    const auto coefficients = Cutoff::fit(0.071, 550.0, sampleRate);
+
+    // The difference equation must realise the magnitude the class claims.
+    {
+        constexpr std::size_t impulseLength = 8'192;
+        std::vector<double> impulse(impulseLength, 0.0);
+        Cutoff::State state;
+        impulse[0] = Cutoff::process(coefficients, state, 1.0F);
+        for (std::size_t n = 1; n < impulseLength; ++n)
+            impulse[n] = Cutoff::process(coefficients, state, 0.0F);
+        for (const auto frequency : { 120.0, 600.0, 1'135.0, 2'270.0, 6'000.0, 12'000.0 }) {
+            const auto omega = 2.0 * std::numbers::pi * frequency / sampleRate;
+            auto response = std::complex<double> {};
+            for (std::size_t n = 0; n < impulseLength; ++n)
+                response += impulse[n] * std::polar(1.0, -omega * static_cast<double>(n));
+            require(std::abs(std::abs(response)
+                        - Cutoff::magnitude(coefficients, frequency, sampleRate)) < 1.0e-5,
+                    "the measured response must match the analytic Butterworth magnitude");
+        }
+    }
+
+    // Exactly -3 dB at the cutoff: the corner is the physical cutoff, not a
+    // corner placed near it.
+    {
+        const auto atCutoff = Cutoff::magnitude(coefficients, chamberCutoffHz, sampleRate);
+        require(std::abs(20.0 * std::log10(atCutoff) + 3.0103) < 1.0e-3,
+                "the section must be 3 dB down exactly at the plane-mode cutoff");
+    }
+
+    // Transparent below cutoff. Evanescent modes store energy but dissipate
+    // none, so the passband must not attenuate. This is the property that lets
+    // the section run inside the collector-to-outlet feedback loop, where any
+    // per-traversal loss compounds, and it is why the cascade is fourth order:
+    // a second-order section would be 0.264 dB down an octave below cutoff.
+    require(-20.0 * std::log10(Cutoff::magnitude(coefficients, chamberCutoffHz * 0.5,
+                                                 sampleRate)) < 0.02,
+            "one octave below cutoff must be transparent to 0.02 dB");
+    for (const auto divisor : { 4.0, 8.0 }) {
+        const auto lossDb = -20.0 * std::log10(
+            Cutoff::magnitude(coefficients, chamberCutoffHz / divisor, sampleRate));
+        require(lossDb < 0.001, "two or more octaves below cutoff must be lossless");
+    }
+
+    // Butterworth asymptote: 24 dB per octave. Measured on a deliberately low
+    // corner, where both probe octaves sit far enough below Nyquist that the
+    // bilinear frequency warping has not yet bent the slope.
+    {
+        const auto lowCorner = Cutoff::fit(0.3224, 550.0, sampleRate);
+        const auto cornerHz = Cutoff::cutoffFrequencyHz(0.3224, 550.0);
+        const auto atTwo = 20.0 * std::log10(
+            Cutoff::magnitude(lowCorner, cornerHz * 2.0, sampleRate));
+        const auto atFour = 20.0 * std::log10(
+            Cutoff::magnitude(lowCorner, cornerHz * 4.0, sampleRate));
+        require(std::abs((atTwo - atFour) - 24.0) < 1.0,
+                "the stopband must fall at the fourth-order rate");
+    }
+    // Nearer Nyquist the bilinear map compresses the frequency axis, so the
+    // realised slope is steeper than the analog prototype, never shallower. The
+    // band limit is therefore at least as sharp as it claims everywhere.
+    {
+        const auto atTwo = 20.0 * std::log10(
+            Cutoff::magnitude(coefficients, chamberCutoffHz * 2.0, sampleRate));
+        const auto atFour = 20.0 * std::log10(
+            Cutoff::magnitude(coefficients, chamberCutoffHz * 4.0, sampleRate));
+        require(atTwo - atFour >= 24.0,
+                "warping must only steepen the realised stopband");
+    }
+
+    // Passive and monotone: this runs in a feedback loop.
+    {
+        auto previous = 1.1;
+        for (int step = 0; step <= 256; ++step) {
+            const auto frequency = static_cast<double>(step) / 256.0 * sampleRate * 0.5;
+            const auto magnitude = Cutoff::magnitude(coefficients, frequency, sampleRate);
+            require(magnitude <= 1.0 + 1.0e-9, "the band limit must never amplify");
+            require(magnitude <= previous + 1.0e-9, "the band limit must be monotone");
+            previous = magnitude;
+        }
+    }
+
+    // A duct narrow enough that its physical cutoff runs past Nyquist must clamp
+    // to a transparent section rather than switch off discontinuously.
+    {
+        const auto narrow = Cutoff::fit(0.002, 620.0, sampleRate);
+        require(narrow.g > 0.0F, "the clamped section must stay well formed");
+        for (const auto frequency : { 500.0, 4'000.0, 12'000.0 }) {
+            const auto lossDb = -20.0 * std::log10(
+                Cutoff::magnitude(narrow, frequency, sampleRate));
+            require(lossDb < 0.01,
+                    "a duct whose cutoff exceeds Nyquist must pass the band untouched");
+        }
+    }
+
+    // Numerical hygiene: a non-finite sample must not poison the integrators.
+    {
+        Cutoff::State state;
+        (void) Cutoff::process(coefficients, state,
+                               std::numeric_limits<float>::infinity());
+        for (std::size_t section = 0; section < Cutoff::sectionCount; ++section)
+            require(std::isfinite(state.integrator1[section])
+                        && std::isfinite(state.integrator2[section]),
+                    "band-limit state must stay finite after a non-finite sample");
+        require(std::isfinite(Cutoff::process(coefficients, state, 1.0F)),
+                "the section must recover after a non-finite sample");
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Boundary reconstruction filter
 // ---------------------------------------------------------------------------
 
-// Cascade magnitude at one frequency from the section coefficients, so the
-// invariants below are stated in the frequency domain where they belong. Two
-// identical sections, hence the square.
+// Cascade magnitude at one frequency from the stage coefficients, so the
+// invariants below are stated in the frequency domain where they belong. An
+// eighth-order Linkwitz-Riley is a fourth-order Butterworth run twice, so this
+// is the product of both stages, squared.
 double reconstructionMagnitude(
     const enginelab::BoundaryReconstructionFilter::Coefficients& c,
     double frequencyHz, double sampleRateHz) {
     const auto z1 = std::polar(1.0, -2.0 * std::numbers::pi * frequencyHz / sampleRateHz);
     const auto z2 = z1 * z1;
-    const auto section = std::abs(
-        (c.b0 + c.b1 * z1 + c.b2 * z2) / (1.0 + c.a1 * z1 + c.a2 * z2));
-    return section * section;
+    auto butterworth = 1.0;
+    for (const auto& stage : c.stage)
+        butterworth *= std::abs(
+            (stage.b0 + stage.b1 * z1 + stage.b2 * z2)
+                / (1.0 + stage.a1 * z1 + stage.a2 * z2));
+    return butterworth * butterworth;
 }
 
 // Invariants come from sampled-data theory, not from the simulator's output:
 // a boundary sampled at rate fc carries nothing above fc/2, so the filter must
 // preserve the band below and establish its stopband at the image lines, which
-// sit at multiples of fc. Thresholds are the analytic response of a 4th-order
-// Butterworth cascade cut at 0.45 fc, with margin.
+// sit at multiples of fc. Thresholds are the analytic response of an
+// eighth-order Linkwitz-Riley cut at 0.47 fc, with margin.
 void boundaryReconstructionRegression() {
     using Filter = enginelab::BoundaryReconstructionFilter;
     constexpr double sampleRate = 48'000.0;
@@ -998,13 +1918,16 @@ void boundaryReconstructionRegression() {
         require(c.active, "a sampled boundary must enable the filter");
         require(std::abs(reconstructionMagnitude(c, 0.0, sampleRate) - 1.0) < 1.0e-9,
                 "mean back-pressure must pass the reconstruction at unity");
-        require(reconstructionMagnitude(c, couplingHz * 0.25, sampleRate) > 0.89,
-                "content well inside the physical band must pass within 1 dB");
-        require(reconstructionMagnitude(c, couplingHz, sampleRate) < 0.0631,
-                "the first image line must be attenuated by at least 24 dB");
+        require(reconstructionMagnitude(c, couplingHz * 0.25, sampleRate) > 0.98,
+                "content well inside the physical band must pass within 0.2 dB");
+        // The first image has to clear the harness's metallic threshold with
+        // room to spare, or it is heard as a whine that tracks rpm. A
+        // fourth-order crossover left it at 28 dB and did not.
+        require(reconstructionMagnitude(c, couplingHz, sampleRate) < 0.01,
+                "the first image line must be attenuated by at least 40 dB");
         if (couplingHz * 2.0 < sampleRate * 0.5)
-            require(reconstructionMagnitude(c, couplingHz * 2.0, sampleRate) < 0.01,
-                    "the second image line must be attenuated by at least 40 dB");
+            require(reconstructionMagnitude(c, couplingHz * 2.0, sampleRate) < 1.0e-4,
+                    "the second image line must be attenuated by at least 80 dB");
 
         // Stability: the impulse response must decay. Prime at zero first so
         // the steady-state initialisation does not swallow the impulse.
@@ -1024,7 +1947,11 @@ void boundaryReconstructionRegression() {
     // produce a divergent filter.
     {
         const auto clamped = Filter::compute(1.0e6, sampleRate);
-        require(clamped.active && std::isfinite(clamped.b0) && std::isfinite(clamped.a2),
+        require(clamped.active
+                    && std::all_of(clamped.stage.begin(), clamped.stage.end(),
+                        [](const Filter::Biquad& stage) {
+                            return std::isfinite(stage.b0) && std::isfinite(stage.a2);
+                        }),
                 "an extreme coupling rate must clamp to a finite design");
         require(!Filter::compute(std::nan(""), sampleRate).active,
                 "a non-finite coupling rate must disable the filter");
@@ -1054,19 +1981,42 @@ void valveFlowAcousticSourceRegression() {
     require(high.active && low.active,
         "a sampled boundary must enable both halves of the crossover");
 
-    // Two cascaded Butterworth sections form a fourth-order Linkwitz-Riley
-    // crossover. Its low and high outputs have a flat coherent sum, so the
-    // transition neither duplicates nor removes a band when both inputs agree.
+    const auto bandLimited = Source::compute(
+        couplingRate, sampleRate, 10'000.0);
+    require(bandLimited.upperBandLimited,
+        "a mechanically sampled valve source must publish a finite upper band");
+    // Butterworth cascade response at one frequency, from a stage pair.
+    const auto butterworthResponse = [](const auto& stages, double frequencyHz) {
+        const auto z1 = std::polar(
+            1.0, -2.0 * std::numbers::pi * frequencyHz / sampleRate);
+        const auto z2 = z1 * z1;
+        auto response = std::complex<double> { 1.0, 0.0 };
+        for (const auto& stage : stages)
+            response *= (stage.b0 + stage.b1 * z1 + stage.b2 * z2)
+                / (1.0 + stage.a1 * z1 + stage.a2 * z2);
+        return response;
+    };
+    {
+        // Above the mechanical solver's Nyquist the source stream carries only
+        // first-order-hold images, and the derivative in the radiation path
+        // turns them into clicks. Eighth order puts the first one 80 dB down.
+        constexpr double imageFrequencyHz = 12'000.0;
+        const auto section = butterworthResponse(
+            bandLimited.upperStage, imageFrequencyHz);
+        require(std::norm(section * section) < 1.0e-4,
+            "the source reconstruction filter must reject images above mechanical Nyquist");
+    }
+
+    // An eighth-order Linkwitz-Riley is a fourth-order Butterworth run twice.
+    // Its low and high outputs have a flat coherent sum, so the transition
+    // neither duplicates nor removes a band when both inputs agree. This is the
+    // property that lets the crossover order be raised without retuning either
+    // physical band.
     for (int step = 0; step <= 96; ++step) {
         const auto frequency = static_cast<double>(step) / 96.0
             * sampleRate * 0.5;
-        const auto z1 = std::polar(
-            1.0, -2.0 * std::numbers::pi * frequency / sampleRate);
-        const auto z2 = z1 * z1;
-        const auto lowSection = (low.b0 + low.b1 * z1 + low.b2 * z2)
-            / (1.0 + low.a1 * z1 + low.a2 * z2);
-        const auto highSection = (high.b0 + high.b1 * z1 + high.b2 * z2)
-            / (1.0 + high.a1 * z1 + high.a2 * z2);
+        const auto lowSection = butterworthResponse(low.stage, frequency);
+        const auto highSection = butterworthResponse(high.highStage, frequency);
         const auto coherentSum = lowSection * lowSection
             + highSection * highSection;
         require(std::abs(std::abs(coherentSum) - 1.0) < 1.0e-9,
@@ -1363,19 +2313,74 @@ void monitorCalibrationDefaultRegression() {
         "runtime full-scale SPL default must match the documented calibration");
 }
 
+void freeFieldObserverRegression() {
+    constexpr double sampleRate = 48'000.0;
+    enginelab::AcousticObserverConfig geometry;
+    geometry.leftMicrophoneM = { 0.0, 1.0, 0.0 };
+    geometry.rightMicrophoneM = { 0.0, 2.0, 0.0 };
+    geometry.soundSpeedMps = 343.0;
+    enginelab::FreeFieldObserver observer;
+    require(observer.prepare(sampleRate, 0.04, {}, { 0.0, 1.0, 0.0 },
+            enginelab::AcousticTerminationType::unflanged, geometry),
+        "valid SI observer geometry must prepare");
+    auto leftEnergy = 0.0;
+    auto rightEnergy = 0.0;
+    for (std::size_t sample = 0; sample < 8'192; ++sample) {
+        const auto drive = static_cast<float>(std::sin(
+            2.0 * std::numbers::pi * 500.0
+                * static_cast<double>(sample) / sampleRate));
+        const auto output = observer.process(drive);
+        if (sample > 1'024) {
+            leftEnergy += static_cast<double>(output.leftPa) * output.leftPa;
+            rightEnergy += static_cast<double>(output.rightPa) * output.rightPa;
+        }
+    }
+    require(std::abs(std::sqrt(leftEnergy / rightEnergy) - 2.0) < 0.02,
+        "free-field pressure must decay exactly as inverse distance");
+
+    geometry.leftMicrophoneM = { 0.0, 1.0, 0.0 };
+    geometry.rightMicrophoneM = { 0.0, -1.0, 0.0 };
+    require(observer.prepare(sampleRate, 0.04, {}, { 0.0, 1.0, 0.0 },
+            enginelab::AcousticTerminationType::flanged, geometry),
+        "flanged observer geometry must prepare");
+    leftEnergy = 0.0;
+    rightEnergy = 0.0;
+    for (std::size_t sample = 0; sample < 8'192; ++sample) {
+        const auto drive = static_cast<float>(std::sin(
+            2.0 * std::numbers::pi * 8'000.0
+                * static_cast<double>(sample) / sampleRate));
+        const auto output = observer.process(drive);
+        if (sample > 1'024) {
+            leftEnergy += static_cast<double>(output.leftPa) * output.leftPa;
+            rightEnergy += static_cast<double>(output.rightPa) * output.rightPa;
+        }
+    }
+    require(rightEnergy < leftEnergy * 0.15,
+        "a rigid flange must suppress the rear high-frequency hemisphere");
+}
+
 int main() {
     try {
         monitorCalibrationDefaultRegression();
+        freeFieldObserverRegression();
         ductWallLossRegression();
+        ductModeCutoffRegression();
         valvePortTerminationRegression();
         boundaryReconstructionRegression();
         valveFlowAcousticSourceRegression();
         nonlinearDuctAcousticsRegression();
         expansionChamberMufflerRegression();
         latencyAndBlockSizeRegression();
+        compressionIgnitionTimbreRegression();
         runnerDelaySampleRateRegression();
         exhaustPathIsolationRegression();
         branchedAcousticTopologyRegression();
+        branchTrunkDelayRegression();
+        ductMediumRegression();
+        areaStepScatteringRegression();
+        structuralModalRadiatorRegression();
+        acousticIntakeNetworkRegression();
+        forcedInductionAcousticsRegression();
         customGraphRuntimeTelemetryRegression();
         ambientPressureRegression();
         physicalThermoacousticPathRegression();

@@ -48,8 +48,15 @@ private:
     int requestedGear_ { -1 };
     int engagedGear_ { -1 };
     int shiftTargetGear_ { -1 };
+    int shiftFromGear_ { -1 };
     double shiftElapsedSeconds_ { 0.0 };
     bool shiftInProgress_ { false };
+    // Post-timer clutch resynchronisation on a forward upshift: the reference
+    // slip captured when the sync-aware torque hold begins (0 while not holding),
+    // and the clutch slip carried from the previous advance() so the hold can be
+    // decided before this tick's mechanical loop recomputes it.
+    double resyncReferenceSlipRpm_ { 0.0 };
+    double lastClutchSlipRpm_ { 0.0 };
     double wheelAngularVelocityRadPerSecond_ { 0.0 };
     double vehicleSpeedMps_ { 0.0 };
     double vehicleDistanceM_ { 0.0 };

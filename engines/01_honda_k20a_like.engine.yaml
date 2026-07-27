@@ -1,4 +1,4 @@
-schema_version: 1
+schema_version: 4
 family: sport compact
 engine:
   name: K20A-like 2.0 I4 VTEC
@@ -12,6 +12,7 @@ engine:
   octane_rating: 98
   plenum_volume_l: 2.6
   throttle_diameter_mm: 64
+  acoustic_observer: { left_microphone_m: { x: -0.18, y: 4.0, z: 0.8 }, right_microphone_m: { x: 0.18, y: 4.0, z: 0.8 }, sound_speed_mps: 0 }
   intake:
     plenum_volume_l: 2.6
     throttle_diameter_mm: 64

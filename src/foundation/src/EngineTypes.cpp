@@ -221,13 +221,20 @@ double engineDisplacementLitres(const EngineConfig& config) noexcept {
 }
 
 double intakeRunnerVolumeLitres(const CylinderConfig& cylinder, const IntakeConfig& fallback) noexcept {
-    const auto diameterMm = cylinder.intakeRunnerDiameterMm > 0.0
+    const auto inletDiameterMm = cylinder.intakeRunnerDiameterMm > 0.0
         ? cylinder.intakeRunnerDiameterMm : fallback.runnerDiameterMm;
+    const auto outletDiameterMm = fallback.runnerPlenumDiameterMm > 0.0
+        ? fallback.runnerPlenumDiameterMm : inletDiameterMm;
     const auto lengthMm = cylinder.intakeRunnerLengthMm > 0.0
         ? cylinder.intakeRunnerLengthMm : fallback.runnerLengthMm;
-    const auto radiusMm = std::max(0.0, diameterMm * 0.5);
-    return std::max(0.001, std::numbers::pi * radiusMm * radiusMm
-        * std::max(0.0, lengthMm) / 1'000'000.0);
+    const auto inletRadiusMm = std::max(0.0, inletDiameterMm * 0.5);
+    const auto outletRadiusMm = std::max(0.0, outletDiameterMm * 0.5);
+    // Exact circular-frustum volume with a radius-linear runner.
+    const auto volumeMm3 = std::numbers::pi * std::max(0.0, lengthMm) / 3.0
+        * (inletRadiusMm * inletRadiusMm
+            + inletRadiusMm * outletRadiusMm
+            + outletRadiusMm * outletRadiusMm);
+    return std::max(0.001, volumeMm3 / 1'000'000.0);
 }
 
 double effectiveRotatingInertiaKgM2(const EngineConfig& config) noexcept {
@@ -324,40 +331,64 @@ ValveControlSample interpolateValveControl(const ValveControlConfig& control, do
     // Schema-v1 accepted sparse point clouds. Retain a deterministic fallback
     // for those files, but clamp at the calibrated axes so extrapolation can
     // never drift beyond the edge cells of a tuning table.
-    const auto rpmScale = std::max(1.0, maximumRpm->rpm - minimumRpm->rpm);
-    const auto loadScale = std::max(0.01, maximumLoad->load - minimumLoad->load);
-    double weightSum = 0.0;
-    result.intakeAdvanceDegrees = 0.0;
-    result.exhaustAdvanceDegrees = 0.0;
-    result.liftMultiplier = 0.0;
-    for (const auto& sample : control.samples) {
-        const auto rpmDistance = (clampedRpm - sample.rpm) / rpmScale;
-        const auto loadDistance = (clampedLoad - sample.load) / loadScale;
-        const auto squaredDistance = rpmDistance * rpmDistance + loadDistance * loadDistance;
-        if (squaredDistance < 1.0e-12) {
-            result.intakeAdvanceDegrees = sample.intakeAdvanceDegrees;
-            result.exhaustAdvanceDegrees = sample.exhaustAdvanceDegrees;
-            result.liftMultiplier = sample.liftMultiplier;
-            return result;
-        }
-        const auto weight = 1.0 / squaredDistance;
-        weightSum += weight;
-        result.intakeAdvanceDegrees += sample.intakeAdvanceDegrees * weight;
-        result.exhaustAdvanceDegrees += sample.exhaustAdvanceDegrees * weight;
-        result.liftMultiplier += sample.liftMultiplier * weight;
+    // A sparse table is a SCHEDULE, so interpolate along it in rpm rather than
+    // averaging it isotropically.
+    //
+    // This used to be inverse-distance (Shepard) weighting over all samples in a
+    // normalised rpm/load plane. That is wrong for a cam-phaser map in a way
+    // that is invisible until it is measured: Shepard weighting is not monotone
+    // between neighbours, so every sample pulls on every query, and a schedule
+    // whose author wrote "advance hard in the midrange, then fall back at the
+    // top" instead gets the midrange value smeared across the whole upper range.
+    // Measured on the K20A, whose sport_na table asks for 28 deg of intake
+    // advance at 6000 rpm and 12 deg at 8500: the old fallback still delivered
+    // 26 deg at 5000 and never came back, holding intake valve closing ~30 deg
+    // early through the entire power band. Disabling the phaser outright was
+    // worth +16 % peak power, which is the size of the error being corrected
+    // here. See docs/physics-audit.md.
+    //
+    // Piecewise-linear in rpm is monotone between authored points, reproduces
+    // the authored value exactly at each of them, and cannot extrapolate past
+    // the ends (rpm is clamped above). Samples sharing an rpm are blended by
+    // load first, so a table that does vary load at fixed rpm still works.
+    auto lowerIndex = control.samples.size();
+    auto upperIndex = control.samples.size();
+    for (std::size_t index = 0; index < control.samples.size(); ++index) {
+        const auto& sample = control.samples[index];
+        if (sample.rpm <= clampedRpm
+            && (lowerIndex == control.samples.size()
+                || sample.rpm > control.samples[lowerIndex].rpm
+                || (sample.rpm == control.samples[lowerIndex].rpm
+                    && std::abs(sample.load - clampedLoad)
+                        < std::abs(control.samples[lowerIndex].load - clampedLoad))))
+            lowerIndex = index;
+        if (sample.rpm >= clampedRpm
+            && (upperIndex == control.samples.size()
+                || sample.rpm < control.samples[upperIndex].rpm
+                || (sample.rpm == control.samples[upperIndex].rpm
+                    && std::abs(sample.load - clampedLoad)
+                        < std::abs(control.samples[upperIndex].load - clampedLoad))))
+            upperIndex = index;
     }
-    if (weightSum > 0.0) {
-        result.intakeAdvanceDegrees /= weightSum;
-        result.exhaustAdvanceDegrees /= weightSum;
-        result.liftMultiplier /= weightSum;
-    }
+    if (lowerIndex == control.samples.size()) lowerIndex = upperIndex;
+    if (upperIndex == control.samples.size()) upperIndex = lowerIndex;
+    if (lowerIndex == control.samples.size()) return result;
+    const auto& lower = control.samples[lowerIndex];
+    const auto& upper = control.samples[upperIndex];
+    const auto amount = upper.rpm > lower.rpm
+        ? (clampedRpm - lower.rpm) / (upper.rpm - lower.rpm) : 0.0;
+    result.intakeAdvanceDegrees = std::lerp(lower.intakeAdvanceDegrees,
+        upper.intakeAdvanceDegrees, amount);
+    result.exhaustAdvanceDegrees = std::lerp(lower.exhaustAdvanceDegrees,
+        upper.exhaustAdvanceDegrees, amount);
+    result.liftMultiplier = std::lerp(lower.liftMultiplier, upper.liftMultiplier, amount);
     return result;
 }
 
 void normaliseEngineConfig(EngineConfig& config) {
     // Schema 2 added authored exhaust DAGs/topology provenance; schema 3 adds
-    // explicit valve count and diameter. Older documents are structurally
-    // compatible because zero diameters request bore-derived geometry.
+    // explicit valve geometry; schema 4 adds SI outlet/observer coordinates.
+    // Older documents migrate to the documented free-field observer below.
     if (config.schemaVersion < currentEngineSchemaVersion)
         config.schemaVersion = currentEngineSchemaVersion;
     // `intake` is the canonical representation. Legacy scalar fields remain
@@ -370,6 +401,13 @@ void normaliseEngineConfig(EngineConfig& config) {
         config.intake.throttleDiameterMm = config.throttleDiameterMm;
     config.plenumVolumeLitres = config.intake.plenumVolumeLitres;
     config.throttleDiameterMm = config.intake.throttleDiameterMm;
+    if (!(config.acousticObserver.soundSpeedMps > 0.0)
+        || !std::isfinite(config.acousticObserver.soundSpeedMps)) {
+        constexpr double dryAirGamma = 1.4;
+        constexpr double dryAirGasConstantJPerKgK = 287.05;
+        config.acousticObserver.soundSpeedMps = std::sqrt(dryAirGamma
+            * dryAirGasConstantJPerKgK * (config.ambientTemperatureC + 273.15));
+    }
 
     if (config.crankshafts.empty()) {
         CrankshaftConfig crankshaft;
@@ -499,12 +537,20 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
     const auto inRange = [](double value, double minimum, double maximum) {
         return std::isfinite(value) && value >= minimum && value <= maximum;
     };
+    const auto validPoint = [&inRange](const AcousticPoint3M& point) {
+        return inRange(point.x, -100.0, 100.0)
+            && inRange(point.y, -100.0, 100.0)
+            && inRange(point.z, -100.0, 100.0);
+    };
     if (config.schemaVersion < minimumSupportedEngineSchemaVersion
             || config.schemaVersion > currentEngineSchemaVersion)
         return "Unsupported engine schema version";
     if (config.name.empty() || config.name.size() > 128) return "Engine name must contain between 1 and 128 bytes";
-    if (config.cycle != EngineCycle::fourStroke || config.fuel != FuelType::gasoline)
-        return "Only four-stroke gasoline engines are currently supported";
+    if (config.cycle != EngineCycle::fourStroke)
+        return "Only four-stroke engines are currently supported";
+    if (config.fuel == FuelType::diesel
+            && config.injection.mode != InjectionMode::direct)
+        return "Compression-ignition diesel engines require direct injection";
     if (config.fuelProperties.name.empty() || config.fuelProperties.name.size() > 128
         || !inRange(config.fuelProperties.lowerHeatingValueMjPerKg, 10.0, 60.0)
         || !inRange(config.fuelProperties.densityKgPerL, 0.30, 1.50)
@@ -512,9 +558,14 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
         || !inRange(config.fuelProperties.molarMassGramsPerMole, 20.0, 300.0)
         || !inRange(config.fuelProperties.oxygenMolesPerFuelMole, 1.0, 40.0)
         || !inRange(config.fuelProperties.productMolesPerFuelMole, 1.0, 60.0)
-        || !inRange(config.fuelProperties.laminarFlameSpeedMps, 0.05, 2.0)
-        || !inRange(config.fuelProperties.turbulenceFlameSpeedGain, 0.0, 10.0))
-        return "Fuel properties must define finite gasoline chemistry and thermodynamic values";
+        || !inRange(config.fuelProperties.laminarFlameSpeedMps,
+            config.fuel == FuelType::diesel ? 0.0 : 0.05, 2.0)
+        || !inRange(config.fuelProperties.turbulenceFlameSpeedGain, 0.0, 10.0)
+        || (config.fuel == FuelType::gasoline
+            && config.fuelProperties.cetaneNumber != 0.0)
+        || (config.fuel == FuelType::diesel
+            && !inRange(config.fuelProperties.cetaneNumber, 30.0, 80.0)))
+        return "Fuel properties must define finite chemistry, ignition quality and thermodynamic values";
     const auto chemistryStoichiometricAfr = config.fuelProperties.oxygenMolesPerFuelMole * 31.9988
         / config.fuelProperties.molarMassGramsPerMole / 0.232;
     if (std::abs(config.fuelProperties.stoichiometricAirFuelRatio / chemistryStoichiometricAfr - 1.0) > 0.25)
@@ -525,13 +576,18 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
         || !inRange(config.redlineRpm, config.idleRpm + 100.0, 20'000.0)
         || !inRange(config.rotatingInertiaKgM2, 0.01, 5.0)
         || !inRange(config.frictionCoefficient, 0.0, 1.0)
-        || !inRange(config.octaneRating, 70.0, 130.0)
+        || (config.fuel == FuelType::gasoline
+            && !inRange(config.octaneRating, 70.0, 130.0))
         || !inRange(config.ambientPressureKpa, 50.0, 120.0)
         || !inRange(config.ambientTemperatureC, -50.0, 60.0)
         || !inRange(config.coolingEfficiency, 0.1, 5.0)
         || !inRange(config.plenumVolumeLitres, 0.1, 50.0)
         || !inRange(config.throttleDiameterMm, 15.0, 150.0)
         || !inRange(config.bankAngleDegrees, 0.0, 180.0)
+        || !validPoint(config.acousticObserver.leftMicrophoneM)
+        || !validPoint(config.acousticObserver.rightMicrophoneM)
+        || !(config.acousticObserver.soundSpeedMps == 0.0
+            || inRange(config.acousticObserver.soundSpeedMps, 250.0, 450.0))
         || !inRange(config.forcedInduction.pressureRatio, 1.0, 3.5)
         || !inRange(config.forcedInduction.fullBoostRpm, 200.0, 20'000.0)
         || !inRange(config.forcedInduction.compressorEfficiency, 0.35, 0.95)
@@ -596,15 +652,40 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
         || !inRange(config.combustionCalibration.ignitionDelayPressureExponent, 0.0, 3.0)
         || !inRange(config.combustionCalibration.wallHeatTransferCoefficientWPerK, 0.0, 5'000.0)
         || !inRange(config.combustionCalibration.residualDilutionSensitivity, 0.0, 3.0)
+        || !inRange(config.combustionCalibration.chamberTurbulenceIntensityRatio, 0.1, 4.0)
+        || config.combustionCalibration.ignitionSiteCount < 1
+        || config.combustionCalibration.ignitionSiteCount > 4
+        || !inRange(config.combustionCalibration.compressionIgnitionDelayScale, 0.2, 5.0)
+        || !inRange(config.combustionCalibration.compressionIgnitionMixingTimeSeconds,
+                    0.00005, 0.02)
+        || !inRange(config.combustionCalibration.compressionIgnitionPremixedFraction,
+                    0.0, 0.8)
         || !inRange(config.runnerAcoustics.dampingRatio, 0.01, 2.0)
         || !inRange(config.runnerAcoustics.couplingGain, 0.0, 2.0)
         || !inRange(config.runnerAcoustics.maximumPressureAmplitudeKpa, 0.1, 200.0)
+        || config.forcedInduction.compressorBladeCount > 100
+        || config.forcedInduction.turbineBladeCount > 100
+        || config.forcedInduction.superchargerLobeCount > 20
+        || !inRange(config.forcedInduction.superchargerDriveRatio, 0.1, 30.0)
+        || !inRange(config.forcedInduction.compressorInducerDiameterMm, 0.0, 500.0)
+        || !inRange(config.forcedInduction.turbineExducerDiameterMm, 0.0, 500.0)
+        || !inRange(config.forcedInduction.blowOffValveFlowAreaMm2, 0.0, 5'000.0)
+        || !inRange(config.forcedInduction.blowOffValveOpeningPressureRatio, 1.001, 3.0)
+        || !inRange(config.forcedInduction.blowOffValveDischargeCoefficient, 0.05, 1.5)
+        || !inRange(config.forcedInduction.tonalAcousticEfficiency, 0.0, 0.01)
+        || !inRange(config.forcedInduction.turbulentJetNoiseCoefficient, 0.0, 0.1)
         || !inRange(config.intake.plenumVolumeLitres, 0.1, 50.0)
         || !inRange(config.intake.throttleDiameterMm, 15.0, 150.0)
         || config.intake.throttleCount < 1 || config.intake.throttleCount > 16
         || !inRange(config.intake.throttleDischargeCoefficient, 0.05, 1.5)
         || !inRange(config.intake.runnerLengthMm, 20.0, 2'000.0)
         || !inRange(config.intake.runnerDiameterMm, 10.0, 150.0)
+        || !(config.intake.runnerPlenumDiameterMm == 0.0
+            || inRange(config.intake.runnerPlenumDiameterMm, 10.0, 150.0))
+        || !inRange(config.intake.airboxVolumeLitres, 0.0, 100.0)
+        || !inRange(config.intake.inletDuctLengthMm, 0.0, 5'000.0)
+        || !inRange(config.intake.inletDuctDiameterMm, 0.0, 500.0)
+        || !inRange(config.intake.bellmouthDiameterMm, 0.0, 1'000.0)
         || !inRange(config.intake.idleBypassAreaMm2, 0.0, 1'000.0)
         || !inRange(config.intake.throttleGamma, 0.2, 5.0)
         || !inRange(config.ignition.revLimitRpm, config.idleRpm + 100.0, 25'000.0)
@@ -621,11 +702,27 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
         || !inRange(config.injection.latentHeatKjPerKg, 10.0, 1'000.0)
         || !inRange(config.injection.directChargeCoolingEfficiency, 0.0, 1.0)
         || !inRange(config.injection.portChargeCoolingEfficiency, 0.0, 1.0)
+        || !inRange(config.injection.directSprayVaporisationTimeConstantSeconds,
+                    0.0, 0.02)
+        || !inRange(config.injection.directSprayEntrainmentTimeConstantSeconds,
+                    0.0, 0.02)
         || !inRange(config.solver.mechanicalFrequencyHz, 240.0, 50'000.0)
         || !inRange(config.solver.maximumMechanicalFrequencyHz, config.solver.mechanicalFrequencyHz, 100'000.0)
         || !inRange(config.solver.maximumCrankDegreesPerStep, 0.1, 30.0)
         || config.solver.gasSubsteps < 1 || config.solver.gasSubsteps > 32)
         return "Engine configuration contains non-finite or physically invalid values";
+    if (config.injection.fullLoadFuelLimit.size() > 64
+            || (config.fuel != FuelType::diesel
+                && !config.injection.fullLoadFuelLimit.empty()))
+        return "Full-load fuel quantity limits are only valid for compression-ignition engines";
+    auto previousFuelLimitRpm = -1.0;
+    for (const auto& sample : config.injection.fullLoadFuelLimit) {
+        if (!inRange(sample.rpm, 0.0, 25'000.0)
+                || !inRange(sample.milligramsPerCycle, 0.0, 1'000.0)
+                || sample.rpm <= previousFuelLimitRpm)
+            return "Full-load fuel quantity limits must be finite and ordered by RPM";
+        previousFuelLimitRpm = sample.rpm;
+    }
     const auto maximumCalibratedRpm = std::max(config.redlineRpm, config.ignition.revLimitRpm);
     const auto requiredAngleFrequency = maximumCalibratedRpm * 6.0
         / config.solver.maximumCrankDegreesPerStep;
@@ -830,6 +927,12 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
             || !inRange(intake.throttleDischargeCoefficient, 0.05, 1.5)
             || !inRange(intake.runnerLengthMm, 20.0, 2'000.0)
             || !inRange(intake.runnerDiameterMm, 10.0, 150.0)
+            || !(intake.runnerPlenumDiameterMm == 0.0
+                || inRange(intake.runnerPlenumDiameterMm, 10.0, 150.0))
+            || !inRange(intake.airboxVolumeLitres, 0.0, 100.0)
+            || !inRange(intake.inletDuctLengthMm, 0.0, 5'000.0)
+            || !inRange(intake.inletDuctDiameterMm, 0.0, 500.0)
+            || !inRange(intake.bellmouthDiameterMm, 0.0, 1'000.0)
             || !inRange(intake.idleBypassAreaMm2, 0.0, 1'000.0)
             || !inRange(intake.throttleGamma, 0.2, 5.0))
             return "Intake path IDs and geometry must be valid";
@@ -843,7 +946,10 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
     std::unordered_set<std::uint32_t> assignedBankCylinders;
     std::unordered_set<std::uint32_t> bankIds;
     for (const auto& bank : config.banks) {
-        if (bank.id == 0 || bank.cylinderIds.empty() || !bankIds.insert(bank.id).second || !inRange(bank.angleDegrees, -180.0, 180.0)
+        // Radial layouts conventionally enumerate cylinder axes over
+        // [0, 360), whereas V/flat layouts commonly use signed angles.
+        // Both describe the same physical circle and must remain valid.
+        if (bank.id == 0 || bank.cylinderIds.empty() || !bankIds.insert(bank.id).second || !inRange(bank.angleDegrees, -360.0, 360.0)
             || !validateCamshaft(bank.camshafts)) return "Bank IDs, angles and camshafts must be valid";
         if (!intakePathIds.contains(bank.intakeId)) return "Bank intakeId must reference a configured intake path";
         for (const auto cylinderId : bank.cylinderIds) {
@@ -872,7 +978,12 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
             || !inRange(exhaust.collectorVolumeLitres, 0.05, 200.0)
             || !inRange(exhaust.outletDischargeCoefficient, 0.02, 1.5)
             || !inRange(exhaust.mufflerChamberDiameterMm, 0.0, 600.0)
-            || !inRange(exhaust.mufflerChamberLengthMm, 0.0, 3'000.0))
+            || !inRange(exhaust.mufflerChamberLengthMm, 0.0, 3'000.0)
+            || !validPoint(path.acousticPositionM)
+            || !validPoint(path.acousticAxis)
+            || path.acousticAxis.x * path.acousticAxis.x
+                + path.acousticAxis.y * path.acousticAxis.y
+                + path.acousticAxis.z * path.acousticAxis.z < 1.0e-12)
             return "Exhaust path IDs and audio volumes must be valid";
         for (const auto cylinderId : path.cylinderIds)
             if (!cylinderIds.contains(cylinderId) || !assignedExhaustCylinders.insert(cylinderId).second)
@@ -903,11 +1014,20 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
                     || component.id == 0 || !components.emplace(component.id, &component).second
                     || !inRange(component.lengthMm, requiresLength ? 1.0 : 0.0, 10'000.0)
                     || !inRange(component.diameterMm, 5.0, 500.0)
+                    || !(component.outletDiameterMm == 0.0
+                        || inRange(component.outletDiameterMm, 5.0, 500.0))
                     || !inRange(component.volumeLitres, 0.0, 1'000.0)
                     || !inRange(component.restriction, 0.0, 20.0)
                     || !inRange(component.resonanceHz, 0.0, 20'000.0)
                     || !inRange(component.acousticGain, 0.0, 8.0)
-                    || !inRange(component.dischargeCoefficient, 0.02, 1.5))
+                    || !inRange(component.dischargeCoefficient, 0.02, 1.5)
+                    || !validPoint(component.acousticPositionM)
+                    || !validPoint(component.acousticAxis)
+                    || (component.type == ExhaustComponentType::outlet
+                        && component.acousticAxis.x * component.acousticAxis.x
+                            + component.acousticAxis.y * component.acousticAxis.y
+                            + component.acousticAxis.z * component.acousticAxis.z
+                            < 1.0e-12))
                     return "Custom exhaust component IDs and dimensions must be finite, unique and valid";
                 outgoing.try_emplace(component.id);
                 componentIncoming.try_emplace(component.id, 0U);

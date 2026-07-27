@@ -42,6 +42,12 @@ struct ExhaustNode final {
     // reduced K (geometry + local loss) and must not be reused by a duct that
     // already resolves Darcy friction from its dimensions.
     double localLossCoefficient { 0.0 };
+    AcousticPoint3M acousticPositionM {};
+    AcousticPoint3M acousticAxis { 0.0, 1.0, 0.0 };
+    AcousticTerminationType acousticTermination {
+        AcousticTerminationType::unflanged };
+    /** Optional component outlet diameter; zero means diameterMm at both ends. */
+    double outletDiameterMm { 0.0 };
 };
 struct ExhaustEdge final { std::uint32_t from {}; std::uint32_t to {}; };
 
@@ -126,6 +132,9 @@ public:
     [[nodiscard]] const std::vector<ExhaustNode>& nodes() const noexcept { return nodes_; }
     [[nodiscard]] const std::vector<ExhaustEdge>& edges() const noexcept { return edges_; }
     [[nodiscard]] const std::vector<ExhaustRoute>& routes() const noexcept { return routes_; }
+    [[nodiscard]] const AcousticObserverConfig& acousticObserver() const noexcept {
+        return acousticObserver_;
+    }
     [[nodiscard]] double effectiveRestriction() const noexcept { return effectiveRestriction_; }
     [[nodiscard]] double referenceWaveSpeedMps() const noexcept {
         return waveSpeedMmPerSecond_ * 0.001;
@@ -158,5 +167,6 @@ private:
     double legacyEffectiveRestriction_ { 0.0 };
     double ambientPressureKpa_ { 101.325 };
     double waveSpeedMmPerSecond_ { 520'000.0 };
+    AcousticObserverConfig acousticObserver_;
 };
 } // namespace enginelab

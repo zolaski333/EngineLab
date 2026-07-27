@@ -1,4 +1,4 @@
-schema_version: 1
+schema_version: 4
 family: motorcycle
 engine:
   name: Big Twin-like 1.9 V2
@@ -13,6 +13,7 @@ engine:
   octane_rating: 95
   plenum_volume_l: 1.4
   throttle_diameter_mm: 55
+  acoustic_observer: { left_microphone_m: { x: -0.18, y: 4.0, z: 0.8 }, right_microphone_m: { x: 0.18, y: 4.0, z: 0.8 }, sound_speed_mps: 0 }
   intake:
     plenum_volume_l: 1.4
     throttle_diameter_mm: 55
@@ -46,5 +47,5 @@ engine:
     - { id: 2, angle_deg: 22.5, cylinder_ids: [1], intake_id: 1, exhaust_path_id: 1 }
     - { id: 1, angle_deg: -22.5, cylinder_ids: [2], intake_id: 1, exhaust_path_id: 2 }
   exhaust_paths:
-    - { id: 1, cylinder_ids: [1], audio_volume: 1.00 }
-    - { id: 2, cylinder_ids: [2], audio_volume: 0.96 }
+    - { id: 1, cylinder_ids: [1], audio_volume: 1.00, acoustic_position_m: { x: -0.25, y: 0.0, z: 0.0 } }
+    - { id: 2, cylinder_ids: [2], audio_volume: 0.96, acoustic_position_m: { x: 0.25, y: 0.0, z: 0.0 } }

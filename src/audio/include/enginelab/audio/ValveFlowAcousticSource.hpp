@@ -2,7 +2,10 @@
 
 #include <enginelab/audio/BoundaryReconstructionFilter.hpp>
 
+#include <algorithm>
+#include <array>
 #include <cmath>
+#include <cstddef>
 #include <numbers>
 
 namespace enginelab {
@@ -26,25 +29,23 @@ namespace enginelab {
  */
 class ValveFlowAcousticSource final {
 public:
-    struct Coefficients final {
-        double b0 {};
-        double b1 {};
-        double b2 {};
-        double a1 {};
-        double a2 {};
-        bool active { false };
-    };
+    using Biquad = BoundaryReconstructionFilter::Biquad;
+    using SectionState = BoundaryReconstructionFilter::SectionState;
+    /** Both edges track the reconstruction filter's order and Q pair, so the two
+     *  physical bands always meet with matched slopes at one crossover. */
+    static constexpr auto butterworthQ = BoundaryReconstructionFilter::butterworthQ;
+    static constexpr auto sectionCount = BoundaryReconstructionFilter::sectionCount;
 
-    struct SectionState final {
-        double x1 {};
-        double x2 {};
-        double y1 {};
-        double y2 {};
+    struct Coefficients final {
+        std::array<Biquad, butterworthQ.size()> highStage {};
+        std::array<Biquad, butterworthQ.size()> upperStage {};
+        bool active { false };
+        bool upperBandLimited { false };
     };
 
     struct State final {
-        SectionState first {};
-        SectionState second {};
+        std::array<SectionState, sectionCount> high {};
+        std::array<SectionState, sectionCount> upper {};
         bool primed { false };
         void reset() noexcept { *this = State {}; }
     };
@@ -56,7 +57,8 @@ public:
     };
 
     [[nodiscard]] static Coefficients compute(
-        double couplingFrequencyHz, double sampleRateHz) noexcept {
+        double couplingFrequencyHz, double sampleRateHz,
+        double sourceSamplingFrequencyHz = 0.0) noexcept {
         Coefficients coefficients;
         const auto cutoffHz = BoundaryReconstructionFilter::crossoverFrequencyHz(
             couplingFrequencyHz, sampleRateHz);
@@ -64,14 +66,56 @@ public:
 
         const auto w0 = 2.0 * std::numbers::pi * cutoffHz / sampleRateHz;
         const auto cosW0 = std::cos(w0);
-        const auto alpha = std::sin(w0) * (0.5 * std::numbers::sqrt2);
-        const auto a0 = 1.0 + alpha;
-        coefficients.b0 = 0.5 * (1.0 + cosW0) / a0;
-        coefficients.b1 = -(1.0 + cosW0) / a0;
-        coefficients.b2 = coefficients.b0;
-        coefficients.a1 = -2.0 * cosW0 / a0;
-        coefficients.a2 = (1.0 - alpha) / a0;
+        const auto sinW0 = std::sin(w0);
+        for (std::size_t index = 0; index < butterworthQ.size(); ++index) {
+            const auto alpha = sinW0 / (2.0 * butterworthQ[index]);
+            const auto a0 = 1.0 + alpha;
+            auto& stage = coefficients.highStage[index];
+            stage.b0 = 0.5 * (1.0 + cosW0) / a0;
+            stage.b1 = -(1.0 + cosW0) / a0;
+            stage.b2 = stage.b0;
+            stage.a1 = -2.0 * cosW0 / a0;
+            stage.a2 = (1.0 - alpha) / a0;
+        }
         coefficients.active = true;
+        // The instantaneous source is still sampled by the mechanical solver.
+        // Its complementary band ends at that producer's Nyquist frequency;
+        // without this reconstruction low-pass, first-order-hold images pass
+        // through the radiation derivative as isolated clicks. The upper edge is
+        // the same eighth-order Linkwitz-Riley as the lower one, for the same
+        // reason: at fourth order the first image of this stream sat only 30 dB
+        // down, which the harness's own metallic threshold does not clear.
+        // 0.42x the source rate keeps the transition below the source Nyquist
+        // (0.5x) so the stop-band is established before that first image; it is
+        // clamped by the audio-rate limit for very fast source streams.
+        const auto upperHz = std::min(0.42 * sourceSamplingFrequencyHz,
+            0.45 * sampleRateHz);
+        if (upperHz > cutoffHz * 1.05 && upperHz > 0.0) {
+            const auto upperW0 = 2.0 * std::numbers::pi * upperHz / sampleRateHz;
+            const auto upperCos = std::cos(upperW0);
+            const auto upperSin = std::sin(upperW0);
+            for (std::size_t index = 0; index < butterworthQ.size(); ++index) {
+                const auto alpha = upperSin / (2.0 * butterworthQ[index]);
+                const auto a0 = 1.0 + alpha;
+                auto& stage = coefficients.upperStage[index];
+                stage.b0 = 0.5 * (1.0 - upperCos) / a0;
+                stage.b1 = (1.0 - upperCos) / a0;
+                stage.b2 = stage.b0;
+                stage.a1 = -2.0 * upperCos / a0;
+                stage.a2 = (1.0 - alpha) / a0;
+            }
+            coefficients.upperBandLimited = true;
+        } else if (sourceSamplingFrequencyHz > 0.0) {
+            // A real source rate was published but it does not clear the
+            // reconstruction crossover, so the complementary band is empty (its
+            // upper edge is at or below the lower edge). Leaving the high-pass
+            // running with no upper edge would radiate only first-order-hold
+            // image content above the source Nyquist. Disable the source
+            // entirely: the reconstructed low band already carries everything
+            // the producer can resolve. (When no source rate is given the band
+            // stays open, the historical behaviour for rate-agnostic callers.)
+            coefficients.active = false;
+        }
         return coefficients;
     }
 
@@ -85,16 +129,27 @@ public:
         const auto input = std::isfinite(instantaneousMassFlowKgPerSecond)
             ? instantaneousMassFlowKgPerSecond : 0.0;
         if (!state.primed) {
-            // A constant input is the high-pass steady state: the first section
-            // remembers the input while both outputs and the second input stay
-            // at zero. Enabling the source therefore cannot create a startup
-            // impulse from the mean exhaust flow.
-            state.first = { input, input, 0.0, 0.0 };
-            state.second = {};
+            // A constant input is the high-pass steady state: only the leading
+            // section remembers the input, because every section downstream of
+            // it sees the zero that a settled high pass produces. Enabling the
+            // source therefore cannot create a startup impulse from the mean
+            // exhaust flow.
+            state.high.fill({});
+            state.upper.fill({});
+            state.high.front() = { input, input, 0.0, 0.0 };
             state.primed = true;
         }
-        const auto highBandMassFlow = processSection(coefficients, state.second,
-            processSection(coefficients, state.first, input));
+        auto highBandMassFlow = input;
+        for (std::size_t index = 0; index < sectionCount; ++index)
+            highBandMassFlow = processSection(
+                coefficients.highStage[index % butterworthQ.size()],
+                state.high[index], highBandMassFlow);
+        if (coefficients.upperBandLimited) {
+            for (std::size_t index = 0; index < sectionCount; ++index)
+                highBandMassFlow = processSection(
+                    coefficients.upperStage[index % butterworthQ.size()],
+                    state.upper[index], highBandMassFlow);
+        }
         if (!(densityKgPerM3 > 0.0) || !std::isfinite(densityKgPerM3)
             || !(characteristicImpedancePaSPerM3 > 0.0)
             || !std::isfinite(characteristicImpedancePaSPerM3)
@@ -108,7 +163,7 @@ public:
 
 private:
     [[nodiscard]] static double processSection(
-        const Coefficients& c, SectionState& s, double x) noexcept {
+        const Biquad& c, SectionState& s, double x) noexcept {
         const auto y = c.b0 * x + c.b1 * s.x1 + c.b2 * s.x2
             - c.a1 * s.y1 - c.a2 * s.y2;
         s.x2 = s.x1;
@@ -117,6 +172,7 @@ private:
         s.y1 = y;
         return y;
     }
+
 };
 
 } // namespace enginelab

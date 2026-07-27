@@ -31,6 +31,7 @@ double FlamePhysicsModel::turbulentFlameSpeedMps(const FuelConfig& fuel,
     const auto laminar = laminarFlameSpeedMps(fuel, conditions.equivalenceRatio,
                                                conditions.temperatureK, conditions.pressurePa);
     const auto turbulence = std::max(0.0, conditions.meanPistonSpeedMps)
+        * std::clamp(conditions.chamberTurbulenceIntensityRatio, 0.1, 4.0)
         * std::clamp(fuel.turbulenceFlameSpeedGain, 0.0, 8.0)
         * (0.28 + 0.72 * std::clamp(conditions.load, 0.0, 1.5));
     const auto dilutionAttenuation = std::clamp(1.0 - conditions.residualDilutionSensitivity
@@ -43,8 +44,24 @@ double FlamePhysicsModel::turbulentFlameSpeedMps(const FuelConfig& fuel,
     const auto turbulentContribution = turbulence * 1.12;
     // Dilution must attenuate the laminar component too.  Using S_L as the
     // lower clamp silently cancelled the residual-gas term at low turbulence.
+    //
+    // The old fixed 42 m/s ceiling clipped every high-speed pent-roof engine
+    // to the same burn rate, regardless of its authored tumble intensity. At
+    // 11,000 rpm that forced a 79 mm chamber to burn for about 60 crank
+    // degrees even though the correlation itself predicted roughly 53 m/s.
+    // Bound the deflagration by a conservative fraction of the unburned-gas
+    // acoustic speed instead. The closure stays subsonic under every accepted
+    // state while retaining the engine-speed and chamber-turbulence response.
+    constexpr double representativeGamma = 1.35;
+    constexpr double representativeGasConstantJPerKgK = 287.05;
+    constexpr double maximumDeflagrationMach = 0.18;
+    const auto acousticSpeedMps = std::sqrt(
+        representativeGamma * representativeGasConstantJPerKgK
+        * std::clamp(conditions.temperatureK, 250.0, 3'500.0));
+    const auto maximumFlameSpeedMps =
+        maximumDeflagrationMach * acousticSpeedMps;
     return std::clamp((laminar + turbulentContribution) * dilutionAttenuation,
-                      laminar * 0.25, 42.0);
+                      laminar * 0.25, maximumFlameSpeedMps);
 }
 
 double FlamePhysicsModel::ignitionDelaySeconds(const CombustionCalibrationConfig& calibration,
@@ -112,8 +129,10 @@ FlameStepResult FlamePhysicsModel::advance(FlameEvent& event, const FuelConfig& 
     // axial height.  pi*r^2*h therefore reaches exactly the chamber volume at
     // both geometric limits; the previous 4/3 factor completed combustion
     // before the front had traversed the chamber.
-    const auto burnedVolumeM3 = std::numbers::pi * event.radialTravelM
-        * event.radialTravelM * event.axialTravelM;
+    const auto kernelCount = static_cast<double>(
+        std::clamp<std::uint32_t>(conditions.ignitionSiteCount, 1, 4));
+    const auto burnedVolumeM3 = kernelCount * std::numbers::pi
+        * event.radialTravelM * event.radialTravelM * event.axialTravelM;
     const auto geometricFraction = std::clamp(burnedVolumeM3
         / std::max(1.0e-12, conditions.chamberVolumeM3), 0.0, 1.0);
     const auto previousFraction = event.burnedFraction;

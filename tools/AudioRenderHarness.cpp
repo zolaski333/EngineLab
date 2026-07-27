@@ -9,10 +9,8 @@
 //    engine. Safety gates (finiteness, peak, clipping plateaus) scan the whole
 //    rendered signal; the spectral/level fingerprint uses the final steady-state
 //    window only. Both channels are analysed.
-//  - measureExhaustDecay(): drives a single exhaust impulse through a quiet
-//    renderer and reports the reverberation time of the tailpipe chain. This is
-//    the instrument for calibrating the muffler FDN and its presets against a
-//    measured RT60 instead of by ear.
+//  - measureExhaustDecay(): drives one SI valve-boundary impulse through a quiet
+//    compiled graph and reports the reverberation time of the physical chain.
 
 #include <enginelab/audio/AcousticMonitorCalibration.hpp>
 #include <enginelab/audio/RealtimeEngineAudio.hpp>
@@ -149,6 +147,30 @@ struct WindowAnalysis final {
     // exactly what this harness exists to avoid.
     double maxResonanceProminenceDb {};
     double maxResonanceFrequencyHz {};
+    // The same measurement restricted to above the coupling Nyquist. Reported,
+    // deliberately not gated -- neither this nor the figure above can carry a
+    // pass/fail on its own, and it is worth being explicit about why, because
+    // the obvious gate is wrong in both directions.
+    //
+    // Below the coupling Nyquist a tall narrow peak is usually just the engine.
+    // A strong second or third firing order stands as proud as any mode; the
+    // catalogue reads 25-40 dB there on content that is exactly what the engine
+    // should sound like.
+    //
+    // Above it the tempting argument is that the boundary carried no
+    // information, so nothing there can be a mode. That is true of the
+    // *boundary* and false of the *network*: the waveguide's own modes do not
+    // stop at the coupling Nyquist, and the complementary valve-flow source
+    // excites them. Measured on the reference inline four, muting that source
+    // took the 4107 Hz peak from 31.2 dB to 22.1 dB -- so it is neither purely
+    // an image nor purely a mode. A default-geometry fixture with no muffler
+    // chamber is also a straight-through open header, which genuinely rings.
+    //
+    // What can be gated is the filter that is supposed to suppress the image
+    // component, and that is asserted analytically in the boundary
+    // reconstruction regression rather than read back off a render.
+    double maxOutOfBandResonanceProminenceDb {};
+    double maxOutOfBandResonanceFrequencyHz {};
     std::array<double, 32> spectrum {};
 };
 
@@ -194,10 +216,19 @@ struct Metrics {
     // downstream compensation this harness exists to make visible.
     std::uint64_t levelLimitedSamples {};
     float minLevelGain { 1.0F };
+    float maxPreLimiterMagnitude {};
+    float maxExhaustPressurePa {};
+    float maxIntakePressurePa {};
+    float maxStructuralPressurePa {};
+    AcousticIntakeNetwork::Diagnostics intakeDiagnostics {};
+    double observerDistanceM { 1.0 };
     // Which path produced the audio. A physical path that never activated would
     // otherwise be reported as an unchanged-sounding physical path.
     bool physicalActive { false };
     bool compiledTopologyActive { false };
+    bool structuralRadiationActive { false };
+    bool intakeTopologyActive { false };
+    bool forcedInductionAcousticsActive { false };
     std::uint64_t legacyPathSamples {};
     std::uint64_t invalidBoundarySamples {};
 };
@@ -234,7 +265,8 @@ SafetyScan scanSignal(const std::vector<float>& x) {
 // Analyse the final steady-state window. The FFT is used both for broad energy
 // balance and for a log-band engine fingerprint; this is less phase-sensitive
 // than probing a handful of individual DFT frequencies.
-WindowAnalysis analyseWindow(const std::vector<float>& x, std::size_t begin, double sampleRate) {
+WindowAnalysis analyseWindow(const std::vector<float>& x, std::size_t begin,
+                             double sampleRate, double outOfBandFloorHz = 0.0) {
     WindowAnalysis m;
     if (begin >= x.size()) return m;
     const auto n = x.size() - begin;
@@ -331,9 +363,15 @@ WindowAnalysis analyseWindow(const std::vector<float>& x, std::size_t begin, dou
             if (!(baseline > 1.0e-24)) continue;
             const auto prominenceDb = 10.0 * std::log10(
                 std::max(powerAt(bin), 1.0e-30) / baseline);
+            const auto frequencyHz = static_cast<double>(bin) * binHz;
             if (prominenceDb > m.maxResonanceProminenceDb) {
                 m.maxResonanceProminenceDb = prominenceDb;
-                m.maxResonanceFrequencyHz = static_cast<double>(bin) * binHz;
+                m.maxResonanceFrequencyHz = frequencyHz;
+            }
+            if (outOfBandFloorHz > 0.0 && frequencyHz > outOfBandFloorHz
+                && prominenceDb > m.maxOutOfBandResonanceProminenceDb) {
+                m.maxOutOfBandResonanceProminenceDb = prominenceDb;
+                m.maxOutOfBandResonanceFrequencyHz = frequencyHz;
             }
         }
     }
@@ -370,8 +408,19 @@ double cosineSimilarity(const Metrics& a, const Metrics& b) {
 
 Metrics renderEngine(const EngineConfig& baseConfig, const WavData& ir,
                      const std::filesystem::path& outDir, double seconds, bool writeOutput,
-                     bool syntheticTurbo = false) {
+    bool syntheticTurbo = false) {
     auto config = baseConfig;
+    if (syntheticTurbo) {
+        config.name += " Synthetic Turbo";
+        config.forcedInduction.enabled = true;
+        config.forcedInduction.type = ForcedInductionType::turbocharger;
+        config.forcedInduction.pressureRatio = 1.8;
+        config.forcedInduction.compressorBladeCount = 6;
+        config.forcedInduction.turbineBladeCount = 9;
+        config.forcedInduction.compressorInducerDiameterMm = 48.0;
+        config.forcedInduction.turbineExducerDiameterMm = 42.0;
+        config.forcedInduction.blowOffValveFlowAreaMm2 = 350.0;
+    }
     normaliseEngineConfig(config);
     SimpleEcuModel ecu; SimplifiedGasolinePhysics physics; FourStrokeEventGenerator events;
     auto exhaust = ExhaustGraph::makeForEngine(config);
@@ -395,7 +444,8 @@ Metrics renderEngine(const EngineConfig& baseConfig, const WavData& ir,
     constexpr double dt = 1.0 / 240.0;
     constexpr int samplesPerStep = 200; // 48000 / 240
     auto rendererPtr = std::make_unique<RealtimeEngineAudio>(
-        eventQueue, audioState, &pressureQueue, &audioConfiguration->exhaustGraph());
+        eventQueue, audioState, &pressureQueue, &audioConfiguration->exhaustGraph(),
+        &audioConfiguration->engineConfig());
     auto& renderer = *rendererPtr;
     if (!ir.samples.empty()) renderer.setImpulseResponse(ir.samples, ir.sampleRate, 0);
     renderer.prepare(audioRate, samplesPerStep);
@@ -423,7 +473,8 @@ Metrics renderEngine(const EngineConfig& baseConfig, const WavData& ir,
         EngineControls controls;
         controls.ignitionEnabled = true;
         controls.starterEngaged = t < 1.1;
-        controls.throttle = t < 0.9 ? 0.2 : 0.72;
+        controls.throttle = t < 0.9 ? 0.2
+            : (syntheticTurbo && t >= 2.4 && t < 2.65 ? 0.08 : 0.72);
         if (t >= 1.2) {
             const auto speedError = (simulator.state().rpm - dynoTargetRpm)
                 / std::max(1.0, dynoTargetRpm);
@@ -480,18 +531,6 @@ Metrics renderEngine(const EngineConfig& baseConfig, const WavData& ir,
         audioState.producerTimeNanoseconds.store(
             static_cast<std::uint64_t>(std::max(0.0, realtimeSeconds + dt) * 1.0e9),
             std::memory_order_release);
-        if (syntheticTurbo) {
-            // Synthetic spool profile: ramp shaft speed + boost, then a lift-off
-            // near the end to exercise the blow-off transient.
-            const auto spool = std::clamp((t - 0.5) / 1.6, 0.0, 1.0);
-            const auto liftOff = t > 2.4 && t < 2.5;
-            audioState.forcedInductionKind.store(1);
-            audioState.forcedInductionShaftRpm.store(static_cast<float>(20'000.0 + spool * 95'000.0));
-            audioState.boostPressureRatio.store(static_cast<float>(1.0 + spool * 0.8));
-            audioState.wastegateOpening.store(static_cast<float>(spool * 0.25));
-            audioState.throttle.store(liftOff ? 0.1F : static_cast<float>(std::clamp(0.4 + spool * 0.5, 0.0, 0.95)));
-        }
-
         block.clear();
         // Block-size invariance probe: a correct realtime renderer must produce
         // the same signal whatever callback size the host chooses. Rendering
@@ -515,8 +554,9 @@ Metrics renderEngine(const EngineConfig& baseConfig, const WavData& ir,
     m.right.scan = scanSignal(audioRight);
     const auto analysisBegin = audioLeft.size() > static_cast<std::size_t>(1.0 * audioRate)
         ? audioLeft.size() - static_cast<std::size_t>(1.0 * audioRate) : 0;
-    m.left.window = analyseWindow(audioLeft, analysisBegin, audioRate);
-    m.right.window = analyseWindow(audioRight, analysisBegin, audioRate);
+    const auto couplingNyquistHz = simulator.state().exhaustCouplingFrequencyHz * 0.5;
+    m.left.window = analyseWindow(audioLeft, analysisBegin, audioRate, couplingNyquistHz);
+    m.right.window = analyseWindow(audioRight, analysisBegin, audioRate, couplingNyquistHz);
     m.channelCorrelation = normalisedCorrelation(audioLeft, audioRight, analysisBegin);
     m.finalRpm = simulator.state().rpm;
     m.solverFrequencyHz = simulator.state().solverFrequencyHz;
@@ -542,8 +582,23 @@ Metrics renderEngine(const EngineConfig& baseConfig, const WavData& ir,
     m.delayTruncations = renderer.delayTruncationCount();
     m.levelLimitedSamples = renderer.levelLimitedSampleCount();
     m.minLevelGain = renderer.minObservedLevelGain();
+    m.maxPreLimiterMagnitude = renderer.maxPreLimiterMagnitude();
+    m.maxExhaustPressurePa = renderer.maxObservedExhaustPressurePa();
+    m.maxIntakePressurePa = renderer.maxObservedIntakePressurePa();
+    m.maxStructuralPressurePa = renderer.maxObservedStructuralPressurePa();
+    m.intakeDiagnostics = renderer.intakeNetworkDiagnostics();
+    const auto microphoneDistance = [](const AcousticPoint3M& point) {
+        return std::sqrt(point.x * point.x + point.y * point.y
+            + point.z * point.z);
+    };
+    m.observerDistanceM = 0.5 * (
+        microphoneDistance(config.acousticObserver.leftMicrophoneM)
+        + microphoneDistance(config.acousticObserver.rightMicrophoneM));
     m.physicalActive = renderer.physicalExhaustActive();
     m.compiledTopologyActive = renderer.compiledExhaustTopologyActive();
+    m.structuralRadiationActive = renderer.structuralRadiationActive();
+    m.intakeTopologyActive = renderer.compiledIntakeTopologyActive();
+    m.forcedInductionAcousticsActive = renderer.forcedInductionAcousticsActive();
     m.legacyPathSamples = renderer.legacyPathSampleCount();
     m.invalidBoundarySamples = renderer.invalidBoundarySampleCount();
     if (writeOutput)
@@ -558,6 +613,9 @@ Metrics renderEngine(const EngineConfig& baseConfig, const WavData& ir,
               << " dc=" << std::showpos << m.left.window.mean << std::noshowpos
               << " physical=" << (m.physicalActive ? "yes" : "NO")
               << " topology=" << (m.compiledTopologyActive ? "full" : "LEGACY")
+              << " structure=" << (m.structuralRadiationActive ? "modal" : "LEGACY")
+              << " intake=" << (m.intakeTopologyActive ? "wave" : "LEGACY")
+              << " forced=" << (m.forcedInductionAcousticsActive ? "semi-empirical" : "none")
               << " legacySamples=" << m.legacyPathSamples
               << " boundaryDropouts=" << m.invalidBoundarySamples
               << " solverHz=" << std::setprecision(0) << m.solverFrequencyHz
@@ -573,6 +631,10 @@ Metrics renderEngine(const EngineConfig& baseConfig, const WavData& ir,
               << " flowSimilarity=" << std::setprecision(3) << m.valveFlowSimilarity
               << " resonance=" << std::setprecision(1) << m.left.window.maxResonanceProminenceDb
               << "dB@" << std::setprecision(0) << m.left.window.maxResonanceFrequencyHz << "Hz"
+              << " outOfBandResonance=" << std::setprecision(1)
+              << m.left.window.maxOutOfBandResonanceProminenceDb
+              << "dB@" << std::setprecision(0)
+              << m.left.window.maxOutOfBandResonanceFrequencyHz << "Hz"
               << " bands=" << std::setprecision(1) << m.left.window.lowBandFraction * 100.0
               << '/' << m.left.window.midBandFraction * 100.0
               << '/' << m.left.window.highBandFraction * 100.0 << '%'
@@ -586,6 +648,15 @@ Metrics renderEngine(const EngineConfig& baseConfig, const WavData& ir,
               << " truncated=" << m.delayTruncations
               << " levelLimited=" << m.levelLimitedSamples
               << " minLevelGain=" << std::setprecision(4) << m.minLevelGain
+              << " preLimiter=" << m.maxPreLimiterMagnitude
+              << " layerPa=" << std::setprecision(1) << m.maxExhaustPressurePa
+              << '/' << m.maxIntakePressurePa << '/' << m.maxStructuralPressurePa
+              << " intakeStagesPa=" << m.intakeDiagnostics.sourcePressurePa
+              << '/' << m.intakeDiagnostics.runnerPressurePa
+              << '/' << m.intakeDiagnostics.plenumPressurePa
+              << '/' << m.intakeDiagnostics.airboxPressurePa
+              << '/' << m.intakeDiagnostics.mouthPressurePa
+              << '/' << m.intakeDiagnostics.radiatedPressurePa
               << " finite=" << (m.left.scan.finite && m.right.scan.finite ? "yes" : "NO")
               << '\n';
     return m;
@@ -632,7 +703,8 @@ IdleCycleMetrics renderIdleCycle(const EngineConfig& baseConfig, const WavData& 
     auto& pressureQueue = *pressureQueueOwner;
     auto& audioState = audioConfiguration->audioState();
     auto rendererOwner = std::make_unique<RealtimeEngineAudio>(
-        eventQueue, audioState, &pressureQueue, &audioConfiguration->exhaustGraph());
+        eventQueue, audioState, &pressureQueue, &audioConfiguration->exhaustGraph(),
+        &audioConfiguration->engineConfig());
     auto& renderer = *rendererOwner;
     if (!ir.samples.empty()) renderer.setImpulseResponse(ir.samples, ir.sampleRate, 0);
     constexpr double audioRate = 48'000.0;
@@ -738,7 +810,8 @@ IdleCycleMetrics renderIdleCycle(const EngineConfig& baseConfig, const WavData& 
     metrics.idleWindow = analyseWindow(
         std::vector<float>(left.begin(),
             left.begin() + static_cast<std::ptrdiff_t>(4.0 * audioRate)),
-        static_cast<std::size_t>(3.0 * audioRate), audioRate);
+        static_cast<std::size_t>(3.0 * audioRate), audioRate,
+        simulator.state().exhaustCouplingFrequencyHz * 0.5);
     metrics.droppedEvents += renderer.droppedPendingEventCount();
     metrics.lateEvents = renderer.lateEventCount();
     metrics.levelLimitedSamples = renderer.levelLimitedSampleCount();
@@ -788,7 +861,8 @@ bool validateIdleCycle(const IdleCycleMetrics& metrics,
     // Stated in SI for the same reason as the running-engine gate above: what
     // matters is that an idling engine radiates an audible sound pressure at
     // the observer, not that it hits a dBFS number the monitor calibration
-    // could move on its own. 85 dB SPL at one metre is a quiet idle.
+    // could move on its own. 85 dB SPL at the published microphones is a quiet
+    // but still clearly measurable idle.
     const auto idleSplDb = [](double rms) {
         const auto pressurePa = rms * AcousticMonitorCalibration::sinePeakPressurePa(
             AcousticMonitorCalibration::defaultFullScaleSplDb);
@@ -797,7 +871,7 @@ bool validateIdleCycle(const IdleCycleMetrics& metrics,
     };
     if (idleSplDb(metrics.initialIdleRms) < 85.0
             || idleSplDb(metrics.returnedIdleRms) < 85.0)
-        fail("idle radiates below 85 dB SPL at the one-metre observer");
+        fail("idle radiates below 85 dB SPL at the published observer");
     if (metrics.droppedEvents != 0 || metrics.droppedPressureSamples != 0
             || metrics.lateEvents != 0)
         fail("realtime telemetry or events were dropped/late");
@@ -866,13 +940,13 @@ DecayMeasurement measureDecay(const std::vector<float>& x, double sampleRate) {
 
 /**
  * Drive one runner-pressure impulse through an otherwise silent renderer and
- * measure the exhaust chain's decay for a given preset.
+ * measure the compiled exhaust chain's decay.
  *
  * The impulse is injected as cylinder-pressure telemetry rather than as a firing
  * event on purpose. Firing-event voices are summed straight onto the exhaust bus
  * and into the per-path IR; they never enter the collector. Only the pressure
- * stream reaches the runner waveguide, collector junction, outlet reflection line
- * and muffler FDN, so only a pressure-driven impulse can measure them.
+ * stream reaches the runner waveguide, collector junction and outlet reflection
+ * line, so only a boundary-driven impulse can measure them.
  *
  * Everything but the exhaust bus is muted and the engine is held at rest, so no
  * continuous source (jet, induction, mechanical, high-frequency noise) adds a
@@ -880,13 +954,12 @@ DecayMeasurement measureDecay(const std::vector<float>& x, double sampleRate) {
  * the safety leveler and the master soft-limiter at identity, so the measured
  * decay is the acoustic model's own and not a compressor's release.
  *
- * convolutionMix selects what is measured: at 0 the per-path IR is muted and the
- * decay is the model's own. Note that `convolution` also scales the muffler FDN
- * wet and the exhaust-body excitation, so 0 removes those too; the pair of
- * measurements brackets the model rather than isolating one stage.
+ * convolutionMix selects what is measured: at 0 the explicit downstream IR is
+ * muted and the decay is the compiled graph's own; at 1 the supplied measured
+ * environment is included.
  */
 DecayMeasurement measureExhaustDecay(const EngineConfig& baseConfig, const WavData& ir,
-                                     int preset, double seconds, float convolutionMix) {
+                                     double seconds, float convolutionMix) {
     auto config = baseConfig;
     normaliseEngineConfig(config);
     auto audioConfiguration = std::make_unique<EngineRuntime>(config);
@@ -900,14 +973,14 @@ DecayMeasurement measureExhaustDecay(const EngineConfig& baseConfig, const WavDa
     auto& eventQueue = *eventQueuePtr;
     auto& pressureQueue = *pressureQueuePtr;
     auto rendererPtr = std::make_unique<RealtimeEngineAudio>(
-        eventQueue, audioState, &pressureQueue, &audioConfiguration->exhaustGraph());
+        eventQueue, audioState, &pressureQueue, &audioConfiguration->exhaustGraph(),
+        &audioConfiguration->engineConfig());
     auto& renderer = *rendererPtr;
     if (!ir.samples.empty()) renderer.setImpulseResponse(ir.samples, ir.sampleRate, 0);
     renderer.prepare(audioRate, samplesPerStep);
     std::this_thread::sleep_for(std::chrono::milliseconds(300));
 
     const auto ambientKpa = static_cast<float>(config.ambientPressureKpa);
-    audioState.exhaustPreset.store(preset, std::memory_order_relaxed);
     audioState.combustionGain.store(0.0F);
     audioState.intakeGain.store(0.0F);
     audioState.mechanicalGain.store(0.0F);
@@ -952,10 +1025,24 @@ DecayMeasurement measureExhaustDecay(const EngineConfig& baseConfig, const WavDa
             sample.timeSeconds = nextPressureTime;
             sample.cylinderCount = 1;
             sample.pressureBar[0] = ambientKpa * 0.01F;
-            sample.exhaustRunnerPressureKpa[0] = ambientKpa + pulseAt(nextPressureTime);
+            const auto pulseKpa = pulseAt(nextPressureTime);
+            sample.exhaustRunnerPressureKpa[0] = ambientKpa + pulseKpa;
+            // This diagnostic predates the SI boundary contract. Supplying only
+            // a legacy runner pressure now correctly produces silence because a
+            // compiled graph never falls back to the procedural path. Drive a
+            // finite, self-contained valve boundary instead: pressure and flow
+            // are sampled together and the flow vanishes exactly outside the
+            // raised-cosine pulse.
+            const auto pulseFraction = pulseKpa / pulseAmplitudeKpa;
+            const auto massFlowKgPerSecond = 0.12F * pulseFraction;
+            sample.exhaustMassFlowKgPerSecond[0] = massFlowKgPerSecond;
+            sample.exhaustAcousticMassFlowKgPerSecond[0] = massFlowKgPerSecond;
+            sample.exhaustPortDensityKgPerM3[0] = 0.65F;
+            sample.exhaustPortSpeedOfSoundMps[0] = 540.0F;
+            sample.exhaustValveConductanceAreaM2[0] = pulseFraction > 0.0F
+                ? 0.00045F : 0.0F;
+            sample.thermoacousticBoundaryValid[0] = 1;
             sample.exhaustFlowMgPerCycle[0] = 60.0F;
-            // A closed port is the reflective termination the primary rings against.
-            sample.exhaustValveOpening[0] = 0.0F;
             sample.exhaustPathIndex[0] = 0;
             if (!pressureQueue.tryPush(sample)) break;
             nextPressureTime += 1.0 / telemetryRate;
@@ -989,7 +1076,8 @@ bool runtimePathCheck(const EngineConfig& baseConfig, const WavData& ir) {
     auto runtime = std::make_unique<EngineRuntime>(config);
     auto renderer = std::make_unique<RealtimeEngineAudio>(
         runtime->audioEvents(), runtime->audioState(),
-        &runtime->cylinderPressureSamples(), &runtime->exhaustGraph());
+        &runtime->cylinderPressureSamples(), &runtime->exhaustGraph(),
+        &runtime->engineConfig());
     if (!ir.samples.empty()) renderer->setImpulseResponse(ir.samples, ir.sampleRate, 0);
 
     constexpr double audioRate = 48'000.0;
@@ -1064,6 +1152,8 @@ bool runtimePathCheck(const EngineConfig& baseConfig, const WavData& ir) {
     const auto blockBudgetMicroseconds = blockSeconds * 1.0e6;
     const auto physical = renderer->physicalExhaustActive();
     const auto fullTopology = renderer->compiledExhaustTopologyActive();
+    const auto modalStructure = renderer->structuralRadiationActive();
+    const auto intakeTopology = renderer->compiledIntakeTopologyActive();
     // Engine speed at the end of the run. A silent render means nothing until
     // it is known whether the engine was still turning: a stalled engine is a
     // physics defect, not an audio one.
@@ -1072,12 +1162,20 @@ bool runtimePathCheck(const EngineConfig& baseConfig, const WavData& ir) {
               << " finalRpm=" << std::fixed << std::setprecision(0) << finalRpm
               << " physical=" << (physical ? "yes" : "NO")
               << " topology=" << (fullTopology ? "full" : "LEGACY")
+              << " structure=" << (modalStructure ? "modal" : "LEGACY")
+              << " intake=" << (intakeTopology ? "wave" : "LEGACY")
               << " legacySamples=" << renderer->legacyPathSampleCount()
               << " boundaryDropouts=" << renderer->invalidBoundarySampleCount()
               << " rms=" << std::fixed << std::setprecision(4) << rms
               << " peak=" << peak
               << " observerPeak=" << std::setprecision(1)
               << renderer->maxObservedExhaustPressurePa() << " Pa"
+              << " intakePeak=" << renderer->maxObservedIntakePressurePa() << " Pa"
+              << " structurePeak=" << renderer->maxObservedStructuralPressurePa() << " Pa"
+              << " preLimiter=" << std::setprecision(3)
+              << renderer->maxPreLimiterMagnitude()
+              << " levelLimited=" << renderer->levelLimitedSampleCount()
+              << " minLevelGain=" << renderer->minObservedLevelGain()
               << " droppedPressure=" << runtime->droppedPressureSampleCount()
               << '\n'
               << "  " << std::setw(26) << " "
@@ -1095,13 +1193,32 @@ bool runtimePathCheck(const EngineConfig& baseConfig, const WavData& ir) {
               << "/" << static_cast<std::uint64_t>(rendered * 240.0)
               << " maxLate=" << std::setprecision(2)
               << runtime->maximumTimingLatenessSeconds() * 1.0e3 << "ms\n";
-    auto ok = physical && fullTopology;
+    auto ok = physical && fullTopology && modalStructure && intakeTopology;
     if (!physical)
         std::cerr << "FAIL: runtime wiring: " << config.name
                   << " never activated the physical exhaust path\n";
     if (!fullTopology)
         std::cerr << "FAIL: runtime wiring: " << config.name
                   << " did not compile the complete exhaust topology\n";
+    if (!modalStructure)
+        std::cerr << "FAIL: runtime wiring: " << config.name
+                  << " did not compile modal structural radiation\n";
+    if (!intakeTopology)
+        std::cerr << "FAIL: runtime wiring: " << config.name
+                  << " did not compile the intake wave network\n";
+    if (renderer->legacyPathSampleCount() != 0) {
+        std::cerr << "FAIL: runtime wiring: " << config.name
+                  << " exposed the procedural compatibility path for "
+                  << renderer->legacyPathSampleCount() << " samples\n";
+        ok = false;
+    }
+    if (renderer->levelLimitedSampleCount() != 0
+        || renderer->minObservedLevelGain() < 0.99999F
+        || renderer->maxPreLimiterMagnitude() >= 0.82F) {
+        std::cerr << "FAIL: runtime wiring: " << config.name
+                  << " drives the safety limiter; physical layer calibration is invalid\n";
+        ok = false;
+    }
     // An engine that has stopped turning cannot produce engine sound, and no
     // amount of audio work will change that. This is checked here rather than in
     // the offline renders because those drive throttle and a dyno load
@@ -1122,6 +1239,7 @@ int main(int argc, char** argv) {
     std::filesystem::path irPath = std::filesystem::path(ENGINELAB_CATALOG_ROOT) / "assets" / "ir" / "exhaust_default.wav";
     bool idleOnly = false;
     std::string referenceFilter;
+    std::string catalogueFilter;
     for (int i = 1; i < argc; ++i) {
         const std::string a = argv[i];
         if (a == "--output" && i + 1 < argc) outDir = argv[++i];
@@ -1129,6 +1247,8 @@ int main(int argc, char** argv) {
         else if (a == "--idle-only") idleOnly = true;
         else if (a == "--reference-filter" && i + 1 < argc)
             referenceFilter = argv[++i];
+        else if (a == "--catalogue-filter" && i + 1 < argc)
+            catalogueFilter = argv[++i];
         else if (a == "--mute-combustion") muteCombustionLayer = true;
         else if (a == "--mute-mechanical") muteMechanicalLayer = true;
         else if (a == "--mute-intake") muteIntakeLayer = true;
@@ -1162,10 +1282,32 @@ int main(int argc, char** argv) {
             selected->config, ir, outDir, 3.0, true);
         const auto valid = metrics.physicalActive
             && metrics.compiledTopologyActive
+            && metrics.structuralRadiationActive
+            && metrics.intakeTopologyActive
             && metrics.left.scan.finite && metrics.right.scan.finite
             && metrics.droppedPressureSamples == 0
             && metrics.invalidBoundarySamples == 0;
         return valid ? 0 : 1;
+    }
+
+    if (!catalogueFilter.empty()) {
+        const auto catalog = loadEngineCatalog(
+            std::filesystem::path(ENGINELAB_CATALOG_ROOT));
+        const auto selected = std::find_if(catalog.entries.begin(), catalog.entries.end(),
+            [&catalogueFilter](const auto& entry) {
+                return entry.config.name.find(catalogueFilter) != std::string::npos;
+            });
+        if (selected == catalog.entries.end()) return 2;
+        const auto metrics = renderEngine(selected->config, ir, outDir, 3.0, true);
+        return metrics.physicalActive && metrics.compiledTopologyActive
+            && metrics.structuralRadiationActive && metrics.intakeTopologyActive
+            && metrics.left.scan.finite && metrics.right.scan.finite
+            && metrics.legacyPathSamples == 0
+            && metrics.invalidBoundarySamples == 0
+            && metrics.levelLimitedSamples == 0
+            && metrics.maxPreLimiterMagnitude < 0.82F
+            && metrics.left.window.crest < 16.0
+            && metrics.right.window.crest < 16.0 ? 0 : 1;
     }
 
     if (idleOnly) {
@@ -1241,6 +1383,18 @@ int main(int argc, char** argv) {
     const auto stability = renderEngine(makeDefaultInlineFour(), ir, outDir, 25.0, false);
 
     const auto catalog = loadEngineCatalog(std::filesystem::path(ENGINELAB_CATALOG_ROOT));
+    std::cout << "\n--- Complete catalogue render (3.0 s each) ---\n";
+    std::filesystem::create_directories(outDir / "catalogue");
+    std::vector<std::pair<std::string, Metrics>> catalogueMetrics;
+    catalogueMetrics.reserve(catalog.entries.size());
+    for (const auto& entry : catalog.entries)
+        catalogueMetrics.emplace_back(entry.config.name,
+            // Starter release ends at 1.1 s and the dyno begins at 1.2 s. A
+            // two-second capture made the "final steady-state" window include
+            // that load transition, so a legitimate Merlin firing pulse was
+            // divided by a transitional RMS and misclassified as an isolated
+            // click. Three seconds leaves a complete settled analysis window.
+            renderEngine(entry.config, ir, outDir / "catalogue", 3.0, true));
     const auto idleEngine = std::find_if(catalog.entries.begin(), catalog.entries.end(),
         [](const auto& entry) {
             return entry.config.name.find("Big Twin") != std::string::npos;
@@ -1250,29 +1404,26 @@ int main(int argc, char** argv) {
         ? renderIdleCycle(idleEngine->config, ir, outDir) : IdleCycleMetrics {};
 
     // Instrument, not a gate: the correct RT60 per preset is not yet established,
-    // so this reports the measurement and only fails if the tail is unmeasurable.
-    // Calibrating the muffler FDN and its presets against these numbers is the
-    // next step; recording the values here is what makes that step falsifiable.
-    std::cout << "\n--- Exhaust decay per preset (inline4, Schroeder RT60) ---\n";
-    constexpr std::array<const char*, 5> presetNames {
-        "street", "openHeaders", "turboMuffled", "longTube", "motorcycle" };
-    bool decayMeasurable = true;
-    for (int preset = 0; preset < 5; ++preset) {
-        const auto dry = measureExhaustDecay(makeDefaultInlineFour(), ir, preset, 6.0, 0.0F);
-        const auto wet = measureExhaustDecay(makeDefaultInlineFour(), ir, preset, 6.0, 1.0F);
-        std::cout << "  " << std::left << std::setw(14) << presetNames[static_cast<std::size_t>(preset)]
-                  << " rt60(noIR/FDN)=" << std::fixed << std::setprecision(3) << dry.rt60Seconds << " s"
-                  << " rt60(full)=" << wet.rt60Seconds << " s"
-                  << " peak=" << std::setprecision(4) << dry.peak << '/' << wet.peak
-                  << " tailFloor=" << std::setprecision(1) << wet.tailFloorDb << " dB"
-                  << " finite=" << (dry.finite && wet.finite ? "yes" : "NO")
-                  << (dry.valid && wet.valid ? "" : "  [UNMEASURABLE]") << '\n';
-        if (!dry.finite || !dry.valid || !wet.finite || !wet.valid) decayMeasurable = false;
-    }
+    std::cout << "\n--- Physical exhaust decay (inline4, Schroeder RT60) ---\n";
+    const auto dryDecay = measureExhaustDecay(
+        makeDefaultInlineFour(), ir, 6.0, 0.0F);
+    const auto wetDecay = measureExhaustDecay(
+        makeDefaultInlineFour(), ir, 6.0, 1.0F);
+    std::cout << "  rt60(freeField)=" << std::fixed << std::setprecision(3)
+              << dryDecay.rt60Seconds << " s"
+              << " rt60(withIR)=" << wetDecay.rt60Seconds << " s"
+              << " peak=" << std::setprecision(4) << dryDecay.peak << '/'
+              << wetDecay.peak
+              << " tailFloor=" << std::setprecision(1) << wetDecay.tailFloorDb << " dB"
+              << " finite=" << (dryDecay.finite && wetDecay.finite ? "yes" : "NO")
+              << (dryDecay.valid && wetDecay.valid ? "" : "  [UNMEASURABLE]") << '\n';
+    const auto decayMeasurable = dryDecay.finite && dryDecay.valid
+        && wetDecay.finite && wetDecay.valid;
 
     bool ok = true;
     const auto validate = [&ok](const Metrics& m, const std::string& label,
-                                bool requireSpectralBalance) {
+                                bool requireSpectralBalance,
+                                bool requireForcedInduction = false) {
         const auto fail = [&ok, &label](const std::string& reason) {
             std::cerr << "FAIL: " << label << ": " << reason << '\n';
             ok = false;
@@ -1280,6 +1431,12 @@ int main(int argc, char** argv) {
         if (!m.physicalActive) fail("physical exhaust rendering was not active");
         if (!m.compiledTopologyActive)
             fail("the complete exhaust topology was not active");
+        if (!m.structuralRadiationActive)
+            fail("modal block/head radiation was not active");
+        if (!m.intakeTopologyActive)
+            fail("the intake wave network was not active");
+        if (requireForcedInduction && !m.forcedInductionAcousticsActive)
+            fail("the solver-driven forced-induction source was not active");
         const auto channels = { std::pair { "left", &m.left }, std::pair { "right", &m.right } };
         for (const auto& [name, channel] : channels) {
             const std::string suffix = std::string(" (") + name + " channel)";
@@ -1303,23 +1460,25 @@ int main(int argc, char** argv) {
             // A dBFS window is also unfalsifiable here, because the monitor
             // calibration alone can move it. Converting back to pascals through
             // that same calibration states the invariant where it is physical:
-            // a running engine one metre from its tailpipe must radiate a
-            // plausible sound pressure level. The bounds are wide, and taken
-            // from what exhaust systems measure at one metre -- roughly 90 dB
-            // for a quiet engine idling through a muffler up to about 130 dB
-            // for open headers at power. Anything outside that is a modelling
-            // error, and no choice of preamp gain can hide it.
+            // a running engine must radiate plausible sound power. Catalogue
+            // microphone distances intentionally differ (a Merlin is observed
+            // much farther away than a motorcycle), so compare the directional
+            // pressure extrapolated to one metre using the same free-field 1/r
+            // law as the observer. Testing raw SPL at arbitrary distances would
+            // reject geometry rather than source physics.
             const auto rmsPressurePa = channel->window.rms
                 * AcousticMonitorCalibration::sinePeakPressurePa(
                     AcousticMonitorCalibration::defaultFullScaleSplDb);
+            const auto oneMetreEquivalentPressurePa = rmsPressurePa
+                * m.observerDistanceM;
             const auto soundPressureLevelDb = 20.0 * std::log10(
-                std::max(rmsPressurePa, 1.0e-12)
+                std::max(oneMetreEquivalentPressurePa, 1.0e-12)
                 / AcousticMonitorCalibration::referenceRmsPressurePa);
             if (soundPressureLevelDb < 90.0)
-                fail("radiated level is below 90 dB SPL at the one-metre observer ("
+                fail("radiated level is below 90 dB SPL at one-metre equivalent ("
                      + std::to_string(static_cast<int>(soundPressureLevelDb)) + " dB)" + suffix);
             if (soundPressureLevelDb > 130.0)
-                fail("radiated level exceeds 130 dB SPL at the one-metre observer ("
+                fail("radiated level exceeds 130 dB SPL at one-metre equivalent ("
                      + std::to_string(static_cast<int>(soundPressureLevelDb)) + " dB)" + suffix);
             // Digital safety is separate and still absolute.
             if (channel->window.rms > 0.40)
@@ -1337,35 +1496,31 @@ int main(int argc, char** argv) {
         if (m.droppedPressureSamples != 0) fail("cylinder-pressure samples were dropped");
         if (m.lateEvents != 0) fail("audio events missed their scheduled render time");
         if (m.stolenVoices != 0) fail("polyphony exhaustion stole active combustion voices");
+        if (m.legacyPathSamples != 0)
+            fail("procedural compatibility audio leaked into the production render");
+        if (m.invalidBoundarySamples != 0)
+            fail("the physical source stream contained invalid boundary samples");
         // Delay lines are sized in prepare() from the published geometry, so a
         // clamp here means the rendered acoustic length is shorter than configured.
         if (m.delayTruncations != 0) fail("a delay line was too short and truncated");
-        // Channel correlation is reported, not gated.
-        //
-        // The former gate required the two channels to differ. That was a
-        // meaningful check when the output was built from per-cylinder voices
-        // carrying authored stereo pan values: a collapse to mono then meant the
-        // panning had stopped working. Those pan values were a mixing decision,
-        // not a measurement, and the voices they belonged to are gone.
-        //
-        // The physical path radiates every exhaust outlet to a single documented
-        // observer point, because outlet positions are not part of the published
-        // geometry. A mono result is therefore the correct output of the model
-        // as it currently stands, and a gate demanding stereo would only be
-        // satisfiable by inventing a pan -- which is precisely the kind of
-        // decoration this path is meant to exclude. Genuine stereo needs outlet
-        // positions and a two-microphone observer; until then this is a known
-        // and documented limitation, not a regression to catch here.
+        // Channel correlation is reported rather than forced: a centred single
+        // outlet is legitimately almost mono, while authored separated outlets
+        // acquire width only from their physical microphone delays.
         // The safety leveler must be safety-only in a shipped voice: if it is
         // pulling gain below identity here, the default level is set too hot and
         // the AGC is silently masking that offset. Keep the level honest instead.
         if (m.levelLimitedSamples != 0 || m.minLevelGain < 0.99999F)
             fail("safety leveler engaged at the default voice (AGC masking a level offset)");
+        if (m.maxPreLimiterMagnitude >= 0.82F)
+            fail("physical layers reach the output limiter knee before monitoring");
     };
     for (std::size_t index = 0; index < metrics.size(); ++index)
         validate(metrics[index], engines[index].label, true);
-    validate(turbo, "synthetic turbo", true);
+    validate(turbo, "synthetic turbo", true, true);
     validate(stability, "long-run inline4", true);
+    for (const auto& [label, measurement] : catalogueMetrics)
+        validate(measurement, "catalogue " + label, true,
+            measurement.forcedInductionAcousticsActive);
     if (idleEngine == catalog.entries.end()) {
         std::cerr << "FAIL: catalog Big Twin fixture is missing\n";
         ok = false;
