@@ -1,60 +1,106 @@
-// CPU feasibility spike for a 1-D finite-volume intake.
+// Micro-instrument for the 1-D intake runner solver.
 //
-// The intake is today a lumped 0-D path, which is why intake tuning cannot
-// exist (see tests/IntakeTuningTests.cpp). The candidate fix reuses
-// FiniteVolumeDuct -- the same solver the exhaust network runs -- as one 1-D
-// duct per intake runner. Whether that fits the realtime budget is not
-// guessable from the exhaust numbers: an intake runner is much SHORTER
-// (150-300 mm vs ~800 mm primaries), so at a similar cell count its cells are
-// smaller and the CFL step shrinks; but the gas is COLD (a ~ 340-450 m/s vs
-// ~600 hot), which relaxes the same limit. These partly cancel and the
-// balance has to be measured, which is all this tool does. Nothing here is
-// wired into the simulator.
+// The runner network is 75-84 % of the mechanical sub-step (see CLAUDE.md), so
+// this is where realtime capacity is won or lost. Iterating on it through the
+// full simulator costs ten minutes a round trip; this tool costs seconds, and
+// it answers the two questions that matter, together:
 //
-// The duct is excited the way an engine excites it, not left quiescent: the
-// valve end alternates between a strong WOT draw (a prescribed ~23 kPa
-// depression ghost state -- deliberately at the harsh end of real port
-// depressions, so the numbers below are not flattered) and a closed valve
-// (reflective), at an intake-event cadence, while the plenum end holds
-// ambient. Substep counts and per-frame wall time are meaningless for a duct
-// sitting still; the whole cost IS the CFL response to the waves.
+//   1. what does one duct advance COST, at the cadence the simulator actually
+//      calls it -- one mechanical sub-step, not one 240 Hz frame; and
+//   2. is a candidate optimisation BIT-IDENTICAL?
 //
-// Read the output against the 240 Hz physics budget (4.167 ms/frame) and
-// against the measured headroom in docs (the physics thread already runs at
-// ~99 % of budget on the V8 at 6500 rpm, with the exhaust FV network at
-// 29-52 % of that): the go/no-go for the intake network is whether N runners
-// x this per-duct cost fits the REMAINING budget, serially or with the
-// per-cylinder parallelism the runner solves trivially admit.
+// (2) is the reason this tool exists in this form. The idles in this project
+// are ULP-sensitive attractors, so "the numbers look the same" is not a
+// standard an optimisation can be held to. The checksum below is a bit-exact
+// fingerprint of every conservative variable and every wall temperature in the
+// duct after a fixed, deterministic excitation. If it is unchanged, the
+// optimisation provably did not touch the physics and no catalogue re-run is
+// needed to prove it. If it moves, the change is a physics change wearing an
+// optimisation's clothes and has to be measured on the catalogue.
+//
+// The excitation is the engine's, not a quiescent duct: the valve end
+// alternates between a strong WOT draw (a ~23 kPa depression ghost, at the
+// harsh end of real port depressions so the cost is not flattered) and a shut
+// valve, at an intake-event cadence, while the plenum end holds ambient.
+// Dynamic wall heat transfer is ON, as the simulator configures it -- it is a
+// quarter of the advance and leaving it out would measure a duct the simulator
+// never runs.
 
 #include <enginelab/gasdynamics/FiniteVolumeDuct.hpp>
 
 #include <chrono>
+#include <cstdint>
 #include <cstdlib>
+#include <cstring>
 #include <iomanip>
 #include <iostream>
+#include <string>
 
 namespace {
 using namespace enginelab::gasdynamics;
 
+// Aluminium runner wall, matching EngineSimulator::configurePhysicalIntakeNetworks.
+constexpr double aluminiumRunnerWallThicknessM = 0.004;
+constexpr double aluminiumDensityKgPerM3 = 2'700.0;
+constexpr double aluminiumSpecificHeatJPerKgK = 900.0;
+constexpr double runnerExternalHeatTransferWPerM2K = 25.0;
+
+/**
+ * Order-sensitive FNV-1a over the raw bits of every double of state. Bit
+ * equality is the whole point, so the doubles are hashed as bytes and never
+ * compared with a tolerance.
+ */
+class BitChecksum final {
+public:
+    void add(double value) noexcept {
+        std::uint64_t bits = 0;
+        std::memcpy(&bits, &value, sizeof(bits));
+        for (int byte = 0; byte < 8; ++byte) {
+            hash_ ^= (bits >> (byte * 8)) & 0xFFull;
+            hash_ *= 0x100000001B3ull;
+        }
+    }
+    [[nodiscard]] std::uint64_t value() const noexcept { return hash_; }
+
+private:
+    std::uint64_t hash_ { 0xCBF29CE484222325ull };
+};
+
 struct BenchResult final {
-    double millisecondsPerFrame { 0.0 };
-    double substepsPerFrame { 0.0 };
+    double nanosecondsPerCall { 0.0 };
+    double nanosecondsPerCellSubstep { 0.0 };
+    double substepsPerCall { 0.0 };
+    std::uint64_t rejected { 0 };
+    std::uint64_t checksum { 0 };
     bool ok { false };
 };
 
-// Advance one intake-conditions duct for `frames` frames of 1/240 s under a
-// valve open/shut cycle and return the mean wall cost of one frame.
-BenchResult benchDuct(std::size_t cellCount, double lengthM, int frames) {
+/**
+ * Advances one runner-shaped duct at the simulator's own cadence: a mechanical
+ * sub-step of `maximumCrankDegreesPerStep` at `rpm`, halved, because the
+ * simulator splits the advance around the exhaust coupling while the intake
+ * valve is open.
+ */
+BenchResult benchDuct(std::size_t cellCount, double lengthM, double rpm,
+                      int calls) {
     FiniteVolumeDuct duct;
     DuctGeometry geometry;
     geometry.lengthM = lengthM;
     geometry.diameterM = 0.038;
     geometry.cellCount = cellCount;
     geometry.wallFrictionEnabled = true;
+    geometry.absoluteRoughnessM = 1.5e-6;
+    geometry.dynamicWallHeatTransferEnabled = true;
+    geometry.wallHeatTransferWPerM2K = 0.0;
+    geometry.wallTemperatureK = 300.0;
+    geometry.wallThicknessM = aluminiumRunnerWallThicknessM;
+    geometry.wallDensityKgPerM3 = aluminiumDensityKgPerM3;
+    geometry.wallSpecificHeatJPerKgK = aluminiumSpecificHeatJPerKgK;
+    geometry.externalWallHeatTransferWPerM2K = runnerExternalHeatTransferWPerM2K;
+    geometry.externalTemperatureK = 300.0;
 
     const auto& mixture = duct.mixtureModel();
     const auto ambient = mixture.conservativeFromPressureTemperature(101'325.0, 300.0);
-    // Cold charge at a WOT high-rpm port depression: the valve-side ghost.
     const auto draw = mixture.conservativeFromPressureTemperature(78'000.0, 320.0);
     if (!ambient || !draw || !duct.configure(geometry, *ambient)) return {};
 
@@ -62,60 +108,84 @@ BenchResult benchDuct(std::size_t cellCount, double lengthM, int frames) {
     const auto valveOpen = DuctBoundaryCondition::prescribed(*draw);
     const auto valveShut = DuctBoundaryCondition::reflective();
 
-    constexpr double frameDt = 1.0 / 240.0;
-    constexpr int warmupFrames = 48;
+    // One mechanical sub-step at 2 crank degrees, halved: what the simulator
+    // asks for while the intake valve is open.
+    const auto halfSubstepSeconds = 0.5 * 2.0 / (rpm * 6.0);
+    // A four-stroke intake event is ~240 of 720 crank degrees, so the valve is
+    // open for one call in three at this cadence.
+    constexpr int valveOpenCallsPerCycle = 120;
+    constexpr int cycleCalls = 360;
+    constexpr int warmupCalls = 2'000;
+
     BenchResult result;
     result.ok = true;
     std::size_t substeps = 0;
     auto elapsedNs = std::chrono::nanoseconds::zero();
-    for (int frame = 0; frame < warmupFrames + frames; ++frame) {
-        // ~50 Hz intake-event cadence (one cylinder at 6000 rpm): the valve
-        // spends 2 frames of every 5 open, 3 shut.
-        const auto& valve = (frame % 5) < 2 ? valveOpen : valveShut;
+    for (int call = 0; call < warmupCalls + calls; ++call) {
+        const auto& valve = (call % cycleCalls) < valveOpenCallsPerCycle
+            ? valveOpen : valveShut;
         const auto start = std::chrono::steady_clock::now();
-        const auto advance = duct.advance(frameDt, plenumEnd, valve);
+        const auto advance = duct.advance(halfSubstepSeconds, plenumEnd, valve);
         const auto stop = std::chrono::steady_clock::now();
         if (!advance.completed) { result.ok = false; break; }
-        if (frame < warmupFrames) continue;
+        if (call < warmupCalls) continue;
         elapsedNs += std::chrono::duration_cast<std::chrono::nanoseconds>(stop - start);
         substeps += advance.acceptedSubsteps;
+        result.rejected += advance.rejectedSubsteps;
     }
-    const auto n = static_cast<double>(frames);
-    result.millisecondsPerFrame = static_cast<double>(elapsedNs.count()) * 1.0e-6 / n;
-    result.substepsPerFrame = static_cast<double>(substeps) / n;
+
+    BitChecksum checksum;
+    for (const auto& cell : duct.cells()) {
+        for (const auto density : cell.speciesMassDensityKgPerM3) checksum.add(density);
+        checksum.add(cell.momentumDensityKgPerM2S);
+        checksum.add(cell.totalEnergyDensityJPerM3);
+    }
+    for (const auto& wall : duct.wallStates()) checksum.add(wall.temperatureK);
+    result.checksum = checksum.value();
+
+    const auto n = static_cast<double>(calls);
+    result.nanosecondsPerCall = static_cast<double>(elapsedNs.count()) / n;
+    result.substepsPerCall = static_cast<double>(substeps) / n;
+    result.nanosecondsPerCellSubstep = substeps > 0
+        ? static_cast<double>(elapsedNs.count())
+            / (static_cast<double>(substeps) * static_cast<double>(cellCount))
+        : 0.0;
     return result;
 }
 }  // namespace
 
 int main(int argc, char** argv) {
-    auto frames = 1'440;  // 6 s simulated per configuration
+    auto calls = 20'000;
+    auto rpm = 7'000.0;
     for (int index = 1; index < argc; ++index) {
         const std::string argument = argv[index];
-        if (argument == "--frames" && index + 1 < argc) frames = std::atoi(argv[++index]);
+        if (argument == "--calls" && index + 1 < argc) calls = std::atoi(argv[++index]);
+        else if (argument == "--rpm" && index + 1 < argc) rpm = std::atof(argv[++index]);
         else {
-            std::cerr << "usage: EngineLabIntakeDuctBench [--frames n]\n";
+            std::cerr << "usage: EngineLabIntakeDuctBench [--calls n] [--rpm n]\n"
+                         "  Cost of one intake-runner advance at the simulator's own\n"
+                         "  cadence, plus a bit-exact checksum of the resulting state.\n"
+                         "  An optimisation that leaves every checksum unchanged is\n"
+                         "  provably not a physics change.\n";
             return EXIT_FAILURE;
         }
     }
 
-    constexpr double budgetMs = 1'000.0 / 240.0;
-    std::cout << std::fixed << std::setprecision(3)
-              << "--- 1-D intake runner cost, per 240 Hz frame (budget "
-              << budgetMs << " ms) ---\n"
-              << "cells,length_m,ms_per_duct,substeps,x4_ms,x8_ms,x12_ms,"
-                 "x4_pct,x8_pct,x12_pct\n";
+    std::cout << "--- 1-D intake runner: cost per half-sub-step advance at "
+              << std::fixed << std::setprecision(0) << rpm << " rpm ---\n"
+              << "cells,length_m,ns_per_call,ns_per_cell_substep,substeps,"
+                 "rejected,checksum\n";
     auto allOk = true;
-    for (const auto cells : { std::size_t { 8 }, std::size_t { 12 } }) {
-        for (const auto length : { 0.20, 0.30 }) {
-            const auto bench = benchDuct(cells, length, frames);
+    for (const auto cells : { std::size_t { 6 }, std::size_t { 9 }, std::size_t { 12 } }) {
+        for (const auto length : { 0.18, 0.30 }) {
+            const auto bench = benchDuct(cells, length, rpm, calls);
             allOk = allOk && bench.ok;
-            const auto ms = bench.millisecondsPerFrame;
-            std::cout << cells << ',' << length << ',' << ms << ','
-                      << bench.substepsPerFrame
-                      << ',' << ms * 4.0 << ',' << ms * 8.0 << ',' << ms * 12.0
-                      << ',' << ms * 4.0 / budgetMs * 100.0
-                      << ',' << ms * 8.0 / budgetMs * 100.0
-                      << ',' << ms * 12.0 / budgetMs * 100.0 << '\n';
+            std::cout << cells << ',' << std::setprecision(2) << length << ','
+                      << std::setprecision(1) << bench.nanosecondsPerCall << ','
+                      << bench.nanosecondsPerCellSubstep << ','
+                      << std::setprecision(3) << bench.substepsPerCall << ','
+                      << bench.rejected << ','
+                      << "0x" << std::hex << bench.checksum << std::dec << '\n';
         }
     }
     if (!allOk) {

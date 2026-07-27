@@ -1278,6 +1278,110 @@ ExhaustNetworkAdvanceResult ExhaustGasNetwork::advance(
     return result;
 }
 
+std::optional<ExhaustOutletFlowSample> ExhaustGasNetwork::predictOutletTransfer(
+    std::size_t outletIndex,
+    const ExhaustAmbientBoundary& ambient,
+    double durationSeconds) const noexcept {
+    if (!configured_ || outletIndex >= layout_.outlets().size()) return std::nullopt;
+    if (!finite(durationSeconds) || !(durationSeconds > 0.0)) return std::nullopt;
+    const auto& outlet = layout_.outlets()[outletIndex];
+    // Only a plain duct end is supported. A junction's primitive cache is not
+    // owned by a duct and no compiled runner layout produces one here.
+    if (outlet.networkEndpoint.type == ExhaustEndpointType::junction)
+        return std::nullopt;
+    const auto& duct = ducts_[outlet.networkEndpoint.elementIndex];
+    if (!duct.refreshCellStateCache()) return std::nullopt;
+    const auto& compiled = layout_.ducts()[outlet.networkEndpoint.elementIndex];
+    const auto isInlet = outlet.networkEndpoint.type == ExhaustEndpointType::ductInlet;
+    const auto& interiorState = isInlet ? duct.cells_.front() : duct.cells_.back();
+    const auto& interiorPrimitive =
+        isInlet ? duct.cellPrimitives_.front() : duct.cellPrimitives_.back();
+    const auto connectionAreaM2 = isInlet
+        ? compiled.inletConnectionAreaM2 : compiled.outletConnectionAreaM2;
+    const auto openingArea = std::min(connectionAreaM2,
+        outlet.openingAreaM2 * outlet.dischargeCoefficient
+            * std::clamp(ambient.openingScale, 0.0, 1.0));
+
+    ExhaustOutletFlowSample sample;
+    sample.outletNodeId = outlet.outletNodeId;
+    sample.pathIndex = outlet.pathIndex;
+    sample.openingAreaM2 = outlet.openingAreaM2;
+    if (!(openingArea > 0.0)) return sample;
+
+    PrimitiveState reservoirPrimitive;
+    if (!mixtureModel_.recoverPrimitive(ambient.reservoirState, reservoirPrimitive))
+        return std::nullopt;
+    // Same characteristic open-end treatment `evaluateStage` uses, with the
+    // same Riemann-ghost fallback, so the prediction is the flux the advance
+    // would start from rather than a second, differently-behaved boundary.
+    const auto mouthFlux = [&](const ConservativeState& state,
+                               const PrimitiveState& primitive) noexcept {
+        const auto ghost = openEndBoundaryPrimitive(primitive, reservoirPrimitive);
+        const auto ghostState = ghost
+            ? mixtureModel_.conservativeFromPrimitive(
+                ghost->densityKgPerM3, ghost->velocityMps, ghost->pressurePa,
+                GasComposition { ghost->massFractions })
+            : std::nullopt;
+        return ghostState && mixtureModel_.isPhysical(*ghostState)
+            ? mixtureModel_.riemannFluxPrepared(state, primitive, *ghostState, *ghost)
+            : mixtureModel_.riemannFluxPrepared(
+                state, primitive, ambient.reservoirState, reservoirPrimitive);
+    };
+    const auto firstFlux = mouthFlux(interiorState, interiorPrimitive);
+
+    // Heun on the terminal cell. What `advance` books is the two-stage average
+    // 0.5*dt*(F1+F2), not dt*F1, and for a prediction whose only job is to
+    // order several networks around one shared reservoir that difference IS the
+    // residual error: with dt*F1 alone the stationary manifold settles 0.011
+    // kPa off ambient, against 0.0004 for the serial reference it stands in
+    // for. Advancing a LOCAL copy of the terminal cell by the mouth flux -- the
+    // term that makes F2 differ from F1 to leading order -- recovers most of
+    // it, and costs one more Riemann evaluation on a ~5 us advance.
+    auto secondFlux = firstFlux;
+    const auto terminalVolumeM3 = isInlet
+        ? duct.cellVolumesM3_.front() : duct.cellVolumesM3_.back();
+    if (terminalVolumeM3 > 0.0) {
+        const auto weight = -openingArea * durationSeconds / terminalVolumeM3;
+        auto predictedState = interiorState;
+        for (std::size_t species = 0; species < gasSpeciesCount; ++species) {
+            predictedState.speciesMassDensityKgPerM3[species] +=
+                firstFlux.speciesMassFluxKgPerM2S[species] * weight;
+        }
+        predictedState.momentumDensityKgPerM2S += firstFlux.momentumFluxPa * weight;
+        predictedState.totalEnergyDensityJPerM3 += firstFlux.totalEnergyFluxWPerM2 * weight;
+        PrimitiveState predictedPrimitive;
+        // An inadmissible extrapolation just falls back to the one-stage
+        // estimate rather than poisoning the staircase.
+        if (mixtureModel_.recoverPrimitive(predictedState, predictedPrimitive))
+            secondFlux = mouthFlux(predictedState, predictedPrimitive);
+    }
+
+    // No orientation flip: `outletSamples_` accumulates makeFlowRate(rawFlux,
+    // area) unsigned by endpoint type, so a prediction that flipped it would
+    // not be comparable with the transfer it is standing in for.
+    const auto scale = 0.5 * openingArea * durationSeconds;
+    for (std::size_t species = 0; species < gasSpeciesCount; ++species) {
+        sample.speciesMassKg[species] = scale
+            * (firstFlux.speciesMassFluxKgPerM2S[species]
+               + secondFlux.speciesMassFluxKgPerM2S[species]);
+    }
+    sample.transferredEnergyJ = scale
+        * (firstFlux.totalEnergyFluxWPerM2 + secondFlux.totalEnergyFluxWPerM2);
+    sample.staticPressurePa = interiorPrimitive.pressurePa;
+    sample.temperatureK = interiorPrimitive.temperatureK;
+    sample.densityKgPerM3 = interiorPrimitive.densityKgPerM3;
+    sample.axialVelocityMps = interiorPrimitive.velocityMps;
+    if (durationSeconds > 0.0) {
+        auto massKg = 0.0;
+        for (const auto species : sample.speciesMassKg) massKg += species;
+        sample.massFlowKgPerS = massKg / durationSeconds;
+        sample.totalEnergyFlowW = sample.transferredEnergyJ / durationSeconds;
+        sample.volumeFlowM3PerS = sample.densityKgPerM3 > 0.0
+            ? sample.massFlowKgPerS / sample.densityKgPerM3 : 0.0;
+    }
+    return sample;
+}
+
 bool ExhaustGasNetwork::injectSpeciesAtPort(std::size_t portIndex,
                                             GasSpecies species,
                                             double massKg,

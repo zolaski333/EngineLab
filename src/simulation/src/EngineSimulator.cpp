@@ -414,7 +414,36 @@ EngineSimulator::EngineSimulator(EngineConfig config, IEcuModel& ecu, IPhysicsMo
     kinematicsReference_ = buildEngineKinematicsReference(config_);
     configurePhysicalExhaustNetwork();
     configurePhysicalIntakeNetworks();
+    configureIntakeWorkerPool();
     reset();
+}
+
+void EngineSimulator::configureIntakeWorkerPool() {
+    // Only the 1-D runner advance is dispatched, and only its per-cylinder
+    // half. Whether that pays depends on two things measured rather than
+    // assumed (docs/physics-audit.md):
+    //
+    //  - the engine must have enough cylinders for the work to divide. A twin
+    //    already produces 1.6 simulated seconds per wall second and would pay a
+    //    barrier to split two items; below three cylinders the phase runs
+    //    inline.
+    //  - the machine must have cores to spare. The audio callback and the UI
+    //    thread need one each, and on an SMT machine two workers sharing a
+    //    physical core mostly contend for its one FPU on a body this
+    //    arithmetic-bound. Half the reported concurrency, minus one for the
+    //    calling thread, is deliberately conservative.
+    const auto cylinderCount = config_.cylinders.size();
+    if (cylinderCount < 3) return;
+    const auto reportedConcurrency = std::thread::hardware_concurrency();
+    if (reportedConcurrency < 4) return;
+    const auto usableThreads = std::max<std::size_t>(1, reportedConcurrency / 2);
+    const auto workerCount = std::min(cylinderCount - 1, usableThreads - 1);
+    if (workerCount == 0) return;
+    intakeWorkerPool_ = std::make_unique<CylinderWorkerPool>(workerCount);
+    // Only a group with more than one cylinder in it needs the plenum staircase
+    // reconstructed. Without a pool the groups stay singletons and the runner
+    // pass is the original serial Gauss-Seidel, exactly, at the original cost.
+    intakePredictionGroupCount_ = 1;
 }
 
 void EngineSimulator::configurePhysicalIntakeNetworks() {
@@ -1662,14 +1691,38 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
         // is a conservation requirement, not a nicety: a cylinder that took the
         // first pass and then failed the predicate would silently lose half a
         // sub-step of mass and energy transfer.
-        const auto advanceIntakeRunners = [&](double halfStepSeconds,
-                                              bool firstHalf) noexcept {
-            for (std::size_t index = 0; index < config_.cylinders.size(); ++index) {
+        //
+        // `advanceIntakeRunnerFor` below is the concurrent phase: it must touch
+        // nothing but state private to its own cylinder. Everything shared --
+        // the plenum -- is decided before it and committed after it, in
+        // cylinder order, so the result cannot depend on the schedule. The
+        // scheme that picks the plenum state each cylinder reads, and the three
+        // that were measured and rejected first, are described on
+        // `advanceIntakeRunners` further down.
+        //
+        // `plenumDeltaForMouthSample` reads the plenum cell only for its
+        // CONFIGURED molar masses, never for its dynamic state, so holding the
+        // delta back changes nothing about the delta itself; the boundary state
+        // is the entire difference.
+        std::array<gasdynamics::ConservativeState, 32> plenumBoundaryState {};
+        std::array<gasdynamics::ExhaustOutletFlowSample, 32> predictedPlenumDraw {};
+        std::array<std::uint8_t, 32> predictedPlenumDrawValid {};
+        std::array<GasInventoryDelta, 32> pendingPlenumDelta {};
+        std::array<std::uint8_t, 32> intakePhaseFailed {};
+        // A cylinder whose intake valve is shut on the first half takes no
+        // advance at all, and must not then have a zero delta pushed into the
+        // plenum: `tryApplyInventoryDelta` is not required to be a no-op on a
+        // zero argument, and the previous code simply did not call it.
+        std::array<std::uint8_t, 32> intakePhaseProducedDelta {};
+        const auto advanceIntakeRunnerFor = [&](std::size_t index,
+                                                double halfStepSeconds,
+                                                bool firstHalf) noexcept {
+            {
                 const auto openIntakeValve = intakeValveAreaM2[index] > 0.0;
                 const auto durationSeconds = openIntakeValve
                     ? halfStepSeconds
                     : (firstHalf ? 0.0 : halfStepSeconds * 2.0);
-                if (!(durationSeconds > 0.0)) continue;
+                if (!(durationSeconds > 0.0)) return;
                 auto& network = *intakeRunnerNetworks_[index];
                 const auto intakePathIndex =
                     intakePathIndexByCylinder_[index];
@@ -1681,15 +1734,15 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                     intakeValveDischargeCoefficient[index],
                 };
                 const gasdynamics::ExhaustAmbientBoundary plenumReservoir {
-                    networkStateForGasCell(intakePlenumGas_[intakePathIndex]), 1.0 };
+                    plenumBoundaryState[index], 1.0 };
                 const auto advance = network.advance(durationSeconds,
                     std::span<const gasdynamics::CylinderValveBoundary>(&boundary, 1),
                     plenumReservoir);
-                if (!advance.completed) state_.solverResolutionLimited = true;
+                if (!advance.completed) intakePhaseFailed[index] = 1;
                 const auto& exchange = network.cylinderExchanges().front();
                 if (!cylinderGas_[index].tryApplyInventoryDelta(
                         cylinderDeltaForExchange(exchange, cylinderGas_[index])))
-                    state_.solverResolutionLimited = true;
+                    intakePhaseFailed[index] = 1;
                 // The exchange is positive from the cylinder into the runner,
                 // so the intake mass the cylinder gained is its negation.
                 instantaneousIntakeTransferredMassKg[index] += -exchange.totalMassKg();
@@ -1702,10 +1755,13 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                     -exchange.speciesMassKg[static_cast<std::size_t>(
                          gasdynamics::GasSpecies::oxygen)]
                     / GasCell::oxygenMolarMassKg / 0.21 * GasCell::airMolarMassKg * 1.0e6;
-                const auto& mouth = network.outletSamples().front();
-                if (!intakePlenumGas_[intakePathIndex].tryApplyInventoryDelta(
-                        plenumDeltaForMouthSample(mouth, intakePlenumGas_[intakePathIndex])))
-                    state_.solverResolutionLimited = true;
+                // Held for the serial phase below rather than applied here: the
+                // shared plenum is the one thing in this body that is not
+                // cylinder-private.
+                pendingPlenumDelta[index] = plenumDeltaForMouthSample(
+                    network.outletSamples().front(),
+                    intakePlenumGas_[intakePathIndex]);
+                intakePhaseProducedDelta[index] = 1;
                 // Port-side runner state for telemetry, injection metering, the
                 // Helmholtz telemetry model and the acoustic intake excitation.
                 intakeRunnerPressureKpa_[index] = exchange.networkPressurePa * 0.001;
@@ -1716,6 +1772,155 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 // velocity points from the valve toward the plenum; the column
                 // velocity TOWARD the cylinder is therefore its negation.
                 intakeValveColumnVelocityMps_[index] = -exchange.networkVelocityMps;
+            }
+        };
+        // Runs `body(i)` for every cylinder, possibly concurrently. The body
+        // must write only state private to `i`; see CylinderWorkerPool.
+        const auto runIntakePhaseOverRange =
+            [&](std::size_t begin, std::size_t end, const auto& body) noexcept {
+                using BodyType = std::decay_t<decltype(body)>;
+                if (!intakeWorkerPool_) {
+                    for (std::size_t index = begin; index < end; ++index) body(index);
+                    return;
+                }
+                intakeWorkerPool_->runIndexRange(begin, end,
+                    [](void* context, std::size_t index) noexcept {
+                        (*static_cast<const BodyType*>(context))(index);
+                    },
+                    const_cast<void*>(static_cast<const void*>(&body)));
+            };
+        // Every cylinder in one concurrent group must read ONE plenum state,
+        // and choosing it is the whole difficulty of running these advances in
+        // parallel. The serial loop this replaces was Gauss-Seidel: cylinder 0
+        // saw the plenum untouched, cylinder 7 saw it after seven draws.
+        //
+        // Simply freezing the plenum -- plain Jacobi -- is not an acceptable
+        // substitute. Measured, it settles the stationary manifold pressure
+        // 0.62 kPa BELOW ambient and stays there; twenty times the settling
+        // time recovers 0.06 kPa of it, so it is a wrong fixed point and not
+        // slow relaxation. `EngineLab.Core`'s stationary-pressure invariant
+        // catches it, as does `EngineLab.CatalogPhysics`.
+        //
+        // What is done instead: the drawdown staircase is reconstructed from a
+        // SAME-INSTANT prediction of each cylinder's draw
+        // (`predictOutletTransfer`). Deviations from ambient on that invariant,
+        // against +0.0004 kPa for the serial reference it stands in for:
+        //
+        //   frozen plenum (plain Jacobi)              -0.62    kPa
+        //   staircase from the PREVIOUS pass's draws   0.17    kPa, oscillating
+        //   every cylinder at the midpoint draw       -0.095   kPa
+        //   same-instant staircase, one-stage          -0.0109 kPa
+        //   same-instant staircase, Heun, two rounds   +0.0011 kPa   shipped
+        //
+        // The lag result is the one worth remembering. The correction is only
+        // ~0.04% of plenum mass, and lagging it by one half-sub-step still
+        // installs a permanent 0.17 kPa limit cycle where the serial reference
+        // is flat to 0.002 kPa -- because the terminal runner cell's acoustic
+        // response time, volume/(mouth area * c), is about 89 us against a
+        // 26 us lag. Nothing this pass reads may be stale.
+        //
+        // `intakePredictionGroupCount_` is the escape hatch if a future engine
+        // needs more accuracy than the iteration gives: a group reads a plenum
+        // already carrying the ACTUAL transfers of every group before it and
+        // predicts only within itself, so one group per cylinder is the old
+        // serial scheme exactly, at the cost of all the concurrency.
+        // Applies one group's plenum transfers, serially and in cylinder order,
+        // so the plenum's floating-point reduction is fixed however the phase
+        // that produced them was scheduled.
+        const auto commitGroup = [&](std::size_t begin, std::size_t end) noexcept {
+            for (std::size_t index = begin; index < end; ++index) {
+                if (intakePhaseFailed[index] != 0)
+                    state_.solverResolutionLimited = true;
+                if (intakePhaseProducedDelta[index] == 0) continue;
+                const auto path = intakePathIndexByCylinder_[index];
+                if (!intakePlenumGas_[path].tryApplyInventoryDelta(
+                        pendingPlenumDelta[index]))
+                    state_.solverResolutionLimited = true;
+            }
+        };
+        const auto advanceIntakeRunners = [&](double halfStepSeconds,
+                                              bool firstHalf) noexcept {
+            const auto cylinderCount = config_.cylinders.size();
+            for (std::size_t index = 0; index < cylinderCount; ++index) {
+                intakePhaseFailed[index] = 0;
+                intakePhaseProducedDelta[index] = 0;
+            }
+            const auto groupCount = std::min(cylinderCount,
+                std::max<std::size_t>(1, intakePredictionGroupCount_));
+            const auto groupStride = (cylinderCount + groupCount - 1) / groupCount;
+            for (std::size_t begin = 0; begin < cylinderCount; begin += groupStride) {
+                const auto end = std::min(cylinderCount, begin + groupStride);
+                // A group of one has no staircase to reconstruct: it reads the
+                // committed plenum, which IS what the serial Gauss-Seidel loop
+                // gave it. Engines too small for the worker pool fall entirely
+                // into this branch and keep the original scheme exactly, at the
+                // original cost -- predicting for them would be pure overhead,
+                // and it measured as one (the CP2 twin lost 14% of its capacity
+                // to a staircase it has no use for).
+                if (end - begin <= 1) {
+                    plenumBoundaryState[begin] = networkStateForGasCell(
+                        intakePlenumGas_[intakePathIndexByCylinder_[begin]]);
+                    advanceIntakeRunnerFor(begin, halfStepSeconds, firstHalf);
+                    commitGroup(begin, end);
+                    continue;
+                }
+                // Round 0 starts every prediction from the committed plenum.
+                for (std::size_t index = begin; index < end; ++index)
+                    plenumBoundaryState[index] =
+                        networkStateForGasCell(
+                            intakePlenumGas_[intakePathIndexByCylinder_[index]]);
+                // The staircase is a fixed point: cylinder i should read the
+                // plenum after the cylinders before it drew, but how much they
+                // draw depends on what THEY read. Iterating converges on it
+                // fast -- each round cut the stationary-manifold deviation by
+                // about an order of magnitude (-0.056 kPa after one round,
+                // against 0.0004 for the serial reference).
+                //
+                // Phase A of each round is concurrent because a prediction
+                // touches only its own duct; phase B is serial but arithmetic
+                // only. Doing phase A serially instead was measured and
+                // rejected: it handed Amdahl a serial term of the same order as
+                // the parallel advance it exists to order, and cost the V8 a
+                // third of the parallelism it had just gained.
+                for (std::size_t round = 0; round < intakeStaircaseRounds_; ++round) {
+                    runIntakePhaseOverRange(begin, end, [&](std::size_t index) noexcept {
+                        predictedPlenumDrawValid[index] = 0;
+                        const auto openIntakeValve = intakeValveAreaM2[index] > 0.0;
+                        const auto durationSeconds = openIntakeValve
+                            ? halfStepSeconds
+                            : (firstHalf ? 0.0 : halfStepSeconds * 2.0);
+                        if (!(durationSeconds > 0.0)) return;
+                        const auto predicted =
+                            intakeRunnerNetworks_[index]->predictOutletTransfer(0,
+                                { plenumBoundaryState[index], 1.0 }, durationSeconds);
+                        if (!predicted) return;
+                        predictedPlenumDraw[index] = *predicted;
+                        predictedPlenumDrawValid[index] = 1;
+                    });
+                    // Phase B, serial and cheap. The scratch starts from the
+                    // real plenum, which already carries every earlier group's
+                    // committed transfer.
+                    for (std::size_t path = 0; path < intakePlenumCount_; ++path)
+                        plenumStaircaseScratch_[path] = intakePlenumGas_[path];
+                    for (std::size_t index = begin; index < end; ++index) {
+                        const auto path = intakePathIndexByCylinder_[index];
+                        plenumBoundaryState[index] =
+                            networkStateForGasCell(plenumStaircaseScratch_[path]);
+                        // A missing prediction just leaves the staircase where
+                        // it is. It cannot break conservation: nothing outside
+                        // this pre-pass reads the scratch cell, and the real
+                        // plenum only ever receives real transfers.
+                        if (predictedPlenumDrawValid[index] == 0) continue;
+                        (void)plenumStaircaseScratch_[path].tryApplyInventoryDelta(
+                            plenumDeltaForMouthSample(predictedPlenumDraw[index],
+                                plenumStaircaseScratch_[path]));
+                    }
+                }
+                runIntakePhaseOverRange(begin, end,
+                    [&](std::size_t index) noexcept {
+                        advanceIntakeRunnerFor(index, halfStepSeconds, firstHalf);
+                    });
+                commitGroup(begin, end);
             }
         };
         advanceIntakeRunners(subDt * 0.5, true);

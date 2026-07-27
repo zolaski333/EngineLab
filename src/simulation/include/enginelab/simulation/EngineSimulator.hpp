@@ -13,6 +13,7 @@
 #include <enginelab/physics/HelmholtzRunnerModel.hpp>
 #include <enginelab/physics/MechanicalKinematics.hpp>
 #include <enginelab/physics/DuctWallHeatTransferModel.hpp>
+#include <enginelab/simulation/CylinderWorkerPool.hpp>
 #include <enginelab/simulation/IEngineSimulation.hpp>
 #include <enginelab/events/CylinderPressureSample.hpp>
 #include <enginelab/foundation/SpscQueue.hpp>
@@ -56,6 +57,7 @@ private:
      * ambient reservoir behind the runner mouth.
      */
     void configurePhysicalIntakeNetworks();
+    void configureIntakeWorkerPool();
     [[nodiscard]] RunningState determineRunningState(const EngineControls&) const noexcept;
     void accumulateCycleTelemetry(double previousAngleDegrees, double travelledDegrees,
                                   double dtSeconds, double indicatedTorqueNm,
@@ -186,6 +188,29 @@ private:
      * boundary to its own path's plenum, so cylinders only interact through
      * the shared plenum cell exactly as before. */
     std::array<std::unique_ptr<gasdynamics::ExhaustGasNetwork>, 32> intakeRunnerNetworks_;
+    /** Workers for the per-cylinder half of the runner advance, which the
+     * profiler puts at 75-84% of the mechanical sub-step. Null when the engine
+     * is too small or the machine too narrow for a barrier to pay for itself,
+     * in which case the phase runs inline. Read CylinderWorkerPool's header
+     * before touching this: an earlier per-cylinder fork-join over a much
+     * smaller body was measured and removed. */
+    std::unique_ptr<CylinderWorkerPool> intakeWorkerPool_;
+    /** Scratch plenum cells the Gauss-Seidel staircase is walked through
+     * before the runner advances run concurrently. A member rather than a
+     * local so a V12 does not copy twelve gas cells onto the stack twice per
+     * mechanical sub-step. Nothing outside that pre-pass reads it, and it is
+     * fully overwritten at the start of every pass. */
+    std::array<GasCell, 32> plenumStaircaseScratch_ {};
+    /** How many serial groups the concurrent runner pass is split into. One is
+     * full concurrency; a group per cylinder is the old serial scheme exactly,
+     * which is what an engine with no worker pool gets. Chosen from the
+     * measured accuracy of the plenum staircase prediction, not from the thread
+     * count -- see `configureIntakeWorkerPool`. */
+    std::size_t intakePredictionGroupCount_ { 32 };
+    /** Fixed-point rounds used to reconstruct the plenum drawdown staircase
+     * before the concurrent runner advances. Each round costs one concurrent
+     * prediction dispatch and one cheap serial sweep. */
+    std::size_t intakeStaircaseRounds_ { 2 };
     /** Port-end (valve-side) runner state published for telemetry, the
      * Helmholtz telemetry model and the acoustic intake excitation. Refreshed
      * from each network advance's exchange record. */

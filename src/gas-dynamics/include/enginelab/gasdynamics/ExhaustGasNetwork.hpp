@@ -6,6 +6,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <span>
 #include <vector>
 
@@ -179,6 +180,34 @@ public:
     [[nodiscard]] std::span<const ExhaustOutletFlowSample> outletSamples() const noexcept {
         return outletSamples_;
     }
+
+    /**
+     * Predicts what one terminal opening would push into `ambient` over
+     * `durationSeconds`, from the network's CURRENT state, without advancing
+     * anything and without mutating the network.
+     *
+     * This exists so several networks that share one reservoir can be advanced
+     * CONCURRENTLY while still each seeing the reservoir drawn down by the ones
+     * ordered before them. The caller walks a scratch copy of the reservoir
+     * through these predictions in a fixed order, hands each network the state
+     * it should see, advances them all in parallel, and then commits the real
+     * transfers. Without it the only option is to freeze the reservoir, which
+     * on the engine's intake plenum was measured to converge to the wrong
+     * pressure -- see EngineSimulator's runner pass.
+     *
+     * It is deliberately the first-stage flux only, not the two-stage integral
+     * `advance` reports: the point is a same-instant estimate of the ORDERING
+     * correction, and the exact transfer replaces it afterwards. A lagged
+     * estimate would not do -- the reservoir/duct coupling responds in tens of
+     * microseconds and one sub-step of lag drives it into a limit cycle.
+     *
+     * Returns nullopt for an unknown outlet, a non-positive duration, or a
+     * state the primitive recovery rejects.
+     */
+    [[nodiscard]] std::optional<ExhaustOutletFlowSample> predictOutletTransfer(
+        std::size_t outletIndex,
+        const ExhaustAmbientBoundary& ambient,
+        double durationSeconds) const noexcept;
 
     /** Add species mass as a source in the duct cell adjacent to a cylinder
      * port, together with its sensible internal energy at temperatureK and an

@@ -460,3 +460,51 @@ Suite complète verte (19 tests ; le test du fork-join disparaît avec lui).
 qu'un tiers du déficit du V8. Tant que le coût de l'admission 1-D n'est pas
 réduit, le son des gros moteurs restera affamé, et aucune correction de la chaîne
 audio ne peut compenser ça.
+
+## 2026-07-27 — Passer le temps réel : l'admission 1-D en concurrence
+
+- **L'instrument saturait.** Le facteur temps réel se lit sur une boucle qui dort
+  jusqu'à son échéance : il plafonne à 1,0 et ne peut pas distinguer 3× de marge
+  d'un équilibre exact. `--free-run` retire ce sommeil et la même mesure devient
+  une capacité. Sur cette échelle le départ était LS3 0,473 et Merlin 0,401.
+- **Avance des runners d'admission mise en concurrence.** Ce n'est pas un retour
+  sur le retrait du fork-join : celui-ci distribuait `processCylinder` (~0,6 µs
+  par cylindre), celle-ci distribue l'avance 1-D (~5 µs). Neuf moteurs sur
+  quatorze passent maintenant le temps réel, contre quatre.
+- **Le plénum partagé était la vraie difficulté, pas le threading.** Quatre
+  schémas mesurés et rejetés contre l'invariant « un moteur à l'arrêt se
+  stabilise à l'ambiant » : Jacobi −0,62 kPa (mauvais point fixe, pas relaxation
+  lente), escalier retardé ±0,17 kPa (cycle limite), point milieu −0,095 kPa,
+  escalier prédit une étape −0,011 kPa. Retenu : escalier prédit à l'instant
+  courant, prédicteur Heun, deux tours de point fixe, +0,0011 kPa.
+- **Interblocage fermé dans le pool, et il a coûté cher à trouver.** La barrière
+  comptait les *items* restants ; elle compte maintenant les *workers* ayant
+  acquitté la génération. Un worker qui a observé une génération mais n'est pas
+  encore entré dans la file n'est pas observable par le maître : celui-ci peut
+  finir le job, publier le suivant, et ce worker entre alors dans la file du
+  *nouveau* job, décrémentant un compteur que le maître va réécrire. Le compte
+  reste définitivement trop haut et le maître tourne indéfiniment.
+  `EngineLab.CombustionPhasing` est resté bloqué **8 h 52** sur un test de
+  7,81 s. Aucune garde du type « un worker est sur le point d'entrer » ne peut
+  fermer ça — la fenêtre est entre deux instructions du worker lui-même.
+  Signature à reconnaître : **un seul cœur à 100 %, tous les autres garés**,
+  donc temps CPU du processus ≈ temps mural quel que soit le nombre de threads.
+  L'acquittement par génération supprime aussi la course sur `body_`/`context_`
+  identifiée plus tôt (un appel via le mauvais type), et ne coûte rien : la
+  suppression du décrément atomique par item paie l'arête supplémentaire
+  (LS3 0,73 → 0,76, 2JZ 0,88 → 0,91).
+- **Un `ctest` en arrière-plan qui a imprimé `Start 10:` et plus rien est
+  bloqué, pas lent.** Le vérifier avec `Get-Process ... | Select CPU,StartTime`,
+  pas en attendant.
+- **Trois impasses documentées** : maillage runner plus grossier (×1,26 sur le
+  V8 mais −22,3 % de couple sur le Merlin), `/arch:AVX` et `/arch:AVX2` (tous
+  deux **plus lents**, le solveur est limité par la latence de chaînes de
+  divisions), suppression des divisions inutilisées de `recoverPrimitive` (bruit).
+- **Piège d'analyse** : `EngineLab.Core` met ~2 minutes quand il PASSE et ~8
+  secondes quand il échoue — un `require` interrompt le test. Une durée courte
+  dans un relevé ctest n'est donc pas une bonne nouvelle.
+
+**Non résolu et assumé** : le V8 (0,76), le V12 (0,79), les six-cylindres
+(0,83-0,91), l'I5 (0,92) et le K20A (0,75) restent sous le temps réel. Le levier suivant est
+le modèle thermique de paroi du conduit, 28 % du coût, avec une constante de
+temps en secondes intégrée ~38 000 fois par seconde.

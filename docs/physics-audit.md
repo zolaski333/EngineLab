@@ -2038,3 +2038,253 @@ restent **sous** le temps réel : leur audio restera partiellement affamée.
 
 `EngineLab.IntakeTuning`, `EngineLab.GasExchange` et
 `EngineLab.CombustionPhasing` passent, puis la suite complète.
+
+
+## Passer au-dessus du temps réel : ce qui marche et ce qui a été réfuté
+
+### L'instrument manquait : le facteur mesuré saturait à 1,0
+
+`EngineRuntime::run` avance un `1/240 s` fixe puis dort jusqu'à une échéance
+murale. Le facteur temps réel qu'on en lit sature donc à 1,0 : un moteur qui a
+3× de marge et un moteur qui tient tout juste rapportent le même `1.000`. Six
+moteurs du catalogue étaient collés à ce plafond et l'instrument ne pouvait pas
+dire lesquels avaient de la marge.
+
+`--free-run` retire ce sommeil (`EngineRuntime::setRealtimeThrottleEnabled`,
+instrumentation uniquement — le thread audio, les files de télémétrie et le
+contrôleur dyno sont tous cadencés par ce sommeil). Le même rapport se lit alors
+comme une **capacité**.
+
+Capacité de départ, maintien dyno à 7 000 tr/min, portable 16 threads :
+
+| moteur | capacité | | moteur | capacité |
+|---|---|---|---|---|
+| Big Twin V2 | 1,668 | | Hayabusa I4 | 0,831 |
+| CP2 twin | 1,636 | | EJ25 F4 | 0,802 |
+| CP3 triple | 1,137 | | Audi I5 | 0,575 |
+| Radial R5 | 1,127 | | 2JZ I6 | 0,542 |
+| TDI I4 | 0,963 | | Flat-6 | 0,541 |
+| CP4 I4 | 0,838 | | K20A I4 | 0,503 |
+| | | | LS3 V8 | **0,473** |
+| | | | Merlin V12 | **0,401** |
+
+Les bicylindres étaient réellement à l'aise, le triple à peine, et **tout ce qui
+a quatre cylindres ou plus manquait d'un facteur deux à quatre**.
+
+Viser 1,0 est d'ailleurs la mauvaise cible. À 1,0 pile, la moindre gigue
+d'ordonnancement fait alterner la télémétrie de pression cylindre — seule
+excitation de la chaîne acoustique d'échappement — entre avance et retard. Il
+faut de la marge, pas l'équilibre.
+
+### Où va le temps, mesuré et non supposé
+
+`EngineLabIntakeDuctBench` a été refait en micro-instrument : il avance un
+conduit de forme runner à la cadence réelle du simulateur (un demi-sous-pas
+mécanique, pas une trame de 240 Hz), avec le transfert thermique de paroi actif
+comme le simulateur le configure, et il publie une **empreinte bit-exacte** de
+l'état final. Cette empreinte est la raison d'être de l'outil : les ralentis de
+ce projet sont des attracteurs sensibles à l'ULP, donc « les chiffres se
+ressemblent » n'est pas un standard acceptable pour une optimisation. Empreinte
+inchangée = la physique n'a provablement pas bougé, sans rejouer le catalogue.
+
+Coût de base : **~533 ns par cellule et par sous-pas**, essentiellement
+proportionnel au nombre de cellules (pas de coût fixe notable — pente 583 ns par
+cellule entre 6 et 9 cellules, ordonnée à l'origine négative dans le bruit).
+
+Attribution par ablation, 6 cellules / 180 mm :
+
+| terme | ns/cellule/sous-pas | part |
+|---|---|---|
+| référence | 533 | — |
+| parois désactivées | 384 | **28 %** |
+| reconstruction MUSCL désactivée | 402 | **25 %** |
+| frottement désactivé | 503 | 6 % |
+| reste (flux Riemann, RK2, cache d'état) | — | 41 % |
+
+### Réfuté : élargir le SIMD
+
+Le build vise la ligne de base MSVC (SSE2) : les boucles à quatre espèces
+tournent au mieux en 2 doubles. `/arch:AVX` et `/arch:AVX2` ont été mesurés,
+empreinte identique dans les deux cas — et **tous les deux plus lents** :
+
+| build | ns/cellule/sous-pas |
+|---|---|
+| ligne de base | **533** |
+| `/arch:AVX` | 616 |
+| `/arch:AVX2` | 578 |
+
+Le solveur n'est pas limité par le débit vectoriel mais par la **latence de
+chaînes dépendantes** de divisions et de racines : ~90 divisions par cellule et
+par sous-pas entre `recoverPrimitive` (appelé 7 fois) et le solveur de Riemann.
+Élargir les registres n'aide pas une chaîne sérielle. Ne pas y revenir.
+
+Corollaire mesuré au passage : supprimer les quatre divisions de
+`PrimitiveState::massFractions` de `recoverPrimitive` (elles ne sont lues qu'à la
+condition limite de sortie) vaut 1 à 3 %, dans le bruit. Ce n'est pas là non
+plus.
+
+### Réfuté : dégrossir le maillage du runner
+
+La politique livrée est `clamp(round(L / 30 mm), 6, 12)`. Passer à 6 cellules
+uniformes pour tout le monde donne LS3 ×1,26, Merlin ×2,0, Radial ×1,83 — et les
+quatre moteurs déjà à 6 cellules (Hayabusa, CP2, CP3, CP4) sont **bit-identiques
+à +0,00 % partout**, ce qui valide l'expérience.
+
+Mais les moteurs à runner long paient :
+
+| moteur | cellules | couple moyen | VE moyenne | pire point |
+|---|---|---|---|---|
+| Big Twin | 12 → 6 | +3,41 % | +2,91 % | **VE +16,7 % à 3 000** |
+| Merlin V12 | 12 → 6 | −6,16 % | +0,76 % | **couple −22,3 % à 3 000** |
+| Flat-6 | 10 → 6 | +2,83 % | +2,16 % | +9,8 % |
+| TDI | 10 → 6 | +0,39 % | +2,55 % | +6,4 % |
+
+Un pic de VE qui se déplace de 16 % à un régime donné, c'est une résonance
+d'accord qui change de fréquence sous la dispersion numérique du maillage plus
+grossier. **Le maillage fait un vrai travail physique ; il ne se rend pas.**
+Cela confirme aussi, indépendamment, ce que la section « le coût de l'admission »
+disait déjà : le schéma d'admission n'est pas convergé au maillage livré.
+
+### Ce qui marche : paralléliser la phase par cylindre du runner 1-D
+
+Un fork-join par cylindre a déjà existé dans ce projet et a été **retiré** après
+mesure, en quatre variantes, toutes perdantes. Ce n'est pas un retour en arrière
+sur cette décision : ce qui avait été distribué était `processCylinder`, que le
+profileur situe à 5-10 % du sous-pas mécanique, soit ~0,6 µs par cylindre. Aucune
+barrière n'amortit ça. Ce qui est distribué ici est l'avance du runner 1-D, que
+le même profileur situe à **75-84 %**, soit ~5 µs par cylindre sur un runner à
+neuf cellules — un ordre de grandeur de plus. Le coût de synchronisation par
+unité de travail est donc environ le dixième de ce qu'il était.
+
+`CylinderWorkerPool` : workers persistants, le thread appelant travaille aussi,
+travail réclamé sur un compteur atomique partagé (le coût par cylindre est
+bimodal — soupape ouverte deux demi-avances, fermée une seule — donc un partage
+statique laisserait la moitié des workers à la barrière), attente en
+spin → yield → parking sur variable de condition. Le nombre de workers est
+`min(cylindres − 1, concurrence/2 − 1)`, délibérément conservateur : le callback
+audio et l'UI ont besoin d'un cœur chacun, et sur une machine SMT deux workers
+sur un même cœur physique se disputent surtout son unité flottante sur un corps
+aussi arithmétique.
+
+**Le résultat doit être indépendant de l'ordonnancement.** Le corps n'écrit que
+de l'état privé à son index ; tout ce qui est partagé est appliqué sériellement,
+dans l'ordre des cylindres, après le retour. Deux passes de balayage dyno
+complètes sur le LS3 sont bit-identiques.
+
+### Le plénum ne se laisse pas geler : quatre schémas mesurés
+
+Faire tourner les avances de runner en parallèle oblige tous les cylindres d'un
+groupe à lire **un seul** état de plénum. La boucle sérielle qu'on remplace était
+Gauss-Seidel : le cylindre 0 voyait le plénum intact, le cylindre 7 le voyait
+après sept prélèvements. Rien de physique ne donne ce privilège au cylindre 0 —
+c'est un artefact de l'indice de boucle — mais on ne peut pas non plus se
+contenter de geler le plénum.
+
+Le témoin est l'invariant de `EngineLab.Core` : **un moteur à l'arrêt, allumage
+mis, papillon ouvert, doit se stabiliser à la pression ambiante** (101,325 kPa,
+tolérance 0,01). C'est un invariant physique, pas un instantané d'implémentation.
+La référence sérielle s'y tient à ±0,002 kPa sur 100 s de simulation.
+
+| schéma du plénum | écart à l'ambiant | verdict |
+|---|---|---|
+| Gauss-Seidel sériel (référence) | +0,0004 kPa | plat |
+| **Jacobi** (plénum gelé) | **−0,62 kPa** | mauvais point fixe |
+| escalier reconstruit des deltas du **pas précédent** | ±0,17 kPa | **cycle limite** |
+| point milieu (moitié du prélèvement total prédit) | −0,095 kPa | pire que l'escalier |
+| escalier prédit, une étape, en série | −0,0109 kPa | échoue de 9 % |
+| escalier prédit, une étape, **en parallèle** contre le plénum brut | −0,056 kPa | échoue |
+| **escalier prédit Heun, 2 tours de point fixe** | **+0,0011 kPa** | **retenu** |
+
+Trois choses à retenir, parce qu'elles sont contre-intuitives :
+
+1. **Jacobi n'est pas une relaxation lente, c'est un mauvais point fixe.** Vingt
+   fois le temps d'établissement n'en récupère que 0,06 kPa sur 0,62. Les deux
+   tests qui l'attrapent sont `EngineLab.Core` et `EngineLab.CatalogPhysics`.
+
+2. **Le plénum ne supporte pas d'être retardé, même d'un demi-sous-pas.** Prédire
+   l'escalier à partir des deltas du pas précédent semble sûr — la correction ne
+   vaut que ~0,04 % de la masse du plénum — et pourtant elle installe un cycle
+   limite entretenu à 0,17 kPa. La raison est un rapport de temps : le volume de
+   la cellule terminale du runner divisé par (aire de bouche × vitesse du son)
+   vaut ~89 µs, et on retarde de 26 µs. Un tiers de déphasage sur le mode le plus
+   rapide de la boucle suffit.
+
+3. **Le prédicteur doit être du second ordre.** Ce que `advance` comptabilise est
+   la moyenne à deux étages `0.5·dt·(F1+F2)`, pas `dt·F1`. Sur un terme dont le
+   seul rôle est d'ordonner des réseaux autour d'un réservoir partagé, cette
+   différence *est* l'erreur résiduelle : −0,011 kPa avec une étape, +0,0006 avec
+   un pas de Heun sur la cellule terminale (une évaluation de Riemann de plus sur
+   une avance de ~5 µs).
+
+Le schéma retenu, par groupe de cylindres traité simultanément :
+
+- **Phase A, concurrente** — chaque cylindre prédit son propre prélèvement
+  (`ExhaustGasNetwork::predictOutletTransfer`, Heun sur la cellule terminale).
+- **Phase B, sérielle et purement arithmétique** — on promène un plénum de
+  travail à travers ces prédictions dans l'ordre des cylindres, en photographiant
+  l'état que chacun doit lire.
+- A et B sont itérées : l'escalier est un point fixe (ce que le cylindre i doit
+  lire dépend de ce que les précédents prélèvent, qui dépend de ce qu'eux lisent),
+  et chaque tour divise l'écart par environ un ordre de grandeur.
+- **Phase C, concurrente** — les avances proprement dites.
+- **Phase D, sérielle** — les transferts réels sont appliqués au vrai plénum,
+  dans l'ordre des cylindres, pour que sa réduction flottante soit fixe quel que
+  soit l'ordonnancement.
+
+Faire la phase A **en série** a été mesuré et refusé : elle offre à Amdahl un
+terme sériel du même ordre que l'avance parallèle qu'elle sert à ordonner, et
+coûte au V8 un tiers du parallélisme qu'il venait de gagner (LS3 0,726 → 0,586).
+
+`intakePredictionGroupCount_` existe pour le cas où l'itération ne suffirait pas :
+un groupe par cylindre redonne exactement l'ancien schéma sériel, et un seul
+groupe (le réglage livré) donne la concurrence maximale.
+
+### Résultat mesuré
+
+Capacité (facteur temps réel en `--free-run`), maintien dyno à 7 000 tr/min,
+portable 16 threads. La dispersion d'un tirage à l'autre est de l'ordre de
+±10 % sur cet instrument, donc les rapports comptent plus que les décimales.
+
+| moteur | cyl | départ | après | gain |
+|---|---|---|---|---|
+| Radial R5 | 5 | 1,127 | **1,762** | ×1,56 |
+| Big Twin V2 | 2 | 1,668 | 1,626 | — (pas de pool) |
+| CP2 twin | 2 | 1,636 | 1,609 | — (pas de pool) |
+| TDI I4 | 4 | 0,963 | **1,294** | ×1,34 |
+| CP3 triple | 3 | 1,137 | **1,236** | ×1,09 |
+| EJ25 F4 | 4 | 0,802 | **1,104** | ×1,38 |
+| CP4 I4 | 4 | 0,838 | **1,020** | ×1,22 |
+| Hayabusa I4 | 4 | 0,831 | **1,007** | ×1,21 |
+| Audi I5 | 5 | 0,575 | 0,896 | ×1,56 |
+| 2JZ I6 | 6 | 0,542 | 0,882 | ×1,63 |
+| Flat-6 | 6 | 0,541 | 0,836 | ×1,55 |
+| Merlin V12 | 12 | 0,401 | 0,773 | **×1,93** |
+| K20A I4 | 4 | 0,503 | 0,731 | ×1,45 |
+| LS3 V8 | 8 | 0,473 | 0,731 | ×1,55 |
+
+**Neuf moteurs sur quatorze passent le temps réel**, contre quatre au départ. Le
+V8, le V12, les six-cylindres et le K20A restent entre 0,73 et 0,90 : leur son
+restera partiellement affamé jusqu'à ce que le coût du conduit lui-même baisse.
+
+Les bicylindres n'ont pas de pool (le travail ne se divise pas), et ils
+retombent donc entièrement dans la branche « groupe d'un seul cylindre », qui
+est l'ancien Gauss-Seidel sériel exact. Ce n'est pas un détail de performance :
+une première version leur faisait payer la machinerie d'escalier dont ils n'ont
+aucun usage, et le CP2 y perdait 14 % de sa capacité.
+
+Déplacement physique, balayage dyno complet du catalogue, **lignes contaminées
+exclues** (`ve / delivered_ve > 1,05`, le détecteur documenté de combustion
+incomplète — sur un balayage, cela veut dire rupteur ou raté) :
+
+| grandeur | pire moyenne par moteur | pire point isolé |
+|---|---|---|
+| couple | −0,85 % (Audi I5) | −4,98 % (Audi I5 à 2 500) |
+| VE | −0,66 % (Radial) | −3,77 % (Audi I5 à 2 500) |
+
+Le déplacement est presque partout négatif et de l'ordre de 0,5 %, ce qui est la
+signature d'un petit changement uniforme du couplage plénum-runner et non d'une
+résonance cassée. **Piège rencontré** : sans le filtre de contamination, le
+Merlin affichait −22,3 % de couple à 3 000 tr/min. C'est sa dernière ligne, sur
+le rupteur, avec `ve/delivered_ve = 1,16` et un IMEP de 4,7 bar contre 18,1 un
+pas plus tôt. Comparer deux lignes pareilles compare deux artefacts ; son vrai
+écart est −0,55 %.

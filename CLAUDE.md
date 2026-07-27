@@ -234,11 +234,92 @@ test onto the behaviour it is meant to catch. Keep it that way.
   *across* sub-steps — a different architecture, not a tuning of that one. Note
   `decoupledSharedVolumeCylinderThreshold` (8) survives and is now purely the
   Jacobi/Gauss-Seidel shared-volume choice: changing it moves large-engine
-  calibration for real.
+  calibration for real. **That verdict does NOT extend to the 1-D intake runner
+  advance**, which `CylinderWorkerPool` now dispatches and which pays — see
+  below.
+- **A work-stealing barrier must count workers, not items — and a hung `ctest`
+  looks like nothing at all.** `CylinderWorkerPool` first counted outstanding
+  *items* and released the master when the count hit zero. That deadlocked
+  `EngineLab.CombustionPhasing` for **8 h 52 min** on a test that takes 7.81 s.
+  The hole: a worker that has *observed* a generation but has not yet entered
+  the queue is invisible to the master, so the master can finish the job,
+  publish the next one, and only then have that worker enter — claiming an item
+  of the **new** job and decrementing a counter the master is about to
+  overwrite. The count is then permanently one too high. No guard on "a worker
+  is about to enter" can close it; the window lies between two of that worker's
+  own instructions. A generation-acknowledgement barrier (every worker must ack
+  g before g+1 exists) deletes the notion of a stale worker, and costs nothing —
+  dropping the per-item atomic decrement pays for the extra edge. **Recognise
+  the signature: exactly one core at 100% with every other worker parked, i.e.
+  process CPU time ≈ wall time regardless of thread count.** Two reading
+  lessons came with it: a background `ctest` that has printed `Start 10:` and
+  nothing since is *hung*, not slow — check it with `Get-Process ... | Select
+  CPU,StartTime`, not by waiting; and conversely a **short** time in a ctest
+  line can be the bad news, since `EngineLab.Core` takes ~90 s when it passes
+  and ~8 s when it aborts on a failure.
+- **The realtime factor saturates at 1.0; use `--free-run` for capacity.**
+  `EngineRuntime::run` sleeps to a wall deadline, so an engine with 3x of margin
+  and one exactly breaking even both report `1.000` — six catalogue engines were
+  sitting at that ceiling indistinguishably.
+  `EngineLabRealtimeBudgetHarness --free-run` removes the sleep
+  (`setRealtimeThrottleEnabled`, instrumentation only — the audio thread, the
+  telemetry queues and the dyno controller are all paced by it) and the same
+  ratio reads as capacity. Do not target 1.0 either: at exactly break-even,
+  scheduler jitter alternates the cylinder-pressure telemetry between early and
+  late, and that telemetry is the exhaust acoustic chain's only excitation.
+- **A shared 0-D plenum cannot be frozen, lagged, or midpointed.** Running the
+  runner advances concurrently forces every cylinder in a group to read ONE
+  plenum state, and every cheap answer is wrong. Measured against
+  `EngineLab.Core`'s "a stationary engine must settle at ambient", where the
+  serial reference is flat to 0.002 kPa: frozen (plain Jacobi) **−0.62 kPa, and
+  it is a wrong fixed point, not slow relaxation** — twenty times the settling
+  time recovers 0.06 of it; predicted from the previous pass's draws, **a
+  sustained 0.17 kPa limit cycle**; every cylinder at the midpoint of the total
+  draw, −0.095 kPa. What works is reconstructing the Gauss-Seidel staircase from
+  a SAME-INSTANT prediction (`ExhaustGasNetwork::predictOutletTransfer`),
+  iterated twice because the staircase is a fixed point, with the prediction
+  itself second order (a Heun step on the terminal cell — `dt*F1` alone leaves
+  −0.011 kPa): **+0.001 kPa**. The lag result is the one to carry forward: the
+  correction is only ~0.04% of plenum mass, but the terminal cell's acoustic
+  response time is volume/(mouth area × c) ≈ 89 µs against a 26 µs lag.
+  **Nothing that pass reads may be stale.** And the prediction phase must itself
+  be concurrent — serial, it hands Amdahl a term of the same order as the
+  advance it exists to order, and cost the V8 a third of its parallelism
+  (0.726 → 0.586).
+- **`EngineLabIntakeDuctBench` prints a bit-exact checksum.** It advances a
+  runner-shaped duct at the simulator's real cadence (a half mechanical
+  sub-step, not a 240 Hz frame) with the wall model on, and fingerprints every
+  conservative variable and wall temperature afterwards. An optimisation that
+  leaves the checksums unchanged is provably not a physics change, in thirty
+  seconds instead of a ten-minute catalogue re-run. Measured attribution at
+  6 cells, ~533 ns per cell per sub-step and essentially all of it per-cell (no
+  fixed per-call overhead left to remove): **walls 28%, MUSCL reconstruction
+  25%, wall friction 6%**, the rest flux and RK2.
+- **Widening SIMD is not the lever, and it is slower.** `/arch:AVX` measures
+  616 ns/cell/sub-step and `/arch:AVX2` 578, against **533** for the shipped
+  baseline, checksums identical in both. The duct solver is bound by the
+  *latency* of dependent division/sqrt chains — about 90 divisions per cell per
+  sub-step, `recoverPrimitive` alone runs 7 times — not by vector throughput.
+  Dropping the four unread `PrimitiveState::massFractions` divisions from
+  `recoverPrimitive` is likewise 1-3%, inside the noise.
+- **The runner mesh does not surrender.** `clamp(round(L/30mm), 6, 12)` looks
+  generous for a 520 mm Merlin runner, and forcing 6 cells everywhere is worth
+  LS3 ×1.26 / Merlin ×2.0 while being bit-identical on the four engines already
+  at 6 (Hayabusa, CP2, CP3, CP4). It also costs the Big Twin **+16.7% of VE at
+  3,000 rpm** and the Merlin **−22.3% of torque** there: a tuning peak moving
+  under the coarser mesh's numerical dispersion. Independent confirmation that
+  the intake scheme is not converged at the shipped mesh.
 - **Never compare a perf CSV across an exhaust-geometry change** — doing so once
   put the V12 at 158% of budget in these docs when it is at 77%. §18 has the
   numbers. The audio callback itself remains comfortable at 15-33% of a
   256-sample budget; that thread is not the problem.
+- **A swept CSV row whose `ve / delivered_ve` exceeds ~1.05 is contaminated.**
+  Unburned oxygen inflates the trapped figure while delivery tells the truth, so
+  that ratio is the documented detector of incomplete combustion — which on a
+  sweep means the point sat on the rev limiter or misfired. The Merlin's last
+  row reads 351 Nm against 2521 Nm one step earlier. Comparing two such rows
+  compares two artefacts; filter on the ratio before believing any before/after
+  percentage.
 
 - **An idle failure is usually not caused by the commit that exposed it.** The
   catalogue's idles are marginal attractors and the simulator is deterministic,
