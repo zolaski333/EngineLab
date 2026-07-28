@@ -1266,8 +1266,30 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                                 * filmAvailableFraction
                                 + trappedCylinderFuel
                             : 0.0);
-                    commandedFuelMoles = std::max(0.0,
-                        requestedFuelMoles - existingFuelInventory);
+                    const auto fuelInventoryDeficit = std::max(
+                        0.0, requestedFuelMoles - existingFuelInventory);
+                    if (portInjection) {
+                        // `requestedFuelMoles` is the fuel required in the
+                        // trapped charge, while the injector meters liquid.
+                        // A fresh port-injection pulse is not fully available:
+                        // (1-X) vaporises immediately and only the fraction
+                        // below of X can leave the wall film before spark.
+                        //
+                        // The old code commanded the charge deficit itself.
+                        // After DFCO had emptied the film this guaranteed a
+                        // lean first cycle by exactly the unavailable wetting
+                        // fraction. Steady closed-loop trim could hide it, but
+                        // no feedback controller can repair that first pulse.
+                        const auto wallFilmFraction = std::clamp(
+                            config_.injection.wallFilmFraction, 0.0, 0.98);
+                        const auto newPulseAvailableFraction = std::max(
+                            0.02, (1.0 - wallFilmFraction)
+                                + wallFilmFraction * filmAvailableFraction);
+                        commandedFuelMoles =
+                            fuelInventoryDeficit / newPulseAvailableFraction;
+                    } else {
+                        commandedFuelMoles = fuelInventoryDeficit;
+                    }
                 }
             }
             // The largest single-substep command is the whole new pulse the
