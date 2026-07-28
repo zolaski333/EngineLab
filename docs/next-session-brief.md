@@ -16,6 +16,20 @@ contexte de la session précédente.
 > Une protection de charge préserve en plus l'échappement/audio : elle espace
 > seulement le calcul thermique des parois d'admission après six retards
 > consécutifs, et restaure la cadence normale avec hystérésis.
+>
+> **État final de cette reprise.** La liste de priorités plus bas est conservée
+> comme historique, mais elle n'est plus une liste de tâches. La production
+> utilise maintenant un maillage admission ciblé à **95 mm**, **2 workers**
+> jusqu'au V8 et **3 workers** à partir de 10 cylindres. Sur le dernier catalogue
+> complet de ce lot, le pire moteur est le Merlin à **1,113×** le temps réel.
+> Le maillage 95 mm s'écarte au plus de **4,460 %** de l'oracle 30 mm/RK2 ;
+> même la protection thermique 600 µs reste à **4,916 %**. Le candidat 120 mm a
+> été refusé à 16,580 %. Le rendu audio complet passe avec le chemin
+> physique/topologique/modal/ondulatoire, zéro perte et une similarité spectrale
+> maximale de 0,642. Enfin, la reprise après coupure de décélération compense
+> désormais la part du pulse neuf retenue dans le film de paroi : le Merlin
+> récupère avec le seuil DFCO proportionnel d'origine, sans calibration spéciale.
+> Les preuves et commandes sont dans `docs/validation-2026-07-28.md`.
 
 ---
 

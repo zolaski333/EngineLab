@@ -2544,3 +2544,36 @@ Preuves locales : erreur VE 600 µs contre oracle ≤14,158 % ; déplacement dir
 150/600 ≤7,69 % ; LS3 applicatif 607 → 582 retards sur 1 440 (−4,1 %), zéro
 pression perdue et zéro fallback dans les deux cas. Le gain est volontairement
 présenté comme un filet modeste.
+
+## 2026-07-28 — État final : 95 mm, pool 2/3 et film carburant
+
+Les chiffres de reprise précédents décrivent leurs commits, mais trois
+fermetures ultérieures définissent la production :
+
+1. **Admission 95 mm.** L'A/B 75/95 mm contrebalancé donne +5,9 % sur LS3 et
+   +9,1 % sur Merlin, contre +0,4 % sur le CP2 témoin sans worker. L'erreur
+   maximale contre l'oracle 30 mm/RK2 tombe à 4,460 %, et à 4,916 % avec la
+   cadence thermique protégée. Le candidat 120 mm est réfuté à 16,580 %.
+2. **Pool 2/3.** Six passages par variante 2/3/4 donnent les moyennes
+   LS3 1,1160/1,1045/1,0805 et Merlin 1,1095/1,1222/1,1032 ; le Big Twin témoin
+   reste 3,5168/3,5395/3,5238. La production emploie donc deux workers jusqu'à
+   neuf cylindres et trois à partir de dix. Le catalogue final est borné par le
+   Merlin à 1,113 fois le temps réel.
+3. **Pulse port après DFCO.** Le modèle connaissait la part du film existant
+   qui s'évaporerait avant l'étincelle, mais supposait à tort que toute la masse
+   liquide d'un pulse neuf serait disponible. Il divise maintenant le déficit
+   de charge par `(1-X) + X*fraction_évaporée`. Le seuil et la rampe DFCO
+   d'origine restent inchangés. Sur Merlin, une reprise expérimentale plus tôt
+   à 1,50 fois le ralenti finissait à 349 tr/min sans cette compensation ;
+   la production compensée, qui ne reprend qu'à 1,25 fois, reste à 479 tr/min
+   au même point et passe le retour de coup de gaz.
+
+Le rendu audio complet après la politique de pool reste entièrement physique,
+topologique, modal et ondulatoire, sans fallback, dropout, pression perdue,
+événement tardif ni limitation. La similarité spectrale maximale est 0,642.
+
+La limite physique assumée ne change pas : l'oracle PMEP haut régime vaut
+encore 0,990 bar à 6 000 tr/min pour une cible de 0,750. Une multiplication
+globale d'aire de soupape reste exclue ; le prochain travail défendable est une
+carte de coefficient de débit dépendant de la levée, du rapport de pression et
+du sens.

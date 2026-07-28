@@ -616,3 +616,86 @@ deux cas les plus lourds.
 - Chemin applicatif LS3 : 607 → 582 retards sur 1 440, callback p95
   2 986,5 → 2 963,9 µs, zéro pression perdue/fallback. L'adaptatif s'active une
   fois et termine à 597 retards, comme attendu après sa fenêtre de confirmation.
+
+## 2026-07-28 — Fermeture admission, pool et son
+
+### Maillage admission retenu
+
+Le maillage ciblé à 75 mm n'était pas le dernier point sûr. Une comparaison
+contrebalancée 75/95 mm, six valeurs par variante et un CP2 sans workers comme
+témoin nul, a donné :
+
+| Cas | 75 mm, moyenne | 95 mm, moyenne | Écart |
+|---|---:|---:|---:|
+| CP2 témoin nul | 2,5467 | 2,5580 | +0,4 % |
+| LS3 | 0,9910 | 1,0498 | +5,9 % |
+| Merlin | 0,9920 | 1,0818 | +9,1 % |
+
+La production passe donc à **95 mm**. Contre l'oracle 30 mm/RK2/couplage à
+chaque sous-pas, l'écart VE maximal n'est plus que 4,460 % ; pic VE 1,127 à
+5 840 tr/min, VE à 6 000 tr/min 1,120 et déplacement du pic avec runner doublé
+26,478 %. Le mode thermique protégé à 600 µs reste à 4,916 %. Le candidat
+120 mm a été construit et refusé : 16,580 % d'écart sur le runner doublé à
+3 000 tr/min, au-delà de la limite de 15 %.
+
+### Pool adapté à six cœurs
+
+Après le changement de maillage, les plafonds 2/3/4 workers ont été remesurés
+sur LS3 et Merlin, avec six passages contrebalancés et le Big Twin comme témoin
+zéro-worker :
+
+| Cas | 2 workers | 3 workers | 4 workers |
+|---|---:|---:|---:|
+| LS3, moyenne | **1,1160** | 1,1045 | 1,0805 |
+| Merlin, moyenne | 1,1095 | **1,1222** | 1,1032 |
+| Big Twin, moyenne | 3,5168 | 3,5395 | 3,5238 |
+
+La politique automatique est donc 2 workers pour 3 à 9 cylindres et 3 workers
+à partir de 10 cylindres, toujours bornée par le matériel et `cylindres - 1`.
+Les overrides explicites de banc restent prioritaires. Elle évite de
+souscrire quatre ou cinq threads de calcul admission sur une machine qui doit
+également servir le thread physique, l'audio et l'interface.
+
+Le catalogue production final de ce lot est entièrement au-dessus du temps
+réel : pire facteur **1,113×** sur le Merlin, puis 1,121× sur le LS3, sans
+overrun en mode capacité. Il s'agit de 11,3 % de marge brute, pas de 15 %.
+
+### Validation audio finale
+
+Le rendu complet conserve le réseau physique, la topologie complète, la
+structure modale et l'admission ondulatoire sur les 14 moteurs. Aucun moteur ne
+produit de fallback, dropout de frontière, pression perdue, événement tardif
+ou échantillon limité. Le maximum de similarité spectrale tombe à **0,642**.
+Dans le chemin applicatif réel, le p95 callback vaut 1 774,9 µs sur K20,
+2 114,6 µs sur 2JZ, 2 620,7 µs sur LS3 et 3 470,9 µs sur Merlin pour un budget
+de 5 333,3 µs. Le garde-fou s'active sur les deux cas lourds sans décimer la
+télémétrie acoustique.
+
+## 2026-07-28 — Reprise DFCO : bilan du film neuf
+
+La suite Release finale a révélé un dernier défaut réel sur le Merlin après un
+coup de gaz. Relever le seuil de reprise DFCO jusqu'à 1,60 fois le ralenti et
+accélérer la rampe ne le corrigeait pas. Même une reprise à 1,50 fois, donc plus
+précoce que la production d'origine, descendait à 349 tr/min.
+
+La cause était dans l'interface contrôleur/injecteur. `requestedFuelMoles`
+désigne la masse nécessaire dans la charge piégée, tandis que l'injecteur
+commande un liquide dont la fraction `X` mouille le port. Le code soustrayait
+bien le film déjà présent et disponible avant l'étincelle, mais commandait le
+déficit brut pour le pulse neuf. Après DFCO, film vide, cela imposait une
+première charge pauvre de la fraction humide indisponible.
+
+La commande port tient maintenant compte de sa disponibilité physique :
+
+```text
+disponible = (1 - X) + X * fraction_du_film_évaporée_avant_étincelle
+masse_liquide_commandée = déficit_de_charge / disponible
+```
+
+Le seuil proportionnel 1,25 et la rampe 3/s d'origine sont conservés. Avec ce
+réglage moins favorable en temps que l'expérience 1,50, le même trace Merlin
+reste encore à 479 tr/min au point où l'expérience non compensée était déjà à
+349 tr/min, au-dessus du plancher de test de 360 tr/min. `EngineLab.Core`,
+`EngineLab.IdleStabilityRegression` sur les 14 moteurs et
+`EngineLab.CatalogReference` passent ensemble ; aucune calibration Merlin n'a
+été ajoutée.

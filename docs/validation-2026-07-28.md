@@ -393,3 +393,130 @@ Le mode fixe protégé réduit ici les retards de 4,1 %. L'adaptatif se situe
 logiquement entre les deux, puisqu'il commence à 150 µs et exige une surcharge
 confirmée avant d'agir. C'est un filet de quelques pourcents, pas une promesse
 de compenser une machine massivement sous-dimensionnée.
+
+## Addendum final — état de production autoritaire
+
+Cette section remplace, pour l'état final du 28 juillet, les anciennes lignes
+qui mentionnent un maillage 75 mm, un plafond uniforme de cinq workers, une
+erreur oracle de 13–14 % ou les anciens hash Release. Ces valeurs restent dans
+le document comme historique des commits qui les ont produites.
+
+### Admission 95 mm et borne physique
+
+Une comparaison 75/95 mm a été exécutée avec un passage jeté, six passages
+contrebalancés par variante et le CP2 comme témoin nul sans worker :
+
+| Moteur | 75 mm, moyenne | 95 mm, moyenne | Effet |
+|---|---:|---:|---:|
+| CP2, témoin nul | 2,5467 | 2,5580 | +0,4 % |
+| LS3 | 0,9910 | 1,0498 | **+5,9 %** |
+| Merlin | 0,9920 | 1,0818 | **+9,1 %** |
+
+Le maillage ciblé de production est donc **95 mm**. Son oracle reste 30 mm,
+RK2 et couplage à chaque sous-pas :
+
+| Contrôle | Production 95 mm | Limite |
+|---|---:|---:|
+| Écart VE maximal, standard + runner 2× | **4,460 %** | 15 % |
+| Pic VE | 1,127 | 0,85–1,15 |
+| Régime du pic | 5 840 tr/min | ≥ 2 880 |
+| VE à 6 000 tr/min | 1,120 | ≥ 0,902 |
+| Déplacement du pic, runner 2× | 26,478 % | ≥ 15 % |
+
+La protection thermique à 600 µs reste à **4,916 %** contre le même oracle et
+passe les quatre critères. Un essai à 120 mm a été refusé : 16,580 % d'écart
+sur le runner doublé à 3 000 tr/min, donc hors de la tolérance demandée.
+
+Logs : `intake-cell-95mm-realtime-ab-2026-07-28.log`,
+`intake-95mm-production-oracle-2026-07-28.log`,
+`intake-95mm-wall600-oracle-2026-07-28.log` et
+`intake-cell-120mm-oracle-2026-07-28.log` sous `out/validation/`.
+
+### Pool automatique adapté aux 12 threads
+
+Le balayage 2/3/4 workers utilise six passages contrebalancés par variante ;
+le Big Twin est le témoin structurellement à zéro worker.
+
+| Cas | 2 workers | 3 workers | 4 workers |
+|---|---:|---:|---:|
+| LS3, moyenne | **1,1160** | 1,1045 | 1,0805 |
+| Merlin, moyenne | 1,1095 | **1,1222** | 1,1032 |
+| Big Twin, moyenne | 3,5168 | 3,5395 | 3,5238 |
+| LS3, minimum | **1,109** | 1,093 | 1,076 |
+| Merlin, minimum | 1,100 | **1,114** | 1,091 |
+
+La production choisit deux workers pour 3 à 9 cylindres, trois à partir de dix,
+puis borne ce nombre par la moitié des threads matériels et `cylindres - 1`.
+Un override explicite de banc contourne cette politique.
+
+### Catalogue complet de production
+
+Commande :
+
+```text
+EngineLabRealtimeBudgetHarness --catalog-root . --relative-rpm 0.90 \
+  --warmup 3 --seconds 6 --free-run --enforce 1.10
+```
+
+| Moteur | Cible | Régime moyen | Workers | Facteur |
+|---|---:|---:|---:|---:|
+| K20A-like 2.0 I4 VTEC | 7 740 | 7 734 | 2 | 1,419 |
+| 2JZ-GTE-like 3.0 I6 Turbo | 6 300 | 6 298 | 2 | 1,642 |
+| LS3-like 6.2 Crossplane V8 | 5 940 | 5 942 | 2 | 1,121 |
+| EJ25-like 2.5 Flat-4 Turbo | 6 120 | 6 114 | 2 | 1,890 |
+| Audi I5-like 2.5 Turbo | 6 390 | 6 387 | 2 | 1,744 |
+| Hayabusa-like 1.3 I4 | 10 080 | 10 072 | 2 | 1,392 |
+| Big Twin-like 1.9 V2 | 5 040 | 5 038 | 0 | 3,511 |
+| Merlin-like 19.8 V12 Scaled | 2 880 | 2 883 | 3 | **1,113** |
+| Aircooled-like 3.6 Flat-6 | 6 660 | 6 661 | 2 | 1,401 |
+| Radial-like 6.5 R5 | 2 160 | 2 160 | 2 | 2,012 |
+| Yamaha CP2 MT-07-like 689 Twin | 9 000 | 8 987 | 0 | 2,546 |
+| Yamaha CP3 MT-09-like 890 Triple | 9 900 | 9 902 | 2 | 1,781 |
+| Yamaha CP4 MT-10-like 998 Crossplane I4 | 10 800 | 10 802 | 2 | 1,308 |
+| VW EA288-like 2.0 TDI I4 | 4 500 | 4 482 | 2 | 2,339 |
+
+Les 14 régimes sont tenus, aucun overrun n'est produit en `--free-run` et le
+pire facteur est 1,113× : **11,3 % de marge brute**, dans l'objectif 10–15 %
+mais pas au plafond de cette plage.
+
+### Son final et continuité de la télémétrie
+
+Le rendu catalogue final active, sur les 14 moteurs, le réseau physique, la
+topologie complète, la structure modale et l'admission ondulatoire. Il rapporte
+zéro fallback, dropout de frontière, pression perdue, événement tardif ou
+échantillon limité. La similarité spectrale maximale entre les quatre familles
+de contrôle est **0,642**.
+
+| Chemin applicatif | Workers | Callback p95 | Budget | Perte/fallback |
+|---|---:|---:|---:|---:|
+| K20A | 2 | 1 774,9 µs | 5 333,3 µs | 0 / 0 |
+| 2JZ | 2 | 2 114,6 µs | 5 333,3 µs | 0 / 0 |
+| LS3 | 2 | 2 620,7 µs | 5 333,3 µs | 0 / 0 |
+| Merlin | 3 | 3 470,9 µs | 5 333,3 µs | 0 / 0 |
+
+Le transitoire Big Twin passe 1 346 → 4 031 → 792 tr/min, toujours sans perte,
+événement tardif ni limiteur. Log :
+`out/validation/audio-render-final-2026-07-28.log`.
+
+### Reprise après coupure de décélération
+
+La première suite complète après ces changements a trouvé un dernier défaut
+réel : le Merlin franchissait le plancher de 360 tr/min au retour d'un coup de
+gaz. Relever le seuil de reprise et accélérer la rampe DFCO n'a pas suffi ;
+même une reprise expérimentale à 1,50 fois le ralenti finissait à 349 tr/min.
+
+Le modèle soustrayait la part disponible du film existant, mais supposait que
+toute la masse liquide d'un pulse neuf atteindrait la charge avant l'étincelle.
+La masse injectée tient désormais compte de la fraction de mouillage `X` :
+
+```text
+fraction disponible = (1 - X) + X * fraction évaporée avant étincelle
+masse commandée = déficit de la charge / fraction disponible
+```
+
+Le seuil 1,25× et la rampe 3/s d'origine ont été restaurés. Avec cette reprise
+plus tardive, le trace compensé reste à 479 tr/min au même point et les portes
+`Core`, `IdleStabilityRegression` (14 moteurs) et `CatalogReference` passent.
+Logs : `ctest-film-availability-2026-07-28.log`,
+`merlin-idle-trace-dfco150-2026-07-28.log` et
+`merlin-idle-trace-film-compensated-2026-07-28.log`.

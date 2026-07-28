@@ -279,14 +279,15 @@ test onto the behaviour it is meant to catch. Keep it that way.
   faults, catalogue file cache, frequency ramp) and always falls to A, while B
   inherits the two warm middle slots — a measured +8% bias. Discard a warm-up
   run and alternate which variant leads.
-- **The worker cap only binds above 8 cylinders.** The pool takes
-  `min(cylinderCount - 1, hardware_concurrency/2 - 1)` workers, so on a
-  16-thread machine every catalogue engine except the Merlin V12 is limited by
-  its own cylinder count, not by the thread cap. "Give the pool more threads" is
-  therefore a V12-only question, and it is **unresolved** — see
-  `docs/physics-audit.md`. Note also that `EngineLabRealtimeBudgetHarness` runs
-  neither the audio callback nor the UI, so it cannot see the cost of
-  oversubscribing the machine the application actually runs on.
+- **The current six-core worker policy is measured, not the old formula.** On
+  the 12-thread desktop, a counterbalanced 2/3/4-worker sweep (six runs per
+  variant, Big Twin as zero-worker control) gives LS3 means
+  1.1160/1.1045/1.0805 and Merlin 1.1095/1.1222/1.1032. Production therefore
+  uses **2 workers for 3–9 cylinders and 3 from 10 cylinders**, still bounded by
+  hardware and `cylinderCount - 1`; explicit benchmark overrides bypass the
+  policy. Do not restore `hardware_concurrency/2 - 1` as an automatic target:
+  `EngineLabRealtimeBudgetHarness` runs neither the audio callback nor the UI,
+  and more pool threads measurably oversubscribe the real application.
 - **The realtime factor saturates at 1.0; use `--free-run` for capacity.**
   `EngineRuntime::run` sleeps to a wall deadline, so an engine with 3x of margin
   and one exactly breaking even both report `1.000` — six catalogue engines were
@@ -360,8 +361,9 @@ test onto the behaviour it is meant to catch. Keep it that way.
   item left is the MUSCL block (limiter + two reconstructions + the two
   primitive recoveries they need) at **16-29%**, and it is not available:
   zeroing the slopes *is* dropping to first order.
-- **This machine is a Ryzen 7 8840U — a 15-28 W mobile part — and it throttles
-  hard.** The same bench on the same binary measured **467 ns/cell** early in a
+- **The previous 2026-07-27 machine was a Ryzen 7 8840U — a 15-28 W mobile
+  part — and it throttled hard.** The same bench on the same binary measured
+  **467 ns/cell** early in a
   session and **1404** after hours of builds and test suites. That single fact
   explains the realtime harness's 20% session drift and the ±20% noise that made
   a thread-count experiment unmeasurable. Measure in short batches, compare only
@@ -375,13 +377,13 @@ test onto the behaviour it is meant to catch. Keep it that way.
   sub-step, `recoverPrimitive` alone runs 7 times — not by vector throughput.
   Dropping the four unread `PrimitiveState::massFractions` divisions from
   `recoverPrimitive` is likewise 1-3%, inside the noise.
-- **The runner mesh does not surrender.** `clamp(round(L/30mm), 6, 12)` looks
-  generous for a 520 mm Merlin runner, and forcing 6 cells everywhere is worth
-  LS3 ×1.26 / Merlin ×2.0 while being bit-identical on the four engines already
-  at 6 (Hayabusa, CP2, CP3, CP4). It also costs the Big Twin **+16.7% of VE at
-  3,000 rpm** and the Merlin **−22.3% of torque** there: a tuning peak moving
-  under the coarser mesh's numerical dispersion. Independent confirmation that
-  the intake scheme is not converged at the shipped mesh.
+- **The accepted runner mesh is 95 mm, guarded against a 30 mm/RK2 oracle.**
+  The old six-cell-everywhere ablation did buy LS3 ×1.26 / Merlin ×2.0, but cost
+  the Big Twin +16.7% VE and the Merlin −22.3% torque at 3,000 rpm. The later
+  75/95 mm A/B found +5.9% LS3 and +9.1% Merlin against +0.4% on the CP2 null
+  control; 95 mm stays within **4.460%** of the oracle (4.916% with protected
+  wall heat). **120 mm is rejected at 16.580%** on the doubled runner. Do not
+  weaken the oracle or infer convergence from cell count alone.
 - **Never compare a perf CSV across an exhaust-geometry change** — doing so once
   put the V12 at 158% of budget in these docs when it is at 77%. §18 has the
   numbers. The audio callback itself remains comfortable at 15-33% of a
@@ -407,6 +409,15 @@ test onto the behaviour it is meant to catch. Keep it that way.
   catch, during the after-start flare, with an empty port film. Corollary: a
   green idle run proves less than it looks, and "engine X now fails" after an
   unrelated change is the expected symptom, not a mystery.
+- **A requested trapped-charge fuel mass is not an injector liquid mass.**
+  For port injection, a fresh pulse makes only
+  `(1-X) + X * filmAvailableBeforeSpark` of its metered mass available to the
+  next charge. The simulator used to subtract the available inventory from the
+  target, then command that raw deficit as liquid; after DFCO emptied the wall
+  film this guaranteed a lean first cycle. Divide the deficit by that available
+  fraction. Do not raise the DFCO resume threshold to hide it: 1.50× idle still
+  fell to 349 rpm without the correction, while the corrected original 1.25×
+  policy remains at 479 rpm in the same Merlin trace.
 - **Bisecting is cheap here; guessing is not.** `cmake --build ... --target
   EngineLabIdleStabilityRegressionTests` relinks in ~36 s even across a
   `EngineSimulator.cpp` change, and the tree is normally clean, so
