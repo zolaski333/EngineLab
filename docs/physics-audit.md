@@ -2520,3 +2520,27 @@ une calibration non physique. La prochaine étape est une carte de coefficient
 de débit soupape/port en fonction de `L/D`, du rapport de pression et du sens.
 Les ablations complètes sont dans
 [`exhaust-pmep-investigation-2026-07-28.md`](exhaust-pmep-investigation-2026-07-28.md).
+
+## 2026-07-28 — Garde-fou de charge sans sacrifier l'échappement
+
+L'admission 500 µs et la suppression du second tour de reconstruction du plénum
+ont été remesurées puis refusées : la première n'apporte aucun gain LS3, la
+seconde donne le même meilleur facteur 1,030× sur six essais par variante. Le
+CP2, témoin structurellement incapable d'exécuter ces tours, ne révèle aucun
+effet séparé du bruit machine.
+
+Le seul levier retenu en surcharge est la cadence thermique des parois
+d'admission, 150 → 600 µs. L'échange conserve sa durée accumulée et donc son
+énergie ; les ondes, la discrétisation, le couplage échappement et la
+télémétrie acoustique ne sont pas décimés.
+
+Le détecteur exige six échéances consécutives manquées. Il ne revient au mode
+normal qu'après 480 trames confortables (≤85 % du budget), et reste désactivé
+pendant les dynos et les mesures libres. Un test déterministe couvre
+l'engagement, le rejet d'un incident isolé, l'hystérésis, les données de timing
+invalides et le retour.
+
+Preuves locales : erreur VE 600 µs contre oracle ≤14,158 % ; déplacement direct
+150/600 ≤7,69 % ; LS3 applicatif 607 → 582 retards sur 1 440 (−4,1 %), zéro
+pression perdue et zéro fallback dans les deux cas. Le gain est volontairement
+présenté comme un filet modeste.

@@ -8,6 +8,7 @@
 #include <enginelab/physics/SimplifiedGasolinePhysics.hpp>
 #include <enginelab/simulation/EngineSimulator.hpp>
 #include <enginelab/runtime/DrivelineModel.hpp>
+#include <enginelab/runtime/RealtimeLoadGovernor.hpp>
 #include <algorithm>
 #include <atomic>
 #include <cmath>
@@ -216,6 +217,19 @@ public:
     [[nodiscard]] double maximumTimingLatenessSeconds() const noexcept {
         return maximumTimingLatenessSeconds_.load();
     }
+    [[nodiscard]] bool realtimeLoadProtectionActive() const noexcept {
+        return realtimeLoadProtectionActive_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t realtimeLoadProtectionActivationCount() const noexcept {
+        return realtimeLoadProtectionActivations_.load(std::memory_order_relaxed);
+    }
+    /**
+     * The application enables the overload guard by default. Measurement
+     * harnesses may disable it before start() when they need one fixed policy.
+     */
+    void setRealtimeLoadProtectionEnabled(bool enabled) noexcept {
+        realtimeLoadProtectionEnabled_.store(enabled, std::memory_order_relaxed);
+    }
     /**
      * Instrumentation only. The loop normally sleeps to a wall deadline after
      * each 1/240 s of simulated time, so the realtime factor it achieves
@@ -277,6 +291,9 @@ private:
     std::atomic<double> dynoMaximumDurationSeconds_ { 30.0 };
     std::atomic<bool> paused_ { false };
     std::atomic<bool> realtimeThrottleEnabled_ { true };
+    std::atomic<bool> realtimeLoadProtectionEnabled_ { true };
+    std::atomic<bool> realtimeLoadProtectionActive_ { false };
+    std::atomic<std::uint64_t> realtimeLoadProtectionActivations_ { 0 };
     std::atomic<double> timeScale_ { 1.0 };
     // UI writes only the desired state. The simulation thread owns all mutable
     // session fields below and reconciles this mailbox once per tick.

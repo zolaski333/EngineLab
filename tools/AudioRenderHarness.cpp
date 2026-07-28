@@ -1085,13 +1085,18 @@ DecayMeasurement measureExhaustDecay(const EngineConfig& baseConfig, const WavDa
  * ran the legacy procedural path instead. This closes that gap.
  */
 bool runtimePathCheck(const EngineConfig& baseConfig, const WavData& ir,
-                      std::optional<std::size_t> intakeWorkers = {}) {
+                      std::optional<std::size_t> intakeWorkers = {},
+                      std::optional<double> intakeWallHeatUpdateSeconds = {}) {
     auto config = baseConfig;
     normaliseEngineConfig(config);
     EngineSimulatorOptions simulatorOptions;
     simulatorOptions.intakeWorkerCount = intakeWorkers;
+    simulatorOptions.intakeWallHeatUpdateIntervalSeconds =
+        intakeWallHeatUpdateSeconds;
     auto runtime = std::make_unique<EngineRuntime>(
         config, nullptr, simulatorOptions);
+    if (intakeWallHeatUpdateSeconds.has_value())
+        runtime->setRealtimeLoadProtectionEnabled(false);
     auto renderer = std::make_unique<RealtimeEngineAudio>(
         runtime->audioEvents(), runtime->audioState(),
         &runtime->cylinderPressureSamples(), &runtime->exhaustGraph(),
@@ -1211,7 +1216,11 @@ bool runtimePathCheck(const EngineConfig& baseConfig, const WavData& ir,
               << " physicsOverruns=" << runtime->timingOverrunCount()
               << "/" << static_cast<std::uint64_t>(rendered * 240.0)
               << " maxLate=" << std::setprecision(2)
-              << runtime->maximumTimingLatenessSeconds() * 1.0e3 << "ms\n";
+              << runtime->maximumTimingLatenessSeconds() * 1.0e3 << "ms"
+              << " protection="
+              << (runtime->realtimeLoadProtectionActive() ? "active" : "normal")
+              << " protectionActivations="
+              << runtime->realtimeLoadProtectionActivationCount() << '\n';
     auto ok = physical && fullTopology && modalStructure && intakeTopology;
     if (!physical)
         std::cerr << "FAIL: runtime wiring: " << config.name
@@ -1263,6 +1272,7 @@ int main(int argc, char** argv) {
     std::string couplingComparisonFilter;
     std::string junctionComparisonFilter;
     std::optional<std::size_t> intakeWorkers;
+    std::optional<double> intakeWallHeatUpdateSeconds;
     for (int i = 1; i < argc; ++i) {
         const std::string a = argv[i];
         if (a == "--output" && i + 1 < argc) outDir = argv[++i];
@@ -1280,6 +1290,8 @@ int main(int argc, char** argv) {
             junctionComparisonFilter = argv[++i];
         else if (a == "--intake-workers" && i + 1 < argc)
             intakeWorkers = static_cast<std::size_t>(std::stoull(argv[++i]));
+        else if (a == "--intake-wall-us" && i + 1 < argc)
+            intakeWallHeatUpdateSeconds = std::stod(argv[++i]) * 1.0e-6;
         else if (a == "--mute-combustion") muteCombustionLayer = true;
         else if (a == "--mute-mechanical") muteMechanicalLayer = true;
         else if (a == "--mute-intake") muteIntakeLayer = true;
@@ -1422,7 +1434,9 @@ int main(int argc, char** argv) {
             return 2;
         }
         std::cout << "\n--- Application wiring: selected EngineRuntime path check ---\n";
-        return runtimePathCheck(selected->config, ir, intakeWorkers) ? 0 : 1;
+        return runtimePathCheck(
+            selected->config, ir, intakeWorkers,
+            intakeWallHeatUpdateSeconds) ? 0 : 1;
     }
 
     if (!referenceFilter.empty()) {

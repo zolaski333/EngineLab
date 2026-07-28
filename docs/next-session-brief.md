@@ -13,6 +13,9 @@ contexte de la session précédente.
 > mais l'oracle reste à 0,990 pour une cible 0,750. Lire aussi
 > `docs/exhaust-pmep-investigation-2026-07-28.md`. Ne pas recommencer une
 > optimisation d'admission ou de pool sans contredire les nouveaux garde-fous.
+> Une protection de charge préserve en plus l'échappement/audio : elle espace
+> seulement le calcul thermique des parois d'admission après six retards
+> consécutifs, et restaure la cadence normale avec hystérésis.
 
 ---
 

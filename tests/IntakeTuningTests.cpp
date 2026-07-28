@@ -230,6 +230,9 @@ int main(int argc, char** argv) {
             options.intakeFirstOrderTimeIntegration = true;
         else if (argument == "--intake-rk2")
             options.intakeFirstOrderTimeIntegration = false;
+        else if (argument == "--intake-wall-us" && index + 1 < argc)
+            options.intakeWallHeatUpdateIntervalSeconds =
+                std::stod(argv[++index]) * 1.0e-6;
     }
 
     auto baseline = enginelab::makeDefaultInlineFour();

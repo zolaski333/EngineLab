@@ -435,6 +435,14 @@ void EngineRuntime::run(std::stop_token stopToken) {
     auto consumedGearCommand = gear_.load(std::memory_order_relaxed);
     double nextPressurePublishTime = 0.0;
     MonotonicPublicationTimeline publicationTimeline;
+    RealtimeLoadGovernor loadGovernor;
+    const auto normalIntakeWallHeatIntervalSeconds =
+        simulator_.intakeWallHeatUpdateIntervalSeconds();
+    const auto protectedIntakeWallHeatIntervalSeconds =
+        std::max(normalIntakeWallHeatIntervalSeconds, 600.0e-6);
+    simulator_.setIntakeWallHeatUpdateIntervalSeconds(
+        normalIntakeWallHeatIntervalSeconds);
+    realtimeLoadProtectionActive_.store(false, std::memory_order_relaxed);
     constexpr double maximumPressurePublishRateHz = 96'000.0;
     constexpr double minimumPressurePublishInterval = 1.0 / maximumPressurePublishRateHz;
     while (!stopToken.stop_requested()) {
@@ -707,6 +715,9 @@ void EngineRuntime::run(std::stop_token stopToken) {
             finishDynoSession();
         }
         const auto now = Clock::now();
+        const auto workFraction =
+            std::chrono::duration<double>(now - iterationStart).count()
+            / baseStep.count();
         const auto producerTime = std::chrono::duration<double>(now - clockEpoch).count();
         audioState_.producerTimeNanoseconds.store(static_cast<std::uint64_t>(std::max(0.0, producerTime) * 1.0e9),
                                                   std::memory_order_release);
@@ -716,10 +727,38 @@ void EngineRuntime::run(std::stop_token stopToken) {
         // carried forward to `now` so the overrun counter does not fill with
         // self-inflicted lateness that means nothing in this mode.
         if (!realtimeThrottleEnabled_.load(std::memory_order_relaxed)) {
+            if (loadGovernor.reset()) {
+                simulator_.setIntakeWallHeatUpdateIntervalSeconds(
+                    normalIntakeWallHeatIntervalSeconds);
+                realtimeLoadProtectionActive_.store(
+                    false, std::memory_order_relaxed);
+            }
             deadline = now;
             continue;
         }
-        if (now > deadline) {
+        const auto missedDeadline = now > deadline;
+        const auto protectionAllowed =
+            realtimeLoadProtectionEnabled_.load(std::memory_order_relaxed)
+            && !dynoActive_ && !isPaused;
+        if (!protectionAllowed) {
+            if (loadGovernor.reset()) {
+                simulator_.setIntakeWallHeatUpdateIntervalSeconds(
+                    normalIntakeWallHeatIntervalSeconds);
+                realtimeLoadProtectionActive_.store(
+                    false, std::memory_order_relaxed);
+            }
+        } else if (loadGovernor.observe(missedDeadline, workFraction)) {
+            simulator_.setIntakeWallHeatUpdateIntervalSeconds(
+                loadGovernor.active()
+                    ? protectedIntakeWallHeatIntervalSeconds
+                    : normalIntakeWallHeatIntervalSeconds);
+            realtimeLoadProtectionActive_.store(
+                loadGovernor.active(), std::memory_order_relaxed);
+            if (loadGovernor.active())
+                realtimeLoadProtectionActivations_.fetch_add(
+                    1, std::memory_order_relaxed);
+        }
+        if (missedDeadline) {
             timingOverruns_.fetch_add(1, std::memory_order_relaxed);
             const auto lateness = std::chrono::duration<double>(now - deadline).count();
             auto previousMaximum = maximumTimingLatenessSeconds_.load(std::memory_order_relaxed);

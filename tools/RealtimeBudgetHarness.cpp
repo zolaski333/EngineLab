@@ -106,6 +106,7 @@ struct Measurement final {
                                         std::optional<double> intakeTargetCellLengthM,
                                         std::optional<double> exhaustCouplingSeconds,
                                         std::optional<bool> intakeFirstOrderTimeIntegration,
+                                        std::optional<double> intakeWallHeatUpdateSeconds,
                                         bool useWellMixedExhaustJunctions) {
     enginelab::EngineSimulatorOptions simulatorOptions;
     simulatorOptions.intakeWorkerCount = intakeWorkers;
@@ -117,6 +118,8 @@ struct Measurement final {
         exhaustCouplingSeconds;
     simulatorOptions.intakeFirstOrderTimeIntegration =
         intakeFirstOrderTimeIntegration;
+    simulatorOptions.intakeWallHeatUpdateIntervalSeconds =
+        intakeWallHeatUpdateSeconds;
     simulatorOptions.evolveExhaustJunctionAxialMomentum =
         !useWellMixedExhaustJunctions;
     auto runtime = std::make_unique<enginelab::EngineRuntime>(
@@ -300,6 +303,7 @@ int main(int argc, char** argv) {
     std::optional<double> intakeTargetCellLengthM;
     std::optional<double> exhaustCouplingSeconds;
     std::optional<bool> intakeFirstOrderTimeIntegration;
+    std::optional<double> intakeWallHeatUpdateSeconds;
     bool useWellMixedExhaustJunctions = false;
 
     for (int index = 1; index < argc; ++index) {
@@ -325,6 +329,8 @@ int main(int argc, char** argv) {
             intakeFirstOrderTimeIntegration = true;
         else if (argument == "--intake-rk2")
             intakeFirstOrderTimeIntegration = false;
+        else if (argument == "--intake-wall-us" && index + 1 < argc)
+            intakeWallHeatUpdateSeconds = std::stod(argv[++index]) * 1.0e-6;
         else if (argument == "--warmup" && index + 1 < argc) warmupSeconds = std::stod(argv[++index]);
         else if (argument == "--seconds" && index + 1 < argc) measureSeconds = std::stod(argv[++index]);
         else if (argument == "--enforce" && index + 1 < argc) failBelow = std::stod(argv[++index]);
@@ -340,6 +346,7 @@ int main(int argc, char** argv) {
                          "[--intake-cell-mm N] "
                          "[--exhaust-coupling-us N] "
                          "[--intake-euler|--intake-rk2] "
+                         "[--intake-wall-us N] "
                          "[--well-mixed-junctions] "
                          "[--enforce FACTOR] [--free-run]\n"
                          "  --free-run  remove the loop's wall-clock sleep, so the factor\n"
@@ -408,6 +415,7 @@ int main(int argc, char** argv) {
             intakeWorkers, intakeMaximumCells, intakeStaircaseRounds,
             intakeCouplingSeconds, intakeTargetCellLengthM,
             exhaustCouplingSeconds, intakeFirstOrderTimeIntegration,
+            intakeWallHeatUpdateSeconds,
             useWellMixedExhaustJunctions);
         const auto cylinders = static_cast<int>(entry.config.cylinders.size());
         std::cout << std::left << std::setw(26) << entry.config.name

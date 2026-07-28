@@ -339,3 +339,57 @@ perdu, zéro événement tardif et zéro action du limiteur. Le clip
 
 Ces chiffres prouvent une différence acoustique objective et un chemin sain ;
 ils ne prétendent pas remplacer le verdict d'écoute sur la préférence sonore.
+
+## Protection dynamique du budget sonore
+
+Le catalogue ne possède qu'une marge d'environ 10 % sur ses cas lourds, et la
+machine peut être occupée par l'interface, le callback ou une autre
+application. L'objectif du garde-fou n'est pas de rendre un moteur moins cher
+en permanence : il est de préserver la télémétrie de pression cylindre quand
+le thread physique manque réellement ses échéances.
+
+Deux candidats ont été mesurés puis refusés :
+
+- admission 400 → 500 µs : physique dans l'enveloppe, mais LS3
+  1,001× → 0,998× au premier A/B, donc aucun gain ;
+- reconstruction de plénum 2 → 1 tour : six répétitions contrebalancées donnent
+  le même meilleur facteur LS3, 1,030× dans les deux variantes. Le CP2, témoin
+  nul qui n'exécute aucun de ces tours, reste dans le même bruit de machine.
+
+Le mécanisme retenu ne touche qu'à l'échantillonnage du coefficient d'échange
+thermique des parois d'admission :
+
+- politique normale : **150 µs** ;
+- après six échéances consécutives manquées : **600 µs** ;
+- retour à 150 µs seulement après 480 trames consécutives sans retard et avec
+  au plus 85 % du budget utilisé ;
+- désactivé pendant un dyno, une pause et les mesures `--free-run`.
+
+Le transfert thermique à deux capacités accumule la durée entre évaluations :
+aucune énergie gaz/paroi n'est jetée. Le maillage, le schéma MUSCL, les ondes
+d'admission, les soupapes, le couplage échappement 125 µs et chaque pression
+cylindre restent inchangés.
+
+### Bornes physiques du mode protégé
+
+Le balayage 600 µs contre son oracle 30 mm/RK2/sous-pas reste à **14,158 %**
+maximum (limite 15 %), et les quatre critères de respiration passent. La
+comparaison directe 150/600 µs de la configuration réduite déplace la VE au
+plus de 5,49 % sur le runner standard et 7,69 % sur le runner doublé ; le pic
+passe de 1,099 à 1,142 et de 5 832 à 5 891 tr/min.
+
+### Chemin applicatif réel
+
+Même binaire, LS3, thread physique et callback 256 échantillons à 48 kHz en
+concurrence :
+
+| Politique | Retards physique / 1 440 | Callback p95 | Pressions perdues | Fallback |
+|---|---:|---:|---:|---:|
+| 150 µs fixe | 607 | 2 986,5 µs | 0 | 0 |
+| 600 µs fixe | **582** | **2 963,9 µs** | 0 | 0 |
+| adaptative | 597, une activation | 2 976,9 µs | 0 | 0 |
+
+Le mode fixe protégé réduit ici les retards de 4,1 %. L'adaptatif se situe
+logiquement entre les deux, puisqu'il commence à 150 µs et exige une surcharge
+confirmée avant d'agir. C'est un filet de quelques pourcents, pas une promesse
+de compenser une machine massivement sous-dimensionnée.

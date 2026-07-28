@@ -14,6 +14,7 @@
 #include <enginelab/physics/HelmholtzRunnerModel.hpp>
 #include <enginelab/runtime/DrivelineModel.hpp>
 #include <enginelab/runtime/MonotonicPublicationTimeline.hpp>
+#include <enginelab/runtime/RealtimeLoadGovernor.hpp>
 #include <enginelab/serialization/JsonEngineSerializer.hpp>
 #include <enginelab/serialization/YamlEngineSerializer.hpp>
 #include <enginelab/simulation/EngineSimulator.hpp>
@@ -376,6 +377,44 @@ int main() {
         const auto nextFirstTimestamp = catchingUp.mapSimulationTime(2.0, 2.0, 1.0);
         require(previousLastTimestamp <= nextFirstTimestamp,
                 "successive realtime event timestamps must remain monotonic after a late frame");
+    }
+    {
+        enginelab::RealtimeLoadGovernor governor;
+        for (std::size_t index = 0;
+             index + 1 < enginelab::RealtimeLoadGovernor::missesToEngage;
+             ++index) {
+            require(!governor.observe(true, 1.05) && !governor.active(),
+                "isolated realtime misses must not lower simulation quality");
+        }
+        require(!governor.observe(false, 0.70) && !governor.active(),
+            "one comfortable frame must clear the overload streak");
+        for (std::size_t index = 0;
+             index + 1 < enginelab::RealtimeLoadGovernor::missesToEngage;
+             ++index) {
+            require(!governor.observe(true, 1.05),
+                "the overload guard must wait for its complete engagement window");
+        }
+        require(governor.observe(true, 1.05) && governor.active(),
+            "a sustained deadline deficit must engage realtime protection");
+
+        for (std::size_t index = 0;
+             index + 1 < enginelab::RealtimeLoadGovernor::comfortableFramesToRecover;
+             ++index) {
+            require(!governor.observe(false, 0.70) && governor.active(),
+                "realtime protection must not chatter during recovery");
+        }
+        require(!governor.observe(
+                    false, std::numeric_limits<double>::quiet_NaN())
+                && governor.active(),
+            "invalid timing data must never count as spare realtime capacity");
+        for (std::size_t index = 0;
+             index + 1 < enginelab::RealtimeLoadGovernor::comfortableFramesToRecover;
+             ++index) {
+            require(!governor.observe(false, 0.70),
+                "recovery must require a new complete comfortable window");
+        }
+        require(governor.observe(false, 0.70) && !governor.active(),
+            "sustained spare capacity must restore the normal thermal cadence");
     }
     {
         auto topology = enginelab::makeDefaultInlineFour();

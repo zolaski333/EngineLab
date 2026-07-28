@@ -416,6 +416,9 @@ EngineSimulator::EngineSimulator(EngineConfig config, IEcuModel& ecu, IPhysicsMo
       eventGenerator_(events), exhaust_(exhaust) {
     normaliseEngineConfig(config_);
     if (const auto error = validateEngineConfig(config_)) throw std::invalid_argument(*error);
+    setIntakeWallHeatUpdateIntervalSeconds(
+        options_.intakeWallHeatUpdateIntervalSeconds.value_or(
+            ductWallHeatUpdateIntervalSeconds));
     for (std::size_t index = 0; index < config_.cylinders.size(); ++index) {
         const auto& cylinder = config_.cylinders[index];
         intakePathIndexByCylinder_[index] =
@@ -2001,7 +2004,7 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
             if (!firstHalf) {
                 intakeWallHeatPendingSeconds_ += halfStepSeconds * 2.0;
                 if (intakeWallHeatPendingSeconds_
-                        >= ductWallHeatUpdateIntervalSeconds) {
+                        >= intakeWallHeatUpdateIntervalSeconds_) {
                     intakeWallHeatPendingSeconds_ = 0.0;
                     for (auto& network : intakeRunnerNetworks_)
                         if (network) network->requestWallHeatUpdate();

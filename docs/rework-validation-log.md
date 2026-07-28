@@ -602,3 +602,17 @@ deux cas les plus lourds.
   limiteur. Les deux WAV sont conservés pour l'écoute humaine.
 - Le transitoire Big Twin démarrage–ralenti–coup de gaz–retour passe également :
   1 337 → 4 036 → 780 tr/min, sans perte ni limiteur.
+
+## 2026-07-28 — Protection de charge
+
+- Admission 500 µs refusée : aucune marge CPU LS3 mesurable.
+- Reconstruction de plénum à un tour refusée : meilleur facteur identique
+  (1,030×) sur six essais par variante, CP2 utilisé comme témoin nul.
+- Garde retenue : cadence thermique des parois d'admission 150 → 600 µs après
+  six échéances consécutives manquées ; retour après 480 trames confortables.
+- Jamais active pendant un dyno, une pause ou un banc `--free-run`.
+- Physique protégée : écart oracle maximal 14,158 %, déplacement direct de VE
+  maximal 7,69 %, quatre critères d'accord d'admission verts.
+- Chemin applicatif LS3 : 607 → 582 retards sur 1 440, callback p95
+  2 986,5 → 2 963,9 µs, zéro pression perdue/fallback. L'adaptatif s'active une
+  fois et termine à 597 retards, comme attendu après sa fenêtre de confirmation.

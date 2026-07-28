@@ -86,7 +86,8 @@ struct BenchResult final {
  * valve is open.
  */
 BenchResult benchDuct(std::size_t cellCount, double lengthM, double rpm,
-                      int calls) {
+                      int calls, double wallHeatUpdateIntervalSeconds,
+                      bool dynamicWallHeatTransferEnabled) {
     FiniteVolumeDuct duct;
     DuctGeometry geometry;
     geometry.lengthM = lengthM;
@@ -94,7 +95,7 @@ BenchResult benchDuct(std::size_t cellCount, double lengthM, double rpm,
     geometry.cellCount = cellCount;
     geometry.wallFrictionEnabled = true;
     geometry.absoluteRoughnessM = 1.5e-6;
-    geometry.dynamicWallHeatTransferEnabled = true;
+    geometry.dynamicWallHeatTransferEnabled = dynamicWallHeatTransferEnabled;
     geometry.wallHeatTransferWPerM2K = 0.0;
     geometry.wallTemperatureK = 300.0;
     geometry.wallThicknessM = aluminiumRunnerWallThicknessM;
@@ -102,7 +103,7 @@ BenchResult benchDuct(std::size_t cellCount, double lengthM, double rpm,
     geometry.wallSpecificHeatJPerKgK = aluminiumSpecificHeatJPerKgK;
     geometry.externalWallHeatTransferWPerM2K = runnerExternalHeatTransferWPerM2K;
     geometry.externalTemperatureK = 300.0;
-    geometry.wallHeatUpdateIntervalSeconds = ductWallHeatUpdateIntervalSeconds;
+    geometry.wallHeatUpdateIntervalSeconds = wallHeatUpdateIntervalSeconds;
 
     const auto& mixture = duct.mixtureModel();
     const auto ambient = mixture.conservativeFromPressureTemperature(101'325.0, 300.0);
@@ -162,12 +163,19 @@ BenchResult benchDuct(std::size_t cellCount, double lengthM, double rpm,
 int main(int argc, char** argv) {
     auto calls = 20'000;
     auto rpm = 7'000.0;
+    auto wallHeatUpdateIntervalSeconds = ductWallHeatUpdateIntervalSeconds;
+    auto dynamicWallHeatTransferEnabled = true;
     for (int index = 1; index < argc; ++index) {
         const std::string argument = argv[index];
         if (argument == "--calls" && index + 1 < argc) calls = std::atoi(argv[++index]);
         else if (argument == "--rpm" && index + 1 < argc) rpm = std::atof(argv[++index]);
+        else if (argument == "--wall-us" && index + 1 < argc)
+            wallHeatUpdateIntervalSeconds = std::atof(argv[++index]) * 1.0e-6;
+        else if (argument == "--adiabatic")
+            dynamicWallHeatTransferEnabled = false;
         else {
-            std::cerr << "usage: EngineLabIntakeDuctBench [--calls n] [--rpm n]\n"
+            std::cerr << "usage: EngineLabIntakeDuctBench [--calls n] [--rpm n]"
+                         " [--wall-us n] [--adiabatic]\n"
                          "  Cost of one intake-runner advance at the simulator's own\n"
                          "  cadence, plus a bit-exact checksum of the resulting state.\n"
                          "  An optimisation that leaves every checksum unchanged is\n"
@@ -183,7 +191,9 @@ int main(int argc, char** argv) {
     auto allOk = true;
     for (const auto cells : { std::size_t { 6 }, std::size_t { 9 }, std::size_t { 12 } }) {
         for (const auto length : { 0.18, 0.30 }) {
-            const auto bench = benchDuct(cells, length, rpm, calls);
+            const auto bench = benchDuct(
+                cells, length, rpm, calls, wallHeatUpdateIntervalSeconds,
+                dynamicWallHeatTransferEnabled);
             allOk = allOk && bench.ok;
             std::cout << cells << ',' << std::setprecision(2) << length << ','
                       << std::setprecision(1) << bench.nanosecondsPerCall << ','

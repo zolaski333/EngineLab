@@ -18,7 +18,9 @@
 #include <enginelab/events/CylinderPressureSample.hpp>
 #include <enginelab/foundation/SpscQueue.hpp>
 #include <enginelab/gasdynamics/ExhaustGasNetwork.hpp>
+#include <algorithm>
 #include <array>
+#include <cmath>
 #include <memory>
 #include <optional>
 namespace enginelab {
@@ -71,6 +73,9 @@ struct EngineSimulatorOptions final {
     /** Reduced intake temporal integration. Spatial reconstruction remains
      * second-order MUSCL; only the RK2 corrector stage is omitted. */
     std::optional<bool> intakeFirstOrderTimeIntegration;
+    /** Diagnostic cadence for the finite-capacity intake-wall heat exchange.
+     * Gas/solid energy is accumulated between updates rather than discarded. */
+    std::optional<double> intakeWallHeatUpdateIntervalSeconds;
 };
 
 /** Orchestrates policies and integrates state; owns no thread and performs no audio work. */
@@ -82,6 +87,14 @@ public:
     [[nodiscard]] const EngineState& state() const noexcept override { return state_; }
     [[nodiscard]] std::size_t intakeWorkerCount() const noexcept {
         return intakeWorkerPool_ ? intakeWorkerPool_->workerCount() : 0U;
+    }
+    void setIntakeWallHeatUpdateIntervalSeconds(double seconds) noexcept {
+        if (std::isfinite(seconds))
+            intakeWallHeatUpdateIntervalSeconds_ =
+                std::clamp(seconds, 50.0e-6, 2.0e-3);
+    }
+    [[nodiscard]] double intakeWallHeatUpdateIntervalSeconds() const noexcept {
+        return intakeWallHeatUpdateIntervalSeconds_;
     }
     [[nodiscard]] bool tryPopCylinderPressureSample(CylinderPressureSample& sample) noexcept {
         return pressureSamples_ && pressureSamples_->tryPop(sample);
@@ -272,6 +285,7 @@ private:
      * measured accuracy of the plenum staircase prediction, not from the thread
      * count -- see `configureIntakeWorkerPool`. */
     double intakeWallHeatPendingSeconds_ { 0.0 };
+    double intakeWallHeatUpdateIntervalSeconds_ { 150.0e-6 };
     std::size_t intakePredictionGroupCount_ { 32 };
     /** Fixed-point rounds used to reconstruct the plenum drawdown staircase.
      * Production keeps the two converged Heun rounds: zero leaves a stationary-
