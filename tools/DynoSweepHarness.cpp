@@ -24,8 +24,10 @@
 #include <cctype>
 #include <cmath>
 #include <filesystem>
+#include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <sstream>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -98,6 +100,66 @@ bool containsCaseInsensitive(const std::string& text, const std::string& filter)
     std::transform(text.begin(), text.end(), a.begin(), lower);
     std::transform(filter.begin(), filter.end(), b.begin(), lower);
     return a.find(b) != std::string::npos;
+}
+
+enum class ReferenceMetric {
+    torqueNm,
+    powerKw,
+};
+
+struct ReferencePoint final {
+    std::string engineFilter;
+    ReferenceMetric metric { ReferenceMetric::torqueNm };
+    double targetRpm {};
+    double expected {};
+    double relativeTolerance {};
+    std::string source;
+    bool matched {};
+};
+
+std::vector<ReferencePoint> readReferencePoints(
+    const std::filesystem::path& path, bool& valid) {
+    std::ifstream input(path);
+    valid = input.good();
+    std::vector<ReferencePoint> result;
+    std::string line;
+    if (!std::getline(input, line)) return result;
+    while (std::getline(input, line)) {
+        if (line.empty() || line.front() == '#') continue;
+        std::array<std::string, 6> fields;
+        std::istringstream row(line);
+        for (auto& field : fields)
+            if (!std::getline(row, field, ',')) {
+                valid = false;
+                break;
+            }
+        if (!valid) break;
+        ReferencePoint point;
+        point.engineFilter = fields[0];
+        if (fields[1] == "torque_nm") point.metric = ReferenceMetric::torqueNm;
+        else if (fields[1] == "power_kw") point.metric = ReferenceMetric::powerKw;
+        else {
+            valid = false;
+            break;
+        }
+        try {
+            point.targetRpm = std::stod(fields[2]);
+            point.expected = std::stod(fields[3]);
+            point.relativeTolerance = std::stod(fields[4]);
+        } catch (const std::exception&) {
+            valid = false;
+            break;
+        }
+        point.source = fields[5];
+        if (point.engineFilter.empty() || !(point.targetRpm > 0.0)
+            || !(point.expected > 0.0) || !(point.relativeTolerance > 0.0)
+            || point.relativeTolerance > 0.25 || point.source.empty()) {
+            valid = false;
+            break;
+        }
+        result.push_back(std::move(point));
+    }
+    return result;
 }
 
 // Hold `targetRpm` under a wide-open-throttle absorber and average the steady
@@ -207,10 +269,100 @@ void sweepEngine(const enginelab::EngineConfig& baseConfig, double stepRpm) {
         writeRow(std::cout, config, target, sample);
     }
 }
+
+bool validateReferencePoints(const std::filesystem::path& catalogRoot,
+                             const std::filesystem::path& referencePath) {
+    bool referenceValid = false;
+    auto points = readReferencePoints(referencePath, referenceValid);
+    if (!referenceValid || points.empty()) {
+        std::cerr << "invalid or empty manufacturer reference file: "
+                  << referencePath.string() << '\n';
+        return false;
+    }
+    const auto catalog = enginelab::loadEngineCatalog(catalogRoot);
+    if (!catalog.errors.empty() || catalog.entries.empty()) {
+        for (const auto& error : catalog.errors)
+            std::cerr << "catalog error: " << error << '\n';
+        return false;
+    }
+
+    auto passed = true;
+    std::cout << "engine,metric,target_rpm,actual_rpm,measured,reference,"
+                 "error_percent,tolerance_percent,source,result\n";
+    for (const auto& entry : catalog.entries) {
+        std::vector<std::size_t> selected;
+        for (std::size_t index = 0; index < points.size(); ++index) {
+            if (containsCaseInsensitive(entry.config.name, points[index].engineFilter))
+                selected.push_back(index);
+        }
+        if (selected.empty()) continue;
+        std::sort(selected.begin(), selected.end(),
+            [&points](std::size_t left, std::size_t right) {
+                return points[left].targetRpm < points[right].targetRpm;
+            });
+
+        auto config = entry.config;
+        enginelab::normaliseEngineConfig(config);
+        enginelab::SimpleEcuModel ecu;
+        enginelab::SimplifiedGasolinePhysics physics;
+        enginelab::FourStrokeEventGenerator events;
+        auto exhaust = enginelab::ExhaustGraph::makeForEngine(config);
+        enginelab::EngineSimulator simulator(config, ecu, physics, events, exhaust);
+        constexpr double dt = 1.0 / 240.0;
+        for (int step = 0; step < static_cast<int>(2.0 / dt); ++step) {
+            const auto time = static_cast<double>(step) * dt;
+            (void)simulator.step(dt, { true, time < 1.5, 0.55, 0.0 });
+        }
+
+        auto first = true;
+        for (const auto index : selected) {
+            auto& reference = points[index];
+            reference.matched = true;
+            const auto maximumRatedRpm =
+                std::min(config.redlineRpm, config.ignition.revLimitRpm);
+            if (reference.targetRpm >= maximumRatedRpm) {
+                std::cerr << "reference point lies on/above the limiter: "
+                          << config.name << " at " << reference.targetRpm << " rpm\n";
+                passed = false;
+                continue;
+            }
+            const auto sample = holdPoint(
+                simulator, reference.targetRpm, first ? 3.0 : 2.0, 1.0);
+            first = false;
+            const auto measured = reference.metric == ReferenceMetric::torqueNm
+                ? sample.torqueNm : sample.powerKw;
+            const auto relativeError =
+                (measured - reference.expected) / reference.expected;
+            const auto speedHeld = std::abs(
+                sample.actualRpm - reference.targetRpm)
+                <= reference.targetRpm * 0.02;
+            const auto pointPassed = speedHeld && std::isfinite(measured)
+                && std::abs(relativeError) <= reference.relativeTolerance;
+            passed = passed && pointPassed;
+            std::cout << std::quoted(config.name) << ','
+                      << (reference.metric == ReferenceMetric::torqueNm
+                            ? "torque_nm" : "power_kw")
+                      << ',' << reference.targetRpm << ',' << sample.actualRpm
+                      << ',' << measured << ',' << reference.expected
+                      << ',' << relativeError * 100.0
+                      << ',' << reference.relativeTolerance * 100.0
+                      << ',' << std::quoted(reference.source)
+                      << ',' << (pointPassed ? "PASS" : "FAIL") << '\n';
+        }
+    }
+    for (const auto& point : points) {
+        if (point.matched) continue;
+        std::cerr << "no catalogue engine matched manufacturer reference: "
+                  << point.engineFilter << '\n';
+        passed = false;
+    }
+    return passed;
+}
 }  // namespace
 
 int main(int argc, char** argv) {
     std::filesystem::path catalogRoot = std::filesystem::current_path();
+    std::filesystem::path referenceFile;
     std::string filter;
     auto stepRpm = 500.0;
     auto schemaOnly = false;
@@ -219,17 +371,26 @@ int main(int argc, char** argv) {
         if (argument == "--catalog-root" && index + 1 < argc) catalogRoot = argv[++index];
         else if (argument == "--filter" && index + 1 < argc) filter = argv[++index];
         else if (argument == "--step" && index + 1 < argc) stepRpm = std::stod(argv[++index]);
+        else if (argument == "--reference-file" && index + 1 < argc)
+            referenceFile = argv[++index];
         else if (argument == "--schema-only") schemaOnly = true;
         else {
             std::cerr << "usage: EngineLabDynoSweepHarness [--catalog-root dir]"
-                         " [--filter name-fragment] [--step rpm] [--schema-only]\n";
+                         " [--filter name-fragment] [--step rpm]"
+                         " [--reference-file csv] [--schema-only]\n";
             return EXIT_FAILURE;
         }
     }
 
     std::cout << std::fixed << std::setprecision(3);
+    if (schemaOnly) {
+        writeHeader(std::cout);
+        return EXIT_SUCCESS;
+    }
+    if (!referenceFile.empty())
+        return validateReferencePoints(catalogRoot, referenceFile)
+            ? EXIT_SUCCESS : EXIT_FAILURE;
     writeHeader(std::cout);
-    if (schemaOnly) return EXIT_SUCCESS;
 
     const auto catalog = enginelab::loadEngineCatalog(catalogRoot);
     for (const auto& error : catalog.errors)

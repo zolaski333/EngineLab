@@ -20,13 +20,53 @@
 #include <enginelab/gasdynamics/ExhaustGasNetwork.hpp>
 #include <array>
 #include <memory>
+#include <optional>
 namespace enginelab {
+
+/** Diagnostic/runtime policy knobs that do not belong in an engine file.
+ *
+ * Every field defaults to the production policy. Overrides exist so a harness
+ * can run a same-process A/B without editing a machine-specific constant into
+ * the simulator or the catalogue.
+ */
+struct EngineSimulatorOptions final {
+    /** Number of background intake workers. The simulation thread still
+     * participates, so N workers means N+1 runner participants. `0` forces the
+     * serial null control. */
+    std::optional<std::size_t> intakeWorkerCount;
+    /** Cap the spatial cells in each intake runner. Diagnostic A/Bs use this
+     * to establish a convergence point without rewriting authored geometry. */
+    std::optional<std::size_t> intakeMaximumCellCount;
+    /** Diagnostic spatial target for the intake FV oracle/reduced mesh.
+     * Absent selects the measured production target (75 mm). */
+    std::optional<double> intakeTargetCellLengthM;
+    /** Fixed-point rounds used to reconstruct the shared-plenum staircase
+     * before concurrent runner advances. */
+    std::optional<std::size_t> intakeStaircaseRounds;
+    /** Maximum conservative intake coupling interval. Absent selects the
+     * measured 400 us production interval; zero restores every-mechanical-
+     * substep oracle coupling. The valve boundary is time-averaged over the
+     * interval and intake-valve closing forces a flush. */
+    std::optional<double> intakeCouplingIntervalSeconds;
+    /** Low-speed cap for the nonlinear exhaust coupling interval. Absent uses
+     * 125 us (at least 4 kHz physical-boundary Nyquist); harnesses can A/B it
+     * against the historical 250 us cap and the full-substep oracle. */
+    std::optional<double> maximumLowSpeedExhaustCouplingSeconds;
+    /** Reduced intake temporal integration. Spatial reconstruction remains
+     * second-order MUSCL; only the RK2 corrector stage is omitted. */
+    std::optional<bool> intakeFirstOrderTimeIntegration;
+};
+
 /** Orchestrates policies and integrates state; owns no thread and performs no audio work. */
 class EngineSimulator final : public IEngineSimulation {
 public:
-    EngineSimulator(EngineConfig, IEcuModel&, IPhysicsModel&, IFiringEventGenerator&, IExhaustModel&);
+    EngineSimulator(EngineConfig, IEcuModel&, IPhysicsModel&, IFiringEventGenerator&,
+                    IExhaustModel&, EngineSimulatorOptions = {});
     [[nodiscard]] SimulationFrame step(double dtSeconds, const EngineControls&) noexcept override;
     [[nodiscard]] const EngineState& state() const noexcept override { return state_; }
+    [[nodiscard]] std::size_t intakeWorkerCount() const noexcept {
+        return intakeWorkerPool_ ? intakeWorkerPool_->workerCount() : 0U;
+    }
     [[nodiscard]] bool tryPopCylinderPressureSample(CylinderPressureSample& sample) noexcept {
         return pressureSamples_ && pressureSamples_->tryPop(sample);
     }
@@ -63,6 +103,7 @@ private:
                                   double dtSeconds, double indicatedTorqueNm,
                                   double brakeTorqueNm) noexcept;
     EngineConfig config_;
+    EngineSimulatorOptions options_;
     EngineKinematicsReference kinematicsReference_;
     IEcuModel& ecu_;
     IPhysicsModel& physics_;
@@ -182,11 +223,10 @@ private:
     /** One 1-D finite-volume runner per cylinder (see
      * configurePhysicalIntakeNetworks). The plenum stays a lumped cell — a
      * plenum is physically a compliance — while the runner, which is the organ
-     * pipe intake tuning lives in, is resolved in space. Advanced twice per
-     * mechanical substep (a symmetric split around the exhaust coupling, like
-     * the lumped valve orifice it replaces), each network couples one cylinder
-     * boundary to its own path's plenum, so cylinders only interact through
-     * the shared plenum cell exactly as before. */
+     * pipe intake tuning lives in, remains resolved in space. Production
+     * advances it at a 400 us conservative multirate cadence against a
+     * time-averaged valve boundary, split symmetrically around exhaust
+     * coupling. Cylinders still interact only through the shared plenum. */
     std::array<std::unique_ptr<gasdynamics::ExhaustGasNetwork>, 32> intakeRunnerNetworks_;
     /** Workers for the per-cylinder half of the runner advance, which the
      * profiler puts at 75-84% of the mechanical sub-step. Null when the engine
@@ -201,6 +241,15 @@ private:
      * mechanical sub-step. Nothing outside that pre-pass reads it, and it is
      * fully overwritten at the start of every pass. */
     std::array<GasCell, 32> plenumStaircaseScratch_ {};
+    /** Time integrals used only by the diagnostic/production multirate intake
+     * coupling. They mirror the exhaust accumulators: no mass or energy is
+     * approximated algebraically; the full conservative runner advances less
+     * often against a boundary averaged over every mechanical substep. */
+    std::array<gasdynamics::ConservativeState, 32>
+        intakeBoundaryStateTimeIntegral_ {};
+    std::array<double, 32> intakeBoundaryVolumeTimeIntegralM3S_ {};
+    std::array<double, 32> intakeValveConductanceTimeIntegralM2S_ {};
+    double intakeCouplingDurationSeconds_ { 0.0 };
     /** How many serial groups the concurrent runner pass is split into. One is
      * full concurrency; a group per cylinder is the old serial scheme exactly,
      * which is what an engine with no worker pool gets. Chosen from the
@@ -208,9 +257,10 @@ private:
      * count -- see `configureIntakeWorkerPool`. */
     double intakeWallHeatPendingSeconds_ { 0.0 };
     std::size_t intakePredictionGroupCount_ { 32 };
-    /** Fixed-point rounds used to reconstruct the plenum drawdown staircase
-     * before the concurrent runner advances. Each round costs one concurrent
-     * prediction dispatch and one cheap serial sweep. */
+    /** Fixed-point rounds used to reconstruct the plenum drawdown staircase.
+     * Production keeps the two converged Heun rounds: zero leaves a stationary-
+     * manifold pressure bias, while one is only borderline at the invariant's
+     * 0.01 kPa tolerance. Multirate coupling amortises their dispatch cost. */
     std::size_t intakeStaircaseRounds_ { 2 };
     /** Port-end (valve-side) runner state published for telemetry, the
      * Helmholtz telemetry model and the acoustic intake excitation. Refreshed

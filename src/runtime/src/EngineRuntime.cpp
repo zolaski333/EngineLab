@@ -112,10 +112,12 @@ void publishAudioFrame(RealtimeAudioState& state, const EngineState& engineState
 }
 
 EngineRuntime::EngineRuntime(EngineConfig config,
-                             std::shared_ptr<calibration::CalibrationStore> calibrations)
+                             std::shared_ptr<calibration::CalibrationStore> calibrations,
+                             EngineSimulatorOptions simulatorOptions)
     : config_(normalised(std::move(config))), ecu_(std::move(calibrations)),
       exhaust_(ExhaustGraph::makeForEngine(config_)),
-      simulator_(config_, ecu_, physics_, eventGenerator_, exhaust_), driveline_(config_),
+      simulator_(config_, ecu_, physics_, eventGenerator_, exhaust_,
+                 std::move(simulatorOptions)), driveline_(config_),
       pressureQueue_(std::make_unique<CylinderPressureQueue>()) {
     simulator_.setPressureSamplingEnabled(true);
     audioState_.cylinderCount.store(static_cast<float>(config_.cylinders.size()), std::memory_order_relaxed);
@@ -323,9 +325,16 @@ void EngineRuntime::shiftDown() noexcept {
 }
 
 void EngineRuntime::adjustDynoHoldRpm(double delta) noexcept {
-    const auto value = dynoHoldRpm_.load(std::memory_order_relaxed) + delta;
-    dynoHoldRpm_.store(std::clamp(value, std::max(500.0, config_.idleRpm * 0.6), config_.redlineRpm),
-                       std::memory_order_relaxed);
+    setDynoHoldRpm(dynoHoldRpm_.load(std::memory_order_relaxed) + delta);
+}
+
+void EngineRuntime::setDynoHoldRpm(double value) noexcept {
+    if (!std::isfinite(value)) return;
+    const auto maximumHoldRpm = std::min(
+        config_.redlineRpm, config_.ignition.revLimitRpm);
+    dynoHoldRpm_.store(
+        std::clamp(value, std::max(500.0, config_.idleRpm * 0.6), maximumHoldRpm),
+        std::memory_order_relaxed);
 }
 
 void EngineRuntime::updateDriveline(double dtSeconds, const EngineState& engineState,
@@ -498,17 +507,30 @@ void EngineRuntime::run(std::stop_token stopToken) {
                 const auto proportionalGain = controllerTorqueScaleNm / 500.0;
                 const auto integralGain = controllerTorqueScaleNm / 1'200.0;
                 const auto accelerationGain = controllerTorqueScaleNm / 6'000.0;
-                // An absorption dyno is unidirectional: while the engine is
-                // materially below the setpoint it must be completely unloaded.
-                // This also prevents a firing-pulse feed-forward estimate from
-                // dragging a low-inertia engine through stall during run-up.
-                if (simulator_.state().rpm < dynoTargetRpm_ - 120.0 && error < 0.0) {
+                // An absorption dyno is unidirectional, but enabling the whole
+                // firing-pulse feed-forward at one hard threshold makes a
+                // relaxation oscillator: the EA288 accelerated unloaded to
+                // target-120 rpm, received the complete brake torque in one
+                // tick, fell below the threshold and repeated forever. Ramp
+                // the absorber into contact across the final 120 rpm instead.
+                // Farther below the setpoint it remains completely unloaded,
+                // preserving the low-inertia run-up protection.
+                constexpr double dynoContactBandRpm = 120.0;
+                const auto contactPhase = std::clamp(
+                    (error + dynoContactBandRpm) / dynoContactBandRpm,
+                    0.0, 1.0);
+                const auto contactScale =
+                    contactPhase * contactPhase * (3.0 - 2.0 * contactPhase);
+                const auto contactedFeedForwardTorqueNm =
+                    dynoFeedForwardTorqueNm_ * contactScale;
+                if (error < -dynoContactBandRpm) {
                     dynoControllerIntegralNm_ = 0.0;
                     dynoBrakeTorqueNm_ = 0.0;
                 } else {
                     const auto integralCandidate = dynoControllerIntegralNm_
                         + error * integralGain * baseStep.count();
-                    const auto unsaturated = dynoFeedForwardTorqueNm_ + integralCandidate
+                    const auto unsaturated = contactedFeedForwardTorqueNm
+                        + integralCandidate
                         + error * proportionalGain
                         + dynoFilteredAccelerationRpmPerSecond_ * accelerationGain;
                     const auto saturated = std::clamp(unsaturated, 0.0, maximumBrakeTorqueNm);
@@ -518,7 +540,8 @@ void EngineRuntime::run(std::stop_token stopToken) {
                         dynoControllerIntegralNm_ = integralCandidate;
                     dynoControllerIntegralNm_ = std::clamp(
                         dynoControllerIntegralNm_, -maximumBrakeTorqueNm, maximumBrakeTorqueNm);
-                    dynoBrakeTorqueNm_ = std::clamp(dynoFeedForwardTorqueNm_
+                    dynoBrakeTorqueNm_ = std::clamp(
+                        contactedFeedForwardTorqueNm
                         + dynoControllerIntegralNm_ + error * proportionalGain
                         + dynoFilteredAccelerationRpmPerSecond_ * accelerationGain,
                         0.0, maximumBrakeTorqueNm);
@@ -674,10 +697,12 @@ void EngineRuntime::run(std::stop_token stopToken) {
             const std::scoped_lock lock(snapshotMutex_);
             snapshot_ = frame.state;
         }
+        const auto maximumDynoDurationSeconds =
+            dynoMaximumDurationSeconds_.load(std::memory_order_relaxed);
         const auto dynoStartupTimedOut = !dynoSweeping_.load(std::memory_order_relaxed)
-            && dynoStartupElapsed >= 30.0;
+            && dynoStartupElapsed >= maximumDynoDurationSeconds;
         if (dynoActive_ && (dynoCompleted_.load(std::memory_order_relaxed)
-            || dynoElapsed >= 30.0 || dynoStartupTimedOut)) {
+            || dynoElapsed >= maximumDynoDurationSeconds || dynoStartupTimedOut)) {
             dynoRequestedRunning_.store(false, std::memory_order_release);
             finishDynoSession();
         }

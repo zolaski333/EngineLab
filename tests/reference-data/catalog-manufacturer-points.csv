@@ -1,0 +1,15 @@
+engine_filter,metric,target_rpm,expected,tolerance,source
+Yamaha CP2,torque_nm,6500,68.0,0.15,Yamaha MT-07 EU rated specification
+Yamaha CP2,power_kw,8750,54.0,0.15,Yamaha MT-07 EU rated specification
+Yamaha CP3,torque_nm,7000,93.0,0.15,Yamaha MT-09 890 rated specification
+Yamaha CP3,power_kw,10000,87.5,0.15,Yamaha MT-09 890 rated specification
+Yamaha CP4,torque_nm,9000,111.0,0.15,Yamaha MT-10 rated specification
+Yamaha CP4,power_kw,11500,118.0,0.15,Yamaha MT-10 rated specification
+VW EA288,torque_nm,2000,320.0,0.15,Volkswagen Golf EA288 2.0 TDI 110 kW rated specification
+VW EA288,power_kw,4000,110.0,0.15,Volkswagen EA288 110 kW rated specification
+K20A-like,torque_nm,7000,206.0,0.15,Honda K20A rated specification
+K20A-like,power_kw,8000,162.0,0.15,Honda K20A rated specification
+LS3-like,torque_nm,4600,575.0,0.15,GM LS3 rated specification
+LS3-like,power_kw,5900,321.0,0.15,GM LS3 rated specification
+2JZ-GTE-like,torque_nm,4000,427.0,0.15,Toyota 2JZ-GTE export rated specification
+2JZ-GTE-like,power_kw,5600,239.0,0.15,Toyota 2JZ-GTE export rated specification

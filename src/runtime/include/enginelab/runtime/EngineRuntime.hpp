@@ -147,7 +147,8 @@ void publishAudioFrame(RealtimeAudioState& state, const EngineState& engineState
 class EngineRuntime final {
 public:
     explicit EngineRuntime(EngineConfig,
-                           std::shared_ptr<calibration::CalibrationStore> calibrations = {});
+                           std::shared_ptr<calibration::CalibrationStore> calibrations = {},
+                           EngineSimulatorOptions simulatorOptions = {});
     ~EngineRuntime();
     EngineRuntime(const EngineRuntime&) = delete;
     EngineRuntime& operator=(const EngineRuntime&) = delete;
@@ -163,6 +164,7 @@ public:
     void shiftDown() noexcept;
     void setGear(int gear) noexcept;
     void setDynoHoldEnabled(bool value) noexcept { dynoHoldEnabled_.store(value); }
+    void setDynoHoldRpm(double value) noexcept;
     void adjustDynoHoldRpm(double delta) noexcept;
     void setAudioVolume(double value) noexcept { audioState_.volume.store(static_cast<float>(std::clamp(value, 0.0, 2.0))); }
     void setAudioConvolution(double value) noexcept { audioState_.convolution.store(static_cast<float>(std::clamp(value, 0.0, 1.0))); }
@@ -179,6 +181,7 @@ public:
     }
     void setExhaustPreset(AudioExhaustPreset value) noexcept { audioState_.exhaustPreset.store(static_cast<int>(value), std::memory_order_relaxed); }
     [[nodiscard]] bool dynoHoldEnabled() const noexcept { return dynoHoldEnabled_.load(); }
+    [[nodiscard]] double dynoHoldRpm() const noexcept { return dynoHoldRpm_.load(); }
     void setAirFuelRatioTrim(double value) noexcept { ecu_.setAirFuelRatioTrim(value); }
     void setTargetAirFuelRatio(double value) noexcept { ecu_.setTargetAirFuelRatio(value); }
     void setIgnitionTrimDegrees(double value) noexcept { ecu_.setIgnitionTrimDegrees(value); }
@@ -201,6 +204,9 @@ public:
     [[nodiscard]] RealtimeAudioState& audioState() noexcept { return audioState_; }
     [[nodiscard]] const EngineConfig& engineConfig() const noexcept { return config_; }
     [[nodiscard]] const ExhaustGraph& exhaustGraph() const noexcept { return exhaust_; }
+    [[nodiscard]] std::size_t intakeWorkerCount() const noexcept {
+        return simulator_.intakeWorkerCount();
+    }
     [[nodiscard]] std::shared_ptr<calibration::CalibrationStore> calibrationStore() const noexcept {
         return ecu_.calibrationStore();
     }
@@ -224,6 +230,14 @@ public:
      */
     void setRealtimeThrottleEnabled(bool enabled) noexcept {
         realtimeThrottleEnabled_.store(enabled, std::memory_order_relaxed);
+    }
+    /** Instrumentation escape hatch for harnesses that must wait for a slow
+     * high-load setpoint to settle. The application keeps the 30 s default. */
+    void setDynoMaximumDurationSeconds(double seconds) noexcept {
+        if (std::isfinite(seconds))
+            dynoMaximumDurationSeconds_.store(
+                std::clamp(seconds, 30.0, 300.0),
+                std::memory_order_relaxed);
     }
 private:
     void run(std::stop_token stopToken);
@@ -260,6 +274,7 @@ private:
     std::atomic<std::uint64_t> droppedPressureSamples_ { 0 };
     std::atomic<std::uint64_t> timingOverruns_ { 0 };
     std::atomic<double> maximumTimingLatenessSeconds_ { 0.0 };
+    std::atomic<double> dynoMaximumDurationSeconds_ { 30.0 };
     std::atomic<bool> paused_ { false };
     std::atomic<bool> realtimeThrottleEnabled_ { true };
     std::atomic<double> timeScale_ { 1.0 };

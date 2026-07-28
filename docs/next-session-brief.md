@@ -4,6 +4,13 @@ Ce fichier est le prompt de démarrage à donner à un agent IA qui reprend le
 projet sur une autre machine. Il est écrit pour être lu à froid, sans le
 contexte de la session précédente.
 
+> **Mise à jour après reprise (2026-07-28).** Les priorités 1 à 6 ci-dessous
+> ont été exécutées et validées. Lire d'abord
+> `docs/validation-2026-07-28.md` pour les tables, le protocole A/B, les
+> 20/20 tests et les limites restantes. Le prochain défaut physique quantifié
+> est la PMEP haut régime ; ne pas recommencer une optimisation d'admission ou
+> de pool sans contredire les nouveaux garde-fous.
+
 ---
 
 Tu reprends EngineLab, un simulateur de moteur thermique temps réel dont
@@ -33,7 +40,9 @@ le même binaire mesurait 467 ns/cellule à froid et **1404 après quelques heur
 un facteur trois. Toutes les valeurs absolues de performance dans la
 documentation en portent la marque.
 
-La nouvelle machine est un **i5-11600** (6 cœurs / 12 threads, 65 W, bureau).
+La machine avait été annoncée comme un **i5-11600**, mais Windows l'identifie
+comme un **i5-10600** (6 cœurs / 12 threads, bureau). Ce désaccord de nom ne
+change pas le protocole : seules les mesures locales comptent.
 Deux conséquences opposées, et il faut les mesurer et non les supposer :
 
 - fréquence soutenue bien meilleure, pas d'effondrement thermique → le
@@ -94,7 +103,8 @@ Branche `codex/audio-physics-phases-4-5`, trois commits récents :
   Physique déplacée : EGT sous 0,15 % de moyenne par moteur.
 - `944e2cd` — deux réfutations (voir ci-dessous).
 
-La suite de 19 tests était verte. `ctest --test-dir out/build/windows-vs2022 -C Release`.
+La suite de 20 tests est verte après la reprise.
+`ctest --test-dir out/build/windows-vs2022 -C Release`.
 
 ## Ce qui est déjà réfuté — ne pas réessayer
 

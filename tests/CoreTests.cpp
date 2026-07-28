@@ -2237,8 +2237,20 @@ int main() {
         runtime.setThrottle(0.31);
         runtime.setLoad(0.27);
         runtime.start(); runtime.startDyno();
-        std::this_thread::sleep_for(std::chrono::milliseconds(4'500));
-        const auto liveRun = runtime.currentDynoRun();
+        // This is an outcome guard, not a wall-clock benchmark. The smoother
+        // absorber contact deliberately trades a little sweep speed for a
+        // stable hold on high-compression engines, and host scheduling can add
+        // further wall-time variance. Wait for the required three physical
+        // points, with a bounded deadline, instead of assuming one machine's
+        // 4.5 s timing.
+        auto liveRun = runtime.currentDynoRun();
+        const auto dynoProofDeadline =
+            std::chrono::steady_clock::now() + std::chrono::seconds(10);
+        while (liveRun.points.size() < 3
+               && std::chrono::steady_clock::now() < dynoProofDeadline) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            liveRun = runtime.currentDynoRun();
+        }
         if (liveRun.points.size() < 3)
             std::cerr << "dyno diagnostic: points=" << liveRun.points.size() << " rpm=" << runtime.snapshot().rpm << '\n';
         runtime.stopDyno();

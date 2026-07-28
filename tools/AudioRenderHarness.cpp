@@ -36,6 +36,8 @@
 #include <memory>
 #include <numbers>
 #include <numeric>
+#include <optional>
+#include <stdexcept>
 #include <string>
 #include <thread>
 #include <vector>
@@ -55,6 +57,10 @@ bool muteIntakeLayer = false;
 // Offline oracle only. Large engines are not expected to meet realtime when the
 // complete nonlinear network is advanced on every mechanical substep.
 bool referenceCouplingEverySubstep = false;
+// Harness-only simulator policy. Empty means the production defaults compiled
+// into EngineSimulator; selected comparison modes override one dimension while
+// leaving the rest of the delivered path unchanged.
+EngineSimulatorOptions renderSimulatorOptions;
 // Render chunk size within each simulation step; see the invariance probe at
 // the render call. 200 reproduces the historical single-call behaviour.
 int audioChunkSamples = 200;
@@ -102,7 +108,11 @@ bool loadWav(const std::filesystem::path& path, WavData& out) {
 
 void writeWav(const std::filesystem::path& path, const std::vector<float>& left,
               const std::vector<float>& right, int sampleRate) {
+    if (!path.parent_path().empty())
+        std::filesystem::create_directories(path.parent_path());
     std::ofstream out(path, std::ios::binary);
+    if (!out)
+        throw std::runtime_error("could not create WAV proof: " + path.string());
     const auto frames = std::min(left.size(), right.size());
     const auto dataBytes = static_cast<std::uint32_t>(frames * 2 * sizeof(std::int16_t));
     const auto put32 = [&](std::uint32_t v) { for (int i = 0; i < 4; ++i) out.put(static_cast<char>((v >> (8 * i)) & 0xffU)); };
@@ -116,6 +126,9 @@ void writeWav(const std::filesystem::path& path, const std::vector<float>& left,
             std::lrint(std::clamp(s, -1.0F, 1.0F) * 32767.0F))));
     };
     for (std::size_t i = 0; i < frames; ++i) { encode(left[i]); encode(right[i]); }
+    out.flush();
+    if (!out)
+        throw std::runtime_error("could not finish WAV proof: " + path.string());
 }
 
 // Safety scan over the complete rendered signal. These are the properties that
@@ -424,7 +437,8 @@ Metrics renderEngine(const EngineConfig& baseConfig, const WavData& ir,
     normaliseEngineConfig(config);
     SimpleEcuModel ecu; SimplifiedGasolinePhysics physics; FourStrokeEventGenerator events;
     auto exhaust = ExhaustGraph::makeForEngine(config);
-    auto simulatorPtr = std::make_unique<EngineSimulator>(config, ecu, physics, events, exhaust);
+    auto simulatorPtr = std::make_unique<EngineSimulator>(
+        config, ecu, physics, events, exhaust, renderSimulatorOptions);
     auto& simulator = *simulatorPtr;
     simulator.setPressureSamplingEnabled(true);
     simulator.setExhaustCouplingEverySubstep(referenceCouplingEverySubstep);
@@ -1070,10 +1084,14 @@ DecayMeasurement measureExhaustDecay(const EngineConfig& baseConfig, const WavDa
  * offline measurements looking healthy while the delivered application quietly
  * ran the legacy procedural path instead. This closes that gap.
  */
-bool runtimePathCheck(const EngineConfig& baseConfig, const WavData& ir) {
+bool runtimePathCheck(const EngineConfig& baseConfig, const WavData& ir,
+                      std::optional<std::size_t> intakeWorkers = {}) {
     auto config = baseConfig;
     normaliseEngineConfig(config);
-    auto runtime = std::make_unique<EngineRuntime>(config);
+    EngineSimulatorOptions simulatorOptions;
+    simulatorOptions.intakeWorkerCount = intakeWorkers;
+    auto runtime = std::make_unique<EngineRuntime>(
+        config, nullptr, simulatorOptions);
     auto renderer = std::make_unique<RealtimeEngineAudio>(
         runtime->audioEvents(), runtime->audioState(),
         &runtime->cylinderPressureSamples(), &runtime->exhaustGraph(),
@@ -1160,6 +1178,7 @@ bool runtimePathCheck(const EngineConfig& baseConfig, const WavData& ir) {
     const auto finalRpm = runtime->audioState().rpm.load(std::memory_order_relaxed);
     std::cout << "  " << std::left << std::setw(26) << config.name
               << " finalRpm=" << std::fixed << std::setprecision(0) << finalRpm
+              << " intakeWorkers=" << runtime->intakeWorkerCount()
               << " physical=" << (physical ? "yes" : "NO")
               << " topology=" << (fullTopology ? "full" : "LEGACY")
               << " structure=" << (modalStructure ? "modal" : "LEGACY")
@@ -1240,6 +1259,9 @@ int main(int argc, char** argv) {
     bool idleOnly = false;
     std::string referenceFilter;
     std::string catalogueFilter;
+    std::string runtimeFilter;
+    std::string couplingComparisonFilter;
+    std::optional<std::size_t> intakeWorkers;
     for (int i = 1; i < argc; ++i) {
         const std::string a = argv[i];
         if (a == "--output" && i + 1 < argc) outDir = argv[++i];
@@ -1249,6 +1271,12 @@ int main(int argc, char** argv) {
             referenceFilter = argv[++i];
         else if (a == "--catalogue-filter" && i + 1 < argc)
             catalogueFilter = argv[++i];
+        else if (a == "--runtime-filter" && i + 1 < argc)
+            runtimeFilter = argv[++i];
+        else if (a == "--coupling-comparison" && i + 1 < argc)
+            couplingComparisonFilter = argv[++i];
+        else if (a == "--intake-workers" && i + 1 < argc)
+            intakeWorkers = static_cast<std::size_t>(std::stoull(argv[++i]));
         else if (a == "--mute-combustion") muteCombustionLayer = true;
         else if (a == "--mute-mechanical") muteMechanicalLayer = true;
         else if (a == "--mute-intake") muteIntakeLayer = true;
@@ -1263,6 +1291,77 @@ int main(int argc, char** argv) {
                   << " samples @ " << ir.sampleRate << " Hz)\n";
     else
         std::cout << "WARNING: could not load IR at " << irPath.string() << " (using renderer fallback)\n";
+
+    if (!couplingComparisonFilter.empty()) {
+        const auto catalog = loadEngineCatalog(
+            std::filesystem::path(ENGINELAB_CATALOG_ROOT));
+        const auto selected = std::find_if(catalog.entries.begin(), catalog.entries.end(),
+            [&couplingComparisonFilter](const auto& entry) {
+                return entry.config.name.find(couplingComparisonFilter)
+                    != std::string::npos;
+            });
+        if (selected == catalog.entries.end()) {
+            std::cerr << "FAIL: no catalogue engine matches coupling comparison '"
+                      << couplingComparisonFilter << "'\n";
+            return 2;
+        }
+        std::cout << "\n--- Exhaust coupling bandwidth A/B/oracle ---\n";
+        referenceCouplingEverySubstep = false;
+        renderSimulatorOptions = {};
+        const auto production = renderEngine(
+            selected->config, ir, outDir / "coupling-125us", 3.0, true);
+        renderSimulatorOptions.maximumLowSpeedExhaustCouplingSeconds = 250.0e-6;
+        const auto historical = renderEngine(
+            selected->config, ir, outDir / "coupling-250us", 3.0, true);
+        renderSimulatorOptions = {};
+        referenceCouplingEverySubstep = true;
+        const auto oracle = renderEngine(
+            selected->config, ir, outDir / "coupling-oracle", 3.0, true);
+        referenceCouplingEverySubstep = false;
+
+        const auto productionSimilarity = cosineSimilarity(production, oracle);
+        const auto historicalSimilarity = cosineSimilarity(historical, oracle);
+        std::cout << std::fixed << std::setprecision(6)
+                  << "  couplingHz production/historical/oracle="
+                  << production.couplingHz << '/' << historical.couplingHz
+                  << '/' << oracle.couplingHz << '\n'
+                  << "  physical Nyquist Hz production/historical="
+                  << production.couplingHz * 0.5 << '/'
+                  << historical.couplingHz * 0.5 << '\n'
+                  << "  spectral cosine to full-substep oracle production="
+                  << productionSimilarity << " historical="
+                  << historicalSimilarity << '\n'
+                  << "  high-band fraction production/historical/oracle="
+                  << production.left.window.highBandFraction << '/'
+                  << historical.left.window.highBandFraction << '/'
+                  << oracle.left.window.highBandFraction << '\n';
+        const auto structurallyValid = production.left.scan.finite
+            && historical.left.scan.finite && oracle.left.scan.finite
+            && production.invalidBoundarySamples == 0
+            && historical.invalidBoundarySamples == 0
+            && oracle.invalidBoundarySamples == 0
+            && production.droppedPressureSamples == 0
+            && historical.droppedPressureSamples == 0
+            && oracle.droppedPressureSamples == 0
+            && production.couplingHz >= historical.couplingHz * 1.80;
+        return structurallyValid ? 0 : 1;
+    }
+
+    if (!runtimeFilter.empty()) {
+        const auto catalog = loadEngineCatalog(
+            std::filesystem::path(ENGINELAB_CATALOG_ROOT));
+        const auto selected = std::find_if(catalog.entries.begin(), catalog.entries.end(),
+            [&runtimeFilter](const auto& entry) {
+                return entry.config.name.find(runtimeFilter) != std::string::npos;
+            });
+        if (selected == catalog.entries.end()) {
+            std::cerr << "FAIL: no catalogue engine matches runtime filter '"
+                      << runtimeFilter << "'\n";
+            return 2;
+        }
+        std::cout << "\n--- Application wiring: selected EngineRuntime path check ---\n";
+        return runtimePathCheck(selected->config, ir, intakeWorkers) ? 0 : 1;
+    }
 
     if (!referenceFilter.empty()) {
         const auto catalog = loadEngineCatalog(

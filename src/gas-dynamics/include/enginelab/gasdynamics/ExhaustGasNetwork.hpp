@@ -41,6 +41,10 @@ struct ExhaustGasNetworkConfig final {
      * the wall burst landed on a different dispatch for every cylinder.
      */
     bool wallHeatUpdateExternallyTriggered { false };
+    /** Use one conservative forward-Euler stage per accepted substep instead
+     * of SSP-RK2. Intended for deliberately reduced, multirate intake
+     * networks; the exhaust and offline oracle keep RK2. */
+    bool firstOrderTimeIntegration { false };
     double maximumCourantNumber { 0.42 };
     std::size_t maximumSubstepsPerAdvance { 100'000 };
 

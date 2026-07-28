@@ -2,12 +2,12 @@
 // range, measured at wide-open throttle under a dyno absorber.
 //
 // This is the guard for intake breathing, written BEFORE the 1-D intake
-// gas-dynamics work it is meant to protect (the same design as the combustion
-// phasing instrument: the reference numbers come from engine literature, never
-// from this simulator's output, so the gate cannot be a re-calibration onto
-// current behaviour). It sweeps a known engine at WOT, extracts the VE(rpm)
-// curve, and evaluates four criteria a real naturally-aspirated multi-valve
-// engine satisfies:
+// gas-dynamics work it now protects (the same design as the combustion phasing
+// instrument: the reference numbers come from engine literature, never from
+// this simulator's output, so the gate cannot be a re-calibration onto current
+// behaviour). It sweeps a known engine at WOT, extracts the VE(rpm) curve, and
+// evaluates four criteria a real naturally-aspirated multi-valve engine
+// satisfies:
 //
 //   1. Peak VE in [0.85, 1.15]. Heywood: ordinary NA SI engines peak at
 //      0.80-0.90; tuned intake/exhaust (ram + wave action) carries sport
@@ -32,19 +32,13 @@
 // cycle against displacement x AMBIENT density (EngineSimulator publishes
 // exactly this), so the literature numbers compare directly.
 //
-// Finding when this was written (2026-07-25): the invariants hold -- the
-// sweep is stable, finite, WOT is genuinely reached (MAP ~97 kPa) -- but the
-// simulator fails the tuning criteria exactly as the topology predicts. The
-// intake is a lumped 0-D path (one plenum cell, one runner cell, quasi-steady
-// orifice) whose only rpm dependence is "less time to fill through a fixed
-// restriction", so VE decays monotonically: the peak pins to the sweep floor
-// (criterion 2) and doubling the runner length moves it nowhere (criterion 4).
-// The four criteria are therefore REPORTED by default and enforced only under
-// --enforce-tuning; the always-on part of this test is the instrument's own
-// health. When the 1-D intake lands, the ctest registration gains
-// --enforce-tuning and the criteria become hard gates. Do not weaken a
-// criterion to make that promotion pass: they encode real-engine behaviour,
-// not a target the simulator has ever met.
+// Historical finding when this was written (2026-07-25): the old lumped 0-D
+// path failed criteria 2 and 4. The resolved 1-D runners subsequently promoted
+// all four literature criteria to CTest gates. The 2026-07-28 realtime
+// reduction adds a second, deliberately different guard under
+// --compare-oracle: every production VE point must remain within 15% of the
+// former 30 mm / RK2 / every-substep numerical configuration. Do not weaken
+// either guard to make a change pass.
 //
 // Instrument notes, learned the hard way elsewhere in this repo:
 //  * WOT under a dyno absorber is the only way to measure a VE curve here.
@@ -66,6 +60,8 @@
 #include <cstdlib>
 #include <iomanip>
 #include <iostream>
+#include <optional>
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -83,6 +79,7 @@ constexpr double targetPeakVeHigh = 1.15;
 constexpr double targetPeakRpmFractionOfRevLimit = 0.40;
 constexpr double targetHighRpmVeFractionOfPeak = 0.80;
 constexpr double targetRunnerDoublingPeakShift = 0.15;
+constexpr double maximumReductionVeError = 0.15;
 
 constexpr double sweepStepRpm = 500.0;
 
@@ -152,12 +149,14 @@ struct SweepResult final {
 // is refined with a 3-point parabolic fit on the uniform target-rpm grid when
 // the discrete maximum is interior; a maximum pinned to either end of the
 // sweep is reported as-is (and at the low end is itself the diagnosis).
-SweepResult sweepEngine(const enginelab::EngineConfig& config, double maxRpm) {
+SweepResult sweepEngine(const enginelab::EngineConfig& config, double maxRpm,
+                        const enginelab::EngineSimulatorOptions& options) {
     enginelab::SimpleEcuModel ecu;
     enginelab::SimplifiedGasolinePhysics physics;
     enginelab::FourStrokeEventGenerator events;
     auto exhaust = enginelab::ExhaustGraph::makeForEngine(config);
-    enginelab::EngineSimulator simulator(config, ecu, physics, events, exhaust);
+    enginelab::EngineSimulator simulator(
+        config, ecu, physics, events, exhaust, options);
 
     constexpr double dt = 1.0 / 240.0;
     for (int step = 0; step < static_cast<int>(2.0 / dt); ++step) {
@@ -206,8 +205,32 @@ SweepResult sweepEngine(const enginelab::EngineConfig& config, double maxRpm) {
 
 int main(int argc, char** argv) {
     auto enforceTuning = false;
-    for (int index = 1; index < argc; ++index)
-        if (std::string_view(argv[index]) == "--enforce-tuning") enforceTuning = true;
+    auto compareOracle = false;
+    enginelab::EngineSimulatorOptions options;
+    for (int index = 1; index < argc; ++index) {
+        const auto argument = std::string_view(argv[index]);
+        if (argument == "--enforce-tuning") enforceTuning = true;
+        else if (argument == "--compare-oracle") compareOracle = true;
+        else if (argument == "--intake-max-cells" && index + 1 < argc)
+            options.intakeMaximumCellCount =
+                static_cast<std::size_t>(std::stoull(argv[++index]));
+        else if (argument == "--intake-staircase-rounds" && index + 1 < argc)
+            options.intakeStaircaseRounds =
+                static_cast<std::size_t>(std::stoull(argv[++index]));
+        else if (argument == "--intake-workers" && index + 1 < argc)
+            options.intakeWorkerCount =
+                static_cast<std::size_t>(std::stoull(argv[++index]));
+        else if (argument == "--intake-coupling-us" && index + 1 < argc)
+            options.intakeCouplingIntervalSeconds =
+                std::stod(argv[++index]) * 1.0e-6;
+        else if (argument == "--intake-cell-mm" && index + 1 < argc)
+            options.intakeTargetCellLengthM =
+                std::stod(argv[++index]) * 1.0e-3;
+        else if (argument == "--intake-euler")
+            options.intakeFirstOrderTimeIntegration = true;
+        else if (argument == "--intake-rk2")
+            options.intakeFirstOrderTimeIntegration = false;
+    }
 
     auto baseline = enginelab::makeDefaultInlineFour();
     enginelab::normaliseEngineConfig(baseline);
@@ -226,8 +249,8 @@ int main(int argc, char** argv) {
 
     std::cout << std::fixed << std::setprecision(3)
               << "--- Intake tuning sweep (inline4, WOT dyno absorber) ---\n";
-    const auto base = sweepEngine(baseline, maxRpm);
-    const auto twice = sweepEngine(doubled, maxRpm);
+    const auto base = sweepEngine(baseline, maxRpm, options);
+    const auto twice = sweepEngine(doubled, maxRpm, options);
 
     // --- Always-on: the instrument's own health. A failure here means the
     // measurement is void, not that the tuning physics regressed.
@@ -240,7 +263,7 @@ int main(int argc, char** argv) {
                       << "rpm=" << point.actualRpm << " ve=" << point.ve
                       << " map=" << point.mapKpa << "kPa lambda=" << point.lambda << '\n';
             require(point.finite, "sweep telemetry must stay finite at every point");
-            require(std::abs(point.actualRpm - point.targetRpm) < 0.15 * point.targetRpm,
+            require(std::abs(point.actualRpm - point.targetRpm) <= 0.02 * point.targetRpm,
                     "the absorber must actually hold each swept operating point");
             require(point.ve > 0.2 && point.ve < 1.6,
                     "VE must stay physically bounded at WOT");
@@ -251,6 +274,53 @@ int main(int argc, char** argv) {
         }
         require(sweep->points.back().targetRpm >= 0.85 * maxRpm,
                 "the sweep must reach the top of the rev range");
+    }
+
+    if (compareOracle) {
+        auto oracleOptions = options;
+        oracleOptions.intakeMaximumCellCount = 12;
+        oracleOptions.intakeTargetCellLengthM = 0.030;
+        oracleOptions.intakeStaircaseRounds = 2;
+        oracleOptions.intakeCouplingIntervalSeconds = 0.0;
+        oracleOptions.intakeFirstOrderTimeIntegration = false;
+
+        std::cout << "--- Intake reduction A/B (production vs 30mm/RK2/substep oracle) ---\n";
+        const auto oracleBase = sweepEngine(baseline, maxRpm, oracleOptions);
+        const auto oracleTwice = sweepEngine(doubled, maxRpm, oracleOptions);
+        require(base.points.size() == oracleBase.points.size()
+                    && twice.points.size() == oracleTwice.points.size(),
+                "production and oracle sweeps must cover the same operating points");
+
+        auto maximumError = 0.0;
+        const auto compareSweep = [&maximumError](
+                                      const char* label,
+                                      const SweepResult& production,
+                                      const SweepResult& oracle) {
+            for (std::size_t index = 0; index < production.points.size(); ++index) {
+                const auto& measured = production.points[index];
+                const auto& reference = oracle.points[index];
+                require(reference.finite, "oracle telemetry must stay finite");
+                require(std::abs(reference.actualRpm - reference.targetRpm)
+                            <= 0.02 * reference.targetRpm,
+                        "the absorber must hold every oracle operating point");
+                require(std::abs(measured.targetRpm - reference.targetRpm) < 1.0,
+                        "production and oracle target grids must match");
+                const auto relativeError = std::abs(measured.ve - reference.ve)
+                    / std::max(0.05, std::abs(reference.ve));
+                maximumError = std::max(maximumError, relativeError);
+                std::cout << "  " << label << ' '
+                          << std::setw(5) << static_cast<int>(measured.targetRpm)
+                          << " rpm production=" << measured.ve
+                          << " oracle=" << reference.ve
+                          << " error=" << relativeError * 100.0 << "%\n";
+            }
+        };
+        compareSweep("base", base, oracleBase);
+        compareSweep("2xL ", twice, oracleTwice);
+        std::cout << "  maximum VE deviation=" << maximumError * 100.0
+                  << "% (limit " << maximumReductionVeError * 100.0 << "%)\n";
+        require(maximumError <= maximumReductionVeError,
+                "the realtime intake reduction must stay within 15% of the numerical oracle");
     }
 
     // --- Literature criteria: reported always, enforced under --enforce-tuning.

@@ -29,8 +29,10 @@ engine:
       - { rpm: 1200, advance_deg: 14 }
       - { rpm: 2500, advance_deg: 22 }
       - { rpm: 4200, advance_deg: 27 }
-      - { rpm: 5800, advance_deg: 28 }
-      - { rpm: 6700, advance_deg: 25 }
+      # High-speed WOT phasing anchored by the stock 321 kW @5900 rpm point.
+      # This changes pressure phasing rather than applying a torque multiplier.
+      - { rpm: 5800, advance_deg: 33 }
+      - { rpm: 6700, advance_deg: 30 }
   uses:
     injection: sequential_port
     camshafts: big_v8_street

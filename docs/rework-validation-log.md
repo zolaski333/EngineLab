@@ -557,3 +557,24 @@ valent rien, la machine ayant dérivé de 20 % pendant les mesures. Seuls les
 rapports entrelacés ci-dessus sont fiables. Une table absolue devra être reprise
 sur une machine reposée avant toute affirmation du type « N moteurs sur 14
 passent le temps réel ».
+
+## 2026-07-28 — Reprise sur 6 cœurs / 12 threads
+
+La reprise complète, les tables et les commandes reproductibles sont consignées
+dans [`validation-2026-07-28.md`](validation-2026-07-28.md).
+
+- le catalogue complet passe le plancher 1,10× temps réel à 90 % du régime
+  limite (pire LS3 1,102 ; Merlin 1,105) ;
+- l'admission réduite reste à 13,435 % de l'oracle sur le cas runner 2× et à
+  4,022 % sur le moteur standard ;
+- le plafond 5 workers est retenu après A/B contrebalancé, chemin applicatif et
+  témoin CP2 ;
+- le couplage échappement 125 µs restaure une Nyquist physique de 3,48 à
+  5,64 kHz sur les deux cas lourds mesurés ;
+- 14/14 points constructeur, 14/14 ralentis, 20/20 tests et le smoke test
+  Release passent.
+
+**Non résolu et assumé** : PMEP haut régime 1,480 bar à 6 000 tr/min pour une
+cible 0,750 ; références constructeur encore absentes pour les moteurs
+génériques/scalés ; marge de capacité brute d'environ 10 %, pas 15 %, sur les
+deux cas les plus lourds.

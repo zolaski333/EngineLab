@@ -27,12 +27,15 @@ engine:
   forced_induction:
     enabled: true
     type: turbocharger
-    pressure_ratio: 1.85
+    # Export 2JZ-GTE rated-point calibration. A 1.92 absolute pressure ratio is
+    # still a stock-class ~0.9 bar boost and keeps both 4000-rpm torque and
+    # 5600-rpm power inside the manufacturer ±15% gate.
+    pressure_ratio: 1.92
     full_boost_rpm: 3600
     compressor_efficiency: 0.72
     turbine_efficiency: 0.70
     shaft_inertia_kg_m2: 0.00016
-    wastegate_pressure_ratio: 1.82
+    wastegate_pressure_ratio: 1.89
     charge_temperature_rise_c: 42
     # Family-level acoustic estimates; replace with measured turbo geometry.
     compressor_blade_count: 6

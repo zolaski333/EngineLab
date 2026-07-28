@@ -1153,29 +1153,44 @@ ExhaustNetworkAdvanceResult ExhaustGasNetwork::advance(
                 continue;
             }
 
-            if (!evaluateStage(true, cylinderBoundaries, ambient)) {
-                result.completed = false;
-                break;
-            }
-            for (auto& duct : ducts_) {
-                for (std::size_t index = 0; index < duct.cells_.size(); ++index) {
-                    duct.candidate_[index] = rk2Combination(
-                        duct.cells_[index], duct.stage_[index],
-                        duct.stageResidual_[index], trialStep);
+            if (config_.firstOrderTimeIntegration) {
+                // The validated stage is the conservative Euler candidate.
+                // Reuse the normal candidate/commit path so positivity, wall
+                // heat and conservation accounting remain common with RK2.
+                for (auto& duct : ducts_) duct.candidate_ = duct.stage_;
+                junctionCandidate_ = junctionStage_;
+                cylinderReservoirCandidate_ = cylinderReservoirStage_;
+                // The trapezoidal transfer accounting below becomes exactly
+                // dt*f(U_n) when both slots carry the first-stage flow.
+                cylinderSecondStageFlow_ = cylinderFirstStageFlow_;
+                outletSecondStageFlow_ = outletFirstStageFlow_;
+            } else {
+                if (!evaluateStage(true, cylinderBoundaries, ambient)) {
+                    result.completed = false;
+                    break;
                 }
-            }
-            for (std::size_t index = 0; index < junctionStates_.size(); ++index) {
-                junctionCandidate_[index] = rk2Combination(
-                    junctionStates_[index], junctionStage_[index],
-                    junctionStageResidual_[index], trialStep);
-                junctionCandidate_[index].momentumDensityKgPerM2S = 0.0;
-            }
-            for (std::size_t index = 0; index < cylinderReservoirStates_.size(); ++index) {
-                if (cylinderReservoirActive_[index] == 0) continue;
-                cylinderReservoirCandidate_[index] = rk2Combination(
-                    cylinderReservoirStates_[index], cylinderReservoirStage_[index],
-                    cylinderReservoirStageResidual_[index], trialStep);
-                cylinderReservoirCandidate_[index].momentumDensityKgPerM2S = 0.0;
+                for (auto& duct : ducts_) {
+                    for (std::size_t index = 0; index < duct.cells_.size(); ++index) {
+                        duct.candidate_[index] = rk2Combination(
+                            duct.cells_[index], duct.stage_[index],
+                            duct.stageResidual_[index], trialStep);
+                    }
+                }
+                for (std::size_t index = 0; index < junctionStates_.size(); ++index) {
+                    junctionCandidate_[index] = rk2Combination(
+                        junctionStates_[index], junctionStage_[index],
+                        junctionStageResidual_[index], trialStep);
+                    junctionCandidate_[index].momentumDensityKgPerM2S = 0.0;
+                }
+                for (std::size_t index = 0;
+                     index < cylinderReservoirStates_.size(); ++index) {
+                    if (cylinderReservoirActive_[index] == 0) continue;
+                    cylinderReservoirCandidate_[index] = rk2Combination(
+                        cylinderReservoirStates_[index],
+                        cylinderReservoirStage_[index],
+                        cylinderReservoirStageResidual_[index], trialStep);
+                    cylinderReservoirCandidate_[index].momentumDensityKgPerM2S = 0.0;
+                }
             }
             for (auto& duct : ducts_)
                 for (auto& state : duct.candidate_)

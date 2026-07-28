@@ -24,12 +24,12 @@ target_link_libraries(EngineLabIntakeTuningTests PRIVATE
     EngineLab::Foundation EngineLab::Events EngineLab::Physics EngineLab::Ecu
     EngineLab::Exhaust EngineLab::Simulation)
 enginelab_set_warnings(EngineLabIntakeTuningTests)
-# --enforce-tuning: the four literature criteria are hard gates. They were
-# frozen and registered report-only BEFORE the 1-D intake existed (see the test
-# header), and promoted the day the resolved runners first met them: peak VE
-# 1.012 at 71 % of the rev limit, anti-resonance dip at ~2450 rpm, and a 2x
-# runner length moving the peak down 23.7 %. Do not weaken a criterion.
-add_test(NAME EngineLab.IntakeTuning COMMAND EngineLabIntakeTuningTests --enforce-tuning)
+# --enforce-tuning keeps the four literature criteria hard. --compare-oracle
+# additionally constrains the realtime 75 mm/Euler/multirate reduction to 15%
+# point-by-point against the former 30 mm/RK2/every-substep configuration.
+# These are independent guards: real-engine curve shape and numerical drift.
+add_test(NAME EngineLab.IntakeTuning COMMAND EngineLabIntakeTuningTests
+    --enforce-tuning --compare-oracle)
 set_tests_properties(EngineLab.IntakeTuning PROPERTIES TIMEOUT 600)
 
 add_executable(EngineLabGasExchangeTests GasExchangeTests.cpp)
@@ -90,9 +90,18 @@ if(TARGET EngineLabDynoSweepHarness)
     # sizes are tied by a static assertion. This fast invocation also catches a
     # stale executable or argument/parser regression before a multi-minute sweep.
     add_test(NAME EngineLab.DynoSchema COMMAND EngineLabDynoSweepHarness --schema-only)
+    # Manufacturer-anchored rated points. Unlike CatalogPhysics, this is an
+    # absolute torque/power gate: every point must be held within 2% rpm and
+    # land within the committed 15% real-engine envelope.
+    add_test(NAME EngineLab.CatalogReference
+        COMMAND EngineLabDynoSweepHarness
+            --catalog-root "${CMAKE_SOURCE_DIR}"
+            --reference-file
+                "${CMAKE_SOURCE_DIR}/tests/reference-data/catalog-manufacturer-points.csv")
     set_tests_properties(EngineLab.DynoSchema PROPERTIES
         PASS_REGULAR_EXPRESSION
             "exhaust_stroke_mep_bar,intake_stroke_mep_bar")
+    set_tests_properties(EngineLab.CatalogReference PROPERTIES TIMEOUT 600)
 endif()
 if(TARGET EngineLabAudioRenderHarness)
     add_test(NAME EngineLab.AudioRender COMMAND EngineLabAudioRenderHarness)
