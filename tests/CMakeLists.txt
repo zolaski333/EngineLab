@@ -25,7 +25,7 @@ target_link_libraries(EngineLabIntakeTuningTests PRIVATE
     EngineLab::Exhaust EngineLab::Simulation)
 enginelab_set_warnings(EngineLabIntakeTuningTests)
 # --enforce-tuning keeps the four literature criteria hard. --compare-oracle
-# additionally constrains the realtime 75 mm/Euler/multirate reduction to 15%
+# additionally constrains the realtime 95 mm/Euler/multirate reduction to 15%
 # point-by-point against the former 30 mm/RK2/every-substep configuration.
 # These are independent guards: real-engine curve shape and numerical drift.
 add_test(NAME EngineLab.IntakeTuning COMMAND EngineLabIntakeTuningTests

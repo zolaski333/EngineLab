@@ -40,7 +40,7 @@ struct EngineSimulatorOptions final {
      * to establish a convergence point without rewriting authored geometry. */
     std::optional<std::size_t> intakeMaximumCellCount;
     /** Diagnostic spatial target for the intake FV oracle/reduced mesh.
-     * Absent selects the measured production target (75 mm). */
+     * Absent selects the measured production target (95 mm). */
     std::optional<double> intakeTargetCellLengthM;
     /** Fixed-point rounds used to reconstruct the shared-plenum staircase
      * before concurrent runner advances. */

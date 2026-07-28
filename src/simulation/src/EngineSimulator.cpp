@@ -514,13 +514,13 @@ void EngineSimulator::configurePhysicalIntakeNetworks() {
         runner.hydraulicDiameterM =
             2.0 * std::sqrt(meanAreaM2 / std::numbers::pi);
         runner.volumeM3 = meanAreaM2 * runner.lengthM;
-        // The realtime mesh targets 75 mm while retaining at least three
+        // The realtime mesh targets 95 mm while retaining at least three
         // volumes: a quarter-wave fundamental (lambda ~= 4L) therefore has at
         // least twelve cells per wavelength under the unchanged MUSCL spatial
         // reconstruction. The 30 mm / RK2 / every-substep variant remains
         // reachable through EngineSimulatorOptions as the offline oracle.
         const auto targetCellLengthM = std::clamp(
-            options_.intakeTargetCellLengthM.value_or(0.075),
+            options_.intakeTargetCellLengthM.value_or(0.095),
             0.020, 0.150);
         constexpr auto minimumCellCount = 3U;
         runner.cellCount = std::clamp<std::size_t>(
