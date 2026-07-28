@@ -597,3 +597,8 @@ deux cas les plus lourds.
 - Après réancrage local de la turbulence du CP2, les points constructeur passent
   14/14. Le résidu PMEP haut régime reste honnêtement ouvert : oracle
   0,990 bar à 6 000 tr/min pour une cible de 0,750.
+- Le rendu A/B LS3 atteint une similarité spectrale de 0,937184 entre collecteur
+  dirigé et contrôle mélangé, avec zéro fallback, dropout, pression perdue ou
+  limiteur. Les deux WAV sont conservés pour l'écoute humaine.
+- Le transitoire Big Twin démarrage–ralenti–coup de gaz–retour passe également :
+  1 337 → 4 036 → 780 tr/min, sans perte ni limiteur.

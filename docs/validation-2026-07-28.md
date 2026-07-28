@@ -303,3 +303,39 @@ cible de 0,750. Le plafond d'aire de tête atteint un plateau à 0,869 bar ; un
 multiplicateur global de soupape n'est donc pas livré. La prochaine étape
 physique défendable est une carte de coefficient de débit dépendant de la levée,
 du rapport de pression et du sens.
+
+### Preuve acoustique de la correction
+
+`EngineLabAudioRenderHarness --junction-comparison LS3` rend le même moteur,
+avec le même trajet acoustique, une fois avec le collecteur dirigé et une fois
+avec le contrôle parfaitement mélangé.
+
+| LS3, fenêtre stabilisée | Dirigé production | Mélangé historique |
+|---|---:|---:|
+| RMS gauche | 0,028212 | 0,025978 |
+| Fraction haute bande | 5,883 % | 9,216 % |
+| Crête pré-limiteur | 0,2981 | 0,1974 |
+| Similarité cosinus spectrale entre les deux | **0,937184** | **0,937184** |
+
+Les deux chemins activent le réseau physique, la topologie complète, la
+structure modale et l'admission ondulatoire. Ils ont chacun zéro fallback,
+dropout de frontière, pression perdue, événement tardif et échantillon limité.
+La différence est donc arrivée par la télémétrie physique, pas par un changement
+de renderer ou un mécanisme de sécurité.
+
+Les clips sont conservés dans :
+
+```text
+out/validation/audio-junction-ab-2026-07-28/LS3/
+  junction-directed/
+  junction-well-mixed/
+```
+
+Le cycle transitoire Big Twin de 12 s passe également : 1 337 tr/min au premier
+ralenti, pointe à 4 036 tr/min, retour à 780 tr/min, zéro événement/pression
+perdu, zéro événement tardif et zéro action du limiteur. Le clip
+`idle-start-rev-return.wav` est sous
+`out/validation/audio-transient-2026-07-28/BigTwin/`.
+
+Ces chiffres prouvent une différence acoustique objective et un chemin sain ;
+ils ne prétendent pas remplacer le verdict d'écoute sur la préférence sonore.

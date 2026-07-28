@@ -1261,6 +1261,7 @@ int main(int argc, char** argv) {
     std::string catalogueFilter;
     std::string runtimeFilter;
     std::string couplingComparisonFilter;
+    std::string junctionComparisonFilter;
     std::optional<std::size_t> intakeWorkers;
     for (int i = 1; i < argc; ++i) {
         const std::string a = argv[i];
@@ -1275,6 +1276,8 @@ int main(int argc, char** argv) {
             runtimeFilter = argv[++i];
         else if (a == "--coupling-comparison" && i + 1 < argc)
             couplingComparisonFilter = argv[++i];
+        else if (a == "--junction-comparison" && i + 1 < argc)
+            junctionComparisonFilter = argv[++i];
         else if (a == "--intake-workers" && i + 1 < argc)
             intakeWorkers = static_cast<std::size_t>(std::stoull(argv[++i]));
         else if (a == "--mute-combustion") muteCombustionLayer = true;
@@ -1291,6 +1294,65 @@ int main(int argc, char** argv) {
                   << " samples @ " << ir.sampleRate << " Hz)\n";
     else
         std::cout << "WARNING: could not load IR at " << irPath.string() << " (using renderer fallback)\n";
+
+    if (!junctionComparisonFilter.empty()) {
+        const auto catalog = loadEngineCatalog(
+            std::filesystem::path(ENGINELAB_CATALOG_ROOT));
+        const auto selected = std::find_if(catalog.entries.begin(), catalog.entries.end(),
+            [&junctionComparisonFilter](const auto& entry) {
+                return entry.config.name.find(junctionComparisonFilter)
+                    != std::string::npos;
+            });
+        if (selected == catalog.entries.end()) {
+            std::cerr << "FAIL: no catalogue engine matches junction comparison '"
+                      << junctionComparisonFilter << "'\n";
+            return 2;
+        }
+        std::cout << "\n--- Exhaust collector momentum A/B ---\n";
+        referenceCouplingEverySubstep = false;
+        renderSimulatorOptions = {};
+        renderSimulatorOptions.evolveExhaustJunctionAxialMomentum = true;
+        const auto directed = renderEngine(
+            selected->config, ir, outDir / "junction-directed", 3.0, true);
+        renderSimulatorOptions = {};
+        renderSimulatorOptions.evolveExhaustJunctionAxialMomentum = false;
+        const auto mixed = renderEngine(
+            selected->config, ir, outDir / "junction-well-mixed", 3.0, true);
+        renderSimulatorOptions = {};
+
+        const auto similarity = cosineSimilarity(directed, mixed);
+        std::cout << std::fixed << std::setprecision(6)
+                  << "  spectral cosine directed/well-mixed=" << similarity << '\n'
+                  << "  exhaust observer peak Pa directed/well-mixed="
+                  << directed.maxExhaustPressurePa << '/'
+                  << mixed.maxExhaustPressurePa << '\n'
+                  << "  RMS left directed/well-mixed="
+                  << directed.left.window.rms << '/'
+                  << mixed.left.window.rms << '\n'
+                  << "  high-band fraction directed/well-mixed="
+                  << directed.left.window.highBandFraction << '/'
+                  << mixed.left.window.highBandFraction << '\n';
+        const auto valid = [](const Metrics& measurement) {
+            return measurement.left.scan.finite
+                && measurement.right.scan.finite
+                && measurement.physicalActive
+                && measurement.compiledTopologyActive
+                && measurement.structuralRadiationActive
+                && measurement.intakeTopologyActive
+                && measurement.legacyPathSamples == 0
+                && measurement.invalidBoundarySamples == 0
+                && measurement.droppedPressureSamples == 0
+                && measurement.levelLimitedSamples == 0
+                && measurement.maxPreLimiterMagnitude < 0.82F;
+        };
+        // The A/B is useful only if the corrected cylinder-pressure excitation
+        // reaches the renderer strongly enough to change its spectral result.
+        const auto acousticallyResolved = similarity < 0.999;
+        if (!acousticallyResolved)
+            std::cerr << "FAIL: collector momentum change did not produce a "
+                         "resolved acoustic difference\n";
+        return valid(directed) && valid(mixed) && acousticallyResolved ? 0 : 1;
+    }
 
     if (!couplingComparisonFilter.empty()) {
         const auto catalog = loadEngineCatalog(
