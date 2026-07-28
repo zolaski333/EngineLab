@@ -578,3 +578,22 @@ dans [`validation-2026-07-28.md`](validation-2026-07-28.md).
 cible 0,750 ; références constructeur encore absentes pour les moteurs
 génériques/scalés ; marge de capacité brute d'environ 10 %, pas 15 %, sur les
 deux cas les plus lourds.
+
+## 2026-07-28 — Correction physique du collecteur d'échappement
+
+- Les ablations à 6 000 tr/min ont réfuté le maillage fin, le silencieux, la
+  sortie atmosphérique et le volume de collecteur comme causes racines.
+- Une remise du réseau à l'ambiante a séparé deux contributions : mémoire de
+  pression aval et capacité soupape/port.
+- La cause aval confirmée était l'annulation forcée de la quantité de mouvement
+  dans chaque jonction 0-D. La correction conserve le résidu axial après
+  réaction de pression statique des parois.
+- A/B I4 : PMEP 1,475 → 1,046 bar ; pression échappement moyenne
+  169,230 → 111,953 kPa.
+- Banc stationnaire K20 : vitesse de collecteur 0 → 128,851 m/s, débit
+  0,139 → 0,295 kg/s, `K/K_géométrique` 5,549 → 1,494, sans écart de bilan
+  masse/énergie.
+- Le contrôle historique est conservé avec `--well-mixed-junctions`.
+- Après réancrage local de la turbulence du CP2, les points constructeur passent
+  14/14. Le résidu PMEP haut régime reste honnêtement ouvert : oracle
+  0,990 bar à 6 000 tr/min pour une cible de 0,750.

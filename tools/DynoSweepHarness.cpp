@@ -235,14 +235,19 @@ Sample holdPoint(enginelab::EngineSimulator& simulator, double targetRpm,
     return acc;
 }
 
-void sweepEngine(const enginelab::EngineConfig& baseConfig, double stepRpm) {
+void sweepEngine(const enginelab::EngineConfig& baseConfig, double stepRpm,
+                 bool useWellMixedExhaustJunctions) {
     auto config = baseConfig;
     enginelab::normaliseEngineConfig(config);
     enginelab::SimpleEcuModel ecu;
     enginelab::SimplifiedGasolinePhysics physics;
     enginelab::FourStrokeEventGenerator events;
     auto exhaust = enginelab::ExhaustGraph::makeForEngine(config);
-    enginelab::EngineSimulator simulator(config, ecu, physics, events, exhaust);
+    enginelab::EngineSimulatorOptions simulatorOptions;
+    simulatorOptions.evolveExhaustJunctionAxialMomentum =
+        !useWellMixedExhaustJunctions;
+    enginelab::EngineSimulator simulator(
+        config, ecu, physics, events, exhaust, simulatorOptions);
 
     constexpr double dt = 1.0 / 240.0;
     // Cold start and idle briefly before the first hold point.
@@ -271,7 +276,9 @@ void sweepEngine(const enginelab::EngineConfig& baseConfig, double stepRpm) {
 }
 
 bool validateReferencePoints(const std::filesystem::path& catalogRoot,
-                             const std::filesystem::path& referencePath) {
+                             const std::filesystem::path& referencePath,
+                             const std::string& engineFilter,
+                             bool useWellMixedExhaustJunctions) {
     bool referenceValid = false;
     auto points = readReferencePoints(referencePath, referenceValid);
     if (!referenceValid || points.empty()) {
@@ -290,6 +297,9 @@ bool validateReferencePoints(const std::filesystem::path& catalogRoot,
     std::cout << "engine,metric,target_rpm,actual_rpm,measured,reference,"
                  "error_percent,tolerance_percent,source,result\n";
     for (const auto& entry : catalog.entries) {
+        if (!engineFilter.empty()
+            && !containsCaseInsensitive(entry.config.name, engineFilter))
+            continue;
         std::vector<std::size_t> selected;
         for (std::size_t index = 0; index < points.size(); ++index) {
             if (containsCaseInsensitive(entry.config.name, points[index].engineFilter))
@@ -307,7 +317,11 @@ bool validateReferencePoints(const std::filesystem::path& catalogRoot,
         enginelab::SimplifiedGasolinePhysics physics;
         enginelab::FourStrokeEventGenerator events;
         auto exhaust = enginelab::ExhaustGraph::makeForEngine(config);
-        enginelab::EngineSimulator simulator(config, ecu, physics, events, exhaust);
+        enginelab::EngineSimulatorOptions simulatorOptions;
+        simulatorOptions.evolveExhaustJunctionAxialMomentum =
+            !useWellMixedExhaustJunctions;
+        enginelab::EngineSimulator simulator(
+            config, ecu, physics, events, exhaust, simulatorOptions);
         constexpr double dt = 1.0 / 240.0;
         for (int step = 0; step < static_cast<int>(2.0 / dt); ++step) {
             const auto time = static_cast<double>(step) * dt;
@@ -351,6 +365,10 @@ bool validateReferencePoints(const std::filesystem::path& catalogRoot,
         }
     }
     for (const auto& point : points) {
+        if (!engineFilter.empty()
+            && !containsCaseInsensitive(point.engineFilter, engineFilter)
+            && !containsCaseInsensitive(engineFilter, point.engineFilter))
+            continue;
         if (point.matched) continue;
         std::cerr << "no catalogue engine matched manufacturer reference: "
                   << point.engineFilter << '\n';
@@ -366,6 +384,7 @@ int main(int argc, char** argv) {
     std::string filter;
     auto stepRpm = 500.0;
     auto schemaOnly = false;
+    auto useWellMixedExhaustJunctions = false;
     for (int index = 1; index < argc; ++index) {
         const std::string argument = argv[index];
         if (argument == "--catalog-root" && index + 1 < argc) catalogRoot = argv[++index];
@@ -374,10 +393,13 @@ int main(int argc, char** argv) {
         else if (argument == "--reference-file" && index + 1 < argc)
             referenceFile = argv[++index];
         else if (argument == "--schema-only") schemaOnly = true;
+        else if (argument == "--well-mixed-junctions")
+            useWellMixedExhaustJunctions = true;
         else {
             std::cerr << "usage: EngineLabDynoSweepHarness [--catalog-root dir]"
                          " [--filter name-fragment] [--step rpm]"
-                         " [--reference-file csv] [--schema-only]\n";
+                         " [--reference-file csv] [--schema-only]"
+                         " [--well-mixed-junctions]\n";
             return EXIT_FAILURE;
         }
     }
@@ -388,7 +410,8 @@ int main(int argc, char** argv) {
         return EXIT_SUCCESS;
     }
     if (!referenceFile.empty())
-        return validateReferencePoints(catalogRoot, referenceFile)
+        return validateReferencePoints(
+            catalogRoot, referenceFile, filter, useWellMixedExhaustJunctions)
             ? EXIT_SUCCESS : EXIT_FAILURE;
     writeHeader(std::cout);
 
@@ -408,6 +431,7 @@ int main(int argc, char** argv) {
         return EXIT_FAILURE;
     }
 
-    for (const auto& engine : engines) sweepEngine(engine, stepRpm);
+    for (const auto& engine : engines)
+        sweepEngine(engine, stepRpm, useWellMixedExhaustJunctions);
     return EXIT_SUCCESS;
 }

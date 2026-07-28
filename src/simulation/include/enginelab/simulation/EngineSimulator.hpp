@@ -64,6 +64,10 @@ struct EngineSimulatorOptions final {
      * Production leaves both absent (exactly 1). */
     std::optional<double> intakeValveAreaMultiplier;
     std::optional<double> exhaustValveAreaMultiplier;
+    /** Diagnostic port plateau, expressed as effective area / valve-head area. */
+    std::optional<double> exhaustMaximumHeadAreaFraction;
+    /** A/B override for directed exhaust-collector momentum. Production uses it. */
+    std::optional<bool> evolveExhaustJunctionAxialMomentum;
     /** Reduced intake temporal integration. Spatial reconstruction remains
      * second-order MUSCL; only the RK2 corrector stage is omitted. */
     std::optional<bool> intakeFirstOrderTimeIntegration;

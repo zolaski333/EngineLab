@@ -511,6 +511,8 @@ ExhaustNetworkInventory ExhaustGasNetwork::inventory() const noexcept {
                 junctionStates_[index].speciesMassDensityKgPerM3[species] * volume;
         }
         result.totalEnergyJ += junctionStates_[index].totalEnergyDensityJPerM3 * volume;
+        result.resolvedAxialMomentumKgMps +=
+            junctionStates_[index].momentumDensityKgPerM2S * volume;
     }
     return result;
 }
@@ -771,17 +773,25 @@ bool ExhaustGasNetwork::evaluateStage(
         result.totalEnergyW = flux.totalEnergyFluxWPerM2 * areaM2;
         return result;
     };
-    const auto addJunctionFlow = [&junctionResiduals, this](
-        std::size_t junctionIndex, const ConservedFlowRate& flow, double sign) noexcept {
+    const auto addJunctionFlow = [&junctionResiduals, &junctionPrimitives, this](
+        std::size_t junctionIndex, const ConservedFlowRate& flow,
+        double openingAreaM2, double sign) noexcept {
         const auto inverseVolume = 1.0 / layout_.junctions()[junctionIndex].volumeM3;
         for (std::size_t species = 0; species < gasSpeciesCount; ++species) {
             junctionResiduals[junctionIndex].speciesMassDensityKgPerM3[species] +=
                 sign * flow.speciesMassKgPerS[species] * inverseVolume;
         }
-        // A zero-dimensional junction mixes incoming axial momenta. Their
-        // kinetic energy remains in totalEnergyW and thermalises; vector wall
-        // reactions carry momentum and are deliberately not stored as one
-        // arbitrary scalar direction.
+        // The unresolved wall balances the junction's own static pressure over
+        // each face. What remains is the graph-axis pressure difference plus
+        // advective momentum. With momentum evolution disabled the junction is
+        // the historical well-mixed plenum; when enabled, a collector carries
+        // momentum toward its trunk without inventing a net force at rest.
+        const auto resolvedAxialForceN = flow.momentumN
+            - junctionPrimitives[junctionIndex].pressurePa * openingAreaM2;
+        if (config_.evolveJunctionAxialMomentum) {
+            junctionResiduals[junctionIndex].momentumDensityKgPerM2S +=
+                sign * resolvedAxialForceN * inverseVolume;
+        }
         junctionResiduals[junctionIndex].totalEnergyDensityJPerM3 +=
             sign * flow.totalEnergyW * inverseVolume;
     };
@@ -849,13 +859,13 @@ bool ExhaustGasNetwork::evaluateStage(
         const auto flow = makeFlowRate(rawFlux, effectiveArea);
         if (observedFlow) *observedFlow = flow;
         if (upstream.type == ExhaustEndpointType::junction) {
-            addJunctionFlow(upstream.elementIndex, flow, -1.0);
+            addJunctionFlow(upstream.elementIndex, flow, effectiveArea, -1.0);
         } else if (!assignDuctBoundary(upstream,
                        ductBoundaryFlux(upstream, rawFlux, effectiveArea))) {
             return false;
         }
         if (downstream.type == ExhaustEndpointType::junction) {
-            addJunctionFlow(downstream.elementIndex, flow, 1.0);
+            addJunctionFlow(downstream.elementIndex, flow, effectiveArea, 1.0);
         } else if (!assignDuctBoundary(downstream,
                        ductBoundaryFlux(downstream, rawFlux, effectiveArea))) {
             return false;
@@ -902,7 +912,8 @@ bool ExhaustGasNetwork::evaluateStage(
                 cylinderFlows[index].totalEnergyW * inverseVolume;
         }
         if (port.networkEndpoint.type == ExhaustEndpointType::junction) {
-            addJunctionFlow(port.networkEndpoint.elementIndex, cylinderFlows[index], 1.0);
+            addJunctionFlow(port.networkEndpoint.elementIndex, cylinderFlows[index],
+                openingArea, 1.0);
         } else if (!assignDuctBoundary(port.networkEndpoint,
                        ductBoundaryFlux(port.networkEndpoint, rawFlux, openingArea))) {
             return false;
@@ -953,7 +964,8 @@ bool ExhaustGasNetwork::evaluateStage(
         }
         outletFlows[index] = makeFlowRate(rawFlux, openingArea);
         if (outlet.networkEndpoint.type == ExhaustEndpointType::junction) {
-            addJunctionFlow(outlet.networkEndpoint.elementIndex, outletFlows[index], -1.0);
+            addJunctionFlow(outlet.networkEndpoint.elementIndex, outletFlows[index],
+                openingArea, -1.0);
         } else if (!assignDuctBoundary(outlet.networkEndpoint,
                        ductBoundaryFlux(outlet.networkEndpoint, rawFlux, openingArea))) {
             return false;
@@ -1126,7 +1138,8 @@ ExhaustNetworkAdvanceResult ExhaustGasNetwork::advance(
             for (std::size_t index = 0; index < junctionStates_.size(); ++index) {
                 junctionStage_[index] = addScaled(
                     junctionStates_[index], junctionResidual_[index], trialStep);
-                junctionStage_[index].momentumDensityKgPerM2S = 0.0;
+                if (!config_.evolveJunctionAxialMomentum)
+                    junctionStage_[index].momentumDensityKgPerM2S = 0.0;
             }
             for (std::size_t index = 0; index < cylinderReservoirStates_.size(); ++index) {
                 if (cylinderReservoirActive_[index] == 0) continue;
@@ -1180,7 +1193,8 @@ ExhaustNetworkAdvanceResult ExhaustGasNetwork::advance(
                     junctionCandidate_[index] = rk2Combination(
                         junctionStates_[index], junctionStage_[index],
                         junctionStageResidual_[index], trialStep);
-                    junctionCandidate_[index].momentumDensityKgPerM2S = 0.0;
+                    if (!config_.evolveJunctionAxialMomentum)
+                        junctionCandidate_[index].momentumDensityKgPerM2S = 0.0;
                 }
                 for (std::size_t index = 0;
                      index < cylinderReservoirStates_.size(); ++index) {

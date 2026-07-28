@@ -45,6 +45,12 @@ struct ExhaustGasNetworkConfig final {
      * of SSP-RK2. Intended for deliberately reduced, multirate intake
      * networks; the exhaust and offline oracle keep RK2. */
     bool firstOrderTimeIntegration { false };
+    /** Evolve graph-axis momentum through a lumped merge/splitter.
+     *
+     * False preserves a deliberately well-mixed plenum. True carries the
+     * momentum left after the junction wall balances its static pressure, which
+     * is the appropriate model for an exhaust collector with a directed trunk. */
+    bool evolveJunctionAxialMomentum { false };
     double maximumCourantNumber { 0.42 };
     std::size_t maximumSubstepsPerAdvance { 100'000 };
 

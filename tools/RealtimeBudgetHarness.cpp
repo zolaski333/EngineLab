@@ -105,7 +105,8 @@ struct Measurement final {
                                         std::optional<double> intakeCouplingSeconds,
                                         std::optional<double> intakeTargetCellLengthM,
                                         std::optional<double> exhaustCouplingSeconds,
-                                        std::optional<bool> intakeFirstOrderTimeIntegration) {
+                                        std::optional<bool> intakeFirstOrderTimeIntegration,
+                                        bool useWellMixedExhaustJunctions) {
     enginelab::EngineSimulatorOptions simulatorOptions;
     simulatorOptions.intakeWorkerCount = intakeWorkers;
     simulatorOptions.intakeMaximumCellCount = intakeMaximumCells;
@@ -116,6 +117,8 @@ struct Measurement final {
         exhaustCouplingSeconds;
     simulatorOptions.intakeFirstOrderTimeIntegration =
         intakeFirstOrderTimeIntegration;
+    simulatorOptions.evolveExhaustJunctionAxialMomentum =
+        !useWellMixedExhaustJunctions;
     auto runtime = std::make_unique<enginelab::EngineRuntime>(
         config, nullptr, simulatorOptions);
     Measurement result;
@@ -297,6 +300,7 @@ int main(int argc, char** argv) {
     std::optional<double> intakeTargetCellLengthM;
     std::optional<double> exhaustCouplingSeconds;
     std::optional<bool> intakeFirstOrderTimeIntegration;
+    bool useWellMixedExhaustJunctions = false;
 
     for (int index = 1; index < argc; ++index) {
         const std::string argument = argv[index];
@@ -325,6 +329,8 @@ int main(int argc, char** argv) {
         else if (argument == "--seconds" && index + 1 < argc) measureSeconds = std::stod(argv[++index]);
         else if (argument == "--enforce" && index + 1 < argc) failBelow = std::stod(argv[++index]);
         else if (argument == "--free-run") freeRun = true;
+        else if (argument == "--well-mixed-junctions")
+            useWellMixedExhaustJunctions = true;
         else if (argument == "--help") {
             std::cout << "usage: EngineLabRealtimeBudgetHarness [--catalog-root DIR] "
                          "[--filter NAME] [--rpm N] [--warmup S] [--seconds S] "
@@ -334,12 +340,15 @@ int main(int argc, char** argv) {
                          "[--intake-cell-mm N] "
                          "[--exhaust-coupling-us N] "
                          "[--intake-euler|--intake-rk2] "
+                         "[--well-mixed-junctions] "
                          "[--enforce FACTOR] [--free-run]\n"
                          "  --free-run  remove the loop's wall-clock sleep, so the factor\n"
                          "              reads capacity instead of saturating at 1.0.\n"
                          "  --relative-rpm  hold each engine at this fraction of redline.\n"
                          "  --intake-workers  override background intake workers; zero is\n"
-                         "                    the serial null control.\n";
+                         "                    the serial null control.\n"
+                         "  --well-mixed-junctions  select the legacy zero-momentum exhaust\n"
+                         "                          collector for same-machine A/B evidence.\n";
             return 0;
         }
     }
@@ -398,7 +407,8 @@ int main(int argc, char** argv) {
             entry.config, requestedRpm, warmupSeconds, measureSeconds, freeRun,
             intakeWorkers, intakeMaximumCells, intakeStaircaseRounds,
             intakeCouplingSeconds, intakeTargetCellLengthM,
-            exhaustCouplingSeconds, intakeFirstOrderTimeIntegration);
+            exhaustCouplingSeconds, intakeFirstOrderTimeIntegration,
+            useWellMixedExhaustJunctions);
         const auto cylinders = static_cast<int>(entry.config.cylinders.size());
         std::cout << std::left << std::setw(26) << entry.config.name
                   << std::right << std::setw(5) << cylinders

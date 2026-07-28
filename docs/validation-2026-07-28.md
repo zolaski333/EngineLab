@@ -1,5 +1,11 @@
 # Validation de reprise — 2026-07-28
 
+> **Addendum de la même journée.** La section
+> « Correction du collecteur dirigé » en fin de document remplace les valeurs
+> PMEP et points constructeur qui dépendaient du collecteur historique
+> parfaitement mélangé. Les tables de performance initiales restent un
+> instantané de leur commit ; une nouvelle table est exigée après la correction.
+
 Ce rapport clôt la reprise demandée dans `docs/next-session-brief.md`. Il
 distingue les faits mesurés, les choix retenus et les limites encore ouvertes.
 Les valeurs absolues ci-dessous sont un instantané de cette machine ; elles ne
@@ -257,3 +263,43 @@ Il est resté vivant après cinq secondes de lancement caché.
 
 L'investigation détaillée et les leviers réfutés sont conservés dans
 `docs/exhaust-pmep-investigation-2026-07-28.md`.
+
+## Correction du collecteur dirigé
+
+L'investigation suivante a isolé une perte non physique : la jonction 0-D
+conservait masse et énergie mais annulait systématiquement sa quantité de
+mouvement. À géométrie identique, elle transformait donc un collecteur dirigé
+en plénum stagnant.
+
+La production fait désormais évoluer le résidu axial après compensation de la
+pression statique de paroi. Trois preuves indépendantes sont conservées :
+
+1. l'état uniforme à l'ambiante reste invariant et ne crée ni énergie ni
+   quantité de mouvement ;
+2. au banc K20 à 135 kPa, le collecteur porte 128,851 m/s, le débit passe de
+   0,139 à 0,295 kg/s et `K/K_géométrique` de 5,549 à 1,494, avec bilans masse
+   et énergie fermés ;
+3. sur l'I4 à 6 000 tr/min, la PMEP de production passe de 1,475 à
+   **1,046 bar** et la pression moyenne échappement de 169,230 à
+   **111,953 kPa**.
+
+Le contrôle `--well-mixed-junctions` reproduit l'ancien modèle dans les bancs.
+Le gate constructeur, après réancrage local de la turbulence de chambre du
+CP2, passe **14/14** :
+
+| Famille | Erreur couple | Erreur puissance | Résultat |
+|---|---:|---:|---|
+| Honda K20A | −1,826 % | −4,644 % | PASS |
+| Toyota 2JZ-GTE export | −9,668 % | −3,943 % | PASS |
+| GM LS3 | +4,641 % | −8,517 % | PASS |
+| Yamaha CP2 | −10,094 % | +12,365 % | PASS |
+| Yamaha CP3 | +8,991 % | +11,524 % | PASS |
+| Yamaha CP4 | +9,990 % | +2,670 % | PASS |
+| VW EA288 2.0 TDI 110 kW | +8,112 % | +0,720 % | PASS |
+
+La limite restante est plus étroite qu'avant : l'oracle PMEP passe à
+0,187 bar à 2 500 tr/min, mais reste à **0,990 bar à 6 000 tr/min** pour une
+cible de 0,750. Le plafond d'aire de tête atteint un plateau à 0,869 bar ; un
+multiplicateur global de soupape n'est donc pas livré. La prochaine étape
+physique défendable est une carte de coefficient de débit dépendant de la levée,
+du rapport de pression et du sens.

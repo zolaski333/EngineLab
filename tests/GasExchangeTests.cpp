@@ -255,6 +255,8 @@ int main(int argc, char** argv) {
     auto idealExhaustReservoir = false;
     std::optional<double> intakeValveAreaMultiplier;
     std::optional<double> exhaustValveAreaMultiplier;
+    std::optional<double> exhaustMaximumHeadAreaFraction;
+    auto useWellMixedExhaustJunctions = false;
     for (int index = 1; index < argc; ++index) {
         const auto argument = std::string_view(argv[index]);
         if (argument == "--enforce-gas-exchange") enforce = true;
@@ -281,6 +283,10 @@ int main(int argc, char** argv) {
             intakeValveAreaMultiplier = std::stod(argv[++index]);
         } else if (argument == "--exhaust-valve-area-x" && index + 1 < argc) {
             exhaustValveAreaMultiplier = std::stod(argv[++index]);
+        } else if (argument == "--exhaust-head-area-fraction" && index + 1 < argc) {
+            exhaustMaximumHeadAreaFraction = std::stod(argv[++index]);
+        } else if (argument == "--well-mixed-junctions") {
+            useWellMixedExhaustJunctions = true;
         } else {
             std::cerr << "usage: EngineLabGasExchangeTests"
                          " [--enforce-gas-exchange] [--oracle-coupling]"
@@ -291,7 +297,9 @@ int main(int argc, char** argv) {
                          " [--collector-litres litres] [--independent-paths]"
                          " [--ideal-exhaust-reservoir]"
                          " [--intake-valve-area-x multiplier]"
-                         " [--exhaust-valve-area-x multiplier]\n";
+                         " [--exhaust-valve-area-x multiplier]"
+                         " [--exhaust-head-area-fraction fraction]"
+                         " [--well-mixed-junctions]\n";
             return EXIT_FAILURE;
         }
     }
@@ -336,6 +344,10 @@ int main(int argc, char** argv) {
     simulatorOptions.resetExhaustToAmbientEachCoupling = idealExhaustReservoir;
     simulatorOptions.intakeValveAreaMultiplier = intakeValveAreaMultiplier;
     simulatorOptions.exhaustValveAreaMultiplier = exhaustValveAreaMultiplier;
+    simulatorOptions.exhaustMaximumHeadAreaFraction =
+        exhaustMaximumHeadAreaFraction;
+    simulatorOptions.evolveExhaustJunctionAxialMomentum =
+        !useWellMixedExhaustJunctions;
     enginelab::EngineSimulator simulator(
         config, ecu, physics, events, exhaust, simulatorOptions);
     simulator.setExhaustCouplingEverySubstep(oracleCoupling);

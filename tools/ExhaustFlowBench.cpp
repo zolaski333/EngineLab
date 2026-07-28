@@ -113,7 +113,8 @@ double geometricLossCoefficient(const ExhaustNetworkLayout& layout) {
 BenchPoint runPoint(const enginelab::EngineConfig& config,
                     const ExhaustNetworkLayout& layout,
                     double drivePressureKpa, double driveTemperatureK,
-                    double settleSeconds, bool dumpProfile) {
+                    double settleSeconds, bool dumpProfile,
+                    bool evolveJunctionAxialMomentum) {
     BenchPoint point;
     point.drivePressureKpa = drivePressureKpa;
 
@@ -129,6 +130,7 @@ BenchPoint runPoint(const enginelab::EngineConfig& config,
     networkConfig.wallHeatTransferWPerM2K = 0.0;
     networkConfig.dynamicWallHeatTransferEnabled = false;
     networkConfig.externalWallHeatTransferWPerM2K = 0.0;
+    networkConfig.evolveJunctionAxialMomentum = evolveJunctionAxialMomentum;
     if (!network.configure(layout, networkConfig)) return point;
 
     const auto& mixture = network.mixtureModel();
@@ -262,7 +264,8 @@ BenchPoint runPoint(const enginelab::EngineConfig& config,
     return point;
 }
 
-void benchEngine(const enginelab::EngineConfig& baseConfig) {
+void benchEngine(const enginelab::EngineConfig& baseConfig,
+                 bool evolveJunctionAxialMomentum) {
     auto config = baseConfig;
     enginelab::normaliseEngineConfig(config);
     const auto graph = enginelab::ExhaustGraph::makeForEngine(config);
@@ -283,6 +286,7 @@ void benchEngine(const enginelab::EngineConfig& baseConfig) {
               << " junctions=" << layout.junctions().size()
               << " ports=" << layout.cylinderPorts().size()
               << " cells=" << totalCells
+              << " junction_momentum=" << (evolveJunctionAxialMomentum ? "directed" : "mixed")
               << " K_geometric=" << geometric << '\n';
     std::cout << "   settle_s  drive_kPa  mdot_out  mdot_port  col_gauge  col_mps"
                  "  col_rho  maxDuct  K_meas  K/K_geom  E_port_kW  E_out_kW  Tmax_K\n";
@@ -292,7 +296,8 @@ void benchEngine(const enginelab::EngineConfig& baseConfig) {
     for (const auto settle : { 0.5, 2.0 }) {
         for (const auto drive : { 105.0, 115.0, 135.0, 165.0, 205.0 }) {
             const auto point = runPoint(config, layout, drive, 1'050.0, settle,
-                                        drive == 135.0 && settle == 2.0);
+                                        drive == 135.0 && settle == 2.0,
+                                        evolveJunctionAxialMomentum);
             if (!point.ok) {
                 std::cout << "   " << std::setw(8) << settle
                           << std::setw(11) << drive << "  FAILED\n";
@@ -320,13 +325,15 @@ void benchEngine(const enginelab::EngineConfig& baseConfig) {
 int main(int argc, char** argv) {
     std::filesystem::path catalogRoot = std::filesystem::current_path();
     std::string filter;
+    auto useWellMixedJunctions = false;
     for (int index = 1; index < argc; ++index) {
         const std::string argument = argv[index];
         if (argument == "--catalog-root" && index + 1 < argc) catalogRoot = argv[++index];
         else if (argument == "--filter" && index + 1 < argc) filter = argv[++index];
+        else if (argument == "--well-mixed-junctions") useWellMixedJunctions = true;
         else {
             std::cerr << "usage: EngineLabExhaustFlowBench [--catalog-root dir]"
-                         " [--filter name-fragment]\n";
+                         " [--filter name-fragment] [--well-mixed-junctions]\n";
             return EXIT_FAILURE;
         }
     }
@@ -340,6 +347,6 @@ int main(int argc, char** argv) {
     std::cout << std::fixed << std::setprecision(3);
     for (const auto& entry : catalog.entries)
         if (filter.empty() || containsCaseInsensitive(entry.config.name, filter))
-            benchEngine(entry.config);
+            benchEngine(entry.config, !useWellMixedJunctions);
     return EXIT_SUCCESS;
 }

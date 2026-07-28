@@ -2488,3 +2488,35 @@ Conséquence pratique pour tout travail de performance ici : mesurer par lots
 courts, comparer uniquement à l'intérieur d'un lot, et prendre le **minimum sur
 N essais** plutôt que la moyenne — le bruit ne peut qu'ajouter du temps. Le
 minimum sur six essais ramène la répétabilité du banc de ~16 % à 2-5 %.
+
+## 2026-07-28 — Cause aval confirmée : quantité de mouvement du collecteur
+
+La PMEP excessive n'était pas principalement un diamètre, un silencieux ou une
+frontière atmosphérique. La jonction 0-D annulait sa quantité de mouvement à
+chaque sous-pas : masse et énergie étaient conservées, mais le collecteur
+devenait une chambre de mélange stagnante qui thermalisait tout l'écoulement
+dirigé.
+
+La production conserve maintenant le résidu axial du flux après compensation
+de la pression statique de la jonction. L'A/B reproductible reste disponible
+avec `--well-mixed-junctions`.
+
+| Preuve | Historique mélangé | Collecteur dirigé |
+|---|---:|---:|
+| I4, \|PMEP\| à 6 000 tr/min | 1,475 bar | **1,046 bar** |
+| I4, pression échappement moyenne | 169,230 kPa | **111,953 kPa** |
+| K20, débit stationnaire à 135 kPa | 0,139 kg/s | **0,295 kg/s** |
+| K20, vitesse de jonction | 0,000 m/s | **128,851 m/s** |
+| K20, `K/K_géométrique` | 5,549 | **1,494** |
+
+Le repos à l'ambiante, la conservation masse/énergie et la convergence
+stationnaire sont couverts par test. Les 14 points constructeur repassent après
+réancrage local du CP2.
+
+**Non résolu et assumé** : l'oracle PMEP vaut encore 0,990 bar à 6 000 tr/min
+pour une cible de 0,750. Le plafond d'aire effective atteint un plateau à
+0,869 bar ; multiplier globalement l'aire jusqu'à faire passer le seuil serait
+une calibration non physique. La prochaine étape est une carte de coefficient
+de débit soupape/port en fonction de `L/D`, du rapport de pression et du sens.
+Les ablations complètes sont dans
+[`exhaust-pmep-investigation-2026-07-28.md`](exhaust-pmep-investigation-2026-07-28.md).

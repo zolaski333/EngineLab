@@ -621,6 +621,8 @@ void EngineSimulator::configurePhysicalExhaustNetwork() {
     networkConfig.externalTemperatureK = config_.ambientTemperatureC + 273.15;
     networkConfig.wallHeatUpdateIntervalSeconds =
         ductWallHeatUpdateIntervalSeconds;
+    networkConfig.evolveJunctionAxialMomentum =
+        options_.evolveExhaustJunctionAxialMomentum.value_or(true);
     if (!network->configure(layout, networkConfig))
         throw std::runtime_error("failed to configure conservative exhaust network");
     const auto ambientState = network->mixtureModel().conservativeFromPressureTemperature(
@@ -1587,7 +1589,9 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 valveTrain.intakeDischargeCoefficient, 0.40, 0.50, 0.58);
             const auto exhaustArea = effectiveValveAreaMm2(cylinder.boreMm, exhaustLift,
                 cylinder.exhaustValveCount, cylinder.exhaustValveDiameterMm,
-                valveTrain.exhaustDischargeCoefficient, 0.34, 0.41, 0.51);
+                valveTrain.exhaustDischargeCoefficient, 0.34, 0.41,
+                std::clamp(options_.exhaustMaximumHeadAreaFraction.value_or(0.51),
+                    0.05, 1.5));
             const auto& cylinderIntake = intakeGeometryAt(config_, intakePathIndex);
             const auto pistonAreaM2 = std::numbers::pi * std::pow(cylinder.boreMm * 0.0005, 2.0);
             // Both areas already carry their discharge coefficient, so the

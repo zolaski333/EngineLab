@@ -98,6 +98,66 @@ void testUniformClosedNetworkIsInvariant() {
         }), "closed outlet must publish exactly zero transfer");
 }
 
+void testMomentumCarryingJunctionRestsAtAmbientAndCarriesDirectedFlow() {
+    ExhaustGasNetworkConfig directedConfiguration;
+    directedConfiguration.evolveJunctionAxialMomentum = true;
+    auto resting = makeNetwork(makeDefaultInlineFour(), directedConfiguration);
+    const auto openAmbient = ambientFor(resting, 101'325.0, 300.0, 1.0);
+    const auto beforeRest = resting.inventory();
+    const auto rest = resting.advance(0.003, {}, openAmbient);
+    requireNetwork(rest.completed && rest.rejectedSubsteps == 0,
+        "a momentum-carrying junction must remain admissible at ambient equilibrium");
+    const auto afterRest = resting.inventory();
+    for (std::size_t species = 0; species < gasSpeciesCount; ++species) {
+        requireNetwork(relativeError(afterRest.speciesMassKg[species],
+                                     beforeRest.speciesMassKg[species]) < 2.0e-12,
+            "junction momentum must not create species flow at uniform pressure");
+    }
+    requireNetwork(relativeError(afterRest.totalEnergyJ, beforeRest.totalEnergyJ) < 2.0e-12
+            && std::abs(afterRest.resolvedAxialMomentumKgMps) < 1.0e-12,
+        "junction wall-pressure balance must create neither energy nor axial momentum at rest");
+
+    ExhaustGasNetworkConfig mixedConfiguration;
+    auto mixed = makeNetwork(makeDefaultInlineFour(), mixedConfiguration);
+    auto directed = makeNetwork(makeDefaultInlineFour(), directedConfiguration);
+    const auto drive = directed.mixtureModel().conservativeFromPressureTemperature(
+        220'000.0, 900.0);
+    requireNetwork(drive.has_value(), "directed-junction drive state must be physical");
+    std::vector<CylinderValveBoundary> boundaries;
+    for (const auto& port : directed.layout().cylinderPorts()) {
+        boundaries.push_back({ port.cylinderId, *drive, 1.0, 5.0e-4, 1.0 });
+    }
+    const auto mixedAmbient = ambientFor(mixed, 101'325.0, 300.0, 1.0);
+    const auto directedAmbient = ambientFor(directed, 101'325.0, 300.0, 1.0);
+    for (int step = 0; step < 80; ++step) {
+        const auto mixedStep = mixed.advance(0.00025, boundaries, mixedAmbient);
+        const auto directedStep = directed.advance(0.00025, boundaries, directedAmbient);
+        requireNetwork(mixedStep.completed && directedStep.completed,
+            "both junction formulations must complete the directed-flow fixture");
+    }
+    requireNetwork(mixed.layout().junctions().size() == 1
+            && directed.layout().junctions().size() == 1,
+        "directed-flow fixture must contain exactly one collector junction");
+    const auto mixedJunction = mixed.mixtureModel().primitiveFromConservative(
+        mixed.junctionStates().front());
+    const auto directedJunction = directed.mixtureModel().primitiveFromConservative(
+        directed.junctionStates().front());
+    requireNetwork(mixedJunction.has_value() && directedJunction.has_value(),
+        "collector junction primitives must remain recoverable");
+    requireNetwork(mixedJunction->velocityMps == 0.0,
+        "the legacy well-mixed junction must remain an explicit zero-momentum control");
+    requireNetwork(directedJunction->velocityMps > 1.0,
+        "a directed collector must retain a measurable graph-axis gas velocity");
+    auto mixedOutletMassFlow = 0.0;
+    auto directedOutletMassFlow = 0.0;
+    for (const auto& outlet : mixed.outletSamples())
+        mixedOutletMassFlow += outlet.massFlowKgPerS;
+    for (const auto& outlet : directed.outletSamples())
+        directedOutletMassFlow += outlet.massFlowKgPerS;
+    requireNetwork(directedOutletMassFlow > mixedOutletMassFlow,
+        "directed collector momentum must increase flow through the same downstream geometry");
+}
+
 void testValveExchangeIsTwoWayAndConservative() {
     ExhaustGasNetworkConfig configuration;
     configuration.initialPressurePa = 120'000.0;
@@ -555,6 +615,7 @@ void testBoundaryInputOrderIsIrrelevant() {
 
 void runExhaustGasNetworkTests() {
     testUniformClosedNetworkIsInvariant();
+    testMomentumCarryingJunctionRestsAtAmbientAndCarriesDirectedFlow();
     testValveExchangeIsTwoWayAndConservative();
     testChokedValveMatchesIsentropicNozzleFlow();
     testSubcriticalValveMatchesIsentropicNozzleFlow();

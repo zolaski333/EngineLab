@@ -7,9 +7,12 @@ contexte de la session précédente.
 > **Mise à jour après reprise (2026-07-28).** Les priorités 1 à 6 ci-dessous
 > ont été exécutées et validées. Lire d'abord
 > `docs/validation-2026-07-28.md` pour les tables, le protocole A/B, les
-> 20/20 tests et les limites restantes. Le prochain défaut physique quantifié
-> est la PMEP haut régime ; ne pas recommencer une optimisation d'admission ou
-> de pool sans contredire les nouveaux garde-fous.
+> 20/20 tests et les limites restantes. La cause aval principale de la PMEP a
+> ensuite été corrigée : le collecteur conserve maintenant sa quantité de
+> mouvement dirigée. La production passe de 1,475 à 1,046 bar à 6 000 tr/min,
+> mais l'oracle reste à 0,990 pour une cible 0,750. Lire aussi
+> `docs/exhaust-pmep-investigation-2026-07-28.md`. Ne pas recommencer une
+> optimisation d'admission ou de pool sans contredire les nouveaux garde-fous.
 
 ---
 

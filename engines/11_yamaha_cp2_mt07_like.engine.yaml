@@ -41,6 +41,11 @@ engine:
       - { rpm: 6500, advance_deg: 34 }
       - { rpm: 8750, advance_deg: 33 }
       - { rpm: 10500, advance_deg: 30 }
+  combustion_calibration:
+    # The long-stroke two-cylinder chamber has less high-speed turbulent
+    # acceleration than the generic pent-roof closure. Re-anchored after the
+    # exhaust collector stopped destroying directed momentum (2026-07-28).
+    chamber_turbulence_intensity_ratio: 0.80
   uses:
     injection: high_flow_port
     exhaust: motorcycle_4_2_1
