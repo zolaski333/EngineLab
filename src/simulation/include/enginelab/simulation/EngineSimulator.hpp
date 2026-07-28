@@ -52,6 +52,18 @@ struct EngineSimulatorOptions final {
      * 125 us (at least 4 kHz physical-boundary Nyquist); harnesses can A/B it
      * against the historical 250 us cap and the full-substep oracle. */
     std::optional<double> maximumLowSpeedExhaustCouplingSeconds;
+    /** Target cell length of the nonlinear exhaust feedback mesh. Absent keeps
+     * the 300 mm production scale. This is a diagnostic/convergence knob: the
+     * characteristic audio network still owns audio-band propagation. */
+    std::optional<double> exhaustTargetCellLengthM;
+    /** Diagnostic lower-bound experiment: reset the exhaust network to ambient
+     * before every coupling advance. Never use in production; it deliberately
+     * discards pulse history to reveal the valve/timing-only pumping floor. */
+    std::optional<bool> resetExhaustToAmbientEachCoupling;
+    /** Diagnostic effective-area multipliers used by gas-exchange ablations.
+     * Production leaves both absent (exactly 1). */
+    std::optional<double> intakeValveAreaMultiplier;
+    std::optional<double> exhaustValveAreaMultiplier;
     /** Reduced intake temporal integration. Spatial reconstruction remains
      * second-order MUSCL; only the RK2 corrector stage is omitted. */
     std::optional<bool> intakeFirstOrderTimeIntegration;

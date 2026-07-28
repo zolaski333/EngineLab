@@ -589,7 +589,8 @@ void EngineSimulator::configurePhysicalExhaustNetwork() {
     // every exhaust cell to run at more than 100 kHz. This is an explicit
     // physical scale separation: no
     // authored component, volume, area or loss is removed from either model.
-    feedbackMesh.targetCellLengthM = 0.300;
+    feedbackMesh.targetCellLengthM = std::clamp(
+        options_.exhaustTargetCellLengthM.value_or(0.300), 0.025, 0.600);
     // Components shorter than the feedback scale remain one conservative
     // finite volume with their exact volume, ports and loss. Their propagation
     // delay is owned by the characteristic network, so duplicating a second FV
@@ -1592,9 +1593,13 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
             // Both areas already carry their discharge coefficient, so the
             // coefficient that travels with them is unity. Everything
             // downstream multiplies the pair, so the product is what matters.
-            exhaustValveAreaM2[cylinderIndex] = exhaustArea * 1.0e-6;
+            exhaustValveAreaM2[cylinderIndex] = exhaustArea * 1.0e-6
+                * std::clamp(options_.exhaustValveAreaMultiplier.value_or(1.0),
+                    0.05, 8.0);
             exhaustValveDischargeCoefficient[cylinderIndex] = 1.0;
-            intakeValveAreaM2[cylinderIndex] = intakeArea * 1.0e-6;
+            intakeValveAreaM2[cylinderIndex] = intakeArea * 1.0e-6
+                * std::clamp(options_.intakeValveAreaMultiplier.value_or(1.0),
+                    0.05, 8.0);
             intakeValveDischargeCoefficient[cylinderIndex] = 1.0;
             pistonAreaM2ForSplit[cylinderIndex] = pistonAreaM2;
             chamberVolumeLitresForWork[cylinderIndex] = chamberVolume;
@@ -2127,6 +2132,12 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
         std::array<std::uint8_t, 32> exhaustExchangeApplied {};
         exhaustExchangeApplied.fill(1);
         if (flushExhaustNetwork) {
+            if (options_.resetExhaustToAmbientEachCoupling.value_or(false)) {
+                const auto reset = physicalExhaustNetwork.reset(
+                    config_.ambientPressureKpa * 1'000.0,
+                    config_.ambientTemperatureC + 273.15);
+                if (!reset) state_.solverResolutionLimited = true;
+            }
             std::array<gasdynamics::CylinderValveBoundary, 32> averagedBoundaries {};
             const auto cylinderPorts = physicalExhaustNetwork.layout().cylinderPorts();
             for (std::size_t portIndex = 0; portIndex < cylinderPorts.size(); ++portIndex) {

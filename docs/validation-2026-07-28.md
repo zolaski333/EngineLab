@@ -254,3 +254,6 @@ Il est resté vivant après cinq secondes de lancement caché.
 4. Les avertissements de contre-pression restent cohérents avec la PMEP haut
    régime ci-dessus. Ils ne doivent pas être supprimés pour rendre l'interface
    verte.
+
+L'investigation détaillée et les leviers réfutés sont conservés dans
+`docs/exhaust-pmep-investigation-2026-07-28.md`.

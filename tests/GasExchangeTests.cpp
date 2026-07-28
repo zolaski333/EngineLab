@@ -73,6 +73,8 @@
 #include <cstdlib>
 #include <iomanip>
 #include <iostream>
+#include <optional>
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -242,13 +244,77 @@ int main(int argc, char** argv) {
     // shrinks when the oracle is switched on, the loss is a coupling artefact
     // and no amount of valve area or duct geometry will fix it.
     auto oracleCoupling = false;
+    std::optional<double> exhaustCellLengthM;
+    std::optional<double> pointRpm;
+    std::optional<double> outletDiameterMm;
+    std::optional<double> outletDischargeCoefficient;
+    std::optional<double> mufflerRestriction;
+    std::optional<double> collectorDiameterMm;
+    std::optional<double> collectorVolumeLitres;
+    auto independentPaths = false;
+    auto idealExhaustReservoir = false;
+    std::optional<double> intakeValveAreaMultiplier;
+    std::optional<double> exhaustValveAreaMultiplier;
     for (int index = 1; index < argc; ++index) {
         const auto argument = std::string_view(argv[index]);
         if (argument == "--enforce-gas-exchange") enforce = true;
-        if (argument == "--oracle-coupling") oracleCoupling = true;
+        else if (argument == "--oracle-coupling") oracleCoupling = true;
+        else if (argument == "--exhaust-cell-mm" && index + 1 < argc) {
+            exhaustCellLengthM = std::stod(argv[++index]) * 0.001;
+        } else if (argument == "--point-rpm" && index + 1 < argc) {
+            pointRpm = std::stod(argv[++index]);
+        } else if (argument == "--outlet-mm" && index + 1 < argc) {
+            outletDiameterMm = std::stod(argv[++index]);
+        } else if (argument == "--outlet-cd" && index + 1 < argc) {
+            outletDischargeCoefficient = std::stod(argv[++index]);
+        } else if (argument == "--muffler-restriction" && index + 1 < argc) {
+            mufflerRestriction = std::stod(argv[++index]);
+        } else if (argument == "--collector-mm" && index + 1 < argc) {
+            collectorDiameterMm = std::stod(argv[++index]);
+        } else if (argument == "--collector-litres" && index + 1 < argc) {
+            collectorVolumeLitres = std::stod(argv[++index]);
+        } else if (argument == "--independent-paths") {
+            independentPaths = true;
+        } else if (argument == "--ideal-exhaust-reservoir") {
+            idealExhaustReservoir = true;
+        } else if (argument == "--intake-valve-area-x" && index + 1 < argc) {
+            intakeValveAreaMultiplier = std::stod(argv[++index]);
+        } else if (argument == "--exhaust-valve-area-x" && index + 1 < argc) {
+            exhaustValveAreaMultiplier = std::stod(argv[++index]);
+        } else {
+            std::cerr << "usage: EngineLabGasExchangeTests"
+                         " [--enforce-gas-exchange] [--oracle-coupling]"
+                         " [--exhaust-cell-mm millimetres] [--point-rpm rpm]"
+                         " [--outlet-mm millimetres] [--outlet-cd coefficient]"
+                         " [--muffler-restriction coefficient]"
+                         " [--collector-mm millimetres]"
+                         " [--collector-litres litres] [--independent-paths]"
+                         " [--ideal-exhaust-reservoir]"
+                         " [--intake-valve-area-x multiplier]"
+                         " [--exhaust-valve-area-x multiplier]\n";
+            return EXIT_FAILURE;
+        }
     }
 
     auto config = enginelab::makeDefaultInlineFour();
+    if (outletDiameterMm) config.exhaust.outletDiameterMm = *outletDiameterMm;
+    if (outletDischargeCoefficient)
+        config.exhaust.outletDischargeCoefficient = *outletDischargeCoefficient;
+    if (mufflerRestriction) config.exhaust.mufflerRestriction = *mufflerRestriction;
+    if (collectorDiameterMm) config.exhaust.collectorDiameterMm = *collectorDiameterMm;
+    if (collectorVolumeLitres)
+        config.exhaust.collectorVolumeLitres = *collectorVolumeLitres;
+    if (independentPaths) {
+        config.exhaustPaths.clear();
+        for (const auto& cylinder : config.cylinders) {
+            enginelab::ExhaustPathConfig path;
+            path.id = cylinder.id;
+            path.cylinderIds = { cylinder.id };
+            path.geometry = config.exhaust;
+            path.inheritsGlobalGeometry = false;
+            config.exhaustPaths.push_back(std::move(path));
+        }
+    }
     enginelab::normaliseEngineConfig(config);
     // 0.95 of the limiter, not the limiter itself. `min(redline, revLimit)` puts
     // the top swept target exactly ON the rev limiter, and the ECU's limiter is
@@ -265,7 +331,13 @@ int main(int argc, char** argv) {
     enginelab::SimplifiedGasolinePhysics physics;
     enginelab::FourStrokeEventGenerator events;
     auto exhaust = enginelab::ExhaustGraph::makeForEngine(config);
-    enginelab::EngineSimulator simulator(config, ecu, physics, events, exhaust);
+    enginelab::EngineSimulatorOptions simulatorOptions;
+    simulatorOptions.exhaustTargetCellLengthM = exhaustCellLengthM;
+    simulatorOptions.resetExhaustToAmbientEachCoupling = idealExhaustReservoir;
+    simulatorOptions.intakeValveAreaMultiplier = intakeValveAreaMultiplier;
+    simulatorOptions.exhaustValveAreaMultiplier = exhaustValveAreaMultiplier;
+    enginelab::EngineSimulator simulator(
+        config, ecu, physics, events, exhaust, simulatorOptions);
     simulator.setExhaustCouplingEverySubstep(oracleCoupling);
 
     constexpr double dt = 1.0 / 240.0;
@@ -275,14 +347,20 @@ int main(int argc, char** argv) {
     }
 
     std::vector<Point> points;
-    const auto startRpm = std::max(2'000.0,
-        std::round(config.idleRpm * 1.5 / sweepStepRpm) * sweepStepRpm);
-    auto first = true;
-    for (double target = startRpm; target <= maxRpm + 1.0; target += sweepStepRpm) {
-        points.push_back(holdPoint(simulator, target, first ? 3.0 : 2.0, 1.0));
-        first = false;
+    if (pointRpm) {
+        points.push_back(holdPoint(simulator,
+            std::clamp(*pointRpm, 1'000.0, maxRpm), 4.0, 1.0));
+    } else {
+        const auto startRpm = std::max(2'000.0,
+            std::round(config.idleRpm * 1.5 / sweepStepRpm) * sweepStepRpm);
+        auto first = true;
+        for (double target = startRpm; target <= maxRpm + 1.0; target += sweepStepRpm) {
+            points.push_back(holdPoint(simulator, target, first ? 3.0 : 2.0, 1.0));
+            first = false;
+        }
     }
-    require(points.size() >= 4, "the sweep must cover enough points to describe a trend");
+    require(pointRpm || points.size() >= 4,
+            "the sweep must cover enough points to describe a trend");
 
     std::cout << std::fixed << std::setprecision(3)
               << "--- Gas-exchange sweep (inline4, WOT dyno absorber) ---\n";
@@ -349,24 +427,35 @@ int main(int argc, char** argv) {
                     < 0.02 * std::max(1.0, std::abs(point.netImepBar)),
                 "the indicated loop split must reconcile with net indicated work");
     }
-    const auto& low = points.front();
-    const auto& high = points.back();
-    require(std::abs(high.pmepBar) > std::abs(low.pmepBar),
-            "gas-exchange loss must grow with engine speed");
+    if (!pointRpm) {
+        const auto& low = points.front();
+        const auto& high = points.back();
+        require(std::abs(high.pmepBar) > std::abs(low.pmepBar),
+                "gas-exchange loss must grow with engine speed");
+    }
 
     // --- Literature criteria: reported always, enforced under the flag.
-    const auto& mid = pointNear(points, midRangeFractionOfRevLimit * maxRpm);
-    const auto& top = pointNear(points, highRpmFractionOfRevLimit * maxRpm);
+    const auto& mid = pointNear(points, pointRpm
+        ? *pointRpm : midRangeFractionOfRevLimit * maxRpm);
+    const auto& top = pointNear(points, pointRpm
+        ? *pointRpm : highRpmFractionOfRevLimit * maxRpm);
     const auto crit3 = std::abs(mid.pmepBar) <= midRangePumpingCeilingBar;
     const auto crit4 = std::abs(top.pmepBar) <= highRpmPumpingCeilingBar;
     const auto within = [](bool ok) { return ok ? "OK" : "outside target"; };
-    std::cout << "  crit3 |pmep| at " << mid.targetRpm << " rpm = " << std::abs(mid.pmepBar)
-              << " <= " << midRangePumpingCeilingBar << " bar (" << within(crit3) << ")\n"
-              << "  crit4 |pmep| at " << top.targetRpm << " rpm = " << std::abs(top.pmepBar)
-              << " <= " << highRpmPumpingCeilingBar << " bar (" << within(crit4) << ")\n";
+    if (pointRpm) {
+        std::cout << "  diagnostic |pmep| at " << top.targetRpm << " rpm = "
+                  << std::abs(top.pmepBar) << " bar\n";
+    } else {
+        std::cout << "  crit3 |pmep| at " << mid.targetRpm << " rpm = " << std::abs(mid.pmepBar)
+                  << " <= " << midRangePumpingCeilingBar << " bar (" << within(crit3) << ")\n"
+                  << "  crit4 |pmep| at " << top.targetRpm << " rpm = " << std::abs(top.pmepBar)
+                  << " <= " << highRpmPumpingCeilingBar << " bar (" << within(crit4) << ")\n";
+    }
     if (enforce) {
-        require(crit3, "mid-range WOT pumping loss must sit in the literature band");
-        require(crit4, "approaching the rev limit, WOT pumping loss must stay in the literature band");
+        require(!pointRpm && crit3,
+                "mid-range WOT pumping loss must sit in the literature band");
+        require(!pointRpm && crit4,
+                "approaching the rev limit, WOT pumping loss must stay in the literature band");
     } else {
         std::cout << "  (pumping criteria reported only; --enforce-gas-exchange gates them --"
                      " promote when the gas-exchange physics meets them)\n";
