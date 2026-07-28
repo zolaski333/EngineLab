@@ -436,28 +436,16 @@ EngineSimulator::EngineSimulator(EngineConfig config, IEcuModel& ecu, IPhysicsMo
 
 void EngineSimulator::configureIntakeWorkerPool() {
     // Only the 1-D runner advance is dispatched, and only its per-cylinder
-    // half. Whether that pays depends on two things measured rather than
-    // assumed (docs/physics-audit.md):
+    // half. The 95 mm production mesh makes each item too short to amortise one
+    // participant per cylinder: on the 12-thread reference machine a same-hour,
+    // counterbalanced free-run sweep found two workers best for the V8 and
+    // three for the V12. Four and five workers lost to barrier/atomic traffic;
+    // an undispatched twin tracked machine drift as the null control.
     //
-    //  - the engine must have enough cylinders for the work to divide. A twin
-    //    already produces 1.6 simulated seconds per wall second and would pay a
-    //    barrier to split two items; below three cylinders the phase runs
-    //    inline.
-    //  - the machine must have cores to spare. The audio callback and the UI
-    //    thread need one each. Half the reported concurrency, minus one for the
-    //    calling thread, is deliberately conservative.
-    //
-    // Note before reaching for a bigger pool: `usableThreads - 1` only BINDS
-    // when the engine has more than that many cylinders. On a 16-thread machine
-    // it is 7, so every catalogue engine except the Merlin V12 is limited by
-    // `cylinderCount - 1` and would not notice a larger cap at all. Raising it
-    // is a V12-only question, and it is untested -- an attempt to measure it
-    // (docs/physics-audit.md, "Le nombre de threads : non mesurable ce soir")
-    // could not resolve it, because a null control that must read 0% read
-    // +20% and then -19% on the same machine. Do not raise it without a
-    // measurement carrying such a control, and remember that the realtime
-    // harness runs no audio callback and no UI, so it cannot see the cost of
-    // oversubscribing the machine the application actually runs on.
+    // The work-cardinality cap below preserves those measured optima. The
+    // hardware cap is still lower when necessary, and half the reported
+    // concurrency remains reserved for the audio callback, UI and OS. Explicit
+    // harness overrides deliberately bypass this production policy.
     const auto cylinderCount = config_.cylinders.size();
     if (options_.intakeStaircaseRounds.has_value())
         intakeStaircaseRounds_ = std::clamp<std::size_t>(
@@ -473,7 +461,9 @@ void EngineSimulator::configureIntakeWorkerPool() {
     const auto reportedConcurrency = std::thread::hardware_concurrency();
     if (reportedConcurrency < 4) return;
     const auto usableThreads = std::max<std::size_t>(1, reportedConcurrency / 2);
-    const auto workerCount = std::min(cylinderCount - 1, usableThreads - 1);
+    const std::size_t workloadWorkerCap = cylinderCount >= 10 ? 3 : 2;
+    const auto workerCount = std::min(
+        { cylinderCount - 1, usableThreads - 1, workloadWorkerCap });
     if (workerCount == 0) return;
     intakeWorkerPool_ = std::make_unique<CylinderWorkerPool>(workerCount);
     // Only a group with more than one cylinder in it needs the plenum staircase
