@@ -1921,12 +1921,14 @@ rapport, donc le couple à la roue divisé par deux partout — exactement la pl
 « très lent, peu importe le rapport, même avec le CP2 ». Le `cruiser_6_speed`
 avait le même défaut.
 
-**Reste ouvert** : le transfert de charge longitudinal n'est pas modélisé.
-`tractionLimit = mu * m * g * drivenAxleWeightFraction` avec la fraction figée à
-0.55. Une moto en accélération franche transfère à ~0.9 et plus sur l'arrière,
-donc l'adhérence arrière est sous-estimée d'un facteur ~1.7 ; une propulsion
-aussi. L'ajouter demande empattement et hauteur de centre de gravité, que
-`VehicleConfig` ne porte pas.
+**Résolu le 2026-07-29** : `VehicleConfig` porte désormais la motricité,
+l'empattement et la hauteur du centre de gravité. Chaque sous-pas mécanique
+applique `delta_Fz = m*a*h/L` à la charge statique avant de calculer
+`tractionLimit = mu * Fz`. Le témoin non vacuitaire
+`EngineLab.VehicleDynamics` mesure 4,058 m/s² en traction contre 6,186 m/s² en
+propulsion sur deux châssis par ailleurs identiques, et vérifie l'inversion en
+marche arrière. Protocole complet :
+[`vehicle-load-transfer-validation-2026-07-29.md`](vehicle-load-transfer-validation-2026-07-29.md).
 
 ### Ce qui n'est PAS encore expliqué
 

@@ -21,6 +21,8 @@ struct DrivelineOutput final {
     double brakeForceN { 0.0 };
     double roadLoadForceN { 0.0 };
     double tireForceN { 0.0 };
+    double drivenAxleNormalForceN { 0.0 };
+    double longitudinalAccelerationMps2 { 0.0 };
     bool tractionLimited { false };
     double clutchTemperatureC { 22.0 };
     double clutchDissipatedEnergyJoules { 0.0 };
@@ -60,6 +62,7 @@ private:
     double wheelAngularVelocityRadPerSecond_ { 0.0 };
     double vehicleSpeedMps_ { 0.0 };
     double vehicleDistanceM_ { 0.0 };
+    double longitudinalAccelerationMps2_ { 0.0 };
     double clutchTemperatureC_ { 22.0 };
     double clutchDissipatedEnergyJoules_ { 0.0 };
     double previousStoredEnergyJoules_ { 0.0 };

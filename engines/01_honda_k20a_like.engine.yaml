@@ -1,4 +1,4 @@
-schema_version: 4
+schema_version: 5
 family: sport compact
 engine:
   name: K20A-like 2.0 I4 VTEC

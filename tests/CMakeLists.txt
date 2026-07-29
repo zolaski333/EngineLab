@@ -7,6 +7,15 @@ target_compile_definitions(EngineLabCoreTests PRIVATE ENGINELAB_CATALOG_ROOT="${
 enginelab_set_warnings(EngineLabCoreTests)
 add_test(NAME EngineLab.Core COMMAND EngineLabCoreTests)
 
+add_executable(EngineLabVehicleDynamicsTests VehicleDynamicsTests.cpp)
+target_link_libraries(EngineLabVehicleDynamicsTests PRIVATE
+    EngineLab::Foundation EngineLab::Runtime EngineLab::Serialization
+    EngineLab::Catalog)
+target_compile_definitions(EngineLabVehicleDynamicsTests PRIVATE
+    ENGINELAB_CATALOG_ROOT="${CMAKE_SOURCE_DIR}")
+enginelab_set_warnings(EngineLabVehicleDynamicsTests)
+add_test(NAME EngineLab.VehicleDynamics COMMAND EngineLabVehicleDynamicsTests)
+
 add_executable(EngineLabPhysicsRegressionTests PhysicsRegressionTests.cpp)
 target_link_libraries(EngineLabPhysicsRegressionTests PRIVATE EngineLab::Foundation EngineLab::Physics)
 enginelab_set_warnings(EngineLabPhysicsRegressionTests)

@@ -460,11 +460,12 @@ test onto the behaviour it is meant to catch. Keep it that way.
   arithmetic, not by feel: 1st gear reached **141 km/h at 9,000 rpm** (real: 69)
   and 6th reached 314 (real: ~189). Check any new vehicle the same way before
   believing a torque or acceleration complaint.
-- **Longitudinal weight transfer is NOT modelled, and the traction limit is
-  static.** `tractionLimit = mu * m * g * drivenAxleWeightFraction` with the
-  fraction fixed at 0.55. A motorcycle accelerating hard transfers to ~0.9+ on
-  the rear, so rear grip is under-estimated by ~1.7x; a RWD car likewise. Adding
-  it needs wheelbase and CG height, which `VehicleConfig` does not carry. Open.
+- **Longitudinal weight transfer is schema-5 vehicle physics, not a tuning
+  gain.** `VehicleConfig` carries `drivenAxleLayout`, static driven-axle weight
+  fraction, wheelbase and CG height. Every 1 ms mechanical sub-step evaluates
+  `deltaFz = m*a*h/L`; positive acceleration unloads FWD, loads RWD, and AWD
+  retains the total `m*g`. Keep the catalogue layout explicit and reproduce
+  `EngineLab.VehicleDynamics` before changing tyre or chassis parameters.
 - **Cell-centre primitives are not a profile at the shipped mesh.**
   `targetCellLengthM = 0.300` with `minimumCellsPerDuct = 1` gives a 760 mm
   primary three cells, and with the high-order reconstruction `rho*u` varies 2.4x

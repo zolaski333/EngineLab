@@ -5,6 +5,17 @@ It records measurements as well as successful changes. Failed hypotheses are
 kept because repeating an attractive but disproved fix wastes more time than
 documenting it.
 
+## 2026-07-29 — transfert de charge longitudinal
+
+Le schéma 5 ajoute la motricité, l'empattement et la hauteur du centre de
+gravité aux véhicules. La limite d'adhérence est maintenant calculée avec
+`delta_Fz = m*a*h/L` à chaque sous-pas mécanique. Le témoin saturé mesure
+4,058 m/s² en traction, 6,186 m/s² en propulsion et 9,796 m/s² en intégrale sur
+le même châssis ; la marche arrière inverse la charge de la propulsion.
+Persistance, validation et appariement des 14 moteurs sont gardés par
+`EngineLab.VehicleDynamics`. Détails et table :
+[`vehicle-load-transfer-validation-2026-07-29.md`](vehicle-load-transfer-validation-2026-07-29.md).
+
 ## 2026-07-29 — points de banc réellement stabilisés
 
 Le contrôleur de banc normalisé du runtime et des harnais a été remplacé par un

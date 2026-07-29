@@ -1,4 +1,4 @@
-schema_version: 4
+schema_version: 5
 family: aircooled flat-six
 engine:
   name: Aircooled-like 3.6 Flat-6
@@ -41,7 +41,7 @@ engine:
     camshafts: aircooled_flat6
     exhaust: flat6_equal_length
     transmission: sport_6_speed
-    vehicle: compact_coupe
+    vehicle: rear_engine_coupe
   exhaust_paths:
     - { id: 1, cylinder_ids: [1, 3, 5], audio_volume: 1.00, acoustic_position_m: { x: -0.45, y: 0.0, z: 0.0 } }
     - { id: 2, cylinder_ids: [2, 4, 6], audio_volume: 0.97, acoustic_position_m: { x: 0.45, y: 0.0, z: 0.0 } }

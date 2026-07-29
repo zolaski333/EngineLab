@@ -1,4 +1,4 @@
-schema_version: 4
+schema_version: 5
 family: motorcycle
 # Yamaha CP3 (MT-09 / Tracer 9 / YZF-R9) -- 890 cc inline triple with a
 # 120-degree crank. A three-cylinder 120-deg crank fires evenly every 240 deg,

@@ -5,6 +5,7 @@
 #include <map>
 #include <optional>
 #include <sstream>
+#include <stdexcept>
 
 namespace enginelab {
 namespace {
@@ -178,7 +179,21 @@ template <typename T>
     assignIfPresent(node, "tire_radius_m", value.tireRadiusM);
     assignIfPresent(node, "rolling_resistance_coefficient", value.rollingResistanceCoefficient);
     assignIfPresent(node, "tire_friction_coefficient", value.tireFrictionCoefficient);
+    const auto drivenAxle = node["driven_axle_layout"].as<std::string>("rear");
+    if (drivenAxle == "front")
+        value.drivenAxleLayout = DrivenAxleLayout::front;
+    else if (drivenAxle == "rear")
+        value.drivenAxleLayout = DrivenAxleLayout::rear;
+    else if (drivenAxle == "all")
+        value.drivenAxleLayout = DrivenAxleLayout::all;
+    else
+        throw std::invalid_argument(
+            "Unknown driven axle layout: " + drivenAxle);
     assignIfPresent(node, "driven_axle_weight_fraction", value.drivenAxleWeightFraction);
+    assignIfPresent(node, "wheelbase_m", value.wheelbaseM);
+    assignIfPresent(
+        node, "center_of_gravity_height_m",
+        value.centerOfGravityHeightM);
     assignIfPresent(node, "maximum_brake_force_n", value.maximumBrakeForceN);
     return value;
 }

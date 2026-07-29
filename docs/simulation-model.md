@@ -207,8 +207,11 @@ engagé tient le couple moteur à quelques tr/min de glissement résiduel au lie
 patiner sans fin. La capacité — bornée puis dégradée par l'échauffement et le
 fading — le limite toujours : au-delà, il décroche et glisse. La roue reste un
 degré de liberté distinct de la vitesse véhicule. Son glissement génère une force
-longitudinale bornée par l'adhérence, puis traînée, roulement et frein dissipent
-l'énergie. Le runtime sous-échantillonne ce couplage à 1 ms.
+longitudinale bornée par l'adhérence. La charge normale de l'essieu moteur
+répond à la motricité et au transfert quasi-statique `m*a*h/L` ; une accélération
+avant charge une propulsion, décharge une traction et conserve le poids total
+disponible en transmission intégrale. Traînée, roulement et frein dissipent
+ensuite l'énergie. Le runtime sous-échantillonne ce couplage à 1 ms.
 
 En mode véhicule, la charge manuelle est une force résistante longitudinale ;
 elle revient au vilebrequin uniquement par la roue, la boîte et l'embrayage. En
@@ -216,8 +219,8 @@ mode dyno, le frein agit directement au vilebrequin et le véhicule est découpl
 Les deux chemins ne sont jamais appliqués simultanément.
 
 Les bilans publient énergie stockée, dissipée et résidu. Le modèle n'inclut ni
-suspension, ni transfert de charge, ni ABS, ni synchroniseurs détaillés, ni
-Pacejka complet.
+dynamique de suspension/tangage, ni ABS, ni synchroniseurs détaillés, ni Pacejka
+complet ; le transfert de charge est un équilibre longitudinal quasi-statique.
 
 ## Limites et interprétation
 

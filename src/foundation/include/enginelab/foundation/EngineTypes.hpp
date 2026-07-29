@@ -8,7 +8,7 @@
 
 namespace enginelab {
 inline constexpr std::uint32_t minimumSupportedEngineSchemaVersion { 1 };
-inline constexpr std::uint32_t currentEngineSchemaVersion { 4 };
+inline constexpr std::uint32_t currentEngineSchemaVersion { 5 };
 
 
 enum class EngineCycle : std::uint8_t { fourStroke, twoStroke };
@@ -17,6 +17,7 @@ enum class InjectionMode : std::uint8_t { port, direct };
 enum class EngineLayout : std::uint8_t { inlineLayout, vLayout, flat, radial, custom };
 enum class ConnectingRodType : std::uint8_t { conventional, master, articulated };
 enum class ForcedInductionType : std::uint8_t { turbocharger, supercharger };
+enum class DrivenAxleLayout : std::uint8_t { front, rear, all };
 enum class ExhaustComponentType : std::uint8_t {
     pipe, merge, splitter, resonator, muffler, catalyst, outlet
 };
@@ -423,7 +424,12 @@ struct VehicleConfig final {
     double tireRadiusM { 0.315 };
     double rollingResistanceCoefficient { 0.014 };
     double tireFrictionCoefficient { 1.0 };
+    DrivenAxleLayout drivenAxleLayout { DrivenAxleLayout::rear };
+    /** Static fraction of vehicle weight carried by the driven axle. Ignored
+     * for all-wheel drive, where every tyre contributes its normal load. */
     double drivenAxleWeightFraction { 0.55 };
+    double wheelbaseM { 2.65 };
+    double centerOfGravityHeightM { 0.52 };
     double maximumBrakeForceN { 14'000.0 };
 };
 
@@ -928,6 +934,8 @@ struct EngineState final {
     double requestedRoadLoad { 0.0 };
     double roadLoadForceN { 0.0 };
     double tireLongitudinalForceN { 0.0 };
+    double drivenAxleNormalForceN { 0.0 };
+    double longitudinalAccelerationMps2 { 0.0 };
     bool tractionLimited { false };
     double clutchTemperatureC { 22.0 };
     double clutchDissipatedEnergyJoules { 0.0 };

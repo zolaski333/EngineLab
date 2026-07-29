@@ -634,6 +634,10 @@ void EngineRuntime::run(std::stop_token stopToken) {
             frame.state.requestedRoadLoad = drivelineOutput_.requestedLoad;
             frame.state.roadLoadForceN = drivelineOutput_.roadLoadForceN;
             frame.state.tireLongitudinalForceN = drivelineOutput_.tireForceN;
+            frame.state.drivenAxleNormalForceN =
+                drivelineOutput_.drivenAxleNormalForceN;
+            frame.state.longitudinalAccelerationMps2 =
+                drivelineOutput_.longitudinalAccelerationMps2;
             frame.state.tractionLimited = drivelineOutput_.tractionLimited;
             frame.state.clutchTemperatureC = drivelineOutput_.clutchTemperatureC;
             frame.state.clutchDissipatedEnergyJoules = drivelineOutput_.clutchDissipatedEnergyJoules;

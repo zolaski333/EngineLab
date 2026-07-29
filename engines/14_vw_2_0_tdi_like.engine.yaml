@@ -1,4 +1,4 @@
-schema_version: 4
+schema_version: 5
 family: turbo diesel
 engine:
   name: VW EA288-like 2.0 TDI I4
@@ -76,7 +76,7 @@ engine:
     camshafts: diesel_low_speed
     exhaust: turbo_downpipe
     transmission: jdm_6_speed
-    vehicle: jdm_gt
+    vehicle: diesel_hatch
   cylinder_template:
     bore_mm: 81.0
     stroke_mm: 95.5

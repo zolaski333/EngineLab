@@ -1,5 +1,6 @@
 #include <enginelab/serialization/JsonEngineSerializer.hpp>
 #include <nlohmann/json.hpp>
+#include <stdexcept>
 
 namespace enginelab {
 namespace {
@@ -14,6 +15,23 @@ using Json = nlohmann::json;
 }
 [[nodiscard]] std::string forcedInductionTypeName(ForcedInductionType value) {
     return value == ForcedInductionType::supercharger ? "supercharger" : "turbocharger";
+}
+[[nodiscard]] const char* drivenAxleLayoutName(
+    DrivenAxleLayout value) noexcept {
+    switch (value) {
+    case DrivenAxleLayout::front: return "front";
+    case DrivenAxleLayout::rear: return "rear";
+    case DrivenAxleLayout::all: return "all";
+    }
+    return "rear";
+}
+[[nodiscard]] DrivenAxleLayout decodeDrivenAxleLayout(
+    std::string_view value) {
+    if (value == "front") return DrivenAxleLayout::front;
+    if (value == "rear") return DrivenAxleLayout::rear;
+    if (value == "all") return DrivenAxleLayout::all;
+    throw std::invalid_argument(
+        "Unknown driven axle layout: " + std::string(value));
 }
 [[nodiscard]] const char* exhaustComponentTypeName(ExhaustComponentType value) noexcept {
     switch (value) {
@@ -389,7 +407,10 @@ std::string JsonEngineSerializer::encode(const EngineConfig& config) const {
                       {"tire_radius_m", config.vehicle.tireRadiusM},
                       {"rolling_resistance_coefficient", config.vehicle.rollingResistanceCoefficient},
                       {"tire_friction_coefficient", config.vehicle.tireFrictionCoefficient},
+                      {"driven_axle_layout", drivenAxleLayoutName(config.vehicle.drivenAxleLayout)},
                       {"driven_axle_weight_fraction", config.vehicle.drivenAxleWeightFraction},
+                      {"wheelbase_m", config.vehicle.wheelbaseM},
+                      {"center_of_gravity_height_m", config.vehicle.centerOfGravityHeightM},
                       {"maximum_brake_force_n", config.vehicle.maximumBrakeForceN}}} }} };
     return document.dump(2);
 }
@@ -593,7 +614,16 @@ EngineDecodeResult JsonEngineSerializer::decode(std::string_view text) const noe
             config.vehicle.rollingResistanceCoefficient = vehicle.value("rolling_resistance_coefficient",
                                                                         config.vehicle.rollingResistanceCoefficient);
             config.vehicle.tireFrictionCoefficient = vehicle.value("tire_friction_coefficient", config.vehicle.tireFrictionCoefficient);
+            config.vehicle.drivenAxleLayout = decodeDrivenAxleLayout(
+                vehicle.value("driven_axle_layout",
+                    std::string { drivenAxleLayoutName(
+                        config.vehicle.drivenAxleLayout) }));
             config.vehicle.drivenAxleWeightFraction = vehicle.value("driven_axle_weight_fraction", config.vehicle.drivenAxleWeightFraction);
+            config.vehicle.wheelbaseM =
+                vehicle.value("wheelbase_m", config.vehicle.wheelbaseM);
+            config.vehicle.centerOfGravityHeightM =
+                vehicle.value("center_of_gravity_height_m",
+                    config.vehicle.centerOfGravityHeightM);
             config.vehicle.maximumBrakeForceN = vehicle.value("maximum_brake_force_n", config.vehicle.maximumBrakeForceN);
         }
         if (engine.contains("ignition")) {

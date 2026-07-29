@@ -1,4 +1,4 @@
-schema_version: 4
+schema_version: 5
 family: motorcycle
 # Yamaha CP4 (YZF-R1 / MT-10) -- 998 cc inline four with the crossplane crank.
 # The crankpins sit 90 deg apart (0-90-270-180 in 360-deg terms), which in a

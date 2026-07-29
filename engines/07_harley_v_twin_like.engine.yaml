@@ -1,4 +1,4 @@
-schema_version: 4
+schema_version: 5
 family: motorcycle
 engine:
   name: Big Twin-like 1.9 V2

@@ -1,4 +1,4 @@
-schema_version: 4
+schema_version: 5
 family: aircraft
 engine:
   name: Merlin-like 19.8 V12 Scaled

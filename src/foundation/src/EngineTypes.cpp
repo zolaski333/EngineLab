@@ -387,8 +387,9 @@ ValveControlSample interpolateValveControl(const ValveControlConfig& control, do
 
 void normaliseEngineConfig(EngineConfig& config) {
     // Schema 2 added authored exhaust DAGs/topology provenance; schema 3 adds
-    // explicit valve geometry; schema 4 adds SI outlet/observer coordinates.
-    // Older documents migrate to the documented free-field observer below.
+    // explicit valve geometry; schema 4 adds SI outlet/observer coordinates;
+    // schema 5 adds authored vehicle layout and longitudinal load-transfer
+    // geometry. Older documents migrate to the documented defaults below.
     if (config.schemaVersion < currentEngineSchemaVersion)
         config.schemaVersion = currentEngineSchemaVersion;
     // `intake` is the canonical representation. Legacy scalar fields remain
@@ -646,6 +647,9 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
         || !inRange(config.vehicle.rollingResistanceCoefficient, 0.0, 0.20)
         || !inRange(config.vehicle.tireFrictionCoefficient, 0.05, 3.0)
         || !inRange(config.vehicle.drivenAxleWeightFraction, 0.05, 1.0)
+        || !inRange(config.vehicle.wheelbaseM, 0.5, 10.0)
+        || !inRange(config.vehicle.centerOfGravityHeightM, 0.05, 3.0)
+        || config.vehicle.centerOfGravityHeightM >= config.vehicle.wheelbaseM
         || !inRange(config.vehicle.maximumBrakeForceN, 0.0, 200'000.0)
         || !inRange(config.combustionCalibration.baseIgnitionDelaySeconds, 0.0, 0.02)
         || !inRange(config.combustionCalibration.ignitionDelayTemperatureExponent, 0.0, 5.0)

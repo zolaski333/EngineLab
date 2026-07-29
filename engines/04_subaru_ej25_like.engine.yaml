@@ -1,4 +1,4 @@
-schema_version: 4
+schema_version: 5
 family: boxer turbo
 engine:
   name: EJ25-like 2.5 Flat-4 Turbo

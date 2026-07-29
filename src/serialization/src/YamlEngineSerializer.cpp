@@ -1,5 +1,6 @@
 #include <enginelab/serialization/YamlEngineSerializer.hpp>
 #include <yaml-cpp/yaml.h>
+#include <stdexcept>
 
 namespace enginelab {
 namespace {
@@ -17,6 +18,23 @@ namespace {
     if (value == ConnectingRodType::master) return "master";
     if (value == ConnectingRodType::articulated) return "articulated";
     return "conventional";
+}
+[[nodiscard]] const char* drivenAxleLayoutName(
+    DrivenAxleLayout value) noexcept {
+    switch (value) {
+    case DrivenAxleLayout::front: return "front";
+    case DrivenAxleLayout::rear: return "rear";
+    case DrivenAxleLayout::all: return "all";
+    }
+    return "rear";
+}
+[[nodiscard]] DrivenAxleLayout decodeDrivenAxleLayout(
+    std::string_view value) {
+    if (value == "front") return DrivenAxleLayout::front;
+    if (value == "rear") return DrivenAxleLayout::rear;
+    if (value == "all") return DrivenAxleLayout::all;
+    throw std::invalid_argument(
+        "Unknown driven axle layout: " + std::string(value));
 }
 [[nodiscard]] const char* exhaustComponentTypeName(ExhaustComponentType value) noexcept {
     switch (value) {
@@ -273,7 +291,10 @@ std::string YamlEngineSerializer::encode(const EngineConfig& config) const {
         << YAML::Key << "tire_radius_m" << YAML::Value << config.vehicle.tireRadiusM
         << YAML::Key << "rolling_resistance_coefficient" << YAML::Value << config.vehicle.rollingResistanceCoefficient
         << YAML::Key << "tire_friction_coefficient" << YAML::Value << config.vehicle.tireFrictionCoefficient
+        << YAML::Key << "driven_axle_layout" << YAML::Value << drivenAxleLayoutName(config.vehicle.drivenAxleLayout)
         << YAML::Key << "driven_axle_weight_fraction" << YAML::Value << config.vehicle.drivenAxleWeightFraction
+        << YAML::Key << "wheelbase_m" << YAML::Value << config.vehicle.wheelbaseM
+        << YAML::Key << "center_of_gravity_height_m" << YAML::Value << config.vehicle.centerOfGravityHeightM
         << YAML::Key << "maximum_brake_force_n" << YAML::Value << config.vehicle.maximumBrakeForceN << YAML::EndMap
         << YAML::Key << "intake" << YAML::Value << YAML::BeginMap
         << YAML::Key << "plenum_volume_l" << YAML::Value << config.intake.plenumVolumeLitres
@@ -667,7 +688,17 @@ EngineDecodeResult YamlEngineSerializer::decode(std::string_view text) const noe
             if (vehicle["rolling_resistance_coefficient"])
                 config.vehicle.rollingResistanceCoefficient = vehicle["rolling_resistance_coefficient"].as<double>();
             if (vehicle["tire_friction_coefficient"]) config.vehicle.tireFrictionCoefficient = vehicle["tire_friction_coefficient"].as<double>();
+            config.vehicle.drivenAxleLayout = decodeDrivenAxleLayout(
+                vehicle["driven_axle_layout"].as<std::string>(
+                    drivenAxleLayoutName(
+                        config.vehicle.drivenAxleLayout)));
             if (vehicle["driven_axle_weight_fraction"]) config.vehicle.drivenAxleWeightFraction = vehicle["driven_axle_weight_fraction"].as<double>();
+            if (vehicle["wheelbase_m"])
+                config.vehicle.wheelbaseM =
+                    vehicle["wheelbase_m"].as<double>();
+            if (vehicle["center_of_gravity_height_m"])
+                config.vehicle.centerOfGravityHeightM =
+                    vehicle["center_of_gravity_height_m"].as<double>();
             if (vehicle["maximum_brake_force_n"]) config.vehicle.maximumBrakeForceN = vehicle["maximum_brake_force_n"].as<double>();
         }
         config.intake.plenumVolumeLitres = config.plenumVolumeLitres;

@@ -149,9 +149,24 @@ DrivelineOutput DrivelineModel::advance(double dt, const EngineState& engineStat
     const auto wheelInertia = std::max(0.01, transmission.drivenWheelInertiaKgM2
         + transmission.differentialInertiaKgM2
         + transmission.gearboxInputInertiaKgM2 * totalRatio * totalRatio);
-    const auto normalForce = vehicle.massKg * 9.80665 * vehicle.drivenAxleWeightFraction;
-    const auto tractionLimit = vehicle.tireFrictionCoefficient * normalForce;
-    const auto tireStiffnessNPerMps = normalForce * 7.5;
+    constexpr double gravityMps2 = 9.80665;
+    const auto totalNormalForce = vehicle.massKg * gravityMps2;
+    const auto drivenAxleNormalForce = [&](double accelerationMps2) noexcept {
+        if (vehicle.drivenAxleLayout == DrivenAxleLayout::all)
+            return totalNormalForce;
+        const auto staticNormalForce =
+            totalNormalForce * vehicle.drivenAxleWeightFraction;
+        // Quasi-static pitch equilibrium: m*a*h/L moves load rearward under
+        // positive acceleration. It therefore helps a rear driven axle and
+        // unloads a front driven axle; reverse acceleration swaps the effect.
+        const auto longitudinalTransfer = vehicle.massKg * accelerationMps2
+            * vehicle.centerOfGravityHeightM / vehicle.wheelbaseM;
+        const auto dynamicNormalForce =
+            vehicle.drivenAxleLayout == DrivenAxleLayout::rear
+            ? staticNormalForce + longitudinalTransfer
+            : staticNormalForce - longitudinalTransfer;
+        return std::clamp(dynamicNormalForce, 0.0, totalNormalForce);
+    };
     const auto brakeForceCapacity = vehicle.maximumBrakeForceN * brakePressure;
     // The tire relaxation time is much shorter than the public simulation step.
     // Integrating that stiff coupling at 1 ms keeps the result stable at every time scale
@@ -166,6 +181,8 @@ DrivelineOutput DrivelineModel::advance(double dt, const EngineState& engineStat
     double brakeWork = 0.0;
     double roadLoadWork = 0.0;
     double tireSlipWork = 0.0;
+    double drivenAxleNormalImpulse = 0.0;
+    double longitudinalAccelerationImpulse = 0.0;
     double lastSlipRpm = 0.0;
     double lastTireForce = 0.0;
     double lastRoadLoadForce = 0.0;
@@ -191,6 +208,14 @@ DrivelineOutput DrivelineModel::advance(double dt, const EngineState& engineStat
         // the clutch, because the lock solver needs the road load it must react.
         const auto tireSurfaceSpeed = previousWheelOmega * vehicle.tireRadiusM;
         const auto slipVelocity = tireSurfaceSpeed - previousVehicleSpeed;
+        // The preceding 1 ms mechanical sub-step supplies acceleration to the
+        // quasi-static pitch equilibrium. This is the same causal update used
+        // by the tyre relaxation state and avoids an algebraic traction loop.
+        const auto normalForce =
+            drivenAxleNormalForce(longitudinalAccelerationMps2_);
+        const auto tractionLimit =
+            vehicle.tireFrictionCoefficient * normalForce;
+        const auto tireStiffnessNPerMps = normalForce * 7.5;
         const auto unconstrainedTireForce = slipVelocity * tireStiffnessNPerMps;
         lastTireForce = std::clamp(unconstrainedTireForce, -tractionLimit, tractionLimit);
         if (std::abs(unconstrainedTireForce) > tractionLimit + 1.0e-6) ++tractionLimitedSteps;
@@ -255,8 +280,10 @@ DrivelineOutput DrivelineModel::advance(double dt, const EngineState& engineStat
             ? roadLoadCapacity : std::min(roadLoadCapacity, std::abs(unretardedForce));
         const auto roadLoadForce = roadLoadMagnitude * loadDirection;
         lastRoadLoadForce = roadLoadForce;
-        vehicleSpeedMps_ += (lastTireForce - aeroForce - rollingForce - roadLoadForce)
-            / vehicle.massKg * mechanicalDt;
+        longitudinalAccelerationMps2_ =
+            (lastTireForce - aeroForce - rollingForce - roadLoadForce)
+            / vehicle.massKg;
+        vehicleSpeedMps_ += longitudinalAccelerationMps2_ * mechanicalDt;
         if (loadDirection != 0.0 && vehicleSpeedMps_ * loadDirection < 0.0)
             vehicleSpeedMps_ = 0.0;
         if (brakePressure > 0.0 && previousVehicleSpeed * vehicleSpeedMps_ < 0.0) vehicleSpeedMps_ = 0.0;
@@ -278,6 +305,9 @@ DrivelineOutput DrivelineModel::advance(double dt, const EngineState& engineStat
         roadLoadWork += std::abs(roadLoadForce * meanVehicleSpeed) * mechanicalDt;
         brakeWork += brakeForceCapacity * vehicle.tireRadiusM * std::abs(meanWheelOmega) * mechanicalDt;
         tireSlipWork += std::abs(lastTireForce * slipVelocity) * mechanicalDt;
+        drivenAxleNormalImpulse += normalForce * mechanicalDt;
+        longitudinalAccelerationImpulse +=
+            longitudinalAccelerationMps2_ * mechanicalDt;
     }
     clutchDissipatedEnergyJoules_ += clutchLossEnergy;
     const auto inverseDt = dt > 0.0 ? 1.0 / dt : 0.0;
@@ -286,6 +316,10 @@ DrivelineOutput DrivelineModel::advance(double dt, const EngineState& engineStat
     output.wheelTorqueNm = wheelTorqueIntegral * inverseDt;
     output.clutchSlipRpm = lastSlipRpm;
     output.tireForceN = lastTireForce;
+    output.drivenAxleNormalForceN =
+        drivenAxleNormalImpulse * inverseDt;
+    output.longitudinalAccelerationMps2 =
+        longitudinalAccelerationImpulse * inverseDt;
     output.tractionLimited = mechanicalStepCount > 0
         && tractionLimitedSteps * 2 > static_cast<std::size_t>(mechanicalStepCount);
     const auto storedEnergy = 0.5 * wheelInertia * wheelAngularVelocityRadPerSecond_

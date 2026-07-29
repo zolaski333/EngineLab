@@ -1,4 +1,4 @@
-schema_version: 4
+schema_version: 5
 family: motorcycle
 # Yamaha CP2 (MT-07 / YZF-R7 / Ténéré 700) -- 689 cc parallel twin with a
 # 270-degree crank. The 270/450 firing gap is the whole point of the engine:

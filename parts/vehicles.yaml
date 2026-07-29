@@ -1,3 +1,5 @@
+# Representative chassis parameters used by the longitudinal model. Weight
+# fractions describe the static load on the driven axle for 2WD layouts.
 compact_coupe:
   mass_kg: 1280
   drag_coefficient: 0.31
@@ -5,7 +7,36 @@ compact_coupe:
   tire_radius_m: 0.305
   rolling_resistance_coefficient: 0.013
   tire_friction_coefficient: 1.05
+  driven_axle_layout: front
   driven_axle_weight_fraction: 0.61
+  wheelbase_m: 2.67
+  center_of_gravity_height_m: 0.52
+  maximum_brake_force_n: 14500
+
+compact_awd:
+  mass_kg: 1570
+  drag_coefficient: 0.34
+  frontal_area_m2: 2.16
+  tire_radius_m: 0.335
+  rolling_resistance_coefficient: 0.013
+  tire_friction_coefficient: 1.05
+  driven_axle_layout: all
+  driven_axle_weight_fraction: 1.0
+  wheelbase_m: 2.63
+  center_of_gravity_height_m: 0.52
+  maximum_brake_force_n: 16000
+
+rear_engine_coupe:
+  mass_kg: 1350
+  drag_coefficient: 0.32
+  frontal_area_m2: 1.85
+  tire_radius_m: 0.315
+  rolling_resistance_coefficient: 0.013
+  tire_friction_coefficient: 1.05
+  driven_axle_layout: rear
+  driven_axle_weight_fraction: 0.61
+  wheelbase_m: 2.27
+  center_of_gravity_height_m: 0.48
   maximum_brake_force_n: 14500
 
 jdm_gt:
@@ -15,8 +46,24 @@ jdm_gt:
   tire_radius_m: 0.323
   rolling_resistance_coefficient: 0.014
   tire_friction_coefficient: 1.02
-  driven_axle_weight_fraction: 0.52
+  driven_axle_layout: rear
+  driven_axle_weight_fraction: 0.48
+  wheelbase_m: 2.55
+  center_of_gravity_height_m: 0.52
   maximum_brake_force_n: 16500
+
+diesel_hatch:
+  mass_kg: 1430
+  drag_coefficient: 0.28
+  frontal_area_m2: 2.22
+  tire_radius_m: 0.310
+  rolling_resistance_coefficient: 0.012
+  tire_friction_coefficient: 1.00
+  driven_axle_layout: front
+  driven_axle_weight_fraction: 0.60
+  wheelbase_m: 2.62
+  center_of_gravity_height_m: 0.52
+  maximum_brake_force_n: 15000
 
 muscle_car:
   mass_kg: 1660
@@ -25,7 +72,10 @@ muscle_car:
   tire_radius_m: 0.335
   rolling_resistance_coefficient: 0.015
   tire_friction_coefficient: 0.98
-  driven_axle_weight_fraction: 0.53
+  driven_axle_layout: rear
+  driven_axle_weight_fraction: 0.47
+  wheelbase_m: 2.85
+  center_of_gravity_height_m: 0.55
   maximum_brake_force_n: 17000
 
 rally_sedan:
@@ -34,6 +84,12 @@ rally_sedan:
   frontal_area_m2: 2.18
   tire_radius_m: 0.315
   rolling_resistance_coefficient: 0.016
+  tire_friction_coefficient: 1.05
+  driven_axle_layout: all
+  driven_axle_weight_fraction: 1.0
+  wheelbase_m: 2.63
+  center_of_gravity_height_m: 0.54
+  maximum_brake_force_n: 16000
 
 motorcycle:
   mass_kg: 260
@@ -41,6 +97,12 @@ motorcycle:
   frontal_area_m2: 0.62
   tire_radius_m: 0.300
   rolling_resistance_coefficient: 0.018
+  tire_friction_coefficient: 1.05
+  driven_axle_layout: rear
+  driven_axle_weight_fraction: 0.52
+  wheelbase_m: 1.45
+  center_of_gravity_height_m: 0.62
+  maximum_brake_force_n: 3000
 
 cruiser_bike:
   mass_kg: 360
@@ -48,6 +110,12 @@ cruiser_bike:
   frontal_area_m2: 0.70
   tire_radius_m: 0.315
   rolling_resistance_coefficient: 0.018
+  tire_friction_coefficient: 1.00
+  driven_axle_layout: rear
+  driven_axle_weight_fraction: 0.56
+  wheelbase_m: 1.63
+  center_of_gravity_height_m: 0.58
+  maximum_brake_force_n: 4000
 
 test_stand:
   mass_kg: 1000
@@ -55,3 +123,11 @@ test_stand:
   frontal_area_m2: 2.00
   tire_radius_m: 0.320
   rolling_resistance_coefficient: 0.014
+  tire_friction_coefficient: 1.00
+  # A fixed stand has no front/rear driven-axle unloading; all support reactions
+  # participate in the roller/contact limit.
+  driven_axle_layout: all
+  driven_axle_weight_fraction: 1.0
+  wheelbase_m: 2.65
+  center_of_gravity_height_m: 0.52
+  maximum_brake_force_n: 14000

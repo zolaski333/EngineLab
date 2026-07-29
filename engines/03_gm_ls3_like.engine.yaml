@@ -1,4 +1,4 @@
-schema_version: 4
+schema_version: 5
 family: american v8
 engine:
   name: LS3-like 6.2 Crossplane V8
