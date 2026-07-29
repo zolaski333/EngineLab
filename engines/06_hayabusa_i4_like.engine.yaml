@@ -21,6 +21,10 @@ engine:
     runner_diameter_mm: 36
     idle_bypass_area_mm2: 18
     throttle_gamma: 1.25
+    # Filter housing, estimatedFamily. A sport bike carries a large airbox over
+    # the throttle bodies with no long inlet duct, matching how the other
+    # motorcycles in this catalogue are authored. Acoustic only.
+    airbox_volume_l: 8.0
   ignition:
     rev_limit_rpm: 11200
     limiter_duration_s: 0.045

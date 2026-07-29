@@ -96,10 +96,60 @@ struct AcousticIntakeNetwork::Impl final {
         float inletOutgoingAtMouth {};
         float inletOutgoingAtAirbox {};
         float radiationIncidentAtAirbox {};
+        // Air-filter element state, one per travel direction. The element is a
+        // reciprocal two-port, so both directions carry the same coefficients
+        // and independent state.
+        bool hasAirFilter { false };
+        float filterTowardMouthState {};
+        float filterTowardAirboxState {};
         UnflangedPipeRadiation radiation;
         FreeFieldObserver observer;
         PathBoundary medium;
     };
+
+    // --- air-filter element -------------------------------------------------
+    //
+    // Every catalogue engine breathes through a filter, and nothing modelled
+    // it: the intake mouth radiated essentially bare. Measured on the delivered
+    // render before this element existed, the intake layer supplied 97.7% (K20),
+    // 99.9% (LS3) and 94.8% (Big Twin) of ALL master energy above 5 kHz, and the
+    // first listening pass called every engine "trop aigu", with a whine "comme
+    // un supercharger" on engines that have no supercharger.
+    //
+    // The element is a porous resistive sheet. For a plane wave crossing a sheet
+    // of specific flow resistance R, transmission is 1/(1 + R/(2*rho*c)), which
+    // is frequency independent; the rising insertion loss that a real element
+    // shows above a few hundred hertz comes from the packing depth and the
+    // element's own inertance. Both parts are represented here: a broadband
+    // resistive transmission and a first-order low pass.
+    //
+    // These constants are SEMI-EMPIRICAL, chosen from the published range for
+    // automotive paper panel elements (specific flow resistance of order
+    // 10^2-10^3 Rayl against rho*c = 415). They are an `estimatedFamily`-grade
+    // authoring choice, NOT a measurement of any catalogue engine, and they are
+    // deliberately the same for every engine until per-engine survey data
+    // exists. Do not present them as measured.
+    //
+    // The loss is frequency dependent on purpose. A flat broadband loss inside
+    // this junction would sit in a resonant loop and collapse the low-order
+    // induction character the same way an absorption term once cost the EJ25
+    // 11 dB at its rev-range fundamental (see CLAUDE.md on the expansion
+    // chamber). Damping the top while leaving the firing orders is the whole
+    // point: a real filter lowers the Q of intake resonances, it does not mute
+    // the intake.
+    static constexpr double airFilterFlowResistanceRayl = 420.0;
+    static constexpr double airFilterCutoffHz = 480.0;
+    float airFilterBroadbandGain { 1.0F };
+    float airFilterLowPassCoefficient { 1.0F };
+
+    /** One direction through the element. Reciprocal: same coefficients.
+     * A path with no filter housing is an exact through-connection. */
+    [[nodiscard]] float applyAirFilter(
+        const Path& path, float& state, float incident) const noexcept {
+        if (!path.hasAirFilter) return incident;
+        state += airFilterLowPassCoefficient * (incident - state);
+        return airFilterBroadbandGain * state;
+    }
 
     std::vector<Runner> runners;
     std::vector<Path> paths;
@@ -128,6 +178,13 @@ struct AcousticIntakeNetwork::Impl final {
             const auto inletDiameterMm = compiled.geometry.inletDuctDiameterMm > 1.0
                 ? compiled.geometry.inletDuctDiameterMm
                 : compiled.geometry.throttleDiameterMm;
+            // The filter element belongs to the filter HOUSING. An engine that
+            // authors no airbox has no housing, so it gets no element: a
+            // carburetted radial breathing through a scoop, or an open-trumpet
+            // ITB stack, is legitimately bright. Inventing an element for those
+            // would be inventing hardware, and it measurably over-darkened the
+            // Radial R5 past `EngineLab.AudioRender`'s low-band gate.
+            compiled.hasAirFilter = compiled.geometry.airboxVolumeLitres > 0.0;
             compiled.hasInletDuct = compiled.geometry.inletDuctLengthMm > 1.0;
             if (compiled.hasInletDuct) {
                 compiled.inletDuct.lengthM = compiled.geometry.inletDuctLengthMm * 0.001;
@@ -208,6 +265,17 @@ bool AcousticIntakeNetwork::prepare(double sampleRateHz,
     // perturbation while retaining every audible engine order.
     impl_->meanFlowCoefficient = static_cast<float>(1.0 - std::exp(
         -2.0 * std::numbers::pi * 5.0 / sampleRateHz));
+    // Filter element coefficients. The characteristic impedance used here is
+    // ambient air on the cold side of the element, not the per-path medium:
+    // the element sits upstream of the throttle, where the charge has not yet
+    // been heated by the engine.
+    constexpr double ambientCharacteristicImpedanceRayl = 415.0;
+    impl_->airFilterBroadbandGain = static_cast<float>(
+        1.0 / (1.0 + Impl::airFilterFlowResistanceRayl
+            / (2.0 * ambientCharacteristicImpedanceRayl)));
+    impl_->airFilterLowPassCoefficient = static_cast<float>(
+        1.0 - std::exp(-2.0 * std::numbers::pi
+            * Impl::airFilterCutoffHz / sampleRateHz));
     for (auto& runner : impl_->runners) impl_->prepareDuct(runner.duct);
     for (auto& path : impl_->paths) {
         if (path.hasInletDuct) impl_->prepareDuct(path.inletDuct);
@@ -274,6 +342,8 @@ void AcousticIntakeNetwork::reset() noexcept {
         path.inletOutgoingAtMouth = 0.0F;
         path.inletOutgoingAtAirbox = 0.0F;
         path.radiationIncidentAtAirbox = 0.0F;
+        path.filterTowardMouthState = 0.0F;
+        path.filterTowardAirboxState = 0.0F;
         path.radiation.reset();
         path.observer.reset();
     }
@@ -347,8 +417,11 @@ AcousticIntakeNetwork::process(
         duct.delaySamples += ramp * (duct.delayTargetSamples - duct.delaySamples);
         path.inletIncidentAtMouth = DuctWallLoss::process(
             duct.wallLoss, duct.reverseLoss, impl_->readDelayed(duct, duct.reverse));
-        path.inletIncidentAtAirbox = DuctWallLoss::process(
-            duct.wallLoss, duct.forwardLoss, impl_->readDelayed(duct, duct.forward));
+        // Crossing the filter element on the way back into the airbox.
+        path.inletIncidentAtAirbox = impl_->applyAirFilter(
+            path, path.filterTowardAirboxState,
+            DuctWallLoss::process(duct.wallLoss, duct.forwardLoss,
+                impl_->readDelayed(duct, duct.forward)));
     }
 
     for (std::size_t pathIndex = 0; pathIndex < impl_->paths.size(); ++pathIndex) {
@@ -402,17 +475,24 @@ AcousticIntakeNetwork::process(
         const auto throttleOutgoingFromAirbox = airboxPressure
             - path.throttleIncidentAtAirbox;
         if (path.hasInletDuct)
-            path.inletOutgoingAtAirbox = airboxPressure - path.inletIncidentAtAirbox;
+            // Crossing the filter element on the way out toward the mouth.
+            path.inletOutgoingAtAirbox = impl_->applyAirFilter(
+                path, path.filterTowardMouthState,
+                airboxPressure - path.inletIncidentAtAirbox);
         else {
-            const auto towardMouth = airboxPressure - path.radiationIncidentAtAirbox;
+            const auto towardMouth = impl_->applyAirFilter(
+                path, path.filterTowardMouthState,
+                airboxPressure - path.radiationIncidentAtAirbox);
             const auto radiation = path.radiation.process(towardMouth);
             impl_->diagnostics.mouthPressurePa = std::max(
                 impl_->diagnostics.mouthPressurePa, std::abs(towardMouth));
             impl_->diagnostics.radiatedPressurePa = std::max(
                 impl_->diagnostics.radiatedPressurePa,
                 static_cast<float>(std::abs(radiation.farFieldPressurePa)));
-            path.radiationIncidentAtAirbox = static_cast<float>(
-                radiation.reflectedPressurePa);
+            // ... and back through it on the reflection from the mouth.
+            path.radiationIncidentAtAirbox = impl_->applyAirFilter(
+                path, path.filterTowardAirboxState,
+                static_cast<float>(radiation.reflectedPressurePa));
             const auto observed = path.observer.process(
                 static_cast<float>(radiation.farFieldPressurePa));
             result[pathIndex].leftPa += observed.leftPa;

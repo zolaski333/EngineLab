@@ -219,6 +219,42 @@ Ce qu'on n'en tire pas :
 différence par famille reste indicative. C'est un pilote — il sert à orienter le
 travail et à roder le protocole, pas à publier un chiffre.
 
+## Un seul clip par moteur biaisait le test, et il faut le découper
+
+Le premier passage humain (`docs/audio-listening-diagnosis-2026-07-29.md`) a
+signalé un ralenti « trop faible ». La mesure a montré que ce n'était pas le
+moteur audio :
+
+- l'écart entre le ralenti et le limiteur vaut **14 à 19 dB** selon le moteur ;
+- la sonie intégrée BS.1770 d'un clip qui contient les deux se cale
+  nécessairement sur la partie forte ;
+- le ralenti atterrit donc vers **−39 à −45 dBFS** dans le fichier remis ;
+- pendant que les références du corpus sont souvent des prises de **ralenti
+  seul**, donc normalisées *sur* le ralenti.
+
+La comparaison était biaisée par construction, et le biais grandit avec la
+correction du ralenti : un vrai ralenti à 950 tr/min est plus discret qu'un
+moteur tiré contre un frein à 1892, donc l'écart s'est **aggravé de 4,4 à
+5,3 dB** en rendant le ralenti correct.
+
+**Le correctif est protocolaire, pas acoustique.** Il ne faut surtout pas
+remonter le niveau du ralenti pour compenser — ce serait fabriquer ce que le
+projet refuse par ailleurs. Il faut rendre **deux clips par moteur** :
+
+| Clip | Contenu | Normalisé sur |
+|---|---|---|
+| `idle` | démarrage puis ralenti tenu, sans mise en gaz | son propre ralenti |
+| `rev` | montée en charge, rupteur, lever de pied | son propre contenu |
+
+Chaque clip est apparié à une **référence de même nature** : une prise de
+ralenti contre le clip `idle`, une prise d'accélération contre le clip `rev`. Le
+manifeste porte déjà `operating_conditions` par référence, ce qui permet de faire
+cet appariement sans deviner.
+
+Bénéfice secondaire : les deux plaintes de l'auditeur deviennent séparables. « Trop
+aigu » se juge sur le clip `rev`, « le ralenti ne ressemble à rien » sur le clip
+`idle`, et un commentaire n'a plus à porter sur deux régimes à la fois.
+
 ## Limites restantes
 
 - Les gestes des enregistrements réels ne suivent pas exactement la trajectoire

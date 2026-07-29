@@ -21,6 +21,10 @@ engine:
     runner_diameter_mm: 45
     idle_bypass_area_mm2: 24
     throttle_gamma: 1.55
+    # Filter housing, estimatedFamily: the round side-mounted air cleaner of a
+    # big twin is a small volume bolted straight to the throttle, with no inlet
+    # duct. Authored, not surveyed; acoustic only.
+    airbox_volume_l: 2.0
   ignition:
     rev_limit_rpm: 5900
     limiter_duration_s: 0.085
