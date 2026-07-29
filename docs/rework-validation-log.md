@@ -828,3 +828,28 @@ Le conflit baisse de 34 % et la dérivée RMS de 9 %, pour 4,1 ms de
 resynchronisation supplémentaire. Le K20 témoin reste verrouillé à 208,3 ms.
 Les quatre tests ciblés (`Core`, `AudioTransients`, shift atmosphérique et
 shift turbo) passent 4/4 en 70,47 s, sans perte, fallback, leveler ou limiteur.
+
+## 2026-07-29 — Turbulence de sortie d’échappement
+
+Une source de bruit de mélange est désormais dérivée du débit, de l’état gaz et
+du diamètre de chaque débouché. Elle suit `U^8` et `St = 0,2`, utilise le débit
+audio de la terminaison comme modulation causale, puis traverse le même
+observateur et la même IR que le réseau. Elle ne retourne aucune excitation au
+solveur.
+
+Les versions débit moyen seul étaient trop faibles. La modulation non bornée a
+été rejetée après avoir produit `158 Pa`, `136 %` de différence RMS et un
+pré-limiteur à `1,06` sur le Big Twin. La borne finale `4,5 ×` donne une
+différence de `1,37 %` à `6,81 %` sur K20, LS3, Big Twin, 2JZ et Merlin, sans
+leveler ni limiteur.
+
+Sur le Merlin, quatre passages A/B de 10 s dans la même fenêtre donnent :
+
+- callback moyen `44,0 %` OFF contre `44,25 %` ON ;
+- callback p99 `66,5 %` OFF contre `67,0 %` ON ;
+- facteur global minimal `1,126×` ;
+- zéro overrun, perte, retard, fallback ou échantillon invalide.
+
+Le facteur global est trop bruité pour isoler ce coût ; seul le chronométrage
+direct du callback permet de conclure à `+0,25` point moyen. Détails et liens de
+preuve : `docs/audio-lot3-outlet-turbulence-2026-07-29.md`.

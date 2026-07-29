@@ -334,6 +334,8 @@ void RealtimeEngineAudio::release() noexcept {
     levelLimitedSamples_.store(0, std::memory_order_relaxed);
     minObservedLevelGain_.store(1.0F, std::memory_order_relaxed);
     maxObservedExhaustPressurePa_.store(0.0F, std::memory_order_relaxed);
+    maxObservedExhaustJetNoisePressurePa_.store(
+        0.0F, std::memory_order_relaxed);
     maxObservedIntakePressurePa_.store(0.0F, std::memory_order_relaxed);
     maxIntakeSourcePressurePa_.store(0.0F, std::memory_order_relaxed);
     maxIntakeRunnerPressurePa_.store(0.0F, std::memory_order_relaxed);
@@ -826,6 +828,7 @@ void RealtimeEngineAudio::renderWithStems(
         acousticIntakeNetwork_->beginBlock(paths, acousticTimeScale);
     }
     float blockPeakObservedExhaustPressurePa = 0.0F;
+    float blockPeakObservedExhaustJetNoisePressurePa = 0.0F;
     float blockPeakObservedIntakePressurePa = 0.0F;
     float blockPeakObservedStructuralPressurePa = 0.0F;
     std::uint64_t legacySamplesThisBlock = 0;
@@ -1325,11 +1328,17 @@ void RealtimeEngineAudio::renderWithStems(
                 std::span<const float>(cylinderExhaustPulse.data(), activeCylinderCount),
                 std::span<const PortBoundary>(portBoundary_.data(), activeCylinderCount),
                 controlRampCoefficient_);
+            const auto jetNoisePressure =
+                acousticExhaustNetwork_->lastOutletJetNoisePressure();
             for (std::size_t path = 0; path < exhaustPathCount; ++path) {
                 blockPeakObservedExhaustPressurePa = std::max(
                     blockPeakObservedExhaustPressurePa,
                     std::max(std::abs(observerPressure[path].leftPa),
                         std::abs(observerPressure[path].rightPa)));
+                blockPeakObservedExhaustJetNoisePressurePa = std::max(
+                    blockPeakObservedExhaustJetNoisePressurePa,
+                    std::max(std::abs(jetNoisePressure[path].leftPa),
+                        std::abs(jetNoisePressure[path].rightPa)));
                 const auto calibratedLeft = static_cast<float>(
                     AcousticMonitorCalibration::normalisePeakPressure(
                         observerPressure[path].leftPa, acousticFullScaleSplDb));
@@ -1753,6 +1762,13 @@ void RealtimeEngineAudio::renderWithStems(
             > maxObservedExhaustPressurePa_.load(std::memory_order_relaxed)) {
         maxObservedExhaustPressurePa_.store(
             blockPeakObservedExhaustPressurePa, std::memory_order_relaxed);
+    }
+    if (blockPeakObservedExhaustJetNoisePressurePa
+            > maxObservedExhaustJetNoisePressurePa_.load(
+                std::memory_order_relaxed)) {
+        maxObservedExhaustJetNoisePressurePa_.store(
+            blockPeakObservedExhaustJetNoisePressurePa,
+            std::memory_order_relaxed);
     }
     if (blockPeakObservedIntakePressurePa
             > maxObservedIntakePressurePa_.load(std::memory_order_relaxed))

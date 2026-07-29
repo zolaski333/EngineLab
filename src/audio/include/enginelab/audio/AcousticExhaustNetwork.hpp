@@ -1,5 +1,6 @@
 #pragma once
 
+#include <enginelab/audio/ExhaustJetNoise.hpp>
 #include <enginelab/audio/ValvePortTermination.hpp>
 #include <enginelab/audio/FreeFieldObserver.hpp>
 #include <enginelab/exhaust/ExhaustGraph.hpp>
@@ -71,6 +72,13 @@ public:
         std::span<const float> cylinderSourcePressurePa,
         std::span<const CylinderBoundary> cylinderBoundaries,
         float delayRampCoefficient) noexcept;
+
+    /** Diagnostic A/B switch. Production leaves the source enabled. */
+    void setOutletJetNoiseEnabled(bool enabled) noexcept;
+    [[nodiscard]] bool outletJetNoiseEnabled() const noexcept;
+    /** Last sample contributed by outlet turbulence, after both microphones. */
+    [[nodiscard]] std::array<StereoPressure, maximumPaths>
+    lastOutletJetNoisePressure() const noexcept;
 
     [[nodiscard]] bool valid() const noexcept;
     [[nodiscard]] std::size_t ductCount() const noexcept;

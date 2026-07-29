@@ -67,6 +67,7 @@ void sleepSeconds(double seconds) {
 
 struct AudioProbeSnapshot final {
     std::uint64_t callbacks {};
+    std::uint64_t renderNanoseconds {};
     std::uint64_t deadlineMisses {};
     std::uint64_t renderOverBudget {};
     std::uint64_t nonFiniteSamples {};
@@ -81,6 +82,7 @@ struct AudioProbeSnapshot final {
 
 struct AudioProbeDelta final {
     std::uint64_t callbacks {};
+    double utilisationMeanPercent {};
     std::uint64_t deadlineMisses {};
     std::uint64_t renderOverBudget {};
     std::uint64_t nonFiniteSamples {};
@@ -99,9 +101,19 @@ struct AudioProbeDelta final {
 }
 
 [[nodiscard]] AudioProbeDelta audioProbeDelta(
-    const AudioProbeSnapshot& begin, const AudioProbeSnapshot& end) {
+    const AudioProbeSnapshot& begin, const AudioProbeSnapshot& end,
+    double sampleRate, int blockSize) {
     AudioProbeDelta delta;
     delta.callbacks = counterDelta(end.callbacks, begin.callbacks);
+    const auto renderNanoseconds = counterDelta(
+        end.renderNanoseconds, begin.renderNanoseconds);
+    if (delta.callbacks > 0 && sampleRate > 0.0 && blockSize > 0) {
+        const auto meanRenderSeconds =
+            static_cast<double>(renderNanoseconds) * 1.0e-9
+            / static_cast<double>(delta.callbacks);
+        delta.utilisationMeanPercent = meanRenderSeconds * sampleRate
+            / static_cast<double>(blockSize) * 100.0;
+    }
     delta.deadlineMisses =
         counterDelta(end.deadlineMisses, begin.deadlineMisses);
     delta.renderOverBudget =
@@ -150,7 +162,8 @@ public:
     RealtimeAudioProbe(enginelab::EngineRuntime& runtime,
                        const std::filesystem::path& catalogRoot,
                        double sampleRate, int blockSize,
-                       bool accelerated)
+                       bool accelerated,
+                       bool outletJetNoiseEnabled)
         : runtime_(runtime),
           sampleRate_(sampleRate),
           blockSize_(blockSize),
@@ -181,6 +194,7 @@ public:
             renderer_.setImpulseResponse(
                 std::move(impulse.samples), impulse.sampleRateHz, pathIndex);
         }
+        renderer_.setOutletJetNoiseEnabled(outletJetNoiseEnabled);
         renderer_.prepare(sampleRate_, blockSize_);
     }
 
@@ -208,6 +222,8 @@ public:
     [[nodiscard]] AudioProbeSnapshot snapshot() const noexcept {
         AudioProbeSnapshot result;
         result.callbacks = callbacks_.load(std::memory_order_relaxed);
+        result.renderNanoseconds =
+            renderNanoseconds_.load(std::memory_order_relaxed);
         result.deadlineMisses =
             deadlineMisses_.load(std::memory_order_relaxed);
         result.renderOverBudget =
@@ -280,6 +296,10 @@ private:
             const auto renderEnd = Clock::now();
             const auto elapsed =
                 std::chrono::duration<double>(renderEnd - renderStart).count();
+            renderNanoseconds_.fetch_add(
+                static_cast<std::uint64_t>(
+                    std::max(0.0, elapsed) * 1.0e9),
+                std::memory_order_relaxed);
             const auto utilisation = elapsed * sampleRate_
                 / static_cast<double>(blockSize_);
             const auto bin = std::min<std::size_t>(
@@ -320,6 +340,7 @@ private:
     juce::AudioBuffer<float> block_;
     std::jthread thread_;
     std::atomic<std::uint64_t> callbacks_ {};
+    std::atomic<std::uint64_t> renderNanoseconds_ {};
     std::atomic<std::uint64_t> deadlineMisses_ {};
     std::atomic<std::uint64_t> renderOverBudget_ {};
     std::atomic<std::uint64_t> nonFiniteSamples_ {};
@@ -387,6 +408,7 @@ struct Measurement final {
                                         std::optional<double> intakeWallHeatUpdateSeconds,
                                         bool useWellMixedExhaustJunctions,
                                         bool withAudio,
+                                        bool outletJetNoiseEnabled,
                                         const std::filesystem::path& catalogRoot,
                                         double audioSampleRate,
                                         int audioBlockSize) {
@@ -414,7 +436,7 @@ struct Measurement final {
         try {
             audioProbe = std::make_unique<RealtimeAudioProbe>(
                 *runtime, catalogRoot, audioSampleRate, audioBlockSize,
-                freeRun);
+                freeRun, outletJetNoiseEnabled);
             audioProbe->start();
         } catch (const std::exception& error) {
             result.invalidReason = error.what();
@@ -616,7 +638,8 @@ struct Measurement final {
     result.droppedPressureSamples =
         counterDelta(droppedPressureEnd, droppedPressureStart);
     if (audioProbe) {
-        result.audio = audioProbeDelta(audioStart, audioEnd);
+        result.audio = audioProbeDelta(
+            audioStart, audioEnd, audioSampleRate, audioBlockSize);
         result.physicalExhaustActive =
             audioProbe->physicalExhaustActive();
         result.compiledExhaustTopologyActive =
@@ -684,6 +707,7 @@ int main(int argc, char** argv) {
     std::optional<double> intakeWallHeatUpdateSeconds;
     bool useWellMixedExhaustJunctions = false;
     bool withAudio = false;
+    bool outletJetNoiseEnabled = true;
     double audioSampleRate = 48'000.0;
     int audioBlockSize = 256;
 
@@ -717,6 +741,8 @@ int main(int argc, char** argv) {
         else if (argument == "--enforce" && index + 1 < argc) failBelow = std::stod(argv[++index]);
         else if (argument == "--free-run") freeRun = true;
         else if (argument == "--with-audio") withAudio = true;
+        else if (argument == "--disable-exhaust-jet-noise")
+            outletJetNoiseEnabled = false;
         else if (argument == "--audio-rate" && index + 1 < argc)
             audioSampleRate = std::stod(argv[++index]);
         else if (argument == "--audio-block" && index + 1 < argc)
@@ -735,11 +761,14 @@ int main(int argc, char** argv) {
                          "[--intake-wall-us N] "
                          "[--well-mixed-junctions] "
                          "[--enforce FACTOR] [--free-run] "
-                         "[--with-audio] [--audio-rate HZ] [--audio-block N]\n"
+                         "[--with-audio] [--disable-exhaust-jet-noise] "
+                         "[--audio-rate HZ] [--audio-block N]\n"
                          "  --free-run  remove the loop's wall-clock sleep, so the factor\n"
                          "              reads capacity instead of saturating at 1.0.\n"
                          "  --with-audio  run the production renderer on a fixed-period\n"
                          "                consumer thread and enforce its realtime contract.\n"
+                         "  --disable-exhaust-jet-noise  same-binary null control for\n"
+                         "                               outlet-noise CPU measurements.\n"
                          "  --relative-rpm  hold each engine at this fraction of redline,\n"
                          "                  capped at 95% to stay below the limiter.\n"
                          "  --intake-workers  override background intake workers; zero is\n"
@@ -784,6 +813,9 @@ int main(int argc, char** argv) {
         std::cout << "AUDIO: production RealtimeEngineAudio consumer at "
                   << static_cast<int>(audioSampleRate) << " Hz / "
                   << audioBlockSize << " samples"
+                  << (outletJetNoiseEnabled
+                      ? ", outlet jet noise ON"
+                      : ", outlet jet noise OFF")
                   << (freeRun
                       ? ", paced by accelerated simulated time.\n"
                       : ", paced by wall-clock deadlines.\n")
@@ -805,7 +837,8 @@ int main(int argc, char** argv) {
               << std::setw(8) << "bpWarn"
               << std::setw(9) << "tyreLim";
     if (withAudio)
-        std::cout << std::setw(9) << "audP99"
+        std::cout << std::setw(9) << "audMean"
+                  << std::setw(9) << "audP99"
                   << std::setw(8) << "miss"
                   << std::setw(8) << "dropP"
                   << std::setw(8) << "late"
@@ -838,7 +871,8 @@ int main(int argc, char** argv) {
             intakeCouplingSeconds, intakeTargetCellLengthM,
             exhaustCouplingSeconds, intakeFirstOrderTimeIntegration,
             intakeWallHeatUpdateSeconds,
-            useWellMixedExhaustJunctions, withAudio, catalogRoot,
+            useWellMixedExhaustJunctions, withAudio, outletJetNoiseEnabled,
+            catalogRoot,
             audioSampleRate, audioBlockSize);
         const auto cylinders = static_cast<int>(entry.config.cylinders.size());
         std::cout << std::left << std::setw(26) << entry.config.name
@@ -864,10 +898,14 @@ int main(int argc, char** argv) {
                   << std::setw(8) << (measurement.backPressureWarning ? "YES" : "no")
                   << std::setw(9) << (measurement.tractionLimited ? "YES" : "no");
         if (withAudio) {
+            std::ostringstream audioMean;
+            audioMean << std::fixed << std::setprecision(1)
+                      << measurement.audio.utilisationMeanPercent << '%';
             std::ostringstream audioP99;
             audioP99 << std::fixed << std::setprecision(0)
                      << measurement.audio.utilisationP99Percent << '%';
-            std::cout << std::setw(9) << audioP99.str()
+            std::cout << std::setw(9) << audioMean.str()
+                      << std::setw(9) << audioP99.str()
                       << std::setw(8) << measurement.audio.deadlineMisses
                       << std::setw(8) << measurement.droppedPressureSamples
                       << std::setw(8) << measurement.audio.lateEvents

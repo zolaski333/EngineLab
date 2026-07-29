@@ -1106,3 +1106,23 @@ Tous non vacués (vérifiés en cassant délibérément le code testé) :
 - `areaStepScatteringRegression` cale la diffusion d'un saut de section sur la
   forme close `T(m) = 4m/(1+m)^2` — la limite basse fréquence de la perte par
   transmission de Munjal — à 0,05 près pour m = 2, 4 et 9.
+
+## 26. Source turbulente au débouché
+
+Le réseau physique reconstruisait le blowdown et le rayonnement de conduit, mais
+ne créait aucune source de mélange turbulent au contact du jet chaud et de
+l’air extérieur. `ExhaustJetNoise` remplit uniquement ce rôle :
+
+- débit moyen réparti entre les débouchés par aire ;
+- vitesse `m_dot/(rho*A)` et puissance `K*rho*A*U^8/c^5` ;
+- centre spectral à `St = 0,2` ;
+- modulation causale par le débit volumique audio de la terminaison ;
+- borne subsonique et borne `4,5 ×` sur l’excursion instantanée ;
+- observateur stéréo, directivité, distance et IR identiques au débouché ;
+- aucune rétroaction vers le solveur gaz.
+
+Le multiplicateur moteur de puissance `100` est une valeur authored, isolée du
+coefficient de jet propre `1e-4`. Il ne prétend pas être une constante physique
+mesurée. Un contrôle nul coupe toute la couche pour les comparaisons sonores et
+CPU. La validation complète, dont les calibrations refusées, est dans
+[`audio-lot3-outlet-turbulence-2026-07-29.md`](audio-lot3-outlet-turbulence-2026-07-29.md).

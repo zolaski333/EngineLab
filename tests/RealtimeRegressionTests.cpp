@@ -2,6 +2,7 @@
 #include <enginelab/audio/AcousticExhaustNetwork.hpp>
 #include <enginelab/audio/AcousticIntakeNetwork.hpp>
 #include <enginelab/audio/BoundaryReconstructionFilter.hpp>
+#include <enginelab/audio/ExhaustJetNoise.hpp>
 #include <enginelab/audio/ForcedInductionAcoustics.hpp>
 #include <enginelab/audio/FreeFieldObserver.hpp>
 #include <enginelab/audio/NonlinearDuctAcoustics.hpp>
@@ -366,6 +367,102 @@ void branchedAcousticTopologyRegression() {
         require(output[0].leftPa == 0.0F && output[0].rightPa == 0.0F,
             "a reset source-free network must be exactly silent");
     }
+}
+
+void exhaustJetNoiseRegression() {
+    using Jet = enginelab::ExhaustJetNoise;
+    constexpr double sampleRate = 48'000.0;
+    constexpr double massFlowKgPerSecond = 0.12;
+    constexpr double areaM2 = 0.0024;
+    constexpr double densityKgPerM3 = 0.60;
+    constexpr double soundSpeedMps = 510.0;
+    const auto velocity = massFlowKgPerSecond / (densityKgPerM3 * areaM2);
+    const auto diameter = 2.0 * std::sqrt(areaM2 / std::numbers::pi);
+    require(std::abs(Jet::limitedJetVelocityMps(
+                massFlowKgPerSecond, areaM2, densityKgPerM3, soundSpeedMps)
+            - velocity) < 1.0e-12,
+        "subsonic outlet velocity must come from resolved mass flow and area");
+    require(std::abs(Jet::centreFrequencyHz(
+                massFlowKgPerSecond, areaM2, densityKgPerM3, soundSpeedMps)
+            - Jet::peakStrouhalNumber * velocity / diameter) < 1.0e-9,
+        "outlet-noise centre frequency must retain Strouhal scaling");
+    const auto lowPower = Jet::acousticPowerWatts(
+        massFlowKgPerSecond, areaM2, densityKgPerM3, soundSpeedMps);
+    const auto doubledPower = Jet::acousticPowerWatts(
+        2.0 * massFlowKgPerSecond, areaM2, densityKgPerM3, soundSpeedMps);
+    require(lowPower > 0.0
+            && std::abs(doubledPower / lowPower - 256.0) < 1.0e-8,
+        "subsonic outlet acoustic power must follow the documented U^8 law");
+
+    Jet first(0x12345678U);
+    Jet second(0x12345678U);
+    require(first.prepare(sampleRate) && second.prepare(sampleRate),
+        "valid outlet-noise renderers must prepare");
+    first.configure(massFlowKgPerSecond, areaM2, densityKgPerM3,
+        soundSpeedMps);
+    second.configure(massFlowKgPerSecond, areaM2, densityKgPerM3,
+        soundSpeedMps);
+    first.snapToTarget();
+    second.snapToTarget();
+    auto energy = 0.0;
+    constexpr std::size_t measurementSamples = 48'000;
+    for (std::size_t sample = 0; sample < measurementSamples; ++sample) {
+        const auto a = first.process(1.0F);
+        const auto b = second.process(1.0F);
+        require(a == b && std::isfinite(a),
+            "equal outlet-noise seeds must render sample-exactly");
+        if (sample >= 4'000)
+            energy += static_cast<double>(a) * a;
+    }
+    const auto measuredRms = std::sqrt(
+        energy / static_cast<double>(measurementSamples - 4'000));
+    require(measuredRms > first.targetPressureRmsPa() * 0.80
+            && measuredRms < first.targetPressureRmsPa() * 1.20,
+        "normalised jet spectrum must retain the acoustic-power RMS");
+
+    first.reset();
+    first.configure(0.0, areaM2, densityKgPerM3, soundSpeedMps);
+    first.snapToTarget();
+    for (std::size_t sample = 0; sample < 4'096; ++sample)
+        require(first.process(1.0F) == 0.0F,
+            "zero resolved outlet flow must be exactly silent");
+
+    // Integration gate: turbulence radiates through the same physical outlet
+    // and microphone geometry, yet the diagnostic switch proves that it never
+    // feeds a fabricated pressure wave back into the passive pipe network.
+    auto config = enginelab::makeDefaultInlineFour();
+    std::array<std::uint32_t, 4> cylinderIds {};
+    for (std::size_t index = 0; index < cylinderIds.size(); ++index)
+        cylinderIds[index] = config.cylinders[index].id;
+    const auto graph = enginelab::ExhaustGraph::makeForEngine(config);
+    enginelab::AcousticExhaustNetwork enabled(graph, cylinderIds);
+    enginelab::AcousticExhaustNetwork disabled(graph, cylinderIds);
+    require(enabled.valid() && disabled.valid()
+            && enabled.prepare(sampleRate) && disabled.prepare(sampleRate),
+        "outlet-noise integration fixtures must compile and prepare");
+    disabled.setOutletJetNoiseEnabled(false);
+    const std::array<enginelab::AcousticExhaustNetwork::Medium, 1> medium {{
+        { static_cast<float>(densityKgPerM3),
+          static_cast<float>(soundSpeedMps) }
+    }};
+    const std::array<float, 1> pathFlow {{ 0.18F }};
+    enabled.beginBlock(medium, 1.0, pathFlow);
+    disabled.beginBlock(medium, 1.0, pathFlow);
+    std::array<float, 4> sources {};
+    std::array<enginelab::AcousticExhaustNetwork::CylinderBoundary, 4>
+        boundaries {};
+    auto enabledEnergy = 0.0;
+    for (std::size_t sample = 0; sample < 12'000; ++sample) {
+        const auto withJet = enabled.process(sources, boundaries, 1.0F);
+        const auto withoutJet = disabled.process(sources, boundaries, 1.0F);
+        require(withoutJet[0].leftPa == 0.0F
+                && withoutJet[0].rightPa == 0.0F,
+            "disabling outlet turbulence must leave a source-free network silent");
+        enabledEnergy += static_cast<double>(withJet[0].leftPa)
+            * withJet[0].leftPa;
+    }
+    require(enabledEnergy > 1.0e-10,
+        "resolved mean flow must radiate deterministic outlet turbulence");
 }
 
 // A merge is a scattering point *and* a pipe. The audio network used to keep
@@ -2450,6 +2547,7 @@ int main() {
         compressionIgnitionTimbreRegression();
         runnerDelaySampleRateRegression();
         exhaustPathIsolationRegression();
+        exhaustJetNoiseRegression();
         branchedAcousticTopologyRegression();
         branchTrunkDelayRegression();
         ductMediumRegression();

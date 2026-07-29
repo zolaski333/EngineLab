@@ -97,6 +97,15 @@ public:
     [[nodiscard]] bool compiledExhaustTopologyActive() const noexcept {
         return acousticExhaustNetwork_ != nullptr;
     }
+    /** Diagnostic A/B switch for the semi-empirical outlet turbulence layer. */
+    void setOutletJetNoiseEnabled(bool enabled) noexcept {
+        if (acousticExhaustNetwork_)
+            acousticExhaustNetwork_->setOutletJetNoiseEnabled(enabled);
+    }
+    [[nodiscard]] bool outletJetNoiseEnabled() const noexcept {
+        return acousticExhaustNetwork_
+            && acousticExhaustNetwork_->outletJetNoiseEnabled();
+    }
     [[nodiscard]] bool structuralRadiationActive() const noexcept {
         return structuralModalRadiator_ != nullptr;
     }
@@ -121,6 +130,10 @@ public:
     /** Peak SI pressure delivered by the free-field exhaust observer. */
     [[nodiscard]] float maxObservedExhaustPressurePa() const noexcept {
         return maxObservedExhaustPressurePa_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] float maxObservedExhaustJetNoisePressurePa() const noexcept {
+        return maxObservedExhaustJetNoisePressurePa_.load(
+            std::memory_order_relaxed);
     }
     [[nodiscard]] float maxObservedIntakePressurePa() const noexcept {
         return maxObservedIntakePressurePa_.load(std::memory_order_relaxed);
@@ -451,6 +464,7 @@ private:
     std::atomic<std::uint64_t> levelLimitedSamples_ { 0 };
     std::atomic<float> minObservedLevelGain_ { 1.0F };
     std::atomic<float> maxObservedExhaustPressurePa_ { 0.0F };
+    std::atomic<float> maxObservedExhaustJetNoisePressurePa_ { 0.0F };
     std::atomic<float> maxObservedIntakePressurePa_ { 0.0F };
     std::atomic<float> maxIntakeSourcePressurePa_ { 0.0F };
     std::atomic<float> maxIntakeRunnerPressurePa_ { 0.0F };

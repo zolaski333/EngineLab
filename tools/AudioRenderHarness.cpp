@@ -58,6 +58,10 @@ bool muteIntakeLayer = false;
 // Focused offline export only. The application master remains stereo; this
 // asks RealtimeEngineAudio to observe its pre-master diagnostic buses.
 bool writeDiagnosticStems = false;
+// Same-binary A/B only. Production keeps the physically driven outlet source
+// enabled; the switch proves exactly what that one layer contributes.
+bool enableExhaustJetNoise = true;
+bool retainRenderedAudioForComparison = false;
 // Offline oracle only. Large engines are not expected to meet realtime when the
 // complete nonlinear network is advanced on every mechanical substep.
 bool referenceCouplingEverySubstep = false;
@@ -248,6 +252,7 @@ struct Metrics {
     float minLevelGain { 1.0F };
     float maxPreLimiterMagnitude {};
     float maxExhaustPressurePa {};
+    float maxExhaustJetNoisePressurePa {};
     float maxIntakePressurePa {};
     float maxStructuralPressurePa {};
     AcousticIntakeNetwork::Diagnostics intakeDiagnostics {};
@@ -268,6 +273,9 @@ struct Metrics {
     double preLiftBoostPressureRatio { 1.0 };
     double maximumBlowOffMassFlowKgPerSecond {};
     TransitionStepScan commandedTransitionSteps {};
+    // Populated only by focused same-binary comparisons. Normal catalogue runs
+    // retain scalar fingerprints and do not keep every rendered sample.
+    std::vector<float> comparisonAudioLeft;
 };
 
 SafetyScan scanSignal(const std::vector<float>& x) {
@@ -533,6 +541,7 @@ Metrics renderEngine(const EngineConfig& baseConfig, const WavData& ir,
         eventQueue, audioState, &pressureQueue, &audioConfiguration->exhaustGraph(),
         &audioConfiguration->engineConfig());
     auto& renderer = *rendererPtr;
+    renderer.setOutletJetNoiseEnabled(enableExhaustJetNoise);
     if (!ir.samples.empty()) renderer.setImpulseResponse(ir.samples, ir.sampleRate, 0);
     renderer.prepare(audioRate, samplesPerStep);
     // Let the convolver's background IR load settle before rendering.
@@ -727,6 +736,8 @@ Metrics renderEngine(const EngineConfig& baseConfig, const WavData& ir,
     m.minLevelGain = renderer.minObservedLevelGain();
     m.maxPreLimiterMagnitude = renderer.maxPreLimiterMagnitude();
     m.maxExhaustPressurePa = renderer.maxObservedExhaustPressurePa();
+    m.maxExhaustJetNoisePressurePa =
+        renderer.maxObservedExhaustJetNoisePressurePa();
     m.maxIntakePressurePa = renderer.maxObservedIntakePressurePa();
     m.maxStructuralPressurePa = renderer.maxObservedStructuralPressurePa();
     m.intakeDiagnostics = renderer.intakeNetworkDiagnostics();
@@ -752,6 +763,8 @@ Metrics renderEngine(const EngineConfig& baseConfig, const WavData& ir,
     m.preLiftBoostPressureRatio = preLiftBoostPressureRatio;
     m.maximumBlowOffMassFlowKgPerSecond =
         maximumBlowOffMassFlowKgPerSecond;
+    if (retainRenderedAudioForComparison)
+        m.comparisonAudioLeft = audioLeft;
     if (limiterRun && limiterEntrySeconds >= 0.0) {
         m.commandedTransitionSteps = scanTransitionSteps(
             audioLeft, audioRate, { limiterEntrySeconds });
@@ -844,6 +857,8 @@ Metrics renderEngine(const EngineConfig& baseConfig, const WavData& ir,
               << m.commandedTransitionSteps.transitionToBackgroundRatio
               << " layerPa=" << std::setprecision(1) << m.maxExhaustPressurePa
               << '/' << m.maxIntakePressurePa << '/' << m.maxStructuralPressurePa
+              << " jetPa=" << std::setprecision(4)
+              << m.maxExhaustJetNoisePressurePa
               << " intakeStagesPa=" << m.intakeDiagnostics.sourcePressurePa
               << '/' << m.intakeDiagnostics.runnerPressurePa
               << '/' << m.intakeDiagnostics.plenumPressurePa
@@ -1548,6 +1563,7 @@ int main(int argc, char** argv) {
     std::string catalogueFilter;
     std::string runtimeFilter;
     std::string stemFilter;
+    std::string exhaustJetComparisonFilter;
     std::string couplingComparisonFilter;
     std::string junctionComparisonFilter;
     std::optional<std::size_t> intakeWorkers;
@@ -1566,6 +1582,8 @@ int main(int argc, char** argv) {
             runtimeFilter = argv[++i];
         else if (a == "--stems" && i + 1 < argc)
             stemFilter = argv[++i];
+        else if (a == "--exhaust-jet-comparison" && i + 1 < argc)
+            exhaustJetComparisonFilter = argv[++i];
         else if (a == "--coupling-comparison" && i + 1 < argc)
             couplingComparisonFilter = argv[++i];
         else if (a == "--junction-comparison" && i + 1 < argc)
@@ -1663,6 +1681,94 @@ int main(int argc, char** argv) {
         std::cout << "Transient result: " << (ok ? "PASS" : "FAIL")
                   << '\n';
         return ok ? 0 : 1;
+    }
+
+    if (!exhaustJetComparisonFilter.empty()) {
+        const auto catalog = loadEngineCatalog(
+            std::filesystem::path(ENGINELAB_CATALOG_ROOT));
+        const auto selected = std::find_if(
+            catalog.entries.begin(), catalog.entries.end(),
+            [&exhaustJetComparisonFilter](const auto& entry) {
+                return entry.config.name.find(exhaustJetComparisonFilter)
+                    != std::string::npos;
+            });
+        if (selected == catalog.entries.end()) {
+            std::cerr << "FAIL: no catalogue engine matches exhaust-jet comparison '"
+                      << exhaustJetComparisonFilter << "'\n";
+            return 2;
+        }
+        std::cout << "\n--- Exhaust outlet turbulence A/B ---\n";
+        retainRenderedAudioForComparison = true;
+        enableExhaustJetNoise = false;
+        const auto baseline = renderEngine(
+            selected->config, ir, outDir / "jet-off", 4.0, true);
+        enableExhaustJetNoise = true;
+        const auto candidate = renderEngine(
+            selected->config, ir, outDir / "jet-on", 4.0, true);
+        retainRenderedAudioForComparison = false;
+        const auto similarity = cosineSimilarity(baseline, candidate);
+        const auto comparisonSamples = std::min(
+            baseline.comparisonAudioLeft.size(),
+            candidate.comparisonAudioLeft.size());
+        auto differenceSquareSum = 0.0;
+        auto baselineSquareSum = 0.0;
+        auto differencePeak = 0.0;
+        for (std::size_t sample = 0; sample < comparisonSamples; ++sample) {
+            const auto reference = static_cast<double>(
+                baseline.comparisonAudioLeft[sample]);
+            const auto difference = static_cast<double>(
+                candidate.comparisonAudioLeft[sample]) - reference;
+            differenceSquareSum += difference * difference;
+            baselineSquareSum += reference * reference;
+            differencePeak = std::max(
+                differencePeak, std::abs(difference));
+        }
+        const auto differenceRms = comparisonSamples > 0
+            ? std::sqrt(differenceSquareSum
+                / static_cast<double>(comparisonSamples)) : 0.0;
+        const auto relativeDifference = baselineSquareSum > 0.0
+            ? std::sqrt(differenceSquareSum / baselineSquareSum) : 0.0;
+        std::cout << std::fixed << std::setprecision(6)
+                  << "  spectral cosine off/on=" << similarity << '\n'
+                  << "  RMS left off/on=" << baseline.left.window.rms << '/'
+                  << candidate.left.window.rms << '\n'
+                  << "  brightness off/on="
+                  << baseline.left.window.brightness << '/'
+                  << candidate.left.window.brightness << '\n'
+                  << "  band fractions off low/mid/high="
+                  << baseline.left.window.lowBandFraction << '/'
+                  << baseline.left.window.midBandFraction << '/'
+                  << baseline.left.window.highBandFraction << '\n'
+                  << "  band fractions on  low/mid/high="
+                  << candidate.left.window.lowBandFraction << '/'
+                  << candidate.left.window.midBandFraction << '/'
+                  << candidate.left.window.highBandFraction << '\n'
+                  << "  observed jet peak Pa off/on="
+                  << baseline.maxExhaustJetNoisePressurePa << '/'
+                  << candidate.maxExhaustJetNoisePressurePa << '\n'
+                  << "  waveform difference RMS/relative/peak="
+                  << differenceRms << '/' << relativeDifference << '/'
+                  << differencePeak << '\n';
+        const auto valid = [](const Metrics& measurement) {
+            return measurement.left.scan.finite
+                && measurement.right.scan.finite
+                && measurement.physicalActive
+                && measurement.compiledTopologyActive
+                && measurement.legacyPathSamples == 0
+                && measurement.invalidBoundarySamples == 0
+                && measurement.droppedPressureSamples == 0
+                && measurement.levelLimitedSamples == 0
+                && measurement.maxPreLimiterMagnitude < 0.82F;
+        };
+        const auto isolated = baseline.maxExhaustJetNoisePressurePa == 0.0F
+            && candidate.maxExhaustJetNoisePressurePa > 1.0e-6F
+            && relativeDifference >= 0.01
+            && relativeDifference <= 0.15
+            && differencePeak < 0.25;
+        if (!isolated)
+            std::cerr << "FAIL: outlet turbulence did not produce an isolated "
+                         "resolved acoustic difference\n";
+        return valid(baseline) && valid(candidate) && isolated ? 0 : 1;
     }
 
     if (!junctionComparisonFilter.empty()) {

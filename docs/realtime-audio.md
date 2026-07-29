@@ -161,6 +161,36 @@ structure au lieu d’être doublée par une voix procédurale directe. Le test
 stems et l’autre sans, puis exige l’égalité **bit à bit de chaque échantillon du
 master**. Il vérifie aussi les bornes du buffer et le silence des bus inactifs.
 
+## Turbulence au débouché d’échappement
+
+`ExhaustJetNoise` ajoute au débouché une source large bande causale dérivée du
+débit, de la densité, de la célérité et du diamètre déjà résolus. Sa puissance
+suit la loi subsonique en `U^8` et son centre spectral `St = 0,2`. La modulation
+audio vient du débit volumique de la charge de rayonnement ; elle n’est jamais
+réinjectée dans le réseau gaz.
+
+La source traverse le même observateur stéréo et la même IR que le débouché.
+Elle est déterministe et ne fait aucune allocation dans le callback. Son
+coefficient moteur demeure semi-empirique et doit encore passer un vote
+d’écoute aveugle. Modèle, valeurs authored, essais rejetés, A/B cinq familles et
+coût temps réel sont consignés dans
+[`audio-lot3-outlet-turbulence-2026-07-29.md`](audio-lot3-outlet-turbulence-2026-07-29.md).
+
+Contrôle A/B sonore :
+
+```powershell
+out/build/windows-vs2022/tools/Release/EngineLabAudioRenderHarness.exe `
+  --exhaust-jet-comparison "LS3" --output out/validation/jet-ls3
+```
+
+Contrôle A/B CPU, même binaire :
+
+```powershell
+out/build/windows-vs2022/tools/Release/EngineLabRealtimeBudgetHarness.exe `
+  --filter Merlin --warmup 3 --seconds 10 --free-run --with-audio `
+  --disable-exhaust-jet-noise
+```
+
 ## Contrat du callback
 
 `RealtimeEngineAudio::render` :
@@ -184,6 +214,7 @@ compteurs sont observables par les harnais.
 
 - passivité et causalité du rayonnement ;
 - déterminisme du rendu SI ;
+- loi en `U^8`, Strouhal, niveau RMS et silence à débit nul du jet de sortie ;
 - influence du signe du débit ;
 - silence d’une frontière SI stationnaire ;
 - invariance aux presets, événements et bruits hérités ;

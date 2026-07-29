@@ -109,6 +109,8 @@ struct AcousticExhaustNetwork::Impl final {
         float incidentToJunction {};
         UnflangedPipeRadiation radiation;
         FreeFieldObserver observer;
+        FreeFieldObserver jetNoiseObserver;
+        ExhaustJetNoise jetNoise;
         double radiationDensityKgPerM3 { 1.2 };
         double radiationSoundSpeedMps { 343.0 };
         double radiationTargetDensityKgPerM3 { 1.2 };
@@ -133,6 +135,8 @@ struct AcousticExhaustNetwork::Impl final {
     std::vector<float> outgoing;
     std::array<Medium, maximumPaths> media {};
     std::array<Medium, maximumPaths> mediaTarget {};
+    std::array<StereoPressure, maximumPaths> lastJetNoise {};
+    bool jetNoiseEnabled { true };
     bool mediaInitialised { false };
     double sampleRateHz { 48'000.0 };
     double maximumDelayScale { 12.5 };
@@ -427,6 +431,10 @@ struct AcousticExhaustNetwork::Impl final {
             compiled.acousticAxis = outlet.acousticAxis;
             compiled.acousticTermination = outlet.acousticTermination;
             const auto outletIndex = outlets.size();
+            compiled.jetNoise.setSeed(static_cast<std::uint32_t>(
+                0x9e3779b9U ^ (outletIndex + 1U) * 0x85ebca6bU
+                ^ (static_cast<std::size_t>(outlet.pathIndex) + 1U)
+                    * 0xc2b2ae35U));
             if (outlet.networkEndpoint.type == gasdynamics::ExhaustEndpointType::junction) {
                 compiled.virtualTerminal = true;
                 compiled.endpointOrJunction = nodeFor(
@@ -571,7 +579,11 @@ bool AcousticExhaustNetwork::prepare(double sampleRateHz,
         if (!outlet.radiation.prepare(sampleRateHz, radiusM, 1.0)
             || !outlet.observer.prepare(sampleRateHz, radiusM,
                 outlet.acousticPositionM, outlet.acousticAxis,
-                outlet.acousticTermination, impl_->observerConfig))
+                outlet.acousticTermination, impl_->observerConfig)
+            || !outlet.jetNoiseObserver.prepare(sampleRateHz, radiusM,
+                outlet.acousticPositionM, outlet.acousticAxis,
+                outlet.acousticTermination, impl_->observerConfig)
+            || !outlet.jetNoise.prepare(sampleRateHz))
             return false;
     }
     impl_->prepared = true;
@@ -604,9 +616,12 @@ void AcousticExhaustNetwork::reset() noexcept {
         outlet.incidentToJunction = 0.0F;
         outlet.radiation.reset();
         outlet.observer.reset();
+        outlet.jetNoiseObserver.reset();
+        outlet.jetNoise.reset();
     }
     std::fill(impl_->incident.begin(), impl_->incident.end(), 0.0F);
     std::fill(impl_->outgoing.begin(), impl_->outgoing.end(), 0.0F);
+    impl_->lastJetNoise.fill(StereoPressure {});
     impl_->mediaInitialised = false;
 }
 
@@ -680,6 +695,12 @@ void AcousticExhaustNetwork::beginBlock(
             duct.modeCutoff = duct.modeCutoffTarget;
         }
     }
+    std::array<double, maximumPaths> totalOutletAreaM2 {};
+    for (const auto& outlet : impl_->outlets) {
+        const auto path = std::min<std::size_t>(
+            outlet.pathIndex, totalOutletAreaM2.size() - 1U);
+        totalOutletAreaM2[path] += outlet.areaM2;
+    }
     for (auto& outlet : impl_->outlets) {
         const auto& medium = impl_->mediaTarget[std::min<std::size_t>(
             outlet.pathIndex, impl_->mediaTarget.size() - 1U)];
@@ -703,6 +724,16 @@ void AcousticExhaustNetwork::beginBlock(
                 mach = massFlow / (density * outlet.areaM2 * soundSpeed);
         }
         outlet.outletMachTarget = std::clamp(mach, 0.0, 0.9);
+        const auto path = std::min<std::size_t>(
+            outlet.pathIndex, totalOutletAreaM2.size() - 1U);
+        const auto pathFlow = path < pathMeanMassFlowKgPerSecond.size()
+            ? std::abs(static_cast<double>(
+                pathMeanMassFlowKgPerSecond[path])) : 0.0;
+        const auto assignedFlow = totalOutletAreaM2[path] > 0.0
+            ? pathFlow * outlet.areaM2 / totalOutletAreaM2[path] : 0.0;
+        outlet.jetNoise.configure(
+            assignedFlow, outlet.areaM2, medium.densityKgPerM3,
+            medium.soundSpeedMps, timeScale);
         if (snap) {
             outlet.radiationDensityKgPerM3 = medium.densityKgPerM3;
             outlet.radiationSoundSpeedMps = medium.soundSpeedMps;
@@ -711,6 +742,7 @@ void AcousticExhaustNetwork::beginBlock(
                 (1.0 - outlet.outletMach) / (1.0 + outlet.outletMach);
             (void) outlet.radiation.setMedium(
                 outlet.radiationDensityKgPerM3, outlet.radiationSoundSpeedMps);
+            outlet.jetNoise.snapToTarget();
         }
     }
 }
@@ -722,6 +754,7 @@ AcousticExhaustNetwork::process(
     float delayRampCoefficient) noexcept {
     std::array<StereoPressure, maximumPaths> result {};
     if (!impl_->prepared) return result;
+    impl_->lastJetNoise.fill(StereoPressure {});
     const auto ramp = std::clamp(delayRampCoefficient, 0.0F, 1.0F);
     // Slew the gas medium toward the block target so every derived scattering
     // coefficient moves continuously. Junction admittance (endpointAdmittance)
@@ -836,8 +869,17 @@ AcousticExhaustNetwork::process(
                 outlet.pathIndex, result.size() - 1U);
             const auto observed = outlet.observer.process(
                 static_cast<float>(radiation.farFieldPressurePa));
-            result[path].leftPa += observed.leftPa;
-            result[path].rightPa += observed.rightPa;
+            auto observedJet = StereoPressure {};
+            if (impl_->jetNoiseEnabled) {
+                const auto jetPressureAtOneMetre = outlet.jetNoise.process(
+                    ramp, radiation.outletVolumeVelocityM3PerS);
+                observedJet = outlet.jetNoiseObserver.process(
+                    jetPressureAtOneMetre);
+            }
+            impl_->lastJetNoise[path].leftPa += observedJet.leftPa;
+            impl_->lastJetNoise[path].rightPa += observedJet.rightPa;
+            result[path].leftPa += observed.leftPa + observedJet.leftPa;
+            result[path].rightPa += observed.rightPa + observedJet.rightPa;
         }
     }
 
@@ -859,8 +901,17 @@ AcousticExhaustNetwork::process(
             outlet.pathIndex, result.size() - 1U);
         const auto observed = outlet.observer.process(
             static_cast<float>(radiation.farFieldPressurePa));
-        result[path].leftPa += observed.leftPa;
-        result[path].rightPa += observed.rightPa;
+        auto observedJet = StereoPressure {};
+        if (impl_->jetNoiseEnabled) {
+            const auto jetPressureAtOneMetre = outlet.jetNoise.process(
+                ramp, radiation.outletVolumeVelocityM3PerS);
+            observedJet = outlet.jetNoiseObserver.process(
+                jetPressureAtOneMetre);
+        }
+        impl_->lastJetNoise[path].leftPa += observedJet.leftPa;
+        impl_->lastJetNoise[path].rightPa += observedJet.rightPa;
+        result[path].leftPa += observed.leftPa + observedJet.leftPa;
+        result[path].rightPa += observed.rightPa + observedJet.rightPa;
     }
 
     for (std::size_t index = 0; index < impl_->ducts.size(); ++index) {
@@ -872,6 +923,20 @@ AcousticExhaustNetwork::process(
         duct.write = (duct.write + 1U) & duct.mask;
     }
     return result;
+}
+
+void AcousticExhaustNetwork::setOutletJetNoiseEnabled(bool enabled) noexcept {
+    if (impl_) impl_->jetNoiseEnabled = enabled;
+}
+
+bool AcousticExhaustNetwork::outletJetNoiseEnabled() const noexcept {
+    return impl_ && impl_->jetNoiseEnabled;
+}
+
+std::array<StereoPressure, AcousticExhaustNetwork::maximumPaths>
+AcousticExhaustNetwork::lastOutletJetNoisePressure() const noexcept {
+    return impl_ ? impl_->lastJetNoise
+                 : std::array<StereoPressure, maximumPaths> {};
 }
 
 bool AcousticExhaustNetwork::valid() const noexcept {

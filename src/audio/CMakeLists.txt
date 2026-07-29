@@ -1,6 +1,7 @@
 add_library(EngineLabAudio STATIC
     src/AcousticExhaustNetwork.cpp
     src/AcousticIntakeNetwork.cpp
+    src/ExhaustJetNoise.cpp
     src/ForcedInductionAcoustics.cpp
     src/FreeFieldObserver.cpp
     src/ImpulseResponseLoader.cpp
