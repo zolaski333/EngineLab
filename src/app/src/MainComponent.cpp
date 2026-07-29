@@ -105,8 +105,10 @@ MainComponent::MainComponent() {
     keyBindingsButton_.onClick = [this] { showKeyBindingsEditor(); };
     ecuTunerButton_.onClick = [this] { showEcuTuner(); };
     exhaustDesignerButton_.onClick = [this] { showExhaustDesigner(); };
+    audioWorkshopButton_.onClick = [this] { showAudioWorkshop(); };
     for (auto* button : { &editButton_, &importButton_, &exportButton_, &csvButton_,
-                          &keyBindingsButton_, &ecuTunerButton_, &exhaustDesignerButton_ })
+                          &keyBindingsButton_, &ecuTunerButton_, &exhaustDesignerButton_,
+                          &audioWorkshopButton_ })
         addAndMakeVisible(*button);
     const std::array<const char*, 5> exhaustPresets { "Street", "Open", "Turbo", "Long tube", "Moto" };
     for (int index = 0; index < static_cast<int>(exhaustPresets.size()); ++index)
@@ -170,6 +172,7 @@ MainComponent::MainComponent() {
 MainComponent::~MainComponent() {
     stopTimer();
     stopEngineScriptWatcher();
+    audioWorkshopWindow_.reset();
     exhaustDesignerWindow_.reset();
     ecuTunerWindow_.reset();
     shutdownAudio();
@@ -246,6 +249,12 @@ bool MainComponent::applyConfig(const EngineConfig& newConfig, bool preserveScri
 void MainComponent::updateAudioControlAvailability() {
     physicalExhaustTopology_ = audio_ != nullptr
         && audio_->compiledExhaustTopologyActive();
+    physicalIntakeTopology_ = audio_ != nullptr
+        && audio_->compiledIntakeTopologyActive();
+    structuralRadiationActive_ = audio_ != nullptr
+        && audio_->structuralRadiationActive();
+    forcedInductionAcousticsActive_ = audio_ != nullptr
+        && audio_->forcedInductionAcousticsActive();
     if (physicalExhaustTopology_) {
         exhaustPresetSelector_.setSelectedId(6, juce::dontSendNotification);
         exhaustPresetSelector_.setEnabled(false);
@@ -333,6 +342,12 @@ void MainComponent::configureImpulseResponse() {
             errors.joinIntoString("\n")
                 + utf8("\n\nLe chemin reste en champ libre ; aucun fallback caché n'a été appliqué."));
     }
+    impulseResponseAvailable_ = loadedCount != 0;
+    if (audioWorkshopWindow_) {
+        audioWorkshopWindow_->setEngine(
+            config_, catalogRoot_, physicalExhaustTopology_,
+            physicalIntakeTopology_, impulseResponseAvailable_);
+    }
     repaint();
 }
 
@@ -419,6 +434,84 @@ void MainComponent::showEcuTuner() {
         ecuTunerWindow_ = std::make_unique<EcuTunerWindow>(runtime_->calibrationStore());
     ecuTunerWindow_->setVisible(true);
     ecuTunerWindow_->toFront(true);
+}
+
+OfflineAudioMix MainComponent::currentAudioMix() const noexcept {
+    OfflineAudioMix mix;
+    mix.volume = audioVolume_;
+    mix.convolution = audioConvolution_;
+    mix.highFrequencyGain = highFrequencyGain_;
+    mix.lowFrequencyNoise = lowFrequencyNoise_;
+    mix.highFrequencyNoise = highFrequencyNoise_;
+    mix.combustionGain = combustionGain_;
+    mix.exhaustGain = exhaustGain_;
+    mix.intakeGain = intakeGain_;
+    mix.mechanicalGain = mechanicalGain_;
+    return mix;
+}
+
+void MainComponent::applyAudioWorkshopMix(
+    const OfflineAudioMix& baseMix,
+    const OfflineAudioMix& effectiveMix) {
+    audioVolume_ = baseMix.volume;
+    audioConvolution_ = baseMix.convolution;
+    highFrequencyGain_ = baseMix.highFrequencyGain;
+    lowFrequencyNoise_ = baseMix.lowFrequencyNoise;
+    highFrequencyNoise_ = baseMix.highFrequencyNoise;
+    combustionGain_ = baseMix.combustionGain;
+    exhaustGain_ = baseMix.exhaustGain;
+    intakeGain_ = baseMix.intakeGain;
+    mechanicalGain_ = baseMix.mechanicalGain;
+    if (runtime_) {
+        runtime_->setAudioVolume(effectiveMix.volume);
+        runtime_->setAudioConvolution(effectiveMix.convolution);
+        runtime_->setHighFrequencyGain(
+            effectiveMix.highFrequencyGain);
+        runtime_->setLowFrequencyNoise(
+            effectiveMix.lowFrequencyNoise);
+        runtime_->setHighFrequencyNoise(
+            effectiveMix.highFrequencyNoise);
+        runtime_->setCombustionGain(
+            effectiveMix.combustionGain);
+        runtime_->setExhaustGain(effectiveMix.exhaustGain);
+        runtime_->setIntakeGain(effectiveMix.intakeGain);
+        runtime_->setMechanicalGain(
+            effectiveMix.mechanicalGain);
+    }
+    repaint();
+}
+
+void MainComponent::syncAudioWorkshopMix() {
+    if (audioWorkshopWindow_)
+        audioWorkshopWindow_->setMix(currentAudioMix());
+}
+
+void MainComponent::showAudioWorkshop() {
+    if (!runtime_ || !audio_) return;
+    if (!audioWorkshopWindow_) {
+        auto safe = juce::Component::SafePointer<MainComponent>(this);
+        audioWorkshopWindow_ =
+            std::make_unique<AudioWorkshopWindow>(
+                config_, catalogRoot_, currentAudioMix(),
+                physicalExhaustTopology_,
+                physicalIntakeTopology_,
+                impulseResponseAvailable_,
+                [safe](
+                    const OfflineAudioMix& baseMix,
+                    const OfflineAudioMix& effectiveMix) {
+                    if (safe)
+                        safe->applyAudioWorkshopMix(
+                            baseMix, effectiveMix);
+                });
+    } else {
+        audioWorkshopWindow_->setEngine(
+            config_, catalogRoot_, physicalExhaustTopology_,
+            physicalIntakeTopology_,
+            impulseResponseAvailable_);
+        audioWorkshopWindow_->setMix(currentAudioMix());
+    }
+    audioWorkshopWindow_->setVisible(true);
+    audioWorkshopWindow_->toFront(true);
 }
 
 void MainComponent::showExhaustDesigner() {
@@ -656,42 +749,56 @@ void MainComponent::applyExhaustPreset(int presetIndex) {
 void MainComponent::adjustAudioOrSimulation(double wheelDelta) {
     if (!runtime_ || wheelDelta == 0.0) return;
     const auto step = actionMap_.isDown(AppAction::wheelFineThrottle) ? 0.01 : 0.05;
+    bool audioMixChanged = false;
     if (actionMap_.isDown(AppAction::wheelDynoRpm) && visibleState_.dynoHoldEnabled) {
         runtime_->adjustDynoHoldRpm(wheelDelta > 0.0 ? 100.0 : -100.0);
     } else if (actionMap_.isDown(AppAction::wheelVolume)) {
         audioVolume_ = std::clamp(audioVolume_ + wheelDelta * step, 0.0, 2.0);
         runtime_->setAudioVolume(audioVolume_);
+        audioMixChanged = true;
     } else if (actionMap_.isDown(AppAction::wheelConvolution)) {
+        if (!impulseResponseAvailable_) return;
         audioConvolution_ = std::clamp(audioConvolution_ + wheelDelta * step, 0.0, 1.0);
         runtime_->setAudioConvolution(audioConvolution_);
+        audioMixChanged = true;
     } else if (actionMap_.isDown(AppAction::wheelHighGain)) {
         highFrequencyGain_ = std::clamp(highFrequencyGain_ + wheelDelta * step, 0.2, 2.5);
         runtime_->setHighFrequencyGain(highFrequencyGain_);
+        audioMixChanged = true;
     } else if (actionMap_.isDown(AppAction::wheelLowNoise)) {
+        if (physicalIntakeTopology_) return;
         lowFrequencyNoise_ = std::clamp(lowFrequencyNoise_ + wheelDelta * step, 0.0, 1.5);
         runtime_->setLowFrequencyNoise(lowFrequencyNoise_);
+        audioMixChanged = true;
     } else if (actionMap_.isDown(AppAction::wheelHighNoise)) {
         if (physicalExhaustTopology_) return;
         highFrequencyNoise_ = std::clamp(highFrequencyNoise_ + wheelDelta * step, 0.0, 1.5);
         runtime_->setHighFrequencyNoise(highFrequencyNoise_);
+        audioMixChanged = true;
     } else if (actionMap_.isDown(AppAction::wheelCombustion)) {
+        if (physicalExhaustTopology_) return;
         combustionGain_ = std::clamp(combustionGain_ + wheelDelta * step, 0.0, 2.0);
         runtime_->setCombustionGain(combustionGain_);
+        audioMixChanged = true;
     } else if (actionMap_.isDown(AppAction::wheelExhaust)) {
         exhaustGain_ = std::clamp(exhaustGain_ + wheelDelta * step, 0.0, 2.0);
         runtime_->setExhaustGain(exhaustGain_);
+        audioMixChanged = true;
     } else if (actionMap_.isDown(AppAction::wheelIntake)) {
         intakeGain_ = std::clamp(intakeGain_ + wheelDelta * step, 0.0, 2.0);
         runtime_->setIntakeGain(intakeGain_);
+        audioMixChanged = true;
     } else if (actionMap_.isDown(AppAction::wheelMechanical)) {
         mechanicalGain_ = std::clamp(mechanicalGain_ + wheelDelta * step, 0.0, 2.0);
         runtime_->setMechanicalGain(mechanicalGain_);
+        audioMixChanged = true;
     } else if (actionMap_.isDown(AppAction::wheelSimulationRate)) {
         runtime_->setTimeScale(runtime_->timeScale() + wheelDelta * step);
     } else if (actionMap_.isDown(AppAction::wheelFineThrottle)) {
         throttleSlider_.setValue(std::clamp(throttleSlider_.getValue() + wheelDelta * 2.0, 0.0, 100.0),
                                  juce::sendNotificationSync);
     }
+    if (audioMixChanged) syncAudioWorkshopMix();
     repaint();
 }
 
@@ -1010,7 +1117,8 @@ void MainComponent::drawMixerPanel(juce::Graphics& g, juce::Rectangle<float> are
     g.setColour(juce::Colour(0xff2b3834)); g.drawRoundedRectangle(area, 8.0F, 1.0F);
     auto body = area.reduced(18.0F);
     g.setColour(juce::Colour(0xffdce5e1)); g.setFont(juce::FontOptions(16.0F, juce::Font::bold));
-    g.drawText("MIXER / AUDIO", body.removeFromTop(34.0F), juce::Justification::centredLeft);
+    g.drawText("MIXER / AUDIO  ·  AUDIO HQ = ATELIER COMPLET",
+               body.removeFromTop(34.0F), juce::Justification::centredLeft);
     const std::array<const char*, 5> presetNames { "Street chamber", "Open headers", "Turbo muffled", "Long tube", "Motorcycle" };
     g.setColour(juce::Colour(0xff79b89f));
     g.setFont(juce::FontOptions(13.0F, juce::Font::bold));
@@ -1027,15 +1135,25 @@ void MainComponent::drawMixerPanel(juce::Graphics& g, juce::Rectangle<float> are
                juce::Justification::centredLeft);
     const std::array<std::pair<juce::String, double>, 9> values {{
         { "Z  Volume", audioVolume_ / 2.0 },
-        { "X  Convolution", audioConvolution_ },
+        { impulseResponseAvailable_ ? "X  Retour IR mesure"
+                                    : "X  Retour IR (N/A)",
+          impulseResponseAvailable_ ? audioConvolution_ : 0.0 },
         { "C  High gain", highFrequencyGain_ / 2.5 },
-        { "V  Low noise", lowFrequencyNoise_ / 1.5 },
+        { physicalIntakeTopology_ ? "V  Noise intake legacy (N/A)"
+                                  : "V  Low noise",
+          physicalIntakeTopology_ ? 0.0 : lowFrequencyNoise_ / 1.5 },
         { physicalExhaustTopology_ ? "B  Noise legacy (N/A)" : "B  High noise",
           physicalExhaustTopology_ ? 0.0 : highFrequencyNoise_ / 1.5 },
-        { "J  Combustion", combustionGain_ / 2.0 },
+        { physicalExhaustTopology_ ? "J  Combustion directe (N/A)"
+                                   : "J  Combustion",
+          physicalExhaustTopology_ ? 0.0 : combustionGain_ / 2.0 },
         { "K  Exhaust", exhaustGain_ / 2.0 },
-        { "L  Intake", intakeGain_ / 2.0 },
-        { "O  Mechanical", mechanicalGain_ / 2.0 }
+        { forcedInductionAcousticsActive_ ? "L  Intake + turbo"
+                                          : "L  Intake",
+          intakeGain_ / 2.0 },
+        { structuralRadiationActive_ ? "O  Structure / mechanical"
+                                     : "O  Mechanical",
+          mechanicalGain_ / 2.0 }
     }};
     for (const auto& item : values) {
         auto row = body.removeFromTop(36.0F);
@@ -1555,7 +1673,7 @@ void MainComponent::drawDynoChart(juce::Graphics& g, juce::Rectangle<float> area
 }
 
 void MainComponent::resized() {
-    const auto toolbarXStart = std::max(300, getWidth() - 1'100);
+    const auto toolbarXStart = std::max(280, getWidth() - 1'160);
     title_.setBounds(22, 12, std::max(250, toolbarXStart - 34), 42);
     engineSelector_.setBounds(getWidth() - 260, 17, 230, 32);
     exhaustPresetSelector_.setBounds(getWidth() - 415, 17, 145, 32);
@@ -1567,7 +1685,8 @@ void MainComponent::resized() {
     toolbarX += 96;
     keyBindingsButton_.setBounds(toolbarX, 17, 86, 32); toolbarX += 90;
     ecuTunerButton_.setBounds(toolbarX, 17, 64, 32); toolbarX += 68;
-    exhaustDesignerButton_.setBounds(toolbarX, 17, 88, 32);
+    exhaustDesignerButton_.setBounds(toolbarX, 17, 88, 32); toolbarX += 92;
+    audioWorkshopButton_.setBounds(toolbarX, 17, 82, 32);
     const auto compact = getHeight() < 740;
     const auto buttonHeight = compact ? 38 : 42;
     const auto labelHeight = compact ? 20 : 23;

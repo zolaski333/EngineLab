@@ -144,6 +144,14 @@ reconstruction, le volume, le leveler et le limiteur. L’échappement sec et l�
 restent séparés pour ne pas confondre la source moteur avec la pièce ou la
 cabine. Les buffers sont fournis par l’appelant et remplis sans allocation.
 
+Le rendu utilisateur haute qualité réutilise ce chemin dans
+`OfflineAudioExporter` : 48/96/192 kHz, PCM 24 bits ou float 32 bits, scénario
+JSON, master et stems, manifeste et annulation. Voir
+[`audio-lot5-offline-hq-2026-07-29.md`](audio-lot5-offline-hq-2026-07-29.md).
+Le bouton **AUDIO HQ**, ses contrôles mute/solo et la neutralisation explicite
+des réglages legacy sans effet sont documentés dans
+[`audio-lot6-workshop-2026-07-29.md`](audio-lot6-workshop-2026-07-29.md).
+
 Export ciblé :
 
 ```powershell

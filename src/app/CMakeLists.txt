@@ -4,9 +4,10 @@ juce_add_gui_app(EngineLabApp
     BUNDLE_ID "com.enginelab.desktop")
 juce_generate_juce_header(EngineLabApp)
 target_sources(EngineLabApp PRIVATE
-    src/Main.cpp src/MainComponent.cpp src/ActionMap.cpp src/EcuTunerWindow.cpp
+    src/Main.cpp src/MainComponent.cpp src/ActionMap.cpp src/AudioWorkshopWindow.cpp src/EcuTunerWindow.cpp
     src/ExhaustDesignerWindow.cpp
     include/enginelab/app/MainComponent.hpp include/enginelab/app/ActionMap.hpp
+    include/enginelab/app/AudioWorkshopWindow.hpp
     include/enginelab/app/EcuTunerWindow.hpp
     include/enginelab/app/ExhaustDesignerWindow.hpp)
 target_include_directories(EngineLabApp PRIVATE include)

@@ -35,6 +35,9 @@ L'application fournit également :
 - un tuner ECU pour les tables AFR et avance ainsi que le rupteur, appliqués à
   chaud par snapshots transactionnels ;
 - un banc automatique avec historique, courbes et export CSV ;
+- un atelier **AUDIO HQ** avec mute/solo, contrôles qui reflètent les graphes
+  réellement actifs, scénarios JSON et export WAV 48/96/192 kHz en PCM 24 bits
+  ou float 32 bits, avec stems optionnels ;
 - une vue JUCE 2D et un contrat de scène 3D indépendant du backend graphique.
 
 OpenGL n'est pas implémenté. Le module `render` prépare les transformations 3D,
@@ -104,6 +107,8 @@ un autre moteur crée volontairement sa calibration par défaut.
 - [Modèle de simulation](docs/simulation-model.md)
 - [Architecture thermoacoustique physique](docs/thermoacoustic-architecture.md)
 - [Architecture audio temps réel](docs/realtime-audio.md)
+- [Rendu audio HQ hors ligne](docs/audio-lot5-offline-hq-2026-07-29.md)
+- [Atelier audio et contrôles honnêtes](docs/audio-lot6-workshop-2026-07-29.md)
 - [Configuration des modes NVH structurels](docs/structural-nvh-configuration.md)
 - [Validation du transfert de charge](docs/vehicle-load-transfer-validation-2026-07-29.md)
 - [Validation finale du 29 juillet 2026](docs/final-validation-2026-07-29.md)
@@ -168,8 +173,7 @@ un niveau égal ou supérieur sont dans
 - admission quasi-1D et modes structurels réduits ; les modes du catalogue
   restent estimés par famille tant qu'aucune mesure sourcée n'est fournie, et
   il manque une validation réelle sur banc/multi-microphones ;
-- pas de backend 3D, d'enregistrement WAV depuis l'interface, ni de diagnostic
-  OBD destiné à une ECU réelle.
+- pas de backend 3D ni de diagnostic OBD destiné à une ECU réelle.
 
 ## Licence
 

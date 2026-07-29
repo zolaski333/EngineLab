@@ -1,6 +1,7 @@
 #pragma once
 #include <enginelab/audio/RealtimeEngineAudio.hpp>
 #include <enginelab/app/ActionMap.hpp>
+#include <enginelab/app/AudioWorkshopWindow.hpp>
 #include <enginelab/app/EcuTunerWindow.hpp>
 #include <enginelab/app/ExhaustDesignerWindow.hpp>
 #include <enginelab/catalog/EngineCatalog.hpp>
@@ -44,6 +45,7 @@ private:
     void showConfigEditor();
     void showConfigEditor(const juce::String& initialText);
     void showKeyBindingsEditor();
+    void showAudioWorkshop();
     void showEcuTuner();
     void showExhaustDesigner();
     void startEngineScriptWatcher(const std::filesystem::path&);
@@ -62,6 +64,11 @@ private:
     void applyExhaustPreset(int presetIndex);
     void updateAudioControlAvailability();
     void configureImpulseResponse();
+    [[nodiscard]] OfflineAudioMix currentAudioMix() const noexcept;
+    void applyAudioWorkshopMix(
+        const OfflineAudioMix& baseMix,
+        const OfflineAudioMix& effectiveMix);
+    void syncAudioWorkshopMix();
     void adjustAudioOrSimulation(double wheelDelta);
     void drawLoadSimulationPanel(juce::Graphics&, juce::Rectangle<float> area) const;
     void drawMixerPanel(juce::Graphics&, juce::Rectangle<float> area) const;
@@ -113,6 +120,10 @@ private:
     double mechanicalGain_ { 0.70 };
     int exhaustPresetIndex_ { 0 };
     bool physicalExhaustTopology_ { false };
+    bool physicalIntakeTopology_ { false };
+    bool structuralRadiationActive_ { false };
+    bool forcedInductionAcousticsActive_ { false };
+    bool impulseResponseAvailable_ { false };
     bool impulseResponseLoadError_ { false };
     juce::String impulseResponseStatus_ { "IR  CHAMP LIBRE" };
     std::array<EngineState, 300> telemetryHistory_ {};
@@ -123,6 +134,7 @@ private:
     std::unique_ptr<juce::AlertWindow> keyBindingsEditor_;
     std::unique_ptr<EcuTunerWindow> ecuTunerWindow_;
     std::unique_ptr<ExhaustDesignerWindow> exhaustDesignerWindow_;
+    std::unique_ptr<AudioWorkshopWindow> audioWorkshopWindow_;
     std::unique_ptr<scripting::EngineScriptHotReloader> scriptReloader_;
     std::uint64_t scriptRevision_ {};
     std::uint64_t scriptAttempt_ {};
@@ -136,6 +148,7 @@ private:
     juce::TextButton keyBindingsButton_ { "TOUCHES" };
     juce::TextButton ecuTunerButton_ { "ECU" };
     juce::TextButton exhaustDesignerButton_ { "ECHAP. PRO" };
+    juce::TextButton audioWorkshopButton_ { "AUDIO HQ" };
     juce::ComboBox exhaustPresetSelector_;
     juce::TextButton ignitionButton_ { "CONTACT" };
     juce::TextButton starterButton_;

@@ -108,6 +108,27 @@ if(MSVC)
     target_link_options(EngineLabOfflineAudioExportTests PRIVATE /STACK:8388608)
 endif()
 
+add_executable(EngineLabAudioWorkshopTests
+    AudioWorkshopTests.cpp
+    "${CMAKE_SOURCE_DIR}/src/app/src/AudioWorkshopWindow.cpp")
+target_include_directories(EngineLabAudioWorkshopTests PRIVATE
+    "${CMAKE_SOURCE_DIR}/src/app/include")
+target_link_libraries(EngineLabAudioWorkshopTests PRIVATE
+    EngineLab::Audio EngineLab::Catalog
+    juce::juce_gui_extra
+    juce::juce_recommended_config_flags)
+target_compile_definitions(EngineLabAudioWorkshopTests PRIVATE
+    ENGINELAB_CATALOG_ROOT="${CMAKE_SOURCE_DIR}"
+    JUCE_WEB_BROWSER=0
+    JUCE_USE_CURL=0)
+enginelab_set_warnings(EngineLabAudioWorkshopTests)
+add_test(NAME EngineLab.AudioWorkshop
+    COMMAND EngineLabAudioWorkshopTests)
+set_tests_properties(EngineLab.AudioWorkshop PROPERTIES TIMEOUT 120)
+if(MSVC)
+    target_link_options(EngineLabAudioWorkshopTests PRIVATE /STACK:8388608)
+endif()
+
 if(TARGET EngineLabComparisonHarness)
     add_test(NAME EngineLab.CatalogPhysics COMMAND EngineLabComparisonHarness
         --output "${CMAKE_BINARY_DIR}/catalog-physics-test"
