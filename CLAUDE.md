@@ -12,6 +12,29 @@ ctest  --test-dir out/build/windows-vs2022 -C Release              # all tests
 
 Warnings are errors. A green build and `ctest` run are the bar for any change.
 
+**`cmake` is not on `PATH` on this machine, and the Visual Studio instance
+resolution is broken.** Both cost an hour on 2026-07-29, and neither is a code
+problem:
+
+- Prefix the tool directory yourself:
+  `$env:PATH = "C:\Program Files\Microsoft Visual Studio\2022\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin;$env:PATH"`.
+  Shell state does not persist between agent tool calls, so do it in every call.
+- A **Visual Studio 18** Community install sits beside 2022, `vswhere.exe`
+  returns **nothing** (the Installer's instance registry is damaged), and CMake
+  therefore resolved the "Visual Studio 17 2022" generator onto
+  `.../Microsoft Visual Studio/18/Community`. The build then fails with *"the
+  instance is not known to the Visual Studio Installer, and no 'version=' field
+  was given"*. The build tree was self-contradictory: `CMAKE_GENERATOR_INSTANCE`
+  said VS 18 while `CMAKE_LINKER` still pointed into 2022's `14.34.31933`.
+- Fix: reconfigure with
+  `-DCMAKE_GENERATOR_INSTANCE="C:/Program Files/Microsoft Visual Studio/2022/Community"`.
+  That is **not** enough on its own — each FetchContent sub-build
+  (`_deps/juce-subbuild`, `_deps/juce-build/tools`, `_deps/nlohmann_json-subbuild`,
+  `_deps/yaml_cpp-subbuild`) caches its own instance and must be retargeted too.
+  Rewrite that one line in each `CMakeCache.txt` rather than deleting the caches,
+  which would re-trigger the downloads. This keeps the original 14.34.31933
+  toolset, so it is an environment repair and not a toolchain change.
+
 ## The one rule that matters most: measure before you "fix"
 
 This codebase reads as if it is full of bugs. Several of them are not — they are
@@ -218,6 +241,14 @@ test onto the behaviour it is meant to catch. Keep it that way.
   render nearly silent. **A silent V8 or V12 is a physics-thread symptom; do not
   go looking for it in the audio path.**
 - **The sub-step cost is the 1-D intake network, by an order of magnitude.**
+  **STALE — this split predates the multirate intake coupling and must be
+  re-measured before it is used to justify anything.** The runner advance is now
+  gated behind `flushIntakeNetworks` at a 400 us default
+  (`intakeCouplingIntervalSeconds`, `EngineSimulator.cpp` ~1749-1790, called at
+  ~2105 and ~2242), plus a forced flush at intake-valve closing — so the runners
+  are no longer advanced twice per mechanical sub-step as described below. The
+  percentages and the "~26 us / 30 mm cells" arithmetic belong to the earlier
+  every-sub-step, 30 mm scheme. Do not quote them as the current profile.
   Measured per-block inside the sub-step loop (K20A / LS3 / Merlin / CP4):
   intake 1-D **83.5 / 81.9 / 83.6 / 75.3%**, per-cylinder physics 7.3 / 7.3 / 4.9 /
   10.3%, exhaust 1-D 4.2 / 7.1 / 8.9 / 6.4%, ECU under 0.6%. This **supersedes the
@@ -481,7 +512,8 @@ test onto the behaviour it is meant to catch. Keep it that way.
   never cell centres. Reading that variation as "not converged" cost a retracted
   claim.
 - **The exhaust coupling averages the cylinder state, then takes one flux from
-  the average.** The interval is `min(250 us, 1/(16*firingFrequencyHz))`. Because
+  the average.** The interval is `min(125 us, 1/(16*firingFrequencyHz))` — the
+  low-speed cap was halved from 250 us on 2026-07-28. Because
   the flux is concave in the pressure difference, averaging the state first
   under-predicts transfer wherever the state moves inside an interval — worst
   during blowdown. Measured with `EngineLabGasExchangeTests --oracle-coupling`

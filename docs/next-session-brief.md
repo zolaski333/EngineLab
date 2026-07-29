@@ -177,10 +177,14 @@ La suite de 20 tests est verte après la reprise.
    ordre que la cible de précision sur certains moteurs (voir la réfutation du
    maillage grossier). Tant que ce n'est pas réglé, on ne sait pas distinguer une
    erreur de physique d'une erreur de discrétisation.
-4. **La bande passante du couplage échappement** (tâche #32) : l'intervalle est
-   plafonné à 250 µs, ce qui limite la bande physique à ~2190 Hz. C'est le point
-   qui menace directement l'objectif de son, et c'est ce que le budget CPU gagné
-   sert à financer.
+4. ~~**La bande passante du couplage échappement** (tâche #32) : l'intervalle est
+   plafonné à 250 µs, ce qui limite la bande physique à ~2190 Hz.~~ **FAIT le
+   2026-07-28.** Le cap est passé à **125 µs**
+   (`maximumLowSpeedExhaustCouplingSeconds.value_or(125.0e-6)`) : Nyquist
+   physique **5 640 Hz** sur le LS3 et **3 480 Hz** sur le Merlin. Ne pas
+   reprendre ce point comme ouvert — le « plafond de 2,19 kHz » ne décrit plus
+   le code livré. Voir `docs/validation-2026-07-28.md` et §14 de
+   `docs/thermoacoustic-architecture.md`.
 5. **Construire des courbes de référence** avant d'ajouter des modes.
    `CatalogPhysics` vérifie que les moteurs tournent et ne divergent pas ; il ne
    vérifie **aucun couple absolu**. La marge de ±10-15 % n'est donc mesurée nulle

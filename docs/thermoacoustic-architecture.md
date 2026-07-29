@@ -68,7 +68,8 @@ décomposition multirate physique :
   son volume, ses ports et ses pertes exacts ; son délai audio appartient au
   réseau caractéristique ;
 - la frontière macro est intégrée au minimum 16 fois par période d’allumage,
-  avec une fenêtre absolue maximale de 250 µs à bas régime ;
+  avec une fenêtre absolue maximale de 125 µs à bas régime (voir §14 ; le cap a
+  été divisé par deux depuis 250 µs le 2026-07-28) ;
 - état conservatif, volume de chambre, `CdA` de soupape et ouverture de sortie
   sont intégrés dans le temps sur chaque fenêtre ;
 - chaque échange macro reste bidirectionnel et ferme exactement les bilans de
@@ -456,7 +457,15 @@ cette différence. Retirer l'étouffement (§14, §15) rend la différence audib
 sans avoir à « forcer » une différenciation artificielle — ce qui aurait été un
 hack.
 
-## 14. Doubler la bande physique à bas régime (cap de couplage 500 → 250 µs)
+## 14. Doubler la bande physique à bas régime (cap de couplage 500 → 250 → 125 µs)
+
+> **État livré (2026-07-28).** Le cap a été divisé une seconde fois, de 250 à
+> **125 µs** : `maximumLowSpeedExhaustCouplingSeconds.value_or(125.0e-6)` dans
+> `EngineSimulator::step`. La fréquence de couplage LS3 passe de 3 760 à
+> 11 280 Hz (Nyquist physique 1 880 → **5 640 Hz**) et celle du Merlin de 3 480 à
+> 6 960 Hz (1 740 → **3 480 Hz**). Les chiffres « ~2 kHz » du texte d'origine
+> ci-dessous décrivent l'étape 250 µs et sont conservés comme historique du
+> raisonnement, pas comme état courant. Mesures : `docs/validation-2026-07-28.md`.
 
 `EngineSimulator::step` borne l'intervalle de couplage par
 `maximumLowSpeedCouplingSeconds`. Ce cap ne mord **que là où la règle par période
