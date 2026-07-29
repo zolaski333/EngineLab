@@ -77,6 +77,65 @@ motorcycle_4_2_1:
   muffler_chamber_diameter_mm: 84
   muffler_chamber_length_mm: 250
 
+# Aftermarket full system for the 689 cc CP2 parallel twin, 2-into-1.
+#
+# WHY THIS EXISTS AS A SEPARATE PRESET. The CP2 ships on `motorcycle_4_2_1`,
+# which it SHARES with the Hayabusa and the CP4 -- 610 mm x 34 mm primaries into
+# a 48 mm collector. Those are litre-class four-cylinder dimensions: a 689 cc
+# twin moves roughly twice the mass per exhaust event through each pipe, and real
+# MT-07 headers are 40-45 mm. The stock preset is not wrong for the bikes it was
+# written for, it is simply not a twin's.
+#
+# This entry is `estimatedFamily`: dimensions typical of a quality full titanium
+# 2-1 system for this platform, NOT measured from a specific product. Do not
+# present them as a manufacturer figure.
+#
+# Equal-length primaries because that is what a good system does -- the 270-degree
+# crank already supplies the uneven 270/450 firing gap that gives this engine its
+# character, and unequal primaries would smear the very edge that carries it.
+# Collector area is about 1.7x one primary, the usual 2-1 merge ratio.
+#
+# THE CAN, AND A TRAP WORTH RECORDING. A real straight-through race silencer has
+# a LARGE body -- 100-110 mm is typical -- and yet attenuates far less than the
+# smaller OEM box, because it is a perforated core wrapped in absorptive packing.
+# This model has no absorptive element (see the header note: "absorptive packing
+# requires a separate component with its own physical data"); its only silencing
+# is the REACTIVE expansion ratio, chamber area over collector area. Authoring the
+# real 110 mm body therefore produced a ratio of (110/54)^2 = 4.2 against the
+# street preset's (84/48)^2 = 3.1, i.e. MORE silencing, and measured 3 dB quieter
+# with the centroid down from 1452 to 1023 Hz and crest from 10.5 to 8.2 -- the
+# exact opposite of a full system. Corrected below.
+#
+# So the chamber dimensions here are chosen for the transmission loss they
+# produce, not as the body's physical size, exactly as the header note says the
+# rest of this file already does. Measured sweep of the chamber diameter against
+# the street preset, rev-up plus limiter window:
+#
+#   chamber   ratio   centroid   RMS dB   crest   2-5k    5-12k
+#   84 (stock)  3.1     1452       -24.6   10.48   23.4%   2.2%
+#   110         4.2     1023       -27.6    8.20   16.8%   0.3%   rejected
+#   88          2.7     1265       -26.3    9.23   23.1%   0.6%
+#   72          1.8     1446       -25.7    8.99   26.1%   1.1%   shipped
+#
+# 72 mm is where the top band comes back: brighter than the street can in
+# 2-5 kHz, and at IDLE it is 3 dB louder, brighter (638 vs 537 Hz) and more
+# impulsive (crest 9.32 vs 8.69) -- which is what a full system does. It is still
+# marginally quieter and less impulsive than stock at the limiter, and that is
+# attributed to the 42 mm primaries rather than the can: a wider pipe carries a
+# lower gas velocity and a less steep front. 42 mm is nevertheless the right
+# number for a 689 cc twin, so the dimension stays and the metric is accepted.
+# Do not sweep this further toward a target number -- the arbiter for a voicing
+# choice is a listener, not the crest factor.
+cp2_full_system:
+  primary_length_mm: 500
+  primary_diameter_mm: 42
+  collector_diameter_mm: 54
+  # Race system: far less mean-flow loss than the 0.20 street can.
+  muffler_restriction: 0.10
+  outlet_diameter_mm: 60
+  muffler_chamber_diameter_mm: 72
+  muffler_chamber_length_mm: 240
+
 short_v_twin:
   primary_length_mm: 880
   primary_diameter_mm: 46

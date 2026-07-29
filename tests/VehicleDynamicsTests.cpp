@@ -146,7 +146,12 @@ int main() {
 
     const auto catalog =
         enginelab::loadEngineCatalog(ENGINELAB_CATALOG_ROOT);
-    require(catalog.errors.empty() && catalog.entries.size() == 14,
+    // The exact count matters and is not redundant with `errors.empty()`: a file
+    // the loader SKIPS rather than rejects produces no error, so only the count
+    // catches an engine silently vanishing from the catalogue. Bump it when a
+    // catalogue entry is deliberately added -- 15 covers the 14 base engines plus
+    // the CP2 full-system listening variant (engines/15_cp2_full_system_like).
+    require(catalog.errors.empty() && catalog.entries.size() == 15,
         "the full schema-5 catalogue and vehicle parts must load");
     require(findEngine(catalog, "K20A").vehicle.drivenAxleLayout
                 == enginelab::DrivenAxleLayout::front
