@@ -383,11 +383,18 @@ void RealtimeEngineAudio::setImpulseResponse(juce::AudioBuffer<float>&& samples,
 }
 
 void RealtimeEngineAudio::render(juce::AudioBuffer<float>& output, int startSample, int sampleCount) noexcept {
+    renderWithStems(output, startSample, sampleCount, {});
+}
+
+void RealtimeEngineAudio::renderWithStems(
+    juce::AudioBuffer<float>& output, int startSample, int sampleCount,
+    const RealtimeAudioStemBuffers& stems) noexcept {
     if (sampleCount <= 0 || startSample < 0 || startSample >= output.getNumSamples()) return;
     sampleCount = std::min(sampleCount, output.getNumSamples() - startSample);
     if (sampleCount > maximumBlockSize_) {
         for (int offset = 0; offset < sampleCount; offset += maximumBlockSize_)
-            render(output, startSample + offset, std::min(maximumBlockSize_, sampleCount - offset));
+            renderWithStems(output, startSample + offset,
+                std::min(maximumBlockSize_, sampleCount - offset), stems);
         return;
     }
     // Flush denormals to zero for the whole callback. The exhaust body, muffler
@@ -396,6 +403,39 @@ void RealtimeEngineAudio::render(juce::AudioBuffer<float>& output, int startSamp
     // costs 10-100x and eventually overruns the callback (audible dropouts).
     const juce::ScopedNoDenormals noDenormals;
     output.clear(startSample, sampleCount);
+    const auto writableStem = [&](juce::AudioBuffer<float>* candidate) {
+        return candidate != nullptr && candidate != &output
+            && candidate->getNumChannels() > 0
+            && startSample + sampleCount <= candidate->getNumSamples();
+    };
+    const RealtimeAudioStemBuffers writable {
+        writableStem(stems.combustion) ? stems.combustion : nullptr,
+        writableStem(stems.exhaustDry) ? stems.exhaustDry : nullptr,
+        writableStem(stems.exhaustIr) ? stems.exhaustIr : nullptr,
+        writableStem(stems.intake) ? stems.intake : nullptr,
+        writableStem(stems.forcedInduction) ? stems.forcedInduction : nullptr,
+        writableStem(stems.mechanical) ? stems.mechanical : nullptr
+    };
+    const std::array stemBuffers {
+        writable.combustion, writable.exhaustDry, writable.exhaustIr,
+        writable.intake, writable.forcedInduction, writable.mechanical
+    };
+    const auto captureStems = std::any_of(
+        stemBuffers.begin(), stemBuffers.end(), [](const auto* buffer) { return buffer != nullptr; });
+    if (captureStems) {
+        for (auto* buffer : stemBuffers) {
+            if (buffer == nullptr) continue;
+            for (int channel = 0; channel < std::min(2, buffer->getNumChannels()); ++channel)
+                buffer->clear(channel, startSample, sampleCount);
+        }
+    }
+    const auto writeStem = [&](juce::AudioBuffer<float>* buffer, int sample,
+                               float left, float right) {
+        if (buffer == nullptr) return;
+        buffer->setSample(0, startSample + sample, finiteState(left, 24.0F));
+        if (buffer->getNumChannels() > 1)
+            buffer->setSample(1, startSample + sample, finiteState(right, 24.0F));
+    };
     convolutionBank_.beginBlock(std::min(2, output.getNumChannels()), sampleCount);
     const auto publishedTimeScale = realtimeState_.timeScale.load(std::memory_order_relaxed);
     const auto acousticTimeScale = std::clamp(
@@ -1670,6 +1710,27 @@ void RealtimeEngineAudio::render(juce::AudioBuffer<float>& output, int startSamp
             * legacyReferenceLevel;
         const auto exhaustMonitorScale = sampleUsesPhysicalExhaust
             ? 1.0F : legacyMonitorScale;
+        if (captureStems) {
+            writeStem(writable.combustion, sample,
+                combustionLeft * combustionGain * legacyMonitorScale,
+                combustionRight * combustionGain * legacyMonitorScale);
+            writeStem(writable.exhaustDry, sample,
+                radiatedExhaustLeft * exhaustGain * exhaustMonitorScale,
+                radiatedExhaustRight * exhaustGain * exhaustMonitorScale);
+            writeStem(writable.intake, sample,
+                intakeLeft * intakeGain * legacyMonitorScale
+                    + physicalIntakeLeft * intakeGain,
+                intakeRight * intakeGain * legacyMonitorScale
+                    + physicalIntakeRight * intakeGain);
+            writeStem(writable.forcedInduction, sample,
+                physicalForcedInduction * intakeGain,
+                physicalForcedInduction * intakeGain);
+            writeStem(writable.mechanical, sample,
+                mechanicalLeft * mechanicalGain * legacyMonitorScale
+                    + physicalStructural * mechanicalGain,
+                mechanicalRight * mechanicalGain * legacyMonitorScale
+                    + physicalStructural * mechanicalGain);
+        }
         auto left = (combustionLeft * combustionGain + intakeLeft * intakeGain
             + mechanicalLeft * mechanicalGain) * legacyMonitorScale
             + physicalStructural * mechanicalGain
@@ -1749,6 +1810,11 @@ void RealtimeEngineAudio::render(juce::AudioBuffer<float>& output, int startSamp
             : wetExhaustRight - wetExhaustRadiationLowRight_ * 0.78F;
         const auto wetMonitorScale = physicalExhaustActive_
             ? 1.0F : acousticDisplacementScale * legacyReferenceLevel;
+        if (captureStems) {
+            writeStem(writable.exhaustIr, sample,
+                radiatedWetExhaustLeft * irMix * exhaustGain * wetMonitorScale,
+                radiatedWetExhaustRight * irMix * exhaustGain * wetMonitorScale);
+        }
         auto left = finiteState(dryLeft
             + radiatedWetExhaustLeft * irMix * exhaustGain * wetMonitorScale, 24.0F);
         auto right = finiteState(dryRight

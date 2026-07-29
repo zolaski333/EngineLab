@@ -1246,6 +1246,89 @@ void ambientPressureRegression() {
             "configured ambient pressure must be acoustic zero, including at altitude");
 }
 
+void diagnosticStemRegression() {
+    constexpr int startSample = 17;
+    constexpr int sampleCount = 4'096;
+    constexpr int totalSamples = startSample + sampleCount + 19;
+    constexpr int blockSize = 256;
+
+    enginelab::FiringEventQueue normalQueue;
+    enginelab::FiringEventQueue tappedQueue;
+    enginelab::RealtimeAudioState normalState;
+    enginelab::RealtimeAudioState tappedState;
+    const auto configure = [](enginelab::RealtimeAudioState& state) {
+        state.rpm.store(3'500.0F);
+        state.throttle.store(0.72F);
+        state.load.store(0.55F);
+        state.mechanicalStress.store(0.30F);
+        state.manifoldPressureKpa.store(72.0F);
+        state.exhaustPressureKpa.store(158.0F);
+        state.exhaustFlowGramsPerSecond.store(62.0F);
+        state.exhaustTemperatureC.store(640.0F);
+        state.intakeRunnerResonanceHz.store(310.0F);
+        state.intakeRunnerAmplitudeKpa.store(4.0F);
+    };
+    configure(normalState);
+    configure(tappedState);
+    const auto event = eventFixture();
+    require(normalQueue.tryPush(event) && tappedQueue.tryPush(event),
+        "stem fixture events must enter both realtime queues");
+
+    enginelab::RealtimeEngineAudio normal(normalQueue, normalState);
+    enginelab::RealtimeEngineAudio tapped(tappedQueue, tappedState);
+    normal.prepare(48'000.0, blockSize);
+    tapped.prepare(48'000.0, blockSize);
+
+    juce::AudioBuffer<float> normalMaster(2, totalSamples);
+    juce::AudioBuffer<float> tappedMaster(2, totalSamples);
+    normalMaster.clear();
+    tappedMaster.clear();
+    std::array<juce::AudioBuffer<float>, 6> stems {
+        juce::AudioBuffer<float>(2, totalSamples),
+        juce::AudioBuffer<float>(2, totalSamples),
+        juce::AudioBuffer<float>(2, totalSamples),
+        juce::AudioBuffer<float>(2, totalSamples),
+        juce::AudioBuffer<float>(2, totalSamples),
+        juce::AudioBuffer<float>(2, totalSamples)
+    };
+    for (auto& stem : stems) {
+        for (int channel = 0; channel < stem.getNumChannels(); ++channel)
+            for (int sample = 0; sample < stem.getNumSamples(); ++sample)
+                stem.setSample(channel, sample, 0.25F);
+    }
+    const enginelab::RealtimeAudioStemBuffers stemBuffers {
+        &stems[0], &stems[1], &stems[2], &stems[3], &stems[4], &stems[5]
+    };
+
+    normal.render(normalMaster, startSample, sampleCount);
+    tapped.renderWithStems(tappedMaster, startSample, sampleCount, stemBuffers);
+
+    for (int channel = 0; channel < normalMaster.getNumChannels(); ++channel) {
+        for (int sample = 0; sample < totalSamples; ++sample) {
+            require(normalMaster.getSample(channel, sample)
+                    == tappedMaster.getSample(channel, sample),
+                "enabling diagnostic stems changed a master sample");
+        }
+    }
+    for (const auto& stem : stems) {
+        require(stem.getSample(0, 0) == 0.25F
+                && stem.getSample(1, totalSamples - 1) == 0.25F,
+            "stem capture wrote outside the requested sample range");
+    }
+    require(stems[0].getMagnitude(0, startSample, sampleCount) > 1.0e-6F,
+        "combustion stem did not expose its active source");
+    require(stems[1].getMagnitude(0, startSample, sampleCount) > 1.0e-6F,
+        "dry exhaust stem did not expose its active source");
+    require(stems[3].getMagnitude(0, startSample, sampleCount) > 1.0e-6F,
+        "intake stem did not expose its active source");
+    require(stems[5].getMagnitude(0, startSample, sampleCount) > 1.0e-6F,
+        "mechanical stem did not expose its active source");
+    require(stems[2].getMagnitude(0, startSample, sampleCount) == 0.0F,
+        "IR stem must stay silent when no impulse response is loaded");
+    require(stems[4].getMagnitude(0, startSample, sampleCount) == 0.0F,
+        "forced-induction stem must stay silent when no device is configured");
+}
+
 void physicalThermoacousticPathRegression() {
     const PhysicalExhaustFixture referenceFixture;
     const auto reference = renderPhysicalExhaust(referenceFixture);
@@ -2376,6 +2459,7 @@ int main() {
         forcedInductionAcousticsRegression();
         customGraphRuntimeTelemetryRegression();
         ambientPressureRegression();
+        diagnosticStemRegression();
         physicalThermoacousticPathRegression();
         pipeRadiationRegression();
         acousticMonitorCalibrationRegression();

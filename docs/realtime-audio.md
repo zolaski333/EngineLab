@@ -118,6 +118,49 @@ remplace. Ses sources de bruit sont indépendantes, ses marches de télémétrie
 sont reconstruites à cadence audio et le débit total est conservé lorsqu'il se
 partage entre turbine et wastegate. Voir les §21–24 du document d’architecture.
 
+## Stems de diagnostic
+
+`RealtimeEngineAudio::renderWithStems` peut observer six bus stéréo pré-master
+sans les réinjecter dans la sortie :
+
+- combustion ;
+- échappement sec ;
+- retour de l’IR d’échappement ;
+- admission ;
+- induction forcée ;
+- mécanique/structure.
+
+Les taps se trouvent avant le shelf commun, le bloqueur DC, le filtre de
+reconstruction, le volume, le leveler et le limiteur. L’échappement sec et l’IR
+restent séparés pour ne pas confondre la source moteur avec la pièce ou la
+cabine. Les buffers sont fournis par l’appelant et remplis sans allocation.
+
+Export ciblé :
+
+```powershell
+out/build/windows-vs2022/tools/Release/EngineLabAudioRenderHarness.exe `
+  --stems K20 `
+  --output out/validation/audio-stems-k20-v2-2026-07-29
+```
+
+Preuve Release du 29 juillet 2026 :
+
+| Stem K20 | RMS | Pic |
+|---|---:|---:|
+| combustion directe | 0,000000 | 0,000000 |
+| échappement sec | 0,030013 | 0,316187 |
+| IR échappement | 0,003014 | 0,015993 |
+| admission | 0,030953 | 0,522270 |
+| induction forcée | 0,000000 | 0,000000 |
+| mécanique/structure | 0,027226 | 0,114039 |
+
+Les deux zéros sont attendus : le K20 est atmosphérique et, dès que la frontière
+physique prend la main, la pression cylindre excite l’échappement et la
+structure au lieu d’être doublée par une voix procédurale directe. Le test
+`EngineLab.RealtimeRegression` rend deux instances déterministes, l’une avec
+stems et l’autre sans, puis exige l’égalité **bit à bit de chaque échantillon du
+master**. Il vérifie aussi les bornes du buffer et le silence des bus inactifs.
+
 ## Contrat du callback
 
 `RealtimeEngineAudio::render` :

@@ -20,6 +20,27 @@
 #include <span>
 #include <vector>
 namespace enginelab {
+/** Optional pre-master source buses for offline diagnosis.
+ *
+ * Every non-null buffer must be distinct from the master output and provide
+ * the requested sample range. The renderer clears and fills channels 0/1 only.
+ * These taps sit before the shared monitor tone/DC/reconstruction filters,
+ * volume, safety leveler and limiter. `exhaustDry` is the source-side tailpipe
+ * bus; `exhaustIr` is the downstream measured-IR return, kept separate so the
+ * source and listening environment are never confused.
+ *
+ * Enabling taps observes the existing render; it does not route the master
+ * through the stem buffers or alter any source state.
+ */
+struct RealtimeAudioStemBuffers final {
+    juce::AudioBuffer<float>* combustion { nullptr };
+    juce::AudioBuffer<float>* exhaustDry { nullptr };
+    juce::AudioBuffer<float>* exhaustIr { nullptr };
+    juce::AudioBuffer<float>* intake { nullptr };
+    juce::AudioBuffer<float>* forcedInduction { nullptr };
+    juce::AudioBuffer<float>* mechanical { nullptr };
+};
+
 /** Allocation-free engine renderer with an SI-unit thermoacoustic exhaust path.
  *
  * When CylinderPressureSample publishes a valid thermoacoustic boundary, the
@@ -36,6 +57,9 @@ public:
     void prepare(double sampleRate, int maximumBlockSize) noexcept override;
     void release() noexcept override;
     void render(juce::AudioBuffer<float>& output, int startSample, int sampleCount) noexcept override;
+    /** Render the identical master while observing optional pre-master stems. */
+    void renderWithStems(juce::AudioBuffer<float>& output, int startSample,
+                         int sampleCount, const RealtimeAudioStemBuffers& stems) noexcept;
     void setImpulseResponse(std::span<const float> samples,
                             double sourceSampleRate = 48'000.0,
                             std::size_t pathIndex = 0);

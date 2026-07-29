@@ -55,6 +55,9 @@ struct WavData { std::vector<float> samples; double sampleRate { 44'100.0 }; };
 bool muteCombustionLayer = false;
 bool muteMechanicalLayer = false;
 bool muteIntakeLayer = false;
+// Focused offline export only. The application master remains stereo; this
+// asks RealtimeEngineAudio to observe its pre-master diagnostic buses.
+bool writeDiagnosticStems = false;
 // Offline oracle only. Large engines are not expected to meet realtime when the
 // complete nonlinear network is advanced on every mechanical substep.
 bool referenceCouplingEverySubstep = false;
@@ -539,6 +542,20 @@ Metrics renderEngine(const EngineConfig& baseConfig, const WavData& ir,
     audioLeft.reserve(static_cast<std::size_t>(seconds * audioRate));
     audioRight.reserve(static_cast<std::size_t>(seconds * audioRate));
     juce::AudioBuffer<float> block(2, samplesPerStep);
+    constexpr std::size_t diagnosticStemCount = 6;
+    std::array<juce::AudioBuffer<float>, diagnosticStemCount> stemBlocks;
+    std::array<std::array<std::vector<float>, 2>, diagnosticStemCount> stemAudio;
+    if (writeDiagnosticStems) {
+        for (auto& stem : stemBlocks)
+            stem.setSize(2, samplesPerStep, false, true, false);
+        for (auto& stem : stemAudio)
+            for (auto& channel : stem)
+                channel.reserve(static_cast<std::size_t>(seconds * audioRate));
+    }
+    const RealtimeAudioStemBuffers stemBuffers {
+        &stemBlocks[0], &stemBlocks[1], &stemBlocks[2],
+        &stemBlocks[3], &stemBlocks[4], &stemBlocks[5]
+    };
     double realtimeSeconds = 0.0;
     double dynoLoadIntegral = 0.0;
     double dynoLoadApplied = 0.0;
@@ -653,12 +670,22 @@ Metrics renderEngine(const EngineConfig& baseConfig, const WavData& ir,
         // each simulation step in smaller chunks moves any per-block parameter
         // step to a different comb frequency (sampleRate / chunk), which
         // separates render-block artefacts from simulation-frame artefacts.
-        for (int offset = 0; offset < samplesPerStep; offset += audioChunkSamples)
-            renderer.render(block, offset,
-                std::min(audioChunkSamples, samplesPerStep - offset));
+        for (int offset = 0; offset < samplesPerStep; offset += audioChunkSamples) {
+            const auto chunk = std::min(audioChunkSamples, samplesPerStep - offset);
+            if (writeDiagnosticStems)
+                renderer.renderWithStems(block, offset, chunk, stemBuffers);
+            else
+                renderer.render(block, offset, chunk);
+        }
         for (int s = 0; s < samplesPerStep; ++s) {
             audioLeft.push_back(block.getSample(0, s));
             audioRight.push_back(block.getSample(1, s));
+            if (writeDiagnosticStems) {
+                for (std::size_t stem = 0; stem < diagnosticStemCount; ++stem) {
+                    stemAudio[stem][0].push_back(stemBlocks[stem].getSample(0, s));
+                    stemAudio[stem][1].push_back(stemBlocks[stem].getSample(1, s));
+                }
+            }
         }
         realtimeSeconds += dt;
     }
@@ -732,8 +759,32 @@ Metrics renderEngine(const EngineConfig& baseConfig, const WavData& ir,
         m.commandedTransitionSteps = scanTransitionSteps(
             audioLeft, audioRate, { 2.4, 2.65 });
     }
-    if (writeOutput)
+    if (writeOutput) {
         writeWav(outDir / (config.name + ".wav"), audioLeft, audioRight, static_cast<int>(audioRate));
+        if (writeDiagnosticStems) {
+            constexpr std::array<const char*, diagnosticStemCount> names {
+                "01-combustion", "02-exhaust-dry", "03-exhaust-ir",
+                "04-intake", "05-forced-induction", "06-mechanical"
+            };
+            const auto stemDirectory = outDir / (config.name + "-stems");
+            for (std::size_t stem = 0; stem < diagnosticStemCount; ++stem) {
+                writeWav(stemDirectory / (std::string(names[stem]) + ".wav"),
+                    stemAudio[stem][0], stemAudio[stem][1],
+                    static_cast<int>(audioRate));
+                const auto safety = scanSignal(stemAudio[stem][0]);
+                const auto squareSum = std::inner_product(
+                    stemAudio[stem][0].begin(), stemAudio[stem][0].end(),
+                    stemAudio[stem][0].begin(), 0.0);
+                const auto rms = std::sqrt(squareSum / static_cast<double>(
+                    std::max<std::size_t>(1, stemAudio[stem][0].size())));
+                std::cout << "    " << std::left << std::setw(20) << names[stem]
+                          << " rms=" << std::fixed << std::setprecision(6) << rms
+                          << " peak=" << safety.peak << '\n';
+            }
+            std::cout << "  diagnostic stems: " << stemDirectory.string()
+                      << " (pre-master source buses)\n";
+        }
+    }
     std::cout << std::left << std::setw(26) << config.name
               << " rms="   << std::fixed << std::setprecision(4) << m.left.window.rms
               << '/' << m.right.window.rms
@@ -1496,6 +1547,7 @@ int main(int argc, char** argv) {
     std::string referenceFilter;
     std::string catalogueFilter;
     std::string runtimeFilter;
+    std::string stemFilter;
     std::string couplingComparisonFilter;
     std::string junctionComparisonFilter;
     std::optional<std::size_t> intakeWorkers;
@@ -1512,6 +1564,8 @@ int main(int argc, char** argv) {
             catalogueFilter = argv[++i];
         else if (a == "--runtime-filter" && i + 1 < argc)
             runtimeFilter = argv[++i];
+        else if (a == "--stems" && i + 1 < argc)
+            stemFilter = argv[++i];
         else if (a == "--coupling-comparison" && i + 1 < argc)
             couplingComparisonFilter = argv[++i];
         else if (a == "--junction-comparison" && i + 1 < argc)
@@ -1534,6 +1588,39 @@ int main(int argc, char** argv) {
                   << " samples @ " << ir.sampleRate << " Hz)\n";
     else
         std::cout << "WARNING: could not load IR at " << irPath.string() << " (using renderer fallback)\n";
+
+    if (!stemFilter.empty()) {
+        const auto catalog = loadEngineCatalog(
+            std::filesystem::path(ENGINELAB_CATALOG_ROOT));
+        if (!catalog.errors.empty()) {
+            std::cerr << "FAIL: catalogue load: " << catalog.errors.front() << '\n';
+            return 2;
+        }
+        const auto selected = std::find_if(
+            catalog.entries.begin(), catalog.entries.end(),
+            [&stemFilter](const auto& entry) {
+                return entry.config.name.find(stemFilter) != std::string::npos;
+            });
+        if (selected == catalog.entries.end()) {
+            std::cerr << "FAIL: no catalogue engine matches stem filter '"
+                      << stemFilter << "'\n";
+            return 2;
+        }
+        std::cout << "\n--- Diagnostic pre-master stem export ---\n";
+        writeDiagnosticStems = true;
+        const auto metrics = renderEngine(
+            selected->config, ir, outDir, 4.0, true);
+        const auto valid = metrics.physicalActive
+            && metrics.compiledTopologyActive
+            && metrics.structuralRadiationActive
+            && metrics.intakeTopologyActive
+            && metrics.left.scan.finite && metrics.right.scan.finite
+            && metrics.droppedPressureSamples == 0
+            && metrics.invalidBoundarySamples == 0
+            && metrics.levelLimitedSamples == 0;
+        std::cout << "Stem export result: " << (valid ? "PASS" : "FAIL") << '\n';
+        return valid ? 0 : 1;
+    }
 
     if (transientOnly) {
         const auto catalog = loadEngineCatalog(
