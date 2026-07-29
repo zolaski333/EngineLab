@@ -853,3 +853,23 @@ Sur le Merlin, quatre passages A/B de 10 s dans la même fenêtre donnent :
 Le facteur global est trop bruité pour isoler ce coût ; seul le chronométrage
 direct du callback permet de conclure à `+0,25` point moyen. Détails et liens de
 preuve : `docs/audio-lot3-outlet-turbulence-2026-07-29.md`.
+
+## 2026-07-29 — Participation structurelle par topologie de banc
+
+Le fallback modal utilisait `index % cylindres_par_banc` alors que les moteurs V
+et flat stockent habituellement leurs cylindres en alternant gauche/droite. Les
+formes modales suivent désormais l’ordre explicite de `banks[].cylinderIds`.
+Aucune fréquence, masse, aire, efficacité, force ou valeur de gain n’a changé.
+
+A/B même binaire :
+
+| Moteur | Différence RMS relative | Pic structure avant/après |
+|---|---:|---:|
+| LS3 V8 | 8,21 % | 10,215 / 10,194 Pa |
+| Flat-6 | 0,83 % | 3,923 / 3,950 Pa |
+| Merlin V12 | 1,04 % | 1,015 / 1,106 Pa |
+
+Le test analytique exige l’égalité exacte de deux cylindres V8 symétriques au
+même rang et l’identité bit à bit de l’I4 non concerné. Les trois A/B restent
+sans perte, fallback, leveler ou sortie non finie. Détails :
+`docs/audio-lot4-structural-bank-topology-2026-07-29.md`.

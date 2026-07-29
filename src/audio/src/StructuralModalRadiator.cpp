@@ -49,6 +49,37 @@ StructuralModalRadiator::StructuralModalRadiator(const EngineConfig& config) {
         || !std::isfinite(configuredObserverDistanceM_))
         configuredObserverDistanceM_ = 1.0;
 
+    const auto cylinderCount = config.cylinders.size();
+    std::array<double, 32> bankLongitudinalPosition {};
+    for (std::size_t cylinder = 0; cylinder < cylinderCount; ++cylinder) {
+        bankLongitudinalPosition[cylinder] =
+            (static_cast<double>(cylinder) + 0.5)
+            / static_cast<double>(cylinderCount);
+    }
+    // Cylinder storage is commonly interleaved left/right (1,2,3,4...), while
+    // each bank explicitly lists its own longitudinal order (1,3,5,7...).
+    // Modal shapes must use that authored topology; index % cylindersPerBank
+    // folded V/flat engines onto the wrong antinodes.
+    for (const auto& bank : config.banks) {
+        if (bank.cylinderIds.empty()) continue;
+        for (std::size_t position = 0;
+             position < bank.cylinderIds.size(); ++position) {
+            const auto cylinder = std::find_if(
+                config.cylinders.begin(), config.cylinders.end(),
+                [&bank, position](const CylinderConfig& candidate) {
+                    return candidate.id == bank.cylinderIds[position];
+                });
+            if (cylinder == config.cylinders.end()) continue;
+            const auto index = static_cast<std::size_t>(
+                std::distance(config.cylinders.begin(), cylinder));
+            if (index < bankLongitudinalPosition.size()) {
+                bankLongitudinalPosition[index] =
+                    (static_cast<double>(position) + 0.5)
+                    / static_cast<double>(bank.cylinderIds.size());
+            }
+        }
+    }
+
     if (!config.structuralNvh.modes.empty()) {
         provenance_ = config.structuralNvh.provenance;
         source_ = config.structuralNvh.source;
@@ -70,9 +101,12 @@ StructuralModalRadiator::StructuralModalRadiator(const EngineConfig& config) {
                 compiled.participation.size(),
                 authored.cylinderParticipation.size());
             for (std::size_t cylinder = 0;
-                 cylinder < participationCount; ++cylinder)
+                 cylinder < participationCount; ++cylinder) {
                 compiled.participation[cylinder] = static_cast<float>(
                     authored.cylinderParticipation[cylinder]);
+                compiled.legacyFlatIndexParticipation[cylinder] =
+                    compiled.participation[cylinder];
+            }
             modes_.push_back(std::move(compiled));
         }
         return;
@@ -87,7 +121,6 @@ StructuralModalRadiator::StructuralModalRadiator(const EngineConfig& config) {
         meanStrokeM += cylinder.strokeMm * 0.001;
         meanRodM += cylinder.connectingRodMm * 0.001;
     }
-    const auto cylinderCount = config.cylinders.size();
     const auto inverseCount = 1.0 / static_cast<double>(cylinderCount);
     meanBoreM *= inverseCount;
     meanStrokeM *= inverseCount;
@@ -139,11 +172,16 @@ StructuralModalRadiator::StructuralModalRadiator(const EngineConfig& config) {
             // Integral of sin²(n*pi*x/L) over the beam length.
             compiled.surfaceVelocityRmsScale = 1.0 / std::sqrt(2.0);
             for (std::size_t cylinder = 0; cylinder < cylinderCount; ++cylinder) {
-                const auto local = (static_cast<double>(cylinder %
+                const auto legacyLocal = (static_cast<double>(cylinder %
                     static_cast<std::size_t>(cylindersPerBank)) + 0.5)
                     / cylindersPerBank;
                 compiled.participation[cylinder] = static_cast<float>(
-                    std::sin(static_cast<double>(order) * std::numbers::pi * local));
+                    std::sin(static_cast<double>(order) * std::numbers::pi
+                        * bankLongitudinalPosition[cylinder]));
+                compiled.legacyFlatIndexParticipation[cylinder] =
+                    static_cast<float>(std::sin(
+                        static_cast<double>(order) * std::numbers::pi
+                            * legacyLocal));
             }
             modes_.push_back(compiled);
         }
@@ -177,12 +215,17 @@ StructuralModalRadiator::StructuralModalRadiator(const EngineConfig& config) {
             // quarter of its antinode mean-square velocity over its surface.
             compiled.surfaceVelocityRmsScale = 0.5;
             for (std::size_t cylinder = 0; cylinder < cylinderCount; ++cylinder) {
-                const auto local = (static_cast<double>(cylinder %
+                const auto legacyLocal = (static_cast<double>(cylinder %
                     static_cast<std::size_t>(cylindersPerBank)) + 0.5)
                     / cylindersPerBank;
                 compiled.participation[cylinder] = static_cast<float>(
                     std::sin(static_cast<double>(longitudinal)
-                        * std::numbers::pi * local));
+                        * std::numbers::pi
+                        * bankLongitudinalPosition[cylinder]));
+                compiled.legacyFlatIndexParticipation[cylinder] =
+                    static_cast<float>(std::sin(
+                        static_cast<double>(longitudinal)
+                            * std::numbers::pi * legacyLocal));
             }
             modes_.push_back(compiled);
         }
@@ -205,11 +248,16 @@ StructuralModalRadiator::StructuralModalRadiator(const EngineConfig& config) {
         compiled.surfaceVelocityRmsScale = 1.0 / std::sqrt(2.0);
         compiled.torqueRadiusM = std::max(0.025, 0.5 * blockWidthM);
         for (std::size_t cylinder = 0; cylinder < cylinderCount; ++cylinder) {
-            const auto local = (static_cast<double>(cylinder %
+            const auto legacyLocal = (static_cast<double>(cylinder %
                 static_cast<std::size_t>(cylindersPerBank)) + 0.5)
                 / cylindersPerBank;
             compiled.participation[cylinder] = static_cast<float>(
-                std::sin(static_cast<double>(order) * std::numbers::pi * local));
+                std::sin(static_cast<double>(order) * std::numbers::pi
+                    * bankLongitudinalPosition[cylinder]));
+            compiled.legacyFlatIndexParticipation[cylinder] =
+                static_cast<float>(std::sin(
+                    static_cast<double>(order) * std::numbers::pi
+                        * legacyLocal));
         }
         modes_.push_back(compiled);
     }
@@ -264,7 +312,9 @@ float StructuralModalRadiator::process(
         auto generalizedForceN = 0.0;
         for (std::size_t cylinder = 0; cylinder < count; ++cylinder) {
             const auto participation = static_cast<double>(
-                mode.participation[cylinder]);
+                bankTopologyParticipationEnabled_
+                    ? mode.participation[cylinder]
+                    : mode.legacyFlatIndexParticipation[cylinder]);
             switch (mode.drive) {
             case StructuralModeDrive::headGas:
                 generalizedForceN += participation

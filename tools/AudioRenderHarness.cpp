@@ -61,6 +61,9 @@ bool writeDiagnosticStems = false;
 // Same-binary A/B only. Production keeps the physically driven outlet source
 // enabled; the switch proves exactly what that one layer contributes.
 bool enableExhaustJetNoise = true;
+// Same-binary null for the V/flat structural coordinate correction. Production
+// follows each bank's explicit cylinder_ids ordering.
+bool enableStructuralBankTopologyParticipation = true;
 bool retainRenderedAudioForComparison = false;
 // Offline oracle only. Large engines are not expected to meet realtime when the
 // complete nonlinear network is advanced on every mechanical substep.
@@ -542,6 +545,8 @@ Metrics renderEngine(const EngineConfig& baseConfig, const WavData& ir,
         &audioConfiguration->engineConfig());
     auto& renderer = *rendererPtr;
     renderer.setOutletJetNoiseEnabled(enableExhaustJetNoise);
+    renderer.setStructuralBankTopologyParticipationEnabled(
+        enableStructuralBankTopologyParticipation);
     if (!ir.samples.empty()) renderer.setImpulseResponse(ir.samples, ir.sampleRate, 0);
     renderer.prepare(audioRate, samplesPerStep);
     // Let the convolver's background IR load settle before rendering.
@@ -1564,6 +1569,7 @@ int main(int argc, char** argv) {
     std::string runtimeFilter;
     std::string stemFilter;
     std::string exhaustJetComparisonFilter;
+    std::string structuralBankComparisonFilter;
     std::string couplingComparisonFilter;
     std::string junctionComparisonFilter;
     std::optional<std::size_t> intakeWorkers;
@@ -1584,6 +1590,8 @@ int main(int argc, char** argv) {
             stemFilter = argv[++i];
         else if (a == "--exhaust-jet-comparison" && i + 1 < argc)
             exhaustJetComparisonFilter = argv[++i];
+        else if (a == "--structural-bank-comparison" && i + 1 < argc)
+            structuralBankComparisonFilter = argv[++i];
         else if (a == "--coupling-comparison" && i + 1 < argc)
             couplingComparisonFilter = argv[++i];
         else if (a == "--junction-comparison" && i + 1 < argc)
@@ -1768,6 +1776,86 @@ int main(int argc, char** argv) {
         if (!isolated)
             std::cerr << "FAIL: outlet turbulence did not produce an isolated "
                          "resolved acoustic difference\n";
+        return valid(baseline) && valid(candidate) && isolated ? 0 : 1;
+    }
+
+    if (!structuralBankComparisonFilter.empty()) {
+        const auto catalog = loadEngineCatalog(
+            std::filesystem::path(ENGINELAB_CATALOG_ROOT));
+        const auto selected = std::find_if(
+            catalog.entries.begin(), catalog.entries.end(),
+            [&structuralBankComparisonFilter](const auto& entry) {
+                return entry.config.name.find(structuralBankComparisonFilter)
+                    != std::string::npos;
+            });
+        if (selected == catalog.entries.end()) {
+            std::cerr << "FAIL: no catalogue engine matches structural-bank "
+                         "comparison '" << structuralBankComparisonFilter << "'\n";
+            return 2;
+        }
+        std::cout << "\n--- Structural bank topology A/B ---\n";
+        retainRenderedAudioForComparison = true;
+        enableStructuralBankTopologyParticipation = false;
+        const auto baseline = renderEngine(
+            selected->config, ir, outDir / "flat-index", 4.0, true);
+        enableStructuralBankTopologyParticipation = true;
+        const auto candidate = renderEngine(
+            selected->config, ir, outDir / "bank-topology", 4.0, true);
+        retainRenderedAudioForComparison = false;
+        const auto similarity = cosineSimilarity(baseline, candidate);
+        const auto comparisonSamples = std::min(
+            baseline.comparisonAudioLeft.size(),
+            candidate.comparisonAudioLeft.size());
+        auto differenceSquareSum = 0.0;
+        auto baselineSquareSum = 0.0;
+        auto differencePeak = 0.0;
+        for (std::size_t sample = 0; sample < comparisonSamples; ++sample) {
+            const auto reference = static_cast<double>(
+                baseline.comparisonAudioLeft[sample]);
+            const auto difference = static_cast<double>(
+                candidate.comparisonAudioLeft[sample]) - reference;
+            differenceSquareSum += difference * difference;
+            baselineSquareSum += reference * reference;
+            differencePeak = std::max(
+                differencePeak, std::abs(difference));
+        }
+        const auto differenceRms = comparisonSamples > 0
+            ? std::sqrt(differenceSquareSum
+                / static_cast<double>(comparisonSamples)) : 0.0;
+        const auto relativeDifference = baselineSquareSum > 0.0
+            ? std::sqrt(differenceSquareSum / baselineSquareSum) : 0.0;
+        std::cout << std::fixed << std::setprecision(6)
+                  << "  spectral cosine flat-index/bank-topology="
+                  << similarity << '\n'
+                  << "  RMS left flat-index/bank-topology="
+                  << baseline.left.window.rms << '/'
+                  << candidate.left.window.rms << '\n'
+                  << "  observed structure peak Pa flat-index/bank-topology="
+                  << baseline.maxStructuralPressurePa << '/'
+                  << candidate.maxStructuralPressurePa << '\n'
+                  << "  waveform difference RMS/relative/peak="
+                  << differenceRms << '/' << relativeDifference << '/'
+                  << differencePeak << '\n';
+        const auto valid = [](const Metrics& measurement) {
+            return measurement.left.scan.finite
+                && measurement.right.scan.finite
+                && measurement.physicalActive
+                && measurement.compiledTopologyActive
+                && measurement.structuralRadiationActive
+                && measurement.legacyPathSamples == 0
+                && measurement.invalidBoundarySamples == 0
+                && measurement.droppedPressureSamples == 0
+                && measurement.levelLimitedSamples == 0
+                && measurement.maxPreLimiterMagnitude < 0.82F;
+        };
+        const auto isolated = baseline.maxStructuralPressurePa > 0.0F
+            && candidate.maxStructuralPressurePa > 0.0F
+            && relativeDifference >= 0.001
+            && relativeDifference <= 0.75
+            && differencePeak < 0.50;
+        if (!isolated)
+            std::cerr << "FAIL: explicit bank topology did not produce a "
+                         "bounded structural difference\n";
         return valid(baseline) && valid(candidate) && isolated ? 0 : 1;
     }
 

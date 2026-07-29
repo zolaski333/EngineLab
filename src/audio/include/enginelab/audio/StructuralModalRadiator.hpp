@@ -38,6 +38,19 @@ public:
                                double observerDistanceM = 0.0) noexcept;
     void reset() noexcept;
 
+    /** Same-binary diagnostic control for the pre-fix flat cylinder-index map.
+     *
+     * Production keeps the explicit bank topology enabled. Authored/measured
+     * mode shapes are identical in both positions because their participation
+     * is already authoritative.
+     */
+    void setBankTopologyParticipationEnabled(bool enabled) noexcept {
+        bankTopologyParticipationEnabled_ = enabled;
+    }
+    [[nodiscard]] bool bankTopologyParticipationEnabled() const noexcept {
+        return bankTopologyParticipationEnabled_;
+    }
+
     /** Return signed far-field structure pressure at the observer, Pa. */
     [[nodiscard]] float process(const StructuralExcitationSample& excitation) noexcept;
 
@@ -52,6 +65,7 @@ private:
         ModeInfo info;
         StructuralModeDrive drive { StructuralModeDrive::headGas };
         std::array<float, 32> participation {};
+        std::array<float, 32> legacyFlatIndexParticipation {};
         double torqueRadiusM { 0.05 };
         double angularFrequencyRadPerSecond {};
         double dampedFrequencyRadPerSecond {};
@@ -72,6 +86,7 @@ private:
     double sampleRateHz_ { 48'000.0 };
     double observerDistanceM_ { 1.0 };
     double configuredObserverDistanceM_ { 1.0 };
+    bool bankTopologyParticipationEnabled_ { true };
 };
 
 } // namespace enginelab

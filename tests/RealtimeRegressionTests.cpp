@@ -801,6 +801,63 @@ void structuralModalRadiatorRegression() {
     }
     require(earlyDecayEnergy > 0.0 && lateDecayEnergy < earlyDecayEnergy * 1.0e-4,
         "positive modal damping must dissipate stored structural energy");
+
+    const auto renderCylinderImpulse = [](
+        enginelab::StructuralModalRadiator& target,
+        std::size_t cylinderIndex, std::size_t cylinderCount,
+        bool bankTopology) {
+        target.setBankTopologyParticipationEnabled(bankTopology);
+        target.reset();
+        std::array<float, 2'048> response {};
+        enginelab::StructuralExcitationSample impulse;
+        impulse.cylinderCount = cylinderCount;
+        impulse.gasForceN[cylinderIndex] = 8'000.0F;
+        impulse.bearingReactionForceN[cylinderIndex] = 6'000.0F;
+        impulse.sideThrustForceN[cylinderIndex] = 1'500.0F;
+        impulse.crankReactionTorqueNm[cylinderIndex] = 120.0F;
+        response[0] = target.process(impulse);
+        impulse = {};
+        impulse.cylinderCount = cylinderCount;
+        for (std::size_t sample = 1; sample < response.size(); ++sample)
+            response[sample] = target.process(impulse);
+        return response;
+    };
+
+    // makeDefaultV8 stores cylinders 1,2,3,4... but its explicit banks are
+    // 1,3,5,7 and 2,4,6,8. Cylinders 1 and 2 therefore occupy the same
+    // longitudinal station. Their response must be identical in a symmetric
+    // family estimate; the removed flat-index modulo placed them at different
+    // antinodes.
+    const auto v8Config = enginelab::makeDefaultV8();
+    enginelab::StructuralModalRadiator v8Radiator(v8Config);
+    require(v8Radiator.prepare(48'000.0),
+        "V8 structural topology fixture must prepare");
+    const auto topologyLeft = renderCylinderImpulse(v8Radiator, 0, 8, true);
+    const auto topologyRight = renderCylinderImpulse(v8Radiator, 1, 8, true);
+    const auto legacyLeft = renderCylinderImpulse(v8Radiator, 0, 8, false);
+    const auto legacyRight = renderCylinderImpulse(v8Radiator, 1, 8, false);
+    auto topologyDifference = 0.0;
+    auto legacyDifference = 0.0;
+    for (std::size_t sample = 0; sample < topologyLeft.size(); ++sample) {
+        topologyDifference += std::abs(static_cast<double>(
+            topologyLeft[sample] - topologyRight[sample]));
+        legacyDifference += std::abs(static_cast<double>(
+            legacyLeft[sample] - legacyRight[sample]));
+    }
+    require(topologyDifference == 0.0,
+        "paired V-bank cylinders at one station must share one modal coordinate");
+    require(legacyDifference > 1.0e-6,
+        "the same-binary null control must retain the disproven flat index map");
+
+    enginelab::StructuralModalRadiator inlineRadiator(config);
+    require(inlineRadiator.prepare(48'000.0),
+        "inline structural null fixture must prepare");
+    const auto inlineTopology = renderCylinderImpulse(
+        inlineRadiator, 2, 4, true);
+    const auto inlineLegacy = renderCylinderImpulse(
+        inlineRadiator, 2, 4, false);
+    require(inlineTopology == inlineLegacy,
+        "one-bank engines must be sample-identical across the bank-map fix");
 }
 
 void acousticIntakeNetworkRegression() {

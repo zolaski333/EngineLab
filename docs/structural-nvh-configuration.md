@@ -12,6 +12,11 @@ rayonnée.
 Sans section `structural_nvh`, EngineLab conserve son modèle de famille
 coque/poutre/plaques et publie la provenance `estimatedFamily`. Aucun des 14
 moteurs livrés ne prétend actuellement posséder une mesure NVH constructeur.
+Pour ce fallback, la coordonnée longitudinale de chaque cylindre vient de sa
+position dans `banks[].cylinderIds`, jamais de son index global. Cette distinction
+est indispensable aux configurations V et flat dont le stockage alterne les
+bancs. Le correctif et ses A/B sont documentés dans
+[`audio-lot4-structural-bank-topology-2026-07-29.md`](audio-lot4-structural-bank-topology-2026-07-29.md).
 
 ## Schéma 5
 

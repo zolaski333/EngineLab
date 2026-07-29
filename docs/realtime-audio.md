@@ -118,6 +118,11 @@ remplace. Ses sources de bruit sont indépendantes, ses marches de télémétrie
 sont reconstruites à cadence audio et le débit total est conservé lorsqu'il se
 partage entre turbine et wastegate. Voir les §21–24 du document d’architecture.
 
+Pour les modes structurels estimés, la participation longitudinale suit l’ordre
+explicite des cylindres dans chaque banc. Le précédent modulo sur l’index global
+déformait les V et les flat ; l’I4 témoin reste bit-identique. Voir
+[`audio-lot4-structural-bank-topology-2026-07-29.md`](audio-lot4-structural-bank-topology-2026-07-29.md).
+
 ## Stems de diagnostic
 
 `RealtimeEngineAudio::renderWithStems` peut observer six bus stéréo pré-master

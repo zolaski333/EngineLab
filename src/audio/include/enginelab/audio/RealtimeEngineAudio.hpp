@@ -109,6 +109,18 @@ public:
     [[nodiscard]] bool structuralRadiationActive() const noexcept {
         return structuralModalRadiator_ != nullptr;
     }
+    /** Diagnostic A/B switch for the corrected structural bank coordinate. */
+    void setStructuralBankTopologyParticipationEnabled(bool enabled) noexcept {
+        if (structuralModalRadiator_)
+            structuralModalRadiator_
+                ->setBankTopologyParticipationEnabled(enabled);
+    }
+    [[nodiscard]] bool structuralBankTopologyParticipationEnabled()
+        const noexcept {
+        return structuralModalRadiator_
+            && structuralModalRadiator_
+                ->bankTopologyParticipationEnabled();
+    }
     [[nodiscard]] bool compiledIntakeTopologyActive() const noexcept {
         return acousticIntakeNetwork_ != nullptr;
     }
