@@ -787,7 +787,7 @@ void forcedInductionAcousticsRegression() {
         "configured rotor geometry must compile a semi-empirical FI source");
     Acoustics::Input input;
     for (std::size_t sample = 0; sample < 512; ++sample)
-        require(tone.process(input, 0.0F) == 0.0F,
+        require(tone.process(input) == 0.0F,
             "zero shaft power and flow must be exactly silent");
 
     // 6 blades at 6,000 rpm is an exact 600 Hz blade-passing order. Correlate
@@ -800,7 +800,7 @@ void forcedInductionAcousticsRegression() {
     auto energy = 0.0;
     constexpr std::size_t sampleCount = 48'000;
     for (std::size_t sample = 0; sample < sampleCount; ++sample) {
-        const auto pressure = tone.process(input, 0.0F);
+        const auto pressure = tone.process(input);
         require(std::isfinite(pressure),
             "forced-induction pressure must remain finite");
         const auto time = static_cast<double>(sample) / sampleRate;
@@ -820,7 +820,7 @@ void forcedInductionAcousticsRegression() {
     input.compressorPowerWatts = 40'000.0F;
     energy = 0.0;
     for (std::size_t sample = 0; sample < sampleCount; ++sample) {
-        const auto pressure = highPower.process(input, 0.0F);
+        const auto pressure = highPower.process(input);
         energy += static_cast<double>(pressure) * pressure;
     }
     const auto highPowerRms = std::sqrt(energy / sampleCount);
@@ -842,12 +842,9 @@ void forcedInductionAcousticsRegression() {
     jetInput.correctedAirFlowKgPerSecond = 0.20F;
     jetInput.exhaustMassFlowKgPerSecond = 0.18F;
     jetInput.wastegateOpening = 0.0F;
-    std::uint32_t random = 0x9182'7364U;
     auto compressorJetEnergy = 0.0;
     for (std::size_t sample = 0; sample < 8'192; ++sample) {
-        random ^= random << 13U; random ^= random >> 17U; random ^= random << 5U;
-        const auto white = static_cast<float>(random) / 2'147'483'648.0F - 1.0F;
-        const auto pressure = jets.process(jetInput, white);
+        const auto pressure = jets.process(jetInput);
         compressorJetEnergy += static_cast<double>(pressure) * pressure;
     }
     require(compressorJetEnergy > 0.0,
@@ -860,14 +857,12 @@ void forcedInductionAcousticsRegression() {
     jetInput.correctedAirFlowKgPerSecond = 0.0F;
     jetInput.wastegateOpening = 0.0F;
     for (std::size_t sample = 0; sample < 512; ++sample)
-        require(wastegate.process(jetInput, 0.5F) == 0.0F,
+        require(wastegate.process(jetInput) == 0.0F,
             "a physically closed wastegate must be exactly silent");
     jetInput.wastegateOpening = 1.0F;
     auto wastegateEnergy = 0.0;
     for (std::size_t sample = 0; sample < 8'192; ++sample) {
-        random ^= random << 13U; random ^= random >> 17U; random ^= random << 5U;
-        const auto white = static_cast<float>(random) / 2'147'483'648.0F - 1.0F;
-        const auto pressure = wastegate.process(jetInput, white);
+        const auto pressure = wastegate.process(jetInput);
         wastegateEnergy += static_cast<double>(pressure) * pressure;
     }
     require(wastegateEnergy > 0.0,
@@ -881,14 +876,12 @@ void forcedInductionAcousticsRegression() {
     jetInput.exhaustMassFlowKgPerSecond = 0.0F;
     jetInput.blowOffMassFlowKgPerSecond = 0.0F;
     for (std::size_t sample = 0; sample < 512; ++sample)
-        require(blowOff.process(jetInput, 0.5F) == 0.0F,
+        require(blowOff.process(jetInput) == 0.0F,
             "a blow-off valve without resolved mass flow must be exactly silent");
     jetInput.blowOffMassFlowKgPerSecond = 0.08F;
     auto blowOffEnergy = 0.0;
     for (std::size_t sample = 0; sample < 8'192; ++sample) {
-        random ^= random << 13U; random ^= random >> 17U; random ^= random << 5U;
-        const auto white = static_cast<float>(random) / 2'147'483'648.0F - 1.0F;
-        const auto pressure = blowOff.process(jetInput, white);
+        const auto pressure = blowOff.process(jetInput);
         blowOffEnergy += static_cast<double>(pressure) * pressure;
     }
     require(blowOffEnergy > 0.0,

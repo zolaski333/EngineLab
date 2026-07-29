@@ -114,7 +114,9 @@ plénum, le papillon et l’entrée d’air. `StructuralModalRadiator` reçoit f
 gazeuses, inerties et réactions de paliers en SI. La suralimentation emploie
 puissance d’arbre, ordres de pales/lobes et débits de wastegate/dump valve ; ses
 niveaux absolus restent semi-empiriques tant qu’aucune mesure composant ne les
-remplace. Voir les §21–24 du document d’architecture.
+remplace. Ses sources de bruit sont indépendantes, ses marches de télémétrie
+sont reconstruites à cadence audio et le débit total est conservé lorsqu'il se
+partage entre turbine et wastegate. Voir les §21–24 du document d’architecture.
 
 ## Contrat du callback
 
@@ -148,7 +150,12 @@ compteurs sont observables par les harnais.
 - absence de réactivation du chemin procédural après verrouillage physique.
 
 `EngineLab.Core` vérifie en plus qu’une frontière SI finie est publiée à chaque
-sous-pas mécanique malgré le couplage multirate du réseau non linéaire.
+sous-pas mécanique malgré le couplage multirate du réseau non linéaire. Il
+refuse aussi l'annulation compresseur/turbine, une discontinuité de puissance à
+la frontière de télémétrie et toute duplication de débit
+turbine/wastegate. `EngineLab.RealtimeRegression` conserve les tests d'ordre de
+pales, de racine de puissance, de silence sans débit et de rayonnement des
+valves réellement ouvertes.
 
 ## Limites connues
 

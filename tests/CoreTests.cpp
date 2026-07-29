@@ -20,6 +20,7 @@
 #include <enginelab/simulation/EngineSimulator.hpp>
 #include <enginelab/simulation/TransientChargeEstimator.hpp>
 #include <enginelab/runtime/EngineRuntime.hpp>
+#include <enginelab/audio/ForcedInductionAcoustics.hpp>
 #include <enginelab/audio/RealtimeEngineAudio.hpp>
 #include <enginelab/audio/ImpulseResponseLoader.hpp>
 #include <enginelab/catalog/EngineCatalog.hpp>
@@ -2025,6 +2026,89 @@ int main() {
             stressCombustion, 0.0, 0.0, 6'000.0, 0.05, std::span<enginelab::FiringEvent> {});
         require(emptyCount == 0 && stressGenerator.droppedEventCountLastGenerate() == stressCount,
                 "a saturated caller must still count every subsequent firing crossing as dropped");
+    }
+
+    {
+        // Compressor and turbine broadband sources are spatially distinct.
+        // The former shared random sequence (with one source negated) cancelled
+        // equal models sample-for-sample, making a physically active turbo
+        // silently disappear. Each physical source now owns a deterministic,
+        // independent noise stream.
+        enginelab::ForcedInductionConfig broadbandConfig;
+        broadbandConfig.enabled = true;
+        broadbandConfig.type = enginelab::ForcedInductionType::turbocharger;
+        broadbandConfig.compressorBladeCount = 0;
+        broadbandConfig.turbineBladeCount = 0;
+        broadbandConfig.compressorInducerDiameterMm = 50.0;
+        broadbandConfig.turbineExducerDiameterMm = 50.0;
+        broadbandConfig.wastegateFlowAreaMm2 = 0.0;
+        broadbandConfig.blowOffValveFlowAreaMm2 = 0.0;
+        broadbandConfig.tonalAcousticEfficiency = 0.0;
+        broadbandConfig.turbulentJetNoiseCoefficient = 0.01;
+        enginelab::ForcedInductionAcoustics broadband(broadbandConfig);
+        require(broadband.prepare(48'000.0),
+                "forced-induction broadband fixture must prepare");
+        enginelab::ForcedInductionAcoustics::Input broadbandInput;
+        broadbandInput.correctedAirFlowKgPerSecond = 0.08F;
+        broadbandInput.exhaustMassFlowKgPerSecond = 0.08F;
+        broadbandInput.densityKgPerM3 = 1.2F;
+        broadbandInput.soundSpeedMps = 343.0F;
+        double broadbandEnergy = 0.0;
+        for (int sample = 0; sample < 8'192; ++sample) {
+            const auto output = broadband.process(broadbandInput);
+            broadbandEnergy += static_cast<double>(output) * output;
+        }
+        require(std::sqrt(broadbandEnergy / 8'192.0) > 1.0e-6,
+                "equal compressor and turbine broadband sources must not cancel");
+
+        // Telemetry arrives at the simulation-frame cadence. A parameter step
+        // must be reconstructed inside the audio model; otherwise the tone
+        // amplitude jumps every 200 samples and creates a 240 Hz sideband comb.
+        enginelab::ForcedInductionConfig toneConfig;
+        toneConfig.enabled = true;
+        toneConfig.type = enginelab::ForcedInductionType::turbocharger;
+        toneConfig.compressorBladeCount = 6;
+        toneConfig.turbineBladeCount = 0;
+        toneConfig.tonalAcousticEfficiency = 1.0e-6;
+        toneConfig.turbulentJetNoiseCoefficient = 0.0;
+        enginelab::ForcedInductionAcoustics tone(toneConfig);
+        require(tone.prepare(48'000.0),
+                "forced-induction tone fixture must prepare");
+        enginelab::ForcedInductionAcoustics::Input toneInput;
+        toneInput.shaftSpeedRpm = 10'000.0F; // 1 kHz at six blades
+        toneInput.compressorPowerWatts = 1'000.0F;
+        toneInput.densityKgPerM3 = 1.2F;
+        toneInput.soundSpeedMps = 343.0F;
+        std::array<float, 260> toneSamples {};
+        for (std::size_t sample = 0; sample < toneSamples.size(); ++sample) {
+            if (sample == 200) toneInput.compressorPowerWatts = 4'000.0F;
+            toneSamples[sample] = tone.process(toneInput);
+        }
+        double naturalAdjacentDelta = 0.0;
+        for (std::size_t sample = 150; sample < 199; ++sample)
+            naturalAdjacentDelta = std::max(naturalAdjacentDelta,
+                std::abs(static_cast<double>(toneSamples[sample + 1] - toneSamples[sample])));
+        const auto telemetryBoundaryDelta = std::abs(
+            static_cast<double>(toneSamples[200] - toneSamples[199]));
+        require(telemetryBoundaryDelta <= naturalAdjacentDelta * 2.0,
+                "forced-induction telemetry steps must not create an audio discontinuity");
+
+        enginelab::ForcedInductionConfig splitConfig;
+        splitConfig.enabled = true;
+        splitConfig.turbineFlowAreaMm2 = 700.0;
+        splitConfig.wastegateFlowAreaMm2 = 350.0;
+        splitConfig.compressorBladeCount = 1;
+        enginelab::ForcedInductionAcoustics flowPartition(splitConfig);
+        const auto closed = flowPartition.partitionExhaustFlow(0.12, 0.0F);
+        const auto open = flowPartition.partitionExhaustFlow(0.12, 1.0F);
+        require(std::abs(closed.turbineKgPerSecond - 0.12) < 1.0e-12
+                    && std::abs(closed.wastegateKgPerSecond) < 1.0e-12,
+                "closed wastegate must route all exhaust through the turbine");
+        require(std::abs(open.turbineKgPerSecond - 0.08) < 1.0e-12
+                    && std::abs(open.wastegateKgPerSecond - 0.04) < 1.0e-12
+                    && std::abs(open.turbineKgPerSecond
+                        + open.wastegateKgPerSecond - 0.12) < 1.0e-12,
+                "open turbine/wastegate flow split must follow area and conserve mass");
     }
 
     {

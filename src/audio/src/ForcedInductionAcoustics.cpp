@@ -41,6 +41,12 @@ bool ForcedInductionAcoustics::prepare(double sampleRateHz,
         return false;
     sampleRateHz_ = sampleRateHz;
     observerDistanceM_ = observerDistanceM;
+    telemetrySmoothingCoefficient_ = static_cast<float>(1.0 - std::exp(
+        -1.0 / (0.005 * sampleRateHz_)));
+    transientAttackCoefficient_ = static_cast<float>(1.0 - std::exp(
+        -1.0 / (0.00075 * sampleRateHz_)));
+    transientReleaseCoefficient_ = static_cast<float>(1.0 - std::exp(
+        -1.0 / (0.012 * sampleRateHz_)));
     reset();
     return true;
 }
@@ -52,6 +58,14 @@ void ForcedInductionAcoustics::reset() noexcept {
     turbineNoise_ = {};
     wastegateNoise_ = {};
     blowOffNoise_ = {};
+    smoothedInput_ = {};
+    noiseStates_ = {
+        0x9e3779b9U,
+        0x243f6a88U,
+        0xb7e15162U,
+        0x8aed2a6bU,
+    };
+    telemetryInitialised_ = false;
 }
 
 float ForcedInductionAcoustics::bandNoise(
@@ -95,16 +109,102 @@ double ForcedInductionAcoustics::jetPower(
         * std::pow(limitedVelocityMps, 8.0) / std::pow(soundSpeedMps, 5.0);
 }
 
-float ForcedInductionAcoustics::process(
-    const Input& input, float whiteNoise) noexcept {
+ForcedInductionAcoustics::ExhaustFlowSplit
+ForcedInductionAcoustics::partitionExhaustFlow(
+    double totalKgPerSecond, float wastegateOpening) const noexcept {
+    const auto total = std::max(0.0, totalKgPerSecond);
+    const auto turbineArea = std::max(0.0, config_.turbineFlowAreaMm2);
+    const auto wastegateArea = std::max(0.0, config_.wastegateFlowAreaMm2)
+        * std::clamp(static_cast<double>(wastegateOpening), 0.0, 1.0);
+    const auto effectiveArea = turbineArea + wastegateArea;
+    if (!(effectiveArea > 0.0)) return { total, 0.0 };
+    const auto wastegate = total * wastegateArea / effectiveArea;
+    return { total - wastegate, wastegate };
+}
+
+float ForcedInductionAcoustics::nextWhiteNoise(std::size_t source) noexcept {
+    auto& state = noiseStates_[std::min(source, noiseStates_.size() - 1U)];
+    state ^= state << 13U;
+    state ^= state >> 17U;
+    state ^= state << 5U;
+    return static_cast<float>(
+        static_cast<double>(state) / 2'147'483'647.5 - 1.0);
+}
+
+void ForcedInductionAcoustics::smoothTelemetry(const Input& input) noexcept {
+    auto target = input;
+    target.shaftSpeedRpm = std::max(0.0F, target.shaftSpeedRpm);
+    target.correctedAirFlowKgPerSecond = std::max(
+        0.0F, target.correctedAirFlowKgPerSecond);
+    target.pressureRatio = std::clamp(target.pressureRatio, 1.0F, 3.5F);
+    target.compressorPowerWatts = std::max(0.0F, target.compressorPowerWatts);
+    target.turbinePowerWatts = std::max(0.0F, target.turbinePowerWatts);
+    target.exhaustMassFlowKgPerSecond = std::max(
+        0.0F, target.exhaustMassFlowKgPerSecond);
+    target.wastegateOpening = std::clamp(target.wastegateOpening, 0.0F, 1.0F);
+    target.blowOffMassFlowKgPerSecond = std::max(
+        0.0F, target.blowOffMassFlowKgPerSecond);
+    target.densityKgPerM3 = std::clamp(target.densityKgPerM3, 0.1F, 5.0F);
+    target.soundSpeedMps = std::clamp(target.soundSpeedMps, 250.0F, 800.0F);
+    target.acousticTimeScale = std::clamp(target.acousticTimeScale, 0.0F, 4.0F);
+    if (!telemetryInitialised_) {
+        smoothedInput_ = target;
+        telemetryInitialised_ = true;
+        return;
+    }
+    const auto smooth = [&](float targetValue, float& state, float coefficient) {
+        state += coefficient * (targetValue - state);
+    };
+    smooth(target.shaftSpeedRpm, smoothedInput_.shaftSpeedRpm,
+        telemetrySmoothingCoefficient_);
+    smooth(target.correctedAirFlowKgPerSecond,
+        smoothedInput_.correctedAirFlowKgPerSecond,
+        telemetrySmoothingCoefficient_);
+    smooth(target.pressureRatio, smoothedInput_.pressureRatio,
+        telemetrySmoothingCoefficient_);
+    smooth(target.compressorPowerWatts, smoothedInput_.compressorPowerWatts,
+        telemetrySmoothingCoefficient_);
+    smooth(target.turbinePowerWatts, smoothedInput_.turbinePowerWatts,
+        telemetrySmoothingCoefficient_);
+    smooth(target.exhaustMassFlowKgPerSecond,
+        smoothedInput_.exhaustMassFlowKgPerSecond,
+        telemetrySmoothingCoefficient_);
+    smooth(target.wastegateOpening, smoothedInput_.wastegateOpening,
+        telemetrySmoothingCoefficient_);
+    const auto blowOffCoefficient = target.blowOffMassFlowKgPerSecond
+            > smoothedInput_.blowOffMassFlowKgPerSecond
+        ? transientAttackCoefficient_ : transientReleaseCoefficient_;
+    smooth(target.blowOffMassFlowKgPerSecond,
+        smoothedInput_.blowOffMassFlowKgPerSecond, blowOffCoefficient);
+    smooth(target.densityKgPerM3, smoothedInput_.densityKgPerM3,
+        telemetrySmoothingCoefficient_);
+    smooth(target.soundSpeedMps, smoothedInput_.soundSpeedMps,
+        telemetrySmoothingCoefficient_);
+    // Time scale is already ramped by the renderer and must reach zero
+    // immediately when the simulation is paused.
+    smoothedInput_.acousticTimeScale = target.acousticTimeScale;
+}
+
+float ForcedInductionAcoustics::process(const Input& input) noexcept {
     if (!valid_ || !std::isfinite(input.shaftSpeedRpm)
-        || !std::isfinite(whiteNoise))
+        || !std::isfinite(input.correctedAirFlowKgPerSecond)
+        || !std::isfinite(input.pressureRatio)
+        || !std::isfinite(input.compressorPowerWatts)
+        || !std::isfinite(input.turbinePowerWatts)
+        || !std::isfinite(input.exhaustMassFlowKgPerSecond)
+        || !std::isfinite(input.wastegateOpening)
+        || !std::isfinite(input.blowOffMassFlowKgPerSecond)
+        || !std::isfinite(input.densityKgPerM3)
+        || !std::isfinite(input.soundSpeedMps)
+        || !std::isfinite(input.acousticTimeScale))
         return 0.0F;
+    smoothTelemetry(input);
+    const auto& source = smoothedInput_;
     const auto spectralScale = std::clamp(
-        static_cast<double>(input.acousticTimeScale), 0.0, 4.0);
+        static_cast<double>(source.acousticTimeScale), 0.0, 4.0);
     if (!(spectralScale > 0.0)) return 0.0F;
     const auto shaftHz = std::max(0.0,
-        static_cast<double>(input.shaftSpeedRpm)) / 60.0 * spectralScale;
+        static_cast<double>(source.shaftSpeedRpm)) / 60.0 * spectralScale;
     const auto advanceTone = [&](double frequencyHz, double& phase) {
         if (!(frequencyHz > 0.0)) return 0.0F;
         // Always advance the phase so the tone stays coherent across the audible
@@ -123,8 +223,8 @@ float ForcedInductionAcoustics::process(
             : 1.0;
         return static_cast<float>(std::sin(phase) * taper);
     };
-    const auto rho = std::clamp(static_cast<double>(input.densityKgPerM3), 0.1, 5.0);
-    const auto c = std::clamp(static_cast<double>(input.soundSpeedMps), 250.0, 800.0);
+    const auto rho = std::clamp(static_cast<double>(source.densityKgPerM3), 0.1, 5.0);
+    const auto c = std::clamp(static_cast<double>(source.soundSpeedMps), 250.0, 800.0);
     auto pressurePa = 0.0;
 
     if (config_.type == ForcedInductionType::supercharger) {
@@ -134,7 +234,7 @@ float ForcedInductionAcoustics::process(
             ? config_.superchargerLobeCount : config_.compressorBladeCount;
         const auto passHz = shaftHz * static_cast<double>(
             passingOrder);
-        const auto tonePowerW = std::max(0.0F, input.compressorPowerWatts)
+        const auto tonePowerW = std::max(0.0F, source.compressorPowerWatts)
             * config_.tonalAcousticEfficiency;
         pressurePa += pressurePeakFromPower(tonePowerW, rho, c)
             * advanceTone(passHz, compressorPhase_);
@@ -144,9 +244,9 @@ float ForcedInductionAcoustics::process(
         const auto turbinePassHz = shaftHz * static_cast<double>(
             config_.turbineBladeCount);
         const auto compressorTonePowerW = std::max(0.0F,
-            input.compressorPowerWatts) * config_.tonalAcousticEfficiency;
+            source.compressorPowerWatts) * config_.tonalAcousticEfficiency;
         const auto turbineTonePowerW = std::max(0.0F,
-            input.turbinePowerWatts) * config_.tonalAcousticEfficiency;
+            source.turbinePowerWatts) * config_.tonalAcousticEfficiency;
         pressurePa += pressurePeakFromPower(compressorTonePowerW, rho, c)
             * advanceTone(compressorPassHz, compressorPhase_);
         pressurePa += pressurePeakFromPower(turbineTonePowerW, rho, c)
@@ -155,45 +255,48 @@ float ForcedInductionAcoustics::process(
         const auto compressorAreaM2 = circularAreaM2(
             config_.compressorInducerDiameterMm);
         const auto correctedFlow = std::max(0.0F,
-            input.correctedAirFlowKgPerSecond);
+            source.correctedAirFlowKgPerSecond);
         if (compressorAreaM2 > 0.0 && correctedFlow > 0.0) {
             const auto velocity = correctedFlow / (rho * compressorAreaM2);
             const auto diameterM = config_.compressorInducerDiameterMm * 0.001;
             const auto centreHz = 0.2 * velocity / diameterM * spectralScale;
             pressurePa += pressurePeakFromPower(jetPower(
                 correctedFlow, compressorAreaM2, rho, c), rho, c)
-                * bandNoise(whiteNoise, centreHz, compressorNoise_);
+                * bandNoise(nextWhiteNoise(0), centreHz, compressorNoise_);
         }
-        const auto turbineAreaM2 = circularAreaM2(
+        const auto exducerAreaM2 = circularAreaM2(
             config_.turbineExducerDiameterMm);
-        const auto exhaustFlow = std::max(0.0F,
-            input.exhaustMassFlowKgPerSecond);
-        if (turbineAreaM2 > 0.0 && exhaustFlow > 0.0) {
-            const auto velocity = exhaustFlow / (rho * turbineAreaM2);
-            const auto diameterM = config_.turbineExducerDiameterMm * 0.001;
+        const auto turbineAreaM2 = exducerAreaM2 > 0.0
+            ? (config_.turbineFlowAreaMm2 > 0.0
+                ? config_.turbineFlowAreaMm2 * 1.0e-6 : exducerAreaM2)
+            : 0.0;
+        const auto flowSplit = partitionExhaustFlow(
+            source.exhaustMassFlowKgPerSecond, source.wastegateOpening);
+        if (turbineAreaM2 > 0.0 && flowSplit.turbineKgPerSecond > 0.0) {
+            const auto velocity = flowSplit.turbineKgPerSecond / (rho * turbineAreaM2);
+            const auto diameterM = 2.0 * std::sqrt(
+                turbineAreaM2 / std::numbers::pi);
             const auto centreHz = 0.2 * velocity / diameterM * spectralScale;
             pressurePa += pressurePeakFromPower(jetPower(
-                exhaustFlow, turbineAreaM2, rho, c), rho, c)
-                * bandNoise(-whiteNoise, centreHz, turbineNoise_);
+                flowSplit.turbineKgPerSecond, turbineAreaM2, rho, c), rho, c)
+                * bandNoise(nextWhiteNoise(1), centreHz, turbineNoise_);
         }
         const auto wastegateAreaM2 = std::max(0.0,
             config_.wastegateFlowAreaMm2) * 1.0e-6;
-        const auto wastegateFlow = std::max(0.0F,
-            input.exhaustMassFlowKgPerSecond)
-            * std::clamp(input.wastegateOpening, 0.0F, 1.0F);
-        if (wastegateAreaM2 > 0.0 && wastegateFlow > 0.0) {
-            const auto velocity = wastegateFlow / (rho * wastegateAreaM2);
+        if (wastegateAreaM2 > 0.0 && flowSplit.wastegateKgPerSecond > 0.0) {
+            const auto velocity = flowSplit.wastegateKgPerSecond
+                / (rho * wastegateAreaM2);
             const auto diameterM = 2.0 * std::sqrt(
                 wastegateAreaM2 / std::numbers::pi);
             const auto centreHz = 0.2 * velocity / diameterM * spectralScale;
             pressurePa += pressurePeakFromPower(jetPower(
-                wastegateFlow, wastegateAreaM2, rho, c), rho, c)
-                * bandNoise(whiteNoise, centreHz, wastegateNoise_);
+                flowSplit.wastegateKgPerSecond, wastegateAreaM2, rho, c), rho, c)
+                * bandNoise(nextWhiteNoise(2), centreHz, wastegateNoise_);
         }
         const auto blowOffAreaM2 = std::max(0.0,
             config_.blowOffValveFlowAreaMm2) * 1.0e-6;
         const auto blowOffFlow = std::max(0.0F,
-            input.blowOffMassFlowKgPerSecond);
+            source.blowOffMassFlowKgPerSecond);
         if (blowOffAreaM2 > 0.0 && blowOffFlow > 0.0) {
             const auto velocity = blowOffFlow / (rho * blowOffAreaM2);
             const auto diameterM = 2.0 * std::sqrt(
@@ -201,7 +304,7 @@ float ForcedInductionAcoustics::process(
             const auto centreHz = 0.2 * velocity / diameterM * spectralScale;
             pressurePa += pressurePeakFromPower(jetPower(
                 blowOffFlow, blowOffAreaM2, rho, c), rho, c)
-                * bandNoise(-whiteNoise, centreHz, blowOffNoise_);
+                * bandNoise(nextWhiteNoise(3), centreHz, blowOffNoise_);
         }
     }
     if (!std::isfinite(pressurePa)) {

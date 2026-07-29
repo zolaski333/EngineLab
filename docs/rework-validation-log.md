@@ -709,3 +709,32 @@ La fermeture complète donne **20/20 tests en 514,43 s**, un rendu audio final
 séparé vert sous charge, puis un lancement caché de `EngineLab.exe` resté vivant
 cinq secondes. Les hash et journaux sont consignés dans
 `docs/validation-2026-07-28.md`.
+
+## 2026-07-29 — Réaudit et correction de la couche turbo
+
+Le balayage Release actuel réfute l'ancien plancher aigu EJ25 : énergie au-dessus
+de 4 kHz de 1,2 % au point haut et 0,4 % au point précédent, contre 20,9 % dans
+un ancien rendu. Aucun assombrissement opportuniste n'a donc été appliqué.
+
+Un test analytique ajouté avant le correctif a en revanche échoué :
+`equal compressor and turbine broadband sources must not cancel`. Deux sources
+égales s'annulaient exactement parce qu'elles filtraient la même suite de bruit
+avec des signes opposés. Deux autres défauts ont été corrigés dans le même
+contrat physique : marches de puissance/vitesse à 240 Hz, et débit total compté
+dans la turbine puis une seconde fois dans la wastegate.
+
+Après correction :
+
+- bruit déterministe indépendant par compresseur, turbine, wastegate et dump ;
+- interpolation temporelle 5 ms, avec dump 0,75 ms attaque / 12 ms relâchement ;
+- partage conservatif par aires : avec 700/350 mm² et wastegate ouverte,
+  0,12 kg/s devient 0,08 + 0,04 kg/s ;
+- `EngineLab.Core` et `EngineLab.RealtimeRegression` : 2/2 en 51,77 s ;
+- rendu court EJ25 : 0 perte/fallback/limiteur, pic 0,3737 contre 0,3751 avant ;
+- A/B complet : différence RMS alignée 5,98 % sur 2JZ, 6,28 % sur EJ25 ;
+  les trois moteurs atmosphériques témoins sont bit-identiques ;
+- part >4 kHz quasi inchangée : 2JZ 0,701 -> 0,703 %, EJ25
+  0,326 -> 0,327 %.
+
+Les artefacts de source sont retirés sans élargissement artificiel du spectre ni
+retouche des calibrations moteur.

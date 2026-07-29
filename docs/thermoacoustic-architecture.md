@@ -708,12 +708,42 @@ Big Twin 12.1 -> 13.1, K20 34.8 -> 28.3, LS3 11.2 -> 9.2. L'écart-type
 inter-moteurs par tiers d'octave monte au ralenti (8.01 -> 8.24 dB) et au
 limiteur (6.31 -> 6.48 dB). Coût CPU : nul (LS3 p95 29.8 % contre 28.9 % avant).
 
-### Limite honnête qui subsiste
+### Réaudit du plancher HF — 2026-07-29
 
-L'EJ25 garde un plancher HF élevé en montée (20.9 % au-dessus de 4 kHz contre
-7.1 % sans chambre) : ce plancher **préexiste** à la chambre, celle-ci le
-démasque en retirant du grave. C'est la prochaine chose à regarder sur ce
-moteur, et c'est un problème de couche turbo, pas de silencieux.
+Le soupçon ci-dessus a été rejoué sur le binaire Release actuel, et il n'est
+plus reproductible. Sur une montée gouvernée en quatre points, l'EJ25 mesure
+1,2 % d'énergie au-dessus de 4 kHz au point haut, et 0,4 % au point précédent ;
+à mi-régime, le harnais court mesure 0,5 %. L'ancien chiffre de 20,9 % décrivait
+donc un état antérieur du renderer et ne doit plus piloter une calibration.
+
+L'audit de la couche turbo a néanmoins trouvé trois défauts structurels
+indépendants du niveau :
+
+- compresseur et turbine employaient la même suite de bruit, l'une négative de
+  l'autre. Avec mêmes débit et géométrie, les deux sources s'annulaient
+  exactement ;
+- la puissance, la vitesse d'arbre et les débits arrivaient par marches de
+  télémétrie à 240 Hz, ce qui produisait des discontinuités d'amplitude et leurs
+  bandes latérales ;
+- le débit total était rayonné une première fois par la turbine, puis à nouveau
+  par la wastegate multipliée par son ouverture. Une wastegate ouverte dupliquait
+  donc de la masse au lieu de partager le débit entre deux aires parallèles.
+
+`ForcedInductionAcoustics` possède désormais quatre générateurs déterministes
+indépendants, reconstruit la télémétrie par échantillon (5 ms ; dump valve
+0,75 ms à l'attaque et 12 ms au relâchement), et partage le débit selon
+`A_turbine / (A_turbine + ouverture*A_wastegate)`. La somme des deux branches
+reste exactement le débit mesuré. La vitesse de jet turbine emploie la section
+de passage `turbine_flow_area_mm2`; le diamètre d'exducer reste nécessaire pour
+déclarer une source acoustique réelle.
+
+Le test ajouté a d'abord échoué sur l'annulation exacte, puis passe avec les
+tests de continuité et de conservation. Sur les clips complets normalisés, le
+changement reste ciblé : corrélation avant/après 0,99821 sur le 2JZ et 0,99803
+sur l'EJ25, différence RMS alignée 5,98 % et 6,28 %. Les moteurs sans
+suralimentation sont bit-identiques et la part >4 kHz reste pratiquement
+inchangée (2JZ 0,701 -> 0,703 %, EJ25 0,326 -> 0,327 %) : le correctif retire
+des artefacts de source sans éclaircir artificiellement tout le moteur.
 
 ## 20. Réseau acoustique complet compilé depuis le DAG
 
@@ -812,6 +842,12 @@ rendement acoustique explicite. Les composantes larges bandes du compresseur,
 de la turbine, de la wastegate et de la dump valve suivent une loi de jet
 compact en U^8, centrée par un Strouhal de 0,2, avec débit corrigé, débit
 d'échappement et sections physiques.
+
+Les quatre sources broadband disposent de suites de bruit déterministes mais
+indépendantes. Le débit d'échappement est partagé entre turbine et wastegate
+proportionnellement à leurs aires effectives ; il n'est jamais compté deux fois.
+Les grandeurs de télémétrie sont lissées à cadence audio afin que les mises à
+jour du thread physique ne deviennent pas une modulation à 240 Hz.
 
 La dump valve n'est plus une enveloppe déclenchée par une fermeture de pédale.
 Le solveur l'ouvre lorsque le rapport de pression entre le réservoir de sortie

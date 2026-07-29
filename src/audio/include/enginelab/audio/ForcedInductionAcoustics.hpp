@@ -2,6 +2,7 @@
 
 #include <enginelab/foundation/EngineTypes.hpp>
 
+#include <array>
 #include <cstdint>
 
 namespace enginelab {
@@ -31,13 +32,24 @@ public:
         float acousticTimeScale { 1.0F };
     };
 
+    struct ExhaustFlowSplit final {
+        double turbineKgPerSecond {};
+        double wastegateKgPerSecond {};
+    };
+
     explicit ForcedInductionAcoustics(const ForcedInductionConfig& config,
         double observerDistanceM = 1.0) noexcept;
 
     [[nodiscard]] bool prepare(double sampleRateHz,
                                double observerDistanceM = 0.0) noexcept;
     void reset() noexcept;
-    [[nodiscard]] float process(const Input& input, float whiteNoise) noexcept;
+    [[nodiscard]] float process(const Input& input) noexcept;
+
+    /** Partitions the measured total exhaust flow through parallel effective
+     * turbine and wastegate areas. The two results always conserve the input
+     * flow; opening a wastegate never duplicates mass through both sources. */
+    [[nodiscard]] ExhaustFlowSplit partitionExhaustFlow(
+        double totalKgPerSecond, float wastegateOpening) const noexcept;
 
     [[nodiscard]] bool valid() const noexcept { return valid_; }
     [[nodiscard]] bool semiEmpirical() const noexcept { return true; }
@@ -56,6 +68,8 @@ private:
     [[nodiscard]] double jetPower(double massFlowKgPerSecond, double areaM2,
                                   double densityKgPerM3,
                                   double soundSpeedMps) const noexcept;
+    [[nodiscard]] float nextWhiteNoise(std::size_t source) noexcept;
+    void smoothTelemetry(const Input& input) noexcept;
 
     ForcedInductionConfig config_;
     double sampleRateHz_ { 48'000.0 };
@@ -67,6 +81,12 @@ private:
     BandNoiseState turbineNoise_ {};
     BandNoiseState wastegateNoise_ {};
     BandNoiseState blowOffNoise_ {};
+    Input smoothedInput_ {};
+    std::array<std::uint32_t, 4> noiseStates_ {};
+    float telemetrySmoothingCoefficient_ { 1.0F };
+    float transientAttackCoefficient_ { 1.0F };
+    float transientReleaseCoefficient_ { 1.0F };
+    bool telemetryInitialised_ { false };
     bool valid_ { false };
 };
 

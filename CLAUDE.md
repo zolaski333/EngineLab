@@ -498,6 +498,14 @@ rework: measurements, and the hypotheses that were tried and refuted.
   the action changes real graph geometry or an explicitly authored downstream
   IR. An authored IR that cannot be decoded must stay visible as an error; field
   free is a valid explicit state, never a silent substitute for a requested WAV.
+- **Independent aeroacoustic sources must not share a signed noise sample.**
+  Compressor and turbine broadband models once used the same random sequence
+  with opposite signs; equal geometry cancelled them exactly. Forced-induction
+  sources now own deterministic independent streams. The total exhaust flow is
+  partitioned by effective turbine/wastegate area and must sum back to the
+  measured flow; never radiate the full flow through the turbine and then add a
+  second `flow * opening` wastegate source. Frame-rate telemetry must also be
+  reconstructed per audio sample before it modulates a blade-order tone.
 
 ## Two concrete traps that cost time here
 

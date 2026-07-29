@@ -1255,7 +1255,7 @@ void RealtimeEngineAudio::render(juce::AudioBuffer<float>& output, int startSamp
             };
             physicalForcedInduction = static_cast<float>(
                 AcousticMonitorCalibration::normalisePeakPressure(
-                    forcedInductionAcoustics_->process(input, noise()),
+                    forcedInductionAcoustics_->process(input),
                     acousticFullScaleSplDb));
         }
         combustionLeft += physicalCylinderPressureLeft;
