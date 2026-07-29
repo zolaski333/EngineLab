@@ -116,7 +116,11 @@ puissance d’arbre, ordres de pales/lobes et débits de wastegate/dump valve ; 
 niveaux absolus restent semi-empiriques tant qu’aucune mesure composant ne les
 remplace. Ses sources de bruit sont indépendantes, ses marches de télémétrie
 sont reconstruites à cadence audio et le débit total est conservé lorsqu'il se
-partage entre turbine et wastegate. Voir les §21–24 du document d’architecture.
+partage entre turbine et wastegate. Le filtre large bande conserve désormais la
+pression RMS déduite de sa puissance configurée ; le correctif, son faible effet
+sur le master et son coût sont consignés dans
+[`audio-lot4-fi-broadband-power-2026-07-29.md`](audio-lot4-fi-broadband-power-2026-07-29.md).
+Voir aussi les §21–24 du document d’architecture.
 
 Pour les modes structurels estimés, la participation longitudinale suit l’ordre
 explicite des cylindres dans chaque banc. Le précédent modulo sur l’index global

@@ -1004,6 +1004,59 @@ void forcedInductionAcousticsRegression() {
     require(compressorJetEnergy > 0.0,
         "corrected compressor flow must radiate broadband noise at zero shaft speed");
 
+    // pressurePeakFromPower() is appropriate for a sinusoid, whose RMS is
+    // peak/sqrt(2). Broadband instead needs both a unit-RMS bandpass and the RMS
+    // pressure implied by W=4*pi*r^2*p_rms^2/(rho*c). Measure the complete
+    // deterministic filter rather than accepting a positive-but-under-levelled
+    // source.
+    Acoustics powerNormalisedJet(jetConfig);
+    Acoustics legacyUnnormalisedJet(jetConfig);
+    legacyUnnormalisedJet.setBroadbandPowerNormalisationEnabled(false);
+    require(powerNormalisedJet.prepare(sampleRate)
+            && legacyUnnormalisedJet.prepare(sampleRate),
+        "broadband power A/B fixtures must prepare");
+    auto normalisedEnergy = 0.0;
+    auto legacyEnergy = 0.0;
+    constexpr std::size_t broadbandSamples = 96'000;
+    constexpr std::size_t broadbandWarmup = 48'000;
+    for (std::size_t sample = 0; sample < broadbandSamples; ++sample) {
+        const auto normalised = powerNormalisedJet.process(jetInput);
+        const auto legacy = legacyUnnormalisedJet.process(jetInput);
+        require(std::isfinite(normalised) && std::isfinite(legacy),
+            "broadband power fixtures must remain finite");
+        if (sample >= broadbandWarmup) {
+            normalisedEnergy += static_cast<double>(normalised) * normalised;
+            legacyEnergy += static_cast<double>(legacy) * legacy;
+        }
+    }
+    const auto measuredBroadbandRms = std::sqrt(
+        normalisedEnergy
+        / static_cast<double>(broadbandSamples - broadbandWarmup));
+    const auto legacyBroadbandRms = std::sqrt(
+        legacyEnergy
+        / static_cast<double>(broadbandSamples - broadbandWarmup));
+    const auto compressorRadiusM =
+        jetConfig.compressorInducerDiameterMm * 0.0005;
+    const auto compressorAreaM2 =
+        std::numbers::pi * compressorRadiusM * compressorRadiusM;
+    const auto jetVelocityMps = static_cast<double>(
+        jetInput.correctedAirFlowKgPerSecond)
+        / (static_cast<double>(jetInput.densityKgPerM3)
+            * compressorAreaM2);
+    const auto acousticPowerWatts =
+        jetConfig.turbulentJetNoiseCoefficient
+        * static_cast<double>(jetInput.densityKgPerM3)
+        * compressorAreaM2 * std::pow(jetVelocityMps, 8.0)
+        / std::pow(static_cast<double>(jetInput.soundSpeedMps), 5.0);
+    const auto expectedBroadbandRms = std::sqrt(
+        acousticPowerWatts * static_cast<double>(jetInput.densityKgPerM3)
+        * static_cast<double>(jetInput.soundSpeedMps)
+        / (4.0 * std::numbers::pi));
+    require(std::abs(measuredBroadbandRms / expectedBroadbandRms - 1.0) < 0.12,
+        "broadband FI pressure must conserve the configured acoustic power");
+    require(measuredBroadbandRms > legacyBroadbandRms * 2.0,
+        "the null control must expose the former bandpass RMS loss");
+
     jetConfig.compressorInducerDiameterMm = 0.0;
     Acoustics wastegate(jetConfig);
     require(wastegate.valid() && wastegate.prepare(sampleRate),

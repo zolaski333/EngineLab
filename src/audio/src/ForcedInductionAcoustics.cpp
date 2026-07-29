@@ -79,10 +79,25 @@ float ForcedInductionAcoustics::bandNoise(
         -2.0 * std::numbers::pi * highCutHz / sampleRateHz_));
     state.lowSlow += slow * (noise - state.lowSlow);
     state.lowFast += fast * (noise - state.lowFast);
-    // Uniform [-1,1] has RMS 1/sqrt(3). The factor makes the unfiltered source
-    // unit-RMS before the two physical corner filters.
+    // For unit-variance white noise, a one-pole y=a*x+(1-a)*y[-1] has variance
+    // a/(2-a), and two poles driven by the same noise have covariance
+    // a*b/(1-(1-a)(1-b)). Normalise their difference rather than pretending
+    // the bandpass retains the input RMS. The legacy switch deliberately
+    // reproduces that old under-levelled result for same-binary A/B.
+    auto normalisation = std::sqrt(3.0);
+    if (broadbandPowerNormalisationEnabled_) {
+        const auto fastVariance = static_cast<double>(fast) / (2.0 - fast);
+        const auto slowVariance = static_cast<double>(slow) / (2.0 - slow);
+        const auto covariance = static_cast<double>(fast) * slow
+            / (1.0 - (1.0 - fast) * (1.0 - slow));
+        const auto differenceVariance = std::max(
+            1.0e-12,
+            fastVariance + slowVariance - 2.0 * covariance);
+        // nextWhiteNoise() is uniform [-1,1], whose variance is 1/3.
+        normalisation = std::sqrt(3.0 / differenceVariance);
+    }
     return (state.lowFast - state.lowSlow)
-        * static_cast<float>(std::sqrt(3.0));
+        * static_cast<float>(normalisation);
 }
 
 double ForcedInductionAcoustics::pressurePeakFromPower(
@@ -260,8 +275,11 @@ float ForcedInductionAcoustics::process(const Input& input) noexcept {
             const auto velocity = correctedFlow / (rho * compressorAreaM2);
             const auto diameterM = config_.compressorInducerDiameterMm * 0.001;
             const auto centreHz = 0.2 * velocity / diameterM * spectralScale;
-            pressurePa += pressurePeakFromPower(jetPower(
+            const auto pressureFromPower = pressurePeakFromPower(jetPower(
                 correctedFlow, compressorAreaM2, rho, c), rho, c)
+                * (broadbandPowerNormalisationEnabled_
+                    ? 1.0 / std::sqrt(2.0) : 1.0);
+            pressurePa += pressureFromPower
                 * bandNoise(nextWhiteNoise(0), centreHz, compressorNoise_);
         }
         const auto exducerAreaM2 = circularAreaM2(
@@ -277,8 +295,11 @@ float ForcedInductionAcoustics::process(const Input& input) noexcept {
             const auto diameterM = 2.0 * std::sqrt(
                 turbineAreaM2 / std::numbers::pi);
             const auto centreHz = 0.2 * velocity / diameterM * spectralScale;
-            pressurePa += pressurePeakFromPower(jetPower(
+            const auto pressureFromPower = pressurePeakFromPower(jetPower(
                 flowSplit.turbineKgPerSecond, turbineAreaM2, rho, c), rho, c)
+                * (broadbandPowerNormalisationEnabled_
+                    ? 1.0 / std::sqrt(2.0) : 1.0);
+            pressurePa += pressureFromPower
                 * bandNoise(nextWhiteNoise(1), centreHz, turbineNoise_);
         }
         const auto wastegateAreaM2 = std::max(0.0,
@@ -289,8 +310,11 @@ float ForcedInductionAcoustics::process(const Input& input) noexcept {
             const auto diameterM = 2.0 * std::sqrt(
                 wastegateAreaM2 / std::numbers::pi);
             const auto centreHz = 0.2 * velocity / diameterM * spectralScale;
-            pressurePa += pressurePeakFromPower(jetPower(
+            const auto pressureFromPower = pressurePeakFromPower(jetPower(
                 flowSplit.wastegateKgPerSecond, wastegateAreaM2, rho, c), rho, c)
+                * (broadbandPowerNormalisationEnabled_
+                    ? 1.0 / std::sqrt(2.0) : 1.0);
+            pressurePa += pressureFromPower
                 * bandNoise(nextWhiteNoise(2), centreHz, wastegateNoise_);
         }
         const auto blowOffAreaM2 = std::max(0.0,
@@ -302,8 +326,11 @@ float ForcedInductionAcoustics::process(const Input& input) noexcept {
             const auto diameterM = 2.0 * std::sqrt(
                 blowOffAreaM2 / std::numbers::pi);
             const auto centreHz = 0.2 * velocity / diameterM * spectralScale;
-            pressurePa += pressurePeakFromPower(jetPower(
+            const auto pressureFromPower = pressurePeakFromPower(jetPower(
                 blowOffFlow, blowOffAreaM2, rho, c), rho, c)
+                * (broadbandPowerNormalisationEnabled_
+                    ? 1.0 / std::sqrt(2.0) : 1.0);
+            pressurePa += pressureFromPower
                 * bandNoise(nextWhiteNoise(3), centreHz, blowOffNoise_);
         }
     }

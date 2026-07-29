@@ -43,6 +43,13 @@ public:
     [[nodiscard]] bool prepare(double sampleRateHz,
                                double observerDistanceM = 0.0) noexcept;
     void reset() noexcept;
+    /** Same-binary diagnostic control for the pre-fix unnormalised bandpass. */
+    void setBroadbandPowerNormalisationEnabled(bool enabled) noexcept {
+        broadbandPowerNormalisationEnabled_ = enabled;
+    }
+    [[nodiscard]] bool broadbandPowerNormalisationEnabled() const noexcept {
+        return broadbandPowerNormalisationEnabled_;
+    }
     [[nodiscard]] float process(const Input& input) noexcept;
 
     /** Partitions the measured total exhaust flow through parallel effective
@@ -87,6 +94,7 @@ private:
     float transientAttackCoefficient_ { 1.0F };
     float transientReleaseCoefficient_ { 1.0F };
     bool telemetryInitialised_ { false };
+    bool broadbandPowerNormalisationEnabled_ { true };
     bool valid_ { false };
 };
 

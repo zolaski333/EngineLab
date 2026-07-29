@@ -127,6 +127,19 @@ public:
     [[nodiscard]] bool forcedInductionAcousticsActive() const noexcept {
         return forcedInductionAcoustics_ != nullptr;
     }
+    /** Diagnostic A/B switch for broadband FI power conservation. */
+    void setForcedInductionBroadbandPowerNormalisationEnabled(
+        bool enabled) noexcept {
+        if (forcedInductionAcoustics_)
+            forcedInductionAcoustics_
+                ->setBroadbandPowerNormalisationEnabled(enabled);
+    }
+    [[nodiscard]] bool forcedInductionBroadbandPowerNormalisationEnabled()
+        const noexcept {
+        return forcedInductionAcoustics_
+            && forcedInductionAcoustics_
+                ->broadbandPowerNormalisationEnabled();
+    }
     /** Samples rendered on the legacy procedural path.
      *
      * Non-zero after start-up means the physical boundary was unavailable or
@@ -163,6 +176,10 @@ public:
     }
     [[nodiscard]] float maxObservedStructuralPressurePa() const noexcept {
         return maxObservedStructuralPressurePa_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] float maxObservedForcedInductionPressurePa() const noexcept {
+        return maxObservedForcedInductionPressurePa_.load(
+            std::memory_order_relaxed);
     }
     [[nodiscard]] float maxPreLimiterMagnitude() const noexcept {
         return maxPreLimiterMagnitude_.load(std::memory_order_relaxed);
@@ -485,6 +502,7 @@ private:
     std::atomic<float> maxIntakeMouthPressurePa_ { 0.0F };
     std::atomic<float> maxIntakeRadiatedPressurePa_ { 0.0F };
     std::atomic<float> maxObservedStructuralPressurePa_ { 0.0F };
+    std::atomic<float> maxObservedForcedInductionPressurePa_ { 0.0F };
     std::atomic<float> maxPreLimiterMagnitude_ { 0.0F };
     std::atomic<std::uint64_t> legacyPathSamples_ { 0 };
     std::atomic<std::uint64_t> invalidBoundarySamples_ { 0 };

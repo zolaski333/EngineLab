@@ -163,7 +163,8 @@ public:
                        const std::filesystem::path& catalogRoot,
                        double sampleRate, int blockSize,
                        bool accelerated,
-                       bool outletJetNoiseEnabled)
+                       bool outletJetNoiseEnabled,
+                       bool forcedInductionPowerNormalisationEnabled)
         : runtime_(runtime),
           sampleRate_(sampleRate),
           blockSize_(blockSize),
@@ -195,6 +196,8 @@ public:
                 std::move(impulse.samples), impulse.sampleRateHz, pathIndex);
         }
         renderer_.setOutletJetNoiseEnabled(outletJetNoiseEnabled);
+        renderer_.setForcedInductionBroadbandPowerNormalisationEnabled(
+            forcedInductionPowerNormalisationEnabled);
         renderer_.prepare(sampleRate_, blockSize_);
     }
 
@@ -409,6 +412,7 @@ struct Measurement final {
                                         bool useWellMixedExhaustJunctions,
                                         bool withAudio,
                                         bool outletJetNoiseEnabled,
+                                        bool forcedInductionPowerNormalisationEnabled,
                                         const std::filesystem::path& catalogRoot,
                                         double audioSampleRate,
                                         int audioBlockSize) {
@@ -436,7 +440,8 @@ struct Measurement final {
         try {
             audioProbe = std::make_unique<RealtimeAudioProbe>(
                 *runtime, catalogRoot, audioSampleRate, audioBlockSize,
-                freeRun, outletJetNoiseEnabled);
+                freeRun, outletJetNoiseEnabled,
+                forcedInductionPowerNormalisationEnabled);
             audioProbe->start();
         } catch (const std::exception& error) {
             result.invalidReason = error.what();
@@ -708,6 +713,7 @@ int main(int argc, char** argv) {
     bool useWellMixedExhaustJunctions = false;
     bool withAudio = false;
     bool outletJetNoiseEnabled = true;
+    bool forcedInductionPowerNormalisationEnabled = true;
     double audioSampleRate = 48'000.0;
     int audioBlockSize = 256;
 
@@ -743,6 +749,8 @@ int main(int argc, char** argv) {
         else if (argument == "--with-audio") withAudio = true;
         else if (argument == "--disable-exhaust-jet-noise")
             outletJetNoiseEnabled = false;
+        else if (argument == "--disable-fi-power-normalisation")
+            forcedInductionPowerNormalisationEnabled = false;
         else if (argument == "--audio-rate" && index + 1 < argc)
             audioSampleRate = std::stod(argv[++index]);
         else if (argument == "--audio-block" && index + 1 < argc)
@@ -762,6 +770,7 @@ int main(int argc, char** argv) {
                          "[--well-mixed-junctions] "
                          "[--enforce FACTOR] [--free-run] "
                          "[--with-audio] [--disable-exhaust-jet-noise] "
+                         "[--disable-fi-power-normalisation] "
                          "[--audio-rate HZ] [--audio-block N]\n"
                          "  --free-run  remove the loop's wall-clock sleep, so the factor\n"
                          "              reads capacity instead of saturating at 1.0.\n"
@@ -769,6 +778,8 @@ int main(int argc, char** argv) {
                          "                consumer thread and enforce its realtime contract.\n"
                          "  --disable-exhaust-jet-noise  same-binary null control for\n"
                          "                               outlet-noise CPU measurements.\n"
+                         "  --disable-fi-power-normalisation  same-binary null for\n"
+                         "                                    broadband FI power cost.\n"
                          "  --relative-rpm  hold each engine at this fraction of redline,\n"
                          "                  capped at 95% to stay below the limiter.\n"
                          "  --intake-workers  override background intake workers; zero is\n"
@@ -816,6 +827,9 @@ int main(int argc, char** argv) {
                   << (outletJetNoiseEnabled
                       ? ", outlet jet noise ON"
                       : ", outlet jet noise OFF")
+                  << (forcedInductionPowerNormalisationEnabled
+                      ? ", FI band power ON"
+                      : ", FI band power OFF")
                   << (freeRun
                       ? ", paced by accelerated simulated time.\n"
                       : ", paced by wall-clock deadlines.\n")
@@ -872,6 +886,7 @@ int main(int argc, char** argv) {
             exhaustCouplingSeconds, intakeFirstOrderTimeIntegration,
             intakeWallHeatUpdateSeconds,
             useWellMixedExhaustJunctions, withAudio, outletJetNoiseEnabled,
+            forcedInductionPowerNormalisationEnabled,
             catalogRoot,
             audioSampleRate, audioBlockSize);
         const auto cylinders = static_cast<int>(entry.config.cylinders.size());

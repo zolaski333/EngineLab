@@ -873,3 +873,26 @@ Le test analytique exige l’égalité exacte de deux cylindres V8 symétriques 
 même rang et l’identité bit à bit de l’I4 non concerné. Les trois A/B restent
 sans perte, fallback, leveler ou sortie non finie. Détails :
 `docs/audio-lot4-structural-bank-topology-2026-07-29.md`.
+
+## 2026-07-29 — Puissance large bande de suralimentation
+
+Le filtre de bruit FI ne compensait pas sa propre perte RMS. À 300 Hz, la
+combinaison filtre non normalisé + pression de pic plaçait la source environ
+`4,70 ×` sous la pression RMS impliquée par sa puissance configurée.
+
+La variance exacte des deux pôles corrélés est désormais normalisée, puis la
+pression RMS remplace la pression de pic pour les quatre bruits de débit. Aucun
+coefficient, débit, aire ou niveau tonal n’a été modifié.
+
+| Moteur | Différence RMS master | Pic FI avant/après |
+|---|---:|---:|
+| 2JZ | 0,206 % | 0,463 / 0,521 Pa |
+| EJ25 | 0,095 % | 0,676 / 0,718 Pa |
+| Audi I5 | 0,187 % | 0,892 / 0,957 Pa |
+| VW TDI | 0,084 % | 0,260 / 0,273 Pa |
+
+Le faible delta master est conservé honnêtement : le bruit FI reste minoritaire
+et aucun gain d’écoute n’a été inventé. Sur l’EJ25, le callback moyen passe de
+`26,45 %` à `26,50 %`, p99 inchangé à `41 %`, avec facteur minimal `2,230×` et
+zéro violation temps réel. La suite transitoire passe. Détails :
+`docs/audio-lot4-fi-broadband-power-2026-07-29.md`.

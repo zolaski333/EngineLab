@@ -344,6 +344,8 @@ void RealtimeEngineAudio::release() noexcept {
     maxIntakeMouthPressurePa_.store(0.0F, std::memory_order_relaxed);
     maxIntakeRadiatedPressurePa_.store(0.0F, std::memory_order_relaxed);
     maxObservedStructuralPressurePa_.store(0.0F, std::memory_order_relaxed);
+    maxObservedForcedInductionPressurePa_.store(
+        0.0F, std::memory_order_relaxed);
     maxPreLimiterMagnitude_.store(0.0F, std::memory_order_relaxed);
     legacyPathSamples_.store(0, std::memory_order_relaxed);
     invalidBoundarySamples_.store(0, std::memory_order_relaxed);
@@ -831,6 +833,7 @@ void RealtimeEngineAudio::renderWithStems(
     float blockPeakObservedExhaustJetNoisePressurePa = 0.0F;
     float blockPeakObservedIntakePressurePa = 0.0F;
     float blockPeakObservedStructuralPressurePa = 0.0F;
+    float blockPeakObservedForcedInductionPressurePa = 0.0F;
     std::uint64_t legacySamplesThisBlock = 0;
     std::uint64_t invalidBoundarySamplesThisBlock = 0;
     for (int sample = 0; sample < sampleCount; ++sample) {
@@ -1296,10 +1299,14 @@ void RealtimeEngineAudio::renderWithStems(
                 .soundSpeedMps = soundSpeed,
                 .acousticTimeScale = acousticTimeScale
             };
+            const auto forcedInductionPressurePa =
+                forcedInductionAcoustics_->process(input);
+            blockPeakObservedForcedInductionPressurePa = std::max(
+                blockPeakObservedForcedInductionPressurePa,
+                std::abs(forcedInductionPressurePa));
             physicalForcedInduction = static_cast<float>(
                 AcousticMonitorCalibration::normalisePeakPressure(
-                    forcedInductionAcoustics_->process(input),
-                    acousticFullScaleSplDb));
+                    forcedInductionPressurePa, acousticFullScaleSplDb));
         }
         combustionLeft += physicalCylinderPressureLeft;
         combustionRight += physicalCylinderPressureRight;
@@ -1793,6 +1800,13 @@ void RealtimeEngineAudio::renderWithStems(
             > maxObservedStructuralPressurePa_.load(std::memory_order_relaxed))
         maxObservedStructuralPressurePa_.store(
             blockPeakObservedStructuralPressurePa, std::memory_order_relaxed);
+    if (blockPeakObservedForcedInductionPressurePa
+            > maxObservedForcedInductionPressurePa_.load(
+                std::memory_order_relaxed)) {
+        maxObservedForcedInductionPressurePa_.store(
+            blockPeakObservedForcedInductionPressurePa,
+            std::memory_order_relaxed);
+    }
     if (legacySamplesThisBlock != 0)
         legacyPathSamples_.fetch_add(legacySamplesThisBlock, std::memory_order_relaxed);
     if (invalidBoundarySamplesThisBlock != 0)

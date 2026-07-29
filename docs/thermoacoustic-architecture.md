@@ -858,6 +858,13 @@ proportionnellement à leurs aires effectives ; il n'est jamais compté deux foi
 Les grandeurs de télémétrie sont lissées à cadence audio afin que les mises à
 jour du thread physique ne deviennent pas une modulation à 240 Hz.
 
+Le filtre différentiel de chaque bruit calcule aussi sa variance analytique :
+sa sortie est normalisée à un RMS unitaire avant d’être multipliée par la
+pression RMS issue de la puissance. L’ancien code compensait le bruit uniforme
+mais pas la perte du filtre, puis appliquait une pression de pic prévue pour un
+sinus. La correction et les A/B sont dans
+[`audio-lot4-fi-broadband-power-2026-07-29.md`](audio-lot4-fi-broadband-power-2026-07-29.md).
+
 La dump valve n'est plus une enveloppe déclenchée par une fermeture de pédale.
 Le solveur l'ouvre lorsque le rapport de pression entre le réservoir de sortie
 compresseur et le collecteur dépasse le seuil configuré ; son débit est calculé

@@ -64,6 +64,8 @@ bool enableExhaustJetNoise = true;
 // Same-binary null for the V/flat structural coordinate correction. Production
 // follows each bank's explicit cylinder_ids ordering.
 bool enableStructuralBankTopologyParticipation = true;
+// Same-binary null for the broadband FI filter-power correction.
+bool enableForcedInductionBroadbandPowerNormalisation = true;
 bool retainRenderedAudioForComparison = false;
 // Offline oracle only. Large engines are not expected to meet realtime when the
 // complete nonlinear network is advanced on every mechanical substep.
@@ -258,6 +260,7 @@ struct Metrics {
     float maxExhaustJetNoisePressurePa {};
     float maxIntakePressurePa {};
     float maxStructuralPressurePa {};
+    float maxForcedInductionPressurePa {};
     AcousticIntakeNetwork::Diagnostics intakeDiagnostics {};
     double observerDistanceM { 1.0 };
     // Which path produced the audio. A physical path that never activated would
@@ -547,6 +550,8 @@ Metrics renderEngine(const EngineConfig& baseConfig, const WavData& ir,
     renderer.setOutletJetNoiseEnabled(enableExhaustJetNoise);
     renderer.setStructuralBankTopologyParticipationEnabled(
         enableStructuralBankTopologyParticipation);
+    renderer.setForcedInductionBroadbandPowerNormalisationEnabled(
+        enableForcedInductionBroadbandPowerNormalisation);
     if (!ir.samples.empty()) renderer.setImpulseResponse(ir.samples, ir.sampleRate, 0);
     renderer.prepare(audioRate, samplesPerStep);
     // Let the convolver's background IR load settle before rendering.
@@ -745,6 +750,8 @@ Metrics renderEngine(const EngineConfig& baseConfig, const WavData& ir,
         renderer.maxObservedExhaustJetNoisePressurePa();
     m.maxIntakePressurePa = renderer.maxObservedIntakePressurePa();
     m.maxStructuralPressurePa = renderer.maxObservedStructuralPressurePa();
+    m.maxForcedInductionPressurePa =
+        renderer.maxObservedForcedInductionPressurePa();
     m.intakeDiagnostics = renderer.intakeNetworkDiagnostics();
     const auto microphoneDistance = [](const AcousticPoint3M& point) {
         return std::sqrt(point.x * point.x + point.y * point.y
@@ -862,6 +869,8 @@ Metrics renderEngine(const EngineConfig& baseConfig, const WavData& ir,
               << m.commandedTransitionSteps.transitionToBackgroundRatio
               << " layerPa=" << std::setprecision(1) << m.maxExhaustPressurePa
               << '/' << m.maxIntakePressurePa << '/' << m.maxStructuralPressurePa
+              << " fiPa=" << std::setprecision(4)
+              << m.maxForcedInductionPressurePa
               << " jetPa=" << std::setprecision(4)
               << m.maxExhaustJetNoisePressurePa
               << " intakeStagesPa=" << m.intakeDiagnostics.sourcePressurePa
@@ -1570,6 +1579,7 @@ int main(int argc, char** argv) {
     std::string stemFilter;
     std::string exhaustJetComparisonFilter;
     std::string structuralBankComparisonFilter;
+    std::string forcedInductionPowerComparisonFilter;
     std::string couplingComparisonFilter;
     std::string junctionComparisonFilter;
     std::optional<std::size_t> intakeWorkers;
@@ -1592,6 +1602,8 @@ int main(int argc, char** argv) {
             exhaustJetComparisonFilter = argv[++i];
         else if (a == "--structural-bank-comparison" && i + 1 < argc)
             structuralBankComparisonFilter = argv[++i];
+        else if (a == "--forced-induction-power-comparison" && i + 1 < argc)
+            forcedInductionPowerComparisonFilter = argv[++i];
         else if (a == "--coupling-comparison" && i + 1 < argc)
             couplingComparisonFilter = argv[++i];
         else if (a == "--junction-comparison" && i + 1 < argc)
@@ -1856,6 +1868,89 @@ int main(int argc, char** argv) {
         if (!isolated)
             std::cerr << "FAIL: explicit bank topology did not produce a "
                          "bounded structural difference\n";
+        return valid(baseline) && valid(candidate) && isolated ? 0 : 1;
+    }
+
+    if (!forcedInductionPowerComparisonFilter.empty()) {
+        const auto catalog = loadEngineCatalog(
+            std::filesystem::path(ENGINELAB_CATALOG_ROOT));
+        const auto selected = std::find_if(
+            catalog.entries.begin(), catalog.entries.end(),
+            [&forcedInductionPowerComparisonFilter](const auto& entry) {
+                return entry.config.name.find(
+                    forcedInductionPowerComparisonFilter)
+                    != std::string::npos;
+            });
+        if (selected == catalog.entries.end()) {
+            std::cerr << "FAIL: no catalogue engine matches FI-power "
+                         "comparison '" << forcedInductionPowerComparisonFilter
+                      << "'\n";
+            return 2;
+        }
+        std::cout << "\n--- Forced-induction broadband power A/B ---\n";
+        retainRenderedAudioForComparison = true;
+        enableForcedInductionBroadbandPowerNormalisation = false;
+        const auto baseline = renderEngine(
+            selected->config, ir, outDir / "unnormalised-band", 4.0, true);
+        enableForcedInductionBroadbandPowerNormalisation = true;
+        const auto candidate = renderEngine(
+            selected->config, ir, outDir / "power-normalised-band", 4.0, true);
+        retainRenderedAudioForComparison = false;
+        const auto similarity = cosineSimilarity(baseline, candidate);
+        const auto comparisonSamples = std::min(
+            baseline.comparisonAudioLeft.size(),
+            candidate.comparisonAudioLeft.size());
+        auto differenceSquareSum = 0.0;
+        auto baselineSquareSum = 0.0;
+        auto differencePeak = 0.0;
+        for (std::size_t sample = 0; sample < comparisonSamples; ++sample) {
+            const auto reference = static_cast<double>(
+                baseline.comparisonAudioLeft[sample]);
+            const auto difference = static_cast<double>(
+                candidate.comparisonAudioLeft[sample]) - reference;
+            differenceSquareSum += difference * difference;
+            baselineSquareSum += reference * reference;
+            differencePeak = std::max(
+                differencePeak, std::abs(difference));
+        }
+        const auto differenceRms = comparisonSamples > 0
+            ? std::sqrt(differenceSquareSum
+                / static_cast<double>(comparisonSamples)) : 0.0;
+        const auto relativeDifference = baselineSquareSum > 0.0
+            ? std::sqrt(differenceSquareSum / baselineSquareSum) : 0.0;
+        std::cout << std::fixed << std::setprecision(6)
+                  << "  spectral cosine unnormalised/power-normalised="
+                  << similarity << '\n'
+                  << "  RMS left unnormalised/power-normalised="
+                  << baseline.left.window.rms << '/'
+                  << candidate.left.window.rms << '\n'
+                  << "  observed FI peak Pa unnormalised/power-normalised="
+                  << baseline.maxForcedInductionPressurePa << '/'
+                  << candidate.maxForcedInductionPressurePa << '\n'
+                  << "  waveform difference RMS/relative/peak="
+                  << differenceRms << '/' << relativeDifference << '/'
+                  << differencePeak << '\n';
+        const auto valid = [](const Metrics& measurement) {
+            return measurement.left.scan.finite
+                && measurement.right.scan.finite
+                && measurement.physicalActive
+                && measurement.compiledTopologyActive
+                && measurement.forcedInductionAcousticsActive
+                && measurement.legacyPathSamples == 0
+                && measurement.invalidBoundarySamples == 0
+                && measurement.droppedPressureSamples == 0
+                && measurement.levelLimitedSamples == 0
+                && measurement.maxPreLimiterMagnitude < 0.82F;
+        };
+        const auto isolated = baseline.maxForcedInductionPressurePa > 0.0F
+            && candidate.maxForcedInductionPressurePa
+                > baseline.maxForcedInductionPressurePa
+            && relativeDifference >= 0.0001
+            && relativeDifference <= 0.50
+            && differencePeak < 0.50;
+        if (!isolated)
+            std::cerr << "FAIL: broadband power normalisation did not produce "
+                         "a bounded FI-only difference\n";
         return valid(baseline) && valid(candidate) && isolated ? 0 : 1;
     }
 
