@@ -67,14 +67,25 @@ de couple et sans modifier les six autres familles.
 | Yamaha CP4 | 111,1 / 111 Nm | +0,090 % | 119,4 / 118 kW | +1,216 % | PASS |
 | VW EA288 | 348,9 / 320 Nm | +9,027 % | 111,7 / 110 kW | +1,535 % | PASS |
 
-Les 14/14 points respectent l'enveloppe indépendante de ±15 % et les 14/14
-fenêtres sont déclarées `PASS`. Le log brut de cette exécution est
-`out/validation/catalog-reference-stable-post-calibration-2026-07-29.log`
+Le gate a ensuite été étendu à cinq variantes dont la géométrie et les chiffres
+constructeur sont traçables :
+
+| Famille ajoutée | couple simulé / référence | erreur | puissance simulée / référence | erreur | tenue |
+|---|---:|---:|---:|---:|---|
+| Subaru EJ257 | 364,8 / 393 Nm | -7,184 % | 198,9 / 231 kW | -13,888 % | PASS |
+| Audi EA855 Evo Sport | 437,0 / 500 Nm | -12,604 % | 253,3 / 294 kW | -13,853 % | PASS |
+| Suzuki GSX1300R 1999 | 147,2 / 138,2 Nm | +6,487 % | 143,7 / 128,7 kW | +11,690 % | PASS |
+| Harley-Davidson 117 Classic | 171,5 / 162,7 Nm | +5,409 % | 81,1 / 73 kW | +11,029 % | PASS |
+| Porsche 964 Carrera 2 | 344,0 / 310 Nm | +10,958 % | 159,6 / 184 kW | -13,270 % | PASS |
+
+Les **24/24** points respectent l'enveloppe indépendante de ±15 % et les
+**24/24** fenêtres sont déclarées `PASS`. Le log brut de cette exécution est
+`out/validation/catalog-reference-24-point-2026-07-29.log`
 (artefact local ignoré par Git).
 
 ## Tests non vacuitaires
 
-- `EngineLab.CatalogReference` échoue si une référence sort de ±15 % **ou** si
+- `EngineLab.CatalogReference` échoue si l'un des 24 points sort de ±15 % **ou** si
   la consigne n'est qu'une moyenne oscillante.
 - `EngineLab.IntakeTuning` et `EngineLab.GasExchange` valident maintenant la
   fenêtre filtrée complète et continuent d'imprimer l'ondulation brute.

@@ -31,6 +31,10 @@ engine:
       - { rpm: 3600, advance_deg: 29 }
       - { rpm: 5000, advance_deg: 30 }
       - { rpm: 5900, advance_deg: 27 }
+  # Effective large-chamber flame-speed closure, anchored to the SAE J1349
+  # torque and power of the matching 117 Classic bore/stroke variant.
+  combustion_calibration:
+    chamber_turbulence_intensity_ratio: 0.50
   uses:
     fuel: pump_gasoline_95
     injection: sequential_port

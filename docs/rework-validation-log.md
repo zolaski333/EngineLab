@@ -13,9 +13,11 @@ l'ondulation brute du vilebrequin de la vitesse d'arbre filtrée utilisée pour
 valider la tenue. L'ancien contrôleur atteignait jusqu'à 29,280 % d'excursion et
 12,527 % de dérive tout en publiant une moyenne proche de la consigne.
 
-Après correction et réancrage local du CP3, les 14 fenêtres constructeur sont
-stables et les 14 valeurs restent dans l'enveloppe ±15 %. Protocole, table
-complète et preuve de non-vacuité :
+Après correction et réancrage local du CP3, le gate initial est stable. Il a
+ensuite été étendu aux EJ257, Audi EA855, Hayabusa 1999, Milwaukee-Eight 117 et
+Porsche 964 : les **24 fenêtres** constructeur sont stables et les **24
+valeurs** restent dans l'enveloppe ±15 %. Protocole, table complète et preuve
+de non-vacuité :
 [`dyno-hold-validation-2026-07-29.md`](dyno-hold-validation-2026-07-29.md).
 
 All quoted executable results use the MSVC Release build in

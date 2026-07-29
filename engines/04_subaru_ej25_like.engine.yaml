@@ -28,12 +28,14 @@ engine:
   forced_induction:
     enabled: true
     type: turbocharger
-    pressure_ratio: 1.72
+    # WRX STI brochure: 16.2 psi maximum gauge boost, i.e. about 2.10
+    # absolute pressure ratio at standard ambient pressure.
+    pressure_ratio: 2.10
     full_boost_rpm: 3000
     compressor_efficiency: 0.70
     turbine_efficiency: 0.69
     shaft_inertia_kg_m2: 0.00011
-    wastegate_pressure_ratio: 1.68
+    wastegate_pressure_ratio: 2.05
     charge_temperature_rise_c: 46
     # Family-level acoustic estimates; replace with measured turbo geometry.
     compressor_blade_count: 6
@@ -52,9 +54,13 @@ engine:
       - { rpm: 0, advance_deg: 7 }
       - { rpm: 1200, advance_deg: 12 }
       - { rpm: 2400, advance_deg: 16 }
-      - { rpm: 3400, advance_deg: 12 }
-      - { rpm: 5200, advance_deg: 16 }
-      - { rpm: 6800, advance_deg: 14 }
+      - { rpm: 3400, advance_deg: 15 }
+      - { rpm: 5200, advance_deg: 20 }
+      - { rpm: 6800, advance_deg: 18 }
+  # Effective high-boost pent-roof tumble. This is a flame-speed calibration,
+  # not an output multiplier.
+  combustion_calibration:
+    chamber_turbulence_intensity_ratio: 1.50
   uses:
     injection: sequential_port
     camshafts: turbo_street

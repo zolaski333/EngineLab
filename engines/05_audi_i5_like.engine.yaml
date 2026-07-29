@@ -27,12 +27,14 @@ engine:
   forced_induction:
     enabled: true
     type: turbocharger
-    pressure_ratio: 1.80
+    # Audi publishes 1.5 bar relative / 2.5 bar absolute maximum boost for
+    # the EA855 Evo Sport represented by this bore and stroke.
+    pressure_ratio: 2.50
     full_boost_rpm: 3200
     compressor_efficiency: 0.73
     turbine_efficiency: 0.71
     shaft_inertia_kg_m2: 0.00013
-    wastegate_pressure_ratio: 1.76
+    wastegate_pressure_ratio: 2.45
     charge_temperature_rise_c: 43
     # Family-level acoustic estimates; replace with measured turbo geometry.
     compressor_blade_count: 7
@@ -54,7 +56,12 @@ engine:
       - { rpm: 3400, advance_deg: 13 }
       - { rpm: 5600, advance_deg: 18 }
       - { rpm: 7300, advance_deg: 16 }
+  combustion_calibration:
+    chamber_turbulence_intensity_ratio: 1.50
   uses:
+    # The real EA855 Evo combines direct and manifold injection. EngineLab
+    # currently selects one topology, so retain the manifold branch rather than
+    # pretending the direct-only preset represents both systems.
     injection: sequential_port
     camshafts: turbo_street
     exhaust: turbo_downpipe

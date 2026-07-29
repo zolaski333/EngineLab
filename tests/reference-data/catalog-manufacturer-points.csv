@@ -13,3 +13,13 @@ LS3-like,torque_nm,4600,575.0,0.15,GM LS3 rated specification
 LS3-like,power_kw,5900,321.0,0.15,GM LS3 rated specification
 2JZ-GTE-like,torque_nm,4000,427.0,0.15,Toyota 2JZ-GTE export rated specification
 2JZ-GTE-like,power_kw,5600,239.0,0.15,Toyota 2JZ-GTE export rated specification
+EJ25-like,torque_nm,4000,393.0,0.15,Subaru 2021 WRX STI EJ257 rated specification
+EJ25-like,power_kw,6000,231.0,0.15,Subaru 2021 WRX STI EJ257 rated specification
+Audi I5-like,torque_nm,4000,500.0,0.15,Audi RS 3 2.5 TFSI rated specification
+Audi I5-like,power_kw,5600,294.0,0.15,Audi RS 3 2.5 TFSI rated specification
+Hayabusa-like,torque_nm,7000,138.2,0.15,Suzuki 1999 GSX1300R rated specification
+Hayabusa-like,power_kw,9800,128.7,0.15,Suzuki 1999 GSX1300R rated specification
+Big Twin-like,torque_nm,2500,162.7,0.15,Harley-Davidson Milwaukee-Eight 117 Classic J1349 specification
+Big Twin-like,power_kw,4600,73.0,0.15,Harley-Davidson Milwaukee-Eight 117 Classic J1349 specification
+Aircooled-like,torque_nm,4800,310.0,0.15,Porsche 911 964 Carrera 2 rated specification
+Aircooled-like,power_kw,6100,184.0,0.15,Porsche 911 964 Carrera 2 rated specification
