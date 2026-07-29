@@ -20,8 +20,11 @@ contexte de la session précédente.
 > **État final de cette reprise.** La liste de priorités plus bas est conservée
 > comme historique, mais elle n'est plus une liste de tâches. La production
 > utilise maintenant un maillage admission ciblé à **95 mm**, **2 workers**
-> jusqu'au V8 et **3 workers** à partir de 10 cylindres. Sur le dernier catalogue
-> complet de ce lot, le pire moteur est le Merlin à **1,113×** le temps réel.
+> jusqu'au V8 et **3 workers** à partir de 10 cylindres. Le lot de politique
+> mesurait le Merlin à 1,113× ; sur l'exact binaire final, le meilleur de six
+> passages vaut **1,147×**. Un passage plein à 1,082× est conservé comme preuve
+> de charge externe : `CompatTelRunner` occupait un cœur et le CP2 témoin
+> chutait simultanément de 2,574× à 1,894×.
 > Le maillage 95 mm s'écarte au plus de **4,460 %** de l'oracle 30 mm/RK2 ;
 > même la protection thermique 600 µs reste à **4,916 %**. Le candidat 120 mm a
 > été refusé à 16,580 %. Le rendu audio complet passe avec le chemin

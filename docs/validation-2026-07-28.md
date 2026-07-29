@@ -460,24 +460,47 @@ EngineLabRealtimeBudgetHarness --catalog-root . --relative-rpm 0.90 \
 
 | Moteur | Cible | Régime moyen | Workers | Facteur |
 |---|---:|---:|---:|---:|
-| K20A-like 2.0 I4 VTEC | 7 740 | 7 734 | 2 | 1,419 |
-| 2JZ-GTE-like 3.0 I6 Turbo | 6 300 | 6 298 | 2 | 1,642 |
-| LS3-like 6.2 Crossplane V8 | 5 940 | 5 942 | 2 | 1,121 |
-| EJ25-like 2.5 Flat-4 Turbo | 6 120 | 6 114 | 2 | 1,890 |
-| Audi I5-like 2.5 Turbo | 6 390 | 6 387 | 2 | 1,744 |
-| Hayabusa-like 1.3 I4 | 10 080 | 10 072 | 2 | 1,392 |
-| Big Twin-like 1.9 V2 | 5 040 | 5 038 | 0 | 3,511 |
-| Merlin-like 19.8 V12 Scaled | 2 880 | 2 883 | 3 | **1,113** |
-| Aircooled-like 3.6 Flat-6 | 6 660 | 6 661 | 2 | 1,401 |
-| Radial-like 6.5 R5 | 2 160 | 2 160 | 2 | 2,012 |
-| Yamaha CP2 MT-07-like 689 Twin | 9 000 | 8 987 | 0 | 2,546 |
-| Yamaha CP3 MT-09-like 890 Triple | 9 900 | 9 902 | 2 | 1,781 |
-| Yamaha CP4 MT-10-like 998 Crossplane I4 | 10 800 | 10 802 | 2 | 1,308 |
-| VW EA288-like 2.0 TDI I4 | 4 500 | 4 482 | 2 | 2,339 |
+| K20A-like 2.0 I4 VTEC | 7 740 | 7 734 | 2 | 1,475 |
+| 2JZ-GTE-like 3.0 I6 Turbo | 6 300 | 6 298 | 2 | 1,739 |
+| LS3-like 6.2 Crossplane V8 | 5 940 | 5 942 | 2 | 1,140 |
+| EJ25-like 2.5 Flat-4 Turbo | 6 120 | 6 114 | 2 | 1,921 |
+| Audi I5-like 2.5 Turbo | 6 390 | 6 387 | 2 | 1,836 |
+| Hayabusa-like 1.3 I4 | 10 080 | 10 074 | 2 | 1,380 |
+| Big Twin-like 1.9 V2 | 5 040 | 5 037 | 0 | 3,540 |
+| Merlin-like 19.8 V12 Scaled | 2 880 | 2 881 | 3 | **1,082** |
+| Aircooled-like 3.6 Flat-6 | 6 660 | 6 660 | 2 | 1,419 |
+| Radial-like 6.5 R5 | 2 160 | 2 160 | 2 | 2,040 |
+| Yamaha CP2 MT-07-like 689 Twin | 9 000 | 8 987 | 0 | 2,524 |
+| Yamaha CP3 MT-09-like 890 Triple | 9 900 | 9 892 | 2 | 1,829 |
+| Yamaha CP4 MT-10-like 998 Crossplane I4 | 10 800 | 10 800 | 2 | 1,291 |
+| VW EA288-like 2.0 TDI I4 | 4 500 | 4 483 | 2 | 2,370 |
 
-Les 14 régimes sont tenus, aucun overrun n'est produit en `--free-run` et le
-pire facteur est 1,113× : **11,3 % de marge brute**, dans l'objectif 10–15 %
-mais pas au plafond de cette plage.
+Cette table est l'exact binaire final après correction du film carburant. Les
+14 régimes sont tenus, aucun overrun n'est produit et tout le catalogue reste
+au-dessus du temps réel. Elle a toutefois été contaminée par une tâche Windows
+externe : `CompatTelRunner` consommait environ un cœur, tandis que Chrome a
+atteint plusieurs cœurs pendant le lot.
+
+Le contrôle obligatoire confirme que le facteur absolu de ce passage ne peut
+pas servir de référence intrinsèque. Dans le lot alterné suivant, sans aucune
+modification de code :
+
+| Mesure finale répétée | Six facteurs | Meilleur temps |
+|---|---|---:|
+| Merlin | 1,147 / 1,088 / 1,100 / 1,039 / 1,108 / 1,015 | **1,147** |
+| CP2 témoin zéro-worker | 2,574 / 2,432 / 2,497 / 2,198 / 2,378 / 1,894 | **2,574** |
+
+Le témoin s'effondre de 26 % au fil du lot, preuve directe d'interférence
+machine. Suivant la règle du brief — l'interférence ne peut qu'ajouter du temps,
+donc retenir le minimum de temps sur N essais — la capacité intrinsèque
+observée du V12 final est **1,147×**, soit 14,7 % de marge. La table 1,082× reste
+conservée parce qu'elle représente honnêtement l'application quand d'autres
+processus occupent déjà la machine ; le garde-fou de charge existe précisément
+pour ce cas.
+
+Logs : `realtime-catalog-release-final-2026-07-29.log` et
+`realtime-merlin-final-repeatability-filter-2026-07-29.log` sous
+`out/validation/`.
 
 ### Son final et continuité de la télémétrie
 
@@ -489,14 +512,16 @@ de contrôle est **0,642**.
 
 | Chemin applicatif | Workers | Callback p95 | Budget | Perte/fallback |
 |---|---:|---:|---:|---:|
-| K20A | 2 | 1 774,9 µs | 5 333,3 µs | 0 / 0 |
-| 2JZ | 2 | 2 114,6 µs | 5 333,3 µs | 0 / 0 |
-| LS3 | 2 | 2 620,7 µs | 5 333,3 µs | 0 / 0 |
-| Merlin | 3 | 3 470,9 µs | 5 333,3 µs | 0 / 0 |
+| K20A | 2 | 1 837,3 µs | 5 333,3 µs | 0 / 0 |
+| 2JZ | 2 | 2 268,2 µs | 5 333,3 µs | 0 / 0 |
+| LS3 | 2 | 2 887,5 µs | 5 333,3 µs | 0 / 0 |
+| Merlin | 3 | 3 662,0 µs | 5 333,3 µs | 0 / 0 |
 
-Le transitoire Big Twin passe 1 346 → 4 031 → 792 tr/min, toujours sans perte,
-événement tardif ni limiteur. Log :
-`out/validation/audio-render-final-2026-07-28.log`.
+Ce dernier rendu a volontairement subi la charge externe détectée ci-dessus :
+le garde-fou s'est activé sur K20, LS3 et Merlin, mais aucun échantillon ni
+paquet de pression n'a été perdu. Le transitoire Big Twin passe
+1 342 → 4 139 → 773 tr/min, toujours sans perte, événement tardif ni limiteur.
+Log : `out/validation/audio-render-release-final-2026-07-29.log`.
 
 ### Reprise après coupure de décélération
 
@@ -520,3 +545,26 @@ plus tardive, le trace compensé reste à 479 tr/min au même point et les porte
 Logs : `ctest-film-availability-2026-07-28.log`,
 `merlin-idle-trace-dfco150-2026-07-28.log` et
 `merlin-idle-trace-film-compensated-2026-07-28.log`.
+
+### Fermeture Release
+
+La build complète MSVC Release et la suite complète ont été relancées après le
+dernier correctif physique :
+
+```text
+cmake --build out/build/windows-vs2022 --config Release -- /m:1 /nr:false
+ctest --test-dir out/build/windows-vs2022 -C Release --output-on-failure
+```
+
+Résultat : **20/20 tests, zéro échec, 514,43 s**. Le test de rendu audio final
+séparé passe également sous charge externe. L'exécutable est resté vivant
+pendant cinq secondes en lancement caché, puis a été arrêté proprement.
+
+| Artefact | Octets | SHA-256 |
+|---|---:|---|
+| `build-release-final-2026-07-28.log` | 14 602 | `6B1DFEC17D7D0826DCE9E2143B6C80BB36A5C208DCC871296BE60B23DA628FA1` |
+| `ctest-release-final-2026-07-28.log` | 5 144 | `1FD022E3C8E0C37CCF5B9671DECD06D82E40BE1AD15774B739AA92090406A9DD` |
+| `EngineLab.exe` | 8 385 024 | `C3D60C1B6D5983A82CE4EFB992ADC76FDF133CB7DC9D520686A63A792E007295` |
+
+Le journal du smoke test est
+`out/validation/executable-smoke-final-2026-07-29.log`.

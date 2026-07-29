@@ -2557,8 +2557,11 @@ fermetures ultérieures définissent la production :
 2. **Pool 2/3.** Six passages par variante 2/3/4 donnent les moyennes
    LS3 1,1160/1,1045/1,0805 et Merlin 1,1095/1,1222/1,1032 ; le Big Twin témoin
    reste 3,5168/3,5395/3,5238. La production emploie donc deux workers jusqu'à
-   neuf cylindres et trois à partir de dix. Le catalogue final est borné par le
-   Merlin à 1,113 fois le temps réel.
+   neuf cylindres et trois à partir de dix. Le lot de politique est borné par
+   le Merlin à 1,113 fois le temps réel. Sur l'exact binaire final, le meilleur
+   des six passages vaut 1,147 ; le passage plein à 1,082 est contaminé par
+   `CompatTelRunner`, ce que prouve le CP2 témoin chutant simultanément de
+   2,574 à 1,894.
 3. **Pulse port après DFCO.** Le modèle connaissait la part du film existant
    qui s'évaporerait avant l'étincelle, mais supposait à tort que toute la masse
    liquide d'un pulse neuf serait disponible. Il divise maintenant le déficit

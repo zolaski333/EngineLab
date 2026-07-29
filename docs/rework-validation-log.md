@@ -656,9 +656,14 @@ Les overrides explicites de banc restent prioritaires. Elle évite de
 souscrire quatre ou cinq threads de calcul admission sur une machine qui doit
 également servir le thread physique, l'audio et l'interface.
 
-Le catalogue production final de ce lot est entièrement au-dessus du temps
-réel : pire facteur **1,113×** sur le Merlin, puis 1,121× sur le LS3, sans
-overrun en mode capacité. Il s'agit de 11,3 % de marge brute, pas de 15 %.
+Le catalogue production de ce lot est entièrement au-dessus du temps réel :
+pire facteur **1,113×** sur le Merlin, puis 1,121× sur le LS3, sans overrun en
+mode capacité. Après le dernier correctif de film, une tâche Windows
+`CompatTelRunner` a contaminé la répétition pleine (Merlin 1,082×), mais le lot
+alterné final trouve un meilleur temps à **1,147×** tandis que le CP2 témoin
+zéro-worker s'effondre de 2,574× à 1,894×. Selon le protocole imposé, la
+capacité intrinsèque observée est donc 1,147× ; 1,082× documente honnêtement le
+cas où d'autres processus occupent déjà la machine.
 
 ### Validation audio finale
 
@@ -666,10 +671,10 @@ Le rendu complet conserve le réseau physique, la topologie complète, la
 structure modale et l'admission ondulatoire sur les 14 moteurs. Aucun moteur ne
 produit de fallback, dropout de frontière, pression perdue, événement tardif
 ou échantillon limité. Le maximum de similarité spectrale tombe à **0,642**.
-Dans le chemin applicatif réel, le p95 callback vaut 1 774,9 µs sur K20,
-2 114,6 µs sur 2JZ, 2 620,7 µs sur LS3 et 3 470,9 µs sur Merlin pour un budget
-de 5 333,3 µs. Le garde-fou s'active sur les deux cas lourds sans décimer la
-télémétrie acoustique.
+Dans le chemin applicatif final exécuté sous cette charge externe, le p95
+callback vaut 1 837,3 µs sur K20, 2 268,2 µs sur 2JZ, 2 887,5 µs sur LS3 et
+3 662,0 µs sur Merlin pour un budget de 5 333,3 µs. Le garde-fou s'active sur
+K20, LS3 et Merlin sans décimer la télémétrie acoustique.
 
 ## 2026-07-28 — Reprise DFCO : bilan du film neuf
 
@@ -699,3 +704,8 @@ reste encore à 479 tr/min au point où l'expérience non compensée était déj
 `EngineLab.IdleStabilityRegression` sur les 14 moteurs et
 `EngineLab.CatalogReference` passent ensemble ; aucune calibration Merlin n'a
 été ajoutée.
+
+La fermeture complète donne **20/20 tests en 514,43 s**, un rendu audio final
+séparé vert sous charge, puis un lancement caché de `EngineLab.exe` resté vivant
+cinq secondes. Les hash et journaux sont consignés dans
+`docs/validation-2026-07-28.md`.
