@@ -5,6 +5,19 @@ It records measurements as well as successful changes. Failed hypotheses are
 kept because repeating an attractive but disproved fix wastes more time than
 documenting it.
 
+## 2026-07-29 — points de banc réellement stabilisés
+
+Le contrôleur de banc normalisé du runtime et des harnais a été remplacé par un
+absorbeur commun exprimé en couple. Les sorties distinguent maintenant
+l'ondulation brute du vilebrequin de la vitesse d'arbre filtrée utilisée pour
+valider la tenue. L'ancien contrôleur atteignait jusqu'à 29,280 % d'excursion et
+12,527 % de dérive tout en publiant une moyenne proche de la consigne.
+
+Après correction et réancrage local du CP3, les 14 fenêtres constructeur sont
+stables et les 14 valeurs restent dans l'enveloppe ±15 %. Protocole, table
+complète et preuve de non-vacuité :
+[`dyno-hold-validation-2026-07-29.md`](dyno-hold-validation-2026-07-29.md).
+
 All quoted executable results use the MSVC Release build in
 `out/build/windows-vs2022` unless stated otherwise. Thresholds were not relaxed
 to make a change pass.

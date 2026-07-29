@@ -6,6 +6,7 @@
 #include <enginelab/exhaust/ExhaustGraph.hpp>
 #include <enginelab/foundation/SpscQueue.hpp>
 #include <enginelab/physics/SimplifiedGasolinePhysics.hpp>
+#include <enginelab/simulation/DynoAbsorberController.hpp>
 #include <enginelab/simulation/EngineSimulator.hpp>
 #include <enginelab/runtime/DrivelineModel.hpp>
 #include <enginelab/runtime/RealtimeLoadGovernor.hpp>
@@ -265,6 +266,8 @@ private:
     FourStrokeEventGenerator eventGenerator_;
     ExhaustGraph exhaust_;
     EngineSimulator simulator_;
+    DynoAbsorberController dynoAbsorber_;
+    DynoAbsorberOutput dynoAbsorberOutput_;
     DrivelineModel driveline_;
     DrivelineOutput drivelineOutput_;
     FiringEventQueue eventQueue_;
@@ -309,10 +312,6 @@ private:
     double dynoTargetRpm_ { 0.0 };
     double dynoStableElapsed_ { 0.0 };
     double dynoBrakeTorqueNm_ { 0.0 };
-    double dynoControllerIntegralNm_ { 0.0 };
-    double dynoFeedForwardTorqueNm_ { 0.0 };
-    double dynoFilteredRpm_ { 0.0 };
-    double dynoFilteredAccelerationRpmPerSecond_ { 0.0 };
     double dynoTorqueAccumulator_ { 0.0 };
     double dynoPowerAccumulator_ { 0.0 };
     std::uint32_t dynoSampleCount_ { 0 };

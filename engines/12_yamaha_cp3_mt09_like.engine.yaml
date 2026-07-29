@@ -41,10 +41,13 @@ engine:
       - { rpm: 7000, advance_deg: 35 }
       - { rpm: 10000, advance_deg: 33 }
       - { rpm: 11500, advance_deg: 30 }
-  # The CP3 pent-roof head deliberately generates tumble; this is a chamber
-  # property, separate from the gasoline's laminar flame-speed calibration.
+  # Effective chamber-turbulence closure, calibrated on the two rated CP3
+  # points with a genuinely settled torque-domain absorber. The previous 1.25
+  # value had been fitted through an oscillating normalized-load controller:
+  # once the shaft was held, it produced 116.9 Nm at 7000 rpm. This parameter
+  # still acts through turbulent flame speed, never as a torque multiplier.
   combustion_calibration:
-    chamber_turbulence_intensity_ratio: 1.25
+    chamber_turbulence_intensity_ratio: 0.80
   uses:
     injection: high_flow_port
     exhaust: motorcycle_4_2_1

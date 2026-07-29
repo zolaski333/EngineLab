@@ -17,6 +17,7 @@
 #include <enginelab/exhaust/ExhaustGraph.hpp>
 #include <enginelab/foundation/EngineTypes.hpp>
 #include <enginelab/physics/SimplifiedGasolinePhysics.hpp>
+#include <enginelab/simulation/DynoAbsorberController.hpp>
 #include <enginelab/simulation/EngineSimulator.hpp>
 
 #include <algorithm>
@@ -27,18 +28,22 @@
 #include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <limits>
 #include <sstream>
 #include <string>
 #include <string_view>
 #include <vector>
 
 namespace {
-constexpr std::array<std::string_view, 21> dynoColumnNames {
+constexpr std::array<std::string_view, 32> dynoColumnNames {
     "engine", "cylinders", "target_rpm", "actual_rpm", "torque_nm",
     "power_kw", "power_ps", "ve", "lambda", "imep_bar", "peak_cyl_bar",
     "egt_c", "map_kpa", "air_mg", "fuel_g_s", "pmep_bar",
     "gross_imep_bar", "exh_kpa", "delivered_ve",
     "exhaust_stroke_mep_bar", "intake_stroke_mep_bar",
+    "rpm_min", "rpm_max", "rpm_stddev", "rpm_drift",
+    "held_rpm_min", "held_rpm_max", "held_rpm_stddev", "held_rpm_drift",
+    "brake_nm_mean", "brake_nm_min", "brake_nm_max",
 };
 
 struct Sample final {
@@ -60,6 +65,19 @@ struct Sample final {
     double exhaustKpa {};
     double airMgPerCycle {};
     double fuelGramsPerSecond {};
+    double minimumRpm {};
+    double maximumRpm {};
+    double rpmStandardDeviation {};
+    /** Second-half mean minus first-half mean over the sample window. */
+    double rpmDrift {};
+    double minimumHeldRpm {};
+    double maximumHeldRpm {};
+    double heldRpmStandardDeviation {};
+    /** Filtered second-half mean minus first-half mean. */
+    double heldRpmDrift {};
+    double meanBrakeTorqueNm {};
+    double minimumBrakeTorqueNm {};
+    double maximumBrakeTorqueNm {};
 };
 
 [[nodiscard]] std::array<double, dynoColumnNames.size() - 1U> numericColumns(
@@ -73,6 +91,12 @@ struct Sample final {
         sample.grossImepBar, sample.exhaustKpa, sample.deliveredVe,
         sample.exhaustStrokeMepBar,
         sample.pmepBar - sample.exhaustStrokeMepBar,
+        sample.minimumRpm, sample.maximumRpm,
+        sample.rpmStandardDeviation, sample.rpmDrift,
+        sample.minimumHeldRpm, sample.maximumHeldRpm,
+        sample.heldRpmStandardDeviation, sample.heldRpmDrift,
+        sample.meanBrakeTorqueNm, sample.minimumBrakeTorqueNm,
+        sample.maximumBrakeTorqueNm,
     };
 }
 
@@ -164,12 +188,16 @@ std::vector<ReferencePoint> readReferencePoints(
 
 // Hold `targetRpm` under a wide-open-throttle absorber and average the steady
 // state. Identical controller to PhysicsPerfHarness::measurePoint.
-Sample holdPoint(enginelab::EngineSimulator& simulator, double targetRpm,
-                 double settleSeconds, double sampleSeconds) {
+Sample holdPoint(enginelab::EngineSimulator& simulator,
+                 const enginelab::EngineConfig& config,
+                 double targetRpm, double settleSeconds,
+                 double sampleSeconds) {
     constexpr double dt = 1.0 / 240.0;
     const auto settleSteps = static_cast<int>(settleSeconds / dt);
     const auto sampleSteps = static_cast<int>(sampleSeconds / dt);
-    auto dynoIntegral = 0.0;
+    enginelab::DynoAbsorberController absorber(config);
+    absorber.reset(
+        simulator.state().rpm, simulator.state().torqueNm);
     auto n = 0.0;
     Sample acc {};
     auto peak = 0.0;
@@ -178,23 +206,60 @@ Sample holdPoint(enginelab::EngineSimulator& simulator, double targetRpm,
     auto airAcc = 0.0, fuelAcc = 0.0, rpmAcc = 0.0, torqueAcc = 0.0, powerAcc = 0.0;
     auto pmepAcc = 0.0, grossImepAcc = 0.0, exhaustAcc = 0.0, deliveredVeAcc = 0.0;
     auto exhStrokeMepAcc = 0.0;
+    auto rpmSquareAcc = 0.0;
+    auto minimumRpm = std::numeric_limits<double>::infinity();
+    auto maximumRpm = 0.0;
+    auto brakeTorqueAcc = 0.0;
+    auto minimumBrakeTorque = std::numeric_limits<double>::infinity();
+    auto maximumBrakeTorque = 0.0;
+    auto firstHalfRpmAcc = 0.0;
+    auto secondHalfRpmAcc = 0.0;
+    auto heldRpmAcc = 0.0;
+    auto heldRpmSquareAcc = 0.0;
+    auto minimumHeldRpm = std::numeric_limits<double>::infinity();
+    auto maximumHeldRpm = 0.0;
+    auto firstHalfHeldRpmAcc = 0.0;
+    auto secondHalfHeldRpmAcc = 0.0;
+    auto firstHalfCount = 0.0;
+    auto secondHalfCount = 0.0;
     for (int step = 0; step < settleSteps + sampleSteps; ++step) {
-        const auto speedError = (simulator.state().rpm - targetRpm) / std::max(1.0, targetRpm);
-        // Integral gain 12.0, not 1.20: at 1/240 s steps the old gain could not
-        // wind up inside a settle window, so above ~5000 rpm the engine drifted
-        // up to 7 % past the target and the top point was measured with the rev
-        // limiter cutting spark. See tests/GasExchangeTests.cpp for the
-        // measurement and docs/physics-audit.md.
-        dynoIntegral = std::clamp(dynoIntegral + speedError * dt * 12.0, 0.0, 1.0);
+        const auto absorberOutput = absorber.advance(
+            dt, targetRpm, simulator.state());
         enginelab::EngineControls controls;
         controls.ignitionEnabled = true;
         controls.starterEngaged = simulator.state().rpm < 550.0;
         controls.throttle = 1.0;
-        controls.load = std::clamp(dynoIntegral + speedError * 0.70, 0.0, 1.0);
+        controls.dynamometerTorqueNm =
+            absorberOutput.brakeTorqueNm;
         const auto frame = simulator.step(dt, controls);
         if (step >= settleSteps) {
+            const auto sampleIndex = step - settleSteps;
             n += 1.0;
             rpmAcc += frame.state.rpm;
+            rpmSquareAcc += frame.state.rpm * frame.state.rpm;
+            minimumRpm = std::min(minimumRpm, frame.state.rpm);
+            maximumRpm = std::max(maximumRpm, frame.state.rpm);
+            heldRpmAcc += absorberOutput.filteredRpm;
+            heldRpmSquareAcc += absorberOutput.filteredRpm
+                * absorberOutput.filteredRpm;
+            minimumHeldRpm = std::min(
+                minimumHeldRpm, absorberOutput.filteredRpm);
+            maximumHeldRpm = std::max(
+                maximumHeldRpm, absorberOutput.filteredRpm);
+            brakeTorqueAcc += controls.dynamometerTorqueNm;
+            minimumBrakeTorque = std::min(
+                minimumBrakeTorque, controls.dynamometerTorqueNm);
+            maximumBrakeTorque = std::max(
+                maximumBrakeTorque, controls.dynamometerTorqueNm);
+            if (sampleIndex < sampleSteps / 2) {
+                firstHalfRpmAcc += frame.state.rpm;
+                firstHalfHeldRpmAcc += absorberOutput.filteredRpm;
+                firstHalfCount += 1.0;
+            } else {
+                secondHalfRpmAcc += frame.state.rpm;
+                secondHalfHeldRpmAcc += absorberOutput.filteredRpm;
+                secondHalfCount += 1.0;
+            }
             torqueAcc += frame.state.cycleAveragedTorqueNm;
             powerAcc += frame.state.cycleAveragedPowerKw;
             veAcc += frame.state.volumetricEfficiency;
@@ -232,6 +297,26 @@ Sample holdPoint(enginelab::EngineSimulator& simulator, double targetRpm,
     acc.exhaustKpa = exhaustAcc / d;
     acc.airMgPerCycle = airAcc / d;
     acc.fuelGramsPerSecond = fuelAcc / d;
+    acc.minimumRpm = std::isfinite(minimumRpm)
+        ? minimumRpm : acc.actualRpm;
+    acc.maximumRpm = maximumRpm;
+    acc.rpmStandardDeviation = std::sqrt(std::max(
+        0.0, rpmSquareAcc / d - acc.actualRpm * acc.actualRpm));
+    acc.rpmDrift = secondHalfRpmAcc / std::max(1.0, secondHalfCount)
+        - firstHalfRpmAcc / std::max(1.0, firstHalfCount);
+    const auto meanHeldRpm = heldRpmAcc / d;
+    acc.minimumHeldRpm = std::isfinite(minimumHeldRpm)
+        ? minimumHeldRpm : meanHeldRpm;
+    acc.maximumHeldRpm = maximumHeldRpm;
+    acc.heldRpmStandardDeviation = std::sqrt(std::max(
+        0.0, heldRpmSquareAcc / d - meanHeldRpm * meanHeldRpm));
+    acc.heldRpmDrift =
+        secondHalfHeldRpmAcc / std::max(1.0, secondHalfCount)
+        - firstHalfHeldRpmAcc / std::max(1.0, firstHalfCount);
+    acc.meanBrakeTorqueNm = brakeTorqueAcc / d;
+    acc.minimumBrakeTorqueNm = std::isfinite(minimumBrakeTorque)
+        ? minimumBrakeTorque : acc.meanBrakeTorqueNm;
+    acc.maximumBrakeTorqueNm = maximumBrakeTorque;
     return acc;
 }
 
@@ -269,7 +354,8 @@ void sweepEngine(const enginelab::EngineConfig& baseConfig, double stepRpm,
     auto first = true;
     for (double target = startRpm; target <= maxRpm + 1.0; target += stepRpm) {
         // Longer settle for the first point (cold ramp), shorter warm-started.
-        const auto sample = holdPoint(simulator, target, first ? 3.0 : 2.0, 1.0);
+        const auto sample = holdPoint(
+            simulator, config, target, first ? 5.0 : 2.0, 1.0);
         first = false;
         writeRow(std::cout, config, target, sample);
     }
@@ -294,8 +380,10 @@ bool validateReferencePoints(const std::filesystem::path& catalogRoot,
     }
 
     auto passed = true;
-    std::cout << "engine,metric,target_rpm,actual_rpm,measured,reference,"
-                 "error_percent,tolerance_percent,source,result\n";
+    std::cout << "engine,metric,target_rpm,actual_rpm,raw_rpm_span_percent,"
+                 "held_rpm_span_percent,held_rpm_drift_percent,"
+                 "held_rpm_stddev,measured,reference,"
+                 "error_percent,tolerance_percent,hold_result,source,result\n";
     for (const auto& entry : catalog.entries) {
         if (!engineFilter.empty()
             && !containsCaseInsensitive(entry.config.name, engineFilter))
@@ -341,7 +429,8 @@ bool validateReferencePoints(const std::filesystem::path& catalogRoot,
                 continue;
             }
             const auto sample = holdPoint(
-                simulator, reference.targetRpm, first ? 3.0 : 2.0, 1.0);
+                simulator, config, reference.targetRpm,
+                first ? 5.0 : 2.0, 1.0);
             first = false;
             const auto measured = reference.metric == ReferenceMetric::torqueNm
                 ? sample.torqueNm : sample.powerKw;
@@ -350,16 +439,35 @@ bool validateReferencePoints(const std::filesystem::path& catalogRoot,
             const auto speedHeld = std::abs(
                 sample.actualRpm - reference.targetRpm)
                 <= reference.targetRpm * 0.02;
-            const auto pointPassed = speedHeld && std::isfinite(measured)
+            // A mean near target is not a held point. The old normalized-load
+            // PI produced means within 2% while CP3 swept 29.3% of target and
+            // CP4 swept 16.6%. Gate the filtered dyno shaft speed across the
+            // complete window; raw crank-speed ripple remains reported.
+            const auto holdStable = speedHeld
+                && sample.maximumHeldRpm - sample.minimumHeldRpm
+                    <= reference.targetRpm * 0.04
+                && std::abs(sample.heldRpmDrift)
+                    <= reference.targetRpm * 0.01
+                && sample.heldRpmStandardDeviation
+                    <= reference.targetRpm * 0.015;
+            const auto pointPassed = holdStable && std::isfinite(measured)
                 && std::abs(relativeError) <= reference.relativeTolerance;
             passed = passed && pointPassed;
             std::cout << std::quoted(config.name) << ','
                       << (reference.metric == ReferenceMetric::torqueNm
                             ? "torque_nm" : "power_kw")
                       << ',' << reference.targetRpm << ',' << sample.actualRpm
+                      << ',' << (sample.maximumRpm - sample.minimumRpm)
+                            / reference.targetRpm * 100.0
+                      << ',' << (sample.maximumHeldRpm - sample.minimumHeldRpm)
+                            / reference.targetRpm * 100.0
+                      << ',' << sample.heldRpmDrift
+                            / reference.targetRpm * 100.0
+                      << ',' << sample.heldRpmStandardDeviation
                       << ',' << measured << ',' << reference.expected
                       << ',' << relativeError * 100.0
                       << ',' << reference.relativeTolerance * 100.0
+                      << ',' << (holdStable ? "PASS" : "UNSETTLED")
                       << ',' << std::quoted(reference.source)
                       << ',' << (pointPassed ? "PASS" : "FAIL") << '\n';
         }

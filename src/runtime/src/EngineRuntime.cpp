@@ -117,7 +117,8 @@ EngineRuntime::EngineRuntime(EngineConfig config,
     : config_(normalised(std::move(config))), ecu_(std::move(calibrations)),
       exhaust_(ExhaustGraph::makeForEngine(config_)),
       simulator_(config_, ecu_, physics_, eventGenerator_, exhaust_,
-                 std::move(simulatorOptions)), driveline_(config_),
+                 std::move(simulatorOptions)), dynoAbsorber_(config_),
+      driveline_(config_),
       pressureQueue_(std::make_unique<CylinderPressureQueue>()) {
     simulator_.setPressureSamplingEnabled(true);
     audioState_.cylinderCount.store(static_cast<float>(config_.cylinders.size()), std::memory_order_relaxed);
@@ -375,10 +376,9 @@ void EngineRuntime::beginDynoSession() {
     dynoTargetRpm_ = nextSampleRpm_;
     dynoStableElapsed_ = 0.0;
     dynoBrakeTorqueNm_ = 0.0;
-    dynoControllerIntegralNm_ = 0.0;
-    dynoFeedForwardTorqueNm_ = 0.0;
-    dynoFilteredRpm_ = simulator_.state().rpm;
-    dynoFilteredAccelerationRpmPerSecond_ = 0.0;
+    dynoAbsorber_.reset(
+        simulator_.state().rpm, simulator_.state().torqueNm);
+    dynoAbsorberOutput_ = {};
     dynoTorqueAccumulator_ = 0.0;
     dynoPowerAccumulator_ = 0.0;
     dynoSampleCount_ = 0;
@@ -472,10 +472,10 @@ void EngineRuntime::run(std::stop_token stopToken) {
                 dynoTargetRpm_ = nextSampleRpm_;
                 dynoStableElapsed_ = 0.0;
                 dynoBrakeTorqueNm_ = 0.0;
-                dynoControllerIntegralNm_ = 0.0;
-                dynoFeedForwardTorqueNm_ = std::max(0.0, simulator_.state().torqueNm);
-                dynoFilteredRpm_ = simulator_.state().rpm;
-                dynoFilteredAccelerationRpmPerSecond_ = 0.0;
+                dynoAbsorber_.reset(
+                    simulator_.state().rpm,
+                    simulator_.state().torqueNm);
+                dynoAbsorberOutput_ = {};
                 dynoTorqueAccumulator_ = 0.0;
                 dynoPowerAccumulator_ = 0.0;
                 dynoSampleCount_ = 0;
@@ -485,75 +485,13 @@ void EngineRuntime::run(std::stop_token stopToken) {
             if (dynoSweeping_) {
                 dynoElapsed_ += baseStep.count();
                 dynoElapsed = dynoElapsed_;
-                const auto previousFilteredRpm = dynoFilteredRpm_;
-                // Control against cycle-scale speed rather than individual firing
-                // pulses.  A two-cylinder engine can otherwise look permanently
-                // unstable even when its mean speed is stationary.
-                dynoFilteredRpm_ += (simulator_.state().rpm - dynoFilteredRpm_)
-                    * (1.0 - std::exp(-baseStep.count() * 3.0));
-                const auto rawAcceleration = (dynoFilteredRpm_ - previousFilteredRpm)
-                    / baseStep.count();
-                dynoFilteredAccelerationRpmPerSecond_ +=
-                    (rawAcceleration - dynoFilteredAccelerationRpmPerSecond_)
-                    * (1.0 - std::exp(-baseStep.count() * 2.0));
                 if (dynoHoldEnabled_.load(std::memory_order_relaxed))
                     dynoTargetRpm_ = dynoHoldRpm_.load(std::memory_order_relaxed);
-                const auto error = dynoFilteredRpm_ - dynoTargetRpm_;
-                const auto displacementM3 = engineDisplacementLitres(config_) * 0.001;
-                // Controller scaling follows a strong naturally aspirated engine,
-                // while the absorber itself has four times that capacity. A dyno
-                // must be able to pull an engine below its torque peak; its limit
-                // is an equipment rating, not a prediction of engine output.
-                constexpr double controllerBrakeMeanEffectivePressurePa = 2'500'000.0;
-                constexpr double absorberBrakeMeanEffectivePressurePa = 10'000'000.0;
-                const auto controllerTorqueScaleNm = controllerBrakeMeanEffectivePressurePa
-                    * displacementM3 / (4.0 * std::numbers::pi);
-                const auto maximumBrakeTorqueNm = absorberBrakeMeanEffectivePressurePa
-                    * displacementM3 / (4.0 * std::numbers::pi);
-                dynoFeedForwardTorqueNm_ += (std::max(0.0, simulator_.state().torqueNm)
-                    - dynoFeedForwardTorqueNm_) * (1.0 - std::exp(-baseStep.count() * 5.0));
-                const auto proportionalGain = controllerTorqueScaleNm / 500.0;
-                const auto integralGain = controllerTorqueScaleNm / 1'200.0;
-                const auto accelerationGain = controllerTorqueScaleNm / 6'000.0;
-                // An absorption dyno is unidirectional, but enabling the whole
-                // firing-pulse feed-forward at one hard threshold makes a
-                // relaxation oscillator: the EA288 accelerated unloaded to
-                // target-120 rpm, received the complete brake torque in one
-                // tick, fell below the threshold and repeated forever. Ramp
-                // the absorber into contact across the final 120 rpm instead.
-                // Farther below the setpoint it remains completely unloaded,
-                // preserving the low-inertia run-up protection.
-                constexpr double dynoContactBandRpm = 120.0;
-                const auto contactPhase = std::clamp(
-                    (error + dynoContactBandRpm) / dynoContactBandRpm,
-                    0.0, 1.0);
-                const auto contactScale =
-                    contactPhase * contactPhase * (3.0 - 2.0 * contactPhase);
-                const auto contactedFeedForwardTorqueNm =
-                    dynoFeedForwardTorqueNm_ * contactScale;
-                if (error < -dynoContactBandRpm) {
-                    dynoControllerIntegralNm_ = 0.0;
-                    dynoBrakeTorqueNm_ = 0.0;
-                } else {
-                    const auto integralCandidate = dynoControllerIntegralNm_
-                        + error * integralGain * baseStep.count();
-                    const auto unsaturated = contactedFeedForwardTorqueNm
-                        + integralCandidate
-                        + error * proportionalGain
-                        + dynoFilteredAccelerationRpmPerSecond_ * accelerationGain;
-                    const auto saturated = std::clamp(unsaturated, 0.0, maximumBrakeTorqueNm);
-                    if (unsaturated == saturated
-                        || (unsaturated < 0.0 && error > 0.0)
-                        || (unsaturated > maximumBrakeTorqueNm && error < 0.0))
-                        dynoControllerIntegralNm_ = integralCandidate;
-                    dynoControllerIntegralNm_ = std::clamp(
-                        dynoControllerIntegralNm_, -maximumBrakeTorqueNm, maximumBrakeTorqueNm);
-                    dynoBrakeTorqueNm_ = std::clamp(
-                        contactedFeedForwardTorqueNm
-                        + dynoControllerIntegralNm_ + error * proportionalGain
-                        + dynoFilteredAccelerationRpmPerSecond_ * accelerationGain,
-                        0.0, maximumBrakeTorqueNm);
-                }
+                dynoAbsorberOutput_ = dynoAbsorber_.advance(
+                    baseStep.count(), dynoTargetRpm_,
+                    simulator_.state());
+                dynoBrakeTorqueNm_ =
+                    dynoAbsorberOutput_.brakeTorqueNm;
                 requestedLoad = 0.0;
             } else {
                 requestedLoad = 0.0;
@@ -616,8 +554,12 @@ void EngineRuntime::run(std::stop_token stopToken) {
                 / std::max(20.0, config_.transmission.maxClutchTorqueNm),
             dynoActive_ ? 1.0 : timeScale_.load(std::memory_order_relaxed) });
         if (dynoActive_ && dynoSweeping_) {
-            if (std::abs(dynoFilteredRpm_ - dynoTargetRpm_) <= 60.0
-                    && std::abs(dynoFilteredAccelerationRpmPerSecond_) <= 120.0) {
+            if (std::abs(dynoAbsorberOutput_.filteredRpm
+                    - dynoTargetRpm_) <= 60.0
+                    && std::abs(
+                        dynoAbsorberOutput_
+                            .filteredAccelerationRpmPerSecond)
+                        <= 120.0) {
                 dynoTorqueAccumulator_ += frame.state.loadTorqueNm;
                 dynoPowerAccumulator_ += frame.state.loadTorqueNm
                     * frame.state.angularVelocityRadPerSecond / 1'000.0;

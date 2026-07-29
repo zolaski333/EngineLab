@@ -53,6 +53,7 @@
 #include <enginelab/exhaust/ExhaustGraph.hpp>
 #include <enginelab/foundation/EngineTypes.hpp>
 #include <enginelab/physics/SimplifiedGasolinePhysics.hpp>
+#include <enginelab/simulation/DynoAbsorberController.hpp>
 #include <enginelab/simulation/EngineSimulator.hpp>
 
 #include <algorithm>
@@ -86,6 +87,10 @@ constexpr double sweepStepRpm = 500.0;
 struct VePoint final {
     double targetRpm { 0.0 };
     double actualRpm { 0.0 };
+    double minimumRpm { 0.0 };
+    double maximumRpm { 0.0 };
+    double minimumHeldRpm { 0.0 };
+    double maximumHeldRpm { 0.0 };
     double ve { 0.0 };
     double mapKpa { 0.0 };
     double lambda { 0.0 };
@@ -95,29 +100,33 @@ struct VePoint final {
 // Hold `targetRpm` under a wide-open-throttle absorber and average the steady
 // state. Identical controller to the dyno-sweep harness, which produced the
 // curves this instrument was designed against.
-VePoint holdPoint(enginelab::EngineSimulator& simulator, double targetRpm,
-                  double settleSeconds, double sampleSeconds) {
+VePoint holdPoint(
+    enginelab::EngineSimulator& simulator,
+    const enginelab::EngineConfig& config, double targetRpm,
+    double settleSeconds, double sampleSeconds) {
     constexpr double dt = 1.0 / 240.0;
     const auto settleSteps = static_cast<int>(settleSeconds / dt);
     const auto sampleSteps = static_cast<int>(sampleSeconds / dt);
-    auto dynoIntegral = 0.0;
+    enginelab::DynoAbsorberController absorber(config);
+    absorber.reset(
+        simulator.state().rpm, simulator.state().torqueNm);
     VePoint result;
     result.targetRpm = targetRpm;
     auto samples = 0.0;
     auto rpmAcc = 0.0, veAcc = 0.0, mapAcc = 0.0, lambdaAcc = 0.0;
+    auto minimumRpm = std::numeric_limits<double>::infinity();
+    auto maximumRpm = 0.0;
+    auto minimumHeldRpm = std::numeric_limits<double>::infinity();
+    auto maximumHeldRpm = 0.0;
     for (int step = 0; step < settleSteps + sampleSteps; ++step) {
-        const auto speedError = (simulator.state().rpm - targetRpm) / std::max(1.0, targetRpm);
-        // Integral gain 12.0, not 1.20: at 1/240 s steps the old gain could not
-        // wind up inside a settle window, so above ~5000 rpm the engine drifted
-        // up to 7 % past the target and the top point was measured with the rev
-        // limiter cutting spark. See tests/GasExchangeTests.cpp for the
-        // measurement and docs/physics-audit.md.
-        dynoIntegral = std::clamp(dynoIntegral + speedError * dt * 12.0, 0.0, 1.0);
+        const auto absorberOutput = absorber.advance(
+            dt, targetRpm, simulator.state());
         enginelab::EngineControls controls;
         controls.ignitionEnabled = true;
         controls.starterEngaged = simulator.state().rpm < 550.0;
         controls.throttle = 1.0;
-        controls.load = std::clamp(dynoIntegral + speedError * 0.70, 0.0, 1.0);
+        controls.dynamometerTorqueNm =
+            absorberOutput.brakeTorqueNm;
         const auto frame = simulator.step(dt, controls);
         if (step < settleSteps) continue;
         if (!std::isfinite(frame.state.rpm) || !std::isfinite(frame.state.volumetricEfficiency)
@@ -125,12 +134,22 @@ VePoint holdPoint(enginelab::EngineSimulator& simulator, double targetRpm,
             result.finite = false;
         samples += 1.0;
         rpmAcc += frame.state.rpm;
+        minimumRpm = std::min(minimumRpm, frame.state.rpm);
+        maximumRpm = std::max(maximumRpm, frame.state.rpm);
+        minimumHeldRpm = std::min(
+            minimumHeldRpm, absorberOutput.filteredRpm);
+        maximumHeldRpm = std::max(
+            maximumHeldRpm, absorberOutput.filteredRpm);
         veAcc += frame.state.volumetricEfficiency;
         mapAcc += frame.state.manifoldPressureKpa;
         lambdaAcc += frame.state.lambda;
     }
     const auto d = std::max(1.0, samples);
     result.actualRpm = rpmAcc / d;
+    result.minimumRpm = minimumRpm;
+    result.maximumRpm = maximumRpm;
+    result.minimumHeldRpm = minimumHeldRpm;
+    result.maximumHeldRpm = maximumHeldRpm;
     result.ve = veAcc / d;
     result.mapKpa = mapAcc / d;
     result.lambda = lambdaAcc / d;
@@ -168,7 +187,9 @@ SweepResult sweepEngine(const enginelab::EngineConfig& config, double maxRpm,
     const auto startRpm = std::max(2'000.0, std::round(config.idleRpm * 1.5 / sweepStepRpm) * sweepStepRpm);
     auto first = true;
     for (double target = startRpm; target <= maxRpm + 1.0; target += sweepStepRpm) {
-        result.points.push_back(holdPoint(simulator, target, first ? 3.0 : 2.0, 1.0));
+        result.points.push_back(holdPoint(
+            simulator, config, target,
+            first ? 5.0 : 2.0, 1.0));
         first = false;
     }
     require(result.points.size() >= 4, "the sweep must cover enough points to locate a peak");
@@ -264,10 +285,17 @@ int main(int argc, char** argv) {
             std::cout << (sweep == &base ? "  base " : "  2xL  ")
                       << std::setw(5) << static_cast<int>(point.targetRpm) << " rpm -> "
                       << "rpm=" << point.actualRpm << " ve=" << point.ve
+                      << " rawRpmBand=[" << point.minimumRpm << ','
+                      << point.maximumRpm << ']'
+                      << " heldRpmBand=[" << point.minimumHeldRpm << ','
+                      << point.maximumHeldRpm << ']'
                       << " map=" << point.mapKpa << "kPa lambda=" << point.lambda << '\n';
             require(point.finite, "sweep telemetry must stay finite at every point");
             require(std::abs(point.actualRpm - point.targetRpm) <= 0.02 * point.targetRpm,
                     "the absorber must actually hold each swept operating point");
+            require(point.maximumHeldRpm - point.minimumHeldRpm
+                        <= 0.04 * point.targetRpm,
+                    "the absorber must settle each complete sampling window");
             require(point.ve > 0.2 && point.ve < 1.6,
                     "VE must stay physically bounded at WOT");
             require(point.mapKpa > 80.0,

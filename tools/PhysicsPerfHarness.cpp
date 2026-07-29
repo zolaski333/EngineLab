@@ -4,6 +4,7 @@
 #include <enginelab/exhaust/ExhaustGraph.hpp>
 #include <enginelab/foundation/EngineTypes.hpp>
 #include <enginelab/physics/SimplifiedGasolinePhysics.hpp>
+#include <enginelab/simulation/DynoAbsorberController.hpp>
 #include <enginelab/simulation/EngineSimulator.hpp>
 
 #include <algorithm>
@@ -52,11 +53,15 @@ bool containsCaseInsensitive(const std::string& text, const std::string& filter)
     return loweredText.find(loweredFilter) != std::string::npos;
 }
 
-StepMetrics measurePoint(enginelab::EngineSimulator& simulator, double targetRpm) {
+StepMetrics measurePoint(
+    enginelab::EngineSimulator& simulator,
+    const enginelab::EngineConfig& config, double targetRpm) {
     constexpr double dt = 1.0 / 240.0;
-    constexpr int settleSteps = static_cast<int>(3.0 / dt);
+    constexpr int settleSteps = static_cast<int>(5.0 / dt);
     constexpr int sampleSteps = static_cast<int>(1.25 / dt);
-    auto dynoIntegral = 0.0;
+    enginelab::DynoAbsorberController absorber(config);
+    absorber.reset(
+        simulator.state().rpm, simulator.state().torqueNm);
     std::vector<double> timings;
     timings.reserve(sampleSteps);
     auto rpmSum = 0.0;
@@ -72,18 +77,14 @@ StepMetrics measurePoint(enginelab::EngineSimulator& simulator, double targetRpm
     auto intakeMgSum = 0.0, trappedSum = 0.0, residualSum = 0.0, airMgSum = 0.0;
     auto cylSamples = 0.0;
     for (int step = 0; step < settleSteps + sampleSteps; ++step) {
-        const auto speedError = (simulator.state().rpm - targetRpm) / std::max(1.0, targetRpm);
-        // Integral gain 12.0, not 1.20: at 1/240 s steps the old gain could not
-        // wind up inside a settle window, so above ~5000 rpm the engine drifted
-        // up to 7 % past the target and the top point was measured with the rev
-        // limiter cutting spark. See tests/GasExchangeTests.cpp for the
-        // measurement and docs/physics-audit.md.
-        dynoIntegral = std::clamp(dynoIntegral + speedError * dt * 12.0, 0.0, 1.0);
+        const auto absorberOutput = absorber.advance(
+            dt, targetRpm, simulator.state());
         enginelab::EngineControls controls;
         controls.ignitionEnabled = true;
         controls.starterEngaged = simulator.state().rpm < 550.0;
         controls.throttle = 1.0;
-        controls.load = std::clamp(dynoIntegral + speedError * 0.70, 0.0, 1.0);
+        controls.dynamometerTorqueNm =
+            absorberOutput.brakeTorqueNm;
         const auto begin = std::chrono::steady_clock::now();
         const auto frame = simulator.step(dt, controls);
         const auto end = std::chrono::steady_clock::now();
@@ -201,7 +202,9 @@ void traceEngine(const enginelab::EngineConfig& baseConfig, double targetRpm,
     auto exhaust = enginelab::ExhaustGraph::makeForEngine(config);
     enginelab::EngineSimulator simulator(config, ecu, physics, events, exhaust);
     constexpr double dt = 1.0 / 240.0;
-    auto dynoIntegral = 0.0;
+    enginelab::DynoAbsorberController absorber(config);
+    absorber.reset(
+        simulator.state().rpm, simulator.state().torqueNm);
     // `--idle` reproduces EngineLab.IdleStabilityRegression's phase 2 exactly:
     // starter until the engine catches, then shut throttle and NO load, so the
     // engine finds its own idle. It exists because the dyno drive below cannot
@@ -219,16 +222,12 @@ void traceEngine(const enginelab::EngineConfig& baseConfig, double targetRpm,
             controls.load = 0.0;
             return simulator.step(stepDt, controls);
         }
-        const auto speedError = (simulator.state().rpm - targetRpm) / std::max(1.0, targetRpm);
-        // Integral gain 12.0, not 1.20: at 1/240 s steps the old gain could not
-        // wind up inside a settle window, so above ~5000 rpm the engine drifted
-        // up to 7 % past the target and the top point was measured with the rev
-        // limiter cutting spark. See tests/GasExchangeTests.cpp for the
-        // measurement and docs/physics-audit.md.
-        dynoIntegral = std::clamp(dynoIntegral + speedError * stepDt * 12.0, 0.0, 1.0);
+        const auto absorberOutput = absorber.advance(
+            stepDt, targetRpm, simulator.state());
         controls.starterEngaged = simulator.state().rpm < 550.0;
         controls.throttle = throttle;
-        controls.load = std::clamp(dynoIntegral + speedError * 0.70, 0.0, 1.0);
+        controls.dynamometerTorqueNm =
+            absorberOutput.brakeTorqueNm;
         return simulator.step(stepDt, controls);
     };
     // `--watch` prints the settle itself at ~10 Hz: the transient an end-state
@@ -335,7 +334,7 @@ void traceOverrun(const enginelab::EngineConfig& baseConfig, double durationSeco
         const auto time = static_cast<double>(step) * dt;
         (void)simulator.step(dt, { true, time < 1.5, 0.72, 0.0 });
     }
-    (void)measurePoint(simulator, hotRpm);
+    (void)measurePoint(simulator, config, hotRpm);
 
     std::cout << "time_s,rpm,egt_c,map_kpa,exhaust_kpa,exhaust_g_s,fuel_g_s,"
                  "lambda,cycle_torque_nm,motoring_torque_nm,gas_energy_j,"
@@ -406,7 +405,8 @@ void measureEngine(const enginelab::EngineConfig& baseConfig, int run) {
         std::max(config.idleRpm * 1.5, maximumRpm * 0.90)
     };
     for (const auto target : targets) {
-        const auto result = measurePoint(simulator, target);
+        const auto result = measurePoint(
+            simulator, config, target);
         std::cout << std::quoted(config.name) << ',' << config.cylinders.size() << ',' << run
                   << ',' << target << ',' << result.actualRpm << ',' << result.meanMicroseconds
                   << ',' << result.p50Microseconds << ',' << result.p95Microseconds

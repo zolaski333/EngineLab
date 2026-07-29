@@ -66,6 +66,7 @@
 #include <enginelab/exhaust/ExhaustGraph.hpp>
 #include <enginelab/foundation/EngineTypes.hpp>
 #include <enginelab/physics/SimplifiedGasolinePhysics.hpp>
+#include <enginelab/simulation/DynoAbsorberController.hpp>
 #include <enginelab/simulation/EngineSimulator.hpp>
 
 #include <algorithm>
@@ -113,6 +114,8 @@ struct Point final {
     double cylinderAfr { 0.0 };
     double rpmMinimum { 0.0 };
     double rpmMaximum { 0.0 };
+    double heldRpmMinimum { 0.0 };
+    double heldRpmMaximum { 0.0 };
     double phiAtSpark { 0.0 };
     double mapKpa { 0.0 };
     double exhaustKpa { 0.0 };
@@ -122,12 +125,16 @@ struct Point final {
 // Hold `targetRpm` under a wide-open-throttle absorber and average the steady
 // state. Identical controller to the dyno-sweep harness and to
 // IntakeTuningTests, so the three instruments describe the same operating line.
-Point holdPoint(enginelab::EngineSimulator& simulator, double targetRpm,
-                double settleSeconds, double sampleSeconds) {
+Point holdPoint(
+    enginelab::EngineSimulator& simulator,
+    const enginelab::EngineConfig& config, double targetRpm,
+    double settleSeconds, double sampleSeconds) {
     constexpr double dt = 1.0 / 240.0;
     const auto settleSteps = static_cast<int>(settleSeconds / dt);
     const auto sampleSteps = static_cast<int>(sampleSeconds / dt);
-    auto dynoIntegral = 0.0;
+    enginelab::DynoAbsorberController absorber(config);
+    absorber.reset(
+        simulator.state().rpm, simulator.state().torqueNm);
     Point result;
     result.targetRpm = targetRpm;
     auto samples = 0.0;
@@ -136,24 +143,17 @@ Point holdPoint(enginelab::EngineSimulator& simulator, double targetRpm,
     auto misfireAcc = 0.0, lambdaAcc = 0.0, combustionAcc = 0.0, residualAcc = 0.0;
     auto capacityAcc = 0.0, deliveryAcc = 0.0, afrAcc = 0.0;
     auto rpmLow = 1.0e30, rpmHigh = -1.0e30;
+    auto heldRpmLow = 1.0e30, heldRpmHigh = -1.0e30;
     auto phiAcc = 0.0;
     for (int step = 0; step < settleSteps + sampleSteps; ++step) {
-        const auto speedError = (simulator.state().rpm - targetRpm) / std::max(1.0, targetRpm);
-        // Integral gain 1.20/s and a 0.95 ceiling -- the value the other WOT
-        // instruments here use -- cannot wind up inside a two-second settle: at
-        // 1/240 s steps a steady 7 % error reaches only ~0.25 of full load, which
-        // is less brake torque than a 2 L engine makes at 7000 rpm. The engine
-        // then drifts upward until its own torque falls off or the rev limiter
-        // catches it, and the point reported as "6500 rpm" was measured at 6958
-        // with the limiter cutting spark. Gain 12.0 holds every point to under
-        // 1 %; see the absorber assertion below, which is what makes this
-        // measurable rather than a matter of taste.
-        dynoIntegral = std::clamp(dynoIntegral + speedError * dt * 12.0, 0.0, 1.0);
+        const auto absorberOutput = absorber.advance(
+            dt, targetRpm, simulator.state());
         enginelab::EngineControls controls;
         controls.ignitionEnabled = true;
         controls.starterEngaged = simulator.state().rpm < 550.0;
         controls.throttle = 1.0;
-        controls.load = std::clamp(dynoIntegral + speedError * 0.70, 0.0, 1.0);
+        controls.dynamometerTorqueNm =
+            absorberOutput.brakeTorqueNm;
         const auto frame = simulator.step(dt, controls);
         if (step < settleSteps) continue;
         if (!std::isfinite(frame.state.rpm)
@@ -165,6 +165,10 @@ Point holdPoint(enginelab::EngineSimulator& simulator, double targetRpm,
         rpmAcc += frame.state.rpm;
         rpmLow = std::min(rpmLow, frame.state.rpm);
         rpmHigh = std::max(rpmHigh, frame.state.rpm);
+        heldRpmLow = std::min(
+            heldRpmLow, absorberOutput.filteredRpm);
+        heldRpmHigh = std::max(
+            heldRpmHigh, absorberOutput.filteredRpm);
         pmepAcc += frame.state.pumpingMeanEffectivePressureBar;
         exhStrokeMepAcc += frame.state.exhaustStrokeMeanEffectivePressureBar;
         netAcc += frame.state.indicatedMeanEffectivePressureBar;
@@ -212,6 +216,8 @@ Point holdPoint(enginelab::EngineSimulator& simulator, double targetRpm,
     result.cylinderAfr = afrAcc / d;
     result.rpmMinimum = rpmLow;
     result.rpmMaximum = rpmHigh;
+    result.heldRpmMinimum = heldRpmLow;
+    result.heldRpmMaximum = heldRpmHigh;
     result.phiAtSpark = phiAcc / d;
     result.mapKpa = mapAcc / d;
     result.exhaustKpa = exhaustAcc / d;
@@ -360,14 +366,18 @@ int main(int argc, char** argv) {
 
     std::vector<Point> points;
     if (pointRpm) {
-        points.push_back(holdPoint(simulator,
-            std::clamp(*pointRpm, 1'000.0, maxRpm), 4.0, 1.0));
+        points.push_back(holdPoint(
+            simulator, config,
+            std::clamp(*pointRpm, 1'000.0, maxRpm),
+            5.0, 1.0));
     } else {
         const auto startRpm = std::max(2'000.0,
             std::round(config.idleRpm * 1.5 / sweepStepRpm) * sweepStepRpm);
         auto first = true;
         for (double target = startRpm; target <= maxRpm + 1.0; target += sweepStepRpm) {
-            points.push_back(holdPoint(simulator, target, first ? 3.0 : 2.0, 1.0));
+            points.push_back(holdPoint(
+                simulator, config, target,
+                first ? 5.0 : 2.0, 1.0));
             first = false;
         }
     }
@@ -394,7 +404,10 @@ int main(int argc, char** argv) {
                   << " fuelDel=" << point.fuelDelivery
                   << " cylAfr=" << point.cylinderAfr
                   << " phiSpark=" << point.phiAtSpark
-                  << " rpmBand=[" << point.rpmMinimum << "," << point.rpmMaximum << "]"
+                  << " rawRpmBand=[" << point.rpmMinimum << ","
+                  << point.rpmMaximum << "]"
+                  << " heldRpmBand=[" << point.heldRpmMinimum << ","
+                  << point.heldRpmMaximum << "]"
                   << " map=" << point.mapKpa
                   << " exh=" << point.exhaustKpa << "kPa\n";
     }
@@ -410,19 +423,17 @@ int main(int argc, char** argv) {
         require(std::abs(point.actualRpm - point.targetRpm) < 0.02 * point.targetRpm,
                 "the absorber must actually hold each swept operating point");
         // The mean alone is not enough either: a window average cannot see an
-        // oscillating point. The band is REPORTED rather than gated, because the
-        // absorber is still under-damped in the mid range -- the 4500 rpm point
-        // swings [4074, 4990] about a mean of 4518, so its mean is right and its
-        // signal is not settled. Tightening the controller is a separate change
-        // from making the drift visible; do not gate this until it is done.
+        // oscillating point. Gate the dyno's filtered shaft speed while still
+        // reporting raw crank-speed ripple from individual firing events.
+        require(point.heldRpmMaximum - point.heldRpmMinimum
+                    <= 0.04 * point.targetRpm,
+                "the absorber must settle each complete sampling window");
         require(point.mapKpa > 80.0,
                 "MAP must sit near ambient at WOT -- otherwise this is not a WOT measurement");
         require(point.pmepBar < 0.0,
                 "a naturally aspirated engine cannot gain work over its gas-exchange strokes");
         require(std::abs(point.pmepBar) < sanityPumpingCeilingBar,
                 "pumping MEP must stay physically bounded");
-        require(point.grossImepBar > point.netImepBar,
-                "the gas-exchange loop must subtract from gross indicated work");
         // Trapping efficiency is bounded above by one for a reason no
         // calibration can change: an engine cannot keep more fresh air than it
         // drew past the valve. A ratio over one means the two figures are no
@@ -435,6 +446,10 @@ int main(int argc, char** argv) {
             require(point.veFraction <= 1.02 * point.deliveredVeFraction,
                     "trapped fresh air cannot exceed delivered fresh air");
         // The two routes to the same quantity must agree: net == gross + pmep.
+        // Net IMEP latches at the engine-level cycle boundary, while the split
+        // sums each cylinder's last completed loop. A strict `gross > net`
+        // comparison is therefore redundant with negative PMEP and can invert
+        // by a few millibar when those boundaries straddle this sample.
         require(std::abs(point.netImepBar - (point.grossImepBar + point.pmepBar))
                     < 0.02 * std::max(1.0, std::abs(point.netImepBar)),
                 "the indicated loop split must reconcile with net indicated work");
