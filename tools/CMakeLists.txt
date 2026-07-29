@@ -75,3 +75,13 @@ if(MSVC)
     target_link_options(EngineLabAudioAbHarness PRIVATE /STACK:8388608)
 endif()
 enginelab_set_warnings(EngineLabAudioAbHarness)
+
+add_executable(EngineLabOfflineAudioExporter OfflineAudioExporter.cpp)
+target_link_libraries(EngineLabOfflineAudioExporter PRIVATE
+    EngineLab::Audio EngineLab::Catalog)
+target_compile_definitions(EngineLabOfflineAudioExporter PRIVATE
+    ENGINELAB_CATALOG_ROOT="${CMAKE_SOURCE_DIR}")
+if(MSVC)
+    target_link_options(EngineLabOfflineAudioExporter PRIVATE /STACK:8388608)
+endif()
+enginelab_set_warnings(EngineLabOfflineAudioExporter)

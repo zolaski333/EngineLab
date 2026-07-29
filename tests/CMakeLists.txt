@@ -95,6 +95,19 @@ if(MSVC)
     target_link_options(EngineLabRealtimeRegressionTests PRIVATE /STACK:8388608)
 endif()
 
+add_executable(EngineLabOfflineAudioExportTests OfflineAudioExportTests.cpp)
+target_link_libraries(EngineLabOfflineAudioExportTests PRIVATE
+    EngineLab::Audio EngineLab::Catalog nlohmann_json::nlohmann_json)
+target_compile_definitions(EngineLabOfflineAudioExportTests PRIVATE
+    ENGINELAB_CATALOG_ROOT="${CMAKE_SOURCE_DIR}")
+enginelab_set_warnings(EngineLabOfflineAudioExportTests)
+add_test(NAME EngineLab.OfflineAudioExport
+    COMMAND EngineLabOfflineAudioExportTests)
+set_tests_properties(EngineLab.OfflineAudioExport PROPERTIES TIMEOUT 180)
+if(MSVC)
+    target_link_options(EngineLabOfflineAudioExportTests PRIVATE /STACK:8388608)
+endif()
+
 if(TARGET EngineLabComparisonHarness)
     add_test(NAME EngineLab.CatalogPhysics COMMAND EngineLabComparisonHarness
         --output "${CMAKE_BINARY_DIR}/catalog-physics-test"
