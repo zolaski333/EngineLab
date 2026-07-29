@@ -15,21 +15,48 @@ $corpusRootPrefix = $corpusRoot.TrimEnd(
     [System.IO.Path]::AltDirectorySeparatorChar) + [System.IO.Path]::DirectorySeparatorChar
 $manifest = Get-Content -LiteralPath $manifestFile.FullName -Raw -Encoding UTF8 | ConvertFrom-Json
 
-if ($manifest.schema_version -ne 1) {
+if ($manifest.schema_version -ne 2) {
     throw "Unsupported corpus manifest schema: $($manifest.schema_version)"
 }
 
 foreach ($reference in $manifest.references) {
-    $target = [System.IO.Path]::GetFullPath((Join-Path $corpusRoot $reference.file))
+    $key = [string] $reference.key
+    if ([string]::IsNullOrWhiteSpace($key)) {
+        throw "Corpus reference has an empty key"
+    }
+
+    $distribution = [string] $reference.distribution
+    if ($distribution -notin @("redistributable", "evaluation-only")) {
+        throw "Unsupported distribution for ${key}: $distribution"
+    }
+    if ($distribution -eq "evaluation-only") {
+        Write-Host "skip evaluation-only ${key}: acquire it manually under its source terms"
+        continue
+    }
+
+    $relativeFile = [string] $reference.file
+    $previewUrl = [string] $reference.preview_url
+    $expected = ([string] $reference.sha256).ToLowerInvariant()
+    if ([string]::IsNullOrWhiteSpace($relativeFile) -or
+        [System.IO.Path]::IsPathRooted($relativeFile)) {
+        throw "Invalid corpus file path for ${key}: $relativeFile"
+    }
+    if (-not $previewUrl.StartsWith("https://", [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "Redistributable reference ${key} needs an HTTPS preview_url"
+    }
+    if ($expected -notmatch "^[0-9a-f]{64}$") {
+        throw "Redistributable reference ${key} needs a lowercase SHA-256"
+    }
+
+    $target = [System.IO.Path]::GetFullPath((Join-Path $corpusRoot $relativeFile))
     if (-not $target.StartsWith($corpusRootPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
         throw "Refusing corpus path outside $corpusRoot : $target"
     }
 
-    $expected = [string] $reference.sha256
     if (Test-Path -LiteralPath $target) {
         $actual = (Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash.ToLowerInvariant()
         if ($actual -eq $expected) {
-            Write-Host "verified $($reference.key): $target"
+            Write-Host "verified ${key}: $target"
             continue
         }
         if (-not $Refresh) {
@@ -44,17 +71,20 @@ foreach ($reference in $manifest.references) {
         Remove-Item -LiteralPath $temporary -Force
     }
 
-    Write-Host "download $($reference.key): $($reference.preview_url)"
-    & curl.exe -L -sS --fail ([string] $reference.preview_url) -o $temporary
+    Write-Host "download ${key}: $previewUrl"
+    & curl.exe -L -sS --fail --retry 3 --connect-timeout 20 --max-time 300 $previewUrl -o $temporary
     if ($LASTEXITCODE -ne 0) {
-        throw "Download failed for $($reference.key)"
+        if (Test-Path -LiteralPath $temporary) {
+            Remove-Item -LiteralPath $temporary -Force
+        }
+        throw "Download failed for ${key}"
     }
 
     $actual = (Get-FileHash -LiteralPath $temporary -Algorithm SHA256).Hash.ToLowerInvariant()
     if ($actual -ne $expected) {
         Remove-Item -LiteralPath $temporary -Force
-        throw "Downloaded hash mismatch for $($reference.key): expected $expected, got $actual"
+        throw "Downloaded hash mismatch for ${key}: expected $expected, got $actual"
     }
     Move-Item -LiteralPath $temporary -Destination $target -Force
-    Write-Host "verified $($reference.key): $target"
+    Write-Host "verified ${key}: $target"
 }

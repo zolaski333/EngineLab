@@ -1,6 +1,6 @@
 {
-  "schema_version": 1,
-  "description": "CC0 field-recording corpus for blind EngineLab listening tests. The OGG files are Freesound HQ previews of the cited source recordings.",
+  "schema_version": 2,
+  "description": "Redistributable real-engine recordings for blind EngineLab listening tests. Every approximation and every unknown acquisition parameter remains explicit.",
   "references": [
     {
       "key": "2JZ",
@@ -8,12 +8,31 @@
       "creator": "editboy23",
       "license": "CC0-1.0",
       "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "distribution": "redistributable",
       "source_url": "https://freesound.org/people/editboy23/sounds/496171/",
       "preview_url": "https://cdn.freesound.org/previews/496/496171_1784475-hq.ogg",
       "sha256": "0b5f744f399b246385b68f6936005c35f8564c763c8e31609bdb54b063a57372",
+      "source_kind": "dyno-recording",
       "match_quality": "platform-proxy",
       "clip_start_seconds": 0.0,
-      "notes": "Real Toyota Supra turbo on a chassis dyno; the source does not identify the exact engine, so this is not proof of an exact 2JZ match."
+      "source_engine": {
+        "identity": "not-documented",
+        "platform": "Toyota Supra",
+        "architecture": "unknown",
+        "cylinders": null,
+        "aspiration": "turbocharged"
+      },
+      "operating_conditions": ["loaded-sweep"],
+      "rpm": { "status": "unknown", "minimum": null, "maximum": null },
+      "microphone": { "placement": "dyno-cell-unknown", "model": "unknown", "calibration": "unknown" },
+      "audio_quality": {
+        "asset": "freesound-hq-preview-transcode",
+        "original_format": "WAV",
+        "original_sample_rate_hz": 48000,
+        "original_bit_depth": 16,
+        "original_channels": 2
+      },
+      "notes": "Real Toyota Supra turbo on a chassis dyno; the source does not identify the exact engine, so this is not proof of an exact 2JZ match. The source warns of distortion at the loudest point."
     },
     {
       "key": "LS3",
@@ -21,12 +40,31 @@
       "creator": "overmedium",
       "license": "CC0-1.0",
       "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "distribution": "redistributable",
       "source_url": "https://freesound.org/people/overmedium/sounds/651534/",
       "preview_url": "https://cdn.freesound.org/previews/651/651534_2396512-hq.ogg",
       "sha256": "fd3619bac22d6fe37ef1925dfe92d2eb878721f65906bd1722a0de219012dc13",
+      "source_kind": "field-recording",
       "match_quality": "architecture-proxy",
       "clip_start_seconds": 0.0,
-      "notes": "Real throaty V8 with idle and throttle blips; exact vehicle and firing order are unknown."
+      "source_engine": {
+        "identity": "not-documented",
+        "platform": "unknown V8 vehicle",
+        "architecture": "V8",
+        "cylinders": 8,
+        "aspiration": "unknown"
+      },
+      "operating_conditions": ["idle", "free-rev"],
+      "rpm": { "status": "unknown", "minimum": null, "maximum": null },
+      "microphone": { "placement": "binaural-unknown", "model": "unspecified binaural pair", "calibration": "unknown" },
+      "audio_quality": {
+        "asset": "freesound-hq-preview-transcode",
+        "original_format": "WAV",
+        "original_sample_rate_hz": 44100,
+        "original_bit_depth": 16,
+        "original_channels": 2
+      },
+      "notes": "Real V8 with idle and throttle blips; the uploader explicitly says the vehicle is unknown. Fade and high-pass processing are documented on the source page."
     },
     {
       "key": "Hayabusa",
@@ -34,12 +72,31 @@
       "creator": "Heigh-hoo",
       "license": "CC0-1.0",
       "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "distribution": "redistributable",
       "source_url": "https://freesound.org/people/Heigh-hoo/sounds/49326/",
       "preview_url": "https://cdn.freesound.org/previews/49/49326_21830-hq.ogg",
       "sha256": "587c32fd4387072ff47e5be5f946abd7b78addaa3e8dedc15cbb1fc3cc8e12a3",
+      "source_kind": "field-recording",
       "match_quality": "exact-platform",
       "clip_start_seconds": 0.0,
-      "notes": "Real Suzuki GSX1300 Hayabusa starting in the open; this is the strongest platform match in the corpus."
+      "source_engine": {
+        "identity": "Suzuki GSX1300 Hayabusa",
+        "platform": "Suzuki GSX1300 Hayabusa",
+        "architecture": "inline-4",
+        "cylinders": 4,
+        "aspiration": "naturally-aspirated"
+      },
+      "operating_conditions": ["start", "idle", "pull-away"],
+      "rpm": { "status": "unknown", "minimum": null, "maximum": null },
+      "microphone": { "placement": "exterior-open", "model": "Audio-Technica AT4073a plus Sennheiser MKH30", "calibration": "unknown" },
+      "audio_quality": {
+        "asset": "freesound-hq-preview-transcode",
+        "original_format": "AIFF",
+        "original_sample_rate_hz": 44100,
+        "original_bit_depth": 24,
+        "original_channels": 2
+      },
+      "notes": "Real Suzuki GSX1300 Hayabusa starting outdoors, recorded to a Korg MR-1. An aircraft is faintly audible at the beginning."
     },
     {
       "key": "Big Twin",
@@ -47,12 +104,31 @@
       "creator": "allencote",
       "license": "CC0-1.0",
       "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "distribution": "redistributable",
       "source_url": "https://freesound.org/people/allencote/sounds/81068/",
       "preview_url": "https://cdn.freesound.org/previews/81/81068_1067842-hq.ogg",
       "sha256": "586e4e2f7b4dff19a90bfa0e969446dbb52e24fffb3a770afbf756f88cf81fea",
+      "source_kind": "field-recording",
       "match_quality": "family-proxy",
       "clip_start_seconds": 0.0,
-      "notes": "Real Harley-Davidson start, idle and rev; the exact engine displacement is not identified."
+      "source_engine": {
+        "identity": "not-documented",
+        "platform": "Harley-Davidson motorcycle",
+        "architecture": "V-twin",
+        "cylinders": 2,
+        "aspiration": "naturally-aspirated"
+      },
+      "operating_conditions": ["start", "idle", "free-rev"],
+      "rpm": { "status": "unknown", "minimum": null, "maximum": null },
+      "microphone": { "placement": "boom-unknown-distance", "model": "MXL 990", "calibration": "unknown" },
+      "audio_quality": {
+        "asset": "freesound-hq-preview-transcode",
+        "original_format": "WAV",
+        "original_sample_rate_hz": 44100,
+        "original_bit_depth": 24,
+        "original_channels": 1
+      },
+      "notes": "Real Harley-Davidson start, idle and rev; the exact engine displacement is not identified. A source-page comment reports clipping."
     },
     {
       "key": "EJ25",
@@ -60,12 +136,191 @@
       "creator": "ulose2piranha",
       "license": "CC0-1.0",
       "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "distribution": "redistributable",
       "source_url": "https://freesound.org/people/ulose2piranha/sounds/273334/",
       "preview_url": "https://cdn.freesound.org/previews/273/273334_4168822-hq.ogg",
       "sha256": "ca7397e21735017b96efd74bf6da1096abff8e61645b00cf26b332b5f053d156",
+      "source_kind": "field-recording",
       "match_quality": "family-proxy",
       "clip_start_seconds": 0.0,
-      "notes": "Real 2003 Subaru Impreza WRX with turbo-back exhaust; boxer/turbo family match, but not an asserted exact EJ25."
+      "source_engine": {
+        "identity": "not-documented",
+        "platform": "2003 Subaru Impreza WRX with 3-inch turbo-back exhaust",
+        "architecture": "flat-4",
+        "cylinders": 4,
+        "aspiration": "turbocharged"
+      },
+      "operating_conditions": ["idle", "free-rev"],
+      "rpm": { "status": "unknown", "minimum": null, "maximum": null },
+      "microphone": { "placement": "exhaust-unknown-distance", "model": "unknown", "calibration": "unknown" },
+      "audio_quality": {
+        "asset": "freesound-hq-preview-transcode",
+        "original_format": "WAV",
+        "original_sample_rate_hz": 44100,
+        "original_bit_depth": 16,
+        "original_channels": 2
+      },
+      "notes": "Real 2003 Subaru Impreza WRX; boxer/turbo family match, but not an asserted exact EJ25. The uploader describes the recording as muffled and containing mechanical rattles."
+    },
+    {
+      "key": "K20",
+      "file": "files/k20-civic-proxy.mp3",
+      "creator": "thepodcastdoctor",
+      "license": "CC0-1.0",
+      "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "distribution": "redistributable",
+      "source_url": "https://freesound.org/people/thepodcastdoctor/sounds/487553/",
+      "preview_url": "https://cdn.freesound.org/previews/487/487553_9945386-hq.mp3",
+      "sha256": "2887403c4f76019c2b426e4de199a1580fc51b4b30ffd10170fee79c64104cd1",
+      "source_kind": "field-recording",
+      "match_quality": "architecture-proxy",
+      "clip_start_seconds": 0.0,
+      "source_engine": {
+        "identity": "not-documented",
+        "platform": "2012 Honda Civic",
+        "architecture": "inline-4",
+        "cylinders": 4,
+        "aspiration": "naturally-aspirated"
+      },
+      "operating_conditions": ["start", "idle", "free-rev"],
+      "rpm": { "status": "unknown", "minimum": null, "maximum": null },
+      "microphone": { "placement": "unknown", "model": "unknown", "calibration": "unknown" },
+      "audio_quality": {
+        "asset": "freesound-hq-preview-transcode",
+        "original_format": "WAV",
+        "original_sample_rate_hz": 44100,
+        "original_bit_depth": 24,
+        "original_channels": 2
+      },
+      "notes": "Real 2012 Honda Civic start and rev. The exact engine is not documented and is not claimed to be a K20; use only as a naturally aspirated inline-four architecture proxy."
+    },
+    {
+      "key": "Merlin",
+      "file": "files/merlin-static.mp3",
+      "creator": "squashy555",
+      "license": "CC0-1.0",
+      "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "distribution": "redistributable",
+      "source_url": "https://freesound.org/people/squashy555/sounds/276597/",
+      "preview_url": "https://cdn.freesound.org/previews/276/276597_1149179-hq.mp3",
+      "sha256": "866d1c76236f23813018f220edc6e72b5b96b269922a72be0968ed1a6b3ead14",
+      "source_kind": "static-test-recording",
+      "match_quality": "exact-platform",
+      "clip_start_seconds": 0.0,
+      "source_engine": {
+        "identity": "Rolls-Royce Merlin Spitfire engine",
+        "platform": "static display without propeller",
+        "architecture": "V12",
+        "cylinders": 12,
+        "aspiration": "supercharged"
+      },
+      "operating_conditions": ["static-run", "free-rev"],
+      "rpm": { "status": "unknown", "minimum": null, "maximum": null },
+      "microphone": { "placement": "exterior-unknown-distance", "model": "unknown", "calibration": "unknown" },
+      "audio_quality": {
+        "asset": "freesound-hq-preview-transcode",
+        "original_format": "WAV",
+        "original_sample_rate_hz": 44100,
+        "original_bit_depth": 24,
+        "original_channels": 2
+      },
+      "notes": "Real Merlin Spitfire engine on a static display without propeller. This is an engine-platform match, not a matched microphone or propeller-loaded operating point."
+    },
+    {
+      "key": "Aircooled",
+      "file": "files/aircooled-porsche-911.mp3",
+      "creator": "mharo",
+      "license": "CC0-1.0",
+      "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "distribution": "redistributable",
+      "source_url": "https://freesound.org/people/mharo/sounds/55727/",
+      "preview_url": "https://cdn.freesound.org/previews/55/55727_267249-hq.mp3",
+      "sha256": "2387d2c74a32f3bd9ff773fe33d3dd6a04a05708ab92ad17d85e88917d43b735",
+      "source_kind": "field-recording",
+      "match_quality": "platform-proxy",
+      "clip_start_seconds": 0.0,
+      "source_engine": {
+        "identity": "not-documented",
+        "platform": "Porsche 911",
+        "architecture": "unknown",
+        "cylinders": null,
+        "aspiration": "unknown"
+      },
+      "operating_conditions": ["street-pass"],
+      "rpm": { "status": "unknown", "minimum": null, "maximum": null },
+      "microphone": { "placement": "street-unknown-distance", "model": "unknown", "calibration": "unknown" },
+      "audio_quality": {
+        "asset": "freesound-hq-preview-transcode",
+        "original_format": "WAV",
+        "original_sample_rate_hz": 44100,
+        "original_bit_depth": 16,
+        "original_channels": 2
+      },
+      "notes": "Real Porsche 911 street recording. The source does not document generation or engine, so it is not proof that the recorded car is the catalogued air-cooled flat-six."
+    },
+    {
+      "key": "CP3",
+      "file": "files/cp3-mt09-flyby.mp3",
+      "creator": "richwise",
+      "license": "CC0-1.0",
+      "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "distribution": "redistributable",
+      "source_url": "https://freesound.org/people/richwise/sounds/429491/",
+      "preview_url": "https://cdn.freesound.org/previews/429/429491_1481531-hq.mp3",
+      "sha256": "f96a60bd6cacbe833d26e71dd2087da7e980a078324875b6fcdbf2b578e2a217",
+      "source_kind": "field-recording",
+      "match_quality": "exact-platform",
+      "clip_start_seconds": 4.0,
+      "source_engine": {
+        "identity": "Yamaha MT-09 / FZ-09",
+        "platform": "Yamaha MT-09 / FZ-09",
+        "architecture": "inline-3",
+        "cylinders": 3,
+        "aspiration": "naturally-aspirated"
+      },
+      "operating_conditions": ["loaded-track-flyby"],
+      "rpm": { "status": "unknown", "minimum": null, "maximum": null },
+      "microphone": { "placement": "trackside-unknown-distance", "model": "unknown", "calibration": "unknown" },
+      "audio_quality": {
+        "asset": "freesound-hq-preview-transcode",
+        "original_format": "MP3",
+        "original_sample_rate_hz": 48000,
+        "original_bit_depth": null,
+        "original_channels": 2
+      },
+      "notes": "Real Yamaha MT-09/FZ-09 track flyby with no other motorcycles running. Strong CP3 platform match, but speed, gear, RPM and microphone geometry are undocumented."
+    },
+    {
+      "key": "Radial",
+      "file": "files/radial-biplane-archive.mp3",
+      "creator": "craigsmith",
+      "license": "CC0-1.0",
+      "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "distribution": "redistributable",
+      "source_url": "https://freesound.org/people/craigsmith/sounds/437726/",
+      "preview_url": "https://cdn.freesound.org/previews/437/437726_2524442-hq.mp3",
+      "sha256": "a2ed9f4e8c301dcf7b9782921f063985ab7e56b73550106e3e43efbbed3f5782",
+      "source_kind": "archival-recording",
+      "match_quality": "architecture-proxy",
+      "clip_start_seconds": 0.0,
+      "source_engine": {
+        "identity": "not-documented",
+        "platform": "vintage radial-engine biplane",
+        "architecture": "radial",
+        "cylinders": null,
+        "aspiration": "unknown"
+      },
+      "operating_conditions": ["aircraft-flyby"],
+      "rpm": { "status": "unknown", "minimum": null, "maximum": null },
+      "microphone": { "placement": "archival-unknown", "model": "unknown", "calibration": "unknown" },
+      "audio_quality": {
+        "asset": "freesound-hq-preview-transcode",
+        "original_format": "optical-or-magnetic-film-transfer",
+        "original_sample_rate_hz": 48000,
+        "original_bit_depth": 24,
+        "original_channels": 1
+      },
+      "notes": "Real archival biplane radial-engine flyby, digitized from historical optical or magnetic effects. It contains propeller, distance, Doppler, transfer noise and an unknown cylinder count, so it is only a radial architecture proxy."
     }
   ]
 }

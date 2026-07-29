@@ -25,10 +25,12 @@
 
 #include <juce_audio_basics/juce_audio_basics.h>
 #include <juce_audio_formats/juce_audio_formats.h>
+#include <juce_cryptography/juce_cryptography.h>
 #include <juce_dsp/juce_dsp.h>
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
@@ -40,8 +42,10 @@
 #include <limits>
 #include <map>
 #include <memory>
+#include <optional>
 #include <random>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 #include <thread>
 #include <vector>
@@ -60,11 +64,19 @@ struct ReferenceSpec final {
     std::filesystem::path file;
     std::string creator { "UNVERIFIED" };
     std::string license { "UNVERIFIED" };
+    std::string licenseUrl;
+    std::string distribution { "evaluation-only" };
     std::string sourceUrl;
     std::string previewUrl;
     std::string sha256;
+    std::string sourceKind { "unknown" };
     std::string matchQuality { "unverified" };
     std::string notes;
+    Json sourceEngine { Json::object() };
+    Json operatingConditions { Json::array() };
+    Json rpm { Json::object() };
+    Json microphone { Json::object() };
+    Json audioQuality { Json::object() };
     double clipStartSeconds { 0.0 };
 };
 
@@ -178,24 +190,165 @@ bool loadReferenceManifest(
     }
     try {
         const auto manifest = Json::parse(input);
-        if (manifest.value("schema_version", 0) != 1 || !manifest.contains("references")
+        if (manifest.value("schema_version", 0) != 2 || !manifest.contains("references")
             || !manifest.at("references").is_array()) {
             error = "unsupported reference manifest schema";
             return false;
         }
         const auto base = std::filesystem::absolute(path).parent_path();
+        const auto requiredText = [](const Json& object, const char* field) {
+            if (!object.contains(field) || !object.at(field).is_string()) {
+                throw std::runtime_error(std::string("missing text field '") + field + "'");
+            }
+            auto value = object.at(field).get<std::string>();
+            if (value.empty()) {
+                throw std::runtime_error(std::string("empty text field '") + field + "'");
+            }
+            return value;
+        };
+        const auto isOneOf = [](const std::string& value, std::initializer_list<const char*> allowed) {
+            return std::any_of(allowed.begin(), allowed.end(),
+                [&](const char* candidate) { return value == candidate; });
+        };
+        const auto validateMetadataObject = [&](const Json& item, const char* field) -> const Json& {
+            if (!item.contains(field) || !item.at(field).is_object()) {
+                throw std::runtime_error(std::string("missing object field '") + field + "'");
+            }
+            return item.at(field);
+        };
         for (const auto& item : manifest.at("references")) {
+            if (!item.is_object()) {
+                throw std::runtime_error("reference entry is not an object");
+            }
             ReferenceSpec spec;
-            spec.key = item.at("key").get<std::string>();
-            spec.file = base / item.at("file").get<std::string>();
-            spec.creator = item.value("creator", spec.creator);
-            spec.license = item.value("license", spec.license);
-            spec.sourceUrl = item.value("source_url", "");
-            spec.previewUrl = item.value("preview_url", "");
-            spec.sha256 = item.value("sha256", "");
-            spec.matchQuality = item.value("match_quality", spec.matchQuality);
-            spec.notes = item.value("notes", "");
-            spec.clipStartSeconds = std::max(0.0, item.value("clip_start_seconds", 0.0));
+            spec.key = requiredText(item, "key");
+            spec.creator = requiredText(item, "creator");
+            spec.license = requiredText(item, "license");
+            spec.licenseUrl = requiredText(item, "license_url");
+            spec.distribution = requiredText(item, "distribution");
+            spec.sourceUrl = requiredText(item, "source_url");
+            spec.sourceKind = requiredText(item, "source_kind");
+            spec.matchQuality = requiredText(item, "match_quality");
+            spec.notes = requiredText(item, "notes");
+            spec.previewUrl = item.value("preview_url", std::string {});
+            spec.sha256 = item.value("sha256", std::string {});
+
+            if (!isOneOf(spec.distribution, { "redistributable", "evaluation-only" })) {
+                throw std::runtime_error("unsupported distribution for '" + spec.key + "'");
+            }
+            if (!isOneOf(spec.sourceKind,
+                    { "field-recording", "dyno-recording", "static-test-recording", "archival-recording" })) {
+                throw std::runtime_error("unsupported source_kind for '" + spec.key + "'");
+            }
+            if (!isOneOf(spec.matchQuality,
+                    { "exact-platform", "family-proxy", "platform-proxy", "architecture-proxy" })) {
+                throw std::runtime_error("unsupported match_quality for '" + spec.key + "'");
+            }
+            if (spec.licenseUrl.rfind("https://", 0) != 0 || spec.sourceUrl.rfind("https://", 0) != 0) {
+                throw std::runtime_error("license_url and source_url must use HTTPS for '" + spec.key + "'");
+            }
+
+            const auto relativeFileText = item.value("file", std::string {});
+            if (spec.distribution == "redistributable") {
+                if (relativeFileText.empty() || spec.previewUrl.rfind("https://", 0) != 0) {
+                    throw std::runtime_error(
+                        "redistributable reference needs file and HTTPS preview_url for '" + spec.key + "'");
+                }
+                const auto validSha = spec.sha256.size() == 64
+                    && std::all_of(spec.sha256.begin(), spec.sha256.end(), [](unsigned char character) {
+                        return std::isdigit(character) != 0 || (character >= 'a' && character <= 'f');
+                    });
+                if (!validSha) {
+                    throw std::runtime_error(
+                        "redistributable reference needs lowercase SHA-256 for '" + spec.key + "'");
+                }
+            }
+            if (!relativeFileText.empty()) {
+                const auto relativeFile = std::filesystem::path(relativeFileText).lexically_normal();
+                if (relativeFile.is_absolute()
+                    || std::any_of(relativeFile.begin(), relativeFile.end(), [](const auto& component) {
+                        return component == std::filesystem::path("..");
+                    })) {
+                    throw std::runtime_error("reference file escapes manifest directory for '" + spec.key + "'");
+                }
+                spec.file = (base / relativeFile).lexically_normal();
+            }
+
+            if (!item.contains("clip_start_seconds") || !item.at("clip_start_seconds").is_number()) {
+                throw std::runtime_error("missing numeric clip_start_seconds for '" + spec.key + "'");
+            }
+            spec.clipStartSeconds = item.at("clip_start_seconds").get<double>();
+            if (!std::isfinite(spec.clipStartSeconds) || spec.clipStartSeconds < 0.0) {
+                throw std::runtime_error("invalid clip_start_seconds for '" + spec.key + "'");
+            }
+
+            spec.sourceEngine = validateMetadataObject(item, "source_engine");
+            for (const auto* field : { "identity", "platform", "architecture", "aspiration" }) {
+                (void) requiredText(spec.sourceEngine, field);
+            }
+            if (!spec.sourceEngine.contains("cylinders")
+                || (!spec.sourceEngine.at("cylinders").is_null()
+                    && (!spec.sourceEngine.at("cylinders").is_number_integer()
+                        || spec.sourceEngine.at("cylinders").get<int>() < 1
+                        || spec.sourceEngine.at("cylinders").get<int>() > 24))) {
+                throw std::runtime_error("invalid source_engine.cylinders for '" + spec.key + "'");
+            }
+
+            if (!item.contains("operating_conditions") || !item.at("operating_conditions").is_array()
+                || item.at("operating_conditions").empty()) {
+                throw std::runtime_error("missing operating_conditions for '" + spec.key + "'");
+            }
+            spec.operatingConditions = item.at("operating_conditions");
+            if (!std::all_of(spec.operatingConditions.begin(), spec.operatingConditions.end(),
+                    [](const Json& condition) { return condition.is_string() && !condition.get<std::string>().empty(); })) {
+                throw std::runtime_error("invalid operating_conditions for '" + spec.key + "'");
+            }
+
+            spec.rpm = validateMetadataObject(item, "rpm");
+            const auto rpmStatus = requiredText(spec.rpm, "status");
+            if (!isOneOf(rpmStatus, { "documented", "instrumented", "estimated", "unknown" })) {
+                throw std::runtime_error("invalid rpm.status for '" + spec.key + "'");
+            }
+            const auto optionalRpm = [&](const char* field) -> std::optional<double> {
+                if (!spec.rpm.contains(field) || spec.rpm.at(field).is_null()) return std::nullopt;
+                if (!spec.rpm.at(field).is_number()) {
+                    throw std::runtime_error(std::string("invalid rpm.") + field + " for '" + spec.key + "'");
+                }
+                const auto value = spec.rpm.at(field).get<double>();
+                if (!std::isfinite(value) || value < 0.0) {
+                    throw std::runtime_error(std::string("invalid rpm.") + field + " for '" + spec.key + "'");
+                }
+                return value;
+            };
+            const auto minimumRpm = optionalRpm("minimum");
+            const auto maximumRpm = optionalRpm("maximum");
+            if (minimumRpm.has_value() && maximumRpm.has_value() && *minimumRpm > *maximumRpm) {
+                throw std::runtime_error("rpm minimum exceeds maximum for '" + spec.key + "'");
+            }
+
+            spec.microphone = validateMetadataObject(item, "microphone");
+            for (const auto* field : { "placement", "model", "calibration" }) {
+                (void) requiredText(spec.microphone, field);
+            }
+
+            spec.audioQuality = validateMetadataObject(item, "audio_quality");
+            for (const auto* field : { "asset", "original_format" }) {
+                (void) requiredText(spec.audioQuality, field);
+            }
+            if (!spec.audioQuality.contains("original_sample_rate_hz")
+                || !spec.audioQuality.at("original_sample_rate_hz").is_number()
+                || spec.audioQuality.at("original_sample_rate_hz").get<double>() <= 0.0
+                || !spec.audioQuality.contains("original_channels")
+                || !spec.audioQuality.at("original_channels").is_number_integer()
+                || spec.audioQuality.at("original_channels").get<int>() < 1
+                || spec.audioQuality.at("original_channels").get<int>() > 8
+                || !spec.audioQuality.contains("original_bit_depth")
+                || (!spec.audioQuality.at("original_bit_depth").is_null()
+                    && (!spec.audioQuality.at("original_bit_depth").is_number_integer()
+                        || spec.audioQuality.at("original_bit_depth").get<int>() < 1))) {
+                throw std::runtime_error("invalid audio_quality for '" + spec.key + "'");
+            }
+
             if (spec.key.empty() || references.contains(spec.key)) {
                 error = "empty or duplicate reference key in manifest";
                 return false;
@@ -204,6 +357,21 @@ bool loadReferenceManifest(
         }
     } catch (const std::exception& e) {
         error = std::string("invalid reference manifest: ") + e.what();
+        return false;
+    }
+    return true;
+}
+
+bool verifyReferenceSha256(const ReferenceSpec& spec, std::string& error) {
+    if (spec.sha256.empty()) return true;
+    const juce::File file(spec.file.string());
+    if (!file.existsAsFile()) {
+        error = "file not found";
+        return false;
+    }
+    const auto actual = juce::SHA256(file).toHexString().toStdString();
+    if (actual != spec.sha256) {
+        error = "SHA-256 mismatch: expected " + spec.sha256 + ", got " + actual;
         return false;
     }
     return true;
@@ -415,6 +583,7 @@ int main(int argc, char** argv) {
     double targetLufs = -20.0;
     unsigned seed = 20260718U;
     bool requireReferences = false;
+    bool validateManifestOnly = false;
     std::map<std::string, std::filesystem::path> refs; // engine name substring -> reference audio
     std::vector<std::string> requestedEngines; // name substrings; empty -> default trio
     for (int i = 1; i < argc; ++i) {
@@ -423,6 +592,7 @@ int main(int argc, char** argv) {
         else if (a == "--root" && i + 1 < argc) root = argv[++i];
         else if (a == "--reference-manifest" && i + 1 < argc) manifestPath = argv[++i];
         else if (a == "--require-references") requireReferences = true;
+        else if (a == "--validate-manifest") validateManifestOnly = true;
         else if (a == "--target-lufs" && i + 1 < argc) targetLufs = std::stod(argv[++i]);
         else if (a == "--seed" && i + 1 < argc) seed = static_cast<unsigned>(std::stoul(argv[++i]));
         else if (a == "--engines" && i + 1 < argc) {
@@ -447,6 +617,7 @@ int main(int argc, char** argv) {
                 << "  --engines <comma-separated catalogue substrings>\n"
                 << "  --reference-manifest <manifest.json>\n"
                 << "  --require-references\n"
+                << "  --validate-manifest\n"
                 << "  --ref <engine-substring>=<audio-path>\n"
                 << "  --target-lufs <value>\n"
                 << "  --seed <integer>\n";
@@ -460,6 +631,55 @@ int main(int argc, char** argv) {
         std::cerr << "Target loudness must be between -40 and -10 LUFS.\n";
         return 1;
     }
+    constexpr double sampleRate = 48'000.0;
+    constexpr double peakCeiling = 0.98;
+
+    std::map<std::string, ReferenceSpec> manifestReferences;
+    if (!manifestPath.empty()) {
+        std::string error;
+        if (!loadReferenceManifest(manifestPath, manifestReferences, error)) {
+            std::cerr << error << '\n';
+            return 1;
+        }
+    }
+    if (validateManifestOnly) {
+        if (manifestPath.empty()) {
+            std::cerr << "--validate-manifest requires --reference-manifest.\n";
+            return 1;
+        }
+        int unavailable = 0;
+        std::cout << "Manifest metadata valid: " << manifestReferences.size() << " references\n";
+        for (const auto& [key, spec] : manifestReferences) {
+            if (spec.file.empty()) {
+                std::cout << "  " << key << ": metadata only (" << spec.distribution << ")\n";
+                continue;
+            }
+            std::string error;
+            if (!verifyReferenceSha256(spec, error)) {
+                std::cerr << "  " << key << ": " << error << '\n';
+                ++unavailable;
+                continue;
+            }
+            Clip clip;
+            ReferenceLoadInfo info;
+            if (!loadReferenceAudio(spec.file, sampleRate, clip, info, error)) {
+                std::cerr << "  " << key << ": " << error << '\n';
+                ++unavailable;
+                continue;
+            }
+            std::cout << "  " << key << ": SHA-256 and decode OK, "
+                      << info.originalSampleRate << " Hz, " << info.originalChannels << " ch, "
+                      << info.originalDurationSeconds << " s\n";
+        }
+        if (unavailable != 0) {
+            std::cerr << "Manifest metadata is valid, but " << unavailable
+                      << " referenced asset(s) failed integrity or decode checks.\n";
+            return 2;
+        }
+        std::cout << "All referenced assets passed integrity and decode checks.\n";
+        return 0;
+    }
+
     const auto listeningDir = outRoot / "clips";
 
     auto catalog = loadEngineCatalog(root);
@@ -474,18 +694,6 @@ int main(int argc, char** argv) {
         for (const auto& e : catalog.entries)
             if (e.config.name.find(key) != std::string::npos) { selected.push_back({ key, &e.config }); break; }
     if (selected.size() != wanted.size()) { std::cerr << "Could not resolve all requested engines.\n"; return 1; }
-
-    constexpr double sampleRate = 48'000.0;
-    constexpr double peakCeiling = 0.98;
-
-    std::map<std::string, ReferenceSpec> manifestReferences;
-    if (!manifestPath.empty()) {
-        std::string error;
-        if (!loadReferenceManifest(manifestPath, manifestReferences, error)) {
-            std::cerr << error << '\n';
-            return 1;
-        }
-    }
 
     struct PreparedReference final {
         bool present { false };
@@ -504,6 +712,8 @@ int main(int argc, char** argv) {
             destination.spec.file = manual->second;
             destination.spec.creator = "MANUAL";
             destination.spec.license = "UNVERIFIED";
+            destination.spec.distribution = "evaluation-only";
+            destination.spec.sourceKind = "unknown";
             destination.spec.matchQuality = "manual-unverified";
             destination.spec.notes = "Supplied with --ref; verify provenance before publishing results.";
         } else if (const auto manifest = manifestReferences.find(sel.label);
@@ -514,8 +724,11 @@ int main(int argc, char** argv) {
         }
 
         if (!destination.spec.file.empty()) {
-            destination.present = loadReferenceAudio(
-                destination.spec.file, sampleRate, destination.clip, destination.loadInfo, destination.error);
+            destination.present = verifyReferenceSha256(destination.spec, destination.error);
+            if (destination.present) {
+                destination.present = loadReferenceAudio(
+                    destination.spec.file, sampleRate, destination.clip, destination.loadInfo, destination.error);
+            }
         }
         if (!destination.present) {
             std::cerr << "Reference preflight [" << sel.label << "]: " << destination.error;
@@ -646,10 +859,18 @@ int main(int argc, char** argv) {
                 { "file", std::filesystem::absolute(prepared[p].spec.file).string() },
                 { "creator", prepared[p].spec.creator },
                 { "license", prepared[p].spec.license },
+                { "license_url", prepared[p].spec.licenseUrl },
+                { "distribution", prepared[p].spec.distribution },
                 { "source_url", prepared[p].spec.sourceUrl },
                 { "preview_url", prepared[p].spec.previewUrl },
                 { "sha256", prepared[p].spec.sha256 },
+                { "source_kind", prepared[p].spec.sourceKind },
                 { "match_quality", prepared[p].spec.matchQuality },
+                { "source_engine", prepared[p].spec.sourceEngine },
+                { "operating_conditions", prepared[p].spec.operatingConditions },
+                { "rpm", prepared[p].spec.rpm },
+                { "microphone", prepared[p].spec.microphone },
+                { "audio_quality", prepared[p].spec.audioQuality },
                 { "notes", prepared[p].spec.notes },
                 { "clip_start_seconds", prepared[p].spec.clipStartSeconds },
                 { "original_sample_rate_hz", prepared[p].loadInfo.originalSampleRate },
