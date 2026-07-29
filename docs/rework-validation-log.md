@@ -738,3 +738,46 @@ Après correction :
 
 Les artefacts de source sont retirés sans élargissement artificiel du spectre ni
 retouche des calibrations moteur.
+
+## 2026-07-29 — Régressions audio transitoires et passage de rapport
+
+Le rendu stationnaire ne couvrait ni la dump valve réellement ouverte, ni le
+rupteur, ni le signal audio d'un passage de rapport. Le harnais de shift ne
+mesurait que le débit d'échappement.
+
+Couverture ajoutée sur la chaîne `RealtimeEngineAudio` livrée :
+
+- Big Twin : démarrage, ralenti, coup de gaz et retour ;
+- 2JZ : plateau sous boost, lever franc, dump valve et reprise ;
+- K20 : montée libre et zone de coupure douce du rupteur ;
+- K20 et 2JZ : upshift clutchless WOT, avec WAV et mesure locale des pas audio.
+
+Mesures du lot Release :
+
+| Cas | Mesure utile | Résultat |
+|---|---:|---:|
+| Big Twin | pas transition / p99,9 local | 1,135 |
+| 2JZ lever | boost avant lever | 1,794 |
+| 2JZ lever | débit dump maximal | 0,09834 kg/s |
+| 2JZ lever | pas transition / p99,9 local | 1,40 |
+| K20 rupteur | régime maximal / zone douce | 8 575 / 8 480 tr/min |
+| K20 rupteur | pas entrée / p99,9 local | 0,53 |
+
+Le passage de rapport avait encore un conflit physique : le couple moteur
+revenait selon le temps du sélecteur pendant que l'embrayage synchronisait
+encore le nouveau rapport. La restitution du couple suit maintenant le
+glissement réel, avec une interpolation lisse jusqu'à la bande de verrouillage.
+
+A/B 2JZ, même machine et même heure :
+
+| Mesure | Avant | Après |
+|---|---:|---:|
+| conflit couple × glissement intégré | 0,1457 | 0,0965 |
+| pente max débit échappement (g/s/ms) | 2,134 | 2,070 |
+| resynchronisation | 216,7 ms | 220,8 ms |
+| RMS dérivée audio, fenêtre shift | 0,00897 | 0,00815 |
+
+Le conflit baisse de 34 % et la dérivée RMS de 9 %, pour 4,1 ms de
+resynchronisation supplémentaire. Le K20 témoin reste verrouillé à 208,3 ms.
+Les quatre tests ciblés (`Core`, `AudioTransients`, shift atmosphérique et
+shift turbo) passent 4/4 en 70,47 s, sans perte, fallback, leveler ou limiteur.

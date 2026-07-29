@@ -506,6 +506,15 @@ rework: measurements, and the hypotheses that were tried and refuted.
   measured flow; never radiate the full flow through the turbine and then add a
   second `flow * opening` wastegate source. Frame-rate telemetry must also be
   reconstructed per audio sample before it modulates a blade-order tone.
+- **An upshift torque cut must release against clutch slip, not only a timer.**
+  Restoring WOT while the clutch is still pulling the crank into the next ratio
+  makes two torques fight and hardens the exhaust-flow/audio transient,
+  especially on a boosted engine. `DrivelineModel` now captures the first slip
+  in the new ratio and releases the cut smoothly as that slip reaches the lock
+  band. Validate both `EngineLab.AudioShiftTransientNA` and
+  `EngineLab.AudioShiftTransientBoosted`: a pre-shift WOT percentile alone is
+  not a valid click baseline for a turbo, because its intentional dump-valve
+  jet raises broadband energy during the event.
 
 ## Two concrete traps that cost time here
 

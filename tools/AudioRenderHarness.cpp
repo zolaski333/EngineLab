@@ -33,6 +33,7 @@
 #include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <limits>
 #include <memory>
 #include <numbers>
 #include <numeric>
@@ -141,6 +142,19 @@ struct SafetyScan final {
     std::size_t longestFlatTop {};
 };
 
+// A control transition is allowed to change the sound, but it must not create
+// a one-sample discontinuity. Compare the largest adjacent-sample step in a
+// narrow window around each commanded transition with the 99.9th percentile of
+// the same signal away from those windows. This keeps genuine combustion
+// impulses in the reference population while making a control-boundary click
+// stand out as an isolated outlier.
+struct TransitionStepScan final {
+    double maximumTransitionStep {};
+    double backgroundStepP999 {};
+    double transitionToBackgroundRatio {};
+    bool measurable { false };
+};
+
 // Steady-state fingerprint over the final analysis window.
 struct WindowAnalysis final {
     double mean {};
@@ -244,6 +258,13 @@ struct Metrics {
     bool forcedInductionAcousticsActive { false };
     std::uint64_t legacyPathSamples {};
     std::uint64_t invalidBoundarySamples {};
+    double maximumRpm {};
+    double limiterEntrySeconds { -1.0 };
+    double minimumRpmAfterLimiter {};
+    double maximumBoostPressureRatio { 1.0 };
+    double preLiftBoostPressureRatio { 1.0 };
+    double maximumBlowOffMassFlowKgPerSecond {};
+    TransitionStepScan commandedTransitionSteps {};
 };
 
 SafetyScan scanSignal(const std::vector<float>& x) {
@@ -273,6 +294,54 @@ SafetyScan scanSignal(const std::vector<float>& x) {
         s.longestFlatTop = std::max(s.longestFlatTop, flatRun);
     }
     return s;
+}
+
+TransitionStepScan scanTransitionSteps(
+    const std::vector<float>& x, double sampleRate,
+    const std::vector<double>& transitionTimesSeconds) {
+    TransitionStepScan result;
+    if (x.size() < 2 || !(sampleRate > 0.0)
+        || transitionTimesSeconds.empty()) {
+        return result;
+    }
+
+    constexpr double transitionHalfWindowSeconds = 0.010;
+    std::vector<double> backgroundSteps;
+    backgroundSteps.reserve(x.size());
+    for (std::size_t index = 1; index < x.size(); ++index) {
+        const auto current = static_cast<double>(x[index]);
+        const auto previous = static_cast<double>(x[index - 1]);
+        if (!std::isfinite(current) || !std::isfinite(previous)) continue;
+        const auto timeSeconds = static_cast<double>(index) / sampleRate;
+        const auto nearTransition = std::any_of(
+            transitionTimesSeconds.begin(), transitionTimesSeconds.end(),
+            [timeSeconds](double transitionTimeSeconds) {
+                return std::abs(timeSeconds - transitionTimeSeconds)
+                    <= transitionHalfWindowSeconds;
+            });
+        const auto step = std::abs(current - previous);
+        if (nearTransition)
+            result.maximumTransitionStep =
+                std::max(result.maximumTransitionStep, step);
+        else
+            backgroundSteps.push_back(step);
+    }
+    if (backgroundSteps.empty()) return result;
+
+    const auto percentileIndex = std::min(
+        backgroundSteps.size() - 1,
+        static_cast<std::size_t>(std::floor(
+            0.999 * static_cast<double>(backgroundSteps.size() - 1))));
+    std::nth_element(
+        backgroundSteps.begin(),
+        backgroundSteps.begin() + static_cast<std::ptrdiff_t>(percentileIndex),
+        backgroundSteps.end());
+    result.backgroundStepP999 = backgroundSteps[percentileIndex];
+    result.transitionToBackgroundRatio = result.maximumTransitionStep
+        / std::max(1.0e-9, result.backgroundStepP999);
+    result.measurable = result.maximumTransitionStep > 0.0
+        && result.backgroundStepP999 > 0.0;
+    return result;
 }
 
 // Analyse the final steady-state window. The FFT is used both for broad energy
@@ -421,7 +490,7 @@ double cosineSimilarity(const Metrics& a, const Metrics& b) {
 
 Metrics renderEngine(const EngineConfig& baseConfig, const WavData& ir,
                      const std::filesystem::path& outDir, double seconds, bool writeOutput,
-    bool syntheticTurbo = false) {
+    bool syntheticTurbo = false, bool limiterRun = false, bool liftRun = false) {
     auto config = baseConfig;
     if (syntheticTurbo) {
         config.name += " Synthetic Turbo";
@@ -480,6 +549,12 @@ Metrics renderEngine(const EngineConfig& baseConfig, const WavData& ir,
     double valveFlowResidualSquareSum = 0.0;
     double valveFlowCrossSum = 0.0;
     std::uint64_t valveFlowSampleCount = 0;
+    double maximumRpm = 0.0;
+    double limiterEntrySeconds = -1.0;
+    double minimumRpmAfterLimiter = std::numeric_limits<double>::infinity();
+    double maximumBoostPressureRatio = 1.0;
+    double preLiftBoostPressureRatio = 1.0;
+    double maximumBlowOffMassFlowKgPerSecond = 0.0;
     const auto dynoTargetRpm = std::max(config.idleRpm * 1.50, config.redlineRpm * 0.55);
     const auto steps = static_cast<std::size_t>(seconds / dt);
     for (std::size_t step = 0; step < steps; ++step) {
@@ -487,9 +562,16 @@ Metrics renderEngine(const EngineConfig& baseConfig, const WavData& ir,
         EngineControls controls;
         controls.ignitionEnabled = true;
         controls.starterEngaged = t < 1.1;
-        controls.throttle = t < 0.9 ? 0.2
-            : (syntheticTurbo && t >= 2.4 && t < 2.65 ? 0.08 : 0.72);
-        if (t >= 1.2) {
+        if (limiterRun) {
+            controls.throttle = t < 0.9 ? 0.18
+                : std::clamp(
+                    0.18 + (t - 0.9) / 0.65 * 0.82, 0.18, 1.0);
+        } else {
+            const auto performLift = syntheticTurbo || liftRun;
+            controls.throttle = t < 0.9 ? 0.2
+                : (performLift && t >= 2.4 && t < 2.65 ? 0.08 : 0.72);
+        }
+        if (t >= 1.2 && !limiterRun) {
             const auto speedError = (simulator.state().rpm - dynoTargetRpm)
                 / std::max(1.0, dynoTargetRpm);
             dynoLoadIntegral = std::clamp(
@@ -507,6 +589,26 @@ Metrics renderEngine(const EngineConfig& baseConfig, const WavData& ir,
             controls.load = dynoLoadApplied;
         }
         auto frame = simulator.step(dt, controls);
+        maximumRpm = std::max(maximumRpm, frame.state.rpm);
+        maximumBoostPressureRatio = std::max(
+            maximumBoostPressureRatio, frame.state.boostPressureRatio);
+        maximumBlowOffMassFlowKgPerSecond = std::max(
+            maximumBlowOffMassFlowKgPerSecond,
+            frame.state.blowOffMassFlowKgPerSecond);
+        if (t >= 2.0 && t < 2.4)
+            preLiftBoostPressureRatio = std::max(
+                preLiftBoostPressureRatio, frame.state.boostPressureRatio);
+        if (limiterRun && limiterEntrySeconds < 0.0
+            // The ECU begins its alternating soft cut 220 rpm below the hard
+            // latch. Measuring that first cut is the audible limiter entry;
+            // requiring the hard latch would reject a correctly effective
+            // soft limiter precisely because it prevented the overshoot.
+            && frame.state.rpm >= config.ignition.revLimitRpm - 210.0) {
+            limiterEntrySeconds = t;
+        }
+        if (limiterEntrySeconds >= 0.0 && t > limiterEntrySeconds + 0.02)
+            minimumRpmAfterLimiter = std::min(
+                minimumRpmAfterLimiter, frame.state.rpm);
         droppedEvents += frame.droppedFiringEventCount;
         droppedPressureSamples += frame.droppedCylinderPressureSampleCount;
         const auto simStart = frame.state.simulationTimeSeconds - dt;
@@ -615,6 +717,21 @@ Metrics renderEngine(const EngineConfig& baseConfig, const WavData& ir,
     m.forcedInductionAcousticsActive = renderer.forcedInductionAcousticsActive();
     m.legacyPathSamples = renderer.legacyPathSampleCount();
     m.invalidBoundarySamples = renderer.invalidBoundarySampleCount();
+    m.maximumRpm = maximumRpm;
+    m.limiterEntrySeconds = limiterEntrySeconds;
+    m.minimumRpmAfterLimiter = std::isfinite(minimumRpmAfterLimiter)
+        ? minimumRpmAfterLimiter : maximumRpm;
+    m.maximumBoostPressureRatio = maximumBoostPressureRatio;
+    m.preLiftBoostPressureRatio = preLiftBoostPressureRatio;
+    m.maximumBlowOffMassFlowKgPerSecond =
+        maximumBlowOffMassFlowKgPerSecond;
+    if (limiterRun && limiterEntrySeconds >= 0.0) {
+        m.commandedTransitionSteps = scanTransitionSteps(
+            audioLeft, audioRate, { limiterEntrySeconds });
+    } else if (syntheticTurbo || liftRun) {
+        m.commandedTransitionSteps = scanTransitionSteps(
+            audioLeft, audioRate, { 2.4, 2.65 });
+    }
     if (writeOutput)
         writeWav(outDir / (config.name + ".wav"), audioLeft, audioRight, static_cast<int>(audioRate));
     std::cout << std::left << std::setw(26) << config.name
@@ -663,6 +780,17 @@ Metrics renderEngine(const EngineConfig& baseConfig, const WavData& ir,
               << " levelLimited=" << m.levelLimitedSamples
               << " minLevelGain=" << std::setprecision(4) << m.minLevelGain
               << " preLimiter=" << m.maxPreLimiterMagnitude
+              << " maxRpm=" << std::setprecision(0) << m.maximumRpm
+              << " boost(pre/max)=" << std::setprecision(3)
+              << m.preLiftBoostPressureRatio << '/'
+              << m.maximumBoostPressureRatio
+              << " bovKgS=" << std::setprecision(5)
+              << m.maximumBlowOffMassFlowKgPerSecond
+              << " transitionStep=" << std::setprecision(5)
+              << m.commandedTransitionSteps.maximumTransitionStep
+              << "/p999=" << m.commandedTransitionSteps.backgroundStepP999
+              << "/ratio=" << std::setprecision(2)
+              << m.commandedTransitionSteps.transitionToBackgroundRatio
               << " layerPa=" << std::setprecision(1) << m.maxExhaustPressurePa
               << '/' << m.maxIntakePressurePa << '/' << m.maxStructuralPressurePa
               << " intakeStagesPa=" << m.intakeDiagnostics.sourcePressurePa
@@ -689,6 +817,7 @@ struct IdleCycleMetrics final {
     std::uint64_t lateEvents {};
     std::uint64_t levelLimitedSamples {};
     float minLevelGain { 1.0F };
+    TransitionStepScan commandedTransitionSteps {};
 };
 
 IdleCycleMetrics renderIdleCycle(const EngineConfig& baseConfig, const WavData& ir,
@@ -830,6 +959,8 @@ IdleCycleMetrics renderIdleCycle(const EngineConfig& baseConfig, const WavData& 
     metrics.lateEvents = renderer.lateEventCount();
     metrics.levelLimitedSamples = renderer.levelLimitedSampleCount();
     metrics.minLevelGain = renderer.minObservedLevelGain();
+    metrics.commandedTransitionSteps = scanTransitionSteps(
+        left, audioRate, { 1.5, 4.0, 4.4, 4.7, 5.0 });
     writeWav(outDir / "idle-start-rev-return.wav", left, right,
              static_cast<int>(audioRate));
     std::cout << std::left << std::setw(26) << config.name
@@ -848,6 +979,12 @@ IdleCycleMetrics renderIdleCycle(const EngineConfig& baseConfig, const WavData& 
               << " late=" << metrics.lateEvents
               << " levelLimited=" << metrics.levelLimitedSamples
               << " minLevelGain=" << metrics.minLevelGain
+              << " transitionStep=" << std::setprecision(5)
+              << metrics.commandedTransitionSteps.maximumTransitionStep
+              << "/p999="
+              << metrics.commandedTransitionSteps.backgroundStepP999
+              << "/ratio="
+              << metrics.commandedTransitionSteps.transitionToBackgroundRatio
               << " observerPeak=" << renderer.maxObservedExhaustPressurePa() << " Pa"
               << '\n';
     return metrics;
@@ -891,6 +1028,95 @@ bool validateIdleCycle(const IdleCycleMetrics& metrics,
         fail("realtime telemetry or events were dropped/late");
     if (metrics.levelLimitedSamples != 0 || metrics.minLevelGain < 0.99999F)
         fail("safety leveler engaged during the idle cycle");
+    if (!metrics.commandedTransitionSteps.measurable)
+        fail("control-boundary discontinuity scan was not measurable");
+    else if (metrics.commandedTransitionSteps.maximumTransitionStep > 0.50
+        || metrics.commandedTransitionSteps.transitionToBackgroundRatio > 8.0)
+        fail("starter or throttle transition produced an isolated audio step");
+    return ok;
+}
+
+bool validateBoostLiftTransient(
+    const Metrics& metrics, const EngineConfig& config) {
+    auto ok = true;
+    const auto fail = [&ok, &config](const std::string& reason) {
+        std::cerr << "FAIL: boost lift transient (" << config.name
+                  << "): " << reason << '\n';
+        ok = false;
+    };
+    if (!metrics.left.scan.finite || !metrics.right.scan.finite
+        || metrics.left.scan.peak > 1.00001
+        || metrics.right.scan.peak > 1.00001) {
+        fail("non-finite or out-of-range audio");
+    }
+    if (metrics.left.scan.nearFullScaleFraction > 0.002
+        || metrics.left.scan.longestFlatTop > 8) {
+        fail("lift transient clips or forms a flat-top plateau");
+    }
+    if (!metrics.physicalActive || !metrics.compiledTopologyActive
+        || !metrics.structuralRadiationActive
+        || !metrics.intakeTopologyActive
+        || !metrics.forcedInductionAcousticsActive) {
+        fail("one or more production physical audio layers were inactive");
+    }
+    if (metrics.preLiftBoostPressureRatio <= 1.01)
+        fail("throttle lift happened without measurable pre-lift boost");
+    if (metrics.maximumBlowOffMassFlowKgPerSecond <= 1.0e-5)
+        fail("the physical blow-off valve never flowed during the lift");
+    if (!metrics.commandedTransitionSteps.measurable)
+        fail("lift-boundary discontinuity scan was not measurable");
+    else if (metrics.commandedTransitionSteps.maximumTransitionStep > 0.50
+        || metrics.commandedTransitionSteps.transitionToBackgroundRatio > 8.0)
+        fail("throttle lift or recovery produced an isolated audio step");
+    if (metrics.droppedEvents != 0 || metrics.droppedPressureSamples != 0
+        || metrics.lateEvents != 0 || metrics.stolenVoices != 0
+        || metrics.invalidBoundarySamples != 0) {
+        fail("realtime telemetry, voices, or physical boundary samples were lost");
+    }
+    if (metrics.levelLimitedSamples != 0
+        || metrics.minLevelGain < 0.99999F
+        || metrics.maxPreLimiterMagnitude >= 0.82F) {
+        fail("a downstream safety processor masked the transient");
+    }
+    return ok;
+}
+
+bool validateLimiterTransient(
+    const Metrics& metrics, const EngineConfig& config) {
+    auto ok = true;
+    const auto fail = [&ok, &config](const std::string& reason) {
+        std::cerr << "FAIL: rev-limiter transient (" << config.name
+                  << "): " << reason << '\n';
+        ok = false;
+    };
+    if (!metrics.left.scan.finite || !metrics.right.scan.finite
+        || metrics.left.scan.peak > 1.00001
+        || metrics.right.scan.peak > 1.00001) {
+        fail("non-finite or out-of-range audio");
+    }
+    if (metrics.limiterEntrySeconds < 0.0
+        || metrics.maximumRpm < config.ignition.revLimitRpm - 220.0) {
+        fail("free rev never reached the configured ECU limiter");
+    }
+    if (metrics.maximumRpm > config.ignition.revLimitRpm * 1.08)
+        fail("engine overshot the configured limiter by more than 8%");
+    if (metrics.maximumRpm - metrics.minimumRpmAfterLimiter < 60.0)
+        fail("limiter did not produce a resolved cut-and-release cycle");
+    if (!metrics.commandedTransitionSteps.measurable)
+        fail("limiter-entry discontinuity scan was not measurable");
+    else if (metrics.commandedTransitionSteps.maximumTransitionStep > 0.50
+        || metrics.commandedTransitionSteps.transitionToBackgroundRatio > 8.0)
+        fail("limiter entry produced an isolated audio step");
+    if (metrics.droppedEvents != 0 || metrics.droppedPressureSamples != 0
+        || metrics.lateEvents != 0 || metrics.stolenVoices != 0
+        || metrics.invalidBoundarySamples != 0) {
+        fail("realtime telemetry, voices, or physical boundary samples were lost");
+    }
+    if (metrics.levelLimitedSamples != 0
+        || metrics.minLevelGain < 0.99999F
+        || metrics.maxPreLimiterMagnitude >= 0.82F) {
+        fail("a downstream safety processor masked the limiter transient");
+    }
     return ok;
 }
 
@@ -1266,6 +1492,7 @@ int main(int argc, char** argv) {
     std::filesystem::path outDir = "audio-render-output";
     std::filesystem::path irPath = std::filesystem::path(ENGINELAB_CATALOG_ROOT) / "assets" / "ir" / "exhaust_default.wav";
     bool idleOnly = false;
+    bool transientOnly = false;
     std::string referenceFilter;
     std::string catalogueFilter;
     std::string runtimeFilter;
@@ -1278,6 +1505,7 @@ int main(int argc, char** argv) {
         if (a == "--output" && i + 1 < argc) outDir = argv[++i];
         else if (a == "--ir" && i + 1 < argc) irPath = argv[++i];
         else if (a == "--idle-only") idleOnly = true;
+        else if (a == "--transient-only") transientOnly = true;
         else if (a == "--reference-filter" && i + 1 < argc)
             referenceFilter = argv[++i];
         else if (a == "--catalogue-filter" && i + 1 < argc)
@@ -1306,6 +1534,49 @@ int main(int argc, char** argv) {
                   << " samples @ " << ir.sampleRate << " Hz)\n";
     else
         std::cout << "WARNING: could not load IR at " << irPath.string() << " (using renderer fallback)\n";
+
+    if (transientOnly) {
+        const auto catalog = loadEngineCatalog(
+            std::filesystem::path(ENGINELAB_CATALOG_ROOT));
+        if (!catalog.errors.empty()) {
+            std::cerr << "FAIL: catalogue load: "
+                      << catalog.errors.front() << '\n';
+            return 2;
+        }
+        const auto findEngine = [&catalog](const std::string& fragment) {
+            return std::find_if(
+                catalog.entries.begin(), catalog.entries.end(),
+                [&fragment](const auto& entry) {
+                    return entry.config.name.find(fragment)
+                        != std::string::npos;
+                });
+        };
+        const auto idleEngine = findEngine("Big Twin");
+        const auto boostedEngine = findEngine("2JZ");
+        const auto limiterEngine = findEngine("K20");
+        if (idleEngine == catalog.entries.end()
+            || boostedEngine == catalog.entries.end()
+            || limiterEngine == catalog.entries.end()) {
+            std::cerr << "FAIL: transient fixtures require Big Twin, 2JZ, and K20 catalogue entries\n";
+            return 2;
+        }
+
+        std::cout << "\n--- Audio transient regression suite ---\n";
+        const auto idle = renderIdleCycle(
+            idleEngine->config, ir, outDir / "start-idle-rev");
+        const auto lift = renderEngine(
+            boostedEngine->config, ir, outDir / "boost-lift",
+            3.6, true, false, false, true);
+        const auto limiter = renderEngine(
+            limiterEngine->config, ir, outDir / "rev-limiter",
+            4.5, true, false, true, false);
+        const auto ok = validateIdleCycle(idle, idleEngine->config)
+            && validateBoostLiftTransient(lift, boostedEngine->config)
+            && validateLimiterTransient(limiter, limiterEngine->config);
+        std::cout << "Transient result: " << (ok ? "PASS" : "FAIL")
+                  << '\n';
+        return ok ? 0 : 1;
+    }
 
     if (!junctionComparisonFilter.empty()) {
         const auto catalog = loadEngineCatalog(

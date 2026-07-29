@@ -54,7 +54,9 @@ DrivelineOutput DrivelineModel::advance(double dt, const EngineState& engineStat
     if (!shiftInProgress_ && requestedGear_ != engagedGear_) {
         shiftInProgress_ = true;
         shiftTargetGear_ = requestedGear_;
+        shiftFromGear_ = engagedGear_;
         shiftElapsedSeconds_ = 0.0;
+        resyncReferenceSlipRpm_ = 0.0;
     }
     double shiftProgress = 0.0;
     double effectiveClutch = clutchPedal;
@@ -65,9 +67,77 @@ DrivelineOutput DrivelineModel::advance(double dt, const EngineState& engineStat
         else if (shiftProgress < 0.60) effectiveClutch = 0.0;
         else effectiveClutch *= (shiftProgress - 0.60) / 0.40;
         if (shiftProgress >= 0.48) engagedGear_ = shiftTargetGear_;
-        if (shiftProgress >= 1.0) { engagedGear_ = shiftTargetGear_; shiftInProgress_ = false; shiftProgress = 0.0; }
-        output.torqueCutMultiplier = 1.0 - transmission.shiftTorqueCutFraction
-            * std::sin(std::numbers::pi * std::clamp(shiftProgress, 0.0, 1.0));
+        const auto forwardUpshift = shiftFromGear_ >= 0
+            && shiftTargetGear_ > shiftFromGear_;
+        const auto lockBandRpm = std::max(
+            1.0, transmission.clutchLockSpeedRpm);
+        // The new ratio becomes active just before halfway through the timer.
+        // On the following frame lastClutchSlipRpm_ is therefore the first
+        // measured slip in that ratio and is a stable reference for the
+        // synchronisation phase.
+        if (forwardUpshift && shiftProgress >= 0.52
+            && resyncReferenceSlipRpm_ <= lockBandRpm
+            && std::abs(lastClutchSlipRpm_) > lockBandRpm) {
+            resyncReferenceSlipRpm_ =
+                std::abs(lastClutchSlipRpm_);
+        }
+
+        const auto cutDepth = std::clamp(
+            transmission.shiftTorqueCutFraction, 0.0, 1.0);
+        const auto cutFloor = 1.0 - cutDepth;
+        if (forwardUpshift && shiftProgress > 0.50
+            && resyncReferenceSlipRpm_ > lockBandRpm) {
+            // Do not restore engine torque merely because a wall-clock shift
+            // timer is ending. Release it with the actual clutch slip instead:
+            // this prevents rising combustion torque and clutch synchronising
+            // torque from fighting across the same few frames, the physical
+            // source of the boosted-engine "gear crack".
+            const auto remainingSlip = std::clamp(
+                (std::abs(lastClutchSlipRpm_) - lockBandRpm)
+                    / std::max(1.0,
+                        resyncReferenceSlipRpm_ - lockBandRpm),
+                0.0, 1.0);
+            const auto release = 1.0 - remainingSlip;
+            const auto smoothRelease =
+                release * release * (3.0 - 2.0 * release);
+            output.torqueCutMultiplier =
+                cutFloor + cutDepth * smoothRelease;
+        } else {
+            output.torqueCutMultiplier = 1.0 - cutDepth
+                * std::sin(std::numbers::pi
+                    * std::clamp(shiftProgress, 0.0, 1.0));
+        }
+        if (shiftProgress >= 1.0) {
+            engagedGear_ = shiftTargetGear_;
+            shiftInProgress_ = false;
+            shiftProgress = 0.0;
+        }
+    } else if (resyncReferenceSlipRpm_
+        > std::max(1.0, transmission.clutchLockSpeedRpm)) {
+        // A high-power upshift can still be synchronising after the selector
+        // timer has completed. Keep the same slip-following torque envelope
+        // until the dry clutch enters its lock band, then return exactly to
+        // the driver's requested torque.
+        const auto lockBandRpm = std::max(
+            1.0, transmission.clutchLockSpeedRpm);
+        const auto currentSlip = std::abs(lastClutchSlipRpm_);
+        if (currentSlip <= lockBandRpm) {
+            resyncReferenceSlipRpm_ = 0.0;
+            output.torqueCutMultiplier = 1.0;
+        } else {
+            const auto remainingSlip = std::clamp(
+                (currentSlip - lockBandRpm)
+                    / std::max(1.0,
+                        resyncReferenceSlipRpm_ - lockBandRpm),
+                0.0, 1.0);
+            const auto release = 1.0 - remainingSlip;
+            const auto smoothRelease =
+                release * release * (3.0 - 2.0 * release);
+            const auto cutDepth = std::clamp(
+                transmission.shiftTorqueCutFraction, 0.0, 1.0);
+            output.torqueCutMultiplier =
+                1.0 - cutDepth + cutDepth * smoothRelease;
+        }
     }
 
     const auto totalRatio = selectedRatio();
@@ -241,6 +311,7 @@ DrivelineOutput DrivelineModel::advance(double dt, const EngineState& engineStat
     output.clutchPowerLossKw = clutchLossEnergy * inverseDt * 0.001;
     output.storedEnergyJoules = storedEnergy;
     output.energyResidualJoules = energyResidual;
+    lastClutchSlipRpm_ = lastSlipRpm;
     return output;
 }
 

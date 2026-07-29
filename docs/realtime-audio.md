@@ -157,6 +157,25 @@ turbine/wastegate. `EngineLab.RealtimeRegression` conserve les tests d'ordre de
 pales, de racine de puissance, de silence sans débit et de rayonnement des
 valves réellement ouvertes.
 
+La suite transitoire Release est séparée du rendu stationnaire :
+
+- `EngineLab.AudioTransients` rend la chaîne de production pendant un
+  démarrage, un ralenti stabilisé, un coup de gaz, le retour au ralenti, un
+  lever/reprise de papillon sous boost avec dump valve, puis une entrée dans la
+  zone de coupure du rupteur ;
+- `EngineLab.AudioShiftTransientNA` et
+  `EngineLab.AudioShiftTransientBoosted` rendent un passage de rapport
+  clutchless WOT complet, vérifient le verrouillage de l'embrayage et écrivent
+  les WAV de preuve ;
+- chaque cas refuse les valeurs non finies, les pertes d'événements ou de
+  pression, le vol de voix, le fallback physique, le leveler ou le limiteur
+  utilisés comme cache-misère et une discontinuité isolée.
+
+Le détecteur de clic compare un pas à la distribution locale des pas pendant
+le même événement. Comparer une dump valve active au seul plateau WOT
+pré-transitoire est invalide : le bruit de jet large bande attendu augmente
+précisément pendant le passage et ferait échouer un signal continu.
+
 ## Limites connues
 
 - huit chemins et 32 cylindres maximum ;

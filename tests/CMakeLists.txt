@@ -105,11 +105,31 @@ if(TARGET EngineLabDynoSweepHarness)
 endif()
 if(TARGET EngineLabAudioRenderHarness)
     add_test(NAME EngineLab.AudioRender COMMAND EngineLabAudioRenderHarness)
+    add_test(NAME EngineLab.AudioTransients
+        COMMAND EngineLabAudioRenderHarness
+            --transient-only
+            --output "${CMAKE_BINARY_DIR}/audio-transient-test")
     if(ENGINELAB_ENABLE_SANITIZERS)
         set_tests_properties(EngineLab.AudioRender PROPERTIES TIMEOUT 600)
+        set_tests_properties(EngineLab.AudioTransients PROPERTIES TIMEOUT 600)
     else()
         set_tests_properties(EngineLab.AudioRender PROPERTIES TIMEOUT 180)
+        set_tests_properties(EngineLab.AudioTransients PROPERTIES TIMEOUT 180)
     endif()
+endif()
+if(TARGET EngineLabShiftTransientHarness)
+    add_test(NAME EngineLab.AudioShiftTransientNA
+        COMMAND EngineLabShiftTransientHarness
+            --filter "K20"
+            --audio-output "${CMAKE_BINARY_DIR}/audio-shift-transient-na-test")
+    add_test(NAME EngineLab.AudioShiftTransientBoosted
+        COMMAND EngineLabShiftTransientHarness
+            --filter "2JZ"
+            --audio-output "${CMAKE_BINARY_DIR}/audio-shift-transient-boosted-test")
+    set_tests_properties(
+        EngineLab.AudioShiftTransientNA
+        EngineLab.AudioShiftTransientBoosted
+        PROPERTIES TIMEOUT 180)
 endif()
 if(MSVC)
     target_link_options(EngineLabCoreTests PRIVATE /STACK:8388608)
