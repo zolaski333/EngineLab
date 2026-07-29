@@ -55,7 +55,8 @@ enginelab_set_warnings(EngineLabRealtimeBudgetHarness)
 add_executable(EngineLabAbClipRenderer AbClipRenderer.cpp)
 target_link_libraries(EngineLabAbClipRenderer PRIVATE
     EngineLab::Audio EngineLab::Simulation EngineLab::Foundation EngineLab::Physics
-    EngineLab::Ecu EngineLab::Events EngineLab::Exhaust EngineLab::Catalog)
+    EngineLab::Ecu EngineLab::Events EngineLab::Exhaust EngineLab::Catalog
+    nlohmann_json::nlohmann_json)
 target_compile_definitions(EngineLabAbClipRenderer PRIVATE ENGINELAB_CATALOG_ROOT="${CMAKE_SOURCE_DIR}")
 if(MSVC)
     target_link_options(EngineLabAbClipRenderer PRIVATE /STACK:8388608)

@@ -1,138 +1,137 @@
-# Protocole d'écoute A/B en aveugle
+# Protocole d’écoute A/B en aveugle
 
-La mesure objective (`docs/audio-ab-comparison.md`) ne prouve pas « sonne mieux ».
-Ce document décrit un protocole d'écoute **en aveugle** et **à sonie égalisée**,
-et l'outil qui produit les extraits appariés. Cette procédure ne change pas le
-moteur audio : elle fournit l'instrument de jugement humain.
+Une mesure spectrale ne prouve pas qu’un son est réaliste. Ce protocole produit
+des paires aveugles entre le vrai chemin audio temps réel d’EngineLab et des
+enregistrements de moteurs réels, à durée et sonie égalisées.
 
-## Outil : `EngineLabAbClipRenderer`
+## Instrument
 
-Source : [`tools/AbClipRenderer.cpp`](../tools/AbClipRenderer.cpp).
+La cible `EngineLabAbClipRenderer` est définie par
+[`tools/AbClipRenderer.cpp`](../tools/AbClipRenderer.cpp).
 
-```
-cmake --build out/build/windows-vs2022 --config Release --target EngineLabAbClipRenderer
-./out/build/windows-vs2022/tools/Release/EngineLabAbClipRenderer.exe --output listening-test
-```
-
-Ce qu'il fait, pour les trois archétypes présents des deux côtés (2JZ I6, LS V8,
-Hayabusa I4) :
-
-- rend le **vrai chemin temps réel** (`RealtimeEngineAudio`), voicing par défaut
-  (`convolution = 0.45`), sans rien changer au moteur audio ;
-- suit un **profil RPM unique et listenable** : ralenti tenu → montée en régime
-  jusqu'au **rupteur** → lâcher de gaz et décélération en frein moteur. Le chemin
-  hors-ligne n'a pas de boucle de ralenti ; un frein dyno gouverné impose la
-  trajectoire (cf. `AudioAbHarness`) ;
-- écrit un **WAV 48 kHz, 32 bits flottant, stéréo** (~10,3 s) par côté ;
-- **égalise la sonie** de chaque extrait à une cible commune par une mesure de
-  **loudness intégrée ITU-R BS.1770** (K-weighting + porte absolue −70 LUFS +
-  porte relative −10 LU). Défaut : **−20 LUFS**. C'est le garde-fou central :
-  sans cela, l'extrait le plus fort passe pour « meilleur ».
-
-Options : `--target-lufs <v>` (cible de sonie), `--seed <n>` (tirage A/B),
-`--ref <archétype>=<chemin.wav>` (enregistrement de référence, voir plus bas),
-`--output <dir>`.
-
-### Déterminisme et sonie vérifiés
-
-Sur un run de référence (cible −20 LUFS) :
-
-| Paire | Moteur | LUFS avant | LUFS après | Pic après |
-|---|---|---|---|---|
-| 1 | 2JZ I6 turbo | −14,87 | −20,00 | 0,55 |
-| 2 | LS V8 | −21,02 | −20,00 | 0,63 |
-| 3 | Hayabusa I4 | −20,40 | −20,00 | 0,45 |
-
-La normalisation converge exactement à la cible (mesure → gain → re-mesure), et
-les pics restent sous pleine échelle (aucun écrêtage introduit par la
-normalisation). Le rendu est déterministe.
-
-## Disposition en aveugle et clé
-
-- Les extraits sont écrits dans `<output>/clips/` sous des noms **neutres** :
-  `pair_1_A.wav`, `pair_1_B.wav`, `pair_2_A.wav`, …
-- Pour chaque paire, le côté (A ou B) occupé par EngineLab est **tiré au sort**
-  (graine reproductible via `--seed`). Le tirage évite le cas « tous du même
-  côté » (deviner un extrait révélerait tous les autres).
-- La **clé de réponse** `<output>/listening-key.json` est écrite **hors** du
-  dossier `clips/`. **L'expérimentateur la garde à l'écart des auditeurs.** Elle
-  indique, par paire : le moteur, le côté EngineLab, le côté référence, la source
-  de référence et les LUFS après normalisation.
-
-Exemple de clé :
-
-```json
-{ "target_lufs": -20, "seed": 20260718,
-  "profile": "idle-hold -> rev-up into limiter -> throttle-off decel",
-  "pairs": [ { "pair": 1, "engine": "2JZ-GTE-like 3.0 I6 Turbo",
-               "enginelab_side": "A", "reference_side": "B",
-               "reference_present": false } ] }
+```powershell
+cmake --build out/build/windows-vs2022 --config Release `
+  --target EngineLabAbClipRenderer -- /m:1 /nr:false
 ```
 
-## Le côté « référence » : es2d ou enregistrements réels
+Pour chaque moteur, l’outil :
 
-**es2d n'a pas pu être compilé** localement (les cinq sous-modules
-`delta-studio`, `piranha`, `simple-2d-constraint-solver`, `direct-to-video`,
-`csv-io` sont vides). Aucun extrait es2d n'est donc produit. Le chemin de sortie
-audio d'es2d existe pourtant (`Synthesizer::readAudioOutput` → PCM16) : si les
-sous-modules sont un jour restaurés et le projet construit, un petit driver
-appelant `Simulator::readAudioOutput` vers un WAV fournirait le côté B.
+1. rend `RealtimeEngineAudio` avec la télémétrie de pression cylindre, le graphe
+   d’échappement physique et le voicing par défaut ;
+2. suit `démarrage -> ralenti tenu -> montée au rupteur -> coupure -> frein
+   moteur` ;
+3. décode la référence WAV, AIFF, FLAC ou OGG avec JUCE ;
+4. la rééchantillonne à 48 kHz si nécessaire ;
+5. sélectionne la fenêtre définie par le manifeste et rogne les deux côtés à la
+   même durée ;
+6. applique les mêmes fondus de 20 ms ;
+7. égalise chaque côté par la sonie intégrée ITU-R BS.1770 (K-weighting, porte
+   absolue -70 LUFS, porte relative -10 LU) ;
+8. si un côté dépasserait 0,98 en crête, atténue **les deux côtés du même
+   facteur**. L’égalité de sonie est donc conservée sans écrêtage ;
+9. randomise la position A/B avec une graine reproductible.
 
-En attendant, le côté référence est un **emplacement documenté** à remplir avec
-des **enregistrements de moteurs réels libres de droits** :
+La comparaison ne révèle donc ni le côté par sa durée, ni par son volume, ni par
+un écrêtage ajouté au moment de la normalisation.
 
-1. Récupérer un enregistrement du bon archétype (ex. un vrai 2JZ) avec un geste
-   comparable (ralenti, montée, décélération), sous licence **CC0 / domaine
-   public** (p. ex. sons CC0 de banques libres). Vérifier la licence.
-2. Le **rééchantillonner à 48 kHz** (l'outil ne rééchantillonne pas ; la mesure
-   BS.1770 et la lecture supposent 48 kHz — un fichier à 44,1 kHz déclenche un
-   avertissement et fausserait la sonie).
-3. Le passer en référence :
-   ```
-   ...EngineLabAbClipRenderer.exe --output listening-test \
-       --ref 2JZ=refs/2jz_real_48k.wav --ref LS3=refs/ls_real_48k.wav \
-       --ref Hayabusa=refs/busa_real_48k.wav
-   ```
-   L'outil charge la référence (WAV PCM16 ou flottant, mono/stéréo), l'**égalise
-   à la même cible LUFS**, et la place sur le côté opposé à EngineLab.
+## Corpus réel CC0
 
-Sans `--ref`, le côté référence reste un emplacement vide (`reference_present:
-false`) : la paire n'est pas écoutable en A/B tant qu'un fichier n'est pas
-déposé. Ne jamais comparer un extrait EngineLab à un extrait de sonie non
-égalisée.
+Le manifeste versionné est
+[`references/real-engine-audio/manifest.json`](../references/real-engine-audio/manifest.json).
+Il fixe l’URL, l’auteur, la licence, le SHA-256, le début de fenêtre et la force
+réelle de la correspondance. Les fichiers téléchargés restent ignorés par Git.
 
-## Procédure d'écoute
+```powershell
+powershell -ExecutionPolicy Bypass `
+  -File references/real-engine-audio/fetch-corpus.ps1
+```
 
-1. **Matériel** : casque neutre ou moniteurs, même volume système pour toutes les
-   paires. Ne pas ajuster le volume entre A et B.
-2. **Aveugle** : l'auditeur ne voit pas la clé. Il écoute A puis B (autant de
-   fois que voulu) pour chaque paire.
-3. **Jugement**, par paire, sur deux axes (échelle 1–5) :
-   - *Réalisme* : « lequel ressemble le plus à un vrai moteur ? »
-   - *Préférence* : « lequel préférez-vous ? »
-   plus un choix forcé A/B pour chaque axe et un champ commentaire libre.
-4. **Plusieurs auditeurs** : idéalement ≥ 5, chacun avec une graine `--seed`
-   différente pour re-randomiser les côtés.
-5. **Dépouillement** : mapper les réponses via `listening-key.json`, compter les
-   préférences EngineLab vs référence par moteur et agrégées. Un écart n'est
-   probant que s'il dépasse le hasard (test binomial simple sur les choix forcés).
+| Clé | Enregistrement réel | Licence | Correspondance déclarée |
+|---|---|---|---|
+| 2JZ | Toyota Supra turbo sur banc, editboy23 | CC0 1.0 | proxy de plateforme, moteur exact non indiqué |
+| LS3 | V8 au ralenti et coups de gaz, overmedium | CC0 1.0 | proxy d’architecture, véhicule inconnu |
+| Hayabusa | Suzuki GSX1300 Hayabusa, Heigh-hoo | CC0 1.0 | plateforme exacte |
+| Big Twin | Harley-Davidson, allencote | CC0 1.0 | proxy de famille, cylindrée inconnue |
+| EJ25 | Subaru Impreza WRX 2003 turbo-back, ulose2piranha | CC0 1.0 | proxy boxer/turbo, moteur exact non affirmé |
 
-### Feuille de score (modèle)
+Ces niveaux sont volontairement conservateurs. Une Supra non documentée comme
+2JZ ou une WRX 2003 non documentée comme EJ25 ne devient pas une référence
+exacte par simple ressemblance.
 
-| Paire | Réalisme A (1–5) | Réalisme B (1–5) | Plus réaliste (A/B) | Préféré (A/B) | Commentaire |
-|---|---|---|---|---|---|
-| 1 | | | | | |
-| 2 | | | | | |
-| 3 | | | | | |
+## Run complet actuel — 2026-07-29
 
-## Limites
+Commande :
 
-- Le profil RPM est imposé par un frein gouverné (pas un vrai ralenti trottoir) ;
-  identique pour tous les extraits EngineLab, mais un enregistrement réel n'aura
-  jamais exactement la même trajectoire — comparer le **caractère**, pas
-  l'alignement temporel.
-- L'outil ne rééchantillonne pas les références ; fournir du 48 kHz.
-- La sonie est égalisée (BS.1770 intégré) mais pas le spectre ni la dynamique :
-  c'est voulu, ce sont précisément les dimensions jugées à l'oreille.
-- Sans enregistrements de référence déposés, ce protocole fournit l'instrument et
-  les extraits EngineLab normalisés, pas encore un verdict d'écoute.
+```powershell
+out/build/windows-vs2022/tools/Release/EngineLabAbClipRenderer.exe `
+  --output out/validation/listening-current-2026-07-29 `
+  --engines "2JZ,LS3,Hayabusa,Big Twin,EJ25" `
+  --reference-manifest references/real-engine-audio/manifest.json `
+  --require-references `
+  --seed 20260729
+```
+
+Résultat :
+
+| Paire | Durée | EngineLab LUFS | Référence LUFS | Pic max | État |
+|---|---:|---:|---:|---:|---|
+| 2JZ / Supra | 10,300 s | -20,000 | -20,000 | 0,710 | appariée |
+| LS3 / V8 | 8,530 s | -20,000 | -20,000 | 0,467 | appariée, ref. 44,1 -> 48 kHz |
+| Hayabusa | 10,300 s | -20,000 | -20,000 | 0,601 | appariée, ref. 44,1 -> 48 kHz |
+| Big Twin / Harley | 10,300 s | -20,000 | -20,000 | 0,611 | appariée, ref. 44,1 -> 48 kHz |
+| EJ25 / WRX | 10,300 s | -21,649 | -21,649 | 0,980 | appariée, plafond de crête commun |
+
+Pour EJ25, la référence contient une crête forte par rapport à sa sonie moyenne.
+Le plafond commun a donc abaissé les deux côtés de 1,649 dB. Ce n’est ni une
+erreur ni une faveur accordée à un côté : les deux sorties restent égales à
+moins de 0,000001 LU dans la clé mesurée.
+
+Les dix WAV ont été écrits. Pour chaque paire, A et B ont exactement la même
+taille. La clé complète se trouve hors du dossier remis aux auditeurs :
+`out/validation/listening-current-2026-07-29/listening-key.json`.
+
+## Disposition et clé
+
+- Les fichiers aveugles sont `clips/pair_N_A.wav` et
+  `clips/pair_N_B.wav`.
+- La position EngineLab est tirée avec `--seed`. Si tous les moteurs tombent du
+  même côté, le tirage est recommencé.
+- `listening-key.json` reste hors de `clips/`. Il contient le nom du moteur, les
+  côtés, la durée, les LUFS, les crêtes, la provenance, la licence, le SHA-256,
+  le taux d’échantillonnage original et la qualité de correspondance.
+- `--require-references` échoue avant tout rendu si un fichier manque ou ne peut
+  pas être décodé.
+- Une référence donnée manuellement avec `--ref clé=chemin` est marquée
+  `MANUAL / UNVERIFIED` dans la clé : l’outil ne fabrique pas une provenance.
+
+## Procédure humaine
+
+1. Utiliser le même casque neutre ou les mêmes moniteurs et ne plus toucher au
+   volume.
+2. Donner uniquement le dossier `clips/` aux auditeurs.
+3. Pour chaque paire, noter séparément :
+   - réalisme A et B de 1 à 5 ;
+   - préférence A et B de 1 à 5 ;
+   - choix forcé « le plus réaliste » A/B ;
+   - choix forcé « préféré » A/B ;
+   - commentaire libre.
+4. Utiliser idéalement au moins cinq auditeurs et une graine différente par
+   session.
+5. Dépouiller ensuite avec la clé. Un résultat qualitatif n’est annoncé qu’après
+   ces écoutes ; le build et les métriques seules ne signifient pas « meilleur
+   son ».
+
+## Limites restantes
+
+- Les gestes des enregistrements réels ne suivent pas exactement la trajectoire
+  EngineLab. On juge le caractère moteur, pas un alignement cycle par cycle.
+- Quatre références sur cinq sont des proxys explicitement étiquetés. Il faudra
+  des prises documentées du véhicule/moteur exact pour une validation
+  modèle-par-modèle.
+- Les préécoutes HQ sont des transcodages OGG des prises citées. Pour une étude
+  finale, remplacer les chemins par les WAV/AIFF originaux téléchargés et
+  conserver leur nouveau SHA-256.
+- Aucune préférence humaine n’est encore enregistrée dans le dépôt. Le corpus
+  rend enfin le test possible, il ne remplace pas les auditeurs.
+- `es2d` reste inutilisable localement parce que ses sous-modules sont vides ;
+  aucune comparaison exécutable contre lui n’est revendiquée.

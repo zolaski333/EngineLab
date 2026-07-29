@@ -1,0 +1,71 @@
+{
+  "schema_version": 1,
+  "description": "CC0 field-recording corpus for blind EngineLab listening tests. The OGG files are Freesound HQ previews of the cited source recordings.",
+  "references": [
+    {
+      "key": "2JZ",
+      "file": "files/2jz-supra-dyno.ogg",
+      "creator": "editboy23",
+      "license": "CC0-1.0",
+      "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "source_url": "https://freesound.org/people/editboy23/sounds/496171/",
+      "preview_url": "https://cdn.freesound.org/previews/496/496171_1784475-hq.ogg",
+      "sha256": "0b5f744f399b246385b68f6936005c35f8564c763c8e31609bdb54b063a57372",
+      "match_quality": "platform-proxy",
+      "clip_start_seconds": 0.0,
+      "notes": "Real Toyota Supra turbo on a chassis dyno; the source does not identify the exact engine, so this is not proof of an exact 2JZ match."
+    },
+    {
+      "key": "LS3",
+      "file": "files/ls3-v8.ogg",
+      "creator": "overmedium",
+      "license": "CC0-1.0",
+      "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "source_url": "https://freesound.org/people/overmedium/sounds/651534/",
+      "preview_url": "https://cdn.freesound.org/previews/651/651534_2396512-hq.ogg",
+      "sha256": "fd3619bac22d6fe37ef1925dfe92d2eb878721f65906bd1722a0de219012dc13",
+      "match_quality": "architecture-proxy",
+      "clip_start_seconds": 0.0,
+      "notes": "Real throaty V8 with idle and throttle blips; exact vehicle and firing order are unknown."
+    },
+    {
+      "key": "Hayabusa",
+      "file": "files/hayabusa.ogg",
+      "creator": "Heigh-hoo",
+      "license": "CC0-1.0",
+      "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "source_url": "https://freesound.org/people/Heigh-hoo/sounds/49326/",
+      "preview_url": "https://cdn.freesound.org/previews/49/49326_21830-hq.ogg",
+      "sha256": "587c32fd4387072ff47e5be5f946abd7b78addaa3e8dedc15cbb1fc3cc8e12a3",
+      "match_quality": "exact-platform",
+      "clip_start_seconds": 0.0,
+      "notes": "Real Suzuki GSX1300 Hayabusa starting in the open; this is the strongest platform match in the corpus."
+    },
+    {
+      "key": "Big Twin",
+      "file": "files/big-twin-harley.ogg",
+      "creator": "allencote",
+      "license": "CC0-1.0",
+      "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "source_url": "https://freesound.org/people/allencote/sounds/81068/",
+      "preview_url": "https://cdn.freesound.org/previews/81/81068_1067842-hq.ogg",
+      "sha256": "586e4e2f7b4dff19a90bfa0e969446dbb52e24fffb3a770afbf756f88cf81fea",
+      "match_quality": "family-proxy",
+      "clip_start_seconds": 0.0,
+      "notes": "Real Harley-Davidson start, idle and rev; the exact engine displacement is not identified."
+    },
+    {
+      "key": "EJ25",
+      "file": "files/ej25-wrx.ogg",
+      "creator": "ulose2piranha",
+      "license": "CC0-1.0",
+      "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "source_url": "https://freesound.org/people/ulose2piranha/sounds/273334/",
+      "preview_url": "https://cdn.freesound.org/previews/273/273334_4168822-hq.ogg",
+      "sha256": "ca7397e21735017b96efd74bf6da1096abff8e61645b00cf26b332b5f053d156",
+      "match_quality": "family-proxy",
+      "clip_start_seconds": 0.0,
+      "notes": "Real 2003 Subaru Impreza WRX with turbo-back exhaust; boxer/turbo family match, but not an asserted exact EJ25."
+    }
+  ]
+}
