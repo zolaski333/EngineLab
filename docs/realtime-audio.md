@@ -149,6 +149,21 @@ compteurs sont observables par les harnais.
 - exactitude de la conversion SPL ↔ pression ↔ dBFS ;
 - absence de réactivation du chemin procédural après verrouillage physique.
 
+Le banc de capacité peut également exécuter le renderer en concurrence avec le
+vrai thread runtime :
+
+```powershell
+out/build/windows-vs2022/tools/Release/EngineLabRealtimeBudgetHarness.exe `
+  --catalog-root . --free-run --rpm 7000 --warmup 3 --seconds 6 `
+  --with-audio --audio-rate 48000 --audio-block 256
+```
+
+En `--free-run`, le consommateur suit le temps simulé accéléré et compare chaque
+durée de rendu à l'échéance réelle du bloc. Il refuse pertes de files, frontière
+invalide, fallback historique, sortie non finie, callback hors budget et
+intervention du leveler. La baseline locale est consignée dans
+[audio-first-baseline-2026-07-29.md](audio-first-baseline-2026-07-29.md).
+
 `EngineLab.Core` vérifie en plus qu’une frontière SI finie est publiée à chaque
 sous-pas mécanique malgré le couplage multirate du réseau non linéaire. Il
 refuse aussi l'annulation compresseur/turbine, une discontinuité de puissance à

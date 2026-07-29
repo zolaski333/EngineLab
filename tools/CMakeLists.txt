@@ -49,7 +49,7 @@ enginelab_set_warnings(EngineLabAudioRenderHarness)
 
 add_executable(EngineLabRealtimeBudgetHarness RealtimeBudgetHarness.cpp)
 target_link_libraries(EngineLabRealtimeBudgetHarness PRIVATE
-    EngineLab::Runtime EngineLab::Simulation EngineLab::Foundation EngineLab::Physics
+    EngineLab::Audio EngineLab::Runtime EngineLab::Simulation EngineLab::Foundation EngineLab::Physics
     EngineLab::Ecu EngineLab::Events EngineLab::Exhaust EngineLab::Catalog
     EngineLab::Diagnostics)
 target_compile_definitions(EngineLabRealtimeBudgetHarness PRIVATE ENGINELAB_CATALOG_ROOT="${CMAKE_SOURCE_DIR}")
