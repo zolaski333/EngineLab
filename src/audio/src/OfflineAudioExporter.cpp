@@ -354,23 +354,59 @@ const char* offlineWaveFormatName(
 
 OfflineAudioScenario makeDefaultOfflineAudioScenario(
     const EngineConfig& engine) {
-    const auto idleTarget = std::max(
-        engine.idleRpm * 1.35, engine.redlineRpm * 0.22);
+    // Crank and idle are UNGOVERNED with a shut throttle, so the engine's own
+    // ECU idle control starts it and holds it.
+    //
+    // They used to be a braked hold at max(idleRpm * 1.35, redlineRpm * 0.22),
+    // and that floor decided the answer on 12 of the 14 catalogue engines: the
+    // "idle" stage sat at 1.35-2.14x the real idle (the flat-six held 1672 rpm
+    // against a catalogue 780), while cranking against a 20% throttle with no
+    // brake free-revved to 6723 rpm on the K20. A listener therefore never
+    // heard an idle at all, which is exactly what the first listening pass
+    // reported. The governor here can only apply load, never throttle, so it
+    // cannot produce an idle -- only a lug against a brake.
+    //
+    // Measured with `stage_speeds` after the change (settled rpm / catalogue
+    // idle): K20 1.04x, LS3 1.00x, Big Twin 1.06x, Merlin 0.98x. The 7 s hold
+    // is what the after-start flare needs to decay; at 3.5 s the same engines
+    // still read 1.12-1.38x, and the residual is a real post-start flare rather
+    // than an error.
+    const auto idleRpm = std::max(300.0, engine.idleRpm);
     const auto limiterTarget = engine.redlineRpm * 1.03;
     const auto overrunStart = engine.redlineRpm * 0.90;
     return {
         "showcase",
         {
-            { "crank", 1.1, true, true, false,
-              0.20, 0.20, 0.0, 0.0, 0.0, 0.0 },
-            { "idle", 2.4, true, false, true,
-              0.12, 0.12, 0.0, 0.0, idleTarget, idleTarget },
-            { "rev_up", 3.2, true, false, true,
-              0.98, 0.98, 0.0, 0.0, idleTarget, limiterTarget },
-            { "limiter", 1.0, true, false, true,
-              0.99, 0.99, 0.0, 0.0, limiterTarget, limiterTarget },
-            { "overrun", 2.6, true, false, true,
-              0.0, 0.0, 0.0, 0.0, overrunStart, idleTarget },
+            { .name = "crank", .durationSeconds = 1.5,
+              .ignitionEnabled = true, .starterEngaged = true,
+              .governed = false,
+              .throttleStart = 0.0, .throttleEnd = 0.0,
+              .loadStart = 0.0, .loadEnd = 0.0,
+              .targetRpmStart = 0.0, .targetRpmEnd = 0.0 },
+            { .name = "idle", .durationSeconds = 7.0,
+              .ignitionEnabled = true, .starterEngaged = false,
+              .governed = false,
+              .throttleStart = 0.0, .throttleEnd = 0.0,
+              .loadStart = 0.0, .loadEnd = 0.0,
+              .targetRpmStart = 0.0, .targetRpmEnd = 0.0 },
+            { .name = "rev_up", .durationSeconds = 3.2,
+              .ignitionEnabled = true, .starterEngaged = false,
+              .governed = true,
+              .throttleStart = 0.98, .throttleEnd = 0.98,
+              .loadStart = 0.0, .loadEnd = 0.0,
+              .targetRpmStart = idleRpm, .targetRpmEnd = limiterTarget },
+            { .name = "limiter", .durationSeconds = 1.0,
+              .ignitionEnabled = true, .starterEngaged = false,
+              .governed = true,
+              .throttleStart = 0.99, .throttleEnd = 0.99,
+              .loadStart = 0.0, .loadEnd = 0.0,
+              .targetRpmStart = limiterTarget, .targetRpmEnd = limiterTarget },
+            { .name = "overrun", .durationSeconds = 2.6,
+              .ignitionEnabled = true, .starterEngaged = false,
+              .governed = true,
+              .throttleStart = 0.0, .throttleEnd = 0.0,
+              .loadStart = 0.0, .loadEnd = 0.0,
+              .targetRpmStart = overrunStart, .targetRpmEnd = idleRpm },
         }
     };
 }
@@ -678,6 +714,19 @@ OfflineAudioExportResult exportOfflineAudio(
                     * static_cast<double>(request.sampleRateHz))));
         constexpr double dt = 1.0 / simulationRateHz;
         std::size_t stageIndex = 0;
+        // Per-stage speed telemetry. `tail*` accumulate only the last quarter
+        // of a stage, which is what the stage settled to rather than what it
+        // passed through on the way.
+        struct StageSpeedAccumulator final {
+            double sum { 0.0 };
+            double minimum { std::numeric_limits<double>::infinity() };
+            double maximum { -std::numeric_limits<double>::infinity() };
+            std::uint64_t count { 0 };
+            double tailSum { 0.0 };
+            std::uint64_t tailCount { 0 };
+        };
+        std::vector<StageSpeedAccumulator> stageSpeeds(
+            request.scenario.stages.size());
         double stageStartSeconds = 0.0;
         double loadIntegral = 0.0;
         double realtimeSeconds = 0.0;
@@ -737,6 +786,18 @@ OfflineAudioExportResult exportOfflineAudio(
             }
 
             auto frame = simulator->step(dt, controls);
+            if (stageIndex < stageSpeeds.size()) {
+                auto& speed = stageSpeeds[stageIndex];
+                const auto rpm = frame.state.rpm;
+                speed.sum += rpm;
+                speed.minimum = std::min(speed.minimum, rpm);
+                speed.maximum = std::max(speed.maximum, rpm);
+                ++speed.count;
+                if (stageFraction >= 0.75) {
+                    speed.tailSum += rpm;
+                    ++speed.tailCount;
+                }
+            }
             const auto simulationStart =
                 frame.state.simulationTimeSeconds - dt;
             for (std::size_t eventIndex = 0;
@@ -866,6 +927,27 @@ OfflineAudioExportResult exportOfflineAudio(
                     masterSquareSum
                     / static_cast<long double>(
                         masterSampleCount)));
+        result.stageSpeeds.reserve(stageSpeeds.size());
+        for (std::size_t index = 0; index < stageSpeeds.size(); ++index) {
+            const auto& accumulator = stageSpeeds[index];
+            const auto& stage = request.scenario.stages[index];
+            OfflineAudioStageSpeed speed;
+            speed.name = stage.name;
+            speed.governed = stage.governed;
+            speed.requestedRpmStart = stage.targetRpmStart;
+            speed.requestedRpmEnd = stage.targetRpmEnd;
+            if (accumulator.count > 0) {
+                speed.meanRpm = accumulator.sum
+                    / static_cast<double>(accumulator.count);
+                speed.minimumRpm = accumulator.minimum;
+                speed.maximumRpm = accumulator.maximum;
+            }
+            speed.settledRpm = accumulator.tailCount > 0
+                ? accumulator.tailSum
+                    / static_cast<double>(accumulator.tailCount)
+                : speed.meanRpm;
+            result.stageSpeeds.push_back(std::move(speed));
+        }
         result.physicalExhaustActive =
             renderer->physicalExhaustActive();
         result.compiledExhaustTopologyActive =
@@ -916,6 +998,22 @@ OfflineAudioExportResult exportOfflineAudio(
             { "master_peak", result.masterPeak },
             { "master_rms", result.masterRms },
             { "stems_written", request.writeStems },
+            { "stage_speeds", [&result] {
+                auto speeds = Json::array();
+                for (const auto& speed : result.stageSpeeds) {
+                    speeds.push_back({
+                        { "name", speed.name },
+                        { "governed", speed.governed },
+                        { "requested_rpm_start", speed.requestedRpmStart },
+                        { "requested_rpm_end", speed.requestedRpmEnd },
+                        { "mean_rpm", speed.meanRpm },
+                        { "minimum_rpm", speed.minimumRpm },
+                        { "maximum_rpm", speed.maximumRpm },
+                        { "settled_rpm", speed.settledRpm },
+                    });
+                }
+                return speeds;
+            }() },
             { "files", std::move(fileList) },
             { "impulse_responses", {
                 { "authored",

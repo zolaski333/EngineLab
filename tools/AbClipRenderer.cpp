@@ -506,12 +506,21 @@ Clip renderTrajectory(const EngineConfig& baseConfig, double sampleRate) {
     renderer.prepare(sampleRate, samplesPerStep);
     std::this_thread::sleep_for(std::chrono::milliseconds(300));
 
-    const auto idle = config.idleRpm;
     const auto redline = config.redlineRpm;
-    const auto idleTarget = std::max(idle * 1.35, redline * 0.22);
+    // Crank and idle run UNGOVERNED with a shut throttle: the brake governor
+    // below can only add load, never throttle, so it cannot produce an idle --
+    // only a lug against a brake. The engine's own ECU idle control does it.
+    //
+    // This used to hold max(idleRpm * 1.35, redline * 0.22), whose floor won on
+    // 12 of 14 catalogue engines and put the "idle" at up to 2.14x the real one,
+    // while cranking against a 20% throttle free-revved past 6700 rpm. The first
+    // listening pass reported the idle as unrecognisable; it was never an idle.
+    // See `makeDefaultOfflineAudioScenario` for the measured settle figures.
+    const auto idleRpm = std::max(300.0, config.idleRpm);
 
-    // Phase timing (seconds).
-    constexpr double crank = 1.1, idleHold = 2.4, revUp = 3.2, limiterHold = 1.0, decel = 2.6;
+    // Phase timing (seconds). The idle hold is 7 s because that is what the
+    // after-start flare needs to decay to the catalogue idle.
+    constexpr double crank = 1.5, idleHold = 7.0, revUp = 3.2, limiterHold = 1.0, decel = 2.6;
     const auto total = crank + idleHold + revUp + limiterHold + decel;
 
     Clip clip; clip.sampleRate = sampleRate;
@@ -522,18 +531,17 @@ Clip renderTrajectory(const EngineConfig& baseConfig, double sampleRate) {
     const auto steps = static_cast<std::size_t>(total / dt);
     for (std::size_t step = 0; step < steps; ++step) {
         const auto t = static_cast<double>(step) * dt;
-        double throttle = 0.2, target = idleTarget; bool governed = true;
-        if (t < crank) { throttle = 0.2; governed = false; }
-        else if (t < crank + idleHold) { throttle = 0.12; target = idleTarget; }
+        double throttle = 0.0, target = idleRpm; bool governed = true;
+        if (t < crank + idleHold) { throttle = 0.0; governed = false; }
         else if (t < crank + idleHold + revUp) {
             const auto u = (t - (crank + idleHold)) / revUp;   // 0..1
             throttle = 0.98;
-            target = idleTarget + (redline * 1.03 - idleTarget) * u; // ramp into the limiter
+            target = idleRpm + (redline * 1.03 - idleRpm) * u; // ramp into the limiter
         } else if (t < crank + idleHold + revUp + limiterHold) {
             throttle = 0.99; target = redline * 1.03;                // sit on the limiter
         } else {
             const auto u = (t - (crank + idleHold + revUp + limiterHold)) / decel;
-            throttle = 0.0; target = idleTarget + (redline * 0.9 - idleTarget) * (1.0 - std::min(1.0, u));
+            throttle = 0.0; target = idleRpm + (redline * 0.9 - idleRpm) * (1.0 - std::min(1.0, u));
         }
 
         EngineControls controls;

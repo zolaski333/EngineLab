@@ -70,6 +70,27 @@ struct OfflineAudioExportRequest final {
     bool overwriteExistingFiles { false };
 };
 
+/** Speed actually reached inside one scenario stage.
+ *
+ * A scenario declares a *requested* trajectory; the engine answers it. Nothing
+ * used to publish the answer, so an "idle" stage could hold twice the engine's
+ * real idle and the render still looked correct. Judging the speed from the
+ * rendered audio does not substitute for this: the firing fundamental of a big
+ * twin at idle is near 13 Hz, and a harmonic-product estimate picks the wrong
+ * octave there. These are simulator telemetry, not an audio estimate.
+ */
+struct OfflineAudioStageSpeed final {
+    std::string name;
+    double requestedRpmStart { 0.0 };
+    double requestedRpmEnd { 0.0 };
+    double meanRpm { 0.0 };
+    double minimumRpm { 0.0 };
+    double maximumRpm { 0.0 };
+    /** Mean over the last quarter of the stage: what the stage settled to. */
+    double settledRpm { 0.0 };
+    bool governed { false };
+};
+
 /** Auditable result returned by the shared CLI/application export path. */
 struct OfflineAudioExportResult final {
     bool success { false };
@@ -92,6 +113,7 @@ struct OfflineAudioExportResult final {
     std::uint64_t legacyPathSampleCount { 0 };
     std::uint64_t droppedFiringEvents { 0 };
     std::uint64_t droppedPressureSamples { 0 };
+    std::vector<OfflineAudioStageSpeed> stageSpeeds;
 };
 
 /** Return the engine-relative crank/idle/rev/limiter/overrun showcase. */
