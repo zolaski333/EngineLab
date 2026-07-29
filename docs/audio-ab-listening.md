@@ -149,6 +149,76 @@ dossier remis aux auditeurs :
    ces écoutes ; le build et les métriques seules ne signifient pas « meilleur
    son ».
 
+## Feuilles de réponse et dépouillement
+
+`scripts/listening.py` (stdlib seule) fait les deux bouts.
+
+```powershell
+# 1. fabriquer les feuilles vierges (ne lit jamais la clé)
+python scripts/listening.py sheets --pack out/validation/listening-pilot-2026-07-29 --listeners 5
+
+# 2. après remplissage, dépouiller
+python scripts/listening.py report --pack out/validation/listening-pilot-2026-07-29
+```
+
+`sheets` écrit `responses/listener_NN.csv`, une ligne par paire, colonnes
+`pair, realism_A, realism_B, preference_A, preference_B, most_realistic,
+preferred, comment`. Les consignes destinées aux auditeurs sont dans
+`clips/CONSIGNES.md`, donc elles voyagent avec les clips ; la clé reste à la
+racine du pack et ne doit pas être distribuée.
+
+`report` relit `listening-key.json`, retourne chaque réponse A/B vers
+« EngineLab » ou « référence » grâce à `enginelab_side`, et écrit
+`listening-report.md` et `listening-report.json`. Il **refuse de noter** (code 2)
+une feuille incomplète, hors échelle 1-5 ou dont un choix forcé n'est pas `A`/`B`,
+en listant les lignes fautives ; `--allow-incomplete` note les lignes valides et
+déclare combien ont été écartées. Une réponse manquante n'est jamais devinée.
+
+Le rapport donne, par question et par famille : le taux de choix d'EngineLab, un
+**intervalle de confiance de Wilson à 95 %** (correct à petit n, contrairement à
+l'approximation normale — c'est exactement le régime d'un pilote à cinq
+auditeurs), un **test des signes binomial exact**, les moyennes de réalisme et de
+préférence des deux côtés, et tous les commentaires regroupés par paire.
+
+## Ce que ce test décide — et ce qu'il ne décide pas
+
+Il faut distinguer deux comparaisons que le plan confond facilement.
+
+| | Contre quoi | À quoi ça sert | Seuil |
+|---|---|---|---|
+| **A. Diagnostic** | EngineLab contre **enregistrement réel** | classer les familles par déficit, pour savoir où porter l'effort | pas de seuil de réussite |
+| **B. Non-régression** | candidate contre **baseline EngineLab** | accepter ou refuser un changement de timbre | ≥ 65 % de préférence |
+
+Le pack actuel est le cas **A**. Le seuil de 65 % du plan appartient au cas
+**B** et **ne s'y applique pas** : sept références sur dix sont des proxys, et
+aucune n'a de trajectoire de régime ni de position micro appariées. Perdre
+contre un vrai enregistrement est l'attendu, pas un échec.
+
+Ce qu'on en tire légitimement :
+
+1. **Le classement par écart de réalisme.** C'est la sortie principale. La
+   famille la plus déficitaire est la prochaine cible de travail.
+2. **L'écart réalisme / préférence.** Une famille jugée peu réaliste mais bien
+   aimée n'a pas le même problème qu'une famille jugée fausse *et* déplaisante.
+3. **Les commentaires, regroupés par couche.** « trop lisse » et « métallique »
+   ne désignent pas le même étage de la chaîne : les stems du lot 2 permettent
+   ensuite de vérifier lequel.
+4. **Un point de départ daté**, auquel une version future se compare.
+
+Ce qu'on n'en tire pas :
+
+- aucune affirmation de supériorité sur ES2D — aucune comparaison exécutable
+  n'existe, ses sous-modules sont vides ;
+- aucun classement entre deux familles dont les intervalles de confiance se
+  recouvrent : à cinq auditeurs, un écart de 1/5 sur un choix forcé n'est pas
+  un résultat ;
+- aucune conclusion sur une famille dont la référence est un proxy faible, si
+  le commentaire ne dit pas *pourquoi*.
+
+À cinq auditeurs et dix paires, un effet global se voit s'il est franc ; une
+différence par famille reste indicative. C'est un pilote — il sert à orienter le
+travail et à roder le protocole, pas à publier un chiffre.
+
 ## Limites restantes
 
 - Les gestes des enregistrements réels ne suivent pas exactement la trajectoire
