@@ -21,6 +21,7 @@
 #include <enginelab/simulation/TransientChargeEstimator.hpp>
 #include <enginelab/runtime/EngineRuntime.hpp>
 #include <enginelab/audio/RealtimeEngineAudio.hpp>
+#include <enginelab/audio/ImpulseResponseLoader.hpp>
 #include <enginelab/catalog/EngineCatalog.hpp>
 #include <chrono>
 #include <algorithm>
@@ -2192,6 +2193,35 @@ int main() {
             irDifference += std::abs(directIrBuffer.getSample(0, sample) - delayedIrBuffer.getSample(0, sample));
         require(irDifference > 0.01,
                 "a path-routed partitioned FIR response must materially change the exhaust signature");
+    }
+
+    {
+        const auto validIr = enginelab::loadImpulseResponseFile(
+            juce::File(juce::String(ENGINELAB_CATALOG_ROOT))
+                .getChildFile("assets")
+                .getChildFile("ir")
+                .getChildFile("exhaust_default.wav"));
+        require(validIr.ok() && validIr.sampleRateHz > 0.0
+                && validIr.samples.getNumChannels() >= 1,
+                "the committed downstream IR must decode before publication");
+
+        const auto missingIr = enginelab::loadImpulseResponseFile(
+            juce::File(juce::String(ENGINELAB_CATALOG_ROOT))
+                .getChildFile("assets")
+                .getChildFile("ir")
+                .getChildFile("does-not-exist.wav"));
+        require(!missingIr.ok()
+                && missingIr.error == enginelab::ImpulseResponseLoadError::missingFile,
+                "a missing explicit IR must remain an observable load error");
+
+        auto corruptFile = juce::File::createTempFile(".wav");
+        require(corruptFile.replaceWithText("not a wave file"),
+                "the corrupt-IR fixture must be created");
+        const auto corruptIr = enginelab::loadImpulseResponseFile(corruptFile);
+        require(!corruptIr.ok()
+                && corruptIr.error == enginelab::ImpulseResponseLoadError::unsupportedOrCorrupt,
+                "a corrupt explicit IR must not be accepted as field-free audio");
+        require(corruptFile.deleteFile(), "the corrupt-IR fixture must be removed");
     }
 
     {

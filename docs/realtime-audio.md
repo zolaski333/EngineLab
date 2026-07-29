@@ -90,6 +90,23 @@ ni d’IR synthétisée depuis les longueurs et restrictions. Une IR explicite e
 considérée comme une mesure de propagation aval ; elle ne doit pas doubler la
 réponse du tube déjà simulée.
 
+L’application rend maintenant ce contrat visible :
+
+- lorsqu’un DAG d’échappement physique est compilé, le sélecteur historique
+  `Street / Open / Turbo / Long tube / Moto` est remplacé par
+  **GRAPHE PHYSIQUE** et désactivé ; changer le son passe par la géométrie du
+  concepteur d’échappement, pas par un preset procédural sans effet ;
+- la commande de bruit aigu héritée est signalée comme non applicable et ne
+  bouge plus en mode physique ;
+- une IR explicitement déclarée mais absente, vide, corrompue ou illisible
+  produit une erreur avec le chemin concerné. Le mixer affiche le nombre d’IR
+  effectivement chargées. Le champ libre reste utilisable, mais il n’est plus
+  un fallback silencieux.
+
+Le décodage hors callback est centralisé dans `ImpulseResponseLoader`. Les tests
+ouvrent une IR livrée et refusent explicitement les cas fichier absent et WAV
+corrompu.
+
 ## Autres couches
 
 `AcousticIntakeNetwork` propage les débits de soupapes dans les runners, le

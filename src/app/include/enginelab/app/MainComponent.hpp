@@ -60,6 +60,7 @@ private:
     void updateMomentaryThrottle();
     void toggleDyno();
     void applyExhaustPreset(int presetIndex);
+    void updateAudioControlAvailability();
     void configureImpulseResponse();
     void adjustAudioOrSimulation(double wheelDelta);
     void drawLoadSimulationPanel(juce::Graphics&, juce::Rectangle<float> area) const;
@@ -111,6 +112,9 @@ private:
     double intakeGain_ { 0.85 };
     double mechanicalGain_ { 0.70 };
     int exhaustPresetIndex_ { 0 };
+    bool physicalExhaustTopology_ { false };
+    bool impulseResponseLoadError_ { false };
+    juce::String impulseResponseStatus_ { "IR  CHAMP LIBRE" };
     std::array<EngineState, 300> telemetryHistory_ {};
     std::size_t telemetryWrite_ { 0 };
     std::size_t telemetryCount_ { 0 };

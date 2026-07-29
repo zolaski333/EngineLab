@@ -1,4 +1,5 @@
 #include <enginelab/app/MainComponent.hpp>
+#include <enginelab/audio/ImpulseResponseLoader.hpp>
 #include <enginelab/calibration/EcuCalibrationKeys.hpp>
 #include <algorithm>
 #include <cmath>
@@ -110,8 +111,12 @@ MainComponent::MainComponent() {
     const std::array<const char*, 5> exhaustPresets { "Street", "Open", "Turbo", "Long tube", "Moto" };
     for (int index = 0; index < static_cast<int>(exhaustPresets.size()); ++index)
         exhaustPresetSelector_.addItem(exhaustPresets[static_cast<std::size_t>(index)], index + 1);
+    exhaustPresetSelector_.addItem("GRAPHE PHYSIQUE", 6);
     exhaustPresetSelector_.setSelectedItemIndex(exhaustPresetIndex_, juce::dontSendNotification);
-    exhaustPresetSelector_.onChange = [this] { applyExhaustPreset(exhaustPresetSelector_.getSelectedItemIndex()); };
+    exhaustPresetSelector_.onChange = [this] {
+        const auto selected = exhaustPresetSelector_.getSelectedItemIndex();
+        if (selected >= 0 && selected < 5) applyExhaustPreset(selected);
+    };
     addAndMakeVisible(exhaustPresetSelector_);
 
     ignitionButton_.setClickingTogglesState(true);
@@ -228,6 +233,7 @@ bool MainComponent::applyConfig(const EngineConfig& newConfig, bool preserveScri
     runtime_->setIntakeGain(intakeGain_);
     runtime_->setMechanicalGain(mechanicalGain_);
     runtime_->setExhaustPreset(static_cast<AudioExhaustPreset>(exhaustPresetIndex_));
+    updateAudioControlAvailability();
     configureImpulseResponse();
     runtime_->start();
     setAudioChannels(0, 2);
@@ -237,27 +243,35 @@ bool MainComponent::applyConfig(const EngineConfig& newConfig, bool preserveScri
     return true;
 }
 
+void MainComponent::updateAudioControlAvailability() {
+    physicalExhaustTopology_ = audio_ != nullptr
+        && audio_->compiledExhaustTopologyActive();
+    if (physicalExhaustTopology_) {
+        exhaustPresetSelector_.setSelectedId(6, juce::dontSendNotification);
+        exhaustPresetSelector_.setEnabled(false);
+        exhaustPresetSelector_.setTooltip(utf8(
+            "Le graphe d'échappement physique possède le son. "
+            "Modifiez sa géométrie dans ECHAP. PRO au lieu d'appliquer un preset procédural."));
+    } else {
+        exhaustPresetSelector_.setSelectedItemIndex(
+            exhaustPresetIndex_, juce::dontSendNotification);
+        exhaustPresetSelector_.setEnabled(true);
+        exhaustPresetSelector_.setTooltip(utf8(
+            "Preset de compatibilité pour une configuration sans graphe physique."));
+    }
+}
+
 void MainComponent::configureImpulseResponse() {
     if (!audio_) return;
-    juce::AudioFormatManager formats;
-    formats.registerBasicFormats();
     constexpr juce::int64 maximumIrSamples = 262'144;
-
-    const auto tryLoadIr = [&](const juce::File& file, std::size_t pathIndex) -> bool {
-        if (!file.existsAsFile()) return false;
-        std::unique_ptr<juce::AudioFormatReader> reader(formats.createReaderFor(file));
-        if (!reader) return false;
-        const auto count = static_cast<int>(std::min(reader->lengthInSamples, maximumIrSamples));
-        if (count <= 0) return false;
-        juce::AudioBuffer<float> decoded(std::clamp(static_cast<int>(reader->numChannels), 1, 2), count);
-        if (!reader->read(&decoded, 0, count, 0, true, true)) return false;
-        audio_->setImpulseResponse(std::move(decoded), reader->sampleRate, pathIndex);
-        return true;
-    };
+    impulseResponseLoadError_ = false;
+    impulseResponseStatus_ = "IR  CHAMP LIBRE";
+    juce::StringArray errors;
+    std::size_t authoredCount = 0;
+    std::size_t loadedCount = 0;
 
     const auto catalogRootFile = juce::File(juce::String(catalogRoot_.string()));
-    const auto configuredPaths = std::min(config_.exhaustPaths.size(),
-                                          RealtimeConvolutionBank::maximumPaths);
+    const auto configuredPaths = config_.exhaustPaths.size();
     // The physical renderer already owns pipe propagation and radiation. An IR
     // is therefore a measured downstream environment/system response, never a
     // preset or geometry-shaped substitute for missing gas physics. Load only
@@ -265,13 +279,61 @@ void MainComponent::configureImpulseResponse() {
     for (std::size_t pathIndex = 0; pathIndex < configuredPaths; ++pathIndex) {
         const auto& path = config_.exhaustPaths[pathIndex];
         if (path.impulseResponsePath.empty()) continue;
+        ++authoredCount;
+        if (pathIndex >= RealtimeConvolutionBank::maximumPaths) {
+            errors.add("Chemin " + juce::String(static_cast<int>(pathIndex + 1))
+                + utf8(" : limite de huit réponses impulsionnelles dépassée."));
+            continue;
+        }
         const auto configuredPath = juce::String::fromUTF8(
             path.impulseResponsePath.c_str());
         const auto file = juce::File::isAbsolutePath(configuredPath)
             ? juce::File(configuredPath)
             : catalogRootFile.getChildFile(configuredPath);
-        (void) tryLoadIr(file, pathIndex);
+        auto decoded = loadImpulseResponseFile(file, maximumIrSamples);
+        if (decoded.ok()) {
+            audio_->setImpulseResponse(
+                std::move(decoded.samples), decoded.sampleRateHz, pathIndex);
+            ++loadedCount;
+        } else {
+            juce::String reason;
+            switch (decoded.error) {
+                case ImpulseResponseLoadError::missingFile:
+                    reason = utf8("fichier introuvable");
+                    break;
+                case ImpulseResponseLoadError::unsupportedOrCorrupt:
+                    reason = utf8("format illisible ou fichier corrompu");
+                    break;
+                case ImpulseResponseLoadError::invalidMetadata:
+                    reason = utf8("métadonnées audio invalides");
+                    break;
+                case ImpulseResponseLoadError::empty:
+                    reason = utf8("réponse impulsionnelle vide");
+                    break;
+                case ImpulseResponseLoadError::readFailure:
+                    reason = utf8("lecture audio impossible");
+                    break;
+                case ImpulseResponseLoadError::none:
+                    reason = utf8("échec de chargement non spécifié");
+                    break;
+            }
+            errors.add("Chemin " + juce::String(static_cast<int>(pathIndex + 1))
+                + " : " + reason + " : " + file.getFullPathName());
+        }
     }
+
+    if (authoredCount != 0) {
+        impulseResponseStatus_ = "IR  " + juce::String(static_cast<int>(loadedCount))
+            + "/" + juce::String(static_cast<int>(authoredCount)) + utf8(" CHARGÉE(S)");
+    }
+    if (!errors.isEmpty()) {
+        impulseResponseLoadError_ = true;
+        impulseResponseStatus_ += "  /  ERREUR";
+        showError(utf8("Réponse impulsionnelle non chargée"),
+            errors.joinIntoString("\n")
+                + utf8("\n\nLe chemin reste en champ libre ; aucun fallback caché n'a été appliqué."));
+    }
+    repaint();
 }
 
 void MainComponent::showError(const juce::String& title, const juce::String& message) {
@@ -585,11 +647,9 @@ void MainComponent::toggleDyno() {
 }
 
 void MainComponent::applyExhaustPreset(int presetIndex) {
+    if (physicalExhaustTopology_) return;
     exhaustPresetIndex_ = std::clamp(presetIndex, 0, 4);
     if (runtime_) runtime_->setExhaustPreset(static_cast<AudioExhaustPreset>(exhaustPresetIndex_));
-    // Reload the preset-voiced exhaust IR so the muffler/system character follows
-    // the selected preset (skipped for engines that pin their own per-path IR).
-    configureImpulseResponse();
     repaint();
 }
 
@@ -611,6 +671,7 @@ void MainComponent::adjustAudioOrSimulation(double wheelDelta) {
         lowFrequencyNoise_ = std::clamp(lowFrequencyNoise_ + wheelDelta * step, 0.0, 1.5);
         runtime_->setLowFrequencyNoise(lowFrequencyNoise_);
     } else if (actionMap_.isDown(AppAction::wheelHighNoise)) {
+        if (physicalExhaustTopology_) return;
         highFrequencyNoise_ = std::clamp(highFrequencyNoise_ + wheelDelta * step, 0.0, 1.5);
         runtime_->setHighFrequencyNoise(highFrequencyNoise_);
     } else if (actionMap_.isDown(AppAction::wheelCombustion)) {
@@ -656,8 +717,11 @@ bool MainComponent::keyPressed(const juce::KeyPress& key) {
     }
     if (actionMap_.matches(AppAction::dynoStats, key)) { showDynoStats_ = !showDynoStats_; repaint(); return true; }
     if (actionMap_.matches(AppAction::exhaustPreset, key)) {
-        applyExhaustPreset((exhaustPresetIndex_ + 1) % 5);
-        exhaustPresetSelector_.setSelectedItemIndex(exhaustPresetIndex_, juce::dontSendNotification);
+        if (!physicalExhaustTopology_) {
+            applyExhaustPreset((exhaustPresetIndex_ + 1) % 5);
+            exhaustPresetSelector_.setSelectedItemIndex(
+                exhaustPresetIndex_, juce::dontSendNotification);
+        }
         return true;
     }
     if (actionMap_.matches(AppAction::layerUp, key)) { viewLayer_ = std::min(viewLayer_ + 1, 3); repaint(); return true; }
@@ -795,7 +859,7 @@ void MainComponent::timerCallback() {
     ignitionButton_.setEnabled(!running);
     starterButton_.setEnabled(!running);
     engineSelector_.setEnabled(!running);
-    exhaustPresetSelector_.setEnabled(true);
+    exhaustPresetSelector_.setEnabled(!physicalExhaustTopology_);
     editButton_.setEnabled(!running); importButton_.setEnabled(!running);
     exhaustDesignerButton_.setEnabled(!running);
     for (auto* slider : { &throttleSlider_, &loadSlider_, &afrSlider_, &advanceSlider_ }) slider->setEnabled(!running);
@@ -950,14 +1014,24 @@ void MainComponent::drawMixerPanel(juce::Graphics& g, juce::Rectangle<float> are
     const std::array<const char*, 5> presetNames { "Street chamber", "Open headers", "Turbo muffled", "Long tube", "Motorcycle" };
     g.setColour(juce::Colour(0xff79b89f));
     g.setFont(juce::FontOptions(13.0F, juce::Font::bold));
-    g.drawText("PRESET  " + juce::String(presetNames[static_cast<std::size_t>(std::clamp(exhaustPresetIndex_, 0, 4))]),
+    const auto presetLabel = physicalExhaustTopology_
+        ? juce::String("GRAPHE PHYSIQUE")
+        : juce::String(presetNames[static_cast<std::size_t>(
+            std::clamp(exhaustPresetIndex_, 0, 4))]);
+    g.drawText("ECHAPPEMENT  " + presetLabel,
                body.removeFromTop(28.0F), juce::Justification::centredLeft);
+    g.setColour(impulseResponseLoadError_
+        ? juce::Colour(0xffef6f3c) : juce::Colour(0xff83918c));
+    g.setFont(juce::FontOptions(12.0F, juce::Font::bold));
+    g.drawText(impulseResponseStatus_, body.removeFromTop(24.0F),
+               juce::Justification::centredLeft);
     const std::array<std::pair<juce::String, double>, 9> values {{
         { "Z  Volume", audioVolume_ / 2.0 },
         { "X  Convolution", audioConvolution_ },
         { "C  High gain", highFrequencyGain_ / 2.5 },
         { "V  Low noise", lowFrequencyNoise_ / 1.5 },
-        { "B  High noise", highFrequencyNoise_ / 1.5 },
+        { physicalExhaustTopology_ ? "B  Noise legacy (N/A)" : "B  High noise",
+          physicalExhaustTopology_ ? 0.0 : highFrequencyNoise_ / 1.5 },
         { "J  Combustion", combustionGain_ / 2.0 },
         { "K  Exhaust", exhaustGain_ / 2.0 },
         { "L  Intake", intakeGain_ / 2.0 },

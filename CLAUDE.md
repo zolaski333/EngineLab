@@ -492,6 +492,13 @@ exhaust models and the corrections already made — read them before touching th
 areas. `docs/rework-validation-log.md` is the running log of the 2026-07-26
 rework: measurements, and the hypotheses that were tried and refuted.
 
+- **A compiled physical exhaust owns the user-facing exhaust controls.** The
+  old Street/Open/Turbo/Long-tube/Moto selector and high-noise control are
+  compatibility controls only. Do not re-enable them for a physical DAG unless
+  the action changes real graph geometry or an explicitly authored downstream
+  IR. An authored IR that cannot be decoded must stay visible as an error; field
+  free is a valid explicit state, never a silent substitute for a requested WAV.
+
 ## Two concrete traps that cost time here
 
 - **CMake target names, and the stale-binary trap.** `cmake --build --target X`
