@@ -33,6 +33,106 @@ using Json = nlohmann::json;
     throw std::invalid_argument(
         "Unknown driven axle layout: " + std::string(value));
 }
+[[nodiscard]] const char* structuralNvhProvenanceName(
+    StructuralNvhProvenance value) noexcept {
+    switch (value) {
+    case StructuralNvhProvenance::estimatedFamily:
+        return "estimated_family";
+    case StructuralNvhProvenance::calculatedGeometry:
+        return "calculated_geometry";
+    case StructuralNvhProvenance::measured: return "measured";
+    }
+    return "estimated_family";
+}
+[[nodiscard]] StructuralNvhProvenance decodeStructuralNvhProvenance(
+    std::string_view value) {
+    if (value == "estimated_family")
+        return StructuralNvhProvenance::estimatedFamily;
+    if (value == "calculated_geometry")
+        return StructuralNvhProvenance::calculatedGeometry;
+    if (value == "measured")
+        return StructuralNvhProvenance::measured;
+    throw std::invalid_argument(
+        "Unknown structural NVH provenance: " + std::string(value));
+}
+[[nodiscard]] const char* structuralModeDriveName(
+    StructuralModeDrive value) noexcept {
+    switch (value) {
+    case StructuralModeDrive::headGas: return "head_gas";
+    case StructuralModeDrive::bearingAxial: return "bearing_axial";
+    case StructuralModeDrive::bearingLateral: return "bearing_lateral";
+    case StructuralModeDrive::torsion: return "torsion";
+    }
+    return "head_gas";
+}
+[[nodiscard]] StructuralModeDrive decodeStructuralModeDrive(
+    std::string_view value) {
+    if (value == "head_gas") return StructuralModeDrive::headGas;
+    if (value == "bearing_axial")
+        return StructuralModeDrive::bearingAxial;
+    if (value == "bearing_lateral")
+        return StructuralModeDrive::bearingLateral;
+    if (value == "torsion") return StructuralModeDrive::torsion;
+    throw std::invalid_argument(
+        "Unknown structural mode drive: " + std::string(value));
+}
+[[nodiscard]] Json structuralNvhJson(
+    const StructuralNvhConfig& config) {
+    auto modes = Json::array();
+    for (const auto& mode : config.modes)
+        modes.push_back({
+            { "name", mode.name },
+            { "drive", structuralModeDriveName(mode.drive) },
+            { "frequency_hz", mode.frequencyHz },
+            { "damping_ratio", mode.dampingRatio },
+            { "modal_mass_kg", mode.modalMassKg },
+            { "radiating_area_m2", mode.radiatingAreaM2 },
+            { "radiation_efficiency", mode.radiationEfficiency },
+            { "surface_velocity_rms_scale",
+                mode.surfaceVelocityRmsScale },
+            { "torque_radius_m", mode.torqueRadiusM },
+            { "cylinder_participation",
+                mode.cylinderParticipation },
+        });
+    return {
+        { "provenance",
+            structuralNvhProvenanceName(config.provenance) },
+        { "source", config.source },
+        { "modes", std::move(modes) },
+    };
+}
+[[nodiscard]] StructuralNvhConfig decodeStructuralNvh(
+    const Json& encoded) {
+    StructuralNvhConfig config;
+    config.provenance = decodeStructuralNvhProvenance(
+        encoded.value("provenance",
+            std::string { "estimated_family" }));
+    config.source = encoded.value("source", std::string {});
+    if (!encoded.contains("modes")) return config;
+    for (const auto& item : encoded.at("modes")) {
+        StructuralModeConfig mode;
+        mode.name = item.at("name").get<std::string>();
+        mode.drive = decodeStructuralModeDrive(
+            item.at("drive").get<std::string>());
+        mode.frequencyHz = item.at("frequency_hz").get<double>();
+        mode.dampingRatio =
+            item.at("damping_ratio").get<double>();
+        mode.modalMassKg = item.at("modal_mass_kg").get<double>();
+        mode.radiatingAreaM2 =
+            item.at("radiating_area_m2").get<double>();
+        mode.radiationEfficiency =
+            item.at("radiation_efficiency").get<double>();
+        mode.surfaceVelocityRmsScale =
+            item.at("surface_velocity_rms_scale").get<double>();
+        mode.torqueRadiusM =
+            item.at("torque_radius_m").get<double>();
+        mode.cylinderParticipation =
+            item.at("cylinder_participation")
+                .get<std::vector<double>>();
+        config.modes.push_back(std::move(mode));
+    }
+    return config;
+}
 [[nodiscard]] const char* exhaustComponentTypeName(ExhaustComponentType value) noexcept {
     switch (value) {
     case ExhaustComponentType::pipe: return "pipe";
@@ -335,6 +435,7 @@ std::string JsonEngineSerializer::encode(const EngineConfig& config) const {
                       {"damping_ratio", config.runnerAcoustics.dampingRatio},
                       {"coupling_gain", config.runnerAcoustics.couplingGain},
                       {"maximum_pressure_amplitude_kpa", config.runnerAcoustics.maximumPressureAmplitudeKpa}}},
+        {"structural_nvh", structuralNvhJson(config.structuralNvh)},
         {"camshafts", camshaftJson(config.camshafts)},
         {"intake", {{"plenum_volume_l", config.intake.plenumVolumeLitres},
                      {"throttle_diameter_mm", config.intake.throttleDiameterMm},
@@ -532,6 +633,9 @@ EngineDecodeResult JsonEngineSerializer::decode(std::string_view text) const noe
             config.runnerAcoustics.couplingGain = acoustics.value("coupling_gain", config.runnerAcoustics.couplingGain);
             config.runnerAcoustics.maximumPressureAmplitudeKpa = acoustics.value("maximum_pressure_amplitude_kpa", config.runnerAcoustics.maximumPressureAmplitudeKpa);
         }
+        if (engine.contains("structural_nvh"))
+            config.structuralNvh =
+                decodeStructuralNvh(engine.at("structural_nvh"));
         if (engine.contains("camshafts")) {
             const auto& cams = engine.at("camshafts");
             config.camshafts = decodeCamshaft(cams);

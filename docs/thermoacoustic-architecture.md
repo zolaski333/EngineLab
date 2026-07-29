@@ -800,19 +800,28 @@ modale (poutre/torsion ou plaque), sans gain de calibration caché. Le
 chemin de production ne contient plus le sinus de vilebrequin, le cliquetis
 bruité ou le « piston slap » façonné qui tenaient auparavant lieu de structure.
 
-Le schéma moteur actuel ne publie ni maillage de bloc, ni épaisseurs, ni modes
-mesurés. Les fréquences livrées sont donc explicitement marquées
+Sans section `structural_nvh`, les fréquences sont explicitement marquées
 `estimatedFamily` : bloc assimilé à une coque creuse, culasses à des plaques
 minces, dimensions déduites de l'alésage, de la course, de la bielle et de la
 famille d'implantation. Ce modèle est le meilleur compromis temps réel avec les
 données disponibles, mais il ne doit pas être présenté comme une corrélation
-NVH constructeur. Une future configuration mesurée pourra remplacer les modes
-sans changer le solveur.
+NVH constructeur.
+
+Le schéma 5 peut maintenant remplacer ce jeu par des modes `measured` ou
+`calculatedGeometry`. Chaque mode porte fréquence, amortissement, masse modale,
+aire et efficacité rayonnantes, facteur RMS de forme, type d'effort et
+participation signée par cylindre. Une source traçable est obligatoire et il
+n'existe aucun gain de voicing. Aucun moteur du catalogue livré ne revendique
+encore une mesure : l'absence de données réelles reste visible au runtime.
+Format et protocole :
+[`structural-nvh-configuration.md`](structural-nvh-configuration.md).
 
 Les tests imposent silence exact sans force, paramètres physiques finis,
 amplification à la résonance calculée et décroissance de l'énergie avec un
-amortissement positif. Le harnais catalogue impose aussi que ce chemin soit
-réellement actif dans le câblage de l'application.
+amortissement positif. `EngineLab.StructuralNvh` ajoute le chargement catalogue,
+les round-trips, l'excitation du mode mesuré et les gardes de provenance. Le
+harnais catalogue impose aussi que ce chemin soit réellement actif dans le
+câblage de l'application.
 
 ## 22. Admission complète et suralimentation
 

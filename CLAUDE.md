@@ -85,6 +85,13 @@ test onto the behaviour it is meant to catch. Keep it that way.
   raises the coarse spectral-shape *correlation* even though it improves the
   sound — that metric penalises "everyone gained treble", so do not chase it
   down. Character lives in the firing-pattern envelope, not the steady spectrum.
+- **Never label structural modes `measured` because they sound plausible.**
+  Schema 5 accepts sourced modal frequency, damping, mass, radiating area,
+  radiation efficiency, force drive and signed participation per cylinder.
+  Validation deliberately rejects a measured claim without modes/source or an
+  incomplete shape. The shipping catalogue has no such dataset and therefore
+  remains visibly `estimatedFamily`; use `EngineLab.StructuralNvh` and
+  `docs/structural-nvh-configuration.md` before adding real survey data.
 - **First-order models get first-order tests.** The finite-amplitude duct
   steepening (`NonlinearDuctAcoustics.hpp`) reproduces the Fubini second-harmonic
   law `B2/B1 -> sigma/2` but deliberately under-generates the third harmonic

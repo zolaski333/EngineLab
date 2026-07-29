@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <numbers>
+#include <utility>
 
 namespace enginelab {
 namespace {
@@ -48,6 +49,36 @@ StructuralModalRadiator::StructuralModalRadiator(const EngineConfig& config) {
         || !std::isfinite(configuredObserverDistanceM_))
         configuredObserverDistanceM_ = 1.0;
 
+    if (!config.structuralNvh.modes.empty()) {
+        provenance_ = config.structuralNvh.provenance;
+        source_ = config.structuralNvh.source;
+        modes_.reserve(config.structuralNvh.modes.size());
+        for (const auto& authored : config.structuralNvh.modes) {
+            Mode compiled;
+            compiled.info = {
+                authored.frequencyHz,
+                authored.dampingRatio,
+                authored.modalMassKg,
+                authored.radiatingAreaM2,
+                authored.radiationEfficiency,
+            };
+            compiled.drive = authored.drive;
+            compiled.surfaceVelocityRmsScale =
+                authored.surfaceVelocityRmsScale;
+            compiled.torqueRadiusM = authored.torqueRadiusM;
+            const auto participationCount = std::min(
+                compiled.participation.size(),
+                authored.cylinderParticipation.size());
+            for (std::size_t cylinder = 0;
+                 cylinder < participationCount; ++cylinder)
+                compiled.participation[cylinder] = static_cast<float>(
+                    authored.cylinderParticipation[cylinder]);
+            modes_.push_back(std::move(compiled));
+        }
+        return;
+    }
+
+    source_ = "EngineLab hollow-box block and thin-plate head family estimate";
     double meanBoreM = 0.0;
     double meanStrokeM = 0.0;
     double meanRodM = 0.0;
@@ -91,7 +122,8 @@ StructuralModalRadiator::StructuralModalRadiator(const EngineConfig& config) {
     const auto blockRadiatingAreaM2 = 2.0 * blockLengthM
         * (blockWidthM + blockHeightM);
 
-    const auto appendBeamModes = [&](Drive drive, double secondMomentM4,
+    const auto appendBeamModes = [&](StructuralModeDrive drive,
+                                     double secondMomentM4,
                                      std::size_t count, double damping) {
         const auto flexuralScale = std::sqrt(aluminiumYoungsModulusPa
             * secondMomentM4 / (aluminiumDensityKgPerM3 * shellAreaM2));
@@ -116,8 +148,10 @@ StructuralModalRadiator::StructuralModalRadiator(const EngineConfig& config) {
             modes_.push_back(compiled);
         }
     };
-    appendBeamModes(Drive::bearingAxial, shellSecondMomentVerticalM4, 3U, 0.035);
-    appendBeamModes(Drive::bearingLateral, shellSecondMomentLateralM4, 3U, 0.040);
+    appendBeamModes(StructuralModeDrive::bearingAxial,
+        shellSecondMomentVerticalM4, 3U, 0.035);
+    appendBeamModes(StructuralModeDrive::bearingLateral,
+        shellSecondMomentLateralM4, 3U, 0.040);
 
     // Each bank head is represented as a simply supported aluminium plate.
     const auto headLengthM = blockLengthM;
@@ -138,7 +172,7 @@ StructuralModalRadiator::StructuralModalRadiator(const EngineConfig& config) {
             Mode compiled;
             compiled.info = { frequencyHz, 0.045, std::max(0.5, headMassKg * 0.25),
                 headAreaM2, modeRadiationEfficiency(frequencyHz, headAreaM2) };
-            compiled.drive = Drive::headGas;
+            compiled.drive = StructuralModeDrive::headGas;
             // A simply-supported sin(m*pi*x/a)sin(n*pi*y/b) plate has one
             // quarter of its antinode mean-square velocity over its surface.
             compiled.surfaceVelocityRmsScale = 0.5;
@@ -167,7 +201,7 @@ StructuralModalRadiator::StructuralModalRadiator(const EngineConfig& config) {
         compiled.info = { frequencyHz, 0.030, blockMassKg * 0.45,
             blockRadiatingAreaM2,
             modeRadiationEfficiency(frequencyHz, blockRadiatingAreaM2) };
-        compiled.drive = Drive::torsion;
+        compiled.drive = StructuralModeDrive::torsion;
         compiled.surfaceVelocityRmsScale = 1.0 / std::sqrt(2.0);
         compiled.torqueRadiusM = std::max(0.025, 0.5 * blockWidthM);
         for (std::size_t cylinder = 0; cylinder < cylinderCount; ++cylinder) {
@@ -232,19 +266,19 @@ float StructuralModalRadiator::process(
             const auto participation = static_cast<double>(
                 mode.participation[cylinder]);
             switch (mode.drive) {
-            case Drive::headGas:
+            case StructuralModeDrive::headGas:
                 generalizedForceN += participation
                     * excitation.gasForceN[cylinder];
                 break;
-            case Drive::bearingAxial:
+            case StructuralModeDrive::bearingAxial:
                 generalizedForceN += participation
                     * excitation.bearingReactionForceN[cylinder];
                 break;
-            case Drive::bearingLateral:
+            case StructuralModeDrive::bearingLateral:
                 generalizedForceN += participation
                     * excitation.sideThrustForceN[cylinder];
                 break;
-            case Drive::torsion:
+            case StructuralModeDrive::torsion:
                 generalizedForceN += participation
                     * excitation.crankReactionTorqueNm[cylinder]
                     / mode.torqueRadiusM;

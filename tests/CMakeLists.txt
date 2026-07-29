@@ -16,6 +16,12 @@ target_compile_definitions(EngineLabVehicleDynamicsTests PRIVATE
 enginelab_set_warnings(EngineLabVehicleDynamicsTests)
 add_test(NAME EngineLab.VehicleDynamics COMMAND EngineLabVehicleDynamicsTests)
 
+add_executable(EngineLabStructuralNvhTests StructuralNvhTests.cpp)
+target_link_libraries(EngineLabStructuralNvhTests PRIVATE
+    EngineLab::Audio EngineLab::Serialization EngineLab::Catalog)
+enginelab_set_warnings(EngineLabStructuralNvhTests)
+add_test(NAME EngineLab.StructuralNvh COMMAND EngineLabStructuralNvhTests)
+
 add_executable(EngineLabPhysicsRegressionTests PhysicsRegressionTests.cpp)
 target_link_libraries(EngineLabPhysicsRegressionTests PRIVATE EngineLab::Foundation EngineLab::Physics)
 enginelab_set_warnings(EngineLabPhysicsRegressionTests)

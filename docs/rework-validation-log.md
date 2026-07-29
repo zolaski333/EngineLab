@@ -5,6 +5,18 @@ It records measurements as well as successful changes. Failed hypotheses are
 kept because repeating an attractive but disproved fix wastes more time than
 documenting it.
 
+## 2026-07-29 — modes NVH sourcés et configurables
+
+Le schéma 5 accepte désormais un jeu de modes `measured` ou
+`calculated_geometry` : paramètres modaux SI, effort d'excitation, forme signée
+par cylindre et source obligatoire. Sans donnée, le renderer conserve et
+annonce son estimation de famille ; aucun mode constructeur n'a été inventé
+pour le catalogue. Le témoin `EngineLab.StructuralNvh` charge un mini-catalogue,
+transmet exactement un mode de 1 234,5 Hz au renderer, mesure une réponse RMS
+finie/non nulle et verrouille les round-trips et les fausses provenances.
+Détails :
+[`structural-nvh-configuration.md`](structural-nvh-configuration.md).
+
 ## 2026-07-29 — transfert de charge longitudinal
 
 Le schéma 5 ajoute la motricité, l'empattement et la hauteur du centre de

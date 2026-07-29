@@ -18,6 +18,12 @@ enum class EngineLayout : std::uint8_t { inlineLayout, vLayout, flat, radial, cu
 enum class ConnectingRodType : std::uint8_t { conventional, master, articulated };
 enum class ForcedInductionType : std::uint8_t { turbocharger, supercharger };
 enum class DrivenAxleLayout : std::uint8_t { front, rear, all };
+enum class StructuralNvhProvenance : std::uint8_t {
+    estimatedFamily, calculatedGeometry, measured
+};
+enum class StructuralModeDrive : std::uint8_t {
+    headGas, bearingAxial, bearingLateral, torsion
+};
 enum class ExhaustComponentType : std::uint8_t {
     pipe, merge, splitter, resonator, muffler, catalyst, outlet
 };
@@ -524,6 +530,35 @@ struct RunnerAcousticsConfig final {
     double maximumPressureAmplitudeKpa { 35.0 };
 };
 
+/** One authored structural mode. Every amplitude-bearing field is an SI
+ * physical/modal parameter; there is deliberately no arbitrary mix gain. */
+struct StructuralModeConfig final {
+    std::string name;
+    StructuralModeDrive drive { StructuralModeDrive::headGas };
+    double frequencyHz { 1'000.0 };
+    double dampingRatio { 0.04 };
+    double modalMassKg { 5.0 };
+    double radiatingAreaM2 { 0.10 };
+    double radiationEfficiency { 0.50 };
+    double surfaceVelocityRmsScale { 0.50 };
+    double torqueRadiusM { 0.05 };
+    /** Signed, antinode-normalised modal participation, one value per
+     * cylinder in EngineConfig::cylinders order. */
+    std::vector<double> cylinderParticipation;
+};
+
+/** Optional measured or geometry-calculated replacement for the family
+ * estimate used by StructuralModalRadiator. Empty modes select the documented
+ * estimated-family fallback and may not claim measured provenance. */
+struct StructuralNvhConfig final {
+    StructuralNvhProvenance provenance {
+        StructuralNvhProvenance::estimatedFamily
+    };
+    /** Measurement report, dataset, model revision or other auditable source. */
+    std::string source;
+    std::vector<StructuralModeConfig> modes;
+};
+
 struct EngineConfig final {
     std::uint32_t schemaVersion { currentEngineSchemaVersion };
     std::string name { "Untitled engine" };
@@ -558,6 +593,7 @@ struct EngineConfig final {
     ThermalConfig thermal;
     CombustionCalibrationConfig combustionCalibration;
     RunnerAcousticsConfig runnerAcoustics;
+    StructuralNvhConfig structuralNvh;
     CamshaftConfig camshafts;
     ExhaustConfig exhaust;
     TransmissionConfig transmission;

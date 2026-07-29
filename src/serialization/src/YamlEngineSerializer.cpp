@@ -36,6 +36,115 @@ namespace {
     throw std::invalid_argument(
         "Unknown driven axle layout: " + std::string(value));
 }
+[[nodiscard]] const char* structuralNvhProvenanceName(
+    StructuralNvhProvenance value) noexcept {
+    switch (value) {
+    case StructuralNvhProvenance::estimatedFamily:
+        return "estimated_family";
+    case StructuralNvhProvenance::calculatedGeometry:
+        return "calculated_geometry";
+    case StructuralNvhProvenance::measured: return "measured";
+    }
+    return "estimated_family";
+}
+[[nodiscard]] StructuralNvhProvenance decodeStructuralNvhProvenance(
+    std::string_view value) {
+    if (value == "estimated_family")
+        return StructuralNvhProvenance::estimatedFamily;
+    if (value == "calculated_geometry")
+        return StructuralNvhProvenance::calculatedGeometry;
+    if (value == "measured")
+        return StructuralNvhProvenance::measured;
+    throw std::invalid_argument(
+        "Unknown structural NVH provenance: " + std::string(value));
+}
+[[nodiscard]] const char* structuralModeDriveName(
+    StructuralModeDrive value) noexcept {
+    switch (value) {
+    case StructuralModeDrive::headGas: return "head_gas";
+    case StructuralModeDrive::bearingAxial: return "bearing_axial";
+    case StructuralModeDrive::bearingLateral: return "bearing_lateral";
+    case StructuralModeDrive::torsion: return "torsion";
+    }
+    return "head_gas";
+}
+[[nodiscard]] StructuralModeDrive decodeStructuralModeDrive(
+    std::string_view value) {
+    if (value == "head_gas") return StructuralModeDrive::headGas;
+    if (value == "bearing_axial")
+        return StructuralModeDrive::bearingAxial;
+    if (value == "bearing_lateral")
+        return StructuralModeDrive::bearingLateral;
+    if (value == "torsion") return StructuralModeDrive::torsion;
+    throw std::invalid_argument(
+        "Unknown structural mode drive: " + std::string(value));
+}
+void emitStructuralNvh(YAML::Emitter& out,
+                       const StructuralNvhConfig& config) {
+    out << YAML::Key << "structural_nvh" << YAML::Value
+        << YAML::BeginMap
+        << YAML::Key << "provenance" << YAML::Value
+        << structuralNvhProvenanceName(config.provenance)
+        << YAML::Key << "source" << YAML::Value << config.source
+        << YAML::Key << "modes" << YAML::Value << YAML::BeginSeq;
+    for (const auto& mode : config.modes)
+        out << YAML::BeginMap
+            << YAML::Key << "name" << YAML::Value << mode.name
+            << YAML::Key << "drive" << YAML::Value
+            << structuralModeDriveName(mode.drive)
+            << YAML::Key << "frequency_hz" << YAML::Value
+            << mode.frequencyHz
+            << YAML::Key << "damping_ratio" << YAML::Value
+            << mode.dampingRatio
+            << YAML::Key << "modal_mass_kg" << YAML::Value
+            << mode.modalMassKg
+            << YAML::Key << "radiating_area_m2" << YAML::Value
+            << mode.radiatingAreaM2
+            << YAML::Key << "radiation_efficiency" << YAML::Value
+            << mode.radiationEfficiency
+            << YAML::Key << "surface_velocity_rms_scale"
+            << YAML::Value << mode.surfaceVelocityRmsScale
+            << YAML::Key << "torque_radius_m" << YAML::Value
+            << mode.torqueRadiusM
+            << YAML::Key << "cylinder_participation" << YAML::Value
+            << YAML::Flow << mode.cylinderParticipation
+            << YAML::EndMap;
+    out << YAML::EndSeq << YAML::EndMap;
+}
+[[nodiscard]] StructuralNvhConfig decodeStructuralNvh(
+    const YAML::Node& encoded) {
+    StructuralNvhConfig config;
+    config.provenance = decodeStructuralNvhProvenance(
+        encoded["provenance"].as<std::string>("estimated_family"));
+    config.source = encoded["source"].as<std::string>("");
+    if (const auto modes = encoded["modes"]) {
+        config.modes.reserve(modes.size());
+        for (const auto& item : modes) {
+            StructuralModeConfig mode;
+            mode.name = item["name"].as<std::string>();
+            mode.drive = decodeStructuralModeDrive(
+                item["drive"].as<std::string>());
+            mode.frequencyHz = item["frequency_hz"].as<double>();
+            mode.dampingRatio =
+                item["damping_ratio"].as<double>();
+            mode.modalMassKg =
+                item["modal_mass_kg"].as<double>();
+            mode.radiatingAreaM2 =
+                item["radiating_area_m2"].as<double>();
+            mode.radiationEfficiency =
+                item["radiation_efficiency"].as<double>();
+            mode.surfaceVelocityRmsScale =
+                item["surface_velocity_rms_scale"].as<double>();
+            mode.torqueRadiusM =
+                item["torque_radius_m"].as<double>();
+            mode.cylinderParticipation =
+                item["cylinder_participation"]
+                    .as<std::vector<double>>();
+            config.modes.push_back(std::move(mode));
+        }
+    }
+    return config;
+}
 [[nodiscard]] const char* exhaustComponentTypeName(ExhaustComponentType value) noexcept {
     switch (value) {
     case ExhaustComponentType::pipe: return "pipe";
@@ -212,8 +321,9 @@ std::string YamlEngineSerializer::encode(const EngineConfig& config) const {
         << YAML::Key << "damping_ratio" << YAML::Value << config.runnerAcoustics.dampingRatio
         << YAML::Key << "coupling_gain" << YAML::Value << config.runnerAcoustics.couplingGain
         << YAML::Key << "maximum_pressure_amplitude_kpa" << YAML::Value << config.runnerAcoustics.maximumPressureAmplitudeKpa
-        << YAML::EndMap
-        << YAML::Key << "camshafts" << YAML::Value << YAML::BeginMap
+        << YAML::EndMap;
+    emitStructuralNvh(out, config.structuralNvh);
+    out << YAML::Key << "camshafts" << YAML::Value << YAML::BeginMap
         << YAML::Key << "intake_duration_deg" << YAML::Value << config.camshafts.intakeDurationDegrees
         << YAML::Key << "exhaust_duration_deg" << YAML::Value << config.camshafts.exhaustDurationDegrees
         << YAML::Key << "intake_lift_mm" << YAML::Value << config.camshafts.intakeLiftMm
@@ -612,6 +722,9 @@ EngineDecodeResult YamlEngineSerializer::decode(std::string_view text) const noe
             config.runnerAcoustics.couplingGain = acoustics["coupling_gain"].as<double>(config.runnerAcoustics.couplingGain);
             config.runnerAcoustics.maximumPressureAmplitudeKpa = acoustics["maximum_pressure_amplitude_kpa"].as<double>(config.runnerAcoustics.maximumPressureAmplitudeKpa);
         }
+        if (const auto structuralNvh = engine["structural_nvh"])
+            config.structuralNvh =
+                decodeStructuralNvh(structuralNvh);
         if (const auto cams = engine["camshafts"]) {
             config.camshafts = { cams["intake_duration_deg"].as<double>(248.0),
                 cams["exhaust_duration_deg"].as<double>(244.0), cams["intake_lift_mm"].as<double>(10.2),

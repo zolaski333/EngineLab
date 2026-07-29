@@ -6,6 +6,8 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <string>
+#include <string_view>
 #include <vector>
 
 namespace enginelab {
@@ -20,11 +22,7 @@ namespace enginelab {
  */
 class StructuralModalRadiator final {
 public:
-    enum class Provenance : std::uint8_t {
-        estimatedFamily,
-        calculatedGeometry,
-        measured,
-    };
+    using Provenance = StructuralNvhProvenance;
 
     struct ModeInfo final {
         double frequencyHz {};
@@ -46,14 +44,13 @@ public:
     [[nodiscard]] bool valid() const noexcept { return !modes_.empty(); }
     [[nodiscard]] std::size_t modeCount() const noexcept { return modes_.size(); }
     [[nodiscard]] Provenance provenance() const noexcept { return provenance_; }
+    [[nodiscard]] std::string_view source() const noexcept { return source_; }
     [[nodiscard]] ModeInfo mode(std::size_t index) const noexcept;
 
 private:
-    enum class Drive : std::uint8_t { headGas, bearingAxial, bearingLateral, torsion };
-
     struct Mode final {
         ModeInfo info;
-        Drive drive { Drive::headGas };
+        StructuralModeDrive drive { StructuralModeDrive::headGas };
         std::array<float, 32> participation {};
         double torqueRadiusM { 0.05 };
         double angularFrequencyRadPerSecond {};
@@ -71,6 +68,7 @@ private:
 
     std::vector<Mode> modes_;
     Provenance provenance_ { Provenance::estimatedFamily };
+    std::string source_;
     double sampleRateHz_ { 48'000.0 };
     double observerDistanceM_ { 1.0 };
     double configuredObserverDistanceM_ { 1.0 };

@@ -181,6 +181,8 @@ précisément pendant le passage et ferait échouer un signal continu.
 - huit chemins et 32 cylindres maximum ;
 - acoustique plane et linéaire pour la bande audio ;
 - pas de correction de rayonnement par écoulement moyen ;
-- modes structurels estimés lorsque aucune mesure NVH n’est fournie ;
+- modes structurels estimés lorsque aucune section NVH sourcée n’est fournie ;
+- aucune mesure NVH réelle livrée dans le catalogue à ce jour, malgré le chemin
+  `measured` désormais configurable ;
 - rendement acoustique de suralimentation encore semi-empirique ;
 - corrélation multi-microphone réelle encore à effectuer moteur par moteur.

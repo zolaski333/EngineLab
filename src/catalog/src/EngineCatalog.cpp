@@ -198,6 +198,63 @@ template <typename T>
     return value;
 }
 
+[[nodiscard]] StructuralNvhConfig decodeStructuralNvh(
+    const YAML::Node& node) {
+    StructuralNvhConfig value;
+    const auto provenance =
+        node["provenance"].as<std::string>("estimated_family");
+    if (provenance == "estimated_family")
+        value.provenance =
+            StructuralNvhProvenance::estimatedFamily;
+    else if (provenance == "calculated_geometry")
+        value.provenance =
+            StructuralNvhProvenance::calculatedGeometry;
+    else if (provenance == "measured")
+        value.provenance = StructuralNvhProvenance::measured;
+    else
+        throw std::invalid_argument(
+            "Unknown structural NVH provenance: " + provenance);
+    value.source = node["source"].as<std::string>("");
+    if (const auto modes = node["modes"]) {
+        value.modes.reserve(modes.size());
+        for (const auto& item : modes) {
+            StructuralModeConfig mode;
+            mode.name = item["name"].as<std::string>();
+            const auto drive = item["drive"].as<std::string>();
+            if (drive == "head_gas")
+                mode.drive = StructuralModeDrive::headGas;
+            else if (drive == "bearing_axial")
+                mode.drive = StructuralModeDrive::bearingAxial;
+            else if (drive == "bearing_lateral")
+                mode.drive = StructuralModeDrive::bearingLateral;
+            else if (drive == "torsion")
+                mode.drive = StructuralModeDrive::torsion;
+            else
+                throw std::invalid_argument(
+                    "Unknown structural mode drive: " + drive);
+            mode.frequencyHz =
+                item["frequency_hz"].as<double>();
+            mode.dampingRatio =
+                item["damping_ratio"].as<double>();
+            mode.modalMassKg =
+                item["modal_mass_kg"].as<double>();
+            mode.radiatingAreaM2 =
+                item["radiating_area_m2"].as<double>();
+            mode.radiationEfficiency =
+                item["radiation_efficiency"].as<double>();
+            mode.surfaceVelocityRmsScale =
+                item["surface_velocity_rms_scale"].as<double>();
+            mode.torqueRadiusM =
+                item["torque_radius_m"].as<double>();
+            mode.cylinderParticipation =
+                item["cylinder_participation"]
+                    .as<std::vector<double>>();
+            value.modes.push_back(std::move(mode));
+        }
+    }
+    return value;
+}
+
 [[nodiscard]] ForcedInductionConfig decodeForcedInduction(const YAML::Node& node) {
     ForcedInductionConfig value;
     assignIfPresent(node, "enabled", value.enabled);
@@ -527,6 +584,9 @@ void applyCrankOffsets(EngineConfig& config) {
         assignIfPresent(acoustics, "coupling_gain", config.runnerAcoustics.couplingGain);
         assignIfPresent(acoustics, "maximum_pressure_amplitude_kpa", config.runnerAcoustics.maximumPressureAmplitudeKpa);
     }
+    if (const auto structuralNvh = engine["structural_nvh"])
+        config.structuralNvh =
+            decodeStructuralNvh(structuralNvh);
     if (engine["fuel_properties"]) config.fuelProperties = decodeFuel(engine["fuel_properties"]);
     if (const auto crankJournals = engine["crank_journals"]) {
         config.crankJournals.clear();

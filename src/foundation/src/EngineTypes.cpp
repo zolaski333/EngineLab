@@ -719,6 +719,52 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
             || (config.fuel != FuelType::diesel
                 && !config.injection.fullLoadFuelLimit.empty()))
         return "Full-load fuel quantity limits are only valid for compression-ignition engines";
+    if (config.structuralNvh.modes.empty()) {
+        if (config.structuralNvh.provenance
+                != StructuralNvhProvenance::estimatedFamily
+            || !config.structuralNvh.source.empty())
+            return "Empty structural NVH data must retain estimated-family provenance";
+    } else {
+        if ((config.structuralNvh.provenance
+                != StructuralNvhProvenance::estimatedFamily
+             && config.structuralNvh.provenance
+                != StructuralNvhProvenance::calculatedGeometry
+             && config.structuralNvh.provenance
+                != StructuralNvhProvenance::measured)
+            || config.structuralNvh.modes.size() > 64
+            || config.structuralNvh.source.empty()
+            || config.structuralNvh.source.size() > 1'024)
+            return "Authored structural NVH modes require a bounded auditable source";
+        for (const auto& mode : config.structuralNvh.modes) {
+            if ((mode.drive != StructuralModeDrive::headGas
+                    && mode.drive
+                        != StructuralModeDrive::bearingAxial
+                    && mode.drive
+                        != StructuralModeDrive::bearingLateral
+                    && mode.drive != StructuralModeDrive::torsion)
+                || mode.name.empty() || mode.name.size() > 128
+                || !inRange(mode.frequencyHz, 10.0, 20'000.0)
+                || !inRange(mode.dampingRatio, 0.001, 0.50)
+                || !inRange(mode.modalMassKg, 0.01, 10'000.0)
+                || !inRange(mode.radiatingAreaM2, 0.0001, 100.0)
+                || !inRange(mode.radiationEfficiency, 0.0, 1.0)
+                || !inRange(mode.surfaceVelocityRmsScale, 0.001, 1.0)
+                || !inRange(mode.torqueRadiusM, 0.001, 2.0)
+                || mode.cylinderParticipation.size()
+                    != config.cylinders.size())
+                return "Structural NVH modes must define finite SI modal data and one participation per cylinder";
+            auto maximumParticipation = 0.0;
+            for (const auto participation :
+                 mode.cylinderParticipation) {
+                if (!inRange(participation, -1.0, 1.0))
+                    return "Structural NVH participation must be finite and antinode-normalised";
+                maximumParticipation = std::max(
+                    maximumParticipation, std::abs(participation));
+            }
+            if (maximumParticipation < 1.0e-6)
+                return "Structural NVH modes must couple to at least one cylinder";
+        }
+    }
     auto previousFuelLimitRpm = -1.0;
     for (const auto& sample : config.injection.fullLoadFuelLimit) {
         if (!inRange(sample.rpm, 0.0, 25'000.0)
