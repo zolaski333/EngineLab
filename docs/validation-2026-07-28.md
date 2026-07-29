@@ -567,4 +567,7 @@ pendant cinq secondes en lancement caché, puis a été arrêté proprement.
 | `EngineLab.exe` | 8 385 024 | `C3D60C1B6D5983A82CE4EFB992ADC76FDF133CB7DC9D520686A63A792E007295` |
 
 Le journal du smoke test est
-`out/validation/executable-smoke-final-2026-07-29.log`.
+`out/validation/executable-smoke-final-2026-07-29.log`. La copie de livraison
+`out/validation/EngineLab-final-2026-07-29.exe` est bit-identique au binaire de
+build ; son second lancement caché de cinq secondes est consigné dans
+`out/validation/executable-delivery-proof-2026-07-29.log`.
