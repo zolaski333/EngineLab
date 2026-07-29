@@ -4,6 +4,21 @@ Ce fichier est le prompt de démarrage à donner à un agent IA qui reprend le
 projet sur une autre machine. Il est écrit pour être lu à froid, sans le
 contexte de la session précédente.
 
+> **Livraison suivante validée le 29 juillet 2026.** Lire en premier
+> `docs/final-validation-2026-07-29.md` : les priorités encore ouvertes de ce
+> brief ont été exécutées. La commande prescrite `--free-run --rpm 7000
+> --seconds 6` produit désormais **14/14 points valides**, sans dépassement ; le
+> pire cas est le Merlin à **1,167×**, soit environ **14,3 % de marge sur
+> l'échéance**. Le lot Release passe **25/25 tests** et le banc passe **24/24
+> références constructeur** dans ±15 % avec des fenêtres réellement stables.
+> L'audio possède maintenant des gates transitoires/rapports, un corpus réel
+> CC0 A/B, des erreurs IR visibles et aucune double source turbo. Le véhicule
+> modélise le transfert de charge longitudinal ; le schéma NVH accepte des
+> modes sourcés sans en inventer pour le catalogue. Les limites prioritaires
+> restantes sont l'évaluation humaine aveugle du corpus, l'acquisition de modes
+> NVH réellement mesurés et l'investigation des alertes de contre-pression
+> turbo. La liste historique plus bas ne doit plus être reprise comme plan.
+>
 > **Mise à jour après reprise (2026-07-28).** Les priorités 1 à 6 ci-dessous
 > ont été exécutées et validées. Lire d'abord
 > `docs/validation-2026-07-28.md` pour les tables, le protocole A/B, les

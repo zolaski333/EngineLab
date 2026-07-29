@@ -24,6 +24,10 @@ ni allocation dynamique.
 L'application fournit également :
 
 - un catalogue de moteurs et des imports/exports JSON ou YAML ;
+- une dynamique véhicule avec transfert de charge longitudinal dépendant de la
+  motricité, de l'empattement et de la hauteur du centre de gravité ;
+- des modes NVH structurels réduits estimés par famille ou configurables à
+  partir de données mesurées/calculées et sourcées ;
 - un concepteur **ECHAP. PRO** pour éditer des graphes validés avec branches,
   jonctions, résonateurs, silencieux, catalyseurs et sorties ;
 - un DSL déclaratif et typé par unités (`.els` ou `.engine`) avec surveillance
@@ -100,6 +104,9 @@ un autre moteur crée volontairement sa calibration par défaut.
 - [Modèle de simulation](docs/simulation-model.md)
 - [Architecture thermoacoustique physique](docs/thermoacoustic-architecture.md)
 - [Architecture audio temps réel](docs/realtime-audio.md)
+- [Configuration des modes NVH structurels](docs/structural-nvh-configuration.md)
+- [Validation du transfert de charge](docs/vehicle-load-transfer-validation-2026-07-29.md)
+- [Validation finale du 29 juillet 2026](docs/final-validation-2026-07-29.md)
 - [Livraison et mesures des phases 0 à 3](docs/phase-0-3-delivery.md)
 
 Un exemple de script prêt à importer est disponible dans
@@ -144,7 +151,8 @@ un niveau égal ou supérieur sont dans
 
 ## Limites à connaître
 
-- essence quatre temps uniquement dans le runtime actuel ;
+- quatre temps uniquement ; essence et diesel à injection directe utilisent
+  encore des modèles globaux et semi-empiriques ;
 - chambres cylindres 0D et réseau d'échappement quasi-1D basse bande, pas CFD 3D ;
 - propagation audible linéaire par caractéristiques agrégées par chemin : les
   modes transverses, les coudes 3D et la correction de rayonnement par écoulement
@@ -157,8 +165,9 @@ un niveau égal ou supérieur sont dans
 - concepteur d'échappement sans glisser-déposer, undo/redo, audition A/B ni
   sélection d'IR ; les chemins et cylindres sont gérés dans l'interface, tandis
   que l'IR reste éditable en JSON/YAML ;
-- admission et bruit structurel/mécanique encore procéduraux ; pas de modèle
-  modal réduit du bloc ni de validation sur banc/multi-microphones ;
+- admission quasi-1D et modes structurels réduits ; les modes du catalogue
+  restent estimés par famille tant qu'aucune mesure sourcée n'est fournie, et
+  il manque une validation réelle sur banc/multi-microphones ;
 - pas de backend 3D, d'enregistrement WAV depuis l'interface, ni de diagnostic
   OBD destiné à une ECU réelle.
 

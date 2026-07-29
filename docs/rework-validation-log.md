@@ -5,6 +5,15 @@ It records measurements as well as successful changes. Failed hypotheses are
 kept because repeating an attractive but disproved fix wastes more time than
 documenting it.
 
+## 2026-07-29 — livraison finale vérifiée
+
+Le catalogue complet passe la commande prescrite : 14/14 points valides, aucun
+dépassement, pire facteur 1,167× sur le Merlin. Le lot Release passe 25/25
+tests, le banc 24/24 références stables, et le ZIP extrait démarre réellement.
+La table complète, les hashes, le contenu du paquet et les limites restantes
+sont regroupés dans
+[`final-validation-2026-07-29.md`](final-validation-2026-07-29.md).
+
 ## 2026-07-29 — modes NVH sourcés et configurables
 
 Le schéma 5 accepte désormais un jeu de modes `measured` ou
