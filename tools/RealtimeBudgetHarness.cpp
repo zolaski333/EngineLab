@@ -351,7 +351,8 @@ int main(int argc, char** argv) {
                          "[--enforce FACTOR] [--free-run]\n"
                          "  --free-run  remove the loop's wall-clock sleep, so the factor\n"
                          "              reads capacity instead of saturating at 1.0.\n"
-                         "  --relative-rpm  hold each engine at this fraction of redline.\n"
+                         "  --relative-rpm  hold each engine at this fraction of redline,\n"
+                         "                  capped at 95% to stay below the limiter.\n"
                          "  --intake-workers  override background intake workers; zero is\n"
                          "                    the serial null control.\n"
                          "  --well-mixed-junctions  select the legacy zero-momentum exhaust\n"
@@ -378,7 +379,7 @@ int main(int argc, char** argv) {
                       + "% of redline.\n"
                   : "held at an absolute requested speed of "
                       + std::to_string(static_cast<int>(holdRpm)) + " rpm "
-                        "(clamped to each engine's valid range).\n");
+                        "(clamped to 95% of each engine's valid range).\n");
     std::cout << (freeRun
         ? "FREE-RUN: the wall-clock sleep is removed, so the factor is CAPACITY.\n"
           "1.0 is exactly break-even and leaves no margin for scheduler jitter.\n\n"
@@ -406,10 +407,18 @@ int main(int argc, char** argv) {
     for (const auto& entry : catalog.entries) {
         if (!filter.empty() && lowercase(entry.config.name).find(filter) == std::string::npos)
             continue;
-        const auto requestedRpm = relativeRpm.has_value()
-            ? std::min(entry.config.redlineRpm,
-                       entry.config.ignition.revLimitRpm) * *relativeRpm
-            : holdRpm;
+        const auto revLimitRpm = std::min(
+            entry.config.redlineRpm,
+            entry.config.ignition.revLimitRpm);
+        // A latched rev limiter is not a steady operating point: missing sparks
+        // contaminate pressure, torque and timing cost. Every other WOT/science
+        // harness already stops at 95%; apply the same ceiling here so the
+        // documented absolute 7,000 rpm catalogue command cannot silently ask
+        // low-redline engines to hold on the limiter.
+        const auto maximumMeasurementRpm = 0.95 * revLimitRpm;
+        const auto requestedRpm = std::min(maximumMeasurementRpm,
+            relativeRpm.has_value()
+                ? revLimitRpm * *relativeRpm : holdRpm);
         const auto measurement = measureEngine(
             entry.config, requestedRpm, warmupSeconds, measureSeconds, freeRun,
             intakeWorkers, intakeMaximumCells, intakeStaircaseRounds,
