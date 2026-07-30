@@ -2,11 +2,14 @@
 //
 // This tool does NOT change the audio engine. It renders the real realtime path
 // (RealtimeEngineAudio, default voicing) for a listenable RPM trajectory --
-// stable low idle, rev-up into the rev limiter, then overrun decel -- and writes
-// a 48 kHz 32-bit float WAV per engine. Clips are loudness-matched with an
-// ITU-R BS.1770 integrated-LUFS measurement (mandatory: otherwise the louder
-// clip is judged "better"), then laid out as neutrally named A/B pairs with a
-// randomised assignment. The answer key is written OUTSIDE the listening folder.
+// stable low idle, rev-up into the rev limiter, then overrun decel -- and cuts
+// that one render into SEGMENTS, one 48 kHz 32-bit float WAV per engine per
+// condition. Each segment is loudness-matched with an ITU-R BS.1770 integrated
+// measurement on its own content (mandatory: otherwise the louder clip is judged
+// "better", and a single gain over the whole trajectory leaves the idle 20 dB
+// below anything a listener can assess -- see `listeningSegments`). Segments are
+// then laid out as neutrally named A/B pairs with a randomised assignment. The
+// answer key is written OUTSIDE the listening folder.
 //
 // If a royalty-free reference recording is supplied per engine (--ref
 // name=path) or through --reference-manifest, it is decoded, resampled to
@@ -59,6 +62,69 @@ struct Clip final {
     double sampleRate { 48'000.0 };
 };
 
+/**
+ * Phase timings of the listening trajectory, in seconds.
+ *
+ * Shared by the renderer and the segment table below so the two cannot
+ * disagree: the segment windows are expressed as offsets into these phases
+ * rather than as literals, which is what stops a retimed trajectory from
+ * silently cutting the idle window out of the rev-up.
+ */
+struct TrajectoryTiming final {
+    double crankSeconds { 1.5 };
+    /// 7 s because that is what the after-start flare needs to decay to the
+    /// catalogue idle; see `makeDefaultOfflineAudioScenario`.
+    double idleHoldSeconds { 7.0 };
+    double revUpSeconds { 3.2 };
+    double limiterHoldSeconds { 1.0 };
+    double decelSeconds { 2.6 };
+    [[nodiscard]] double totalSeconds() const noexcept {
+        return crankSeconds + idleHoldSeconds + revUpSeconds + limiterHoldSeconds
+            + decelSeconds;
+    }
+};
+
+/** One independently levelled listening clip cut out of the trajectory. */
+struct SegmentSpec final {
+    std::string name;
+    double startSeconds { 0.0 };
+    double endSeconds { 0.0 };
+    std::string description;
+};
+
+/**
+ * The trajectory is cut into separately normalised clips, and that is the whole
+ * point of this table.
+ *
+ * Rendering one 15.3 s clip and applying a single BS.1770 gain to it makes the
+ * measurement useless for the idle: integrated loudness is dominated by the
+ * rev-up and the limiter, which sit 20 dB or more above an idle, so the gain
+ * that lands the gesture at -20 LUFS leaves the idle far below anything a
+ * listener can judge. The first listening pass reported exactly that ("le son au
+ * ralenti de chaque moteur est trop faible"), and part of it was this bias
+ * rather than the engine.
+ *
+ * Each segment is therefore levelled on its own content. Note what this does NOT
+ * do: it does not raise the idle relative to the rev-up within one clip, which
+ * would be a voicing change disguised as a measurement. It presents two
+ * conditions at a comparable listening level, exactly as one would set a
+ * monitoring level twice when auditioning two different recordings.
+ */
+std::vector<SegmentSpec> listeningSegments(const TrajectoryTiming& timing) {
+    const auto idleEnd = timing.crankSeconds + timing.idleHoldSeconds;
+    // The LAST 3.5 s of the hold: the after-start flare owns the first half, and
+    // a window that catches it measures a flare, not an idle.
+    constexpr double idleWindowSeconds = 3.5;
+    return {
+        { "idle", idleEnd - idleWindowSeconds, idleEnd,
+          "settled idle, shut throttle, no load" },
+        // Rev-up, limiter and overrun stay in ONE clip: they are a single
+        // gesture, and their internal dynamics are what a listener judges.
+        { "rev", idleEnd, timing.totalSeconds(),
+          "rev-up into the limiter, then throttle-off overrun" },
+    };
+}
+
 struct ReferenceSpec final {
     std::string key;
     std::filesystem::path file;
@@ -78,6 +144,18 @@ struct ReferenceSpec final {
     Json microphone { Json::object() };
     Json audioQuality { Json::object() };
     double clipStartSeconds { 0.0 };
+    /**
+     * Where each listening segment's condition sits inside this recording,
+     * keyed by segment name.
+     *
+     * A real recording holds its idle and its rev-up at different offsets, so a
+     * single `clip_start_seconds` cannot condition-match both. Pairing an idle
+     * clip against a rev-up recording is the confound this exists to prevent --
+     * and it is precisely the confound that made the previous listening pass
+     * unreadable. A segment absent from this map gets no reference at all, which
+     * is reported rather than substituted.
+     */
+    std::map<std::string, double> segmentWindowStartSeconds;
 };
 
 struct ReferenceLoadInfo final {
@@ -190,11 +268,20 @@ bool loadReferenceManifest(
     }
     try {
         const auto manifest = Json::parse(input);
-        if (manifest.value("schema_version", 0) != 2 || !manifest.contains("references")
+        // Schema 3 adds the per-segment `segment_windows` map. Schema 2 is still
+        // decoded and integrity-checked so `--validate-manifest` keeps working on
+        // an older file, but it carries no segment windows and therefore cannot
+        // be condition-matched -- the pairing step reports that rather than
+        // quietly reusing one window for every condition.
+        const auto schema = manifest.value("schema_version", 0);
+        if ((schema != 2 && schema != 3) || !manifest.contains("references")
             || !manifest.at("references").is_array()) {
             error = "unsupported reference manifest schema";
             return false;
         }
+        std::vector<std::string> knownSegments;
+        for (const auto& segment : listeningSegments(TrajectoryTiming {}))
+            knownSegments.push_back(segment.name);
         const auto base = std::filesystem::absolute(path).parent_path();
         const auto requiredText = [](const Json& object, const char* field) {
             if (!object.contains(field) || !object.at(field).is_string()) {
@@ -280,6 +367,34 @@ bool loadReferenceManifest(
             spec.clipStartSeconds = item.at("clip_start_seconds").get<double>();
             if (!std::isfinite(spec.clipStartSeconds) || spec.clipStartSeconds < 0.0) {
                 throw std::runtime_error("invalid clip_start_seconds for '" + spec.key + "'");
+            }
+
+            if (item.contains("segment_windows")) {
+                if (!item.at("segment_windows").is_object() || item.at("segment_windows").empty()) {
+                    throw std::runtime_error(
+                        "segment_windows must be a non-empty object for '" + spec.key + "'");
+                }
+                for (const auto& [segmentName, window] : item.at("segment_windows").items()) {
+                    if (std::find(knownSegments.begin(), knownSegments.end(), segmentName)
+                        == knownSegments.end()) {
+                        throw std::runtime_error("unknown segment '" + segmentName
+                            + "' in segment_windows for '" + spec.key + "'");
+                    }
+                    if (!window.is_object() || !window.contains("clip_start_seconds")
+                        || !window.at("clip_start_seconds").is_number()) {
+                        throw std::runtime_error("segment_windows." + segmentName
+                            + " needs a numeric clip_start_seconds for '" + spec.key + "'");
+                    }
+                    const auto start = window.at("clip_start_seconds").get<double>();
+                    if (!std::isfinite(start) || start < 0.0) {
+                        throw std::runtime_error("invalid segment_windows." + segmentName
+                            + ".clip_start_seconds for '" + spec.key + "'");
+                    }
+                    spec.segmentWindowStartSeconds.emplace(segmentName, start);
+                }
+            } else if (schema == 3) {
+                throw std::runtime_error(
+                    "schema 3 requires segment_windows for '" + spec.key + "'");
             }
 
             spec.sourceEngine = validateMetadataObject(item, "source_engine");
@@ -460,6 +575,24 @@ void resizeClip(Clip& clip, std::size_t frames) {
     clip.right.resize(std::min(frames, clip.right.size()));
 }
 
+/** Cut the half-open window [startSeconds, endSeconds) out of a rendered clip. */
+Clip extractSegment(const Clip& source, double startSeconds, double endSeconds) {
+    Clip segment;
+    segment.sampleRate = source.sampleRate;
+    const auto available = std::min(source.left.size(), source.right.size());
+    const auto toFrame = [&](double seconds) {
+        const auto rounded = std::max(0.0, std::round(seconds * source.sampleRate));
+        return std::min<std::size_t>(available, static_cast<std::size_t>(rounded));
+    };
+    const auto first = toFrame(startSeconds);
+    const auto last = std::max(first, toFrame(endSeconds));
+    const auto begin = static_cast<std::ptrdiff_t>(first);
+    const auto end = static_cast<std::ptrdiff_t>(last);
+    segment.left.assign(source.left.begin() + begin, source.left.begin() + end);
+    segment.right.assign(source.right.begin() + begin, source.right.begin() + end);
+    return segment;
+}
+
 void applySymmetricFade(Clip& clip, double seconds) {
     const auto frames = std::min(clip.left.size(), clip.right.size());
     const auto fadeFrames = std::min(
@@ -481,7 +614,8 @@ void applySymmetricFade(Clip& clip, double seconds) {
 // it holds a low idle target, releases as the target ramps to the limiter under
 // full throttle (the ECU rev limiter then bounces at redline), and brakes the
 // overrun back down with the throttle shut.
-Clip renderTrajectory(const EngineConfig& baseConfig, double sampleRate) {
+Clip renderTrajectory(const EngineConfig& baseConfig, double sampleRate,
+                      const TrajectoryTiming& timing) {
     auto config = baseConfig;
     normaliseEngineConfig(config);
     SimpleEcuModel ecu; SimplifiedGasolinePhysics physics; FourStrokeEventGenerator events;
@@ -518,10 +652,14 @@ Clip renderTrajectory(const EngineConfig& baseConfig, double sampleRate) {
     // See `makeDefaultOfflineAudioScenario` for the measured settle figures.
     const auto idleRpm = std::max(300.0, config.idleRpm);
 
-    // Phase timing (seconds). The idle hold is 7 s because that is what the
-    // after-start flare needs to decay to the catalogue idle.
-    constexpr double crank = 1.5, idleHold = 7.0, revUp = 3.2, limiterHold = 1.0, decel = 2.6;
-    const auto total = crank + idleHold + revUp + limiterHold + decel;
+    // Phase timing comes from the caller so the segment table and the render
+    // cannot drift apart; see `TrajectoryTiming`.
+    const auto crank = timing.crankSeconds;
+    const auto idleHold = timing.idleHoldSeconds;
+    const auto revUp = timing.revUpSeconds;
+    const auto limiterHold = timing.limiterHoldSeconds;
+    const auto decel = timing.decelSeconds;
+    const auto total = timing.totalSeconds();
 
     Clip clip; clip.sampleRate = sampleRate;
     clip.left.reserve(static_cast<std::size_t>(total * sampleRate));
@@ -592,8 +730,33 @@ int main(int argc, char** argv) {
     unsigned seed = 20260718U;
     bool requireReferences = false;
     bool validateManifestOnly = false;
+    // Opt-in to pairing a reference whose window is not condition-matched (a
+    // schema-2 manifest, or a bare `--ref`). Off by default because the resulting
+    // pair can put an idle clip against a rev-up recording, which produces a
+    // confident verdict about nothing. Useful for a rough check, never for a
+    // published result.
+    bool allowUnmatchedReferenceWindow = false;
     std::map<std::string, std::filesystem::path> refs; // engine name substring -> reference audio
     std::vector<std::string> requestedEngines; // name substrings; empty -> default trio
+    // Variant mode: blind A/B between TWO catalogue engines instead of engine
+    // against recording. This is how a voicing or hardware variant is judged --
+    // a bespoke exhaust against the stock one, say -- and it needs the same
+    // loudness matching and the same blinding as the reference test, because
+    // "louder is better" and "I know which one I built" bias a variant judgement
+    // at least as hard.
+    std::vector<std::string> comparedEngines;
+    const auto splitList = [](const std::string& list) {
+        std::vector<std::string> tokens;
+        for (std::size_t pos = 0; pos <= list.size();) {
+            const auto comma = list.find(',', pos);
+            const auto token = list.substr(
+                pos, comma == std::string::npos ? std::string::npos : comma - pos);
+            if (!token.empty()) tokens.push_back(token);
+            if (comma == std::string::npos) break;
+            pos = comma + 1;
+        }
+        return tokens;
+    };
     for (int i = 1; i < argc; ++i) {
         const std::string a = argv[i];
         if (a == "--output" && i + 1 < argc) outRoot = argv[++i];
@@ -601,18 +764,15 @@ int main(int argc, char** argv) {
         else if (a == "--reference-manifest" && i + 1 < argc) manifestPath = argv[++i];
         else if (a == "--require-references") requireReferences = true;
         else if (a == "--validate-manifest") validateManifestOnly = true;
+        else if (a == "--allow-unmatched-reference-window") allowUnmatchedReferenceWindow = true;
         else if (a == "--target-lufs" && i + 1 < argc) targetLufs = std::stod(argv[++i]);
         else if (a == "--seed" && i + 1 < argc) seed = static_cast<unsigned>(std::stoul(argv[++i]));
         else if (a == "--engines" && i + 1 < argc) {
             // Comma-separated catalogue-name substrings, e.g. "LS3,Merlin,Twin".
-            std::string list = argv[++i];
-            for (std::size_t pos = 0; pos <= list.size();) {
-                const auto comma = list.find(',', pos);
-                const auto token = list.substr(pos, comma == std::string::npos ? std::string::npos : comma - pos);
-                if (!token.empty()) requestedEngines.push_back(token);
-                if (comma == std::string::npos) break;
-                pos = comma + 1;
-            }
+            requestedEngines = splitList(argv[++i]);
+        }
+        else if (a == "--compare" && i + 1 < argc) {
+            comparedEngines = splitList(argv[++i]);
         }
         else if (a == "--ref" && i + 1 < argc) {
             const std::string kv = argv[++i]; const auto eq = kv.find('=');
@@ -623,12 +783,23 @@ int main(int argc, char** argv) {
                 << "EngineLabAbClipRenderer options:\n"
                 << "  --output <dir>\n"
                 << "  --engines <comma-separated catalogue substrings>\n"
+                << "  --compare <baseline-substring>,<candidate-substring>\n"
+                << "      blind A/B between two catalogue engines instead of\n"
+                << "      engine-against-recording; references are not used\n"
                 << "  --reference-manifest <manifest.json>\n"
                 << "  --require-references\n"
                 << "  --validate-manifest\n"
+                << "  --allow-unmatched-reference-window\n"
                 << "  --ref <engine-substring>=<audio-path>\n"
                 << "  --target-lufs <value>\n"
-                << "  --seed <integer>\n";
+                << "  --seed <integer>\n"
+                << "\nOne clip per engine per listening segment ("
+                << "each levelled on its own content):\n";
+            for (const auto& segment : listeningSegments(TrajectoryTiming {})) {
+                std::cout << "  " << segment.name << ": " << segment.description << " ("
+                          << std::fixed << std::setprecision(2)
+                          << (segment.endSeconds - segment.startSeconds) << " s)\n";
+            }
             return 0;
         } else {
             std::cerr << "Unknown or incomplete option: " << a << '\n';
@@ -638,6 +809,26 @@ int main(int argc, char** argv) {
     if (!(targetLufs >= -40.0 && targetLufs <= -10.0)) {
         std::cerr << "Target loudness must be between -40 and -10 LUFS.\n";
         return 1;
+    }
+    const auto variantMode = !comparedEngines.empty();
+    if (variantMode) {
+        // Refuse the combinations rather than silently ignoring an argument: a
+        // run that quietly dropped --reference-manifest would look like a
+        // reference comparison in the shell history and be nothing of the kind.
+        if (comparedEngines.size() != 2) {
+            std::cerr << "--compare takes exactly two catalogue substrings, "
+                         "baseline first.\n";
+            return 1;
+        }
+        if (!requestedEngines.empty()) {
+            std::cerr << "--compare and --engines are different modes; pass one.\n";
+            return 1;
+        }
+        if (!manifestPath.empty() || !refs.empty() || requireReferences) {
+            std::cerr << "--compare pairs two catalogue engines against each other, "
+                         "so reference options do not apply.\n";
+            return 1;
+        }
     }
     constexpr double sampleRate = 48'000.0;
     constexpr double peakCeiling = 0.98;
@@ -695,13 +886,44 @@ int main(int argc, char** argv) {
 
     // Default: the three near-equivalent archetypes present in both catalogues.
     std::vector<std::string> wanted { "2JZ", "LS3", "Hayabusa" };
-    if (!requestedEngines.empty()) wanted = requestedEngines;
+    if (variantMode) wanted = comparedEngines;
+    else if (!requestedEngines.empty()) wanted = requestedEngines;
     struct Selected { std::string label; const EngineConfig* config; };
     std::vector<Selected> selected;
-    for (const auto& key : wanted)
-        for (const auto& e : catalog.entries)
-            if (e.config.name.find(key) != std::string::npos) { selected.push_back({ key, &e.config }); break; }
-    if (selected.size() != wanted.size()) { std::cerr << "Could not resolve all requested engines.\n"; return 1; }
+    for (const auto& key : wanted) {
+        // Substring selection is ambiguous by nature -- "Twin" matches three
+        // catalogue entries -- and silently taking the first match is the same
+        // trap that once held a race-exhaust variant to the stock bike's rated
+        // torque (see engines/15_cp2_full_system_like.engine.yaml). Report every
+        // match, and refuse the ambiguity outright in variant mode, where the
+        // whole point is that the two sides are the engines you meant.
+        std::vector<const EngineConfig*> matches;
+        for (const auto& entry : catalog.entries)
+            if (entry.config.name.find(key) != std::string::npos)
+                matches.push_back(&entry.config);
+        if (matches.empty()) {
+            std::cerr << "No catalogue engine matches '" << key << "'.\n";
+            return 1;
+        }
+        if (matches.size() > 1) {
+            std::cerr << (variantMode ? "Ambiguous" : "Warning: ambiguous")
+                      << " engine filter '" << key << "' matches " << matches.size()
+                      << " entries:\n";
+            for (const auto* match : matches)
+                std::cerr << "    " << match->name << '\n';
+            if (variantMode) {
+                std::cerr << "  Pass a substring that selects exactly one engine.\n";
+                return 1;
+            }
+            std::cerr << "  Using the first.\n";
+        }
+        selected.push_back({ key, matches.front() });
+    }
+    if (variantMode && selected[0].config == selected[1].config) {
+        std::cerr << "--compare resolved both sides to the same engine ("
+                  << selected[0].config->name << ").\n";
+        return 1;
+    }
 
     struct PreparedReference final {
         bool present { false };
@@ -712,7 +934,9 @@ int main(int argc, char** argv) {
     };
     std::vector<PreparedReference> prepared(selected.size());
     bool missingRequiredReference = false;
-    for (std::size_t p = 0; p < selected.size(); ++p) {
+    // Variant mode has no recordings on either side, so there is nothing to
+    // preflight; both sides come out of the simulator.
+    for (std::size_t p = 0; p < (variantMode ? 0U : selected.size()); ++p) {
         const auto& sel = selected[p];
         auto& destination = prepared[p];
         if (const auto manual = refs.find(sel.label); manual != refs.end()) {
@@ -762,137 +986,365 @@ int main(int argc, char** argv) {
     }
     std::filesystem::create_directories(listeningDir);
 
+    const TrajectoryTiming timing;
+    const auto segments = listeningSegments(timing);
+
+    // Resolve every (engine, segment) reference window BEFORE rendering. A
+    // missing window is a corpus problem, and discovering it after ten minutes of
+    // physics wastes the run.
+    struct SegmentReference final {
+        bool usable { false };
+        double startSeconds { 0.0 };
+        bool conditionMatched { false };
+        std::string error;
+    };
+    std::vector<std::vector<SegmentReference>> segmentReferences(
+        selected.size(), std::vector<SegmentReference>(segments.size()));
+    bool anyUnusableSegmentReference = false;
+    for (std::size_t p = 0; p < (variantMode ? 0U : selected.size()); ++p) {
+        for (std::size_t s = 0; s < segments.size(); ++s) {
+            auto& resolved = segmentReferences[p][s];
+            const auto& segment = segments[s];
+            const auto& windows = prepared[p].spec.segmentWindowStartSeconds;
+            if (!prepared[p].present) {
+                // Already reported by the preflight above; do not repeat it once
+                // per segment.
+                resolved.error = prepared[p].error.empty()
+                    ? "no reference configured" : prepared[p].error;
+                anyUnusableSegmentReference = true;
+                continue;
+            }
+            if (const auto window = windows.find(segment.name); window != windows.end()) {
+                resolved.usable = true;
+                resolved.startSeconds = window->second;
+                resolved.conditionMatched = true;
+            } else if (allowUnmatchedReferenceWindow) {
+                resolved.usable = true;
+                resolved.startSeconds = prepared[p].spec.clipStartSeconds;
+                resolved.conditionMatched = false;
+            } else {
+                resolved.error = "no segment_windows entry for '" + segment.name
+                    + "', so the reference cannot be condition-matched"
+                      " (--allow-unmatched-reference-window pairs the whole-file"
+                      " window anyway, which is not a publishable comparison)";
+            }
+
+            if (resolved.usable) {
+                // The pair is only as long as its shorter side.
+                const auto remaining = prepared[p].loadInfo.originalDurationSeconds
+                    - resolved.startSeconds;
+                const auto pairSeconds =
+                    std::min(segment.endSeconds - segment.startSeconds, remaining);
+                if (!(pairSeconds >= 2.0)) {
+                    resolved.usable = false;
+                    resolved.error = "less than two usable seconds at the '"
+                        + segment.name + "' window";
+                }
+            }
+            if (!resolved.usable) {
+                anyUnusableSegmentReference = true;
+                std::cerr << "Reference window [" << selected[p].label << ' '
+                          << segment.name << "]: " << resolved.error << '\n';
+            }
+        }
+    }
+    if (requireReferences && anyUnusableSegmentReference) {
+        std::cerr << "Required reference corpus is incomplete;"
+                     " no listening clips were rendered.\n";
+        return 2;
+    }
+
+    // In variant mode there is one case: the candidate under test against the
+    // baseline. In reference mode there is one case per engine, its control being
+    // that engine's recording.
+    struct RenderCase final {
+        const EngineConfig* subject { nullptr };
+        std::size_t referenceIndex { 0 };
+        const EngineConfig* controlEngine { nullptr };
+    };
+    std::vector<RenderCase> cases;
+    if (variantMode) {
+        cases.push_back({ selected[1].config, 0, selected[0].config });
+    } else {
+        for (std::size_t p = 0; p < selected.size(); ++p)
+            cases.push_back({ selected[p].config, p, nullptr });
+    }
+
     std::mt19937 rng(seed);
     Json key {
-        { "schema_version", 2 },
+        { "schema_version", 3 },
+        { "mode", variantMode ? "variant" : "reference" },
         { "target_lufs", targetLufs },
         { "peak_ceiling", peakCeiling },
         { "seed", seed },
-        { "profile", "idle-hold -> rev-up into limiter -> throttle-off decel" },
+        { "profile", "crank -> idle hold -> rev-up into limiter -> throttle-off decel" },
         { "sample_rate_hz", sampleRate },
         { "reference_manifest", manifestPath.empty() ? "" : std::filesystem::absolute(manifestPath).string() },
+        { "segments", Json::array() },
         { "pairs", Json::array() },
     };
-
-    // Pre-draw the A/B side per pair, re-rolling if every EngineLab clip landed on
-    // the same side (a valid but poor blind batch: guessing one would reveal all).
-    std::vector<bool> elIsASide(selected.size());
-    for (int attempt = 0; attempt < 16; ++attempt) {
-        for (std::size_t p = 0; p < selected.size(); ++p)
-            elIsASide[p] = std::uniform_int_distribution<int>(0, 1)(rng) == 0;
-        const bool allSame = std::all_of(elIsASide.begin(), elIsASide.end(), [&](bool b) { return b == elIsASide[0]; });
-        if (!allSame || selected.size() < 2) break;
+    if (variantMode) {
+        key["baseline_engine"] = selected[0].config->name;
+        key["candidate_engine"] = selected[1].config->name;
+    }
+    for (const auto& segment : segments) {
+        key["segments"].push_back({
+            { "name", segment.name },
+            { "description", segment.description },
+            { "trajectory_start_seconds", segment.startSeconds },
+            { "trajectory_end_seconds", segment.endSeconds },
+        });
     }
 
-    std::cout << "Target loudness: " << targetLufs << " LUFS  (BS.1770 integrated)\n\n";
-    for (std::size_t p = 0; p < selected.size(); ++p) {
-        const auto& sel = selected[p];
-        std::cout << "=== pair " << (p + 1) << ": " << sel.config->name << " ===\n";
+    // One pair per (case, segment). Sides are drawn for the whole batch at once so
+    // it can be rejected as a whole: a batch that put every subject clip on the
+    // same side is valid but poor, since guessing one reveals all.
+    const auto pairCount = cases.size() * segments.size();
+    std::vector<bool> subjectIsASide(pairCount);
+    for (int attempt = 0; attempt < 16; ++attempt) {
+        for (std::size_t i = 0; i < pairCount; ++i)
+            subjectIsASide[i] = std::uniform_int_distribution<int>(0, 1)(rng) == 0;
+        const bool allSame = std::all_of(subjectIsASide.begin(), subjectIsASide.end(),
+            [&](bool side) { return side == subjectIsASide[0]; });
+        if (!allSame || pairCount < 2) break;
+    }
 
-        auto elClip = renderTrajectory(*sel.config, sampleRate);
-        auto refClip = prepared[p].clip;
-        auto haveRef = prepared[p].present;
-        if (haveRef) {
-            selectReferenceWindow(refClip, prepared[p].spec.clipStartSeconds, elClip.left.size());
-            const auto pairFrames = std::min({
-                elClip.left.size(), elClip.right.size(), refClip.left.size(), refClip.right.size() });
-            if (pairFrames < static_cast<std::size_t>(2.0 * sampleRate)) {
-                std::cerr << "Reference [" << sel.label
-                          << "] has less than two usable seconds after its configured start offset.\n";
-                if (requireReferences) return 2;
-                haveRef = false;
-                refClip = {};
-            } else {
+    std::cout << "Target loudness: " << targetLufs
+              << " LUFS (BS.1770 integrated), applied to each segment"
+                 " on its own content\n\n";
+
+    std::vector<std::string> indexRows;
+    std::size_t pairNumber = 0;
+    for (const auto& renderCase : cases) {
+        const auto p = renderCase.referenceIndex;
+        std::cout << "=== " << renderCase.subject->name;
+        if (renderCase.controlEngine != nullptr)
+            std::cout << "  vs  " << renderCase.controlEngine->name << " (baseline)";
+        std::cout << " ===\n";
+        // Rendered ONCE and cut up: the segments must come from the same physics
+        // run, or an idle and a rev clip could disagree about the engine's state.
+        const auto fullClip = renderTrajectory(*renderCase.subject, sampleRate, timing);
+        // In variant mode the control is a second full render of the baseline
+        // engine, cut on exactly the same segment boundaries -- so the two sides
+        // are the same conditions on two engines, not two moments on one.
+        const auto controlFullClip = renderCase.controlEngine != nullptr
+            ? renderTrajectory(*renderCase.controlEngine, sampleRate, timing)
+            : Clip {};
+
+        // The whole-trajectory loudness is what the single-gain scheme measured,
+        // and it is reported so the per-segment offsets below stay auditable: the
+        // difference between it and a segment's own loudness IS the level error
+        // that segment used to be presented at. Keeping it also makes an
+        // unintended change to the render visible in one number.
+        const auto trajectoryLufs = integratedLufs(fullClip);
+        std::cout << "  whole trajectory: " << std::fixed << std::setprecision(2)
+                  << (static_cast<double>(fullClip.left.size()) / sampleRate) << " s, "
+                  << trajectoryLufs << " LUFS\n";
+
+        for (std::size_t s = 0; s < segments.size(); ++s) {
+            const auto& segment = segments[s];
+            const auto& resolved = segmentReferences[p][s];
+            ++pairNumber;
+
+            auto elClip = extractSegment(fullClip, segment.startSeconds, segment.endSeconds);
+            Clip refClip;
+            auto haveRef = variantMode || resolved.usable;
+            if (variantMode) {
+                refClip = extractSegment(
+                    controlFullClip, segment.startSeconds, segment.endSeconds);
+                const auto pairFrames = std::min({ elClip.left.size(), elClip.right.size(),
+                    refClip.left.size(), refClip.right.size() });
                 resizeClip(elClip, pairFrames);
                 resizeClip(refClip, pairFrames);
+            } else if (haveRef) {
+                refClip = prepared[p].clip;
+                selectReferenceWindow(refClip, resolved.startSeconds, elClip.left.size());
+                const auto pairFrames = std::min({ elClip.left.size(), elClip.right.size(),
+                    refClip.left.size(), refClip.right.size() });
+                if (pairFrames < static_cast<std::size_t>(2.0 * sampleRate)) {
+                    std::cerr << "  reference [" << segment.name
+                              << "] has less than two usable seconds; slot left empty\n";
+                    if (requireReferences) return 2;
+                    haveRef = false;
+                    refClip = {};
+                } else {
+                    resizeClip(elClip, pairFrames);
+                    resizeClip(refClip, pairFrames);
+                }
             }
-        }
-        applySymmetricFade(elClip, 0.020);
-        if (haveRef) applySymmetricFade(refClip, 0.020);
+            applySymmetricFade(elClip, 0.020);
+            if (haveRef) applySymmetricFade(refClip, 0.020);
 
-        const auto elLufsBefore = integratedLufs(elClip);
-        applyGain(elClip, std::pow(10.0, (targetLufs - elLufsBefore) / 20.0));
-        double refLufsBefore = 0.0;
-        if (haveRef) {
-            refLufsBefore = integratedLufs(refClip);
-            applyGain(refClip, std::pow(10.0, (targetLufs - refLufsBefore) / 20.0));
-        }
+            const auto elLufsBefore = integratedLufs(elClip);
+            applyGain(elClip, std::pow(10.0, (targetLufs - elLufsBefore) / 20.0));
+            double refLufsBefore = 0.0;
+            if (haveRef) {
+                refLufsBefore = integratedLufs(refClip);
+                applyGain(refClip, std::pow(10.0, (targetLufs - refLufsBefore) / 20.0));
+            }
 
-        // Apply the same extra attenuation to both sides if either would exceed
-        // the peak ceiling. This preserves equal loudness without clipping.
-        auto pairPeak = peakOf(elClip);
-        if (haveRef) pairPeak = std::max(pairPeak, peakOf(refClip));
-        if (pairPeak > peakCeiling) {
-            const auto pairGain = peakCeiling / pairPeak;
-            applyGain(elClip, pairGain);
-            if (haveRef) applyGain(refClip, pairGain);
-        }
+            // Apply the same extra attenuation to both sides if either would
+            // exceed the peak ceiling. This preserves equal loudness without
+            // clipping.
+            auto pairPeak = peakOf(elClip);
+            if (haveRef) pairPeak = std::max(pairPeak, peakOf(refClip));
+            if (pairPeak > peakCeiling) {
+                const auto pairGain = peakCeiling / pairPeak;
+                applyGain(elClip, pairGain);
+                if (haveRef) applyGain(refClip, pairGain);
+            }
 
-        const auto elLufsAfter = integratedLufs(elClip);
-        const auto elPeak = peakOf(elClip);
-        const auto refLufsAfter = haveRef ? integratedLufs(refClip) : 0.0;
-        const auto refPeak = haveRef ? peakOf(refClip) : 0.0;
-        std::cout << "  EngineLab: " << elLufsBefore << " -> " << elLufsAfter
-                  << " LUFS, peak " << std::fixed << std::setprecision(3) << elPeak << '\n';
-        if (haveRef) {
-            std::cout << "  Reference: " << refLufsBefore << " -> " << refLufsAfter
-                      << " LUFS, peak " << refPeak << "  ("
-                      << prepared[p].spec.file.string() << ")\n";
-        } else {
-            std::cout << "  Reference: none supplied -> slot left as placeholder\n";
-        }
+            const auto elLufsAfter = integratedLufs(elClip);
+            const auto elPeak = peakOf(elClip);
+            const auto refLufsAfter = haveRef ? integratedLufs(refClip) : 0.0;
+            const auto refPeak = haveRef ? peakOf(refClip) : 0.0;
+            const auto segmentSeconds = static_cast<double>(elClip.left.size()) / sampleRate;
+            std::cout << "  pair " << pairNumber << ' ' << segment.name << ": "
+                      << std::fixed << std::setprecision(2) << segmentSeconds << " s, "
+                      << (variantMode ? "candidate " : "EngineLab ")
+                      << elLufsBefore << " -> " << elLufsAfter
+                      << " LUFS, peak " << std::setprecision(3) << elPeak;
+            if (variantMode) {
+                std::cout << " | baseline " << std::setprecision(2) << refLufsBefore
+                          << " -> " << refLufsAfter << " LUFS, peak "
+                          << std::setprecision(3) << refPeak;
+            } else if (haveRef) {
+                std::cout << " | reference " << std::setprecision(2) << refLufsBefore
+                          << " -> " << refLufsAfter << " LUFS";
+                if (!resolved.conditionMatched)
+                    std::cout << "  [WINDOW NOT CONDITION-MATCHED]";
+            } else {
+                std::cout << " | no reference";
+            }
+            std::cout << '\n';
 
-        // Randomised side (A/B) for EngineLab, drawn above.
-        const bool elIsA = elIsASide[p];
-        const auto sideEl = elIsA ? "A" : "B";
-        const auto sideRef = elIsA ? "B" : "A";
-        const auto nameA = listeningDir / ("pair_" + std::to_string(p + 1) + "_A.wav");
-        const auto nameB = listeningDir / ("pair_" + std::to_string(p + 1) + "_B.wav");
-        writeWavFloat(elIsA ? nameA : nameB, elClip);
-        if (haveRef) writeWavFloat(elIsA ? nameB : nameA, refClip);
+            // Randomised side (A/B) for the subject, drawn above.
+            const bool elIsA = subjectIsASide[pairNumber - 1];
+            const auto sideEl = elIsA ? "A" : "B";
+            const auto sideRef = elIsA ? "B" : "A";
+            if (haveRef) {
+                const auto stem =
+                    "pair_" + std::to_string(pairNumber) + "_" + segment.name;
+                const auto nameA = listeningDir / (stem + "_A.wav");
+                const auto nameB = listeningDir / (stem + "_B.wav");
+                writeWavFloat(elIsA ? nameA : nameB, elClip);
+                writeWavFloat(elIsA ? nameB : nameA, refClip);
+            } else {
+                // With nothing on the other side there is no pair and no blinding
+                // to protect, so do NOT name the file as one half of one: a lone
+                // `pair_3_idle_B.wav` reads as a lost file, and a listener told to
+                // compare A with B would be grading silence. It is a solo
+                // audition, which is still a useful thing to hand over.
+                writeWavFloat(listeningDir
+                        / ("solo_" + std::to_string(pairNumber) + "_" + segment.name
+                            + ".wav"),
+                    elClip);
+            }
 
-        Json pair {
-            { "pair", p + 1 },
-            { "engine", sel.config->name },
-            { "duration_seconds", static_cast<double>(elClip.left.size()) / sampleRate },
-            { "enginelab_side", sideEl },
-            { "enginelab_lufs_before", elLufsBefore },
-            { "enginelab_lufs", elLufsAfter },
-            { "enginelab_peak", elPeak },
-            { "reference_side", sideRef },
-            { "reference_present", haveRef },
-        };
-        if (haveRef) {
-            pair["reference"] = {
-                { "file", std::filesystem::absolute(prepared[p].spec.file).string() },
-                { "creator", prepared[p].spec.creator },
-                { "license", prepared[p].spec.license },
-                { "license_url", prepared[p].spec.licenseUrl },
-                { "distribution", prepared[p].spec.distribution },
-                { "source_url", prepared[p].spec.sourceUrl },
-                { "preview_url", prepared[p].spec.previewUrl },
-                { "sha256", prepared[p].spec.sha256 },
-                { "source_kind", prepared[p].spec.sourceKind },
-                { "match_quality", prepared[p].spec.matchQuality },
-                { "source_engine", prepared[p].spec.sourceEngine },
-                { "operating_conditions", prepared[p].spec.operatingConditions },
-                { "rpm", prepared[p].spec.rpm },
-                { "microphone", prepared[p].spec.microphone },
-                { "audio_quality", prepared[p].spec.audioQuality },
-                { "notes", prepared[p].spec.notes },
-                { "clip_start_seconds", prepared[p].spec.clipStartSeconds },
-                { "original_sample_rate_hz", prepared[p].loadInfo.originalSampleRate },
-                { "original_channels", prepared[p].loadInfo.originalChannels },
-                { "resampled", prepared[p].loadInfo.resampled },
-                { "lufs_before", refLufsBefore },
-                { "lufs", refLufsAfter },
-                { "peak", refPeak },
+            // The index names the CONDITION, never the engine or the side: a
+            // listener should know whether they are hearing an idle or a rev-up,
+            // and must not know that pair 7 is a Merlin.
+            {
+                std::ostringstream row;
+                row << "| " << pairNumber << " | " << segment.name << " | "
+                    << segment.description << " | " << std::fixed << std::setprecision(2)
+                    << segmentSeconds << " s | "
+                    << (haveRef ? "A/B" : "ecoute seule (un seul cote)") << " |";
+                indexRows.push_back(row.str());
+            }
+
+            // Sides are named subject/control rather than EngineLab/reference
+            // because in variant mode BOTH sides are EngineLab. `mode` at the top
+            // of the key says which comparison this is; `control.kind` says what
+            // the other side actually is.
+            Json pair {
+                { "pair", pairNumber },
+                { "engine", renderCase.subject->name },
+                { "segment", segment.name },
+                { "segment_description", segment.description },
+                { "duration_seconds", segmentSeconds },
+                // What the single-gain scheme would have presented this segment
+                // at: its own loudness shifted by the whole-trajectory gain.
+                { "whole_trajectory_lufs", trajectoryLufs },
+                { "level_error_removed_db", (targetLufs - elLufsBefore)
+                                                - (targetLufs - trajectoryLufs) },
+                { "subject_side", sideEl },
+                { "subject_lufs_before", elLufsBefore },
+                { "subject_lufs", elLufsAfter },
+                { "subject_peak", elPeak },
+                { "control_side", haveRef ? sideRef : "" },
+                { "control_present", haveRef },
+                { "solo", !haveRef },
             };
-        } else {
-            pair["reference_error"] = prepared[p].error.empty()
-                ? "reference window unusable" : prepared[p].error;
+            if (!haveRef) pair["subject_side"] = "";
+            if (variantMode) {
+                pair["control"] = {
+                    { "kind", "enginelab-baseline" },
+                    { "engine", renderCase.controlEngine->name },
+                    { "match_quality", "enginelab-baseline" },
+                    { "window_condition_matched", true },
+                    { "lufs_before", refLufsBefore },
+                    { "lufs", refLufsAfter },
+                    { "peak", refPeak },
+                };
+            } else if (haveRef) {
+                pair["control"] = {
+                    { "kind", "recording" },
+                    { "file", std::filesystem::absolute(prepared[p].spec.file).string() },
+                    { "creator", prepared[p].spec.creator },
+                    { "license", prepared[p].spec.license },
+                    { "license_url", prepared[p].spec.licenseUrl },
+                    { "distribution", prepared[p].spec.distribution },
+                    { "source_url", prepared[p].spec.sourceUrl },
+                    { "preview_url", prepared[p].spec.previewUrl },
+                    { "sha256", prepared[p].spec.sha256 },
+                    { "source_kind", prepared[p].spec.sourceKind },
+                    { "match_quality", prepared[p].spec.matchQuality },
+                    { "source_engine", prepared[p].spec.sourceEngine },
+                    { "operating_conditions", prepared[p].spec.operatingConditions },
+                    { "rpm", prepared[p].spec.rpm },
+                    { "microphone", prepared[p].spec.microphone },
+                    { "audio_quality", prepared[p].spec.audioQuality },
+                    { "notes", prepared[p].spec.notes },
+                    { "clip_start_seconds", resolved.startSeconds },
+                    { "window_condition_matched", resolved.conditionMatched },
+                    { "original_sample_rate_hz", prepared[p].loadInfo.originalSampleRate },
+                    { "original_channels", prepared[p].loadInfo.originalChannels },
+                    { "resampled", prepared[p].loadInfo.resampled },
+                    { "lufs_before", refLufsBefore },
+                    { "lufs", refLufsAfter },
+                    { "peak", refPeak },
+                };
+            } else {
+                pair["control_error"] = resolved.error.empty()
+                    ? "reference window unusable" : resolved.error;
+            }
+            key["pairs"].push_back(std::move(pair));
         }
-        key["pairs"].push_back(std::move(pair));
+    }
+
+    // Written INSIDE clips/ so it travels with the folder handed to a listener.
+    {
+        std::ofstream index(listeningDir / "INDEX.md");
+        if (!index) {
+            std::cerr << "Could not write the listener clip index.\n";
+            return 1;
+        }
+        index << "# Clips a ecouter\n\n"
+              << "Chaque clip est cale a " << targetLufs << " LUFS (ITU-R BS.1770)"
+                 " sur SON PROPRE contenu, donc un\nralenti et une montee"
+                 " s'ecoutent au meme niveau de monitoring. Regle le volume une\n"
+                 "fois et n'y touche plus -- surtout pas entre le A et le B d'une"
+                 " meme paire.\n\n"
+                 "`pair_N_<condition>_A.wav` et `..._B.wav` sont les deux cotes"
+                 " d'une comparaison en\naveugle. Un fichier `solo_N_<condition>.wav`"
+                 " n'a pas de vis-a-vis : il s'ecoute\nseul, il n'y a rien a"
+                 " comparer et il ne faut rien noter en A/B dessus.\n\n"
+              << "| Paire | Condition | Description | Duree | Comparaison |\n"
+              << "|---:|---|---|---:|---|\n";
+        for (const auto& row : indexRows) index << row << '\n';
+        index << "\nLes noms de moteur et l'attribution A/B ne sont pas ici :"
+                 " ils sont dans\n`listening-key.json`, en dehors de ce dossier.\n";
     }
 
     std::ofstream keyFile(outRoot / "listening-key.json"); // deliberately OUTSIDE clips/
@@ -901,8 +1353,11 @@ int main(int argc, char** argv) {
         return 1;
     }
     keyFile << key.dump(2) << '\n';
-    std::cout << "\nWrote clips to " << listeningDir.string()
-              << " and key to " << (outRoot / "listening-key.json").string() << '\n';
+    std::cout << "\nWrote " << key["pairs"].size() << " pairs ("
+              << cases.size() << (variantMode ? " comparison x " : " engines x ")
+              << segments.size() << " segments) to "
+              << listeningDir.string() << ", with INDEX.md alongside them,\nand the key to "
+              << (outRoot / "listening-key.json").string() << '\n';
     std::cout << "The key is outside the clips/ folder: keep it away from listeners.\n";
     return 0;
 }

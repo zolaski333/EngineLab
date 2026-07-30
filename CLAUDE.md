@@ -108,6 +108,38 @@ test onto the behaviour it is meant to catch. Keep it that way.
   raises the coarse spectral-shape *correlation* even though it improves the
   sound — that metric penalises "everyone gained treble", so do not chase it
   down. Character lives in the firing-pattern envelope, not the steady spectrum.
+- **One loudness gain over a clip that holds both an idle and full load presents
+  the idle ~23 dB too quiet, and a listener will report that as an engine
+  fault.** BS.1770 integrated loudness is set by the loud part, so a single gain
+  landing a 15.3 s idle-to-limiter trajectory at −20 LUFS put the CP2's idle
+  window at about −43. Measured: whole trajectory −21.55 LUFS, its `idle` segment
+  −44.89, its `rev` segment −20.30. The first human pass reported "le ralenti est
+  trop faible" for every engine and a large part of it was this. `AbClipRenderer`
+  now renders ONE trajectory and cuts it into segments levelled on their own
+  content (`listeningSegments`), publishing `level_error_removed_db` per pair.
+  **Do not "fix" this by raising the idle in the voicing** — that fabricates the
+  thing the correction exists to reveal, and the render must stay untouched (the
+  trajectory still measures −21.55, unchanged). Same shape as the cycle-average
+  and fixed-window-gate traps below: any integrated measure over a window that
+  spans widely different levels reports the loudest part.
+- **A reference recording must be windowed per CONDITION, not per file.** Real
+  takes hold their idle and their rev at different offsets, so one
+  `clip_start_seconds` cannot match both; pairing a simulated idle against a
+  recording under load yields a confident verdict about nothing. Manifest schema 3
+  adds `segment_windows`; a segment with no window gets NO reference and says so,
+  and `--allow-unmatched-reference-window` is an explicit opt-in that marks the
+  pair unpublishable. Corollary found the same day: a pair with an empty control
+  side must be excluded from scoring, because a listener who graded that side
+  graded silence — `scripts/listening.py` used to crash there, which was at least
+  visible; averaging it in would not have been.
+- **The listening iteration loop is bounded by header fan-out, not by physics.**
+  Measured on the 12-thread desktop: one engine's 15.3 s trajectory renders in
+  5.9 s (CP2) to 15.6 s (Merlin), and relinking `EngineLabAbClipRenderer` after
+  touching an audio **`.cpp`** costs 11.0 s — so that loop is already 17-27 s.
+  Touching `RealtimeEngineAudio.hpp` instead costs **115.1 s**. A telemetry cache
+  that replays the physics into the audio path was scoped to fix this and would
+  have addressed **none** of it; it was dropped before being written. What removes
+  the build from the loop is making voicing *data* rather than code.
 - **Never label structural modes `measured` because they sound plausible.**
   Schema 5 accepts sourced modal frequency, damping, mass, radiating area,
   radiation efficiency, force drive and signed participation per cylinder.
@@ -558,6 +590,16 @@ rework: measurements, and the hypotheses that were tried and refuted.
 
 ## Two concrete traps that cost time here
 
+- **Every engine selector in this repo is an unanchored SUBSTRING match, and the
+  catalogue now contains names that contain each other.** `--engines Twin` matches
+  three entries (`Big Twin-like 1.9 V2`, `Yamaha CP2 MT-07-like 689 Twin`,
+  `MT-07-like 689 Twin Full System`) and the tools silently took the first. Same
+  mechanism as `DynoSweepHarness`'s `containsCaseInsensitive`, which would have
+  held a race-exhaust variant to the stock bike's rated torque had the variant
+  been named "Yamaha CP2 ... Full System". `AbClipRenderer` now lists every match
+  and refuses the ambiguity outright in `--compare`, where the whole point is that
+  the two sides are the engines you meant. Assume any new selector has this bug
+  until you check it.
 - **CMake target names, and the stale-binary trap.** `cmake --build --target X`
   with a wrong `X` fails with `MSB1009: project file does not exist`, builds
   nothing, and then `ctest` happily reruns the *previous* binary — so a test can

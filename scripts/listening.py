@@ -50,7 +50,26 @@ def make_sheets(pack: Path, listeners: int) -> int:
         return 1
     with key_path.open(encoding="utf-8") as handle:
         key = json.load(handle)
-    pair_numbers = sorted(entry["pair"] for entry in key["pairs"])
+    # The condition is pre-filled so a listener knows whether they are scoring an
+    # idle or a rev-up. It reveals nothing: the engine name and the A/B assignment
+    # both stay in the key. `report` never reads this column.
+    conditions = {entry["pair"]: entry.get("segment", "") for entry in key["pairs"]}
+    # A pair with no control side has one file on disk and cannot be scored A vs B,
+    # so it gets no row at all. Giving it one would force the listener to either
+    # invent a grade for silence or leave the row blank, and a blank row makes
+    # `report` refuse the whole sheet.
+    scoreable = [
+        entry for entry in key["pairs"] if entry.get("control_present", True)
+    ]
+    skipped = len(key["pairs"]) - len(scoreable)
+    pair_numbers = sorted(entry["pair"] for entry in scoreable)
+    if not pair_numbers:
+        print(
+            "error: no pair in this pack has two sides, so there is nothing to "
+            "score blind. Render with a reference manifest, or with --compare.",
+            file=sys.stderr,
+        )
+        return 1
 
     out_dir = pack / "responses"
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -62,9 +81,9 @@ def make_sheets(pack: Path, listeners: int) -> int:
             continue
         with path.open("w", encoding="utf-8", newline="") as handle:
             writer = csv.writer(handle)
-            writer.writerow(COLUMNS)
+            writer.writerow(["pair", "condition", *COLUMNS[1:]])
             for pair in pair_numbers:
-                writer.writerow([pair, "", "", "", "", "", "", ""])
+                writer.writerow([pair, conditions.get(pair, ""), "", "", "", "", "", "", ""])
         written.append(path)
     for path in written:
         print(f"wrote {path}")
@@ -72,6 +91,11 @@ def make_sheets(pack: Path, listeners: int) -> int:
         f"\n{len(pair_numbers)} pairs per sheet. "
         "Scores are 1-5 integers; most_realistic and preferred are A or B."
     )
+    if skipped:
+        print(
+            f"{skipped} clip(s) have no second side and are NOT on the sheet; "
+            "they can be auditioned (solo_*.wav) but not scored A/B."
+        )
     return 0
 
 
@@ -166,6 +190,15 @@ def report(pack: Path, allow_incomplete: bool) -> int:
     with key_path.open(encoding="utf-8") as handle:
         key = json.load(handle)
     by_pair = {entry["pair"]: entry for entry in key["pairs"]}
+    # Two comparisons share this machinery because the statistics are identical --
+    # a blind binary choice, Wilson, sign test. Only the LABELS differ, and getting
+    # them wrong would report "EngineLab beat a real recording" about a run where
+    # no recording was involved.
+    variant_mode = key.get("mode") == "variant"
+    baseline = key.get("baseline_engine", "-")
+    candidate = key.get("candidate_engine", "-")
+    subject_label = "Candidat" if variant_mode else "EngineLab"
+    control_label = "Baseline" if variant_mode else "Reference"
 
     rows, problems = load_responses(pack)
     if problems and not allow_incomplete:
@@ -184,6 +217,11 @@ def report(pack: Path, allow_incomplete: bool) -> int:
     listeners = sorted({row["listener"] for row in rows})
     per_pair: dict[int, dict] = {}
     unknown_pairs = set()
+    # A pair whose reference slot is empty has only ONE side on disk, so a listener
+    # scoring "B" scored nothing. Those judgements are not comparisons and are
+    # excluded from every statistic rather than averaged in -- the report lists
+    # them separately so the gap in the corpus stays visible.
+    solo_pairs: dict[int, dict] = {}
 
     for row in rows:
         pair = row["pair"]
@@ -191,13 +229,31 @@ def report(pack: Path, allow_incomplete: bool) -> int:
         if entry is None:
             unknown_pairs.add(pair)
             continue
-        el_side = entry["enginelab_side"]
+        if not entry.get("control_present", True):
+            solo = solo_pairs.setdefault(
+                pair,
+                {
+                    "engine": entry["engine"],
+                    "segment": entry.get("segment", "-"),
+                    "reason": entry.get("control_error", "no control side"),
+                    "n": 0,
+                },
+            )
+            solo["n"] += 1
+            continue
+        el_side = entry["subject_side"]
         ref_side = "A" if el_side == "B" else "B"
+        # `control` is absent whenever the pair has no usable other side, which is
+        # the normal state for a segment the corpus does not cover. Reading it
+        # unconditionally raised KeyError and took the whole report down.
+        control = entry.get("control") or {}
         bucket = per_pair.setdefault(
             pair,
             {
                 "engine": entry["engine"],
-                "match_quality": entry["reference"].get("match_quality", "unknown"),
+                "segment": entry.get("segment", "-"),
+                "match_quality": control.get("match_quality", "no-control"),
+                "window_matched": control.get("window_condition_matched", None),
                 "n": 0,
                 "realism_el": [],
                 "realism_ref": [],
@@ -228,29 +284,71 @@ def report(pack: Path, allow_incomplete: bool) -> int:
     total_preferred = sum(bucket["chose_el_preferred"] for bucket in per_pair.values())
 
     lines: list[str] = []
-    lines.append("# Resultat d'ecoute A/B en aveugle - EngineLab contre enregistrements reels")
+    if variant_mode:
+        lines.append(f"# Ecoute A/B en aveugle - {candidate} contre {baseline}")
+    else:
+        lines.append(
+            "# Resultat d'ecoute A/B en aveugle - EngineLab contre enregistrements reels"
+        )
     lines.append("")
     lines.append(f"- dossier : `{pack.as_posix()}`")
     lines.append(f"- graine de tirage : `{key.get('seed')}`")
     lines.append(f"- sonie cible : {key.get('target_lufs')} LUFS (ITU-R BS.1770)")
     lines.append(f"- auditeurs : {len(listeners)} ({', '.join(listeners)})")
     lines.append(f"- jugements retenus : {total_n}")
+    if solo_pairs:
+        dropped = sum(bucket["n"] for bucket in solo_pairs.values())
+        lines.append(
+            f"- **jugements ecartes faute de reference : {dropped} "
+            f"sur {len(solo_pairs)} paire(s)**"
+        )
     if problems:
         lines.append(f"- **lignes ecartees comme incompletes : {len(problems)}**")
     if unknown_pairs:
         lines.append(f"- **paires inconnues ignorees : {sorted(unknown_pairs)}**")
     lines.append("")
-    lines.append(
-        "Ce test mesure l'ecart a un enregistrement reel. Ce n'est pas un score "
-        "absolu d'EngineLab : 7 references sur 10 sont des proxys, et aucune n'a "
-        "de trajectoire de regime ni de position micro appariees. Sa valeur est "
-        "le CLASSEMENT des familles, qui dit ou porter l'effort."
-    )
+
+    # Counted from the key rather than asserted: a hardcoded "7 references sur 10
+    # sont des proxys" goes stale the moment the corpus changes, and a stale
+    # caveat is worse than none because it is read as current.
+    qualities: dict[str, int] = {}
+    for entry in key["pairs"]:
+        control = entry.get("control") or {}
+        if entry.get("control_present", False):
+            label = control.get("match_quality", "unknown")
+            qualities[label] = qualities.get(label, 0) + 1
+    paired = sum(qualities.values())
+    proxies = sum(count for label, count in qualities.items() if "proxy" in label)
+    if variant_mode:
+        lines.append(
+            f"Ce test compare deux moteurs du catalogue : **{candidate}** (le"
+            f" candidat) contre **{baseline}** (la reference interne). Il ne dit"
+            " rien du realisme absolu -- aucun enregistrement reel n'y participe."
+            " Il dit seulement lequel des deux un auditeur prefere, en aveugle et"
+            " a sonie egale."
+        )
+    else:
+        lines.append(
+            "Ce test mesure l'ecart a un enregistrement reel. Ce n'est pas un score "
+            f"absolu d'EngineLab : sur {paired} paire(s) appariee(s), {proxies} le "
+            "sont contre un proxy, et aucune reference n'a de trajectoire de regime "
+            "ni de position micro appariees. Sa valeur est le CLASSEMENT des "
+            "familles, qui dit ou porter l'effort."
+        )
+    if qualities:
+        detail = ", ".join(
+            f"{label} x{count}" for label, count in sorted(qualities.items())
+        )
+        lines.append("")
+        lines.append(f"Correspondances presentes : {detail}.")
     lines.append("")
 
     lines.append("## Global")
     lines.append("")
-    lines.append("| Question | EngineLab choisi | Taux | IC 95 % (Wilson) | p (test des signes) |")
+    lines.append(
+        f"| Question | {subject_label} choisi | Taux | IC 95 % (Wilson) | "
+        "p (test des signes) |"
+    )
     lines.append("|---|---:|---:|---|---:|")
     for label, successes in (
         ("Le plus realiste", total_realistic),
@@ -268,10 +366,11 @@ def report(pack: Path, allow_incomplete: bool) -> int:
     lines.append("## Par famille, classe par ecart de realisme (le plus deficitaire d'abord)")
     lines.append("")
     lines.append(
-        "| Paire | Moteur | Correspondance | n | Realisme EL | Realisme ref | Ecart | "
-        "EL juge + realiste | IC 95 % |"
+        f"| Paire | Moteur | Condition | Correspondance | n | Realisme "
+        f"{subject_label} | Realisme {control_label} | Ecart | {subject_label} juge "
+        "+ realiste | IC 95 % |"
     )
-    lines.append("|---:|---|---|---:|---:|---:|---:|---:|---|")
+    lines.append("|---:|---|---|---|---:|---:|---:|---:|---:|---|")
     ordered = sorted(
         per_pair.items(),
         key=lambda item: mean(item[1]["realism_el"]) - mean(item[1]["realism_ref"]),
@@ -280,12 +379,48 @@ def report(pack: Path, allow_incomplete: bool) -> int:
         el_mean = mean(bucket["realism_el"])
         ref_mean = mean(bucket["realism_ref"])
         low, high = wilson(bucket["chose_el_realistic"], bucket["n"])
+        match = bucket["match_quality"]
+        if bucket["window_matched"] is False:
+            match += " (fenetre non appariee)"
         lines.append(
-            f"| {pair} | {bucket['engine']} | {bucket['match_quality']} | {bucket['n']} | "
-            f"{el_mean:.2f} | {ref_mean:.2f} | {el_mean - ref_mean:+.2f} | "
+            f"| {pair} | {bucket['engine']} | {bucket['segment']} | {match} | "
+            f"{bucket['n']} | {el_mean:.2f} | {ref_mean:.2f} | {el_mean - ref_mean:+.2f} | "
             f"{bucket['chose_el_realistic']}/{bucket['n']} | [{low:.0%}, {high:.0%}] |"
         )
     lines.append("")
+
+    unmatched = sorted(
+        pair for pair, bucket in per_pair.items() if bucket["window_matched"] is False
+    )
+    if unmatched:
+        lines.append(
+            "> **Attention.** Les paires "
+            + ", ".join(str(pair) for pair in unmatched)
+            + " comparent un segment a une fenetre de reference qui n'est pas"
+            " appariee en condition : le ralenti simule peut y etre oppose a un"
+            " enregistrement en charge. Leur verdict ne vaut rien et ne doit pas"
+            " etre publie."
+        )
+        lines.append("")
+
+    if solo_pairs:
+        lines.append("## Paires sans reference - non comparables, exclues des scores")
+        lines.append("")
+        lines.append(
+            "Ces paires n'ont qu'un seul cote sur le disque. Un auditeur qui a note"
+            " l'autre cote a note du silence, donc leurs jugements sont ecartes."
+            " Elles restent listees parce que c'est le corpus qui manque, pas"
+            " l'auditeur."
+        )
+        lines.append("")
+        lines.append("| Paire | Moteur | Condition | Jugements ecartes | Raison |")
+        lines.append("|---:|---|---|---:|---|")
+        for pair, bucket in sorted(solo_pairs.items()):
+            lines.append(
+                f"| {pair} | {bucket['engine']} | {bucket['segment']} | "
+                f"{bucket['n']} | {bucket['reason']} |"
+            )
+        lines.append("")
 
     lines.append("## Commentaires libres")
     lines.append("")
@@ -316,6 +451,16 @@ def report(pack: Path, allow_incomplete: bool) -> int:
         "listeners": listeners,
         "judgements": total_n,
         "dropped_rows": len(problems),
+        "match_quality_counts": qualities,
+        "unpaired_segments": {
+            str(pair): {
+                "engine": bucket["engine"],
+                "segment": bucket["segment"],
+                "discarded_judgements": bucket["n"],
+                "reason": bucket["reason"],
+            }
+            for pair, bucket in solo_pairs.items()
+        },
         "global": {
             "most_realistic": {
                 "enginelab": total_realistic,
@@ -333,7 +478,9 @@ def report(pack: Path, allow_incomplete: bool) -> int:
         "per_pair": {
             str(pair): {
                 "engine": bucket["engine"],
+                "segment": bucket["segment"],
                 "match_quality": bucket["match_quality"],
+                "window_condition_matched": bucket["window_matched"],
                 "n": bucket["n"],
                 "realism_enginelab_mean": mean(bucket["realism_el"]),
                 "realism_reference_mean": mean(bucket["realism_ref"]),

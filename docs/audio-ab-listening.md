@@ -117,14 +117,20 @@ dossier remis aux auditeurs :
 
 ## Disposition et clé
 
-- Les fichiers aveugles sont `clips/pair_N_A.wav` et
-  `clips/pair_N_B.wav`.
-- La position EngineLab est tirée avec `--seed`. Si tous les moteurs tombent du
-  même côté, le tirage est recommencé.
-- `listening-key.json` reste hors de `clips/`. Il contient le nom du moteur, les
-  côtés, la durée, les LUFS, les crêtes, la provenance, la licence, le SHA-256,
-  le taux d’échantillonnage original, les conditions, le statut des RPM, le
-  microphone, la qualité de l’asset et la qualité de correspondance.
+- Les fichiers aveugles sont `clips/pair_N_<segment>_A.wav` et
+  `clips/pair_N_<segment>_B.wav` — une paire par (moteur, condition).
+- `clips/INDEX.md` accompagne les clips et nomme la **condition** de chaque paire,
+  jamais le moteur ni le côté : un auditeur doit savoir s'il écoute un ralenti ou
+  une montée, et ne doit pas savoir que la paire 7 est un Merlin.
+- La position du côté testé est tirée avec `--seed`. Si toutes les paires tombent
+  du même côté, le tirage est recommencé.
+- `listening-key.json` reste hors de `clips/`. Il contient le mode, le nom du
+  moteur, le segment, les côtés (`subject_side` / `control_side`), la durée, les
+  LUFS avant/après, les crêtes, la sonie de la trajectoire entière, l'erreur de
+  niveau retirée, et pour le côté contrôle : sa nature (`control.kind`), la
+  provenance, la licence, le SHA-256, le taux d’échantillonnage original, les
+  conditions, le statut des RPM, le microphone, la qualité de l’asset, la qualité
+  de correspondance et `window_condition_matched`.
 - `--require-references` échoue avant tout rendu si un fichier manque, si son
   SHA-256 diffère ou s’il ne peut pas être décodé.
 - `--validate-manifest` vérifie les métadonnées, l’intégrité et le décodage de
@@ -162,17 +168,37 @@ python scripts/listening.py report --pack out/validation/listening-pilot-2026-07
 ```
 
 `sheets` écrit `responses/listener_NN.csv`, une ligne par paire, colonnes
-`pair, realism_A, realism_B, preference_A, preference_B, most_realistic,
-preferred, comment`. Les consignes destinées aux auditeurs sont dans
-`clips/CONSIGNES.md`, donc elles voyagent avec les clips ; la clé reste à la
-racine du pack et ne doit pas être distribuée.
+`pair, condition, realism_A, realism_B, preference_A, preference_B,
+most_realistic, preferred, comment`. La colonne `condition` est **pré-remplie**
+depuis la clé pour que l'auditeur sache s'il note un ralenti ou une montée ; elle
+ne révèle ni le moteur ni le côté, et `report` ne la relit jamais.
 
-`report` relit `listening-key.json`, retourne chaque réponse A/B vers
-« EngineLab » ou « référence » grâce à `enginelab_side`, et écrit
-`listening-report.md` et `listening-report.json`. Il **refuse de noter** (code 2)
-une feuille incomplète, hors échelle 1-5 ou dont un choix forcé n'est pas `A`/`B`,
-en listant les lignes fautives ; `--allow-incomplete` note les lignes valides et
-déclare combien ont été écartées. Une réponse manquante n'est jamais devinée.
+Le renderer écrit `clips/INDEX.md` (généré : conditions, durées, présence d'un
+côté contrôle, et la consigne de ne pas toucher au volume entre A et B). Pour une
+vraie session d'écoute, y ajouter à la main un `clips/CONSIGNES.md` comme celui de
+`out/validation/listening-pilot-2026-07-29`. Les deux voyagent avec les clips ; la
+clé reste à la racine du pack et ne doit pas être distribuée.
+
+`report` relit `listening-key.json`, retourne chaque réponse A/B vers le côté
+testé ou le côté contrôle grâce à `subject_side`, et écrit `listening-report.md`
+et `listening-report.json`. Il **refuse de noter** (code 2) une feuille
+incomplète, hors échelle 1-5 ou dont un choix forcé n'est pas `A`/`B`, en listant
+les lignes fautives ; `--allow-incomplete` note les lignes valides et déclare
+combien ont été écartées. Une réponse manquante n'est jamais devinée.
+
+Deux garde-fous ajoutés le 2026-07-30, tous deux découverts en exerçant le mode
+segmenté :
+
+- **Une paire sans côté contrôle n'est plus notée.** Elle n'a qu'un fichier sur le
+  disque, donc un auditeur qui a noté l'autre côté a noté du silence. Ces
+  jugements sont exclus de toutes les statistiques et listés à part, avec le motif
+  — c'est le corpus qui manque, pas l'auditeur. Auparavant le rapport **plantait**
+  sur ce cas (`KeyError` sur `reference`), ce qui était au moins visible ; le
+  moyenner l'aurait été moins.
+- **Le nombre de proxys est compté depuis la clé.** La phrase « sept références
+  sur dix sont des proxys » était écrite en dur dans le générateur : elle devient
+  fausse dès que le corpus change, et une mise en garde périmée est pire
+  qu'aucune, parce qu'elle est lue comme actuelle.
 
 Le rapport donne, par question et par famille : le taux de choix d'EngineLab, un
 **intervalle de confiance de Wilson à 95 %** (correct à petit n, contrairement à
@@ -219,7 +245,7 @@ Ce qu'on n'en tire pas :
 différence par famille reste indicative. C'est un pilote — il sert à orienter le
 travail et à roder le protocole, pas à publier un chiffre.
 
-## Un seul clip par moteur biaisait le test, et il faut le découper
+## Un seul clip par moteur biaisait le test — découpé le 2026-07-30
 
 Le premier passage humain (`docs/audio-listening-diagnosis-2026-07-29.md`) a
 signalé un ralenti « trop faible ». La mesure a montré que ce n'était pas le
@@ -239,21 +265,96 @@ moteur tiré contre un frein à 1892, donc l'écart s'est **aggravé de 4,4 à
 
 **Le correctif est protocolaire, pas acoustique.** Il ne faut surtout pas
 remonter le niveau du ralenti pour compenser — ce serait fabriquer ce que le
-projet refuse par ailleurs. Il faut rendre **deux clips par moteur** :
+projet refuse par ailleurs. `AbClipRenderer` rend donc **une seule trajectoire**
+et la **découpe** en segments indépendamment calés (`listeningSegments`) :
 
-| Clip | Contenu | Normalisé sur |
-|---|---|---|
-| `idle` | démarrage puis ralenti tenu, sans mise en gaz | son propre ralenti |
-| `rev` | montée en charge, rupteur, lever de pied | son propre contenu |
+| Segment | Fenêtre dans la trajectoire | Durée | Normalisé sur |
+|---|---|---:|---|
+| `idle` | les **3,5 dernières** secondes du maintien de ralenti | 3,50 s | son propre contenu |
+| `rev` | montée, rupteur et lever de pied, d'un bloc | 6,80 s | son propre contenu |
 
-Chaque clip est apparié à une **référence de même nature** : une prise de
-ralenti contre le clip `idle`, une prise d'accélération contre le clip `rev`. Le
-manifeste porte déjà `operating_conditions` par référence, ce qui permet de faire
-cet appariement sans deviner.
+La fenêtre de ralenti est prise à la **fin** du maintien parce que la surchauffe
+d'après-démarrage occupe le début : une fenêtre qui l'attrape mesure un flare, pas
+un ralenti. La montée reste en **un seul** clip parce que c'est un geste unique et
+que sa dynamique interne est précisément ce qu'un auditeur juge — le découpage ne
+remonte donc rien *à l'intérieur* d'un clip.
+
+Le biais, mesuré (2026-07-30, `--engines "Yamaha CP2"`) :
+
+| | sonie propre | présenté avant | présenté après |
+|---|---:|---:|---:|
+| trajectoire entière | −21,55 LUFS | −20,00 | — |
+| segment `idle` | −44,89 LUFS | ≈ **−43,3** | −20,00 |
+| segment `rev` | −20,30 LUFS | ≈ −18,8 | −20,00 |
+
+Soit **23,3 dB** d'erreur de présentation retirée sur le ralenti du CP2, et 18,2 dB
+sur celui du full system. La clé publie ce chiffre par paire
+(`level_error_removed_db`) et la sonie de la trajectoire entière
+(`whole_trajectory_lufs`), pour que la correction reste auditable.
+
+**Le rendu lui-même n'a pas changé** : la trajectoire entière mesurait −21,5486
+LUFS avant le découpage et −21,55 après, sur le même moteur. C'est une correction
+de mesure, pas de voicing.
 
 Bénéfice secondaire : les deux plaintes de l'auditeur deviennent séparables. « Trop
 aigu » se juge sur le clip `rev`, « le ralenti ne ressemble à rien » sur le clip
 `idle`, et un commentaire n'a plus à porter sur deux régimes à la fois.
+
+### Une référence doit être appariée en condition, sinon elle n'est pas appariée
+
+Un enregistrement réel porte son ralenti et sa montée à des **offsets différents**
+— les cinq prises du corpus local font 8,5 à 47 s — donc un unique
+`clip_start_seconds` ne peut pas apparier les deux conditions. Le schéma **3** du
+manifeste ajoute pour cela :
+
+```json
+"segment_windows": {
+  "idle": { "clip_start_seconds": 2.0 },
+  "rev":  { "clip_start_seconds": 20.0 }
+}
+```
+
+Règles, et elles sont volontairement sévères :
+
+- un segment **absent** de `segment_windows` n'obtient **aucune** référence, et le
+  motif est publié dans la clé (`control_error`). Opposer un ralenti simulé à une
+  prise en charge produirait un verdict assuré sur rien — c'est exactement le
+  confondant qui a rendu le premier passage illisible ;
+- une prise trop courte pour porter deux conditions n'en déclare qu'une. Le
+  ralenti du LS3 (fichier de 8,5 s) n'a donc pas de référence, et cela **se voit**
+  au lieu d'être substitué ;
+- le schéma 2 reste décodé et vérifié par `--validate-manifest`, mais n'apparie
+  plus rien : il ne porte pas de fenêtre par condition.
+  `--allow-unmatched-reference-window` force l'appariement pour un contrôle
+  grossier, marque la paire `[WINDOW NOT CONDITION-MATCHED]` dans la sortie et
+  `window_condition_matched: false` dans la clé, et le rapport refuse alors d'en
+  tirer un verdict publiable ;
+- `--require-references` échoue **avant** tout rendu si une fenêtre manque.
+
+## A/B entre deux moteurs du catalogue (`--compare`)
+
+Le cas **B** du tableau ci-dessous — juger une variante — n'avait pas d'outil : on
+ne pouvait comparer deux moteurs qu'à l'oreille dans l'application, sans
+appariement de sonie ni aveugle. `--compare <baseline>,<candidat>` rend les deux
+moteurs sur la **même** trajectoire, découpe les **mêmes** fenêtres, cale chaque
+côté à la même sonie et tire l'attribution A/B.
+
+```powershell
+EngineLabAbClipRenderer --compare "Yamaha CP2,Full System" `
+    --output out/validation/listening-cp2-variant-2026-07-30
+```
+
+- La clé porte `mode: "variant"`, `baseline_engine` et `candidate_engine`, et
+  `control.kind` vaut `enginelab-baseline`. `scripts/listening.py` change ses
+  libellés en conséquence : il ne peut pas annoncer « EngineLab a battu un
+  enregistrement réel » sur un test où aucun enregistrement n'intervient.
+- Les options de référence sont **refusées** dans ce mode au lieu d'être ignorées :
+  un run qui aurait silencieusement laissé tomber `--reference-manifest`
+  ressemblerait à une comparaison contre le réel dans l'historique du shell.
+- Un filtre ambigu est **refusé** ici (`Twin` désigne trois moteurs du catalogue),
+  et seulement signalé en mode référence. C'est le même piège de sous-chaîne que
+  celui documenté dans `engines/15_cp2_full_system_like.engine.yaml`.
+- C'est le seuil de **65 %** qui s'applique à ce mode, pas au mode diagnostic.
 
 ## Limites restantes
 

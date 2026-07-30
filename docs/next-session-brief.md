@@ -4,6 +4,38 @@ Ce fichier est le prompt de démarrage à donner à un agent IA qui reprend le
 projet sur une autre machine. Il est écrit pour être lu à froid, sans le
 contexte de la session précédente.
 
+> **Priorité en cours au 2026-07-30 : la boucle d'écoute, puis le voicing comme
+> donnée.** Lire `docs/audio-listening-protocol-2026-07-30.md`.
+>
+> Le diagnostic est que le projet a un objectif (du son qui ne sonne pas
+> artificiel) et une architecture qui le rend indirect : le timbre est dérivé
+> d'une simulation physique, donc **chaque problème de son est un problème de
+> physique**, couplé aux 14 moteurs à la fois. C'est ce qui rend chaque
+> changement coûteux, pas la difficulté du son.
+>
+> **P1 — fait.** La boucle de jugement était biaisée : un seul gain BS.1770 sur
+> une trajectoire ralenti→rupteur présentait le ralenti **23,3 dB trop bas**, ce
+> que le premier auditeur a rapporté comme un défaut du moteur. Les clips sont
+> désormais découpés par condition et calés séparément ; les références sont
+> appariées par condition (schéma de manifeste 3) ; `--compare` donne un A/B en
+> aveugle entre deux moteurs du catalogue. Le rendu n'a pas changé (trajectoire
+> −21,5486 → −21,55 LUFS).
+>
+> **P2 — à faire, et c'est la prochaine chose.** Sortir le voicing du code vers
+> un `voicing/<moteur>.yaml` (EQ de rayonnement, gains de couches, ordre de
+> saturation, largeur stéréo). Deux raisons mesurées : une décision d'écoute ne
+> doit pas exiger de trouver quel terme de dynamique des gaz rend un moteur aigu
+> et de le faire retomber sur 14 moteurs et 20 tests ; et un changement de
+> voicing dans un en-tête coûte **115 s** de rebuild contre 11 s pour un `.cpp`,
+> donc faire du voicing une donnée retire le build de la boucle. La « voice
+> layer » d'échappement à gain 0,20, décrite ailleurs comme un vestige à
+> supprimer, est l'embryon de cette architecture.
+>
+> **Ne pas faire :** de la performance (six hypothèses déjà mesurées et
+> réfutées, marge quasi nulle, risque élevé sur les ralentis) ni de nouvelle
+> physique 1-D. Un cache de télémétrie audio a été scopé puis **abandonné après
+> mesure** : il n'adressait aucune partie du coût réel.
+
 > **Livraison suivante validée le 29 juillet 2026.** Lire en premier
 > `docs/final-validation-2026-07-29.md` : les priorités encore ouvertes de ce
 > brief ont été exécutées. La commande prescrite `--free-run --rpm 7000

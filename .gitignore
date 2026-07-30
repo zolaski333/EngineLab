@@ -13,6 +13,9 @@ compile_commands.json
 *.local
 .DS_Store
 .agents/
+# scripts/listening.py is stdlib-only but still leaves bytecode behind when run.
+__pycache__/
+*.pyc
 
 # Throwaway measurement artifacts (baselines, WAV clips, CSVs) from the audio harnesses
 scratch-ab/
