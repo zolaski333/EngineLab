@@ -79,6 +79,7 @@ set idle_rpm = 900 rpm
 set engine.rotating_inertia_kg_m2 = 0.30 kg_m2
 set engine.redline_rpm = 7.5 khz * 1 rpm / 1 hz
 set ignition.rev_limit_rpm = 7.5 khz * 1 rpm / 1 hz
+set ignition.limiter_keeps_fuel = true
 set intake.runner_length_mm = runner
 set intake.runner_diameter_mm = 4.2 cm
 set exhaust.primary_length_mm = 0.52 m
@@ -153,6 +154,8 @@ ignition point 1000 rpm, 14 deg
                 "observer sound speed must be script-authorable in SI");
     requireNear(config.injection.railPressureBar, 200.0, 1.0e-12, "pressure should convert back to bar field units");
     requireNear(config.injection.wallFilmFraction, 0.08, 1.0e-12, "percent should convert to a ratio");
+    require(config.ignition.limiterKeepsFuel,
+            "wet limiter strategy should be script-authorable");
     requireNear(config.combustionCalibration.cycleVariationCoefficientOfVariation, 0.04, 1.0e-12,
                 "combustion variation COV should be script-authorable");
     requireNear(config.combustionCalibration.cycleVariationCorrelation, 0.55, 1.0e-12,

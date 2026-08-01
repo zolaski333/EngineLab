@@ -63,6 +63,26 @@ int main() {
     state.simulationTimeSeconds = 1.0;
     const auto limited = ecu.evaluate(config, state, controls);
     require(!limited.sparkEnabled, "calibrated rev limiter should apply without rebuilding the ECU");
+    require(!limited.fuelEnabled,
+            "the backwards-compatible hard limiter should cut fuel by default");
+
+    auto wetLimiterConfig = config;
+    wetLimiterConfig.ignition.limiterKeepsFuel = true;
+    enginelab::SimpleEcuModel wetLimiterEcu;
+    wetLimiterEcu.initialiseCalibration(wetLimiterConfig);
+    auto wetLimiterDraft = enginelab::calibration::makeDraft(
+        *wetLimiterEcu.calibrationStore()->snapshot());
+    auto wetLimiter = *wetLimiterDraft.find(enginelab::calibration::keys::revLimit);
+    std::get<enginelab::calibration::ScalarCalibration>(wetLimiter).value = 2'500.0;
+    wetLimiterDraft.set(std::move(wetLimiter));
+    require(wetLimiterEcu.calibrationStore()->publish(wetLimiterDraft).published,
+            "wet limiter calibration should publish");
+    wetLimiterEcu.beginFrame();
+    const auto wetLimited = wetLimiterEcu.evaluate(wetLimiterConfig, state, controls);
+    require(wetLimited.fuelEnabled,
+            "an opted-in wet limiter should retain injection at the hard limit");
+    require(!wetLimited.sparkEnabled,
+            "an opted-in wet limiter should still suppress spark at the hard limit");
 
     std::cout << "EngineLab ECU calibration integration tests passed\n";
     return EXIT_SUCCESS;

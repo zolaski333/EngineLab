@@ -639,6 +639,7 @@ void applyCrankOffsets(EngineConfig& config) {
     if (const auto ignition = engine["ignition"]) {
         assignIfPresent(ignition, "rev_limit_rpm", config.ignition.revLimitRpm);
         assignIfPresent(ignition, "limiter_duration_s", config.ignition.limiterDurationSeconds);
+        assignIfPresent(ignition, "limiter_keeps_fuel", config.ignition.limiterKeepsFuel);
         if (ignition["timing_curve"]) {
             config.ignition.timingCurve.clear();
             for (const auto& sample : ignition["timing_curve"])

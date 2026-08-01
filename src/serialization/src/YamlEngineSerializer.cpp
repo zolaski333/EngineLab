@@ -451,6 +451,7 @@ std::string YamlEngineSerializer::encode(const EngineConfig& config) const {
     out << YAML::EndSeq << YAML::Key << "ignition" << YAML::Value << YAML::BeginMap
         << YAML::Key << "rev_limit_rpm" << YAML::Value << config.ignition.revLimitRpm
         << YAML::Key << "limiter_duration_s" << YAML::Value << config.ignition.limiterDurationSeconds
+        << YAML::Key << "limiter_keeps_fuel" << YAML::Value << config.ignition.limiterKeepsFuel
         << YAML::Key << "timing_curve" << YAML::Value << YAML::BeginSeq;
     for (const auto& sample : config.ignition.timingCurve)
         out << YAML::BeginMap << YAML::Key << "rpm" << YAML::Value << sample.rpm
@@ -883,6 +884,7 @@ EngineDecodeResult YamlEngineSerializer::decode(std::string_view text) const noe
         if (const auto ignition = engine["ignition"]) {
             config.ignition.revLimitRpm = ignition["rev_limit_rpm"].as<double>(config.redlineRpm);
             config.ignition.limiterDurationSeconds = ignition["limiter_duration_s"].as<double>(config.ignition.limiterDurationSeconds);
+            config.ignition.limiterKeepsFuel = ignition["limiter_keeps_fuel"].as<bool>(config.ignition.limiterKeepsFuel);
             if (ignition["timing_curve"]) {
                 config.ignition.timingCurve.clear();
                 for (const auto& sample : ignition["timing_curve"])

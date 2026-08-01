@@ -328,7 +328,9 @@ EcuCommand SimpleEcuModel::evaluate(const EngineConfig& config, const EngineStat
     // start-mode retard is gated on the ECU's run/start state, not on speed.
     const auto softLimit = state.rpm > revLimit - 220.0;
     const auto alternatingCut = softLimit && (static_cast<std::uint64_t>(state.simulationTimeSeconds * 120.0) & 1U) != 0U;
-    const auto enabled = controls.ignitionEnabled && !limiterActive;
+    const auto fuelEnabled = controls.ignitionEnabled
+        && (!limiterActive || config.ignition.limiterKeepsFuel);
+    const auto sparkEnabled = controls.ignitionEnabled && !limiterActive;
     auto decelerationFuelCut = decelerationFuelCutLatched_.load(
         std::memory_order_relaxed);
     const auto idleTargetRpm = std::max(300.0, config.idleRpm);
@@ -383,7 +385,7 @@ EcuCommand SimpleEcuModel::evaluate(const EngineConfig& config, const EngineStat
              warmupCorrection * crankingCorrection
                  * (1.0 + accelerationFuelEnrichment * 1.40)
                  * decelerationFuelResume,
-             enabled && !decelerationFuelCut,
-             enabled && !alternatingCut };
+             fuelEnabled && !decelerationFuelCut,
+             sparkEnabled && !alternatingCut };
 }
 } // namespace enginelab

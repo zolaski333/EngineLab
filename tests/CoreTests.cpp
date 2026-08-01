@@ -1201,6 +1201,7 @@ int main() {
     extendedPhysicsConfig.combustionCalibration.compressionIgnitionPremixedFraction = 0.16;
     extendedPhysicsConfig.combustionCalibration.cycleVariationCoefficientOfVariation = 0.047;
     extendedPhysicsConfig.combustionCalibration.cycleVariationCorrelation = 0.62;
+    extendedPhysicsConfig.ignition.limiterKeepsFuel = true;
     extendedPhysicsConfig.exhaustAfterfire = { true, 875.0, 0.012, 0.91 };
     extendedPhysicsConfig.runnerAcoustics.dampingRatio = 0.21;
     extendedPhysicsConfig.intake.runnerPlenumDiameterMm = 49.0;
@@ -1254,6 +1255,7 @@ int main() {
             && std::abs(extendedJsonRoundTrip.config->combustionCalibration.compressionIgnitionPremixedFraction - 0.16) < 0.001
             && std::abs(extendedJsonRoundTrip.config->combustionCalibration.cycleVariationCoefficientOfVariation - 0.047) < 0.001
             && std::abs(extendedJsonRoundTrip.config->combustionCalibration.cycleVariationCorrelation - 0.62) < 0.001
+            && extendedJsonRoundTrip.config->ignition.limiterKeepsFuel
             && extendedJsonRoundTrip.config->exhaustAfterfire.enabled
             && std::abs(extendedJsonRoundTrip.config->exhaustAfterfire.ignitionTemperatureK - 875.0) < 0.001
             && std::abs(extendedJsonRoundTrip.config->exhaustAfterfire.reactionTimeConstantSeconds - 0.012) < 1.0e-9

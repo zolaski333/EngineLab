@@ -463,7 +463,9 @@ std::string JsonEngineSerializer::encode(const EngineConfig& config) const {
             {"right_microphone_m", pointJson(config.acousticObserver.rightMicrophoneM)},
             {"sound_speed_mps", config.acousticObserver.soundSpeedMps}}},
         {"ignition", {{"rev_limit_rpm", config.ignition.revLimitRpm},
-                        {"limiter_duration_s", config.ignition.limiterDurationSeconds}, {"timing_curve", timingCurve}}},
+                        {"limiter_duration_s", config.ignition.limiterDurationSeconds},
+                        {"limiter_keeps_fuel", config.ignition.limiterKeepsFuel},
+                        {"timing_curve", timingCurve}}},
         {"injection", {{"mode", injectionModeName(config.injection.mode)},
                         {"start_angle_deg", config.injection.startAngleDegrees},
                         {"end_angle_deg", config.injection.endAngleDegrees},
@@ -754,6 +756,7 @@ EngineDecodeResult JsonEngineSerializer::decode(std::string_view text) const noe
             const auto& ignition = engine.at("ignition");
             config.ignition.revLimitRpm = ignition.value("rev_limit_rpm", config.redlineRpm);
             config.ignition.limiterDurationSeconds = ignition.value("limiter_duration_s", config.ignition.limiterDurationSeconds);
+            config.ignition.limiterKeepsFuel = ignition.value("limiter_keeps_fuel", config.ignition.limiterKeepsFuel);
             if (ignition.contains("timing_curve")) {
                 config.ignition.timingCurve.clear();
                 for (const auto& sample : ignition.at("timing_curve"))

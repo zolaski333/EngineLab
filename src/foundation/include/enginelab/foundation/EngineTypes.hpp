@@ -360,6 +360,13 @@ struct IgnitionConfig final {
     };
     double revLimitRpm { 7'200.0 };
     double limiterDurationSeconds { 0.08 };
+    /**
+     * Keep injecting while the hard limiter suppresses spark.  The default
+     * remains a fuel-and-spark cut for backwards-compatible, clean operation;
+     * audio-oriented calibrations may opt into a physical wet limiter so the
+     * exhaust afterfire model receives actual unburned fuel.
+     */
+    bool limiterKeepsFuel { false };
 };
 
 struct InjectionConfig final {
