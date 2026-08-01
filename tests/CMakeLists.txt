@@ -10,6 +10,8 @@ add_test(NAME EngineLab.Core COMMAND EngineLabCoreTests)
 add_executable(EngineLabAudioVoicingTests AudioVoicingTests.cpp)
 target_link_libraries(EngineLabAudioVoicingTests PRIVATE
     EngineLab::Foundation EngineLab::Catalog)
+target_compile_definitions(EngineLabAudioVoicingTests PRIVATE
+    ENGINELAB_CATALOG_ROOT="${CMAKE_SOURCE_DIR}")
 enginelab_set_warnings(EngineLabAudioVoicingTests)
 add_test(NAME EngineLab.AudioVoicing COMMAND EngineLabAudioVoicingTests)
 

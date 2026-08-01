@@ -1,0 +1,14 @@
+schema_version: 1
+
+# estimatedFamily air-cooled flat-six profile. The street recording is only a
+# platform proxy and includes propagation/vehicle effects.
+voicing:
+  high_frequency_gain: 1.12
+  low_frequency_gain: 0.96
+  exhaust_gain: 1.02
+  intake_gain: 0.98
+  mechanical_gain: 1.10
+  stereo_width: 1.16
+  outlet_jet_gain: 1.02
+  saturation_drive: 0.14
+  saturation_placement: post_shelf

@@ -1,0 +1,14 @@
+schema_version: 1
+
+# estimatedFamily boxer/turbo-back profile. The reference is a real WRX but its
+# exact engine and microphone distance are undocumented.
+voicing:
+  high_frequency_gain: 0.96
+  low_frequency_gain: 1.12
+  exhaust_gain: 1.08
+  intake_gain: 0.80
+  mechanical_gain: 0.72
+  stereo_width: 1.18
+  outlet_jet_gain: 0.90
+  saturation_drive: 0.24
+  saturation_placement: post_shelf

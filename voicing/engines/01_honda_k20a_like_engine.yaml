@@ -1,0 +1,15 @@
+schema_version: 1
+
+# estimatedFamily monitor profile. The CC0 Civic take is only an architecture
+# proxy, so this favours the physically expected high-speed intake/exhaust edge
+# without claiming a microphone-matched K20 calibration.
+voicing:
+  high_frequency_gain: 1.18
+  low_frequency_gain: 0.90
+  exhaust_gain: 1.06
+  intake_gain: 1.12
+  mechanical_gain: 0.84
+  stereo_width: 0.94
+  outlet_jet_gain: 0.96
+  saturation_drive: 0.12
+  saturation_placement: post_shelf

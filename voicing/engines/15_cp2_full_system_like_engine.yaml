@@ -1,0 +1,14 @@
+schema_version: 1
+
+# estimatedFamily open/full-system CP2 presentation. Geometry and packing remain
+# physical; this layer only exposes the extra outlet and high-band energy.
+voicing:
+  high_frequency_gain: 1.10
+  low_frequency_gain: 1.08
+  exhaust_gain: 1.18
+  intake_gain: 0.92
+  mechanical_gain: 0.78
+  stereo_width: 1.08
+  outlet_jet_gain: 1.16
+  saturation_drive: 0.30
+  saturation_placement: post_shelf

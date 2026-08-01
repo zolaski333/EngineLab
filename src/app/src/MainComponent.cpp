@@ -232,6 +232,12 @@ bool MainComponent::applyConfig(const EngineConfig& newConfig, bool preserveScri
     runtime_->setExhaustPreset(static_cast<AudioExhaustPreset>(exhaustPresetIndex_));
     updateAudioControlAvailability();
     configureImpulseResponse();
+    if (audioWorkshopWindow_) {
+        audioWorkshopWindow_->setEngine(
+            config_, catalogRoot_, physicalExhaustTopology_,
+            physicalIntakeTopology_, impulseResponseAvailable_);
+        audioWorkshopWindow_->setMix(currentAudioMix());
+    }
     runtime_->start();
     setAudioChannels(0, 2);
     title_.setText("EngineLab   /   " + juce::String(config_.name) + "   /   "

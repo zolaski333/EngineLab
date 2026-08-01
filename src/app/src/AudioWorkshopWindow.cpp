@@ -180,6 +180,8 @@ public:
         TelemetryProvider telemetryProvider)
         : engine_(engine),
           assetRoot_(std::move(assetRoot)),
+          catalogueMix_(mix),
+          authoredMix_(mix),
           compiledExhaustTopology_(compiledExhaustTopology),
           compiledIntakeTopology_(compiledIntakeTopology),
           measuredImpulseResponseAvailable_(
@@ -272,6 +274,10 @@ public:
             addAndMakeVisible(*soloButtons_[index]);
         }
 
+        catalogueMixButton_.onClick = [this] {
+            setMixInternal(catalogueMix_);
+            publishMix();
+        };
         resetButton_.onClick = [this] {
             setMixInternal(OfflineAudioMix {});
             for (auto& button : muteButtons_)
@@ -282,6 +288,7 @@ public:
                     false, juce::dontSendNotification);
             publishMix();
         };
+        addAndMakeVisible(catalogueMixButton_);
         addAndMakeVisible(resetButton_);
 
         sampleRateSelector_.addItem("48 kHz", 1);
@@ -457,6 +464,7 @@ public:
     }
 
     void setMix(const OfflineAudioMix& mix) {
+        catalogueMix_ = mix;
         setMixInternal(mix);
         publishMix();
     }
@@ -514,9 +522,11 @@ public:
                 row.removeFromRight(58).reduced(2, 7));
             layerSliders()[layer]->setBounds(row);
         }
+        auto voicingButtons = mixBody.removeFromBottom(32);
+        catalogueMixButton_.setBounds(
+            voicingButtons.removeFromLeft(190));
         resetButton_.setBounds(
-            mixBody.removeFromBottom(32)
-                .removeFromRight(150));
+            voicingButtons.removeFromRight(150));
 
         auto exportBody = exportArea.reduced(16, 30);
         auto selectors = exportBody.removeFromTop(34);
@@ -643,6 +653,7 @@ private:
     }
 
     void setMixInternal(const OfflineAudioMix& mix) {
+        authoredMix_ = mix;
         updatingControls_ = true;
         volumeSlider_.setValue(
             mix.volume, juce::dontSendNotification);
@@ -724,7 +735,10 @@ private:
     }
 
     [[nodiscard]] OfflineAudioMix baseMix() const {
-        OfflineAudioMix mix;
+        // Only nine authoring controls are visible. Preserve the remaining
+        // catalogue fields (low shelf, stereo width, outlet jet and saturation)
+        // instead of silently resetting them when any visible fader moves.
+        auto mix = authoredMix_;
         mix.volume = volumeSlider_.getValue();
         mix.convolution = irSlider_.getValue();
         mix.highFrequencyGain =
@@ -1118,6 +1132,8 @@ private:
     std::filesystem::path assetRoot_;
     std::filesystem::path scenarioPath_;
     std::filesystem::path lastOutputDirectory_;
+    OfflineAudioMix catalogueMix_;
+    OfflineAudioMix authoredMix_;
     bool compiledExhaustTopology_ { false };
     bool compiledIntakeTopology_ { false };
     bool measuredImpulseResponseAvailable_ { false };
@@ -1146,7 +1162,8 @@ private:
         muteButtons_;
     std::array<std::unique_ptr<juce::TextButton>, 4>
         soloButtons_;
-    juce::TextButton resetButton_ { "RESET MIX" };
+    juce::TextButton catalogueMixButton_ { "VOICING CATALOGUE" };
+    juce::TextButton resetButton_ { "NEUTRE" };
 
     juce::ComboBox sampleRateSelector_;
     juce::ComboBox formatSelector_;

@@ -7,6 +7,7 @@
 #include <iostream>
 #include <stdexcept>
 #include <string>
+#include <algorithm>
 
 namespace {
 
@@ -61,8 +62,36 @@ int main() {
                 && invalid.error.find("unknown key") != std::string::npos,
             "invalid voicing must fall back to safe compiled defaults with a diagnostic");
 
+        const auto catalogue = enginelab::loadEngineCatalog(
+            ENGINELAB_CATALOG_ROOT);
+        require(catalogue.errors.empty() && catalogue.entries.size() == 16,
+            "shipping catalogue and all authored voicing files must load");
+        const auto authoredCount = std::count_if(
+            catalogue.entries.begin(), catalogue.entries.end(),
+            [](const auto& entry) {
+                const auto& mix = entry.config.audioVoicing;
+                return std::abs(mix.highFrequencyGain - 1.0) > 1.0e-12
+                    || std::abs(mix.lowFrequencyGain - 1.0) > 1.0e-12
+                    || std::abs(mix.exhaustGain - 1.0) > 1.0e-12
+                    || std::abs(mix.stereoWidth - 1.0) > 1.0e-12
+                    || std::abs(mix.saturationDrive) > 1.0e-12;
+            });
+        require(static_cast<std::size_t>(authoredCount)
+                == catalogue.entries.size(),
+            "every shipping engine must resolve an explicit audible monitor profile");
+        const auto ls3 = std::find_if(
+            catalogue.entries.begin(), catalogue.entries.end(),
+            [](const auto& entry) {
+                return entry.config.name == "LS3-like 6.2 Crossplane V8";
+            });
+        require(ls3 != catalogue.entries.end()
+                && std::abs(ls3->config.audioVoicing.lowFrequencyGain - 1.20) < 1.0e-12
+                && std::abs(ls3->config.audioVoicing.stereoWidth - 1.28) < 1.0e-12
+                && std::abs(ls3->config.audioVoicing.saturationDrive - 0.34) < 1.0e-12,
+            "LS3 profile must resolve by the normalised engine filename");
+
         std::filesystem::remove_all(root);
-        std::cout << "PASS: layered strict audio voicing\n";
+        std::cout << "PASS: layered strict audio voicing and 16 catalogue profiles\n";
         return 0;
     } catch (const std::exception& error) {
         std::error_code ignored;

@@ -51,6 +51,27 @@ La largeur stereo utilise un traitement mid/side uniquement lorsqu'elle est
 differente de `1.0`. Le gain de jet agit sur la composante de pression de jet
 separee publiee par le reseau acoustique d'echappement.
 
+## Profils catalogue et A/B instantane
+
+Les seize moteurs livres possedent maintenant un override sous
+`voicing/engines/`. Ces profils sont des presentations `estimatedFamily` : ils
+mettent en avant le caractere produit par la pression, la topologie et la
+geometrie, mais ne sont pas annonces comme des egalisations micro mesurees. Les
+prises CC0 dont le regime, la charge ou la geometrie micro sont inconnus ne
+servent qu'a encadrer le caractere attendu.
+
+Dans **AUDIO HQ**, **VOICING CATALOGUE** rappelle l'override complet du moteur et
+**NEUTRE** restaure toutes les valeurs du schema, pas seulement les neuf faders
+visibles. Le changement est instantane et ne redemarre pas le moteur. Deplacer
+un fader conserve desormais `low_frequency_gain`, `stereo_width`,
+`outlet_jet_gain`, `saturation_drive` et `saturation_placement`; ils etaient
+auparavant remis silencieusement au defaut par la reconstruction partielle du
+mix.
+
+Un changement de moteur pendant que l'atelier est ouvert recharge egalement son
+profil catalogue et ses disponibilites physiques. L'A/B n'est donc plus expose
+a un mix appartenant au moteur precedent.
+
 ## Non-regression du defaut
 
 Le fichier livre reprend exactement les anciennes constantes compilees. Sur le

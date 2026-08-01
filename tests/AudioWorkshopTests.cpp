@@ -82,12 +82,18 @@ int main() {
     base.volume = 1.25;
     base.convolution = 0.60;
     base.highFrequencyGain = 1.10;
+    base.lowFrequencyGain = 1.23;
     base.lowFrequencyNoise = 0.45;
     base.highFrequencyNoise = 0.55;
     base.combustionGain = 1.20;
     base.exhaustGain = 1.30;
     base.intakeGain = 0.90;
     base.mechanicalGain = 0.80;
+    base.stereoWidth = 1.31;
+    base.outletJetGain = 0.77;
+    base.saturationDrive = 0.42;
+    base.saturationPlacement =
+        enginelab::AudioSaturationPlacement::preShelf;
 
     enginelab::AudioWorkshopAvailability physical {
         true, true, false
@@ -184,6 +190,8 @@ int main() {
     int disabledMuteCount = 0;
     int disabledSoloCount = 0;
     bool exportButtonFound = false;
+    juce::TextButton* catalogueMixButton = nullptr;
+    juce::TextButton* neutralMixButton = nullptr;
     juce::TextButton* demoPhysicsButton = nullptr;
     bool applyPhysicsButtonFound = false;
     for (int index = 0;
@@ -210,6 +218,10 @@ int main() {
                 exportButtonFound = true;
             } else if (text == "DEMO AUDIBLE") {
                 demoPhysicsButton = button;
+            } else if (text == "VOICING CATALOGUE") {
+                catalogueMixButton = button;
+            } else if (text == "NEUTRE") {
+                neutralMixButton = button;
             } else if (text == "APPLIQUER ET REDEMARRER") {
                 applyPhysicsButtonFound = true;
             }
@@ -225,6 +237,8 @@ int main() {
             && disabledSoloCount == 1,
         "four source mute/solo rows exist and direct combustion is unavailable");
     require(exportButtonFound, "HQ export action is visible");
+    require(catalogueMixButton != nullptr && neutralMixButton != nullptr,
+            "catalogue and neutral voicing A/B actions are visible");
     require(demoPhysicsButton != nullptr && applyPhysicsButtonFound,
             "audible physics A/B and explicit apply actions are visible");
     demoPhysicsButton->onClick();
@@ -239,13 +253,34 @@ int main() {
     require(callbackCount > 0, "mix synchronisation publishes to MainComponent");
     require(
         near(callbackBase.volume, base.volume)
-            && near(callbackBase.exhaustGain, base.exhaustGain),
-        "visible fader intent is preserved");
+            && near(callbackBase.exhaustGain, base.exhaustGain)
+            && near(callbackBase.lowFrequencyGain, base.lowFrequencyGain)
+            && near(callbackBase.stereoWidth, base.stereoWidth)
+            && near(callbackBase.outletJetGain, base.outletJetGain)
+            && near(callbackBase.saturationDrive, base.saturationDrive)
+            && callbackBase.saturationPlacement
+                == enginelab::AudioSaturationPlacement::preShelf,
+        "visible and hidden catalogue voicing fields are preserved");
     require(
         near(callbackEffective.convolution, 0.0)
             && near(callbackEffective.combustionGain, 0.0)
             && near(callbackEffective.exhaustGain, base.exhaustGain),
         "window publishes topology-aware effective mix");
+
+    neutralMixButton->onClick();
+    require(
+        near(callbackBase.lowFrequencyGain, 1.0)
+            && near(callbackBase.stereoWidth, 1.0)
+            && near(callbackBase.outletJetGain, 1.0)
+            && near(callbackBase.saturationDrive, 0.0),
+        "neutral A/B action bypasses every catalogue voicing field");
+    catalogueMixButton->onClick();
+    require(
+        near(callbackBase.lowFrequencyGain, base.lowFrequencyGain)
+            && near(callbackBase.stereoWidth, base.stereoWidth)
+            && near(callbackBase.outletJetGain, base.outletJetGain)
+            && near(callbackBase.saturationDrive, base.saturationDrive),
+        "catalogue A/B action restores the complete authored voicing");
 
     window.setEngine(
         engine, ENGINELAB_CATALOG_ROOT,

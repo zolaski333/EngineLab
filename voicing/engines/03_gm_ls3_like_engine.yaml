@@ -1,0 +1,14 @@
+schema_version: 1
+
+# estimatedFamily crossplane-V8 profile. Preserve the uneven-bank envelope and
+# tailpipe body; the CC0 V8 recording does not identify an actual LS3.
+voicing:
+  high_frequency_gain: 0.86
+  low_frequency_gain: 1.20
+  exhaust_gain: 1.16
+  intake_gain: 0.76
+  mechanical_gain: 0.72
+  stereo_width: 1.28
+  outlet_jet_gain: 1.10
+  saturation_drive: 0.34
+  saturation_placement: post_shelf

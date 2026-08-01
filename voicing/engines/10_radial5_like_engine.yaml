@@ -1,0 +1,14 @@
+schema_version: 1
+
+# estimatedFamily radial profile. The archival CC0 reference contains propeller,
+# Doppler and transfer noise, so it cannot set absolute spectral targets.
+voicing:
+  high_frequency_gain: 0.88
+  low_frequency_gain: 1.24
+  exhaust_gain: 1.18
+  intake_gain: 0.78
+  mechanical_gain: 1.02
+  stereo_width: 1.26
+  outlet_jet_gain: 1.12
+  saturation_drive: 0.28
+  saturation_placement: post_shelf

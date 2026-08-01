@@ -1,0 +1,14 @@
+schema_version: 1
+
+# estimatedFamily turbo-diesel profile; mechanical combustion character is
+# favoured while turbine attenuation keeps the tailpipe controlled.
+voicing:
+  high_frequency_gain: 0.82
+  low_frequency_gain: 1.16
+  exhaust_gain: 0.86
+  intake_gain: 0.76
+  mechanical_gain: 1.18
+  stereo_width: 0.94
+  outlet_jet_gain: 0.78
+  saturation_drive: 0.10
+  saturation_placement: post_shelf

@@ -1,0 +1,13 @@
+schema_version: 1
+
+# estimatedFamily odd-fire inline-five profile; no matched recording is claimed.
+voicing:
+  high_frequency_gain: 1.04
+  low_frequency_gain: 1.05
+  exhaust_gain: 1.04
+  intake_gain: 0.94
+  mechanical_gain: 0.72
+  stereo_width: 1.06
+  outlet_jet_gain: 0.86
+  saturation_drive: 0.20
+  saturation_placement: post_shelf

@@ -1,0 +1,14 @@
+schema_version: 1
+
+# estimatedFamily aircraft V12 profile. The CC0 Merlin recording is a platform
+# match but lacks RPM, load and microphone geometry and contains no propeller.
+voicing:
+  high_frequency_gain: 0.92
+  low_frequency_gain: 1.16
+  exhaust_gain: 1.18
+  intake_gain: 0.86
+  mechanical_gain: 0.94
+  stereo_width: 1.34
+  outlet_jet_gain: 1.14
+  saturation_drive: 0.18
+  saturation_placement: post_shelf
