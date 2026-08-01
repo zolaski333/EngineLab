@@ -91,6 +91,12 @@ set acoustic_observer.sound_speed_mps = 343 m_s
 set injection.mode = direct
 set injection.rail_pressure_bar = 20 MPa
 set injection.wall_film_fraction = 8 percent
+set combustion.cycle_variation_cov = 4 percent
+set combustion.cycle_variation_correlation = 0.55 ratio
+set exhaust_afterfire.enabled = 1 ratio
+set exhaust_afterfire.ignition_temperature_c = 627 c
+set exhaust_afterfire.reaction_time_constant_s = 10 ms
+set exhaust_afterfire.reaction_efficiency = 95 percent
 set solver.gas_substeps = 3
 set forced_induction.enabled = true
 set forced_induction.type = turbo
@@ -147,6 +153,17 @@ ignition point 1000 rpm, 14 deg
                 "observer sound speed must be script-authorable in SI");
     requireNear(config.injection.railPressureBar, 200.0, 1.0e-12, "pressure should convert back to bar field units");
     requireNear(config.injection.wallFilmFraction, 0.08, 1.0e-12, "percent should convert to a ratio");
+    requireNear(config.combustionCalibration.cycleVariationCoefficientOfVariation, 0.04, 1.0e-12,
+                "combustion variation COV should be script-authorable");
+    requireNear(config.combustionCalibration.cycleVariationCorrelation, 0.55, 1.0e-12,
+                "combustion variation correlation should be script-authorable");
+    require(config.exhaustAfterfire.enabled, "afterfire should be script-authorable");
+    requireNear(config.exhaustAfterfire.ignitionTemperatureK, 900.15, 1.0e-12,
+                "afterfire ignition temperature should convert from Celsius");
+    requireNear(config.exhaustAfterfire.reactionTimeConstantSeconds, 0.010, 1.0e-12,
+                "afterfire reaction time should convert from milliseconds");
+    requireNear(config.exhaustAfterfire.reactionEfficiency, 0.95, 1.0e-12,
+                "afterfire efficiency should accept percentages");
     require(config.solver.gasSubsteps == 3, "integer property should be assigned exactly");
     require(config.forcedInduction.enabled, "boolean setting should be assigned");
     requireNear(config.cylinders[1].ignitionOffsetDegrees, -2.0, 1.0e-12,

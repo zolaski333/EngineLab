@@ -107,6 +107,10 @@ un autre moteur crée volontairement sa calibration par défaut.
 - [Modèle de simulation](docs/simulation-model.md)
 - [Architecture thermoacoustique physique](docs/thermoacoustic-architecture.md)
 - [Architecture audio temps réel](docs/realtime-audio.md)
+- [Voicing audio déclaratif et rechargeable à chaud](docs/audio-voicing.md)
+- [Exports de diagnostic, stems et carte des ordres](docs/audio-diagnostics.md)
+- [Variabilité physique cycle-à-cycle](docs/combustion-variability.md)
+- [Afterfire physique dans l'échappement](docs/physical-afterfire.md)
 - [Rendu audio HQ hors ligne](docs/audio-lot5-offline-hq-2026-07-29.md)
 - [Atelier audio et contrôles honnêtes](docs/audio-lot6-workshop-2026-07-29.md)
 - [Configuration des modes NVH structurels](docs/structural-nvh-configuration.md)
@@ -114,8 +118,10 @@ un autre moteur crée volontairement sa calibration par défaut.
 - [Validation finale du 29 juillet 2026](docs/final-validation-2026-07-29.md)
 - [Livraison et mesures des phases 0 à 3](docs/phase-0-3-delivery.md)
 
-Un exemple de script prêt à importer est disponible dans
-`examples/street-turbo.els`.
+Deux exemples de scripts prêts à importer sont disponibles dans
+`examples/street-turbo.els` et `examples/physical-audio-lab.els`. Le second
+active les nouvelles sources physiques sans ajouter de sample ni de pop
+programmé.
 
 ## Commandes principales
 

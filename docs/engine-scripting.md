@@ -114,6 +114,7 @@ Les familles actuellement prises en charge couvrent :
 - admission et échappement géométriques globaux ;
 - limiteur et courbe d'allumage ;
 - mode, fenêtre, rail, débit, film et refroidissement d'injection ;
+- variabilité physique cycle-à-cycle de combustion et afterfire physique ;
 - fréquence, sous-pas et résolution du solveur ;
 - activation et paramètres principaux de suralimentation ;
 - géométrie, masses, friction, journal, banque et atténuation par cylindre.
@@ -130,6 +131,11 @@ set cylinder.7.connecting_rod_type = articulated
 Une propriété inconnue est une erreur ; elle n'est pas ignorée. La liste
 exécutable de référence se trouve dans les tables de
 `src/scripting/src/EngineScriptCompiler.cpp`.
+
+L'exemple [`physical-audio-lab.els`](../examples/physical-audio-lab.els)
+active une dispersion de combustion modérée et la réaction d'afterfire. Cette
+dernière ne programme aucun pop : sans carburant imbrûlé, oxygène et gaz assez
+chauds dans l'échappement, elle reste correctement silencieuse.
 
 ## Diagnostics et validation
 

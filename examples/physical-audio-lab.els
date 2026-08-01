@@ -1,0 +1,15 @@
+# Exemple d'ecoute des nouvelles sources physiques.
+# Importer ce fichier dans EngineLab, puis utiliser le ralenti, une montee en
+# regime et le rupteur. La variabilite agit sur la pression cylindre. L'afterfire
+# ne reagit que si le reseau contient reellement carburant, oxygene et chaleur.
+
+preset inline_four
+name "Physical Audio Lab I4"
+
+set combustion.cycle_variation_cov = 4 percent
+set combustion.cycle_variation_correlation = 0.55 ratio
+
+set exhaust_afterfire.enabled = 1 ratio
+set exhaust_afterfire.ignition_temperature_c = 627 c
+set exhaust_afterfire.reaction_time_constant_s = 10 ms
+set exhaust_afterfire.reaction_efficiency = 95 percent
