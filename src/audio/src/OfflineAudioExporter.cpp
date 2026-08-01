@@ -925,6 +925,8 @@ OfflineAudioExportResult exportOfflineAudio(
                 std::max(0.0, frame.state.exhaustAfterfireHeatReleaseKw));
             result.afterfireFuelBurnedMg += std::max(
                 0.0, frame.state.exhaustAfterfireFuelBurnMgPerSecond) * dt;
+            if (frame.state.exhaustAfterfireOverrunActive)
+                ++result.overrunAfterfireActiveFrames;
             if (config.combustionCalibration
                     .cycleVariationCoefficientOfVariation > 0.0) {
                 const auto cylinderCount = std::min(
@@ -1255,11 +1257,13 @@ OfflineAudioExportResult exportOfflineAudio(
                 { "authored_cycle_variation_correlation", config.combustionCalibration.cycleVariationCorrelation },
                 { "authored_afterfire_enabled", config.exhaustAfterfire.enabled },
                 { "authored_limiter_keeps_fuel", config.ignition.limiterKeepsFuel },
+                { "authored_overrun_fuel_fraction", config.exhaustAfterfire.overrunFuelFraction },
                 { "cycle_multiplier_minimum", result.cycleMultiplierMinimum },
                 { "cycle_multiplier_maximum", result.cycleMultiplierMaximum },
                 { "cycle_variation_samples", result.cycleVariationSamples },
                 { "afterfire_peak_heat_release_kw", result.afterfirePeakHeatReleaseKw },
                 { "afterfire_fuel_burned_mg", result.afterfireFuelBurnedMg },
+                { "overrun_afterfire_active_frames", result.overrunAfterfireActiveFrames },
                 { "porous_muffler_count", result.porousMufflerCount },
             } },
             { "mix", {

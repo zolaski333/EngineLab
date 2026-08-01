@@ -1003,9 +1003,21 @@ int main() {
         enginelab::SimpleEcuModel overrunAfterfireEcu;
         overrunAfterfireEcu.initialise(overrunAfterfireConfig);
         enginelab::EngineState overrunState;
-        overrunState.simulationTimeSeconds = 10.0;
+        overrunState.simulationTimeSeconds = 1.0;
+        overrunState.rpm = 300.0;
+        overrunState.coolantTemperatureC = 22.0;
+        enginelab::EngineControls cranking { true, true, 0.0, 0.0 };
+        (void)overrunAfterfireEcu.evaluate(
+            overrunAfterfireConfig, overrunState, cranking);
+
+        overrunState.simulationTimeSeconds += 0.01;
         overrunState.rpm = 3'500.0;
-        overrunState.coolantTemperatureC = 90.0;
+        overrunState.throttle = 0.50;
+        enginelab::EngineControls powerRequest { true, false, 0.50, 0.0 };
+        (void)overrunAfterfireEcu.evaluate(
+            overrunAfterfireConfig, overrunState, powerRequest);
+
+        overrunState.simulationTimeSeconds += 0.01;
         overrunState.throttle = 0.0;
         enginelab::EngineControls closedThrottle { true, false, 0.0, 0.0 };
         const auto active = overrunAfterfireEcu.evaluate(
@@ -1014,7 +1026,7 @@ int main() {
                 && !active.sparkEnabled
                 && active.fuelCorrection > 0.11
                 && active.fuelCorrection < 0.13,
-            "authored deceleration afterfire must meter partial fuel with spark cut");
+            "a deliberate power request must arm partial-fuel spark-cut overrun even while the post-start air floor is decaying");
 
         overrunState.simulationTimeSeconds += 0.01;
         overrunState.rpm = 2'900.0;

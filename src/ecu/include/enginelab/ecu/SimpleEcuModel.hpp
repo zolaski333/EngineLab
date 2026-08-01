@@ -31,6 +31,7 @@ public:
         idleDashpot_.store(0.0, std::memory_order_relaxed);
         previousIdleEvaluationTime_.store(0.0, std::memory_order_relaxed);
         postStartAirOpening_.store(0.0, std::memory_order_relaxed);
+        overrunAfterfireArmed_.store(false, std::memory_order_relaxed);
     }
     /**
      * Read-only view of the idle governor's internal state, for diagnostics.
@@ -83,5 +84,7 @@ private:
     mutable std::atomic<double> previousIdleEvaluationTime_ { 0.0 };
     /** Decaying post-start idle air opening. See evaluate(). */
     mutable std::atomic<double> postStartAirOpening_ { 0.0 };
+    /** Latched only after a deliberate high-speed driver power request. */
+    mutable std::atomic<bool> overrunAfterfireArmed_ { false };
 };
 } // namespace enginelab

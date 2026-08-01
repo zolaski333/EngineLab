@@ -31,6 +31,7 @@ struct AudioPhysicsSettings final {
     double afterfireIgnitionTemperatureK { 900.0 };
     double afterfireReactionTimeSeconds { 0.010 };
     double afterfireEfficiency { 0.95 };
+    double overrunFuelFraction { 0.0 };
 };
 
 /** Live proof that the authored controls are active in the simulator. */
@@ -39,6 +40,7 @@ struct AudioPhysicsTelemetry final {
     double maximumCycleMultiplier { 1.0 };
     double afterfireHeatReleaseKw { 0.0 };
     double afterfireFuelBurnMgPerSecond { 0.0 };
+    bool overrunAfterfireActive { false };
     std::size_t porousMufflerCount { 0 };
 };
 

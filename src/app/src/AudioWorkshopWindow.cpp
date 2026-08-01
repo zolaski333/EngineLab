@@ -104,6 +104,7 @@ AudioPhysicsSettings audioPhysicsSettingsFor(
         engine.exhaustAfterfire.ignitionTemperatureK,
         engine.exhaustAfterfire.reactionTimeConstantSeconds,
         engine.exhaustAfterfire.reactionEfficiency,
+        engine.exhaustAfterfire.overrunFuelFraction,
     };
 }
 
@@ -121,6 +122,8 @@ void applyAudioPhysicsSettings(
         settings.afterfireReactionTimeSeconds;
     engine.exhaustAfterfire.reactionEfficiency =
         settings.afterfireEfficiency;
+    engine.exhaustAfterfire.overrunFuelFraction =
+        settings.overrunFuelFraction;
 }
 
 AudioPhysicsTelemetry audioPhysicsTelemetryFor(
@@ -146,6 +149,8 @@ AudioPhysicsTelemetry audioPhysicsTelemetryFor(
         state.exhaustAfterfireHeatReleaseKw;
     telemetry.afterfireFuelBurnMgPerSecond =
         state.exhaustAfterfireFuelBurnMgPerSecond;
+    telemetry.overrunAfterfireActive =
+        state.exhaustAfterfireOverrunActive;
     for (const auto& path : engine.exhaustPaths) {
         if (path.network) {
             for (const auto& component : path.network->components) {
@@ -363,10 +368,10 @@ public:
         addAndMakeVisible(proofLabel_);
         addAndMakeVisible(progressBar_);
 
-        const std::array<std::string_view, 5> physicsNames {
+        const std::array<std::string_view, 6> physicsNames {
             "Variation cycle (COV)", "Correlation cycles",
             "Allumage afterfire (K)", "Reaction afterfire (ms)",
-            "Rendement afterfire",
+            "Rendement afterfire", "Carburant decel",
         };
         for (std::size_t index = 0; index < physicsLabels_.size(); ++index) {
             physicsLabels_[index].setText(
@@ -381,11 +386,13 @@ public:
         configureSlider(afterfireTemperatureSlider_, 500.0, 1'800.0, 10.0);
         configureSlider(afterfireReactionSlider_, 2.0, 50.0, 1.0);
         configureSlider(afterfireEfficiencySlider_, 0.0, 1.0, 0.01);
+        configureSlider(overrunFuelSlider_, 0.0, 0.25, 0.005);
         cycleVariationSlider_.setTextValueSuffix(" ratio");
         cycleCorrelationSlider_.setTextValueSuffix(" ratio");
         afterfireTemperatureSlider_.setTextValueSuffix(" K");
         afterfireReactionSlider_.setTextValueSuffix(" ms");
         afterfireEfficiencySlider_.setTextValueSuffix(" ratio");
+        overrunFuelSlider_.setTextValueSuffix(" ratio");
 
         afterfireToggle_.setColour(
             juce::ToggleButton::textColourId, juce::Colour(0xffc4d0cb));
@@ -395,7 +402,7 @@ public:
         addAndMakeVisible(wetLimiterToggle_);
         demoPhysicsButton_.onClick = [this] {
             setPhysicsInternal({ 0.06, 0.55, true, true,
-                                 800.0, 0.008, 0.95 });
+                                 800.0, 0.008, 0.95, 0.12 });
             applyPhysics();
         };
         bypassPhysicsButton_.onClick = [this] {
@@ -403,6 +410,7 @@ public:
             settings.cycleVariationCoefficientOfVariation = 0.0;
             settings.afterfireEnabled = false;
             settings.limiterKeepsFuel = false;
+            settings.overrunFuelFraction = 0.0;
             setPhysicsInternal(settings);
             applyPhysics();
         };
@@ -586,6 +594,7 @@ public:
         physicsRow(secondColumn, physicsLabels_[2], afterfireTemperatureSlider_);
         physicsRow(secondColumn, physicsLabels_[3], afterfireReactionSlider_);
         physicsRow(secondColumn, physicsLabels_[4], afterfireEfficiencySlider_);
+        physicsRow(secondColumn, physicsLabels_[5], overrunFuelSlider_);
         afterfireToggle_.setBounds(thirdColumn.removeFromTop(27));
         wetLimiterToggle_.setBounds(thirdColumn.removeFromTop(27));
         auto presets = thirdColumn.removeFromTop(32);
@@ -692,6 +701,7 @@ private:
             afterfireTemperatureSlider_.getValue(),
             afterfireReactionSlider_.getValue() * 0.001,
             afterfireEfficiencySlider_.getValue(),
+            overrunFuelSlider_.getValue(),
         };
     }
 
@@ -713,6 +723,8 @@ private:
             juce::dontSendNotification);
         afterfireEfficiencySlider_.setValue(
             settings.afterfireEfficiency, juce::dontSendNotification);
+        overrunFuelSlider_.setValue(
+            settings.overrunFuelFraction, juce::dontSendNotification);
     }
 
     void applyPhysics() {
@@ -1123,7 +1135,9 @@ private:
                 + " .. " + juce::String(telemetry.maximumCycleMultiplier, 3)
                 + "  |  afterfire " + juce::String(telemetry.afterfireHeatReleaseKw, 2)
                 + " kW / " + juce::String(telemetry.afterfireFuelBurnMgPerSecond, 1)
-                + " mg/s  |  silencieux poreux "
+                + " mg/s  |  decel "
+                + (telemetry.overrunAfterfireActive ? "ACTIVE" : "off")
+                + "  |  silencieux poreux "
                 + juce::String(static_cast<int>(telemetry.porousMufflerCount)),
             juce::dontSendNotification);
     }
@@ -1190,12 +1204,13 @@ private:
     juce::ProgressBar progressBar_;
     std::jthread exportThread_;
     std::unique_ptr<juce::FileChooser> fileChooser_;
-    std::array<juce::Label, 5> physicsLabels_;
+    std::array<juce::Label, 6> physicsLabels_;
     juce::Slider cycleVariationSlider_;
     juce::Slider cycleCorrelationSlider_;
     juce::Slider afterfireTemperatureSlider_;
     juce::Slider afterfireReactionSlider_;
     juce::Slider afterfireEfficiencySlider_;
+    juce::Slider overrunFuelSlider_;
     juce::ToggleButton afterfireToggle_ { "AFTERFIRE PHYSIQUE ACTIF" };
     juce::ToggleButton wetLimiterToggle_ {
         "RUPTEUR SPARK-CUT / CARBURANT CONSERVE"

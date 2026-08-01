@@ -41,6 +41,7 @@ int main() {
         enginelab::audioPhysicsSettingsFor(audioLab->config);
     require(
         labSettings.afterfireEnabled && labSettings.limiterKeepsFuel
+            && near(labSettings.overrunFuelFraction, 0.12)
             && near(labSettings.cycleVariationCoefficientOfVariation, 0.06),
         "audio lab engine opts into the complete physical demo path");
     require(
@@ -50,7 +51,7 @@ int main() {
 
     auto physicsConfig = engine;
     enginelab::AudioPhysicsSettings authoredPhysics {
-        0.06, 0.55, true, true, 800.0, 0.008, 0.95
+        0.06, 0.55, true, true, 800.0, 0.008, 0.95, 0.12
     };
     enginelab::applyAudioPhysicsSettings(physicsConfig, authoredPhysics);
     const auto recoveredPhysics =
@@ -62,20 +63,23 @@ int main() {
             && recoveredPhysics.limiterKeepsFuel
             && near(recoveredPhysics.afterfireIgnitionTemperatureK, 800.0)
             && near(recoveredPhysics.afterfireReactionTimeSeconds, 0.008)
-            && near(recoveredPhysics.afterfireEfficiency, 0.95),
+            && near(recoveredPhysics.afterfireEfficiency, 0.95)
+            && near(recoveredPhysics.overrunFuelFraction, 0.12),
         "audio physics controls round-trip through EngineConfig");
     enginelab::EngineState physicsState;
     physicsState.cylinderStates[0].combustionCycleMultiplier = 0.91;
     physicsState.cylinderStates[1].combustionCycleMultiplier = 1.08;
     physicsState.exhaustAfterfireHeatReleaseKw = 3.4;
     physicsState.exhaustAfterfireFuelBurnMgPerSecond = 22.0;
+    physicsState.exhaustAfterfireOverrunActive = true;
     const auto physicsTelemetry =
         enginelab::audioPhysicsTelemetryFor(physicsConfig, physicsState);
     require(
         near(physicsTelemetry.minimumCycleMultiplier, 0.91)
             && near(physicsTelemetry.maximumCycleMultiplier, 1.08)
             && near(physicsTelemetry.afterfireHeatReleaseKw, 3.4)
-            && near(physicsTelemetry.afterfireFuelBurnMgPerSecond, 22.0),
+            && near(physicsTelemetry.afterfireFuelBurnMgPerSecond, 22.0)
+            && physicsTelemetry.overrunAfterfireActive,
         "audio physics telemetry reports real simulator state");
 
     enginelab::OfflineAudioMix base;
@@ -229,8 +233,8 @@ int main() {
     }
     require(visibleChildren >= 45, "complete workshop control set is present");
     require(
-        sliderCount == 14 && disabledSliderCount == 4,
-        "nine faders and five physics controls exist; four no-op faders are disabled");
+        sliderCount == 15 && disabledSliderCount == 4,
+        "nine faders and six physics controls exist; four no-op faders are disabled");
     require(
         muteCount == 4 && soloCount == 4
             && disabledMuteCount == 1
@@ -246,7 +250,8 @@ int main() {
         physicsApplyCount == 1
             && near(appliedPhysics.cycleVariationCoefficientOfVariation, 0.06)
             && appliedPhysics.afterfireEnabled
-            && appliedPhysics.limiterKeepsFuel,
+            && appliedPhysics.limiterKeepsFuel
+            && near(appliedPhysics.overrunFuelFraction, 0.12),
         "demo action publishes an intentionally audible physical calibration");
 
     window.setMix(base);

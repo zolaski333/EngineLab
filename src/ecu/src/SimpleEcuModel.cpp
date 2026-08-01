@@ -355,8 +355,27 @@ EcuCommand SimpleEcuModel::evaluate(const EngineConfig& config, const EngineStat
     // lasts longest. Gate on it rather than adding a second timer -- the
     // comment on the start-mode retard above makes the same point: this belongs
     // on the ECU's run/start state, not on a speed threshold.
+    auto overrunAfterfireArmed = overrunAfterfireArmed_.load(
+        std::memory_order_relaxed);
+    if (!controls.ignitionEnabled || controls.starterEngaged) {
+        overrunAfterfireArmed = false;
+    } else if (config.exhaustAfterfire.enabled
+            && config.exhaustAfterfire.overrunFuelFraction > 0.0
+            && effectiveThrottle > 0.20
+            && state.rpm >= config.exhaustAfterfire.overrunMinimumRpm) {
+        // The post-start air floor can remain above its normal DFCO-inhibit
+        // threshold for more than ten seconds on a cold start. An authored
+        // afterfire engine which the driver has deliberately taken above its
+        // RPM gate is no longer in an accidental start flare: arm its next
+        // lift-off without changing clean/default engines or weakening the
+        // ordinary idle-stability protection.
+        overrunAfterfireArmed = true;
+    }
+    overrunAfterfireArmed_.store(overrunAfterfireArmed,
+        std::memory_order_relaxed);
     const auto afterStartPhase =
-        postStartAirOpening_.load(std::memory_order_relaxed) > 0.05;
+        postStartAirOpening_.load(std::memory_order_relaxed) > 0.05
+        && !overrunAfterfireArmed;
     if (controls.starterEngaged || effectiveThrottle > 0.02 || afterStartPhase
             || state.rpm < decelerationFuelResumeRpm) {
         decelerationFuelCut = false;
@@ -393,14 +412,18 @@ EcuCommand SimpleEcuModel::evaluate(const EngineConfig& config, const EngineStat
         && controls.ignitionEnabled && !controls.starterEngaged
         && state.rpm >= config.exhaustAfterfire.overrunMinimumRpm
         && effectiveThrottle <= config.exhaustAfterfire.overrunMaximumThrottle;
-    const auto fuelResumeOrOverrun = overrunAfterfireActive
+    const auto fuelCorrection = overrunAfterfireActive
+        // This is a bounded fraction of the normal charge request. Do not let
+        // the preceding tip-in reserve or cold-start correction multiply it:
+        // both can still be decaying at lift-off and would turn a conservative
+        // 12% strategy into an uncontrolled rich pulse.
         ? config.exhaustAfterfire.overrunFuelFraction
-        : decelerationFuelResume;
+        : warmupCorrection * crankingCorrection
+            * (1.0 + accelerationFuelEnrichment * 1.40)
+            * decelerationFuelResume;
     return { mappedAfr, mappedAdvance,
              effectiveThrottle, idleAirOpening,
-             warmupCorrection * crankingCorrection
-                 * (1.0 + accelerationFuelEnrichment * 1.40)
-                 * fuelResumeOrOverrun,
+             fuelCorrection,
              overrunAfterfireActive
                  || (fuelEnabled && !decelerationFuelCut),
              !overrunAfterfireActive

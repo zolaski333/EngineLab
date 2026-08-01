@@ -359,6 +359,7 @@ int main() {
     auto bypassEngine = *audioLab;
     bypassEngine.combustionCalibration.cycleVariationCoefficientOfVariation = 0.0;
     bypassEngine.exhaustAfterfire.enabled = false;
+    bypassEngine.exhaustAfterfire.overrunFuelFraction = 0.0;
     bypassEngine.ignition.limiterKeepsFuel = false;
     bypassEngine.exhaust.mufflerPackingFlowResistivityPaSPerM2 = 0.0;
     bypassEngine.exhaust.mufflerPackingThicknessMm = 0.0;
@@ -390,10 +391,16 @@ int main() {
             && demo.cycleMultiplierMinimum < 0.99
             && demo.cycleMultiplierMaximum > 1.01,
         "demo render measures non-neutral physical cycle variation");
-    require(
-        demo.afterfirePeakHeatReleaseKw > 0.01
-            && demo.afterfireFuelBurnedMg > 0.01,
-        "demo render measures real exhaust chemical heat release");
+    std::cout << "Audio physics raw proof: afterfire="
+              << demo.afterfirePeakHeatReleaseKw << " kW / "
+              << demo.afterfireFuelBurnedMg << " mg, overrun_frames="
+              << demo.overrunAfterfireActiveFrames << '\n';
+    require(demo.overrunAfterfireActiveFrames > 0,
+        "demo render must enter the ECU-conditioned overrun strategy");
+    require(demo.afterfirePeakHeatReleaseKw > 0.01,
+        "demo render must measure exhaust chemical heat release");
+    require(demo.afterfireFuelBurnedMg > 0.01,
+        "demo render must consume real exhaust fuel inventory");
     require(demo.porousMufflerCount == 1 && bypass.porousMufflerCount == 0,
             "demo/bypass pair isolates one authored porous silencer");
     const auto bypassSamples = readFloat32(
@@ -418,7 +425,9 @@ int main() {
               << ", cycle=" << demo.cycleMultiplierMinimum << ".."
               << demo.cycleMultiplierMaximum
               << ", afterfire=" << demo.afterfirePeakHeatReleaseKw
-              << " kW / " << demo.afterfireFuelBurnedMg << " mg\n";
+              << " kW / " << demo.afterfireFuelBurnedMg << " mg"
+              << ", overrun_frames=" << demo.overrunAfterfireActiveFrames
+              << '\n';
 
     std::cout
         << "Offline audio export: PCM24 stems, float32 192 kHz, "

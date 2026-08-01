@@ -109,6 +109,7 @@ struct OfflineAudioExportResult final {
     /** Measured physical-audio activity over the complete rendered scenario. */
     double afterfirePeakHeatReleaseKw { 0.0 };
     double afterfireFuelBurnedMg { 0.0 };
+    std::uint64_t overrunAfterfireActiveFrames { 0 };
     double cycleMultiplierMinimum { 1.0 };
     double cycleMultiplierMaximum { 1.0 };
     std::uint64_t cycleVariationSamples { 0 };

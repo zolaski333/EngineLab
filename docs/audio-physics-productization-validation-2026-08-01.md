@@ -124,8 +124,10 @@ Artefacts finaux :
 
 - Les valeurs démo sont choisies pour rendre le chemin observable, pas pour
   représenter un moteur ou un silencieux précis.
-- La coupure DFCO reste prioritaire : l'afterfire n'est pas garanti à chaque
-  lever de pied.
+- La coupure DFCO reste prioritaire par défaut. Le mode de décélération opt-in
+  exige une demande conducteur préalable, son seuil RPM et son seuil papillon ;
+  même actif, il ne garantit aucune réaction si la ligne manque de température
+  ou d'oxygène.
 - L'application redémarre le moteur lors d'une modification physique ; il n'y a
   pas encore de morphing instantané sans reset.
 - La qualité sonore finale doit être jugée à l'oreille. Les métriques A/B ne

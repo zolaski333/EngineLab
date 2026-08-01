@@ -16,6 +16,10 @@ exhaust_afterfire:
   ignition_temperature_k: 900
   reaction_time_constant_s: 0.010
   reaction_efficiency: 0.95
+  # Optionnel : petite charge de carburant sur vraie décélération DFCO.
+  overrun_fuel_fraction: 0.12
+  overrun_minimum_rpm: 3000
+  overrun_maximum_throttle: 0.02
 ignition:
   # Le rupteur coupe l'etincelle mais conserve l'injection.
   limiter_keeps_fuel: true
@@ -25,6 +29,10 @@ ignition:
 - `reaction_time_constant_s` fixe la vitesse d'oxydation au-dessus du seuil ;
 - `reaction_efficiency` borne la fraction de reactifs qui peut reagir pendant
   une etape.
+- `overrun_fuel_fraction` conserve une fraction bornée de la charge normale
+  pendant une vraie décélération DFCO et coupe l'étincelle ; zéro conserve
+  exactement la coupure propre historique ;
+- `overrun_minimum_rpm` et `overrun_maximum_throttle` bornent la zone ECU.
 
 La stoechiometrie, la masse molaire et le pouvoir calorifique viennent de
 `fuel_properties`. `EngineState::exhaustAfterfireHeatReleaseKw` et
@@ -40,13 +48,23 @@ combustion d'echappement plausible.
 Le rupteur historique coupe carburant et etincelle et reste le comportement par
 defaut. `limiter_keeps_fuel: true` fournit un chemin physique volontairement
 humide : au hard cut, l'injection continue mais l'etincelle est supprimee. La
-coupure de carburant en deceleration reste prioritaire. Il n'y a donc toujours
-pas de pop programme ; le carburant doit traverser le cylindre, rencontrer de
-l'oxygene et une ligne assez chaude.
+coupure de carburant en deceleration reste prioritaire tant que
+`overrun_fuel_fraction` vaut zéro. Avec une fraction positive, l'ECU n'arme le
+mode qu'après une demande conducteur supérieure à 20 % au-dessus du seuil RPM.
+Au lever de pied, il conserve exactement la fraction auteur sans la multiplier
+par l'enrichissement transitoire, coupe l'étincelle puis laisse le carburant
+traverser le cylindre. Il n'y a donc toujours pas de pop programmé : il faut
+encore de l'oxygène et une ligne assez chaude.
 
 Dans **AUDIO HQ**, le bloc **PHYSIQUE AUDIO** expose ces reglages. **DEMO
 AUDIBLE** applique une calibration d'ecoute (COV 6 %, correlation 0,55,
-afterfire actif, rupteur humide, seuil 800 K, reaction 8 ms), puis redemarre le
-moteur. **BYPASS** remet variation, afterfire et rupteur humide a zero/off. La
+afterfire actif, rupteur humide, carburant de décélération 12 %, seuil 800 K,
+reaction 8 ms), puis redemarre le moteur. **BYPASS** remet variation, afterfire,
+carburant de décélération et rupteur humide a zero/off. La
 ligne `LIVE` affiche les kW et mg/s effectivement produits : zero signifie que
 les conditions chimiques ne sont pas reunies, pas que l'interface est en panne.
+
+Pour l'essai le plus direct, sélectionner `Audio Physics Lab 689 Twin`, cliquer
+**DEMO AUDIBLE**, dépasser 3 000 tr/min avec plus de 20 % d'accélérateur puis
+relâcher. `decel ACTIVE` prouve la stratégie ECU ; seuls des kW/mg/s non nuls
+prouvent ensuite que la chimie d'échappement a réellement réagi.

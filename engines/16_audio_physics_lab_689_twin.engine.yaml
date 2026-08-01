@@ -48,6 +48,11 @@ engine:
     ignition_temperature_k: 800
     reaction_time_constant_s: 0.008
     reaction_efficiency: 0.95
+    # Conservative spark-cut enrichment on genuine closed-throttle DFCO.
+    # The exhaust chemistry still requires oxygen and sufficient temperature.
+    overrun_fuel_fraction: 0.12
+    overrun_minimum_rpm: 3000
+    overrun_maximum_throttle: 0.02
   uses:
     injection: high_flow_port
     exhaust: cp2_absorptive_lab

@@ -13,8 +13,12 @@
 > ses troncs de branche, les changements de section, les états par conduit et
 > les sorties spatialisées. Voir
 > `docs/exhaust-audio-topology-validation-2026-08-01.md`. Ne pas réimplémenter
-> ce graphe ; la prochaine lacune audible est l'afterfire de décélération
-> conditionné par l'ECU, distinct de l'afterfire thermique déjà présent.
+> ce graphe. L'afterfire de décélération conditionné par l'ECU est également
+> livré et validé : fraction bornée, armement par demande conducteur, témoins
+> négatifs et réaction chimique réelle. Voir
+> `docs/overrun-afterfire-validation-2026-08-01.md`. La prochaine étape est de
+> mesurer/écouter séparément les sources de blowdown et les sorties spatiales,
+> sans dupliquer ce qui existe déjà.
 
 > **Mise à jour produit du 1er août 2026.** Lire d'abord
 > `docs/audio-physics-productization-validation-2026-08-01.md`. Les modèles
