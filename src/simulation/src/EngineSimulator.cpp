@@ -1224,12 +1224,16 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
             // runner ringing against the plenum at 0 rpm (port temperature
             // swinging 14-39 degC), holding the manifold off ambient. No crank
             // signal, no pulse.
-            // Injection follows the injector command, not the in-cylinder
-            // combustion gate. A wet limiter or calibrated overrun has fuel
-            // enabled with spark disabled on purpose; gating here on
-            // `combustionEnabled` silently erased that fuel before it could
-            // reach the physical exhaust chemistry.
-            if (ecuCommand.fuelEnabled && state_.rpm > 20.0
+            // Preserve the established combustion gate except for the one
+            // deliberate wet strategy: authored spark-cut overrun. Treating
+            // every fuel-enabled/spark-disabled cycle as injectable also wets
+            // ordinary cranking cuts; the large-inertia Big Twin then floods
+            // before the dyno start can catch. The explicit ECU bit keeps the
+            // new afterfire path physical without changing start or limiter
+            // behaviour elsewhere.
+            if ((combustion.combustionEnabled
+                    || ecuCommand.overrunAfterfireActive)
+                && state_.rpm > 20.0
                 && phaseInsideWindow(cyclePhase,
                     config_.injection.startAngleDegrees, config_.injection.endAngleDegrees)) {
                 // Meter to the requested physical inventory, accounting for

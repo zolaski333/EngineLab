@@ -1497,6 +1497,7 @@ int main() {
     bool foundCalibratedVtec = false;
     bool foundCalibratedAvgas = false;
     bool foundCompressionIgnition = false;
+    const enginelab::EngineConfig* bigTwinConfig = nullptr;
     for (const auto& entry : catalog.entries) {
         found2jz = found2jz || entry.config.name.find("2JZ") != std::string::npos;
         foundV8 = foundV8 || (entry.config.layout == enginelab::EngineLayout::vLayout && entry.config.cylinders.size() == 8);
@@ -1529,6 +1530,8 @@ int main() {
             || (entry.config.fuel == enginelab::FuelType::diesel
                 && entry.config.fuelProperties.cetaneNumber >= 40.0
                 && !entry.config.injection.fullLoadFuelLimit.empty());
+        if (entry.config.name.find("Big Twin") != std::string::npos)
+            bigTwinConfig = &entry.config;
         require(!enginelab::validateEngineConfig(entry.config), "every catalog engine must validate");
         require(!entry.sourcePath.empty(), "catalog entries must retain their source path");
     }
@@ -1539,6 +1542,39 @@ int main() {
     require(foundCalibratedAvgas, "catalog parts must apply an explicit fuel calibration to aviation engines");
     require(foundCompressionIgnition,
             "catalog must include a cetane-calibrated compression-ignition engine");
+    require(bigTwinConfig != nullptr,
+            "catalog must retain the Big Twin start regression fixture");
+
+    {
+        // Only the explicit authored afterfire state may bypass the normal
+        // combustion/injection gate. Letting every fuel-on, spark-off phase
+        // inject wets the low-speed cranking cuts and the high-inertia Big Twin
+        // reproducibly stalls at 0 rpm in the realtime budget harness.
+        enginelab::EngineRuntime runtime(*bigTwinConfig);
+        runtime.setRealtimeThrottleEnabled(false);
+        runtime.setDynoMaximumDurationSeconds(30.0);
+        runtime.setIgnitionEnabled(true);
+        runtime.setStarterEngaged(true);
+        runtime.setDynoHoldEnabled(true);
+        const auto targetRpm = std::min(
+            bigTwinConfig->redlineRpm,
+            bigTwinConfig->ignition.revLimitRpm) * 0.95;
+        runtime.setDynoHoldRpm(targetRpm);
+        runtime.start();
+        runtime.startDyno();
+        auto peakRpm = 0.0;
+        const auto startProofDeadline =
+            std::chrono::steady_clock::now() + std::chrono::seconds(15);
+        while (std::chrono::steady_clock::now() < startProofDeadline) {
+            const auto state = runtime.snapshot();
+            peakRpm = std::max(peakRpm, state.rpm);
+            if (peakRpm >= targetRpm * 0.90) break;
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+        runtime.stop();
+        require(peakRpm >= targetRpm * 0.90,
+            "Big Twin must catch and enter its dyno hold instead of flooding at 0 rpm");
+    }
 
     {
         const auto simulate = [](const enginelab::EngineConfig& testConfig, double dt) {
