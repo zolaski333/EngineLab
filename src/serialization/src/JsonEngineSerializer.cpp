@@ -508,6 +508,7 @@ std::string JsonEngineSerializer::encode(const EngineConfig& config) const {
                       {"tire_radius_m", config.vehicle.tireRadiusM},
                       {"rolling_resistance_coefficient", config.vehicle.rollingResistanceCoefficient},
                       {"tire_friction_coefficient", config.vehicle.tireFrictionCoefficient},
+                      {"tyre_grip_limit_enabled", config.vehicle.tyreGripLimitEnabled},
                       {"driven_axle_layout", drivenAxleLayoutName(config.vehicle.drivenAxleLayout)},
                       {"driven_axle_weight_fraction", config.vehicle.drivenAxleWeightFraction},
                       {"wheelbase_m", config.vehicle.wheelbaseM},
@@ -718,6 +719,7 @@ EngineDecodeResult JsonEngineSerializer::decode(std::string_view text) const noe
             config.vehicle.rollingResistanceCoefficient = vehicle.value("rolling_resistance_coefficient",
                                                                         config.vehicle.rollingResistanceCoefficient);
             config.vehicle.tireFrictionCoefficient = vehicle.value("tire_friction_coefficient", config.vehicle.tireFrictionCoefficient);
+            config.vehicle.tyreGripLimitEnabled = vehicle.value("tyre_grip_limit_enabled", config.vehicle.tyreGripLimitEnabled);
             config.vehicle.drivenAxleLayout = decodeDrivenAxleLayout(
                 vehicle.value("driven_axle_layout",
                     std::string { drivenAxleLayoutName(

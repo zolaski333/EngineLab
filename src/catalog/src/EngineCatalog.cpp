@@ -179,6 +179,7 @@ template <typename T>
     assignIfPresent(node, "tire_radius_m", value.tireRadiusM);
     assignIfPresent(node, "rolling_resistance_coefficient", value.rollingResistanceCoefficient);
     assignIfPresent(node, "tire_friction_coefficient", value.tireFrictionCoefficient);
+    assignIfPresent(node, "tyre_grip_limit_enabled", value.tyreGripLimitEnabled);
     const auto drivenAxle = node["driven_axle_layout"].as<std::string>("rear");
     if (drivenAxle == "front")
         value.drivenAxleLayout = DrivenAxleLayout::front;

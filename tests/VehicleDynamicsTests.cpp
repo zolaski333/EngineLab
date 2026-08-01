@@ -1,4 +1,5 @@
 #include <enginelab/catalog/EngineCatalog.hpp>
+#include <enginelab/diagnostics/EngineDiagnostics.hpp>
 #include <enginelab/foundation/EngineTypes.hpp>
 #include <enginelab/runtime/DrivelineModel.hpp>
 #include <enginelab/serialization/JsonEngineSerializer.hpp>
@@ -27,6 +28,10 @@ enginelab::EngineConfig launchConfig(enginelab::DrivenAxleLayout layout) {
     config.vehicle.tireRadiusM = 0.30;
     config.vehicle.rollingResistanceCoefficient = 0.0;
     config.vehicle.tireFrictionCoefficient = 1.0;
+    // This suite exists to exercise the friction circle and the longitudinal
+    // load transfer that rides on it, so it opts in explicitly: the shipped
+    // default is off (see VehicleConfig::tyreGripLimitEnabled).
+    config.vehicle.tyreGripLimitEnabled = true;
     config.vehicle.drivenAxleLayout = layout;
     config.vehicle.drivenAxleWeightFraction = 0.50;
     config.vehicle.wheelbaseM = 2.50;
@@ -163,6 +168,23 @@ int main() {
                 == enginelab::DrivenAxleLayout::front,
         "catalogue engines must select their authored driveline layout");
 
-    std::cout << "PASS: longitudinal load transfer, persistence and catalogue layouts\n";
+    {
+        auto diagnosticConfig = enginelab::makeDefaultV8();
+        enginelab::EngineState diagnosticState;
+        diagnosticState.load = 0.8;
+        diagnosticState.rpm = 3'000.0;
+        diagnosticState.cylinderStateCount = 8;
+        for (std::size_t cylinder = 0; cylinder < 8; ++cylinder)
+            diagnosticState.cylinderStates[cylinder].injectorCapacityRatio = 0.50;
+        diagnosticState.cylinderStates[7].injectorCapacityRatio = 0.05;
+        const auto diagnostics = enginelab::EngineDiagnostics {}.evaluate(
+            diagnosticConfig, diagnosticState);
+        const auto saturated = std::any_of(diagnostics.begin(), diagnostics.end(),
+            [](const auto& item) { return item.code == "injection.capacity"; });
+        require(saturated,
+            "one saturated injector must not be hidden by the cylinder average");
+    }
+
+    std::cout << "PASS: load transfer, persistence, catalogue layouts and worst-cylinder diagnostics\n";
     return 0;
 }

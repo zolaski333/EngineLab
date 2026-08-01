@@ -401,6 +401,7 @@ std::string YamlEngineSerializer::encode(const EngineConfig& config) const {
         << YAML::Key << "tire_radius_m" << YAML::Value << config.vehicle.tireRadiusM
         << YAML::Key << "rolling_resistance_coefficient" << YAML::Value << config.vehicle.rollingResistanceCoefficient
         << YAML::Key << "tire_friction_coefficient" << YAML::Value << config.vehicle.tireFrictionCoefficient
+        << YAML::Key << "tyre_grip_limit_enabled" << YAML::Value << config.vehicle.tyreGripLimitEnabled
         << YAML::Key << "driven_axle_layout" << YAML::Value << drivenAxleLayoutName(config.vehicle.drivenAxleLayout)
         << YAML::Key << "driven_axle_weight_fraction" << YAML::Value << config.vehicle.drivenAxleWeightFraction
         << YAML::Key << "wheelbase_m" << YAML::Value << config.vehicle.wheelbaseM
@@ -801,6 +802,8 @@ EngineDecodeResult YamlEngineSerializer::decode(std::string_view text) const noe
             if (vehicle["rolling_resistance_coefficient"])
                 config.vehicle.rollingResistanceCoefficient = vehicle["rolling_resistance_coefficient"].as<double>();
             if (vehicle["tire_friction_coefficient"]) config.vehicle.tireFrictionCoefficient = vehicle["tire_friction_coefficient"].as<double>();
+            if (vehicle["tyre_grip_limit_enabled"])
+                config.vehicle.tyreGripLimitEnabled = vehicle["tyre_grip_limit_enabled"].as<bool>();
             config.vehicle.drivenAxleLayout = decodeDrivenAxleLayout(
                 vehicle["driven_axle_layout"].as<std::string>(
                     drivenAxleLayoutName(

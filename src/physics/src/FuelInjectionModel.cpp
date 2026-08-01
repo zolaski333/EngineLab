@@ -27,6 +27,9 @@ FuelInjectionResult FuelInjectionModel::deliver(const InjectionConfig& injection
     const auto capacityMoles = injection.injectorFlowMgPerSecond * pressureFlowRatio
         * dtSeconds * 1.0e-6 / std::max(1.0e-9, fuelMolarMassKg);
     result.meteredMoles = std::min(std::max(0.0, commandedMoles), capacityMoles);
+    result.openFraction = capacityMoles > 1.0e-18
+        ? std::clamp(result.meteredMoles / capacityMoles, 0.0, 1.0)
+        : 0.0;
 
     double newlyVaporisedMoles = 0.0;
     double newlyEntrainedMoles = 0.0;

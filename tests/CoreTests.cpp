@@ -754,7 +754,23 @@ int main() {
             portCell, 0.0, 0.02);
         require(firstPort.meteredMoles > firstPort.vaporisedMoles && filmAfterInjection > 0.0
                 && laterPort.vaporisedMoles > 0.0 && portState.liquidFilmMoles < filmAfterInjection,
-                "port injection must retain and subsequently evaporate a wall film");
+            "port injection must retain and subsequently evaporate a wall film");
+
+        enginelab::FuelInjectionState fractionalPulseState;
+        enginelab::GasCell fractionalPulseCell;
+        fractionalPulseCell.initialise(80.0, 0.18, 320.0);
+        const auto saturatedPulse = enginelab::FuelInjectionModel::deliver(
+            port, fuel, fractionalPulseState, fractionalPulseCell, 1.0, 0.001);
+        require(std::abs(saturatedPulse.openFraction - 1.0) < 1.0e-12,
+            "an injector command beyond one sub-step capacity must report full opening");
+        enginelab::FuelInjectionState halfPulseState;
+        enginelab::GasCell halfPulseCell;
+        halfPulseCell.initialise(80.0, 0.18, 320.0);
+        const auto halfPulse = enginelab::FuelInjectionModel::deliver(
+            port, fuel, halfPulseState, halfPulseCell,
+            saturatedPulse.meteredMoles * 0.5, 0.001);
+        require(std::abs(halfPulse.openFraction - 0.5) < 1.0e-12,
+            "injector duty must retain a fractional final sub-step instead of rounding it up");
 
         enginelab::GasCell boostedPortCell;
         boostedPortCell.initialise(180.0, 0.18, 320.0);

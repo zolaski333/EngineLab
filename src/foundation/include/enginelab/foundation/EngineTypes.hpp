@@ -437,6 +437,20 @@ struct VehicleConfig final {
     double wheelbaseM { 2.65 };
     double centerOfGravityHeightM { 0.52 };
     double maximumBrakeForceN { 14'000.0 };
+    /** Whether the driven tyre may break traction and spin.
+     *
+     * Off by default, and deliberately so: the grip limit is a VEHICLE feature
+     * layered on top of the engine, and until the engine side is trustworthy it
+     * only adds a second explanation for every "it will not rev" observation --
+     * which is exactly what happened, with a part-load fuelling defect being
+     * read from the application as a traction limit because the panel was
+     * announcing one. With this off the tyre transmits whatever the driveline
+     * asks, the model behaves like a rolling road, and `tractionLimited` is
+     * always false so the diagnostic cannot fire. Turning it on restores the
+     * friction-circle clamp and the longitudinal load transfer that
+     * `EngineLab.VehicleDynamics` exercises; that test sets it explicitly and
+     * therefore still covers the model. */
+    bool tyreGripLimitEnabled { false };
 };
 
 struct ForcedInductionConfig final {

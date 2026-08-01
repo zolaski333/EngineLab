@@ -217,8 +217,17 @@ DrivelineOutput DrivelineModel::advance(double dt, const EngineState& engineStat
             vehicle.tireFrictionCoefficient * normalForce;
         const auto tireStiffnessNPerMps = normalForce * 7.5;
         const auto unconstrainedTireForce = slipVelocity * tireStiffnessNPerMps;
-        lastTireForce = std::clamp(unconstrainedTireForce, -tractionLimit, tractionLimit);
-        if (std::abs(unconstrainedTireForce) > tractionLimit + 1.0e-6) ++tractionLimitedSteps;
+        // With the grip limit disabled the tyre is not allowed to break away:
+        // it transmits whatever the driveline demands, which is the rolling-road
+        // behaviour `VehicleConfig::tyreGripLimitEnabled` documents. The slip
+        // spring itself stays -- it is what couples wheel to road at all -- so
+        // this removes the friction circle, not the tyre.
+        lastTireForce = vehicle.tyreGripLimitEnabled
+            ? std::clamp(unconstrainedTireForce, -tractionLimit, tractionLimit)
+            : unconstrainedTireForce;
+        if (vehicle.tyreGripLimitEnabled
+                && std::abs(unconstrainedTireForce) > tractionLimit + 1.0e-6)
+            ++tractionLimitedSteps;
         const auto motionSign = std::abs(previousWheelOmega) > 0.01
             ? std::copysign(1.0, previousWheelOmega)
             : (std::abs(previousVehicleSpeed) > 0.01 ? std::copysign(1.0, previousVehicleSpeed) : 0.0);

@@ -9,7 +9,7 @@ add_test(NAME EngineLab.Core COMMAND EngineLabCoreTests)
 
 add_executable(EngineLabVehicleDynamicsTests VehicleDynamicsTests.cpp)
 target_link_libraries(EngineLabVehicleDynamicsTests PRIVATE
-    EngineLab::Foundation EngineLab::Runtime EngineLab::Serialization
+    EngineLab::Foundation EngineLab::Runtime EngineLab::Diagnostics EngineLab::Serialization
     EngineLab::Catalog)
 target_compile_definitions(EngineLabVehicleDynamicsTests PRIVATE
     ENGINELAB_CATALOG_ROOT="${CMAKE_SOURCE_DIR}")
@@ -70,6 +70,17 @@ target_compile_definitions(EngineLabOverrunThermalRegressionTests PRIVATE
 enginelab_set_warnings(EngineLabOverrunThermalRegressionTests)
 add_test(NAME EngineLab.OverrunThermalRegression
     COMMAND EngineLabOverrunThermalRegressionTests)
+
+add_executable(EngineLabPartLoadFuellingRegressionTests PartLoadFuellingRegressionTests.cpp)
+target_link_libraries(EngineLabPartLoadFuellingRegressionTests PRIVATE
+    EngineLab::Foundation EngineLab::Events EngineLab::Physics EngineLab::Ecu
+    EngineLab::Exhaust EngineLab::Simulation EngineLab::Catalog)
+target_compile_definitions(EngineLabPartLoadFuellingRegressionTests PRIVATE
+    ENGINELAB_CATALOG_ROOT="${CMAKE_SOURCE_DIR}")
+enginelab_set_warnings(EngineLabPartLoadFuellingRegressionTests)
+add_test(NAME EngineLab.PartLoadFuelling
+    COMMAND EngineLabPartLoadFuellingRegressionTests)
+set_tests_properties(EngineLab.PartLoadFuelling PROPERTIES TIMEOUT 600)
 
 add_executable(EngineLabIdleStabilityRegressionTests IdleStabilityRegressionTests.cpp)
 target_link_libraries(EngineLabIdleStabilityRegressionTests PRIVATE

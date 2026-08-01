@@ -128,6 +128,21 @@ private:
     void configurePhysicalIntakeNetworks();
     void configureIntakeWorkerPool();
     [[nodiscard]] RunningState determineRunningState(const EngineControls&) const noexcept;
+    /** Headroom left on the injector's duty cycle for one cylinder, 1 = shut,
+     *  0 = open for the whole 720 deg. The open fraction is measured inside the
+     *  angular window, including the fractional final sub-step, so it is
+     *  scaled by that window's share of the cycle. */
+    [[nodiscard]] double injectorDutyHeadroom(std::size_t cylinderIndex) const noexcept {
+        const auto windowSubsteps = injectorWindowSubsteps_[cylinderIndex];
+        if (windowSubsteps <= 0.0) return 1.0;
+        const auto windowDegrees = std::fmod(
+            config_.injection.endAngleDegrees
+                - config_.injection.startAngleDegrees + 720.0, 720.0);
+        const auto openFraction =
+            injectorOpenSubsteps_[cylinderIndex] / windowSubsteps;
+        return std::clamp(
+            1.0 - openFraction * windowDegrees / 720.0, 0.0, 1.0);
+    }
     void accumulateCycleTelemetry(double previousAngleDegrees, double travelledDegrees,
                                   double dtSeconds, double indicatedTorqueNm,
                                   double brakeTorqueNm) noexcept;
@@ -316,6 +331,41 @@ private:
     // 1.0 whenever the injector keeps up with its command, however large the
     // trim, and only falls when the injector physically runs out of time.
     std::array<double, 32> commandedFuelMolesMaxThisCycle_ {};
+    /** Sub-steps on which the injector actually flowed, and sub-steps spent
+     *  inside its angular window, both per cycle. Their ratio scaled by the
+     *  window's share of the 720 deg cycle is the injector's DUTY CYCLE, and
+     *  `injectorCapacityRatio_` is now the headroom left on it (1 - duty).
+     *  `injectorOpenSubsteps_` is a historical name: it stores the SUM of
+     *  fractional openings, not an integer count.
+     *
+     *  The ratio above it used to be `injected sum / largest single-sub-step
+     *  command`, which compares two quantities that are not commensurable: the
+     *  command is a "place the whole remaining deficit now" figure recomputed
+     *  every sub-step against an inventory that includes runner vapour and wall
+     *  film, so it inflates whenever transport losses reopen the deficit, while
+     *  the numerator is a per-cycle total. Measured, it disagreed with delivery
+     *  in BOTH directions: the Flat-6 at a quarter throttle read 1.000 while
+     *  only 27.9 mg of a 34.2 mg request reached the charge, and a K20A about
+     *  fifteen per cent short read 0.11. So the warning missed real shortfalls
+     *  and fired on healthy engines, which is what was reported from the
+     *  application.
+     *
+     *  Deficit over request was tried next and is also wrong, for a subtler
+     *  reason worth keeping: the inventory it subtracts is discounted by the
+     *  vaporisation-availability model, which collapses as the window closes,
+     *  so the deficit reads large at the very instant it must be sampled even
+     *  though the fuel is physically present. Measured, it reported 0.46-0.56
+     *  on a Flat-6 and an LS3 that were holding their commanded AFR to within
+     *  0.03 with no misfire at all.
+     *
+     *  Duty cycle has none of those problems because it is a statement about
+     *  the ACTUATOR rather than about any fuel accounting: how much of the
+     *  cycle the injector had to spend open. Its fault threshold comes from
+     *  production practice -- a port injector is sized to stay under roughly
+     *  85-90 % duty at rated power -- and not from anything this simulator
+     *  reports. */
+    std::array<double, 32> injectorOpenSubsteps_ {};
+    std::array<double, 32> injectorWindowSubsteps_ {};
     std::array<double, 32> injectorCapacityRatio_ {};
     std::array<double, 32> closedLoopFuelTrim_ {};
     /** Separate high-throttle adaptation cell. A single scalar let a rich WOT

@@ -1108,11 +1108,7 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                     deliveredFuelMolesLastCycle_[cylinderIndex] =
                         entrainedFuelMolesThisCycle_[cylinderIndex];
                     injectorCapacityRatio_[cylinderIndex] =
-                        commandedFuelMolesMaxThisCycle_[cylinderIndex] > 1.0e-15
-                        ? std::clamp(injectedFuelMolesThisCycle_[cylinderIndex]
-                            / commandedFuelMolesMaxThisCycle_[cylinderIndex],
-                            0.0, 1.0)
-                        : 1.0;
+                        injectorDutyHeadroom(cylinderIndex);
                     CompressionIgnitionModel::beginCycle(
                         compressionIgnitionStates_[cylinderIndex]);
                     compressionIgnitionResults_[cylinderIndex] = {};
@@ -1122,6 +1118,8 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 entrainedFuelMolesThisCycle_[cylinderIndex] = 0.0;
                 requestedFuelMolesThisCycle_[cylinderIndex] = 0.0;
                 commandedFuelMolesMaxThisCycle_[cylinderIndex] = 0.0;
+                injectorOpenSubsteps_[cylinderIndex] = 0.0;
+                injectorWindowSubsteps_[cylinderIndex] = 0.0;
             }
             const auto oxygenEquivalentAirMassMg = cylinderGas_[cylinderIndex].mixture().oxygenMoles
                 / 0.21 * GasCell::airMolarMassKg * 1.0e6;
@@ -1301,6 +1299,11 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
             const auto injectionResult = FuelInjectionModel::deliver(config_.injection,
                 config_.fuelProperties, injectionStates_[cylinderIndex], injectionTarget,
                 commandedFuelMoles, subDt);
+            // Duty accounting. Every sub-step reaching here is inside the
+            // angular window. Preserve the fractional final opening instead of
+            // rounding every non-zero pulse up to one complete sub-step.
+            injectorWindowSubsteps_[cylinderIndex] += 1.0;
+            injectorOpenSubsteps_[cylinderIndex] += injectionResult.openFraction;
             if (portInjection && injectionResult.vaporisedMoles > 0.0) {
                 // Each cylinder owns its runner network, so this write is as
                 // cylinder-private as the old runner-cell injection was.
@@ -1325,11 +1328,7 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                         / requestedFuelMoles, 0.0, 1.0)
                     : 0.0;
                 injectorCapacityRatio_[cylinderIndex] =
-                    commandedFuelMolesMaxThisCycle_[cylinderIndex] > 1.0e-15
-                    ? std::clamp(injectedFuelMolesThisCycle_[cylinderIndex]
-                        / commandedFuelMolesMaxThisCycle_[cylinderIndex],
-                        0.0, 1.0)
-                    : 1.0;
+                    injectorDutyHeadroom(cylinderIndex);
                 const auto deliveredFuelMassMg =
                     injectedFuelMolesThisCycle_[cylinderIndex]
                     * fuelMolarMassKg * 1.0e6;
@@ -1352,16 +1351,16 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 deliveredFuelMolesLastCycle_[cylinderIndex] = chamberFuelMoles;
                 fuelDeliveryRatio_[cylinderIndex] = requestedFuelMoles > 1.0e-15
                     ? std::clamp(chamberFuelMoles / requestedFuelMoles, 0.0, 1.0) : 0.0;
-                // Delivered fraction of the commanded pulse. Unlike the ratio
-                // above it does not carry the closed-loop trim in its reference,
-                // so a well-regulated engine reads ~1.0 and only a genuinely
-                // undersized injector (or a pulse wider than its window) falls
-                // short. This is what the injector-capacity diagnostic must read.
+                // Fraction of the requested charge fuel the injector DID
+                // place before its window shut. Unlike `fuelDeliveryRatio` it
+                // does not carry the closed-loop trim in its reference -- the
+                // trim scales the request and the delivery alike -- so a
+                // well-regulated engine reads ~1.0 and only a genuinely
+                // undersized injector, or a pulse wider than its window, falls
+                // short. See `injectorOpenSubsteps_` for why the two earlier
+                // formulations measured neither.
                 injectorCapacityRatio_[cylinderIndex] =
-                    commandedFuelMolesMaxThisCycle_[cylinderIndex] > 1.0e-15
-                    ? std::clamp(injectedFuelMolesThisCycle_[cylinderIndex]
-                        / commandedFuelMolesMaxThisCycle_[cylinderIndex], 0.0, 1.0)
-                    : 1.0;
+                    injectorDutyHeadroom(cylinderIndex);
                 const auto mixtureAfr = airFuelRatioForCell(cylinderGas_[cylinderIndex], config_.fuelProperties);
                 actualAfrLastCycle_[cylinderIndex] = mixtureAfr;
                 // Closed-loop lambda correction is based on the mixture that
@@ -1384,20 +1383,60 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                     && mixtureAfr > 4.0 && mixtureAfr < 40.0) {
                     const auto targetAfr = std::clamp(
                         ecuCommand.targetAirFuelRatio, 5.0, 30.0);
-                    // An observation in the interpolation band cannot identify
-                    // which cell owns its error, so retain both until the
-                    // operating point is unambiguous.
-                    if (state_.throttle <= 0.10) {
-                        closedLoopFuelTrim_[cylinderIndex] =
+                    // Attribute the observation to each cell in proportion to
+                    // the authority it actually held over the command that
+                    // produced it -- the same blend the command was built
+                    // from, a few lines above. This must be the SAME weight:
+                    // a cell that sets the fuel must answer for the mixture.
+                    //
+                    // The previous rule ("an observation in the interpolation
+                    // band cannot identify which cell owns its error, so
+                    // retain both") left a learning hole exactly over the
+                    // authority ramp: the blend hands the high-load cell 0 to
+                    // 100 % of the command between throttle 0.10 and 0.25,
+                    // while neither cell learned anywhere inside that band.
+                    // Worse, the ramp REACHES full authority at the same 0.25
+                    // where learning was supposed to begin, and `state_.throttle`
+                    // is the smoothed physical opening, so a command held at
+                    // 0.25 approaches the test from below and can sit there
+                    // indefinitely: full authority, zero adaptation.
+                    //
+                    // Measured on the Flat-6 free-revving at a fixed 0.25
+                    // opening, before this change: trim pinned at 0.586 (its
+                    // clamp floor is 0.55) while the engine ran AFR 20.9
+                    // against a commanded 13.4 -- the controller removing 41 %
+                    // of the fuel from an engine already starving, 81 % misfire,
+                    // and net torque swinging -190 to +250 Nm. That torque
+                    // spike is the audible "bop" reported from the application,
+                    // and 0.25 is not a coincidence in the report: it is this
+                    // constant. The diesel was the only catalogue engine free
+                    // of it because compression ignition bypasses this trim
+                    // entirely (see the `dieselFuelDemand` branch above).
+                    //
+                    // Proportional attribution is the textbook answer to the
+                    // credit-assignment objection, not a threshold nudge: it
+                    // is a normalised least-mean-squares update, it converges
+                    // to the same fixed point, and it is identical to the old
+                    // behaviour at both extremes (blend 0 updates only the low
+                    // cell at full rate, blend 1 only the high cell).
+                    const auto trimAuthorityBlend = std::clamp(
+                        (state_.throttle - 0.10) / 0.15, 0.0, 1.0);
+                    if (trimAuthorityBlend < 1.0) {
+                        closedLoopFuelTrim_[cylinderIndex] = std::lerp(
+                            closedLoopFuelTrim_[cylinderIndex],
                             FuelInjectionModel::updateClosedLoopTrim(
                                 config_.injection, state_.rpm, mixtureAfr,
-                                targetAfr, closedLoopFuelTrim_[cylinderIndex]);
-                    } else if (state_.throttle >= 0.25) {
-                        highLoadClosedLoopFuelTrim_[cylinderIndex] =
+                                targetAfr, closedLoopFuelTrim_[cylinderIndex]),
+                            1.0 - trimAuthorityBlend);
+                    }
+                    if (trimAuthorityBlend > 0.0) {
+                        highLoadClosedLoopFuelTrim_[cylinderIndex] = std::lerp(
+                            highLoadClosedLoopFuelTrim_[cylinderIndex],
                             FuelInjectionModel::updateClosedLoopTrim(
                                 config_.injection, state_.rpm, mixtureAfr,
                                 targetAfr,
-                                highLoadClosedLoopFuelTrim_[cylinderIndex]);
+                                highLoadClosedLoopFuelTrim_[cylinderIndex]),
+                            trimAuthorityBlend);
                     }
                 }
                 const auto mixtureError = std::abs(mixtureAfr - ecuCommand.targetAirFuelRatio)
@@ -3009,6 +3048,8 @@ void EngineSimulator::reset() noexcept {
     actualAfrLastCycle_.fill(config_.fuelProperties.stoichiometricAirFuelRatio);
     fuelDeliveryRatio_.fill(0.0);
     commandedFuelMolesMaxThisCycle_.fill(0.0);
+    injectorOpenSubsteps_.fill(0.0);
+    injectorWindowSubsteps_.fill(0.0);
     injectorCapacityRatio_.fill(1.0);
     closedLoopFuelTrim_.fill(1.0);
     highLoadClosedLoopFuelTrim_.fill(1.0);

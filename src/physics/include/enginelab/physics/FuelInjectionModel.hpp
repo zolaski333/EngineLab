@@ -13,6 +13,14 @@ struct FuelInjectionState final {
 
 struct FuelInjectionResult final {
     double meteredMoles { 0.0 };
+    /** Fraction of this call for which the injector was physically open.
+     *
+     * A pulse can consume only part of a solver sub-step when its remaining
+     * command is below the flow capacity. Counting every non-zero pulse as a
+     * full sub-step overstates duty cycle; this value preserves that final
+     * fractional opening without exposing the model's internal capacity.
+     */
+    double openFraction { 0.0 };
     double vaporisedMoles { 0.0 };
     double entrainedMoles { 0.0 };
     double chargeCoolingJoules { 0.0 };
