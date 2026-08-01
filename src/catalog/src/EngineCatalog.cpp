@@ -1,9 +1,12 @@
 #include <enginelab/catalog/EngineCatalog.hpp>
 #include <yaml-cpp/yaml.h>
 #include <algorithm>
+#include <cctype>
+#include <cmath>
 #include <fstream>
 #include <map>
 #include <optional>
+#include <set>
 #include <sstream>
 #include <stdexcept>
 
@@ -27,6 +30,100 @@ void assignIfPresent(const YAML::Node& node, const char* key, T& value) {
     if (value == "radial") return EngineLayout::radial;
     if (value == "custom") return EngineLayout::custom;
     throw std::runtime_error("Unknown engine layout: " + value);
+}
+
+[[nodiscard]] std::string voicingFileKey(std::string_view value) {
+    std::string result;
+    result.reserve(value.size());
+    auto previousSeparator = false;
+    for (const auto character : value) {
+        const auto byte = static_cast<unsigned char>(character);
+        if (std::isalnum(byte)) {
+            result.push_back(static_cast<char>(std::tolower(byte)));
+            previousSeparator = false;
+        } else if (!previousSeparator && !result.empty()) {
+            result.push_back('_');
+            previousSeparator = true;
+        }
+    }
+    while (!result.empty() && result.back() == '_') result.pop_back();
+    return result;
+}
+
+void requireKnownKeys(const YAML::Node& node,
+                      const std::set<std::string>& allowed,
+                      std::string_view context) {
+    if (!node || !node.IsMap())
+        throw std::runtime_error(std::string(context) + " must be a map");
+    for (const auto& item : node) {
+        const auto key = item.first.as<std::string>();
+        if (!allowed.contains(key))
+            throw std::runtime_error(std::string(context)
+                + ": unknown key `" + key + "`");
+    }
+}
+
+void assignVoicingNumber(const YAML::Node& node, const char* key,
+                         double minimum, double maximum, double& destination) {
+    if (!node[key]) return;
+    const auto value = node[key].as<double>();
+    if (!std::isfinite(value) || value < minimum || value > maximum)
+        throw std::runtime_error(std::string("voicing.") + key
+            + " must be finite and in [" + std::to_string(minimum)
+            + ", " + std::to_string(maximum) + "]");
+    destination = value;
+}
+
+void applyVoicingFile(const std::filesystem::path& file,
+                      AudioVoicingConfig& voicing) {
+    const auto document = YAML::LoadFile(file.string());
+    requireKnownKeys(document, { "schema_version", "voicing" },
+        file.filename().string());
+    if (document["schema_version"].as<int>(1) != 1)
+        throw std::runtime_error(file.filename().string()
+            + ": unsupported schema_version");
+    const auto node = document["voicing"];
+    if (!node) return;
+    requireKnownKeys(node, {
+        "volume", "convolution", "high_frequency_gain",
+        "low_frequency_gain", "low_frequency_noise",
+        "high_frequency_noise", "combustion_gain", "exhaust_gain",
+        "intake_gain", "mechanical_gain", "stereo_width",
+        "outlet_jet_gain", "saturation_drive", "saturation_placement"
+    }, file.filename().string() + ".voicing");
+    assignVoicingNumber(node, "volume", 0.0, 2.0, voicing.volume);
+    assignVoicingNumber(node, "convolution", 0.0, 1.0, voicing.convolution);
+    assignVoicingNumber(node, "high_frequency_gain", 0.2, 2.5,
+        voicing.highFrequencyGain);
+    assignVoicingNumber(node, "low_frequency_gain", 0.2, 2.5,
+        voicing.lowFrequencyGain);
+    assignVoicingNumber(node, "low_frequency_noise", 0.0, 1.5,
+        voicing.lowFrequencyNoise);
+    assignVoicingNumber(node, "high_frequency_noise", 0.0, 1.5,
+        voicing.highFrequencyNoise);
+    assignVoicingNumber(node, "combustion_gain", 0.0, 2.0,
+        voicing.combustionGain);
+    assignVoicingNumber(node, "exhaust_gain", 0.0, 2.0,
+        voicing.exhaustGain);
+    assignVoicingNumber(node, "intake_gain", 0.0, 2.0,
+        voicing.intakeGain);
+    assignVoicingNumber(node, "mechanical_gain", 0.0, 2.0,
+        voicing.mechanicalGain);
+    assignVoicingNumber(node, "stereo_width", 0.0, 2.0,
+        voicing.stereoWidth);
+    assignVoicingNumber(node, "outlet_jet_gain", 0.0, 2.0,
+        voicing.outletJetGain);
+    assignVoicingNumber(node, "saturation_drive", 0.0, 4.0,
+        voicing.saturationDrive);
+    if (node["saturation_placement"]) {
+        const auto placement = node["saturation_placement"].as<std::string>();
+        if (placement == "pre_shelf")
+            voicing.saturationPlacement = AudioSaturationPlacement::preShelf;
+        else if (placement == "post_shelf")
+            voicing.saturationPlacement = AudioSaturationPlacement::postShelf;
+        else
+            throw std::runtime_error("voicing.saturation_placement must be pre_shelf or post_shelf");
+    }
 }
 
 template <typename T>
@@ -749,6 +846,50 @@ void applyCrankOffsets(EngineConfig& config) {
 }
 } // namespace
 
+AudioVoicingLoadResult loadAudioVoicing(
+    const std::filesystem::path& rootDirectory,
+    std::string_view family,
+    std::string_view engineKey) {
+    AudioVoicingLoadResult result;
+    const auto voicingRoot = rootDirectory / "voicing";
+    const std::array candidates {
+        voicingRoot / "default.yaml",
+        voicingRoot / "families" / (voicingFileKey(family) + ".yaml"),
+        voicingRoot / "engines" / (voicingFileKey(engineKey) + ".yaml")
+    };
+    try {
+        for (const auto& file : candidates) {
+            if (file.filename() == ".yaml" || !std::filesystem::exists(file))
+                continue;
+            applyVoicingFile(file, result.voicing);
+            result.sources.push_back(file);
+        }
+    } catch (const std::exception& error) {
+        result.voicing = {};
+        result.sources.clear();
+        result.error = error.what();
+    }
+    return result;
+}
+
+std::filesystem::file_time_type audioVoicingRevision(
+    const std::filesystem::path& rootDirectory) noexcept {
+    const auto voicingRoot = rootDirectory / "voicing";
+    auto revision = std::filesystem::file_time_type::min();
+    std::error_code error;
+    if (!std::filesystem::is_directory(voicingRoot, error)) return revision;
+    for (std::filesystem::recursive_directory_iterator iterator(
+             voicingRoot,
+             std::filesystem::directory_options::skip_permission_denied,
+             error), end;
+         iterator != end && !error; iterator.increment(error)) {
+        if (!iterator->is_regular_file(error)) continue;
+        const auto updated = iterator->last_write_time(error);
+        if (!error) revision = std::max(revision, updated);
+    }
+    return revision;
+}
+
 EngineCatalogLoadResult loadEngineCatalog(const std::filesystem::path& rootDirectory) {
     EngineCatalogLoadResult result;
     const auto enginesRoot = rootDirectory / "engines";
@@ -777,6 +918,15 @@ EngineCatalogLoadResult loadEngineCatalog(const std::filesystem::path& rootDirec
             entry.sourcePath = file;
             if (const auto document = YAML::LoadFile(file.string()); document["family"])
                 entry.family = document["family"].as<std::string>();
+            entry.config.audioVoicingFamily = entry.family;
+            entry.config.audioVoicingKey = file.stem().string();
+            const auto voicing = loadAudioVoicing(rootDirectory, entry.family,
+                entry.config.audioVoicingKey);
+            if (voicing)
+                entry.config.audioVoicing = voicing.voicing;
+            else
+                result.errors.push_back(file.filename().string()
+                    + " voicing: " + voicing.error);
             result.entries.push_back(std::move(entry));
         } catch (const std::exception& error) {
             result.errors.push_back(file.filename().string() + ": " + error.what());

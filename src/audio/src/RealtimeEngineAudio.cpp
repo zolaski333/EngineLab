@@ -386,6 +386,14 @@ void RealtimeEngineAudio::setImpulseResponse(juce::AudioBuffer<float>&& samples,
     convolutionBank_.load(pathIndex, std::move(samples), sourceSampleRate);
 }
 
+[[nodiscard]] float applyVoicingSaturation(float sample, float drive) noexcept {
+    if (drive <= 0.0F) return sample;
+    // tanh(g*x)/g has unity small-signal gain, so drive changes transient crest
+    // shape without turning a saturation choice into a hidden volume control.
+    const auto gain = 1.0F + std::clamp(drive, 0.0F, 4.0F);
+    return std::tanh(finiteState(sample, 24.0F) * gain) / gain;
+}
+
 void RealtimeEngineAudio::render(juce::AudioBuffer<float>& output, int startSample, int sampleCount) noexcept {
     renderWithStems(output, startSample, sampleCount, {});
 }
@@ -567,12 +575,22 @@ void RealtimeEngineAudio::renderWithStems(
         realtimeState_.convolution.load(std::memory_order_relaxed), 0.0F, 1.0F);
     const auto highGain = std::clamp(
         realtimeState_.highFrequencyGain.load(std::memory_order_relaxed), 0.2F, 2.5F);
+    const auto lowGain = std::clamp(
+        realtimeState_.lowFrequencyGain.load(std::memory_order_relaxed), 0.2F, 2.5F);
     const auto lowNoise = realtimeState_.lowFrequencyNoise.load(std::memory_order_relaxed);
     const auto highNoise = realtimeState_.highFrequencyNoise.load(std::memory_order_relaxed);
     const auto combustionGain = realtimeState_.combustionGain.load(std::memory_order_relaxed);
     const auto exhaustGain = realtimeState_.exhaustGain.load(std::memory_order_relaxed);
     const auto intakeGain = realtimeState_.intakeGain.load(std::memory_order_relaxed);
     const auto mechanicalGain = realtimeState_.mechanicalGain.load(std::memory_order_relaxed);
+    const auto stereoWidth = std::clamp(
+        realtimeState_.stereoWidth.load(std::memory_order_relaxed), 0.0F, 2.0F);
+    const auto outletJetGain = std::clamp(
+        realtimeState_.outletJetGain.load(std::memory_order_relaxed), 0.0F, 2.0F);
+    const auto saturationDrive = std::clamp(
+        realtimeState_.saturationDrive.load(std::memory_order_relaxed), 0.0F, 4.0F);
+    const auto saturationPlacement = static_cast<AudioSaturationPlacement>(
+        realtimeState_.saturationPlacement.load(std::memory_order_relaxed));
     const auto acousticFullScaleSplDb = std::clamp(
         realtimeState_.acousticFullScaleSplDb.load(std::memory_order_relaxed),
         100.0F, 180.0F);
@@ -1338,20 +1356,24 @@ void RealtimeEngineAudio::renderWithStems(
             const auto jetNoisePressure =
                 acousticExhaustNetwork_->lastOutletJetNoisePressure();
             for (std::size_t path = 0; path < exhaustPathCount; ++path) {
+                const auto adjustedLeftPa = observerPressure[path].leftPa
+                    + (outletJetGain - 1.0F) * jetNoisePressure[path].leftPa;
+                const auto adjustedRightPa = observerPressure[path].rightPa
+                    + (outletJetGain - 1.0F) * jetNoisePressure[path].rightPa;
                 blockPeakObservedExhaustPressurePa = std::max(
                     blockPeakObservedExhaustPressurePa,
-                    std::max(std::abs(observerPressure[path].leftPa),
-                        std::abs(observerPressure[path].rightPa)));
+                    std::max(std::abs(adjustedLeftPa),
+                        std::abs(adjustedRightPa)));
                 blockPeakObservedExhaustJetNoisePressurePa = std::max(
                     blockPeakObservedExhaustJetNoisePressurePa,
                     std::max(std::abs(jetNoisePressure[path].leftPa),
                         std::abs(jetNoisePressure[path].rightPa)));
                 const auto calibratedLeft = static_cast<float>(
                     AcousticMonitorCalibration::normalisePeakPressure(
-                        observerPressure[path].leftPa, acousticFullScaleSplDb));
+                        adjustedLeftPa, acousticFullScaleSplDb));
                 const auto calibratedRight = static_cast<float>(
                     AcousticMonitorCalibration::normalisePeakPressure(
-                        observerPressure[path].rightPa, acousticFullScaleSplDb));
+                        adjustedRightPa, acousticFullScaleSplDb));
                 exhaustLeft += calibratedLeft;
                 exhaustRight += calibratedRight;
                 convolutionBank_.addInput(path, 0, sample, calibratedLeft);
@@ -1850,10 +1872,28 @@ void RealtimeEngineAudio::renderWithStems(
         auto right = finiteState(dryRight
             + radiatedWetExhaustRight * irMix * exhaustGain * wetMonitorScale, 24.0F);
 
+        if (saturationDrive > 0.0F
+                && saturationPlacement == AudioSaturationPlacement::preShelf) {
+            left = applyVoicingSaturation(left, saturationDrive);
+            right = applyVoicingSaturation(right, saturationDrive);
+        }
+
         toneLowLeft_ += toneCoefficient_ * (left - toneLowLeft_);
         toneLowRight_ += toneCoefficient_ * (right - toneLowRight_);
-        left = toneLowLeft_ + (left - toneLowLeft_) * highGain;
-        right = toneLowRight_ + (right - toneLowRight_) * highGain;
+        left = toneLowLeft_ * lowGain + (left - toneLowLeft_) * highGain;
+        right = toneLowRight_ * lowGain + (right - toneLowRight_) * highGain;
+
+        if (saturationDrive > 0.0F
+                && saturationPlacement == AudioSaturationPlacement::postShelf) {
+            left = applyVoicingSaturation(left, saturationDrive);
+            right = applyVoicingSaturation(right, saturationDrive);
+        }
+        if (stereoWidth != 1.0F) {
+            const auto mid = 0.5F * (left + right);
+            const auto side = 0.5F * (left - right) * stereoWidth;
+            left = mid + side;
+            right = mid - side;
+        }
 
         const auto dcLeft = left - dcInputLeft_ + dcBlockPole_ * dcOutputLeft_;
         const auto dcRight = right - dcInputRight_ + dcBlockPole_ * dcOutputRight_;

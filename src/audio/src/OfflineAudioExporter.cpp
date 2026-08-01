@@ -620,6 +620,8 @@ OfflineAudioExportResult exportOfflineAudio(
             request.mix.convolution);
         audioConfiguration->setHighFrequencyGain(
             request.mix.highFrequencyGain);
+        audioConfiguration->setLowFrequencyGain(
+            request.mix.lowFrequencyGain);
         audioConfiguration->setLowFrequencyNoise(
             request.mix.lowFrequencyNoise);
         audioConfiguration->setHighFrequencyNoise(
@@ -632,6 +634,14 @@ OfflineAudioExportResult exportOfflineAudio(
             request.mix.intakeGain);
         audioConfiguration->setMechanicalGain(
             request.mix.mechanicalGain);
+        audioConfiguration->setStereoWidth(
+            request.mix.stereoWidth);
+        audioConfiguration->setOutletJetGain(
+            request.mix.outletJetGain);
+        audioConfiguration->setSaturationDrive(
+            request.mix.saturationDrive);
+        audioConfiguration->setSaturationPlacement(
+            request.mix.saturationPlacement);
 
         auto renderer = std::make_unique<RealtimeEngineAudio>(
             *eventQueue, audioConfiguration->audioState(),
@@ -1046,6 +1056,8 @@ OfflineAudioExportResult exportOfflineAudio(
                 { "convolution", request.mix.convolution },
                 { "high_frequency_gain",
                   request.mix.highFrequencyGain },
+                { "low_frequency_gain",
+                  request.mix.lowFrequencyGain },
                 { "low_frequency_noise",
                   request.mix.lowFrequencyNoise },
                 { "high_frequency_noise",
@@ -1058,6 +1070,13 @@ OfflineAudioExportResult exportOfflineAudio(
                   request.mix.intakeGain },
                 { "mechanical_gain",
                   request.mix.mechanicalGain },
+                { "stereo_width", request.mix.stereoWidth },
+                { "outlet_jet_gain", request.mix.outletJetGain },
+                { "saturation_drive", request.mix.saturationDrive },
+                { "saturation_placement",
+                  request.mix.saturationPlacement
+                        == AudioSaturationPlacement::preShelf
+                    ? "pre_shelf" : "post_shelf" },
             } },
             { "warnings", std::move(warnings) },
         };

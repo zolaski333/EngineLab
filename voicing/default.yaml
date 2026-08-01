@@ -1,0 +1,19 @@
+schema_version: 1
+
+# Listening-chain defaults. These reproduce the pre-catalogue hard-coded mix;
+# engine physics, pressure telemetry and exhaust geometry do not belong here.
+voicing:
+  volume: 1.0
+  convolution: 0.45
+  high_frequency_gain: 1.0
+  low_frequency_gain: 1.0
+  low_frequency_noise: 0.35
+  high_frequency_noise: 0.35
+  combustion_gain: 1.0
+  exhaust_gain: 1.0
+  intake_gain: 0.85
+  mechanical_gain: 0.70
+  stereo_width: 1.0
+  outlet_jet_gain: 1.0
+  saturation_drive: 0.0
+  saturation_placement: post_shelf

@@ -43,18 +43,8 @@ struct OfflineAudioScenario final {
     std::vector<OfflineAudioStage> stages;
 };
 
-/** The same user-facing mix controls as the realtime application. */
-struct OfflineAudioMix final {
-    double volume { 1.0 };
-    double convolution { 0.45 };
-    double highFrequencyGain { 1.0 };
-    double lowFrequencyNoise { 0.35 };
-    double highFrequencyNoise { 0.35 };
-    double combustionGain { 1.0 };
-    double exhaustGain { 1.0 };
-    double intakeGain { 0.85 };
-    double mechanicalGain { 0.70 };
-};
+/** The same listening-chain controls as the realtime application. */
+using OfflineAudioMix = AudioVoicingConfig;
 
 struct OfflineAudioExportRequest final {
     EngineConfig engine;

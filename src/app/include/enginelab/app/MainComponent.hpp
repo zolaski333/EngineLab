@@ -51,6 +51,8 @@ private:
     void startEngineScriptWatcher(const std::filesystem::path&);
     void stopEngineScriptWatcher() noexcept;
     void pollEngineScript();
+    void pollAudioVoicing();
+    void adoptAudioVoicing(const AudioVoicingConfig&);
     void importEngine();
     void exportEngine();
     void exportDynoCsv();
@@ -112,12 +114,19 @@ private:
     double audioVolume_ { 1.0 };
     double audioConvolution_ { 0.45 };
     double highFrequencyGain_ { 1.0 };
+    double lowFrequencyGain_ { 1.0 };
     double lowFrequencyNoise_ { 0.35 };
     double highFrequencyNoise_ { 0.35 };
     double combustionGain_ { 1.0 };
     double exhaustGain_ { 1.0 };
     double intakeGain_ { 0.85 };
     double mechanicalGain_ { 0.70 };
+    double stereoWidth_ { 1.0 };
+    double outletJetGain_ { 1.0 };
+    double saturationDrive_ { 0.0 };
+    AudioSaturationPlacement saturationPlacement_ {
+        AudioSaturationPlacement::postShelf
+    };
     int exhaustPresetIndex_ { 0 };
     bool physicalExhaustTopology_ { false };
     bool physicalIntakeTopology_ { false };
@@ -138,6 +147,11 @@ private:
     std::unique_ptr<scripting::EngineScriptHotReloader> scriptReloader_;
     std::uint64_t scriptRevision_ {};
     std::uint64_t scriptAttempt_ {};
+    std::filesystem::file_time_type voicingRevision_ {
+        std::filesystem::file_time_type::min()
+    };
+    std::uint32_t voicingPollTicks_ {};
+    std::uint64_t voicingReloadCount_ {};
 
     juce::Label title_;
     juce::ComboBox engineSelector_;

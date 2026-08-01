@@ -211,6 +211,8 @@ bool MainComponent::applyConfig(const EngineConfig& newConfig, bool preserveScri
     collectFinishedRuns();
     audio_.reset(); runtime_.reset();
     config_ = std::move(canonicalConfig);
+    adoptAudioVoicing(config_.audioVoicing);
+    voicingRevision_ = audioVoicingRevision(catalogRoot_);
     if (exhaustDesignerWindow_) exhaustDesignerWindow_->setConfig(config_);
     renderSnapshotBuilder_ = std::make_unique<RenderSnapshotBuilder>(config_);
     renderSnapshotInterpolator_.reset();
@@ -226,15 +228,7 @@ bool MainComponent::applyConfig(const EngineConfig& newConfig, bool preserveScri
     runtime_->setAirFuelRatioTrim(afrSlider_.getValue());
     runtime_->setIgnitionTrimDegrees(advanceSlider_.getValue());
     runtime_->setIgnitionEnabled(ignitionButton_.getToggleState());
-    runtime_->setAudioVolume(audioVolume_);
-    runtime_->setAudioConvolution(audioConvolution_);
-    runtime_->setHighFrequencyGain(highFrequencyGain_);
-    runtime_->setLowFrequencyNoise(lowFrequencyNoise_);
-    runtime_->setHighFrequencyNoise(highFrequencyNoise_);
-    runtime_->setCombustionGain(combustionGain_);
-    runtime_->setExhaustGain(exhaustGain_);
-    runtime_->setIntakeGain(intakeGain_);
-    runtime_->setMechanicalGain(mechanicalGain_);
+    runtime_->applyAudioVoicing(currentAudioMix());
     runtime_->setExhaustPreset(static_cast<AudioExhaustPreset>(exhaustPresetIndex_));
     updateAudioControlAvailability();
     configureImpulseResponse();
@@ -441,13 +435,35 @@ OfflineAudioMix MainComponent::currentAudioMix() const noexcept {
     mix.volume = audioVolume_;
     mix.convolution = audioConvolution_;
     mix.highFrequencyGain = highFrequencyGain_;
+    mix.lowFrequencyGain = lowFrequencyGain_;
     mix.lowFrequencyNoise = lowFrequencyNoise_;
     mix.highFrequencyNoise = highFrequencyNoise_;
     mix.combustionGain = combustionGain_;
     mix.exhaustGain = exhaustGain_;
     mix.intakeGain = intakeGain_;
     mix.mechanicalGain = mechanicalGain_;
+    mix.stereoWidth = stereoWidth_;
+    mix.outletJetGain = outletJetGain_;
+    mix.saturationDrive = saturationDrive_;
+    mix.saturationPlacement = saturationPlacement_;
     return mix;
+}
+
+void MainComponent::adoptAudioVoicing(const AudioVoicingConfig& voicing) {
+    audioVolume_ = voicing.volume;
+    audioConvolution_ = voicing.convolution;
+    highFrequencyGain_ = voicing.highFrequencyGain;
+    lowFrequencyGain_ = voicing.lowFrequencyGain;
+    lowFrequencyNoise_ = voicing.lowFrequencyNoise;
+    highFrequencyNoise_ = voicing.highFrequencyNoise;
+    combustionGain_ = voicing.combustionGain;
+    exhaustGain_ = voicing.exhaustGain;
+    intakeGain_ = voicing.intakeGain;
+    mechanicalGain_ = voicing.mechanicalGain;
+    stereoWidth_ = voicing.stereoWidth;
+    outletJetGain_ = voicing.outletJetGain;
+    saturationDrive_ = voicing.saturationDrive;
+    saturationPlacement_ = voicing.saturationPlacement;
 }
 
 void MainComponent::applyAudioWorkshopMix(
@@ -456,27 +472,19 @@ void MainComponent::applyAudioWorkshopMix(
     audioVolume_ = baseMix.volume;
     audioConvolution_ = baseMix.convolution;
     highFrequencyGain_ = baseMix.highFrequencyGain;
+    lowFrequencyGain_ = baseMix.lowFrequencyGain;
     lowFrequencyNoise_ = baseMix.lowFrequencyNoise;
     highFrequencyNoise_ = baseMix.highFrequencyNoise;
     combustionGain_ = baseMix.combustionGain;
     exhaustGain_ = baseMix.exhaustGain;
     intakeGain_ = baseMix.intakeGain;
     mechanicalGain_ = baseMix.mechanicalGain;
+    stereoWidth_ = baseMix.stereoWidth;
+    outletJetGain_ = baseMix.outletJetGain;
+    saturationDrive_ = baseMix.saturationDrive;
+    saturationPlacement_ = baseMix.saturationPlacement;
     if (runtime_) {
-        runtime_->setAudioVolume(effectiveMix.volume);
-        runtime_->setAudioConvolution(effectiveMix.convolution);
-        runtime_->setHighFrequencyGain(
-            effectiveMix.highFrequencyGain);
-        runtime_->setLowFrequencyNoise(
-            effectiveMix.lowFrequencyNoise);
-        runtime_->setHighFrequencyNoise(
-            effectiveMix.highFrequencyNoise);
-        runtime_->setCombustionGain(
-            effectiveMix.combustionGain);
-        runtime_->setExhaustGain(effectiveMix.exhaustGain);
-        runtime_->setIntakeGain(effectiveMix.intakeGain);
-        runtime_->setMechanicalGain(
-            effectiveMix.mechanicalGain);
+        runtime_->applyAudioVoicing(effectiveMix);
     }
     repaint();
 }
@@ -572,6 +580,29 @@ void MainComponent::pollEngineScript() {
     }
     message << "\n\nLa dernière configuration valide reste active.";
     showError("Script moteur refusé", message);
+}
+
+void MainComponent::pollAudioVoicing() {
+    // Timer runs at 30 Hz. Filesystem probing once per second stays entirely on
+    // the message thread and never enters the realtime callback.
+    if (++voicingPollTicks_ < 30U) return;
+    voicingPollTicks_ = 0;
+    const auto revision = audioVoicingRevision(catalogRoot_);
+    if (revision == voicingRevision_) return;
+    voicingRevision_ = revision;
+    const auto loaded = loadAudioVoicing(catalogRoot_,
+        config_.audioVoicingFamily, config_.audioVoicingKey);
+    if (!loaded) {
+        showError("Voicing audio refusee",
+            juce::String::fromUTF8(loaded.error.c_str())
+                + "\n\nLa derniere voicing valide reste active.");
+        return;
+    }
+    config_.audioVoicing = loaded.voicing;
+    adoptAudioVoicing(loaded.voicing);
+    if (runtime_) runtime_->applyAudioVoicing(loaded.voicing);
+    syncAudioWorkshopMix();
+    ++voicingReloadCount_;
 }
 
 void MainComponent::importEngine() {
@@ -928,6 +959,7 @@ void MainComponent::mouseDoubleClick(const juce::MouseEvent& event) {
 
 void MainComponent::timerCallback() {
     pollEngineScript();
+    pollAudioVoicing();
     if (!runtime_) return;
     if (throttleKeyActive_) updateMomentaryThrottle();
     const auto clutchTarget = (actionMap_.isDown(AppAction::clutchHold)
@@ -959,7 +991,10 @@ void MainComponent::timerCallback() {
     title_.setText("EngineLab   /   " + juce::String(config_.name) + "   /   "
         + juce::String(engineDisplacementLitres(config_), 2) + " L   /   "
         + (runtime_->paused() ? juce::String("PAUSE") : "x" + juce::String(runtime_->timeScale(), 1))
-        + (scriptReloader_ ? "   /   SCRIPT LIVE r" + juce::String(scriptRevision_) : juce::String {}),
+        + (scriptReloader_ ? "   /   SCRIPT LIVE r" + juce::String(scriptRevision_) : juce::String {})
+        + (voicingReloadCount_ > 0
+            ? "   /   VOICING LIVE r" + juce::String(voicingReloadCount_)
+            : juce::String {}),
         juce::dontSendNotification);
     dynoButton_.setButtonText(running ? utf8("D  ARRÊTER DYNO") : juce::String("D  LANCER DYNO"));
     dynoButton_.setToggleState(running, juce::dontSendNotification);

@@ -84,12 +84,19 @@ struct RealtimeAudioState final {
     std::atomic<float> volume { 1.0F };
     std::atomic<float> convolution { 0.45F };
     std::atomic<float> highFrequencyGain { 1.0F };
+    std::atomic<float> lowFrequencyGain { 1.0F };
     std::atomic<float> lowFrequencyNoise { 0.35F };
     std::atomic<float> highFrequencyNoise { 0.35F };
     std::atomic<float> combustionGain { 1.0F };
     std::atomic<float> exhaustGain { 1.0F };
     std::atomic<float> intakeGain { 0.85F };
     std::atomic<float> mechanicalGain { 0.70F };
+    std::atomic<float> stereoWidth { 1.0F };
+    std::atomic<float> outletJetGain { 1.0F };
+    std::atomic<float> saturationDrive { 0.0F };
+    std::atomic<int> saturationPlacement {
+        static_cast<int>(AudioSaturationPlacement::postShelf)
+    };
     // Microphone/preamp calibration for SI exhaust pressure. dBFS has no
     // intrinsic pressure unit; keeping the capture-chain headroom explicit
     // avoids disguising a fixed voicing gain as acoustics.
@@ -171,12 +178,21 @@ public:
     void setAudioVolume(double value) noexcept { audioState_.volume.store(static_cast<float>(std::clamp(value, 0.0, 2.0))); }
     void setAudioConvolution(double value) noexcept { audioState_.convolution.store(static_cast<float>(std::clamp(value, 0.0, 1.0))); }
     void setHighFrequencyGain(double value) noexcept { audioState_.highFrequencyGain.store(static_cast<float>(std::clamp(value, 0.2, 2.5))); }
+    void setLowFrequencyGain(double value) noexcept { audioState_.lowFrequencyGain.store(static_cast<float>(std::clamp(value, 0.2, 2.5))); }
     void setLowFrequencyNoise(double value) noexcept { audioState_.lowFrequencyNoise.store(static_cast<float>(std::clamp(value, 0.0, 1.5))); }
     void setHighFrequencyNoise(double value) noexcept { audioState_.highFrequencyNoise.store(static_cast<float>(std::clamp(value, 0.0, 1.5))); }
     void setCombustionGain(double value) noexcept { audioState_.combustionGain.store(static_cast<float>(std::clamp(value, 0.0, 2.0))); }
     void setExhaustGain(double value) noexcept { audioState_.exhaustGain.store(static_cast<float>(std::clamp(value, 0.0, 2.0))); }
     void setIntakeGain(double value) noexcept { audioState_.intakeGain.store(static_cast<float>(std::clamp(value, 0.0, 2.0))); }
     void setMechanicalGain(double value) noexcept { audioState_.mechanicalGain.store(static_cast<float>(std::clamp(value, 0.0, 2.0))); }
+    void setStereoWidth(double value) noexcept { audioState_.stereoWidth.store(static_cast<float>(std::clamp(value, 0.0, 2.0))); }
+    void setOutletJetGain(double value) noexcept { audioState_.outletJetGain.store(static_cast<float>(std::clamp(value, 0.0, 2.0))); }
+    void setSaturationDrive(double value) noexcept { audioState_.saturationDrive.store(static_cast<float>(std::clamp(value, 0.0, 4.0))); }
+    void setSaturationPlacement(AudioSaturationPlacement value) noexcept {
+        audioState_.saturationPlacement.store(static_cast<int>(value), std::memory_order_relaxed);
+    }
+    /** Publish one coherent voicing snapshot through lock-free callback atoms. */
+    void applyAudioVoicing(const AudioVoicingConfig&) noexcept;
     void setAcousticFullScaleSplDb(double value) noexcept {
         audioState_.acousticFullScaleSplDb.store(
             static_cast<float>(std::clamp(value, 100.0, 180.0)));

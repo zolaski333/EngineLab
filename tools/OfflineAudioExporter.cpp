@@ -72,6 +72,14 @@ int main(int argc, char** argv) {
     bool overwrite = false;
     bool listEngines = false;
     enginelab::OfflineAudioMix mix;
+    struct MixOverrides final {
+        std::optional<double> volume;
+        std::optional<double> convolution;
+        std::optional<double> combustion;
+        std::optional<double> exhaust;
+        std::optional<double> intake;
+        std::optional<double> mechanical;
+    } mixOverrides;
 
     for (int argument = 1; argument < argc; ++argument) {
         const std::string option = argv[argument];
@@ -137,46 +145,53 @@ int main(int argc, char** argv) {
                 return 1;
             }
         } else if (option == "--volume") {
-            if (!parseDouble(value, mix.volume)
-                || mix.volume < 0.0 || mix.volume > 2.0) {
+            double parsed {};
+            if (!parseDouble(value, parsed)
+                || parsed < 0.0 || parsed > 2.0) {
                 std::cerr << "Volume must be in [0, 2].\n";
                 return 1;
             }
+            mixOverrides.volume = parsed;
         } else if (option == "--convolution") {
-            if (!parseDouble(value, mix.convolution)
-                || mix.convolution < 0.0
-                || mix.convolution > 1.0) {
+            double parsed {};
+            if (!parseDouble(value, parsed)
+                || parsed < 0.0 || parsed > 1.0) {
                 std::cerr << "Convolution must be in [0, 1].\n";
                 return 1;
             }
+            mixOverrides.convolution = parsed;
         } else if (option == "--combustion") {
-            if (!parseDouble(value, mix.combustionGain)
-                || mix.combustionGain < 0.0
-                || mix.combustionGain > 2.0) {
+            double parsed {};
+            if (!parseDouble(value, parsed)
+                || parsed < 0.0 || parsed > 2.0) {
                 std::cerr << "Combustion gain must be in [0, 2].\n";
                 return 1;
             }
+            mixOverrides.combustion = parsed;
         } else if (option == "--exhaust") {
-            if (!parseDouble(value, mix.exhaustGain)
-                || mix.exhaustGain < 0.0
-                || mix.exhaustGain > 2.0) {
+            double parsed {};
+            if (!parseDouble(value, parsed)
+                || parsed < 0.0 || parsed > 2.0) {
                 std::cerr << "Exhaust gain must be in [0, 2].\n";
                 return 1;
             }
+            mixOverrides.exhaust = parsed;
         } else if (option == "--intake") {
-            if (!parseDouble(value, mix.intakeGain)
-                || mix.intakeGain < 0.0
-                || mix.intakeGain > 2.0) {
+            double parsed {};
+            if (!parseDouble(value, parsed)
+                || parsed < 0.0 || parsed > 2.0) {
                 std::cerr << "Intake gain must be in [0, 2].\n";
                 return 1;
             }
+            mixOverrides.intake = parsed;
         } else if (option == "--mechanical") {
-            if (!parseDouble(value, mix.mechanicalGain)
-                || mix.mechanicalGain < 0.0
-                || mix.mechanicalGain > 2.0) {
+            double parsed {};
+            if (!parseDouble(value, parsed)
+                || parsed < 0.0 || parsed > 2.0) {
                 std::cerr << "Mechanical gain must be in [0, 2].\n";
                 return 1;
             }
+            mixOverrides.mechanical = parsed;
         } else {
             std::cerr << "Unknown option: " << option << '\n';
             return 1;
@@ -215,6 +230,16 @@ int main(int argc, char** argv) {
             std::cerr << "  " << match->config.name << '\n';
         return 1;
     }
+
+    // Catalogue voicing is the offline default too; explicit command-line
+    // switches remain the final layer for controlled A/B renders.
+    mix = matches.front()->config.audioVoicing;
+    if (mixOverrides.volume) mix.volume = *mixOverrides.volume;
+    if (mixOverrides.convolution) mix.convolution = *mixOverrides.convolution;
+    if (mixOverrides.combustion) mix.combustionGain = *mixOverrides.combustion;
+    if (mixOverrides.exhaust) mix.exhaustGain = *mixOverrides.exhaust;
+    if (mixOverrides.intake) mix.intakeGain = *mixOverrides.intake;
+    if (mixOverrides.mechanical) mix.mechanicalGain = *mixOverrides.mechanical;
 
     enginelab::OfflineAudioScenario scenario =
         enginelab::makeDefaultOfflineAudioScenario(

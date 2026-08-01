@@ -573,6 +573,36 @@ struct StructuralNvhConfig final {
     std::vector<StructuralModeConfig> modes;
 };
 
+enum class AudioSaturationPlacement : std::uint8_t {
+    preShelf,
+    postShelf
+};
+
+/** Non-physical monitor voicing, kept separate from engine and exhaust physics.
+ *
+ * These values shape only the listening chain. Defaults exactly match the
+ * historical hard-coded realtime mix, so introducing a voicing catalogue does
+ * not silently retune existing engines.
+ */
+struct AudioVoicingConfig final {
+    double volume { 1.0 };
+    double convolution { 0.45 };
+    double highFrequencyGain { 1.0 };
+    double lowFrequencyGain { 1.0 };
+    double lowFrequencyNoise { 0.35 };
+    double highFrequencyNoise { 0.35 };
+    double combustionGain { 1.0 };
+    double exhaustGain { 1.0 };
+    double intakeGain { 0.85 };
+    double mechanicalGain { 0.70 };
+    double stereoWidth { 1.0 };
+    double outletJetGain { 1.0 };
+    double saturationDrive { 0.0 };
+    AudioSaturationPlacement saturationPlacement {
+        AudioSaturationPlacement::postShelf
+    };
+};
+
 struct EngineConfig final {
     std::uint32_t schemaVersion { currentEngineSchemaVersion };
     std::string name { "Untitled engine" };
@@ -612,6 +642,12 @@ struct EngineConfig final {
     ExhaustConfig exhaust;
     TransmissionConfig transmission;
     VehicleConfig vehicle;
+    /** Resolved default -> family -> engine voicing. Runtime-only: the engine
+     * serializers remain physics/configuration documents, while the catalogue
+     * YAML files in voicing/ own listening-chain choices. */
+    AudioVoicingConfig audioVoicing;
+    std::string audioVoicingFamily;
+    std::string audioVoicingKey;
 };
 
 struct EngineControls final {

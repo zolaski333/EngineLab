@@ -182,6 +182,7 @@ EngineRuntime::EngineRuntime(EngineConfig config,
       driveline_(config_),
       pressureQueue_(std::make_unique<CylinderPressureQueue>()) {
     simulator_.setPressureSamplingEnabled(true);
+    applyAudioVoicing(config_.audioVoicing);
     audioState_.cylinderCount.store(static_cast<float>(config_.cylinders.size()), std::memory_order_relaxed);
     const auto displacement = engineDisplacementLitres(config_);
     double boreSum = 0.0;
@@ -369,6 +370,23 @@ void EngineRuntime::stop() {
 EngineState EngineRuntime::snapshot() const {
     const std::scoped_lock lock(snapshotMutex_);
     return snapshot_;
+}
+
+void EngineRuntime::applyAudioVoicing(const AudioVoicingConfig& voicing) noexcept {
+    setAudioVolume(voicing.volume);
+    setAudioConvolution(voicing.convolution);
+    setHighFrequencyGain(voicing.highFrequencyGain);
+    setLowFrequencyGain(voicing.lowFrequencyGain);
+    setLowFrequencyNoise(voicing.lowFrequencyNoise);
+    setHighFrequencyNoise(voicing.highFrequencyNoise);
+    setCombustionGain(voicing.combustionGain);
+    setExhaustGain(voicing.exhaustGain);
+    setIntakeGain(voicing.intakeGain);
+    setMechanicalGain(voicing.mechanicalGain);
+    setStereoWidth(voicing.stereoWidth);
+    setOutletJetGain(voicing.outletJetGain);
+    setSaturationDrive(voicing.saturationDrive);
+    setSaturationPlacement(voicing.saturationPlacement);
 }
 
 void EngineRuntime::setGear(int gear) noexcept {

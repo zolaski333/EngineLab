@@ -7,6 +7,12 @@ target_compile_definitions(EngineLabCoreTests PRIVATE ENGINELAB_CATALOG_ROOT="${
 enginelab_set_warnings(EngineLabCoreTests)
 add_test(NAME EngineLab.Core COMMAND EngineLabCoreTests)
 
+add_executable(EngineLabAudioVoicingTests AudioVoicingTests.cpp)
+target_link_libraries(EngineLabAudioVoicingTests PRIVATE
+    EngineLab::Foundation EngineLab::Catalog)
+enginelab_set_warnings(EngineLabAudioVoicingTests)
+add_test(NAME EngineLab.AudioVoicing COMMAND EngineLabAudioVoicingTests)
+
 add_executable(EngineLabVehicleDynamicsTests VehicleDynamicsTests.cpp)
 target_link_libraries(EngineLabVehicleDynamicsTests PRIVATE
     EngineLab::Foundation EngineLab::Runtime EngineLab::Diagnostics EngineLab::Serialization
