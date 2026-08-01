@@ -31,6 +31,10 @@ namespace enginelab {
  *
  * Enabling taps observes the existing render; it does not route the master
  * through the stem buffers or alter any source state.
+ *
+ * `exhaustPressureWave` and `exhaustJet` are diagnostic sub-stems: together
+ * they reconstruct `exhaustDry`, but they are not additional mix buses and
+ * must not be added to the premaster a second time.
  */
 struct RealtimeAudioStemBuffers final {
     juce::AudioBuffer<float>* combustion { nullptr };
@@ -39,6 +43,8 @@ struct RealtimeAudioStemBuffers final {
     juce::AudioBuffer<float>* intake { nullptr };
     juce::AudioBuffer<float>* forcedInduction { nullptr };
     juce::AudioBuffer<float>* mechanical { nullptr };
+    juce::AudioBuffer<float>* exhaustPressureWave { nullptr };
+    juce::AudioBuffer<float>* exhaustJet { nullptr };
 };
 
 /** Allocation-free engine renderer with an SI-unit thermoacoustic exhaust path.

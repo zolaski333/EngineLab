@@ -18,6 +18,19 @@ Quand l'option de stems est activee, l'export offline ecrit :
   premaster ;
 - `engine-order-map.csv`.
 
+Deux sous-stems diagnostiques supplémentaires décomposent le bus sec sans être
+ajoutés une seconde fois au prémaster :
+
+- `stem_exhaust_pressure_wave.wav` contient l'onde rayonnée par le réseau
+  (blowdown, réflexions et éventuel afterfire) ;
+- `stem_exhaust_jet.wav` contient uniquement la turbulence de sortie, après le
+  gain de jet auteur.
+
+Leur somme reconstruit `stem_exhaust_dry.wav`. Le manifeste publie l'erreur
+float dans `exhaust_dry_decomposition.sum_to_exhaust_dry_max_abs_error`. Cette
+séparation permet de décider à l'écoute si un excès d'aigu vient de la source
+de pression ou du bruit de jet sans changer le master.
+
 La relation auditable est :
 
 `master = premaster + master_processing_delta`

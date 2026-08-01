@@ -37,10 +37,12 @@ constexpr std::size_t maximumScenarioStages = 128;
 constexpr std::array<std::uint32_t, 3> supportedSampleRates {
     48'000U, 96'000U, 192'000U
 };
-constexpr std::array<const char*, 6> stemNames {
+constexpr std::array<const char*, 8> stemNames {
     "combustion", "exhaust_dry", "exhaust_ir",
-    "intake", "forced_induction", "mechanical"
+    "intake", "forced_induction", "mechanical",
+    "exhaust_pressure_wave", "exhaust_jet"
 };
+constexpr std::size_t reconstructingStemCount = 6;
 constexpr const char* premasterName = "premaster.wav";
 constexpr const char* processingDeltaName = "master_processing_delta.wav";
 
@@ -837,6 +839,7 @@ OfflineAudioExportResult exportOfflineAudio(
                 &stemBlocks[0], &stemBlocks[1],
                 &stemBlocks[2], &stemBlocks[3],
                 &stemBlocks[4], &stemBlocks[5],
+                &stemBlocks[6], &stemBlocks[7],
             };
         }
 
@@ -1031,15 +1034,19 @@ OfflineAudioExportResult exportOfflineAudio(
                 for (int channel = 0; channel < 2; ++channel) {
                     for (int sample = 0; sample < framesThisStep; ++sample) {
                         float stemSum = 0.0F;
-                        for (const auto& stem : stemBlocks)
-                            stemSum += stem.getSample(channel, sample);
+                        for (std::size_t stem = 0;
+                             stem < reconstructingStemCount; ++stem)
+                            stemSum += stemBlocks[stem].getSample(
+                                channel, sample);
                         const auto masterSample = master.getSample(channel, sample);
                         const auto delta = masterSample - stemSum;
                         premaster.setSample(channel, sample, stemSum);
                         processingDelta.setSample(channel, sample, delta);
                         float rebuiltStemSum = 0.0F;
-                        for (const auto& stem : stemBlocks)
-                            rebuiltStemSum += stem.getSample(channel, sample);
+                        for (std::size_t stem = 0;
+                             stem < reconstructingStemCount; ++stem)
+                            rebuiltStemSum += stemBlocks[stem].getSample(
+                                channel, sample);
                         result.stemPremasterMaxError = std::max(
                             result.stemPremasterMaxError,
                             std::abs(static_cast<double>(rebuiltStemSum - stemSum)));
@@ -1047,6 +1054,14 @@ OfflineAudioExportResult exportOfflineAudio(
                             result.masterReconstructionMaxError,
                             std::abs(static_cast<double>(
                                 (stemSum + delta) - masterSample)));
+                        const auto exhaustDecomposition =
+                            stemBlocks[6].getSample(channel, sample)
+                            + stemBlocks[7].getSample(channel, sample);
+                        result.exhaustDiagnosticDecompositionMaxError = std::max(
+                            result.exhaustDiagnosticDecompositionMaxError,
+                            std::abs(static_cast<double>(
+                                exhaustDecomposition
+                                - stemBlocks[1].getSample(channel, sample))));
                     }
                 }
             }
@@ -1206,6 +1221,13 @@ OfflineAudioExportResult exportOfflineAudio(
                 { "premaster_plus_delta_to_master_max_abs_error",
                   result.masterReconstructionMaxError },
                 { "domain", "float_before_wave_encoding" },
+            } },
+            { "exhaust_dry_decomposition", {
+                { "pressure_wave", "stem_exhaust_pressure_wave.wav" },
+                { "outlet_jet", "stem_exhaust_jet.wav" },
+                { "sum_to_exhaust_dry_max_abs_error",
+                  result.exhaustDiagnosticDecompositionMaxError },
+                { "diagnostic_only", true },
             } },
             { "engine_order_map",
               request.writeStems ? orderMapPath.filename().string() : "" },

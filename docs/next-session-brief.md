@@ -16,9 +16,12 @@
 > ce graphe. L'afterfire de décélération conditionné par l'ECU est également
 > livré et validé : fraction bornée, armement par demande conducteur, témoins
 > négatifs et réaction chimique réelle. Voir
-> `docs/overrun-afterfire-validation-2026-08-01.md`. La prochaine étape est de
-> mesurer/écouter séparément les sources de blowdown et les sorties spatiales,
-> sans dupliquer ce qui existe déjà.
+> `docs/overrun-afterfire-validation-2026-08-01.md`. Les sources sont désormais
+> séparables dans les exports HQ : onde de pression
+> (blowdown/réflexions/afterfire) et jet reconstruisent exactement
+> `exhaust_dry`, sans altérer le master. Voir
+> `docs/exhaust-source-stem-validation-2026-08-01.md`. La prochaine action doit
+> être une écoute A/B de ces stems, pas une nouvelle source procédurale.
 
 > **Mise à jour produit du 1er août 2026.** Lire d'abord
 > `docs/audio-physics-productization-validation-2026-08-01.md`. Les modèles

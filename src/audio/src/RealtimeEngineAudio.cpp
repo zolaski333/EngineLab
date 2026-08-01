@@ -426,11 +426,15 @@ void RealtimeEngineAudio::renderWithStems(
         writableStem(stems.exhaustIr) ? stems.exhaustIr : nullptr,
         writableStem(stems.intake) ? stems.intake : nullptr,
         writableStem(stems.forcedInduction) ? stems.forcedInduction : nullptr,
-        writableStem(stems.mechanical) ? stems.mechanical : nullptr
+        writableStem(stems.mechanical) ? stems.mechanical : nullptr,
+        writableStem(stems.exhaustPressureWave)
+            ? stems.exhaustPressureWave : nullptr,
+        writableStem(stems.exhaustJet) ? stems.exhaustJet : nullptr
     };
     const std::array stemBuffers {
         writable.combustion, writable.exhaustDry, writable.exhaustIr,
-        writable.intake, writable.forcedInduction, writable.mechanical
+        writable.intake, writable.forcedInduction, writable.mechanical,
+        writable.exhaustPressureWave, writable.exhaustJet
     };
     const auto captureStems = std::any_of(
         stemBuffers.begin(), stemBuffers.end(), [](const auto* buffer) { return buffer != nullptr; });
@@ -882,6 +886,10 @@ void RealtimeEngineAudio::renderWithStems(
         float physicalForcedInduction = 0.0F;
         float physicalCylinderPressureLeft = 0.0F;
         float physicalCylinderPressureRight = 0.0F;
+        float physicalExhaustPressureWaveLeft = 0.0F;
+        float physicalExhaustPressureWaveRight = 0.0F;
+        float physicalExhaustJetLeft = 0.0F;
+        float physicalExhaustJetRight = 0.0F;
         std::array<float, maximumPaths> pathCollectorLeft {};
         std::array<float, maximumPaths> pathCollectorRight {};
         std::array<float, maximumPaths> pathExhaustLeft {};
@@ -1360,6 +1368,10 @@ void RealtimeEngineAudio::renderWithStems(
                     + (outletJetGain - 1.0F) * jetNoisePressure[path].leftPa;
                 const auto adjustedRightPa = observerPressure[path].rightPa
                     + (outletJetGain - 1.0F) * jetNoisePressure[path].rightPa;
+                const auto pressureWaveLeftPa = observerPressure[path].leftPa
+                    - jetNoisePressure[path].leftPa;
+                const auto pressureWaveRightPa = observerPressure[path].rightPa
+                    - jetNoisePressure[path].rightPa;
                 blockPeakObservedExhaustPressurePa = std::max(
                     blockPeakObservedExhaustPressurePa,
                     std::max(std::abs(adjustedLeftPa),
@@ -1374,6 +1386,18 @@ void RealtimeEngineAudio::renderWithStems(
                 const auto calibratedRight = static_cast<float>(
                     AcousticMonitorCalibration::normalisePeakPressure(
                         adjustedRightPa, acousticFullScaleSplDb));
+                physicalExhaustPressureWaveLeft += static_cast<float>(
+                    AcousticMonitorCalibration::normalisePeakPressure(
+                        pressureWaveLeftPa, acousticFullScaleSplDb));
+                physicalExhaustPressureWaveRight += static_cast<float>(
+                    AcousticMonitorCalibration::normalisePeakPressure(
+                        pressureWaveRightPa, acousticFullScaleSplDb));
+                physicalExhaustJetLeft += outletJetGain * static_cast<float>(
+                    AcousticMonitorCalibration::normalisePeakPressure(
+                        jetNoisePressure[path].leftPa, acousticFullScaleSplDb));
+                physicalExhaustJetRight += outletJetGain * static_cast<float>(
+                    AcousticMonitorCalibration::normalisePeakPressure(
+                        jetNoisePressure[path].rightPa, acousticFullScaleSplDb));
                 exhaustLeft += calibratedLeft;
                 exhaustRight += calibratedRight;
                 convolutionBank_.addInput(path, 0, sample, calibratedLeft);
@@ -1755,6 +1779,18 @@ void RealtimeEngineAudio::renderWithStems(
             writeStem(writable.exhaustDry, sample,
                 radiatedExhaustLeft * exhaustGain * exhaustMonitorScale,
                 radiatedExhaustRight * exhaustGain * exhaustMonitorScale);
+            writeStem(writable.exhaustPressureWave, sample,
+                (useCompiledTopology
+                    ? physicalExhaustPressureWaveLeft
+                    : radiatedExhaustLeft * exhaustMonitorScale) * exhaustGain,
+                (useCompiledTopology
+                    ? physicalExhaustPressureWaveRight
+                    : radiatedExhaustRight * exhaustMonitorScale) * exhaustGain);
+            writeStem(writable.exhaustJet, sample,
+                (useCompiledTopology ? physicalExhaustJetLeft : 0.0F)
+                    * exhaustGain,
+                (useCompiledTopology ? physicalExhaustJetRight : 0.0F)
+                    * exhaustGain);
             writeStem(writable.intake, sample,
                 intakeLeft * intakeGain * legacyMonitorScale
                     + physicalIntakeLeft * intakeGain,

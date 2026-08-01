@@ -95,6 +95,8 @@ struct OfflineAudioExportResult final {
     /** Float-domain algebraic checks, before WAV quantisation. */
     double stemPremasterMaxError { 0.0 };
     double masterReconstructionMaxError { 0.0 };
+    /** pressure-wave + outlet-jet diagnostic stems versus exhaust_dry. */
+    double exhaustDiagnosticDecompositionMaxError { 0.0 };
     std::size_t loadedImpulseResponses { 0 };
     std::size_t authoredImpulseResponses { 0 };
     bool physicalExhaustActive { false };

@@ -1490,7 +1490,9 @@ void diagnosticStemRegression() {
     juce::AudioBuffer<float> tappedMaster(2, totalSamples);
     normalMaster.clear();
     tappedMaster.clear();
-    std::array<juce::AudioBuffer<float>, 6> stems {
+    std::array<juce::AudioBuffer<float>, 8> stems {
+        juce::AudioBuffer<float>(2, totalSamples),
+        juce::AudioBuffer<float>(2, totalSamples),
         juce::AudioBuffer<float>(2, totalSamples),
         juce::AudioBuffer<float>(2, totalSamples),
         juce::AudioBuffer<float>(2, totalSamples),
@@ -1504,7 +1506,8 @@ void diagnosticStemRegression() {
                 stem.setSample(channel, sample, 0.25F);
     }
     const enginelab::RealtimeAudioStemBuffers stemBuffers {
-        &stems[0], &stems[1], &stems[2], &stems[3], &stems[4], &stems[5]
+        &stems[0], &stems[1], &stems[2], &stems[3], &stems[4], &stems[5],
+        &stems[6], &stems[7]
     };
 
     normal.render(normalMaster, startSample, sampleCount);
@@ -1534,6 +1537,10 @@ void diagnosticStemRegression() {
         "IR stem must stay silent when no impulse response is loaded");
     require(stems[4].getMagnitude(0, startSample, sampleCount) == 0.0F,
         "forced-induction stem must stay silent when no device is configured");
+    require(stems[6].getMagnitude(0, startSample, sampleCount) > 1.0e-6F,
+        "pressure-wave diagnostic must expose the legacy exhaust source");
+    require(stems[7].getMagnitude(0, startSample, sampleCount) == 0.0F,
+        "outlet-jet diagnostic must stay silent on the legacy fallback");
 }
 
 void physicalThermoacousticPathRegression() {

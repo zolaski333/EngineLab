@@ -208,7 +208,7 @@ int main() {
     pcmRequest.loadAuthoredImpulseResponses = false;
     const auto pcm = enginelab::exportOfflineAudio(pcmRequest);
     require(pcm.success, pcm.error);
-    require(pcm.files.size() == 12,
+    require(pcm.files.size() == 14,
         "master, diagnostic WAVs, order map and metadata written");
     require(
         pcm.renderedFrames == 9'600,
@@ -226,7 +226,8 @@ int main() {
         1, 24, 96'000, pcm.renderedFrames);
     for (const auto* stem : {
              "combustion", "exhaust_dry", "exhaust_ir",
-             "intake", "forced_induction", "mechanical" }) {
+             "intake", "forced_induction", "mechanical",
+             "exhaust_pressure_wave", "exhaust_jet" }) {
         verifyWave(
             pcmRequest.outputDirectory
                 / (std::string("stem_") + stem + ".wav"),
@@ -265,6 +266,9 @@ int main() {
     require(quantisedStemError <= 1.0e-6
             && quantisedMasterError <= 3.0e-7,
         "PCM24 stems and processing delta reconstruct within quantisation error");
+    std::cout << "Exhaust diagnostic decomposition: float_error="
+              << pcm.exhaustDiagnosticDecompositionMaxError
+              << ", PCM24_stem_error=" << quantisedStemError << '\n';
     {
         std::ifstream orderMap(
             pcmRequest.outputDirectory / "engine-order-map.csv");
@@ -293,7 +297,7 @@ int main() {
         require(
             manifest.at("schema_version") == 3
                 && manifest.at("stems_written") == true
-                && manifest.at("files").size() == 10,
+                && manifest.at("files").size() == 12,
             "manifest inventories master, stems and order map");
         require(
             manifest.contains("audio_physics")
@@ -307,6 +311,11 @@ int main() {
                     .at("premaster_plus_delta_to_master_max_abs_error")
                     .get<double>() <= 1.0e-7,
             "manifest proves float-domain diagnostic reconstruction");
+        require(
+            manifest.at("exhaust_dry_decomposition")
+                    .at("sum_to_exhaust_dry_max_abs_error")
+                    .get<double>() <= 1.0e-6,
+            "manifest proves pressure-wave plus jet reconstructs dry exhaust");
     }
 
     enginelab::OfflineAudioExportRequest floatRequest = pcmRequest;
