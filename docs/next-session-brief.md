@@ -1,5 +1,21 @@
 # Brief de reprise — nouvelle machine (2026-07-28)
 
+> **État sonore vérifié au 1er août 2026, après mesure propre.** La nouvelle
+> table `--free-run` au repos passe **16/16** sans overrun ; le pire cas est le
+> Merlin à **1,187×** au meilleur passage et **1,086×** au pire des six passages.
+> Le catalogue a donc basculé sur le son, sans nouvelle simplification de
+> l'admission. Les 16 profils de voicing sont maintenant des données YAML et
+> l'A/B conserve aussi les paramètres cachés de mixage. Voir
+> `docs/audio-voicing-catalogue-validation-2026-08-01.md`.
+>
+> La prétendue réduction de la haute bande à un guide par chemin était une
+> documentation périmée : le binaire Release vérifie le DAG acoustique complet,
+> ses troncs de branche, les changements de section, les états par conduit et
+> les sorties spatialisées. Voir
+> `docs/exhaust-audio-topology-validation-2026-08-01.md`. Ne pas réimplémenter
+> ce graphe ; la prochaine lacune audible est l'afterfire de décélération
+> conditionné par l'ECU, distinct de l'afterfire thermique déjà présent.
+
 > **Mise à jour produit du 1er août 2026.** Lire d'abord
 > `docs/audio-physics-productization-validation-2026-08-01.md`. Les modèles
 > poreux, de variation et d'afterfire ne sont plus seulement des API opt-in :
@@ -51,7 +67,7 @@ contexte de la session précédente.
 > aveugle entre deux moteurs du catalogue. Le rendu n'a pas changé (trajectoire
 > −21,5486 → −21,55 LUFS).
 >
-> **P2 — à faire, et c'est la prochaine chose.** Sortir le voicing du code vers
+> **P2 — fait le 1er août 2026.** Le voicing est sorti du code vers
 > un `voicing/<moteur>.yaml` (EQ de rayonnement, gains de couches, ordre de
 > saturation, largeur stéréo). Deux raisons mesurées : une décision d'écoute ne
 > doit pas exiger de trouver quel terme de dynamique des gaz rend un moteur aigu

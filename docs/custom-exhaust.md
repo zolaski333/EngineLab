@@ -3,10 +3,11 @@
 Chaque `ExhaustPathConfig` peut contenir un `graph` optionnel. Ce graphe décrit
 un réseau orienté acyclique de composants entre les cylindres et une ou
 plusieurs sorties. Il est sérialisé en JSON et YAML et compilé par
-`ExhaustGraph` en routes utilisées pour la contre-pression, le délai, le gain et
-la résonance des événements. Le réseau est aussi réduit en propriétés physiques
-agrégées injectées dans le solveur gazeux ; ce n'est pas encore la résolution
-d'un volume distinct par composant.
+`ExhaustGraph` en routes utilisées par les outils de diagnostic historiques.
+En production, `ExhaustNetworkLayout` conserve chaque composant dans le solveur
+gazeux quasi-1D et `AcousticExhaustNetwork` compile le même DAG en guides
+bidirectionnels pour la haute bande. Il n'existe donc plus de réduction globale
+du réseau à une seule restriction ou à un seul tube acoustique par chemin.
 
 Le bouton **ECHAP. PRO** ouvre un concepteur graphique pour les opérations les
 plus courantes. JSON/YAML reste le format de persistance et permet encore les
@@ -258,17 +259,20 @@ débit et réversion dans chaque composant. Les anciennes conductances agrégée
 la fermeture analytique de contre-pression ne sont plus utilisées par
 `EngineSimulator`.
 
-Pour l'audio physique, les routes servent à construire longueurs et sections des
+Pour l'audio physique, le DAG complet fournit les longueurs et sections des
 guides caractéristiques. Les métriques historiques `audio_volume`,
 `sound_attenuation`, gains de composants, modes de preset et transmission de
 `FiringEvent` ne colorent pas la frontière SI. Firing order, pression, débit,
 température et géométrie suffisent à produire les caractéristiques acoustiques.
 
-Une branche complète n'est toutefois pas encore propagée nœud par nœud dans la
-haute bande : les runners se rencontrent dans une jonction de collecteur par
-chemin, puis un guide rejoint la sortie. Le réseau volumes finis conserve la
-topologie détaillée pour la contre-pression ; le réseau audio en conserve une
-réduction caractéristique passive.
+Chaque composant de longueur finie devient une ligne à retard bidirectionnelle.
+Les interfaces directes, merges et splitters utilisent une dispersion passive
+par admittance ; les longueurs de tronc portées par une branche restent des
+conduits, et chaque sortie conserve sa propre charge de rayonnement, sa position
+et son axe. Un 4-1 et un 4-2-1 ne sont donc pas réduits au même chemin dès lors
+que leurs géométries diffèrent. Les preuves causales et analytiques sont dans
+`tests/RealtimeRegressionTests.cpp` et résumées dans
+[exhaust-audio-topology-validation-2026-08-01.md](exhaust-audio-topology-validation-2026-08-01.md).
 
 ## Chemins multiples
 
@@ -294,10 +298,11 @@ L'absence de WAV signifie désormais champ libre ; aucune IR n'est générée.
 
 Le solveur non linéaire résout bien chaque composant, mais seulement dans la
 bande nécessaire au débit et à la contre-pression temps réel. La haute bande
-audio reste linéaire, plane et agrégée par chemin. Elle ne résout pas les modes
-transverses, les coudes 3D, la directivité ni la correction du rayonnement par
-écoulement moyen. Deux sorties d'un splitter ne possèdent pas encore des
-positions micro indépendantes.
+audio conserve le DAG, mais reste linéaire et plane. Elle ne résout pas les
+modes transverses, les coudes 3D ni la correction complète du rayonnement par
+écoulement moyen. La directivité simple de terminaison et les positions/axes
+indépendants des sorties sont résolus vers une paire de microphones commune ;
+le modèle n'est pas un champ acoustique 3D ni une simulation de local.
 
 Les réflexions haute fréquence du guide ne reviennent pas dans le cylindre 0D ;
 le retour physique est fourni par le réseau non linéaire basse bande. Les IR ne
