@@ -690,6 +690,9 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
         || !inRange(config.exhaustAfterfire.reactionTimeConstantSeconds,
                     0.0001, 1.0)
         || !inRange(config.exhaustAfterfire.reactionEfficiency, 0.0, 1.0)
+        || !inRange(config.exhaustAfterfire.overrunFuelFraction, 0.0, 0.25)
+        || !inRange(config.exhaustAfterfire.overrunMinimumRpm, 500.0, 20'000.0)
+        || !inRange(config.exhaustAfterfire.overrunMaximumThrottle, 0.0, 0.20)
         || !inRange(config.runnerAcoustics.dampingRatio, 0.01, 2.0)
         || !inRange(config.runnerAcoustics.couplingGain, 0.0, 2.0)
         || !inRange(config.runnerAcoustics.maximumPressureAmplitudeKpa, 0.1, 200.0)

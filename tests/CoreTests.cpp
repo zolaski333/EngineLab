@@ -995,6 +995,37 @@ int main() {
     }
 
     {
+        auto overrunAfterfireConfig = config;
+        overrunAfterfireConfig.exhaustAfterfire.enabled = true;
+        overrunAfterfireConfig.exhaustAfterfire.overrunFuelFraction = 0.12;
+        overrunAfterfireConfig.exhaustAfterfire.overrunMinimumRpm = 3'000.0;
+        overrunAfterfireConfig.exhaustAfterfire.overrunMaximumThrottle = 0.02;
+        enginelab::SimpleEcuModel overrunAfterfireEcu;
+        overrunAfterfireEcu.initialise(overrunAfterfireConfig);
+        enginelab::EngineState overrunState;
+        overrunState.simulationTimeSeconds = 10.0;
+        overrunState.rpm = 3'500.0;
+        overrunState.coolantTemperatureC = 90.0;
+        overrunState.throttle = 0.0;
+        enginelab::EngineControls closedThrottle { true, false, 0.0, 0.0 };
+        const auto active = overrunAfterfireEcu.evaluate(
+            overrunAfterfireConfig, overrunState, closedThrottle);
+        require(active.overrunAfterfireActive && active.fuelEnabled
+                && !active.sparkEnabled
+                && active.fuelCorrection > 0.11
+                && active.fuelCorrection < 0.13,
+            "authored deceleration afterfire must meter partial fuel with spark cut");
+
+        overrunState.simulationTimeSeconds += 0.01;
+        overrunState.rpm = 2'900.0;
+        const auto belowMinimum = overrunAfterfireEcu.evaluate(
+            overrunAfterfireConfig, overrunState, closedThrottle);
+        require(!belowMinimum.overrunAfterfireActive
+                && !belowMinimum.fuelEnabled && belowMinimum.sparkEnabled,
+            "deceleration afterfire must remain a clean DFCO below its RPM gate");
+    }
+
+    {
         // A fuel-cut strategy is not safe merely because it eventually turns
         // the injectors back on.  The port film must be replenished before the
         // crank reaches idle.  Follow a representative 1,000 rpm/s coast-down
@@ -1203,6 +1234,9 @@ int main() {
     extendedPhysicsConfig.combustionCalibration.cycleVariationCorrelation = 0.62;
     extendedPhysicsConfig.ignition.limiterKeepsFuel = true;
     extendedPhysicsConfig.exhaustAfterfire = { true, 875.0, 0.012, 0.91 };
+    extendedPhysicsConfig.exhaustAfterfire.overrunFuelFraction = 0.11;
+    extendedPhysicsConfig.exhaustAfterfire.overrunMinimumRpm = 3'450.0;
+    extendedPhysicsConfig.exhaustAfterfire.overrunMaximumThrottle = 0.015;
     extendedPhysicsConfig.exhaust.mufflerChamberDiameterMm = 118.0;
     extendedPhysicsConfig.exhaust.mufflerChamberLengthMm = 360.0;
     extendedPhysicsConfig.exhaust.mufflerPackingFlowResistivityPaSPerM2 = 24'000.0;
@@ -1266,6 +1300,9 @@ int main() {
             && std::abs(extendedJsonRoundTrip.config->exhaustAfterfire.ignitionTemperatureK - 875.0) < 0.001
             && std::abs(extendedJsonRoundTrip.config->exhaustAfterfire.reactionTimeConstantSeconds - 0.012) < 1.0e-9
             && std::abs(extendedJsonRoundTrip.config->exhaustAfterfire.reactionEfficiency - 0.91) < 0.001
+            && std::abs(extendedJsonRoundTrip.config->exhaustAfterfire.overrunFuelFraction - 0.11) < 0.001
+            && std::abs(extendedJsonRoundTrip.config->exhaustAfterfire.overrunMinimumRpm - 3'450.0) < 0.001
+            && std::abs(extendedJsonRoundTrip.config->exhaustAfterfire.overrunMaximumThrottle - 0.015) < 0.001
             && std::abs(extendedJsonRoundTrip.config->exhaust.mufflerPackingFlowResistivityPaSPerM2 - 24'000.0) < 0.001
             && std::abs(extendedJsonRoundTrip.config->exhaustPaths.front().geometry.mufflerPackingThicknessMm - 35.0) < 0.001
             && std::abs(extendedJsonRoundTrip.config->exhaustPaths.front().geometry.mufflerPerforatedOpenAreaRatio - 0.28) < 0.001
@@ -1319,6 +1356,9 @@ int main() {
             "YAML must preserve turbo inertia, bearing and speed calibration");
     require(extendedYamlRoundTrip
             && std::abs(extendedYamlRoundTrip.config->runnerAcoustics.dampingRatio - 0.21) < 0.001
+            && std::abs(extendedYamlRoundTrip.config->exhaustAfterfire.overrunFuelFraction - 0.11) < 0.001
+            && std::abs(extendedYamlRoundTrip.config->exhaustAfterfire.overrunMinimumRpm - 3'450.0) < 0.001
+            && std::abs(extendedYamlRoundTrip.config->exhaustAfterfire.overrunMaximumThrottle - 0.015) < 0.001
             && std::abs(extendedYamlRoundTrip.config->exhaust.mufflerPackingFlowResistivityPaSPerM2 - 24'000.0) < 0.001
             && std::abs(extendedYamlRoundTrip.config->exhaustPaths.front().geometry.mufflerPackingThicknessMm - 35.0) < 0.001
             && std::abs(extendedYamlRoundTrip.config->intake

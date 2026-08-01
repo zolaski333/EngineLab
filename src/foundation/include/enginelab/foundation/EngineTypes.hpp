@@ -315,6 +315,13 @@ struct ExhaustAfterfireConfig final {
     double ignitionTemperatureK { 900.0 };
     double reactionTimeConstantSeconds { 0.010 };
     double reactionEfficiency { 0.95 };
+    /** Fraction of the normal charge fuel deliberately retained during DFCO.
+     * Zero preserves the historical clean fuel cut exactly. A positive value
+     * requests a spark-cut overrun strategy; chemistry still decides whether
+     * that fuel can react in the exhaust. */
+    double overrunFuelFraction { 0.0 };
+    double overrunMinimumRpm { 2'500.0 };
+    double overrunMaximumThrottle { 0.02 };
 };
 
 struct ExhaustCylinderConnectionConfig final {
@@ -910,6 +917,8 @@ struct EngineState final {
     /** Real chemical heat release occurring in the physical exhaust network. */
     double exhaustAfterfireHeatReleaseKw { 0.0 };
     double exhaustAfterfireFuelBurnMgPerSecond { 0.0 };
+    /** ECU currently meters the authored partial fuel charge with spark cut. */
+    bool exhaustAfterfireOverrunActive { false };
     double manifoldGasMassGrams { 0.0 };
     double cylinderGasMassGrams { 0.0 };
     double gasInternalEnergyJoules { 0.0 };
@@ -1083,6 +1092,7 @@ struct EcuCommand final {
     double fuelCorrection { 1.0 };
     bool fuelEnabled { true };
     bool sparkEnabled { true };
+    bool overrunAfterfireActive { false };
 };
 
 // Output of the mean-value model SimplifiedGasolinePhysics::evaluateCombustion.

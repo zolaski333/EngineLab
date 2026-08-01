@@ -753,6 +753,8 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 / std::max(1.0, config_.ambientPressureKpa), 0.0, 1.5);
         state_.load = smooth(state_.load, thermodynamicLoad, subDt, 12.0);
         const auto ecuCommand = ecu_.evaluate(config_, state_, safeControls);
+        state_.exhaustAfterfireOverrunActive =
+            ecuCommand.overrunAfterfireActive;
         state_.throttle = smooth(state_.throttle, ecuCommand.effectiveThrottle, subDt, 10.0);
         if (compressionIgnitionEngine) {
             // A conventional diesel has no load-controlling throttle plate:
@@ -1222,7 +1224,12 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
             // runner ringing against the plenum at 0 rpm (port temperature
             // swinging 14-39 degC), holding the manifold off ambient. No crank
             // signal, no pulse.
-            if (combustion.combustionEnabled && state_.rpm > 20.0
+            // Injection follows the injector command, not the in-cylinder
+            // combustion gate. A wet limiter or calibrated overrun has fuel
+            // enabled with spark disabled on purpose; gating here on
+            // `combustionEnabled` silently erased that fuel before it could
+            // reach the physical exhaust chemistry.
+            if (ecuCommand.fuelEnabled && state_.rpm > 20.0
                 && phaseInsideWindow(cyclePhase,
                     config_.injection.startAngleDegrees, config_.injection.endAngleDegrees)) {
                 // Meter to the requested physical inventory, accounting for

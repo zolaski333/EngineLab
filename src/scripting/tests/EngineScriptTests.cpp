@@ -98,6 +98,9 @@ set exhaust_afterfire.enabled = 1 ratio
 set exhaust_afterfire.ignition_temperature_c = 627 c
 set exhaust_afterfire.reaction_time_constant_s = 10 ms
 set exhaust_afterfire.reaction_efficiency = 95 percent
+set exhaust_afterfire.overrun_fuel_fraction = 12 percent
+set exhaust_afterfire.overrun_minimum_rpm = 3000 rpm
+set exhaust_afterfire.overrun_maximum_throttle = 2 percent
 set solver.gas_substeps = 3
 set forced_induction.enabled = true
 set forced_induction.type = turbo
@@ -167,6 +170,12 @@ ignition point 1000 rpm, 14 deg
                 "afterfire reaction time should convert from milliseconds");
     requireNear(config.exhaustAfterfire.reactionEfficiency, 0.95, 1.0e-12,
                 "afterfire efficiency should accept percentages");
+    requireNear(config.exhaustAfterfire.overrunFuelFraction, 0.12, 1.0e-12,
+                "overrun afterfire fuel fraction should accept percentages");
+    requireNear(config.exhaustAfterfire.overrunMinimumRpm, 3'000.0, 1.0e-12,
+                "overrun afterfire minimum speed should accept RPM");
+    requireNear(config.exhaustAfterfire.overrunMaximumThrottle, 0.02, 1.0e-12,
+                "overrun afterfire throttle gate should accept percentages");
     require(config.solver.gasSubsteps == 3, "integer property should be assigned exactly");
     require(config.forcedInduction.enabled, "boolean setting should be assigned");
     requireNear(config.cylinders[1].ignitionOffsetDegrees, -2.0, 1.0e-12,

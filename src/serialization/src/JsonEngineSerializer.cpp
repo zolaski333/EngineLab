@@ -442,7 +442,10 @@ std::string JsonEngineSerializer::encode(const EngineConfig& config) const {
         {"exhaust_afterfire", {{"enabled", config.exhaustAfterfire.enabled},
                       {"ignition_temperature_k", config.exhaustAfterfire.ignitionTemperatureK},
                       {"reaction_time_constant_s", config.exhaustAfterfire.reactionTimeConstantSeconds},
-                      {"reaction_efficiency", config.exhaustAfterfire.reactionEfficiency}}},
+                      {"reaction_efficiency", config.exhaustAfterfire.reactionEfficiency},
+                      {"overrun_fuel_fraction", config.exhaustAfterfire.overrunFuelFraction},
+                      {"overrun_minimum_rpm", config.exhaustAfterfire.overrunMinimumRpm},
+                      {"overrun_maximum_throttle", config.exhaustAfterfire.overrunMaximumThrottle}}},
         {"runner_acoustics", {{"enabled", config.runnerAcoustics.enabled},
                       {"damping_ratio", config.runnerAcoustics.dampingRatio},
                       {"coupling_gain", config.runnerAcoustics.couplingGain},
@@ -652,6 +655,9 @@ EngineDecodeResult JsonEngineSerializer::decode(std::string_view text) const noe
             config.exhaustAfterfire.ignitionTemperatureK = afterfire.value("ignition_temperature_k", config.exhaustAfterfire.ignitionTemperatureK);
             config.exhaustAfterfire.reactionTimeConstantSeconds = afterfire.value("reaction_time_constant_s", config.exhaustAfterfire.reactionTimeConstantSeconds);
             config.exhaustAfterfire.reactionEfficiency = afterfire.value("reaction_efficiency", config.exhaustAfterfire.reactionEfficiency);
+            config.exhaustAfterfire.overrunFuelFraction = afterfire.value("overrun_fuel_fraction", config.exhaustAfterfire.overrunFuelFraction);
+            config.exhaustAfterfire.overrunMinimumRpm = afterfire.value("overrun_minimum_rpm", config.exhaustAfterfire.overrunMinimumRpm);
+            config.exhaustAfterfire.overrunMaximumThrottle = afterfire.value("overrun_maximum_throttle", config.exhaustAfterfire.overrunMaximumThrottle);
         }
         if (engine.contains("runner_acoustics")) {
             const auto& acoustics = engine.at("runner_acoustics");

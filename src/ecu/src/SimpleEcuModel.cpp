@@ -380,12 +380,31 @@ EcuCommand SimpleEcuModel::evaluate(const EngineConfig& config, const EngineStat
     }
     decelerationFuelResume_.store(decelerationFuelResume,
                                   std::memory_order_relaxed);
+    // This is an ECU calibration, not a pop scheduler. It only retains a small
+    // authored fraction of the normal fuel request while the existing DFCO
+    // state proves that the engine is in closed-throttle overrun. Spark is cut,
+    // but the downstream chemistry must still find oxygen and sufficient gas
+    // temperature before any heat or sound can be produced.
+    const auto overrunAfterfireActive =
+        config.fuel == FuelType::gasoline
+        && config.exhaustAfterfire.enabled
+        && config.exhaustAfterfire.overrunFuelFraction > 0.0
+        && decelerationFuelCut && !limiterActive
+        && controls.ignitionEnabled && !controls.starterEngaged
+        && state.rpm >= config.exhaustAfterfire.overrunMinimumRpm
+        && effectiveThrottle <= config.exhaustAfterfire.overrunMaximumThrottle;
+    const auto fuelResumeOrOverrun = overrunAfterfireActive
+        ? config.exhaustAfterfire.overrunFuelFraction
+        : decelerationFuelResume;
     return { mappedAfr, mappedAdvance,
              effectiveThrottle, idleAirOpening,
              warmupCorrection * crankingCorrection
                  * (1.0 + accelerationFuelEnrichment * 1.40)
-                 * decelerationFuelResume,
-             fuelEnabled && !decelerationFuelCut,
-             sparkEnabled && !alternatingCut };
+                 * fuelResumeOrOverrun,
+             overrunAfterfireActive
+                 || (fuelEnabled && !decelerationFuelCut),
+             !overrunAfterfireActive
+                 && sparkEnabled && !alternatingCut,
+             overrunAfterfireActive };
 }
 } // namespace enginelab
