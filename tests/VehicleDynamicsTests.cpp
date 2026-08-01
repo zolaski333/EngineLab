@@ -185,6 +185,46 @@ int main() {
             "one saturated injector must not be hidden by the cylinder average");
     }
 
-    std::cout << "PASS: load transfer, persistence, catalogue layouts and worst-cylinder diagnostics\n";
+    {
+        const auto reportsBackPressure = [](const enginelab::EngineConfig& config,
+                                            enginelab::EngineState state) {
+            const auto diagnostics = enginelab::EngineDiagnostics {}.evaluate(
+                config, state);
+            return std::any_of(diagnostics.begin(), diagnostics.end(),
+                [](const auto& item) {
+                    return item.code == "exhaust.back_pressure";
+                });
+        };
+        auto naturallyAspirated = enginelab::makeDefaultV8();
+        enginelab::EngineState state;
+        state.load = 0.8;
+        state.rpm = 3'000.0;
+        state.exhaustPressureKpa = naturallyAspirated.ambientPressureKpa
+            + 180.0; // instantaneous blowdown peak: diagnostic must ignore it
+        state.exhaustBackPressureKpa = naturallyAspirated.ambientPressureKpa
+            + 39.0;
+        require(!reportsBackPressure(naturallyAspirated, state),
+            "a blowdown peak must not masquerade as excessive mean back pressure");
+        state.exhaustBackPressureKpa = naturallyAspirated.ambientPressureKpa
+            + 41.0;
+        require(reportsBackPressure(naturallyAspirated, state),
+            "an NA mean back-pressure excess above 40 kPa must be diagnosed");
+
+        auto turbocharged = naturallyAspirated;
+        turbocharged.forcedInduction.enabled = true;
+        turbocharged.forcedInduction.type =
+            enginelab::ForcedInductionType::turbocharger;
+        state.boostPressureRatio = 2.0;
+        state.exhaustBackPressureKpa = turbocharged.ambientPressureKpa
+            + 130.0;
+        require(!reportsBackPressure(turbocharged, state),
+            "a turbo must receive a delivered-boost-scaled turbine allowance");
+        state.exhaustBackPressureKpa = turbocharged.ambientPressureKpa
+            + 150.0;
+        require(reportsBackPressure(turbocharged, state),
+            "a turbo must still diagnose pressure beyond its boost-scaled allowance");
+    }
+
+    std::cout << "PASS: load transfer, persistence, catalogue layouts, injector and back-pressure diagnostics\n";
     return 0;
 }
