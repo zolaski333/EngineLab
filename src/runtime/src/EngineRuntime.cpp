@@ -13,6 +13,67 @@ namespace enginelab {
 namespace {
 constexpr std::size_t maximumAudioExhaustPaths = 8;
 
+/** A DynoPoint with every field at zero, for use as a running sum.
+ *
+ * `DynoPoint {}` is NOT this: several of its members default to physical
+ * neutral values (14.7 AFR, 22 degC, lambda 1.0) which would be added into the
+ * first sample and then divided by the sample count. */
+[[nodiscard]] DynoPoint zeroedDynoAccumulator() noexcept {
+    DynoPoint zero;
+    zero.rpm = 0.0;
+    zero.torqueNm = 0.0;
+    zero.powerKw = 0.0;
+    zero.airFuelRatio = 0.0;
+    zero.coolantTemperatureC = 0.0;
+    zero.exhaustTemperatureC = 0.0;
+    zero.ignitionAdvanceDegrees = 0.0;
+    zero.atmosphericCorrectionFactor = 0.0;
+    zero.correctedTorqueNm = 0.0;
+    zero.correctedPowerKw = 0.0;
+    zero.targetAirFuelRatio = 0.0;
+    zero.volumetricEfficiency = 0.0;
+    zero.fuelFlowGramsPerSecond = 0.0;
+    zero.manifoldPressureKpa = 0.0;
+    zero.exhaustPressureKpa = 0.0;
+    zero.oilTemperatureC = 0.0;
+    zero.oilPressureKpa = 0.0;
+    zero.airFlowGramsPerSecond = 0.0;
+    zero.lambda = 0.0;
+    zero.brakeSpecificFuelConsumptionGPerKwh = 0.0;
+    return zero;
+}
+
+/** Highest speed a swept bench run is allowed to sample.
+ *
+ * The sweep used to step to `redlineRpm` inclusive, so its last point or two
+ * sat on the latched rev limiter -- where a cut spark zeroes the published
+ * combustion efficiency and the torque reading becomes an artefact rather than
+ * a measurement (docs/physics-audit.md records a Merlin row of 351 Nm one step
+ * after 2521 Nm). Both offline WOT instruments already stop at 0.95 of the
+ * lower of the two limits; the bench the application drives did not, and its
+ * curves collapsed at the top for that reason alone. */
+[[nodiscard]] double sweepCeilingRpm(const EngineConfig& config) noexcept {
+    return 0.95 * std::min(config.redlineRpm, config.ignition.revLimitRpm);
+}
+
+/** Averaging window for one bench point, in seconds.
+ *
+ * Torque is periodic at the firing frequency, so a window that is not a whole
+ * number of firing periods leaves a residual set by where the window happened
+ * to start and stop. The window is driven at the 1/240 s runtime step and the
+ * firing period is comparable to that step at high speed, so it cannot be
+ * aligned exactly; what is available is length, since the residual falls as
+ * 1/N in the number of periods covered. The old floor of 0.12 s was chosen as
+ * two engine CYCLES, which on a slow twin is only a handful of firings. */
+[[nodiscard]] double dynoAveragingWindowSeconds(
+    const EngineConfig& config, double targetRpm) noexcept {
+    const auto cylinders = std::max<std::size_t>(1U, config.cylinders.size());
+    const auto firingPeriodSeconds = 120.0
+        / (std::max(250.0, targetRpm) * static_cast<double>(cylinders));
+    constexpr double minimumFirings = 48.0;
+    return std::clamp(minimumFirings * firingPeriodSeconds, 0.25, 0.80);
+}
+
 [[nodiscard]] EngineConfig normalised(EngineConfig config) {
     normaliseEngineConfig(config);
     return config;
@@ -379,8 +440,7 @@ void EngineRuntime::beginDynoSession() {
     dynoAbsorber_.reset(
         simulator_.state().rpm, simulator_.state().torqueNm);
     dynoAbsorberOutput_ = {};
-    dynoTorqueAccumulator_ = 0.0;
-    dynoPowerAccumulator_ = 0.0;
+    dynoChannelAccumulator_ = zeroedDynoAccumulator();
     dynoSampleCount_ = 0;
     savedIgnition_ = ignition_.load();
     savedStarter_ = starter_.load();
@@ -476,8 +536,7 @@ void EngineRuntime::run(std::stop_token stopToken) {
                     simulator_.state().rpm,
                     simulator_.state().torqueNm);
                 dynoAbsorberOutput_ = {};
-                dynoTorqueAccumulator_ = 0.0;
-                dynoPowerAccumulator_ = 0.0;
+                dynoChannelAccumulator_ = zeroedDynoAccumulator();
                 dynoSampleCount_ = 0;
                 starter_.store(false);
                 throttle_.store(1.0);
@@ -560,38 +619,79 @@ void EngineRuntime::run(std::stop_token stopToken) {
                         dynoAbsorberOutput_
                             .filteredAccelerationRpmPerSecond)
                         <= 120.0) {
-                dynoTorqueAccumulator_ += frame.state.loadTorqueNm;
-                dynoPowerAccumulator_ += frame.state.loadTorqueNm
+                // The ENGINE's brake torque, not the absorber's brake command.
+                //
+                // `loadTorqueNm` is the dyno controller's output, and the
+                // controller deliberately ramps its feed-forward term in over
+                // the final 60 rpm of approach (DynoAbsorberController's
+                // `contactScale`, a smoothstep) -- across exactly the +-60 rpm
+                // this gate accepts a sample within. A point that settled 40 rpm
+                // low therefore published about a quarter of the feed-forward
+                // and a point that settled dead on published all of it, so the
+                // curve rose and fell with where the engine happened to land in
+                // the acceptance band rather than with what it produced. That is
+                // the "rollercoaster". `state_.torqueNm` is the engine's own
+                // brake torque and carries none of the controller's shape; it is
+                // also what `DynoSweepHarness` averages, so the bench in the
+                // application and the instrument the catalogue is validated
+                // against now measure the same quantity.
+                dynoChannelAccumulator_.rpm += frame.state.rpm;
+                dynoChannelAccumulator_.torqueNm += frame.state.torqueNm;
+                dynoChannelAccumulator_.powerKw += frame.state.torqueNm
                     * frame.state.angularVelocityRadPerSecond / 1'000.0;
+                dynoChannelAccumulator_.airFuelRatio += frame.state.airFuelRatio;
+                dynoChannelAccumulator_.coolantTemperatureC += frame.state.coolantTemperatureC;
+                dynoChannelAccumulator_.exhaustTemperatureC += frame.state.exhaustTemperatureC;
+                dynoChannelAccumulator_.ignitionAdvanceDegrees += frame.state.ignitionAdvanceDegrees;
+                dynoChannelAccumulator_.targetAirFuelRatio += frame.state.targetAirFuelRatio;
+                dynoChannelAccumulator_.volumetricEfficiency += frame.state.volumetricEfficiency;
+                dynoChannelAccumulator_.fuelFlowGramsPerSecond += frame.state.fuelFlowGramsPerSecond;
+                dynoChannelAccumulator_.manifoldPressureKpa += frame.state.manifoldPressureKpa;
+                dynoChannelAccumulator_.exhaustPressureKpa += frame.state.exhaustBackPressureKpa;
+                dynoChannelAccumulator_.oilTemperatureC += frame.state.oilTemperatureC;
+                dynoChannelAccumulator_.oilPressureKpa += frame.state.oilPressureKpa;
+                dynoChannelAccumulator_.airFlowGramsPerSecond += frame.state.airFlowGramsPerSecond;
+                dynoChannelAccumulator_.lambda += frame.state.lambda;
+                dynoChannelAccumulator_.brakeSpecificFuelConsumptionGPerKwh +=
+                    frame.state.brakeSpecificFuelConsumptionGPerKwh;
                 ++dynoSampleCount_;
                 dynoStableElapsed_ += baseStep.count();
             } else {
-                dynoTorqueAccumulator_ = 0.0;
-                dynoPowerAccumulator_ = 0.0;
+                dynoChannelAccumulator_ = zeroedDynoAccumulator();
                 dynoSampleCount_ = 0;
                 dynoStableElapsed_ = 0.0;
             }
-            const auto minimumCycleWindowSeconds = std::clamp(120.0
-                / std::max(250.0, dynoTargetRpm_) * 2.0, 0.12, 0.60);
+            const auto minimumCycleWindowSeconds =
+                dynoAveragingWindowSeconds(config_, dynoTargetRpm_);
             if (dynoStableElapsed_ >= minimumCycleWindowSeconds && dynoSampleCount_ > 0) {
                 const auto divisor = static_cast<double>(dynoSampleCount_);
                 const auto atmosphericCorrection = std::clamp((99.0 / config_.ambientPressureKpa)
                     * std::sqrt((config_.ambientTemperatureC + 273.15) / 298.15), 0.80, 1.20);
-                DynoPoint point { dynoTargetRpm_, dynoTorqueAccumulator_ / divisor,
-                    dynoPowerAccumulator_ / divisor, frame.state.airFuelRatio, frame.state.coolantTemperatureC,
-                    frame.state.exhaustTemperatureC, frame.state.ignitionAdvanceDegrees, atmosphericCorrection,
-                    dynoTorqueAccumulator_ / divisor * atmosphericCorrection,
-                    dynoPowerAccumulator_ / divisor * atmosphericCorrection };
-                point.targetAirFuelRatio = frame.state.targetAirFuelRatio;
-                point.volumetricEfficiency = frame.state.volumetricEfficiency;
-                point.fuelFlowGramsPerSecond = frame.state.fuelFlowGramsPerSecond;
-                point.manifoldPressureKpa = frame.state.manifoldPressureKpa;
-                point.exhaustPressureKpa = frame.state.exhaustPressureKpa;
-                point.oilTemperatureC = frame.state.oilTemperatureC;
-                point.oilPressureKpa = frame.state.oilPressureKpa;
-                point.airFlowGramsPerSecond = frame.state.airFlowGramsPerSecond;
-                point.lambda = frame.state.lambda;
-                point.brakeSpecificFuelConsumptionGPerKwh = frame.state.brakeSpecificFuelConsumptionGPerKwh;
+                const auto meanTorqueNm = dynoChannelAccumulator_.torqueNm / divisor;
+                const auto meanPowerKw = dynoChannelAccumulator_.powerKw / divisor;
+                // The speed actually held, not the speed asked for. The gate
+                // tolerates 60 rpm of placement error, so labelling the point
+                // with its target put a real measurement at a false abscissa --
+                // on a steep part of the curve that alone is several Nm of
+                // apparent scatter.
+                DynoPoint point { dynoChannelAccumulator_.rpm / divisor, meanTorqueNm,
+                    meanPowerKw, dynoChannelAccumulator_.airFuelRatio / divisor,
+                    dynoChannelAccumulator_.coolantTemperatureC / divisor,
+                    dynoChannelAccumulator_.exhaustTemperatureC / divisor,
+                    dynoChannelAccumulator_.ignitionAdvanceDegrees / divisor, atmosphericCorrection,
+                    meanTorqueNm * atmosphericCorrection,
+                    meanPowerKw * atmosphericCorrection };
+                point.targetAirFuelRatio = dynoChannelAccumulator_.targetAirFuelRatio / divisor;
+                point.volumetricEfficiency = dynoChannelAccumulator_.volumetricEfficiency / divisor;
+                point.fuelFlowGramsPerSecond = dynoChannelAccumulator_.fuelFlowGramsPerSecond / divisor;
+                point.manifoldPressureKpa = dynoChannelAccumulator_.manifoldPressureKpa / divisor;
+                point.exhaustPressureKpa = dynoChannelAccumulator_.exhaustPressureKpa / divisor;
+                point.oilTemperatureC = dynoChannelAccumulator_.oilTemperatureC / divisor;
+                point.oilPressureKpa = dynoChannelAccumulator_.oilPressureKpa / divisor;
+                point.airFlowGramsPerSecond = dynoChannelAccumulator_.airFlowGramsPerSecond / divisor;
+                point.lambda = dynoChannelAccumulator_.lambda / divisor;
+                point.brakeSpecificFuelConsumptionGPerKwh =
+                    dynoChannelAccumulator_.brakeSpecificFuelConsumptionGPerKwh / divisor;
                 {
                     const std::scoped_lock lock(dynoMutex_);
                     currentRun_.points.push_back(point);
@@ -600,13 +700,18 @@ void EngineRuntime::run(std::stop_token stopToken) {
                     currentRun_.peakCorrectedTorqueNm = std::max(currentRun_.peakCorrectedTorqueNm, point.correctedTorqueNm);
                     currentRun_.peakCorrectedPowerKw = std::max(currentRun_.peakCorrectedPowerKw, point.correctedPowerKw);
                 }
-                if (!dynoHoldEnabled_.load(std::memory_order_relaxed) && point.rpm >= config_.redlineRpm)
+                // Completion is tested on the TARGET, never on the published
+                // rpm: the published value is now the mean speed actually held
+                // and can sit just under the ceiling forever, which would leave
+                // the sweep running with nowhere left to step.
+                const auto ceilingRpm = sweepCeilingRpm(config_);
+                if (!dynoHoldEnabled_.load(std::memory_order_relaxed)
+                        && dynoTargetRpm_ >= ceilingRpm - 1.0e-6)
                     dynoCompleted_.store(true, std::memory_order_relaxed);
                 if (!dynoHoldEnabled_.load(std::memory_order_relaxed))
-                    dynoTargetRpm_ = std::min(config_.redlineRpm, dynoTargetRpm_ + 250.0);
+                    dynoTargetRpm_ = std::min(ceilingRpm, dynoTargetRpm_ + 250.0);
                 nextSampleRpm_ = dynoTargetRpm_;
-                dynoTorqueAccumulator_ = 0.0;
-                dynoPowerAccumulator_ = 0.0;
+                dynoChannelAccumulator_ = zeroedDynoAccumulator();
                 dynoSampleCount_ = 0;
                 dynoStableElapsed_ = 0.0;
             }

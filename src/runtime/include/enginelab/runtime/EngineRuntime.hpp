@@ -312,8 +312,16 @@ private:
     double dynoTargetRpm_ { 0.0 };
     double dynoStableElapsed_ { 0.0 };
     double dynoBrakeTorqueNm_ { 0.0 };
-    double dynoTorqueAccumulator_ { 0.0 };
-    double dynoPowerAccumulator_ { 0.0 };
+    /** Running sum of EVERY published channel over the stable window.
+     *
+     * Torque used to be the only averaged quantity; lambda, VE, manifold
+     * pressure, exhaust temperature, ignition advance and the rest were each
+     * taken from the single frame that happened to close the window, so those
+     * curves could not be anything but ragged however well the engine was held.
+     * Fields are summed here and divided by `dynoSampleCount_` at publication,
+     * so a zeroed instance is required rather than a default-constructed one
+     * (DynoPoint's defaults are 14.7 / 22.0 / 1.0, not 0). */
+    DynoPoint dynoChannelAccumulator_ {};
     std::uint32_t dynoSampleCount_ { 0 };
     bool savedIgnition_ { false };
     bool savedStarter_ { false };
