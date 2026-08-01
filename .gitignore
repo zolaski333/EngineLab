@@ -23,3 +23,7 @@ audio-render-output/
 audio-ab-output/
 listening-test/
 
+# Local runnable package assembled for hands-on testing. It is deliberately
+# reproducible from the Release build and must never be committed.
+/dist/
+

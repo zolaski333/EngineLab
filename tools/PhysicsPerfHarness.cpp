@@ -310,6 +310,102 @@ void traceEngine(const enginelab::EngineConfig& baseConfig, double targetRpm,
 }
 
 /**
+ * Free-rev a hot engine at a FIXED throttle with no load (`--freerev 0..1`).
+ *
+ * This is the condition a user actually operates in the application and which
+ * no other mode here reproduces. `--trace` is a dyno hold, so its load
+ * controller answers a part-throttle request by commanding brake torque until
+ * the ECU reopens the plate, and the manifold lands within 1 kPa of WOT: a
+ * part-load complaint measured there is measured at full load. `--idle` shuts
+ * the throttle entirely. Neither can show a defect whose trigger is *the
+ * engine accelerating through a speed at a partial opening*.
+ *
+ * It reports the per-cylinder injector-capacity ratio as a MEAN and a MIN,
+ * because the diagnostic in the application averages it and a single-cylinder
+ * excursion is therefore invisible in the delivered warning; and the ECU's
+ * commanded AFR beside the achieved one, so mixture tracking is readable
+ * without a second run.
+ *
+ * READ THE RPM COLUMN BEFORE BELIEVING ANY ROW. With no load, a healthy engine
+ * at any appreciable opening accelerates until the rev limiter stops it, and
+ * then STAYS there for the rest of the run. That is faithful to the condition
+ * being reproduced -- it is what blipping in neutral does -- but it makes the
+ * steady part of a wide-open run a limiter measurement, and every quantity
+ * derived from combustion is contaminated there (a cut spark zeroes the
+ * published combustion efficiency, and the fuel request drops to zero on the
+ * cut cycles). Sitting on the limiter, this harness reported the LS3 at AFR
+ * 15.1 against a commanded 12.9 and the closed-loop trim pinned at its 2.20
+ * ceiling; the same engine on the stepped dyno hold measures lambda 0.913
+ * against a 0.88 target, i.e. three per cent, not twenty. A conclusion about
+ * high-load mixture must come from the swept CSV, never from here.
+ *
+ * What this instrument is FOR is the part-throttle band the dyno hold cannot
+ * reach, where the engine settles well below the limiter and the reading is
+ * clean.
+ */
+void traceFreeRev(const enginelab::EngineConfig& baseConfig, double throttle,
+                  double durationSeconds) {
+    auto config = baseConfig;
+    enginelab::normaliseEngineConfig(config);
+    enginelab::SimpleEcuModel ecu;
+    enginelab::SimplifiedGasolinePhysics physics;
+    enginelab::FourStrokeEventGenerator events;
+    auto exhaust = enginelab::ExhaustGraph::makeForEngine(config);
+    enginelab::EngineSimulator simulator(config, ecu, physics, events, exhaust);
+    constexpr double dt = 1.0 / 240.0;
+
+    // Settle a real idle first, the same way `--idle` does. Opening the
+    // throttle on a cold-started engine measures the after-start flare, not
+    // the part-load transient under investigation.
+    for (int step = 0; step < static_cast<int>(6.0 / dt); ++step) {
+        enginelab::EngineControls controls;
+        controls.ignitionEnabled = true;
+        controls.starterEngaged = simulator.state().rpm < config.idleRpm * 0.85;
+        controls.throttle = 0.0;
+        controls.load = 0.0;
+        (void)simulator.step(dt, controls);
+    }
+
+    std::cout << "time_s,rpm,throttle_cmd,map_kpa,net_nm,afr,afr_target,lambda,"
+                 "fuel_req_mg,fuel_del_mg,trim,misfire,inj_cap_mean,inj_cap_min,"
+                 "knock,ve\n";
+    const auto steps = static_cast<int>(durationSeconds / dt);
+    for (int step = 0; step < steps; ++step) {
+        enginelab::EngineControls controls;
+        controls.ignitionEnabled = true;
+        controls.starterEngaged = false;
+        controls.throttle = throttle;
+        controls.load = 0.0;
+        const auto frame = simulator.step(dt, controls);
+        const auto& state = frame.state;
+        auto capacitySum = 0.0;
+        auto capacityMin = 1.0;
+        for (std::size_t index = 0; index < state.cylinderStateCount; ++index) {
+            const auto ratio = state.cylinderStates[index].injectorCapacityRatio;
+            capacitySum += ratio;
+            capacityMin = std::min(capacityMin, ratio);
+        }
+        const auto capacityMean = state.cylinderStateCount > 0
+            ? capacitySum / static_cast<double>(state.cylinderStateCount) : 1.0;
+        std::cout << static_cast<double>(step) * dt << ',' << state.rpm
+                  << ',' << state.throttle
+                  << ',' << state.manifoldPressureKpa
+                  << ',' << state.netTorqueNm
+                  << ',' << state.airFuelRatio
+                  << ',' << state.targetAirFuelRatio
+                  << ',' << state.lambda
+                  << ',' << state.cylinderStates[0].requestedFuelMgPerCycle
+                  << ',' << state.cylinderStates[0].deliveredFuelMgPerCycle
+                  << ',' << state.cylinderStates[0].closedLoopFuelTrim
+                  << ',' << state.misfireRate
+                  << ',' << capacityMean
+                  << ',' << capacityMin
+                  << ',' << state.knockLevel
+                  << ',' << state.volumetricEfficiency << '\n';
+    }
+}
+
+/**
  * Drive a hot engine through closed-throttle fuel cut at a prescribed speed.
  *
  * This isolates exhaust thermodynamics from vehicle mass and gearing while
@@ -432,6 +528,8 @@ int main(int argc, char** argv) {
     auto traceFreeIdle = false;
     auto traceWatch = false;
     auto overrunSeconds = 0.0;
+    auto freeRevThrottle = -1.0;
+    auto freeRevSeconds = 12.0;
     for (int index = 1; index < argc; ++index) {
         const std::string argument = argv[index];
         if (argument == "--catalog-root" && index + 1 < argc) catalogRoot = argv[++index];
@@ -443,10 +541,15 @@ int main(int argc, char** argv) {
             traceThrottle = std::clamp(std::stod(argv[++index]), 0.0, 1.0);
         else if (argument == "--idle") traceFreeIdle = true;
         else if (argument == "--watch") traceWatch = true;
+        else if (argument == "--freerev" && index + 1 < argc)
+            freeRevThrottle = std::clamp(std::stod(argv[++index]), 0.0, 1.0);
+        else if (argument == "--seconds" && index + 1 < argc)
+            freeRevSeconds = std::max(1.0, std::stod(argv[++index]));
         else {
             std::cerr << "usage: EngineLabPhysicsPerfHarness [--catalog-root dir]"
                          " [--filter name-fragment] [--runs count] [--trace rpm]"
-                         " [--throttle 0..1] [--idle] [--overrun seconds]\n";
+                         " [--throttle 0..1] [--idle] [--overrun seconds]"
+                         " [--freerev 0..1 [--seconds S]]\n";
             return EXIT_FAILURE;
         }
     }
@@ -473,6 +576,10 @@ int main(int argc, char** argv) {
     // --trace is a single-engine instrument: pair it with --filter.
     if (traceRpm > 0.0) {
         traceEngine(engines.front(), traceRpm, traceThrottle, traceFreeIdle, traceWatch);
+        return EXIT_SUCCESS;
+    }
+    if (freeRevThrottle >= 0.0) {
+        traceFreeRev(engines.front(), freeRevThrottle, freeRevSeconds);
         return EXIT_SUCCESS;
     }
     if (overrunSeconds > 0.0) {
