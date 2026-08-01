@@ -2210,6 +2210,7 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
         auto exhaustNetworkCompleted = true;
         auto exhaustAdvanceDurationSeconds = 0.0;
         auto outletMassKg = 0.0;
+        gasdynamics::ExhaustFuelReactionResult exhaustFuelReaction;
         std::array<std::uint8_t, 32> exhaustExchangeApplied {};
         exhaustExchangeApplied.fill(1);
         if (flushExhaustNetwork) {
@@ -2252,6 +2253,19 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
             exhaustNetworkAcceptedSubsteps += networkAdvance.acceptedSubsteps;
             exhaustNetworkAdvancedSeconds += networkAdvance.advancedTimeSeconds;
             if (!networkAdvance.completed) state_.solverResolutionLimited = true;
+            if (networkAdvance.completed && config_.exhaustAfterfire.enabled) {
+                exhaustFuelReaction = physicalExhaustNetwork.reactUnburnedFuel(
+                    networkAdvance.advancedTimeSeconds,
+                    {
+                        config_.exhaustAfterfire.ignitionTemperatureK,
+                        config_.exhaustAfterfire.reactionTimeConstantSeconds,
+                        config_.exhaustAfterfire.reactionEfficiency,
+                        config_.fuelProperties.oxygenMolesPerFuelMole,
+                        config_.fuelProperties.molarMassGramsPerMole * 0.001,
+                        config_.fuelProperties.lowerHeatingValueMjPerKg
+                            * 1'000'000.0,
+                    });
+            }
 
             const auto cylinderExchanges = physicalExhaustNetwork.cylinderExchanges();
             for (std::size_t exchangeIndex = 0;
@@ -2656,6 +2670,16 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
             state_.exhaustFlowGramsPerSecond = smooth(state_.exhaustFlowGramsPerSecond,
                 physicalOutletFlowGramsPerSecond,
                 exhaustAdvanceDurationSeconds, 35.0);
+            state_.exhaustAfterfireHeatReleaseKw = smooth(
+                state_.exhaustAfterfireHeatReleaseKw,
+                exhaustFuelReaction.releasedEnergyJoules
+                    / exhaustAdvanceDurationSeconds / 1'000.0,
+                exhaustAdvanceDurationSeconds, 80.0);
+            state_.exhaustAfterfireFuelBurnMgPerSecond = smooth(
+                state_.exhaustAfterfireFuelBurnMgPerSecond,
+                exhaustFuelReaction.burnedFuelMassKg
+                    / exhaustAdvanceDurationSeconds * 1.0e6,
+                exhaustAdvanceDurationSeconds, 80.0);
         }
         state_.manifoldGasMassGrams = 0.0;
         state_.cylinderGasMassGrams = 0.0;

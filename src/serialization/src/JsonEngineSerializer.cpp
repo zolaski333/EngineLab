@@ -436,6 +436,10 @@ std::string JsonEngineSerializer::encode(const EngineConfig& config) const {
                       {"compression_ignition_premixed_fraction", config.combustionCalibration.compressionIgnitionPremixedFraction},
                       {"cycle_variation_cov", config.combustionCalibration.cycleVariationCoefficientOfVariation},
                       {"cycle_variation_correlation", config.combustionCalibration.cycleVariationCorrelation}}},
+        {"exhaust_afterfire", {{"enabled", config.exhaustAfterfire.enabled},
+                      {"ignition_temperature_k", config.exhaustAfterfire.ignitionTemperatureK},
+                      {"reaction_time_constant_s", config.exhaustAfterfire.reactionTimeConstantSeconds},
+                      {"reaction_efficiency", config.exhaustAfterfire.reactionEfficiency}}},
         {"runner_acoustics", {{"enabled", config.runnerAcoustics.enabled},
                       {"damping_ratio", config.runnerAcoustics.dampingRatio},
                       {"coupling_gain", config.runnerAcoustics.couplingGain},
@@ -633,6 +637,13 @@ EngineDecodeResult JsonEngineSerializer::decode(std::string_view text) const noe
             config.combustionCalibration.compressionIgnitionPremixedFraction = calibration.value("compression_ignition_premixed_fraction", config.combustionCalibration.compressionIgnitionPremixedFraction);
             config.combustionCalibration.cycleVariationCoefficientOfVariation = calibration.value("cycle_variation_cov", config.combustionCalibration.cycleVariationCoefficientOfVariation);
             config.combustionCalibration.cycleVariationCorrelation = calibration.value("cycle_variation_correlation", config.combustionCalibration.cycleVariationCorrelation);
+        }
+        if (engine.contains("exhaust_afterfire")) {
+            const auto& afterfire = engine.at("exhaust_afterfire");
+            config.exhaustAfterfire.enabled = afterfire.value("enabled", config.exhaustAfterfire.enabled);
+            config.exhaustAfterfire.ignitionTemperatureK = afterfire.value("ignition_temperature_k", config.exhaustAfterfire.ignitionTemperatureK);
+            config.exhaustAfterfire.reactionTimeConstantSeconds = afterfire.value("reaction_time_constant_s", config.exhaustAfterfire.reactionTimeConstantSeconds);
+            config.exhaustAfterfire.reactionEfficiency = afterfire.value("reaction_efficiency", config.exhaustAfterfire.reactionEfficiency);
         }
         if (engine.contains("runner_acoustics")) {
             const auto& acoustics = engine.at("runner_acoustics");

@@ -146,6 +146,22 @@ struct ExhaustNetworkAdvanceResult final {
     double wallHeatRejectedJ { 0.0 };
 };
 
+struct ExhaustFuelReactionConfig final {
+    double ignitionTemperatureK { 900.0 };
+    double reactionTimeConstantSeconds { 0.010 };
+    double reactionEfficiency { 0.95 };
+    double oxygenMolesPerFuelMole { 12.5 };
+    double fuelMolarMassKg { 0.114 };
+    double lowerHeatingValueJPerKg { 44'000'000.0 };
+};
+
+struct ExhaustFuelReactionResult final {
+    double burnedFuelMassKg { 0.0 };
+    double consumedOxygenMassKg { 0.0 };
+    double releasedEnergyJoules { 0.0 };
+    std::size_t reactingControlVolumes { 0 };
+};
+
 /** Globally coupled finite-volume exhaust network.
  *
  * Every duct and junction participates in the same SSP-RK2 stages. Direct
@@ -180,6 +196,15 @@ public:
         return junctionStates_;
     }
     [[nodiscard]] ExhaustNetworkInventory inventory() const noexcept;
+
+    /** Operator-split oxidation of real fuel and oxygen inventories already
+     * present in hot exhaust control volumes. Species mass is conserved and
+     * chemical heat is added to the same conservative state that drives the
+     * pressure/acoustic boundary. No authored fuel or synthetic impulse is
+     * introduced. */
+    [[nodiscard]] ExhaustFuelReactionResult reactUnburnedFuel(
+        double durationSeconds,
+        const ExhaustFuelReactionConfig& reaction) noexcept;
 
     /** Advance the complete network by exactly durationSeconds when successful.
      * Missing cylinder IDs are treated as closed valves. Duplicate supplied IDs

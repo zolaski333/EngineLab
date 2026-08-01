@@ -517,6 +517,85 @@ ExhaustNetworkInventory ExhaustGasNetwork::inventory() const noexcept {
     return result;
 }
 
+ExhaustFuelReactionResult ExhaustGasNetwork::reactUnburnedFuel(
+    double durationSeconds,
+    const ExhaustFuelReactionConfig& reaction) noexcept {
+    ExhaustFuelReactionResult result;
+    if (!configured_ || !(durationSeconds > 0.0)
+        || !finite(durationSeconds)
+        || !(reaction.ignitionTemperatureK > 0.0)
+        || !(reaction.reactionTimeConstantSeconds > 0.0)
+        || !(reaction.reactionEfficiency > 0.0)
+        || !(reaction.oxygenMolesPerFuelMole > 0.0)
+        || !(reaction.fuelMolarMassKg > 0.0)
+        || !(reaction.lowerHeatingValueJPerKg > 0.0))
+        return result;
+
+    const auto oxygen = static_cast<std::size_t>(GasSpecies::oxygen);
+    const auto fuel = static_cast<std::size_t>(GasSpecies::fuel);
+    const auto burned = static_cast<std::size_t>(GasSpecies::burned);
+    const auto oxygenMassPerFuelMass =
+        reaction.oxygenMolesPerFuelMole * 0.032
+        / reaction.fuelMolarMassKg;
+    const auto efficiency = std::clamp(reaction.reactionEfficiency, 0.0, 1.0);
+
+    const auto reactState = [&](ConservativeState& state,
+                                double volumeM3) noexcept {
+        const auto primitive = mixtureModel_.primitiveFromConservative(state);
+        if (!primitive
+            || primitive->temperatureK <= reaction.ignitionTemperatureK
+            || !(volumeM3 > 0.0)) return false;
+        const auto fuelDensity = state.speciesMassDensityKgPerM3[fuel];
+        const auto oxygenDensity = state.speciesMassDensityKgPerM3[oxygen];
+        if (!(fuelDensity > 0.0) || !(oxygenDensity > 0.0)) return false;
+        const auto activation = std::clamp(
+            (primitive->temperatureK - reaction.ignitionTemperatureK)
+                / 450.0,
+            0.0, 1.0);
+        const auto reactedFraction = efficiency * (1.0 - std::exp(
+            -durationSeconds * activation
+                / reaction.reactionTimeConstantSeconds));
+        const auto stoichiometricFuelDensity =
+            oxygenDensity / oxygenMassPerFuelMass;
+        const auto consumedFuelDensity = std::min(
+            fuelDensity, stoichiometricFuelDensity) * reactedFraction;
+        if (!(consumedFuelDensity > 0.0)) return false;
+        const auto consumedOxygenDensity =
+            consumedFuelDensity * oxygenMassPerFuelMass;
+        auto candidate = state;
+        candidate.speciesMassDensityKgPerM3[fuel] -= consumedFuelDensity;
+        candidate.speciesMassDensityKgPerM3[oxygen] -= consumedOxygenDensity;
+        candidate.speciesMassDensityKgPerM3[burned] +=
+            consumedFuelDensity + consumedOxygenDensity;
+        const auto releasedEnergyDensity = consumedFuelDensity
+            * reaction.lowerHeatingValueJPerKg;
+        candidate.totalEnergyDensityJPerM3 += releasedEnergyDensity;
+        if (!mixtureModel_.primitiveFromConservative(candidate)) return false;
+        state = candidate;
+        result.burnedFuelMassKg += consumedFuelDensity * volumeM3;
+        result.consumedOxygenMassKg += consumedOxygenDensity * volumeM3;
+        result.releasedEnergyJoules += releasedEnergyDensity * volumeM3;
+        ++result.reactingControlVolumes;
+        return true;
+    };
+
+    for (auto& duct : ducts_) {
+        auto reacted = false;
+        for (std::size_t index = 0; index < duct.cells_.size(); ++index)
+            reacted = reactState(duct.cells_[index], duct.cellVolumesM3_[index])
+                || reacted;
+        if (reacted) duct.cellStateCacheIsValid_ = false;
+    }
+    for (std::size_t index = 0; index < junctionStates_.size(); ++index) {
+        if (!reactState(junctionStates_[index],
+                layout_.junctions()[index].volumeM3)) continue;
+        const auto primitive = mixtureModel_.primitiveFromConservative(
+            junctionStates_[index]);
+        if (primitive) junctionPrimitives_[index] = *primitive;
+    }
+    return result;
+}
+
 bool ExhaustGasNetwork::sampleCylinderBoundaries(
     std::span<const CylinderValveBoundary> cylinderBoundaries,
     std::span<CylinderBoundaryFlowSample> samples) const noexcept {

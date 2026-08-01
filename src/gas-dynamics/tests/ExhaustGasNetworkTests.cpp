@@ -611,6 +611,54 @@ void testBoundaryInputOrderIsIrrelevant() {
         "duplicate cylinder boundaries must be rejected before changing state");
 }
 
+void testHotUnburnedFuelReactsConservatively() {
+    ExhaustGasNetworkConfig hotConfiguration;
+    hotConfiguration.initialTemperatureK = 1'150.0;
+    GasComposition reactive;
+    reactive.massFractions = { 0.20, 0.68, 0.12, 0.0 };
+    hotConfiguration.initialComposition = reactive;
+    auto hot = makeNetwork(makeDefaultInlineFour(), hotConfiguration);
+    const auto before = hot.inventory();
+    ExhaustFuelReactionConfig chemistry;
+    chemistry.ignitionTemperatureK = 850.0;
+    chemistry.reactionTimeConstantSeconds = 0.008;
+    chemistry.reactionEfficiency = 0.94;
+    const auto reaction = hot.reactUnburnedFuel(0.004, chemistry);
+    const auto after = hot.inventory();
+    const auto oxygen = static_cast<std::size_t>(GasSpecies::oxygen);
+    const auto fuel = static_cast<std::size_t>(GasSpecies::fuel);
+    const auto burned = static_cast<std::size_t>(GasSpecies::burned);
+    requireNetwork(reaction.reactingControlVolumes > 0
+            && reaction.burnedFuelMassKg > 0.0
+            && reaction.releasedEnergyJoules > 0.0,
+        "hot fuel and oxygen must release heat inside exhaust control volumes");
+    requireNetwork(after.speciesMassKg[fuel] < before.speciesMassKg[fuel]
+            && after.speciesMassKg[oxygen] < before.speciesMassKg[oxygen]
+            && after.speciesMassKg[burned] > before.speciesMassKg[burned],
+        "exhaust reaction must consume real reactants and create burned products");
+    requireNetwork(std::abs(totalMass(after.speciesMassKg)
+            - totalMass(before.speciesMassKg)) < 1.0e-12,
+        "exhaust reaction must conserve total species mass");
+    requireNetwork(relativeError(after.totalEnergyJ - before.totalEnergyJ,
+            reaction.releasedEnergyJoules) < 2.0e-12,
+        "exhaust reaction telemetry must equal conservative energy increase");
+    std::cout << "afterfire: volumes=" << reaction.reactingControlVolumes
+              << " fuel_mg=" << reaction.burnedFuelMassKg * 1.0e6
+              << " oxygen_mg=" << reaction.consumedOxygenMassKg * 1.0e6
+              << " energy_j=" << reaction.releasedEnergyJoules << '\n';
+
+    ExhaustGasNetworkConfig coldConfiguration = hotConfiguration;
+    coldConfiguration.initialTemperatureK = 700.0;
+    auto cold = makeNetwork(makeDefaultInlineFour(), coldConfiguration);
+    const auto coldBefore = cold.inventory();
+    const auto coldReaction = cold.reactUnburnedFuel(0.004, chemistry);
+    const auto coldAfter = cold.inventory();
+    requireNetwork(coldReaction.burnedFuelMassKg == 0.0
+            && coldAfter.speciesMassKg == coldBefore.speciesMassKg
+            && coldAfter.totalEnergyJ == coldBefore.totalEnergyJ,
+        "sub-ignition exhaust mixture must remain an exact non-reacting state");
+}
+
 } // namespace
 
 void runExhaustGasNetworkTests() {
@@ -625,4 +673,5 @@ void runExhaustGasNetworkTests() {
     testOpenEndDischargesTowardFreeExpansion();
     testDirectDuctInterfaceTransmitsWavesWithoutInventoryLoss();
     testBoundaryInputOrderIsIrrelevant();
+    testHotUnburnedFuelReactsConservatively();
 }

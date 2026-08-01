@@ -302,6 +302,16 @@ struct ExhaustComponentConfig final {
     double perforatedOpenAreaRatio { 0.0 };
 };
 
+/** Optional oxidation of unburned charge inside the physical exhaust network.
+ * Disabled by default: enabling it never creates fuel, oxygen or an audio
+ * event, it only lets inventories already present react when hot enough. */
+struct ExhaustAfterfireConfig final {
+    bool enabled { false };
+    double ignitionTemperatureK { 900.0 };
+    double reactionTimeConstantSeconds { 0.010 };
+    double reactionEfficiency { 0.95 };
+};
+
 struct ExhaustCylinderConnectionConfig final {
     std::uint32_t cylinderId { 0 };
     std::uint32_t componentId { 0 };
@@ -650,6 +660,7 @@ struct EngineConfig final {
     StructuralNvhConfig structuralNvh;
     CamshaftConfig camshafts;
     ExhaustConfig exhaust;
+    ExhaustAfterfireConfig exhaustAfterfire;
     TransmissionConfig transmission;
     VehicleConfig vehicle;
     /** Resolved default -> family -> engine voicing. Runtime-only: the engine
@@ -884,6 +895,9 @@ struct EngineState final {
     double intakeRunnerPressureKpa { 101.325 };
     double exhaustRunnerPressureKpa { 101.325 };
     double exhaustFlowGramsPerSecond { 0.0 };
+    /** Real chemical heat release occurring in the physical exhaust network. */
+    double exhaustAfterfireHeatReleaseKw { 0.0 };
+    double exhaustAfterfireFuelBurnMgPerSecond { 0.0 };
     double manifoldGasMassGrams { 0.0 };
     double cylinderGasMassGrams { 0.0 };
     double gasInternalEnergyJoules { 0.0 };

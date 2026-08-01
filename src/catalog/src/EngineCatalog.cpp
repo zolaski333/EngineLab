@@ -684,6 +684,12 @@ void applyCrankOffsets(EngineConfig& config) {
         assignIfPresent(calibration, "cycle_variation_cov", config.combustionCalibration.cycleVariationCoefficientOfVariation);
         assignIfPresent(calibration, "cycle_variation_correlation", config.combustionCalibration.cycleVariationCorrelation);
     }
+    if (const auto afterfire = engine["exhaust_afterfire"]) {
+        assignIfPresent(afterfire, "enabled", config.exhaustAfterfire.enabled);
+        assignIfPresent(afterfire, "ignition_temperature_k", config.exhaustAfterfire.ignitionTemperatureK);
+        assignIfPresent(afterfire, "reaction_time_constant_s", config.exhaustAfterfire.reactionTimeConstantSeconds);
+        assignIfPresent(afterfire, "reaction_efficiency", config.exhaustAfterfire.reactionEfficiency);
+    }
     if (const auto acoustics = engine["runner_acoustics"]) {
         assignIfPresent(acoustics, "enabled", config.runnerAcoustics.enabled);
         assignIfPresent(acoustics, "damping_ratio", config.runnerAcoustics.dampingRatio);

@@ -318,6 +318,12 @@ std::string YamlEngineSerializer::encode(const EngineConfig& config) const {
         << YAML::Key << "cycle_variation_cov" << YAML::Value << config.combustionCalibration.cycleVariationCoefficientOfVariation
         << YAML::Key << "cycle_variation_correlation" << YAML::Value << config.combustionCalibration.cycleVariationCorrelation
         << YAML::EndMap
+        << YAML::Key << "exhaust_afterfire" << YAML::Value << YAML::BeginMap
+        << YAML::Key << "enabled" << YAML::Value << config.exhaustAfterfire.enabled
+        << YAML::Key << "ignition_temperature_k" << YAML::Value << config.exhaustAfterfire.ignitionTemperatureK
+        << YAML::Key << "reaction_time_constant_s" << YAML::Value << config.exhaustAfterfire.reactionTimeConstantSeconds
+        << YAML::Key << "reaction_efficiency" << YAML::Value << config.exhaustAfterfire.reactionEfficiency
+        << YAML::EndMap
         << YAML::Key << "runner_acoustics" << YAML::Value << YAML::BeginMap
         << YAML::Key << "enabled" << YAML::Value << config.runnerAcoustics.enabled
         << YAML::Key << "damping_ratio" << YAML::Value << config.runnerAcoustics.dampingRatio
@@ -726,6 +732,12 @@ EngineDecodeResult YamlEngineSerializer::decode(std::string_view text) const noe
             config.combustionCalibration.compressionIgnitionPremixedFraction = calibration["compression_ignition_premixed_fraction"].as<double>(config.combustionCalibration.compressionIgnitionPremixedFraction);
             config.combustionCalibration.cycleVariationCoefficientOfVariation = calibration["cycle_variation_cov"].as<double>(config.combustionCalibration.cycleVariationCoefficientOfVariation);
             config.combustionCalibration.cycleVariationCorrelation = calibration["cycle_variation_correlation"].as<double>(config.combustionCalibration.cycleVariationCorrelation);
+        }
+        if (const auto afterfire = engine["exhaust_afterfire"]) {
+            config.exhaustAfterfire.enabled = afterfire["enabled"].as<bool>(config.exhaustAfterfire.enabled);
+            config.exhaustAfterfire.ignitionTemperatureK = afterfire["ignition_temperature_k"].as<double>(config.exhaustAfterfire.ignitionTemperatureK);
+            config.exhaustAfterfire.reactionTimeConstantSeconds = afterfire["reaction_time_constant_s"].as<double>(config.exhaustAfterfire.reactionTimeConstantSeconds);
+            config.exhaustAfterfire.reactionEfficiency = afterfire["reaction_efficiency"].as<double>(config.exhaustAfterfire.reactionEfficiency);
         }
         if (const auto acoustics = engine["runner_acoustics"]) {
             config.runnerAcoustics.enabled = acoustics["enabled"].as<bool>(config.runnerAcoustics.enabled);
