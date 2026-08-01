@@ -5,6 +5,18 @@ It records measurements as well as successful changes. Failed hypotheses are
 kept because repeating an attractive but disproved fix wastes more time than
 documenting it.
 
+## 2026-08-01 — livraison audio et physique vérifiée
+
+Le catalogue courant passe 15/15 en `--free-run`, sans overrun ; le Merlin est
+le pire cas à 1,128 fois le temps réel, soit 11,3 % de marge avant échéance.
+La suite Release passe 31/31. Le lot ajoute voicing rechargeable à chaud,
+stems reconstructibles et carte d'ordres, absorption poreuse passive,
+variabilité physique cycle-à-cycle, afterfire chimique dans le réseau 1-D et
+diagnostics de contre-pression turbo testés. Le ZIP extrait démarre et son
+exporteur produit un rendu K20 de 15,3 s sans perte. Table complète, hashes,
+commandes et limites :
+[`final-validation-2026-08-01.md`](final-validation-2026-08-01.md).
+
 ## 2026-07-29 — livraison finale vérifiée
 
 Le catalogue complet passe la commande prescrite : 14/14 points valides, aucun

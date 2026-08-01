@@ -1,5 +1,21 @@
 # Brief de reprise — nouvelle machine (2026-07-28)
 
+> **État vérifié au 1er août 2026.** Lire d'abord
+> `docs/final-validation-2026-08-01.md`. La priorité P2 « sortir le voicing du
+> code » ci-dessous est terminée, ainsi que les stems reconstructibles, la carte
+> des ordres, l'absorption poreuse passive, la variabilité cycle-à-cycle et
+> l'afterfire physique. Le catalogue courant passe 15/15 en mesure locale
+> `--free-run`, sans overrun ; le pire cas Merlin vaut 1,128 fois le temps réel,
+> soit 11,3 % de marge avant échéance. La suite Release passe 31/31.
+>
+> **Prochaine priorité : écoute humaine A/B aveugle et calibration mesurée.**
+> Ne pas relancer une optimisation admission/pool tant qu'une nouvelle mesure
+> locale ne contredit pas la table. Ne pas inventer de réglages de matériau,
+> variabilité ou afterfire pour rendre le son spectaculaire : partir de
+> références réelles et utiliser les stems pour localiser l'écart. Les alertes
+> de contre-pression turbo 2JZ/EJ25/Audi restent visibles et doivent être
+> expliquées par une comparaison physique, pas masquées.
+
 Ce fichier est le prompt de démarrage à donner à un agent IA qui reprend le
 projet sur une autre machine. Il est écrit pour être lu à froid, sans le
 contexte de la session précédente.

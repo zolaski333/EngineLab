@@ -115,6 +115,7 @@ un autre moteur crée volontairement sa calibration par défaut.
 - [Atelier audio et contrôles honnêtes](docs/audio-lot6-workshop-2026-07-29.md)
 - [Configuration des modes NVH structurels](docs/structural-nvh-configuration.md)
 - [Validation du transfert de charge](docs/vehicle-load-transfer-validation-2026-07-29.md)
+- [Validation finale audio et physique du 1er août 2026](docs/final-validation-2026-08-01.md)
 - [Validation finale du 29 juillet 2026](docs/final-validation-2026-07-29.md)
 - [Livraison et mesures des phases 0 à 3](docs/phase-0-3-delivery.md)
 
