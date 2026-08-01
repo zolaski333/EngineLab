@@ -3,6 +3,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
@@ -103,6 +104,22 @@ void verifyWave(
         "WAV file size matches header");
 }
 
+[[nodiscard]] std::vector<double> readPcm24(
+    const std::filesystem::path& file) {
+    std::ifstream input(file, std::ios::binary);
+    input.seekg(44);
+    std::vector<double> samples;
+    std::array<unsigned char, 3> bytes {};
+    while (input.read(reinterpret_cast<char*>(bytes.data()), 3)) {
+        auto value = static_cast<std::int32_t>(bytes[0])
+            | (static_cast<std::int32_t>(bytes[1]) << 8)
+            | (static_cast<std::int32_t>(bytes[2]) << 16);
+        if ((value & 0x00800000) != 0) value |= ~0x00ffffff;
+        samples.push_back(static_cast<double>(value) / 8'388'608.0);
+    }
+    return samples;
+}
+
 [[nodiscard]] enginelab::OfflineAudioScenario shortScenario() {
     return {
         "format-smoke",
@@ -158,7 +175,8 @@ int main() {
     pcmRequest.loadAuthoredImpulseResponses = false;
     const auto pcm = enginelab::exportOfflineAudio(pcmRequest);
     require(pcm.success, pcm.error);
-    require(pcm.files.size() == 9, "master, six stems and metadata written");
+    require(pcm.files.size() == 12,
+        "master, diagnostic WAVs, order map and metadata written");
     require(
         pcm.renderedFrames == 9'600,
         "96 kHz render has exact scenario frame count");
@@ -181,6 +199,50 @@ int main() {
                 / (std::string("stem_") + stem + ".wav"),
             1, 24, 96'000, pcm.renderedFrames);
     }
+    verifyWave(pcmRequest.outputDirectory / "premaster.wav",
+        1, 24, 96'000, pcm.renderedFrames);
+    verifyWave(pcmRequest.outputDirectory / "master_processing_delta.wav",
+        1, 24, 96'000, pcm.renderedFrames);
+
+    const auto premaster = readPcm24(
+        pcmRequest.outputDirectory / "premaster.wav");
+    const auto master = readPcm24(
+        pcmRequest.outputDirectory / "master.wav");
+    const auto delta = readPcm24(
+        pcmRequest.outputDirectory / "master_processing_delta.wav");
+    std::vector<std::vector<double>> stems;
+    for (const auto* stem : {
+             "combustion", "exhaust_dry", "exhaust_ir",
+             "intake", "forced_induction", "mechanical" }) {
+        stems.push_back(readPcm24(pcmRequest.outputDirectory
+            / (std::string("stem_") + stem + ".wav")));
+    }
+    require(premaster.size() == master.size() && master.size() == delta.size(),
+        "diagnostic WAVs have matching sample counts");
+    double quantisedStemError = 0.0;
+    double quantisedMasterError = 0.0;
+    for (std::size_t sample = 0; sample < master.size(); ++sample) {
+        double sum = 0.0;
+        for (const auto& stem : stems) sum += stem[sample];
+        quantisedStemError = std::max(quantisedStemError,
+            std::abs(sum - premaster[sample]));
+        quantisedMasterError = std::max(quantisedMasterError,
+            std::abs(premaster[sample] + delta[sample] - master[sample]));
+    }
+    require(quantisedStemError <= 1.0e-6
+            && quantisedMasterError <= 3.0e-7,
+        "PCM24 stems and processing delta reconstruct within quantisation error");
+    {
+        std::ifstream orderMap(
+            pcmRequest.outputDirectory / "engine-order-map.csv");
+        std::string header;
+        std::string firstRow;
+        std::getline(orderMap, header);
+        std::getline(orderMap, firstRow);
+        require(header == "time_s,rpm,order,frequency_hz,level_dbfs"
+                && !firstRow.empty(),
+            "engine order map contains a machine-readable header and data");
+    }
 
     {
         std::ifstream manifestFile(
@@ -196,9 +258,17 @@ int main() {
                 && manifest.at("wave_format_code") == 1,
             "manifest records PCM24 format truthfully");
         require(
-            manifest.at("stems_written") == true
-                && manifest.at("files").size() == 7,
-            "manifest inventories master and stems");
+            manifest.at("schema_version") == 2
+                && manifest.at("stems_written") == true
+                && manifest.at("files").size() == 10,
+            "manifest inventories master, stems and order map");
+        require(
+            manifest.at("stem_reconstruction")
+                    .at("stem_sum_to_premaster_max_abs_error") == 0.0
+                && manifest.at("stem_reconstruction")
+                    .at("premaster_plus_delta_to_master_max_abs_error")
+                    .get<double>() <= 1.0e-7,
+            "manifest proves float-domain diagnostic reconstruction");
     }
 
     enginelab::OfflineAudioExportRequest floatRequest = pcmRequest;

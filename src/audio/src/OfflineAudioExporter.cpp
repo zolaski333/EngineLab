@@ -21,6 +21,8 @@
 #include <fstream>
 #include <limits>
 #include <memory>
+#include <numbers>
+#include <numeric>
 #include <stdexcept>
 #include <thread>
 #include <utility>
@@ -38,6 +40,92 @@ constexpr std::array<std::uint32_t, 3> supportedSampleRates {
 constexpr std::array<const char*, 6> stemNames {
     "combustion", "exhaust_dry", "exhaust_ir",
     "intake", "forced_induction", "mechanical"
+};
+constexpr const char* premasterName = "premaster.wav";
+constexpr const char* processingDeltaName = "master_processing_delta.wav";
+
+class EngineOrderMap final {
+public:
+    EngineOrderMap(std::uint32_t sampleRate, std::ostream& output)
+        : sampleRate_(static_cast<double>(sampleRate)), output_(output),
+          windowSize_(sampleRate / 12U), hopSize_(windowSize_ / 2U) {
+        mono_.reserve(windowSize_ + hopSize_);
+        rpm_.reserve(windowSize_ + hopSize_);
+        window_.resize(windowSize_);
+        for (std::size_t sample = 0; sample < windowSize_; ++sample)
+            window_[sample] = 0.5 - 0.5 * std::cos(
+                2.0 * std::numbers::pi * static_cast<double>(sample)
+                / static_cast<double>(windowSize_ - 1U));
+        windowSum_ = std::accumulate(window_.begin(), window_.end(), 0.0);
+        output_ << "time_s,rpm,order,frequency_hz,level_dbfs\n";
+    }
+
+    void push(const juce::AudioBuffer<float>& audio, int sampleCount,
+              double rpm) {
+        const auto* left = audio.getReadPointer(0);
+        const auto* right = audio.getReadPointer(1);
+        for (int sample = 0; sample < sampleCount; ++sample) {
+            mono_.push_back(0.5F * (left[sample] + right[sample]));
+            rpm_.push_back(static_cast<float>(rpm));
+        }
+        while (mono_.size() >= windowSize_) {
+            analyse();
+            mono_.erase(mono_.begin(), mono_.begin()
+                + static_cast<std::ptrdiff_t>(hopSize_));
+            rpm_.erase(rpm_.begin(), rpm_.begin()
+                + static_cast<std::ptrdiff_t>(hopSize_));
+            consumedFrames_ += hopSize_;
+        }
+    }
+
+private:
+    void analyse() {
+        const auto rpmSum = std::accumulate(
+            rpm_.begin(), rpm_.begin() + static_cast<std::ptrdiff_t>(windowSize_),
+            0.0);
+        const auto meanRpm = rpmSum / static_cast<double>(windowSize_);
+        const auto centreSeconds = (static_cast<double>(consumedFrames_)
+            + 0.5 * static_cast<double>(windowSize_)) / sampleRate_;
+        for (int halfOrder = 1; halfOrder <= 48; ++halfOrder) {
+            const auto order = 0.5 * static_cast<double>(halfOrder);
+            const auto frequencyHz = meanRpm / 60.0 * order;
+            if (frequencyHz <= 0.0 || frequencyHz >= sampleRate_ * 0.48)
+                continue;
+            const auto phaseStep = 2.0 * std::numbers::pi
+                * frequencyHz / sampleRate_;
+            const auto cosine = std::cos(phaseStep);
+            const auto sine = std::sin(phaseStep);
+            const auto coefficient = 2.0 * cosine;
+            double previous = 0.0;
+            double beforePrevious = 0.0;
+            for (std::size_t sample = 0; sample < windowSize_; ++sample) {
+                const auto value = static_cast<double>(mono_[sample])
+                    * window_[sample];
+                const auto current = value + coefficient * previous
+                    - beforePrevious;
+                beforePrevious = previous;
+                previous = current;
+            }
+            const auto real = previous - beforePrevious * cosine;
+            const auto imaginary = beforePrevious * sine;
+            const auto amplitude = 2.0 * std::hypot(real, imaginary)
+                / std::max(1.0, windowSum_);
+            const auto levelDbfs = 20.0 * std::log10(
+                std::max(1.0e-12, amplitude));
+            output_ << centreSeconds << ',' << meanRpm << ',' << order
+                    << ',' << frequencyHz << ',' << levelDbfs << '\n';
+        }
+    }
+
+    double sampleRate_;
+    std::ostream& output_;
+    std::size_t windowSize_;
+    std::size_t hopSize_;
+    std::uint64_t consumedFrames_ { 0 };
+    std::vector<float> mono_;
+    std::vector<float> rpm_;
+    std::vector<double> window_;
+    double windowSum_ { 1.0 };
 };
 
 [[nodiscard]] bool finiteInRange(
@@ -527,8 +615,13 @@ OfflineAudioExportResult exportOfflineAudio(
     OfflineAudioExportResult result;
     std::vector<std::filesystem::path> partialFiles;
     std::vector<std::unique_ptr<WaveStreamWriter>> writers;
+    std::unique_ptr<std::ofstream> orderMapStream;
+    std::unique_ptr<EngineOrderMap> orderMap;
 
     const auto fail = [&](std::string message) {
+        orderMap.reset();
+        if (orderMapStream) orderMapStream->close();
+        orderMapStream.reset();
         for (auto& writer : writers)
             if (writer) writer->abort();
         removePartialFiles(partialFiles);
@@ -566,6 +659,8 @@ OfflineAudioExportResult exportOfflineAudio(
             request.outputDirectory / "scenario.json";
         const auto manifestPath =
             request.outputDirectory / "render-manifest.json";
+        const auto orderMapPath =
+            request.outputDirectory / "engine-order-map.csv";
 
         std::vector<std::filesystem::path> finalWavePaths { masterPath };
         if (request.writeStems) {
@@ -573,8 +668,12 @@ OfflineAudioExportResult exportOfflineAudio(
                 finalWavePaths.push_back(
                     request.outputDirectory
                     / (std::string("stem_") + name + ".wav"));
+            finalWavePaths.push_back(request.outputDirectory / premasterName);
+            finalWavePaths.push_back(
+                request.outputDirectory / processingDeltaName);
         }
         std::vector<std::filesystem::path> finalFiles = finalWavePaths;
+        if (request.writeStems) finalFiles.push_back(orderMapPath);
         finalFiles.push_back(scenarioPath);
         finalFiles.push_back(manifestPath);
         for (const auto& finalFile : finalFiles) {
@@ -701,8 +800,18 @@ OfflineAudioExportResult exportOfflineAudio(
             writers.push_back(std::make_unique<WaveStreamWriter>(
                 partial, request.sampleRateHz, request.format));
         }
+        if (request.writeStems) {
+            orderMapStream = std::make_unique<std::ofstream>(
+                partialPathFor(orderMapPath));
+            if (!*orderMapStream)
+                return fail("Could not create engine-order-map.csv.");
+            orderMap = std::make_unique<EngineOrderMap>(
+                request.sampleRateHz, *orderMapStream);
+        }
 
         juce::AudioBuffer<float> master(2, samplesPerStep);
+        juce::AudioBuffer<float> premaster(2, samplesPerStep);
+        juce::AudioBuffer<float> processingDelta(2, samplesPerStep);
         std::array<juce::AudioBuffer<float>, stemNames.size()>
             stemBlocks;
         RealtimeAudioStemBuffers stemViews;
@@ -874,6 +983,30 @@ OfflineAudioExportResult exportOfflineAudio(
                     applyFade(
                         stem, framesThisStep, writtenFrames,
                         totalFrames, fadeFrames);
+
+                premaster.clear();
+                processingDelta.clear();
+                for (int channel = 0; channel < 2; ++channel) {
+                    for (int sample = 0; sample < framesThisStep; ++sample) {
+                        float stemSum = 0.0F;
+                        for (const auto& stem : stemBlocks)
+                            stemSum += stem.getSample(channel, sample);
+                        const auto masterSample = master.getSample(channel, sample);
+                        const auto delta = masterSample - stemSum;
+                        premaster.setSample(channel, sample, stemSum);
+                        processingDelta.setSample(channel, sample, delta);
+                        float rebuiltStemSum = 0.0F;
+                        for (const auto& stem : stemBlocks)
+                            rebuiltStemSum += stem.getSample(channel, sample);
+                        result.stemPremasterMaxError = std::max(
+                            result.stemPremasterMaxError,
+                            std::abs(static_cast<double>(rebuiltStemSum - stemSum)));
+                        result.masterReconstructionMaxError = std::max(
+                            result.masterReconstructionMaxError,
+                            std::abs(static_cast<double>(
+                                (stemSum + delta) - masterSample)));
+                    }
+                }
             }
 
             const auto* left = master.getReadPointer(0);
@@ -900,6 +1033,11 @@ OfflineAudioExportResult exportOfflineAudio(
                         stemBlocks[stemIndex],
                         framesThisStep);
                 }
+                writers[stemBlocks.size() + 1]->write(
+                    premaster, framesThisStep);
+                writers[stemBlocks.size() + 2]->write(
+                    processingDelta, framesThisStep);
+                orderMap->push(master, framesThisStep, frame.state.rpm);
             }
             writtenFrames +=
                 static_cast<std::uint64_t>(framesThisStep);
@@ -925,6 +1063,14 @@ OfflineAudioExportResult exportOfflineAudio(
         for (auto& writer : writers)
             writer->close();
         writers.clear();
+        orderMap.reset();
+        if (orderMapStream) {
+            orderMapStream->flush();
+            if (!*orderMapStream)
+                return fail("Could not write engine-order-map.csv.");
+            orderMapStream->close();
+            orderMapStream.reset();
+        }
 
         result.renderedFrames = writtenFrames;
         result.durationSeconds =
@@ -984,11 +1130,13 @@ OfflineAudioExportResult exportOfflineAudio(
         Json fileList = Json::array();
         for (const auto& path : finalWavePaths)
             fileList.push_back(path.filename().string());
+        if (request.writeStems)
+            fileList.push_back(orderMapPath.filename().string());
         Json warnings = Json::array();
         for (const auto& warning : result.warnings)
             warnings.push_back(warning);
         const Json manifest {
-            { "schema_version", 1 },
+            { "schema_version", 2 },
             { "engine", config.name },
             { "scenario", request.scenario.name },
             { "render_path",
@@ -1008,6 +1156,17 @@ OfflineAudioExportResult exportOfflineAudio(
             { "master_peak", result.masterPeak },
             { "master_rms", result.masterRms },
             { "stems_written", request.writeStems },
+            { "stem_reconstruction", {
+                { "premaster", premasterName },
+                { "master_processing_delta", processingDeltaName },
+                { "stem_sum_to_premaster_max_abs_error",
+                  result.stemPremasterMaxError },
+                { "premaster_plus_delta_to_master_max_abs_error",
+                  result.masterReconstructionMaxError },
+                { "domain", "float_before_wave_encoding" },
+            } },
+            { "engine_order_map",
+              request.writeStems ? orderMapPath.filename().string() : "" },
             { "stage_speeds", [&result] {
                 auto speeds = Json::array();
                 for (const auto& speed : result.stageSpeeds) {

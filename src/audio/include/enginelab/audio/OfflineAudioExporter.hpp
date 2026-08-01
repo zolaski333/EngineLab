@@ -92,6 +92,9 @@ struct OfflineAudioExportResult final {
     double durationSeconds { 0.0 };
     double masterPeak { 0.0 };
     double masterRms { 0.0 };
+    /** Float-domain algebraic checks, before WAV quantisation. */
+    double stemPremasterMaxError { 0.0 };
+    double masterReconstructionMaxError { 0.0 };
     std::size_t loadedImpulseResponses { 0 };
     std::size_t authoredImpulseResponses { 0 };
     bool physicalExhaustActive { false };

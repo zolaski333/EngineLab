@@ -907,7 +907,7 @@ private:
     juce::ComboBox sampleRateSelector_;
     juce::ComboBox formatSelector_;
     juce::ToggleButton stemsToggle_ {
-        "Master + six stems de diagnostic"
+        "Master + stems exacts + carte d'ordres"
     };
     juce::TextButton scenarioButton_ {
         "SCENARIO JSON..."
