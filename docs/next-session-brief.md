@@ -1,5 +1,16 @@
 # Brief de reprise — nouvelle machine (2026-07-28)
 
+> **État final vérifié le 2 août 2026.** Lire d'abord
+> `docs/audio-roadmap-final-validation-2026-08-02.md`. Le commit de code testé
+> `da33134` passe **16/16** en `--free-run`, zéro overrun, avec le Merlin pire
+> cas à **1,167×** (environ **14,3 %** de budget avant l'échéance), puis
+> **31/31 tests** en 642,39 s. Le Big Twin a révélé puis verrouillé une vraie
+> régression de démarrage : seuls l'afterfire de décélération et le rupteur
+> humide opt-in peuvent désormais contourner la porte d'injection. Les chiffres
+> plus anciens ci-dessous sont historiques et ne remplacent jamais une nouvelle
+> mesure locale. Prochaine action : écoute A/B aveugle des stems pression/jet et
+> du voicing catalogue, pas une nouvelle optimisation admission.
+
 > **État sonore vérifié au 1er août 2026, après mesure propre.** La nouvelle
 > table `--free-run` au repos passe **16/16** sans overrun ; le pire cas est le
 > Merlin à **1,187×** au meilleur passage et **1,086×** au pire des six passages.

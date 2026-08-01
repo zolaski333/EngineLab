@@ -929,3 +929,27 @@ et aucun gain d’écoute n’a été inventé. Sur l’EJ25, le callback moyen 
 `26,45 %` à `26,50 %`, p99 inchangé à `41 %`, avec facteur minimal `2,230×` et
 zéro violation temps réel. La suite transitoire passe. Détails :
 `docs/audio-lot4-fi-broadband-power-2026-07-29.md`.
+
+## 2026-08-02 — Clôture voicing, afterfire et sources d'échappement
+
+Le catalogue dispose maintenant de 16 profils de voicing YAML. Le DAG
+acoustique complet a été confirmé au lieu d'être réimplémenté, l'afterfire de
+décélération est conditionné par l'ECU et observable dans AUDIO HQ, et l'export
+sépare les stems onde de pression et jet sans double sommation.
+
+La validation finale a aussi trouvé un défaut réel : l'autorisation trop large
+de l'injection sans étincelle faisait caler le Big Twin à `0 rpm` dans le
+harness. Après séparation des états ECU, le Big Twin tient `5319 rpm` ;
+l'afterfire de lever et le rupteur humide opt-in restent explicitement actifs.
+
+Sur le commit de code `da33134` :
+
+- catalogue `--free-run` : 16/16 valides, zéro overrun ;
+- pire cas : Merlin `1,167×`, soit environ 14,3 % avant l'échéance ;
+- suite Release : 31/31 en 642,39 s ;
+- références constructeur : 24/24 ;
+- décomposition pression + jet : erreur float `2,32831e-10`, PCM24
+  `1,19209e-07`.
+
+Détails, table complète, A/B et limites :
+`docs/audio-roadmap-final-validation-2026-08-02.md`.
