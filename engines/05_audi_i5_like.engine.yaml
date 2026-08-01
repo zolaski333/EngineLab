@@ -53,7 +53,10 @@ engine:
       - { rpm: 0, advance_deg: 7 }
       - { rpm: 1200, advance_deg: 12 }
       - { rpm: 2400, advance_deg: 17 }
-      - { rpm: 3400, advance_deg: 13 }
+      # Current dyno-hold A/B: 13 deg gave 424.088 Nm (-15.182%) at
+      # 4,000 rpm; 14 deg gives 437.036 Nm (-12.593%) without moving the
+      # 5,600 rpm power point outside its independent envelope.
+      - { rpm: 3400, advance_deg: 14 }
       - { rpm: 5600, advance_deg: 18 }
       - { rpm: 7300, advance_deg: 16 }
   combustion_calibration:
