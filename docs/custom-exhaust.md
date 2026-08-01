@@ -90,6 +90,22 @@ exhaust_paths:
 
 Les mêmes clés existent en JSON sous `engine.exhaust_paths[].graph`.
 
+### Garnissage poreux mesure
+
+Un composant `muffler` peut maintenant decrire son absorption avec trois
+mesures independantes de la perte de charge :
+
+- `packing_flow_resistivity_pa_s_m2`, resistivite au flux du materiau poreux ;
+- `packing_thickness_mm`, epaisseur radiale du garnissage ;
+- `perforated_open_area_ratio`, fraction ouverte du tube perfore, entre 0 et 1.
+
+Les trois champs doivent etre strictement positifs ensemble et ne sont valides
+que sur un `muffler`. En leur absence, le filtre compile en identite exacte :
+EngineLab n'invente pas une absorption a partir de `restriction`, de
+`acoustic_gain` ou du volume du corps. Lorsqu'ils sont renseignes, l'impedance
+de surface suit Delany-Bazley et la perte de propagation reste passive. Ces
+valeurs doivent provenir de la fiche du materiau ou d'une mesure du silencieux.
+
 ## Types de composant
 
 | Type | Rôle compilé |

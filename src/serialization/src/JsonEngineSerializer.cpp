@@ -345,6 +345,9 @@ std::string JsonEngineSerializer::encode(const EngineConfig& config) const {
                     {"volume_l", component.volumeLitres}, {"restriction", component.restriction},
                     {"resonance_hz", component.resonanceHz}, {"acoustic_gain", component.acousticGain},
                     {"discharge_coefficient", component.dischargeCoefficient},
+                    {"packing_flow_resistivity_pa_s_m2", component.packingFlowResistivityPaSPerM2},
+                    {"packing_thickness_mm", component.packingThicknessMm},
+                    {"perforated_open_area_ratio", component.perforatedOpenAreaRatio},
                     {"acoustic_position_m", pointJson(component.acousticPositionM)},
                     {"acoustic_axis", pointJson(component.acousticAxis)},
                     {"acoustic_termination", terminationName(component.acousticTermination)} });
@@ -880,6 +883,14 @@ EngineDecodeResult JsonEngineSerializer::decode(std::string_view text) const noe
                         component.acousticGain = encodedComponent.value("acoustic_gain", component.acousticGain);
                         component.dischargeCoefficient = encodedComponent.value(
                             "discharge_coefficient", component.dischargeCoefficient);
+                        component.packingFlowResistivityPaSPerM2 = encodedComponent.value(
+                            "packing_flow_resistivity_pa_s_m2",
+                            component.packingFlowResistivityPaSPerM2);
+                        component.packingThicknessMm = encodedComponent.value(
+                            "packing_thickness_mm", component.packingThicknessMm);
+                        component.perforatedOpenAreaRatio = encodedComponent.value(
+                            "perforated_open_area_ratio",
+                            component.perforatedOpenAreaRatio);
                         if (encodedComponent.contains("acoustic_position_m"))
                             component.acousticPositionM = decodePoint(
                                 encodedComponent.at("acoustic_position_m"));

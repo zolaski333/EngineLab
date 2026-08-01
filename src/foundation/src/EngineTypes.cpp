@@ -1071,6 +1071,9 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
                     || !inRange(component.resonanceHz, 0.0, 20'000.0)
                     || !inRange(component.acousticGain, 0.0, 8.0)
                     || !inRange(component.dischargeCoefficient, 0.02, 1.5)
+                    || !inRange(component.packingFlowResistivityPaSPerM2, 0.0, 200'000.0)
+                    || !inRange(component.packingThicknessMm, 0.0, 300.0)
+                    || !inRange(component.perforatedOpenAreaRatio, 0.0, 1.0)
                     || !validPoint(component.acousticPositionM)
                     || !validPoint(component.acousticAxis)
                     || (component.type == ExhaustComponentType::outlet
@@ -1079,6 +1082,15 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
                             + component.acousticAxis.z * component.acousticAxis.z
                             < 1.0e-12))
                     return "Custom exhaust component IDs and dimensions must be finite, unique and valid";
+                const auto hasPacking = component.packingFlowResistivityPaSPerM2 > 0.0
+                    || component.packingThicknessMm > 0.0
+                    || component.perforatedOpenAreaRatio > 0.0;
+                if (hasPacking
+                    && (component.type != ExhaustComponentType::muffler
+                        || component.packingFlowResistivityPaSPerM2 <= 0.0
+                        || component.packingThicknessMm <= 0.0
+                        || component.perforatedOpenAreaRatio <= 0.0))
+                    return "Porous packing requires a muffler with resistivity, thickness and perforated open area";
                 outgoing.try_emplace(component.id);
                 componentIncoming.try_emplace(component.id, 0U);
                 cylinderIncoming.try_emplace(component.id, 0U);

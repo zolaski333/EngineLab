@@ -48,6 +48,9 @@ struct ExhaustNode final {
         AcousticTerminationType::unflanged };
     /** Optional component outlet diameter; zero means diameterMm at both ends. */
     double outletDiameterMm { 0.0 };
+    double packingFlowResistivityPaSPerM2 { 0.0 };
+    double packingThicknessMm { 0.0 };
+    double perforatedOpenAreaRatio { 0.0 };
 };
 struct ExhaustEdge final { std::uint32_t from {}; std::uint32_t to {}; };
 

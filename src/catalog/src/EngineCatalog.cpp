@@ -220,6 +220,12 @@ template <typename T>
             assignIfPresent(encoded, "resonance_hz", component.resonanceHz);
             assignIfPresent(encoded, "acoustic_gain", component.acousticGain);
             assignIfPresent(encoded, "discharge_coefficient", component.dischargeCoefficient);
+            assignIfPresent(encoded, "packing_flow_resistivity_pa_s_m2",
+                component.packingFlowResistivityPaSPerM2);
+            assignIfPresent(encoded, "packing_thickness_mm",
+                component.packingThicknessMm);
+            assignIfPresent(encoded, "perforated_open_area_ratio",
+                component.perforatedOpenAreaRatio);
             if (encoded["acoustic_position_m"])
                 component.acousticPositionM = decodePoint(encoded["acoustic_position_m"]);
             if (encoded["acoustic_axis"])

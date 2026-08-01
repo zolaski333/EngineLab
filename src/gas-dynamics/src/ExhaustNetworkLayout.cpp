@@ -154,6 +154,9 @@ ExhaustNetworkLayout ExhaustNetworkLayout::compile(
             0,
             lengthWasDerived,
             areaWasDerivedFromVolume,
+            std::max(0.0, node.packingFlowResistivityPaSPerM2),
+            std::max(0.0, node.packingThicknessMm) * 0.001,
+            std::clamp(node.perforatedOpenAreaRatio, 0.0, 1.0),
         });
         elements.emplace(node.id, ElementReference { false, index });
     }

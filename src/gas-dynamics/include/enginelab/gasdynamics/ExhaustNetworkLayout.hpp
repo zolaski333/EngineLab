@@ -45,6 +45,10 @@ struct CompiledExhaustDuct final {
     std::size_t cellCount { 0 };
     bool lengthWasDerived { false };
     bool areaWasDerivedFromVolume { false };
+    /** Acoustic-only porous lining metadata; ignored by the gas solver. */
+    double packingFlowResistivityPaSPerM2 { 0.0 };
+    double packingThicknessM { 0.0 };
+    double perforatedOpenAreaRatio { 0.0 };
 };
 
 /** Well-mixed physical junction used only where topology changes direction or

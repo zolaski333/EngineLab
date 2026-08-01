@@ -295,6 +295,11 @@ struct ExhaustComponentConfig final {
     AcousticPoint3M acousticAxis { 0.0, 1.0, 0.0 };
     AcousticTerminationType acousticTermination {
         AcousticTerminationType::unflanged };
+    /** Optional perforated-core porous packing. All three must be positive;
+     * zero leaves the acoustic network exactly unlined. */
+    double packingFlowResistivityPaSPerM2 { 0.0 };
+    double packingThicknessMm { 0.0 };
+    double perforatedOpenAreaRatio { 0.0 };
 };
 
 struct ExhaustCylinderConnectionConfig final {

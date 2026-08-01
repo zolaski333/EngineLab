@@ -554,6 +554,12 @@ std::string YamlEngineSerializer::encode(const EngineConfig& config) const {
                     << YAML::Key << "resonance_hz" << YAML::Value << component.resonanceHz
                     << YAML::Key << "acoustic_gain" << YAML::Value << component.acousticGain
                     << YAML::Key << "discharge_coefficient" << YAML::Value << component.dischargeCoefficient
+                    << YAML::Key << "packing_flow_resistivity_pa_s_m2" << YAML::Value
+                    << component.packingFlowResistivityPaSPerM2
+                    << YAML::Key << "packing_thickness_mm" << YAML::Value
+                    << component.packingThicknessMm
+                    << YAML::Key << "perforated_open_area_ratio" << YAML::Value
+                    << component.perforatedOpenAreaRatio
                     << YAML::Key << "acoustic_position_m" << YAML::Value;
                 emitPoint(out, component.acousticPositionM);
                 out << YAML::Key << "acoustic_axis" << YAML::Value;
@@ -996,6 +1002,14 @@ EngineDecodeResult YamlEngineSerializer::decode(std::string_view text) const noe
                         component.acousticGain = encodedComponent["acoustic_gain"].as<double>(component.acousticGain);
                         component.dischargeCoefficient = encodedComponent["discharge_coefficient"].as<double>(
                             component.dischargeCoefficient);
+                        component.packingFlowResistivityPaSPerM2 = encodedComponent[
+                            "packing_flow_resistivity_pa_s_m2"].as<double>(
+                                component.packingFlowResistivityPaSPerM2);
+                        component.packingThicknessMm = encodedComponent[
+                            "packing_thickness_mm"].as<double>(component.packingThicknessMm);
+                        component.perforatedOpenAreaRatio = encodedComponent[
+                            "perforated_open_area_ratio"].as<double>(
+                                component.perforatedOpenAreaRatio);
                         if (encodedComponent["acoustic_position_m"])
                             component.acousticPositionM = decodePoint(
                                 encodedComponent["acoustic_position_m"]);

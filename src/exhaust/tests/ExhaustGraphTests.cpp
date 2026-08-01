@@ -47,6 +47,9 @@ void require(bool condition, const std::string& message) {
     network.components.push_back(component(400, ExhaustComponentType::muffler, 480.0, 62.0, 0.20));
     network.components.back().volumeLitres = 7.3;
     network.components.back().dischargeCoefficient = 0.64;
+    network.components.back().packingFlowResistivityPaSPerM2 = 24'000.0;
+    network.components.back().packingThicknessMm = 45.0;
+    network.components.back().perforatedOpenAreaRatio = 0.28;
     network.components.push_back(component(401, ExhaustComponentType::catalyst, 180.0, 58.0, 0.08));
     network.components.push_back(component(500, ExhaustComponentType::outlet, 160.0, 70.0));
     network.components.push_back(component(501, ExhaustComponentType::outlet, 210.0, 58.0));
@@ -321,6 +324,15 @@ void testRoundTrip(const char* formatName) {
             && catalyst->type == ExhaustComponentType::catalyst
             && std::abs(catalyst->restriction - 0.08) < 1.0e-12,
         std::string(formatName) + " changed typed component data");
+    const auto muffler = std::find_if(path.network->components.begin(),
+        path.network->components.end(), [](const ExhaustComponentConfig& value) {
+            return value.id == 400;
+        });
+    require(muffler != path.network->components.end()
+            && std::abs(muffler->packingFlowResistivityPaSPerM2 - 24'000.0) < 1.0e-12
+            && std::abs(muffler->packingThicknessMm - 45.0) < 1.0e-12
+            && std::abs(muffler->perforatedOpenAreaRatio - 0.28) < 1.0e-12,
+        std::string(formatName) + " lost porous muffler material data");
 }
 
 void testLegacyAndBackPressure() {

@@ -13,6 +13,11 @@ target_link_libraries(EngineLabAudioVoicingTests PRIVATE
 enginelab_set_warnings(EngineLabAudioVoicingTests)
 add_test(NAME EngineLab.AudioVoicing COMMAND EngineLabAudioVoicingTests)
 
+add_executable(EngineLabPorousLinerLossTests PorousLinerLossTests.cpp)
+target_link_libraries(EngineLabPorousLinerLossTests PRIVATE EngineLab::Audio)
+enginelab_set_warnings(EngineLabPorousLinerLossTests)
+add_test(NAME EngineLab.PorousLinerLoss COMMAND EngineLabPorousLinerLossTests)
+
 add_executable(EngineLabVehicleDynamicsTests VehicleDynamicsTests.cpp)
 target_link_libraries(EngineLabVehicleDynamicsTests PRIVATE
     EngineLab::Foundation EngineLab::Runtime EngineLab::Diagnostics EngineLab::Serialization

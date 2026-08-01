@@ -4,6 +4,7 @@
 #include <enginelab/audio/DuctWallLoss.hpp>
 #include <enginelab/audio/NonlinearDuctAcoustics.hpp>
 #include <enginelab/audio/PipeRadiationModel.hpp>
+#include <enginelab/audio/PorousLinerLoss.hpp>
 #include <enginelab/gasdynamics/ExhaustNetworkLayout.hpp>
 
 #include <algorithm>
@@ -79,6 +80,13 @@ struct AcousticExhaustNetwork::Impl final {
         DuctWallLoss::Coefficients wallLossTarget {};
         DuctWallLoss::State forwardLoss {};
         DuctWallLoss::State reverseLoss {};
+        double packingFlowResistivityPaSPerM2 { 0.0 };
+        double packingThicknessM { 0.0 };
+        double perforatedOpenAreaRatio { 0.0 };
+        DuctWallLoss::Coefficients linerLoss {};
+        DuctWallLoss::Coefficients linerLossTarget {};
+        DuctWallLoss::State forwardLinerLoss {};
+        DuctWallLoss::State reverseLinerLoss {};
         DuctModeCutoff::Coefficients modeCutoff {};
         DuctModeCutoff::Coefficients modeCutoffTarget {};
         DuctModeCutoff::State forwardCutoff {};
@@ -165,6 +173,10 @@ struct AcousticExhaustNetwork::Impl final {
             duct.outletAreaM2 = std::max(
                 1.0e-10, descriptor.outletFlowAreaM2);
             duct.radiusM = std::sqrt(area / std::numbers::pi);
+            duct.packingFlowResistivityPaSPerM2 =
+                descriptor.packingFlowResistivityPaSPerM2;
+            duct.packingThicknessM = descriptor.packingThicknessM;
+            duct.perforatedOpenAreaRatio = descriptor.perforatedOpenAreaRatio;
             duct.mediumSources.push_back(ducts.size());
             ducts.push_back(std::move(duct));
         }
@@ -605,6 +617,8 @@ void AcousticExhaustNetwork::reset() noexcept {
         duct.write = 0;
         duct.forwardLoss.reset();
         duct.reverseLoss.reset();
+        duct.forwardLinerLoss.reset();
+        duct.reverseLinerLoss.reset();
         duct.forwardCutoff.reset();
         duct.reverseCutoff.reset();
     }
@@ -688,10 +702,16 @@ void AcousticExhaustNetwork::beginBlock(
         duct.wallLossTarget = DuctWallLoss::fit(
             traversalSeconds, duct.radiusM, medium.densityKgPerM3,
             medium.soundSpeedMps, impl_->sampleRateHz);
+        duct.linerLossTarget = PorousLinerLoss::fit(
+            duct.lengthM, duct.radiusM, medium.densityKgPerM3,
+            medium.soundSpeedMps, duct.packingFlowResistivityPaSPerM2,
+            duct.packingThicknessM, duct.perforatedOpenAreaRatio,
+            impl_->sampleRateHz);
         duct.modeCutoffTarget = DuctModeCutoff::fit(
             duct.radiusM, medium.soundSpeedMps, impl_->sampleRateHz);
         if (snap) {
             duct.wallLoss = duct.wallLossTarget;
+            duct.linerLoss = duct.linerLossTarget;
             duct.modeCutoff = duct.modeCutoffTarget;
         }
     }
@@ -794,6 +814,11 @@ AcousticExhaustNetwork::process(
         // be rebuilt after the slew moves them; interpolating it independently
         // would let the duct pass DC gain while the medium is changing.
         duct.wallLoss.renormalise();
+        duct.linerLoss.pole += ramp
+            * (duct.linerLossTarget.pole - duct.linerLoss.pole);
+        duct.linerLoss.zero += ramp
+            * (duct.linerLossTarget.zero - duct.linerLoss.zero);
+        duct.linerLoss.renormalise();
         // The plane-mode cutoff moves with the gas state too. The TPT form is
         // stable for any positive g, so the prewarped cutoff interpolates
         // directly; only its resolved denominator has to be rebuilt.
@@ -810,16 +835,18 @@ AcousticExhaustNetwork::process(
         // amplitude scale the delay line stores.
         impl_->incident[index * 2U] = DuctModeCutoff::process(
             duct.modeCutoff, duct.reverseCutoff,
-            DuctWallLoss::process(
-                duct.wallLoss, duct.reverseLoss,
-                impl_->readDelayed(duct.reverse, duct.write,
-                    duct.delaySamples, stiffness)));
+            DuctWallLoss::process(duct.linerLoss, duct.reverseLinerLoss,
+                DuctWallLoss::process(
+                    duct.wallLoss, duct.reverseLoss,
+                    impl_->readDelayed(duct.reverse, duct.write,
+                        duct.delaySamples, stiffness))));
         impl_->incident[index * 2U + 1U] = DuctModeCutoff::process(
             duct.modeCutoff, duct.forwardCutoff,
-            DuctWallLoss::process(
-                duct.wallLoss, duct.forwardLoss,
-                impl_->readDelayed(duct.forward, duct.write,
-                    duct.delaySamples, stiffness)));
+            DuctWallLoss::process(duct.linerLoss, duct.forwardLinerLoss,
+                DuctWallLoss::process(
+                    duct.wallLoss, duct.forwardLoss,
+                    impl_->readDelayed(duct.forward, duct.write,
+                        duct.delaySamples, stiffness))));
     }
     std::fill(impl_->outgoing.begin(), impl_->outgoing.end(), 0.0F);
 

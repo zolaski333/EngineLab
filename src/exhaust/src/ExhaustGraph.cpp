@@ -339,7 +339,13 @@ ExhaustGraph ExhaustGraph::makeForEngine(
                     component.outletDiameterMm > 0.0
                         ? finiteClamped(component.outletDiameterMm,
                             5.0, 500.0, component.diameterMm)
-                        : 0.0 });
+                        : 0.0,
+                    finiteClamped(component.packingFlowResistivityPaSPerM2,
+                        0.0, 200'000.0, 0.0),
+                    finiteClamped(component.packingThicknessMm,
+                        0.0, 300.0, 0.0),
+                    finiteClamped(component.perforatedOpenAreaRatio,
+                        0.0, 1.0, 0.0) });
             }
             std::unordered_set<std::uint64_t> compiledConnections;
             for (const auto& connection : path.network->connections) {
