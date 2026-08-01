@@ -156,6 +156,27 @@ ce lot.
 | `0bbadd4` | injection afterfire exclue des coupures de démarrage |
 | `da33134` | rupteur humide explicite préservé |
 
+## Validation du paquet Windows
+
+Le ZIP CPack a été extrait dans un dossier neuf puis testé depuis cet extrait,
+pas depuis l'arbre de build :
+
+- 106 entrées, 16 fichiers moteur et 16 profils moteur sous
+  `voicing/engines/`, plus le profil neutre `voicing/default.yaml` ;
+- `EngineLab.exe` reste vivant après un smoke caché de 6 secondes ;
+- l'exporteur extrait rend `Audio Physics Lab 689 Twin` à 48 kHz float32 avec
+  stems : 734 400 frames / 15,3 s, pic `0,432668`, RMS `0,032891` ;
+- graphe physique actif, graphe compilé actif, zéro troncature de délai, zéro
+  frontière invalide et zéro télémétrie perdue ;
+- variation cycle `0,858323..1,153011`, afterfire `71,970520 kW`,
+  `2578,748989 mg` brûlés et un silencieux poreux ;
+- les stems `stem_exhaust_pressure_wave.wav` et `stem_exhaust_jet.wav` sont
+  présents et leur somme reconstruit `stem_exhaust_dry.wav` avec une erreur
+  maximale `5,960464e-08` dans cet export float32.
+
+Le hash SHA-256 est calculé seulement après la régénération finale qui inclut
+ce document, afin de ne pas publier le hash d'un ZIP antérieur.
+
 ## Limites honnêtes et suite
 
 - Aucune écoute humaine aveugle n'a été effectuée par l'agent ; les différences
@@ -168,4 +189,3 @@ ce lot.
   catalogue, puis l'ajustement du voicing à partir de références réelles. Ne pas
   relancer une optimisation admission/pool tant qu'une nouvelle table locale ne
   montre pas un déficit.
-
