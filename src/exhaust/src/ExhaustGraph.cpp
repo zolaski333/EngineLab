@@ -445,6 +445,15 @@ ExhaustGraph ExhaustGraph::makeForEngine(
             82.0, 1.0, runtimePathIndex, 0, 0.55,
             mufflerVolumeLitres,
             1.0, finiteClamped(geometry.mufflerRestriction, 0.0, 1.0, 1.0) });
+        graph.nodes_.back().packingFlowResistivityPaSPerM2 =
+            finiteClamped(geometry.mufflerPackingFlowResistivityPaSPerM2,
+                0.0, 200'000.0, 0.0);
+        graph.nodes_.back().packingThicknessMm =
+            finiteClamped(geometry.mufflerPackingThicknessMm,
+                0.0, 300.0, 0.0);
+        graph.nodes_.back().perforatedOpenAreaRatio =
+            finiteClamped(geometry.mufflerPerforatedOpenAreaRatio,
+                0.0, 1.0, 0.0);
         graph.nodes_.push_back({ outletId, ExhaustNodeType::outlet, 180.0, outletDiameter,
             outletRestriction, 0.0, 1.0, runtimePathIndex, 0, 0.0,
             std::numbers::pi * std::pow(outletDiameter * 0.0005, 2.0)

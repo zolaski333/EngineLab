@@ -335,7 +335,10 @@ std::string JsonEngineSerializer::encode(const EngineConfig& config) const {
                 {"collector_volume_l", path.geometry.collectorVolumeLitres},
                 {"outlet_discharge_coefficient", path.geometry.outletDischargeCoefficient},
                 {"muffler_chamber_diameter_mm", path.geometry.mufflerChamberDiameterMm},
-                {"muffler_chamber_length_mm", path.geometry.mufflerChamberLengthMm}}} };
+                {"muffler_chamber_length_mm", path.geometry.mufflerChamberLengthMm},
+                {"muffler_packing_flow_resistivity_pa_s_m2", path.geometry.mufflerPackingFlowResistivityPaSPerM2},
+                {"muffler_packing_thickness_mm", path.geometry.mufflerPackingThicknessMm},
+                {"muffler_perforated_open_area_ratio", path.geometry.mufflerPerforatedOpenAreaRatio}}} };
         if (path.network) {
             Json components = Json::array();
             for (const auto& component : path.network->components)
@@ -494,7 +497,10 @@ std::string JsonEngineSerializer::encode(const EngineConfig& config) const {
                       {"collector_volume_l", config.exhaust.collectorVolumeLitres},
                       {"outlet_discharge_coefficient", config.exhaust.outletDischargeCoefficient},
                       {"muffler_chamber_diameter_mm", config.exhaust.mufflerChamberDiameterMm},
-                      {"muffler_chamber_length_mm", config.exhaust.mufflerChamberLengthMm}}},
+                      {"muffler_chamber_length_mm", config.exhaust.mufflerChamberLengthMm},
+                      {"muffler_packing_flow_resistivity_pa_s_m2", config.exhaust.mufflerPackingFlowResistivityPaSPerM2},
+                      {"muffler_packing_thickness_mm", config.exhaust.mufflerPackingThicknessMm},
+                      {"muffler_perforated_open_area_ratio", config.exhaust.mufflerPerforatedOpenAreaRatio}}},
         {"transmission", {{"gear_ratios", config.transmission.gearRatios},
                            {"final_drive_ratio", config.transmission.finalDriveRatio},
                            {"max_clutch_torque_nm", config.transmission.maxClutchTorqueNm},
@@ -707,7 +713,10 @@ EngineDecodeResult JsonEngineSerializer::decode(std::string_view text) const noe
                 exhaust.value("outlet_diameter_mm", 65.0), exhaust.value("collector_volume_l", 2.0),
                 exhaust.value("outlet_discharge_coefficient", 0.72),
                 exhaust.value("muffler_chamber_diameter_mm", 0.0),
-                exhaust.value("muffler_chamber_length_mm", 0.0) };
+                exhaust.value("muffler_chamber_length_mm", 0.0),
+                exhaust.value("muffler_packing_flow_resistivity_pa_s_m2", 0.0),
+                exhaust.value("muffler_packing_thickness_mm", 0.0),
+                exhaust.value("muffler_perforated_open_area_ratio", 0.0) };
         }
         if (engine.contains("transmission")) {
             const auto& transmission = engine.at("transmission");
@@ -880,6 +889,12 @@ EngineDecodeResult JsonEngineSerializer::decode(std::string_view text) const noe
                     path.geometry.outletDischargeCoefficient = geometry.value("outlet_discharge_coefficient", path.geometry.outletDischargeCoefficient);
                     path.geometry.mufflerChamberDiameterMm = geometry.value("muffler_chamber_diameter_mm", path.geometry.mufflerChamberDiameterMm);
                     path.geometry.mufflerChamberLengthMm = geometry.value("muffler_chamber_length_mm", path.geometry.mufflerChamberLengthMm);
+                    path.geometry.mufflerPackingFlowResistivityPaSPerM2 = geometry.value(
+                        "muffler_packing_flow_resistivity_pa_s_m2", path.geometry.mufflerPackingFlowResistivityPaSPerM2);
+                    path.geometry.mufflerPackingThicknessMm = geometry.value(
+                        "muffler_packing_thickness_mm", path.geometry.mufflerPackingThicknessMm);
+                    path.geometry.mufflerPerforatedOpenAreaRatio = geometry.value(
+                        "muffler_perforated_open_area_ratio", path.geometry.mufflerPerforatedOpenAreaRatio);
                 }
                 if (item.contains("graph") && !item.at("graph").is_null()) {
                     const auto& encodedGraph = item.at("graph");

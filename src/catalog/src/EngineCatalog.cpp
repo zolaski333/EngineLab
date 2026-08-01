@@ -191,6 +191,12 @@ template <typename T>
     assignIfPresent(node, "outlet_discharge_coefficient", value.outletDischargeCoefficient);
     assignIfPresent(node, "muffler_chamber_diameter_mm", value.mufflerChamberDiameterMm);
     assignIfPresent(node, "muffler_chamber_length_mm", value.mufflerChamberLengthMm);
+    assignIfPresent(node, "muffler_packing_flow_resistivity_pa_s_m2",
+        value.mufflerPackingFlowResistivityPaSPerM2);
+    assignIfPresent(node, "muffler_packing_thickness_mm",
+        value.mufflerPackingThicknessMm);
+    assignIfPresent(node, "muffler_perforated_open_area_ratio",
+        value.mufflerPerforatedOpenAreaRatio);
     return value;
 }
 

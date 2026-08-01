@@ -60,6 +60,11 @@ ExhaustNetworkConfig makeEditableExhaustNetwork(const ExhaustPathConfig& path) {
         muffler.diameterMm = path.geometry.mufflerChamberDiameterMm;
         muffler.lengthMm = path.geometry.mufflerChamberLengthMm;
         muffler.volumeLitres = std::max(0.05, path.geometry.collectorVolumeLitres);
+        muffler.packingFlowResistivityPaSPerM2 =
+            path.geometry.mufflerPackingFlowResistivityPaSPerM2;
+        muffler.packingThicknessMm = path.geometry.mufflerPackingThicknessMm;
+        muffler.perforatedOpenAreaRatio =
+            path.geometry.mufflerPerforatedOpenAreaRatio;
         network.components.push_back(muffler);
         if (previousId != 0)
             network.connections.push_back({ previousId, muffler.id });

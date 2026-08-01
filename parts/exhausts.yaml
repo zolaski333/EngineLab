@@ -8,10 +8,11 @@
 # muffler_restriction remains a mean-flow pressure-loss coefficient. It does
 # not drive acoustic absorption: overloading it previously collapsed the
 # low-frequency feedback loop. The chamber below is deliberately reactive.
-# Custom graph mufflers can opt into Delany-Bazley porous absorption with
+# Custom graph mufflers and scalar expansion chambers can opt into
+# Delany-Bazley porous absorption with
 # packing_flow_resistivity_pa_s_m2, packing_thickness_mm and
-# perforated_open_area_ratio. None is inferred for these scalar catalogue
-# presets: without measured material data their acoustic path remains exact.
+# perforated_open_area_ratio. None is inferred: without authored material data
+# the acoustic path remains an exact dry bypass.
 #
 # Expansion ratios sit at the modest end of what real hardware uses (peak
 # transmission loss 1.5-6.5 dB rather than the 10-13 dB a full-size OEM body
@@ -138,6 +139,22 @@ cp2_full_system:
   outlet_diameter_mm: 60
   muffler_chamber_diameter_mm: 72
   muffler_chamber_length_mm: 240
+
+# Listening-lab sibling of cp2_full_system. Geometry and mean-flow restriction
+# are identical, so an A/B isolates the absorptive packing instead of quietly
+# changing pipe dimensions. The material values are representative estimates
+# for a straight-through perforated-core motorcycle can, not manufacturer data.
+cp2_absorptive_lab:
+  primary_length_mm: 500
+  primary_diameter_mm: 42
+  collector_diameter_mm: 54
+  muffler_restriction: 0.10
+  outlet_diameter_mm: 60
+  muffler_chamber_diameter_mm: 72
+  muffler_chamber_length_mm: 240
+  muffler_packing_flow_resistivity_pa_s_m2: 24000
+  muffler_packing_thickness_mm: 35
+  muffler_perforated_open_area_ratio: 0.28
 
 short_v_twin:
   primary_length_mm: 880

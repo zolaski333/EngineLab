@@ -147,13 +147,18 @@ AudioPhysicsTelemetry audioPhysicsTelemetryFor(
     telemetry.afterfireFuelBurnMgPerSecond =
         state.exhaustAfterfireFuelBurnMgPerSecond;
     for (const auto& path : engine.exhaustPaths) {
-        if (!path.network) continue;
-        for (const auto& component : path.network->components) {
-            if (component.type == ExhaustComponentType::muffler
-                    && component.packingFlowResistivityPaSPerM2 > 0.0
-                    && component.packingThicknessMm > 0.0
-                    && component.perforatedOpenAreaRatio > 0.0)
-                ++telemetry.porousMufflerCount;
+        if (path.network) {
+            for (const auto& component : path.network->components) {
+                if (component.type == ExhaustComponentType::muffler
+                        && component.packingFlowResistivityPaSPerM2 > 0.0
+                        && component.packingThicknessMm > 0.0
+                        && component.perforatedOpenAreaRatio > 0.0)
+                    ++telemetry.porousMufflerCount;
+            }
+        } else if (path.geometry.mufflerPackingFlowResistivityPaSPerM2 > 0.0
+                && path.geometry.mufflerPackingThicknessMm > 0.0
+                && path.geometry.mufflerPerforatedOpenAreaRatio > 0.0) {
+            ++telemetry.porousMufflerCount;
         }
     }
     return telemetry;

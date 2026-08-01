@@ -10,6 +10,18 @@
 namespace enginelab {
 
 namespace {
+[[nodiscard]] bool validMufflerPacking(const ExhaustConfig& exhaust) noexcept {
+    const auto none = exhaust.mufflerPackingFlowResistivityPaSPerM2 == 0.0
+        && exhaust.mufflerPackingThicknessMm == 0.0
+        && exhaust.mufflerPerforatedOpenAreaRatio == 0.0;
+    const auto complete = exhaust.mufflerPackingFlowResistivityPaSPerM2 > 0.0
+        && exhaust.mufflerPackingThicknessMm > 0.0
+        && exhaust.mufflerPerforatedOpenAreaRatio > 0.0
+        && exhaust.mufflerChamberDiameterMm > 1.0
+        && exhaust.mufflerChamberLengthMm > 1.0;
+    return none || complete;
+}
+
 [[nodiscard]] IntakePathConfig makeDefaultIntakePath(const EngineConfig& config) {
     IntakePathConfig path;
     path.id = 1;
@@ -623,6 +635,10 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
         || !inRange(config.exhaust.outletDischargeCoefficient, 0.02, 1.5)
         || !inRange(config.exhaust.mufflerChamberDiameterMm, 0.0, 600.0)
         || !inRange(config.exhaust.mufflerChamberLengthMm, 0.0, 3'000.0)
+        || !inRange(config.exhaust.mufflerPackingFlowResistivityPaSPerM2, 0.0, 200'000.0)
+        || !inRange(config.exhaust.mufflerPackingThicknessMm, 0.0, 300.0)
+        || !inRange(config.exhaust.mufflerPerforatedOpenAreaRatio, 0.0, 1.0)
+        || !validMufflerPacking(config.exhaust)
         || !inRange(config.transmission.finalDriveRatio, 1.0, 8.0)
         || !inRange(config.transmission.maxClutchTorqueNm, 10.0, 10'000.0)
         || !inRange(config.transmission.drivelineEfficiency, 0.2, 1.0)
@@ -1039,6 +1055,10 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
             || !inRange(exhaust.outletDischargeCoefficient, 0.02, 1.5)
             || !inRange(exhaust.mufflerChamberDiameterMm, 0.0, 600.0)
             || !inRange(exhaust.mufflerChamberLengthMm, 0.0, 3'000.0)
+            || !inRange(exhaust.mufflerPackingFlowResistivityPaSPerM2, 0.0, 200'000.0)
+            || !inRange(exhaust.mufflerPackingThicknessMm, 0.0, 300.0)
+            || !inRange(exhaust.mufflerPerforatedOpenAreaRatio, 0.0, 1.0)
+            || !validMufflerPacking(exhaust)
             || !validPoint(path.acousticPositionM)
             || !validPoint(path.acousticAxis)
             || path.acousticAxis.x * path.acousticAxis.x

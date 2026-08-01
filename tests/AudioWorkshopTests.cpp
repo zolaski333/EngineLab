@@ -31,6 +31,22 @@ int main() {
         enginelab::loadEngineCatalog(ENGINELAB_CATALOG_ROOT);
     require(!catalog.entries.empty(), "catalog loads");
     const auto& engine = catalog.entries.front().config;
+    const auto audioLab = std::find_if(
+        catalog.entries.begin(), catalog.entries.end(), [](const auto& entry) {
+            return entry.config.name == "Audio Physics Lab 689 Twin";
+        });
+    require(audioLab != catalog.entries.end(),
+            "catalog exposes the selectable audio physics lab engine");
+    const auto labSettings =
+        enginelab::audioPhysicsSettingsFor(audioLab->config);
+    require(
+        labSettings.afterfireEnabled && labSettings.limiterKeepsFuel
+            && near(labSettings.cycleVariationCoefficientOfVariation, 0.06),
+        "audio lab engine opts into the complete physical demo path");
+    require(
+        enginelab::audioPhysicsTelemetryFor(
+            audioLab->config, enginelab::EngineState {}).porousMufflerCount == 1,
+        "audio lab engine contains one active absorptive silencer");
 
     auto physicsConfig = engine;
     enginelab::AudioPhysicsSettings authoredPhysics {

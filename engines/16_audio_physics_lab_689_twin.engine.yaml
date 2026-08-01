@@ -1,0 +1,65 @@
+schema_version: 5
+family: motorcycle
+# Deliberately audible listening-lab variant of engine 15. The base geometry,
+# fuelling, valvetrain and vehicle are unchanged. This variant alone opts into
+# cycle variability, a wet spark-cut limiter, physical exhaust afterfire and
+# representative absorptive packing so users can select one engine and hear the
+# complete feature path. Values are engineering estimates, not Yamaha or any
+# exhaust manufacturer's calibration. The name intentionally avoids the stock
+# catalogue reference filter (see engine 15).
+engine:
+  name: Audio Physics Lab 689 Twin
+  layout: inline
+  firing_order: [1, 2]
+  idle_rpm: 1400
+  redline_rpm: 10000
+  rotating_inertia_kg_m2: 0.052
+  friction_coefficient: 0.09
+  octane_rating: 98
+  plenum_volume_l: 1.0
+  throttle_diameter_mm: 38
+  acoustic_observer: { left_microphone_m: { x: -0.16, y: 3.5, z: 0.7 }, right_microphone_m: { x: 0.16, y: 3.5, z: 0.7 }, sound_speed_mps: 0 }
+  intake:
+    plenum_volume_l: 1.0
+    throttle_diameter_mm: 38
+    throttle_count: 2
+    runner_length_mm: 120
+    runner_diameter_mm: 35
+    airbox_volume_l: 6.0
+    idle_bypass_area_mm2: 14
+    throttle_gamma: 1.3
+  ignition:
+    rev_limit_rpm: 10500
+    limiter_duration_s: 0.05
+    limiter_keeps_fuel: true
+    timing_curve:
+      - { rpm: 0, advance_deg: 10 }
+      - { rpm: 2000, advance_deg: 18 }
+      - { rpm: 4000, advance_deg: 30 }
+      - { rpm: 6500, advance_deg: 34 }
+      - { rpm: 8750, advance_deg: 33 }
+      - { rpm: 10500, advance_deg: 30 }
+  combustion_calibration:
+    chamber_turbulence_intensity_ratio: 0.80
+    cycle_variation_cov: 0.06
+    cycle_variation_correlation: 0.55
+  exhaust_afterfire:
+    enabled: true
+    ignition_temperature_k: 800
+    reaction_time_constant_s: 0.008
+    reaction_efficiency: 0.95
+  uses:
+    injection: high_flow_port
+    exhaust: cp2_absorptive_lab
+    transmission: motorcycle_6_speed
+    vehicle: motorcycle
+  camshafts:
+    intake_duration_deg: 256
+    exhaust_duration_deg: 248
+    intake_lift_mm: 8.6
+    exhaust_lift_mm: 7.9
+    intake_centerline_deg: 106
+    exhaust_centerline_deg: 110
+  cylinders:
+    - { id: 1, bore_mm: 80.0, stroke_mm: 68.6, connecting_rod_mm: 115.0, piston_mass_g: 180, compression_ratio: 11.5, crank_offset_deg: 0,   intake_valve_count: 2, exhaust_valve_count: 2 }
+    - { id: 2, bore_mm: 80.0, stroke_mm: 68.6, connecting_rod_mm: 115.0, piston_mass_g: 180, compression_ratio: 11.5, crank_offset_deg: 270, intake_valve_count: 2, exhaust_valve_count: 2 }

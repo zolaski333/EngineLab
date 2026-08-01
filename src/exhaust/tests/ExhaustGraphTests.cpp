@@ -499,6 +499,9 @@ void testEditableLegacyConversionIsNeutral() {
     auto path = config.exhaustPaths.front();
     path.geometry.mufflerChamberDiameterMm = 142.0;
     path.geometry.mufflerChamberLengthMm = 400.0;
+    path.geometry.mufflerPackingFlowResistivityPaSPerM2 = 24'000.0;
+    path.geometry.mufflerPackingThicknessMm = 35.0;
+    path.geometry.mufflerPerforatedOpenAreaRatio = 0.28;
     path.geometry.mufflerRestriction = 0.73;
     path.acousticPositionM = { 1.0, 2.0, 3.0 };
 
@@ -512,6 +515,10 @@ void testEditableLegacyConversionIsNeutral() {
     require(std::abs(muffler->diameterMm - 142.0) < 1.0e-12
             && std::abs(muffler->lengthMm - 400.0) < 1.0e-12,
         "conversion must retain expansion-chamber dimensions");
+    require(std::abs(muffler->packingFlowResistivityPaSPerM2 - 24'000.0) < 1.0e-12
+            && std::abs(muffler->packingThicknessMm - 35.0) < 1.0e-12
+            && std::abs(muffler->perforatedOpenAreaRatio - 0.28) < 1.0e-12,
+        "conversion must retain authored porous packing data");
     require(std::abs(muffler->acousticGain - 1.0) < 1.0e-12
             && std::abs(muffler->restriction) < 1.0e-12,
         "conversion must not invent generic muffler attenuation or restriction");

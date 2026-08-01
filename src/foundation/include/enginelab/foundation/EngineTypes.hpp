@@ -178,6 +178,11 @@ struct ExhaustConfig final {
      *  `enginelab/audio/ExpansionChamberMuffler.hpp`. */
     double mufflerChamberDiameterMm { 0.0 };
     double mufflerChamberLengthMm { 0.0 };
+    /** Optional straight-through absorptive packing around the perforated core.
+     * All three values are zero for an exact dry bypass, or positive together. */
+    double mufflerPackingFlowResistivityPaSPerM2 { 0.0 };
+    double mufflerPackingThicknessMm { 0.0 };
+    double mufflerPerforatedOpenAreaRatio { 0.0 };
 };
 
 struct IntakeConfig final {

@@ -1203,6 +1203,12 @@ int main() {
     extendedPhysicsConfig.combustionCalibration.cycleVariationCorrelation = 0.62;
     extendedPhysicsConfig.ignition.limiterKeepsFuel = true;
     extendedPhysicsConfig.exhaustAfterfire = { true, 875.0, 0.012, 0.91 };
+    extendedPhysicsConfig.exhaust.mufflerChamberDiameterMm = 118.0;
+    extendedPhysicsConfig.exhaust.mufflerChamberLengthMm = 360.0;
+    extendedPhysicsConfig.exhaust.mufflerPackingFlowResistivityPaSPerM2 = 24'000.0;
+    extendedPhysicsConfig.exhaust.mufflerPackingThicknessMm = 35.0;
+    extendedPhysicsConfig.exhaust.mufflerPerforatedOpenAreaRatio = 0.28;
+    extendedPhysicsConfig.exhaustPaths.front().geometry = extendedPhysicsConfig.exhaust;
     extendedPhysicsConfig.runnerAcoustics.dampingRatio = 0.21;
     extendedPhysicsConfig.intake.runnerPlenumDiameterMm = 49.0;
     extendedPhysicsConfig.intakePaths.front().geometry.runnerPlenumDiameterMm = 49.0;
@@ -1260,6 +1266,9 @@ int main() {
             && std::abs(extendedJsonRoundTrip.config->exhaustAfterfire.ignitionTemperatureK - 875.0) < 0.001
             && std::abs(extendedJsonRoundTrip.config->exhaustAfterfire.reactionTimeConstantSeconds - 0.012) < 1.0e-9
             && std::abs(extendedJsonRoundTrip.config->exhaustAfterfire.reactionEfficiency - 0.91) < 0.001
+            && std::abs(extendedJsonRoundTrip.config->exhaust.mufflerPackingFlowResistivityPaSPerM2 - 24'000.0) < 0.001
+            && std::abs(extendedJsonRoundTrip.config->exhaustPaths.front().geometry.mufflerPackingThicknessMm - 35.0) < 0.001
+            && std::abs(extendedJsonRoundTrip.config->exhaustPaths.front().geometry.mufflerPerforatedOpenAreaRatio - 0.28) < 0.001
             && std::abs(extendedJsonRoundTrip.config->intake
                     .runnerPlenumDiameterMm - 49.0) < 0.001
             && std::abs(extendedJsonRoundTrip.config->transmission.reverseRatio - 3.55) < 0.001
@@ -1310,6 +1319,8 @@ int main() {
             "YAML must preserve turbo inertia, bearing and speed calibration");
     require(extendedYamlRoundTrip
             && std::abs(extendedYamlRoundTrip.config->runnerAcoustics.dampingRatio - 0.21) < 0.001
+            && std::abs(extendedYamlRoundTrip.config->exhaust.mufflerPackingFlowResistivityPaSPerM2 - 24'000.0) < 0.001
+            && std::abs(extendedYamlRoundTrip.config->exhaustPaths.front().geometry.mufflerPackingThicknessMm - 35.0) < 0.001
             && std::abs(extendedYamlRoundTrip.config->intake
                     .runnerPlenumDiameterMm - 49.0) < 0.001
             && std::abs(extendedYamlRoundTrip.config->transmission.clutchThermalCapacityJPerC - 24'000.0) < 0.001

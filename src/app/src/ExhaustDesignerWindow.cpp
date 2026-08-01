@@ -416,10 +416,17 @@ public:
         auto leftColumn = propertyInner.removeFromLeft(columnWidth);
         propertyInner.removeFromLeft(columnGap);
         auto rightColumn = propertyInner;
-        layoutPropertyColumn(leftColumn, { 0, 1, 2, 3, 4 });
-        layoutPropertyColumn(rightColumn, { 5, 6, 7, 8 });
-        updateComponentButton_.setBounds(propertyArea.getX() + 12, propertyArea.getBottom() - 42,
-                                         propertyArea.getWidth() - 24, 30);
+        layoutPropertyColumn(leftColumn, { 0, 1, 2, 3, 4, 5 });
+        layoutPropertyColumn(rightColumn, { 6, 7, 8, 9, 10, 11 });
+        auto propertyActions = juce::Rectangle<int>(
+            propertyArea.getX() + 12, propertyArea.getBottom() - 40,
+            propertyArea.getWidth() - 24, 28);
+        const auto actionWidth = (propertyActions.getWidth() - 12) / 3;
+        packingDemoButton_.setBounds(propertyActions.removeFromLeft(actionWidth));
+        propertyActions.removeFromLeft(6);
+        packingBypassButton_.setBounds(propertyActions.removeFromLeft(actionWidth));
+        propertyActions.removeFromLeft(6);
+        updateComponentButton_.setBounds(propertyActions);
 
         topologyGroup_.setBounds(topologyArea);
         auto topologyInner = topologyArea.reduced(10, 24);
@@ -522,10 +529,12 @@ private:
         componentTypeLabel_.setText("Type", juce::dontSendNotification);
         componentTypeLabel_.setColour(juce::Label::textColourId, juce::Colour(0xffaebbb7));
         populateTypeSelector(componentTypeSelector_);
-        const std::array<const char*, 9> names {
+        const std::array<const char*, 12> names {
             "ID", "Longueur (mm)", "Diametre entree (mm)",
             "Diametre sortie (mm, 0 = constant)", "Volume (L)",
-            "Restriction", "Resonance (Hz)", "Gain acoustique", "Cd sortie"
+            "Restriction", "Resonance (Hz)", "Gain acoustique", "Cd sortie",
+            "Resistivite garnissage (Pa.s/m2)", "Epaisseur garnissage (mm)",
+            "Taux ouvert perfore (0..1)"
         };
         for (std::size_t index = 0; index < propertyLabels_.size(); ++index) {
             propertyLabels_[index].setText(names[index], juce::dontSendNotification);
@@ -541,6 +550,13 @@ private:
         }
         updateComponentButton_.setButtonText("METTRE A JOUR LE COMPOSANT");
         updateComponentButton_.onClick = [this] { updateSelectedComponent(); };
+        packingDemoButton_.setButtonText("GARNISSAGE DEMO");
+        packingDemoButton_.onClick = [this] { setPackingPreset(true); };
+        packingBypassButton_.setButtonText("BYPASS GARNISSAGE");
+        packingBypassButton_.onClick = [this] { setPackingPreset(false); };
+        componentTypeSelector_.onChange = [this] {
+            updatePackingEditorAvailability(true);
+        };
 
         connectionTitle_.setText("Connexions composant -> composant", juce::dontSendNotification);
         mappingTitle_.setText("Cylindre -> premier composant", juce::dontSendNotification);
@@ -579,6 +595,8 @@ private:
         addAndMakeVisible(deleteComponentButton_);
         addAndMakeVisible(componentTypeSelector_);
         addAndMakeVisible(updateComponentButton_);
+        addAndMakeVisible(packingDemoButton_);
+        addAndMakeVisible(packingBypassButton_);
         addAndMakeVisible(fromSelector_);
         addAndMakeVisible(toSelector_);
         addAndMakeVisible(addConnectionButton_);
@@ -978,6 +996,8 @@ private:
         componentTypeSelector_.setEnabled(enabled);
         updateComponentButton_.setEnabled(enabled);
         deleteComponentButton_.setEnabled(enabled);
+        packingDemoButton_.setEnabled(enabled);
+        packingBypassButton_.setEnabled(enabled);
         for (auto& editor : propertyEditors_) editor.setEnabled(enabled);
         if (!enabled) {
             componentTypeSelector_.setSelectedItemIndex(-1, juce::dontSendNotification);
@@ -986,25 +1006,53 @@ private:
         }
         componentTypeSelector_.setSelectedItemIndex(static_cast<int>(component->type),
                                                      juce::dontSendNotification);
-        const std::array<double, 8> values {
+        const std::array<double, 11> values {
             component->lengthMm, component->diameterMm, component->outletDiameterMm,
             component->volumeLitres,
             component->restriction, component->resonanceHz, component->acousticGain,
-            component->dischargeCoefficient
+            component->dischargeCoefficient,
+            component->packingFlowResistivityPaSPerM2,
+            component->packingThicknessMm,
+            component->perforatedOpenAreaRatio
         };
         propertyEditors_[0].setText(juce::String(component->id), false);
         for (std::size_t index = 0; index < values.size(); ++index)
             propertyEditors_[index + 1].setText(juce::String(values[index], index == 0 ? 1 : 3), false);
+        updatePackingEditorAvailability(false);
     }
 
     void layoutPropertyColumn(juce::Rectangle<int> bounds,
                               std::initializer_list<int> indices) {
         for (const auto index : indices) {
-            auto row = bounds.removeFromTop(54);
-            propertyLabels_[static_cast<std::size_t>(index)].setBounds(row.removeFromTop(20));
-            propertyEditors_[static_cast<std::size_t>(index)].setBounds(row.removeFromTop(30));
-            bounds.removeFromTop(2);
+            auto row = bounds.removeFromTop(43);
+            propertyLabels_[static_cast<std::size_t>(index)].setBounds(row.removeFromTop(17));
+            propertyEditors_[static_cast<std::size_t>(index)].setBounds(row.removeFromTop(24));
+            bounds.removeFromTop(1);
         }
+    }
+
+    void updatePackingEditorAvailability(bool clearIfUnavailable) {
+        const auto available = componentTypeSelector_.getSelectedItemIndex()
+            == static_cast<int>(ExhaustComponentType::muffler);
+        for (std::size_t index = 9; index < propertyEditors_.size(); ++index) {
+            propertyEditors_[index].setEnabled(available);
+            if (!available && clearIfUnavailable)
+                propertyEditors_[index].setText("0", false);
+        }
+        packingDemoButton_.setEnabled(available);
+        packingBypassButton_.setEnabled(available);
+    }
+
+    void setPackingPreset(bool enabled) {
+        if (componentTypeSelector_.getSelectedItemIndex()
+                != static_cast<int>(ExhaustComponentType::muffler)) {
+            setStatus("Le garnissage poreux ne s'applique qu'a un silencieux.", true);
+            return;
+        }
+        propertyEditors_[9].setText(enabled ? "24000" : "0", false);
+        propertyEditors_[10].setText(enabled ? "35" : "0", false);
+        propertyEditors_[11].setText(enabled ? "0.28" : "0", false);
+        updateSelectedComponent();
     }
 
     void generateLegacyNetwork() {
@@ -1095,7 +1143,7 @@ private:
             setStatus("Cet identifiant est deja utilise dans le chemin.", true);
             return;
         }
-        std::array<double, 8> values {};
+        std::array<double, 11> values {};
         for (std::size_t index = 0; index < values.size(); ++index) {
             if (!parseFinite(propertyEditors_[index + 1].getText(), values[index])) {
                 setStatus("Toutes les proprietes doivent etre des nombres finis.", true);
@@ -1120,9 +1168,20 @@ private:
             || values[4] < 0.0 || values[4] > 20.0
             || values[5] < 0.0 || values[5] > 20'000.0
             || values[6] < 0.0 || values[6] > 8.0
-            || values[7] < 0.02 || values[7] > 1.5) {
+            || values[7] < 0.02 || values[7] > 1.5
+            || values[8] < 0.0 || values[8] > 200'000.0
+            || values[9] < 0.0 || values[9] > 300.0
+            || values[10] < 0.0 || values[10] > 1.0) {
             setStatus("Valeurs hors limites (L 0..10000, D entree 5..500, D sortie 0 ou 5..500, V 0..1000, restriction 0..20, "
                       "resonance 0..20000, gain 0..8, Cd 0.02..1.5).", true);
+            return;
+        }
+        const auto hasNoPacking = values[8] == 0.0
+            && values[9] == 0.0 && values[10] == 0.0;
+        const auto hasCompletePacking = type == ExhaustComponentType::muffler
+            && values[8] > 0.0 && values[9] > 0.0 && values[10] > 0.0;
+        if (!hasNoPacking && !hasCompletePacking) {
+            setStatus("Garnissage: les trois valeurs doivent etre nulles, ou positives ensemble sur un silencieux.", true);
             return;
         }
 
@@ -1137,6 +1196,9 @@ private:
         component->resonanceHz = values[5];
         component->acousticGain = values[6];
         component->dischargeCoefficient = values[7];
+        component->packingFlowResistivityPaSPerM2 = values[8];
+        component->packingThicknessMm = values[9];
+        component->perforatedOpenAreaRatio = values[10];
         if (newId != oldId) {
             for (auto& connection : network->connections) {
                 if (connection.fromComponentId == oldId) connection.fromComponentId = newId;
@@ -1304,9 +1366,11 @@ private:
 
     juce::Label componentTypeLabel_;
     juce::ComboBox componentTypeSelector_;
-    std::array<juce::Label, 9> propertyLabels_;
-    std::array<juce::TextEditor, 9> propertyEditors_;
+    std::array<juce::Label, 12> propertyLabels_;
+    std::array<juce::TextEditor, 12> propertyEditors_;
     juce::TextButton updateComponentButton_;
+    juce::TextButton packingDemoButton_;
+    juce::TextButton packingBypassButton_;
 
     juce::Label connectionTitle_;
     juce::ComboBox fromSelector_;
