@@ -104,7 +104,21 @@ justifiée depuis cette table contaminée.
   reste dans la fenêtre. La capture Windows automatique de JUCE reste bloquée
   par `SetIsBorderRequired: 0x80004002`; aucune inspection visuelle automatisée
   n'est donc revendiquée.
-- Package extrait et smoke test : consignés lors de la passe CPack finale.
+- CPack ZIP : 84 entrées. L'extrait liste les 16 moteurs et `EngineLab.exe`
+  reste vivant après un smoke test caché de six secondes.
+- L'exporteur **extrait du ZIP** rend le showcase du moteur laboratoire :
+  734 400 frames / 15,3 s à 48 kHz float32, RMS 0,024855, zéro troncature,
+  frontière invalide ou télémétrie perdue. Il mesure 0,858323..1,153011 sur les
+  cycles, 71,970520 kW d'afterfire, 2 703,423250 mg brûlés et un silencieux
+  poreux.
+
+Artefacts finaux :
+
+| Fichier | Taille | SHA-256 |
+|---|---:|---|
+| `EngineLab-0.1.0-win64-audio-physics-20260801.zip` | 6 263 567 | `F7CFC6082D433282DF846DF8DFF3899419764868103C68D95B42986D9F1AE9E8` |
+| `EngineLab.exe` extrait | 8 690 176 | `AB456789271D5B421FAA2ED267673E8ECE4CDC345745EE2D89A9DBBB6AD7E1FA` |
+| `master.wav` de preuve package | 5 875 244 | `71E99969453273E44D9C3CA314220C753AC320E9DAFE1B35A15C55971CDA889B` |
 
 ## Limites honnêtes
 
