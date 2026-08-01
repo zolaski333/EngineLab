@@ -16,6 +16,9 @@ exhaust_afterfire:
   ignition_temperature_k: 900
   reaction_time_constant_s: 0.010
   reaction_efficiency: 0.95
+ignition:
+  # Le rupteur coupe l'etincelle mais conserve l'injection.
+  limiter_keeps_fuel: true
 ```
 
 - `ignition_temperature_k` est le seuil thermique, valide de 500 a 2 000 K ;
@@ -33,3 +36,17 @@ peut pas bruler, et une ligne froide reste silencieuse. Pour obtenir un
 afterfire, la calibration moteur doit produire physiquement les trois conditions
 necessaires. Ce comportement empeche de confondre un effet sonore avec une
 combustion d'echappement plausible.
+
+Le rupteur historique coupe carburant et etincelle et reste le comportement par
+defaut. `limiter_keeps_fuel: true` fournit un chemin physique volontairement
+humide : au hard cut, l'injection continue mais l'etincelle est supprimee. La
+coupure de carburant en deceleration reste prioritaire. Il n'y a donc toujours
+pas de pop programme ; le carburant doit traverser le cylindre, rencontrer de
+l'oxygene et une ligne assez chaude.
+
+Dans **AUDIO HQ**, le bloc **PHYSIQUE AUDIO** expose ces reglages. **DEMO
+AUDIBLE** applique une calibration d'ecoute (COV 6 %, correlation 0,55,
+afterfire actif, rupteur humide, seuil 800 K, reaction 8 ms), puis redemarre le
+moteur. **BYPASS** remet variation, afterfire et rupteur humide a zero/off. La
+ligne `LIVE` affiche les kW et mg/s effectivement produits : zero signifie que
+les conditions chimiques ne sont pas reunies, pas que l'interface est en panne.

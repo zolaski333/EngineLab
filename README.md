@@ -29,7 +29,8 @@ L'application fournit également :
 - des modes NVH structurels réduits estimés par famille ou configurables à
   partir de données mesurées/calculées et sourcées ;
 - un concepteur **ECHAP. PRO** pour éditer des graphes validés avec branches,
-  jonctions, résonateurs, silencieux, catalyseurs et sorties ;
+  jonctions, résonateurs, silencieux, catalyseurs et sorties, y compris le
+  garnissage poreux avec A/B démo/bypass ;
 - un DSL déclaratif et typé par unités (`.els` ou `.engine`) avec surveillance
   automatique des dépendances ;
 - un tuner ECU pour les tables AFR et avance ainsi que le rupteur, appliqués à
@@ -37,7 +38,8 @@ L'application fournit également :
 - un banc automatique avec historique, courbes et export CSV ;
 - un atelier **AUDIO HQ** avec mute/solo, contrôles qui reflètent les graphes
   réellement actifs, scénarios JSON et export WAV 48/96/192 kHz en PCM 24 bits
-  ou float 32 bits, avec stems optionnels ;
+  ou float 32 bits, avec stems optionnels, réglages variation/afterfire/rupteur
+  humide et télémétrie physique live ;
 - une vue JUCE 2D et un contrat de scène 3D indépendant du backend graphique.
 
 OpenGL n'est pas implémenté. Le module `render` prépare les transformations 3D,
@@ -174,9 +176,9 @@ un niveau égal ou supérieur sont dans
 - huit chemins d'échappement audio au maximum ;
 - les branches sont conservées dans le solveur gaz, mais leurs sorties ne
   possèdent pas encore des positions audio 3D indépendantes ;
-- concepteur d'échappement sans glisser-déposer, undo/redo, audition A/B ni
-  sélection d'IR ; les chemins et cylindres sont gérés dans l'interface, tandis
-  que l'IR reste éditable en JSON/YAML ;
+- concepteur d'échappement sans glisser-déposer, undo/redo ni sélection d'IR ;
+  l'A/B garnissage est disponible, les chemins et cylindres sont gérés dans
+  l'interface, tandis que l'IR reste éditable en JSON/YAML ;
 - admission quasi-1D et modes structurels réduits ; les modes du catalogue
   restent estimés par famille tant qu'aucune mesure sourcée n'est fournie, et
   il manque une validation réelle sur banc/multi-microphones ;

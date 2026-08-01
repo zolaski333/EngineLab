@@ -25,9 +25,16 @@ independant par cylindre. Il ne modifie pas la sequence des vrais rates
 d'allumage. `CylinderState::combustionCycleMultiplier` publie la valeur active
 pour les mesures et les exports.
 
-La fonction est volontairement non calibree dans le catalogue. Une valeur
-doit etre choisie depuis une serie de cycles mesures (IMEP ou pression cylindre),
-pas pour fabriquer artificiellement un ralenti irregulier. Comme ordre de
+Les moteurs de production restent volontairement non calibres dans le
+catalogue. La variante explicitement nommee `Audio Physics Lab 689 Twin` est
+une exception pedagogique : son COV de 0,06 est un reglage d'ecoute estime et
+annonce comme tel, pas une valeur constructeur. Pour un moteur calibre, une
+valeur doit etre choisie depuis une serie de cycles mesures (IMEP ou pression
+cylindre), pas pour fabriquer artificiellement un ralenti irregulier. Comme ordre de
 grandeur de depart pour une ecoute A/B, 0,02 a 0,05 convient a un moteur chaud
 stable ; les valeurs plus fortes doivent correspondre a un regime pauvre,
 dilue ou instable que la simulation explique aussi physiquement.
+
+**AUDIO HQ** publie en direct le minimum et le maximum des multiplicateurs vus
+sur les cylindres. Le bouton **BYPASS** remet le COV a zero, ce qui conserve le
+contournement bit-exact et permet une comparaison sans tirage aleatoire cache.

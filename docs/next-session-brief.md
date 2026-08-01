@@ -1,5 +1,19 @@
 # Brief de reprise — nouvelle machine (2026-07-28)
 
+> **Mise à jour produit du 1er août 2026.** Lire d'abord
+> `docs/audio-physics-productization-validation-2026-08-01.md`. Les modèles
+> poreux, de variation et d'afterfire ne sont plus seulement des API opt-in :
+> AUDIO HQ expose une démo/bypass et leur télémétrie live, ÉCHAP PRO expose le
+> garnissage, et le catalogue contient `Audio Physics Lab 689 Twin`. Une A/B
+> offline mesure un delta RMS de 0,0640, des cycles 0,858..1,153 et 6,602 g de
+> carburant brûlés dans l'échappement. Le rendu par défaut reste neutre.
+>
+> La première table 16 moteurs de ce lot est **contaminée par une charge
+> externe** (`RobloxPlayerBeta` ~171 % d'un cœur logique, Chrome actif) : elle
+> passe 16/16 sans overrun mais le Merlin ne vaut que 1,050×. Ne pas réutiliser
+> ce chiffre comme référence propre ni prétendre que la marge 10–15 % est
+> prouvée ; refaire `--free-run` au repos selon le protocole ci-dessous.
+
 > **État vérifié au 1er août 2026.** Lire d'abord
 > `docs/final-validation-2026-08-01.md`. La priorité P2 « sortir le voicing du
 > code » ci-dessous est terminée, ainsi que les stems reconstructibles, la carte

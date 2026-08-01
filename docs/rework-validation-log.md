@@ -5,6 +5,27 @@ It records measurements as well as successful changes. Failed hypotheses are
 kept because repeating an attractive but disproved fix wastes more time than
 documenting it.
 
+## 2026-08-01 — productisation des physiques audio
+
+Les fonctions d'absorption poreuse, variabilité cycle-à-cycle et afterfire
+avaient une implémentation physique mais aucun chemin produit évident. Le lot
+ajoute un rupteur spark-cut qui peut conserver l'injection (opt-in), les
+réglages et télémétries live dans AUDIO HQ, les champs et presets démo/bypass du
+garnissage dans ÉCHAP PRO, ainsi qu'un moteur catalogue explicitement nommé
+`Audio Physics Lab 689 Twin`.
+
+La preuve offline compare un bypass exact à la démo sur le même scénario :
+delta WAV RMS 0,0640149, pic 0,836792, multiplicateurs 0,858323..1,15301,
+afterfire 99,5317 kW de pic et 6 602,49 mg de carburant réellement brûlés. Le
+manifeste schéma 3 publie ces compteurs. Les moteurs historiques conservent
+leurs valeurs neutres et le rupteur historique fuel+spark cut par défaut.
+
+La première mesure 16 moteurs a été invalidée comme référence de marge par une
+charge externe observée pendant le run (Roblox et Chrome). Elle reste une
+preuve fonctionnelle 16/16, zéro overrun, mais son pire facteur 1,050× ne prouve
+pas la marge demandée. Voir
+[`audio-physics-productization-validation-2026-08-01.md`](audio-physics-productization-validation-2026-08-01.md).
+
 ## 2026-08-01 — livraison audio et physique vérifiée
 
 Le catalogue courant passe 15/15 en `--free-run`, sans overrun ; le Merlin est

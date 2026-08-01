@@ -22,7 +22,7 @@ La relation auditable est :
 
 `master = premaster + master_processing_delta`
 
-Le manifeste schema 2 enregistre l'erreur absolue maximale des deux
+Le manifeste schema 3 enregistre l'erreur absolue maximale des deux
 reconstructions dans le domaine float avant encodage WAV. En PCM24, chaque
 fichier est quantifie independamment : une reconstruction relue depuis les WAV
 peut donc differer de quelques LSB, ce qui est une limite de representation et
@@ -34,3 +34,10 @@ fenetre de Hann et une evaluation de Goertzel aux ordres 0.5 a 24 par pas de
 0.5. Chaque ligne contient le temps central, le regime moyen mesure, l'ordre,
 sa frequence et son niveau dBFS. Le regime vient de la simulation pendant le
 rendu ; il n'est pas estime a partir du son.
+
+Le bloc `audio_physics` du manifeste distingue configuration et activite
+mesuree : COV/correlation auteurs, afterfire active, rupteur humide, minimum et
+maximum des multiplicateurs de cycle, nombre d'echantillons de variation,
+chaleur afterfire maximale, masse de carburant reellement brulee et nombre de
+silencieux poreux. Cela evite de conclure qu'une case cochee a produit un effet
+quand la ligne etait froide ou qu'aucun carburant imbrule n'etait disponible.

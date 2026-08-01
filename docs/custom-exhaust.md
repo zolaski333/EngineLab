@@ -92,6 +92,11 @@ Les mêmes clés existent en JSON sous `engine.exhaust_paths[].graph`.
 
 ### Garnissage poreux mesure
 
+ECHAP PRO expose maintenant les trois champs ci-dessous lorsqu'un composant
+`muffler` est selectionne. **GARNISSAGE DEMO** remplit 24 000 Pa.s/m2, 35 mm et
+0,28 ; **BYPASS GARNISSAGE** remet les trois champs a zero. Une mise a jour est
+un changement structurel et redemarre le moteur lors de l'application du graphe.
+
 Un composant `muffler` peut maintenant decrire son absorption avec trois
 mesures independantes de la perte de charge :
 
@@ -105,6 +110,14 @@ EngineLab n'invente pas une absorption a partir de `restriction`, de
 `acoustic_gain` ou du volume du corps. Lorsqu'ils sont renseignes, l'impedance
 de surface suit Delany-Bazley et la perte de propagation reste passive. Ces
 valeurs doivent provenir de la fiche du materiau ou d'une mesure du silencieux.
+
+Les memes trois champs existent sur une geometrie scalaire sans `graph`, avec
+les noms `muffler_packing_flow_resistivity_pa_s_m2`,
+`muffler_packing_thickness_mm` et `muffler_perforated_open_area_ratio`. Ils sont
+copies dans le vrai noeud muffler lors de la compilation ou de **GENERER DEPUIS
+LEGACY**. `cp2_full_system` et `cp2_absorptive_lab` ont la meme geometrie et la
+meme restriction ; seul le second renseigne ces valeurs estimees pour une A/B
+d'ecoute. EngineLab n'en deduit jamais depuis le nom d'un silencieux.
 
 ## Types de composant
 
