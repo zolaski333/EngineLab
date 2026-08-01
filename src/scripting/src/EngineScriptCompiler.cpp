@@ -428,7 +428,6 @@ const GlobalNumericProperty* findGlobalNumericProperty(std::string_view path) no
         { "exhaust.outlet_discharge_coefficient", Dimension::dimensionless, setExhaustOutletCoefficient },
         { "ignition.rev_limit_rpm", Dimension::engineSpeed, [](auto& c, double v) { c.ignition.revLimitRpm = v; } },
         { "ignition.limiter_duration_s", Dimension::time, [](auto& c, double v) { c.ignition.limiterDurationSeconds = v; } },
-        { "ignition.limiter_keeps_fuel", Dimension::dimensionless, [](auto& c, double v) { c.ignition.limiterKeepsFuel = v != 0.0; } },
         { "injection.start_angle_deg", Dimension::angle, [](auto& c, double v) { c.injection.startAngleDegrees = v; } },
         { "injection.end_angle_deg", Dimension::angle, [](auto& c, double v) { c.injection.endAngleDegrees = v; } },
         { "injection.injector_flow_mg_s", Dimension::massFlow, [](auto& c, double v) { c.injection.injectorFlowMgPerSecond = v; } },
@@ -750,6 +749,10 @@ private:
         }
         if (path == "forced_induction.enabled") {
             if (const auto value = parseBoolean()) context_.config.forcedInduction.enabled = *value;
+            return;
+        }
+        if (path == "ignition.limiter_keeps_fuel") {
+            if (const auto value = parseBoolean()) context_.config.ignition.limiterKeepsFuel = *value;
             return;
         }
         if (path == "engine.cycle") {
