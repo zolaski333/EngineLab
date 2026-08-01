@@ -528,6 +528,11 @@ struct CombustionCalibrationConfig final {
      *  initial premixed phase; the remainder is mixing controlled.
      */
     double compressionIgnitionPremixedFraction { 0.20 };
+    /** Standard deviation of the physical burn-rate multiplier from one
+     * cylinder cycle to the next. Zero is an exact deterministic bypass. */
+    double cycleVariationCoefficientOfVariation { 0.0 };
+    /** AR(1) correlation between consecutive combustion cycles. */
+    double cycleVariationCorrelation { 0.45 };
 };
 
 /**
@@ -825,6 +830,9 @@ struct CylinderState final {
     double combustionSharpness { 0.0 };
     double directLiquidSprayFuelMg { 0.0 };
     double directDispersingFuelMg { 0.0 };
+    /** Current per-cylinder physical burn-rate multiplier. Unlike the legacy
+     * event-generator jitter, this acts before pressure and heat release. */
+    double combustionCycleMultiplier { 1.0 };
 };
 
 struct EngineState final {

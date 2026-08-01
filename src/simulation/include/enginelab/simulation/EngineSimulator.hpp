@@ -409,6 +409,11 @@ private:
     // sequence for 8+ cylinders while keeping it deterministic across runs and
     // across machines with different hardware concurrency.
     std::array<std::uint32_t, 32> cylinderRandomState_ {};
+    /** Independent stream keeps opt-in cyclic variability from changing the
+     * deterministic misfire decisions. */
+    std::array<std::uint32_t, 32> combustionVariationRandomState_ {};
+    std::array<double, 32> combustionVariationNormalisedState_ {};
+    std::array<double, 32> combustionCycleMultiplier_ {};
     double eventEvaluationAngleDegrees_ { 719.9 };
     double eventEvaluationTimeSeconds_ { 0.0 };
     double indicatedWorkThisCycleJoules_ { 0.0 };

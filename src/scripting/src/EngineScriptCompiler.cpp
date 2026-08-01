@@ -444,6 +444,8 @@ const GlobalNumericProperty* findGlobalNumericProperty(std::string_view path) no
         { "combustion.compression_ignition_delay_scale", Dimension::dimensionless, [](auto& c, double v) { c.combustionCalibration.compressionIgnitionDelayScale = v; } },
         { "combustion.compression_ignition_mixing_time_s", Dimension::time, [](auto& c, double v) { c.combustionCalibration.compressionIgnitionMixingTimeSeconds = v; } },
         { "combustion.compression_ignition_premixed_fraction", Dimension::dimensionless, [](auto& c, double v) { c.combustionCalibration.compressionIgnitionPremixedFraction = v; } },
+        { "combustion.cycle_variation_cov", Dimension::dimensionless, [](auto& c, double v) { c.combustionCalibration.cycleVariationCoefficientOfVariation = v; } },
+        { "combustion.cycle_variation_correlation", Dimension::dimensionless, [](auto& c, double v) { c.combustionCalibration.cycleVariationCorrelation = v; } },
         { "solver.mechanical_frequency_hz", Dimension::frequency, [](auto& c, double v) { c.solver.mechanicalFrequencyHz = v; } },
         { "solver.maximum_frequency_hz", Dimension::frequency, [](auto& c, double v) { c.solver.maximumMechanicalFrequencyHz = v; } },
         { "solver.maximum_crank_deg_per_step", Dimension::angle, [](auto& c, double v) { c.solver.maximumCrankDegreesPerStep = v; } },

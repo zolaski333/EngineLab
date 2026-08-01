@@ -3,6 +3,7 @@
 #include <enginelab/exhaust/ExhaustGraph.hpp>
 #include <enginelab/physics/MechanicalKinematics.hpp>
 #include <enginelab/physics/CylinderHeatTransferModel.hpp>
+#include <enginelab/physics/CombustionCycleVariation.hpp>
 #include <enginelab/physics/DuctWallHeatTransferModel.hpp>
 #include <algorithm>
 #include <array>
@@ -1103,6 +1104,14 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 config_.injection.startAngleDegrees);
             if (injectionStartCrossed) {
                 if (compressionIgnitionEngine) {
+                    combustionCycleMultiplier_[cylinderIndex] =
+                        CombustionCycleVariation::advance(
+                            config_.combustionCalibration
+                                .cycleVariationCoefficientOfVariation,
+                            config_.combustionCalibration
+                                .cycleVariationCorrelation,
+                            combustionVariationRandomState_[cylinderIndex],
+                            combustionVariationNormalisedState_[cylinderIndex]);
                     meteredFuelMolesLastCycle_[cylinderIndex] =
                         injectedFuelMolesThisCycle_[cylinderIndex];
                     deliveredFuelMolesLastCycle_[cylinderIndex] =
@@ -1345,6 +1354,14 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 ignitionPending_[cylinderIndex] = false;
                 ignitionDelayRemainingSeconds_[cylinderIndex] = 0.0;
             } else if (sparkCrossed) {
+                combustionCycleMultiplier_[cylinderIndex] =
+                    CombustionCycleVariation::advance(
+                        config_.combustionCalibration
+                            .cycleVariationCoefficientOfVariation,
+                        config_.combustionCalibration
+                            .cycleVariationCorrelation,
+                        combustionVariationRandomState_[cylinderIndex],
+                        combustionVariationNormalisedState_[cylinderIndex]);
                 endGasKnockStates_[cylinderIndex] = {};
                 meteredFuelMolesLastCycle_[cylinderIndex] = injectedFuelMolesThisCycle_[cylinderIndex];
                 const auto chamberFuelMoles = cylinderGas_[cylinderIndex].mixture().fuelMoles;
@@ -1470,7 +1487,8 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                         ? cylinderGas_[cylinderIndex].mixture().burnedMoles / totalMoles : 0.0,
                     2.0 * cylinder.strokeMm * 0.001 * state_.rpm / 60.0,
                     state_.load, config_.combustionCalibration.residualDilutionSensitivity,
-                    config_.combustionCalibration.chamberTurbulenceIntensityRatio,
+                    config_.combustionCalibration.chamberTurbulenceIntensityRatio
+                        * combustionCycleMultiplier_[cylinderIndex],
                     config_.combustionCalibration.ignitionSiteCount };
                 ignitionPending_[cylinderIndex] = !cylinderMisfires_[cylinderIndex];
                 ignitionDelayRemainingSeconds_[cylinderIndex] = ignitionPending_[cylinderIndex]
@@ -1505,17 +1523,22 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                     ? cylinderGas_[cylinderIndex].mixture().burnedMoles / totalMoles : 0.0,
                 2.0 * cylinder.strokeMm * 0.001 * state_.rpm / 60.0,
                 state_.load, config_.combustionCalibration.residualDilutionSensitivity,
-                config_.combustionCalibration.chamberTurbulenceIntensityRatio,
+                config_.combustionCalibration.chamberTurbulenceIntensityRatio
+                    * combustionCycleMultiplier_[cylinderIndex],
                 config_.combustionCalibration.ignitionSiteCount };
             if (compressionIgnitionEngine) {
                 const auto wasAutoIgnited =
                     compressionIgnitionStates_[cylinderIndex].autoIgnited;
                 auto& compressionResult =
                     compressionIgnitionResults_[cylinderIndex];
+                auto cycleCalibration = config_.combustionCalibration;
+                cycleCalibration.compressionIgnitionMixingTimeSeconds /=
+                    std::max(0.55,
+                        combustionCycleMultiplier_[cylinderIndex]);
                 compressionResult = CompressionIgnitionModel::advance(
                     compressionIgnitionStates_[cylinderIndex],
                     cylinderGas_[cylinderIndex], config_.fuelProperties,
-                    config_.combustionCalibration,
+                    cycleCalibration,
                     { cyclePhase,
                       2.0 * cylinder.strokeMm * 0.001 * state_.rpm / 60.0,
                       compressionIgnitionAvailable },
@@ -2801,6 +2824,8 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
             cylinderState.directDispersingFuelMg =
                 injectionStates_[index].directDispersingVapourMoles
                 * config_.fuelProperties.molarMassGramsPerMole * 1'000.0;
+            cylinderState.combustionCycleMultiplier =
+                combustionCycleMultiplier_[index];
         }
         if (pressureSamples_) {
             CylinderPressureSample pressureSample;
@@ -3026,6 +3051,12 @@ void EngineSimulator::reset() noexcept {
     for (std::size_t index = 0; index < cylinderRandomState_.size(); ++index)
         cylinderRandomState_[index] = 0x6d2b79f5U
             + 0x9e3779b9U * static_cast<std::uint32_t>(index + 1);
+    for (std::size_t index = 0;
+            index < combustionVariationRandomState_.size(); ++index)
+        combustionVariationRandomState_[index] = 0xa341316cU
+            + 0x7f4a7c15U * static_cast<std::uint32_t>(index + 1);
+    combustionVariationNormalisedState_.fill(0.0);
+    combustionCycleMultiplier_.fill(1.0);
     cylinderMisfires_.fill(false);
     intakeFlowMgPerCycle_.fill(0.0);
     exhaustFlowMgPerCycle_.fill(0.0);

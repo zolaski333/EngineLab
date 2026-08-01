@@ -664,6 +664,11 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
                     0.00005, 0.02)
         || !inRange(config.combustionCalibration.compressionIgnitionPremixedFraction,
                     0.0, 0.8)
+        || !inRange(config.combustionCalibration
+                        .cycleVariationCoefficientOfVariation,
+                    0.0, 0.20)
+        || !inRange(config.combustionCalibration.cycleVariationCorrelation,
+                    0.0, 0.98)
         || !inRange(config.runnerAcoustics.dampingRatio, 0.01, 2.0)
         || !inRange(config.runnerAcoustics.couplingGain, 0.0, 2.0)
         || !inRange(config.runnerAcoustics.maximumPressureAmplitudeKpa, 0.1, 200.0)

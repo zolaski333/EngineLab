@@ -1199,6 +1199,8 @@ int main() {
     extendedPhysicsConfig.combustionCalibration.compressionIgnitionDelayScale = 1.8;
     extendedPhysicsConfig.combustionCalibration.compressionIgnitionMixingTimeSeconds = 0.0017;
     extendedPhysicsConfig.combustionCalibration.compressionIgnitionPremixedFraction = 0.16;
+    extendedPhysicsConfig.combustionCalibration.cycleVariationCoefficientOfVariation = 0.047;
+    extendedPhysicsConfig.combustionCalibration.cycleVariationCorrelation = 0.62;
     extendedPhysicsConfig.runnerAcoustics.dampingRatio = 0.21;
     extendedPhysicsConfig.intake.runnerPlenumDiameterMm = 49.0;
     extendedPhysicsConfig.intakePaths.front().geometry.runnerPlenumDiameterMm = 49.0;
@@ -1249,6 +1251,8 @@ int main() {
             && std::abs(extendedJsonRoundTrip.config->combustionCalibration.compressionIgnitionDelayScale - 1.8) < 0.001
             && std::abs(extendedJsonRoundTrip.config->combustionCalibration.compressionIgnitionMixingTimeSeconds - 0.0017) < 1.0e-9
             && std::abs(extendedJsonRoundTrip.config->combustionCalibration.compressionIgnitionPremixedFraction - 0.16) < 0.001
+            && std::abs(extendedJsonRoundTrip.config->combustionCalibration.cycleVariationCoefficientOfVariation - 0.047) < 0.001
+            && std::abs(extendedJsonRoundTrip.config->combustionCalibration.cycleVariationCorrelation - 0.62) < 0.001
             && std::abs(extendedJsonRoundTrip.config->intake
                     .runnerPlenumDiameterMm - 49.0) < 0.001
             && std::abs(extendedJsonRoundTrip.config->transmission.reverseRatio - 3.55) < 0.001

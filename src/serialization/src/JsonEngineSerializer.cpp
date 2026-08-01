@@ -433,7 +433,9 @@ std::string JsonEngineSerializer::encode(const EngineConfig& config) const {
                       {"ignition_site_count", config.combustionCalibration.ignitionSiteCount},
                       {"compression_ignition_delay_scale", config.combustionCalibration.compressionIgnitionDelayScale},
                       {"compression_ignition_mixing_time_s", config.combustionCalibration.compressionIgnitionMixingTimeSeconds},
-                      {"compression_ignition_premixed_fraction", config.combustionCalibration.compressionIgnitionPremixedFraction}}},
+                      {"compression_ignition_premixed_fraction", config.combustionCalibration.compressionIgnitionPremixedFraction},
+                      {"cycle_variation_cov", config.combustionCalibration.cycleVariationCoefficientOfVariation},
+                      {"cycle_variation_correlation", config.combustionCalibration.cycleVariationCorrelation}}},
         {"runner_acoustics", {{"enabled", config.runnerAcoustics.enabled},
                       {"damping_ratio", config.runnerAcoustics.dampingRatio},
                       {"coupling_gain", config.runnerAcoustics.couplingGain},
@@ -629,6 +631,8 @@ EngineDecodeResult JsonEngineSerializer::decode(std::string_view text) const noe
             config.combustionCalibration.compressionIgnitionDelayScale = calibration.value("compression_ignition_delay_scale", config.combustionCalibration.compressionIgnitionDelayScale);
             config.combustionCalibration.compressionIgnitionMixingTimeSeconds = calibration.value("compression_ignition_mixing_time_s", config.combustionCalibration.compressionIgnitionMixingTimeSeconds);
             config.combustionCalibration.compressionIgnitionPremixedFraction = calibration.value("compression_ignition_premixed_fraction", config.combustionCalibration.compressionIgnitionPremixedFraction);
+            config.combustionCalibration.cycleVariationCoefficientOfVariation = calibration.value("cycle_variation_cov", config.combustionCalibration.cycleVariationCoefficientOfVariation);
+            config.combustionCalibration.cycleVariationCorrelation = calibration.value("cycle_variation_correlation", config.combustionCalibration.cycleVariationCorrelation);
         }
         if (engine.contains("runner_acoustics")) {
             const auto& acoustics = engine.at("runner_acoustics");

@@ -243,6 +243,52 @@ int main() {
         require(p.maxBurnedFraction > 0.9, "combustion must complete within the cycle");
     }
 
+    // The authored dispersion must reach the physical simulator and its
+    // pressure-producing flame path, not stop in an audio event generator.
+    auto variedConfig = enginelab::makeDefaultInlineFour();
+    variedConfig.combustionCalibration
+        .cycleVariationCoefficientOfVariation = 0.05;
+    variedConfig.combustionCalibration.cycleVariationCorrelation = 0.65;
+    enginelab::normaliseEngineConfig(variedConfig);
+    enginelab::SimpleEcuModel variedEcu;
+    enginelab::SimplifiedGasolinePhysics variedPhysics;
+    enginelab::FourStrokeEventGenerator variedEvents;
+    auto variedExhaust = enginelab::ExhaustGraph::makeForEngine(variedConfig);
+    enginelab::EngineSimulator variedSimulator(variedConfig, variedEcu,
+        variedPhysics, variedEvents, variedExhaust);
+    auto previousMultiplier = 1.0;
+    auto minimumMultiplier = 1.0;
+    auto maximumMultiplier = 1.0;
+    auto observedCycles = 0;
+    auto maximumPressureBar = 0.0;
+    for (int step = 0; step < 6 * 240; ++step) {
+        const auto time = static_cast<double>(step) / 240.0;
+        const auto frame = variedSimulator.step(1.0 / 240.0,
+            { true, time < 1.2, 0.52, time < 1.5 ? 0.0 : 0.22 });
+        if (frame.state.cylinderStateCount == 0) continue;
+        const auto& cylinder = frame.state.cylinderStates[0];
+        maximumPressureBar = std::max(maximumPressureBar,
+            cylinder.pressureEstimateBar);
+        if (std::abs(cylinder.combustionCycleMultiplier
+                - previousMultiplier) > 1.0e-12) {
+            previousMultiplier = cylinder.combustionCycleMultiplier;
+            minimumMultiplier = std::min(minimumMultiplier,
+                previousMultiplier);
+            maximumMultiplier = std::max(maximumMultiplier,
+                previousMultiplier);
+            ++observedCycles;
+        }
+    }
+    std::cout << "  varied cycles=" << observedCycles
+              << " multiplier=" << minimumMultiplier << ".."
+              << maximumMultiplier << " Pmax=" << maximumPressureBar
+              << "bar\n";
+    require(observedCycles >= 4 && minimumMultiplier < 0.99
+            && maximumMultiplier > 1.01,
+        "authored cycle variation must reach per-cylinder combustion telemetry");
+    require(std::isfinite(maximumPressureBar) && maximumPressureBar > 10.0,
+        "varied combustion must still generate finite physical cylinder pressure");
+
     std::cout << "Combustion phasing tests passed\n";
     return EXIT_SUCCESS;
 }

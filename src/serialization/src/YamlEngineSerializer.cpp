@@ -315,6 +315,8 @@ std::string YamlEngineSerializer::encode(const EngineConfig& config) const {
         << YAML::Key << "compression_ignition_delay_scale" << YAML::Value << config.combustionCalibration.compressionIgnitionDelayScale
         << YAML::Key << "compression_ignition_mixing_time_s" << YAML::Value << config.combustionCalibration.compressionIgnitionMixingTimeSeconds
         << YAML::Key << "compression_ignition_premixed_fraction" << YAML::Value << config.combustionCalibration.compressionIgnitionPremixedFraction
+        << YAML::Key << "cycle_variation_cov" << YAML::Value << config.combustionCalibration.cycleVariationCoefficientOfVariation
+        << YAML::Key << "cycle_variation_correlation" << YAML::Value << config.combustionCalibration.cycleVariationCorrelation
         << YAML::EndMap
         << YAML::Key << "runner_acoustics" << YAML::Value << YAML::BeginMap
         << YAML::Key << "enabled" << YAML::Value << config.runnerAcoustics.enabled
@@ -722,6 +724,8 @@ EngineDecodeResult YamlEngineSerializer::decode(std::string_view text) const noe
             config.combustionCalibration.compressionIgnitionDelayScale = calibration["compression_ignition_delay_scale"].as<double>(config.combustionCalibration.compressionIgnitionDelayScale);
             config.combustionCalibration.compressionIgnitionMixingTimeSeconds = calibration["compression_ignition_mixing_time_s"].as<double>(config.combustionCalibration.compressionIgnitionMixingTimeSeconds);
             config.combustionCalibration.compressionIgnitionPremixedFraction = calibration["compression_ignition_premixed_fraction"].as<double>(config.combustionCalibration.compressionIgnitionPremixedFraction);
+            config.combustionCalibration.cycleVariationCoefficientOfVariation = calibration["cycle_variation_cov"].as<double>(config.combustionCalibration.cycleVariationCoefficientOfVariation);
+            config.combustionCalibration.cycleVariationCorrelation = calibration["cycle_variation_correlation"].as<double>(config.combustionCalibration.cycleVariationCorrelation);
         }
         if (const auto acoustics = engine["runner_acoustics"]) {
             config.runnerAcoustics.enabled = acoustics["enabled"].as<bool>(config.runnerAcoustics.enabled);
