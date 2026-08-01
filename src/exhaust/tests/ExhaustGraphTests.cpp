@@ -1,4 +1,5 @@
 #include <enginelab/exhaust/ExhaustGraph.hpp>
+#include <enginelab/exhaust/LegacyExhaustNetwork.hpp>
 #include <enginelab/serialization/JsonEngineSerializer.hpp>
 #include <enginelab/serialization/YamlEngineSerializer.hpp>
 
@@ -480,12 +481,52 @@ void testTopologyRejectionIsReported() {
     require(rejected.routes().size() > 0,
         "a rejected topology must still compile a usable fallback graph");
 }
+
+void testEditableLegacyConversionIsNeutral() {
+    auto config = makeDefaultV8();
+    auto path = config.exhaustPaths.front();
+    path.geometry.mufflerChamberDiameterMm = 142.0;
+    path.geometry.mufflerChamberLengthMm = 400.0;
+    path.geometry.mufflerRestriction = 0.73;
+    path.acousticPositionM = { 1.0, 2.0, 3.0 };
+
+    const auto converted = makeEditableExhaustNetwork(path);
+    const auto muffler = std::find_if(converted.components.begin(),
+        converted.components.end(), [](const auto& item) {
+            return item.type == ExhaustComponentType::muffler;
+        });
+    require(muffler != converted.components.end(),
+        "an authored scalar expansion chamber must survive conversion");
+    require(std::abs(muffler->diameterMm - 142.0) < 1.0e-12
+            && std::abs(muffler->lengthMm - 400.0) < 1.0e-12,
+        "conversion must retain expansion-chamber dimensions");
+    require(std::abs(muffler->acousticGain - 1.0) < 1.0e-12
+            && std::abs(muffler->restriction) < 1.0e-12,
+        "conversion must not invent generic muffler attenuation or restriction");
+    const auto outlet = std::find_if(converted.components.begin(),
+        converted.components.end(), [](const auto& item) {
+            return item.type == ExhaustComponentType::outlet;
+        });
+    require(outlet != converted.components.end()
+            && std::abs(outlet->acousticPositionM.x - 1.0) < 1.0e-12
+            && std::abs(outlet->acousticPositionM.y - 2.0) < 1.0e-12
+            && std::abs(outlet->acousticPositionM.z - 3.0) < 1.0e-12,
+        "conversion must preserve the authored outlet radiation position");
+
+    path.geometry.mufflerChamberDiameterMm = 0.0;
+    path.geometry.mufflerChamberLengthMm = 0.0;
+    const auto open = makeEditableExhaustNetwork(path);
+    require(std::none_of(open.components.begin(), open.components.end(),
+        [](const auto& item) { return item.type == ExhaustComponentType::muffler; }),
+        "an open scalar path must not become a default muffler when edited");
+}
 } // namespace
 
 int main() {
     try {
         testNonFiniteAuthoredFieldsFailSafe();
         testTopologyRejectionIsReported();
+        testEditableLegacyConversionIsNeutral();
         testValidationAndRouting();
         testAcousticGainEnergyAccounting();
         testModalRoutesAndAdmittanceWeightedBranches();

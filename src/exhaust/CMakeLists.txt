@@ -1,4 +1,7 @@
-add_library(EngineLabExhaust STATIC src/ExhaustGraph.cpp src/ExhaustPathTopologyEditor.cpp)
+add_library(EngineLabExhaust STATIC
+    src/ExhaustGraph.cpp
+    src/ExhaustPathTopologyEditor.cpp
+    src/LegacyExhaustNetwork.cpp)
 add_library(EngineLab::Exhaust ALIAS EngineLabExhaust)
 target_include_directories(EngineLabExhaust PUBLIC include)
 target_link_libraries(EngineLabExhaust PUBLIC EngineLab::Foundation EngineLab::Events)

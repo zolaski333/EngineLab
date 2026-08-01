@@ -1,5 +1,6 @@
 #include <enginelab/app/ExhaustDesignerWindow.hpp>
 #include <enginelab/exhaust/ExhaustPathTopologyEditor.hpp>
+#include <enginelab/exhaust/LegacyExhaustNetwork.hpp>
 
 #include <algorithm>
 #include <array>
@@ -122,52 +123,6 @@ constexpr std::size_t maximumConnections = 1'024;
         break;
     }
     return result;
-}
-
-[[nodiscard]] ExhaustNetworkConfig makeLegacyNetwork(const ExhaustPathConfig& path) {
-    ExhaustNetworkConfig network;
-    network.components.reserve(path.cylinderIds.size() + 3U);
-    network.cylinderConnections.reserve(path.cylinderIds.size());
-    network.connections.reserve(path.cylinderIds.size() + 2U);
-
-    std::uint32_t nextId = 1;
-    std::vector<std::uint32_t> primaryIds;
-    primaryIds.reserve(path.cylinderIds.size());
-    for (const auto cylinderId : path.cylinderIds) {
-        auto primary = defaultComponent(ExhaustComponentType::pipe, nextId++);
-        primary.lengthMm = path.geometry.primaryLengthMm;
-        primary.diameterMm = path.geometry.primaryDiameterMm;
-        primaryIds.push_back(primary.id);
-        network.cylinderConnections.push_back({ cylinderId, primary.id });
-        network.components.push_back(primary);
-    }
-
-    std::uint32_t previousId = 0;
-    if (primaryIds.size() > 1U) {
-        auto collector = defaultComponent(ExhaustComponentType::merge, nextId++);
-        collector.diameterMm = path.geometry.collectorDiameterMm;
-        collector.volumeLitres = path.geometry.collectorVolumeLitres;
-        previousId = collector.id;
-        network.components.push_back(collector);
-        for (const auto primaryId : primaryIds)
-            network.connections.push_back({ primaryId, collector.id });
-    } else if (!primaryIds.empty()) {
-        previousId = primaryIds.front();
-    }
-
-    auto muffler = defaultComponent(ExhaustComponentType::muffler, nextId++);
-    muffler.diameterMm = path.geometry.collectorDiameterMm;
-    muffler.volumeLitres = std::max(0.05, path.geometry.collectorVolumeLitres);
-    muffler.restriction = path.geometry.mufflerRestriction;
-    network.components.push_back(muffler);
-    if (previousId != 0) network.connections.push_back({ previousId, muffler.id });
-
-    auto outlet = defaultComponent(ExhaustComponentType::outlet, nextId);
-    outlet.diameterMm = path.geometry.outletDiameterMm;
-    outlet.dischargeCoefficient = path.geometry.outletDischargeCoefficient;
-    network.components.push_back(outlet);
-    network.connections.push_back({ muffler.id, outlet.id });
-    return network;
 }
 
 class CallbackListModel final : public juce::ListBoxModel {
@@ -1058,7 +1013,7 @@ private:
             setStatus("Impossible de generer un reseau sans cylindre sur ce chemin.", true);
             return;
         }
-        path->network = makeLegacyNetwork(*path);
+        path->network = makeEditableExhaustNetwork(*path);
         selectedComponentId_ = path->network->components.front().id;
         selectedConnectionRow_ = -1;
         selectedMappingRow_ = -1;
