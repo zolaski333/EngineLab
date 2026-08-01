@@ -22,6 +22,33 @@ struct AudioWorkshopLayerSwitches final {
     std::array<bool, 4> solo {};
 };
 
+/** Authored controls that make the pressure/exhaust audio physics audible. */
+struct AudioPhysicsSettings final {
+    double cycleVariationCoefficientOfVariation { 0.0 };
+    double cycleVariationCorrelation { 0.45 };
+    bool afterfireEnabled { false };
+    bool limiterKeepsFuel { false };
+    double afterfireIgnitionTemperatureK { 900.0 };
+    double afterfireReactionTimeSeconds { 0.010 };
+    double afterfireEfficiency { 0.95 };
+};
+
+/** Live proof that the authored controls are active in the simulator. */
+struct AudioPhysicsTelemetry final {
+    double minimumCycleMultiplier { 1.0 };
+    double maximumCycleMultiplier { 1.0 };
+    double afterfireHeatReleaseKw { 0.0 };
+    double afterfireFuelBurnMgPerSecond { 0.0 };
+    std::size_t porousMufflerCount { 0 };
+};
+
+[[nodiscard]] AudioPhysicsSettings audioPhysicsSettingsFor(
+    const EngineConfig& engine) noexcept;
+void applyAudioPhysicsSettings(
+    EngineConfig& engine, const AudioPhysicsSettings& settings) noexcept;
+[[nodiscard]] AudioPhysicsTelemetry audioPhysicsTelemetryFor(
+    const EngineConfig& engine, const EngineState& state) noexcept;
+
 /** Apply availability plus source mute/solo without modifying visible faders. */
 [[nodiscard]] OfflineAudioMix effectiveAudioWorkshopMix(
     const OfflineAudioMix& baseMix,
@@ -39,6 +66,9 @@ public:
     using MixChangedCallback = std::function<void(
         const OfflineAudioMix& baseMix,
         const OfflineAudioMix& effectiveMix)>;
+    using PhysicsApplyCallback = std::function<bool(
+        const AudioPhysicsSettings& settings)>;
+    using TelemetryProvider = std::function<AudioPhysicsTelemetry()>;
 
     AudioWorkshopWindow(
         const EngineConfig& engine,
@@ -47,7 +77,9 @@ public:
         bool compiledExhaustTopology,
         bool compiledIntakeTopology,
         bool measuredImpulseResponseAvailable,
-        MixChangedCallback mixChanged);
+        MixChangedCallback mixChanged,
+        PhysicsApplyCallback physicsApply = {},
+        TelemetryProvider telemetryProvider = {});
     ~AudioWorkshopWindow() override;
 
     void closeButtonPressed() override;

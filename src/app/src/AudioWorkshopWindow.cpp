@@ -94,6 +94,71 @@ OfflineAudioMix effectiveAudioWorkshopMix(
     return mix;
 }
 
+AudioPhysicsSettings audioPhysicsSettingsFor(
+    const EngineConfig& engine) noexcept {
+    return {
+        engine.combustionCalibration.cycleVariationCoefficientOfVariation,
+        engine.combustionCalibration.cycleVariationCorrelation,
+        engine.exhaustAfterfire.enabled,
+        engine.ignition.limiterKeepsFuel,
+        engine.exhaustAfterfire.ignitionTemperatureK,
+        engine.exhaustAfterfire.reactionTimeConstantSeconds,
+        engine.exhaustAfterfire.reactionEfficiency,
+    };
+}
+
+void applyAudioPhysicsSettings(
+    EngineConfig& engine, const AudioPhysicsSettings& settings) noexcept {
+    engine.combustionCalibration.cycleVariationCoefficientOfVariation =
+        settings.cycleVariationCoefficientOfVariation;
+    engine.combustionCalibration.cycleVariationCorrelation =
+        settings.cycleVariationCorrelation;
+    engine.exhaustAfterfire.enabled = settings.afterfireEnabled;
+    engine.ignition.limiterKeepsFuel = settings.limiterKeepsFuel;
+    engine.exhaustAfterfire.ignitionTemperatureK =
+        settings.afterfireIgnitionTemperatureK;
+    engine.exhaustAfterfire.reactionTimeConstantSeconds =
+        settings.afterfireReactionTimeSeconds;
+    engine.exhaustAfterfire.reactionEfficiency =
+        settings.afterfireEfficiency;
+}
+
+AudioPhysicsTelemetry audioPhysicsTelemetryFor(
+    const EngineConfig& engine, const EngineState& state) noexcept {
+    AudioPhysicsTelemetry telemetry;
+    const auto cylinderCount = std::min(
+        engine.cylinders.size(), state.cylinderStates.size());
+    if (cylinderCount != 0) {
+        telemetry.minimumCycleMultiplier =
+            state.cylinderStates[0].combustionCycleMultiplier;
+        telemetry.maximumCycleMultiplier =
+            telemetry.minimumCycleMultiplier;
+        for (std::size_t cylinder = 1; cylinder < cylinderCount; ++cylinder) {
+            const auto multiplier =
+                state.cylinderStates[cylinder].combustionCycleMultiplier;
+            telemetry.minimumCycleMultiplier = std::min(
+                telemetry.minimumCycleMultiplier, multiplier);
+            telemetry.maximumCycleMultiplier = std::max(
+                telemetry.maximumCycleMultiplier, multiplier);
+        }
+    }
+    telemetry.afterfireHeatReleaseKw =
+        state.exhaustAfterfireHeatReleaseKw;
+    telemetry.afterfireFuelBurnMgPerSecond =
+        state.exhaustAfterfireFuelBurnMgPerSecond;
+    for (const auto& path : engine.exhaustPaths) {
+        if (!path.network) continue;
+        for (const auto& component : path.network->components) {
+            if (component.type == ExhaustComponentType::muffler
+                    && component.packingFlowResistivityPaSPerM2 > 0.0
+                    && component.packingThicknessMm > 0.0
+                    && component.perforatedOpenAreaRatio > 0.0)
+                ++telemetry.porousMufflerCount;
+        }
+    }
+    return telemetry;
+}
+
 class AudioWorkshopWindow::WorkshopContent final
     : public juce::Component,
       private juce::Timer {
@@ -105,7 +170,9 @@ public:
         bool compiledExhaustTopology,
         bool compiledIntakeTopology,
         bool measuredImpulseResponseAvailable,
-        MixChangedCallback mixChanged)
+        MixChangedCallback mixChanged,
+        PhysicsApplyCallback physicsApply,
+        TelemetryProvider telemetryProvider)
         : engine_(engine),
           assetRoot_(std::move(assetRoot)),
           compiledExhaustTopology_(compiledExhaustTopology),
@@ -113,12 +180,15 @@ public:
           measuredImpulseResponseAvailable_(
               measuredImpulseResponseAvailable),
           mixChanged_(std::move(mixChanged)),
+          physicsApply_(std::move(physicsApply)),
+          telemetryProvider_(std::move(telemetryProvider)),
           progressBar_(progressValue_) {
         setOpaque(true);
 
         mixGroup_.setText("MIX TEMPS REEL");
         exportGroup_.setText("RENDU HQ HORS LIGNE");
-        for (auto* group : { &mixGroup_, &exportGroup_ }) {
+        physicsGroup_.setText("PHYSIQUE AUDIO  /  PRESSION -> ECHAPPEMENT");
+        for (auto* group : { &mixGroup_, &exportGroup_, &physicsGroup_ }) {
             group->setColour(
                 juce::GroupComponent::outlineColourId,
                 juce::Colour(0xff33423e));
@@ -281,8 +351,67 @@ public:
         addAndMakeVisible(proofLabel_);
         addAndMakeVisible(progressBar_);
 
+        const std::array<std::string_view, 5> physicsNames {
+            "Variation cycle (COV)", "Correlation cycles",
+            "Allumage afterfire (K)", "Reaction afterfire (ms)",
+            "Rendement afterfire",
+        };
+        for (std::size_t index = 0; index < physicsLabels_.size(); ++index) {
+            physicsLabels_[index].setText(
+                utf8(physicsNames[index]), juce::dontSendNotification);
+            physicsLabels_[index].setColour(
+                juce::Label::textColourId, juce::Colour(0xffaebbb6));
+            physicsLabels_[index].setFont(juce::FontOptions(12.0F));
+            addAndMakeVisible(physicsLabels_[index]);
+        }
+        configureSlider(cycleVariationSlider_, 0.0, 0.20, 0.005);
+        configureSlider(cycleCorrelationSlider_, 0.0, 0.98, 0.01);
+        configureSlider(afterfireTemperatureSlider_, 500.0, 1'800.0, 10.0);
+        configureSlider(afterfireReactionSlider_, 2.0, 50.0, 1.0);
+        configureSlider(afterfireEfficiencySlider_, 0.0, 1.0, 0.01);
+        cycleVariationSlider_.setTextValueSuffix(" ratio");
+        cycleCorrelationSlider_.setTextValueSuffix(" ratio");
+        afterfireTemperatureSlider_.setTextValueSuffix(" K");
+        afterfireReactionSlider_.setTextValueSuffix(" ms");
+        afterfireEfficiencySlider_.setTextValueSuffix(" ratio");
+
+        afterfireToggle_.setColour(
+            juce::ToggleButton::textColourId, juce::Colour(0xffc4d0cb));
+        wetLimiterToggle_.setColour(
+            juce::ToggleButton::textColourId, juce::Colour(0xffc4d0cb));
+        addAndMakeVisible(afterfireToggle_);
+        addAndMakeVisible(wetLimiterToggle_);
+        demoPhysicsButton_.onClick = [this] {
+            setPhysicsInternal({ 0.06, 0.55, true, true,
+                                 800.0, 0.008, 0.95 });
+            applyPhysics();
+        };
+        bypassPhysicsButton_.onClick = [this] {
+            auto settings = physicsSettings();
+            settings.cycleVariationCoefficientOfVariation = 0.0;
+            settings.afterfireEnabled = false;
+            settings.limiterKeepsFuel = false;
+            setPhysicsInternal(settings);
+            applyPhysics();
+        };
+        applyPhysicsButton_.onClick = [this] { applyPhysics(); };
+        for (auto* button : { &demoPhysicsButton_, &bypassPhysicsButton_,
+                              &applyPhysicsButton_ })
+            addAndMakeVisible(*button);
+        physicsTelemetryLabel_.setColour(
+            juce::Label::textColourId, juce::Colour(0xff8fb7a8));
+        physicsTelemetryLabel_.setFont(juce::FontOptions(12.0F));
+        physicsTelemetryLabel_.setJustificationType(juce::Justification::topLeft);
+        addAndMakeVisible(physicsTelemetryLabel_);
+        physicsStatusLabel_.setColour(
+            juce::Label::textColourId, juce::Colour(0xffd49a72));
+        physicsStatusLabel_.setFont(juce::FontOptions(11.5F));
+        addAndMakeVisible(physicsStatusLabel_);
+
         setMixInternal(mix);
+        setPhysicsInternal(audioPhysicsSettingsFor(engine_));
         updateEnginePresentation();
+        setPhysicsInternal(audioPhysicsSettingsFor(engine_));
         updateScenarioLabel();
         installSliderCallbacks();
         updateAvailability();
@@ -346,8 +475,10 @@ public:
         statusLabel_.setBounds(header);
         area.removeFromTop(8);
 
+        auto physicsArea = area.removeFromBottom(224);
+        area.removeFromBottom(12);
         const auto leftWidth = std::max(
-            520, static_cast<int>(
+            500, static_cast<int>(
                      static_cast<double>(area.getWidth())
                      * 0.58));
         auto mixArea = area.removeFromLeft(leftWidth);
@@ -355,9 +486,10 @@ public:
         auto exportArea = area;
         mixGroup_.setBounds(mixArea);
         exportGroup_.setBounds(exportArea);
+        physicsGroup_.setBounds(physicsArea);
 
         auto mixBody = mixArea.reduced(16, 28);
-        const auto generalRowHeight = 42;
+        const auto generalRowHeight = 34;
         for (std::size_t index = 0; index < 5; ++index) {
             auto row = mixBody.removeFromTop(
                 generalRowHeight);
@@ -366,7 +498,7 @@ public:
             sliders()[index]->setBounds(row);
         }
         mixBody.removeFromTop(8);
-        const auto layerRowHeight = 48;
+        const auto layerRowHeight = 38;
         for (std::size_t layer = 0; layer < 4; ++layer) {
             auto row = mixBody.removeFromTop(layerRowHeight);
             controlLabels_[layer + 5].setBounds(
@@ -418,6 +550,38 @@ public:
             exportBody.removeFromTop(24));
         exportBody.removeFromTop(12);
         proofLabel_.setBounds(exportBody);
+
+        auto physicsBody = physicsArea.reduced(16, 28);
+        const auto firstWidth = physicsBody.getWidth() * 31 / 100;
+        const auto secondWidth = physicsBody.getWidth() * 34 / 100;
+        auto firstColumn = physicsBody.removeFromLeft(firstWidth);
+        physicsBody.removeFromLeft(12);
+        auto secondColumn = physicsBody.removeFromLeft(secondWidth);
+        physicsBody.removeFromLeft(12);
+        auto thirdColumn = physicsBody;
+        const auto physicsRow = [](juce::Rectangle<int>& column,
+                                   juce::Label& label, juce::Slider& slider) {
+            auto row = column.removeFromTop(35);
+            label.setBounds(row.removeFromLeft(145));
+            slider.setBounds(row);
+        };
+        physicsRow(firstColumn, physicsLabels_[0], cycleVariationSlider_);
+        physicsRow(firstColumn, physicsLabels_[1], cycleCorrelationSlider_);
+        physicsStatusLabel_.setBounds(firstColumn.reduced(0, 5));
+        physicsRow(secondColumn, physicsLabels_[2], afterfireTemperatureSlider_);
+        physicsRow(secondColumn, physicsLabels_[3], afterfireReactionSlider_);
+        physicsRow(secondColumn, physicsLabels_[4], afterfireEfficiencySlider_);
+        afterfireToggle_.setBounds(thirdColumn.removeFromTop(27));
+        wetLimiterToggle_.setBounds(thirdColumn.removeFromTop(27));
+        auto presets = thirdColumn.removeFromTop(32);
+        demoPhysicsButton_.setBounds(
+            presets.removeFromLeft(presets.getWidth() / 2 - 4));
+        presets.removeFromLeft(8);
+        bypassPhysicsButton_.setBounds(presets);
+        thirdColumn.removeFromTop(5);
+        applyPhysicsButton_.setBounds(thirdColumn.removeFromTop(34));
+        thirdColumn.removeFromTop(5);
+        physicsTelemetryLabel_.setBounds(thirdColumn);
     }
 
 private:
@@ -501,6 +665,57 @@ private:
             mix.mechanicalGain,
             juce::dontSendNotification);
         updatingControls_ = false;
+    }
+
+    [[nodiscard]] AudioPhysicsSettings physicsSettings() const noexcept {
+        return {
+            cycleVariationSlider_.getValue(),
+            cycleCorrelationSlider_.getValue(),
+            afterfireToggle_.getToggleState(),
+            wetLimiterToggle_.getToggleState(),
+            afterfireTemperatureSlider_.getValue(),
+            afterfireReactionSlider_.getValue() * 0.001,
+            afterfireEfficiencySlider_.getValue(),
+        };
+    }
+
+    void setPhysicsInternal(const AudioPhysicsSettings& settings) {
+        cycleVariationSlider_.setValue(
+            settings.cycleVariationCoefficientOfVariation,
+            juce::dontSendNotification);
+        cycleCorrelationSlider_.setValue(
+            settings.cycleVariationCorrelation, juce::dontSendNotification);
+        afterfireToggle_.setToggleState(
+            settings.afterfireEnabled, juce::dontSendNotification);
+        wetLimiterToggle_.setToggleState(
+            settings.limiterKeepsFuel, juce::dontSendNotification);
+        afterfireTemperatureSlider_.setValue(
+            settings.afterfireIgnitionTemperatureK,
+            juce::dontSendNotification);
+        afterfireReactionSlider_.setValue(
+            settings.afterfireReactionTimeSeconds * 1'000.0,
+            juce::dontSendNotification);
+        afterfireEfficiencySlider_.setValue(
+            settings.afterfireEfficiency, juce::dontSendNotification);
+    }
+
+    void applyPhysics() {
+        if (!physicsApply_) {
+            physicsStatusLabel_.setText(
+                "Lecture seule: aucun moteur hote.", juce::dontSendNotification);
+            return;
+        }
+        const auto settings = physicsSettings();
+        if (physicsApply_(settings)) {
+            applyAudioPhysicsSettings(engine_, settings);
+            physicsStatusLabel_.setText(
+                "Applique. Le moteur a redemarre avec cette physique.",
+                juce::dontSendNotification);
+        } else {
+            physicsStatusLabel_.setText(
+                "Refuse (banc actif ou configuration invalide).",
+                juce::dontSendNotification);
+        }
     }
 
     [[nodiscard]] OfflineAudioMix baseMix() const {
@@ -871,6 +1086,17 @@ private:
         progressValue_ = threadProgress_.load(
             std::memory_order_relaxed);
         progressBar_.repaint();
+        const auto telemetry = telemetryProvider_
+            ? telemetryProvider_()
+            : audioPhysicsTelemetryFor(engine_, EngineState {});
+        physicsTelemetryLabel_.setText(
+            "LIVE  cycles " + juce::String(telemetry.minimumCycleMultiplier, 3)
+                + " .. " + juce::String(telemetry.maximumCycleMultiplier, 3)
+                + "  |  afterfire " + juce::String(telemetry.afterfireHeatReleaseKw, 2)
+                + " kW / " + juce::String(telemetry.afterfireFuelBurnMgPerSecond, 1)
+                + " mg/s  |  silencieux poreux "
+                + juce::String(static_cast<int>(telemetry.porousMufflerCount)),
+            juce::dontSendNotification);
     }
 
     EngineConfig engine_;
@@ -883,9 +1109,12 @@ private:
     bool updatingControls_ { false };
     bool exportRunning_ { false };
     MixChangedCallback mixChanged_;
+    PhysicsApplyCallback physicsApply_;
+    TelemetryProvider telemetryProvider_;
 
     juce::GroupComponent mixGroup_;
     juce::GroupComponent exportGroup_;
+    juce::GroupComponent physicsGroup_;
     juce::Label engineLabel_;
     juce::Label statusLabel_;
     std::array<juce::Label, 9> controlLabels_;
@@ -929,6 +1158,21 @@ private:
     juce::ProgressBar progressBar_;
     std::jthread exportThread_;
     std::unique_ptr<juce::FileChooser> fileChooser_;
+    std::array<juce::Label, 5> physicsLabels_;
+    juce::Slider cycleVariationSlider_;
+    juce::Slider cycleCorrelationSlider_;
+    juce::Slider afterfireTemperatureSlider_;
+    juce::Slider afterfireReactionSlider_;
+    juce::Slider afterfireEfficiencySlider_;
+    juce::ToggleButton afterfireToggle_ { "AFTERFIRE PHYSIQUE ACTIF" };
+    juce::ToggleButton wetLimiterToggle_ {
+        "RUPTEUR SPARK-CUT / CARBURANT CONSERVE"
+    };
+    juce::TextButton demoPhysicsButton_ { "DEMO AUDIBLE" };
+    juce::TextButton bypassPhysicsButton_ { "BYPASS" };
+    juce::TextButton applyPhysicsButton_ { "APPLIQUER ET REDEMARRER" };
+    juce::Label physicsTelemetryLabel_;
+    juce::Label physicsStatusLabel_;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(WorkshopContent)
 };
@@ -940,7 +1184,9 @@ AudioWorkshopWindow::AudioWorkshopWindow(
     bool compiledExhaustTopology,
     bool compiledIntakeTopology,
     bool measuredImpulseResponseAvailable,
-    MixChangedCallback mixChanged)
+    MixChangedCallback mixChanged,
+    PhysicsApplyCallback physicsApply,
+    TelemetryProvider telemetryProvider)
     : juce::DocumentWindow(
         "EngineLab - Atelier audio",
         juce::Colour(0xff0d1312),
@@ -951,12 +1197,13 @@ AudioWorkshopWindow::AudioWorkshopWindow(
         compiledExhaustTopology,
         compiledIntakeTopology,
         measuredImpulseResponseAvailable,
-        std::move(mixChanged));
+        std::move(mixChanged), std::move(physicsApply),
+        std::move(telemetryProvider));
     setContentOwned(content_, true);
     setUsingNativeTitleBar(true);
     setResizable(true, true);
-    setResizeLimits(980, 620, 1'600, 1'000);
-    centreWithSize(1'120, 700);
+    setResizeLimits(1'100, 800, 1'700, 1'080);
+    centreWithSize(1'280, 860);
 }
 
 AudioWorkshopWindow::~AudioWorkshopWindow() = default;

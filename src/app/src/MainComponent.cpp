@@ -510,6 +510,18 @@ void MainComponent::showAudioWorkshop() {
                     if (safe)
                         safe->applyAudioWorkshopMix(
                             baseMix, effectiveMix);
+                },
+                [safe](const AudioPhysicsSettings& settings) {
+                    if (!safe) return false;
+                    auto editedConfig = safe->config_;
+                    applyAudioPhysicsSettings(editedConfig, settings);
+                    return safe->applyConfig(
+                        editedConfig, safe->scriptReloader_ != nullptr, true);
+                },
+                [safe] {
+                    if (!safe) return AudioPhysicsTelemetry {};
+                    return audioPhysicsTelemetryFor(
+                        safe->config_, safe->visibleState_);
                 });
     } else {
         audioWorkshopWindow_->setEngine(

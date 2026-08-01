@@ -32,6 +32,36 @@ int main() {
     require(!catalog.entries.empty(), "catalog loads");
     const auto& engine = catalog.entries.front().config;
 
+    auto physicsConfig = engine;
+    enginelab::AudioPhysicsSettings authoredPhysics {
+        0.06, 0.55, true, true, 800.0, 0.008, 0.95
+    };
+    enginelab::applyAudioPhysicsSettings(physicsConfig, authoredPhysics);
+    const auto recoveredPhysics =
+        enginelab::audioPhysicsSettingsFor(physicsConfig);
+    require(
+        near(recoveredPhysics.cycleVariationCoefficientOfVariation, 0.06)
+            && near(recoveredPhysics.cycleVariationCorrelation, 0.55)
+            && recoveredPhysics.afterfireEnabled
+            && recoveredPhysics.limiterKeepsFuel
+            && near(recoveredPhysics.afterfireIgnitionTemperatureK, 800.0)
+            && near(recoveredPhysics.afterfireReactionTimeSeconds, 0.008)
+            && near(recoveredPhysics.afterfireEfficiency, 0.95),
+        "audio physics controls round-trip through EngineConfig");
+    enginelab::EngineState physicsState;
+    physicsState.cylinderStates[0].combustionCycleMultiplier = 0.91;
+    physicsState.cylinderStates[1].combustionCycleMultiplier = 1.08;
+    physicsState.exhaustAfterfireHeatReleaseKw = 3.4;
+    physicsState.exhaustAfterfireFuelBurnMgPerSecond = 22.0;
+    const auto physicsTelemetry =
+        enginelab::audioPhysicsTelemetryFor(physicsConfig, physicsState);
+    require(
+        near(physicsTelemetry.minimumCycleMultiplier, 0.91)
+            && near(physicsTelemetry.maximumCycleMultiplier, 1.08)
+            && near(physicsTelemetry.afterfireHeatReleaseKw, 3.4)
+            && near(physicsTelemetry.afterfireFuelBurnMgPerSecond, 22.0),
+        "audio physics telemetry reports real simulator state");
+
     enginelab::OfflineAudioMix base;
     base.volume = 1.25;
     base.convolution = 0.60;
@@ -83,6 +113,8 @@ int main() {
     int callbackCount = 0;
     enginelab::OfflineAudioMix callbackBase;
     enginelab::OfflineAudioMix callbackEffective;
+    int physicsApplyCount = 0;
+    enginelab::AudioPhysicsSettings appliedPhysics;
     enginelab::AudioWorkshopWindow window(
         engine, ENGINELAB_CATALOG_ROOT, base,
         true, true, false,
@@ -91,7 +123,13 @@ int main() {
             ++callbackCount;
             callbackBase = nextBase;
             callbackEffective = nextEffective;
-        });
+        },
+        [&](const enginelab::AudioPhysicsSettings& settings) {
+            ++physicsApplyCount;
+            appliedPhysics = settings;
+            return true;
+        },
+        [physicsTelemetry] { return physicsTelemetry; });
     auto* content = window.getContentComponent();
     require(content != nullptr, "workshop owns content");
     const auto verifyLayoutAt = [&](int width, int height) {
@@ -118,9 +156,9 @@ int main() {
                 "every visible workshop control stays inside the window");
         }
     };
-    verifyLayoutAt(980, 620);
-    verifyLayoutAt(1'120, 700);
-    verifyLayoutAt(1'600, 900);
+    verifyLayoutAt(1'100, 800);
+    verifyLayoutAt(1'280, 860);
+    verifyLayoutAt(1'600, 1'000);
 
     int visibleChildren = 0;
     int sliderCount = 0;
@@ -130,6 +168,8 @@ int main() {
     int disabledMuteCount = 0;
     int disabledSoloCount = 0;
     bool exportButtonFound = false;
+    juce::TextButton* demoPhysicsButton = nullptr;
+    bool applyPhysicsButtonFound = false;
     for (int index = 0;
          index < content->getNumChildComponents(); ++index) {
         auto* child = content->getChildComponent(index);
@@ -140,7 +180,7 @@ int main() {
             ++sliderCount;
             if (!slider->isEnabled()) ++disabledSliderCount;
         }
-        if (const auto* button =
+        if (auto* button =
                 dynamic_cast<juce::TextButton*>(child)) {
             const auto text = button->getButtonText();
             if (text == "MUTE") {
@@ -152,19 +192,32 @@ int main() {
             } else if (text
                        == "CHOISIR DOSSIER ET EXPORTER") {
                 exportButtonFound = true;
+            } else if (text == "DEMO AUDIBLE") {
+                demoPhysicsButton = button;
+            } else if (text == "APPLIQUER ET REDEMARRER") {
+                applyPhysicsButtonFound = true;
             }
         }
     }
-    require(visibleChildren >= 30, "complete workshop control set is present");
+    require(visibleChildren >= 45, "complete workshop control set is present");
     require(
-        sliderCount == 9 && disabledSliderCount == 4,
-        "nine faders exist and four truthful no-op controls are disabled");
+        sliderCount == 14 && disabledSliderCount == 4,
+        "nine faders and five physics controls exist; four no-op faders are disabled");
     require(
         muteCount == 4 && soloCount == 4
             && disabledMuteCount == 1
             && disabledSoloCount == 1,
         "four source mute/solo rows exist and direct combustion is unavailable");
     require(exportButtonFound, "HQ export action is visible");
+    require(demoPhysicsButton != nullptr && applyPhysicsButtonFound,
+            "audible physics A/B and explicit apply actions are visible");
+    demoPhysicsButton->onClick();
+    require(
+        physicsApplyCount == 1
+            && near(appliedPhysics.cycleVariationCoefficientOfVariation, 0.06)
+            && appliedPhysics.afterfireEnabled
+            && appliedPhysics.limiterKeepsFuel,
+        "demo action publishes an intentionally audible physical calibration");
 
     window.setMix(base);
     require(callbackCount > 0, "mix synchronisation publishes to MainComponent");
@@ -192,7 +245,7 @@ int main() {
         "compatibility topology re-enables its real controls");
 
     std::cout
-        << "Audio workshop: layout, truthful availability, "
-           "mute/solo routing and HQ export controls PASS\n";
+        << "Audio workshop: layout, truthful availability, physical A/B, "
+           "live telemetry, mute/solo routing and HQ export controls PASS\n";
     return 0;
 }
