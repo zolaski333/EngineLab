@@ -1,5 +1,12 @@
 # Exports de diagnostic audio
 
+Le paquet Windows livre aussi `tools/EngineLabOfflineAudioExporter.exe`. Depuis
+la racine extraite, un export directement exploitable s'obtient avec :
+
+```powershell
+.\tools\EngineLabOfflineAudioExporter.exe --catalog-root . --engine K20 --output .\exports\k20 --format float32 --stems
+```
+
 Quand l'option de stems est activee, l'export offline ecrit :
 
 - `master.wav` ;

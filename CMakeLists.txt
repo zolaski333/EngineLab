@@ -75,6 +75,10 @@ endif()
 install(TARGETS EngineLabApp
     RUNTIME DESTINATION . COMPONENT EngineLab
     BUNDLE DESTINATION . COMPONENT EngineLab)
+if(TARGET EngineLabOfflineAudioExporter AND TARGET EngineLabAbClipRenderer)
+    install(TARGETS EngineLabOfflineAudioExporter EngineLabAbClipRenderer
+        RUNTIME DESTINATION tools COMPONENT EngineLab)
+endif()
 install(DIRECTORY engines parts assets examples voicing DESTINATION . COMPONENT EngineLab)
 install(DIRECTORY docs DESTINATION . COMPONENT EngineLab)
 install(FILES README.md LICENSE.md DESTINATION . COMPONENT EngineLab)
