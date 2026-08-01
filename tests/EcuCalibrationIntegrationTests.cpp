@@ -65,6 +65,8 @@ int main() {
     require(!limited.sparkEnabled, "calibrated rev limiter should apply without rebuilding the ECU");
     require(!limited.fuelEnabled,
             "the backwards-compatible hard limiter should cut fuel by default");
+    require(!limited.wetSparkCutActive,
+            "the backwards-compatible hard limiter must not request wet injection");
 
     auto wetLimiterConfig = config;
     wetLimiterConfig.ignition.limiterKeepsFuel = true;
@@ -83,6 +85,8 @@ int main() {
             "an opted-in wet limiter should retain injection at the hard limit");
     require(!wetLimited.sparkEnabled,
             "an opted-in wet limiter should still suppress spark at the hard limit");
+    require(wetLimited.wetSparkCutActive,
+            "an opted-in wet limiter must explicitly authorize spark-cut injection");
 
     std::cout << "EngineLab ECU calibration integration tests passed\n";
     return EXIT_SUCCESS;

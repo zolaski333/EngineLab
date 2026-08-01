@@ -1546,10 +1546,11 @@ int main() {
             "catalog must retain the Big Twin start regression fixture");
 
     {
-        // Only the explicit authored afterfire state may bypass the normal
-        // combustion/injection gate. Letting every fuel-on, spark-off phase
-        // inject wets the low-speed cranking cuts and the high-inertia Big Twin
-        // reproducibly stalls at 0 rpm in the realtime budget harness.
+        // Only explicit authored afterfire or wet-limiter states may bypass
+        // the normal combustion/injection gate. Letting every fuel-on,
+        // spark-off phase inject wets the low-speed cranking cuts and the
+        // high-inertia Big Twin reproducibly stalls at 0 rpm in the realtime
+        // budget harness.
         enginelab::EngineRuntime runtime(*bigTwinConfig);
         runtime.setRealtimeThrottleEnabled(false);
         runtime.setDynoMaximumDurationSeconds(30.0);

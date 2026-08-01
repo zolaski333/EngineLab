@@ -1225,14 +1225,15 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
             // swinging 14-39 degC), holding the manifold off ambient. No crank
             // signal, no pulse.
             // Preserve the established combustion gate except for the one
-            // deliberate wet strategy: authored spark-cut overrun. Treating
-            // every fuel-enabled/spark-disabled cycle as injectable also wets
-            // ordinary cranking cuts; the large-inertia Big Twin then floods
-            // before the dyno start can catch. The explicit ECU bit keeps the
-            // new afterfire path physical without changing start or limiter
-            // behaviour elsewhere.
+            // deliberate wet strategies: authored spark-cut overrun or the
+            // opt-in wet limiter. Treating every fuel-enabled/spark-disabled
+            // cycle as injectable also wets ordinary cranking cuts; the
+            // large-inertia Big Twin then floods before the dyno start can
+            // catch. Explicit ECU bits keep both audio strategies physical
+            // without changing start behaviour elsewhere.
             if ((combustion.combustionEnabled
-                    || ecuCommand.overrunAfterfireActive)
+                    || ecuCommand.overrunAfterfireActive
+                    || ecuCommand.wetSparkCutActive)
                 && state_.rpm > 20.0
                 && phaseInsideWindow(cyclePhase,
                     config_.injection.startAngleDegrees, config_.injection.endAngleDegrees)) {

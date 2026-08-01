@@ -421,13 +421,23 @@ EcuCommand SimpleEcuModel::evaluate(const EngineConfig& config, const EngineStat
         : warmupCorrection * crankingCorrection
             * (1.0 + accelerationFuelEnrichment * 1.40)
             * decelerationFuelResume;
+    const auto commandedFuelEnabled = overrunAfterfireActive
+        || (fuelEnabled && !decelerationFuelCut);
+    const auto commandedSparkEnabled = !overrunAfterfireActive
+        && sparkEnabled && !alternatingCut;
+    const auto wetSparkCutActive =
+        config.fuel == FuelType::gasoline
+        && config.ignition.limiterKeepsFuel
+        && !overrunAfterfireActive
+        && commandedFuelEnabled && !commandedSparkEnabled
+        && !controls.starterEngaged
+        && (limiterActive || alternatingCut);
     return { mappedAfr, mappedAdvance,
              effectiveThrottle, idleAirOpening,
              fuelCorrection,
-             overrunAfterfireActive
-                 || (fuelEnabled && !decelerationFuelCut),
-             !overrunAfterfireActive
-                 && sparkEnabled && !alternatingCut,
-             overrunAfterfireActive };
+             commandedFuelEnabled,
+             commandedSparkEnabled,
+             overrunAfterfireActive,
+             wetSparkCutActive };
 }
 } // namespace enginelab

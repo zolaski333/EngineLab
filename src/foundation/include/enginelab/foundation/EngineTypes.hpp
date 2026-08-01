@@ -1093,6 +1093,8 @@ struct EcuCommand final {
     bool fuelEnabled { true };
     bool sparkEnabled { true };
     bool overrunAfterfireActive { false };
+    /** Explicit authored limiter state that keeps fuel while cutting spark. */
+    bool wetSparkCutActive { false };
 };
 
 // Output of the mean-value model SimplifiedGasolinePhysics::evaluateCombustion.
