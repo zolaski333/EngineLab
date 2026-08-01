@@ -1062,7 +1062,17 @@ private:
                     << "\nTelemetrie perdue: "
                     << static_cast<juce::int64>(
                            result.droppedFiringEvents
-                           + result.droppedPressureSamples);
+                           + result.droppedPressureSamples)
+                    << "\nVariation cycles: "
+                    << juce::String(result.cycleMultiplierMinimum, 3)
+                    << " .. " << juce::String(result.cycleMultiplierMaximum, 3)
+                    << "\nAfterfire: "
+                    << juce::String(result.afterfirePeakHeatReleaseKw, 2)
+                    << " kW peak / "
+                    << juce::String(result.afterfireFuelBurnedMg, 1)
+                    << " mg brules"
+                    << "\nSilencieux poreux: "
+                    << static_cast<int>(result.porousMufflerCount);
             if (!result.warnings.empty())
                 message << "\n\nWarnings: "
                         << static_cast<int>(

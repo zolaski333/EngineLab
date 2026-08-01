@@ -646,6 +646,21 @@ OfflineAudioExportResult exportOfflineAudio(
         normaliseEngineConfig(config);
         if (const auto configError = validateEngineConfig(config))
             return fail("Invalid engine configuration: " + *configError);
+        for (const auto& path : config.exhaustPaths) {
+            if (path.network) {
+                for (const auto& component : path.network->components) {
+                    if (component.type == ExhaustComponentType::muffler
+                            && component.packingFlowResistivityPaSPerM2 > 0.0
+                            && component.packingThicknessMm > 0.0
+                            && component.perforatedOpenAreaRatio > 0.0)
+                        ++result.porousMufflerCount;
+                }
+            } else if (path.geometry.mufflerPackingFlowResistivityPaSPerM2 > 0.0
+                    && path.geometry.mufflerPackingThicknessMm > 0.0
+                    && path.geometry.mufflerPerforatedOpenAreaRatio > 0.0) {
+                ++result.porousMufflerCount;
+            }
+        }
 
         if (progress && !progress(0.0, "preflight")) {
             result.cancelled = true;
@@ -905,6 +920,31 @@ OfflineAudioExportResult exportOfflineAudio(
             }
 
             auto frame = simulator->step(dt, controls);
+            result.afterfirePeakHeatReleaseKw = std::max(
+                result.afterfirePeakHeatReleaseKw,
+                std::max(0.0, frame.state.exhaustAfterfireHeatReleaseKw));
+            result.afterfireFuelBurnedMg += std::max(
+                0.0, frame.state.exhaustAfterfireFuelBurnMgPerSecond) * dt;
+            if (config.combustionCalibration
+                    .cycleVariationCoefficientOfVariation > 0.0) {
+                const auto cylinderCount = std::min(
+                    config.cylinders.size(), frame.state.cylinderStates.size());
+                for (std::size_t cylinder = 0; cylinder < cylinderCount; ++cylinder) {
+                    const auto multiplier = frame.state.cylinderStates[cylinder]
+                        .combustionCycleMultiplier;
+                    if (!std::isfinite(multiplier)) continue;
+                    if (result.cycleVariationSamples == 0) {
+                        result.cycleMultiplierMinimum = multiplier;
+                        result.cycleMultiplierMaximum = multiplier;
+                    } else {
+                        result.cycleMultiplierMinimum = std::min(
+                            result.cycleMultiplierMinimum, multiplier);
+                        result.cycleMultiplierMaximum = std::max(
+                            result.cycleMultiplierMaximum, multiplier);
+                    }
+                    ++result.cycleVariationSamples;
+                }
+            }
             if (stageIndex < stageSpeeds.size()) {
                 auto& speed = stageSpeeds[stageIndex];
                 const auto rpm = frame.state.rpm;
@@ -1136,7 +1176,7 @@ OfflineAudioExportResult exportOfflineAudio(
         for (const auto& warning : result.warnings)
             warnings.push_back(warning);
         const Json manifest {
-            { "schema_version", 2 },
+            { "schema_version", 3 },
             { "engine", config.name },
             { "scenario", request.scenario.name },
             { "render_path",
@@ -1209,6 +1249,18 @@ OfflineAudioExportResult exportOfflineAudio(
                   result.droppedFiringEvents },
                 { "dropped_pressure_samples",
                   result.droppedPressureSamples },
+            } },
+            { "audio_physics", {
+                { "authored_cycle_variation_cov", config.combustionCalibration.cycleVariationCoefficientOfVariation },
+                { "authored_cycle_variation_correlation", config.combustionCalibration.cycleVariationCorrelation },
+                { "authored_afterfire_enabled", config.exhaustAfterfire.enabled },
+                { "authored_limiter_keeps_fuel", config.ignition.limiterKeepsFuel },
+                { "cycle_multiplier_minimum", result.cycleMultiplierMinimum },
+                { "cycle_multiplier_maximum", result.cycleMultiplierMaximum },
+                { "cycle_variation_samples", result.cycleVariationSamples },
+                { "afterfire_peak_heat_release_kw", result.afterfirePeakHeatReleaseKw },
+                { "afterfire_fuel_burned_mg", result.afterfireFuelBurnedMg },
+                { "porous_muffler_count", result.porousMufflerCount },
             } },
             { "mix", {
                 { "volume", request.mix.volume },

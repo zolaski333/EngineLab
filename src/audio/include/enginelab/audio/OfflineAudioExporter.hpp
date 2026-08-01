@@ -106,6 +106,13 @@ struct OfflineAudioExportResult final {
     std::uint64_t legacyPathSampleCount { 0 };
     std::uint64_t droppedFiringEvents { 0 };
     std::uint64_t droppedPressureSamples { 0 };
+    /** Measured physical-audio activity over the complete rendered scenario. */
+    double afterfirePeakHeatReleaseKw { 0.0 };
+    double afterfireFuelBurnedMg { 0.0 };
+    double cycleMultiplierMinimum { 1.0 };
+    double cycleMultiplierMaximum { 1.0 };
+    std::uint64_t cycleVariationSamples { 0 };
+    std::size_t porousMufflerCount { 0 };
     std::vector<OfflineAudioStageSpeed> stageSpeeds;
 };
 

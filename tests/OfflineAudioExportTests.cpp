@@ -4,6 +4,7 @@
 #include <nlohmann/json.hpp>
 
 #include <array>
+#include <bit>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
@@ -120,12 +121,44 @@ void verifyWave(
     return samples;
 }
 
+[[nodiscard]] std::vector<double> readFloat32(
+    const std::filesystem::path& file) {
+    std::ifstream input(file, std::ios::binary);
+    input.seekg(44);
+    std::vector<double> samples;
+    std::array<unsigned char, 4> bytes {};
+    while (input.read(reinterpret_cast<char*>(bytes.data()), 4)) {
+        const auto bits = static_cast<std::uint32_t>(bytes[0])
+            | (static_cast<std::uint32_t>(bytes[1]) << 8U)
+            | (static_cast<std::uint32_t>(bytes[2]) << 16U)
+            | (static_cast<std::uint32_t>(bytes[3]) << 24U);
+        samples.push_back(static_cast<double>(std::bit_cast<float>(bits)));
+    }
+    return samples;
+}
+
 [[nodiscard]] enginelab::OfflineAudioScenario shortScenario() {
     return {
         "format-smoke",
         {
             { "starter", 0.10, true, true, false,
               0.20, 0.20, 0.0, 0.0, 0.0, 0.0 },
+        }
+    };
+}
+
+[[nodiscard]] enginelab::OfflineAudioScenario audioPhysicsScenario() {
+    return {
+        "audio-physics-ab",
+        {
+            { "starter", 0.8, true, true, false,
+              0.35, 0.35, 0.0, 0.0, 0.0, 0.0 },
+            { "free-run", 2.7, true, false, false,
+              0.45, 1.0, 0.0, 0.0, 0.0, 0.0 },
+            { "limiter", 1.4, true, false, false,
+              1.0, 1.0, 0.0, 0.0, 0.0, 0.0 },
+            { "overrun", 1.5, true, false, false,
+              0.0, 0.0, 0.0, 0.0, 0.0, 0.0 },
         }
     };
 }
@@ -258,10 +291,15 @@ int main() {
                 && manifest.at("wave_format_code") == 1,
             "manifest records PCM24 format truthfully");
         require(
-            manifest.at("schema_version") == 2
+            manifest.at("schema_version") == 3
                 && manifest.at("stems_written") == true
                 && manifest.at("files").size() == 10,
             "manifest inventories master, stems and order map");
+        require(
+            manifest.contains("audio_physics")
+                && manifest.at("audio_physics").at("cycle_variation_samples") == 0
+                && manifest.at("audio_physics").at("afterfire_fuel_burned_mg") == 0.0,
+            "manifest exposes an exact bypass for the default deterministic engine");
         require(
             manifest.at("stem_reconstruction")
                     .at("stem_sum_to_premaster_max_abs_error") == 0.0
@@ -310,8 +348,80 @@ int main() {
             cancelledRequest.outputDirectory / "master.wav"),
         "cancelled export leaves no final WAV");
 
+    const enginelab::EngineConfig* audioLab = nullptr;
+    for (const auto& entry : catalog.entries) {
+        if (entry.config.name == "Audio Physics Lab 689 Twin") {
+            audioLab = &entry.config;
+            break;
+        }
+    }
+    require(audioLab != nullptr, "audio physics lab fixture is present");
+    auto bypassEngine = *audioLab;
+    bypassEngine.combustionCalibration.cycleVariationCoefficientOfVariation = 0.0;
+    bypassEngine.exhaustAfterfire.enabled = false;
+    bypassEngine.ignition.limiterKeepsFuel = false;
+    bypassEngine.exhaust.mufflerPackingFlowResistivityPaSPerM2 = 0.0;
+    bypassEngine.exhaust.mufflerPackingThicknessMm = 0.0;
+    bypassEngine.exhaust.mufflerPerforatedOpenAreaRatio = 0.0;
+    for (auto& path : bypassEngine.exhaustPaths) {
+        path.geometry.mufflerPackingFlowResistivityPaSPerM2 = 0.0;
+        path.geometry.mufflerPackingThicknessMm = 0.0;
+        path.geometry.mufflerPerforatedOpenAreaRatio = 0.0;
+    }
+    enginelab::OfflineAudioExportRequest bypassRequest;
+    bypassRequest.engine = std::move(bypassEngine);
+    bypassRequest.scenario = audioPhysicsScenario();
+    bypassRequest.outputDirectory = temporary.path() / "physics-bypass";
+    bypassRequest.assetRoot = ENGINELAB_CATALOG_ROOT;
+    bypassRequest.sampleRateHz = 48'000;
+    bypassRequest.format = enginelab::OfflineWaveFormat::float32;
+    bypassRequest.writeStems = false;
+    bypassRequest.loadAuthoredImpulseResponses = false;
+    const auto bypass = enginelab::exportOfflineAudio(bypassRequest);
+    require(bypass.success, bypass.error);
+
+    auto demoRequest = bypassRequest;
+    demoRequest.engine = *audioLab;
+    demoRequest.outputDirectory = temporary.path() / "physics-demo";
+    const auto demo = enginelab::exportOfflineAudio(demoRequest);
+    require(demo.success, demo.error);
+    require(
+        demo.cycleVariationSamples > 0
+            && demo.cycleMultiplierMinimum < 0.99
+            && demo.cycleMultiplierMaximum > 1.01,
+        "demo render measures non-neutral physical cycle variation");
+    require(
+        demo.afterfirePeakHeatReleaseKw > 0.01
+            && demo.afterfireFuelBurnedMg > 0.01,
+        "demo render measures real exhaust chemical heat release");
+    require(demo.porousMufflerCount == 1 && bypass.porousMufflerCount == 0,
+            "demo/bypass pair isolates one authored porous silencer");
+    const auto bypassSamples = readFloat32(
+        bypassRequest.outputDirectory / "master.wav");
+    const auto demoSamples = readFloat32(
+        demoRequest.outputDirectory / "master.wav");
+    require(bypassSamples.size() == demoSamples.size() && !demoSamples.empty(),
+            "A/B WAV files have matching non-empty sample counts");
+    long double deltaSquareSum = 0.0;
+    double deltaPeak = 0.0;
+    for (std::size_t sample = 0; sample < demoSamples.size(); ++sample) {
+        const auto sampleDelta = demoSamples[sample] - bypassSamples[sample];
+        deltaSquareSum += static_cast<long double>(sampleDelta) * sampleDelta;
+        deltaPeak = std::max(deltaPeak, std::abs(sampleDelta));
+    }
+    const auto deltaRms = std::sqrt(static_cast<double>(
+        deltaSquareSum / static_cast<long double>(demoSamples.size())));
+    require(deltaRms > 1.0e-5 && deltaPeak > 1.0e-4,
+            "physical demo produces a measurable non-identical WAV");
+    std::cout << "Audio physics A/B: delta RMS=" << deltaRms
+              << ", peak=" << deltaPeak
+              << ", cycle=" << demo.cycleMultiplierMinimum << ".."
+              << demo.cycleMultiplierMaximum
+              << ", afterfire=" << demo.afterfirePeakHeatReleaseKw
+              << " kW / " << demo.afterfireFuelBurnedMg << " mg\n";
+
     std::cout
         << "Offline audio export: PCM24 stems, float32 192 kHz, "
-           "JSON scenario, manifest and cancellation PASS\n";
+           "JSON scenario, manifest, physical A/B and cancellation PASS\n";
     return 0;
 }

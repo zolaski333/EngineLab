@@ -309,7 +309,14 @@ int main(int argc, char** argv) {
               << result.invalidBoundarySampleCount
               << "; dropped telemetry: "
               << result.droppedFiringEvents << '/'
-              << result.droppedPressureSamples << '\n';
+              << result.droppedPressureSamples << '\n'
+              << "Audio physics: cycle multiplier "
+              << result.cycleMultiplierMinimum << ".."
+              << result.cycleMultiplierMaximum << " ("
+              << result.cycleVariationSamples << " samples); afterfire peak "
+              << result.afterfirePeakHeatReleaseKw << " kW, fuel burned "
+              << result.afterfireFuelBurnedMg << " mg; porous mufflers "
+              << result.porousMufflerCount << '\n';
     for (const auto& warning : result.warnings)
         std::cout << "WARNING: " << warning << '\n';
     for (const auto& file : result.files)
