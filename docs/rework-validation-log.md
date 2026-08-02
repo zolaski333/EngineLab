@@ -1006,3 +1006,20 @@ Sur le commit de code `da33134` :
 
 Détails, table complète, A/B et limites :
 `docs/audio-roadmap-final-validation-2026-08-02.md`.
+
+## 2026-08-02 — Débit turbine/wastegate et pression motrice turbo
+
+La puissance de turbine utilisait encore le débit total malgré le contournement
+de la wastegate, puis appliquait un coefficient empirique non conservatif. Le
+partage par aires effectives est maintenant commun à la simulation et à
+l'audio ; turbine + wastegate conserve exactement le débit mesuré.
+
+En troisième plein gaz, la pression moyenne de fin de plage passe de 279,7 à
+267,9 kPa sur le 2JZ, de 253,2 à 231,6 kPa sur l'EJ25 et de 300,5 à 278,5 kPa
+sur l'Audi. Les quatre turbos stock sont entre 1,11 et 1,39 de rapport pression
+motrice/MAP. Le diagnostic turbo utilise donc ce rapport après spool au lieu du
+seuil atmosphérique qui produisait une fausse alerte.
+
+Les huit références constructeur turbo/TDI restent dans ±15 %, les accélérations
+chargées restent sans sursaut et les tests ciblés Release passent 2/2. Détails :
+`docs/turbo-backpressure-validation-2026-08-02.md`.

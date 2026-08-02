@@ -1,4 +1,5 @@
 #include <enginelab/audio/ForcedInductionAcoustics.hpp>
+#include <enginelab/foundation/ForcedInductionFlow.hpp>
 
 #include <algorithm>
 #include <cmath>
@@ -127,14 +128,9 @@ double ForcedInductionAcoustics::jetPower(
 ForcedInductionAcoustics::ExhaustFlowSplit
 ForcedInductionAcoustics::partitionExhaustFlow(
     double totalKgPerSecond, float wastegateOpening) const noexcept {
-    const auto total = std::max(0.0, totalKgPerSecond);
-    const auto turbineArea = std::max(0.0, config_.turbineFlowAreaMm2);
-    const auto wastegateArea = std::max(0.0, config_.wastegateFlowAreaMm2)
-        * std::clamp(static_cast<double>(wastegateOpening), 0.0, 1.0);
-    const auto effectiveArea = turbineArea + wastegateArea;
-    if (!(effectiveArea > 0.0)) return { total, 0.0 };
-    const auto wastegate = total * wastegateArea / effectiveArea;
-    return { total - wastegate, wastegate };
+    const auto split = partitionTurboExhaustFlow(
+        config_, totalKgPerSecond, static_cast<double>(wastegateOpening));
+    return { split.turbineKgPerSecond, split.wastegateKgPerSecond };
 }
 
 float ForcedInductionAcoustics::nextWhiteNoise(std::size_t source) noexcept {

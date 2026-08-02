@@ -64,29 +64,34 @@ std::vector<Diagnostic> EngineDiagnostics::evaluate(const EngineConfig& config, 
     // was a false positive by construction, not a reading. It now uses the
     // damped port mean.
     //
-    // Threshold from engine literature rather than from this simulator's own
-    // output: a production naturally aspirated exhaust runs roughly 15-30 kPa of
-    // mean back pressure at rated power, and a turbocharged one more because the
-    // turbine is a deliberate restriction. 40 kPa over ambient is therefore
-    // genuinely excessive for an NA engine; a turbo engine is allowed its turbine
-    // pressure ratio before the same complaint applies.
+    // A naturally aspirated engine can be judged against ambient pressure. A
+    // turbo cannot: the turbine is deliberately upstream of the cat-back and
+    // needs drive pressure to make boost. Comparing its manifold to ambient made
+    // every healthy boosted engine look obstructed and suggested enlarging the
+    // wrong part of the exhaust.
     const auto backPressureDeltaKpa =
         state.exhaustBackPressureKpa - config.ambientPressureKpa;
-    // A turbine is a deliberate restriction, and the pressure it needs upstream
-    // tracks the boost it is producing: for a matched turbo at comparable
-    // stage efficiencies the expansion ratio is of the same order as the
-    // compressor pressure ratio. So the allowance scales with delivered boost
-    // rather than sitting at some flat number that is simultaneously too tight
-    // at full boost and too loose off boost.
     const auto turbocharged = config.forcedInduction.enabled
         && config.forcedInduction.type == ForcedInductionType::turbocharger;
-    const auto boostAboveAmbientKpa = turbocharged
-        ? std::max(0.0, (state.boostPressureRatio - 1.0) * config.ambientPressureKpa)
-        : 0.0;
-    const auto allowanceKpa = 40.0 + boostAboveAmbientKpa;
     const auto stableHighLoad = state.load > 0.45 && state.rpm > config.idleRpm * 1.25;
-    if (stableHighLoad && backPressureDeltaKpa > allowanceKpa)
-        result.push_back({ DiagnosticSeverity::warning, "exhaust.back_pressure", "Contre-pression d'echappement excessive." });
+    if (turbocharged) {
+        // Diagnose a turbo by drive-pressure ratio once it is in the post-spool
+        // operating region. The catalogue's same-hour loaded runs sit between
+        // 1.1 and 1.4; 2:1 is kept as the conservative fault boundary. Transient
+        // pressure before spool is intentionally ignored.
+        const auto postSpool = state.rpm >= config.forcedInduction.fullBoostRpm * 0.85;
+        const auto intakeReferenceKpa = std::max(config.ambientPressureKpa,
+            state.manifoldPressureKpa);
+        const auto drivePressureRatio = state.exhaustBackPressureKpa
+            / std::max(1.0, intakeReferenceKpa);
+        if (stableHighLoad && postSpool && drivePressureRatio > 2.0)
+            result.push_back({ DiagnosticSeverity::warning,
+                "exhaust.back_pressure",
+                "Pression motrice turbo excessive : verifiez turbine et wastegate." });
+    } else if (stableHighLoad && backPressureDeltaKpa > 40.0) {
+        result.push_back({ DiagnosticSeverity::warning,
+            "exhaust.back_pressure", "Contre-pression d'echappement excessive." });
+    }
     if (state.damage > 0.5) result.push_back({ DiagnosticSeverity::critical, "mechanical.damage", "Dommages mecaniques importants : puissance et fiabilite degradees." });
     else if (state.wear > 0.35) result.push_back({ DiagnosticSeverity::warning, "mechanical.wear", "Usure mecanique mesurable." });
     if (state.meanPistonSpeedMps > 25.0) result.push_back({ DiagnosticSeverity::warning, "mechanical.piston_speed", "Vitesse moyenne des pistons elevee." });

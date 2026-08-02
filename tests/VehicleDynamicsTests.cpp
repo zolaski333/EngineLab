@@ -1,5 +1,6 @@
 #include <enginelab/catalog/EngineCatalog.hpp>
 #include <enginelab/diagnostics/EngineDiagnostics.hpp>
+#include <enginelab/foundation/ForcedInductionFlow.hpp>
 #include <enginelab/foundation/EngineTypes.hpp>
 #include <enginelab/runtime/DrivelineModel.hpp>
 #include <enginelab/serialization/JsonEngineSerializer.hpp>
@@ -213,6 +214,24 @@ int main() {
     }
 
     {
+        enginelab::ForcedInductionConfig turbo;
+        turbo.turbineFlowAreaMm2 = 700.0;
+        turbo.wastegateFlowAreaMm2 = 500.0;
+        const auto shutGate = enginelab::partitionTurboExhaustFlow(
+            turbo, 1.2, 0.0);
+        require(std::abs(shutGate.turbineKgPerSecond - 1.2) < 1.0e-12
+                && std::abs(shutGate.wastegateKgPerSecond) < 1.0e-12,
+            "a shut wastegate must route all exhaust through the turbine");
+        const auto openGate = enginelab::partitionTurboExhaustFlow(
+            turbo, 1.2, 0.6);
+        require(std::abs(openGate.turbineKgPerSecond - 0.84) < 1.0e-12
+                && std::abs(openGate.wastegateKgPerSecond - 0.36) < 1.0e-12
+                && std::abs(openGate.turbineKgPerSecond
+                    + openGate.wastegateKgPerSecond - 1.2) < 1.0e-12,
+            "wastegate flow split must conserve the measured exhaust mass");
+    }
+
+    {
         const auto reportsBackPressure = [](const enginelab::EngineConfig& config,
                                             enginelab::EngineState state) {
             const auto diagnostics = enginelab::EngineDiagnostics {}.evaluate(
@@ -241,15 +260,19 @@ int main() {
         turbocharged.forcedInduction.enabled = true;
         turbocharged.forcedInduction.type =
             enginelab::ForcedInductionType::turbocharger;
+        turbocharged.forcedInduction.fullBoostRpm = 3'500.0;
+        state.rpm = 4'000.0;
         state.boostPressureRatio = 2.0;
-        state.exhaustBackPressureKpa = turbocharged.ambientPressureKpa
-            + 130.0;
+        state.manifoldPressureKpa = 190.0;
+        state.exhaustBackPressureKpa = 265.0;
         require(!reportsBackPressure(turbocharged, state),
-            "a turbo must receive a delivered-boost-scaled turbine allowance");
-        state.exhaustBackPressureKpa = turbocharged.ambientPressureKpa
-            + 150.0;
+            "a healthy post-spool turbo drive-pressure ratio must not be diagnosed");
+        state.exhaustBackPressureKpa = 385.0;
         require(reportsBackPressure(turbocharged, state),
-            "a turbo must still diagnose pressure beyond its boost-scaled allowance");
+            "a post-spool turbo drive-pressure ratio above 2:1 must be diagnosed");
+        state.rpm = 2'500.0;
+        require(!reportsBackPressure(turbocharged, state),
+            "a pre-spool pressure transient must not latch the turbo diagnostic");
     }
 
     std::cout << "PASS: load transfer, persistence, catalogue layouts, injector and back-pressure diagnostics\n";

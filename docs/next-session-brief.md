@@ -270,6 +270,15 @@ La suite de 20 tests est verte après la reprise.
 
 ## Ce qui est déjà réfuté — ne pas réessayer
 
+### Mise à jour 2026-08-02 — pression motrice turbo
+
+Le faux diagnostic de contre-pression turbo et le partage non conservatif de
+débit wastegate sont corrigés. En troisième plein gaz, les quatre turbos du
+catalogue mesurent un rapport pression motrice/MAP de 1,11 à 1,39 ; les huit
+points constructeur turbo/TDI passent dans ±15 %. Ne pas tenter de résoudre la
+pression amont turbine en agrandissant uniquement le cat-back. Voir
+`docs/turbo-backpressure-validation-2026-08-02.md`.
+
 - **Élargir le SIMD** : `/arch:AVX` 616 ns/cellule et `/arch:AVX2` 578 contre
   533 pour la base, checksums identiques. Le solveur est limité par la *latence*
   de chaînes dépendantes.

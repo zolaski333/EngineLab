@@ -1,4 +1,5 @@
 #include <enginelab/simulation/EngineSimulator.hpp>
+#include <enginelab/foundation/ForcedInductionFlow.hpp>
 #include <enginelab/simulation/TransientChargeEstimator.hpp>
 #include <enginelab/exhaust/ExhaustGraph.hpp>
 #include <enginelab/physics/MechanicalKinematics.hpp>
@@ -832,6 +833,9 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                     * config_.forcedInduction.superchargerDriveRatio;
                 state_.wastegateOpening = 0.0;
             } else if (config_.forcedInduction.enabled) {
+                const auto exhaustFlowSplit = partitionTurboExhaustFlow(
+                    config_.forcedInduction, exhaustMassFlowKgPerSecond,
+                    state_.wastegateOpening);
                 const auto designOmega = config_.forcedInduction.designShaftSpeedRpm
                     * 2.0 * std::numbers::pi / 60.0;
                 auto shaftOmega = state_.forcedInductionShaftSpeedRpm
@@ -840,7 +844,8 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                                                                state_.exhaustRunnerPressureKpa);
                 const auto turbineExpansionRatio = std::max(1.0,
                     turbineInletPressureKpa / std::max(1.0, config_.ambientPressureKpa));
-                turbinePowerW = exhaustMassFlowKgPerSecond * exhaustCpJPerKgK * exhaustTemperatureK
+                turbinePowerW = exhaustFlowSplit.turbineKgPerSecond
+                    * exhaustCpJPerKgK * exhaustTemperatureK
                     * (1.0 - std::pow(turbineExpansionRatio, -compressorExponent))
                     * config_.forcedInduction.turbineEfficiency;
                 desiredCompressorPowerW = compressorMassFlowKgPerSecond * airCpJPerKgK * ambientTemperatureK
@@ -851,7 +856,7 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 const auto speedRatio = shaftOmega / std::max(1.0, designOmega);
                 const auto bearingPowerW = config_.forcedInduction.bearingFrictionPowerWatts
                     * speedRatio * speedRatio;
-                const auto shaftPowerW = turbinePowerW * (1.0 - state_.wastegateOpening * 0.94)
+                const auto shaftPowerW = turbinePowerW
                     - desiredCompressorPowerW - bearingPowerW;
                 auto shaftEnergyJ = 0.5 * config_.forcedInduction.shaftInertiaKgM2
                     * shaftOmega * shaftOmega;
