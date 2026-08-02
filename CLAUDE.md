@@ -412,6 +412,25 @@ test onto the behaviour it is meant to catch. Keep it that way.
   The panel also carries the slow AGC's minimum gain and the soft limiter's
   sample count, which separate "this engine is quiet" from "the chain is being
   held down".
+- **How the telemetry actually starves is not "the queue empties".** That
+  description is wrong and it misdirects. `RealtimeEngineAudio` does not consume
+  pressure samples one for one: it holds a current/next pair, advances while
+  `next.timeSeconds <= audioTimeSeconds_`, and lerps between them by a fraction
+  **clamped to [0, 1]**. And the timestamps are not simulated time —
+  `EngineRuntime` maps every sample through
+  `MonotonicPublicationTimeline::mapSimulationTime` into a wall-clock
+  publication window before pushing it, so producer and consumer share a
+  domain by construction. What breaks is that the window is opened at
+  `realtimeSeconds` and spans one `baseStep`, i.e. it assumes the iteration
+  finished on time. At a realtime factor of 0.36 the windows are ~3 baseSteps of
+  wall time apart while each still spans one, so published timestamps fall
+  behind the audio clock without bound, the interpolation fraction sits pinned
+  at 1.0, and the network is driven by a **frozen** sample rather than by no
+  sample at all. Frozen means DC, the high-pass removes it, and the chain rings
+  down — which reads as silence but is not the same failure and will not be
+  found by looking for an empty queue. Note also that
+  `droppedPressureSampleCount` counts the OPPOSITE fault (producer outrunning
+  the queue) and stays at zero throughout this one.
 - **The sub-step cost is the 1-D intake network, by an order of magnitude.**
   **STALE — this split predates the multirate intake coupling and must be
   re-measured before it is used to justify anything.** The runner advance is now
