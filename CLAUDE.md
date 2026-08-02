@@ -50,32 +50,45 @@ invisible from the Visual Studio tree:
   extension and does not care — the `windows-vs2022` cache has `CMAKE_C_FLAGS`
   but **no `CMAKE_C_COMPILER` at all**. Ninja resolves the compile rule at
   generate time and fails with `CMAKE_C_COMPILE_OBJECT` missing.
-- **sccache is useless with the Visual Studio generator.**
-  `CMAKE_CXX_COMPILER_LAUNCHER` is silently ignored there, so
-  `ENGINELAB_ENABLE_COMPILER_CACHE` defaults OFF and only the Ninja presets turn
-  it on. On MSVC the cache also requires `/Z7` rather than `/Zi`, because a
-  compile that writes into a shared PDB cannot be cached and sccache falls back
-  silently — a 0 % hit rate that reads as "the cache is not working". Release
-  carries no debug flag here, so it was already safe; the rewrite in
-  `CMakeLists.txt` covers the other configurations.
+- **A compiler cache breaks Ninja's header tracking. Do not enable
+  `ENGINELAB_ENABLE_COMPILER_CACHE`.** This one nearly shipped as an
+  improvement, and it is the most dangerous kind of defect this repo can have:
+  it makes the build *silently* wrong.
 
-  Measured payoff, which is what makes bisecting cheap: after `ninja -t clean`,
-  a full rebuild of the Ninja tree is **56.5 s at 94.5 % hits** (240/254, mean
-  read 0.001 s against a mean compile of 0.087 s), against roughly **474 s** for
-  123 of those same objects when the cache was cold. Use it for `git checkout`
-  loops; it does nothing for the first build of a change you just wrote.
+  Ninja learns which headers an object depends on by parsing `cl.exe`'s
+  `/showIncludes` output. sccache does not pass that through. Measured, on
+  `EngineTypes.cpp.obj`: with the launcher, `ninja -t deps` reports **`#deps
+  0`**; without it, **`#deps 1`** naming `EngineTypes.hpp`. So with the cache on,
+  editing a header rebuilds **nothing** — a full `ninja` after changing
+  `EngineTypes.hpp` executed exactly one edge, the CMake regen. Neither
+  `SCCACHE_DIRECT=false` nor a forced `SCCACHE_RECACHE=1` recovers it, so it is
+  not a cache-hit artefact.
 
-- **Build the Ninja tree at `-j 2` while the cache is cold.** The `C1060` heap
-  exhaustion documented further down is not specific to MSBuild: this machine
-  has **15.9 GB for 12 logical cores**, and concurrent `cl.exe` on the large
-  translation units exhausts it. Measured, all on
-  `SpscQueue<CylinderPressureSample, 8192>`'s compiler-generated constructor:
-  `-j 6` fails, `-j 3` fails, `-j 2` completes with zero failures, and the same
-  single object alone at `-j 1` compiles fine in **75.4 s**. So the limit is
-  *cumulative* memory, not that one instantiation — a hypothesis worth
-  refuting before touching `SpscQueue.hpp`, which is what the measurement did.
-  Once the cache is warm the limit does not apply: a hit never launches
-  `cl.exe`, so a cached rebuild runs at full `-j`.
+  That is fatal precisely where the cache was supposed to pay: a `git checkout`
+  during a bisect mostly moves headers. The prize was real — 94.5 % hits and a
+  **56.5 s** full rebuild against ~**474 s** cold — and it is still not worth a
+  tree that can compile against a header it no longer matches. sccache stays on
+  `PATH` and the option stays in `CMakeLists.txt` so the finding is
+  reproducible; the presets ship it OFF.
+
+  Two lessons generalise. **`CMAKE_CXX_COMPILER_LAUNCHER` is silently ignored by
+  the Visual Studio generator**, so nothing wrapped that way can ever affect the
+  authoritative tree. And **verify a new build tree tracks headers before
+  trusting it**: build an object, edit a header it includes, and check that the
+  rebuild is not a no-op — `ninja -t deps <obj>` must not say `#deps 0`. The
+  symptom otherwise is the stale-binary trap below, but arriving without a wrong
+  target name to explain it.
+
+- **Build the Ninja tree at `-j 2`.** The `C1060` heap exhaustion documented
+  further down is not specific to MSBuild: this machine has **15.9 GB for 12
+  logical cores**, and concurrent `cl.exe` on the large translation units
+  exhausts it. Measured, all failing on the compiler-generated constructor of
+  `SpscQueue<CylinderPressureSample, 8192>`: `-j 6` fails, `-j 3` fails, `-j 2`
+  completes with zero failures, and that same single object alone at `-j 1`
+  compiles fine in **75.4 s**. So the limit is *cumulative* memory, not that one
+  instantiation — a hypothesis worth refuting before touching `SpscQueue.hpp`,
+  which is what the measurement did. Note the outlier for what it is: the mean
+  compile here is **5.5 s** over 127 objects and that one is 75.
 
 - The old manual prefix, if you ever need it without the script:
   `$env:PATH = "C:\Program Files\Microsoft Visual Studio\2022\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin;$env:PATH"`.
@@ -265,11 +278,35 @@ test onto the behaviour it is meant to catch. Keep it that way.
   Three things came out of that measurement and all three are live: the ordering
   is **inverted** (seven engines are rougher at WOT than at light load, and it is
   not the absorber — held speed varies 0.10–0.48 % while the work varies 5–13 %);
-  the burned fraction at spark reads **0.004–0.026 everywhere**, an order of
-  magnitude under the 15–25 % a production SI engine traps at light load; and a
-  **free idle is not a valid instrument for this** — its COV(IMEP) is the
-  governor hunting, which read 90 % on the radial. Hold the speed. See
-  `docs/physics-audit.md`.
+  a **free idle is not a valid instrument for this** — its COV(IMEP) is the
+  governor hunting, which read 90 % on the radial, so hold the speed; and a third
+  finding, "the trapped residual is an order of magnitude too low", was **WRONG
+  and is retracted** — see the next entry. See `docs/physics-audit.md`.
+- **RETRACTED: the trapped residual is not too low. It is healthy, and the claim
+  was a unit error on top of a wrong operating point.** I reported that
+  `residualGasFractionAtSpark` reads 0.004–0.026 against the 15–25 % a
+  production SI engine traps, and the claim reached three documents. Both halves
+  were wrong.
+  - **The quantity is not a residual gas fraction.** The mixture model carries
+    four species — oxygen, inert, fuel, burned — and the nitrogen that arrives
+    with the air stays `inert` forever, so `burned / total` counts the combustion
+    PRODUCTS alone while Heywood's figure counts the whole trapped exhaust.
+    With the default gasoline (`productMolesPerFuelMole` 17.0,
+    `oxygenMolesPerFuelMole` 12.5) stoichiometric exhaust is 17 product moles out
+    of 17 + 12.5 × 3.7619 = 64.0, so the field is **0.266 × RGF** — a factor of
+    3.8.
+  - **The low numbers came from the wrong point.** They were measured at a
+    speed-held 10 % throttle condition, not a free idle.
+  Measured properly with `--trace 1 --idle` on eight engines: the field reads
+  **0.063–0.142**, i.e. **24–53 % residual**, at or above Heywood's ~20 % idle
+  figure. At a WOT hold it reads 0.014–0.016 on the naturally aspirated engines,
+  i.e. **5.3–6.0 %**, inside Heywood's 3–7 % band; the boosted 2JZ sits at 9.0 %
+  at 196 kPa manifold, which is the right direction. The generic lesson: **a
+  literature threshold in a doc comment is only usable if the comment states the
+  units of the field it sits on.** That comment cited Heywood's percentages
+  beside a mole fraction of products and cost a whole investigation; it now
+  carries the conversion and the corrected thresholds
+  (0.008–0.019 at WOT, ~0.053 at idle, failure above ~0.04 at WOT).
 - **A crank EVENT is a distance, not an angle — an angle cannot cross the cycle
   boundary.** The spark schedule was latched at phase 540 as an absolute
   `sparkPhase` and disarmed at the 0 crossing, so its reachable set was the arc

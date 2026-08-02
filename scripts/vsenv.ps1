@@ -39,6 +39,12 @@ foreach ($line in $captured) {
     }
 }
 
+# Ninja learns which header a compile depends on by parsing cl.exe's
+# /showIncludes output. A compiler cache placed in front of cl swallows it, and
+# Ninja then records `#deps 0` and serves stale objects after a header edit --
+# see CLAUDE.md. sccache is therefore on PATH but NOT enabled in the presets.
+# Verify after any toolchain change, on an object whose source includes a header:
+#   ninja -C out/build/ninja-release -t deps <some>.obj    # must NOT say #deps 0
 $extraPaths = @(
     (Join-Path $vsRoot 'Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin'),
     (Join-Path $vsRoot 'Common7\IDE\CommonExtensions\Microsoft\CMake\Ninja'))

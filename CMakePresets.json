@@ -22,7 +22,7 @@
         "CMAKE_BUILD_TYPE": "Debug",
         "ENGINELAB_BUILD_TESTS": "ON",
         "ENGINELAB_ENABLE_WARNINGS_AS_ERRORS": "ON",
-        "ENGINELAB_ENABLE_COMPILER_CACHE": "ON"
+        "ENGINELAB_ENABLE_COMPILER_CACHE": "OFF"
       }
     },
     {
@@ -35,7 +35,7 @@
         "CMAKE_BUILD_TYPE": "Release",
         "ENGINELAB_BUILD_TESTS": "ON",
         "ENGINELAB_ENABLE_WARNINGS_AS_ERRORS": "ON",
-        "ENGINELAB_ENABLE_COMPILER_CACHE": "ON"
+        "ENGINELAB_ENABLE_COMPILER_CACHE": "OFF"
       }
     }
   ],

@@ -19,11 +19,25 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-# A compiler cache turns the expensive half of a bisect -- `git checkout` then
-# rebuild -- back into a link. It is OFF by default on purpose:
-# CMAKE_CXX_COMPILER_LAUNCHER is silently IGNORED by the Visual Studio
-# generator, so switching it on in the windows-vs2022 tree would cost a
-# reconfigure and buy nothing. Only the Ninja tree can use it.
+# DO NOT SWITCH THIS ON. It is kept only so the finding is reproducible.
+#
+# A compiler cache looked like the way to make a bisect cheap, and it is not
+# usable here. Two independent reasons:
+#
+# - The Visual Studio generator silently IGNORES
+#   CMAKE_CXX_COMPILER_LAUNCHER, so the authoritative tree cannot use it at all.
+# - With the Ninja generator it is worse than useless: it breaks header
+#   dependency tracking. Ninja learns dependencies by parsing cl.exe's
+#   /showIncludes output, and sccache does not pass it through, so every object
+#   records `#deps 0` and the tree serves STALE objects after any header edit.
+#   Measured on this project: with the launcher, `ninja -t deps` on
+#   EngineTypes.cpp.obj reports `#deps 0`; without it, `#deps 1` naming
+#   EngineTypes.hpp. SCCACHE_DIRECT=false does not help, and a forced recache
+#   (SCCACHE_RECACHE=1) does not either -- it is not a cache-hit artefact.
+#
+# The cache was measured at 94.5 % hits and 56.5 s for a full rebuild that costs
+# ~474 s cold, so the prize was real; it is simply not worth a build tree that
+# can silently compile against a header it no longer matches.
 if(ENGINELAB_ENABLE_COMPILER_CACHE)
     file(GLOB ENGINELAB_COMPILER_CACHE_HINTS
         "$ENV{LOCALAPPDATA}/Microsoft/WinGet/Packages/Mozilla.sccache*/*")
