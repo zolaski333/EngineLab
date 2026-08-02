@@ -1133,3 +1133,72 @@ le rms qui décide, pas le pic.
 Non-régression Release 8/8 : `Core`, `Scripting`, `AudioVoicing`,
 `StructuralNvh`, `RealtimeRegression`, `OfflineAudioExport`, `AudioRender`
 (garde SPL incluse), `AudioTransients`.
+
+## 2026-08-02 — La turbine se détend maintenant vers sa sortie, pas vers l'ambiante
+
+La détente de turbine était référencée à la pression **ambiante** :
+
+```
+expansionRatio = p_turbine_inlet / p_ambient
+```
+
+donc la pression en aval de la turbine — la seule chose qu'un downpipe et un
+silencieux fixent réellement — était absente de la puissance arbre **par
+construction**. Le seul chemin restant entre géométrie d'échappement et
+performance d'un turbo était le terme d'entrée, et celui-là est **négatif** : des
+primaires plus grosses détendent la bouffée de blowdown dans plus de volume et
+abaissent le pic dont la turbine est chargée. Le modèle ne pouvait donc répondre
+que « échappement plus gros, moins de suralimentation ». C'est exactement le
+rapport utilisateur sur un 2JZ reconstruit en Ø80 : plus d'inertie, moins de
+vivacité, aucun gain.
+
+La contre-pression aval est prise de façon quasi-stationnaire depuis le débit
+réellement passé (charge dynamique d'un orifice de la conductance aval
+configurée), bornée bien sous la pression d'entrée, et elle tend vers l'ambiante
+quand la conductance grandit — un downpipe vraiment libre lit donc toujours
+l'ambiante.
+
+Deuxième correction, plus petite : turbine et système aval sont deux
+restrictions **en série**, donc l'aire effective est la somme quadratique
+inverse, pas le `min` qui rendait la plus grande parfaitement invisible. Sur la
+géométrie livrée les deux formes diffèrent de bien moins d'un pour cent, et
+c'est la réponse honnête : un col de turbine de 700 mm² domine réellement un
+tuyau de 4 000 mm².
+
+Mesure, 2JZ tenu à 4 197 tr/min pleins gaz, balayage du diamètre de sortie :
+
+| sortie | p sortie turbine | contre-pression | couple |
+|---|---|---|---|
+| 45 mm | 131,7 kPa | 260,5 kPa | 356,87 Nm |
+| 60 mm | 110,8 kPa | 220,6 kPa | 373,74 Nm |
+| 76 mm | 105,0 kPa | 211,0 kPa | 379,60 Nm |
+| 95 mm | 102,8 kPa | 210,3 kPa | 380,09 Nm |
+
+Non-vacuité : en neutralisant la perte aval, la portée de pression de sortie
+tombe à **0,0 kPa** et la porte échoue. Le témoin atmosphérique lit exactement
+l'ambiante aux quatre points, comme il doit.
+
+### Deuxième plafond trouvé, NON corrigé et volontairement non porté
+
+Wastegate parquée fermée, la suralimentation ne bouge **pas** : 2,154 aux quatre
+diamètres, alors que la sortie de turbine descend de 138,3 à 103,2 kPa. La cause
+n'est pas la turbine mais le compresseur : la cible vaut
+`1 + (PR-1) * speedRatio²` avec l'arbre plafonné à 1,16× le régime de design et
+le ratio à 1,12, donc sur le 2JZ elle sature à `1 + 0,92 * 1,12² = 2,154`
+exactement — le nombre mesuré partout. Au-delà de ce plafond, le compresseur ne
+peut plus convertir de puissance arbre en pression du tout.
+
+C'est la **prochaine tâche turbo**. Ne pas relâcher ce plafond pour faire passer
+une porte : ce serait calibrer un modèle sur un test. La porte
+`EngineLab.TurboDownstreamAuthority` documente explicitement pourquoi elle
+n'assère pas la suralimentation.
+
+Note honnête sur l'ampleur : sur ce point tenu, la progression de couple
+(+6,1 %) reste dominée par le travail de pompage — le témoin atmosphérique fait
++5,5 % au même balayage. Ce qui est turbine-spécifique et nouveau, c'est la
+réponse de la pression de sortie (28,8 kPa) et de la contre-pression.
+
+Non-régression Release 7/7 : `Core`, `VehicleDynamics`, `CatalogPhysics`,
+`TurboDownstreamAuthority`, `CatalogReference` (24/24 points constructeur, les
+huit points turbo/TDI dans ±15 %), `LoadedAccelerationCP2`,
+`LoadedAccelerationAudi`.

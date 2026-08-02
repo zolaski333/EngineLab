@@ -170,6 +170,11 @@ if(TARGET EngineLabDynoSweepHarness)
     # The header and each data row are generated from fixed-size arrays whose
     # sizes are tied by a static assertion. This fast invocation also catches a
     # stale executable or argument/parser regression before a multi-minute sweep.
+    add_test(NAME EngineLab.TurboDownstreamAuthority
+        COMMAND EngineLabTurboDownstreamAuthorityHarness --enforce
+                --catalog-root "${CMAKE_SOURCE_DIR}")
+    set_tests_properties(EngineLab.TurboDownstreamAuthority
+        PROPERTIES TIMEOUT 900)
     add_test(NAME EngineLab.DynoSchema COMMAND EngineLabDynoSweepHarness --schema-only)
     # Manufacturer-anchored rated points. Unlike CatalogPhysics, this is an
     # absolute torque/power gate: every point must be held within 2% rpm and

@@ -413,6 +413,10 @@ private:
     std::array<bool, 32> cylinderMisfires_ {};
     std::unique_ptr<gasdynamics::ExhaustGasNetwork> physicalExhaustNetwork_;
     gasdynamics::ConservativeState physicalExhaustAmbientState_ {};
+    /** Total configured conductance of the network's terminal openings, m^2.
+     *  Cached from the compiled layout so the forced-induction block can charge
+     *  the turbine its real downstream back pressure. */
+    double exhaustOutletConductanceM2_ { 0.0 };
     /** Network-port order -> EngineConfig cylinder order, compiled once. */
     std::array<std::size_t, 32> exhaustNetworkCylinderIndex_ {};
     std::unique_ptr<SpscQueue<CylinderPressureSample, 1'024>> pressureSamples_;

@@ -842,8 +842,44 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                     * 2.0 * std::numbers::pi / 60.0;
                 const auto turbineInletPressureKpa = std::max(state_.exhaustPressureKpa,
                                                                state_.exhaustRunnerPressureKpa);
+                // A turbine expands to ITS OWN OUTLET, not to atmosphere.
+                //
+                // Referencing the expansion to ambient hard-wired away the one
+                // thing a downpipe and a silencer actually set. The only
+                // remaining path from exhaust geometry to a turbo's output was
+                // then the INLET term, and that one has the wrong sign: larger
+                // primaries expand the blowdown pulse into more volume and
+                // lower the peak the turbine is charged with. So the model
+                // could only ever answer "bigger exhaust, less boost", which is
+                // what a user rebuilding a 2JZ exhaust in 80 mm reported --
+                // more inertia, less response, and no improvement anywhere.
+                //
+                // The downstream system is not a separate control volume here,
+                // so its back pressure is taken quasi-steadily from the flow it
+                // is actually passing: the dynamic head an orifice of the
+                // configured downstream conductance needs to pass this mass
+                // flow. It is bounded well below the inlet pressure -- a
+                // turbine outlet above its own inlet is not a turbine -- and it
+                // reduces exactly to the previous behaviour as the downstream
+                // conductance grows, so a genuinely free downpipe still reads
+                // ambient.
+                const auto downstreamConductanceM2 =
+                    std::max(1.0e-6, exhaustOutletConductanceM2_);
+                const auto downstreamDensityKgPerM3 = std::max(0.05,
+                    config_.ambientPressureKpa * 1'000.0
+                        / (287.0 * std::max(250.0, exhaustTemperatureK)));
+                const auto downstreamVelocityMps =
+                    std::max(0.0, exhaustMassFlowKgPerSecond)
+                    / (downstreamDensityKgPerM3 * downstreamConductanceM2);
+                const auto downstreamLossKpa = std::min(
+                    0.5 * downstreamDensityKgPerM3 * downstreamVelocityMps
+                        * downstreamVelocityMps * 0.001,
+                    0.60 * turbineInletPressureKpa);
+                const auto turbineOutletPressureKpa = std::max(1.0,
+                    config_.ambientPressureKpa + downstreamLossKpa);
+                state_.turbineOutletPressureKpa = turbineOutletPressureKpa;
                 const auto turbineExpansionRatio = std::max(1.0,
-                    turbineInletPressureKpa / std::max(1.0, config_.ambientPressureKpa));
+                    turbineInletPressureKpa / turbineOutletPressureKpa);
                 turbinePowerW = exhaustFlowSplit.turbineKgPerSecond
                     * exhaustCpJPerKgK * exhaustTemperatureK
                     * (1.0 - std::pow(turbineExpansionRatio, -compressorExponent))
@@ -2298,18 +2334,35 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
         if (flushIntakeNetworks)
             advanceIntakeRunners(intakeAdvanceDurationSeconds * 0.5, true);
 
+        auto configuredOutletConductanceM2 = 0.0;
+        for (const auto& outlet : physicalExhaustNetwork.layout().outlets())
+            configuredOutletConductanceM2 +=
+                outlet.openingAreaM2 * outlet.dischargeCoefficient;
+        // Published so the forced-induction block can charge the turbine its
+        // real downstream back pressure instead of assuming atmosphere.
+        exhaustOutletConductanceM2_ = configuredOutletConductanceM2;
         auto instantaneousOutletOpeningScale = 1.0;
         if (config_.forcedInduction.enabled
             && config_.forcedInduction.type == ForcedInductionType::turbocharger) {
             const auto turbineAreaM2 = (config_.forcedInduction.turbineFlowAreaMm2
                 + state_.wastegateOpening
                     * config_.forcedInduction.wastegateFlowAreaMm2) * 1.0e-6;
-            auto configuredOutletConductanceM2 = 0.0;
-            for (const auto& outlet : physicalExhaustNetwork.layout().outlets())
-                configuredOutletConductanceM2 +=
-                    outlet.openingAreaM2 * outlet.dischargeCoefficient;
-            instantaneousOutletOpeningScale = std::clamp(turbineAreaM2
-                / std::max(1.0e-12, configuredOutletConductanceM2), 0.0, 1.0);
+            // Turbine throat and downstream system are two restrictions IN
+            // SERIES, so their losses add and the effective area is the
+            // reciprocal-square-sum, not the smaller of the two. The old `min`
+            // made the larger one perfectly invisible. On the shipped geometry
+            // the two forms differ by well under one per cent, which is the
+            // honest answer: a 700 mm2 turbine throat really does dominate a
+            // 4000 mm2 tailpipe, and no amount of tailpipe changes that. What
+            // the downstream system does change is the pressure the turbine
+            // expands INTO, which is handled with the shaft power above.
+            const auto downstream = std::max(1.0e-12,
+                configuredOutletConductanceM2);
+            const auto seriesAreaM2 = 1.0 / std::sqrt(
+                1.0 / (turbineAreaM2 * turbineAreaM2)
+                + 1.0 / (downstream * downstream));
+            instantaneousOutletOpeningScale =
+                std::clamp(seriesAreaM2 / downstream, 0.0, 1.0);
         }
         exhaustCouplingDurationSeconds_ += subDt;
         outletOpeningScaleTimeIntegralSeconds_ +=

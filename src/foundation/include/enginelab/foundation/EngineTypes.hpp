@@ -992,6 +992,11 @@ struct EngineState final {
     double exhaustBackPressureKpa { 101.325 };
     double intakeRunnerPressureKpa { 101.325 };
     double exhaustRunnerPressureKpa { 101.325 };
+    /** Static pressure the turbine expands INTO, absolute. Ambient plus the
+     *  quasi-steady loss the downstream system needs to pass the current flow.
+     *  A turbo's shaft power is set by inlet/outlet, so this is the channel
+     *  through which downpipe and silencer geometry reach the boost. */
+    double turbineOutletPressureKpa { 101.325 };
     double exhaustFlowGramsPerSecond { 0.0 };
     /** Real chemical heat release occurring in the physical exhaust network. */
     double exhaustAfterfireHeatReleaseKw { 0.0 };
