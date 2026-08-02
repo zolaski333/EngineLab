@@ -120,3 +120,70 @@ succès dans la même passe.
 - La justesse absolue reste limitée aux 24 points constructeur disponibles ;
   le harnais complet prouve la continuité et l'achèvement, pas une vérité
   mesurée à chaque régime.
+
+## Conception du passage en rampe continue (à implémenter)
+
+Le balayage produit reste **par paliers** : `dynoTargetRpm_ += 250` après chaque
+fenêtre de moyennage stabilisée (`EngineRuntime.cpp`, recherche
+`std::min(ceilingRpm, dynoTargetRpm_ + 250.0)`). La préparation progressive
+livrée le 2 août corrige l'**entrée** du banc, pas sa nature. La demande
+utilisateur — « un banc comme ES2D / comme quand on met sa voiture sur un banc »
+— est un passage en **rampe continue**, qui n'est pas encore fait.
+
+### Ce que fait ES2D, vérifié dans la source
+
+`src/engine_sim_application.cpp` (~835) :
+
+```
+si couple dyno filtré > 1 ft-lb :  vitesse cible += 500 tr/min * dt
+sinon                           :  vitesse cible *= 1/(1+dt)
+si vitesse cible > rupteur      :  arrêt
+```
+
+Le point de conception à retenir n'est pas la valeur 500 tr/min/s. C'est que
+**la rampe n'avance que tant que le moteur pousse réellement**, et qu'elle
+*décroît* sinon. Elle ne peut donc pas dépasser le moteur, ce qui rend le
+passage sûr sur n'importe quelle cylindrée sans réglage par moteur — exactement
+la propriété qui manque au balayage par paliers, dont chaque marche est un
+échelon de consigne que le moteur peut ne pas suivre.
+
+Le couple y est moyenné sur 512 échantillons répartis sur le cycle moteur
+(`src/simulator.cpp:125`).
+
+### Transposition à EngineLab
+
+- Nouveau mode de balayage explicite, **rampe** pour le produit, **paliers**
+  conservés pour les instruments de calibration. Le banc de mise au point doit
+  rester inchangé : c'est une demande explicite, et `EngineLab.CatalogReference`
+  mesure ses 24 points en régime établi.
+- Consigne : `dynoTargetRpm_ += rampRpmPerSecond * dt` tant que le couple de
+  cycle dépasse un seuil, décroissance sinon, arrêt à
+  `0.95 * min(redline, revLimit)` comme aujourd'hui.
+- Publication : un point par cycle moteur achevé, étiqueté par le régime moyen
+  réellement tenu sur la fenêtre — le balayage actuel étiquette déjà par le
+  régime tenu et non par la cible, cette règle doit être conservée.
+
+### Le piège à ne pas reproduire
+
+Un banc en rampe mesure normalement le couple **au frein**, qui vaut
+`T_moteur − I * dω/dt`. À 500 tr/min/s, soit 52,4 rad/s², une inertie de
+0,2 kg·m² retire déjà 10,5 Nm — beaucoup sur un moteur de moto, peu sur un V8.
+Un passage en rampe qui publierait le couple de frein lirait donc
+**systématiquement bas**, et l'écart dépendrait de la cylindrée : les points
+constructeur sortiraient par le bas d'autant plus que le moteur est petit.
+
+EngineLab n'a pas ce problème **à condition de ne pas changer la source** :
+l'accumulateur publie `frame.state.torqueNm`, le couple frein du moteur calculé
+comme indiqué moins pertes, indépendant de l'absorbeur. Il ne contient pas le
+terme d'inertie. Ne pas le remplacer par le couple commandé à l'absorbeur en
+passant en rampe.
+
+### Ce qu'il faudra mesurer
+
+- Les 16 moteurs terminent leur rampe sans calage ni récupération, depuis le
+  ralenti et depuis un régime élevé.
+- Les 24 points constructeur restent dans ±15 % **par le banc à paliers**, qui
+  ne doit pas bouger.
+- Rampe contre paliers sur le même moteur : l'écart de couple aux mêmes régimes
+  est la mesure du biais de transitoire. S'il est grand, la rampe est trop
+  rapide pour la thermique et le remplissage, pas seulement pour l'inertie.
