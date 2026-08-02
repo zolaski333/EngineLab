@@ -193,6 +193,23 @@ test onto the behaviour it is meant to catch. Keep it that way.
   `CylinderState::residualGasFraction` is the *instantaneous* burned fraction
   despite its name (≈1.0 just after combustion); the residual is
   `residualGasFractionAtSpark`.
+- **`cycle_variation_cov = 0` does NOT mean the cycles repeat.** Fifteen of the
+  sixteen catalogue engines author zero, and reading that as "combustion is
+  perfectly periodic, hence the idle sounds synthetic" is wrong — I proposed a
+  dilution-driven variability closure on that basis and measurement killed it.
+  Measured with `EngineLabCyclicVariabilityHarness` on the shipped catalogue,
+  COV(IMEP) per cylinder about its OWN mean is already **1.7–7.0 %** at light
+  load and **0.9–12.9 %** at WOT with no authored dispersion at all: the
+  gas/film/wave/ECU coupling makes consecutive cycles genuinely different. The
+  simulator is deterministic (two runs are identical) but it is not *periodic*.
+  Three things came out of that measurement and all three are live: the ordering
+  is **inverted** (seven engines are rougher at WOT than at light load, and it is
+  not the absorber — held speed varies 0.10–0.48 % while the work varies 5–13 %);
+  the burned fraction at spark reads **0.004–0.026 everywhere**, an order of
+  magnitude under the 15–25 % a production SI engine traps at light load; and a
+  **free idle is not a valid instrument for this** — its COV(IMEP) is the
+  governor hunting, which read 90 % on the radial. Hold the speed. See
+  `docs/physics-audit.md`.
 - **A crank EVENT is a distance, not an angle — an angle cannot cross the cycle
   boundary.** The spark schedule was latched at phase 540 as an absolute
   `sparkPhase` and disarmed at the 0 crossing, so its reachable set was the arc

@@ -2592,3 +2592,83 @@ encore 0,990 bar à 6 000 tr/min pour une cible de 0,750. Une multiplication
 globale d'aire de soupape reste exclue ; le prochain travail défendable est une
 carte de coefficient de débit dépendant de la levée, du rapport de pression et
 du sens.
+
+## 2026-08-02 — « Les cycles se répètent » : hypothèse mesurée et RÉFUTÉE
+
+### L'hypothèse
+
+`cycle_variation_cov` vaut 0 sur 15 des 16 moteurs du catalogue. Lu dans le
+code, cela dit que le multiplicateur de vitesse de combustion est un
+contournement déterministe exact, donc que les cycles consécutifs sont
+identiques, donc que le ralenti sonne artificiellement régulier. La correction
+proposée était une fermeture physique pilotée par la dilution
+(`CyclicVariabilityModel`) donnant un COV croissant avec la fraction de gaz
+brûlés au moment de l'allumage.
+
+L'inférence est fausse. Le champ est bien à zéro, mais **le travail indiqué par
+cycle est déjà fortement dispersé sans lui**.
+
+### L'instrument
+
+`EngineLabCyclicVariabilityHarness` mesure le COV du travail indiqué par cycle
+et par cylindre — soit COV(PMI), la cylindrée étant constante — chaque cylindre
+autour de **sa propre** moyenne pour qu'un moteur irrégulier entre cylindres ne
+soit pas compté comme cycliquement variable.
+
+Deux conditions, **toutes deux à régime tenu par l'absorbeur** :
+
+- `light` — papillon 10 % à ~1,35× le ralenti (charge diluée) ;
+- `wot` — pleins gaz à ~0,62× le rupteur.
+
+Un **ralenti libre a d'abord été essayé et n'est pas un instrument valide** :
+son COV(PMI) est dominé par la chasse du régulateur, pas par la combustion. Le
+même passage lisait 90,4 % sur le radial et 50,8 % sur l'EJ25, ce qui est une
+oscillation de boucle lue comme une variabilité de combustion. Tenir le régime
+supprime la boucle et laisse la charge. La colonne `dN%` publie la dispersion
+du régime tenu précisément pour que ce piège reste visible.
+
+### Le résultat, A/B même binaire et même session
+
+| Moteur | light COV(PMI) | light dN | wot COV(PMI) | wot dN | x_b allumage |
+|---|---|---|---|---|---|
+| K20A I4 | 1,80 % | 3,34 % | **5,62 %** | 0,20 % | 0,012 / 0,013 |
+| 2JZ I6 turbo | 2,84 % | 1,49 % | **4,84 %** | 0,10 % | 0,019 / 0,024 |
+| LS3 V8 | 1,73 % | 1,32 % | 1,19 % | 0,10 % | 0,012 / 0,016 |
+| EJ25 turbo | 5,43 % | 2,57 % | **12,87 %** | 0,48 % | 0,023 / 0,022 |
+| Audi I5 turbo | 2,94 % | 2,24 % | 1,04 % | 0,38 % | 0,019 / 0,021 |
+| Flat-6 | 2,25 % | 1,42 % | **5,35 %** | 0,13 % | 0,025 / 0,008 |
+| Merlin V12 | 1,74 % | 0,27 % | **3,01 %** | 0,31 % | 0,026 / 0,009 |
+| CP4 | 2,72 % | 7,56 % | **4,70 %** | 1,07 % | 0,016 / 0,011 |
+| TDI | 7,03 % | 2,15 % | 1,30 % | 0,57 % | 0,004 / 0,022 |
+
+Activer la fermeture (`--sensitivity 1.0` à l'époque du prototype) ne déplace
+rien : 1,80 → 1,81, 2,84 → 2,87, 1,73 → 1,75, 2,94 → 2,84… tout est dans le
+bruit de la mesure elle-même. La raison est dans la dernière colonne.
+
+### Pourquoi la fermeture était inerte, et pourquoi elle a été retirée
+
+La fraction de gaz brûlés à l'allumage vaut **0,004 à 0,026** partout, dans les
+deux conditions. Le seuil de dilution de la fermeture était à 0,06, donc son
+terme valait exactement zéro sur chaque cylindre de chaque moteur. Le seul
+moyen de la faire agir aurait été d'abaisser le seuil **sur la sortie du
+simulateur** — précisément la recalibration que ce projet interdit. Le code a
+donc été retiré ; l'instrument est conservé.
+
+### Ce que la mesure a réellement trouvé (trois pistes ouvertes)
+
+1. **La dispersion cycle-à-cycle existe déjà et n'est pas autorée.** Elle vient
+   du couplage gaz/film/ondes/ECU : le simulateur est déterministe (deux
+   exécutions identiques) mais il n'est pas *périodique*. Toute future
+   proposition d'ajouter du bruit de combustion doit commencer par cette table.
+2. **L'ordre est inversé.** Sept moteurs sont plus dispersés à pleine charge
+   qu'à charge partielle, alors qu'une charge propre et peu diluée est le point
+   le PLUS régulier d'un moteur réel. Et ce n'est pas l'absorbeur : à pleine
+   charge le régime est tenu à **0,10-0,48 %** pendant que le travail par cycle
+   varie de 5 à 13 %. La cause n'est pas identifiée et n'est pas devinée ici.
+3. **La dilution piégée est trop faible d'un ordre de grandeur.** Un moteur à
+   allumage commandé de série piège 15-25 % de gaz brûlés à charge partielle ;
+   le catalogue lit 0,4-2,6 %. Si ce chiffre est juste, la combustion du
+   simulateur est trop robuste partout et la dilution ne peut jouer aucun des
+   rôles qu'elle joue en réalité (irrégularité de ralenti, limite EGR, ratés).
+   C'est la piste la plus prometteuse des trois, et elle se vérifie avec
+   `EngineLabPhysicsPerfHarness --trace 1 --idle`, pas avec ce harnais.
