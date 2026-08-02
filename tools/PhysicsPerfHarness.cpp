@@ -162,6 +162,16 @@ StepMetrics measurePoint(
  * runner sitting at 333 degC while the manifold reads a healthy 96 kPa is what
  * exposed the jet-momentum defect in docs/physics-audit.md.
  *
+ * The `residual` column is NOT a residual. It is
+ * `CylinderState::residualGasFraction`, the INSTANTANEOUS burned mole fraction,
+ * which reads ~1.0 for the whole expansion stroke -- the field carries that
+ * meaning for the stall diagnostic and keeps it. The trapped residual is
+ * `residual_at_spark` (`residualGasFractionAtSpark`), sampled at ignition when
+ * nothing has burned yet. Heywood ch. 6.4 puts it at 3-7 % at wide-open
+ * throttle and near 20 % at idle, where the pressure ratio across the overlap
+ * is adverse; measure the idle figure with `--trace 1 --idle`, never with a
+ * `--trace <low rpm>` dyno hold, which is WOT lugging.
+ *
  * The intake side is `irp_kpa` / `irt_c`. `exh_runner_kpa` is the *exhaust*
  * runner: `CylinderState::runnerPressureKpa` carries the exhaust runner despite
  * its neutral name, because it is filled positionally from
@@ -266,6 +276,7 @@ void traceEngine(const enginelab::EngineConfig& baseConfig, double targetRpm,
                  "exh_lift_mm,exh_cda_mm2,exh_valve_gps,res_kpa,res_hz,ram_kpa,"
                  "col_mps,afr,fuel_mg,oxygen_mmol,burned_mmol,flame_mps,"
                  "burned_fraction,combustion_efficiency,phi_at_spark,"
+                 "residual_at_spark,"
                  "compression_ignition,soc_deg,burn_ms,sharpness,"
                  "liquid_spray_mg,dispersing_spray_mg,injector_capacity\n";
     const auto fineDt = dt / 48.0;
@@ -299,6 +310,7 @@ void traceEngine(const enginelab::EngineConfig& baseConfig, double targetRpm,
                   << ',' << c.burnedFraction
                   << ',' << c.combustionEfficiency
                   << ',' << c.equivalenceRatioAtSpark
+                  << ',' << c.residualGasFractionAtSpark
                   << ',' << (c.compressionIgnition ? 1 : 0)
                   << ',' << c.combustionStartPhaseDegrees
                   << ',' << c.combustionDurationMs

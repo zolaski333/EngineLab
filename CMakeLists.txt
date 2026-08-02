@@ -1,15 +1,58 @@
 cmake_minimum_required(VERSION 3.24)
-project(EngineLab VERSION 0.1.0 LANGUAGES CXX)
+# C is listed even though EngineLab itself is C++ only. JUCE declares
+# `project(JUCE LANGUAGES C CXX)`, but that runs inside the FetchContent
+# subdirectory scope, so the C rule variables (CMAKE_C_COMPILE_OBJECT and
+# friends) never reach the top level. The Visual Studio generator tolerates
+# that -- MSBuild picks the language from the file extension -- which is why the
+# windows-vs2022 cache has CMAKE_C_FLAGS but no CMAKE_C_COMPILER at all. Ninja
+# resolves the compile rule at generate time and fails outright.
+project(EngineLab VERSION 0.1.0 LANGUAGES CXX C)
 
 option(ENGINELAB_BUILD_TESTS "Build EngineLab unit tests" ON)
 option(ENGINELAB_BUILD_COMPARISON_HARNESS "Build deterministic comparison and regression harness" ON)
 option(ENGINELAB_ENABLE_WARNINGS_AS_ERRORS "Treat compiler warnings as errors" OFF)
 option(ENGINELAB_ENABLE_SANITIZERS "Enable Address/UndefinedBehavior sanitizers" OFF)
 option(ENGINELAB_ENABLE_CLANG_TIDY "Run clang-tidy while compiling" OFF)
+option(ENGINELAB_ENABLE_COMPILER_CACHE "Route compilation through sccache/ccache when one is available" OFF)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
+# A compiler cache turns the expensive half of a bisect -- `git checkout` then
+# rebuild -- back into a link. It is OFF by default on purpose:
+# CMAKE_CXX_COMPILER_LAUNCHER is silently IGNORED by the Visual Studio
+# generator, so switching it on in the windows-vs2022 tree would cost a
+# reconfigure and buy nothing. Only the Ninja tree can use it.
+if(ENGINELAB_ENABLE_COMPILER_CACHE)
+    file(GLOB ENGINELAB_COMPILER_CACHE_HINTS
+        "$ENV{LOCALAPPDATA}/Microsoft/WinGet/Packages/Mozilla.sccache*/*")
+    find_program(ENGINELAB_COMPILER_CACHE NAMES sccache ccache
+        HINTS ${ENGINELAB_COMPILER_CACHE_HINTS})
+    if(ENGINELAB_COMPILER_CACHE)
+        set(CMAKE_CXX_COMPILER_LAUNCHER "${ENGINELAB_COMPILER_CACHE}")
+        if(MSVC)
+            # sccache cannot cache a compile that writes into a shared PDB, and
+            # silently falls back to an uncached invocation for every such
+            # object -- a 0% hit rate that looks like the cache simply not
+            # working. /Z7 puts the debug info in the object instead, where the
+            # cache can carry it. CMake 3.24 predates
+            # CMAKE_MSVC_DEBUG_INFORMATION_FORMAT (CMP0141 landed in 3.25), so
+            # the per-configuration flags are rewritten directly. Release
+            # carries no debug flag at all here and comes out unchanged.
+            foreach(enginelab_config DEBUG RELWITHDEBINFO MINSIZEREL RELEASE)
+                string(REPLACE "/ZI" "/Z7"
+                    CMAKE_CXX_FLAGS_${enginelab_config} "${CMAKE_CXX_FLAGS_${enginelab_config}}")
+                string(REPLACE "/Zi" "/Z7"
+                    CMAKE_CXX_FLAGS_${enginelab_config} "${CMAKE_CXX_FLAGS_${enginelab_config}}")
+            endforeach()
+        endif()
+        message(STATUS "EngineLab: compiler cache enabled (${ENGINELAB_COMPILER_CACHE})")
+    else()
+        message(WARNING
+            "ENGINELAB_ENABLE_COMPILER_CACHE is ON but neither sccache nor ccache was found")
+    endif()
+endif()
 
 # Sanitizer instrumentation must be consistent across EngineLab and fetched
 # static dependencies (notably yaml-cpp), otherwise MSVC's annotated STL types

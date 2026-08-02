@@ -1,5 +1,5 @@
 {
-  "version": 6,
+  "version": 5,
   "cmakeMinimumRequired": { "major": 3, "minor": 24, "patch": 0 },
   "configurePresets": [
     {
@@ -21,16 +21,32 @@
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Debug",
         "ENGINELAB_BUILD_TESTS": "ON",
-        "ENGINELAB_ENABLE_WARNINGS_AS_ERRORS": "ON"
+        "ENGINELAB_ENABLE_WARNINGS_AS_ERRORS": "ON",
+        "ENGINELAB_ENABLE_COMPILER_CACHE": "ON"
+      }
+    },
+    {
+      "name": "ninja-release",
+      "displayName": "Ninja Release (inner loop; NOT the authoritative tree)",
+      "description": "Fast compile-error and targeted-test loop. Gates, commits and every performance number belong to windows-vs2022 -- see CLAUDE.md. Requires `. scripts/vsenv.ps1` first.",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/out/build/ninja-release",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "ENGINELAB_BUILD_TESTS": "ON",
+        "ENGINELAB_ENABLE_WARNINGS_AS_ERRORS": "ON",
+        "ENGINELAB_ENABLE_COMPILER_CACHE": "ON"
       }
     }
   ],
   "buildPresets": [
     { "name": "windows-release", "configurePreset": "windows-vs2022", "configuration": "Release" },
-    { "name": "ninja-dev", "configurePreset": "ninja-dev" }
+    { "name": "ninja-dev", "configurePreset": "ninja-dev" },
+    { "name": "ninja-release", "configurePreset": "ninja-release" }
   ],
   "testPresets": [
     { "name": "windows-release", "configurePreset": "windows-vs2022", "configuration": "Release", "output": { "outputOnFailure": true } },
-    { "name": "ninja-dev", "configurePreset": "ninja-dev", "output": { "outputOnFailure": true } }
+    { "name": "ninja-dev", "configurePreset": "ninja-dev", "output": { "outputOnFailure": true } },
+    { "name": "ninja-release", "configurePreset": "ninja-release", "output": { "outputOnFailure": true } }
   ]
 }

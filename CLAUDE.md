@@ -6,19 +6,79 @@ were learned the hard way here and are not visible from reading the code.
 ## Build and test
 
 ```
+. scripts/vsenv.ps1                                                # EVERY call
 cmake --build out/build/windows-vs2022 --config Release            # whole project
 ctest  --test-dir out/build/windows-vs2022 -C Release              # all tests
 ```
 
 Warnings are errors. A green build and `ctest` run are the bar for any change.
 
-**`cmake` is not on `PATH` on this machine, and the Visual Studio instance
-resolution is broken.** Both cost an hour on 2026-07-29, and neither is a code
-problem:
+### Two build trees, and which one is authoritative
 
-- Prefix the tool directory yourself:
+- **`out/build/windows-vs2022`** (Visual Studio generator) is **authoritative**.
+  Every gate, every commit and **every performance number** belongs to it. All
+  the reference figures in this document were taken there.
+- **`out/build/ninja-release`** (Ninja + sccache, `cmake --preset ninja-release`)
+  is the **inner loop only**: compile errors and targeted test runs. Both trees
+  are pinned to the same toolset (14.34.31933) so a warning-as-error in one is a
+  warning-as-error in the other.
+
+**Never compare a timing between the two trees.** Different generator, different
+link, different object layout. The realtime-factor drift warned about further
+down is already enough to invent a regression that does not exist; a second
+toolchain configuration is a new way to do it, and a much more convincing one.
+
+### `. scripts/vsenv.ps1`
+
+Dot-source it in every call that runs cmake/ninja/ctest — shell state does not
+persist between agent tool calls. It imports `vcvars64.bat` pinned to toolset
+14.34 and puts CMake, Ninja and sccache on `PATH`, replacing the manual prefix
+that used to be required here. It deliberately does not use
+`Launch-VsDevShell.ps1`, which goes through the broken `vswhere.exe` below.
+
+Three things had to be repaired before Ninja would configure at all, and each is
+invisible from the Visual Studio tree:
+
+- **`CMakePresets.json` declared `"version": 6`, which needs CMake 3.25.** VS
+  2022 ships **3.24** (VS 18 ships 4.2.3). So the presets file had never been
+  readable by the CMake this project actually builds with, which is why every
+  build order here is a raw path and never `--preset`. Lowered to 5; nothing in
+  the file used a v6 feature.
+- **`project()` had to list `C`.** JUCE declares `project(JUCE LANGUAGES C CXX)`,
+  but that runs inside the FetchContent subdirectory scope, so the C rule
+  variables never reach the top level. MSBuild picks the language from the file
+  extension and does not care — the `windows-vs2022` cache has `CMAKE_C_FLAGS`
+  but **no `CMAKE_C_COMPILER` at all**. Ninja resolves the compile rule at
+  generate time and fails with `CMAKE_C_COMPILE_OBJECT` missing.
+- **sccache is useless with the Visual Studio generator.**
+  `CMAKE_CXX_COMPILER_LAUNCHER` is silently ignored there, so
+  `ENGINELAB_ENABLE_COMPILER_CACHE` defaults OFF and only the Ninja presets turn
+  it on. On MSVC the cache also requires `/Z7` rather than `/Zi`, because a
+  compile that writes into a shared PDB cannot be cached and sccache falls back
+  silently — a 0 % hit rate that reads as "the cache is not working". Release
+  carries no debug flag here, so it was already safe; the rewrite in
+  `CMakeLists.txt` covers the other configurations.
+
+  Measured payoff, which is what makes bisecting cheap: after `ninja -t clean`,
+  a full rebuild of the Ninja tree is **56.5 s at 94.5 % hits** (240/254, mean
+  read 0.001 s against a mean compile of 0.087 s), against roughly **474 s** for
+  123 of those same objects when the cache was cold. Use it for `git checkout`
+  loops; it does nothing for the first build of a change you just wrote.
+
+- **Build the Ninja tree at `-j 2` while the cache is cold.** The `C1060` heap
+  exhaustion documented further down is not specific to MSBuild: this machine
+  has **15.9 GB for 12 logical cores**, and concurrent `cl.exe` on the large
+  translation units exhausts it. Measured, all on
+  `SpscQueue<CylinderPressureSample, 8192>`'s compiler-generated constructor:
+  `-j 6` fails, `-j 3` fails, `-j 2` completes with zero failures, and the same
+  single object alone at `-j 1` compiles fine in **75.4 s**. So the limit is
+  *cumulative* memory, not that one instantiation — a hypothesis worth
+  refuting before touching `SpscQueue.hpp`, which is what the measurement did.
+  Once the cache is warm the limit does not apply: a hit never launches
+  `cl.exe`, so a cached rebuild runs at full `-j`.
+
+- The old manual prefix, if you ever need it without the script:
   `$env:PATH = "C:\Program Files\Microsoft Visual Studio\2022\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin;$env:PATH"`.
-  Shell state does not persist between agent tool calls, so do it in every call.
 - A **Visual Studio 18** Community install sits beside 2022, `vswhere.exe`
   returns **nothing** (the Installer's instance registry is damaged), and CMake
   therefore resolved the "Visual Studio 17 2022" generator onto
