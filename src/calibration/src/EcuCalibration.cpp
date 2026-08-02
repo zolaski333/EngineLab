@@ -72,10 +72,23 @@ CalibrationDraft makeDefaultEcuCalibration(const EngineConfig& config) {
             : -2.0 - 5.0 * (normalizedLoad - 1.0);
         for (const auto rpm : speed.breakpoints) {
             const auto highSpeedEnrichment = rpm > config.redlineRpm * 0.78 ? 0.35 : 0.0;
-            afrValues.push_back(std::clamp(ecuLimits::referenceAirFuelRatio + afrLoadCorrection
-                                           - highSpeedEnrichment,
-                                           ecuLimits::minimumAirFuelRatio,
-                                           ecuLimits::maximumAirFuelRatio));
+            if (config.fuel == FuelType::diesel) {
+                // This map is a smoke-limit FLOOR, not a stoichiometric target.
+                // Driver demand already meters a quality-governed diesel leaner
+                // at part load; the map only caps the richest admissible charge.
+                // Keep the shipped engine on the EN 590 lambda-1.16 boundary so
+                // the separate injected-quantity curve remains its torque map.
+                afrValues.push_back(std::clamp(
+                    config.fuelProperties.stoichiometricAirFuelRatio * 1.16,
+                    ecuLimits::minimumAirFuelRatio,
+                    ecuLimits::maximumDieselSmokeLimitAirFuelRatio));
+            } else {
+                afrValues.push_back(std::clamp(
+                    ecuLimits::referenceAirFuelRatio + afrLoadCorrection
+                        - highSpeedEnrichment,
+                    ecuLimits::minimumAirFuelRatio,
+                    ecuLimits::maximumGasolineAirFuelRatio));
+            }
             ignitionValues.push_back(std::clamp(timingAt(config, rpm)
                                                 + timingLoadCorrection,
                                                 ecuLimits::minimumIgnitionAdvanceDegrees,
@@ -83,12 +96,45 @@ CalibrationDraft makeDefaultEcuCalibration(const EngineConfig& config) {
         }
     }
 
+    const auto diesel = config.fuel == FuelType::diesel;
+    const auto minimumAfr = diesel
+        ? config.fuelProperties.stoichiometricAirFuelRatio * 1.16
+        : ecuLimits::minimumAirFuelRatio;
+    const auto maximumAfr = diesel
+        ? ecuLimits::maximumDieselSmokeLimitAirFuelRatio
+        : ecuLimits::maximumGasolineAirFuelRatio;
     draft.set(CalibrationTable2D {
-        metadata(std::string(keys::targetAirFuelRatio), "AFR cible", "Richesse commandée par régime et charge.",
-                 CalibrationUnit::airFuelRatio, ecuLimits::minimumAirFuelRatio,
-                 ecuLimits::maximumAirFuelRatio),
+        metadata(std::string(keys::targetAirFuelRatio),
+                 diesel ? "Limite fumée AFR" : "AFR cible",
+                 diesel
+                    ? "AFR minimum admissible. Augmenter appauvrit et réduit la fumée; le fonctionnement normal peut être plus pauvre."
+                    : "Richesse commandée par régime et charge.",
+                 CalibrationUnit::airFuelRatio, minimumAfr, maximumAfr),
         speed, load, std::move(afrValues)
     });
+    if (diesel && !config.injection.fullLoadFuelLimit.empty()) {
+        CalibrationAxis quantitySpeed {
+            { "rpm", "Régime moteur", AxisQuantity::engineSpeed,
+              CalibrationUnit::revolutionsPerMinute }, {}
+        };
+        std::vector<double> quantities;
+        quantitySpeed.breakpoints.reserve(
+            config.injection.fullLoadFuelLimit.size());
+        quantities.reserve(config.injection.fullLoadFuelLimit.size());
+        for (const auto& sample : config.injection.fullLoadFuelLimit) {
+            quantitySpeed.breakpoints.push_back(sample.rpm);
+            quantities.push_back(sample.milligramsPerCycle);
+        }
+        draft.set(CalibrationCurve1D {
+            metadata(std::string(keys::dieselFuelQuantityMgPerCycle),
+                     "Quantité gazole pleine charge",
+                     "Plafond injecté par cylindre et par cycle. C'est la carte de couple Diesel; la limite fumée reste prioritaire.",
+                     CalibrationUnit::milligram,
+                     ecuLimits::minimumDieselFuelQuantityMgPerCycle,
+                     ecuLimits::maximumDieselFuelQuantityMgPerCycle, 1),
+            std::move(quantitySpeed), std::move(quantities)
+        });
+    }
     draft.set(CalibrationTable2D {
         metadata(std::string(keys::ignitionAdvance), "Avance allumage", "Avance absolue vilebrequin.",
                  CalibrationUnit::degreeCrankshaft, ecuLimits::minimumIgnitionAdvanceDegrees,

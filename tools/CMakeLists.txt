@@ -59,6 +59,18 @@ if(MSVC)
 endif()
 enginelab_set_warnings(EngineLabUserDynoHarness)
 
+add_executable(EngineLabDieselControlHarness DieselControlHarness.cpp)
+target_link_libraries(EngineLabDieselControlHarness PRIVATE
+    EngineLab::Simulation EngineLab::Foundation EngineLab::Physics
+    EngineLab::Ecu EngineLab::Events EngineLab::Exhaust EngineLab::Catalog
+    EngineLab::Diagnostics)
+target_compile_definitions(EngineLabDieselControlHarness PRIVATE
+    ENGINELAB_CATALOG_ROOT="${CMAKE_SOURCE_DIR}")
+if(MSVC)
+    target_link_options(EngineLabDieselControlHarness PRIVATE /STACK:8388608)
+endif()
+enginelab_set_warnings(EngineLabDieselControlHarness)
+
 add_executable(EngineLabAudioRenderHarness AudioRenderHarness.cpp)
 target_link_libraries(EngineLabAudioRenderHarness PRIVATE
     EngineLab::Audio EngineLab::Simulation EngineLab::Foundation EngineLab::Physics

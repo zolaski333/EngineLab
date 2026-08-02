@@ -1,11 +1,22 @@
 # Brief de reprise — nouvelle machine (2026-07-28)
 
+> **Mise à jour Diesel du 2 août 2026.** Le diagnostic essence « mélange trop
+> pauvre » ne s'applique plus au Diesel. `fuel.target_afr` y est explicitement
+> une limite fumée minimale et une nouvelle carte live
+> `fuel.diesel_quantity_mg_per_cycle` expose enfin la vraie commande de couple
+> par quantité injectée. À 2 000 tr/min WOT, une réduction de carte
+> 52,55 -> 34,15 mg/cyl/cycle fait passer le couple mesuré de 346,82 à
+> 216,96 Nm ; une hausse est arrêtée proprement à AFR 17,22 pour une limite
+> 16,99. Le gate constructeur Diesel reste à +9,03 % de couple et +1,54 % de
+> puissance, donc dans ±15 %. Voir
+> `docs/diesel-control-validation-2026-08-02.md`. Le prochain chantier ouvert
+> est la contre-pression turbo.
+
 > **Mise à jour banc du 2 août 2026.** Le banc utilisateur dispose maintenant
 > d'une préparation progressive lorsqu'il est activé au-dessus de son premier
 > point. Le catalogue passe 16/16 balayages complets, sans calage ni
 > récupération, et les 24 références constructeur restent dans ±15 %. Voir
-> `docs/user-dyno-validation-2026-08-02.md`. Le prochain chantier ouvert est le
-> diagnostic et l'autorité AFR du diesel, puis la contre-pression turbo.
+> `docs/user-dyno-validation-2026-08-02.md`.
 
 > **Mise à jour physique du 2 août 2026.** Les chutes de couple environ
 > 2 000 tr/min avant rupteur sont maintenant reproduites par un harnais à plein

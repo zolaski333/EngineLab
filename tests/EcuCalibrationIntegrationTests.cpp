@@ -88,6 +88,43 @@ int main() {
     require(wetLimited.wetSparkCutActive,
             "an opted-in wet limiter must explicitly authorize spark-cut injection");
 
+    auto dieselConfig = enginelab::makeDefaultInlineFour();
+    dieselConfig.fuel = enginelab::FuelType::diesel;
+    dieselConfig.injection.mode = enginelab::InjectionMode::direct;
+    dieselConfig.fuelProperties.stoichiometricAirFuelRatio = 14.65;
+    dieselConfig.injection.fullLoadFuelLimit = {
+        { 1'000.0, 42.0 }, { 2'000.0, 52.5 }, { 4'000.0, 47.0 }
+    };
+    enginelab::SimpleEcuModel dieselEcu;
+    dieselEcu.initialiseCalibration(dieselConfig);
+    auto dieselDraft = enginelab::calibration::makeDraft(
+        *dieselEcu.calibrationStore()->snapshot());
+    auto* dieselQuantityEntry = dieselDraft.find(
+        enginelab::calibration::keys::dieselFuelQuantityMgPerCycle);
+    require(dieselQuantityEntry != nullptr,
+            "diesel defaults should expose the injected-quantity torque curve");
+    auto dieselQuantity = *dieselQuantityEntry;
+    auto& dieselQuantityCurve = std::get<
+        enginelab::calibration::CalibrationCurve1D>(dieselQuantity);
+    std::fill(dieselQuantityCurve.values.begin(),
+              dieselQuantityCurve.values.end(), 31.0);
+    dieselDraft.set(std::move(dieselQuantity));
+    require(dieselEcu.calibrationStore()->publish(dieselDraft).published,
+            "edited diesel quantity curve should publish atomically");
+    dieselEcu.beginFrame();
+    state.rpm = 2'000.0;
+    state.load = 1.0;
+    state.simulationTimeSeconds = 0.0;
+    controls.throttle = 1.0;
+    const auto dieselCommand = dieselEcu.evaluate(
+        dieselConfig, state, controls);
+    requireNear(dieselCommand.dieselFuelQuantityLimitMgPerCycle, 31.0,
+                1.0e-12,
+                "diesel ECU should consume the live quantity curve");
+    require(dieselCommand.targetAirFuelRatio
+                >= dieselConfig.fuelProperties.stoichiometricAirFuelRatio * 1.16,
+            "diesel ECU must enforce its rich-side smoke floor");
+
     std::cout << "EngineLab ECU calibration integration tests passed\n";
     return EXIT_SUCCESS;
 }

@@ -1,5 +1,6 @@
 #pragma once
 #include <enginelab/calibration/CalibrationStore.hpp>
+#include <enginelab/calibration/EcuCalibrationKeys.hpp>
 #include <enginelab/ecu/IEcuModel.hpp>
 #include <algorithm>
 #include <atomic>
@@ -58,7 +59,11 @@ public:
         return decelerationFuelResume_.load(std::memory_order_relaxed);
     }
     void setAirFuelRatioTrim(double value) noexcept {
-        afrTrim_.store(std::isfinite(value) ? std::clamp(value, -3.0, 3.0) : 0.0);
+        afrTrim_.store(std::isfinite(value)
+            ? std::clamp(value,
+                calibration::ecuLimits::minimumAirFuelRatioTrim,
+                calibration::ecuLimits::maximumAirFuelRatioTrim)
+            : 0.0);
     }
     /** Compatibility API: converts the former absolute AFR knob into a trim. */
     void setTargetAirFuelRatio(double value) noexcept { setAirFuelRatioTrim(value - 14.2); }

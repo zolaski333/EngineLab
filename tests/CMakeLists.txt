@@ -233,6 +233,11 @@ if(TARGET EngineLabUserDynoHarness)
     set_tests_properties(EngineLab.UserDynoHighRpmStart
         PROPERTIES TIMEOUT 120)
 endif()
+if(TARGET EngineLabDieselControlHarness)
+    add_test(NAME EngineLab.DieselControl
+        COMMAND EngineLabDieselControlHarness)
+    set_tests_properties(EngineLab.DieselControl PROPERTIES TIMEOUT 180)
+endif()
 if(MSVC)
     target_link_options(EngineLabCoreTests PRIVATE /STACK:8388608)
 endif()

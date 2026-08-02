@@ -5,6 +5,30 @@ It records measurements as well as successful changes. Failed hypotheses are
 kept because repeating an attractive but disproved fix wastes more time than
 documenting it.
 
+## 2026-08-02 — commande Diesel et diagnostic AFR corrigés
+
+Le tuner générait auparavant une carte AFR essence, bornée à 18, pour le
+Diesel. Le simulateur remplaçait ensuite presque toutes ses valeurs par son
+plancher fumée 16,99, tandis que la quantité injectée qui gouverne réellement
+le couple restait cachée dans la configuration. Le diagnostic générique
+signalait en plus tout lambda supérieur à 1,03 comme une panne sous charge,
+alors qu'un Diesel à charge partielle est normalement très pauvre.
+
+Le contrat est maintenant explicite : carte AFR = plancher fumée, carte
+`fuel.diesel_quantity_mg_per_cycle` = quantité maximale par cylindre/cycle.
+Cette seconde carte est modifiable à chaud, traverse l'ECU et borne
+l'injection physique ; la limite fumée reste prioritaire. L'interface affiche
+« AFR >= limite fumée » et le diagnostic Diesel ne se déclenche que si le
+mélange franchit cette limite du côté riche.
+
+Le nouveau harnais à 2 000 tr/min WOT mesure 34,15 / 52,55 / 63,06 mg commandés,
+136,50 / 208,74 / 212,54 mg réellement injectés par cycle moteur, et
+216,96 / 346,82 / 353,37 Nm. Le dernier point converge sur la protection fumée
+(AFR 17,22, plancher 16,99) au lieu de l'outrepasser. Les tests ciblés passent
+3/3 et `EngineLab.CatalogReference` 24/24 ; le TDI mesure +9,03 % au point de
+couple et +1,54 % au point de puissance. Détails :
+[`diesel-control-validation-2026-08-02.md`](diesel-control-validation-2026-08-02.md).
+
 ## 2026-08-02 — banc utilisateur progressif et catalogue complet
 
 L'appui sur D depuis un régime élevé ne connecte plus instantanément le frein à

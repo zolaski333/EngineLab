@@ -760,6 +760,8 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
         state_.exhaustAfterfireOverrunActive =
             ecuCommand.overrunAfterfireActive;
         state_.ecuFuelCorrection = ecuCommand.fuelCorrection;
+        state_.ecuDieselFuelQuantityLimitMgPerCycle =
+            ecuCommand.dieselFuelQuantityLimitMgPerCycle;
         state_.ecuFuelEnabled = ecuCommand.fuelEnabled;
         state_.ecuSparkEnabled = ecuCommand.sparkEnabled;
         state_.ecuSoftRevLimiterActive = ecuCommand.softRevLimiterActive;
@@ -981,10 +983,16 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
         const auto compressionIgnitionAvailable =
             config_.fuel == FuelType::diesel && ecuCommand.fuelEnabled
             && state_.rpm >= 220.0 && state_.damage < 1.0;
-        const auto dieselFullLoadFuelLimitMg =
+        const auto configuredDieselFullLoadFuelLimitMg =
             compressionIgnitionEngine && ecuCommand.fuelEnabled
             ? fullLoadFuelLimitMg(config_.injection, state_.rpm)
             : std::numeric_limits<double>::infinity();
+        const auto dieselFullLoadFuelLimitMg =
+            compressionIgnitionEngine && ecuCommand.fuelEnabled
+                && ecuCommand.dieselFuelQuantityLimitMgPerCycle > 0.0
+                && std::isfinite(ecuCommand.dieselFuelQuantityLimitMgPerCycle)
+            ? ecuCommand.dieselFuelQuantityLimitMgPerCycle
+            : configuredDieselFullLoadFuelLimitMg;
         const auto cranking = safeControls.starterEngaged && state_.rpm < 620.0 && state_.damage < 1.0;
         const auto displacement = engineDisplacementLitres(config_);
         const auto rotatingInertia =
@@ -1225,11 +1233,17 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                     * 1.0e-6 / fuelMolarMassKg
                 : 0.0;
             if (compressionIgnitionEngine && ecuCommand.fuelEnabled) {
+                // The AFR map is a rich-side smoke boundary. Transient fuel
+                // correction and the quantity map may request less fuel, never
+                // more than this oxygen-derived ceiling.
+                const auto smokeLimitMoles = measuredChargeMassMg
+                    / targetAirFuelRatio * 1.0e-6 / fuelMolarMassKg;
                 const auto quantityLimitMoles =
                     dieselFullLoadFuelLimitMg
                     * dieselFuelDemand * 1.0e-6 / fuelMolarMassKg;
                 physicalFuelTargetMoles = std::min(
-                    physicalFuelTargetMoles, quantityLimitMoles);
+                    physicalFuelTargetMoles,
+                    std::min(smokeLimitMoles, quantityLimitMoles));
             }
             requestedFuelMolesThisCycle_[cylinderIndex] = std::max(
                 requestedFuelMolesThisCycle_[cylinderIndex], physicalFuelTargetMoles);

@@ -196,11 +196,35 @@ void validateMappedEcuEntry(const CalibrationEntry& entry, CalibrationUnit unit,
     }
 }
 
+void validateRpmCurveEcuEntry(const CalibrationEntry& entry,
+                              CalibrationUnit unit, double minimum,
+                              double maximum, std::string_view path,
+                              std::vector<CalibrationIssue>& issues) {
+    const auto& metadata = metadataOf(entry);
+    if (metadata.unit != unit) {
+        addIssue(issues, CalibrationErrorCode::incompatibleUnit,
+                 std::string(path) + ".unit",
+                 "The known ECU key has a fixed output unit.");
+    }
+    validateCanonicalLimits(metadata, minimum, maximum, path, issues);
+    if (const auto* curve = std::get_if<CalibrationCurve1D>(&entry)) {
+        validateRpmAxisContract(curve->axis, std::string(path) + ".axis", issues);
+    } else {
+        addIssue(issues, CalibrationErrorCode::invalidDimensions,
+                 std::string(path),
+                 "This ECU key must be an engine-speed curve.");
+    }
+}
+
 void validateKnownEcuEntry(std::string_view id, const CalibrationEntry& entry,
                            std::string_view path, std::vector<CalibrationIssue>& issues) {
     if (id == keys::targetAirFuelRatio) {
         validateMappedEcuEntry(entry, CalibrationUnit::airFuelRatio,
             ecuLimits::minimumAirFuelRatio, ecuLimits::maximumAirFuelRatio, path, issues);
+    } else if (id == keys::dieselFuelQuantityMgPerCycle) {
+        validateRpmCurveEcuEntry(entry, CalibrationUnit::milligram,
+            ecuLimits::minimumDieselFuelQuantityMgPerCycle,
+            ecuLimits::maximumDieselFuelQuantityMgPerCycle, path, issues);
     } else if (id == keys::ignitionAdvance) {
         validateMappedEcuEntry(entry, CalibrationUnit::degreeCrankshaft,
             ecuLimits::minimumIgnitionAdvanceDegrees,

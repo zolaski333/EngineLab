@@ -186,6 +186,33 @@ int main() {
     }
 
     {
+        auto dieselConfig = enginelab::makeDefaultInlineFour();
+        dieselConfig.fuel = enginelab::FuelType::diesel;
+        enginelab::EngineState state;
+        state.load = 0.9;
+        state.rpm = 2'500.0;
+        state.targetAirFuelRatio = 17.0;
+        state.airFuelRatio = 22.0;
+        state.lambda = 1.50;
+        const auto normal = enginelab::EngineDiagnostics {}.evaluate(
+            dieselConfig, state);
+        require(std::none_of(normal.begin(), normal.end(), [](const auto& item) {
+                return item.code == "combustion.lean"
+                    || item.code == "combustion.diesel_smoke_limit";
+            }),
+            "a normally lean diesel must not inherit the gasoline lean fault");
+        state.airFuelRatio = 16.0;
+        state.lambda = 16.0
+            / dieselConfig.fuelProperties.stoichiometricAirFuelRatio;
+        const auto smoky = enginelab::EngineDiagnostics {}.evaluate(
+            dieselConfig, state);
+        require(std::any_of(smoky.begin(), smoky.end(), [](const auto& item) {
+                return item.code == "combustion.diesel_smoke_limit";
+            }),
+            "a diesel richer than its smoke floor must be diagnosed explicitly");
+    }
+
+    {
         const auto reportsBackPressure = [](const enginelab::EngineConfig& config,
                                             enginelab::EngineState state) {
             const auto diagnostics = enginelab::EngineDiagnostics {}.evaluate(

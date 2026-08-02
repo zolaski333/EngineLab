@@ -11,10 +11,23 @@ std::vector<Diagnostic> EngineDiagnostics::evaluate(const EngineConfig& config, 
     if (state.rpm > 900.0 && state.oilPressureKpa < 100.0) result.push_back({ DiagnosticSeverity::critical, "lubrication.pressure", "Pression d'huile insuffisante sous regime." });
     if (state.exhaustTemperatureC > 920.0) result.push_back({ DiagnosticSeverity::warning, "thermal.exhaust", "Temperature d'echappement excessive." });
     if (state.oilTemperatureC > 135.0) result.push_back({ DiagnosticSeverity::critical, "thermal.oil", "Temperature d'huile critique." });
-    if (state.load > 0.55 && state.lambda > 1.03)
-        result.push_back({ DiagnosticSeverity::critical, "combustion.lean", "Melange trop pauvre sous charge." });
-    if (state.lambda < 0.74)
-        result.push_back({ DiagnosticSeverity::warning, "combustion.rich", "Melange excessivement riche : dilution d'huile possible." });
+    if (config.fuel == FuelType::diesel) {
+        // A quality-governed diesel is deliberately lean: lambda 1.4-3 under
+        // load is normal and is not the gasoline lean-fault this diagnostic
+        // historically reported. Its AFR command is instead a rich-side smoke
+        // floor. Allow a small cycle/telemetry lag before reporting a breach.
+        if (state.load > 0.55 && state.airFuelRatio > 1.0
+                && state.airFuelRatio < state.targetAirFuelRatio * 0.97) {
+            result.push_back({ DiagnosticSeverity::warning,
+                "combustion.diesel_smoke_limit",
+                "Richesse Diesel au-dela de la limite fumee : reduisez la quantite injectee." });
+        }
+    } else {
+        if (state.load > 0.55 && state.lambda > 1.03)
+            result.push_back({ DiagnosticSeverity::critical, "combustion.lean", "Melange trop pauvre sous charge." });
+        if (state.lambda < 0.74)
+            result.push_back({ DiagnosticSeverity::warning, "combustion.rich", "Melange excessivement riche : dilution d'huile possible." });
+    }
     if (state.solverResolutionLimited)
         result.push_back({ DiagnosticSeverity::critical, "solver.resolution", "Resolution angulaire du solveur insuffisante au regime actuel." });
     if (state.load > 0.40 && state.rpm > config.idleRpm * 1.2 && state.cylinderStateCount > 0) {

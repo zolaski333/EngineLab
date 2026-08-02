@@ -1024,6 +1024,10 @@ struct EngineState final {
      * second control path: EngineSimulator publishes the exact command that
      * already drove injection and combustion in the current sub-step. */
     double ecuFuelCorrection { 1.0 };
+    /** Per-cylinder compression-ignition quantity command. Zero means that the
+     *  active ECU did not publish one and the simulator must use the authored
+     *  engine-config fallback. */
+    double ecuDieselFuelQuantityLimitMgPerCycle { 0.0 };
     bool ecuFuelEnabled { false };
     bool ecuSparkEnabled { false };
     bool ecuSoftRevLimiterActive { false };
@@ -1124,6 +1128,9 @@ struct EcuCommand final {
     /** Normalised command for the configured idle-air bypass actuator. */
     double idleAirOpening { 0.0 };
     double fuelCorrection { 1.0 };
+    /** Per-cylinder diesel injected-quantity ceiling. Zero preserves custom
+     *  ECU compatibility by selecting the EngineConfig fallback curve. */
+    double dieselFuelQuantityLimitMgPerCycle { 0.0 };
     bool fuelEnabled { true };
     bool sparkEnabled { true };
     bool overrunAfterfireActive { false };

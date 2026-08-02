@@ -279,9 +279,19 @@ EcuCommand SimpleEcuModel::evaluate(const EngineConfig& config, const EngineStat
     const auto afrCommand = calibratedAfr
         ? *calibratedAfr + afrTrim_.load(std::memory_order_relaxed)
         : legacyAfr;
-    auto mappedAfr = std::clamp(afrCommand,
-        calibration::ecuLimits::minimumAirFuelRatio,
-        calibration::ecuLimits::maximumAirFuelRatio);
+    const auto minimumMappedAfr = config.fuel == FuelType::diesel
+        ? config.fuelProperties.stoichiometricAirFuelRatio * 1.16
+        : calibration::ecuLimits::minimumAirFuelRatio;
+    const auto maximumMappedAfr = config.fuel == FuelType::diesel
+        ? calibration::ecuLimits::maximumDieselSmokeLimitAirFuelRatio
+        : calibration::ecuLimits::maximumGasolineAirFuelRatio;
+    auto mappedAfr = std::clamp(
+        afrCommand, minimumMappedAfr, maximumMappedAfr);
+    const auto dieselFuelQuantityLimit = config.fuel == FuelType::diesel
+        ? calibrationSnapshot->sampleCurve(
+            calibration::keys::dieselFuelQuantityMgPerCycle,
+            rpmCoordinate).value_or(0.0)
+        : 0.0;
     const auto configuredAdvance = interpolateTimingCurve(config.ignition.timingCurve, state.rpm);
     const auto liveTrim = ignitionTrimDegrees_.load(std::memory_order_relaxed);
     const auto legacyAdvance = configuredAdvance
@@ -310,8 +320,7 @@ EcuCommand SimpleEcuModel::evaluate(const EngineConfig& config, const EngineStat
                                       std::memory_order_relaxed);
     mappedAfr = std::clamp(mappedAfr - throttleIncrease * 2.2
         - std::max(0.0, state.coolantTemperatureC - 108.0) * 0.025,
-        calibration::ecuLimits::minimumAirFuelRatio,
-        calibration::ecuLimits::maximumAirFuelRatio);
+        minimumMappedAfr, maximumMappedAfr);
     mappedAdvance = std::clamp(mappedAdvance - state.knockLevel * 12.0
         - std::max(0.0, state.coolantTemperatureC - 108.0) * 0.20,
         calibration::ecuLimits::minimumIgnitionAdvanceDegrees,
@@ -434,7 +443,7 @@ EcuCommand SimpleEcuModel::evaluate(const EngineConfig& config, const EngineStat
         && (limiterActive || alternatingCut);
     return { mappedAfr, mappedAdvance,
              effectiveThrottle, idleAirOpening,
-             fuelCorrection,
+             fuelCorrection, dieselFuelQuantityLimit,
              commandedFuelEnabled,
              commandedSparkEnabled,
              overrunAfterfireActive,

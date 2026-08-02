@@ -211,6 +211,14 @@ bool MainComponent::applyConfig(const EngineConfig& newConfig, bool preserveScri
     collectFinishedRuns();
     audio_.reset(); runtime_.reset();
     config_ = std::move(canonicalConfig);
+    const auto diesel = config_.fuel == FuelType::diesel;
+    afrSlider_.setRange(diesel ? 0.0 : -3.0, diesel ? 15.0 : 3.0, 0.1);
+    if (!preserveCalibration)
+        afrSlider_.setValue(0.0, juce::dontSendNotification);
+    afrLabel_.setText(diesel
+        ? utf8("TRIM LIMITE FUMÉE (+ = MOINS DE GAZOLE)")
+        : utf8("TRIM AFR (CARTE ±)"),
+        juce::dontSendNotification);
     adoptAudioVoicing(config_.audioVoicing);
     voicingRevision_ = audioVoicingRevision(catalogRoot_);
     if (exhaustDesignerWindow_) exhaustDesignerWindow_->setConfig(config_);
@@ -1103,13 +1111,20 @@ void MainComponent::paint(juce::Graphics& g) {
             + juce::String(visibleState_.torqueNm, 0) + " Nm instant.";
     g.drawFittedText(torqueText,
                      telemetry.removeFromLeft(telemetryColumnWidth).toNearestInt(), juce::Justification::centred, 1);
+    const auto diesel = config_.fuel == FuelType::diesel;
+    const auto mixtureText = diesel
+        ? "AFR " + juce::String(visibleState_.airFuelRatio, 1)
+            + utf8(" ≥ limite fumée ")
+            + juce::String(visibleState_.targetAirFuelRatio, 1)
+        : "AFR " + juce::String(visibleState_.airFuelRatio, 1) + "/"
+            + juce::String(visibleState_.targetAirFuelRatio, 1);
     const auto environmentText = compactTelemetry
-        ? "MAP " + juce::String(visibleState_.manifoldPressureKpa, 0) + " kPa\nAFR "
-            + juce::String(visibleState_.airFuelRatio, 1) + utf8(" · ")
+        ? "MAP " + juce::String(visibleState_.manifoldPressureKpa, 0)
+            + " kPa\n" + mixtureText + utf8(" · ")
             + juce::String(visibleState_.coolantTemperatureC, 0) + utf8("°C")
-        : juce::String(visibleState_.manifoldPressureKpa, 0) + " kPa  / AFR "
-            + juce::String(visibleState_.airFuelRatio, 1) + "/" + juce::String(visibleState_.targetAirFuelRatio, 1)
-            + utf8("  ·  Eau ") + juce::String(visibleState_.coolantTemperatureC, 0) + utf8("°C");
+        : juce::String(visibleState_.manifoldPressureKpa, 0) + " kPa  / "
+            + mixtureText + utf8("  ·  Eau ")
+            + juce::String(visibleState_.coolantTemperatureC, 0) + utf8("°C");
     g.drawFittedText(environmentText, telemetry.toNearestInt(), juce::Justification::centredRight,
                      compactTelemetry ? 2 : 1);
 
@@ -1231,10 +1246,18 @@ void MainComponent::drawGaugeCluster(juce::Graphics& g, juce::Rectangle<float> a
     auto body = area.reduced(10.0F, 8.0F);
     struct Gauge { juce::String label; juce::String value; double normalized; juce::Colour colour; };
     const auto gearText = gearName(visibleState_.gear);
+    const auto diesel = config_.fuel == FuelType::diesel;
+    const auto mixtureGauge = diesel
+        ? std::clamp(visibleState_.airFuelRatio
+            / std::max(1.0, visibleState_.targetAirFuelRatio), 0.0, 1.0)
+        : 1.0 - std::abs(visibleState_.airFuelRatio
+            - visibleState_.targetAirFuelRatio) / 6.0;
     const std::array<Gauge, 8> gauges {{
         { "RPM", juce::String(visibleState_.rpm, 0), visibleState_.rpm / std::max(1.0, config_.redlineRpm), juce::Colour(0xffef6f3c) },
         { "MAP", juce::String(visibleState_.manifoldPressureKpa, 0) + " kPa", visibleState_.manifoldPressureKpa / std::max(1.0, config_.ambientPressureKpa), juce::Colour(0xff41b6d7) },
-        { "AFR", juce::String(visibleState_.airFuelRatio, 1), 1.0 - std::abs(visibleState_.airFuelRatio - visibleState_.targetAirFuelRatio) / 6.0, juce::Colour(0xff79b89f) },
+        { diesel ? "AFR/FUM" : "AFR",
+          juce::String(visibleState_.airFuelRatio, 1), mixtureGauge,
+          juce::Colour(0xff79b89f) },
         { "VE", juce::String(visibleState_.volumetricEfficiency * 100.0, 0) + "%", visibleState_.volumetricEfficiency / 1.20, juce::Colour(0xff9ccc65) },
         { "OIL", juce::String(visibleState_.oilPressureKpa, 0), visibleState_.oilPressureKpa / 520.0, juce::Colour(0xffffca28) },
         { "EGT", juce::String(visibleState_.exhaustTemperatureC, 0), (visibleState_.exhaustTemperatureC - 100.0) / 850.0, juce::Colour(0xffff7a45) },
