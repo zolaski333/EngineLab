@@ -234,6 +234,22 @@ public:
     [[nodiscard]] double maximumTimingLatenessSeconds() const noexcept {
         return maximumTimingLatenessSeconds_.load();
     }
+    /**
+     * Simulated seconds the physics thread delivers per wall second, averaged
+     * over a 0.25 s window. 1.0 is healthy; below 1.0 the whole simulation is
+     * in slow motion and the user sees it as late controls and, on the biggest
+     * engines, as near-silence -- the cylinder-pressure telemetry is the
+     * exhaust chain's only excitation and it is produced far slower than the
+     * audio thread consumes it.
+     *
+     * It counts ITERATIONS, not simulated time, so a deliberate `timeScale`
+     * or a pause does not read as a fault. It saturates at 1.0 while
+     * `setRealtimeThrottleEnabled(true)`, which is the point for a user-facing
+     * indicator; turn the throttle off and the same number reads as capacity.
+     */
+    [[nodiscard]] double realtimeFactor() const noexcept {
+        return realtimeFactor_.load(std::memory_order_relaxed);
+    }
     [[nodiscard]] bool realtimeLoadProtectionActive() const noexcept {
         return realtimeLoadProtectionActive_.load(std::memory_order_relaxed);
     }
@@ -308,6 +324,7 @@ private:
     std::atomic<std::uint64_t> droppedPressureSamples_ { 0 };
     std::atomic<std::uint64_t> timingOverruns_ { 0 };
     std::atomic<double> maximumTimingLatenessSeconds_ { 0.0 };
+    std::atomic<double> realtimeFactor_ { 1.0 };
     std::atomic<double> dynoMaximumDurationSeconds_ { 60.0 };
     std::atomic<bool> paused_ { false };
     std::atomic<bool> realtimeThrottleEnabled_ { true };

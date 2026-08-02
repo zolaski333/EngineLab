@@ -403,6 +403,15 @@ test onto the behaviour it is meant to catch. Keep it that way.
   produced far slower than the audio thread consumes it, so the biggest engines
   render nearly silent. **A silent V8 or V12 is a physics-thread symptom; do not
   go looking for it in the audio path.**
+  The application now shows this: `EngineRuntime::realtimeFactor()` appears in
+  the diagnostics panel and leads the runtime status line, amber below 0.95, so
+  ask what it reads before treating a user's report as an engine fault. It
+  counts **iterations**, not simulated seconds — `simulationDt` carries
+  `timeScale_` and is zero while paused, so counting simulated time would show a
+  deliberate slow motion and a machine that cannot keep up as the same number.
+  The panel also carries the slow AGC's minimum gain and the soft limiter's
+  sample count, which separate "this engine is quiet" from "the chain is being
+  held down".
 - **The sub-step cost is the 1-D intake network, by an order of magnitude.**
   **STALE — this split predates the multirate intake coupling and must be
   re-measured before it is used to justify anything.** The runner advance is now
@@ -752,6 +761,20 @@ rework: measurements, and the hypotheses that were tried and refuted.
   the crank rotate. **A config knob set at the top level may be shadowed
   per-bank or per-cylinder; and an assertion on a quantity that is force-zeroed
   below a threshold proves nothing until you assert the engine reached it.**
+- **An `EngineRuntime` is about 7.4 MB, so never put two of them on the stack in
+  one function.** It embeds `CylinderPressureQueue`, i.e.
+  `SpscQueue<CylinderPressureSample, 8192>`, and a `CylinderPressureSample` is
+  around 900 bytes (seven `std::array<float, 32>`). The test binaries link
+  `/STACK:8388608`, so exactly one fits. MSVC does not reliably share frame slots
+  between **sibling scopes**, so adding a second `{ EngineRuntime rt(...); }`
+  block beside an existing one overflows the stack even though the two never
+  coexist logically. **Recognise the signature: exit `0xC00000FD`
+  (`-1073741571`) after 0.02 s, which ctest reports as `***Exception:
+  SegFault`** — a crash before `main` prints anything, pointing nowhere near its
+  cause. `std::make_unique` fixes it. That same 8192-deep queue is what makes
+  every translation unit including `EngineRuntime.hpp` expensive to compile
+  (75 s for `OfflineAudioExporter.cpp` against a 5.5 s mean) and is why the Ninja
+  tree needs `-j 2`.
 - **A gate that averages a fixed window cannot see an unsettled signal.** The
   idle gate measured t=10-14 s and eleven engines "passed" while all of them
   were ringing 130-180 rpm peak-to-peak; the verdict depended on the phase the

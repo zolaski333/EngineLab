@@ -1353,7 +1353,7 @@ void MainComponent::drawDebugPanel(juce::Graphics& g, juce::Rectangle<float> are
         liftMultiplier = std::max(liftMultiplier, visibleState_.cylinderStates[index].valveLiftMultiplier);
         runnerResonanceHz = std::max(runnerResonanceHz, visibleState_.cylinderStates[index].intakeResonanceFrequencyHz);
     }
-    const std::array<juce::String, 46> values {
+    const std::array<juce::String, 49> values {
         "Net torque       " + juce::String(visibleState_.netTorqueNm, 2),
         "Indicated torque " + juce::String(visibleState_.indicatedTorqueNm, 2),
         "Mean-work torque " + juce::String(visibleState_.meanWorkTorqueNm, 2),
@@ -1401,8 +1401,22 @@ void MainComponent::drawDebugPanel(juce::Graphics& g, juce::Rectangle<float> are
         "Tire limited     " + juce::String(visibleState_.tractionLimited ? "YES" : "no"),
         "Damage/wear      " + juce::String(visibleState_.damage, 4) + " / " + juce::String(visibleState_.wear, 4),
         "SPSC drops       " + juce::String(runtime_ ? runtime_->droppedEventCount() : 0),
+        // Simulated seconds delivered per wall second. The overrun counter
+        // beside it says a deadline was missed but not by how much work, and
+        // that is the whole difference: below 1.0 the simulation is in slow
+        // motion, controls answer late in proportion to cylinder count, and the
+        // cylinder-pressure telemetry -- the exhaust chain's only excitation --
+        // is produced slower than the audio thread drains it.
+        "Realtime factor  " + juce::String(runtime_ ? runtime_->realtimeFactor() : 1.0, 3) + " x",
         "Runtime overruns " + juce::String(runtime_ ? runtime_->timingOverrunCount() : 0),
-        "Audio late/file  " + juce::String(audio_ ? audio_->lateEventCount() : 0) + " / " + juce::String(audio_ ? audio_->droppedPendingEventCount() : 0)
+        "Audio late/file  " + juce::String(audio_ ? audio_->lateEventCount() : 0) + " / " + juce::String(audio_ ? audio_->droppedPendingEventCount() : 0),
+        // The two readings that separate "the engine is quiet" from "the chain
+        // is being held down". The slow AGC sitting below 1 means the safety
+        // leveler is pulling, and a non-zero limited count means the soft
+        // limiter is working -- neither is visible in the waveform and both are
+        // reported by listeners as an engine fault.
+        "AGC min gain     " + juce::String(audio_ ? audio_->minObservedLevelGain() : 1.0F, 3),
+        "Limiter samples  " + juce::String(audio_ ? audio_->levelLimitedSampleCount() : 0)
     };
     const auto columns = area.getWidth() > 680.0F ? 3 : 2;
     const auto cellWidth = body.getWidth() / static_cast<float>(columns);
@@ -1446,8 +1460,15 @@ void MainComponent::drawTelemetryChart(juce::Graphics& g, juce::Rectangle<float>
     g.setColour(juce::Colour(0xff41b6d7)); g.drawText("MAP", area.removeFromLeft(42.0F).removeFromTop(18.0F), juce::Justification::centredLeft);
     g.setColour(juce::Colour(0xffffca28)); g.drawText("EAU", area.removeFromLeft(42.0F).removeFromTop(18.0F), juce::Justification::centredLeft);
     if (runtime_ && audio_) {
-        g.setColour(juce::Colour(0xff70807a));
-        g.drawText("RT drop " + juce::String(runtime_->droppedEventCount()) + "  retard "
+        // The realtime factor leads, and turns amber below 0.95: a simulation
+        // in slow motion is reported by users as an engine fault (late
+        // response, silent V8 or V12), so it has to be legible without opening
+        // the diagnostics panel. The other counters stay grey -- they are
+        // cumulative and say nothing about the present moment.
+        const auto factor = runtime_->realtimeFactor();
+        g.setColour(factor < 0.95 ? juce::Colour(0xffffca28) : juce::Colour(0xff70807a));
+        g.drawText("temps reel " + juce::String(factor, 2) + "x  RT drop "
+            + juce::String(runtime_->droppedEventCount()) + "  retard "
             + juce::String(runtime_->timingOverrunCount()) + "  audio tardif "
             + juce::String(audio_->lateEventCount()) + "  file audio "
             + juce::String(audio_->droppedPendingEventCount()), area.removeFromTop(18.0F), juce::Justification::centredRight);

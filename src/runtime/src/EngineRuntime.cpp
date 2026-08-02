@@ -540,6 +540,15 @@ void EngineRuntime::run(std::stop_token stopToken) {
 #endif
     const auto clockEpoch = Clock::now();
     auto deadline = clockEpoch;
+    // Delivered pace of this thread, published for the UI. Counting ITERATIONS
+    // rather than simulated seconds is deliberate: `simulationDt` carries
+    // `timeScale_` and goes to zero on pause, so a user who asked for slow
+    // motion, or who paused, would otherwise be shown the same reading as an
+    // engine the machine cannot keep up with. One iteration always owes one
+    // `baseStep` of wall time, whatever it chose to simulate inside it.
+    auto paceWindowStart = clockEpoch;
+    auto paceWindowIterations = std::uint64_t { 0 };
+    constexpr auto paceWindowSeconds = 0.25;
     auto consumedGearGeneration = std::uint64_t { 0 };
     auto consumedGearCommand = gear_.load(std::memory_order_relaxed);
     double nextPressurePublishTime = 0.0;
@@ -925,6 +934,20 @@ void EngineRuntime::run(std::stop_token stopToken) {
         const auto producerTime = std::chrono::duration<double>(now - clockEpoch).count();
         audioState_.producerTimeNanoseconds.store(static_cast<std::uint64_t>(std::max(0.0, producerTime) * 1.0e9),
                                                   std::memory_order_release);
+        // Accounted before the free-run escape below, so the instrumentation
+        // mode reports capacity by the same arithmetic the throttled mode
+        // reports delivery -- the throttle is the only difference between them.
+        ++paceWindowIterations;
+        if (const auto paceElapsed =
+                std::chrono::duration<double>(now - paceWindowStart).count();
+            paceElapsed >= paceWindowSeconds) {
+            realtimeFactor_.store(
+                static_cast<double>(paceWindowIterations) * baseStep.count()
+                    / paceElapsed,
+                std::memory_order_relaxed);
+            paceWindowStart = now;
+            paceWindowIterations = 0;
+        }
         // Instrumentation escape hatch (see setRealtimeThrottleEnabled): with
         // the throttle off the loop free-runs, so the realtime factor stops
         // saturating at 1.0 and reads as capacity instead. The deadline is

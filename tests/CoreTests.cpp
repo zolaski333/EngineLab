@@ -2519,6 +2519,45 @@ int main() {
     }
 
     {
+        // The realtime factor is the only reading that can see the failure this
+        // project actually has, which is not a dropped frame but SLOW MOTION.
+        // `EngineRuntime::run` advances a fixed 1/240 s per iteration and sleeps
+        // to a wall deadline, so once a step costs more wall time than it
+        // advances, simulated time falls behind permanently. Users report that
+        // as late controls and a silent V8 or V12, never as a timing fault, so
+        // the number has to exist and has to be honest.
+        // On the heap, not the stack. An EngineRuntime embeds
+        // CylinderPressureQueue -- SpscQueue<CylinderPressureSample, 8192>, some
+        // 7.4 MB -- and MSVC does not reliably share frame slots between sibling
+        // scopes, so a SECOND stack-allocated runtime in this function overflows
+        // the 8 MB stack before main() prints anything. The symptom is exit
+        // 0xC00000FD in 0.02 s, which ctest reports as SegFault.
+        auto runtimeOwner =
+            std::make_unique<enginelab::EngineRuntime>(enginelab::makeDefaultInlineTwo());
+        auto& runtime = *runtimeOwner;
+        runtime.setIgnitionEnabled(true);
+        runtime.setThrottle(0.35);
+        runtime.start();
+        std::this_thread::sleep_for(std::chrono::milliseconds(1'200));
+        const auto throttledFactor = runtime.realtimeFactor();
+        require(std::isfinite(throttledFactor) && throttledFactor > 0.0,
+                "realtime factor must be finite and positive while running");
+        // `sleep_until` is what caps it. A throttled reading above 1 would mean
+        // the loop is not pacing itself at all.
+        require(throttledFactor <= 1.05,
+                "a throttled runtime must not report more than realtime");
+        // Non-vacuity. With the throttle removed the SAME arithmetic must read
+        // capacity instead, and an inline twin has several times the margin it
+        // needs. A field hard-coded to 1.0 passes the assertion above and fails
+        // this one.
+        runtime.setRealtimeThrottleEnabled(false);
+        std::this_thread::sleep_for(std::chrono::milliseconds(1'200));
+        const auto freeRunningFactor = runtime.realtimeFactor();
+        require(freeRunningFactor > 1.5,
+                "a free-running inline twin must report capacity above realtime");
+    }
+
+    {
         enginelab::EngineRuntime runtime(enginelab::makeDefaultInlineTwo());
         runtime.setIgnitionEnabled(false);
         runtime.setThrottle(0.31);
