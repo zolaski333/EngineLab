@@ -1,5 +1,15 @@
 # Brief de reprise — nouvelle machine (2026-07-28)
 
+> **Mise à jour physique du 2 août 2026.** Les chutes de couple environ
+> 2 000 tr/min avant rupteur sont maintenant reproduites par un harnais à plein
+> gaz en 2e/3e et supprimées sur les 14 moteurs routiers du catalogue. Les
+> causes étaient le couplage inertiel retardé, une cible d'étincelle mobile et
+> une double pénalisation de raté sur l'Audi I5. Voir
+> `docs/loaded-acceleration-validation-2026-08-02.md`. Prochaines étapes : banc
+> utilisateur progressif, diagnostic/autorité AFR diesel, puis
+> contre-pression turbo. Ne pas réactiver la limite d'adhérence : sa
+> désactivation est un choix de test volontaire.
+
 > **État final vérifié le 2 août 2026.** Lire d'abord
 > `docs/audio-roadmap-final-validation-2026-08-02.md`. Le commit de code testé
 > `da33134` passe **16/16** en `--free-run`, zéro overrun, avec le Merlin pire

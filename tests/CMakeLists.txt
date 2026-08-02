@@ -212,6 +212,20 @@ if(TARGET EngineLabShiftTransientHarness)
         EngineLab.AudioShiftTransientBoosted
         PROPERTIES TIMEOUT 180)
 endif()
+if(TARGET EngineLabLoadedAccelerationHarness)
+    add_test(NAME EngineLab.LoadedAccelerationCP2
+        COMMAND EngineLabLoadedAccelerationHarness
+            --filter "Yamaha CP2"
+            --gear 2)
+    add_test(NAME EngineLab.LoadedAccelerationAudi
+        COMMAND EngineLabLoadedAccelerationHarness
+            --filter "Audi I5"
+            --gear 3)
+    set_tests_properties(
+        EngineLab.LoadedAccelerationCP2
+        EngineLab.LoadedAccelerationAudi
+        PROPERTIES TIMEOUT 120)
+endif()
 if(MSVC)
     target_link_options(EngineLabCoreTests PRIVATE /STACK:8388608)
 endif()

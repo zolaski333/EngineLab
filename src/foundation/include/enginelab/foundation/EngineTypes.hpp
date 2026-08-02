@@ -700,6 +700,11 @@ struct EngineControls final {
     double externalTorqueNm { 0.0 };
     double brake { 0.0 };
     double dynamometerTorqueNm { 0.0 };
+    /** Rotating inertia reflected through a sticking clutch. The driveline
+     * supplies this with its equivalent external torque so chamber ripple is
+     * integrated against the coupled shaft instead of a one-frame-delayed
+     * clutch reaction. Zero preserves standalone/dyno behaviour. */
+    double externalRotatingInertiaKgM2 { 0.0 };
 };
 
 struct CylinderState final {
@@ -863,6 +868,13 @@ struct CylinderState final {
     /** Current per-cylinder physical burn-rate multiplier. Unlike the legacy
      * event-generator jitter, this acts before pressure and heat release. */
     double combustionCycleMultiplier { 1.0 };
+    /** Diagnostic event accounting for the most recently completed cylinder
+     * cycle. A commanded spark which never becomes an ignition distinguishes
+     * phasing/delay failures from fuelling and probabilistic misfire. */
+    std::uint32_t commandedSparkEventsLastCycle { 0 };
+    std::uint32_t completedIgnitionEventsLastCycle { 0 };
+    double commandedSparkPhaseLastCycle { -1.0 };
+    double completedIgnitionPhaseLastCycle { -1.0 };
 };
 
 struct EngineState final {
@@ -1008,6 +1020,16 @@ struct EngineState final {
     double forcedInductionShaftSpeedRpm { 0.0 };
     double wastegateOpening { 0.0 };
     double blowOffMassFlowKgPerSecond { 0.0 };
+    /** Last resolved ECU command. These are diagnostic telemetry, not a
+     * second control path: EngineSimulator publishes the exact command that
+     * already drove injection and combustion in the current sub-step. */
+    double ecuFuelCorrection { 1.0 };
+    bool ecuFuelEnabled { false };
+    bool ecuSparkEnabled { false };
+    bool ecuSoftRevLimiterActive { false };
+    bool ecuHardRevLimiterActive { false };
+    bool ecuAlternatingSparkCutActive { false };
+    bool ecuDecelerationFuelCutActive { false };
     double indicatedWorkJoulesPerCycle { 0.0 };
     double indicatedMeanEffectivePressureBar { 0.0 };
     /**
@@ -1061,6 +1083,7 @@ struct EngineState final {
     double drivelineLoadTorqueNm { 0.0 };
     double clutchTorqueNm { 0.0 };
     double clutchSlipRpm { 0.0 };
+    double drivelineReflectedInertiaKgM2 { 0.0 };
     double shiftProgress { 0.0 };
     bool shiftInProgress { false };
     double brakePressure { 0.0 };
@@ -1095,6 +1118,11 @@ struct EcuCommand final {
     bool overrunAfterfireActive { false };
     /** Explicit authored limiter state that keeps fuel while cutting spark. */
     bool wetSparkCutActive { false };
+    /** Diagnostic attribution for torque discontinuities. */
+    bool softRevLimiterActive { false };
+    bool hardRevLimiterActive { false };
+    bool alternatingSparkCutActive { false };
+    bool decelerationFuelCutActive { false };
 };
 
 // Output of the mean-value model SimplifiedGasolinePhysics::evaluateCombustion.

@@ -348,6 +348,8 @@ private:
     double wheelTorqueNm_ { 0.0 };
     double drivelineLoadTorqueNm_ { 0.0 };
     double engineClutchTorqueNm_ { 0.0 };
+    double engineCouplingTorqueNm_ { 0.0 };
+    double drivelineReflectedInertiaKgM2_ { 0.0 };
     double clutchSlipRpm_ { 0.0 };
     double effectiveClutchPressure_ { 0.0 };
     int engagedGear_ { -1 };

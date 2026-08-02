@@ -424,6 +424,9 @@ void EngineRuntime::updateDriveline(double dtSeconds, const EngineState& engineS
     engagedGear_ = drivelineOutput_.engagedGear;
     effectiveClutchPressure_ = drivelineOutput_.clutchPressure;
     engineClutchTorqueNm_ = drivelineOutput_.engineReactionTorqueNm;
+    engineCouplingTorqueNm_ = drivelineOutput_.engineCouplingTorqueNm;
+    drivelineReflectedInertiaKgM2_ =
+        drivelineOutput_.reflectedRotatingInertiaKgM2;
     drivelineLoadTorqueNm_ = drivelineOutput_.clutchTorqueNm;
     wheelTorqueNm_ = drivelineOutput_.wheelTorqueNm;
     clutchSlipRpm_ = drivelineOutput_.clutchSlipRpm;
@@ -599,9 +602,10 @@ void EngineRuntime::run(std::stop_token stopToken) {
         const EngineControls controls { ignition_.load(), starter_.load(),
             (dynoActive_ ? (dynoSweeping_ ? 1.0 : 0.18) : std::clamp(throttle_.load(), 0.0, 1.0))
                 * torqueCutMultiplier,
-            dynoActive_ ? requestedLoad : 0.0, dynoActive_ ? 0.0 : engineClutchTorqueNm_,
+            dynoActive_ ? requestedLoad : 0.0, dynoActive_ ? 0.0 : engineCouplingTorqueNm_,
             dynoActive_ ? 0.0 : brakePressure_.load(std::memory_order_relaxed),
-            dynoActive_ ? dynoBrakeTorqueNm_ : 0.0 };
+            dynoActive_ ? dynoBrakeTorqueNm_ : 0.0,
+            dynoActive_ ? 0.0 : drivelineReflectedInertiaKgM2_ };
         auto frame = simulationDt > 0.0 ? simulator_.step(simulationDt, controls) : SimulationFrame { simulator_.state() };
         if (simulationDt > 0.0) {
             const auto simulationStart = frame.state.simulationTimeSeconds - simulationDt;
@@ -750,6 +754,8 @@ void EngineRuntime::run(std::stop_token stopToken) {
             frame.state.drivelineLoadTorqueNm = drivelineLoadTorqueNm_;
             frame.state.clutchTorqueNm = -engineClutchTorqueNm_;
             frame.state.clutchSlipRpm = clutchSlipRpm_;
+            frame.state.drivelineReflectedInertiaKgM2 =
+                drivelineReflectedInertiaKgM2_;
             frame.state.shiftProgress = shiftProgress_;
             frame.state.shiftInProgress = shiftInProgress_;
             frame.state.brakePressure = drivelineOutput_.brakePressure;

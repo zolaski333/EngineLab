@@ -374,7 +374,9 @@ TickResult coupledStep(enginelab::EngineSimulator& simulator,
     controls.starterEngaged = starter;
     result.engineThrottle = std::clamp(throttleCmd, 0.0, 1.0) * result.drive.torqueCutMultiplier;
     controls.throttle = result.engineThrottle;
-    controls.externalTorqueNm = result.drive.engineReactionTorqueNm;
+    controls.externalTorqueNm = result.drive.engineCouplingTorqueNm;
+    controls.externalRotatingInertiaKgM2 =
+        result.drive.reflectedRotatingInertiaKgM2;
     result.frame = simulator.step(stepSeconds, controls);
     return result;
 }

@@ -438,6 +438,10 @@ EcuCommand SimpleEcuModel::evaluate(const EngineConfig& config, const EngineStat
              commandedFuelEnabled,
              commandedSparkEnabled,
              overrunAfterfireActive,
-             wetSparkCutActive };
+             wetSparkCutActive,
+             softLimit,
+             limiterActive,
+             alternatingCut,
+             decelerationFuelCut };
 }
 } // namespace enginelab

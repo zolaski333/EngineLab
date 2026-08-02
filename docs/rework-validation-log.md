@@ -5,6 +5,21 @@ It records measurements as well as successful changes. Failed hypotheses are
 kept because repeating an attractive but disproved fix wastes more time than
 documenting it.
 
+## 2026-08-02 — sursauts pré-rupteur reproduits et supprimés
+
+Un nouveau harnais accélère chaque moteur du catalogue à plein gaz en 2e ou
+3e et attribue chaque chute de couple à l'embrayage, l'ECU, l'alimentation, le
+raté ou la planification d'étincelle. Les causes prouvées étaient un couplage
+embrayage/véhicule retardé, une cible d'étincelle mobile pouvant être manquée
+et, sur l'Audi I5, une double pénalisation probabiliste du carburant.
+
+Après correction, les **14/14 moteurs routiers** passent en 2e puis en 3e avec
+**zéro sursaut pré-rupteur** et sans fuel cut, spark cut ni glissement dans la
+fenêtre qualifiée. Les deux témoins CP2/Audi sont dans CTest ; le groupe ciblé
+passe 7/7. L'A/B local `--free-run` fait 16/16 sans overrun avant comme après ;
+le pire LS3 évolue de 1,132× à 1,122×. Protocole, tables et limites :
+[`loaded-acceleration-validation-2026-08-02.md`](loaded-acceleration-validation-2026-08-02.md).
+
 ## 2026-08-01 — productisation des physiques audio
 
 Les fonctions d'absorption poreuse, variabilité cycle-à-cycle et afterfire

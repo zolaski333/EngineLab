@@ -37,6 +37,17 @@ if(MSVC)
 endif()
 enginelab_set_warnings(EngineLabShiftTransientHarness)
 
+add_executable(EngineLabLoadedAccelerationHarness LoadedAccelerationHarness.cpp)
+target_link_libraries(EngineLabLoadedAccelerationHarness PRIVATE
+    EngineLab::Runtime EngineLab::Simulation EngineLab::Foundation EngineLab::Physics
+    EngineLab::Ecu EngineLab::Events EngineLab::Exhaust EngineLab::Catalog)
+target_compile_definitions(EngineLabLoadedAccelerationHarness PRIVATE
+    ENGINELAB_CATALOG_ROOT="${CMAKE_SOURCE_DIR}")
+if(MSVC)
+    target_link_options(EngineLabLoadedAccelerationHarness PRIVATE /STACK:8388608)
+endif()
+enginelab_set_warnings(EngineLabLoadedAccelerationHarness)
+
 add_executable(EngineLabAudioRenderHarness AudioRenderHarness.cpp)
 target_link_libraries(EngineLabAudioRenderHarness PRIVATE
     EngineLab::Audio EngineLab::Simulation EngineLab::Foundation EngineLab::Physics

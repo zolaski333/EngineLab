@@ -658,6 +658,10 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
     safeControls.load = std::isfinite(controls.load) ? std::clamp(controls.load, 0.0, 1.0) : 0.0;
     safeControls.externalTorqueNm = std::isfinite(controls.externalTorqueNm)
         ? std::clamp(controls.externalTorqueNm, -5'000.0, 5'000.0) : 0.0;
+    safeControls.externalRotatingInertiaKgM2 =
+        std::isfinite(controls.externalRotatingInertiaKgM2)
+        ? std::clamp(controls.externalRotatingInertiaKgM2, 0.0, 100.0)
+        : 0.0;
     safeControls.dynamometerTorqueNm = std::isfinite(controls.dynamometerTorqueNm)
         ? std::clamp(controls.dynamometerTorqueNm, 0.0, 10'000.0) : 0.0;
     // Gas pressure and crank loading need much finer resolution than UI/runtime
@@ -755,6 +759,15 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
         const auto ecuCommand = ecu_.evaluate(config_, state_, safeControls);
         state_.exhaustAfterfireOverrunActive =
             ecuCommand.overrunAfterfireActive;
+        state_.ecuFuelCorrection = ecuCommand.fuelCorrection;
+        state_.ecuFuelEnabled = ecuCommand.fuelEnabled;
+        state_.ecuSparkEnabled = ecuCommand.sparkEnabled;
+        state_.ecuSoftRevLimiterActive = ecuCommand.softRevLimiterActive;
+        state_.ecuHardRevLimiterActive = ecuCommand.hardRevLimiterActive;
+        state_.ecuAlternatingSparkCutActive =
+            ecuCommand.alternatingSparkCutActive;
+        state_.ecuDecelerationFuelCutActive =
+            ecuCommand.decelerationFuelCutActive;
         state_.throttle = smooth(state_.throttle, ecuCommand.effectiveThrottle, subDt, 10.0);
         if (compressionIgnitionEngine) {
             // A conventional diesel has no load-controlling throttle plate:
@@ -975,7 +988,8 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
         const auto cranking = safeControls.starterEngaged && state_.rpm < 620.0 && state_.damage < 1.0;
         const auto displacement = engineDisplacementLitres(config_);
         const auto rotatingInertia =
-            effectiveRotatingInertiaKgM2(config_);
+            effectiveRotatingInertiaKgM2(config_)
+            + safeControls.externalRotatingInertiaKgM2;
         const auto fuelMolarMassKg =
             config_.fuelProperties.molarMassGramsPerMole * 0.001;
         double pistonSpeedSum = 0.0;
@@ -1072,6 +1086,22 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
             const auto previousPhase = previousCylinderPhases_[cylinderIndex];
             const auto cycleBoundaryCrossed = crossedPhase(previousPhase, cyclePhase, 0.0);
             if (cycleBoundaryCrossed) {
+                commandedSparkEventsLastCycle_[cylinderIndex] =
+                    commandedSparkEventsThisCycle_[cylinderIndex];
+                completedIgnitionEventsLastCycle_[cylinderIndex] =
+                    completedIgnitionEventsThisCycle_[cylinderIndex];
+                commandedSparkPhaseLastCycle_[cylinderIndex] =
+                    commandedSparkPhaseThisCycle_[cylinderIndex];
+                completedIgnitionPhaseLastCycle_[cylinderIndex] =
+                    completedIgnitionPhaseThisCycle_[cylinderIndex];
+                commandedSparkEventsThisCycle_[cylinderIndex] = 0;
+                completedIgnitionEventsThisCycle_[cylinderIndex] = 0;
+                commandedSparkPhaseThisCycle_[cylinderIndex] = -1.0;
+                completedIgnitionPhaseThisCycle_[cylinderIndex] = -1.0;
+                // A schedule belongs to exactly one compression stroke. If a
+                // cut prevented its event, it must not leak into the next
+                // cycle and fire at an unrelated angle.
+                sparkScheduleArmed_[cylinderIndex] = false;
                 if (cylinderFlowCycleStarted_[cylinderIndex]) {
                     intakeFlowMgPerCycle_[cylinderIndex] = std::max(0.0,
                         intakeFlowMgThisCycle_[cylinderIndex]);
@@ -1099,9 +1129,23 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
             valveTrainResults_[cylinderIndex] = ValveTrainModel::evaluate(*cams.config, cams.highProfile,
                 valveTrainStates_[cylinderIndex], cyclePhase, state_.rpm, state_.load, subDt);
             const auto& valveTrain = valveTrainResults_[cylinderIndex];
-            const auto sparkPhase = std::fmod(720.0 - ecuCommand.ignitionAdvanceDegrees
+            const auto requestedSparkPhase = std::fmod(720.0 - ecuCommand.ignitionAdvanceDegrees
                 + cylinder.ignitionOffsetDegrees + 720.0, 720.0);
-            const auto sparkCrossed = crossedPhase(previousPhase, cyclePhase, sparkPhase);
+            // A real ECU commits a spark event ahead of the target tooth. The
+            // former code moved the crossing target at every solver substep;
+            // under a loaded acceleration, a small advance change could move
+            // that target across the crank between two evaluations, producing
+            // no event for the entire cylinder cycle. Latch it at the start of
+            // compression (phase 540) and consume it once near firing TDC.
+            if (crossedPhase(previousPhase, cyclePhase, 540.0)) {
+                scheduledSparkPhaseDegrees_[cylinderIndex] =
+                    requestedSparkPhase;
+                sparkScheduleArmed_[cylinderIndex] = true;
+            }
+            const auto sparkPhase =
+                scheduledSparkPhaseDegrees_[cylinderIndex];
+            const auto sparkCrossed = sparkScheduleArmed_[cylinderIndex]
+                && crossedPhase(previousPhase, cyclePhase, sparkPhase);
             const auto injectionStartCrossed = crossedPhase(previousPhase, cyclePhase,
                 config_.injection.startAngleDegrees);
             if (injectionStartCrossed) {
@@ -1366,6 +1410,8 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 ignitionPending_[cylinderIndex] = false;
                 ignitionDelayRemainingSeconds_[cylinderIndex] = 0.0;
             } else if (sparkCrossed) {
+                ++commandedSparkEventsThisCycle_[cylinderIndex];
+                commandedSparkPhaseThisCycle_[cylinderIndex] = sparkPhase;
                 combustionCycleMultiplier_[cylinderIndex] =
                     CombustionCycleVariation::advance(
                         config_.combustionCalibration
@@ -1478,10 +1524,17 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 const auto actualMisfireProbability = std::clamp(
                     std::max(0.0, mixtureError - 0.20) * 0.95
                     + flammabilityPenalty * 0.72
-                    + std::max(0.0, 380.0 - state_.rpm) / 1'400.0
-                    + (requestedFuelMoles > 1.0e-15
-                        ? std::max(0.0, 0.55 - fuelDeliveryRatio_[cylinderIndex]) * 0.65 : 0.0),
+                    + std::max(0.0, 380.0 - state_.rpm) / 1'400.0,
                     0.0, 0.92);
+                // Do not add fuelDeliveryRatio as a second mixture penalty.
+                // It compares chamber inventory with the current command and
+                // legitimately sits below one on a port-injected transient;
+                // the mixture above is the fuel and oxygen the flame actually
+                // sees. On the boosted I5 it read ~0.48 while every cylinder
+                // was at AFR 12.0-13.2 and the injector retained ~62% duty
+                // headroom, yet the duplicate term invented simultaneous WOT
+                // misfires. Genuine under-delivery already raises mixtureAfr
+                // and therefore both mixtureError and flammabilityPenalty.
                 auto& rng = decoupleSharedVolumes
                     ? cylinderRandomState_[cylinderIndex] : randomState_;
                 rng ^= rng << 13U;
@@ -1507,6 +1560,8 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                     ? FlamePhysicsModel::ignitionDelaySeconds(config_.combustionCalibration, flameConditions) : 0.0;
                 flameEvents_[cylinderIndex] = {};
             }
+            if (sparkCrossed)
+                sparkScheduleArmed_[cylinderIndex] = false;
             previousCylinderPhases_[cylinderIndex] = cyclePhase;
             const auto phaseTravel = forwardPhaseDegrees(previousPhase, cyclePhase);
             // Bank angle is spatial geometry, not cam timing. Valve events are
@@ -1585,6 +1640,9 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                                 / config_.fuelProperties.oxygenMolesPerFuelMole);
                         flamePhysics_.ignite(flameEvents_[cylinderIndex], config_.fuelProperties,
                                              flameConditions, burnableFuelMoles);
+                        ++completedIgnitionEventsThisCycle_[cylinderIndex];
+                        completedIgnitionPhaseThisCycle_[cylinderIndex] =
+                            cyclePhase;
                         residualGasFractionAtSpark_[cylinderIndex] =
                             flameConditions.burnedGasFraction;
                         equivalenceRatioAtSpark_[cylinderIndex] =
@@ -2862,6 +2920,14 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 * config_.fuelProperties.molarMassGramsPerMole * 1'000.0;
             cylinderState.combustionCycleMultiplier =
                 combustionCycleMultiplier_[index];
+            cylinderState.commandedSparkEventsLastCycle =
+                commandedSparkEventsLastCycle_[index];
+            cylinderState.completedIgnitionEventsLastCycle =
+                completedIgnitionEventsLastCycle_[index];
+            cylinderState.commandedSparkPhaseLastCycle =
+                commandedSparkPhaseLastCycle_[index];
+            cylinderState.completedIgnitionPhaseLastCycle =
+                completedIgnitionPhaseLastCycle_[index];
         }
         if (pressureSamples_) {
             CylinderPressureSample pressureSample;
@@ -3133,6 +3199,16 @@ void EngineSimulator::reset() noexcept {
     runnerAcousticResults_.fill({});
     ignitionDelayRemainingSeconds_.fill(0.0);
     ignitionPending_.fill(false);
+    sparkScheduleArmed_.fill(false);
+    scheduledSparkPhaseDegrees_.fill(0.0);
+    commandedSparkEventsThisCycle_.fill(0);
+    commandedSparkEventsLastCycle_.fill(0);
+    completedIgnitionEventsThisCycle_.fill(0);
+    completedIgnitionEventsLastCycle_.fill(0);
+    commandedSparkPhaseThisCycle_.fill(-1.0);
+    commandedSparkPhaseLastCycle_.fill(-1.0);
+    completedIgnitionPhaseThisCycle_.fill(-1.0);
+    completedIgnitionPhaseLastCycle_.fill(-1.0);
     eventEvaluationAngleDegrees_ = state_.crankAngleDegrees;
     eventEvaluationTimeSeconds_ = state_.simulationTimeSeconds;
     indicatedWorkThisCycleJoules_ = 0.0;

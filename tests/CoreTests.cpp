@@ -285,10 +285,17 @@ int main() {
             unloadedOutput = unloadedDriveline.advance(0.001, engine, 0.0, 1.0, 0.0);
             loadedOutput = loadedDriveline.advance(0.001, engine, 0.15, 1.0, 0.0);
         }
+        // With rigid rolling contact and a fixed external engine speed, both
+        // drivelines must settle at the same kinematic road speed.  The manual
+        // retarder is observable as additional crank reaction, not artificial
+        // tyre slip or a lower speed at the same locked ratio.
         require(loadedOutput.roadLoadForceN > 0.0
-                && loadedOutput.vehicleSpeedMps < unloadedOutput.vehicleSpeedMps
+                && loadedOutput.engineCouplingTorqueNm
+                    < unloadedOutput.engineCouplingTorqueNm - 1.0
+                && std::abs(loadedOutput.vehicleSpeedMps
+                    - unloadedOutput.vehicleSpeedMps) < 0.05
                 && std::isfinite(loadedOutput.energyResidualJoules),
-                "manual vehicle load must dissipate road work through the driveline energy path");
+                "manual vehicle load must reach the crank through the rigid driveline energy path");
 
         // A fully engaged dry clutch must lock and carry the crank's torque at a few
         // rpm of slip, not slip endlessly like a fluid coupling. Close the loop with a

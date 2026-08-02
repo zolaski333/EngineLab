@@ -6,6 +6,12 @@ namespace enginelab {
 
 struct DrivelineOutput final {
     double engineReactionTorqueNm { 0.0 };
+    /** Equivalent crank torque used together with
+     * reflectedRotatingInertiaKgM2 by EngineSimulator. While slipping this is
+     * the ordinary clutch reaction; while sticking it is the road-side load
+     * reflected through the ratio, without counting coupled inertia as load. */
+    double engineCouplingTorqueNm { 0.0 };
+    double reflectedRotatingInertiaKgM2 { 0.0 };
     double requestedLoad { 0.0 };
     double torqueCutMultiplier { 1.0 };
     int engagedGear { -1 };

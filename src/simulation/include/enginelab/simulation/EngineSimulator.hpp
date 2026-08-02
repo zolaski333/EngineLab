@@ -394,6 +394,16 @@ private:
      *  can still be arriving when the spark fires. */
     std::array<double, 32> equivalenceRatioAtSpark_ {};
     std::array<bool, 32> ignitionPending_ {};
+    std::array<bool, 32> sparkScheduleArmed_ {};
+    std::array<double, 32> scheduledSparkPhaseDegrees_ {};
+    std::array<std::uint32_t, 32> commandedSparkEventsThisCycle_ {};
+    std::array<std::uint32_t, 32> commandedSparkEventsLastCycle_ {};
+    std::array<std::uint32_t, 32> completedIgnitionEventsThisCycle_ {};
+    std::array<std::uint32_t, 32> completedIgnitionEventsLastCycle_ {};
+    std::array<double, 32> commandedSparkPhaseThisCycle_ {};
+    std::array<double, 32> commandedSparkPhaseLastCycle_ {};
+    std::array<double, 32> completedIgnitionPhaseThisCycle_ {};
+    std::array<double, 32> completedIgnitionPhaseLastCycle_ {};
     FlamePhysicsModel flamePhysics_ {};
     std::array<bool, 32> cylinderMisfires_ {};
     std::unique_ptr<gasdynamics::ExhaustGasNetwork> physicalExhaustNetwork_;

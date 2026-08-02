@@ -145,7 +145,18 @@ DrivelineOutput DrivelineModel::advance(double dt, const EngineState& engineStat
     // The crank's own torque this tick (combustion brake torque plus any starter),
     // used by the locked-clutch constraint. It is a one-tick estimate of a quantity
     // that changes slowly next to the tick, and the friction capacity bounds it.
-    const auto engineDriveTorque = engineState.torqueNm + engineState.starterTorqueNm;
+    // The driveline advances once per public 240 Hz frame while chamber torque
+    // is resolved at many crank-angle substeps. Feeding the last instantaneous
+    // pressure torque into a one-frame-ahead rigid-clutch constraint aliases a
+    // firing pulse into an equal-and-opposite reaction on the next frame. Use
+    // the completed-cycle work for the mean constraint load; torsional ripple
+    // remains in EngineSimulator, but cannot be phase-inverted by the slower
+    // vehicle coupling.
+    const auto engineDriveTorque =
+        (engineState.simulationTimeSeconds > 0.0 && engineState.rpm > 220.0
+            ? engineState.cycleAveragedTorqueNm
+            : engineState.torqueNm)
+        + engineState.starterTorqueNm;
     const auto wheelInertia = std::max(0.01, transmission.drivenWheelInertiaKgM2
         + transmission.differentialInertiaKgM2
         + transmission.gearboxInputInertiaKgM2 * totalRatio * totalRatio);
@@ -174,6 +185,8 @@ DrivelineOutput DrivelineModel::advance(double dt, const EngineState& engineStat
     const auto mechanicalStepCount = std::max(1, static_cast<int>(std::ceil(dt / 0.001)));
     const auto mechanicalDt = mechanicalStepCount > 0 ? dt / mechanicalStepCount : 0.0;
     double clutchTorqueIntegral = 0.0;
+    double engineCouplingTorqueIntegral = 0.0;
+    double reflectedInertiaTimeIntegral = 0.0;
     double wheelTorqueIntegral = 0.0;
     double clutchLossEnergy = 0.0;
     double wheelInputWork = 0.0;
@@ -186,6 +199,20 @@ DrivelineOutput DrivelineModel::advance(double dt, const EngineState& engineStat
     double lastSlipRpm = 0.0;
     double lastTireForce = 0.0;
     double lastRoadLoadForce = 0.0;
+    // The engine itself is integrated by EngineSimulator after this call, from
+    // the frame-mean clutch reaction returned below. The mechanical loop still
+    // needs a local prediction of that same response: keeping engineOmega
+    // frozen while the wheel advances through four or five 1 ms substeps makes
+    // a locked clutch overshoot synchronism, reverse its full kinetic-friction
+    // torque on the next substep, and repeat. At high ratio this appeared as
+    // +/- clutch capacity and 200-300 rpm crank jumps every public 240 Hz tick.
+    //
+    // This predictor does not become a second crank state and is never
+    // published. It integrates the same estimated drive torque and clutch
+    // reaction solely for the next local slip evaluation; EngineSimulator
+    // remains authoritative and receives the time-averaged reaction exactly as
+    // before.
+    auto predictedEngineOmega = engineOmega;
     // Counted, not latched. This used to be a sticky OR across the mechanical
     // sub-steps, so a single clipped sub-step out of five lit the indicator for
     // the whole frame -- and with a slip-velocity spring this stiff, one clipped
@@ -198,14 +225,33 @@ DrivelineOutput DrivelineModel::advance(double dt, const EngineState& engineStat
         const auto previousWheelOmega = wheelAngularVelocityRadPerSecond_;
         const auto previousVehicleSpeed = vehicleSpeedMps_;
         const auto gearboxOmega = previousWheelOmega * totalRatio;
-        const auto slipOmega = engineOmega - gearboxOmega;
+        const auto slipOmega = predictedEngineOmega - gearboxOmega;
         lastSlipRpm = slipOmega * 60.0 / (2.0 * std::numbers::pi);
         const auto fade = std::clamp((transmission.clutchFailureTemperatureC - clutchTemperatureC_)
             / (transmission.clutchFailureTemperatureC - transmission.clutchFadeStartTemperatureC), 0.0, 1.0);
         const auto capacity = transmission.maxClutchTorqueNm * effectiveClutch * fade;
 
-        // Driven-tyre longitudinal force and wheel-brake torque are resolved before
-        // the clutch, because the lock solver needs the road load it must react.
+        const auto speedSquared = previousVehicleSpeed * previousVehicleSpeed;
+        const auto speedSign = std::abs(previousVehicleSpeed) > 0.01
+            ? std::copysign(1.0, previousVehicleSpeed) : 0.0;
+        const auto aeroForce = 0.5 * 1.225 * vehicle.dragCoefficient
+            * vehicle.frontalAreaM2 * speedSquared * speedSign;
+        const auto rollingForce = vehicle.massKg * 9.80665
+            * vehicle.rollingResistanceCoefficient * speedSign;
+        const auto motionSign = std::abs(previousWheelOmega) > 0.01
+            ? std::copysign(1.0, previousWheelOmega)
+            : (std::abs(previousVehicleSpeed) > 0.01
+                ? std::copysign(1.0, previousVehicleSpeed) : 0.0);
+        const auto brakeTorque = brakeForceCapacity
+            * vehicle.tireRadiusM * motionSign;
+
+        // Driven-tyre longitudinal force and wheel-brake torque are resolved
+        // before the clutch, because the lock solver needs the road load it
+        // must react. With the optional grip model OFF, rolling contact is a
+        // rigid no-wheelspin constraint: vehicle translation is reflected as
+        // m*r^2 at the wheel instead of approximated by an unbounded stiff
+        // slip spring. This is both the documented rolling-road behaviour and
+        // the stable interpretation of "no adhesion constraint".
         const auto tireSurfaceSpeed = previousWheelOmega * vehicle.tireRadiusM;
         const auto slipVelocity = tireSurfaceSpeed - previousVehicleSpeed;
         // The preceding 1 ms mechanical sub-step supplies acceleration to the
@@ -213,26 +259,37 @@ DrivelineOutput DrivelineModel::advance(double dt, const EngineState& engineStat
         // by the tyre relaxation state and avoids an algebraic traction loop.
         const auto normalForce =
             drivenAxleNormalForce(longitudinalAccelerationMps2_);
-        const auto tractionLimit =
-            vehicle.tireFrictionCoefficient * normalForce;
-        const auto tireStiffnessNPerMps = normalForce * 7.5;
-        const auto unconstrainedTireForce = slipVelocity * tireStiffnessNPerMps;
-        // With the grip limit disabled the tyre is not allowed to break away:
-        // it transmits whatever the driveline demands, which is the rolling-road
-        // behaviour `VehicleConfig::tyreGripLimitEnabled` documents. The slip
-        // spring itself stays -- it is what couples wheel to road at all -- so
-        // this removes the friction circle, not the tyre.
-        lastTireForce = vehicle.tyreGripLimitEnabled
-            ? std::clamp(unconstrainedTireForce, -tractionLimit, tractionLimit)
-            : unconstrainedTireForce;
-        if (vehicle.tyreGripLimitEnabled
-                && std::abs(unconstrainedTireForce) > tractionLimit + 1.0e-6)
-            ++tractionLimitedSteps;
-        const auto motionSign = std::abs(previousWheelOmega) > 0.01
-            ? std::copysign(1.0, previousWheelOmega)
-            : (std::abs(previousVehicleSpeed) > 0.01 ? std::copysign(1.0, previousVehicleSpeed) : 0.0);
-        const auto brakeTorque = brakeForceCapacity * vehicle.tireRadiusM * motionSign;
-        const auto wheelLoadTorque = lastTireForce * vehicle.tireRadiusM + brakeTorque;
+        auto wheelInertiaForConstraint = wheelInertia;
+        auto wheelLoadTorque = 0.0;
+        auto roadLoadForce = 0.0;
+        if (vehicle.tyreGripLimitEnabled) {
+            const auto tractionLimit =
+                vehicle.tireFrictionCoefficient * normalForce;
+            const auto tireStiffnessNPerMps = normalForce * 7.5;
+            const auto unconstrainedTireForce =
+                slipVelocity * tireStiffnessNPerMps;
+            lastTireForce = std::clamp(
+                unconstrainedTireForce, -tractionLimit, tractionLimit);
+            if (std::abs(unconstrainedTireForce) > tractionLimit + 1.0e-6)
+                ++tractionLimitedSteps;
+            wheelLoadTorque = lastTireForce * vehicle.tireRadiusM
+                + brakeTorque;
+        } else {
+            constexpr double roadLoadDirectionThresholdMps = 1.0e-6;
+            const auto vehicleIsMoving = std::abs(previousVehicleSpeed)
+                > roadLoadDirectionThresholdMps;
+            const auto loadDirection = vehicleIsMoving
+                ? std::copysign(1.0, previousVehicleSpeed)
+                : (std::abs(totalRatio) > 1.0e-9
+                    ? std::copysign(1.0, totalRatio) : 0.0);
+            roadLoadForce = requestedLoad * vehicle.maximumBrakeForceN
+                * loadDirection;
+            lastRoadLoadForce = roadLoadForce;
+            wheelInertiaForConstraint += vehicle.massKg
+                * vehicle.tireRadiusM * vehicle.tireRadiusM;
+            wheelLoadTorque = (aeroForce + rollingForce + roadLoadForce)
+                * vehicle.tireRadiusM + brakeTorque;
+        }
 
         // Dry-friction clutch with a Karnopp stick/slip law.
         //  * |slip| outside the lock window -> kinetic friction: it transmits its full
@@ -247,54 +304,87 @@ DrivelineOutput DrivelineModel::advance(double dt, const EngineState& engineStat
         //    slipping without end. The friction capacity still bounds it: when the
         //    demanded stick torque exceeds capacity the clutch breaks away into slip.
         double clutchTorque = 0.0;
+        auto clutchSticking = false;
         if (totalRatio != 0.0 && effectiveClutch > 0.0) {
             const auto lockBandRpm = std::max(1.0, transmission.clutchLockSpeedRpm);
             if (std::abs(lastSlipRpm) > lockBandRpm) {
                 clutchTorque = std::copysign(capacity, slipOmega);
             } else {
-                const auto coupledInertia = wheelInertia
+                const auto coupledInertia = wheelInertiaForConstraint
                     + engineInertiaKgM2_ * totalRatio * totalRatio * transmission.drivelineEfficiency;
                 const auto stickTorque = coupledInertia > 0.0
-                    ? (wheelInertia * engineDriveTorque
+                    ? (wheelInertiaForConstraint * engineDriveTorque
                        + engineInertiaKgM2_ * totalRatio * wheelLoadTorque) / coupledInertia
                     : 0.0;
                 clutchTorque = std::clamp(stickTorque, -capacity, capacity);
+                clutchSticking = std::abs(stickTorque) <= capacity + 1.0e-9;
             }
         }
+        auto engineCouplingTorque = -clutchTorque;
+        auto reflectedInertiaKgM2 = 0.0;
+        if (clutchSticking && std::abs(totalRatio) > 1.0e-9) {
+            // Rigid-shaft equivalent referred to the crank. The clutch torque
+            // itself contains the torque needed to accelerate wheel/gearbox
+            // inertia; applying it as an external load one 240 Hz frame later
+            // phase-inverts combustion ripple. Carry that inertia explicitly
+            // and reflect only the road-side load torque instead.
+            const auto ratioEfficiency = totalRatio
+                * transmission.drivelineEfficiency;
+            reflectedInertiaKgM2 = wheelInertiaForConstraint
+                / (totalRatio * ratioEfficiency);
+            engineCouplingTorque = -wheelLoadTorque / ratioEfficiency;
+        }
         const auto wheelTorque = clutchTorque * totalRatio * transmission.drivelineEfficiency;
-        const auto wheelAcceleration = (wheelTorque - lastTireForce * vehicle.tireRadiusM - brakeTorque)
-            / wheelInertia;
+        const auto wheelAcceleration = (wheelTorque - wheelLoadTorque)
+            / wheelInertiaForConstraint;
         wheelAngularVelocityRadPerSecond_ += wheelAcceleration * mechanicalDt;
+        if (totalRatio != 0.0 && effectiveClutch > 0.0) {
+            predictedEngineOmega = std::max(0.0,
+                predictedEngineOmega
+                    + (engineDriveTorque + engineCouplingTorque)
+                        / (engineInertiaKgM2_ + reflectedInertiaKgM2)
+                        * mechanicalDt);
+        }
         if (brakePressure > 0.0 && previousWheelOmega * wheelAngularVelocityRadPerSecond_ < 0.0)
             wheelAngularVelocityRadPerSecond_ = 0.0;
 
-        const auto speedSquared = previousVehicleSpeed * previousVehicleSpeed;
-        const auto speedSign = std::abs(previousVehicleSpeed) > 0.01
-            ? std::copysign(1.0, previousVehicleSpeed) : 0.0;
-        const auto aeroForce = 0.5 * 1.225 * vehicle.dragCoefficient * vehicle.frontalAreaM2
-            * speedSquared * speedSign;
-        const auto rollingForce = vehicle.massKg * 9.80665 * vehicle.rollingResistanceCoefficient * speedSign;
-        // The manual vehicle load is an external longitudinal retarder. Its
-        // reaction reaches the crank only through tire, gearbox and clutch;
-        // applying the same command directly at the crank would count it twice.
-        const auto unretardedForce = lastTireForce - aeroForce - rollingForce;
-        constexpr double roadLoadDirectionThresholdMps = 1.0e-6;
-        const auto vehicleIsMoving = std::abs(previousVehicleSpeed)
-            > roadLoadDirectionThresholdMps;
-        const auto loadDirection = vehicleIsMoving
-            ? std::copysign(1.0, previousVehicleSpeed)
-            : (std::abs(unretardedForce) > 1.0e-6 ? std::copysign(1.0, unretardedForce) : 0.0);
-        const auto roadLoadCapacity = requestedLoad * vehicle.maximumBrakeForceN;
-        const auto roadLoadMagnitude = vehicleIsMoving
-            ? roadLoadCapacity : std::min(roadLoadCapacity, std::abs(unretardedForce));
-        const auto roadLoadForce = roadLoadMagnitude * loadDirection;
-        lastRoadLoadForce = roadLoadForce;
-        longitudinalAccelerationMps2_ =
-            (lastTireForce - aeroForce - rollingForce - roadLoadForce)
-            / vehicle.massKg;
-        vehicleSpeedMps_ += longitudinalAccelerationMps2_ * mechanicalDt;
-        if (loadDirection != 0.0 && vehicleSpeedMps_ * loadDirection < 0.0)
-            vehicleSpeedMps_ = 0.0;
+        if (vehicle.tyreGripLimitEnabled) {
+            // The manual vehicle load is an external longitudinal retarder. Its
+            // reaction reaches the crank only through tyre, gearbox and clutch.
+            const auto unretardedForce =
+                lastTireForce - aeroForce - rollingForce;
+            constexpr double roadLoadDirectionThresholdMps = 1.0e-6;
+            const auto vehicleIsMoving = std::abs(previousVehicleSpeed)
+                > roadLoadDirectionThresholdMps;
+            const auto loadDirection = vehicleIsMoving
+                ? std::copysign(1.0, previousVehicleSpeed)
+                : (std::abs(unretardedForce) > 1.0e-6
+                    ? std::copysign(1.0, unretardedForce) : 0.0);
+            const auto roadLoadCapacity =
+                requestedLoad * vehicle.maximumBrakeForceN;
+            const auto roadLoadMagnitude = vehicleIsMoving
+                ? roadLoadCapacity
+                : std::min(roadLoadCapacity, std::abs(unretardedForce));
+            roadLoadForce = roadLoadMagnitude * loadDirection;
+            lastRoadLoadForce = roadLoadForce;
+            longitudinalAccelerationMps2_ =
+                (lastTireForce - aeroForce - rollingForce - roadLoadForce)
+                / vehicle.massKg;
+            vehicleSpeedMps_ +=
+                longitudinalAccelerationMps2_ * mechanicalDt;
+            if (loadDirection != 0.0
+                    && vehicleSpeedMps_ * loadDirection < 0.0)
+                vehicleSpeedMps_ = 0.0;
+        } else {
+            vehicleSpeedMps_ = wheelAngularVelocityRadPerSecond_
+                * vehicle.tireRadiusM;
+            longitudinalAccelerationMps2_ =
+                (vehicleSpeedMps_ - previousVehicleSpeed) / mechanicalDt;
+            // Contact force telemetry includes the force accelerating vehicle
+            // mass plus the external longitudinal resistances.
+            lastTireForce = vehicle.massKg * longitudinalAccelerationMps2_
+                + aeroForce + rollingForce + roadLoadForce;
+        }
         if (brakePressure > 0.0 && previousVehicleSpeed * vehicleSpeedMps_ < 0.0) vehicleSpeedMps_ = 0.0;
         vehicleDistanceM_ += std::abs(0.5 * (previousVehicleSpeed + vehicleSpeedMps_)) * mechanicalDt;
 
@@ -307,13 +397,19 @@ DrivelineOutput DrivelineModel::advance(double dt, const EngineState& engineStat
             / transmission.clutchThermalCapacityJPerC * mechanicalDt;
         clutchTemperatureC_ = std::max(config_.ambientTemperatureC, clutchTemperatureC_);
         clutchTorqueIntegral += clutchTorque * mechanicalDt;
+        engineCouplingTorqueIntegral +=
+            engineCouplingTorque * mechanicalDt;
+        reflectedInertiaTimeIntegral +=
+            reflectedInertiaKgM2 * mechanicalDt;
         wheelTorqueIntegral += wheelTorque * mechanicalDt;
         clutchLossEnergy += clutchLossW * mechanicalDt;
         wheelInputWork += wheelTorque * meanWheelOmega * mechanicalDt;
         roadWork += (std::abs(aeroForce) + std::abs(rollingForce)) * std::abs(meanVehicleSpeed) * mechanicalDt;
         roadLoadWork += std::abs(roadLoadForce * meanVehicleSpeed) * mechanicalDt;
         brakeWork += brakeForceCapacity * vehicle.tireRadiusM * std::abs(meanWheelOmega) * mechanicalDt;
-        tireSlipWork += std::abs(lastTireForce * slipVelocity) * mechanicalDt;
+        if (vehicle.tyreGripLimitEnabled)
+            tireSlipWork += std::abs(lastTireForce * slipVelocity)
+                * mechanicalDt;
         drivenAxleNormalImpulse += normalForce * mechanicalDt;
         longitudinalAccelerationImpulse +=
             longitudinalAccelerationMps2_ * mechanicalDt;
@@ -322,6 +418,10 @@ DrivelineOutput DrivelineModel::advance(double dt, const EngineState& engineStat
     const auto inverseDt = dt > 0.0 ? 1.0 / dt : 0.0;
     output.clutchTorqueNm = clutchTorqueIntegral * inverseDt;
     output.engineReactionTorqueNm = -output.clutchTorqueNm;
+    output.engineCouplingTorqueNm =
+        engineCouplingTorqueIntegral * inverseDt;
+    output.reflectedRotatingInertiaKgM2 =
+        reflectedInertiaTimeIntegral * inverseDt;
     output.wheelTorqueNm = wheelTorqueIntegral * inverseDt;
     output.clutchSlipRpm = lastSlipRpm;
     output.tireForceN = lastTireForce;
