@@ -270,6 +270,15 @@ La suite de 20 tests est verte après la reprise.
 
 ## Ce qui est déjà réfuté — ne pas réessayer
 
+### Mise à jour 2026-08-02 — base simulation stabilisée
+
+Les sursauts pré-rupteur, le démarrage du banc produit, l'autorité Diesel, le
+partage turbine/wastegate et l'affichage mobile des chemises radiales sont
+corrigés. Validation finale : 14/14 moteurs routiers sans sursaut sur les deux
+rapports testés, banc 16/16, références 24/24, `ctest` 35/35 et catalogue audio
+temps réel 16/16. Le Merlin reste le bord CPU mesuré. Lire impérativement
+`docs/foundation-recovery-final-validation-2026-08-02.md` avant de reprendre.
+
 ### Mise à jour 2026-08-02 — pression motrice turbo
 
 Le faux diagnostic de contre-pression turbo et le partage non conservatif de

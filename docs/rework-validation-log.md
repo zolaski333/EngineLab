@@ -1023,3 +1023,23 @@ seuil atmosphérique qui produisait une fausse alerte.
 Les huit références constructeur turbo/TDI restent dans ±15 %, les accélérations
 chargées restent sans sursaut et les tests ciblés Release passent 2/2. Détails :
 `docs/turbo-backpressure-validation-2026-08-02.md`.
+
+## 2026-08-02 — Clôture de la reprise de base simulation
+
+Les accélérations plein gaz finales donnent 14/14 moteurs routiers sans sursaut
+en deuxième et 14/14 en troisième. Le banc utilisateur termine 16/16 courbes
+sans calage ni récupération ; les 24/24 points constructeur restent dans ±15 %.
+
+Le catalogue `--free-run` passe 16/16 sans overrun. Le Merlin donne 1,101× en
+fin de parcours puis 1,124×, 1,145× et 1,135× isolé au repos. Avec le renderer
+de production actif à 48 kHz/256, le catalogue repasse 16/16 : pire facteur
+1,117× et pire callback p99 73 % sur Merlin, tous les compteurs audio à zéro.
+
+La sonde audio du harness a été alignée sur la priorité produit après preuve que
+son thread normal pouvait être préempté par la physique `ABOVE_NORMAL`. Aucun
+seuil n'a été relâché. Le cylindre radial est aussi séparé de son wrist pin : la
+chemise reste fixe, seuls piston et bielle bougent.
+
+Build Release complet vert, `ctest` 35/35 en 679,20 s, package extrait vivant
+après 6 secondes. Rapport complet :
+`docs/foundation-recovery-final-validation-2026-08-02.md`.

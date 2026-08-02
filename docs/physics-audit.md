@@ -1,5 +1,15 @@
 # Audit physique — baseline mesurée et plan de correction
 
+## Addendum 2026-08-02 — reprise de la base simulation
+
+La campagne produit postérieure à cet audit a corrigé les sursauts pré-rupteur,
+le banc utilisateur, l'autorité de quantité Diesel et le partage
+turbine/wastegate. Les preuves finales sont 14/14 moteurs routiers sans sursaut
+sur les rapports 2 et 3, 16/16 courbes utilisateur terminées, 24/24 références
+constructeur dans ±15 %, `ctest` 35/35 et 16/16 moteurs avec renderer audio de
+production sans callback manqué. Le détail et les limites restantes sont dans
+`docs/foundation-recovery-final-validation-2026-08-02.md`.
+
 > **Archive de provenance.** Les sections audio de cet audit décrivent le chemin
 > antérieur au réseau gaz quasi-1D et au rayonnement passif. Les décisions encore
 > actives sont documentées dans `thermoacoustic-architecture.md`.
