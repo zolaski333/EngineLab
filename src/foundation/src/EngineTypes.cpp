@@ -601,6 +601,10 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
         || !validPoint(config.acousticObserver.rightMicrophoneM)
         || !(config.acousticObserver.soundSpeedMps == 0.0
             || inRange(config.acousticObserver.soundSpeedMps, 250.0, 450.0))
+        // Zero keeps the authored microphone positions; anything else places
+        // the listener at a real, human distance from the engine.
+        || !(config.acousticObserver.listeningDistanceM == 0.0
+            || inRange(config.acousticObserver.listeningDistanceM, 0.5, 200.0))
         || !inRange(config.forcedInduction.pressureRatio, 1.0, 3.5)
         || !inRange(config.forcedInduction.fullBoostRpm, 200.0, 20'000.0)
         || !inRange(config.forcedInduction.compressorEfficiency, 0.35, 0.95)

@@ -42,9 +42,12 @@ StructuralModalRadiator::StructuralModalRadiator(const EngineConfig& config) {
         return std::sqrt(point.x * point.x + point.y * point.y
             + point.z * point.z);
     };
-    configuredObserverDistanceM_ = 0.5 * (
-        distance(config.acousticObserver.leftMicrophoneM)
-        + distance(config.acousticObserver.rightMicrophoneM));
+    // Effective, not authored: the structural layer radiates to the same
+    // listener as the exhaust and intake layers, so it must use the same
+    // radius or the three layers stop being mixable.
+    (void)distance;
+    configuredObserverDistanceM_ =
+        effectiveObserverDistanceM(config.acousticObserver);
     if (!(configuredObserverDistanceM_ >= 0.05)
         || !std::isfinite(configuredObserverDistanceM_))
         configuredObserverDistanceM_ = 1.0;

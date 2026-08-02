@@ -1084,3 +1084,52 @@ Non-régression Release, 12/12 : `Core`, `PhysicsRegression`,
 constructeur), `CombustionPhasing`, `CombustionCycleVariation`,
 `OverrunThermalRegression`, `PartLoadFuelling`, `LoadedAccelerationCP2`,
 `LoadedAccelerationAudi`.
+
+## 2026-08-02 — La distance d'écoute n'est pas une propriété du moteur
+
+Le catalogue traitait `acoustic_observer` à la fois comme une scène de mesure et
+comme le point d'écoute. Quatorze moteurs étaient autorés entre 3,5 et 5 m, le
+V12 Merlin à **24 m** et le radial à 6. Avec une loi `1/r`, cela retire environ
+16 dB au V12 pour une raison sur laquelle l'auditeur n'a aucune prise, et c'est
+l'essentiel de « le V12 ne fait aucun son ».
+
+Le couple de microphones est désormais remis à l'échelle **autour de l'origine**
+jusqu'à `listening_distance_m` (4 m par défaut, 0 = scène autorée conservée).
+L'échelle est uniforme, donc tous les angles sont préservés — directivité,
+rapport de retard interaural, géométrie relative de plusieurs sorties — et seul
+`r` change. La puissance rayonnée n'est pas touchée : deux moteurs continuent de
+différer par ce qu'ils produisent réellement.
+
+A/B `EngineLabAudioRenderHarness`, même session, chemin `EngineRuntime` réel :
+
+| Moteur | rms avant | rms après | pic observateur avant | après |
+|---|---|---|---|---|
+| K20A I4 | 0,0602 | 0,0617 | 70,4 Pa | 67,0 Pa |
+| 2JZ I6 turbo | 0,0451 | 0,0590 | 45,8 Pa | 55,0 Pa |
+| LS3 V8 | 0,0834 | 0,0848 | 49,4 Pa | 45,2 Pa |
+| **Merlin V12** | **0,0095** | **0,0538** | **6,0 Pa** | **40,8 Pa** |
+
+Le Merlin gagne **+15,1 dB de rms** et rejoint la plage du LS3 et du 2JZ, avec
+`levelLimited=0`, `minLevelGain=1,000` et `preLimiter=0,359` : ni AGC ni
+limiteur ne sont sollicités. Les autres moteurs bougent de moins de 2 dB, ce qui
+est l'écart entre leur distance autorée et 4 m.
+
+**Trois consommateurs recalculaient la distance micro chacun de leur côté** —
+`RealtimeEngineAudio`, `StructuralModalRadiator` et la garde SPL du harnais.
+Laisser l'un d'eux sur la valeur autorée le met en désaccord avec la
+propagation réellement rendue ; la garde SPL en particulier extrapole en `1/r`
+et aurait extrapolé depuis un rayon inutilisé. Ils passent tous par
+`effectiveObserverDistanceM`.
+
+Contrôle de no-op : avec `listening_distance_m = 0`, le rendu revient exactement
+à la référence (EL-20 rms 0,0246, pic 0,2741, crête 9,40, brillance 0,286 —
+identiques). Le test de régression échoue sans le défaut à 4 m.
+
+Note de lecture pour la suite : `layerPa` est un **maximum** sur tout le rendu,
+donc un statistique à un échantillon. Il a bougé de 45 % sur la couche admission
+là où le rms bougeait de 0,11 dB, exactement la valeur prédite par `1/r`. C'est
+le rms qui décide, pas le pic.
+
+Non-régression Release 8/8 : `Core`, `Scripting`, `AudioVoicing`,
+`StructuralNvh`, `RealtimeRegression`, `OfflineAudioExport`, `AudioRender`
+(garde SPL incluse), `AudioTransients`.

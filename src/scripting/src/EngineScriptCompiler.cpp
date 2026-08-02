@@ -406,6 +406,7 @@ const GlobalNumericProperty* findGlobalNumericProperty(std::string_view path) no
         { "acoustic_observer.right_y_m", Dimension::length, [](auto& c, double v) { c.acousticObserver.rightMicrophoneM.y = v * 0.001; } },
         { "acoustic_observer.right_z_m", Dimension::length, [](auto& c, double v) { c.acousticObserver.rightMicrophoneM.z = v * 0.001; } },
         { "acoustic_observer.sound_speed_mps", Dimension::velocity, [](auto& c, double v) { c.acousticObserver.soundSpeedMps = v; } },
+        { "acoustic_observer.listening_distance_m", Dimension::length, [](auto& c, double v) { c.acousticObserver.listeningDistanceM = v; } },
         { "intake.plenum_volume_l", Dimension::volume, setIntakePlenum },
         { "intake.throttle_diameter_mm", Dimension::length, setIntakeThrottleDiameter },
         { "intake.throttle_count", Dimension::dimensionless, setIntakeThrottleCount, true },

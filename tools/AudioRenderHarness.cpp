@@ -757,9 +757,11 @@ Metrics renderEngine(const EngineConfig& baseConfig, const WavData& ir,
         return std::sqrt(point.x * point.x + point.y * point.y
             + point.z * point.z);
     };
-    m.observerDistanceM = 0.5 * (
-        microphoneDistance(config.acousticObserver.leftMicrophoneM)
-        + microphoneDistance(config.acousticObserver.rightMicrophoneM));
+    // The SPL guard back-extrapolates the observed pressure to one metre by
+    // 1/r, so it must use the radius the render used, not the authored one.
+    (void)microphoneDistance;
+    m.observerDistanceM =
+        effectiveObserverDistanceM(config.acousticObserver);
     m.physicalActive = renderer.physicalExhaustActive();
     m.compiledTopologyActive = renderer.compiledExhaustTopologyActive();
     m.structuralRadiationActive = renderer.structuralRadiationActive();

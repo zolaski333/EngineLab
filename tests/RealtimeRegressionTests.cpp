@@ -2647,6 +2647,57 @@ void freeFieldObserverRegression() {
     }
     require(rightEnergy < leftEnergy * 0.15,
         "a rigid flange must suppress the rear high-frequency hemisphere");
+
+    // How far away the listener stands is a property of the scene, not of the
+    // engine. The catalogue had drifted into treating it as both -- fourteen
+    // engines between 3.5 and 5 m, the V12 at 24 -- which is about -16 dB on
+    // the V12 for no reason a listener can act on. The pair is therefore
+    // rescaled about the origin, uniformly, so only the radius changes.
+    enginelab::AcousticObserverConfig scene;
+    scene.leftMicrophoneM = { 0.0, 1.0, 0.0 };
+    scene.rightMicrophoneM = { 0.0, 2.0, 0.0 };
+    scene.soundSpeedMps = 343.0;
+    scene.listeningDistanceM = 0.0;
+    require(observer.prepare(sampleRate, 0.04, {}, { 0.0, 1.0, 0.0 },
+            enginelab::AcousticTerminationType::unflanged, scene),
+        "an authored scene must prepare");
+    require(std::abs(observer.distanceM(0) - 1.0) < 1.0e-9
+            && std::abs(observer.distanceM(1) - 2.0) < 1.0e-9,
+        "zero listening distance must keep the authored microphone positions");
+
+    scene.listeningDistanceM = 6.0;
+    require(observer.prepare(sampleRate, 0.04, {}, { 0.0, 1.0, 0.0 },
+            enginelab::AcousticTerminationType::unflanged, scene),
+        "a scaled scene must prepare");
+    // Mean authored distance is 1.5, so the pair scales by four: the mean
+    // becomes the requested 6 m and the 1:2 geometry is untouched.
+    require(std::abs(observer.distanceM(0) - 4.0) < 1.0e-9
+            && std::abs(observer.distanceM(1) - 8.0) < 1.0e-9,
+        "the listener must be placed at the scene's listening distance");
+    require(std::abs(observer.distanceM(1) / observer.distanceM(0) - 2.0)
+            < 1.0e-9,
+        "rescaling the listener must not deform the microphone geometry");
+
+    // Two scenes that differ only by how far away they were authored must
+    // deliver the same level. This is the defect the field exists to close.
+    enginelab::AcousticObserverConfig near;
+    near.leftMicrophoneM = { -0.18, 4.0, 0.8 };
+    near.rightMicrophoneM = { 0.18, 4.0, 0.8 };
+    near.soundSpeedMps = 343.0;
+    auto far = near;
+    far.leftMicrophoneM = { -1.0, 24.0, 3.0 };
+    far.rightMicrophoneM = { 1.0, 24.0, 3.0 };
+    enginelab::FreeFieldObserver nearObserver;
+    enginelab::FreeFieldObserver farObserver;
+    require(nearObserver.prepare(sampleRate, 0.04, {}, { 0.0, 1.0, 0.0 },
+                enginelab::AcousticTerminationType::unflanged, near)
+            && farObserver.prepare(sampleRate, 0.04, {}, { 0.0, 1.0, 0.0 },
+                enginelab::AcousticTerminationType::unflanged, far),
+        "both authored scenes must prepare");
+    require(std::abs(nearObserver.distanceM(0) - farObserver.distanceM(0))
+            < 1.0e-6,
+        "a scene authored at 24 m must present at the same distance as one "
+        "authored at 4 m");
 }
 
 int main() {

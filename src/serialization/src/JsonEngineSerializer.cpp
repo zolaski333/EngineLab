@@ -467,7 +467,9 @@ std::string JsonEngineSerializer::encode(const EngineConfig& config) const {
         {"acoustic_observer", {
             {"left_microphone_m", pointJson(config.acousticObserver.leftMicrophoneM)},
             {"right_microphone_m", pointJson(config.acousticObserver.rightMicrophoneM)},
-            {"sound_speed_mps", config.acousticObserver.soundSpeedMps}}},
+            {"sound_speed_mps", config.acousticObserver.soundSpeedMps},
+            {"listening_distance_m",
+             config.acousticObserver.listeningDistanceM}}},
         {"ignition", {{"rev_limit_rpm", config.ignition.revLimitRpm},
                         {"limiter_duration_s", config.ignition.limiterDurationSeconds},
                         {"limiter_keeps_fuel", config.ignition.limiterKeepsFuel},
@@ -869,6 +871,9 @@ EngineDecodeResult JsonEngineSerializer::decode(std::string_view text) const noe
                     config.acousticObserver.rightMicrophoneM);
             config.acousticObserver.soundSpeedMps = observer.value(
                 "sound_speed_mps", config.acousticObserver.soundSpeedMps);
+            config.acousticObserver.listeningDistanceM = observer.value(
+                "listening_distance_m",
+                config.acousticObserver.listeningDistanceM);
         }
         if (engine.contains("exhaust_paths")) {
             for (const auto& item : engine.at("exhaust_paths")) {

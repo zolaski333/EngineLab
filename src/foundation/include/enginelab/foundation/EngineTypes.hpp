@@ -1,5 +1,6 @@
-#pragma once
+﻿#pragma once
 
+#include <cmath>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -274,7 +275,73 @@ struct AcousticObserverConfig final {
     AcousticPoint3M rightMicrophoneM { 0.18, 4.0, 0.8 };
     /** Zero derives local sound speed from the acoustic medium. */
     double soundSpeedMps { 0.0 };
+    /**
+     * Distance from the engine origin at which the listener is placed, metres.
+     *
+     * How far away the listener stands is a property of the SCENE, not of the
+     * engine, and the catalogue had drifted into treating it as both: fourteen
+     * engines were authored between 3.5 and 5 m while the V12 sat at 24 m and
+     * the radial at 6. With a `1/r` law that is about -16 dB on the V12 against
+     * the twins for no reason a listener can act on, and it is most of why the
+     * biggest engine in the catalogue was reported as making no sound at all.
+     *
+     * The microphone pair is therefore rescaled about the origin to this
+     * distance before propagation. It is a UNIFORM scale, so every angle is
+     * preserved -- directivity, the interaural delay ratio, the relative
+     * geometry of multiple outlets -- and only `r` changes. Radiated source
+     * strength is untouched, so engines still differ in level by how much sound
+     * they actually make, which is the comparison that means something.
+     *
+     * Zero keeps the authored positions exactly, for a scene that is genuinely
+     * about distance. The SPL guard already back-extrapolates to one metre by
+     * this same law, so it does not confuse a distant observer with a weak
+     * source and is unaffected either way.
+     */
+    double listeningDistanceM { 4.0 };
 };
+
+/** Uniform scale that places the authored microphone pair at the scene's
+ *  listening distance. Returns 1 when the scene keeps its authored positions.
+ *
+ *  Every consumer that derives a distance from `leftMicrophoneM` /
+ *  `rightMicrophoneM` must apply this. Three of them computed their own mean
+ *  distance independently, and leaving any one of them on the authored value
+ *  makes it disagree with the propagation the listener actually hears -- the
+ *  SPL guard in particular back-extrapolates by `1/r` and would be
+ *  extrapolating from a radius the render no longer uses. */
+[[nodiscard]] inline double observerMicrophoneScale(
+    const AcousticObserverConfig& observer) noexcept {
+    const auto magnitude = [](const AcousticPoint3M& point) noexcept {
+        return std::sqrt(point.x * point.x + point.y * point.y
+            + point.z * point.z);
+    };
+    if (!(observer.listeningDistanceM > 0.0)) return 1.0;
+    const auto authored = 0.5 * (magnitude(observer.leftMicrophoneM)
+        + magnitude(observer.rightMicrophoneM));
+    if (!(authored > 1.0e-6)) return 1.0;
+    const auto scale = observer.listeningDistanceM / authored;
+    return std::isfinite(scale) && scale > 0.0 ? scale : 1.0;
+}
+
+/** Microphone positions after the listening-distance scale. */
+[[nodiscard]] inline AcousticPoint3M effectiveMicrophonePosition(
+    const AcousticObserverConfig& observer, bool right) noexcept {
+    const auto scale = observerMicrophoneScale(observer);
+    const auto& point = right ? observer.rightMicrophoneM
+                              : observer.leftMicrophoneM;
+    return { point.x * scale, point.y * scale, point.z * scale };
+}
+
+/** Mean listener distance from the engine origin, after the scale. */
+[[nodiscard]] inline double effectiveObserverDistanceM(
+    const AcousticObserverConfig& observer) noexcept {
+    const auto magnitude = [](const AcousticPoint3M& point) noexcept {
+        return std::sqrt(point.x * point.x + point.y * point.y
+            + point.z * point.z);
+    };
+    return 0.5 * (magnitude(effectiveMicrophonePosition(observer, false))
+        + magnitude(effectiveMicrophonePosition(observer, true)));
+}
 
 /** A user-authored component in one exhaust path's directed acyclic graph. */
 struct ExhaustComponentConfig final {
@@ -1242,3 +1309,7 @@ void normaliseEngineConfig(EngineConfig&);
 [[nodiscard]] std::optional<std::string> validateEngineConfig(const EngineConfig&);
 
 } // namespace enginelab
+
+
+
+

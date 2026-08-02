@@ -94,9 +94,12 @@ RealtimeEngineAudio::RealtimeEngineAudio(FiringEventQueue& queue,
             return std::sqrt(point.x * point.x + point.y * point.y
                 + point.z * point.z);
         };
-        const auto observerDistance = 0.5 * (
-            microphoneDistance(engineConfig->acousticObserver.leftMicrophoneM)
-            + microphoneDistance(engineConfig->acousticObserver.rightMicrophoneM));
+        // The EFFECTIVE distance, after the scene's listening-distance
+        // scale. Deriving it from the authored positions would disagree with
+        // the propagation FreeFieldObserver actually performs.
+        (void)microphoneDistance;
+        const auto observerDistance = effectiveObserverDistanceM(
+            engineConfig->acousticObserver);
         auto structural = std::make_unique<StructuralModalRadiator>(*engineConfig);
         if (structural->valid()) structuralModalRadiator_ = std::move(structural);
         auto intake = std::make_unique<AcousticIntakeNetwork>(*engineConfig);

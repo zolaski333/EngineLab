@@ -529,7 +529,9 @@ std::string YamlEngineSerializer::encode(const EngineConfig& config) const {
     out << YAML::Key << "right_microphone_m" << YAML::Value;
     emitPoint(out, config.acousticObserver.rightMicrophoneM);
     out << YAML::Key << "sound_speed_mps" << YAML::Value
-        << config.acousticObserver.soundSpeedMps << YAML::EndMap
+        << config.acousticObserver.soundSpeedMps
+        << YAML::Key << "listening_distance_m" << YAML::Value
+        << config.acousticObserver.listeningDistanceM << YAML::EndMap
         << YAML::Key << "exhaust_paths" << YAML::Value << YAML::BeginSeq;
     for (const auto& path : config.exhaustPaths) {
         out << YAML::BeginMap << YAML::Key << "id" << YAML::Value << path.id
@@ -991,6 +993,9 @@ EngineDecodeResult YamlEngineSerializer::decode(std::string_view text) const noe
                     config.acousticObserver.rightMicrophoneM);
             config.acousticObserver.soundSpeedMps = observer["sound_speed_mps"]
                 .as<double>(config.acousticObserver.soundSpeedMps);
+            config.acousticObserver.listeningDistanceM =
+                observer["listening_distance_m"].as<double>(
+                    config.acousticObserver.listeningDistanceM);
         }
         if (const auto paths = engine["exhaust_paths"]) {
             for (const auto& item : paths) {

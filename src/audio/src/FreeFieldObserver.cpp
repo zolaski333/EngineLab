@@ -54,8 +54,19 @@ bool FreeFieldObserver::prepare(double sampleRateHz, double apertureRadiusM,
         return false;
 
     const auto axis = normalised(sourceAxis, { 0.0, 1.0, 0.0 });
-    const std::array positions { observer.leftMicrophoneM,
-        observer.rightMicrophoneM };
+    // Place the listener at the scene's listening distance.
+    //
+    // The scale is taken about the ENGINE ORIGIN and applied to the microphone
+    // pair, never about each source. Normalising every outlet to the same
+    // distance individually would collapse the geometry between banks: two
+    // outlets a metre apart would both read exactly the target distance and the
+    // engine would lose its width. Scaling the pair about the origin moves the
+    // listener along one ray and leaves every source where the engine put it,
+    // so a V12's two banks keep their real path-length difference -- and in fact
+    // recover one, since at 24 m that difference was negligible.
+    const std::array positions {
+        effectiveMicrophonePosition(observer, false),
+        effectiveMicrophonePosition(observer, true) };
     for (std::size_t index = 0; index < microphones_.size(); ++index) {
         auto& microphone = microphones_[index];
         const auto offset = subtract(positions[index], sourcePositionM);

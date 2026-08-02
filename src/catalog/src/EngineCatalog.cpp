@@ -781,6 +781,8 @@ void applyCrankOffsets(EngineConfig& config) {
                 config.acousticObserver.rightMicrophoneM);
         assignIfPresent(observer, "sound_speed_mps",
             config.acousticObserver.soundSpeedMps);
+        assignIfPresent(observer, "listening_distance_m",
+            config.acousticObserver.listeningDistanceM);
     }
     if (const auto paths = engine["exhaust_paths"]) {
         config.exhaustPaths.clear();
