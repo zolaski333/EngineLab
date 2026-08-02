@@ -1505,6 +1505,14 @@ void MainComponent::drawEngine(juce::Graphics& g, juce::Rectangle<float> area) c
                 + cylinder.bankOffsetDegrees * std::numbers::pi / 180.0;
             const auto unitX = static_cast<float>(std::cos(angle));
             const auto unitY = static_cast<float>(std::sin(angle));
+            // The barrel belongs to the crankcase and must remain fixed. Only
+            // the piston/wrist pin travels on the cylinder axis. The previous
+            // code reused the live wrist-pin point as the chamber centre, which
+            // made the complete radial cylinder follow its connecting rod.
+            const auto cylinderCenterX = center.x
+                + unitX * (radius + strokeTravel * 0.5F);
+            const auto cylinderCenterY = center.y
+                + unitY * (radius + strokeTravel * 0.5F);
             auto pistonCenterX = center.x + unitX * (radius + travel * strokeTravel);
             auto pistonCenterY = center.y + unitY * (radius + travel * strokeTravel);
             const auto sharedCrankAngle = visibleState_.crankAngleDegrees * std::numbers::pi / 180.0;
@@ -1522,18 +1530,18 @@ void MainComponent::drawEngine(juce::Graphics& g, juce::Rectangle<float> area) c
                 const auto exhaustPulse = static_cast<float>(std::clamp(liveCylinder->exhaustFlowMgPerCycle / 55.0, 0.0, 1.0));
                 g.setColour(juce::Colour(0xff41b6d7).withAlpha(0.18F + intakePulse * 0.52F));
                 g.drawLine(center.x + unitX * radius * 1.13F, center.y + unitY * radius * 1.13F,
-                           pistonCenterX, pistonCenterY, 1.4F + intakePulse * 3.4F);
+                           cylinderCenterX, cylinderCenterY, 1.4F + intakePulse * 3.4F);
                 g.setColour(juce::Colour(0xffef6f3c).withAlpha(0.18F + exhaustPulse * 0.52F));
                 g.drawLine(center.x + unitX * radius * 1.34F, center.y + unitY * radius * 1.34F,
-                           pistonCenterX, pistonCenterY, 1.4F + exhaustPulse * 3.4F);
+                           cylinderCenterX, cylinderCenterY, 1.4F + exhaustPulse * 3.4F);
             }
             g.setColour(juce::Colour(0xff9ba8a3));
             g.drawLine(pistonCenterX, pistonCenterY, crankPinX, crankPinY, 4.0F);
             g.saveState();
             g.addTransform(juce::AffineTransform::rotation(static_cast<float>(angle + std::numbers::pi * 0.5),
-                                                           pistonCenterX, pistonCenterY));
-            const auto chamber = juce::Rectangle<float>(pistonCenterX - cylinderWidth * 0.5F,
-                                                        pistonCenterY - cylinderHeight * 0.5F,
+                                                           cylinderCenterX, cylinderCenterY));
+            const auto chamber = juce::Rectangle<float>(cylinderCenterX - cylinderWidth * 0.5F,
+                                                        cylinderCenterY - cylinderHeight * 0.5F,
                                                         cylinderWidth, cylinderHeight);
             g.setColour(juce::Colour(0xff111817));
             g.fillRoundedRectangle(chamber, 7.0F);
@@ -1558,7 +1566,7 @@ void MainComponent::drawEngine(juce::Graphics& g, juce::Rectangle<float> area) c
                 g.setFont(juce::FontOptions(10.5F, juce::Font::bold));
                 g.drawFittedText("C" + juce::String(liveCylinder->id) + "  "
                     + juce::String(liveCylinder->pressureEstimateBar, 1) + " bar",
-                    juce::Rectangle<float>(pistonCenterX - 38.0F, pistonCenterY - 8.0F, 76.0F, 16.0F).toNearestInt(),
+                    juce::Rectangle<float>(cylinderCenterX - 38.0F, cylinderCenterY - 8.0F, 76.0F, 16.0F).toNearestInt(),
                     juce::Justification::centred, 1);
             }
         }
