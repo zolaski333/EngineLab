@@ -494,6 +494,64 @@ void testTopologyRejectionIsReported() {
         "a rejected topology must still compile a usable fallback graph");
 }
 
+void testDegenerateChamberIsFlooredToItsResolutionLimit() {
+    // A chamber shorter than its own plane-wave resolution limit -- the length
+    // at which its half-wave c/(2L) leaves the band bounded by its plane-mode
+    // cutoff, L ~= 0.853 d -- is not a resonator, but it is still MESHED.
+    // ExhaustNetworkLayout floors a missing length with minimumResolvedLengthM
+    // and never a short one, so one authored dimension sets the CFL limit for
+    // every duct in the path. Measured on the 2JZ, an 80 mm x 10 mm body on
+    // 80 mm pipes took exhaust substepping from 11,520 Hz to 92,160 Hz and the
+    // frame from 2,507 us to 6,392 us against a 4,166 us budget: permanent slow
+    // motion, which a user reads as lost response and near-silence.
+    constexpr double planeWaveResonantLengthRatio = 0.853;
+    // A legacy single-path engine reads config.exhaust, NOT path.geometry
+    // (ExhaustGraph.cpp: `legacySinglePath ? config.exhaust : path.geometry`).
+    // Setting only the paths left both assertions below reading the
+    // unconfigured 450 mm default, so the first one passed vacuously. Set both.
+    const auto applyGeometry = [](EngineConfig& config, double collector,
+                                  double outlet, double chamberD, double chamberL) {
+        const auto assign = [&](ExhaustConfig& geometry) {
+            geometry.collectorDiameterMm = collector;
+            geometry.outletDiameterMm = outlet;
+            geometry.mufflerChamberDiameterMm = chamberD;
+            geometry.mufflerChamberLengthMm = chamberL;
+        };
+        assign(config.exhaust);
+        for (auto& path : config.exhaustPaths) assign(path.geometry);
+    };
+    auto degenerate = makeDefaultV8();
+    applyGeometry(degenerate, 80.0, 80.0, 80.0, 10.0);
+    const auto floored = ExhaustGraph::makeForEngine(degenerate);
+    const auto shortest = std::min_element(floored.nodes().begin(), floored.nodes().end(),
+        [](const ExhaustNode& a, const ExhaustNode& b) {
+            const auto lengthOf = [](const ExhaustNode& node) {
+                return node.type == ExhaustNodeType::muffler
+                    ? node.lengthMm : std::numeric_limits<double>::max();
+            };
+            return lengthOf(a) < lengthOf(b);
+        });
+    require(shortest != floored.nodes().end()
+            && shortest->type == ExhaustNodeType::muffler
+            && shortest->lengthMm >= 80.0 * planeWaveResonantLengthRatio - 1.0e-9,
+        "a chamber below its plane-wave resolution limit must be floored, not meshed as authored");
+
+    // And the floor must not touch a real body. Every shipped chamber clears it
+    // by 2.1-3.5x, so a catalogue-shaped one has to come through untouched --
+    // otherwise the fix would be a silent voicing change across the catalogue.
+    auto realistic = makeDefaultV8();
+    applyGeometry(realistic, 76.0, 82.0, 142.0, 400.0);
+    const auto untouched = ExhaustGraph::makeForEngine(realistic);
+    const auto body = std::find_if(untouched.nodes().begin(), untouched.nodes().end(),
+        [](const ExhaustNode& node) { return node.type == ExhaustNodeType::muffler; });
+    if (body == untouched.nodes().end())
+        require(false, "no muffler node was compiled at all");
+    require(std::abs(body->lengthMm - 400.0) < 1.0e-9,
+        "an authored chamber above the resolution limit must be compiled as authored"
+        " (got " + std::to_string(body->lengthMm) + " mm, diameter "
+        + std::to_string(body->diameterMm) + " mm)");
+}
+
 void testEditableLegacyConversionIsNeutral() {
     auto config = makeDefaultV8();
     auto path = config.exhaustPaths.front();
@@ -545,6 +603,7 @@ int main() {
     try {
         testNonFiniteAuthoredFieldsFailSafe();
         testTopologyRejectionIsReported();
+        testDegenerateChamberIsFlooredToItsResolutionLimit();
         testEditableLegacyConversionIsNeutral();
         testValidationAndRouting();
         testAcousticGainEnergyAccounting();

@@ -426,13 +426,40 @@ ExhaustGraph ExhaustGraph::makeForEngine(
             collectorVolumeLitres, 1.0, 0.0 });
         const auto chamberConfigured = geometry.mufflerChamberDiameterMm > 1.0
             && geometry.mufflerChamberLengthMm > 1.0;
-        const auto mufflerLengthMm = chamberConfigured
-            ? finiteClamped(geometry.mufflerChamberLengthMm, 1.0, 10'000.0, 450.0)
-            : 450.0;
         const auto mufflerFlowDiameterMm = chamberConfigured
             ? finiteClamped(geometry.mufflerChamberDiameterMm,
                 collectorDiameter, 1'000.0, collectorDiameter)
             : collectorDiameter;
+        // A body shorter than its own plane-wave resolution limit is not a
+        // resonator, and meshing it as authored costs the WHOLE network.
+        //
+        // A chamber acts as a 1-D element only while its half-wave c/(2L) stays
+        // inside the band the delay-line model is valid in, which its own
+        // plane-mode cutoff f_c = 1.8412 c / (2 pi a) bounds (see
+        // DuctModeCutoff). Equating the two gives L = pi a / 1.8412 ~= 0.853 d:
+        // below that the first resonance has left the band and the authored
+        // length carries nothing the network can use. It is still meshed
+        // though, because ExhaustNetworkLayout floors a MISSING length with
+        // minimumResolvedLengthM and never a short one -- so one tiny element
+        // sets the CFL limit for every duct in the path.
+        //
+        // Measured on the 2JZ against a user-authored 80 mm x 10 mm body on
+        // 80 mm pipes, exhaust network substepping and frame cost:
+        //   stock 132 x 470 body, 40/64/76 mm pipes   11,520 Hz   2,507 us
+        //   80 mm pipes, no chamber at all            23,040 Hz
+        //   80 mm pipes, 80 x 10 body                 92,160 Hz   6,392 us
+        // against a 4,166 us frame budget -- so that one authored dimension put
+        // the engine at 153 % of budget and into permanent slow motion, which
+        // reads as lost throttle response and near-silence rather than as an
+        // exhaust choice. Flooring the meshed length removes the 4x the chamber
+        // contributed. All six shipped chambers are 2.1-3.5x above this floor,
+        // so the catalogue is untouched.
+        constexpr double planeWaveResonantLengthRatio = 0.853;
+        const auto mufflerLengthMm = chamberConfigured
+            ? std::max(
+                finiteClamped(geometry.mufflerChamberLengthMm, 1.0, 10'000.0, 450.0),
+                mufflerFlowDiameterMm * planeWaveResonantLengthRatio)
+            : 450.0;
         const auto mufflerVolumeLitres = std::numbers::pi
             * std::pow(mufflerFlowDiameterMm * 0.0005, 2.0)
             * (mufflerLengthMm * 0.001) * 1'000.0;

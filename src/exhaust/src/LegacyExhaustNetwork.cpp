@@ -53,8 +53,28 @@ ExhaustNetworkConfig makeEditableExhaustNetwork(const ExhaustPathConfig& path) {
     // muffler preset. The old UI silently replaced it with a 480 x collector-
     // diameter body, a 28% broadband loss and a live graph restriction. That
     // changed both the sound and the gas flow as soon as the user saved.
+    //
+    // A body no wider than the pipes it sits between is not a chamber. An
+    // expansion chamber silences by SCATTERING at its two area steps, and its
+    // transmission loss is a function of the area ratio alone -- exactly 0 dB at
+    // ratio 1. So showing the user a silencer component there would be showing
+    // something that provably does nothing, and a user who authors it (a common
+    // shape when every diameter is set to the same number) is entitled to see
+    // that the exhaust has no silencer rather than a silencer with no effect.
+    // Not an approximation: there is nothing there to model.
+    //
+    // A body that is merely SHORT is a separate matter and is deliberately not
+    // filtered here. `ExhaustGraph` floors its meshed length at the body's own
+    // plane-wave resolution limit instead, which keeps the authored component
+    // visible in the editor while stopping it from setting the CFL limit for the
+    // whole gas network.
+    const auto upstreamDiameterMm = primaryIds.size() > 1U
+        ? path.geometry.collectorDiameterMm : path.geometry.primaryDiameterMm;
+    const auto scatteringDiameterMm = std::max(upstreamDiameterMm,
+                                               path.geometry.outletDiameterMm);
     const auto chamberConfigured = path.geometry.mufflerChamberDiameterMm > 1.0
-        && path.geometry.mufflerChamberLengthMm > 1.0;
+        && path.geometry.mufflerChamberLengthMm > 1.0
+        && path.geometry.mufflerChamberDiameterMm > scatteringDiameterMm;
     if (chamberConfigured) {
         auto muffler = component(ExhaustComponentType::muffler, nextId++);
         muffler.diameterMm = path.geometry.mufflerChamberDiameterMm;

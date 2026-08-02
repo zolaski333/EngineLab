@@ -625,6 +625,45 @@ test onto the behaviour it is meant to catch. Keep it that way.
   compares two artefacts; filter on the ratio before believing any before/after
   percentage.
 
+- **One short authored element sets the CFL limit for the WHOLE exhaust network,
+  and the user sees it as an engine fault.** A user rebuilt the 2JZ exhaust in
+  80 mm with an 80 mm x 10 mm silencer body and reported the engine had "gained
+  inertia, lost its liveliness and made almost no sound". All three are the same
+  thing. Measured, exhaust substepping and frame cost at 3,000 rpm:
+
+  | geometry | `net_hz` | frame @6,300 |
+  |---|---|---|
+  | stock 132x470 body, 40/64/76 mm pipes | 11,520 | 2,507 us |
+  | 80 mm pipes, no chamber at all | 23,040 | — |
+  | 80 mm pipes, 80x10 body | **92,160** | **6,392 us** |
+
+  against a 4,166 us frame budget — so that one authored dimension put the
+  engine at **153 % of budget** and into permanent slow motion. In the audio
+  render the same config went from 18/1440 physics overruns to **974/1440**,
+  maxLate 7.13 → 23.28 ms, the realtime load protection engaged, and the
+  observer peak fell 49.6 → 26.8 Pa. **Do not read that quietening as an
+  acoustic problem**: the exhaust chain is starved because the physics thread is
+  late, exactly as the realtime-factor entry above describes.
+
+  The cause is that `ExhaustNetworkLayout` floors a **missing** length with
+  `minimumResolvedLengthM` and never a short one, so an authored 10 mm body is
+  meshed at 10 mm. The fix is a floor in `ExhaustGraph.cpp` at the body's own
+  plane-wave resolution limit: a chamber acts as a 1-D resonator only while its
+  half-wave `c/(2L)` stays inside the band its plane-mode cutoff
+  `f_c = 1.8412 c/(2 pi a)` bounds, and equating the two gives **L ≈ 0.853 d**.
+  Below that the authored length carries nothing the network can use, so
+  flooring it is not an approximation. All six shipped chambers clear it by
+  2.1-3.5x, so the catalogue is untouched — verified: the 2JZ still measures
+  `net_hz` 11,520 with the floor in place, and the user's config drops from
+  92,160 to 23,040 and from 153 % to 72 % of budget with torque unchanged.
+- **A legacy single-path engine reads `config.exhaust`, NOT `path.geometry`.**
+  `ExhaustGraph.cpp` selects with `legacySinglePath ? config.exhaust :
+  path.geometry`, so a test that configures only `exhaustPaths` on a
+  `makeDefaultV8()` silently measures the *unconfigured* defaults — a 450 mm
+  body on the collector diameter. That is how the regression above first passed
+  **vacuously**: the assertion "the short body must be floored" was satisfied by
+  a 450 mm default the test never set. Set both fields, and make a failing
+  assertion print the value it got.
 - **An idle failure is usually not caused by the commit that exposed it.** The
   catalogue's idles are marginal attractors and the simulator is deterministic,
   so a change that is only *algebraically* equivalent still moves them. Measured:
