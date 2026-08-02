@@ -172,7 +172,7 @@ public:
           renderer_(runtime.audioEvents(), runtime.audioState(),
                     &runtime.cylinderPressureSamples(), &runtime.exhaustGraph(),
                     &runtime.engineConfig()),
-          block_(2, blockSize) {
+          block_(2, blockSize), thread_(*this) {
         if (!(sampleRate_ > 0.0) || blockSize_ <= 0)
             throw std::invalid_argument("invalid audio probe format");
         for (std::size_t pathIndex = 0;
@@ -209,15 +209,23 @@ public:
     RealtimeAudioProbe& operator=(const RealtimeAudioProbe&) = delete;
 
     void start() {
-        if (thread_.joinable()) return;
-        thread_ = std::jthread(
-            [this](std::stop_token stopToken) { run(stopToken); });
+        if (thread_.isThreadRunning()) return;
+        // The application renderer is called by the OS audio thread, while the
+        // physics thread is ABOVE_NORMAL on Windows. A normal-priority std::thread
+        // here let physics pre-empt an otherwise 25-58%-budget render for one
+        // complete 5.33 ms block and falsely classified that scheduler stall as
+        // DSP overload. JUCE high priority mirrors the product scheduling class
+        // without promoting the whole process to realtime priority.
+        if (!thread_.startThread(juce::Thread::Priority::high))
+            throw std::runtime_error("audio probe thread could not start");
     }
 
     void stop() noexcept {
-        if (thread_.joinable()) {
-            thread_.request_stop();
-            thread_.join();
+        if (thread_.isThreadRunning()) {
+            // The loop checks its exit flag at least once per audio block, so
+            // an unbounded clean join is safer than releasing the renderer
+            // after an arbitrary timeout while the probe might still use it.
+            (void) thread_.stopThread(-1);
         }
         renderer_.release();
     }
@@ -264,7 +272,18 @@ public:
     }
 
 private:
-    void run(std::stop_token stopToken) noexcept {
+    class ProbeThread final : public juce::Thread {
+    public:
+        explicit ProbeThread(RealtimeAudioProbe& owner)
+            : juce::Thread("EngineLab audio budget probe"), owner_(owner) {}
+
+        void run() override { owner_.run(); }
+
+    private:
+        RealtimeAudioProbe& owner_;
+    };
+
+    void run() noexcept {
         const auto period = std::chrono::duration_cast<Clock::duration>(
             std::chrono::duration<double>(
                 static_cast<double>(blockSize_) / sampleRate_));
@@ -272,7 +291,7 @@ private:
             static_cast<double>(blockSize_) / sampleRate_;
         auto renderedSimulationSeconds = 0.0;
         auto scheduledStart = Clock::now();
-        while (!stopToken.stop_requested()) {
+        while (!thread_.threadShouldExit()) {
             if (accelerated_) {
                 // EngineRuntime deliberately publishes wall-clock timestamps
                 // even when its instrumentation throttle is disabled. In
@@ -291,7 +310,7 @@ private:
             } else {
                 std::this_thread::sleep_until(scheduledStart);
             }
-            if (stopToken.stop_requested()) break;
+            if (thread_.threadShouldExit()) break;
             const auto renderStart = Clock::now();
             const auto deadline = scheduledStart + period;
             block_.clear();
@@ -341,7 +360,7 @@ private:
     bool accelerated_ {};
     enginelab::RealtimeEngineAudio renderer_;
     juce::AudioBuffer<float> block_;
-    std::jthread thread_;
+    ProbeThread thread_;
     std::atomic<std::uint64_t> callbacks_ {};
     std::atomic<std::uint64_t> renderNanoseconds_ {};
     std::atomic<std::uint64_t> deadlineMisses_ {};
