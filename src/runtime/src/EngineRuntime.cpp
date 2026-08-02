@@ -56,6 +56,21 @@ constexpr std::size_t maximumAudioExhaustPaths = 8;
     return 0.95 * std::min(config.redlineRpm, config.ignition.revLimitRpm);
 }
 
+[[nodiscard]] double sweepEntryRpm(const EngineConfig& config) noexcept {
+    const auto lowCylinderEntry = config.cylinders.size() <= 2U
+        ? 1'800.0 : 0.0;
+    return std::min(sweepCeilingRpm(config),
+        std::max({ 1'000.0, config.idleRpm + 400.0,
+                   lowCylinderEntry }));
+}
+
+[[nodiscard]] double moveTowards(
+    double current, double target, double maximumDelta) noexcept {
+    if (current < target)
+        return std::min(target, current + maximumDelta);
+    return std::max(target, current - maximumDelta);
+}
+
 /** Averaging window for one bench point, in seconds.
  *
  * Torque is periodic at the firing frequency, so a window that is not a whole
@@ -454,8 +469,21 @@ void EngineRuntime::beginDynoSession() {
     }
     dynoElapsed_ = 0.0;
     dynoStartupElapsed_ = 0.0;
-    nextSampleRpm_ = std::max(1'000.0, config_.idleRpm);
+    nextSampleRpm_ = sweepEntryRpm(config_);
     dynoTargetRpm_ = nextSampleRpm_;
+    dynoPreparationDestinationRpm_ =
+        dynoHoldEnabled_.load(std::memory_order_relaxed)
+        ? dynoHoldRpm_.load(std::memory_order_relaxed)
+        : nextSampleRpm_;
+    const auto runningThreshold =
+        std::max(650.0, config_.idleRpm * 0.82);
+    const auto currentRpm = simulator_.state().rpm;
+    dynoPreparationTargetRpm_ = currentRpm >= runningThreshold
+        ? currentRpm : dynoPreparationDestinationRpm_;
+    dynoPullDownRequired_ = currentRpm
+        > dynoPreparationDestinationRpm_ + 150.0;
+    dynoThrottleCommand_ = 0.18;
+    dynoRecoveryCount_ = 0;
     dynoStableElapsed_ = 0.0;
     dynoBrakeTorqueNm_ = 0.0;
     dynoAbsorber_.reset(
@@ -468,7 +496,7 @@ void EngineRuntime::beginDynoSession() {
     savedThrottle_ = throttle_.load();
     savedLoad_ = load_.load();
     ignition_.store(true);
-    starter_.store(true);
+    starter_.store(currentRpm < runningThreshold);
     throttle_.store(0.18);
     dynoSweeping_ = false;
     dynoCompleted_ = false;
@@ -545,37 +573,118 @@ void EngineRuntime::run(std::stop_token stopToken) {
         if (dynoActive_) {
             dynoStartupElapsed_ += baseStep.count();
             dynoStartupElapsed = dynoStartupElapsed_;
-            if (!dynoSweeping_ && simulator_.state().rpm >= std::max(650.0, config_.idleRpm * 0.82)) {
-                dynoSweeping_ = true;
-                dynoElapsed_ = 0.0;
-                nextSampleRpm_ = dynoHoldEnabled_.load(std::memory_order_relaxed)
-                    ? dynoHoldRpm_.load(std::memory_order_relaxed) : std::max(1'000.0, config_.idleRpm);
-                dynoTargetRpm_ = nextSampleRpm_;
-                dynoStableElapsed_ = 0.0;
-                dynoBrakeTorqueNm_ = 0.0;
-                dynoAbsorber_.reset(
-                    simulator_.state().rpm,
-                    simulator_.state().torqueNm);
-                dynoAbsorberOutput_ = {};
-                dynoChannelAccumulator_ = zeroedDynoAccumulator();
-                dynoSampleCount_ = 0;
-                starter_.store(false);
-                throttle_.store(1.0);
+            const auto& dynoState = simulator_.state();
+            const auto runningThreshold =
+                std::max(650.0, config_.idleRpm * 0.82);
+            if (!dynoSweeping_) {
+                if (dynoHoldEnabled_.load(std::memory_order_relaxed))
+                    dynoPreparationDestinationRpm_ =
+                        dynoHoldRpm_.load(std::memory_order_relaxed);
+
+                if (dynoState.rpm < runningThreshold) {
+                    // A stopped engine is started without an absorber load.
+                    // Re-resetting here also discards any brake integral left
+                    // by a failed approach before the starter tries again.
+                    starter_.store(true);
+                    dynoThrottleCommand_ = 0.18;
+                    dynoBrakeTorqueNm_ = 0.0;
+                    dynoAbsorber_.reset(dynoState.rpm, 0.0);
+                    dynoAbsorberOutput_ = {};
+                } else {
+                    starter_.store(false);
+                    // Never connect an already-running engine directly to the
+                    // 1,000 rpm point. Slew the absorber command down from the
+                    // actual shaft speed, just like an operator progressively
+                    // loads a water/eddy-current brake before beginning a run.
+                    constexpr double preparationSlewRpmPerSecond = 700.0;
+                    dynoPreparationTargetRpm_ = moveTowards(
+                        dynoPreparationTargetRpm_,
+                        dynoPreparationDestinationRpm_,
+                        preparationSlewRpmPerSecond * baseStep.count());
+                    // Once the engine has caught, keep the run at the same
+                    // WOT operating condition used for every measured point.
+                    // Trying to stage at part throttle fights the ECU's idle
+                    // bypass on small engines and makes the one-way absorber
+                    // alternately contact and release. The progressively
+                    // slewed brake target already provides the gentle entry.
+                    dynoThrottleCommand_ = 1.0;
+                    dynoAbsorberOutput_ = dynoAbsorber_.advance(
+                        baseStep.count(), dynoPreparationTargetRpm_,
+                        dynoState, 1'000.0);
+                    dynoBrakeTorqueNm_ =
+                        dynoAbsorberOutput_.brakeTorqueNm;
+                    // Starting below the first point follows the already
+                    // validated WOT acquisition path immediately. Preparation
+                    // exists specifically for the dangerous case: connecting
+                    // a high-revving shaft to a 1,000 rpm target. In that case
+                    // wait until the slewed controller has brought the filtered
+                    // shaft close, then hand over to the precise 60 rpm hold.
+                    const auto pullDownComplete =
+                        std::abs(dynoPreparationTargetRpm_
+                            - dynoPreparationDestinationRpm_) <= 1.0
+                        && dynoAbsorberOutput_.filteredRpm
+                            <= dynoPreparationDestinationRpm_ + 100.0;
+                    if (!dynoPullDownRequired_ || pullDownComplete) {
+                        dynoSweeping_ = true;
+                        nextSampleRpm_ =
+                            dynoPreparationDestinationRpm_;
+                        dynoTargetRpm_ = nextSampleRpm_;
+                        dynoStableElapsed_ = 0.0;
+                        dynoBrakeTorqueNm_ = 0.0;
+                        dynoAbsorber_.reset(
+                            dynoState.rpm,
+                            dynoState.cycleAveragedTorqueNm);
+                        dynoAbsorberOutput_ = {};
+                        dynoChannelAccumulator_ =
+                            zeroedDynoAccumulator();
+                        dynoSampleCount_ = 0;
+                        starter_.store(false);
+                        dynoThrottleCommand_ = 1.0;
+                    }
+                }
+                requestedLoad = 0.0;
             }
             if (dynoSweeping_) {
                 dynoElapsed_ += baseStep.count();
                 dynoElapsed = dynoElapsed_;
-                if (dynoHoldEnabled_.load(std::memory_order_relaxed))
-                    dynoTargetRpm_ = dynoHoldRpm_.load(std::memory_order_relaxed);
-                dynoAbsorberOutput_ = dynoAbsorber_.advance(
-                    baseStep.count(), dynoTargetRpm_,
-                    simulator_.state());
-                dynoBrakeTorqueNm_ =
-                    dynoAbsorberOutput_.brakeTorqueNm;
+                if (dynoHoldEnabled_.load(std::memory_order_relaxed)) {
+                    // Wheel changes in hold mode are rate limited too; a large
+                    // setpoint change cannot become another brake step.
+                    constexpr double holdSlewRpmPerSecond = 700.0;
+                    dynoTargetRpm_ = moveTowards(
+                        dynoTargetRpm_,
+                        dynoHoldRpm_.load(std::memory_order_relaxed),
+                        holdSlewRpmPerSecond * baseStep.count());
+                }
+                const auto recoveryThreshold =
+                    std::max(350.0, config_.idleRpm * 0.55);
+                if (dynoState.rpm < recoveryThreshold) {
+                    // An unexpected weak point must not turn into a permanent
+                    // stall. Release the brake, restart if required, and
+                    // approach the same target progressively before retrying.
+                    dynoSweeping_ = false;
+                    ++dynoRecoveryCount_;
+                    dynoStartupElapsed_ = 0.0;
+                    dynoStartupElapsed = 0.0;
+                    dynoPreparationDestinationRpm_ = dynoTargetRpm_;
+                    dynoPreparationTargetRpm_ = dynoState.rpm;
+                    dynoPullDownRequired_ = false;
+                    dynoBrakeTorqueNm_ = 0.0;
+                    dynoAbsorber_.reset(dynoState.rpm, 0.0);
+                    dynoAbsorberOutput_ = {};
+                    dynoChannelAccumulator_ = zeroedDynoAccumulator();
+                    dynoSampleCount_ = 0;
+                    dynoStableElapsed_ = 0.0;
+                    dynoThrottleCommand_ = 0.18;
+                    starter_.store(true);
+                } else {
+                    dynoThrottleCommand_ = 1.0;
+                    dynoAbsorberOutput_ = dynoAbsorber_.advance(
+                        baseStep.count(), dynoTargetRpm_, dynoState);
+                    dynoBrakeTorqueNm_ =
+                        dynoAbsorberOutput_.brakeTorqueNm;
+                }
                 requestedLoad = 0.0;
-            } else {
-                requestedLoad = 0.0;
-                dynoBrakeTorqueNm_ = 0.0;
             }
         }
         const auto gearGeneration = gearCommandGeneration_.load(std::memory_order_acquire);
@@ -600,7 +709,8 @@ void EngineRuntime::run(std::stop_token stopToken) {
         const auto torqueCutMultiplier = dynoActive_
             ? 1.0 : drivelineOutput_.torqueCutMultiplier;
         const EngineControls controls { ignition_.load(), starter_.load(),
-            (dynoActive_ ? (dynoSweeping_ ? 1.0 : 0.18) : std::clamp(throttle_.load(), 0.0, 1.0))
+            (dynoActive_ ? dynoThrottleCommand_
+                         : std::clamp(throttle_.load(), 0.0, 1.0))
                 * torqueCutMultiplier,
             dynoActive_ ? requestedLoad : 0.0, dynoActive_ ? 0.0 : engineCouplingTorqueNm_,
             dynoActive_ ? 0.0 : brakePressure_.load(std::memory_order_relaxed),
@@ -777,6 +887,25 @@ void EngineRuntime::run(std::stop_token stopToken) {
             frame.state.drivelineEnergyResidualJoules = drivelineOutput_.energyResidualJoules;
             frame.state.dynoHoldRpm = dynoHoldRpm_.load(std::memory_order_relaxed);
             frame.state.dynoHoldEnabled = dynoHoldEnabled_.load(std::memory_order_relaxed);
+            frame.state.dynoActive = dynoActive_;
+            frame.state.dynoPreparing = dynoActive_
+                && !dynoSweeping_.load(std::memory_order_relaxed);
+            frame.state.dynoTargetRpm = frame.state.dynoPreparing
+                ? dynoPreparationDestinationRpm_ : dynoTargetRpm_;
+            frame.state.dynoControllerTargetRpm = frame.state.dynoPreparing
+                ? dynoPreparationTargetRpm_ : dynoTargetRpm_;
+            frame.state.dynoFilteredAccelerationRpmPerSecond =
+                dynoAbsorberOutput_.filteredAccelerationRpmPerSecond;
+            frame.state.dynoBrakeTorqueNm = dynoBrakeTorqueNm_;
+            const auto sweepStartRpm = sweepEntryRpm(config_);
+            const auto sweepRangeRpm = std::max(
+                1.0, sweepCeilingRpm(config_) - sweepStartRpm);
+            frame.state.dynoProgress = dynoHoldEnabled_.load(
+                std::memory_order_relaxed)
+                ? (frame.state.dynoPreparing ? 0.0 : 1.0)
+                : std::clamp((dynoTargetRpm_ - sweepStartRpm)
+                    / sweepRangeRpm, 0.0, 1.0);
+            frame.state.dynoRecoveryCount = dynoRecoveryCount_;
             const std::scoped_lock lock(snapshotMutex_);
             snapshot_ = frame.state;
         }

@@ -1,5 +1,12 @@
 # Brief de reprise — nouvelle machine (2026-07-28)
 
+> **Mise à jour banc du 2 août 2026.** Le banc utilisateur dispose maintenant
+> d'une préparation progressive lorsqu'il est activé au-dessus de son premier
+> point. Le catalogue passe 16/16 balayages complets, sans calage ni
+> récupération, et les 24 références constructeur restent dans ±15 %. Voir
+> `docs/user-dyno-validation-2026-08-02.md`. Le prochain chantier ouvert est le
+> diagnostic et l'autorité AFR du diesel, puis la contre-pression turbo.
+
 > **Mise à jour physique du 2 août 2026.** Les chutes de couple environ
 > 2 000 tr/min avant rupteur sont maintenant reproduites par un harnais à plein
 > gaz en 2e/3e et supprimées sur les 14 moteurs routiers du catalogue. Les

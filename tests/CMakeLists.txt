@@ -226,6 +226,13 @@ if(TARGET EngineLabLoadedAccelerationHarness)
         EngineLab.LoadedAccelerationAudi
         PROPERTIES TIMEOUT 120)
 endif()
+if(TARGET EngineLabUserDynoHarness)
+    add_test(NAME EngineLab.UserDynoHighRpmStart
+        COMMAND EngineLabUserDynoHarness
+            --filter "Yamaha CP2")
+    set_tests_properties(EngineLab.UserDynoHighRpmStart
+        PROPERTIES TIMEOUT 120)
+endif()
 if(MSVC)
     target_link_options(EngineLabCoreTests PRIVATE /STACK:8388608)
 endif()

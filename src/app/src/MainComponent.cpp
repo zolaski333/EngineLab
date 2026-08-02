@@ -1014,7 +1014,11 @@ void MainComponent::timerCallback() {
             ? "   /   VOICING LIVE r" + juce::String(voicingReloadCount_)
             : juce::String {}),
         juce::dontSendNotification);
-    dynoButton_.setButtonText(running ? utf8("D  ARRÊTER DYNO") : juce::String("D  LANCER DYNO"));
+    dynoButton_.setButtonText(running
+        ? (visibleState_.dynoPreparing
+            ? utf8("D  ANNULER PRÉPA")
+            : utf8("D  ARRÊTER DYNO"))
+        : juce::String("D  LANCER DYNO"));
     dynoButton_.setToggleState(running, juce::dontSendNotification);
     ignitionButton_.setEnabled(!running);
     starterButton_.setEnabled(!running);
@@ -1668,6 +1672,20 @@ void MainComponent::drawDynoChart(juce::Graphics& g, juce::Rectangle<float> area
                    juce::Rectangle<float>(plot.getX(), plot.getY() - 20.0F, plot.getWidth(), 18.0F),
                    juce::Justification::centredRight);
     }
+    if (visibleState_.dynoActive) {
+        g.setColour(visibleState_.dynoPreparing
+            ? juce::Colour(0xffffca55) : juce::Colour(0xff79b89f));
+        const auto status = visibleState_.dynoPreparing
+            ? utf8("PRÉPARATION PROGRESSIVE  →  ")
+                + juce::String(visibleState_.dynoTargetRpm, 0) + " RPM"
+            : utf8("MESURE  ")
+                + juce::String(visibleState_.dynoTargetRpm, 0) + " RPM  ·  "
+                + juce::String(visibleState_.dynoProgress * 100.0, 0) + " %";
+        g.drawText(status,
+            juce::Rectangle<float>(plot.getX(), plot.getY() - 20.0F,
+                                   plot.getWidth(), 18.0F),
+            juce::Justification::centredLeft);
+    }
     double maxTorque = 100.0;
     double maxPower = 75.0;
     auto accumulateMax = [&maxTorque, &maxPower](const DynoRun& run) {
@@ -1690,11 +1708,31 @@ void MainComponent::drawDynoChart(juce::Graphics& g, juce::Rectangle<float> area
     const auto drawRun = [&](const DynoRun& run, juce::Colour colour, bool current) {
         if (run.points.size() < 2) return;
         juce::Path torquePath, powerPath;
+        // Real brake benches display a filtered trace while retaining raw
+        // samples for export. A three-point triangular filter removes the
+        // last cycle-window stair step without changing RPM positions, peak
+        // bookkeeping or the DynoRun data itself.
+        const auto displayValue = [&run](std::size_t index,
+                                         bool torque) noexcept {
+            const auto valueAt = [&run, torque](std::size_t pointIndex) {
+                const auto& point = run.points[pointIndex];
+                return torque
+                    ? (point.correctedTorqueNm > 0.0
+                        ? point.correctedTorqueNm : point.torqueNm)
+                    : (point.correctedPowerKw > 0.0
+                        ? point.correctedPowerKw : point.powerKw);
+            };
+            if (index == 0 || index + 1 >= run.points.size())
+                return valueAt(index);
+            return 0.25 * valueAt(index - 1)
+                + 0.50 * valueAt(index)
+                + 0.25 * valueAt(index + 1);
+        };
         for (std::size_t i = 0; i < run.points.size(); ++i) {
             const auto& point = run.points[i];
             const auto x = plot.getX() + static_cast<float>(point.rpm / maxRpm) * plot.getWidth();
-            const auto torque = point.correctedTorqueNm > 0.0 ? point.correctedTorqueNm : point.torqueNm;
-            const auto power = point.correctedPowerKw > 0.0 ? point.correctedPowerKw : point.powerKw;
+            const auto torque = displayValue(i, true);
+            const auto power = displayValue(i, false);
             const auto torqueY = plot.getBottom() - static_cast<float>(torque / maxTorque) * plot.getHeight();
             const auto powerY = plot.getBottom() - static_cast<float>(power / maxPower) * plot.getHeight();
             if (i == 0) { torquePath.startNewSubPath(x, torqueY); powerPath.startNewSubPath(x, powerY); }

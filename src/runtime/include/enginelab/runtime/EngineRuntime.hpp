@@ -263,7 +263,8 @@ public:
         realtimeThrottleEnabled_.store(enabled, std::memory_order_relaxed);
     }
     /** Instrumentation escape hatch for harnesses that must wait for a slow
-     * high-load setpoint to settle. The application keeps the 30 s default. */
+     * high-load setpoint to settle. The application keeps the 60 s default
+     * proven by the complete user-dyno catalogue sweep. */
     void setDynoMaximumDurationSeconds(double seconds) noexcept {
         if (std::isfinite(seconds))
             dynoMaximumDurationSeconds_.store(
@@ -307,7 +308,7 @@ private:
     std::atomic<std::uint64_t> droppedPressureSamples_ { 0 };
     std::atomic<std::uint64_t> timingOverruns_ { 0 };
     std::atomic<double> maximumTimingLatenessSeconds_ { 0.0 };
-    std::atomic<double> dynoMaximumDurationSeconds_ { 30.0 };
+    std::atomic<double> dynoMaximumDurationSeconds_ { 60.0 };
     std::atomic<bool> paused_ { false };
     std::atomic<bool> realtimeThrottleEnabled_ { true };
     std::atomic<bool> realtimeLoadProtectionEnabled_ { true };
@@ -326,6 +327,11 @@ private:
     double dynoStartupElapsed_ { 0.0 };
     double nextSampleRpm_ { 0.0 };
     double dynoTargetRpm_ { 0.0 };
+    double dynoPreparationTargetRpm_ { 0.0 };
+    double dynoPreparationDestinationRpm_ { 0.0 };
+    bool dynoPullDownRequired_ { false };
+    double dynoThrottleCommand_ { 0.18 };
+    std::uint32_t dynoRecoveryCount_ { 0 };
     double dynoStableElapsed_ { 0.0 };
     double dynoBrakeTorqueNm_ { 0.0 };
     /** Running sum of EVERY published channel over the stable window.

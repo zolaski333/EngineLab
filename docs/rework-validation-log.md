@@ -5,6 +5,20 @@ It records measurements as well as successful changes. Failed hypotheses are
 kept because repeating an attractive but disproved fix wastes more time than
 documenting it.
 
+## 2026-08-02 — banc utilisateur progressif et catalogue complet
+
+L'appui sur D depuis un régime élevé ne connecte plus instantanément le frein à
+1 000 tr/min. Une préparation visible descend la consigne à 700 tr/min/s, puis
+le maintien historique prend le relais. Les twins commencent au minimum à
+1 800 tr/min ; le produit dispose de 60 secondes pour terminer la courbe.
+
+Le nouveau harnais produit passe **16/16 balayages complets**, de 6 à 40 points,
+jusqu'au plafond de chaque moteur, sans calage ni récupération. Le correctif
+d'étincelle précédent a nécessité de réancrer quatre calibrations locales ; le
+gate constructeur repasse **24/24** dans ±15 %, toutes fenêtres stables. Tables,
+protocole et limites :
+[`user-dyno-validation-2026-08-02.md`](user-dyno-validation-2026-08-02.md).
+
 ## 2026-08-02 — sursauts pré-rupteur reproduits et supprimés
 
 Un nouveau harnais accélère chaque moteur du catalogue à plein gaz en 2e ou

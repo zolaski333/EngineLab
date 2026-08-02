@@ -35,12 +35,12 @@ engine:
       - { rpm: 1200, advance_deg: 14 }
       - { rpm: 2600, advance_deg: 23 }
       - { rpm: 4400, advance_deg: 29 }
-      - { rpm: 6200, advance_deg: 30 }
+      - { rpm: 6200, advance_deg: 28 }
       - { rpm: 7400, advance_deg: 27 }
   # Effective air-cooled chamber closure, anchored to the type-964 Carrera 2
   # with the same displacement, bore/stroke and 11.3:1 compression ratio.
   combustion_calibration:
-    chamber_turbulence_intensity_ratio: 0.60
+    chamber_turbulence_intensity_ratio: 0.55
   uses:
     injection: sequential_port
     camshafts: aircooled_flat6

@@ -2531,15 +2531,46 @@ int main() {
         // points, with a bounded deadline, instead of assuming one machine's
         // 4.5 s timing.
         auto liveRun = runtime.currentDynoRun();
+        auto dynoMinimumRpm = std::numeric_limits<double>::max();
+        auto dynoMaximumRpm = 0.0;
+        auto dynoMaximumBrakeTorqueNm = 0.0;
+        std::size_t dynoBrakeContactSamples = 0;
         const auto dynoProofDeadline =
             std::chrono::steady_clock::now() + std::chrono::seconds(10);
         while (liveRun.points.size() < 3
                && std::chrono::steady_clock::now() < dynoProofDeadline) {
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            const auto dynoSnapshot = runtime.snapshot();
+            dynoMinimumRpm = std::min(dynoMinimumRpm, dynoSnapshot.rpm);
+            dynoMaximumRpm = std::max(dynoMaximumRpm, dynoSnapshot.rpm);
+            dynoMaximumBrakeTorqueNm = std::max(
+                dynoMaximumBrakeTorqueNm,
+                dynoSnapshot.dynoBrakeTorqueNm);
+            if (dynoSnapshot.dynoBrakeTorqueNm > 1.0)
+                ++dynoBrakeContactSamples;
             liveRun = runtime.currentDynoRun();
         }
-        if (liveRun.points.size() < 3)
-            std::cerr << "dyno diagnostic: points=" << liveRun.points.size() << " rpm=" << runtime.snapshot().rpm << '\n';
+        if (liveRun.points.size() < 3) {
+            const auto diagnostic = runtime.snapshot();
+            std::cerr << "dyno diagnostic: points=" << liveRun.points.size()
+                      << " rpm=" << diagnostic.rpm
+                      << " target=" << diagnostic.dynoTargetRpm
+                      << " controller_target="
+                      << diagnostic.dynoControllerTargetRpm
+                      << " filtered_accel="
+                      << diagnostic.dynoFilteredAccelerationRpmPerSecond
+                      << " brake_torque=" << diagnostic.dynoBrakeTorqueNm
+                      << " preparing=" << diagnostic.dynoPreparing
+                      << " recoveries=" << diagnostic.dynoRecoveryCount
+                      << " load_torque=" << diagnostic.loadTorqueNm
+                      << " torque=" << diagnostic.cycleAveragedTorqueNm
+                      << " throttle=" << diagnostic.throttle
+                      << " observed_rpm=" << dynoMinimumRpm << ".."
+                      << dynoMaximumRpm
+                      << " max_brake=" << dynoMaximumBrakeTorqueNm
+                      << " contact_samples=" << dynoBrakeContactSamples
+                      << '\n';
+        }
         runtime.stopDyno();
         std::this_thread::sleep_for(std::chrono::milliseconds(750));
         const auto restored = runtime.snapshot();

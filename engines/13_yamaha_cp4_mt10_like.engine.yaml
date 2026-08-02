@@ -42,13 +42,13 @@ engine:
       - { rpm: 2500, advance_deg: 20 }
       - { rpm: 5000, advance_deg: 32 }
       - { rpm: 8000, advance_deg: 36 }
-      - { rpm: 11500, advance_deg: 34 }
+      - { rpm: 11500, advance_deg: 31 }
       - { rpm: 12500, advance_deg: 31 }
   # The short-stroke, high-revving CP4 relies on a strong tumble field. Without
   # it a mean-piston-speed-only closure burns for about 60 crank degrees at
   # 9000 rpm, versus the 35-45 degree interval expected of this pent-roof head.
   combustion_calibration:
-    chamber_turbulence_intensity_ratio: 1.55
+    chamber_turbulence_intensity_ratio: 1.25
   uses:
     injection: high_flow_port
     exhaust: motorcycle_4_2_1

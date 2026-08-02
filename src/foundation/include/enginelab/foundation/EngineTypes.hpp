@@ -1101,6 +1101,17 @@ struct EngineState final {
     double drivelineEnergyResidualJoules { 0.0 };
     double dynoHoldRpm { 0.0 };
     bool dynoHoldEnabled { false };
+    /** User-facing brake-dyno session state. The preparation phase brings an
+     * already-running engine to the first measurement speed without applying
+     * a discontinuous absorber step. */
+    bool dynoActive { false };
+    bool dynoPreparing { false };
+    double dynoTargetRpm { 0.0 };
+    double dynoControllerTargetRpm { 0.0 };
+    double dynoFilteredAccelerationRpmPerSecond { 0.0 };
+    double dynoBrakeTorqueNm { 0.0 };
+    double dynoProgress { 0.0 };
+    std::uint32_t dynoRecoveryCount { 0 };
     RunningState runningState { RunningState::stopped };
     std::array<CylinderState, 32> cylinderStates {};
     std::size_t cylinderStateCount { 0 };

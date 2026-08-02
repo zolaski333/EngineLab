@@ -27,7 +27,8 @@ public:
 
     [[nodiscard]] DynoAbsorberOutput advance(
         double dtSeconds, double targetRpm,
-        const EngineState& engineState) noexcept;
+        const EngineState& engineState,
+        double contactBandRpm = 60.0) noexcept;
 
 private:
     double controllerTorqueScaleNm_ { 1.0 };

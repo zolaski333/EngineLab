@@ -39,7 +39,8 @@ void DynoAbsorberController::reset(
 
 DynoAbsorberOutput DynoAbsorberController::advance(
     double dtSeconds, double targetRpm,
-    const EngineState& engineState) noexcept {
+    const EngineState& engineState,
+    double requestedContactBandRpm) noexcept {
     const auto dt = std::isfinite(dtSeconds)
         ? std::clamp(dtSeconds, 0.0, 0.05) : 0.0;
     const auto target = std::isfinite(targetRpm)
@@ -76,7 +77,9 @@ DynoAbsorberOutput DynoAbsorberController::advance(
     // oscillator, most visibly on the high-compression diesel. A wider band
     // starts absorbing too early at the catalogue's 2,000 rpm points and can
     // leave the one-way brake wound up below its target.
-    constexpr double contactBandRpm = 60.0;
+    const auto contactBandRpm = std::isfinite(requestedContactBandRpm)
+        ? std::clamp(requestedContactBandRpm, 20.0, 1'000.0)
+        : 60.0;
     const auto contactPhase = std::clamp(
         (errorRpm + contactBandRpm) / contactBandRpm, 0.0, 1.0);
     const auto contactScale =
