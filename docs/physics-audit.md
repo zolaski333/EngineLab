@@ -2665,10 +2665,66 @@ donc été retiré ; l'instrument est conservé.
    le PLUS régulier d'un moteur réel. Et ce n'est pas l'absorbeur : à pleine
    charge le régime est tenu à **0,10-0,48 %** pendant que le travail par cycle
    varie de 5 à 13 %. La cause n'est pas identifiée et n'est pas devinée ici.
-3. **La dilution piégée est trop faible d'un ordre de grandeur.** Un moteur à
-   allumage commandé de série piège 15-25 % de gaz brûlés à charge partielle ;
-   le catalogue lit 0,4-2,6 %. Si ce chiffre est juste, la combustion du
-   simulateur est trop robuste partout et la dilution ne peut jouer aucun des
-   rôles qu'elle joue en réalité (irrégularité de ralenti, limite EGR, ratés).
-   C'est la piste la plus prometteuse des trois, et elle se vérifie avec
-   `EngineLabPhysicsPerfHarness --trace 1 --idle`, pas avec ce harnais.
+3. ~~**La dilution piégée est trop faible d'un ordre de grandeur.**~~
+   **RETIRÉ le 2026-08-02 — la revendication était fausse deux fois.** Voir la
+   section suivante.
+
+### Retrait : la dilution piégée n'est pas trop faible (2026-08-02)
+
+La piste 3 ci-dessus disait qu'un moteur à allumage commandé de série piège
+15-25 % de gaz brûlés à charge partielle quand le catalogue lit 0,4-2,6 %. Les
+deux moitiés de la comparaison étaient fausses.
+
+**Erreur d'unité.** `residualGasFractionAtSpark` **n'est pas** une fraction de
+gaz résiduels. Le mélange porte quatre espèces — oxygène, inerte, carburant,
+brûlé — et l'azote entré avec l'air reste `inerte` pour toujours. Le champ
+compte donc les **produits de combustion seuls**, là où la RGF de Heywood compte
+tout l'échappement piégé, azote compris. Avec l'essence par défaut
+(`productMolesPerFuelMole` 17,0, `oxygenMolesPerFuelMole` 12,5, soit
+C8H18 + 12,5 O2 -> 8 CO2 + 9 H2O), l'échappement stœchiométrique fait 17 moles
+de produits sur 17 + 12,5 × 3,7619 = 64,0, donc :
+
+    residualGasFractionAtSpark ~= 0,266 × RGF
+
+soit un facteur **3,8**.
+
+**Mauvais point de fonctionnement.** Les 0,004-0,026 venaient de la condition
+`light` du harnais de variabilité — 10 % de papillon avec le régime *tenu par
+l'absorbeur* à 1,35× le ralenti — et non d'un ralenti libre.
+
+**Mesure corrigée**, `EngineLabPhysicsPerfHarness --trace 1 --idle`, arbre
+`windows-vs2022` :
+
+| moteur | rpm | irp kPa | champ | RGF impliquée |
+|---|---|---|---|---|
+| K20A | 950 | 16,7 | 0,0631 | 23,8 % |
+| 2JZ | 755 | 22,2 | 0,0955 | 36,0 % |
+| LS3 | 716 | 17,4 | 0,0671 | 25,3 % |
+| EJ25 | 826 | 23,3 | 0,0921 | 34,7 % |
+| Radial | 685 | 21,8 | 0,0847 | 31,9 % |
+| CP4 | 1370 | 31,5 | 0,1294 | 48,7 % |
+| Merlin | 793 | 25,6 | 0,0955 | 36,0 % |
+| Hayabusa | 1244 | 33,7 | 0,1420 | 53,5 % |
+
+Contrôle de non-vacuité, à pleine charge — la prédiction était 0,015 ± 0,005 et
+elle est vérifiée : LS3 0,0160 (**6,0 %** de RGF), K20A 0,0140 (**5,3 %**), tous
+deux dans la bande 3-7 % de Heywood ; le 2JZ suralimenté lit 0,0240 (9,0 %) à
+196,6 kPa de collecteur, ce qui est le bon sens de variation.
+
+Le résidu piégé est donc **sain sur toute la plage de charge**, et non trop
+faible. Il est plutôt *élevé* au ralenti sur les moteurs à fort croisement
+(CP4 48,7 %, Hayabusa 53,5 %) — question distincte, non instruite ici.
+
+**Conséquence sur la fermeture retirée, à ne pas lire trop vite.** Son seuil de
+dilution était 0,06. Il est bien au-dessus des 0,004-0,026 du point `light`, ce
+qui rend le constat d'inertie exact *à ce point-là*. Mais il est **en dessous**
+des 0,063-0,142 mesurés au ralenti libre : la fermeture n'aurait donc pas été
+identiquement nulle partout, seulement à la condition où elle avait été mesurée.
+Cela ne justifie pas de la remettre — il faudrait la valider pour elle-même —
+mais l'argument « son terme vaut zéro sur tout le catalogue » est retiré aussi.
+
+**Leçon générique :** un seuil issu de la littérature posé dans un commentaire
+n'est exploitable que si le commentaire dit **les unités du champ sur lequel il
+est posé**. Celui de `residualGasFractionAtSpark` citait les pourcentages de
+Heywood à côté d'une fraction molaire de produits ; il porte désormais la
+conversion et les seuils corrigés.

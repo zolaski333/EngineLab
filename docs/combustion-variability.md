@@ -59,9 +59,14 @@ variabilite doit donc partir de cette table, pas du champ a zero.
 Trois consequences pratiques :
 
 1. Une fermeture physique pilotee par la dilution a ete prototypee puis
-   **retiree** : la fraction de gaz brules a l'allumage vaut 0,004 a 0,026 sur
-   tout le catalogue, donc son terme etait identiquement nul. La faire agir
-   aurait exige d'abaisser son seuil sur la sortie du simulateur.
+   **retiree** : a la condition `light` de ce harnais, la fraction de produits
+   brules a l'allumage vaut 0,004 a 0,026, sous son seuil de 0,06, donc son terme
+   y etait nul. **Attention, deux corrections du 2026-08-02** : ce champ n'est
+   pas une fraction de gaz residuels mais une fraction molaire de PRODUITS, soit
+   0,266 x RGF ; et au ralenti libre il vaut 0,063 a 0,142, donc au-dessus du
+   seuil. L'affirmation « nul sur tout le catalogue » est retiree. Voir
+   `docs/physics-audit.md`, section « Retrait : la dilution piegee n'est pas trop
+   faible ».
 2. L'ordre est **inverse** sur sept moteurs, plus disperses a pleine charge qu'a
    charge partielle. Ce n'est pas l'absorbeur : la colonne `dN%` montre le
    regime tenu a 0,10-0,48 % pendant que le travail varie de 5 a 13 %.

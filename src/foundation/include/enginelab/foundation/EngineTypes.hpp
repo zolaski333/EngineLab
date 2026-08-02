@@ -869,9 +869,34 @@ struct CylinderState final {
      * visible cause -- while the field named `residualGasFraction` reported
      * something else entirely.
      *
-     * Literature (Heywood ch. 6.4): 3-7 % at wide-open throttle, rising towards
-     * 20 % at idle where the pressure ratio across the overlap is adverse. A WOT
-     * figure above ~0.15 is a gas-exchange failure, not a calibration choice.
+     * IT IS NOT A RESIDUAL GAS FRACTION, and must not be compared with one
+     * directly. The mixture model carries four species -- oxygen, inert, fuel,
+     * burned -- and the nitrogen that arrives with the air stays in `inert`
+     * forever. So `burned / total` counts the combustion PRODUCTS alone, while
+     * Heywood's residual gas fraction counts the whole trapped exhaust,
+     * nitrogen included.
+     *
+     * The conversion is fixed by the fuel chemistry. With the default pump
+     * gasoline (`oxygenMolesPerFuelMole` 12.5, `productMolesPerFuelMole` 17.0,
+     * i.e. C8H18 + 12.5 O2 -> 8 CO2 + 9 H2O), stoichiometric exhaust is 17
+     * product moles against 17 + 12.5 * 3.7619 = 64.0 total, so
+     *
+     *     residualGasFractionAtSpark ~= 0.266 * (residual gas fraction)
+     *
+     * Literature (Heywood ch. 6.4) puts the residual gas fraction at 3-7 % at
+     * wide-open throttle and near 20 % at idle, where the pressure ratio across
+     * the overlap is adverse. Expressed in THIS quantity that is **0.008-0.019
+     * at WOT and about 0.053 at idle**, and the gas-exchange failure threshold
+     * that used to read 0.15 here is about **0.04**.
+     *
+     * Reading the raw number against Heywood's percentages is a factor of 3.8,
+     * and it produced a false alarm that reached three documents: 0.004-0.026
+     * was reported as "an order of magnitude below what a production SI engine
+     * traps". Measured on the shipped catalogue after both errors were
+     * corrected -- the other being that the low figures came from a speed-held
+     * 10 % throttle point rather than a free idle -- a `--trace 1 --idle` run
+     * reads 0.063-0.142 (24-53 % residual) and a WOT hold reads 0.014-0.016 on
+     * the naturally aspirated engines, i.e. 5.3-6.0 %, inside Heywood's band.
      */
     double residualGasFractionAtSpark { 0.0 };
     /**
