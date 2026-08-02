@@ -1,5 +1,54 @@
 # Brief de reprise — nouvelle machine (2026-07-28)
 
+> **Session du 2 août 2026 (soir) — quatre lots, dont une réfutation.**
+> Lire `docs/rework-validation-log.md` à partir de « Un retard d'allumage ».
+>
+> 1. **Étincelle.** Un rendez-vous d'allumage exprimé comme une phase absolue ne
+>    peut pas représenter un retard au-delà du PMH, et l'ECU en commande
+>    (plancher −10°, atteint par cliquetis ou surchauffe). Mesuré : **0 étincelle
+>    et 0 allumage** au lieu d'un allumage retardé. Le rendez-vous est désormais
+>    une distance de vilebrequin restante.
+> 2. **Variabilité cycle-à-cycle : hypothèse RÉFUTÉE.** `cycle_variation_cov = 0`
+>    ne veut **pas** dire que les cycles se répètent. Mesuré sans dispersion
+>    autorée : COV(PMI) **1,7-7,0 %** à charge partielle et **0,9-12,9 %** à
+>    pleine charge. Une fermeture pilotée par la dilution a été prototypée puis
+>    **retirée** (inerte : fraction brûlée à l'allumage 0,004-0,026 partout).
+>    L'instrument reste : `EngineLabCyclicVariabilityHarness`.
+> 3. **Distance d'écoute.** Le catalogue mélangeait scène de mesure et point
+>    d'écoute (V12 à 24 m, radial à 6, le reste à 3,5-5). Le couple de micros est
+>    remis à l'échelle autour de l'origine à `listening_distance_m` (4 m).
+>    Merlin : rms **0,0095 → 0,0538 (+15,1 dB)**, pic observateur 6,0 → 40,8 Pa,
+>    sans AGC ni limiteur. No-op exact vérifié à 0.
+> 4. **Turbine.** La détente était référencée à l'ambiante, donc la géométrie
+>    aval était absente de la puissance arbre par construction. Elle se détend
+>    maintenant vers sa propre sortie : 2JZ, sortie 45 → 95 mm, pression de
+>    sortie turbine 131,7 → 102,8 kPa, contre-pression 260,5 → 210,3 kPa, couple
+>    356,9 → 380,1 Nm. Porte : `EngineLab.TurboDownstreamAuthority`.
+>
+> **Trois pistes ouvertes, mesurées, non corrigées — ne pas les redécouvrir :**
+>
+> - **Plafond compresseur.** `1 + (PR-1)*speedRatio²` sature à 2,154 sur le 2JZ
+>   (arbre plafonné 1,16×, ratio 1,12). Wastegate fermée, la suralimentation ne
+>   bouge à aucun diamètre aval. C'est ce qui bloque encore le gain « gros
+>   downpipe = plus de boost ». **Ne pas relâcher ce plafond pour faire passer
+>   une porte.**
+> - **Dispersion inversée.** Sept moteurs sont plus dispersés à pleine charge
+>   qu'à charge partielle. Ce n'est pas l'absorbeur : régime tenu à 0,10-0,48 %
+>   pendant que le travail par cycle varie de 5 à 13 %.
+> - **Résidu piégé trop faible d'un ordre de grandeur.** 0,4-2,6 % contre 15-25 %
+>   pour un moteur de série à charge partielle. Vérifier avec
+>   `EngineLabPhysicsPerfHarness --trace 1 --idle`, pas avec le harnais de
+>   variabilité.
+>
+> **Non traité de la demande utilisateur, par ordre :** banc en rampe continue
+> style ES2D (le balayage reste par paliers de 250 tr/min,
+> `EngineRuntime.cpp` ~845) ; garde-fous physiques ÉCHAP PRO (la validation ne
+> vérifie que bornes et topologie) ; afterfire localisé **et** son chemin vers
+> l'audio (le chemin temps réel n'a aujourd'hui aucune référence à l'afterfire) ;
+> énergie hors mode plan rayonnée au lieu d'être jetée (`DuctModeCutoff`, cause
+> du « gros diamètre = étouffé »).
+
+
 > **Mise à jour Diesel du 2 août 2026.** Le diagnostic essence « mélange trop
 > pauvre » ne s'applique plus au Diesel. `fuel.target_afr` y est explicitement
 > une limite fumée minimale et une nouvelle carte live
