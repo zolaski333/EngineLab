@@ -396,6 +396,11 @@ private:
     std::array<bool, 32> ignitionPending_ {};
     std::array<bool, 32> sparkScheduleArmed_ {};
     std::array<double, 32> scheduledSparkPhaseDegrees_ {};
+    /** Crank degrees still to travel before the latched spark event fires.
+     *  A remaining DISTANCE, not an absolute phase: a commanded retard past
+     *  firing TDC places the event after the cycle boundary, which no
+     *  single-arc phase target can express. See the latch in step(). */
+    std::array<double, 32> sparkScheduleTravelRemainingDegrees_ {};
     std::array<std::uint32_t, 32> commandedSparkEventsThisCycle_ {};
     std::array<std::uint32_t, 32> commandedSparkEventsLastCycle_ {};
     std::array<std::uint32_t, 32> completedIgnitionEventsThisCycle_ {};

@@ -193,6 +193,23 @@ test onto the behaviour it is meant to catch. Keep it that way.
   `CylinderState::residualGasFraction` is the *instantaneous* burned fraction
   despite its name (≈1.0 just after combustion); the residual is
   `residualGasFractionAtSpark`.
+- **A crank EVENT is a distance, not an angle — an angle cannot cross the cycle
+  boundary.** The spark schedule was latched at phase 540 as an absolute
+  `sparkPhase` and disarmed at the 0 crossing, so its reachable set was the arc
+  (540, 720]. But `minimumIgnitionAdvanceDegrees` is **−10**, reached by knock
+  retard (`knockLevel * 12`) or the over-temperature pull, and that event lands
+  at phase [0, 10) — *after* the boundary. The boundary reset consumed it first
+  and the cylinder went dark: measured 0 sparks and 0 ignitions where a retard
+  was commanded, not the low-torque hot-exhaust behaviour a retard should give.
+  The schedule is now a remaining-travel countdown, which has no arc, and the
+  leak the reset existed to stop is excluded by the validated ranges (advance
+  [−10, 55], per-cylinder offset [−30, 30] ⇒ distance ∈ [95, 220]). Two things
+  generalise. **Any "wait until phase X" written against a wrapping phase silently
+  assumes X is inside the current wrap** — check that assumption whenever the
+  target is computed rather than constant. And **an accumulator cannot be fed
+  `forwardPhaseDegrees` unguarded**: it wraps, so one backward sub-step (start
+  kickback is real here) reports ~720° of forward travel. A crossing test shrugs
+  that off; an accumulator fires immediately. Credit at most 180° per sub-step.
 - **A grep by field name proves nothing about an aggregate initialised by
   position.** `FlameConditions::burnedGasFraction` appears nowhere outside a unit
   test, so I concluded the flame model's residual-dilution term was dead. It is

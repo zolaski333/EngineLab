@@ -43,6 +43,7 @@
 
 #include <array>
 #include <cmath>
+#include <cstdint>
 #include <cstdlib>
 #include <iomanip>
 #include <iostream>
@@ -288,6 +289,73 @@ int main() {
         "authored cycle variation must reach per-cylinder combustion telemetry");
     require(std::isfinite(maximumPressureBar) && maximumPressureBar > 10.0,
         "varied combustion must still generate finite physical cylinder pressure");
+
+    // A commanded RETARD past firing TDC must still produce a spark.
+    //
+    // `minimumIgnitionAdvanceDegrees` is -10, and the ECU reaches it through
+    // knock retard (`knockLevel * 12`) or an over-temperature pull. Such an
+    // event sits at cycle phase [0, 10), i.e. AFTER the boundary, so a spark
+    // schedule expressed as an absolute phase inside the (540, 720] compression
+    // arc cannot represent it: the boundary reset consumed the arming flag
+    // first and the cylinder went dark for good. Retarded is not the same
+    // failure as dead -- a retarded engine makes less torque and hotter
+    // exhaust, a dead one makes none -- so this asserts the distinction.
+    //
+    // The engine is brought up on its normal map first and only then pulled
+    // into retard, because the point is that a RUNNING engine survives the
+    // pull, and a large external inertia holds the speed so the assertion is
+    // about ignition rather than about whether -10 deg can idle.
+    auto retardConfig = enginelab::makeDefaultInlineFour();
+    // The retard condition is CONSTRUCTED rather than waited for. What is under
+    // test is the spark schedule, not the ECU's ability to reach its own floor:
+    // a base map plus the -30 deg trim ceiling cannot cross zero at the speed
+    // this probe runs at, while knock and over-temperature -- the paths that
+    // reach it in service -- are states no test can command directly. A low
+    // base curve plus the trim reproduces the same commanded angle.
+    retardConfig.ignition.timingCurve = {
+        { 0.0, 6.0 }, { 2'000.0, 8.0 }, { 8'000.0, 10.0 }
+    };
+    enginelab::normaliseEngineConfig(retardConfig);
+    enginelab::SimpleEcuModel retardEcu;
+    enginelab::SimplifiedGasolinePhysics retardPhysics;
+    enginelab::FourStrokeEventGenerator retardEvents;
+    auto retardExhaust = enginelab::ExhaustGraph::makeForEngine(retardConfig);
+    enginelab::EngineSimulator retardSimulator(retardConfig, retardEcu,
+        retardPhysics, retardEvents, retardExhaust);
+    auto retardCommandedAdvance = std::numeric_limits<double>::quiet_NaN();
+    std::uint32_t retardCommandedSparks = 0;
+    std::uint32_t retardCompletedIgnitions = 0;
+    auto retardObservedCylinders = std::size_t { 0 };
+    for (int step = 0; step < 10 * 240; ++step) {
+        const auto time = static_cast<double>(step) / 240.0;
+        // -30 deg of trim saturates the map against the -10 deg floor.
+        if (time >= 5.0) retardEcu.setIgnitionTrimDegrees(-30.0);
+        enginelab::EngineControls controls { true, time < 1.2, 0.60, 0.0 };
+        controls.externalRotatingInertiaKgM2 = 2.0;
+        const auto frame = retardSimulator.step(1.0 / 240.0, controls);
+        if (time < 8.0 || frame.state.cylinderStateCount == 0) continue;
+        retardCommandedAdvance = frame.state.ignitionAdvanceDegrees;
+        retardObservedCylinders = frame.state.cylinderStateCount;
+        for (std::size_t index = 0; index < frame.state.cylinderStateCount;
+             ++index) {
+            retardCommandedSparks += frame.state.cylinderStates[index]
+                .commandedSparkEventsLastCycle;
+            retardCompletedIgnitions += frame.state.cylinderStates[index]
+                .completedIgnitionEventsLastCycle;
+        }
+    }
+    std::cout << "  retard advance=" << retardCommandedAdvance
+              << "deg sparks=" << retardCommandedSparks
+              << " ignitions=" << retardCompletedIgnitions
+              << " rpm=" << retardSimulator.state().rpm << '\n';
+    require(retardObservedCylinders > 0,
+        "the retard probe must observe cylinder telemetry");
+    require(retardCommandedAdvance < 0.0,
+        "the trim must actually drive the commanded advance past firing TDC");
+    require(retardCommandedSparks > 0,
+        "a spark retarded past TDC must still be commanded, not silently lost");
+    require(retardCompletedIgnitions > 0,
+        "a spark retarded past TDC must still reach ignition");
 
     std::cout << "Combustion phasing tests passed\n";
     return EXIT_SUCCESS;

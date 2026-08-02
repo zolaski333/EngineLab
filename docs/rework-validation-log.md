@@ -1043,3 +1043,44 @@ chemise reste fixe, seuls piston et bielle bougent.
 Build Release complet vert, `ctest` 35/35 en 679,20 s, package extrait vivant
 après 6 secondes. Rapport complet :
 `docs/foundation-recovery-final-validation-2026-08-02.md`.
+
+## 2026-08-02 — Un retard d'allumage au-delà du PMH éteignait le cylindre
+
+Le verrou d'étincelle introduit avec la suppression des sursauts exprimait le
+rendez-vous comme une **phase absolue** armée au passage de 540° et désarmée au
+passage de 0°. Cet arc (540, 720] ne peut pas représenter un allumage
+*après* le PMH d'allumage, et l'ECU en commande légitimement : la borne
+`minimumIgnitionAdvanceDegrees` vaut −10°, atteinte par le retard de cliquetis
+(`knockLevel * 12`) ou par la protection de surchauffe (`coolant > 108 °C`). Un
+tel événement tombe en phase [0, 10), donc hors de l'arc, et le désarmement de
+frontière le supprimait définitivement.
+
+Le rendez-vous est désormais une **distance de vilebrequin restante**, mesurée
+depuis la phase courante au moment du verrouillage et décrémentée par le trajet
+de chaque sous-pas. Une distance n'a pas d'arc. La fuite vers le cycle suivant —
+la raison d'être du désarmement — est exclue par construction : les plages
+validées (avance [−10, 55], décalage cylindre [−30, 30]) bornent la distance à
+[95, 220]°, et un clamp à 260° garde même une configuration malformée dans la
+même détente.
+
+Une réserve a été ajoutée sur l'accumulation : `forwardPhaseDegrees` boucle, donc
+un vilebrequin qui recule momentanément (le retour de manivelle au démarrage est
+réel ici) rapporte ~720° de trajet avant. Un test de croisement l'ignore, un
+accumulateur non — le trajet crédité est donc plafonné à 180° par sous-pas.
+
+Mesure de non-vacuité, moteur maintenu par une inertie externe, trim −30°
+saturant la carte contre le plancher −10° :
+
+| | avance commandée | étincelles/cycle | allumages/cycle | régime |
+|---|---|---|---|---|
+| avant | −10,00° | **0** | **0** | 3 180 |
+| après | −10,00° | 1 920 | 1 920 | 6 490 |
+
+Le moteur ne devenait donc pas *retardé* mais **complètement éteint**. Le sondage
+est dans `EngineLab.CombustionPhasing`.
+
+Non-régression Release, 12/12 : `Core`, `PhysicsRegression`,
+`IdleStabilityRegression`, `CatalogPhysics`, `CatalogReference` (24/24 points
+constructeur), `CombustionPhasing`, `CombustionCycleVariation`,
+`OverrunThermalRegression`, `PartLoadFuelling`, `LoadedAccelerationCP2`,
+`LoadedAccelerationAudi`.

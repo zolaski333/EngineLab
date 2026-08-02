@@ -1111,10 +1111,14 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 completedIgnitionEventsThisCycle_[cylinderIndex] = 0;
                 commandedSparkPhaseThisCycle_[cylinderIndex] = -1.0;
                 completedIgnitionPhaseThisCycle_[cylinderIndex] = -1.0;
-                // A schedule belongs to exactly one compression stroke. If a
-                // cut prevented its event, it must not leak into the next
-                // cycle and fire at an unrelated angle.
-                sparkScheduleArmed_[cylinderIndex] = false;
+                // A schedule deliberately SURVIVES this boundary. It used to be
+                // discarded here so a prevented event could not leak into the
+                // next cycle, but the cycle boundary is not the end of a spark
+                // schedule: a retarded event (negative commanded advance) sits
+                // just after it, and discarding it there is what turned a
+                // retard into a misfire. The schedule is now a bounded
+                // countdown, so it expires inside its own power stroke by
+                // construction and cannot reach the next compression stroke.
                 if (cylinderFlowCycleStarted_[cylinderIndex]) {
                     intakeFlowMgPerCycle_[cylinderIndex] = std::max(0.0,
                         intakeFlowMgThisCycle_[cylinderIndex]);
@@ -1150,15 +1154,53 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
             // that target across the crank between two evaluations, producing
             // no event for the entire cylinder cycle. Latch it at the start of
             // compression (phase 540) and consume it once near firing TDC.
+            //
+            // The schedule is carried as a REMAINING CRANK DISTANCE, not as an
+            // absolute phase to be crossed again. A phase target cannot express
+            // a spark that falls after the cycle boundary, and the ECU can
+            // legitimately command one: `minimumIgnitionAdvanceDegrees` is
+            // -10 deg, which heavy knock retard (`knockLevel * 12`) or an
+            // over-temperature pull (`coolant > 108 C`) reaches. Such an event
+            // lands at phase [0, 10) -- outside the (540, 720] arc the latch
+            // covers -- and the boundary reset below then discarded it, turning
+            // a retarded spark into a complete misfire. A countdown has no arc.
+            //
+            // It also cannot leak into the following cycle, which is what the
+            // boundary reset existed to prevent: the reachable distance is
+            // bounded by the validated ranges (advance [-10, 55], per-cylinder
+            // ignition offset [-30, 30]) to [95, 220] deg, and the clamp below
+            // keeps even a malformed configuration inside the same power
+            // stroke.
+            constexpr double sparkScheduleMaximumTravelDegrees = 260.0;
             if (crossedPhase(previousPhase, cyclePhase, 540.0)) {
                 scheduledSparkPhaseDegrees_[cylinderIndex] =
                     requestedSparkPhase;
+                // Measured from the CURRENT phase, not from 540: the crank has
+                // already moved past 540 inside this substep, and counting from
+                // the trigger angle would spend that travel twice.
+                sparkScheduleTravelRemainingDegrees_[cylinderIndex] =
+                    std::clamp(std::fmod(requestedSparkPhase - cyclePhase
+                            + 720.0, 720.0),
+                        0.0, sparkScheduleMaximumTravelDegrees);
                 sparkScheduleArmed_[cylinderIndex] = true;
+            } else if (sparkScheduleArmed_[cylinderIndex]) {
+                // `forwardPhaseDegrees` wraps, so a momentarily REVERSING crank
+                // -- start kickback is real here -- reports ~720 deg of forward
+                // travel for a small backward step. A crossing test shrugs that
+                // off; an accumulator would not, and would fire the schedule at
+                // once. One substep can never legitimately advance half a
+                // cycle, so anything that large is the wrap artefact.
+                constexpr double maximumCreditedSubstepTravelDegrees = 180.0;
+                const auto travel =
+                    forwardPhaseDegrees(previousPhase, cyclePhase);
+                if (travel <= maximumCreditedSubstepTravelDegrees)
+                    sparkScheduleTravelRemainingDegrees_[cylinderIndex] -=
+                        travel;
             }
             const auto sparkPhase =
                 scheduledSparkPhaseDegrees_[cylinderIndex];
             const auto sparkCrossed = sparkScheduleArmed_[cylinderIndex]
-                && crossedPhase(previousPhase, cyclePhase, sparkPhase);
+                && sparkScheduleTravelRemainingDegrees_[cylinderIndex] <= 0.0;
             const auto injectionStartCrossed = crossedPhase(previousPhase, cyclePhase,
                 config_.injection.startAngleDegrees);
             if (injectionStartCrossed) {
@@ -3220,6 +3262,7 @@ void EngineSimulator::reset() noexcept {
     ignitionPending_.fill(false);
     sparkScheduleArmed_.fill(false);
     scheduledSparkPhaseDegrees_.fill(0.0);
+    sparkScheduleTravelRemainingDegrees_.fill(0.0);
     commandedSparkEventsThisCycle_.fill(0);
     commandedSparkEventsLastCycle_.fill(0);
     completedIgnitionEventsThisCycle_.fill(0);
