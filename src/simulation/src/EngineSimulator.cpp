@@ -2864,6 +2864,25 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 exhaustFuelReaction.burnedFuelMassKg
                     / exhaustAdvanceDurationSeconds * 1.0e6,
                 exhaustAdvanceDurationSeconds, 80.0);
+            // Unsmoothed: the wall moves on a tens-of-seconds time constant, so
+            // there is nothing here for a filter to remove.
+            //
+            // This is a max over every exhaust cell and it sits in the SUB-STEP
+            // loop, which on this project's critical thread deserves an answer
+            // rather than a shrug: ~40 cells against ~160 sub-steps per frame is
+            // ~6 us of a 4166 us budget, i.e. 0.15%, and the `inventory()`
+            // traversal a few lines below is already more expensive. Sampling a
+            // 55 s time constant at 240 Hz would be plenty, so if this block
+            // ever moves somewhere cheaper, take this with it.
+            state_.exhaustWallTemperatureC =
+                physicalExhaustNetwork.peakWallTemperatureK() - 273.15;
+        }
+        if (exhaustFuelReaction.reactingControlVolumes > 0) {
+            state_.exhaustAfterfireWallIgnitedFraction =
+                static_cast<double>(
+                    exhaustFuelReaction.wallIgnitedControlVolumes)
+                / static_cast<double>(
+                    exhaustFuelReaction.reactingControlVolumes);
         }
         state_.manifoldGasMassGrams = 0.0;
         state_.cylinderGasMassGrams = 0.0;

@@ -682,6 +682,64 @@ test onto the behaviour it is meant to catch. Keep it that way.
   2.1-3.5x, so the catalogue is untouched — verified: the 2JZ still measures
   `net_hz` 11,520 with the floor in place, and the user's config drops from
   92,160 to 23,040 and from 153 % to 72 % of budget with torque unchanged.
+- **The afterfire has three separate defects and the audible one is NOT in the
+  chemistry.** Measured with `EngineLabAfterfireHarness`, which drives a
+  deterministic crank / launch / **warm-up** / lift-off / overrun / tip-in and
+  reports the SHAPE of the heat release (bursts, crest, 10-90% rise, duty)
+  plus the real `RealtimeEngineAudio` path. Three things to know before
+  touching it:
+  - **It does nothing by default because nothing authors it.** `enabled` is
+    false, no catalogue engine sets it, and `overrunFuelFraction` defaults to 0
+    so even flipping `enabled` leaves the exhaust with no fuel. That is an
+    authoring fact; reading it as a broken model sends you into the chemistry
+    for nothing.
+  - **The ignition source is the PIPE WALL, and the wall takes minutes.**
+    Overrun cuts spark, so the gas entering the exhaust is cold by
+    construction — measured 325-346 degC against a 900 K threshold, with the
+    published heat release falling to **exactly 0.000 kW** a second after
+    lift-off. The gate now takes the hotter of gas and wall
+    (`dynamicWallHeatTransferEnabled` was already on; the wall was simply never
+    read). But 1.5 mm of steel is 5925 J/m2K against ~90 W/m2K inside and
+    18 outside, i.e. **tau ~= 55 s**: measured wall 147 degC at 10 s, 547 at 45,
+    793 at 90, 933 at 150. **An engine that has just started cannot pop, and
+    that is correct.** `EngineState::exhaustWallTemperatureC` publishes it.
+    Wall-ignited share reads exactly 0% below the threshold and 11% above, so
+    the path is gated, not vacuous — and the first version of this measurement
+    lifted off six seconds after cranking, where the fix came out
+    **bit-identical to no fix**. A cold-pipe scenario proves nothing here.
+  - **Doubling the chemistry moves the observer by 0.74 dB — and the reason is
+    the SHAPE, not a missing audio path.** A/B on a warm exhaust, same
+    trajectory, only `overrunFuelFraction` differing: 248.1 mg burned against
+    120.7, mean heat 3.556 kW against 1.730, audio overrun p999
+    0.24117 -> 0.26269, **peak unchanged** and **port pressure identical**
+    (128.6 kPa). The tempting reading is "`RealtimeEngineAudio` has no afterfire
+    source, add one" — that is wrong and nearly got written down.
+    `reactUnburnedFuel` adds its energy to `totalEnergyDensityJPerM3`, so the
+    reaction raises cell pressure and launches a wave that reaches the port,
+    and the port is exactly what the telemetry publishes to the audio. **The
+    coupling already exists.** What is missing is audio-band content: the
+    release is a 120-512 ms swell at 100% duty, whose fundamental is ~2 Hz, and
+    the chain high-passes it away. So the measurement says *doubling a slow
+    smear is inaudible*, which is not the same claim as *afterfire is
+    inaudible*. Fix the burst shape first, then re-run the same A/B; a dedicated
+    audio source is only justified if a real burst still does not carry. Note
+    the telemetry is itself low-passed at tau = 12.5 ms, which is 40x smaller
+    than the swell, so the instrument is not what smears it.
+  - **REFUTED: speeding the burn up does not make bursts.** The obvious next
+    move is `reactionTimeConstantSeconds`, which is already authorable from
+    2 to 50 ms, so it costs nothing to test. Measured on the CP2 with a warm
+    exhaust, everything else fixed: tau 10 ms gives peak 16.944 kW / rise
+    120.8 ms / duty 100% / 1 burst, tau 5 ms gives 21.039 / 116.7 / 100% / 1,
+    tau 2 ms gives 25.332 / **112.5** / **100%** / **1**. Five times faster
+    chemistry raises the peak by half and leaves the SHAPE alone. The reason is
+    that the constant sets how fast fuel burns *once present*, while fuel is
+    delivered continuously — every cylinder, every cycle, throughout the
+    overrun — so it burns as it arrives at any speed; the ~120 ms rise is the
+    throttle-closing transient, not the chemistry. What is needed is to **not
+    burn until an inventory has built up**: an induction delay (Livengood-Wu
+    style, strongly temperature-dependent) then a fast burn, which needs
+    persistent per-control-volume state that `ExhaustGasNetwork` does not have.
+    Do not retry the cheap version.
 - **A legacy single-path engine reads `config.exhaust`, NOT `path.geometry`.**
   `ExhaustGraph.cpp` selects with `legacySinglePath ? config.exhaust :
   path.geometry`, so a test that configures only `exhaustPaths` on a

@@ -657,6 +657,42 @@ void testHotUnburnedFuelReactsConservatively() {
             && coldAfter.speciesMassKg == coldBefore.speciesMassKg
             && coldAfter.totalEnergyJ == coldBefore.totalEnergyJ,
         "sub-ignition exhaust mixture must remain an exact non-reacting state");
+    requireNetwork(coldReaction.wallIgnitedControlVolumes == 0,
+        "a cold pipe must not report a hot-surface ignition");
+
+    // Cold gas against a HOT pipe: the overrun case, and the one the gas-only
+    // criterion could never serve. The mixture entering the exhaust on a
+    // spark-cut overrun is pumped air, so it is below the threshold by
+    // construction while the pipe it is flowing through is still glowing from
+    // the preceding pull. Same 700 K gas as the run above, which does not
+    // react, so anything that happens here is attributable to the wall alone.
+    //
+    // The wall is left static (dynamicWallHeatTransferEnabled off) precisely so
+    // this asserts the ignition criterion and not the wall solver.
+    ExhaustGasNetworkConfig hotWallConfiguration = coldConfiguration;
+    hotWallConfiguration.wallTemperatureK = 1'000.0;
+    auto hotWall = makeNetwork(makeDefaultInlineFour(), hotWallConfiguration);
+    const auto hotWallBefore = hotWall.inventory();
+    const auto hotWallReaction = hotWall.reactUnburnedFuel(0.004, chemistry);
+    const auto hotWallAfter = hotWall.inventory();
+    requireNetwork(hotWallReaction.wallIgnitedControlVolumes > 0
+            && hotWallReaction.burnedFuelMassKg > 0.0
+            && hotWallReaction.releasedEnergyJoules > 0.0,
+        "a hot pipe must ignite an overrun mixture whose bulk gas is cold");
+    requireNetwork(hotWallReaction.wallIgnitedControlVolumes
+            == hotWallReaction.reactingControlVolumes,
+        "with the gas below the threshold every reacting volume is wall-ignited");
+    requireNetwork(std::abs(totalMass(hotWallAfter.speciesMassKg)
+            - totalMass(hotWallBefore.speciesMassKg)) < 1.0e-12,
+        "wall-ignited reaction must conserve total species mass");
+    requireNetwork(relativeError(
+            hotWallAfter.totalEnergyJ - hotWallBefore.totalEnergyJ,
+            hotWallReaction.releasedEnergyJoules) < 2.0e-12,
+        "wall-ignited telemetry must equal the conservative energy increase");
+    std::cout << "wall afterfire: volumes=" << hotWallReaction.reactingControlVolumes
+              << " wall_ignited=" << hotWallReaction.wallIgnitedControlVolumes
+              << " fuel_mg=" << hotWallReaction.burnedFuelMassKg * 1.0e6
+              << " energy_j=" << hotWallReaction.releasedEnergyJoules << '\n';
 }
 
 } // namespace

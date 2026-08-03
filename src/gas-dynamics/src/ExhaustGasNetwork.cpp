@@ -517,6 +517,14 @@ ExhaustNetworkInventory ExhaustGasNetwork::inventory() const noexcept {
     return result;
 }
 
+double ExhaustGasNetwork::peakWallTemperatureK() const noexcept {
+    auto peak = 0.0;
+    for (const auto& duct : ducts_)
+        for (const auto& wall : duct.wallStates_)
+            peak = std::max(peak, wall.temperatureK);
+    return peak;
+}
+
 ExhaustFuelReactionResult ExhaustGasNetwork::reactUnburnedFuel(
     double durationSeconds,
     const ExhaustFuelReactionConfig& reaction) noexcept {
@@ -539,17 +547,44 @@ ExhaustFuelReactionResult ExhaustGasNetwork::reactUnburnedFuel(
         / reaction.fuelMolarMassKg;
     const auto efficiency = std::clamp(reaction.reactionEfficiency, 0.0, 1.0);
 
-    const auto reactState = [&](ConservativeState& state,
-                                double volumeM3) noexcept {
+    // Ignition source, not bulk gas temperature.
+    //
+    // This used to gate on `primitive->temperatureK` alone, and that is exactly
+    // backwards for the condition afterfire is supposed to model. On a
+    // closed-throttle overrun the cylinder is pumping air with the spark cut,
+    // so the gas entering the exhaust is COLD by construction -- measured on
+    // the CP2 with the strategy armed, the exhaust sits at 325-346 degC (600-620 K)
+    // against a 900 K threshold, and the published heat release falls to
+    // exactly 0.000 kW about a second into the overrun and never returns. The
+    // strategy retains fuel to make pops and then removes the only thing that
+    // could light it.
+    //
+    // What lights it in a real exhaust is the PIPE: after a pull the wall is
+    // still several hundred degrees and has far more thermal mass than the gas
+    // touching it, so the mixture ignites on the surface. That wall is already
+    // a live per-cell state here (`dynamicWallHeatTransferEnabled` is on for
+    // the exhaust network), it was simply never read. Take the ignition source
+    // as the hotter of the two and let the released heat do the rest -- once a
+    // cell reacts it raises its own gas temperature, so propagation falls out
+    // of the energy equation rather than needing a flame model.
+    //
+    // Junctions have no wall state, so they pass 0 and degenerate to the old
+    // gas-only criterion. A collector is physically a place afterfire happens,
+    // so that is a known conservatism, not a claim that it cannot.
+    const auto reactState = [&](ConservativeState& state, double volumeM3,
+                                double wallTemperatureK) noexcept {
         const auto primitive = mixtureModel_.primitiveFromConservative(state);
-        if (!primitive
-            || primitive->temperatureK <= reaction.ignitionTemperatureK
-            || !(volumeM3 > 0.0)) return false;
+        if (!primitive || !(volumeM3 > 0.0)) return false;
+        const auto ignitionSourceK =
+            std::max(primitive->temperatureK, wallTemperatureK);
+        if (ignitionSourceK <= reaction.ignitionTemperatureK) return false;
         const auto fuelDensity = state.speciesMassDensityKgPerM3[fuel];
         const auto oxygenDensity = state.speciesMassDensityKgPerM3[oxygen];
         if (!(fuelDensity > 0.0) || !(oxygenDensity > 0.0)) return false;
+        const auto wallIgnited =
+            primitive->temperatureK <= reaction.ignitionTemperatureK;
         const auto activation = std::clamp(
-            (primitive->temperatureK - reaction.ignitionTemperatureK)
+            (ignitionSourceK - reaction.ignitionTemperatureK)
                 / 450.0,
             0.0, 1.0);
         const auto reactedFraction = efficiency * (1.0 - std::exp(
@@ -576,19 +611,23 @@ ExhaustFuelReactionResult ExhaustGasNetwork::reactUnburnedFuel(
         result.consumedOxygenMassKg += consumedOxygenDensity * volumeM3;
         result.releasedEnergyJoules += releasedEnergyDensity * volumeM3;
         ++result.reactingControlVolumes;
+        if (wallIgnited) ++result.wallIgnitedControlVolumes;
         return true;
     };
 
     for (auto& duct : ducts_) {
         auto reacted = false;
-        for (std::size_t index = 0; index < duct.cells_.size(); ++index)
-            reacted = reactState(duct.cells_[index], duct.cellVolumesM3_[index])
-                || reacted;
+        for (std::size_t index = 0; index < duct.cells_.size(); ++index) {
+            const auto wallTemperatureK = index < duct.wallStates_.size()
+                ? duct.wallStates_[index].temperatureK : 0.0;
+            reacted = reactState(duct.cells_[index],
+                duct.cellVolumesM3_[index], wallTemperatureK) || reacted;
+        }
         if (reacted) duct.cellStateCacheIsValid_ = false;
     }
     for (std::size_t index = 0; index < junctionStates_.size(); ++index) {
         if (!reactState(junctionStates_[index],
-                layout_.junctions()[index].volumeM3)) continue;
+                layout_.junctions()[index].volumeM3, 0.0)) continue;
         const auto primitive = mixtureModel_.primitiveFromConservative(
             junctionStates_[index]);
         if (primitive) junctionPrimitives_[index] = *primitive;

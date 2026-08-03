@@ -1028,6 +1028,17 @@ struct EngineState final {
     double exhaustAfterfireFuelBurnMgPerSecond { 0.0 };
     /** ECU currently meters the authored partial fuel charge with spark cut. */
     bool exhaustAfterfireOverrunActive { false };
+    /** Share of reacting exhaust control volumes whose bulk gas was BELOW the
+     * ignition threshold and which lit on the pipe wall instead. It exists to
+     * keep the hot-surface path non-vacuous: a fully heat-soaked exhaust warms
+     * its own gas past the threshold, so this reads near zero there and the
+     * reading only rises in the partly-warm regime the path was added for. */
+    double exhaustAfterfireWallIgnitedFraction { 0.0 };
+    /** Hottest exhaust pipe wall, which is what ignites an overrun mixture --
+     * the gas is cold during overrun by construction. It lags the gas by tens
+     * of seconds (1.5 mm steel), so a just-started engine cannot pop and this
+     * is the reading that says whether it is warm enough yet. */
+    double exhaustWallTemperatureC { 22.0 };
     double manifoldGasMassGrams { 0.0 };
     double cylinderGasMassGrams { 0.0 };
     double gasInternalEnergyJoules { 0.0 };

@@ -147,6 +147,8 @@ struct ExhaustNetworkAdvanceResult final {
 };
 
 struct ExhaustFuelReactionConfig final {
+    /** Ignition threshold, compared against the hotter of the bulk gas and the
+     * pipe wall the gas is touching -- see `reactUnburnedFuel`. */
     double ignitionTemperatureK { 900.0 };
     double reactionTimeConstantSeconds { 0.010 };
     double reactionEfficiency { 0.95 };
@@ -160,6 +162,12 @@ struct ExhaustFuelReactionResult final {
     double consumedOxygenMassKg { 0.0 };
     double releasedEnergyJoules { 0.0 };
     std::size_t reactingControlVolumes { 0 };
+    /** Control volumes whose bulk gas was below the ignition threshold and
+     * which reacted on the wall instead. Zero means every reaction in this
+     * call was gas-ignited, which during a closed-throttle overrun means the
+     * hot-surface path is not contributing and the model has fallen back to
+     * the behaviour that cannot pop. */
+    std::size_t wallIgnitedControlVolumes { 0 };
 };
 
 /** Globally coupled finite-volume exhaust network.
@@ -192,6 +200,15 @@ public:
     [[nodiscard]] const ExhaustNetworkLayout& layout() const noexcept { return layout_; }
     [[nodiscard]] std::span<const FiniteVolumeDuct> ducts() const noexcept { return ducts_; }
     [[nodiscard]] std::span<FiniteVolumeDuct> ducts() noexcept { return ducts_; }
+    /** Hottest pipe wall anywhere in the network.
+     *
+     * This is the afterfire ignition source (see `reactUnburnedFuel`) and it is
+     * slow: 1.5 mm of steel is about 5.9 kJ/m2K against an exhaust-side film of
+     * a few hundred W/m2K, i.e. a time constant of tens of seconds. An engine
+     * that has only just started has a cold pipe and physically cannot pop, so
+     * any afterfire measurement has to state how long the exhaust was heated
+     * before the overrun. */
+    [[nodiscard]] double peakWallTemperatureK() const noexcept;
     [[nodiscard]] std::span<const ConservativeState> junctionStates() const noexcept {
         return junctionStates_;
     }

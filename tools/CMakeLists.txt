@@ -37,6 +37,17 @@ if(MSVC)
 endif()
 enginelab_set_warnings(EngineLabShiftTransientHarness)
 
+add_executable(EngineLabAfterfireHarness AfterfireHarness.cpp)
+target_link_libraries(EngineLabAfterfireHarness PRIVATE
+    EngineLab::Audio EngineLab::Runtime EngineLab::Simulation EngineLab::Foundation EngineLab::Physics
+    EngineLab::Ecu EngineLab::Events EngineLab::Exhaust EngineLab::Catalog)
+target_compile_definitions(EngineLabAfterfireHarness PRIVATE ENGINELAB_CATALOG_ROOT="${CMAKE_SOURCE_DIR}")
+if(MSVC)
+    # An EngineRuntime is ~7.4 MB of stack (SpscQueue<CylinderPressureSample, 8192>).
+    target_link_options(EngineLabAfterfireHarness PRIVATE /STACK:8388608)
+endif()
+enginelab_set_warnings(EngineLabAfterfireHarness)
+
 add_executable(EngineLabLoadedAccelerationHarness LoadedAccelerationHarness.cpp)
 target_link_libraries(EngineLabLoadedAccelerationHarness PRIVATE
     EngineLab::Runtime EngineLab::Simulation EngineLab::Foundation EngineLab::Physics

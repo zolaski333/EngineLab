@@ -2728,3 +2728,160 @@ n'est exploitable que si le commentaire dit **les unités du champ sur lequel il
 est posé**. Celui de `residualGasFractionAtSpark` citait les pourcentages de
 Heywood à côté d'une fraction molaire de produits ; il porte désormais la
 conversion et les seuils corrigés.
+
+## 2026-08-03 — L'afterfire : trois défauts distincts, et le seul qui s'entend n'est pas dans la chimie
+
+Le grief utilisateur était « retour de flamme non fonctionnel, avec une
+implémentation très moyenne ». Les deux moitiés sont vraies, elles ont des
+causes différentes, et la mesure a **réordonné** le travail : la chimie n'est
+pas le sujet.
+
+Instrument : `EngineLabAfterfireHarness` (`tools/AfterfireHarness.cpp`). Il
+enchaîne démarrage, lancement en prise, **chauffe sous charge**, lever de pied,
+overrun, remise des gaz, de façon déterministe (pas de fil, couplage moteur /
+transmission dans l'ordre de `EngineRuntime::run`), et publie la *forme* du
+dégagement de chaleur — bouffées, facteur de crête, temps de montée 10-90 %,
+rapport cyclique — plus, sur demande, le vrai chemin `RealtimeEngineAudio`.
+
+### 1. Il ne fait rien par défaut, et ce n'est pas un défaut de physique
+
+`ExhaustAfterfireConfig::enabled` est `false`, **aucun moteur du catalogue ne
+l'active**, et `overrunFuelFraction` vaut 0 — donc même en basculant `enabled`
+l'échappement n'a pas de carburant à faire réagir. C'est un fait d'écriture de
+catalogue. Le lire comme « le modèle est cassé » envoie dans la chimie pour rien.
+
+### 2. Le critère d'allumage était le gaz, alors que l'overrun est froid par construction
+
+Sur lever de pied, la stratégie coupe l'allumage et retient une fraction de
+carburant. Le cylindre pompe donc de l'air **sans combustion** : le gaz qui
+entre à l'échappement est froid. Mesuré sur le CP2, stratégie armée, moteur
+démarré depuis six secondes — EGT 325-346 degC (598-619 K) contre un seuil de
+900 K, et le dégagement publié tombe à **exactement 0,000 kW** une seconde
+après le lever de pied et n'en repart jamais.
+
+La stratégie retient du carburant pour faire des pétarades puis retire la seule
+chose capable de l'allumer.
+
+Ce qui l'allume dans un vrai échappement, c'est **le tube** : après une montée
+il est encore à plusieurs centaines de degrés et sa masse thermique écrase
+celle du gaz qui le touche. Cette paroi était déjà un état vivant par cellule
+(`dynamicWallHeatTransferEnabled` est à `true` pour le réseau d'échappement),
+elle n'était simplement jamais lue. Le critère est désormais le **plus chaud
+des deux**, gaz ou paroi ; la chaleur dégagée réchauffe la cellule, donc la
+propagation sort de l'équation d'énergie sans modèle de flamme.
+
+Non-vacuité, mesurée par balayage de la durée de chauffe (CP2) :
+
+| chauffe | paroi au lever de pied | volumes allumés par la paroi |
+|---|---|---|
+| 10 s | 147,3 degC | **0,0 %** |
+| 45 s | 546,8 degC | **0,0 %** |
+| 90 s | 793,1 degC | **11,1 %** crête, 9,5 % moyen |
+| 150 s | 933,5 degC | 11,1 % crête, 9,4 % moyen |
+
+Exactement zéro tant que la paroi est sous le seuil, non nul dès qu'elle le
+franchit. Le test unitaire correspondant (`ExhaustGasNetworkTests`) oppose gaz
+700 K / paroi 450 K — **zéro volume** — à gaz 700 K / paroi 1000 K — **128
+volumes, tous allumés par la paroi**, la paroi laissée statique pour que
+l'assertion porte sur le critère et non sur le solveur de paroi.
+
+### 3. La paroi met des MINUTES à arriver, donc un moteur qui vient de démarrer ne peut pas pétarader
+
+C'est ce qui a fait échouer la première version de l'instrument : elle levait le
+pied six secondes après le démarreur, la paroi était à l'ambiante, et le chemin
+d'allumage par paroi est ressorti **bit-identique à pas de chemin du tout**. Le
+correctif était bon, le scénario ne l'était pas.
+
+L'ordre de grandeur : 1,5 mm d'acier font 7900 × 500 × 0,0015 = **5925 J/m²K**,
+contre un film interne de ~90 W/m²K (Gnielinski aux conditions échappement) et
+un externe de 18 W/m²K. D'où tau = 5925/108 ~= **55 s** et un équilibre vers
+690 degC. Mesuré : 147 degC à 10 s, 547 à 45 s, 793 à 90 s, 933 à 150 s — cohérent.
+
+**Conséquence applicative** : dans l'application, aucune pétarade n'est
+physiquement possible pendant la première minute de fonctionnement, et c'est
+correct. `EngineState::exhaustWallTemperatureC` publie désormais cette lecture,
+qui est celle qui dit si le moteur *peut* pétarader.
+
+### 4. C'est un gonflement, jamais une bouffée — mais ce n'est pas là qu'il faut corriger
+
+Sur les quatre moteurs essayés, dans toutes les configurations de chauffe :
+**rapport cyclique 100 %**, une seule « bouffée » sur une fenêtre d'overrun de
+3 s, temps de montée 120-512 ms. Le modèle est une relaxation exponentielle à
+constante fixe appliquée à toutes les cellules chaudes en même temps, c'est-à-dire
+la forme d'un étalement. À noter : la télémétrie elle-même est lissée à
+tau = 12,5 ms (`smooth(..., 80.0)`), mais 496 ms font **quarante fois** cette
+constante — l'instrument n'est donc pas ce qui étale, le modèle l'est.
+
+### 5. Le résultat qui décide de l'ordre des travaux : tout cela est INAUDIBLE
+
+A/B déterministe sur échappement chaud (90 s), même trajectoire, seule
+`overrunFuelFraction` change :
+
+| | carburant brûlé | chaleur moyenne | pression au port | audio p999 overrun | pic audio |
+|---|---|---|---|---|---|
+| stratégie armée | **248,1 mg** | 3,556 kW | 128,6 kPa | 0,26269 | 0,58437 |
+| contrôle nul | 120,7 mg | 1,730 kW | 128,6 kPa | 0,24117 | 0,58437 |
+
+Doubler le dégagement chimique dans l'échappement déplace l'observateur de
+**+8,9 %, soit 0,74 dB**, ne change **pas du tout** le pic, et laisse la
+pression au port **identique**.
+
+### 6. Attention à ce que ce chiffre autorise à conclure — et à ce qu'il n'autorise pas
+
+Le premier réflexe est de lire le 0,74 dB comme « le chemin audio n'a pas de
+source afterfire, il faut lui en ajouter une ». C'est **faux comme diagnostic**,
+et cette rédaction a failli être consignée telle quelle.
+
+Le couplage existe déjà : `reactUnburnedFuel` ajoute `releasedEnergyDensity` à
+`totalEnergyDensityJPerM3`, donc la réaction **monte la pression de la cellule
+et lance une onde** dans le réseau 1-D ; cette onde remonte jusqu'au port, et
+le port est précisément ce que la télémétrie publie vers l'audio. Il n'y a pas
+de chemin manquant.
+
+Ce qui manque, c'est du **contenu dans la bande audio**. Une montée de 500 ms a
+son fondamental vers 2 Hz : la chaîne la passe-haut et il n'en reste rien. Ce
+que le A/B mesure n'est donc pas « l'afterfire est inaudible », c'est **« doubler
+un dégagement lent est inaudible »** — ce qui est exactement ce à quoi on
+s'attend d'un terme quasi continu, et ne dit rien de ce que ferait une bouffée
+de quelques millisecondes.
+
+**Ordre correct des travaux, donc :** corriger d'abord la forme (point 4 —
+accumulation puis combustion rapide, au lieu d'une relaxation à constante fixe
+appliquée partout en même temps), **puis re-mesurer l'audio avec le même A/B**.
+Une source afterfire dédiée dans `RealtimeEngineAudio` ne se justifie que si la
+bouffée, une fois obtenue, ne passe toujours pas — et cette question n'est pas
+encore tranchée.
+
+Formulation à ne pas reprendre : « une chimie parfaite resterait inaudible ».
+Elle ne découle pas de la mesure.
+
+### 7. Réfuté : accélérer la combustion ne produit PAS de bouffées
+
+L'hypothèse évidente, une fois le point 6 posé, est que l'étalement vient de la
+constante de temps de réaction — 10 ms par défaut, et déjà réglable de 2 à
+50 ms sans toucher au code. Elle se teste gratuitement avec l'instrument.
+Mesuré sur le CP2, échappement chaud (90 s), tout le reste identique :
+
+| tau de réaction | pic | montée 10-90 % | rapport cyclique | bouffées |
+|---|---|---|---|---|
+| 10 ms | 16,944 kW | 120,8 ms | 100 % | 1 |
+| 5 ms | 21,039 kW | 116,7 ms | 100 % | 1 |
+| 2 ms | 25,332 kW | **112,5 ms** | **100 %** | **1** |
+
+Diviser la constante par cinq monte le pic de 50 % et **ne change pas la forme** :
+la montée bouge de 7 %, le rapport cyclique reste à 100 %, le nombre de bouffées
+reste à un. L'hypothèse est réfutée.
+
+La raison est que la constante de réaction règle la vitesse à laquelle le
+carburant brûle **une fois présent**, alors que le carburant est livré en
+continu — chaque cylindre, chaque cycle, pendant tout l'overrun — et brûle donc
+au fur et à mesure de son arrivée quelle que soit la vitesse de combustion. Les
+~120 ms de montée ne sont pas la chimie : c'est le transitoire de fermeture des
+gaz et d'engagement de la stratégie.
+
+**Ce qu'il faut donc, c'est ne PAS brûler tant qu'un inventaire ne s'est pas
+constitué** : un délai d'induction (type intégrale de Livengood-Wu, fortement
+dépendant de la température) qui laisse le carburant s'accumuler, puis une
+combustion rapide une fois le seuil franchi. Cela demande un état persistant
+par volume de contrôle dans `ExhaustGasNetwork`, ce que le modèle actuel n'a
+pas. L'alternative bon marché est écartée : inutile de la réessayer.
