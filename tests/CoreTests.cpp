@@ -38,6 +38,7 @@
 #include <numbers>
 #include <set>
 #include <cmath>
+#include <string_view>
 #include <tuple>
 #include <stdexcept>
 #include <thread>
@@ -1034,6 +1035,12 @@ int main() {
                 && active.fuelCorrection > 0.11
                 && active.fuelCorrection < 0.13,
             "a deliberate power request must arm partial-fuel spark-cut overrun even while the post-start air floor is decaying");
+        // The blocker mask has to agree with the boolean it explains. If it
+        // could disagree it would be worse than useless: the whole point is
+        // that a user seeing no pop can read WHY, and a mask derived
+        // separately from the conjunction would eventually drift from it.
+        require(active.overrunAfterfireBlockers == 0U,
+            "an active overrun afterfire must report no blocker");
 
         overrunState.simulationTimeSeconds += 0.01;
         overrunState.rpm = 2'900.0;
@@ -1042,6 +1049,43 @@ int main() {
         require(!belowMinimum.overrunAfterfireActive
                 && !belowMinimum.fuelEnabled && belowMinimum.sparkEnabled,
             "deceleration afterfire must remain a clean DFCO below its RPM gate");
+        // Non-vacuous in both directions: the speed gate must be named, and
+        // the conditions that are still satisfied must NOT be named. A mask
+        // that simply lit every bit whenever the feature was inactive would
+        // pass a one-sided assertion and tell a user nothing.
+        require(enginelab::afterfireBlocked(
+                    belowMinimum.overrunAfterfireBlockers,
+                    enginelab::AfterfireBlocker::belowMinimumRpm),
+            "the blocker mask must name the RPM gate that stopped the afterfire");
+        require(!enginelab::afterfireBlocked(
+                    belowMinimum.overrunAfterfireBlockers,
+                    enginelab::AfterfireBlocker::notAuthored)
+                && !enginelab::afterfireBlocked(
+                    belowMinimum.overrunAfterfireBlockers,
+                    enginelab::AfterfireBlocker::throttleOpen)
+                && !enginelab::afterfireBlocked(
+                    belowMinimum.overrunAfterfireBlockers,
+                    enginelab::AfterfireBlocker::notArmed),
+            "the blocker mask must not name conditions that are satisfied");
+        require(std::string_view(enginelab::afterfireBlockerName(
+                    belowMinimum.overrunAfterfireBlockers)) == "regime trop bas",
+            "the blocker name must resolve to the reason a user can act on");
+
+        // An unauthored engine is the case a reader meets first, and it must
+        // say so rather than reporting the nine downstream conditions that a
+        // disabled feature also fails.
+        auto unauthoredConfig = overrunAfterfireConfig;
+        unauthoredConfig.exhaustAfterfire.enabled = false;
+        enginelab::SimpleEcuModel unauthoredEcu;
+        unauthoredEcu.initialise(unauthoredConfig);
+        const auto unauthored = unauthoredEcu.evaluate(
+            unauthoredConfig, overrunState, closedThrottle);
+        require(enginelab::afterfireBlocked(
+                    unauthored.overrunAfterfireBlockers,
+                    enginelab::AfterfireBlocker::notAuthored)
+                && std::string_view(enginelab::afterfireBlockerName(
+                    unauthored.overrunAfterfireBlockers)) == "non autorise",
+            "an engine that does not author an afterfire must say exactly that");
     }
 
     {

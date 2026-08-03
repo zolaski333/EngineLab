@@ -1264,4 +1264,20 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
     return std::nullopt;
 }
 
+const char* afterfireBlockerName(std::uint32_t mask) noexcept {
+    // Ordered by how much the reading tells someone who hears no pop. An
+    // unauthored feature explains everything else, so it leads; the duty-cycle
+    // chop is the mechanism of a WORKING pop map and therefore comes last.
+    if (afterfireBlocked(mask, AfterfireBlocker::notAuthored)) return "non autorise";
+    if (afterfireBlocked(mask, AfterfireBlocker::ignitionOff)) return "allumage coupe";
+    if (afterfireBlocked(mask, AfterfireBlocker::cranking)) return "demarreur";
+    if (afterfireBlocked(mask, AfterfireBlocker::notArmed)) return "jamais arme (monter en regime a fond)";
+    if (afterfireBlocked(mask, AfterfireBlocker::belowMinimumRpm)) return "regime trop bas";
+    if (afterfireBlocked(mask, AfterfireBlocker::throttleOpen)) return "papillon ouvert";
+    if (afterfireBlocked(mask, AfterfireBlocker::revLimiterActive)) return "rupteur";
+    if (afterfireBlocked(mask, AfterfireBlocker::fuelCutInactive)) return "pas en coupure decel";
+    if (afterfireBlocked(mask, AfterfireBlocker::pulseChopClosed)) return "hachage ferme";
+    return "";
+}
+
 } // namespace enginelab

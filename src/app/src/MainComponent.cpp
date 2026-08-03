@@ -1364,7 +1364,7 @@ void MainComponent::drawDebugPanel(juce::Graphics& g, juce::Rectangle<float> are
         liftMultiplier = std::max(liftMultiplier, visibleState_.cylinderStates[index].valveLiftMultiplier);
         runnerResonanceHz = std::max(runnerResonanceHz, visibleState_.cylinderStates[index].intakeResonanceFrequencyHz);
     }
-    const std::array<juce::String, 49> values {
+    const std::array<juce::String, 51> values {
         "Net torque       " + juce::String(visibleState_.netTorqueNm, 2),
         "Indicated torque " + juce::String(visibleState_.indicatedTorqueNm, 2),
         "Mean-work torque " + juce::String(visibleState_.meanWorkTorqueNm, 2),
@@ -1427,7 +1427,20 @@ void MainComponent::drawDebugPanel(juce::Graphics& g, juce::Rectangle<float> are
         // limiter is working -- neither is visible in the waveform and both are
         // reported by listeners as an engine fault.
         "AGC min gain     " + juce::String(audio_ ? audio_->minObservedLevelGain() : 1.0F, 3),
-        "Limiter samples  " + juce::String(audio_ ? audio_->levelLimitedSampleCount() : 0)
+        "Limiter samples  " + juce::String(audio_ ? audio_->levelLimitedSampleCount() : 0),
+        // The afterfire has nine independent preconditions and produces exactly
+        // the same silence whichever one is missing, so it was reported as
+        // "does nothing" three times without any of them being identifiable
+        // from outside. State first, diagnosis after.
+        utf8("Afterfire        ") + (visibleState_.exhaustAfterfireOverrunActive
+            ? juce::String("ACTIF ") + juce::String(visibleState_.exhaustAfterfireHeatReleaseKw, 2) + " kW"
+            : juce::String(afterfireBlockerName(visibleState_.exhaustAfterfireBlockers))),
+        // The ignition source during overrun is the PIPE WALL -- the gas is
+        // cold by construction once the spark is cut -- and 1.5 mm of steel has
+        // a time constant near 55 s. A just-started engine cannot pop, and that
+        // is correct, so the reading has to be visible beside the arming state.
+        utf8("Paroi echap. C   ") + juce::String(visibleState_.exhaustWallTemperatureC, 0)
+            + " / " + juce::String(config_.exhaustAfterfire.ignitionTemperatureK - 273.15, 0)
     };
     const auto columns = area.getWidth() > 680.0F ? 3 : 2;
     const auto cellWidth = body.getWidth() / static_cast<float>(columns);

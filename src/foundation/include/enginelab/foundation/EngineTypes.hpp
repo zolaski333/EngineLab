@@ -409,6 +409,50 @@ struct ExhaustAfterfireConfig final {
     double overrunPulseDutyCycle { 0.35 };
 };
 
+/**
+ * Why the overrun afterfire is not metering fuel right now.
+ *
+ * The afterfire has nine independent preconditions and a user who hears no pop
+ * has no way to tell which one is missing -- the reported symptom is identical
+ * whether the feature is unauthored, the throttle never closed far enough, or
+ * the engine is still in its after-start flare. Every one of those was proposed
+ * and none could be confirmed from a render, so the state is published instead
+ * of guessed at.
+ *
+ * A bitmask rather than a single reason: several conditions genuinely fail at
+ * once during a normal lift-off, and reporting only the first would make the
+ * readout flicker between them as the engine coasts down.
+ */
+enum class AfterfireBlocker : std::uint32_t {
+    none = 0,
+    /** Not authored: disabled, zero retained fuel, or a non-gasoline engine. */
+    notAuthored = 1U << 0,
+    ignitionOff = 1U << 1,
+    cranking = 1U << 2,
+    /** Commanded throttle above `overrunMaximumThrottle` (default 2 %). */
+    throttleOpen = 1U << 3,
+    belowMinimumRpm = 1U << 4,
+    /** Deceleration fuel cut is not latched, so the engine is not in overrun. */
+    fuelCutInactive = 1U << 5,
+    revLimiterActive = 1U << 6,
+    /** `overrunPulseHz` chopping is in the closed part of its duty cycle. This
+     * one is expected to blink during a working pop map: it is the mechanism,
+     * not a fault. */
+    pulseChopClosed = 1U << 7,
+    /** The engine has not been taken above the rpm gate under throttle since
+     * the last start, so the lift-off is still an after-start flare. */
+    notArmed = 1U << 8,
+};
+
+[[nodiscard]] constexpr bool afterfireBlocked(std::uint32_t mask,
+                                              AfterfireBlocker bit) noexcept {
+    return (mask & static_cast<std::uint32_t>(bit)) != 0U;
+}
+/** Shortest human-readable summary of a blocker mask, most informative first.
+ *  Empty when nothing blocks. Declared here so the app and the harnesses print
+ *  the same words for the same state. */
+[[nodiscard]] const char* afterfireBlockerName(std::uint32_t mask) noexcept;
+
 struct ExhaustCylinderConnectionConfig final {
     std::uint32_t cylinderId { 0 };
     std::uint32_t componentId { 0 };
@@ -1046,6 +1090,10 @@ struct EngineState final {
     double exhaustAfterfireFuelBurnMgPerSecond { 0.0 };
     /** ECU currently meters the authored partial fuel charge with spark cut. */
     bool exhaustAfterfireOverrunActive { false };
+    /** Bitmask of `AfterfireBlocker` explaining the line above when it is
+     * false. Zero while the overrun afterfire is metering. */
+    std::uint32_t exhaustAfterfireBlockers {
+        static_cast<std::uint32_t>(AfterfireBlocker::notAuthored) };
     /** Share of reacting exhaust control volumes whose bulk gas was BELOW the
      * ignition threshold and which lit on the pipe wall instead. It exists to
      * keep the hot-surface path non-vacuous: a fully heat-soaked exhaust warms
@@ -1273,6 +1321,9 @@ struct EcuCommand final {
     bool hardRevLimiterActive { false };
     bool alternatingSparkCutActive { false };
     bool decelerationFuelCutActive { false };
+    /** Bitmask of `AfterfireBlocker`. Append new members BELOW this one: the
+     *  aggregate is initialised by position in SimpleEcuModel. */
+    std::uint32_t overrunAfterfireBlockers { 0U };
 };
 
 // Output of the mean-value model SimplifiedGasolinePhysics::evaluateCombustion.

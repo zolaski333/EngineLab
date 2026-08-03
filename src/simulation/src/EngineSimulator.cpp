@@ -760,6 +760,7 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
         const auto ecuCommand = ecu_.evaluate(config_, state_, safeControls);
         state_.exhaustAfterfireOverrunActive =
             ecuCommand.overrunAfterfireActive;
+        state_.exhaustAfterfireBlockers = ecuCommand.overrunAfterfireBlockers;
         state_.ecuFuelCorrection = ecuCommand.fuelCorrection;
         state_.ecuDieselFuelQuantityLimitMgPerCycle =
             ecuCommand.dieselFuelQuantityLimitMgPerCycle;

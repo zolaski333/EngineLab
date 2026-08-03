@@ -441,6 +441,43 @@ EcuCommand SimpleEcuModel::evaluate(const EngineConfig& config, const EngineStat
         && state.rpm >= config.exhaustAfterfire.overrunMinimumRpm
         && effectiveThrottle <= config.exhaustAfterfire.overrunMaximumThrottle
         && overrunPulseOpen;
+    // Publish WHY, not just whether. Every clause above is an independent
+    // precondition and they are indistinguishable from the outside: an
+    // afterfire that never fires produces exactly the same silence whether it
+    // is unauthored, the throttle stopped 3 % short, or the engine is still in
+    // its after-start flare. Mirror the conjunction term by term rather than
+    // deriving a reason afterwards, so the two can never disagree.
+    const auto overrunAfterfireBlockers = static_cast<std::uint32_t>(
+        (config.fuel == FuelType::gasoline
+             && config.exhaustAfterfire.enabled
+             && config.exhaustAfterfire.overrunFuelFraction > 0.0
+             ? 0U : static_cast<std::uint32_t>(AfterfireBlocker::notAuthored))
+        | (controls.ignitionEnabled
+             ? 0U : static_cast<std::uint32_t>(AfterfireBlocker::ignitionOff))
+        | (controls.starterEngaged
+             ? static_cast<std::uint32_t>(AfterfireBlocker::cranking) : 0U)
+        | (effectiveThrottle <= config.exhaustAfterfire.overrunMaximumThrottle
+             ? 0U : static_cast<std::uint32_t>(AfterfireBlocker::throttleOpen))
+        | (state.rpm >= config.exhaustAfterfire.overrunMinimumRpm
+             ? 0U
+             : static_cast<std::uint32_t>(AfterfireBlocker::belowMinimumRpm))
+        | (decelerationFuelCut
+             ? 0U
+             : static_cast<std::uint32_t>(AfterfireBlocker::fuelCutInactive))
+        | (limiterActive
+             ? static_cast<std::uint32_t>(AfterfireBlocker::revLimiterActive)
+             : 0U)
+        | (overrunPulseOpen
+             ? 0U
+             : static_cast<std::uint32_t>(AfterfireBlocker::pulseChopClosed))
+        // Not part of the conjunction: arming gates the DFCO inhibit rather
+        // than the afterfire directly, so it is reported as the upstream
+        // explanation for a `fuelCutInactive` that would otherwise look
+        // inexplicable on a warm engine at a shut throttle.
+        | (overrunAfterfireArmed
+               || !config.exhaustAfterfire.enabled
+               || !(config.exhaustAfterfire.overrunFuelFraction > 0.0)
+             ? 0U : static_cast<std::uint32_t>(AfterfireBlocker::notArmed)));
     const auto fuelCorrection = overrunAfterfireActive
         // This is a bounded fraction of the normal charge request. Do not let
         // the preceding tip-in reserve or cold-start correction multiply it:
@@ -471,6 +508,7 @@ EcuCommand SimpleEcuModel::evaluate(const EngineConfig& config, const EngineStat
              softLimit,
              limiterActive,
              alternatingCut,
-             decelerationFuelCut };
+             decelerationFuelCut,
+             overrunAfterfireBlockers };
 }
 } // namespace enginelab

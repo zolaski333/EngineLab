@@ -124,6 +124,19 @@ if(MSVC)
 endif()
 enginelab_set_warnings(EngineLabAudioRenderHarness)
 
+add_executable(EngineLabGeometrySensitivityHarness GeometrySensitivityHarness.cpp)
+target_link_libraries(EngineLabGeometrySensitivityHarness PRIVATE
+    EngineLab::Audio EngineLab::Runtime EngineLab::Simulation
+    EngineLab::Foundation EngineLab::Physics EngineLab::Ecu EngineLab::Events
+    EngineLab::Exhaust EngineLab::GasDynamics EngineLab::Catalog)
+target_compile_definitions(EngineLabGeometrySensitivityHarness PRIVATE
+    ENGINELAB_CATALOG_ROOT="${CMAKE_SOURCE_DIR}")
+if(MSVC)
+    # An EngineRuntime is ~7.4 MB of stack (SpscQueue<CylinderPressureSample, 8192>).
+    target_link_options(EngineLabGeometrySensitivityHarness PRIVATE /STACK:8388608)
+endif()
+enginelab_set_warnings(EngineLabGeometrySensitivityHarness)
+
 add_executable(EngineLabRealtimeBudgetHarness RealtimeBudgetHarness.cpp)
 target_link_libraries(EngineLabRealtimeBudgetHarness PRIVATE
     EngineLab::Audio EngineLab::Runtime EngineLab::Simulation EngineLab::Foundation EngineLab::Physics

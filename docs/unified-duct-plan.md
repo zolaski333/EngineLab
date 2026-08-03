@@ -7,6 +7,16 @@ ES3D v0.4.0a fourni par l'utilisateur.
 
 Ce document est le plan de référence. Il survit au compactage de contexte.
 
+> ## VERDICT DE LA PHASE 0 (2026-08-03) : LE DIAGNOSTIC EST FAUX, LE PLAN S'ARRÊTE
+>
+> La phase 0 était une porte : « elle doit reproduire le grief. Si elle montre
+> un gros écart, le diagnostic est faux et le plan s'arrête ici. »
+> **Elle a montré un gros écart. Les phases 1 à 5 ne doivent pas être
+> réalisées telles qu'écrites.** Le détail est en fin de document, section
+> « Ce que la phase 0 a réellement mesuré ». Le reste du document est conservé
+> tel quel parce qu'un plan réfuté est une donnée : il dit quelle hypothèse a
+> été éliminée et à quel prix.
+
 ## Le diagnostic, en une phrase
 
 EngineLab résout la géométrie d'échappement dans un maillage volumes finis à
@@ -165,8 +175,117 @@ sur un V8.
   moteur entre se stabiliser et caler. Attendre des casses de ralenti à chaque
   phase, ne pas chasser l'ULP, bisecter puis corriger la fragilité.
 
+## Ce que la phase 0 a réellement mesuré (2026-08-03)
+
+`EngineLabGeometrySensitivityHarness` rend le MÊME moteur par le vrai chemin
+temps réel avec plusieurs échappements et publie l'écart par tiers d'octave.
+« forme » est l'écart RMS par bande après retrait de l'offset large bande :
+c'est le changement de TIMBRE, indépendant du niveau.
+
+| moteur | forme mix | forme échap. seul | bandes masquées | AGC | limiteur |
+|---|---|---|---|---|---|
+| CP2 twin atmo | 8,20 dB | 12,52 dB | **0 / 28** | 1,000 | 0 |
+| LS3 V8 atmo | 7,17 dB | 11,91 dB | **2 / 28** | 1,000 | 0 |
+| 2JZ I6 turbo | 4,11 dB | 14,35 dB | **24 / 28** | 1,000 | 0 |
+
+**Le maillage 300 mm porte la géométrie.** L'échappement répond de 11,9 à
+14,4 dB de forme, avec des bandes individuelles à 18, 23 et 32 dB. L'hypothèse
+« la géométrie est résolue dans un modèle qui ne fait pas le son » est réfutée :
+le modèle qui fait le son EST celui qui résout la géométrie, et il l'entend
+très bien. Une réécriture en conduit unifié n'aurait pas corrigé le grief.
+
+Trois hypothèses ont été éliminées par la même mesure :
+
+- **L'AGC lent et le limiteur ne retirent rien.** Gain minimal 1,000 et zéro
+  échantillon limité sur les 21 rendus. Écartés, mesurés.
+- **La couche combustion à −205 dB n'est pas une panne.** Elle est coupée
+  volontairement sur le chemin physique (`RealtimeEngineAudio.cpp`, garde
+  `if (!acousticExhaustNetwork_)`), avec le motif écrit dans le code : c'était
+  du façonnage perceptuel présenté comme de la physique. Le contenu de
+  structure passe désormais par `StructuralModalRadiator`.
+- **Le masquage n'est PAS général.** Il est propre au 2JZ, où l'admission est
+  à −10,1 dB de l'échappement et la mécanique à −8,4 dB, contre −28,9 et
+  −22,6 dB sur le CP2. C'est un problème d'équilibre sur un moteur, pas une
+  cause architecturale.
+
+### La vraie cause : le silencieux ne silence pas
+
+Mesure à un seul facteur — on retire UNIQUEMENT le corps du silencieux, rien
+d'autre ne bouge. C'est une perte d'insertion, comparable à la littérature :
+
+| moteur | chambre autorée | rendu | physique (Pa observateur) |
+|---|---|---|---|
+| CP2 | 84 × 250 mm | +2,10 dB | +1,25 dB |
+| LS3 | 142 × 400 mm | +3,80 dB | +3,91 dB |
+| 2JZ | 132 × 470 mm | −0,72 dB | **+0,06 dB** |
+
+Littérature : **+20 à +30 dB**. Retirer entièrement le silencieux le plus gros
+du catalogue change la pression à l'observateur de 0,06 dB. C'est exactement le
+grief de l'utilisateur, chiffré : *« un échappement court sans silencieux, dans
+la vraie vie ça fait un bordel pas possible, alors que là rien ne se passe. »*
+
+Ce n'est pas une panne de l'élément — il a de l'autorité et suit la courbe de
+Munjal. Sonde sur le 2JZ, en ne changeant que le diamètre de chambre :
+
+| chambre | m = S_c/S_p | Pa observateur | écart |
+|---|---|---|---|
+| aucune | — | 20,3 | +0,06 dB |
+| 132 mm (autorée) | 4,25 | 20,2 | référence |
+| 198 mm | 9,6 | 10,7 | −5,5 dB |
+| 304 mm | 22,5 | 8,8 | −7,2 dB |
+
+**Une chambre d'expansion UNIQUE à un rapport automobile réaliste (m ≈ 4) ne
+peut pas silencer** : sa perte de transmission de crête est
+10·log₁₀[1 + ¼(m − 1/m)²] = 7,0 dB, et elle vaut exactement 0 dB à toutes ses
+bandes passantes, espacées de c/(2L). Le modèle est juste ; c'est le composant
+qui n'est pas celui d'une voiture.
+
+Le garnissage absorbant Delany-Bazley a été mesuré aussi : il existe et
+fonctionne, mais aucun moteur routier du catalogue ne l'autorise — seul le
+preset de labo `cp2_absorptive_lab` le fait. Autorisé sur le 2JZ
+(24 kPa·s/m², 35 mm, 28 % d'aire ouverte), il vaut **−1,7 dB**.
+
+**Le tableau complet d'autorité du silencieux sur le 2JZ**, pression crête à
+l'observateur, un seul facteur changé à chaque ligne :
+
+| configuration | Pa | écart |
+|---|---|---|
+| aucun silencieux | 20,3 | +0,06 dB |
+| chambre autorée 132 mm (m = 4,25) | 20,2 | référence |
+| + garnissage absorbant | 16,5 | −1,7 dB |
+| chambre 198 mm (m = 9,6) | 10,7 | −5,5 dB |
+| chambre 304 mm (m = 22,5) | 8,8 | −7,2 dB |
+
+**La perte d'insertion in situ sature vers 7 dB** quelle que soit la force
+appliquée à l'élément réactif, alors que sa perte de transmission anéchoïque
+atteint 21 dB à m = 22,5. Un élément purement réactif redistribue l'énergie
+entre transmis et réfléchi ; dans une boucle collecteur-sortie réfléchissante,
+ce qui est renvoyé revient. **C'est précisément pour cela qu'un vrai silencieux
+est réactif ET absorbant.** Aucune des deux moitiés ne suffit seule, et c'est
+la mesure qui le dit, pas une intuition.
+
+Et la correction naïve est **déjà réfutée** dans `parts/exhausts.yaml` : creuser
+la chambre unique jusqu'à la profondeur d'un vrai silencieux « a mis un cran de
+16 dB sur la fondamentale de plage d'utilisation de l'EJ25 et coupé de moitié le
+haut du K20 et du LS3 ». Le même fichier nomme le correctif correct : *« un vrai
+silencieux multi-chambres est conçu précisément pour que ses crans ne tombent
+pas sur un ordre d'allumage »*.
+
+### Ce qu'il faut faire à la place
+
+1. **Cascade de chambres** dans `ExpansionChamberMuffler`, longueurs décalées
+   de façon non harmonique, pour que les bandes passantes de l'une soient
+   couvertes par les crans des autres. Reste purement réactif
+   (Kelly-Lochbaum, sans perte), donc le second échec documenté — une
+   absorption large bande qui se compose dans la boucle collecteur-sortie —
+   est structurellement impossible.
+2. **Autorer le garnissage absorbant** sur les moteurs routiers. Le modèle
+   Delany-Bazley existe et fonctionne (`AcousticExhaustNetwork.cpp`), mais
+   seule la ligne d'échappement de labo `cp2_absorptive_lab` l'autorise.
+3. **Équilibre des couches sur le 2JZ**, où l'admission et la mécanique
+   masquent l'échappement dans 24 bandes sur 28.
+
 ## Ce qui reste ouvert et non diagnostiqué
 
-- L'afterfire (phase 0 le tranche).
 - Le V8 encore sous le temps réel dans certains cas après `a9ff0dd`.
 - Le plafond de vitesse compresseur (saturation 2,154 sur le 2JZ).

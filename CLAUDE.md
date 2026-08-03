@@ -167,9 +167,78 @@ the default `convolution` setting via the harness before and after.
   gate. It deliberately does not report dropped telemetry: no audio thread drains
   the queue here, so that count overflows on every engine and would mean nothing.
 
+- **`tools/GeometrySensitivityHarness.cpp`** (`EngineLabGeometrySensitivityHarness`)
+  answers the one question no other instrument could: **does changing the
+  exhaust change the sound?** It renders the same engine through the real
+  realtime path with several exhausts and reports, per third octave, `forme`
+  (RMS band difference with the broadband offset removed -- the TIMBRE change,
+  which is the headline), `niveau` (broadband, i.e. loudness) and the worst
+  single band. It also splits the mix into the exhaust chain and the four
+  masking layers, so "the exhaust does not respond" and "the exhaust responds
+  and is buried" are distinguishable. `--filter NAME --rpm N --seconds S`.
+  **Every variant must change exactly ONE factor.** The first version of this
+  harness compared "short AND open" against the reference and called the result
+  silencer authority; it changed two things at once and the number meant
+  nothing. The single-factor `sans-silencieux` variant is the one with a
+  literature value to check against.
+
 Reference numbers for these gates come from engine/DSP literature, never from the
 simulator's current output, so tightening a gate later cannot re-calibrate the
 test onto the behaviour it is meant to catch. Keep it that way.
+
+- **REFUTED: "the 300 mm mesh does not carry the audio band, so editing the
+  exhaust edits the model that does not make the sound."** This was written up
+  as a five-phase unified-duct rewrite in `docs/unified-duct-plan.md` and its
+  own phase-0 gate killed it. Measured with the harness above, the exhaust
+  stem's timbre moves **11.9 to 14.4 dB** for ordinary geometry changes, with
+  individual third octaves at 18, 23 and 32 dB. The mesh resolves the geometry
+  and the model that resolves it IS the one that makes the sound. Do not
+  re-propose the rewrite without new evidence. Two side hypotheses died in the
+  same measurement: the slow AGC and the soft limiter remove nothing (gain
+  1.000, zero limited samples over 21 renders), and the combustion layer
+  reading -205 dB is **deliberate**, not broken -- it is gated off on the
+  physical path by `if (!acousticExhaustNetwork_)` with the reason in the code.
+- **The silencer does not silence, and that IS the "no engine makes a racket"
+  complaint.** Single-factor insertion loss, removing only the chamber body:
+  CP2 +2.10 dB, LS3 +3.80 dB, **2JZ +0.06 dB** against a literature figure of
+  +20 to +30 dB. Removing the largest silencer in the catalogue entirely
+  changes observer pressure by six hundredths of a decibel. The element is not
+  broken -- it follows Munjal, and pushing the 2JZ's chamber diameter up moves
+  it along the right curve (m 4.25 -> 0 dB, m 9.6 -> -5.5, m 22.5 -> -7.2).
+  The trouble is structural: **a single expansion chamber at a realistic
+  automotive expansion ratio has a 7.0 dB peak transmission loss and exactly
+  0 dB at every pass-band**, spaced c/(2L). Three things follow, and all three
+  are already measured, so do not re-derive them:
+  - **Deepening the single chamber is REFUTED**, in `parts/exhausts.yaml`: OEM
+    depth on one chamber "put a 16 dB notch on the EJ25's rev-range
+    fundamental and halved the K20 and LS3 top end". A real multi-chamber box
+    is designed precisely so its notches do not land on a firing order.
+  - **In-situ insertion loss saturates near 7 dB** however hard the reactive
+    element is pushed, while its anechoic TL reaches 21 dB. A purely reactive
+    element redistributes energy between transmitted and reflected, and in the
+    collector-outlet loop what is reflected comes back. This is why a real
+    silencer is reactive AND absorptive; neither half suffices.
+  - **The Delany-Bazley packing model exists, works, and no road engine
+    authors it.** Only `cp2_absorptive_lab` does. Authored on the 2JZ
+    (24 kPa.s/m2, 35 mm, 28 % open) it is worth **-1.7 dB**. Note this is NOT
+    the refuted "broadband loss inside the reactive element" -- that was an
+    invented mapping from `muffler_restriction`; this is a separate physical
+    model with material data, which is what the parts file says to use.
+- **Masking is per BAND, and a broadband level cannot tell you about it.** On
+  the 2JZ the exhaust is the loudest single layer broadband (+8.4 dB over
+  mechanical, +10.1 over intake) and is nonetheless **below the rest of the mix
+  in 24 of 28 third octaves**, because the exhaust's energy is concentrated in
+  a few bands while intake and structural noise are broadband. The same
+  measurement on the CP2 gives 0 masked bands of 28 and on the LS3 gives 2. So
+  this is one engine's layer balance, not an architectural property -- do not
+  generalise it, and do not "fix" it on engines that do not have it.
+- **The afterfire's arming state is published; stop guessing at it.**
+  `EngineState::exhaustAfterfireBlockers` is a bitmask of `AfterfireBlocker`
+  and the diagnostics panel prints it beside the pipe wall temperature against
+  the ignition threshold. The feature has nine independent preconditions and
+  produces identical silence whichever one is missing, which is how it was
+  reported as "does nothing" three times with none of them identifiable from
+  outside. Read the state before touching the chemistry.
 
 - **Separate the audio complaints; they have unrelated causes.** "Muffled" is a
   bandwidth problem (the exhaust boundary coupling caps the physical band at low
