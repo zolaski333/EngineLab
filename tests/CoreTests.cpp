@@ -2519,6 +2519,62 @@ int main() {
     }
 
     {
+        // The user-facing bench must be a continuous ramp, not a 250 rpm
+        // ladder. What separates the two is not the speed of the sweep but its
+        // SPACING: the stepped sweep advances the setpoint by exactly 250 rpm
+        // after each settled window, so its points land on a ladder, while a
+        // ramp is paced by the engine and lands wherever the engine got to.
+        //
+        // Both modes have to keep working. The stepped sweep stays the
+        // calibration instrument -- EngineLab.CatalogReference measures its 24
+        // manufacturer points with it, in steady state -- so it must not be
+        // quietly replaced.
+        auto rampOwner = std::make_unique<enginelab::EngineRuntime>(
+            enginelab::makeDefaultInlineTwo());
+        auto& rampRuntime = *rampOwner;
+        rampRuntime.setRealtimeThrottleEnabled(false);
+        rampRuntime.setDynoRampEnabled(true);
+        require(rampRuntime.dynoRampEnabled(), "ramp mode must latch when set");
+        // Spacing is rate x averaging window, and the window is clamped to
+        // [0.25, 0.80] s -- so at the 500 rpm/s default the spacing spans
+        // 125-400 rpm and could land ON the stepped ladder by coincidence,
+        // making the discriminator below unreliable. Pin a low rate instead:
+        // 150 rpm/s gives 37-120 rpm, unambiguously under the ladder whatever
+        // window the engine's firing rate selects.
+        rampRuntime.setDynoRampRpmPerSecond(150.0);
+        rampRuntime.setDynoMaximumDurationSeconds(45.0);
+        rampRuntime.setIgnitionEnabled(true);
+        rampRuntime.start();
+        rampRuntime.startDyno();
+        auto rampRun = rampRuntime.currentDynoRun();
+        const auto rampDeadline =
+            std::chrono::steady_clock::now() + std::chrono::seconds(40);
+        while (rampRun.points.size() < 5
+               && std::chrono::steady_clock::now() < rampDeadline) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            rampRun = rampRuntime.currentDynoRun();
+        }
+        const auto rampPointDiagnostic = "a ramp sweep must publish points; it published "
+            + std::to_string(rampRun.points.size());
+        require(rampRun.points.size() >= 5, rampPointDiagnostic.c_str());
+        auto rampRose = true;
+        auto widestSpacingRpm = 0.0;
+        for (std::size_t index = 1; index < rampRun.points.size(); ++index) {
+            const auto spacing = rampRun.points[index].rpm - rampRun.points[index - 1].rpm;
+            if (!(spacing > 0.0)) rampRose = false;
+            widestSpacingRpm = std::max(widestSpacingRpm, spacing);
+        }
+        require(rampRose, "a ramp sweep must climb");
+        // The stepped bench accepts a settled point within 60 rpm of a target it
+        // moves by exactly 250, so its spacing cannot fall below 130 rpm. At
+        // 150 rpm/s the ramp cannot reach it.
+        const auto rampSpacingDiagnostic =
+            "a ramp sweep must not land on the stepped bench's 250 rpm ladder; widest spacing was "
+            + std::to_string(widestSpacingRpm);
+        require(widestSpacingRpm < 130.0, rampSpacingDiagnostic.c_str());
+    }
+
+    {
         // The realtime factor is the only reading that can see the failure this
         // project actually has, which is not a dropped frame but SLOW MOTION.
         // `EngineRuntime::run` advances a fixed 1/240 s per iteration and sleeps

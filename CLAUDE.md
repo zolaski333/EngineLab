@@ -385,6 +385,32 @@ test onto the behaviour it is meant to catch. Keep it that way.
   is void; one such claim in `docs/physics-audit.md` had to be retracted. Note the
   Radial R5 idles near ambient (95.6 kPa) and is the one engine sensitive to intake
   terms, but its baseline is healthy, so a failure there is the change's fault.
+- **There are now TWO dyno sweep modes and they are not interchangeable.** The
+  stepped sweep (`dynoTargetRpm_ + 250` after each settled window) is the
+  **calibration instrument** — `EngineLab.CatalogReference` measures its 24
+  manufacturer points with it, in steady state, and it must not be moved onto a
+  transient. The continuous ramp (`setDynoRampEnabled`, default OFF; rate
+  `setDynoRampRpmPerSecond`, default 500 rpm/s; key `6` in the app) is the
+  **user-facing bench**, the one a person recognises from a real chassis dyno.
+  Three things to know before touching either:
+  - The ramp advances **only while `cycleAveragedTorqueNm > 1.4 Nm`** and decays
+    otherwise. That single rule is what makes it safe on any displacement with no
+    per-engine tuning: the setpoint cannot run away from an engine that has
+    stopped following it. The stepped sweep has no such property, which is what
+    its recovery path exists to catch.
+  - **A ramp cannot pass the stepped sweep's settling gate**, which demands under
+    120 rpm/s while the ramp commands 500 by design. The gate is relaxed for the
+    ramp but not removed: the speed-error bound stays (150 rpm instead of 60) so
+    the engine must still be TRACKING rather than being dragged, and only the
+    acceleration bound follows the commanded rate.
+  - **Publishing a point must not also step the target** in ramp mode, or the
+    bench jumps 250 rpm per window on top of the ramp.
+  Note the inertial trap a ramped bench normally has and this one does not: a
+  real ramp measures brake torque `T_engine - I*dw/dt`, which at 500 rpm/s and
+  0.2 kg·m² removes 10.5 Nm and biases small engines worst. EngineLab escapes it
+  only because the accumulator publishes `frame.state.torqueNm`, the engine's own
+  brake torque, which carries no inertia term. **Do not replace it with the
+  absorber's commanded torque when working on the ramp.**
 - **The realtime bottleneck is the physics thread, not the audio callback**, and
   the failure mode is not a dropped frame — it is *slow motion*. `EngineRuntime::run`
   advances a fixed `1/240 s` of simulated time per iteration and sleeps to a wall

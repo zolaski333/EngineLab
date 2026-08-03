@@ -121,7 +121,35 @@ succès dans la même passe.
   le harnais complet prouve la continuité et l'achèvement, pas une vérité
   mesurée à chaque régime.
 
-## Conception du passage en rampe continue (à implémenter)
+## Conception du passage en rampe continue — IMPLÉMENTÉ le 2026-08-03
+
+Le mode rampe existe désormais dans `EngineRuntime`, **désactivé par défaut** :
+`setDynoRampEnabled(bool)` et `setDynoRampRpmPerSecond(double)` (bornes
+50-2000 tr/min/s, défaut 500), touche `6` dans l'application. Le balayage par
+paliers reste inchangé et reste l'instrument de calibration —
+`EngineLab.CatalogReference` mesure ses 24 points constructeur en régime établi
+et ne doit pas être déplacé sur un transitoire.
+
+Trois points d'implémentation méritent d'être retenus :
+
+- **L'avance conditionnée au couple** est la seule règle qui rend la rampe sûre
+  sans réglage par moteur : elle n'avance que tant que
+  `cycleAveragedTorqueNm > 1,4 Nm` (le 1 ft-lb d'ES2D, un seuil « pousse encore »
+  et non un chiffre à régler) et **décroît** sinon. La consigne ne peut donc pas
+  s'échapper d'un moteur qui ne suit plus.
+- **La porte d'acceptation des échantillons a dû être relâchée, mais pas
+  supprimée.** Le balayage par paliers exige moins de 120 tr/min/s d'accélération
+  pour publier un point ; une rampe en commande 500 par construction, donc cette
+  porte aurait rejeté chaque échantillon. Ce qui doit rester vrai est que le
+  moteur **suit** la consigne au lieu d'être traîné derrière : la porte d'erreur
+  de régime est conservée (150 tr/min au lieu de 60) et seule la borne
+  d'accélération suit le taux commandé.
+- **Ne pas publier ET incrémenter.** Le pas de 250 tr/min est appliqué à la
+  publication d'un point ; en rampe la consigne avance déjà à chaque itération,
+  donc les deux ensemble auraient fait sauter le banc de 250 tr/min par fenêtre
+  *en plus* de la rampe.
+
+### Conception d'origine (conservée pour référence)
 
 Le balayage produit reste **par paliers** : `dynoTargetRpm_ += 250` après chaque
 fenêtre de moyennage stabilisée (`EngineRuntime.cpp`, recherche

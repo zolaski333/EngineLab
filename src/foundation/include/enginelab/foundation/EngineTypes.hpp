@@ -1202,6 +1202,12 @@ struct EngineState final {
     double drivelineEnergyResidualJoules { 0.0 };
     double dynoHoldRpm { 0.0 };
     bool dynoHoldEnabled { false };
+    /** Which bench is armed: the continuous ramp or the 250 rpm stepped ladder.
+     * Published because the toggle is otherwise invisible -- the two modes only
+     * differ in how the setpoint moves, which a user cannot read off a torque
+     * curve while it is being drawn. */
+    bool dynoRampEnabled { false };
+    double dynoRampRpmPerSecond { 500.0 };
     /** User-facing brake-dyno session state. The preparation phase brings an
      * already-running engine to the first measurement speed without applying
      * a discontinuous absorber step. */

@@ -31,7 +31,9 @@ ActionMap::ActionMap()
         { "wheel_combustion", letter('J') }, { "wheel_exhaust", letter('K') },
         { "wheel_intake", letter('L') }, { "wheel_mechanical", letter('O') },
         { "wheel_simulation_rate", letter('N') },
-        { "wheel_fine_throttle", juce::KeyPress(juce::KeyPress::spaceKey) }
+        { "wheel_fine_throttle", juce::KeyPress(juce::KeyPress::spaceKey) },
+        // Every letter A-Z is already bound, hence a digit.
+        { "dyno_ramp", letter('6') }
     }} {
     load();
 }

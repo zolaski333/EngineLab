@@ -12,7 +12,12 @@ enum class AppAction : std::size_t {
     layerUp, layerDown, exhaustPreset, clutchHold, clutchDecrease, clutchIncrease,
     wheelDynoRpm, wheelVolume, wheelConvolution, wheelHighGain, wheelLowNoise,
     wheelHighNoise, wheelCombustion, wheelExhaust, wheelIntake, wheelMechanical,
-    wheelSimulationRate, wheelFineThrottle, count
+    wheelSimulationRate, wheelFineThrottle,
+    // ActionMap::entries_ is initialised POSITIONALLY against this order, so new
+    // actions go here, at the end, immediately before `count`. Inserting one in
+    // the middle silently rebinds every action after it.
+    dynoRamp,
+    count
 };
 
 class ActionMap final {

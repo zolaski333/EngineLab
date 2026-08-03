@@ -908,6 +908,7 @@ bool MainComponent::keyPressed(const juce::KeyPress& key) {
     }
     if (actionMap_.matches(AppAction::dyno, key)) { toggleDyno(); return true; }
     if (actionMap_.matches(AppAction::dynoHold, key)) { if (runtime_) runtime_->setDynoHoldEnabled(!runtime_->dynoHoldEnabled()); return true; }
+    if (actionMap_.matches(AppAction::dynoRamp, key)) { if (runtime_) runtime_->setDynoRampEnabled(!runtime_->dynoRampEnabled()); return true; }
     if (actionMap_.matches(AppAction::clutchDecrease, key)) {
         targetClutchPressure_ = std::clamp(targetClutchPressure_ - 0.08, 0.0, 1.0);
         return true;
@@ -1155,6 +1156,14 @@ void MainComponent::drawLoadSimulationPanel(juce::Graphics& g, juce::Rectangle<f
     g.setColour(juce::Colour(0xffdce5e1)); g.setFont(juce::FontOptions(16.0F, juce::Font::bold));
     g.drawText("LOAD / TRANSMISSION", body.removeFromTop(34.0F), juce::Justification::centredLeft);
     const auto gearText = gearName(visibleState_.gear);
+    // The bench has three modes and they are indistinguishable from the curve
+    // being drawn, so name the armed one. Hold wins over the sweep in
+    // EngineRuntime::run, so it is reported first here for the same reason.
+    const auto benchText = visibleState_.dynoHoldEnabled
+        ? juce::String("MAINTIEN")
+        : (visibleState_.dynoRampEnabled
+            ? "RAMPE " + juce::String(visibleState_.dynoRampRpmPerSecond, 0) + " tr/min/s"
+            : juce::String("PALIERS 250"));
     const std::array<juce::String, 12> values {
         "GEAR  " + gearText + " / " + juce::String(visibleState_.gearCount),
         "CLUTCH  " + juce::String(visibleState_.clutchPressure * 100.0, 0) + " %",
@@ -1166,7 +1175,7 @@ void MainComponent::drawLoadSimulationPanel(juce::Graphics& g, juce::Rectangle<f
         "CLUTCH LOSS  " + juce::String(visibleState_.clutchPowerLossKw, 2) + " kW",
         "BRAKE  " + juce::String(visibleState_.brakePressure * 100.0, 0) + " %",
         "TIRE FORCE  " + juce::String(visibleState_.tireLongitudinalForceN, 0) + " N",
-        "DYNO HOLD  " + juce::String(visibleState_.dynoHoldEnabled ? "ON" : "OFF"),
+        "BANC  " + benchText,
         "HOLD RPM  " + juce::String(visibleState_.dynoHoldRpm, 0)
     };
     const auto columns = 2;
@@ -1178,7 +1187,9 @@ void MainComponent::drawLoadSimulationPanel(juce::Graphics& g, juce::Rectangle<f
         auto cell = juce::Rectangle<float>(body.getX() + column * cellWidth, body.getY() + row * cellHeight,
                                            cellWidth - 10.0F, cellHeight - 8.0F);
         g.setColour(juce::Colour(0xff17231f)); g.fillRoundedRectangle(cell, 7.0F);
-        g.setColour(index == 10 && visibleState_.dynoHoldEnabled ? juce::Colour(0xff79b89f) : juce::Colour(0xffc4cfca));
+        g.setColour(index == 10
+                && (visibleState_.dynoHoldEnabled || visibleState_.dynoRampEnabled)
+            ? juce::Colour(0xff79b89f) : juce::Colour(0xffc4cfca));
         g.setFont(juce::FontOptions(14.0F, juce::Font::bold));
         g.drawFittedText(values[index], cell.reduced(10.0F, 5.0F).toNearestInt(), juce::Justification::centredLeft, 1);
     }

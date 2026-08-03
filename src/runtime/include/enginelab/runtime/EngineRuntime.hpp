@@ -173,6 +173,33 @@ public:
     void shiftDown() noexcept;
     void setGear(int gear) noexcept;
     void setDynoHoldEnabled(bool value) noexcept { dynoHoldEnabled_.store(value); }
+    /**
+     * Continuous-ramp sweep, the bench a user recognises, instead of the
+     * stepped one.
+     *
+     * The stepped sweep settles at a speed, averages a window, publishes, then
+     * jumps 250 rpm. Every step is a setpoint edge the engine may fail to
+     * follow, and it is not what a chassis dyno does. A ramp raises the target
+     * continuously and -- this is the part that matters -- **only while the
+     * engine is genuinely producing torque**, decaying otherwise, so it can
+     * never outrun the engine and needs no per-engine tuning.
+     *
+     * OFF by default. The stepped sweep stays the calibration instrument:
+     * EngineLab.CatalogReference measures its 24 manufacturer points in steady
+     * state and must not be moved onto a transient.
+     */
+    void setDynoRampEnabled(bool value) noexcept { dynoRampEnabled_.store(value); }
+    [[nodiscard]] bool dynoRampEnabled() const noexcept { return dynoRampEnabled_.load(); }
+    /** Ramp rate, rpm per second. ES2D uses 500; the useful range is narrow
+     *  because a fast ramp biases filling and wall temperature, not just
+     *  inertia. */
+    void setDynoRampRpmPerSecond(double value) noexcept {
+        dynoRampRpmPerSecond_.store(
+            std::isfinite(value) ? std::clamp(value, 50.0, 2'000.0) : 500.0);
+    }
+    [[nodiscard]] double dynoRampRpmPerSecond() const noexcept {
+        return dynoRampRpmPerSecond_.load();
+    }
     void setDynoHoldRpm(double value) noexcept;
     void adjustDynoHoldRpm(double delta) noexcept;
     void setAudioVolume(double value) noexcept { audioState_.volume.store(static_cast<float>(std::clamp(value, 0.0, 2.0))); }
@@ -320,6 +347,8 @@ private:
     std::atomic<std::uint64_t> gearCommandGeneration_ { 0 };
     std::atomic<bool> dynoHoldEnabled_ { false };
     std::atomic<double> dynoHoldRpm_ { 2'500.0 };
+    std::atomic<bool> dynoRampEnabled_ { false };
+    std::atomic<double> dynoRampRpmPerSecond_ { 500.0 };
     std::atomic<std::uint64_t> droppedEvents_ { 0 };
     std::atomic<std::uint64_t> droppedPressureSamples_ { 0 };
     std::atomic<std::uint64_t> timingOverruns_ { 0 };

@@ -664,6 +664,27 @@ void EngineRuntime::run(std::stop_token stopToken) {
                         dynoTargetRpm_,
                         dynoHoldRpm_.load(std::memory_order_relaxed),
                         holdSlewRpmPerSecond * baseStep.count());
+                } else if (dynoRampEnabled_.load(std::memory_order_relaxed)) {
+                    // The continuous ramp, and the single rule that makes it
+                    // safe on any engine without per-engine tuning: it advances
+                    // ONLY while the engine is genuinely producing torque, and
+                    // decays otherwise. The target therefore cannot run away
+                    // from an engine that has stopped following it. The stepped
+                    // sweep has no such property -- every 250 rpm step is a
+                    // setpoint edge the engine may fail to climb, which is what
+                    // the recovery path below exists to catch.
+                    //
+                    // Threshold is ES2D's 1 ft-lb, i.e. "still pushing at all",
+                    // not a torque figure to tune.
+                    constexpr double rampTorqueThresholdNm = 1.4;
+                    const auto rampCeilingRpm = sweepCeilingRpm(config_);
+                    if (dynoState.cycleAveragedTorqueNm > rampTorqueThresholdNm)
+                        dynoTargetRpm_ = std::min(rampCeilingRpm,
+                            dynoTargetRpm_
+                                + dynoRampRpmPerSecond_.load(std::memory_order_relaxed)
+                                    * baseStep.count());
+                    else
+                        dynoTargetRpm_ /= (1.0 + baseStep.count());
                 }
                 const auto recoveryThreshold =
                     std::max(350.0, config_.idleRpm * 0.55);
@@ -754,12 +775,26 @@ void EngineRuntime::run(std::stop_token stopToken) {
                 / std::max(20.0, config_.transmission.maxClutchTorqueNm),
             dynoActive_ ? 1.0 : timeScale_.load(std::memory_order_relaxed) });
         if (dynoActive_ && dynoSweeping_) {
+            // A ramp is a TRANSIENT by construction, so the stepped sweep's
+            // settling gate would reject every sample: it demands under
+            // 120 rpm/s of acceleration while the ramp commands 500 by design.
+            // What still has to hold is that the engine is TRACKING the target
+            // rather than being dragged behind it, so the speed-error gate
+            // stays and only the acceleration bound follows the commanded rate.
+            const auto rampingSweep =
+                dynoRampEnabled_.load(std::memory_order_relaxed)
+                && !dynoHoldEnabled_.load(std::memory_order_relaxed);
+            const auto acceptedSpeedErrorRpm = rampingSweep ? 150.0 : 60.0;
+            const auto acceptedAccelerationRpmPerSecond = rampingSweep
+                ? std::max(120.0, 3.0 * dynoRampRpmPerSecond_.load(
+                    std::memory_order_relaxed))
+                : 120.0;
             if (std::abs(dynoAbsorberOutput_.filteredRpm
-                    - dynoTargetRpm_) <= 60.0
+                    - dynoTargetRpm_) <= acceptedSpeedErrorRpm
                     && std::abs(
                         dynoAbsorberOutput_
                             .filteredAccelerationRpmPerSecond)
-                        <= 120.0) {
+                        <= acceptedAccelerationRpmPerSecond) {
                 // The ENGINE's brake torque, not the absorber's brake command.
                 //
                 // `loadTorqueNm` is the dyno controller's output, and the
@@ -849,7 +884,11 @@ void EngineRuntime::run(std::stop_token stopToken) {
                 if (!dynoHoldEnabled_.load(std::memory_order_relaxed)
                         && dynoTargetRpm_ >= ceilingRpm - 1.0e-6)
                     dynoCompleted_.store(true, std::memory_order_relaxed);
-                if (!dynoHoldEnabled_.load(std::memory_order_relaxed))
+                // The ramp advances every iteration up in the sweep block, so
+                // publishing a point must NOT also step it -- doing both would
+                // make the bench jump 250 rpm every window on top of the ramp.
+                if (!dynoHoldEnabled_.load(std::memory_order_relaxed)
+                        && !rampingSweep)
                     dynoTargetRpm_ = std::min(ceilingRpm, dynoTargetRpm_ + 250.0);
                 nextSampleRpm_ = dynoTargetRpm_;
                 dynoChannelAccumulator_ = zeroedDynoAccumulator();
@@ -896,6 +935,9 @@ void EngineRuntime::run(std::stop_token stopToken) {
             frame.state.drivelineEnergyResidualJoules = drivelineOutput_.energyResidualJoules;
             frame.state.dynoHoldRpm = dynoHoldRpm_.load(std::memory_order_relaxed);
             frame.state.dynoHoldEnabled = dynoHoldEnabled_.load(std::memory_order_relaxed);
+            frame.state.dynoRampEnabled = dynoRampEnabled_.load(std::memory_order_relaxed);
+            frame.state.dynoRampRpmPerSecond =
+                dynoRampRpmPerSecond_.load(std::memory_order_relaxed);
             frame.state.dynoActive = dynoActive_;
             frame.state.dynoPreparing = dynoActive_
                 && !dynoSweeping_.load(std::memory_order_relaxed);
