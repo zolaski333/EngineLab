@@ -147,7 +147,11 @@ constexpr std::size_t maximumConnections = 1'024;
         result.dischargeCoefficient = 0.68;
         break;
     case ExhaustComponentType::outlet:
-        result.lengthMm = 0.0;
+        // A tailpipe is a pipe. Zero here used to mean "the system ends", but
+        // the layout has to mesh it anyway, and a length it has to invent is
+        // the length that then sets the CFL limit for the whole network. Give
+        // it the real thing instead; the user can still shorten it.
+        result.lengthMm = 300.0;
         result.diameterMm = 65.0;
         break;
     }

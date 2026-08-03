@@ -27,6 +27,14 @@ target_link_libraries(EngineLabExhaustFlowBench PRIVATE
     EngineLab::Physics EngineLab::Catalog)
 enginelab_set_warnings(EngineLabExhaustFlowBench)
 
+add_executable(EngineLabExhaustNetworkCostBench ExhaustNetworkCostBench.cpp)
+target_link_libraries(EngineLabExhaustNetworkCostBench PRIVATE
+    EngineLab::GasDynamics EngineLab::Exhaust EngineLab::Foundation
+    EngineLab::Physics EngineLab::Catalog)
+target_compile_definitions(EngineLabExhaustNetworkCostBench PRIVATE
+    ENGINELAB_CATALOG_ROOT="${CMAKE_SOURCE_DIR}")
+enginelab_set_warnings(EngineLabExhaustNetworkCostBench)
+
 add_executable(EngineLabShiftTransientHarness ShiftTransientHarness.cpp)
 target_link_libraries(EngineLabShiftTransientHarness PRIVATE
     EngineLab::Audio EngineLab::Runtime EngineLab::Simulation EngineLab::Foundation EngineLab::Physics

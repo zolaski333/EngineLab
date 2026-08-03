@@ -108,10 +108,31 @@ ExhaustNetworkLayout ExhaustNetworkLayout::compile(
             ? node.volumeLitres * 0.001 : 0.0;
         auto lengthWasDerived = false;
         if (!(lengthM > 0.0)) {
+            // `minimumResolvedLengthM` is a numerical guard against a degenerate
+            // zero, NOT a physical scale, and it must not become the length of a
+            // real element: the explicit time step is the minimum over cells of
+            // dx/(c+|u|), so one 5 mm cell makes EVERY duct in the network
+            // substep at its rate.
+            //
+            // A 1-D element carries resolvable plane-wave physics only down to
+            // L ~= 0.853 d, where its half-wave c/(2L) meets its own plane-mode
+            // cutoff f_c = 1.8412 c/(2 pi a) -- the same limit, and the same
+            // constant, that floors a short silencer body in ExhaustGraph.cpp.
+            // Below it the length carries nothing the network can use, so
+            // flooring a DERIVED length there is not an approximation.
+            //
+            // This is the difference between a usable exhaust designer and an
+            // unusable one. `defaultComponent` gives an outlet and a splitter no
+            // length and no volume, and every network has an outlet, so before
+            // this floor EVERY user-authored network fell to 5 mm: measured on
+            // the 2JZ and the LS3, 180 mm shipped against 5 mm authored, i.e.
+            // x36 solver cost for a geometry the user did not choose.
+            constexpr double planeWaveResonantLengthRatio = 0.853;
             lengthM = requestedVolumeM3 > 0.0
                 ? requestedVolumeM3 / connectionAreaM2
-                : discretisation.minimumResolvedLengthM;
-            lengthM = std::max(lengthM, discretisation.minimumResolvedLengthM);
+                : planeWaveResonantLengthRatio * diameterM;
+            lengthM = std::max({ lengthM, discretisation.minimumResolvedLengthM,
+                                 planeWaveResonantLengthRatio * diameterM });
             lengthWasDerived = true;
             layout.diagnostics_.push_back(
                 { ExhaustNetworkLayoutIssue::zeroLengthComponentResolved, node.id });

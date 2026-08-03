@@ -262,6 +262,93 @@ void testShortestCellIsReportedAndTracksOneShortElement() {
               << costRatio << '\n';
 }
 
+void testDerivedLengthIsFlooredAtThePlaneWaveLimit() {
+    // A component with neither length nor volume used to take
+    // `minimumResolvedLengthM` (5 mm) as its LENGTH. That constant is a
+    // numerical guard against a degenerate zero, not a physical scale, and the
+    // explicit time step is the minimum over cells of dx/(c+|u|) -- so one such
+    // element made every duct in the network substep at 5 mm.
+    //
+    // This was not a corner case. `defaultComponent` in the exhaust designer
+    // gives an outlet no length and no volume, and EVERY network has an outlet,
+    // so every user-authored exhaust hit it: measured on the 2JZ and the LS3,
+    // 180 mm shipped against 5 mm authored, i.e. x36 solver cost for a geometry
+    // the user never chose. That is the whole of "any exhaust I apply from the
+    // designer drops the simulation below realtime, whatever I draw".
+    auto config = customNetworkConfig();
+    auto& components = config.exhaustPaths.front().network->components;
+    auto* outlet = static_cast<ExhaustComponentConfig*>(nullptr);
+    for (auto& candidate : components) {
+        if (candidate.type == ExhaustComponentType::outlet) {
+            outlet = &candidate;
+            break;
+        }
+    }
+    requireLayout(outlet != nullptr, "the reference network must contain an outlet");
+    outlet->lengthMm = 0.0;
+    outlet->volumeLitres = 0.0;
+    const auto outletDiameterMm = outlet->diameterMm;
+
+    const auto layout = ExhaustNetworkLayout::compile(
+        ExhaustGraph::makeForEngine(config));
+    requireLayout(layout.valid(), "a length-less outlet must still compile");
+
+    // Below L ~= 0.853 d the first plane-wave resonance has left the band the
+    // 1-D element is valid in, so the derived length carries nothing usable and
+    // flooring it there is not an approximation. Same constant as the short
+    // silencer body floor in ExhaustGraph.cpp.
+    constexpr double planeWaveResonantLengthRatio = 0.853;
+    const auto flooredM = planeWaveResonantLengthRatio * outletDiameterMm * 0.001;
+
+    // Assert on the OUTLET's own duct, not on the network minimum: this
+    // reference network already contains a shorter element elsewhere, so the
+    // network minimum would be satisfied without the outlet ever being floored
+    // and the test would pass vacuously.
+    const auto outletDuct = std::find_if(
+        layout.ducts().begin(), layout.ducts().end(),
+        [id = outlet->id](const CompiledExhaustDuct& duct) {
+            return duct.sourceComponentId == id;
+        });
+    requireLayout(outletDuct != layout.ducts().end(),
+        "the length-less outlet must still be compiled as a duct");
+    requireLayout(outletDuct->cellCount > 0, "the outlet duct must carry cells");
+    if (!(outletDuct->lengthM >= flooredM * 0.999)) {
+        std::cout << "outlet length " << outletDuct->lengthM * 1'000.0
+                  << " mm, floor " << flooredM * 1'000.0 << " mm\n";
+    }
+    requireLayout(outletDuct->lengthM >= flooredM * 0.999,
+        "a derived length must be floored at the element's plane-wave limit, "
+        "never at the numerical minimumResolvedLengthM");
+
+    // What the user actually pays is the CELL, so check it under the mesh the
+    // simulator really uses (EngineSimulator::configurePhysicalExhaustNetwork:
+    // 300 mm target, one cell minimum). Before the floor this element was 5 mm.
+    ExhaustNetworkDiscretisation productionMesh;
+    productionMesh.targetCellLengthM = 0.300;
+    productionMesh.minimumCellsPerDuct = 1;
+    productionMesh.maximumCellsPerDuct = 64;
+    productionMesh.maximumTotalCells = 1'024;
+    const auto production = ExhaustNetworkLayout::compile(
+        ExhaustGraph::makeForEngine(config), productionMesh);
+    requireLayout(production.valid(), "the production mesh must compile");
+    const auto productionOutlet = std::find_if(
+        production.ducts().begin(), production.ducts().end(),
+        [id = outlet->id](const CompiledExhaustDuct& duct) {
+            return duct.sourceComponentId == id;
+        });
+    requireLayout(productionOutlet != production.ducts().end()
+            && productionOutlet->cellCount > 0,
+        "the outlet must compile under the production mesh");
+    const auto productionCellM =
+        productionOutlet->lengthM / static_cast<double>(productionOutlet->cellCount);
+    requireLayout(productionCellM > 5.0 * 0.005,
+        "a length-less outlet must not mesh anywhere near the 5 mm numerical floor");
+    std::cout << "length-less outlet: length " << outletDuct->lengthM * 1'000.0
+              << " mm (floor " << flooredM * 1'000.0
+              << " mm), production cell " << productionCellM * 1'000.0
+              << " mm against 5 mm before the fix\n";
+}
+
 } // namespace
 
 void runExhaustNetworkLayoutTests() {
@@ -271,4 +358,5 @@ void runExhaustNetworkLayoutTests() {
     testAuthoredTaperSurvivesTopologyCompilation();
     testZeroLengthResolutionAndHardCellBudget();
     testShortestCellIsReportedAndTracksOneShortElement();
+    testDerivedLengthIsFlooredAtThePlaneWaveLimit();
 }
