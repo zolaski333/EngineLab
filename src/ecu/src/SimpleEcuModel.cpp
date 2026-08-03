@@ -413,6 +413,25 @@ EcuCommand SimpleEcuModel::evaluate(const EngineConfig& config, const EngineStat
     // state proves that the engine is in closed-throttle overrun. Spark is cut,
     // but the downstream chemistry must still find oxygen and sufficient gas
     // temperature before any heat or sound can be produced.
+    // Chopping the retained fuel is what separates the two real strategies.
+    // Continuous retained fuel with the spark cut is anti-lag: the exhaust
+    // burns steadily, because a continuously fuelled and continuously ignited
+    // flow is supposed to. Pops come from discrete SLUGS, so a pop-and-bang
+    // calibration gates delivery on a duty cycle. Zero keeps every cycle
+    // fuelled, which is the historical behaviour and every shipped engine.
+    //
+    // Phase off simulation time, in the same idiom as `alternatingCut` above,
+    // so it stays deterministic and independent of engine speed -- the pop rate
+    // a listener hears is set by the map, not by how fast the engine happens to
+    // be turning.
+    const auto overrunPulseOpen = !(config.exhaustAfterfire.overrunPulseHz > 0.0)
+        || [&] {
+            const auto period = 1.0 / config.exhaustAfterfire.overrunPulseHz;
+            const auto phase = state.simulationTimeSeconds
+                - std::floor(state.simulationTimeSeconds / period) * period;
+            return phase < period * std::clamp(
+                config.exhaustAfterfire.overrunPulseDutyCycle, 0.0, 1.0);
+        }();
     const auto overrunAfterfireActive =
         config.fuel == FuelType::gasoline
         && config.exhaustAfterfire.enabled
@@ -420,7 +439,8 @@ EcuCommand SimpleEcuModel::evaluate(const EngineConfig& config, const EngineStat
         && decelerationFuelCut && !limiterActive
         && controls.ignitionEnabled && !controls.starterEngaged
         && state.rpm >= config.exhaustAfterfire.overrunMinimumRpm
-        && effectiveThrottle <= config.exhaustAfterfire.overrunMaximumThrottle;
+        && effectiveThrottle <= config.exhaustAfterfire.overrunMaximumThrottle
+        && overrunPulseOpen;
     const auto fuelCorrection = overrunAfterfireActive
         // This is a bounded fraction of the normal charge request. Do not let
         // the preceding tip-in reserve or cold-start correction multiply it:

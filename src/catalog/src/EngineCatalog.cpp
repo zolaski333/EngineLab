@@ -699,6 +699,8 @@ void applyCrankOffsets(EngineConfig& config) {
         assignIfPresent(afterfire, "overrun_fuel_fraction", config.exhaustAfterfire.overrunFuelFraction);
         assignIfPresent(afterfire, "overrun_minimum_rpm", config.exhaustAfterfire.overrunMinimumRpm);
         assignIfPresent(afterfire, "overrun_maximum_throttle", config.exhaustAfterfire.overrunMaximumThrottle);
+        assignIfPresent(afterfire, "overrun_pulse_hz", config.exhaustAfterfire.overrunPulseHz);
+        assignIfPresent(afterfire, "overrun_pulse_duty", config.exhaustAfterfire.overrunPulseDutyCycle);
     }
     if (const auto acoustics = engine["runner_acoustics"]) {
         assignIfPresent(acoustics, "enabled", config.runnerAcoustics.enabled);

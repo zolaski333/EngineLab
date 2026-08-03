@@ -1045,6 +1045,58 @@ int main() {
     }
 
     {
+        // Chopping the retained fuel is what separates a pop-and-bang map from
+        // anti-lag: continuous delivery into a continuously ignited exhaust
+        // burns steadily and roars, and discrete slugs are what pop. Zero must
+        // stay exactly the historical every-cycle behaviour, because that is
+        // what the whole catalogue authors.
+        auto pulsedConfig = config;
+        pulsedConfig.exhaustAfterfire.enabled = true;
+        pulsedConfig.exhaustAfterfire.overrunFuelFraction = 0.12;
+        pulsedConfig.exhaustAfterfire.overrunMinimumRpm = 3'000.0;
+        pulsedConfig.exhaustAfterfire.overrunMaximumThrottle = 0.02;
+        pulsedConfig.exhaustAfterfire.overrunPulseHz = 4.0;
+        pulsedConfig.exhaustAfterfire.overrunPulseDutyCycle = 0.35;
+
+        const auto armedAt = [](const enginelab::EngineConfig& engineConfig,
+                                double timeSeconds) {
+            enginelab::SimpleEcuModel ecuModel;
+            ecuModel.initialise(engineConfig);
+            enginelab::EngineState state;
+            state.simulationTimeSeconds = 1.0;
+            state.rpm = 300.0;
+            state.coolantTemperatureC = 90.0;
+            enginelab::EngineControls cranking { true, true, 0.0, 0.0 };
+            (void)ecuModel.evaluate(engineConfig, state, cranking);
+            // Arm the strategy with a deliberate power request, then lift off.
+            state.simulationTimeSeconds += 0.01;
+            state.rpm = 4'000.0;
+            state.throttle = 0.50;
+            enginelab::EngineControls power { true, false, 0.50, 0.0 };
+            (void)ecuModel.evaluate(engineConfig, state, power);
+            state.simulationTimeSeconds = timeSeconds;
+            state.throttle = 0.0;
+            enginelab::EngineControls closed { true, false, 0.0, 0.0 };
+            return ecuModel.evaluate(engineConfig, state, closed)
+                .overrunAfterfireActive;
+        };
+
+        // One 4 Hz period is 250 ms with a 35 % duty, so 0.05 s into a period
+        // is inside the slug and 0.20 s is between slugs. Times are chosen from
+        // the commanded rate, never read back from the model.
+        require(armedAt(pulsedConfig, 8.05),
+            "a chopped overrun must meter fuel inside its pulse");
+        require(!armedAt(pulsedConfig, 8.20),
+            "a chopped overrun must stop metering between its pulses");
+        // Same instants, unchopped: both must stay armed, so the discriminator
+        // above is the chopping and not the two timestamps.
+        auto continuousConfig = pulsedConfig;
+        continuousConfig.exhaustAfterfire.overrunPulseHz = 0.0;
+        require(armedAt(continuousConfig, 8.05) && armedAt(continuousConfig, 8.20),
+            "zero pulse rate must keep the historical every-cycle delivery");
+    }
+
+    {
         // A fuel-cut strategy is not safe merely because it eventually turns
         // the injectors back on.  The port film must be replenished before the
         // crank reaches idle.  Follow a representative 1,000 rpm/s coast-down

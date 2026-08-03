@@ -2826,6 +2826,16 @@ Doubler le dégagement chimique dans l'échappement déplace l'observateur de
 **+8,9 %, soit 0,74 dB**, ne change **pas du tout** le pic, et laisse la
 pression au port **identique**.
 
+> **RETRACTÉ le 2026-08-03, plus bas au point 10.** Le A/B audio ci-dessous a
+> été mesuré **sur le rupteur**, à 9 999 tr/min, parce que la phase de chauffe
+> emmène le moteur en zone rouge et que la condition d'armement est alors
+> satisfaite immédiatement. À ce régime le pompage du moteur enterre l'afterfire.
+> Mesuré à un point de fonctionnement contrôlé (4 000 tr/min), l'afterfire est
+> **+3,2 dB en pic et +5,5 dB en p999** contre le contrôle nul. Les deux
+> paragraphes qui suivent restent affichés parce que le raisonnement sur le
+> chemin de couplage est juste ; le chiffre de 0,74 dB et tout ce qu'on en
+> déduisait sur l'audibilité sont faux.
+
 ### 6. Attention à ce que ce chiffre autorise à conclure — et à ce qu'il n'autorise pas
 
 Le premier réflexe est de lire le 0,74 dB comme « le chemin audio n'a pas de
@@ -2880,8 +2890,103 @@ au fur et à mesure de son arrivée quelle que soit la vitesse de combustion. Le
 gaz et d'engagement de la stratégie.
 
 **Ce qu'il faut donc, c'est ne PAS brûler tant qu'un inventaire ne s'est pas
-constitué** : un délai d'induction (type intégrale de Livengood-Wu, fortement
-dépendant de la température) qui laisse le carburant s'accumuler, puis une
-combustion rapide une fois le seuil franchi. Cela demande un état persistant
-par volume de contrôle dans `ExhaustGasNetwork`, ce que le modèle actuel n'a
-pas. L'alternative bon marché est écartée : inutile de la réessayer.
+constitué.** Voir le point 9 : ce n'est pas la chimie qui doit changer, c'est la
+livraison.
+
+### 8. Mon détecteur de bouffées était faux, et il a failli réfuter l'hypothèse juste
+
+Avant de lire le point 9, lire celui-ci, parce que c'est l'erreur la plus
+réutilisable de la séquence.
+
+Le seuil de détection d'événement valait `max(0,05 x pic, 2 x médiane)` sur la
+fenêtre d'overrun entière. Or le pic de cette fenêtre est le **transitoire de
+fermeture des gaz**, 16,9 kW, plusieurs fois plus grand que tout ce que
+l'overrun lui-même produit. Le plancher se posait donc à 0,85 kW, alors que les
+bouffées oscillent entre **0,12 et 2,57 kW** : elles ne repassent jamais sous le
+plancher et sont comptées comme **un seul événement continu à 100 % de rapport
+cyclique**.
+
+Le premier essai de stratégie hachée est donc ressorti « aucun changement de
+forme », et j'ai commencé à écrire une réfutation. La série temporelle brute,
+regardée directement, montrait une modulation **d'un facteur 21 parfaitement
+verrouillée sur la commande**.
+
+C'est exactement le piège déjà consigné ailleurs dans ces documents sous une
+autre forme — *toute mesure agrégée sur une fenêtre qui couvre des niveaux très
+différents rapporte la partie la plus forte* — et il se referme aussi bien sur
+un instrument de diagnostic que sur une normalisation de sonie. Deux corrections
+en découlent, toutes deux appliquées :
+
+- exclure la demi-seconde de transitoire et ne mesurer que l'overrun **établi** ;
+- ancrer le seuil sur la moyenne géométrique creux/pic de cette fenêtre, jamais
+  sur une fraction d'un pic qui peut appartenir à autre chose ;
+- et publier une **profondeur de modulation** (pic/creux), qui ne demande aucun
+  seuil et aurait montré le problème du premier coup.
+
+### 9. La forme n'est pas un défaut de chimie : c'est une calibration ECU
+
+Les deux stratégies réelles existent et diffèrent par la **livraison**, pas par
+la combustion :
+
+- **Anti-lag** : carburant retenu en continu, allumage coupé. L'échappement
+  brûle en régime établi et **rugit**. C'est ce que le modèle produisait, et
+  c'est correct pour cette configuration.
+- **Pop and bang** : le carburant retenu est **haché**, ce qui envoie des bouffées
+  discrètes dans l'échappement.
+
+Un écoulement alimenté en continu et allumé en continu brûle en continu ; c'est
+la bonne réponse physique, pas un défaut. `ExhaustAfterfireConfig` porte donc
+désormais `overrunPulseHz` (0 = tous les cycles, comportement historique et
+celui de tout le catalogue) et `overrunPulseDutyCycle`.
+
+Mesuré sur le CP2, échappement chaud à 90 s, overrun établi :
+
+| stratégie | modulation pic/creux | bouffées sur 2,5 s | pic de pression au port |
+|---|---|---|---|
+| continue | **3,0x** | 1 | 109,6 kPa |
+| hachée 4 Hz | **56,7x** | **11** (~4,4/s) | 113,8 kPa |
+| hachée 8 Hz | **11,2x** | **20** (~8,0/s) | 112,4 kPa |
+
+Le nombre de bouffées suit exactement la commande, et la pression au port —
+la seule grandeur qui puisse porter l'événement jusqu'à l'audio — se met enfin
+à bouger, contre 107,3 kPa avant le lever de pied.
+
+### 10. Le point de fonctionnement n'était pas contrôlé, et l'afterfire est AUDIBLE
+
+Le A/B audio du point 5 est **retiré**. Il levait le pied à **9 999 tr/min**,
+parce que la phase de chauffe monte les rapports et tient le plein gaz aussi
+longtemps que la paroi l'exige : le moteur est donc en zone rouge quand le test
+d'armement est atteint, et l'armement est satisfait immédiatement. À ce régime,
+le pompage et la vidange du moteur lui-même enterrent quelques kPa d'afterfire,
+et le verdict portait sur le bruit de pompage. Une vraie pétarade en lever de
+pied se produit à mi-régime. Même famille que le piège `--trace <bas régime>`
+déjà consigné : un régime choisi par un contrôleur n'est pas le point de
+fonctionnement qu'on croit avoir demandé.
+
+`--liftoff-rpm` (défaut 4 000) descend désormais en roue libre jusqu'au régime
+demandé avant d'ouvrir la fenêtre mesurée. Mesuré ainsi sur le CP2, échappement
+chaud à 90 s, overrun établi :
+
+| | carburant brûlé | modulation | pic overrun | p999 | crête audio |
+|---|---|---|---|---|---|
+| contrôle nul | 0,000 mg | — | 0,16975 | 0,09628 | 8,74 |
+| continue | 90,6 mg | 1,3x | **0,24643** | **0,18146** | 9,69 |
+| hachée 4 Hz | 55,7 mg | 2,4x | 0,23590 | 0,16654 | **10,18** |
+
+**L'afterfire est audible** : +45 % en pic (**+3,2 dB**) et +88 % en p999
+(**+5,5 dB**) contre le contrôle nul. Le hachage, lui, donne la crête la plus
+élevée pour 39 % de carburant en moins — la même énergie redistribuée en
+transitoires, ce qui est exactement ce qu'est une détonation et ce que n'est pas
+un rugissement.
+
+Deux notes de lecture, toutes deux issues d'erreurs commises ici :
+
+- La **fraction allumée par la paroi** compte bien plus au régime où les
+  pétarades existent : ~10 % des volumes en zone rouge, **20 à 50 % à
+  4 000 tr/min**. Le correctif d'allumage par surface chaude n'est donc pas un
+  détail, il porte l'essentiel du phénomène au point de fonctionnement utile.
+- Cette fraction **conservait sa dernière valeur** quand rien ne réagissait, et
+  affichait 99,5 % à côté d'un dégagement de 0,000 kW dans le contrôle nul.
+  Corrigé : elle vaut zéro sans réaction. Le contrôle nul lit maintenant ~91 %,
+  ce qui est réel — il reste du carburant des cycles précédents qui réagit sur
+  la paroi chaude, en quantité trop faible pour peser.

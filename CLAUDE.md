@@ -724,24 +724,56 @@ test onto the behaviour it is meant to catch. Keep it that way.
     the path is gated, not vacuous — and the first version of this measurement
     lifted off six seconds after cranking, where the fix came out
     **bit-identical to no fix**. A cold-pipe scenario proves nothing here.
-  - **Doubling the chemistry moves the observer by 0.74 dB — and the reason is
-    the SHAPE, not a missing audio path.** A/B on a warm exhaust, same
-    trajectory, only `overrunFuelFraction` differing: 248.1 mg burned against
-    120.7, mean heat 3.556 kW against 1.730, audio overrun p999
-    0.24117 -> 0.26269, **peak unchanged** and **port pressure identical**
-    (128.6 kPa). The tempting reading is "`RealtimeEngineAudio` has no afterfire
-    source, add one" — that is wrong and nearly got written down.
+  - **MEASURE IT AT A CONTROLLED SPEED, or the audio verdict is about pumping
+    noise.** This entry first recorded "doubling the chemistry moves the
+    observer by 0.74 dB, it is inaudible". **That is retracted.** The lift-off
+    was happening at **9,999 rpm** — the warm-up phase shifts up and holds WOT
+    for as long as the wall needs, so the engine is at redline by the time the
+    arming test is reached — and at redline the engine's own pumping and
+    blowdown bury a few kPa of afterfire. A real trailing-throttle pop happens
+    at moderate speed. Measured properly at a 4,000 rpm lift-off, against a
+    null control with no retained fuel: overrun peak **0.16975 -> 0.24643
+    (+3.2 dB)** and p999 **0.09628 -> 0.18146 (+5.5 dB)**. The afterfire is
+    clearly audible. `--liftoff-rpm` now coasts to the requested speed before
+    the measured window opens; do not read a run that does not report it.
+    Same family as the `--trace <low rpm>` trap: a speed the controller chose
+    is not the operating point you think you asked for.
+  - **The coupling path already exists; do not add an audio source for it.**
+    The tempting reading of a weak A/B is "`RealtimeEngineAudio` has no
+    afterfire source, add one" — that is wrong and nearly got written down.
     `reactUnburnedFuel` adds its energy to `totalEnergyDensityJPerM3`, so the
     reaction raises cell pressure and launches a wave that reaches the port,
     and the port is exactly what the telemetry publishes to the audio. **The
     coupling already exists.** What is missing is audio-band content: the
-    release is a 120-512 ms swell at 100% duty, whose fundamental is ~2 Hz, and
-    the chain high-passes it away. So the measurement says *doubling a slow
-    smear is inaudible*, which is not the same claim as *afterfire is
-    inaudible*. Fix the burst shape first, then re-run the same A/B; a dedicated
-    audio source is only justified if a real burst still does not carry. Note
-    the telemetry is itself low-passed at tau = 12.5 ms, which is 40x smaller
-    than the swell, so the instrument is not what smears it.
+    release raises cell pressure, the wave reaches the port, and the +3.2 dB
+    above confirms it carries. Note the telemetry is itself low-passed at
+    tau = 12.5 ms, so `exhaustAfterfireHeatReleaseKw` is a display quantity —
+    the audio does not go through it and is not limited by it.
+  - **The burst/smear distinction is a DELIVERY calibration, not chemistry —
+    and the instrument that says otherwise is probably lying.** The two real
+    strategies differ in how the fuel arrives: anti-lag retains it on every
+    cycle and the exhaust burns steadily and roars, which is the correct answer
+    for a continuously fuelled, continuously ignited flow; pop-and-bang CHOPS
+    it and gets discrete slugs. `ExhaustAfterfireConfig::overrunPulseHz`
+    (0 = every cycle, the historical behaviour and the whole catalogue) plus
+    `overrunPulseDutyCycle` do that in the ECU. Measured on a warm CP2 over the
+    settled overrun, at a 4,000 rpm lift-off: continuous gives peak/trough
+    modulation 1.3x and no bursts, 4 Hz gives **2.4x and 11 bursts in 2.5 s**
+    with a **higher audio crest (10.18 against 9.69) on 39 % less fuel** —
+    the same audible energy redistributed into transients, which is what a pop
+    is and a roar is not. The burst count tracks the command exactly (4 Hz -> 11
+    in 2.5 s, 8 Hz -> 20).
+    **Read the warning with it:** the first run of that experiment reported "no
+    change in shape" and nearly became a written refutation. The event
+    threshold was a fraction of the window PEAK, and that peak is the
+    throttle-closing transient at 16.9 kW, so the floor sat at 0.85 kW while
+    the bursts swung 0.12-2.57 kW and never dipped below it — one continuous
+    event at 100 % duty, from a signal modulating 21x in lock with the command.
+    Same trap as the loudness-normalisation one further up: any aggregate over
+    a window spanning widely different levels reports the loudest part. The
+    harness now excludes the first 0.5 s, anchors the threshold on the settled
+    window's own geometric mean of trough and peak, and publishes a
+    **modulation depth** that needs no threshold at all.
   - **REFUTED: speeding the burn up does not make bursts.** The obvious next
     move is `reactionTimeConstantSeconds`, which is already authorable from
     2 to 50 ms, so it costs nothing to test. Measured on the CP2 with a warm

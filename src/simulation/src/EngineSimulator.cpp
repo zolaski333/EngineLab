@@ -2877,13 +2877,18 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
             state_.exhaustWallTemperatureC =
                 physicalExhaustNetwork.peakWallTemperatureK() - 273.15;
         }
-        if (exhaustFuelReaction.reactingControlVolumes > 0) {
-            state_.exhaustAfterfireWallIgnitedFraction =
-                static_cast<double>(
-                    exhaustFuelReaction.wallIgnitedControlVolumes)
-                / static_cast<double>(
-                    exhaustFuelReaction.reactingControlVolumes);
-        }
+        // Zero when nothing reacts, rather than holding the last value. Holding
+        // it reads as "the hot-surface path is carrying almost everything"
+        // exactly when the answer is "nothing is burning at all", which is the
+        // most misleading moment for it to say that -- a null-control run with
+        // no retained fuel reported 99.5 % beside a heat release of 0.000 kW.
+        state_.exhaustAfterfireWallIgnitedFraction =
+            exhaustFuelReaction.reactingControlVolumes > 0
+                ? static_cast<double>(
+                      exhaustFuelReaction.wallIgnitedControlVolumes)
+                    / static_cast<double>(
+                        exhaustFuelReaction.reactingControlVolumes)
+                : 0.0;
         state_.manifoldGasMassGrams = 0.0;
         state_.cylinderGasMassGrams = 0.0;
         state_.gasInternalEnergyJoules = 0.0;

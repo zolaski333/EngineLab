@@ -697,6 +697,11 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
         || !inRange(config.exhaustAfterfire.overrunFuelFraction, 0.0, 0.25)
         || !inRange(config.exhaustAfterfire.overrunMinimumRpm, 500.0, 20'000.0)
         || !inRange(config.exhaustAfterfire.overrunMaximumThrottle, 0.0, 0.20)
+        // Zero means "every cycle", the historical continuous strategy. The
+        // upper bound is where chopping stops being audible as separate events
+        // and merges back into the steady burn it exists to break up.
+        || !inRange(config.exhaustAfterfire.overrunPulseHz, 0.0, 60.0)
+        || !inRange(config.exhaustAfterfire.overrunPulseDutyCycle, 0.02, 1.0)
         || !inRange(config.runnerAcoustics.dampingRatio, 0.01, 2.0)
         || !inRange(config.runnerAcoustics.couplingGain, 0.0, 2.0)
         || !inRange(config.runnerAcoustics.maximumPressureAmplitudeKpa, 0.1, 200.0)

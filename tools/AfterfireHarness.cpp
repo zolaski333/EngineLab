@@ -107,6 +107,8 @@ struct Metrics final {
     double meanWallIgnitedFraction { 0.0 };
     // Heat release over the overrun window.
     double peakHeatKw { 0.0 };
+    double troughHeatKw { 0.0 };
+    double modulationDepth { 0.0 };
     double meanHeatKw { 0.0 };
     double crest { 0.0 };
     double dutyCycle { 0.0 };
@@ -125,6 +127,11 @@ struct Metrics final {
     double audioOverrunPeak { 0.0 };
     double audioBaselineP999 { 0.0 };
     double audioOverrunP999 { 0.0 };
+    // Peak over RMS across the overrun. A level metric cannot tell a pop from a
+    // slightly louder steady note; a crest factor is exactly "does something
+    // stick out of the background", which is what a pop IS.
+    double audioOverrunCrest { 0.0 };
+    double audioBaselineCrest { 0.0 };
     std::uint64_t droppedPressureSamples { 0 };
 };
 
@@ -329,6 +336,13 @@ struct Options final {
     double overrunSeconds { 3.0 };
     // Long enough for 1.5 mm of steel to arrive; see phase C.
     double warmupSeconds { 30.0 };
+    // Zero keeps the historical continuous strategy (anti-lag).
+    double pulseHz { 0.0 };
+    double pulseDuty { 0.35 };
+    // Speed the measured overrun opens at. Must be controlled: left to the
+    // warm-up it lands on the rev limiter, where engine pumping buries the
+    // afterfire and the audio verdict is about the wrong thing entirely.
+    double liftOffRpm { 4'000.0 };
 };
 
 Metrics measureAfterfire(const enginelab::EngineConfig& baseConfig,
@@ -343,6 +357,8 @@ Metrics measureAfterfire(const enginelab::EngineConfig& baseConfig,
     config.exhaustAfterfire.ignitionTemperatureK = options.ignitionTemperatureK;
     config.exhaustAfterfire.reactionTimeConstantSeconds =
         options.reactionMilliseconds * 0.001;
+    config.exhaustAfterfire.overrunPulseHz = options.pulseHz;
+    config.exhaustAfterfire.overrunPulseDutyCycle = options.pulseDuty;
     // The rpm gate has to sit under what this engine actually reaches in the
     // acceleration below, or the strategy never arms and the run measures
     // nothing while looking like a null result.
@@ -450,6 +466,32 @@ Metrics measureAfterfire(const enginelab::EngineConfig& baseConfig,
         }
     }
     if (!reachedArm) return metrics;
+
+    // Phase C2 -- COAST DOWN to the speed the overrun is to be measured at.
+    //
+    // Without this the recorded window starts wherever the warm-up left the
+    // engine, which is the rev limiter: phase C shifts up and holds WOT for
+    // however long the wall needs, so by the time the arming test is reached
+    // the engine is at redline and lifts off from 9,999 rpm. That is the wrong
+    // operating point for this question and it is not a small error -- at
+    // redline the pumping and blowdown of the engine itself dominate the port
+    // signal, so a few kPa of afterfire sits under it and any audio verdict is
+    // a verdict about pumping noise. A real trailing-throttle pop happens at
+    // moderate speed. Same class of mistake as reading `--trace <low rpm>` as
+    // an idle when the dyno controller is holding WOT.
+    //
+    // Not recorded as part of the overrun: the strategy is already armed here,
+    // which is exactly what a real descent does, and the measured window then
+    // opens on an exhaust that is already in the state being measured.
+    for (int step = 0; step < static_cast<int>(20.0 / stepSeconds)
+             && simulator.state().rpm > options.liftOffRpm;
+         ++step, t += stepSeconds) {
+        auto tick = coupledStep(simulator, driveline, 0.0, 1.0, false);
+        if (audio)
+            audio->renderFrame(tick.frame, simulator, false,
+                tick.drive.requestedLoad);
+        record(tick, 0.0);
+    }
     metrics.wallTemperatureAtLiftOffC = simulator.state().exhaustWallTemperatureC;
     metrics.liftOffTime = t;
     metrics.rpmAtLiftOff = simulator.state().rpm;
@@ -483,13 +525,28 @@ Metrics measureAfterfire(const enginelab::EngineConfig& baseConfig,
 
     metrics.ran = true;
 
-    // --- heat-release statistics over the overrun window -------------------
+    // --- heat-release statistics over the SETTLED overrun ------------------
+    //
+    // The first half second after lift-off is the throttle-closing transient,
+    // and it is several times larger than anything the overrun itself does.
+    // Including it does not merely add noise, it BREAKS the burst statistics:
+    // the event threshold is a fraction of the window peak, so a 16.9 kW
+    // transient puts the floor at 0.85 kW while the bursts swing 0.12-2.57 kW,
+    // and every one of them is then reported as a single continuous event at
+    // 100 % duty. That is exactly the trap this project documents about any
+    // aggregate taken over a window spanning widely different levels -- it
+    // reports the loudest part -- and it nearly refuted a correct hypothesis
+    // here. Measure the settled overrun on its own.
+    const auto settleSteps = std::min<std::size_t>(
+        static_cast<std::size_t>(0.5 / stepSeconds),
+        (tipInIndex - liftOffIndex) / 2);
+    const auto steadyBegin = liftOffIndex + settleSteps;
     auto heatSum = 0.0;
     auto wallIgnitedSum = 0.0;
     auto activeSteps = 0;
     std::vector<double> overrunHeat;
-    overrunHeat.reserve(tipInIndex - liftOffIndex);
-    for (auto index = liftOffIndex; index < tipInIndex; ++index) {
+    overrunHeat.reserve(tipInIndex - steadyBegin);
+    for (auto index = steadyBegin; index < tipInIndex; ++index) {
         const auto& sample = samples[index];
         overrunHeat.push_back(sample.heatKw);
         heatSum += sample.heatKw;
@@ -500,16 +557,22 @@ Metrics measureAfterfire(const enginelab::EngineConfig& baseConfig,
         metrics.portPeakDuringOverrunKpa = std::max(
             metrics.portPeakDuringOverrunKpa, sample.exhaustPortPeakKpa);
         metrics.wallTemperatureMinDuringOverrunC =
-            index == liftOffIndex ? sample.exhaustWallC
+            index == steadyBegin ? sample.exhaustWallC
                 : std::min(metrics.wallTemperatureMinDuringOverrunC,
                     sample.exhaustWallC);
         metrics.peakWallIgnitedFraction = std::max(
             metrics.peakWallIgnitedFraction, sample.wallIgnitedFraction);
         wallIgnitedSum += sample.wallIgnitedFraction;
+        metrics.troughHeatKw = index == steadyBegin
+            ? sample.heatKw : std::min(metrics.troughHeatKw, sample.heatKw);
     }
     metrics.meanWallIgnitedFraction =
         wallIgnitedSum / static_cast<double>(
-            std::max<std::size_t>(1, tipInIndex - liftOffIndex));
+            std::max<std::size_t>(1, tipInIndex - steadyBegin));
+    // The direct "is it bursty" reading, and the one that needs no threshold
+    // at all: peak over trough across the settled overrun.
+    metrics.modulationDepth = metrics.peakHeatKw
+        / std::max(1.0e-6, metrics.troughHeatKw);
     const auto overrunSteps = std::max<std::size_t>(1, overrunHeat.size());
     metrics.meanHeatKw = heatSum / static_cast<double>(overrunSteps);
     metrics.crest = metrics.peakHeatKw
@@ -538,8 +601,13 @@ Metrics measureAfterfire(const enginelab::EngineConfig& baseConfig,
     // produces one enormous "event" covering the whole window, which the duty
     // cycle then exposes; a bang produces several short ones.
     if (metrics.peakHeatKw > 0.0) {
+        // Threshold from the settled window's OWN median, halfway between
+        // trough and peak in the log sense. Anchoring it to a fraction of the
+        // peak is what hid a 21x modulation behind "one continuous event".
         const auto threshold = std::max(
-            0.05 * metrics.peakHeatKw, 2.0 * percentile(overrunHeat, 0.50));
+            std::sqrt(std::max(1.0e-9, metrics.troughHeatKw)
+                * metrics.peakHeatKw),
+            0.5 * percentile(overrunHeat, 0.50));
         auto inEvent = false;
         std::size_t eventStart = 0;
         for (std::size_t index = 0; index < overrunHeat.size(); ++index) {
@@ -597,16 +665,35 @@ Metrics measureAfterfire(const enginelab::EngineConfig& baseConfig,
         std::vector<double> overrun;
         baseline.reserve(overrunBegin - baselineBegin);
         overrun.reserve(overrunEnd - overrunBegin);
-        for (auto index = baselineBegin; index < overrunBegin; ++index)
-            baseline.push_back(std::abs(static_cast<double>(left[index])));
+        auto baselineSquareSum = 0.0;
+        auto baselinePeak = 0.0;
+        auto overrunSquareSum = 0.0;
+        for (auto index = baselineBegin; index < overrunBegin; ++index) {
+            const auto magnitude = std::abs(static_cast<double>(left[index]));
+            baseline.push_back(magnitude);
+            baselineSquareSum += magnitude * magnitude;
+            baselinePeak = std::max(baselinePeak, magnitude);
+        }
         for (auto index = overrunBegin; index < overrunEnd; ++index) {
             const auto magnitude = std::abs(static_cast<double>(left[index]));
             overrun.push_back(magnitude);
+            overrunSquareSum += magnitude * magnitude;
             metrics.audioOverrunPeak =
                 std::max(metrics.audioOverrunPeak, magnitude);
         }
         metrics.audioBaselineP999 = percentile(baseline, 0.999);
         metrics.audioOverrunP999 = percentile(overrun, 0.999);
+        if (!overrun.empty()) {
+            const auto rms = std::sqrt(overrunSquareSum
+                / static_cast<double>(overrun.size()));
+            metrics.audioOverrunCrest =
+                metrics.audioOverrunPeak / std::max(1.0e-9, rms);
+        }
+        if (!baseline.empty()) {
+            const auto rms = std::sqrt(baselineSquareSum
+                / static_cast<double>(baseline.size()));
+            metrics.audioBaselineCrest = baselinePeak / std::max(1.0e-9, rms);
+        }
         if (!options.audioDirectory.empty()) {
             std::filesystem::create_directories(options.audioDirectory);
             writeWav(options.audioDirectory
@@ -648,21 +735,29 @@ void report(const Metrics& metrics) {
         metrics.wallTemperatureMinDuringOverrunC,
         metrics.peakWallIgnitedFraction * 100.0,
         metrics.meanWallIgnitedFraction * 100.0);
-    std::printf("    heat  peak %8.3f kW  mean %8.4f kW  crest %7.2f"
-                "  duty %5.1f %%\n",
-        metrics.peakHeatKw, metrics.meanHeatKw, metrics.crest,
-        metrics.dutyCycle * 100.0);
-    std::printf("    burst events %3d  largest %8.3f kW  rise %6.1f ms"
+    std::printf("    heat  peak %8.3f kW  trough %8.4f kW  modulation %8.1fx"
+                "  mean %8.4f kW  duty %5.1f %%\n",
+        metrics.peakHeatKw, metrics.troughHeatKw, metrics.modulationDepth,
+        metrics.meanHeatKw, metrics.dutyCycle * 100.0);
+    // The event count only means something once the signal actually modulates.
+    // Below about 2x the threshold sits inside the firing-rate ripple and the
+    // counter crosses it repeatedly: a steady burn measured 1.3x modulation and
+    // "60 events" over 2.5 s, which is the ripple, not bursts. Modulation depth
+    // needs no threshold and is the reading to trust.
+    std::printf("    burst events %3d%s  largest %8.3f kW  rise %6.1f ms"
                 "  fuel %8.3f mg\n",
-        metrics.eventCount, metrics.largestEventPeakKw,
+        metrics.eventCount,
+        metrics.modulationDepth < 2.0 ? " (ripple, not bursts)" : "",
+        metrics.largestEventPeakKw,
         metrics.largestEventRiseMs, metrics.burnedFuelMg);
     std::printf("    port  overrun peak %7.1f kPa  pre-lift mean %7.1f kPa\n",
         metrics.portPeakDuringOverrunKpa, metrics.portBaselineKpa);
     if (metrics.audioMeasured) {
-        std::printf("    audio peak %8.5f  overrun peak %8.5f"
-                    "  p999 base %8.5f -> overrun %8.5f%s\n",
-            metrics.audioPeak, metrics.audioOverrunPeak,
-            metrics.audioBaselineP999, metrics.audioOverrunP999,
+        std::printf("    audio overrun peak %8.5f  p999 %8.5f  crest %6.2f"
+                    "   (pre-lift p999 %8.5f crest %6.2f)%s\n",
+            metrics.audioOverrunPeak, metrics.audioOverrunP999,
+            metrics.audioOverrunCrest,
+            metrics.audioBaselineP999, metrics.audioBaselineCrest,
             metrics.audioFinite ? "" : "  NON-FINITE");
         if (metrics.droppedPressureSamples > 0)
             std::printf("    dropped pressure samples %llu\n",
@@ -695,6 +790,10 @@ int main(int argc, char** argv) {
             options.overrunSeconds = std::stod(next());
         else if (argument == "--warmup-seconds")
             options.warmupSeconds = std::stod(next());
+        else if (argument == "--liftoff-rpm")
+            options.liftOffRpm = std::stod(next());
+        else if (argument == "--pulse-hz") options.pulseHz = std::stod(next());
+        else if (argument == "--pulse-duty") options.pulseDuty = std::stod(next());
         else {
             std::fprintf(stderr, "unknown argument: %s\n", argument.c_str());
             return 2;

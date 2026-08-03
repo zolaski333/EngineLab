@@ -389,6 +389,24 @@ struct ExhaustAfterfireConfig final {
     double overrunFuelFraction { 0.0 };
     double overrunMinimumRpm { 2'500.0 };
     double overrunMaximumThrottle { 0.02 };
+    /** Rate at which the retained fuel is CHOPPED, Hz. Zero meters it on every
+     * cycle of the overrun, which is the historical behaviour.
+     *
+     * This is the difference between the two real strategies, and it is an ECU
+     * calibration rather than a chemistry parameter. Continuous retained fuel
+     * with the spark cut is anti-lag: the exhaust burns steadily and roars.
+     * Pops need discrete SLUGS, because a continuously fuelled and
+     * continuously ignited flow burns steadily and is supposed to.
+     *
+     * Measured before this existed: heat release on a warm exhaust ran at
+     * 100 % duty with a single 120-512 ms swell over a 3 s overrun on every
+     * engine tried, and shrinking `reactionTimeConstantSeconds` from 10 ms to
+     * 2 ms raised the peak by half while leaving that shape untouched -- the
+     * chemistry was never what made it continuous, the delivery was. */
+    double overrunPulseHz { 0.0 };
+    /** Fraction of each pulse period during which fuel is retained. Only read
+     * when `overrunPulseHz` is positive. */
+    double overrunPulseDutyCycle { 0.35 };
 };
 
 struct ExhaustCylinderConnectionConfig final {
