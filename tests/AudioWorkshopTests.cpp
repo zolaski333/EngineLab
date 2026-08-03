@@ -51,7 +51,7 @@ int main() {
 
     auto physicsConfig = engine;
     enginelab::AudioPhysicsSettings authoredPhysics {
-        0.06, 0.55, true, true, 800.0, 0.008, 0.95, 0.12
+        0.06, 0.55, true, true, 800.0, 0.008, 0.95, 0.12, 4.0, 0.35
     };
     enginelab::applyAudioPhysicsSettings(physicsConfig, authoredPhysics);
     const auto recoveredPhysics =
@@ -64,7 +64,9 @@ int main() {
             && near(recoveredPhysics.afterfireIgnitionTemperatureK, 800.0)
             && near(recoveredPhysics.afterfireReactionTimeSeconds, 0.008)
             && near(recoveredPhysics.afterfireEfficiency, 0.95)
-            && near(recoveredPhysics.overrunFuelFraction, 0.12),
+            && near(recoveredPhysics.overrunFuelFraction, 0.12)
+            && near(recoveredPhysics.overrunPulseHz, 4.0)
+            && near(recoveredPhysics.overrunPulseDutyCycle, 0.35),
         "audio physics controls round-trip through EngineConfig");
     enginelab::EngineState physicsState;
     physicsState.cylinderStates[0].combustionCycleMultiplier = 0.91;
@@ -233,8 +235,8 @@ int main() {
     }
     require(visibleChildren >= 45, "complete workshop control set is present");
     require(
-        sliderCount == 15 && disabledSliderCount == 4,
-        "nine faders and six physics controls exist; four no-op faders are disabled");
+        sliderCount == 17 && disabledSliderCount == 4,
+        "nine faders and eight physics controls exist; four no-op faders are disabled");
     require(
         muteCount == 4 && soloCount == 4
             && disabledMuteCount == 1
@@ -251,7 +253,8 @@ int main() {
             && near(appliedPhysics.cycleVariationCoefficientOfVariation, 0.06)
             && appliedPhysics.afterfireEnabled
             && appliedPhysics.limiterKeepsFuel
-            && near(appliedPhysics.overrunFuelFraction, 0.12),
+            && near(appliedPhysics.overrunFuelFraction, 0.12)
+            && near(appliedPhysics.overrunPulseHz, 4.0),
         "demo action publishes an intentionally audible physical calibration");
 
     window.setMix(base);

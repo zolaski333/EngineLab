@@ -445,7 +445,9 @@ std::string JsonEngineSerializer::encode(const EngineConfig& config) const {
                       {"reaction_efficiency", config.exhaustAfterfire.reactionEfficiency},
                       {"overrun_fuel_fraction", config.exhaustAfterfire.overrunFuelFraction},
                       {"overrun_minimum_rpm", config.exhaustAfterfire.overrunMinimumRpm},
-                      {"overrun_maximum_throttle", config.exhaustAfterfire.overrunMaximumThrottle}}},
+                      {"overrun_maximum_throttle", config.exhaustAfterfire.overrunMaximumThrottle},
+                      {"overrun_pulse_hz", config.exhaustAfterfire.overrunPulseHz},
+                      {"overrun_pulse_duty", config.exhaustAfterfire.overrunPulseDutyCycle}}},
         {"runner_acoustics", {{"enabled", config.runnerAcoustics.enabled},
                       {"damping_ratio", config.runnerAcoustics.dampingRatio},
                       {"coupling_gain", config.runnerAcoustics.couplingGain},
@@ -660,6 +662,8 @@ EngineDecodeResult JsonEngineSerializer::decode(std::string_view text) const noe
             config.exhaustAfterfire.overrunFuelFraction = afterfire.value("overrun_fuel_fraction", config.exhaustAfterfire.overrunFuelFraction);
             config.exhaustAfterfire.overrunMinimumRpm = afterfire.value("overrun_minimum_rpm", config.exhaustAfterfire.overrunMinimumRpm);
             config.exhaustAfterfire.overrunMaximumThrottle = afterfire.value("overrun_maximum_throttle", config.exhaustAfterfire.overrunMaximumThrottle);
+            config.exhaustAfterfire.overrunPulseHz = afterfire.value("overrun_pulse_hz", config.exhaustAfterfire.overrunPulseHz);
+            config.exhaustAfterfire.overrunPulseDutyCycle = afterfire.value("overrun_pulse_duty", config.exhaustAfterfire.overrunPulseDutyCycle);
         }
         if (engine.contains("runner_acoustics")) {
             const auto& acoustics = engine.at("runner_acoustics");

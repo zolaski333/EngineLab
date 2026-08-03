@@ -32,6 +32,11 @@ struct AudioPhysicsSettings final {
     double afterfireReactionTimeSeconds { 0.010 };
     double afterfireEfficiency { 0.95 };
     double overrunFuelFraction { 0.0 };
+    /** 0 retains fuel on every cycle (anti-lag roar); a rate chops it into
+     *  discrete slugs, which is what a pop-and-bang map does. Append new
+     *  members below this comment: the aggregate is initialised by position. */
+    double overrunPulseHz { 0.0 };
+    double overrunPulseDutyCycle { 0.35 };
 };
 
 /** Live proof that the authored controls are active in the simulator. */

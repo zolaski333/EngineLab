@@ -1308,6 +1308,8 @@ int main() {
     extendedPhysicsConfig.exhaustAfterfire.overrunFuelFraction = 0.11;
     extendedPhysicsConfig.exhaustAfterfire.overrunMinimumRpm = 3'450.0;
     extendedPhysicsConfig.exhaustAfterfire.overrunMaximumThrottle = 0.015;
+    extendedPhysicsConfig.exhaustAfterfire.overrunPulseHz = 6.5;
+    extendedPhysicsConfig.exhaustAfterfire.overrunPulseDutyCycle = 0.42;
     extendedPhysicsConfig.exhaust.mufflerChamberDiameterMm = 118.0;
     extendedPhysicsConfig.exhaust.mufflerChamberLengthMm = 360.0;
     extendedPhysicsConfig.exhaust.mufflerPackingFlowResistivityPaSPerM2 = 24'000.0;
@@ -1374,6 +1376,8 @@ int main() {
             && std::abs(extendedJsonRoundTrip.config->exhaustAfterfire.overrunFuelFraction - 0.11) < 0.001
             && std::abs(extendedJsonRoundTrip.config->exhaustAfterfire.overrunMinimumRpm - 3'450.0) < 0.001
             && std::abs(extendedJsonRoundTrip.config->exhaustAfterfire.overrunMaximumThrottle - 0.015) < 0.001
+            && std::abs(extendedJsonRoundTrip.config->exhaustAfterfire.overrunPulseHz - 6.5) < 0.001
+            && std::abs(extendedJsonRoundTrip.config->exhaustAfterfire.overrunPulseDutyCycle - 0.42) < 0.001
             && std::abs(extendedJsonRoundTrip.config->exhaust.mufflerPackingFlowResistivityPaSPerM2 - 24'000.0) < 0.001
             && std::abs(extendedJsonRoundTrip.config->exhaustPaths.front().geometry.mufflerPackingThicknessMm - 35.0) < 0.001
             && std::abs(extendedJsonRoundTrip.config->exhaustPaths.front().geometry.mufflerPerforatedOpenAreaRatio - 0.28) < 0.001
@@ -1430,6 +1434,8 @@ int main() {
             && std::abs(extendedYamlRoundTrip.config->exhaustAfterfire.overrunFuelFraction - 0.11) < 0.001
             && std::abs(extendedYamlRoundTrip.config->exhaustAfterfire.overrunMinimumRpm - 3'450.0) < 0.001
             && std::abs(extendedYamlRoundTrip.config->exhaustAfterfire.overrunMaximumThrottle - 0.015) < 0.001
+            && std::abs(extendedYamlRoundTrip.config->exhaustAfterfire.overrunPulseHz - 6.5) < 0.001
+            && std::abs(extendedYamlRoundTrip.config->exhaustAfterfire.overrunPulseDutyCycle - 0.42) < 0.001
             && std::abs(extendedYamlRoundTrip.config->exhaust.mufflerPackingFlowResistivityPaSPerM2 - 24'000.0) < 0.001
             && std::abs(extendedYamlRoundTrip.config->exhaustPaths.front().geometry.mufflerPackingThicknessMm - 35.0) < 0.001
             && std::abs(extendedYamlRoundTrip.config->intake

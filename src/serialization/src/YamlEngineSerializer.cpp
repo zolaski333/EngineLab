@@ -326,6 +326,8 @@ std::string YamlEngineSerializer::encode(const EngineConfig& config) const {
         << YAML::Key << "overrun_fuel_fraction" << YAML::Value << config.exhaustAfterfire.overrunFuelFraction
         << YAML::Key << "overrun_minimum_rpm" << YAML::Value << config.exhaustAfterfire.overrunMinimumRpm
         << YAML::Key << "overrun_maximum_throttle" << YAML::Value << config.exhaustAfterfire.overrunMaximumThrottle
+        << YAML::Key << "overrun_pulse_hz" << YAML::Value << config.exhaustAfterfire.overrunPulseHz
+        << YAML::Key << "overrun_pulse_duty" << YAML::Value << config.exhaustAfterfire.overrunPulseDutyCycle
         << YAML::EndMap
         << YAML::Key << "runner_acoustics" << YAML::Value << YAML::BeginMap
         << YAML::Key << "enabled" << YAML::Value << config.runnerAcoustics.enabled
@@ -753,6 +755,8 @@ EngineDecodeResult YamlEngineSerializer::decode(std::string_view text) const noe
             config.exhaustAfterfire.overrunFuelFraction = afterfire["overrun_fuel_fraction"].as<double>(config.exhaustAfterfire.overrunFuelFraction);
             config.exhaustAfterfire.overrunMinimumRpm = afterfire["overrun_minimum_rpm"].as<double>(config.exhaustAfterfire.overrunMinimumRpm);
             config.exhaustAfterfire.overrunMaximumThrottle = afterfire["overrun_maximum_throttle"].as<double>(config.exhaustAfterfire.overrunMaximumThrottle);
+            config.exhaustAfterfire.overrunPulseHz = afterfire["overrun_pulse_hz"].as<double>(config.exhaustAfterfire.overrunPulseHz);
+            config.exhaustAfterfire.overrunPulseDutyCycle = afterfire["overrun_pulse_duty"].as<double>(config.exhaustAfterfire.overrunPulseDutyCycle);
         }
         if (const auto acoustics = engine["runner_acoustics"]) {
             config.runnerAcoustics.enabled = acoustics["enabled"].as<bool>(config.runnerAcoustics.enabled);

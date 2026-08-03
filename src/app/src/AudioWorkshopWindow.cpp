@@ -105,6 +105,8 @@ AudioPhysicsSettings audioPhysicsSettingsFor(
         engine.exhaustAfterfire.reactionTimeConstantSeconds,
         engine.exhaustAfterfire.reactionEfficiency,
         engine.exhaustAfterfire.overrunFuelFraction,
+        engine.exhaustAfterfire.overrunPulseHz,
+        engine.exhaustAfterfire.overrunPulseDutyCycle,
     };
 }
 
@@ -124,6 +126,9 @@ void applyAudioPhysicsSettings(
         settings.afterfireEfficiency;
     engine.exhaustAfterfire.overrunFuelFraction =
         settings.overrunFuelFraction;
+    engine.exhaustAfterfire.overrunPulseHz = settings.overrunPulseHz;
+    engine.exhaustAfterfire.overrunPulseDutyCycle =
+        settings.overrunPulseDutyCycle;
 }
 
 AudioPhysicsTelemetry audioPhysicsTelemetryFor(
@@ -368,10 +373,11 @@ public:
         addAndMakeVisible(proofLabel_);
         addAndMakeVisible(progressBar_);
 
-        const std::array<std::string_view, 6> physicsNames {
+        const std::array<std::string_view, 8> physicsNames {
             "Variation cycle (COV)", "Correlation cycles",
             "Allumage afterfire (K)", "Reaction afterfire (ms)",
             "Rendement afterfire", "Carburant decel",
+            "Hachage pops (Hz)", "Rapport cyclique pops",
         };
         for (std::size_t index = 0; index < physicsLabels_.size(); ++index) {
             physicsLabels_[index].setText(
@@ -387,12 +393,16 @@ public:
         configureSlider(afterfireReactionSlider_, 2.0, 50.0, 1.0);
         configureSlider(afterfireEfficiencySlider_, 0.0, 1.0, 0.01);
         configureSlider(overrunFuelSlider_, 0.0, 0.25, 0.005);
+        configureSlider(overrunPulseHzSlider_, 0.0, 20.0, 0.5);
+        configureSlider(overrunPulseDutySlider_, 0.02, 1.0, 0.01);
         cycleVariationSlider_.setTextValueSuffix(" ratio");
         cycleCorrelationSlider_.setTextValueSuffix(" ratio");
         afterfireTemperatureSlider_.setTextValueSuffix(" K");
         afterfireReactionSlider_.setTextValueSuffix(" ms");
         afterfireEfficiencySlider_.setTextValueSuffix(" ratio");
         overrunFuelSlider_.setTextValueSuffix(" ratio");
+        overrunPulseHzSlider_.setTextValueSuffix(" Hz");
+        overrunPulseDutySlider_.setTextValueSuffix(" ratio");
 
         afterfireToggle_.setColour(
             juce::ToggleButton::textColourId, juce::Colour(0xffc4d0cb));
@@ -402,7 +412,7 @@ public:
         addAndMakeVisible(wetLimiterToggle_);
         demoPhysicsButton_.onClick = [this] {
             setPhysicsInternal({ 0.06, 0.55, true, true,
-                                 800.0, 0.008, 0.95, 0.12 });
+                                 800.0, 0.008, 0.95, 0.12, 4.0, 0.35 });
             applyPhysics();
         };
         bypassPhysicsButton_.onClick = [this] {
@@ -496,7 +506,7 @@ public:
         statusLabel_.setBounds(header);
         area.removeFromTop(8);
 
-        auto physicsArea = area.removeFromBottom(224);
+        auto physicsArea = area.removeFromBottom(276);
         area.removeFromBottom(12);
         const auto leftWidth = std::max(
             500, static_cast<int>(
@@ -582,9 +592,14 @@ public:
         auto secondColumn = physicsBody.removeFromLeft(secondWidth);
         physicsBody.removeFromLeft(12);
         auto thirdColumn = physicsBody;
-        const auto physicsRow = [](juce::Rectangle<int>& column,
-                                   juce::Label& label, juce::Slider& slider) {
-            auto row = column.removeFromTop(35);
+        // The afterfire column is the tallest at six rows; size the row from it
+        // so shrinking the window narrows the rows instead of clipping them.
+        const auto physicsRowHeight =
+            std::clamp(physicsBody.getHeight() / 6, 24, 35);
+        const auto physicsRow = [physicsRowHeight](
+                                    juce::Rectangle<int>& column,
+                                    juce::Label& label, juce::Slider& slider) {
+            auto row = column.removeFromTop(physicsRowHeight);
             label.setBounds(row.removeFromLeft(145));
             slider.setBounds(row);
         };
@@ -595,6 +610,8 @@ public:
         physicsRow(secondColumn, physicsLabels_[3], afterfireReactionSlider_);
         physicsRow(secondColumn, physicsLabels_[4], afterfireEfficiencySlider_);
         physicsRow(secondColumn, physicsLabels_[5], overrunFuelSlider_);
+        physicsRow(secondColumn, physicsLabels_[6], overrunPulseHzSlider_);
+        physicsRow(secondColumn, physicsLabels_[7], overrunPulseDutySlider_);
         afterfireToggle_.setBounds(thirdColumn.removeFromTop(27));
         wetLimiterToggle_.setBounds(thirdColumn.removeFromTop(27));
         auto presets = thirdColumn.removeFromTop(32);
@@ -702,6 +719,8 @@ private:
             afterfireReactionSlider_.getValue() * 0.001,
             afterfireEfficiencySlider_.getValue(),
             overrunFuelSlider_.getValue(),
+            overrunPulseHzSlider_.getValue(),
+            overrunPulseDutySlider_.getValue(),
         };
     }
 
@@ -725,6 +744,10 @@ private:
             settings.afterfireEfficiency, juce::dontSendNotification);
         overrunFuelSlider_.setValue(
             settings.overrunFuelFraction, juce::dontSendNotification);
+        overrunPulseHzSlider_.setValue(
+            settings.overrunPulseHz, juce::dontSendNotification);
+        overrunPulseDutySlider_.setValue(
+            settings.overrunPulseDutyCycle, juce::dontSendNotification);
     }
 
     void applyPhysics() {
@@ -1204,13 +1227,15 @@ private:
     juce::ProgressBar progressBar_;
     std::jthread exportThread_;
     std::unique_ptr<juce::FileChooser> fileChooser_;
-    std::array<juce::Label, 6> physicsLabels_;
+    std::array<juce::Label, 8> physicsLabels_;
     juce::Slider cycleVariationSlider_;
     juce::Slider cycleCorrelationSlider_;
     juce::Slider afterfireTemperatureSlider_;
     juce::Slider afterfireReactionSlider_;
     juce::Slider afterfireEfficiencySlider_;
     juce::Slider overrunFuelSlider_;
+    juce::Slider overrunPulseHzSlider_;
+    juce::Slider overrunPulseDutySlider_;
     juce::ToggleButton afterfireToggle_ { "AFTERFIRE PHYSIQUE ACTIF" };
     juce::ToggleButton wetLimiterToggle_ {
         "RUPTEUR SPARK-CUT / CARBURANT CONSERVE"
