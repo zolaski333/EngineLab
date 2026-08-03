@@ -188,6 +188,24 @@ public:
         return diagnostics_;
     }
     [[nodiscard]] std::size_t totalCellCount() const noexcept { return totalCellCount_; }
+    /** Shortest cell anywhere in the network, metres. Zero if there are none.
+     *
+     * This ONE number sets the explicit time step for the WHOLE network. The
+     * CFL limit is the minimum over cells of dx/(c+|u|), so a single short
+     * element makes every other duct substep at its rate, and the cost is
+     * global rather than local to the part that was authored badly.
+     *
+     * It is deliberately separate from `totalCellCount()`, which is what the
+     * `cellBudgetExceeded` diagnostic guards. The two failures are different
+     * and the coarsening loop in `compile` only answers the first: it raises
+     * the target cell length while the TOTAL exceeds the budget, and never
+     * reacts to one duct being far shorter than the target. A user who
+     * authored an 80 x 10 mm silencer body hit exactly that -- a handful of
+     * cells, one of them 10 mm, and the network's substep rate went from
+     * 11,520 Hz to 92,160 Hz, which put the engine into permanent slow motion
+     * and was reported as the engine having "gained inertia and lost its
+     * liveliness". Nothing in validation could see it. */
+    [[nodiscard]] double minimumCellLengthM() const noexcept;
     [[nodiscard]] const ExhaustNetworkDiscretisation& discretisation() const noexcept {
         return discretisation_;
     }

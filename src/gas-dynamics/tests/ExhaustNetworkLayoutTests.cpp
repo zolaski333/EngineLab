@@ -211,6 +211,57 @@ void testZeroLengthResolutionAndHardCellBudget() {
         "a hard cell budget must reject an impossible topology instead of dropping ducts");
 }
 
+void testShortestCellIsReportedAndTracksOneShortElement() {
+    // The shortest cell anywhere sets the explicit time step for the WHOLE
+    // network, so it is the number that says what an authored geometry will
+    // cost the solver. `cellBudgetExceeded` does not cover this: it guards the
+    // TOTAL cell count, and the coarsening loop in `compile` only reacts to
+    // that total, never to one duct being far shorter than the target.
+    auto config = customNetworkConfig();
+    const auto baseline = ExhaustNetworkLayout::compile(
+        ExhaustGraph::makeForEngine(config));
+    requireLayout(baseline.valid(), "the reference network must compile");
+
+    const auto shortestM = baseline.minimumCellLengthM();
+    requireLayout(shortestM > 0.0,
+        "a compiled network must report a positive shortest cell");
+    auto expected = 0.0;
+    for (const auto& duct : baseline.ducts()) {
+        if (duct.cellCount == 0 || !(duct.lengthM > 0.0)) continue;
+        const auto cellM = duct.lengthM / static_cast<double>(duct.cellCount);
+        if (expected == 0.0 || cellM < expected) expected = cellM;
+    }
+    requireLayout(shortestM == expected,
+        "the reported shortest cell must be the minimum over the compiled ducts");
+
+    // Now shorten ONE pipe far below the meshing target. Everything else is
+    // untouched, so any change is attributable to that element alone. A pipe is
+    // used rather than a chamber deliberately: ExhaustGraph floors a chamber at
+    // its own plane-wave resolution limit, and a pipe has no such floor, so
+    // this is the case that survives that fix and still needs to be visible.
+    auto& components = config.exhaustPaths.front().network->components;
+    auto* pipe = static_cast<ExhaustComponentConfig*>(nullptr);
+    for (auto& candidate : components) {
+        if (candidate.type == ExhaustComponentType::pipe) { pipe = &candidate; break; }
+    }
+    requireLayout(pipe != nullptr, "the reference network must contain a pipe");
+    pipe->lengthMm = 8.0;
+    const auto degraded = ExhaustNetworkLayout::compile(
+        ExhaustGraph::makeForEngine(config));
+    requireLayout(degraded.valid(), "a short pipe must still compile");
+    const auto degradedM = degraded.minimumCellLengthM();
+    requireLayout(degradedM > 0.0 && degradedM < shortestM,
+        "one short element must lower the network's shortest cell");
+    // The substep rate is proportional to 1/dx for the same gas, so this ratio
+    // is exactly the factor by which the whole exhaust solver gets slower.
+    const auto costRatio = shortestM / degradedM;
+    requireLayout(costRatio > 2.0,
+        "an 8 mm element must show up as a large, visible solver-cost ratio");
+    std::cout << "shortest cell: " << shortestM * 1'000.0 << " mm -> "
+              << degradedM * 1'000.0 << " mm, solver cost x"
+              << costRatio << '\n';
+}
+
 } // namespace
 
 void runExhaustNetworkLayoutTests() {
@@ -219,4 +270,5 @@ void runExhaustNetworkLayoutTests() {
     testLegacyTopologyCompilation();
     testAuthoredTaperSurvivesTopologyCompilation();
     testZeroLengthResolutionAndHardCellBudget();
+    testShortestCellIsReportedAndTracksOneShortElement();
 }

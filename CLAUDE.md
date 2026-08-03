@@ -682,6 +682,23 @@ test onto the behaviour it is meant to catch. Keep it that way.
   2.1-3.5x, so the catalogue is untouched — verified: the 2JZ still measures
   `net_hz` 11,520 with the floor in place, and the user's config drops from
   92,160 to 23,040 and from 153 % to 72 % of budget with torque unchanged.
+- **`ExhaustNetworkLayout::minimumCellLengthM()` is the number that says what an
+  authored exhaust costs, and it is NOT what `cellBudgetExceeded` guards.** That
+  diagnostic watches the TOTAL cell count, and the coarsening loop in `compile`
+  only reacts to that total — it raises the target cell length while the sum
+  exceeds the budget and never notices one duct being far shorter than the
+  target. But the explicit time step is the minimum over cells of `dx/(c+|u|)`,
+  so a single short element makes **every** duct substep at its rate. Report it
+  as a LENGTH, not a frequency: rate goes as `1/dx` for the same gas, so a ratio
+  of two of these lengths is an exact ratio of two solver costs with no assumed
+  sound speed anywhere. ÉCHAP PRO now prints it on apply, against the network
+  being replaced, and warns above 1.5x — advisory, never a refusal, because an
+  unusual exhaust is a legitimate thing to want and the invisible cost is the
+  actual defect. Measured by the regression: an 8 mm pipe takes the shipped
+  network from 19.6 mm to 4.0 mm, i.e. **4.9x the solver cost**. Note the
+  chamber floor (`0.853 d`) does not cover this — it applies to chambers, whose
+  sub-resolution length carries no physics, whereas a pipe's length positions
+  everything downstream of it and must not be silently lengthened.
 - **The afterfire has three separate defects and the audible one is NOT in the
   chemistry.** Measured with `EngineLabAfterfireHarness`, which drives a
   deterministic crank / launch / **warm-up** / lift-off / overrun / tip-in and

@@ -437,4 +437,15 @@ ExhaustNetworkLayout ExhaustNetworkLayout::assemble(
     return layout;
 }
 
+double ExhaustNetworkLayout::minimumCellLengthM() const noexcept {
+    auto shortest = 0.0;
+    for (const auto& duct : ducts_) {
+        if (duct.cellCount == 0 || !(duct.lengthM > 0.0)) continue;
+        const auto cellLengthM =
+            duct.lengthM / static_cast<double>(duct.cellCount);
+        if (shortest == 0.0 || cellLengthM < shortest) shortest = cellLengthM;
+    }
+    return shortest;
+}
+
 } // namespace enginelab::gasdynamics

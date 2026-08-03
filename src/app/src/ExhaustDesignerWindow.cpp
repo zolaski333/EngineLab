@@ -1,6 +1,8 @@
 #include <enginelab/app/ExhaustDesignerWindow.hpp>
+#include <enginelab/exhaust/ExhaustGraph.hpp>
 #include <enginelab/exhaust/ExhaustPathTopologyEditor.hpp>
 #include <enginelab/exhaust/LegacyExhaustNetwork.hpp>
+#include <enginelab/gasdynamics/ExhaustNetworkLayout.hpp>
 
 #include <algorithm>
 #include <array>
@@ -25,6 +27,33 @@ constexpr std::size_t maximumConnections = 1'024;
 
 [[nodiscard]] juce::String utf8(std::string_view value) {
     return juce::String::fromUTF8(value.data(), static_cast<int>(value.size()));
+}
+
+/** Shortest meshed cell in an engine's compiled exhaust, metres; 0 if unknown.
+ *
+ * Validation checks ranges and topology and nothing else, so a network that is
+ * perfectly legal can still be ruinously expensive: the explicit solver's time
+ * step is set by the SHORTEST cell anywhere in the network, and every other
+ * duct then substeps at that rate. A user who rebuilt a 2JZ exhaust with an
+ * 80 x 10 mm silencer body reported that the engine had "gained inertia, lost
+ * its liveliness and made almost no sound" -- three descriptions of one cause,
+ * the network going from 11,520 Hz to 92,160 Hz of substepping and the physics
+ * thread landing at 153 % of its frame budget. Nothing in the editor could
+ * have told them.
+ *
+ * Returning the length rather than a frequency is deliberate: the substep RATE
+ * is proportional to 1/dx for the same gas, so a ratio of two of these lengths
+ * is an exact ratio of two solver costs, with no assumed sound speed anywhere.
+ */
+[[nodiscard]] double shortestExhaustCellM(const EngineConfig& config) {
+    try {
+        const auto graph = ExhaustGraph::makeForEngine(config);
+        const auto layout = gasdynamics::ExhaustNetworkLayout::compile(graph);
+        if (!layout.valid()) return 0.0;
+        return layout.minimumCellLengthM();
+    } catch (...) {
+        return 0.0;
+    }
 }
 
 [[nodiscard]] const char* componentTypeName(ExhaustComponentType type) noexcept {
@@ -336,6 +365,12 @@ public:
 
     void setConfig(const EngineConfig& config) {
         working_ = config;
+        // The network the engine is actually running, kept so `apply()` can
+        // report what the edit costs RELATIVE to it. A ratio against the user's
+        // own baseline needs no calibrated threshold, which matters here: the
+        // absolute substep rate that is fine for one exhaust is not meaningful
+        // for another.
+        baseline_ = config;
         ensurePathExists();
         selectedPathIndex_ = 0;
         selectedComponentId_ = 0;
@@ -1295,6 +1330,43 @@ private:
         rebuildAll();
     }
 
+    /** What the applied network costs the solver, against the one it replaced.
+     *
+     * Advisory, never a refusal: an unusual exhaust is a legitimate thing to
+     * want, and the editor has no business deciding otherwise. What it does
+     * have a business doing is not letting the cost be invisible -- the failure
+     * this exists for looks nothing like a solver problem from the driver's
+     * seat. It reads as the engine having gained inertia, gone dull and fallen
+     * silent, because the physics thread is late and the cylinder-pressure
+     * telemetry that excites the whole exhaust chain is produced slower than
+     * the audio consumes it.
+     */
+    [[nodiscard]] juce::String solverCostAdvisory() const {
+        const auto appliedM = shortestExhaustCellM(working_);
+        const auto baselineM = shortestExhaustCellM(baseline_);
+        if (!(appliedM > 0.0)) return {};
+        auto text = "  Maille la plus fine " + juce::String(appliedM * 1'000.0, 1)
+            + " mm";
+        if (!(baselineM > 0.0)) return text + ".";
+        // Rate is proportional to 1/dx for the same gas, so this ratio is an
+        // exact ratio of solver cost with nothing assumed about the gas state.
+        const auto costRatio = baselineM / appliedM;
+        text += " contre " + juce::String(baselineM * 1'000.0, 1)
+            + " mm auparavant";
+        if (costRatio >= 1.5) {
+            text += " : le solveur d'echappement sous-cadencera "
+                + juce::String(costRatio, 1)
+                + "x plus vite. Verifiez le facteur temps reel;"
+                  " un element court impose son pas a TOUT le reseau.";
+        } else if (costRatio <= 0.67) {
+            text += " : cout du solveur divise par "
+                + juce::String(1.0 / costRatio, 1) + ".";
+        } else {
+            text += " (cout du solveur inchange).";
+        }
+        return text;
+    }
+
     void apply() {
         if (selectedComponent() != nullptr) {
             updateSelectedComponent();
@@ -1315,7 +1387,8 @@ private:
                 setStatus("La configuration valide a ete refusee par le moteur actif.", true);
                 return;
             }
-            setStatus("Configuration validee et appliquee au moteur.", false);
+            setStatus("Configuration validee et appliquee au moteur."
+                + solverCostAdvisory(), false);
         } catch (const std::exception& exception) {
             setStatus("L'application a echoue: " + utf8(exception.what()), true);
         } catch (...) {
@@ -1332,6 +1405,7 @@ private:
     }
 
     EngineConfig working_;
+    EngineConfig baseline_;
     ApplyCallback applyCallback_;
     int selectedPathIndex_ {};
     std::uint32_t selectedComponentId_ {};
