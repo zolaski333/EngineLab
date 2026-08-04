@@ -50,10 +50,13 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <cstring>
 #include <filesystem>
+#include <fstream>
 #include <functional>
 #include <iomanip>
 #include <iostream>
+#include <iterator>
 #include <limits>
 #include <memory>
 #include <numbers>
@@ -495,6 +498,219 @@ struct Variant final {
     return config;
 }
 
+/** A mono signal read from a WAV file, plus what the file said about itself.
+ *
+ *  This exists so an EXTERNAL recording can be measured by exactly the same
+ *  `analyse` and `distance` code as our own renders. A reference simulator with
+ *  no offline render and no WAV export can only be captured from its sound card
+ *  output; re-implementing the band maths for that path would produce numbers
+ *  that look comparable and are not, which would defeat the entire purpose of
+ *  measuring it. */
+struct WavSignal final {
+    std::vector<float> mono;
+    double sampleRate { 0.0 };
+    std::size_t channels { 0 };
+    std::size_t frames { 0 };
+    /** Per-channel RMS before the downmix. A capture from a multi-channel
+     *  endpoint usually carries signal in two channels and silence in the rest,
+     *  and that must be visible rather than quietly averaged away. */
+    std::vector<double> channelRms;
+};
+
+[[nodiscard]] std::uint32_t readLe32(const std::vector<std::uint8_t>& bytes,
+                                     std::size_t offset) {
+    return static_cast<std::uint32_t>(bytes[offset])
+        | (static_cast<std::uint32_t>(bytes[offset + 1]) << 8)
+        | (static_cast<std::uint32_t>(bytes[offset + 2]) << 16)
+        | (static_cast<std::uint32_t>(bytes[offset + 3]) << 24);
+}
+
+[[nodiscard]] std::uint16_t readLe16(const std::vector<std::uint8_t>& bytes,
+                                     std::size_t offset) {
+    return static_cast<std::uint16_t>(
+        static_cast<std::uint16_t>(bytes[offset])
+        | (static_cast<std::uint16_t>(bytes[offset + 1]) << 8));
+}
+
+[[nodiscard]] bool readWavMono(const std::filesystem::path& path,
+                               WavSignal& signal,
+                               std::string& error) {
+    std::ifstream stream(path, std::ios::binary);
+    if (!stream) { error = "fichier illisible"; return false; }
+    const std::vector<std::uint8_t> bytes { std::istreambuf_iterator<char>(stream),
+                                            std::istreambuf_iterator<char>() };
+    if (bytes.size() < 44
+        || std::memcmp(bytes.data(), "RIFF", 4) != 0
+        || std::memcmp(bytes.data() + 8, "WAVE", 4) != 0) {
+        error = "en-tete RIFF/WAVE absent";
+        return false;
+    }
+
+    std::uint16_t formatCode = 0;
+    std::uint16_t channels = 0;
+    std::uint16_t bitsPerSample = 0;
+    std::uint32_t sampleRate = 0;
+    std::size_t dataBegin = 0;
+    std::size_t dataBytes = 0;
+
+    for (std::size_t offset = 12; offset + 8 <= bytes.size();) {
+        const auto chunkSize = readLe32(bytes, offset + 4);
+        const auto bodyBegin = offset + 8;
+        if (bodyBegin + chunkSize > bytes.size()) break;
+
+        if (std::memcmp(bytes.data() + offset, "fmt ", 4) == 0 && chunkSize >= 16) {
+            formatCode = readLe16(bytes, bodyBegin);
+            channels = readLe16(bytes, bodyBegin + 2);
+            sampleRate = readLe32(bytes, bodyBegin + 4);
+            bitsPerSample = readLe16(bytes, bodyBegin + 14);
+            // WAVE_FORMAT_EXTENSIBLE hides the real code in the sub-format GUID,
+            // whose first four bytes are the tag it stands in for.
+            if (formatCode == 0xFFFE && chunkSize >= 40)
+                formatCode = readLe16(bytes, bodyBegin + 24);
+        } else if (std::memcmp(bytes.data() + offset, "data", 4) == 0) {
+            dataBegin = bodyBegin;
+            dataBytes = chunkSize;
+        }
+        offset = bodyBegin + chunkSize + (chunkSize % 2);
+    }
+
+    if (channels == 0 || sampleRate == 0 || dataBytes == 0) {
+        error = "chunk fmt ou data absent";
+        return false;
+    }
+    // The band edges are mapped through the module-level `audioRate`, so a file
+    // at another rate would be binned against the wrong frequencies and report a
+    // confident, meaningless spectrum. Refuse rather than resample.
+    if (std::abs(static_cast<double>(sampleRate) - audioRate) > 0.5) {
+        error = "echantillonnage " + std::to_string(sampleRate)
+            + " Hz, attendu " + std::to_string(static_cast<int>(audioRate));
+        return false;
+    }
+
+    const std::size_t bytesPerSample = bitsPerSample / 8U;
+    if (bytesPerSample == 0) { error = "bits par echantillon nul"; return false; }
+    const std::size_t frames = dataBytes / (bytesPerSample * channels);
+    if (frames == 0) { error = "aucune image"; return false; }
+
+    const auto decode = [&](std::size_t index) -> double {
+        const auto at = dataBegin + index * bytesPerSample;
+        if (formatCode == 3 && bitsPerSample == 32) {
+            float value = 0.0F;
+            std::memcpy(&value, bytes.data() + at, sizeof(float));
+            return static_cast<double>(value);
+        }
+        if (formatCode == 1 && bitsPerSample == 16)
+            return static_cast<double>(static_cast<std::int16_t>(readLe16(bytes, at)))
+                / 32'768.0;
+        if (formatCode == 1 && bitsPerSample == 32)
+            return static_cast<double>(static_cast<std::int32_t>(readLe32(bytes, at)))
+                / 2'147'483'648.0;
+        return std::numeric_limits<double>::quiet_NaN();
+    };
+
+    if (std::isnan(decode(0))) {
+        error = "encodage non gere (format " + std::to_string(formatCode) + ", "
+            + std::to_string(bitsPerSample) + " bits)";
+        return false;
+    }
+
+    signal.sampleRate = static_cast<double>(sampleRate);
+    signal.channels = channels;
+    signal.frames = frames;
+    signal.channelRms.assign(channels, 0.0);
+    signal.mono.resize(frames);
+
+    std::vector<double> squareSums(channels, 0.0);
+    for (std::size_t frame = 0; frame < frames; ++frame) {
+        double sum = 0.0;
+        for (std::size_t channel = 0; channel < channels; ++channel) {
+            const auto value = decode(frame * channels + channel);
+            squareSums[channel] += value * value;
+            sum += value;
+        }
+        signal.mono[frame] = static_cast<float>(sum / static_cast<double>(channels));
+    }
+    for (std::size_t channel = 0; channel < channels; ++channel)
+        signal.channelRms[channel] =
+            std::sqrt(squareSums[channel] / static_cast<double>(frames));
+    return true;
+}
+
+/** Compare captured WAV files the same way the rendered variants are compared.
+ *  The first file is the reference; every other file is a variant against it. */
+[[nodiscard]] int compareWavFiles(const std::filesystem::path& reference,
+                                  const std::vector<std::filesystem::path>& variants,
+                                  double skipSeconds) {
+    std::vector<std::filesystem::path> paths { reference };
+    paths.insert(paths.end(), variants.begin(), variants.end());
+
+    std::vector<Spectrum> spectra;
+    spectra.reserve(paths.size());
+
+    std::cout << "Sensibilite mesuree sur des ENREGISTREMENTS externes\n"
+              << "  meme code d'analyse que les rendus internes, donc les "
+                 "chiffres sont comparables.\n"
+              << "  " << std::setprecision(2) << skipSeconds
+              << " s ignorees en tete de chaque fichier.\n\n";
+
+    for (const auto& path : paths) {
+        WavSignal signal;
+        std::string error;
+        if (!readWavMono(path, signal, error)) {
+            std::cerr << "  " << path.filename().string() << " : " << error << '\n';
+            return 1;
+        }
+        const auto begin = std::min(signal.mono.size(),
+            static_cast<std::size_t>(std::max(0.0, skipSeconds) * signal.sampleRate));
+        // 2^16 samples of FFT is 1.365 s at 48 kHz; below that the window is
+        // zero-padded and the low bands stop meaning anything.
+        const auto usable = signal.mono.size() - begin;
+        if (usable < (std::size_t { 1 } << 16)) {
+            std::cerr << "  " << path.filename().string() << " : seulement "
+                      << std::setprecision(3)
+                      << static_cast<double>(usable) / signal.sampleRate
+                      << " s exploitables, il en faut 1.37\n";
+            return 1;
+        }
+        auto spectrum = analyse(signal.mono, begin);
+
+        std::cout << "  " << std::left << std::setw(28) << path.filename().string()
+                  << std::right << std::fixed
+                  << std::setprecision(2) << std::setw(7)
+                  << static_cast<double>(signal.frames) / signal.sampleRate << " s"
+                  << "  " << std::setw(2) << signal.channels << " ch"
+                  << "  rms " << std::setprecision(6) << std::setw(9) << spectrum.rms
+                  << "  " << std::setprecision(1) << std::setw(7)
+                  << spectrum.broadbandDb << " dBFS\n";
+        spectra.push_back(std::move(spectrum));
+    }
+
+    if (spectra.size() < 2) {
+        std::cerr << "\n  il faut au moins une variante (--wav-variant)\n";
+        return 1;
+    }
+
+    std::cout << "\n  Ecarts contre " << reference.filename().string() << ":\n"
+              << "  " << std::left << std::setw(28) << "variante"
+              << std::right << std::setw(10) << "niveau" << std::setw(10) << "forme"
+              << std::setw(12) << "bande_max" << "   a\n";
+    auto worstShape = 0.0;
+    for (std::size_t index = 1; index < spectra.size(); ++index) {
+        const auto gap = distance(spectra[0], spectra[index]);
+        worstShape = std::max(worstShape, gap.shapeRmsDb);
+        std::cout << "  " << std::left << std::setw(28)
+                  << paths[index].filename().string()
+                  << std::right << std::fixed << std::setprecision(2)
+                  << std::setw(9) << gap.levelDb << " dB"
+                  << std::setw(9) << gap.shapeRmsDb << " dB"
+                  << std::setw(11) << gap.worstBandDb << " dB"
+                  << std::setw(8) << std::setprecision(0) << gap.worstBandHz << " Hz\n";
+    }
+    std::cout << "\n  SENSIBILITE     " << std::fixed << std::setprecision(2)
+              << worstShape << " dB de FORME (pire variante)\n";
+    return 0;
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -503,6 +719,9 @@ int main(int argc, char** argv) {
     double targetRpm = 0.0;
     double seconds = 6.0;
     bool listEngines = false;
+    std::filesystem::path wavReference;
+    std::vector<std::filesystem::path> wavVariants;
+    double wavSkipSeconds = 1.0;
     for (int index = 1; index < argc; ++index) {
         const std::string argument = argv[index];
         if (argument == "--catalog-root" && index + 1 < argc) catalogRoot = argv[++index];
@@ -510,13 +729,27 @@ int main(int argc, char** argv) {
         else if (argument == "--rpm" && index + 1 < argc) targetRpm = std::stod(argv[++index]);
         else if (argument == "--seconds" && index + 1 < argc) seconds = std::stod(argv[++index]);
         else if (argument == "--list") listEngines = true;
+        else if (argument == "--wav-reference" && index + 1 < argc)
+            wavReference = argv[++index];
+        else if (argument == "--wav-variant" && index + 1 < argc)
+            wavVariants.emplace_back(argv[++index]);
+        else if (argument == "--wav-skip" && index + 1 < argc)
+            wavSkipSeconds = std::stod(argv[++index]);
         else {
             std::cout << "usage: " << argv[0]
                       << " [--catalog-root path] [--filter name-fragment]"
-                         " [--rpm N] [--seconds S] [--list]\n";
+                         " [--rpm N] [--seconds S] [--list]\n"
+                         "       " << argv[0]
+                      << " --wav-reference ref.wav --wav-variant v.wav [...]"
+                         " [--wav-skip S]\n";
             return argument == "--help" ? 0 : 2;
         }
     }
+
+    // Measuring external recordings shares only the analysis, never the
+    // catalogue: there is no engine to select and no render to perform.
+    if (!wavReference.empty())
+        return compareWavFiles(wavReference, wavVariants, wavSkipSeconds);
 
     const auto catalog = loadEngineCatalog(catalogRoot);
     if (catalog.entries.empty()) {
