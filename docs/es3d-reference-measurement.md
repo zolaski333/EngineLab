@@ -204,6 +204,72 @@ fonder quoi que ce soit dessus. Le rapport de niveau, lui, est robuste : les
 deux simulateurs sont dans le même ordre de grandeur et tous deux à ~10× de la
 réalité.
 
+## Décomposition du caractère (2026-08-04)
+
+« Sonne mieux » n'est pas une quantité. Le harness mesure maintenant quatre axes
+que la forme spectrale ne peut pas trancher, validés d'abord sur signaux
+connus : bruit blanc crest **4,8 dB** (théorie 4,77) et pente **+3,10 dB/oct**
+(exactement ce que donne un bruit blanc en tiers d'octave) ; ton pur crest
+**3,0 dB** (√2 = 3,01), période détectée **1000,0 Hz**, périodicité **1,00**.
+
+| axe | EngineLab Hayabusa, 6 300 tr/min tenus | ES3D Hayabusa, son ralenti |
+|---|---|---|
+| crest | 18,3 à 24,9 dB | **7,4 dB** |
+| modulation | 13,9 à 16,3 dB | 19,0 dB |
+| pente spectrale | **+2,4 dB/oct** | **−4,6 dB/oct** |
+| **périodicité de l'enveloppe** | **0,38 à 0,50** | **0,92** |
+| allumage détecté | 179 à 250 Hz (vrai : 207-211) | 28,7 Hz, propre |
+| COV cycle à cycle | *inexploitable, voir ci-dessous* | 7,1 % |
+
+### Ce que ça établit, et ce que ça ne établit pas
+
+- **RÉFUTÉ : « il nous manque la dérivée de rayonnement, nous sommes trop
+  sourds ».** Mesuré, **nous sommes plus BRILLANTS** qu'ES3D : +2,4 contre
+  −4,6 dB/oct, sept décibels par octave d'écart, dans l'autre sens. L'hypothèse
+  d'une pression rayonnée là où il faudrait d*Q*/d*t* prédisait l'inverse.
+  Réserve : les régimes diffèrent et la pente en dépend.
+- **Le seul écart robuste est la PÉRIODICITÉ de l'enveloppe : 0,92 contre
+  0,38-0,50.** C'est une autocorrélation normalisée, donc la moins sensible au
+  régime des quatre. Le détecteur verrouille proprement sur ES3D et sur un ton
+  pur, et **pas** sur notre rendu : il y annonce 250 Hz là où l'allumage est à
+  211. L'enveloppe de notre moteur n'a pas de structure de période d'allumage
+  nette.
+- **Crest élevé ET périodicité basse est une signature**, pas deux mesures
+  indépendantes : 18-25 dB de crest avec 0,4 de périodicité, ce sont des pics
+  **isolés et irréguliers**, pas un train d'impulsions régulier. ES3D est
+  l'inverse exact — 7,4 dB de crest pour 0,92 de périodicité, donc des
+  impulsions modestes mais parfaitement régulières.
+- **Notre COV cycle à cycle (79 à 188 %) ne veut rien dire** et ne doit pas être
+  cité : il est calculé sur une période que le détecteur n'a pas trouvée. Un
+  COV n'est lisible que si la périodicité qui l'accompagne est forte.
+
+Cet écart pointe vers le chemin **événement d'allumage → audio**, pas vers la
+géométrie d'échappement.
+
+## Un défaut trouvé dans le harness lui-même
+
+`--rpm` en dessous d'environ 6 000 tr/min **cale le moteur et le harness
+imprimait quand même des chiffres** — rendus à 900, 1 250 et 3 000 tr/min : tous
+`rpm 0`, l'un à rms 0,000474, et des valeurs de crest, de pente et de COV
+publiées comme si de rien n'était.
+
+La cause est ligne 497 : `controls.throttle = t < 0.9 ? 0.2 : 0.85`. Les gaz
+sont **fixes à 85 %** quelle que soit la consigne, et seul le frein régule, avec
+un intégrateur à gain 1,20/s saturé à 0,92 — la famille de défaut d'absorbeur
+que `CLAUDE.md` documente déjà pour les bancs WOT. Une consigne basse le sature,
+il écrase le moteur et le cale.
+
+Une garde refuse désormais tout rendu dont le régime final est sous 80 % de la
+consigne, et vérifiée non vacante : sortie 1 à 1 250 tr/min, sortie 0 au régime
+par défaut. **Les chiffres de la phase 0 ne sont pas touchés** : ils ont tous
+été pris au régime par défaut, qui est tenu (6 160 visés, 6 219 à 6 327 atteints).
+
+Conséquence de méthode : **ce harness ne peut pas mesurer un ralenti.** Même si
+l'absorbeur était corrigé, une consigne basse tenue à 85 % de gaz serait du
+plein gaz en sous-régime, jamais un ralenti — le piège exact que `CLAUDE.md`
+décrit pour `--trace <bas régime>`. La comparaison des ralentis demande
+`AbClipRenderer`, qui rend déjà des segments de ralenti.
+
 ### Ce qui est définitivement écarté
 
 **« ES3D sonne mieux parce que son silencieux atténue vraiment. »** Non : 2,72 dB.

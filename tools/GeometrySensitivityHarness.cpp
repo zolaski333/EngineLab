@@ -207,9 +207,183 @@ struct Distance final {
     return result;
 }
 
+/** The axes "it sounds better" decomposes into, none of which a spectrum shape
+ *  can answer. Shape says whether the TONE differs; these say whether the sound
+ *  is PUNCHY, BRIGHT or ALIVE, and each points at a different part of the code.
+ *
+ *  `impliedFiringHz` is a by-product worth as much as the rest: it recovers the
+ *  operating point from the recording itself, so an external capture whose rpm
+ *  nobody controlled can still be compared against a render at a known speed. */
+struct Character final {
+    /** Peak over RMS. The classic impulsiveness measure, but sensitive to a
+     *  single sample, which is why the p99.9 figure sits beside it. */
+    double crestDb { 0.0 };
+    double p999Db { 0.0 };
+    /** Spread of short-block level: how hard the signal pulses between firing
+     *  events. A drone modulates little; a bark modulates a lot. */
+    double modulationDb { 0.0 };
+    /** Regression of band level against log2 of band centre. Positive is
+     *  brighter. This is the axis a missing radiation derivative would move. */
+    double spectralTiltDbPerOctave { 0.0 };
+    double envelopePeriodSeconds { 0.0 };
+    double impliedFiringHz { 0.0 };
+    /** Dispersion of energy from one firing period to the next. This is
+     *  "does the idle breathe" rather than "is it loud". */
+    double periodEnergyCovPercent { 0.0 };
+    std::size_t periodsCounted { 0 };
+    double periodicityStrength { 0.0 };
+};
+
+[[nodiscard]] Character characterise(const std::vector<float>& signal,
+                                     std::size_t begin,
+                                     const Spectrum& spectrum) {
+    Character character;
+    if (begin >= signal.size() || !(spectrum.rms > 0.0)) return character;
+
+    std::vector<double> magnitudes;
+    magnitudes.reserve(signal.size() - begin);
+    for (auto index = begin; index < signal.size(); ++index) {
+        const auto value = static_cast<double>(signal[index]);
+        if (std::isfinite(value)) magnitudes.push_back(std::abs(value));
+    }
+    if (magnitudes.size() < 1'024) return character;
+
+    auto sorted = magnitudes;
+    std::sort(sorted.begin(), sorted.end());
+    const auto peak = sorted.back();
+    const auto p999 = sorted[static_cast<std::size_t>(
+        0.999 * static_cast<double>(sorted.size() - 1))];
+    character.crestDb = 20.0 * std::log10(std::max(peak, 1.0e-12) / spectrum.rms);
+    character.p999Db = 20.0 * std::log10(std::max(p999, 1.0e-12) / spectrum.rms);
+
+    // 0.25 ms blocks. Fine enough that a 200 Hz firing rate still spans about
+    // 20 blocks, which the period search below needs to resolve rpm usefully.
+    constexpr double blockSeconds = 0.000'25;
+    const auto blockSize = static_cast<std::size_t>(audioRate * blockSeconds);
+    std::vector<double> blocks;
+    blocks.reserve(magnitudes.size() / std::max<std::size_t>(1, blockSize));
+    for (std::size_t index = 0; index + blockSize <= magnitudes.size(); index += blockSize) {
+        double squareSum = 0.0;
+        for (std::size_t k = 0; k < blockSize; ++k)
+            squareSum += magnitudes[index + k] * magnitudes[index + k];
+        blocks.push_back(std::sqrt(squareSum / static_cast<double>(blockSize)));
+    }
+    if (blocks.size() < 512) return character;
+
+    auto sortedBlocks = blocks;
+    std::sort(sortedBlocks.begin(), sortedBlocks.end());
+    const auto low = sortedBlocks[static_cast<std::size_t>(
+        0.10 * static_cast<double>(sortedBlocks.size() - 1))];
+    const auto high = sortedBlocks[static_cast<std::size_t>(
+        0.90 * static_cast<double>(sortedBlocks.size() - 1))];
+    character.modulationDb = 20.0 * std::log10(
+        std::max(high, 1.0e-12) / std::max(low, 1.0e-12));
+
+    double sumN = 0.0, sumX = 0.0, sumY = 0.0, sumXX = 0.0, sumXY = 0.0;
+    for (std::size_t band = 0; band < thirdOctaveCentresHz.size(); ++band) {
+        if (!spectrum.bandPresent[band]) continue;
+        const auto x = std::log2(thirdOctaveCentresHz[band]);
+        const auto y = spectrum.bandDb[band];
+        sumN += 1.0; sumX += x; sumY += y; sumXX += x * x; sumXY += x * y;
+    }
+    if (sumN >= 3.0) {
+        const auto denominator = sumN * sumXX - sumX * sumX;
+        if (std::abs(denominator) > 1.0e-12)
+            character.spectralTiltDbPerOctave =
+                (sumN * sumXY - sumX * sumY) / denominator;
+    }
+
+    // Firing period from the envelope's autocorrelation. The lag window spans
+    // 17 Hz to 1 kHz, which covers every firing rate the catalogue can reach.
+    double mean = 0.0;
+    for (const auto block : blocks) mean += block;
+    mean /= static_cast<double>(blocks.size());
+    std::vector<double> centred(blocks.size());
+    for (std::size_t index = 0; index < blocks.size(); ++index)
+        centred[index] = blocks[index] - mean;
+    double norm = 0.0;
+    for (const auto value : centred) norm += value * value;
+    if (!(norm > 0.0)) return character;
+
+    const std::size_t minimumLag = 4;
+    const auto maximumLag = std::min<std::size_t>(240, blocks.size() / 4);
+    double best = 0.0;
+    std::size_t bestLag = 0;
+    std::vector<double> correlation(maximumLag + 1, 0.0);
+    for (auto lag = minimumLag; lag <= maximumLag; ++lag) {
+        double accumulator = 0.0;
+        for (std::size_t index = 0; index + lag < centred.size(); ++index)
+            accumulator += centred[index] * centred[index + lag];
+        correlation[lag] = accumulator / norm;
+        if (correlation[lag] > best) { best = correlation[lag]; bestLag = lag; }
+    }
+    character.periodicityStrength = best;
+    // Below this the envelope has no repeating structure and any "period" would
+    // be the largest noise peak, which would then be reported as an rpm.
+    if (bestLag == 0 || best < 0.10) return character;
+
+    // Parabolic interpolation on the correlation peak: without it the period is
+    // quantised to the block size and the implied rpm is coarse at high speed.
+    auto refinedLag = static_cast<double>(bestLag);
+    if (bestLag > minimumLag && bestLag < maximumLag) {
+        const auto before = correlation[bestLag - 1];
+        const auto after = correlation[bestLag + 1];
+        const auto denominator = before - 2.0 * best + after;
+        if (std::abs(denominator) > 1.0e-12)
+            refinedLag += 0.5 * (before - after) / denominator;
+    }
+    character.envelopePeriodSeconds = refinedLag * blockSeconds;
+    character.impliedFiringHz = 1.0 / std::max(character.envelopePeriodSeconds, 1.0e-9);
+
+    std::vector<double> energies;
+    for (std::size_t index = 0; index + bestLag <= blocks.size(); index += bestLag) {
+        double energy = 0.0;
+        for (std::size_t k = 0; k < bestLag; ++k)
+            energy += blocks[index + k] * blocks[index + k];
+        energies.push_back(energy);
+    }
+    if (energies.size() >= 8) {
+        double energyMean = 0.0;
+        for (const auto energy : energies) energyMean += energy;
+        energyMean /= static_cast<double>(energies.size());
+        double variance = 0.0;
+        for (const auto energy : energies)
+            variance += (energy - energyMean) * (energy - energyMean);
+        variance /= static_cast<double>(energies.size());
+        if (energyMean > 0.0)
+            character.periodEnergyCovPercent = 100.0 * std::sqrt(variance) / energyMean;
+        character.periodsCounted = energies.size();
+    }
+    return character;
+}
+
+void printCharacter(const Character& character) {
+    std::cout << std::fixed
+              << "      crest " << std::setprecision(1) << std::setw(5)
+              << character.crestDb << " dB   p99.9 " << std::setw(5)
+              << character.p999Db << " dB   modulation " << std::setw(5)
+              << character.modulationDb << " dB   pente "
+              << std::showpos << std::setprecision(2) << std::setw(6)
+              << character.spectralTiltDbPerOctave << " dB/oct" << std::noshowpos
+              << '\n' << "      allumage ";
+    if (character.impliedFiringHz > 0.0)
+        std::cout << std::setprecision(1) << std::setw(6) << character.impliedFiringHz
+                  << " Hz (periodicite " << std::setprecision(2)
+                  << character.periodicityStrength << ")   COV cycle a cycle "
+                  << std::setprecision(1) << character.periodEnergyCovPercent
+                  << " % sur " << character.periodsCounted << " periodes\n";
+    else
+        std::cout << "non detecte (periodicite " << std::setprecision(2)
+                  << character.periodicityStrength << ")\n";
+}
+
 struct RenderResult final {
     Spectrum mix;
     Spectrum exhaust;
+    /** The rendered mix itself, kept so it can be written to WAV and then
+     *  measured by the SAME path as an external capture. */
+    std::vector<float> mixSignal;
+    std::size_t steadyBegin { 0 };
     /** Everything in the mix that is NOT the exhaust chain: combustion,
      *  intake, forced induction, mechanical. Kept as its own sum because the
      *  question "is the exhaust audible" is per band and cannot be answered
@@ -385,6 +559,8 @@ maskingMarginDb(const Spectrum& exhaust, const Spectrum& others) {
         static_cast<std::size_t>(2.0 * audioRate));
     const auto begin = mix.size() - analysisSamples;
     result.mix = analyse(mix, begin);
+    result.steadyBegin = begin;
+    result.mixSignal = mix;
     result.exhaust = analyse(exhaustStem, begin);
     result.others = analyse(otherStems, begin);
     for (std::size_t layer = 0; layer < result.layers.size(); ++layer)
@@ -636,6 +812,48 @@ struct WavSignal final {
     return true;
 }
 
+/** Write a mono 32-bit float WAV. Exists so our OWN render can be dumped and
+ *  then read back through `readWavMono`, which means both sides of an
+ *  EngineLab-versus-external comparison traverse byte-for-byte the same
+ *  analysis path instead of merely the same formulas. */
+[[nodiscard]] bool writeWavMono(const std::filesystem::path& path,
+                                const std::vector<float>& samples) {
+    std::ofstream stream(path, std::ios::binary);
+    if (!stream) return false;
+
+    const auto dataBytes = static_cast<std::uint32_t>(samples.size() * sizeof(float));
+    const auto rate = static_cast<std::uint32_t>(audioRate);
+    const auto put32 = [&stream](std::uint32_t value) {
+        const char bytes[4] { static_cast<char>(value & 0xFF),
+                              static_cast<char>((value >> 8) & 0xFF),
+                              static_cast<char>((value >> 16) & 0xFF),
+                              static_cast<char>((value >> 24) & 0xFF) };
+        stream.write(bytes, 4);
+    };
+    const auto put16 = [&stream](std::uint16_t value) {
+        const char bytes[2] { static_cast<char>(value & 0xFF),
+                              static_cast<char>((value >> 8) & 0xFF) };
+        stream.write(bytes, 2);
+    };
+
+    stream.write("RIFF", 4);
+    put32(36U + dataBytes);
+    stream.write("WAVE", 4);
+    stream.write("fmt ", 4);
+    put32(16U);
+    put16(3U);   // WAVE_FORMAT_IEEE_FLOAT
+    put16(1U);
+    put32(rate);
+    put32(rate * 4U);
+    put16(4U);
+    put16(32U);
+    stream.write("data", 4);
+    put32(dataBytes);
+    stream.write(reinterpret_cast<const char*>(samples.data()),
+                 static_cast<std::streamsize>(dataBytes));
+    return static_cast<bool>(stream);
+}
+
 /** Compare captured WAV files the same way the rendered variants are compared.
  *  The first file is the reference; every other file is a variant against it. */
 [[nodiscard]] int compareWavFiles(const std::filesystem::path& reference,
@@ -682,6 +900,7 @@ struct WavSignal final {
                   << "  rms " << std::setprecision(6) << std::setw(9) << spectrum.rms
                   << "  " << std::setprecision(1) << std::setw(7)
                   << spectrum.broadbandDb << " dBFS\n";
+        printCharacter(characterise(signal.mono, begin, spectrum));
         spectra.push_back(std::move(spectrum));
     }
 
@@ -721,6 +940,7 @@ int main(int argc, char** argv) {
     bool listEngines = false;
     std::filesystem::path wavReference;
     std::vector<std::filesystem::path> wavVariants;
+    std::filesystem::path wavOut;
     double wavSkipSeconds = 1.0;
     for (int index = 1; index < argc; ++index) {
         const std::string argument = argv[index];
@@ -735,6 +955,8 @@ int main(int argc, char** argv) {
             wavVariants.emplace_back(argv[++index]);
         else if (argument == "--wav-skip" && index + 1 < argc)
             wavSkipSeconds = std::stod(argv[++index]);
+        else if (argument == "--wav-out" && index + 1 < argc)
+            wavOut = argv[++index];
         else {
             std::cout << "usage: " << argv[0]
                       << " [--catalog-root path] [--filter name-fragment]"
@@ -816,6 +1038,47 @@ int main(int argc, char** argv) {
                   << '\n';
         results.push_back(std::move(result));
     }
+
+    // A render whose engine never reached the commanded speed is not a quiet
+    // variant, it is a DEAD ENGINE, and every number downstream of it -- shape,
+    // level, insertion loss, character -- describes a stall. The absorber here
+    // holds speed with the brake alone at a fixed 0.85 throttle, so a low
+    // command saturates it and drags the engine to zero; without this gate the
+    // harness reports that as measurement. Refuse instead.
+    std::vector<std::size_t> stalled;
+    for (std::size_t index = 0; index < results.size(); ++index)
+        if (!(results[index].finalRpm > 0.80 * targetRpm)) stalled.push_back(index);
+    if (!stalled.empty()) {
+        std::cerr << "\n  MOTEUR NON TENU a " << std::fixed << std::setprecision(0)
+                  << targetRpm << " tr/min sur " << stalled.size() << " variante(s):\n";
+        for (const auto index : stalled)
+            std::cerr << "    " << catalogueVariants[index].name << " -> "
+                      << std::setprecision(0) << results[index].finalRpm << " tr/min\n";
+        std::cerr << "  L'absorbeur tient la vitesse au frein seul, gaz fixes a 0.85,"
+                     " donc une consigne\n  basse le sature et cale le moteur. Aucun"
+                     " chiffre de ce rendu n'est exploitable.\n"
+                     "  Note aussi qu'une consigne basse tenue serait du PLEIN GAZ EN"
+                     " SOUS-REGIME,\n  jamais un ralenti: ce harness ne peut pas"
+                     " mesurer un ralenti.\n";
+        return 1;
+    }
+
+    // The reference render, written out so it can be read back and measured by
+    // the same path as an external capture.
+    if (!wavOut.empty() && !results.empty()) {
+        if (!writeWavMono(wavOut, results[0].mixSignal)) {
+            std::cerr << "\n  ecriture impossible: " << wavOut.string() << '\n';
+            return 1;
+        }
+        std::cout << "\n  rendu de reference ecrit: " << wavOut.string() << " ("
+                  << std::fixed << std::setprecision(2)
+                  << static_cast<double>(results[0].mixSignal.size()) / audioRate
+                  << " s)\n";
+    }
+
+    std::cout << "\n  Caractere de la reference:\n";
+    printCharacter(characterise(results[0].mixSignal, results[0].steadyBegin,
+                                results[0].mix));
 
     std::cout << "\n  Ecarts contre la reference (variante - reference):\n"
               << "  " << std::left << std::setw(17) << "variante"
