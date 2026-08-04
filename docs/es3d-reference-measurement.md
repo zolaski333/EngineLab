@@ -151,14 +151,62 @@ n'est pas le point que vous croyez avoir demandé ») :
   mesurée est à gain unité ; un changement de volume se lirait comme une
   différence de niveau du moteur.
 
-## Ce que la mesure doit trancher
+## Résultats mesurés (2026-08-04)
 
-Une seule question, et elle oriente deux travaux très différents :
+Moteur ES3D : la Hayabusa de `01_hayabusa_straight_pipe.mr`, au ralenti,
+`idle: 0.13`. Facteur unique : `muffler_area` 15 → 55 cm² (m = 3,67), qui est
+la bosse `.add_sample(0.8, muffler_area)` de ses quatre tubes d'échappement.
 
-- **Si l'écart de forme d'ES3D dépasse nettement nos 11,9-14,4 dB**, alors sa
-  réponse à la géométrie est réellement supérieure et il faut chercher où.
-- **S'il est comparable**, alors la satisfaction que l'utilisateur y entend ne
-  vient PAS de la sensibilité géométrique, et la chercher là est une impasse.
-  Restent le niveau, la réverbération par convolution avec une IR de lieu réel,
-  le modèle de rayonnement, et le voicing — quatre pistes distinctes qu'aucune
-  lecture de code ne peut départager.
+| comparaison | niveau | forme | pire bande |
+|---|---|---|---|
+| **témoin nul** (retour à la même config) | −0,09 dB | **1,14 dB** | +3,06 dB à 50 Hz |
+| **silencieux 15 → 55 cm²** | **−2,72 dB** | **9,24 dB** | −23,31 dB à 80 Hz |
+
+Le témoin nul borne le bruit de toute la chaîne — capture temps réel comprise —
+à environ 1,1 dB de forme et 0,1 dB de niveau. L'effet du silencieux est donc
+8 à 30 fois au-dessus du bruit : il est réel.
+
+### Contre EngineLab, même moteur, même facteur unique
+
+`EngineLabGeometrySensitivityHarness --filter Hayabusa`, variante
+`sans-silencieux`, à 6 160 tr/min tenus :
+
+| | perte d'insertion | forme du mix |
+|---|---|---|
+| **ES3D** (Hayabusa, ralenti) | **2,72 dB** | **9,24 dB** |
+| **EngineLab** (Hayabusa, 6 160 tr/min) | **1,56 dB** | **3,34 dB** |
+| EngineLab CP2 | 2,10 dB | — |
+| EngineLab LS3 | 3,80 dB | — |
+| **littérature** | **20 à 30 dB** | — |
+
+Deux conclusions, de portées très différentes.
+
+1. **Aucun des deux simulateurs ne silence, et l'écart entre eux est mineur
+   devant l'écart à la réalité.** ES3D perd 2,72 dB en montant un silencieux,
+   nous perdons 1,56 à 3,80 dB selon le moteur, quand la littérature donne 20 à
+   30. Le grief « un échappement sans silencieux ne fait rien » **s'applique
+   aussi à ES3D**. Ce n'est donc pas un défaut propre à EngineLab, et la cascade
+   multi-chambres reste justifiée par la physique et par la littérature — pas
+   par un retard sur la référence.
+2. **ES3D change le TIMBRE environ 2,8× plus que nous pour ce même facteur**
+   (9,24 contre 3,34 dB de forme sur le mix). Sa bosse de section agit à
+   80 Hz avec 23 dB sur une bande. C'est le seul écart réel que la mesure
+   établit, et c'est là qu'il faut chercher.
+
+### La réserve qui limite la conclusion 2
+
+**Les deux points de fonctionnement ne sont pas les mêmes** : ES3D était au
+ralenti, notre harness tient 6 160 tr/min. C'est exactement le piège que
+`CLAUDE.md` documente à répétition, et il n'est ici que partiellement évité —
+le point ES3D est répétable (il est fixé par le script) mais il n'est pas
+*le nôtre*. Le rapport 2,8× doit être reconfirmé à régime comparable avant de
+fonder quoi que ce soit dessus. Le rapport de niveau, lui, est robuste : les
+deux simulateurs sont dans le même ordre de grandeur et tous deux à ~10× de la
+réalité.
+
+### Ce qui est définitivement écarté
+
+**« ES3D sonne mieux parce que son silencieux atténue vraiment. »** Non : 2,72 dB.
+La satisfaction que l'utilisateur entend ne vient pas de là. Restent la
+réponse en timbre (mesurée, réelle, 2,8×), la réverbération par convolution
+avec une IR de lieu réel, le modèle de rayonnement, et le voicing.
