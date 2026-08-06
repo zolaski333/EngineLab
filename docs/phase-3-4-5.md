@@ -136,7 +136,7 @@ performances d'une future scène 3D ne sont pas mesurées.
 ## Critère de sortie honnête
 
 Ces modules rendent l'architecture extensible et les modifications utilisateur
-plus sûres. Ils ne suffisent pas à conclure qu'EngineLab égale ES2D sur son
-écosystème de scripts, son catalogue ou son rendu sonore. La grille de
-comparaison et les jalons restants sont maintenus dans
-[es2d-targeted-gap-closure.md](es2d-targeted-gap-closure.md).
+plus sûres. Ils ne suffisent pas à conclure quoi que ce soit sur la maturité de
+l'écosystème de scripts, du catalogue ou du rendu sonore : ces trois axes
+restent des chantiers ouverts, jugés sur les mesures des harnais et non sur une
+grille comparative.

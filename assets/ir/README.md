@@ -17,5 +17,6 @@ presets voice the muffler/system differently:
 - `exhaust_longtube.wav` — Long tube (es2d `smooth/smooth_20.wav`).
 - `exhaust_moto.wav`     — Moto    (es2d `smooth/smooth_12.wav`).
 
-Original copyright © 2022 AngeTheGreat, MIT license. See the es2d repository for
-the full license text.
+Original copyright © 2022 Ange Yaghi (AngeTheGreat), MIT license. The full
+license text is reproduced beside these files in
+[LICENSE-es2d.txt](LICENSE-es2d.txt).

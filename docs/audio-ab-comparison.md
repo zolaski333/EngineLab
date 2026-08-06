@@ -206,7 +206,7 @@ Agrégats sur les 80 lignes (10 moteurs × 4 points × 2 canaux) :
 
 **Sur la question de départ.** L'architecture d'EngineLab est effectivement plus
 riche (source multi-couches, séparation multi-chemin, contrat temps réel
-vérifiable — cf. `docs/es2d-targeted-gap-closure.md`), et ses sorties sont
+vérifiable), et ses sorties sont
 **mesurablement plus propres et plus dynamiques** que les normes DSP courantes.
 Mais « plus propre et plus dynamique » **n'est pas** « meilleur son » : deux
 déficits mesurables (spectre sombre, loudness non égalisée) tirent probablement
