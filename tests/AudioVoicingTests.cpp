@@ -35,7 +35,8 @@ int main() {
             "schema_version: 1\nvoicing:\n  exhaust_gain: 1.25\n  outlet_jet_gain: 0.7\n");
         write(root / "voicing" / "engines" / "cp2_engine.yaml",
             "schema_version: 1\nvoicing:\n  stereo_width: 1.4\n"
-            "  saturation_drive: 0.6\n  saturation_placement: pre_shelf\n");
+            "  saturation_drive: 0.6\n  saturation_placement: pre_shelf\n"
+            "  monitor_mode: capture_voiced\n");
 
         const auto layered = enginelab::loadAudioVoicing(
             root, "Motorcycle", "CP2.engine");
@@ -47,7 +48,9 @@ int main() {
                 && std::abs(layered.voicing.stereoWidth - 1.4) < 1.0e-12
                 && std::abs(layered.voicing.saturationDrive - 0.6) < 1.0e-12
                 && layered.voicing.saturationPlacement
-                    == enginelab::AudioSaturationPlacement::preShelf,
+                    == enginelab::AudioSaturationPlacement::preShelf
+                && layered.voicing.monitorMode
+                    == enginelab::AudioMonitorMode::captureVoiced,
             "later voicing layers did not override only their authored fields");
         require(std::abs(layered.voicing.intakeGain - 0.85) < 1.0e-12,
             "unspecified fields must retain the shipping default");
@@ -79,6 +82,12 @@ int main() {
         require(static_cast<std::size_t>(authoredCount)
                 == catalogue.entries.size(),
             "every shipping engine must resolve an explicit audible monitor profile");
+        require(std::all_of(catalogue.entries.begin(), catalogue.entries.end(),
+                [](const auto& entry) {
+                    return entry.config.audioVoicing.monitorMode
+                        == enginelab::AudioMonitorMode::physicalReference;
+                }),
+            "shipping engines must default to the neutral physical-reference monitor");
         const auto ls3 = std::find_if(
             catalogue.entries.begin(), catalogue.entries.end(),
             [](const auto& entry) {

@@ -58,7 +58,8 @@ std::vector<float> renderEvent(double sampleRate, int preparedBlockSize,
     state.intakeGain.store(0.0F);
     state.mechanicalGain.store(0.0F);
     state.convolution.store(0.0F);
-    auto renderer = std::make_unique<enginelab::RealtimeEngineAudio>(queue, state);
+    auto renderer = std::make_unique<enginelab::RealtimeEngineAudio>(
+        queue, state, nullptr, nullptr, nullptr, nullptr);
     renderer->prepare(sampleRate, preparedBlockSize);
     require(queue.tryPush(event), "event fixture must enter the realtime queue");
     juce::AudioBuffer<float> output(2, sampleCount);
@@ -109,7 +110,7 @@ std::vector<float> renderContinuousPressure(std::uint32_t cylinderPath,
     require(pressureQueue->tryPush(first) && pressureQueue->tryPush(second),
             "pressure fixtures must enter the realtime queue");
     auto renderer = std::make_unique<enginelab::RealtimeEngineAudio>(
-        eventQueue, state, pressureQueue.get());
+        eventQueue, state, pressureQueue.get(), nullptr, nullptr, nullptr);
     const std::array<float, 1> directIr { 1.0F };
     renderer->setImpulseResponse(directIr, 48'000.0, 0);
     renderer->setImpulseResponse(pathOneIr, 48'000.0, 1);
@@ -213,7 +214,7 @@ std::vector<float> renderPhysicalExhaust(const PhysicalExhaustFixture& fixture) 
     }
 
     auto renderer = std::make_unique<enginelab::RealtimeEngineAudio>(
-        eventQueue, state, pressureQueue.get());
+        eventQueue, state, pressureQueue.get(), nullptr, nullptr, nullptr);
     renderer->prepare(fixture.sampleRateHz, blockSize);
     juce::AudioBuffer<float> output(2, sampleCount);
     for (int offset = 0; offset < sampleCount; offset += blockSize)
@@ -463,6 +464,73 @@ void exhaustJetNoiseRegression() {
     }
     require(enabledEnergy > 1.0e-10,
         "resolved mean flow must radiate deterministic outlet turbulence");
+
+    const auto outletNode = std::find_if(
+        graph.nodes().begin(), graph.nodes().end(), [](const auto& node) {
+            return node.type == enginelab::ExhaustNodeType::outlet;
+        });
+    require(outletNode != graph.nodes().end(),
+        "the signed-flow fixture must resolve its physical outlet node");
+    const auto signedFlowEnergy = [&](float signedFlow) {
+        enginelab::AcousticExhaustNetwork acoustics(graph, cylinderIds);
+        require(acoustics.valid() && acoustics.prepare(sampleRate),
+            "the signed-flow fixture must compile and prepare");
+        const std::array<enginelab::AcousticExhaustNetwork::OutletBoundary, 1>
+            outletBoundary {{ {
+                outletNode->id, signedFlow,
+                static_cast<float>(densityKgPerM3),
+                static_cast<float>(soundSpeedMps),
+                static_cast<float>(areaM2) } }};
+        acoustics.beginBlock(medium, 1.0, {}, {}, outletBoundary);
+        auto energy = 0.0;
+        for (std::size_t sample = 0; sample < 12'000; ++sample) {
+            const auto output = acoustics.process(sources, boundaries, 1.0F);
+            energy += static_cast<double>(output[0].leftPa)
+                * output[0].leftPa;
+        }
+        return energy;
+    };
+    require(signedFlowEnergy(-0.18F) == 0.0
+            && signedFlowEnergy(0.18F) > 1.0e-10,
+        "outlet reversion must not fabricate a downstream jet, while positive outflow must");
+}
+
+void reactionInjectionRegression() {
+    constexpr double sampleRate = 48'000.0;
+    auto config = enginelab::makeDefaultInlineFour();
+    std::array<std::uint32_t, 4> cylinderIds {};
+    for (std::size_t index = 0; index < cylinderIds.size(); ++index)
+        cylinderIds[index] = config.cylinders[index].id;
+    const auto graph = enginelab::ExhaustGraph::makeForEngine(config);
+    const auto sourceNode = std::find_if(
+        graph.nodes().begin(), graph.nodes().end(), [](const auto& node) {
+            return node.type == enginelab::ExhaustNodeType::pipe
+                && node.lengthMm > 0.0;
+        });
+    require(sourceNode != graph.nodes().end(),
+        "the reaction fixture must resolve a finite physical duct");
+    enginelab::AcousticExhaustNetwork acoustics(graph, cylinderIds);
+    require(acoustics.valid() && acoustics.prepare(sampleRate),
+        "the reaction fixture must compile and prepare");
+    const std::array<enginelab::AcousticExhaustNetwork::Medium, 1> medium {{
+        { 0.55F, 535.0F } }};
+    acoustics.beginBlock(medium, 1.0);
+    require(!acoustics.injectReactionPressure(
+                0xfffffff0U, 0.5F, 5'000.0F)
+            && acoustics.injectReactionPressure(
+                sourceNode->id, 0.5F, 5'000.0F),
+        "reaction pressure must enter only at its exact compiled node");
+    std::array<float, 4> sources {};
+    std::array<enginelab::AcousticExhaustNetwork::CylinderBoundary, 4>
+        boundaries {};
+    auto energy = 0.0;
+    for (std::size_t sample = 0; sample < 8'192; ++sample) {
+        const auto output = acoustics.process(sources, boundaries, 1.0F);
+        energy += static_cast<double>(output[0].leftPa)
+            * output[0].leftPa;
+    }
+    require(energy > 1.0e-10,
+        "a local exhaust reaction must propagate through the authored DAG to the microphones");
 }
 
 // A merge is a scattering point *and* a pipe. The audio network used to keep
@@ -702,8 +770,13 @@ void areaStepScatteringRegression() {
         std::array<enginelab::AcousticExhaustNetwork::CylinderBoundary, 1> boundaries {};
         std::vector<float> response(3'000, 0.0F);
         for (std::size_t sample = 0; sample < response.size(); ++sample) {
+            // This contract isolates the *linear*, small-signal junction
+            // scattering law.  Production exhaust mouths now include a
+            // passive amplitude-dependent vortex resistance, so a 5 kPa
+            // excitation also measured that deliberately nonlinear load and
+            // could not be compared with the lossless admittance formula.
             sources[0] = sample < burstSamples
-                ? 5'000.0F * static_cast<float>(std::sin(
+                ? 1.0F * static_cast<float>(std::sin(
                     2.0 * std::numbers::pi * static_cast<double>(sample)
                         / static_cast<double>(burstSamples)))
                 : 0.0F;
@@ -1238,7 +1311,7 @@ std::array<std::vector<float>, 2> renderMaximumMix() {
             "stress pressure samples must enter the realtime queue");
 
     auto renderer = std::make_unique<enginelab::RealtimeEngineAudio>(
-        eventQueue, state, pressureQueue.get());
+        eventQueue, state, pressureQueue.get(), nullptr, nullptr, nullptr);
     const std::array<float, 1> directIr { 1.0F };
     renderer->setImpulseResponse(directIr);
     renderer->prepare(sampleRate, blockSize);
@@ -1301,7 +1374,8 @@ void latencyAndBlockSizeRegression() {
         for (const auto blockSize : { 1'024, 2'048 }) {
             enginelab::FiringEventQueue queue;
             enginelab::RealtimeAudioState state;
-            auto renderer = std::make_unique<enginelab::RealtimeEngineAudio>(queue, state);
+            auto renderer = std::make_unique<enginelab::RealtimeEngineAudio>(
+                queue, state, nullptr, nullptr, nullptr, nullptr);
             renderer->prepare(sampleRate, blockSize);
             const auto requiredLookahead = std::max(0.020,
                 static_cast<double>(blockSize) / sampleRate + 0.005);
@@ -1444,7 +1518,7 @@ void ambientPressureRegression() {
     require(pressureQueue->tryPush(sample) && pressureQueue->tryPush(next),
             "ambient pressure fixtures must enter the realtime queue");
     auto renderer = std::make_unique<enginelab::RealtimeEngineAudio>(
-        eventQueue, state, pressureQueue.get());
+        eventQueue, state, pressureQueue.get(), nullptr, nullptr, nullptr);
     renderer->setImpulseResponse(directIr);
     renderer->prepare(48'000.0, 256);
     juce::AudioBuffer<float> output(2, 512);
@@ -1481,8 +1555,10 @@ void diagnosticStemRegression() {
     require(normalQueue.tryPush(event) && tappedQueue.tryPush(event),
         "stem fixture events must enter both realtime queues");
 
-    enginelab::RealtimeEngineAudio normal(normalQueue, normalState);
-    enginelab::RealtimeEngineAudio tapped(tappedQueue, tappedState);
+    enginelab::RealtimeEngineAudio normal(
+        normalQueue, normalState, nullptr, nullptr, nullptr, nullptr);
+    enginelab::RealtimeEngineAudio tapped(
+        tappedQueue, tappedState, nullptr, nullptr, nullptr, nullptr);
     normal.prepare(48'000.0, blockSize);
     tapped.prepare(48'000.0, blockSize);
 
@@ -2716,6 +2792,7 @@ int main() {
         runnerDelaySampleRateRegression();
         exhaustPathIsolationRegression();
         exhaustJetNoiseRegression();
+        reactionInjectionRegression();
         branchedAcousticTopologyRegression();
         branchTrunkDelayRegression();
         ductMediumRegression();

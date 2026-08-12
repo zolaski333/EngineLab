@@ -268,7 +268,8 @@ DecayMeasurement measureExhaustDecay(const EngineConfig& baseConfig, const WavDa
     auto& pressureQueue = *pressureQueuePtr;
     auto rendererPtr = std::make_unique<RealtimeEngineAudio>(
         eventQueue, audioState, &pressureQueue, &audioConfiguration->exhaustGraph(),
-        &audioConfiguration->engineConfig());
+        &audioConfiguration->engineConfig(),
+        &audioConfiguration->exhaustAcousticSamples());
     auto& renderer = *rendererPtr;
     if (!ir.samples.empty()) renderer.setImpulseResponse(ir.samples, ir.sampleRate, 0);
     renderer.prepare(audioRate, samplesPerStep);
@@ -380,7 +381,7 @@ SweepResult renderSweep(const EngineConfig& baseConfig, const WavData& ir,
     constexpr int samplesPerStep = 200; // 48000 / 240
     auto rendererPtr = std::make_unique<RealtimeEngineAudio>(
         eventQueue, audioState, &pressureQueue, &audioConfiguration->exhaustGraph(),
-        &audioConfiguration->engineConfig());
+        &audioConfiguration->engineConfig(), nullptr);
     auto& renderer = *rendererPtr;
     if (!ir.samples.empty()) renderer.setImpulseResponse(ir.samples, ir.sampleRate, 0);
     renderer.prepare(audioRate, samplesPerStep);
@@ -444,6 +445,24 @@ SweepResult renderSweep(const EngineConfig& baseConfig, const WavData& ir,
             const auto fraction = std::clamp((ps.timeSeconds - simStart) / dt, 0.0, 1.0);
             ps.timeSeconds = realtimeSeconds + fraction * dt;
             if (!pressureQueue.tryPush(ps)) ++out.droppedPressureSamples;
+        }
+        ExhaustAcousticSample acousticSample;
+        while (simulator.tryPopExhaustAcousticSample(acousticSample)) {
+            const auto fraction = std::clamp(
+                (acousticSample.timeSeconds - simStart) / dt, 0.0, 1.0);
+            acousticSample.timeSeconds = realtimeSeconds + fraction * dt;
+            for (std::size_t eventIndex = 0;
+                 eventIndex < acousticSample.reactionEventCount; ++eventIndex) {
+                const auto eventFraction = std::clamp(
+                    (acousticSample.reactionEvents[eventIndex].timeSeconds
+                        - simStart) / dt, 0.0, 1.0);
+                acousticSample.reactionEvents[eventIndex].timeSeconds =
+                    realtimeSeconds + eventFraction * dt;
+            }
+            if (!audioConfiguration->exhaustAcousticSamples().tryPush(
+                    acousticSample))
+                throw std::runtime_error(
+                    "A/B harness exhausted its thermoacoustic queue");
         }
         publishAudioFrame(audioState, frame.state,
             { false, controls.starterEngaged, controls.load, 1.0 });

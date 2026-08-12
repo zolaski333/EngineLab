@@ -24,6 +24,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <iostream>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -43,7 +44,8 @@ struct IdleResult final {
     double driftRpm { 0.0 };      // second-half mean minus first-half mean
 };
 
-IdleResult measureIdle(const enginelab::EngineConfig& config, double blipThrottle) {
+IdleResult measureIdle(const enginelab::EngineConfig& config, double blipThrottle,
+                       std::optional<double> exhaustTargetCellLengthM = {}) {
     IdleResult result;
     result.name = config.name;
     result.idleRpm = config.idleRpm;
@@ -52,7 +54,10 @@ IdleResult measureIdle(const enginelab::EngineConfig& config, double blipThrottl
     enginelab::SimplifiedGasolinePhysics physics;
     enginelab::FourStrokeEventGenerator events;
     auto exhaust = enginelab::ExhaustGraph::makeForEngine(config);
-    enginelab::EngineSimulator simulator(config, ecu, physics, events, exhaust);
+    enginelab::EngineSimulatorOptions simulatorOptions;
+    simulatorOptions.exhaustTargetCellLengthM = exhaustTargetCellLengthM;
+    enginelab::EngineSimulator simulator(
+        config, ecu, physics, events, exhaust, simulatorOptions);
 
     const auto stallFloorRpm = std::max(250.0, config.idleRpm * 0.45);
 
@@ -252,7 +257,18 @@ int main(int argc, char** argv) {
             return EXIT_SUCCESS;
         }
 
-        const auto blipThrottle = argc > 1 ? std::atof(argv[1]) : 0.5;
+        auto blipThrottle = 0.5;
+        auto engineFilter = std::string {};
+        auto exhaustTargetCellLengthM = std::optional<double> {};
+        for (auto index = 1; index < argc; ++index) {
+            const auto argument = std::string { argv[index] };
+            if (argument == "--filter" && index + 1 < argc)
+                engineFilter = argv[++index];
+            else if (argument == "--exhaust-cell-mm" && index + 1 < argc)
+                exhaustTargetCellLengthM = std::stod(argv[++index]) * 0.001;
+            else
+                blipThrottle = std::stod(argument);
+        }
         std::printf("idle stability measurement (free idle; blip=%.2f)\n", blipThrottle);
         std::cout << "  engine                              target   mean    min    max"
                      "   std  drift  caught steadyStall blipStall\n";
@@ -276,7 +292,11 @@ int main(int argc, char** argv) {
         for (const auto& entry : catalog.entries) {
             auto config = entry.config;
             enginelab::normaliseEngineConfig(config);
-            const auto r = measureIdle(config, blipThrottle);
+            if (!engineFilter.empty()
+                && config.name.find(engineFilter) == std::string::npos)
+                continue;
+            const auto r = measureIdle(
+                config, blipThrottle, exhaustTargetCellLengthM);
             std::printf("  %-34s %6.0f %6.0f %6.0f %6.0f %5.1f %6.1f    %d       %d         %d\n",
                 r.name.c_str(), r.idleRpm, r.settledMeanRpm, r.minRpm, r.maxRpm,
                 r.stdRpm, r.driftRpm, r.caught ? 1 : 0, r.steadyStalled ? 1 : 0,

@@ -35,8 +35,12 @@ engine:
       - { rpm: 1200, advance_deg: 14 }
       - { rpm: 2600, advance_deg: 23 }
       - { rpm: 4400, advance_deg: 29 }
-      - { rpm: 6200, advance_deg: 28 }
-      - { rpm: 7400, advance_deg: 27 }
+      # Full-load high-speed retard is anchored by the 184 kW type-964 rated
+      # point after replacing the scalar exhaust with its explicit twin graph.
+      # This is deliberately a spark calibration, not hidden audio gain or a
+      # widened dyno tolerance.
+      - { rpm: 6200, advance_deg: 27.5 }
+      - { rpm: 7400, advance_deg: 26.5 }
   # Effective air-cooled chamber closure, anchored to the type-964 Carrera 2
   # with the same displacement, bore/stroke and 11.3:1 compression ratio.
   combustion_calibration:

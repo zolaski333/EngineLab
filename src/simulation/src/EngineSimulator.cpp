@@ -577,7 +577,7 @@ void EngineSimulator::configurePhysicalExhaustNetwork() {
     const auto physicalGraph = ExhaustGraph::makeForEngine(config_);
     gasdynamics::ExhaustNetworkDiscretisation feedbackMesh;
     // The realtime FV mesh owns nonlinear mean-flow/back-pressure feedback,
-    // not audio-band propagation. A 300 mm maximum cell length gives about six
+    // not audio-band propagation. A 360 mm maximum cell length gives five
     // control volumes per 1.8 m wavelength (roughly 330-360 Hz in hot exhaust),
     // covering the resolved firing fundamentals of the shipped engines. The
     // characteristic audio network transports the remaining band without asking
@@ -585,7 +585,7 @@ void EngineSimulator::configurePhysicalExhaustNetwork() {
     // physical scale separation: no
     // authored component, volume, area or loss is removed from either model.
     feedbackMesh.targetCellLengthM = std::clamp(
-        options_.exhaustTargetCellLengthM.value_or(0.300), 0.025, 0.600);
+        options_.exhaustTargetCellLengthM.value_or(0.360), 0.025, 0.600);
     // Components shorter than the feedback scale remain one conservative
     // finite volume with their exact volume, ports and loss. Their propagation
     // delay is owned by the characteristic network, so duplicating a second FV
@@ -642,10 +642,24 @@ void EngineSimulator::configurePhysicalExhaustNetwork() {
 }
 
 void EngineSimulator::setPressureSamplingEnabled(bool enabled) {
-    if (enabled && !pressureSamples_)
+    if (enabled && !pressureSamples_) {
         pressureSamples_ = std::make_unique<SpscQueue<CylinderPressureSample, 1'024>>();
-    else if (!enabled)
+        exhaustAcousticSamples_ =
+            std::make_unique<SpscQueue<ExhaustAcousticSample, 1'024>>();
+    } else if (!enabled) {
         pressureSamples_.reset();
+        exhaustAcousticSamples_.reset();
+    }
+}
+
+void EngineSimulator::applyAudioPhysicsCalibration(
+    const AudioPhysicsCalibration& calibration) noexcept {
+    config_.combustionCalibration.cycleVariationCoefficientOfVariation =
+        calibration.cycleVariationCoefficientOfVariation;
+    config_.combustionCalibration.cycleVariationCorrelation =
+        calibration.cycleVariationCorrelation;
+    config_.ignition.limiterKeepsFuel = calibration.limiterKeepsFuel;
+    config_.exhaustAfterfire = calibration.exhaustAfterfire;
 }
 
 SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& controls) noexcept {
@@ -2395,7 +2409,9 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
         auto exhaustNetworkCompleted = true;
         auto exhaustAdvanceDurationSeconds = 0.0;
         auto outletMassKg = 0.0;
-        gasdynamics::ExhaustFuelReactionResult exhaustFuelReaction;
+        auto publishExhaustAcousticState = false;
+        exhaustFuelReactionScratch_ = {};
+        auto& exhaustFuelReaction = exhaustFuelReactionScratch_;
         std::array<std::uint8_t, 32> exhaustExchangeApplied {};
         exhaustExchangeApplied.fill(1);
         if (flushExhaustNetwork) {
@@ -2438,7 +2454,10 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
             exhaustNetworkAcceptedSubsteps += networkAdvance.acceptedSubsteps;
             exhaustNetworkAdvancedSeconds += networkAdvance.advancedTimeSeconds;
             if (!networkAdvance.completed) state_.solverResolutionLimited = true;
-            if (networkAdvance.completed && config_.exhaustAfterfire.enabled) {
+            if (networkAdvance.completed
+                && (afterfireRetainsFuel(
+                        config_.exhaustAfterfire.strategy)
+                    || config_.ignition.limiterKeepsFuel)) {
                 exhaustFuelReaction = physicalExhaustNetwork.reactUnburnedFuel(
                     networkAdvance.advancedTimeSeconds,
                     {
@@ -2449,8 +2468,29 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                         config_.fuelProperties.molarMassGramsPerMole * 0.001,
                         config_.fuelProperties.lowerHeatingValueMjPerKg
                             * 1'000'000.0,
+                        config_.exhaustAfterfire.inductionTimeSeconds,
+                        config_.exhaustAfterfire.minimumEquivalenceRatio,
+                        config_.exhaustAfterfire.maximumEquivalenceRatio,
+                        config_.exhaustAfterfire.quenchTemperatureK,
                     });
             }
+
+            // Boundary/media states are consumed only at the renderer's block
+            // boundary (187.5 Hz at 48 kHz/256). Publishing them at every
+            // ~8 kHz solver coupling rebuilt and copied the complete duct array
+            // dozens of times before any consumer could observe it. Reaction
+            // sources remain losslessly coupling-rate: any non-empty source
+            // forces an immediate packet.
+            constexpr double acousticStatePublishIntervalSeconds = 1.0 / 240.0;
+            const auto projectedTimeSeconds =
+                state_.simulationTimeSeconds + subDt;
+            publishExhaustAcousticState = exhaustAcousticSamples_
+                && (exhaustFuelReaction.sourceCount > 0
+                    || lastExhaustAcousticStatePublishSeconds_ < 0.0
+                    || projectedTimeSeconds
+                        - lastExhaustAcousticStatePublishSeconds_
+                        >= acousticStatePublishIntervalSeconds
+                            - 0.5 * subDt);
 
             const auto cylinderExchanges = physicalExhaustNetwork.cylinderExchanges();
             for (std::size_t exchangeIndex = 0;
@@ -2470,24 +2510,28 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 outletMassKg += std::max(0.0, transferredMassKg);
             }
             // Publish the acoustic medium of each duct, not just of the valve.
-            // The waveguide's delays, wall losses and plane-mode band limits all
+            // The waveguide's delays, wall/liner losses and radiation state all
             // read the local gas state, and it varies by hundreds of kelvin
             // between the port and the tailpipe.
-            const auto networkDucts = physicalExhaustNetwork.ducts();
-            exhaustDuctMediumCount_ = std::min(networkDucts.size(),
-                CylinderPressureSample::maximumExhaustDucts);
-            for (std::size_t index = 0; index < exhaustDuctMediumCount_; ++index) {
-                auto densityKgPerM3 = 0.0;
-                auto speedOfSoundMps = 0.0;
-                if (!networkDucts[index].meanAcousticMedium(
-                        densityKgPerM3, speedOfSoundMps)) {
-                    // Leave the previous sample in place rather than publish a
-                    // zero the renderer would have to special-case; an
-                    // unrecoverable duct state already flags resolution limited.
-                    continue;
+            if (publishExhaustAcousticState) {
+                const auto networkDucts = physicalExhaustNetwork.ducts();
+                exhaustDuctMediumCount_ = std::min(networkDucts.size(),
+                    ExhaustAcousticSample::maximumDucts);
+                for (std::size_t index = 0;
+                     index < exhaustDuctMediumCount_; ++index) {
+                    auto densityKgPerM3 = 0.0;
+                    auto speedOfSoundMps = 0.0;
+                    if (!networkDucts[index].meanAcousticMedium(
+                            densityKgPerM3, speedOfSoundMps)) {
+                        // Leave the previous sample in place rather than publish
+                        // a zero the renderer would have to special-case.
+                        continue;
+                    }
+                    exhaustDuctDensityKgPerM3_[index] =
+                        static_cast<float>(densityKgPerM3);
+                    exhaustDuctSpeedOfSoundMps_[index] =
+                        static_cast<float>(speedOfSoundMps);
                 }
-                exhaustDuctDensityKgPerM3_[index] = static_cast<float>(densityKgPerM3);
-                exhaustDuctSpeedOfSoundMps_[index] = static_cast<float>(speedOfSoundMps);
             }
 
             exhaustValveConductanceTimeIntegralM2S_.fill(0.0);
@@ -3068,6 +3112,81 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
             cylinderState.completedIgnitionPhaseLastCycle =
                 completedIgnitionPhaseLastCycle_[index];
         }
+        if (publishExhaustAcousticState && flushExhaustNetwork
+            && exhaustNetworkCompleted) {
+            ExhaustAcousticSample acousticSample;
+            acousticSample.timeSeconds = state_.simulationTimeSeconds;
+            acousticSample.couplingFrequencyHz =
+                state_.exhaustCouplingFrequencyHz;
+            const auto copiedReactionSourceCount = std::min(
+                exhaustFuelReaction.sourceCount,
+                acousticSample.reactionEvents.size());
+            acousticSample.reactionEventCount =
+                copiedReactionSourceCount;
+            acousticSample.droppedReactionEventCount =
+                exhaustFuelReaction.droppedSourceCount
+                + exhaustFuelReaction.sourceCount
+                    - copiedReactionSourceCount;
+            for (std::size_t index = 0;
+                index < copiedReactionSourceCount; ++index) {
+                const auto& source = exhaustFuelReaction.sources[index];
+                auto& event = acousticSample.reactionEvents[index];
+                event.timeSeconds = state_.simulationTimeSeconds
+                    - 0.5 * source.durationSeconds;
+                event.nodeId = source.nodeId;
+                event.sourceComponentId = source.sourceComponentId;
+                event.pathIndex = source.pathIndex;
+                event.axialPosition = static_cast<float>(
+                    source.axialPosition);
+                event.releasedEnergyJoules = static_cast<float>(
+                    source.releasedEnergyJoules);
+                event.burnedFuelMassKg = static_cast<float>(
+                    source.burnedFuelMassKg);
+                event.durationSeconds = static_cast<float>(
+                    source.durationSeconds);
+                event.densityKgPerM3 = static_cast<float>(
+                    source.densityKgPerM3);
+                event.speedOfSoundMps = static_cast<float>(
+                    source.speedOfSoundMps);
+                event.flowAreaM2 = static_cast<float>(
+                    source.flowAreaM2);
+            }
+            const auto outletSamples = physicalExhaustNetwork.outletSamples();
+            acousticSample.outletCount = std::min(
+                outletSamples.size(),
+                acousticSample.outletMassFlowKgPerSecond.size());
+            for (std::size_t index = 0;
+                 index < acousticSample.outletCount; ++index) {
+                const auto& outlet = outletSamples[index];
+                acousticSample.outletNodeId[index] =
+                    outlet.outletNodeId;
+                acousticSample.outletPathIndex[index] =
+                    static_cast<std::uint8_t>(outlet.pathIndex);
+                acousticSample.outletMassFlowKgPerSecond[index] =
+                    static_cast<float>(outlet.massFlowKgPerS);
+                acousticSample.outletDensityKgPerM3[index] =
+                    static_cast<float>(outlet.densityKgPerM3);
+                acousticSample.outletSpeedOfSoundMps[index] =
+                    static_cast<float>(outlet.speedOfSoundMps);
+                acousticSample.outletAreaM2[index] =
+                    static_cast<float>(outlet.openingAreaM2);
+            }
+            acousticSample.ductCount = exhaustDuctMediumCount_;
+            for (std::size_t index = 0;
+                 index < exhaustDuctMediumCount_; ++index) {
+                acousticSample.ductDensityKgPerM3[index] =
+                    exhaustDuctDensityKgPerM3_[index];
+                acousticSample.ductSpeedOfSoundMps[index] =
+                    exhaustDuctSpeedOfSoundMps_[index];
+            }
+            if (exhaustAcousticSamples_->tryPush(acousticSample)) {
+                ++frame.exhaustAcousticSampleCount;
+                lastExhaustAcousticStatePublishSeconds_ =
+                    state_.simulationTimeSeconds;
+            } else {
+                ++frame.droppedExhaustAcousticSampleCount;
+            }
+        }
         if (pressureSamples_) {
             CylinderPressureSample pressureSample;
             pressureSample.timeSeconds = state_.simulationTimeSeconds;
@@ -3078,7 +3197,6 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 pressureSample.intakeThrottleConductanceAreaM2[path] =
                     static_cast<float>(intakeThrottleConductanceAreaM2[path]);
             }
-            pressureSample.exhaustCouplingFrequencyHz = state_.exhaustCouplingFrequencyHz;
             for (std::size_t index = 0; index < config_.cylinders.size(); ++index) {
                 pressureSample.pressureBar[index] = static_cast<float>(chamberPressureBar_[index]);
                 const auto pistonRadiusM = config_.cylinders[index].boreMm * 0.0005;
@@ -3133,13 +3251,6 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                         exhaustPathIndexByCylinder_[index]);
                 pressureSample.thermoacousticBoundaryValid[index] =
                     thermoacousticBoundaryValid[index];
-            }
-            pressureSample.exhaustDuctCount = exhaustDuctMediumCount_;
-            for (std::size_t index = 0; index < exhaustDuctMediumCount_; ++index) {
-                pressureSample.exhaustDuctDensityKgPerM3[index] =
-                    exhaustDuctDensityKgPerM3_[index];
-                pressureSample.exhaustDuctSpeedOfSoundMps[index] =
-                    exhaustDuctSpeedOfSoundMps_[index];
             }
             if (pressureSamples_->tryPush(pressureSample))
                 ++frame.cylinderPressureSampleCount;
@@ -3271,9 +3382,14 @@ void EngineSimulator::reset() noexcept {
     exhaustBoundaryVolumeTimeIntegralM3S_.fill(0.0);
     exhaustCouplingDurationSeconds_ = 0.0;
     outletOpeningScaleTimeIntegralSeconds_ = 0.0;
+    lastExhaustAcousticStatePublishSeconds_ = -1.0;
     if (pressureSamples_) {
         CylinderPressureSample discarded;
         while (pressureSamples_->tryPop(discarded)) {}
+    }
+    if (exhaustAcousticSamples_) {
+        ExhaustAcousticSample discarded;
+        while (exhaustAcousticSamples_->tryPop(discarded)) {}
     }
     state_ = {};
     state_.coolantTemperatureC = config_.ambientTemperatureC;

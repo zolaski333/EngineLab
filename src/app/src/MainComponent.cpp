@@ -228,7 +228,7 @@ bool MainComponent::applyConfig(const EngineConfig& newConfig, bool preserveScri
     runtime_ = std::move(replacement);
     audio_ = std::make_unique<RealtimeEngineAudio>(runtime_->audioEvents(), runtime_->audioState(),
         &runtime_->cylinderPressureSamples(), &runtime_->exhaustGraph(),
-        &runtime_->engineConfig());
+        &runtime_->engineConfig(), &runtime_->exhaustAcousticSamples());
     importedRunCount_ = 0;
     telemetryWrite_ = 0; telemetryCount_ = 0;
     runtime_->setThrottle(throttleSlider_.getValue() / 100.0);
@@ -460,6 +460,7 @@ OfflineAudioMix MainComponent::currentAudioMix() const noexcept {
     mix.outletJetGain = outletJetGain_;
     mix.saturationDrive = saturationDrive_;
     mix.saturationPlacement = saturationPlacement_;
+    mix.monitorMode = audioMonitorMode_;
     return mix;
 }
 
@@ -478,6 +479,7 @@ void MainComponent::adoptAudioVoicing(const AudioVoicingConfig& voicing) {
     outletJetGain_ = voicing.outletJetGain;
     saturationDrive_ = voicing.saturationDrive;
     saturationPlacement_ = voicing.saturationPlacement;
+    audioMonitorMode_ = voicing.monitorMode;
 }
 
 void MainComponent::applyAudioWorkshopMix(
@@ -497,6 +499,7 @@ void MainComponent::applyAudioWorkshopMix(
     outletJetGain_ = baseMix.outletJetGain;
     saturationDrive_ = baseMix.saturationDrive;
     saturationPlacement_ = baseMix.saturationPlacement;
+    audioMonitorMode_ = baseMix.monitorMode;
     if (runtime_) {
         runtime_->applyAudioVoicing(effectiveMix);
     }
@@ -527,10 +530,33 @@ void MainComponent::showAudioWorkshop() {
                 },
                 [safe](const AudioPhysicsSettings& settings) {
                     if (!safe) return false;
+                    if (!safe->runtime_ || safe->runtime_->dynoRunning()) {
+                        safe->showError(utf8("Modification refusÃ©e"),
+                            utf8("ArrÃªtez le banc de puissance avant de modifier la calibration physique."));
+                        return false;
+                    }
                     auto editedConfig = safe->config_;
                     applyAudioPhysicsSettings(editedConfig, settings);
-                    return safe->applyConfig(
-                        editedConfig, safe->scriptReloader_ != nullptr, true);
+                    normaliseEngineConfig(editedConfig);
+                    if (const auto error = validateEngineConfig(editedConfig)) {
+                        safe->showError(utf8("Calibration physique invalide"),
+                            juce::String::fromUTF8(error->c_str()));
+                        return false;
+                    }
+                    AudioPhysicsCalibration calibration;
+                    calibration.cycleVariationCoefficientOfVariation =
+                        editedConfig.combustionCalibration
+                            .cycleVariationCoefficientOfVariation;
+                    calibration.cycleVariationCorrelation =
+                        editedConfig.combustionCalibration
+                            .cycleVariationCorrelation;
+                    calibration.limiterKeepsFuel =
+                        editedConfig.ignition.limiterKeepsFuel;
+                    calibration.exhaustAfterfire =
+                        editedConfig.exhaustAfterfire;
+                    safe->config_ = std::move(editedConfig);
+                    safe->runtime_->applyAudioPhysicsCalibration(calibration);
+                    return true;
                 },
                 [safe] {
                     if (!safe) return AudioPhysicsTelemetry {};

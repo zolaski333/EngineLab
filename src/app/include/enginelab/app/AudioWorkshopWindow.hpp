@@ -37,6 +37,7 @@ struct AudioPhysicsSettings final {
      *  members below this comment: the aggregate is initialised by position. */
     double overrunPulseHz { 0.0 };
     double overrunPulseDutyCycle { 0.35 };
+    double overrunPulseTimingVariation { 0.0 };
 };
 
 /** Live proof that the authored controls are active in the simulator. */

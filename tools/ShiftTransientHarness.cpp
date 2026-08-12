@@ -47,6 +47,7 @@
 #include <fstream>
 #include <iostream>
 #include <memory>
+#include <numbers>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -68,6 +69,7 @@ struct Sample final {
     double clutchTorque { 0.0 };
     double clutchPressure { 0.0 };
     double slipRpm { 0.0 };
+    double clutchStickFraction { 0.0 };
     double shiftProgress { 0.0 };
     int engagedGear { -1 };
     bool shifting { false };
@@ -87,6 +89,7 @@ struct ShiftMetrics final {
     double peakFlowSlopeGpsPerMs { 0.0 };  // max |d(flow)/dt|, the "crack" sharpness
     double peakClutchTorqueNm { 0.0 };
     double throttleClutchOverlap { 0.0 };  // see computation below
+    double timerOnlyThrottleClutchOverlap { 0.0 };
     bool audioMeasured { false };
     bool audioFinite { true };
     bool physicalAudioActive { false };
@@ -182,7 +185,8 @@ public:
             configuration_->audioState(),
             &configuration_->cylinderPressureSamples(),
             &configuration_->exhaustGraph(),
-            &configuration_->engineConfig());
+            &configuration_->engineConfig(),
+            &configuration_->exhaustAcousticSamples());
         auto impulse = enginelab::loadImpulseResponseFile(
             juce::File(impulseResponsePath.string()));
         if (!impulse.ok())
@@ -227,6 +231,26 @@ public:
                     pressureSample)) {
                 ++droppedPressureSamples_;
             }
+        }
+        enginelab::ExhaustAcousticSample acousticSample;
+        while (simulator.tryPopExhaustAcousticSample(acousticSample)) {
+            const auto fraction = std::clamp(
+                (acousticSample.timeSeconds - simulationStart) / stepSeconds,
+                0.0, 1.0);
+            acousticSample.timeSeconds =
+                realtimeSeconds_ + fraction * stepSeconds;
+            for (std::size_t eventIndex = 0;
+                 eventIndex < acousticSample.reactionEventCount; ++eventIndex) {
+                const auto eventFraction = std::clamp(
+                    (acousticSample.reactionEvents[eventIndex].timeSeconds
+                        - simulationStart) / stepSeconds, 0.0, 1.0);
+                acousticSample.reactionEvents[eventIndex].timeSeconds =
+                    realtimeSeconds_ + eventFraction * stepSeconds;
+            }
+            if (!configuration_->exhaustAcousticSamples().tryPush(
+                    acousticSample))
+                throw std::runtime_error(
+                    "shift harness exhausted its thermoacoustic queue");
         }
         enginelab::publishAudioFrame(
             configuration_->audioState(), frame.state,
@@ -457,6 +481,7 @@ ShiftMetrics measureShift(
         sample.clutchTorque = tick.drive.clutchTorqueNm;
         sample.clutchPressure = tick.drive.clutchPressure;
         sample.slipRpm = tick.drive.clutchSlipRpm;
+        sample.clutchStickFraction = tick.drive.clutchStickFraction;
         sample.shiftProgress = tick.drive.shiftProgress;
         sample.engagedGear = tick.drive.engagedGear;
         sample.shifting = tick.drive.shiftInProgress;
@@ -507,6 +532,7 @@ ShiftMetrics measureShift(
     double peakClutch = 0.0;
     double lastFlow = samples[static_cast<std::size_t>(shiftSampleIndex)].exhaustFlowGps;
     double overlap = 0.0;
+    double timerOnlyOverlap = 0.0;
     bool sawLock = false;
     double rpmAfter = samples.back().rpm;
     const auto lockBand = 2.0 * config.transmission.clutchLockSpeedRpm;
@@ -518,13 +544,34 @@ ShiftMetrics measureShift(
         lastFlow = s.exhaustFlowGps;
         peakClutch = std::max(peakClutch, std::abs(s.clutchTorque));
         // Overlap: engine torque restoring (throttle above the cut floor) while
-        // the clutch is still slipping to synchronise -- the fight that hardens
-        // the shift. Integrated over the whole event, gear engaged onward.
+        // the clutch is physically in kinetic slip -- the fight that hardens
+        // the shift. The old metric inferred slip from residual rpm and kept
+        // integrating through the 0.6 s settled tail, so ordinary few-rpm
+        // locked-clutch ripple could fail this test. Read the Karnopp solver's
+        // own stick fraction instead.
         if (s.engagedGear == metrics.gearBefore + 1) {
-            const auto restored = std::clamp((s.engineThrottle - 0.15) / 0.85, 0.0, 1.0);
-            const auto slipping = std::clamp(std::abs(s.slipRpm)
-                / std::max(1.0, lockBand * 2.0), 0.0, 1.0);
+            const auto cutDepth = std::clamp(
+                config.transmission.shiftTorqueCutFraction, 0.0, 1.0);
+            const auto cutFloor = 1.0 - cutDepth;
+            const auto restored = std::clamp(
+                (s.engineThrottle - cutFloor)
+                    / std::max(1.0e-9, cutDepth), 0.0, 1.0);
+            const auto slipping = std::clamp(
+                1.0 - s.clutchStickFraction, 0.0, 1.0);
             overlap += restored * slipping * stepSeconds;
+
+            // Same measured clutch trajectory, but replay the former
+            // timer-only torque envelope. This same-run counterfactual keeps
+            // the regression non-vacuous without reintroducing that behaviour
+            // into the product model.
+            const auto timerOnlyMultiplier = s.shifting
+                ? 1.0 - cutDepth * std::sin(std::numbers::pi
+                    * std::clamp(s.shiftProgress, 0.0, 1.0))
+                : 1.0;
+            const auto timerOnlyRestored = std::clamp(
+                (s.throttleCmd * timerOnlyMultiplier - cutFloor)
+                    / std::max(1.0e-9, cutDepth), 0.0, 1.0);
+            timerOnlyOverlap += timerOnlyRestored * slipping * stepSeconds;
         }
         // True synchronisation: the first tick, after the gear has engaged, when
         // the clutch slip falls back within the lock band. The shift's declared
@@ -543,6 +590,7 @@ ShiftMetrics measureShift(
     metrics.peakFlowSlopeGpsPerMs = peakSlope;
     metrics.peakClutchTorqueNm = peakClutch;
     metrics.throttleClutchOverlap = overlap;
+    metrics.timerOnlyThrottleClutchOverlap = timerOnlyOverlap;
     metrics.gearAfter = samples.back().engagedGear;
     metrics.rpmAfterSync = rpmAfter;
     metrics.shiftCompleted = sawLock && samples.back().engagedGear == metrics.gearBefore + 1;
@@ -588,11 +636,14 @@ bool validateShiftAudio(const ShiftMetrics& metrics) {
     };
     if (!metrics.shiftCompleted || !metrics.relocked)
         fail("shift did not complete and re-lock");
-    // This dimensionless overlap is integrated in seconds. Both pre-fix
-    // witnesses were above 0.136 while the slip-following release is below
-    // 0.097; 0.12 therefore rejects the timer-only torque restoration without
-    // demanding an artificially slow shift.
-    if (metrics.throttleClutchOverlap > 0.12)
+    // This dimensionless overlap is integrated in seconds over kinetic-slip
+    // frames only. Reject more than 40 ms of fully restored torque during slip,
+    // and require the slip-following release to cut at least 35 % of the
+    // counterfactual timer-only overlap on the exact same trajectory.
+    if (metrics.throttleClutchOverlap > 0.040
+        || metrics.timerOnlyThrottleClutchOverlap <= 0.0
+        || metrics.throttleClutchOverlap
+            > 0.65 * metrics.timerOnlyThrottleClutchOverlap)
         fail("engine torque restored while the clutch was still synchronising");
     if (!metrics.audioMeasured || !metrics.audioFinite)
         fail("audio capture was missing or non-finite");
@@ -657,7 +708,7 @@ int main(int argc, char** argv) {
     std::printf("clutchless WOT upshift transient (trigger fraction %.2f of redline)\n",
                 triggerFraction);
     std::printf("  %-30s  gearShift   rpm@shift  rpm@sync  resyncMs   baseF   peakF"
-                "  slope(g/s/ms)  clutchTq  overlap  done\n", "engine");
+                "  slope(g/s/ms)  clutchTq  overlap/legacy  done\n", "engine");
     auto matched = false;
     auto allAudioChecksPassed = true;
     for (const auto& entry : catalog.entries) {
@@ -700,10 +751,11 @@ int main(int argc, char** argv) {
                 allAudioChecksPassed = false;
             continue;
         }
-        std::printf("  %-30s   g%d->g%d    %8.0f  %8.0f  %7.1f %7.2f %7.2f     %8.3f  %8.0f %8.4f   %s\n",
+        std::printf("  %-30s   g%d->g%d    %8.0f  %8.0f  %7.1f %7.2f %7.2f     %8.3f  %8.0f %7.4f/%7.4f   %s\n",
                     m.name.c_str(), m.gearBefore, m.gearBefore + 1, m.rpmAtShift, m.rpmAfterSync,
                     m.resyncMs, m.baselineFlowGps, m.peakFlowGps, m.peakFlowSlopeGpsPerMs,
                     m.peakClutchTorqueNm, m.throttleClutchOverlap,
+                    m.timerOnlyThrottleClutchOverlap,
                     m.shiftCompleted && m.relocked ? "yes" : "NO");
         if (!audioOutputDirectory.empty()) {
             std::printf("    audio peak=%.5f shiftStep=%.5f@%.2fms"

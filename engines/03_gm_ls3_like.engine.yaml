@@ -1,4 +1,4 @@
-schema_version: 5
+schema_version: 6
 family: american v8
 engine:
   name: LS3-like 6.2 Crossplane V8
@@ -45,8 +45,56 @@ engine:
     transmission: muscle_6_speed
     vehicle: muscle_car
   exhaust_paths:
-    - { id: 1, cylinder_ids: [1, 3, 5, 7], audio_volume: 1.00, acoustic_position_m: { x: -0.45, y: 0.0, z: 0.0 } }
-    - { id: 2, cylinder_ids: [2, 4, 6, 8], audio_volume: 0.97, acoustic_position_m: { x: 0.45, y: 0.0, z: 0.0 } }
+    # One global DAG: both banks meet at a finite X section and split again.
+    # The former two path-local graphs could not transmit a wave or mean-flow
+    # perturbation across banks, so "crossplane_dual" had no X-pipe in the
+    # simulation despite its name.
+    - id: 1
+      cylinder_ids: [1, 2, 3, 4, 5, 6, 7, 8]
+      audio_volume: 1.00
+      graph:
+        components:
+          - { id: 101, type: pipe, length_mm: 690, diameter_mm: 48 }
+          - { id: 102, type: pipe, length_mm: 690, diameter_mm: 48 }
+          - { id: 103, type: pipe, length_mm: 690, diameter_mm: 48 }
+          - { id: 104, type: pipe, length_mm: 690, diameter_mm: 48 }
+          - { id: 105, type: pipe, length_mm: 690, diameter_mm: 48 }
+          - { id: 106, type: pipe, length_mm: 690, diameter_mm: 48 }
+          - { id: 107, type: pipe, length_mm: 690, diameter_mm: 48 }
+          - { id: 108, type: pipe, length_mm: 690, diameter_mm: 48 }
+          - { id: 201, type: merge, length_mm: 620, diameter_mm: 76, volume_l: 3.0, restriction: 0.04 }
+          - { id: 202, type: merge, length_mm: 620, diameter_mm: 76, volume_l: 3.0, restriction: 0.04 }
+          - { id: 301, type: merge, length_mm: 140, diameter_mm: 80, volume_l: 0.70, restriction: 0.03 }
+          - { id: 302, type: splitter, length_mm: 140, diameter_mm: 80, volume_l: 0.70, restriction: 0.03 }
+          - { id: 401, type: muffler, length_mm: 400, diameter_mm: 76, volume_l: 6.3, restriction: 0.30, packing_flow_resistivity_pa_s_m2: 10000, packing_thickness_mm: 15, perforated_open_area_ratio: 0.35 }
+          - { id: 402, type: muffler, length_mm: 400, diameter_mm: 76, volume_l: 6.3, restriction: 0.30, packing_flow_resistivity_pa_s_m2: 10000, packing_thickness_mm: 15, perforated_open_area_ratio: 0.35 }
+          - { id: 501, type: outlet, length_mm: 80, diameter_mm: 82, discharge_coefficient: 0.72, acoustic_position_m: { x: -0.45, y: 0.0, z: 0.0 } }
+          - { id: 502, type: outlet, length_mm: 80, diameter_mm: 82, discharge_coefficient: 0.72, acoustic_position_m: { x: 0.45, y: 0.0, z: 0.0 } }
+        cylinder_connections:
+          - { cylinder_id: 1, to_component_id: 101 }
+          - { cylinder_id: 2, to_component_id: 102 }
+          - { cylinder_id: 3, to_component_id: 103 }
+          - { cylinder_id: 4, to_component_id: 104 }
+          - { cylinder_id: 5, to_component_id: 105 }
+          - { cylinder_id: 6, to_component_id: 106 }
+          - { cylinder_id: 7, to_component_id: 107 }
+          - { cylinder_id: 8, to_component_id: 108 }
+        connections:
+          - { from_component_id: 101, to_component_id: 201 }
+          - { from_component_id: 103, to_component_id: 201 }
+          - { from_component_id: 105, to_component_id: 201 }
+          - { from_component_id: 107, to_component_id: 201 }
+          - { from_component_id: 102, to_component_id: 202 }
+          - { from_component_id: 104, to_component_id: 202 }
+          - { from_component_id: 106, to_component_id: 202 }
+          - { from_component_id: 108, to_component_id: 202 }
+          - { from_component_id: 201, to_component_id: 301 }
+          - { from_component_id: 202, to_component_id: 301 }
+          - { from_component_id: 301, to_component_id: 302 }
+          - { from_component_id: 302, to_component_id: 401 }
+          - { from_component_id: 302, to_component_id: 402 }
+          - { from_component_id: 401, to_component_id: 501 }
+          - { from_component_id: 402, to_component_id: 502 }
   cylinder_template:
     bore_mm: 103.25
     stroke_mm: 92.0

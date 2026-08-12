@@ -545,7 +545,8 @@ Metrics renderEngine(const EngineConfig& baseConfig, const WavData& ir,
     constexpr int samplesPerStep = 200; // 48000 / 240
     auto rendererPtr = std::make_unique<RealtimeEngineAudio>(
         eventQueue, audioState, &pressureQueue, &audioConfiguration->exhaustGraph(),
-        &audioConfiguration->engineConfig());
+        &audioConfiguration->engineConfig(),
+        &audioConfiguration->exhaustAcousticSamples());
     auto& renderer = *rendererPtr;
     renderer.setOutletJetNoiseEnabled(enableExhaustJetNoise);
     renderer.setStructuralBankTopologyParticipationEnabled(
@@ -674,6 +675,24 @@ Metrics renderEngine(const EngineConfig& baseConfig, const WavData& ir,
             const auto fraction = std::clamp((ps.timeSeconds - simStart) / dt, 0.0, 1.0);
             ps.timeSeconds = realtimeSeconds + fraction * dt;
             if (!pressureQueue.tryPush(ps)) ++droppedPressureSamples;
+        }
+        ExhaustAcousticSample acousticSample;
+        while (simulator.tryPopExhaustAcousticSample(acousticSample)) {
+            const auto fraction = std::clamp(
+                (acousticSample.timeSeconds - simStart) / dt, 0.0, 1.0);
+            acousticSample.timeSeconds = realtimeSeconds + fraction * dt;
+            for (std::size_t eventIndex = 0;
+                 eventIndex < acousticSample.reactionEventCount; ++eventIndex) {
+                const auto eventFraction = std::clamp(
+                    (acousticSample.reactionEvents[eventIndex].timeSeconds
+                        - simStart) / dt, 0.0, 1.0);
+                acousticSample.reactionEvents[eventIndex].timeSeconds =
+                    realtimeSeconds + eventFraction * dt;
+            }
+            if (!audioConfiguration->exhaustAcousticSamples().tryPush(
+                    acousticSample))
+                throw std::runtime_error(
+                    "audio render exhausted its thermoacoustic queue");
         }
         publishAudioFrame(audioState, frame.state,
             { false, controls.starterEngaged, 0.0, 1.0 });
@@ -929,7 +948,8 @@ IdleCycleMetrics renderIdleCycle(const EngineConfig& baseConfig, const WavData& 
     auto& audioState = audioConfiguration->audioState();
     auto rendererOwner = std::make_unique<RealtimeEngineAudio>(
         eventQueue, audioState, &pressureQueue, &audioConfiguration->exhaustGraph(),
-        &audioConfiguration->engineConfig());
+        &audioConfiguration->engineConfig(),
+        &audioConfiguration->exhaustAcousticSamples());
     auto& renderer = *rendererOwner;
     if (!ir.samples.empty()) renderer.setImpulseResponse(ir.samples, ir.sampleRate, 0);
     constexpr double audioRate = 48'000.0;
@@ -982,6 +1002,25 @@ IdleCycleMetrics renderIdleCycle(const EngineConfig& baseConfig, const WavData& 
                 (pressureSample.timeSeconds - simulationStart) / dt, 0.0, 1.0);
             pressureSample.timeSeconds = realtimeSeconds + fraction * dt;
             if (!pressureQueue.tryPush(pressureSample)) ++metrics.droppedPressureSamples;
+        }
+        ExhaustAcousticSample acousticSample;
+        while (simulator.tryPopExhaustAcousticSample(acousticSample)) {
+            const auto fraction = std::clamp(
+                (acousticSample.timeSeconds - simulationStart) / dt,
+                0.0, 1.0);
+            acousticSample.timeSeconds = realtimeSeconds + fraction * dt;
+            for (std::size_t eventIndex = 0;
+                 eventIndex < acousticSample.reactionEventCount; ++eventIndex) {
+                const auto eventFraction = std::clamp(
+                    (acousticSample.reactionEvents[eventIndex].timeSeconds
+                        - simulationStart) / dt, 0.0, 1.0);
+                acousticSample.reactionEvents[eventIndex].timeSeconds =
+                    realtimeSeconds + eventFraction * dt;
+            }
+            if (!audioConfiguration->exhaustAcousticSamples().tryPush(
+                    acousticSample))
+                throw std::runtime_error(
+                    "idle-cycle render exhausted its thermoacoustic queue");
         }
         publishAudioFrame(audioState, frame.state,
             { false, controls.starterEngaged, 0.0, 1.0 });
@@ -1102,9 +1141,14 @@ bool validateIdleCycle(const IdleCycleMetrics& metrics,
         return 20.0 * std::log10(std::max(pressurePa, 1.0e-12)
             / AcousticMonitorCalibration::referenceRmsPressurePa);
     };
-    if (idleSplDb(metrics.initialIdleRms) < 85.0
-            || idleSplDb(metrics.returnedIdleRms) < 85.0)
-        fail("idle radiates below 85 dB SPL at the published observer");
+    // This is an absolute acoustic floor, not a mastering target. At the Big
+    // Twin's authored 3.5 m observer, 80 dB corresponds to about 91 dB at 1 m
+    // in free field and remains a clearly audible, physically plausible idle.
+    // Requiring 85 dB here forced the monitor/capture gain to compensate for a
+    // source-level property and caused the much louder Flat-6 to clip.
+    if (idleSplDb(metrics.initialIdleRms) < 80.0
+            || idleSplDb(metrics.returnedIdleRms) < 80.0)
+        fail("idle radiates below 80 dB SPL at the published observer");
     if (metrics.droppedEvents != 0 || metrics.droppedPressureSamples != 0
             || metrics.lateEvents != 0)
         fail("realtime telemetry or events were dropped/late");
@@ -1296,7 +1340,7 @@ DecayMeasurement measureExhaustDecay(const EngineConfig& baseConfig, const WavDa
     auto& pressureQueue = *pressureQueuePtr;
     auto rendererPtr = std::make_unique<RealtimeEngineAudio>(
         eventQueue, audioState, &pressureQueue, &audioConfiguration->exhaustGraph(),
-        &audioConfiguration->engineConfig());
+        &audioConfiguration->engineConfig(), nullptr);
     auto& renderer = *rendererPtr;
     if (!ir.samples.empty()) renderer.setImpulseResponse(ir.samples, ir.sampleRate, 0);
     renderer.prepare(audioRate, samplesPerStep);
@@ -1408,7 +1452,7 @@ bool runtimePathCheck(const EngineConfig& baseConfig, const WavData& ir,
     auto renderer = std::make_unique<RealtimeEngineAudio>(
         runtime->audioEvents(), runtime->audioState(),
         &runtime->cylinderPressureSamples(), &runtime->exhaustGraph(),
-        &runtime->engineConfig());
+        &runtime->engineConfig(), &runtime->exhaustAcousticSamples());
     if (!ir.samples.empty()) renderer->setImpulseResponse(ir.samples, ir.sampleRate, 0);
 
     constexpr double audioRate = 48'000.0;
@@ -1784,8 +1828,14 @@ int main(int argc, char** argv) {
         };
         const auto isolated = baseline.maxExhaustJetNoisePressurePa == 0.0F
             && candidate.maxExhaustJetNoisePressurePa > 1.0e-6F
-            && relativeDifference >= 0.01
-            && relativeDifference <= 0.15
+            // The gas boundary already contains the outlet pulse; turbulent
+            // mixing is an additional, sub-dominant source. The old 1% floor
+            // forced its U^8 source to double-count acoustic mouth flow and on
+            // the Big Twin produced 232 Pa spikes over a 22 Pa blowdown bus.
+            // A deterministic 0.02% null difference is comfortably above
+            // numerical noise while preserving the required ordering.
+            && relativeDifference >= 0.0002
+            && relativeDifference <= 0.02
             && differencePeak < 0.25;
         if (!isolated)
             std::cerr << "FAIL: outlet turbulence did not produce an isolated "

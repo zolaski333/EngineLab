@@ -171,7 +171,7 @@ public:
           accelerated_(accelerated),
           renderer_(runtime.audioEvents(), runtime.audioState(),
                     &runtime.cylinderPressureSamples(), &runtime.exhaustGraph(),
-                    &runtime.engineConfig()),
+                    &runtime.engineConfig(), &runtime.exhaustAcousticSamples()),
           block_(2, blockSize), thread_(*this) {
         if (!(sampleRate_ > 0.0) || blockSize_ <= 0)
             throw std::invalid_argument("invalid audio probe format");
@@ -380,6 +380,9 @@ struct Measurement final {
     double meanRpm {};
     double minimumRpm {};
     double maximumRpm {};
+    double meanTorqueNm {};
+    double meanPowerKw {};
+    double meanVolumetricEfficiency {};
     std::size_t intakeWorkers {};
     std::uint64_t overruns {};
     std::uint64_t iterations {};
@@ -425,6 +428,7 @@ struct Measurement final {
                                         std::optional<std::size_t> intakeStaircaseRounds,
                                         std::optional<double> intakeCouplingSeconds,
                                         std::optional<double> intakeTargetCellLengthM,
+                                        std::optional<double> exhaustTargetCellLengthM,
                                         std::optional<double> exhaustCouplingSeconds,
                                         std::optional<bool> intakeFirstOrderTimeIntegration,
                                         std::optional<double> intakeWallHeatUpdateSeconds,
@@ -441,6 +445,7 @@ struct Measurement final {
     simulatorOptions.intakeStaircaseRounds = intakeStaircaseRounds;
     simulatorOptions.intakeCouplingIntervalSeconds = intakeCouplingSeconds;
     simulatorOptions.intakeTargetCellLengthM = intakeTargetCellLengthM;
+    simulatorOptions.exhaustTargetCellLengthM = exhaustTargetCellLengthM;
     simulatorOptions.maximumLowSpeedExhaustCouplingSeconds =
         exhaustCouplingSeconds;
     simulatorOptions.intakeFirstOrderTimeIntegration =
@@ -626,12 +631,18 @@ struct Measurement final {
         + std::chrono::duration_cast<Clock::duration>(
             std::chrono::duration<double>(measureSeconds));
     auto rpmSum = 0.0;
+    auto torqueSum = 0.0;
+    auto powerSum = 0.0;
+    auto volumetricEfficiencySum = 0.0;
     auto rpmSamples = std::uint64_t { 0 };
     result.minimumRpm = std::numeric_limits<double>::infinity();
     result.maximumRpm = 0.0;
     while (Clock::now() < measurementDeadline) {
         const auto state = runtime->snapshot();
         rpmSum += state.rpm;
+        torqueSum += state.cycleAveragedTorqueNm;
+        powerSum += state.cycleAveragedPowerKw;
+        volumetricEfficiencySum += state.volumetricEfficiency;
         ++rpmSamples;
         result.minimumRpm = std::min(result.minimumRpm, state.rpm);
         result.maximumRpm = std::max(result.maximumRpm, state.rpm);
@@ -655,6 +666,13 @@ struct Measurement final {
         ? result.simulatedSeconds / result.wallSeconds : 0.0;
     result.meanRpm = rpmSamples > 0 ? rpmSum / static_cast<double>(rpmSamples)
                                    : runtime->snapshot().rpm;
+    if (rpmSamples > 0) {
+        const auto inverseSamples = 1.0 / static_cast<double>(rpmSamples);
+        result.meanTorqueNm = torqueSum * inverseSamples;
+        result.meanPowerKw = powerSum * inverseSamples;
+        result.meanVolumetricEfficiency =
+            volumetricEfficiencySum * inverseSamples;
+    }
     if (!std::isfinite(result.minimumRpm)) result.minimumRpm = result.meanRpm;
     result.overruns = overrunsEnd - overrunsStart;
     result.droppedEvents =
@@ -726,6 +744,7 @@ int main(int argc, char** argv) {
     std::optional<std::size_t> intakeStaircaseRounds;
     std::optional<double> intakeCouplingSeconds;
     std::optional<double> intakeTargetCellLengthM;
+    std::optional<double> exhaustTargetCellLengthM;
     std::optional<double> exhaustCouplingSeconds;
     std::optional<bool> intakeFirstOrderTimeIntegration;
     std::optional<double> intakeWallHeatUpdateSeconds;
@@ -753,6 +772,8 @@ int main(int argc, char** argv) {
             intakeCouplingSeconds = std::stod(argv[++index]) * 1.0e-6;
         else if (argument == "--intake-cell-mm" && index + 1 < argc)
             intakeTargetCellLengthM = std::stod(argv[++index]) * 1.0e-3;
+        else if (argument == "--exhaust-cell-mm" && index + 1 < argc)
+            exhaustTargetCellLengthM = std::stod(argv[++index]) * 1.0e-3;
         else if (argument == "--exhaust-coupling-us" && index + 1 < argc)
             exhaustCouplingSeconds = std::stod(argv[++index]) * 1.0e-6;
         else if (argument == "--intake-euler")
@@ -783,6 +804,7 @@ int main(int argc, char** argv) {
                          "[--intake-max-cells N] [--intake-staircase-rounds N] "
                          "[--intake-coupling-us N] "
                          "[--intake-cell-mm N] "
+                         "[--exhaust-cell-mm N] "
                          "[--exhaust-coupling-us N] "
                          "[--intake-euler|--intake-rk2] "
                          "[--intake-wall-us N] "
@@ -902,6 +924,7 @@ int main(int argc, char** argv) {
             entry.config, requestedRpm, warmupSeconds, measureSeconds, freeRun,
             intakeWorkers, intakeMaximumCells, intakeStaircaseRounds,
             intakeCouplingSeconds, intakeTargetCellLengthM,
+            exhaustTargetCellLengthM,
             exhaustCouplingSeconds, intakeFirstOrderTimeIntegration,
             intakeWallHeatUpdateSeconds,
             useWellMixedExhaustJunctions, withAudio, outletJetNoiseEnabled,
@@ -947,6 +970,20 @@ int main(int argc, char** argv) {
                       << std::setw(8) << measurement.audio.levelLimitedSamples;
         }
         std::cout << '\n';
+        if (withAudio) {
+            std::cout << "  audio gain min " << std::fixed
+                      << std::setprecision(4)
+                      << measurement.minimumLevelGain
+                      << ", pre-limiter peak "
+                      << measurement.maximumPreLimiterMagnitude << '\n';
+        }
+        if (measurement.valid) {
+            std::cout << "  steady: torque " << std::fixed
+                      << std::setprecision(2) << measurement.meanTorqueNm
+                      << " Nm, power " << measurement.meanPowerKw
+                      << " kW, VE " << std::setprecision(4)
+                      << measurement.meanVolumetricEfficiency << '\n';
+        }
         if (!measurement.valid) {
             std::cerr << "INVALID: " << entry.config.name << ": "
                       << measurement.invalidReason << '\n';

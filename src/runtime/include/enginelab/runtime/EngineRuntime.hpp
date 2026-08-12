@@ -2,6 +2,7 @@
 #include <enginelab/ecu/SimpleEcuModel.hpp>
 #include <enginelab/events/FiringEvent.hpp>
 #include <enginelab/events/CylinderPressureSample.hpp>
+#include <enginelab/events/ExhaustAcousticSample.hpp>
 #include <enginelab/events/FourStrokeEventGenerator.hpp>
 #include <enginelab/exhaust/ExhaustGraph.hpp>
 #include <enginelab/foundation/SpscQueue.hpp>
@@ -24,6 +25,9 @@ using FiringEventQueue = SpscQueue<FiringEvent, 2'048>;
 // slots retain more than 85 ms, covering the adaptive look-ahead plus a full
 // 2,048-sample callback at every supported sample rate.
 using CylinderPressureQueue = SpscQueue<CylinderPressureSample, 8'192>;
+// The finite-volume coupling stream is sparse relative to pressure telemetry;
+// 2,047 slots retain ample audio look-ahead without duplicating it 8,192 times.
+using ExhaustAcousticQueue = SpscQueue<ExhaustAcousticSample, 2'048>;
 enum class AudioExhaustPreset : int { street = 0, openHeaders = 1, turboMuffled = 2, longTube = 3, motorcycle = 4 };
 
 struct RealtimeAudioState final {
@@ -97,6 +101,9 @@ struct RealtimeAudioState final {
     std::atomic<int> saturationPlacement {
         static_cast<int>(AudioSaturationPlacement::postShelf)
     };
+    std::atomic<int> monitorMode {
+        static_cast<int>(AudioMonitorMode::physicalReference)
+    };
     // Microphone/preamp calibration for SI exhaust pressure. dBFS has no
     // intrinsic pressure unit; keeping the capture-chain headroom explicit
     // avoids disguising a fixed voicing gain as acoustics.
@@ -105,7 +112,7 @@ struct RealtimeAudioState final {
     // which documents the measurement it comes from; the constant is duplicated
     // rather than included because audio depends on runtime, not the reverse.
     // RealtimeRegressionTests asserts the two stay equal.
-    std::atomic<float> acousticFullScaleSplDb { 134.0F };
+    std::atomic<float> acousticFullScaleSplDb { 156.0F };
     std::atomic<int> exhaustPreset { static_cast<int>(AudioExhaustPreset::street) };
     // Extended physical telemetry for the intake/forced-induction/mechanical and
     // waveguide audio layers (populated once at construction or per sim frame).
@@ -246,9 +253,16 @@ public:
     [[nodiscard]] EngineState snapshot() const;
     [[nodiscard]] FiringEventQueue& audioEvents() noexcept { return eventQueue_; }
     [[nodiscard]] CylinderPressureQueue& cylinderPressureSamples() noexcept { return *pressureQueue_; }
+    [[nodiscard]] ExhaustAcousticQueue& exhaustAcousticSamples() noexcept {
+        return *exhaustAcousticQueue_;
+    }
     [[nodiscard]] RealtimeAudioState& audioState() noexcept { return audioState_; }
     [[nodiscard]] const EngineConfig& engineConfig() const noexcept { return config_; }
     [[nodiscard]] const ExhaustGraph& exhaustGraph() const noexcept { return exhaust_; }
+    /** Publish a coherent live calibration without reconstructing the runtime.
+     * The simulation thread consumes it at its next 240 Hz boundary. */
+    void applyAudioPhysicsCalibration(
+        const AudioPhysicsCalibration& calibration) noexcept;
     [[nodiscard]] std::size_t intakeWorkerCount() const noexcept {
         return simulator_.intakeWorkerCount();
     }
@@ -257,6 +271,9 @@ public:
     }
     [[nodiscard]] std::uint64_t droppedEventCount() const noexcept { return droppedEvents_.load(); }
     [[nodiscard]] std::uint64_t droppedPressureSampleCount() const noexcept { return droppedPressureSamples_.load(); }
+    [[nodiscard]] std::uint64_t droppedExhaustAcousticSampleCount() const noexcept {
+        return droppedExhaustAcousticSamples_.load();
+    }
     [[nodiscard]] std::uint64_t timingOverrunCount() const noexcept { return timingOverruns_.load(); }
     [[nodiscard]] double maximumTimingLatenessSeconds() const noexcept {
         return maximumTimingLatenessSeconds_.load();
@@ -334,6 +351,7 @@ private:
     // Large enough for adaptive audio look-ahead; heap storage keeps
     // EngineRuntime safe to instantiate in stack-based tools/tests.
     std::unique_ptr<CylinderPressureQueue> pressureQueue_;
+    std::unique_ptr<ExhaustAcousticQueue> exhaustAcousticQueue_;
     RealtimeAudioState audioState_;
     mutable std::mutex snapshotMutex_;
     EngineState snapshot_;
@@ -351,6 +369,7 @@ private:
     std::atomic<double> dynoRampRpmPerSecond_ { 500.0 };
     std::atomic<std::uint64_t> droppedEvents_ { 0 };
     std::atomic<std::uint64_t> droppedPressureSamples_ { 0 };
+    std::atomic<std::uint64_t> droppedExhaustAcousticSamples_ { 0 };
     std::atomic<std::uint64_t> timingOverruns_ { 0 };
     std::atomic<double> maximumTimingLatenessSeconds_ { 0.0 };
     std::atomic<double> realtimeFactor_ { 1.0 };
@@ -361,6 +380,9 @@ private:
     std::atomic<bool> realtimeLoadProtectionActive_ { false };
     std::atomic<std::uint64_t> realtimeLoadProtectionActivations_ { 0 };
     std::atomic<double> timeScale_ { 1.0 };
+    mutable std::mutex audioPhysicsCalibrationMutex_;
+    AudioPhysicsCalibration pendingAudioPhysicsCalibration_ {};
+    std::atomic<std::uint64_t> audioPhysicsCalibrationRevision_ { 0 };
     // UI writes only the desired state. The simulation thread owns all mutable
     // session fields below and reconciles this mailbox once per tick.
     std::atomic<bool> dynoRequestedRunning_ { false };

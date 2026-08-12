@@ -47,6 +47,7 @@
 //   EngineLabAfterfireHarness [--engines NAME] [--trace] [--audio DIR]
 //                             [--fuel-fraction F] [--ignition-k K]
 //                             [--reaction-ms MS] [--overrun-seconds S]
+//                             [--pulse-timing-variation FRACTION]
 //                             [--list]
 
 #include <enginelab/audio/ImpulseResponseLoader.hpp>
@@ -115,6 +116,9 @@ struct Metrics final {
     int eventCount { 0 };
     double largestEventRiseMs { 0.0 };
     double largestEventPeakKw { 0.0 };
+    double minimumEventIntervalMs { 0.0 };
+    double maximumEventIntervalMs { 0.0 };
+    double eventIntervalStdDevMs { 0.0 };
     double burnedFuelMg { 0.0 };
     int overrunActiveSteps { 0 };
     // Port pressure, the only quantity that can carry the bang to the audio.
@@ -210,7 +214,7 @@ public:
         renderer_ = std::make_unique<enginelab::RealtimeEngineAudio>(
             runtime_->audioEvents(), runtime_->audioState(),
             &runtime_->cylinderPressureSamples(), &runtime_->exhaustGraph(),
-            &runtime_->engineConfig());
+            &runtime_->engineConfig(), &runtime_->exhaustAcousticSamples());
         if (!impulseResponsePath.empty()) {
             auto impulse = enginelab::loadImpulseResponseFile(
                 juce::File(impulseResponsePath.string()));
@@ -247,6 +251,26 @@ public:
             pressureSample.timeSeconds =
                 realtimeSeconds_ + fraction * stepSeconds;
             if (!runtime_->cylinderPressureSamples().tryPush(pressureSample))
+                ++droppedPressureSamples_;
+        }
+        enginelab::ExhaustAcousticSample acousticSample;
+        while (simulator.tryPopExhaustAcousticSample(acousticSample)) {
+            const auto fraction = std::clamp(
+                (acousticSample.timeSeconds - simulationStart) / stepSeconds,
+                0.0, 1.0);
+            acousticSample.timeSeconds =
+                realtimeSeconds_ + fraction * stepSeconds;
+            for (std::size_t eventIndex = 0;
+                 eventIndex < acousticSample.reactionEventCount;
+                 ++eventIndex) {
+                const auto eventFraction = std::clamp(
+                    (acousticSample.reactionEvents[eventIndex].timeSeconds
+                        - simulationStart) / stepSeconds,
+                    0.0, 1.0);
+                acousticSample.reactionEvents[eventIndex].timeSeconds =
+                    realtimeSeconds_ + eventFraction * stepSeconds;
+            }
+            if (!runtime_->exhaustAcousticSamples().tryPush(acousticSample))
                 ++droppedPressureSamples_;
         }
         enginelab::publishAudioFrame(runtime_->audioState(), frame.state,
@@ -330,7 +354,9 @@ struct Options final {
     bool list { false };
     std::filesystem::path audioDirectory;
     std::filesystem::path impulseResponsePath;
-    double fuelFraction { 0.12 };
+    // Same measured combustible discrete-slug calibration as the listening
+    // lab engine. Callers can still select zero for the strict DFCO control.
+    double fuelFraction { 0.18 };
     double ignitionTemperatureK { 900.0 };
     double reactionMilliseconds { 10.0 };
     double overrunSeconds { 3.0 };
@@ -339,6 +365,7 @@ struct Options final {
     // Zero keeps the historical continuous strategy (anti-lag).
     double pulseHz { 0.0 };
     double pulseDuty { 0.35 };
+    double pulseTimingVariation { 0.25 };
     // Speed the measured overrun opens at. Must be controlled: left to the
     // warm-up it lands on the rev limiter, where engine pumping buries the
     // afterfire and the audio verdict is about the wrong thing entirely.
@@ -352,13 +379,21 @@ Metrics measureAfterfire(const enginelab::EngineConfig& baseConfig,
     // measures; nothing here creates fuel or an audio event by itself -- the
     // ECU still has to reach its own DFCO state and the chemistry still has to
     // find oxygen and temperature.
-    config.exhaustAfterfire.enabled = true;
+    config.exhaustAfterfire.strategy = options.fuelFraction <= 0.0
+        ? enginelab::ExhaustAfterfireStrategy::cleanDfco
+        : (options.pulseHz > 0.0
+            ? enginelab::ExhaustAfterfireStrategy::discreteAfterfire
+            : enginelab::ExhaustAfterfireStrategy::continuousAntiLag);
+    config.exhaustAfterfire.enabled =
+        enginelab::afterfireRetainsFuel(config.exhaustAfterfire.strategy);
     config.exhaustAfterfire.overrunFuelFraction = options.fuelFraction;
     config.exhaustAfterfire.ignitionTemperatureK = options.ignitionTemperatureK;
     config.exhaustAfterfire.reactionTimeConstantSeconds =
         options.reactionMilliseconds * 0.001;
     config.exhaustAfterfire.overrunPulseHz = options.pulseHz;
     config.exhaustAfterfire.overrunPulseDutyCycle = options.pulseDuty;
+    config.exhaustAfterfire.overrunPulseTimingVariation =
+        options.pulseTimingVariation;
     // The rpm gate has to sit under what this engine actually reaches in the
     // acceleration below, or the strategy never arms and the run measures
     // nothing while looking like a null result.
@@ -553,7 +588,10 @@ Metrics measureAfterfire(const enginelab::EngineConfig& baseConfig,
         metrics.peakHeatKw = std::max(metrics.peakHeatKw, sample.heatKw);
         metrics.burnedFuelMg += sample.fuelBurnMgPerSecond * stepSeconds;
         if (sample.overrunActive) ++metrics.overrunActiveSteps;
-        if (sample.heatKw > 0.0) ++activeSteps;
+        // Ignore sub-milliwatt numerical residue. A clean-DFCO run can carry a
+        // positive denormal-sized heat value even though no fuel is consumed;
+        // treating that as 100 % duty and one burst makes the diagnostic lie.
+        if (sample.heatKw > 1.0e-6) ++activeSteps;
         metrics.portPeakDuringOverrunKpa = std::max(
             metrics.portPeakDuringOverrunKpa, sample.exhaustPortPeakKpa);
         metrics.wallTemperatureMinDuringOverrunC =
@@ -600,7 +638,7 @@ Metrics measureAfterfire(const enginelab::EngineConfig& baseConfig,
     // than a tuned kW number that would only suit one displacement. A smear
     // produces one enormous "event" covering the whole window, which the duty
     // cycle then exposes; a bang produces several short ones.
-    if (metrics.peakHeatKw > 0.0) {
+    if (metrics.peakHeatKw > 1.0e-6) {
         // Threshold from the settled window's OWN median, halfway between
         // trough and peak in the log sense. Anchoring it to a fraction of the
         // peak is what hid a 21x modulation behind "one continuous event".
@@ -610,12 +648,15 @@ Metrics measureAfterfire(const enginelab::EngineConfig& baseConfig,
             0.5 * percentile(overrunHeat, 0.50));
         auto inEvent = false;
         std::size_t eventStart = 0;
+        std::vector<double> eventStartsSeconds;
         for (std::size_t index = 0; index < overrunHeat.size(); ++index) {
             const auto above = overrunHeat[index] > threshold;
             if (above && !inEvent) { inEvent = true; eventStart = index; }
             if ((!above || index + 1 == overrunHeat.size()) && inEvent) {
                 inEvent = false;
                 ++metrics.eventCount;
+                eventStartsSeconds.push_back(
+                    static_cast<double>(eventStart) * stepSeconds);
                 auto peak = 0.0;
                 std::size_t peakIndex = eventStart;
                 for (auto scan = eventStart; scan <= index; ++scan) {
@@ -638,6 +679,33 @@ Metrics measureAfterfire(const enginelab::EngineConfig& baseConfig,
                         * stepSeconds * 1'000.0;
                 }
             }
+        }
+        if (eventStartsSeconds.size() > 1) {
+            auto intervalSum = 0.0;
+            std::vector<double> intervals;
+            intervals.reserve(eventStartsSeconds.size() - 1);
+            for (std::size_t index = 1;
+                 index < eventStartsSeconds.size(); ++index) {
+                const auto interval = eventStartsSeconds[index]
+                    - eventStartsSeconds[index - 1];
+                intervals.push_back(interval);
+                intervalSum += interval;
+            }
+            const auto mean = intervalSum
+                / static_cast<double>(intervals.size());
+            auto varianceSum = 0.0;
+            metrics.minimumEventIntervalMs = intervals.front() * 1'000.0;
+            metrics.maximumEventIntervalMs = intervals.front() * 1'000.0;
+            for (const auto interval : intervals) {
+                const auto delta = interval - mean;
+                varianceSum += delta * delta;
+                metrics.minimumEventIntervalMs = std::min(
+                    metrics.minimumEventIntervalMs, interval * 1'000.0);
+                metrics.maximumEventIntervalMs = std::max(
+                    metrics.maximumEventIntervalMs, interval * 1'000.0);
+            }
+            metrics.eventIntervalStdDevMs = std::sqrt(
+                varianceSum / static_cast<double>(intervals.size())) * 1'000.0;
         }
     }
 
@@ -750,6 +818,11 @@ void report(const Metrics& metrics) {
         metrics.modulationDepth < 2.0 ? " (ripple, not bursts)" : "",
         metrics.largestEventPeakKw,
         metrics.largestEventRiseMs, metrics.burnedFuelMg);
+    if (metrics.eventCount > 1)
+        std::printf("    burst spacing min %6.1f ms  max %6.1f ms"
+                    "  stddev %6.1f ms\n",
+            metrics.minimumEventIntervalMs, metrics.maximumEventIntervalMs,
+            metrics.eventIntervalStdDevMs);
     std::printf("    port  overrun peak %7.1f kPa  pre-lift mean %7.1f kPa\n",
         metrics.portPeakDuringOverrunKpa, metrics.portBaselineKpa);
     if (metrics.audioMeasured) {
@@ -794,6 +867,8 @@ int main(int argc, char** argv) {
             options.liftOffRpm = std::stod(next());
         else if (argument == "--pulse-hz") options.pulseHz = std::stod(next());
         else if (argument == "--pulse-duty") options.pulseDuty = std::stod(next());
+        else if (argument == "--pulse-timing-variation")
+            options.pulseTimingVariation = std::stod(next());
         else {
             std::fprintf(stderr, "unknown argument: %s\n", argument.c_str());
             return 2;

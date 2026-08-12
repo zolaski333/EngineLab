@@ -73,8 +73,10 @@ RealtimeEngineAudio::RealtimeEngineAudio(FiringEventQueue& queue,
                                          RealtimeAudioState& state,
                                          CylinderPressureQueue* pressureQueue,
                                          const ExhaustGraph* exhaustGraph,
-                                         const EngineConfig* engineConfig)
+                                         const EngineConfig* engineConfig,
+                                         ExhaustAcousticQueue* exhaustAcousticQueue)
     : queue_(queue), realtimeState_(state), pressureQueue_(pressureQueue),
+      exhaustAcousticQueue_(exhaustAcousticQueue),
       runners_(std::make_unique<RunnerWaveguides>()) {
     if (exhaustGraph != nullptr) {
         std::array<std::uint32_t, maxRunners> cylinderIds {};
@@ -300,6 +302,12 @@ void RealtimeEngineAudio::release() noexcept {
     wetExhaustRadiationLowLeft_ = wetExhaustRadiationLowRight_ = 0.0F;
     currentPressureSample_ = {}; nextPressureSample_ = {};
     hasCurrentPressureSample_ = hasNextPressureSample_ = false;
+    currentExhaustAcousticSample_ = {};
+    nextExhaustAcousticSample_ = {};
+    hasCurrentExhaustAcousticSample_ = false;
+    hasNextExhaustAcousticSample_ = false;
+    reactionVoices_.fill({});
+    lastReactionEventSampleTime_ = -1.0;
     cylinderPressureRawPrevious_.fill(0.0F);
     cylinderPressureHighPass_.fill(0.0F);
     cylinderPressureHighPassPrevious_.fill(0.0F);
@@ -335,6 +343,11 @@ void RealtimeEngineAudio::release() noexcept {
     physicalExhaustActive_ = false;
     pressureSampleIntervalSeconds_ = 0.0;
     levelLimitedSamples_.store(0, std::memory_order_relaxed);
+    saturationProcessedSamples_.store(0, std::memory_order_relaxed);
+    softLimitedSamples_.store(0, std::memory_order_relaxed);
+    hardClampedSamples_.store(0, std::memory_order_relaxed);
+    droppedReactionEvents_.store(0, std::memory_order_relaxed);
+    maximumTruePeakMagnitude_.store(0.0F, std::memory_order_relaxed);
     minObservedLevelGain_.store(1.0F, std::memory_order_relaxed);
     maxObservedExhaustPressurePa_.store(0.0F, std::memory_order_relaxed);
     maxObservedExhaustJetNoisePressurePa_.store(
@@ -540,6 +553,24 @@ void RealtimeEngineAudio::renderWithStems(
         receivedTimestampedPayload = receivedTimestampedPayload
             || hasCurrentPressureSample_ || hasNextPressureSample_;
     }
+    if (exhaustAcousticQueue_) {
+        if (!hasCurrentExhaustAcousticSample_)
+            hasCurrentExhaustAcousticSample_ =
+                exhaustAcousticQueue_->tryPop(currentExhaustAcousticSample_);
+        if (hasCurrentExhaustAcousticSample_
+            && !hasNextExhaustAcousticSample_)
+            hasNextExhaustAcousticSample_ =
+                exhaustAcousticQueue_->tryPop(nextExhaustAcousticSample_);
+        if (hasCurrentExhaustAcousticSample_)
+            latestPayloadTime = std::max(latestPayloadTime,
+                currentExhaustAcousticSample_.timeSeconds);
+        if (hasNextExhaustAcousticSample_)
+            latestPayloadTime = std::max(latestPayloadTime,
+                nextExhaustAcousticSample_.timeSeconds);
+        receivedTimestampedPayload = receivedTimestampedPayload
+            || hasCurrentExhaustAcousticSample_
+            || hasNextExhaustAcousticSample_;
+    }
     const auto publishedProducerNanoseconds = realtimeState_.producerTimeNanoseconds.load(std::memory_order_acquire);
     if (publishedProducerNanoseconds > 0) {
         // The runtime's steady-clock epoch is authoritative. Payload timestamps
@@ -577,24 +608,39 @@ void RealtimeEngineAudio::renderWithStems(
     const auto stress = realtimeState_.mechanicalStress.load(std::memory_order_relaxed);
     const auto starter = realtimeState_.starter.load(std::memory_order_relaxed);
     const auto timeScale = std::clamp(publishedTimeScale, 0.0F, 4.0F);
+    const auto physicalReferenceMonitor = static_cast<AudioMonitorMode>(
+        realtimeState_.monitorMode.load(std::memory_order_relaxed))
+        == AudioMonitorMode::physicalReference;
     const auto volume = std::clamp(realtimeState_.volume.load(std::memory_order_relaxed), 0.0F, 2.0F);
     const auto convolution = std::clamp(
         realtimeState_.convolution.load(std::memory_order_relaxed), 0.0F, 1.0F);
-    const auto highGain = std::clamp(
+    const auto highGain = physicalReferenceMonitor ? 1.0F : std::clamp(
         realtimeState_.highFrequencyGain.load(std::memory_order_relaxed), 0.2F, 2.5F);
-    const auto lowGain = std::clamp(
+    const auto lowGain = physicalReferenceMonitor ? 1.0F : std::clamp(
         realtimeState_.lowFrequencyGain.load(std::memory_order_relaxed), 0.2F, 2.5F);
-    const auto lowNoise = realtimeState_.lowFrequencyNoise.load(std::memory_order_relaxed);
-    const auto highNoise = realtimeState_.highFrequencyNoise.load(std::memory_order_relaxed);
-    const auto combustionGain = realtimeState_.combustionGain.load(std::memory_order_relaxed);
-    const auto exhaustGain = realtimeState_.exhaustGain.load(std::memory_order_relaxed);
-    const auto intakeGain = realtimeState_.intakeGain.load(std::memory_order_relaxed);
-    const auto mechanicalGain = realtimeState_.mechanicalGain.load(std::memory_order_relaxed);
-    const auto stereoWidth = std::clamp(
+    const auto lowNoise = physicalReferenceMonitor ? 0.0F
+        : realtimeState_.lowFrequencyNoise.load(std::memory_order_relaxed);
+    const auto highNoise = physicalReferenceMonitor ? 0.0F
+        : realtimeState_.highFrequencyNoise.load(std::memory_order_relaxed);
+    const auto layerGain = [physicalReferenceMonitor](float requested) {
+        // Reference mode is unity calibrated, but an explicit zero remains a
+        // hard mute so source isolation and mute/solo controls still work.
+        return physicalReferenceMonitor
+            ? (requested <= 0.0F ? 0.0F : 1.0F) : requested;
+    };
+    const auto combustionGain = layerGain(
+        realtimeState_.combustionGain.load(std::memory_order_relaxed));
+    const auto exhaustGain = layerGain(
+        realtimeState_.exhaustGain.load(std::memory_order_relaxed));
+    const auto intakeGain = layerGain(
+        realtimeState_.intakeGain.load(std::memory_order_relaxed));
+    const auto mechanicalGain = layerGain(
+        realtimeState_.mechanicalGain.load(std::memory_order_relaxed));
+    const auto stereoWidth = physicalReferenceMonitor ? 1.0F : std::clamp(
         realtimeState_.stereoWidth.load(std::memory_order_relaxed), 0.0F, 2.0F);
-    const auto outletJetGain = std::clamp(
+    const auto outletJetGain = physicalReferenceMonitor ? 1.0F : std::clamp(
         realtimeState_.outletJetGain.load(std::memory_order_relaxed), 0.0F, 2.0F);
-    const auto saturationDrive = std::clamp(
+    const auto saturationDrive = physicalReferenceMonitor ? 0.0F : std::clamp(
         realtimeState_.saturationDrive.load(std::memory_order_relaxed), 0.0F, 4.0F);
     const auto saturationPlacement = static_cast<AudioSaturationPlacement>(
         realtimeState_.saturationPlacement.load(std::memory_order_relaxed));
@@ -800,16 +846,35 @@ void RealtimeEngineAudio::renderWithStems(
         // flushes and slewed per sample inside the network, so the step at each
         // flush never reaches a scattering coefficient.
         std::array<AcousticExhaustNetwork::Medium,
-                   CylinderPressureSample::maximumExhaustDucts> ductMedia {};
+                   ExhaustAcousticSample::maximumDucts> ductMedia {};
+        std::array<AcousticExhaustNetwork::OutletBoundary,
+                   ExhaustAcousticSample::maximumOutlets> outletBoundaries {};
         auto ductMediumCount = std::size_t { 0 };
-        if (hasCurrentPressureSample_) {
-            ductMediumCount = std::min(currentPressureSample_.exhaustDuctCount,
+        auto outletBoundaryCount = std::size_t { 0 };
+        if (hasCurrentExhaustAcousticSample_) {
+            ductMediumCount = std::min(currentExhaustAcousticSample_.ductCount,
                                        ductMedia.size());
             for (std::size_t duct = 0; duct < ductMediumCount; ++duct)
                 ductMedia[duct] = {
-                    currentPressureSample_.exhaustDuctDensityKgPerM3[duct],
-                    currentPressureSample_.exhaustDuctSpeedOfSoundMps[duct],
+                    currentExhaustAcousticSample_.ductDensityKgPerM3[duct],
+                    currentExhaustAcousticSample_.ductSpeedOfSoundMps[duct],
                 };
+            outletBoundaryCount = std::min(
+                currentExhaustAcousticSample_.outletCount,
+                outletBoundaries.size());
+            for (std::size_t outlet = 0;
+                 outlet < outletBoundaryCount; ++outlet) {
+                outletBoundaries[outlet] = {
+                    currentExhaustAcousticSample_.outletNodeId[outlet],
+                    currentExhaustAcousticSample_
+                        .outletMassFlowKgPerSecond[outlet],
+                    currentExhaustAcousticSample_
+                        .outletDensityKgPerM3[outlet],
+                    currentExhaustAcousticSample_
+                        .outletSpeedOfSoundMps[outlet],
+                    currentExhaustAcousticSample_.outletAreaM2[outlet],
+                };
+            }
         }
         acousticExhaustNetwork_->beginBlock(
             std::span<const AcousticExhaustNetwork::Medium>(
@@ -817,7 +882,9 @@ void RealtimeEngineAudio::renderWithStems(
             acousticTimeScale,
             std::span<const float>(meanMassFlow.data(), exhaustPathCount),
             std::span<const AcousticExhaustNetwork::Medium>(
-                ductMedia.data(), ductMediumCount));
+                ductMedia.data(), ductMediumCount),
+            std::span<const AcousticExhaustNetwork::OutletBoundary>(
+                outletBoundaries.data(), outletBoundaryCount));
     }
     if (acousticIntakeNetwork_) {
         std::array<AcousticIntakeNetwork::PathBoundary, maximumPaths> paths {};
@@ -916,6 +983,73 @@ void RealtimeEngineAudio::renderWithStems(
         auto sampleUsesPhysicalExhaust = acousticExhaustNetwork_ != nullptr
             || physicalExhaustActive_.load(std::memory_order_relaxed);
         std::size_t activeCylinderCount = 0;
+        if (exhaustAcousticQueue_ && hasCurrentExhaustAcousticSample_
+            && currentExhaustAcousticSample_.timeSeconds <= audioTimeSeconds_) {
+            if (currentExhaustAcousticSample_.timeSeconds
+                    > lastReactionEventSampleTime_ + 1.0e-12) {
+                droppedReactionEvents_.fetch_add(
+                    currentExhaustAcousticSample_.droppedReactionEventCount,
+                    std::memory_order_relaxed);
+                for (std::size_t eventIndex = 0;
+                     eventIndex < currentExhaustAcousticSample_
+                        .reactionEventCount; ++eventIndex) {
+                    const auto& reactionEvent = currentExhaustAcousticSample_
+                        .reactionEvents[eventIndex];
+                    if (!(reactionEvent.releasedEnergyJoules > 0.0F)
+                        || !(reactionEvent.durationSeconds > 0.0F)
+                        || !(reactionEvent.flowAreaM2 > 0.0F)
+                        || !(reactionEvent.speedOfSoundMps > 0.0F))
+                        continue;
+                    auto voice = std::find_if(
+                        reactionVoices_.begin(), reactionVoices_.end(),
+                        [&reactionEvent](const auto& candidate) noexcept {
+                            return candidate.active
+                                && candidate.nodeId == reactionEvent.nodeId;
+                        });
+                    if (voice == reactionVoices_.end())
+                        voice = std::find_if(
+                            reactionVoices_.begin(), reactionVoices_.end(),
+                            [](const auto& candidate) noexcept {
+                                return !candidate.active;
+                            });
+                    if (voice == reactionVoices_.end())
+                        voice = std::min_element(
+                            reactionVoices_.begin(), reactionVoices_.end(),
+                            [](const auto& left, const auto& right) noexcept {
+                                return left.smoothedPowerW
+                                    < right.smoothedPowerW;
+                            });
+                    if (!voice->active
+                        || voice->nodeId != reactionEvent.nodeId)
+                        *voice = {};
+                    voice->active = true;
+                    voice->nodeId = reactionEvent.nodeId;
+                    voice->axialPosition = reactionEvent.axialPosition;
+                    voice->flowAreaM2 = reactionEvent.flowAreaM2;
+                    voice->speedOfSoundMps = reactionEvent.speedOfSoundMps;
+                    voice->targetPowerW = static_cast<double>(
+                        reactionEvent.releasedEnergyJoules)
+                        / static_cast<double>(reactionEvent.durationSeconds);
+                    voice->lastUpdateTimeSeconds = audioTimeSeconds_;
+                    voice->holdSeconds = std::max(0.0005,
+                        2.0 * static_cast<double>(
+                            reactionEvent.durationSeconds));
+                }
+                lastReactionEventSampleTime_ =
+                    currentExhaustAcousticSample_.timeSeconds;
+            }
+            if (hasNextExhaustAcousticSample_) {
+                currentExhaustAcousticSample_ =
+                    nextExhaustAcousticSample_;
+                hasNextExhaustAcousticSample_ =
+                    exhaustAcousticQueue_->tryPop(
+                        nextExhaustAcousticSample_);
+            } else {
+                hasNextExhaustAcousticSample_ =
+                    exhaustAcousticQueue_->tryPop(
+                        nextExhaustAcousticSample_);
+            }
+        }
         if (pressureQueue_ && hasCurrentPressureSample_) {
             const auto pressureTime = audioTimeSeconds_;
             while (hasNextPressureSample_ && nextPressureSample_.timeSeconds <= pressureTime) {
@@ -953,7 +1087,8 @@ void RealtimeEngineAudio::renderWithStems(
                 // anti-imaging reconstruction when it moves by more than 1%.
                 // The rate follows engine speed, so refits are rare relative to
                 // the audio rate and the transcendental cost is amortised away.
-                const auto couplingHz = currentPressureSample_.exhaustCouplingFrequencyHz;
+                const auto couplingHz = hasCurrentExhaustAcousticSample_
+                    ? currentExhaustAcousticSample_.couplingFrequencyHz : 0.0;
                 if (std::abs(couplingHz - boundaryReconstructionCouplingHz_)
                         > 0.01 * std::max(couplingHz, boundaryReconstructionCouplingHz_)
                     || valveFlowSourceRateChanged) {
@@ -1360,6 +1495,55 @@ void RealtimeEngineAudio::renderWithStems(
         const auto useCompiledTopology = sampleUsesPhysicalExhaust
             && acousticExhaustNetwork_ != nullptr;
         if (useCompiledTopology) {
+            // The FV energy update already owns DC/low-band pressure.  Inject
+            // only its causal high-band complement, at the exact reacting node.
+            // A constant anti-lag heat release therefore settles to silence in
+            // this branch, while the onset/cessation of a transported slug
+            // produces the compact pressure front a listener recognises as a
+            // pop. No sample or oscillator is involved.
+            const auto couplingHz = std::max(1.0,
+                hasCurrentExhaustAcousticSample_
+                    ? currentExhaustAcousticSample_.couplingFrequencyHz
+                    : 0.0);
+            const auto crossoverHz = std::clamp(
+                couplingHz * 0.42, 300.0,
+                std::min(6'000.0, sampleRate_ * 0.35));
+            const auto crossoverPole = static_cast<float>(std::exp(
+                -2.0 * std::numbers::pi * crossoverHz / sampleRate_));
+            const auto attack = 1.0 - std::exp(
+                -1.0 / (sampleRate_ * 0.00020));
+            const auto release = 1.0 - std::exp(
+                -1.0 / (sampleRate_ * 0.0015));
+            for (auto& voice : reactionVoices_) {
+                if (!voice.active) continue;
+                if (audioTimeSeconds_ - voice.lastUpdateTimeSeconds
+                    > voice.holdSeconds)
+                    voice.targetPowerW = 0.0;
+                const auto coefficient = voice.targetPowerW
+                        > voice.smoothedPowerW ? attack : release;
+                voice.smoothedPowerW += coefficient
+                    * (voice.targetPowerW - voice.smoothedPowerW);
+                constexpr double exhaustGammaMinusOne = 0.34;
+                const auto sourcePressurePa = static_cast<float>(
+                    exhaustGammaMinusOne * voice.smoothedPowerW
+                    / (2.0 * std::max(1.0e-8F, voice.flowAreaM2)
+                        * std::max(100.0F, voice.speedOfSoundMps)));
+                voice.highPass1 = crossoverPole
+                    * (voice.highPass1 + sourcePressurePa
+                        - voice.previousInput1);
+                voice.previousInput1 = sourcePressurePa;
+                voice.highPass2 = crossoverPole
+                    * (voice.highPass2 + voice.highPass1
+                        - voice.previousInput2);
+                voice.previousInput2 = voice.highPass1;
+                (void) acousticExhaustNetwork_->injectReactionPressure(
+                    voice.nodeId, voice.axialPosition,
+                    voice.highPass2);
+                if (voice.targetPowerW == 0.0
+                    && std::abs(voice.smoothedPowerW) < 1.0e-6
+                    && std::abs(voice.highPass2) < 1.0e-6F)
+                    voice = {};
+            }
             const auto observerPressure = acousticExhaustNetwork_->process(
                 std::span<const float>(cylinderExhaustPulse.data(), activeCylinderCount),
                 std::span<const PortBoundary>(portBoundary_.data(), activeCylinderCount),
@@ -1882,6 +2066,7 @@ void RealtimeEngineAudio::renderWithStems(
     std::uint64_t levelLimitedBlockSamples = 0;
     float levelGainBlockMin = 1.0F;
     float preLimiterBlockPeak = 0.0F;
+    std::uint64_t saturationProcessedBlockSamples = 0;
     for (int sample = 0; sample < sampleCount; ++sample) {
         const auto dryLeft = output.getNumChannels() > 0
             ? output.getSample(0, startSample + sample) : 0.0F;
@@ -1915,6 +2100,7 @@ void RealtimeEngineAudio::renderWithStems(
                 && saturationPlacement == AudioSaturationPlacement::preShelf) {
             left = applyVoicingSaturation(left, saturationDrive);
             right = applyVoicingSaturation(right, saturationDrive);
+            ++saturationProcessedBlockSamples;
         }
 
         toneLowLeft_ += toneCoefficient_ * (left - toneLowLeft_);
@@ -1922,11 +2108,6 @@ void RealtimeEngineAudio::renderWithStems(
         left = toneLowLeft_ * lowGain + (left - toneLowLeft_) * highGain;
         right = toneLowRight_ * lowGain + (right - toneLowRight_) * highGain;
 
-        if (saturationDrive > 0.0F
-                && saturationPlacement == AudioSaturationPlacement::postShelf) {
-            left = applyVoicingSaturation(left, saturationDrive);
-            right = applyVoicingSaturation(right, saturationDrive);
-        }
         if (stereoWidth != 1.0F) {
             const auto mid = 0.5F * (left + right);
             const auto side = 0.5F * (left - right) * stereoWidth;
@@ -1972,31 +2153,75 @@ void RealtimeEngineAudio::renderWithStems(
         minObservedLevelGain_.store(levelGainBlockMin, std::memory_order_relaxed);
     if (preLimiterBlockPeak > maxPreLimiterMagnitude_.load(std::memory_order_relaxed))
         maxPreLimiterMagnitude_.store(preLimiterBlockPeak, std::memory_order_relaxed);
-    // Pass 2: single transparent soft-limiter (identity below the knee), run at
-    // 2x oversampling so the peak-shaping harmonics do not alias back down.
+    // Pass 2: capture-mode post-shelf saturation and the transparent limiter
+    // share one 2x domain. Product voicings all use this placement; keeping the
+    // non-linearity above Nyquist prevents the former harsh folded top end.
+    const auto oversampledPostSaturation = saturationDrive > 0.0F
+        && saturationPlacement == AudioSaturationPlacement::postShelf;
     if (oversampler_ && output.getNumChannels() >= 2) {
         auto block = juce::dsp::AudioBlock<float>(output)
             .getSubsetChannelBlock(0, 2)
             .getSubBlock(static_cast<std::size_t>(startSample), static_cast<std::size_t>(sampleCount));
         auto oversampled = oversampler_->processSamplesUp(block);
+        auto affected = std::uint64_t { 0 };
         for (std::size_t channel = 0; channel < oversampled.getNumChannels(); ++channel) {
             auto* data = oversampled.getChannelPointer(channel);
-            for (std::size_t index = 0; index < oversampled.getNumSamples(); ++index)
+            for (std::size_t index = 0; index < oversampled.getNumSamples(); ++index) {
+                if (oversampledPostSaturation)
+                    data[index] = applyVoicingSaturation(
+                        data[index], saturationDrive);
+                if (std::abs(data[index]) > 0.82F) ++affected;
                 data[index] = softLimit(data[index]);
+            }
         }
         oversampler_->processSamplesDown(block);
+        if (oversampledPostSaturation)
+            saturationProcessedBlockSamples +=
+                static_cast<std::uint64_t>(sampleCount);
+        if (affected != 0)
+            softLimitedSamples_.fetch_add(affected, std::memory_order_relaxed);
     } else {
+        auto affected = std::uint64_t { 0 };
         for (int sample = 0; sample < sampleCount; ++sample) {
-            if (output.getNumChannels() > 0)
+            if (output.getNumChannels() > 0) {
+                if (oversampledPostSaturation)
+                    output.setSample(0, startSample + sample,
+                        applyVoicingSaturation(output.getSample(
+                            0, startSample + sample), saturationDrive));
+                if (std::abs(output.getSample(0, startSample + sample)) > 0.82F)
+                    ++affected;
                 output.setSample(0, startSample + sample, softLimit(output.getSample(0, startSample + sample)));
-            if (output.getNumChannels() > 1)
+            }
+            if (output.getNumChannels() > 1) {
+                if (oversampledPostSaturation)
+                    output.setSample(1, startSample + sample,
+                        applyVoicingSaturation(output.getSample(
+                            1, startSample + sample), saturationDrive));
+                if (std::abs(output.getSample(1, startSample + sample)) > 0.82F)
+                    ++affected;
                 output.setSample(1, startSample + sample, softLimit(output.getSample(1, startSample + sample)));
+            }
         }
+        if (oversampledPostSaturation)
+            saturationProcessedBlockSamples +=
+                static_cast<std::uint64_t>(sampleCount);
+        if (affected != 0)
+            softLimitedSamples_.fetch_add(affected, std::memory_order_relaxed);
     }
+    if (saturationProcessedBlockSamples != 0)
+        saturationProcessedSamples_.fetch_add(
+            saturationProcessedBlockSamples, std::memory_order_relaxed);
     // Pass 3: leave inter-sample headroom after downsampling and downmix extras.
+    auto hardClampedBlockSamples = std::uint64_t { 0 };
+    auto truePeakBlockMagnitude = 0.0F;
     for (int sample = 0; sample < sampleCount; ++sample) {
         const auto left = output.getNumChannels() > 0 ? output.getSample(0, startSample + sample) : 0.0F;
         const auto right = output.getNumChannels() > 1 ? output.getSample(1, startSample + sample) : left;
+        truePeakBlockMagnitude = std::max(truePeakBlockMagnitude,
+            std::max(std::abs(left), std::abs(right)));
+        if (!std::isfinite(left) || !std::isfinite(right)
+            || std::abs(left) > 0.999F || std::abs(right) > 0.999F)
+            ++hardClampedBlockSamples;
         const auto outLeft = std::clamp(finiteState(left, 1.0F), -0.999F, 0.999F);
         const auto outRight = std::clamp(finiteState(right, 1.0F), -0.999F, 0.999F);
         if (output.getNumChannels() > 0) output.setSample(0, startSample + sample, outLeft);
@@ -2004,6 +2229,13 @@ void RealtimeEngineAudio::renderWithStems(
         for (int channel = 2; channel < output.getNumChannels(); ++channel)
             output.setSample(channel, startSample + sample, (outLeft + outRight) * 0.5F);
     }
+    if (hardClampedBlockSamples != 0)
+        hardClampedSamples_.fetch_add(
+            hardClampedBlockSamples, std::memory_order_relaxed);
+    if (truePeakBlockMagnitude
+        > maximumTruePeakMagnitude_.load(std::memory_order_relaxed))
+        maximumTruePeakMagnitude_.store(
+            truePeakBlockMagnitude, std::memory_order_relaxed);
 }
 
 void RealtimeEngineAudio::trigger(const FiringEvent& event, bool exhaust) noexcept {

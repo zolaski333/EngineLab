@@ -401,9 +401,31 @@ void normaliseEngineConfig(EngineConfig& config) {
     // Schema 2 added authored exhaust DAGs/topology provenance; schema 3 adds
     // explicit valve geometry; schema 4 adds SI outlet/observer coordinates;
     // schema 5 adds authored vehicle layout and longitudinal load-transfer
-    // geometry. Older documents migrate to the documented defaults below.
+    // geometry; schema 6 makes the overrun strategy explicit and adds local
+    // induction/flammability/quench calibration. Older documents migrate to
+    // the documented defaults below.
+    const auto sourceSchemaVersion = config.schemaVersion;
     if (config.schemaVersion < currentEngineSchemaVersion)
         config.schemaVersion = currentEngineSchemaVersion;
+    // Schema <=5 only had `enabled`, fuel fraction and an optional pulse rate.
+    // Programmatic callers also commonly still set those three fields, so the
+    // same deterministic migration is intentionally accepted there.  Once a
+    // non-clean strategy is present it is authoritative.
+    if (config.exhaustAfterfire.strategy
+            == ExhaustAfterfireStrategy::cleanDfco
+        && config.exhaustAfterfire.enabled) {
+        config.exhaustAfterfire.strategy =
+            config.exhaustAfterfire.overrunPulseHz > 0.0
+            ? ExhaustAfterfireStrategy::discreteAfterfire
+            : ExhaustAfterfireStrategy::continuousAntiLag;
+    }
+    if (sourceSchemaVersion < 6
+        && !config.exhaustAfterfire.enabled) {
+        config.exhaustAfterfire.strategy =
+            ExhaustAfterfireStrategy::cleanDfco;
+    }
+    config.exhaustAfterfire.enabled = afterfireRetainsFuel(
+        config.exhaustAfterfire.strategy);
     // `intake` is the canonical representation. Legacy scalar fields remain
     // mirrored so schema-v1 files and old catalog overrides remain compatible.
     if (config.intake.plenumVolumeLitres == IntakeConfig {}.plenumVolumeLitres
@@ -702,6 +724,27 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
         // and merges back into the steady burn it exists to break up.
         || !inRange(config.exhaustAfterfire.overrunPulseHz, 0.0, 60.0)
         || !inRange(config.exhaustAfterfire.overrunPulseDutyCycle, 0.02, 1.0)
+        || !inRange(config.exhaustAfterfire.overrunPulseTimingVariation,
+                    0.0, 0.45)
+        || !inRange(config.exhaustAfterfire.inductionTimeSeconds,
+                    0.0001, 0.100)
+        || !inRange(config.exhaustAfterfire.minimumEquivalenceRatio,
+                    0.05, 1.0)
+        || !inRange(config.exhaustAfterfire.maximumEquivalenceRatio,
+                    1.0, 5.0)
+        || config.exhaustAfterfire.minimumEquivalenceRatio
+            >= config.exhaustAfterfire.maximumEquivalenceRatio
+        || !inRange(config.exhaustAfterfire.quenchTemperatureK,
+                    250.0, 1'500.0)
+        || (afterfireRetainsFuel(config.exhaustAfterfire.strategy)
+            && !(config.exhaustAfterfire.overrunFuelFraction > 0.0))
+        || (config.exhaustAfterfire.strategy
+                == ExhaustAfterfireStrategy::discreteAfterfire
+            && !(config.exhaustAfterfire.overrunPulseHz > 0.0))
+        || (config.exhaustAfterfire.strategy
+                == ExhaustAfterfireStrategy::discreteAfterfire
+            && config.exhaustAfterfire.overrunFuelFraction
+                > config.exhaustAfterfire.overrunPulseDutyCycle)
         || !inRange(config.runnerAcoustics.dampingRatio, 0.01, 2.0)
         || !inRange(config.runnerAcoustics.couplingGain, 0.0, 2.0)
         || !inRange(config.runnerAcoustics.maximumPressureAmplitudeKpa, 0.1, 200.0)

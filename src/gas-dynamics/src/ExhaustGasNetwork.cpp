@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <numbers>
 #include <optional>
 
 namespace enginelab::gasdynamics {
@@ -447,6 +448,11 @@ bool ExhaustGasNetwork::configure(const ExhaustNetworkLayout& layout,
         outletSamples_[index].pathIndex = layout_.outlets()[index].pathIndex;
         outletSamples_[index].openingAreaM2 = layout_.outlets()[index].openingAreaM2;
     }
+    ductReactionStates_.clear();
+    ductReactionStates_.reserve(ducts_.size());
+    for (const auto& duct : ducts_)
+        ductReactionStates_.emplace_back(duct.cells_.size());
+    junctionReactionStates_.assign(junctionStates_.size(), {});
     configured_ = true;
     return true;
 }
@@ -470,6 +476,10 @@ bool ExhaustGasNetwork::reset(double pressurePa,
         duct.resetWallTemperature(temperatureK);
         if (!duct.refreshCellStateCache()) return false;
     }
+    for (auto& sites : ductReactionStates_)
+        std::fill(sites.begin(), sites.end(), ReactionSiteState {});
+    std::fill(junctionReactionStates_.begin(),
+              junctionReactionStates_.end(), ReactionSiteState {});
     wallHeatPendingSeconds_ = 0.0;
     std::fill(junctionStates_.begin(), junctionStates_.end(), *initialState);
     for (auto& state : junctionStates_) state.momentumDensityKgPerM2S = 0.0;
@@ -536,7 +546,12 @@ ExhaustFuelReactionResult ExhaustGasNetwork::reactUnburnedFuel(
         || !(reaction.reactionEfficiency > 0.0)
         || !(reaction.oxygenMolesPerFuelMole > 0.0)
         || !(reaction.fuelMolarMassKg > 0.0)
-        || !(reaction.lowerHeatingValueJPerKg > 0.0))
+        || !(reaction.lowerHeatingValueJPerKg > 0.0)
+        || !(reaction.inductionTimeSeconds > 0.0)
+        || !(reaction.minimumEquivalenceRatio > 0.0)
+        || !(reaction.maximumEquivalenceRatio
+            > reaction.minimumEquivalenceRatio)
+        || !(reaction.quenchTemperatureK > 0.0))
         return result;
 
     const auto oxygen = static_cast<std::size_t>(GasSpecies::oxygen);
@@ -547,49 +562,85 @@ ExhaustFuelReactionResult ExhaustGasNetwork::reactUnburnedFuel(
         / reaction.fuelMolarMassKg;
     const auto efficiency = std::clamp(reaction.reactionEfficiency, 0.0, 1.0);
 
-    // Ignition source, not bulk gas temperature.
-    //
-    // This used to gate on `primitive->temperatureK` alone, and that is exactly
-    // backwards for the condition afterfire is supposed to model. On a
-    // closed-throttle overrun the cylinder is pumping air with the spark cut,
-    // so the gas entering the exhaust is COLD by construction -- measured on
-    // the CP2 with the strategy armed, the exhaust sits at 325-346 degC (600-620 K)
-    // against a 900 K threshold, and the published heat release falls to
-    // exactly 0.000 kW about a second into the overrun and never returns. The
-    // strategy retains fuel to make pops and then removes the only thing that
-    // could light it.
-    //
-    // What lights it in a real exhaust is the PIPE: after a pull the wall is
-    // still several hundred degrees and has far more thermal mass than the gas
-    // touching it, so the mixture ignites on the surface. That wall is already
-    // a live per-cell state here (`dynamicWallHeatTransferEnabled` is on for
-    // the exhaust network), it was simply never read. Take the ignition source
-    // as the hotter of the two and let the released heat do the rest -- once a
-    // cell reacts it raises its own gas temperature, so propagation falls out
-    // of the energy equation rather than needing a flame model.
-    //
-    // Junctions have no wall state, so they pass 0 and degenerate to the old
-    // gas-only criterion. A collector is physically a place afterfire happens,
-    // so that is a known conservatism, not a claim that it cannot.
+    struct ReactionAggregate final {
+        double energyJ { 0.0 };
+        double fuelKg { 0.0 };
+        double energyWeightedAxial { 0.0 };
+        double energyWeightedDensity { 0.0 };
+        double energyWeightedSoundSpeed { 0.0 };
+    };
+    const auto appendSource = [&](const ReactionAggregate& aggregate,
+                                  std::uint32_t nodeId,
+                                  std::uint32_t sourceComponentId,
+                                  std::uint32_t pathIndex,
+                                  double flowAreaM2) noexcept {
+        if (!(aggregate.energyJ > 0.0)) return;
+        if (result.sourceCount >= result.sources.size()) {
+            ++result.droppedSourceCount;
+            return;
+        }
+        auto& source = result.sources[result.sourceCount++];
+        source.nodeId = nodeId;
+        source.sourceComponentId = sourceComponentId;
+        source.pathIndex = pathIndex;
+        source.axialPosition = std::clamp(
+            aggregate.energyWeightedAxial / aggregate.energyJ, 0.0, 1.0);
+        source.releasedEnergyJoules = aggregate.energyJ;
+        source.burnedFuelMassKg = aggregate.fuelKg;
+        source.durationSeconds = durationSeconds;
+        source.densityKgPerM3 = aggregate.energyWeightedDensity
+            / aggregate.energyJ;
+        source.speedOfSoundMps = aggregate.energyWeightedSoundSpeed
+            / aggregate.energyJ;
+        source.flowAreaM2 = flowAreaM2;
+    };
+
+    // Local induction and flame state persist across coupling calls. Fuel and
+    // oxygen may therefore convect through cold cells without globally reacting
+    // the instant any temperature threshold is crossed. Once a kernel is
+    // established it burns its local inventory until it is depleted, becomes
+    // non-flammable or is genuinely quenched.
     const auto reactState = [&](ConservativeState& state, double volumeM3,
-                                double wallTemperatureK) noexcept {
+                                double wallTemperatureK,
+                                ReactionSiteState& site,
+                                double axialPosition,
+                                ReactionAggregate& aggregate) noexcept {
         const auto primitive = mixtureModel_.primitiveFromConservative(state);
         if (!primitive || !(volumeM3 > 0.0)) return false;
         const auto ignitionSourceK =
             std::max(primitive->temperatureK, wallTemperatureK);
-        if (ignitionSourceK <= reaction.ignitionTemperatureK) return false;
         const auto fuelDensity = state.speciesMassDensityKgPerM3[fuel];
         const auto oxygenDensity = state.speciesMassDensityKgPerM3[oxygen];
-        if (!(fuelDensity > 0.0) || !(oxygenDensity > 0.0)) return false;
+        const auto equivalenceRatio = oxygenDensity > 0.0
+            ? fuelDensity * oxygenMassPerFuelMass / oxygenDensity
+            : std::numeric_limits<double>::infinity();
+        const auto flammable = fuelDensity > 0.0 && oxygenDensity > 0.0
+            && equivalenceRatio >= reaction.minimumEquivalenceRatio
+            && equivalenceRatio <= reaction.maximumEquivalenceRatio;
+        const auto activation = std::clamp(
+            (ignitionSourceK - reaction.ignitionTemperatureK) / 450.0,
+            0.0, 1.0);
+        if (flammable && activation > 0.0) {
+            site.inductionSeconds = std::min(
+                reaction.inductionTimeSeconds,
+                site.inductionSeconds + durationSeconds * activation);
+            if (site.inductionSeconds >= reaction.inductionTimeSeconds)
+                site.burning = true;
+        } else if (!site.burning) {
+            site.inductionSeconds = std::max(
+                0.0, site.inductionSeconds - durationSeconds * 0.5);
+        }
+        if (!flammable
+            || ignitionSourceK < reaction.quenchTemperatureK) {
+            site.burning = false;
+            if (!flammable) site.inductionSeconds = 0.0;
+            return false;
+        }
+        if (!site.burning) return false;
         const auto wallIgnited =
             primitive->temperatureK <= reaction.ignitionTemperatureK;
-        const auto activation = std::clamp(
-            (ignitionSourceK - reaction.ignitionTemperatureK)
-                / 450.0,
-            0.0, 1.0);
         const auto reactedFraction = efficiency * (1.0 - std::exp(
-            -durationSeconds * activation
-                / reaction.reactionTimeConstantSeconds));
+            -durationSeconds / reaction.reactionTimeConstantSeconds));
         const auto stoichiometricFuelDensity =
             oxygenDensity / oxygenMassPerFuelMass;
         const auto consumedFuelDensity = std::min(
@@ -612,25 +663,56 @@ ExhaustFuelReactionResult ExhaustGasNetwork::reactUnburnedFuel(
         result.releasedEnergyJoules += releasedEnergyDensity * volumeM3;
         ++result.reactingControlVolumes;
         if (wallIgnited) ++result.wallIgnitedControlVolumes;
+        const auto releasedEnergyJ = releasedEnergyDensity * volumeM3;
+        aggregate.energyJ += releasedEnergyJ;
+        aggregate.fuelKg += consumedFuelDensity * volumeM3;
+        aggregate.energyWeightedAxial += releasedEnergyJ * axialPosition;
+        aggregate.energyWeightedDensity += releasedEnergyJ
+            * primitive->densityKgPerM3;
+        aggregate.energyWeightedSoundSpeed += releasedEnergyJ
+            * primitive->speedOfSoundMps;
+        if (candidate.speciesMassDensityKgPerM3[fuel] <= 1.0e-12
+            || candidate.speciesMassDensityKgPerM3[oxygen] <= 1.0e-12) {
+            site.burning = false;
+            site.inductionSeconds = 0.0;
+        }
         return true;
     };
 
-    for (auto& duct : ducts_) {
+    for (std::size_t ductIndex = 0; ductIndex < ducts_.size(); ++ductIndex) {
+        auto& duct = ducts_[ductIndex];
+        ReactionAggregate aggregate;
         auto reacted = false;
         for (std::size_t index = 0; index < duct.cells_.size(); ++index) {
             const auto wallTemperatureK = index < duct.wallStates_.size()
                 ? duct.wallStates_[index].temperatureK : 0.0;
             reacted = reactState(duct.cells_[index],
-                duct.cellVolumesM3_[index], wallTemperatureK) || reacted;
+                duct.cellVolumesM3_[index], wallTemperatureK,
+                ductReactionStates_[ductIndex][index],
+                (static_cast<double>(index) + 0.5)
+                    / static_cast<double>(duct.cells_.size()),
+                aggregate) || reacted;
         }
         if (reacted) duct.cellStateCacheIsValid_ = false;
+        const auto& layoutDuct = layout_.ducts()[ductIndex];
+        appendSource(aggregate, layoutDuct.nodeId,
+            layoutDuct.sourceComponentId, layoutDuct.pathIndex,
+            layoutDuct.flowAreaM2);
     }
     for (std::size_t index = 0; index < junctionStates_.size(); ++index) {
+        ReactionAggregate aggregate;
         if (!reactState(junctionStates_[index],
-                layout_.junctions()[index].volumeM3, 0.0)) continue;
+                layout_.junctions()[index].volumeM3, 0.0,
+                junctionReactionStates_[index], 0.5, aggregate)) continue;
         const auto primitive = mixtureModel_.primitiveFromConservative(
             junctionStates_[index]);
         if (primitive) junctionPrimitives_[index] = *primitive;
+        const auto& junction = layout_.junctions()[index];
+        const auto flowAreaM2 = 0.25 * std::numbers::pi
+            * junction.characteristicDiameterM
+            * junction.characteristicDiameterM;
+        appendSource(aggregate, junction.nodeId,
+            junction.sourceComponentId, junction.pathIndex, flowAreaM2);
     }
     return result;
 }
@@ -1539,6 +1621,7 @@ std::optional<ExhaustOutletFlowSample> ExhaustGasNetwork::predictOutletTransfer(
     sample.staticPressurePa = interiorPrimitive.pressurePa;
     sample.temperatureK = interiorPrimitive.temperatureK;
     sample.densityKgPerM3 = interiorPrimitive.densityKgPerM3;
+    sample.speedOfSoundMps = interiorPrimitive.speedOfSoundMps;
     sample.axialVelocityMps = interiorPrimitive.velocityMps;
     if (durationSeconds > 0.0) {
         auto massKg = 0.0;
@@ -1637,6 +1720,7 @@ void ExhaustGasNetwork::updateOutletSamples(double durationSeconds) noexcept {
         sample.temperatureK = primitive.temperatureK;
         sample.axialVelocityMps = primitive.velocityMps;
         sample.densityKgPerM3 = primitive.densityKgPerM3;
+        sample.speedOfSoundMps = primitive.speedOfSoundMps;
         if (durationSeconds > 0.0) {
             sample.massFlowKgPerS = sumSpecies(sample.speciesMassKg) / durationSeconds;
             sample.totalEnergyFlowW = sample.transferredEnergyJ / durationSeconds;

@@ -139,8 +139,6 @@ void ExhaustJetNoise::configure(
         ? static_cast<float>(massFlowKgPerSecond / densityKgPerM3) : 0.0F;
     inverseOutletAreaTargetM2_ = positiveFinite(outletAreaM2)
         ? static_cast<float>(1.0 / outletAreaM2) : 0.0F;
-    maximumJetVelocityTargetMps_ = positiveFinite(soundSpeedMps)
-        ? static_cast<float>(0.95 * soundSpeedMps) : 0.0F;
     // p_rms(1 m) = rho*sqrt(K*A/(4*pi))/c^2 * U^4.
     pressurePerVelocityFourthTarget_ =
         positiveFinite(outletAreaM2)
@@ -158,7 +156,6 @@ void ExhaustJetNoise::configure(
 void ExhaustJetNoise::snapToTarget() noexcept {
     meanVolumeVelocityM3PerS_ = meanVolumeVelocityTargetM3PerS_;
     inverseOutletAreaM2_ = inverseOutletAreaTargetM2_;
-    maximumJetVelocityMps_ = maximumJetVelocityTargetMps_;
     pressurePerVelocityFourth_ = pressurePerVelocityFourthTarget_;
     slowCoefficient_ = slowCoefficientTarget_;
     fastCoefficient_ = fastCoefficientTarget_;
@@ -175,9 +172,7 @@ float ExhaustJetNoise::nextUnitRmsWhiteNoise() noexcept {
         * static_cast<float>(std::sqrt(3.0));
 }
 
-float ExhaustJetNoise::process(
-    float rampCoefficient,
-    double outletVolumeVelocityPerturbationM3PerS) noexcept {
+float ExhaustJetNoise::process(float rampCoefficient) noexcept {
     if (!prepared_) return 0.0F;
     const auto ramp = std::clamp(rampCoefficient, 0.0F, 1.0F);
     meanVolumeVelocityM3PerS_ += ramp
@@ -185,8 +180,6 @@ float ExhaustJetNoise::process(
             - meanVolumeVelocityM3PerS_);
     inverseOutletAreaM2_ += ramp
         * (inverseOutletAreaTargetM2_ - inverseOutletAreaM2_);
-    maximumJetVelocityMps_ += ramp
-        * (maximumJetVelocityTargetMps_ - maximumJetVelocityMps_);
     pressurePerVelocityFourth_ += ramp
         * (pressurePerVelocityFourthTarget_
             - pressurePerVelocityFourth_);
@@ -196,21 +189,9 @@ float ExhaustJetNoise::process(
         * (fastCoefficientTarget_ - fastCoefficient_);
     bandNormalisation_ += ramp
         * (bandNormalisationTarget_ - bandNormalisation_);
-    const auto perturbation = std::isfinite(
-        outletVolumeVelocityPerturbationM3PerS)
-        ? outletVolumeVelocityPerturbationM3PerS : 0.0;
-    const auto outwardVolumeVelocity = std::max(
-        0.0, static_cast<double>(meanVolumeVelocityM3PerS_) + perturbation);
-    const auto meanJetVelocity = static_cast<double>(
-        meanVolumeVelocityM3PerS_) * static_cast<double>(
-            inverseOutletAreaM2_);
-    const auto instantaneousVelocityLimit = std::min(
-        static_cast<double>(maximumJetVelocityMps_),
-        std::max(0.0, meanJetVelocity)
-            * maximumInstantaneousVelocityRatio);
-    const auto velocity = std::clamp(
-        outwardVolumeVelocity * static_cast<double>(inverseOutletAreaM2_),
-        0.0, instantaneousVelocityLimit);
+    const auto velocity = std::max(0.0,
+        static_cast<double>(meanVolumeVelocityM3PerS_)
+            * static_cast<double>(inverseOutletAreaM2_));
     const auto velocitySquared = velocity * velocity;
     const auto pressureRmsPa = static_cast<double>(
         pressurePerVelocityFourth_) * velocitySquared * velocitySquared;

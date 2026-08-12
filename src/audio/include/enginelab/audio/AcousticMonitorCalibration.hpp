@@ -12,7 +12,7 @@ namespace enginelab {
  * prevents an arbitrary voice gain or the safety limiter from silently filling
  * the role of a capture chain.
  *
- * The default represents a high-SPL engine recording path with 134 dB SPL
+ * The default represents a high-SPL engine recording path with 156 dB SPL
  * (RMS sine convention) at digital full scale, which is a normal preamp setting
  * for close exhaust miking with a measurement microphone.
  *
@@ -22,16 +22,17 @@ namespace enginelab {
  * remain below the safety limiter. The calibration therefore remains a capture
  * property; it is never adjusted per engine to normalise model output.
  *
- * The previous 144 dB left 33 dB of unused headroom above anything the model
- * produced. That was harmless while synthetic oscillator voices dominated the
- * mix and set the level themselves; once the physical radiation is the whole
- * voice, the calibration is what decides the delivered level, so it has to be
- * derived from the source rather than left at a placeholder.
+ * The former 142 dB setting still clipped the measured Merlin startup peak:
+ * 3.588 FS, about 1.28 kPa, and left the slow safety gain below unity for an
+ * entire ten-second measurement. 156 dB corresponds to about 1.78 kPa sine
+ * peak, retaining headroom for that catalogue maximum without per-engine gain,
+ * AGC, or compression. It remains a capture-chain calibration rather than a
+ * loudness-normalisation control.
  */
 class AcousticMonitorCalibration final {
 public:
     static constexpr double referenceRmsPressurePa = 20.0e-6;
-    static constexpr double defaultFullScaleSplDb = 134.0;
+    static constexpr double defaultFullScaleSplDb = 156.0;
 
     [[nodiscard]] static double rmsPressurePa(double soundPressureLevelDb) noexcept {
         return std::isfinite(soundPressureLevelDb)

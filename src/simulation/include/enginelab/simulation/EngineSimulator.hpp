@@ -16,6 +16,7 @@
 #include <enginelab/simulation/CylinderWorkerPool.hpp>
 #include <enginelab/simulation/IEngineSimulation.hpp>
 #include <enginelab/events/CylinderPressureSample.hpp>
+#include <enginelab/events/ExhaustAcousticSample.hpp>
 #include <enginelab/foundation/SpscQueue.hpp>
 #include <enginelab/gasdynamics/ExhaustGasNetwork.hpp>
 #include <algorithm>
@@ -85,6 +86,11 @@ public:
                     IExhaustModel&, EngineSimulatorOptions = {});
     [[nodiscard]] SimulationFrame step(double dtSeconds, const EngineControls&) noexcept override;
     [[nodiscard]] const EngineState& state() const noexcept override { return state_; }
+    /** Apply only live audio/combustion calibration. Called by the owning
+     * simulation thread; it intentionally leaves every dynamic state and
+     * compiled gas network untouched. */
+    void applyAudioPhysicsCalibration(
+        const AudioPhysicsCalibration& calibration) noexcept;
     [[nodiscard]] std::size_t intakeWorkerCount() const noexcept {
         return intakeWorkerPool_ ? intakeWorkerPool_->workerCount() : 0U;
     }
@@ -98,6 +104,9 @@ public:
     }
     [[nodiscard]] bool tryPopCylinderPressureSample(CylinderPressureSample& sample) noexcept {
         return pressureSamples_ && pressureSamples_->tryPop(sample);
+    }
+    [[nodiscard]] bool tryPopExhaustAcousticSample(ExhaustAcousticSample& sample) noexcept {
+        return exhaustAcousticSamples_ && exhaustAcousticSamples_->tryPop(sample);
     }
     void setPressureSamplingEnabled(bool enabled);
     /** Diagnostic oracle: advance the nonlinear exhaust network on every
@@ -243,13 +252,17 @@ private:
     std::array<std::array<ExhaustNetworkBoundary, exhaustBoundaryKnotCount>, 32>
         exhaustBoundaryKnots_ {};
     std::size_t exhaustBoundaryKnotWrite_ { 0 };
-    /** Length-mean acoustic medium of every compiled exhaust duct, refreshed on
-     *  each coupling flush and republished on every substep in between. */
-    std::array<float, CylinderPressureSample::maximumExhaustDucts>
+    /** Length-mean acoustic medium of every compiled exhaust duct. Reaction
+     * events remain coupling-rate, while these slowly varying states are
+     * refreshed at the 240 Hz product-frame cadence: the audio renderer applies
+     * boundaries once per 187.5 Hz block, so copying them at ~8 kHz discarded
+     * CPU without increasing the delivered temporal resolution. */
+    std::array<float, ExhaustAcousticSample::maximumDucts>
         exhaustDuctDensityKgPerM3_ {};
-    std::array<float, CylinderPressureSample::maximumExhaustDucts>
+    std::array<float, ExhaustAcousticSample::maximumDucts>
         exhaustDuctSpeedOfSoundMps_ {};
     std::size_t exhaustDuctMediumCount_ { 0 };
+    double lastExhaustAcousticStatePublishSeconds_ { -1.0 };
     std::array<double, 32> chamberPressureBar_ {};
     std::array<double, 32> intakeFlowMgPerCycle_ {};
     std::array<double, 32> exhaustFlowMgPerCycle_ {};
@@ -412,6 +425,9 @@ private:
     FlamePhysicsModel flamePhysics_ {};
     std::array<bool, 32> cylinderMisfires_ {};
     std::unique_ptr<gasdynamics::ExhaustGasNetwork> physicalExhaustNetwork_;
+    /** Heap-owned scratch keeps the bounded source list out of step()'s large
+     * Windows stack frame. */
+    gasdynamics::ExhaustFuelReactionResult exhaustFuelReactionScratch_ {};
     gasdynamics::ConservativeState physicalExhaustAmbientState_ {};
     /** Total configured conductance of the network's terminal openings, m^2.
      *  Cached from the compiled layout so the forced-induction block can charge
@@ -420,6 +436,9 @@ private:
     /** Network-port order -> EngineConfig cylinder order, compiled once. */
     std::array<std::size_t, 32> exhaustNetworkCylinderIndex_ {};
     std::unique_ptr<SpscQueue<CylinderPressureSample, 1'024>> pressureSamples_;
+    // Coupling-rate exhaust media/reaction telemetry is intentionally separate
+    // from the much denser thermodynamic pressure stream.
+    std::unique_ptr<SpscQueue<ExhaustAcousticSample, 1'024>> exhaustAcousticSamples_;
     std::uint32_t randomState_ { 0x6d2b79f5U };
     // Engines below the threading threshold retain randomState_ and therefore
     // their historical misfire sequence. Thread-eligible engines use independent

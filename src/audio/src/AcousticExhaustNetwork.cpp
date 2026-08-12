@@ -1,6 +1,5 @@
 #include <enginelab/audio/AcousticExhaustNetwork.hpp>
 
-#include <enginelab/audio/DuctModeCutoff.hpp>
 #include <enginelab/audio/DuctWallLoss.hpp>
 #include <enginelab/audio/NonlinearDuctAcoustics.hpp>
 #include <enginelab/audio/PipeRadiationModel.hpp>
@@ -53,6 +52,7 @@ struct AcousticExhaustNetwork::Impl final {
     };
 
     struct Duct final {
+        std::uint32_t nodeId {};
         std::uint32_t pathIndex {};
         double lengthM {};
         /** Length-mean area for wall/mode properties. */
@@ -67,7 +67,7 @@ struct AcousticExhaustNetwork::Impl final {
          *  ducts on either side of it. Empty means fall back to the path. */
         std::vector<std::size_t> mediumSources;
         /** Live and target gas state of this duct. Held per duct rather than per
-         *  path because delay, wall loss and plane-mode cutoff are all local. */
+         *  path because delay and wall/liner losses are all local. */
         Medium medium {};
         Medium mediumTarget {};
         std::vector<float> forward;
@@ -87,16 +87,13 @@ struct AcousticExhaustNetwork::Impl final {
         DuctWallLoss::Coefficients linerLossTarget {};
         DuctWallLoss::State forwardLinerLoss {};
         DuctWallLoss::State reverseLinerLoss {};
-        DuctModeCutoff::Coefficients modeCutoff {};
-        DuctModeCutoff::Coefficients modeCutoffTarget {};
-        DuctModeCutoff::State forwardCutoff {};
-        DuctModeCutoff::State reverseCutoff {};
     };
 
     struct Junction final {
         std::vector<std::size_t> ductEndpoints;
         std::vector<std::size_t> cylinderTerminals;
         std::vector<std::size_t> outletTerminals;
+        float pendingSourcePressurePa {};
     };
 
     struct CylinderPort final {
@@ -110,6 +107,7 @@ struct AcousticExhaustNetwork::Impl final {
     };
 
     struct Outlet final {
+        std::uint32_t nodeId {};
         std::uint32_t pathIndex {};
         double areaM2 {};
         bool virtualTerminal { false };
@@ -133,11 +131,19 @@ struct AcousticExhaustNetwork::Impl final {
             AcousticTerminationType::unflanged };
     };
 
+    struct ReactionTarget final {
+        std::uint32_t nodeId {};
+        bool duct { true };
+        std::size_t index {};
+        bool useEventAxialPosition { true };
+    };
+
     gasdynamics::ExhaustNetworkLayout layout;
     std::vector<Duct> ducts;
     std::vector<Junction> junctions;
     std::vector<CylinderPort> cylinderPorts;
     std::vector<Outlet> outlets;
+    std::vector<ReactionTarget> reactionTargets;
     std::vector<EndpointOwner> owners;
     std::vector<float> incident;
     std::vector<float> outgoing;
@@ -165,6 +171,7 @@ struct AcousticExhaustNetwork::Impl final {
         for (const auto& descriptor : layout.ducts()) {
             const auto area = std::max(1.0e-10, descriptor.flowAreaM2);
             Duct duct;
+            duct.nodeId = descriptor.nodeId;
             duct.pathIndex = descriptor.pathIndex;
             duct.lengthM = descriptor.lengthM;
             duct.areaM2 = area;
@@ -437,6 +444,7 @@ struct AcousticExhaustNetwork::Impl final {
         outlets.reserve(layout.outlets().size());
         for (const auto& outlet : layout.outlets()) {
             Outlet compiled;
+            compiled.nodeId = outlet.outletNodeId;
             compiled.pathIndex = outlet.pathIndex;
             compiled.areaM2 = outlet.openingAreaM2;
             compiled.acousticPositionM = outlet.acousticPositionM;
@@ -458,6 +466,24 @@ struct AcousticExhaustNetwork::Impl final {
                         OwnerType::outlet, outletIndex)) return;
             }
             outlets.push_back(std::move(compiled));
+        }
+        reactionTargets.reserve(layout.ducts().size()
+            + layout.junctions().size());
+        for (std::size_t index = 0; index < layout.ducts().size(); ++index)
+            reactionTargets.push_back({
+                layout.ducts()[index].nodeId, true, index, true });
+        for (std::size_t index = 0; index < layout.junctions().size(); ++index) {
+            const auto group = groupForJunction[index];
+            const auto& plan = groupPlans[group];
+            if (plan.hasTrunk) {
+                reactionTargets.push_back({
+                    layout.junctions()[index].nodeId, true,
+                    plan.trunkDuctIndex, false });
+            } else {
+                reactionTargets.push_back({
+                    layout.junctions()[index].nodeId, false,
+                    nodeFor(group, true), false });
+            }
         }
         // A trunk has no entry of its own in the layout, because the layout
         // carries the branch as a junction. Its gas is what passes between the
@@ -597,6 +623,17 @@ bool AcousticExhaustNetwork::prepare(double sampleRateHz,
                 outlet.acousticTermination, impl_->observerConfig)
             || !outlet.jetNoise.prepare(sampleRateHz))
             return false;
+        // The same quasi-steady vorticity resistance already used by the
+        // intake mouth belongs at a sharp exhaust edge too. It is passive and
+        // driven by the local acoustic particle velocity inside the radiation
+        // model; no arbitrary exhaust gain or clipping threshold is involved.
+        constexpr double unflangedVortexLoss = 4.0
+            / (3.0 * std::numbers::pi);
+        const auto edgeCoefficient = outlet.acousticTermination
+                == AcousticTerminationType::unflanged
+            ? unflangedVortexLoss : unflangedVortexLoss * 0.5;
+        if (!outlet.radiation.setNonlinearLossCoefficient(edgeCoefficient))
+            return false;
     }
     impl_->prepared = true;
     reset();
@@ -619,8 +656,6 @@ void AcousticExhaustNetwork::reset() noexcept {
         duct.reverseLoss.reset();
         duct.forwardLinerLoss.reset();
         duct.reverseLinerLoss.reset();
-        duct.forwardCutoff.reset();
-        duct.reverseCutoff.reset();
     }
     for (auto& port : impl_->cylinderPorts) {
         port.incidentToJunction = 0.0F;
@@ -642,7 +677,8 @@ void AcousticExhaustNetwork::reset() noexcept {
 void AcousticExhaustNetwork::beginBlock(
     std::span<const Medium> pathMedia, double acousticTimeScale,
     std::span<const float> pathMeanMassFlowKgPerSecond,
-    std::span<const Medium> ductMedia) noexcept {
+    std::span<const Medium> ductMedia,
+    std::span<const OutletBoundary> outletBoundaries) noexcept {
     if (!impl_->prepared) return;
     for (std::size_t path = 0; path < impl_->mediaTarget.size(); ++path) {
         if (path < pathMedia.size()
@@ -707,12 +743,9 @@ void AcousticExhaustNetwork::beginBlock(
             medium.soundSpeedMps, duct.packingFlowResistivityPaSPerM2,
             duct.packingThicknessM, duct.perforatedOpenAreaRatio,
             impl_->sampleRateHz);
-        duct.modeCutoffTarget = DuctModeCutoff::fit(
-            duct.radiusM, medium.soundSpeedMps, impl_->sampleRateHz);
         if (snap) {
             duct.wallLoss = duct.wallLossTarget;
             duct.linerLoss = duct.linerLossTarget;
-            duct.modeCutoff = duct.modeCutoffTarget;
         }
     }
     std::array<double, maximumPaths> totalOutletAreaM2 {};
@@ -722,8 +755,21 @@ void AcousticExhaustNetwork::beginBlock(
         totalOutletAreaM2[path] += outlet.areaM2;
     }
     for (auto& outlet : impl_->outlets) {
-        const auto& medium = impl_->mediaTarget[std::min<std::size_t>(
+        auto medium = impl_->mediaTarget[std::min<std::size_t>(
             outlet.pathIndex, impl_->mediaTarget.size() - 1U)];
+        const auto boundary = std::find_if(
+            outletBoundaries.begin(), outletBoundaries.end(),
+            [&outlet](const OutletBoundary& candidate) noexcept {
+                return candidate.nodeId == outlet.nodeId;
+            });
+        if (boundary != outletBoundaries.end()
+            && std::isfinite(boundary->densityKgPerM3)
+            && boundary->densityKgPerM3 > 0.0F
+            && std::isfinite(boundary->soundSpeedMps)
+            && boundary->soundSpeedMps > 0.0F) {
+            medium = { boundary->densityKgPerM3,
+                       boundary->soundSpeedMps };
+        }
         outlet.radiationTargetDensityKgPerM3 = medium.densityKgPerM3;
         outlet.radiationTargetSoundSpeedMps = medium.soundSpeedMps;
         // A quiescent open pipe end reflects almost fully below its radiation
@@ -734,9 +780,17 @@ void AcousticExhaustNetwork::beginBlock(
         // the outlet Mach number sets a real, physically scaled dissipation at
         // the termination -- not a broadband gain inside the collector loop.
         auto mach = 0.0;
-        if (outlet.pathIndex < pathMeanMassFlowKgPerSecond.size()) {
-            const auto massFlow = std::abs(static_cast<double>(
+        auto massFlow = 0.0;
+        if (boundary != outletBoundaries.end()) {
+            // Negative is ambient reversion. It neither convects acoustic
+            // energy out of the pipe nor creates a downstream exhaust jet.
+            massFlow = std::max(0.0, static_cast<double>(
+                boundary->signedMassFlowKgPerSecond));
+        } else if (outlet.pathIndex < pathMeanMassFlowKgPerSecond.size()) {
+            massFlow = std::abs(static_cast<double>(
                 pathMeanMassFlowKgPerSecond[outlet.pathIndex]));
+        }
+        {
             const auto density = static_cast<double>(medium.densityKgPerM3);
             const auto soundSpeed = static_cast<double>(medium.soundSpeedMps);
             if (outlet.areaM2 > 0.0 && std::isfinite(massFlow)
@@ -746,11 +800,10 @@ void AcousticExhaustNetwork::beginBlock(
         outlet.outletMachTarget = std::clamp(mach, 0.0, 0.9);
         const auto path = std::min<std::size_t>(
             outlet.pathIndex, totalOutletAreaM2.size() - 1U);
-        const auto pathFlow = path < pathMeanMassFlowKgPerSecond.size()
-            ? std::abs(static_cast<double>(
-                pathMeanMassFlowKgPerSecond[path])) : 0.0;
-        const auto assignedFlow = totalOutletAreaM2[path] > 0.0
-            ? pathFlow * outlet.areaM2 / totalOutletAreaM2[path] : 0.0;
+        const auto assignedFlow = boundary != outletBoundaries.end()
+            ? massFlow
+            : (totalOutletAreaM2[path] > 0.0
+                ? massFlow * outlet.areaM2 / totalOutletAreaM2[path] : 0.0);
         outlet.jetNoise.configure(
             assignedFlow, outlet.areaM2, medium.densityKgPerM3,
             medium.soundSpeedMps, timeScale);
@@ -765,6 +818,8 @@ void AcousticExhaustNetwork::beginBlock(
             outlet.jetNoise.snapToTarget();
         }
     }
+    for (auto& junction : impl_->junctions)
+        junction.pendingSourcePressurePa = 0.0F;
 }
 
 std::array<StereoPressure, AcousticExhaustNetwork::maximumPaths>
@@ -819,34 +874,30 @@ AcousticExhaustNetwork::process(
         duct.linerLoss.zero += ramp
             * (duct.linerLossTarget.zero - duct.linerLoss.zero);
         duct.linerLoss.renormalise();
-        // The plane-mode cutoff moves with the gas state too. The TPT form is
-        // stable for any positive g, so the prewarped cutoff interpolates
-        // directly; only its resolved denominator has to be rebuilt.
-        duct.modeCutoff.g += ramp * (duct.modeCutoffTarget.g - duct.modeCutoff.g);
-        duct.modeCutoff.renormalise();
         duct.medium.densityKgPerM3 += ramp
             * (duct.mediumTarget.densityKgPerM3 - duct.medium.densityKgPerM3);
         duct.medium.soundSpeedMps += ramp
             * (duct.mediumTarget.soundSpeedMps - duct.medium.soundSpeedMps);
         const auto stiffness = duct.medium.densityKgPerM3
             * duct.medium.soundSpeedMps * duct.medium.soundSpeedMps;
-        // Order matters only for arithmetic, not for physics: both sections are
-        // linear. Wall loss first keeps the band limit operating on the same
-        // amplitude scale the delay line stores.
-        impl_->incident[index * 2U] = DuctModeCutoff::process(
-            duct.modeCutoff, duct.reverseCutoff,
-            DuctWallLoss::process(duct.linerLoss, duct.reverseLinerLoss,
-                DuctWallLoss::process(
-                    duct.wallLoss, duct.reverseLoss,
-                    impl_->readDelayed(duct.reverse, duct.write,
-                        duct.delaySamples, stiffness))));
-        impl_->incident[index * 2U + 1U] = DuctModeCutoff::process(
-            duct.modeCutoff, duct.forwardCutoff,
-            DuctWallLoss::process(duct.linerLoss, duct.forwardLinerLoss,
-                DuctWallLoss::process(
-                    duct.wallLoss, duct.forwardLoss,
-                    impl_->readDelayed(duct.forward, duct.write,
-                        duct.delaySamples, stiffness))));
+        // The plane mode does not cease to exist at the first transverse-mode
+        // cutoff. The former fourth-order low-pass deleted it there, so every
+        // large chamber erased the upper spectrum instead of merely acquiring
+        // additional modes. Preserve the passive plane branch across the
+        // audible band; unmodelled transverse modes are now an explicit
+        // limitation rather than energy destruction disguised as physics.
+        impl_->incident[index * 2U] = DuctWallLoss::process(
+            duct.linerLoss, duct.reverseLinerLoss,
+            DuctWallLoss::process(
+                duct.wallLoss, duct.reverseLoss,
+                impl_->readDelayed(duct.reverse, duct.write,
+                    duct.delaySamples, stiffness)));
+        impl_->incident[index * 2U + 1U] = DuctWallLoss::process(
+            duct.linerLoss, duct.forwardLinerLoss,
+            DuctWallLoss::process(
+                duct.wallLoss, duct.forwardLoss,
+                impl_->readDelayed(duct.forward, duct.write,
+                    duct.delaySamples, stiffness)));
     }
     std::fill(impl_->outgoing.begin(), impl_->outgoing.end(), 0.0F);
 
@@ -873,8 +924,10 @@ AcousticExhaustNetwork::process(
             weightedIncident += admittance * outlet.incidentToJunction;
             totalAdmittance += admittance;
         }
-        const auto junctionPressure = totalAdmittance > 1.0e-15
-            ? static_cast<float>(2.0 * weightedIncident / totalAdmittance) : 0.0F;
+        const auto junctionPressure = (totalAdmittance > 1.0e-15
+            ? static_cast<float>(2.0 * weightedIncident / totalAdmittance)
+            : 0.0F) + junction.pendingSourcePressurePa;
+        junction.pendingSourcePressurePa = 0.0F;
         for (const auto key : junction.ductEndpoints)
             impl_->outgoing[key] = junctionPressure - impl_->incident[key];
         for (const auto portIndex : junction.cylinderTerminals) {
@@ -898,8 +951,7 @@ AcousticExhaustNetwork::process(
                 static_cast<float>(radiation.farFieldPressurePa));
             auto observedJet = StereoPressure {};
             if (impl_->jetNoiseEnabled) {
-                const auto jetPressureAtOneMetre = outlet.jetNoise.process(
-                    ramp, radiation.outletVolumeVelocityM3PerS);
+                const auto jetPressureAtOneMetre = outlet.jetNoise.process(ramp);
                 observedJet = outlet.jetNoiseObserver.process(
                     jetPressureAtOneMetre);
             }
@@ -930,8 +982,7 @@ AcousticExhaustNetwork::process(
             static_cast<float>(radiation.farFieldPressurePa));
         auto observedJet = StereoPressure {};
         if (impl_->jetNoiseEnabled) {
-            const auto jetPressureAtOneMetre = outlet.jetNoise.process(
-                ramp, radiation.outletVolumeVelocityM3PerS);
+            const auto jetPressureAtOneMetre = outlet.jetNoise.process(ramp);
             observedJet = outlet.jetNoiseObserver.process(
                 jetPressureAtOneMetre);
         }
@@ -950,6 +1001,49 @@ AcousticExhaustNetwork::process(
         duct.write = (duct.write + 1U) & duct.mask;
     }
     return result;
+}
+
+bool AcousticExhaustNetwork::injectReactionPressure(
+    std::uint32_t nodeId, float axialPosition,
+    float sourcePressurePa) noexcept {
+    if (!impl_ || !impl_->prepared || !std::isfinite(sourcePressurePa))
+        return false;
+    const auto found = std::find_if(
+        impl_->reactionTargets.begin(), impl_->reactionTargets.end(),
+        [nodeId](const Impl::ReactionTarget& target) noexcept {
+            return target.nodeId == nodeId;
+        });
+    if (found == impl_->reactionTargets.end()) return false;
+    const auto boundedPressure = std::clamp(
+        sourcePressurePa, -100'000.0F, 100'000.0F);
+    if (!found->duct) {
+        if (found->index >= impl_->junctions.size()) return false;
+        impl_->junctions[found->index].pendingSourcePressurePa +=
+            boundedPressure;
+        return true;
+    }
+    if (found->index >= impl_->ducts.size()) return false;
+    auto& duct = impl_->ducts[found->index];
+    const auto axial = found->useEventAxialPosition
+        ? std::clamp(axialPosition, 0.0F, 1.0F) : 0.5F;
+    const auto addHistorical = [&](std::vector<float>& line,
+                                   float offsetSamples,
+                                   float pressurePa) noexcept {
+        if (line.empty()) return;
+        const auto offset = std::max(0.0F, offsetSamples);
+        const auto whole = static_cast<std::size_t>(std::floor(offset));
+        const auto fraction = offset - static_cast<float>(whole);
+        const auto nearer = (duct.write - whole) & duct.mask;
+        const auto farther = (nearer - 1U) & duct.mask;
+        line[nearer] += pressurePa * (1.0F - fraction);
+        line[farther] += pressurePa * fraction;
+    };
+    // Half the compact heat-addition pressure travels in each direction.
+    const auto halfPressure = 0.5F * boundedPressure;
+    addHistorical(duct.forward, axial * duct.delaySamples, halfPressure);
+    addHistorical(duct.reverse,
+        (1.0F - axial) * duct.delaySamples, halfPressure);
+    return true;
 }
 
 void AcousticExhaustNetwork::setOutletJetNoiseEnabled(bool enabled) noexcept {

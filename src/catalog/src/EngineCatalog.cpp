@@ -6,12 +6,185 @@
 #include <fstream>
 #include <map>
 #include <optional>
+#include <numbers>
 #include <set>
 #include <sstream>
 #include <stdexcept>
 
 namespace enginelab {
 namespace {
+[[nodiscard]] ExhaustAfterfireStrategy decodeAfterfireStrategy(
+    std::string_view value) {
+    if (value == "clean_dfco")
+        return ExhaustAfterfireStrategy::cleanDfco;
+    if (value == "continuous_anti_lag")
+        return ExhaustAfterfireStrategy::continuousAntiLag;
+    if (value == "discrete_afterfire")
+        return ExhaustAfterfireStrategy::discreteAfterfire;
+    throw std::invalid_argument(
+        "Unknown exhaust afterfire strategy: " + std::string(value));
+}
+
+[[nodiscard]] ExhaustComponentConfig exhaustComponent(
+    std::uint32_t id, ExhaustComponentType type, double lengthMm,
+    double diameterMm) {
+    ExhaustComponentConfig component;
+    component.id = id;
+    component.type = type;
+    component.lengthMm = lengthMm;
+    component.diameterMm = diameterMm;
+    return component;
+}
+
+/** Compile catalogue scalar hardware into a component DAG once at load time.
+ * This is a canonical representation, not the old reduced audio fallback: the
+ * same graph is subsequently consumed by gas dynamics, acoustics, the editor
+ * and exported snapshots. */
+void compileCatalogueExhaustPath(ExhaustPathConfig& path,
+                                 std::string_view presetKey) {
+    if (path.network || path.cylinderIds.empty()) return;
+    const auto& geometry = path.geometry;
+    ExhaustNetworkConfig network;
+    const auto primaryLength = std::max(20.0, geometry.primaryLengthMm);
+    const auto primaryDiameter = std::max(10.0, geometry.primaryDiameterMm);
+    const auto collectorDiameter = std::max(
+        primaryDiameter, geometry.collectorDiameterMm);
+    const auto addConnection = [&network](std::uint32_t from,
+                                          std::uint32_t to) {
+        network.connections.push_back({ from, to });
+    };
+
+    if (presetKey == "aircraft_manifold") {
+        // Short independent ejector stacks: no atmosphere-side merge, no
+        // invented 450 mm muffler. All outlets may share an audio bus while
+        // remaining disconnected physical terminals in the global network.
+        for (std::size_t index = 0; index < path.cylinderIds.size(); ++index) {
+            const auto outletId = static_cast<std::uint32_t>(500 + index);
+            auto outlet = exhaustComponent(outletId,
+                // An ejector stack is itself the terminal duct. Representing
+                // it as a pipe followed by a second outlet duct doubled every
+                // stack's cells and interfaces while adding no geometry. The
+                // inlet diameter carries the tube; outletDiameterMm carries
+                // the authored open lip/taper on that same 150 mm element.
+                ExhaustComponentType::outlet,
+                primaryLength, primaryDiameter);
+            outlet.outletDiameterMm = std::max(
+                primaryDiameter, geometry.outletDiameterMm);
+            outlet.dischargeCoefficient =
+                geometry.outletDischargeCoefficient;
+            outlet.acousticPositionM = path.acousticPositionM;
+            outlet.acousticPositionM.x += 0.055
+                * (static_cast<double>(index)
+                    - 0.5 * static_cast<double>(path.cylinderIds.size() - 1));
+            outlet.acousticAxis = path.acousticAxis;
+            outlet.acousticTermination = path.acousticTermination;
+            network.components.push_back(outlet);
+            network.cylinderConnections.push_back({
+                path.cylinderIds[index], outletId });
+        }
+        path.network = std::move(network);
+        return;
+    }
+
+    std::vector<std::uint32_t> primaryIds;
+    primaryIds.reserve(path.cylinderIds.size());
+    for (std::size_t index = 0; index < path.cylinderIds.size(); ++index) {
+        const auto id = static_cast<std::uint32_t>(100 + index);
+        primaryIds.push_back(id);
+        network.components.push_back(exhaustComponent(
+            id, ExhaustComponentType::pipe,
+            primaryLength, primaryDiameter));
+        network.cylinderConnections.push_back({ path.cylinderIds[index], id });
+    }
+
+    auto terminalComponent = std::uint32_t {};
+    if (presetKey == "motorcycle_4_2_1"
+        && primaryIds.size() == 4) {
+        const auto secondaryDiameter = std::min(collectorDiameter,
+            primaryDiameter * 1.28);
+        // A conventional inline-four 4-2-1 pairs the two outside cylinders
+        // (1+4) and the two inside cylinders (2+3). Pairing adjacent entries
+        // made consecutive firing pulses collide in one secondary and erased
+        // the alternating collector signature the layout is chosen for.
+        constexpr std::array<std::array<std::size_t, 2>, 2> pairs {{
+            {{ 0, 3 }}, {{ 1, 2 }}
+        }};
+        for (std::size_t pair = 0; pair < pairs.size(); ++pair) {
+            const auto mergeId = static_cast<std::uint32_t>(200 + pair);
+            auto merge = exhaustComponent(mergeId,
+                ExhaustComponentType::merge, 90.0, secondaryDiameter);
+            merge.volumeLitres = 0.20;
+            network.components.push_back(merge);
+            const auto secondaryId = static_cast<std::uint32_t>(300 + pair);
+            network.components.push_back(exhaustComponent(secondaryId,
+                ExhaustComponentType::pipe,
+                primaryLength * 0.42, secondaryDiameter));
+            addConnection(primaryIds[pairs[pair][0]], mergeId);
+            addConnection(primaryIds[pairs[pair][1]], mergeId);
+            addConnection(mergeId, secondaryId);
+        }
+        auto merge = exhaustComponent(400,
+            ExhaustComponentType::merge, 130.0, collectorDiameter);
+        merge.volumeLitres = std::max(0.20,
+            geometry.collectorVolumeLitres);
+        network.components.push_back(merge);
+        addConnection(300, 400);
+        addConnection(301, 400);
+        terminalComponent = 400;
+    } else if (primaryIds.size() == 1) {
+        terminalComponent = primaryIds.front();
+    } else {
+        auto merge = exhaustComponent(200,
+            ExhaustComponentType::merge,
+            std::max(120.0, primaryLength * 0.35), collectorDiameter);
+        merge.volumeLitres = std::max(0.05,
+            geometry.collectorVolumeLitres);
+        network.components.push_back(merge);
+        for (const auto primaryId : primaryIds)
+            addConnection(primaryId, 200);
+        terminalComponent = 200;
+    }
+
+    const auto chamberConfigured =
+        geometry.mufflerChamberDiameterMm > 1.0
+        && geometry.mufflerChamberLengthMm > 1.0;
+    const auto downstreamId = std::uint32_t { 600 };
+    if (chamberConfigured) {
+        auto muffler = exhaustComponent(downstreamId,
+            ExhaustComponentType::muffler,
+            geometry.mufflerChamberLengthMm, collectorDiameter);
+        const auto radiusM = geometry.mufflerChamberDiameterMm * 0.0005;
+        muffler.volumeLitres = std::numbers::pi * radiusM * radiusM
+            * geometry.mufflerChamberLengthMm;
+        muffler.restriction = geometry.mufflerRestriction;
+        muffler.packingFlowResistivityPaSPerM2 =
+            geometry.mufflerPackingFlowResistivityPaSPerM2;
+        muffler.packingThicknessMm =
+            geometry.mufflerPackingThicknessMm;
+        muffler.perforatedOpenAreaRatio =
+            geometry.mufflerPerforatedOpenAreaRatio;
+        network.components.push_back(muffler);
+    } else {
+        network.components.push_back(exhaustComponent(downstreamId,
+            ExhaustComponentType::pipe,
+            std::max(100.0, primaryLength * 0.28), collectorDiameter));
+    }
+    addConnection(terminalComponent, downstreamId);
+
+    auto outlet = exhaustComponent(700, ExhaustComponentType::outlet,
+        // Boundary-only opening: the layout derives its minimum physically
+        // resolvable terminal cell. An explicitly authored tailpipe remains a
+        // pipe component upstream and keeps its real length.
+        0.0, std::max(10.0, geometry.outletDiameterMm));
+    outlet.dischargeCoefficient = geometry.outletDischargeCoefficient;
+    outlet.acousticPositionM = path.acousticPositionM;
+    outlet.acousticAxis = path.acousticAxis;
+    outlet.acousticTermination = path.acousticTermination;
+    network.components.push_back(outlet);
+    addConnection(downstreamId, 700);
+    path.network = std::move(network);
+}
+
 template <typename T>
 void assignIfPresent(const YAML::Node& node, const char* key, T& value) {
     if (node && node[key]) value = node[key].as<T>();
@@ -89,7 +262,8 @@ void applyVoicingFile(const std::filesystem::path& file,
         "low_frequency_gain", "low_frequency_noise",
         "high_frequency_noise", "combustion_gain", "exhaust_gain",
         "intake_gain", "mechanical_gain", "stereo_width",
-        "outlet_jet_gain", "saturation_drive", "saturation_placement"
+        "outlet_jet_gain", "saturation_drive", "saturation_placement",
+        "monitor_mode"
     }, file.filename().string() + ".voicing");
     assignVoicingNumber(node, "volume", 0.0, 2.0, voicing.volume);
     assignVoicingNumber(node, "convolution", 0.0, 1.0, voicing.convolution);
@@ -123,6 +297,16 @@ void applyVoicingFile(const std::filesystem::path& file,
             voicing.saturationPlacement = AudioSaturationPlacement::postShelf;
         else
             throw std::runtime_error("voicing.saturation_placement must be pre_shelf or post_shelf");
+    }
+    if (node["monitor_mode"]) {
+        const auto mode = node["monitor_mode"].as<std::string>();
+        if (mode == "physical_reference")
+            voicing.monitorMode = AudioMonitorMode::physicalReference;
+        else if (mode == "capture_voiced")
+            voicing.monitorMode = AudioMonitorMode::captureVoiced;
+        else
+            throw std::runtime_error(
+                "voicing.monitor_mode must be physical_reference or capture_voiced");
     }
 }
 
@@ -664,6 +848,8 @@ void applyCrankOffsets(EngineConfig& config) {
     if (!hasExplicitCylinders) applyCrankOffsets(config);
 
     const auto uses = engine["uses"];
+    const auto exhaustPresetKey = uses && uses["exhaust"]
+        ? uses["exhaust"].as<std::string>() : std::string {};
     applyPart(parts.fuels, uses, "fuel", config.fuelProperties);
     applyPart(parts.injections, uses, "injection", config.injection);
     applyPart(parts.camshafts, uses, "camshafts", config.camshafts);
@@ -693,6 +879,9 @@ void applyCrankOffsets(EngineConfig& config) {
     }
     if (const auto afterfire = engine["exhaust_afterfire"]) {
         assignIfPresent(afterfire, "enabled", config.exhaustAfterfire.enabled);
+        if (afterfire["strategy"])
+            config.exhaustAfterfire.strategy = decodeAfterfireStrategy(
+                afterfire["strategy"].as<std::string>());
         assignIfPresent(afterfire, "ignition_temperature_k", config.exhaustAfterfire.ignitionTemperatureK);
         assignIfPresent(afterfire, "reaction_time_constant_s", config.exhaustAfterfire.reactionTimeConstantSeconds);
         assignIfPresent(afterfire, "reaction_efficiency", config.exhaustAfterfire.reactionEfficiency);
@@ -701,6 +890,11 @@ void applyCrankOffsets(EngineConfig& config) {
         assignIfPresent(afterfire, "overrun_maximum_throttle", config.exhaustAfterfire.overrunMaximumThrottle);
         assignIfPresent(afterfire, "overrun_pulse_hz", config.exhaustAfterfire.overrunPulseHz);
         assignIfPresent(afterfire, "overrun_pulse_duty", config.exhaustAfterfire.overrunPulseDutyCycle);
+        assignIfPresent(afterfire, "overrun_pulse_timing_variation", config.exhaustAfterfire.overrunPulseTimingVariation);
+        assignIfPresent(afterfire, "induction_time_s", config.exhaustAfterfire.inductionTimeSeconds);
+        assignIfPresent(afterfire, "minimum_equivalence_ratio", config.exhaustAfterfire.minimumEquivalenceRatio);
+        assignIfPresent(afterfire, "maximum_equivalence_ratio", config.exhaustAfterfire.maximumEquivalenceRatio);
+        assignIfPresent(afterfire, "quench_temperature_k", config.exhaustAfterfire.quenchTemperatureK);
     }
     if (const auto acoustics = engine["runner_acoustics"]) {
         assignIfPresent(acoustics, "enabled", config.runnerAcoustics.enabled);
@@ -855,6 +1049,8 @@ void applyCrankOffsets(EngineConfig& config) {
         for (const auto& cylinder : config.cylinders) pathConfig.cylinderIds.push_back(cylinder.id);
         config.exhaustPaths.push_back(std::move(pathConfig));
     }
+    for (auto& exhaustPath : config.exhaustPaths)
+        compileCatalogueExhaustPath(exhaustPath, exhaustPresetKey);
 
     normaliseEngineConfig(config);
     if (const auto error = validateEngineConfig(config)) throw std::runtime_error(*error);

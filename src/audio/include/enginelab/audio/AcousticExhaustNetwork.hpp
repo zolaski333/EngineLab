@@ -39,6 +39,14 @@ public:
         float soundSpeedMps { 343.0F };
     };
 
+    struct OutletBoundary final {
+        std::uint32_t nodeId { 0 };
+        float signedMassFlowKgPerSecond { 0.0F };
+        float densityKgPerM3 { 0.0F };
+        float soundSpeedMps { 0.0F };
+        float openingAreaM2 { 0.0F };
+    };
+
     AcousticExhaustNetwork(const ExhaustGraph& graph,
                            std::span<const std::uint32_t> cylinderIds);
     ~AcousticExhaustNetwork();
@@ -58,20 +66,28 @@ public:
      *
      *  `ductMedia` carries the gas state of each compiled duct, indexed as
      *  ExhaustNetworkLayout::ducts(). Where it is supplied every duct resolves
-     *  its own delay, wall loss and plane-mode cutoff from the gas actually in
-     *  it, which differs by hundreds of kelvin between a header primary and a
-     *  tailpipe. Where it is absent, or an entry is not usable, the duct falls
-     *  back to its path medium. */
+     *  its own delay and wall loss from the gas actually in it, which differs
+     *  by hundreds of kelvin between a header primary and a tailpipe. Where it
+     *  is absent, or an entry is not usable, the duct falls back to its path
+     *  medium. */
     void beginBlock(std::span<const Medium> pathMedia,
                     double acousticTimeScale,
                     std::span<const float> pathMeanMassFlowKgPerSecond = {},
-                    std::span<const Medium> ductMedia = {}) noexcept;
+                    std::span<const Medium> ductMedia = {},
+                    std::span<const OutletBoundary> outletBoundaries = {}) noexcept;
 
     /** Propagate one sample and return each path at the two microphones, Pa. */
     [[nodiscard]] std::array<StereoPressure, maximumPaths> process(
         std::span<const float> cylinderSourcePressurePa,
         std::span<const CylinderBoundary> cylinderBoundaries,
         float delayRampCoefficient) noexcept;
+
+    /** Add a symmetric high-band pressure source at the finite-volume node
+     * that released the energy. No outlet or cylinder fallback is used when a
+     * node cannot be resolved. */
+    [[nodiscard]] bool injectReactionPressure(
+        std::uint32_t nodeId, float axialPosition,
+        float sourcePressurePa) noexcept;
 
     /** Diagnostic A/B switch. Production leaves the source enabled. */
     void setOutletJetNoiseEnabled(bool enabled) noexcept;

@@ -60,7 +60,9 @@
 #include <limits>
 #include <memory>
 #include <numbers>
+#include <set>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <vector>
 
@@ -439,7 +441,7 @@ maskingMarginDb(const Spectrum& exhaust, const Spectrum& others) {
     {
         const auto graph = ExhaustGraph::makeForEngine(config);
         gasdynamics::ExhaustNetworkDiscretisation mesh;
-        mesh.targetCellLengthM = 0.300;
+        mesh.targetCellLengthM = 0.360;
         mesh.minimumCellsPerDuct = 1;
         mesh.maximumCellsPerDuct = 64;
         mesh.maximumTotalCells = 1'024;
@@ -464,7 +466,7 @@ maskingMarginDb(const Spectrum& exhaust, const Spectrum& others) {
     auto& audioState = runtimeOwner->audioState();
     auto rendererOwner = std::make_unique<RealtimeEngineAudio>(
         eventQueue, audioState, &pressureQueue, &runtimeOwner->exhaustGraph(),
-        &runtimeOwner->engineConfig());
+        &runtimeOwner->engineConfig(), &runtimeOwner->exhaustAcousticSamples());
     auto& renderer = *rendererOwner;
     renderer.prepare(audioRate, samplesPerFrame);
     std::this_thread::sleep_for(std::chrono::milliseconds(200));
@@ -523,6 +525,24 @@ maskingMarginDb(const Spectrum& exhaust, const Spectrum& others) {
                 (sample.timeSeconds - simulationStart) / frameDt, 0.0, 1.0);
             sample.timeSeconds = realtimeSeconds + fraction * frameDt;
             (void)pressureQueue.tryPush(sample);
+        }
+        ExhaustAcousticSample acousticSample;
+        while (simulator.tryPopExhaustAcousticSample(acousticSample)) {
+            const auto fraction = std::clamp(
+                (acousticSample.timeSeconds - simulationStart) / frameDt,
+                0.0, 1.0);
+            acousticSample.timeSeconds = realtimeSeconds + fraction * frameDt;
+            for (std::size_t eventIndex = 0;
+                 eventIndex < acousticSample.reactionEventCount; ++eventIndex) {
+                const auto eventFraction = std::clamp(
+                    (acousticSample.reactionEvents[eventIndex].timeSeconds
+                        - simulationStart) / frameDt, 0.0, 1.0);
+                acousticSample.reactionEvents[eventIndex].timeSeconds =
+                    realtimeSeconds + eventFraction * frameDt;
+            }
+            if (!runtimeOwner->exhaustAcousticSamples().tryPush(acousticSample))
+                throw std::runtime_error(
+                    "geometry harness exhausted its thermoacoustic queue");
         }
         publishAudioFrame(audioState, frame.state,
             { false, controls.starterEngaged, 0.0, 1.0 });
@@ -589,6 +609,17 @@ struct Variant final {
 [[nodiscard]] std::vector<Variant> variants() {
     return {
         { "reference", [](ExhaustConfig&) {} },
+        // V8 control applied only when the graph contains two four-into-one
+        // bank collectors, two silencers and two outlets. The graph rewrite
+        // below bypasses only the common X section; all bank primaries,
+        // collector bodies, silencers and terminal geometry remain authored.
+        { "double-4en1-sans-x", [](ExhaustConfig&) {} },
+        // Topology control matching the original user report: preserve each
+        // authored primary but terminate it independently, with no collector,
+        // crossover or silencer. This is not a length/diameter proxy; the DAG
+        // itself is replaced below so a 4-2-1 and four open tubes cannot pass
+        // by rendering the same network.
+        { "tubes-independants", [](ExhaustConfig&) {} },
         // THE decisive variant, and it changes exactly ONE thing: the silencer
         // body is removed and nothing else moves. That makes the difference
         // against the reference a clean insertion loss, comparable to the
@@ -600,6 +631,9 @@ struct Variant final {
         { "sans-silencieux", [](ExhaustConfig& exhaust) {
             exhaust.mufflerChamberDiameterMm = 0.0;
             exhaust.mufflerChamberLengthMm = 0.0;
+            exhaust.mufflerPackingFlowResistivityPaSPerM2 = 0.0;
+            exhaust.mufflerPackingThicknessMm = 0.0;
+            exhaust.mufflerPerforatedOpenAreaRatio = 0.0;
         } },
         // Single-factor length. The quarter-wave of a 250 mm primary is near
         // 340 Hz and of a 900 mm primary near 95 Hz, so these two must not
@@ -658,6 +692,9 @@ struct Variant final {
             exhaust.mufflerChamberDiameterMm = 0.0;
             exhaust.mufflerChamberLengthMm = 0.0;
             exhaust.mufflerRestriction = 0.02;
+            exhaust.mufflerPackingFlowResistivityPaSPerM2 = 0.0;
+            exhaust.mufflerPackingThicknessMm = 0.0;
+            exhaust.mufflerPerforatedOpenAreaRatio = 0.0;
         } },
     };
 }
@@ -670,7 +707,155 @@ struct Variant final {
     // `legacySinglePath ? config.exhaust : path.geometry`), so a variant that
     // only edited the legacy field would silently measure the SAME exhaust six
     // times on any engine that authors paths. Apply it to every path too.
-    for (auto& path : config.exhaustPaths) variant.apply(path.geometry);
+    for (auto& path : config.exhaustPaths) {
+        variant.apply(path.geometry);
+        if (!path.network) continue;
+        auto& network = *path.network;
+        const auto name = std::string_view { variant.name };
+        const auto primaryIds = [&] {
+            std::set<std::uint32_t> ids;
+            for (const auto& connection : network.cylinderConnections)
+                ids.insert(connection.componentId);
+            return ids;
+        }();
+        const auto setPrimaryLength = [&](double lengthMm) {
+            for (auto& component : network.components)
+                if (primaryIds.contains(component.id))
+                    component.lengthMm = lengthMm;
+        };
+        const auto bypassMufflers = [&] {
+            for (auto& component : network.components) {
+                if (component.type != ExhaustComponentType::muffler) continue;
+                // A removed straight-through can leaves the same centreline
+                // length occupied by plain pipe. It does not delete the route
+                // or move the tailpipe, and it removes both reactive volume
+                // and porous material rather than only hiding a scalar flag.
+                component.type = ExhaustComponentType::pipe;
+                component.volumeLitres = 0.0;
+                component.restriction = 0.0;
+                component.packingFlowResistivityPaSPerM2 = 0.0;
+                component.packingThicknessMm = 0.0;
+                component.perforatedOpenAreaRatio = 0.0;
+            }
+        };
+        if (name == "double-4en1-sans-x") {
+            std::vector<std::uint32_t> bankMergeIds;
+            std::vector<std::uint32_t> mufflerIds;
+            std::vector<std::uint32_t> outletIds;
+            for (const auto& component : network.components) {
+                if (component.type == ExhaustComponentType::muffler)
+                    mufflerIds.push_back(component.id);
+                else if (component.type == ExhaustComponentType::outlet)
+                    outletIds.push_back(component.id);
+            }
+            for (const auto& component : network.components) {
+                if (component.type != ExhaustComponentType::merge) continue;
+                const auto primaryInputs = std::count_if(
+                    network.connections.begin(), network.connections.end(),
+                    [&](const auto& connection) {
+                        return connection.toComponentId == component.id
+                            && primaryIds.contains(
+                                connection.fromComponentId);
+                    });
+                if (primaryInputs >= 2) bankMergeIds.push_back(component.id);
+            }
+            std::ranges::sort(bankMergeIds);
+            std::ranges::sort(mufflerIds);
+            std::ranges::sort(outletIds);
+            if (bankMergeIds.size() == 2 && mufflerIds.size() == 2
+                    && outletIds.size() == 2) {
+                std::set<std::uint32_t> keptIds = primaryIds;
+                keptIds.insert(bankMergeIds.begin(), bankMergeIds.end());
+                keptIds.insert(mufflerIds.begin(), mufflerIds.end());
+                keptIds.insert(outletIds.begin(), outletIds.end());
+                std::erase_if(network.components, [&](const auto& component) {
+                    return !keptIds.contains(component.id);
+                });
+                std::erase_if(network.connections, [&](const auto& connection) {
+                    return !(primaryIds.contains(connection.fromComponentId)
+                            && std::ranges::find(bankMergeIds,
+                                connection.toComponentId)
+                                != bankMergeIds.end())
+                        && !(std::ranges::find(mufflerIds,
+                                connection.fromComponentId)
+                                != mufflerIds.end()
+                            && std::ranges::find(outletIds,
+                                connection.toComponentId)
+                                != outletIds.end());
+                });
+                for (std::size_t bank = 0; bank < 2; ++bank)
+                    network.connections.push_back(
+                        { bankMergeIds[bank], mufflerIds[bank] });
+            }
+        } else if (name == "tubes-independants") {
+            const auto originalComponents = network.components;
+            std::vector<ExhaustComponentConfig> independentComponents;
+            independentComponents.reserve(primaryIds.size() * 2U);
+            for (const auto& component : originalComponents)
+                if (primaryIds.contains(component.id))
+                    independentComponents.push_back(component);
+            auto nextId = std::uint32_t { 1 };
+            for (const auto& component : originalComponents)
+                nextId = std::max(nextId, component.id + 1U);
+            network.connections.clear();
+            for (std::size_t index = 0;
+                 index < network.cylinderConnections.size(); ++index) {
+                const auto primaryId =
+                    network.cylinderConnections[index].componentId;
+                const auto primary = std::find_if(
+                    originalComponents.begin(), originalComponents.end(),
+                    [primaryId](const auto& component) {
+                        return component.id == primaryId;
+                    });
+                if (primary == originalComponents.end()) continue;
+                ExhaustComponentConfig outlet;
+                outlet.id = nextId++;
+                outlet.type = ExhaustComponentType::outlet;
+                outlet.lengthMm = 0.0;
+                outlet.diameterMm = primary->diameterMm;
+                outlet.outletDiameterMm = primary->diameterMm;
+                outlet.dischargeCoefficient = 1.0;
+                outlet.acousticPositionM = path.acousticPositionM;
+                outlet.acousticPositionM.x += 0.055
+                    * (static_cast<double>(index)
+                        - 0.5 * static_cast<double>(
+                            network.cylinderConnections.size() - 1U));
+                outlet.acousticAxis = path.acousticAxis;
+                outlet.acousticTermination = path.acousticTermination;
+                independentComponents.push_back(outlet);
+                network.connections.push_back({ primaryId, outlet.id });
+            }
+            network.components = std::move(independentComponents);
+        } else if (name == "sans-silencieux") {
+            bypassMufflers();
+        } else if (name == "primaire-court") {
+            setPrimaryLength(250.0);
+        } else if (name == "primaire-long") {
+            setPrimaryLength(900.0);
+        } else if (name == "petit-diametre" || name == "gros-diametre") {
+            const auto scale = name == "petit-diametre" ? 0.65 : 1.55;
+            for (auto& component : network.components) {
+                component.diameterMm *= scale;
+                if (component.outletDiameterMm > 0.0)
+                    component.outletDiameterMm *= scale;
+            }
+        } else if (name == "avec-garnissage") {
+            for (auto& component : network.components) {
+                if (component.type != ExhaustComponentType::muffler) continue;
+                component.packingFlowResistivityPaSPerM2 = 24'000.0;
+                component.packingThicknessMm = 35.0;
+                component.perforatedOpenAreaRatio = 0.28;
+            }
+        } else if (name == "chambre-x2.25" || name == "chambre-x5.3") {
+            const auto areaScale = name == "chambre-x2.25" ? 2.25 : 5.29;
+            for (auto& component : network.components)
+                if (component.type == ExhaustComponentType::muffler)
+                    component.volumeLitres *= areaScale;
+        } else if (name == "court-ouvert") {
+            setPrimaryLength(250.0);
+            bypassMufflers();
+        }
+    }
     return config;
 }
 
@@ -1019,7 +1204,14 @@ int main(int argc, char** argv) {
     results.reserve(catalogueVariants.size());
     for (const auto& variant : catalogueVariants) {
         const auto config = withVariant(engine, variant);
-        auto result = render(config, targetRpm, seconds);
+        RenderResult result;
+        try {
+            result = render(config, targetRpm, seconds);
+        } catch (const std::exception& error) {
+            std::cerr << "  ECHEC variante " << variant.name << ": "
+                      << error.what() << '\n';
+            return 1;
+        }
         std::cout << "  " << std::left << std::setw(17) << variant.name
                   << std::right
                   << " rms " << std::setw(9) << std::fixed << std::setprecision(6)
@@ -1140,8 +1332,14 @@ int main(int argc, char** argv) {
     // The single-factor insertion loss, called out on its own line because it
     // is the one number with a literature value to check against and the one
     // the user's complaint is literally about.
-    const auto silencerIndex = std::size_t { 1 }; // "sans-silencieux"
-    if (results.size() > silencerIndex) {
+    const auto silencerVariant = std::ranges::find_if(
+        catalogueVariants, [](const auto& variant) {
+            return std::string_view { variant.name } == "sans-silencieux";
+        });
+    const auto silencerIndex = static_cast<std::size_t>(
+        std::distance(catalogueVariants.begin(), silencerVariant));
+    if (silencerVariant != catalogueVariants.end()
+            && results.size() > silencerIndex) {
         const auto renderedDb = results[silencerIndex].mix.broadbandDb
             - results[0].mix.broadbandDb;
         const auto physicalDb = 20.0 * std::log10(

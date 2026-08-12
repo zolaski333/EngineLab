@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdint>
 #include <cstdlib>
 namespace enginelab {
 namespace {
@@ -35,6 +36,51 @@ double interpolateTimingCurve(const std::vector<IgnitionMapSample>& curve, doubl
         }
     }
     return curve.back().advanceDegrees;
+}
+
+/** Boundary of a fuel-slug interval relative to the lift-off edge.
+ *
+ * A golden-angle phase gives a deterministic low-discrepancy sequence instead
+ * of a PRNG or a short repeating table. The amplitude is derived so adjacent
+ * boundaries differ by no more than `variation * nominalPeriod`; every actual
+ * interval is therefore in [(1-v)T, (1+v)T] and remains strictly positive for
+ * the validated v <= 0.45. */
+[[nodiscard]] double afterfirePulseBoundarySeconds(
+    std::int64_t pulseIndex, double nominalPeriod,
+    double variation) noexcept {
+    if (pulseIndex <= 0) return 0.0;
+    constexpr double goldenAngleRadians =
+        2.3999632297286533222; // pi * (3 - sqrt(5))
+    const auto boundedVariation = std::clamp(variation, 0.0, 0.45);
+    if (!(boundedVariation > 0.0))
+        return static_cast<double>(pulseIndex) * nominalPeriod;
+    const auto boundaryAmplitude = boundedVariation
+        / (2.0 * std::abs(std::sin(goldenAngleRadians * 0.5)));
+    const auto index = static_cast<double>(pulseIndex);
+    return index * nominalPeriod
+        + boundaryAmplitude * nominalPeriod
+            * std::sin(index * goldenAngleRadians);
+}
+
+[[nodiscard]] bool afterfirePulseOpen(
+    double elapsed, double pulseHz, double duty,
+    double timingVariation) noexcept {
+    const auto nominalPeriod = 1.0 / pulseHz;
+    auto pulseIndex = std::max<std::int64_t>(0,
+        static_cast<std::int64_t>(std::floor(elapsed / nominalPeriod)));
+    while (pulseIndex > 0
+        && elapsed < afterfirePulseBoundarySeconds(
+            pulseIndex, nominalPeriod, timingVariation))
+        --pulseIndex;
+    while (elapsed >= afterfirePulseBoundarySeconds(
+        pulseIndex + 1, nominalPeriod, timingVariation))
+        ++pulseIndex;
+    const auto start = afterfirePulseBoundarySeconds(
+        pulseIndex, nominalPeriod, timingVariation);
+    const auto end = afterfirePulseBoundarySeconds(
+        pulseIndex + 1, nominalPeriod, timingVariation);
+    const auto actualPeriod = std::max(1.0e-9, end - start);
+    return elapsed - start < actualPeriod * std::clamp(duty, 0.0, 1.0);
 }
 }
 
@@ -113,6 +159,30 @@ EcuCommand SimpleEcuModel::evaluate(const EngineConfig& config, const EngineStat
     if (controls.ignitionEnabled || controls.starterEngaged) {
         const auto targetRpm = std::max(300.0, config.idleRpm);
         const auto normalizedError = (targetRpm - state.rpm) / targetRpm;
+        // Derivative damping uses a filtered physical speed, not firing ripple.
+        // The former PI loop was underdamped on the high-authority aircraft V12:
+        // it swung 619-852 rpm around an 800 rpm target with a ~4 s period even
+        // though its mean was correct. A generic PID derivative term anticipates
+        // the stored rotational energy instead of adding a per-engine exception.
+        auto filteredRpm = idleFilteredRpm_.load(std::memory_order_relaxed);
+        if (!(filteredRpm > 0.0) || idleDt <= 0.0)
+            filteredRpm = state.rpm;
+        const auto previousFilteredRpm = filteredRpm;
+        constexpr double derivativeFilterTimeConstantSeconds = 0.080;
+        filteredRpm += (state.rpm - filteredRpm) * (1.0 - std::exp(
+            -idleDt / derivativeFilterTimeConstantSeconds));
+        const auto normalizedRpmRate = idleDt > 0.0
+            ? (filteredRpm - previousFilteredRpm) / (idleDt * targetRpm)
+            : 0.0;
+        const auto governorOwnsSpeedDamping = effectiveThrottle <= 0.02
+            && state.rpm < targetRpm * 1.30
+            // Do not open extra air into a fuel film that is still refilling
+            // after DFCO. On the LS3 the derivative correctly saw the falling
+            // speed, but its extra bypass air arrived while fuel resume was
+            // only 0.32 and drove AFR to the model's 100:1 ceiling. Let the
+            // existing dashpot own that coordinated relight first.
+            && decelerationFuelResume_.load(std::memory_order_relaxed) > 0.95;
+        idleFilteredRpm_.store(filteredRpm, std::memory_order_relaxed);
         // Cross-fade against the physical (smoothed) throttle plate, not the
         // driver's instantaneous request. Otherwise the bypass snaps shut one
         // integration step before the plate has opened and creates a real air
@@ -121,6 +191,7 @@ EcuCommand SimpleEcuModel::evaluate(const EngineConfig& config, const EngineStat
         constexpr double feedForward = 0.42;
         constexpr double proportionalGain = 0.90;
         constexpr double integralGain = 0.55;
+        constexpr double derivativeGainSeconds = 0.12;
         constexpr double minimumIntegral = -0.20;
         if (effectiveThrottle > 0.02) {
             // A real throttle/idle system does not snap from a driven opening
@@ -193,7 +264,9 @@ EcuCommand SimpleEcuModel::evaluate(const EngineConfig& config, const EngineStat
         // for seconds after a catch the valve is held open by the schedule
         // while the governor's output is ignored.
         const auto governorCommand = [&](double integral) noexcept {
-            return feedForward + proportionalGain * normalizedError + integral;
+            return feedForward + proportionalGain * normalizedError + integral
+                - (governorOwnsSpeedDamping
+                    ? derivativeGainSeconds * normalizedRpmRate : 0.0);
         };
         const auto deliveredFor = [&](double integral) noexcept {
             return std::max(postStartAir,
@@ -368,7 +441,9 @@ EcuCommand SimpleEcuModel::evaluate(const EngineConfig& config, const EngineStat
         std::memory_order_relaxed);
     if (!controls.ignitionEnabled || controls.starterEngaged) {
         overrunAfterfireArmed = false;
-    } else if (config.exhaustAfterfire.enabled
+    } else if ((afterfireRetainsFuel(config.exhaustAfterfire.strategy)
+                || (config.exhaustAfterfire.enabled
+                    && config.exhaustAfterfire.overrunFuelFraction > 0.0))
             && config.exhaustAfterfire.overrunFuelFraction > 0.0
             && effectiveThrottle > 0.20
             && state.rpm >= config.exhaustAfterfire.overrunMinimumRpm) {
@@ -420,27 +495,44 @@ EcuCommand SimpleEcuModel::evaluate(const EngineConfig& config, const EngineStat
     // calibration gates delivery on a duty cycle. Zero keeps every cycle
     // fuelled, which is the historical behaviour and every shipped engine.
     //
-    // Phase off simulation time, in the same idiom as `alternatingCut` above,
-    // so it stays deterministic and independent of engine speed -- the pop rate
-    // a listener hears is set by the map, not by how fast the engine happens to
-    // be turning.
-    const auto overrunPulseOpen = !(config.exhaustAfterfire.overrunPulseHz > 0.0)
-        || [&] {
-            const auto period = 1.0 / config.exhaustAfterfire.overrunPulseHz;
-            const auto phase = state.simulationTimeSeconds
-                - std::floor(state.simulationTimeSeconds / period) * period;
-            return phase < period * std::clamp(
-                config.exhaustAfterfire.overrunPulseDutyCycle, 0.0, 1.0);
-        }();
-    const auto overrunAfterfireActive =
+    const auto retainedFuelStrategy = afterfireRetainsFuel(
+        config.exhaustAfterfire.strategy)
+        || (config.exhaustAfterfire.enabled
+            && config.exhaustAfterfire.overrunFuelFraction > 0.0);
+    const auto overrunBaseActive =
         config.fuel == FuelType::gasoline
-        && config.exhaustAfterfire.enabled
+        && retainedFuelStrategy
         && config.exhaustAfterfire.overrunFuelFraction > 0.0
         && decelerationFuelCut && !limiterActive
         && controls.ignitionEnabled && !controls.starterEngaged
         && state.rpm >= config.exhaustAfterfire.overrunMinimumRpm
-        && effectiveThrottle <= config.exhaustAfterfire.overrunMaximumThrottle
-        && overrunPulseOpen;
+        && effectiveThrottle <= config.exhaustAfterfire.overrunMaximumThrottle;
+    const auto wasInOverrunWindow = afterfireOverrunWindow_.exchange(
+        overrunBaseActive, std::memory_order_relaxed);
+    if (overrunBaseActive && !wasInOverrunWindow)
+        afterfirePulseEpochSeconds_.store(
+            state.simulationTimeSeconds, std::memory_order_relaxed);
+    // A discrete map starts a new deterministic slug schedule at the actual
+    // lift-off edge. A calibrated zero timing variation remains an exact square
+    // wave for compatibility; a non-zero value uses bounded low-discrepancy
+    // intervals, so the chemistry is not driven by an audible metronome.
+    const auto discreteStrategy = config.exhaustAfterfire.strategy
+            == ExhaustAfterfireStrategy::discreteAfterfire
+        || (config.exhaustAfterfire.enabled
+            && config.exhaustAfterfire.strategy
+                == ExhaustAfterfireStrategy::cleanDfco
+            && config.exhaustAfterfire.overrunPulseHz > 0.0);
+    const auto overrunPulseOpen = !discreteStrategy
+        || !(config.exhaustAfterfire.overrunPulseHz > 0.0)
+        || [&] {
+            const auto elapsed = std::max(0.0, state.simulationTimeSeconds
+                - afterfirePulseEpochSeconds_.load(std::memory_order_relaxed));
+            return afterfirePulseOpen(
+                elapsed, config.exhaustAfterfire.overrunPulseHz,
+                config.exhaustAfterfire.overrunPulseDutyCycle,
+                config.exhaustAfterfire.overrunPulseTimingVariation);
+        }();
+    const auto overrunAfterfireActive = overrunBaseActive && overrunPulseOpen;
     // Publish WHY, not just whether. Every clause above is an independent
     // precondition and they are indistinguishable from the outside: an
     // afterfire that never fires produces exactly the same silence whether it
@@ -449,7 +541,7 @@ EcuCommand SimpleEcuModel::evaluate(const EngineConfig& config, const EngineStat
     // deriving a reason afterwards, so the two can never disagree.
     const auto overrunAfterfireBlockers = static_cast<std::uint32_t>(
         (config.fuel == FuelType::gasoline
-             && config.exhaustAfterfire.enabled
+             && retainedFuelStrategy
              && config.exhaustAfterfire.overrunFuelFraction > 0.0
              ? 0U : static_cast<std::uint32_t>(AfterfireBlocker::notAuthored))
         | (controls.ignitionEnabled
@@ -475,7 +567,7 @@ EcuCommand SimpleEcuModel::evaluate(const EngineConfig& config, const EngineStat
         // explanation for a `fuelCutInactive` that would otherwise look
         // inexplicable on a warm engine at a shut throttle.
         | (overrunAfterfireArmed
-               || !config.exhaustAfterfire.enabled
+               || !retainedFuelStrategy
                || !(config.exhaustAfterfire.overrunFuelFraction > 0.0)
              ? 0U : static_cast<std::uint32_t>(AfterfireBlocker::notArmed)));
     const auto fuelCorrection = overrunAfterfireActive
@@ -483,7 +575,11 @@ EcuCommand SimpleEcuModel::evaluate(const EngineConfig& config, const EngineStat
         // the preceding tip-in reserve or cold-start correction multiply it:
         // both can still be decaying at lift-off and would turn a conservative
         // 12% strategy into an uncontrolled rich pulse.
-        ? config.exhaustAfterfire.overrunFuelFraction
+        ? std::min(1.0, config.exhaustAfterfire.overrunFuelFraction
+            / (discreteStrategy
+                ? std::clamp(config.exhaustAfterfire.overrunPulseDutyCycle,
+                    0.02, 1.0)
+                : 1.0))
         : warmupCorrection * crankingCorrection
             * (1.0 + accelerationFuelEnrichment * 1.40)
             * decelerationFuelResume;

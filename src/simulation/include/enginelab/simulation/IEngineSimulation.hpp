@@ -15,6 +15,8 @@ struct SimulationFrame final {
     std::size_t droppedFiringEventCount { 0 };
     std::size_t cylinderPressureSampleCount { 0 };
     std::size_t droppedCylinderPressureSampleCount { 0 };
+    std::size_t exhaustAcousticSampleCount { 0 };
+    std::size_t droppedExhaustAcousticSampleCount { 0 };
 };
 class IEngineSimulation {
 public:

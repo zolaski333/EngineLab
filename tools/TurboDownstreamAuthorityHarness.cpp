@@ -83,6 +83,25 @@ struct Point final {
         config.exhaust.mufflerChamberDiameterMm = std::max(
             config.exhaust.mufflerChamberDiameterMm,
             outletDiameterMm * 1.5);
+    // Catalogue scalar hardware is compiled into the canonical component DAG
+    // at load time. This experiment starts from that already-normalised
+    // configuration, so mutate the actual downstream components as well as the
+    // legacy scalar mirror; otherwise all four points exercise the same graph.
+    for (auto& path : config.exhaustPaths) {
+        if (path.inheritsGlobalGeometry) path.geometry = config.exhaust;
+        if (!path.network) continue;
+        for (auto& component : path.network->components) {
+            if (component.type == enginelab::ExhaustComponentType::outlet) {
+                component.diameterMm = outletDiameterMm;
+                component.outletDiameterMm = outletDiameterMm;
+            } else if (component.type
+                    == enginelab::ExhaustComponentType::muffler
+                && component.diameterMm > 1.0) {
+                component.diameterMm = std::max(
+                    component.diameterMm, outletDiameterMm * 1.5);
+            }
+        }
+    }
     enginelab::normaliseEngineConfig(config);
 
     enginelab::SimpleEcuModel ecu;

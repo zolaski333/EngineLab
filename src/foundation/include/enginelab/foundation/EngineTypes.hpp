@@ -9,7 +9,7 @@
 
 namespace enginelab {
 inline constexpr std::uint32_t minimumSupportedEngineSchemaVersion { 1 };
-inline constexpr std::uint32_t currentEngineSchemaVersion { 5 };
+inline constexpr std::uint32_t currentEngineSchemaVersion { 6 };
 
 
 enum class EngineCycle : std::uint8_t { fourStroke, twoStroke };
@@ -374,9 +374,22 @@ struct ExhaustComponentConfig final {
     double perforatedOpenAreaRatio { 0.0 };
 };
 
+/** Driver/ECU intent for closed-throttle exhaust combustion.
+ *
+ * The former boolean could mean three physically different calibrations and,
+ * worse, could be enabled while retaining exactly zero fuel.  Keep the legacy
+ * boolean in the structure for schema-1..5 readers, but make this strategy the
+ * canonical schema-6 contract after normalisation.
+ */
+enum class ExhaustAfterfireStrategy : std::uint8_t {
+    cleanDfco,
+    continuousAntiLag,
+    discreteAfterfire,
+};
+
 /** Optional oxidation of unburned charge inside the physical exhaust network.
- * Disabled by default: enabling it never creates fuel, oxygen or an audio
- * event, it only lets inventories already present react when hot enough. */
+ * Disabled by default: enabling it never creates fuel or oxygen, it only lets
+ * inventories already present react when hot enough. */
 struct ExhaustAfterfireConfig final {
     bool enabled { false };
     double ignitionTemperatureK { 900.0 };
@@ -407,6 +420,39 @@ struct ExhaustAfterfireConfig final {
     /** Fraction of each pulse period during which fuel is retained. Only read
      * when `overrunPulseHz` is positive. */
     double overrunPulseDutyCycle { 0.35 };
+    /** Maximum fractional departure of one slug interval from 1/pulseHz.
+     * Zero is a metronomic authored map; non-zero uses a deterministic
+     * low-discrepancy timing sequence while preserving each interval's duty
+     * and therefore the calibrated long-run fuel mass. */
+    double overrunPulseTimingVariation { 0.0 };
+    ExhaustAfterfireStrategy strategy {
+        ExhaustAfterfireStrategy::cleanDfco
+    };
+    /** Time a flammable local inventory must remain above its ignition source
+     * before a flame kernel is established. This persistent induction state is
+     * what separates a transported fuel slug from a global temperature gate. */
+    double inductionTimeSeconds { 0.004 };
+    /** Lean/rich flammability bounds expressed as equivalence ratio. */
+    double minimumEquivalenceRatio { 0.45 };
+    double maximumEquivalenceRatio { 1.80 };
+    /** Below this bulk-gas temperature an established kernel is quenched unless
+     * a sufficiently hot wall continues to supply ignition energy. */
+    double quenchTemperatureK { 520.0 };
+};
+
+[[nodiscard]] constexpr bool afterfireRetainsFuel(
+    ExhaustAfterfireStrategy strategy) noexcept {
+    return strategy != ExhaustAfterfireStrategy::cleanDfco;
+}
+
+/** Coherent, allocation-free calibration copied into the simulation thread.
+ * It deliberately contains no state and no geometry: applying it must not
+ * rebuild a network or reset gas/wall/ECU history. */
+struct AudioPhysicsCalibration final {
+    double cycleVariationCoefficientOfVariation { 0.0 };
+    double cycleVariationCorrelation { 0.45 };
+    bool limiterKeepsFuel { false };
+    ExhaustAfterfireConfig exhaustAfterfire;
 };
 
 /**
@@ -746,6 +792,13 @@ enum class AudioSaturationPlacement : std::uint8_t {
     postShelf
 };
 
+enum class AudioMonitorMode : std::uint8_t {
+    /** SI source buses with neutral gains and no artistic saturation/EQ. */
+    physicalReference,
+    /** Optional listening/capture voicing authored in the voicing catalogue. */
+    captureVoiced,
+};
+
 /** Non-physical monitor voicing, kept separate from engine and exhaust physics.
  *
  * These values shape only the listening chain. Defaults exactly match the
@@ -769,6 +822,7 @@ struct AudioVoicingConfig final {
     AudioSaturationPlacement saturationPlacement {
         AudioSaturationPlacement::postShelf
     };
+    AudioMonitorMode monitorMode { AudioMonitorMode::physicalReference };
 };
 
 struct EngineConfig final {

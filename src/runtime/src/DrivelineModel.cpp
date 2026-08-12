@@ -196,6 +196,7 @@ DrivelineOutput DrivelineModel::advance(double dt, const EngineState& engineStat
     double tireSlipWork = 0.0;
     double drivenAxleNormalImpulse = 0.0;
     double longitudinalAccelerationImpulse = 0.0;
+    std::size_t clutchStickingSteps = 0;
     double lastSlipRpm = 0.0;
     double lastTireForce = 0.0;
     double lastRoadLoadForce = 0.0;
@@ -323,6 +324,7 @@ DrivelineOutput DrivelineModel::advance(double dt, const EngineState& engineStat
         auto engineCouplingTorque = -clutchTorque;
         auto reflectedInertiaKgM2 = 0.0;
         if (clutchSticking && std::abs(totalRatio) > 1.0e-9) {
+            ++clutchStickingSteps;
             // Rigid-shaft equivalent referred to the crank. The clutch torque
             // itself contains the torque needed to accelerate wheel/gearbox
             // inertia; applying it as an external load one 240 Hz frame later
@@ -424,6 +426,10 @@ DrivelineOutput DrivelineModel::advance(double dt, const EngineState& engineStat
         reflectedInertiaTimeIntegral * inverseDt;
     output.wheelTorqueNm = wheelTorqueIntegral * inverseDt;
     output.clutchSlipRpm = lastSlipRpm;
+    output.clutchStickFraction = mechanicalStepCount > 0
+        ? static_cast<double>(clutchStickingSteps)
+            / static_cast<double>(mechanicalStepCount)
+        : 0.0;
     output.tireForceN = lastTireForce;
     output.drivenAxleNormalForceN =
         drivenAxleNormalImpulse * inverseDt;

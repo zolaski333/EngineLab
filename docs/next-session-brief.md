@@ -1,5 +1,13 @@
 # Brief de reprise — nouvelle machine (2026-07-28)
 
+> **Audit audio/échappement/afterfire/dyno du 10–11 août 2026.** Avant tout
+> nouveau réglage sonore, lire
+> `docs/deep-audit-audio-afterfire-exhaust-dyno-2026-08-10.md`. Il contient les
+> mesures fraîches, les causes racines, l'architecture de correction et les
+> critères d'acceptation. Les défauts principaux ne se corrigent pas par un
+> preset : topologies catalogue non authorisées, propriétés acoustiques perdues,
+> source afterfire locale absente et dyno par fenêtres non chevauchantes.
+
 > **Session du 2 août 2026 (soir) — quatre lots, dont une réfutation.**
 > Lire `docs/rework-validation-log.md` à partir de « Un retard d'allumage ».
 >

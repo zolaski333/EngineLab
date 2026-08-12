@@ -106,8 +106,15 @@ struct OfflineAudioExportResult final {
     std::uint64_t delayTruncationCount { 0 };
     std::uint64_t invalidBoundarySampleCount { 0 };
     std::uint64_t legacyPathSampleCount { 0 };
+    std::uint64_t saturationProcessedSampleCount { 0 };
+    std::uint64_t automaticGainControlledSampleCount { 0 };
+    std::uint64_t softLimitedSampleCount { 0 };
+    std::uint64_t hardClampedSampleCount { 0 };
+    std::uint64_t droppedReactionEvents { 0 };
+    double maximumTruePeakMagnitude { 0.0 };
     std::uint64_t droppedFiringEvents { 0 };
     std::uint64_t droppedPressureSamples { 0 };
+    std::uint64_t droppedExhaustAcousticSamples { 0 };
     /** Measured physical-audio activity over the complete rendered scenario. */
     double afterfirePeakHeatReleaseKw { 0.0 };
     double afterfireFuelBurnedMg { 0.0 };

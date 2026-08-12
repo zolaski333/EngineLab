@@ -14,15 +14,11 @@
 # perforated_open_area_ratio. None is inferred: without authored material data
 # the acoustic path remains an exact dry bypass.
 #
-# Expansion ratios sit at the modest end of what real hardware uses (peak
-# transmission loss 1.5-6.5 dB rather than the 10-13 dB a full-size OEM body
-# gives). That is deliberate and measured, not timidity: this is a *single*
-# chamber, and a real multi-chamber silencer is designed precisely so its
-# notches do not land on a firing order. Modelling one chamber at OEM depth put
-# a 16 dB notch on the EJ25's rev-range fundamental and halved the K20 and LS3
-# top end -- claiming more silencing than a one-chamber topology can honestly
-# justify. Chamber lengths are staggered per engine because c/(2L) is what
-# sets each exhaust's comb spacing, and that is where the character lives.
+# The runtime now composes the reactive area changes with a perforated-core
+# porous liner whenever the material data below is present. Values are
+# estimated-family data, not manufacturer measurements; absence still means an
+# exact dry chamber. This is intentionally physical hardware data rather than a
+# target dB gain.
 
 compact_sport:
   primary_length_mm: 520
@@ -34,6 +30,9 @@ compact_sport:
   # it keeps the rasp a Subaru flat-four is known for.
   muffler_chamber_diameter_mm: 112
   muffler_chamber_length_mm: 330
+  muffler_packing_flow_resistivity_pa_s_m2: 22000
+  muffler_packing_thickness_mm: 30
+  muffler_perforated_open_area_ratio: 0.28
 
 turbo_downpipe:
   primary_length_mm: 430
@@ -46,6 +45,9 @@ turbo_downpipe:
   # blowdown edge. Long body means closely spaced, low pass-bands.
   muffler_chamber_diameter_mm: 132
   muffler_chamber_length_mm: 470
+  muffler_packing_flow_resistivity_pa_s_m2: 30000
+  muffler_packing_thickness_mm: 45
+  muffler_perforated_open_area_ratio: 0.25
 
 equal_length_header:
   primary_length_mm: 760
@@ -57,6 +59,9 @@ equal_length_header:
   # VTEC top end keeps its edge instead of being boxed in.
   muffler_chamber_diameter_mm: 114
   muffler_chamber_length_mm: 300
+  muffler_packing_flow_resistivity_pa_s_m2: 18000
+  muffler_packing_thickness_mm: 25
+  muffler_perforated_open_area_ratio: 0.32
 
 crossplane_dual:
   primary_length_mm: 690
@@ -69,6 +74,9 @@ crossplane_dual:
   # through instead of averaging it away.
   muffler_chamber_diameter_mm: 142
   muffler_chamber_length_mm: 400
+  muffler_packing_flow_resistivity_pa_s_m2: 10000
+  muffler_packing_thickness_mm: 15
+  muffler_perforated_open_area_ratio: 0.35
 
 motorcycle_4_2_1:
   primary_length_mm: 610
@@ -80,6 +88,9 @@ motorcycle_4_2_1:
   # is high and the litre-bike top end stays bright.
   muffler_chamber_diameter_mm: 84
   muffler_chamber_length_mm: 250
+  muffler_packing_flow_resistivity_pa_s_m2: 18000
+  muffler_packing_thickness_mm: 22
+  muffler_perforated_open_area_ratio: 0.35
 
 # Aftermarket full system for the 689 cc CP2 parallel twin, 2-into-1.
 #
@@ -99,37 +110,10 @@ motorcycle_4_2_1:
 # character, and unequal primaries would smear the very edge that carries it.
 # Collector area is about 1.7x one primary, the usual 2-1 merge ratio.
 #
-# THE CAN, AND A TRAP WORTH RECORDING. A real straight-through race silencer has
-# a LARGE body -- 100-110 mm is typical -- and yet attenuates far less than the
-# smaller OEM box, because it is a perforated core wrapped in absorptive packing.
-# This model has no absorptive element (see the header note: "absorptive packing
-# requires a separate component with its own physical data"); its only silencing
-# is the REACTIVE expansion ratio, chamber area over collector area. Authoring the
-# real 110 mm body therefore produced a ratio of (110/54)^2 = 4.2 against the
-# street preset's (84/48)^2 = 3.1, i.e. MORE silencing, and measured 3 dB quieter
-# with the centroid down from 1452 to 1023 Hz and crest from 10.5 to 8.2 -- the
-# exact opposite of a full system. Corrected below.
-#
-# So the chamber dimensions here are chosen for the transmission loss they
-# produce, not as the body's physical size, exactly as the header note says the
-# rest of this file already does. Measured sweep of the chamber diameter against
-# the street preset, rev-up plus limiter window:
-#
-#   chamber   ratio   centroid   RMS dB   crest   2-5k    5-12k
-#   84 (stock)  3.1     1452       -24.6   10.48   23.4%   2.2%
-#   110         4.2     1023       -27.6    8.20   16.8%   0.3%   rejected
-#   88          2.7     1265       -26.3    9.23   23.1%   0.6%
-#   72          1.8     1446       -25.7    8.99   26.1%   1.1%   shipped
-#
-# 72 mm is where the top band comes back: brighter than the street can in
-# 2-5 kHz, and at IDLE it is 3 dB louder, brighter (638 vs 537 Hz) and more
-# impulsive (crest 9.32 vs 8.69) -- which is what a full system does. It is still
-# marginally quieter and less impulsive than stock at the limiter, and that is
-# attributed to the 42 mm primaries rather than the can: a wider pipe carries a
-# lower gas velocity and a less steep front. 42 mm is nevertheless the right
-# number for a 689 cc twin, so the dimension stays and the metric is accepted.
-# Do not sweep this further toward a target number -- the arbiter for a voicing
-# choice is a listener, not the crest factor.
+# The former preset falsified the body down to 72 mm because the renderer had no
+# absorptive liner and a real 105-110 mm can acted like an over-deep dry
+# expansion chamber. Porous loss is now a first-class physical element, so the
+# real family-scale body and perforated packing can be represented directly.
 cp2_full_system:
   primary_length_mm: 500
   primary_diameter_mm: 42
@@ -137,8 +121,11 @@ cp2_full_system:
   # Race system: far less mean-flow loss than the 0.20 street can.
   muffler_restriction: 0.10
   outlet_diameter_mm: 60
-  muffler_chamber_diameter_mm: 72
+  muffler_chamber_diameter_mm: 105
   muffler_chamber_length_mm: 240
+  muffler_packing_flow_resistivity_pa_s_m2: 16000
+  muffler_packing_thickness_mm: 30
+  muffler_perforated_open_area_ratio: 0.32
 
 # Listening-lab sibling of cp2_full_system. Geometry and mean-flow restriction
 # are identical, so an A/B isolates the absorptive packing instead of quietly
@@ -150,7 +137,7 @@ cp2_absorptive_lab:
   collector_diameter_mm: 54
   muffler_restriction: 0.10
   outlet_diameter_mm: 60
-  muffler_chamber_diameter_mm: 72
+  muffler_chamber_diameter_mm: 105
   muffler_chamber_length_mm: 240
   muffler_packing_flow_resistivity_pa_s_m2: 24000
   muffler_packing_thickness_mm: 35
@@ -167,6 +154,9 @@ short_v_twin:
   # be the first thing its owner removed.
   muffler_chamber_diameter_mm: 82
   muffler_chamber_length_mm: 430
+  muffler_packing_flow_resistivity_pa_s_m2: 14000
+  muffler_packing_thickness_mm: 20
+  muffler_perforated_open_area_ratio: 0.38
 
 # Short individual ejector stacks, near-open to atmosphere. A Merlin-style
 # aircraft V12 exhausts each cylinder through its own ~150 mm stack with no

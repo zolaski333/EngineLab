@@ -300,10 +300,33 @@ int main() {
                 && manifest.at("files").size() == 12,
             "manifest inventories master, stems and order map");
         require(
+            manifest.at("conditions").at("monitor_mode")
+                    == "physical_reference"
+                && manifest.at("conditions").contains("observer")
+                && manifest.at("exhaust_topology").at("node_count")
+                    .get<std::size_t>() > 0
+                && !manifest.at("exhaust_topology").at("fnv1a64")
+                    .get<std::string>().empty()
+                && manifest.at("reference_audio").at("supplied") == false
+                && manifest.at("reference_audio").at("provenance")
+                    == "none_supplied",
+            "manifest must pin listening conditions, topology and reference provenance");
+        require(
             manifest.contains("audio_physics")
                 && manifest.at("audio_physics").at("cycle_variation_samples") == 0
-                && manifest.at("audio_physics").at("afterfire_fuel_burned_mg") == 0.0,
+                && manifest.at("audio_physics").at("afterfire_fuel_burned_mg") == 0.0
+                && manifest.at("audio_physics").contains("authored_overrun_pulse_hz")
+                && manifest.at("audio_physics").contains("authored_overrun_pulse_duty")
+                && manifest.at("audio_physics").at("authored_overrun_pulse_timing_variation") == 0.0,
             "manifest exposes an exact bypass for the default deterministic engine");
+        require(
+            manifest.at("path_diagnostics")
+                    .at("saturation_processed_samples") == 0
+                && manifest.at("path_diagnostics")
+                    .at("dropped_exhaust_acoustic_samples") == 0
+                && manifest.at("path_diagnostics")
+                    .at("dropped_reaction_events") == 0,
+            "physical-reference export must prove neutral saturation and lossless acoustic transport");
         require(
             manifest.at("stem_reconstruction")
                     .at("stem_sum_to_premaster_max_abs_error") == 0.0
@@ -367,6 +390,8 @@ int main() {
     require(audioLab != nullptr, "audio physics lab fixture is present");
     auto bypassEngine = *audioLab;
     bypassEngine.combustionCalibration.cycleVariationCoefficientOfVariation = 0.0;
+    bypassEngine.exhaustAfterfire.strategy =
+        enginelab::ExhaustAfterfireStrategy::cleanDfco;
     bypassEngine.exhaustAfterfire.enabled = false;
     bypassEngine.exhaustAfterfire.overrunFuelFraction = 0.0;
     bypassEngine.ignition.limiterKeepsFuel = false;
@@ -377,6 +402,13 @@ int main() {
         path.geometry.mufflerPackingFlowResistivityPaSPerM2 = 0.0;
         path.geometry.mufflerPackingThicknessMm = 0.0;
         path.geometry.mufflerPerforatedOpenAreaRatio = 0.0;
+        if (path.network) {
+            for (auto& component : path.network->components) {
+                component.packingFlowResistivityPaSPerM2 = 0.0;
+                component.packingThicknessMm = 0.0;
+                component.perforatedOpenAreaRatio = 0.0;
+            }
+        }
     }
     enginelab::OfflineAudioExportRequest bypassRequest;
     bypassRequest.engine = std::move(bypassEngine);

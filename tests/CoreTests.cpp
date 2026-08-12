@@ -1096,6 +1096,8 @@ int main() {
         // what the whole catalogue authors.
         auto pulsedConfig = config;
         pulsedConfig.exhaustAfterfire.enabled = true;
+        pulsedConfig.exhaustAfterfire.strategy =
+            enginelab::ExhaustAfterfireStrategy::discreteAfterfire;
         pulsedConfig.exhaustAfterfire.overrunFuelFraction = 0.12;
         pulsedConfig.exhaustAfterfire.overrunMinimumRpm = 3'000.0;
         pulsedConfig.exhaustAfterfire.overrunMaximumThrottle = 0.02;
@@ -1103,7 +1105,7 @@ int main() {
         pulsedConfig.exhaustAfterfire.overrunPulseDutyCycle = 0.35;
 
         const auto armedAt = [](const enginelab::EngineConfig& engineConfig,
-                                double timeSeconds) {
+                                double secondsAfterLift) {
             enginelab::SimpleEcuModel ecuModel;
             ecuModel.initialise(engineConfig);
             enginelab::EngineState state;
@@ -1118,9 +1120,13 @@ int main() {
             state.throttle = 0.50;
             enginelab::EngineControls power { true, false, 0.50, 0.0 };
             (void)ecuModel.evaluate(engineConfig, state, power);
-            state.simulationTimeSeconds = timeSeconds;
+            state.simulationTimeSeconds = 1.02;
             state.throttle = 0.0;
             enginelab::EngineControls closed { true, false, 0.0, 0.0 };
+            // The pulse clock is deliberately anchored at the lift-off edge,
+            // rather than at an arbitrary absolute simulation-time grid.
+            (void)ecuModel.evaluate(engineConfig, state, closed);
+            state.simulationTimeSeconds += secondsAfterLift;
             return ecuModel.evaluate(engineConfig, state, closed)
                 .overrunAfterfireActive;
         };
@@ -1128,16 +1134,108 @@ int main() {
         // One 4 Hz period is 250 ms with a 35 % duty, so 0.05 s into a period
         // is inside the slug and 0.20 s is between slugs. Times are chosen from
         // the commanded rate, never read back from the model.
-        require(armedAt(pulsedConfig, 8.05),
+        require(armedAt(pulsedConfig, 0.05),
             "a chopped overrun must meter fuel inside its pulse");
-        require(!armedAt(pulsedConfig, 8.20),
+        require(!armedAt(pulsedConfig, 0.20),
             "a chopped overrun must stop metering between its pulses");
         // Same instants, unchopped: both must stay armed, so the discriminator
         // above is the chopping and not the two timestamps.
         auto continuousConfig = pulsedConfig;
+        continuousConfig.exhaustAfterfire.strategy =
+            enginelab::ExhaustAfterfireStrategy::continuousAntiLag;
         continuousConfig.exhaustAfterfire.overrunPulseHz = 0.0;
-        require(armedAt(continuousConfig, 8.05) && armedAt(continuousConfig, 8.20),
+        require(armedAt(continuousConfig, 0.05) && armedAt(continuousConfig, 0.20),
             "zero pulse rate must keep the historical every-cycle delivery");
+
+        auto irregularConfig = pulsedConfig;
+        irregularConfig.exhaustAfterfire.overrunPulseTimingVariation = 0.30;
+        enginelab::SimpleEcuModel irregularEcu;
+        irregularEcu.initialise(irregularConfig);
+        enginelab::EngineState irregularState;
+        irregularState.simulationTimeSeconds = 1.0;
+        irregularState.rpm = 4'000.0;
+        irregularState.coolantTemperatureC = 90.0;
+        irregularState.throttle = 0.50;
+        enginelab::EngineControls irregularPower { true, false, 0.50, 0.0 };
+        (void)irregularEcu.evaluate(
+            irregularConfig, irregularState, irregularPower);
+        irregularState.simulationTimeSeconds += 0.001;
+        irregularState.throttle = 0.0;
+        enginelab::EngineControls irregularClosed { true, false, 0.0, 0.0 };
+        auto previousPulseOpen = false;
+        std::vector<double> irregularPulseStarts;
+        constexpr auto timingSampleSeconds = 0.001;
+        for (int step = 0; step < 4'000; ++step) {
+            const auto command = irregularEcu.evaluate(
+                irregularConfig, irregularState, irregularClosed);
+            if (command.overrunAfterfireActive && !previousPulseOpen)
+                irregularPulseStarts.push_back(
+                    irregularState.simulationTimeSeconds);
+            previousPulseOpen = command.overrunAfterfireActive;
+            irregularState.simulationTimeSeconds += timingSampleSeconds;
+        }
+        require(irregularPulseStarts.size() >= 14,
+            "irregular discrete afterfire must keep producing separate slugs");
+        auto minimumInterval = 1.0;
+        auto maximumInterval = 0.0;
+        for (std::size_t index = 1;
+             index < irregularPulseStarts.size(); ++index) {
+            const auto interval = irregularPulseStarts[index]
+                - irregularPulseStarts[index - 1];
+            minimumInterval = std::min(minimumInterval, interval);
+            maximumInterval = std::max(maximumInterval, interval);
+        }
+        require(minimumInterval >= 0.25 * (1.0 - 0.30) - 0.002
+                && maximumInterval <= 0.25 * (1.0 + 0.30) + 0.002
+                && maximumInterval - minimumInterval > 0.08,
+            "timing variation must be audible but remain inside its authored bound");
+
+        const auto retainedFuelIntegral = [](
+                const enginelab::EngineConfig& engineConfig,
+                double durationSeconds = 2.0) {
+            enginelab::SimpleEcuModel ecuModel;
+            ecuModel.initialise(engineConfig);
+            enginelab::EngineState state;
+            state.simulationTimeSeconds = 1.0;
+            state.rpm = 4'000.0;
+            state.coolantTemperatureC = 90.0;
+            state.throttle = 0.50;
+            enginelab::EngineControls power { true, false, 0.50, 0.0 };
+            (void)ecuModel.evaluate(engineConfig, state, power);
+            state.simulationTimeSeconds += 0.001;
+            state.throttle = 0.0;
+            enginelab::EngineControls closed { true, false, 0.0, 0.0 };
+            (void)ecuModel.evaluate(engineConfig, state, closed);
+            auto integral = 0.0;
+            auto peak = 0.0;
+            constexpr auto dt = 0.001;
+            for (int step = 0;
+                 step < static_cast<int>(durationSeconds / dt); ++step) {
+                state.simulationTimeSeconds += dt;
+                const auto command = ecuModel.evaluate(
+                    engineConfig, state, closed);
+                if (command.fuelEnabled)
+                    integral += command.fuelCorrection * dt;
+                peak = std::max(peak, command.fuelCorrection);
+            }
+            return std::pair { integral, peak };
+        };
+        const auto [pulsedIntegral, pulsedPeak] =
+            retainedFuelIntegral(pulsedConfig);
+        const auto [continuousIntegral, continuousPeak] =
+            retainedFuelIntegral(continuousConfig);
+        require(std::abs(pulsedIntegral - continuousIntegral)
+                    <= continuousIntegral * 0.015
+                && pulsedPeak > continuousPeak * 2.5,
+            "pulse duty must concentrate, not discard, the calibrated overrun fuel mass");
+        const auto [irregularIntegral, irregularPeak] =
+            retainedFuelIntegral(irregularConfig, 30.0);
+        const auto [longContinuousIntegral, longContinuousPeak] =
+            retainedFuelIntegral(continuousConfig, 30.0);
+        require(std::abs(irregularIntegral - longContinuousIntegral)
+                    <= longContinuousIntegral * 0.015
+                && irregularPeak > longContinuousPeak * 2.5,
+            "irregular pulse timing must preserve calibrated long-run fuel mass");
     }
 
     {
@@ -1354,6 +1452,13 @@ int main() {
     extendedPhysicsConfig.exhaustAfterfire.overrunMaximumThrottle = 0.015;
     extendedPhysicsConfig.exhaustAfterfire.overrunPulseHz = 6.5;
     extendedPhysicsConfig.exhaustAfterfire.overrunPulseDutyCycle = 0.42;
+    extendedPhysicsConfig.exhaustAfterfire.overrunPulseTimingVariation = 0.23;
+    extendedPhysicsConfig.exhaustAfterfire.strategy =
+        enginelab::ExhaustAfterfireStrategy::discreteAfterfire;
+    extendedPhysicsConfig.exhaustAfterfire.inductionTimeSeconds = 0.0065;
+    extendedPhysicsConfig.exhaustAfterfire.minimumEquivalenceRatio = 0.51;
+    extendedPhysicsConfig.exhaustAfterfire.maximumEquivalenceRatio = 1.63;
+    extendedPhysicsConfig.exhaustAfterfire.quenchTemperatureK = 545.0;
     extendedPhysicsConfig.exhaust.mufflerChamberDiameterMm = 118.0;
     extendedPhysicsConfig.exhaust.mufflerChamberLengthMm = 360.0;
     extendedPhysicsConfig.exhaust.mufflerPackingFlowResistivityPaSPerM2 = 24'000.0;
@@ -1422,6 +1527,13 @@ int main() {
             && std::abs(extendedJsonRoundTrip.config->exhaustAfterfire.overrunMaximumThrottle - 0.015) < 0.001
             && std::abs(extendedJsonRoundTrip.config->exhaustAfterfire.overrunPulseHz - 6.5) < 0.001
             && std::abs(extendedJsonRoundTrip.config->exhaustAfterfire.overrunPulseDutyCycle - 0.42) < 0.001
+            && std::abs(extendedJsonRoundTrip.config->exhaustAfterfire.overrunPulseTimingVariation - 0.23) < 0.001
+            && extendedJsonRoundTrip.config->exhaustAfterfire.strategy
+                == enginelab::ExhaustAfterfireStrategy::discreteAfterfire
+            && std::abs(extendedJsonRoundTrip.config->exhaustAfterfire.inductionTimeSeconds - 0.0065) < 1.0e-9
+            && std::abs(extendedJsonRoundTrip.config->exhaustAfterfire.minimumEquivalenceRatio - 0.51) < 0.001
+            && std::abs(extendedJsonRoundTrip.config->exhaustAfterfire.maximumEquivalenceRatio - 1.63) < 0.001
+            && std::abs(extendedJsonRoundTrip.config->exhaustAfterfire.quenchTemperatureK - 545.0) < 0.001
             && std::abs(extendedJsonRoundTrip.config->exhaust.mufflerPackingFlowResistivityPaSPerM2 - 24'000.0) < 0.001
             && std::abs(extendedJsonRoundTrip.config->exhaustPaths.front().geometry.mufflerPackingThicknessMm - 35.0) < 0.001
             && std::abs(extendedJsonRoundTrip.config->exhaustPaths.front().geometry.mufflerPerforatedOpenAreaRatio - 0.28) < 0.001
@@ -1480,6 +1592,13 @@ int main() {
             && std::abs(extendedYamlRoundTrip.config->exhaustAfterfire.overrunMaximumThrottle - 0.015) < 0.001
             && std::abs(extendedYamlRoundTrip.config->exhaustAfterfire.overrunPulseHz - 6.5) < 0.001
             && std::abs(extendedYamlRoundTrip.config->exhaustAfterfire.overrunPulseDutyCycle - 0.42) < 0.001
+            && std::abs(extendedYamlRoundTrip.config->exhaustAfterfire.overrunPulseTimingVariation - 0.23) < 0.001
+            && extendedYamlRoundTrip.config->exhaustAfterfire.strategy
+                == enginelab::ExhaustAfterfireStrategy::discreteAfterfire
+            && std::abs(extendedYamlRoundTrip.config->exhaustAfterfire.inductionTimeSeconds - 0.0065) < 1.0e-9
+            && std::abs(extendedYamlRoundTrip.config->exhaustAfterfire.minimumEquivalenceRatio - 0.51) < 0.001
+            && std::abs(extendedYamlRoundTrip.config->exhaustAfterfire.maximumEquivalenceRatio - 1.63) < 0.001
+            && std::abs(extendedYamlRoundTrip.config->exhaustAfterfire.quenchTemperatureK - 545.0) < 0.001
             && std::abs(extendedYamlRoundTrip.config->exhaust.mufflerPackingFlowResistivityPaSPerM2 - 24'000.0) < 0.001
             && std::abs(extendedYamlRoundTrip.config->exhaustPaths.front().geometry.mufflerPackingThicknessMm - 35.0) < 0.001
             && std::abs(extendedYamlRoundTrip.config->intake
@@ -1606,6 +1725,8 @@ int main() {
     bool foundCalibratedVtec = false;
     bool foundCalibratedAvgas = false;
     bool foundCompressionIgnition = false;
+    bool foundGlobalCrossPlaneXPipe = false;
+    bool foundMotorcycleFourTwoOne = false;
     const enginelab::EngineConfig* bigTwinConfig = nullptr;
     for (const auto& entry : catalog.entries) {
         found2jz = found2jz || entry.config.name.find("2JZ") != std::string::npos;
@@ -1641,6 +1762,39 @@ int main() {
                 && !entry.config.injection.fullLoadFuelLimit.empty());
         if (entry.config.name.find("Big Twin") != std::string::npos)
             bigTwinConfig = &entry.config;
+        for (const auto& path : entry.config.exhaustPaths)
+            require(path.network.has_value(),
+                "every catalogue exhaust must compile to the explicit component DAG");
+        if (entry.config.name.find("LS3") != std::string::npos
+                && entry.config.exhaustPaths.size() == 1
+                && entry.config.exhaustPaths.front().network) {
+            const auto& components = entry.config.exhaustPaths.front()
+                .network->components;
+            const auto merges = std::count_if(
+                components.begin(), components.end(), [](const auto& component) {
+                    return component.type == enginelab::ExhaustComponentType::merge;
+                });
+            const auto splitters = std::count_if(
+                components.begin(), components.end(), [](const auto& component) {
+                    return component.type == enginelab::ExhaustComponentType::splitter;
+                });
+            const auto outlets = std::count_if(
+                components.begin(), components.end(), [](const auto& component) {
+                    return component.type == enginelab::ExhaustComponentType::outlet;
+                });
+            foundGlobalCrossPlaneXPipe = merges >= 3
+                && splitters >= 1 && outlets == 2;
+        }
+        if (entry.config.name.find("Hayabusa") != std::string::npos
+                && !entry.config.exhaustPaths.empty()
+                && entry.config.exhaustPaths.front().network) {
+            const auto& components = entry.config.exhaustPaths.front()
+                .network->components;
+            foundMotorcycleFourTwoOne = std::count_if(
+                components.begin(), components.end(), [](const auto& component) {
+                    return component.type == enginelab::ExhaustComponentType::merge;
+                }) >= 3;
+        }
         require(!enginelab::validateEngineConfig(entry.config), "every catalog engine must validate");
         require(!entry.sourcePath.empty(), "catalog entries must retain their source path");
     }
@@ -1651,6 +1805,10 @@ int main() {
     require(foundCalibratedAvgas, "catalog parts must apply an explicit fuel calibration to aviation engines");
     require(foundCompressionIgnition,
             "catalog must include a cetane-calibrated compression-ignition engine");
+    require(foundGlobalCrossPlaneXPipe,
+            "the LS3 must expose one cross-bank 4-into-1/X-pipe/twin-outlet DAG");
+    require(foundMotorcycleFourTwoOne,
+            "the Hayabusa 4-2-1 must retain both pair collectors and its final merge");
     require(bigTwinConfig != nullptr,
             "catalog must retain the Big Twin start regression fixture");
 
@@ -2348,9 +2506,11 @@ int main() {
     }
 
     {
-        enginelab::FiringEventQueue audioQueue;
+        auto audioQueue = std::make_unique<enginelab::FiringEventQueue>();
         enginelab::RealtimeAudioState audioState;
-        enginelab::RealtimeEngineAudio renderer(audioQueue, audioState);
+        audioState.saturationDrive.store(4.0F);
+        enginelab::RealtimeEngineAudio renderer(
+            *audioQueue, audioState, nullptr, nullptr, nullptr, nullptr);
         renderer.prepare(48'000.0, 256);
         enginelab::FiringEvent event;
         event.timeSeconds = 0.0;
@@ -2359,7 +2519,7 @@ int main() {
         event.combustionDurationMs = 5.0F;
         event.exhaustResonanceHz = 240.0F;
         event.airFuelRatio = 12.8F;
-        require(audioQueue.tryPush(event), "audio timing event must enter realtime queue");
+        require(audioQueue->tryPush(event), "audio timing event must enter realtime queue");
         juce::AudioBuffer<float> buffer(2, 1'200);
         renderer.render(buffer, 0, buffer.getNumSamples());
         int firstAudible = -1;
@@ -2369,25 +2529,35 @@ int main() {
                 "audio event must be rendered at its sample-accurate scheduled offset");
         require(buffer.getMagnitude(0, firstAudible, buffer.getNumSamples() - firstAudible) > 1.0e-4F,
                 "combustion audio must produce a sustained audible impulse tail");
+        require(renderer.saturationProcessedSampleCount() == 0,
+                "physical-reference monitoring must bypass authored saturation exactly");
+        audioState.monitorMode.store(static_cast<int>(
+            enginelab::AudioMonitorMode::captureVoiced));
+        juce::AudioBuffer<float> captureBuffer(2, 256);
+        renderer.render(captureBuffer, 0, captureBuffer.getNumSamples());
+        require(renderer.saturationProcessedSampleCount() > 0,
+                "capture monitoring must retain the explicitly requested voicing saturation");
     }
 
     {
-        enginelab::FiringEventQueue scaledQueue;
+        auto scaledQueue = std::make_unique<enginelab::FiringEventQueue>();
         enginelab::RealtimeAudioState scaledState;
         scaledState.rpm.store(3'000.0F);
         scaledState.timeScale.store(1.0F);
-        enginelab::RealtimeEngineAudio scaledRenderer(scaledQueue, scaledState);
+        enginelab::RealtimeEngineAudio scaledRenderer(
+            *scaledQueue, scaledState, nullptr, nullptr, nullptr, nullptr);
         scaledRenderer.prepare(48'000.0, 256);
         juce::AudioBuffer<float> audible(2, 4'800);
         scaledRenderer.render(audible, 0, audible.getNumSamples());
         require(audible.getMagnitude(0, 0, audible.getNumSamples()) > 1.0e-5F,
                 "mechanical audio layer must follow running RPM");
 
-        enginelab::FiringEventQueue pausedQueue;
+        auto pausedQueue = std::make_unique<enginelab::FiringEventQueue>();
         enginelab::RealtimeAudioState pausedState;
         pausedState.rpm.store(3'000.0F);
         pausedState.timeScale.store(0.0F);
-        enginelab::RealtimeEngineAudio pausedRenderer(pausedQueue, pausedState);
+        enginelab::RealtimeEngineAudio pausedRenderer(
+            *pausedQueue, pausedState, nullptr, nullptr, nullptr, nullptr);
         pausedRenderer.prepare(48'000.0, 256);
         juce::AudioBuffer<float> silent(2, 4'800);
         pausedRenderer.render(silent, 0, silent.getNumSamples());
@@ -2399,21 +2569,24 @@ int main() {
         overflowEvent.exhaustDelaySeconds = 0.01F;
         for (int index = 0; index < 600; ++index) {
             overflowEvent.timeSeconds = static_cast<double>(index) * 0.0001;
-            require(scaledQueue.tryPush(overflowEvent), "audio overflow fixture must enter queue");
+            require(scaledQueue->tryPush(overflowEvent), "audio overflow fixture must enter queue");
         }
         juce::AudioBuffer<float> shortBuffer(2, 64);
         scaledRenderer.render(shortBuffer, 0, shortBuffer.getNumSamples());
         require(scaledRenderer.droppedPendingEventCount() > 0,
                 "pending audio saturation must be observable instead of blocking the producer queue");
 
-        enginelab::FiringEventQueue flowQueue;
+        auto flowQueue = std::make_unique<enginelab::FiringEventQueue>();
         enginelab::RealtimeAudioState flowAudioState;
+        flowAudioState.monitorMode.store(static_cast<int>(
+            enginelab::AudioMonitorMode::captureVoiced));
         flowAudioState.combustionGain.store(0.0F);
         flowAudioState.intakeGain.store(0.0F);
         flowAudioState.mechanicalGain.store(0.0F);
         flowAudioState.exhaustFlowGramsPerSecond.store(120.0F);
         flowAudioState.exhaustPressureKpa.store(155.0F);
-        enginelab::RealtimeEngineAudio flowRenderer(flowQueue, flowAudioState);
+        enginelab::RealtimeEngineAudio flowRenderer(
+            *flowQueue, flowAudioState, nullptr, nullptr, nullptr, nullptr);
         flowRenderer.prepare(48'000.0, 256);
         juce::AudioBuffer<float> physicalFlowAudio(2, 4'800);
         flowRenderer.render(physicalFlowAudio, 0, physicalFlowAudio.getNumSamples());
@@ -2422,8 +2595,10 @@ int main() {
     }
 
     {
-        enginelab::FiringEventQueue presetQueue;
+        auto presetQueue = std::make_unique<enginelab::FiringEventQueue>();
         enginelab::RealtimeAudioState presetState;
+        presetState.monitorMode.store(static_cast<int>(
+            enginelab::AudioMonitorMode::captureVoiced));
         presetState.rpm.store(3'600.0F);
         presetState.throttle.store(0.8F);
         presetState.load.store(0.5F);
@@ -2440,29 +2615,35 @@ int main() {
         event.airFuelRatio = 12.9F;
 
         presetState.exhaustPreset.store(static_cast<int>(enginelab::AudioExhaustPreset::openHeaders));
-        enginelab::RealtimeEngineAudio openRenderer(presetQueue, presetState);
+        enginelab::RealtimeEngineAudio openRenderer(
+            *presetQueue, presetState, nullptr, nullptr, nullptr, nullptr);
         openRenderer.prepare(48'000.0, 256);
-        require(presetQueue.tryPush(event), "open-header fixture event must enter queue");
+        require(presetQueue->tryPush(event), "open-header fixture event must enter queue");
         juce::AudioBuffer<float> openBuffer(2, 4'800);
         openRenderer.render(openBuffer, 0, openBuffer.getNumSamples());
         const auto openMagnitude = openBuffer.getMagnitude(0, 0, openBuffer.getNumSamples());
 
-        enginelab::FiringEventQueue mutedQueue;
+        auto mutedQueue = std::make_unique<enginelab::FiringEventQueue>();
         enginelab::RealtimeAudioState mutedState;
+        mutedState.monitorMode.store(static_cast<int>(
+            enginelab::AudioMonitorMode::captureVoiced));
         mutedState.combustionGain.store(0.0F);
         mutedState.exhaustGain.store(0.0F);
         mutedState.intakeGain.store(0.0F);
         mutedState.mechanicalGain.store(0.0F);
-        enginelab::RealtimeEngineAudio mutedRenderer(mutedQueue, mutedState);
+        enginelab::RealtimeEngineAudio mutedRenderer(
+            *mutedQueue, mutedState, nullptr, nullptr, nullptr, nullptr);
         mutedRenderer.prepare(48'000.0, 256);
-        require(mutedQueue.tryPush(event), "muted fixture event must enter queue");
+        require(mutedQueue->tryPush(event), "muted fixture event must enter queue");
         juce::AudioBuffer<float> mutedBuffer(2, 4'800);
         mutedRenderer.render(mutedBuffer, 0, mutedBuffer.getNumSamples());
         require(mutedBuffer.getMagnitude(0, 0, mutedBuffer.getNumSamples()) < openMagnitude * 0.05F,
                 "live mixer gains must be able to mute audio layers");
 
-        enginelab::FiringEventQueue turboQueue;
+        auto turboQueue = std::make_unique<enginelab::FiringEventQueue>();
         enginelab::RealtimeAudioState turboState;
+        turboState.monitorMode.store(static_cast<int>(
+            enginelab::AudioMonitorMode::captureVoiced));
         turboState.rpm.store(3'600.0F);
         turboState.throttle.store(0.8F);
         turboState.load.store(0.5F);
@@ -2470,34 +2651,41 @@ int main() {
         turboState.intakeGain.store(0.0F);
         turboState.mechanicalGain.store(0.0F);
         turboState.exhaustPreset.store(static_cast<int>(enginelab::AudioExhaustPreset::turboMuffled));
-        enginelab::RealtimeEngineAudio turboRenderer(turboQueue, turboState);
+        enginelab::RealtimeEngineAudio turboRenderer(
+            *turboQueue, turboState, nullptr, nullptr, nullptr, nullptr);
         turboRenderer.prepare(48'000.0, 256);
-        require(turboQueue.tryPush(event), "turbo fixture event must enter queue");
+        require(turboQueue->tryPush(event), "turbo fixture event must enter queue");
         juce::AudioBuffer<float> turboBuffer(2, 4'800);
         turboRenderer.render(turboBuffer, 0, turboBuffer.getNumSamples());
         const auto turboMagnitude = turboBuffer.getMagnitude(0, 0, turboBuffer.getNumSamples());
         require(std::abs(openMagnitude - turboMagnitude) > 1.0e-4F,
                 "exhaust presets must produce observably different impulse responses");
 
-        enginelab::FiringEventQueue directIrQueue;
+        auto directIrQueue = std::make_unique<enginelab::FiringEventQueue>();
         enginelab::RealtimeAudioState directIrState;
+        directIrState.monitorMode.store(static_cast<int>(
+            enginelab::AudioMonitorMode::captureVoiced));
         directIrState.combustionGain.store(0.0F);
         directIrState.intakeGain.store(0.0F);
         directIrState.mechanicalGain.store(0.0F);
-        enginelab::RealtimeEngineAudio directIrRenderer(directIrQueue, directIrState);
+        enginelab::RealtimeEngineAudio directIrRenderer(
+            *directIrQueue, directIrState, nullptr, nullptr, nullptr, nullptr);
         const std::array<float, 1> directIr { 1.0F };
         directIrRenderer.setImpulseResponse(directIr);
         directIrRenderer.prepare(48'000.0, 256);
-        require(directIrQueue.tryPush(event), "direct IR fixture event must enter queue");
+        require(directIrQueue->tryPush(event), "direct IR fixture event must enter queue");
         juce::AudioBuffer<float> directIrBuffer(2, 4'800);
         directIrRenderer.render(directIrBuffer, 0, directIrBuffer.getNumSamples());
 
-        enginelab::FiringEventQueue delayedIrQueue;
+        auto delayedIrQueue = std::make_unique<enginelab::FiringEventQueue>();
         enginelab::RealtimeAudioState delayedIrState;
+        delayedIrState.monitorMode.store(static_cast<int>(
+            enginelab::AudioMonitorMode::captureVoiced));
         delayedIrState.combustionGain.store(0.0F);
         delayedIrState.intakeGain.store(0.0F);
         delayedIrState.mechanicalGain.store(0.0F);
-        enginelab::RealtimeEngineAudio delayedIrRenderer(delayedIrQueue, delayedIrState);
+        enginelab::RealtimeEngineAudio delayedIrRenderer(
+            *delayedIrQueue, delayedIrState, nullptr, nullptr, nullptr, nullptr);
         std::array<float, 128> delayedIr {};
         delayedIr[0] = 0.15F;
         delayedIr[96] = 0.85F;
@@ -2505,7 +2693,7 @@ int main() {
         delayedIrRenderer.prepare(48'000.0, 256);
         auto secondPathEvent = event;
         secondPathEvent.exhaustPathIndex = 1;
-        require(delayedIrQueue.tryPush(secondPathEvent), "delayed IR fixture event must enter queue");
+        require(delayedIrQueue->tryPush(secondPathEvent), "delayed IR fixture event must enter queue");
         juce::AudioBuffer<float> delayedIrBuffer(2, 4'800);
         delayedIrRenderer.render(delayedIrBuffer, 0, delayedIrBuffer.getNumSamples());
         double irDifference = 0.0;
@@ -2545,7 +2733,7 @@ int main() {
     }
 
     {
-        enginelab::FiringEventQueue pressureEventQueue;
+        auto pressureEventQueue = std::make_unique<enginelab::FiringEventQueue>();
         enginelab::RealtimeAudioState pressureAudioState;
         auto pressureQueue = std::make_unique<enginelab::CylinderPressureQueue>();
         enginelab::CylinderPressureSample pressure0;
@@ -2561,8 +2749,9 @@ int main() {
         pressure1.pressureBar[1] = 38.0F;
         require(pressureQueue->tryPush(pressure0) && pressureQueue->tryPush(pressure1),
                 "pressure audio queue must accept thermodynamic substeps");
-        enginelab::RealtimeEngineAudio pressureRenderer(pressureEventQueue, pressureAudioState,
-                                                        pressureQueue.get());
+        enginelab::RealtimeEngineAudio pressureRenderer(
+            *pressureEventQueue, pressureAudioState, pressureQueue.get(),
+            nullptr, nullptr, nullptr);
         pressureRenderer.prepare(48'000.0, 512);
         juce::AudioBuffer<float> pressureBuffer(2, 512);
         pressureRenderer.render(pressureBuffer, 0, pressureBuffer.getNumSamples());
@@ -2587,6 +2776,21 @@ int main() {
         { true, false, std::numeric_limits<double>::infinity(), std::numeric_limits<double>::quiet_NaN() });
     require(std::isfinite(finiteFrame.state.rpm) && std::isfinite(finiteFrame.state.throttle)
             && std::isfinite(finiteFrame.state.load), "non-finite controls must not poison simulation state");
+    const auto calibrationTimeBefore = simulator.state().simulationTimeSeconds;
+    const auto calibrationRpmBefore = simulator.state().rpm;
+    enginelab::AudioPhysicsCalibration liveCalibration;
+    liveCalibration.cycleVariationCoefficientOfVariation = 0.035;
+    liveCalibration.cycleVariationCorrelation = 0.61;
+    liveCalibration.limiterKeepsFuel = true;
+    liveCalibration.exhaustAfterfire = config.exhaustAfterfire;
+    simulator.applyAudioPhysicsCalibration(liveCalibration);
+    const auto calibrationFrame = simulator.step(
+        1.0 / 240.0, { true, false, 0.25, 0.08 });
+    require(calibrationFrame.state.simulationTimeSeconds
+                > calibrationTimeBefore
+            && std::abs(calibrationFrame.state.rpm - calibrationRpmBefore)
+                < std::max(400.0, calibrationRpmBefore * 0.25),
+        "live audio-physics calibration must preserve simulation time and rotating state");
     enginelab::CylinderPressureSample discardedPressureSample;
     while (simulator.tryPopCylinderPressureSample(discardedPressureSample)) {}
     simulator.setPressureSamplingEnabled(true);
@@ -2609,6 +2813,30 @@ int main() {
     }
     require(observedPhysicalExhaustBoundary,
         "multirate exhaust coupling must retain a physical boundary sample at mechanical cadence");
+
+    // Duct media/outlet states are consumed once per audio block, not at the
+    // gas-network's ~8 kHz coupling rate. In a non-reacting run the simulator
+    // must therefore publish them at product-frame cadence; afterfire sources
+    // independently force immediate packets and are covered by the exact-node
+    // reaction tests above. This guards the CPU regression where a large zeroed
+    // telemetry object was rebuilt dozens of times before one consumer block.
+    enginelab::ExhaustAcousticSample discardedAcousticSample;
+    while (simulator.tryPopExhaustAcousticSample(discardedAcousticSample)) {}
+    auto acousticSampleFrames = std::size_t { 0 };
+    constexpr auto acousticCadenceProbeFrames = std::size_t { 24 };
+    for (std::size_t frameIndex = 0;
+         frameIndex < acousticCadenceProbeFrames; ++frameIndex) {
+        const auto frame = simulator.step(
+            1.0 / 240.0, { true, false, 0.4, 0.1 });
+        acousticSampleFrames += frame.exhaustAcousticSampleCount;
+    }
+    auto poppedAcousticSamples = std::size_t { 0 };
+    while (simulator.tryPopExhaustAcousticSample(discardedAcousticSample))
+        ++poppedAcousticSamples;
+    require(acousticSampleFrames > 0
+            && acousticSampleFrames == poppedAcousticSamples
+            && acousticSampleFrames <= acousticCadenceProbeFrames + 1,
+        "non-reacting exhaust media telemetry must stay at product-frame cadence");
 
     {
         auto invalidConfig = config;

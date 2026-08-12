@@ -123,6 +123,7 @@ struct ExhaustOutletFlowSample final {
     double temperatureK { 0.0 };
     double axialVelocityMps { 0.0 };
     double densityKgPerM3 { 0.0 };
+    double speedOfSoundMps { 0.0 };
     double massFlowKgPerS { 0.0 };
     double volumeFlowM3PerS { 0.0 };
     double totalEnergyFlowW { 0.0 };
@@ -155,9 +156,33 @@ struct ExhaustFuelReactionConfig final {
     double oxygenMolesPerFuelMole { 12.5 };
     double fuelMolarMassKg { 0.114 };
     double lowerHeatingValueJPerKg { 44'000'000.0 };
+    double inductionTimeSeconds { 0.004 };
+    double minimumEquivalenceRatio { 0.45 };
+    double maximumEquivalenceRatio { 1.80 };
+    double quenchTemperatureK { 520.0 };
+};
+
+/** One conservative, spatially resolved heat-release source. The finite-volume
+ * state remains the sole owner of mass and low-band energy; this descriptor is
+ * only a location/time/energy observation for the high-band acoustic solver. */
+struct ExhaustFuelReactionSource final {
+    std::uint32_t nodeId { 0 };
+    std::uint32_t sourceComponentId { 0 };
+    std::uint32_t pathIndex { 0 };
+    double axialPosition { 0.5 };
+    double releasedEnergyJoules { 0.0 };
+    double burnedFuelMassKg { 0.0 };
+    double durationSeconds { 0.0 };
+    double densityKgPerM3 { 0.0 };
+    double speedOfSoundMps { 0.0 };
+    double flowAreaM2 { 0.0 };
 };
 
 struct ExhaustFuelReactionResult final {
+    // Coalesced per physical node, not per cell. Keeping this aligned with the
+    // pressure-queue transport bounds EngineSimulator::step's already large
+    // fixed stack frame on Windows.
+    static constexpr std::size_t maximumSources { 32 };
     double burnedFuelMassKg { 0.0 };
     double consumedOxygenMassKg { 0.0 };
     double releasedEnergyJoules { 0.0 };
@@ -168,6 +193,9 @@ struct ExhaustFuelReactionResult final {
      * hot-surface path is not contributing and the model has fallen back to
      * the behaviour that cannot pop. */
     std::size_t wallIgnitedControlVolumes { 0 };
+    std::array<ExhaustFuelReactionSource, maximumSources> sources {};
+    std::size_t sourceCount { 0 };
+    std::size_t droppedSourceCount { 0 };
 };
 
 /** Globally coupled finite-volume exhaust network.
@@ -364,6 +392,12 @@ private:
     std::vector<ConservedFlowRate> outletSecondStageFlow_;
     std::vector<CylinderGasExchange> cylinderExchanges_;
     std::vector<ExhaustOutletFlowSample> outletSamples_;
+    struct ReactionSiteState final {
+        double inductionSeconds { 0.0 };
+        bool burning { false };
+    };
+    std::vector<std::vector<ReactionSiteState>> ductReactionStates_;
+    std::vector<ReactionSiteState> junctionReactionStates_;
     PrimitiveState ambientPrimitive_ {};
     bool configured_ { false };
 };

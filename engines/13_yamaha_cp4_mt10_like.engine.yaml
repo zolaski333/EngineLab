@@ -42,8 +42,12 @@ engine:
       - { rpm: 2500, advance_deg: 20 }
       - { rpm: 5000, advance_deg: 32 }
       - { rpm: 8000, advance_deg: 36 }
-      - { rpm: 11500, advance_deg: 31 }
-      - { rpm: 12500, advance_deg: 31 }
+      # The MT-10 calibration must shed torque above its 9000 rpm peak. The
+      # explicit 4-2-1 now supplies the tuned-wave contribution that the old
+      # scalar collector omitted, so retain the measured midrange and apply a
+      # plausible full-load retard only in the top-end cell.
+      - { rpm: 11500, advance_deg: 25.5 }
+      - { rpm: 12500, advance_deg: 25.5 }
   # The short-stroke, high-revving CP4 relies on a strong tumble field. Without
   # it a mean-piston-speed-only closure burns for about 60 crank degrees at
   # 9000 rpm, versus the 35-45 degree interval expected of this pent-roof head.

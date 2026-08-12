@@ -1,4 +1,4 @@
-schema_version: 5
+schema_version: 6
 family: motorcycle
 # Deliberately audible listening-lab variant of engine 15. The base geometry,
 # fuelling, valvetrain and vehicle are unchanged. This variant alone opts into
@@ -45,14 +45,30 @@ engine:
     cycle_variation_correlation: 0.55
   exhaust_afterfire:
     enabled: true
+    strategy: discrete_afterfire
     ignition_temperature_k: 800
     reaction_time_constant_s: 0.008
     reaction_efficiency: 0.95
-    # Conservative spark-cut enrichment on genuine closed-throttle DFCO.
-    # The exhaust chemistry still requires oxygen and sufficient temperature.
-    overrun_fuel_fraction: 0.12
+    # Measured minimum combustible slug calibration on genuine closed-throttle
+    # DFCO. With 35% pulse duty, the previous 0.12 average command produced an
+    # instantaneous equivalence ratio near 0.34, below the authored 0.45 lean
+    # flammability limit, and correctly burned 0 mg even at a 603 C wall.
+    # 0.18 raises the open-window slug near phi=0.51; oxygen and temperature are
+    # still required and the cold-exhaust control remains exactly silent.
+    overrun_fuel_fraction: 0.18
     overrun_minimum_rpm: 3000
     overrun_maximum_throttle: 0.02
+    # Four fuel slugs per second. Fuel retained during the open 35% window is
+    # normalised by duty, so pulse timing changes texture rather than mass.
+    overrun_pulse_hz: 4.0
+    overrun_pulse_duty: 0.35
+    # Interval scatter is bounded at +/-25%. The duty is recomputed from each
+    # actual interval, so irregular timing does not change average fuel mass.
+    overrun_pulse_timing_variation: 0.25
+    induction_time_s: 0.004
+    minimum_equivalence_ratio: 0.45
+    maximum_equivalence_ratio: 1.80
+    quench_temperature_k: 520
   uses:
     injection: high_flow_port
     exhaust: cp2_absorptive_lab

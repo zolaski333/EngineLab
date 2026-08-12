@@ -56,10 +56,14 @@ struct RealtimeAudioStemBuffers final {
  */
 class RealtimeEngineAudio final : public IAudioRenderer {
 public:
+    /** Every telemetry source is explicit so a production-equivalent harness
+     *  cannot silently omit the sparse thermoacoustic stream. Pass nullptr
+     *  deliberately only for a unit test of a reduced path. */
     RealtimeEngineAudio(FiringEventQueue& queue, RealtimeAudioState& state,
-                        CylinderPressureQueue* pressureQueue = nullptr,
-                        const ExhaustGraph* exhaustGraph = nullptr,
-                        const EngineConfig* engineConfig = nullptr);
+                        CylinderPressureQueue* pressureQueue,
+                        const ExhaustGraph* exhaustGraph,
+                        const EngineConfig* engineConfig,
+                        ExhaustAcousticQueue* exhaustAcousticQueue);
     void prepare(double sampleRate, int maximumBlockSize) noexcept override;
     void release() noexcept override;
     void render(juce::AudioBuffer<float>& output, int startSample, int sampleCount) noexcept override;
@@ -87,6 +91,21 @@ public:
     // slow AGC actually engages in a given voice (gain < 1) or stays at identity
     // (safety-only). These do not affect the audio path.
     [[nodiscard]] std::uint64_t levelLimitedSampleCount() const noexcept { return levelLimitedSamples_.load(std::memory_order_relaxed); }
+    [[nodiscard]] std::uint64_t saturationProcessedSampleCount() const noexcept {
+        return saturationProcessedSamples_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t softLimitedSampleCount() const noexcept {
+        return softLimitedSamples_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t hardClampedSampleCount() const noexcept {
+        return hardClampedSamples_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t droppedReactionEventCount() const noexcept {
+        return droppedReactionEvents_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] float maximumTruePeakMagnitude() const noexcept {
+        return maximumTruePeakMagnitude_.load(std::memory_order_relaxed);
+    }
     [[nodiscard]] float minObservedLevelGain() const noexcept { return minObservedLevelGain_.load(std::memory_order_relaxed); }
     /** Whether the physical thermoacoustic path has taken ownership of the voice.
      *
@@ -359,10 +378,32 @@ private:
     FiringEventQueue& queue_;
     RealtimeAudioState& realtimeState_;
     CylinderPressureQueue* pressureQueue_ { nullptr };
+    ExhaustAcousticQueue* exhaustAcousticQueue_ { nullptr };
     CylinderPressureSample currentPressureSample_ {};
     CylinderPressureSample nextPressureSample_ {};
     bool hasCurrentPressureSample_ { false };
     bool hasNextPressureSample_ { false };
+    ExhaustAcousticSample currentExhaustAcousticSample_ {};
+    ExhaustAcousticSample nextExhaustAcousticSample_ {};
+    bool hasCurrentExhaustAcousticSample_ { false };
+    bool hasNextExhaustAcousticSample_ { false };
+    struct ThermoacousticReactionVoice final {
+        bool active { false };
+        std::uint32_t nodeId { 0 };
+        float axialPosition { 0.5F };
+        float flowAreaM2 { 0.0F };
+        float speedOfSoundMps { 0.0F };
+        double targetPowerW { 0.0 };
+        double smoothedPowerW { 0.0 };
+        double lastUpdateTimeSeconds { 0.0 };
+        double holdSeconds { 0.001 };
+        float previousInput1 {};
+        float highPass1 {};
+        float previousInput2 {};
+        float highPass2 {};
+    };
+    std::array<ThermoacousticReactionVoice, 64> reactionVoices_ {};
+    double lastReactionEventSampleTime_ { -1.0 };
     std::array<Voice, 96> voices_ {};
     std::array<PendingEvent, 512> pendingEvents_ {};
     std::size_t pendingEventCount_ { 0 };
@@ -497,6 +538,11 @@ private:
     std::atomic<std::uint64_t> delayTruncations_ { 0 };
     // Safety-leveler observers (measurement only; updated once per block).
     std::atomic<std::uint64_t> levelLimitedSamples_ { 0 };
+    std::atomic<std::uint64_t> saturationProcessedSamples_ { 0 };
+    std::atomic<std::uint64_t> softLimitedSamples_ { 0 };
+    std::atomic<std::uint64_t> hardClampedSamples_ { 0 };
+    std::atomic<std::uint64_t> droppedReactionEvents_ { 0 };
+    std::atomic<float> maximumTruePeakMagnitude_ { 0.0F };
     std::atomic<float> minObservedLevelGain_ { 1.0F };
     std::atomic<float> maxObservedExhaustPressurePa_ { 0.0F };
     std::atomic<float> maxObservedExhaustJetNoisePressurePa_ { 0.0F };

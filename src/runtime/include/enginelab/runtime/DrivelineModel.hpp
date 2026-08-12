@@ -21,6 +21,9 @@ struct DrivelineOutput final {
     double wheelTorqueNm { 0.0 };
     double clutchTorqueNm { 0.0 };
     double clutchSlipRpm { 0.0 };
+    /** Fraction of the public frame for which the Karnopp clutch law solved a
+     * static-friction constraint rather than kinetic slip. */
+    double clutchStickFraction { 0.0 };
     double shiftProgress { 0.0 };
     bool shiftInProgress { false };
     double brakePressure { 0.0 };

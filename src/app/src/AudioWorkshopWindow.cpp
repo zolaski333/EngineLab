@@ -107,6 +107,7 @@ AudioPhysicsSettings audioPhysicsSettingsFor(
         engine.exhaustAfterfire.overrunFuelFraction,
         engine.exhaustAfterfire.overrunPulseHz,
         engine.exhaustAfterfire.overrunPulseDutyCycle,
+        engine.exhaustAfterfire.overrunPulseTimingVariation,
     };
 }
 
@@ -116,7 +117,13 @@ void applyAudioPhysicsSettings(
         settings.cycleVariationCoefficientOfVariation;
     engine.combustionCalibration.cycleVariationCorrelation =
         settings.cycleVariationCorrelation;
-    engine.exhaustAfterfire.enabled = settings.afterfireEnabled;
+    engine.exhaustAfterfire.strategy = settings.afterfireEnabled
+        ? (settings.overrunPulseHz > 0.0
+            ? ExhaustAfterfireStrategy::discreteAfterfire
+            : ExhaustAfterfireStrategy::continuousAntiLag)
+        : ExhaustAfterfireStrategy::cleanDfco;
+    engine.exhaustAfterfire.enabled = afterfireRetainsFuel(
+        engine.exhaustAfterfire.strategy);
     engine.ignition.limiterKeepsFuel = settings.limiterKeepsFuel;
     engine.exhaustAfterfire.ignitionTemperatureK =
         settings.afterfireIgnitionTemperatureK;
@@ -124,11 +131,19 @@ void applyAudioPhysicsSettings(
         settings.afterfireReactionTimeSeconds;
     engine.exhaustAfterfire.reactionEfficiency =
         settings.afterfireEfficiency;
-    engine.exhaustAfterfire.overrunFuelFraction =
-        settings.overrunFuelFraction;
+    // Toggling the feature must denote an executable calibration.  The old UI
+    // left the authored default at zero, making "enabled" indistinguishable
+    // from clean DFCO. Eighteen percent is the measured minimum demo command
+    // that remains inside the configured lean flammability limit once the
+    // 35%-duty slug is normalised; an explicit non-zero slider value wins.
+    engine.exhaustAfterfire.overrunFuelFraction = settings.afterfireEnabled
+        && !(settings.overrunFuelFraction > 0.0)
+        ? 0.18 : settings.overrunFuelFraction;
     engine.exhaustAfterfire.overrunPulseHz = settings.overrunPulseHz;
     engine.exhaustAfterfire.overrunPulseDutyCycle =
         settings.overrunPulseDutyCycle;
+    engine.exhaustAfterfire.overrunPulseTimingVariation =
+        settings.overrunPulseTimingVariation;
 }
 
 AudioPhysicsTelemetry audioPhysicsTelemetryFor(
@@ -298,8 +313,13 @@ public:
                     false, juce::dontSendNotification);
             publishMix();
         };
+        captureVoicingToggle_.setColour(
+            juce::ToggleButton::textColourId,
+            juce::Colour(0xffc4d0cb));
+        captureVoicingToggle_.onClick = [this] { publishMix(); };
         addAndMakeVisible(catalogueMixButton_);
         addAndMakeVisible(resetButton_);
+        addAndMakeVisible(captureVoicingToggle_);
 
         sampleRateSelector_.addItem("48 kHz", 1);
         sampleRateSelector_.addItem("96 kHz", 2);
@@ -373,11 +393,12 @@ public:
         addAndMakeVisible(proofLabel_);
         addAndMakeVisible(progressBar_);
 
-        const std::array<std::string_view, 8> physicsNames {
+        const std::array<std::string_view, 9> physicsNames {
             "Variation cycle (COV)", "Correlation cycles",
             "Allumage afterfire (K)", "Reaction afterfire (ms)",
             "Rendement afterfire", "Carburant decel",
             "Hachage pops (Hz)", "Rapport cyclique pops",
+            "Irregularite cadence",
         };
         for (std::size_t index = 0; index < physicsLabels_.size(); ++index) {
             physicsLabels_[index].setText(
@@ -395,6 +416,7 @@ public:
         configureSlider(overrunFuelSlider_, 0.0, 0.25, 0.005);
         configureSlider(overrunPulseHzSlider_, 0.0, 20.0, 0.5);
         configureSlider(overrunPulseDutySlider_, 0.02, 1.0, 0.01);
+        configureSlider(overrunPulseTimingVariationSlider_, 0.0, 0.45, 0.01);
         cycleVariationSlider_.setTextValueSuffix(" ratio");
         cycleCorrelationSlider_.setTextValueSuffix(" ratio");
         afterfireTemperatureSlider_.setTextValueSuffix(" K");
@@ -403,6 +425,7 @@ public:
         overrunFuelSlider_.setTextValueSuffix(" ratio");
         overrunPulseHzSlider_.setTextValueSuffix(" Hz");
         overrunPulseDutySlider_.setTextValueSuffix(" ratio");
+        overrunPulseTimingVariationSlider_.setTextValueSuffix(" ratio");
 
         afterfireToggle_.setColour(
             juce::ToggleButton::textColourId, juce::Colour(0xffc4d0cb));
@@ -412,7 +435,8 @@ public:
         addAndMakeVisible(wetLimiterToggle_);
         demoPhysicsButton_.onClick = [this] {
             setPhysicsInternal({ 0.06, 0.55, true, true,
-                                 800.0, 0.008, 0.95, 0.12, 4.0, 0.35 });
+                                 800.0, 0.008, 0.95, 0.18, 4.0, 0.35,
+                                 0.25 });
             applyPhysics();
         };
         bypassPhysicsButton_.onClick = [this] {
@@ -545,6 +569,7 @@ public:
             voicingButtons.removeFromLeft(190));
         resetButton_.setBounds(
             voicingButtons.removeFromRight(150));
+        captureVoicingToggle_.setBounds(voicingButtons.reduced(6, 0));
 
         auto exportBody = exportArea.reduced(16, 30);
         auto selectors = exportBody.removeFromTop(34);
@@ -592,10 +617,10 @@ public:
         auto secondColumn = physicsBody.removeFromLeft(secondWidth);
         physicsBody.removeFromLeft(12);
         auto thirdColumn = physicsBody;
-        // The afterfire column is the tallest at six rows; size the row from it
+        // The afterfire column is the tallest at seven rows; size the row from it
         // so shrinking the window narrows the rows instead of clipping them.
         const auto physicsRowHeight =
-            std::clamp(physicsBody.getHeight() / 6, 24, 35);
+            std::clamp(physicsBody.getHeight() / 7, 24, 35);
         const auto physicsRow = [physicsRowHeight](
                                     juce::Rectangle<int>& column,
                                     juce::Label& label, juce::Slider& slider) {
@@ -612,6 +637,8 @@ public:
         physicsRow(secondColumn, physicsLabels_[5], overrunFuelSlider_);
         physicsRow(secondColumn, physicsLabels_[6], overrunPulseHzSlider_);
         physicsRow(secondColumn, physicsLabels_[7], overrunPulseDutySlider_);
+        physicsRow(secondColumn, physicsLabels_[8],
+                   overrunPulseTimingVariationSlider_);
         afterfireToggle_.setBounds(thirdColumn.removeFromTop(27));
         wetLimiterToggle_.setBounds(thirdColumn.removeFromTop(27));
         auto presets = thirdColumn.removeFromTop(32);
@@ -706,6 +733,9 @@ private:
         mechanicalSlider_.setValue(
             mix.mechanicalGain,
             juce::dontSendNotification);
+        captureVoicingToggle_.setToggleState(
+            mix.monitorMode == AudioMonitorMode::captureVoiced,
+            juce::dontSendNotification);
         updatingControls_ = false;
     }
 
@@ -721,6 +751,7 @@ private:
             overrunFuelSlider_.getValue(),
             overrunPulseHzSlider_.getValue(),
             overrunPulseDutySlider_.getValue(),
+            overrunPulseTimingVariationSlider_.getValue(),
         };
     }
 
@@ -748,6 +779,9 @@ private:
             settings.overrunPulseHz, juce::dontSendNotification);
         overrunPulseDutySlider_.setValue(
             settings.overrunPulseDutyCycle, juce::dontSendNotification);
+        overrunPulseTimingVariationSlider_.setValue(
+            settings.overrunPulseTimingVariation,
+            juce::dontSendNotification);
     }
 
     void applyPhysics() {
@@ -760,7 +794,7 @@ private:
         if (physicsApply_(settings)) {
             applyAudioPhysicsSettings(engine_, settings);
             physicsStatusLabel_.setText(
-                "Applique. Le moteur a redemarre avec cette physique.",
+                "Applique en direct. Etats thermiques et rotation conserves.",
                 juce::dontSendNotification);
         } else {
             physicsStatusLabel_.setText(
@@ -788,6 +822,9 @@ private:
         mix.intakeGain = intakeSlider_.getValue();
         mix.mechanicalGain =
             mechanicalSlider_.getValue();
+        mix.monitorMode = captureVoicingToggle_.getToggleState()
+            ? AudioMonitorMode::captureVoiced
+            : AudioMonitorMode::physicalReference;
         return mix;
     }
 
@@ -1201,6 +1238,7 @@ private:
         soloButtons_;
     juce::TextButton catalogueMixButton_ { "VOICING CATALOGUE" };
     juce::TextButton resetButton_ { "NEUTRE" };
+    juce::ToggleButton captureVoicingToggle_ { "MODE CAPTURE" };
 
     juce::ComboBox sampleRateSelector_;
     juce::ComboBox formatSelector_;
@@ -1227,7 +1265,7 @@ private:
     juce::ProgressBar progressBar_;
     std::jthread exportThread_;
     std::unique_ptr<juce::FileChooser> fileChooser_;
-    std::array<juce::Label, 8> physicsLabels_;
+    std::array<juce::Label, 9> physicsLabels_;
     juce::Slider cycleVariationSlider_;
     juce::Slider cycleCorrelationSlider_;
     juce::Slider afterfireTemperatureSlider_;
@@ -1236,13 +1274,14 @@ private:
     juce::Slider overrunFuelSlider_;
     juce::Slider overrunPulseHzSlider_;
     juce::Slider overrunPulseDutySlider_;
+    juce::Slider overrunPulseTimingVariationSlider_;
     juce::ToggleButton afterfireToggle_ { "AFTERFIRE PHYSIQUE ACTIF" };
     juce::ToggleButton wetLimiterToggle_ {
         "RUPTEUR SPARK-CUT / CARBURANT CONSERVE"
     };
     juce::TextButton demoPhysicsButton_ { "DEMO AUDIBLE" };
     juce::TextButton bypassPhysicsButton_ { "BYPASS" };
-    juce::TextButton applyPhysicsButton_ { "APPLIQUER ET REDEMARRER" };
+    juce::TextButton applyPhysicsButton_ { "APPLIQUER EN DIRECT" };
     juce::Label physicsTelemetryLabel_;
     juce::Label physicsStatusLabel_;
 

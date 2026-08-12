@@ -322,9 +322,9 @@ void testDerivedLengthIsFlooredAtThePlaneWaveLimit() {
 
     // What the user actually pays is the CELL, so check it under the mesh the
     // simulator really uses (EngineSimulator::configurePhysicalExhaustNetwork:
-    // 300 mm target, one cell minimum). Before the floor this element was 5 mm.
+    // 360 mm target, one cell minimum). Before the floor this element was 5 mm.
     ExhaustNetworkDiscretisation productionMesh;
-    productionMesh.targetCellLengthM = 0.300;
+    productionMesh.targetCellLengthM = 0.360;
     productionMesh.minimumCellsPerDuct = 1;
     productionMesh.maximumCellsPerDuct = 64;
     productionMesh.maximumTotalCells = 1'024;

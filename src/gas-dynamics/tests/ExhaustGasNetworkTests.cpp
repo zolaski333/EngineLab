@@ -615,7 +615,7 @@ void testHotUnburnedFuelReactsConservatively() {
     ExhaustGasNetworkConfig hotConfiguration;
     hotConfiguration.initialTemperatureK = 1'150.0;
     GasComposition reactive;
-    reactive.massFractions = { 0.20, 0.68, 0.12, 0.0 };
+    reactive.massFractions = { 0.20, 0.68, 0.08, 0.04 };
     hotConfiguration.initialComposition = reactive;
     auto hot = makeNetwork(makeDefaultInlineFour(), hotConfiguration);
     const auto before = hot.inventory();
@@ -623,6 +623,7 @@ void testHotUnburnedFuelReactsConservatively() {
     chemistry.ignitionTemperatureK = 850.0;
     chemistry.reactionTimeConstantSeconds = 0.008;
     chemistry.reactionEfficiency = 0.94;
+    chemistry.inductionTimeSeconds = 0.001;
     const auto reaction = hot.reactUnburnedFuel(0.004, chemistry);
     const auto after = hot.inventory();
     const auto oxygen = static_cast<std::size_t>(GasSpecies::oxygen);
@@ -642,6 +643,27 @@ void testHotUnburnedFuelReactsConservatively() {
     requireNetwork(relativeError(after.totalEnergyJ - before.totalEnergyJ,
             reaction.releasedEnergyJoules) < 2.0e-12,
         "exhaust reaction telemetry must equal conservative energy increase");
+    auto sourceEnergyJ = 0.0;
+    auto sourceFuelKg = 0.0;
+    for (std::size_t sourceIndex = 0;
+         sourceIndex < reaction.sourceCount; ++sourceIndex) {
+        const auto& source = reaction.sources[sourceIndex];
+        sourceEnergyJ += source.releasedEnergyJoules;
+        sourceFuelKg += source.burnedFuelMassKg;
+        requireNetwork(source.nodeId != 0
+                && source.axialPosition >= 0.0
+                && source.axialPosition <= 1.0
+                && source.flowAreaM2 > 0.0
+                && source.speedOfSoundMps > 0.0,
+            "every heat-release source must identify a usable physical injection site");
+    }
+    requireNetwork(reaction.sourceCount > 0
+            && reaction.droppedSourceCount == 0
+            && relativeError(sourceEnergyJ,
+                reaction.releasedEnergyJoules) < 2.0e-12
+            && relativeError(sourceFuelKg,
+                reaction.burnedFuelMassKg) < 2.0e-12,
+        "local acoustic sources must account for all conservative reaction energy and fuel");
     std::cout << "afterfire: volumes=" << reaction.reactingControlVolumes
               << " fuel_mg=" << reaction.burnedFuelMassKg * 1.0e6
               << " oxygen_mg=" << reaction.consumedOxygenMassKg * 1.0e6
@@ -659,6 +681,28 @@ void testHotUnburnedFuelReactsConservatively() {
         "sub-ignition exhaust mixture must remain an exact non-reacting state");
     requireNetwork(coldReaction.wallIgnitedControlVolumes == 0,
         "a cold pipe must not report a hot-surface ignition");
+
+    // Induction belongs to each physical site and persists between network
+    // coupling calls. Two sub-threshold observations must not burn anything;
+    // the third crosses the accumulated kernel time without inventing fuel.
+    auto induced = makeNetwork(makeDefaultInlineFour(), hotConfiguration);
+    auto inductionChemistry = chemistry;
+    inductionChemistry.inductionTimeSeconds = 0.004;
+    const auto inducedBefore = induced.inventory();
+    const auto induction0 = induced.reactUnburnedFuel(
+        0.002, inductionChemistry);
+    const auto induction1 = induced.reactUnburnedFuel(
+        0.002, inductionChemistry);
+    const auto inducedWaiting = induced.inventory();
+    const auto induction2 = induced.reactUnburnedFuel(
+        0.002, inductionChemistry);
+    requireNetwork(induction0.releasedEnergyJoules == 0.0
+            && induction1.releasedEnergyJoules == 0.0
+            && inducedWaiting.speciesMassKg
+                == inducedBefore.speciesMassKg
+            && inducedWaiting.totalEnergyJ == inducedBefore.totalEnergyJ
+            && induction2.releasedEnergyJoules > 0.0,
+        "local induction must accumulate across coupling calls before ignition");
 
     // Cold gas against a HOT pipe: the overrun case, and the one the gas-only
     // criterion could never serve. The mixture entering the exhaust on a

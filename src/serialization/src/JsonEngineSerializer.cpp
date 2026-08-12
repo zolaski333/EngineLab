@@ -8,6 +8,28 @@ using Json = nlohmann::json;
 [[nodiscard]] std::string cycleName(EngineCycle value) { return value == EngineCycle::fourStroke ? "four_stroke" : "two_stroke"; }
 [[nodiscard]] std::string fuelName(FuelType value) { return value == FuelType::gasoline ? "gasoline" : "diesel"; }
 [[nodiscard]] std::string injectionModeName(InjectionMode value) { return value == InjectionMode::port ? "port" : "direct"; }
+[[nodiscard]] const char* afterfireStrategyName(
+    ExhaustAfterfireStrategy value) noexcept {
+    switch (value) {
+    case ExhaustAfterfireStrategy::cleanDfco: return "clean_dfco";
+    case ExhaustAfterfireStrategy::continuousAntiLag:
+        return "continuous_anti_lag";
+    case ExhaustAfterfireStrategy::discreteAfterfire:
+        return "discrete_afterfire";
+    }
+    return "clean_dfco";
+}
+[[nodiscard]] ExhaustAfterfireStrategy decodeAfterfireStrategy(
+    std::string_view value) {
+    if (value == "clean_dfco")
+        return ExhaustAfterfireStrategy::cleanDfco;
+    if (value == "continuous_anti_lag")
+        return ExhaustAfterfireStrategy::continuousAntiLag;
+    if (value == "discrete_afterfire")
+        return ExhaustAfterfireStrategy::discreteAfterfire;
+    throw std::invalid_argument(
+        "Unknown exhaust afterfire strategy: " + std::string(value));
+}
 [[nodiscard]] std::string rodTypeName(ConnectingRodType value) {
     if (value == ConnectingRodType::master) return "master";
     if (value == ConnectingRodType::articulated) return "articulated";
@@ -440,6 +462,7 @@ std::string JsonEngineSerializer::encode(const EngineConfig& config) const {
                       {"cycle_variation_cov", config.combustionCalibration.cycleVariationCoefficientOfVariation},
                       {"cycle_variation_correlation", config.combustionCalibration.cycleVariationCorrelation}}},
         {"exhaust_afterfire", {{"enabled", config.exhaustAfterfire.enabled},
+                      {"strategy", afterfireStrategyName(config.exhaustAfterfire.strategy)},
                       {"ignition_temperature_k", config.exhaustAfterfire.ignitionTemperatureK},
                       {"reaction_time_constant_s", config.exhaustAfterfire.reactionTimeConstantSeconds},
                       {"reaction_efficiency", config.exhaustAfterfire.reactionEfficiency},
@@ -447,7 +470,12 @@ std::string JsonEngineSerializer::encode(const EngineConfig& config) const {
                       {"overrun_minimum_rpm", config.exhaustAfterfire.overrunMinimumRpm},
                       {"overrun_maximum_throttle", config.exhaustAfterfire.overrunMaximumThrottle},
                       {"overrun_pulse_hz", config.exhaustAfterfire.overrunPulseHz},
-                      {"overrun_pulse_duty", config.exhaustAfterfire.overrunPulseDutyCycle}}},
+                      {"overrun_pulse_duty", config.exhaustAfterfire.overrunPulseDutyCycle},
+                      {"overrun_pulse_timing_variation", config.exhaustAfterfire.overrunPulseTimingVariation},
+                      {"induction_time_s", config.exhaustAfterfire.inductionTimeSeconds},
+                      {"minimum_equivalence_ratio", config.exhaustAfterfire.minimumEquivalenceRatio},
+                      {"maximum_equivalence_ratio", config.exhaustAfterfire.maximumEquivalenceRatio},
+                      {"quench_temperature_k", config.exhaustAfterfire.quenchTemperatureK}}},
         {"runner_acoustics", {{"enabled", config.runnerAcoustics.enabled},
                       {"damping_ratio", config.runnerAcoustics.dampingRatio},
                       {"coupling_gain", config.runnerAcoustics.couplingGain},
@@ -656,6 +684,9 @@ EngineDecodeResult JsonEngineSerializer::decode(std::string_view text) const noe
         if (engine.contains("exhaust_afterfire")) {
             const auto& afterfire = engine.at("exhaust_afterfire");
             config.exhaustAfterfire.enabled = afterfire.value("enabled", config.exhaustAfterfire.enabled);
+            if (afterfire.contains("strategy"))
+                config.exhaustAfterfire.strategy = decodeAfterfireStrategy(
+                    afterfire.at("strategy").get<std::string>());
             config.exhaustAfterfire.ignitionTemperatureK = afterfire.value("ignition_temperature_k", config.exhaustAfterfire.ignitionTemperatureK);
             config.exhaustAfterfire.reactionTimeConstantSeconds = afterfire.value("reaction_time_constant_s", config.exhaustAfterfire.reactionTimeConstantSeconds);
             config.exhaustAfterfire.reactionEfficiency = afterfire.value("reaction_efficiency", config.exhaustAfterfire.reactionEfficiency);
@@ -664,6 +695,11 @@ EngineDecodeResult JsonEngineSerializer::decode(std::string_view text) const noe
             config.exhaustAfterfire.overrunMaximumThrottle = afterfire.value("overrun_maximum_throttle", config.exhaustAfterfire.overrunMaximumThrottle);
             config.exhaustAfterfire.overrunPulseHz = afterfire.value("overrun_pulse_hz", config.exhaustAfterfire.overrunPulseHz);
             config.exhaustAfterfire.overrunPulseDutyCycle = afterfire.value("overrun_pulse_duty", config.exhaustAfterfire.overrunPulseDutyCycle);
+            config.exhaustAfterfire.overrunPulseTimingVariation = afterfire.value("overrun_pulse_timing_variation", config.exhaustAfterfire.overrunPulseTimingVariation);
+            config.exhaustAfterfire.inductionTimeSeconds = afterfire.value("induction_time_s", config.exhaustAfterfire.inductionTimeSeconds);
+            config.exhaustAfterfire.minimumEquivalenceRatio = afterfire.value("minimum_equivalence_ratio", config.exhaustAfterfire.minimumEquivalenceRatio);
+            config.exhaustAfterfire.maximumEquivalenceRatio = afterfire.value("maximum_equivalence_ratio", config.exhaustAfterfire.maximumEquivalenceRatio);
+            config.exhaustAfterfire.quenchTemperatureK = afterfire.value("quench_temperature_k", config.exhaustAfterfire.quenchTemperatureK);
         }
         if (engine.contains("runner_acoustics")) {
             const auto& acoustics = engine.at("runner_acoustics");

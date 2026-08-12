@@ -195,7 +195,8 @@ EngineRuntime::EngineRuntime(EngineConfig config,
       simulator_(config_, ecu_, physics_, eventGenerator_, exhaust_,
                  std::move(simulatorOptions)), dynoAbsorber_(config_),
       driveline_(config_),
-      pressureQueue_(std::make_unique<CylinderPressureQueue>()) {
+      pressureQueue_(std::make_unique<CylinderPressureQueue>()),
+      exhaustAcousticQueue_(std::make_unique<ExhaustAcousticQueue>()) {
     simulator_.setPressureSamplingEnabled(true);
     applyAudioVoicing(config_.audioVoicing);
     audioState_.cylinderCount.store(static_cast<float>(config_.cylinders.size()), std::memory_order_relaxed);
@@ -387,6 +388,15 @@ EngineState EngineRuntime::snapshot() const {
     return snapshot_;
 }
 
+void EngineRuntime::applyAudioPhysicsCalibration(
+    const AudioPhysicsCalibration& calibration) noexcept {
+    {
+        const std::scoped_lock lock(audioPhysicsCalibrationMutex_);
+        pendingAudioPhysicsCalibration_ = calibration;
+    }
+    audioPhysicsCalibrationRevision_.fetch_add(1, std::memory_order_release);
+}
+
 void EngineRuntime::applyAudioVoicing(const AudioVoicingConfig& voicing) noexcept {
     setAudioVolume(voicing.volume);
     setAudioConvolution(voicing.convolution);
@@ -402,6 +412,8 @@ void EngineRuntime::applyAudioVoicing(const AudioVoicingConfig& voicing) noexcep
     setOutletJetGain(voicing.outletJetGain);
     setSaturationDrive(voicing.saturationDrive);
     setSaturationPlacement(voicing.saturationPlacement);
+    audioState_.monitorMode.store(static_cast<int>(voicing.monitorMode),
+                                  std::memory_order_relaxed);
 }
 
 void EngineRuntime::setGear(int gear) noexcept {
@@ -551,6 +563,7 @@ void EngineRuntime::run(std::stop_token stopToken) {
     constexpr auto paceWindowSeconds = 0.25;
     auto consumedGearGeneration = std::uint64_t { 0 };
     auto consumedGearCommand = gear_.load(std::memory_order_relaxed);
+    auto consumedAudioPhysicsRevision = std::uint64_t { 0 };
     double nextPressurePublishTime = 0.0;
     MonotonicPublicationTimeline publicationTimeline;
     RealtimeLoadGovernor loadGovernor;
@@ -738,6 +751,17 @@ void EngineRuntime::run(std::stop_token stopToken) {
         }
         const auto torqueCutMultiplier = dynoActive_
             ? 1.0 : drivelineOutput_.torqueCutMultiplier;
+        const auto requestedAudioPhysicsRevision =
+            audioPhysicsCalibrationRevision_.load(std::memory_order_acquire);
+        if (requestedAudioPhysicsRevision != consumedAudioPhysicsRevision) {
+            AudioPhysicsCalibration calibration;
+            {
+                const std::scoped_lock lock(audioPhysicsCalibrationMutex_);
+                calibration = pendingAudioPhysicsCalibration_;
+            }
+            simulator_.applyAudioPhysicsCalibration(calibration);
+            consumedAudioPhysicsRevision = requestedAudioPhysicsRevision;
+        }
         const EngineControls controls { ignition_.load(), starter_.load(),
             (dynoActive_ ? dynoThrottleCommand_
                          : std::clamp(throttle_.load(), 0.0, 1.0))
@@ -765,9 +789,28 @@ void EngineRuntime::run(std::stop_token stopToken) {
                     nextPressurePublishTime = pressureSample.timeSeconds + minimumPressurePublishInterval;
                 }
             }
+            ExhaustAcousticSample acousticSample;
+            while (simulator_.tryPopExhaustAcousticSample(acousticSample)) {
+                acousticSample.timeSeconds = publicationWindow.mapSimulationTime(
+                    acousticSample.timeSeconds, simulationStart, simulationDt);
+                for (std::size_t eventIndex = 0;
+                     eventIndex < acousticSample.reactionEventCount; ++eventIndex) {
+                    acousticSample.reactionEvents[eventIndex].timeSeconds =
+                        publicationWindow.mapSimulationTime(
+                            acousticSample.reactionEvents[eventIndex].timeSeconds,
+                            simulationStart, simulationDt);
+                }
+                if (!exhaustAcousticQueue_->tryPush(acousticSample))
+                    droppedExhaustAcousticSamples_.fetch_add(
+                        1, std::memory_order_relaxed);
+            }
             if (frame.droppedCylinderPressureSampleCount > 0)
                 droppedPressureSamples_.fetch_add(frame.droppedCylinderPressureSampleCount,
                                                   std::memory_order_relaxed);
+            if (frame.droppedExhaustAcousticSampleCount > 0)
+                droppedExhaustAcousticSamples_.fetch_add(
+                    frame.droppedExhaustAcousticSampleCount,
+                    std::memory_order_relaxed);
         }
         publishAudioFrame(audioState_, frame.state, {
             isPaused, controls.starterEngaged,

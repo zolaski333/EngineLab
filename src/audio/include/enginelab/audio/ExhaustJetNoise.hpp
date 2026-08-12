@@ -29,8 +29,8 @@ public:
      * because their inflow is already turbulent. Keeping the correction named
      * and separate prevents the listening calibration from being mistaken for
      * a universal fluid constant. The current +20 dB power correction keeps the
-     * source below the physical blowdown bus while making it resolvable in blind
-     * A/B; the value remains subject to the listening gate.
+     * source below the physical blowdown bus while making it resolvable in an
+     * instrumented same-binary A/B. It is not a loudness target.
      */
     static constexpr double engineOutletTurbulencePowerMultiplier { 100.0 };
     static constexpr double acousticPowerCoefficient {
@@ -38,13 +38,6 @@ public:
             * engineOutletTurbulencePowerMultiplier
     };
     static constexpr double peakStrouhalNumber { 0.2 };
-    /** Choked-pulse guard relative to the resolved mean outlet velocity.
-     *
-     * The audio-rate radiation flow is a linear acoustic perturbation, not a
-     * second compressible-flow solve. Extrapolating its largest blowdown sample
-     * directly through U^8 grossly overstates sparse-cylinder engines. */
-    static constexpr double maximumInstantaneousVelocityRatio { 4.5 };
-
     explicit ExhaustJetNoise(std::uint32_t seed = 0x6d2b79f5U) noexcept;
 
     [[nodiscard]] bool prepare(double sampleRateHz) noexcept;
@@ -68,13 +61,12 @@ public:
 
     /** Return turbulent pressure at one metre, in pascals.
      *
-     * outletVolumeVelocityPerturbationM3PerS is the radiation load's resolved
-     * audio-rate mouth flow. Adding it to the configured mean makes blowdown
-     * modulate the U^8 source causally; it is never fed back into the network.
+     * The configured signed gas-network outlet flow is already the complete
+     * quasi-1D flow through the mouth. The acoustic radiation volume velocity
+     * describes the same wave and must not be added a second time before the
+     * U^8 law; doing so made sparse engines radiate isolated broadband spikes.
      */
-    [[nodiscard]] float process(
-        float rampCoefficient,
-        double outletVolumeVelocityPerturbationM3PerS = 0.0) noexcept;
+    [[nodiscard]] float process(float rampCoefficient) noexcept;
 
     [[nodiscard]] double targetCentreFrequencyHz() const noexcept {
         return targetCentreFrequencyHz_;
@@ -105,8 +97,6 @@ private:
     float meanVolumeVelocityTargetM3PerS_ {};
     float inverseOutletAreaM2_ {};
     float inverseOutletAreaTargetM2_ {};
-    float maximumJetVelocityMps_ {};
-    float maximumJetVelocityTargetMps_ {};
     float pressurePerVelocityFourth_ {};
     float pressurePerVelocityFourthTarget_ {};
     float slowCoefficient_ {};

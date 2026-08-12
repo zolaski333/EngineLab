@@ -635,7 +635,8 @@ Clip renderTrajectory(const EngineConfig& baseConfig, double sampleRate,
     const auto samplesPerStep = static_cast<int>(std::lround(sampleRate / 240.0));
     auto rendererPtr = std::make_unique<RealtimeEngineAudio>(
         eventQueue, audioState, &pressureQueue, &audioConfiguration->exhaustGraph(),
-        &audioConfiguration->engineConfig());
+        &audioConfiguration->engineConfig(),
+        &audioConfiguration->exhaustAcousticSamples());
     auto& renderer = *rendererPtr;
     renderer.prepare(sampleRate, samplesPerStep);
     std::this_thread::sleep_for(std::chrono::milliseconds(300));
@@ -707,6 +708,24 @@ Clip renderTrajectory(const EngineConfig& baseConfig, double sampleRate,
             const auto fraction = std::clamp((ps.timeSeconds - simStart) / dt, 0.0, 1.0);
             ps.timeSeconds = realtime + fraction * dt;
             (void) pressureQueue.tryPush(ps);
+        }
+        ExhaustAcousticSample acousticSample;
+        while (simulator.tryPopExhaustAcousticSample(acousticSample)) {
+            const auto fraction = std::clamp(
+                (acousticSample.timeSeconds - simStart) / dt, 0.0, 1.0);
+            acousticSample.timeSeconds = realtime + fraction * dt;
+            for (std::size_t eventIndex = 0;
+                 eventIndex < acousticSample.reactionEventCount; ++eventIndex) {
+                const auto eventFraction = std::clamp(
+                    (acousticSample.reactionEvents[eventIndex].timeSeconds
+                        - simStart) / dt, 0.0, 1.0);
+                acousticSample.reactionEvents[eventIndex].timeSeconds =
+                    realtime + eventFraction * dt;
+            }
+            if (!audioConfiguration->exhaustAcousticSamples().tryPush(
+                    acousticSample))
+                throw std::runtime_error(
+                    "clip renderer exhausted its thermoacoustic queue");
         }
         publishAudioFrame(audioState, frame.state, { false, controls.starterEngaged, controls.load, 1.0 });
         audioState.producerTimeNanoseconds.store(

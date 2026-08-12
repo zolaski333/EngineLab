@@ -127,6 +127,9 @@ private:
     AudioSaturationPlacement saturationPlacement_ {
         AudioSaturationPlacement::postShelf
     };
+    AudioMonitorMode audioMonitorMode_ {
+        AudioMonitorMode::physicalReference
+    };
     int exhaustPresetIndex_ { 0 };
     bool physicalExhaustTopology_ { false };
     bool physicalIntakeTopology_ { false };

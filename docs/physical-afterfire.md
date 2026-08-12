@@ -1,70 +1,125 @@
-# Afterfire physique dans l'echappement
+# Afterfire physique dans l’échappement
 
-L'afterfire optionnel d'EngineLab est une reaction chimique dans le reseau
-quasi-1D. Il ne programme aucun « pop » et ne declenche aucun sample. Une maille
-ne reagit que si elle contient simultanement du carburant imbrule, de l'oxygene
-et une temperature superieure au seuil d'allumage. La masse des especes est
-conservee et le pouvoir calorifique du carburant augmente l'energie totale de
-la maille. La hausse de pression qui en resulte traverse ensuite le meme reseau
-et la meme sortie acoustique que le blowdown normal.
+L’afterfire d’EngineLab n’est ni un sample ni un bruit ajouté. L’ECU transporte
+des paquets de carburant imbrûlé et d’oxygène dans le réseau quasi-1D ; une
+réaction locale libère ensuite de l’énergie dans la maille ou la jonction où les
+conditions sont réunies. La hausse de pression traverse le même DAG acoustique,
+les mêmes collecteurs, silencieux et sorties que le blowdown normal.
 
-La fonction est desactivee par defaut :
+## Stratégies ECU
+
+Le schéma moteur 6 distingue explicitement trois intentions :
+
+- `clean_dfco` : coupure propre, aucun carburant retenu ;
+- `continuous_anti_lag` : carburant et allumage échappement continus, destiné à
+  un grondement/anti-lag et non à des pops isolés ;
+- `discrete_afterfire` : paquets de carburant hachés, destinés à produire des
+  combustions séparées après un lever de pied.
+
+Exemple de calibration discrète :
 
 ```yaml
-exhaust_afterfire:
-  enabled: true
-  ignition_temperature_k: 900
-  reaction_time_constant_s: 0.010
-  reaction_efficiency: 0.95
-  # Optionnel : petite charge de carburant sur vraie décélération DFCO.
-  overrun_fuel_fraction: 0.12
-  overrun_minimum_rpm: 3000
-  overrun_maximum_throttle: 0.02
-ignition:
-  # Le rupteur coupe l'etincelle mais conserve l'injection.
-  limiter_keeps_fuel: true
+schema_version: 6
+engine:
+  exhaust_afterfire:
+    strategy: discrete_afterfire
+    enabled: true
+    ignition_temperature_k: 800
+    reaction_time_constant_s: 0.008
+    reaction_efficiency: 0.95
+    overrun_fuel_fraction: 0.18
+    overrun_minimum_rpm: 3000
+    overrun_maximum_throttle: 0.02
+    overrun_pulse_hz: 4.0
+    overrun_pulse_duty: 0.35
+    overrun_pulse_timing_variation: 0.25
+    induction_time_s: 0.004
+    minimum_equivalence_ratio: 0.45
+    maximum_equivalence_ratio: 1.80
+    quench_temperature_k: 520
 ```
 
-- `ignition_temperature_k` est le seuil thermique, valide de 500 a 2 000 K ;
-- `reaction_time_constant_s` fixe la vitesse d'oxydation au-dessus du seuil ;
-- `reaction_efficiency` borne la fraction de reactifs qui peut reagir pendant
-  une etape.
-- `overrun_fuel_fraction` conserve une fraction bornée de la charge normale
-  pendant une vraie décélération DFCO et coupe l'étincelle ; zéro conserve
-  exactement la coupure propre historique ;
-- `overrun_minimum_rpm` et `overrun_maximum_throttle` bornent la zone ECU.
+La fraction de carburant est une valeur moyenne. En mode pulsé, l’ECU la
+normalise par le rapport cyclique : passer de 100 % à 35 % de duty ne supprime
+donc plus 65 % de la masse demandée. À 12 % moyen et 35 % de duty, le paquet du
+laboratoire restait néanmoins trop pauvre (`phi ≈ 0,34`) pour la borne physique
+`phi_min = 0,45`. La démonstration d’écoute emploie 18 % (`phi ≈ 0,51`).
 
-La stoechiometrie, la masse molaire et le pouvoir calorifique viennent de
-`fuel_properties`. `EngineState::exhaustAfterfireHeatReleaseKw` et
-`exhaustAfterfireFuelBurnMgPerSecond` rendent le phenomene mesurable.
+La cadence de `discrete_afterfire` n’est plus un carré parfaitement périodique.
+`overrun_pulse_timing_variation` décale les frontières des paquets avec une
+séquence déterministe à faible répétition. Une valeur de 0,25 autour de 4 Hz
+borne chaque intervalle entre 187,5 et 312,5 ms au niveau ECU ; le front de
+réaction mesuré peut s’en écarter légèrement à cause du transport et de
+l’induction. Chaque paquet garde le même duty relatif à son intervalle, donc la
+masse moyenne prescrite est conservée. Une valeur nulle restitue exactement la
+cadence régulière historique.
 
-Activer le modele ne garantit volontairement aucun bruit : une coupure
-d'injection propre ne fournit pas de carburant, un melange riche sans oxygene ne
-peut pas bruler, et une ligne froide reste silencieuse. Pour obtenir un
-afterfire, la calibration moteur doit produire physiquement les trois conditions
-necessaires. Ce comportement empeche de confondre un effet sonore avec une
-combustion d'echappement plausible.
+## Conditions physiques
 
-Le rupteur historique coupe carburant et etincelle et reste le comportement par
-defaut. `limiter_keeps_fuel: true` fournit un chemin physique volontairement
-humide : au hard cut, l'injection continue mais l'etincelle est supprimee. La
-coupure de carburant en deceleration reste prioritaire tant que
-`overrun_fuel_fraction` vaut zéro. Avec une fraction positive, l'ECU n'arme le
-mode qu'après une demande conducteur supérieure à 20 % au-dessus du seuil RPM.
-Au lever de pied, il conserve exactement la fraction auteur sans la multiplier
-par l'enrichissement transitoire, coupe l'étincelle puis laisse le carburant
-traverser le cylindre. Il n'y a donc toujours pas de pop programmé : il faut
-encore de l'oxygène et une ligne assez chaude.
+Un site ne brûle que si toutes les conditions suivantes sont vraies :
 
-Dans **AUDIO HQ**, le bloc **PHYSIQUE AUDIO** expose ces reglages. **DEMO
-AUDIBLE** applique une calibration d'ecoute (COV 6 %, correlation 0,55,
-afterfire actif, rupteur humide, carburant de décélération 12 %, seuil 800 K,
-reaction 8 ms), puis redemarre le moteur. **BYPASS** remet variation, afterfire,
-carburant de décélération et rupteur humide a zero/off. La
-ligne `LIVE` affiche les kW et mg/s effectivement produits : zero signifie que
-les conditions chimiques ne sont pas reunies, pas que l'interface est en panne.
+1. carburant et oxygène coexistent localement ;
+2. l’équivalence locale est dans la fenêtre de flammabilité ;
+3. le gaz ou la paroi dépasse la température d’allumage ;
+4. ce mélange reste actif pendant le délai d’induction ;
+5. une flamme établie n’est pas sous la température de quench.
 
-Pour l'essai le plus direct, sélectionner `Audio Physics Lab 689 Twin`, cliquer
-**DEMO AUDIBLE**, dépasser 3 000 tr/min avec plus de 20 % d'accélérateur puis
-relâcher. `decel ACTIVE` prouve la stratégie ECU ; seuls des kW/mg/s non nuls
-prouvent ensuite que la chimie d'échappement a réellement réagi.
+Chaque maille et chaque jonction possède son propre état persistant d’induction
+et de combustion. La réaction consomme les espèces de manière conservative et
+ajoute `masse_carburant × PCI` à l’énergie. Elle publie un événement borné qui
+contient le nœud exact, la position axiale, l’énergie, la durée, la densité, la
+célérité et la section locale.
+
+La source acoustique est dérivée de la chaleur libérée :
+
+```text
+p_source ≈ (gamma - 1) × Qdot / (2 × A × c)
+```
+
+Elle est injectée au nœud de réaction du guide d’onde. Il n’existe pas
+d’oscillateur « pop », de périodicité audio imposée ou de source globale placée
+artificiellement à la sortie.
+
+## Utilisation dans AUDIO HQ
+
+Le bouton `APPLY` envoie désormais la calibration au thread de simulation par
+mailbox. Il ne reconstruit plus `EngineRuntime` et conserve donc régime, phase,
+inventaires gazeux et températures de paroi. L’application est refusée pendant
+un pull dyno afin de ne pas modifier une mesure en cours.
+
+`DEMO AUDIBLE` sélectionne `discrete_afterfire`, 4 Hz nominaux, 35 % de duty,
+25 % de variation temporelle et 18 % de carburant moyen. Le simple toggle
+complète aussi une calibration restée à zéro, au lieu d’afficher « actif » sans
+aucune matière réactive.
+
+Pour le test direct :
+
+1. sélectionner `Audio Physics Lab 689 Twin` ;
+2. activer `DEMO AUDIBLE` ;
+3. tenir le moteur au-dessus de 3 000 tr/min avec plus de 20 % de gaz ;
+4. relâcher complètement.
+
+La télémétrie indique la stratégie, les bloqueurs ECU, les kW, les mg/s, le
+nombre de volumes réactifs et les événements perdus. Une puissance nulle reste
+un résultat physique possible : ligne froide, mélange hors fenêtre, DFCO propre
+ou stratégie non armée.
+
+## Preuve mesurée
+
+Sur le Twin laboratoire à environ 4 000 tr/min, paroi chaude :
+
+| Cas | Carburant brûlé | Événements | Puissance crête | Crête audio | Crest factor |
+|---|---:|---:|---:|---:|---:|
+| DFCO propre | 0 mg | 0 | 0 kW | 0,00313 | 2,74 |
+| Afterfire discret irrégulier | 37,477 mg | 10 | 8,694 kW | 0,00502 | 4,29 |
+
+Le cas discret gagne 4,11 dB en crête, mais seulement 1,73 dB au percentile
+99,9 %. Les dix réactions sont espacées de 170,8 à 325,0 ms, avec un écart-type
+de 54,0 ms : elles ne forment plus la vague strictement périodique à 250 ms.
+La hausse du crest factor reste le comportement attendu d’impulsions brèves,
+contrairement à l’ancien swell régulier qui augmentait surtout le niveau
+continu.
+
+Les WAV de contrôle sont produits dans
+`out/implementation-2026-08-11/afterfire-null-final4/` et
+`out/implementation-2026-08-11/afterfire-discrete-irregular-final/`.

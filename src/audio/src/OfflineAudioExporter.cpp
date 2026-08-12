@@ -1,5 +1,4 @@
 #include <enginelab/audio/OfflineAudioExporter.hpp>
-
 #include <enginelab/audio/ImpulseResponseLoader.hpp>
 #include <enginelab/audio/RealtimeEngineAudio.hpp>
 #include <enginelab/ecu/SimpleEcuModel.hpp>
@@ -13,22 +12,48 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <bit>
 #include <array>
 #include <atomic>
 #include <chrono>
 #include <cmath>
 #include <cstring>
 #include <fstream>
+#include <iomanip>
 #include <limits>
 #include <memory>
 #include <numbers>
 #include <numeric>
 #include <stdexcept>
+#include <sstream>
 #include <thread>
 #include <utility>
 
 namespace enginelab {
 namespace {
+[[nodiscard]] std::string exhaustTopologyHash(const ExhaustGraph& graph) {
+    auto hash = std::uint64_t { 1469598103934665603ULL };
+    const auto add = [&hash](std::uint64_t value) noexcept {
+        for (auto byte = 0; byte < 8; ++byte) {
+            hash ^= (value >> (byte * 8)) & 0xffU;
+            hash *= 1099511628211ULL;
+        }
+    };
+    for (const auto& node : graph.nodes()) {
+        add(node.id);
+        add(static_cast<std::uint64_t>(node.type));
+        add(std::bit_cast<std::uint64_t>(node.lengthMm));
+        add(std::bit_cast<std::uint64_t>(node.diameterMm));
+        add(std::bit_cast<std::uint64_t>(node.volumeLitres));
+    }
+    for (const auto& edge : graph.edges()) {
+        add(edge.from);
+        add(edge.to);
+    }
+    std::ostringstream encoded;
+    encoded << std::hex << std::setfill('0') << std::setw(16) << hash;
+    return encoded.str();
+}
 using Json = nlohmann::json;
 
 constexpr double simulationRateHz = 240.0;
@@ -729,6 +754,8 @@ OfflineAudioExportResult exportOfflineAudio(
 
         auto eventQueue = std::make_unique<FiringEventQueue>();
         auto pressureQueue = std::make_unique<CylinderPressureQueue>();
+        auto exhaustAcousticQueue =
+            std::make_unique<ExhaustAcousticQueue>();
         auto audioConfiguration =
             std::make_unique<EngineRuntime>(config);
         audioConfiguration->setAudioVolume(request.mix.volume);
@@ -758,11 +785,13 @@ OfflineAudioExportResult exportOfflineAudio(
             request.mix.saturationDrive);
         audioConfiguration->setSaturationPlacement(
             request.mix.saturationPlacement);
+        audioConfiguration->applyAudioVoicing(request.mix);
 
         auto renderer = std::make_unique<RealtimeEngineAudio>(
             *eventQueue, audioConfiguration->audioState(),
             pressureQueue.get(), &audioConfiguration->exhaustGraph(),
-            &audioConfiguration->engineConfig());
+            &audioConfiguration->engineConfig(),
+            exhaustAcousticQueue.get());
 
         if (request.loadAuthoredImpulseResponses) {
             const auto pathCount = config.exhaustPaths.size();
@@ -990,6 +1019,27 @@ OfflineAudioExportResult exportOfflineAudio(
                 if (!pressureQueue->tryPush(pressureSample))
                     ++result.droppedPressureSamples;
             }
+            ExhaustAcousticSample acousticSample;
+            while (simulator->tryPopExhaustAcousticSample(
+                acousticSample)) {
+                const auto fraction = std::clamp(
+                    (acousticSample.timeSeconds - simulationStart) / dt,
+                    0.0, 1.0);
+                acousticSample.timeSeconds =
+                    realtimeSeconds + fraction * dt;
+                for (std::size_t eventIndex = 0;
+                     eventIndex < acousticSample.reactionEventCount;
+                     ++eventIndex) {
+                    const auto eventFraction = std::clamp(
+                        (acousticSample.reactionEvents[eventIndex]
+                            .timeSeconds - simulationStart) / dt,
+                        0.0, 1.0);
+                    acousticSample.reactionEvents[eventIndex].timeSeconds =
+                        realtimeSeconds + eventFraction * dt;
+                }
+                if (!exhaustAcousticQueue->tryPush(acousticSample))
+                    ++result.droppedExhaustAcousticSamples;
+            }
 
             publishAudioFrame(
                 audioConfiguration->audioState(), frame.state,
@@ -1175,6 +1225,18 @@ OfflineAudioExportResult exportOfflineAudio(
             renderer->invalidBoundarySampleCount();
         result.legacyPathSampleCount =
             renderer->legacyPathSampleCount();
+        result.saturationProcessedSampleCount =
+            renderer->saturationProcessedSampleCount();
+        result.automaticGainControlledSampleCount =
+            renderer->levelLimitedSampleCount();
+        result.softLimitedSampleCount =
+            renderer->softLimitedSampleCount();
+        result.hardClampedSampleCount =
+            renderer->hardClampedSampleCount();
+        result.droppedReactionEvents =
+            renderer->droppedReactionEventCount();
+        result.maximumTruePeakMagnitude =
+            renderer->maximumTruePeakMagnitude();
 
         const auto scenarioPartial =
             partialPathFor(scenarioPath);
@@ -1192,6 +1254,29 @@ OfflineAudioExportResult exportOfflineAudio(
         Json warnings = Json::array();
         for (const auto& warning : result.warnings)
             warnings.push_back(warning);
+        const auto manifestExhaustGraph = ExhaustGraph::makeForEngine(config);
+        const auto manifestOutletCount = std::count_if(
+            manifestExhaustGraph.nodes().begin(),
+            manifestExhaustGraph.nodes().end(),
+            [](const ExhaustNode& node) noexcept {
+                return node.type == ExhaustNodeType::outlet;
+            });
+        const auto authoredGraphCount = std::count_if(
+            config.exhaustPaths.begin(), config.exhaustPaths.end(),
+            [](const ExhaustPathConfig& path) noexcept {
+                return path.network.has_value();
+            });
+        const auto afterfireStrategy = [&config] {
+            switch (config.exhaustAfterfire.strategy) {
+            case ExhaustAfterfireStrategy::cleanDfco:
+                return "clean_dfco";
+            case ExhaustAfterfireStrategy::continuousAntiLag:
+                return "continuous_anti_lag";
+            case ExhaustAfterfireStrategy::discreteAfterfire:
+                return "discrete_afterfire";
+            }
+            return "clean_dfco";
+        }();
         const Json manifest {
             { "schema_version", 3 },
             { "engine", config.name },
@@ -1210,6 +1295,40 @@ OfflineAudioExportResult exportOfflineAudio(
             { "channels", 2 },
             { "frames", result.renderedFrames },
             { "duration_seconds", result.durationSeconds },
+            { "conditions", {
+                { "ambient_pressure_kpa", config.ambientPressureKpa },
+                { "ambient_temperature_c", config.ambientTemperatureC },
+                { "scenario_stage_count", request.scenario.stages.size() },
+                { "observer", {
+                    { "left_microphone_m", {
+                        { "x", config.acousticObserver.leftMicrophoneM.x },
+                        { "y", config.acousticObserver.leftMicrophoneM.y },
+                        { "z", config.acousticObserver.leftMicrophoneM.z },
+                    } },
+                    { "right_microphone_m", {
+                        { "x", config.acousticObserver.rightMicrophoneM.x },
+                        { "y", config.acousticObserver.rightMicrophoneM.y },
+                        { "z", config.acousticObserver.rightMicrophoneM.z },
+                    } },
+                    { "listening_distance_m",
+                      config.acousticObserver.listeningDistanceM },
+                } },
+                { "monitor_mode", request.mix.monitorMode
+                        == AudioMonitorMode::physicalReference
+                    ? "physical_reference" : "capture_voiced" },
+            } },
+            { "exhaust_topology", {
+                { "fnv1a64", exhaustTopologyHash(manifestExhaustGraph) },
+                { "node_count", manifestExhaustGraph.nodes().size() },
+                { "edge_count", manifestExhaustGraph.edges().size() },
+                { "outlet_count", manifestOutletCount },
+                { "path_count", config.exhaustPaths.size() },
+                { "authored_graph_count", authoredGraphCount },
+            } },
+            { "reference_audio", {
+                { "supplied", false },
+                { "provenance", "none_supplied" },
+            } },
             { "master_peak", result.masterPeak },
             { "master_rms", result.masterRms },
             { "stems_written", request.writeStems },
@@ -1269,17 +1388,35 @@ OfflineAudioExportResult exportOfflineAudio(
                   result.invalidBoundarySampleCount },
                 { "legacy_path_samples",
                   result.legacyPathSampleCount },
+                { "saturation_processed_samples",
+                  result.saturationProcessedSampleCount },
+                { "automatic_gain_controlled_samples",
+                  result.automaticGainControlledSampleCount },
+                { "soft_limited_samples",
+                  result.softLimitedSampleCount },
+                { "hard_clamped_samples",
+                  result.hardClampedSampleCount },
+                { "maximum_true_peak_magnitude",
+                  result.maximumTruePeakMagnitude },
                 { "dropped_firing_events",
                   result.droppedFiringEvents },
                 { "dropped_pressure_samples",
                   result.droppedPressureSamples },
+                { "dropped_exhaust_acoustic_samples",
+                  result.droppedExhaustAcousticSamples },
+                { "dropped_reaction_events",
+                  result.droppedReactionEvents },
             } },
             { "audio_physics", {
                 { "authored_cycle_variation_cov", config.combustionCalibration.cycleVariationCoefficientOfVariation },
                 { "authored_cycle_variation_correlation", config.combustionCalibration.cycleVariationCorrelation },
                 { "authored_afterfire_enabled", config.exhaustAfterfire.enabled },
+                { "authored_afterfire_strategy", afterfireStrategy },
                 { "authored_limiter_keeps_fuel", config.ignition.limiterKeepsFuel },
                 { "authored_overrun_fuel_fraction", config.exhaustAfterfire.overrunFuelFraction },
+                { "authored_overrun_pulse_hz", config.exhaustAfterfire.overrunPulseHz },
+                { "authored_overrun_pulse_duty", config.exhaustAfterfire.overrunPulseDutyCycle },
+                { "authored_overrun_pulse_timing_variation", config.exhaustAfterfire.overrunPulseTimingVariation },
                 { "cycle_multiplier_minimum", result.cycleMultiplierMinimum },
                 { "cycle_multiplier_maximum", result.cycleMultiplierMaximum },
                 { "cycle_variation_samples", result.cycleVariationSamples },
@@ -1314,6 +1451,9 @@ OfflineAudioExportResult exportOfflineAudio(
                   request.mix.saturationPlacement
                         == AudioSaturationPlacement::preShelf
                     ? "pre_shelf" : "post_shelf" },
+                { "monitor_mode", request.mix.monitorMode
+                        == AudioMonitorMode::physicalReference
+                    ? "physical_reference" : "capture_voiced" },
             } },
             { "warnings", std::move(warnings) },
         };
