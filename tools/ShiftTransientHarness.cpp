@@ -620,13 +620,6 @@ ShiftMetrics measureShift(
     return metrics;
 }
 
-bool containsCaseInsensitive(const std::string& haystack, const std::string& needle) {
-    if (needle.empty()) return true;
-    const auto it = std::search(haystack.begin(), haystack.end(), needle.begin(), needle.end(),
-        [](char a, char b) { return std::tolower(a) == std::tolower(b); });
-    return it != haystack.end();
-}
-
 bool validateShiftAudio(const ShiftMetrics& metrics) {
     auto ok = true;
     const auto fail = [&ok, &metrics](const std::string& reason) {
@@ -705,14 +698,34 @@ int main(int argc, char** argv) {
         return EXIT_FAILURE;
     }
 
+    std::vector<const enginelab::EngineCatalogEntry*> selectedEntries;
+    if (filter.empty()) {
+        selectedEntries.reserve(catalog.entries.size());
+        for (const auto& entry : catalog.entries)
+            selectedEntries.push_back(&entry);
+    } else {
+        const auto selected = enginelab::selectSingleEngineCatalogEntry(
+            catalog.entries, filter);
+        if (!selected) {
+            std::cerr << (selected.status
+                    == enginelab::EngineCatalogSelectionStatus::ambiguous
+                    ? "FAILED: ambiguous engine selector; use an exact catalogue key:\n"
+                    : "FAILED: no catalogue engine matched selector\n");
+            for (const auto* match : selected.matches)
+                std::cerr << "  " << match->config.audioVoicingKey
+                          << "  " << match->config.name << '\n';
+            return EXIT_FAILURE;
+        }
+        selectedEntries.push_back(selected.entry);
+    }
+
     std::printf("clutchless WOT upshift transient (trigger fraction %.2f of redline)\n",
                 triggerFraction);
     std::printf("  %-30s  gearShift   rpm@shift  rpm@sync  resyncMs   baseF   peakF"
                 "  slope(g/s/ms)  clutchTq  overlap/legacy  done\n", "engine");
-    auto matched = false;
     auto allAudioChecksPassed = true;
-    for (const auto& entry : catalog.entries) {
-        auto config = entry.config;
+    for (const auto* entry : selectedEntries) {
+        auto config = entry->config;
         // This scenario is a standing-start WOT launch followed by an upshift,
         // which is precisely the manoeuvre where tyre saturation is part of the
         // physics, so it pins the grip limit on rather than inheriting the
@@ -731,8 +744,6 @@ int main(int argc, char** argv) {
         // condition it was measured under keeps it non-vacuous instead.
         config.vehicle.tyreGripLimitEnabled = true;
         enginelab::normaliseEngineConfig(config);
-        if (!containsCaseInsensitive(config.name, filter)) continue;
-        matched = true;
         const auto rpm = triggerRpm > 0.0 ? triggerRpm : config.redlineRpm * triggerFraction;
         ShiftMetrics m;
         try {
@@ -787,11 +798,6 @@ int main(int argc, char** argv) {
             if (!validateShiftAudio(m))
                 allAudioChecksPassed = false;
         }
-    }
-    if (!matched) {
-        std::cerr << "FAILED: no catalogue engine matched filter '"
-                  << filter << "'\n";
-        return EXIT_FAILURE;
     }
     if (!audioOutputDirectory.empty())
         std::cout << "Shift audio result: "

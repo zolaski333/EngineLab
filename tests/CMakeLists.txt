@@ -119,13 +119,24 @@ target_link_libraries(EngineLabEcuCalibrationIntegrationTests PRIVATE
 enginelab_set_warnings(EngineLabEcuCalibrationIntegrationTests)
 add_test(NAME EngineLab.EcuCalibration COMMAND EngineLabEcuCalibrationIntegrationTests)
 
-add_executable(EngineLabRealtimeRegressionTests RealtimeRegressionTests.cpp)
+add_executable(EngineLabRealtimeRegressionTests
+    RealtimeRegressionTests.cpp
+    ExhaustTransferTests.cpp)
 target_link_libraries(EngineLabRealtimeRegressionTests PRIVATE EngineLab::Audio)
 enginelab_set_warnings(EngineLabRealtimeRegressionTests)
 add_test(NAME EngineLab.RealtimeRegression COMMAND EngineLabRealtimeRegressionTests)
 if(MSVC)
     target_link_options(EngineLabRealtimeRegressionTests PRIVATE /STACK:8388608)
 endif()
+
+# Fixed-source transfer oracle for the complete authored exhaust DAG. It is
+# intentionally separate from the engine/audio render harnesses: no catalogue,
+# running simulator, voicing, random source or external recording can obscure
+# whether geometry itself changes the passive acoustic transfer. Reuse the
+# realtime-regression binary so JUCE's module sources compile only once.
+add_test(NAME EngineLab.ExhaustTransfer
+    COMMAND EngineLabRealtimeRegressionTests --exhaust-transfer-only)
+set_tests_properties(EngineLab.ExhaustTransfer PROPERTIES TIMEOUT 30)
 
 add_executable(EngineLabOfflineAudioExportTests OfflineAudioExportTests.cpp)
 target_link_libraries(EngineLabOfflineAudioExportTests PRIVATE

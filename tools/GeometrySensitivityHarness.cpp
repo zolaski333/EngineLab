@@ -1169,25 +1169,21 @@ int main(int argc, char** argv) {
         return 0;
     }
 
-    // Every engine selector in this repo is an unanchored substring match and
-    // the catalogue contains names that contain each other, so silently taking
-    // the first hit is how a measurement ends up being about a different engine
-    // than the one it names.
-    std::vector<const EngineConfig*> matches;
-    for (const auto& entry : catalog.entries)
-        if (entry.config.name.find(filter) != std::string::npos)
-            matches.push_back(&entry.config);
-    if (matches.empty()) {
+    const auto selected = selectSingleEngineCatalogEntry(catalog.entries, filter);
+    if (selected.status == EngineCatalogSelectionStatus::notFound) {
         std::cerr << "aucun moteur ne correspond a \"" << filter << "\"\n";
         return 1;
     }
-    if (matches.size() > 1) {
-        std::cerr << "\"" << filter << "\" correspond a " << matches.size()
+    if (selected.status == EngineCatalogSelectionStatus::ambiguous) {
+        std::cerr << "\"" << filter << "\" correspond a "
+                  << selected.matches.size()
                   << " moteurs, precisez:\n";
-        for (const auto* match : matches) std::cerr << "  " << match->name << '\n';
+        for (const auto* match : selected.matches)
+            std::cerr << "  " << match->config.audioVoicingKey
+                      << "  " << match->config.name << '\n';
         return 1;
     }
-    const auto& engine = *matches.front();
+    const auto& engine = selected.entry->config;
     if (!(targetRpm > 0.0))
         targetRpm = std::max(engine.idleRpm * 2.0, engine.redlineRpm * 0.55);
 

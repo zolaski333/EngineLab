@@ -27,14 +27,6 @@
 namespace {
 using Clock = std::chrono::steady_clock;
 
-[[nodiscard]] std::string lowercase(std::string value) {
-    std::transform(value.begin(), value.end(), value.begin(),
-        [](unsigned char character) {
-            return static_cast<char>(std::tolower(character));
-        });
-    return value;
-}
-
 [[nodiscard]] double sweepCeilingRpm(
     const enginelab::EngineConfig& config) noexcept {
     return 0.95 * std::min(
@@ -173,7 +165,7 @@ int main(int argc, char** argv) {
         if (argument == "--catalog-root" && index + 1 < argc)
             catalogRoot = argv[++index];
         else if (argument == "--filter" && index + 1 < argc)
-            filter = lowercase(argv[++index]);
+            filter = argv[++index];
         else if (argument == "--complete")
             completeSweep = true;
         else if (argument == "--help") {
@@ -203,15 +195,32 @@ int main(int argc, char** argv) {
               << std::setw(8) << "recover"
               << std::setw(9) << "result" << '\n';
 
+    std::vector<const enginelab::EngineCatalogEntry*> selectedEntries;
+    if (filter.empty()) {
+        selectedEntries.reserve(catalog.entries.size());
+        for (const auto& entry : catalog.entries)
+            selectedEntries.push_back(&entry);
+    } else {
+        const auto selected = enginelab::selectSingleEngineCatalogEntry(
+            catalog.entries, filter);
+        if (!selected) {
+            std::cerr << (selected.status
+                    == enginelab::EngineCatalogSelectionStatus::ambiguous
+                    ? "FAIL: ambiguous engine selector; use an exact catalogue key:\n"
+                    : "FAIL: no catalog engine matched the selector\n");
+            for (const auto* match : selected.matches)
+                std::cerr << "  " << match->config.audioVoicingKey
+                          << "  " << match->config.name << '\n';
+            return 2;
+        }
+        selectedEntries.push_back(selected.entry);
+    }
+
     std::size_t matched = 0;
     std::size_t passed = 0;
-    for (const auto& entry : catalog.entries) {
-        if (!filter.empty()
-            && lowercase(entry.config.name).find(filter)
-                == std::string::npos)
-            continue;
+    for (const auto* entry : selectedEntries) {
         ++matched;
-        const auto result = runOne(entry.config, completeSweep);
+        const auto result = runOne(entry->config, completeSweep);
         const auto pass = result.failure.empty();
         if (pass) ++passed;
         std::cout << std::left << std::setw(31) << result.engine
@@ -228,10 +237,6 @@ int main(int argc, char** argv) {
             std::cerr << "  " << result.failure << '\n';
     }
 
-    if (matched == 0) {
-        std::cerr << "FAIL: no catalog engine matched the filter\n";
-        return 2;
-    }
     std::cout << "summary: " << passed << '/' << matched << " passed\n";
     return passed == matched ? 0 : 1;
 }

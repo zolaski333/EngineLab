@@ -31,7 +31,12 @@
 #include <stdexcept>
 #include <span>
 #include <string>
+#include <string_view>
 #include <vector>
+
+namespace enginelab::tests {
+void exhaustTransferRegression();
+}
 
 namespace {
 
@@ -2776,8 +2781,14 @@ void freeFieldObserverRegression() {
         "authored at 4 m");
 }
 
-int main() {
+int main(int argc, char** argv) {
     try {
+        if (argc == 2
+            && std::string_view { argv[1] } == "--exhaust-transfer-only") {
+            enginelab::tests::exhaustTransferRegression();
+            std::cout << "Deterministic exhaust transfer tests passed\n";
+            return 0;
+        }
         monitorCalibrationDefaultRegression();
         freeFieldObserverRegression();
         ductWallLossRegression();

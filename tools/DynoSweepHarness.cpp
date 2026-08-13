@@ -531,12 +531,24 @@ int main(int argc, char** argv) {
         return EXIT_FAILURE;
     }
     std::vector<enginelab::EngineConfig> engines;
-    for (const auto& entry : catalog.entries)
-        if (filter.empty() || containsCaseInsensitive(entry.config.name, filter))
+    if (filter.empty()) {
+        engines.reserve(catalog.entries.size());
+        for (const auto& entry : catalog.entries)
             engines.push_back(entry.config);
-    if (engines.empty()) {
-        std::cerr << "no engine matched filter\n";
-        return EXIT_FAILURE;
+    } else {
+        const auto selected = enginelab::selectSingleEngineCatalogEntry(
+            catalog.entries, filter);
+        if (!selected) {
+            std::cerr << (selected.status
+                    == enginelab::EngineCatalogSelectionStatus::ambiguous
+                    ? "ambiguous engine selector; use an exact catalogue key:\n"
+                    : "no engine matched selector\n");
+            for (const auto* match : selected.matches)
+                std::cerr << "  " << match->config.audioVoicingKey
+                          << "  " << match->config.name << '\n';
+            return EXIT_FAILURE;
+        }
+        engines.push_back(selected.entry->config);
     }
 
     for (const auto& engine : engines)

@@ -1716,6 +1716,39 @@ int main() {
     }
     require(catalog.errors.empty(), "engine catalog files must load without errors");
     require(catalog.entries.size() >= 10, "catalog must ship a meaningful starter library of realistic and exotic engines");
+    {
+        std::vector<enginelab::EngineCatalogEntry> selectionFixture(3);
+        selectionFixture[0].config.name = "Big Twin-like 1.9 V2";
+        selectionFixture[0].config.audioVoicingKey = "02_big_twin";
+        selectionFixture[0].sourcePath = "02_big_twin.engine.yaml";
+        selectionFixture[1].config.name = "Yamaha CP2 MT-07-like 689 Twin";
+        selectionFixture[1].config.audioVoicingKey = "08_yamaha_cp2";
+        selectionFixture[1].sourcePath = "08_yamaha_cp2.engine.yaml";
+        selectionFixture[2].config.name = "MT-07-like 689 Twin Full System";
+        selectionFixture[2].config.audioVoicingKey = "16_audio_physics_lab_689_twin";
+        selectionFixture[2].sourcePath = "16_audio_physics_lab_689_twin.engine.yaml";
+
+        const auto exact = enginelab::selectSingleEngineCatalogEntry(
+            selectionFixture, "16_AUDIO_PHYSICS_LAB_689_TWIN");
+        require(exact && exact.exactMatch
+                && exact.entry == &selectionFixture[2],
+                "an exact stable catalogue key must override ambiguous name substrings");
+        const auto uniqueSubstring = enginelab::selectSingleEngineCatalogEntry(
+            selectionFixture, "full system");
+        require(uniqueSubstring && !uniqueSubstring.exactMatch
+                && uniqueSubstring.entry == &selectionFixture[2],
+                "a unique case-insensitive substring must remain convenient");
+        const auto ambiguous = enginelab::selectSingleEngineCatalogEntry(
+            selectionFixture, "Twin");
+        require(ambiguous.status == enginelab::EngineCatalogSelectionStatus::ambiguous
+                && ambiguous.entry == nullptr && ambiguous.matches.size() == 3,
+                "an ambiguous selector must list candidates instead of choosing the first");
+        const auto missing = enginelab::selectSingleEngineCatalogEntry(
+            selectionFixture, "not-an-engine");
+        require(missing.status == enginelab::EngineCatalogSelectionStatus::notFound
+                && missing.matches.empty(),
+                "a missing selector must remain distinguishable from ambiguity");
+    }
     bool found2jz = false;
     bool foundV8 = false;
     bool foundMotorcycle = false;

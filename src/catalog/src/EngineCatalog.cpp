@@ -1168,4 +1168,53 @@ std::vector<EngineConfig> makeCatalogOrBasePresets(const std::filesystem::path& 
     return configs;
 }
 
+EngineCatalogSelectionResult selectSingleEngineCatalogEntry(
+    const std::vector<EngineCatalogEntry>& entries,
+    std::string_view selector) {
+    EngineCatalogSelectionResult result;
+    if (selector.empty()) return result;
+
+    const auto lowercase = [](std::string_view text) {
+        std::string lowered(text);
+        std::transform(lowered.begin(), lowered.end(), lowered.begin(),
+            [](unsigned char value) { return static_cast<char>(std::tolower(value)); });
+        return lowered;
+    };
+    const auto requested = lowercase(selector);
+    const auto addIfMissing = [](auto& matches, const EngineCatalogEntry& entry) {
+        if (std::find(matches.begin(), matches.end(), &entry) == matches.end())
+            matches.push_back(&entry);
+    };
+
+    for (const auto& entry : entries) {
+        const auto key = lowercase(entry.config.audioVoicingKey);
+        const auto stem = lowercase(entry.sourcePath.stem().string());
+        const auto name = lowercase(entry.config.name);
+        if (requested == key || requested == stem || requested == name)
+            addIfMissing(result.matches, entry);
+    }
+
+    if (!result.matches.empty()) {
+        result.exactMatch = true;
+    } else {
+        for (const auto& entry : entries) {
+            const auto key = lowercase(entry.config.audioVoicingKey);
+            const auto stem = lowercase(entry.sourcePath.stem().string());
+            const auto name = lowercase(entry.config.name);
+            if (key.find(requested) != std::string::npos
+                    || stem.find(requested) != std::string::npos
+                    || name.find(requested) != std::string::npos)
+                addIfMissing(result.matches, entry);
+        }
+    }
+
+    if (result.matches.size() == 1) {
+        result.status = EngineCatalogSelectionStatus::unique;
+        result.entry = result.matches.front();
+    } else if (!result.matches.empty()) {
+        result.status = EngineCatalogSelectionStatus::ambiguous;
+    }
+    return result;
+}
+
 } // namespace enginelab

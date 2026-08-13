@@ -1390,7 +1390,7 @@ void MainComponent::drawDebugPanel(juce::Graphics& g, juce::Rectangle<float> are
         liftMultiplier = std::max(liftMultiplier, visibleState_.cylinderStates[index].valveLiftMultiplier);
         runnerResonanceHz = std::max(runnerResonanceHz, visibleState_.cylinderStates[index].intakeResonanceFrequencyHz);
     }
-    const std::array<juce::String, 51> values {
+    const std::array<juce::String, 55> values {
         "Net torque       " + juce::String(visibleState_.netTorqueNm, 2),
         "Indicated torque " + juce::String(visibleState_.indicatedTorqueNm, 2),
         "Mean-work torque " + juce::String(visibleState_.meanWorkTorqueNm, 2),
@@ -1437,7 +1437,14 @@ void MainComponent::drawDebugPanel(juce::Graphics& g, juce::Rectangle<float> are
         "Clutch energy J  " + juce::String(visibleState_.clutchDissipatedEnergyJoules, 1),
         "Tire limited     " + juce::String(visibleState_.tractionLimited ? "YES" : "no"),
         "Damage/wear      " + juce::String(visibleState_.damage, 4) + " / " + juce::String(visibleState_.wear, 4),
-        "SPSC drops       " + juce::String(runtime_ ? runtime_->droppedEventCount() : 0),
+        // Keep each realtime transport failure separate. A single aggregate
+        // made a silent exhaust indistinguishable from missing combustion,
+        // pressure starvation, or a saturated reaction voice pool. These are
+        // atomic reads performed only by the 30 Hz UI paint path.
+        "Pertes firing    " + juce::String(runtime_ ? runtime_->droppedEventCount() : 0),
+        "Pertes pression  " + juce::String(runtime_ ? runtime_->droppedPressureSampleCount() : 0),
+        "Pertes acoust ech " + juce::String(runtime_ ? runtime_->droppedExhaustAcousticSampleCount() : 0),
+        "Pertes reaction  " + juce::String(audio_ ? audio_->droppedReactionEventCount() : 0),
         // Simulated seconds delivered per wall second. The overrun counter
         // beside it says a deadline was missed but not by how much work, and
         // that is the whole difference: below 1.0 the simulation is in slow
@@ -1446,7 +1453,12 @@ void MainComponent::drawDebugPanel(juce::Graphics& g, juce::Rectangle<float> are
         // is produced slower than the audio thread drains it.
         "Realtime factor  " + juce::String(runtime_ ? runtime_->realtimeFactor() : 1.0, 3) + " x",
         "Runtime overruns " + juce::String(runtime_ ? runtime_->timingOverrunCount() : 0),
-        "Audio late/file  " + juce::String(audio_ ? audio_->lateEventCount() : 0) + " / " + juce::String(audio_ ? audio_->droppedPendingEventCount() : 0),
+        "Audio late/pending " + juce::String(audio_ ? audio_->lateEventCount() : 0) + " / " + juce::String(audio_ ? audio_->droppedPendingEventCount() : 0),
+        "Protection charge "
+            + juce::String(runtime_ && runtime_->realtimeLoadProtectionActive()
+                ? "ACTIF / " : "repos / ")
+            + juce::String(runtime_ ? runtime_->realtimeLoadProtectionActivationCount() : 0)
+            + " activ.",
         // The two readings that separate "the engine is quiet" from "the chain
         // is being held down". The slow AGC sitting below 1 means the safety
         // leveler is pulling, and a non-zero limited count means the soft

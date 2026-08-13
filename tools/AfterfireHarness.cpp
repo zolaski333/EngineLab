@@ -96,6 +96,20 @@ struct Sample final {
     bool overrunActive { false };
 };
 
+struct AudioContractCounters final {
+    std::uint64_t droppedFiringEvents {};
+    std::uint64_t droppedCylinderPressureSamples {};
+    std::uint64_t droppedExhaustAcousticSamples {};
+    std::uint64_t droppedReactionEvents {};
+    std::uint64_t lateEvents {};
+    std::uint64_t droppedPendingEvents {};
+    std::uint64_t stolenVoices {};
+    std::uint64_t delayTruncations {};
+    std::uint64_t legacyPathSamples {};
+    std::uint64_t invalidBoundarySamples {};
+    std::uint64_t levelLimitedSamples {};
+};
+
 struct Metrics final {
     std::string name;
     bool ran { false };
@@ -136,20 +150,10 @@ struct Metrics final {
     // stick out of the background", which is what a pop IS.
     double audioOverrunCrest { 0.0 };
     double audioBaselineCrest { 0.0 };
-    std::uint64_t droppedPressureSamples { 0 };
+    bool physicalExhaustActive { false };
+    bool compiledExhaustTopologyActive { false };
+    AudioContractCounters audioContract {};
 };
-
-[[nodiscard]] bool containsCaseInsensitive(const std::string& haystack,
-                                           const std::string& needle) {
-    if (needle.empty()) return true;
-    const auto lower = [](std::string value) {
-        for (auto& character : value)
-            character = static_cast<char>(std::tolower(
-                static_cast<unsigned char>(character)));
-        return value;
-    };
-    return lower(haystack).find(lower(needle)) != std::string::npos;
-}
 
 std::string safeFileStem(std::string name) {
     for (auto& character : name) {
@@ -233,7 +237,11 @@ public:
     void renderFrame(enginelab::SimulationFrame& frame,
                      enginelab::EngineSimulator& simulator,
                      bool starterEngaged, double drivelineLoad) {
-        droppedPressureSamples_ += frame.droppedCylinderPressureSampleCount;
+        counters_.droppedFiringEvents += frame.droppedFiringEventCount;
+        counters_.droppedCylinderPressureSamples +=
+            frame.droppedCylinderPressureSampleCount;
+        counters_.droppedExhaustAcousticSamples +=
+            frame.droppedExhaustAcousticSampleCount;
         const auto simulationStart =
             frame.state.simulationTimeSeconds - stepSeconds;
         for (std::size_t index = 0; index < frame.firingEventCount; ++index) {
@@ -241,7 +249,8 @@ public:
             const auto fraction = std::clamp(
                 (event.timeSeconds - simulationStart) / stepSeconds, 0.0, 1.0);
             event.timeSeconds = realtimeSeconds_ + fraction * stepSeconds;
-            (void)runtime_->audioEvents().tryPush(event);
+            if (!runtime_->audioEvents().tryPush(event))
+                ++counters_.droppedFiringEvents;
         }
         enginelab::CylinderPressureSample pressureSample;
         while (simulator.tryPopCylinderPressureSample(pressureSample)) {
@@ -251,10 +260,12 @@ public:
             pressureSample.timeSeconds =
                 realtimeSeconds_ + fraction * stepSeconds;
             if (!runtime_->cylinderPressureSamples().tryPush(pressureSample))
-                ++droppedPressureSamples_;
+                ++counters_.droppedCylinderPressureSamples;
         }
         enginelab::ExhaustAcousticSample acousticSample;
         while (simulator.tryPopExhaustAcousticSample(acousticSample)) {
+            counters_.droppedReactionEvents +=
+                acousticSample.droppedReactionEventCount;
             const auto fraction = std::clamp(
                 (acousticSample.timeSeconds - simulationStart) / stepSeconds,
                 0.0, 1.0);
@@ -271,7 +282,7 @@ public:
                     realtimeSeconds_ + eventFraction * stepSeconds;
             }
             if (!runtime_->exhaustAcousticSamples().tryPush(acousticSample))
-                ++droppedPressureSamples_;
+                ++counters_.droppedExhaustAcousticSamples;
         }
         enginelab::publishAudioFrame(runtime_->audioState(), frame.state,
             { false, starterEngaged, drivelineLoad, 1.0 });
@@ -297,8 +308,22 @@ public:
     [[nodiscard]] const std::vector<float>& right() const noexcept {
         return right_;
     }
-    [[nodiscard]] std::uint64_t droppedPressureSamples() const noexcept {
-        return droppedPressureSamples_;
+    [[nodiscard]] AudioContractCounters audioContractCounters() const noexcept {
+        auto result = counters_;
+        result.lateEvents = renderer_->lateEventCount();
+        result.droppedPendingEvents = renderer_->droppedPendingEventCount();
+        result.stolenVoices = renderer_->stolenVoiceCount();
+        result.delayTruncations = renderer_->delayTruncationCount();
+        result.legacyPathSamples = renderer_->legacyPathSampleCount();
+        result.invalidBoundarySamples = renderer_->invalidBoundarySampleCount();
+        result.levelLimitedSamples = renderer_->levelLimitedSampleCount();
+        return result;
+    }
+    [[nodiscard]] bool physicalExhaustActive() const noexcept {
+        return renderer_->physicalExhaustActive();
+    }
+    [[nodiscard]] bool compiledExhaustTopologyActive() const noexcept {
+        return renderer_->compiledExhaustTopologyActive();
     }
 
 private:
@@ -308,7 +333,7 @@ private:
     std::vector<float> left_;
     std::vector<float> right_;
     double realtimeSeconds_ {};
-    std::uint64_t droppedPressureSamples_ {};
+    AudioContractCounters counters_ {};
 };
 
 struct TickResult final {
@@ -415,6 +440,14 @@ Metrics measureAfterfire(const enginelab::EngineConfig& baseConfig,
 
     Metrics metrics;
     metrics.name = config.name;
+    const auto captureAudioContract = [&metrics, &audio]() {
+        if (!audio) return;
+        metrics.audioMeasured = true;
+        metrics.audioContract = audio->audioContractCounters();
+        metrics.physicalExhaustActive = audio->physicalExhaustActive();
+        metrics.compiledExhaustTopologyActive =
+            audio->compiledExhaustTopologyActive();
+    };
 
     std::vector<Sample> samples;
     samples.reserve(8192);
@@ -500,7 +533,10 @@ Metrics measureAfterfire(const enginelab::EngineConfig& baseConfig,
             break;
         }
     }
-    if (!reachedArm) return metrics;
+    if (!reachedArm) {
+        captureAudioContract();
+        return metrics;
+    }
 
     // Phase C2 -- COAST DOWN to the speed the overrun is to be measured at.
     //
@@ -711,8 +747,7 @@ Metrics measureAfterfire(const enginelab::EngineConfig& baseConfig,
 
     // --- audio ------------------------------------------------------------
     if (audio) {
-        metrics.audioMeasured = true;
-        metrics.droppedPressureSamples = audio->droppedPressureSamples();
+        captureAudioContract();
         const auto& left = audio->left();
         for (const auto sample : left) {
             if (!std::isfinite(sample)) { metrics.audioFinite = false; continue; }
@@ -788,10 +823,55 @@ Metrics measureAfterfire(const enginelab::EngineConfig& baseConfig,
     return metrics;
 }
 
+[[nodiscard]] bool violatesAudioContract(const Metrics& metrics) noexcept {
+    if (!metrics.audioMeasured) return false;
+    const auto& counters = metrics.audioContract;
+    return !metrics.audioFinite
+        || !metrics.physicalExhaustActive
+        || !metrics.compiledExhaustTopologyActive
+        || counters.droppedFiringEvents > 0
+        || counters.droppedCylinderPressureSamples > 0
+        || counters.droppedExhaustAcousticSamples > 0
+        || counters.droppedReactionEvents > 0
+        || counters.lateEvents > 0
+        || counters.droppedPendingEvents > 0
+        || counters.stolenVoices > 0
+        || counters.delayTruncations > 0
+        || counters.legacyPathSamples > 0
+        || counters.invalidBoundarySamples > 0
+        || counters.levelLimitedSamples > 0;
+}
+
+void reportAudioContract(const Metrics& metrics) {
+    if (!metrics.audioMeasured) return;
+    const auto& counters = metrics.audioContract;
+    std::printf("    audio contract physical=%s compiled=%s"
+                " dropF=%llu dropP=%llu dropA=%llu dropR=%llu"
+                " late=%llu pending=%llu stolen=%llu trunc=%llu"
+                " boundary=%llu legacy=%llu leveler=%llu  %s\n",
+        metrics.physicalExhaustActive ? "yes" : "NO",
+        metrics.compiledExhaustTopologyActive ? "yes" : "NO",
+        static_cast<unsigned long long>(counters.droppedFiringEvents),
+        static_cast<unsigned long long>(
+            counters.droppedCylinderPressureSamples),
+        static_cast<unsigned long long>(
+            counters.droppedExhaustAcousticSamples),
+        static_cast<unsigned long long>(counters.droppedReactionEvents),
+        static_cast<unsigned long long>(counters.lateEvents),
+        static_cast<unsigned long long>(counters.droppedPendingEvents),
+        static_cast<unsigned long long>(counters.stolenVoices),
+        static_cast<unsigned long long>(counters.delayTruncations),
+        static_cast<unsigned long long>(counters.invalidBoundarySamples),
+        static_cast<unsigned long long>(counters.legacyPathSamples),
+        static_cast<unsigned long long>(counters.levelLimitedSamples),
+        violatesAudioContract(metrics) ? "INVALID" : "valid");
+}
+
 void report(const Metrics& metrics) {
     if (!metrics.ran) {
         std::printf("%-44s  NOT RUN (never reached the arming speed)\n",
             metrics.name.c_str());
+        reportAudioContract(metrics);
         return;
     }
     std::printf("%-44s  rpm@lift %6.0f  armed %4d steps\n",
@@ -832,10 +912,7 @@ void report(const Metrics& metrics) {
             metrics.audioOverrunCrest,
             metrics.audioBaselineP999, metrics.audioBaselineCrest,
             metrics.audioFinite ? "" : "  NON-FINITE");
-        if (metrics.droppedPressureSamples > 0)
-            std::printf("    dropped pressure samples %llu\n",
-                static_cast<unsigned long long>(
-                    metrics.droppedPressureSamples));
+        reportAudioContract(metrics);
     }
 }
 } // namespace
@@ -888,29 +965,43 @@ int main(int argc, char** argv) {
         return 0;
     }
 
-    // Every selector in this repo is an unanchored substring match and the
-    // catalogue contains names that contain each other, so name the matches
-    // rather than silently taking the first.
     std::vector<enginelab::EngineConfig> selected;
-    for (const auto& entry : catalog.entries) {
-        auto config = entry.config;
-        enginelab::normaliseEngineConfig(config);
-        if (containsCaseInsensitive(config.name, options.engineFilter))
+    if (options.engineFilter.empty()) {
+        selected.reserve(catalog.entries.size());
+        for (const auto& entry : catalog.entries) {
+            auto config = entry.config;
+            enginelab::normaliseEngineConfig(config);
             selected.push_back(std::move(config));
-    }
-    if (selected.empty()) {
-        std::fprintf(stderr, "no engine matches \"%s\"\n",
-            options.engineFilter.c_str());
-        return 1;
-    }
-    if (selected.size() > 1 && !options.engineFilter.empty()) {
-        std::printf("\"%s\" matches %zu engines:\n",
-            options.engineFilter.c_str(), selected.size());
-        for (const auto& engine : selected)
-            std::printf("    %s\n", engine.name.c_str());
+        }
+    } else {
+        const auto resolved = enginelab::selectSingleEngineCatalogEntry(
+            catalog.entries, options.engineFilter);
+        if (!resolved) {
+            std::fprintf(stderr, "%s engine selector \"%s\"\n",
+                resolved.status == enginelab::EngineCatalogSelectionStatus::ambiguous
+                    ? "ambiguous" : "unmatched",
+                options.engineFilter.c_str());
+            for (const auto* match : resolved.matches)
+                std::fprintf(stderr, "  %s  %s\n",
+                    match->config.audioVoicingKey.c_str(),
+                    match->config.name.c_str());
+            return 1;
+        }
+        auto config = resolved.entry->config;
+        enginelab::normaliseEngineConfig(config);
+        selected.push_back(std::move(config));
     }
 
-    for (const auto& engine : selected)
-        report(measureAfterfire(engine, options));
-    return 0;
+    auto invalidAudioMeasurements = 0;
+    for (const auto& engine : selected) {
+        const auto metrics = measureAfterfire(engine, options);
+        report(metrics);
+        if (violatesAudioContract(metrics)) {
+            std::fprintf(stderr,
+                "INVALID: %s: audio delivery contract was violated\n",
+                metrics.name.c_str());
+            ++invalidAudioMeasurements;
+        }
+    }
+    return invalidAudioMeasurements == 0 ? 0 : 1;
 }

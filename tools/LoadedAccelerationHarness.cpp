@@ -101,17 +101,6 @@ TickResult coupledStep(enginelab::EngineSimulator& simulator,
     return result;
 }
 
-bool containsCaseInsensitive(const std::string& haystack,
-                             const std::string& needle) {
-    if (needle.empty()) return true;
-    return std::search(
-        haystack.begin(), haystack.end(), needle.begin(), needle.end(),
-        [](char left, char right) {
-            return std::tolower(static_cast<unsigned char>(left))
-                == std::tolower(static_cast<unsigned char>(right));
-        }) != haystack.end();
-}
-
 std::string safeFileStem(std::string name) {
     for (auto& character : name) {
         const auto byte = static_cast<unsigned char>(character);
@@ -461,26 +450,44 @@ int main(int argc, char** argv) {
         return EXIT_FAILURE;
     }
 
+    std::vector<const enginelab::EngineCatalogEntry*> selectedEntries;
+    if (filter.empty()) {
+        selectedEntries.reserve(catalog.entries.size());
+        for (const auto& entry : catalog.entries)
+            selectedEntries.push_back(&entry);
+    } else {
+        const auto selected = enginelab::selectSingleEngineCatalogEntry(
+            catalog.entries, filter);
+        if (!selected) {
+            std::cerr << (selected.status
+                    == enginelab::EngineCatalogSelectionStatus::ambiguous
+                    ? "FAILED: ambiguous engine selector; use an exact catalogue key:\n"
+                    : "FAILED: no catalogue engine matched selector\n");
+            for (const auto* match : selected.matches)
+                std::cerr << "  " << match->config.audioVoicingKey
+                          << "  " << match->config.name << '\n';
+            return EXIT_FAILURE;
+        }
+        selectedEntries.push_back(selected.entry);
+    }
+
     std::printf(
         "fixed-gear WOT acceleration, gear %d (automatic shifts OFF, grip limiter OFF)\n",
         gearNumber);
     std::printf(
         "  %-32s start gear scan limiter maxRpm surges firstRpm minTq%% afrErr%% fuel%% misfire%% fuelCut sparkCut clutchSlip solver\n",
         "engine");
-    auto matched = false;
     auto allRunnable = true;
-    for (const auto& entry : catalog.entries) {
-        if (!containsCaseInsensitive(entry.config.name, filter)) continue;
-        matched = true;
+    for (const auto* entry : selectedEntries) {
         if (gearNumber
-            > static_cast<int>(entry.config.transmission.gearRatios.size())) {
+            > static_cast<int>(entry->config.transmission.gearRatios.size())) {
             std::printf("  %-32s   n/a (gear unavailable)\n",
-                entry.config.name.c_str());
+                entry->config.name.c_str());
             continue;
         }
         try {
             const auto metrics = measureAcceleration(
-                entry.config, gearNumber, csvDirectory, traceEvents);
+                entry->config, gearNumber, csvDirectory, traceEvents);
             std::printf(
                 "  %-32s %5s %4s %4s %7s %6.0f %6zu %8.0f %6.1f %7.1f %5.1f %8.1f %7zu %8zu %10zu %6zu\n",
                 metrics.name.c_str(), metrics.started ? "yes" : "NO",
@@ -501,14 +508,10 @@ int main(int argc, char** argv) {
                 && metrics.gearEngaged && metrics.scanWindowReached
                 && metrics.surges.empty();
         } catch (const std::exception& exception) {
-            std::cerr << "FAILED: " << entry.config.name << ": "
+            std::cerr << "FAILED: " << entry->config.name << ": "
                       << exception.what() << '\n';
             allRunnable = false;
         }
-    }
-    if (!matched) {
-        std::cerr << "FAILED: no catalogue engine matched filter\n";
-        return EXIT_FAILURE;
     }
     return allRunnable ? EXIT_SUCCESS : EXIT_FAILURE;
 }

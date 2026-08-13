@@ -55,12 +55,6 @@ using Clock = std::chrono::steady_clock;
 
 constexpr std::size_t audioUtilisationHistogramBins = 201;
 
-[[nodiscard]] std::string lowercase(std::string value) {
-    std::transform(value.begin(), value.end(), value.begin(),
-                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-    return value;
-}
-
 void sleepSeconds(double seconds) {
     std::this_thread::sleep_for(std::chrono::duration<double>(seconds));
 }
@@ -75,6 +69,8 @@ struct AudioProbeSnapshot final {
     std::uint64_t lateEvents {};
     std::uint64_t stolenVoices {};
     std::uint64_t droppedPendingEvents {};
+    std::uint64_t delayTruncations {};
+    std::uint64_t droppedReactionEvents {};
     std::uint64_t legacyPathSamples {};
     std::uint64_t invalidBoundarySamples {};
     std::uint64_t levelLimitedSamples {};
@@ -90,6 +86,8 @@ struct AudioProbeDelta final {
     std::uint64_t lateEvents {};
     std::uint64_t stolenVoices {};
     std::uint64_t droppedPendingEvents {};
+    std::uint64_t delayTruncations {};
+    std::uint64_t droppedReactionEvents {};
     std::uint64_t legacyPathSamples {};
     std::uint64_t invalidBoundarySamples {};
     std::uint64_t levelLimitedSamples {};
@@ -124,6 +122,10 @@ struct AudioProbeDelta final {
     delta.stolenVoices = counterDelta(end.stolenVoices, begin.stolenVoices);
     delta.droppedPendingEvents =
         counterDelta(end.droppedPendingEvents, begin.droppedPendingEvents);
+    delta.delayTruncations =
+        counterDelta(end.delayTruncations, begin.delayTruncations);
+    delta.droppedReactionEvents =
+        counterDelta(end.droppedReactionEvents, begin.droppedReactionEvents);
     delta.legacyPathSamples =
         counterDelta(end.legacyPathSamples, begin.legacyPathSamples);
     delta.invalidBoundarySamples =
@@ -249,6 +251,8 @@ public:
         result.lateEvents = renderer_.lateEventCount();
         result.stolenVoices = renderer_.stolenVoiceCount();
         result.droppedPendingEvents = renderer_.droppedPendingEventCount();
+        result.delayTruncations = renderer_.delayTruncationCount();
+        result.droppedReactionEvents = renderer_.droppedReactionEventCount();
         result.legacyPathSamples = renderer_.legacyPathSampleCount();
         result.invalidBoundarySamples = renderer_.invalidBoundarySampleCount();
         result.levelLimitedSamples = renderer_.levelLimitedSampleCount();
@@ -401,13 +405,13 @@ struct Measurement final {
     AudioProbeDelta audio {};
     std::uint64_t droppedEvents {};
     std::uint64_t droppedPressureSamples {};
+    std::uint64_t droppedExhaustAcousticSamples {};
     float minimumLevelGain { 1.0F };
     float maximumPreLimiterMagnitude {};
 };
-// Deliberately NOT reported: the dropped cylinder-pressure count. This harness
-// runs no audio thread, so nothing drains the telemetry queue and it overflows
-// on every engine regardless of load -- the number would look alarming and mean
-// nothing. Read that one from the AudioRender harness, which has a consumer.
+// Pressure and exhaust-acoustic queue losses are meaningful only with the audio
+// consumer running. The counters are still sampled without audio for a uniform
+// result type, but the validity gate deliberately ignores them in that mode.
 
 /**
  * Runs one engine on the real runtime thread and reports how much simulated
@@ -625,6 +629,8 @@ struct Measurement final {
     const auto overrunsStart = runtime->timingOverrunCount();
     const auto droppedEventsStart = runtime->droppedEventCount();
     const auto droppedPressureStart = runtime->droppedPressureSampleCount();
+    const auto droppedExhaustAcousticStart =
+        runtime->droppedExhaustAcousticSampleCount();
     const auto audioStart = audioProbe
         ? audioProbe->snapshot() : AudioProbeSnapshot {};
     const auto measurementDeadline = wallStart
@@ -657,6 +663,8 @@ struct Measurement final {
     const auto overrunsEnd = runtime->timingOverrunCount();
     const auto droppedEventsEnd = runtime->droppedEventCount();
     const auto droppedPressureEnd = runtime->droppedPressureSampleCount();
+    const auto droppedExhaustAcousticEnd =
+        runtime->droppedExhaustAcousticSampleCount();
     const auto audioEnd = audioProbe
         ? audioProbe->snapshot() : AudioProbeSnapshot {};
 
@@ -679,6 +687,8 @@ struct Measurement final {
         counterDelta(droppedEventsEnd, droppedEventsStart);
     result.droppedPressureSamples =
         counterDelta(droppedPressureEnd, droppedPressureStart);
+    result.droppedExhaustAcousticSamples = counterDelta(
+        droppedExhaustAcousticEnd, droppedExhaustAcousticStart);
     if (audioProbe) {
         result.audio = audioProbeDelta(
             audioStart, audioEnd, audioSampleRate, audioBlockSize);
@@ -714,12 +724,43 @@ struct Measurement final {
     if (result.invalidReason.empty() && withAudio
         && (result.droppedEvents > 0
             || result.droppedPressureSamples > 0
+            || result.droppedExhaustAcousticSamples > 0
             || result.audio.nonFiniteSamples > 0
             || result.audio.renderOverBudget > 0
+            || result.audio.lateEvents > 0
+            || result.audio.stolenVoices > 0
+            || result.audio.droppedPendingEvents > 0
+            || result.audio.delayTruncations > 0
+            || result.audio.droppedReactionEvents > 0
             || result.audio.legacyPathSamples > 0
             || result.audio.invalidBoundarySamples > 0
             || result.audio.levelLimitedSamples > 0)) {
-        result.invalidReason = "audio realtime contract violation";
+        std::ostringstream reason;
+        reason << "audio realtime contract violation (";
+        auto first = true;
+        const auto append = [&reason, &first](const char* name,
+                                              std::uint64_t count) {
+            if (count == 0) return;
+            if (!first) reason << ", ";
+            reason << name << '=' << count;
+            first = false;
+        };
+        append("dropped-firing", result.droppedEvents);
+        append("dropped-pressure", result.droppedPressureSamples);
+        append("dropped-exhaust-acoustic",
+               result.droppedExhaustAcousticSamples);
+        append("dropped-reaction", result.audio.droppedReactionEvents);
+        append("late", result.audio.lateEvents);
+        append("pending", result.audio.droppedPendingEvents);
+        append("stolen", result.audio.stolenVoices);
+        append("delay-truncation", result.audio.delayTruncations);
+        append("non-finite", result.audio.nonFiniteSamples);
+        append("render-over-budget", result.audio.renderOverBudget);
+        append("legacy", result.audio.legacyPathSamples);
+        append("invalid-boundary", result.audio.invalidBoundarySamples);
+        append("leveler", result.audio.levelLimitedSamples);
+        reason << ')';
+        result.invalidReason = reason.str();
     }
     result.valid = result.invalidReason.empty();
     runtime->stop();
@@ -758,7 +799,7 @@ int main(int argc, char** argv) {
     for (int index = 1; index < argc; ++index) {
         const std::string argument = argv[index];
         if (argument == "--catalog-root" && index + 1 < argc) catalogRoot = argv[++index];
-        else if (argument == "--filter" && index + 1 < argc) filter = lowercase(argv[++index]);
+        else if (argument == "--filter" && index + 1 < argc) filter = argv[++index];
         else if (argument == "--rpm" && index + 1 < argc) holdRpm = std::stod(argv[++index]);
         else if (argument == "--relative-rpm" && index + 1 < argc)
             relativeRpm = std::stod(argv[++index]);
@@ -829,6 +870,10 @@ int main(int argc, char** argv) {
                          "                          collector for same-machine A/B evidence.\n";
             return 0;
         }
+        else {
+            std::cerr << "FAIL: unknown argument: " << argument << '\n';
+            return 2;
+        }
     }
     if (relativeRpm.has_value()
         && (!std::isfinite(*relativeRpm) || *relativeRpm <= 0.0 || *relativeRpm > 1.0)) {
@@ -846,6 +891,27 @@ int main(int argc, char** argv) {
     if (catalog.entries.empty()) {
         std::cerr << "FAIL: no engines found under " << catalogRoot << '\n';
         return 1;
+    }
+
+    std::vector<const enginelab::EngineCatalogEntry*> selectedEntries;
+    if (filter.empty()) {
+        selectedEntries.reserve(catalog.entries.size());
+        for (const auto& entry : catalog.entries)
+            selectedEntries.push_back(&entry);
+    } else {
+        const auto selected = enginelab::selectSingleEngineCatalogEntry(
+            catalog.entries, filter);
+        if (!selected) {
+            std::cerr << (selected.status
+                    == enginelab::EngineCatalogSelectionStatus::ambiguous
+                    ? "FAIL: ambiguous engine selector; use an exact catalogue key:\n"
+                    : "FAIL: no engine matched selector\n");
+            for (const auto* match : selected.matches)
+                std::cerr << "  " << match->config.audioVoicingKey
+                          << "  " << match->config.name << '\n';
+            return 1;
+        }
+        selectedEntries.push_back(selected.entry);
     }
 
     std::cout << "Realtime budget: simulated seconds produced per wall second by the\n"
@@ -874,9 +940,12 @@ int main(int argc, char** argv) {
                   << (freeRun
                       ? ", paced by accelerated simulated time.\n"
                       : ", paced by wall-clock deadlines.\n")
-                  << "A valid point requires no "
-                     "over-budget render, queue loss, invalid boundary, "
-                     "legacy sample, leveler activity or non-finite output.\n\n";
+                   << "A valid point requires no "
+                     "over-budget render, queue/reaction loss, late event, "
+                     "stolen voice, delay truncation, invalid boundary, legacy "
+                     "sample, leveler activity or non-finite output. Scheduler "
+                     "wake misses remain diagnostic unless the render itself "
+                     "exceeds one block.\n\n";
     std::cout << std::left << std::setw(26) << "engine"
               << std::right << std::setw(5) << "cyl"
               << std::setw(9) << "target"
@@ -905,12 +974,10 @@ int main(int argc, char** argv) {
     std::string worstEngine;
     auto failures = 0;
     auto invalidMeasurements = 0;
-    for (const auto& entry : catalog.entries) {
-        if (!filter.empty() && lowercase(entry.config.name).find(filter) == std::string::npos)
-            continue;
+    for (const auto* entry : selectedEntries) {
         const auto revLimitRpm = std::min(
-            entry.config.redlineRpm,
-            entry.config.ignition.revLimitRpm);
+            entry->config.redlineRpm,
+            entry->config.ignition.revLimitRpm);
         // A latched rev limiter is not a steady operating point: missing sparks
         // contaminate pressure, torque and timing cost. Every other WOT/science
         // harness already stops at 95%; apply the same ceiling here so the
@@ -921,7 +988,7 @@ int main(int argc, char** argv) {
             relativeRpm.has_value()
                 ? revLimitRpm * *relativeRpm : holdRpm);
         const auto measurement = measureEngine(
-            entry.config, requestedRpm, warmupSeconds, measureSeconds, freeRun,
+            entry->config, requestedRpm, warmupSeconds, measureSeconds, freeRun,
             intakeWorkers, intakeMaximumCells, intakeStaircaseRounds,
             intakeCouplingSeconds, intakeTargetCellLengthM,
             exhaustTargetCellLengthM,
@@ -931,8 +998,8 @@ int main(int argc, char** argv) {
             forcedInductionPowerNormalisationEnabled,
             catalogRoot,
             audioSampleRate, audioBlockSize);
-        const auto cylinders = static_cast<int>(entry.config.cylinders.size());
-        std::cout << std::left << std::setw(26) << entry.config.name
+        const auto cylinders = static_cast<int>(entry->config.cylinders.size());
+        std::cout << std::left << std::setw(26) << entry->config.name
                   << std::right << std::setw(5) << cylinders
                   << std::setw(9) << std::fixed << std::setprecision(0) << measurement.targetRpm
                   << std::setw(9) << measurement.meanRpm
@@ -976,6 +1043,26 @@ int main(int argc, char** argv) {
                       << measurement.minimumLevelGain
                       << ", pre-limiter peak "
                       << measurement.maximumPreLimiterMagnitude << '\n';
+            std::cout << "  audio contract: dropF="
+                      << measurement.droppedEvents
+                      << " dropP=" << measurement.droppedPressureSamples
+                      << " dropA="
+                      << measurement.droppedExhaustAcousticSamples
+                      << " dropR="
+                      << measurement.audio.droppedReactionEvents
+                      << " late=" << measurement.audio.lateEvents
+                      << " pending="
+                      << measurement.audio.droppedPendingEvents
+                      << " stolen=" << measurement.audio.stolenVoices
+                      << " trunc=" << measurement.audio.delayTruncations
+                      << " boundary="
+                      << measurement.audio.invalidBoundarySamples
+                      << " legacy=" << measurement.audio.legacyPathSamples
+                      << " leveler="
+                      << measurement.audio.levelLimitedSamples
+                      << " nonFinite=" << measurement.audio.nonFiniteSamples
+                      << " renderOver=" << measurement.audio.renderOverBudget
+                      << '\n';
         }
         if (measurement.valid) {
             std::cout << "  steady: torque " << std::fixed
@@ -985,16 +1072,16 @@ int main(int argc, char** argv) {
                       << measurement.meanVolumetricEfficiency << '\n';
         }
         if (!measurement.valid) {
-            std::cerr << "INVALID: " << entry.config.name << ": "
+            std::cerr << "INVALID: " << entry->config.name << ": "
                       << measurement.invalidReason << '\n';
             ++invalidMeasurements;
         } else if (measurement.realtimeFactor < worst) {
             worst = measurement.realtimeFactor;
-            worstEngine = entry.config.name;
+            worstEngine = entry->config.name;
         }
         if (measurement.valid && failBelow > 0.0
             && measurement.realtimeFactor < failBelow) {
-            std::cerr << "FAIL: " << entry.config.name << " produced only "
+            std::cerr << "FAIL: " << entry->config.name << " produced only "
                       << std::setprecision(3) << measurement.realtimeFactor
                       << " simulated seconds per wall second (floor " << failBelow << ")\n";
             ++failures;
