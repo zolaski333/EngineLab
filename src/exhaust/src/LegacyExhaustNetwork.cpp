@@ -1,6 +1,8 @@
 #include <enginelab/exhaust/LegacyExhaustNetwork.hpp>
 
 #include <algorithm>
+#include <cmath>
+#include <numbers>
 
 namespace enginelab {
 namespace {
@@ -77,14 +79,27 @@ ExhaustNetworkConfig makeEditableExhaustNetwork(const ExhaustPathConfig& path) {
         && path.geometry.mufflerChamberDiameterMm > scatteringDiameterMm;
     if (chamberConfigured) {
         auto muffler = component(ExhaustComponentType::muffler, nextId++);
-        muffler.diameterMm = path.geometry.mufflerChamberDiameterMm;
         muffler.lengthMm = path.geometry.mufflerChamberLengthMm;
-        muffler.volumeLitres = std::max(0.05, path.geometry.collectorVolumeLitres);
         muffler.packingFlowResistivityPaSPerM2 =
             path.geometry.mufflerPackingFlowResistivityPaSPerM2;
         muffler.packingThicknessMm = path.geometry.mufflerPackingThicknessMm;
         muffler.perforatedOpenAreaRatio =
             path.geometry.mufflerPerforatedOpenAreaRatio;
+        const auto packedCore = muffler.packingFlowResistivityPaSPerM2 > 0.0
+            && muffler.packingThicknessMm > 0.0
+            && muffler.perforatedOpenAreaRatio > 0.0;
+        // `diameterMm` is the gas passage. A dry reactive chamber passes gas
+        // through its expanded body; a packed straight-through can passes it
+        // through the perforated core and keeps the larger body in volumeLitres
+        // as acoustic annular storage. This is the same representation emitted
+        // by ExhaustGraph's direct legacy compiler, so merely opening/applying
+        // the editor cannot change either flow area or sound.
+        muffler.diameterMm = packedCore
+            ? upstreamDiameterMm : path.geometry.mufflerChamberDiameterMm;
+        const auto bodyRadiusM = path.geometry.mufflerChamberDiameterMm * 0.0005;
+        muffler.volumeLitres = std::numbers::pi * bodyRadiusM * bodyRadiusM
+            * path.geometry.mufflerChamberLengthMm;
+        muffler.restriction = path.geometry.mufflerRestriction;
         network.components.push_back(muffler);
         if (previousId != 0)
             network.connections.push_back({ previousId, muffler.id });

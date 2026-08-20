@@ -18,8 +18,9 @@ namespace enginelab {
  * Every constant-section component becomes a bidirectional delay line; a
  * finite taper is resolved by up to four bounded sections under a graph-wide
  * complexity budget. Direct interfaces, merges and splitters are lossless
- * admittance-scattering junctions, compact junction volumes are passive
- * compliances, and every authored outlet owns an independent radiation load. The
+ * admittance-scattering junctions, compact junction volumes and homogenised
+ * perforated-core annuli are passive compliances, and every authored outlet
+ * owns an independent radiation load. The
  * finite-volume solver remains authoritative for mean flow and low-frequency
  * feedback, while this network transports the complementary audible band.
  */

@@ -54,6 +54,11 @@ struct CompiledExhaustDuct final {
     bool homogenisedCatalystMonolith { false };
     double catalystOpenAreaRatio { 1.0 };
     double catalystSubstrateVolumetricHeatCapacityJPerM3K { 0.0 };
+    /** A packed muffler carries mean flow through its perforated centre tube.
+     *  The outer can is acoustic storage, not extra quasi-1D flow area. */
+    bool perforatedCoreMuffler { false };
+    /** Gross authored can volume minus the swept core volume. Audio only. */
+    double mufflerAnnularVolumeM3 { 0.0 };
 };
 
 /** Well-mixed physical junction used only where topology changes direction or

@@ -1,7 +1,9 @@
 #include <enginelab/gasdynamics/ExhaustGasNetwork.hpp>
 
 #include <algorithm>
+#include <bit>
 #include <cmath>
+#include <cstdint>
 #include <limits>
 #include <numbers>
 #include <optional>
@@ -9,8 +11,12 @@
 namespace enginelab::gasdynamics {
 namespace {
 
-[[nodiscard]] bool finite(double value) noexcept {
-    return std::isfinite(value);
+[[nodiscard]] constexpr bool finite(double value) noexcept {
+    static_assert(std::numeric_limits<double>::is_iec559
+                  && sizeof(double) == sizeof(std::uint64_t),
+        "the conservative gas solver requires IEEE-754 binary64 doubles");
+    constexpr auto exponentMask = std::uint64_t { 0x7ff0000000000000ULL };
+    return (std::bit_cast<std::uint64_t>(value) & exponentMask) != exponentMask;
 }
 
 /**
@@ -945,7 +951,8 @@ bool ExhaustGasNetwork::evaluateStage(
             ? std::span<EulerFlux>(duct.stageFaceFluxes_)
             : std::span<EulerFlux>(duct.faceFluxes_);
         if (!duct.computeResidual(states, primitives, sourceTerms,
-                                  transmissive, transmissive, residual, faceFluxes))
+                                  transmissive, transmissive, residual, faceFluxes,
+                                  false))
             return false;
     }
 

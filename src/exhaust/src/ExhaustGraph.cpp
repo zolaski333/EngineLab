@@ -205,9 +205,8 @@ struct ComponentResonance final {
     return std::numbers::pi * radiusM * radiusM;
 }
 
-[[nodiscard]] double componentVolumeLitres(const ExhaustComponentConfig& component) noexcept {
-    if (std::isfinite(component.volumeLitres) && component.volumeLitres > 0.0)
-        return std::clamp(component.volumeLitres, 0.001, 1'000.0);
+[[nodiscard]] double componentSweptVolumeLitres(
+    const ExhaustComponentConfig& component) noexcept {
     // Radius varies linearly, so use the exact conical-frustum mean area.
     const auto inletAreaM2 = componentAreaM2(component);
     const auto outletAreaM2 = componentOutletAreaM2(component);
@@ -217,9 +216,25 @@ struct ComponentResonance final {
         * finiteClamped(component.lengthMm, 0.0, 10'000.0, 0.0);
 }
 
+[[nodiscard]] double componentVolumeLitres(const ExhaustComponentConfig& component) noexcept {
+    if (std::isfinite(component.volumeLitres) && component.volumeLitres > 0.0)
+        return std::clamp(component.volumeLitres, 0.001, 1'000.0);
+    return componentSweptVolumeLitres(component);
+}
+
 [[nodiscard]] double componentGasVolumeLitres(
     const ExhaustComponentConfig& component) noexcept {
     const auto monolith = componentMonolith(component);
+    const auto perforatedCoreMuffler =
+        component.type == ExhaustComponentType::muffler
+        && std::isfinite(component.packingFlowResistivityPaSPerM2)
+        && component.packingFlowResistivityPaSPerM2 > 0.0
+        && std::isfinite(component.packingThicknessMm)
+        && component.packingThicknessMm > 0.0
+        && std::isfinite(component.perforatedOpenAreaRatio)
+        && component.perforatedOpenAreaRatio > 0.0;
+    if (perforatedCoreMuffler)
+        return componentSweptVolumeLitres(component);
     return componentVolumeLitres(component)
         * (monolith.active ? monolith.openAreaRatio : 1.0);
 }

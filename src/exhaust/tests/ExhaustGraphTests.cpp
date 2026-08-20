@@ -7,6 +7,7 @@
 #include <cmath>
 #include <iostream>
 #include <limits>
+#include <numbers>
 #include <numeric>
 #include <stdexcept>
 #include <string>
@@ -70,6 +71,18 @@ void require(bool condition, const std::string& message) {
 void testValidationAndRouting() {
     const auto config = makeCustomExhaust();
     require(!validateEngineConfig(config).has_value(), "valid split custom exhaust rejected");
+    auto missingOuterCan = config;
+    auto& invalidMuffler = *std::find_if(
+        missingOuterCan.exhaustPaths.front().network->components.begin(),
+        missingOuterCan.exhaustPaths.front().network->components.end(),
+        [](const ExhaustComponentConfig& value) {
+            return value.type == ExhaustComponentType::muffler;
+        });
+    invalidMuffler.volumeLitres = std::numbers::pi
+        * std::pow(invalidMuffler.diameterMm * 0.0005, 2.0)
+        * invalidMuffler.lengthMm;
+    require(validateEngineConfig(missingOuterCan).has_value(),
+        "porous packing without volume outside its core must be rejected");
     const auto graph = ExhaustGraph::makeForEngine(config);
     require(graph.nodes().size() == 14, "explicit graph did not preserve ports and components");
     require(graph.edges().size() == 13, "explicit graph connections were not compiled");
@@ -103,6 +116,25 @@ void testValidationAndRouting() {
             && pathFlow.effectiveOutletAreaM2 > 0.0
             && pathFlow.equivalentRestriction > 0.0,
         "custom DAG did not compile finite physical collector/outlet properties");
+    auto dryChamberConfig = config;
+    auto& dryMuffler = *std::find_if(
+        dryChamberConfig.exhaustPaths.front().network->components.begin(),
+        dryChamberConfig.exhaustPaths.front().network->components.end(),
+        [](const ExhaustComponentConfig& value) {
+            return value.type == ExhaustComponentType::muffler;
+        });
+    dryMuffler.packingFlowResistivityPaSPerM2 = 0.0;
+    dryMuffler.packingThicknessMm = 0.0;
+    dryMuffler.perforatedOpenAreaRatio = 0.0;
+    const auto dryPathFlow = ExhaustGraph::makeForEngine(dryChamberConfig)
+        .pathFlowProperties(0);
+    const auto coreVolumeLitres = std::numbers::pi
+        * std::pow(dryMuffler.diameterMm * 0.0005, 2.0)
+        * dryMuffler.lengthMm;
+    require(std::abs((dryPathFlow.collectorVolumeLitres
+                - pathFlow.collectorVolumeLitres)
+            - (dryMuffler.volumeLitres - coreVolumeLitres)) < 1.0e-12,
+        "steady-flow summaries must exclude a packed muffler's sealed annular volume");
     for (const auto& cylinder : config.cylinders) {
         const auto cylinderFlow = graph.cylinderFlowProperties(cylinder.id);
         require(cylinderFlow.authoredNetwork && cylinderFlow.cylinderId == cylinder.id
@@ -685,16 +717,59 @@ void testEditableLegacyConversionIsNeutral() {
         });
     require(muffler != converted.components.end(),
         "an authored scalar expansion chamber must survive conversion");
-    require(std::abs(muffler->diameterMm - 142.0) < 1.0e-12
-            && std::abs(muffler->lengthMm - 400.0) < 1.0e-12,
-        "conversion must retain expansion-chamber dimensions");
+    const auto grossBodyVolumeLitres = std::numbers::pi
+        * std::pow(142.0 * 0.0005, 2.0) * 0.400 * 1'000.0;
+    require(std::abs(muffler->diameterMm
+                - path.geometry.collectorDiameterMm) < 1.0e-12
+            && std::abs(muffler->lengthMm - 400.0) < 1.0e-12
+            && std::abs(muffler->volumeLitres
+                - grossBodyVolumeLitres) < 1.0e-12,
+        "a packed chamber conversion must retain its core and outer-can dimensions");
     require(std::abs(muffler->packingFlowResistivityPaSPerM2 - 24'000.0) < 1.0e-12
             && std::abs(muffler->packingThicknessMm - 35.0) < 1.0e-12
             && std::abs(muffler->perforatedOpenAreaRatio - 0.28) < 1.0e-12,
         "conversion must retain authored porous packing data");
     require(std::abs(muffler->acousticGain - 1.0) < 1.0e-12
-            && std::abs(muffler->restriction) < 1.0e-12,
-        "conversion must not invent generic muffler attenuation or restriction");
+            && std::abs(muffler->restriction - 0.73) < 1.0e-12,
+        "conversion must retain physical restriction without inventing acoustic gain");
+
+    auto legacyConfig = config;
+    legacyConfig.exhaust = path.geometry;
+    legacyConfig.exhaustPaths.front() = path;
+    legacyConfig.exhaustPaths.front().network.reset();
+    auto editableConfig = legacyConfig;
+    editableConfig.exhaustPaths.front().network = converted;
+    const auto legacyGraph = ExhaustGraph::makeForEngine(legacyConfig);
+    const auto editableGraph = ExhaustGraph::makeForEngine(editableConfig);
+    const auto findCompiledMuffler = [](const ExhaustGraph& graph) {
+        return std::find_if(graph.nodes().begin(), graph.nodes().end(),
+            [](const ExhaustNode& node) {
+                return node.type == ExhaustNodeType::muffler;
+            });
+    };
+    const auto legacyMuffler = findCompiledMuffler(legacyGraph);
+    const auto editableMuffler = findCompiledMuffler(editableGraph);
+    require(legacyMuffler != legacyGraph.nodes().end(),
+        "the scalar packed muffler must compile before editor equivalence is checked");
+    require(editableMuffler != editableGraph.nodes().end(),
+        "the editor-generated packed muffler must compile before equivalence is checked");
+    require(std::abs(legacyMuffler->diameterMm
+                - editableMuffler->diameterMm) < 1.0e-12
+            && std::abs(legacyMuffler->lengthMm
+                - editableMuffler->lengthMm) < 1.0e-12
+            && std::abs(legacyMuffler->volumeLitres
+                - editableMuffler->volumeLitres) < 1.0e-12
+            && std::abs(legacyMuffler->localLossCoefficient
+                - editableMuffler->localLossCoefficient) < 1.0e-12,
+        "opening the graph editor must preserve the compiled packed-muffler geometry"
+        " (legacy d=" + std::to_string(legacyMuffler->diameterMm)
+        + " L=" + std::to_string(legacyMuffler->lengthMm)
+        + " V=" + std::to_string(legacyMuffler->volumeLitres)
+        + " K=" + std::to_string(legacyMuffler->localLossCoefficient)
+        + ", editable d=" + std::to_string(editableMuffler->diameterMm)
+        + " L=" + std::to_string(editableMuffler->lengthMm)
+        + " V=" + std::to_string(editableMuffler->volumeLitres)
+        + " K=" + std::to_string(editableMuffler->localLossCoefficient) + ")");
     const auto outlet = std::find_if(converted.components.begin(),
         converted.components.end(), [](const auto& item) {
             return item.type == ExhaustComponentType::outlet;

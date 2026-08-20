@@ -597,7 +597,12 @@ private:
         }
         propertyEditors_[4].setTooltip(
             "Sur un resonateur terminal, ce volume est la cavite fermee au bout de la branche. "
-            "Zero donne une terminaison rigide quart d'onde.");
+            "Sur un silencieux garni, c'est le volume brut du corps autour du noyau; "
+            "il doit depasser le volume balaye par le noyau. Zero donne une terminaison "
+            "rigide quart d'onde sur un resonateur.");
+        propertyEditors_[2].setTooltip(
+            "Silencieux garni: diametre du noyau perfore qui porte le debit. "
+            "Silencieux sec: diametre de la chambre reactive.");
         propertyEditors_[5].setTooltip(
             "Coefficient de perte de charge du debit moyen. Son effet acoustique physique est "
             "indirect, via la pression et le debit calcules par le solveur gaz.");
@@ -1107,6 +1112,13 @@ private:
             == static_cast<int>(ExhaustComponentType::muffler);
         const auto catalyst = selectedType
             == static_cast<int>(ExhaustComponentType::catalyst);
+        propertyLabels_[2].setText(available
+                ? "Diametre noyau garni / chambre seche (mm)"
+                : "Diametre entree (mm)",
+            juce::dontSendNotification);
+        propertyLabels_[4].setText(available
+                ? "Volume brut du corps (L)" : "Volume (L)",
+            juce::dontSendNotification);
         propertyLabels_[9].setText(catalyst
                 ? "Densite cellules (cpsi)"
                 : "Resistivite garnissage (Pa.s/m2)",
@@ -1289,6 +1301,22 @@ private:
         if (!hasNoPacking && !hasCompletePacking && !hasCompleteMonolith) {
             setStatus("Materiau invalide: garnissage complet sur silencieux, ou catalyseur 25..5000 cpsi, aire ouverte 0.05..0.99 et capacite 0.1..10 MJ/m3/K.", true);
             return;
+        }
+        if (hasCompletePacking) {
+            constexpr double pi = 3.14159265358979323846;
+            const auto inletRadiusM = values[1] * 0.0005;
+            const auto outletRadiusM = (values[2] > 0.0 ? values[2] : values[1])
+                * 0.0005;
+            const auto inletAreaM2 = pi * inletRadiusM * inletRadiusM;
+            const auto outletAreaM2 = pi * outletRadiusM * outletRadiusM;
+            const auto coreMeanAreaM2 = (inletAreaM2
+                + std::sqrt(inletAreaM2 * outletAreaM2)
+                + outletAreaM2) / 3.0;
+            const auto coreVolumeLitres = coreMeanAreaM2 * values[0];
+            if (!(values[3] > coreVolumeLitres * (1.0 + 1.0e-9))) {
+                setStatus("Silencieux garni invalide: le volume brut du corps doit depasser le volume du noyau perfore.", true);
+                return;
+            }
         }
 
         const auto oldId = component->id;

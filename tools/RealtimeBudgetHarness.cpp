@@ -387,6 +387,7 @@ struct Measurement final {
     double meanTorqueNm {};
     double meanPowerKw {};
     double meanVolumetricEfficiency {};
+    double meanExhaustSubstepFrequencyHz {};
     std::size_t intakeWorkers {};
     std::uint64_t overruns {};
     std::uint64_t iterations {};
@@ -640,6 +641,7 @@ struct Measurement final {
     auto torqueSum = 0.0;
     auto powerSum = 0.0;
     auto volumetricEfficiencySum = 0.0;
+    auto exhaustSubstepFrequencySum = 0.0;
     auto rpmSamples = std::uint64_t { 0 };
     result.minimumRpm = std::numeric_limits<double>::infinity();
     result.maximumRpm = 0.0;
@@ -649,6 +651,7 @@ struct Measurement final {
         torqueSum += state.cycleAveragedTorqueNm;
         powerSum += state.cycleAveragedPowerKw;
         volumetricEfficiencySum += state.volumetricEfficiency;
+        exhaustSubstepFrequencySum += state.exhaustNetworkSubstepFrequencyHz;
         ++rpmSamples;
         result.minimumRpm = std::min(result.minimumRpm, state.rpm);
         result.maximumRpm = std::max(result.maximumRpm, state.rpm);
@@ -680,6 +683,8 @@ struct Measurement final {
         result.meanPowerKw = powerSum * inverseSamples;
         result.meanVolumetricEfficiency =
             volumetricEfficiencySum * inverseSamples;
+        result.meanExhaustSubstepFrequencyHz =
+            exhaustSubstepFrequencySum * inverseSamples;
     }
     if (!std::isfinite(result.minimumRpm)) result.minimumRpm = result.meanRpm;
     result.overruns = overrunsEnd - overrunsStart;
@@ -790,6 +795,7 @@ int main(int argc, char** argv) {
     std::optional<bool> intakeFirstOrderTimeIntegration;
     std::optional<double> intakeWallHeatUpdateSeconds;
     bool useWellMixedExhaustJunctions = false;
+    bool disableMufflerPacking = false;
     bool withAudio = false;
     bool outletJetNoiseEnabled = true;
     bool forcedInductionPowerNormalisationEnabled = true;
@@ -838,6 +844,8 @@ int main(int argc, char** argv) {
             audioBlockSize = std::stoi(argv[++index]);
         else if (argument == "--well-mixed-junctions")
             useWellMixedExhaustJunctions = true;
+        else if (argument == "--disable-muffler-packing")
+            disableMufflerPacking = true;
         else if (argument == "--help") {
             std::cout << "usage: EngineLabRealtimeBudgetHarness [--catalog-root DIR] "
                          "[--filter NAME] [--rpm N] [--warmup S] [--seconds S] "
@@ -850,6 +858,7 @@ int main(int argc, char** argv) {
                          "[--intake-euler|--intake-rk2] "
                          "[--intake-wall-us N] "
                          "[--well-mixed-junctions] "
+                         "[--disable-muffler-packing] "
                          "[--enforce FACTOR] [--free-run] "
                          "[--with-audio] [--disable-exhaust-jet-noise] "
                          "[--disable-fi-power-normalisation] "
@@ -867,7 +876,9 @@ int main(int argc, char** argv) {
                          "  --intake-workers  override background intake workers; zero is\n"
                          "                    the serial null control.\n"
                          "  --well-mixed-junctions  select the legacy zero-momentum exhaust\n"
-                         "                          collector for same-machine A/B evidence.\n";
+                         "                          collector for same-machine A/B evidence.\n"
+                         "  --disable-muffler-packing  same-binary dry-chamber null for\n"
+                         "                             packed-core flow/audio measurements.\n";
             return 0;
         }
         else {
@@ -946,6 +957,9 @@ int main(int argc, char** argv) {
                      "sample, leveler activity or non-finite output. Scheduler "
                      "wake misses remain diagnostic unless the render itself "
                      "exceeds one block.\n\n";
+    if (disableMufflerPacking)
+        std::cout << "MUFFLER NULL: porous packing disabled; authored bodies compile as dry "
+                     "expansion chambers.\n\n";
     std::cout << std::left << std::setw(26) << "engine"
               << std::right << std::setw(5) << "cyl"
               << std::setw(9) << "target"
@@ -975,9 +989,27 @@ int main(int argc, char** argv) {
     auto failures = 0;
     auto invalidMeasurements = 0;
     for (const auto* entry : selectedEntries) {
+        auto measurementConfig = entry->config;
+        if (disableMufflerPacking) {
+            const auto clearPacking = [](enginelab::ExhaustConfig& exhaust) {
+                exhaust.mufflerPackingFlowResistivityPaSPerM2 = 0.0;
+                exhaust.mufflerPackingThicknessMm = 0.0;
+                exhaust.mufflerPerforatedOpenAreaRatio = 0.0;
+            };
+            clearPacking(measurementConfig.exhaust);
+            for (auto& path : measurementConfig.exhaustPaths) {
+                clearPacking(path.geometry);
+                if (!path.network) continue;
+                for (auto& component : path.network->components) {
+                    component.packingFlowResistivityPaSPerM2 = 0.0;
+                    component.packingThicknessMm = 0.0;
+                    component.perforatedOpenAreaRatio = 0.0;
+                }
+            }
+        }
         const auto revLimitRpm = std::min(
-            entry->config.redlineRpm,
-            entry->config.ignition.revLimitRpm);
+            measurementConfig.redlineRpm,
+            measurementConfig.ignition.revLimitRpm);
         // A latched rev limiter is not a steady operating point: missing sparks
         // contaminate pressure, torque and timing cost. Every other WOT/science
         // harness already stops at 95%; apply the same ceiling here so the
@@ -988,7 +1020,7 @@ int main(int argc, char** argv) {
             relativeRpm.has_value()
                 ? revLimitRpm * *relativeRpm : holdRpm);
         const auto measurement = measureEngine(
-            entry->config, requestedRpm, warmupSeconds, measureSeconds, freeRun,
+            measurementConfig, requestedRpm, warmupSeconds, measureSeconds, freeRun,
             intakeWorkers, intakeMaximumCells, intakeStaircaseRounds,
             intakeCouplingSeconds, intakeTargetCellLengthM,
             exhaustTargetCellLengthM,
@@ -1069,7 +1101,9 @@ int main(int argc, char** argv) {
                       << std::setprecision(2) << measurement.meanTorqueNm
                       << " Nm, power " << measurement.meanPowerKw
                       << " kW, VE " << std::setprecision(4)
-                      << measurement.meanVolumetricEfficiency << '\n';
+                      << measurement.meanVolumetricEfficiency
+                      << ", exhaust substeps " << std::setprecision(0)
+                      << measurement.meanExhaustSubstepFrequencyHz << " Hz\n";
         }
         if (!measurement.valid) {
             std::cerr << "INVALID: " << entry->config.name << ": "

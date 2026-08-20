@@ -1183,6 +1183,28 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
                         || component.packingThicknessMm <= 0.0
                         || component.perforatedOpenAreaRatio <= 0.0))
                     return "Porous packing requires a muffler with resistivity, thickness and perforated open area";
+                if (hasPacking) {
+                    const auto inletRadiusM = component.diameterMm * 0.0005;
+                    const auto outletDiameterMm = component.outletDiameterMm > 0.0
+                        ? component.outletDiameterMm : component.diameterMm;
+                    const auto outletRadiusM = outletDiameterMm * 0.0005;
+                    const auto inletAreaM2 = std::numbers::pi
+                        * inletRadiusM * inletRadiusM;
+                    const auto outletAreaM2 = std::numbers::pi
+                        * outletRadiusM * outletRadiusM;
+                    const auto coreMeanAreaM2 = (inletAreaM2
+                        + std::sqrt(inletAreaM2 * outletAreaM2)
+                        + outletAreaM2) / 3.0;
+                    // m2 * mm has the same numerical value as litres. A packed
+                    // straight-through component needs volume outside that
+                    // swept core; otherwise its material fields describe a can
+                    // which has no physical annulus to occupy.
+                    const auto coreVolumeLitres = coreMeanAreaM2
+                        * component.lengthMm;
+                    if (!(component.volumeLitres
+                            > coreVolumeLitres * (1.0 + 1.0e-9)))
+                        return "Porous packing requires outer-can volume greater than the perforated core volume";
+                }
                 const auto hasCatalystMonolith =
                     component.catalystCellDensityCpsi > 0.0
                     || component.catalystOpenAreaRatio > 0.0

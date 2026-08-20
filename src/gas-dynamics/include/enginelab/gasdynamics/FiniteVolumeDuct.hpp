@@ -355,7 +355,8 @@ private:
         const DuctBoundaryCondition& left,
         const DuctBoundaryCondition& right,
         std::span<ConservativeState> residual,
-        std::span<EulerFlux> faceFluxes) noexcept;
+        std::span<EulerFlux> faceFluxes,
+        bool computeBoundaryFluxes = true) noexcept;
 
     EulerMixtureModel mixtureModel_;
     DuctGeometry geometry_ {};

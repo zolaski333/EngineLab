@@ -42,6 +42,8 @@ enum class FixtureTopology : std::uint8_t {
     sideBranch500HzOverride,
     catalystBypass,
     catalystMonolith,
+    perforatedCoreSmallCan,
+    perforatedCoreLargeCan,
     asymmetricSplit,
     compactSplitSmallVolume,
     compactSplitLargeVolume,
@@ -200,6 +202,27 @@ void require(bool condition, std::string message) {
         network.components.push_back(catalyst);
         auto outlet = component(
             300, enginelab::ExhaustComponentType::outlet, 600.0, 56.0);
+        outlet.acousticPositionM = { 0.0, 0.0, 0.0 };
+        network.components.push_back(outlet);
+        network.cylinderConnections.push_back({ cylinderId, 100 });
+        network.connections.push_back({ 100, 200 });
+        network.connections.push_back({ 200, 300 });
+        break;
+    }
+    case FixtureTopology::perforatedCoreSmallCan:
+    case FixtureTopology::perforatedCoreLargeCan: {
+        network.components.push_back(component(
+            100, enginelab::ExhaustComponentType::pipe, 500.0, 62.0));
+        auto muffler = component(
+            200, enginelab::ExhaustComponentType::muffler, 500.0, 62.0);
+        muffler.volumeLitres =
+            topology == FixtureTopology::perforatedCoreSmallCan ? 4.0 : 8.0;
+        muffler.packingFlowResistivityPaSPerM2 = 24'000.0;
+        muffler.packingThicknessMm = 35.0;
+        muffler.perforatedOpenAreaRatio = 0.28;
+        network.components.push_back(muffler);
+        auto outlet = component(
+            300, enginelab::ExhaustComponentType::outlet, 500.0, 62.0);
         outlet.acousticPositionM = { 0.0, 0.0, 0.0 };
         network.components.push_back(outlet);
         network.cylinderConnections.push_back({ cylinderId, 100 });
@@ -421,6 +444,10 @@ void transferOracleRegression() {
         FixtureTopology::catalystBypass, excitation);
     const auto catalystMonolith = render(
         FixtureTopology::catalystMonolith, excitation);
+    const auto perforatedCoreSmall = render(
+        FixtureTopology::perforatedCoreSmallCan, excitation);
+    const auto perforatedCoreLarge = render(
+        FixtureTopology::perforatedCoreLargeCan, excitation);
     const auto split = render(FixtureTopology::asymmetricSplit, excitation);
     const auto compactSmall = render(
         FixtureTopology::compactSplitSmallVolume, excitation);
@@ -444,6 +471,10 @@ void transferOracleRegression() {
     requireBoundedPassiveResponse("500 Hz side branch", resonator500);
     requireBoundedPassiveResponse("catalyst bypass", catalystBypass);
     requireBoundedPassiveResponse("catalyst monolith", catalystMonolith);
+    requireBoundedPassiveResponse(
+        "perforated core, 4 litre can", perforatedCoreSmall);
+    requireBoundedPassiveResponse(
+        "perforated core, 8 litre can", perforatedCoreLarge);
     requireBoundedPassiveResponse("asymmetric split", split);
     requireBoundedPassiveResponse("compact split, 0.25 litre", compactSmall);
     requireBoundedPassiveResponse("compact split, 2.0 litres", compactLarge);
@@ -483,6 +514,9 @@ void transferOracleRegression() {
         "a terminal resonator must add one bounded acoustic branch and no mean-flow route");
     require(catalystBypass.acousticDuctCount == catalystMonolith.acousticDuctCount,
         "a homogenised catalyst must not add acoustic delay lines per substrate cell");
+    require(perforatedCoreSmall.acousticDuctCount
+            == perforatedCoreLarge.acousticDuctCount,
+        "outer-can volume must not change the bounded acoustic work");
 
     const auto chamberShapeDistanceDb = shapeDistanceDb(straight, chamber);
     const auto taperShapeDistanceDb = shapeDistanceDb(straight, taper);
@@ -492,6 +526,8 @@ void transferOracleRegression() {
         resonator250, resonator250WithCavity);
     const auto catalystShapeDistanceDb = shapeDistanceDb(
         catalystBypass, catalystMonolith);
+    const auto perforatedCanShapeDistanceDb = shapeDistanceDb(
+        perforatedCoreSmall, perforatedCoreLarge);
     const auto splitShapeDistanceDb = shapeDistanceDb(straight, split);
     const auto junctionVolumeShapeDistanceDb = shapeDistanceDb(
         compactSmall, compactLarge);
@@ -507,6 +543,8 @@ void transferOracleRegression() {
         "terminal cavity volume did not change the passive side-branch transfer");
     require(catalystShapeDistanceDb > 0.25,
         "authored catalyst cell geometry did not change the passive transfer");
+    require(perforatedCanShapeDistanceDb > 0.25,
+        "changing only annular can volume did not change the perforated-core transfer");
     require(splitShapeDistanceDb > 0.25,
         "the asymmetric split did not change the fixed-source transfer shape");
     require(junctionVolumeShapeDistanceDb > 0.25,
@@ -532,6 +570,8 @@ void transferOracleRegression() {
               << resonatorCavityShapeDistanceDb << " dB\n"
               << "  catalyst monolith shape_delta="
               << catalystShapeDistanceDb << " dB\n"
+              << "  perforated can volume shape_delta="
+              << perforatedCanShapeDistanceDb << " dB\n"
               << "  split shape_delta=" << splitShapeDistanceDb << " dB\n"
               << "  junction volume shape_delta="
               << junctionVolumeShapeDistanceDb << " dB\n";

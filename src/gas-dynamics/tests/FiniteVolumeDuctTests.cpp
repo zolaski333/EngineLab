@@ -113,6 +113,58 @@ void testEquationOfStateRoundTrip() {
         "roundoff repair must reject physically significant species negativity");
 }
 
+void testNonFiniteConservativeStatesAreRejected() {
+    EulerMixtureModel model;
+    const auto valid = makeState(model, 1.18, 63.0, 141'000.0);
+    const std::array nonFiniteValues {
+        std::numeric_limits<double>::quiet_NaN(),
+        std::numeric_limits<double>::infinity(),
+        -std::numeric_limits<double>::infinity(),
+    };
+
+    for (const auto nonFinite : nonFiniteValues) {
+        for (std::size_t index = 0; index < gasSpeciesCount; ++index) {
+            auto poisoned = valid;
+            poisoned.speciesMassDensityKgPerM3[index] = nonFinite;
+            require(!model.primitiveFromConservative(poisoned),
+                "every non-finite species density must be rejected");
+            require(!model.canonicaliseSpeciesRoundoff(poisoned),
+                "roundoff repair must not canonicalise a non-finite species density");
+        }
+
+        auto poisonedMomentum = valid;
+        poisonedMomentum.momentumDensityKgPerM2S = nonFinite;
+        require(!model.primitiveFromConservative(poisonedMomentum),
+            "every non-finite momentum density must be rejected");
+
+        auto poisonedEnergy = valid;
+        poisonedEnergy.totalEnergyDensityJPerM3 = nonFinite;
+        require(!model.primitiveFromConservative(poisonedEnergy),
+            "every non-finite total-energy density must be rejected");
+
+        require(!model.conservativeFromPrimitive(
+                    nonFinite, 0.0, 101'325.0),
+            "primitive density construction must reject every non-finite value");
+        require(!model.conservativeFromPrimitive(
+                    1.0, nonFinite, 101'325.0),
+            "primitive velocity construction must reject every non-finite value");
+        require(!model.conservativeFromPrimitive(
+                    1.0, 0.0, nonFinite),
+            "primitive pressure construction must reject every non-finite value");
+    }
+
+    auto signedZero = valid;
+    signedZero.speciesMassDensityKgPerM3[0] = -0.0;
+    require(model.primitiveFromConservative(signedZero).has_value(),
+        "negative zero is finite and must remain a valid absent species");
+
+    auto subnormal = valid;
+    subnormal.speciesMassDensityKgPerM3[0] =
+        std::numeric_limits<double>::denorm_min();
+    require(model.primitiveFromConservative(subnormal).has_value(),
+        "a positive subnormal is finite and must not be mistaken for NaN or infinity");
+}
+
 void testUniformStatePreservation() {
     EulerMixtureModel model;
     GasComposition composition;
@@ -555,6 +607,7 @@ void runIntakeNetworkTests();
 
 int main() {
     testEquationOfStateRoundTrip();
+    testNonFiniteConservativeStatesAreRejected();
     testUniformStatePreservation();
     testSingleControlVolumePreservesUniformConservation();
     testMutableInitialConditionRefreshesDerivedState();

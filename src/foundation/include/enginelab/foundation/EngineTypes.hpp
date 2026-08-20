@@ -352,12 +352,17 @@ struct ExhaustComponentConfig final {
     std::uint32_t id { 0 };
     ExhaustComponentType type { ExhaustComponentType::pipe };
     double lengthMm { 300.0 };
-    /** Diameter at the component inlet. */
+    /** Diameter at the component inlet. On a packed muffler this is the
+     * perforated mean-flow core diameter; on a dry muffler it is the chamber
+     * inlet and volumeLitres may expand the internal gas section. */
     double diameterMm { 42.0 };
     /** Optional outlet diameter. Zero keeps a constant section. A non-zero
      * value forms a linear-area taper in the quasi-1D gas solver.
      */
     double outletDiameterMm { 0.0 };
+    /** Optional component volume. For a packed muffler this is the gross outer
+     * can volume and must exceed the swept core volume; the difference is a
+     * sealed acoustic annulus and never becomes mean-flow area. */
     double volumeLitres { 0.0 };
     // Dimensionless pressure-loss coefficient added to the geometric loss.
     double restriction { 0.0 };
@@ -376,7 +381,9 @@ struct ExhaustComponentConfig final {
     AcousticTerminationType acousticTermination {
         AcousticTerminationType::unflanged };
     /** Optional perforated-core porous packing. All three must be positive;
-     * zero leaves the acoustic network exactly unlined. */
+     * zero leaves the acoustic network exactly unlined. The resistivity and
+     * thickness drive material loss, while the open-area ratio couples the
+     * gross-can annulus to the core as a passive compliance. */
     double packingFlowResistivityPaSPerM2 { 0.0 };
     double packingThicknessMm { 0.0 };
     double perforatedOpenAreaRatio { 0.0 };

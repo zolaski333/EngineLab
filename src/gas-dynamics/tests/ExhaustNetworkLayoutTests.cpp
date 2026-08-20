@@ -187,6 +187,44 @@ void testAuthoredTaperSurvivesTopologyCompilation() {
         "topology compilation must preserve both taper faces and exact frustum volume");
 }
 
+void testPerforatedCoreMufflerSeparatesFlowDuctFromOuterCan() {
+    auto config = customNetworkConfig();
+    auto& muffler = *std::find_if(
+        config.exhaustPaths.front().network->components.begin(),
+        config.exhaustPaths.front().network->components.end(),
+        [](const ExhaustComponentConfig& value) {
+            return value.type == ExhaustComponentType::muffler;
+        });
+    muffler.packingFlowResistivityPaSPerM2 = 24'000.0;
+    muffler.packingThicknessMm = 35.0;
+    muffler.perforatedOpenAreaRatio = 0.28;
+    requireLayout(!validateEngineConfig(config),
+        "a complete perforated-core muffler fixture must be valid");
+
+    const auto layout = ExhaustNetworkLayout::compile(
+        ExhaustGraph::makeForEngine(config));
+    const auto compiled = std::find_if(
+        layout.ducts().begin(), layout.ducts().end(),
+        [id = muffler.id](const CompiledExhaustDuct& duct) {
+            return duct.sourceComponentId == id;
+        });
+    requireLayout(layout.valid() && compiled != layout.ducts().end(),
+        "the perforated-core muffler must compile to one bounded gas duct");
+
+    const auto coreAreaM2 = std::numbers::pi
+        * std::pow(muffler.diameterMm * 0.0005, 2.0);
+    const auto coreVolumeM3 = coreAreaM2 * muffler.lengthMm * 0.001;
+    requireLayout(std::abs(compiled->flowAreaM2 - coreAreaM2) < 1.0e-14
+            && std::abs(compiled->inletFlowAreaM2 - coreAreaM2) < 1.0e-14
+            && std::abs(compiled->outletFlowAreaM2 - coreAreaM2) < 1.0e-14
+            && std::abs(compiled->volumeM3 - coreVolumeM3) < 1.0e-14
+            && !compiled->areaWasDerivedFromVolume
+            && compiled->perforatedCoreMuffler
+            && std::abs(compiled->mufflerAnnularVolumeM3
+                - (muffler.volumeLitres * 0.001 - coreVolumeM3)) < 1.0e-14,
+        "packing must not turn the outer can volume into the mean-flow bore");
+}
+
 void testHomogenisedCatalystPreservesTheHardRealtimeBudget() {
     auto bypassConfig = customNetworkConfig();
     auto& bypassComponent = *std::find_if(
@@ -437,6 +475,7 @@ void testDerivedLengthIsFlooredAtThePlaneWaveLimit() {
 void runExhaustNetworkLayoutTests() {
     testAuthoredTopologyCompilation();
     testAudioFieldsCannotChangePhysicalLayout();
+    testPerforatedCoreMufflerSeparatesFlowDuctFromOuterCan();
     testLegacyTopologyCompilation();
     testAuthoredTaperSurvivesTopologyCompilation();
     testHomogenisedCatalystPreservesTheHardRealtimeBudget();

@@ -114,6 +114,12 @@ ExhaustNetworkLayout ExhaustNetworkLayout::compile(
             : CatalystMonolithGeometry {};
         const auto requestedVolumeM3 = finite(node.volumeLitres) && node.volumeLitres > 0.0
             ? node.volumeLitres * 0.001 : 0.0;
+        const auto perforatedCoreMuffler = node.type == ExhaustNodeType::muffler
+            && finite(node.packingFlowResistivityPaSPerM2)
+            && node.packingFlowResistivityPaSPerM2 > 0.0
+            && finite(node.packingThicknessMm) && node.packingThicknessMm > 0.0
+            && finite(node.perforatedOpenAreaRatio)
+            && node.perforatedOpenAreaRatio > 0.0;
         auto lengthWasDerived = false;
         if (!(lengthM > 0.0)) {
             // `minimumResolvedLengthM` is a numerical guard against a degenerate
@@ -151,7 +157,8 @@ ExhaustNetworkLayout ExhaustNetworkLayout::compile(
             + std::sqrt(inletFlowAreaM2 * outletFlowAreaM2)
             + outletFlowAreaM2) / 3.0;
         auto areaWasDerivedFromVolume = false;
-        if (requestedVolumeM3 > connectionAreaM2 * lengthM * (1.0 + 1.0e-9)) {
+        if (!perforatedCoreMuffler
+            && requestedVolumeM3 > connectionAreaM2 * lengthM * (1.0 + 1.0e-9)) {
             flowAreaM2 = requestedVolumeM3 / lengthM;
             // An explicit chamber volume describes a large internal control
             // section behind its two real connection apertures, not a smooth
@@ -170,6 +177,8 @@ ExhaustNetworkLayout ExhaustNetworkLayout::compile(
             outletFlowAreaM2 *= monolith.openAreaRatio;
         }
         const auto volumeM3 = flowAreaM2 * lengthM;
+        const auto mufflerAnnularVolumeM3 = perforatedCoreMuffler
+            ? std::max(0.0, requestedVolumeM3 - volumeM3) : 0.0;
         const auto hydraulicDiameterM = monolith.active
             ? monolith.hydraulicDiameterM
             : 2.0 * std::sqrt(flowAreaM2 / std::numbers::pi);
@@ -202,6 +211,8 @@ ExhaustNetworkLayout ExhaustNetworkLayout::compile(
                 ? std::max(0.0,
                     node.catalystSubstrateVolumetricHeatCapacityJPerM3K)
                 : 0.0,
+            perforatedCoreMuffler,
+            mufflerAnnularVolumeM3,
         });
         elements.emplace(node.id, ElementReference { false, index });
     }

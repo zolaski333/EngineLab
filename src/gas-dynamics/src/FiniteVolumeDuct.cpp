@@ -1,7 +1,9 @@
 #include <enginelab/gasdynamics/FiniteVolumeDuct.hpp>
 
 #include <algorithm>
+#include <bit>
 #include <cmath>
+#include <cstdint>
 #include <limits>
 #include <numbers>
 
@@ -11,6 +13,14 @@ namespace {
 constexpr double minimumDensityKgPerM3 = 1.0e-12;
 constexpr double minimumInternalEnergyDensityJPerM3 = 1.0e-9;
 constexpr double reconstructionBias = 1.5;
+
+[[nodiscard]] constexpr bool finite(double value) noexcept {
+    static_assert(std::numeric_limits<double>::is_iec559
+                  && sizeof(double) == sizeof(std::uint64_t),
+        "the conservative gas solver requires IEEE-754 binary64 doubles");
+    constexpr auto exponentMask = std::uint64_t { 0x7ff0000000000000ULL };
+    return (std::bit_cast<std::uint64_t>(value) & exponentMask) != exponentMask;
+}
 
 [[nodiscard]] constexpr std::size_t speciesIndex(GasSpecies species) noexcept {
     return static_cast<std::size_t>(species);
@@ -105,16 +115,16 @@ constexpr double reconstructionBias = 1.5;
     const ConservativeState& state) noexcept {
     auto density = 0.0;
     for (const auto speciesDensity : state.speciesMassDensityKgPerM3) {
-        if (!std::isfinite(speciesDensity) || speciesDensity < 0.0) return false;
+        if (!finite(speciesDensity) || speciesDensity < 0.0) return false;
         density += speciesDensity;
     }
     if (!(density > minimumDensityKgPerM3)
-        || !std::isfinite(state.momentumDensityKgPerM2S)
-        || !std::isfinite(state.totalEnergyDensityJPerM3))
+        || !finite(state.momentumDensityKgPerM2S)
+        || !finite(state.totalEnergyDensityJPerM3))
         return false;
     const auto kineticEnergyDensity = 0.5 * state.momentumDensityKgPerM2S
         * state.momentumDensityKgPerM2S / density;
-    return std::isfinite(kineticEnergyDensity)
+    return finite(kineticEnergyDensity)
         && state.totalEnergyDensityJPerM3 - kineticEnergyDensity
             > minimumInternalEnergyDensityJPerM3;
 }
@@ -201,10 +211,6 @@ void accumulateFluxIntegral(EulerFluxIntegral& integral,
         * (firstStage.momentumFluxPa + secondStage.momentumFluxPa);
     integral.totalEnergyJPerM2 += weight
         * (firstStage.totalEnergyFluxWPerM2 + secondStage.totalEnergyFluxWPerM2);
-}
-
-[[nodiscard]] bool finite(double value) noexcept {
-    return std::isfinite(value);
 }
 
 } // namespace
@@ -968,7 +974,8 @@ bool FiniteVolumeDuct::computeResidual(
     const DuctBoundaryCondition& leftBoundary,
     const DuctBoundaryCondition& rightBoundary,
     std::span<ConservativeState> residual,
-    std::span<EulerFlux> faceFluxes) noexcept {
+    std::span<EulerFlux> faceFluxes,
+    bool computeBoundaryFluxes) noexcept {
     const auto count = states.size();
     if (primitives.size() != count || sourceTerms.size() != count
         || residual.size() != count
@@ -1023,7 +1030,7 @@ bool FiniteVolumeDuct::computeResidual(
             reconstructedRight_[count - 1], reconstructedRightPrimitives_[count - 1],
             reconstructedLeft_[0], reconstructedLeftPrimitives_[0]);
         faceFluxes[count] = faceFluxes[0];
-    } else {
+    } else if (computeBoundaryFluxes) {
         const auto& insideLeft = reconstructedLeft_[0];
         const auto& insideLeftPrimitive = reconstructedLeftPrimitives_[0];
         auto outsideLeft = insideLeft;
@@ -1051,6 +1058,14 @@ bool FiniteVolumeDuct::computeResidual(
         }
         faceFluxes[count] = mixtureModel_.riemannFluxPrepared(
             insideRight, insideRightPrimitive, outsideRight, outsideRightPrimitive);
+    } else {
+        // ExhaustGasNetwork owns every graph endpoint and replaces both end
+        // fluxes immediately after this call. Starting from zero avoids two
+        // transmissive Riemann solves per duct and makes assignDuctBoundary()
+        // add the physical flux directly. The network's assigned-endpoint gate
+        // still fails the stage if a graph boundary was omitted.
+        faceFluxes[0] = {};
+        faceFluxes[count] = {};
     }
 
     for (std::size_t face = 1; face < count; ++face) {

@@ -727,6 +727,61 @@ struct AcousticExhaustNetwork::Impl final {
             });
         }
 
+        // A packed straight-through muffler has two different volumes which
+        // must not be conflated: the centre tube carries mean flow and delay,
+        // while the sealed annulus stores acoustic compression behind the
+        // perforated wall. Resolve the lowest-order distributed approximation
+        // by sharing the accessible annular compliance between the core's two
+        // end junctions. At wavelengths long compared with the can, the two
+        // shunts sum to C = V/(rho*c^2); at shorter wavelengths their physical
+        // separation is already retained by the core delay line.
+        //
+        // The open-area fraction is an explicit homogenised coupling fraction,
+        // not a target dB gain. PorousLinerLoss remains the dissipative material
+        // model. This addition is therefore lossless and passive, allocates no
+        // new delay line or gas cell, and reuses the junction's existing one
+        // scalar WDF compliance state. A higher-order perforation inertance
+        // would require authored hole diameter/sheet thickness; do not invent
+        // those dimensions here.
+        for (std::size_t layoutIndex = 0;
+             layoutIndex < layout.ducts().size(); ++layoutIndex) {
+            const auto& descriptor = layout.ducts()[layoutIndex];
+            if (!descriptor.perforatedCoreMuffler
+                || !(descriptor.mufflerAnnularVolumeM3 > 0.0)
+                || !(descriptor.perforatedOpenAreaRatio > 0.0))
+                continue;
+            const auto& plan = ductPlans[layoutIndex];
+            const std::array<std::size_t, 2> keys {
+                plan.firstDuctIndex * 2U,
+                (plan.firstDuctIndex + plan.sectionCount - 1U) * 2U + 1U,
+            };
+            std::array<std::size_t, 2> attachmentJunctions {};
+            auto attachmentCount = std::size_t { 0 };
+            for (const auto key : keys) {
+                if (key >= owners.size()
+                    || owners[key].type != OwnerType::junction)
+                    continue;
+                const auto junctionIndex = owners[key].index;
+                if (std::find(attachmentJunctions.begin(),
+                        attachmentJunctions.begin() + attachmentCount,
+                        junctionIndex)
+                    != attachmentJunctions.begin() + attachmentCount)
+                    continue;
+                attachmentJunctions[attachmentCount++] = junctionIndex;
+            }
+            if (attachmentCount == 0U) return;
+            const auto coupledVolumeM3 = descriptor.mufflerAnnularVolumeM3
+                * std::clamp(descriptor.perforatedOpenAreaRatio, 0.0, 1.0);
+            const auto shareM3 = coupledVolumeM3
+                / static_cast<double>(attachmentCount);
+            for (std::size_t attachment = 0;
+                 attachment < attachmentCount; ++attachment) {
+                auto& junction = junctions[attachmentJunctions[attachment]];
+                junction.pathIndex = descriptor.pathIndex;
+                junction.compactVolumeM3 += shareM3;
+            }
+        }
+
         // Attach each compact volume to the branch itself (the many-port side),
         // never to the far end of its common trunk. Coincident authored branch
         // groups share one scattering node, so their residual volumes add.
