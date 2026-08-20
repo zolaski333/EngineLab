@@ -1439,7 +1439,8 @@ bool AcousticExhaustNetwork::injectReactionPressure(
         });
     if (found == impl_->reactionTargets.end()) return false;
     const auto boundedPressure = std::clamp(
-        sourcePressurePa, -100'000.0F, 100'000.0F);
+        sourcePressurePa, -maximumReactionSourcePressurePa,
+        maximumReactionSourcePressurePa);
     if (!found->duct) {
         if (found->index >= impl_->junctions.size()) return false;
         impl_->junctions[found->index].pendingSourcePressurePa +=

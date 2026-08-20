@@ -1496,7 +1496,7 @@ void MainComponent::drawDebugPanel(juce::Graphics& g, juce::Rectangle<float> are
         liftMultiplier = std::max(liftMultiplier, visibleState_.cylinderStates[index].valveLiftMultiplier);
         runnerResonanceHz = std::max(runnerResonanceHz, visibleState_.cylinderStates[index].intakeResonanceFrequencyHz);
     }
-    const std::array<juce::String, 60> values {
+    const std::array<juce::String, 61> values {
         "Net torque       " + juce::String(visibleState_.netTorqueNm, 2),
         "Indicated torque " + juce::String(visibleState_.indicatedTorqueNm, 2),
         "Mean-work torque " + juce::String(visibleState_.meanWorkTorqueNm, 2),
@@ -1551,6 +1551,7 @@ void MainComponent::drawDebugPanel(juce::Graphics& g, juce::Rectangle<float> are
         "Pertes pression  " + juce::String(runtime_ ? runtime_->droppedPressureSampleCount() : 0),
         "Pertes acoust ech " + juce::String(runtime_ ? runtime_->droppedExhaustAcousticSampleCount() : 0),
         "Pertes reaction  " + juce::String(audio_ ? audio_->droppedReactionEventCount() : 0),
+        "Limite pression AF " + juce::String(audio_ ? audio_->reactionPressureLimitedSampleCount() : 0),
         "Pertes cycles dyno " + juce::String(runtime_ ? runtime_->droppedBrakeCycleSampleCount() : 0),
         "Dyno gate mask   " + juce::String(static_cast<juce::int64>(visibleState_.dynoQualityReasons)),
         "Dyno contact/sat " + juce::String(visibleState_.dynoBrakeContactFraction, 3)

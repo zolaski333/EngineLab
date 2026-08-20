@@ -629,15 +629,19 @@ ExhaustFuelReactionResult ExhaustGasNetwork::reactUnburnedFuel(
         const auto flammable = fuelDensity > 0.0 && oxygenDensity > 0.0
             && equivalenceRatio >= reaction.minimumEquivalenceRatio
             && equivalenceRatio <= reaction.maximumEquivalenceRatio;
-        const auto activation = std::clamp(
-            (ignitionSourceK - reaction.ignitionTemperatureK) / 450.0,
-            0.0, 1.0);
-        if (flammable && activation > 0.0) {
+        const auto ignitionCondition =
+            ignitionSourceK >= reaction.ignitionTemperatureK;
+        if (flammable && ignitionCondition) {
             site.inductionSeconds = std::min(
                 reaction.inductionTimeSeconds,
-                site.inductionSeconds + durationSeconds * activation);
-            if (site.inductionSeconds >= reaction.inductionTimeSeconds)
+                site.inductionSeconds + durationSeconds);
+            if (!site.burning
+                && site.inductionSeconds >= reaction.inductionTimeSeconds) {
                 site.burning = true;
+                site.wallIgnited = primitive->temperatureK
+                        < reaction.ignitionTemperatureK
+                    && wallTemperatureK >= reaction.ignitionTemperatureK;
+            }
         } else if (!site.burning) {
             site.inductionSeconds = std::max(
                 0.0, site.inductionSeconds - durationSeconds * 0.5);
@@ -645,12 +649,11 @@ ExhaustFuelReactionResult ExhaustGasNetwork::reactUnburnedFuel(
         if (!flammable
             || ignitionSourceK < reaction.quenchTemperatureK) {
             site.burning = false;
+            site.wallIgnited = false;
             if (!flammable) site.inductionSeconds = 0.0;
             return false;
         }
         if (!site.burning) return false;
-        const auto wallIgnited =
-            primitive->temperatureK <= reaction.ignitionTemperatureK;
         const auto reactedFraction = efficiency * (1.0 - std::exp(
             -durationSeconds / reaction.reactionTimeConstantSeconds));
         const auto stoichiometricFuelDensity =
@@ -674,7 +677,7 @@ ExhaustFuelReactionResult ExhaustGasNetwork::reactUnburnedFuel(
         result.consumedOxygenMassKg += consumedOxygenDensity * volumeM3;
         result.releasedEnergyJoules += releasedEnergyDensity * volumeM3;
         ++result.reactingControlVolumes;
-        if (wallIgnited) ++result.wallIgnitedControlVolumes;
+        if (site.wallIgnited) ++result.wallIgnitedControlVolumes;
         const auto releasedEnergyJ = releasedEnergyDensity * volumeM3;
         aggregate.energyJ += releasedEnergyJ;
         aggregate.fuelKg += consumedFuelDensity * volumeM3;
@@ -687,6 +690,7 @@ ExhaustFuelReactionResult ExhaustGasNetwork::reactUnburnedFuel(
             || candidate.speciesMassDensityKgPerM3[oxygen] <= 1.0e-12) {
             site.burning = false;
             site.inductionSeconds = 0.0;
+            site.wallIgnited = false;
         }
         return true;
     };

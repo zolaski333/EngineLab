@@ -156,6 +156,9 @@ struct ExhaustFuelReactionConfig final {
     double oxygenMolesPerFuelMole { 12.5 };
     double fuelMolarMassKg { 0.114 };
     double lowerHeatingValueJPerKg { 44'000'000.0 };
+    /** Residence time required at or above ignitionTemperatureK. The threshold
+     * is the reference condition: this value is not silently divided by an
+     * additional temperature ramp. */
     double inductionTimeSeconds { 0.004 };
     double minimumEquivalenceRatio { 0.45 };
     double maximumEquivalenceRatio { 1.80 };
@@ -395,6 +398,9 @@ private:
     struct ReactionSiteState final {
         double inductionSeconds { 0.0 };
         bool burning { false };
+        /** Origin of the current flame kernel, latched at ignition rather than
+         * re-inferred after the released heat has warmed the gas. */
+        bool wallIgnited { false };
     };
     std::vector<std::vector<ReactionSiteState>> ductReactionStates_;
     std::vector<ReactionSiteState> junctionReactionStates_;

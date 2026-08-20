@@ -8,6 +8,7 @@
 #include <enginelab/audio/NonlinearDuctAcoustics.hpp>
 #include <enginelab/audio/RealtimeEngineAudio.hpp>
 #include <enginelab/audio/StructuralModalRadiator.hpp>
+#include <enginelab/audio/ThermoacousticHeatReleaseSource.hpp>
 #include <enginelab/audio/DuctModeCutoff.hpp>
 #include <enginelab/audio/DuctWallLoss.hpp>
 #include <enginelab/audio/ExpansionChamberMuffler.hpp>
@@ -536,6 +537,68 @@ void reactionInjectionRegression() {
     }
     require(energy > 1.0e-10,
         "a local exhaust reaction must propagate through the authored DAG to the microphones");
+}
+
+void thermoacousticHeatReleaseSourceRegression() {
+    using Source = enginelab::ThermoacousticHeatReleaseSource;
+    constexpr double sampleRate = 48'000.0;
+    constexpr double couplingRate = 8'000.0;
+    constexpr double powerW = 4'500.0;
+    constexpr double areaM2 = 0.003;
+    constexpr double soundSpeedMps = 500.0;
+    const auto coefficients = Source::compute(couplingRate, sampleRate);
+    require(coefficients.valid && coefficients.reconstruction.active,
+        "a coupling-rate heat source must build a valid anti-imaging path");
+
+    const auto expectedJump = Source::exhaustGammaMinusOne * powerW
+        / (areaM2 * soundSpeedMps);
+    require(std::abs(Source::compactPressureJumpPa(
+                powerW, areaM2, soundSpeedMps) - expectedJump) < 1.0e-12,
+        "compact heat release must preserve its analytic pressure jump");
+    require(Source::compactPressureJumpPa(
+                powerW, 0.0, soundSpeedMps) == 0.0,
+        "invalid source geometry must fail silent");
+
+    Source::State one;
+    Source::State two;
+    auto peakOne = 0.0;
+    auto peakTwo = 0.0;
+    auto positive = false;
+    auto negative = false;
+    constexpr int burstSamples = 384; // 8 ms, the authored lab reaction.
+    for (int sample = 0; sample < 48'000; ++sample) {
+        const auto activePower = sample < burstSamples ? powerW : 0.0;
+        const auto first = static_cast<double>(Source::process(
+            coefficients, one, activePower, areaM2, soundSpeedMps));
+        const auto second = static_cast<double>(Source::process(
+            coefficients, two, 2.0 * activePower, areaM2, soundSpeedMps));
+        require(std::isfinite(first) && std::isfinite(second),
+            "heat-release reconstruction must remain finite");
+        peakOne = std::max(peakOne, std::abs(first));
+        peakTwo = std::max(peakTwo, std::abs(second));
+        positive = positive || first > 1.0e-3;
+        negative = negative || first < -1.0e-3;
+    }
+    std::cout << "thermoacoustic source: jump_pa=" << expectedJump
+              << " burst_peak_pa=" << peakOne
+              << " doubled_peak_pa=" << peakTwo << '\n';
+    require(peakOne > 0.50 * expectedJump
+            && peakOne < 1.25 * expectedJump
+            && std::abs(peakTwo / peakOne - 2.0) < 1.0e-5,
+        "an 8 ms reaction must retain its physical pressure scale and linearity");
+    require(positive && negative && std::abs(one.highPass2) < 1.0e-3,
+        "a finite reaction must radiate a bipolar front and return to silence");
+
+    Source::State continuous;
+    auto tailPeak = 0.0;
+    for (int sample = 0; sample < 96'000; ++sample) {
+        const auto output = static_cast<double>(Source::process(
+            coefficients, continuous, powerW, areaM2, soundSpeedMps));
+        if (sample >= 72'000)
+            tailPeak = std::max(tailPeak, std::abs(output));
+    }
+    require(tailPeak < 1.0e-3,
+        "steady anti-lag heat must remain in the mean-flow solver, not radiate DC");
 }
 
 // A merge is a scattering point *and* a pipe. The audio network used to keep
@@ -2803,6 +2866,7 @@ int main(int argc, char** argv) {
         runnerDelaySampleRateRegression();
         exhaustPathIsolationRegression();
         exhaustJetNoiseRegression();
+        thermoacousticHeatReleaseSourceRegression();
         reactionInjectionRegression();
         branchedAcousticTopologyRegression();
         branchTrunkDelayRegression();

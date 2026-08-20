@@ -47,7 +47,11 @@ engine:
     enabled: true
     strategy: discrete_afterfire
     ignition_temperature_k: 800
-    reaction_time_constant_s: 0.008
+    # Compact burn time of the listening-lab slug.  The former 8 ms value
+    # spread the same conservative energy into a low-crest swell; 2 ms remains
+    # inside the authored control range and produces a resolved pressure front
+    # without reaching the 100 kPa linear-network safety bound.
+    reaction_time_constant_s: 0.002
     reaction_efficiency: 0.95
     # Measured minimum combustible slug calibration on genuine closed-throttle
     # DFCO. With 35% pulse duty, the previous 0.12 average command produced an

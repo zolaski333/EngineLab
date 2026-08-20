@@ -9,6 +9,7 @@
 #include <enginelab/audio/ExpansionChamberMuffler.hpp>
 #include <enginelab/audio/RealtimeConvolutionBank.hpp>
 #include <enginelab/audio/StructuralModalRadiator.hpp>
+#include <enginelab/audio/ThermoacousticHeatReleaseSource.hpp>
 #include <enginelab/audio/ValveFlowAcousticSource.hpp>
 #include <enginelab/audio/ValvePortTermination.hpp>
 #include <enginelab/runtime/EngineRuntime.hpp>
@@ -102,6 +103,9 @@ public:
     }
     [[nodiscard]] std::uint64_t droppedReactionEventCount() const noexcept {
         return droppedReactionEvents_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t reactionPressureLimitedSampleCount() const noexcept {
+        return reactionPressureLimitedSamples_.load(std::memory_order_relaxed);
     }
     [[nodiscard]] float maximumTruePeakMagnitude() const noexcept {
         return maximumTruePeakMagnitude_.load(std::memory_order_relaxed);
@@ -390,20 +394,19 @@ private:
     struct ThermoacousticReactionVoice final {
         bool active { false };
         std::uint32_t nodeId { 0 };
+        std::uint32_t sourceComponentId { 0 };
         float axialPosition { 0.5F };
         float flowAreaM2 { 0.0F };
         float speedOfSoundMps { 0.0F };
         double targetPowerW { 0.0 };
-        double smoothedPowerW { 0.0 };
         double lastUpdateTimeSeconds { 0.0 };
         double holdSeconds { 0.001 };
-        float previousInput1 {};
-        float highPass1 {};
-        float previousInput2 {};
-        float highPass2 {};
+        ThermoacousticHeatReleaseSource::State source {};
     };
     std::array<ThermoacousticReactionVoice, 64> reactionVoices_ {};
     double lastReactionEventSampleTime_ { -1.0 };
+    ThermoacousticHeatReleaseSource::Coefficients reactionSourceCoefficients_ {};
+    double reactionSourceCouplingHz_ { 0.0 };
     std::array<Voice, 96> voices_ {};
     std::array<PendingEvent, 512> pendingEvents_ {};
     std::size_t pendingEventCount_ { 0 };
@@ -542,6 +545,7 @@ private:
     std::atomic<std::uint64_t> softLimitedSamples_ { 0 };
     std::atomic<std::uint64_t> hardClampedSamples_ { 0 };
     std::atomic<std::uint64_t> droppedReactionEvents_ { 0 };
+    std::atomic<std::uint64_t> reactionPressureLimitedSamples_ { 0 };
     std::atomic<float> maximumTruePeakMagnitude_ { 0.0F };
     std::atomic<float> minObservedLevelGain_ { 1.0F };
     std::atomic<float> maxObservedExhaustPressurePa_ { 0.0F };

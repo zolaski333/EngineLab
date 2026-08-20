@@ -450,9 +450,9 @@ struct ExhaustAfterfireConfig final {
     ExhaustAfterfireStrategy strategy {
         ExhaustAfterfireStrategy::cleanDfco
     };
-    /** Time a flammable local inventory must remain above its ignition source
-     * before a flame kernel is established. This persistent induction state is
-     * what separates a transported fuel slug from a global temperature gate. */
+    /** Time a flammable local inventory must remain at or above the authored
+     * ignition threshold before a flame kernel is established. This is the
+     * delay at the threshold itself; no hidden temperature ramp rescales it. */
     double inductionTimeSeconds { 0.004 };
     /** Lean/rich flammability bounds expressed as equivalence ratio. */
     double minimumEquivalenceRatio { 0.45 };

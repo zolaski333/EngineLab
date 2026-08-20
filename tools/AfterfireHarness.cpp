@@ -53,6 +53,7 @@
 
 #include <enginelab/audio/ImpulseResponseLoader.hpp>
 #include <enginelab/audio/RealtimeEngineAudio.hpp>
+#include <enginelab/audio/ThermoacousticHeatReleaseSource.hpp>
 #include <enginelab/catalog/EngineCatalog.hpp>
 #include <enginelab/ecu/SimpleEcuModel.hpp>
 #include <enginelab/events/FourStrokeEventGenerator.hpp>
@@ -74,6 +75,7 @@
 #include <fstream>
 #include <iostream>
 #include <memory>
+#include <numeric>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -91,6 +93,8 @@ struct Sample final {
     double throttle { 0.0 };
     double heatKw { 0.0 };
     double fuelBurnMgPerSecond { 0.0 };
+    double meteredFuelGrams { 0.0 };
+    double deliveredFuelMgPerSecond { 0.0 };
     double exhaustPortPeakKpa { 0.0 };
     double exhaustGasC { 0.0 };
     double exhaustWallC { 0.0 };
@@ -103,6 +107,7 @@ struct AudioContractCounters final {
     std::uint64_t droppedCylinderPressureSamples {};
     std::uint64_t droppedExhaustAcousticSamples {};
     std::uint64_t droppedReactionEvents {};
+    std::uint64_t reactionPressureLimitedSamples {};
     std::uint64_t lateEvents {};
     std::uint64_t droppedPendingEvents {};
     std::uint64_t stolenVoices {};
@@ -110,6 +115,22 @@ struct AudioContractCounters final {
     std::uint64_t legacyPathSamples {};
     std::uint64_t invalidBoundarySamples {};
     std::uint64_t levelLimitedSamples {};
+};
+
+struct ReactionAcousticDiagnostics final {
+    std::uint64_t eventCount {};
+    double releasedEnergyJoules {};
+    double maximumPowerW {};
+    double maximumCompactPressureJumpPa {};
+    double energyWeightedAxial {};
+};
+
+struct AudioRenderTiming final {
+    std::uint64_t blockCount {};
+    std::uint64_t overBudgetBlockCount {};
+    double meanBudgetFraction {};
+    double p99BudgetFraction {};
+    double maximumBudgetFraction {};
 };
 
 struct Metrics final {
@@ -136,6 +157,8 @@ struct Metrics final {
     double maximumEventIntervalMs { 0.0 };
     double eventIntervalStdDevMs { 0.0 };
     double burnedFuelMg { 0.0 };
+    double meteredFuelMg { 0.0 };
+    double deliveredFuelMg { 0.0 };
     int overrunActiveSteps { 0 };
     // Port pressure, the only quantity that can carry the bang to the audio.
     double portPeakDuringOverrunKpa { 0.0 };
@@ -155,6 +178,11 @@ struct Metrics final {
     bool physicalExhaustActive { false };
     bool compiledExhaustTopologyActive { false };
     AudioContractCounters audioContract {};
+    ReactionAcousticDiagnostics preLiftReactionAcoustics {};
+    bool preLiftReactionWindowMeasured { false };
+    ReactionAcousticDiagnostics reactionAcoustics {};
+    bool reactionWindowCaptured { false };
+    AudioRenderTiming reactionWindowRenderTiming {};
     enginelab::ExhaustAfterfireConfig effectiveCalibration {};
     bool calibrationOverridden { false };
     bool reactionAcousticsEnabled { true };
@@ -281,6 +309,26 @@ public:
             for (std::size_t eventIndex = 0;
                  eventIndex < acousticSample.reactionEventCount;
                  ++eventIndex) {
+                const auto& observed =
+                    acousticSample.reactionEvents[eventIndex];
+                ++reactionDiagnostics_.eventCount;
+                reactionDiagnostics_.releasedEnergyJoules +=
+                    observed.releasedEnergyJoules;
+                reactionDiagnostics_.energyWeightedAxial +=
+                    observed.releasedEnergyJoules
+                        * observed.axialPosition;
+                const auto powerW = observed.durationSeconds > 0.0F
+                    ? static_cast<double>(observed.releasedEnergyJoules)
+                        / observed.durationSeconds
+                    : 0.0;
+                reactionDiagnostics_.maximumPowerW = std::max(
+                    reactionDiagnostics_.maximumPowerW, powerW);
+                reactionDiagnostics_.maximumCompactPressureJumpPa = std::max(
+                    reactionDiagnostics_.maximumCompactPressureJumpPa,
+                    enginelab::ThermoacousticHeatReleaseSource::
+                        compactPressureJumpPa(
+                            powerW, observed.flowAreaM2,
+                            observed.speedOfSoundMps));
                 const auto eventFraction = std::clamp(
                     (acousticSample.reactionEvents[eventIndex].timeSeconds
                         - simulationStart) / stepSeconds,
@@ -303,7 +351,11 @@ public:
                 (realtimeSeconds_ + stepSeconds) * 1.0e9),
             std::memory_order_release);
         block_.clear();
+        const auto renderStart = std::chrono::steady_clock::now();
         renderer_->render(block_, 0, audioSamplesPerStep);
+        const auto renderEnd = std::chrono::steady_clock::now();
+        renderDurationsSeconds_.push_back(
+            std::chrono::duration<double>(renderEnd - renderStart).count());
         for (int sample = 0; sample < audioSamplesPerStep; ++sample) {
             left_.push_back(block_.getSample(0, sample));
             right_.push_back(block_.getSample(1, sample));
@@ -325,11 +377,50 @@ public:
         result.lateEvents = renderer_->lateEventCount();
         result.droppedPendingEvents = renderer_->droppedPendingEventCount();
         result.stolenVoices = renderer_->stolenVoiceCount();
+        result.reactionPressureLimitedSamples =
+            renderer_->reactionPressureLimitedSampleCount();
         result.delayTruncations = renderer_->delayTruncationCount();
         result.legacyPathSamples = renderer_->legacyPathSampleCount();
         result.invalidBoundarySamples = renderer_->invalidBoundarySampleCount();
         result.levelLimitedSamples = renderer_->levelLimitedSampleCount();
         return result;
+    }
+    [[nodiscard]] ReactionAcousticDiagnostics reactionDiagnostics() const noexcept {
+        auto result = reactionDiagnostics_;
+        if (result.releasedEnergyJoules > 0.0)
+            result.energyWeightedAxial /= result.releasedEnergyJoules;
+        return result;
+    }
+    void resetReactionDiagnostics() noexcept {
+        reactionDiagnostics_ = {};
+    }
+    [[nodiscard]] AudioRenderTiming renderTiming() const {
+        AudioRenderTiming result;
+        result.blockCount = renderDurationsSeconds_.size();
+        if (renderDurationsSeconds_.empty()) return result;
+        const auto budgetSeconds = static_cast<double>(audioSamplesPerStep)
+            / audioSampleRate;
+        auto sorted = renderDurationsSeconds_;
+        std::sort(sorted.begin(), sorted.end());
+        const auto sumSeconds = std::accumulate(
+            sorted.begin(), sorted.end(), 0.0);
+        result.meanBudgetFraction = sumSeconds
+            / (budgetSeconds * static_cast<double>(sorted.size()));
+        const auto p99Index = std::min(
+            sorted.size() - 1,
+            static_cast<std::size_t>(std::floor(
+                0.99 * static_cast<double>(sorted.size() - 1))));
+        result.p99BudgetFraction = sorted[p99Index] / budgetSeconds;
+        result.maximumBudgetFraction = sorted.back() / budgetSeconds;
+        result.overBudgetBlockCount = static_cast<std::uint64_t>(
+            std::count_if(sorted.begin(), sorted.end(),
+                [budgetSeconds](double seconds) {
+                    return seconds > budgetSeconds;
+                }));
+        return result;
+    }
+    void resetRenderTiming() noexcept {
+        renderDurationsSeconds_.clear();
     }
     [[nodiscard]] bool physicalExhaustActive() const noexcept {
         return renderer_->physicalExhaustActive();
@@ -346,6 +437,8 @@ private:
     std::vector<float> right_;
     double realtimeSeconds_ {};
     AudioContractCounters counters_ {};
+    ReactionAcousticDiagnostics reactionDiagnostics_ {};
+    std::vector<double> renderDurationsSeconds_ {};
     bool reactionAcousticsEnabled_ { true };
 };
 
@@ -357,12 +450,13 @@ struct TickResult final {
 
 TickResult coupledStep(enginelab::EngineSimulator& simulator,
                        enginelab::DrivelineModel& driveline, double throttleCmd,
-                       double clutchPedal, bool starter) {
+                       double clutchPedal, bool starter,
+                       double brakePressure = 0.0) {
     // Same ordering as EngineRuntime::run: the driveline advances on the
     // PREVIOUS engine state, then the simulator steps with this tick's reaction.
     TickResult result;
     result.drive = driveline.advance(
-        stepSeconds, simulator.state(), 0.0, clutchPedal, 0.0);
+        stepSeconds, simulator.state(), 0.0, clutchPedal, brakePressure);
     enginelab::EngineControls controls;
     controls.ignitionEnabled = true;
     controls.starterEngaged = starter;
@@ -497,6 +591,10 @@ Metrics measureAfterfire(const enginelab::EngineConfig& baseConfig,
         if (!audio) return;
         metrics.audioMeasured = true;
         metrics.audioContract = audio->audioContractCounters();
+        if (!metrics.reactionWindowCaptured)
+            metrics.reactionAcoustics = audio->reactionDiagnostics();
+        if (!metrics.reactionWindowCaptured)
+            metrics.reactionWindowRenderTiming = audio->renderTiming();
         metrics.physicalExhaustActive = audio->physicalExhaustActive();
         metrics.compiledExhaustTopologyActive =
             audio->compiledExhaustTopologyActive();
@@ -513,6 +611,9 @@ Metrics measureAfterfire(const enginelab::EngineConfig& baseConfig,
         sample.throttle = throttleCmd;
         sample.heatKw = s.exhaustAfterfireHeatReleaseKw;
         sample.fuelBurnMgPerSecond = s.exhaustAfterfireFuelBurnMgPerSecond;
+        sample.meteredFuelGrams = s.fuelConsumedGrams;
+        sample.deliveredFuelMgPerSecond = s.deliveredFuelMgPerCycle
+            * std::max(0.0, s.rpm) / 120.0;
         sample.overrunActive = s.exhaustAfterfireOverrunActive;
         sample.exhaustPortPeakKpa = s.exhaustPressureKpa;
         sample.exhaustGasC = s.exhaustTemperatureC;
@@ -591,7 +692,8 @@ Metrics measureAfterfire(const enginelab::EngineConfig& baseConfig,
         return metrics;
     }
 
-    // Phase C2 -- COAST DOWN to the speed the overrun is to be measured at.
+    // Phase C2 -- BRAKE DOWN under positive throttle to the speed where the
+    // real lift-off is to be measured.
     //
     // Without this the recorded window starts wherever the warm-up left the
     // engine, which is the rev limiter: phase C shifts up and holds WOT for
@@ -604,22 +706,58 @@ Metrics measureAfterfire(const enginelab::EngineConfig& baseConfig,
     // moderate speed. Same class of mistake as reading `--trace <low rpm>` as
     // an idle when the dyno controller is holding WOT.
     //
-    // Not recorded as part of the overrun: the strategy is already armed here,
-    // which is exactly what a real descent does, and the measured window then
-    // opens on an exhaust that is already in the state being measured.
+    // The old harness closed the throttle here, so the ECU began afterfire for
+    // several seconds before the timestamp it labelled "lift-off". It measured
+    // an arbitrary late slice of a coast and hid the onset users actually hear.
+    // Vehicle braking with 28% throttle keeps the strategy armed and the pipe
+    // loaded while removing road speed; Phase D below is now the unique falling
+    // edge of the pedal command.
     for (int step = 0; step < static_cast<int>(20.0 / stepSeconds)
              && simulator.state().rpm > options.liftOffRpm;
          ++step, t += stepSeconds) {
-        auto tick = coupledStep(simulator, driveline, 0.0, 1.0, false);
+        auto tick = coupledStep(
+            simulator, driveline, 0.28, 1.0, false, 1.0);
         if (audio)
             audio->renderFrame(tick.frame, simulator, false,
                 tick.drive.requestedLoad);
-        record(tick, 0.0);
+        record(tick, 0.28);
+    }
+
+    // Phase C3 -- a fixed loaded proof immediately before lift-off. The first
+    // 250 ms flushes any wet-limiter state left by the warm-up; the final 500 ms
+    // must contain no reaction event. This makes the operating-state gate a
+    // falsifiable harness contract instead of relying on a particular coast
+    // duration in Phase C2.
+    constexpr auto loadedProofSeconds = 0.75;
+    constexpr auto loadedProofFlushSeconds = 0.25;
+    if (audio) audio->resetReactionDiagnostics();
+    for (int step = 0;
+         step < static_cast<int>(loadedProofSeconds / stepSeconds);
+         ++step, t += stepSeconds) {
+        auto tick = coupledStep(
+            simulator, driveline, 0.28, 1.0, false);
+        if (audio)
+            audio->renderFrame(tick.frame, simulator, false,
+                tick.drive.requestedLoad);
+        record(tick, 0.28);
+        if (audio
+            && step == static_cast<int>(
+                loadedProofFlushSeconds / stepSeconds)) {
+            audio->resetReactionDiagnostics();
+            metrics.preLiftReactionWindowMeasured = true;
+        }
     }
     metrics.wallTemperatureAtLiftOffC = simulator.state().exhaustWallTemperatureC;
     metrics.liftOffTime = t;
     metrics.rpmAtLiftOff = simulator.state().rpm;
     const auto liftOffIndex = samples.size();
+    if (audio) {
+        if (metrics.preLiftReactionWindowMeasured)
+            metrics.preLiftReactionAcoustics =
+                audio->reactionDiagnostics();
+        audio->resetReactionDiagnostics();
+        audio->resetRenderTiming();
+    }
 
     // Phase D -- lift off. Closed throttle, clutch home, engine driven by the
     // car. This is the overrun the pops are supposed to live in.
@@ -634,6 +772,11 @@ Metrics measureAfterfire(const enginelab::EngineConfig& baseConfig,
     }
     metrics.tipInTime = t;
     const auto tipInIndex = samples.size();
+    if (audio) {
+        metrics.reactionAcoustics = audio->reactionDiagnostics();
+        metrics.reactionWindowRenderTiming = audio->renderTiming();
+        metrics.reactionWindowCaptured = true;
+    }
 
     // Phase E -- tip back in. A model that only accumulates and never releases
     // during the overrun still has to dump somewhere, and this is where it
@@ -676,6 +819,8 @@ Metrics measureAfterfire(const enginelab::EngineConfig& baseConfig,
         heatSum += sample.heatKw;
         metrics.peakHeatKw = std::max(metrics.peakHeatKw, sample.heatKw);
         metrics.burnedFuelMg += sample.fuelBurnMgPerSecond * stepSeconds;
+        metrics.deliveredFuelMg +=
+            sample.deliveredFuelMgPerSecond * stepSeconds;
         if (sample.overrunActive) ++metrics.overrunActiveSteps;
         // Ignore sub-milliwatt numerical residue. A clean-DFCO run can carry a
         // positive denormal-sized heat value even though no fuel is consumed;
@@ -696,6 +841,10 @@ Metrics measureAfterfire(const enginelab::EngineConfig& baseConfig,
     metrics.meanWallIgnitedFraction =
         wallIgnitedSum / static_cast<double>(
             std::max<std::size_t>(1, tipInIndex - steadyBegin));
+    if (tipInIndex > steadyBegin)
+        metrics.meteredFuelMg = std::max(0.0,
+            (samples[tipInIndex - 1].meteredFuelGrams
+                - samples[steadyBegin].meteredFuelGrams) * 1'000.0);
     // The direct "is it bursty" reading, and the one that needs no threshold
     // at all: peak over trough across the settled overrun.
     metrics.modulationDepth = metrics.peakHeatKw
@@ -882,10 +1031,14 @@ Metrics measureAfterfire(const enginelab::EngineConfig& baseConfig,
     return !metrics.audioFinite
         || !metrics.physicalExhaustActive
         || !metrics.compiledExhaustTopologyActive
+        || (metrics.preLiftReactionWindowMeasured
+            && metrics.preLiftReactionAcoustics.eventCount > 0)
+        || metrics.reactionWindowRenderTiming.overBudgetBlockCount > 0
         || counters.droppedFiringEvents > 0
         || counters.droppedCylinderPressureSamples > 0
         || counters.droppedExhaustAcousticSamples > 0
         || counters.droppedReactionEvents > 0
+        || counters.reactionPressureLimitedSamples > 0
         || counters.lateEvents > 0
         || counters.droppedPendingEvents > 0
         || counters.stolenVoices > 0
@@ -900,7 +1053,7 @@ void reportAudioContract(const Metrics& metrics) {
     const auto& counters = metrics.audioContract;
     std::printf("    audio contract physical=%s compiled=%s"
                 " dropF=%llu dropP=%llu dropA=%llu dropR=%llu"
-                " late=%llu pending=%llu stolen=%llu trunc=%llu"
+                " reactLimit=%llu late=%llu pending=%llu stolen=%llu trunc=%llu"
                 " boundary=%llu legacy=%llu leveler=%llu  %s\n",
         metrics.physicalExhaustActive ? "yes" : "NO",
         metrics.compiledExhaustTopologyActive ? "yes" : "NO",
@@ -910,6 +1063,8 @@ void reportAudioContract(const Metrics& metrics) {
         static_cast<unsigned long long>(
             counters.droppedExhaustAcousticSamples),
         static_cast<unsigned long long>(counters.droppedReactionEvents),
+        static_cast<unsigned long long>(
+            counters.reactionPressureLimitedSamples),
         static_cast<unsigned long long>(counters.lateEvents),
         static_cast<unsigned long long>(counters.droppedPendingEvents),
         static_cast<unsigned long long>(counters.stolenVoices),
@@ -967,11 +1122,16 @@ void report(const Metrics& metrics) {
     // "60 events" over 2.5 s, which is the ripple, not bursts. Modulation depth
     // needs no threshold and is the reading to trust.
     std::printf("    burst events %3d%s  largest %8.3f kW  rise %6.1f ms"
-                "  fuel %8.3f mg\n",
+                "  burned %8.3f / delivered %8.3f / metered %8.3f mg"
+                " (%5.1f %% delivered burned)\n",
         metrics.eventCount,
         metrics.modulationDepth < 2.0 ? " (ripple, not bursts)" : "",
         metrics.largestEventPeakKw,
-        metrics.largestEventRiseMs, metrics.burnedFuelMg);
+        metrics.largestEventRiseMs, metrics.burnedFuelMg,
+        metrics.deliveredFuelMg,
+        metrics.meteredFuelMg,
+        100.0 * metrics.burnedFuelMg
+            / std::max(1.0e-9, metrics.deliveredFuelMg));
     if (metrics.eventCount > 1)
         std::printf("    burst spacing min %6.1f ms  max %6.1f ms"
                     "  stddev %6.1f ms\n",
@@ -980,6 +1140,32 @@ void report(const Metrics& metrics) {
     std::printf("    port  overrun peak %7.1f kPa  pre-lift mean %7.1f kPa\n",
         metrics.portPeakDuringOverrunKpa, metrics.portBaselineKpa);
     if (metrics.audioMeasured) {
+        if (metrics.preLiftReactionWindowMeasured)
+            std::printf("    loaded pre-lift reaction events=%llu  %s\n",
+                static_cast<unsigned long long>(
+                    metrics.preLiftReactionAcoustics.eventCount),
+                metrics.preLiftReactionAcoustics.eventCount == 0
+                    ? "valid" : "INVALID");
+        std::printf("    reaction source events=%llu energy=%8.3f J"
+                    " max_power=%8.3f kW jump=%7.3f kPa axial=%5.3f\n",
+            static_cast<unsigned long long>(
+                metrics.reactionAcoustics.eventCount),
+            metrics.reactionAcoustics.releasedEnergyJoules,
+            metrics.reactionAcoustics.maximumPowerW * 0.001,
+            metrics.reactionAcoustics.maximumCompactPressureJumpPa * 0.001,
+            metrics.reactionAcoustics.energyWeightedAxial);
+        std::printf("    audio render %llu x %d samples: mean=%5.1f %%"
+                    " p99=%5.1f %% max=%5.1f %% over-budget=%llu  %s\n",
+            static_cast<unsigned long long>(
+                metrics.reactionWindowRenderTiming.blockCount),
+            audioSamplesPerStep,
+            metrics.reactionWindowRenderTiming.meanBudgetFraction * 100.0,
+            metrics.reactionWindowRenderTiming.p99BudgetFraction * 100.0,
+            metrics.reactionWindowRenderTiming.maximumBudgetFraction * 100.0,
+            static_cast<unsigned long long>(
+                metrics.reactionWindowRenderTiming.overBudgetBlockCount),
+            metrics.reactionWindowRenderTiming.overBudgetBlockCount == 0
+                ? "valid" : "INVALID");
         std::printf("    audio overrun peak %8.5f  p999 %8.5f  crest %6.2f"
                     "   (pre-lift p999 %8.5f crest %6.2f)%s\n",
             metrics.audioOverrunPeak, metrics.audioOverrunP999,

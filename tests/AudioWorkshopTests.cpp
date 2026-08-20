@@ -41,6 +41,7 @@ int main() {
         enginelab::audioPhysicsSettingsFor(audioLab->config);
     require(
         labSettings.afterfireEnabled && labSettings.limiterKeepsFuel
+            && near(labSettings.afterfireReactionTimeSeconds, 0.002)
             && near(labSettings.overrunFuelFraction, 0.18)
             && near(labSettings.overrunPulseHz, 4.0)
             && near(labSettings.overrunPulseDutyCycle, 0.35)
@@ -262,6 +263,7 @@ int main() {
             && near(appliedPhysics.cycleVariationCoefficientOfVariation, 0.06)
             && appliedPhysics.afterfireEnabled
             && appliedPhysics.limiterKeepsFuel
+            && near(appliedPhysics.afterfireReactionTimeSeconds, 0.002)
             && near(appliedPhysics.overrunFuelFraction, 0.18)
             && near(appliedPhysics.overrunPulseHz, 4.0)
             && near(appliedPhysics.overrunPulseTimingVariation, 0.25),

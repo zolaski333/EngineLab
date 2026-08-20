@@ -686,6 +686,8 @@ void testHotUnburnedFuelReactsConservatively() {
             && reaction.burnedFuelMassKg > 0.0
             && reaction.releasedEnergyJoules > 0.0,
         "hot fuel and oxygen must release heat inside exhaust control volumes");
+    requireNetwork(reaction.wallIgnitedControlVolumes == 0,
+        "a gas-ignited kernel must not be relabelled after heat release");
     requireNetwork(after.speciesMassKg[fuel] < before.speciesMassKg[fuel]
             && after.speciesMassKg[oxygen] < before.speciesMassKg[oxygen]
             && after.speciesMassKg[burned] > before.speciesMassKg[burned],
@@ -736,19 +738,19 @@ void testHotUnburnedFuelReactsConservatively() {
         "a cold pipe must not report a hot-surface ignition");
 
     // Induction belongs to each physical site and persists between network
-    // coupling calls. Two sub-threshold observations must not burn anything;
-    // the third crosses the accumulated kernel time without inventing fuel.
+    // coupling calls. Two 1.5 ms observations must not satisfy a 4 ms delay;
+    // the third crosses it without inventing fuel.
     auto induced = makeNetwork(makeDefaultInlineFour(), hotConfiguration);
     auto inductionChemistry = chemistry;
     inductionChemistry.inductionTimeSeconds = 0.004;
     const auto inducedBefore = induced.inventory();
     const auto induction0 = induced.reactUnburnedFuel(
-        0.002, inductionChemistry);
+        0.0015, inductionChemistry);
     const auto induction1 = induced.reactUnburnedFuel(
-        0.002, inductionChemistry);
+        0.0015, inductionChemistry);
     const auto inducedWaiting = induced.inventory();
     const auto induction2 = induced.reactUnburnedFuel(
-        0.002, inductionChemistry);
+        0.0015, inductionChemistry);
     requireNetwork(induction0.releasedEnergyJoules == 0.0
             && induction1.releasedEnergyJoules == 0.0
             && inducedWaiting.speciesMassKg
@@ -756,6 +758,24 @@ void testHotUnburnedFuelReactsConservatively() {
             && inducedWaiting.totalEnergyJ == inducedBefore.totalEnergyJ
             && induction2.releasedEnergyJoules > 0.0,
         "local induction must accumulate across coupling calls before ignition");
+
+    // The authored induction time is defined AT the threshold. The former
+    // hidden `(T-Tign)/450 K` activation made a 4 ms calibration take 1.8 s at
+    // one kelvin above it and made a physically hot exhaust appear inert.
+    ExhaustGasNetworkConfig thresholdConfiguration = hotConfiguration;
+    thresholdConfiguration.initialTemperatureK =
+        chemistry.ignitionTemperatureK + 1.0;
+    auto threshold = makeNetwork(
+        makeDefaultInlineFour(), thresholdConfiguration);
+    auto thresholdChemistry = chemistry;
+    thresholdChemistry.inductionTimeSeconds = 0.004;
+    const auto threshold0 = threshold.reactUnburnedFuel(
+        0.002, thresholdChemistry);
+    const auto threshold1 = threshold.reactUnburnedFuel(
+        0.002, thresholdChemistry);
+    requireNetwork(threshold0.releasedEnergyJoules == 0.0
+            && threshold1.releasedEnergyJoules > 0.0,
+        "induction at the authored ignition threshold must use the authored delay");
 
     // Cold gas against a HOT pipe: the overrun case, and the one the gas-only
     // criterion could never serve. The mixture entering the exhaust on a

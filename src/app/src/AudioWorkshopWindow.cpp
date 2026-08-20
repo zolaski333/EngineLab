@@ -435,7 +435,7 @@ public:
         addAndMakeVisible(wetLimiterToggle_);
         demoPhysicsButton_.onClick = [this] {
             setPhysicsInternal({ 0.06, 0.55, true, true,
-                                 800.0, 0.008, 0.95, 0.18, 4.0, 0.35,
+                                 800.0, 0.002, 0.95, 0.18, 4.0, 0.35,
                                  0.25 });
             applyPhysics();
         };

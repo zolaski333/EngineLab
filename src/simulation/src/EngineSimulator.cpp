@@ -2454,10 +2454,23 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
             exhaustNetworkAcceptedSubsteps += networkAdvance.acceptedSubsteps;
             exhaustNetworkAdvancedSeconds += networkAdvance.advancedTimeSeconds;
             if (!networkAdvance.completed) state_.solverResolutionLimited = true;
+            // Chemistry is an operating state, not a permanent property of an
+            // engine that happens to author an afterfire map. The old condition
+            // ran it throughout every loaded warm-up whenever either feature
+            // existed, oxidising normal trace HC and sending compact reaction
+            // sources as high as the 100 kPa safety bound before the driver had
+            // lifted. Closed-throttle DFCO remains true across the pulse's OFF
+            // windows, so a transported slug continues reacting after injection
+            // closes; a wet hard limiter likewise stays enabled across its
+            // alternating spark phases.
+            const auto exhaustReactionOperatingState =
+                (afterfireRetainsFuel(config_.exhaustAfterfire.strategy)
+                    && ecuCommand.decelerationFuelCutActive)
+                || (config_.ignition.limiterKeepsFuel
+                    && (ecuCommand.wetSparkCutActive
+                        || ecuCommand.hardRevLimiterActive));
             if (networkAdvance.completed
-                && (afterfireRetainsFuel(
-                        config_.exhaustAfterfire.strategy)
-                    || config_.ignition.limiterKeepsFuel)) {
+                && exhaustReactionOperatingState) {
                 exhaustFuelReaction = physicalExhaustNetwork.reactUnburnedFuel(
                     networkAdvance.advancedTimeSeconds,
                     {

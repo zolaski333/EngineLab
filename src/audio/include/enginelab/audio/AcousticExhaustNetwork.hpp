@@ -28,6 +28,10 @@ class AcousticExhaustNetwork final {
 public:
     static constexpr std::size_t maximumCylinders = 32;
     static constexpr std::size_t maximumPaths = 8;
+    /** Last-resort stability bound for a compact source in the linear network.
+     * Any use must be reported by RealtimeEngineAudio; it is not a voicing
+     * limiter and must never be silent instrumentation. */
+    static constexpr float maximumReactionSourcePressurePa = 100'000.0F;
 
     struct CylinderBoundary final {
         float conductanceAreaM2 {};

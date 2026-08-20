@@ -308,6 +308,9 @@ void RealtimeEngineAudio::release() noexcept {
     hasNextExhaustAcousticSample_ = false;
     reactionVoices_.fill({});
     lastReactionEventSampleTime_ = -1.0;
+    reactionSourceCoefficients_ =
+        ThermoacousticHeatReleaseSource::compute(0.0, sampleRate_);
+    reactionSourceCouplingHz_ = 0.0;
     cylinderPressureRawPrevious_.fill(0.0F);
     cylinderPressureHighPass_.fill(0.0F);
     cylinderPressureHighPassPrevious_.fill(0.0F);
@@ -347,6 +350,7 @@ void RealtimeEngineAudio::release() noexcept {
     softLimitedSamples_.store(0, std::memory_order_relaxed);
     hardClampedSamples_.store(0, std::memory_order_relaxed);
     droppedReactionEvents_.store(0, std::memory_order_relaxed);
+    reactionPressureLimitedSamples_.store(0, std::memory_order_relaxed);
     maximumTruePeakMagnitude_.store(0.0F, std::memory_order_relaxed);
     minObservedLevelGain_.store(1.0F, std::memory_order_relaxed);
     maxObservedExhaustPressurePa_.store(0.0F, std::memory_order_relaxed);
@@ -1004,7 +1008,9 @@ void RealtimeEngineAudio::renderWithStems(
                         reactionVoices_.begin(), reactionVoices_.end(),
                         [&reactionEvent](const auto& candidate) noexcept {
                             return candidate.active
-                                && candidate.nodeId == reactionEvent.nodeId;
+                                && candidate.nodeId == reactionEvent.nodeId
+                                && candidate.sourceComponentId
+                                    == reactionEvent.sourceComponentId;
                         });
                     if (voice == reactionVoices_.end())
                         voice = std::find_if(
@@ -1016,14 +1022,18 @@ void RealtimeEngineAudio::renderWithStems(
                         voice = std::min_element(
                             reactionVoices_.begin(), reactionVoices_.end(),
                             [](const auto& left, const auto& right) noexcept {
-                                return left.smoothedPowerW
-                                    < right.smoothedPowerW;
+                                return left.targetPowerW
+                                    < right.targetPowerW;
                             });
                     if (!voice->active
-                        || voice->nodeId != reactionEvent.nodeId)
+                        || voice->nodeId != reactionEvent.nodeId
+                        || voice->sourceComponentId
+                            != reactionEvent.sourceComponentId)
                         *voice = {};
                     voice->active = true;
                     voice->nodeId = reactionEvent.nodeId;
+                    voice->sourceComponentId =
+                        reactionEvent.sourceComponentId;
                     voice->axialPosition = reactionEvent.axialPosition;
                     voice->flowAreaM2 = reactionEvent.flowAreaM2;
                     voice->speedOfSoundMps = reactionEvent.speedOfSoundMps;
@@ -1495,53 +1505,45 @@ void RealtimeEngineAudio::renderWithStems(
         const auto useCompiledTopology = sampleUsesPhysicalExhaust
             && acousticExhaustNetwork_ != nullptr;
         if (useCompiledTopology) {
-            // The FV energy update already owns DC/low-band pressure.  Inject
-            // only its causal high-band complement, at the exact reacting node.
-            // A constant anti-lag heat release therefore settles to silence in
-            // this branch, while the onset/cessation of a transported slug
-            // produces the compact pressure front a listener recognises as a
-            // pop. No sample or oscillator is involved.
+            // Conservative heat release becomes a compact pressure jump at the
+            // exact reacting node. The source reconstructs the coupling-rate
+            // signal and removes only quasi-steady/DC heat; see its derivation.
+            // The former couplingHz*0.42 HIGH-pass discarded the entire resolved
+            // reaction band (an 8 ms pulse lives around 125 Hz while that corner
+            // was 3-6 kHz), which is why valid chemistry was inaudible.
             const auto couplingHz = std::max(1.0,
                 hasCurrentExhaustAcousticSample_
                     ? currentExhaustAcousticSample_.couplingFrequencyHz
                     : 0.0);
-            const auto crossoverHz = std::clamp(
-                couplingHz * 0.42, 300.0,
-                std::min(6'000.0, sampleRate_ * 0.35));
-            const auto crossoverPole = static_cast<float>(std::exp(
-                -2.0 * std::numbers::pi * crossoverHz / sampleRate_));
-            const auto attack = 1.0 - std::exp(
-                -1.0 / (sampleRate_ * 0.00020));
-            const auto release = 1.0 - std::exp(
-                -1.0 / (sampleRate_ * 0.0015));
+            if (std::abs(couplingHz - reactionSourceCouplingHz_)
+                    > 0.01 * std::max(
+                        couplingHz, reactionSourceCouplingHz_)
+                || !reactionSourceCoefficients_.valid) {
+                reactionSourceCoefficients_ =
+                    ThermoacousticHeatReleaseSource::compute(
+                        couplingHz, sampleRate_);
+                reactionSourceCouplingHz_ = couplingHz;
+            }
             for (auto& voice : reactionVoices_) {
                 if (!voice.active) continue;
                 if (audioTimeSeconds_ - voice.lastUpdateTimeSeconds
                     > voice.holdSeconds)
                     voice.targetPowerW = 0.0;
-                const auto coefficient = voice.targetPowerW
-                        > voice.smoothedPowerW ? attack : release;
-                voice.smoothedPowerW += coefficient
-                    * (voice.targetPowerW - voice.smoothedPowerW);
-                constexpr double exhaustGammaMinusOne = 0.34;
-                const auto sourcePressurePa = static_cast<float>(
-                    exhaustGammaMinusOne * voice.smoothedPowerW
-                    / (2.0 * std::max(1.0e-8F, voice.flowAreaM2)
-                        * std::max(100.0F, voice.speedOfSoundMps)));
-                voice.highPass1 = crossoverPole
-                    * (voice.highPass1 + sourcePressurePa
-                        - voice.previousInput1);
-                voice.previousInput1 = sourcePressurePa;
-                voice.highPass2 = crossoverPole
-                    * (voice.highPass2 + voice.highPass1
-                        - voice.previousInput2);
-                voice.previousInput2 = voice.highPass1;
+                const auto sourcePressurePa =
+                    ThermoacousticHeatReleaseSource::process(
+                        reactionSourceCoefficients_, voice.source,
+                        voice.targetPowerW, voice.flowAreaM2,
+                        voice.speedOfSoundMps);
+                if (std::abs(sourcePressurePa)
+                    > AcousticExhaustNetwork::maximumReactionSourcePressurePa)
+                    reactionPressureLimitedSamples_.fetch_add(
+                        1, std::memory_order_relaxed);
                 (void) acousticExhaustNetwork_->injectReactionPressure(
                     voice.nodeId, voice.axialPosition,
-                    voice.highPass2);
+                    sourcePressurePa);
                 if (voice.targetPowerW == 0.0
-                    && std::abs(voice.smoothedPowerW) < 1.0e-6
-                    && std::abs(voice.highPass2) < 1.0e-6F)
+                    && audioTimeSeconds_ - voice.lastUpdateTimeSeconds
+                        > voice.holdSeconds + 0.35)
                     voice = {};
             }
             const auto observerPressure = acousticExhaustNetwork_->process(

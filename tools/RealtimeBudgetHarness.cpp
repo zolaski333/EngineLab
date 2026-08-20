@@ -71,6 +71,7 @@ struct AudioProbeSnapshot final {
     std::uint64_t droppedPendingEvents {};
     std::uint64_t delayTruncations {};
     std::uint64_t droppedReactionEvents {};
+    std::uint64_t reactionPressureLimitedSamples {};
     std::uint64_t legacyPathSamples {};
     std::uint64_t invalidBoundarySamples {};
     std::uint64_t levelLimitedSamples {};
@@ -88,6 +89,7 @@ struct AudioProbeDelta final {
     std::uint64_t droppedPendingEvents {};
     std::uint64_t delayTruncations {};
     std::uint64_t droppedReactionEvents {};
+    std::uint64_t reactionPressureLimitedSamples {};
     std::uint64_t legacyPathSamples {};
     std::uint64_t invalidBoundarySamples {};
     std::uint64_t levelLimitedSamples {};
@@ -126,6 +128,9 @@ struct AudioProbeDelta final {
         counterDelta(end.delayTruncations, begin.delayTruncations);
     delta.droppedReactionEvents =
         counterDelta(end.droppedReactionEvents, begin.droppedReactionEvents);
+    delta.reactionPressureLimitedSamples = counterDelta(
+        end.reactionPressureLimitedSamples,
+        begin.reactionPressureLimitedSamples);
     delta.legacyPathSamples =
         counterDelta(end.legacyPathSamples, begin.legacyPathSamples);
     delta.invalidBoundarySamples =
@@ -253,6 +258,8 @@ public:
         result.droppedPendingEvents = renderer_.droppedPendingEventCount();
         result.delayTruncations = renderer_.delayTruncationCount();
         result.droppedReactionEvents = renderer_.droppedReactionEventCount();
+        result.reactionPressureLimitedSamples =
+            renderer_.reactionPressureLimitedSampleCount();
         result.legacyPathSamples = renderer_.legacyPathSampleCount();
         result.invalidBoundarySamples = renderer_.invalidBoundarySampleCount();
         result.levelLimitedSamples = renderer_.levelLimitedSampleCount();
@@ -737,6 +744,7 @@ struct Measurement final {
             || result.audio.droppedPendingEvents > 0
             || result.audio.delayTruncations > 0
             || result.audio.droppedReactionEvents > 0
+            || result.audio.reactionPressureLimitedSamples > 0
             || result.audio.legacyPathSamples > 0
             || result.audio.invalidBoundarySamples > 0
             || result.audio.levelLimitedSamples > 0)) {
@@ -755,6 +763,8 @@ struct Measurement final {
         append("dropped-exhaust-acoustic",
                result.droppedExhaustAcousticSamples);
         append("dropped-reaction", result.audio.droppedReactionEvents);
+        append("reaction-pressure-limit",
+               result.audio.reactionPressureLimitedSamples);
         append("late", result.audio.lateEvents);
         append("pending", result.audio.droppedPendingEvents);
         append("stolen", result.audio.stolenVoices);
@@ -1082,6 +1092,8 @@ int main(int argc, char** argv) {
                       << measurement.droppedExhaustAcousticSamples
                       << " dropR="
                       << measurement.audio.droppedReactionEvents
+                      << " reactLimit="
+                      << measurement.audio.reactionPressureLimitedSamples
                       << " late=" << measurement.audio.lateEvents
                       << " pending="
                       << measurement.audio.droppedPendingEvents
