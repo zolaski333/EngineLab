@@ -15,9 +15,11 @@ namespace enginelab {
 
 /** Allocation-free audio-band wave network compiled from the complete exhaust DAG.
  *
- * Every finite-length component becomes a bidirectional delay line. Direct
- * interfaces, merges and splitters are lossless admittance-scattering
- * junctions; every authored outlet owns an independent radiation load. The
+ * Every constant-section component becomes a bidirectional delay line; a
+ * finite taper is resolved by up to four bounded sections under a graph-wide
+ * complexity budget. Direct interfaces, merges and splitters are lossless
+ * admittance-scattering junctions, compact junction volumes are passive
+ * compliances, and every authored outlet owns an independent radiation load. The
  * finite-volume solver remains authoritative for mean flow and low-frequency
  * feedback, while this network transports the complementary audible band.
  */

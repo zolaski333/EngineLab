@@ -35,6 +35,8 @@ enum class FixtureTopology : std::uint8_t {
     straight,
     longStraight,
     expansionChamber,
+    smoothTaper,
+    parallelTaperBudget,
     asymmetricSplit,
     compactSplitSmallVolume,
     compactSplitLargeVolume,
@@ -123,6 +125,37 @@ void require(bool condition, std::string message) {
         network.connections.push_back({ 200, 300 });
         break;
     }
+    case FixtureTopology::smoothTaper: {
+        auto taper = component(
+            100, enginelab::ExhaustComponentType::pipe, 750.0, 42.0);
+        taper.outletDiameterMm = 84.0;
+        network.components.push_back(taper);
+        auto outlet = component(
+            200, enginelab::ExhaustComponentType::outlet, 750.0, 84.0);
+        outlet.acousticPositionM = { 0.0, 0.0, 0.0 };
+        network.components.push_back(outlet);
+        network.cylinderConnections.push_back({ cylinderId, 100 });
+        network.connections.push_back({ 100, 200 });
+        break;
+    }
+    case FixtureTopology::parallelTaperBudget: {
+        network.components.push_back(component(
+            100, enginelab::ExhaustComponentType::pipe, 500.0, 52.0));
+        network.components.push_back(component(
+            200, enginelab::ExhaustComponentType::splitter, 0.0, 52.0));
+        network.cylinderConnections.push_back({ cylinderId, 100 });
+        network.connections.push_back({ 100, 200 });
+        for (std::uint32_t index = 0; index < 12U; ++index) {
+            auto outlet = component(300U + index,
+                enginelab::ExhaustComponentType::outlet, 150.0, 52.0);
+            outlet.outletDiameterMm = 140.0;
+            outlet.acousticPositionM = {
+                -0.55 + 0.10 * static_cast<double>(index), 0.0, 0.0 };
+            network.components.push_back(outlet);
+            network.connections.push_back({ 200, 300U + index });
+        }
+        break;
+    }
     case FixtureTopology::asymmetricSplit:
     case FixtureTopology::compactSplitSmallVolume:
     case FixtureTopology::compactSplitLargeVolume: {
@@ -177,6 +210,7 @@ struct TransferResult final {
     double lateSquareSum {};
     double outputPeakPa {};
     bool finite { true };
+    std::size_t acousticDuctCount {};
     std::array<double, probeFrequenciesHz.size()> shapeDb {};
 };
 
@@ -252,6 +286,7 @@ struct TransferResult final {
     network.beginBlock(medium, 1.0, meanFlowKgPerSecond);
 
     TransferResult result;
+    result.acousticDuctCount = network.ductCount();
     result.left.resize(renderSampleCount);
     result.right.resize(renderSampleCount);
     std::array<float, 1> source {};
@@ -322,6 +357,9 @@ void transferOracleRegression() {
     const auto straightRepeat = render(FixtureTopology::straight, excitation);
     const auto longStraight = render(FixtureTopology::longStraight, excitation);
     const auto chamber = render(FixtureTopology::expansionChamber, excitation);
+    const auto taper = render(FixtureTopology::smoothTaper, excitation);
+    const auto parallelTapers = render(
+        FixtureTopology::parallelTaperBudget, excitation);
     const auto split = render(FixtureTopology::asymmetricSplit, excitation);
     const auto compactSmall = render(
         FixtureTopology::compactSplitSmallVolume, excitation);
@@ -338,6 +376,7 @@ void transferOracleRegression() {
     requireBoundedPassiveResponse("straight", straight);
     requireBoundedPassiveResponse("long straight", longStraight);
     requireBoundedPassiveResponse("expansion chamber", chamber);
+    requireBoundedPassiveResponse("smooth taper", taper);
     requireBoundedPassiveResponse("asymmetric split", split);
     requireBoundedPassiveResponse("compact split, 0.25 litre", compactSmall);
     requireBoundedPassiveResponse("compact split, 2.0 litres", compactLarge);
@@ -349,8 +388,30 @@ void transferOracleRegression() {
         longStraight.firstArrivalSample) - straight.firstArrivalSample;
     require(std::abs(measuredAddedSamples - expectedAddedSamples) < 3.0,
         "a 600 mm geometry change must add its physical propagation delay");
+    require(taper.acousticDuctCount > straight.acousticDuctCount,
+        "a finite taper must contain distributed acoustic sections, not only endpoint areas");
+    const auto taperExtraSections = taper.acousticDuctCount
+        - straight.acousticDuctCount;
+    // Cascaded linear fractional delays keep the summed group delay, but each
+    // section contributes one earlier non-zero interpolation tap. The support
+    // onset may therefore move by at most N-1 samples without shortening the
+    // physical centreline delay.
+    require(std::abs(static_cast<double>(taper.firstArrivalSample)
+            - static_cast<double>(straight.firstArrivalSample))
+            <= static_cast<double>(taperExtraSections),
+        "taper sectioning must preserve the authored centreline delay (straight="
+            + std::to_string(straight.firstArrivalSample) + ", taper="
+            + std::to_string(taper.firstArrivalSample) + ")");
+    require(taper.acousticDuctCount <= straight.acousticDuctCount + 3U,
+        "the bounded taper approximation allocated more than four sections");
+    // One core duct plus twelve equivalent outlets. The graph-wide budget must
+    // allocate one complete refinement round (two sections per outlet), never
+    // refine only the first branches and destroy bank symmetry.
+    require(parallelTapers.acousticDuctCount == 25U,
+        "parallel tapers must share the bounded refinement budget symmetrically");
 
     const auto chamberShapeDistanceDb = shapeDistanceDb(straight, chamber);
+    const auto taperShapeDistanceDb = shapeDistanceDb(straight, taper);
     const auto splitShapeDistanceDb = shapeDistanceDb(straight, split);
     const auto junctionVolumeShapeDistanceDb = shapeDistanceDb(
         compactSmall, compactLarge);
@@ -358,6 +419,8 @@ void transferOracleRegression() {
     // leaving the actual transfer shape unconstrained for future better models.
     require(chamberShapeDistanceDb > 0.25,
         "the expansion ratio did not change the fixed-source transfer shape");
+    require(taperShapeDistanceDb > 0.25,
+        "the distributed taper did not change the fixed-source transfer shape");
     require(splitShapeDistanceDb > 0.25,
         "the asymmetric split did not change the fixed-source transfer shape");
     require(junctionVolumeShapeDistanceDb > 0.25,
@@ -375,6 +438,8 @@ void transferOracleRegression() {
               << " added_samples=" << measuredAddedSamples
               << " expected=" << expectedAddedSamples << '\n'
               << "  chamber shape_delta=" << chamberShapeDistanceDb << " dB\n"
+              << "  taper shape_delta=" << taperShapeDistanceDb
+              << " dB sections=" << taper.acousticDuctCount - 1U << '\n'
               << "  split shape_delta=" << splitShapeDistanceDb << " dB\n"
               << "  junction volume shape_delta="
               << junctionVolumeShapeDistanceDb << " dB\n";

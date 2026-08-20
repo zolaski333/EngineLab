@@ -14,6 +14,7 @@ est respecté ; il ne transforme pas une hypothèse acoustique en donnée mesur�
 | `dc6f022` | échantillon de frein autoritaire par cycle moteur et estimateur dyno commun | poussé |
 | `be93990` | rampe dyno rééchantillonnée sur une grille exacte de 50 tr/min | poussé |
 | `c3faf6e` | sessions dyno immuables, archive persistante, statuts et calibration épinglée | poussé |
+| `91b5ca8` | compliance passive des volumes compacts de jonction | poussé |
 
 ## Dyno livré
 
@@ -105,6 +106,55 @@ Le contrat compte séparément pertes firing/pression/acoustique/réaction,
 chemin legacy, garde-niveau, non-finitude et rendu hors budget. Tous les
 compteurs sont restés à zéro sur ces deux passages.
 
+## Tapers distribués sous budget explicite
+
+### Défaut reproduit
+
+Le layout conservait bien l'aire d'entrée, l'aire de sortie et l'aire moyenne,
+mais l'audio créait une seule ligne uniforme. La variation de section
+n'existait qu'aux deux admittances terminales : aucun scattering intermédiaire
+ne distinguait un cône fini d'une transformation concentrée.
+
+Le nouveau fixture 42→84 mm sur 750 mm exige plusieurs sections acoustiques,
+un délai total conservé et une réponse passive. Il échouait d'abord avec :
+
+```text
+a finite taper must contain distributed acoustic sections, not only endpoint areas
+```
+
+### Approximation retenue
+
+Le rayon est interpolé le long du cône et chaque section conserve exactement le
+volume de son frustum. Les sections se raccordent par les mêmes jonctions
+d'admittance passives que le reste du graphe. Une ligne constante reste une
+seule ligne. Un taper trop court pour des tronçons de 25 mm n'est pas sur-maillé.
+
+Le maximum local est quatre sections, mais le budget est global : au plus seize
+lignes supplémentaires par réseau. Les raffinements sont distribués par tours
+complets entre les branches équivalentes. Ainsi douze sorties identiques ont
+toutes deux sections ; le compilateur ne raffine jamais les premières sorties
+en laissant les dernières différentes.
+
+Ce budget vient d'une mesure, pas d'une estimation : quatre sections sur chacun
+des douze stacks du Merlin faisaient monter le DSP moyen de 41,9 % à 61,4 % et
+ont produit 3 puis 1 blocs hors budget sur deux passages. Cette version a été
+rejetée. Avec deux sections symétriques par stack, le passage final de 20 s
+mesure 48,4 % moyen, 54 % p99, facteur 1,000 et zéro violation.
+
+Oracle fixe après correction :
+
+| Contrat | Mesure |
+|---|---:|
+| taper 42→84 mm contre tube de contrôle | 1,123 dB de forme |
+| sections du taper isolé | 4 |
+| graphe 12 sorties | 25 lignes : 1 tronc + 12 × 2 |
+| violations temps réel Merlin final | 0 |
+
+Les injections de réaction conservent leur position axiale : la coordonnée
+globale choisit désormais la section puis sa position locale. Un smoke produit
+afterfire/audio a gardé `physical=yes`, `compiled=yes` et tous les compteurs de
+livraison à zéro.
+
 ## Matrice actuelle des champs du graphe
 
 Cette matrice évite de confondre un champ sérialisé avec une influence physique
@@ -113,7 +163,7 @@ effective.
 | Champ/type | Gaz | Acoustique physique | État |
 |---|---|---|---|
 | longueur | volume/CFL et frottement distribué | délai et pertes de paroi ; tronc de merge/splitter conservé | actif |
-| diamètre entrée/sortie | sections et faces quasi-1D | admittances terminales, rayon moyen et chambre | actif, taper encore approché |
+| diamètre entrée/sortie | sections et faces quasi-1D | taper distribué 1–4 sections sous budget global | corrigé dans ce lot |
 | volume d'un conduit | section interne de chambre | section interne et deux sauts d'aire | actif |
 | volume d'une jonction | contrôle bien mélangé | compliance compacte résiduelle | corrigé dans ce lot |
 | packing + perforation | ignoré volontairement | perte poreuse distribuée opt-in | actif |
@@ -133,4 +183,3 @@ effective.
 3. Reprendre l'afterfire seulement après ces transferts : distribution spatiale,
    variabilité de l'allumage et énergie locale, sans échantillon de pop.
 4. Rejouer les oracles, les tests produit et le budget temps réel à chaque lot.
-

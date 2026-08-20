@@ -30,12 +30,6 @@ namespace {
     return type != gasdynamics::ExhaustEndpointType::junction;
 }
 
-[[nodiscard]] std::size_t endpointKey(
-    const gasdynamics::ExhaustEndpoint& endpoint) noexcept {
-    return endpoint.elementIndex * 2U
-        + (endpoint.type == gasdynamics::ExhaustEndpointType::ductOutlet ? 1U : 0U);
-}
-
 [[nodiscard]] double circularArea(double diameterM) noexcept {
     const auto radiusM = 0.5 * diameterM;
     return std::numbers::pi * radiusM * radiusM;
@@ -144,6 +138,7 @@ struct AcousticExhaustNetwork::Impl final {
         std::uint32_t nodeId {};
         bool duct { true };
         std::size_t index {};
+        std::size_t ductCount { 1 };
         bool useEventAxialPosition { true };
     };
 
@@ -176,26 +171,126 @@ struct AcousticExhaustNetwork::Impl final {
         : layout(gasdynamics::ExhaustNetworkLayout::compile(graph)),
           observerConfig(graph.acousticObserver()) {
         if (!layout.valid()) return;
-        ducts.reserve(layout.ducts().size() + layout.junctions().size());
-        for (const auto& descriptor : layout.ducts()) {
-            const auto area = std::max(1.0e-10, descriptor.flowAreaM2);
-            Duct duct;
-            duct.nodeId = descriptor.nodeId;
-            duct.pathIndex = descriptor.pathIndex;
-            duct.lengthM = descriptor.lengthM;
-            duct.areaM2 = area;
-            duct.inletAreaM2 = std::max(
+        struct DuctPlan final {
+            std::size_t firstDuctIndex {};
+            std::size_t sectionCount { 1 };
+        };
+        std::vector<DuctPlan> ductPlans(layout.ducts().size());
+        std::vector<std::size_t> requestedTaperSections(
+            layout.ducts().size(), 1U);
+        for (std::size_t layoutIndex = 0;
+             layoutIndex < layout.ducts().size(); ++layoutIndex) {
+            const auto& descriptor = layout.ducts()[layoutIndex];
+            const auto inletAreaM2 = std::max(
                 1.0e-10, descriptor.inletFlowAreaM2);
-            duct.outletAreaM2 = std::max(
+            const auto outletAreaM2 = std::max(
                 1.0e-10, descriptor.outletFlowAreaM2);
-            duct.radiusM = std::sqrt(area / std::numbers::pi);
-            duct.packingFlowResistivityPaSPerM2 =
-                descriptor.packingFlowResistivityPaSPerM2;
-            duct.packingThicknessM = descriptor.packingThicknessM;
-            duct.perforatedOpenAreaRatio = descriptor.perforatedOpenAreaRatio;
-            duct.mediumSources.push_back(ducts.size());
-            ducts.push_back(std::move(duct));
+            const auto areaRatio = std::max(inletAreaM2, outletAreaM2)
+                / std::min(inletAreaM2, outletAreaM2);
+            if (areaRatio > 1.05) {
+                // Keep each step modest, but cap the per-taper cost. Four
+                // pressure-wave sections are enough to distinguish a finite
+                // cone from one abrupt discontinuity without turning an
+                // authored flare into a fine audio mesh.
+                constexpr double maximumAreaRatioPerSection = 1.45;
+                const auto requested = static_cast<std::size_t>(std::ceil(
+                    std::log(areaRatio) / std::log(maximumAreaRatioPerSection)));
+                constexpr double minimumSectionLengthM = 0.025;
+                const auto resolvableByLength = static_cast<std::size_t>(
+                    std::floor(descriptor.lengthM / minimumSectionLengthM));
+                requestedTaperSections[layoutIndex] = std::clamp<std::size_t>(
+                    std::min(requested, resolvableByLength), 1U, 4U);
+            }
         }
+
+        // Complexity is budgeted for the complete graph, not independently
+        // per component. Twelve parallel Merlin ejector stacks requesting four
+        // sections each measured 61.4% mean DSP and missed the 5.33 ms block
+        // deadline; the previous one-line network was 41.9%. Allocate only
+        // complete refinement rounds so equivalent parallel branches remain
+        // symmetric. A lone taper can still receive all four sections, while
+        // the whole network adds at most sixteen delay lines/junctions.
+        constexpr std::size_t maximumAdditionalTaperSections = 16U;
+        auto remainingTaperSections = maximumAdditionalTaperSections;
+        std::vector<std::size_t> taperSections(layout.ducts().size(), 1U);
+        for (std::size_t refinement = 2U; refinement <= 4U; ++refinement) {
+            const auto candidates = static_cast<std::size_t>(std::count_if(
+                requestedTaperSections.begin(), requestedTaperSections.end(),
+                [refinement](std::size_t requested) {
+                    return requested >= refinement;
+                }));
+            if (candidates == 0U) continue;
+            if (candidates > remainingTaperSections) break;
+            for (std::size_t index = 0; index < taperSections.size(); ++index)
+                if (requestedTaperSections[index] >= refinement)
+                    taperSections[index] = refinement;
+            remainingTaperSections -= candidates;
+        }
+
+        ducts.reserve(layout.ducts().size()
+            + maximumAdditionalTaperSections + layout.junctions().size());
+        for (std::size_t layoutIndex = 0;
+             layoutIndex < layout.ducts().size(); ++layoutIndex) {
+            const auto& descriptor = layout.ducts()[layoutIndex];
+            const auto inletAreaM2 = std::max(
+                1.0e-10, descriptor.inletFlowAreaM2);
+            const auto outletAreaM2 = std::max(
+                1.0e-10, descriptor.outletFlowAreaM2);
+            const auto sectionCount = taperSections[layoutIndex];
+            auto& plan = ductPlans[layoutIndex];
+            plan.firstDuctIndex = ducts.size();
+            plan.sectionCount = sectionCount;
+
+            const auto inletRadiusM = std::sqrt(inletAreaM2 / std::numbers::pi);
+            const auto outletRadiusM = std::sqrt(outletAreaM2 / std::numbers::pi);
+            for (std::size_t section = 0; section < sectionCount; ++section) {
+                const auto t0 = static_cast<double>(section)
+                    / static_cast<double>(sectionCount);
+                const auto t1 = static_cast<double>(section + 1U)
+                    / static_cast<double>(sectionCount);
+                const auto sectionInletRadiusM = std::lerp(
+                    inletRadiusM, outletRadiusM, t0);
+                const auto sectionOutletRadiusM = std::lerp(
+                    inletRadiusM, outletRadiusM, t1);
+                const auto sectionInletAreaM2 = std::numbers::pi
+                    * sectionInletRadiusM * sectionInletRadiusM;
+                const auto sectionOutletAreaM2 = std::numbers::pi
+                    * sectionOutletRadiusM * sectionOutletRadiusM;
+                const auto sectionAreaM2 = (sectionInletAreaM2
+                    + std::sqrt(sectionInletAreaM2 * sectionOutletAreaM2)
+                    + sectionOutletAreaM2) / 3.0;
+
+                Duct duct;
+                duct.nodeId = descriptor.nodeId;
+                duct.pathIndex = descriptor.pathIndex;
+                duct.lengthM = descriptor.lengthM
+                    / static_cast<double>(sectionCount);
+                duct.areaM2 = std::max(1.0e-10, sectionAreaM2);
+                duct.inletAreaM2 = std::max(1.0e-10, sectionInletAreaM2);
+                duct.outletAreaM2 = std::max(1.0e-10, sectionOutletAreaM2);
+                duct.radiusM = std::sqrt(duct.areaM2 / std::numbers::pi);
+                duct.packingFlowResistivityPaSPerM2 =
+                    descriptor.packingFlowResistivityPaSPerM2;
+                duct.packingThicknessM = descriptor.packingThicknessM;
+                duct.perforatedOpenAreaRatio =
+                    descriptor.perforatedOpenAreaRatio;
+                duct.mediumSources.push_back(layoutIndex);
+                ducts.push_back(std::move(duct));
+            }
+        }
+        const auto compiledAcousticDuctCount = ducts.size();
+
+        const auto acousticEndpointKey = [&ductPlans](
+            const gasdynamics::ExhaustEndpoint& endpoint) {
+            const auto& plan = ductPlans[endpoint.elementIndex];
+            const auto ductIndex = endpoint.type
+                    == gasdynamics::ExhaustEndpointType::ductOutlet
+                ? plan.firstDuctIndex + plan.sectionCount - 1U
+                : plan.firstDuctIndex;
+            return ductIndex * 2U
+                + (endpoint.type == gasdynamics::ExhaustEndpointType::ductOutlet
+                    ? 1U : 0U);
+        };
 
         // Junction-to-junction edges connect two branches directly. When neither
         // carries an authored trunk they are coincident and form one physical
@@ -397,6 +492,27 @@ struct AcousticExhaustNetwork::Impl final {
             owners[key] = { type, index };
             return true;
         };
+        // Consecutive sections of a taper meet at ordinary lossless
+        // admittance junctions. Constant-area ducts have one section and pay
+        // none of this per-sample cost.
+        for (const auto& plan : ductPlans) {
+            for (std::size_t section = 0;
+                 section + 1U < plan.sectionCount; ++section) {
+                const auto junctionIndex = junctions.size();
+                junctions.emplace_back();
+                const auto upstreamKey =
+                    (plan.firstDuctIndex + section) * 2U + 1U;
+                const auto downstreamKey =
+                    (plan.firstDuctIndex + section + 1U) * 2U;
+                if (!assignEndpoint(upstreamKey, OwnerType::junction,
+                        junctionIndex)
+                    || !assignEndpoint(downstreamKey, OwnerType::junction,
+                        junctionIndex))
+                    return;
+                junctions[junctionIndex].ductEndpoints.push_back(upstreamKey);
+                junctions[junctionIndex].ductEndpoints.push_back(downstreamKey);
+            }
+        }
         // Attach each trunk between the two nodes its group resolved to,
         // oriented so the wave crosses it in the direction of mean flow.
         for (std::size_t group = 0; group < groupCount; ++group) {
@@ -430,12 +546,12 @@ struct AcousticExhaustNetwork::Impl final {
                 junctions.emplace_back();
             }
             if (upstreamDuct) {
-                const auto key = endpointKey(interface.upstream);
+                const auto key = acousticEndpointKey(interface.upstream);
                 if (!assignEndpoint(key, OwnerType::junction, groupIndex)) return;
                 junctions[groupIndex].ductEndpoints.push_back(key);
             }
             if (downstreamDuct) {
-                const auto key = endpointKey(interface.downstream);
+                const auto key = acousticEndpointKey(interface.downstream);
                 if (!assignEndpoint(key, OwnerType::junction, groupIndex)) return;
                 junctions[groupIndex].ductEndpoints.push_back(key);
             }
@@ -457,7 +573,8 @@ struct AcousticExhaustNetwork::Impl final {
                     groupForJunction[port.networkEndpoint.elementIndex], true);
                 junctions[compiled.endpointOrJunction].cylinderTerminals.push_back(portIndex);
             } else {
-                compiled.endpointOrJunction = endpointKey(port.networkEndpoint);
+                compiled.endpointOrJunction = acousticEndpointKey(
+                    port.networkEndpoint);
                 if (!assignEndpoint(compiled.endpointOrJunction,
                         OwnerType::cylinder, portIndex)) return;
             }
@@ -484,7 +601,8 @@ struct AcousticExhaustNetwork::Impl final {
                     groupForJunction[outlet.networkEndpoint.elementIndex], false);
                 junctions[compiled.endpointOrJunction].outletTerminals.push_back(outletIndex);
             } else {
-                compiled.endpointOrJunction = endpointKey(outlet.networkEndpoint);
+                compiled.endpointOrJunction = acousticEndpointKey(
+                    outlet.networkEndpoint);
                 if (!assignEndpoint(compiled.endpointOrJunction,
                         OwnerType::outlet, outletIndex)) return;
             }
@@ -503,20 +621,23 @@ struct AcousticExhaustNetwork::Impl final {
         }
         reactionTargets.reserve(layout.ducts().size()
             + layout.junctions().size());
-        for (std::size_t index = 0; index < layout.ducts().size(); ++index)
+        for (std::size_t index = 0; index < layout.ducts().size(); ++index) {
+            const auto& plan = ductPlans[index];
             reactionTargets.push_back({
-                layout.ducts()[index].nodeId, true, index, true });
+                layout.ducts()[index].nodeId, true, plan.firstDuctIndex,
+                plan.sectionCount, true });
+        }
         for (std::size_t index = 0; index < layout.junctions().size(); ++index) {
             const auto group = groupForJunction[index];
             const auto& plan = groupPlans[group];
             if (plan.hasTrunk) {
                 reactionTargets.push_back({
                     layout.junctions()[index].nodeId, true,
-                    plan.trunkDuctIndex, false });
+                    plan.trunkDuctIndex, 1U, false });
             } else {
                 reactionTargets.push_back({
                     layout.junctions()[index].nodeId, false,
-                    nodeFor(group, true), false });
+                    nodeFor(group, true), 0U, false });
             }
         }
         // A trunk has no entry of its own in the layout, because the layout
@@ -524,7 +645,6 @@ struct AcousticExhaustNetwork::Impl final {
         // ducts on either side of it, so read their state: the mean is a linear
         // interpolation along the chain, which is the shape of the temperature
         // gradient through a real exhaust.
-        const auto compiledDuctCount = layout.ducts().size();
         for (std::size_t group = 0; group < groupCount; ++group) {
             const auto& plan = groupPlans[group];
             if (!plan.hasTrunk) continue;
@@ -532,8 +652,14 @@ struct AcousticExhaustNetwork::Impl final {
             for (const auto inflowSide : { true, false }) {
                 for (const auto key : junctions[nodeFor(group, inflowSide)].ductEndpoints) {
                     const auto ductIndex = key / 2U;
-                    if (ductIndex != plan.trunkDuctIndex && ductIndex < compiledDuctCount)
-                        trunk.mediumSources.push_back(ductIndex);
+                    if (ductIndex == plan.trunkDuctIndex
+                        || ductIndex >= compiledAcousticDuctCount)
+                        continue;
+                    for (const auto mediumSource : ducts[ductIndex].mediumSources)
+                        if (std::find(trunk.mediumSources.begin(),
+                                trunk.mediumSources.end(), mediumSource)
+                            == trunk.mediumSources.end())
+                            trunk.mediumSources.push_back(mediumSource);
                 }
             }
         }
@@ -1097,10 +1223,22 @@ bool AcousticExhaustNetwork::injectReactionPressure(
             boundedPressure;
         return true;
     }
-    if (found->index >= impl_->ducts.size()) return false;
-    auto& duct = impl_->ducts[found->index];
-    const auto axial = found->useEventAxialPosition
-        ? std::clamp(axialPosition, 0.0F, 1.0F) : 0.5F;
+    if (found->ductCount == 0U || found->index >= impl_->ducts.size()
+        || found->ductCount > impl_->ducts.size() - found->index)
+        return false;
+    auto ductIndex = found->index;
+    auto axial = 0.5F;
+    if (found->useEventAxialPosition) {
+        const auto wholeAxial = std::clamp(axialPosition, 0.0F, 1.0F);
+        const auto scaledAxial = wholeAxial
+            * static_cast<float>(found->ductCount);
+        const auto section = std::min<std::size_t>(
+            static_cast<std::size_t>(scaledAxial), found->ductCount - 1U);
+        ductIndex += section;
+        axial = wholeAxial >= 1.0F ? 1.0F
+            : scaledAxial - static_cast<float>(section);
+    }
+    auto& duct = impl_->ducts[ductIndex];
     const auto addHistorical = [&](std::vector<float>& line,
                                    float offsetSamples,
                                    float pressurePa) noexcept {
