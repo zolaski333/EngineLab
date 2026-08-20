@@ -4,9 +4,9 @@
 // this tool sweeps the whole rev range so a torque/power curve can be compared
 // against a manufacturer number. It holds each rpm with the same absorber the
 // perf harness uses (a PI controller on state.load at throttle = 1.0) and
-// reports the cycle-averaged brake torque and power the crankshaft actually
-// produced -- the crank-brake figure a manufacturer quotes, before any
-// driveline loss.
+// reports work/angle/time from each completed brake-cycle event exactly once.
+// EngineState's cycle averages are intentionally not sampled here: they are
+// latched for display and would repeat a cycle at the 240 Hz outer-frame rate.
 //
 // It warm-starts each point from the previous one (ascending rpm), so the
 // settle time can be shorter than a cold measurePoint. Absolutes still come
@@ -29,6 +29,7 @@
 #include <iomanip>
 #include <iostream>
 #include <limits>
+#include <numbers>
 #include <sstream>
 #include <string>
 #include <string_view>
@@ -203,7 +204,12 @@ Sample holdPoint(enginelab::EngineSimulator& simulator,
     auto peak = 0.0;
     auto cylN = 0.0;
     auto veAcc = 0.0, lambdaAcc = 0.0, imepAcc = 0.0, egtAcc = 0.0, mapAcc = 0.0;
-    auto airAcc = 0.0, fuelAcc = 0.0, rpmAcc = 0.0, torqueAcc = 0.0, powerAcc = 0.0;
+    auto airAcc = 0.0, fuelAcc = 0.0, rpmAcc = 0.0;
+    auto brakeWorkJoules = 0.0;
+    auto brakeCrankRadians = 0.0;
+    auto brakeCycleDurationSeconds = 0.0;
+    std::size_t brakeCycleCount = 0;
+    std::size_t droppedBrakeCycleCount = 0;
     auto pmepAcc = 0.0, grossImepAcc = 0.0, exhaustAcc = 0.0, deliveredVeAcc = 0.0;
     auto exhStrokeMepAcc = 0.0;
     auto rpmSquareAcc = 0.0;
@@ -222,6 +228,7 @@ Sample holdPoint(enginelab::EngineSimulator& simulator,
     auto secondHalfHeldRpmAcc = 0.0;
     auto firstHalfCount = 0.0;
     auto secondHalfCount = 0.0;
+    auto sampleStartTimeSeconds = std::numeric_limits<double>::infinity();
     for (int step = 0; step < settleSteps + sampleSteps; ++step) {
         const auto absorberOutput = absorber.advance(
             dt, targetRpm, simulator.state());
@@ -231,6 +238,8 @@ Sample holdPoint(enginelab::EngineSimulator& simulator,
         controls.throttle = 1.0;
         controls.dynamometerTorqueNm =
             absorberOutput.brakeTorqueNm;
+        if (step == settleSteps)
+            sampleStartTimeSeconds = simulator.state().simulationTimeSeconds;
         const auto frame = simulator.step(dt, controls);
         if (step >= settleSteps) {
             const auto sampleIndex = step - settleSteps;
@@ -260,8 +269,25 @@ Sample holdPoint(enginelab::EngineSimulator& simulator,
                 secondHalfHeldRpmAcc += absorberOutput.filteredRpm;
                 secondHalfCount += 1.0;
             }
-            torqueAcc += frame.state.cycleAveragedTorqueNm;
-            powerAcc += frame.state.cycleAveragedPowerKw;
+            droppedBrakeCycleCount +=
+                frame.droppedCompletedBrakeCycleSampleCount;
+            for (std::size_t cycleIndex = 0;
+                 cycleIndex < frame.completedBrakeCycleSampleCount;
+                 ++cycleIndex) {
+                const auto& cycle =
+                    frame.completedBrakeCycleSamples[cycleIndex];
+                // A cycle which began in the settling interval is not a full
+                // member of the acquisition window, even if it ends in its
+                // first frame. The unfinished final cycle is naturally absent.
+                if (!cycle.numericallyValid
+                    || cycle.startTimeSeconds + 1.0e-12
+                        < sampleStartTimeSeconds)
+                    continue;
+                brakeWorkJoules += cycle.brakeWorkJoules;
+                brakeCrankRadians += cycle.integratedCrankRadians;
+                brakeCycleDurationSeconds += cycle.durationSeconds;
+                ++brakeCycleCount;
+            }
             veAcc += frame.state.volumetricEfficiency;
             deliveredVeAcc += frame.state.deliveredVolumetricEfficiency;
             lambdaAcc += frame.state.lambda;
@@ -281,9 +307,21 @@ Sample holdPoint(enginelab::EngineSimulator& simulator,
         }
     }
     const auto d = std::max(1.0, n);
-    acc.actualRpm = rpmAcc / d;
-    acc.torqueNm = torqueAcc / d;
-    acc.powerKw = powerAcc / d;
+    const auto validBrakeCycles = droppedBrakeCycleCount == 0
+        && brakeCycleCount > 0
+        && brakeCrankRadians > 0.0
+        && brakeCycleDurationSeconds > 0.0;
+    if (validBrakeCycles) {
+        acc.actualRpm = brakeCrankRadians / brakeCycleDurationSeconds
+            * 60.0 / (2.0 * std::numbers::pi);
+        acc.torqueNm = brakeWorkJoules / brakeCrankRadians;
+        acc.powerKw = brakeWorkJoules
+            / brakeCycleDurationSeconds / 1'000.0;
+    } else {
+        acc.actualRpm = rpmAcc / d;
+        acc.torqueNm = std::numeric_limits<double>::quiet_NaN();
+        acc.powerKw = std::numeric_limits<double>::quiet_NaN();
+    }
     acc.ve = veAcc / d;
     acc.deliveredVe = deliveredVeAcc / d;
     acc.lambda = lambdaAcc / d;

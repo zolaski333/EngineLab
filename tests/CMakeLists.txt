@@ -37,6 +37,16 @@ target_compile_definitions(EngineLabVehicleDynamicsTests PRIVATE
 enginelab_set_warnings(EngineLabVehicleDynamicsTests)
 add_test(NAME EngineLab.VehicleDynamics COMMAND EngineLabVehicleDynamicsTests)
 
+add_executable(EngineLabDynoEstimatorTests DynoEstimatorTests.cpp)
+target_link_libraries(EngineLabDynoEstimatorTests PRIVATE EngineLab::Runtime)
+enginelab_set_warnings(EngineLabDynoEstimatorTests)
+add_test(NAME EngineLab.DynoEstimator COMMAND EngineLabDynoEstimatorTests)
+
+add_executable(EngineLabDynoQualityGateTests DynoQualityGateTests.cpp)
+target_link_libraries(EngineLabDynoQualityGateTests PRIVATE EngineLab::Runtime)
+enginelab_set_warnings(EngineLabDynoQualityGateTests)
+add_test(NAME EngineLab.DynoQualityGate COMMAND EngineLabDynoQualityGateTests)
+
 add_executable(EngineLabStructuralNvhTests StructuralNvhTests.cpp)
 target_link_libraries(EngineLabStructuralNvhTests PRIVATE
     EngineLab::Audio EngineLab::Serialization EngineLab::Catalog)

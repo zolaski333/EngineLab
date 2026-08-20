@@ -47,6 +47,25 @@ namespace {
 void require(bool condition, const char* message) {
     if (!condition) { std::cerr << "FAILED: " << message << '\n'; std::exit(EXIT_FAILURE); }
 }
+
+/** Test-only crank-cycle contract with deliberately short cycles.
+ *
+ * Engine thermodynamics remain the production implementation; only the cycle
+ * boundary spacing is shortened so one bounded outer step exercises the fixed
+ * completion buffer and its observable overflow path.
+ */
+class ShortCycleEventGenerator final : public enginelab::IFiringEventGenerator {
+public:
+    [[nodiscard]] double cycleDegrees() const noexcept override { return 10.0; }
+    std::size_t generate(const enginelab::EngineConfig&,
+                         const enginelab::EngineState&,
+                         const enginelab::EcuCommand&,
+                         const enginelab::CombustionResult&,
+                         double, double, double, double,
+                         std::span<enginelab::FiringEvent>) noexcept override {
+        return 0;
+    }
+};
 }
 
 int main() {
@@ -1288,11 +1307,59 @@ int main() {
             "simulator construction must initialise the ECU maps used by offline and runtime callers");
     std::set<std::uint32_t> firedCylinders;
     bool observedCylinderTelemetry = false;
+    std::uint64_t previousBrakeCycleId = 0;
+    double previousBrakeCycleEndTime = 0.0;
+    std::size_t completedBrakeCycleCount = 0;
     for (int step = 0; step < 2'400; ++step) {
         const enginelab::EngineControls controls { true, step < 600, 0.45, 0.05 };
         const auto frame = simulator.step(1.0 / 240.0, controls);
         for (std::size_t index = 0; index < frame.firingEventCount; ++index)
             firedCylinders.insert(frame.firingEvents[index].cylinderId);
+        for (std::size_t index = 0;
+             index < frame.completedBrakeCycleSampleCount; ++index) {
+            const auto& sample = frame.completedBrakeCycleSamples[index];
+            require(sample.numericallyValid,
+                    "a completed brake cycle must satisfy its numerical contract");
+            require(sample.cycleId == previousBrakeCycleId + 1,
+                    "undropped completed brake cycles must have contiguous IDs");
+            require(sample.endTimeSeconds > sample.startTimeSeconds
+                    && std::abs(sample.durationSeconds
+                        - (sample.endTimeSeconds - sample.startTimeSeconds))
+                        < 1.0e-10,
+                    "cycle timestamps and duration must describe exact boundaries");
+            require(std::abs(sample.integratedCrankRadians
+                        - 4.0 * std::numbers::pi) < 1.0e-8,
+                    "a four-stroke sample must contain exactly 720 crank degrees");
+            require(std::abs(sample.meanTorqueNm * sample.integratedCrankRadians
+                        - sample.brakeWorkJoules)
+                        < 1.0e-8 * std::max(1.0, std::abs(sample.brakeWorkJoules))
+                    && std::abs(sample.meanPowerKw * sample.durationSeconds * 1'000.0
+                        - sample.brakeWorkJoules)
+                        < 1.0e-8 * std::max(1.0, std::abs(sample.brakeWorkJoules)),
+                    "cycle work, angle, torque, time and power must be invariant");
+            if (previousBrakeCycleId != 0) {
+                require(std::abs(sample.startTimeSeconds
+                            - previousBrakeCycleEndTime) < 1.0e-9,
+                        "successive complete cycles must share one exact boundary");
+            } else {
+                require(sample.cycleId == 1 && sample.startTimeSeconds > 0.0,
+                        "the first partial cycle after reset must not be published");
+            }
+            previousBrakeCycleId = sample.cycleId;
+            previousBrakeCycleEndTime = sample.endTimeSeconds;
+            ++completedBrakeCycleCount;
+        }
+        require(frame.droppedCompletedBrakeCycleSampleCount == 0,
+                "ordinary four-stroke stepping must not overflow cycle samples");
+        if (frame.completedBrakeCycleSampleCount > 0) {
+            const auto& latest = frame.completedBrakeCycleSamples[
+                frame.completedBrakeCycleSampleCount - 1];
+            require(std::abs(frame.state.cycleAveragedTorqueNm
+                        - latest.meanTorqueNm) < 1.0e-10
+                    && std::abs(frame.state.cycleAveragedPowerKw
+                        - latest.meanPowerKw) < 1.0e-10,
+                    "EngineState cycle averages must latch the latest complete cycle");
+        }
         observedCylinderTelemetry = observedCylinderTelemetry || std::any_of(frame.state.cylinderStates.begin(),
             frame.state.cylinderStates.begin() + static_cast<std::ptrdiff_t>(frame.state.cylinderStateCount),
             [](const enginelab::CylinderState& cylinder) {
@@ -1331,6 +1398,8 @@ int main() {
     require(std::isfinite(simulator.state().cycleAveragedTorqueNm)
             && std::isfinite(simulator.state().cycleAveragedPowerKw),
             "cycle-averaged output must remain finite for UI and dyno consumers");
+    require(completedBrakeCycleCount >= 20,
+            "the cycle-sample regression must observe many real completed cycles");
     require(simulator.state().indicatedWorkJoulesPerCycle > 0.0
             && simulator.state().indicatedMeanEffectivePressureBar > 0.0
             && simulator.state().indicatedPowerKw > 0.0,
@@ -1340,6 +1409,42 @@ int main() {
             [](const auto& cylinder) { return cylinder.indicatedWorkJoulesPerCycle > 0.0
                 && cylinder.intakeResonanceFrequencyHz > 0.0; }),
             "cylinder telemetry must expose P-dV work and runner resonance state");
+
+    {
+        auto overflowConfig = enginelab::makeDefaultInlineTwo();
+        enginelab::normaliseEngineConfig(overflowConfig);
+        enginelab::SimpleEcuModel overflowEcu;
+        enginelab::SimplifiedGasolinePhysics overflowPhysics;
+        ShortCycleEventGenerator overflowEvents;
+        auto overflowExhaust = enginelab::ExhaustGraph::makeForEngine(overflowConfig);
+        enginelab::EngineSimulator overflow(
+            overflowConfig, overflowEcu, overflowPhysics,
+            overflowEvents, overflowExhaust);
+        enginelab::EngineControls drivenControls;
+        drivenControls.externalTorqueNm = 5'000.0;
+        const auto saturatedFrame = overflow.step(0.05, drivenControls);
+        require(saturatedFrame.completedBrakeCycleSampleCount
+                    == enginelab::maxCompletedBrakeCycleSamplesPerSimulationStep
+                && saturatedFrame.droppedCompletedBrakeCycleSampleCount > 0,
+                "cycle completion overflow must fill the fixed array and report every drop");
+        require(saturatedFrame.completedBrakeCycleSamples.front().cycleId == 1
+                && saturatedFrame.completedBrakeCycleSamples.back().cycleId
+                    == enginelab::maxCompletedBrakeCycleSamplesPerSimulationStep,
+                "retained cycle IDs must start after the ignored partial cycle");
+        const auto expectedNextId = static_cast<std::uint64_t>(
+            saturatedFrame.completedBrakeCycleSampleCount
+            + saturatedFrame.droppedCompletedBrakeCycleSampleCount + 1);
+        const auto followingFrame = overflow.step(0.001, drivenControls);
+        require(followingFrame.completedBrakeCycleSampleCount > 0
+                && followingFrame.completedBrakeCycleSamples.front().cycleId
+                    == expectedNextId,
+                "cycle IDs must advance across dropped events without replay");
+        overflow.reset();
+        const auto resetFrame = overflow.step(0.05, drivenControls);
+        require(resetFrame.completedBrakeCycleSampleCount > 0
+                && resetFrame.completedBrakeCycleSamples.front().cycleId == 1,
+                "reset must begin a new cycle-ID epoch after ignoring its partial cycle");
+    }
 
     {
         enginelab::SimpleEcuModel drivenEcu;

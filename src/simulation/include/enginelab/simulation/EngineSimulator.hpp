@@ -154,7 +154,8 @@ private:
     }
     void accumulateCycleTelemetry(double previousAngleDegrees, double travelledDegrees,
                                   double dtSeconds, double indicatedTorqueNm,
-                                  double brakeTorqueNm) noexcept;
+                                  double brakeTorqueNm,
+                                  SimulationFrame& frame) noexcept;
     EngineConfig config_;
     EngineSimulatorOptions options_;
     EngineKinematicsReference kinematicsReference_;
@@ -456,7 +457,10 @@ private:
     double eventEvaluationTimeSeconds_ { 0.0 };
     double indicatedWorkThisCycleJoules_ { 0.0 };
     double brakeWorkThisCycleJoules_ { 0.0 };
+    double integratedCrankRadiansThisCycle_ { 0.0 };
     double cycleElapsedSeconds_ { 0.0 };
+    double cycleStartTimeSeconds_ { 0.0 };
+    std::uint64_t nextCompletedBrakeCycleId_ { 1 };
     bool cycleTelemetryStarted_ { false };
 };
 } // namespace enginelab

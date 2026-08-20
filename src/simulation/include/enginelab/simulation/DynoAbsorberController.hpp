@@ -5,10 +5,22 @@
 namespace enginelab {
 
 struct DynoAbsorberOutput final {
+    // Applied one-way absorber torque after the physical [0, capacity] clamp.
     double brakeTorqueNm {};
     double filteredRpm {};
     double filteredAccelerationRpmPerSecond {};
+    // Legacy contact flag: true for any strictly positive contact fraction.
     bool contacted { false };
+    // Smooth engagement of the absorber, from disengaged (0) to full (1).
+    double contactFraction {};
+    // Requested torque after anti-windup, immediately before the physical
+    // one-way/capacity clamp which produces brakeTorqueNm.
+    double unclampedBrakeTorqueNm {};
+    // True when the physical clamp materially rejected negative torque or
+    // torque above the absorber capacity. Round-off at a clamp boundary is
+    // deliberately ignored.
+    bool saturatedLow { false };
+    bool saturatedHigh { false };
 };
 
 /**

@@ -2819,7 +2819,7 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
         const auto subTravelled = (subPreviousRpm + state_.rpm) * 0.5 * 6.0 * subDt;
         maximumIntegratedCrankStep = std::max(maximumIntegratedCrankStep, std::abs(subTravelled));
         accumulateCycleTelemetry(subPreviousAngle, subTravelled, subDt,
-                                 indicatedTorque, brakeTorque);
+                                 indicatedTorque, brakeTorque, frame);
         state_.crankAngleDegrees = std::fmod(subPreviousAngle + subTravelled, eventGenerator_.cycleDegrees());
         state_.simulationTimeSeconds += subDt;
 
@@ -3302,25 +3302,36 @@ void EngineSimulator::accumulateCycleTelemetry(double previousAngleDegrees,
                                                double travelledDegrees,
                                                double dtSeconds,
                                                double indicatedTorqueNm,
-                                               double brakeTorqueNm) noexcept {
+                                               double brakeTorqueNm,
+                                               SimulationFrame& frame) noexcept {
     if (!(travelledDegrees > 0.0) || !(dtSeconds > 0.0)) return;
     const auto cycleDegrees = eventGenerator_.cycleDegrees();
     if (!(cycleDegrees > 0.0)) return;
     const auto cycleRadians = cycleDegrees * std::numbers::pi / 180.0;
     auto angle = std::fmod(previousAngleDegrees + cycleDegrees, cycleDegrees);
     auto remainingDegrees = travelledDegrees;
-    int guard = 0;
-    while (remainingDegrees > 1.0e-12 && guard++ < 16) {
+    auto elapsedSubstepSeconds = 0.0;
+    // A 50 ms recovery step at the configuration ceiling of 20,000 rpm spans
+    // only 8.4 four-stroke cycles. Sixteen therefore covers the declared input
+    // envelope with margin and preserves a small hard realtime bound if a
+    // future event generator returns a nonsensically tiny cycle angle.
+    constexpr std::size_t maximumCycleSegmentsPerSubstep = 16;
+    std::size_t segmentCount = 0;
+    while (remainingDegrees > 1.0e-12
+           && segmentCount++ < maximumCycleSegmentsPerSubstep) {
         const auto degreesToBoundary = cycleDegrees - angle;
         const auto segmentDegrees = std::min(remainingDegrees, degreesToBoundary);
         const auto segmentFraction = segmentDegrees / travelledDegrees;
+        const auto segmentSeconds = dtSeconds * segmentFraction;
+        const auto segmentRadians = segmentDegrees * std::numbers::pi / 180.0;
         if (cycleTelemetryStarted_) {
-            const auto segmentRadians = segmentDegrees * std::numbers::pi / 180.0;
             indicatedWorkThisCycleJoules_ += indicatedTorqueNm * segmentRadians;
             brakeWorkThisCycleJoules_ += brakeTorqueNm * segmentRadians;
-            cycleElapsedSeconds_ += dtSeconds * segmentFraction;
+            integratedCrankRadiansThisCycle_ += segmentRadians;
+            cycleElapsedSeconds_ += segmentSeconds;
         }
         remainingDegrees -= segmentDegrees;
+        elapsedSubstepSeconds += segmentSeconds;
         const auto reachedBoundary = segmentDegrees >= degreesToBoundary - 1.0e-12;
         if (!reachedBoundary) {
             angle += segmentDegrees;
@@ -3328,17 +3339,72 @@ void EngineSimulator::accumulateCycleTelemetry(double previousAngleDegrees,
         }
 
         if (cycleTelemetryStarted_ && cycleElapsedSeconds_ > 1.0e-12) {
-            state_.indicatedWorkJoulesPerCycle = indicatedWorkThisCycleJoules_;
+            CompletedBrakeCycleSample sample;
+            sample.cycleId = nextCompletedBrakeCycleId_++;
+            sample.startTimeSeconds = cycleStartTimeSeconds_;
+            sample.endTimeSeconds = state_.simulationTimeSeconds
+                + std::min(dtSeconds, elapsedSubstepSeconds);
+            sample.durationSeconds = sample.endTimeSeconds
+                - sample.startTimeSeconds;
+            sample.integratedCrankRadians = integratedCrankRadiansThisCycle_;
+            sample.indicatedWorkJoules = indicatedWorkThisCycleJoules_;
+            sample.brakeWorkJoules = brakeWorkThisCycleJoules_;
+            const auto positiveDenominators = sample.durationSeconds > 1.0e-12
+                && sample.integratedCrankRadians > 1.0e-12;
+            if (positiveDenominators) {
+                sample.meanRpm = sample.integratedCrankRadians
+                    / sample.durationSeconds * 60.0
+                    / (2.0 * std::numbers::pi);
+                sample.meanTorqueNm = sample.brakeWorkJoules
+                    / sample.integratedCrankRadians;
+                sample.meanPowerKw = sample.brakeWorkJoules
+                    / sample.durationSeconds / 1'000.0;
+            }
+            const auto timeTolerance = 1.0e-9
+                * std::max({ 1.0, std::abs(sample.durationSeconds),
+                             std::abs(cycleElapsedSeconds_) });
+            const auto angleTolerance = 1.0e-9
+                * std::max(1.0, std::abs(cycleRadians));
+            sample.numericallyValid = positiveDenominators
+                && std::isfinite(sample.startTimeSeconds)
+                && std::isfinite(sample.endTimeSeconds)
+                && std::isfinite(sample.durationSeconds)
+                && std::isfinite(sample.integratedCrankRadians)
+                && std::isfinite(sample.indicatedWorkJoules)
+                && std::isfinite(sample.brakeWorkJoules)
+                && std::isfinite(sample.meanRpm)
+                && std::isfinite(sample.meanTorqueNm)
+                && std::isfinite(sample.meanPowerKw)
+                && std::abs(sample.durationSeconds - cycleElapsedSeconds_)
+                    <= timeTolerance
+                && std::abs(sample.integratedCrankRadians - cycleRadians)
+                    <= angleTolerance;
+
+            if (frame.completedBrakeCycleSampleCount
+                < frame.completedBrakeCycleSamples.size()) {
+                frame.completedBrakeCycleSamples[
+                    frame.completedBrakeCycleSampleCount++] = sample;
+            } else {
+                ++frame.droppedCompletedBrakeCycleSampleCount;
+            }
+
+            // Preserve the existing EngineState contract as a latch of the
+            // latest complete, valid cycle. Frames without a boundary leave it
+            // untouched; the event array above is never replayed.
             const auto displacementM3 =
                 engineDisplacementLitres(config_) * 0.001;
-            state_.indicatedMeanEffectivePressureBar = displacementM3 > 0.0
-                ? indicatedWorkThisCycleJoules_ / displacementM3 / 100'000.0 : 0.0;
-            state_.indicatedPowerKw = indicatedWorkThisCycleJoules_
-                / cycleElapsedSeconds_ / 1'000.0;
-            state_.pdvTorqueNm = indicatedWorkThisCycleJoules_ / cycleRadians;
-            state_.cycleAveragedTorqueNm = brakeWorkThisCycleJoules_ / cycleRadians;
-            state_.cycleAveragedPowerKw = brakeWorkThisCycleJoules_
-                / cycleElapsedSeconds_ / 1'000.0;
+            if (sample.numericallyValid) {
+                state_.indicatedWorkJoulesPerCycle = sample.indicatedWorkJoules;
+                state_.indicatedMeanEffectivePressureBar = displacementM3 > 0.0
+                    ? sample.indicatedWorkJoules / displacementM3 / 100'000.0
+                    : 0.0;
+                state_.indicatedPowerKw = sample.indicatedWorkJoules
+                    / sample.durationSeconds / 1'000.0;
+                state_.pdvTorqueNm = sample.indicatedWorkJoules
+                    / sample.integratedCrankRadians;
+                state_.cycleAveragedTorqueNm = sample.meanTorqueNm;
+                state_.cycleAveragedPowerKw = sample.meanPowerKw;
+            }
             // The gas-exchange split comes from the per-cylinder p-dV integrals,
             // not from the engine-level torque accumulation above: at any crank
             // angle the cylinders are in different strokes, so only a
@@ -3362,8 +3428,11 @@ void EngineSimulator::accumulateCycleTelemetry(double previousAngleDegrees,
                 ? (totalJoules - pumpingJoules) / displacementM3 / 100'000.0 : 0.0;
         }
         cycleTelemetryStarted_ = true;
+        cycleStartTimeSeconds_ = state_.simulationTimeSeconds
+            + std::min(dtSeconds, elapsedSubstepSeconds);
         indicatedWorkThisCycleJoules_ = 0.0;
         brakeWorkThisCycleJoules_ = 0.0;
+        integratedCrankRadiansThisCycle_ = 0.0;
         cycleElapsedSeconds_ = 0.0;
         angle = 0.0;
     }
@@ -3469,7 +3538,10 @@ void EngineSimulator::reset() noexcept {
     eventEvaluationTimeSeconds_ = state_.simulationTimeSeconds;
     indicatedWorkThisCycleJoules_ = 0.0;
     brakeWorkThisCycleJoules_ = 0.0;
+    integratedCrankRadiansThisCycle_ = 0.0;
     cycleElapsedSeconds_ = 0.0;
+    cycleStartTimeSeconds_ = 0.0;
+    nextCompletedBrakeCycleId_ = 1;
     cycleTelemetryStarted_ = false;
     const auto configureFuel = [this](GasCell& cell) {
         cell.configureFuelChemistry(config_.fuelProperties.molarMassGramsPerMole * 0.001,

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <numbers>
 
 namespace enginelab {
@@ -48,11 +49,18 @@ DynoAbsorberOutput DynoAbsorberController::advance(
     if (!initialised_)
         reset(engineState.rpm, engineState.torqueNm);
 
+    // A non-finite observation is not a zero-speed impulse. Hold the last
+    // finite observation so one corrupt frame cannot inject an artificial
+    // acceleration spike into the controller.
+    const auto measuredRpm = std::isfinite(engineState.rpm)
+        ? std::max(0.0, engineState.rpm) : filteredRpm_;
     const auto previousFilteredRpm = filteredRpm_;
-    filteredRpm_ += (std::max(0.0, engineState.rpm) - filteredRpm_)
+    filteredRpm_ += (measuredRpm - filteredRpm_)
         * (1.0 - std::exp(-dt * 8.0));
-    const auto rawAcceleration = dt > 0.0
+    const auto accelerationObservation = dt > 0.0
         ? (filteredRpm_ - previousFilteredRpm) / dt : 0.0;
+    const auto rawAcceleration = std::isfinite(accelerationObservation)
+        ? accelerationObservation : 0.0;
     filteredAccelerationRpmPerSecond_ +=
         (rawAcceleration - filteredAccelerationRpmPerSecond_)
         * (1.0 - std::exp(-dt * 6.0));
@@ -60,10 +68,15 @@ DynoAbsorberOutput DynoAbsorberController::advance(
     // A cycle-average is the actual quantity the absorber must balance. Using
     // instantaneous gas torque makes the brake chase each firing pulse and can
     // excite the crank/flywheel mode it is supposed to hold.
-    const auto measuredBrakeTorqueNm =
-        engineState.cycleAveragedTorqueNm > 0.0
-        ? engineState.cycleAveragedTorqueNm
-        : std::max(0.0, engineState.torqueNm);
+    const auto cycleBrakeTorqueNm =
+        std::isfinite(engineState.cycleAveragedTorqueNm)
+            && engineState.cycleAveragedTorqueNm > 0.0
+        ? engineState.cycleAveragedTorqueNm : 0.0;
+    const auto instantaneousBrakeTorqueNm =
+        std::isfinite(engineState.torqueNm)
+        ? std::max(0.0, engineState.torqueNm) : 0.0;
+    const auto measuredBrakeTorqueNm = cycleBrakeTorqueNm > 0.0
+        ? cycleBrakeTorqueNm : instantaneousBrakeTorqueNm;
     feedForwardTorqueNm_ += (
         measuredBrakeTorqueNm - feedForwardTorqueNm_)
         * (1.0 - std::exp(-dt * 8.0));
@@ -86,7 +99,10 @@ DynoAbsorberOutput DynoAbsorberController::advance(
         contactPhase * contactPhase * (3.0 - 2.0 * contactPhase);
     const auto contactedFeedForwardTorqueNm =
         feedForwardTorqueNm_ * contactScale;
-    if (errorRpm < -contactBandRpm) {
+    auto unclampedBrakeTorqueNm = 0.0;
+    auto saturatedLow = false;
+    auto saturatedHigh = false;
+    if (contactScale <= 0.0) {
         integralTorqueNm_ = 0.0;
         brakeTorqueNm_ = 0.0;
     } else {
@@ -114,18 +130,34 @@ DynoAbsorberOutput DynoAbsorberController::advance(
         integralTorqueNm_ = std::clamp(
             integralTorqueNm_,
             -maximumBrakeTorqueNm_, maximumBrakeTorqueNm_);
+        unclampedBrakeTorqueNm = contactedFeedForwardTorqueNm
+            + integralTorqueNm_
+            + errorRpm * proportionalGain
+            + filteredAccelerationRpmPerSecond_ * accelerationGain;
+        if (!std::isfinite(unclampedBrakeTorqueNm))
+            unclampedBrakeTorqueNm = 0.0;
         brakeTorqueNm_ = std::clamp(
-            contactedFeedForwardTorqueNm
-                + integralTorqueNm_
-                + errorRpm * proportionalGain
-                + filteredAccelerationRpmPerSecond_ * accelerationGain,
-            0.0, maximumBrakeTorqueNm_);
+            unclampedBrakeTorqueNm, 0.0, maximumBrakeTorqueNm_);
+
+        // The clamp can change a value by a few ULPs at a boundary. Expose a
+        // capacity event only when the rejected torque is material compared
+        // with the scale of this absorber.
+        const auto saturationToleranceNm =
+            64.0 * std::numeric_limits<double>::epsilon()
+            * std::max(1.0, maximumBrakeTorqueNm_);
+        saturatedLow = unclampedBrakeTorqueNm < -saturationToleranceNm;
+        saturatedHigh = unclampedBrakeTorqueNm
+            > maximumBrakeTorqueNm_ + saturationToleranceNm;
     }
     return {
         brakeTorqueNm_,
         filteredRpm_,
         filteredAccelerationRpmPerSecond_,
         contactScale > 0.0,
+        contactScale,
+        unclampedBrakeTorqueNm,
+        saturatedLow,
+        saturatedHigh,
     };
 }
 
