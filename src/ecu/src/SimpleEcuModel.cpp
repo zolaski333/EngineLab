@@ -103,9 +103,25 @@ void SimpleEcuModel::initialiseCalibration(const EngineConfig& config) {
 }
 
 void SimpleEcuModel::beginFrame() noexcept {
-    auto next = calibrations_->snapshot();
+    auto next = pinnedCalibration_
+        ? pinnedCalibration_ : calibrations_->snapshot();
     frameCalibration_ = std::move(next);
     calibrationReader_->acknowledge(frameCalibration_->revision());
+}
+
+std::uint64_t SimpleEcuModel::pinCalibrationSnapshot(
+    std::shared_ptr<const calibration::CalibrationSnapshot> accepted) noexcept {
+    pinnedCalibration_ = accepted ? std::move(accepted)
+                                  : calibrations_->snapshot();
+    frameCalibration_ = pinnedCalibration_;
+    calibrationReader_->acknowledge(frameCalibration_->revision());
+    return frameCalibration_->revision();
+}
+
+void SimpleEcuModel::releasePinnedCalibrationSnapshot() noexcept {
+    // Do not swap frameCalibration_ half way through a simulator frame. The
+    // normal beginFrame() boundary will adopt the newest published revision.
+    pinnedCalibration_.reset();
 }
 
 EcuCommand SimpleEcuModel::evaluate(const EngineConfig& config, const EngineState& state,

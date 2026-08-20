@@ -20,6 +20,14 @@ public:
     [[nodiscard]] std::shared_ptr<calibration::CalibrationStore> calibrationStore() const noexcept {
         return calibrations_;
     }
+    /** Freeze one coherent calibration for a measurement session. Calls are
+     * made by the simulation thread, so evaluate() remains lock-free. */
+    [[nodiscard]] std::uint64_t pinCalibrationSnapshot(
+        std::shared_ptr<const calibration::CalibrationSnapshot> accepted = {}) noexcept;
+    void releasePinnedCalibrationSnapshot() noexcept;
+    [[nodiscard]] bool calibrationSnapshotPinned() const noexcept {
+        return pinnedCalibration_ != nullptr;
+    }
     void reset() noexcept override {
         limiterLatched_.store(false, std::memory_order_relaxed);
         decelerationFuelCutLatched_.store(false, std::memory_order_relaxed);
@@ -78,6 +86,7 @@ private:
     std::shared_ptr<calibration::CalibrationStore> calibrations_;
     std::shared_ptr<calibration::CalibrationReaderEpoch> calibrationReader_;
     std::shared_ptr<const calibration::CalibrationSnapshot> frameCalibration_;
+    std::shared_ptr<const calibration::CalibrationSnapshot> pinnedCalibration_;
     std::atomic<double> afrTrim_ { 0.0 };
     std::atomic<double> ignitionTrimDegrees_ { 0.0 };
     mutable std::atomic<bool> limiterLatched_ { false };

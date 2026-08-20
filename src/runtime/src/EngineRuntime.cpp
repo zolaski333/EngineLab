@@ -277,14 +277,17 @@ void publishAudioFrame(RealtimeAudioState& state, const EngineState& engineState
 
 EngineRuntime::EngineRuntime(EngineConfig config,
                              std::shared_ptr<calibration::CalibrationStore> calibrations,
-                             EngineSimulatorOptions simulatorOptions)
+                             EngineSimulatorOptions simulatorOptions,
+                             std::shared_ptr<DynoRunArchive> dynoArchive)
     : config_(normalised(std::move(config))), ecu_(std::move(calibrations)),
       exhaust_(ExhaustGraph::makeForEngine(config_)),
       simulator_(config_, ecu_, physics_, eventGenerator_, exhaust_,
                  std::move(simulatorOptions)), dynoAbsorber_(config_),
       driveline_(config_),
       pressureQueue_(std::make_unique<CylinderPressureQueue>()),
-      exhaustAcousticQueue_(std::make_unique<ExhaustAcousticQueue>()) {
+      exhaustAcousticQueue_(std::make_unique<ExhaustAcousticQueue>()),
+      dynoArchive_(dynoArchive ? std::move(dynoArchive)
+                               : std::make_shared<DynoRunArchive>()) {
     simulator_.setPressureSamplingEnabled(true);
     applyAudioVoicing(config_.audioVoicing);
     audioState_.cylinderCount.store(static_cast<float>(config_.cylinders.size()), std::memory_order_relaxed);
@@ -469,7 +472,18 @@ void EngineRuntime::start() {
 void EngineRuntime::stop() {
     dynoRequestedRunning_.store(false, std::memory_order_release);
     if (thread_.joinable()) { thread_.request_stop(); thread_.join(); }
-    if (dynoActive_) finishDynoSession();
+    if (dynoActive_)
+        finishDynoSession(
+            DynoRunStatus::cancelled,
+            DynoStopReason::runtimeStopped);
+    else if (dynoSessionActive_.exchange(false, std::memory_order_acq_rel)) {
+        {
+            const std::scoped_lock lock(dynoMutex_);
+            pendingDynoCalibration_.reset();
+        }
+        dynoRunStatus_.store(
+            DynoRunStatus::cancelled, std::memory_order_release);
+    }
 }
 EngineState EngineRuntime::snapshot() const {
     const std::scoped_lock lock(snapshotMutex_);
@@ -523,6 +537,23 @@ void EngineRuntime::adjustDynoHoldRpm(double delta) noexcept {
     setDynoHoldRpm(dynoHoldRpm_.load(std::memory_order_relaxed) + delta);
 }
 
+void EngineRuntime::setDynoMode(DynoMode value) noexcept {
+    if (dynoSessionActive_.load(std::memory_order_acquire)) return;
+    configuredDynoMode_.store(value, std::memory_order_relaxed);
+}
+
+void EngineRuntime::setDynoHoldEnabled(bool value) noexcept {
+    if (value) setDynoMode(DynoMode::hold);
+    else if (dynoMode() == DynoMode::hold)
+        setDynoMode(DynoMode::steppedCalibration);
+}
+
+void EngineRuntime::setDynoRampEnabled(bool value) noexcept {
+    if (value) setDynoMode(DynoMode::continuousRamp);
+    else if (dynoMode() == DynoMode::continuousRamp)
+        setDynoMode(DynoMode::steppedCalibration);
+}
+
 void EngineRuntime::setDynoHoldRpm(double value) noexcept {
     if (!std::isfinite(value)) return;
     const auto maximumHoldRpm = std::min(
@@ -552,6 +583,58 @@ void EngineRuntime::updateDriveline(double dtSeconds, const EngineState& engineS
 }
 
 void EngineRuntime::startDyno() {
+    DynoSessionConfig config;
+    config.mode = dynoMode();
+    config.holdRpm = dynoHoldRpm_.load(std::memory_order_relaxed);
+    config.rampRateRpmPerSecond =
+        dynoRampRpmPerSecond_.load(std::memory_order_relaxed);
+    config.maximumDurationSeconds =
+        dynoMaximumDurationSeconds_.load(std::memory_order_relaxed);
+    startDyno(config);
+}
+
+void EngineRuntime::startDyno(DynoSessionConfig config) {
+    auto expected = false;
+    if (!dynoSessionActive_.compare_exchange_strong(
+            expected, true, std::memory_order_acq_rel))
+        return;
+    const auto defaultEntryRpm = sweepEntryRpm(config_);
+    const auto safeCeilingRpm = sweepCeilingRpm(config_);
+    config.sweepEntryRpm = std::isfinite(config.sweepEntryRpm)
+            && config.sweepEntryRpm > 0.0
+        ? std::clamp(config.sweepEntryRpm, 500.0, safeCeilingRpm)
+        : defaultEntryRpm;
+    config.sweepCeilingRpm = std::isfinite(config.sweepCeilingRpm)
+            && config.sweepCeilingRpm > 0.0
+        ? std::clamp(config.sweepCeilingRpm,
+            config.sweepEntryRpm, safeCeilingRpm)
+        : safeCeilingRpm;
+    config.holdRpm = std::isfinite(config.holdRpm)
+        ? std::clamp(config.holdRpm,
+            std::max(500.0, config_.idleRpm * 0.6), safeCeilingRpm)
+        : dynoHoldRpm_.load(std::memory_order_relaxed);
+    config.rampRateRpmPerSecond = std::isfinite(
+            config.rampRateRpmPerSecond)
+        ? std::clamp(config.rampRateRpmPerSecond, 50.0, 2'000.0)
+        : 500.0;
+    config.binWidthRpm = std::isfinite(config.binWidthRpm)
+        ? std::clamp(config.binWidthRpm, 10.0, 250.0) : 50.0;
+    config.rollingWindowSeconds = std::isfinite(
+            config.rollingWindowSeconds)
+        ? std::clamp(config.rollingWindowSeconds, 0.10, 1.0) : 0.25;
+    config.maximumDurationSeconds = std::isfinite(
+            config.maximumDurationSeconds)
+        ? std::clamp(config.maximumDurationSeconds, 30.0, 300.0) : 60.0;
+    {
+        const std::scoped_lock lock(dynoMutex_);
+        pendingDynoConfig_ = config;
+        // Acceptance, not the next 240 Hz tick, defines the metrology
+        // boundary. Keep this immutable object alive even if the tuner
+        // publishes another revision before beginDynoSession() runs.
+        pendingDynoCalibration_ = ecu_.calibrationStore()->snapshot();
+    }
+    dynoRunStatus_.store(DynoRunStatus::running,
+                         std::memory_order_release);
     dynoRequestedRunning_.store(true, std::memory_order_release);
 }
 
@@ -563,17 +646,30 @@ void EngineRuntime::beginDynoSession() {
     if (dynoActive_) return;
     {
         const std::scoped_lock lock(dynoMutex_);
+        activeDynoConfig_ = pendingDynoConfig_;
+        const auto calibrationRevision = ecu_.pinCalibrationSnapshot(
+            std::move(pendingDynoCalibration_));
         currentRun_ = {};
-        currentRun_.id = nextDynoId_++;
+        currentRun_.id = dynoArchive_->reserveRunId();
         currentRun_.engineName = config_.name;
+        currentRun_.sessionConfig = activeDynoConfig_;
+        currentRun_.status = DynoRunStatus::running;
+        currentRun_.calibrationRevision = calibrationRevision;
+        currentRun_.startedAtSimulationSeconds =
+            simulator_.state().simulationTimeSeconds;
+        const auto expectedPointCount = static_cast<std::size_t>(std::ceil(
+            std::max(0.0, activeDynoConfig_.sweepCeilingRpm
+                - activeDynoConfig_.sweepEntryRpm)
+            / std::max(1.0, activeDynoConfig_.binWidthRpm))) + 2U;
+        currentRun_.points.reserve(expectedPointCount);
     }
     dynoElapsed_ = 0.0;
     dynoStartupElapsed_ = 0.0;
-    nextSampleRpm_ = sweepEntryRpm(config_);
+    nextSampleRpm_ = activeDynoConfig_.sweepEntryRpm;
     dynoTargetRpm_ = nextSampleRpm_;
     dynoPreparationDestinationRpm_ =
-        dynoHoldEnabled_.load(std::memory_order_relaxed)
-        ? dynoHoldRpm_.load(std::memory_order_relaxed)
+        activeDynoConfig_.mode == DynoMode::hold
+        ? activeDynoConfig_.holdRpm
         : nextSampleRpm_;
     const auto runningThreshold =
         std::max(650.0, config_.idleRpm * 0.82);
@@ -588,7 +684,8 @@ void EngineRuntime::beginDynoSession() {
     dynoAbsorber_.reset(
         simulator_.state().rpm, simulator_.state().torqueNm);
     dynoAbsorberOutput_ = {};
-    dynoEstimator_.reset();
+    dynoEstimator_ = DynoEstimator(
+        activeDynoConfig_.rollingWindowSeconds);
     previousRampEstimate_.reset();
     lastCompletedBrakeCycleTorqueNm_ = 0.0;
     latestDynoQualityReasons_ = DynoQualityReason::notPrepared;
@@ -607,20 +704,31 @@ void EngineRuntime::beginDynoSession() {
     dynoSweeping_ = false;
     dynoCompleted_ = false;
     dynoActive_ = true;
+    dynoRunStatus_.store(DynoRunStatus::running,
+                         std::memory_order_release);
 }
 
-void EngineRuntime::finishDynoSession() {
+void EngineRuntime::finishDynoSession(
+    DynoRunStatus status, DynoStopReason reason) {
     if (!dynoActive_) return;
     {
         const std::scoped_lock lock(dynoMutex_);
-        if (currentRun_.points.size() >= 3) dynoHistory_.push_back(currentRun_);
+        currentRun_.status = status;
+        currentRun_.stopReason = reason;
+        currentRun_.endedAtSimulationSeconds =
+            simulator_.state().simulationTimeSeconds;
+        (void)dynoArchive_->append(currentRun_);
         currentRun_ = {};
     }
     ignition_.store(savedIgnition_);
     starter_.store(savedStarter_);
     throttle_.store(savedThrottle_);
     load_.store(savedLoad_);
+    ecu_.releasePinnedCalibrationSnapshot();
     dynoActive_ = false;
+    dynoRequestedRunning_.store(false, std::memory_order_release);
+    dynoRunStatus_.store(status, std::memory_order_release);
+    dynoSessionActive_.store(false, std::memory_order_release);
 }
 
 DynoRun EngineRuntime::currentDynoRun() const {
@@ -629,13 +737,11 @@ DynoRun EngineRuntime::currentDynoRun() const {
 }
 
 std::vector<DynoRun> EngineRuntime::dynoHistory() const {
-    const std::scoped_lock lock(dynoMutex_);
-    return dynoHistory_;
+    return dynoArchive_->snapshot();
 }
 
 void EngineRuntime::deleteDynoRun(std::uint64_t id) {
-    const std::scoped_lock lock(dynoMutex_);
-    std::erase_if(dynoHistory_, [id](const DynoRun& run) { return run.id == id; });
+    (void)dynoArchive_->erase(id);
 }
 
 void EngineRuntime::run(std::stop_token stopToken) {
@@ -678,7 +784,32 @@ void EngineRuntime::run(std::stop_token stopToken) {
         deadline += std::chrono::duration_cast<Clock::duration>(baseStep);
         const auto dynoDesired = dynoRequestedRunning_.load(std::memory_order_acquire);
         if (dynoDesired && !dynoActive_) beginDynoSession();
-        else if (!dynoDesired && dynoActive_) finishDynoSession();
+        else if (!dynoDesired && dynoActive_) {
+            auto hasValidHoldPoint = false;
+            if (activeDynoConfig_.mode == DynoMode::hold) {
+                const std::scoped_lock lock(dynoMutex_);
+                hasValidHoldPoint = std::ranges::any_of(
+                    currentRun_.points,
+                    [](const DynoPoint& point) { return point.valid; });
+            }
+            finishDynoSession(
+                hasValidHoldPoint ? DynoRunStatus::completed
+                                  : DynoRunStatus::cancelled,
+                hasValidHoldPoint ? DynoStopReason::operatorFinished
+                                  : DynoStopReason::operatorCancelled);
+        } else if (!dynoDesired
+                   && dynoSessionActive_.load(std::memory_order_acquire)) {
+            // startDyno()/stopDyno() may both be called between two simulation
+            // ticks. No session ever began, so there is no fabricated empty run
+            // to archive, but the public state must still leave `running`.
+            dynoRunStatus_.store(
+                DynoRunStatus::cancelled, std::memory_order_release);
+            {
+                const std::scoped_lock lock(dynoMutex_);
+                pendingDynoCalibration_.reset();
+            }
+            dynoSessionActive_.store(false, std::memory_order_release);
+        }
         const auto isPaused = paused_.load(std::memory_order_relaxed) && !dynoActive_;
         const auto simulationScale = dynoActive_
             ? 1.0 : std::clamp(timeScale_.load(std::memory_order_relaxed), 0.0, 8.0);
@@ -693,7 +824,7 @@ void EngineRuntime::run(std::stop_token stopToken) {
             const auto runningThreshold =
                 std::max(650.0, config_.idleRpm * 0.82);
             if (!dynoSweeping_) {
-                if (dynoHoldEnabled_.load(std::memory_order_relaxed))
+                if (activeDynoConfig_.mode == DynoMode::hold)
                     dynoPreparationDestinationRpm_ =
                         dynoHoldRpm_.load(std::memory_order_relaxed);
 
@@ -767,25 +898,37 @@ void EngineRuntime::run(std::stop_token stopToken) {
             if (dynoSweeping_) {
                 dynoElapsed_ += baseStep.count();
                 dynoElapsed = dynoElapsed_;
-                if (dynoHoldEnabled_.load(std::memory_order_relaxed)) {
+                if (activeDynoConfig_.mode == DynoMode::hold) {
                     // Wheel changes in hold mode are rate limited too; a large
-                    // setpoint change cannot become another brake step.
+                    // setpoint change cannot become another brake step. A
+                    // moving setpoint also starts a fresh measurement window:
+                    // torque from the old hold must never be relabelled at the
+                    // new target.
                     constexpr double holdSlewRpmPerSecond = 700.0;
+                    const auto previousTargetRpm = dynoTargetRpm_;
                     dynoTargetRpm_ = moveTowards(
                         dynoTargetRpm_,
                         dynoHoldRpm_.load(std::memory_order_relaxed),
                         holdSlewRpmPerSecond * baseStep.count());
-                } else if (dynoRampEnabled_.load(std::memory_order_relaxed)) {
+                    if (std::abs(dynoTargetRpm_ - previousTargetRpm) > 1.0e-9) {
+                        dynoEstimator_.breakContinuity();
+                        previousRampEstimate_.reset();
+                        dynoCycleTainted_ = true;
+                        dynoGateAllowsProgress_ = false;
+                    }
+                } else if (activeDynoConfig_.mode
+                           == DynoMode::continuousRamp) {
                     // The target is frozen exactly until one complete rolling
                     // window has primed the pull, and on every rejected frame.
                     // The former `target /= 1 + dt` path was not a pause: at
                     // normal speeds it could command a multi-thousand-rpm/s
                     // fall after one weak cycle and invalidate the next bins.
                     if (dynoRampPrimed_ && dynoGateAllowsProgress_) {
-                        const auto rampCeilingRpm = sweepCeilingRpm(config_);
+                        const auto rampCeilingRpm =
+                            activeDynoConfig_.sweepCeilingRpm;
                         dynoTargetRpm_ = std::min(rampCeilingRpm,
                             dynoTargetRpm_
-                                + dynoRampRpmPerSecond_.load(std::memory_order_relaxed)
+                                + activeDynoConfig_.rampRateRpmPerSecond
                                     * baseStep.count());
                     }
                 }
@@ -916,18 +1059,12 @@ void EngineRuntime::run(std::stop_token stopToken) {
                 baseStep.count(), dynoTargetRpm_, frame.state);
             dynoBrakeTorqueNm_ = dynoAbsorberOutput_.brakeTorqueNm;
 
-            const auto holding =
-                dynoHoldEnabled_.load(std::memory_order_relaxed);
+            const auto acquisitionMode = activeDynoConfig_.mode;
+            const auto holding = acquisitionMode == DynoMode::hold;
             const auto rampingSweep =
-                dynoRampEnabled_.load(std::memory_order_relaxed)
-                && !holding;
-            const auto acquisitionMode = holding
-                ? DynoAcquisitionMode::hold
-                : (rampingSweep
-                    ? DynoAcquisitionMode::continuousRamp
-                    : DynoAcquisitionMode::steppedCalibration);
-            const auto rampRate = dynoRampRpmPerSecond_.load(
-                std::memory_order_relaxed);
+                acquisitionMode == DynoMode::continuousRamp;
+            const auto rampRate =
+                activeDynoConfig_.rampRateRpmPerSecond;
             const auto gateInput = [&](double cycleTorqueNm,
                                        double measuredRpm,
                                        bool cycleContinuous) noexcept {
@@ -1057,12 +1194,15 @@ void EngineRuntime::run(std::stop_token stopToken) {
                     continue;
                 }
                 dynoGateAllowsProgress_ = true;
-                const auto ceilingRpm = sweepCeilingRpm(config_);
+                const auto ceilingRpm =
+                    activeDynoConfig_.sweepCeilingRpm;
 
                 if (rampingSweep) {
-                    constexpr double binWidthRpm = 50.0;
+                    const auto binWidthRpm =
+                        activeDynoConfig_.binWidthRpm;
                     if (!dynoRampPrimed_) {
-                        const auto entryRpm = sweepEntryRpm(config_);
+                        const auto entryRpm =
+                            activeDynoConfig_.sweepEntryRpm;
                         // Priming is a steady hold, even though the following
                         // acquisition is transient. Do not label a window up
                         // to 150 rpm away as the entry point.
@@ -1190,11 +1330,27 @@ void EngineRuntime::run(std::stop_token stopToken) {
                 + 0.5 * effectiveRotatingInertiaKgM2(config_)
                     * frame.state.angularVelocityRadPerSecond * frame.state.angularVelocityRadPerSecond;
             frame.state.drivelineEnergyResidualJoules = drivelineOutput_.energyResidualJoules;
-            frame.state.dynoHoldRpm = dynoHoldRpm_.load(std::memory_order_relaxed);
-            frame.state.dynoHoldEnabled = dynoHoldEnabled_.load(std::memory_order_relaxed);
-            frame.state.dynoRampEnabled = dynoRampEnabled_.load(std::memory_order_relaxed);
-            frame.state.dynoRampRpmPerSecond =
-                dynoRampRpmPerSecond_.load(std::memory_order_relaxed);
+            const auto displayedDynoMode = dynoActive_
+                ? activeDynoConfig_.mode : dynoMode();
+            frame.state.dynoMode = displayedDynoMode;
+            frame.state.dynoRunStatus = dynoRunStatus_.load(
+                std::memory_order_acquire);
+            frame.state.dynoPhase = !dynoActive_
+                ? (frame.state.dynoRunStatus == DynoRunStatus::idle
+                    ? DynoPhase::idle : DynoPhase::terminal)
+                : (!dynoSweeping_.load(std::memory_order_relaxed)
+                    ? (dynoRecoveryCount_ > 0
+                        ? DynoPhase::recovery : DynoPhase::preparing)
+                    : DynoPhase::acquiring);
+            frame.state.dynoHoldRpm = dynoHoldRpm_.load(
+                std::memory_order_relaxed);
+            frame.state.dynoHoldEnabled =
+                displayedDynoMode == DynoMode::hold;
+            frame.state.dynoRampEnabled =
+                displayedDynoMode == DynoMode::continuousRamp;
+            frame.state.dynoRampRpmPerSecond = dynoActive_
+                ? activeDynoConfig_.rampRateRpmPerSecond
+                : dynoRampRpmPerSecond_.load(std::memory_order_relaxed);
             frame.state.dynoActive = dynoActive_;
             frame.state.dynoPreparing = dynoActive_
                 && !dynoSweeping_.load(std::memory_order_relaxed);
@@ -1227,11 +1383,13 @@ void EngineRuntime::run(std::stop_token stopToken) {
             frame.state.dynoWindowMeanRpm = dynoEstimate.meanRpm;
             frame.state.dynoWindowMinimumRpm = dynoEstimate.minRpm;
             frame.state.dynoWindowMaximumRpm = dynoEstimate.maxRpm;
-            const auto sweepStartRpm = sweepEntryRpm(config_);
+            const auto sweepStartRpm = dynoActive_
+                ? activeDynoConfig_.sweepEntryRpm : sweepEntryRpm(config_);
+            const auto sweepCeiling = dynoActive_
+                ? activeDynoConfig_.sweepCeilingRpm : sweepCeilingRpm(config_);
             const auto sweepRangeRpm = std::max(
-                1.0, sweepCeilingRpm(config_) - sweepStartRpm);
-            frame.state.dynoProgress = dynoHoldEnabled_.load(
-                std::memory_order_relaxed)
+                1.0, sweepCeiling - sweepStartRpm);
+            frame.state.dynoProgress = displayedDynoMode == DynoMode::hold
                 ? (frame.state.dynoPreparing ? 0.0 : 1.0)
                 : std::clamp((dynoTargetRpm_ - sweepStartRpm)
                     / sweepRangeRpm, 0.0, 1.0);
@@ -1239,14 +1397,27 @@ void EngineRuntime::run(std::stop_token stopToken) {
             const std::scoped_lock lock(snapshotMutex_);
             snapshot_ = frame.state;
         }
-        const auto maximumDynoDurationSeconds =
-            dynoMaximumDurationSeconds_.load(std::memory_order_relaxed);
+        const auto maximumDynoDurationSeconds = dynoActive_
+            ? activeDynoConfig_.maximumDurationSeconds
+            : dynoMaximumDurationSeconds_.load(std::memory_order_relaxed);
         const auto dynoStartupTimedOut = !dynoSweeping_.load(std::memory_order_relaxed)
             && dynoStartupElapsed >= maximumDynoDurationSeconds;
-        if (dynoActive_ && (dynoCompleted_.load(std::memory_order_relaxed)
-            || dynoElapsed >= maximumDynoDurationSeconds || dynoStartupTimedOut)) {
+        if (dynoActive_ && dynoCompleted_.load(std::memory_order_relaxed)) {
             dynoRequestedRunning_.store(false, std::memory_order_release);
-            finishDynoSession();
+            finishDynoSession(
+                DynoRunStatus::completed,
+                DynoStopReason::sweepCeilingReached);
+        } else if (dynoActive_ && dynoStartupTimedOut) {
+            dynoRequestedRunning_.store(false, std::memory_order_release);
+            finishDynoSession(
+                DynoRunStatus::timedOut,
+                DynoStopReason::startupTimeout);
+        } else if (dynoActive_
+                   && dynoElapsed >= maximumDynoDurationSeconds) {
+            dynoRequestedRunning_.store(false, std::memory_order_release);
+            finishDynoSession(
+                DynoRunStatus::timedOut,
+                DynoStopReason::acquisitionTimeout);
         }
         const auto now = Clock::now();
         const auto workFraction =

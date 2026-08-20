@@ -21,6 +21,7 @@ public:
     void paint(juce::Graphics&) override;
     void resized() override;
     void setOperatingPoint(double rpm, double normalizedLoad);
+    void setSessionLocked(bool locked);
 
 private:
     void timerCallback() override;
@@ -40,6 +41,7 @@ private:
     double operatingRpm_ {};
     double operatingLoad_ {};
     bool rebuilding_ { false };
+    bool sessionLocked_ { false };
 
     juce::ComboBox mapSelector_;
     juce::TextButton loadButton_ { "CHARGER" };
@@ -63,6 +65,7 @@ public:
     explicit EcuTunerWindow(std::shared_ptr<calibration::CalibrationStore> store);
     void closeButtonPressed() override;
     void setOperatingPoint(double rpm, double normalizedLoad);
+    void setSessionLocked(bool locked);
 
 private:
     EcuTunerComponent* tuner_ {};

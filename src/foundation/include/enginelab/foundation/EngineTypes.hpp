@@ -1085,6 +1085,54 @@ struct CylinderState final {
     double completedIgnitionPhaseLastCycle { -1.0 };
 };
 
+enum class DynoMode : std::uint8_t {
+    steppedCalibration,
+    continuousRamp,
+    hold
+};
+
+enum class DynoRunStatus : std::uint8_t {
+    idle,
+    running,
+    completed,
+    cancelled,
+    timedOut,
+    invalid
+};
+
+enum class DynoPhase : std::uint8_t {
+    idle,
+    preparing,
+    acquiring,
+    recovery,
+    terminal
+};
+
+enum class DynoStopReason : std::uint8_t {
+    none,
+    sweepCeilingReached,
+    operatorFinished,
+    operatorCancelled,
+    startupTimeout,
+    acquisitionTimeout,
+    runtimeStopped,
+    engineReconfigured,
+    insufficientValidData,
+    controllerFailure
+};
+
+struct DynoSessionConfig final {
+    DynoMode mode { DynoMode::continuousRamp };
+    /** Zero means derive the safe endpoint from the engine configuration. */
+    double sweepEntryRpm { 0.0 };
+    double sweepCeilingRpm { 0.0 };
+    double holdRpm { 2'500.0 };
+    double rampRateRpmPerSecond { 500.0 };
+    double binWidthRpm { 50.0 };
+    double rollingWindowSeconds { 0.25 };
+    double maximumDurationSeconds { 60.0 };
+};
+
 struct EngineState final {
     double simulationTimeSeconds { 0.0 };
     double rpm { 0.0 };
@@ -1338,6 +1386,9 @@ struct EngineState final {
      * differ in how the setpoint moves, which a user cannot read off a torque
      * curve while it is being drawn. */
     bool dynoRampEnabled { false };
+    DynoMode dynoMode { DynoMode::steppedCalibration };
+    DynoRunStatus dynoRunStatus { DynoRunStatus::idle };
+    DynoPhase dynoPhase { DynoPhase::idle };
     double dynoRampRpmPerSecond { 500.0 };
     /** User-facing brake-dyno session state. The preparation phase brings an
      * already-running engine to the first measurement speed without applying
@@ -1470,6 +1521,12 @@ struct DynoPoint final {
 struct DynoRun final {
     std::uint64_t id { 0 };
     std::string engineName;
+    DynoSessionConfig sessionConfig {};
+    DynoRunStatus status { DynoRunStatus::idle };
+    DynoStopReason stopReason { DynoStopReason::none };
+    std::uint64_t calibrationRevision { 0 };
+    double startedAtSimulationSeconds { 0.0 };
+    double endedAtSimulationSeconds { 0.0 };
     std::vector<DynoPoint> points;
     double peakTorqueNm { 0.0 };
     double peakPowerKw { 0.0 };

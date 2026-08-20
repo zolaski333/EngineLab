@@ -7,11 +7,7 @@
 
 namespace enginelab {
 
-enum class DynoAcquisitionMode : std::uint8_t {
-    steppedCalibration,
-    continuousRamp,
-    hold
-};
+using DynoAcquisitionMode = DynoMode;
 
 enum class DynoQualityReason : std::uint32_t {
     none = 0,

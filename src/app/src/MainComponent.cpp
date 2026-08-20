@@ -57,6 +57,61 @@ constexpr std::array<std::uint32_t, 8> curveColours {
     return juce::String(gear + 1);
 }
 
+[[nodiscard]] const char* dynoModeToken(DynoMode mode) noexcept {
+    switch (mode) {
+    case DynoMode::steppedCalibration: return "stepped_calibration";
+    case DynoMode::continuousRamp: return "continuous_ramp";
+    case DynoMode::hold: return "hold";
+    }
+    return "unknown";
+}
+
+[[nodiscard]] const char* dynoStatusToken(DynoRunStatus status) noexcept {
+    switch (status) {
+    case DynoRunStatus::idle: return "idle";
+    case DynoRunStatus::running: return "running";
+    case DynoRunStatus::completed: return "completed";
+    case DynoRunStatus::cancelled: return "cancelled";
+    case DynoRunStatus::timedOut: return "timed_out";
+    case DynoRunStatus::invalid: return "invalid";
+    }
+    return "unknown";
+}
+
+[[nodiscard]] const char* dynoStatusLabel(DynoRunStatus status) noexcept {
+    switch (status) {
+    case DynoRunStatus::idle: return "INACTIF";
+    case DynoRunStatus::running: return "EN COURS";
+    case DynoRunStatus::completed: return "TERMINÉ";
+    case DynoRunStatus::cancelled: return "ANNULÉ";
+    case DynoRunStatus::timedOut: return "TIMEOUT";
+    case DynoRunStatus::invalid: return "INVALIDE";
+    }
+    return "INCONNU";
+}
+
+[[nodiscard]] const char* dynoStopReasonToken(DynoStopReason reason) noexcept {
+    switch (reason) {
+    case DynoStopReason::none: return "none";
+    case DynoStopReason::sweepCeilingReached: return "sweep_ceiling_reached";
+    case DynoStopReason::operatorFinished: return "operator_finished";
+    case DynoStopReason::operatorCancelled: return "operator_cancelled";
+    case DynoStopReason::startupTimeout: return "startup_timeout";
+    case DynoStopReason::acquisitionTimeout: return "acquisition_timeout";
+    case DynoStopReason::runtimeStopped: return "runtime_stopped";
+    case DynoStopReason::engineReconfigured: return "engine_reconfigured";
+    case DynoStopReason::insufficientValidData: return "insufficient_valid_data";
+    case DynoStopReason::controllerFailure: return "controller_failure";
+    }
+    return "unknown";
+}
+
+[[nodiscard]] juce::String csvField(const std::string& source) {
+    auto value = juce::String::fromUTF8(source.c_str());
+    value = value.replace("\"", "\"\"");
+    return "\"" + value + "\"";
+}
+
 [[nodiscard]] double crankThrowMmFor(const EngineConfig& config, const CylinderConfig& cylinder) noexcept {
     if (cylinder.crankJournalId != 0) {
         const auto journal = std::find_if(config.crankJournals.begin(), config.crankJournals.end(),
@@ -137,8 +192,9 @@ MainComponent::MainComponent() {
     deleteRunButton_.onClick = [this] {
         const auto selected = historySelector_.getSelectedItemIndex();
         if (selected >= 0 && selected < static_cast<int>(archivedRuns_.size())) {
-            archivedRuns_.erase(archivedRuns_.begin() + selected);
-            updateHistorySelector();
+            (void)dynoArchive_->erase(
+                archivedRuns_[static_cast<std::size_t>(selected)].id);
+            collectFinishedRuns();
             if (!archivedRuns_.empty())
                 historySelector_.setSelectedItemIndex(std::min(selected, static_cast<int>(archivedRuns_.size()) - 1));
             repaint();
@@ -199,7 +255,9 @@ bool MainComponent::applyConfig(const EngineConfig& newConfig, bool preserveScri
         normaliseEngineConfig(canonicalConfig);
         if (const auto error = validateEngineConfig(canonicalConfig))
             throw std::invalid_argument(*error);
-        replacement = std::make_unique<EngineRuntime>(canonicalConfig, retainedCalibration);
+        replacement = std::make_unique<EngineRuntime>(
+            canonicalConfig, retainedCalibration,
+            EngineSimulatorOptions {}, dynoArchive_);
     } catch (const std::exception& error) {
         showError(utf8("Configuration moteur invalide"), juce::String::fromUTF8(error.what()));
         return false;
@@ -229,7 +287,6 @@ bool MainComponent::applyConfig(const EngineConfig& newConfig, bool preserveScri
     audio_ = std::make_unique<RealtimeEngineAudio>(runtime_->audioEvents(), runtime_->audioState(),
         &runtime_->cylinderPressureSamples(), &runtime_->exhaustGraph(),
         &runtime_->engineConfig(), &runtime_->exhaustAcousticSamples());
-    importedRunCount_ = 0;
     telemetryWrite_ = 0; telemetryCount_ = 0;
     runtime_->setThrottle(throttleSlider_.getValue() / 100.0);
     runtime_->setLoad(loadSlider_.getValue() / 100.0);
@@ -440,6 +497,7 @@ void MainComponent::showEcuTuner() {
     if (!runtime_) return;
     if (!ecuTunerWindow_)
         ecuTunerWindow_ = std::make_unique<EcuTunerWindow>(runtime_->calibrationStore());
+    ecuTunerWindow_->setSessionLocked(runtime_->dynoRunning());
     ecuTunerWindow_->setVisible(true);
     ecuTunerWindow_->toFront(true);
 }
@@ -717,10 +775,33 @@ void MainComponent::exportDynoCsv() {
     else if (!archivedRuns_.empty()) run = &archivedRuns_.back();
     else if (!visibleCurrentRun_.points.empty()) run = &visibleCurrentRun_;
     if (run == nullptr) { showError("CSV DYNO", utf8("Aucune courbe à exporter.")); return; }
-    juce::String csv = "rpm;valid;quality_reasons;bin_rpm;window_mean_rpm;window_min_rpm;window_max_rpm;window_duration_s;torque_variance_nm2;first_cycle_id;last_cycle_id;accepted_cycle_count;"
-        "torque_nm;power_kw;actual_afr;target_afr;lambda;volumetric_efficiency;air_flow_g_s;fuel_flow_g_s;bsfc_g_kwh;map_kpa;"
-        "exhaust_pressure_kpa;coolant_c;oil_c;oil_pressure_kpa;exhaust_c;ignition_advance_deg;correction_factor;"
-        "corrected_torque_nm;corrected_power_kw\n";
+    juce::String csv;
+    csv << "#schema;enginelab-dyno-v2\n"
+        << "#run_id;" << juce::String(static_cast<juce::int64>(run->id)) << '\n'
+        << "#engine;" << csvField(run->engineName) << '\n'
+        << "#status;" << dynoStatusToken(run->status) << '\n'
+        << "#stop_reason;" << dynoStopReasonToken(run->stopReason) << '\n'
+        << "#mode;" << dynoModeToken(run->sessionConfig.mode) << '\n'
+        << "#calibration_revision;"
+        << juce::String(static_cast<juce::int64>(run->calibrationRevision)) << '\n'
+        << "#started_simulation_s;"
+        << juce::String(run->startedAtSimulationSeconds, 6) << '\n'
+        << "#ended_simulation_s;"
+        << juce::String(run->endedAtSimulationSeconds, 6) << '\n'
+        << "#sweep_entry_rpm;"
+        << juce::String(run->sessionConfig.sweepEntryRpm, 3) << '\n'
+        << "#sweep_ceiling_rpm;"
+        << juce::String(run->sessionConfig.sweepCeilingRpm, 3) << '\n'
+        << "#ramp_rate_rpm_s;"
+        << juce::String(run->sessionConfig.rampRateRpmPerSecond, 3) << '\n'
+        << "#bin_width_rpm;"
+        << juce::String(run->sessionConfig.binWidthRpm, 3) << '\n'
+        << "#rolling_window_s;"
+        << juce::String(run->sessionConfig.rollingWindowSeconds, 6) << '\n'
+        << "rpm;valid;quality_reasons;bin_rpm;window_mean_rpm;window_min_rpm;window_max_rpm;window_duration_s;torque_variance_nm2;first_cycle_id;last_cycle_id;accepted_cycle_count;"
+        << "torque_nm;power_kw;actual_afr;target_afr;lambda;volumetric_efficiency;air_flow_g_s;fuel_flow_g_s;bsfc_g_kwh;map_kpa;"
+        << "exhaust_pressure_kpa;coolant_c;oil_c;oil_pressure_kpa;exhaust_c;ignition_advance_deg;correction_factor;"
+        << "corrected_torque_nm;corrected_power_kw\n";
     for (const auto& point : run->points) {
         csv << juce::String(point.rpm, 1) << ';' << (point.valid ? "1" : "0") << ';'
             << juce::String(static_cast<juce::int64>(point.qualityReasons)) << ';'
@@ -794,15 +875,11 @@ void MainComponent::configureSlider(juce::Slider& slider, double min, double max
 }
 
 void MainComponent::collectFinishedRuns() {
-    if (!runtime_) return;
-    const auto runs = runtime_->dynoHistory();
-    bool changed = false;
-    for (auto index = importedRunCount_; index < runs.size(); ++index) {
-        auto run = runs[index]; run.id = nextUiRunId_++; archivedRuns_.push_back(std::move(run));
-        changed = true;
-    }
-    importedRunCount_ = runs.size();
-    if (changed) updateHistorySelector();
+    const auto revision = dynoArchive_->revision();
+    if (revision == visibleDynoArchiveRevision_) return;
+    archivedRuns_ = dynoArchive_->snapshot();
+    visibleDynoArchiveRevision_ = revision;
+    updateHistorySelector();
 }
 
 void MainComponent::updateHistorySelector() {
@@ -810,12 +887,22 @@ void MainComponent::updateHistorySelector() {
     historySelector_.clear(juce::dontSendNotification);
     for (int index = 0; index < static_cast<int>(archivedRuns_.size()); ++index) {
         const auto& run = archivedRuns_[static_cast<std::size_t>(index)];
+        const auto validPoints = std::count_if(
+            run.points.begin(), run.points.end(),
+            [](const DynoPoint& point) { return point.valid; });
         historySelector_.addItem(juce::String(run.engineName) + "  #" + juce::String(run.id)
-            + "  " + juce::String(run.peakCorrectedPowerKw > 0.0 ? run.peakCorrectedPowerKw : run.peakPowerKw, 1)
+            + "  [" + dynoStatusLabel(run.status) + "]  "
+            + juce::String(static_cast<int>(validPoints)) + " pts  ·  "
+            + juce::String(run.peakCorrectedPowerKw > 0.0
+                ? run.peakCorrectedPowerKw : run.peakPowerKw, 1)
             + " kW corr.", index + 1);
     }
     if (previousSelection >= 0 && previousSelection < static_cast<int>(archivedRuns_.size()))
         historySelector_.setSelectedItemIndex(previousSelection, juce::dontSendNotification);
+    else if (!archivedRuns_.empty())
+        historySelector_.setSelectedItemIndex(
+            static_cast<int>(archivedRuns_.size()) - 1,
+            juce::dontSendNotification);
 }
 
 void MainComponent::setThrottlePreset(double value) {
@@ -1056,6 +1143,7 @@ void MainComponent::timerCallback() {
     visibleDiagnostics_ = diagnostics_.evaluate(config_, visibleState_);
     collectFinishedRuns();
     const auto running = runtime_->dynoRunning();
+    if (ecuTunerWindow_) ecuTunerWindow_->setSessionLocked(running);
     title_.setText("EngineLab   /   " + juce::String(config_.name) + "   /   "
         + juce::String(engineDisplacementLitres(config_), 2) + " L   /   "
         + (runtime_->paused() ? juce::String("PAUSE") : "x" + juce::String(runtime_->timeScale(), 1))
@@ -1067,7 +1155,9 @@ void MainComponent::timerCallback() {
     dynoButton_.setButtonText(running
         ? (visibleState_.dynoPreparing
             ? utf8("D  ANNULER PRÉPA")
-            : utf8("D  ARRÊTER DYNO"))
+            : (visibleState_.dynoMode == DynoMode::hold
+                ? utf8("D  TERMINER HOLD")
+                : utf8("D  ANNULER DYNO")))
         : juce::String("D  LANCER DYNO"));
     dynoButton_.setToggleState(running, juce::dontSendNotification);
     ignitionButton_.setEnabled(!running);
@@ -1075,6 +1165,7 @@ void MainComponent::timerCallback() {
     engineSelector_.setEnabled(!running);
     exhaustPresetSelector_.setEnabled(!physicalExhaustTopology_);
     editButton_.setEnabled(!running); importButton_.setEnabled(!running);
+    ecuTunerButton_.setEnabled(!running);
     exhaustDesignerButton_.setEnabled(!running);
     for (auto* slider : { &throttleSlider_, &loadSlider_, &afrSlider_, &advanceSlider_ }) slider->setEnabled(!running);
     repaint();
@@ -1815,16 +1906,33 @@ void MainComponent::drawDynoChart(juce::Graphics& g, juce::Rectangle<float> area
     if (visibleState_.dynoActive) {
         g.setColour(visibleState_.dynoPreparing
             ? juce::Colour(0xffffca55) : juce::Colour(0xff79b89f));
-        const auto status = visibleState_.dynoPreparing
-            ? utf8("PRÉPARATION PROGRESSIVE  →  ")
+        const auto status = visibleState_.dynoPhase == DynoPhase::recovery
+            ? utf8("RÉCUPÉRATION CONTRÔLEUR  →  ")
                 + juce::String(visibleState_.dynoTargetRpm, 0) + " RPM"
-            : utf8("MESURE  ")
-                + juce::String(visibleState_.dynoTargetRpm, 0) + " RPM  ·  "
-                + juce::String(visibleState_.dynoProgress * 100.0, 0) + " %";
+            : (visibleState_.dynoPreparing
+                ? utf8("PRÉPARATION PROGRESSIVE  →  ")
+                    + juce::String(visibleState_.dynoTargetRpm, 0) + " RPM"
+                : utf8("MESURE  ")
+                    + juce::String(visibleState_.dynoTargetRpm, 0) + " RPM  ·  "
+                    + juce::String(visibleState_.dynoProgress * 100.0, 0) + " %");
         g.drawText(status,
             juce::Rectangle<float>(plot.getX(), plot.getY() - 20.0F,
                                    plot.getWidth(), 18.0F),
             juce::Justification::centredLeft);
+    } else {
+        const auto selected = historySelector_.getSelectedItemIndex();
+        if (selected >= 0
+            && selected < static_cast<int>(archivedRuns_.size())) {
+            const auto& run = archivedRuns_[static_cast<std::size_t>(selected)];
+            g.setColour(run.status == DynoRunStatus::completed
+                ? juce::Colour(0xff79b89f) : juce::Colour(0xffffca55));
+            g.drawText(juce::String(dynoStatusLabel(run.status)) + "  ·  "
+                    + juce::String(dynoModeToken(run.sessionConfig.mode))
+                    + "  ·  #" + juce::String(run.id),
+                juce::Rectangle<float>(plot.getX(), plot.getY() - 20.0F,
+                                       plot.getWidth(), 18.0F),
+                juce::Justification::centredLeft);
+        }
     }
     double maxTorque = 100.0;
     double maxPower = 75.0;

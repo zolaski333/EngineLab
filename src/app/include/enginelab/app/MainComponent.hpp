@@ -17,6 +17,7 @@
 #include <memory>
 #include <array>
 #include <filesystem>
+#include <limits>
 
 namespace enginelab {
 /** Desktop presentation layer. It only writes controls and renders snapshots. */
@@ -95,10 +96,12 @@ private:
     RenderSnapshotInterpolator renderSnapshotInterpolator_;
     RenderSnapshot visibleRenderSnapshot_;
     DynoRun visibleCurrentRun_;
+    std::shared_ptr<DynoRunArchive> dynoArchive_ {
+        std::make_shared<DynoRunArchive>() };
     std::vector<DynoRun> archivedRuns_;
     std::vector<Diagnostic> visibleDiagnostics_;
-    std::size_t importedRunCount_ { 0 };
-    std::uint64_t nextUiRunId_ { 1 };
+    std::uint64_t visibleDynoArchiveRevision_ {
+        std::numeric_limits<std::uint64_t>::max() };
     bool starterKeyDown_ { false };
     bool brakeKeyDown_ { false };
     bool throttleKeyActive_ { false };

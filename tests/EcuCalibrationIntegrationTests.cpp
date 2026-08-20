@@ -59,6 +59,29 @@ int main() {
                 "ECU should consume the live ignition table");
     require(command.sparkEnabled, "spark should remain enabled below the calibrated limiter");
 
+    const auto pinnedRevision = ecu.pinCalibrationSnapshot();
+    auto nextDraft = enginelab::calibration::makeDraft(
+        *ecu.calibrationStore()->snapshot());
+    auto nextAfr = *nextDraft.find(
+        enginelab::calibration::keys::targetAirFuelRatio);
+    auto& nextAfrTable = std::get<
+        enginelab::calibration::CalibrationTable2D>(nextAfr);
+    std::fill(nextAfrTable.values.begin(), nextAfrTable.values.end(), 13.25);
+    nextDraft.set(std::move(nextAfr));
+    const auto nextPublish = ecu.calibrationStore()->publish(nextDraft);
+    require(nextPublish.published
+            && nextPublish.activeRevision == pinnedRevision + 1,
+            "a tuner may publish the calibration intended for the next run");
+    ecu.beginFrame();
+    requireNear(ecu.evaluate(config, state, controls).targetAirFuelRatio,
+                12.5, 1.0e-12,
+                "a pinned measurement must ignore mid-session ECU publishes");
+    ecu.releasePinnedCalibrationSnapshot();
+    ecu.beginFrame();
+    requireNear(ecu.evaluate(config, state, controls).targetAirFuelRatio,
+                13.25, 1.0e-12,
+                "the newest ECU revision must become active after the session releases its pin");
+
     state.rpm = 2'600.0;
     state.simulationTimeSeconds = 1.0;
     const auto limited = ecu.evaluate(config, state, controls);

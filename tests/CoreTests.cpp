@@ -2991,7 +2991,8 @@ int main() {
         // ladder. What separates the two is not the speed of the sweep but its
         // SPACING: the stepped sweep advances the setpoint by exactly 250 rpm
         // after each settled window, so its points land on a ladder, while a
-        // ramp is paced by the engine and lands wherever the engine got to.
+        // ramp is paced continuously while its recorder publishes an explicit
+        // 50 rpm grid independently of the rolling measurement cadence.
         //
         // Both modes have to keep working. The stepped sweep stays the
         // calibration instrument -- EngineLab.CatalogReference measures its 24
@@ -3001,8 +3002,16 @@ int main() {
             enginelab::makeDefaultInlineTwo());
         auto& rampRuntime = *rampOwner;
         rampRuntime.setRealtimeThrottleEnabled(false);
+        require(rampRuntime.dynoRampEnabled(),
+                "the user-facing dyno must default to a continuous ramp");
+        rampRuntime.setDynoHoldEnabled(true);
+        require(rampRuntime.dynoHoldEnabled()
+                && !rampRuntime.dynoRampEnabled(),
+                "dyno modes must be mutually exclusive");
         rampRuntime.setDynoRampEnabled(true);
-        require(rampRuntime.dynoRampEnabled(), "ramp mode must latch when set");
+        require(rampRuntime.dynoRampEnabled()
+                && !rampRuntime.dynoHoldEnabled(),
+                "selecting ramp must atomically replace hold mode");
         // The recorder is now independent of its rolling window: it publishes
         // one explicit valid/invalid record on an exact 50 rpm grid. Keep a
         // low rate so this regression finishes quickly without stressing the
@@ -3012,6 +3021,15 @@ int main() {
         rampRuntime.setIgnitionEnabled(true);
         rampRuntime.start();
         rampRuntime.startDyno();
+        // Once start has accepted a protocol, menu/key commands are ignored.
+        // They cannot relabel or retune an in-flight measurement.
+        rampRuntime.setDynoHoldEnabled(true);
+        rampRuntime.setDynoRampRpmPerSecond(900.0);
+        require(rampRuntime.dynoRampEnabled()
+                && !rampRuntime.dynoHoldEnabled()
+                && std::abs(rampRuntime.dynoRampRpmPerSecond() - 150.0)
+                    < 1.0e-9,
+                "an active dyno session must keep an immutable mode and ramp rate");
         auto rampRun = rampRuntime.currentDynoRun();
         std::array<std::uint32_t, 11> rampQualityObservations {};
         auto minimumRampContact = 1.0;
@@ -3087,6 +3105,37 @@ int main() {
             + ", window=" + std::to_string(lastRampWindowMean);
         require(std::abs(widestSpacingRpm - 50.0) < 1.0e-6,
                 rampSpacingDiagnostic.c_str());
+        require(rampRun.status == enginelab::DynoRunStatus::running
+                && rampRun.calibrationRevision > 0
+                && rampRun.sessionConfig.mode
+                    == enginelab::DynoMode::continuousRamp
+                && std::abs(rampRun.sessionConfig.rampRateRpmPerSecond
+                    - 150.0) < 1.0e-9
+                && std::abs(rampRun.sessionConfig.binWidthRpm - 50.0)
+                    < 1.0e-9,
+                "the live run must retain the exact accepted session protocol");
+        const auto liveState = rampRuntime.snapshot();
+        require(liveState.dynoMode == enginelab::DynoMode::continuousRamp
+                && liveState.dynoRunStatus
+                    == enginelab::DynoRunStatus::running
+                && liveState.dynoPhase == enginelab::DynoPhase::acquiring,
+                "product state must expose the active dyno mode, status and phase");
+        rampRuntime.stopDyno();
+        const auto stopDeadline = std::chrono::steady_clock::now()
+            + std::chrono::seconds(2);
+        while (rampRuntime.dynoRunning()
+               && std::chrono::steady_clock::now() < stopDeadline)
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        const auto cancelledRuns = rampRuntime.dynoHistory();
+        require(!rampRuntime.dynoRunning()
+                && rampRuntime.dynoRunStatus()
+                    == enginelab::DynoRunStatus::cancelled
+                && cancelledRuns.size() == 1
+                && cancelledRuns.front().status
+                    == enginelab::DynoRunStatus::cancelled
+                && cancelledRuns.front().stopReason
+                    == enginelab::DynoStopReason::operatorCancelled,
+                "an operator-stopped ramp must be archived explicitly as cancelled");
     }
 
     {
@@ -3130,6 +3179,7 @@ int main() {
 
     {
         enginelab::EngineRuntime runtime(enginelab::makeDefaultInlineTwo());
+        runtime.setDynoMode(enginelab::DynoMode::steppedCalibration);
         runtime.setIgnitionEnabled(false);
         runtime.setThrottle(0.31);
         runtime.setLoad(0.27);

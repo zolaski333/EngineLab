@@ -12,6 +12,7 @@
 #include <enginelab/runtime/DrivelineModel.hpp>
 #include <enginelab/runtime/DynoEstimator.hpp>
 #include <enginelab/runtime/DynoQualityGate.hpp>
+#include <enginelab/runtime/DynoRunArchive.hpp>
 #include <enginelab/runtime/RealtimeLoadGovernor.hpp>
 #include <algorithm>
 #include <atomic>
@@ -167,7 +168,8 @@ class EngineRuntime final {
 public:
     explicit EngineRuntime(EngineConfig,
                            std::shared_ptr<calibration::CalibrationStore> calibrations = {},
-                           EngineSimulatorOptions simulatorOptions = {});
+                           EngineSimulatorOptions simulatorOptions = {},
+                           std::shared_ptr<DynoRunArchive> dynoArchive = {});
     ~EngineRuntime();
     EngineRuntime(const EngineRuntime&) = delete;
     EngineRuntime& operator=(const EngineRuntime&) = delete;
@@ -182,7 +184,11 @@ public:
     void shiftUp() noexcept;
     void shiftDown() noexcept;
     void setGear(int gear) noexcept;
-    void setDynoHoldEnabled(bool value) noexcept { dynoHoldEnabled_.store(value); }
+    void setDynoMode(DynoMode value) noexcept;
+    [[nodiscard]] DynoMode dynoMode() const noexcept {
+        return configuredDynoMode_.load(std::memory_order_relaxed);
+    }
+    void setDynoHoldEnabled(bool value) noexcept;
     /**
      * Continuous-ramp sweep, the bench a user recognises, instead of the
      * stepped one.
@@ -191,19 +197,22 @@ public:
      * jumps 250 rpm. Every step is a setpoint edge the engine may fail to
      * follow, and it is not what a chassis dyno does. A ramp raises the target
      * continuously and -- this is the part that matters -- **only while the
-     * engine is genuinely producing torque**, decaying otherwise, so it can
-     * never outrun the engine and needs no per-engine tuning.
+     * engine has produced one complete, accepted rolling window. A rejected
+     * observation freezes the target exactly; it never invents a reverse ramp.
      *
-     * OFF by default. The stepped sweep stays the calibration instrument:
-     * EngineLab.CatalogReference measures its 24 manufacturer points in steady
-     * state and must not be moved onto a transient.
+     * This is the product default. The stepped sweep stays available as the
+     * explicit calibration instrument: EngineLab.CatalogReference measures its
+     * manufacturer points in steady state and must not be moved onto a transient.
      */
-    void setDynoRampEnabled(bool value) noexcept { dynoRampEnabled_.store(value); }
-    [[nodiscard]] bool dynoRampEnabled() const noexcept { return dynoRampEnabled_.load(); }
+    void setDynoRampEnabled(bool value) noexcept;
+    [[nodiscard]] bool dynoRampEnabled() const noexcept {
+        return dynoMode() == DynoMode::continuousRamp;
+    }
     /** Ramp rate, rpm per second. ES2D uses 500; the useful range is narrow
      *  because a fast ramp biases filling and wall temperature, not just
      *  inertia. */
     void setDynoRampRpmPerSecond(double value) noexcept {
+        if (dynoSessionActive_.load(std::memory_order_acquire)) return;
         dynoRampRpmPerSecond_.store(
             std::isfinite(value) ? std::clamp(value, 50.0, 2'000.0) : 500.0);
     }
@@ -235,20 +244,37 @@ public:
             static_cast<float>(std::clamp(value, 100.0, 180.0)));
     }
     void setExhaustPreset(AudioExhaustPreset value) noexcept { audioState_.exhaustPreset.store(static_cast<int>(value), std::memory_order_relaxed); }
-    [[nodiscard]] bool dynoHoldEnabled() const noexcept { return dynoHoldEnabled_.load(); }
+    [[nodiscard]] bool dynoHoldEnabled() const noexcept {
+        return dynoMode() == DynoMode::hold;
+    }
     [[nodiscard]] double dynoHoldRpm() const noexcept { return dynoHoldRpm_.load(); }
-    void setAirFuelRatioTrim(double value) noexcept { ecu_.setAirFuelRatioTrim(value); }
-    void setTargetAirFuelRatio(double value) noexcept { ecu_.setTargetAirFuelRatio(value); }
-    void setIgnitionTrimDegrees(double value) noexcept { ecu_.setIgnitionTrimDegrees(value); }
+    void setAirFuelRatioTrim(double value) noexcept {
+        if (!dynoSessionActive_.load(std::memory_order_acquire))
+            ecu_.setAirFuelRatioTrim(value);
+    }
+    void setTargetAirFuelRatio(double value) noexcept {
+        if (!dynoSessionActive_.load(std::memory_order_acquire))
+            ecu_.setTargetAirFuelRatio(value);
+    }
+    void setIgnitionTrimDegrees(double value) noexcept {
+        if (!dynoSessionActive_.load(std::memory_order_acquire))
+            ecu_.setIgnitionTrimDegrees(value);
+    }
     void setIgnitionAdvanceDegrees(double value) noexcept { setIgnitionTrimDegrees(value); }
     void setPaused(bool value) noexcept { paused_.store(value); }
     void setTimeScale(double value) noexcept { timeScale_.store(std::isfinite(value) ? std::clamp(value, 0.25, 4.0) : 1.0); }
     [[nodiscard]] bool paused() const noexcept { return paused_.load(); }
     [[nodiscard]] double timeScale() const noexcept { return timeScale_.load(); }
     void startDyno();
+    void startDyno(DynoSessionConfig config);
+    /** Requests an operator stop. Ramp/stepped runs are archived as cancelled;
+     * a hold with a valid aggregate is a completed operator measurement. */
     void stopDyno();
     [[nodiscard]] bool dynoRunning() const noexcept {
-        return dynoRequestedRunning_.load(std::memory_order_acquire);
+        return dynoSessionActive_.load(std::memory_order_acquire);
+    }
+    [[nodiscard]] DynoRunStatus dynoRunStatus() const noexcept {
+        return dynoRunStatus_.load(std::memory_order_acquire);
     }
     [[nodiscard]] DynoRun currentDynoRun() const;
     [[nodiscard]] std::vector<DynoRun> dynoHistory() const;
@@ -332,7 +358,8 @@ public:
      * high-load setpoint to settle. The application keeps the 60 s default
      * proven by the complete user-dyno catalogue sweep. */
     void setDynoMaximumDurationSeconds(double seconds) noexcept {
-        if (std::isfinite(seconds))
+        if (std::isfinite(seconds)
+            && !dynoSessionActive_.load(std::memory_order_acquire))
             dynoMaximumDurationSeconds_.store(
                 std::clamp(seconds, 30.0, 300.0),
                 std::memory_order_relaxed);
@@ -340,7 +367,8 @@ public:
 private:
     void run(std::stop_token stopToken);
     void beginDynoSession();
-    void finishDynoSession();
+    void finishDynoSession(DynoRunStatus status,
+                           DynoStopReason reason);
     void updateDriveline(double dtSeconds, const EngineState& engineState,
                          double requestedLoad) noexcept;
     EngineConfig config_;
@@ -371,9 +399,9 @@ private:
     std::atomic<double> brakePressure_ { 0.0 };
     std::atomic<int> gear_ { -1 };
     std::atomic<std::uint64_t> gearCommandGeneration_ { 0 };
-    std::atomic<bool> dynoHoldEnabled_ { false };
+    std::atomic<DynoMode> configuredDynoMode_ {
+        DynoMode::continuousRamp };
     std::atomic<double> dynoHoldRpm_ { 2'500.0 };
-    std::atomic<bool> dynoRampEnabled_ { false };
     std::atomic<double> dynoRampRpmPerSecond_ { 500.0 };
     std::atomic<std::uint64_t> droppedEvents_ { 0 };
     std::atomic<std::uint64_t> droppedPressureSamples_ { 0 };
@@ -395,11 +423,16 @@ private:
     // UI writes only the desired state. The simulation thread owns all mutable
     // session fields below and reconciles this mailbox once per tick.
     std::atomic<bool> dynoRequestedRunning_ { false };
+    std::atomic<bool> dynoSessionActive_ { false };
+    std::atomic<DynoRunStatus> dynoRunStatus_ { DynoRunStatus::idle };
     bool dynoActive_ { false };
     mutable std::mutex dynoMutex_;
     DynoRun currentRun_;
-    std::vector<DynoRun> dynoHistory_;
-    std::uint64_t nextDynoId_ { 1 };
+    std::shared_ptr<DynoRunArchive> dynoArchive_;
+    std::shared_ptr<const calibration::CalibrationSnapshot>
+        pendingDynoCalibration_;
+    DynoSessionConfig pendingDynoConfig_ {};
+    DynoSessionConfig activeDynoConfig_ {};
     double dynoElapsed_ { 0.0 };
     double dynoStartupElapsed_ { 0.0 };
     double nextSampleRpm_ { 0.0 };

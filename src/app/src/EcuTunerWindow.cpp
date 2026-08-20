@@ -85,6 +85,24 @@ void EcuTunerComponent::setOperatingPoint(double rpm, double normalizedLoad) {
     repaint();
 }
 
+void EcuTunerComponent::setSessionLocked(bool locked) {
+    if (sessionLocked_ == locked) return;
+    sessionLocked_ = locked;
+    loadButton_.setEnabled(!locked);
+    refreshButton_.setEnabled(!locked);
+    if (!locked) {
+        reloadFromSnapshot();
+        return;
+    }
+    for (auto& editor : valueEditors_)
+        editor->setReadOnly(locked);
+    statusLabel_.setText(locked
+        ? "SESSION DYNO · RÉVISION " + juce::String(baseRevision_)
+            + " ÉPINGLÉE · ÉDITION VERROUILLÉE"
+        : "RÉVISION " + juce::String(baseRevision_) + "  ·  MODE LIVE",
+        juce::dontSendNotification);
+}
+
 juce::String EcuTunerComponent::selectedCalibrationId() const {
     return mapSelector_.getText();
 }
@@ -203,6 +221,8 @@ void EcuTunerComponent::rebuildCells() {
     }
 
     updateActiveCellHighlight();
+    for (auto& editor : valueEditors_)
+        editor->setReadOnly(sessionLocked_);
     rebuilding_ = false;
     resized();
     repaint();
@@ -232,7 +252,8 @@ void EcuTunerComponent::updateActiveCellHighlight() {
 }
 
 void EcuTunerComponent::commitCell(std::size_t valueIndex) {
-    if (rebuilding_ || valueIndex >= valueEditors_.size()) return;
+    if (rebuilding_ || sessionLocked_
+        || valueIndex >= valueEditors_.size()) return;
     const auto text = valueEditors_[valueIndex]->getText().trim();
     if (valueIndex < committedTexts_.size() && text == committedTexts_[valueIndex]) return;
     double value = 0.0;
@@ -284,6 +305,7 @@ void EcuTunerComponent::showIssues(const calibration::PublishResult& result,
 }
 
 void EcuTunerComponent::chooseCalibrationToLoad() {
+    if (sessionLocked_) return;
     fileChooser_ = std::make_unique<juce::FileChooser>("Charger une calibration ECU",
                                                        juce::File {}, "*.ecu.json;*.json");
     auto safe = juce::Component::SafePointer<EcuTunerComponent>(this);
@@ -334,6 +356,7 @@ void EcuTunerComponent::chooseCalibrationToSave() {
 }
 
 void EcuTunerComponent::timerCallback() {
+    if (sessionLocked_) return;
     const auto reload = hotReloader_->poll();
     if (reload.changed) {
         if (reload.published()) reloadFromSnapshot();
@@ -404,6 +427,10 @@ void EcuTunerWindow::closeButtonPressed() { setVisible(false); }
 
 void EcuTunerWindow::setOperatingPoint(double rpm, double normalizedLoad) {
     if (tuner_ != nullptr) tuner_->setOperatingPoint(rpm, normalizedLoad);
+}
+
+void EcuTunerWindow::setSessionLocked(bool locked) {
+    if (tuner_ != nullptr) tuner_->setSessionLocked(locked);
 }
 
 } // namespace enginelab

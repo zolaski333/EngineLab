@@ -2,7 +2,8 @@ add_library(EngineLabRuntime STATIC
     src/EngineRuntime.cpp
     src/DrivelineModel.cpp
     src/DynoEstimator.cpp
-    src/DynoQualityGate.cpp)
+    src/DynoQualityGate.cpp
+    src/DynoRunArchive.cpp)
 add_library(EngineLab::Runtime ALIAS EngineLabRuntime)
 target_include_directories(EngineLabRuntime PUBLIC include)
 target_link_libraries(EngineLabRuntime PUBLIC EngineLab::Simulation EngineLab::Ecu EngineLab::Physics EngineLab::Events EngineLab::Exhaust)

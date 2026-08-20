@@ -47,6 +47,11 @@ target_link_libraries(EngineLabDynoQualityGateTests PRIVATE EngineLab::Runtime)
 enginelab_set_warnings(EngineLabDynoQualityGateTests)
 add_test(NAME EngineLab.DynoQualityGate COMMAND EngineLabDynoQualityGateTests)
 
+add_executable(EngineLabDynoRunArchiveTests DynoRunArchiveTests.cpp)
+target_link_libraries(EngineLabDynoRunArchiveTests PRIVATE EngineLab::Runtime)
+enginelab_set_warnings(EngineLabDynoRunArchiveTests)
+add_test(NAME EngineLab.DynoRunArchive COMMAND EngineLabDynoRunArchiveTests)
+
 add_executable(EngineLabStructuralNvhTests StructuralNvhTests.cpp)
 target_link_libraries(EngineLabStructuralNvhTests PRIVATE
     EngineLab::Audio EngineLab::Serialization EngineLab::Catalog)

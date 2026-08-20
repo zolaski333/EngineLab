@@ -59,6 +59,9 @@ struct Result final {
     std::uint32_t invalidQualityReasons {};
     double lastRecordedRpm {};
     bool exactRampGrid { false };
+    enginelab::DynoRunStatus runStatus { enginelab::DynoRunStatus::idle };
+    enginelab::DynoStopReason stopReason { enginelab::DynoStopReason::none };
+    enginelab::DynoSessionConfig sessionConfig {};
     std::uint32_t recoveryCount {};
     double finalRpm {};
     double finalTargetRpm {};
@@ -166,6 +169,9 @@ struct Result final {
             run = history.back();
     }
     result.pointCount = validPointCount(run);
+    result.runStatus = run.status;
+    result.stopReason = run.stopReason;
+    result.sessionConfig = run.sessionConfig;
     result.totalPointCount = run.points.size();
     for (const auto& point : run.points) {
         if (!point.valid) {
@@ -228,6 +234,18 @@ struct Result final {
             + std::to_string(result.totalPointCount)
             + " invalidMask=" + std::to_string(result.invalidQualityReasons)
             + " exactGrid=" + (result.exactRampGrid ? "yes" : "no");
+    else if (completeSweep
+             && (result.runStatus != enginelab::DynoRunStatus::completed
+                 || result.stopReason
+                    != enginelab::DynoStopReason::sweepCeilingReached
+                 || result.sessionConfig.mode
+                    != enginelab::DynoMode::continuousRamp
+                 || run.calibrationRevision == 0
+                 || std::abs(result.sessionConfig.rampRateRpmPerSecond
+                    - 500.0) > 1.0e-9
+                 || std::abs(result.sessionConfig.binWidthRpm - 50.0)
+                    > 1.0e-9))
+        result.failure = "completed sweep lost its terminal status or accepted protocol";
     return result;
 }
 }
