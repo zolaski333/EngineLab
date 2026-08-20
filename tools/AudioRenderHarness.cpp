@@ -77,6 +77,12 @@ EngineSimulatorOptions renderSimulatorOptions;
 // Render chunk size within each simulation step; see the invariance probe at
 // the render call. 200 reproduces the historical single-call behaviour.
 int audioChunkSamples = 200;
+// Starter release ends at 1.1 s and the dyno controller starts at 1.2 s. The
+// slowest catalogue charge path (EA288 diesel) still crosses the final 2-3 s
+// window with an intake filling transient, whose single peak gives a false
+// steady-state crest of 18.42. Four seconds keeps the one-second analysis window
+// after that transition; dedicated transient modes continue to test the edges.
+constexpr double catalogueSteadyRenderSeconds = 4.0;
 
 std::uint32_t readU32(const unsigned char* p) {
     return static_cast<std::uint32_t>(p[0]) | (static_cast<std::uint32_t>(p[1]) << 8)
@@ -2172,7 +2178,9 @@ int main(int argc, char** argv) {
                 return entry.config.name.find(catalogueFilter) != std::string::npos;
             });
         if (selected == catalog.entries.end()) return 2;
-        const auto metrics = renderEngine(selected->config, ir, outDir, 3.0, true);
+        const auto metrics = renderEngine(
+            selected->config, ir, outDir,
+            catalogueSteadyRenderSeconds, true);
         return metrics.physicalActive && metrics.compiledTopologyActive
             && metrics.structuralRadiationActive && metrics.intakeTopologyActive
             && metrics.left.scan.finite && metrics.right.scan.finite
@@ -2257,18 +2265,14 @@ int main(int argc, char** argv) {
     const auto stability = renderEngine(makeDefaultInlineFour(), ir, outDir, 25.0, false);
 
     const auto catalog = loadEngineCatalog(std::filesystem::path(ENGINELAB_CATALOG_ROOT));
-    std::cout << "\n--- Complete catalogue render (3.0 s each) ---\n";
+    std::cout << "\n--- Complete catalogue render (4.0 s each) ---\n";
     std::filesystem::create_directories(outDir / "catalogue");
     std::vector<std::pair<std::string, Metrics>> catalogueMetrics;
     catalogueMetrics.reserve(catalog.entries.size());
     for (const auto& entry : catalog.entries)
         catalogueMetrics.emplace_back(entry.config.name,
-            // Starter release ends at 1.1 s and the dyno begins at 1.2 s. A
-            // two-second capture made the "final steady-state" window include
-            // that load transition, so a legitimate Merlin firing pulse was
-            // divided by a transitional RMS and misclassified as an isolated
-            // click. Three seconds leaves a complete settled analysis window.
-            renderEngine(entry.config, ir, outDir / "catalogue", 3.0, true));
+            renderEngine(entry.config, ir, outDir / "catalogue",
+                catalogueSteadyRenderSeconds, true));
     const auto idleEngine = std::find_if(catalog.entries.begin(), catalog.entries.end(),
         [](const auto& entry) {
             return entry.config.name.find("Big Twin") != std::string::npos;

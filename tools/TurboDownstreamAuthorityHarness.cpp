@@ -40,6 +40,7 @@
 #include <array>
 #include <cmath>
 #include <cstdlib>
+#include <exception>
 #include <iomanip>
 #include <iostream>
 #include <string>
@@ -79,10 +80,6 @@ struct Point final {
     // charged with, and the question here is specifically whether what happens
     // AFTER the turbine reaches the engine.
     config.exhaust.outletDiameterMm = outletDiameterMm;
-    if (config.exhaust.mufflerChamberDiameterMm > 1.0)
-        config.exhaust.mufflerChamberDiameterMm = std::max(
-            config.exhaust.mufflerChamberDiameterMm,
-            outletDiameterMm * 1.5);
     // Catalogue scalar hardware is compiled into the canonical component DAG
     // at load time. This experiment starts from that already-normalised
     // configuration, so mutate the actual downstream components as well as the
@@ -94,14 +91,14 @@ struct Point final {
             if (component.type == enginelab::ExhaustComponentType::outlet) {
                 component.diameterMm = outletDiameterMm;
                 component.outletDiameterMm = outletDiameterMm;
-            } else if (component.type
-                    == enginelab::ExhaustComponentType::muffler
-                && component.diameterMm > 1.0) {
-                component.diameterMm = std::max(
-                    component.diameterMm, outletDiameterMm * 1.5);
             }
         }
     }
+    // Keep every upstream/downstream component other than the outlet fixed.
+    // In particular, a packed muffler's authored diameter is its perforated
+    // core, not an unconstrained outer can: scaling that number without also
+    // authoring a new can volume creates impossible negative packing volume and
+    // turns this one-variable experiment into a different exhaust.
     enginelab::normaliseEngineConfig(config);
 
     enginelab::SimpleEcuModel ecu;
@@ -173,7 +170,7 @@ void report(const std::string& name, const std::vector<Point>& points) {
 }
 } // namespace
 
-int main(int argc, char** argv) {
+int runHarness(int argc, char** argv) {
     auto enforce = false;
     std::string catalogRoot = ENGINELAB_CATALOG_ROOT;
     for (int index = 1; index < argc; ++index) {
@@ -316,4 +313,16 @@ int main(int argc, char** argv) {
         && regulatedBoostHolds;
     if (enforce && !passed) return EXIT_FAILURE;
     return EXIT_SUCCESS;
+}
+
+int main(int argc, char** argv) {
+    try {
+        return runHarness(argc, argv);
+    } catch (const std::exception& error) {
+        std::cerr << "FAIL: unhandled harness exception: "
+                  << error.what() << '\n';
+    } catch (...) {
+        std::cerr << "FAIL: unhandled non-standard harness exception\n";
+    }
+    return EXIT_FAILURE;
 }

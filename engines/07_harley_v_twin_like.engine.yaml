@@ -35,10 +35,12 @@ engine:
       - { rpm: 3600, advance_deg: 29 }
       - { rpm: 5000, advance_deg: 29 }
       - { rpm: 5900, advance_deg: 27 }
-  # Effective large-chamber flame-speed closure, anchored to the SAE J1349
-  # torque and power of the matching 117 Classic bore/stroke variant.
+  # Effective large-chamber flame-speed closure, refitted after the dyno became
+  # cycle-authoritative. At 0.50 the old marginal fit had drifted to +5.45% at
+  # the torque point and +16.26% at the power point; 0.42 measures -3.48% and
+  # +3.77% against the same two committed anchors without relaxing their gate.
   combustion_calibration:
-    chamber_turbulence_intensity_ratio: 0.50
+    chamber_turbulence_intensity_ratio: 0.42
   uses:
     fuel: pump_gasoline_95
     injection: sequential_port
