@@ -1,10 +1,11 @@
-# muffler_chamber_* is the single expansion chamber the audio waveguide
-# scatters through (see enginelab/audio/ExpansionChamberMuffler.hpp). Body
-# diameter and length are the real silencer's, because they set what a listener
-# hears: the chamber's transmission loss combs the exhaust with pass-bands
-# every c/(2L) and stop-bands between, deep in proportion to (chamber area /
-# collector area). Omitting both fields means "no silencer" -- the correct model
-# for an open stack, and what the aircraft, radial and flat-six presets keep.
+# Scalar muffler_chamber_* describes the outer expansion chamber. During
+# legacy-to-graph conversion, a packed silencer is made explicit instead:
+# the graph muffler diameter is the perforated mean-flow core, its length is
+# the real can length, and volume_l is the gross outer-can volume. The sealed
+# difference between gross volume and swept core volume is acoustic storage,
+# never an enlarged gas-flow bore. A dry muffler keeps the expansion-chamber
+# interpretation. Omitting diameter or length means "no silencer" -- the
+# correct model for an open stack, and what aircraft/radial/open presets keep.
 # muffler_restriction remains a mean-flow pressure-loss coefficient. It does
 # not drive acoustic absorption: overloading it previously collapsed the
 # low-frequency feedback loop. The chamber below is deliberately reactive.
@@ -14,10 +15,11 @@
 # perforated_open_area_ratio. None is inferred: without authored material data
 # the acoustic path remains an exact dry bypass.
 #
-# The runtime now composes the reactive area changes with a perforated-core
-# porous liner whenever the material data below is present. Values are
-# estimated-family data, not manufacturer measurements; absence still means an
-# exact dry chamber. This is intentionally physical hardware data rather than a
+# The runtime composes the core delay, Delany-Bazley porous loss and a bounded
+# lowest-order passive compliance for the coupled annular volume. It does not
+# invent perforation inertance without hole diameter and sheet thickness.
+# Values below are estimated-family data, not manufacturer measurements;
+# absence still means an exact dry chamber. These are hardware inputs, never a
 # target dB gain.
 
 compact_sport:

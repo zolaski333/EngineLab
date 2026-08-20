@@ -245,6 +245,12 @@ fonctionne, mais aucun moteur routier du catalogue ne l'autorise — seul le
 preset de labo `cp2_absorptive_lab` le fait. Autorisé sur le 2JZ
 (24 kPa·s/m², 35 mm, 28 % d'aire ouverte), il vaut **−1,7 dB**.
 
+> **État historique, remplacé le 20 août 2026.** Les presets routiers portent
+> maintenant des valeurs `estimated-family` et le corps brut n'est plus
+> confondu avec le noyau de débit. Le volume annulaire possède une compliance
+> passive bornée. Les mesures courantes et les limites sont consignées dans
+> `docs/passive-muffler-implementation-2026-08-20.md`.
+
 **Le tableau complet d'autorité du silencieux sur le 2JZ**, pression crête à
 l'observateur, un seul facteur changé à chaque ligne :
 
@@ -279,9 +285,9 @@ pas sur un ordre d'allumage »*.
    (Kelly-Lochbaum, sans perte), donc le second échec documenté — une
    absorption large bande qui se compose dans la boucle collecteur-sortie —
    est structurellement impossible.
-2. **Autorer le garnissage absorbant** sur les moteurs routiers. Le modèle
-   Delany-Bazley existe et fonctionne (`AcousticExhaustNetwork.cpp`), mais
-   seule la ligne d'échappement de labo `cp2_absorptive_lab` l'autorise.
+2. **Autorer le garnissage absorbant** sur les moteurs routiers. Cette action a
+   depuis été réalisée avec des valeurs explicitement marquées estimées ; elle
+   ne constitue toujours pas une calibration OEM.
 3. **Équilibre des couches sur le 2JZ**, où l'admission et la mécanique
    masquent l'échappement dans 24 bandes sur 28.
 

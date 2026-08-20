@@ -218,12 +218,19 @@ test onto the behaviour it is meant to catch. Keep it that way.
     element redistributes energy between transmitted and reflected, and in the
     collector-outlet loop what is reflected comes back. This is why a real
     silencer is reactive AND absorptive; neither half suffices.
-  - **The Delany-Bazley packing model exists, works, and no road engine
-    authors it.** Only `cp2_absorptive_lab` does. Authored on the 2JZ
-    (24 kPa.s/m2, 35 mm, 28 % open) it is worth **-1.7 dB**. Note this is NOT
-    the refuted "broadband loss inside the reactive element" -- that was an
-    invented mapping from `muffler_restriction`; this is a separate physical
-    model with material data, which is what the parts file says to use.
+  - **The Delany-Bazley packing model exists, but it formerly conflated the
+    can and the gas bore.** A graph muffler with a 76 mm perforated core and a
+    gross `volume_l` for a 142 mm can was compiled as a 142 mm mean-flow duct.
+    Packed mufflers now keep the authored core for gas/delay, subtract its
+    swept volume from the gross can, and expose that sealed annulus as a
+    lowest-order passive compliance multiplied by the authored open-area
+    ratio. Delany-Bazley remains the separate dissipative material model. On
+    the LS3 fixture, changing only annular can volume moves exhaust-only shape
+    by **5.138 dB** in the deterministic oracle; removing the body changes
+    physical observer level by **+9.41 dB**. The full rendered mix moves only
+    +0.07 dB because mechanical/intake layers mask 16/28 bands. Do not "fix"
+    that by inventing a broadband target gain. Higher-order hole inertance
+    needs hole diameter and sheet thickness, which are not authored yet.
 - **Masking is per BAND, and a broadband level cannot tell you about it.** On
   the 2JZ the exhaust is the loudest single layer broadband (+8.4 dB over
   mechanical, +10.1 over intake) and is nonetheless **below the rest of the mix
@@ -296,14 +303,17 @@ test onto the behaviour it is meant to catch. Keep it that way.
   leading-order law, monotone cascade, growth, and passivity — never an exact
   higher-harmonic match, which would have to be calibrated onto the simulator's
   own output.
-- **The silencer is `muffler_chamber_*`, not `muffler_restriction`.** The
-  restriction is still only a pressure-loss term: the physical exhaust branch
-  never reads it, never reads `openness`, never runs the FDN. What silences is
-  the expansion chamber (`ExpansionChamberMuffler.hpp`), driven by the chamber
-  diameter and length. Zero on either means "no chamber" and the element is an
-  exact through-connection — verified in the delivered render, not just in the
-  test: the Merlin measures +0.00 dB in every band. **Do not put broadband loss
-  back inside that element.** It sits in the collector-outlet feedback loop, so
+- **The silencer is geometry plus authored material, not
+  `muffler_restriction`.** Restriction remains a mean-flow pressure-loss term;
+  it never becomes an acoustic target gain. A dry scalar muffler uses
+  `muffler_chamber_*` as an expansion chamber. A packed graph muffler instead
+  uses its diameter as the perforated core, its gross body volume as sealed
+  annular storage, and its three packing fields for passive coupling/loss.
+  Zero scalar diameter or length still means "no chamber" and the legacy
+  element is an exact through-connection — verified in the delivered render,
+  not just in the test: the Merlin measures +0.00 dB in every band. **Do not put
+  broadband loss inferred from restriction back inside that element.** It sits
+  in the collector-outlet feedback loop, so
   a couple of dB per traversal compounds and collapses the low-frequency
   resonance; an earlier absorption term cost the EJ25 11 dB at its rev-range
   fundamental, and loudness normalisation then exposed the renderer's own
@@ -685,6 +695,18 @@ test onto the behaviour it is meant to catch. Keep it that way.
   item left is the MUSCL block (limiter + two reconstructions + the two
   primitive recoveries they need) at **16-29%**, and it is not available:
   zeroing the slopes *is* dropping to first order.
+- **On MSVC, the finite-value predicate was a lever without changing the
+  predicate.** A user-mode profile of the corrected 76 mm-core LS3 attributed
+  18.74% of `ExhaustGasNetwork::advance` to the tiny `finite(double)` wrapper.
+  Binary64 defines every NaN and infinity by an all-ones exponent, so a
+  `std::bit_cast<uint64_t>` plus exponent mask is exactly equivalent to
+  `std::isfinite` for all finite values, signed zero and subnormals; a
+  compile-time IEEE-754 assertion guards the assumption. Immediate rebuild/A/B
+  at identical 26,880 exhaust substeps/s measured old 0.932/0.935 and new
+  1.102/1.108 realtime capacity (about +18%), with the same rounded torque,
+  power and VE. Regressions explicitly poison every conservative field with
+  NaN and both infinities. This optimisation relaxes neither CFL, mesh,
+  positivity nor thermodynamics.
 - **The previous 2026-07-27 machine was a Ryzen 7 8840U — a 15-28 W mobile
   part — and it throttled hard.** The same bench on the same binary measured
   **467 ns/cell** early in a

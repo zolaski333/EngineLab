@@ -106,19 +106,37 @@ mesures independantes de la perte de charge :
 - `perforated_open_area_ratio`, fraction ouverte du tube perfore, entre 0 et 1.
 
 Les trois champs doivent etre strictement positifs ensemble et ne sont valides
-que sur un `muffler`. En leur absence, le filtre compile en identite exacte :
-EngineLab n'invente pas une absorption a partir de `restriction`, de
-`acoustic_gain` ou du volume du corps. Lorsqu'ils sont renseignes, l'impedance
-de surface suit Delany-Bazley et la perte de propagation reste passive. Ces
-valeurs doivent provenir de la fiche du materiau ou d'une mesure du silencieux.
+que sur un `muffler`. Un silencieux garni distingue alors explicitement deux
+geometries :
+
+- `diameter_mm` et `outlet_diameter_mm` decrivent le noyau perfore qui porte le
+  debit moyen et le delai de propagation ;
+- `volume_l` decrit le volume brut du corps exterieur. Il doit etre strictement
+  superieur au volume balaye par le noyau. La difference est l'anneau ferme
+  rempli de materiau, jamais une section de debit supplementaire.
+
+En leur absence, le filtre compile en identite exacte : EngineLab n'invente pas
+une absorption a partir de `restriction`, de `acoustic_gain` ou du volume du
+corps. Lorsqu'ils sont renseignes, l'impedance de surface suit Delany-Bazley et
+la perte de propagation reste passive. La fraction ouverte couple aussi une
+part du volume annulaire aux deux extremites du noyau sous forme de compliance
+acoustique passive. Faire varier le volume du corps change donc le transfert
+sans elargir le conduit de gaz ni ajouter de maille. Ces valeurs doivent
+provenir de la fiche du materiau ou d'une mesure du silencieux.
+
+Ce modele est volontairement d'ordre reduit : il represente le mode de
+compression dominant du volume annulaire et la perte du materiau. Il ne simule
+pas les trous un par un, ni leur inertance, car le graphe ne possede pas encore
+le diametre des perforations ou l'epaisseur de la tole. Ajouter ces effets sans
+ces donnees serait un accordage sonore cache, pas une correction physique.
 
 Les memes trois champs existent sur une geometrie scalaire sans `graph`, avec
 les noms `muffler_packing_flow_resistivity_pa_s_m2`,
 `muffler_packing_thickness_mm` et `muffler_perforated_open_area_ratio`. Ils sont
 copies dans le vrai noeud muffler lors de la compilation ou de **GENERER DEPUIS
 LEGACY**. `cp2_full_system` et `cp2_absorptive_lab` ont la meme geometrie et la
-meme restriction ; seul le second renseigne ces valeurs estimees pour une A/B
-d'ecoute. EngineLab n'en deduit jamais depuis le nom d'un silencieux.
+meme restriction, mais des proprietes de materiau estimees differentes pour une
+A/B controlee. EngineLab n'en deduit jamais depuis le nom d'un silencieux.
 
 ### Monolithe de catalyseur homogénéisé
 

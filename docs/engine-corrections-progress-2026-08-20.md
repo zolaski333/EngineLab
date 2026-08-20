@@ -17,6 +17,8 @@ est respecté ; il ne transforme pas une hypothèse acoustique en donnée mesur�
 | `91b5ca8` | compliance passive des volumes compacts de jonction | poussé |
 | `5cf2d55` | conduits coniques distribués sous budget global symétrique | poussé |
 | `9c4ff1f` | branches latérales résonantes passives, bornées à huit | poussé |
+| `8b4f980` | monolithes de catalyseur homogénéisés | poussé |
+| `f865a7b` | noyau perforé, volume annulaire et garnissage passif | poussé |
 
 ## Dyno livré
 
@@ -264,6 +266,48 @@ dépassé la durée d'un bloc (`renderOver=0`) et aucun événement n'a été pe
 La reconstruction Release intégrale puis les **42/42 CTest** ont passé en
 842,87 s, y compris les rampes dyno produit CP2 et LS3.
 
+## Silencieux à noyau perforé et volume annulaire
+
+Le silencieux garni confondait son volume brut avec le conduit de débit : un
+noyau de 76 mm dans un corps de 142 mm devenait un tube gaz proche de 142 mm.
+Le layout conserve maintenant le noyau comme section quasi-1D, soustrait son
+volume balayé du corps brut et publie la différence comme volume annulaire
+acoustique. Le résumé du chemin exclut lui aussi ce volume scellé.
+
+La fraction ouverte couple ce volume à une compliance passive répartie aux
+deux extrémités du noyau ; Delany-Bazley reste la perte matérielle indépendante.
+Le modèle réutilise les états WDF des jonctions et n'ajoute ni cellule gaz, ni
+ligne de délai. Faire varier seulement le corps de 4 à 8 L change la forme du
+transfert de **5,138 dB** avec un nombre de conduits identique.
+
+Sur le LS3 à 4 000 tr/min, retirer seulement le silencieux fait passer la
+pression observateur de 30,1 à 89,1 Pa, soit **+9,41 dB**. Doubler puis
+quintupler environ le volume donne respectivement 6,83 et 13,49 dB d'écart de
+forme sur la couche échappement. Le mix complet ne bouge presque pas en niveau
+large bande parce que les autres couches masquent 16/28 bandes ; ce résultat
+est documenté comme un problème séparé, pas compensé par un gain arbitraire.
+
+La correction du vrai noyau augmente le coût CFL du LS3 à ~26 880 sous-pas/s.
+Un profil a isolé un prédicat `std::isfinite` à 18,74 % du réseau gaz. Son
+équivalent exact par masque d'exposant IEEE-754 fait passer l'A/B immédiat de
+0,932/0,935 à 1,102/1,108×, sans changer la cadence, les seuils physiques ou les
+résultats publiés. Avec audio produit au régime haut, le LS3 atteint 1,018× et
+le Merlin 1,367× ; le contrat temps réel complet reste à zéro violation. La
+marge LS3 de 4,8 % reste un gate à préserver, pas un budget à dépenser. Les
+détails, équations, oracles et limites sont dans
+`docs/passive-muffler-implementation-2026-08-20.md`.
+
+Le smoke afterfire qui suit ce lot garde la topologie physique active et tous
+les compteurs à zéro. Il met aussi en évidence la prochaine cause à traiter :
+avec le seuil produit de 900 K, la paroi n'atteint que 327,8 °C après 30 s de
+charge et aucune réaction ne s'arme. Un contrôle à 520 K livre bien dix
+réactions et 22,523 mg brûlés jusqu'à l'observateur, mais ce seuil forcé n'est
+pas une correction proposée. Il sépare seulement le chemin de livraison sain
+du problème thermique/stratégique encore ouvert.
+
+La reconstruction Release a relié l'application et les harness ; les
+**42/42 CTest** ont passé en 860,90 s après ce lot.
+
 ## Matrice actuelle des champs du graphe
 
 Cette matrice évite de confondre un champ sérialisé avec une influence physique
@@ -275,7 +319,7 @@ effective.
 | diamètre entrée/sortie | sections et faces quasi-1D | taper distribué 1–4 sections sous budget global | corrigé dans ce lot |
 | volume d'un conduit | section interne de chambre | section interne et deux sauts d'aire | actif |
 | volume d'une jonction | contrôle bien mélangé | compliance compacte résiduelle | corrigé dans ce lot |
-| packing + perforation | ignoré volontairement | perte poreuse distribuée opt-in | actif |
+| packing + perforation | noyau seul ; annulus scellé exclu | perte poreuse + compliance annulaire passive | corrigé dans ce lot |
 | position/axe/terminaison de sortie | frontière de débit indirecte | délai, directivité, radiation et perte de lèvre | actif |
 | restriction | perte de charge locale | effet indirect par pression/débit, pas une impédance complexe | libellé clarifié |
 | `acousticGain` | aucun | fallback reconstruit seulement, jamais le guide d'onde SI | libellé legacy explicite |
@@ -285,8 +329,8 @@ effective.
 
 ## Prochain ordre de travail
 
-1. Construire les silencieux comme petits assemblages passifs composables
-   (chambres, noyau perforé, branches accordées), sans augmenter la maille gaz.
-2. Reprendre l'afterfire seulement après ces transferts : distribution spatiale,
+1. Composer les silencieux plus complexes avec chambres et branches explicites
+   lorsque leurs dimensions sont connues ; le noyau perforé de base est livré.
+2. Reprendre l'afterfire maintenant que ces transferts existent : distribution spatiale,
    variabilité de l'allumage et énergie locale, sans échantillon de pop.
 3. Rejouer les oracles, les tests produit et le budget temps réel à chaque lot.

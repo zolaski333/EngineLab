@@ -455,6 +455,13 @@ Le filtre actuel assimile cette redistribution à une disparition totale de la h
 
 ### 7.10 EX-10 — silencieux trop simples
 
+> Mise à jour du 20 août 2026 : ce constat décrit l'état audité le 10 août.
+> Les presets routiers portent désormais des données de garnissage estimées,
+> le noyau perforé est séparé du volume annulaire, et jonctions, tapers,
+> résonateurs et catalyseurs disposent de modèles passifs bornés. Voir
+> `docs/passive-muffler-implementation-2026-08-20.md` pour les nouvelles
+> preuves et les limites qui restent ouvertes.
+
 Le catalogue le documente honnêtement : une seule chambre réactive, volontairement modeste. Seul le preset de laboratoire `cp2_absorptive_lab` (moteur Audio Physics Lab) authorise du packing poreux ; le CP2 Full System livré à l'écoute reste sec. Il n'existe pas de bibliothèque de :
 
 - chambres multiples ;
