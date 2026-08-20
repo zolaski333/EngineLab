@@ -24,6 +24,24 @@ enum class DynoEstimateQuality : std::uint8_t {
     ready
 };
 
+/** Slowly varying channels observed once when a brake cycle completes. */
+struct DynoCycleTelemetry final {
+    double airFuelRatio { 0.0 };
+    double coolantTemperatureC { 0.0 };
+    double exhaustTemperatureC { 0.0 };
+    double ignitionAdvanceDegrees { 0.0 };
+    double targetAirFuelRatio { 0.0 };
+    double volumetricEfficiency { 0.0 };
+    double fuelFlowGramsPerSecond { 0.0 };
+    double manifoldPressureKpa { 0.0 };
+    double exhaustPressureKpa { 0.0 };
+    double oilTemperatureC { 0.0 };
+    double oilPressureKpa { 0.0 };
+    double airFlowGramsPerSecond { 0.0 };
+    double lambda { 0.0 };
+    double brakeSpecificFuelConsumptionGPerKwh { 0.0 };
+};
+
 /**
  * A bounded rolling estimate derived from complete 720-degree brake cycles.
  *
@@ -47,6 +65,7 @@ struct DynoWindowEstimate final {
     double meanTorqueNm { 0.0 };
     double meanPowerKw { 0.0 };
     double torqueVarianceNm2 { 0.0 };
+    DynoCycleTelemetry meanTelemetry {};
 };
 
 struct DynoEstimatorUpdate final {
@@ -80,6 +99,9 @@ public:
 
     [[nodiscard]] DynoEstimatorUpdate push(
         const CompletedBrakeCycleSample& sample) noexcept;
+    [[nodiscard]] DynoEstimatorUpdate push(
+        const CompletedBrakeCycleSample& sample,
+        const DynoCycleTelemetry& telemetry) noexcept;
 
     [[nodiscard]] const DynoWindowEstimate& estimate() const noexcept {
         return estimate_;
@@ -97,6 +119,7 @@ private:
         double crankRadians { 0.0 };
         double rpm { 0.0 };
         double torqueNm { 0.0 };
+        DynoCycleTelemetry telemetry {};
     };
 
     [[nodiscard]] bool structurallyValid(
@@ -116,6 +139,7 @@ private:
     double totalBrakeWorkJoules_ { 0.0 };
     double totalCrankRadians_ { 0.0 };
     double torqueSquaredAngleSum_ { 0.0 };
+    DynoCycleTelemetry telemetryTimeSums_ {};
     double requestedWindowDurationSeconds_ { defaultWindowDurationSeconds };
     std::uint64_t lastObservedCycleId_ { 0 };
     double lastObservedEndTimeSeconds_ { 0.0 };

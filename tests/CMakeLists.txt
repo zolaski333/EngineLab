@@ -256,7 +256,15 @@ if(TARGET EngineLabUserDynoHarness)
     add_test(NAME EngineLab.UserDynoHighRpmStart
         COMMAND EngineLabUserDynoHarness
             --filter "Yamaha CP2")
+    add_test(NAME EngineLab.UserDynoRampCP2Complete
+        COMMAND EngineLabUserDynoHarness
+            --filter "11_yamaha_cp2_mt07_like" --complete)
+    add_test(NAME EngineLab.UserDynoRampLS3Complete
+        COMMAND EngineLabUserDynoHarness
+            --filter "03_gm_ls3_like" --complete)
     set_tests_properties(EngineLab.UserDynoHighRpmStart
+        EngineLab.UserDynoRampCP2Complete
+        EngineLab.UserDynoRampLS3Complete
         PROPERTIES TIMEOUT 120)
 endif()
 if(TARGET EngineLabDieselControlHarness)

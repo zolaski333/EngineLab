@@ -1348,6 +1348,16 @@ struct EngineState final {
     double dynoControllerTargetRpm { 0.0 };
     double dynoFilteredAccelerationRpmPerSecond { 0.0 };
     double dynoBrakeTorqueNm { 0.0 };
+    double dynoBrakeContactFraction { 0.0 };
+    bool dynoAbsorberSaturatedLow { false };
+    bool dynoAbsorberSaturatedHigh { false };
+    std::uint32_t dynoQualityReasons { 0U };
+    bool dynoMeasurementReady { false };
+    std::uint32_t dynoAcceptedCycleCount { 0U };
+    double dynoWindowDurationSeconds { 0.0 };
+    double dynoWindowMeanRpm { 0.0 };
+    double dynoWindowMinimumRpm { 0.0 };
+    double dynoWindowMaximumRpm { 0.0 };
     double dynoProgress { 0.0 };
     std::uint32_t dynoRecoveryCount { 0 };
     RunningState runningState { RunningState::stopped };
@@ -1421,6 +1431,8 @@ struct CombustionResult final {
 };
 
 struct DynoPoint final {
+    /** Display/recorder abscissa. For a continuous pull this is an exact bin;
+     * windowMeanRpm below remains the speed actually represented. */
     double rpm { 0.0 };
     double torqueNm { 0.0 };
     double powerKw { 0.0 };
@@ -1441,6 +1453,18 @@ struct DynoPoint final {
     double airFlowGramsPerSecond { 0.0 };
     double lambda { 1.0 };
     double brakeSpecificFuelConsumptionGPerKwh { 0.0 };
+    double binRpm { 0.0 };
+    double windowMeanRpm { 0.0 };
+    double windowMinimumRpm { 0.0 };
+    double windowMaximumRpm { 0.0 };
+    double windowDurationSeconds { 0.0 };
+    double torqueVarianceNm2 { 0.0 };
+    std::uint64_t firstCycleId { 0 };
+    std::uint64_t lastCycleId { 0 };
+    std::uint32_t acceptedCycleCount { 0 };
+    /** Bit representation of DynoQualityReason; zero means accepted. */
+    std::uint32_t qualityReasons { 0 };
+    bool valid { true };
 };
 
 struct DynoRun final {

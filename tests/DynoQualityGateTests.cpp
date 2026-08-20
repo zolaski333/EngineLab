@@ -19,6 +19,7 @@ enginelab::DynoQualityGateInput validInput() {
     enginelab::DynoQualityGateInput input;
     input.mode = enginelab::DynoAcquisitionMode::steppedCalibration;
     input.targetRpm = 3'000.0;
+    input.measuredRpm = 3'000.0;
     input.rampRateRpmPerSecond = 500.0;
     input.measuredCycleTorqueNm = 100.0;
     input.prepared = true;
@@ -105,12 +106,21 @@ int main() {
                 DynoQualityReason::noBrakeContact,
                 "materially partial contact must be rejected");
 
+    input = validInput();
+    input.mode = DynoAcquisitionMode::continuousRamp;
     absorber = validAbsorber();
-    absorber.filteredRpm = 3'060.0;
+    absorber.contactFraction = 0.0;
+    absorber.contacted = false;
+    require(gate.evaluate(input, state, absorber).accepted(),
+            "a tracked inertial ramp may legitimately unload a passive brake");
+
+    input = validInput();
+    absorber = validAbsorber();
+    input.measuredRpm = 3'060.0;
     absorber.filteredAccelerationRpmPerSecond = 120.0;
     require(gate.evaluate(input, state, absorber).accepted(),
             "steady limits are inclusive");
-    absorber.filteredRpm = 3'060.01;
+    input.measuredRpm = 3'060.01;
     absorber.filteredAccelerationRpmPerSecond = 120.01;
     auto result = gate.evaluate(input, state, absorber);
     require(hasDynoQualityReason(result.reasons,
@@ -122,8 +132,8 @@ int main() {
     input = validInput();
     input.mode = DynoAcquisitionMode::continuousRamp;
     input.rampRateRpmPerSecond = 500.0;
+    input.measuredRpm = 3'150.0;
     absorber = validAbsorber();
-    absorber.filteredRpm = 3'150.0;
     absorber.filteredAccelerationRpmPerSecond = 1'500.0;
     result = gate.evaluate(input, state, absorber);
     require(result.accepted()

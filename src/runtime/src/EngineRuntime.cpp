@@ -2,6 +2,7 @@
 #include <enginelab/runtime/MonotonicPublicationTimeline.hpp>
 #include <algorithm>
 #include <chrono>
+#include <limits>
 #include <numbers>
 #if defined(_WIN32)
 #define WIN32_LEAN_AND_MEAN
@@ -12,36 +13,6 @@
 namespace enginelab {
 namespace {
 constexpr std::size_t maximumAudioExhaustPaths = 8;
-
-/** A DynoPoint with every field at zero, for use as a running sum.
- *
- * `DynoPoint {}` is NOT this: several of its members default to physical
- * neutral values (14.7 AFR, 22 degC, lambda 1.0) which would be added into the
- * first sample and then divided by the sample count. */
-[[nodiscard]] DynoPoint zeroedDynoAccumulator() noexcept {
-    DynoPoint zero;
-    zero.rpm = 0.0;
-    zero.torqueNm = 0.0;
-    zero.powerKw = 0.0;
-    zero.airFuelRatio = 0.0;
-    zero.coolantTemperatureC = 0.0;
-    zero.exhaustTemperatureC = 0.0;
-    zero.ignitionAdvanceDegrees = 0.0;
-    zero.atmosphericCorrectionFactor = 0.0;
-    zero.correctedTorqueNm = 0.0;
-    zero.correctedPowerKw = 0.0;
-    zero.targetAirFuelRatio = 0.0;
-    zero.volumetricEfficiency = 0.0;
-    zero.fuelFlowGramsPerSecond = 0.0;
-    zero.manifoldPressureKpa = 0.0;
-    zero.exhaustPressureKpa = 0.0;
-    zero.oilTemperatureC = 0.0;
-    zero.oilPressureKpa = 0.0;
-    zero.airFlowGramsPerSecond = 0.0;
-    zero.lambda = 0.0;
-    zero.brakeSpecificFuelConsumptionGPerKwh = 0.0;
-    return zero;
-}
 
 /** Highest speed a swept bench run is allowed to sample.
  *
@@ -71,22 +42,139 @@ constexpr std::size_t maximumAudioExhaustPaths = 8;
     return std::max(target, current - maximumDelta);
 }
 
-/** Averaging window for one bench point, in seconds.
- *
- * Torque is periodic at the firing frequency, so a window that is not a whole
- * number of firing periods leaves a residual set by where the window happened
- * to start and stop. The window is driven at the 1/240 s runtime step and the
- * firing period is comparable to that step at high speed, so it cannot be
- * aligned exactly; what is available is length, since the residual falls as
- * 1/N in the number of periods covered. The old floor of 0.12 s was chosen as
- * two engine CYCLES, which on a slow twin is only a handful of firings. */
-[[nodiscard]] double dynoAveragingWindowSeconds(
-    const EngineConfig& config, double targetRpm) noexcept {
-    const auto cylinders = std::max<std::size_t>(1U, config.cylinders.size());
-    const auto firingPeriodSeconds = 120.0
-        / (std::max(250.0, targetRpm) * static_cast<double>(cylinders));
-    constexpr double minimumFirings = 48.0;
-    return std::clamp(minimumFirings * firingPeriodSeconds, 0.25, 0.80);
+[[nodiscard]] double interpolate(double left, double right,
+                                 double fraction) noexcept {
+    return left + (right - left) * std::clamp(fraction, 0.0, 1.0);
+}
+
+[[nodiscard]] DynoCycleTelemetry dynoTelemetry(
+    const EngineState& state) noexcept {
+    return {
+        state.airFuelRatio,
+        state.coolantTemperatureC,
+        state.exhaustTemperatureC,
+        state.ignitionAdvanceDegrees,
+        state.targetAirFuelRatio,
+        state.volumetricEfficiency,
+        state.fuelFlowGramsPerSecond,
+        state.manifoldPressureKpa,
+        state.exhaustBackPressureKpa,
+        state.oilTemperatureC,
+        state.oilPressureKpa,
+        state.airFlowGramsPerSecond,
+        state.lambda,
+        state.brakeSpecificFuelConsumptionGPerKwh,
+    };
+}
+
+[[nodiscard]] DynoCycleTelemetry interpolateTelemetry(
+    const DynoCycleTelemetry& left, const DynoCycleTelemetry& right,
+    double fraction) noexcept {
+    return {
+        interpolate(left.airFuelRatio, right.airFuelRatio, fraction),
+        interpolate(left.coolantTemperatureC, right.coolantTemperatureC, fraction),
+        interpolate(left.exhaustTemperatureC, right.exhaustTemperatureC, fraction),
+        interpolate(left.ignitionAdvanceDegrees, right.ignitionAdvanceDegrees, fraction),
+        interpolate(left.targetAirFuelRatio, right.targetAirFuelRatio, fraction),
+        interpolate(left.volumetricEfficiency, right.volumetricEfficiency, fraction),
+        interpolate(left.fuelFlowGramsPerSecond, right.fuelFlowGramsPerSecond, fraction),
+        interpolate(left.manifoldPressureKpa, right.manifoldPressureKpa, fraction),
+        interpolate(left.exhaustPressureKpa, right.exhaustPressureKpa, fraction),
+        interpolate(left.oilTemperatureC, right.oilTemperatureC, fraction),
+        interpolate(left.oilPressureKpa, right.oilPressureKpa, fraction),
+        interpolate(left.airFlowGramsPerSecond, right.airFlowGramsPerSecond, fraction),
+        interpolate(left.lambda, right.lambda, fraction),
+        interpolate(left.brakeSpecificFuelConsumptionGPerKwh,
+                    right.brakeSpecificFuelConsumptionGPerKwh, fraction),
+    };
+}
+
+[[nodiscard]] DynoWindowEstimate interpolateEstimate(
+    const DynoWindowEstimate& left, const DynoWindowEstimate& right,
+    double fraction, double meanRpm) noexcept {
+    DynoWindowEstimate result = right;
+    result.firstCycleId = right.firstCycleId;
+    result.lastCycleId = right.lastCycleId;
+    result.cycleCount = right.cycleCount;
+    result.durationSeconds = interpolate(
+        left.durationSeconds, right.durationSeconds, fraction);
+    result.brakeWorkJoules = interpolate(
+        left.brakeWorkJoules, right.brakeWorkJoules, fraction);
+    result.integratedCrankRadians = interpolate(
+        left.integratedCrankRadians, right.integratedCrankRadians, fraction);
+    result.meanRpm = meanRpm;
+    result.minRpm = interpolate(left.minRpm, right.minRpm, fraction);
+    result.maxRpm = interpolate(left.maxRpm, right.maxRpm, fraction);
+    result.meanTorqueNm = interpolate(
+        left.meanTorqueNm, right.meanTorqueNm, fraction);
+    result.meanPowerKw = interpolate(
+        left.meanPowerKw, right.meanPowerKw, fraction);
+    result.torqueVarianceNm2 = interpolate(
+        left.torqueVarianceNm2, right.torqueVarianceNm2, fraction);
+    result.meanTelemetry = interpolateTelemetry(
+        left.meanTelemetry, right.meanTelemetry, fraction);
+    result.continuous = left.continuous && right.continuous;
+    result.capacityLimited = left.capacityLimited || right.capacityLimited;
+    return result;
+}
+
+[[nodiscard]] DynoPoint makeDynoPoint(
+    const EngineConfig& config, const DynoWindowEstimate& estimate,
+    double coordinateRpm, bool fixedBin) noexcept {
+    DynoPoint point;
+    point.rpm = coordinateRpm;
+    point.torqueNm = estimate.meanTorqueNm;
+    point.powerKw = estimate.meanPowerKw;
+    point.airFuelRatio = estimate.meanTelemetry.airFuelRatio;
+    point.coolantTemperatureC = estimate.meanTelemetry.coolantTemperatureC;
+    point.exhaustTemperatureC = estimate.meanTelemetry.exhaustTemperatureC;
+    point.ignitionAdvanceDegrees = estimate.meanTelemetry.ignitionAdvanceDegrees;
+    point.atmosphericCorrectionFactor = std::clamp(
+        (99.0 / config.ambientPressureKpa)
+            * std::sqrt((config.ambientTemperatureC + 273.15) / 298.15),
+        0.80, 1.20);
+    point.correctedTorqueNm = point.torqueNm
+        * point.atmosphericCorrectionFactor;
+    point.correctedPowerKw = point.powerKw
+        * point.atmosphericCorrectionFactor;
+    point.targetAirFuelRatio = estimate.meanTelemetry.targetAirFuelRatio;
+    point.volumetricEfficiency = estimate.meanTelemetry.volumetricEfficiency;
+    point.fuelFlowGramsPerSecond = estimate.meanTelemetry.fuelFlowGramsPerSecond;
+    point.manifoldPressureKpa = estimate.meanTelemetry.manifoldPressureKpa;
+    point.exhaustPressureKpa = estimate.meanTelemetry.exhaustPressureKpa;
+    point.oilTemperatureC = estimate.meanTelemetry.oilTemperatureC;
+    point.oilPressureKpa = estimate.meanTelemetry.oilPressureKpa;
+    point.airFlowGramsPerSecond = estimate.meanTelemetry.airFlowGramsPerSecond;
+    point.lambda = estimate.meanTelemetry.lambda;
+    point.brakeSpecificFuelConsumptionGPerKwh =
+        estimate.meanTelemetry.brakeSpecificFuelConsumptionGPerKwh;
+    point.binRpm = fixedBin ? coordinateRpm : 0.0;
+    point.windowMeanRpm = estimate.meanRpm;
+    point.windowMinimumRpm = estimate.minRpm;
+    point.windowMaximumRpm = estimate.maxRpm;
+    point.windowDurationSeconds = estimate.durationSeconds;
+    point.torqueVarianceNm2 = estimate.torqueVarianceNm2;
+    point.firstCycleId = estimate.firstCycleId;
+    point.lastCycleId = estimate.lastCycleId;
+    point.acceptedCycleCount = static_cast<std::uint32_t>(
+        std::min<std::size_t>(estimate.cycleCount,
+            std::numeric_limits<std::uint32_t>::max()));
+    point.qualityReasons = 0U;
+    point.valid = estimate.quality == DynoEstimateQuality::ready
+        && estimate.continuous && !estimate.capacityLimited;
+    return point;
+}
+
+[[nodiscard]] DynoPoint makeInvalidDynoPoint(
+    double binRpm, DynoQualityReason reasons) noexcept {
+    DynoPoint point;
+    point.rpm = binRpm;
+    point.binRpm = binRpm;
+    point.qualityReasons = static_cast<std::uint32_t>(
+        reasons == DynoQualityReason::none
+            ? DynoQualityReason::discontinuousCycle : reasons);
+    point.valid = false;
+    return point;
 }
 
 [[nodiscard]] EngineConfig normalised(EngineConfig config) {
@@ -496,13 +584,19 @@ void EngineRuntime::beginDynoSession() {
         > dynoPreparationDestinationRpm_ + 150.0;
     dynoThrottleCommand_ = 0.18;
     dynoRecoveryCount_ = 0;
-    dynoStableElapsed_ = 0.0;
     dynoBrakeTorqueNm_ = 0.0;
     dynoAbsorber_.reset(
         simulator_.state().rpm, simulator_.state().torqueNm);
     dynoAbsorberOutput_ = {};
-    dynoChannelAccumulator_ = zeroedDynoAccumulator();
-    dynoSampleCount_ = 0;
+    dynoEstimator_.reset();
+    previousRampEstimate_.reset();
+    lastCompletedBrakeCycleTorqueNm_ = 0.0;
+    latestDynoQualityReasons_ = DynoQualityReason::notPrepared;
+    pendingDynoInvalidReasons_ = DynoQualityReason::none;
+    hasCompletedBrakeCycleTorque_ = false;
+    dynoCycleTainted_ = true;
+    dynoGateAllowsProgress_ = false;
+    dynoRampPrimed_ = false;
     savedIgnition_ = ignition_.load();
     savedStarter_ = starter_.load();
     savedThrottle_ = throttle_.load();
@@ -651,15 +745,19 @@ void EngineRuntime::run(std::stop_token stopToken) {
                         nextSampleRpm_ =
                             dynoPreparationDestinationRpm_;
                         dynoTargetRpm_ = nextSampleRpm_;
-                        dynoStableElapsed_ = 0.0;
                         dynoBrakeTorqueNm_ = 0.0;
                         dynoAbsorber_.reset(
                             dynoState.rpm,
                             dynoState.cycleAveragedTorqueNm);
                         dynoAbsorberOutput_ = {};
-                        dynoChannelAccumulator_ =
-                            zeroedDynoAccumulator();
-                        dynoSampleCount_ = 0;
+                        dynoEstimator_.reset();
+                        previousRampEstimate_.reset();
+                        hasCompletedBrakeCycleTorque_ = false;
+                        dynoCycleTainted_ = true;
+                        dynoGateAllowsProgress_ = false;
+                        dynoRampPrimed_ = false;
+                        pendingDynoInvalidReasons_ =
+                            DynoQualityReason::none;
                         starter_.store(false);
                         dynoThrottleCommand_ = 1.0;
                     }
@@ -678,26 +776,18 @@ void EngineRuntime::run(std::stop_token stopToken) {
                         dynoHoldRpm_.load(std::memory_order_relaxed),
                         holdSlewRpmPerSecond * baseStep.count());
                 } else if (dynoRampEnabled_.load(std::memory_order_relaxed)) {
-                    // The continuous ramp, and the single rule that makes it
-                    // safe on any engine without per-engine tuning: it advances
-                    // ONLY while the engine is genuinely producing torque, and
-                    // decays otherwise. The target therefore cannot run away
-                    // from an engine that has stopped following it. The stepped
-                    // sweep has no such property -- every 250 rpm step is a
-                    // setpoint edge the engine may fail to climb, which is what
-                    // the recovery path below exists to catch.
-                    //
-                    // Threshold is ES2D's 1 ft-lb, i.e. "still pushing at all",
-                    // not a torque figure to tune.
-                    constexpr double rampTorqueThresholdNm = 1.4;
-                    const auto rampCeilingRpm = sweepCeilingRpm(config_);
-                    if (dynoState.cycleAveragedTorqueNm > rampTorqueThresholdNm)
+                    // The target is frozen exactly until one complete rolling
+                    // window has primed the pull, and on every rejected frame.
+                    // The former `target /= 1 + dt` path was not a pause: at
+                    // normal speeds it could command a multi-thousand-rpm/s
+                    // fall after one weak cycle and invalidate the next bins.
+                    if (dynoRampPrimed_ && dynoGateAllowsProgress_) {
+                        const auto rampCeilingRpm = sweepCeilingRpm(config_);
                         dynoTargetRpm_ = std::min(rampCeilingRpm,
                             dynoTargetRpm_
                                 + dynoRampRpmPerSecond_.load(std::memory_order_relaxed)
                                     * baseStep.count());
-                    else
-                        dynoTargetRpm_ /= (1.0 + baseStep.count());
+                    }
                 }
                 const auto recoveryThreshold =
                     std::max(350.0, config_.idleRpm * 0.55);
@@ -715,17 +805,17 @@ void EngineRuntime::run(std::stop_token stopToken) {
                     dynoBrakeTorqueNm_ = 0.0;
                     dynoAbsorber_.reset(dynoState.rpm, 0.0);
                     dynoAbsorberOutput_ = {};
-                    dynoChannelAccumulator_ = zeroedDynoAccumulator();
-                    dynoSampleCount_ = 0;
-                    dynoStableElapsed_ = 0.0;
+                    dynoEstimator_.breakContinuity();
+                    previousRampEstimate_.reset();
+                    hasCompletedBrakeCycleTorque_ = false;
+                    dynoCycleTainted_ = true;
+                    dynoGateAllowsProgress_ = false;
+                    pendingDynoInvalidReasons_ |=
+                        DynoQualityReason::recoveryActive;
                     dynoThrottleCommand_ = 0.18;
                     starter_.store(true);
                 } else {
                     dynoThrottleCommand_ = 1.0;
-                    dynoAbsorberOutput_ = dynoAbsorber_.advance(
-                        baseStep.count(), dynoTargetRpm_, dynoState);
-                    dynoBrakeTorqueNm_ =
-                        dynoAbsorberOutput_.brakeTorqueNm;
                 }
                 requestedLoad = 0.0;
             }
@@ -818,125 +908,249 @@ void EngineRuntime::run(std::stop_token stopToken) {
                 / std::max(20.0, config_.transmission.maxClutchTorqueNm),
             dynoActive_ ? 1.0 : timeScale_.load(std::memory_order_relaxed) });
         if (dynoActive_ && dynoSweeping_) {
-            // A ramp is a TRANSIENT by construction, so the stepped sweep's
-            // settling gate would reject every sample: it demands under
-            // 120 rpm/s of acceleration while the ramp commands 500 by design.
-            // What still has to hold is that the engine is TRACKING the target
-            // rather than being dragged behind it, so the speed-error gate
-            // stays and only the acceleration bound follows the commanded rate.
+            // Observe the POST-step shaft state. The old acquisition gate used
+            // the pre-step absorber output with post-step engine telemetry;
+            // moving this controller update here keeps contact, acceleration,
+            // limiter state and completed-cycle events on one time boundary.
+            dynoAbsorberOutput_ = dynoAbsorber_.advance(
+                baseStep.count(), dynoTargetRpm_, frame.state);
+            dynoBrakeTorqueNm_ = dynoAbsorberOutput_.brakeTorqueNm;
+
+            const auto holding =
+                dynoHoldEnabled_.load(std::memory_order_relaxed);
             const auto rampingSweep =
                 dynoRampEnabled_.load(std::memory_order_relaxed)
-                && !dynoHoldEnabled_.load(std::memory_order_relaxed);
-            const auto acceptedSpeedErrorRpm = rampingSweep ? 150.0 : 60.0;
-            const auto acceptedAccelerationRpmPerSecond = rampingSweep
-                ? std::max(120.0, 3.0 * dynoRampRpmPerSecond_.load(
-                    std::memory_order_relaxed))
-                : 120.0;
-            if (std::abs(dynoAbsorberOutput_.filteredRpm
-                    - dynoTargetRpm_) <= acceptedSpeedErrorRpm
-                    && std::abs(
-                        dynoAbsorberOutput_
-                            .filteredAccelerationRpmPerSecond)
-                        <= acceptedAccelerationRpmPerSecond) {
-                // The ENGINE's brake torque, not the absorber's brake command.
-                //
-                // `loadTorqueNm` is the dyno controller's output, and the
-                // controller deliberately ramps its feed-forward term in over
-                // the final 60 rpm of approach (DynoAbsorberController's
-                // `contactScale`, a smoothstep) -- across exactly the +-60 rpm
-                // this gate accepts a sample within. A point that settled 40 rpm
-                // low therefore published about a quarter of the feed-forward
-                // and a point that settled dead on published all of it, so the
-                // curve rose and fell with where the engine happened to land in
-                // the acceptance band rather than with what it produced. That is
-                // the "rollercoaster". `state_.torqueNm` is the engine's own
-                // brake torque and carries none of the controller's shape; it is
-                // also what `DynoSweepHarness` averages, so the bench in the
-                // application and the instrument the catalogue is validated
-                // against now measure the same quantity.
-                dynoChannelAccumulator_.rpm += frame.state.rpm;
-                dynoChannelAccumulator_.torqueNm += frame.state.torqueNm;
-                dynoChannelAccumulator_.powerKw += frame.state.torqueNm
-                    * frame.state.angularVelocityRadPerSecond / 1'000.0;
-                dynoChannelAccumulator_.airFuelRatio += frame.state.airFuelRatio;
-                dynoChannelAccumulator_.coolantTemperatureC += frame.state.coolantTemperatureC;
-                dynoChannelAccumulator_.exhaustTemperatureC += frame.state.exhaustTemperatureC;
-                dynoChannelAccumulator_.ignitionAdvanceDegrees += frame.state.ignitionAdvanceDegrees;
-                dynoChannelAccumulator_.targetAirFuelRatio += frame.state.targetAirFuelRatio;
-                dynoChannelAccumulator_.volumetricEfficiency += frame.state.volumetricEfficiency;
-                dynoChannelAccumulator_.fuelFlowGramsPerSecond += frame.state.fuelFlowGramsPerSecond;
-                dynoChannelAccumulator_.manifoldPressureKpa += frame.state.manifoldPressureKpa;
-                dynoChannelAccumulator_.exhaustPressureKpa += frame.state.exhaustBackPressureKpa;
-                dynoChannelAccumulator_.oilTemperatureC += frame.state.oilTemperatureC;
-                dynoChannelAccumulator_.oilPressureKpa += frame.state.oilPressureKpa;
-                dynoChannelAccumulator_.airFlowGramsPerSecond += frame.state.airFlowGramsPerSecond;
-                dynoChannelAccumulator_.lambda += frame.state.lambda;
-                dynoChannelAccumulator_.brakeSpecificFuelConsumptionGPerKwh +=
-                    frame.state.brakeSpecificFuelConsumptionGPerKwh;
-                ++dynoSampleCount_;
-                dynoStableElapsed_ += baseStep.count();
-            } else {
-                dynoChannelAccumulator_ = zeroedDynoAccumulator();
-                dynoSampleCount_ = 0;
-                dynoStableElapsed_ = 0.0;
-            }
-            const auto minimumCycleWindowSeconds =
-                dynoAveragingWindowSeconds(config_, dynoTargetRpm_);
-            if (dynoStableElapsed_ >= minimumCycleWindowSeconds && dynoSampleCount_ > 0) {
-                const auto divisor = static_cast<double>(dynoSampleCount_);
-                const auto atmosphericCorrection = std::clamp((99.0 / config_.ambientPressureKpa)
-                    * std::sqrt((config_.ambientTemperatureC + 273.15) / 298.15), 0.80, 1.20);
-                const auto meanTorqueNm = dynoChannelAccumulator_.torqueNm / divisor;
-                const auto meanPowerKw = dynoChannelAccumulator_.powerKw / divisor;
-                // The speed actually held, not the speed asked for. The gate
-                // tolerates 60 rpm of placement error, so labelling the point
-                // with its target put a real measurement at a false abscissa --
-                // on a steep part of the curve that alone is several Nm of
-                // apparent scatter.
-                DynoPoint point { dynoChannelAccumulator_.rpm / divisor, meanTorqueNm,
-                    meanPowerKw, dynoChannelAccumulator_.airFuelRatio / divisor,
-                    dynoChannelAccumulator_.coolantTemperatureC / divisor,
-                    dynoChannelAccumulator_.exhaustTemperatureC / divisor,
-                    dynoChannelAccumulator_.ignitionAdvanceDegrees / divisor, atmosphericCorrection,
-                    meanTorqueNm * atmosphericCorrection,
-                    meanPowerKw * atmosphericCorrection };
-                point.targetAirFuelRatio = dynoChannelAccumulator_.targetAirFuelRatio / divisor;
-                point.volumetricEfficiency = dynoChannelAccumulator_.volumetricEfficiency / divisor;
-                point.fuelFlowGramsPerSecond = dynoChannelAccumulator_.fuelFlowGramsPerSecond / divisor;
-                point.manifoldPressureKpa = dynoChannelAccumulator_.manifoldPressureKpa / divisor;
-                point.exhaustPressureKpa = dynoChannelAccumulator_.exhaustPressureKpa / divisor;
-                point.oilTemperatureC = dynoChannelAccumulator_.oilTemperatureC / divisor;
-                point.oilPressureKpa = dynoChannelAccumulator_.oilPressureKpa / divisor;
-                point.airFlowGramsPerSecond = dynoChannelAccumulator_.airFlowGramsPerSecond / divisor;
-                point.lambda = dynoChannelAccumulator_.lambda / divisor;
-                point.brakeSpecificFuelConsumptionGPerKwh =
-                    dynoChannelAccumulator_.brakeSpecificFuelConsumptionGPerKwh / divisor;
-                {
-                    const std::scoped_lock lock(dynoMutex_);
+                && !holding;
+            const auto acquisitionMode = holding
+                ? DynoAcquisitionMode::hold
+                : (rampingSweep
+                    ? DynoAcquisitionMode::continuousRamp
+                    : DynoAcquisitionMode::steppedCalibration);
+            const auto rampRate = dynoRampRpmPerSecond_.load(
+                std::memory_order_relaxed);
+            const auto gateInput = [&](double cycleTorqueNm,
+                                       double measuredRpm,
+                                       bool cycleContinuous) noexcept {
+                DynoQualityGateInput input;
+                input.mode = acquisitionMode;
+                input.targetRpm = dynoTargetRpm_;
+                input.measuredRpm = measuredRpm;
+                input.rampRateRpmPerSecond = rampRate;
+                input.measuredCycleTorqueNm = cycleTorqueNm;
+                input.prepared = true;
+                input.protocolReady = true;
+                input.recoveryActive = false;
+                input.cycleContinuous = cycleContinuous;
+                return input;
+            };
+            const auto storePoint = [&](const DynoPoint& point,
+                                        bool replaceHoldPoint) {
+                const std::scoped_lock lock(dynoMutex_);
+                if (replaceHoldPoint && !currentRun_.points.empty())
+                    currentRun_.points.front() = point;
+                else
                     currentRun_.points.push_back(point);
-                    currentRun_.peakTorqueNm = std::max(currentRun_.peakTorqueNm, point.torqueNm);
-                    currentRun_.peakPowerKw = std::max(currentRun_.peakPowerKw, point.powerKw);
-                    currentRun_.peakCorrectedTorqueNm = std::max(currentRun_.peakCorrectedTorqueNm, point.correctedTorqueNm);
-                    currentRun_.peakCorrectedPowerKw = std::max(currentRun_.peakCorrectedPowerKw, point.correctedPowerKw);
+                if (!point.valid) return;
+                if (replaceHoldPoint) {
+                    currentRun_.points.resize(1);
+                    currentRun_.peakTorqueNm = point.torqueNm;
+                    currentRun_.peakPowerKw = point.powerKw;
+                    currentRun_.peakCorrectedTorqueNm = point.correctedTorqueNm;
+                    currentRun_.peakCorrectedPowerKw = point.correctedPowerKw;
+                } else {
+                    currentRun_.peakTorqueNm = std::max(
+                        currentRun_.peakTorqueNm, point.torqueNm);
+                    currentRun_.peakPowerKw = std::max(
+                        currentRun_.peakPowerKw, point.powerKw);
+                    currentRun_.peakCorrectedTorqueNm = std::max(
+                        currentRun_.peakCorrectedTorqueNm,
+                        point.correctedTorqueNm);
+                    currentRun_.peakCorrectedPowerKw = std::max(
+                        currentRun_.peakCorrectedPowerKw,
+                        point.correctedPowerKw);
                 }
-                // Completion is tested on the TARGET, never on the published
-                // rpm: the published value is now the mean speed actually held
-                // and can sit just under the ceiling forever, which would leave
-                // the sweep running with nowhere left to step.
+            };
+
+            if (frame.droppedCompletedBrakeCycleSampleCount > 0) {
+                droppedBrakeCycleSamples_.fetch_add(
+                    frame.droppedCompletedBrakeCycleSampleCount,
+                    std::memory_order_relaxed);
+                dynoEstimator_.breakContinuity();
+                previousRampEstimate_.reset();
+                dynoCycleTainted_ = true;
+                dynoGateAllowsProgress_ = false;
+                latestDynoQualityReasons_ |=
+                    DynoQualityReason::discontinuousCycle;
+                pendingDynoInvalidReasons_ |=
+                    DynoQualityReason::discontinuousCycle;
+            }
+
+            // Frame-level faults taint the complete cycle which contains them;
+            // they also freeze a ramp immediately instead of waiting for its
+            // boundary event. Cycle continuity itself is evaluated at the
+            // boundary below, hence `true` in this instantaneous observation.
+            const auto liveGate = dynoQualityGate_.evaluate(
+                gateInput(hasCompletedBrakeCycleTorque_
+                        ? lastCompletedBrakeCycleTorqueNm_ : 0.0,
+                    dynoAbsorberOutput_.filteredRpm,
+                    true),
+                frame.state, dynoAbsorberOutput_);
+            latestDynoQualityReasons_ = liveGate.reasons;
+            if (!liveGate.accepted()) {
+                dynoGateAllowsProgress_ = false;
+                const auto physicallyTaintsCycle =
+                    hasDynoQualityReason(liveGate.reasons,
+                        DynoQualityReason::nonFinite)
+                    || hasDynoQualityReason(liveGate.reasons,
+                        DynoQualityReason::noBrakeContact)
+                    || hasDynoQualityReason(liveGate.reasons,
+                        DynoQualityReason::absorberCapacityLimited)
+                    || hasDynoQualityReason(liveGate.reasons,
+                        DynoQualityReason::revLimiterActive)
+                    || hasDynoQualityReason(liveGate.reasons,
+                        DynoQualityReason::recoveryActive);
+                if (physicallyTaintsCycle) {
+                    dynoCycleTainted_ = true;
+                    pendingDynoInvalidReasons_ |= liveGate.reasons;
+                }
+            } else {
+                dynoGateAllowsProgress_ = !rampingSweep
+                    || (dynoRampPrimed_
+                        && dynoEstimator_.estimate().quality
+                            == DynoEstimateQuality::ready);
+            }
+
+            for (std::size_t sampleIndex = 0;
+                 sampleIndex < frame.completedBrakeCycleSampleCount;
+                 ++sampleIndex) {
+                const auto& cycle =
+                    frame.completedBrakeCycleSamples[sampleIndex];
+                const auto update = dynoEstimator_.push(
+                    cycle, dynoTelemetry(frame.state));
+                lastCompletedBrakeCycleTorqueNm_ = cycle.meanTorqueNm;
+                hasCompletedBrakeCycleTorque_ = cycle.numericallyValid;
+                const auto cycleSequenceContinuous =
+                    update.acceptance == DynoCycleAcceptance::accepted
+                    && !dynoCycleTainted_;
+                const auto cycleGate = dynoQualityGate_.evaluate(
+                    gateInput(cycle.meanTorqueNm,
+                              update.estimate.meanRpm > 0.0
+                                ? update.estimate.meanRpm
+                                : cycle.meanRpm,
+                              cycleSequenceContinuous),
+                    frame.state, dynoAbsorberOutput_);
+                latestDynoQualityReasons_ = cycleGate.reasons;
+                dynoCycleTainted_ = false;
+                if (update.acceptance != DynoCycleAcceptance::accepted
+                    || !cycleGate.accepted()) {
+                    pendingDynoInvalidReasons_ |= cycleGate.reasons;
+                    dynoEstimator_.breakContinuity();
+                    previousRampEstimate_.reset();
+                    dynoGateAllowsProgress_ = false;
+                    continue;
+                }
+
+                const auto estimate = update.estimate;
+                if (estimate.quality != DynoEstimateQuality::ready
+                    || estimate.capacityLimited) {
+                    dynoGateAllowsProgress_ = !rampingSweep;
+                    continue;
+                }
+                dynoGateAllowsProgress_ = true;
                 const auto ceilingRpm = sweepCeilingRpm(config_);
-                if (!dynoHoldEnabled_.load(std::memory_order_relaxed)
-                        && dynoTargetRpm_ >= ceilingRpm - 1.0e-6)
+
+                if (rampingSweep) {
+                    constexpr double binWidthRpm = 50.0;
+                    if (!dynoRampPrimed_) {
+                        const auto entryRpm = sweepEntryRpm(config_);
+                        // Priming is a steady hold, even though the following
+                        // acquisition is transient. Do not label a window up
+                        // to 150 rpm away as the entry point.
+                        if (std::abs(estimate.meanRpm - entryRpm)
+                            > 0.5 * binWidthRpm)
+                            continue;
+                        storePoint(makeDynoPoint(
+                            config_, estimate, entryRpm, true), false);
+                        dynoRampPrimed_ = true;
+                        nextSampleRpm_ = entryRpm + binWidthRpm;
+                        previousRampEstimate_ = estimate;
+                        pendingDynoInvalidReasons_ =
+                            DynoQualityReason::none;
+                        continue;
+                    }
+                    if (!previousRampEstimate_) {
+                        while (nextSampleRpm_ <= ceilingRpm + 1.0e-9
+                               && nextSampleRpm_
+                                    < estimate.meanRpm - 1.0e-9) {
+                            storePoint(makeInvalidDynoPoint(
+                                nextSampleRpm_,
+                                pendingDynoInvalidReasons_), false);
+                            nextSampleRpm_ += binWidthRpm;
+                        }
+                        previousRampEstimate_ = estimate;
+                        continue;
+                    }
+                    const auto previous = *previousRampEstimate_;
+                    const auto rpmDelta = estimate.meanRpm - previous.meanRpm;
+                    if (rpmDelta > 1.0e-9) {
+                        while (nextSampleRpm_ <= ceilingRpm + 1.0e-9
+                               && nextSampleRpm_
+                                    <= estimate.meanRpm + 1.0e-9) {
+                            if (nextSampleRpm_
+                                < previous.meanRpm - 1.0e-9) {
+                                storePoint(makeInvalidDynoPoint(
+                                    nextSampleRpm_,
+                                    pendingDynoInvalidReasons_), false);
+                            } else {
+                                const auto fraction =
+                                    (nextSampleRpm_ - previous.meanRpm)
+                                    / rpmDelta;
+                                const auto atBin = interpolateEstimate(
+                                    previous, estimate, fraction,
+                                    nextSampleRpm_);
+                                storePoint(makeDynoPoint(
+                                    config_, atBin,
+                                    nextSampleRpm_, true), false);
+                            }
+                            nextSampleRpm_ += binWidthRpm;
+                        }
+                        previousRampEstimate_ = estimate;
+                        pendingDynoInvalidReasons_ =
+                            DynoQualityReason::none;
+                    }
+                    if (dynoTargetRpm_ >= ceilingRpm - 1.0e-9
+                        && nextSampleRpm_ > ceilingRpm + 1.0e-9)
+                        dynoCompleted_.store(
+                            true, std::memory_order_relaxed);
+                    continue;
+                }
+
+                const auto point = makeDynoPoint(
+                    config_, estimate, estimate.meanRpm, false);
+                if (holding) {
+                    // Hold is one live aggregate, not an ever-growing curve at
+                    // a repeated abscissa. The UI may later render its temporal
+                    // stability separately without inventing torque/RPM data.
+                    storePoint(point, true);
+                    continue;
+                }
+
+                storePoint(point, false);
+                if (dynoTargetRpm_ >= ceilingRpm - 1.0e-6) {
                     dynoCompleted_.store(true, std::memory_order_relaxed);
-                // The ramp advances every iteration up in the sweep block, so
-                // publishing a point must NOT also step it -- doing both would
-                // make the bench jump 250 rpm every window on top of the ramp.
-                if (!dynoHoldEnabled_.load(std::memory_order_relaxed)
-                        && !rampingSweep)
-                    dynoTargetRpm_ = std::min(ceilingRpm, dynoTargetRpm_ + 250.0);
-                nextSampleRpm_ = dynoTargetRpm_;
-                dynoChannelAccumulator_ = zeroedDynoAccumulator();
-                dynoSampleCount_ = 0;
-                dynoStableElapsed_ = 0.0;
+                } else {
+                    dynoTargetRpm_ = std::min(
+                        ceilingRpm, dynoTargetRpm_ + 250.0);
+                    nextSampleRpm_ = dynoTargetRpm_;
+                    dynoEstimator_.reset();
+                    previousRampEstimate_.reset();
+                    dynoCycleTainted_ = true;
+                    dynoGateAllowsProgress_ = false;
+                }
+                // A high-speed diagnostic step can theoretically contain more
+                // than one cycle; every remaining sample belongs to the old
+                // setpoint and must not leak into the new stepped window.
+                break;
             }
         }
         for (std::size_t index = 0; index < frame.firingEventCount; ++index)
@@ -991,6 +1205,28 @@ void EngineRuntime::run(std::stop_token stopToken) {
             frame.state.dynoFilteredAccelerationRpmPerSecond =
                 dynoAbsorberOutput_.filteredAccelerationRpmPerSecond;
             frame.state.dynoBrakeTorqueNm = dynoBrakeTorqueNm_;
+            frame.state.dynoBrakeContactFraction =
+                dynoAbsorberOutput_.contactFraction;
+            frame.state.dynoAbsorberSaturatedLow =
+                dynoAbsorberOutput_.saturatedLow;
+            frame.state.dynoAbsorberSaturatedHigh =
+                dynoAbsorberOutput_.saturatedHigh;
+            frame.state.dynoQualityReasons =
+                static_cast<std::uint32_t>(latestDynoQualityReasons_);
+            const auto& dynoEstimate = dynoEstimator_.estimate();
+            frame.state.dynoMeasurementReady =
+                dynoEstimate.quality == DynoEstimateQuality::ready
+                && dynoEstimate.continuous
+                && !dynoEstimate.capacityLimited;
+            frame.state.dynoAcceptedCycleCount =
+                static_cast<std::uint32_t>(std::min<std::size_t>(
+                    dynoEstimate.cycleCount,
+                    std::numeric_limits<std::uint32_t>::max()));
+            frame.state.dynoWindowDurationSeconds =
+                dynoEstimate.durationSeconds;
+            frame.state.dynoWindowMeanRpm = dynoEstimate.meanRpm;
+            frame.state.dynoWindowMinimumRpm = dynoEstimate.minRpm;
+            frame.state.dynoWindowMaximumRpm = dynoEstimate.maxRpm;
             const auto sweepStartRpm = sweepEntryRpm(config_);
             const auto sweepRangeRpm = std::max(
                 1.0, sweepCeilingRpm(config_) - sweepStartRpm);

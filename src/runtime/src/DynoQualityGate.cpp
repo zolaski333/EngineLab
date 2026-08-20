@@ -13,9 +13,13 @@ double finitePositiveOr(double value, double fallback) noexcept {
 } // namespace
 
 DynoQualityGate::DynoQualityGate(DynoQualityGateConfig config) noexcept {
-    config_.minimumContactFraction = std::clamp(
-        std::isfinite(config.minimumContactFraction)
-            ? config.minimumContactFraction : 0.95,
+    config_.minimumSteadyContactFraction = std::clamp(
+        std::isfinite(config.minimumSteadyContactFraction)
+            ? config.minimumSteadyContactFraction : 0.95,
+        0.0, 1.0);
+    config_.minimumRampContactFraction = std::clamp(
+        std::isfinite(config.minimumRampContactFraction)
+            ? config.minimumRampContactFraction : 0.0,
         0.0, 1.0);
     config_.minimumEngineTorqueNm = finitePositiveOr(
         config.minimumEngineTorqueNm, 1.4);
@@ -46,6 +50,7 @@ DynoQualityGateResult DynoQualityGate::evaluate(
 
     const auto numericalInputsFinite =
         std::isfinite(input.targetRpm)
+        && std::isfinite(input.measuredRpm)
         && std::isfinite(input.measuredCycleTorqueNm)
         && (!ramp || std::isfinite(input.rampRateRpmPerSecond))
         && std::isfinite(engineState.rpm)
@@ -57,9 +62,12 @@ DynoQualityGateResult DynoQualityGate::evaluate(
     if (!numericalInputsFinite) {
         result.reasons |= DynoQualityReason::nonFinite;
     } else {
-        result.speedErrorRpm = absorber.filteredRpm - input.targetRpm;
+        result.speedErrorRpm = input.measuredRpm - input.targetRpm;
+        const auto minimumContactFraction = ramp
+            ? config_.minimumRampContactFraction
+            : config_.minimumSteadyContactFraction;
         if (absorber.contactFraction + 1.0e-12
-            < config_.minimumContactFraction)
+            < minimumContactFraction)
             result.reasons |= DynoQualityReason::noBrakeContact;
         if (!(input.measuredCycleTorqueNm
               > config_.minimumEngineTorqueNm))

@@ -58,10 +58,14 @@ int main() {
         enginelab::DynoEstimator estimator(0.15);
         const auto first = cycle(10, 0.0, 1'000.0, 100.0);
         const auto second = cycle(11, first.endTimeSeconds, 2'000.0, 200.0);
-        require(estimator.push(first).acceptance
+        enginelab::DynoCycleTelemetry firstTelemetry;
+        firstTelemetry.airFuelRatio = 10.0;
+        enginelab::DynoCycleTelemetry secondTelemetry;
+        secondTelemetry.airFuelRatio = 20.0;
+        require(estimator.push(first, firstTelemetry).acceptance
                     == DynoCycleAcceptance::accepted,
                 "the first complete cycle must be accepted");
-        const auto update = estimator.push(second);
+        const auto update = estimator.push(second, secondTelemetry);
         require(update.acceptance == DynoCycleAcceptance::accepted,
                 "a contiguous complete cycle must be accepted");
         const auto& value = update.estimate;
@@ -83,6 +87,9 @@ int main() {
                     "maximum cycle RPM must be retained");
         requireNear(value.torqueVarianceNm2, 2'500.0, 1.0e-9,
                     "torque variance must be crank-angle weighted");
+        requireNear(value.meanTelemetry.airFuelRatio, 40.0 / 3.0,
+                    1.0e-10,
+                    "auxiliary telemetry must be duration weighted");
     }
 
     // The window is the shortest causal suffix which still covers the target.

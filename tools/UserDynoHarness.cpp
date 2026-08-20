@@ -54,7 +54,20 @@ struct Result final {
     double lastPointRpm {};
     double maximumProgress {};
     std::size_t pointCount {};
+    std::size_t totalPointCount {};
+    std::size_t invalidPointCount {};
+    std::uint32_t invalidQualityReasons {};
+    double lastRecordedRpm {};
+    bool exactRampGrid { false };
     std::uint32_t recoveryCount {};
+    double finalRpm {};
+    double finalTargetRpm {};
+    double finalContactFraction {};
+    double finalWindowMeanRpm {};
+    double finalWindowDurationSeconds {};
+    std::uint32_t finalWindowCycleCount {};
+    std::uint32_t finalQualityReasons {};
+    bool finalPreparing { false };
     std::string failure;
 };
 
@@ -72,6 +85,11 @@ struct Result final {
     runtime.setRealtimeThrottleEnabled(false);
     runtime.setRealtimeLoadProtectionEnabled(false);
     runtime.setDynoMaximumDurationSeconds(60.0);
+    // This is the product/user bench regression, not the stepped catalogue
+    // calibration instrument. Make the mode explicit so a default can never
+    // silently turn the test back into a 250 rpm ladder.
+    runtime.setDynoRampEnabled(true);
+    runtime.setDynoRampRpmPerSecond(500.0);
     runtime.setIgnitionEnabled(true);
     runtime.setStarterEngaged(true);
     runtime.setThrottle(1.0);
@@ -105,10 +123,17 @@ struct Result final {
     const auto minimumRunningRpm =
         std::max(300.0, config.idleRpm * 0.40);
     auto run = runtime.currentDynoRun();
+    const auto validPointCount = [](const enginelab::DynoRun& candidate) {
+        return static_cast<std::size_t>(std::count_if(
+            candidate.points.begin(), candidate.points.end(),
+            [](const enginelab::DynoPoint& point) {
+                return point.valid;
+            }));
+    };
     while (state.simulationTimeSeconds - dynoStartSimulationTime < 80.0
            && Clock::now() < wallDeadline
            && (completeSweep ? runtime.dynoRunning()
-                             : run.points.size() < 3)) {
+                             : validPointCount(run) < 3)) {
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
         state = runtime.snapshot();
         run = runtime.currentDynoRun();
@@ -126,16 +151,45 @@ struct Result final {
             result.stalled = true;
     }
 
+    result.finalRpm = state.rpm;
+    result.finalTargetRpm = state.dynoTargetRpm;
+    result.finalContactFraction = state.dynoBrakeContactFraction;
+    result.finalWindowMeanRpm = state.dynoWindowMeanRpm;
+    result.finalWindowDurationSeconds = state.dynoWindowDurationSeconds;
+    result.finalWindowCycleCount = state.dynoAcceptedCycleCount;
+    result.finalQualityReasons = state.dynoQualityReasons;
+    result.finalPreparing = state.dynoPreparing;
+
     if (completeSweep && !runtime.dynoRunning()) {
         const auto history = runtime.dynoHistory();
         if (!history.empty())
             run = history.back();
     }
-    result.pointCount = run.points.size();
-    if (!run.points.empty())
-        result.firstPointRpm = run.points.front().rpm;
-    if (!run.points.empty())
-        result.lastPointRpm = run.points.back().rpm;
+    result.pointCount = validPointCount(run);
+    result.totalPointCount = run.points.size();
+    for (const auto& point : run.points) {
+        if (!point.valid) {
+            ++result.invalidPointCount;
+            result.invalidQualityReasons |= point.qualityReasons;
+        }
+    }
+    if (!run.points.empty()) result.lastRecordedRpm = run.points.back().rpm;
+    result.exactRampGrid = !run.points.empty()
+        && std::abs(run.points.front().rpm - entryRpm) < 1.0e-6;
+    for (std::size_t index = 1;
+         index < run.points.size() && result.exactRampGrid; ++index) {
+        result.exactRampGrid = std::abs(
+            run.points[index].rpm - run.points[index - 1].rpm - 50.0)
+            < 1.0e-6;
+    }
+    const auto firstValid = std::find_if(
+        run.points.begin(), run.points.end(),
+        [](const enginelab::DynoPoint& point) { return point.valid; });
+    const auto lastValid = std::find_if(
+        run.points.rbegin(), run.points.rend(),
+        [](const enginelab::DynoPoint& point) { return point.valid; });
+    if (firstValid != run.points.end()) result.firstPointRpm = firstValid->rpm;
+    if (lastValid != run.points.rend()) result.lastPointRpm = lastValid->rpm;
     runtime.stopDyno();
     std::this_thread::sleep_for(std::chrono::milliseconds(10));
     runtime.stop();
@@ -145,13 +199,35 @@ struct Result final {
     else if (result.stalled)
         result.failure = "engine crossed the running threshold during preparation";
     else if (result.pointCount < 3)
-        result.failure = "dyno did not acquire three points";
+        result.failure = "dyno did not acquire three points; rpm="
+            + std::to_string(result.finalRpm)
+            + " target=" + std::to_string(result.finalTargetRpm)
+            + " contact=" + std::to_string(result.finalContactFraction)
+            + " window=" + std::to_string(result.finalWindowMeanRpm)
+            + "/" + std::to_string(result.finalWindowDurationSeconds)
+            + "s/" + std::to_string(result.finalWindowCycleCount)
+            + " gate=" + std::to_string(result.finalQualityReasons)
+            + " preparing=" + (result.finalPreparing ? "yes" : "no");
     else if (std::abs(result.firstPointRpm - entryRpm) > 100.0)
         result.failure = "first point was not acquired at the low-speed sweep entry";
     else if (completeSweep
              && (result.maximumProgress < 0.99
                  || result.lastPointRpm < ceilingRpm - 100.0))
-        result.failure = "full sweep stopped before the high-speed endpoint";
+        result.failure = "full sweep stopped before the high-speed endpoint; valid="
+            + std::to_string(result.pointCount) + "/"
+            + std::to_string(result.totalPointCount)
+            + " invalidMask=" + std::to_string(result.invalidQualityReasons)
+            + " lastRecorded=" + std::to_string(result.lastRecordedRpm)
+            + " finalTarget=" + std::to_string(result.finalTargetRpm)
+            + " finalGate=" + std::to_string(result.finalQualityReasons);
+    else if (completeSweep
+             && (result.invalidPointCount != 0
+                 || !result.exactRampGrid))
+        result.failure = "full sweep contained invalid or non-grid bins; valid="
+            + std::to_string(result.pointCount) + "/"
+            + std::to_string(result.totalPointCount)
+            + " invalidMask=" + std::to_string(result.invalidQualityReasons)
+            + " exactGrid=" + (result.exactRampGrid ? "yes" : "no");
     return result;
 }
 }

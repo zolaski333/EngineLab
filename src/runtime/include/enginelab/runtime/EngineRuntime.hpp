@@ -10,12 +10,15 @@
 #include <enginelab/simulation/DynoAbsorberController.hpp>
 #include <enginelab/simulation/EngineSimulator.hpp>
 #include <enginelab/runtime/DrivelineModel.hpp>
+#include <enginelab/runtime/DynoEstimator.hpp>
+#include <enginelab/runtime/DynoQualityGate.hpp>
 #include <enginelab/runtime/RealtimeLoadGovernor.hpp>
 #include <algorithm>
 #include <atomic>
 #include <cmath>
 #include <cstdint>
 #include <mutex>
+#include <optional>
 #include <thread>
 #include <vector>
 
@@ -274,6 +277,9 @@ public:
     [[nodiscard]] std::uint64_t droppedExhaustAcousticSampleCount() const noexcept {
         return droppedExhaustAcousticSamples_.load();
     }
+    [[nodiscard]] std::uint64_t droppedBrakeCycleSampleCount() const noexcept {
+        return droppedBrakeCycleSamples_.load();
+    }
     [[nodiscard]] std::uint64_t timingOverrunCount() const noexcept { return timingOverruns_.load(); }
     [[nodiscard]] double maximumTimingLatenessSeconds() const noexcept {
         return maximumTimingLatenessSeconds_.load();
@@ -345,6 +351,8 @@ private:
     EngineSimulator simulator_;
     DynoAbsorberController dynoAbsorber_;
     DynoAbsorberOutput dynoAbsorberOutput_;
+    DynoEstimator dynoEstimator_;
+    DynoQualityGate dynoQualityGate_;
     DrivelineModel driveline_;
     DrivelineOutput drivelineOutput_;
     FiringEventQueue eventQueue_;
@@ -370,6 +378,7 @@ private:
     std::atomic<std::uint64_t> droppedEvents_ { 0 };
     std::atomic<std::uint64_t> droppedPressureSamples_ { 0 };
     std::atomic<std::uint64_t> droppedExhaustAcousticSamples_ { 0 };
+    std::atomic<std::uint64_t> droppedBrakeCycleSamples_ { 0 };
     std::atomic<std::uint64_t> timingOverruns_ { 0 };
     std::atomic<double> maximumTimingLatenessSeconds_ { 0.0 };
     std::atomic<double> realtimeFactor_ { 1.0 };
@@ -400,19 +409,17 @@ private:
     bool dynoPullDownRequired_ { false };
     double dynoThrottleCommand_ { 0.18 };
     std::uint32_t dynoRecoveryCount_ { 0 };
-    double dynoStableElapsed_ { 0.0 };
     double dynoBrakeTorqueNm_ { 0.0 };
-    /** Running sum of EVERY published channel over the stable window.
-     *
-     * Torque used to be the only averaged quantity; lambda, VE, manifold
-     * pressure, exhaust temperature, ignition advance and the rest were each
-     * taken from the single frame that happened to close the window, so those
-     * curves could not be anything but ragged however well the engine was held.
-     * Fields are summed here and divided by `dynoSampleCount_` at publication,
-     * so a zeroed instance is required rather than a default-constructed one
-     * (DynoPoint's defaults are 14.7 / 22.0 / 1.0, not 0). */
-    DynoPoint dynoChannelAccumulator_ {};
-    std::uint32_t dynoSampleCount_ { 0 };
+    std::optional<DynoWindowEstimate> previousRampEstimate_;
+    double lastCompletedBrakeCycleTorqueNm_ { 0.0 };
+    DynoQualityReason latestDynoQualityReasons_ {
+        DynoQualityReason::notPrepared };
+    DynoQualityReason pendingDynoInvalidReasons_ {
+        DynoQualityReason::none };
+    bool hasCompletedBrakeCycleTorque_ { false };
+    bool dynoCycleTainted_ { true };
+    bool dynoGateAllowsProgress_ { false };
+    bool dynoRampPrimed_ { false };
     bool savedIgnition_ { false };
     bool savedStarter_ { false };
     double savedThrottle_ { 0.0 };

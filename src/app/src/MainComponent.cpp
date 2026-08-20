@@ -717,11 +717,25 @@ void MainComponent::exportDynoCsv() {
     else if (!archivedRuns_.empty()) run = &archivedRuns_.back();
     else if (!visibleCurrentRun_.points.empty()) run = &visibleCurrentRun_;
     if (run == nullptr) { showError("CSV DYNO", utf8("Aucune courbe à exporter.")); return; }
-    juce::String csv = "rpm;torque_nm;power_kw;actual_afr;target_afr;lambda;volumetric_efficiency;air_flow_g_s;fuel_flow_g_s;bsfc_g_kwh;map_kpa;"
+    juce::String csv = "rpm;valid;quality_reasons;bin_rpm;window_mean_rpm;window_min_rpm;window_max_rpm;window_duration_s;torque_variance_nm2;first_cycle_id;last_cycle_id;accepted_cycle_count;"
+        "torque_nm;power_kw;actual_afr;target_afr;lambda;volumetric_efficiency;air_flow_g_s;fuel_flow_g_s;bsfc_g_kwh;map_kpa;"
         "exhaust_pressure_kpa;coolant_c;oil_c;oil_pressure_kpa;exhaust_c;ignition_advance_deg;correction_factor;"
         "corrected_torque_nm;corrected_power_kw\n";
-    for (const auto& point : run->points)
-        csv << juce::String(point.rpm, 1) << ';' << juce::String(point.torqueNm, 2) << ';'
+    for (const auto& point : run->points) {
+        csv << juce::String(point.rpm, 1) << ';' << (point.valid ? "1" : "0") << ';'
+            << juce::String(static_cast<juce::int64>(point.qualityReasons)) << ';'
+            << juce::String(point.binRpm, 1) << ';' << juce::String(point.windowMeanRpm, 3) << ';'
+            << juce::String(point.windowMinimumRpm, 3) << ';' << juce::String(point.windowMaximumRpm, 3) << ';'
+            << juce::String(point.windowDurationSeconds, 6) << ';' << juce::String(point.torqueVarianceNm2, 6) << ';'
+            << juce::String(static_cast<juce::int64>(point.firstCycleId)) << ';'
+            << juce::String(static_cast<juce::int64>(point.lastCycleId)) << ';'
+            << juce::String(static_cast<juce::int64>(point.acceptedCycleCount));
+        if (!point.valid) {
+            for (int column = 0; column < 19; ++column) csv << ';';
+            csv << '\n';
+            continue;
+        }
+        csv << ';' << juce::String(point.torqueNm, 2) << ';'
             << juce::String(point.powerKw, 2) << ';' << juce::String(point.airFuelRatio, 2) << ';'
             << juce::String(point.targetAirFuelRatio, 2) << ';' << juce::String(point.lambda, 4) << ';'
             << juce::String(point.volumetricEfficiency, 4) << ';' << juce::String(point.airFlowGramsPerSecond, 4) << ';'
@@ -733,6 +747,7 @@ void MainComponent::exportDynoCsv() {
             << ';' << juce::String(point.ignitionAdvanceDegrees, 2) << ';'
             << juce::String(point.atmosphericCorrectionFactor, 4) << ';'
             << juce::String(point.correctedTorqueNm, 2) << ';' << juce::String(point.correctedPowerKw, 2) << '\n';
+    }
     fileChooser_ = std::make_unique<juce::FileChooser>("Exporter CSV",
         juce::File::getSpecialLocation(juce::File::userDocumentsDirectory).getChildFile(juce::String(run->engineName) + ".csv"), "*.csv");
     auto safe = juce::Component::SafePointer<MainComponent>(this);
@@ -1390,7 +1405,7 @@ void MainComponent::drawDebugPanel(juce::Graphics& g, juce::Rectangle<float> are
         liftMultiplier = std::max(liftMultiplier, visibleState_.cylinderStates[index].valveLiftMultiplier);
         runnerResonanceHz = std::max(runnerResonanceHz, visibleState_.cylinderStates[index].intakeResonanceFrequencyHz);
     }
-    const std::array<juce::String, 55> values {
+    const std::array<juce::String, 60> values {
         "Net torque       " + juce::String(visibleState_.netTorqueNm, 2),
         "Indicated torque " + juce::String(visibleState_.indicatedTorqueNm, 2),
         "Mean-work torque " + juce::String(visibleState_.meanWorkTorqueNm, 2),
@@ -1445,6 +1460,17 @@ void MainComponent::drawDebugPanel(juce::Graphics& g, juce::Rectangle<float> are
         "Pertes pression  " + juce::String(runtime_ ? runtime_->droppedPressureSampleCount() : 0),
         "Pertes acoust ech " + juce::String(runtime_ ? runtime_->droppedExhaustAcousticSampleCount() : 0),
         "Pertes reaction  " + juce::String(audio_ ? audio_->droppedReactionEventCount() : 0),
+        "Pertes cycles dyno " + juce::String(runtime_ ? runtime_->droppedBrakeCycleSampleCount() : 0),
+        "Dyno gate mask   " + juce::String(static_cast<juce::int64>(visibleState_.dynoQualityReasons)),
+        "Dyno contact/sat " + juce::String(visibleState_.dynoBrakeContactFraction, 3)
+            + " / " + (visibleState_.dynoAbsorberSaturatedHigh ? "HIGH"
+                : (visibleState_.dynoAbsorberSaturatedLow ? "low" : "no")),
+        "Dyno window rpm  " + juce::String(visibleState_.dynoWindowMeanRpm, 1)
+            + " [" + juce::String(visibleState_.dynoWindowMinimumRpm, 0)
+            + "," + juce::String(visibleState_.dynoWindowMaximumRpm, 0) + "]",
+        "Dyno window      " + juce::String(visibleState_.dynoWindowDurationSeconds, 3)
+            + " s / " + juce::String(visibleState_.dynoAcceptedCycleCount)
+            + (visibleState_.dynoMeasurementReady ? " READY" : " warm"),
         // Simulated seconds delivered per wall second. The overrun counter
         // beside it says a deadline was missed but not by how much work, and
         // that is the whole difference: below 1.0 the simulation is in slow
@@ -1804,6 +1830,7 @@ void MainComponent::drawDynoChart(juce::Graphics& g, juce::Rectangle<float> area
     double maxPower = 75.0;
     auto accumulateMax = [&maxTorque, &maxPower](const DynoRun& run) {
         for (const auto& point : run.points) {
+            if (!point.valid) continue;
             maxTorque = std::max(maxTorque, point.correctedTorqueNm > 0.0 ? point.correctedTorqueNm : point.torqueNm);
             maxPower = std::max(maxPower, point.correctedPowerKw > 0.0 ? point.correctedPowerKw : point.powerKw);
         }
@@ -1820,37 +1847,36 @@ void MainComponent::drawDynoChart(juce::Graphics& g, juce::Rectangle<float> area
                    juce::Rectangle<float>(area.getRight() - 43.0F, y - 7.0F, 38.0F, 14.0F), juce::Justification::centredLeft);
     }
     const auto drawRun = [&](const DynoRun& run, juce::Colour colour, bool current) {
-        if (run.points.size() < 2) return;
+        if (run.points.empty()) return;
         juce::Path torquePath, powerPath;
-        // Real brake benches display a filtered trace while retaining raw
-        // samples for export. A three-point triangular filter removes the
-        // last cycle-window stair step without changing RPM positions, peak
-        // bookkeeping or the DynoRun data itself.
-        const auto displayValue = [&run](std::size_t index,
-                                         bool torque) noexcept {
-            const auto valueAt = [&run, torque](std::size_t pointIndex) {
-                const auto& point = run.points[pointIndex];
-                return torque
-                    ? (point.correctedTorqueNm > 0.0
-                        ? point.correctedTorqueNm : point.torqueNm)
-                    : (point.correctedPowerKw > 0.0
-                        ? point.correctedPowerKw : point.powerKw);
-            };
-            if (index == 0 || index + 1 >= run.points.size())
-                return valueAt(index);
-            return 0.25 * valueAt(index - 1)
-                + 0.50 * valueAt(index)
-                + 0.25 * valueAt(index + 1);
-        };
-        for (std::size_t i = 0; i < run.points.size(); ++i) {
-            const auto& point = run.points[i];
+        // The recorder now owns a physically averaged 50-rpm series. Drawing
+        // it directly avoids a second, non-causal triangular filter. Invalid
+        // bins break the path instead of being bridged or plotted as zero.
+        auto pathStarted = false;
+        for (const auto& point : run.points) {
+            if (!point.valid) {
+                pathStarted = false;
+                continue;
+            }
             const auto x = plot.getX() + static_cast<float>(point.rpm / maxRpm) * plot.getWidth();
-            const auto torque = displayValue(i, true);
-            const auto power = displayValue(i, false);
+            const auto torque = point.correctedTorqueNm > 0.0
+                ? point.correctedTorqueNm : point.torqueNm;
+            const auto power = point.correctedPowerKw > 0.0
+                ? point.correctedPowerKw : point.powerKw;
+            if (!std::isfinite(torque) || !std::isfinite(power)) {
+                pathStarted = false;
+                continue;
+            }
             const auto torqueY = plot.getBottom() - static_cast<float>(torque / maxTorque) * plot.getHeight();
             const auto powerY = plot.getBottom() - static_cast<float>(power / maxPower) * plot.getHeight();
-            if (i == 0) { torquePath.startNewSubPath(x, torqueY); powerPath.startNewSubPath(x, powerY); }
-            else { torquePath.lineTo(x, torqueY); powerPath.lineTo(x, powerY); }
+            if (!pathStarted) {
+                torquePath.startNewSubPath(x, torqueY);
+                powerPath.startNewSubPath(x, powerY);
+                pathStarted = true;
+            } else {
+                torquePath.lineTo(x, torqueY);
+                powerPath.lineTo(x, powerY);
+            }
         }
         g.setColour(colour.withAlpha(current ? 1.0F : 0.72F)); g.strokePath(torquePath, juce::PathStrokeType(current ? 2.8F : 1.7F));
         g.setColour(colour.brighter(0.75F).withAlpha(current ? 0.88F : 0.55F));

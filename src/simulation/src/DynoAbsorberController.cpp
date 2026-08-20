@@ -35,6 +35,7 @@ void DynoAbsorberController::reset(
     filteredAccelerationRpmPerSecond_ = 0.0;
     integralTorqueNm_ = 0.0;
     brakeTorqueNm_ = 0.0;
+    fullContactLatched_ = false;
     initialised_ = true;
 }
 
@@ -95,8 +96,20 @@ DynoAbsorberOutput DynoAbsorberController::advance(
         : 60.0;
     const auto contactPhase = std::clamp(
         (errorRpm + contactBandRpm) / contactBandRpm, 0.0, 1.0);
-    const auto contactScale =
+    const auto approachContactScale =
         contactPhase * contactPhase * (3.0 - 2.0 * contactPhase);
+    // The smooth approach prevents a brake step. Once it carries roughly 90%
+    // of the requested torque, capture the rotor and expose full contact; the
+    // old memoryless scale could settle permanently around 93%, making a 95%
+    // measurement gate mathematically unreachable. A full contact is released
+    // only after falling an entire band below target, so ramp ripple cannot
+    // chatter the coupling state.
+    if (!fullContactLatched_ && approachContactScale >= 0.90)
+        fullContactLatched_ = true;
+    else if (fullContactLatched_ && errorRpm < -contactBandRpm)
+        fullContactLatched_ = false;
+    const auto contactScale = fullContactLatched_
+        ? 1.0 : approachContactScale;
     const auto contactedFeedForwardTorqueNm =
         feedForwardTorqueNm_ * contactScale;
     auto unclampedBrakeTorqueNm = 0.0;

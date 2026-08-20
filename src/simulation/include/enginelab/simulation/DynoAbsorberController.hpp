@@ -50,6 +50,9 @@ private:
     double filteredRpm_ {};
     double filteredAccelerationRpmPerSecond_ {};
     double brakeTorqueNm_ {};
+    /** Hysteretic rotor capture. Proximity is progressive on approach, but a
+     * real coupled brake does not remain fractionally connected forever. */
+    bool fullContactLatched_ { false };
     bool initialised_ { false };
 };
 

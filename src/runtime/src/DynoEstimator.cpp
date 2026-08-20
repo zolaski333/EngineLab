@@ -17,6 +17,52 @@ double secondsConsistencyTolerance(double lhs, double rhs) noexcept {
 bool sameTime(double lhs, double rhs) noexcept {
     return std::abs(lhs - rhs) <= secondsConsistencyTolerance(lhs, rhs);
 }
+
+bool telemetryFinite(const DynoCycleTelemetry& value) noexcept {
+    return std::isfinite(value.airFuelRatio)
+        && std::isfinite(value.coolantTemperatureC)
+        && std::isfinite(value.exhaustTemperatureC)
+        && std::isfinite(value.ignitionAdvanceDegrees)
+        && std::isfinite(value.targetAirFuelRatio)
+        && std::isfinite(value.volumetricEfficiency)
+        && std::isfinite(value.fuelFlowGramsPerSecond)
+        && std::isfinite(value.manifoldPressureKpa)
+        && std::isfinite(value.exhaustPressureKpa)
+        && std::isfinite(value.oilTemperatureC)
+        && std::isfinite(value.oilPressureKpa)
+        && std::isfinite(value.airFlowGramsPerSecond)
+        && std::isfinite(value.lambda)
+        && std::isfinite(value.brakeSpecificFuelConsumptionGPerKwh);
+}
+
+void accumulateTelemetry(DynoCycleTelemetry& sum,
+                         const DynoCycleTelemetry& value,
+                         double weight) noexcept {
+    sum.airFuelRatio += value.airFuelRatio * weight;
+    sum.coolantTemperatureC += value.coolantTemperatureC * weight;
+    sum.exhaustTemperatureC += value.exhaustTemperatureC * weight;
+    sum.ignitionAdvanceDegrees += value.ignitionAdvanceDegrees * weight;
+    sum.targetAirFuelRatio += value.targetAirFuelRatio * weight;
+    sum.volumetricEfficiency += value.volumetricEfficiency * weight;
+    sum.fuelFlowGramsPerSecond += value.fuelFlowGramsPerSecond * weight;
+    sum.manifoldPressureKpa += value.manifoldPressureKpa * weight;
+    sum.exhaustPressureKpa += value.exhaustPressureKpa * weight;
+    sum.oilTemperatureC += value.oilTemperatureC * weight;
+    sum.oilPressureKpa += value.oilPressureKpa * weight;
+    sum.airFlowGramsPerSecond += value.airFlowGramsPerSecond * weight;
+    sum.lambda += value.lambda * weight;
+    sum.brakeSpecificFuelConsumptionGPerKwh +=
+        value.brakeSpecificFuelConsumptionGPerKwh * weight;
+}
+
+DynoCycleTelemetry dividedTelemetry(const DynoCycleTelemetry& sum,
+                                    double divisor) noexcept {
+    DynoCycleTelemetry result;
+    if (!(divisor > 0.0)) return result;
+    const auto inverse = 1.0 / divisor;
+    accumulateTelemetry(result, sum, inverse);
+    return result;
+}
 } // namespace
 
 DynoEstimator::DynoEstimator(double requestedWindowDurationSeconds) noexcept
@@ -69,6 +115,7 @@ void DynoEstimator::clearWindow(bool continuous) noexcept {
     totalBrakeWorkJoules_ = 0.0;
     totalCrankRadians_ = 0.0;
     torqueSquaredAngleSum_ = 0.0;
+    telemetryTimeSums_ = {};
     capacityLimited_ = false;
     estimate_ = {};
     estimate_.continuous = continuous;
@@ -97,6 +144,8 @@ void DynoEstimator::removeOldest() noexcept {
     totalCrankRadians_ -= oldest.crankRadians;
     torqueSquaredAngleSum_ -=
         oldest.torqueNm * oldest.torqueNm * oldest.crankRadians;
+    accumulateTelemetry(telemetryTimeSums_, oldest.telemetry,
+                        -oldest.durationSeconds);
     head_ = (head_ + 1) % capacity;
     --cycleCount_;
 
@@ -107,6 +156,7 @@ void DynoEstimator::removeOldest() noexcept {
         totalBrakeWorkJoules_ = 0.0;
         totalCrankRadians_ = 0.0;
         torqueSquaredAngleSum_ = 0.0;
+        telemetryTimeSums_ = {};
     }
 }
 
@@ -158,11 +208,19 @@ void DynoEstimator::refreshEstimate(bool continuous) noexcept {
         torqueSquaredAngleSum_ / totalCrankRadians_;
     estimate_.torqueVarianceNm2 = std::max(0.0,
         secondMoment - estimate_.meanTorqueNm * estimate_.meanTorqueNm);
+    estimate_.meanTelemetry = dividedTelemetry(
+        telemetryTimeSums_, totalDurationSeconds_);
 }
 
 DynoEstimatorUpdate DynoEstimator::push(
     const CompletedBrakeCycleSample& sample) noexcept {
-    if (!structurallyValid(sample)) {
+    return push(sample, {});
+}
+
+DynoEstimatorUpdate DynoEstimator::push(
+    const CompletedBrakeCycleSample& sample,
+    const DynoCycleTelemetry& telemetry) noexcept {
+    if (!structurallyValid(sample) || !telemetryFinite(telemetry)) {
         const auto monotonic = !hasObservedCycle_
             || sample.cycleId > lastObservedCycleId_;
         rejectAndAdvanceSequence(sample, monotonic,
@@ -209,12 +267,15 @@ DynoEstimatorUpdate DynoEstimator::push(
         * 60.0 / (2.0 * std::numbers::pi);
     stored.torqueNm =
         sample.brakeWorkJoules / sample.integratedCrankRadians;
+    stored.telemetry = telemetry;
     ++cycleCount_;
     totalDurationSeconds_ += stored.durationSeconds;
     totalBrakeWorkJoules_ += stored.brakeWorkJoules;
     totalCrankRadians_ += stored.crankRadians;
     torqueSquaredAngleSum_ +=
         stored.torqueNm * stored.torqueNm * stored.crankRadians;
+    accumulateTelemetry(telemetryTimeSums_, stored.telemetry,
+                        stored.durationSeconds);
 
     while (cycleCount_ > 1) {
         const auto& oldest = cycles_[head_];

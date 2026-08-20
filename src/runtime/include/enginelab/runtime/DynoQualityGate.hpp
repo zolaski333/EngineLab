@@ -47,7 +47,9 @@ constexpr DynoQualityReason& operator|=(
 }
 
 struct DynoQualityGateConfig final {
-    double minimumContactFraction { 0.95 };
+    double minimumSteadyContactFraction { 0.95 };
+    /** An inertial ramp may legitimately unload a passive brake. */
+    double minimumRampContactFraction { 0.0 };
     double minimumEngineTorqueNm { 1.4 };
     double steadyMaximumSpeedErrorRpm { 60.0 };
     double rampMaximumSpeedErrorRpm { 150.0 };
@@ -58,6 +60,8 @@ struct DynoQualityGateConfig final {
 struct DynoQualityGateInput final {
     DynoAcquisitionMode mode { DynoAcquisitionMode::steppedCalibration };
     double targetRpm { 0.0 };
+    /** RPM represented by the same observation as measuredCycleTorqueNm. */
+    double measuredRpm { 0.0 };
     double rampRateRpmPerSecond { 500.0 };
     /** Authoritative torque from the completed brake-cycle event. */
     double measuredCycleTorqueNm { 0.0 };

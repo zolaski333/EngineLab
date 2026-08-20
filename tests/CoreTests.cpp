@@ -3003,28 +3003,56 @@ int main() {
         rampRuntime.setRealtimeThrottleEnabled(false);
         rampRuntime.setDynoRampEnabled(true);
         require(rampRuntime.dynoRampEnabled(), "ramp mode must latch when set");
-        // Spacing is rate x averaging window, and the window is clamped to
-        // [0.25, 0.80] s -- so at the 500 rpm/s default the spacing spans
-        // 125-400 rpm and could land ON the stepped ladder by coincidence,
-        // making the discriminator below unreliable. Pin a low rate instead:
-        // 150 rpm/s gives 37-120 rpm, unambiguously under the ladder whatever
-        // window the engine's firing rate selects.
+        // The recorder is now independent of its rolling window: it publishes
+        // one explicit valid/invalid record on an exact 50 rpm grid. Keep a
+        // low rate so this regression finishes quickly without stressing the
+        // controller rather than using cadence as an accidental discriminator.
         rampRuntime.setDynoRampRpmPerSecond(150.0);
         rampRuntime.setDynoMaximumDurationSeconds(45.0);
         rampRuntime.setIgnitionEnabled(true);
         rampRuntime.start();
         rampRuntime.startDyno();
         auto rampRun = rampRuntime.currentDynoRun();
+        std::array<std::uint32_t, 11> rampQualityObservations {};
+        auto minimumRampContact = 1.0;
+        auto lastRampTarget = 0.0;
+        auto lastRampWindowMean = 0.0;
         const auto rampDeadline =
             std::chrono::steady_clock::now() + std::chrono::seconds(40);
-        while (rampRun.points.size() < 5
+        auto validRampPointCount = [&rampRun] {
+            return static_cast<std::size_t>(std::count_if(
+                rampRun.points.begin(), rampRun.points.end(),
+                [](const enginelab::DynoPoint& point) {
+                    return point.valid;
+                }));
+        }();
+        while (validRampPointCount < 5
                && std::chrono::steady_clock::now() < rampDeadline) {
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
             rampRun = rampRuntime.currentDynoRun();
+            validRampPointCount = static_cast<std::size_t>(std::count_if(
+                rampRun.points.begin(), rampRun.points.end(),
+                [](const enginelab::DynoPoint& point) {
+                    return point.valid;
+                }));
+            const auto state = rampRuntime.snapshot();
+            if (state.dynoActive && !state.dynoPreparing) {
+                minimumRampContact = std::min(
+                    minimumRampContact,
+                    state.dynoBrakeContactFraction);
+                lastRampTarget = state.dynoTargetRpm;
+                lastRampWindowMean = state.dynoWindowMeanRpm;
+                for (std::size_t reason = 0;
+                     reason < rampQualityObservations.size(); ++reason) {
+                    if ((state.dynoQualityReasons & (1U << reason)) != 0U)
+                        ++rampQualityObservations[reason];
+                }
+            }
         }
-        const auto rampPointDiagnostic = "a ramp sweep must publish points; it published "
-            + std::to_string(rampRun.points.size());
-        require(rampRun.points.size() >= 5, rampPointDiagnostic.c_str());
+        const auto rampPointDiagnostic = "a ramp sweep must publish five valid points; it published "
+            + std::to_string(validRampPointCount) + " valid / "
+            + std::to_string(rampRun.points.size()) + " total";
+        require(validRampPointCount >= 5, rampPointDiagnostic.c_str());
         auto rampRose = true;
         auto widestSpacingRpm = 0.0;
         for (std::size_t index = 1; index < rampRun.points.size(); ++index) {
@@ -3033,13 +3061,32 @@ int main() {
             widestSpacingRpm = std::max(widestSpacingRpm, spacing);
         }
         require(rampRose, "a ramp sweep must climb");
-        // The stepped bench accepts a settled point within 60 rpm of a target it
-        // moves by exactly 250, so its spacing cannot fall below 130 rpm. At
-        // 150 rpm/s the ramp cannot reach it.
+        // Invalid intervals remain explicit holes on the same grid; they must
+        // never be silently skipped or joined across by the renderer.
         const auto rampSpacingDiagnostic =
             "a ramp sweep must not land on the stepped bench's 250 rpm ladder; widest spacing was "
-            + std::to_string(widestSpacingRpm);
-        require(widestSpacingRpm < 130.0, rampSpacingDiagnostic.c_str());
+            + std::to_string(widestSpacingRpm) + ", points="
+            + [&rampRun] {
+                std::string values;
+                for (const auto& point : rampRun.points) {
+                    if (!values.empty()) values += '/';
+                    values += std::to_string(point.rpm)
+                        + (point.valid ? "V" : "I");
+                }
+                return values;
+            }() + ", reasons="
+            + [&rampQualityObservations] {
+                std::string values;
+                for (const auto count : rampQualityObservations) {
+                    if (!values.empty()) values += '/';
+                    values += std::to_string(count);
+                }
+                return values;
+            }() + ", minContact=" + std::to_string(minimumRampContact)
+            + ", target=" + std::to_string(lastRampTarget)
+            + ", window=" + std::to_string(lastRampWindowMean);
+        require(std::abs(widestSpacingRpm - 50.0) < 1.0e-6,
+                rampSpacingDiagnostic.c_str());
     }
 
     {
