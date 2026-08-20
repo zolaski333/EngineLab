@@ -127,8 +127,8 @@ d'ecoute. EngineLab n'en deduit jamais depuis le nom d'un silencieux.
 | `pipe` | longueur, diamètre, perte géométrique et résonance quart d'onde |
 | `merge` | rassemble au moins deux entrées vers une sortie |
 | `splitter` | partage une entrée vers au moins deux branches |
-| `resonator` | longueur et résonance explicite ou estimation de Helmholtz avec `volume_l` |
-| `muffler` | perte, longueur, gain et résonance de silencieux |
+| `resonator` | conduit inline s'il possède une sortie ; branche acoustique fermée s'il n'en possède aucune |
+| `muffler` | chambre/conduit inline et, si renseigné, garnissage poreux distribué |
 | `catalyst` | perte de charge concentrée avec longueur physique |
 | `outlet` | termine une route et applique diamètre/coefficient de décharge |
 
@@ -138,13 +138,33 @@ Chaque composant possède :
 - `length_mm`, `diameter_mm`, éventuellement `outlet_diameter_mm` et
   `volume_l` ;
 - `restriction`, coefficient de perte additionnel sans dimension ;
-- `resonance_hz`, où zéro demande une estimation lorsque le type le permet ;
-- `acoustic_gain`, multiplié le long de la route ;
+- `resonance_hz`, accord de référence d'un `resonator` terminal ; zéro conserve
+  sa longueur géométrique ;
+- `acoustic_gain`, conservé pour le rendu audio de secours historique, mais
+  jamais appliqué au guide d'onde physique passif ;
 - `discharge_coefficient`, principalement utilisé par la sortie.
 
 La restriction finale additionne la perte géométrique calculée et
-`restriction`. Modifier seulement `acoustic_gain` change la transmission
-acoustique des événements et du signal continu, pas la contre-pression.
+`restriction`. Elle change le débit et la pression calculés, donc peut modifier
+indirectement la source acoustique physique ; elle n'est pas encore une
+impédance acoustique complexe. Modifier seulement `acoustic_gain` ne change pas
+le réseau physique de production. Ce champ n'agit que si le rendu doit utiliser
+son ancien chemin reconstruit de secours.
+
+### Résonateur terminal
+
+Un `resonator` relié depuis un composant, sans aucune sortie et sans mapping de
+cylindre, est une branche latérale scellée. Elle n'ajoute aucune route de débit
+moyen. L'audio ajoute une ligne bidirectionnelle avec une réflexion de pression
+`+1` à son extrémité. Un `volume_l` positif transforme cette extrémité en cavité
+compliant passive ; zéro donne une branche quart d'onde rigide.
+
+Avec `resonance_hz = 0`, `length_mm` est la longueur acoustique. Une fréquence
+positive remplace cette longueur, à la température de référence du graphe, par
+`c/(4f)`. Le milieu simulé continue ensuite à faire varier la vitesse du son et
+donc l'accord. Il n'y a ni oscillateur ajouté, ni filtre correctif. Si une
+cavité est également configurée, la fréquence saisie accorde la longueur du col
+et non la résonance finale de l'ensemble col-cavité.
 
 Le `discharge_coefficient` de la sortie est un coefficient de contraction
 d'écoulement. Il est appliqué une seule fois, comme section effective `A·Cd` de
@@ -181,14 +201,19 @@ La validation impose :
 - un à huit chemins, chaque cylindre affecté exactement une fois ;
 - 1 à 256 composants et au plus 1 024 connexions par graphe ;
 - au plus 4 096 routes développées entre cylindres et sorties ;
+- au plus huit `resonator` terminaux sur l'ensemble du moteur, borne explicite
+  du nombre de lignes de délai acoustiques supplémentaires ;
 - un ID de composant unique et des arêtes uniques sans auto-boucle ;
 - un mapping unique pour chaque cylindre du chemin ;
-- une entrée et une sortie pour `pipe`, `resonator`, `muffler` et `catalyst` ;
+- une entrée et une sortie pour `pipe`, `muffler`, `catalyst` et un
+  `resonator` inline ;
+- exactement une connexion composant entrante, aucun mapping cylindre et
+  aucune sortie pour un `resonator` utilisé comme branche latérale ;
 - au moins deux entrées et exactement une sortie pour `merge` ;
 - exactement une entrée et au moins deux sorties pour `splitter` ;
 - au moins une entrée et aucune sortie pour `outlet` ;
-- aucun cycle, aucun composant inaccessible et chaque branche terminée par une
-  sortie.
+- aucun cycle, aucun composant inaccessible et chaque branche de débit terminée
+  par une sortie (les `resonator` terminaux sont les seules feuilles scellées).
 
 Une erreur fait échouer l'import complet ; l'application ne lance pas un
 réseau partiellement valide.
@@ -208,6 +233,7 @@ est vide quand la topologie a été compilée telle qu'elle est écrite.
 | `routeLimitReached` | la limite de 4 096 routes est atteinte ; les routes suivantes ne sont pas compilées | le cylindre en cours |
 | `unresolvedRestriction` | une route n'a pas de restriction équivalente finie (branche pendante ou cycle) et s'est vu imputer le maximum | le cylindre concerné |
 | `nodeIdSpaceExhausted` | l'espace d'ID générés est épuisé | 0 |
+| `acousticBranchLimitReached` | plus de huit branches acoustiques ont été fournies sans passer par la validation ; les suivantes sont omises | premier composant omis |
 
 `topologyRejected` est le cas à surveiller : il fait disparaître tout un
 échappement personnalisé au profit d'un collecteur générique. À l'oreille, c'est

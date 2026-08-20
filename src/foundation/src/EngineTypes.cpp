@@ -1097,6 +1097,7 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
     if (config.exhaustPaths.size() > 8) return "Exhaust topology may contain at most 8 paths supported by audio";
     std::unordered_set<std::uint32_t> exhaustPathIds;
     std::unordered_set<std::uint32_t> assignedExhaustCylinders;
+    std::size_t exhaustAcousticSideBranchCount = 0;
     for (const auto& path : config.exhaustPaths) {
         const auto& exhaust = path.geometry;
         if (path.id == 0 || path.cylinderIds.empty() || !exhaustPathIds.insert(path.id).second || !inRange(path.audioVolume, 0.0, 8.0)
@@ -1207,9 +1208,44 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
             if (connectedCylinderIds != pathCylinderIds)
                 return "Custom exhaust graphs must map every path cylinder exactly once";
 
+            const auto isTerminalSideBranch = [&components, &outgoing](
+                std::uint32_t componentId) {
+                const auto component = components.find(componentId);
+                const auto outputs = outgoing.find(componentId);
+                return component != components.end()
+                    && outputs != outgoing.end()
+                    && component->second->type == ExhaustComponentType::resonator
+                    && outputs->second.empty();
+            };
+            const auto pathAcousticSideBranchCount = static_cast<std::size_t>(
+                std::count_if(network.components.begin(), network.components.end(),
+                    [&isTerminalSideBranch](const auto& component) {
+                        return isTerminalSideBranch(component.id);
+                    }));
+            if (pathAcousticSideBranchCount
+                    > maximumExhaustAcousticSideBranches
+                        - exhaustAcousticSideBranchCount)
+                return "An engine may contain at most 8 terminal exhaust resonators";
+            exhaustAcousticSideBranchCount += pathAcousticSideBranchCount;
+            std::unordered_map<std::uint32_t, std::vector<std::uint32_t>>
+                flowOutgoing;
+            flowOutgoing.reserve(outgoing.size());
+            for (const auto& [componentId, outputs] : outgoing) {
+                auto& flowOutputs = flowOutgoing[componentId];
+                for (const auto nextId : outputs)
+                    if (!isTerminalSideBranch(nextId))
+                        flowOutputs.push_back(nextId);
+            }
+
             for (const auto& component : network.components) {
                 const auto incoming = componentIncoming[component.id] + cylinderIncoming[component.id];
-                const auto outputCount = outgoing[component.id].size();
+                if (isTerminalSideBranch(component.id)) {
+                    if (componentIncoming[component.id] != 1U
+                        || cylinderIncoming[component.id] != 0U)
+                        return "A terminal exhaust resonator requires exactly one component attachment and no cylinder mapping";
+                    continue;
+                }
+                const auto outputCount = flowOutgoing[component.id].size();
                 switch (component.type) {
                 case ExhaustComponentType::merge:
                     if (incoming < 2 || outputCount != 1)
@@ -1220,7 +1256,8 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
                         return "An exhaust splitter requires exactly one input and at least two outputs";
                     break;
                 case ExhaustComponentType::outlet:
-                    if (incoming < 1 || outputCount != 0)
+                    if (incoming < 1 || outputCount != 0
+                        || !outgoing[component.id].empty())
                         return "An exhaust outlet requires at least one input and cannot have outputs";
                     break;
                 default:
@@ -1263,7 +1300,7 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
                 const auto component = components.at(componentId);
                 if (component->type == ExhaustComponentType::outlet)
                     return reachesOutletMemo.emplace(componentId, true).first->second;
-                const auto& outputs = outgoing[componentId];
+                const auto& outputs = flowOutgoing[componentId];
                 const auto valid = !outputs.empty() && std::all_of(outputs.begin(), outputs.end(),
                     [&everyRouteReachesOutlet](std::uint32_t nextId) { return everyRouteReachesOutlet(nextId); });
                 reachesOutletMemo.emplace(componentId, valid);
@@ -1285,7 +1322,7 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
                     continue;
                 }
                 std::size_t count = 0;
-                for (const auto nextId : outgoing[componentId])
+                for (const auto nextId : flowOutgoing[componentId])
                     count = std::min(maximumRoutes + 1, count + routeCounts[nextId]);
                 routeCounts[componentId] = count;
             }

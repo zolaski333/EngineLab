@@ -128,6 +128,86 @@ void testValidationAndRouting() {
         "bounded route/mode retention must preserve the compiled acoustic energy");
 }
 
+void testTerminalResonatorIsAcousticOnly() {
+    const auto baselineConfig = makeCustomExhaust();
+    const auto baseline = ExhaustGraph::makeForEngine(baselineConfig);
+
+    auto config = baselineConfig;
+    auto& network = *config.exhaustPaths.front().network;
+    auto branch = component(
+        700, ExhaustComponentType::resonator, 535.0, 28.0);
+    branch.volumeLitres = 0.35;
+    branch.resonanceHz = 500.0;
+    network.components.push_back(branch);
+    network.connections.push_back({ 200, 700 });
+
+    require(!validateEngineConfig(config).has_value(),
+        "a singly attached terminal resonator must be a valid side branch");
+    const auto graph = ExhaustGraph::makeForEngine(config);
+    require(graph.diagnostics().empty(),
+        "a valid terminal resonator must compile without a graph fallback");
+    require(graph.nodes().size() == baseline.nodes().size()
+            && graph.edges().size() == baseline.edges().size()
+            && graph.routes().size() == baseline.routes().size(),
+        "a sealed side branch must not create a mean-flow node, edge or route");
+    const auto baselineFlow = baseline.pathFlowProperties(0);
+    const auto branchFlow = graph.pathFlowProperties(0);
+    require(std::abs(branchFlow.collectorVolumeLitres
+                - baselineFlow.collectorVolumeLitres) < 1.0e-12
+            && std::abs(branchFlow.effectiveOutletAreaM2
+                - baselineFlow.effectiveOutletAreaM2) < 1.0e-12
+            && std::abs(branchFlow.equivalentRestriction
+                - baselineFlow.equivalentRestriction) < 1.0e-12,
+        "a sealed side branch must not alter steady-flow volume, outlet area or restriction");
+    require(graph.acousticSideBranches().size() == 1U,
+        "the terminal resonator was not retained as one acoustic branch");
+    const auto& compiled = graph.acousticSideBranches().front();
+    require(compiled.sourceComponentId == 700U
+            && compiled.pathIndex == 0U
+            && std::abs(compiled.lengthM - 0.535) < 1.0e-12
+            && std::abs(compiled.diameterM - 0.028) < 1.0e-12
+            && std::abs(compiled.terminalVolumeM3 - 0.00035) < 1.0e-12
+            && std::abs(compiled.referenceTuningHz - 500.0) < 1.0e-12,
+        "the side-branch geometry or tuning was not compiled losslessly");
+
+    auto multiplyAttached = config;
+    multiplyAttached.exhaustPaths.front().network->connections.push_back(
+        { 300, 700 });
+    require(validateEngineConfig(multiplyAttached).has_value(),
+        "a terminal resonator attached at two physical locations must be rejected");
+
+    auto nonResonantDeadEnd = baselineConfig;
+    auto& invalidNetwork = *nonResonantDeadEnd.exhaustPaths.front().network;
+    invalidNetwork.components.push_back(component(
+        700, ExhaustComponentType::pipe, 535.0, 28.0));
+    invalidNetwork.connections.push_back({ 200, 700 });
+    require(validateEngineConfig(nonResonantDeadEnd).has_value(),
+        "a dangling pipe must not silently acquire side-branch semantics");
+
+    auto excessive = baselineConfig;
+    auto& excessiveNetwork = *excessive.exhaustPaths.front().network;
+    for (std::size_t index = 0;
+         index <= maximumExhaustAcousticSideBranches; ++index) {
+        const auto id = static_cast<std::uint32_t>(700U + index);
+        excessiveNetwork.components.push_back(component(
+            id, ExhaustComponentType::resonator, 300.0, 28.0));
+        excessiveNetwork.connections.push_back({ 200, id });
+    }
+    require(validateEngineConfig(excessive).has_value(),
+        "more than eight acoustic branches must be rejected before realtime use");
+    const auto bounded = ExhaustGraph::makeForEngine(excessive);
+    const auto limitReported = std::any_of(
+        bounded.diagnostics().begin(), bounded.diagnostics().end(),
+        [](const auto& diagnostic) {
+            return diagnostic.issue
+                == ExhaustCompileIssue::acousticBranchLimitReached;
+        });
+    require(bounded.acousticSideBranches().size()
+                == maximumExhaustAcousticSideBranches
+            && limitReported,
+        "the defensive compiler must bound and report unvalidated acoustic branches");
+}
+
 void testAcousticGainEnergyAccounting() {
     auto config = makeCustomExhaust();
     auto& path = config.exhaustPaths.front();
@@ -606,6 +686,7 @@ int main() {
         testDegenerateChamberIsFlooredToItsResolutionLimit();
         testEditableLegacyConversionIsNeutral();
         testValidationAndRouting();
+        testTerminalResonatorIsAcousticOnly();
         testAcousticGainEnergyAccounting();
         testModalRoutesAndAdmittanceWeightedBranches();
         testTemperatureAwareWaveSpeed();

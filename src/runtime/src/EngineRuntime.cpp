@@ -347,9 +347,11 @@ EngineRuntime::EngineRuntime(EngineConfig config,
     std::array<double, maximumAudioExhaustPaths> pathRestrictionSum {};
     std::array<std::size_t, maximumAudioExhaustPaths> pathCylinderCount {};
 
-    // Publish the exact energy-combined graph transmission used by firing
-    // events. Continuous runner pressure consumes this value before entering
-    // the waveguide, while the path output remains unity-gain.
+    // Publish the energy-combined route transmission for firing-event metadata
+    // and for the graph-less/reconstructed audio fallback. The SI valve-flow
+    // source entering a compiled physical waveguide does not consume this
+    // arbitrary gain: its amplitude follows the simulated pressure and flow,
+    // while the passive topology supplies the transfer function.
     for (std::size_t index = 0;
          index < config_.cylinders.size() && index < audioState_.cylinderExhaustGain.size(); ++index) {
         const auto& cylinder = config_.cylinders[index];

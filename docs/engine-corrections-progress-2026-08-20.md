@@ -15,6 +15,7 @@ est respecté ; il ne transforme pas une hypothèse acoustique en donnée mesur�
 | `be93990` | rampe dyno rééchantillonnée sur une grille exacte de 50 tr/min | poussé |
 | `c3faf6e` | sessions dyno immuables, archive persistante, statuts et calibration épinglée | poussé |
 | `91b5ca8` | compliance passive des volumes compacts de jonction | poussé |
+| `5cf2d55` | conduits coniques distribués sous budget global symétrique | poussé |
 
 ## Dyno livré
 
@@ -155,6 +156,50 @@ globale choisit désormais la section puis sa position locale. Un smoke produit
 afterfire/audio a gardé `physical=yes`, `compiled=yes` et tous les compteurs de
 livraison à zéro.
 
+## Résonateur terminal passif
+
+### Sémantique du graphe
+
+Un composant `resonator` avec une entrée et une sortie garde son comportement
+historique : c'est un conduit inline, dont la géométrie est résolue par le guide
+d'onde. Le même composant avec exactement une connexion entrante et aucune
+sortie est désormais une branche latérale fermée. Elle est exclue du DAG de
+débit moyen, parce qu'une branche scellée ne transporte aucun débit permanent,
+mais elle est raccordée au nœud acoustique aval du composant source.
+
+La branche ajoute une seule ligne de délai bidirectionnelle. Avec `volume_l =
+0`, son extrémité a une réflexion de pression `+1`, soit une branche quart
+d'onde fermée. Un volume positif ajoute à l'extrémité le même port de compliance
+WDF passif que les volumes compacts. Il n'y a ni cellule gaz, ni sous-pas, ni
+allocation dans le callback.
+
+`resonance_hz = 0` conserve la longueur géométrique écrite. Une valeur positive
+définit une longueur acoustique de référence `c_ref/(4 f)` ; le milieu local
+chaud ou froid déplace ensuite naturellement l'accord, sans oscillateur ni EQ
+posé après coup. Si un volume terminal est aussi renseigné, la valeur règle la
+longueur du col et la cavité reste un second élément physique : elle ne promet
+donc pas que le minimum final restera exactement à la fréquence saisie.
+
+### Preuves de non-vacuité et de coût borné
+
+Le fixture a d'abord échoué parce que le résonateur pendant entrait encore dans
+le graphe gaz et déclenchait un fallback de topologie. Après compilation dédiée,
+deux branches de même diamètre et même longueur, dont seule la consigne passe de
+la longueur écrite à 500 Hz, diffèrent de **11,015 dB** sur la forme du transfert
+fixe. Chacune ajoute exactement une ligne acoustique, reste finie et sous le
+plafond passif de l'oracle. À longueur et diamètre constants, ajouter une cavité
+terminale de 0,35 L change la forme de **11,825 dB** : le port de compliance
+n'est donc pas un champ sérialisé sans effet.
+
+Un test de graphe séparé vérifie qu'ajouter une branche ne change ni les nœuds,
+ni les arêtes, ni les routes, ni le volume de contrôle, ni l'aire de sortie, ni
+la restriction du solveur de débit moyen. Deux attaches ou un simple tube
+pendant restent invalides : seule cette forme explicite de `resonator` obtient
+la sémantique de branche. Le nombre est borné globalement à huit par moteur ; un
+document validé au-delà est refusé, et le compilateur défensif tronque à huit en
+émettant `acousticBranchLimitReached`. Le coût ne peut donc pas croître jusqu'à
+la limite générale de 256 composants.
+
 ## Matrice actuelle des champs du graphe
 
 Cette matrice évite de confondre un champ sérialisé avec une influence physique
@@ -168,16 +213,16 @@ effective.
 | volume d'une jonction | contrôle bien mélangé | compliance compacte résiduelle | corrigé dans ce lot |
 | packing + perforation | ignoré volontairement | perte poreuse distribuée opt-in | actif |
 | position/axe/terminaison de sortie | frontière de débit indirecte | délai, directivité, radiation et perte de lèvre | actif |
-| restriction | perte de charge locale | atténuation de source réduite, pas une impédance complexe | à clarifier |
-| `acousticGain` | aucun | gain de source authorisé | actif mais non géométrique |
-| `resonanceHz` | aucun | métadonnée/fallback procédural, pas le guide d'onde produit | champ trompeur à corriger |
+| restriction | perte de charge locale | effet indirect par pression/débit, pas une impédance complexe | libellé clarifié |
+| `acousticGain` | aucun | fallback reconstruit seulement, jamais le guide d'onde SI | libellé legacy explicite |
+| `resonanceHz` | aucun | accorde la longueur de référence d'un `resonator` terminal seulement | corrigé sans oscillateur |
 | type `catalyst` | perte géométrique et locale | aucun monolithe acoustique dédié | à corriger |
-| type `resonator` | conduit inline | aucun branchement Helmholtz/quart d'onde dédié | à corriger |
+| type `resonator` | conduit inline, ou aucun débit s'il est terminal | conduit inline, ou branche fermée quart d'onde avec cavité optionnelle | corrigé dans ce lot |
 
 ## Prochain ordre de travail
 
-1. Donner une sémantique non trompeuse à `resonator`, `resonanceHz`,
-   `catalyst`, `restriction` et `acousticGain`, avec tests A/B non vacants.
+1. Modéliser le monolithe de `catalyst` comme une impédance passive bornée, avec
+   un coût indépendant du nombre de canaux réels.
 2. Construire les silencieux comme petits assemblages passifs composables
    (chambres, noyau perforé, branches accordées), sans augmenter la maille gaz.
 3. Reprendre l'afterfire seulement après ces transferts : distribution spatiale,

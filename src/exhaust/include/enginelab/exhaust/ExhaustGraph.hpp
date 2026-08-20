@@ -54,6 +54,24 @@ struct ExhaustNode final {
 };
 struct ExhaustEdge final { std::uint32_t from {}; std::uint32_t to {}; };
 
+/** Acoustic-only terminal branch attached to a mean-flow component.
+ *
+ * The main gas DAG deliberately excludes this sealed branch: it carries no
+ * steady exhaust flow. The audio network compiles it as a side duct with a
+ * rigid end or an optional terminal cavity compliance. A non-zero tuning
+ * frequency represents a measured/folded acoustic length at the graph's
+ * reference gas temperature; zero uses the authored geometric length.
+ */
+struct ExhaustAcousticSideBranch final {
+    std::uint32_t attachmentNodeId { 0 };
+    std::uint32_t sourceComponentId { 0 };
+    std::uint32_t pathIndex { 0 };
+    double lengthM { 0.0 };
+    double diameterM { 0.0 };
+    double terminalVolumeM3 { 0.0 };
+    double referenceTuningHz { 0.0 };
+};
+
 /** A condition the topology compiler had to work around.
  *
  * The compiler always yields a usable graph so the audio and solver paths stay
@@ -72,6 +90,9 @@ enum class ExhaustCompileIssue : std::uint8_t {
     /// A node has no finite equivalent restriction (dangling branch or cycle);
     /// it was charged the maximum. relatedId is the cylinder whose route failed.
     unresolvedRestriction,
+    /// More acoustic-only branches were authored than the realtime bound;
+    /// extras were omitted. relatedId is the first omitted component.
+    acousticBranchLimitReached,
 };
 
 struct ExhaustCompileDiagnostic final {
@@ -118,7 +139,7 @@ struct ExhaustCylinderAcoustics final {
     std::array<ExhaustAcousticMode, maximumExhaustAcousticModes> modes {};
 };
 
-/** Directed exhaust topology shared by back-pressure and acoustic event propagation. */
+/** Directed mean-flow topology plus explicitly separated acoustic-only branches. */
 class ExhaustGraph final : public IExhaustModel {
 public:
     [[nodiscard]] static ExhaustGraph makeForEngine(const EngineConfig&);
@@ -134,6 +155,8 @@ public:
     void process(FiringEvent&) const noexcept override;
     [[nodiscard]] const std::vector<ExhaustNode>& nodes() const noexcept { return nodes_; }
     [[nodiscard]] const std::vector<ExhaustEdge>& edges() const noexcept { return edges_; }
+    [[nodiscard]] const std::vector<ExhaustAcousticSideBranch>&
+    acousticSideBranches() const noexcept { return acousticSideBranches_; }
     [[nodiscard]] const std::vector<ExhaustRoute>& routes() const noexcept { return routes_; }
     [[nodiscard]] const AcousticObserverConfig& acousticObserver() const noexcept {
         return acousticObserver_;
@@ -161,6 +184,7 @@ private:
     };
     std::vector<ExhaustNode> nodes_;
     std::vector<ExhaustEdge> edges_;
+    std::vector<ExhaustAcousticSideBranch> acousticSideBranches_;
     std::vector<ExhaustRoute> routes_;
     std::vector<CylinderRestriction> cylinderRestrictions_;
     std::vector<ExhaustPathFlowProperties> pathFlowProperties_;

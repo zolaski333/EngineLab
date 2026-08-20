@@ -1,5 +1,6 @@
 ﻿#pragma once
 
+#include <cstddef>
 #include <cmath>
 #include <cstdint>
 #include <string>
@@ -28,6 +29,8 @@ enum class StructuralModeDrive : std::uint8_t {
 enum class ExhaustComponentType : std::uint8_t {
     pipe, merge, splitter, resonator, muffler, catalyst, outlet
 };
+/** Global CPU bound for acoustic-only delay lines authored as sealed branches. */
+inline constexpr std::size_t maximumExhaustAcousticSideBranches { 8 };
 enum class AcousticTerminationType : std::uint8_t { unflanged, flanged };
 enum class RunningState : std::uint8_t {
     stopped, cranking, idling, running, unstable, knocking, overheating, damaged, destroyed
@@ -358,8 +361,13 @@ struct ExhaustComponentConfig final {
     double volumeLitres { 0.0 };
     // Dimensionless pressure-loss coefficient added to the geometric loss.
     double restriction { 0.0 };
-    // Zero lets the runtime derive the dominant quarter-wave resonance.
+    // On a terminal resonator, zero uses lengthMm and a positive value requests
+    // a c/(4f) acoustic length at the graph's reference temperature. Kept as
+    // legacy route metadata on inline components, but not imposed on the
+    // physical waveguide.
     double resonanceHz { 0.0 };
+    // Compatibility gain for the reconstructed audio fallback. The physical
+    // SI waveguide remains passive and does not consume this arbitrary gain.
     double acousticGain { 1.0 };
     double dischargeCoefficient { 0.72 };
     /** Radiation geometry, used only when type==outlet. */

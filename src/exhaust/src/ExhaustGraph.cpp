@@ -274,6 +274,8 @@ ExhaustGraph ExhaustGraph::makeForEngine(
     };
     std::vector<Root> roots;
     std::unordered_set<std::uint32_t> usedNodeIds;
+    graph.acousticSideBranches_.reserve(maximumExhaustAcousticSideBranches);
+    auto acousticBranchLimitReported = false;
     for (const auto& cylinder : config.cylinders) usedNodeIds.insert(cylinder.id);
     auto nextGeneratedId = std::numeric_limits<std::uint32_t>::max();
     auto nodeIdSpaceExhausted = false;
@@ -297,11 +299,27 @@ ExhaustGraph ExhaustGraph::makeForEngine(
         if (path.network && !path.network->components.empty()) {
             auto& pathFlow = graph.pathFlowProperties_[pathIndex];
             pathFlow.authoredNetwork = true;
+            std::unordered_map<std::uint32_t, std::size_t> authoredOutputCounts;
+            authoredOutputCounts.reserve(path.network->components.size());
+            for (const auto& component : path.network->components)
+                authoredOutputCounts.try_emplace(component.id, 0U);
+            for (const auto& connection : path.network->connections)
+                if (const auto found = authoredOutputCounts.find(
+                        connection.fromComponentId);
+                    found != authoredOutputCounts.end())
+                    ++found->second;
+            std::unordered_set<std::uint32_t> acousticSideBranchIds;
+            for (const auto& component : path.network->components)
+                if (component.type == ExhaustComponentType::resonator
+                    && authoredOutputCounts[component.id] == 0U)
+                    acousticSideBranchIds.insert(component.id);
+
             double outletConductanceM2 = 0.0;
             std::unordered_set<std::uint32_t> summarisedComponentIds;
             for (const auto& component : path.network->components) {
                 if (component.id == 0 || !summarisedComponentIds.insert(component.id).second)
                     continue;
+                if (acousticSideBranchIds.contains(component.id)) continue;
                 pathFlow.collectorVolumeLitres += componentVolumeLitres(component);
                 if (component.type == ExhaustComponentType::outlet) {
                     outletConductanceM2 += componentOutletAreaM2(component)
@@ -320,7 +338,9 @@ ExhaustGraph ExhaustGraph::makeForEngine(
             std::unordered_map<std::uint32_t, std::uint32_t> componentNodeIds;
             componentNodeIds.reserve(path.network->components.size());
             for (const auto& component : path.network->components) {
-                if (component.id == 0 || componentNodeIds.contains(component.id)) continue;
+                if (component.id == 0 || componentNodeIds.contains(component.id)
+                    || acousticSideBranchIds.contains(component.id))
+                    continue;
                 const auto runtimeId = allocateNodeId();
                 componentNodeIds.emplace(component.id, runtimeId);
                 const auto resonance = componentResonance(
@@ -350,11 +370,44 @@ ExhaustGraph ExhaustGraph::makeForEngine(
             std::unordered_set<std::uint64_t> compiledConnections;
             for (const auto& connection : path.network->connections) {
                 const auto from = componentNodeIds.find(connection.fromComponentId);
-                const auto to = componentNodeIds.find(connection.toComponentId);
                 const auto key = (static_cast<std::uint64_t>(connection.fromComponentId) << 32U)
                     | connection.toComponentId;
-                if (from != componentNodeIds.end() && to != componentNodeIds.end()
-                    && from != to && compiledConnections.insert(key).second)
+                if (from == componentNodeIds.end()
+                    || !compiledConnections.insert(key).second)
+                    continue;
+                if (acousticSideBranchIds.contains(connection.toComponentId)) {
+                    const auto branch = std::find_if(
+                        path.network->components.begin(), path.network->components.end(),
+                        [&connection](const auto& component) {
+                            return component.id == connection.toComponentId;
+                        });
+                    if (branch == path.network->components.end()) continue;
+                    if (graph.acousticSideBranches_.size()
+                            >= maximumExhaustAcousticSideBranches) {
+                        if (!acousticBranchLimitReported) {
+                            graph.diagnostics_.push_back({
+                                ExhaustCompileIssue::acousticBranchLimitReached,
+                                branch->id });
+                            acousticBranchLimitReported = true;
+                        }
+                        continue;
+                    }
+                    graph.acousticSideBranches_.push_back({
+                        from->second,
+                        branch->id,
+                        runtimePathIndex,
+                        finiteClamped(branch->lengthMm, 1.0, 10'000.0, 300.0)
+                            * 0.001,
+                        finiteClamped(branch->diameterMm, 5.0, 500.0, 30.0)
+                            * 0.001,
+                        finiteClamped(branch->volumeLitres, 0.0, 1'000.0, 0.0)
+                            * 0.001,
+                        finiteClamped(branch->resonanceHz, 0.0, 20'000.0, 0.0),
+                    });
+                    continue;
+                }
+                const auto to = componentNodeIds.find(connection.toComponentId);
+                if (to != componentNodeIds.end() && from != to)
                     graph.edges_.push_back({ from->second, to->second });
             }
             std::unordered_set<std::uint32_t> compiledCylinderConnections;

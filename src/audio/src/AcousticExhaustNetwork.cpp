@@ -38,7 +38,9 @@ namespace {
 } // namespace
 
 struct AcousticExhaustNetwork::Impl final {
-    enum class OwnerType : std::uint8_t { none, junction, cylinder, outlet };
+    enum class OwnerType : std::uint8_t {
+        none, junction, cylinder, outlet, sideBranchTerminal
+    };
 
     struct EndpointOwner final {
         OwnerType type { OwnerType::none };
@@ -134,6 +136,15 @@ struct AcousticExhaustNetwork::Impl final {
             AcousticTerminationType::unflanged };
     };
 
+    struct SideBranchTerminal final {
+        std::size_t ductIndex {};
+        std::uint32_t pathIndex {};
+        double cavityVolumeM3 {};
+        float complianceAdmittanceM3PerPaSecond {};
+        float complianceAdmittanceTargetM3PerPaSecond {};
+        float complianceIncidentPressurePa {};
+    };
+
     struct ReactionTarget final {
         std::uint32_t nodeId {};
         bool duct { true };
@@ -147,6 +158,7 @@ struct AcousticExhaustNetwork::Impl final {
     std::vector<Junction> junctions;
     std::vector<CylinderPort> cylinderPorts;
     std::vector<Outlet> outlets;
+    std::vector<SideBranchTerminal> sideBranchTerminals;
     std::vector<ReactionTarget> reactionTargets;
     std::vector<EndpointOwner> owners;
     std::vector<float> incident;
@@ -228,7 +240,8 @@ struct AcousticExhaustNetwork::Impl final {
         }
 
         ducts.reserve(layout.ducts().size()
-            + maximumAdditionalTaperSections + layout.junctions().size());
+            + maximumAdditionalTaperSections + layout.junctions().size()
+            + graph.acousticSideBranches().size());
         for (std::size_t layoutIndex = 0;
              layoutIndex < layout.ducts().size(); ++layoutIndex) {
             const auto& descriptor = layout.ducts()[layoutIndex];
@@ -277,6 +290,48 @@ struct AcousticExhaustNetwork::Impl final {
                 duct.mediumSources.push_back(layoutIndex);
                 ducts.push_back(std::move(duct));
             }
+        }
+        struct SideBranchPlan final {
+            std::size_t ductIndex {};
+            std::uint32_t attachmentNodeId {};
+            std::uint32_t pathIndex {};
+            double cavityVolumeM3 {};
+        };
+        std::vector<SideBranchPlan> sideBranchPlans;
+        sideBranchPlans.reserve(graph.acousticSideBranches().size());
+        for (const auto& descriptor : graph.acousticSideBranches()) {
+            const auto effectiveLengthM = descriptor.referenceTuningHz > 0.0
+                ? graph.referenceWaveSpeedMps()
+                    / (4.0 * descriptor.referenceTuningHz)
+                : descriptor.lengthM;
+            if (!(effectiveLengthM > 0.0) || !(descriptor.diameterM > 0.0))
+                return;
+            const auto areaM2 = std::max(
+                1.0e-10, circularArea(descriptor.diameterM));
+            Duct duct;
+            duct.nodeId = descriptor.sourceComponentId;
+            duct.pathIndex = descriptor.pathIndex;
+            duct.lengthM = std::clamp(effectiveLengthM, 0.005, 10.0);
+            duct.areaM2 = areaM2;
+            duct.inletAreaM2 = areaM2;
+            duct.outletAreaM2 = areaM2;
+            duct.radiusM = 0.5 * descriptor.diameterM;
+            const auto host = std::find_if(
+                layout.ducts().begin(), layout.ducts().end(),
+                [&descriptor](const auto& candidate) {
+                    return candidate.nodeId == descriptor.attachmentNodeId;
+                });
+            if (host != layout.ducts().end())
+                duct.mediumSources.push_back(static_cast<std::size_t>(
+                    std::distance(layout.ducts().begin(), host)));
+            const auto ductIndex = ducts.size();
+            ducts.push_back(std::move(duct));
+            sideBranchPlans.push_back({
+                ductIndex,
+                descriptor.attachmentNodeId,
+                descriptor.pathIndex,
+                std::max(0.0, descriptor.terminalVolumeM3),
+            });
         }
         const auto compiledAcousticDuctCount = ducts.size();
 
@@ -609,6 +664,67 @@ struct AcousticExhaustNetwork::Impl final {
             outlets.push_back(std::move(compiled));
         }
 
+        sideBranchTerminals.reserve(sideBranchPlans.size());
+        for (const auto& branch : sideBranchPlans) {
+            std::optional<std::size_t> attachmentJunction;
+            const auto hostDuct = std::find_if(
+                layout.ducts().begin(), layout.ducts().end(),
+                [&branch](const auto& candidate) {
+                    return candidate.nodeId == branch.attachmentNodeId;
+                });
+            if (hostDuct != layout.ducts().end()) {
+                const auto layoutIndex = static_cast<std::size_t>(
+                    std::distance(layout.ducts().begin(), hostDuct));
+                const gasdynamics::ExhaustEndpoint hostOutlet {
+                    gasdynamics::ExhaustEndpointType::ductOutlet,
+                    layoutIndex,
+                    hostDuct->nodeId,
+                };
+                const auto hostKey = acousticEndpointKey(hostOutlet);
+                if (hostKey >= owners.size()
+                    || owners[hostKey].type != OwnerType::junction)
+                    return;
+                attachmentJunction = owners[hostKey].index;
+            } else {
+                const auto hostJunction = std::find_if(
+                    layout.junctions().begin(), layout.junctions().end(),
+                    [&branch](const auto& candidate) {
+                        return candidate.nodeId == branch.attachmentNodeId;
+                    });
+                if (hostJunction == layout.junctions().end()) return;
+                const auto layoutIndex = static_cast<std::size_t>(
+                    std::distance(layout.junctions().begin(), hostJunction));
+                attachmentJunction = nodeFor(
+                    groupForJunction[layoutIndex], false);
+            }
+
+            auto& terminalDuct = ducts[branch.ductIndex];
+            if (terminalDuct.mediumSources.empty()) {
+                for (const auto key : junctions[*attachmentJunction].ductEndpoints) {
+                    for (const auto source : ducts[key / 2U].mediumSources)
+                        if (std::find(terminalDuct.mediumSources.begin(),
+                                terminalDuct.mediumSources.end(), source)
+                            == terminalDuct.mediumSources.end())
+                            terminalDuct.mediumSources.push_back(source);
+                }
+            }
+            const auto nearKey = branch.ductIndex * 2U;
+            const auto farKey = nearKey + 1U;
+            if (!assignEndpoint(nearKey, OwnerType::junction,
+                    *attachmentJunction))
+                return;
+            junctions[*attachmentJunction].ductEndpoints.push_back(nearKey);
+            const auto terminalIndex = sideBranchTerminals.size();
+            if (!assignEndpoint(farKey, OwnerType::sideBranchTerminal,
+                    terminalIndex))
+                return;
+            sideBranchTerminals.push_back({
+                branch.ductIndex,
+                branch.pathIndex,
+                branch.cavityVolumeM3,
+            });
+        }
+
         // Attach each compact volume to the branch itself (the many-port side),
         // never to the far end of its common trunk. Coincident authored branch
         // groups share one scattering node, so their residual volumes add.
@@ -834,6 +950,11 @@ void AcousticExhaustNetwork::reset() noexcept {
         junction.complianceIncidentPressurePa = 0.0F;
         junction.pendingSourcePressurePa = 0.0F;
     }
+    for (auto& terminal : impl_->sideBranchTerminals) {
+        terminal.complianceAdmittanceM3PerPaSecond = 0.0F;
+        terminal.complianceAdmittanceTargetM3PerPaSecond = 0.0F;
+        terminal.complianceIncidentPressurePa = 0.0F;
+    }
     std::fill(impl_->incident.begin(), impl_->incident.end(), 0.0F);
     std::fill(impl_->outgoing.begin(), impl_->outgoing.end(), 0.0F);
     impl_->lastJetNoise.fill(StereoPressure {});
@@ -1001,6 +1122,20 @@ void AcousticExhaustNetwork::beginBlock(
         if (snap) junction.complianceAdmittanceM3PerPaSecond =
             junction.complianceAdmittanceTargetM3PerPaSecond;
         junction.pendingSourcePressurePa = 0.0F;
+    }
+    for (auto& terminal : impl_->sideBranchTerminals) {
+        const auto& medium = impl_->mediaTarget[std::min<std::size_t>(
+            terminal.pathIndex, impl_->mediaTarget.size() - 1U)];
+        const auto density = static_cast<double>(medium.densityKgPerM3);
+        const auto soundSpeed = static_cast<double>(medium.soundSpeedMps);
+        terminal.complianceAdmittanceTargetM3PerPaSecond =
+            terminal.cavityVolumeM3 > 0.0 && density > 0.0
+                && soundSpeed > 0.0
+            ? static_cast<float>(2.0 * terminal.cavityVolumeM3
+                * impl_->sampleRateHz / (density * soundSpeed * soundSpeed))
+            : 0.0F;
+        if (snap) terminal.complianceAdmittanceM3PerPaSecond =
+            terminal.complianceAdmittanceTargetM3PerPaSecond;
     }
 }
 
@@ -1191,6 +1326,37 @@ AcousticExhaustNetwork::process(
         impl_->lastJetNoise[path].rightPa += observedJet.rightPa;
         result[path].leftPa += observed.leftPa + observedJet.leftPa;
         result[path].rightPa += observed.rightPa + observedJet.rightPa;
+    }
+
+    for (auto& terminal : impl_->sideBranchTerminals) {
+        terminal.complianceAdmittanceM3PerPaSecond += ramp
+            * (terminal.complianceAdmittanceTargetM3PerPaSecond
+                - terminal.complianceAdmittanceM3PerPaSecond);
+        const auto key = terminal.ductIndex * 2U + 1U;
+        const auto incidentPressure = impl_->incident[key];
+        const auto complianceAdmittance = static_cast<double>(
+            terminal.complianceAdmittanceM3PerPaSecond);
+        if (!(complianceAdmittance > 0.0)) {
+            // Rigid closed end: pressure reflection coefficient +1.
+            impl_->outgoing[key] = incidentPressure;
+            continue;
+        }
+        const auto ductAdmittance = static_cast<double>(
+            impl_->endpointAdmittance(key));
+        const auto totalAdmittance = ductAdmittance + complianceAdmittance;
+        const auto pressure = totalAdmittance > 1.0e-15
+            ? static_cast<float>(2.0
+                * (ductAdmittance * incidentPressure
+                    + complianceAdmittance
+                        * terminal.complianceIncidentPressurePa)
+                / totalAdmittance)
+            : 0.0F;
+        impl_->outgoing[key] = pressure - incidentPressure;
+        const auto nextComplianceIncident = pressure
+            - terminal.complianceIncidentPressurePa;
+        terminal.complianceIncidentPressurePa =
+            std::isfinite(nextComplianceIncident)
+            ? nextComplianceIncident : 0.0F;
     }
 
     for (std::size_t index = 0; index < impl_->ducts.size(); ++index) {

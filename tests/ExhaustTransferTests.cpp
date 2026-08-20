@@ -37,6 +37,9 @@ enum class FixtureTopology : std::uint8_t {
     expansionChamber,
     smoothTaper,
     parallelTaperBudget,
+    sideBranch250Hz,
+    sideBranch250HzWithCavity,
+    sideBranch500HzOverride,
     asymmetricSplit,
     compactSplitSmallVolume,
     compactSplitLargeVolume,
@@ -154,6 +157,29 @@ void require(bool condition, std::string message) {
             network.components.push_back(outlet);
             network.connections.push_back({ 200, 300U + index });
         }
+        break;
+    }
+    case FixtureTopology::sideBranch250Hz:
+    case FixtureTopology::sideBranch250HzWithCavity:
+    case FixtureTopology::sideBranch500HzOverride: {
+        network.components.push_back(component(
+            100, enginelab::ExhaustComponentType::pipe, 750.0, 42.0));
+        auto outlet = component(
+            200, enginelab::ExhaustComponentType::outlet, 750.0, 42.0);
+        outlet.acousticPositionM = { 0.0, 0.0, 0.0 };
+        network.components.push_back(outlet);
+        auto resonator = component(
+            300, enginelab::ExhaustComponentType::resonator, 535.0, 28.0);
+        resonator.volumeLitres =
+            topology == FixtureTopology::sideBranch250HzWithCavity
+            ? 0.35 : 0.0;
+        resonator.resonanceHz =
+            topology == FixtureTopology::sideBranch500HzOverride
+            ? 500.0 : 0.0;
+        network.components.push_back(resonator);
+        network.cylinderConnections.push_back({ cylinderId, 100 });
+        network.connections.push_back({ 100, 200 });
+        network.connections.push_back({ 100, 300 });
         break;
     }
     case FixtureTopology::asymmetricSplit:
@@ -360,6 +386,12 @@ void transferOracleRegression() {
     const auto taper = render(FixtureTopology::smoothTaper, excitation);
     const auto parallelTapers = render(
         FixtureTopology::parallelTaperBudget, excitation);
+    const auto resonator250 = render(
+        FixtureTopology::sideBranch250Hz, excitation);
+    const auto resonator250WithCavity = render(
+        FixtureTopology::sideBranch250HzWithCavity, excitation);
+    const auto resonator500 = render(
+        FixtureTopology::sideBranch500HzOverride, excitation);
     const auto split = render(FixtureTopology::asymmetricSplit, excitation);
     const auto compactSmall = render(
         FixtureTopology::compactSplitSmallVolume, excitation);
@@ -377,6 +409,10 @@ void transferOracleRegression() {
     requireBoundedPassiveResponse("long straight", longStraight);
     requireBoundedPassiveResponse("expansion chamber", chamber);
     requireBoundedPassiveResponse("smooth taper", taper);
+    requireBoundedPassiveResponse("250 Hz side branch", resonator250);
+    requireBoundedPassiveResponse(
+        "250 Hz side branch with cavity", resonator250WithCavity);
+    requireBoundedPassiveResponse("500 Hz side branch", resonator500);
     requireBoundedPassiveResponse("asymmetric split", split);
     requireBoundedPassiveResponse("compact split, 0.25 litre", compactSmall);
     requireBoundedPassiveResponse("compact split, 2.0 litres", compactLarge);
@@ -409,9 +445,18 @@ void transferOracleRegression() {
     // refine only the first branches and destroy bank symmetry.
     require(parallelTapers.acousticDuctCount == 25U,
         "parallel tapers must share the bounded refinement budget symmetrically");
+    require(resonator250.acousticDuctCount == straight.acousticDuctCount + 1U
+            && resonator250WithCavity.acousticDuctCount
+                == resonator250.acousticDuctCount
+            && resonator500.acousticDuctCount == resonator250.acousticDuctCount,
+        "a terminal resonator must add one bounded acoustic branch and no mean-flow route");
 
     const auto chamberShapeDistanceDb = shapeDistanceDb(straight, chamber);
     const auto taperShapeDistanceDb = shapeDistanceDb(straight, taper);
+    const auto resonatorTuningShapeDistanceDb = shapeDistanceDb(
+        resonator250, resonator500);
+    const auto resonatorCavityShapeDistanceDb = shapeDistanceDb(
+        resonator250, resonator250WithCavity);
     const auto splitShapeDistanceDb = shapeDistanceDb(straight, split);
     const auto junctionVolumeShapeDistanceDb = shapeDistanceDb(
         compactSmall, compactLarge);
@@ -421,6 +466,10 @@ void transferOracleRegression() {
         "the expansion ratio did not change the fixed-source transfer shape");
     require(taperShapeDistanceDb > 0.25,
         "the distributed taper did not change the fixed-source transfer shape");
+    require(resonatorTuningShapeDistanceDb > 0.25,
+        "resonanceHz did not retune the passive side-branch transfer");
+    require(resonatorCavityShapeDistanceDb > 0.25,
+        "terminal cavity volume did not change the passive side-branch transfer");
     require(splitShapeDistanceDb > 0.25,
         "the asymmetric split did not change the fixed-source transfer shape");
     require(junctionVolumeShapeDistanceDb > 0.25,
@@ -440,6 +489,10 @@ void transferOracleRegression() {
               << "  chamber shape_delta=" << chamberShapeDistanceDb << " dB\n"
               << "  taper shape_delta=" << taperShapeDistanceDb
               << " dB sections=" << taper.acousticDuctCount - 1U << '\n'
+              << "  resonator tuning shape_delta="
+              << resonatorTuningShapeDistanceDb << " dB\n"
+              << "  resonator cavity shape_delta="
+              << resonatorCavityShapeDistanceDb << " dB\n"
               << "  split shape_delta=" << splitShapeDistanceDb << " dB\n"
               << "  junction volume shape_delta="
               << junctionVolumeShapeDistanceDb << " dB\n";

@@ -127,10 +127,13 @@ constexpr std::size_t maximumConnections = 1'024;
         result.diameterMm = 58.0;
         break;
     case ExhaustComponentType::resonator:
-        result.lengthMm = 320.0;
-        result.diameterMm = 54.0;
-        result.volumeLitres = 2.5;
-        result.resonanceHz = 180.0;
+        // The most useful neutral starting point is a closed quarter-wave
+        // branch. One incoming connection and no output gives it that meaning;
+        // adding an output keeps the historical inline-duct behaviour.
+        result.lengthMm = 535.0;
+        result.diameterMm = 28.0;
+        result.volumeLitres = 0.0;
+        result.resonanceHz = 0.0;
         break;
     case ExhaustComponentType::muffler:
         result.lengthMm = 480.0;
@@ -571,7 +574,8 @@ private:
         const std::array<const char*, 12> names {
             "ID", "Longueur (mm)", "Diametre entree (mm)",
             "Diametre sortie (mm, 0 = constant)", "Volume (L)",
-            "Restriction", "Resonance (Hz)", "Gain acoustique", "Cd sortie",
+            "Restriction debit (K)", "Accord branche (Hz, 0 = longueur)",
+            "Gain fallback legacy", "Cd sortie",
             "Resistivite garnissage (Pa.s/m2)", "Epaisseur garnissage (mm)",
             "Taux ouvert perfore (0..1)"
         };
@@ -587,6 +591,18 @@ private:
             addAndMakeVisible(propertyLabels_[index]);
             addAndMakeVisible(propertyEditors_[index]);
         }
+        propertyEditors_[4].setTooltip(
+            "Sur un resonateur terminal, ce volume est la cavite fermee au bout de la branche. "
+            "Zero donne une terminaison rigide quart d'onde.");
+        propertyEditors_[5].setTooltip(
+            "Coefficient de perte de charge du debit moyen. Son effet acoustique physique est "
+            "indirect, via la pression et le debit calcules par le solveur gaz.");
+        propertyEditors_[6].setTooltip(
+            "Actif dans le reseau physique uniquement pour un resonateur terminal: la longueur "
+            "acoustique de reference vaut c/(4f). Zero conserve la longueur geometrique.");
+        propertyEditors_[7].setTooltip(
+            "Compatibilite du rendu audio de secours. Le guide d'onde physique reste passif et "
+            "n'applique pas ce gain arbitraire.");
         updateComponentButton_.setButtonText("METTRE A JOUR LE COMPOSANT");
         updateComponentButton_.onClick = [this] { updateSelectedComponent(); };
         packingDemoButton_.setButtonText("GARNISSAGE DEMO");
@@ -1071,13 +1087,19 @@ private:
     }
 
     void updatePackingEditorAvailability(bool clearIfUnavailable) {
-        const auto available = componentTypeSelector_.getSelectedItemIndex()
+        const auto selectedType = componentTypeSelector_.getSelectedItemIndex();
+        const auto available = selectedType
             == static_cast<int>(ExhaustComponentType::muffler);
         for (std::size_t index = 9; index < propertyEditors_.size(); ++index) {
             propertyEditors_[index].setEnabled(available);
             if (!available && clearIfUnavailable)
                 propertyEditors_[index].setText("0", false);
         }
+        const auto tunableBranch = selectedType
+            == static_cast<int>(ExhaustComponentType::resonator);
+        propertyEditors_[6].setEnabled(tunableBranch);
+        if (!tunableBranch && clearIfUnavailable)
+            propertyEditors_[6].setText("0", false);
         packingDemoButton_.setEnabled(available);
         packingBypassButton_.setEnabled(available);
     }
@@ -1141,9 +1163,13 @@ private:
             setStatus("Aucun identifiant de composant disponible.", true);
             return;
         }
-        network.components.push_back(defaultComponent(static_cast<ExhaustComponentType>(typeIndex), id));
+        const auto type = static_cast<ExhaustComponentType>(typeIndex);
+        network.components.push_back(defaultComponent(type, id));
         selectedComponentId_ = id;
-        setStatus("Composant ajoute. Reliez-le avant de valider le reseau.", false);
+        setStatus(type == ExhaustComponentType::resonator
+                ? "Resonateur ajoute: une entree et aucune sortie forment une branche fermee; une sortie le rend inline."
+                : "Composant ajoute. Reliez-le avant de valider le reseau.",
+            false);
         rebuildAll();
         componentList_.selectRow(static_cast<int>(network.components.size()) - 1);
     }
