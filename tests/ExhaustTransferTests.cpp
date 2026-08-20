@@ -36,6 +36,8 @@ enum class FixtureTopology : std::uint8_t {
     longStraight,
     expansionChamber,
     asymmetricSplit,
+    compactSplitSmallVolume,
+    compactSplitLargeVolume,
 };
 
 [[noreturn]] void fail(std::string message) {
@@ -121,11 +123,18 @@ void require(bool condition, std::string message) {
         network.connections.push_back({ 200, 300 });
         break;
     }
-    case FixtureTopology::asymmetricSplit: {
+    case FixtureTopology::asymmetricSplit:
+    case FixtureTopology::compactSplitSmallVolume:
+    case FixtureTopology::compactSplitLargeVolume: {
         network.components.push_back(component(
             100, enginelab::ExhaustComponentType::pipe, 500.0, 42.0));
-        network.components.push_back(component(
-            200, enginelab::ExhaustComponentType::splitter, 0.0, 42.0));
+        auto splitter = component(
+            200, enginelab::ExhaustComponentType::splitter, 0.0, 42.0);
+        if (topology == FixtureTopology::compactSplitSmallVolume)
+            splitter.volumeLitres = 0.25;
+        else if (topology == FixtureTopology::compactSplitLargeVolume)
+            splitter.volumeLitres = 2.0;
+        network.components.push_back(splitter);
         auto leftOutlet = component(
             300, enginelab::ExhaustComponentType::outlet, 1'000.0, 42.0);
         leftOutlet.acousticPositionM = { -0.20, 0.0, 0.0 };
@@ -314,6 +323,10 @@ void transferOracleRegression() {
     const auto longStraight = render(FixtureTopology::longStraight, excitation);
     const auto chamber = render(FixtureTopology::expansionChamber, excitation);
     const auto split = render(FixtureTopology::asymmetricSplit, excitation);
+    const auto compactSmall = render(
+        FixtureTopology::compactSplitSmallVolume, excitation);
+    const auto compactLarge = render(
+        FixtureTopology::compactSplitLargeVolume, excitation);
 
     // The straight-through graph is the deterministic bypass/control. Equal
     // topology, medium, observer and samples must remain bit-exact across fresh
@@ -326,6 +339,8 @@ void transferOracleRegression() {
     requireBoundedPassiveResponse("long straight", longStraight);
     requireBoundedPassiveResponse("expansion chamber", chamber);
     requireBoundedPassiveResponse("asymmetric split", split);
+    requireBoundedPassiveResponse("compact split, 0.25 litre", compactSmall);
+    requireBoundedPassiveResponse("compact split, 2.0 litres", compactLarge);
 
     constexpr double addedLengthM = 0.600;
     const auto expectedAddedSamples = addedLengthM
@@ -337,12 +352,16 @@ void transferOracleRegression() {
 
     const auto chamberShapeDistanceDb = shapeDistanceDb(straight, chamber);
     const auto splitShapeDistanceDb = shapeDistanceDb(straight, split);
+    const auto junctionVolumeShapeDistanceDb = shapeDistanceDb(
+        compactSmall, compactLarge);
     // These low thresholds reject a graph that has become decorative while
     // leaving the actual transfer shape unconstrained for future better models.
     require(chamberShapeDistanceDb > 0.25,
         "the expansion ratio did not change the fixed-source transfer shape");
     require(splitShapeDistanceDb > 0.25,
         "the asymmetric split did not change the fixed-source transfer shape");
+    require(junctionVolumeShapeDistanceDb > 0.25,
+        "changing only the compact junction volume did not change its acoustic transfer");
 
     std::cout << std::fixed << std::setprecision(3)
               << "Exhaust transfer oracle\n"
@@ -356,7 +375,9 @@ void transferOracleRegression() {
               << " added_samples=" << measuredAddedSamples
               << " expected=" << expectedAddedSamples << '\n'
               << "  chamber shape_delta=" << chamberShapeDistanceDb << " dB\n"
-              << "  split shape_delta=" << splitShapeDistanceDb << " dB\n";
+              << "  split shape_delta=" << splitShapeDistanceDb << " dB\n"
+              << "  junction volume shape_delta="
+              << junctionVolumeShapeDistanceDb << " dB\n";
 }
 
 } // namespace

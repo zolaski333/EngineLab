@@ -93,6 +93,15 @@ struct AcousticExhaustNetwork::Impl final {
         std::vector<std::size_t> ductEndpoints;
         std::vector<std::size_t> cylinderTerminals;
         std::vector<std::size_t> outletTerminals;
+        std::uint32_t pathIndex {};
+        /** Compact gas volume which is not already represented by a trunk
+         *  delay line. It is a shunt acoustic compliance at the scattering
+         *  node, C = V/(rho*c^2). */
+        double compactVolumeM3 {};
+        float complianceAdmittanceM3PerPaSecond {};
+        float complianceAdmittanceTargetM3PerPaSecond {};
+        /** Incident wave retained by the trapezoidal/WDF compliance port. */
+        float complianceIncidentPressurePa {};
         float pendingSourcePressurePa {};
     };
 
@@ -234,6 +243,9 @@ struct AcousticExhaustNetwork::Impl final {
             /** Sum of area * length over the group, so a chain of unioned
              *  junctions recovers a single length-weighted mean area. */
             double sweptVolumeM3 { 0.0 };
+            /** Well-mixed volume left after the authored trunk has been
+             *  represented explicitly as a waveguide. */
+            double compactVolumeM3 { 0.0 };
             std::uint32_t pathIndex { 0 };
             std::size_t inflowCount { 0 };
             std::size_t outflowCount { 0 };
@@ -243,8 +255,16 @@ struct AcousticExhaustNetwork::Impl final {
             const auto& descriptor = layout.junctions()[index];
             auto& geometry = groupGeometry[groupForJunction[index]];
             geometry.lengthM += descriptor.trunkLengthM;
-            geometry.sweptVolumeM3 += circularArea(descriptor.characteristicDiameterM)
+            const auto sweptVolumeM3 =
+                circularArea(descriptor.characteristicDiameterM)
                 * descriptor.trunkLengthM;
+            geometry.sweptVolumeM3 += sweptVolumeM3;
+            // The gas solver stores the complete junction control volume in
+            // volumeM3. The acoustic network already turns an authored common
+            // trunk into a distributed delay line, so only the residual may be
+            // lumped here; adding the full value would count that pipe twice.
+            geometry.compactVolumeM3 += std::max(
+                0.0, descriptor.volumeM3 - sweptVolumeM3);
             geometry.pathIndex = descriptor.pathIndex;
         }
         // A trunk belongs on whichever side of the branch carries exactly one
@@ -355,12 +375,15 @@ struct AcousticExhaustNetwork::Impl final {
             if (left != right) slotParent[right] = left;
         }
         std::unordered_map<std::size_t, std::size_t> junctionForSlotRoot;
-        const auto nodeFor = [&](std::size_t group, bool inflowToGroup) {
-            const auto root = slotRootOf(slotFor(group, inflowToGroup));
+        const auto nodeForSlot = [&](std::size_t slot) {
+            const auto root = slotRootOf(slot);
             const auto [found, inserted] =
                 junctionForSlotRoot.emplace(root, junctions.size());
             if (inserted) junctions.emplace_back();
             return found->second;
+        };
+        const auto nodeFor = [&](std::size_t group, bool inflowToGroup) {
+            return nodeForSlot(slotFor(group, inflowToGroup));
         };
 
         owners.resize(ducts.size() * 2U);
@@ -466,6 +489,17 @@ struct AcousticExhaustNetwork::Impl final {
                         OwnerType::outlet, outletIndex)) return;
             }
             outlets.push_back(std::move(compiled));
+        }
+
+        // Attach each compact volume to the branch itself (the many-port side),
+        // never to the far end of its common trunk. Coincident authored branch
+        // groups share one scattering node, so their residual volumes add.
+        for (std::size_t group = 0; group < groupCount; ++group) {
+            const auto& geometry = groupGeometry[group];
+            if (!(geometry.compactVolumeM3 > 0.0)) continue;
+            auto& junction = junctions[nodeForSlot(groupPlans[group].manyNode)];
+            junction.pathIndex = geometry.pathIndex;
+            junction.compactVolumeM3 += geometry.compactVolumeM3;
         }
         reactionTargets.reserve(layout.ducts().size()
             + layout.junctions().size());
@@ -668,6 +702,12 @@ void AcousticExhaustNetwork::reset() noexcept {
         outlet.jetNoiseObserver.reset();
         outlet.jetNoise.reset();
     }
+    for (auto& junction : impl_->junctions) {
+        junction.complianceAdmittanceM3PerPaSecond = 0.0F;
+        junction.complianceAdmittanceTargetM3PerPaSecond = 0.0F;
+        junction.complianceIncidentPressurePa = 0.0F;
+        junction.pendingSourcePressurePa = 0.0F;
+    }
     std::fill(impl_->incident.begin(), impl_->incident.end(), 0.0F);
     std::fill(impl_->outgoing.begin(), impl_->outgoing.end(), 0.0F);
     impl_->lastJetNoise.fill(StereoPressure {});
@@ -818,8 +858,24 @@ void AcousticExhaustNetwork::beginBlock(
             outlet.jetNoise.snapToTarget();
         }
     }
-    for (auto& junction : impl_->junctions)
+    for (auto& junction : impl_->junctions) {
+        const auto& medium = impl_->mediaTarget[std::min<std::size_t>(
+            junction.pathIndex, impl_->mediaTarget.size() - 1U)];
+        const auto density = static_cast<double>(medium.densityKgPerM3);
+        const auto soundSpeed = static_cast<double>(medium.soundSpeedMps);
+        // Bilinear/WDF port admittance of an acoustic compliance:
+        // C = V/(rho*c^2), Yc = 2*C/T. It adds one scalar state to the compact
+        // junction and no delay line, mesh cell or substep.
+        junction.complianceAdmittanceTargetM3PerPaSecond =
+            junction.compactVolumeM3 > 0.0 && density > 0.0
+                && soundSpeed > 0.0
+            ? static_cast<float>(2.0 * junction.compactVolumeM3
+                * impl_->sampleRateHz / (density * soundSpeed * soundSpeed))
+            : 0.0F;
+        if (snap) junction.complianceAdmittanceM3PerPaSecond =
+            junction.complianceAdmittanceTargetM3PerPaSecond;
         junction.pendingSourcePressurePa = 0.0F;
+    }
 }
 
 std::array<StereoPressure, AcousticExhaustNetwork::maximumPaths>
@@ -902,6 +958,9 @@ AcousticExhaustNetwork::process(
     std::fill(impl_->outgoing.begin(), impl_->outgoing.end(), 0.0F);
 
     for (auto& junction : impl_->junctions) {
+        junction.complianceAdmittanceM3PerPaSecond += ramp
+            * (junction.complianceAdmittanceTargetM3PerPaSecond
+                - junction.complianceAdmittanceM3PerPaSecond);
         double weightedIncident = 0.0;
         double totalAdmittance = 0.0;
         for (const auto key : junction.ductEndpoints) {
@@ -924,10 +983,26 @@ AcousticExhaustNetwork::process(
             weightedIncident += admittance * outlet.incidentToJunction;
             totalAdmittance += admittance;
         }
+        const auto complianceAdmittance = static_cast<double>(
+            junction.complianceAdmittanceM3PerPaSecond);
+        if (complianceAdmittance > 0.0) {
+            weightedIncident += complianceAdmittance
+                * junction.complianceIncidentPressurePa;
+            totalAdmittance += complianceAdmittance;
+        }
         const auto junctionPressure = (totalAdmittance > 1.0e-15
             ? static_cast<float>(2.0 * weightedIncident / totalAdmittance)
             : 0.0F) + junction.pendingSourcePressurePa;
         junction.pendingSourcePressurePa = 0.0F;
+        if (complianceAdmittance > 0.0) {
+            // A lossless compliance is a one-port whose reflected wave becomes
+            // its incident wave on the next sample. This is the same passive
+            // trapezoidal adaptor used by AcousticIntakeNetwork's plenums.
+            const auto nextIncident = junctionPressure
+                - junction.complianceIncidentPressurePa;
+            junction.complianceIncidentPressurePa = std::isfinite(nextIncident)
+                ? nextIncident : 0.0F;
+        }
         for (const auto key : junction.ductEndpoints)
             impl_->outgoing[key] = junctionPressure - impl_->incident[key];
         for (const auto portIndex : junction.cylinderTerminals) {
