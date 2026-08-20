@@ -209,12 +209,20 @@ comme un budget disponible pour multiplier les voix ou les mailles.
 
 ### Compatibilité afterfire et découverte transmise au lot suivant
 
-Le smoke produit sur `Audio Physics Lab 689 Twin` conserve `physical=yes`,
-`compiled=yes` et tous les compteurs de livraison à zéro. Avec le seuil produit
-de 900 K, 30 s de chauffe ne portent cependant la paroi qu'à 327,8 °C : aucun
-volume ne s'allume et zéro milligramme brûle. Ce n'est pas un défaut du nouveau
-silencieux ; c'est une preuve fraîche que l'afterfire produit reste pratiquement
-inarmable dans ce scénario.
+Le smoke sur `Audio Physics Lab 689 Twin` conserve `physical=yes`, `compiled=yes`
+et tous les compteurs de livraison à zéro. Rectification importante découverte
+au lot suivant : le harness remplaçait silencieusement la calibration du moteur
+par 900 K. Ce n'était donc pas le « seuil produit » ; le catalogue écrit 800 K.
+Sous ce seuil forcé, 30 s de chauffe ne portent la paroi qu'à 327,8 °C et aucun
+volume ne s'allume. Cette mesure reste une preuve de compatibilité du silencieux,
+mais pas une mesure fidèle de l'afterfire catalogué.
+
+Une mesure corrigée avec les paramètres réellement écrits, après 60 s de charge,
+atteint environ 517 °C de paroi et produit 5,593 mg brûlés en sept excursions sur
+le chemin sans audio. Avec le chemin audio, six excursions et 5,025 mg atteignent
+l'observateur sans aucune perte, mais le niveau ne gagne qu'environ 0,8 dB au pic
+et 0,2 dB au percentile 99,9 par rapport au contrôle sans carburant : le défaut
+audible reste donc confirmé.
 
 Un contrôle instrumental à 520 K, qui n'est **pas** une calibration proposée,
 fait brûler 22,523 mg en dix événements, avec un pic de 7,144 kW et toujours

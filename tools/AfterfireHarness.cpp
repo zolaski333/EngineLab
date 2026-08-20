@@ -4,12 +4,11 @@
 // poor implementation. Both halves need separating before anything is changed,
 // because they have different causes and only one of them is a model defect.
 //
-//  * It does nothing BY DEFAULT because it is off everywhere. `enabled` is
-//    false in ExhaustAfterfireConfig and no catalogue engine authors it, and
-//    `overrunFuelFraction` defaults to 0, so even switching `enabled` on leaves
-//    the exhaust with no fuel to react. That is a catalogue/authoring fact, not
-//    a physics one, and reading it as "the model is broken" would send you into
-//    the chemistry for nothing.
+//  * Most catalogue engines intentionally use clean DFCO. The Audio Physics Lab
+//    engine authors a discrete strategy, so its exact authored calibration must
+//    remain observable. Hidden harness defaults used to replace that calibration
+//    on every run; the default path now preserves it and --force-demo is the
+//    explicit legacy laboratory override.
 //
 //  * Whether what is there is a POOR model is a question about the shape of the
 //    heat release in time, and that is what this harness measures. A real
@@ -45,9 +44,11 @@
 // coupling replicated in the same order EngineRuntime::run uses.
 //
 //   EngineLabAfterfireHarness [--engines NAME] [--trace] [--audio DIR]
-//                             [--fuel-fraction F] [--ignition-k K]
+//                             [--force-demo] [--fuel-fraction F]
+//                             [--ignition-k K]
 //                             [--reaction-ms MS] [--overrun-seconds S]
 //                             [--pulse-timing-variation FRACTION]
+//                             [--no-reaction-acoustics]
 //                             [--list]
 
 #include <enginelab/audio/ImpulseResponseLoader.hpp>
@@ -73,6 +74,7 @@
 #include <fstream>
 #include <iostream>
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -153,6 +155,9 @@ struct Metrics final {
     bool physicalExhaustActive { false };
     bool compiledExhaustTopologyActive { false };
     AudioContractCounters audioContract {};
+    enginelab::ExhaustAfterfireConfig effectiveCalibration {};
+    bool calibrationOverridden { false };
+    bool reactionAcousticsEnabled { true };
 };
 
 std::string safeFileStem(std::string name) {
@@ -213,8 +218,10 @@ void writeWav(const std::filesystem::path& path,
 class AudioCapture final {
 public:
     AudioCapture(const enginelab::EngineConfig& config,
-                 const std::filesystem::path& impulseResponsePath)
-        : runtime_(std::make_unique<enginelab::EngineRuntime>(config)) {
+                 const std::filesystem::path& impulseResponsePath,
+                 bool reactionAcousticsEnabled)
+        : runtime_(std::make_unique<enginelab::EngineRuntime>(config)),
+          reactionAcousticsEnabled_(reactionAcousticsEnabled) {
         renderer_ = std::make_unique<enginelab::RealtimeEngineAudio>(
             runtime_->audioEvents(), runtime_->audioState(),
             &runtime_->cylinderPressureSamples(), &runtime_->exhaustGraph(),
@@ -281,6 +288,11 @@ public:
                 acousticSample.reactionEvents[eventIndex].timeSeconds =
                     realtimeSeconds_ + eventFraction * stepSeconds;
             }
+            // Instrumental A/B: remove only the copied acoustic observations.
+            // The finite-volume chemistry, heat release, wall state and engine
+            // trajectory have already advanced and remain bit-identical.
+            if (!reactionAcousticsEnabled_)
+                acousticSample.reactionEventCount = 0;
             if (!runtime_->exhaustAcousticSamples().tryPush(acousticSample))
                 ++counters_.droppedExhaustAcousticSamples;
         }
@@ -334,6 +346,7 @@ private:
     std::vector<float> right_;
     double realtimeSeconds_ {};
     AudioContractCounters counters_ {};
+    bool reactionAcousticsEnabled_ { true };
 };
 
 struct TickResult final {
@@ -379,51 +392,84 @@ struct Options final {
     bool list { false };
     std::filesystem::path audioDirectory;
     std::filesystem::path impulseResponsePath;
-    // Same measured combustible discrete-slug calibration as the listening
-    // lab engine. Callers can still select zero for the strict DFCO control.
-    double fuelFraction { 0.18 };
-    double ignitionTemperatureK { 900.0 };
-    double reactionMilliseconds { 10.0 };
+    // Default means "use the selected engine exactly as authored". Individual
+    // optionals are explicit overrides; --force-demo recreates the historical
+    // 0.18 / 900 K / 10 ms continuous laboratory scenario.
+    bool forceDemo { false };
+    std::optional<double> fuelFraction;
+    std::optional<double> ignitionTemperatureK;
+    std::optional<double> reactionMilliseconds;
     double overrunSeconds { 3.0 };
     // Long enough for 1.5 mm of steel to arrive; see phase C.
     double warmupSeconds { 30.0 };
     // Zero keeps the historical continuous strategy (anti-lag).
-    double pulseHz { 0.0 };
-    double pulseDuty { 0.35 };
-    double pulseTimingVariation { 0.25 };
+    std::optional<double> pulseHz;
+    std::optional<double> pulseDuty;
+    std::optional<double> pulseTimingVariation;
+    bool reactionAcousticsEnabled { true };
     // Speed the measured overrun opens at. Must be controlled: left to the
     // warm-up it lands on the rev limiter, where engine pumping buries the
     // afterfire and the audio verdict is about the wrong thing entirely.
     double liftOffRpm { 4'000.0 };
 };
 
+[[nodiscard]] const char* afterfireStrategyName(
+    enginelab::ExhaustAfterfireStrategy strategy) noexcept {
+    switch (strategy) {
+    case enginelab::ExhaustAfterfireStrategy::cleanDfco:
+        return "clean_dfco";
+    case enginelab::ExhaustAfterfireStrategy::continuousAntiLag:
+        return "continuous_anti_lag";
+    case enginelab::ExhaustAfterfireStrategy::discreteAfterfire:
+        return "discrete_afterfire";
+    }
+    return "unknown";
+}
+
+void applyCalibrationOverrides(enginelab::EngineConfig& config,
+                               const Options& options) {
+    auto& afterfire = config.exhaustAfterfire;
+    if (options.forceDemo) {
+        afterfire.overrunFuelFraction = 0.18;
+        afterfire.ignitionTemperatureK = 900.0;
+        afterfire.reactionTimeConstantSeconds = 0.010;
+        afterfire.overrunPulseHz = 0.0;
+        afterfire.overrunPulseDutyCycle = 0.35;
+        afterfire.overrunPulseTimingVariation = 0.25;
+        afterfire.overrunMinimumRpm =
+            std::clamp(config.idleRpm * 1.8, 500.0, 20'000.0);
+    }
+    if (options.fuelFraction)
+        afterfire.overrunFuelFraction = *options.fuelFraction;
+    if (options.ignitionTemperatureK)
+        afterfire.ignitionTemperatureK = *options.ignitionTemperatureK;
+    if (options.reactionMilliseconds)
+        afterfire.reactionTimeConstantSeconds =
+            *options.reactionMilliseconds * 0.001;
+    if (options.pulseHz)
+        afterfire.overrunPulseHz = *options.pulseHz;
+    if (options.pulseDuty)
+        afterfire.overrunPulseDutyCycle = *options.pulseDuty;
+    if (options.pulseTimingVariation)
+        afterfire.overrunPulseTimingVariation =
+            *options.pulseTimingVariation;
+
+    // Strategy is only inferred when the caller explicitly changes delivery.
+    // Merely overriding a chemistry parameter must not rewrite ECU intent.
+    if (options.forceDemo || options.fuelFraction || options.pulseHz) {
+        afterfire.strategy = afterfire.overrunFuelFraction <= 0.0
+            ? enginelab::ExhaustAfterfireStrategy::cleanDfco
+            : (afterfire.overrunPulseHz > 0.0
+                ? enginelab::ExhaustAfterfireStrategy::discreteAfterfire
+                : enginelab::ExhaustAfterfireStrategy::continuousAntiLag);
+        afterfire.enabled = enginelab::afterfireRetainsFuel(afterfire.strategy);
+    }
+}
+
 Metrics measureAfterfire(const enginelab::EngineConfig& baseConfig,
                          const Options& options) {
     auto config = baseConfig;
-    // Author the strategy the complaint is about. Everything below only
-    // measures; nothing here creates fuel or an audio event by itself -- the
-    // ECU still has to reach its own DFCO state and the chemistry still has to
-    // find oxygen and temperature.
-    config.exhaustAfterfire.strategy = options.fuelFraction <= 0.0
-        ? enginelab::ExhaustAfterfireStrategy::cleanDfco
-        : (options.pulseHz > 0.0
-            ? enginelab::ExhaustAfterfireStrategy::discreteAfterfire
-            : enginelab::ExhaustAfterfireStrategy::continuousAntiLag);
-    config.exhaustAfterfire.enabled =
-        enginelab::afterfireRetainsFuel(config.exhaustAfterfire.strategy);
-    config.exhaustAfterfire.overrunFuelFraction = options.fuelFraction;
-    config.exhaustAfterfire.ignitionTemperatureK = options.ignitionTemperatureK;
-    config.exhaustAfterfire.reactionTimeConstantSeconds =
-        options.reactionMilliseconds * 0.001;
-    config.exhaustAfterfire.overrunPulseHz = options.pulseHz;
-    config.exhaustAfterfire.overrunPulseDutyCycle = options.pulseDuty;
-    config.exhaustAfterfire.overrunPulseTimingVariation =
-        options.pulseTimingVariation;
-    // The rpm gate has to sit under what this engine actually reaches in the
-    // acceleration below, or the strategy never arms and the run measures
-    // nothing while looking like a null result.
-    config.exhaustAfterfire.overrunMinimumRpm =
-        std::clamp(config.idleRpm * 1.8, 500.0, 20'000.0);
+    applyCalibrationOverrides(config, options);
 
     enginelab::SimpleEcuModel ecu;
     enginelab::SimplifiedGasolinePhysics physics;
@@ -435,11 +481,18 @@ Metrics measureAfterfire(const enginelab::EngineConfig& baseConfig,
     if (!options.audioDirectory.empty()) {
         simulator.setPressureSamplingEnabled(true);
         audio = std::make_unique<AudioCapture>(
-            config, options.impulseResponsePath);
+            config, options.impulseResponsePath,
+            options.reactionAcousticsEnabled);
     }
 
     Metrics metrics;
     metrics.name = config.name;
+    metrics.effectiveCalibration = config.exhaustAfterfire;
+    metrics.calibrationOverridden = options.forceDemo
+        || options.fuelFraction || options.ignitionTemperatureK
+        || options.reactionMilliseconds || options.pulseHz
+        || options.pulseDuty || options.pulseTimingVariation;
+    metrics.reactionAcousticsEnabled = options.reactionAcousticsEnabled;
     const auto captureAudioContract = [&metrics, &audio]() {
         if (!audio) return;
         metrics.audioMeasured = true;
@@ -868,6 +921,27 @@ void reportAudioContract(const Metrics& metrics) {
 }
 
 void report(const Metrics& metrics) {
+    const auto& calibration = metrics.effectiveCalibration;
+    std::printf("    calibration %s  strategy=%s enabled=%s fuel=%.3f"
+                " ignition=%.1f K reaction=%.2f ms induction=%.2f ms\n",
+        metrics.calibrationOverridden ? "OVERRIDDEN" : "authored",
+        afterfireStrategyName(calibration.strategy),
+        calibration.enabled ? "yes" : "no",
+        calibration.overrunFuelFraction,
+        calibration.ignitionTemperatureK,
+        calibration.reactionTimeConstantSeconds * 1'000.0,
+        calibration.inductionTimeSeconds * 1'000.0);
+    std::printf("    delivery pulse=%.3f Hz duty=%.3f variation=%.3f"
+                " min_rpm=%.0f max_throttle=%.3f quench=%.1f K"
+                " reaction_audio=%s\n",
+        calibration.overrunPulseHz,
+        calibration.overrunPulseDutyCycle,
+        calibration.overrunPulseTimingVariation,
+        calibration.overrunMinimumRpm,
+        calibration.overrunMaximumThrottle,
+        calibration.quenchTemperatureK,
+        metrics.reactionAcousticsEnabled ? "on" : "OFF (instrumental)"
+    );
     if (!metrics.ran) {
         std::printf("%-44s  NOT RUN (never reached the arming speed)\n",
             metrics.name.c_str());
@@ -915,6 +989,29 @@ void report(const Metrics& metrics) {
         reportAudioContract(metrics);
     }
 }
+
+void printUsage() {
+    std::puts(
+        "EngineLabAfterfireHarness [options]\n"
+        "  --engines NAME                 select one catalogue engine\n"
+        "  --audio DIR                    render the production audio path\n"
+        "  --ir FILE                      optional listening impulse response\n"
+        "  --trace                        print the 240 Hz heat-release trace\n"
+        "  --list                         list catalogue engines\n"
+        "  --force-demo                   apply the historical hidden lab defaults\n"
+        "  --fuel-fraction F              override retained fuel fraction\n"
+        "  --ignition-k K                 override ignition threshold\n"
+        "  --reaction-ms MS               override reaction time constant\n"
+        "  --pulse-hz HZ                  override fuel-slug frequency\n"
+        "  --pulse-duty FRACTION          override fuel-slug duty cycle\n"
+        "  --pulse-timing-variation F     override deterministic timing variation\n"
+        "  --warmup-seconds S             loaded exhaust warm-up duration\n"
+        "  --overrun-seconds S            closed-throttle capture duration\n"
+        "  --liftoff-rpm RPM              controlled lift-off speed\n"
+        "  --no-reaction-acoustics        suppress only copied reaction events\n"
+        "\nWithout calibration overrides, the selected engine is measured exactly as authored."
+    );
+}
 } // namespace
 
 int main(int argc, char** argv) {
@@ -926,10 +1023,17 @@ int main(int argc, char** argv) {
         };
         if (argument == "--engines" || argument == "--filter")
             options.engineFilter = next();
+        else if (argument == "--help" || argument == "-h") {
+            printUsage();
+            return 0;
+        }
         else if (argument == "--trace") options.trace = true;
         else if (argument == "--list") options.list = true;
         else if (argument == "--audio") options.audioDirectory = next();
         else if (argument == "--ir") options.impulseResponsePath = next();
+        else if (argument == "--force-demo") options.forceDemo = true;
+        else if (argument == "--no-reaction-acoustics")
+            options.reactionAcousticsEnabled = false;
         else if (argument == "--fuel-fraction")
             options.fuelFraction = std::stod(next());
         else if (argument == "--ignition-k")

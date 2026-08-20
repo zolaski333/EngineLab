@@ -298,12 +298,16 @@ détails, équations, oracles et limites sont dans
 `docs/passive-muffler-implementation-2026-08-20.md`.
 
 Le smoke afterfire qui suit ce lot garde la topologie physique active et tous
-les compteurs à zéro. Il met aussi en évidence la prochaine cause à traiter :
-avec le seuil produit de 900 K, la paroi n'atteint que 327,8 °C après 30 s de
-charge et aucune réaction ne s'arme. Un contrôle à 520 K livre bien dix
+les compteurs à zéro. Le lot suivant a toutefois découvert que le harness
+imposait silencieusement 900 K alors que le moteur catalogué écrit 800 K : la
+première mesure à 327,8 °C après 30 s n'était donc pas une mesure du « seuil
+produit ». Avec la calibration réellement écrite et 60 s de charge, la paroi
+atteint environ 517 °C ; 5,0 à 5,6 mg brûlent en six à sept excursions, mais le
+chemin audio ne gagne qu'environ 0,8 dB au pic et 0,2 dB au percentile 99,9 face
+au contrôle sans carburant. Le contrôle instrumental à 520 K livre bien dix
 réactions et 22,523 mg brûlés jusqu'à l'observateur, mais ce seuil forcé n'est
 pas une correction proposée. Il sépare seulement le chemin de livraison sain
-du problème thermique/stratégique encore ouvert.
+du problème d'allumage et de rayonnement acoustique encore ouvert.
 
 La reconstruction Release a relié l'application et les harness ; les
 **42/42 CTest** ont passé en 860,90 s après ce lot.
