@@ -71,7 +71,7 @@ exhaust_paths:
         - { id: 103, type: pipe,     length_mm: 480, diameter_mm: 42, restriction: 0.00, resonance_hz: 0, acoustic_gain: 1.00 }
         - { id: 104, type: pipe,     length_mm: 480, diameter_mm: 42, restriction: 0.00, resonance_hz: 0, acoustic_gain: 1.00 }
         - { id: 201, type: merge,    length_mm: 0,   diameter_mm: 60, restriction: 0.03, resonance_hz: 0, acoustic_gain: 1.00 }
-        - { id: 301, type: catalyst, length_mm: 180, diameter_mm: 60, outlet_diameter_mm: 68, restriction: 0.18, resonance_hz: 0, acoustic_gain: 0.92 }
+        - { id: 301, type: catalyst, length_mm: 180, diameter_mm: 60, outlet_diameter_mm: 68, restriction: 0.18, catalyst_cell_density_cpsi: 400, catalyst_open_area_ratio: 0.80, catalyst_substrate_volumetric_heat_capacity_j_m3_k: 2000000, resonance_hz: 0, acoustic_gain: 1.00 }
         - { id: 401, type: muffler,  length_mm: 520, diameter_mm: 65, volume_l: 8.0, restriction: 0.20, resonance_hz: 95, acoustic_gain: 0.82 }
         - { id: 501, type: outlet,   length_mm: 120, diameter_mm: 70, restriction: 0.00, resonance_hz: 0, acoustic_gain: 1.00, discharge_coefficient: 0.78 }
       cylinder_connections:
@@ -120,6 +120,44 @@ LEGACY**. `cp2_full_system` et `cp2_absorptive_lab` ont la meme geometrie et la
 meme restriction ; seul le second renseigne ces valeurs estimees pour une A/B
 d'ecoute. EngineLab n'en deduit jamais depuis le nom d'un silencieux.
 
+### Monolithe de catalyseur homogénéisé
+
+Un composant `catalyst` peut décrire explicitement son substrat cellulaire avec
+trois champs :
+
+- `catalyst_cell_density_cpsi`, densité de cellules par pouce carré ;
+- `catalyst_open_area_ratio`, fraction de surface frontale réellement ouverte ;
+- `catalyst_substrate_volumetric_heat_capacity_j_m3_k`, capacité thermique du
+  solide par volume de substrat occupé.
+
+Les trois valeurs doivent être nulles ensemble ou positives ensemble. Zéro
+conserve exactement le catalyseur historique : un conduit ordinaire portant la
+longueur, le diamètre et le coefficient `restriction`. Quand le substrat est
+renseigné, la validation accepte 25 à 5 000 cpsi, une aire ouverte de 0,05 à
+0,99 et exige qu'au moins un pas de cellule tienne dans le diamètre du boîtier.
+ECHAP PRO propose 400 cpsi, 0,80 et 2,0 MJ/m3/K comme point de départ éditable ;
+ces nombres ne sont pas déduits du nom du moteur ni appliqués aux anciens
+catalogues.
+
+Le modèle suppose des canaux carrés. Avec `N` en cpsi et `phi` comme fraction
+ouverte :
+
+```text
+pas        = 0,0254 / sqrt(N)
+largeur    = pas * sqrt(phi)
+Dh canal   = largeur
+aire débit = aire boîtier * phi
+```
+
+Le faisceau complet reste **un seul conduit quasi-1D**. L'aire ouverte fixe
+l'admittance de débit et le diamètre hydraulique d'un canal fixe le frottement
+distribué et les pertes thermo-visqueuses acoustiques. Le nombre de cellules du
+solveur gaz et le nombre de lignes audio restent donc identiques au bypass,
+quelle que soit la valeur cpsi. Chaque cellule axiale agrège aussi la surface
+mouillée de tous les canaux, la capacité du solide et celle de l'enveloppe
+métallique dans un unique état thermique. Ce modèle ne prétend pas calculer la
+chimie de dépollution, la conduction radiale interne ni chaque canal réel.
+
 ## Types de composant
 
 | Type | Rôle compilé |
@@ -129,7 +167,7 @@ d'ecoute. EngineLab n'en deduit jamais depuis le nom d'un silencieux.
 | `splitter` | partage une entrée vers au moins deux branches |
 | `resonator` | conduit inline s'il possède une sortie ; branche acoustique fermée s'il n'en possède aucune |
 | `muffler` | chambre/conduit inline et, si renseigné, garnissage poreux distribué |
-| `catalyst` | perte de charge concentrée avec longueur physique |
+| `catalyst` | conduit physique et, si renseigné, substrat cellulaire homogénéisé passif |
 | `outlet` | termine une route et applique diamètre/coefficient de décharge |
 
 Chaque composant possède :
@@ -311,10 +349,11 @@ restent les références des banques et de la sérialisation.
 ## Compatibilité avec les configurations existantes
 
 `graph` est optionnel. En son absence, EngineLab compile les anciens champs de
-géométrie en primaires, merge, silencieux et sortie. Les fichiers moteur de
-schémas 1 et 2 restent lisibles et sont migrés en mémoire vers le schéma 3. Tout
-nouvel export JSON/YAML porte `schema_version: 3`. Les fichiers historiques du
-catalogue restent volontairement des fixtures de migration.
+géométrie en primaires, merge, silencieux et sortie. Les fichiers moteur des
+schémas 1 à 6 restent lisibles et sont migrés en mémoire vers le schéma 7. Tout
+nouvel export JSON/YAML porte `schema_version: 7`. Les fichiers historiques du
+catalogue restent volontairement des fixtures de migration ; l'absence des
+trois champs de substrat conserve le bypass exact.
 
 Même avec un graphe, le bloc `geometry` reste utile : il fournit les valeurs de
 secours nécessaires à la compilation physique d'une ancienne configuration.

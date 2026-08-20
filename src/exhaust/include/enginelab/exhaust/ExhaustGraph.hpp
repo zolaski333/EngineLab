@@ -51,6 +51,9 @@ struct ExhaustNode final {
     double packingFlowResistivityPaSPerM2 { 0.0 };
     double packingThicknessMm { 0.0 };
     double perforatedOpenAreaRatio { 0.0 };
+    double catalystCellDensityCpsi { 0.0 };
+    double catalystOpenAreaRatio { 0.0 };
+    double catalystSubstrateVolumetricHeatCapacityJPerM3K { 0.0 };
 };
 struct ExhaustEdge final { std::uint32_t from {}; std::uint32_t to {}; };
 

@@ -2,6 +2,7 @@
 #include <enginelab/exhaust/ExhaustGraph.hpp>
 #include <enginelab/exhaust/ExhaustPathTopologyEditor.hpp>
 #include <enginelab/exhaust/LegacyExhaustNetwork.hpp>
+#include <enginelab/foundation/CatalystMonolithGeometry.hpp>
 #include <enginelab/gasdynamics/ExhaustNetworkLayout.hpp>
 
 #include <algorithm>
@@ -145,9 +146,12 @@ constexpr std::size_t maximumConnections = 1'024;
     case ExhaustComponentType::catalyst:
         result.lengthMm = 180.0;
         result.diameterMm = 56.0;
-        result.volumeLitres = 1.2;
+        result.volumeLitres = 0.0;
         result.restriction = 0.18;
         result.dischargeCoefficient = 0.68;
+        result.catalystCellDensityCpsi = 400.0;
+        result.catalystOpenAreaRatio = 0.80;
+        result.catalystSubstrateVolumetricHeatCapacityJPerM3K = 2'000'000.0;
         break;
     case ExhaustComponentType::outlet:
         // A tailpipe is a pipe. Zero here used to mean "the system ends", but
@@ -603,6 +607,12 @@ private:
         propertyEditors_[7].setTooltip(
             "Compatibilite du rendu audio de secours. Le guide d'onde physique reste passif et "
             "n'applique pas ce gain arbitraire.");
+        propertyEditors_[9].setTooltip(
+            "Silencieux: resistivite du garnissage. Catalyseur: densite de cellules par pouce carre.");
+        propertyEditors_[10].setTooltip(
+            "Silencieux: epaisseur du garnissage. Catalyseur: fraction de face reellement ouverte.");
+        propertyEditors_[11].setTooltip(
+            "Silencieux: taux ouvert du tube perfore. Catalyseur: capacite thermique volumique effective du substrat solide.");
         updateComponentButton_.setButtonText("METTRE A JOUR LE COMPOSANT");
         updateComponentButton_.onClick = [this] { updateSelectedComponent(); };
         packingDemoButton_.setButtonText("GARNISSAGE DEMO");
@@ -1061,7 +1071,7 @@ private:
         }
         componentTypeSelector_.setSelectedItemIndex(static_cast<int>(component->type),
                                                      juce::dontSendNotification);
-        const std::array<double, 11> values {
+        std::array<double, 11> values {
             component->lengthMm, component->diameterMm, component->outletDiameterMm,
             component->volumeLitres,
             component->restriction, component->resonanceHz, component->acousticGain,
@@ -1070,6 +1080,11 @@ private:
             component->packingThicknessMm,
             component->perforatedOpenAreaRatio
         };
+        if (component->type == ExhaustComponentType::catalyst) {
+            values[8] = component->catalystCellDensityCpsi;
+            values[9] = component->catalystOpenAreaRatio;
+            values[10] = component->catalystSubstrateVolumetricHeatCapacityJPerM3K;
+        }
         propertyEditors_[0].setText(juce::String(component->id), false);
         for (std::size_t index = 0; index < values.size(); ++index)
             propertyEditors_[index + 1].setText(juce::String(values[index], index == 0 ? 1 : 3), false);
@@ -1090,10 +1105,28 @@ private:
         const auto selectedType = componentTypeSelector_.getSelectedItemIndex();
         const auto available = selectedType
             == static_cast<int>(ExhaustComponentType::muffler);
+        const auto catalyst = selectedType
+            == static_cast<int>(ExhaustComponentType::catalyst);
+        propertyLabels_[9].setText(catalyst
+                ? "Densite cellules (cpsi)"
+                : "Resistivite garnissage (Pa.s/m2)",
+            juce::dontSendNotification);
+        propertyLabels_[10].setText(catalyst
+                ? "Aire ouverte monolithe (0..1)"
+                : "Epaisseur garnissage (mm)",
+            juce::dontSendNotification);
+        propertyLabels_[11].setText(catalyst
+                ? "Capacite vol. substrat (J/m3/K)"
+                : "Taux ouvert perfore (0..1)",
+            juce::dontSendNotification);
+        if (clearIfUnavailable) {
+            propertyEditors_[9].setText(catalyst ? "400" : "0", false);
+            propertyEditors_[10].setText(catalyst ? "0.8" : "0", false);
+            propertyEditors_[11].setText(catalyst ? "2000000" : "0", false);
+        }
         for (std::size_t index = 9; index < propertyEditors_.size(); ++index) {
-            propertyEditors_[index].setEnabled(available);
-            if (!available && clearIfUnavailable)
-                propertyEditors_[index].setText("0", false);
+            const auto enabled = available || catalyst;
+            propertyEditors_[index].setEnabled(enabled);
         }
         const auto tunableBranch = selectedType
             == static_cast<int>(ExhaustComponentType::resonator);
@@ -1236,7 +1269,7 @@ private:
             || values[7] < 0.02 || values[7] > 1.5
             || values[8] < 0.0 || values[8] > 200'000.0
             || values[9] < 0.0 || values[9] > 300.0
-            || values[10] < 0.0 || values[10] > 1.0) {
+            || values[10] < 0.0 || values[10] > 10'000'000.0) {
             setStatus("Valeurs hors limites (L 0..10000, D entree 5..500, D sortie 0 ou 5..500, V 0..1000, restriction 0..20, "
                       "resonance 0..20000, gain 0..8, Cd 0.02..1.5).", true);
             return;
@@ -1244,9 +1277,17 @@ private:
         const auto hasNoPacking = values[8] == 0.0
             && values[9] == 0.0 && values[10] == 0.0;
         const auto hasCompletePacking = type == ExhaustComponentType::muffler
-            && values[8] > 0.0 && values[9] > 0.0 && values[10] > 0.0;
-        if (!hasNoPacking && !hasCompletePacking) {
-            setStatus("Garnissage: les trois valeurs doivent etre nulles, ou positives ensemble sur un silencieux.", true);
+            && values[8] > 0.0 && values[9] > 0.0
+            && values[10] > 0.0 && values[10] <= 1.0;
+        const auto monolith = catalystMonolithGeometry(values[8], values[9]);
+        const auto hasCompleteMonolith = type == ExhaustComponentType::catalyst
+            && values[8] >= 25.0 && values[8] <= 5'000.0
+            && values[9] >= 0.05 && values[9] <= 0.99
+            && values[10] >= 100'000.0 && values[10] <= 10'000'000.0
+            && monolith.active
+            && monolith.cellPitchM <= values[1] * 0.001;
+        if (!hasNoPacking && !hasCompletePacking && !hasCompleteMonolith) {
+            setStatus("Materiau invalide: garnissage complet sur silencieux, ou catalyseur 25..5000 cpsi, aire ouverte 0.05..0.99 et capacite 0.1..10 MJ/m3/K.", true);
             return;
         }
 
@@ -1261,9 +1302,13 @@ private:
         component->resonanceHz = values[5];
         component->acousticGain = values[6];
         component->dischargeCoefficient = values[7];
-        component->packingFlowResistivityPaSPerM2 = values[8];
-        component->packingThicknessMm = values[9];
-        component->perforatedOpenAreaRatio = values[10];
+        component->packingFlowResistivityPaSPerM2 = hasCompletePacking ? values[8] : 0.0;
+        component->packingThicknessMm = hasCompletePacking ? values[9] : 0.0;
+        component->perforatedOpenAreaRatio = hasCompletePacking ? values[10] : 0.0;
+        component->catalystCellDensityCpsi = hasCompleteMonolith ? values[8] : 0.0;
+        component->catalystOpenAreaRatio = hasCompleteMonolith ? values[9] : 0.0;
+        component->catalystSubstrateVolumetricHeatCapacityJPerM3K =
+            hasCompleteMonolith ? values[10] : 0.0;
         if (newId != oldId) {
             for (auto& connection : network->connections) {
                 if (connection.fromComponentId == oldId) connection.fromComponentId = newId;

@@ -16,6 +16,7 @@ est respecté ; il ne transforme pas une hypothèse acoustique en donnée mesur�
 | `c3faf6e` | sessions dyno immuables, archive persistante, statuts et calibration épinglée | poussé |
 | `91b5ca8` | compliance passive des volumes compacts de jonction | poussé |
 | `5cf2d55` | conduits coniques distribués sous budget global symétrique | poussé |
+| `9c4ff1f` | branches latérales résonantes passives, bornées à huit | poussé |
 
 ## Dyno livré
 
@@ -200,6 +201,69 @@ document validé au-delà est refusé, et le compilateur défensif tronque à hu
 émettant `acousticBranchLimitReached`. Le coût ne peut donc pas croître jusqu'à
 la limite générale de 256 composants.
 
+## Monolithe de catalyseur homogénéisé
+
+### Défaut reproduit
+
+Le type `catalyst` conservait sa longueur et sa perte locale dans le réseau de
+gaz, mais ne portait aucune géométrie de substrat. À longueur, diamètre et
+restriction identiques, activer une densité de 400 cpsi et une aire ouverte de
+0,80 ne changeait d'abord aucun échantillon du transfert passif : le nouvel
+oracle a échoué avec `authored catalyst cell geometry did not change the passive
+transfer`.
+
+### Modèle et conservation
+
+Le substrat carré est défini par `catalyst_cell_density_cpsi`,
+`catalyst_open_area_ratio` et une capacité thermique volumique effective. Le
+pas vaut `0,0254/sqrt(cpsi)`, la largeur et le diamètre hydraulique du canal
+valent `pas*sqrt(aire_ouverte)`. Le faisceau est homogénéisé en un conduit : sa
+section de volume est la section du boîtier multipliée par l'aire ouverte,
+tandis que le diamètre hydraulique du canal pilote le frottement de paroi gaz
+et la perte thermo-visqueuse acoustique.
+
+L'état de paroi par cellule axiale agrège la surface mouillée de tous les
+canaux, la capacité du solide `(A_boîtier-A_ouverte)*L*Cvol` et celle de
+l'enveloppe métallique. Sans cette agrégation, le nouveau diamètre hydraulique
+aurait donné à tout le faisceau la masse thermique d'un seul micro-canal et
+aurait artificiellement armé l'afterfire presque instantanément.
+
+Ce cas a révélé un deuxième défaut, plus général : le flux de Riemann d'une
+interface était comptabilisé avec l'aire extérieure du raccord alors que la
+cellule aval pouvait avoir une aire plus faible. L'inventaire observé et la
+masse réellement ajoutée divergeaient. Les frontières internes, soupapes et
+sorties bornent maintenant le flux par le minimum de l'ouverture de raccord et
+de l'aire de face. Le test de propagation à travers le catalyseur referme de
+nouveau espèces et énergie contre les transferts aux frontières.
+
+### Preuves et budget
+
+À source, milieu, boîtier, longueur et `restriction` identiques, le monolithe
+400 cpsi / 0,80 change la forme du transfert de **7,062 dB**. Les réponses
+restent finies, non vides et sous le plafond passif. Un test de layout exige en
+même temps : aire de débit `A*0,80`, diamètre hydraulique du canal, ouvertures
+de boîtier inchangées, même nombre de conduits et même nombre total de cellules
+gaz que le bypass.
+
+Il n'existe ni ligne par canal, ni maille par cellule réelle, ni nouveau filtre
+par échantillon : le filtre de perte de paroi déjà présent reçoit seulement le
+diamètre hydraulique physique. Les trois champs à zéro gardent le chemin ancien
+exact. Aucun moteur du catalogue ne les renseigne encore ; ce lot n'impose donc
+pas une couleur arbitraire aux presets existants.
+
+Mesure produit fraîche après reconstruction complète, 48 kHz / 256 samples,
+8 s de chauffe et 20 s mesurées à 55 % du redline :
+
+| Moteur | Facteur | DSP moyen | DSP p99 | Violations du contrat |
+|---|---:|---:|---:|---:|
+| LS3-like V8 | 1,000 | 30,6 % | 36 % | 0 |
+| Merlin-like V12 | 1,000 | 48,3 % | 58 % | 0 |
+
+Le Merlin a compté deux réveils tardifs du scheduler, mais aucun rendu n'a
+dépassé la durée d'un bloc (`renderOver=0`) et aucun événement n'a été perdu.
+La reconstruction Release intégrale puis les **42/42 CTest** ont passé en
+842,87 s, y compris les rampes dyno produit CP2 et LS3.
+
 ## Matrice actuelle des champs du graphe
 
 Cette matrice évite de confondre un champ sérialisé avec une influence physique
@@ -216,15 +280,13 @@ effective.
 | restriction | perte de charge locale | effet indirect par pression/débit, pas une impédance complexe | libellé clarifié |
 | `acousticGain` | aucun | fallback reconstruit seulement, jamais le guide d'onde SI | libellé legacy explicite |
 | `resonanceHz` | aucun | accorde la longueur de référence d'un `resonator` terminal seulement | corrigé sans oscillateur |
-| type `catalyst` | perte géométrique et locale | aucun monolithe acoustique dédié | à corriger |
+| type `catalyst` | aire ouverte, diamètre hydraulique, frottement et perte locale | même conduit passif, pertes de canal thermo-visqueuses | corrigé sans maille par canal |
 | type `resonator` | conduit inline, ou aucun débit s'il est terminal | conduit inline, ou branche fermée quart d'onde avec cavité optionnelle | corrigé dans ce lot |
 
 ## Prochain ordre de travail
 
-1. Modéliser le monolithe de `catalyst` comme une impédance passive bornée, avec
-   un coût indépendant du nombre de canaux réels.
-2. Construire les silencieux comme petits assemblages passifs composables
+1. Construire les silencieux comme petits assemblages passifs composables
    (chambres, noyau perforé, branches accordées), sans augmenter la maille gaz.
-3. Reprendre l'afterfire seulement après ces transferts : distribution spatiale,
+2. Reprendre l'afterfire seulement après ces transferts : distribution spatiale,
    variabilité de l'allumage et énergie locale, sans échantillon de pop.
-4. Rejouer les oracles, les tests produit et le budget temps réel à chaque lot.
+3. Rejouer les oracles, les tests produit et le budget temps réel à chaque lot.

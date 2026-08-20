@@ -343,6 +343,12 @@ bool ExhaustGasNetwork::configure(const ExhaustNetworkLayout& layout,
         geometry.externalTemperatureK = config.externalTemperatureK;
         geometry.wallHeatUpdateIntervalSeconds =
             config.wallHeatUpdateIntervalSeconds;
+        geometry.homogenisedCellularSubstrate =
+            descriptor.homogenisedCatalystMonolith;
+        geometry.cellularSubstrateOpenAreaRatio =
+            descriptor.catalystOpenAreaRatio;
+        geometry.cellularSubstrateVolumetricHeatCapacityJPerM3K =
+            descriptor.catalystSubstrateVolumetricHeatCapacityJPerM3K;
         ducts_.emplace_back(mixtureModel_.thermodynamics());
         if (!ducts_.back().configure(geometry, *initialState)) {
             ducts_.clear();
@@ -382,8 +388,8 @@ bool ExhaustGasNetwork::configure(const ExhaustNetworkLayout& layout,
         }
         const auto& duct = layout_.ducts()[endpoint.elementIndex];
         return endpoint.type == ExhaustEndpointType::ductInlet
-            ? duct.inletConnectionAreaM2
-            : duct.outletConnectionAreaM2;
+            ? std::min(duct.inletConnectionAreaM2, duct.inletFlowAreaM2)
+            : std::min(duct.outletConnectionAreaM2, duct.outletFlowAreaM2);
     };
     for (const auto& connection : layout_.interfaces()) {
         const auto area = std::min(endpointArea(connection.upstream),
@@ -849,6 +855,17 @@ double ExhaustGasNetwork::maximumStableTimeStep(
             ? std::size_t { 0 } : duct.cells().size() - 1;
         return duct.cellVolumesM3_[cellIndex];
     };
+    const auto endpointOpenArea = [this](const ExhaustEndpoint& endpoint) noexcept {
+        if (endpoint.type == ExhaustEndpointType::junction) {
+            const auto diameter = layout_.junctions()[endpoint.elementIndex]
+                .characteristicDiameterM;
+            return 0.25 * std::acos(-1.0) * diameter * diameter;
+        }
+        const auto& duct = layout_.ducts()[endpoint.elementIndex];
+        return endpoint.type == ExhaustEndpointType::ductInlet
+            ? std::min(duct.inletConnectionAreaM2, duct.inletFlowAreaM2)
+            : std::min(duct.outletConnectionAreaM2, duct.outletFlowAreaM2);
+    };
     const auto constrainBoundary = [this, &stableStep, &endpointPrimitive, &endpointVolume](
         const PrimitiveState& reservoir,
         const ExhaustEndpoint& endpoint,
@@ -868,10 +885,11 @@ double ExhaustGasNetwork::maximumStableTimeStep(
         const auto boundaryIndex = cylinderBoundaryIndices_[index];
         if (boundaryIndex >= cylinderBoundaries.size()) continue;
         const auto& boundary = cylinderBoundaries[boundaryIndex];
-        const auto opening = std::min(
+        const auto opening = std::min({
             std::max(0.0, boundary.effectiveValveAreaM2)
                 * std::clamp(boundary.dischargeCoefficient, 0.0, 1.5),
-            port.runnerConnectionAreaM2 * port.dischargeCoefficient);
+            port.runnerConnectionAreaM2 * port.dischargeCoefficient,
+            endpointOpenArea(port.networkEndpoint) });
         const auto& reservoirPrimitive = cylinderReservoirPrimitives_[index];
         const auto& networkPrimitive = endpointPrimitive(port.networkEndpoint);
         constrainBoundary(reservoirPrimitive, port.networkEndpoint, opening);
@@ -885,8 +903,9 @@ double ExhaustGasNetwork::maximumStableTimeStep(
         }
     }
     for (const auto& outlet : layout_.outlets()) {
-        const auto opening = outlet.openingAreaM2 * outlet.dischargeCoefficient
-            * std::clamp(ambient.openingScale, 0.0, 1.0);
+        const auto opening = std::min(endpointOpenArea(outlet.networkEndpoint),
+            outlet.openingAreaM2 * outlet.dischargeCoefficient
+                * std::clamp(ambient.openingScale, 0.0, 1.0));
         constrainBoundary(ambientPrimitive_, outlet.networkEndpoint, opening);
     }
     return stableStep;
@@ -962,8 +981,8 @@ bool ExhaustGasNetwork::evaluateStage(
         }
         const auto& duct = layout_.ducts()[endpoint.elementIndex];
         return endpoint.type == ExhaustEndpointType::ductInlet
-            ? duct.inletConnectionAreaM2
-            : duct.outletConnectionAreaM2;
+            ? std::min(duct.inletConnectionAreaM2, duct.inletFlowAreaM2)
+            : std::min(duct.outletConnectionAreaM2, duct.outletFlowAreaM2);
     };
     const auto makeFlowRate = [](const EulerFlux& flux, double areaM2) noexcept {
         ConservedFlowRate result;
@@ -1087,10 +1106,11 @@ bool ExhaustGasNetwork::evaluateStage(
         auto openingArea = 0.0;
         if (suppliedIndex < cylinderBoundaries.size()) {
             const auto& supplied = cylinderBoundaries[suppliedIndex];
-            openingArea = std::min(
+            openingArea = std::min({
                 std::max(0.0, supplied.effectiveValveAreaM2)
                     * std::clamp(supplied.dischargeCoefficient, 0.0, 1.5),
-                port.runnerConnectionAreaM2 * port.dischargeCoefficient);
+                port.runnerConnectionAreaM2 * port.dischargeCoefficient,
+                endpointArea(port.networkEndpoint) });
         }
 
         const auto& activeCylinderState = useStageState
@@ -1548,7 +1568,8 @@ std::optional<ExhaustOutletFlowSample> ExhaustGasNetwork::predictOutletTransfer(
     const auto& interiorPrimitive =
         isInlet ? duct.cellPrimitives_.front() : duct.cellPrimitives_.back();
     const auto connectionAreaM2 = isInlet
-        ? compiled.inletConnectionAreaM2 : compiled.outletConnectionAreaM2;
+        ? std::min(compiled.inletConnectionAreaM2, compiled.inletFlowAreaM2)
+        : std::min(compiled.outletConnectionAreaM2, compiled.outletFlowAreaM2);
     const auto openingArea = std::min(connectionAreaM2,
         outlet.openingAreaM2 * outlet.dischargeCoefficient
             * std::clamp(ambient.openingScale, 0.0, 1.0));

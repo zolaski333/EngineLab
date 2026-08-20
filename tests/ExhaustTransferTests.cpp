@@ -40,6 +40,8 @@ enum class FixtureTopology : std::uint8_t {
     sideBranch250Hz,
     sideBranch250HzWithCavity,
     sideBranch500HzOverride,
+    catalystBypass,
+    catalystMonolith,
     asymmetricSplit,
     compactSplitSmallVolume,
     compactSplitLargeVolume,
@@ -180,6 +182,29 @@ void require(bool condition, std::string message) {
         network.cylinderConnections.push_back({ cylinderId, 100 });
         network.connections.push_back({ 100, 200 });
         network.connections.push_back({ 100, 300 });
+        break;
+    }
+    case FixtureTopology::catalystBypass:
+    case FixtureTopology::catalystMonolith: {
+        network.components.push_back(component(
+            100, enginelab::ExhaustComponentType::pipe, 600.0, 56.0));
+        auto catalyst = component(
+            200, enginelab::ExhaustComponentType::catalyst, 300.0, 56.0);
+        catalyst.restriction = 0.18;
+        if (topology == FixtureTopology::catalystMonolith) {
+            catalyst.catalystCellDensityCpsi = 400.0;
+            catalyst.catalystOpenAreaRatio = 0.80;
+            catalyst.catalystSubstrateVolumetricHeatCapacityJPerM3K =
+                2'000'000.0;
+        }
+        network.components.push_back(catalyst);
+        auto outlet = component(
+            300, enginelab::ExhaustComponentType::outlet, 600.0, 56.0);
+        outlet.acousticPositionM = { 0.0, 0.0, 0.0 };
+        network.components.push_back(outlet);
+        network.cylinderConnections.push_back({ cylinderId, 100 });
+        network.connections.push_back({ 100, 200 });
+        network.connections.push_back({ 200, 300 });
         break;
     }
     case FixtureTopology::asymmetricSplit:
@@ -392,6 +417,10 @@ void transferOracleRegression() {
         FixtureTopology::sideBranch250HzWithCavity, excitation);
     const auto resonator500 = render(
         FixtureTopology::sideBranch500HzOverride, excitation);
+    const auto catalystBypass = render(
+        FixtureTopology::catalystBypass, excitation);
+    const auto catalystMonolith = render(
+        FixtureTopology::catalystMonolith, excitation);
     const auto split = render(FixtureTopology::asymmetricSplit, excitation);
     const auto compactSmall = render(
         FixtureTopology::compactSplitSmallVolume, excitation);
@@ -413,6 +442,8 @@ void transferOracleRegression() {
     requireBoundedPassiveResponse(
         "250 Hz side branch with cavity", resonator250WithCavity);
     requireBoundedPassiveResponse("500 Hz side branch", resonator500);
+    requireBoundedPassiveResponse("catalyst bypass", catalystBypass);
+    requireBoundedPassiveResponse("catalyst monolith", catalystMonolith);
     requireBoundedPassiveResponse("asymmetric split", split);
     requireBoundedPassiveResponse("compact split, 0.25 litre", compactSmall);
     requireBoundedPassiveResponse("compact split, 2.0 litres", compactLarge);
@@ -450,6 +481,8 @@ void transferOracleRegression() {
                 == resonator250.acousticDuctCount
             && resonator500.acousticDuctCount == resonator250.acousticDuctCount,
         "a terminal resonator must add one bounded acoustic branch and no mean-flow route");
+    require(catalystBypass.acousticDuctCount == catalystMonolith.acousticDuctCount,
+        "a homogenised catalyst must not add acoustic delay lines per substrate cell");
 
     const auto chamberShapeDistanceDb = shapeDistanceDb(straight, chamber);
     const auto taperShapeDistanceDb = shapeDistanceDb(straight, taper);
@@ -457,6 +490,8 @@ void transferOracleRegression() {
         resonator250, resonator500);
     const auto resonatorCavityShapeDistanceDb = shapeDistanceDb(
         resonator250, resonator250WithCavity);
+    const auto catalystShapeDistanceDb = shapeDistanceDb(
+        catalystBypass, catalystMonolith);
     const auto splitShapeDistanceDb = shapeDistanceDb(straight, split);
     const auto junctionVolumeShapeDistanceDb = shapeDistanceDb(
         compactSmall, compactLarge);
@@ -470,6 +505,8 @@ void transferOracleRegression() {
         "resonanceHz did not retune the passive side-branch transfer");
     require(resonatorCavityShapeDistanceDb > 0.25,
         "terminal cavity volume did not change the passive side-branch transfer");
+    require(catalystShapeDistanceDb > 0.25,
+        "authored catalyst cell geometry did not change the passive transfer");
     require(splitShapeDistanceDb > 0.25,
         "the asymmetric split did not change the fixed-source transfer shape");
     require(junctionVolumeShapeDistanceDb > 0.25,
@@ -493,6 +530,8 @@ void transferOracleRegression() {
               << resonatorTuningShapeDistanceDb << " dB\n"
               << "  resonator cavity shape_delta="
               << resonatorCavityShapeDistanceDb << " dB\n"
+              << "  catalyst monolith shape_delta="
+              << catalystShapeDistanceDb << " dB\n"
               << "  split shape_delta=" << splitShapeDistanceDb << " dB\n"
               << "  junction volume shape_delta="
               << junctionVolumeShapeDistanceDb << " dB\n";

@@ -1,5 +1,6 @@
 #include <enginelab/exhaust/ExhaustGraph.hpp>
 #include <enginelab/foundation/ExhaustGasAcoustics.hpp>
+#include <enginelab/foundation/CatalystMonolithGeometry.hpp>
 
 #include <algorithm>
 #include <cmath>
@@ -176,6 +177,25 @@ struct ComponentResonance final {
     return std::numbers::pi * radiusM * radiusM;
 }
 
+[[nodiscard]] CatalystMonolithGeometry componentMonolith(
+    const ExhaustComponentConfig& component) noexcept {
+    return component.type == ExhaustComponentType::catalyst
+            && std::isfinite(
+                component.catalystSubstrateVolumetricHeatCapacityJPerM3K)
+            && component.catalystSubstrateVolumetricHeatCapacityJPerM3K
+                >= 100'000.0
+        ? catalystMonolithGeometry(component.catalystCellDensityCpsi,
+            component.catalystOpenAreaRatio)
+        : CatalystMonolithGeometry {};
+}
+
+[[nodiscard]] double componentOpenAreaM2(
+    const ExhaustComponentConfig& component) noexcept {
+    const auto monolith = componentMonolith(component);
+    return componentAreaM2(component)
+        * (monolith.active ? monolith.openAreaRatio : 1.0);
+}
+
 [[nodiscard]] double componentOutletAreaM2(
     const ExhaustComponentConfig& component) noexcept {
     const auto outletDiameterMm = component.outletDiameterMm > 0.0
@@ -195,6 +215,13 @@ struct ComponentResonance final {
         + std::sqrt(inletAreaM2 * outletAreaM2) + outletAreaM2) / 3.0;
     return meanAreaM2
         * finiteClamped(component.lengthMm, 0.0, 10'000.0, 0.0);
+}
+
+[[nodiscard]] double componentGasVolumeLitres(
+    const ExhaustComponentConfig& component) noexcept {
+    const auto monolith = componentMonolith(component);
+    return componentVolumeLitres(component)
+        * (monolith.active ? monolith.openAreaRatio : 1.0);
 }
 
 [[nodiscard]] const CylinderConfig* findCylinder(const EngineConfig& config,
@@ -320,7 +347,7 @@ ExhaustGraph ExhaustGraph::makeForEngine(
                 if (component.id == 0 || !summarisedComponentIds.insert(component.id).second)
                     continue;
                 if (acousticSideBranchIds.contains(component.id)) continue;
-                pathFlow.collectorVolumeLitres += componentVolumeLitres(component);
+                pathFlow.collectorVolumeLitres += componentGasVolumeLitres(component);
                 if (component.type == ExhaustComponentType::outlet) {
                     outletConductanceM2 += componentOutletAreaM2(component)
                         * finiteClamped(component.dischargeCoefficient, 0.02, 1.5, 0.72);
@@ -365,7 +392,14 @@ ExhaustGraph ExhaustGraph::makeForEngine(
                     finiteClamped(component.packingThicknessMm,
                         0.0, 300.0, 0.0),
                     finiteClamped(component.perforatedOpenAreaRatio,
-                        0.0, 1.0, 0.0) });
+                        0.0, 1.0, 0.0),
+                    finiteClamped(component.catalystCellDensityCpsi,
+                        0.0, 5'000.0, 0.0),
+                    finiteClamped(component.catalystOpenAreaRatio,
+                        0.0, 0.99, 0.0),
+                    finiteClamped(
+                        component.catalystSubstrateVolumetricHeatCapacityJPerM3K,
+                        0.0, 10'000'000.0, 0.0) });
             }
             std::unordered_set<std::uint64_t> compiledConnections;
             for (const auto& connection : path.network->connections) {
@@ -430,9 +464,9 @@ ExhaustGraph ExhaustGraph::makeForEngine(
                 if (sourceComponent != path.network->components.end()) {
                     graph.cylinderFlowProperties_.push_back({ true, connection.cylinderId,
                         runtimePathIndex,
-                        componentAreaM2(*sourceComponent),
+                        componentOpenAreaM2(*sourceComponent),
                         finiteClamped(sourceComponent->dischargeCoefficient, 0.02, 1.5, 0.72),
-                        std::max(0.001, componentVolumeLitres(*sourceComponent)),
+                        std::max(0.001, componentGasVolumeLitres(*sourceComponent)),
                         finiteClamped(sourceComponent->lengthMm, 0.0, 10'000.0, 0.0) });
                 }
             }

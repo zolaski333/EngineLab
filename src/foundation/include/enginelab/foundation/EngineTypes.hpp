@@ -10,7 +10,7 @@
 
 namespace enginelab {
 inline constexpr std::uint32_t minimumSupportedEngineSchemaVersion { 1 };
-inline constexpr std::uint32_t currentEngineSchemaVersion { 6 };
+inline constexpr std::uint32_t currentEngineSchemaVersion { 7 };
 
 
 enum class EngineCycle : std::uint8_t { fourStroke, twoStroke };
@@ -380,6 +380,13 @@ struct ExhaustComponentConfig final {
     double packingFlowResistivityPaSPerM2 { 0.0 };
     double packingThicknessMm { 0.0 };
     double perforatedOpenAreaRatio { 0.0 };
+    /** Optional homogenised catalyst substrate. All three fields are zero for
+     * an exact backward-compatible bypass and positive together when authored. */
+    double catalystCellDensityCpsi { 0.0 };
+    double catalystOpenAreaRatio { 0.0 };
+    /** Effective heat capacity of the solid substrate per occupied solid
+     * volume. Required with the two cellular-geometry fields. */
+    double catalystSubstrateVolumetricHeatCapacityJPerM3K { 0.0 };
 };
 
 /** Driver/ECU intent for closed-throttle exhaust combustion.

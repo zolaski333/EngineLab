@@ -51,6 +51,10 @@ void require(bool condition, const std::string& message) {
     network.components.back().packingThicknessMm = 45.0;
     network.components.back().perforatedOpenAreaRatio = 0.28;
     network.components.push_back(component(401, ExhaustComponentType::catalyst, 180.0, 58.0, 0.08));
+    network.components.back().catalystCellDensityCpsi = 400.0;
+    network.components.back().catalystOpenAreaRatio = 0.80;
+    network.components.back().catalystSubstrateVolumetricHeatCapacityJPerM3K =
+        2'000'000.0;
     network.components.push_back(component(500, ExhaustComponentType::outlet, 160.0, 70.0));
     network.components.push_back(component(501, ExhaustComponentType::outlet, 210.0, 58.0));
     network.connections.push_back({ 200, 300 });
@@ -75,6 +79,15 @@ void testValidationAndRouting() {
             && std::abs(physicalMuffler->volumeLitres - 7.3) < 1.0e-12
             && std::abs(physicalMuffler->dischargeCoefficient - 0.64) < 1.0e-12,
         "compiled topology must retain physical volume and discharge metadata");
+    const auto physicalCatalyst = std::find_if(graph.nodes().begin(), graph.nodes().end(),
+        [](const ExhaustNode& node) { return node.sourceComponentId == 401; });
+    require(physicalCatalyst != graph.nodes().end()
+            && std::abs(physicalCatalyst->catalystCellDensityCpsi - 400.0) < 1.0e-12
+            && std::abs(physicalCatalyst->catalystOpenAreaRatio - 0.80) < 1.0e-12
+            && std::abs(physicalCatalyst
+                    ->catalystSubstrateVolumetricHeatCapacityJPerM3K
+                - 2'000'000.0) < 1.0e-12,
+        "compiled topology must retain catalyst substrate geometry");
     require(graph.routes().size() == 8, "splitter must create two routes per cylinder");
     for (const auto& cylinder : config.cylinders) {
         const auto routeCount = std::count_if(graph.routes().begin(), graph.routes().end(),
@@ -383,6 +396,23 @@ void testInvalidGraphs() {
         std::numeric_limits<double>::quiet_NaN();
     require(validateEngineConfig(nonFiniteGain).has_value(),
         "non-finite acoustic component gain must be rejected");
+
+    auto catalystFieldsOnPipe = makeCustomExhaust();
+    auto& pipe = catalystFieldsOnPipe.exhaustPaths.front().network->components.front();
+    pipe.catalystCellDensityCpsi = 400.0;
+    pipe.catalystOpenAreaRatio = 0.80;
+    pipe.catalystSubstrateVolumetricHeatCapacityJPerM3K = 2'000'000.0;
+    require(validateEngineConfig(catalystFieldsOnPipe).has_value(),
+        "catalyst substrate geometry on a non-catalyst component must be rejected");
+
+    auto incompleteCatalyst = makeCustomExhaust();
+    auto& authoredCatalyst = *std::find_if(
+        incompleteCatalyst.exhaustPaths.front().network->components.begin(),
+        incompleteCatalyst.exhaustPaths.front().network->components.end(),
+        [](const ExhaustComponentConfig& value) { return value.id == 401; });
+    authoredCatalyst.catalystOpenAreaRatio = 0.0;
+    require(validateEngineConfig(incompleteCatalyst).has_value(),
+        "a partially authored catalyst substrate must be rejected");
 }
 
 template <typename Serializer>
@@ -402,7 +432,12 @@ void testRoundTrip(const char* formatName) {
         [](const ExhaustComponentConfig& value) { return value.id == 401; });
     require(catalyst != path.network->components.end()
             && catalyst->type == ExhaustComponentType::catalyst
-            && std::abs(catalyst->restriction - 0.08) < 1.0e-12,
+            && std::abs(catalyst->restriction - 0.08) < 1.0e-12
+            && std::abs(catalyst->catalystCellDensityCpsi - 400.0) < 1.0e-12
+            && std::abs(catalyst->catalystOpenAreaRatio - 0.80) < 1.0e-12
+            && std::abs(catalyst
+                    ->catalystSubstrateVolumetricHeatCapacityJPerM3K
+                - 2'000'000.0) < 1.0e-12,
         std::string(formatName) + " changed typed component data");
     const auto muffler = std::find_if(path.network->components.begin(),
         path.network->components.end(), [](const ExhaustComponentConfig& value) {

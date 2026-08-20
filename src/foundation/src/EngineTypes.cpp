@@ -1,4 +1,5 @@
 #include <enginelab/foundation/EngineTypes.hpp>
+#include <enginelab/foundation/CatalystMonolithGeometry.hpp>
 #include <algorithm>
 #include <cmath>
 #include <numbers>
@@ -402,8 +403,9 @@ void normaliseEngineConfig(EngineConfig& config) {
     // explicit valve geometry; schema 4 adds SI outlet/observer coordinates;
     // schema 5 adds authored vehicle layout and longitudinal load-transfer
     // geometry; schema 6 makes the overrun strategy explicit and adds local
-    // induction/flammability/quench calibration. Older documents migrate to
-    // the documented defaults below.
+    // induction/flammability/quench calibration; schema 7 adds explicit
+    // cellular catalyst-substrate geometry. Older documents migrate to the
+    // documented defaults below.
     const auto sourceSchemaVersion = config.schemaVersion;
     if (config.schemaVersion < currentEngineSchemaVersion)
         config.schemaVersion = currentEngineSchemaVersion;
@@ -1160,6 +1162,10 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
                     || !inRange(component.packingFlowResistivityPaSPerM2, 0.0, 200'000.0)
                     || !inRange(component.packingThicknessMm, 0.0, 300.0)
                     || !inRange(component.perforatedOpenAreaRatio, 0.0, 1.0)
+                    || !inRange(component.catalystCellDensityCpsi, 0.0, 5'000.0)
+                    || !inRange(component.catalystOpenAreaRatio, 0.0, 0.99)
+                    || !inRange(component.catalystSubstrateVolumetricHeatCapacityJPerM3K,
+                        0.0, 10'000'000.0)
                     || !validPoint(component.acousticPositionM)
                     || !validPoint(component.acousticAxis)
                     || (component.type == ExhaustComponentType::outlet
@@ -1177,6 +1183,23 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
                         || component.packingThicknessMm <= 0.0
                         || component.perforatedOpenAreaRatio <= 0.0))
                     return "Porous packing requires a muffler with resistivity, thickness and perforated open area";
+                const auto hasCatalystMonolith =
+                    component.catalystCellDensityCpsi > 0.0
+                    || component.catalystOpenAreaRatio > 0.0
+                    || component.catalystSubstrateVolumetricHeatCapacityJPerM3K > 0.0;
+                if (hasCatalystMonolith) {
+                    const auto monolith = catalystMonolithGeometry(
+                        component.catalystCellDensityCpsi,
+                        component.catalystOpenAreaRatio);
+                    if (component.type != ExhaustComponentType::catalyst
+                        || component.catalystCellDensityCpsi < 25.0
+                        || component.catalystOpenAreaRatio < 0.05
+                        || component.catalystSubstrateVolumetricHeatCapacityJPerM3K
+                            < 100'000.0
+                        || !monolith.active
+                        || monolith.cellPitchM > component.diameterMm * 0.001)
+                        return "Catalyst monolith requires a catalyst, 25..5000 cpsi, 0.05..0.99 open area, 0.1..10 MJ/m3/K substrate capacity and at least one cell across its diameter";
+                }
                 outgoing.try_emplace(component.id);
                 componentIncoming.try_emplace(component.id, 0U);
                 cylinderIncoming.try_emplace(component.id, 0U);

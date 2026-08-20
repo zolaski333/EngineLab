@@ -1,4 +1,5 @@
 #include <enginelab/gasdynamics/ExhaustNetworkLayout.hpp>
+#include <enginelab/foundation/CatalystMonolithGeometry.hpp>
 
 #include <algorithm>
 #include <cmath>
@@ -104,6 +105,13 @@ ExhaustNetworkLayout ExhaustNetworkLayout::compile(
         }
 
         auto lengthM = finite(node.lengthMm) ? node.lengthMm * 0.001 : 0.0;
+        const auto monolith = node.type == ExhaustNodeType::catalyst
+                && finite(node.catalystSubstrateVolumetricHeatCapacityJPerM3K)
+                && node.catalystSubstrateVolumetricHeatCapacityJPerM3K
+                    >= 100'000.0
+            ? catalystMonolithGeometry(node.catalystCellDensityCpsi,
+                node.catalystOpenAreaRatio)
+            : CatalystMonolithGeometry {};
         const auto requestedVolumeM3 = finite(node.volumeLitres) && node.volumeLitres > 0.0
             ? node.volumeLitres * 0.001 : 0.0;
         auto lengthWasDerived = false;
@@ -152,9 +160,19 @@ ExhaustNetworkLayout ExhaustNetworkLayout::compile(
             outletFlowAreaM2 = flowAreaM2;
             areaWasDerivedFromVolume = true;
         }
+        if (monolith.active) {
+            // Homogenise the parallel channels into one duct. Total open area
+            // carries volume flow, while one channel's hydraulic diameter sets
+            // distributed friction and thermoviscous attenuation. Neither the
+            // gas-cell count nor the audio-line count depends on cpsi.
+            flowAreaM2 *= monolith.openAreaRatio;
+            inletFlowAreaM2 *= monolith.openAreaRatio;
+            outletFlowAreaM2 *= monolith.openAreaRatio;
+        }
         const auto volumeM3 = flowAreaM2 * lengthM;
-        const auto hydraulicDiameterM =
-            2.0 * std::sqrt(flowAreaM2 / std::numbers::pi);
+        const auto hydraulicDiameterM = monolith.active
+            ? monolith.hydraulicDiameterM
+            : 2.0 * std::sqrt(flowAreaM2 / std::numbers::pi);
         const auto index = layout.ducts_.size();
         layout.ducts_.push_back({
             node.id,
@@ -178,6 +196,12 @@ ExhaustNetworkLayout ExhaustNetworkLayout::compile(
             std::max(0.0, node.packingFlowResistivityPaSPerM2),
             std::max(0.0, node.packingThicknessMm) * 0.001,
             std::clamp(node.perforatedOpenAreaRatio, 0.0, 1.0),
+            monolith.active,
+            monolith.active ? monolith.openAreaRatio : 1.0,
+            monolith.active
+                ? std::max(0.0,
+                    node.catalystSubstrateVolumetricHeatCapacityJPerM3K)
+                : 0.0,
         });
         elements.emplace(node.id, ElementReference { false, index });
     }

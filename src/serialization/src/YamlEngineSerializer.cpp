@@ -610,6 +610,13 @@ std::string YamlEngineSerializer::encode(const EngineConfig& config) const {
                     << component.packingThicknessMm
                     << YAML::Key << "perforated_open_area_ratio" << YAML::Value
                     << component.perforatedOpenAreaRatio
+                    << YAML::Key << "catalyst_cell_density_cpsi" << YAML::Value
+                    << component.catalystCellDensityCpsi
+                    << YAML::Key << "catalyst_open_area_ratio" << YAML::Value
+                    << component.catalystOpenAreaRatio
+                    << YAML::Key << "catalyst_substrate_volumetric_heat_capacity_j_m3_k"
+                    << YAML::Value
+                    << component.catalystSubstrateVolumetricHeatCapacityJPerM3K
                     << YAML::Key << "acoustic_position_m" << YAML::Value;
                 emitPoint(out, component.acousticPositionM);
                 out << YAML::Key << "acoustic_axis" << YAML::Value;
@@ -1091,6 +1098,16 @@ EngineDecodeResult YamlEngineSerializer::decode(std::string_view text) const noe
                         component.perforatedOpenAreaRatio = encodedComponent[
                             "perforated_open_area_ratio"].as<double>(
                                 component.perforatedOpenAreaRatio);
+                        component.catalystCellDensityCpsi = encodedComponent[
+                            "catalyst_cell_density_cpsi"].as<double>(
+                                component.catalystCellDensityCpsi);
+                        component.catalystOpenAreaRatio = encodedComponent[
+                            "catalyst_open_area_ratio"].as<double>(
+                                component.catalystOpenAreaRatio);
+                        component.catalystSubstrateVolumetricHeatCapacityJPerM3K =
+                            encodedComponent[
+                                "catalyst_substrate_volumetric_heat_capacity_j_m3_k"].as<double>(
+                                    component.catalystSubstrateVolumetricHeatCapacityJPerM3K);
                         if (encodedComponent["acoustic_position_m"])
                             component.acousticPositionM = decodePoint(
                                 encodedComponent["acoustic_position_m"]);

@@ -6,6 +6,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <iostream>
+#include <numbers>
 #include <string_view>
 #include <vector>
 
@@ -483,6 +484,10 @@ void testOpenEndDischargesTowardFreeExpansion() {
         catalyst.id = catalystId;
         catalyst.type = ExhaustComponentType::catalyst;
         catalyst.lengthMm = 120.0;
+        catalyst.catalystCellDensityCpsi = 400.0;
+        catalyst.catalystOpenAreaRatio = 0.80;
+        catalyst.catalystSubstrateVolumetricHeatCapacityJPerM3K =
+            2'000'000.0;
         ExhaustComponentConfig outlet = primary;
         outlet.id = outletId;
         outlet.type = ExhaustComponentType::outlet;
@@ -513,6 +518,16 @@ void testDirectDuctInterfaceTransmitsWavesWithoutInventoryLoss() {
     requireNetwork(primaryDescriptor != network.layout().ducts().end()
             && catalystDescriptor != network.layout().ducts().end(),
         "direct-interface fixture components must be compiled");
+    requireNetwork(catalystDescriptor->homogenisedCatalystMonolith
+            && std::abs(catalystDescriptor->catalystOpenAreaRatio - 0.80) < 1.0e-12
+            && catalystDescriptor->hydraulicDiameterM < 0.002
+            && catalystDescriptor->flowAreaM2
+                < catalystDescriptor->connectionAreaM2,
+        "the gas solver must receive one homogenised cellular catalyst duct");
+    requireNetwork(network.ducts()[static_cast<std::size_t>(std::distance(
+                network.layout().ducts().begin(), catalystDescriptor))]
+                .geometry().homogenisedCellularSubstrate,
+        "the dynamic wall must aggregate the full cellular substrate, not one channel");
     const auto primaryIndex = static_cast<std::size_t>(
         std::distance(network.layout().ducts().begin(), primaryDescriptor));
     const auto catalystIndex = static_cast<std::size_t>(
@@ -553,6 +568,44 @@ void testDirectDuctInterfaceTransmitsWavesWithoutInventoryLoss() {
         "a two-port component edge must transmit the pressure characteristic without a fake plenum");
     requireMassEnergyBalance(before, network.inventory(),
                              network.cylinderExchanges(), network.outletSamples(), 3.0e-9);
+}
+
+void testCatalystThermalStateAggregatesTheWholeSubstrate() {
+    ExhaustGasNetworkConfig configuration;
+    configuration.initialTemperatureK = 300.0;
+    configuration.wallTemperatureK = 300.0;
+    configuration.dynamicWallHeatTransferEnabled = true;
+    configuration.wallThicknessM = 0.0015;
+    configuration.wallDensityKgPerM3 = 7'900.0;
+    configuration.wallSpecificHeatJPerKgK = 500.0;
+    configuration.externalWallHeatTransferWPerM2K = 0.0;
+    auto network = makeNetwork(directChainConfig(), configuration);
+    const auto descriptor = std::find_if(network.layout().ducts().begin(),
+        network.layout().ducts().end(), [](const CompiledExhaustDuct& duct) {
+            return duct.sourceComponentId == 200;
+        });
+    requireNetwork(descriptor != network.layout().ducts().end()
+            && descriptor->homogenisedCatalystMonolith,
+        "the thermal catalyst fixture must compile its substrate");
+    const auto ductIndex = static_cast<std::size_t>(std::distance(
+        network.layout().ducts().begin(), descriptor));
+    const auto housingAreaM2 = descriptor->flowAreaM2
+        / descriptor->catalystOpenAreaRatio;
+    const auto housingRadiusM = std::sqrt(housingAreaM2 / std::numbers::pi);
+    const auto canOuterRadiusM = housingRadiusM + configuration.wallThicknessM;
+    const auto substrateCapacityJPerK =
+        (housingAreaM2 - descriptor->flowAreaM2) * descriptor->lengthM
+        * descriptor->catalystSubstrateVolumetricHeatCapacityJPerM3K;
+    const auto canCapacityJPerK = std::numbers::pi * descriptor->lengthM
+        * (canOuterRadiusM * canOuterRadiusM
+            - housingRadiusM * housingRadiusM)
+        * configuration.wallDensityKgPerM3
+        * configuration.wallSpecificHeatJPerKgK;
+    const auto actualCapacityJPerK = network.ducts()[ductIndex]
+        .wallThermalEnergyJ() / configuration.wallTemperatureK;
+    requireNetwork(relativeError(actualCapacityJPerK,
+                substrateCapacityJPerK + canCapacityJPerK) < 2.0e-12,
+        "one wall state per axial cell must aggregate substrate solid and outer can capacity");
 }
 
 void testBoundaryInputOrderIsIrrelevant() {
@@ -752,6 +805,7 @@ void runExhaustGasNetworkTests() {
     testOutletFlowIsPhysicalAndConservative();
     testOpenEndDischargesTowardFreeExpansion();
     testDirectDuctInterfaceTransmitsWavesWithoutInventoryLoss();
+    testCatalystThermalStateAggregatesTheWholeSubstrate();
     testBoundaryInputOrderIsIrrelevant();
     testHotUnburnedFuelReactsConservatively();
 }

@@ -373,6 +373,10 @@ std::string JsonEngineSerializer::encode(const EngineConfig& config) const {
                     {"packing_flow_resistivity_pa_s_m2", component.packingFlowResistivityPaSPerM2},
                     {"packing_thickness_mm", component.packingThicknessMm},
                     {"perforated_open_area_ratio", component.perforatedOpenAreaRatio},
+                    {"catalyst_cell_density_cpsi", component.catalystCellDensityCpsi},
+                    {"catalyst_open_area_ratio", component.catalystOpenAreaRatio},
+                    {"catalyst_substrate_volumetric_heat_capacity_j_m3_k",
+                        component.catalystSubstrateVolumetricHeatCapacityJPerM3K},
                     {"acoustic_position_m", pointJson(component.acousticPositionM)},
                     {"acoustic_axis", pointJson(component.acousticAxis)},
                     {"acoustic_termination", terminationName(component.acousticTermination)} });
@@ -975,6 +979,16 @@ EngineDecodeResult JsonEngineSerializer::decode(std::string_view text) const noe
                         component.perforatedOpenAreaRatio = encodedComponent.value(
                             "perforated_open_area_ratio",
                             component.perforatedOpenAreaRatio);
+                        component.catalystCellDensityCpsi = encodedComponent.value(
+                            "catalyst_cell_density_cpsi",
+                            component.catalystCellDensityCpsi);
+                        component.catalystOpenAreaRatio = encodedComponent.value(
+                            "catalyst_open_area_ratio",
+                            component.catalystOpenAreaRatio);
+                        component.catalystSubstrateVolumetricHeatCapacityJPerM3K =
+                            encodedComponent.value(
+                                "catalyst_substrate_volumetric_heat_capacity_j_m3_k",
+                                component.catalystSubstrateVolumetricHeatCapacityJPerM3K);
                         if (encodedComponent.contains("acoustic_position_m"))
                             component.acousticPositionM = decodePoint(
                                 encodedComponent.at("acoustic_position_m"));

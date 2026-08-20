@@ -49,6 +49,11 @@ struct CompiledExhaustDuct final {
     double packingFlowResistivityPaSPerM2 { 0.0 };
     double packingThicknessM { 0.0 };
     double perforatedOpenAreaRatio { 0.0 };
+    /** True when one equivalent duct represents an authored cellular
+     * catalyst substrate. It never changes cell or delay-line count. */
+    bool homogenisedCatalystMonolith { false };
+    double catalystOpenAreaRatio { 1.0 };
+    double catalystSubstrateVolumetricHeatCapacityJPerM3K { 0.0 };
 };
 
 /** Well-mixed physical junction used only where topology changes direction or

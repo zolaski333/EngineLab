@@ -1,4 +1,5 @@
 #include <enginelab/foundation/EngineTypes.hpp>
+#include <enginelab/foundation/CatalystMonolithGeometry.hpp>
 #include <enginelab/exhaust/ExhaustGraph.hpp>
 #include <enginelab/gasdynamics/ExhaustNetworkLayout.hpp>
 
@@ -186,6 +187,88 @@ void testAuthoredTaperSurvivesTopologyCompilation() {
         "topology compilation must preserve both taper faces and exact frustum volume");
 }
 
+void testHomogenisedCatalystPreservesTheHardRealtimeBudget() {
+    auto bypassConfig = customNetworkConfig();
+    auto& bypassComponent = *std::find_if(
+        bypassConfig.exhaustPaths.front().network->components.begin(),
+        bypassConfig.exhaustPaths.front().network->components.end(),
+        [](const ExhaustComponentConfig& value) { return value.id == 300; });
+    bypassComponent.type = ExhaustComponentType::catalyst;
+    bypassComponent.lengthMm = 180.0;
+    bypassComponent.diameterMm = 58.0;
+    bypassComponent.volumeLitres = 0.0;
+    bypassComponent.packingFlowResistivityPaSPerM2 = 0.0;
+    bypassComponent.packingThicknessMm = 0.0;
+    bypassComponent.perforatedOpenAreaRatio = 0.0;
+
+    auto monolithConfig = bypassConfig;
+    auto& monolithComponent = *std::find_if(
+        monolithConfig.exhaustPaths.front().network->components.begin(),
+        monolithConfig.exhaustPaths.front().network->components.end(),
+        [](const ExhaustComponentConfig& value) { return value.id == 300; });
+    monolithComponent.catalystCellDensityCpsi = 400.0;
+    monolithComponent.catalystOpenAreaRatio = 0.80;
+    monolithComponent.catalystSubstrateVolumetricHeatCapacityJPerM3K =
+        2'000'000.0;
+    auto incompleteConfig = bypassConfig;
+    auto& incompleteComponent = *std::find_if(
+        incompleteConfig.exhaustPaths.front().network->components.begin(),
+        incompleteConfig.exhaustPaths.front().network->components.end(),
+        [](const ExhaustComponentConfig& value) { return value.id == 300; });
+    incompleteComponent.catalystCellDensityCpsi = 400.0;
+    incompleteComponent.catalystOpenAreaRatio = 0.80;
+    requireLayout(!validateEngineConfig(bypassConfig)
+            && !validateEngineConfig(monolithConfig),
+        "both catalyst compatibility and monolith fixtures must be valid");
+
+    const auto bypass = ExhaustNetworkLayout::compile(
+        ExhaustGraph::makeForEngine(bypassConfig));
+    const auto monolith = ExhaustNetworkLayout::compile(
+        ExhaustGraph::makeForEngine(monolithConfig));
+    const auto incomplete = ExhaustNetworkLayout::compile(
+        ExhaustGraph::makeForEngine(incompleteConfig));
+    const auto findCatalyst = [](const ExhaustNetworkLayout& layout) {
+        return std::find_if(layout.ducts().begin(), layout.ducts().end(),
+            [](const CompiledExhaustDuct& duct) {
+                return duct.sourceComponentId == 300;
+            });
+    };
+    const auto bypassDuct = findCatalyst(bypass);
+    const auto monolithDuct = findCatalyst(monolith);
+    const auto incompleteDuct = findCatalyst(incomplete);
+    requireLayout(bypass.valid() && monolith.valid()
+            && bypassDuct != bypass.ducts().end()
+            && monolithDuct != monolith.ducts().end(),
+        "both catalyst layouts must compile to one physical duct");
+    requireLayout(incomplete.valid()
+            && incompleteDuct != incomplete.ducts().end()
+            && !incompleteDuct->homogenisedCatalystMonolith
+            && incompleteDuct->flowAreaM2 == bypassDuct->flowAreaM2
+            && incompleteDuct->hydraulicDiameterM
+                == bypassDuct->hydraulicDiameterM,
+        "an unvalidated partial substrate must fail safe to the exact bypass");
+
+    const auto geometry = catalystMonolithGeometry(400.0, 0.80);
+    const auto housingAreaM2 = std::numbers::pi * std::pow(0.058 * 0.5, 2.0);
+    requireLayout(geometry.active
+            && monolithDuct->homogenisedCatalystMonolith
+            && !bypassDuct->homogenisedCatalystMonolith
+            && std::abs(monolithDuct->catalystOpenAreaRatio - 0.80) < 1.0e-12
+            && std::abs(monolithDuct
+                    ->catalystSubstrateVolumetricHeatCapacityJPerM3K
+                - 2'000'000.0) < 1.0e-12
+            && std::abs(monolithDuct->flowAreaM2 - housingAreaM2 * 0.80) < 1.0e-14
+            && std::abs(monolithDuct->inletConnectionAreaM2 - housingAreaM2) < 1.0e-14
+            && std::abs(monolithDuct->outletConnectionAreaM2 - housingAreaM2) < 1.0e-14
+            && std::abs(monolithDuct->hydraulicDiameterM
+                - geometry.hydraulicDiameterM) < 1.0e-14,
+        "the homogenised substrate must separate housing aperture, open area and channel scale");
+    requireLayout(monolithDuct->cellCount == bypassDuct->cellCount
+            && monolith.totalCellCount() == bypass.totalCellCount()
+            && monolith.ducts().size() == bypass.ducts().size(),
+        "cpsi must not multiply gas cells, ducts or explicit-solver work");
+}
+
 void testZeroLengthResolutionAndHardCellBudget() {
     auto config = customNetworkConfig();
     auto& outlet = config.exhaustPaths.front().network->components.back();
@@ -356,6 +439,7 @@ void runExhaustNetworkLayoutTests() {
     testAudioFieldsCannotChangePhysicalLayout();
     testLegacyTopologyCompilation();
     testAuthoredTaperSurvivesTopologyCompilation();
+    testHomogenisedCatalystPreservesTheHardRealtimeBudget();
     testZeroLengthResolutionAndHardCellBudget();
     testShortestCellIsReportedAndTracksOneShortElement();
     testDerivedLengthIsFlooredAtThePlaneWaveLimit();

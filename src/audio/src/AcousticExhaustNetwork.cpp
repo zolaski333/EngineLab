@@ -281,7 +281,9 @@ struct AcousticExhaustNetwork::Impl final {
                 duct.areaM2 = std::max(1.0e-10, sectionAreaM2);
                 duct.inletAreaM2 = std::max(1.0e-10, sectionInletAreaM2);
                 duct.outletAreaM2 = std::max(1.0e-10, sectionOutletAreaM2);
-                duct.radiusM = std::sqrt(duct.areaM2 / std::numbers::pi);
+                duct.radiusM = descriptor.homogenisedCatalystMonolith
+                    ? 0.5 * descriptor.hydraulicDiameterM
+                    : std::sqrt(duct.areaM2 / std::numbers::pi);
                 duct.packingFlowResistivityPaSPerM2 =
                     descriptor.packingFlowResistivityPaSPerM2;
                 duct.packingThicknessM = descriptor.packingThicknessM;

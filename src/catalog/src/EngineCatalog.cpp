@@ -416,6 +416,13 @@ template <typename T>
                 component.packingThicknessMm);
             assignIfPresent(encoded, "perforated_open_area_ratio",
                 component.perforatedOpenAreaRatio);
+            assignIfPresent(encoded, "catalyst_cell_density_cpsi",
+                component.catalystCellDensityCpsi);
+            assignIfPresent(encoded, "catalyst_open_area_ratio",
+                component.catalystOpenAreaRatio);
+            assignIfPresent(encoded,
+                "catalyst_substrate_volumetric_heat_capacity_j_m3_k",
+                component.catalystSubstrateVolumetricHeatCapacityJPerM3K);
             if (encoded["acoustic_position_m"])
                 component.acousticPositionM = decodePoint(encoded["acoustic_position_m"]);
             if (encoded["acoustic_axis"])

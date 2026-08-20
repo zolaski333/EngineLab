@@ -622,7 +622,16 @@ bool DuctGeometry::valid() const noexcept {
         && finite(wallSpecificHeatJPerKgK) && wallSpecificHeatJPerKgK > 0.0
         && finite(externalWallHeatTransferWPerM2K)
         && externalWallHeatTransferWPerM2K >= 0.0
-        && finite(externalTemperatureK) && externalTemperatureK > 0.0;
+        && finite(externalTemperatureK) && externalTemperatureK > 0.0
+        && finite(cellularSubstrateOpenAreaRatio)
+        && cellularSubstrateOpenAreaRatio > 0.0
+        && cellularSubstrateOpenAreaRatio <= 1.0
+        && finite(cellularSubstrateVolumetricHeatCapacityJPerM3K)
+        && cellularSubstrateVolumetricHeatCapacityJPerM3K >= 0.0
+        && (!homogenisedCellularSubstrate
+            || (cellularSubstrateOpenAreaRatio > 0.0
+                && cellularSubstrateOpenAreaRatio < 1.0
+                && cellularSubstrateVolumetricHeatCapacityJPerM3K > 0.0));
 }
 
 DuctBoundaryCondition DuctBoundaryCondition::transmissive() noexcept {
@@ -692,7 +701,7 @@ bool FiniteVolumeDuct::configure(const DuctGeometry& geometry,
             geometry.absoluteRoughnessM / diameterM / 3.7, 1.11);
         wallHeatConductancePerVolumes_[index] =
             geometry.wallHeatTransferWPerM2K * (4.0 / diameterM);
-        wallHeatTransferGeometries_[index] =
+        auto wallGeometry =
             DuctWallHeatTransferModel::prepareGeometry(
                 diameterM,
                 cellLengthM_,
@@ -700,6 +709,35 @@ bool FiniteVolumeDuct::configure(const DuctGeometry& geometry,
                 geometry.wallDensityKgPerM3,
                 geometry.wallSpecificHeatJPerKgK,
                 geometry.externalWallHeatTransferWPerM2K);
+        if (geometry.homogenisedCellularSubstrate) {
+            // One state represents all parallel channels in this axial cell.
+            // Their aggregate wetted perimeter is 4*A_open/Dh. The solid
+            // substrate capacity comes from the authored volumetric value;
+            // the outer metal can retains the network's wall material.
+            const auto openAreaM2 = geometry.cellAreaM2(index);
+            const auto housingAreaM2 = openAreaM2
+                / geometry.cellularSubstrateOpenAreaRatio;
+            const auto housingRadiusM = std::sqrt(
+                housingAreaM2 / std::numbers::pi);
+            const auto canOuterRadiusM = housingRadiusM
+                + geometry.wallThicknessM;
+            const auto substrateSolidAreaM2 = std::max(
+                0.0, housingAreaM2 - openAreaM2);
+            wallGeometry.innerAreaM2 = 4.0 * openAreaM2
+                / diameterM * cellLengthM_;
+            wallGeometry.wallHeatCapacityJPerK = cellLengthM_ * (
+                substrateSolidAreaM2
+                    * geometry.cellularSubstrateVolumetricHeatCapacityJPerM3K
+                + std::numbers::pi
+                    * (canOuterRadiusM * canOuterRadiusM
+                        - housingRadiusM * housingRadiusM)
+                    * geometry.wallDensityKgPerM3
+                    * geometry.wallSpecificHeatJPerKgK);
+            wallGeometry.externalConductanceWPerK =
+                geometry.externalWallHeatTransferWPerM2K
+                * 2.0 * std::numbers::pi * canOuterRadiusM * cellLengthM_;
+        }
+        wallHeatTransferGeometries_[index] = wallGeometry;
         if (geometry.dynamicWallHeatTransferEnabled
             && !wallHeatTransferGeometries_[index].valid())
             return false;

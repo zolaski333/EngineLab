@@ -207,6 +207,12 @@ struct DuctGeometry final {
      */
     double wallHeatUpdateIntervalSeconds { 0.0 };
 
+    /** Optional cellular-bundle thermal geometry. The flow remains one duct,
+     * but its wall state represents all channel walls plus the outer can. */
+    bool homogenisedCellularSubstrate { false };
+    double cellularSubstrateOpenAreaRatio { 1.0 };
+    double cellularSubstrateVolumetricHeatCapacityJPerM3K { 0.0 };
+
     /** Length-mean area (and therefore volume / length). */
     [[nodiscard]] double areaM2() const noexcept;
     [[nodiscard]] double inletAreaM2() const noexcept;
