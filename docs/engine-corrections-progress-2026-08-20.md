@@ -19,6 +19,8 @@ est respecté ; il ne transforme pas une hypothèse acoustique en donnée mesur�
 | `9c4ff1f` | branches latérales résonantes passives, bornées à huit | poussé |
 | `8b4f980` | monolithes de catalyseur homogénéisés | poussé |
 | `f865a7b` | noyau perforé, volume annulaire et garnissage passif | poussé |
+| `9f4fa96` | induction cohérente, source thermoacoustique audible, afterfire borné et instrumenté | poussé |
+| `2465157` | sweep turbo univarié, recalibration Big Twin et vraie fenêtre audio stabilisée | poussé |
 
 ## Dyno livré
 
@@ -312,6 +314,61 @@ du problème d'allumage et de rayonnement acoustique encore ouvert.
 La reconstruction Release a relié l'application et les harness ; les
 **42/42 CTest** ont passé en 860,90 s après ce lot.
 
+## Afterfire local, audible et borné
+
+L’ancien chemin calculait une source depuis la chaleur, puis la passait deux
+fois dans un passe-haut à environ 3–6 kHz. Il supprimait ainsi presque toute la
+bande d’une réaction de quelques millisecondes et divisait en plus l’amplitude
+par deux avant que le réseau ne partage déjà le saut entre deux ondes. L’A/B
+WAV strict plaçait la composante directe à −57,747 dB du mix, avec un maximum
+d’un LSB de différence.
+
+La nouvelle source emploie le saut compact
+`Delta p = (gamma - 1) Qdot / (A c)`, une reconstruction anti-imaging LR8 et
+un bloqueur continu à 25 Hz. Elle reste au lieu de réaction et traverse le DAG
+passif. Les coefficients ne sont plus recalculés par échantillon ; seules les
+voix actives filtrent, dans un tableau fixe de 64 entrées.
+
+Deux erreurs de chimie ont été corrigées en même temps : le délai d’induction
+n’est plus multiplié par une rampe cachée de 450 K, et l’origine paroi/gaz est
+mémorisée à l’allumage. Le simulateur n’appelle plus la chimie simplement parce
+qu’une calibration existe : il faut un DFCO afterfire ou un rupteur humide
+réellement actif. Le contrôle chargé de 500 ms avant lever mesure désormais
+zéro événement et devient invalidant sinon.
+
+Sur le Twin laboratoire catalogué à 2 ms, 60 s de chauffe puis 8 s d’overrun :
+
+| Mesure | Sources audio supprimées | Sources audio actives |
+|---|---:|---:|
+| trajectoire / chaleur / carburant | identiques | identiques |
+| événements avant lever | 0 | 0 |
+| événements chaleur | 27 | 27 |
+| carburant brûlé | 63,532 mg | 63,532 mg |
+| crête audio | 0,00348 | 0,00518 |
+| crest factor | 4,48 | 6,41 |
+| source directe / mix overrun | — | −12,436 dB |
+| limite 100 kPa / pertes / leveler | 0 | 0 |
+
+Le rendu actif consomme 13,6 % du budget moyen d’un bloc de 200 samples et
+14,6 % au p99, contre 13,1 % et 13,9 % pour le contrôle ; aucun des 1 920 blocs
+n’a dépassé sa durée. Les gates produit de 20 s restent valides à 1,053× sur le
+LS3 et 1,449× sur le Merlin, avec zéro violation. Le détail des causes, équations,
+artefacts et limites se trouve dans
+`docs/afterfire-implementation-2026-08-20.md`.
+
+La reconstruction intégrale a aussi exposé trois défauts latents : le sweep
+turbo fabriquait un silencieux perforé impossible au lieu de ne changer que la
+sortie ; le Big Twin était devenu marginalement hors de son enveloppe fabricant
+avec la mesure dyno par cycle ; et le rendu catalogue diesel appelait stabilisée
+une fenêtre encore traversée par le remplissage admission. Les trois corrections
+passent isolément sans desserrer les gates : sortie seule et exceptions lisibles,
+turbulence Big Twin 0,50 → 0,42 (erreurs finales −3,48 % / +3,77 %), puis fenêtre
+catalogue 3 → 4 s (crest EA288 18,42 → 7,21).
+
+Après reconstruction des exécutables touchés, le second passage autoritaire
+termine à **42/42 CTest**, zéro échec, en **735,23 s**. Les deux rampes dyno
+produit CP2/LS3 passent en fin de suite.
+
 ## Matrice actuelle des champs du graphe
 
 Cette matrice évite de confondre un champ sérialisé avec une influence physique
@@ -333,8 +390,11 @@ effective.
 
 ## Prochain ordre de travail
 
-1. Composer les silencieux plus complexes avec chambres et branches explicites
+1. Rejouer la suite Release complète et produire un artefact exécutable après
+   les corrections afterfire.
+2. Poursuivre les limites physiques restantes par petits états d’ordre réduit :
+   induction thermochimique explicite et transport éventuel du noyau, seulement
+   si les nouveaux oracles montrent que l’état local reste insuffisant.
+3. Composer les silencieux plus complexes avec chambres et branches explicites
    lorsque leurs dimensions sont connues ; le noyau perforé de base est livré.
-2. Reprendre l'afterfire maintenant que ces transferts existent : distribution spatiale,
-   variabilité de l'allumage et énergie locale, sans échantillon de pop.
-3. Rejouer les oracles, les tests produit et le budget temps réel à chaque lot.
+4. Rejouer les oracles, les tests produit et le budget temps réel à chaque lot.
