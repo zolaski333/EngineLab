@@ -369,6 +369,35 @@ Après reconstruction des exécutables touchés, le second passage autoritaire
 termine à **42/42 CTest**, zéro échec, en **735,23 s**. Les deux rampes dyno
 produit CP2/LS3 passent en fin de suite.
 
+## Arbre turbo sans puits d'énergie caché
+
+Le turbo tronquait l'arbre à 1,16 fois sa vitesse de conception puis tronquait
+sa loi de tête à 1,12 fois. Sur le 2JZ stressé, 14,9 à 23,7 kW disparaissaient
+ainsi en continu : 150 800 tr/min et 2,154 de boost restaient exactement fixes
+alors que la turbine passait de 32,71 à 41,60 kW.
+
+Le bilan est maintenant intégré directement en énergie cinétique : turbine
+moins travail compresseur moins pertes de palier. La tête centrifuge continue
+avec le carré de la vitesse et n'est plus multipliée directement par le
+papillon. Vitesse relative, trois puissances et puissance nette sont visibles
+dans `EngineState`, le panneau debug et le harness.
+
+En stock, les quatre points restent à 1,000–1,006 fois la vitesse de conception,
+1,921–1,932 de boost et 0,02–0,07 kW de bilan net. Le stress explicitement hors
+calibration traverse l'ancien clamp à 1,618–1,626 fois, retrouve 0,022 de
+sensibilité au downstream et ferme encore son bilan à 0,01–0,09 kW. Ce stress
+prouve la conservation, pas la précision d'une carte compresseur inexistante.
+
+Les tests `Core`, `GasExchange`, `TurboDownstreamAuthority`,
+`CatalogReference`, `AudioRender`, `AudioTransients` et
+`AudioShiftTransientBoosted` passent. Le 2JZ tient **1,426x** temps réel avec
+audio, DSP p99 45 % et tous les compteurs à zéro. Le détail se trouve dans
+`docs/turbo-shaft-energy-implementation-2026-08-20.md`.
+
+La reconstruction Release intégrale puis la suite autoritaire terminent à
+**42/42 CTest**, zéro échec, en **765,38 s**. Les tests audio et transitoires
+ainsi que les rampes dyno produit CP2/LS3 sont compris dans ce passage.
+
 ## Matrice actuelle des champs du graphe
 
 Cette matrice évite de confondre un champ sérialisé avec une influence physique
@@ -391,10 +420,13 @@ effective.
 ## Prochain ordre de travail
 
 1. Rejouer la suite Release complète et produire un artefact exécutable après
-   les corrections afterfire.
-2. Poursuivre les limites physiques restantes par petits états d’ordre réduit :
+   le lot d'énergie turbo.
+2. Poursuivre les limites physiques restantes par petits états d'ordre réduit :
    induction thermochimique explicite et transport éventuel du noyau, seulement
-   si les nouveaux oracles montrent que l’état local reste insuffisant.
+   si les nouveaux oracles montrent que l'état local reste insuffisant.
 3. Composer les silencieux plus complexes avec chambres et branches explicites
    lorsque leurs dimensions sont connues ; le noyau perforé de base est livré.
-4. Rejouer les oracles, les tests produit et le budget temps réel à chaque lot.
+4. Ne remplacer la loi de similitude turbo par une carte compresseur que si les
+   lignes débit/vitesse/rendement possèdent une provenance ; l'UI marque déjà
+   toute vitesse au-dessus du point de conception.
+5. Rejouer les oracles, les tests produit et le budget temps réel à chaque lot.

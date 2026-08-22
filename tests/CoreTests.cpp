@@ -2,6 +2,7 @@
 #include <enginelab/events/FourStrokeEventGenerator.hpp>
 #include <enginelab/exhaust/ExhaustGraph.hpp>
 #include <enginelab/foundation/SpscQueue.hpp>
+#include <enginelab/foundation/ForcedInductionFlow.hpp>
 #include <enginelab/physics/SimplifiedGasolinePhysics.hpp>
 #include <enginelab/physics/ConservativeGasSystem.hpp>
 #include <enginelab/physics/FlamePhysicsModel.hpp>
@@ -70,6 +71,53 @@ public:
 
 int main() {
     try {
+    {
+        enginelab::ForcedInductionConfig turbo;
+        turbo.enabled = true;
+        turbo.pressureRatio = 2.0;
+        turbo.designShaftSpeedRpm = 120'000.0;
+        turbo.shaftInertiaKgM2 = 0.00012;
+        turbo.compressorEfficiency = 0.72;
+        turbo.bearingFrictionPowerWatts = 300.0;
+        const auto designOmega = turbo.designShaftSpeedRpm
+            * 2.0 * std::numbers::pi / 60.0;
+        require(std::abs(enginelab::compressorPressureRatioFromSpeed(
+                    turbo, designOmega) - turbo.pressureRatio) < 1.0e-12,
+            "compressor similarity law must pass through the authored design point");
+
+        const auto compressorPower =
+            enginelab::compressorPowerForPressureRatioWatts(
+                turbo, 0.20, 295.0, 2.0);
+        const auto equilibrium = enginelab::advanceTurboShaft(
+            turbo, designOmega, compressorPower + 300.0,
+            0.20, 295.0, 2.0, 0.01);
+        require(std::abs(equilibrium.angularSpeedRadPerSecond
+                    - designOmega) < 1.0e-9
+                && std::abs(equilibrium.netPowerWatts) < 1.0e-9,
+            "balanced turbine, compressor and bearing powers must hold shaft speed");
+
+        const auto accelerated = enginelab::advanceTurboShaft(
+            turbo, designOmega * 1.16, 60'000.0,
+            0.20, 295.0, 2.0, 0.01);
+        const auto expectedEnergy = accelerated.energyBeforeJoules
+            + accelerated.netPowerWatts * 0.01;
+        require(accelerated.angularSpeedRadPerSecond > designOmega * 1.16
+                && std::abs(accelerated.energyAfterJoules - expectedEnergy)
+                    < 1.0e-10 * std::max(1.0, expectedEnergy),
+            "turbo shaft integration must retain surplus energy above the old hidden clamp");
+        require(accelerated.compressorPressureRatio
+                    > enginelab::compressorPressureRatioFromSpeed(
+                        turbo, designOmega * 1.16),
+            "compressor head must continue to follow retained shaft energy");
+
+        const auto stopped = enginelab::advanceTurboShaft(
+            turbo, designOmega * 0.01, 0.0,
+            2.0, 295.0, 3.0, 1.0);
+        require(stopped.energyAfterJoules < 1.0e-12
+                && std::abs(stopped.energyBeforeJoules
+                    + stopped.netPowerWatts) < 1.0e-12,
+            "a decelerating shaft must bound delivered loss work by available kinetic energy");
+    }
     {
         const enginelab::TrappedChargeReference reference {
             120.0, 50.0, 300.0

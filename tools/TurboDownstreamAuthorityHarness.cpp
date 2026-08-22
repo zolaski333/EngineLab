@@ -58,20 +58,25 @@ struct Point final {
     double backPressureKpa { 0.0 };
     double manifoldKpa { 0.0 };
     double wastegateOpening { 0.0 };
+    double shaftSpeedRpm { 0.0 };
+    double shaftSpeedRatio { 0.0 };
+    double compressorPowerKw { 0.0 };
+    double turbinePowerKw { 0.0 };
+    double bearingPowerKw { 0.0 };
+    double netShaftPowerKw { 0.0 };
     double torqueNm { 0.0 };
 };
 
 [[nodiscard]] Point measure(enginelab::EngineConfig config,
                             double outletDiameterMm, double holdRpm,
-                            bool openWastegateLoop) {
-    // Raising the boost target out of the compressor's reach parks the
-    // wastegate shut, so every watt the turbine gains has to appear as boost.
-    // Without this the sweep measures a REGULATOR, not a turbine: a wastegated
-    // engine on target answers extra turbine power by opening the gate further
-    // and holding the same manifold pressure, which is exactly what a wastegate
-    // is for and exactly what the first version of this harness mistook for the
-    // model still being deaf to its exhaust.
-    if (openWastegateLoop) {
+                            bool raisedWastegateTarget) {
+    // The stock sweep measures a regulator: extra turbine power opens the
+    // wastegate and holds manifold pressure. This second, explicitly
+    // out-of-design stress condition raises the set point so the shaft and
+    // compressor response remain observable above the stock design point. It
+    // is NOT a calibrated boost claim and it is not called an open loop: once
+    // the raised target is reached, the same wastegate controller may reopen.
+    if (raisedWastegateTarget) {
         config.forcedInduction.wastegatePressureRatio =
             config.forcedInduction.pressureRatio + 1.5;
     }
@@ -130,6 +135,13 @@ struct Point final {
         point.backPressureKpa += frame.state.exhaustBackPressureKpa;
         point.manifoldKpa += frame.state.manifoldPressureKpa;
         point.wastegateOpening += frame.state.wastegateOpening;
+        point.shaftSpeedRpm += frame.state.forcedInductionShaftSpeedRpm;
+        point.shaftSpeedRatio +=
+            frame.state.forcedInductionShaftSpeedRatio;
+        point.compressorPowerKw += frame.state.compressorPowerKw;
+        point.turbinePowerKw += frame.state.turbinePowerKw;
+        point.bearingPowerKw += frame.state.turboBearingPowerKw;
+        point.netShaftPowerKw += frame.state.turboShaftNetPowerKw;
         point.torqueNm += frame.state.cycleAveragedTorqueNm;
     }
     const auto divisor = static_cast<double>(sampleSteps);
@@ -139,6 +151,12 @@ struct Point final {
     point.backPressureKpa /= divisor;
     point.manifoldKpa /= divisor;
     point.wastegateOpening /= divisor;
+    point.shaftSpeedRpm /= divisor;
+    point.shaftSpeedRatio /= divisor;
+    point.compressorPowerKw /= divisor;
+    point.turbinePowerKw /= divisor;
+    point.bearingPowerKw /= divisor;
+    point.netShaftPowerKw /= divisor;
     point.torqueNm /= divisor;
     return point;
 }
@@ -152,6 +170,12 @@ void report(const std::string& name, const std::vector<Point>& points) {
               << std::setw(12) << "backP_kPa"
               << std::setw(11) << "MAP_kPa"
               << std::setw(8) << "wg"
+              << std::setw(12) << "shaft_rpm"
+              << std::setw(8) << "N/Nd"
+              << std::setw(10) << "comp_kW"
+              << std::setw(10) << "turb_kW"
+              << std::setw(10) << "bear_kW"
+              << std::setw(10) << "net_kW"
               << std::setw(12) << "torque_Nm" << '\n';
     for (const auto& point : points) {
         std::cout << std::fixed << std::setprecision(1)
@@ -164,6 +188,15 @@ void report(const std::string& name, const std::vector<Point>& points) {
                   << std::setw(11) << point.manifoldKpa
                   << std::setprecision(3) << std::setw(8)
                   << point.wastegateOpening
+                  << std::setprecision(0) << std::setw(12)
+                  << point.shaftSpeedRpm
+                  << std::setprecision(3) << std::setw(8)
+                  << point.shaftSpeedRatio
+                  << std::setprecision(2) << std::setw(10)
+                  << point.compressorPowerKw
+                  << std::setw(10) << point.turbinePowerKw
+                  << std::setw(10) << point.bearingPowerKw
+                  << std::setw(10) << point.netShaftPowerKw
                   << std::setprecision(2) << std::setw(12) << point.torqueNm
                   << '\n';
     }
@@ -208,22 +241,22 @@ int runHarness(int argc, char** argv) {
 
     constexpr std::array outletsMm { 45.0, 60.0, 76.0, 95.0 };
     const auto sweep = [&](const enginelab::EngineConfig& config,
-                           bool openWastegateLoop) {
+                           bool raisedWastegateTarget) {
         const auto holdRpm = std::min(0.60 * std::min(config.redlineRpm,
             config.ignition.revLimitRpm), 4'500.0);
         std::vector<Point> points;
         points.reserve(outletsMm.size());
         for (const auto outlet : outletsMm)
             points.push_back(
-                measure(config, outlet, holdRpm, openWastegateLoop));
+                measure(config, outlet, holdRpm, raisedWastegateTarget));
         return points;
     };
     const auto regulated = sweep(turbo->config, false);
-    const auto unregulated = sweep(turbo->config, true);
+    const auto stress = sweep(turbo->config, true);
     const auto controlPoints = sweep(control->config, false);
     report(turbo->config.name + "  (turbo, stock wastegate)", regulated);
-    report(turbo->config.name + "  (turbo, boost target out of reach)",
-           unregulated);
+    report(turbo->config.name
+        + "  (turbo, raised-target energy stress; not calibrated)", stress);
     report(control->config.name + "  (naturally aspirated control)",
            controlPoints);
 
@@ -276,18 +309,37 @@ int runHarness(int argc, char** argv) {
     const auto regulatedBoostHolds = std::abs(regulated.back().boostRatio
         - regulated.front().boostRatio) < 0.02;
 
-    // Deliberately NOT gated: boost with the wastegate parked shut.
-    //
-    // Measured, it does not move -- and the reason is a SECOND ceiling, further
-    // downstream, which this change does not address and must not be papered
-    // over. The compressor target is `1 + (PR-1) * speedRatio^2` with the shaft
-    // clamped at 1.16x design and the ratio at 1.12, so on the 2JZ it saturates
-    // at 1 + 0.92 * 1.12^2 = 2.154 exactly, which is the number measured at
-    // every downstream area. Past that clamp the compressor cannot convert
-    // additional shaft power into pressure at all. Asserting a boost rise here
-    // would fail for a reason that has nothing to do with the turbine, and
-    // relaxing the clamp to make it pass would be tuning a model to satisfy a
-    // test. It is recorded in the docs as the next open item instead.
+    // 6. The deliberately raised-target stress must cross the former 1.16x
+    //    clamp, retain downstream authority and settle through the EXPLICIT
+    //    compressor/bearing work. Its absolute 3.x pressure ratio is outside
+    //    the authored design point and is never treated as a calibrated claim.
+    const auto stressCrossesFormerClamp = std::all_of(
+        stress.begin(), stress.end(), [](const Point& point) {
+            return point.shaftSpeedRatio > 1.20;
+        });
+    auto stressResponseIsMonotonic = true;
+    for (std::size_t index = 1; index < stress.size(); ++index) {
+        stressResponseIsMonotonic = stressResponseIsMonotonic
+            && stress[index].boostRatio
+                >= stress[index - 1].boostRatio - 0.002
+            && stress[index].shaftSpeedRpm
+                >= stress[index - 1].shaftSpeedRpm - 150.0;
+    }
+    const auto stressRetainsAuthority = stress.back().boostRatio
+            > stress.front().boostRatio + 0.010
+        && stress.back().shaftSpeedRpm
+            > stress.front().shaftSpeedRpm + 500.0;
+    const auto shaftPowerBalances = std::all_of(
+        regulated.begin(), regulated.end(), [](const Point& point) {
+            return std::abs(point.netShaftPowerKw) < 0.25;
+        }) && std::all_of(stress.begin(), stress.end(), [](const Point& point) {
+            return std::abs(point.netShaftPowerKw) < 0.25;
+        });
+    const auto stockStaysNearDesign = std::all_of(
+        regulated.begin(), regulated.end(), [](const Point& point) {
+            return point.shaftSpeedRatio > 0.85
+                && point.shaftSpeedRatio < 1.15;
+        });
     const auto turboSpan = relativeSpan(regulated);
     const auto controlSpan = relativeSpan(controlPoints);
 
@@ -304,13 +356,24 @@ int runHarness(int argc, char** argv) {
               << (torqueRises ? "PASS" : "FAIL")
               << "\nstock wastegate holds its boost target: "
               << (regulatedBoostHolds ? "PASS" : "FAIL")
-              << "\n(ungated) torque span turbo " << std::setprecision(2)
+              << "\nstock shaft remains near authored design speed: "
+              << (stockStaysNearDesign ? "PASS" : "FAIL")
+              << "\nraised-target stress crosses former clamp: "
+              << (stressCrossesFormerClamp ? "PASS" : "FAIL")
+              << "\nraised-target speed/boost retain downstream authority: "
+              << (stressResponseIsMonotonic && stressRetainsAuthority
+                    ? "PASS" : "FAIL")
+              << "\nsettled shaft power balance |net| < 0.25 kW: "
+              << (shaftPowerBalances ? "PASS" : "FAIL")
+              << "\n(diagnostic) torque span turbo " << std::setprecision(2)
               << turboSpan * 100.0 << " % vs NA control "
               << controlSpan * 100.0 << " %\n";
 
     const auto passed = outletFalls && outletSpanIsReal
         && controlOutletIsAmbient && backPressureFalls && torqueRises
-        && regulatedBoostHolds;
+        && regulatedBoostHolds && stockStaysNearDesign
+        && stressCrossesFormerClamp && stressResponseIsMonotonic
+        && stressRetainsAuthority && shaftPowerBalances;
     if (enforce && !passed) return EXIT_FAILURE;
     return EXIT_SUCCESS;
 }

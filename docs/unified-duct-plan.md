@@ -293,5 +293,10 @@ pas sur un ordre d'allumage »*.
 
 ## Ce qui reste ouvert et non diagnostiqué
 
-- Le V8 encore sous le temps réel dans certains cas après `a9ff0dd`.
-- Le plafond de vitesse compresseur (saturation 2,154 sur le 2JZ).
+- La marge LS3 reste proche du temps réel dans le scénario produit le plus
+  coûteux ; le gate courant passe, mais la cible de confort 1,10x reste ouverte.
+- **Plafond compresseur corrigé le 20 août 2026.** Le double clamp 1,16/1,12
+  effaçait jusqu'à 23,7 kW. Le bilan turbine/compresseur/palier est maintenant
+  conservatif et visible. Il reste à obtenir une vraie carte compresseur avec
+  provenance avant de prétendre modéliser surge, choke ou rendement hors point.
+  Voir `docs/turbo-shaft-energy-implementation-2026-08-20.md`.

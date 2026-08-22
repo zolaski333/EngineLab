@@ -806,6 +806,9 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
             state_.blowOffMassFlowKgPerSecond = 0.0;
             state_.compressorPowerKw = 0.0;
             state_.turbinePowerKw = 0.0;
+            state_.turboBearingPowerKw = 0.0;
+            state_.turboShaftNetPowerKw = 0.0;
+            state_.forcedInductionShaftSpeedRatio = 0.0;
             for (std::size_t pathIndex = 0; pathIndex < intakePlenumCount_; ++pathIndex) {
                 const auto& intake = intakeGeometryAt(config_, pathIndex);
                 const auto throttleRadiusM = intake.throttleDiameterMm * 0.0005;
@@ -825,17 +828,18 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                     0.0, -1.0); // plenum -> upstream atmosphere
             }
         } else {
-            constexpr double airCpJPerKgK = 1'005.0;
             constexpr double exhaustCpJPerKgK = 1'120.0;
-            constexpr double compressorExponent = 0.285714285714;
             const auto ambientTemperatureK = config_.ambientTemperatureC + 273.15;
             const auto airMassFlowKgPerSecond = std::max(0.0, state_.airFlowGramsPerSecond) * 0.001;
             const auto compressorMassFlowKgPerSecond = airMassFlowKgPerSecond
                 + std::max(0.0, state_.blowOffMassFlowKgPerSecond);
             const auto exhaustMassFlowKgPerSecond = std::max(0.0, state_.exhaustFlowGramsPerSecond) * 0.001;
             auto pressureRatioTarget = 1.0;
-            auto desiredCompressorPowerW = 0.0;
+            auto compressorPowerW = 0.0;
             auto turbinePowerW = 0.0;
+            state_.turboBearingPowerKw = 0.0;
+            state_.turboShaftNetPowerKw = 0.0;
+            state_.forcedInductionShaftSpeedRatio = 0.0;
             const auto exhaustTemperatureK = std::max(ambientTemperatureK, state_.exhaustTemperatureC + 273.15);
             if (config_.forcedInduction.enabled
                     && config_.forcedInduction.type == ForcedInductionType::supercharger) {
@@ -897,37 +901,40 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                     turbineInletPressureKpa / turbineOutletPressureKpa);
                 turbinePowerW = exhaustFlowSplit.turbineKgPerSecond
                     * exhaustCpJPerKgK * exhaustTemperatureK
-                    * (1.0 - std::pow(turbineExpansionRatio, -compressorExponent))
+                    * (1.0 - std::pow(turbineExpansionRatio,
+                        -turboIsentropicExponent))
                     * config_.forcedInduction.turbineEfficiency;
-                desiredCompressorPowerW = compressorMassFlowKgPerSecond * airCpJPerKgK * ambientTemperatureK
-                    * (std::pow(std::max(1.0, state_.boostPressureRatio), compressorExponent) - 1.0)
-                    / std::max(0.35, config_.forcedInduction.compressorEfficiency);
                 state_.wastegateOpening = std::clamp((state_.boostPressureRatio
                     - config_.forcedInduction.wastegatePressureRatio + 0.02) / 0.08, 0.0, 1.0);
-                const auto speedRatio = shaftOmega / std::max(1.0, designOmega);
-                const auto bearingPowerW = config_.forcedInduction.bearingFrictionPowerWatts
-                    * speedRatio * speedRatio;
-                const auto shaftPowerW = turbinePowerW
-                    - desiredCompressorPowerW - bearingPowerW;
-                auto shaftEnergyJ = 0.5 * config_.forcedInduction.shaftInertiaKgM2
-                    * shaftOmega * shaftOmega;
-                shaftEnergyJ = std::max(0.0, shaftEnergyJ + shaftPowerW * subDt);
-                shaftOmega = std::min(std::sqrt(2.0 * shaftEnergyJ
-                    / config_.forcedInduction.shaftInertiaKgM2), designOmega * 1.16);
+                const auto shaftAdvance = advanceTurboShaft(
+                    config_.forcedInduction, shaftOmega, turbinePowerW,
+                    compressorMassFlowKgPerSecond, ambientTemperatureK,
+                    state_.boostPressureRatio, subDt);
+                shaftOmega = shaftAdvance.angularSpeedRadPerSecond;
+                compressorPowerW = shaftAdvance.compressorPowerWatts;
                 state_.forcedInductionShaftSpeedRpm = shaftOmega * 60.0
                     / (2.0 * std::numbers::pi);
-                const auto compressorSpeedRatio = std::clamp(shaftOmega
-                    / std::max(1.0, designOmega), 0.0, 1.12);
-                pressureRatioTarget = 1.0 + (config_.forcedInduction.pressureRatio - 1.0)
-                    * compressorSpeedRatio * compressorSpeedRatio
-                    * std::clamp(std::pow(state_.throttle, 0.38), 0.0, 1.0);
-                pressureRatioTarget = std::min(pressureRatioTarget,
-                    config_.forcedInduction.wastegatePressureRatio + 0.04);
+                state_.forcedInductionShaftSpeedRatio = shaftOmega
+                    / std::max(1.0, designOmega);
+                state_.turboBearingPowerKw =
+                    shaftAdvance.bearingPowerWatts * 0.001;
+                state_.turboShaftNetPowerKw =
+                    shaftAdvance.netPowerWatts * 0.001;
+                // The pressure head follows the compressor affinity law. The
+                // throttle is not a gain here: its measured flow changes the
+                // compressor work, and a closed throttle can retain upstream
+                // pressure long enough to drive a real bypass valve.
+                pressureRatioTarget =
+                    shaftAdvance.compressorPressureRatio;
             }
-            desiredCompressorPowerW = compressorMassFlowKgPerSecond * airCpJPerKgK * ambientTemperatureK
-                * (std::pow(std::max(1.0, pressureRatioTarget), compressorExponent) - 1.0)
-                / std::max(0.35, config_.forcedInduction.compressorEfficiency);
-            state_.compressorPowerKw = desiredCompressorPowerW * 0.001;
+            if (!config_.forcedInduction.enabled
+                || config_.forcedInduction.type
+                    == ForcedInductionType::supercharger) {
+                compressorPowerW = compressorPowerForPressureRatioWatts(
+                    config_.forcedInduction, compressorMassFlowKgPerSecond,
+                    ambientTemperatureK, pressureRatioTarget);
+            }
+            state_.compressorPowerKw = compressorPowerW * 0.001;
             state_.turbinePowerKw = turbinePowerW * 0.001;
             state_.boostPressureRatio = smooth(state_.boostPressureRatio,
                 config_.forcedInduction.enabled ? pressureRatioTarget : 1.0, subDt, 14.0);
@@ -940,7 +947,8 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 / std::max(0.01, config_.forcedInduction.pressureRatio - 1.0), 0.0, 1.0);
             const auto intakeSourcePressureKpa = config_.ambientPressureKpa * state_.boostPressureRatio;
             const auto isentropicRiseC = ambientTemperatureK
-                * (std::pow(std::max(1.0, state_.boostPressureRatio), compressorExponent) - 1.0)
+                * (std::pow(std::max(1.0, state_.boostPressureRatio),
+                    turboIsentropicExponent) - 1.0)
                 / std::max(0.35, config_.forcedInduction.compressorEfficiency);
             const auto chargeTemperatureC = config_.ambientTemperatureC + isentropicRiseC
                 + config_.forcedInduction.chargeTemperatureRiseC * 0.15 * boostBlend;

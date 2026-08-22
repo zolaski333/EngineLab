@@ -1496,7 +1496,7 @@ void MainComponent::drawDebugPanel(juce::Graphics& g, juce::Rectangle<float> are
         liftMultiplier = std::max(liftMultiplier, visibleState_.cylinderStates[index].valveLiftMultiplier);
         runnerResonanceHz = std::max(runnerResonanceHz, visibleState_.cylinderStates[index].intakeResonanceFrequencyHz);
     }
-    const std::array<juce::String, 61> values {
+    const std::array<juce::String, 64> values {
         "Net torque       " + juce::String(visibleState_.netTorqueNm, 2),
         "Indicated torque " + juce::String(visibleState_.indicatedTorqueNm, 2),
         "Mean-work torque " + juce::String(visibleState_.meanWorkTorqueNm, 2),
@@ -1524,6 +1524,17 @@ void MainComponent::drawDebugPanel(juce::Graphics& g, juce::Rectangle<float> are
         "Gas cylinders g  " + juce::String(visibleState_.cylinderGasMassGrams, 4),
         "Gas energy J     " + juce::String(visibleState_.gasInternalEnergyJoules, 1),
         "Boost ratio      " + juce::String(visibleState_.boostPressureRatio, 3),
+        "Turbo shaft      "
+            + juce::String(visibleState_.forcedInductionShaftSpeedRpm, 0)
+            + " rpm / "
+            + juce::String(visibleState_.forcedInductionShaftSpeedRatio, 3)
+            + (visibleState_.forcedInductionShaftSpeedRatio > 1.0
+                ? " >DESIGN" : ""),
+        "Turbo P t/c/b kW " + juce::String(visibleState_.turbinePowerKw, 2)
+            + " / " + juce::String(visibleState_.compressorPowerKw, 2)
+            + " / " + juce::String(visibleState_.turboBearingPowerKw, 2),
+        "Turbo shaft net  "
+            + juce::String(visibleState_.turboShaftNetPowerKw, 3) + " kW",
         "Solver Hz/steps  " + juce::String(visibleState_.solverFrequencyHz, 0) + " / " + juce::String(visibleState_.solverSubsteps),
         "Crank step deg   " + juce::String(visibleState_.crankDegreesPerSolverStep, 3),
         "Solver limited   " + juce::String(visibleState_.solverResolutionLimited ? "YES" : "no"),

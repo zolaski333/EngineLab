@@ -1315,7 +1315,13 @@ struct EngineState final {
     double resolvedHeatReleaseKw { 0.0 };
     double compressorPowerKw { 0.0 };
     double turbinePowerKw { 0.0 };
+    /** Bearing/friction work removed from the turbo shaft energy balance. */
+    double turboBearingPowerKw { 0.0 };
+    /** Turbine minus compressor minus bearing power. Near zero at equilibrium. */
+    double turboShaftNetPowerKw { 0.0 };
     double forcedInductionShaftSpeedRpm { 0.0 };
+    /** Shaft speed divided by the authored compressor design speed. */
+    double forcedInductionShaftSpeedRatio { 0.0 };
     double wastegateOpening { 0.0 };
     double blowOffMassFlowKgPerSecond { 0.0 };
     /** Last resolved ECU command. These are diagnostic telemetry, not a
