@@ -33,7 +33,9 @@ appliquée.
    résonance, gain et coefficient de décharge. Le canevas utilise un placement
    automatique et un clic sur un nœud sélectionne le composant correspondant.
 4. Créer les connexions orientées dans l'ordre du flux et affecter chaque
-   cylindre à son premier composant.
+   cylindre à son premier composant. Sur un X-pipe, le concepteur attribue le
+   premier port libre `0`, puis `1`, et affiche ce port dans la liste. Supprimer
+   puis recréer les deux liaisons permet d'inverser l'appariement.
 5. Sélectionner **VALIDER ET APPLIQUER**. La validation complète décrite plus
    bas s'exécute avant toute modification du moteur.
 6. Utiliser **EXPORTER** dans la fenêtre principale pour enregistrer la
@@ -187,6 +189,7 @@ chimie de dépollution, la conduction radiale interne ni chaque canal réel.
 | `muffler` | chambre/conduit inline et, si renseigné, garnissage poreux distribué |
 | `catalyst` | conduit physique et, si renseigné, substrat cellulaire homogénéisé passif |
 | `outlet` | termine une route et applique diamètre/coefficient de décharge |
+| `crossover` | X-pipe compact à deux entrées/deux sorties appariées, avec matrice acoustique passive |
 
 Chaque composant possède :
 
@@ -199,6 +202,8 @@ Chaque composant possède :
 - `acoustic_gain`, conservé pour le rendu audio de secours historique, mais
   jamais appliqué au guide d'onde physique passif ;
 - `discharge_coefficient`, principalement utilisé par la sortie.
+- `crossover_coupling`, uniquement sur `crossover`, amplitude de puissance
+  croisée `k` entre 0 et 1.
 
 La restriction finale additionne la perte géométrique calculée et
 `restriction`. Elle change le débit et la pression calculés, donc peut modifier
@@ -206,6 +211,61 @@ indirectement la source acoustique physique ; elle n'est pas encore une
 impédance acoustique complexe. Modifier seulement `acoustic_gain` ne change pas
 le réseau physique de production. Ce champ n'agit que si le rendu doit utiliser
 son ancien chemin reconstruit de secours.
+
+### X-pipe directionnel
+
+Un X-pipe n'est pas un `merge` suivi d'un `splitter`. Cette ancienne écriture
+forme un plénum commun idéal : une onde du banc 0 et la même onde du banc 1
+deviennent exactement identiques en aval. Le type `crossover` du schéma 9 garde
+donc quatre ports explicites :
+
+```yaml
+- { id: 200, type: crossover, length_mm: 0, diameter_mm: 80,
+    volume_l: 0, restriction: 0.06, crossover_coupling: 0.30 }
+# entree du banc 0 / banc 1
+- { from_component_id: 110, to_component_id: 200, to_port: 0 }
+- { from_component_id: 120, to_component_id: 200, to_port: 1 }
+# sortie droite 0 / 1
+- { from_component_id: 200, from_port: 0, to_component_id: 210 }
+- { from_component_id: 200, from_port: 1, to_component_id: 220 }
+```
+
+Chaque port doit être relié une fois, par un composant de conduit fini. Le X
+lui-même exige `length_mm: 0` et `volume_l: 0` : les longueurs réellement
+mesurables avant et après l'intersection appartiennent aux quatre tubes voisins,
+ce qui évite une longueur cachée ou comptée deux fois. Une connexion directe à
+un cylindre, merge, splitter ou autre crossover est refusée.
+
+Dans les coordonnées de pression normalisées par la puissance
+`q=sqrt(Y)*p`, avec `t=sqrt(1-k²)`, l'ordre des ports étant entrée 0, entrée 1,
+sortie 0, sortie 1 :
+
+```text
+q'_entree0 =  t q_sortie0 + k q_sortie1
+q'_entree1 = -k q_sortie0 + t q_sortie1
+q'_sortie0 =  t q_entree0 - k q_entree1
+q'_sortie1 =  k q_entree0 + t q_entree1
+```
+
+La matrice est réelle, orthogonale et réciproque : elle conserve exactement
+`sum(Y p²)` et n'ajoute aucun gain. `k=0` donne deux passages droits séparés ;
+`k=1` échange les sorties. Le signe du mode croisé conserve la parité modale,
+au lieu de sommer quatre pressions en phase dans un nœud commun.
+
+Le solveur gaz basse bande conserve un seul volume bien mélangé pour
+l'intersection. En l'absence de volume auteur, il dérive `2 A d`, soit deux
+sections de tube d'un diamètre. Cette dérivation évite de sous-estimer de moitié
+un composant quatre ports et maintient sa longueur CFL `V/sum(A_port)` à `d/2`.
+Le coût audio reste quatre mélanges par échantillon, sans voix, allocation,
+maille ou ligne à retard supplémentaire dans le X lui-même.
+Les quatre `sqrt(Y)` sont recalculées uniquement quand l'état gaz cible est
+publié au début d'un bloc, puis interpolées par échantillon ; elles ne sont pas
+inutilement recalculées à 48 kHz.
+
+`crossover_coupling` doit être une calibration mesurée ou estimée et étiquetée
+comme telle. Le modèle actuel est compact et indépendant de la fréquence : il
+ne déduit pas le couplage d'un angle, d'une longueur de recouvrement ou d'une
+géométrie 3D qui ne figurent pas encore dans le schéma.
 
 ### Résonateur terminal
 
@@ -330,7 +390,8 @@ Pour un DAG auteur, `ExhaustNetworkLayout` conserve chaque composant physique :
 
 - tubes, catalyseurs, silencieux, résonateurs et sorties deviennent des conduits
   quasi-1D avec longueur, volume, section, diamètre hydraulique et perte ;
-- merges et splitters deviennent des volumes de jonction finis ;
+- merges, splitters et crossovers deviennent des volumes de jonction finis
+  pour le gaz ; le crossover conserve séparément ses ports acoustiques ;
 - chaque soupape et chaque sortie garde sa section et son coefficient de
   décharge ;
 - les interfaces partagent un unique flux de Riemann, donc une branche ne peut
@@ -349,7 +410,8 @@ température et géométrie suffisent à produire les caractéristiques acoustiq
 
 Chaque composant de longueur finie devient une ligne à retard bidirectionnelle.
 Les interfaces directes, merges et splitters utilisent une dispersion passive
-par admittance ; les longueurs de tronc portées par une branche restent des
+par admittance ; un crossover utilise sa matrice quatre ports passive et
+appariée. Les longueurs de tronc portées par une branche restent des
 conduits, et chaque sortie conserve sa propre charge de rayonnement, sa position
 et son axe. Un 4-1 et un 4-2-1 ne sont donc pas réduits au même chemin dès lors
 que leurs géométries diffèrent. Les preuves causales et analytiques sont dans
@@ -368,10 +430,11 @@ restent les références des banques et de la sérialisation.
 
 `graph` est optionnel. En son absence, EngineLab compile les anciens champs de
 géométrie en primaires, merge, silencieux et sortie. Les fichiers moteur des
-schémas 1 à 7 restent lisibles et sont migrés en mémoire vers le schéma 8. Tout
-nouvel export JSON/YAML porte `schema_version: 8`. Le schéma 8 ajoute la
-corrélation d'induction afterfire explicitement paramétrée ; un document plus
-ancien reçoit des exposants nuls et conserve exactement son timer plat. Les
+schémas 1 à 8 restent lisibles et sont migrés en mémoire vers le schéma 9. Tout
+nouvel export JSON/YAML porte `schema_version: 9`. Le schéma 8 ajoute la
+corrélation d'induction afterfire explicitement paramétrée ; le schéma 9 ajoute
+le type `crossover`, `crossover_coupling`, `from_port` et `to_port`. Un document
+antérieur au schéma 8 reçoit des exposants nuls et conserve exactement son timer plat. Les
 fichiers historiques du catalogue restent volontairement des fixtures de
 migration ; l'absence des trois champs de substrat conserve le bypass exact.
 
@@ -387,7 +450,9 @@ audio conserve le DAG, mais reste linéaire et plane. Elle ne résout pas les
 modes transverses, les coudes 3D ni la correction complète du rayonnement par
 écoulement moyen. La directivité simple de terminaison et les positions/axes
 indépendants des sorties sont résolus vers une paire de microphones commune ;
-le modèle n'est pas un champ acoustique 3D ni une simulation de local.
+le modèle n'est pas un champ acoustique 3D ni une simulation de local. Le X
+compact n'est pas encore dispersif en fréquence et le DAG interdit toujours la
+boucle nécessaire à un H-pipe littéral ; ces deux limites sont explicites.
 
 Les réflexions haute fréquence du guide ne reviennent pas dans le cylindre 0D ;
 le retour physique est fourni par le réseau non linéaire basse bande. Les IR ne

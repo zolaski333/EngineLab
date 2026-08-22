@@ -5,6 +5,15 @@
 namespace enginelab {
 namespace {
 using Json = nlohmann::json;
+[[nodiscard]] std::uint8_t decodeOptionalCrossoverPort(
+    const Json& object, const char* key) {
+    if (!object.contains(key)) return unspecifiedExhaustComponentPort;
+    const auto value = object.at(key).get<unsigned>();
+    if (value > 1U)
+        throw std::invalid_argument(
+            std::string("Exhaust crossover port must be 0 or 1: ") + key);
+    return static_cast<std::uint8_t>(value);
+}
 [[nodiscard]] std::string cycleName(EngineCycle value) { return value == EngineCycle::fourStroke ? "four_stroke" : "two_stroke"; }
 [[nodiscard]] std::string fuelName(FuelType value) { return value == FuelType::gasoline ? "gasoline" : "diesel"; }
 [[nodiscard]] std::string injectionModeName(InjectionMode value) { return value == InjectionMode::port ? "port" : "direct"; }
@@ -164,6 +173,7 @@ using Json = nlohmann::json;
     case ExhaustComponentType::muffler: return "muffler";
     case ExhaustComponentType::catalyst: return "catalyst";
     case ExhaustComponentType::outlet: return "outlet";
+    case ExhaustComponentType::crossover: return "crossover";
     }
     return "pipe";
 }
@@ -175,6 +185,7 @@ using Json = nlohmann::json;
     if (value == "muffler") return ExhaustComponentType::muffler;
     if (value == "catalyst") return ExhaustComponentType::catalyst;
     if (value == "outlet") return ExhaustComponentType::outlet;
+    if (value == "crossover") return ExhaustComponentType::crossover;
     return std::nullopt;
 }
 [[nodiscard]] const char* terminationName(AcousticTerminationType value) noexcept {
@@ -377,6 +388,7 @@ std::string JsonEngineSerializer::encode(const EngineConfig& config) const {
                     {"catalyst_open_area_ratio", component.catalystOpenAreaRatio},
                     {"catalyst_substrate_volumetric_heat_capacity_j_m3_k",
                         component.catalystSubstrateVolumetricHeatCapacityJPerM3K},
+                    {"crossover_coupling", component.crossoverCoupling},
                     {"acoustic_position_m", pointJson(component.acousticPositionM)},
                     {"acoustic_axis", pointJson(component.acousticAxis)},
                     {"acoustic_termination", terminationName(component.acousticTermination)} });
@@ -385,9 +397,18 @@ std::string JsonEngineSerializer::encode(const EngineConfig& config) const {
                 cylinderConnections.push_back({ {"cylinder_id", connection.cylinderId},
                     {"to_component_id", connection.componentId} });
             Json connections = Json::array();
-            for (const auto& connection : path.network->connections)
-                connections.push_back({ {"from_component_id", connection.fromComponentId},
-                    {"to_component_id", connection.toComponentId} });
+            for (const auto& connection : path.network->connections) {
+                Json encodedConnection {
+                    {"from_component_id", connection.fromComponentId},
+                    {"to_component_id", connection.toComponentId} };
+                if (connection.fromPort != unspecifiedExhaustComponentPort)
+                    encodedConnection["from_port"] =
+                        static_cast<unsigned>(connection.fromPort);
+                if (connection.toPort != unspecifiedExhaustComponentPort)
+                    encodedConnection["to_port"] =
+                        static_cast<unsigned>(connection.toPort);
+                connections.push_back(std::move(encodedConnection));
+            }
             encodedPath["graph"] = { {"components", std::move(components)},
                 {"cylinder_connections", std::move(cylinderConnections)},
                 {"connections", std::move(connections)} };
@@ -999,6 +1020,8 @@ EngineDecodeResult JsonEngineSerializer::decode(std::string_view text) const noe
                             encodedComponent.value(
                                 "catalyst_substrate_volumetric_heat_capacity_j_m3_k",
                                 component.catalystSubstrateVolumetricHeatCapacityJPerM3K);
+                        component.crossoverCoupling = encodedComponent.value(
+                            "crossover_coupling", component.crossoverCoupling);
                         if (encodedComponent.contains("acoustic_position_m"))
                             component.acousticPositionM = decodePoint(
                                 encodedComponent.at("acoustic_position_m"));
@@ -1015,8 +1038,13 @@ EngineDecodeResult JsonEngineSerializer::decode(std::string_view text) const noe
                         network.cylinderConnections.push_back({ encodedConnection.at("cylinder_id"),
                             encodedConnection.at("to_component_id") });
                     for (const auto& encodedConnection : encodedGraph.at("connections"))
-                        network.connections.push_back({ encodedConnection.at("from_component_id"),
-                            encodedConnection.at("to_component_id") });
+                        network.connections.push_back({
+                            encodedConnection.at("from_component_id"),
+                            encodedConnection.at("to_component_id"),
+                            decodeOptionalCrossoverPort(
+                                encodedConnection, "from_port"),
+                            decodeOptionalCrossoverPort(
+                                encodedConnection, "to_port") });
                     path.network = std::move(network);
                 }
                 config.exhaustPaths.push_back(std::move(path));

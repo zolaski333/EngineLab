@@ -575,7 +575,8 @@ void EngineSimulator::configurePhysicalIntakeNetworks() {
 
 void EngineSimulator::configurePhysicalExhaustNetwork() {
     const auto physicalGraph = ExhaustGraph::makeForEngine(config_);
-    gasdynamics::ExhaustNetworkDiscretisation feedbackMesh;
+    auto feedbackMesh =
+        gasdynamics::realtimeExhaustFeedbackDiscretisation();
     // The realtime FV mesh owns nonlinear mean-flow/back-pressure feedback,
     // not audio-band propagation. A 360 mm maximum cell length gives five
     // control volumes per 1.8 m wavelength (roughly 330-360 Hz in hot exhaust),
@@ -585,14 +586,13 @@ void EngineSimulator::configurePhysicalExhaustNetwork() {
     // physical scale separation: no
     // authored component, volume, area or loss is removed from either model.
     feedbackMesh.targetCellLengthM = std::clamp(
-        options_.exhaustTargetCellLengthM.value_or(0.360), 0.025, 0.600);
+        options_.exhaustTargetCellLengthM.value_or(
+            feedbackMesh.targetCellLengthM),
+        0.025, 0.600);
     // Components shorter than the feedback scale remain one conservative
     // finite volume with their exact volume, ports and loss. Their propagation
     // delay is owned by the characteristic network, so duplicating a second FV
     // cell would add cost but no resolved mean-flow information.
-    feedbackMesh.minimumCellsPerDuct = 1;
-    feedbackMesh.maximumCellsPerDuct = 64;
-    feedbackMesh.maximumTotalCells = 1'024;
     const auto layout = gasdynamics::ExhaustNetworkLayout::compile(
         physicalGraph, feedbackMesh);
     auto network = std::make_unique<gasdynamics::ExhaustGasNetwork>(

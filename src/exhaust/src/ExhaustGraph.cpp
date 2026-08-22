@@ -98,6 +98,7 @@ struct ComponentResonance final {
     case ExhaustComponentType::muffler: return ExhaustNodeType::muffler;
     case ExhaustComponentType::catalyst: return ExhaustNodeType::catalyst;
     case ExhaustComponentType::outlet: return ExhaustNodeType::outlet;
+    case ExhaustComponentType::crossover: return ExhaustNodeType::crossover;
     }
     return ExhaustNodeType::pipe;
 }
@@ -135,6 +136,11 @@ struct ComponentResonance final {
         // by sqrt(1+K) a second time and understated outlet flow. Only the
         // diameter-derived geometric loss belongs to the restriction.
         loss = 0.01 * std::pow(65.0 / diameterMm, 4.0);
+        break;
+    case ExhaustComponentType::crossover:
+        // A compact ideal directional coupler has no invented geometric loss.
+        // Any measured mean-flow loss is authored explicitly in restriction.
+        loss = 0.0;
         break;
     }
     // A non-finite authored restriction must not silently choke the path: the
@@ -414,7 +420,9 @@ ExhaustGraph ExhaustGraph::makeForEngine(
                         0.0, 0.99, 0.0),
                     finiteClamped(
                         component.catalystSubstrateVolumetricHeatCapacityJPerM3K,
-                        0.0, 10'000'000.0, 0.0) });
+                        0.0, 10'000'000.0, 0.0),
+                    finiteClamped(component.crossoverCoupling,
+                        0.0, 1.0, 0.0) });
             }
             std::unordered_set<std::uint64_t> compiledConnections;
             for (const auto& connection : path.network->connections) {
@@ -457,7 +465,8 @@ ExhaustGraph ExhaustGraph::makeForEngine(
                 }
                 const auto to = componentNodeIds.find(connection.toComponentId);
                 if (to != componentNodeIds.end() && from != to)
-                    graph.edges_.push_back({ from->second, to->second });
+                    graph.edges_.push_back({ from->second, to->second,
+                        connection.fromPort, connection.toPort });
             }
             std::unordered_set<std::uint32_t> compiledCylinderConnections;
             for (const auto& connection : path.network->cylinderConnections) {
@@ -599,13 +608,20 @@ ExhaustGraph ExhaustGraph::makeForEngine(
     // turn any later push_back into silent use-after-free.
     std::unordered_map<std::uint32_t, std::size_t> nodesById;
     std::unordered_map<std::uint32_t, std::vector<std::uint32_t>> outgoing;
+    std::unordered_map<std::uint32_t, std::vector<const ExhaustEdge*>>
+        outgoingEdges;
     nodesById.reserve(graph.nodes_.size());
     outgoing.reserve(graph.nodes_.size());
+    outgoingEdges.reserve(graph.nodes_.size());
     for (std::size_t index = 0; index < graph.nodes_.size(); ++index) {
         nodesById.emplace(graph.nodes_[index].id, index);
         outgoing.try_emplace(graph.nodes_[index].id);
+        outgoingEdges.try_emplace(graph.nodes_[index].id);
     }
-    for (const auto& edge : graph.edges_) outgoing[edge.from].push_back(edge.to);
+    for (const auto& edge : graph.edges_) {
+        outgoing[edge.from].push_back(edge.to);
+        outgoingEdges[edge.from].push_back(&edge);
+    }
 
     // For pressure loss K, common segments are in series and only downstream
     // branches are parallel: K_eq = K_node + 1/(sum(1/sqrt(K_branch)))^2.
@@ -697,8 +713,10 @@ ExhaustGraph ExhaustGraph::makeForEngine(
         // ModeSet carries a fixed mode array; taking it by const reference and
         // copying once per node keeps the per-branch copy the algorithm needs
         // without also copying it on every call.
-        std::function<void(std::uint32_t, double, double, double, const ModeSet&)> visit =
-            [&](std::uint32_t nodeId, double lengthMm, double restriction,
+        std::function<void(std::uint32_t, std::uint8_t, double, double,
+                           double, const ModeSet&)> visit =
+            [&](std::uint32_t nodeId, std::uint8_t incomingPort,
+                double lengthMm, double restriction,
                 double logAmplitudeGain, const ModeSet& inheritedModes) {
                 if (graph.routes_.size() >= maximumCompiledRoutes) {
                     if (!routeLimitReported) {
@@ -757,29 +775,58 @@ ExhaustGraph ExhaustGraph::makeForEngine(
                     activeNodes.erase(nodeId);
                     return;
                 }
-                const auto foundOutputs = outgoing.find(nodeId);
-                if (foundOutputs == outgoing.end() || foundOutputs->second.empty()) {
+                const auto foundOutputs = outgoingEdges.find(nodeId);
+                if (foundOutputs == outgoingEdges.end()
+                    || foundOutputs->second.empty()) {
+                    activeNodes.erase(nodeId);
+                    return;
+                }
+                const auto validDirectionalCrossover =
+                    node.type == ExhaustNodeType::crossover
+                    && incomingPort <= 1U
+                    && foundOutputs->second.size() == 2U
+                    && foundOutputs->second[0]->fromPort <= 1U
+                    && foundOutputs->second[1]->fromPort <= 1U
+                    && foundOutputs->second[0]->fromPort
+                        != foundOutputs->second[1]->fromPort;
+                if (validDirectionalCrossover) {
+                    const auto crossEnergy = node.crossoverCoupling
+                        * node.crossoverCoupling;
+                    for (const auto* edge : foundOutputs->second) {
+                        const auto samePair = edge->fromPort == incomingPort;
+                        const auto energyShare = samePair
+                            ? 1.0 - crossEnergy : crossEnergy;
+                        const auto branchLogGain = energyShare > 0.0
+                            && logAmplitudeGain
+                                != -std::numeric_limits<double>::infinity()
+                            ? logAmplitudeGain + 0.5 * std::log(energyShare)
+                            : -std::numeric_limits<double>::infinity();
+                        visit(edge->to, edge->toPort, lengthMm, restriction,
+                            branchLogGain, modes);
+                    }
                     activeNodes.erase(nodeId);
                     return;
                 }
                 double totalAdmittance = 0.0;
-                for (const auto nextNodeId : foundOutputs->second)
-                    totalAdmittance += acousticAdmittance(nextNodeId);
+                for (const auto* edge : foundOutputs->second)
+                    totalAdmittance += acousticAdmittance(edge->to);
                 const auto equalEnergyShare = 1.0
                     / static_cast<double>(foundOutputs->second.size());
-                for (const auto nextNodeId : foundOutputs->second) {
-                    const auto branchAdmittance = acousticAdmittance(nextNodeId);
+                for (const auto* edge : foundOutputs->second) {
+                    const auto branchAdmittance = acousticAdmittance(edge->to);
                     const auto energyShare = totalAdmittance > 0.0
                         ? branchAdmittance / totalAdmittance : equalEnergyShare;
                     const auto branchLogGain = energyShare > 0.0
                         && logAmplitudeGain != -std::numeric_limits<double>::infinity()
                         ? logAmplitudeGain + 0.5 * std::log(energyShare)
                         : -std::numeric_limits<double>::infinity();
-                    visit(nextNodeId, lengthMm, restriction, branchLogGain, modes);
+                    visit(edge->to, edge->toPort, lengthMm, restriction,
+                        branchLogGain, modes);
                 }
                 activeNodes.erase(nodeId);
             };
-        visit(root.nodeId, 0.0, 0.0, 0.0, {});
+        visit(root.nodeId, unspecifiedExhaustComponentPort,
+            0.0, 0.0, 0.0, {});
     }
 
     std::vector<double> restrictionSums(paths.size(), 0.0);

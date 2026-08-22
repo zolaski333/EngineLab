@@ -21,7 +21,9 @@ namespace {
 }
 
 [[nodiscard]] bool isJunctionType(ExhaustNodeType type) noexcept {
-    return type == ExhaustNodeType::merge || type == ExhaustNodeType::splitter;
+    return type == ExhaustNodeType::merge
+        || type == ExhaustNodeType::splitter
+        || type == ExhaustNodeType::crossover;
 }
 
 struct ElementReference final {
@@ -83,8 +85,15 @@ ExhaustNetworkLayout ExhaustNetworkLayout::compile(
                 // A branch junction has finite physical extent even when the
                 // author did not draw a plenum. One hydraulic diameter is the
                 // smallest geometry-based volume that does not invent a tuning
-                // frequency or depend on the numerical mesh length.
-                volumeM3 = connectionAreaM2 * diameterM;
+                // frequency or depend on the numerical mesh length. A
+                // crossover contains TWO intersecting duct sections, so its
+                // compact gas volume is 2*A*d; using the single-duct A*d volume
+                // made a four-port X half as large as its own geometry and
+                // unnecessarily doubled the global explicit substep rate.
+                const auto parallelSections = node.type
+                        == ExhaustNodeType::crossover
+                    ? 2.0 : 1.0;
+                volumeM3 = parallelSections * connectionAreaM2 * diameterM;
                 derived = true;
             }
             const auto index = layout.junctions_.size();
@@ -99,6 +108,8 @@ ExhaustNetworkLayout ExhaustNetworkLayout::compile(
                 finite(node.lengthMm) && node.lengthMm > 0.0
                     ? node.lengthMm * 0.001 : 0.0,
                 derived,
+                node.type == ExhaustNodeType::crossover
+                    ? std::clamp(node.crossoverCoupling, 0.0, 1.0) : 0.0,
             });
             elements.emplace(node.id, ElementReference { true, index });
             continue;
@@ -277,7 +288,8 @@ ExhaustNetworkLayout ExhaustNetworkLayout::compile(
                   !upstream ? edge.from : edge.to });
             continue;
         }
-        layout.interfaces_.push_back({ *upstream, *downstream });
+        layout.interfaces_.push_back({ *upstream, *downstream,
+            edge.fromPort, edge.toPort });
     }
 
     std::vector<std::uint32_t> cylinderIds;
@@ -500,6 +512,50 @@ double ExhaustNetworkLayout::minimumCellLengthM() const noexcept {
         const auto cellLengthM =
             duct.lengthM / static_cast<double>(duct.cellCount);
         if (shortest == 0.0 || cellLengthM < shortest) shortest = cellLengthM;
+    }
+    return shortest;
+}
+
+double ExhaustNetworkLayout::minimumCflLengthM() const noexcept {
+    auto shortest = minimumCellLengthM();
+    std::vector<double> junctionPortAreaSums(junctions_.size(), 0.0);
+    const auto endpointArea = [this](const ExhaustEndpoint& endpoint) noexcept {
+        if (endpoint.type == ExhaustEndpointType::junction) {
+            return circularArea(
+                junctions_[endpoint.elementIndex].characteristicDiameterM);
+        }
+        const auto& duct = ducts_[endpoint.elementIndex];
+        return endpoint.type == ExhaustEndpointType::ductInlet
+            ? std::min(duct.inletConnectionAreaM2, duct.inletFlowAreaM2)
+            : std::min(duct.outletConnectionAreaM2, duct.outletFlowAreaM2);
+    };
+    for (const auto& connection : interfaces_) {
+        const auto area = std::min(endpointArea(connection.upstream),
+            endpointArea(connection.downstream));
+        if (connection.upstream.type == ExhaustEndpointType::junction)
+            junctionPortAreaSums[connection.upstream.elementIndex] += area;
+        if (connection.downstream.type == ExhaustEndpointType::junction)
+            junctionPortAreaSums[connection.downstream.elementIndex] += area;
+    }
+    for (const auto& port : cylinderPorts_) {
+        if (port.networkEndpoint.type != ExhaustEndpointType::junction)
+            continue;
+        junctionPortAreaSums[port.networkEndpoint.elementIndex] += std::min(
+            port.runnerConnectionAreaM2, endpointArea(port.networkEndpoint));
+    }
+    for (const auto& outlet : outlets_) {
+        if (outlet.networkEndpoint.type != ExhaustEndpointType::junction)
+            continue;
+        junctionPortAreaSums[outlet.networkEndpoint.elementIndex] += std::min(
+            outlet.openingAreaM2, endpointArea(outlet.networkEndpoint));
+    }
+    for (std::size_t index = 0; index < junctions_.size(); ++index) {
+        if (!(junctionPortAreaSums[index] > 0.0)) continue;
+        const auto characteristicLengthM = junctions_[index].volumeM3
+            / junctionPortAreaSums[index];
+        if (characteristicLengthM > 0.0
+            && (shortest == 0.0 || characteristicLengthM < shortest))
+            shortest = characteristicLengthM;
     }
     return shortest;
 }

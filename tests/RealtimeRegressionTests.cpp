@@ -3,6 +3,7 @@
 #include <enginelab/audio/AcousticIntakeNetwork.hpp>
 #include <enginelab/audio/BoundaryReconstructionFilter.hpp>
 #include <enginelab/audio/ExhaustJetNoise.hpp>
+#include <enginelab/audio/ExhaustCrossoverScattering.hpp>
 #include <enginelab/audio/ForcedInductionAcoustics.hpp>
 #include <enginelab/audio/FreeFieldObserver.hpp>
 #include <enginelab/audio/NonlinearDuctAcoustics.hpp>
@@ -537,6 +538,269 @@ void reactionInjectionRegression() {
     }
     require(energy > 1.0e-10,
         "a local exhaust reaction must propagate through the authored DAG to the microphones");
+}
+
+struct ReactionSpatialSignature final {
+    std::vector<float> left;
+    std::vector<float> right;
+    double leftEnergy {};
+    double rightEnergy {};
+};
+
+[[nodiscard]] enginelab::EngineConfig legacyPseudoXReactionFixture() {
+    auto config = enginelab::makeDefaultInlineTwo();
+    config.acousticObserver.leftMicrophoneM = { -2.0, 0.20, 0.0 };
+    config.acousticObserver.rightMicrophoneM = { 2.0, 0.20, 0.0 };
+    config.acousticObserver.listeningDistanceM = 0.0;
+    auto& path = config.exhaustPaths.front();
+    enginelab::ExhaustNetworkConfig network;
+    for (const auto id : { 101U, 102U }) {
+        enginelab::ExhaustComponentConfig pipe;
+        pipe.id = id;
+        pipe.type = enginelab::ExhaustComponentType::pipe;
+        pipe.lengthMm = 600.0;
+        pipe.diameterMm = 48.0;
+        network.components.push_back(pipe);
+    }
+    for (const auto id : { 201U, 202U }) {
+        enginelab::ExhaustComponentConfig branch;
+        branch.id = id;
+        branch.type = id == 201U
+            ? enginelab::ExhaustComponentType::merge
+            : enginelab::ExhaustComponentType::splitter;
+        branch.lengthMm = 0.0;
+        branch.diameterMm = 60.0;
+        network.components.push_back(branch);
+    }
+    for (const auto id : { 301U, 302U }) {
+        enginelab::ExhaustComponentConfig pipe;
+        pipe.id = id;
+        pipe.type = enginelab::ExhaustComponentType::pipe;
+        pipe.lengthMm = 500.0;
+        pipe.diameterMm = 48.0;
+        network.components.push_back(pipe);
+    }
+    for (const auto id : { 401U, 402U }) {
+        enginelab::ExhaustComponentConfig outlet;
+        outlet.id = id;
+        outlet.type = enginelab::ExhaustComponentType::outlet;
+        outlet.lengthMm = 100.0;
+        outlet.diameterMm = 48.0;
+        outlet.acousticPositionM = {
+            id == 401U ? -2.0 : 2.0, 0.0, 0.0 };
+        outlet.acousticAxis = { 0.0, 1.0, 0.0 };
+        network.components.push_back(outlet);
+    }
+    network.cylinderConnections = {
+        { config.cylinders[0].id, 101U },
+        { config.cylinders[1].id, 102U },
+    };
+    network.connections = {
+        { 101U, 201U }, { 102U, 201U }, { 201U, 202U },
+        { 202U, 301U }, { 202U, 302U },
+        { 301U, 401U }, { 302U, 402U },
+    };
+    path.network = std::move(network);
+    enginelab::normaliseEngineConfig(config);
+    return config;
+}
+
+[[nodiscard]] enginelab::EngineConfig directionalXReactionFixture() {
+    auto config = enginelab::makeDefaultInlineTwo();
+    config.acousticObserver.leftMicrophoneM = { -2.0, 0.20, 0.0 };
+    config.acousticObserver.rightMicrophoneM = { 2.0, 0.20, 0.0 };
+    config.acousticObserver.listeningDistanceM = 0.0;
+    auto& path = config.exhaustPaths.front();
+    enginelab::ExhaustNetworkConfig network;
+    for (const auto id : { 101U, 102U }) {
+        enginelab::ExhaustComponentConfig pipe;
+        pipe.id = id;
+        pipe.type = enginelab::ExhaustComponentType::pipe;
+        pipe.lengthMm = 600.0;
+        pipe.diameterMm = 48.0;
+        network.components.push_back(pipe);
+    }
+    enginelab::ExhaustComponentConfig crossover;
+    crossover.id = 201U;
+    crossover.type = enginelab::ExhaustComponentType::crossover;
+    crossover.lengthMm = 0.0;
+    crossover.diameterMm = 60.0;
+    crossover.volumeLitres = 0.0;
+    crossover.crossoverCoupling = 0.30;
+    network.components.push_back(crossover);
+    for (const auto id : { 301U, 302U }) {
+        enginelab::ExhaustComponentConfig pipe;
+        pipe.id = id;
+        pipe.type = enginelab::ExhaustComponentType::pipe;
+        pipe.lengthMm = 500.0;
+        pipe.diameterMm = 48.0;
+        network.components.push_back(pipe);
+    }
+    for (const auto id : { 401U, 402U }) {
+        enginelab::ExhaustComponentConfig outlet;
+        outlet.id = id;
+        outlet.type = enginelab::ExhaustComponentType::outlet;
+        outlet.lengthMm = 100.0;
+        outlet.diameterMm = 48.0;
+        outlet.acousticPositionM = {
+            id == 401U ? -2.0 : 2.0, 0.0, 0.0 };
+        outlet.acousticAxis = { 0.0, 1.0, 0.0 };
+        network.components.push_back(outlet);
+    }
+    network.cylinderConnections = {
+        { config.cylinders[0].id, 101U },
+        { config.cylinders[1].id, 102U },
+    };
+    network.connections = {
+        { 101U, 201U, enginelab::unspecifiedExhaustComponentPort, 0U },
+        { 102U, 201U, enginelab::unspecifiedExhaustComponentPort, 1U },
+        { 201U, 301U, 0U, enginelab::unspecifiedExhaustComponentPort },
+        { 201U, 302U, 1U, enginelab::unspecifiedExhaustComponentPort },
+        { 301U, 401U }, { 302U, 402U },
+    };
+    path.network = std::move(network);
+    enginelab::normaliseEngineConfig(config);
+    return config;
+}
+
+void crossoverScatteringRegression() {
+    using Crossover = enginelab::ExhaustCrossoverScattering;
+    constexpr Crossover::Admittances admittance {
+        1.7e-8, 2.4e-8, 1.2e-8, 3.1e-8 };
+    constexpr Crossover::Waves incident { 1'100.0F, -430.0F, 720.0F, 95.0F };
+    const auto outgoing = Crossover::scatter(incident, admittance, 0.37);
+    const auto power = [&admittance](const Crossover::Waves& waves) {
+        auto sum = 0.0;
+        for (std::size_t index = 0; index < waves.size(); ++index)
+            sum += admittance[index] * static_cast<double>(waves[index])
+                * waves[index];
+        return sum;
+    };
+    require(std::abs(power(outgoing) / power(incident) - 1.0) < 2.0e-7,
+        "the X-pipe power-wave matrix must be passive for unequal ducts");
+
+    const auto straight = Crossover::scatter(
+        Crossover::Waves { 900.0F, 0.0F, 0.0F, 0.0F },
+        Crossover::Admittances { 2.0e-8, 2.0e-8, 2.0e-8, 2.0e-8 }, 0.0);
+    require(straight[0] == 0.0F && straight[1] == 0.0F
+            && std::abs(straight[2] - 900.0F) < 1.0e-4F
+            && straight[3] == 0.0F,
+        "zero X-pipe coupling must be an exact paired straight-through path");
+
+    Crossover::Waves fromUpstream0 {};
+    fromUpstream0[0] = 1.0F;
+    Crossover::Waves fromDownstream1 {};
+    fromDownstream1[3] = 1.0F;
+    constexpr Crossover::Admittances equalAdmittance { 1.0, 1.0, 1.0, 1.0 };
+    const auto forward = Crossover::scatter(
+        fromUpstream0, equalAdmittance, 0.37);
+    const auto reverse = Crossover::scatter(
+        fromDownstream1, equalAdmittance, 0.37);
+    require(std::abs(forward[3] - reverse[0]) < 1.0e-7F,
+        "the X-pipe cross path must be reciprocal");
+}
+
+[[nodiscard]] ReactionSpatialSignature renderReactionAtComponent(
+    const enginelab::EngineConfig& config, std::uint32_t componentId) {
+    constexpr double sampleRate = 48'000.0;
+    constexpr std::size_t sampleCount = 16'384;
+    const auto graph = enginelab::ExhaustGraph::makeForEngine(config);
+    std::array<std::uint32_t, 2> cylinderIds {
+        config.cylinders[0].id, config.cylinders[1].id };
+    const auto sourceNode = std::find_if(
+        graph.nodes().begin(), graph.nodes().end(),
+        [componentId](const auto& node) {
+            return node.sourceComponentId == componentId;
+        });
+    require(sourceNode != graph.nodes().end(),
+        "the reaction-spatialisation fixture must resolve its source component");
+    enginelab::AcousticExhaustNetwork acoustics(graph, cylinderIds);
+    require(acoustics.valid() && acoustics.prepare(sampleRate),
+        "the reaction-spatialisation fixture must compile and prepare");
+    acoustics.setOutletJetNoiseEnabled(false);
+    const std::array<enginelab::AcousticExhaustNetwork::Medium, 1> medium {{
+        { 0.55F, 535.0F } }};
+    acoustics.beginBlock(medium, 1.0);
+    require(acoustics.injectReactionPressure(
+            sourceNode->id, 0.5F, 5'000.0F),
+        "the spatial reaction must enter its exact finite-volume node");
+    std::array<float, 2> sources {};
+    std::array<enginelab::AcousticExhaustNetwork::CylinderBoundary, 2>
+        boundaries {};
+    ReactionSpatialSignature result;
+    result.left.reserve(sampleCount);
+    result.right.reserve(sampleCount);
+    for (std::size_t sample = 0; sample < sampleCount; ++sample) {
+        const auto output = acoustics.process(sources, boundaries, 1.0F);
+        require(std::isfinite(output[0].leftPa)
+                && std::isfinite(output[0].rightPa),
+            "reaction spatialisation must stay finite");
+        result.left.push_back(output[0].leftPa);
+        result.right.push_back(output[0].rightPa);
+        result.leftEnergy += static_cast<double>(output[0].leftPa)
+            * output[0].leftPa;
+        result.rightEnergy += static_cast<double>(output[0].rightPa)
+            * output[0].rightPa;
+    }
+    return result;
+}
+
+void reactionXPipeSpatialisationRegression() {
+    const auto legacy = legacyPseudoXReactionFixture();
+    const auto legacyBankA = renderReactionAtComponent(legacy, 101U);
+    const auto legacyBankB = renderReactionAtComponent(legacy, 102U);
+    const auto legacyAfterX = renderReactionAtComponent(legacy, 301U);
+    const auto directional = directionalXReactionFixture();
+    const auto bankA = renderReactionAtComponent(directional, 101U);
+    const auto bankB = renderReactionAtComponent(directional, 102U);
+    const auto afterX = renderReactionAtComponent(directional, 301U);
+    const auto levelDifferenceDb = [](double first, double second) {
+        return 10.0 * std::log10(std::max(1.0e-30, first)
+            / std::max(1.0e-30, second));
+    };
+    const auto identityDelta = [&levelDifferenceDb](
+        const ReactionSpatialSignature& first,
+        const ReactionSpatialSignature& second) {
+        auto differenceEnergy = 0.0;
+        auto referenceEnergy = 0.0;
+        for (std::size_t sample = 0; sample < first.left.size(); ++sample) {
+            const auto difference = static_cast<double>(first.left[sample])
+                - second.left[sample];
+            differenceEnergy += difference * difference;
+            referenceEnergy += static_cast<double>(first.left[sample])
+                * first.left[sample];
+        }
+        return levelDifferenceDb(differenceEnergy, referenceEnergy);
+    };
+    const auto legacyIdentityDeltaDb = identityDelta(
+        legacyBankA, legacyBankB);
+    const auto identityDeltaDb = identityDelta(bankA, bankB);
+    const auto bankADifferenceDb = levelDifferenceDb(
+        bankA.leftEnergy, bankA.rightEnergy);
+    const auto bankBDifferenceDb = levelDifferenceDb(
+        bankB.leftEnergy, bankB.rightEnergy);
+    const auto afterXDifferenceDb = levelDifferenceDb(
+        afterX.leftEnergy, afterX.rightEnergy);
+    const auto legacyAfterXDifferenceDb = levelDifferenceDb(
+        legacyAfterX.leftEnergy, legacyAfterX.rightEnergy);
+    std::cout << "reaction X spatialisation: legacy_identity_db="
+              << legacyIdentityDeltaDb
+              << " directional_identity_db=" << identityDeltaDb
+              << " bankA_lr_db="
+              << bankADifferenceDb
+              << " bankB_lr_db=" << bankBDifferenceDb
+              << " afterX_lr_db=" << afterXDifferenceDb
+              << " legacy_afterX_lr_db=" << legacyAfterXDifferenceDb << '\n';
+    require(legacyIdentityDeltaDb < -120.0,
+        "the legacy merge-plus-splitter null must expose bank identity collapse");
+    require(bankA.leftEnergy > 1.0e-10 && bankA.rightEnergy > 1.0e-10
+            && bankB.leftEnergy > 1.0e-10 && bankB.rightEnergy > 1.0e-10,
+        "both directional X outlets must radiate a reaction from either bank");
+    require(identityDeltaDb > -20.0
+            && bankADifferenceDb > 3.0 && bankBDifferenceDb < -3.0,
+        "the directional X must preserve mirrored bank identity at its outlets");
+    require(afterXDifferenceDb > 6.0,
+        "the spatial oracle must distinguish a reaction placed after the X");
 }
 
 void thermoacousticHeatReleaseSourceRegression() {
@@ -2866,8 +3130,10 @@ int main(int argc, char** argv) {
         runnerDelaySampleRateRegression();
         exhaustPathIsolationRegression();
         exhaustJetNoiseRegression();
+        crossoverScatteringRegression();
         thermoacousticHeatReleaseSourceRegression();
         reactionInjectionRegression();
+        reactionXPipeSpatialisationRegression();
         branchedAcousticTopologyRegression();
         branchTrunkDelayRegression();
         ductMediumRegression();

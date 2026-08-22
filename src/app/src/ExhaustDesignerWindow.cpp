@@ -30,11 +30,11 @@ constexpr std::size_t maximumConnections = 1'024;
     return juce::String::fromUTF8(value.data(), static_cast<int>(value.size()));
 }
 
-/** Shortest meshed cell in an engine's compiled exhaust, metres; 0 if unknown.
+/** Smallest duct/junction CFL length in a compiled exhaust; 0 if unknown.
  *
  * Validation checks ranges and topology and nothing else, so a network that is
  * perfectly legal can still be ruinously expensive: the explicit solver's time
- * step is set by the SHORTEST cell anywhere in the network, and every other
+ * step is set by the minimum duct dx or junction V/sum(A), and every other
  * duct then substeps at that rate. A user who rebuilt a 2JZ exhaust with an
  * 80 x 10 mm silencer body reported that the engine had "gained inertia, lost
  * its liveliness and made almost no sound" -- three descriptions of one cause,
@@ -42,16 +42,17 @@ constexpr std::size_t maximumConnections = 1'024;
  * thread landing at 153 % of its frame budget. Nothing in the editor could
  * have told them.
  *
- * Returning the length rather than a frequency is deliberate: the substep RATE
- * is proportional to 1/dx for the same gas, so a ratio of two of these lengths
- * is an exact ratio of two solver costs, with no assumed sound speed anywhere.
+ * Returning the geometric length rather than a frequency is deliberate: the
+ * substep rate is proportional to its inverse at the same gas state, without
+ * assuming a fixed sound speed in the editor.
  */
-[[nodiscard]] double shortestExhaustCellM(const EngineConfig& config) {
+[[nodiscard]] double minimumExhaustCflLengthM(const EngineConfig& config) {
     try {
         const auto graph = ExhaustGraph::makeForEngine(config);
-        const auto layout = gasdynamics::ExhaustNetworkLayout::compile(graph);
+        const auto layout = gasdynamics::ExhaustNetworkLayout::compile(
+            graph, gasdynamics::realtimeExhaustFeedbackDiscretisation());
         if (!layout.valid()) return 0.0;
-        return layout.minimumCellLengthM();
+        return layout.minimumCflLengthM();
     } catch (...) {
         return 0.0;
     }
@@ -66,6 +67,7 @@ constexpr std::size_t maximumConnections = 1'024;
     case ExhaustComponentType::muffler: return "Silencieux";
     case ExhaustComponentType::catalyst: return "Catalyseur";
     case ExhaustComponentType::outlet: return "Sortie";
+    case ExhaustComponentType::crossover: return "X-pipe";
     }
     return "Inconnu";
 }
@@ -79,6 +81,7 @@ constexpr std::size_t maximumConnections = 1'024;
     case ExhaustComponentType::muffler: return juce::Colour(0xffb16a71);
     case ExhaustComponentType::catalyst: return juce::Colour(0xffa19b55);
     case ExhaustComponentType::outlet: return juce::Colour(0xff6d7472);
+    case ExhaustComponentType::crossover: return juce::Colour(0xff4f90c9);
     }
     return juce::Colour(0xff6d7472);
 }
@@ -160,6 +163,14 @@ constexpr std::size_t maximumConnections = 1'024;
         // it the real thing instead; the user can still shorten it.
         result.lengthMm = 300.0;
         result.diameterMm = 65.0;
+        break;
+    case ExhaustComponentType::crossover:
+        result.lengthMm = 0.0;
+        result.diameterMm = 80.0;
+        result.volumeLitres = 0.0;
+        result.restriction = 0.06;
+        // Estimated neutral starting point, not a measured calibration.
+        result.crossoverCoupling = 0.30;
         break;
     }
     return result;
@@ -608,7 +619,8 @@ private:
             "indirect, via la pression et le debit calcules par le solveur gaz.");
         propertyEditors_[6].setTooltip(
             "Actif dans le reseau physique uniquement pour un resonateur terminal: la longueur "
-            "acoustique de reference vaut c/(4f). Zero conserve la longueur geometrique.");
+            "acoustique de reference vaut c/(4f). Sur un X-pipe, k est l'amplitude "
+            "de puissance croisee et sqrt(1-k^2) reste dans le tube apparie.");
         propertyEditors_[7].setTooltip(
             "Compatibilite du rendu audio de secours. Le guide d'onde physique reste passif et "
             "n'applique pas ce gain arbitraire.");
@@ -681,7 +693,7 @@ private:
     static void populateTypeSelector(juce::ComboBox& selector) {
         selector.clear(juce::dontSendNotification);
         for (int type = static_cast<int>(ExhaustComponentType::pipe);
-             type <= static_cast<int>(ExhaustComponentType::outlet); ++type) {
+             type <= static_cast<int>(ExhaustComponentType::crossover); ++type) {
             selector.addItem(componentTypeName(static_cast<ExhaustComponentType>(type)), type + 1);
         }
     }
@@ -1028,8 +1040,15 @@ private:
         const auto* network = selectedNetwork();
         if (network == nullptr || row < 0 || row >= static_cast<int>(network->connections.size())) return {};
         const auto& connection = network->connections[static_cast<std::size_t>(row)];
-        return "#" + juce::String(connection.fromComponentId) + "  ->  #"
-            + juce::String(connection.toComponentId);
+        auto from = "#" + juce::String(connection.fromComponentId);
+        auto to = "#" + juce::String(connection.toComponentId);
+        if (connection.fromPort != unspecifiedExhaustComponentPort)
+            from += "[port " + juce::String(
+                static_cast<int>(connection.fromPort)) + "]";
+        if (connection.toPort != unspecifiedExhaustComponentPort)
+            to += "[port " + juce::String(
+                static_cast<int>(connection.toPort)) + "]";
+        return from + "  ->  " + to;
     }
 
     [[nodiscard]] int mappingCount() const {
@@ -1085,6 +1104,8 @@ private:
             component->packingThicknessMm,
             component->perforatedOpenAreaRatio
         };
+        if (component->type == ExhaustComponentType::crossover)
+            values[5] = component->crossoverCoupling;
         if (component->type == ExhaustComponentType::catalyst) {
             values[8] = component->catalystCellDensityCpsi;
             values[9] = component->catalystOpenAreaRatio;
@@ -1112,12 +1133,18 @@ private:
             == static_cast<int>(ExhaustComponentType::muffler);
         const auto catalyst = selectedType
             == static_cast<int>(ExhaustComponentType::catalyst);
+        const auto crossover = selectedType
+            == static_cast<int>(ExhaustComponentType::crossover);
         propertyLabels_[2].setText(available
                 ? "Diametre noyau garni / chambre seche (mm)"
                 : "Diametre entree (mm)",
             juce::dontSendNotification);
         propertyLabels_[4].setText(available
                 ? "Volume brut du corps (L)" : "Volume (L)",
+            juce::dontSendNotification);
+        propertyLabels_[6].setText(crossover
+                ? "Couplage croise k (0..1)"
+                : "Accord branche (Hz, 0 = longueur)",
             juce::dontSendNotification);
         propertyLabels_[9].setText(catalyst
                 ? "Densite cellules (cpsi)"
@@ -1142,8 +1169,10 @@ private:
         }
         const auto tunableBranch = selectedType
             == static_cast<int>(ExhaustComponentType::resonator);
-        propertyEditors_[6].setEnabled(tunableBranch);
-        if (!tunableBranch && clearIfUnavailable)
+        propertyEditors_[6].setEnabled(tunableBranch || crossover);
+        if (crossover && clearIfUnavailable)
+            propertyEditors_[6].setText("0.3", false);
+        else if (!tunableBranch && clearIfUnavailable)
             propertyEditors_[6].setText("0", false);
         packingDemoButton_.setEnabled(available);
         packingBypassButton_.setEnabled(available);
@@ -1262,7 +1291,7 @@ private:
         }
         const auto typeIndex = componentTypeSelector_.getSelectedItemIndex();
         if (typeIndex < static_cast<int>(ExhaustComponentType::pipe)
-            || typeIndex > static_cast<int>(ExhaustComponentType::outlet)) {
+            || typeIndex > static_cast<int>(ExhaustComponentType::crossover)) {
             setStatus("Type de composant invalide.", true);
             return;
         }
@@ -1276,7 +1305,9 @@ private:
             || !(values[2] == 0.0 || (values[2] >= 5.0 && values[2] <= 500.0))
             || values[3] < 0.0 || values[3] > 1'000.0
             || values[4] < 0.0 || values[4] > 20.0
-            || values[5] < 0.0 || values[5] > 20'000.0
+            || values[5] < 0.0
+            || values[5] > (type == ExhaustComponentType::crossover
+                    ? 1.0 : 20'000.0)
             || values[6] < 0.0 || values[6] > 8.0
             || values[7] < 0.02 || values[7] > 1.5
             || values[8] < 0.0 || values[8] > 200'000.0
@@ -1302,6 +1333,12 @@ private:
             setStatus("Materiau invalide: garnissage complet sur silencieux, ou catalyseur 25..5000 cpsi, aire ouverte 0.05..0.99 et capacite 0.1..10 MJ/m3/K.", true);
             return;
         }
+        if (type == ExhaustComponentType::crossover
+            && (values[0] != 0.0 || values[2] != 0.0
+                || values[3] != 0.0)) {
+            setStatus("Un X-pipe compact exige longueur, diametre de sortie et volume nuls; dessinez ses quatre longueurs avec des tubes voisins.", true);
+            return;
+        }
         if (hasCompletePacking) {
             constexpr double pi = 3.14159265358979323846;
             const auto inletRadiusM = values[1] * 0.0005;
@@ -1320,6 +1357,7 @@ private:
         }
 
         const auto oldId = component->id;
+        const auto oldType = component->type;
         component->id = newId;
         component->type = type;
         component->lengthMm = values[0];
@@ -1327,7 +1365,10 @@ private:
         component->outletDiameterMm = values[2];
         component->volumeLitres = values[3];
         component->restriction = values[4];
-        component->resonanceHz = values[5];
+        component->resonanceHz = type == ExhaustComponentType::crossover
+            ? 0.0 : values[5];
+        component->crossoverCoupling = type == ExhaustComponentType::crossover
+            ? values[5] : 0.0;
         component->acousticGain = values[6];
         component->dischargeCoefficient = values[7];
         component->packingFlowResistivityPaSPerM2 = hasCompletePacking ? values[8] : 0.0;
@@ -1344,6 +1385,20 @@ private:
             }
             for (auto& mapping : network->cylinderConnections)
                 if (mapping.componentId == oldId) mapping.componentId = newId;
+        }
+        if (oldType != type) {
+            auto nextInputPort = std::uint8_t { 0 };
+            auto nextOutputPort = std::uint8_t { 0 };
+            for (auto& connection : network->connections) {
+                if (connection.toComponentId == newId)
+                    connection.toPort = type == ExhaustComponentType::crossover
+                            && nextInputPort <= 1U
+                        ? nextInputPort++ : unspecifiedExhaustComponentPort;
+                if (connection.fromComponentId == newId)
+                    connection.fromPort = type == ExhaustComponentType::crossover
+                            && nextOutputPort <= 1U
+                        ? nextOutputPort++ : unspecifiedExhaustComponentPort;
+            }
         }
         selectedComponentId_ = newId;
         setStatus("Composant mis a jour dans la copie de travail.", false);
@@ -1373,7 +1428,48 @@ private:
             setStatus("Cette connexion existe deja.", true);
             return;
         }
-        network->connections.push_back({ *from, *to });
+        const auto componentType = [network](std::uint32_t id) {
+            const auto found = std::find_if(network->components.begin(),
+                network->components.end(), [id](const auto& component) {
+                    return component.id == id;
+                });
+            return found != network->components.end()
+                ? found->type : ExhaustComponentType::pipe;
+        };
+        const auto nextPort = [network](std::uint32_t id, bool output)
+            -> std::optional<std::uint8_t> {
+            std::array<bool, 2> used {};
+            for (const auto& connection : network->connections) {
+                if (output && connection.fromComponentId == id
+                    && connection.fromPort <= 1U)
+                    used[connection.fromPort] = true;
+                if (!output && connection.toComponentId == id
+                    && connection.toPort <= 1U)
+                    used[connection.toPort] = true;
+            }
+            for (std::uint8_t port = 0; port <= 1U; ++port)
+                if (!used[port]) return port;
+            return std::nullopt;
+        };
+        auto fromPort = unspecifiedExhaustComponentPort;
+        auto toPort = unspecifiedExhaustComponentPort;
+        if (componentType(*from) == ExhaustComponentType::crossover) {
+            const auto port = nextPort(*from, true);
+            if (!port) {
+                setStatus("Les deux ports de sortie du X-pipe sont deja utilises.", true);
+                return;
+            }
+            fromPort = *port;
+        }
+        if (componentType(*to) == ExhaustComponentType::crossover) {
+            const auto port = nextPort(*to, false);
+            if (!port) {
+                setStatus("Les deux ports d'entree du X-pipe sont deja utilises.", true);
+                return;
+            }
+            toPort = *port;
+        }
+        network->connections.push_back({ *from, *to, fromPort, toPort });
         selectedConnectionRow_ = static_cast<int>(network->connections.size()) - 1;
         setStatus("Connexion ajoutee. La validation detectera cycles et cardinalites invalides.", false);
         rebuildAll();
@@ -1445,10 +1541,10 @@ private:
      * the audio consumes it.
      */
     [[nodiscard]] juce::String solverCostAdvisory() const {
-        const auto appliedM = shortestExhaustCellM(working_);
-        const auto baselineM = shortestExhaustCellM(baseline_);
+        const auto appliedM = minimumExhaustCflLengthM(working_);
+        const auto baselineM = minimumExhaustCflLengthM(baseline_);
         if (!(appliedM > 0.0)) return {};
-        auto text = "  Maille la plus fine " + juce::String(appliedM * 1'000.0, 1)
+        auto text = "  Longueur CFL limitante " + juce::String(appliedM * 1'000.0, 1)
             + " mm";
         if (!(baselineM > 0.0)) return text + ".";
         // Rate is proportional to 1/dx for the same gas, so this ratio is an

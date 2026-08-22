@@ -4,6 +4,16 @@
 
 namespace enginelab {
 namespace {
+[[nodiscard]] std::uint8_t decodeOptionalCrossoverPort(
+    const YAML::Node& object, const char* key) {
+    const auto encoded = object[key];
+    if (!encoded) return unspecifiedExhaustComponentPort;
+    const auto value = encoded.as<unsigned>();
+    if (value > 1U)
+        throw std::invalid_argument(
+            std::string("Exhaust crossover port must be 0 or 1: ") + key);
+    return static_cast<std::uint8_t>(value);
+}
 [[nodiscard]] const char* afterfireStrategyName(
     ExhaustAfterfireStrategy value) noexcept {
     switch (value) {
@@ -176,6 +186,7 @@ void emitStructuralNvh(YAML::Emitter& out,
     case ExhaustComponentType::muffler: return "muffler";
     case ExhaustComponentType::catalyst: return "catalyst";
     case ExhaustComponentType::outlet: return "outlet";
+    case ExhaustComponentType::crossover: return "crossover";
     }
     return "pipe";
 }
@@ -187,6 +198,7 @@ void emitStructuralNvh(YAML::Emitter& out,
     if (value == "muffler") return ExhaustComponentType::muffler;
     if (value == "catalyst") return ExhaustComponentType::catalyst;
     if (value == "outlet") return ExhaustComponentType::outlet;
+    if (value == "crossover") return ExhaustComponentType::crossover;
     return std::nullopt;
 }
 [[nodiscard]] const char* terminationName(AcousticTerminationType value) noexcept {
@@ -622,6 +634,8 @@ std::string YamlEngineSerializer::encode(const EngineConfig& config) const {
                     << YAML::Key << "catalyst_substrate_volumetric_heat_capacity_j_m3_k"
                     << YAML::Value
                     << component.catalystSubstrateVolumetricHeatCapacityJPerM3K
+                    << YAML::Key << "crossover_coupling" << YAML::Value
+                    << component.crossoverCoupling
                     << YAML::Key << "acoustic_position_m" << YAML::Value;
                 emitPoint(out, component.acousticPositionM);
                 out << YAML::Key << "acoustic_axis" << YAML::Value;
@@ -637,11 +651,18 @@ std::string YamlEngineSerializer::encode(const EngineConfig& config) const {
                     << YAML::Key << "to_component_id" << YAML::Value << connection.componentId
                     << YAML::EndMap;
             out << YAML::EndSeq << YAML::Key << "connections" << YAML::Value << YAML::BeginSeq;
-            for (const auto& connection : path.network->connections)
+            for (const auto& connection : path.network->connections) {
                 out << YAML::BeginMap
                     << YAML::Key << "from_component_id" << YAML::Value << connection.fromComponentId
-                    << YAML::Key << "to_component_id" << YAML::Value << connection.toComponentId
-                    << YAML::EndMap;
+                    << YAML::Key << "to_component_id" << YAML::Value << connection.toComponentId;
+                if (connection.fromPort != unspecifiedExhaustComponentPort)
+                    out << YAML::Key << "from_port" << YAML::Value
+                        << static_cast<unsigned>(connection.fromPort);
+                if (connection.toPort != unspecifiedExhaustComponentPort)
+                    out << YAML::Key << "to_port" << YAML::Value
+                        << static_cast<unsigned>(connection.toPort);
+                out << YAML::EndMap;
+            }
             out << YAML::EndSeq << YAML::EndMap;
         }
         out << YAML::EndMap;
@@ -1118,6 +1139,9 @@ EngineDecodeResult YamlEngineSerializer::decode(std::string_view text) const noe
                             encodedComponent[
                                 "catalyst_substrate_volumetric_heat_capacity_j_m3_k"].as<double>(
                                     component.catalystSubstrateVolumetricHeatCapacityJPerM3K);
+                        component.crossoverCoupling = encodedComponent[
+                            "crossover_coupling"].as<double>(
+                                component.crossoverCoupling);
                         if (encodedComponent["acoustic_position_m"])
                             component.acousticPositionM = decodePoint(
                                 encodedComponent["acoustic_position_m"]);
@@ -1138,7 +1162,11 @@ EngineDecodeResult YamlEngineSerializer::decode(std::string_view text) const noe
                     for (const auto& encodedConnection : encodedGraph["connections"])
                         network.connections.push_back({
                             encodedConnection["from_component_id"].as<std::uint32_t>(),
-                            encodedConnection["to_component_id"].as<std::uint32_t>() });
+                            encodedConnection["to_component_id"].as<std::uint32_t>(),
+                            decodeOptionalCrossoverPort(
+                                encodedConnection, "from_port"),
+                            decodeOptionalCrossoverPort(
+                                encodedConnection, "to_port") });
                     path.network = std::move(network);
                 }
                 config.exhaustPaths.push_back(std::move(path));

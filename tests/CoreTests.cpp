@@ -1935,6 +1935,7 @@ int main() {
     bool foundGlobalCrossPlaneXPipe = false;
     bool foundMotorcycleFourTwoOne = false;
     const enginelab::EngineConfig* bigTwinConfig = nullptr;
+    const enginelab::EngineConfig* ls3Config = nullptr;
     for (const auto& entry : catalog.entries) {
         found2jz = found2jz || entry.config.name.find("2JZ") != std::string::npos;
         foundV8 = foundV8 || (entry.config.layout == enginelab::EngineLayout::vLayout && entry.config.cylinders.size() == 8);
@@ -1985,12 +1986,18 @@ int main() {
                 components.begin(), components.end(), [](const auto& component) {
                     return component.type == enginelab::ExhaustComponentType::splitter;
                 });
+            const auto crossovers = std::count_if(
+                components.begin(), components.end(), [](const auto& component) {
+                    return component.type
+                        == enginelab::ExhaustComponentType::crossover;
+                });
             const auto outlets = std::count_if(
                 components.begin(), components.end(), [](const auto& component) {
                     return component.type == enginelab::ExhaustComponentType::outlet;
                 });
-            foundGlobalCrossPlaneXPipe = merges >= 3
-                && splitters >= 1 && outlets == 2;
+            foundGlobalCrossPlaneXPipe = merges == 2
+                && splitters == 0 && crossovers == 1 && outlets == 2;
+            ls3Config = &entry.config;
         }
         if (entry.config.name.find("Hayabusa") != std::string::npos
                 && !entry.config.exhaustPaths.empty()
@@ -2018,6 +2025,53 @@ int main() {
             "the Hayabusa 4-2-1 must retain both pair collectors and its final merge");
     require(bigTwinConfig != nullptr,
             "catalog must retain the Big Twin start regression fixture");
+    require(ls3Config != nullptr,
+            "catalog must retain the schema-9 LS3 crossover fixture");
+    const auto checkCrossoverRoundTrip = [](const enginelab::EngineConfig& decoded) {
+        const auto& network = *decoded.exhaustPaths.front().network;
+        const auto crossover = std::find_if(
+            network.components.begin(), network.components.end(),
+            [](const auto& component) {
+                return component.type
+                    == enginelab::ExhaustComponentType::crossover;
+            });
+        if (crossover == network.components.end()
+            || std::abs(crossover->crossoverCoupling - 0.30) > 1.0e-12)
+            return false;
+        std::array<bool, 2> inputs {};
+        std::array<bool, 2> outputs {};
+        for (const auto& connection : network.connections) {
+            if (connection.toComponentId == crossover->id
+                && connection.toPort <= 1U)
+                inputs[connection.toPort] = true;
+            if (connection.fromComponentId == crossover->id
+                && connection.fromPort <= 1U)
+                outputs[connection.fromPort] = true;
+        }
+        return inputs == std::array<bool, 2> { true, true }
+            && outputs == std::array<bool, 2> { true, true };
+    };
+    const auto ls3Json = json.decode(json.encode(*ls3Config));
+    const auto ls3Yaml = yaml.decode(yaml.encode(*ls3Config));
+    require(ls3Json && checkCrossoverRoundTrip(*ls3Json.config)
+            && ls3Yaml && checkCrossoverRoundTrip(*ls3Yaml.config),
+        "JSON and YAML must preserve crossover coupling and explicit port pairing");
+    auto invalidPortJson = json.encode(*ls3Config);
+    const auto jsonPort = invalidPortJson.find("\"to_port\": 0");
+    require(jsonPort != std::string::npos,
+        "the schema-9 JSON fixture must contain an explicit crossover port");
+    invalidPortJson.replace(jsonPort, std::string("\"to_port\": 0").size(),
+        "\"to_port\": 256");
+    require(!json.decode(invalidPortJson),
+        "JSON must reject an out-of-range crossover port before integer narrowing");
+    auto invalidPortYaml = yaml.encode(*ls3Config);
+    const auto yamlPort = invalidPortYaml.find("to_port: 0");
+    require(yamlPort != std::string::npos,
+        "the schema-9 YAML fixture must contain an explicit crossover port");
+    invalidPortYaml.replace(yamlPort, std::string("to_port: 0").size(),
+        "to_port: 256");
+    require(!yaml.decode(invalidPortYaml),
+        "YAML must reject an out-of-range crossover port before integer narrowing");
 
     {
         // Only explicit authored afterfire or wet-limiter states may bypass

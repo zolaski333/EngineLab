@@ -56,7 +56,7 @@ struct EngineSimulatorOptions final {
      * against the historical 250 us cap and the full-substep oracle. */
     std::optional<double> maximumLowSpeedExhaustCouplingSeconds;
     /** Target cell length of the nonlinear exhaust feedback mesh. Absent keeps
-     * the 300 mm production scale. This is a diagnostic/convergence knob: the
+     * the 360 mm production scale. This is a diagnostic/convergence knob: the
      * characteristic audio network still owns audio-band propagation. */
     std::optional<double> exhaustTargetCellLengthM;
     /** Diagnostic lower-bound experiment: reset the exhaust network to ambient

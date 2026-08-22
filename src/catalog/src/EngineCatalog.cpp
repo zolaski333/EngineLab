@@ -13,6 +13,16 @@
 
 namespace enginelab {
 namespace {
+[[nodiscard]] std::uint8_t decodeOptionalCrossoverPort(
+    const YAML::Node& object, const char* key) {
+    const auto encoded = object[key];
+    if (!encoded) return unspecifiedExhaustComponentPort;
+    const auto value = encoded.as<unsigned>();
+    if (value > 1U)
+        throw std::invalid_argument(
+            std::string("Exhaust crossover port must be 0 or 1: ") + key);
+    return static_cast<std::uint8_t>(value);
+}
 [[nodiscard]] ExhaustAfterfireStrategy decodeAfterfireStrategy(
     std::string_view value) {
     if (value == "clean_dfco")
@@ -392,6 +402,7 @@ template <typename T>
     if (value == "muffler") return ExhaustComponentType::muffler;
     if (value == "catalyst") return ExhaustComponentType::catalyst;
     if (value == "outlet") return ExhaustComponentType::outlet;
+    if (value == "crossover") return ExhaustComponentType::crossover;
     throw std::runtime_error("Unknown exhaust component type: " + value);
 }
 
@@ -423,6 +434,8 @@ template <typename T>
             assignIfPresent(encoded,
                 "catalyst_substrate_volumetric_heat_capacity_j_m3_k",
                 component.catalystSubstrateVolumetricHeatCapacityJPerM3K);
+            assignIfPresent(encoded, "crossover_coupling",
+                component.crossoverCoupling);
             if (encoded["acoustic_position_m"])
                 component.acousticPositionM = decodePoint(encoded["acoustic_position_m"]);
             if (encoded["acoustic_axis"])
@@ -442,8 +455,11 @@ template <typename T>
     }
     if (const auto connections = node["connections"]) {
         for (const auto& encoded : connections)
-            network.connections.push_back({ encoded["from_component_id"].as<std::uint32_t>(),
-                encoded["to_component_id"].as<std::uint32_t>() });
+            network.connections.push_back({
+                encoded["from_component_id"].as<std::uint32_t>(),
+                encoded["to_component_id"].as<std::uint32_t>(),
+                decodeOptionalCrossoverPort(encoded, "from_port"),
+                decodeOptionalCrossoverPort(encoded, "to_port") });
     }
     return network;
 }

@@ -396,7 +396,7 @@ struct RenderResult final {
      *  which layer to touch. */
     std::array<Spectrum, 4> layers {};
     double finalRpm { 0.0 };
-    double shortestCellMm { 0.0 };
+    double limitingCflLengthMm { 0.0 };
     double networkSubstepHz { 0.0 };
     bool physicalActive { false };
     bool finite { true };
@@ -440,13 +440,9 @@ maskingMarginDb(const Spectrum& exhaust, const Spectrum& others) {
     RenderResult result;
     {
         const auto graph = ExhaustGraph::makeForEngine(config);
-        gasdynamics::ExhaustNetworkDiscretisation mesh;
-        mesh.targetCellLengthM = 0.360;
-        mesh.minimumCellsPerDuct = 1;
-        mesh.maximumCellsPerDuct = 64;
-        mesh.maximumTotalCells = 1'024;
-        const auto layout = gasdynamics::ExhaustNetworkLayout::compile(graph, mesh);
-        result.shortestCellMm = layout.minimumCellLengthM() * 1'000.0;
+        const auto layout = gasdynamics::ExhaustNetworkLayout::compile(
+            graph, gasdynamics::realtimeExhaustFeedbackDiscretisation());
+        result.limitingCflLengthMm = layout.minimumCflLengthM() * 1'000.0;
     }
 
     SimpleEcuModel ecu;
@@ -1214,8 +1210,8 @@ int main(int argc, char** argv) {
                   << result.mix.rms
                   << "  echap " << std::setw(9) << result.exhaust.rms
                   << "  rpm " << std::setw(5) << std::setprecision(0) << result.finalRpm
-                  << "  maille " << std::setw(6) << std::setprecision(1)
-                  << result.shortestCellMm << " mm"
+                  << "  CFL " << std::setw(6) << std::setprecision(1)
+                  << result.limitingCflLengthMm << " mm"
                   << "  Pa " << std::setw(7) << std::setprecision(1)
                   << result.exhaustPeakPa
                   << "  agc " << std::setw(5) << std::setprecision(3)

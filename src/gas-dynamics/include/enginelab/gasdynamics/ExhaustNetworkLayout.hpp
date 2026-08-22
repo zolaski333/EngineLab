@@ -20,6 +20,22 @@ struct ExhaustNetworkDiscretisation final {
     [[nodiscard]] bool valid() const noexcept;
 };
 
+/** Production policy for the nonlinear, realtime exhaust-feedback mesh.
+ *
+ * Keep the simulator, editor advisory and measurement harnesses on this one
+ * source of truth. The characteristic audio network owns audio-band wave
+ * propagation; this deliberately coarse finite-volume mesh owns mean flow,
+ * back-pressure and low-band nonlinear feedback. */
+[[nodiscard]] inline ExhaustNetworkDiscretisation
+realtimeExhaustFeedbackDiscretisation() noexcept {
+    ExhaustNetworkDiscretisation result;
+    result.targetCellLengthM = 0.360;
+    result.minimumCellsPerDuct = 1;
+    result.maximumCellsPerDuct = 64;
+    result.maximumTotalCells = 1'024;
+    return result;
+}
+
 /** One component resolved as a finite-volume duct. */
 struct CompiledExhaustDuct final {
     std::uint32_t nodeId { 0 };
@@ -85,6 +101,8 @@ struct CompiledExhaustJunction final {
      *  Published here so the two discretisations read the same geometry. */
     double trunkLengthM { 0.0 };
     bool volumeWasDerived { false };
+    /** Passive power-wave coupling amplitude when sourceType==crossover. */
+    double crossoverCoupling { 0.0 };
 };
 
 enum class ExhaustEndpointType : std::uint8_t {
@@ -104,6 +122,8 @@ struct ExhaustEndpoint final {
 struct CompiledExhaustInterface final {
     ExhaustEndpoint upstream {};
     ExhaustEndpoint downstream {};
+    std::uint8_t upstreamPort { unspecifiedExhaustComponentPort };
+    std::uint8_t downstreamPort { unspecifiedExhaustComponentPort };
 };
 
 struct CompiledCylinderPort final {
@@ -198,12 +218,11 @@ public:
         return diagnostics_;
     }
     [[nodiscard]] std::size_t totalCellCount() const noexcept { return totalCellCount_; }
-    /** Shortest cell anywhere in the network, metres. Zero if there are none.
+    /** Shortest DUCT cell anywhere in the network, metres. Zero if none.
      *
-     * This ONE number sets the explicit time step for the WHOLE network. The
-     * CFL limit is the minimum over cells of dx/(c+|u|), so a single short
-     * element makes every other duct substep at its rate, and the cost is
-     * global rather than local to the part that was authored badly.
+     * This remains useful for mesh inspection, but it is not the complete CFL
+     * scale: a finite junction may impose a smaller V/sum(A_port) bound. Use
+     * `minimumCflLengthM()` for editor warnings and cost comparisons.
      *
      * It is deliberately separate from `totalCellCount()`, which is what the
      * `cellBudgetExceeded` diagnostic guards. The two failures are different
@@ -216,6 +235,13 @@ public:
      * and was reported as the engine having "gained inertia and lost its
      * liveliness". Nothing in validation could see it. */
     [[nodiscard]] double minimumCellLengthM() const noexcept;
+    /** Smallest geometry-only length entering the production CFL bound.
+     *
+     * This includes both duct dx and each finite junction's V/sum(A_port),
+     * matching ExhaustGasNetwork's static area accounting. It intentionally
+     * excludes the live |u|+c signal speed: ratios between two layouts at the
+     * same operating state are the intended editor/benchmark use. */
+    [[nodiscard]] double minimumCflLengthM() const noexcept;
     [[nodiscard]] const ExhaustNetworkDiscretisation& discretisation() const noexcept {
         return discretisation_;
     }

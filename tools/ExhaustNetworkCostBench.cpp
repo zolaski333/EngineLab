@@ -12,11 +12,10 @@
 // If it does, the cost is in the representation and not in what the user drew,
 // which is exactly the failure their report describes.
 //
-// The number that decides it is the shortest cell anywhere in the network. The
-// explicit time step is the minimum over cells of dx/(c+|u|), so ONE short cell
-// sets the substep rate for every duct. Rate goes as 1/dx for the same gas, so
-// a ratio of two shortest-cell lengths is an exact ratio of two solver costs
-// with no assumed sound speed anywhere.
+// The geometry number that decides it is the minimum of every duct dx and every
+// junction V/sum(A_port). The explicit time step divides that scale by c+|u|,
+// so ONE small component sets the substep rate for every duct. A ratio of two
+// limiting lengths is the static solver-cost ratio at the same gas state.
 
 #include <enginelab/catalog/EngineCatalog.hpp>
 #include <enginelab/exhaust/ExhaustGraph.hpp>
@@ -38,36 +37,26 @@ using enginelab::ExhaustComponentConfig;
 using enginelab::ExhaustComponentType;
 using enginelab::ExhaustGraph;
 using enginelab::ExhaustNetworkConfig;
-using enginelab::gasdynamics::ExhaustNetworkDiscretisation;
 using enginelab::gasdynamics::ExhaustNetworkLayout;
-
-/** Exactly the production mesh from EngineSimulator::configurePhysicalExhaustNetwork. */
-[[nodiscard]] ExhaustNetworkDiscretisation productionMesh() noexcept {
-    ExhaustNetworkDiscretisation mesh;
-    mesh.targetCellLengthM = 0.300;
-    mesh.minimumCellsPerDuct = 1;
-    mesh.maximumCellsPerDuct = 64;
-    mesh.maximumTotalCells = 1'024;
-    return mesh;
-}
 
 struct Cost final {
     std::size_t ducts { 0 };
     std::size_t junctions { 0 };
     std::size_t cells { 0 };
-    double shortestCellM { 0.0 };
+    double limitingCflLengthM { 0.0 };
     bool valid { false };
 };
 
 [[nodiscard]] Cost measure(const EngineConfig& config) {
     Cost cost;
     const auto graph = ExhaustGraph::makeForEngine(config);
-    const auto layout = ExhaustNetworkLayout::compile(graph, productionMesh());
+    const auto layout = ExhaustNetworkLayout::compile(
+        graph, enginelab::gasdynamics::realtimeExhaustFeedbackDiscretisation());
     cost.valid = layout.valid();
     cost.ducts = layout.ducts().size();
     cost.junctions = layout.junctions().size();
     for (const auto& duct : layout.ducts()) cost.cells += duct.cellCount;
-    cost.shortestCellM = layout.minimumCellLengthM();
+    cost.limitingCflLengthM = layout.minimumCflLengthM();
     return cost;
 }
 
@@ -145,8 +134,8 @@ void report(const std::string& label, const Cost& cost) {
               << " ducts " << std::setw(3) << cost.ducts
               << "  junctions " << std::setw(3) << cost.junctions
               << "  cells " << std::setw(4) << cost.cells
-              << "  maille_min " << std::setw(8) << std::fixed
-              << std::setprecision(2) << cost.shortestCellM * 1'000.0 << " mm"
+              << "  longueur_CFL " << std::setw(8) << std::fixed
+              << std::setprecision(2) << cost.limitingCflLengthM * 1'000.0 << " mm"
               << (cost.valid ? "" : "  [LAYOUT INVALIDE]") << '\n';
 }
 
@@ -174,8 +163,8 @@ int main(int argc, char** argv) {
 
     std::cout << "Cout solveur d'echappement: reseau livre contre le MEME "
                  "reseau exprime en composants.\n"
-                 "Le rapport des mailles minimales est le rapport exact des "
-                 "couts solveur.\n\n";
+                 "La longueur CFL inclut dx des conduits et V/somme(A) des "
+                 "jonctions.\n\n";
 
     auto worstRatio = 0.0;
     std::string worstEngine;
@@ -193,9 +182,11 @@ int main(int argc, char** argv) {
         for (const auto& [label, lengths] : variants) {
             const auto designed = measure(asDesignerNetwork(entry.config, lengths));
             report(label, designed);
-            if (!(shipped.shortestCellM > 0.0) || !(designed.shortestCellM > 0.0))
+            if (!(shipped.limitingCflLengthM > 0.0)
+                || !(designed.limitingCflLengthM > 0.0))
                 continue;
-            const auto ratio = shipped.shortestCellM / designed.shortestCellM;
+            const auto ratio = shipped.limitingCflLengthM
+                / designed.limitingCflLengthM;
             std::cout << "        -> cout solveur x" << std::fixed
                       << std::setprecision(2) << ratio << '\n';
             if (ratio > worstRatio) {

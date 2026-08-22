@@ -10,7 +10,7 @@
 
 namespace enginelab {
 inline constexpr std::uint32_t minimumSupportedEngineSchemaVersion { 1 };
-inline constexpr std::uint32_t currentEngineSchemaVersion { 8 };
+inline constexpr std::uint32_t currentEngineSchemaVersion { 9 };
 
 
 enum class EngineCycle : std::uint8_t { fourStroke, twoStroke };
@@ -27,8 +27,12 @@ enum class StructuralModeDrive : std::uint8_t {
     headGas, bearingAxial, bearingLateral, torsion
 };
 enum class ExhaustComponentType : std::uint8_t {
-    pipe, merge, splitter, resonator, muffler, catalyst, outlet
+    pipe, merge, splitter, resonator, muffler, catalyst, outlet, crossover
 };
+/** Port metadata is meaningful only on the corresponding side of a crossover
+ * connection. All historical two-field connection initialisers retain this
+ * sentinel and therefore preserve their exact topology semantics. */
+inline constexpr std::uint8_t unspecifiedExhaustComponentPort { 0xffU };
 /** Global CPU bound for acoustic-only delay lines authored as sealed branches. */
 inline constexpr std::size_t maximumExhaustAcousticSideBranches { 8 };
 enum class AcousticTerminationType : std::uint8_t { unflanged, flanged };
@@ -394,6 +398,11 @@ struct ExhaustComponentConfig final {
     /** Effective heat capacity of the solid substrate per occupied solid
      * volume. Required with the two cellular-geometry fields. */
     double catalystSubstrateVolumetricHeatCapacityJPerM3K { 0.0 };
+    /** Power-wave cross-coupling amplitude of an ideal matched four-port X.
+     * Zero transmits each bank only to its paired outlet; one swaps the two
+     * outlets. The complementary straight coefficient is sqrt(1-k^2), so the
+     * acoustic scattering matrix is passive for every value in [0, 1]. */
+    double crossoverCoupling { 0.0 };
 };
 
 /** Driver/ECU intent for closed-throttle exhaust combustion.
@@ -542,6 +551,10 @@ struct ExhaustCylinderConnectionConfig final {
 struct ExhaustComponentConnectionConfig final {
     std::uint32_t fromComponentId { 0 };
     std::uint32_t toComponentId { 0 };
+    /** Port 0 or 1 when the source is a crossover; unspecified otherwise. */
+    std::uint8_t fromPort { unspecifiedExhaustComponentPort };
+    /** Port 0 or 1 when the destination is a crossover; unspecified otherwise. */
+    std::uint8_t toPort { unspecifiedExhaustComponentPort };
 };
 
 /**

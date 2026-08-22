@@ -1,6 +1,7 @@
 #include <enginelab/audio/AcousticExhaustNetwork.hpp>
 
 #include <enginelab/audio/DuctWallLoss.hpp>
+#include <enginelab/audio/ExhaustCrossoverScattering.hpp>
 #include <enginelab/audio/NonlinearDuctAcoustics.hpp>
 #include <enginelab/audio/PipeRadiationModel.hpp>
 #include <enginelab/audio/PorousLinerLoss.hpp>
@@ -38,6 +39,8 @@ namespace {
 } // namespace
 
 struct AcousticExhaustNetwork::Impl final {
+    static constexpr std::size_t invalidEndpoint {
+        std::numeric_limits<std::size_t>::max() };
     enum class OwnerType : std::uint8_t {
         none, junction, cylinder, outlet, sideBranchTerminal
     };
@@ -99,6 +102,16 @@ struct AcousticExhaustNetwork::Impl final {
         /** Incident wave retained by the trapezoidal/WDF compliance port. */
         float complianceIncidentPressurePa {};
         float pendingSourcePressurePa {};
+        bool directionalCrossover { false };
+        float crossoverCoupling {};
+        float crossoverStraightCoupling { 1.0F };
+        /** upstream 0/1 followed by downstream 0/1. */
+        std::array<std::size_t, 4> crossoverEndpoints {
+            invalidEndpoint, invalidEndpoint, invalidEndpoint, invalidEndpoint };
+        ExhaustCrossoverScattering::RootAdmittances
+            crossoverRootAdmittance {};
+        ExhaustCrossoverScattering::RootAdmittances
+            crossoverRootAdmittanceTarget {};
     };
 
     struct CylinderPort final {
@@ -368,12 +381,22 @@ struct AcousticExhaustNetwork::Impl final {
         const auto junctionTrunkLengthM = [this](std::size_t index) {
             return layout.junctions()[index].trunkLengthM;
         };
+        const auto directionalCrossover = [this](std::size_t index) {
+            return layout.junctions()[index].sourceType
+                == ExhaustNodeType::crossover;
+        };
         for (const auto& interface : layout.interfaces()) {
             if (interface.upstream.type != gasdynamics::ExhaustEndpointType::junction
                 || interface.downstream.type != gasdynamics::ExhaustEndpointType::junction)
                 continue;
             if (junctionTrunkLengthM(interface.upstream.elementIndex) > 0.0
                 || junctionTrunkLengthM(interface.downstream.elementIndex) > 0.0)
+                continue;
+            // A crossover is a directional four-port, never a coincident
+            // well-mixed node. Validation requires a finite duct on every port,
+            // but retain this guard for programmatic graphs that bypass it.
+            if (directionalCrossover(interface.upstream.elementIndex)
+                || directionalCrossover(interface.downstream.elementIndex))
                 continue;
             const auto left = rootOf(interface.upstream.elementIndex);
             const auto right = rootOf(interface.downstream.elementIndex);
@@ -401,6 +424,8 @@ struct AcousticExhaustNetwork::Impl final {
             std::uint32_t pathIndex { 0 };
             std::size_t inflowCount { 0 };
             std::size_t outflowCount { 0 };
+            bool directionalCrossover { false };
+            double crossoverCoupling { 0.0 };
         };
         std::vector<GroupGeometry> groupGeometry(groupCount);
         for (std::size_t index = 0; index < layout.junctions().size(); ++index) {
@@ -415,9 +440,18 @@ struct AcousticExhaustNetwork::Impl final {
             // volumeM3. The acoustic network already turns an authored common
             // trunk into a distributed delay line, so only the residual may be
             // lumped here; adding the full value would count that pipe twice.
-            geometry.compactVolumeM3 += std::max(
-                0.0, descriptor.volumeM3 - sweptVolumeM3);
+            // A schema-9 crossover is an ideal compact matched four-port. Its
+            // derived gas-control volume is a numerical finite-volume guard,
+            // not an authored acoustic plenum, and must not reintroduce the
+            // very well-mixed pressure node this component replaces.
+            if (descriptor.sourceType != ExhaustNodeType::crossover)
+                geometry.compactVolumeM3 += std::max(
+                    0.0, descriptor.volumeM3 - sweptVolumeM3);
             geometry.pathIndex = descriptor.pathIndex;
+            if (descriptor.sourceType == ExhaustNodeType::crossover) {
+                geometry.directionalCrossover = true;
+                geometry.crossoverCoupling = descriptor.crossoverCoupling;
+            }
         }
         // A trunk belongs on whichever side of the branch carries exactly one
         // connection: the common pipe of a collector is downstream of the merge,
@@ -538,6 +572,21 @@ struct AcousticExhaustNetwork::Impl final {
             return nodeForSlot(slotFor(group, inflowToGroup));
         };
 
+        for (std::size_t group = 0; group < groupCount; ++group) {
+            const auto& geometry = groupGeometry[group];
+            if (!geometry.directionalCrossover) continue;
+            const auto junctionIndex = nodeFor(group, true);
+            if (junctionIndex != nodeFor(group, false)) return;
+            auto& junction = junctions[junctionIndex];
+            junction.directionalCrossover = true;
+            junction.crossoverCoupling = static_cast<float>(
+                std::clamp(geometry.crossoverCoupling, 0.0, 1.0));
+            junction.crossoverStraightCoupling = std::sqrt(std::max(
+                0.0F, 1.0F - junction.crossoverCoupling
+                    * junction.crossoverCoupling));
+            junction.pathIndex = geometry.pathIndex;
+        }
+
         owners.resize(ducts.size() * 2U);
         incident.resize(owners.size());
         outgoing.resize(owners.size());
@@ -606,12 +655,47 @@ struct AcousticExhaustNetwork::Impl final {
                 const auto key = acousticEndpointKey(interface.upstream);
                 if (!assignEndpoint(key, OwnerType::junction, groupIndex)) return;
                 junctions[groupIndex].ductEndpoints.push_back(key);
+                if (!downstreamDuct
+                    && layout.junctions()[interface.downstream.elementIndex]
+                        .sourceType == ExhaustNodeType::crossover) {
+                    if (interface.downstreamPort > 1U) return;
+                    auto& crossover = junctions[groupIndex];
+                    auto& target = crossover.crossoverEndpoints[
+                        interface.downstreamPort];
+                    if (!crossover.directionalCrossover
+                        || target != invalidEndpoint)
+                        return;
+                    target = key;
+                }
             }
             if (downstreamDuct) {
                 const auto key = acousticEndpointKey(interface.downstream);
                 if (!assignEndpoint(key, OwnerType::junction, groupIndex)) return;
                 junctions[groupIndex].ductEndpoints.push_back(key);
+                if (!upstreamDuct
+                    && layout.junctions()[interface.upstream.elementIndex]
+                        .sourceType == ExhaustNodeType::crossover) {
+                    if (interface.upstreamPort > 1U) return;
+                    auto& crossover = junctions[groupIndex];
+                    auto& target = crossover.crossoverEndpoints[
+                        2U + interface.upstreamPort];
+                    if (!crossover.directionalCrossover
+                        || target != invalidEndpoint)
+                        return;
+                    target = key;
+                }
             }
+        }
+
+        for (const auto& junction : junctions) {
+            if (!junction.directionalCrossover) continue;
+            if (junction.ductEndpoints.size() != 4U
+                || !junction.cylinderTerminals.empty()
+                || !junction.outletTerminals.empty()
+                || std::any_of(junction.crossoverEndpoints.begin(),
+                    junction.crossoverEndpoints.end(),
+                    [](std::size_t key) { return key == invalidEndpoint; }))
+                return;
         }
 
         cylinderPorts.reserve(layout.cylinderPorts().size());
@@ -897,6 +981,20 @@ struct AcousticExhaustNetwork::Impl final {
                 * static_cast<double>(duct.medium.soundSpeedMps)));
     }
 
+    [[nodiscard]] float endpointTargetRootAdmittance(
+        std::size_t key) const noexcept {
+        const auto& duct = ducts[key / 2U];
+        const auto endpointAreaM2 = key % 2U == 0U
+            ? duct.inletAreaM2 : duct.outletAreaM2;
+        const auto impedance = static_cast<double>(
+            duct.mediumTarget.densityKgPerM3)
+            * static_cast<double>(duct.mediumTarget.soundSpeedMps);
+        const auto admittance = impedance > 0.0
+            ? endpointAreaM2 / impedance : 0.0;
+        return std::isfinite(admittance) && admittance > 0.0
+            ? static_cast<float>(std::sqrt(admittance)) : 0.0F;
+    }
+
     [[nodiscard]] float portAdmittance(std::size_t portIndex,
                                        std::span<const CylinderBoundary> boundaries) const noexcept {
         const auto& port = cylinderPorts[portIndex];
@@ -1178,6 +1276,20 @@ void AcousticExhaustNetwork::beginBlock(
             : 0.0F;
         if (snap) junction.complianceAdmittanceM3PerPaSecond =
             junction.complianceAdmittanceTargetM3PerPaSecond;
+        if (junction.directionalCrossover) {
+            for (std::size_t port = 0;
+                 port < junction.crossoverEndpoints.size(); ++port) {
+                junction.crossoverRootAdmittanceTarget[port] =
+                    impl_->endpointTargetRootAdmittance(
+                        junction.crossoverEndpoints[port]);
+            }
+            if (snap || std::any_of(
+                    junction.crossoverRootAdmittance.begin(),
+                    junction.crossoverRootAdmittance.end(),
+                    [](float value) { return !(value > 0.0F); }))
+                junction.crossoverRootAdmittance =
+                    junction.crossoverRootAdmittanceTarget;
+        }
         junction.pendingSourcePressurePa = 0.0F;
     }
     for (auto& terminal : impl_->sideBranchTerminals) {
@@ -1279,6 +1391,27 @@ AcousticExhaustNetwork::process(
         junction.complianceAdmittanceM3PerPaSecond += ramp
             * (junction.complianceAdmittanceTargetM3PerPaSecond
                 - junction.complianceAdmittanceM3PerPaSecond);
+        if (junction.directionalCrossover) {
+            ExhaustCrossoverScattering::Waves incident {};
+            for (std::size_t port = 0; port < incident.size(); ++port) {
+                const auto key = junction.crossoverEndpoints[port];
+                incident[port] = impl_->incident[key];
+                junction.crossoverRootAdmittance[port] += ramp
+                    * (junction.crossoverRootAdmittanceTarget[port]
+                        - junction.crossoverRootAdmittance[port]);
+            }
+            const auto scattered =
+                ExhaustCrossoverScattering::
+                    scatterFromRootAdmittanceAndCoupling(
+                    incident, junction.crossoverRootAdmittance,
+                    junction.crossoverStraightCoupling,
+                    junction.crossoverCoupling);
+            for (std::size_t port = 0; port < scattered.size(); ++port)
+                impl_->outgoing[junction.crossoverEndpoints[port]] =
+                    scattered[port] + junction.pendingSourcePressurePa;
+            junction.pendingSourcePressurePa = 0.0F;
+            continue;
+        }
         double weightedIncident = 0.0;
         double totalAdmittance = 0.0;
         for (const auto key : junction.ductEndpoints) {

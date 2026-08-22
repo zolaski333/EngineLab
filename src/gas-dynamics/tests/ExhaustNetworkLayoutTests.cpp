@@ -187,6 +187,76 @@ void testAuthoredTaperSurvivesTopologyCompilation() {
         "topology compilation must preserve both taper faces and exact frustum volume");
 }
 
+void testCrossoverUsesTwoPhysicalSectionsAndRetainsPorts() {
+    auto config = makeDefaultInlineTwo();
+    auto& path = config.exhaustPaths.front();
+    ExhaustNetworkConfig network;
+    for (const auto id : { 101U, 102U, 301U, 302U })
+        network.components.push_back(component(
+            id, ExhaustComponentType::pipe, 180.0, 60.0));
+    auto crossover = component(
+        200U, ExhaustComponentType::crossover, 0.0, 60.0);
+    crossover.crossoverCoupling = 0.30;
+    network.components.push_back(crossover);
+    network.components.push_back(component(
+        401U, ExhaustComponentType::outlet, 180.0, 60.0));
+    network.components.push_back(component(
+        402U, ExhaustComponentType::outlet, 180.0, 60.0));
+    network.cylinderConnections = {
+        { config.cylinders[0].id, 101U },
+        { config.cylinders[1].id, 102U },
+    };
+    network.connections = {
+        { 101U, 200U, unspecifiedExhaustComponentPort, 0U },
+        { 102U, 200U, unspecifiedExhaustComponentPort, 1U },
+        { 200U, 301U, 0U, unspecifiedExhaustComponentPort },
+        { 200U, 302U, 1U, unspecifiedExhaustComponentPort },
+        { 301U, 401U }, { 302U, 402U },
+    };
+    path.network = std::move(network);
+    normaliseEngineConfig(config);
+    requireLayout(!validateEngineConfig(config),
+        "the crossover layout fixture must validate");
+
+    const auto layout = ExhaustNetworkLayout::compile(
+        ExhaustGraph::makeForEngine(config));
+    const auto compiled = std::find_if(
+        layout.junctions().begin(), layout.junctions().end(),
+        [](const auto& junction) {
+            return junction.sourceComponentId == 200U;
+        });
+    const auto areaM2 = std::numbers::pi * std::pow(0.030, 2.0);
+    requireLayout(layout.valid() && compiled != layout.junctions().end()
+            && compiled->sourceType == ExhaustNodeType::crossover
+            && compiled->volumeWasDerived
+            && std::abs(compiled->volumeM3
+                - 2.0 * areaM2 * 0.060) < 1.0e-14
+            && std::abs(compiled->crossoverCoupling - 0.30) < 1.0e-12,
+        "a compact X must retain two intersecting A*d gas sections and coupling");
+
+    std::array<bool, 2> inputs {};
+    std::array<bool, 2> outputs {};
+    for (const auto& interface : layout.interfaces()) {
+        if (interface.downstream.nodeId == compiled->nodeId
+            && interface.downstreamPort <= 1U)
+            inputs[interface.downstreamPort] = true;
+        if (interface.upstream.nodeId == compiled->nodeId
+            && interface.upstreamPort <= 1U)
+            outputs[interface.upstreamPort] = true;
+    }
+    requireLayout(inputs == std::array<bool, 2> { true, true }
+            && outputs == std::array<bool, 2> { true, true },
+        "layout compilation must retain all explicit crossover port identities");
+
+    const auto productionMesh = realtimeExhaustFeedbackDiscretisation();
+    const auto production = ExhaustNetworkLayout::compile(
+        ExhaustGraph::makeForEngine(config), productionMesh);
+    requireLayout(production.valid()
+            && std::abs(production.minimumCellLengthM() - 0.180) < 1.0e-12
+            && std::abs(production.minimumCflLengthM() - 0.030) < 1.0e-12,
+        "CFL metrology must expose crossover V/sum(A), not only duct dx");
+}
+
 void testPerforatedCoreMufflerSeparatesFlowDuctFromOuterCan() {
     auto config = customNetworkConfig();
     auto& muffler = *std::find_if(
@@ -474,6 +544,7 @@ void testDerivedLengthIsFlooredAtThePlaneWaveLimit() {
 
 void runExhaustNetworkLayoutTests() {
     testAuthoredTopologyCompilation();
+    testCrossoverUsesTwoPhysicalSectionsAndRetainsPorts();
     testAudioFieldsCannotChangePhysicalLayout();
     testPerforatedCoreMufflerSeparatesFlowDuctFromOuterCan();
     testLegacyTopologyCompilation();

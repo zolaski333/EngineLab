@@ -68,6 +68,115 @@ void require(bool condition, const std::string& message) {
     return config;
 }
 
+[[nodiscard]] EngineConfig makeDirectionalCrossoverExhaust() {
+    auto config = makeDefaultInlineTwo();
+    auto& path = config.exhaustPaths.front();
+    ExhaustNetworkConfig network;
+    network.components.push_back(component(
+        101, ExhaustComponentType::pipe, 500.0, 48.0));
+    network.components.push_back(component(
+        102, ExhaustComponentType::pipe, 500.0, 48.0));
+    auto crossover = component(
+        200, ExhaustComponentType::crossover, 0.0, 60.0, 0.04);
+    crossover.volumeLitres = 0.0;
+    crossover.crossoverCoupling = 0.30;
+    network.components.push_back(crossover);
+    network.components.push_back(component(
+        301, ExhaustComponentType::pipe, 300.0, 52.0));
+    network.components.push_back(component(
+        302, ExhaustComponentType::pipe, 300.0, 52.0));
+    network.components.push_back(component(
+        401, ExhaustComponentType::outlet, 180.0, 60.0));
+    network.components.push_back(component(
+        402, ExhaustComponentType::outlet, 180.0, 60.0));
+    network.cylinderConnections = {
+        { config.cylinders[0].id, 101 },
+        { config.cylinders[1].id, 102 },
+    };
+    network.connections = {
+        { 101, 200, unspecifiedExhaustComponentPort, 0 },
+        { 102, 200, unspecifiedExhaustComponentPort, 1 },
+        { 200, 301, 0, unspecifiedExhaustComponentPort },
+        { 200, 302, 1, unspecifiedExhaustComponentPort },
+        { 301, 401 }, { 302, 402 },
+    };
+    path.network = std::move(network);
+    normaliseEngineConfig(config);
+    return config;
+}
+
+void testDirectionalCrossoverRouting() {
+    const auto config = makeDirectionalCrossoverExhaust();
+    require(!validateEngineConfig(config).has_value(),
+        "a paired two-in/two-out crossover graph must validate");
+    const auto graph = ExhaustGraph::makeForEngine(config);
+    const auto crossoverNode = std::find_if(
+        graph.nodes().begin(), graph.nodes().end(), [](const auto& node) {
+            return node.sourceComponentId == 200;
+        });
+    require(crossoverNode != graph.nodes().end()
+            && crossoverNode->type == ExhaustNodeType::crossover
+            && std::abs(crossoverNode->crossoverCoupling - 0.30) < 1.0e-12,
+        "the graph compiler must retain crossover type and coupling");
+    const auto outletNode = [&graph](std::uint32_t componentId) {
+        const auto found = std::find_if(
+            graph.nodes().begin(), graph.nodes().end(),
+            [componentId](const auto& node) {
+                return node.sourceComponentId == componentId;
+            });
+        return found != graph.nodes().end() ? found->id : 0U;
+    };
+    const auto outlet0 = outletNode(401);
+    const auto outlet1 = outletNode(402);
+    require(outlet0 != 0U && outlet1 != 0U,
+        "the crossover route fixture must retain both outlets");
+    const auto routeEnergy = [&graph](std::uint32_t cylinderId,
+                                      std::uint32_t outletId) {
+        const auto route = std::find_if(
+            graph.routes().begin(), graph.routes().end(),
+            [cylinderId, outletId](const auto& candidate) {
+                return candidate.cylinderId == cylinderId
+                    && candidate.outletNodeId == outletId;
+            });
+        return route != graph.routes().end()
+            ? route->audioGain * route->audioGain : -1.0;
+    };
+    const auto cylinder0 = config.cylinders[0].id;
+    const auto cylinder1 = config.cylinders[1].id;
+    require(std::abs(routeEnergy(cylinder0, outlet0) - 0.91) < 1.0e-12
+            && std::abs(routeEnergy(cylinder0, outlet1) - 0.09) < 1.0e-12
+            && std::abs(routeEnergy(cylinder1, outlet0) - 0.09) < 1.0e-12
+            && std::abs(routeEnergy(cylinder1, outlet1) - 0.91) < 1.0e-12,
+        "fallback routes must preserve paired/crossed X-pipe power shares");
+
+    auto missingPort = config;
+    missingPort.exhaustPaths.front().network->connections[0].toPort =
+        unspecifiedExhaustComponentPort;
+    require(validateEngineConfig(missingPort).has_value(),
+        "a crossover connection without its explicit port must be rejected");
+    const auto malformedGraph = ExhaustGraph::makeForEngine(missingPort);
+    auto malformedRouteEnergy = 0.0;
+    for (const auto& route : malformedGraph.routes())
+        if (route.cylinderId == cylinder0)
+            malformedRouteEnergy += route.audioGain * route.audioGain;
+    require(std::abs(malformedRouteEnergy - 1.0) < 1.0e-12,
+        "an unvalidated crossover must fall back to a conservative generic split");
+    auto duplicatePort = config;
+    duplicatePort.exhaustPaths.front().network->connections[1].toPort = 0;
+    require(validateEngineConfig(duplicatePort).has_value(),
+        "two crossover connections cannot claim the same input port");
+    auto nonCompact = config;
+    const auto crossover = std::find_if(
+        nonCompact.exhaustPaths.front().network->components.begin(),
+        nonCompact.exhaustPaths.front().network->components.end(),
+        [](const auto& candidate) {
+            return candidate.type == ExhaustComponentType::crossover;
+        });
+    crossover->lengthMm = 50.0;
+    require(validateEngineConfig(nonCompact).has_value(),
+        "a crossover length must be authored as adjacent paired ducts");
+}
+
 void testValidationAndRouting() {
     const auto config = makeCustomExhaust();
     require(!validateEngineConfig(config).has_value(), "valid split custom exhaust rejected");
@@ -796,6 +905,7 @@ int main() {
         testDegenerateChamberIsFlooredToItsResolutionLimit();
         testEditableLegacyConversionIsNeutral();
         testValidationAndRouting();
+        testDirectionalCrossoverRouting();
         testTerminalResonatorIsAcousticOnly();
         testAcousticGainEnergyAccounting();
         testModalRoutesAndAdmittanceWeightedBranches();

@@ -406,7 +406,9 @@ void normaliseEngineConfig(EngineConfig& config) {
     // induction/flammability/quench calibration; schema 7 adds explicit
     // cellular catalyst-substrate geometry; schema 8 replaces the afterfire's
     // flat induction clock with an explicitly parameterised Livengood-Wu
-    // correlation. Older documents migrate to the documented defaults below.
+    // correlation; schema 9 adds explicit paired ports and passive coupling
+    // for a four-port exhaust crossover. Older documents migrate to the
+    // documented defaults below.
     const auto sourceSchemaVersion = config.schemaVersion;
     if (config.schemaVersion < currentEngineSchemaVersion)
         config.schemaVersion = currentEngineSchemaVersion;
@@ -1172,7 +1174,7 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
                     || component.type == ExhaustComponentType::muffler
                     || component.type == ExhaustComponentType::catalyst;
                 if (static_cast<std::uint8_t>(component.type)
-                        > static_cast<std::uint8_t>(ExhaustComponentType::outlet)
+                        > static_cast<std::uint8_t>(ExhaustComponentType::crossover)
                     || component.id == 0 || !components.emplace(component.id, &component).second
                     || !inRange(component.lengthMm, requiresLength ? 1.0 : 0.0, 10'000.0)
                     || !inRange(component.diameterMm, 5.0, 500.0)
@@ -1190,6 +1192,7 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
                     || !inRange(component.catalystOpenAreaRatio, 0.0, 0.99)
                     || !inRange(component.catalystSubstrateVolumetricHeatCapacityJPerM3K,
                         0.0, 10'000'000.0)
+                    || !inRange(component.crossoverCoupling, 0.0, 1.0)
                     || !validPoint(component.acousticPositionM)
                     || !validPoint(component.acousticAxis)
                     || (component.type == ExhaustComponentType::outlet
@@ -1198,6 +1201,15 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
                             + component.acousticAxis.z * component.acousticAxis.z
                             < 1.0e-12))
                     return "Custom exhaust component IDs and dimensions must be finite, unique and valid";
+                if (component.type == ExhaustComponentType::crossover) {
+                    if (component.lengthMm != 0.0
+                        || component.volumeLitres != 0.0
+                        || component.outletDiameterMm != 0.0
+                        || component.resonanceHz != 0.0)
+                        return "An exhaust crossover is a compact four-port and requires zero length, volume, outlet diameter and resonance; author real pipe lengths on its four neighbours";
+                } else if (component.crossoverCoupling != 0.0) {
+                    return "Crossover coupling may only be authored on an exhaust crossover";
+                }
                 const auto hasPacking = component.packingFlowResistivityPaSPerM2 > 0.0
                     || component.packingThicknessMm > 0.0
                     || component.perforatedOpenAreaRatio > 0.0;
@@ -1252,6 +1264,10 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
             }
 
             std::unordered_set<std::uint64_t> uniqueConnections;
+            std::unordered_map<std::uint32_t, std::array<bool, 2>>
+                usedCrossoverInputs;
+            std::unordered_map<std::uint32_t, std::array<bool, 2>>
+                usedCrossoverOutputs;
             for (const auto& connection : network.connections) {
                 if (!components.contains(connection.fromComponentId)
                     || !components.contains(connection.toComponentId)
@@ -1261,6 +1277,49 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
                     | connection.toComponentId;
                 if (!uniqueConnections.insert(key).second)
                     return "Custom exhaust component connections must be unique";
+                const auto fromType = components.at(
+                    connection.fromComponentId)->type;
+                const auto toType = components.at(
+                    connection.toComponentId)->type;
+                const auto validPort = [](std::uint8_t port) noexcept {
+                    return port <= 1U;
+                };
+                if (fromType == ExhaustComponentType::crossover) {
+                    if (!validPort(connection.fromPort))
+                        return "Every exhaust crossover output connection requires from_port 0 or 1";
+                    if (usedCrossoverOutputs[connection.fromComponentId]
+                            [connection.fromPort])
+                        return "Each exhaust crossover output port may be connected exactly once";
+                    usedCrossoverOutputs[connection.fromComponentId]
+                        [connection.fromPort] = true;
+                } else if (connection.fromPort
+                        != unspecifiedExhaustComponentPort) {
+                    return "from_port may only be set on an exhaust crossover";
+                }
+                if (toType == ExhaustComponentType::crossover) {
+                    if (!validPort(connection.toPort))
+                        return "Every exhaust crossover input connection requires to_port 0 or 1";
+                    if (usedCrossoverInputs[connection.toComponentId]
+                            [connection.toPort])
+                        return "Each exhaust crossover input port may be connected exactly once";
+                    usedCrossoverInputs[connection.toComponentId]
+                        [connection.toPort] = true;
+                } else if (connection.toPort
+                        != unspecifiedExhaustComponentPort) {
+                    return "to_port may only be set on an exhaust crossover";
+                }
+                if (fromType == ExhaustComponentType::crossover
+                    && toType == ExhaustComponentType::crossover)
+                    return "Exhaust crossovers must be separated by a finite duct";
+                const auto isBranchJunction = [](ExhaustComponentType type) {
+                    return type == ExhaustComponentType::merge
+                        || type == ExhaustComponentType::splitter;
+                };
+                if ((fromType == ExhaustComponentType::crossover
+                        && isBranchJunction(toType))
+                    || (toType == ExhaustComponentType::crossover
+                        && isBranchJunction(fromType)))
+                    return "Every exhaust crossover port must connect through a finite duct, not directly to a merge or splitter";
                 outgoing[connection.fromComponentId].push_back(connection.toComponentId);
                 ++componentIncoming[connection.toComponentId];
             }
@@ -1272,6 +1331,9 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
                     || !components.contains(connection.componentId)
                     || !connectedCylinderIds.insert(connection.cylinderId).second)
                     return "Custom exhaust graphs must map each path cylinder to one configured component";
+                if (components.at(connection.componentId)->type
+                        == ExhaustComponentType::crossover)
+                    return "A cylinder cannot connect directly to an exhaust crossover; insert a finite inlet duct";
                 ++cylinderIncoming[connection.componentId];
             }
             if (connectedCylinderIds != pathCylinderIds)
@@ -1323,6 +1385,17 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
                 case ExhaustComponentType::splitter:
                     if (incoming != 1 || outputCount < 2)
                         return "An exhaust splitter requires exactly one input and at least two outputs";
+                    break;
+                case ExhaustComponentType::crossover:
+                    if (incoming != 2 || outputCount != 2
+                        || usedCrossoverInputs[component.id]
+                            != std::array<bool, 2> { true, true }
+                        || usedCrossoverOutputs[component.id]
+                            != std::array<bool, 2> { true, true })
+                        return "An exhaust crossover requires exactly two explicitly paired input ports and two explicitly paired output ports";
+                    for (const auto nextId : outgoing[component.id])
+                        if (isTerminalSideBranch(nextId))
+                            return "An exhaust crossover port cannot terminate in an acoustic-only resonator branch";
                     break;
                 case ExhaustComponentType::outlet:
                     if (incoming < 1 || outputCount != 0

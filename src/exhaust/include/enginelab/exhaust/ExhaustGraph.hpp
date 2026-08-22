@@ -18,7 +18,10 @@ struct ExhaustAcousticMode final {
     double relativeEnergy { 0.0 };
 };
 
-enum class ExhaustNodeType : std::uint8_t { port, pipe, merge, splitter, resonator, muffler, catalyst, outlet };
+enum class ExhaustNodeType : std::uint8_t {
+    port, pipe, merge, splitter, resonator, muffler, catalyst, outlet,
+    crossover
+};
 struct ExhaustNode final {
     std::uint32_t id {};
     ExhaustNodeType type { ExhaustNodeType::pipe };
@@ -54,8 +57,14 @@ struct ExhaustNode final {
     double catalystCellDensityCpsi { 0.0 };
     double catalystOpenAreaRatio { 0.0 };
     double catalystSubstrateVolumetricHeatCapacityJPerM3K { 0.0 };
+    double crossoverCoupling { 0.0 };
 };
-struct ExhaustEdge final { std::uint32_t from {}; std::uint32_t to {}; };
+struct ExhaustEdge final {
+    std::uint32_t from {};
+    std::uint32_t to {};
+    std::uint8_t fromPort { unspecifiedExhaustComponentPort };
+    std::uint8_t toPort { unspecifiedExhaustComponentPort };
+};
 
 /** Acoustic-only terminal branch attached to a mean-flow component.
  *

@@ -1,4 +1,4 @@
-schema_version: 6
+schema_version: 9
 family: american v8
 engine:
   name: LS3-like 6.2 Crossplane V8
@@ -45,7 +45,7 @@ engine:
     transmission: muscle_6_speed
     vehicle: muscle_car
   exhaust_paths:
-    # One global DAG: both banks meet at a finite X section and split again.
+    # One global DAG: both banks meet at an explicitly paired passive X.
     # The former two path-local graphs could not transmit a wave or mean-flow
     # perturbation across banks, so "crossplane_dual" had no X-pipe in the
     # simulation despite its name.
@@ -64,8 +64,15 @@ engine:
           - { id: 108, type: pipe, length_mm: 690, diameter_mm: 48 }
           - { id: 201, type: merge, length_mm: 620, diameter_mm: 76, volume_l: 3.0, restriction: 0.04 }
           - { id: 202, type: merge, length_mm: 620, diameter_mm: 76, volume_l: 3.0, restriction: 0.04 }
-          - { id: 301, type: merge, length_mm: 140, diameter_mm: 80, volume_l: 0.70, restriction: 0.03 }
-          - { id: 302, type: splitter, length_mm: 140, diameter_mm: 80, volume_l: 0.70, restriction: 0.03 }
+          # The four 140 mm pipes retain the same 280 mm route length as the
+          # former merge+splitter pseudo-X, but no longer collapse both banks
+          # into one pressure node. crossover_coupling=0.30 is an authored
+          # estimate, not a measured calibration.
+          - { id: 211, type: pipe, length_mm: 140, diameter_mm: 80 }
+          - { id: 212, type: pipe, length_mm: 140, diameter_mm: 80 }
+          - { id: 303, type: crossover, length_mm: 0, diameter_mm: 80, volume_l: 0, restriction: 0.06, crossover_coupling: 0.30 }
+          - { id: 311, type: pipe, length_mm: 140, diameter_mm: 80 }
+          - { id: 312, type: pipe, length_mm: 140, diameter_mm: 80 }
           - { id: 401, type: muffler, length_mm: 400, diameter_mm: 76, volume_l: 6.3, restriction: 0.30, packing_flow_resistivity_pa_s_m2: 10000, packing_thickness_mm: 15, perforated_open_area_ratio: 0.35 }
           - { id: 402, type: muffler, length_mm: 400, diameter_mm: 76, volume_l: 6.3, restriction: 0.30, packing_flow_resistivity_pa_s_m2: 10000, packing_thickness_mm: 15, perforated_open_area_ratio: 0.35 }
           - { id: 501, type: outlet, length_mm: 80, diameter_mm: 82, discharge_coefficient: 0.72, acoustic_position_m: { x: -0.45, y: 0.0, z: 0.0 } }
@@ -88,11 +95,14 @@ engine:
           - { from_component_id: 104, to_component_id: 202 }
           - { from_component_id: 106, to_component_id: 202 }
           - { from_component_id: 108, to_component_id: 202 }
-          - { from_component_id: 201, to_component_id: 301 }
-          - { from_component_id: 202, to_component_id: 301 }
-          - { from_component_id: 301, to_component_id: 302 }
-          - { from_component_id: 302, to_component_id: 401 }
-          - { from_component_id: 302, to_component_id: 402 }
+          - { from_component_id: 201, to_component_id: 211 }
+          - { from_component_id: 202, to_component_id: 212 }
+          - { from_component_id: 211, to_component_id: 303, to_port: 0 }
+          - { from_component_id: 212, to_component_id: 303, to_port: 1 }
+          - { from_component_id: 303, from_port: 0, to_component_id: 311 }
+          - { from_component_id: 303, from_port: 1, to_component_id: 312 }
+          - { from_component_id: 311, to_component_id: 401 }
+          - { from_component_id: 312, to_component_id: 402 }
           - { from_component_id: 401, to_component_id: 501 }
           - { from_component_id: 402, to_component_id: 502 }
   cylinder_template:
