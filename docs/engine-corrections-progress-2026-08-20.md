@@ -27,6 +27,8 @@ est respecté ; il ne transforme pas une hypothèse acoustique en donnée mesur�
 | `cdb8ba2` | énergie d'arbre turbo conservée et autorité aval mesurée | poussé |
 | `f008e2c` | induction afterfire thermochimique explicitement paramétrée | poussé |
 | `4c74f61` | X-pipe directionnel passif à quatre ports, schéma 9 et métrologie CFL complète | poussé |
+| `aa727c2` | preuves de livraison et limites du X-pipe directionnel | poussé |
+| `ba0093c` | observabilité honnête de la chaîne de sortie et métrologie géométrique corrigée | poussé |
 
 ## Dyno livré
 
@@ -536,6 +538,35 @@ valeurs intermédiaires, hypothèses réfutées et limites sont consignés dans
 
 La reconstruction Release intégrale puis la suite autoritaire passent à
 **42/42 CTest**, zéro échec, en **730,07 s**, rampes dyno produit incluses.
+
+## Livraison Windows finale du chantier
+
+L'archive CPack est reconstruite après les changements de code et de
+documentation, puis contrôlée depuis une extraction neuve. Le contrôle porte
+sur l'exécutable principal, les outils CLI, les seize moteurs, les catalogues,
+les voicings et les documents techniques ajoutés pendant le chantier. Le SHA-256
+de l'exécutable extrait doit être identique à celui de l'arbre Release, et
+l'application extraite doit rester vivante pendant le smoke de cinq secondes.
+
+La copie de ce journal embarquée dans le ZIP ne contient volontairement pas la
+taille et le SHA-256 finaux du ZIP : les y inscrire puis reconstruire modifierait
+le hash à l'infini. La copie de travail externe les fixe après la dernière
+génération, sans reconstruire ensuite l'archive.
+
+Artefact externe final :
+
+- ZIP : `out/build/windows-vs2022/EngineLab-0.1.0-win64.zip` ;
+- taille : **6 579 343 octets** ;
+- SHA-256 :
+  `E4BEB3924F137E4907365F990BD6E3B212634FCF38981CEB8BD5218B736A0F81` ;
+- 122 entrées ZIP, soit 113 fichiers après extraction, dont les 16 moteurs ;
+- un seul `EngineLab.exe`, avec le même SHA-256 dans l'arbre Release et dans
+  l'extraction :
+  `D9596C11448BBE146D8DD2FB20B7233BAFF120D31A27FD37D41D92E006F0C81D` ;
+- les deux outils utilisateurs `EngineLabAbClipRenderer.exe` et
+  `EngineLabOfflineAudioExporter.exe` répondent à `--help` depuis l'extraction ;
+- extraction contrôlée dans `out/validation-2026-08-22-output-final/` ;
+- application extraite vivante après cinq secondes, puis arrêt volontaire.
 
 ## Matrice actuelle des champs du graphe
 
