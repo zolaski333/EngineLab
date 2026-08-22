@@ -1496,7 +1496,7 @@ void MainComponent::drawDebugPanel(juce::Graphics& g, juce::Rectangle<float> are
         liftMultiplier = std::max(liftMultiplier, visibleState_.cylinderStates[index].valveLiftMultiplier);
         runnerResonanceHz = std::max(runnerResonanceHz, visibleState_.cylinderStates[index].intakeResonanceFrequencyHz);
     }
-    const std::array<juce::String, 64> values {
+    const std::array<juce::String, 65> values {
         "Net torque       " + juce::String(visibleState_.netTorqueNm, 2),
         "Indicated torque " + juce::String(visibleState_.indicatedTorqueNm, 2),
         "Mean-work torque " + juce::String(visibleState_.meanWorkTorqueNm, 2),
@@ -1602,6 +1602,15 @@ void MainComponent::drawDebugPanel(juce::Graphics& g, juce::Rectangle<float> are
         utf8("Afterfire        ") + (visibleState_.exhaustAfterfireOverrunActive
             ? juce::String("ACTIF ") + juce::String(visibleState_.exhaustAfterfireHeatReleaseKw, 2) + " kW"
             : juce::String(afterfireBlockerName(visibleState_.exhaustAfterfireBlockers))),
+        "Induction AF I/t "
+            + juce::String(visibleState_.exhaustAfterfireInductionProgress, 3)
+            + " / "
+            + juce::String(
+                visibleState_.exhaustAfterfireMinimumInductionDelayMs, 3)
+            + ".."
+            + juce::String(
+                visibleState_.exhaustAfterfireMaximumInductionDelayMs, 3)
+            + " ms",
         // The ignition source during overrun is the PIPE WALL -- the gas is
         // cold by construction once the spark is cut -- and 1.5 mm of steel has
         // a time constant near 55 s. A just-started engine cannot pop, and that

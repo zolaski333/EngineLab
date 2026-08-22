@@ -1609,6 +1609,11 @@ int main() {
     extendedPhysicsConfig.exhaustAfterfire.strategy =
         enginelab::ExhaustAfterfireStrategy::discreteAfterfire;
     extendedPhysicsConfig.exhaustAfterfire.inductionTimeSeconds = 0.0065;
+    extendedPhysicsConfig.exhaustAfterfire.inductionReferencePressureKpa = 118.0;
+    extendedPhysicsConfig.exhaustAfterfire.inductionActivationTemperatureK = 12'700.0;
+    extendedPhysicsConfig.exhaustAfterfire.inductionPressureExponent = 0.91;
+    extendedPhysicsConfig.exhaustAfterfire.inductionEquivalenceRatioExponent = -0.48;
+    extendedPhysicsConfig.exhaustAfterfire.inductionDecayTimeSeconds = 0.014;
     extendedPhysicsConfig.exhaustAfterfire.minimumEquivalenceRatio = 0.51;
     extendedPhysicsConfig.exhaustAfterfire.maximumEquivalenceRatio = 1.63;
     extendedPhysicsConfig.exhaustAfterfire.quenchTemperatureK = 545.0;
@@ -1684,6 +1689,11 @@ int main() {
             && extendedJsonRoundTrip.config->exhaustAfterfire.strategy
                 == enginelab::ExhaustAfterfireStrategy::discreteAfterfire
             && std::abs(extendedJsonRoundTrip.config->exhaustAfterfire.inductionTimeSeconds - 0.0065) < 1.0e-9
+            && std::abs(extendedJsonRoundTrip.config->exhaustAfterfire.inductionReferencePressureKpa - 118.0) < 0.001
+            && std::abs(extendedJsonRoundTrip.config->exhaustAfterfire.inductionActivationTemperatureK - 12'700.0) < 0.001
+            && std::abs(extendedJsonRoundTrip.config->exhaustAfterfire.inductionPressureExponent - 0.91) < 0.001
+            && std::abs(extendedJsonRoundTrip.config->exhaustAfterfire.inductionEquivalenceRatioExponent + 0.48) < 0.001
+            && std::abs(extendedJsonRoundTrip.config->exhaustAfterfire.inductionDecayTimeSeconds - 0.014) < 1.0e-9
             && std::abs(extendedJsonRoundTrip.config->exhaustAfterfire.minimumEquivalenceRatio - 0.51) < 0.001
             && std::abs(extendedJsonRoundTrip.config->exhaustAfterfire.maximumEquivalenceRatio - 1.63) < 0.001
             && std::abs(extendedJsonRoundTrip.config->exhaustAfterfire.quenchTemperatureK - 545.0) < 0.001
@@ -1711,7 +1721,13 @@ int main() {
                        "\"schema_version\": 1");
     const auto migratedJson = json.decode(legacyJson);
     require(migratedJson
-            && migratedJson.config->schemaVersion == enginelab::currentEngineSchemaVersion,
+            && migratedJson.config->schemaVersion == enginelab::currentEngineSchemaVersion
+            && migratedJson.config->exhaustAfterfire.inductionActivationTemperatureK == 0.0
+            && migratedJson.config->exhaustAfterfire.inductionPressureExponent == 0.0
+            && migratedJson.config->exhaustAfterfire.inductionEquivalenceRatioExponent == 0.0
+            && std::abs(migratedJson.config->exhaustAfterfire.inductionDecayTimeSeconds
+                - 2.0 * migratedJson.config->exhaustAfterfire.inductionTimeSeconds)
+                    < 1.0e-12,
             "schema-v1 JSON must migrate to the current in-memory schema");
     const auto radialJsonRoundTrip = json.decode(json.encode(enginelab::makeDefaultRadialFive()));
     require(radialJsonRoundTrip && radialJsonRoundTrip.config->layout == enginelab::EngineLayout::radial
@@ -1749,6 +1765,11 @@ int main() {
             && extendedYamlRoundTrip.config->exhaustAfterfire.strategy
                 == enginelab::ExhaustAfterfireStrategy::discreteAfterfire
             && std::abs(extendedYamlRoundTrip.config->exhaustAfterfire.inductionTimeSeconds - 0.0065) < 1.0e-9
+            && std::abs(extendedYamlRoundTrip.config->exhaustAfterfire.inductionReferencePressureKpa - 118.0) < 0.001
+            && std::abs(extendedYamlRoundTrip.config->exhaustAfterfire.inductionActivationTemperatureK - 12'700.0) < 0.001
+            && std::abs(extendedYamlRoundTrip.config->exhaustAfterfire.inductionPressureExponent - 0.91) < 0.001
+            && std::abs(extendedYamlRoundTrip.config->exhaustAfterfire.inductionEquivalenceRatioExponent + 0.48) < 0.001
+            && std::abs(extendedYamlRoundTrip.config->exhaustAfterfire.inductionDecayTimeSeconds - 0.014) < 1.0e-9
             && std::abs(extendedYamlRoundTrip.config->exhaustAfterfire.minimumEquivalenceRatio - 0.51) < 0.001
             && std::abs(extendedYamlRoundTrip.config->exhaustAfterfire.maximumEquivalenceRatio - 1.63) < 0.001
             && std::abs(extendedYamlRoundTrip.config->exhaustAfterfire.quenchTemperatureK - 545.0) < 0.001

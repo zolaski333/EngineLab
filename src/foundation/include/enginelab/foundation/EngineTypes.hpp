@@ -10,7 +10,7 @@
 
 namespace enginelab {
 inline constexpr std::uint32_t minimumSupportedEngineSchemaVersion { 1 };
-inline constexpr std::uint32_t currentEngineSchemaVersion { 7 };
+inline constexpr std::uint32_t currentEngineSchemaVersion { 8 };
 
 
 enum class EngineCycle : std::uint8_t { fourStroke, twoStroke };
@@ -450,10 +450,23 @@ struct ExhaustAfterfireConfig final {
     ExhaustAfterfireStrategy strategy {
         ExhaustAfterfireStrategy::cleanDfco
     };
-    /** Time a flammable local inventory must remain at or above the authored
-     * ignition threshold before a flame kernel is established. This is the
-     * delay at the threshold itself; no hidden temperature ramp rescales it. */
+    /** Reference ignition delay at ignitionTemperatureK, stoichiometry and
+     * inductionReferencePressureKpa. Schema-7 files migrate to the former flat
+     * timer by keeping all three correlation exponents at zero. */
     double inductionTimeSeconds { 0.004 };
+    /** Reference pressure of the induction-delay correlation. */
+    double inductionReferencePressureKpa { 101.325 };
+    /** Arrhenius activation energy divided by R, expressed as kelvin. Zero
+     * preserves the schema-7 temperature-independent timer. */
+    double inductionActivationTemperatureK { 0.0 };
+    /** Positive exponent n in tau proportional to pressure^-n. */
+    double inductionPressureExponent { 0.0 };
+    /** Exponent m in tau proportional to equivalenceRatio^m. */
+    double inductionEquivalenceRatioExponent { 0.0 };
+    /** Time for a fully accumulated, unlit induction integral to decay back to
+     * zero when the hot-source condition disappears but the mixture remains
+     * flammable. A non-flammable inventory resets immediately. */
+    double inductionDecayTimeSeconds { 0.008 };
     /** Lean/rich flammability bounds expressed as equivalence ratio. */
     double minimumEquivalenceRatio { 0.45 };
     double maximumEquivalenceRatio { 1.80 };
@@ -1224,6 +1237,15 @@ struct EngineState final {
      * its own gas past the threshold, so this reads near zero there and the
      * reading only rises in the partly-warm regime the path was added for. */
     double exhaustAfterfireWallIgnitedFraction { 0.0 };
+    /** Largest local Livengood-Wu induction integral in the active exhaust
+     * chemistry pass. One establishes a flame kernel. */
+    double exhaustAfterfireInductionProgress { 0.0 };
+    /** Smallest finite local induction delay evaluated in the active chemistry
+     * pass, milliseconds. Zero means that no site was induction-eligible. */
+    double exhaustAfterfireMinimumInductionDelayMs { 0.0 };
+    /** Largest finite local induction delay evaluated in the active chemistry
+     * pass, milliseconds. Zero means that no site was induction-eligible. */
+    double exhaustAfterfireMaximumInductionDelayMs { 0.0 };
     /** Hottest exhaust pipe wall, which is what ignites an overrun mixture --
      * the gas is cold during overrun by construction. It lags the gas by tens
      * of seconds (1.5 mm steel), so a just-started engine cannot pop and this

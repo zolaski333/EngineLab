@@ -378,3 +378,23 @@ Les améliorations à meilleur rapport précision/coût sont :
 Ces étapes ajoutent quelques scalaires par volume réactif ou des tests hors
 temps réel ; elles n’exigent ni nouvelle grille 3-D, ni convolution par réaction,
 ni banque de samples.
+
+## Mise à jour du 22 août 2026
+
+Le premier point de l'ordre ci-dessus est livré dans le schéma moteur 8. Le
+timer plat a été remplacé, pour les configurations qui l'authorisent, par une
+intégrale `dt/tau(T,p,phi)` dont délai de référence, pression de référence,
+`Ea/R`, exposants pression/richesse et temps de décroissance sont tous exposés.
+Les schémas 1 à 7 gardent exactement le timer historique grâce à des exposants
+nuls.
+
+Le sweep isolé passe de `4/4/4/4 ms` à `3,95/0,20/2,25/5,90 ms` sur les cas
+référence/chaud/pressurisé/pauvre. Le geste produit reste audible, borné et très
+loin du budget bloc ; il n'a reçu aucun gain compensatoire lorsque son crest a
+baissé. Le détail, la provenance et l'A/B même binaire sont dans
+[`afterfire-induction-implementation-2026-08-22.md`](afterfire-induction-implementation-2026-08-22.md).
+
+Le transport d'un noyau distinct reste conditionnel : il ne sera ajouté que si
+un oracle de slug met en évidence une dépendance fautive au maillage ou une
+localisation incorrecte. La fixture X-pipe/multi-branche devient donc le prochain
+instrument afterfire utile, pas une hausse du nombre de voix.

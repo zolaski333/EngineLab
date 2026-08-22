@@ -19,7 +19,7 @@ Le schéma moteur 6 distingue explicitement trois intentions :
 Exemple de calibration discrète :
 
 ```yaml
-schema_version: 6
+schema_version: 8
 engine:
   exhaust_afterfire:
     strategy: discrete_afterfire
@@ -34,6 +34,11 @@ engine:
     overrun_pulse_duty: 0.35
     overrun_pulse_timing_variation: 0.25
     induction_time_s: 0.004
+    induction_reference_pressure_kpa: 101.325
+    induction_activation_temperature_k: 13340
+    induction_pressure_exponent: 0.989
+    induction_equivalence_ratio_exponent: -0.577
+    induction_decay_time_s: 0.008
     minimum_equivalence_ratio: 0.45
     maximum_equivalence_ratio: 1.80
     quench_temperature_k: 520
@@ -70,11 +75,16 @@ ajoute `masse_carburant × PCI` à l’énergie. Elle publie un événement born
 contient le nœud exact, la position axiale, l’énergie, la durée, la densité, la
 célérité et la section locale.
 
-Le délai d’induction est la durée écrite **au seuil**. L’ancien calcul le
-divisait silencieusement par `(T - T_allumage) / 450 K` : un délai écrit à 4 ms
-devenait ainsi 1,8 s seulement 1 K au-dessus du seuil. Ce facteur caché a été
-supprimé. L’origine paroi/gaz de la flamme est mémorisée à l’allumage ; elle
-n’est plus réinterprétée après que la réaction elle-même a chauffé le gaz.
+`induction_time_s` est le délai de référence au seuil, à la pression de
+référence et à `phi=1`. Le schéma 8 intègre `dt/tau(T,p,phi)` avec une loi
+Arrhenius dont tous les coefficients sont exposés ; les schémas 1 à 7 migrent
+avec des exposants nuls et retrouvent exactement leur durée plate. L’ancien
+calcul divisait silencieusement le temps par
+`(T - T_allumage) / 450 K` : un délai écrit à 4 ms devenait ainsi 1,8 s seulement
+1 K au-dessus du seuil. Ce facteur caché reste supprimé. L’origine paroi/gaz de
+la flamme est mémorisée à l’allumage ; elle n’est plus réinterprétée après que la
+réaction elle-même a chauffé le gaz. Équation, provenance, A/B et limites :
+[afterfire-induction-implementation-2026-08-22.md](afterfire-induction-implementation-2026-08-22.md).
 
 La chimie n’est exécutée que dans un état qui peut effectivement la demander :
 DFCO avec stratégie retenant du carburant, ou rupteur humide actif. Le simple
@@ -127,7 +137,7 @@ nombre de volumes réactifs et les événements perdus. Une puissance nulle rest
 un résultat physique possible : ligne froide, mélange hors fenêtre, DFCO propre
 ou stratégie non armée.
 
-## Preuve mesurée
+## Preuve mesurée du chemin acoustique (timer plat historique)
 
 Le contrôle final emploie le Twin laboratoire tel qu’il est catalogué, 60 s de
 chauffe, un intervalle chargé juste avant le lever et 8 s d’overrun. Les deux
@@ -155,3 +165,6 @@ n’a dépassé sa durée. Les WAV frais sont sous
 Ces nombres valident le chemin logiciel et la non-vacuité du modèle. La
 calibration de 2 ms reste une estimation d’ingénierie du moteur laboratoire,
 pas une identification issue d’un enregistrement ou d’un banc instrumenté.
+
+La preuve schema-8 avec induction thermochimique se trouve dans
+[afterfire-induction-implementation-2026-08-22.md](afterfire-induction-implementation-2026-08-22.md).

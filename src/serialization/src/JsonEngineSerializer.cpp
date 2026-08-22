@@ -477,6 +477,11 @@ std::string JsonEngineSerializer::encode(const EngineConfig& config) const {
                       {"overrun_pulse_duty", config.exhaustAfterfire.overrunPulseDutyCycle},
                       {"overrun_pulse_timing_variation", config.exhaustAfterfire.overrunPulseTimingVariation},
                       {"induction_time_s", config.exhaustAfterfire.inductionTimeSeconds},
+                      {"induction_reference_pressure_kpa", config.exhaustAfterfire.inductionReferencePressureKpa},
+                      {"induction_activation_temperature_k", config.exhaustAfterfire.inductionActivationTemperatureK},
+                      {"induction_pressure_exponent", config.exhaustAfterfire.inductionPressureExponent},
+                      {"induction_equivalence_ratio_exponent", config.exhaustAfterfire.inductionEquivalenceRatioExponent},
+                      {"induction_decay_time_s", config.exhaustAfterfire.inductionDecayTimeSeconds},
                       {"minimum_equivalence_ratio", config.exhaustAfterfire.minimumEquivalenceRatio},
                       {"maximum_equivalence_ratio", config.exhaustAfterfire.maximumEquivalenceRatio},
                       {"quench_temperature_k", config.exhaustAfterfire.quenchTemperatureK}}},
@@ -701,6 +706,11 @@ EngineDecodeResult JsonEngineSerializer::decode(std::string_view text) const noe
             config.exhaustAfterfire.overrunPulseDutyCycle = afterfire.value("overrun_pulse_duty", config.exhaustAfterfire.overrunPulseDutyCycle);
             config.exhaustAfterfire.overrunPulseTimingVariation = afterfire.value("overrun_pulse_timing_variation", config.exhaustAfterfire.overrunPulseTimingVariation);
             config.exhaustAfterfire.inductionTimeSeconds = afterfire.value("induction_time_s", config.exhaustAfterfire.inductionTimeSeconds);
+            config.exhaustAfterfire.inductionReferencePressureKpa = afterfire.value("induction_reference_pressure_kpa", config.exhaustAfterfire.inductionReferencePressureKpa);
+            config.exhaustAfterfire.inductionActivationTemperatureK = afterfire.value("induction_activation_temperature_k", config.exhaustAfterfire.inductionActivationTemperatureK);
+            config.exhaustAfterfire.inductionPressureExponent = afterfire.value("induction_pressure_exponent", config.exhaustAfterfire.inductionPressureExponent);
+            config.exhaustAfterfire.inductionEquivalenceRatioExponent = afterfire.value("induction_equivalence_ratio_exponent", config.exhaustAfterfire.inductionEquivalenceRatioExponent);
+            config.exhaustAfterfire.inductionDecayTimeSeconds = afterfire.value("induction_decay_time_s", config.exhaustAfterfire.inductionDecayTimeSeconds);
             config.exhaustAfterfire.minimumEquivalenceRatio = afterfire.value("minimum_equivalence_ratio", config.exhaustAfterfire.minimumEquivalenceRatio);
             config.exhaustAfterfire.maximumEquivalenceRatio = afterfire.value("maximum_equivalence_ratio", config.exhaustAfterfire.maximumEquivalenceRatio);
             config.exhaustAfterfire.quenchTemperatureK = afterfire.value("quench_temperature_k", config.exhaustAfterfire.quenchTemperatureK);

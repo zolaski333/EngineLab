@@ -751,6 +751,11 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
     // how much the audio boundary is allowed to observe. See EngineState.
     std::uint64_t exhaustNetworkAcceptedSubsteps = 0;
     double exhaustNetworkAdvancedSeconds = 0.0;
+    std::size_t frameReactingExhaustControlVolumes = 0;
+    std::size_t frameWallIgnitedExhaustControlVolumes = 0;
+    double frameMaximumAfterfireInductionIntegral = 0.0;
+    double frameMinimumAfterfireInductionDelaySeconds = 0.0;
+    double frameMaximumAfterfireInductionDelaySeconds = 0.0;
 
     for (std::size_t subStep = 0; subStep < subStepCount; ++subStep) {
         const auto subStepStartTime = state_.simulationTimeSeconds;
@@ -2479,21 +2484,63 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                         || ecuCommand.hardRevLimiterActive));
             if (networkAdvance.completed
                 && exhaustReactionOperatingState) {
+                // Named assignments are intentional. This public chemistry
+                // contract contains only doubles, so a positional aggregate
+                // would still compile while silently reinterpreting every
+                // trailing value whenever a new coefficient is inserted.
+                gasdynamics::ExhaustFuelReactionConfig reactionConfig;
+                reactionConfig.ignitionTemperatureK =
+                    config_.exhaustAfterfire.ignitionTemperatureK;
+                reactionConfig.reactionTimeConstantSeconds =
+                    config_.exhaustAfterfire.reactionTimeConstantSeconds;
+                reactionConfig.reactionEfficiency =
+                    config_.exhaustAfterfire.reactionEfficiency;
+                reactionConfig.oxygenMolesPerFuelMole =
+                    config_.fuelProperties.oxygenMolesPerFuelMole;
+                reactionConfig.fuelMolarMassKg =
+                    config_.fuelProperties.molarMassGramsPerMole * 0.001;
+                reactionConfig.lowerHeatingValueJPerKg =
+                    config_.fuelProperties.lowerHeatingValueMjPerKg
+                        * 1'000'000.0;
+                reactionConfig.inductionTimeSeconds =
+                    config_.exhaustAfterfire.inductionTimeSeconds;
+                reactionConfig.inductionReferencePressureKpa =
+                    config_.exhaustAfterfire.inductionReferencePressureKpa;
+                reactionConfig.inductionActivationTemperatureK =
+                    config_.exhaustAfterfire.inductionActivationTemperatureK;
+                reactionConfig.inductionPressureExponent =
+                    config_.exhaustAfterfire.inductionPressureExponent;
+                reactionConfig.inductionEquivalenceRatioExponent =
+                    config_.exhaustAfterfire
+                        .inductionEquivalenceRatioExponent;
+                reactionConfig.inductionDecayTimeSeconds =
+                    config_.exhaustAfterfire.inductionDecayTimeSeconds;
+                reactionConfig.minimumEquivalenceRatio =
+                    config_.exhaustAfterfire.minimumEquivalenceRatio;
+                reactionConfig.maximumEquivalenceRatio =
+                    config_.exhaustAfterfire.maximumEquivalenceRatio;
+                reactionConfig.quenchTemperatureK =
+                    config_.exhaustAfterfire.quenchTemperatureK;
                 exhaustFuelReaction = physicalExhaustNetwork.reactUnburnedFuel(
                     networkAdvance.advancedTimeSeconds,
-                    {
-                        config_.exhaustAfterfire.ignitionTemperatureK,
-                        config_.exhaustAfterfire.reactionTimeConstantSeconds,
-                        config_.exhaustAfterfire.reactionEfficiency,
-                        config_.fuelProperties.oxygenMolesPerFuelMole,
-                        config_.fuelProperties.molarMassGramsPerMole * 0.001,
-                        config_.fuelProperties.lowerHeatingValueMjPerKg
-                            * 1'000'000.0,
-                        config_.exhaustAfterfire.inductionTimeSeconds,
-                        config_.exhaustAfterfire.minimumEquivalenceRatio,
-                        config_.exhaustAfterfire.maximumEquivalenceRatio,
-                        config_.exhaustAfterfire.quenchTemperatureK,
-                    });
+                    reactionConfig);
+                frameReactingExhaustControlVolumes +=
+                    exhaustFuelReaction.reactingControlVolumes;
+                frameWallIgnitedExhaustControlVolumes +=
+                    exhaustFuelReaction.wallIgnitedControlVolumes;
+                frameMaximumAfterfireInductionIntegral = std::max(
+                    frameMaximumAfterfireInductionIntegral,
+                    exhaustFuelReaction.maximumInductionIntegral);
+                if (exhaustFuelReaction.minimumInductionDelaySeconds > 0.0) {
+                    frameMinimumAfterfireInductionDelaySeconds =
+                        frameMinimumAfterfireInductionDelaySeconds > 0.0
+                        ? std::min(frameMinimumAfterfireInductionDelaySeconds,
+                            exhaustFuelReaction.minimumInductionDelaySeconds)
+                        : exhaustFuelReaction.minimumInductionDelaySeconds;
+                }
+                frameMaximumAfterfireInductionDelaySeconds = std::max(
+                    frameMaximumAfterfireInductionDelaySeconds,
+                    exhaustFuelReaction.maximumInductionDelaySeconds);
             }
 
             // Boundary/media states are consumed only at the renderer's block
@@ -2949,12 +2996,18 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
         // most misleading moment for it to say that -- a null-control run with
         // no retained fuel reported 99.5 % beside a heat release of 0.000 kW.
         state_.exhaustAfterfireWallIgnitedFraction =
-            exhaustFuelReaction.reactingControlVolumes > 0
+            frameReactingExhaustControlVolumes > 0
                 ? static_cast<double>(
-                      exhaustFuelReaction.wallIgnitedControlVolumes)
+                      frameWallIgnitedExhaustControlVolumes)
                     / static_cast<double>(
-                        exhaustFuelReaction.reactingControlVolumes)
+                        frameReactingExhaustControlVolumes)
                 : 0.0;
+        state_.exhaustAfterfireInductionProgress =
+            frameMaximumAfterfireInductionIntegral;
+        state_.exhaustAfterfireMinimumInductionDelayMs =
+            frameMinimumAfterfireInductionDelaySeconds * 1'000.0;
+        state_.exhaustAfterfireMaximumInductionDelayMs =
+            frameMaximumAfterfireInductionDelaySeconds * 1'000.0;
         state_.manifoldGasMassGrams = 0.0;
         state_.cylinderGasMassGrams = 0.0;
         state_.gasInternalEnergyJoules = 0.0;

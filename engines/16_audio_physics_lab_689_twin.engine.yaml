@@ -1,4 +1,4 @@
-schema_version: 6
+schema_version: 8
 family: motorcycle
 # Deliberately audible listening-lab variant of engine 15. The base geometry,
 # fuelling, valvetrain and vehicle are unchanged. This variant alone opts into
@@ -69,7 +69,18 @@ engine:
     # Interval scatter is bounded at +/-25%. The duty is recomputed from each
     # actual interval, so irregular timing does not change average fuel mass.
     overrun_pulse_timing_variation: 0.25
+    # Reference Livengood-Wu delay at 800 K, 101.325 kPa and phi=1. The
+    # Arrhenius/pressure/mixture exponents below reproduce the FORM of a global
+    # high-temperature gasoline-surrogate correlation (Ea/R=13340 K,
+    # p^-0.989, phi^-0.577). Its published 4-60 atm / 968-1361 K corpus does not
+    # calibrate this 1-atm exhaust, so the 4 ms reference remains explicitly an
+    # engineering estimate rather than an OEM or chemistry-mechanism claim.
     induction_time_s: 0.004
+    induction_reference_pressure_kpa: 101.325
+    induction_activation_temperature_k: 13340
+    induction_pressure_exponent: 0.989
+    induction_equivalence_ratio_exponent: -0.577
+    induction_decay_time_s: 0.008
     minimum_equivalence_ratio: 0.45
     maximum_equivalence_ratio: 1.80
     quench_temperature_k: 520

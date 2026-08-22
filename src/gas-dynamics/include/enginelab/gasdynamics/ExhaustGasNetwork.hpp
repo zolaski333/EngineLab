@@ -156,10 +156,19 @@ struct ExhaustFuelReactionConfig final {
     double oxygenMolesPerFuelMole { 12.5 };
     double fuelMolarMassKg { 0.114 };
     double lowerHeatingValueJPerKg { 44'000'000.0 };
-    /** Residence time required at or above ignitionTemperatureK. The threshold
-     * is the reference condition: this value is not silently divided by an
-     * additional temperature ramp. */
+    /** Reference delay at ignitionTemperatureK, stoichiometry and
+     * inductionReferencePressureKpa. */
     double inductionTimeSeconds { 0.004 };
+    double inductionReferencePressureKpa { 101.325 };
+    /** Ea/R in kelvin for the normalised Arrhenius delay. Zero makes
+     * temperature neutral for backwards compatibility. */
+    double inductionActivationTemperatureK { 0.0 };
+    /** tau is proportional to pressure^-n and equivalenceRatio^m. */
+    double inductionPressureExponent { 0.0 };
+    double inductionEquivalenceRatioExponent { 0.0 };
+    /** Full decay time of an unlit Livengood-Wu integral while the mixture
+     * remains flammable; a non-flammable inventory resets immediately. */
+    double inductionDecayTimeSeconds { 0.008 };
     double minimumEquivalenceRatio { 0.45 };
     double maximumEquivalenceRatio { 1.80 };
     double quenchTemperatureK { 520.0 };
@@ -196,6 +205,14 @@ struct ExhaustFuelReactionResult final {
      * hot-surface path is not contributing and the model has fallen back to
      * the behaviour that cannot pop. */
     std::size_t wallIgnitedControlVolumes { 0 };
+    /** Largest local Livengood-Wu integral observed during this call. */
+    double maximumInductionIntegral { 0.0 };
+    /** Smallest finite local correlation delay evaluated during this call.
+     * Zero means that no unlit site was induction-eligible. */
+    double minimumInductionDelaySeconds { 0.0 };
+    /** Largest finite local correlation delay evaluated during this call.
+     * Zero means that no unlit site was induction-eligible. */
+    double maximumInductionDelaySeconds { 0.0 };
     std::array<ExhaustFuelReactionSource, maximumSources> sources {};
     std::size_t sourceCount { 0 };
     std::size_t droppedSourceCount { 0 };
@@ -396,7 +413,8 @@ private:
     std::vector<CylinderGasExchange> cylinderExchanges_;
     std::vector<ExhaustOutletFlowSample> outletSamples_;
     struct ReactionSiteState final {
-        double inductionSeconds { 0.0 };
+        /** Dimensionless Livengood-Wu integral; ignition occurs at one. */
+        double inductionIntegral { 0.0 };
         bool burning { false };
         /** Origin of the current flame kernel, latched at ignition rather than
          * re-inferred after the released heat has warmed the gas. */

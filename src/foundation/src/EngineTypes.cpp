@@ -404,8 +404,9 @@ void normaliseEngineConfig(EngineConfig& config) {
     // schema 5 adds authored vehicle layout and longitudinal load-transfer
     // geometry; schema 6 makes the overrun strategy explicit and adds local
     // induction/flammability/quench calibration; schema 7 adds explicit
-    // cellular catalyst-substrate geometry. Older documents migrate to the
-    // documented defaults below.
+    // cellular catalyst-substrate geometry; schema 8 replaces the afterfire's
+    // flat induction clock with an explicitly parameterised Livengood-Wu
+    // correlation. Older documents migrate to the documented defaults below.
     const auto sourceSchemaVersion = config.schemaVersion;
     if (config.schemaVersion < currentEngineSchemaVersion)
         config.schemaVersion = currentEngineSchemaVersion;
@@ -428,6 +429,18 @@ void normaliseEngineConfig(EngineConfig& config) {
     }
     config.exhaustAfterfire.enabled = afterfireRetainsFuel(
         config.exhaustAfterfire.strategy);
+    if (sourceSchemaVersion < 8) {
+        // Schema <=7 accumulated wall-clock seconds once the threshold was
+        // crossed. Zero exponents reproduce that behaviour exactly, while the
+        // old `-0.5 seconds per second` cooldown becomes a dimensionless full
+        // decay time of 2*tau_ref.
+        config.exhaustAfterfire.inductionReferencePressureKpa = 101.325;
+        config.exhaustAfterfire.inductionActivationTemperatureK = 0.0;
+        config.exhaustAfterfire.inductionPressureExponent = 0.0;
+        config.exhaustAfterfire.inductionEquivalenceRatioExponent = 0.0;
+        config.exhaustAfterfire.inductionDecayTimeSeconds =
+            2.0 * config.exhaustAfterfire.inductionTimeSeconds;
+    }
     // `intake` is the canonical representation. Legacy scalar fields remain
     // mirrored so schema-v1 files and old catalog overrides remain compatible.
     if (config.intake.plenumVolumeLitres == IntakeConfig {}.plenumVolumeLitres
@@ -730,6 +743,17 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
                     0.0, 0.45)
         || !inRange(config.exhaustAfterfire.inductionTimeSeconds,
                     0.0001, 0.100)
+        || !inRange(config.exhaustAfterfire.inductionReferencePressureKpa,
+                    10.0, 10'000.0)
+        || !inRange(config.exhaustAfterfire.inductionActivationTemperatureK,
+                    0.0, 50'000.0)
+        || !inRange(config.exhaustAfterfire.inductionPressureExponent,
+                    0.0, 3.0)
+        || !inRange(
+            config.exhaustAfterfire.inductionEquivalenceRatioExponent,
+            -3.0, 3.0)
+        || !inRange(config.exhaustAfterfire.inductionDecayTimeSeconds,
+                    0.0001, 1.0)
         || !inRange(config.exhaustAfterfire.minimumEquivalenceRatio,
                     0.05, 1.0)
         || !inRange(config.exhaustAfterfire.maximumEquivalenceRatio,

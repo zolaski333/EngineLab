@@ -19,6 +19,50 @@ namespace {
     return (std::bit_cast<std::uint64_t>(value) & exponentMask) != exponentMask;
 }
 
+/** Normalised modified-Arrhenius ignition delay used by the local
+ * Livengood-Wu integral.
+ *
+ * tau = tau_ref * exp[(Ea/R)(1/T - 1/T_ref)]
+ *               * (p/p_ref)^(-n) * phi^m
+ *
+ * Every coefficient is authored in ExhaustFuelReactionConfig. Setting Ea/R,
+ * n and m to zero returns the schema-7 flat timer exactly. This routine does
+ * not clamp a physical delay: overflow means no induction at that condition,
+ * while underflow means the integral completes in the current coupling step.
+ */
+[[nodiscard]] double localInductionDelaySeconds(
+    const ExhaustFuelReactionConfig& reaction, double ignitionSourceK,
+    double pressurePa, double equivalenceRatio) noexcept {
+    if (reaction.inductionActivationTemperatureK == 0.0
+        && reaction.inductionPressureExponent == 0.0
+        && reaction.inductionEquivalenceRatioExponent == 0.0)
+        return reaction.inductionTimeSeconds;
+    if (!(ignitionSourceK > 0.0) || !(pressurePa > 0.0)
+        || !(equivalenceRatio > 0.0))
+        return std::numeric_limits<double>::infinity();
+    const auto referencePressurePa =
+        reaction.inductionReferencePressureKpa * 1'000.0;
+    auto logDelayScale = 0.0;
+    if (reaction.inductionActivationTemperatureK != 0.0) {
+        logDelayScale += reaction.inductionActivationTemperatureK
+            * (1.0 / ignitionSourceK
+                - 1.0 / reaction.ignitionTemperatureK);
+    }
+    if (reaction.inductionPressureExponent != 0.0) {
+        logDelayScale -= reaction.inductionPressureExponent
+            * std::log(pressurePa / referencePressurePa);
+    }
+    if (reaction.inductionEquivalenceRatioExponent != 0.0) {
+        logDelayScale += reaction.inductionEquivalenceRatioExponent
+            * std::log(equivalenceRatio);
+    }
+    const auto delay = reaction.inductionTimeSeconds
+        * std::exp(logDelayScale);
+    if (finite(delay)) return std::max(0.0, delay);
+    return logDelayScale > 0.0
+        ? std::numeric_limits<double>::infinity() : 0.0;
+}
+
 /**
  * Boundary state at a terminal opening discharging into open atmosphere.
  *
@@ -560,6 +604,16 @@ ExhaustFuelReactionResult ExhaustGasNetwork::reactUnburnedFuel(
         || !(reaction.fuelMolarMassKg > 0.0)
         || !(reaction.lowerHeatingValueJPerKg > 0.0)
         || !(reaction.inductionTimeSeconds > 0.0)
+        || !finite(reaction.inductionTimeSeconds)
+        || !(reaction.inductionReferencePressureKpa > 0.0)
+        || !finite(reaction.inductionReferencePressureKpa)
+        || !(reaction.inductionActivationTemperatureK >= 0.0)
+        || !finite(reaction.inductionActivationTemperatureK)
+        || !(reaction.inductionPressureExponent >= 0.0)
+        || !finite(reaction.inductionPressureExponent)
+        || !finite(reaction.inductionEquivalenceRatioExponent)
+        || !(reaction.inductionDecayTimeSeconds > 0.0)
+        || !finite(reaction.inductionDecayTimeSeconds)
         || !(reaction.minimumEquivalenceRatio > 0.0)
         || !(reaction.maximumEquivalenceRatio
             > reaction.minimumEquivalenceRatio)
@@ -609,7 +663,8 @@ ExhaustFuelReactionResult ExhaustGasNetwork::reactUnburnedFuel(
 
     // Local induction and flame state persist across coupling calls. Fuel and
     // oxygen may therefore convect through cold cells without globally reacting
-    // the instant any temperature threshold is crossed. Once a kernel is
+    // the instant any temperature threshold is crossed. The dimensionless
+    // Livengood-Wu integral advances by dt/tau(T,p,phi); once a kernel is
     // established it burns its local inventory until it is depleted, becomes
     // non-flammable or is genuinely quenched.
     const auto reactState = [&](ConservativeState& state, double volumeM3,
@@ -631,28 +686,48 @@ ExhaustFuelReactionResult ExhaustGasNetwork::reactUnburnedFuel(
             && equivalenceRatio <= reaction.maximumEquivalenceRatio;
         const auto ignitionCondition =
             ignitionSourceK >= reaction.ignitionTemperatureK;
-        if (flammable && ignitionCondition) {
-            site.inductionSeconds = std::min(
-                reaction.inductionTimeSeconds,
-                site.inductionSeconds + durationSeconds);
-            if (!site.burning
-                && site.inductionSeconds >= reaction.inductionTimeSeconds) {
+        if (!site.burning && flammable && ignitionCondition) {
+            const auto localDelaySeconds = localInductionDelaySeconds(
+                reaction, ignitionSourceK, primitive->pressurePa,
+                equivalenceRatio);
+            if (localDelaySeconds > 0.0 && finite(localDelaySeconds)
+                && (result.minimumInductionDelaySeconds == 0.0
+                    || localDelaySeconds
+                        < result.minimumInductionDelaySeconds)) {
+                result.minimumInductionDelaySeconds = localDelaySeconds;
+            }
+            if (localDelaySeconds > 0.0 && finite(localDelaySeconds)) {
+                result.maximumInductionDelaySeconds = std::max(
+                    result.maximumInductionDelaySeconds, localDelaySeconds);
+            }
+            const auto inductionIncrement = localDelaySeconds > 0.0
+                ? (finite(localDelaySeconds)
+                    ? durationSeconds / localDelaySeconds : 0.0)
+                : 1.0;
+            site.inductionIntegral = std::min(
+                1.0, site.inductionIntegral + inductionIncrement);
+            if (site.inductionIntegral >= 1.0) {
                 site.burning = true;
                 site.wallIgnited = primitive->temperatureK
                         < reaction.ignitionTemperatureK
                     && wallTemperatureK >= reaction.ignitionTemperatureK;
             }
         } else if (!site.burning) {
-            site.inductionSeconds = std::max(
-                0.0, site.inductionSeconds - durationSeconds * 0.5);
+            site.inductionIntegral = std::max(0.0,
+                site.inductionIntegral - durationSeconds
+                    / reaction.inductionDecayTimeSeconds);
         }
         if (!flammable
             || ignitionSourceK < reaction.quenchTemperatureK) {
             site.burning = false;
             site.wallIgnited = false;
-            if (!flammable) site.inductionSeconds = 0.0;
+            if (!flammable) site.inductionIntegral = 0.0;
+            result.maximumInductionIntegral = std::max(
+                result.maximumInductionIntegral, site.inductionIntegral);
             return false;
         }
+        result.maximumInductionIntegral = std::max(
+            result.maximumInductionIntegral, site.inductionIntegral);
         if (!site.burning) return false;
         const auto reactedFraction = efficiency * (1.0 - std::exp(
             -durationSeconds / reaction.reactionTimeConstantSeconds));
@@ -689,7 +764,7 @@ ExhaustFuelReactionResult ExhaustGasNetwork::reactUnburnedFuel(
         if (candidate.speciesMassDensityKgPerM3[fuel] <= 1.0e-12
             || candidate.speciesMassDensityKgPerM3[oxygen] <= 1.0e-12) {
             site.burning = false;
-            site.inductionSeconds = 0.0;
+            site.inductionIntegral = 0.0;
             site.wallIgnited = false;
         }
         return true;

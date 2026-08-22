@@ -368,10 +368,12 @@ restent les références des banques et de la sérialisation.
 
 `graph` est optionnel. En son absence, EngineLab compile les anciens champs de
 géométrie en primaires, merge, silencieux et sortie. Les fichiers moteur des
-schémas 1 à 6 restent lisibles et sont migrés en mémoire vers le schéma 7. Tout
-nouvel export JSON/YAML porte `schema_version: 7`. Les fichiers historiques du
-catalogue restent volontairement des fixtures de migration ; l'absence des
-trois champs de substrat conserve le bypass exact.
+schémas 1 à 7 restent lisibles et sont migrés en mémoire vers le schéma 8. Tout
+nouvel export JSON/YAML porte `schema_version: 8`. Le schéma 8 ajoute la
+corrélation d'induction afterfire explicitement paramétrée ; un document plus
+ancien reçoit des exposants nuls et conserve exactement son timer plat. Les
+fichiers historiques du catalogue restent volontairement des fixtures de
+migration ; l'absence des trois champs de substrat conserve le bypass exact.
 
 Même avec un graphe, le bloc `geometry` reste utile : il fournit les valeurs de
 secours nécessaires à la compilation physique d'une ancienne configuration.

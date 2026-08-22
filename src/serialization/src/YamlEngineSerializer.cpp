@@ -353,6 +353,11 @@ std::string YamlEngineSerializer::encode(const EngineConfig& config) const {
         << YAML::Key << "overrun_pulse_duty" << YAML::Value << config.exhaustAfterfire.overrunPulseDutyCycle
         << YAML::Key << "overrun_pulse_timing_variation" << YAML::Value << config.exhaustAfterfire.overrunPulseTimingVariation
         << YAML::Key << "induction_time_s" << YAML::Value << config.exhaustAfterfire.inductionTimeSeconds
+        << YAML::Key << "induction_reference_pressure_kpa" << YAML::Value << config.exhaustAfterfire.inductionReferencePressureKpa
+        << YAML::Key << "induction_activation_temperature_k" << YAML::Value << config.exhaustAfterfire.inductionActivationTemperatureK
+        << YAML::Key << "induction_pressure_exponent" << YAML::Value << config.exhaustAfterfire.inductionPressureExponent
+        << YAML::Key << "induction_equivalence_ratio_exponent" << YAML::Value << config.exhaustAfterfire.inductionEquivalenceRatioExponent
+        << YAML::Key << "induction_decay_time_s" << YAML::Value << config.exhaustAfterfire.inductionDecayTimeSeconds
         << YAML::Key << "minimum_equivalence_ratio" << YAML::Value << config.exhaustAfterfire.minimumEquivalenceRatio
         << YAML::Key << "maximum_equivalence_ratio" << YAML::Value << config.exhaustAfterfire.maximumEquivalenceRatio
         << YAML::Key << "quench_temperature_k" << YAML::Value << config.exhaustAfterfire.quenchTemperatureK
@@ -797,6 +802,11 @@ EngineDecodeResult YamlEngineSerializer::decode(std::string_view text) const noe
             config.exhaustAfterfire.overrunPulseDutyCycle = afterfire["overrun_pulse_duty"].as<double>(config.exhaustAfterfire.overrunPulseDutyCycle);
             config.exhaustAfterfire.overrunPulseTimingVariation = afterfire["overrun_pulse_timing_variation"].as<double>(config.exhaustAfterfire.overrunPulseTimingVariation);
             config.exhaustAfterfire.inductionTimeSeconds = afterfire["induction_time_s"].as<double>(config.exhaustAfterfire.inductionTimeSeconds);
+            config.exhaustAfterfire.inductionReferencePressureKpa = afterfire["induction_reference_pressure_kpa"].as<double>(config.exhaustAfterfire.inductionReferencePressureKpa);
+            config.exhaustAfterfire.inductionActivationTemperatureK = afterfire["induction_activation_temperature_k"].as<double>(config.exhaustAfterfire.inductionActivationTemperatureK);
+            config.exhaustAfterfire.inductionPressureExponent = afterfire["induction_pressure_exponent"].as<double>(config.exhaustAfterfire.inductionPressureExponent);
+            config.exhaustAfterfire.inductionEquivalenceRatioExponent = afterfire["induction_equivalence_ratio_exponent"].as<double>(config.exhaustAfterfire.inductionEquivalenceRatioExponent);
+            config.exhaustAfterfire.inductionDecayTimeSeconds = afterfire["induction_decay_time_s"].as<double>(config.exhaustAfterfire.inductionDecayTimeSeconds);
             config.exhaustAfterfire.minimumEquivalenceRatio = afterfire["minimum_equivalence_ratio"].as<double>(config.exhaustAfterfire.minimumEquivalenceRatio);
             config.exhaustAfterfire.maximumEquivalenceRatio = afterfire["maximum_equivalence_ratio"].as<double>(config.exhaustAfterfire.maximumEquivalenceRatio);
             config.exhaustAfterfire.quenchTemperatureK = afterfire["quench_temperature_k"].as<double>(config.exhaustAfterfire.quenchTemperatureK);

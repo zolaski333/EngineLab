@@ -664,6 +664,40 @@ void testBoundaryInputOrderIsIrrelevant() {
         "duplicate cylinder boundaries must be rejected before changing state");
 }
 
+[[nodiscard]] double measuredExhaustIgnitionDelaySeconds(
+    double temperatureK, double pressureKpa, double equivalenceRatio,
+    const ExhaustFuelReactionConfig& chemistry) {
+    ExhaustGasNetworkConfig configuration;
+    configuration.initialPressurePa = pressureKpa * 1'000.0;
+    configuration.initialTemperatureK = temperatureK;
+    configuration.wallTemperatureK = 300.0;
+    const auto oxygenMassPerFuelMass = chemistry.oxygenMolesPerFuelMole
+        * 0.032 / chemistry.fuelMolarMassKg;
+    constexpr double oxygenMassFraction = 0.20;
+    const auto fuelMassFraction = oxygenMassFraction * equivalenceRatio
+        / oxygenMassPerFuelMass;
+    requireNetwork(fuelMassFraction > 0.0
+            && fuelMassFraction + oxygenMassFraction < 1.0,
+        "induction sweep composition must be physical");
+    configuration.initialComposition.massFractions = {
+        oxygenMassFraction,
+        1.0 - oxygenMassFraction - fuelMassFraction,
+        fuelMassFraction,
+        0.0,
+    };
+    auto network = makeNetwork(makeDefaultInlineFour(), configuration);
+    constexpr double observationStepSeconds = 50.0e-6;
+    constexpr double maximumObservationSeconds = 0.100;
+    auto elapsedSeconds = 0.0;
+    while (elapsedSeconds < maximumObservationSeconds) {
+        const auto reaction = network.reactUnburnedFuel(
+            observationStepSeconds, chemistry);
+        elapsedSeconds += observationStepSeconds;
+        if (reaction.releasedEnergyJoules > 0.0) return elapsedSeconds;
+    }
+    return std::numeric_limits<double>::infinity();
+}
+
 void testHotUnburnedFuelReactsConservatively() {
     ExhaustGasNetworkConfig hotConfiguration;
     hotConfiguration.initialTemperatureK = 1'150.0;
@@ -677,6 +711,59 @@ void testHotUnburnedFuelReactsConservatively() {
     chemistry.reactionTimeConstantSeconds = 0.008;
     chemistry.reactionEfficiency = 0.94;
     chemistry.inductionTimeSeconds = 0.001;
+
+    auto inductionSweepChemistry = chemistry;
+    inductionSweepChemistry.ignitionTemperatureK = 900.0;
+    inductionSweepChemistry.inductionTimeSeconds = 0.004;
+    inductionSweepChemistry.inductionReferencePressureKpa = 101.325;
+    inductionSweepChemistry.inductionActivationTemperatureK = 13'340.0;
+    inductionSweepChemistry.inductionPressureExponent = 0.989;
+    inductionSweepChemistry.inductionEquivalenceRatioExponent = -0.577;
+    inductionSweepChemistry.inductionDecayTimeSeconds = 0.008;
+    const auto referenceDelay = measuredExhaustIgnitionDelaySeconds(
+        901.0, 101.325, 1.0, inductionSweepChemistry);
+    const auto hotDelay = measuredExhaustIgnitionDelaySeconds(
+        1'150.0, 101.325, 1.0, inductionSweepChemistry);
+    const auto pressureDelay = measuredExhaustIgnitionDelaySeconds(
+        901.0, 180.0, 1.0, inductionSweepChemistry);
+    const auto leanDelay = measuredExhaustIgnitionDelaySeconds(
+        901.0, 101.325, 0.50, inductionSweepChemistry);
+    std::cout << "afterfire induction sweep: reference_ms="
+              << referenceDelay * 1'000.0
+              << " hot_ms=" << hotDelay * 1'000.0
+              << " pressure_ms=" << pressureDelay * 1'000.0
+              << " lean_ms=" << leanDelay * 1'000.0 << '\n';
+    requireNetwork(std::isfinite(referenceDelay) && std::isfinite(hotDelay)
+            && std::isfinite(pressureDelay) && std::isfinite(leanDelay),
+        "the controlled induction sweep must ignite every flammable hot case");
+    requireNetwork(referenceDelay > 0.0038 && referenceDelay < 0.0041,
+        "the normalised correlation must preserve its authored reference delay");
+    requireNetwork(hotDelay < referenceDelay * 0.10,
+        "hotter reactive gas must accumulate induction materially faster");
+    requireNetwork(pressureDelay < referenceDelay * 0.70,
+        "higher local pressure must shorten the authored gasoline induction delay");
+    requireNetwork(leanDelay > referenceDelay * 1.35,
+        "the authored lean-mixture exponent must lengthen induction near the lean edge");
+
+    auto flatInductionChemistry = inductionSweepChemistry;
+    flatInductionChemistry.inductionActivationTemperatureK = 0.0;
+    flatInductionChemistry.inductionPressureExponent = 0.0;
+    flatInductionChemistry.inductionEquivalenceRatioExponent = 0.0;
+    const std::array flatDelays {
+        measuredExhaustIgnitionDelaySeconds(
+            901.0, 101.325, 1.0, flatInductionChemistry),
+        measuredExhaustIgnitionDelaySeconds(
+            1'150.0, 101.325, 1.0, flatInductionChemistry),
+        measuredExhaustIgnitionDelaySeconds(
+            901.0, 180.0, 1.0, flatInductionChemistry),
+        measuredExhaustIgnitionDelaySeconds(
+            901.0, 101.325, 0.50, flatInductionChemistry),
+    };
+    for (const auto flatDelay : flatDelays) {
+        requireNetwork(std::abs(flatDelay
+                - flatInductionChemistry.inductionTimeSeconds) < 51.0e-6,
+            "zero induction exponents must preserve the schema-7 flat timer");
+    }
     const auto reaction = hot.reactUnburnedFuel(0.004, chemistry);
     const auto after = hot.inventory();
     const auto oxygen = static_cast<std::size_t>(GasSpecies::oxygen);

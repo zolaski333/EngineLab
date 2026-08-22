@@ -398,6 +398,31 @@ La reconstruction Release intégrale puis la suite autoritaire terminent à
 **42/42 CTest**, zéro échec, en **765,38 s**. Les tests audio et transitoires
 ainsi que les rampes dyno produit CP2/LS3 sont compris dans ce passage.
 
+## Induction d'afterfire thermochimique et explicite
+
+L'induction locale était encore un chronomètre : une fois le seuil franchi,
+901 K ou 1 150 K, 101 ou 180 kPa, `phi=1` ou `phi=0,5` attendaient tous
+exactement 4,00 ms. Le schéma 8 peut maintenant authorer une intégrale de
+Livengood-Wu normalisée, avec délai et pression de référence, `Ea/R`, exposants
+pression/richesse et durée de décroissance explicites. Les anciens schémas
+migrent avec des exposants nuls et restent bit-sémantiquement plats.
+
+Le sweep final mesure respectivement **3,95 / 0,20 / 2,25 / 5,90 ms**. Sur le
+Twin laboratoire, l'A/B même binaire `--flat-induction` mesure une plage locale
+0,001–6,543 ms au lieu de 4,000 ms fixe, 72,092 mg brûlés au lieu de 63,532 mg
+et 10,547 kW au lieu de 9,244 kW. Le crest audio baisse honnêtement de 6,41 à
+5,67 sans gain compensatoire ; la source demeure identifiable, sans limite de
+pression, perte de queue, leveler ni bloc hors budget. Le pas physique mesure
+20,3 % / 23,4 % du budget moyen / p99 contre 20,2 % / 23,5 % pour le timer
+plat ; la corrélation n'ajoute donc aucun coût discernable dans ce passage. Le
+détail et les limites de provenance se trouvent dans
+`docs/afterfire-induction-implementation-2026-08-22.md`.
+
+La reconstruction Release intégrale passe, application comprise, puis la suite
+autoritaire termine à **42/42 CTest**, zéro échec, en **719,78 s**. Les tests
+dyno produit CP2/LS3, audio, overrun thermique, catalogue et turbo sont compris
+dans ce passage.
+
 ## Matrice actuelle des champs du graphe
 
 Cette matrice évite de confondre un champ sérialisé avec une influence physique
@@ -419,14 +444,13 @@ effective.
 
 ## Prochain ordre de travail
 
-1. Rejouer la suite Release complète et produire un artefact exécutable après
-   le lot d'énergie turbo.
-2. Poursuivre les limites physiques restantes par petits états d'ordre réduit :
-   induction thermochimique explicite et transport éventuel du noyau, seulement
-   si les nouveaux oracles montrent que l'état local reste insuffisant.
-3. Composer les silencieux plus complexes avec chambres et branches explicites
+1. Ajouter l'oracle de spatialisation réactionnelle X-pipe/multi-branche avant
+   d'envisager le transport d'un noyau ; l'induction thermochimique locale est
+   maintenant livrée.
+2. Composer les silencieux plus complexes avec chambres et branches explicites
    lorsque leurs dimensions sont connues ; le noyau perforé de base est livré.
-4. Ne remplacer la loi de similitude turbo par une carte compresseur que si les
+3. Ne remplacer la loi de similitude turbo par une carte compresseur que si les
    lignes débit/vitesse/rendement possèdent une provenance ; l'UI marque déjà
    toute vitesse au-dessus du point de conception.
-5. Rejouer les oracles, les tests produit et le budget temps réel à chaque lot.
+4. Rejouer les oracles, les tests produit et le budget temps réel à chaque lot,
+   puis produire l'artefact exécutable final.

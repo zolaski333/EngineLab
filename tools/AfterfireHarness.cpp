@@ -80,6 +80,7 @@
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -99,6 +100,9 @@ struct Sample final {
     double exhaustGasC { 0.0 };
     double exhaustWallC { 0.0 };
     double wallIgnitedFraction { 0.0 };
+    double inductionProgress { 0.0 };
+    double minimumInductionDelayMs { 0.0 };
+    double maximumInductionDelayMs { 0.0 };
     bool overrunActive { false };
 };
 
@@ -125,13 +129,37 @@ struct ReactionAcousticDiagnostics final {
     double energyWeightedAxial {};
 };
 
-struct AudioRenderTiming final {
+struct RealtimeTiming final {
     std::uint64_t blockCount {};
     std::uint64_t overBudgetBlockCount {};
     double meanBudgetFraction {};
     double p99BudgetFraction {};
     double maximumBudgetFraction {};
 };
+
+[[nodiscard]] RealtimeTiming summariseRealtimeTiming(
+    std::vector<double> durationsSeconds, double budgetSeconds) {
+    RealtimeTiming result;
+    result.blockCount = durationsSeconds.size();
+    if (durationsSeconds.empty() || !(budgetSeconds > 0.0)) return result;
+    std::sort(durationsSeconds.begin(), durationsSeconds.end());
+    const auto sumSeconds = std::accumulate(
+        durationsSeconds.begin(), durationsSeconds.end(), 0.0);
+    result.meanBudgetFraction = sumSeconds
+        / (budgetSeconds * static_cast<double>(durationsSeconds.size()));
+    const auto p99Index = std::min(
+        durationsSeconds.size() - 1,
+        static_cast<std::size_t>(std::floor(
+            0.99 * static_cast<double>(durationsSeconds.size() - 1))));
+    result.p99BudgetFraction = durationsSeconds[p99Index] / budgetSeconds;
+    result.maximumBudgetFraction = durationsSeconds.back() / budgetSeconds;
+    result.overBudgetBlockCount = static_cast<std::uint64_t>(
+        std::count_if(durationsSeconds.begin(), durationsSeconds.end(),
+            [budgetSeconds](double seconds) {
+                return seconds > budgetSeconds;
+            }));
+    return result;
+}
 
 struct Metrics final {
     std::string name;
@@ -143,6 +171,9 @@ struct Metrics final {
     double wallTemperatureMinDuringOverrunC { 0.0 };
     double peakWallIgnitedFraction { 0.0 };
     double meanWallIgnitedFraction { 0.0 };
+    double peakInductionProgress { 0.0 };
+    double minimumInductionDelayMs { 0.0 };
+    double maximumInductionDelayMs { 0.0 };
     // Heat release over the overrun window.
     double peakHeatKw { 0.0 };
     double troughHeatKw { 0.0 };
@@ -182,7 +213,8 @@ struct Metrics final {
     bool preLiftReactionWindowMeasured { false };
     ReactionAcousticDiagnostics reactionAcoustics {};
     bool reactionWindowCaptured { false };
-    AudioRenderTiming reactionWindowRenderTiming {};
+    RealtimeTiming reactionWindowSimulationTiming {};
+    RealtimeTiming reactionWindowRenderTiming {};
     enginelab::ExhaustAfterfireConfig effectiveCalibration {};
     bool calibrationOverridden { false };
     bool reactionAcousticsEnabled { true };
@@ -394,30 +426,10 @@ public:
     void resetReactionDiagnostics() noexcept {
         reactionDiagnostics_ = {};
     }
-    [[nodiscard]] AudioRenderTiming renderTiming() const {
-        AudioRenderTiming result;
-        result.blockCount = renderDurationsSeconds_.size();
-        if (renderDurationsSeconds_.empty()) return result;
+    [[nodiscard]] RealtimeTiming renderTiming() const {
         const auto budgetSeconds = static_cast<double>(audioSamplesPerStep)
             / audioSampleRate;
-        auto sorted = renderDurationsSeconds_;
-        std::sort(sorted.begin(), sorted.end());
-        const auto sumSeconds = std::accumulate(
-            sorted.begin(), sorted.end(), 0.0);
-        result.meanBudgetFraction = sumSeconds
-            / (budgetSeconds * static_cast<double>(sorted.size()));
-        const auto p99Index = std::min(
-            sorted.size() - 1,
-            static_cast<std::size_t>(std::floor(
-                0.99 * static_cast<double>(sorted.size() - 1))));
-        result.p99BudgetFraction = sorted[p99Index] / budgetSeconds;
-        result.maximumBudgetFraction = sorted.back() / budgetSeconds;
-        result.overBudgetBlockCount = static_cast<std::uint64_t>(
-            std::count_if(sorted.begin(), sorted.end(),
-                [budgetSeconds](double seconds) {
-                    return seconds > budgetSeconds;
-                }));
-        return result;
+        return summariseRealtimeTiming(renderDurationsSeconds_, budgetSeconds);
     }
     void resetRenderTiming() noexcept {
         renderDurationsSeconds_.clear();
@@ -500,6 +512,8 @@ struct Options final {
     std::optional<double> pulseHz;
     std::optional<double> pulseDuty;
     std::optional<double> pulseTimingVariation;
+    /** Same-binary null for the schema-8 induction correlation. */
+    bool flatInductionControl { false };
     bool reactionAcousticsEnabled { true };
     // Speed the measured overrun opens at. Must be controlled: left to the
     // warm-up it lands on the rev limiter, where engine pumping buries the
@@ -530,6 +544,11 @@ void applyCalibrationOverrides(enginelab::EngineConfig& config,
         afterfire.overrunPulseHz = 0.0;
         afterfire.overrunPulseDutyCycle = 0.35;
         afterfire.overrunPulseTimingVariation = 0.25;
+        afterfire.inductionActivationTemperatureK = 0.0;
+        afterfire.inductionPressureExponent = 0.0;
+        afterfire.inductionEquivalenceRatioExponent = 0.0;
+        afterfire.inductionDecayTimeSeconds =
+            2.0 * afterfire.inductionTimeSeconds;
         afterfire.overrunMinimumRpm =
             std::clamp(config.idleRpm * 1.8, 500.0, 20'000.0);
     }
@@ -547,6 +566,13 @@ void applyCalibrationOverrides(enginelab::EngineConfig& config,
     if (options.pulseTimingVariation)
         afterfire.overrunPulseTimingVariation =
             *options.pulseTimingVariation;
+    if (options.flatInductionControl) {
+        afterfire.inductionActivationTemperatureK = 0.0;
+        afterfire.inductionPressureExponent = 0.0;
+        afterfire.inductionEquivalenceRatioExponent = 0.0;
+        afterfire.inductionDecayTimeSeconds =
+            2.0 * afterfire.inductionTimeSeconds;
+    }
 
     // Strategy is only inferred when the caller explicitly changes delivery.
     // Merely overriding a chemistry parameter must not rewrite ECU intent.
@@ -585,7 +611,8 @@ Metrics measureAfterfire(const enginelab::EngineConfig& baseConfig,
     metrics.calibrationOverridden = options.forceDemo
         || options.fuelFraction || options.ignitionTemperatureK
         || options.reactionMilliseconds || options.pulseHz
-        || options.pulseDuty || options.pulseTimingVariation;
+        || options.pulseDuty || options.pulseTimingVariation
+        || options.flatInductionControl;
     metrics.reactionAcousticsEnabled = options.reactionAcousticsEnabled;
     const auto captureAudioContract = [&metrics, &audio]() {
         if (!audio) return;
@@ -619,6 +646,12 @@ Metrics measureAfterfire(const enginelab::EngineConfig& baseConfig,
         sample.exhaustGasC = s.exhaustTemperatureC;
         sample.exhaustWallC = s.exhaustWallTemperatureC;
         sample.wallIgnitedFraction = s.exhaustAfterfireWallIgnitedFraction;
+        sample.inductionProgress =
+            s.exhaustAfterfireInductionProgress;
+        sample.minimumInductionDelayMs =
+            s.exhaustAfterfireMinimumInductionDelayMs;
+        sample.maximumInductionDelayMs =
+            s.exhaustAfterfireMaximumInductionDelayMs;
         samples.push_back(sample);
     };
 
@@ -761,15 +794,25 @@ Metrics measureAfterfire(const enginelab::EngineConfig& baseConfig,
 
     // Phase D -- lift off. Closed throttle, clutch home, engine driven by the
     // car. This is the overrun the pops are supposed to live in.
+    std::vector<double> overrunSimulationDurationsSeconds;
+    overrunSimulationDurationsSeconds.reserve(
+        static_cast<std::size_t>(options.overrunSeconds / stepSeconds));
     for (int step = 0;
          step < static_cast<int>(options.overrunSeconds / stepSeconds);
          ++step, t += stepSeconds) {
+        const auto simulationStart = std::chrono::steady_clock::now();
         auto tick = coupledStep(simulator, driveline, 0.0, 1.0, false);
+        const auto simulationEnd = std::chrono::steady_clock::now();
+        overrunSimulationDurationsSeconds.push_back(
+            std::chrono::duration<double>(
+                simulationEnd - simulationStart).count());
         if (audio)
             audio->renderFrame(tick.frame, simulator, false,
                 tick.drive.requestedLoad);
         record(tick, 0.0);
     }
+    metrics.reactionWindowSimulationTiming = summariseRealtimeTiming(
+        std::move(overrunSimulationDurationsSeconds), stepSeconds);
     metrics.tipInTime = t;
     const auto tipInIndex = samples.size();
     if (audio) {
@@ -834,6 +877,18 @@ Metrics measureAfterfire(const enginelab::EngineConfig& baseConfig,
                     sample.exhaustWallC);
         metrics.peakWallIgnitedFraction = std::max(
             metrics.peakWallIgnitedFraction, sample.wallIgnitedFraction);
+        metrics.peakInductionProgress = std::max(
+            metrics.peakInductionProgress, sample.inductionProgress);
+        if (sample.minimumInductionDelayMs > 0.0) {
+            metrics.minimumInductionDelayMs =
+                metrics.minimumInductionDelayMs > 0.0
+                ? std::min(metrics.minimumInductionDelayMs,
+                    sample.minimumInductionDelayMs)
+                : sample.minimumInductionDelayMs;
+        }
+        metrics.maximumInductionDelayMs = std::max(
+            metrics.maximumInductionDelayMs,
+            sample.maximumInductionDelayMs);
         wallIgnitedSum += sample.wallIgnitedFraction;
         metrics.troughHeatKw = index == steadyBegin
             ? sample.heatKw : std::min(metrics.troughHeatKw, sample.heatKw);
@@ -1010,15 +1065,19 @@ Metrics measureAfterfire(const enginelab::EngineConfig& baseConfig,
     if (options.trace) {
         std::printf("# %s\n", config.name.c_str());
         std::printf("t_s,rpm,throttle,heat_kw,fuel_mg_s,port_kpa,egt_c,"
-                    "wall_c,armed\n");
+                    "wall_c,induction_i,induction_min_ms,"
+                    "induction_max_ms,armed\n");
         const auto traceBegin = liftOffIndex > 240 ? liftOffIndex - 240
                                                    : std::size_t { 0 };
         for (std::size_t index = traceBegin; index < samples.size(); ++index) {
             const auto& sample = samples[index];
-            std::printf("%.4f,%.1f,%.2f,%.4f,%.3f,%.1f,%.1f,%.1f,%d\n",
+            std::printf("%.4f,%.1f,%.2f,%.4f,%.3f,%.1f,%.1f,%.1f,"
+                        "%.4f,%.4f,%.4f,%d\n",
                 sample.t, sample.rpm, sample.throttle, sample.heatKw,
                 sample.fuelBurnMgPerSecond, sample.exhaustPortPeakKpa,
                 sample.exhaustGasC, sample.exhaustWallC,
+                sample.inductionProgress, sample.minimumInductionDelayMs,
+                sample.maximumInductionDelayMs,
                 sample.overrunActive ? 1 : 0);
         }
     }
@@ -1046,6 +1105,26 @@ Metrics measureAfterfire(const enginelab::EngineConfig& baseConfig,
         || counters.legacyPathSamples > 0
         || counters.invalidBoundarySamples > 0
         || counters.levelLimitedSamples > 0;
+}
+
+[[nodiscard]] bool violatesSimulationBudget(const Metrics& metrics) noexcept {
+    return metrics.reactionWindowSimulationTiming.overBudgetBlockCount > 0;
+}
+
+[[nodiscard]] bool violatesPhysicalAfterfireContract(
+    const Metrics& metrics) noexcept {
+    if (!metrics.ran) return true;
+    const auto expectsAfterfire = enginelab::afterfireRetainsFuel(
+            metrics.effectiveCalibration.strategy)
+        && metrics.effectiveCalibration.overrunFuelFraction > 0.0;
+    if (!expectsAfterfire) return false;
+    return metrics.overrunActiveSteps == 0
+        || !(metrics.deliveredFuelMg > 0.0)
+        || !(metrics.burnedFuelMg > 0.0)
+        || metrics.eventCount == 0
+        || metrics.peakInductionProgress < 1.0
+        || (metrics.audioMeasured
+            && metrics.reactionAcoustics.eventCount == 0);
 }
 
 void reportAudioContract(const Metrics& metrics) {
@@ -1086,6 +1165,13 @@ void report(const Metrics& metrics) {
         calibration.ignitionTemperatureK,
         calibration.reactionTimeConstantSeconds * 1'000.0,
         calibration.inductionTimeSeconds * 1'000.0);
+    std::printf("    induction reference=%.3f kPa Ea/R=%.1f K"
+                " p_exp=%.3f phi_exp=%.3f decay=%.2f ms\n",
+        calibration.inductionReferencePressureKpa,
+        calibration.inductionActivationTemperatureK,
+        calibration.inductionPressureExponent,
+        calibration.inductionEquivalenceRatioExponent,
+        calibration.inductionDecayTimeSeconds * 1'000.0);
     std::printf("    delivery pulse=%.3f Hz duty=%.3f variation=%.3f"
                 " min_rpm=%.0f max_throttle=%.3f quench=%.1f K"
                 " reaction_audio=%s\n",
@@ -1112,6 +1198,10 @@ void report(const Metrics& metrics) {
         metrics.wallTemperatureMinDuringOverrunC,
         metrics.peakWallIgnitedFraction * 100.0,
         metrics.meanWallIgnitedFraction * 100.0);
+    std::printf("    induction Imax=%.3f local_delay=%.3f..%.3f ms\n",
+        metrics.peakInductionProgress,
+        metrics.minimumInductionDelayMs,
+        metrics.maximumInductionDelayMs);
     std::printf("    heat  peak %8.3f kW  trough %8.4f kW  modulation %8.1fx"
                 "  mean %8.4f kW  duty %5.1f %%\n",
         metrics.peakHeatKw, metrics.troughHeatKw, metrics.modulationDepth,
@@ -1139,6 +1229,28 @@ void report(const Metrics& metrics) {
             metrics.eventIntervalStdDevMs);
     std::printf("    port  overrun peak %7.1f kPa  pre-lift mean %7.1f kPa\n",
         metrics.portPeakDuringOverrunKpa, metrics.portBaselineKpa);
+    std::printf("    simulation step %llu x %.3f ms: mean=%5.1f %%"
+                " p99=%5.1f %% max=%5.1f %% over-budget=%llu  %s\n",
+        static_cast<unsigned long long>(
+            metrics.reactionWindowSimulationTiming.blockCount),
+        stepSeconds * 1'000.0,
+        metrics.reactionWindowSimulationTiming.meanBudgetFraction * 100.0,
+        metrics.reactionWindowSimulationTiming.p99BudgetFraction * 100.0,
+        metrics.reactionWindowSimulationTiming.maximumBudgetFraction * 100.0,
+        static_cast<unsigned long long>(
+            metrics.reactionWindowSimulationTiming.overBudgetBlockCount),
+        violatesSimulationBudget(metrics) ? "INVALID" : "valid");
+    const auto expectsAfterfire = enginelab::afterfireRetainsFuel(
+            calibration.strategy)
+        && calibration.overrunFuelFraction > 0.0;
+    std::printf("    physical afterfire expected=%s induction=%s"
+                " heat_events=%d source_events=%llu  %s\n",
+        expectsAfterfire ? "yes" : "no",
+        metrics.peakInductionProgress >= 1.0 ? "yes" : "no",
+        metrics.eventCount,
+        static_cast<unsigned long long>(
+            metrics.reactionAcoustics.eventCount),
+        violatesPhysicalAfterfireContract(metrics) ? "INVALID" : "valid");
     if (metrics.audioMeasured) {
         if (metrics.preLiftReactionWindowMeasured)
             std::printf("    loaded pre-lift reaction events=%llu  %s\n",
@@ -1191,6 +1303,7 @@ void printUsage() {
         "  --pulse-hz HZ                  override fuel-slug frequency\n"
         "  --pulse-duty FRACTION          override fuel-slug duty cycle\n"
         "  --pulse-timing-variation F     override deterministic timing variation\n"
+        "  --flat-induction               same-binary schema-7 timer control\n"
         "  --warmup-seconds S             loaded exhaust warm-up duration\n"
         "  --overrun-seconds S            closed-throttle capture duration\n"
         "  --liftoff-rpm RPM              controlled lift-off speed\n"
@@ -1236,6 +1349,8 @@ int main(int argc, char** argv) {
         else if (argument == "--pulse-duty") options.pulseDuty = std::stod(next());
         else if (argument == "--pulse-timing-variation")
             options.pulseTimingVariation = std::stod(next());
+        else if (argument == "--flat-induction")
+            options.flatInductionControl = true;
         else {
             std::fprintf(stderr, "unknown argument: %s\n", argument.c_str());
             return 2;
@@ -1282,16 +1397,19 @@ int main(int argc, char** argv) {
         selected.push_back(std::move(config));
     }
 
-    auto invalidAudioMeasurements = 0;
+    auto invalidRealtimeMeasurements = 0;
     for (const auto& engine : selected) {
         const auto metrics = measureAfterfire(engine, options);
         report(metrics);
-        if (violatesAudioContract(metrics)) {
+        if (violatesPhysicalAfterfireContract(metrics)
+            || violatesSimulationBudget(metrics)
+            || violatesAudioContract(metrics)) {
             std::fprintf(stderr,
-                "INVALID: %s: audio delivery contract was violated\n",
+                "INVALID: %s: physical or real-time afterfire contract"
+                " was violated\n",
                 metrics.name.c_str());
-            ++invalidAudioMeasurements;
+            ++invalidRealtimeMeasurements;
         }
     }
-    return invalidAudioMeasurements == 0 ? 0 : 1;
+    return invalidRealtimeMeasurements == 0 ? 0 : 1;
 }

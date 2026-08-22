@@ -899,6 +899,11 @@ void applyCrankOffsets(EngineConfig& config) {
         assignIfPresent(afterfire, "overrun_pulse_duty", config.exhaustAfterfire.overrunPulseDutyCycle);
         assignIfPresent(afterfire, "overrun_pulse_timing_variation", config.exhaustAfterfire.overrunPulseTimingVariation);
         assignIfPresent(afterfire, "induction_time_s", config.exhaustAfterfire.inductionTimeSeconds);
+        assignIfPresent(afterfire, "induction_reference_pressure_kpa", config.exhaustAfterfire.inductionReferencePressureKpa);
+        assignIfPresent(afterfire, "induction_activation_temperature_k", config.exhaustAfterfire.inductionActivationTemperatureK);
+        assignIfPresent(afterfire, "induction_pressure_exponent", config.exhaustAfterfire.inductionPressureExponent);
+        assignIfPresent(afterfire, "induction_equivalence_ratio_exponent", config.exhaustAfterfire.inductionEquivalenceRatioExponent);
+        assignIfPresent(afterfire, "induction_decay_time_s", config.exhaustAfterfire.inductionDecayTimeSeconds);
         assignIfPresent(afterfire, "minimum_equivalence_ratio", config.exhaustAfterfire.minimumEquivalenceRatio);
         assignIfPresent(afterfire, "maximum_equivalence_ratio", config.exhaustAfterfire.maximumEquivalenceRatio);
         assignIfPresent(afterfire, "quench_temperature_k", config.exhaustAfterfire.quenchTemperatureK);
