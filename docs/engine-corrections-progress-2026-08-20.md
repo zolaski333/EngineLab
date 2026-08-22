@@ -19,8 +19,14 @@ est respecté ; il ne transforme pas une hypothèse acoustique en donnée mesur�
 | `9c4ff1f` | branches latérales résonantes passives, bornées à huit | poussé |
 | `8b4f980` | monolithes de catalyseur homogénéisés | poussé |
 | `f865a7b` | noyau perforé, volume annulaire et garnissage passif | poussé |
+| `afbc3e2` | preuves, budget et limites du silencieux passif | poussé |
+| `7db0b8e` | harness afterfire aligné sur la calibration réellement authorée | poussé |
 | `9f4fa96` | induction cohérente, source thermoacoustique audible, afterfire borné et instrumenté | poussé |
-| `2465157` | sweep turbo univarié, recalibration Big Twin et vraie fenêtre audio stabilisée | poussé |
+| `2465157` | fixtures de mesure périmées réparées sans relâcher les seuils | poussé |
+| `778c70f` | preuves et limites de l'afterfire physique documentées | poussé |
+| `cdb8ba2` | énergie d'arbre turbo conservée et autorité aval mesurée | poussé |
+| `f008e2c` | induction afterfire thermochimique explicitement paramétrée | poussé |
+| `4c74f61` | X-pipe directionnel passif à quatre ports, schéma 9 et métrologie CFL complète | poussé |
 
 ## Dyno livré
 
@@ -423,6 +429,76 @@ autoritaire termine à **42/42 CTest**, zéro échec, en **719,78 s**. Les tests
 dyno produit CP2/LS3, audio, overrun thermique, catalogue et turbo sont compris
 dans ce passage.
 
+## X-pipe directionnel et identité des bancs
+
+Le LS3 utilisait encore un `merge -> splitter` comme pseudo-X. L'oracle de
+réaction a prouvé que cette écriture détruisait complètement l'identité des
+bancs : les deux injections miroir devenaient identiques, avec un écart de
+`-318,813 dB` à la précision numérique.
+
+Le schéma 9 ajoute un `crossover` compact avec deux entrées, deux sorties,
+appariement explicite des ports et couplage de puissance `k`. Le guide d'onde
+emploie une matrice quatre ports réelle, réciproque et orthogonale dans les
+coordonnées `sqrt(Y) p`. À `k=0,30`, les routes conservent exactement les parts
+de puissance `0,91 / 0,09`, en miroir entre les deux bancs. Le nouvel oracle
+mesure `3,0189 dB` d'identité résiduelle, avec des biais gauche/droite opposés de
+`+8,68156 / -7,49687 dB` selon le banc excité.
+
+Le solveur gaz garde un seul contrôle bien mélangé de volume `2 A d`. La
+métrologie coût inclut désormais la vraie borne de jonction `V/sum(A_port)` en
+plus du `dx` des conduits, et le moteur, l'éditeur et les harnesses partagent une
+seule politique de maille temps réel. Le LS3 livré expose 16 conduits, 3
+jonctions, 26 cellules et une longueur CFL limitante de 40 mm.
+
+Le premier callback recalculait quatre racines d'admittance à chaque échantillon
+et a révélé un passage chaud à `0,994×`. Il n'a pas été retenu. Les cibles sont
+maintenant calculées une fois par bloc puis interpolées dans le domaine
+`sqrt(Y)`, ce qui conserve le scattering passif et remonte deux passages
+consécutifs à **1,025×**. DSP moyen `34,9–35,0 %`, p99 `56 %`, sous-pas gaz
+`26 880 Hz`, et tous les compteurs audio restent à zéro. Le gate 0,97 passe,
+mais les 2,5 % de marge sur le temps réel restent une contrainte.
+
+Le rendu produit à 5 000 tr/min, sans référence externe, mesure 6,32 dB de
+forme mix et 7,98 dB sur l'échappement entre le X livré et les deux 4-en-1 sans
+section commune ; les tubes indépendants atteignent 8,08 / 15,15 dB. AGC 1,000,
+zéro échantillon limité. Cela prouve l'autorité du graphe dans la chaîne livrée,
+pas une fidélité absolue au réel.
+
+Après l'optimisation finale, la reconstruction Release intégrale passe et la
+suite autoritaire termine à **42/42 CTest**, zéro échec, en **727,16 s**. Les
+deux rampes dyno produit sont incluses. `EngineLab.exe` reste vivant après un
+smoke caché de cinq secondes. Toutes les équations, mesures intermédiaires et
+limites sont consignées dans
+[`x-pipe-directionnel-implementation-2026-08-22.md`](x-pipe-directionnel-implementation-2026-08-22.md).
+
+## Livraison Windows du lot X-pipe
+
+Le ZIP CPack final est reconstruit après le journal et vérifié depuis une
+extraction neuve, pas depuis l'arbre de build. Le contrôle exige :
+
+- 121 entrées, dont les 16 fichiers moteur ;
+- `EngineLab.exe`, les deux outils CLI et les catalogues de pièces/voicings ;
+- le document X-pipe détaillé dans `docs/` ;
+- un seul exécutable principal, dont le SHA-256 doit être identique à celui de
+  l'arbre Release ;
+- processus extrait encore vivant après cinq secondes, puis arrêté
+  volontairement.
+
+La copie de ce journal embarquée dans le ZIP omet volontairement la taille et le
+SHA-256 finaux du ZIP : les ajouter puis reconstruire changerait le hash à
+l'infini. La copie de travail externe les fixe après la dernière génération.
+
+Artefact externe final :
+
+- ZIP : `out/build/windows-vs2022/EngineLab-0.1.0-win64.zip` ;
+- taille : **6 571 930 octets** ;
+- SHA-256 :
+  `F7D0AB914EA857CB96499CF29CBF9880E0C33F003017CAABB2E7D0C6FE838DDB` ;
+- SHA-256 de l'exécutable extrait :
+  `17BC98CCA3687B7F926CE89BE1493988316CDECCF38BF5FE1BDCFE5543C7D93F` ;
+- extraction contrôlée dans `out/validation-2026-08-22-xpipe-final/` ;
+- smoke extrait vivant après cinq secondes, puis arrêt volontaire.
+
 ## Matrice actuelle des champs du graphe
 
 Cette matrice évite de confondre un champ sérialisé avec une influence physique
@@ -441,14 +517,15 @@ effective.
 | `resonanceHz` | aucun | accorde la longueur de référence d'un `resonator` terminal seulement | corrigé sans oscillateur |
 | type `catalyst` | aire ouverte, diamètre hydraulique, frottement et perte locale | même conduit passif, pertes de canal thermo-visqueuses | corrigé sans maille par canal |
 | type `resonator` | conduit inline, ou aucun débit s'il est terminal | conduit inline, ou branche fermée quart d'onde avec cavité optionnelle | corrigé dans ce lot |
+| type `crossover` | jonction bien mélangée `2 A d`, perte locale authorée et ports conservés | matrice directionnelle passive quatre ports, sans plénum commun | corrigé, `k` catalogue encore estimé |
 
 ## Prochain ordre de travail
 
-1. Ajouter l'oracle de spatialisation réactionnelle X-pipe/multi-branche avant
-   d'envisager le transport d'un noyau ; l'induction thermochimique locale est
-   maintenant livrée.
-2. Composer les silencieux plus complexes avec chambres et branches explicites
+1. Composer les silencieux plus complexes avec chambres et branches explicites
    lorsque leurs dimensions sont connues ; le noyau perforé de base est livré.
+2. Ne pas simuler un H-pipe par un X : une branche transversale littérale exige
+   une topologie cyclique et un solveur acoustique adapté. Ce chantier ne se
+   justifie que lorsqu'une géométrie à authorer ou mesurer est disponible.
 3. Ne remplacer la loi de similitude turbo par une carte compresseur que si les
    lignes débit/vitesse/rendement possèdent une provenance ; l'UI marque déjà
    toute vitesse au-dessus du point de conception.
