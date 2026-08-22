@@ -1496,7 +1496,7 @@ void MainComponent::drawDebugPanel(juce::Graphics& g, juce::Rectangle<float> are
         liftMultiplier = std::max(liftMultiplier, visibleState_.cylinderStates[index].valveLiftMultiplier);
         runnerResonanceHz = std::max(runnerResonanceHz, visibleState_.cylinderStates[index].intakeResonanceFrequencyHz);
     }
-    const std::array<juce::String, 65> values {
+    const std::array<juce::String, 68> values {
         "Net torque       " + juce::String(visibleState_.netTorqueNm, 2),
         "Indicated torque " + juce::String(visibleState_.indicatedTorqueNm, 2),
         "Mean-work torque " + juce::String(visibleState_.meanWorkTorqueNm, 2),
@@ -1588,13 +1588,16 @@ void MainComponent::drawDebugPanel(juce::Graphics& g, juce::Rectangle<float> are
                 ? "ACTIF / " : "repos / ")
             + juce::String(runtime_ ? runtime_->realtimeLoadProtectionActivationCount() : 0)
             + " activ.",
-        // The two readings that separate "the engine is quiet" from "the chain
-        // is being held down". The slow AGC sitting below 1 means the safety
-        // leveler is pulling, and a non-zero limited count means the soft
-        // limiter is working -- neither is visible in the waveform and both are
-        // reported by listeners as an engine fault.
-        "AGC min gain     " + juce::String(audio_ ? audio_->minObservedLevelGain() : 1.0F, 3),
-        "Limiter samples  " + juce::String(audio_ ? audio_->levelLimitedSampleCount() : 0),
+        // Keep every output non-linearity distinct. levelLimitedSampleCount()
+        // belongs to the slow safety AGC; labelling it as the limiter used to
+        // hide the actual 2x soft-limiter and made saturation reports
+        // impossible to diagnose from the product UI.
+        "AGC gain/frames  " + juce::String(audio_ ? audio_->minObservedLevelGain() : 1.0F, 3)
+            + " / " + juce::String(audio_ ? audio_->levelLimitedSampleCount() : 0),
+        "Voicing sat. frm " + juce::String(audio_ ? audio_->saturationProcessedSampleCount() : 0),
+        "Soft-limit smp   " + juce::String(audio_ ? audio_->softLimitedSampleCount() : 0),
+        "Hard-clamp frames " + juce::String(audio_ ? audio_->hardClampedSampleCount() : 0),
+        "Post-limit smp pk " + juce::String(audio_ ? audio_->maximumPostLimiterSampleMagnitude() : 0.0F, 4),
         // The afterfire has nine independent preconditions and produces exactly
         // the same silence whichever one is missing, so it was reported as
         // "does nothing" three times without any of them being identifiable

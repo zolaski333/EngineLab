@@ -75,6 +75,9 @@ struct AudioProbeSnapshot final {
     std::uint64_t legacyPathSamples {};
     std::uint64_t invalidBoundarySamples {};
     std::uint64_t levelLimitedSamples {};
+    std::uint64_t saturationProcessedSamples {};
+    std::uint64_t softLimitedSamples {};
+    std::uint64_t hardClampedSamples {};
 };
 
 struct AudioProbeDelta final {
@@ -93,6 +96,9 @@ struct AudioProbeDelta final {
     std::uint64_t legacyPathSamples {};
     std::uint64_t invalidBoundarySamples {};
     std::uint64_t levelLimitedSamples {};
+    std::uint64_t saturationProcessedSamples {};
+    std::uint64_t softLimitedSamples {};
+    std::uint64_t hardClampedSamples {};
 };
 
 [[nodiscard]] std::uint64_t counterDelta(
@@ -137,6 +143,12 @@ struct AudioProbeDelta final {
         counterDelta(end.invalidBoundarySamples, begin.invalidBoundarySamples);
     delta.levelLimitedSamples =
         counterDelta(end.levelLimitedSamples, begin.levelLimitedSamples);
+    delta.saturationProcessedSamples = counterDelta(
+        end.saturationProcessedSamples, begin.saturationProcessedSamples);
+    delta.softLimitedSamples = counterDelta(
+        end.softLimitedSamples, begin.softLimitedSamples);
+    delta.hardClampedSamples = counterDelta(
+        end.hardClampedSamples, begin.hardClampedSamples);
 
     const auto rank = delta.callbacks > 0
         ? std::max<std::uint64_t>(
@@ -263,6 +275,10 @@ public:
         result.legacyPathSamples = renderer_.legacyPathSampleCount();
         result.invalidBoundarySamples = renderer_.invalidBoundarySampleCount();
         result.levelLimitedSamples = renderer_.levelLimitedSampleCount();
+        result.saturationProcessedSamples =
+            renderer_.saturationProcessedSampleCount();
+        result.softLimitedSamples = renderer_.softLimitedSampleCount();
+        result.hardClampedSamples = renderer_.hardClampedSampleCount();
         return result;
     }
 
@@ -747,7 +763,10 @@ struct Measurement final {
             || result.audio.reactionPressureLimitedSamples > 0
             || result.audio.legacyPathSamples > 0
             || result.audio.invalidBoundarySamples > 0
-            || result.audio.levelLimitedSamples > 0)) {
+            || result.audio.levelLimitedSamples > 0
+            || result.audio.saturationProcessedSamples > 0
+            || result.audio.softLimitedSamples > 0
+            || result.audio.hardClampedSamples > 0)) {
         std::ostringstream reason;
         reason << "audio realtime contract violation (";
         auto first = true;
@@ -774,6 +793,9 @@ struct Measurement final {
         append("legacy", result.audio.legacyPathSamples);
         append("invalid-boundary", result.audio.invalidBoundarySamples);
         append("leveler", result.audio.levelLimitedSamples);
+        append("voicing-saturation", result.audio.saturationProcessedSamples);
+        append("soft-limiter", result.audio.softLimitedSamples);
+        append("hard-clamp", result.audio.hardClampedSamples);
         reason << ')';
         result.invalidReason = reason.str();
     }
@@ -962,9 +984,10 @@ int main(int argc, char** argv) {
                       ? ", paced by accelerated simulated time.\n"
                       : ", paced by wall-clock deadlines.\n")
                    << "A valid point requires no "
-                     "over-budget render, queue/reaction loss, late event, "
-                     "stolen voice, delay truncation, invalid boundary, legacy "
-                     "sample, leveler activity or non-finite output. Scheduler "
+                      "over-budget render, queue/reaction loss, late event, "
+                      "stolen voice, delay truncation, invalid boundary, legacy "
+                      "sample, voicing saturation, AGC, soft limiting, hard "
+                      "clamping or non-finite output. Scheduler "
                      "wake misses remain diagnostic unless the render itself "
                      "exceeds one block.\n\n";
     if (disableMufflerPacking)
@@ -991,7 +1014,7 @@ int main(int argc, char** argv) {
                   << std::setw(8) << "dropP"
                   << std::setw(8) << "late"
                   << std::setw(8) << "legacy"
-                  << std::setw(8) << "lvl";
+                  << std::setw(8) << "agc";
     std::cout << '\n';
 
     auto worst = 1.0e30;
@@ -1104,6 +1127,12 @@ int main(int argc, char** argv) {
                       << " legacy=" << measurement.audio.legacyPathSamples
                       << " leveler="
                       << measurement.audio.levelLimitedSamples
+                      << " saturation="
+                      << measurement.audio.saturationProcessedSamples
+                      << " softLimit="
+                      << measurement.audio.softLimitedSamples
+                      << " hardClamp="
+                      << measurement.audio.hardClampedSamples
                       << " nonFinite=" << measurement.audio.nonFiniteSamples
                       << " renderOver=" << measurement.audio.renderOverBudget
                       << '\n';

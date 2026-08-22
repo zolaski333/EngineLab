@@ -105,6 +105,9 @@ struct ShiftMetrics final {
     std::uint64_t lateAudioEvents {};
     std::uint64_t stolenAudioVoices {};
     std::uint64_t levelLimitedSamples {};
+    std::uint64_t saturationProcessedSamples {};
+    std::uint64_t softLimitedSamples {};
+    std::uint64_t hardClampedSamples {};
     float minimumLevelGain { 1.0F };
     float maximumPreLimiterMagnitude {};
 };
@@ -358,6 +361,10 @@ public:
         metrics.stolenAudioVoices = renderer_->stolenVoiceCount();
         metrics.levelLimitedSamples =
             renderer_->levelLimitedSampleCount();
+        metrics.saturationProcessedSamples =
+            renderer_->saturationProcessedSampleCount();
+        metrics.softLimitedSamples = renderer_->softLimitedSampleCount();
+        metrics.hardClampedSamples = renderer_->hardClampedSampleCount();
         metrics.minimumLevelGain =
             renderer_->minObservedLevelGain();
         metrics.maximumPreLimiterMagnitude =
@@ -658,6 +665,9 @@ bool validateShiftAudio(const ShiftMetrics& metrics) {
         fail("realtime events, pressure samples, or voices were lost");
     }
     if (metrics.levelLimitedSamples != 0
+        || metrics.saturationProcessedSamples != 0
+        || metrics.softLimitedSamples != 0
+        || metrics.hardClampedSamples != 0
         || metrics.minimumLevelGain < 0.99999F
         || metrics.maximumPreLimiterMagnitude >= 0.82F) {
         fail("a downstream safety processor masked the shift transient");
@@ -773,7 +783,8 @@ int main(int argc, char** argv) {
                         " preP999=%.5f shiftP999=%.5f ratio=%.2f"
                         " diffRms=%.5f"
                         " dropped=%llu/%llu late=%llu stolen=%llu"
-                        " levelLimited=%llu minGain=%.5f"
+                        " levelLimited=%llu saturation=%llu softLimit=%llu"
+                        " hardClamp=%llu minGain=%.5f"
                         " preLimiter=%.5f physical=%s\n",
                         m.audioPeak, m.audioShiftStep,
                         m.audioShiftStepTimeMs,
@@ -791,6 +802,12 @@ int main(int argc, char** argv) {
                             m.stolenAudioVoices),
                         static_cast<unsigned long long>(
                             m.levelLimitedSamples),
+                        static_cast<unsigned long long>(
+                            m.saturationProcessedSamples),
+                        static_cast<unsigned long long>(
+                            m.softLimitedSamples),
+                        static_cast<unsigned long long>(
+                            m.hardClampedSamples),
                         static_cast<double>(m.minimumLevelGain),
                         static_cast<double>(
                             m.maximumPreLimiterMagnitude),

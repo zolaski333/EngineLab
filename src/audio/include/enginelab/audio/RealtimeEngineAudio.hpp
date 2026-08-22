@@ -88,9 +88,9 @@ public:
      */
     [[nodiscard]] std::uint64_t delayTruncationCount() const noexcept { return delayTruncations_.load(std::memory_order_relaxed); }
     [[nodiscard]] double eventLatencySeconds() const noexcept { return eventLatencySeconds_; }
-    // Read-only observers of the safety leveler, so a harness can prove whether the
-    // slow AGC actually engages in a given voice (gain < 1) or stays at identity
-    // (safety-only). These do not affect the audio path.
+    // Read-only output-chain observers. The counters deliberately keep authored
+    // voicing saturation, slow safety AGC, oversampled soft limiting and the
+    // last-resort sample clamp separate. These loads do not affect the audio path.
     [[nodiscard]] std::uint64_t levelLimitedSampleCount() const noexcept { return levelLimitedSamples_.load(std::memory_order_relaxed); }
     [[nodiscard]] std::uint64_t saturationProcessedSampleCount() const noexcept {
         return saturationProcessedSamples_.load(std::memory_order_relaxed);
@@ -107,8 +107,12 @@ public:
     [[nodiscard]] std::uint64_t reactionPressureLimitedSampleCount() const noexcept {
         return reactionPressureLimitedSamples_.load(std::memory_order_relaxed);
     }
-    [[nodiscard]] float maximumTruePeakMagnitude() const noexcept {
-        return maximumTruePeakMagnitude_.load(std::memory_order_relaxed);
+    /** Maximum post-limiter sample magnitude at the host rate.
+     *
+     * This is deliberately not called a true peak: no standards-grade
+     * inter-sample reconstruction meter is run in the realtime callback. */
+    [[nodiscard]] float maximumPostLimiterSampleMagnitude() const noexcept {
+        return maximumPostLimiterSampleMagnitude_.load(std::memory_order_relaxed);
     }
     [[nodiscard]] float minObservedLevelGain() const noexcept { return minObservedLevelGain_.load(std::memory_order_relaxed); }
     /** Whether the physical thermoacoustic path has taken ownership of the voice.
@@ -546,7 +550,7 @@ private:
     std::atomic<std::uint64_t> hardClampedSamples_ { 0 };
     std::atomic<std::uint64_t> droppedReactionEvents_ { 0 };
     std::atomic<std::uint64_t> reactionPressureLimitedSamples_ { 0 };
-    std::atomic<float> maximumTruePeakMagnitude_ { 0.0F };
+    std::atomic<float> maximumPostLimiterSampleMagnitude_ { 0.0F };
     std::atomic<float> minObservedLevelGain_ { 1.0F };
     std::atomic<float> maxObservedExhaustPressurePa_ { 0.0F };
     std::atomic<float> maxObservedExhaustJetNoisePressurePa_ { 0.0F };

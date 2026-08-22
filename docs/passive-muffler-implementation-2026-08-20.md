@@ -130,25 +130,35 @@ corps change le transfert sans augmenter le travail structurel par échantillon.
 
 Le harness de sensibilité a rendu chaque variante à 4 000 tr/min pendant 3 s.
 La « forme » est l'écart par tiers d'octave après retrait de l'offset large
-bande ; le niveau physique provient de l'observateur avant le mix final.
+bande. Les niveaux ci-dessous sont tous des RMS calculés sur la même fenêtre
+stabilisée de deux secondes. Cette précision corrige la première version du
+rapport, qui comparait à tort un maximum de pression par chemin sur toute la
+montée en régime à ces RMS stabilisés.
 
-| Variante | Pression observateur | RMS échappement | Forme échappement seul |
+| Variante | RMS bus échappement | Écart de niveau | Forme échappement seul |
 |---|---:|---:|---:|
-| référence | 30,1 Pa | 0,002857 | référence |
-| sans silencieux | 89,1 Pa | 0,003878 | 16,17 dB |
-| avec garnissage A/B | 19,7 Pa | 0,002448 | 1,89 dB |
-| corps/chambre ×2,25 | 11,4 Pa | 0,001917 | 6,83 dB |
-| corps/chambre ×5,3 | 5,4 Pa | 0,000975 | 13,49 dB |
+| référence | 0,002425 | référence | référence |
+| sans silencieux | 0,003361 | +2,84 dB | 14,28 dB |
+| avec garnissage A/B | 0,002056 | −1,43 dB | 1,37 dB |
+| corps/chambre ×2,25 | 0,001898 | −2,13 dB | 6,40 dB |
+| corps/chambre ×5,3 | 0,000936 | −8,27 dB | 11,29 dB |
 
-Retirer uniquement le corps donne `+9,41 dB` au niveau physique. Le mix final
-ne monte que de `+0,07 dB`, car l'admission et la mécanique masquent
-l'échappement dans 16 bandes sur 28. Le silencieux influence donc bien la
-physique ; son audibilité dans le mix est un problème de balance de couches
-distinct, qui ne doit pas être corrigé par un faux gain dans le silencieux.
+Retirer uniquement le corps fait passer le RMS du master de `0,019440` à
+`0,019584`, soit seulement `+0,06 dB`, tandis que le bus échappement monte de
+`+2,84 dB`. Le silencieux a donc une autorité mesurable sur sa couche, mais elle
+reste faible dans le mix actuel. Les valeurs `30,1/89,1 Pa` et la conclusion
+`+9,41 dB` de la première mesure étaient invalides pour quantifier cette
+autorité : ce sont des maxima par chemin sur des transitoires différents, pas
+des niveaux agrégés sur la fenêtre comparée.
 
-Le pire changement de forme parmi toutes les variantes d'échappement mesurées
-atteint 16,27 dB sur la couche échappement. Aucun échantillon n'a atteint le
-limiteur et le garde-niveau est resté à 1,000.
+Le changement de forme `14,28 dB` montre que retirer le corps ne revient pas à
+un simple gain. En revanche, cette mesure interne ne démontre ni une atténuation
+réaliste ni l'identité d'un silencieux déterminé. Sur les douze variantes du run,
+l'AGC reste à `1,000` et les compteurs saturation de voicing, AGC, soft-limiter
+et clamp dur restent tous à zéro : la faible différence du master n'est donc
+pas créée par une non-linéarité aval. Le maximum de pression sur tout le run
+reste affiché comme diagnostic de stabilité, mais il n'entre plus dans le calcul
+de dynamique ou d'atténuation.
 
 ## Budget CPU et optimisation sans perte de physique
 

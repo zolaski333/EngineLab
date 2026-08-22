@@ -288,12 +288,16 @@ Le modèle réutilise les états WDF des jonctions et n'ajoute ni cellule gaz, n
 ligne de délai. Faire varier seulement le corps de 4 à 8 L change la forme du
 transfert de **5,138 dB** avec un nombre de conduits identique.
 
-Sur le LS3 à 4 000 tr/min, retirer seulement le silencieux fait passer la
-pression observateur de 30,1 à 89,1 Pa, soit **+9,41 dB**. Doubler puis
-quintupler environ le volume donne respectivement 6,83 et 13,49 dB d'écart de
-forme sur la couche échappement. Le mix complet ne bouge presque pas en niveau
-large bande parce que les autres couches masquent 16/28 bandes ; ce résultat
-est documenté comme un problème séparé, pas compensé par un gain arbitraire.
+Une reprise métrologique a invalidé le premier chiffre de niveau publié ici :
+les 30,1/89,1 Pa étaient des maxima par chemin sur toute la montée en régime,
+alors que le rendu était un RMS agrégé sur la seule fenêtre stabilisée. La
+comparaison correcte, sur le LS3 à 4 000 tr/min et la même fenêtre de deux
+secondes, fait passer le RMS du bus échappement de 0,002425 à 0,003361 quand on
+retire seulement le corps, soit **+2,84 dB** ; le master ne monte que de
+**+0,06 dB**. Doubler puis quintupler environ le volume change la forme de la
+couche échappement de 6,40 et 11,29 dB. Cela démontre une autorité interne, pas
+une atténuation réaliste. AGC, saturation de voicing, soft-limiter et clamp dur
+sont tous restés inactifs : le faible écart master n'est pas un écrasement aval.
 
 La correction du vrai noyau augmente le coût CFL du LS3 à ~26 880 sous-pas/s.
 Un profil a isolé un prédicat `std::isfinite` à 18,74 % du réseau gaz. Son
@@ -498,6 +502,40 @@ Artefact externe final :
   `17BC98CCA3687B7F926CE89BE1493988316CDECCF38BF5FE1BDCFE5543C7D93F` ;
 - extraction contrôlée dans `out/validation-2026-08-22-xpipe-final/` ;
 - smoke extrait vivant après cinq secondes, puis arrêt volontaire.
+
+## Observabilité de la chaîne de sortie et correction métrologique
+
+Le panneau produit appelait « limiteur » le compteur de l'AGC lent, tandis que
+la saturation de voicing, le vrai soft-limiter 2× et le clamp final restaient
+invisibles. Les harnesses n'en faisaient pas tous des conditions d'invalidité.
+Les quatre étages sont maintenant séparés dans l'UI, les exports offline, les
+tests audio, la géométrie, l'afterfire, les shifts et le budget temps réel.
+
+La mesure appelée « true peak » n'était qu'une crête d'échantillon au taux hôte.
+Elle porte désormais son nom exact dans l'API et le manifeste offline schéma 4.
+Aucun mesureur inter-échantillon n'a été ajouté au callback.
+
+Cette instrumentation a révélé que la conclusion silencieux `+9,41 dB` était
+une erreur de méthode, pas un écrasement aval : elle mélangeait le pic d'un
+chemin sur tout le run et le RMS agrégé d'une fenêtre stabilisée. La reprise
+LS3 à 4 000 tr/min donne `+2,84 dB` sur le bus échappement et `+0,06 dB` sur le
+master quand seul le corps est retiré. Les douze variantes conservent gain AGC
+1,000, saturation/AGC/soft-limit/clamp à zéro.
+
+Un rendu LS3 avant/après instrumentation est bit à bit identique, SHA-256
+`CD1C1B72F18B8437FF6D473DCF5012D54B3A83C3C09A01E9DE19A8AF0CB136EC`.
+Au point contraignant de 95 % du régime rouge, le facteur temps réel frais vaut
+`1,022×`, charge audio moyenne `35,5 %`, p99 `55 %`, et toutes les violations
+restent nulles. Le lot n'ajoute aucun DSP par échantillon.
+
+Le harness afterfire catalogué, après 60 s de chauffe et 8 s d'overrun, publie
+25 événements, 72,092 mg brûlés, 1 080 sources distribuées et 5 175,180 J,
+toujours sans action des quatre étages de sortie ni perte audio. Les détails,
+valeurs intermédiaires, hypothèses réfutées et limites sont consignés dans
+[`output-chain-observability-2026-08-22.md`](output-chain-observability-2026-08-22.md).
+
+La reconstruction Release intégrale puis la suite autoritaire passent à
+**42/42 CTest**, zéro échec, en **730,07 s**, rampes dyno produit incluses.
 
 ## Matrice actuelle des champs du graphe
 

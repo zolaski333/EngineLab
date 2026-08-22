@@ -2792,6 +2792,10 @@ int main() {
                 "combustion audio must produce a sustained audible impulse tail");
         require(renderer.saturationProcessedSampleCount() == 0,
                 "physical-reference monitoring must bypass authored saturation exactly");
+        require(renderer.levelLimitedSampleCount() == 0
+                    && renderer.softLimitedSampleCount() == 0
+                    && renderer.hardClampedSampleCount() == 0,
+                "physical-reference timing fixture must keep AGC, limiter and clamp distinct and idle");
         audioState.monitorMode.store(static_cast<int>(
             enginelab::AudioMonitorMode::captureVoiced));
         juce::AudioBuffer<float> captureBuffer(2, 256);

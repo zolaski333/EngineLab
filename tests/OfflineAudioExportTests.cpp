@@ -295,7 +295,7 @@ int main() {
                 && manifest.at("wave_format_code") == 1,
             "manifest records PCM24 format truthfully");
         require(
-            manifest.at("schema_version") == 3
+            manifest.at("schema_version") == 4
                 && manifest.at("stems_written") == true
                 && manifest.at("files").size() == 12,
             "manifest inventories master, stems and order map");
@@ -323,10 +323,18 @@ int main() {
             manifest.at("path_diagnostics")
                     .at("saturation_processed_samples") == 0
                 && manifest.at("path_diagnostics")
+                    .at("automatic_gain_controlled_samples") == 0
+                && manifest.at("path_diagnostics")
+                    .at("soft_limited_samples") == 0
+                && manifest.at("path_diagnostics")
+                    .at("hard_clamped_samples") == 0
+                && manifest.at("path_diagnostics")
+                    .at("maximum_post_limiter_sample_magnitude") < 0.999
+                && manifest.at("path_diagnostics")
                     .at("dropped_exhaust_acoustic_samples") == 0
                 && manifest.at("path_diagnostics")
                     .at("dropped_reaction_events") == 0,
-            "physical-reference export must prove neutral saturation and lossless acoustic transport");
+            "physical-reference export must prove neutral output processing and lossless acoustic transport");
         require(
             manifest.at("stem_reconstruction")
                     .at("stem_sum_to_premaster_max_abs_error") == 0.0

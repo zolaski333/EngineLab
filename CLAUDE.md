@@ -226,10 +226,13 @@ test onto the behaviour it is meant to catch. Keep it that way.
     lowest-order passive compliance multiplied by the authored open-area
     ratio. Delany-Bazley remains the separate dissipative material model. On
     the LS3 fixture, changing only annular can volume moves exhaust-only shape
-    by **5.138 dB** in the deterministic oracle; removing the body changes
-    physical observer level by **+9.41 dB**. The full rendered mix moves only
-    +0.07 dB because mechanical/intake layers mask 16/28 bands. Do not "fix"
-    that by inventing a broadband target gain. Higher-order hole inertance
+    by **5.138 dB** in the deterministic oracle. The corrected product A/B uses
+    one settled window for both quantities: removing the body changes the LS3
+    exhaust-bus RMS by **+2.84 dB** and the master by only **+0.06 dB**, with
+    AGC, voicing saturation, soft limiting and hard clamping all inactive. The
+    former +9.41 dB claim compared a full-run per-path pressure maximum against
+    a settled aggregate RMS and is invalid. Do not "fix" the small master
+    difference with an invented broadband gain. Higher-order hole inertance
     needs hole diameter and sheet thickness, which are not authored yet.
 - **Masking is per BAND, and a broadband level cannot tell you about it.** On
   the 2JZ the exhaust is the loudest single layer broadband (+8.4 dB over

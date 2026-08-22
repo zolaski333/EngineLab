@@ -35,12 +35,19 @@ La relation auditable est :
 
 `master = premaster + master_processing_delta`
 
-Le manifeste schema 3 enregistre l'erreur absolue maximale des deux
+Le manifeste schema 4 enregistre l'erreur absolue maximale des deux
 reconstructions dans le domaine float avant encodage WAV. En PCM24, chaque
 fichier est quantifie independamment : une reconstruction relue depuis les WAV
 peut donc differer de quelques LSB, ce qui est une limite de representation et
 non une source audio manquante. Utiliser `float32` pour une analyse numerique
 sans cette ambiguite.
+
+Le bloc `path_diagnostics` sépare aussi les quatre étages susceptibles de
+façonner la sortie : saturation de voicing, AGC lent, soft-limiter 2x et clamp
+de dernier recours. `maximum_post_limiter_sample_magnitude` est exactement la
+crête des échantillons au taux hôte après le soft-limiter et juste avant le
+clamp final. Elle n'est volontairement pas appelée « true peak » : aucun
+mesureur inter-échantillon normalisé n'est exécuté dans le callback temps réel.
 
 La carte d'ordres emploie des fenetres de 1/12 s, recouvrees a 50 %, avec une
 fenetre de Hann et une evaluation de Goertzel aux ordres 0.5 a 24 par pas de

@@ -1235,8 +1235,8 @@ OfflineAudioExportResult exportOfflineAudio(
             renderer->hardClampedSampleCount();
         result.droppedReactionEvents =
             renderer->droppedReactionEventCount();
-        result.maximumTruePeakMagnitude =
-            renderer->maximumTruePeakMagnitude();
+        result.maximumPostLimiterSampleMagnitude =
+            renderer->maximumPostLimiterSampleMagnitude();
 
         const auto scenarioPartial =
             partialPathFor(scenarioPath);
@@ -1278,7 +1278,7 @@ OfflineAudioExportResult exportOfflineAudio(
             return "clean_dfco";
         }();
         const Json manifest {
-            { "schema_version", 3 },
+            { "schema_version", 4 },
             { "engine", config.name },
             { "scenario", request.scenario.name },
             { "render_path",
@@ -1396,8 +1396,8 @@ OfflineAudioExportResult exportOfflineAudio(
                   result.softLimitedSampleCount },
                 { "hard_clamped_samples",
                   result.hardClampedSampleCount },
-                { "maximum_true_peak_magnitude",
-                  result.maximumTruePeakMagnitude },
+                { "maximum_post_limiter_sample_magnitude",
+                  result.maximumPostLimiterSampleMagnitude },
                 { "dropped_firing_events",
                   result.droppedFiringEvents },
                 { "dropped_pressure_samples",

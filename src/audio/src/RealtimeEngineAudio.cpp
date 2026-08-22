@@ -351,7 +351,7 @@ void RealtimeEngineAudio::release() noexcept {
     hardClampedSamples_.store(0, std::memory_order_relaxed);
     droppedReactionEvents_.store(0, std::memory_order_relaxed);
     reactionPressureLimitedSamples_.store(0, std::memory_order_relaxed);
-    maximumTruePeakMagnitude_.store(0.0F, std::memory_order_relaxed);
+    maximumPostLimiterSampleMagnitude_.store(0.0F, std::memory_order_relaxed);
     minObservedLevelGain_.store(1.0F, std::memory_order_relaxed);
     maxObservedExhaustPressurePa_.store(0.0F, std::memory_order_relaxed);
     maxObservedExhaustJetNoisePressurePa_.store(
@@ -2215,11 +2215,11 @@ void RealtimeEngineAudio::renderWithStems(
             saturationProcessedBlockSamples, std::memory_order_relaxed);
     // Pass 3: leave inter-sample headroom after downsampling and downmix extras.
     auto hardClampedBlockSamples = std::uint64_t { 0 };
-    auto truePeakBlockMagnitude = 0.0F;
+    auto postLimiterSampleBlockMagnitude = 0.0F;
     for (int sample = 0; sample < sampleCount; ++sample) {
         const auto left = output.getNumChannels() > 0 ? output.getSample(0, startSample + sample) : 0.0F;
         const auto right = output.getNumChannels() > 1 ? output.getSample(1, startSample + sample) : left;
-        truePeakBlockMagnitude = std::max(truePeakBlockMagnitude,
+        postLimiterSampleBlockMagnitude = std::max(postLimiterSampleBlockMagnitude,
             std::max(std::abs(left), std::abs(right)));
         if (!std::isfinite(left) || !std::isfinite(right)
             || std::abs(left) > 0.999F || std::abs(right) > 0.999F)
@@ -2234,10 +2234,10 @@ void RealtimeEngineAudio::renderWithStems(
     if (hardClampedBlockSamples != 0)
         hardClampedSamples_.fetch_add(
             hardClampedBlockSamples, std::memory_order_relaxed);
-    if (truePeakBlockMagnitude
-        > maximumTruePeakMagnitude_.load(std::memory_order_relaxed))
-        maximumTruePeakMagnitude_.store(
-            truePeakBlockMagnitude, std::memory_order_relaxed);
+    if (postLimiterSampleBlockMagnitude
+        > maximumPostLimiterSampleMagnitude_.load(std::memory_order_relaxed))
+        maximumPostLimiterSampleMagnitude_.store(
+            postLimiterSampleBlockMagnitude, std::memory_order_relaxed);
 }
 
 void RealtimeEngineAudio::trigger(const FiringEvent& event, bool exhaust) noexcept {

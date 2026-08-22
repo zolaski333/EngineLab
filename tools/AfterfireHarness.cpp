@@ -119,6 +119,9 @@ struct AudioContractCounters final {
     std::uint64_t legacyPathSamples {};
     std::uint64_t invalidBoundarySamples {};
     std::uint64_t levelLimitedSamples {};
+    std::uint64_t saturationProcessedSamples {};
+    std::uint64_t softLimitedSamples {};
+    std::uint64_t hardClampedSamples {};
 };
 
 struct ReactionAcousticDiagnostics final {
@@ -415,6 +418,10 @@ public:
         result.legacyPathSamples = renderer_->legacyPathSampleCount();
         result.invalidBoundarySamples = renderer_->invalidBoundarySampleCount();
         result.levelLimitedSamples = renderer_->levelLimitedSampleCount();
+        result.saturationProcessedSamples =
+            renderer_->saturationProcessedSampleCount();
+        result.softLimitedSamples = renderer_->softLimitedSampleCount();
+        result.hardClampedSamples = renderer_->hardClampedSampleCount();
         return result;
     }
     [[nodiscard]] ReactionAcousticDiagnostics reactionDiagnostics() const noexcept {
@@ -1104,7 +1111,10 @@ Metrics measureAfterfire(const enginelab::EngineConfig& baseConfig,
         || counters.delayTruncations > 0
         || counters.legacyPathSamples > 0
         || counters.invalidBoundarySamples > 0
-        || counters.levelLimitedSamples > 0;
+        || counters.levelLimitedSamples > 0
+        || counters.saturationProcessedSamples > 0
+        || counters.softLimitedSamples > 0
+        || counters.hardClampedSamples > 0;
 }
 
 [[nodiscard]] bool violatesSimulationBudget(const Metrics& metrics) noexcept {
@@ -1133,7 +1143,8 @@ void reportAudioContract(const Metrics& metrics) {
     std::printf("    audio contract physical=%s compiled=%s"
                 " dropF=%llu dropP=%llu dropA=%llu dropR=%llu"
                 " reactLimit=%llu late=%llu pending=%llu stolen=%llu trunc=%llu"
-                " boundary=%llu legacy=%llu leveler=%llu  %s\n",
+                " boundary=%llu legacy=%llu leveler=%llu saturation=%llu"
+                " softLimit=%llu hardClamp=%llu  %s\n",
         metrics.physicalExhaustActive ? "yes" : "NO",
         metrics.compiledExhaustTopologyActive ? "yes" : "NO",
         static_cast<unsigned long long>(counters.droppedFiringEvents),
@@ -1151,6 +1162,9 @@ void reportAudioContract(const Metrics& metrics) {
         static_cast<unsigned long long>(counters.invalidBoundarySamples),
         static_cast<unsigned long long>(counters.legacyPathSamples),
         static_cast<unsigned long long>(counters.levelLimitedSamples),
+        static_cast<unsigned long long>(counters.saturationProcessedSamples),
+        static_cast<unsigned long long>(counters.softLimitedSamples),
+        static_cast<unsigned long long>(counters.hardClampedSamples),
         violatesAudioContract(metrics) ? "INVALID" : "valid");
 }
 

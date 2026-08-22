@@ -71,9 +71,10 @@ crossplane_dual:
   collector_diameter_mm: 76
   muffler_restriction: 0.30
   outlet_diameter_mm: 82
-  # American chambered V8 muffler: wide body, short, lightly packed. The wide
-  # spacing of its pass-bands is exactly what lets the uneven-bank burble
-  # through instead of averaging it away.
+  # Estimated wide, lightly packed perforated-core placeholder for the V8
+  # preset. This is not a literal chambered/baffled American muffler: that
+  # architecture needs explicit chambers and connecting tubes in the graph.
+  # Do not infer a particular burble or OEM identity from these dimensions.
   muffler_chamber_diameter_mm: 142
   muffler_chamber_length_mm: 400
   muffler_packing_flow_resistivity_pa_s_m2: 10000

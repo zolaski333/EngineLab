@@ -25,12 +25,8 @@
 // exhaust responds to geometry but is buried; both small means the exhaust
 // model itself does not respond.
 //
-// Reference points for reading the output, from the acoustics literature and
-// never from this simulator: a straight-through absorptive silencer gives
-// 10-25 dB of insertion loss over its working band, and a reactive expansion
-// chamber gives 15-30 dB at its tuned frequencies with near 0 dB at its pass
-// frequencies. Changing a primary from 250 to 900 mm moves the tuned quarter-
-// wave from about 340 Hz to about 95 Hz, which is two octaves.
+// This instrument compares simulator variants against one another. It does not
+// turn those internal A/Bs into claims about a real exhaust or listening test.
 
 #include <enginelab/audio/RealtimeEngineAudio.hpp>
 #include <enginelab/catalog/EngineCatalog.hpp>
@@ -400,17 +396,21 @@ struct RenderResult final {
     double networkSubstepHz { 0.0 };
     bool physicalActive { false };
     bool finite { true };
-    /** Pressure the exhaust chain actually delivered to the observer, before
-     *  any level control. This is the physical answer to "is it louder"; the
-     *  rendered RMS is that answer after the safety leveler has had its say. */
-    double exhaustPeakPa { 0.0 };
+    /** Maximum path pressure seen over the complete run-up and hold. It is a
+     *  stability diagnostic only: unlike the spectra below it is neither an
+     *  aggregate stereo pressure nor restricted to the steady-state window. */
+    double maximumRunExhaustPressurePa { 0.0 };
     /** The two ways a level change can be removed after the fact. A slow AGC
      *  sitting below 1 means the safety leveler is doing steady-state gain
      *  work, which would turn "I removed the silencer" into "it sounds
      *  different but no louder" -- exactly the reported symptom. */
     double minLevelGain { 1.0 };
     std::uint64_t levelLimitedSamples { 0 };
+    std::uint64_t saturationProcessedSamples { 0 };
+    std::uint64_t softLimitedSamples { 0 };
+    std::uint64_t hardClampedSamples { 0 };
     double maxPreLimiter { 0.0 };
+    double maxPostLimiterPeak { 0.0 };
 };
 
 /** Per-band margin of the exhaust over everything else, in dB. Negative means
@@ -584,10 +584,17 @@ maskingMarginDb(const Spectrum& exhaust, const Spectrum& others) {
     result.finalRpm = simulator.state().rpm;
     result.networkSubstepHz = simulator.state().exhaustNetworkSubstepFrequencyHz;
     result.physicalActive = renderer.physicalExhaustActive();
-    result.exhaustPeakPa = renderer.maxObservedExhaustPressurePa();
+    result.maximumRunExhaustPressurePa =
+        renderer.maxObservedExhaustPressurePa();
     result.minLevelGain = renderer.minObservedLevelGain();
     result.levelLimitedSamples = renderer.levelLimitedSampleCount();
+    result.saturationProcessedSamples =
+        renderer.saturationProcessedSampleCount();
+    result.softLimitedSamples = renderer.softLimitedSampleCount();
+    result.hardClampedSamples = renderer.hardClampedSampleCount();
     result.maxPreLimiter = renderer.maxPreLimiterMagnitude();
+    result.maxPostLimiterPeak =
+        renderer.maximumPostLimiterSampleMagnitude();
     result.finite = std::all_of(mix.begin(), mix.end(),
         [](float value) { return std::isfinite(value); });
     return result;
@@ -618,8 +625,7 @@ struct Variant final {
         { "tubes-independants", [](ExhaustConfig&) {} },
         // THE decisive variant, and it changes exactly ONE thing: the silencer
         // body is removed and nothing else moves. That makes the difference
-        // against the reference a clean insertion loss, comparable to the
-        // 20-30 dB a production silencer is worth.
+        // against the reference a clean internal single-factor measurement.
         //
         // An earlier version of this harness compared "short AND open" against
         // the reference and called the result silencer authority. It changed
@@ -1212,11 +1218,17 @@ int main(int argc, char** argv) {
                   << "  rpm " << std::setw(5) << std::setprecision(0) << result.finalRpm
                   << "  CFL " << std::setw(6) << std::setprecision(1)
                   << result.limitingCflLengthMm << " mm"
-                  << "  Pa " << std::setw(7) << std::setprecision(1)
-                  << result.exhaustPeakPa
+                  << "  runPeakPa " << std::setw(7) << std::setprecision(1)
+                  << result.maximumRunExhaustPressurePa
                   << "  agc " << std::setw(5) << std::setprecision(3)
                   << result.minLevelGain
-                  << "  limite " << std::setw(8) << result.levelLimitedSamples
+                  << "  AGC " << std::setw(8) << result.levelLimitedSamples
+                  << "  sat/lim/clamp "
+                  << result.saturationProcessedSamples << '/'
+                  << result.softLimitedSamples << '/'
+                  << result.hardClampedSamples
+                  << "  postLimPeak " << std::setprecision(4)
+                  << result.maxPostLimiterPeak
                   << (result.physicalActive ? "" : "  [CHEMIN NON PHYSIQUE]")
                   << (result.finite ? "" : "  [NON FINI]")
                   << '\n';
@@ -1244,6 +1256,29 @@ int main(int argc, char** argv) {
                      "  Note aussi qu'une consigne basse tenue serait du PLEIN GAZ EN"
                      " SOUS-REGIME,\n  jamais un ralenti: ce harness ne peut pas"
                      " mesurer un ralenti.\n";
+        return 1;
+    }
+
+    // Geometry comparisons are invalid if a downstream non-linearity removes
+    // their level or reshapes their spectrum. Keep the four mechanisms
+    // separate so a failure identifies the stage that actually acted.
+    const auto shapedOutput = std::ranges::find_if(results, [](const auto& result) {
+        return result.minLevelGain < 0.99999
+            || result.levelLimitedSamples != 0
+            || result.saturationProcessedSamples != 0
+            || result.softLimitedSamples != 0
+            || result.hardClampedSamples != 0;
+    });
+    if (shapedOutput != results.end()) {
+        const auto index = static_cast<std::size_t>(
+            std::distance(results.begin(), shapedOutput));
+        std::cerr << "\n  SORTIE NON NEUTRE sur "
+                  << catalogueVariants[index].name
+                  << ": AGC=" << shapedOutput->levelLimitedSamples
+                  << " saturation=" << shapedOutput->saturationProcessedSamples
+                  << " softLimit=" << shapedOutput->softLimitedSamples
+                  << " hardClamp=" << shapedOutput->hardClampedSamples
+                  << ". Comparaison rejetee.\n";
         return 1;
     }
 
@@ -1292,38 +1327,31 @@ int main(int argc, char** argv) {
               << worstShapeExhaust << " dB\n"
               << "  (pire ecart de FORME sur toutes les variantes)\n";
 
-    // The number a listener means by "an open pipe makes an unbelievable
-    // racket". Shape is tone; this is loudness, and the two are independent --
-    // a chain that changes tone but not level sounds "different" and never
-    // "louder", which is precisely the reported complaint.
-    //
-    // Reference, from acoustics and not from this simulator: fitting a
-    // production silencer to an open exhaust is worth 20-30 dB of insertion
-    // loss. Anything under about 10 dB here means the silencer does not
-    // silence.
+    // Compare like with like: both spans below are RMS levels over the exact
+    // same settled two-second window. The former code compared a full-run,
+    // per-path pressure peak against a settled master RMS and then attributed
+    // the discrepancy to downstream processing. That conclusion was invalid
+    // even when every output-shaper counter was zero.
     auto quietestDb = std::numeric_limits<double>::infinity();
     auto loudestDb = -std::numeric_limits<double>::infinity();
-    auto quietestPa = std::numeric_limits<double>::infinity();
-    auto loudestPa = -std::numeric_limits<double>::infinity();
+    auto quietestExhaustDb = std::numeric_limits<double>::infinity();
+    auto loudestExhaustDb = -std::numeric_limits<double>::infinity();
     for (const auto& result : results) {
         quietestDb = std::min(quietestDb, result.mix.broadbandDb);
         loudestDb = std::max(loudestDb, result.mix.broadbandDb);
-        quietestPa = std::min(quietestPa, result.exhaustPeakPa);
-        loudestPa = std::max(loudestPa, result.exhaustPeakPa);
+        quietestExhaustDb = std::min(
+            quietestExhaustDb, result.exhaust.broadbandDb);
+        loudestExhaustDb = std::max(
+            loudestExhaustDb, result.exhaust.broadbandDb);
     }
-    const auto physicalSpanDb = 20.0 * std::log10(
-        std::max(loudestPa, 1.0e-9) / std::max(quietestPa, 1.0e-9));
     std::cout << "  DYNAMIQUE       rendu " << std::setprecision(2)
               << loudestDb - quietestDb << " dB"
-              << "     physique (Pa observateur) " << physicalSpanDb << " dB\n"
-              << "  (du plus silencieux au plus bruyant. Un vrai silencieux "
-                 "vaut 20-30 dB.\n"
-              << "   Si physique >> rendu, la difference est retiree APRES la "
-                 "physique.)\n";
+              << "     bus echappement "
+              << loudestExhaustDb - quietestExhaustDb << " dB\n"
+              << "  (RMS sur la meme fenetre stabilisee pour chaque variante.)\n";
 
-    // The single-factor insertion loss, called out on its own line because it
-    // is the one number with a literature value to check against and the one
-    // the user's complaint is literally about.
+    // Single-factor comparison at this simulated operating point. This is an
+    // internal authority check, not a claimed real-world insertion loss.
     const auto silencerVariant = std::ranges::find_if(
         catalogueVariants, [](const auto& variant) {
             return std::string_view { variant.name } == "sans-silencieux";
@@ -1334,14 +1362,13 @@ int main(int argc, char** argv) {
             && results.size() > silencerIndex) {
         const auto renderedDb = results[silencerIndex].mix.broadbandDb
             - results[0].mix.broadbandDb;
-        const auto physicalDb = 20.0 * std::log10(
-            std::max(results[silencerIndex].exhaustPeakPa, 1.0e-9)
-            / std::max(results[0].exhaustPeakPa, 1.0e-9));
+        const auto exhaustBusDb = results[silencerIndex].exhaust.broadbandDb
+            - results[0].exhaust.broadbandDb;
         std::cout << "  SILENCIEUX      retirer le corps seul: rendu "
                   << std::showpos << std::setprecision(2) << renderedDb
-                  << " dB, physique " << physicalDb << " dB" << std::noshowpos
-                  << "\n  (litterature: +20 a +30 dB. C'est une perte "
-                     "d'insertion a un seul facteur.)\n";
+                  << " dB, bus echappement " << exhaustBusDb << " dB"
+                  << std::noshowpos
+                  << "\n  (A/B interne, meme regime et meme fenetre RMS.)\n";
     }
 
     // A large stem sensitivity with a small mix sensitivity has exactly one

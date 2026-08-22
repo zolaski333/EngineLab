@@ -111,7 +111,8 @@ struct OfflineAudioExportResult final {
     std::uint64_t softLimitedSampleCount { 0 };
     std::uint64_t hardClampedSampleCount { 0 };
     std::uint64_t droppedReactionEvents { 0 };
-    double maximumTruePeakMagnitude { 0.0 };
+    /** Maximum host-rate sample magnitude after limiter/downsampling. */
+    double maximumPostLimiterSampleMagnitude { 0.0 };
     std::uint64_t droppedFiringEvents { 0 };
     std::uint64_t droppedPressureSamples { 0 };
     std::uint64_t droppedExhaustAcousticSamples { 0 };

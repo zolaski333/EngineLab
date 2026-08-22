@@ -260,8 +260,12 @@ struct Metrics {
     // the leveler is silently doing steady-state gain work -- exactly the kind of
     // downstream compensation this harness exists to make visible.
     std::uint64_t levelLimitedSamples {};
+    std::uint64_t saturationProcessedSamples {};
+    std::uint64_t softLimitedSamples {};
+    std::uint64_t hardClampedSamples {};
     float minLevelGain { 1.0F };
     float maxPreLimiterMagnitude {};
+    float maxPostLimiterPeakMagnitude {};
     float maxExhaustPressurePa {};
     float maxExhaustJetNoisePressurePa {};
     float maxIntakePressurePa {};
@@ -768,8 +772,13 @@ Metrics renderEngine(const EngineConfig& baseConfig, const WavData& ir,
     m.stolenVoices = renderer.stolenVoiceCount();
     m.delayTruncations = renderer.delayTruncationCount();
     m.levelLimitedSamples = renderer.levelLimitedSampleCount();
+    m.saturationProcessedSamples = renderer.saturationProcessedSampleCount();
+    m.softLimitedSamples = renderer.softLimitedSampleCount();
+    m.hardClampedSamples = renderer.hardClampedSampleCount();
     m.minLevelGain = renderer.minObservedLevelGain();
     m.maxPreLimiterMagnitude = renderer.maxPreLimiterMagnitude();
+    m.maxPostLimiterPeakMagnitude =
+        renderer.maximumPostLimiterSampleMagnitude();
     m.maxExhaustPressurePa = renderer.maxObservedExhaustPressurePa();
     m.maxExhaustJetNoisePressurePa =
         renderer.maxObservedExhaustJetNoisePressurePa();
@@ -881,8 +890,12 @@ Metrics renderEngine(const EngineConfig& baseConfig, const WavData& ir,
               << " stolen=" << m.stolenVoices
               << " truncated=" << m.delayTruncations
               << " levelLimited=" << m.levelLimitedSamples
+              << " saturation=" << m.saturationProcessedSamples
+              << " softLimit=" << m.softLimitedSamples
+              << " hardClamp=" << m.hardClampedSamples
               << " minLevelGain=" << std::setprecision(4) << m.minLevelGain
               << " preLimiter=" << m.maxPreLimiterMagnitude
+              << " postLimiterPeak=" << m.maxPostLimiterPeakMagnitude
               << " maxRpm=" << std::setprecision(0) << m.maximumRpm
               << " boost(pre/max)=" << std::setprecision(3)
               << m.preLiftBoostPressureRatio << '/'
@@ -923,6 +936,9 @@ struct IdleCycleMetrics final {
     std::uint64_t droppedPressureSamples {};
     std::uint64_t lateEvents {};
     std::uint64_t levelLimitedSamples {};
+    std::uint64_t saturationProcessedSamples {};
+    std::uint64_t softLimitedSamples {};
+    std::uint64_t hardClampedSamples {};
     float minLevelGain { 1.0F };
     TransitionStepScan commandedTransitionSteps {};
 };
@@ -1085,6 +1101,10 @@ IdleCycleMetrics renderIdleCycle(const EngineConfig& baseConfig, const WavData& 
     metrics.droppedEvents += renderer.droppedPendingEventCount();
     metrics.lateEvents = renderer.lateEventCount();
     metrics.levelLimitedSamples = renderer.levelLimitedSampleCount();
+    metrics.saturationProcessedSamples =
+        renderer.saturationProcessedSampleCount();
+    metrics.softLimitedSamples = renderer.softLimitedSampleCount();
+    metrics.hardClampedSamples = renderer.hardClampedSampleCount();
     metrics.minLevelGain = renderer.minObservedLevelGain();
     metrics.commandedTransitionSteps = scanTransitionSteps(
         left, audioRate, { 1.5, 4.0, 4.4, 4.7, 5.0 });
@@ -1105,6 +1125,9 @@ IdleCycleMetrics renderIdleCycle(const EngineConfig& baseConfig, const WavData& 
               << metrics.droppedPressureSamples
               << " late=" << metrics.lateEvents
               << " levelLimited=" << metrics.levelLimitedSamples
+              << " saturation=" << metrics.saturationProcessedSamples
+              << " softLimit=" << metrics.softLimitedSamples
+              << " hardClamp=" << metrics.hardClampedSamples
               << " minLevelGain=" << metrics.minLevelGain
               << " transitionStep=" << std::setprecision(5)
               << metrics.commandedTransitionSteps.maximumTransitionStep
@@ -1158,8 +1181,11 @@ bool validateIdleCycle(const IdleCycleMetrics& metrics,
     if (metrics.droppedEvents != 0 || metrics.droppedPressureSamples != 0
             || metrics.lateEvents != 0)
         fail("realtime telemetry or events were dropped/late");
-    if (metrics.levelLimitedSamples != 0 || metrics.minLevelGain < 0.99999F)
-        fail("safety leveler engaged during the idle cycle");
+    if (metrics.levelLimitedSamples != 0 || metrics.minLevelGain < 0.99999F
+        || metrics.saturationProcessedSamples != 0
+        || metrics.softLimitedSamples != 0
+        || metrics.hardClampedSamples != 0)
+        fail("a downstream output shaper engaged during the idle cycle");
     if (!metrics.commandedTransitionSteps.measurable)
         fail("control-boundary discontinuity scan was not measurable");
     else if (metrics.commandedTransitionSteps.maximumTransitionStep > 0.50
@@ -1206,6 +1232,9 @@ bool validateBoostLiftTransient(
         fail("realtime telemetry, voices, or physical boundary samples were lost");
     }
     if (metrics.levelLimitedSamples != 0
+        || metrics.saturationProcessedSamples != 0
+        || metrics.softLimitedSamples != 0
+        || metrics.hardClampedSamples != 0
         || metrics.minLevelGain < 0.99999F
         || metrics.maxPreLimiterMagnitude >= 0.82F) {
         fail("a downstream safety processor masked the transient");
@@ -1245,6 +1274,9 @@ bool validateLimiterTransient(
         fail("realtime telemetry, voices, or physical boundary samples were lost");
     }
     if (metrics.levelLimitedSamples != 0
+        || metrics.saturationProcessedSamples != 0
+        || metrics.softLimitedSamples != 0
+        || metrics.hardClampedSamples != 0
         || metrics.minLevelGain < 0.99999F
         || metrics.maxPreLimiterMagnitude >= 0.82F) {
         fail("a downstream safety processor masked the limiter transient");
@@ -1557,6 +1589,9 @@ bool runtimePathCheck(const EngineConfig& baseConfig, const WavData& ir,
               << " preLimiter=" << std::setprecision(3)
               << renderer->maxPreLimiterMagnitude()
               << " levelLimited=" << renderer->levelLimitedSampleCount()
+              << " saturation=" << renderer->saturationProcessedSampleCount()
+              << " softLimit=" << renderer->softLimitedSampleCount()
+              << " hardClamp=" << renderer->hardClampedSampleCount()
               << " minLevelGain=" << renderer->minObservedLevelGain()
               << " droppedPressure=" << runtime->droppedPressureSampleCount()
               << '\n'
@@ -1599,6 +1634,9 @@ bool runtimePathCheck(const EngineConfig& baseConfig, const WavData& ir,
         ok = false;
     }
     if (renderer->levelLimitedSampleCount() != 0
+        || renderer->saturationProcessedSampleCount() != 0
+        || renderer->softLimitedSampleCount() != 0
+        || renderer->hardClampedSampleCount() != 0
         || renderer->minObservedLevelGain() < 0.99999F
         || renderer->maxPreLimiterMagnitude() >= 0.82F) {
         std::cerr << "FAIL: runtime wiring: " << config.name
@@ -1707,7 +1745,10 @@ int main(int argc, char** argv) {
             && metrics.left.scan.finite && metrics.right.scan.finite
             && metrics.droppedPressureSamples == 0
             && metrics.invalidBoundarySamples == 0
-            && metrics.levelLimitedSamples == 0;
+            && metrics.levelLimitedSamples == 0
+            && metrics.saturationProcessedSamples == 0
+            && metrics.softLimitedSamples == 0
+            && metrics.hardClampedSamples == 0;
         std::cout << "Stem export result: " << (valid ? "PASS" : "FAIL") << '\n';
         return valid ? 0 : 1;
     }
@@ -1830,6 +1871,9 @@ int main(int argc, char** argv) {
                 && measurement.invalidBoundarySamples == 0
                 && measurement.droppedPressureSamples == 0
                 && measurement.levelLimitedSamples == 0
+                && measurement.saturationProcessedSamples == 0
+                && measurement.softLimitedSamples == 0
+                && measurement.hardClampedSamples == 0
                 && measurement.maxPreLimiterMagnitude < 0.82F;
         };
         const auto isolated = baseline.maxExhaustJetNoisePressurePa == 0.0F
@@ -1916,6 +1960,9 @@ int main(int argc, char** argv) {
                 && measurement.invalidBoundarySamples == 0
                 && measurement.droppedPressureSamples == 0
                 && measurement.levelLimitedSamples == 0
+                && measurement.saturationProcessedSamples == 0
+                && measurement.softLimitedSamples == 0
+                && measurement.hardClampedSamples == 0
                 && measurement.maxPreLimiterMagnitude < 0.82F;
         };
         const auto isolated = baseline.maxStructuralPressurePa > 0.0F
@@ -1998,6 +2045,9 @@ int main(int argc, char** argv) {
                 && measurement.invalidBoundarySamples == 0
                 && measurement.droppedPressureSamples == 0
                 && measurement.levelLimitedSamples == 0
+                && measurement.saturationProcessedSamples == 0
+                && measurement.softLimitedSamples == 0
+                && measurement.hardClampedSamples == 0
                 && measurement.maxPreLimiterMagnitude < 0.82F;
         };
         const auto isolated = baseline.maxForcedInductionPressurePa > 0.0F
@@ -2060,6 +2110,9 @@ int main(int argc, char** argv) {
                 && measurement.invalidBoundarySamples == 0
                 && measurement.droppedPressureSamples == 0
                 && measurement.levelLimitedSamples == 0
+                && measurement.saturationProcessedSamples == 0
+                && measurement.softLimitedSamples == 0
+                && measurement.hardClampedSamples == 0
                 && measurement.maxPreLimiterMagnitude < 0.82F;
         };
         // The A/B is useful only if the corrected cylinder-pressure excitation
@@ -2187,6 +2240,9 @@ int main(int argc, char** argv) {
             && metrics.legacyPathSamples == 0
             && metrics.invalidBoundarySamples == 0
             && metrics.levelLimitedSamples == 0
+            && metrics.saturationProcessedSamples == 0
+            && metrics.softLimitedSamples == 0
+            && metrics.hardClampedSamples == 0
             && metrics.maxPreLimiterMagnitude < 0.82F
             && metrics.left.window.crest < 16.0
             && metrics.right.window.crest < 16.0 ? 0 : 1;
@@ -2389,6 +2445,10 @@ int main(int argc, char** argv) {
         // the AGC is silently masking that offset. Keep the level honest instead.
         if (m.levelLimitedSamples != 0 || m.minLevelGain < 0.99999F)
             fail("safety leveler engaged at the default voice (AGC masking a level offset)");
+        if (m.saturationProcessedSamples != 0)
+            fail("physical-reference monitoring entered the artistic saturation stage");
+        if (m.softLimitedSamples != 0 || m.hardClampedSamples != 0)
+            fail("physical layers were reshaped by the output limiter or clamp");
         if (m.maxPreLimiterMagnitude >= 0.82F)
             fail("physical layers reach the output limiter knee before monitoring");
     };
