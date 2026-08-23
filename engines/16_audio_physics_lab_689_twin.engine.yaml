@@ -53,22 +53,23 @@ engine:
     # without reaching the 100 kPa linear-network safety bound.
     reaction_time_constant_s: 0.002
     reaction_efficiency: 0.95
-    # Measured minimum combustible slug calibration on genuine closed-throttle
-    # DFCO. With 35% pulse duty, the previous 0.12 average command produced an
-    # instantaneous equivalence ratio near 0.34, below the authored 0.45 lean
-    # flammability limit, and correctly burned 0 mg even at a 603 C wall.
-    # 0.18 raises the open-window slug near phi=0.51; oxygen and temperature are
-    # still required and the cold-exhaust control remains exactly silent.
-    overrun_fuel_fraction: 0.18
+    # Eight percent average fuel with the matching 8% duty commands full normal
+    # fuelling only inside each short slug. The former 18% / 35% / 4 Hz profile
+    # held the injector window open for 87.5 ms and covered many cylinder firing
+    # opportunities; measured heat duty reached 76.6% on this Twin and nearly
+    # 100% on the K20, which was an anti-lag-like roar rather than discrete pops.
+    # The new 40 ms window lowers total retained fuel while remaining locally
+    # combustible. Oxygen, wall heat and the induction gate are still required.
+    overrun_fuel_fraction: 0.08
     overrun_minimum_rpm: 3000
     overrun_maximum_throttle: 0.02
-    # Four fuel slugs per second. Fuel retained during the open 35% window is
+    # Two fuel slugs per second. Fuel retained during the open 8% window is
     # normalised by duty, so pulse timing changes texture rather than mass.
-    overrun_pulse_hz: 4.0
-    overrun_pulse_duty: 0.35
-    # Interval scatter is bounded at +/-25%. The duty is recomputed from each
+    overrun_pulse_hz: 2.0
+    overrun_pulse_duty: 0.08
+    # Interval scatter is bounded at +/-40%. The duty is recomputed from each
     # actual interval, so irregular timing does not change average fuel mass.
-    overrun_pulse_timing_variation: 0.25
+    overrun_pulse_timing_variation: 0.40
     # Reference Livengood-Wu delay at 800 K, 101.325 kPa and phi=1. The
     # Arrhenius/pressure/mixture exponents below reproduce the FORM of a global
     # high-temperature gasoline-surrogate correlation (Ea/R=13340 K,

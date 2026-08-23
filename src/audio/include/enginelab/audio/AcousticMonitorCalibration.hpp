@@ -12,9 +12,9 @@ namespace enginelab {
  * prevents an arbitrary voice gain or the safety limiter from silently filling
  * the role of a capture chain.
  *
- * The default represents a high-SPL engine recording path with 156 dB SPL
- * (RMS sine convention) at digital full scale, which is a normal preamp setting
- * for close exhaust miking with a measurement microphone.
+ * The default represents a high-SPL engine recording path with 134 dB SPL
+ * (RMS sine convention) at digital full scale. This maps 100.237 Pa RMS, or
+ * 141.757 Pa for a sine peak, to 0 dBFS.
  *
  * That figure is chosen from what the model actually radiates, not to taste.
  * Catalogue validation converts the signal back to pascals at each engine's
@@ -22,17 +22,19 @@ namespace enginelab {
  * remain below the safety limiter. The calibration therefore remains a capture
  * property; it is never adjusted per engine to normalise model output.
  *
- * The former 142 dB setting still clipped the measured Merlin startup peak:
- * 3.588 FS, about 1.28 kPa, and left the slow safety gain below unity for an
- * entire ten-second measurement. 156 dB corresponds to about 1.78 kPa sine
- * peak, retaining headroom for that catalogue maximum without per-engine gain,
- * AGC, or compression. It remains a capture-chain calibration rather than a
- * loudness-normalisation control.
+ * A temporary 156 dB setting was derived from an obsolete Merlin startup peak.
+ * The current 16-engine catalogue measurement instead observes at most about
+ * 70 Pa from any SI pressure source. The remaining Merlin startup peak belongs
+ * to the legacy synthetic starter layer, which is already digital and is not
+ * affected by this conversion. Using that unrelated layer to attenuate every
+ * physical pressure source was therefore dimensionally wrong and made normal
+ * running roughly 22 dB too quiet. Catalogue output-chain gates retain the
+ * required limiter and hard-clamp headroom at this default.
  */
 class AcousticMonitorCalibration final {
 public:
     static constexpr double referenceRmsPressurePa = 20.0e-6;
-    static constexpr double defaultFullScaleSplDb = 156.0;
+    static constexpr double defaultFullScaleSplDb = 134.0;
 
     [[nodiscard]] static double rmsPressurePa(double soundPressureLevelDb) noexcept {
         return std::isfinite(soundPressureLevelDb)

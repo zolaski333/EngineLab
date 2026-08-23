@@ -116,7 +116,7 @@ struct RealtimeAudioState final {
     // which documents the measurement it comes from; the constant is duplicated
     // rather than included because audio depends on runtime, not the reverse.
     // RealtimeRegressionTests asserts the two stay equal.
-    std::atomic<float> acousticFullScaleSplDb { 156.0F };
+    std::atomic<float> acousticFullScaleSplDb { 134.0F };
     std::atomic<int> exhaustPreset { static_cast<int>(AudioExhaustPreset::street) };
     // Extended physical telemetry for the intake/forced-induction/mechanical and
     // waveguide audio layers (populated once at construction or per sim frame).

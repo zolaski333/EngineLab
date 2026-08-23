@@ -42,10 +42,10 @@ int main() {
     require(
         labSettings.afterfireEnabled && labSettings.limiterKeepsFuel
             && near(labSettings.afterfireReactionTimeSeconds, 0.002)
-            && near(labSettings.overrunFuelFraction, 0.18)
-            && near(labSettings.overrunPulseHz, 4.0)
-            && near(labSettings.overrunPulseDutyCycle, 0.35)
-            && near(labSettings.overrunPulseTimingVariation, 0.25)
+            && near(labSettings.overrunFuelFraction, 0.08)
+            && near(labSettings.overrunPulseHz, 2.0)
+            && near(labSettings.overrunPulseDutyCycle, 0.08)
+            && near(labSettings.overrunPulseTimingVariation, 0.40)
             && audioLab->config.exhaustAfterfire.strategy
                 == enginelab::ExhaustAfterfireStrategy::discreteAfterfire
             && near(labSettings.cycleVariationCoefficientOfVariation, 0.06),
@@ -76,7 +76,13 @@ int main() {
             && near(recoveredPhysics.overrunPulseDutyCycle, 0.35)
             && near(recoveredPhysics.overrunPulseTimingVariation, 0.27)
             && physicsConfig.exhaustAfterfire.strategy
-                == enginelab::ExhaustAfterfireStrategy::discreteAfterfire,
+                == enginelab::ExhaustAfterfireStrategy::discreteAfterfire
+            && near(physicsConfig.exhaustAfterfire
+                        .inductionActivationTemperatureK, 13'340.0)
+            && near(physicsConfig.exhaustAfterfire.inductionPressureExponent,
+                    0.989)
+            && near(physicsConfig.exhaustAfterfire
+                        .inductionEquivalenceRatioExponent, -0.577),
         "audio physics controls round-trip through EngineConfig");
     enginelab::EngineState physicsState;
     physicsState.cylinderStates[0].combustionCycleMultiplier = 0.91;
@@ -209,7 +215,10 @@ int main() {
     juce::TextButton* catalogueMixButton = nullptr;
     juce::TextButton* neutralMixButton = nullptr;
     juce::TextButton* demoPhysicsButton = nullptr;
-    bool applyPhysicsButtonFound = false;
+    juce::TextButton* applyPhysicsButton = nullptr;
+    juce::ToggleButton* afterfireToggle = nullptr;
+    juce::ToggleButton* captureModeToggle = nullptr;
+    juce::Slider* exhaustMixSlider = nullptr;
     for (int index = 0;
          index < content->getNumChildComponents(); ++index) {
         auto* child = content->getChildComponent(index);
@@ -220,6 +229,9 @@ int main() {
             ++sliderCount;
             if (!slider->isEnabled()) ++disabledSliderCount;
         }
+        if (auto* slider = dynamic_cast<juce::Slider*>(child);
+            slider != nullptr && slider->getComponentID() == "mix-exhaust")
+            exhaustMixSlider = slider;
         if (auto* button =
                 dynamic_cast<juce::TextButton*>(child)) {
             const auto text = button->getButtonText();
@@ -239,8 +251,15 @@ int main() {
             } else if (text == "NEUTRE") {
                 neutralMixButton = button;
             } else if (text == "APPLIQUER EN DIRECT") {
-                applyPhysicsButtonFound = true;
+                applyPhysicsButton = button;
             }
+        }
+        if (auto* toggle =
+                dynamic_cast<juce::ToggleButton*>(child)) {
+            if (toggle->getComponentID() == "afterfire-enabled")
+                afterfireToggle = toggle;
+            else if (toggle->getComponentID() == "monitor-capture")
+                captureModeToggle = toggle;
         }
     }
     require(visibleChildren >= 45, "complete workshop control set is present");
@@ -255,18 +274,48 @@ int main() {
     require(exportButtonFound, "HQ export action is visible");
     require(catalogueMixButton != nullptr && neutralMixButton != nullptr,
             "catalogue and neutral voicing A/B actions are visible");
-    require(demoPhysicsButton != nullptr && applyPhysicsButtonFound,
+    require(demoPhysicsButton != nullptr && applyPhysicsButton != nullptr
+                && afterfireToggle != nullptr,
             "audible physics A/B and explicit apply actions are visible");
-    demoPhysicsButton->onClick();
+    require(captureModeToggle != nullptr,
+            "the effective monitor mode is visible to the user");
+    require(exhaustMixSlider != nullptr,
+            "the physical exhaust fader is addressable");
+
+    exhaustMixSlider->setValue(base.exhaustGain + 0.01,
+                               juce::sendNotificationSync);
+    require(
+        captureModeToggle->getToggleState()
+            && callbackBase.monitorMode
+                == enginelab::AudioMonitorMode::captureVoiced
+            && near(callbackBase.exhaustGain, base.exhaustGain + 0.01),
+        "editing an authored fader visibly enables the mode that honours it");
+
+    afterfireToggle->setToggleState(true, juce::dontSendNotification);
+    afterfireToggle->onClick();
+    applyPhysicsButton->onClick();
     require(
         physicsApplyCount == 1
+            && appliedPhysics.afterfireEnabled
+            && near(appliedPhysics.afterfireIgnitionTemperatureK, 800.0)
+            && near(appliedPhysics.afterfireReactionTimeSeconds, 0.002)
+            && near(appliedPhysics.overrunFuelFraction, 0.08)
+            && near(appliedPhysics.overrunPulseHz, 2.0)
+            && near(appliedPhysics.overrunPulseDutyCycle, 0.08)
+            && near(appliedPhysics.overrunPulseTimingVariation, 0.40),
+        "enabling a clean afterfire prepares discrete irregular pops rather than continuous anti-lag");
+
+    demoPhysicsButton->onClick();
+    require(
+        physicsApplyCount == 2
             && near(appliedPhysics.cycleVariationCoefficientOfVariation, 0.06)
             && appliedPhysics.afterfireEnabled
             && appliedPhysics.limiterKeepsFuel
             && near(appliedPhysics.afterfireReactionTimeSeconds, 0.002)
-            && near(appliedPhysics.overrunFuelFraction, 0.18)
-            && near(appliedPhysics.overrunPulseHz, 4.0)
-            && near(appliedPhysics.overrunPulseTimingVariation, 0.25),
+            && near(appliedPhysics.overrunFuelFraction, 0.08)
+            && near(appliedPhysics.overrunPulseHz, 2.0)
+            && near(appliedPhysics.overrunPulseDutyCycle, 0.08)
+            && near(appliedPhysics.overrunPulseTimingVariation, 0.40),
         "demo action publishes an intentionally audible physical calibration");
 
     window.setMix(base);

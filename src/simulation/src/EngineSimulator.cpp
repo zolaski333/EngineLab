@@ -2467,15 +2467,18 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
             exhaustNetworkAcceptedSubsteps += networkAdvance.acceptedSubsteps;
             exhaustNetworkAdvancedSeconds += networkAdvance.advancedTimeSeconds;
             if (!networkAdvance.completed) state_.solverResolutionLimited = true;
-            // Chemistry is an operating state, not a permanent property of an
-            // engine that happens to author an afterfire map. The old condition
-            // ran it throughout every loaded warm-up whenever either feature
-            // existed, oxidising normal trace HC and sending compact reaction
-            // sources as high as the 100 kPa safety bound before the driver had
-            // lifted. Closed-throttle DFCO remains true across the pulse's OFF
-            // windows, so a transported slug continues reacting after injection
-            // closes; a wet hard limiter likewise stays enabled across its
-            // alternating spark phases.
+            // Chemistry and an audible afterfire have different operating
+            // contracts. Hot trace HC must keep oxidising while a reaction
+            // model is enabled; otherwise normal running accumulates an
+            // artificial fuel reservoir. Compact acoustic events and afterfire
+            // telemetry, however, belong only to a requested overrun or wet
+            // limiter window. Closed-throttle DFCO remains true across the
+            // pulse's OFF windows, so a transported slug continues reacting
+            // after injection closes; a wet hard limiter likewise stays enabled
+            // across its alternating spark phases.
+            const auto exhaustReactionModelEnabled =
+                afterfireRetainsFuel(config_.exhaustAfterfire.strategy)
+                || config_.ignition.limiterKeepsFuel;
             const auto exhaustReactionOperatingState =
                 (afterfireRetainsFuel(config_.exhaustAfterfire.strategy)
                     && ecuCommand.decelerationFuelCutActive)
@@ -2483,7 +2486,7 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                     && (ecuCommand.wetSparkCutActive
                         || ecuCommand.hardRevLimiterActive));
             if (networkAdvance.completed
-                && exhaustReactionOperatingState) {
+                && exhaustReactionModelEnabled) {
                 // Named assignments are intentional. This public chemistry
                 // contract contains only doubles, so a positional aggregate
                 // would still compile while silently reinterpreting every
@@ -2524,23 +2527,35 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 exhaustFuelReaction = physicalExhaustNetwork.reactUnburnedFuel(
                     networkAdvance.advancedTimeSeconds,
                     reactionConfig);
-                frameReactingExhaustControlVolumes +=
-                    exhaustFuelReaction.reactingControlVolumes;
-                frameWallIgnitedExhaustControlVolumes +=
-                    exhaustFuelReaction.wallIgnitedControlVolumes;
-                frameMaximumAfterfireInductionIntegral = std::max(
-                    frameMaximumAfterfireInductionIntegral,
-                    exhaustFuelReaction.maximumInductionIntegral);
-                if (exhaustFuelReaction.minimumInductionDelaySeconds > 0.0) {
-                    frameMinimumAfterfireInductionDelaySeconds =
-                        frameMinimumAfterfireInductionDelaySeconds > 0.0
-                        ? std::min(frameMinimumAfterfireInductionDelaySeconds,
-                            exhaustFuelReaction.minimumInductionDelaySeconds)
-                        : exhaustFuelReaction.minimumInductionDelaySeconds;
+                if (exhaustReactionOperatingState) {
+                    frameReactingExhaustControlVolumes +=
+                        exhaustFuelReaction.reactingControlVolumes;
+                    frameWallIgnitedExhaustControlVolumes +=
+                        exhaustFuelReaction.wallIgnitedControlVolumes;
+                    frameMaximumAfterfireInductionIntegral = std::max(
+                        frameMaximumAfterfireInductionIntegral,
+                        exhaustFuelReaction.maximumInductionIntegral);
+                    if (exhaustFuelReaction.minimumInductionDelaySeconds > 0.0) {
+                        frameMinimumAfterfireInductionDelaySeconds =
+                            frameMinimumAfterfireInductionDelaySeconds > 0.0
+                            ? std::min(frameMinimumAfterfireInductionDelaySeconds,
+                                exhaustFuelReaction.minimumInductionDelaySeconds)
+                            : exhaustFuelReaction.minimumInductionDelaySeconds;
+                    }
+                    frameMaximumAfterfireInductionDelaySeconds = std::max(
+                        frameMaximumAfterfireInductionDelaySeconds,
+                        exhaustFuelReaction.maximumInductionDelaySeconds);
+                } else {
+                    // A hot exhaust oxidises trace HC during loaded running;
+                    // disabling chemistry until lift-off accumulated tens of
+                    // seconds of artificial inventory and then presented it as
+                    // one long afterfire roar. Keep the conservative species
+                    // and energy update, but do not label its quasi-steady
+                    // housekeeping heat as an overrun event or publish it to
+                    // the high-band acoustic queue. The next genuine slug then
+                    // starts from the physical inventory that actually remains.
+                    exhaustFuelReaction = {};
                 }
-                frameMaximumAfterfireInductionDelaySeconds = std::max(
-                    frameMaximumAfterfireInductionDelaySeconds,
-                    exhaustFuelReaction.maximumInductionDelaySeconds);
             }
 
             // Boundary/media states are consumed only at the renderer's block

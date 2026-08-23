@@ -64,7 +64,7 @@ la pleine échelle SPL du micro/préampli est publiée explicitement dans
 `RealtimeAudioState::acousticFullScaleSplDb`. Par défaut :
 
 ```text
-141,589 Pa crête = 100,237 Pa RMS = 134 dB SPL = 0 dBFS
+141,757 Pa crête = 100,237 Pa RMS = 134 dB SPL = 0 dBFS
 ```
 
 La conversion utilise toujours la référence acoustique de 20 µPa. Modifier

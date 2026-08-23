@@ -1041,8 +1041,15 @@ void RealtimeEngineAudio::renderWithStems(
                         reactionEvent.releasedEnergyJoules)
                         / static_cast<double>(reactionEvent.durationSeconds);
                     voice->lastUpdateTimeSeconds = audioTimeSeconds_;
-                    voice->holdSeconds = std::max(0.0005,
-                        2.0 * static_cast<double>(
+                    // Power is energy divided by this exact finite-volume
+                    // interval. Holding it for twice the interval (and at
+                    // least 0.5 ms) duplicated sparse-event energy and joined
+                    // neighbouring kernels into the smooth swell reported by
+                    // users. One audio sample is only the representability
+                    // floor; otherwise the acoustic pulse owns precisely the
+                    // duration whose conservative energy it reconstructs.
+                    voice->holdSeconds = std::max(1.0 / sampleRate_,
+                        static_cast<double>(
                             reactionEvent.durationSeconds));
                 }
                 lastReactionEventSampleTime_ =

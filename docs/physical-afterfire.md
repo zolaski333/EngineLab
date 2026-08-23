@@ -27,12 +27,12 @@ engine:
     ignition_temperature_k: 800
     reaction_time_constant_s: 0.002
     reaction_efficiency: 0.95
-    overrun_fuel_fraction: 0.18
+    overrun_fuel_fraction: 0.08
     overrun_minimum_rpm: 3000
     overrun_maximum_throttle: 0.02
-    overrun_pulse_hz: 4.0
-    overrun_pulse_duty: 0.35
-    overrun_pulse_timing_variation: 0.25
+    overrun_pulse_hz: 2.0
+    overrun_pulse_duty: 0.08
+    overrun_pulse_timing_variation: 0.40
     induction_time_s: 0.004
     induction_reference_pressure_kpa: 101.325
     induction_activation_temperature_k: 13340
@@ -45,15 +45,19 @@ engine:
 ```
 
 La fraction de carburant est une valeur moyenne. En mode pulsé, l’ECU la
-normalise par le rapport cyclique : passer de 100 % à 35 % de duty ne supprime
-donc plus 65 % de la masse demandée. À 12 % moyen et 35 % de duty, le paquet du
-laboratoire restait néanmoins trop pauvre (`phi ≈ 0,34`) pour la borne physique
-`phi_min = 0,45`. La démonstration d’écoute emploie 18 % (`phi ≈ 0,51`).
+normalise par le rapport cyclique. Le profil final garde fraction et duty à 8 % :
+la commande instantanée atteint donc la pleine injection normale pendant une
+fenêtre de 40 ms, deux fois par seconde, pour seulement 8 % de masse moyenne.
+L’ancien profil 18 % / 35 % / 4 Hz ouvrait pendant 87,5 ms. Il traversait de
+nombreuses opportunités d’injection et a mesuré 76,6 % de duty chimique sur le
+Twin, presque 100 % sur le K20 : c’était un grondement proche de l’anti-lag, pas
+une suite de pops. Une fenêtre de 25 ms à 5 % pouvait au contraire manquer les
+injections d’un bicylindre et laisser jusqu’à quatre secondes entre réactions.
 
 La cadence de `discrete_afterfire` n’est plus un carré parfaitement périodique.
 `overrun_pulse_timing_variation` décale les frontières des paquets avec une
-séquence déterministe à faible répétition. Une valeur de 0,25 autour de 4 Hz
-borne chaque intervalle entre 187,5 et 312,5 ms au niveau ECU ; le front de
+séquence déterministe à faible répétition. Une valeur de 0,40 autour de 2 Hz
+borne chaque intervalle entre 300 et 700 ms au niveau ECU ; le front de
 réaction mesuré peut s’en écarter légèrement à cause du transport et de
 l’induction. Chaque paquet garde le même duty relatif à son intervalle, donc la
 masse moyenne prescrite est conservée. Une valeur nulle restitue exactement la
@@ -86,10 +90,14 @@ la flamme est mémorisée à l’allumage ; elle n’est plus réinterprétée a
 réaction elle-même a chauffé le gaz. Équation, provenance, A/B et limites :
 [afterfire-induction-implementation-2026-08-22.md](afterfire-induction-implementation-2026-08-22.md).
 
-La chimie n’est exécutée que dans un état qui peut effectivement la demander :
-DFCO avec stratégie retenant du carburant, ou rupteur humide actif. Le simple
-fait qu’un moteur possède une calibration afterfire ne déclenche plus
-l’oxydation de traces d’hydrocarbures à pleine charge.
+La chimie conserve son état dès qu’une stratégie de réaction est authorée, y
+compris sous charge. Cela oxyde les traces d’hydrocarbures au fil de leur
+transport au lieu d’accumuler artificiellement soixante secondes de carburant
+puis d’enflammer cet ancien inventaire au lever. Cette oxydation d’entretien ne
+publie toutefois ni télémétrie afterfire ni source acoustique. Ces deux sorties
+restent strictement réservées au DFCO qui retient du carburant ou au rupteur
+humide actif ; le contrôle chargé juste avant le lever mesure toujours zéro
+événement acoustique.
 
 La source acoustique compacte est dérivée de la chaleur libérée. Le saut total
 de pression vaut :
@@ -112,6 +120,11 @@ source globale placée artificiellement à la sortie. Une borne de dernier recou
 à 100 kPa protège le réseau linéaire ; chaque échantillon qui l’atteindrait est
 compté, affiché et invalide les harness de validation.
 
+Chaque voix conserve maintenant la puissance `énergie / durée` pendant la durée
+exacte du pas de réaction. L’ancien rendu la maintenait deux fois plus longtemps
+avec un minimum de 0,5 ms : il dupliquait l’énergie des événements courts et
+collait les noyaux voisins en une vague continue.
+
 ## Utilisation dans AUDIO HQ
 
 Le bouton `APPLY` envoie désormais la calibration au thread de simulation par
@@ -120,10 +133,10 @@ inventaires gazeux et températures de paroi. L’application est refusée penda
 un pull dyno afin de ne pas modifier une mesure en cours.
 
 `DEMO AUDIBLE` sélectionne `discrete_afterfire`, une réaction compacte de 2 ms,
-4 Hz nominaux, 35 % de duty, 25 % de variation temporelle et 18 % de carburant
-moyen. Le simple toggle
-complète aussi une calibration restée à zéro, au lieu d’afficher « actif » sans
-aucune matière réactive.
+2 Hz nominaux, 8 % de duty, 40 % de variation temporelle et 8 % de carburant
+moyen. Le simple toggle complète aussi une calibration restée à zéro et installe
+la corrélation d’induction thermochimique du schéma 8. Une calibration anti-lag
+ou afterfire déjà authorée reste inchangée.
 
 Pour le test direct :
 
@@ -137,7 +150,7 @@ nombre de volumes réactifs et les événements perdus. Une puissance nulle rest
 un résultat physique possible : ligne froide, mélange hors fenêtre, DFCO propre
 ou stratégie non armée.
 
-## Preuve mesurée du chemin acoustique (timer plat historique)
+## Preuve mesurée du chemin acoustique (profil produit du 23 août)
 
 Le contrôle final emploie le Twin laboratoire tel qu’il est catalogué, 60 s de
 chauffe, un intervalle chargé juste avant le lever et 8 s d’overrun. Les deux
@@ -147,24 +160,29 @@ réaction vers le réseau audio.
 
 | Cas | Réactions avant lever | Carburant brûlé | Événements chaleur | Puissance crête | Crête audio | P99,9 | Crest |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| événements réaction non injectés | 0 | 63,532 mg | 27 | 9,244 kW | 0,00348 | 0,00262 | 4,48 |
-| événements réaction injectés | 0 | 63,532 mg | 27 | 9,244 kW | 0,00518 | 0,00291 | 6,41 |
+| événements réaction non injectés | 0 | 89,373 mg | 10 | 15,068 kW | 0,04764 | 0,03310 | 4,75 |
+| événements réaction injectés | 0 | 89,373 mg | 10 | 15,068 kW | 0,05835 | 0,03349 | 5,73 |
 
-L’injection physique ajoute 3,46 dB à la crête. Sa composante directe mesurée
-par soustraction des WAV vaut −12,44 dB par rapport au mix complet sur tout
-l’overrun ; l’ancien chemin était à environ −57,75 dB. Les 817 événements
-couplés transportent 4 579,559 J ; le saut compact maximal calculé est 54,708
-kPa, sans atteindre la borne de 100 kPa.
+La soustraction des WAV donne une contribution de réaction à 0,03415 de crête.
+Son RMS médian sur des fenêtres de 5 ms est exactement nul, puis atteint 0,01229
+sur les pops : ce n’est plus une hausse continue du volume. Les dix fronts
+audio isolés sont espacés de 460 à 1 090 ms. Leur énergie se répartit à 15,35 %
+entre 20–120 Hz, 64,60 % entre 120–500 Hz, 19,65 % entre 500 Hz–2 kHz et 0,39 %
+entre 2–8 kHz. Les 1 479 événements de volumes finis transportent 5 419,634 J ;
+le saut compact maximal est 80,902 kPa, sans atteindre la borne de 100 kPa.
 
-Le rendu actif consomme 13,6 % du budget moyen d’un bloc de 200 échantillons et
-14,6 % au p99, contre 13,1 % et 13,9 % dans le contrôle. Aucun des 1 920 blocs
-n’a dépassé sa durée. Les WAV frais sont sous
-`out/audit-2026-08-20/afterfire-final-timed-on/` et
-`out/audit-2026-08-20/afterfire-final-timed-off/`.
+Le rendu actif consomme 13,5 % du budget moyen d’un bloc de 200 échantillons et
+15,9 % au p99, contre 13,1 % et 14,2 % dans le contrôle. La simulation consomme
+20,6 % du pas de 4,167 ms en moyenne et 24,4 % au p99. Aucun des 1 920 blocs ou
+pas n’a dépassé sa durée. Les WAV frais sont sous
+`out/audit-2026-08-23-afterfire-twin-fuel08-duty08/` et
+`out/audit-2026-08-23-afterfire-twin-fuel08-duty08-no-source/`.
 
 Ces nombres valident le chemin logiciel et la non-vacuité du modèle. La
 calibration de 2 ms reste une estimation d’ingénierie du moteur laboratoire,
 pas une identification issue d’un enregistrement ou d’un banc instrumenté.
 
-La preuve schema-8 avec induction thermochimique se trouve dans
+La preuve schéma-8 avec induction thermochimique se trouve dans
 [afterfire-induction-implementation-2026-08-22.md](afterfire-induction-implementation-2026-08-22.md).
+Le diagnostic complet du niveau et du nouveau profil se trouve dans
+[audio-level-afterfire-correction-2026-08-23.md](audio-level-afterfire-correction-2026-08-23.md).

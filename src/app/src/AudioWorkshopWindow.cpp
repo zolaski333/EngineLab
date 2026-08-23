@@ -113,6 +113,13 @@ AudioPhysicsSettings audioPhysicsSettingsFor(
 
 void applyAudioPhysicsSettings(
     EngineConfig& engine, const AudioPhysicsSettings& settings) noexcept {
+    const auto enablingCleanAfterfire = settings.afterfireEnabled
+        && !afterfireRetainsFuel(engine.exhaustAfterfire.strategy)
+        && !(engine.exhaustAfterfire.overrunFuelFraction > 0.0)
+        && !(engine.exhaustAfterfire.overrunPulseHz > 0.0)
+        && engine.exhaustAfterfire.inductionActivationTemperatureK == 0.0
+        && engine.exhaustAfterfire.inductionPressureExponent == 0.0
+        && engine.exhaustAfterfire.inductionEquivalenceRatioExponent == 0.0;
     engine.combustionCalibration.cycleVariationCoefficientOfVariation =
         settings.cycleVariationCoefficientOfVariation;
     engine.combustionCalibration.cycleVariationCorrelation =
@@ -133,17 +140,29 @@ void applyAudioPhysicsSettings(
         settings.afterfireEfficiency;
     // Toggling the feature must denote an executable calibration.  The old UI
     // left the authored default at zero, making "enabled" indistinguishable
-    // from clean DFCO. Eighteen percent is the measured minimum demo command
-    // that remains inside the configured lean flammability limit once the
-    // 35%-duty slug is normalised; an explicit non-zero slider value wins.
+    // from clean DFCO. Eight percent is the measured discrete-pop command: with
+    // the matching 8%-duty preset it requests one full-fuelling 40 ms slug at
+    // 2 Hz, instead of the old 87.5 ms window that covered many firing events
+    // and became an anti-lag-like roar. An explicit non-zero value still wins.
     engine.exhaustAfterfire.overrunFuelFraction = settings.afterfireEnabled
         && !(settings.overrunFuelFraction > 0.0)
-        ? 0.18 : settings.overrunFuelFraction;
+        ? 0.08 : settings.overrunFuelFraction;
     engine.exhaustAfterfire.overrunPulseHz = settings.overrunPulseHz;
     engine.exhaustAfterfire.overrunPulseDutyCycle =
         settings.overrunPulseDutyCycle;
     engine.exhaustAfterfire.overrunPulseTimingVariation =
         settings.overrunPulseTimingVariation;
+    if (enablingCleanAfterfire) {
+        // Schema-7 engines intentionally retain their flat legacy induction
+        // timer. A user who enables a completely clean/default calibration for
+        // the first time instead gets the schema-8 thermochemical correlation
+        // used by the measured demo. This makes event spacing depend on local
+        // temperature, pressure and mixture rather than only on a metronome.
+        engine.exhaustAfterfire.inductionActivationTemperatureK = 13'340.0;
+        engine.exhaustAfterfire.inductionPressureExponent = 0.989;
+        engine.exhaustAfterfire.inductionEquivalenceRatioExponent = -0.577;
+        engine.exhaustAfterfire.inductionDecayTimeSeconds = 0.008;
+    }
 }
 
 AudioPhysicsTelemetry audioPhysicsTelemetryFor(
@@ -274,6 +293,7 @@ public:
         configureSlider(highNoiseSlider_, 0.0, 1.5, 0.01);
         configureSlider(combustionSlider_, 0.0, 2.0, 0.01);
         configureSlider(exhaustSlider_, 0.0, 2.0, 0.01);
+        exhaustSlider_.setComponentID("mix-exhaust");
         configureSlider(intakeSlider_, 0.0, 2.0, 0.01);
         configureSlider(mechanicalSlider_, 0.0, 2.0, 0.01);
 
@@ -316,6 +336,7 @@ public:
         captureVoicingToggle_.setColour(
             juce::ToggleButton::textColourId,
             juce::Colour(0xffc4d0cb));
+        captureVoicingToggle_.setComponentID("monitor-capture");
         captureVoicingToggle_.onClick = [this] { publishMix(); };
         addAndMakeVisible(catalogueMixButton_);
         addAndMakeVisible(resetButton_);
@@ -429,14 +450,46 @@ public:
 
         afterfireToggle_.setColour(
             juce::ToggleButton::textColourId, juce::Colour(0xffc4d0cb));
+        afterfireToggle_.setComponentID("afterfire-enabled");
+        afterfireToggle_.onClick = [this] {
+            if (!afterfireToggle_.getToggleState()) return;
+
+            // A completely unauthored catalogue entry describes clean DFCO:
+            // 900 K, 10 ms, no retained fuel, no chopping and no timing
+            // variation. Merely ticking "afterfire" used to preserve that
+            // calibration, which selected continuous anti-lag and produced a
+            // smooth periodic swell. On the first clean enable, prepare the
+            // discrete pop profile that the control promises. Existing
+            // authored anti-lag/afterfire calibrations are left untouched.
+            const auto cleanProfile =
+                std::abs(afterfireTemperatureSlider_.getValue() - 900.0) < 0.5
+                && std::abs(afterfireReactionSlider_.getValue() - 10.0) < 0.5
+                && overrunFuelSlider_.getValue() <= 0.0
+                && overrunPulseHzSlider_.getValue() <= 0.0
+                && overrunPulseTimingVariationSlider_.getValue() <= 0.0;
+            if (!cleanProfile) return;
+
+            afterfireTemperatureSlider_.setValue(
+                800.0, juce::dontSendNotification);
+            afterfireReactionSlider_.setValue(
+                2.0, juce::dontSendNotification);
+            overrunFuelSlider_.setValue(
+                0.08, juce::dontSendNotification);
+            overrunPulseHzSlider_.setValue(
+                2.0, juce::dontSendNotification);
+            overrunPulseDutySlider_.setValue(
+                0.08, juce::dontSendNotification);
+            overrunPulseTimingVariationSlider_.setValue(
+                0.40, juce::dontSendNotification);
+        };
         wetLimiterToggle_.setColour(
             juce::ToggleButton::textColourId, juce::Colour(0xffc4d0cb));
         addAndMakeVisible(afterfireToggle_);
         addAndMakeVisible(wetLimiterToggle_);
         demoPhysicsButton_.onClick = [this] {
             setPhysicsInternal({ 0.06, 0.55, true, true,
-                                 800.0, 0.002, 0.95, 0.18, 4.0, 0.35,
-                                 0.25 });
+                                 800.0, 0.002, 0.95, 0.08, 2.0, 0.08,
+                                 0.40 });
             applyPhysics();
         };
         bypassPhysicsButton_.onClick = [this] {
@@ -700,9 +753,24 @@ private:
     }
 
     void installSliderCallbacks() {
-        for (auto* slider : sliders())
-            slider->onValueChange =
-                [this] { publishMix(); };
+        volumeSlider_.onValueChange = [this] { publishMix(); };
+        irSlider_.onValueChange = [this] { publishMix(); };
+
+        // These controls are intentionally neutral in the SI reference mode.
+        // Moving one must not appear to work while its value is silently
+        // ignored: a user edit explicitly opts into capture voicing and the
+        // visible MODE CAPTURE switch follows the actual audio state.
+        for (auto* slider : {
+                 &highShelfSlider_, &lowNoiseSlider_, &highNoiseSlider_,
+                 &combustionSlider_, &exhaustSlider_, &intakeSlider_,
+                 &mechanicalSlider_ }) {
+            slider->onValueChange = [this] {
+                if (!updatingControls_)
+                    captureVoicingToggle_.setToggleState(
+                        true, juce::dontSendNotification);
+                publishMix();
+            };
+        }
     }
 
     void setMixInternal(const OfflineAudioMix& mix) {

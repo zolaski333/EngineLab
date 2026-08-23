@@ -2103,6 +2103,15 @@ void acousticMonitorCalibrationRegression() {
     require(std::abs(defaultState.acousticFullScaleSplDb.load()
                      - enginelab::AcousticMonitorCalibration::defaultFullScaleSplDb) < 1.0e-12,
         "runtime and SI monitor calibration defaults must not drift apart");
+    require(std::abs(
+                enginelab::AcousticMonitorCalibration::defaultFullScaleSplDb
+                    - 134.0) < 1.0e-12,
+        "the documented 134 dB SPL monitor reference must not silently regress");
+    require(std::abs(
+                enginelab::AcousticMonitorCalibration::sinePeakPressurePa(
+                    enginelab::AcousticMonitorCalibration::defaultFullScaleSplDb)
+                    - 141.75715661678836) < 1.0e-9,
+        "134 dB SPL full scale must retain its explicit pressure mapping");
     const auto fullScalePeakPressurePa =
         enginelab::AcousticMonitorCalibration::sinePeakPressurePa(fullScaleSplDb);
     require(std::abs(enginelab::AcousticMonitorCalibration::normalisePeakPressure(

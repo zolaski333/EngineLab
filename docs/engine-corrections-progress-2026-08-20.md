@@ -600,3 +600,47 @@ effective.
    toute vitesse au-dessus du point de conception.
 4. Rejouer les oracles, les tests produit et le budget temps réel à chaque lot,
    puis produire l'artefact exécutable final.
+
+## 23 août — niveau global et afterfire réellement discret
+
+La calibration de moniteur 156 dB atténuait les pressions physiques d’environ
+22 dB à cause d’un pic Merlin provenant en réalité du starter synthétique déjà
+numérique. Le contrat unique est restauré à 134 dB SPL, soit 100,237 Pa RMS et
+141,757 Pa crête à 0 dBFS. Le rendu catalogue final mesure 0,0108–0,0384 RMS
+dans le rapport du harness, jusqu’à 0,4936 de crête, avec AGC, saturation,
+soft-limit et clamp tous nuls. Modifier un fader authoré active désormais
+visiblement le mode de capture qui l’honore.
+
+L’afterfire produit passe à une fenêtre carburant 8 % / duty 8 %, 2 Hz,
+variation 40 %, réaction 2 ms et induction thermochimique locale. La chimie
+maintient l’inventaire sous charge sans publier de faux événement, et chaque
+voix acoustique possède exactement la durée de l’énergie finite-volume qui l’a
+créée. Les A/B Twin et K20 montrent une contribution quasi nulle entre les pops,
+puis des crêtes différentielles respectives de 0,03415 et 0,05383. Twin, K20 et
+LS3 passent sans limiteur de pression, perte audio ni dépassement de budget.
+
+La reconstruction Release complète passe, l’application reste vivante cinq
+secondes et la suite finale termine à **42/42 CTest** en **728,10 s**, rampes
+dyno CP2/LS3 incluses. Analyse, candidats rejetés, mesures spectrales, coûts et
+limites :
+[`audio-level-afterfire-correction-2026-08-23.md`](audio-level-afterfire-correction-2026-08-23.md).
+
+Les tailles et SHA-256 de l’archive reconstruite après ce texte sont ajoutés à
+la copie de travail ci-dessous, sans rebâtir ensuite le ZIP.
+
+Artefact externe du 23 août :
+
+- ZIP : `out/build/windows-vs2022/EngineLab-0.1.0-win64.zip` ;
+- taille : **6 591 285 octets** ;
+- SHA-256 :
+  `AF690FE453F8EFE452626F249961A0CF25340D090DD1F0D5B82FE54A1AD760E0` ;
+- 123 entrées ZIP, soit 114 fichiers après extraction, dont les 16 moteurs,
+  les deux outils CLI et le rapport du 23 août ;
+- un seul `EngineLab.exe`, avec le même SHA-256 dans l’arbre Release et dans
+  l’extraction :
+  `8DCC04F995ADE4386A0C8648A2D72C8F97EABD257B2887BED3FE55DA8F128678` ;
+- `EngineLabAbClipRenderer.exe` et `EngineLabOfflineAudioExporter.exe`
+  répondent à `--help` depuis l’extraction ;
+- extraction contrôlée sous
+  `out/validation-2026-08-23-audio-level-afterfire-final/` ;
+- application extraite vivante après cinq secondes, puis arrêt volontaire.

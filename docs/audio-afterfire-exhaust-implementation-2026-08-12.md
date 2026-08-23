@@ -176,6 +176,13 @@ du réseau, le débit de jet sortant et la chaleur réellement libérée.
 
 ### Moniteurs
 
+> Mise à jour du 23 août 2026 : les valeurs 156 dB ci-dessous décrivent ce lot
+> historique mais ne sont plus la calibration livrée. Le pic Merlin qui avait
+> motivé 156 dB appartenait au starter synthétique déjà numérique, pas à une
+> pression en pascals. La chaîne courante emploie 134 dB SPL = 100,237 Pa RMS =
+> 141,757 Pa crête. Mesure et correction :
+> [audio-level-afterfire-correction-2026-08-23.md](audio-level-afterfire-correction-2026-08-23.md).
+
 `physical_reference` est le défaut. Il met les couches physiques à l’unité,
 désactive EQ, bruit de voicing et saturation, tout en conservant les mutes
 explicites et la sécurité de sortie. `capture_voiced` garde les choix artistiques

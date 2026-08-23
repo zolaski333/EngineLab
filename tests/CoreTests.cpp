@@ -3085,6 +3085,16 @@ int main() {
     // independently force immediate packets and are covered by the exact-node
     // reaction tests above. This guards the CPU regression where a large zeroed
     // telemetry object was rebuilt dozens of times before one consumer block.
+    // The live-calibration proof above deliberately enabled a wet limiter while
+    // this simulator is already near redline. With persistent exhaust chemistry
+    // that is a genuinely reacting operating state, so it may and must force
+    // immediate packets. Restore an explicitly clean calibration before calling
+    // the cadence probe "non-reacting"; draining the queue alone cannot change
+    // ECU intent or extinguish an authored wet-limiter reaction.
+    auto nonReactingCalibration = liveCalibration;
+    nonReactingCalibration.limiterKeepsFuel = false;
+    nonReactingCalibration.exhaustAfterfire = config.exhaustAfterfire;
+    simulator.applyAudioPhysicsCalibration(nonReactingCalibration);
     enginelab::ExhaustAcousticSample discardedAcousticSample;
     while (simulator.tryPopExhaustAcousticSample(discardedAcousticSample)) {}
     auto acousticSampleFrames = std::size_t { 0 };

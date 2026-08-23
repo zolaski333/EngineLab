@@ -47,6 +47,8 @@
 //                             [--force-demo] [--fuel-fraction F]
 //                             [--ignition-k K]
 //                             [--reaction-ms MS] [--overrun-seconds S]
+//                             [--induction-ms MS]
+//                             [--correlated-induction]
 //                             [--pulse-timing-variation FRACTION]
 //                             [--no-reaction-acoustics]
 //                             [--list]
@@ -192,7 +194,10 @@ struct Metrics final {
     double eventIntervalStdDevMs { 0.0 };
     double burnedFuelMg { 0.0 };
     double meteredFuelMg { 0.0 };
-    double deliveredFuelMg { 0.0 };
+    // Legacy last-completed-cycle estimate sampled at the outer frame rate.
+    // It is diagnostic only: a short fuel window can open and close without a
+    // cycle boundary, so the cumulative injector meter below is authoritative.
+    double sampledDeliveredFuelEstimateMg { 0.0 };
     int overrunActiveSteps { 0 };
     // Port pressure, the only quantity that can carry the bang to the audio.
     double portPeakDuringOverrunKpa { 0.0 };
@@ -512,6 +517,8 @@ struct Options final {
     std::optional<double> fuelFraction;
     std::optional<double> ignitionTemperatureK;
     std::optional<double> reactionMilliseconds;
+    std::optional<double> inductionMilliseconds;
+    bool correlatedInduction { false };
     double overrunSeconds { 3.0 };
     // Long enough for 1.5 mm of steel to arrive; see phase C.
     double warmupSeconds { 30.0 };
@@ -566,6 +573,15 @@ void applyCalibrationOverrides(enginelab::EngineConfig& config,
     if (options.reactionMilliseconds)
         afterfire.reactionTimeConstantSeconds =
             *options.reactionMilliseconds * 0.001;
+    if (options.inductionMilliseconds)
+        afterfire.inductionTimeSeconds =
+            *options.inductionMilliseconds * 0.001;
+    if (options.correlatedInduction) {
+        afterfire.inductionActivationTemperatureK = 13'340.0;
+        afterfire.inductionPressureExponent = 0.989;
+        afterfire.inductionEquivalenceRatioExponent = -0.577;
+        afterfire.inductionDecayTimeSeconds = 0.008;
+    }
     if (options.pulseHz)
         afterfire.overrunPulseHz = *options.pulseHz;
     if (options.pulseDuty)
@@ -617,7 +633,8 @@ Metrics measureAfterfire(const enginelab::EngineConfig& baseConfig,
     metrics.effectiveCalibration = config.exhaustAfterfire;
     metrics.calibrationOverridden = options.forceDemo
         || options.fuelFraction || options.ignitionTemperatureK
-        || options.reactionMilliseconds || options.pulseHz
+        || options.reactionMilliseconds || options.inductionMilliseconds
+        || options.correlatedInduction || options.pulseHz
         || options.pulseDuty || options.pulseTimingVariation
         || options.flatInductionControl;
     metrics.reactionAcousticsEnabled = options.reactionAcousticsEnabled;
@@ -869,7 +886,7 @@ Metrics measureAfterfire(const enginelab::EngineConfig& baseConfig,
         heatSum += sample.heatKw;
         metrics.peakHeatKw = std::max(metrics.peakHeatKw, sample.heatKw);
         metrics.burnedFuelMg += sample.fuelBurnMgPerSecond * stepSeconds;
-        metrics.deliveredFuelMg +=
+        metrics.sampledDeliveredFuelEstimateMg +=
             sample.deliveredFuelMgPerSecond * stepSeconds;
         if (sample.overrunActive) ++metrics.overrunActiveSteps;
         // Ignore sub-milliwatt numerical residue. A clean-DFCO run can carry a
@@ -1129,7 +1146,7 @@ Metrics measureAfterfire(const enginelab::EngineConfig& baseConfig,
         && metrics.effectiveCalibration.overrunFuelFraction > 0.0;
     if (!expectsAfterfire) return false;
     return metrics.overrunActiveSteps == 0
-        || !(metrics.deliveredFuelMg > 0.0)
+        || !(metrics.meteredFuelMg > 0.0)
         || !(metrics.burnedFuelMg > 0.0)
         || metrics.eventCount == 0
         || metrics.peakInductionProgress < 1.0
@@ -1226,16 +1243,16 @@ void report(const Metrics& metrics) {
     // "60 events" over 2.5 s, which is the ripple, not bursts. Modulation depth
     // needs no threshold and is the reading to trust.
     std::printf("    burst events %3d%s  largest %8.3f kW  rise %6.1f ms"
-                "  burned %8.3f / delivered %8.3f / metered %8.3f mg"
-                " (%5.1f %% delivered burned)\n",
+                "  burned %8.3f / metered %8.3f mg"
+                " (%5.1f %% metered burned)  sampled-cycle estimate %8.3f mg\n",
         metrics.eventCount,
         metrics.modulationDepth < 2.0 ? " (ripple, not bursts)" : "",
         metrics.largestEventPeakKw,
         metrics.largestEventRiseMs, metrics.burnedFuelMg,
-        metrics.deliveredFuelMg,
         metrics.meteredFuelMg,
         100.0 * metrics.burnedFuelMg
-            / std::max(1.0e-9, metrics.deliveredFuelMg));
+            / std::max(1.0e-9, metrics.meteredFuelMg),
+        metrics.sampledDeliveredFuelEstimateMg);
     if (metrics.eventCount > 1)
         std::printf("    burst spacing min %6.1f ms  max %6.1f ms"
                     "  stddev %6.1f ms\n",
@@ -1314,6 +1331,8 @@ void printUsage() {
         "  --fuel-fraction F              override retained fuel fraction\n"
         "  --ignition-k K                 override ignition threshold\n"
         "  --reaction-ms MS               override reaction time constant\n"
+        "  --induction-ms MS              override reference ignition delay\n"
+        "  --correlated-induction         enable the schema-8 T/p/phi delay law\n"
         "  --pulse-hz HZ                  override fuel-slug frequency\n"
         "  --pulse-duty FRACTION          override fuel-slug duty cycle\n"
         "  --pulse-timing-variation F     override deterministic timing variation\n"
@@ -1353,6 +1372,10 @@ int main(int argc, char** argv) {
             options.ignitionTemperatureK = std::stod(next());
         else if (argument == "--reaction-ms")
             options.reactionMilliseconds = std::stod(next());
+        else if (argument == "--induction-ms")
+            options.inductionMilliseconds = std::stod(next());
+        else if (argument == "--correlated-induction")
+            options.correlatedInduction = true;
         else if (argument == "--overrun-seconds")
             options.overrunSeconds = std::stod(next());
         else if (argument == "--warmup-seconds")
