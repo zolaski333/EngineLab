@@ -796,7 +796,7 @@ struct CombustionCalibrationConfig final {
  * its peak, and on an engine whose low-speed torque is already at or above the
  * real one (the LS3: 596 Nm at 2000 rpm, real peak 575 at 4600) that is a
  * regression dressed as a calibration. Measured numbers in
- * HelmholtzRunnerModel's header and docs/physics-audit.md. Leave it at 0.45
+ * HelmholtzRunnerModel's header and docs/archive/physics-audit.md. Leave it at 0.45
  * until the runner has a real inertance to force against.
  */
 struct RunnerAcousticsConfig final {
@@ -1088,7 +1088,7 @@ struct CylinderState final {
      * ONLY -- nothing reads it for flow. It peaks at full lift and is ~3 % of peak
      * by the time the valve seats, which is why biasing the fill with it loses
      * charge instead of trapping it; see the intake-valve comment in
-     * EngineSimulator.cpp and docs/physics-audit.md. Published because it is the
+     * EngineSimulator.cpp and docs/archive/physics-audit.md. Published because it is the
      * quantity to watch when evaluating any future ram mechanism. */
     double intakePortRamPressureKpa { 0.0 };
     /** Runner column velocity at the valve plane, u = mdot_valve/(rho*A_runner).
@@ -1336,7 +1336,7 @@ struct EngineState final {
      *
      * Note this is total charge mass, not air alone -- with port injection it
      * carries the fuel vapour picked up in the runner -- so it is NOT a drop-in
-     * numerator for volumetric efficiency. See docs/physics-audit.md.
+     * numerator for volumetric efficiency. See docs/archive/physics-audit.md.
      */
     double inductedChargeMassMgPerCycle { 0.0 };
     /**
@@ -1550,7 +1550,7 @@ struct EcuCommand final {
 // Output of the mean-value model SimplifiedGasolinePhysics::evaluateCombustion.
 // It is telemetry, NOT the crank-driving model: the crankshaft is integrated
 // from the 0-D solver's chamber pressure (see that model's header and
-// docs/physics-audit.md). This is the *measured* consumption map (Phase 6): the
+// docs/archive/physics-audit.md). This is the *measured* consumption map (Phase 6): the
 // only production readers are EngineSimulator and FourStrokeEventGenerator, plus
 // the EngineLab.Core characterization test. Field order is load-bearing (used by
 // designated/positional init in the model); do not reorder to "tidy" the groups.

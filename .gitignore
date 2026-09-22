@@ -27,3 +27,6 @@ listening-test/
 # reproducible from the Release build and must never be committed.
 /dist/
 
+
+# Packaged release archives (CPack output).
+EngineLab-*-win64.zip

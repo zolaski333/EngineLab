@@ -416,7 +416,7 @@ conduits, et chaque sortie conserve sa propre charge de rayonnement, sa position
 et son axe. Un 4-1 et un 4-2-1 ne sont donc pas réduits au même chemin dès lors
 que leurs géométries diffèrent. Les preuves causales et analytiques sont dans
 `tests/RealtimeRegressionTests.cpp` et résumées dans
-[exhaust-audio-topology-validation-2026-08-01.md](exhaust-audio-topology-validation-2026-08-01.md).
+[exhaust-audio-topology-validation-2026-08-01.md](archive/exhaust-audio-topology-validation-2026-08-01.md).
 
 ## Chemins multiples
 

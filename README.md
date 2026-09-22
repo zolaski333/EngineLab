@@ -87,7 +87,7 @@ cmake --build build --config Release --target EngineLabApp
 On Visual Studio 2026, use `-G "Visual Studio 18 2026"`. The executable lands in
 `build/src/app/EngineLabApp_artefacts/Release/EngineLab.exe`.
 
-To build and run the full validation suite (29 test suites):
+To build and run the full validation suite (44 test suites):
 
 ```powershell
 cmake --build build --config Release
@@ -95,7 +95,7 @@ ctest --test-dir build -C Release --output-on-failure
 ```
 
 Details on the tests, the deterministic harnesses and sanitizer builds are in
-[docs/phase-0-1-2.md](docs/phase-0-1-2.md).
+[docs/tests-and-validation.md](docs/tests-and-validation.md).
 
 ### Controls
 
@@ -193,20 +193,20 @@ The documentation under `docs/` is currently written in French.
 - [Custom exhaust systems](docs/custom-exhaust.md)
 - [Declarative audio voicing](docs/audio-voicing.md)
 - [Diagnostic exports, stems and order maps](docs/audio-diagnostics.md)
-- [Offline HQ audio rendering](docs/audio-lot5-offline-hq-2026-07-29.md)
-- [Audio workshop and honest controls](docs/audio-lot6-workshop-2026-07-29.md)
+- [Offline HQ audio rendering](docs/offline-hq-rendering.md)
+- [Audio workshop and honest controls](docs/audio-workshop.md)
 
-**Measurement logs** — measurements, hypotheses tested, and hypotheses
-*refuted*:
+**Project direction and measurements**
 
-- [Physics audit](docs/physics-audit.md)
-- [Rework validation log](docs/rework-validation-log.md)
-- [Final validation, 1 August 2026](docs/final-validation-2026-08-01.md)
+- [VISION.md](VISION.md) — what EngineLab is for, and how success is judged:
+  against real recordings, never against the simulator's own output.
+- [Measurement journal](docs/journal.md) — current results, short entries.
+- [Recording protocol, pilot engine](docs/protocole-enregistrement-cp2.md)
+- [Archive](docs/archive/) — the full history up to September 2026 (audits,
+  validation logs, refuted hypotheses). Read-only; may be stale.
 
-`CLAUDE.md` collects the traps of this repository learned the hard way: what was
-measured, what was refuted, and why some obvious-looking "fixes" are in fact
-regressions. It is probably the single most useful file to read before touching
-the code.
+`CLAUDE.md` holds the working rules, build notes and verified traps of this
+repository. Read it with `VISION.md` before touching the code.
 
 ---
 

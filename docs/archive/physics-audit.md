@@ -8,7 +8,7 @@ turbine/wastegate. Les preuves finales sont 14/14 moteurs routiers sans sursaut
 sur les rapports 2 et 3, 16/16 courbes utilisateur terminées, 24/24 références
 constructeur dans ±15 %, `ctest` 35/35 et 16/16 moteurs avec renderer audio de
 production sans callback manqué. Le détail et les limites restantes sont dans
-`docs/foundation-recovery-final-validation-2026-08-02.md`.
+`docs/archive/foundation-recovery-final-validation-2026-08-02.md`.
 
 > **Archive de provenance.** Les sections audio de cet audit décrivent le chemin
 > antérieur au réseau gaz quasi-1D et au rayonnement passif. Les décisions encore

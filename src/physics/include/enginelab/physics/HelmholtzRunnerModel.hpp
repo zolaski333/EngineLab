@@ -19,7 +19,7 @@ struct HelmholtzRunnerResult final {
  * Lumped runner/plenum acoustic compliance coupled to the conservative mass-flow restriction.
  *
  * Two things about this model are measured, not guessed, and both matter before
- * anyone reaches for `coupling_gain` (see docs/physics-audit.md):
+ * anyone reaches for `coupling_gain` (see docs/archive/physics-audit.md):
  *
  *  - The frequency is right and the amplitude is starved. On the CP4 at 9013 rpm
  *    the natural frequency is 138.8 Hz against a 75.1 Hz valve-event frequency --

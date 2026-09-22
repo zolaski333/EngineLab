@@ -1,7 +1,7 @@
 # Mesurer ES3D comme référence sonore
 
 Écrit le 2026-08-04, après le verdict de la phase 0
-(`docs/unified-duct-plan.md`). Ce document décrit **comment** transformer
+(`docs/archive/unified-duct-plan.md`). Ce document décrit **comment** transformer
 « EngineLab devrait sonner comme ES3D » en un cahier des charges chiffré, et
 **ce qui empêche** de le faire entièrement sans l'utilisateur.
 

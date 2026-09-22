@@ -247,7 +247,7 @@ travail et à roder le protocole, pas à publier un chiffre.
 
 ## Un seul clip par moteur biaisait le test — découpé le 2026-07-30
 
-Le premier passage humain (`docs/audio-listening-diagnosis-2026-07-29.md`) a
+Le premier passage humain (`docs/archive/audio-listening-diagnosis-2026-07-29.md`) a
 signalé un ralenti « trop faible ». La mesure a montré que ce n'était pas le
 moteur audio :
 

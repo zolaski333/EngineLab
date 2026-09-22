@@ -65,7 +65,7 @@ Trois consequences pratiques :
    pas une fraction de gaz residuels mais une fraction molaire de PRODUITS, soit
    0,266 x RGF ; et au ralenti libre il vaut 0,063 a 0,142, donc au-dessus du
    seuil. L'affirmation « nul sur tout le catalogue » est retiree. Voir
-   `docs/physics-audit.md`, section « Retrait : la dilution piegee n'est pas trop
+   `docs/archive/physics-audit.md`, section « Retrait : la dilution piegee n'est pas trop
    faible ».
 2. L'ordre est **inverse** sur sept moteurs, plus disperses a pleine charge qu'a
    charge partielle. Ce n'est pas l'absorbeur : la colonne `dN%` montre le
@@ -78,7 +78,7 @@ Trois consequences pratiques :
 Le harnais n'est volontairement **pas** enregistre comme test : ses bandes de
 reference viennent de la litterature et neuf moteurs en sortent aujourd'hui. En
 faire une porte maintenant obligerait a elargir les bandes jusqu'au comportement
-courant, ce qui detruirait leur valeur. Voir `docs/physics-audit.md`.
+courant, ce qui detruirait leur valeur. Voir `docs/archive/physics-audit.md`.
 
 ```
 out/build/windows-vs2022/tools/Release/EngineLabCyclicVariabilityHarness.exe

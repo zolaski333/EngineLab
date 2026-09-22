@@ -97,7 +97,7 @@ passent. La table, les sources et les critères sont dans
   les anciens réglages sans effet sont explicitement désactivés.
 - Un corpus CC0 de cinq familles de moteurs et dix fichiers A/B de même durée
   et même sonie est reproductible. Voir
-  [`audio-ab-listening.md`](audio-ab-listening.md).
+  [`audio-ab-listening.md`](../audio-ab-listening.md).
 
 ### Véhicule et structure
 
@@ -108,7 +108,7 @@ passent. La table, les sources et les critères sont dans
 - Le schéma accepte des modes structurels mesurés ou calculés, sourcés, avec
   fréquence, amortissement, masse modale, rayonnement, excitation et
   participation par cylindre. Les fausses provenances sont refusées. Voir
-  [`structural-nvh-configuration.md`](structural-nvh-configuration.md).
+  [`structural-nvh-configuration.md`](../structural-nvh-configuration.md).
 
 ## Artefact de livraison
 

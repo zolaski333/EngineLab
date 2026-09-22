@@ -2,14 +2,14 @@
 
 > **Audit audio/échappement/afterfire/dyno du 10–11 août 2026.** Avant tout
 > nouveau réglage sonore, lire
-> `docs/deep-audit-audio-afterfire-exhaust-dyno-2026-08-10.md`. Il contient les
+> `docs/archive/deep-audit-audio-afterfire-exhaust-dyno-2026-08-10.md`. Il contient les
 > mesures fraîches, les causes racines, l'architecture de correction et les
 > critères d'acceptation. Les défauts principaux ne se corrigent pas par un
 > preset : topologies catalogue non authorisées, propriétés acoustiques perdues,
 > source afterfire locale absente et dyno par fenêtres non chevauchantes.
 
 > **Session du 2 août 2026 (soir) — quatre lots, dont une réfutation.**
-> Lire `docs/rework-validation-log.md` à partir de « Un retard d'allumage ».
+> Lire `docs/archive/rework-validation-log.md` à partir de « Un retard d'allumage ».
 >
 > 1. **Étincelle.** Un rendez-vous d'allumage exprimé comme une phase absolue ne
 >    peut pas représenter un retard au-delà du PMH, et l'ECU en commande
@@ -66,27 +66,27 @@
 > 216,96 Nm ; une hausse est arrêtée proprement à AFR 17,22 pour une limite
 > 16,99. Le gate constructeur Diesel reste à +9,03 % de couple et +1,54 % de
 > puissance, donc dans ±15 %. Voir
-> `docs/diesel-control-validation-2026-08-02.md`. Le prochain chantier ouvert
+> `docs/archive/diesel-control-validation-2026-08-02.md`. Le prochain chantier ouvert
 > est la contre-pression turbo.
 
 > **Mise à jour banc du 2 août 2026.** Le banc utilisateur dispose maintenant
 > d'une préparation progressive lorsqu'il est activé au-dessus de son premier
 > point. Le catalogue passe 16/16 balayages complets, sans calage ni
 > récupération, et les 24 références constructeur restent dans ±15 %. Voir
-> `docs/user-dyno-validation-2026-08-02.md`.
+> `docs/archive/user-dyno-validation-2026-08-02.md`.
 
 > **Mise à jour physique du 2 août 2026.** Les chutes de couple environ
 > 2 000 tr/min avant rupteur sont maintenant reproduites par un harnais à plein
 > gaz en 2e/3e et supprimées sur les 14 moteurs routiers du catalogue. Les
 > causes étaient le couplage inertiel retardé, une cible d'étincelle mobile et
 > une double pénalisation de raté sur l'Audi I5. Voir
-> `docs/loaded-acceleration-validation-2026-08-02.md`. Prochaines étapes : banc
+> `docs/archive/loaded-acceleration-validation-2026-08-02.md`. Prochaines étapes : banc
 > utilisateur progressif, diagnostic/autorité AFR diesel, puis
 > contre-pression turbo. Ne pas réactiver la limite d'adhérence : sa
 > désactivation est un choix de test volontaire.
 
 > **État final vérifié le 2 août 2026.** Lire d'abord
-> `docs/audio-roadmap-final-validation-2026-08-02.md`. Le commit de code testé
+> `docs/archive/audio-roadmap-final-validation-2026-08-02.md`. Le commit de code testé
 > `da33134` passe **16/16** en `--free-run`, zéro overrun, avec le Merlin pire
 > cas à **1,167×** (environ **14,3 %** de budget avant l'échéance), puis
 > **31/31 tests** en 642,39 s. Le Big Twin a révélé puis verrouillé une vraie
@@ -102,25 +102,25 @@
 > Le catalogue a donc basculé sur le son, sans nouvelle simplification de
 > l'admission. Les 16 profils de voicing sont maintenant des données YAML et
 > l'A/B conserve aussi les paramètres cachés de mixage. Voir
-> `docs/audio-voicing-catalogue-validation-2026-08-01.md`.
+> `docs/archive/audio-voicing-catalogue-validation-2026-08-01.md`.
 >
 > La prétendue réduction de la haute bande à un guide par chemin était une
 > documentation périmée : le binaire Release vérifie le DAG acoustique complet,
 > ses troncs de branche, les changements de section, les états par conduit et
 > les sorties spatialisées. Voir
-> `docs/exhaust-audio-topology-validation-2026-08-01.md`. Ne pas réimplémenter
+> `docs/archive/exhaust-audio-topology-validation-2026-08-01.md`. Ne pas réimplémenter
 > ce graphe. L'afterfire de décélération conditionné par l'ECU est également
 > livré et validé : fraction bornée, armement par demande conducteur, témoins
 > négatifs et réaction chimique réelle. Voir
-> `docs/overrun-afterfire-validation-2026-08-01.md`. Les sources sont désormais
+> `docs/archive/overrun-afterfire-validation-2026-08-01.md`. Les sources sont désormais
 > séparables dans les exports HQ : onde de pression
 > (blowdown/réflexions/afterfire) et jet reconstruisent exactement
 > `exhaust_dry`, sans altérer le master. Voir
-> `docs/exhaust-source-stem-validation-2026-08-01.md`. La prochaine action doit
+> `docs/archive/exhaust-source-stem-validation-2026-08-01.md`. La prochaine action doit
 > être une écoute A/B de ces stems, pas une nouvelle source procédurale.
 
 > **Mise à jour produit du 1er août 2026.** Lire d'abord
-> `docs/audio-physics-productization-validation-2026-08-01.md`. Les modèles
+> `docs/archive/audio-physics-productization-validation-2026-08-01.md`. Les modèles
 > poreux, de variation et d'afterfire ne sont plus seulement des API opt-in :
 > AUDIO HQ expose une démo/bypass et leur télémétrie live, ÉCHAP PRO expose le
 > garnissage, et le catalogue contient `Audio Physics Lab 689 Twin`. Une A/B
@@ -134,7 +134,7 @@
 > prouvée ; refaire `--free-run` au repos selon le protocole ci-dessous.
 
 > **État vérifié au 1er août 2026.** Lire d'abord
-> `docs/final-validation-2026-08-01.md`. La priorité P2 « sortir le voicing du
+> `docs/archive/final-validation-2026-08-01.md`. La priorité P2 « sortir le voicing du
 > code » ci-dessous est terminée, ainsi que les stems reconstructibles, la carte
 > des ordres, l'absorption poreuse passive, la variabilité cycle-à-cycle et
 > l'afterfire physique. Le catalogue courant passe 15/15 en mesure locale
@@ -154,7 +154,7 @@ projet sur une autre machine. Il est écrit pour être lu à froid, sans le
 contexte de la session précédente.
 
 > **Priorité en cours au 2026-07-30 : la boucle d'écoute, puis le voicing comme
-> donnée.** Lire `docs/audio-listening-protocol-2026-07-30.md`.
+> donnée.** Lire `docs/archive/audio-listening-protocol-2026-07-30.md`.
 >
 > Le diagnostic est que le projet a un objectif (du son qui ne sonne pas
 > artificiel) et une architecture qui le rend indirect : le timbre est dérivé
@@ -186,7 +186,7 @@ contexte de la session précédente.
 > mesure** : il n'adressait aucune partie du coût réel.
 
 > **Livraison suivante validée le 29 juillet 2026.** Lire en premier
-> `docs/final-validation-2026-07-29.md` : les priorités encore ouvertes de ce
+> `docs/archive/final-validation-2026-07-29.md` : les priorités encore ouvertes de ce
 > brief ont été exécutées. La commande prescrite `--free-run --rpm 7000
 > --seconds 6` produit désormais **14/14 points valides**, sans dépassement ; le
 > pire cas est le Merlin à **1,167×**, soit environ **14,3 % de marge sur
@@ -202,12 +202,12 @@ contexte de la session précédente.
 >
 > **Mise à jour après reprise (2026-07-28).** Les priorités 1 à 6 ci-dessous
 > ont été exécutées et validées. Lire d'abord
-> `docs/validation-2026-07-28.md` pour les tables, le protocole A/B, les
+> `docs/archive/validation-2026-07-28.md` pour les tables, le protocole A/B, les
 > 20/20 tests et les limites restantes. La cause aval principale de la PMEP a
 > ensuite été corrigée : le collecteur conserve maintenant sa quantité de
 > mouvement dirigée. La production passe de 1,475 à 1,046 bar à 6 000 tr/min,
 > mais l'oracle reste à 0,990 pour une cible 0,750. Lire aussi
-> `docs/exhaust-pmep-investigation-2026-07-28.md`. Ne pas recommencer une
+> `docs/archive/exhaust-pmep-investigation-2026-07-28.md`. Ne pas recommencer une
 > optimisation d'admission ou de pool sans contredire les nouveaux garde-fous.
 > Une protection de charge préserve en plus l'échappement/audio : elle espace
 > seulement le calcul thermique des parois d'admission après six retards
@@ -228,7 +228,7 @@ contexte de la session précédente.
 > maximale de 0,642. Enfin, la reprise après coupure de décélération compense
 > désormais la part du pulse neuf retenue dans le film de paroi : le Merlin
 > récupère avec le seuil DFCO proportionnel d'origine, sans calibration spéciale.
-> Les preuves et commandes sont dans `docs/validation-2026-07-28.md`.
+> Les preuves et commandes sont dans `docs/archive/validation-2026-07-28.md`.
 
 ---
 
@@ -244,9 +244,9 @@ différence.
 1. `CLAUDE.md` — ce ne sont pas des conventions de style, c'est la liste des
    pièges qui ont coûté du temps ici. Plusieurs « bugs » évidents du code sont
    des compensations délibérées qu'il ne faut pas « corriger ».
-2. `docs/physics-audit.md` — les mesures, et surtout les hypothèses réfutées.
+2. `docs/archive/physics-audit.md` — les mesures, et surtout les hypothèses réfutées.
    Beaucoup d'idées séduisantes y sont déjà mortes, avec les chiffres.
-3. `docs/rework-validation-log.md` — le journal chronologique.
+3. `docs/archive/rework-validation-log.md` — le journal chronologique.
 
 La règle qui prime sur tout : **mesurer avant de corriger.** Ce code se lit comme
 s'il était plein de bugs ; la lecture induit en erreur, la mesure non.
@@ -334,7 +334,7 @@ partage turbine/wastegate et l'affichage mobile des chemises radiales sont
 corrigés. Validation finale : 14/14 moteurs routiers sans sursaut sur les deux
 rapports testés, banc 16/16, références 24/24, `ctest` 35/35 et catalogue audio
 temps réel 16/16. Le Merlin reste le bord CPU mesuré. Lire impérativement
-`docs/foundation-recovery-final-validation-2026-08-02.md` avant de reprendre.
+`docs/archive/foundation-recovery-final-validation-2026-08-02.md` avant de reprendre.
 
 ### Mise à jour 2026-08-02 — pression motrice turbo
 
@@ -343,7 +343,7 @@ débit wastegate sont corrigés. En troisième plein gaz, les quatre turbos du
 catalogue mesurent un rapport pression motrice/MAP de 1,11 à 1,39 ; les huit
 points constructeur turbo/TDI passent dans ±15 %. Ne pas tenter de résoudre la
 pression amont turbine en agrandissant uniquement le cat-back. Voir
-`docs/turbo-backpressure-validation-2026-08-02.md`.
+`docs/archive/turbo-backpressure-validation-2026-08-02.md`.
 
 - **Élargir le SIMD** : `/arch:AVX` 616 ns/cellule et `/arch:AVX2` 578 contre
   533 pour la base, checksums identiques. Le solveur est limité par la *latence*
@@ -382,7 +382,7 @@ pression amont turbine en agrandissant uniquement le cat-back. Voir
    (`maximumLowSpeedExhaustCouplingSeconds.value_or(125.0e-6)`) : Nyquist
    physique **5 640 Hz** sur le LS3 et **3 480 Hz** sur le Merlin. Ne pas
    reprendre ce point comme ouvert — le « plafond de 2,19 kHz » ne décrit plus
-   le code livré. Voir `docs/validation-2026-07-28.md` et §14 de
+   le code livré. Voir `docs/archive/validation-2026-07-28.md` et §14 de
    `docs/thermoacoustic-architecture.md`.
 5. **Construire des courbes de référence** avant d'ajouter des modes.
    `CatalogPhysics` vérifie que les moteurs tournent et ne divergent pas ; il ne

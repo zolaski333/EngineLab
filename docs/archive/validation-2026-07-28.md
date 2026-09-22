@@ -6,7 +6,7 @@
 > parfaitement mélangé. Les tables de performance initiales restent un
 > instantané de leur commit ; une nouvelle table est exigée après la correction.
 
-Ce rapport clôt la reprise demandée dans `docs/next-session-brief.md`. Il
+Ce rapport clôt la reprise demandée dans `docs/archive/next-session-brief.md`. Il
 distingue les faits mesurés, les choix retenus et les limites encore ouvertes.
 Les valeurs absolues ci-dessous sont un instantané de cette machine ; elles ne
 doivent pas servir de référence à une future optimisation sans une nouvelle
@@ -262,7 +262,7 @@ Il est resté vivant après cinq secondes de lancement caché.
    verte.
 
 L'investigation détaillée et les leviers réfutés sont conservés dans
-`docs/exhaust-pmep-investigation-2026-07-28.md`.
+`docs/archive/exhaust-pmep-investigation-2026-07-28.md`.
 
 ## Correction du collecteur dirigé
 

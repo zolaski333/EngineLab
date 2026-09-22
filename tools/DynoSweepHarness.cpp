@@ -386,7 +386,7 @@ void sweepEngine(const enginelab::EngineConfig& baseConfig, double stepRpm,
     // combustion efficiency 0.167 and net IMEP 4.8 bar against 0.911 and 13.0
     // bar for the same speed with the limiter moved out of the way. A
     // manufacturer quotes rated power below the limiter. See
-    // tests/GasExchangeTests.cpp and docs/physics-audit.md.
+    // tests/GasExchangeTests.cpp and docs/archive/physics-audit.md.
     const auto maxRpm = 0.95 * std::min(config.redlineRpm, config.ignition.revLimitRpm);
     const auto startRpm = std::max(2000.0, std::round(config.idleRpm * 1.5 / stepRpm) * stepRpm);
     auto first = true;

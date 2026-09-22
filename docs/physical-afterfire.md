@@ -88,7 +88,7 @@ calcul divisait silencieusement le temps par
 1 K au-dessus du seuil. Ce facteur caché reste supprimé. L’origine paroi/gaz de
 la flamme est mémorisée à l’allumage ; elle n’est plus réinterprétée après que la
 réaction elle-même a chauffé le gaz. Équation, provenance, A/B et limites :
-[afterfire-induction-implementation-2026-08-22.md](afterfire-induction-implementation-2026-08-22.md).
+[afterfire-induction-implementation-2026-08-22.md](archive/afterfire-induction-implementation-2026-08-22.md).
 
 La chimie conserve son état dès qu’une stratégie de réaction est authorée, y
 compris sous charge. Cela oxyde les traces d’hydrocarbures au fil de leur
@@ -183,6 +183,6 @@ calibration de 2 ms reste une estimation d’ingénierie du moteur laboratoire,
 pas une identification issue d’un enregistrement ou d’un banc instrumenté.
 
 La preuve schéma-8 avec induction thermochimique se trouve dans
-[afterfire-induction-implementation-2026-08-22.md](afterfire-induction-implementation-2026-08-22.md).
+[afterfire-induction-implementation-2026-08-22.md](archive/afterfire-induction-implementation-2026-08-22.md).
 Le diagnostic complet du niveau et du nouveau profil se trouve dans
-[audio-level-afterfire-correction-2026-08-23.md](audio-level-afterfire-correction-2026-08-23.md).
+[audio-level-afterfire-correction-2026-08-23.md](archive/audio-level-afterfire-correction-2026-08-23.md).

@@ -2,8 +2,8 @@
 
 > **Archive historique.** Les mesures et le renderer décrits ici précèdent la
 > chaîne thermoacoustique physique. Pour l’état exécutable actuel, consulter
-> [thermoacoustic-architecture.md](thermoacoustic-architecture.md) et
-> [realtime-audio.md](realtime-audio.md).
+> [thermoacoustic-architecture.md](../thermoacoustic-architecture.md) et
+> [realtime-audio.md](../realtime-audio.md).
 
 Date de validation : 16 juillet 2026.
 

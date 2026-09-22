@@ -68,7 +68,7 @@ plus un Diesel normalement pauvre comme défectueux.
 | Demande au-dessus fumée | 63,06 mg/cycle | 17,22 | 353,37 Nm | non |
 
 Le dernier cas est bien plafonné par la limite fumée 16,99. Détails :
-`docs/diesel-control-validation-2026-08-02.md`.
+`docs/archive/diesel-control-validation-2026-08-02.md`.
 
 ## 4. Turbo et pression motrice
 
@@ -90,7 +90,7 @@ Le TDI monte légèrement avec son nouvel équilibre, mais son rapport reste sai
 Le diagnostic turbo compare maintenant pression motrice et MAP après spool ;
 un cas 265/190 kPa ne déclenche pas, un cas 385/190 kPa déclenche toujours.
 Détails et sources Garrett/BorgWarner :
-`docs/turbo-backpressure-validation-2026-08-02.md`.
+`docs/archive/turbo-backpressure-validation-2026-08-02.md`.
 
 ## 5. Références constructeur
 

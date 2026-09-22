@@ -23,7 +23,7 @@ schéma `.ecu.json`. Une modification de cellule ou de fichier valide est
 appliquée sans recréer le moteur. Les axes de charge normalisée couvrent jusqu'à
 400 % pour ne pas écraser les zones de suralimentation sur la colonne 100 %.
 
-Voir [ecu-tuning.md](ecu-tuning.md) pour le format, les effets actifs et les
+Voir [ecu-tuning.md](../ecu-tuning.md) pour le format, les effets actifs et les
 limites.
 
 ## Livré : DSL moteur et watcher de dépendances
@@ -45,7 +45,7 @@ de base puis applique les nouvelles révisions.
 
 Ce reload remplace le runtime : il évite de relancer l'application, pas de
 réinitialiser le moteur. Le détail et la comparaison avec `.mr` sont dans
-[engine-scripting.md](engine-scripting.md).
+[engine-scripting.md](../engine-scripting.md).
 
 ## Livré : scène prête pour un backend 3D
 
@@ -62,7 +62,7 @@ visible reste le dessin JUCE 2D existant et ne consomme pas encore
 La base rend le passage en 3D raisonnable : le futur backend pourra rester un
 consommateur de snapshots au lieu d'accéder au simulateur. Elle n'élimine pas
 le travail graphique listé dans
-[architecture.md#préparation-du-rendu-3d](architecture.md#préparation-du-rendu-3d).
+[architecture.md#préparation-du-rendu-3d](../architecture.md#préparation-du-rendu-3d).
 
 ## Livré : séparation audio renforcée
 
@@ -74,7 +74,7 @@ et comparent les délais à 48, 96 et 192 kHz.
 
 Le résultat technique est plus robuste que l'ancienne sommation globale, mais
 la supériorité sonore ne sera considérée acquise qu'après un corpus de référence
-et des écoutes à niveau égalisé. Voir [realtime-audio.md](realtime-audio.md).
+et des écoutes à niveau égalisé. Voir [realtime-audio.md](../realtime-audio.md).
 
 ## Livré : topologie d'échappement auteur
 
@@ -100,7 +100,7 @@ connexions, affectations cylindre et vue du flux. Une validation complète est
 requise avant l'application, qui remplace le runtime comme tout changement
 structurel. JSON/YAML reste le format de persistance et le moyen de gérer les
 chemins, leurs cylindres et leurs IR. Le format, le workflow et ses limites
-sont décrits dans [custom-exhaust.md](custom-exhaust.md).
+sont décrits dans [custom-exhaust.md](../custom-exhaust.md).
 
 ## Encore limité
 

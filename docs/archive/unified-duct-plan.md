@@ -249,7 +249,7 @@ preset de labo `cp2_absorptive_lab` le fait. Autorisé sur le 2JZ
 > maintenant des valeurs `estimated-family` et le corps brut n'est plus
 > confondu avec le noyau de débit. Le volume annulaire possède une compliance
 > passive bornée. Les mesures courantes et les limites sont consignées dans
-> `docs/passive-muffler-implementation-2026-08-20.md`.
+> `docs/archive/passive-muffler-implementation-2026-08-20.md`.
 
 **Le tableau complet d'autorité du silencieux sur le 2JZ**, pression crête à
 l'observateur, un seul facteur changé à chaque ligne :
@@ -299,4 +299,4 @@ pas sur un ordre d'allumage »*.
   effaçait jusqu'à 23,7 kW. Le bilan turbine/compresseur/palier est maintenant
   conservatif et visible. Il reste à obtenir une vraie carte compresseur avec
   provenance avant de prétendre modéliser surge, choke ou rendement hors point.
-  Voir `docs/turbo-shaft-energy-implementation-2026-08-20.md`.
+  Voir `docs/archive/turbo-shaft-energy-implementation-2026-08-20.md`.

@@ -15,7 +15,7 @@ namespace enginelab {
  *   - `heatOutput` -> cylinder wall temperature -> wall heat transfer;
  *   - `airMassMgPerCycle`, `misfireProbability` -> display / event-gen fallback.
  * So retuning the thermodynamics here changes audio and thermal feel, never the
- * dyno torque. See docs/physics-audit.md ("Constat d'architecture").
+ * dyno torque. See docs/archive/physics-audit.md ("Constat d'architecture").
  */
 class SimplifiedGasolinePhysics final : public IPhysicsModel {
 public:

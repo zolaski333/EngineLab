@@ -106,7 +106,7 @@ et `jet-on` sont livrés dans chaque dossier.
 Ces chiffres prouvent que la couche existe, reste bornée et ne remplace pas la
 signature du réseau. Ils ne prouvent pas qu’elle est préférée à l’aveugle. Les
 fichiers devront être notés avec le protocole de
-[`audio-ab-listening.md`](audio-ab-listening.md) avant tout nouveau gain.
+[`audio-ab-listening.md`](../audio-ab-listening.md) avant tout nouveau gain.
 
 ## Transitoires
 

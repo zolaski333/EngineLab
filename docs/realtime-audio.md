@@ -119,13 +119,13 @@ sont reconstruites à cadence audio et le débit total est conservé lorsqu'il s
 partage entre turbine et wastegate. Le filtre large bande conserve désormais la
 pression RMS déduite de sa puissance configurée ; le correctif, son faible effet
 sur le master et son coût sont consignés dans
-[`audio-lot4-fi-broadband-power-2026-07-29.md`](audio-lot4-fi-broadband-power-2026-07-29.md).
+[`audio-lot4-fi-broadband-power-2026-07-29.md`](archive/audio-lot4-fi-broadband-power-2026-07-29.md).
 Voir aussi les §21–24 du document d’architecture.
 
 Pour les modes structurels estimés, la participation longitudinale suit l’ordre
 explicite des cylindres dans chaque banc. Le précédent modulo sur l’index global
 déformait les V et les flat ; l’I4 témoin reste bit-identique. Voir
-[`audio-lot4-structural-bank-topology-2026-07-29.md`](audio-lot4-structural-bank-topology-2026-07-29.md).
+[`audio-lot4-structural-bank-topology-2026-07-29.md`](archive/audio-lot4-structural-bank-topology-2026-07-29.md).
 
 ## Stems de diagnostic
 
@@ -147,10 +147,10 @@ cabine. Les buffers sont fournis par l’appelant et remplis sans allocation.
 Le rendu utilisateur haute qualité réutilise ce chemin dans
 `OfflineAudioExporter` : 48/96/192 kHz, PCM 24 bits ou float 32 bits, scénario
 JSON, master et stems, manifeste et annulation. Voir
-[`audio-lot5-offline-hq-2026-07-29.md`](audio-lot5-offline-hq-2026-07-29.md).
+[`audio-lot5-offline-hq-2026-07-29.md`](offline-hq-rendering.md).
 Le bouton **AUDIO HQ**, ses contrôles mute/solo et la neutralisation explicite
 des réglages legacy sans effet sont documentés dans
-[`audio-lot6-workshop-2026-07-29.md`](audio-lot6-workshop-2026-07-29.md).
+[`audio-lot6-workshop-2026-07-29.md`](audio-workshop.md).
 
 Export ciblé :
 
@@ -191,7 +191,7 @@ Elle est déterministe et ne fait aucune allocation dans le callback. Son
 coefficient moteur demeure semi-empirique et doit encore passer un vote
 d’écoute aveugle. Modèle, valeurs authored, essais rejetés, A/B cinq familles et
 coût temps réel sont consignés dans
-[`audio-lot3-outlet-turbulence-2026-07-29.md`](audio-lot3-outlet-turbulence-2026-07-29.md).
+[`audio-lot3-outlet-turbulence-2026-07-29.md`](archive/audio-lot3-outlet-turbulence-2026-07-29.md).
 
 Contrôle A/B sonore :
 
@@ -253,7 +253,7 @@ En `--free-run`, le consommateur suit le temps simulé accéléré et compare ch
 durée de rendu à l'échéance réelle du bloc. Il refuse pertes de files, frontière
 invalide, fallback historique, sortie non finie, callback hors budget et
 intervention du leveler. La baseline locale est consignée dans
-[audio-first-baseline-2026-07-29.md](audio-first-baseline-2026-07-29.md).
+[audio-first-baseline-2026-07-29.md](archive/audio-first-baseline-2026-07-29.md).
 
 `EngineLab.Core` vérifie en plus qu’une frontière SI finie est publiée à chaque
 sous-pas mécanique malgré le couplage multirate du réseau non linéaire. Il

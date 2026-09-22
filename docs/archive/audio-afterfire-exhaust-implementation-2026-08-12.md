@@ -385,5 +385,5 @@ voicer à l’oreille.
 Cette implémentation ne modifie pas le dyno, conformément au périmètre décidé
 pour ce chantier. L’audit séparé a identifié un échantillonnage par fenêtres non
 chevauchantes dépendant du nombre de cylindres ; il reste documenté dans
-`docs/deep-audit-audio-afterfire-exhaust-dyno-2026-08-10.md` pour un chantier
+`docs/archive/deep-audit-audio-afterfire-exhaust-dyno-2026-08-10.md` pour un chantier
 dédié, sans mêler sa correction aux changements audio/échappement.

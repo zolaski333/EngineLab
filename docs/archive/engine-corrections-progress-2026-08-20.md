@@ -309,7 +309,7 @@ résultats publiés. Avec audio produit au régime haut, le LS3 atteint 1,018× 
 le Merlin 1,367× ; le contrat temps réel complet reste à zéro violation. La
 marge LS3 de 4,8 % reste un gate à préserver, pas un budget à dépenser. Les
 détails, équations, oracles et limites sont dans
-`docs/passive-muffler-implementation-2026-08-20.md`.
+`docs/archive/passive-muffler-implementation-2026-08-20.md`.
 
 Le smoke afterfire qui suit ce lot garde la topologie physique active et tous
 les compteurs à zéro. Le lot suivant a toutefois découvert que le harness
@@ -366,7 +366,7 @@ Le rendu actif consomme 13,6 % du budget moyen d’un bloc de 200 samples et
 n’a dépassé sa durée. Les gates produit de 20 s restent valides à 1,053× sur le
 LS3 et 1,449× sur le Merlin, avec zéro violation. Le détail des causes, équations,
 artefacts et limites se trouve dans
-`docs/afterfire-implementation-2026-08-20.md`.
+`docs/archive/afterfire-implementation-2026-08-20.md`.
 
 La reconstruction intégrale a aussi exposé trois défauts latents : le sweep
 turbo fabriquait un silencieux perforé impossible au lieu de ne changer que la
@@ -404,7 +404,7 @@ Les tests `Core`, `GasExchange`, `TurboDownstreamAuthority`,
 `CatalogReference`, `AudioRender`, `AudioTransients` et
 `AudioShiftTransientBoosted` passent. Le 2JZ tient **1,426x** temps réel avec
 audio, DSP p99 45 % et tous les compteurs à zéro. Le détail se trouve dans
-`docs/turbo-shaft-energy-implementation-2026-08-20.md`.
+`docs/archive/turbo-shaft-energy-implementation-2026-08-20.md`.
 
 La reconstruction Release intégrale puis la suite autoritaire terminent à
 **42/42 CTest**, zéro échec, en **765,38 s**. Les tests audio et transitoires
@@ -428,7 +428,7 @@ pression, perte de queue, leveler ni bloc hors budget. Le pas physique mesure
 20,3 % / 23,4 % du budget moyen / p99 contre 20,2 % / 23,5 % pour le timer
 plat ; la corrélation n'ajoute donc aucun coût discernable dans ce passage. Le
 détail et les limites de provenance se trouvent dans
-`docs/afterfire-induction-implementation-2026-08-22.md`.
+`docs/archive/afterfire-induction-implementation-2026-08-22.md`.
 
 La reconstruction Release intégrale passe, application comprise, puis la suite
 autoritaire termine à **42/42 CTest**, zéro échec, en **719,78 s**. Les tests

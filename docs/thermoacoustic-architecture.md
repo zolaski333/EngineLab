@@ -465,7 +465,7 @@ hack.
 > 11 280 Hz (Nyquist physique 1 880 → **5 640 Hz**) et celle du Merlin de 3 480 à
 > 6 960 Hz (1 740 → **3 480 Hz**). Les chiffres « ~2 kHz » du texte d'origine
 > ci-dessous décrivent l'étape 250 µs et sont conservés comme historique du
-> raisonnement, pas comme état courant. Mesures : `docs/validation-2026-07-28.md`.
+> raisonnement, pas comme état courant. Mesures : `docs/archive/validation-2026-07-28.md`.
 
 `EngineSimulator::step` borne l'intervalle de couplage par
 `maximumLowSpeedCouplingSeconds`. Ce cap ne mord **que là où la règle par période
@@ -872,7 +872,7 @@ sa sortie est normalisée à un RMS unitaire avant d’être multipliée par la
 pression RMS issue de la puissance. L’ancien code compensait le bruit uniforme
 mais pas la perte du filtre, puis appliquait une pression de pic prévue pour un
 sinus. La correction et les A/B sont dans
-[`audio-lot4-fi-broadband-power-2026-07-29.md`](audio-lot4-fi-broadband-power-2026-07-29.md).
+[`audio-lot4-fi-broadband-power-2026-07-29.md`](archive/audio-lot4-fi-broadband-power-2026-07-29.md).
 
 La dump valve n'est plus une enveloppe déclenchée par une fermeture de pédale.
 Le solveur l'ouvre lorsque le rapport de pression entre le réservoir de sortie
@@ -1141,4 +1141,4 @@ Le multiplicateur moteur de puissance `100` est une valeur authored, isolée du
 coefficient de jet propre `1e-4`. Il ne prétend pas être une constante physique
 mesurée. Un contrôle nul coupe toute la couche pour les comparaisons sonores et
 CPU. La validation complète, dont les calibrations refusées, est dans
-[`audio-lot3-outlet-turbulence-2026-07-29.md`](audio-lot3-outlet-turbulence-2026-07-29.md).
+[`audio-lot3-outlet-turbulence-2026-07-29.md`](archive/audio-lot3-outlet-turbulence-2026-07-29.md).

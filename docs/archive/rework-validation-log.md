@@ -110,7 +110,7 @@ pour le catalogue. Le témoin `EngineLab.StructuralNvh` charge un mini-catalogue
 transmet exactement un mode de 1 234,5 Hz au renderer, mesure une réponse RMS
 finie/non nulle et verrouille les round-trips et les fausses provenances.
 Détails :
-[`structural-nvh-configuration.md`](structural-nvh-configuration.md).
+[`structural-nvh-configuration.md`](../structural-nvh-configuration.md).
 
 ## 2026-07-29 — transfert de charge longitudinal
 
@@ -559,7 +559,7 @@ the smoke limit -- lives. The tolerance was not widened.
 ## 2026-07-27 — Le son des gros moteurs était un problème de thread physique
 
 Entrée courte : le détail complet, les tableaux et les hypothèses réfutées sont
-dans `docs/physics-audit.md`, section « Le simulateur tournait au ralenti, et le
+dans `docs/archive/physics-audit.md`, section « Le simulateur tournait au ralenti, et le
 son en découlait ».
 
 Point de départ : plainte utilisateur sur l'audio (« plus il y a de cylindres,
@@ -841,7 +841,7 @@ reste encore à 479 tr/min au point où l'expérience non compensée était déj
 La fermeture complète donne **20/20 tests en 514,43 s**, un rendu audio final
 séparé vert sous charge, puis un lancement caché de `EngineLab.exe` resté vivant
 cinq secondes. Les hash et journaux sont consignés dans
-`docs/validation-2026-07-28.md`.
+`docs/archive/validation-2026-07-28.md`.
 
 ## 2026-07-29 — Réaudit et correction de la couche turbo
 
@@ -938,7 +938,7 @@ Sur le Merlin, quatre passages A/B de 10 s dans la même fenêtre donnent :
 
 Le facteur global est trop bruité pour isoler ce coût ; seul le chronométrage
 direct du callback permet de conclure à `+0,25` point moyen. Détails et liens de
-preuve : `docs/audio-lot3-outlet-turbulence-2026-07-29.md`.
+preuve : `docs/archive/audio-lot3-outlet-turbulence-2026-07-29.md`.
 
 ## 2026-07-29 — Participation structurelle par topologie de banc
 
@@ -958,7 +958,7 @@ A/B même binaire :
 Le test analytique exige l’égalité exacte de deux cylindres V8 symétriques au
 même rang et l’identité bit à bit de l’I4 non concerné. Les trois A/B restent
 sans perte, fallback, leveler ou sortie non finie. Détails :
-`docs/audio-lot4-structural-bank-topology-2026-07-29.md`.
+`docs/archive/audio-lot4-structural-bank-topology-2026-07-29.md`.
 
 ## 2026-07-29 — Puissance large bande de suralimentation
 
@@ -981,7 +981,7 @@ Le faible delta master est conservé honnêtement : le bruit FI reste minoritair
 et aucun gain d’écoute n’a été inventé. Sur l’EJ25, le callback moyen passe de
 `26,45 %` à `26,50 %`, p99 inchangé à `41 %`, avec facteur minimal `2,230×` et
 zéro violation temps réel. La suite transitoire passe. Détails :
-`docs/audio-lot4-fi-broadband-power-2026-07-29.md`.
+`docs/archive/audio-lot4-fi-broadband-power-2026-07-29.md`.
 
 ## 2026-08-02 — Clôture voicing, afterfire et sources d'échappement
 
@@ -1005,7 +1005,7 @@ Sur le commit de code `da33134` :
   `1,19209e-07`.
 
 Détails, table complète, A/B et limites :
-`docs/audio-roadmap-final-validation-2026-08-02.md`.
+`docs/archive/audio-roadmap-final-validation-2026-08-02.md`.
 
 ## 2026-08-02 — Débit turbine/wastegate et pression motrice turbo
 
@@ -1022,7 +1022,7 @@ seuil atmosphérique qui produisait une fausse alerte.
 
 Les huit références constructeur turbo/TDI restent dans ±15 %, les accélérations
 chargées restent sans sursaut et les tests ciblés Release passent 2/2. Détails :
-`docs/turbo-backpressure-validation-2026-08-02.md`.
+`docs/archive/turbo-backpressure-validation-2026-08-02.md`.
 
 ## 2026-08-02 — Clôture de la reprise de base simulation
 
@@ -1042,7 +1042,7 @@ chemise reste fixe, seuls piston et bielle bougent.
 
 Build Release complet vert, `ctest` 35/35 en 679,20 s, package extrait vivant
 après 6 secondes. Rapport complet :
-`docs/foundation-recovery-final-validation-2026-08-02.md`.
+`docs/archive/foundation-recovery-final-validation-2026-08-02.md`.
 
 ## 2026-08-02 — Un retard d'allumage au-delà du PMH éteignait le cylindre
 

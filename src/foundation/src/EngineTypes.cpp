@@ -358,7 +358,7 @@ ValveControlSample interpolateValveControl(const ValveControlConfig& control, do
     // 26 deg at 5000 and never came back, holding intake valve closing ~30 deg
     // early through the entire power band. Disabling the phaser outright was
     // worth +16 % peak power, which is the size of the error being corrected
-    // here. See docs/physics-audit.md.
+    // here. See docs/archive/physics-audit.md.
     //
     // Piecewise-linear in rpm is monotone between authored points, reproduces
     // the authored value exactly at each of them, and cannot extrapolate past
