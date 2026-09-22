@@ -22,9 +22,15 @@ constexpr std::size_t maximumAudioExhaustPaths = 8;
  * a measurement (docs/physics-audit.md records a Merlin row of 351 Nm one step
  * after 2521 Nm). Both offline WOT instruments already stop at 0.95 of the
  * lower of the two limits; the bench the application drives did not, and its
- * curves collapsed at the top for that reason alone. */
+ * curves collapsed at the top for that reason alone. A percentage margin is
+ * insufficient on low-speed engines because the ECU's soft-cut band is an
+ * absolute 220 rpm; retain one 50 rpm acquisition bin beyond that band. */
 [[nodiscard]] double sweepCeilingRpm(const EngineConfig& config) noexcept {
-    return 0.95 * std::min(config.redlineRpm, config.ignition.revLimitRpm);
+    const auto physicalLimitRpm = std::min(
+        config.redlineRpm, config.ignition.revLimitRpm);
+    return std::max(500.0, std::min(
+        0.95 * physicalLimitRpm,
+        config.ignition.revLimitRpm - 300.0));
 }
 
 [[nodiscard]] double sweepEntryRpm(const EngineConfig& config) noexcept {
@@ -64,6 +70,7 @@ constexpr std::size_t maximumAudioExhaustPaths = 8;
         state.airFlowGramsPerSecond,
         state.lambda,
         state.brakeSpecificFuelConsumptionGPerKwh,
+        state.airFuelRatioValid,
     };
 }
 
@@ -86,6 +93,7 @@ constexpr std::size_t maximumAudioExhaustPaths = 8;
         interpolate(left.lambda, right.lambda, fraction),
         interpolate(left.brakeSpecificFuelConsumptionGPerKwh,
                     right.brakeSpecificFuelConsumptionGPerKwh, fraction),
+        left.airFuelRatioValid && right.airFuelRatioValid,
     };
 }
 
@@ -124,7 +132,12 @@ constexpr std::size_t maximumAudioExhaustPaths = 8;
     DynoPoint point;
     point.rpm = coordinateRpm;
     point.torqueNm = estimate.meanTorqueNm;
-    point.powerKw = estimate.meanPowerKw;
+    // A fixed RPM bin has one exact abscissa. Interpolating torque and power
+    // independently violates P=T*omega and creates a visible one-point kink.
+    point.powerKw = fixedBin
+        ? point.torqueNm * coordinateRpm * 2.0 * std::numbers::pi
+            / 60.0 / 1'000.0
+        : estimate.meanPowerKw;
     point.airFuelRatio = estimate.meanTelemetry.airFuelRatio;
     point.coolantTemperatureC = estimate.meanTelemetry.coolantTemperatureC;
     point.exhaustTemperatureC = estimate.meanTelemetry.exhaustTemperatureC;
@@ -135,8 +148,10 @@ constexpr std::size_t maximumAudioExhaustPaths = 8;
         0.80, 1.20);
     point.correctedTorqueNm = point.torqueNm
         * point.atmosphericCorrectionFactor;
-    point.correctedPowerKw = point.powerKw
-        * point.atmosphericCorrectionFactor;
+    point.correctedPowerKw = fixedBin
+        ? point.correctedTorqueNm * coordinateRpm
+            * 2.0 * std::numbers::pi / 60.0 / 1'000.0
+        : point.powerKw * point.atmosphericCorrectionFactor;
     point.targetAirFuelRatio = estimate.meanTelemetry.targetAirFuelRatio;
     point.volumetricEfficiency = estimate.meanTelemetry.volumetricEfficiency;
     point.fuelFlowGramsPerSecond = estimate.meanTelemetry.fuelFlowGramsPerSecond;
@@ -162,18 +177,7 @@ constexpr std::size_t maximumAudioExhaustPaths = 8;
     point.qualityReasons = 0U;
     point.valid = estimate.quality == DynoEstimateQuality::ready
         && estimate.continuous && !estimate.capacityLimited;
-    return point;
-}
-
-[[nodiscard]] DynoPoint makeInvalidDynoPoint(
-    double binRpm, DynoQualityReason reasons) noexcept {
-    DynoPoint point;
-    point.rpm = binRpm;
-    point.binRpm = binRpm;
-    point.qualityReasons = static_cast<std::uint32_t>(
-        reasons == DynoQualityReason::none
-            ? DynoQualityReason::discontinuousCycle : reasons);
-    point.valid = false;
+    point.airFuelRatioValid = estimate.meanTelemetry.airFuelRatioValid;
     return point;
 }
 
@@ -1057,8 +1061,18 @@ void EngineRuntime::run(std::stop_token stopToken) {
             // the pre-step absorber output with post-step engine telemetry;
             // moving this controller update here keeps contact, acceleration,
             // limiter state and completed-cycle events on one time boundary.
+            // A ramp accepts up to the gate's explicit tracking-error band.
+            // Keep the captured one-way brake engaged over that same band;
+            // releasing it at the 60 rpm steady-state threshold forced a full
+            // 0.25 s re-prime almost every 50 rpm bin despite an otherwise
+            // valid 500 rpm/s pull.
+            const auto dynoContactBandRpm =
+                activeDynoConfig_.mode == DynoMode::continuousRamp
+                ? dynoQualityGate_.config().rampMaximumSpeedErrorRpm
+                : dynoQualityGate_.config().steadyMaximumSpeedErrorRpm;
             dynoAbsorberOutput_ = dynoAbsorber_.advance(
-                baseStep.count(), dynoTargetRpm_, frame.state);
+                baseStep.count(), dynoTargetRpm_, frame.state,
+                dynoContactBandRpm);
             dynoBrakeTorqueNm_ = dynoAbsorberOutput_.brakeTorqueNm;
 
             const auto acquisitionMode = activeDynoConfig_.mode;
@@ -1186,6 +1200,15 @@ void EngineRuntime::run(std::stop_token stopToken) {
                     dynoEstimator_.breakContinuity();
                     previousRampEstimate_.reset();
                     dynoGateAllowsProgress_ = false;
+                    if (rampingSweep && dynoRampPrimed_) {
+                        // A failed observation is not a zero-torque data point.
+                        // Hold the next unmeasured grid speed and reacquire it
+                        // from a new continuous window. Advancing the bin index
+                        // here permanently baked contact/limiter transients into
+                        // the archived curve as isolated holes or spikes.
+                        dynoTargetRpm_ = std::min(
+                            nextSampleRpm_, activeDynoConfig_.sweepCeilingRpm);
+                    }
                     continue;
                 }
 
@@ -1221,15 +1244,19 @@ void EngineRuntime::run(std::stop_token stopToken) {
                         continue;
                     }
                     if (!previousRampEstimate_) {
-                        while (nextSampleRpm_ <= ceilingRpm + 1.0e-9
-                               && nextSampleRpm_
-                                    < estimate.meanRpm - 1.0e-9) {
-                            storePoint(makeInvalidDynoPoint(
-                                nextSampleRpm_,
-                                pendingDynoInvalidReasons_), false);
-                            nextSampleRpm_ += binWidthRpm;
-                        }
+                        // Recovery deliberately holds `nextSampleRpm_`. Admit a
+                        // fresh point only once a complete rolling window is
+                        // centred on that unmeasured bin; rejected intervals
+                        // remain quality telemetry, never curve coordinates.
+                        if (std::abs(estimate.meanRpm - nextSampleRpm_)
+                                > 0.5 * binWidthRpm)
+                            continue;
+                        storePoint(makeDynoPoint(
+                            config_, estimate, nextSampleRpm_, true), false);
                         previousRampEstimate_ = estimate;
+                        nextSampleRpm_ += binWidthRpm;
+                        pendingDynoInvalidReasons_ =
+                            DynoQualityReason::none;
                         continue;
                     }
                     const auto previous = *previousRampEstimate_;
@@ -1240,9 +1267,13 @@ void EngineRuntime::run(std::stop_token stopToken) {
                                     <= estimate.meanRpm + 1.0e-9) {
                             if (nextSampleRpm_
                                 < previous.meanRpm - 1.0e-9) {
-                                storePoint(makeInvalidDynoPoint(
-                                    nextSampleRpm_,
-                                    pendingDynoInvalidReasons_), false);
+                                // Rotor overshoot cannot be relabelled as the
+                                // missed lower-speed bin. Reacquire that bin.
+                                dynoTargetRpm_ = nextSampleRpm_;
+                                dynoEstimator_.breakContinuity();
+                                previousRampEstimate_.reset();
+                                dynoGateAllowsProgress_ = false;
+                                break;
                             } else {
                                 const auto fraction =
                                     (nextSampleRpm_ - previous.meanRpm)
@@ -1256,9 +1287,11 @@ void EngineRuntime::run(std::stop_token stopToken) {
                             }
                             nextSampleRpm_ += binWidthRpm;
                         }
-                        previousRampEstimate_ = estimate;
-                        pendingDynoInvalidReasons_ =
-                            DynoQualityReason::none;
+                        if (previousRampEstimate_) {
+                            previousRampEstimate_ = estimate;
+                            pendingDynoInvalidReasons_ =
+                                DynoQualityReason::none;
+                        }
                     }
                     if (dynoTargetRpm_ >= ceilingRpm - 1.0e-9
                         && nextSampleRpm_ > ceilingRpm + 1.0e-9)

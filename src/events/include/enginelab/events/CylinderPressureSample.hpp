@@ -11,6 +11,14 @@ namespace enginelab {
 /** One thermodynamic-substep snapshot consumed by the realtime audio path. */
 struct CylinderPressureSample final {
     double timeSeconds { 0.0 };
+    /** Physical cadence of the mechanical substep that produced this sample.
+     *
+     * This is simulation time, not the wall-clock spacing assigned later by
+     * EngineRuntime. A late producer frame may insert a wall-time gap without
+     * changing the solver bandwidth; audio reconstruction must therefore tune
+     * from this field rather than from adjacent publication timestamps. Zero
+     * retains timestamp-derived compatibility for synthetic/legacy producers. */
+    float mechanicalSamplingFrequencyHz { 0.0F };
     std::array<float, 32> pressureBar {};
     std::array<float, 32> exhaustRunnerPressureKpa {};
     /** Signed instantaneous valve mass flow; positive cylinder -> exhaust.

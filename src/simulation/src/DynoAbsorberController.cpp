@@ -29,10 +29,12 @@ void DynoAbsorberController::reset(
     double initialRpm, double initialBrakeTorqueNm) noexcept {
     filteredRpm_ = std::isfinite(initialRpm)
         ? std::max(0.0, initialRpm) : 0.0;
+    filteredTargetRpm_ = filteredRpm_;
     feedForwardTorqueNm_ = std::isfinite(initialBrakeTorqueNm)
         ? std::clamp(initialBrakeTorqueNm, 0.0, maximumBrakeTorqueNm_)
         : 0.0;
     filteredAccelerationRpmPerSecond_ = 0.0;
+    filteredTargetAccelerationRpmPerSecond_ = 0.0;
     integralTorqueNm_ = 0.0;
     brakeTorqueNm_ = 0.0;
     fullContactLatched_ = false;
@@ -56,8 +58,16 @@ DynoAbsorberOutput DynoAbsorberController::advance(
     const auto measuredRpm = std::isfinite(engineState.rpm)
         ? std::max(0.0, engineState.rpm) : filteredRpm_;
     const auto previousFilteredRpm = filteredRpm_;
+    const auto speedFilterAlpha = 1.0 - std::exp(-dt * 8.0);
     filteredRpm_ += (measuredRpm - filteredRpm_)
-        * (1.0 - std::exp(-dt * 8.0));
+        * speedFilterAlpha;
+    // Compare signals with identical group delay. Comparing filtered rotor
+    // speed with an instantaneous 500 rpm/s target creates a deterministic
+    // 62.5 rpm error (rate/bandwidth), enough to release the 60 rpm brake
+    // contact even when the shaft follows the ramp perfectly.
+    const auto previousFilteredTargetRpm = filteredTargetRpm_;
+    filteredTargetRpm_ += (target - filteredTargetRpm_)
+        * speedFilterAlpha;
     const auto accelerationObservation = dt > 0.0
         ? (filteredRpm_ - previousFilteredRpm) / dt : 0.0;
     const auto rawAcceleration = std::isfinite(accelerationObservation)
@@ -65,6 +75,8 @@ DynoAbsorberOutput DynoAbsorberController::advance(
     filteredAccelerationRpmPerSecond_ +=
         (rawAcceleration - filteredAccelerationRpmPerSecond_)
         * (1.0 - std::exp(-dt * 6.0));
+    filteredTargetAccelerationRpmPerSecond_ = dt > 0.0
+        ? (filteredTargetRpm_ - previousFilteredTargetRpm) / dt : 0.0;
 
     // A cycle-average is the actual quantity the absorber must balance. Using
     // instantaneous gas torque makes the brake chase each firing pulse and can
@@ -81,7 +93,7 @@ DynoAbsorberOutput DynoAbsorberController::advance(
     feedForwardTorqueNm_ += (
         measuredBrakeTorqueNm - feedForwardTorqueNm_)
         * (1.0 - std::exp(-dt * 8.0));
-    const auto errorRpm = filteredRpm_ - target;
+    const auto errorRpm = filteredRpm_ - filteredTargetRpm_;
     const auto proportionalGain = controllerTorqueScaleNm_ / 600.0;
     const auto integralGain = controllerTorqueScaleNm_ / 1'800.0;
     const auto accelerationGain = controllerTorqueScaleNm_ / 800.0;
@@ -128,10 +140,18 @@ DynoAbsorberOutput DynoAbsorberController::advance(
             std::abs(errorRpm) <= contactBandRpm
             ? integralTorqueNm_ + errorRpm * integralGain * dt
             : integralTorqueNm_ * std::exp(-dt * 4.0);
+        // Acceleration feedback is relative to the commanded ramp. The former
+        // absolute term added brake whenever the rotor accelerated at all, so
+        // an ideal 500 rpm/s follower was actively resisted and repeatedly
+        // fell out of contact. At a steady hold target acceleration is zero,
+        // preserving the established damping law.
+        const auto accelerationErrorRpmPerSecond =
+            filteredAccelerationRpmPerSecond_
+            - filteredTargetAccelerationRpmPerSecond_;
         const auto unsaturated = contactedFeedForwardTorqueNm
             + integralCandidate
             + errorRpm * proportionalGain
-            + filteredAccelerationRpmPerSecond_ * accelerationGain;
+            + accelerationErrorRpmPerSecond * accelerationGain;
         const auto saturated = std::clamp(
             unsaturated, 0.0, maximumBrakeTorqueNm_);
         if (unsaturated == saturated
@@ -146,7 +166,7 @@ DynoAbsorberOutput DynoAbsorberController::advance(
         unclampedBrakeTorqueNm = contactedFeedForwardTorqueNm
             + integralTorqueNm_
             + errorRpm * proportionalGain
-            + filteredAccelerationRpmPerSecond_ * accelerationGain;
+            + accelerationErrorRpmPerSecond * accelerationGain;
         if (!std::isfinite(unclampedBrakeTorqueNm))
             unclampedBrakeTorqueNm = 0.0;
         brakeTorqueNm_ = std::clamp(

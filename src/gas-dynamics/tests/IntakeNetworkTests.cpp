@@ -260,6 +260,14 @@ void testPortSpeciesInjectionIsConservativeAndGuarded() {
     requireIntake(std::abs(after.speciesMassKg[fuelIndex]
                                - before.speciesMassKg[fuelIndex] - fuelKg) < 1.0e-15,
                   "injected fuel mass must appear exactly once in the inventory");
+    auto fuelBearingCells = std::size_t { 0 };
+    for (const auto& cell : network.ducts().front().cells()) {
+        if (cell.speciesMassDensityKgPerM3[fuelIndex] > 0.0)
+            ++fuelBearingCells;
+    }
+    requireIntake(fuelBearingCells == 2,
+                  "a 31 mm mesh must resolve the 60 mm port-injector footprint "
+                  "with two cells, not a fixed cell count");
     const auto fuelCv = network.mixtureModel().thermodynamics()
         .species[fuelIndex].molarHeatCapacityCvJPerMolK
         / network.mixtureModel().thermodynamics().species[fuelIndex].molarMassKgPerMol;
@@ -293,6 +301,25 @@ void testPortSpeciesInjectionIsConservativeAndGuarded() {
                       && sumSpeciesMass(guardAfter.speciesMassKg)
                              == sumSpeciesMass(guardBefore.speciesMassKg),
                   "refused injections must leave the state untouched");
+
+    // The realtime runner mesh is deliberately coarse (~83-95 mm). Its first
+    // cell already covers the whole physical injector footprint; spreading to
+    // three cells would move fuel most of the way to the plenum and make
+    // transient delivery depend on performance settings.
+    ExhaustGasNetwork coarseNetwork;
+    requireIntake(coarseNetwork.configure(makeRunnerLayout(3), configuration),
+                  "coarse realtime runner must configure for injection");
+    requireIntake(coarseNetwork.injectSpeciesAtPort(0, GasSpecies::fuel, fuelKg,
+                                                    fuelTemperatureK, coolingJ),
+                  "coarse realtime runner must accept a port fuel pulse");
+    fuelBearingCells = 0;
+    for (const auto& cell : coarseNetwork.ducts().front().cells()) {
+        if (cell.speciesMassDensityKgPerM3[fuelIndex] > 0.0)
+            ++fuelBearingCells;
+    }
+    requireIntake(fuelBearingCells == 1,
+                  "a coarse runner cell must not expand the injector footprint "
+                  "to most of the runner");
 }
 
 } // namespace

@@ -5,6 +5,13 @@
 
 namespace enginelab {
 
+double FuelInjectionModel::representedDirectFuelMoles(
+    const FuelInjectionState& state, const GasCell& target) noexcept {
+    return std::max(0.0, target.mixture().fuelMoles)
+        + std::max(0.0, state.directLiquidSprayMoles)
+        + std::max(0.0, state.directDispersingVapourMoles);
+}
+
 FuelInjectionResult FuelInjectionModel::deliver(const InjectionConfig& injection,
                                                  const FuelConfig& fuel,
                                                  FuelInjectionState& state,

@@ -88,6 +88,12 @@ public:
      */
     [[nodiscard]] std::uint64_t delayTruncationCount() const noexcept { return delayTruncations_.load(std::memory_order_relaxed); }
     [[nodiscard]] double eventLatencySeconds() const noexcept { return eventLatencySeconds_; }
+    [[nodiscard]] std::uint64_t largeForwardClockDriftCount() const noexcept {
+        return largeForwardClockDrifts_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] double maximumForwardClockDriftSeconds() const noexcept {
+        return maximumForwardClockDriftSeconds_.load(std::memory_order_relaxed);
+    }
     // Read-only output-chain observers. The counters deliberately keep authored
     // voicing saturation, slow safety AGC, oversampled soft limiting and the
     // last-resort sample clamp separate. These loads do not affect the audio path.
@@ -193,6 +199,16 @@ public:
         return maxObservedExhaustJetNoisePressurePa_.load(
             std::memory_order_relaxed);
     }
+    /** Peak outgoing characteristic injected at any exhaust valve. */
+    [[nodiscard]] float maxThermoacousticValveSourcePressurePa() const noexcept {
+        return maxThermoacousticValveSourcePressurePa_.load(
+            std::memory_order_relaxed);
+    }
+    /** Peak observer pressure with the semi-empirical outlet jet removed. */
+    [[nodiscard]] float maxObservedExhaustPressureWavePa() const noexcept {
+        return maxObservedExhaustPressureWavePa_.load(
+            std::memory_order_relaxed);
+    }
     [[nodiscard]] float maxObservedIntakePressurePa() const noexcept {
         return maxObservedIntakePressurePa_.load(std::memory_order_relaxed);
     }
@@ -220,6 +236,10 @@ public:
     /** Sample-rate invariant quantisation used by the physical runner lines. */
     [[nodiscard]] static std::size_t runnerDelaySamples(double delaySeconds,
                                                         double sampleRate) noexcept;
+    /** Resolve physical source cadence without confusing a wall-clock producer
+     * stall for a change in solver bandwidth. */
+    [[nodiscard]] static double pressureSourceSamplingFrequencyHz(
+        const CylinderPressureSample&, double timestampIntervalSeconds) noexcept;
 private:
     struct Voice {
         double bodyPhase {}, crackPhase {}, pipePhase {}, knockPhase {};
@@ -543,6 +563,9 @@ private:
     std::atomic<std::uint64_t> stolenVoices_ { 0 };
     std::atomic<std::uint64_t> droppedPendingEvents_ { 0 };
     std::atomic<std::uint64_t> delayTruncations_ { 0 };
+    std::atomic<std::uint64_t> largeForwardClockDrifts_ { 0 };
+    std::atomic<double> maximumForwardClockDriftSeconds_ { 0.0 };
+    bool largeForwardClockDriftActive_ { false };
     // Safety-leveler observers (measurement only; updated once per block).
     std::atomic<std::uint64_t> levelLimitedSamples_ { 0 };
     std::atomic<std::uint64_t> saturationProcessedSamples_ { 0 };
@@ -554,6 +577,8 @@ private:
     std::atomic<float> minObservedLevelGain_ { 1.0F };
     std::atomic<float> maxObservedExhaustPressurePa_ { 0.0F };
     std::atomic<float> maxObservedExhaustJetNoisePressurePa_ { 0.0F };
+    std::atomic<float> maxThermoacousticValveSourcePressurePa_ { 0.0F };
+    std::atomic<float> maxObservedExhaustPressureWavePa_ { 0.0F };
     std::atomic<float> maxObservedIntakePressurePa_ { 0.0F };
     std::atomic<float> maxIntakeSourcePressurePa_ { 0.0F };
     std::atomic<float> maxIntakeRunnerPressurePa_ { 0.0F };

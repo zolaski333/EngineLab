@@ -195,6 +195,7 @@ int main() {
         state.targetAirFuelRatio = 17.0;
         state.airFuelRatio = 22.0;
         state.lambda = 1.50;
+        state.airFuelRatioValid = true;
         const auto normal = enginelab::EngineDiagnostics {}.evaluate(
             dieselConfig, state);
         require(std::none_of(normal.begin(), normal.end(), [](const auto& item) {

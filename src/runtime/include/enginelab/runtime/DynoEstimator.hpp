@@ -40,6 +40,7 @@ struct DynoCycleTelemetry final {
     double airFlowGramsPerSecond { 0.0 };
     double lambda { 0.0 };
     double brakeSpecificFuelConsumptionGPerKwh { 0.0 };
+    bool airFuelRatioValid { true };
 };
 
 /**

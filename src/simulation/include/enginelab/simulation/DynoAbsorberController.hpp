@@ -48,7 +48,9 @@ private:
     double integralTorqueNm_ {};
     double feedForwardTorqueNm_ {};
     double filteredRpm_ {};
+    double filteredTargetRpm_ {};
     double filteredAccelerationRpmPerSecond_ {};
+    double filteredTargetAccelerationRpmPerSecond_ {};
     double brakeTorqueNm_ {};
     /** Hysteretic rotor capture. Proximity is progressive on approach, but a
      * real coupled brake does not remain fractionally connected forever. */

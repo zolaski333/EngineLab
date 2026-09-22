@@ -56,8 +56,11 @@ struct AcousticIntakeNetwork::Impl final {
         std::size_t write {};
         std::size_t mask {};
         float delaySamples { 1.0F };
+        float delayControlSamples { 1.0F };
         float delayTargetSamples { 1.0F };
         DuctWallLoss::Coefficients wallLoss {};
+        DuctWallLoss::Coefficients wallLossControl {};
+        DuctWallLoss::Coefficients wallLossTarget {};
         DuctWallLoss::State forwardLoss {};
         DuctWallLoss::State reverseLoss {};
     };
@@ -105,6 +108,11 @@ struct AcousticIntakeNetwork::Impl final {
         UnflangedPipeRadiation radiation;
         FreeFieldObserver observer;
         PathBoundary medium;
+        PathBoundary mediumControl;
+        PathBoundary mediumTarget;
+        float throttleConductanceAreaM2 {};
+        float throttleControlConductanceAreaM2 {};
+        float throttleTargetConductanceAreaM2 {};
     };
 
     // --- air-filter element -------------------------------------------------
@@ -154,10 +162,12 @@ struct AcousticIntakeNetwork::Impl final {
     std::vector<Runner> runners;
     std::vector<Path> paths;
     double sampleRateHz { 48'000.0 };
+    double acousticTimeScale { 1.0 };
     double observerDistanceM { 1.0 };
     AcousticObserverConfig observerConfig;
     float meanFlowCoefficient { 0.0F };
     Diagnostics diagnostics;
+    bool mediaInitialised { false };
     bool configured { false };
     bool prepared { false };
 
@@ -306,12 +316,16 @@ bool AcousticIntakeNetwork::prepare(double sampleRateHz,
     std::array<PathBoundary, maximumPaths> defaults {};
     beginBlock(std::span<const PathBoundary>(
         defaults.data(), impl_->paths.size()), 1.0);
+    // The default block seeds finite delay/loss targets. The first real block
+    // must snap to its true gas state rather than sweep up from ambient.
+    impl_->mediaInitialised = false;
     return true;
 }
 
 void AcousticIntakeNetwork::reset() noexcept {
     if (!impl_) return;
     impl_->diagnostics = {};
+    impl_->mediaInitialised = false;
     const auto resetDuct = [](Impl::Duct& duct) {
         std::fill(duct.forward.begin(), duct.forward.end(), 0.0F);
         std::fill(duct.reverse.begin(), duct.reverse.end(), 0.0F);
@@ -353,8 +367,59 @@ void AcousticIntakeNetwork::beginBlock(
     std::span<const PathBoundary> boundaries,
     double acousticTimeScale) noexcept {
     if (!impl_->prepared) return;
-    const auto timeScale = std::clamp(
+    impl_->acousticTimeScale = std::clamp(
         std::isfinite(acousticTimeScale) ? acousticTimeScale : 1.0, 0.25, 4.0);
+    updateBoundaryTargets(boundaries);
+    for (std::size_t pathIndex = 0; pathIndex < impl_->paths.size(); ++pathIndex) {
+        auto& path = impl_->paths[pathIndex];
+        const auto rho = static_cast<double>(path.mediumTarget.densityKgPerM3);
+        const auto c = static_cast<double>(path.mediumTarget.soundSpeedMps);
+
+        const auto fitDuct = [&](Impl::Duct& duct) {
+            const auto traversalSeconds = duct.lengthM / c
+                / impl_->acousticTimeScale;
+            duct.wallLossTarget = DuctWallLoss::fit(
+                traversalSeconds, duct.radiusM, rho, c, impl_->sampleRateHz);
+        };
+        for (const auto runnerIndex : path.runners)
+            fitDuct(impl_->runners[runnerIndex].duct);
+        if (path.hasInletDuct) fitDuct(path.inletDuct);
+    }
+    if (!impl_->mediaInitialised) {
+        for (auto& path : impl_->paths) {
+            path.medium = path.mediumTarget;
+            path.mediumControl = path.mediumTarget;
+            path.throttleConductanceAreaM2 =
+                path.throttleTargetConductanceAreaM2;
+            path.throttleControlConductanceAreaM2 =
+                path.throttleTargetConductanceAreaM2;
+            for (const auto runnerIndex : path.runners) {
+                auto& duct = impl_->runners[runnerIndex].duct;
+                duct.wallLoss = duct.wallLossTarget;
+                duct.wallLossControl = duct.wallLossTarget;
+                duct.delayControlSamples = duct.delayTargetSamples;
+                duct.delaySamples = duct.delayTargetSamples;
+            }
+            if (path.hasInletDuct) {
+                path.inletDuct.wallLoss = path.inletDuct.wallLossTarget;
+                path.inletDuct.wallLossControl =
+                    path.inletDuct.wallLossTarget;
+                path.inletDuct.delayControlSamples =
+                    path.inletDuct.delayTargetSamples;
+                path.inletDuct.delaySamples =
+                    path.inletDuct.delayTargetSamples;
+            }
+            (void) path.radiation.setMedium(
+                path.medium.densityKgPerM3,
+                path.medium.soundSpeedMps);
+        }
+        impl_->mediaInitialised = true;
+    }
+}
+
+void AcousticIntakeNetwork::updateBoundaryTargets(
+    std::span<const PathBoundary> boundaries) noexcept {
+    if (!impl_->prepared) return;
     for (std::size_t pathIndex = 0; pathIndex < impl_->paths.size(); ++pathIndex) {
         auto& path = impl_->paths[pathIndex];
         if (pathIndex < boundaries.size()
@@ -362,33 +427,24 @@ void AcousticIntakeNetwork::beginBlock(
             && boundaries[pathIndex].densityKgPerM3 > 0.0F
             && std::isfinite(boundaries[pathIndex].soundSpeedMps)
             && boundaries[pathIndex].soundSpeedMps > 0.0F)
-            path.medium = boundaries[pathIndex];
-        const auto rho = static_cast<double>(path.medium.densityKgPerM3);
-        const auto c = static_cast<double>(path.medium.soundSpeedMps);
-        path.plenum.admittanceM3PerPaSecond = static_cast<float>(
-            2.0 * path.plenum.volumeM3 / (rho * c * c) * impl_->sampleRateHz);
-        path.airbox.admittanceM3PerPaSecond = path.airbox.volumeM3 > 0.0
-            ? static_cast<float>(2.0 * path.airbox.volumeM3
-                / (rho * c * c) * impl_->sampleRateHz) : 0.0F;
-        const auto throttleArea = std::isfinite(path.medium.throttleConductanceAreaM2)
-            ? std::max(0.0F, path.medium.throttleConductanceAreaM2) : 0.0F;
-        path.throttleAdmittanceM3PerPaSecond = throttleArea
-            / (path.medium.densityKgPerM3 * path.medium.soundSpeedMps);
-        (void) path.radiation.setMedium(rho, c);
-
-        const auto fitDuct = [&](Impl::Duct& duct) {
-            const auto traversalSeconds = duct.lengthM / c / timeScale;
+            path.mediumTarget = boundaries[pathIndex];
+        path.throttleTargetConductanceAreaM2 =
+            std::isfinite(path.mediumTarget.throttleConductanceAreaM2)
+            ? std::max(0.0F,
+                path.mediumTarget.throttleConductanceAreaM2) : 0.0F;
+        const auto c = static_cast<double>(path.mediumTarget.soundSpeedMps);
+        const auto updateDelayTarget = [&](Impl::Duct& duct) {
+            const auto traversalSeconds = duct.lengthM / c
+                / impl_->acousticTimeScale;
             const auto limit = static_cast<float>(duct.forward.size() - 2U);
             duct.delayTargetSamples = std::clamp(static_cast<float>(
                 traversalSeconds * impl_->sampleRateHz), 1.0F, limit);
             if (duct.delaySamples <= 1.0F)
                 duct.delaySamples = duct.delayTargetSamples;
-            duct.wallLoss = DuctWallLoss::fit(
-                traversalSeconds, duct.radiusM, rho, c, impl_->sampleRateHz);
         };
         for (const auto runnerIndex : path.runners)
-            fitDuct(impl_->runners[runnerIndex].duct);
-        if (path.hasInletDuct) fitDuct(path.inletDuct);
+            updateDelayTarget(impl_->runners[runnerIndex].duct);
+        if (path.hasInletDuct) updateDelayTarget(path.inletDuct);
     }
 }
 
@@ -399,9 +455,68 @@ AcousticIntakeNetwork::process(
     std::array<StereoPressure, maximumPaths> result {};
     if (!impl_->prepared) return result;
     const auto ramp = std::clamp(delayRampCoefficient, 0.0F, 1.0F);
+    // Two matched poles preserve a continuous first derivative when a host
+    // callback supplies a new block-held target. A single pole kept the value
+    // continuous but changed its slope instantaneously; the radiation model
+    // differentiates volume velocity, turning that corner into a delayed
+    // two-sample click whose cadence followed the host block size. Each stage
+    // is 1.55x the requested cutoff so the cascade retains the original -3 dB
+    // control bandwidth.
+    constexpr auto matchedPoleFrequencyRatio = 1.553773974F;
+    const auto stageRamp = 1.0F - std::pow(
+        std::max(0.0F, 1.0F - ramp), matchedPoleFrequencyRatio);
+    // Every medium-derived scattering parameter must move continuously at the
+    // sample rate. Stepping these values in beginBlock produced a deterministic
+    // impulse at fs/blockSize in the intake stem.
+    for (auto& path : impl_->paths) {
+        path.mediumControl.densityKgPerM3 += stageRamp
+            * (path.mediumTarget.densityKgPerM3
+                - path.mediumControl.densityKgPerM3);
+        path.mediumControl.soundSpeedMps += stageRamp
+            * (path.mediumTarget.soundSpeedMps
+                - path.mediumControl.soundSpeedMps);
+        path.medium.densityKgPerM3 += stageRamp
+            * (path.mediumControl.densityKgPerM3
+                - path.medium.densityKgPerM3);
+        path.medium.soundSpeedMps += stageRamp
+            * (path.mediumControl.soundSpeedMps
+                - path.medium.soundSpeedMps);
+        path.throttleControlConductanceAreaM2 += stageRamp
+            * (path.throttleTargetConductanceAreaM2
+                - path.throttleControlConductanceAreaM2);
+        path.throttleConductanceAreaM2 += stageRamp
+            * (path.throttleControlConductanceAreaM2
+                - path.throttleConductanceAreaM2);
+        const auto rho = static_cast<double>(path.medium.densityKgPerM3);
+        const auto c = static_cast<double>(path.medium.soundSpeedMps);
+        path.plenum.admittanceM3PerPaSecond = static_cast<float>(
+            2.0 * path.plenum.volumeM3 / (rho * c * c)
+                * impl_->sampleRateHz);
+        path.airbox.admittanceM3PerPaSecond = path.airbox.volumeM3 > 0.0
+            ? static_cast<float>(2.0 * path.airbox.volumeM3
+                / (rho * c * c) * impl_->sampleRateHz) : 0.0F;
+        path.throttleAdmittanceM3PerPaSecond =
+            path.throttleConductanceAreaM2
+            / (path.medium.densityKgPerM3
+                * path.medium.soundSpeedMps);
+        (void) path.radiation.setMedium(rho, c);
+    }
     for (auto& runner : impl_->runners) {
         auto& duct = runner.duct;
-        duct.delaySamples += ramp * (duct.delayTargetSamples - duct.delaySamples);
+        duct.delayControlSamples += stageRamp
+            * (duct.delayTargetSamples - duct.delayControlSamples);
+        duct.delaySamples += stageRamp
+            * (duct.delayControlSamples - duct.delaySamples);
+        duct.wallLossControl.pole += stageRamp
+            * (duct.wallLossTarget.pole - duct.wallLossControl.pole);
+        duct.wallLossControl.zero += stageRamp
+            * (duct.wallLossTarget.zero - duct.wallLossControl.zero);
+        duct.wallLossControl.renormalise();
+        duct.wallLoss.pole += stageRamp
+            * (duct.wallLossControl.pole - duct.wallLoss.pole);
+        duct.wallLoss.zero += stageRamp
+            * (duct.wallLossControl.zero - duct.wallLoss.zero);
+        duct.wallLoss.renormalise();
         runner.incidentAtValve = DuctWallLoss::process(
             duct.wallLoss, duct.reverseLoss, impl_->readDelayed(duct, duct.reverse));
         runner.incidentAtPlenum = DuctWallLoss::process(
@@ -414,7 +529,20 @@ AcousticIntakeNetwork::process(
     for (auto& path : impl_->paths) {
         if (!path.hasInletDuct) continue;
         auto& duct = path.inletDuct;
-        duct.delaySamples += ramp * (duct.delayTargetSamples - duct.delaySamples);
+        duct.delayControlSamples += stageRamp
+            * (duct.delayTargetSamples - duct.delayControlSamples);
+        duct.delaySamples += stageRamp
+            * (duct.delayControlSamples - duct.delaySamples);
+        duct.wallLossControl.pole += stageRamp
+            * (duct.wallLossTarget.pole - duct.wallLossControl.pole);
+        duct.wallLossControl.zero += stageRamp
+            * (duct.wallLossTarget.zero - duct.wallLossControl.zero);
+        duct.wallLossControl.renormalise();
+        duct.wallLoss.pole += stageRamp
+            * (duct.wallLossControl.pole - duct.wallLoss.pole);
+        duct.wallLoss.zero += stageRamp
+            * (duct.wallLossControl.zero - duct.wallLoss.zero);
+        duct.wallLoss.renormalise();
         path.inletIncidentAtMouth = DuctWallLoss::process(
             duct.wallLoss, duct.reverseLoss, impl_->readDelayed(duct, duct.reverse));
         // Crossing the filter element on the way back into the airbox.

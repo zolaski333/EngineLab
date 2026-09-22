@@ -19,7 +19,7 @@ DynoQualityGate::DynoQualityGate(DynoQualityGateConfig config) noexcept {
         0.0, 1.0);
     config_.minimumRampContactFraction = std::clamp(
         std::isfinite(config.minimumRampContactFraction)
-            ? config.minimumRampContactFraction : 0.0,
+            ? config.minimumRampContactFraction : 0.95,
         0.0, 1.0);
     config_.minimumEngineTorqueNm = finitePositiveOr(
         config.minimumEngineTorqueNm, 1.4);

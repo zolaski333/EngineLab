@@ -188,19 +188,67 @@ MainComponent::MainComponent() {
     addAndMakeVisible(ignitionButton_); addAndMakeVisible(starterButton_); addAndMakeVisible(dynoButton_);
 
     historySelector_.setTextWhenNothingSelected(utf8("Courbes archivées"));
-    historySelector_.onChange = [this] { repaint(); };
+    historySelector_.onChange = [this] {
+        updateDynoPresentationControls();
+        repaint();
+    };
+    runNameEditor_.setTextToShowWhenEmpty(
+        utf8("Nom de la courbe"), juce::Colour(0xff71827b));
+    runNameEditor_.setSelectAllWhenFocused(true);
+    runNameEditor_.onTextChange = [this] {
+        if (dynoPresentationControlsUpdating_) return;
+        const auto selected = historySelector_.getSelectedItemIndex();
+        if (selected < 0
+            || selected >= static_cast<int>(archivedRuns_.size())) return;
+        auto& presentation = dynoCurvePresentation_[
+            archivedRuns_[static_cast<std::size_t>(selected)].id];
+        const auto edited = runNameEditor_.getText().trim();
+        if (edited.isNotEmpty()) presentation.name = edited;
+        repaint();
+    };
+    runColourButton_.onClick = [this] {
+        const auto selected = historySelector_.getSelectedItemIndex();
+        if (selected < 0
+            || selected >= static_cast<int>(archivedRuns_.size())) return;
+        auto& presentation = dynoCurvePresentation_[
+            archivedRuns_[static_cast<std::size_t>(selected)].id];
+        const auto found = std::find(curveColours.begin(),
+            curveColours.end(), presentation.colour);
+        const auto index = found == curveColours.end() ? 0U
+            : (static_cast<std::size_t>(std::distance(
+                curveColours.begin(), found)) + 1U) % curveColours.size();
+        presentation.colour = curveColours[index];
+        updateDynoPresentationControls();
+        repaint();
+    };
+    runVisibilityButton_.onClick = [this] {
+        const auto selected = historySelector_.getSelectedItemIndex();
+        if (selected < 0
+            || selected >= static_cast<int>(archivedRuns_.size())) return;
+        auto& presentation = dynoCurvePresentation_[
+            archivedRuns_[static_cast<std::size_t>(selected)].id];
+        presentation.visible = !presentation.visible;
+        updateDynoPresentationControls();
+        repaint();
+    };
     deleteRunButton_.onClick = [this] {
         const auto selected = historySelector_.getSelectedItemIndex();
         if (selected >= 0 && selected < static_cast<int>(archivedRuns_.size())) {
+            const auto id = archivedRuns_[static_cast<std::size_t>(selected)].id;
             (void)dynoArchive_->erase(
-                archivedRuns_[static_cast<std::size_t>(selected)].id);
+                id);
+            dynoCurvePresentation_.erase(id);
             collectFinishedRuns();
             if (!archivedRuns_.empty())
                 historySelector_.setSelectedItemIndex(std::min(selected, static_cast<int>(archivedRuns_.size()) - 1));
             repaint();
         }
     };
-    addAndMakeVisible(historySelector_); addAndMakeVisible(deleteRunButton_);
+    addAndMakeVisible(historySelector_);
+    addAndMakeVisible(runNameEditor_);
+    addAndMakeVisible(runColourButton_);
+    addAndMakeVisible(runVisibilityButton_);
+    addAndMakeVisible(deleteRunButton_);
 
     throttleLabel_.setText(utf8("ACCÉLÉRATEUR  [W 10% / E 20% / R 100%]"), juce::dontSendNotification);
     loadLabel_.setText("CHARGE MANUELLE", juce::dontSendNotification);
@@ -589,8 +637,8 @@ void MainComponent::showAudioWorkshop() {
                 [safe](const AudioPhysicsSettings& settings) {
                     if (!safe) return false;
                     if (!safe->runtime_ || safe->runtime_->dynoRunning()) {
-                        safe->showError(utf8("Modification refusÃ©e"),
-                            utf8("ArrÃªtez le banc de puissance avant de modifier la calibration physique."));
+                        safe->showError(utf8("Modification refusée"),
+                            utf8("Arrêtez le banc de puissance avant de modifier la calibration physique."));
                         return false;
                     }
                     auto editedConfig = safe->config_;
@@ -776,7 +824,7 @@ void MainComponent::exportDynoCsv() {
     else if (!visibleCurrentRun_.points.empty()) run = &visibleCurrentRun_;
     if (run == nullptr) { showError("CSV DYNO", utf8("Aucune courbe à exporter.")); return; }
     juce::String csv;
-    csv << "#schema;enginelab-dyno-v2\n"
+    csv << "#schema;enginelab-dyno-v3\n"
         << "#run_id;" << juce::String(static_cast<juce::int64>(run->id)) << '\n'
         << "#engine;" << csvField(run->engineName) << '\n'
         << "#status;" << dynoStatusToken(run->status) << '\n'
@@ -799,7 +847,7 @@ void MainComponent::exportDynoCsv() {
         << "#rolling_window_s;"
         << juce::String(run->sessionConfig.rollingWindowSeconds, 6) << '\n'
         << "rpm;valid;quality_reasons;bin_rpm;window_mean_rpm;window_min_rpm;window_max_rpm;window_duration_s;torque_variance_nm2;first_cycle_id;last_cycle_id;accepted_cycle_count;"
-        << "torque_nm;power_kw;actual_afr;target_afr;lambda;volumetric_efficiency;air_flow_g_s;fuel_flow_g_s;bsfc_g_kwh;map_kpa;"
+        << "torque_nm;power_kw;actual_afr;actual_afr_valid;target_afr;lambda;volumetric_efficiency;air_flow_g_s;fuel_flow_g_s;bsfc_g_kwh;map_kpa;"
         << "exhaust_pressure_kpa;coolant_c;oil_c;oil_pressure_kpa;exhaust_c;ignition_advance_deg;correction_factor;"
         << "corrected_torque_nm;corrected_power_kw\n";
     for (const auto& point : run->points) {
@@ -812,12 +860,13 @@ void MainComponent::exportDynoCsv() {
             << juce::String(static_cast<juce::int64>(point.lastCycleId)) << ';'
             << juce::String(static_cast<juce::int64>(point.acceptedCycleCount));
         if (!point.valid) {
-            for (int column = 0; column < 19; ++column) csv << ';';
+            for (int column = 0; column < 20; ++column) csv << ';';
             csv << '\n';
             continue;
         }
         csv << ';' << juce::String(point.torqueNm, 2) << ';'
             << juce::String(point.powerKw, 2) << ';' << juce::String(point.airFuelRatio, 2) << ';'
+            << (point.airFuelRatioValid ? "1" : "0") << ';'
             << juce::String(point.targetAirFuelRatio, 2) << ';' << juce::String(point.lambda, 4) << ';'
             << juce::String(point.volumetricEfficiency, 4) << ';' << juce::String(point.airFlowGramsPerSecond, 4) << ';'
             << juce::String(point.fuelFlowGramsPerSecond, 4) << ';'
@@ -878,8 +927,48 @@ void MainComponent::collectFinishedRuns() {
     const auto revision = dynoArchive_->revision();
     if (revision == visibleDynoArchiveRevision_) return;
     archivedRuns_ = dynoArchive_->snapshot();
+    for (std::size_t index = 0; index < archivedRuns_.size(); ++index)
+        ensureDynoPresentation(archivedRuns_[index], index);
     visibleDynoArchiveRevision_ = revision;
     updateHistorySelector();
+}
+
+void MainComponent::ensureDynoPresentation(
+    const DynoRun& run, std::size_t paletteIndex) {
+    if (dynoCurvePresentation_.contains(run.id)) return;
+    DynoCurvePresentation presentation;
+    presentation.name = juce::String::fromUTF8(run.engineName.c_str())
+        + "  #" + juce::String(run.id);
+    presentation.colour = curveColours[
+        paletteIndex % curveColours.size()];
+    dynoCurvePresentation_.emplace(run.id, std::move(presentation));
+}
+
+void MainComponent::updateDynoPresentationControls() {
+    const auto selected = historySelector_.getSelectedItemIndex();
+    const auto validSelection = selected >= 0
+        && selected < static_cast<int>(archivedRuns_.size());
+    runNameEditor_.setEnabled(validSelection);
+    runColourButton_.setEnabled(validSelection);
+    runVisibilityButton_.setEnabled(validSelection);
+    deleteRunButton_.setEnabled(validSelection);
+    dynoPresentationControlsUpdating_ = true;
+    if (validSelection) {
+        const auto id = archivedRuns_[static_cast<std::size_t>(selected)].id;
+        const auto found = dynoCurvePresentation_.find(id);
+        if (found != dynoCurvePresentation_.end()) {
+            runNameEditor_.setText(found->second.name, false);
+            runColourButton_.setColour(
+                juce::TextButton::buttonColourId,
+                juce::Colour(found->second.colour).darker(0.35F));
+            runVisibilityButton_.setButtonText(found->second.visible
+                ? "MASQUER" : "AFFICHER");
+        }
+    } else {
+        runNameEditor_.clear();
+        runVisibilityButton_.setButtonText("MASQUER");
+    }
+    dynoPresentationControlsUpdating_ = false;
 }
 
 void MainComponent::updateHistorySelector() {
@@ -887,10 +976,12 @@ void MainComponent::updateHistorySelector() {
     historySelector_.clear(juce::dontSendNotification);
     for (int index = 0; index < static_cast<int>(archivedRuns_.size()); ++index) {
         const auto& run = archivedRuns_[static_cast<std::size_t>(index)];
+        ensureDynoPresentation(run, static_cast<std::size_t>(index));
+        const auto& presentation = dynoCurvePresentation_.at(run.id);
         const auto validPoints = std::count_if(
             run.points.begin(), run.points.end(),
             [](const DynoPoint& point) { return point.valid; });
-        historySelector_.addItem(juce::String(run.engineName) + "  #" + juce::String(run.id)
+        historySelector_.addItem(presentation.name
             + "  [" + dynoStatusLabel(run.status) + "]  "
             + juce::String(static_cast<int>(validPoints)) + " pts  ·  "
             + juce::String(run.peakCorrectedPowerKw > 0.0
@@ -903,6 +994,7 @@ void MainComponent::updateHistorySelector() {
         historySelector_.setSelectedItemIndex(
             static_cast<int>(archivedRuns_.size()) - 1,
             juce::dontSendNotification);
+    updateDynoPresentationControls();
 }
 
 void MainComponent::setThrottlePreset(double value) {
@@ -935,6 +1027,7 @@ void MainComponent::adjustAudioOrSimulation(double wheelDelta) {
     if (!runtime_ || wheelDelta == 0.0) return;
     const auto step = actionMap_.isDown(AppAction::wheelFineThrottle) ? 0.01 : 0.05;
     bool audioMixChanged = false;
+    bool authoredVoicingChanged = false;
     if (actionMap_.isDown(AppAction::wheelDynoRpm) && visibleState_.dynoHoldEnabled) {
         runtime_->adjustDynoHoldRpm(wheelDelta > 0.0 ? 100.0 : -100.0);
     } else if (actionMap_.isDown(AppAction::wheelVolume)) {
@@ -950,38 +1043,52 @@ void MainComponent::adjustAudioOrSimulation(double wheelDelta) {
         highFrequencyGain_ = std::clamp(highFrequencyGain_ + wheelDelta * step, 0.2, 2.5);
         runtime_->setHighFrequencyGain(highFrequencyGain_);
         audioMixChanged = true;
+        authoredVoicingChanged = true;
     } else if (actionMap_.isDown(AppAction::wheelLowNoise)) {
         if (physicalIntakeTopology_) return;
         lowFrequencyNoise_ = std::clamp(lowFrequencyNoise_ + wheelDelta * step, 0.0, 1.5);
         runtime_->setLowFrequencyNoise(lowFrequencyNoise_);
         audioMixChanged = true;
+        authoredVoicingChanged = true;
     } else if (actionMap_.isDown(AppAction::wheelHighNoise)) {
         if (physicalExhaustTopology_) return;
         highFrequencyNoise_ = std::clamp(highFrequencyNoise_ + wheelDelta * step, 0.0, 1.5);
         runtime_->setHighFrequencyNoise(highFrequencyNoise_);
         audioMixChanged = true;
+        authoredVoicingChanged = true;
     } else if (actionMap_.isDown(AppAction::wheelCombustion)) {
         if (physicalExhaustTopology_) return;
         combustionGain_ = std::clamp(combustionGain_ + wheelDelta * step, 0.0, 2.0);
         runtime_->setCombustionGain(combustionGain_);
         audioMixChanged = true;
+        authoredVoicingChanged = true;
     } else if (actionMap_.isDown(AppAction::wheelExhaust)) {
         exhaustGain_ = std::clamp(exhaustGain_ + wheelDelta * step, 0.0, 2.0);
         runtime_->setExhaustGain(exhaustGain_);
         audioMixChanged = true;
+        authoredVoicingChanged = true;
     } else if (actionMap_.isDown(AppAction::wheelIntake)) {
         intakeGain_ = std::clamp(intakeGain_ + wheelDelta * step, 0.0, 2.0);
         runtime_->setIntakeGain(intakeGain_);
         audioMixChanged = true;
+        authoredVoicingChanged = true;
     } else if (actionMap_.isDown(AppAction::wheelMechanical)) {
         mechanicalGain_ = std::clamp(mechanicalGain_ + wheelDelta * step, 0.0, 2.0);
         runtime_->setMechanicalGain(mechanicalGain_);
         audioMixChanged = true;
+        authoredVoicingChanged = true;
     } else if (actionMap_.isDown(AppAction::wheelSimulationRate)) {
         runtime_->setTimeScale(runtime_->timeScale() + wheelDelta * step);
     } else if (actionMap_.isDown(AppAction::wheelFineThrottle)) {
         throttleSlider_.setValue(std::clamp(throttleSlider_.getValue() + wheelDelta * 2.0, 0.0, 100.0),
                                  juce::sendNotificationSync);
+    }
+    if (authoredVoicingChanged) {
+        // Physical-reference mode deliberately fixes authored layer/EQ gains
+        // at unity. Moving one of those controls is therefore an explicit
+        // request for the voiced monitor, exactly as in Audio Workshop.
+        audioMonitorMode_ = AudioMonitorMode::captureVoiced;
+        runtime_->applyAudioVoicing(currentAudioMix());
     }
     if (audioMixChanged) syncAudioWorkshopMix();
     repaint();
@@ -1245,12 +1352,14 @@ void MainComponent::paint(juce::Graphics& g) {
     g.drawFittedText(torqueText,
                      telemetry.removeFromLeft(telemetryColumnWidth).toNearestInt(), juce::Justification::centred, 1);
     const auto diesel = config_.fuel == FuelType::diesel;
-    const auto mixtureText = diesel
-        ? "AFR " + juce::String(visibleState_.airFuelRatio, 1)
-            + utf8(" ≥ limite fumée ")
-            + juce::String(visibleState_.targetAirFuelRatio, 1)
-        : "AFR " + juce::String(visibleState_.airFuelRatio, 1) + "/"
-            + juce::String(visibleState_.targetAirFuelRatio, 1);
+    const auto mixtureText = !visibleState_.airFuelRatioValid
+        ? utf8("AFR — COUPURE / SYNCHRO")
+        : (diesel
+            ? "AFR " + juce::String(visibleState_.airFuelRatio, 1)
+                + utf8(" ≥ limite fumée ")
+                + juce::String(visibleState_.targetAirFuelRatio, 1)
+            : "AFR " + juce::String(visibleState_.airFuelRatio, 1) + "/"
+                + juce::String(visibleState_.targetAirFuelRatio, 1));
     const auto environmentText = compactTelemetry
         ? "MAP " + juce::String(visibleState_.manifoldPressureKpa, 0)
             + " kPa\n" + mixtureText + utf8(" · ")
@@ -1390,7 +1499,8 @@ void MainComponent::drawGaugeCluster(juce::Graphics& g, juce::Rectangle<float> a
     struct Gauge { juce::String label; juce::String value; double normalized; juce::Colour colour; };
     const auto gearText = gearName(visibleState_.gear);
     const auto diesel = config_.fuel == FuelType::diesel;
-    const auto mixtureGauge = diesel
+    const auto mixtureGauge = !visibleState_.airFuelRatioValid
+        ? 0.0 : diesel
         ? std::clamp(visibleState_.airFuelRatio
             / std::max(1.0, visibleState_.targetAirFuelRatio), 0.0, 1.0)
         : 1.0 - std::abs(visibleState_.airFuelRatio
@@ -1399,7 +1509,9 @@ void MainComponent::drawGaugeCluster(juce::Graphics& g, juce::Rectangle<float> a
         { "RPM", juce::String(visibleState_.rpm, 0), visibleState_.rpm / std::max(1.0, config_.redlineRpm), juce::Colour(0xffef6f3c) },
         { "MAP", juce::String(visibleState_.manifoldPressureKpa, 0) + " kPa", visibleState_.manifoldPressureKpa / std::max(1.0, config_.ambientPressureKpa), juce::Colour(0xff41b6d7) },
         { diesel ? "AFR/FUM" : "AFR",
-          juce::String(visibleState_.airFuelRatio, 1), mixtureGauge,
+          visibleState_.airFuelRatioValid
+            ? juce::String(visibleState_.airFuelRatio, 1) : utf8("—"),
+          mixtureGauge,
           juce::Colour(0xff79b89f) },
         { "VE", juce::String(visibleState_.volumetricEfficiency * 100.0, 0) + "%", visibleState_.volumetricEfficiency / 1.20, juce::Colour(0xff9ccc65) },
         { "OIL", juce::String(visibleState_.oilPressureKpa, 0), visibleState_.oilPressureKpa / 520.0, juce::Colour(0xffffca28) },
@@ -1920,7 +2032,30 @@ void MainComponent::drawDynoChart(juce::Graphics& g, juce::Rectangle<float> area
     auto plot = area.reduced(48.0F, 48.0F); plot.removeFromTop(24.0F);
     g.setFont(juce::FontOptions(13.0F, juce::Font::bold)); g.setColour(juce::Colour(0xffdce5e1));
     g.drawText(utf8("BANC DE PUISSANCE FREINÉ"), area.removeFromTop(38.0F), juce::Justification::centred);
-    const auto maxRpm = std::max(8'500.0, config_.redlineRpm);
+    const auto presentationFor = [this](std::uint64_t id)
+            -> const DynoCurvePresentation* {
+        const auto found = dynoCurvePresentation_.find(id);
+        return found != dynoCurvePresentation_.end()
+            ? &found->second : nullptr;
+    };
+    const auto runVisible = [&presentationFor](const DynoRun& run) {
+        const auto* presentation = presentationFor(run.id);
+        return presentation == nullptr || presentation->visible;
+    };
+    auto maximumVisibleRpm = visibleCurrentRun_.points.empty()
+        ? 0.0 : config_.redlineRpm;
+    const auto accumulateRpm = [&maximumVisibleRpm](const DynoRun& run) {
+        for (const auto& point : run.points)
+            if (point.valid && std::isfinite(point.rpm))
+                maximumVisibleRpm = std::max(maximumVisibleRpm, point.rpm);
+    };
+    for (const auto& run : archivedRuns_)
+        if (runVisible(run)) accumulateRpm(run);
+    accumulateRpm(visibleCurrentRun_);
+    const auto maxRpm = maximumVisibleRpm > 0.0
+        ? std::max(1'000.0,
+            std::ceil(maximumVisibleRpm * 1.05 / 500.0) * 500.0)
+        : std::max(1'000.0, config_.redlineRpm);
     if (visibleState_.dynoHoldEnabled) {
         g.setColour(juce::Colour(0xff79b89f));
         g.drawText("HOLD " + juce::String(visibleState_.dynoHoldRpm, 0) + " RPM",
@@ -1948,9 +2083,13 @@ void MainComponent::drawDynoChart(juce::Graphics& g, juce::Rectangle<float> area
         if (selected >= 0
             && selected < static_cast<int>(archivedRuns_.size())) {
             const auto& run = archivedRuns_[static_cast<std::size_t>(selected)];
+            const auto* presentation = presentationFor(run.id);
             g.setColour(run.status == DynoRunStatus::completed
                 ? juce::Colour(0xff79b89f) : juce::Colour(0xffffca55));
-            g.drawText(juce::String(dynoStatusLabel(run.status)) + "  ·  "
+            g.drawText((presentation != nullptr
+                    ? presentation->name
+                    : juce::String::fromUTF8(run.engineName.c_str()))
+                    + "  ·  " + juce::String(dynoStatusLabel(run.status)) + "  ·  "
                     + juce::String(dynoModeToken(run.sessionConfig.mode))
                     + "  ·  #" + juce::String(run.id),
                 juce::Rectangle<float>(plot.getX(), plot.getY() - 20.0F,
@@ -1967,7 +2106,8 @@ void MainComponent::drawDynoChart(juce::Graphics& g, juce::Rectangle<float> area
             maxPower = std::max(maxPower, point.correctedPowerKw > 0.0 ? point.correctedPowerKw : point.powerKw);
         }
     };
-    for (const auto& run : archivedRuns_) accumulateMax(run);
+    for (const auto& run : archivedRuns_)
+        if (runVisible(run)) accumulateMax(run);
     accumulateMax(visibleCurrentRun_);
     g.setFont(12.0F); g.setColour(juce::Colour(0xff71827b));
     for (int grid = 0; grid <= 5; ++grid) {
@@ -2019,10 +2159,50 @@ void MainComponent::drawDynoChart(juce::Graphics& g, juce::Rectangle<float> area
         g.fillPath(dashedPower);
     };
     const auto selectedRun = historySelector_.getSelectedItemIndex();
-    for (std::size_t index = 0; index < archivedRuns_.size(); ++index)
-        drawRun(archivedRuns_[index], juce::Colour(curveColours[index % curveColours.size()]),
+    for (std::size_t index = 0; index < archivedRuns_.size(); ++index) {
+        const auto& run = archivedRuns_[index];
+        const auto* presentation = presentationFor(run.id);
+        if (presentation != nullptr && !presentation->visible) continue;
+        drawRun(run, juce::Colour(presentation != nullptr
+                    ? presentation->colour
+                    : curveColours[index % curveColours.size()]),
                 static_cast<int>(index) == selectedRun);
+    }
     drawRun(visibleCurrentRun_, juce::Colour(0xffffffff), true);
+
+    // Stable, named legend. Solid is torque; the brighter dashed partner is
+    // power. Hiding or deleting another curve never changes these colours.
+    auto legendY = plot.getY() + 6.0F;
+    const auto legendX = plot.getX() + 8.0F;
+    std::size_t legendRows = 0;
+    for (std::size_t index = 0;
+         index < archivedRuns_.size() && legendRows < 8U; ++index) {
+        const auto& run = archivedRuns_[index];
+        const auto* presentation = presentationFor(run.id);
+        if (presentation != nullptr && !presentation->visible) continue;
+        const auto colour = juce::Colour(presentation != nullptr
+            ? presentation->colour
+            : curveColours[index % curveColours.size()]);
+        g.setColour(juce::Colour(0xcc111817));
+        g.fillRoundedRectangle(legendX - 4.0F, legendY - 1.0F,
+            std::min(310.0F, plot.getWidth() * 0.48F), 17.0F, 3.0F);
+        g.setColour(colour);
+        g.drawLine(legendX, legendY + 7.0F,
+            legendX + 22.0F, legendY + 7.0F,
+            static_cast<int>(index) == selectedRun ? 3.0F : 2.0F);
+        g.setFont(juce::FontOptions(10.5F,
+            static_cast<int>(index) == selectedRun
+                ? juce::Font::bold : juce::Font::plain));
+        g.drawFittedText(presentation != nullptr
+                ? presentation->name
+                : juce::String::fromUTF8(run.engineName.c_str()),
+            juce::Rectangle<float>(legendX + 28.0F, legendY,
+                std::min(276.0F, plot.getWidth() * 0.44F), 15.0F)
+                .toNearestInt(),
+            juce::Justification::centredLeft, 1);
+        legendY += 18.0F;
+        ++legendRows;
+    }
     g.setColour(juce::Colour(0xff80908a)); g.setFont(10.0F);
     for (int grid = 0; grid <= 4; ++grid) {
         const auto x = plot.getX() + plot.getWidth() * static_cast<float>(grid) / 4.0F;
@@ -2031,6 +2211,68 @@ void MainComponent::drawDynoChart(juce::Graphics& g, juce::Rectangle<float> area
     }
     g.drawText("Corrigé · Nm axe G (foncé) · kW axe D (clair)",
                juce::Rectangle<float>(plot.getX(), plot.getBottom() + 18.0F, plot.getWidth(), 18.0F), juce::Justification::centred);
+    const auto mouse = getMouseXYRelative().toFloat();
+    if (plot.contains(mouse)) {
+        const DynoPoint* nearestPoint = nullptr;
+        juce::String nearestName;
+        auto nearestColour = juce::Colour(0xffffffff);
+        auto nearestDistance = std::numeric_limits<float>::max();
+        const auto consider = [&](const DynoRun& run,
+                                  const juce::String& name,
+                                  juce::Colour colour) {
+            for (const auto& point : run.points) {
+                if (!point.valid) continue;
+                const auto x = plot.getX()
+                    + static_cast<float>(point.rpm / maxRpm)
+                        * plot.getWidth();
+                const auto distance = std::abs(mouse.x - x);
+                if (distance < nearestDistance) {
+                    nearestDistance = distance;
+                    nearestPoint = &point;
+                    nearestName = name;
+                    nearestColour = colour;
+                }
+            }
+        };
+        for (std::size_t index = 0; index < archivedRuns_.size(); ++index) {
+            const auto& run = archivedRuns_[index];
+            const auto* presentation = presentationFor(run.id);
+            if (presentation != nullptr && !presentation->visible) continue;
+            consider(run,
+                presentation != nullptr ? presentation->name
+                    : juce::String::fromUTF8(run.engineName.c_str()),
+                juce::Colour(presentation != nullptr
+                    ? presentation->colour
+                    : curveColours[index % curveColours.size()]));
+        }
+        consider(visibleCurrentRun_, utf8("MESURE EN COURS"),
+            juce::Colour(0xffffffff));
+        if (nearestPoint != nullptr && nearestDistance <= 14.0F) {
+            const auto torque = nearestPoint->correctedTorqueNm > 0.0
+                ? nearestPoint->correctedTorqueNm : nearestPoint->torqueNm;
+            const auto power = nearestPoint->correctedPowerKw > 0.0
+                ? nearestPoint->correctedPowerKw : nearestPoint->powerKw;
+            auto text = nearestName + "\n"
+                + juce::String(nearestPoint->rpm, 0) + " tr/min  ·  "
+                + juce::String(torque, 1) + " Nm  ·  "
+                + juce::String(power, 1) + " kW\n"
+                + (nearestPoint->airFuelRatioValid
+                    ? "AFR " + juce::String(nearestPoint->airFuelRatio, 2)
+                        + " / cible "
+                        + juce::String(nearestPoint->targetAirFuelRatio, 2)
+                    : utf8("AFR — mesure invalide"));
+            auto tooltip = juce::Rectangle<float>(
+                std::min(mouse.x + 12.0F, plot.getRight() - 270.0F),
+                std::max(plot.getY(), mouse.y - 58.0F), 270.0F, 54.0F);
+            g.setColour(juce::Colour(0xee0b1110));
+            g.fillRoundedRectangle(tooltip, 5.0F);
+            g.setColour(nearestColour);
+            g.drawRoundedRectangle(tooltip, 5.0F, 1.5F);
+            g.setFont(juce::FontOptions(11.0F));
+            g.drawFittedText(text, tooltip.reduced(7.0F).toNearestInt(),
+                juce::Justification::centredLeft, 3);
+        }
+    }
     if (visibleState_.dynoHoldEnabled) {
         const auto holdX = plot.getX() + static_cast<float>(visibleState_.dynoHoldRpm / maxRpm) * plot.getWidth();
         g.setColour(juce::Colour(0xff79b89f).withAlpha(0.75F));
@@ -2070,6 +2312,15 @@ void MainComponent::resized() {
     }
     controls.removeFromTop(compact ? 4 : 12);
     historySelector_.setBounds(controls.removeFromTop(compact ? 30 : 34)); controls.removeFromTop(compact ? 4 : 6);
-    deleteRunButton_.setBounds(controls.removeFromTop(compact ? 30 : 34));
+    runNameEditor_.setBounds(controls.removeFromTop(compact ? 28 : 32));
+    controls.removeFromTop(compact ? 4 : 6);
+    auto curveButtons = controls.removeFromTop(compact ? 30 : 34);
+    const auto buttonGap = 4;
+    const auto third = (curveButtons.getWidth() - buttonGap * 2) / 3;
+    runColourButton_.setBounds(curveButtons.removeFromLeft(third));
+    curveButtons.removeFromLeft(buttonGap);
+    runVisibilityButton_.setBounds(curveButtons.removeFromLeft(third));
+    curveButtons.removeFromLeft(buttonGap);
+    deleteRunButton_.setBounds(curveButtons);
 }
 } // namespace enginelab

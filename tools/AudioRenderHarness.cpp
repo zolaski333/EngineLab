@@ -77,6 +77,10 @@ EngineSimulatorOptions renderSimulatorOptions;
 // Render chunk size within each simulation step; see the invariance probe at
 // the render call. 200 reproduces the historical single-call behaviour.
 int audioChunkSamples = 200;
+// Diagnostic callback suspension used to verify discontinuity recovery. Zero
+// is the production-path measurement; non-zero sleeps once during the runtime
+// check and deliberately emulates an audio device/host stall.
+int runtimeDiagnosticStallMilliseconds = 0;
 // Starter release ends at 1.1 s and the dyno controller starts at 1.2 s. The
 // slowest catalogue charge path (EA288 diesel) still crosses the final 2-3 s
 // window with an intake filling transient, whose single peak gives a false
@@ -1523,7 +1527,14 @@ bool runtimePathCheck(const EngineConfig& baseConfig, const WavData& ir,
     // runtime's wall-clock telemetry, and produce a starvation artefact
     // belonging to this harness rather than to the application.
     const auto startTime = std::chrono::steady_clock::now();
+    auto diagnosticStallInjected = false;
     while (rendered < 6.0) {
+        if (!diagnosticStallInjected && runtimeDiagnosticStallMilliseconds > 0
+            && rendered > 4.0) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(
+                runtimeDiagnosticStallMilliseconds));
+            diagnosticStallInjected = true;
+        }
         if (rendered > 1.5) runtime->setStarterEngaged(false);
         if (rendered > 3.0) runtime->setThrottle(0.5);
         block.clear();
@@ -1584,6 +1595,14 @@ bool runtimePathCheck(const EngineConfig& baseConfig, const WavData& ir,
               << " peak=" << peak
               << " observerPeak=" << std::setprecision(1)
               << renderer->maxObservedExhaustPressurePa() << " Pa"
+              << " valveSource="
+              << renderer->maxThermoacousticValveSourcePressurePa() << " Pa"
+              << " pressureWave="
+              << renderer->maxObservedExhaustPressureWavePa() << " Pa"
+              << " jet="
+              << renderer->maxObservedExhaustJetNoisePressurePa() << " Pa"
+              << " reactionLimited="
+              << renderer->reactionPressureLimitedSampleCount()
               << " intakePeak=" << renderer->maxObservedIntakePressurePa() << " Pa"
               << " structurePeak=" << renderer->maxObservedStructuralPressurePa() << " Pa"
               << " preLimiter=" << std::setprecision(3)
@@ -1594,6 +1613,9 @@ bool runtimePathCheck(const EngineConfig& baseConfig, const WavData& ir,
               << " hardClamp=" << renderer->hardClampedSampleCount()
               << " minLevelGain=" << renderer->minObservedLevelGain()
               << " droppedPressure=" << runtime->droppedPressureSampleCount()
+              << " largeClockDrifts=" << renderer->largeForwardClockDriftCount()
+              << " maxClockDrift=" << std::setprecision(2)
+              << renderer->maximumForwardClockDriftSeconds() * 1.0e3 << "ms"
               << '\n'
               << "  " << std::setw(26) << " "
               << " callback mean=" << std::setprecision(1) << renderMean << "us"
@@ -1663,6 +1685,7 @@ int main(int argc, char** argv) {
     std::filesystem::path irPath = std::filesystem::path(ENGINELAB_CATALOG_ROOT) / "assets" / "ir" / "exhaust_default.wav";
     bool idleOnly = false;
     bool transientOnly = false;
+    bool runtimeOnly = false;
     std::string referenceFilter;
     std::string catalogueFilter;
     std::string runtimeFilter;
@@ -1680,6 +1703,7 @@ int main(int argc, char** argv) {
         else if (a == "--ir" && i + 1 < argc) irPath = argv[++i];
         else if (a == "--idle-only") idleOnly = true;
         else if (a == "--transient-only") transientOnly = true;
+        else if (a == "--runtime-only") runtimeOnly = true;
         else if (a == "--reference-filter" && i + 1 < argc)
             referenceFilter = argv[++i];
         else if (a == "--catalogue-filter" && i + 1 < argc)
@@ -1707,6 +1731,8 @@ int main(int argc, char** argv) {
         else if (a == "--mute-intake") muteIntakeLayer = true;
         else if (a == "--audio-chunk" && i + 1 < argc)
             audioChunkSamples = std::clamp(std::atoi(argv[++i]), 1, 200);
+        else if (a == "--runtime-stall-ms" && i + 1 < argc)
+            runtimeDiagnosticStallMilliseconds = std::max(0, std::atoi(argv[++i]));
     }
     std::filesystem::create_directories(outDir);
 
@@ -2298,6 +2324,7 @@ int main(int argc, char** argv) {
             runtimePathOk = false;
         }
     }
+    if (runtimeOnly) return runtimePathOk ? 0 : 1;
 
     std::cout << "\n--- Per-engine render (3.0 s) ---\n";
     std::vector<Metrics> metrics;

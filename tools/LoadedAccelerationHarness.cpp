@@ -40,6 +40,7 @@ struct CyclePoint final {
     double torqueNm {};
     double afr {};
     double targetAfr {};
+    bool afrValid {};
     double deliveredFuelRatio {};
     double misfireRate {};
     bool clutchUnlocked {};
@@ -72,13 +73,35 @@ struct RunMetrics final {
     double minimumTorqueRatio { 1.0 };
     double firstSurgeRpm {};
     double maximumAfrError {};
+    double maximumHighRpmAfrError {};
+    double afrErrorSum {};
+    double minimumObservedAfr { std::numeric_limits<double>::infinity() };
     double minimumFuelDeliveryRatio { 1.0 };
+    double minimumInjectorCapacityRatio { 1.0 };
     double maximumMisfireRate {};
+    double misfireRateSum {};
+    std::uint64_t preLimiterMisfireEvents {};
+    std::size_t validAfrFrames {};
+    std::size_t invalidAfrFrames {};
     double maximumExhaustBackPressureKpa {};
     std::size_t preLimiterFuelCutFrames {};
     std::size_t preLimiterSparkCutFrames {};
     std::size_t preLimiterClutchSlipFrames {};
     std::size_t solverLimitedFrames {};
+    bool dfcoTipInRequested {};
+    bool dfcoObserved {};
+    bool postDfcoAfrRecovered {};
+    double preDfcoWarmIdleRpm {};
+    double preDfcoLiftRpm {};
+    double postDfcoLiftRpm {};
+    double postDfcoTimeToValidSeconds {};
+    double postDfcoMaximumAfrError {};
+    double postDfcoMinimumAfr { std::numeric_limits<double>::infinity() };
+    double postDfcoMaximumMisfireRate {};
+    std::uint64_t postDfcoCommandedSparkEvents {};
+    std::uint64_t postDfcoMisfireEvents {};
+    double postDfcoLastMisfireAfr {};
+    double postDfcoLastMisfireTimeSeconds {};
     std::vector<SurgeEvent> surges;
 };
 
@@ -179,7 +202,7 @@ void detectSurges(const std::vector<CyclePoint>& cycles,
 RunMetrics measureAcceleration(
     enginelab::EngineConfig config, int gearNumber,
     const std::optional<std::filesystem::path>& csvDirectory,
-    bool traceEvents) {
+    bool traceEvents, bool dfcoTipIn) {
     config.transmission.automaticShifting = false;
     // The product currently keeps the optional grip limiter disabled so the
     // user can load engines without a traction constraint. The diagnostic must
@@ -197,6 +220,7 @@ RunMetrics measureAcceleration(
     RunMetrics metrics;
     metrics.name = config.name;
     metrics.requestedGearNumber = gearNumber;
+    metrics.dfcoTipInRequested = dfcoTipIn;
     const auto gearIndex = gearNumber - 1;
     if (gearIndex < 0
         || gearIndex >= static_cast<int>(config.transmission.gearRatios.size()))
@@ -226,6 +250,191 @@ RunMetrics measureAcceleration(
         (void)coupledStep(simulator, driveline, 1.0, clutch, false);
     }
 
+    if (dfcoTipIn) {
+        // Test an actual running-engine overrun, not the ECU's protected
+        // after-start flare. Launch first while the car is rolling, then hold a
+        // moderate loaded speed for twice the longest cold after-start decay.
+        // Waiting in neutral made this a second-gear standing-start test and
+        // stalled the 2JZ/EJ25 before DFCO could even be exercised.
+        const auto warmTargetRpm = std::min(
+            config.ignition.revLimitRpm - 2'000.0,
+            std::max(config.idleRpm * 3.0,
+                config.forcedInduction.fullBoostRpm - 500.0));
+        for (int tick = 0;
+             tick < static_cast<int>(12.0 / stepSeconds);
+             ++tick, timeSeconds += stepSeconds) {
+            const auto throttle = std::clamp(
+                0.18 + (warmTargetRpm - simulator.state().rpm) / 2'000.0,
+                0.0, 0.60);
+            (void)coupledStep(simulator, driveline, throttle, 1.0, false);
+        }
+        metrics.preDfcoWarmIdleRpm = simulator.state().rpm;
+        const auto targetRpm = std::min(
+            config.ignition.revLimitRpm - 1'200.0,
+            std::max(config.forcedInduction.fullBoostRpm + 500.0,
+                config.idleRpm * 2.5));
+        for (int tick = 0;
+             tick < static_cast<int>(6.0 / stepSeconds)
+                && simulator.state().rpm < targetRpm;
+             ++tick, timeSeconds += stepSeconds) {
+            (void)coupledStep(simulator, driveline, 1.0, 1.0, false);
+        }
+        metrics.preDfcoLiftRpm = simulator.state().rpm;
+        for (int tick = 0;
+             tick < static_cast<int>(1.2 / stepSeconds);
+             ++tick, timeSeconds += stepSeconds) {
+            const auto result = coupledStep(
+                simulator, driveline, 0.0, 1.0, false);
+            metrics.dfcoObserved = metrics.dfcoObserved
+                || result.frame.state.ecuDecelerationFuelCutActive
+                || !result.frame.state.ecuFuelEnabled;
+        }
+        metrics.postDfcoLiftRpm = simulator.state().rpm;
+        auto observableCommandedSparkEventsAtStart = std::uint64_t { 0 };
+        auto observableMisfireEventsAtStart = std::uint64_t { 0 };
+        auto lastObservedMisfireEvents = std::uint64_t { 0 };
+        auto validStart = -1.0;
+        for (int tick = 0;
+             tick < static_cast<int>(2.0 / stepSeconds);
+             ++tick, timeSeconds += stepSeconds) {
+            const auto result = coupledStep(
+                simulator, driveline, 1.0, 1.0, false);
+            const auto& state = result.frame.state;
+            const auto elapsed = static_cast<double>(tick) * stepSeconds;
+            if (validStart >= 0.0
+                    && (!state.airFuelRatioValid
+                        || !state.ecuFuelEnabled || !state.ecuSparkEnabled
+                        || state.ecuSoftRevLimiterActive
+                        || state.ecuHardRevLimiterActive))
+                break;
+            if (traceEvents && !state.airFuelRatioValid && tick % 2 == 0) {
+                std::printf(
+                    "    tip-in t=%.3f AFR=invalid lastMisfireAFR=%.2f "
+                    "misfireEvents=%llu\n",
+                    elapsed, state.lastMisfireAirFuelRatio,
+                    static_cast<unsigned long long>(state.misfireEventCount));
+                for (std::size_t cylinder = 0;
+                     cylinder < state.cylinderStateCount; ++cylinder) {
+                    const auto& cylinderState = state.cylinderStates[cylinder];
+                    std::printf(
+                        "      c%zu phase=%6.1f command=%s AFR=%s%6.2f "
+                        "request=%6.2fmg delivered=%6.2fmg\n",
+                        cylinder, cylinderState.cyclePhaseDegrees,
+                        cylinderState.combustionCommandAvailable ? "yes" : "cut",
+                        cylinderState.airFuelRatioValid ? "" : "invalid/",
+                        cylinderState.airFuelRatio,
+                        cylinderState.requestedFuelMgPerCycle,
+                        cylinderState.deliveredFuelMgPerCycle);
+                }
+            }
+            if (!state.airFuelRatioValid) continue;
+            if (validStart < 0.0) {
+                validStart = elapsed;
+                metrics.postDfcoTimeToValidSeconds = elapsed;
+                observableCommandedSparkEventsAtStart =
+                    state.commandedSparkEventCount;
+                observableMisfireEventsAtStart = state.misfireEventCount;
+                lastObservedMisfireEvents = state.misfireEventCount;
+            }
+            const auto error = std::abs(state.airFuelRatio
+                - state.targetAirFuelRatio)
+                / std::max(1.0, state.targetAirFuelRatio);
+            metrics.postDfcoMaximumAfrError = std::max(
+                metrics.postDfcoMaximumAfrError, error);
+            metrics.postDfcoMinimumAfr = std::min(
+                metrics.postDfcoMinimumAfr, state.airFuelRatio);
+            metrics.postDfcoMaximumMisfireRate = std::max(
+                metrics.postDfcoMaximumMisfireRate,
+                state.misfireRate);
+            metrics.postDfcoCommandedSparkEvents =
+                state.commandedSparkEventCount
+                    - observableCommandedSparkEventsAtStart;
+            metrics.postDfcoMisfireEvents = state.misfireEventCount
+                - observableMisfireEventsAtStart;
+            if (traceEvents
+                    && state.misfireEventCount > lastObservedMisfireEvents) {
+                std::printf(
+                    "    NEW post-DFCO misfire t=%.3f rpm=%.0f AFR=%.3f "
+                    "target=%.3f lastCylinderAFR=%.3f events=%llu (+%llu)\n",
+                    elapsed, state.rpm, state.airFuelRatio,
+                    state.targetAirFuelRatio, state.lastMisfireAirFuelRatio,
+                    static_cast<unsigned long long>(metrics.postDfcoMisfireEvents),
+                    static_cast<unsigned long long>(state.misfireEventCount
+                        - lastObservedMisfireEvents));
+                for (std::size_t cylinder = 0;
+                     cylinder < state.cylinderStateCount; ++cylinder) {
+                    const auto& cylinderState = state.cylinderStates[cylinder];
+                    std::printf(
+                        "      c%zu%s phase=%6.1f air=%6.1fmg request=%6.2fmg "
+                        "metered=%6.2fmg delivered=%6.2fmg portV=%5.2fmg "
+                        "local=%5.2f/%5.2fmg film=%5.2fmg AFR=%s%6.2f "
+                        "phi=%5.2f trim=%5.3f\n",
+                        cylinder, cylinderState.misfiring ? " MISFIRE" : "",
+                        cylinderState.cyclePhaseDegrees,
+                        cylinderState.trappedFreshAirMassMg,
+                        cylinderState.requestedFuelMgPerCycle,
+                        cylinderState.meteredFuelMgPerCycle,
+                        cylinderState.deliveredFuelMgPerCycle,
+                        cylinderState.portFuelVapourInventoryMg,
+                        cylinderState.portInjectorFootprintFuelMg,
+                        cylinderState.portInjectorFootprintTargetFuelMg,
+                        cylinderState.portLiquidFilmFuelMg,
+                        cylinderState.airFuelRatioValid ? "" : "invalid/",
+                        cylinderState.airFuelRatio,
+                        cylinderState.equivalenceRatioAtSpark,
+                        cylinderState.closedLoopFuelTrim);
+                }
+            }
+            lastObservedMisfireEvents = state.misfireEventCount;
+            const auto traceStride = elapsed <= 0.25 ? 6 : 24;
+            if (traceEvents && tick % traceStride == 0) {
+                std::printf(
+                    "    tip-in t=%.3f rpm=%.0f MAP=%.1fkPa AFR=%s%.3f target=%.3f "
+                    "fuel=%s dfco=%s misfire=%.1f%% events=%llu\n",
+                    elapsed, state.rpm, state.manifoldPressureKpa,
+                    state.airFuelRatioValid ? "" : "invalid/",
+                    state.airFuelRatio,
+                    state.targetAirFuelRatio,
+                    state.ecuFuelEnabled ? "on" : "OFF",
+                    state.ecuDecelerationFuelCutActive ? "on" : "off",
+                    state.misfireRate * 100.0,
+                    static_cast<unsigned long long>(state.misfireEventCount
+                        - observableMisfireEventsAtStart));
+                if (elapsed <= 0.25 || elapsed >= 1.89) {
+                    for (std::size_t cylinder = 0;
+                         cylinder < state.cylinderStateCount; ++cylinder) {
+                        const auto& cylinderState =
+                            state.cylinderStates[cylinder];
+                        std::printf(
+                            "      c%zu phase=%6.1f air=%6.1fmg request=%6.2fmg "
+                            "metered=%6.2fmg delivered=%6.2fmg "
+                            "portV=%5.2fmg local=%5.2f/%5.2fmg film=%5.2fmg AFR=%s%6.2f "
+                            "phi=%5.2f trim=%5.3f duty=%5.1f%%\n",
+                            cylinder,
+                            cylinderState.cyclePhaseDegrees,
+                            cylinderState.trappedFreshAirMassMg,
+                            cylinderState.requestedFuelMgPerCycle,
+                            cylinderState.meteredFuelMgPerCycle,
+                            cylinderState.deliveredFuelMgPerCycle,
+                            cylinderState.portFuelVapourInventoryMg,
+                            cylinderState.portInjectorFootprintFuelMg,
+                            cylinderState.portInjectorFootprintTargetFuelMg,
+                            cylinderState.portLiquidFilmFuelMg,
+                            cylinderState.airFuelRatioValid ? "" : "invalid/",
+                            cylinderState.airFuelRatio,
+                            cylinderState.equivalenceRatioAtSpark,
+                            cylinderState.closedLoopFuelTrim,
+                            cylinderState.injectorDutyCycle * 100.0);
+                    }
+                }
+            }
+        }
+        metrics.postDfcoLastMisfireAfr = simulator.state().lastMisfireAirFuelRatio;
+        metrics.postDfcoLastMisfireTimeSeconds =
+            simulator.state().lastMisfireTimeSeconds;
+        metrics.postDfcoAfrRecovered = validStart >= 0.0;
+    }
+
     std::ofstream csv;
     if (csvDirectory) {
         std::filesystem::create_directories(*csvDirectory);
@@ -239,7 +448,7 @@ RunMetrics measureAcceleration(
                "net_torque_nm,driveline_reaction_nm,coupling_torque_nm,"
                "reflected_inertia_kg_m2,clutch_torque_nm,"
                "clutch_slip_rpm,torque_cut,throttle,map_kpa,boost_pr,"
-               "exhaust_backpressure_kpa,afr,target_afr,lambda,"
+               "exhaust_backpressure_kpa,afr,afr_valid,target_afr,lambda,"
                "injected_fuel_mg,delivered_fuel_mg,fuel_delivery_ratio,"
                "fuel_correction,misfire_rate,fuel_enabled,spark_enabled,"
                "soft_limiter,hard_limiter,alternating_spark_cut,dfco,"
@@ -250,8 +459,10 @@ RunMetrics measureAcceleration(
                 << ",c" << cylinder << "_residual"
                 << ",c" << cylinder << "_phi_at_spark"
                 << ",c" << cylinder << "_injector_capacity"
+                << ",c" << cylinder << "_injector_duty"
                 << ",c" << cylinder << "_fuel_delivery_ratio"
                 << ",c" << cylinder << "_afr"
+                << ",c" << cylinder << "_afr_valid"
                 << ",c" << cylinder << "_misfire"
                 << ",c" << cylinder << "_spark_events"
                 << ",c" << cylinder << "_ignition_events"
@@ -265,6 +476,8 @@ RunMetrics measureAcceleration(
     cycles.reserve(256);
     auto previousAngle = simulator.state().crankAngleDegrees;
     auto limiterSeconds = 0.0;
+    auto scanMisfireEventsAtStart = std::uint64_t { 0 };
+    auto lastObservedMisfireEvents = simulator.state().misfireEventCount;
     const auto scanStartRpm = std::max(
         config.idleRpm * 1.5, config.ignition.revLimitRpm - 3'500.0);
     const auto lockBandRpm = std::max(
@@ -275,12 +488,52 @@ RunMetrics measureAcceleration(
         const auto result = coupledStep(
             simulator, driveline, 1.0, 1.0, false);
         const auto& state = result.frame.state;
+        if (traceEvents
+                && state.misfireEventCount != lastObservedMisfireEvents) {
+            std::printf(
+                "    NEW physical misfire t=%.3f rpm=%.0f MAP=%.1fkPa "
+                "engineAFR=%s%.3f target=%.3f events=%llu (+%llu)\n",
+                timeSeconds, state.rpm, state.manifoldPressureKpa,
+                state.airFuelRatioValid ? "" : "invalid/",
+                state.airFuelRatio, state.targetAirFuelRatio,
+                static_cast<unsigned long long>(state.misfireEventCount),
+                static_cast<unsigned long long>(state.misfireEventCount
+                    - lastObservedMisfireEvents));
+            for (std::size_t cylinder = 0;
+                 cylinder < state.cylinderStateCount; ++cylinder) {
+                const auto& cylinderState = state.cylinderStates[cylinder];
+                if (!cylinderState.misfiring) continue;
+                std::printf(
+                    "      c%zu phase=%6.1f trappedAir=%6.1fmg request=%6.2fmg "
+                    "metered=%6.2fmg delivered=%6.2fmg "
+                    "portV=%5.2fmg local=%5.2f/%5.2fmg film=%5.2fmg "
+                    "AFR=%s%6.2f lastPhi=%5.2f trim=%5.3f "
+                    "duty=%5.1f%% capacity=%5.1f%%\n",
+                    cylinder, cylinderState.cyclePhaseDegrees,
+                    cylinderState.trappedFreshAirMassMg,
+                    cylinderState.requestedFuelMgPerCycle,
+                    cylinderState.meteredFuelMgPerCycle,
+                    cylinderState.deliveredFuelMgPerCycle,
+                    cylinderState.portFuelVapourInventoryMg,
+                    cylinderState.portInjectorFootprintFuelMg,
+                    cylinderState.portInjectorFootprintTargetFuelMg,
+                    cylinderState.portLiquidFilmFuelMg,
+                    cylinderState.airFuelRatioValid ? "" : "invalid/",
+                    cylinderState.airFuelRatio,
+                    cylinderState.equivalenceRatioAtSpark,
+                    cylinderState.closedLoopFuelTrim,
+                    cylinderState.injectorDutyCycle * 100.0,
+                    cylinderState.injectorCapacityRatio * 100.0);
+            }
+            lastObservedMisfireEvents = state.misfireEventCount;
+        }
         const auto deliveryRatio = state.injectedFuelMgPerCycle > 1.0e-9
             ? state.deliveredFuelMgPerCycle / state.injectedFuelMgPerCycle
             : 1.0;
-        const auto afrError = std::abs(state.airFuelRatio
-            - state.targetAirFuelRatio)
-            / std::max(1.0, state.targetAirFuelRatio);
+        const auto afrError = state.airFuelRatioValid
+            ? std::abs(state.airFuelRatio - state.targetAirFuelRatio)
+                / std::max(1.0, state.targetAirFuelRatio)
+            : 0.0;
         const auto lockedInRequestedGear =
             result.drive.engagedGear == gearIndex
             && !result.drive.shiftInProgress
@@ -291,16 +544,49 @@ RunMetrics measureAcceleration(
         const auto inScan = result.drive.engagedGear == gearIndex
             && !result.drive.shiftInProgress
             && state.rpm >= scanStartRpm;
+        const auto preLimiterScan = inScan
+            && state.rpm < config.ignition.revLimitRpm - 300.0
+            && !state.ecuSoftRevLimiterActive
+            && !state.ecuHardRevLimiterActive;
         if (inScan) {
-            if (!metrics.scanWindowReached)
+            if (!metrics.scanWindowReached) {
                 metrics.minimumScanRpm = state.rpm;
+                scanMisfireEventsAtStart = state.misfireEventCount;
+            }
             metrics.scanWindowReached = true;
-            metrics.maximumAfrError = std::max(
-                metrics.maximumAfrError, afrError);
-            metrics.minimumFuelDeliveryRatio = std::min(
-                metrics.minimumFuelDeliveryRatio, deliveryRatio);
-            metrics.maximumMisfireRate = std::max(
-                metrics.maximumMisfireRate, state.misfireRate);
+            if (preLimiterScan) {
+                if (state.airFuelRatioValid) {
+                    ++metrics.validAfrFrames;
+                    metrics.minimumObservedAfr = std::min(
+                        metrics.minimumObservedAfr, state.airFuelRatio);
+                    metrics.maximumAfrError = std::max(
+                        metrics.maximumAfrError, afrError);
+                    metrics.afrErrorSum += afrError;
+                    const auto highRpmThreshold = std::max(
+                        config.forcedInduction.fullBoostRpm + 500.0,
+                        config.ignition.revLimitRpm - 1'800.0);
+                    if (state.rpm >= highRpmThreshold) {
+                        metrics.maximumHighRpmAfrError = std::max(
+                            metrics.maximumHighRpmAfrError, afrError);
+                    }
+                } else {
+                    ++metrics.invalidAfrFrames;
+                }
+                metrics.minimumFuelDeliveryRatio = std::min(
+                    metrics.minimumFuelDeliveryRatio, deliveryRatio);
+                for (std::size_t cylinder = 0;
+                     cylinder < state.cylinderStateCount; ++cylinder) {
+                    metrics.minimumInjectorCapacityRatio = std::min(
+                        metrics.minimumInjectorCapacityRatio,
+                        state.cylinderStates[cylinder]
+                            .injectorCapacityRatio);
+                }
+                metrics.maximumMisfireRate = std::max(
+                    metrics.maximumMisfireRate, state.misfireRate);
+                metrics.misfireRateSum += state.misfireRate;
+                metrics.preLimiterMisfireEvents = state.misfireEventCount
+                    - scanMisfireEventsAtStart;
+            }
             metrics.maximumExhaustBackPressureKpa = std::max(
                 metrics.maximumExhaustBackPressureKpa,
                 state.exhaustBackPressureKpa);
@@ -329,7 +615,8 @@ RunMetrics measureAcceleration(
                 << state.throttle << ',' << state.manifoldPressureKpa << ','
                 << state.boostPressureRatio << ','
                 << state.exhaustBackPressureKpa << ','
-                << state.airFuelRatio << ',' << state.targetAirFuelRatio << ','
+                << state.airFuelRatio << ',' << state.airFuelRatioValid << ','
+                << state.targetAirFuelRatio << ','
                 << state.lambda << ',' << state.injectedFuelMgPerCycle << ','
                 << state.deliveredFuelMgPerCycle << ',' << deliveryRatio << ','
                 << state.ecuFuelCorrection << ',' << state.misfireRate << ','
@@ -348,15 +635,17 @@ RunMetrics measureAcceleration(
                         << ',' << cylinderState.residualGasFractionAtSpark
                         << ',' << cylinderState.equivalenceRatioAtSpark
                         << ',' << cylinderState.injectorCapacityRatio
+                        << ',' << cylinderState.injectorDutyCycle
                         << ',' << cylinderState.fuelDeliveryRatio
                         << ',' << cylinderState.airFuelRatio
+                        << ',' << cylinderState.airFuelRatioValid
                         << ',' << cylinderState.misfiring
                         << ',' << cylinderState.commandedSparkEventsLastCycle
                         << ',' << cylinderState.completedIgnitionEventsLastCycle
                         << ',' << cylinderState.commandedSparkPhaseLastCycle
                         << ',' << cylinderState.completedIgnitionPhaseLastCycle;
                 } else {
-                    csv << ",,,,,,,,,,,,";
+                    csv << ",,,,,,,,,,,,,,";
                 }
             }
             csv << '\n';
@@ -376,6 +665,7 @@ RunMetrics measureAcceleration(
             point.torqueNm = state.cycleAveragedTorqueNm;
             point.afr = state.airFuelRatio;
             point.targetAfr = state.targetAirFuelRatio;
+            point.afrValid = state.airFuelRatioValid;
             point.deliveredFuelRatio = deliveryRatio;
             point.misfireRate = state.misfireRate;
             point.clutchUnlocked =
@@ -402,6 +692,9 @@ RunMetrics measureAcceleration(
 
     detectSurges(cycles, metrics);
     if (traceEvents) {
+        std::printf("    pre-limiter physical misfire events=%llu\n",
+            static_cast<unsigned long long>(
+                metrics.preLimiterMisfireEvents));
         for (const auto& surge : metrics.surges) {
             std::printf(
                 "    surge @ %.0f rpm: %.1f -> %.1f Nm (%.1f%%), %s\n",
@@ -417,6 +710,7 @@ int main(int argc, char** argv) {
     std::string filter;
     int gearNumber = 2;
     bool traceEvents = false;
+    bool dfcoTipIn = false;
     std::optional<std::filesystem::path> csvDirectory;
     std::filesystem::path catalogRoot = ENGINELAB_CATALOG_ROOT;
     for (int index = 1; index < argc; ++index) {
@@ -430,11 +724,12 @@ int main(int argc, char** argv) {
         else if (argument == "--catalog-root" && index + 1 < argc)
             catalogRoot = argv[++index];
         else if (argument == "--trace") traceEvents = true;
+        else if (argument == "--dfco-tip-in") dfcoTipIn = true;
         else {
             std::cerr
                 << "usage: EngineLabLoadedAccelerationHarness"
                    " [--filter NAME] [--gear 2|3] [--csv-dir DIR]"
-                   " [--catalog-root DIR] [--trace]\n";
+                   " [--catalog-root DIR] [--trace] [--dfco-tip-in]\n";
             return EXIT_FAILURE;
         }
     }
@@ -475,7 +770,7 @@ int main(int argc, char** argv) {
         "fixed-gear WOT acceleration, gear %d (automatic shifts OFF, grip limiter OFF)\n",
         gearNumber);
     std::printf(
-        "  %-32s start gear scan limiter maxRpm surges firstRpm minTq%% afrErr%% fuel%% misfire%% fuelCut sparkCut clutchSlip solver\n",
+        "  %-32s start gear scan limiter maxRpm surges firstRpm minTq%% afrPeak%% afrHigh%% fuel%% injHead%% misfire%% invalidAFR fuelCut sparkCut clutchSlip solver\n",
         "engine");
     auto allRunnable = true;
     for (const auto* entry : selectedEntries) {
@@ -487,9 +782,10 @@ int main(int argc, char** argv) {
         }
         try {
             const auto metrics = measureAcceleration(
-                entry->config, gearNumber, csvDirectory, traceEvents);
+                entry->config, gearNumber, csvDirectory, traceEvents,
+                dfcoTipIn);
             std::printf(
-                "  %-32s %5s %4s %4s %7s %6.0f %6zu %8.0f %6.1f %7.1f %5.1f %8.1f %7zu %8zu %10zu %6zu\n",
+                "  %-32s %5s %4s %4s %7s %6.0f %6zu %8.0f %6.1f %8.1f %8.1f %5.1f %8.1f %8.1f %10zu %7zu %8zu %10zu %6zu\n",
                 metrics.name.c_str(), metrics.started ? "yes" : "NO",
                 metrics.gearEngaged ? "yes" : "NO",
                 metrics.scanWindowReached ? "yes" : "NO",
@@ -498,15 +794,85 @@ int main(int argc, char** argv) {
                 metrics.firstSurgeRpm,
                 metrics.minimumTorqueRatio * 100.0,
                 metrics.maximumAfrError * 100.0,
+                metrics.maximumHighRpmAfrError * 100.0,
                 metrics.minimumFuelDeliveryRatio * 100.0,
+                metrics.minimumInjectorCapacityRatio * 100.0,
                 metrics.maximumMisfireRate * 100.0,
+                metrics.invalidAfrFrames,
                 metrics.preLimiterFuelCutFrames,
                 metrics.preLimiterSparkCutFrames,
                 metrics.preLimiterClutchSlipFrames,
                 metrics.solverLimitedFrames);
-            allRunnable = allRunnable && metrics.started
-                && metrics.gearEngaged && metrics.scanWindowReached
-                && metrics.surges.empty();
+            if (dfcoTipIn) {
+                std::printf(
+                    "    DFCO->WOT: warmIdle=%.0f preLift=%.0f postLift=%.0f "
+                    "cut=%s valid=%s tValid=%.3fs afrPeak=%.1f%% "
+                    "misfirePeak=%.1f%% events=%llu/%llu lastMisfireAFR=%.2f at=%.3fs\n",
+                    metrics.preDfcoWarmIdleRpm,
+                    metrics.preDfcoLiftRpm,
+                    metrics.postDfcoLiftRpm,
+                    metrics.dfcoObserved ? "yes" : "NO",
+                    metrics.postDfcoAfrRecovered ? "yes" : "NO",
+                    metrics.postDfcoTimeToValidSeconds,
+                    metrics.postDfcoMaximumAfrError * 100.0,
+                    metrics.postDfcoMaximumMisfireRate * 100.0,
+                    static_cast<unsigned long long>(metrics.postDfcoMisfireEvents),
+                    static_cast<unsigned long long>(
+                        metrics.postDfcoCommandedSparkEvents),
+                    metrics.postDfcoLastMisfireAfr,
+                    metrics.postDfcoLastMisfireTimeSeconds);
+            }
+            if (metrics.dfcoTipInRequested) {
+                // This mode owns a running overrun/resume scenario. It can
+                // reach the limiter before the later generic scan window (the
+                // 2JZ does), so requiring that unrelated window makes a valid
+                // DFCO result fail with zero-filled steady-pull metrics.
+                const auto postDfcoAfrWithinEnvelope =
+                    entry->config.fuel == enginelab::FuelType::diesel
+                    // Compression ignition controls torque with fuel quantity;
+                    // its healthy resume is intentionally lean and does not
+                    // track the gasoline enrichment map. Guard its rich smoke
+                    // side independently instead of applying a symmetric SI
+                    // target-error band that it can never meaningfully pass.
+                    ? metrics.postDfcoMinimumAfr
+                        >= entry->config.fuelProperties
+                            .stoichiometricAirFuelRatio * 1.05
+                    : metrics.postDfcoMaximumAfrError <= 0.18;
+                allRunnable = allRunnable && metrics.started
+                    && metrics.gearEngaged
+                    && metrics.dfcoObserved
+                    && metrics.postDfcoAfrRecovered
+                    && metrics.postDfcoTimeToValidSeconds <= 0.25
+                        // The WOT target is deliberately richer than
+                        // stoichiometric. An 18 % target-relative envelope is
+                        // still only about lambda 1.04 for the catalogue's
+                        // 12.9:1 resume target; zero physical misfire events is
+                        // required independently below. This rejects the old
+                        // AFR 20-30 lean excursion without pretending a brief
+                        // AFR 15.1 transport transient is a flammability loss.
+                    && postDfcoAfrWithinEnvelope
+                    && metrics.postDfcoMisfireEvents == 0;
+            } else {
+                const auto afrTrackingValid =
+                    entry->config.fuel == enginelab::FuelType::diesel
+                    ? metrics.minimumObservedAfr
+                        >= entry->config.fuelProperties.stoichiometricAirFuelRatio
+                            * 1.10
+                    : metrics.maximumHighRpmAfrError <= 0.12
+                        && metrics.afrErrorSum
+                            / static_cast<double>(metrics.validAfrFrames) <= 0.08;
+                allRunnable = allRunnable && metrics.started
+                    && metrics.gearEngaged && metrics.scanWindowReached
+                    && metrics.surges.empty()
+                    && metrics.validAfrFrames > 0
+                    && metrics.invalidAfrFrames == 0
+                    && afrTrackingValid
+                    && metrics.minimumInjectorCapacityRatio >= 0.10
+                    && metrics.preLimiterMisfireEvents == 0
+                    && metrics.maximumMisfireRate <= 0.10
+                    && metrics.misfireRateSum
+                        / static_cast<double>(metrics.validAfrFrames) <= 0.02;
+            }
         } catch (const std::exception& exception) {
             std::cerr << "FAILED: " << entry->config.name << ": "
                       << exception.what() << '\n';

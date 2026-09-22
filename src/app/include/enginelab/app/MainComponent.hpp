@@ -18,6 +18,7 @@
 #include <array>
 #include <filesystem>
 #include <limits>
+#include <unordered_map>
 
 namespace enginelab {
 /** Desktop presentation layer. It only writes controls and renders snapshots. */
@@ -61,6 +62,8 @@ private:
     void reloadEngine();
     void collectFinishedRuns();
     void updateHistorySelector();
+    void updateDynoPresentationControls();
+    void ensureDynoPresentation(const DynoRun&, std::size_t paletteIndex);
     void setThrottlePreset(double value);
     void updateMomentaryThrottle();
     void toggleDyno();
@@ -99,6 +102,14 @@ private:
     std::shared_ptr<DynoRunArchive> dynoArchive_ {
         std::make_shared<DynoRunArchive>() };
     std::vector<DynoRun> archivedRuns_;
+    struct DynoCurvePresentation final {
+        juce::String name;
+        std::uint32_t colour { 0xffffffffU };
+        bool visible { true };
+    };
+    std::unordered_map<std::uint64_t, DynoCurvePresentation>
+        dynoCurvePresentation_;
+    bool dynoPresentationControlsUpdating_ { false };
     std::vector<Diagnostic> visibleDiagnostics_;
     std::uint64_t visibleDynoArchiveRevision_ {
         std::numeric_limits<std::uint64_t>::max() };
@@ -175,6 +186,9 @@ private:
     juce::TextButton dynoButton_ { "D  LANCER DYNO" };
     juce::ComboBox historySelector_;
     juce::TextButton deleteRunButton_ { "SUPPRIMER COURBE" };
+    juce::TextEditor runNameEditor_;
+    juce::TextButton runColourButton_ { "COULEUR" };
+    juce::TextButton runVisibilityButton_ { "MASQUER" };
     juce::Label throttleLabel_, loadLabel_, afrLabel_, advanceLabel_;
     juce::Slider throttleSlider_, loadSlider_, afrSlider_, advanceSlider_;
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(MainComponent)

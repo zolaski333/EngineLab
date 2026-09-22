@@ -5,6 +5,20 @@
 
 namespace enginelab {
 
+namespace {
+double synchronisationTorqueRelease(double speedMatchedFraction) noexcept {
+    const auto matched = std::clamp(speedMatchedFraction, 0.0, 1.0);
+    const auto smoothMatched = matched * matched * (3.0 - 2.0 * matched);
+    // The clutch is still dissipating kinetic-slip power until it enters the
+    // lock band. Restoring engine torque linearly with the matched-speed
+    // fraction makes combustion torque fight that dissipation through most of
+    // the hand-over. A second smooth stage keeps the intervention dominant
+    // while slip power is material, yet retains zero slope at both endpoints
+    // and returns exactly to the driver's torque at synchronism.
+    return smoothMatched * smoothMatched;
+}
+} // namespace
+
 DrivelineModel::DrivelineModel(const EngineConfig& config) : config_(config) {
     clutchTemperatureC_ = config_.ambientTemperatureC;
     engineInertiaKgM2_ = std::max(0.001, effectiveRotatingInertiaKgM2(config_));
@@ -98,10 +112,8 @@ DrivelineOutput DrivelineModel::advance(double dt, const EngineState& engineStat
                         resyncReferenceSlipRpm_ - lockBandRpm),
                 0.0, 1.0);
             const auto release = 1.0 - remainingSlip;
-            const auto smoothRelease =
-                release * release * (3.0 - 2.0 * release);
             output.torqueCutMultiplier =
-                cutFloor + cutDepth * smoothRelease;
+                cutFloor + cutDepth * synchronisationTorqueRelease(release);
         } else {
             output.torqueCutMultiplier = 1.0 - cutDepth
                 * std::sin(std::numbers::pi
@@ -131,12 +143,11 @@ DrivelineOutput DrivelineModel::advance(double dt, const EngineState& engineStat
                         resyncReferenceSlipRpm_ - lockBandRpm),
                 0.0, 1.0);
             const auto release = 1.0 - remainingSlip;
-            const auto smoothRelease =
-                release * release * (3.0 - 2.0 * release);
             const auto cutDepth = std::clamp(
                 transmission.shiftTorqueCutFraction, 0.0, 1.0);
             output.torqueCutMultiplier =
-                1.0 - cutDepth + cutDepth * smoothRelease;
+                1.0 - cutDepth
+                    + cutDepth * synchronisationTorqueRelease(release);
         }
     }
 

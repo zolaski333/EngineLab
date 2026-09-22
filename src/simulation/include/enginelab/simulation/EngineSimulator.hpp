@@ -137,20 +137,25 @@ private:
     void configurePhysicalIntakeNetworks();
     void configureIntakeWorkerPool();
     [[nodiscard]] RunningState determineRunningState(const EngineControls&) const noexcept;
-    /** Headroom left on the injector's duty cycle for one cylinder, 1 = shut,
-     *  0 = open for the whole 720 deg. The open fraction is measured inside the
-     *  angular window, including the fractional final sub-step, so it is
-     *  scaled by that window's share of the cycle. */
-    [[nodiscard]] double injectorDutyHeadroom(std::size_t cylinderIndex) const noexcept {
+    /** Injector open time divided by the complete 720-degree cycle. */
+    [[nodiscard]] double injectorDutyCycle(std::size_t cylinderIndex) const noexcept {
         const auto windowSubsteps = injectorWindowSubsteps_[cylinderIndex];
-        if (windowSubsteps <= 0.0) return 1.0;
+        if (windowSubsteps <= 0.0) return 0.0;
         const auto windowDegrees = std::fmod(
             config_.injection.endAngleDegrees
                 - config_.injection.startAngleDegrees + 720.0, 720.0);
         const auto openFraction =
             injectorOpenSubsteps_[cylinderIndex] / windowSubsteps;
         return std::clamp(
-            1.0 - openFraction * windowDegrees / 720.0, 0.0, 1.0);
+            openFraction * windowDegrees / 720.0, 0.0, 1.0);
+    }
+    /** Fraction of the authored crank window for which the injector was open. */
+    [[nodiscard]] double injectorWindowUtilisation(
+        std::size_t cylinderIndex) const noexcept {
+        const auto windowSubsteps = injectorWindowSubsteps_[cylinderIndex];
+        if (windowSubsteps <= 0.0) return 0.0;
+        return std::clamp(injectorOpenSubsteps_[cylinderIndex]
+            / windowSubsteps, 0.0, 1.0);
     }
     void accumulateCycleTelemetry(double previousAngleDegrees, double travelledDegrees,
                                   double dtSeconds, double indicatedTorqueNm,
@@ -334,10 +339,33 @@ private:
     std::array<double, 32> meteredFuelMolesLastCycle_ {};
     std::array<double, 32> deliveredFuelMolesLastCycle_ {};
     std::array<double, 32> requestedFuelMolesThisCycle_ {};
+    /** Density-scaled previous charge sampled once at the injector-start edge.
+     *  Resolved chamber oxygen may raise the request later in the intake event,
+     *  but sub-cycle plenum waves must not be peak-detected into pulse width. */
+    std::array<double, 32> predictedPortChargeMassMgThisCycle_ {};
     std::array<double, 32> trappedAirMassMgLastCycle_ {};
     std::array<double, 32> trappedAirSourcePressureKpaLastCycle_ {};
     std::array<double, 32> trappedAirSourceTemperatureKLastCycle_ {};
     std::array<double, 32> actualAfrLastCycle_ {};
+    std::array<double, 32> actualAfrFuelMassMgLastCycle_ {};
+    std::array<bool, 32> actualAfrValidLastCycle_ {};
+    /** Per-cylinder observation state after a DFCO fuel-resume edge.
+     *  `prepared` proves that an injection window has begun in the new epoch;
+     *  until then the next spark cannot be treated as a fresh AFR observation. */
+    std::array<bool, 32> portFuelResumePending_ {};
+    std::array<bool, 32> portFuelResumePrepared_ {};
+    /** First post-cut injection edge owns an unfuelled airflow purge; the next
+     *  edge may prepare a complete synchronised pulse. */
+    std::array<bool, 32> portFuelResumePurgeCycleSeen_ {};
+    std::array<double, 32> portFuelResumeOpenLoopSecondsRemaining_ {};
+    std::array<double, 32> portFuelResumeEpochAgeSeconds_ {};
+    /** Fast, per-cylinder lambda correction owned only by the observable
+     *  post-DFCO transport epoch. It starts at authored unity and converges from
+     *  completed combustion observations without contaminating steady cells. */
+    std::array<double, 32> portFuelResumeFuelTrim_ {};
+    std::array<double, 32> portInjectorFootprintFuelMoles_ {};
+    std::array<double, 32> portInjectorFootprintTargetFuelMoles_ {};
+    std::array<bool, 32> combustionCommandAvailable_ {};
     std::array<double, 32> fuelDeliveryRatio_ {};
     // Largest pulse the injector was asked to deliver this cycle, and the
     // fraction of it that actually metered before the window closed. The latter
@@ -381,13 +409,13 @@ private:
     std::array<double, 32> injectorOpenSubsteps_ {};
     std::array<double, 32> injectorWindowSubsteps_ {};
     std::array<double, 32> injectorCapacityRatio_ {};
+    std::array<double, 32> injectorDutyCycle_ {};
     std::array<double, 32> closedLoopFuelTrim_ {};
     /** Separate high-throttle adaptation cell. A single scalar let a rich WOT
      *  transient erase the low-load correction needed on return to idle. */
     std::array<double, 32> highLoadClosedLoopFuelTrim_ {};
     /** The first transition must be continuous: seed the high-load cell from
      *  the already learned low-load value, then let both regions diverge. */
-    std::array<bool, 32> highLoadClosedLoopFuelTrimSeeded_ {};
     std::array<FlameEvent, 32> flameEvents_ {};
     std::array<CompressionIgnitionState, 32> compressionIgnitionStates_ {};
     std::array<CompressionIgnitionResult, 32> compressionIgnitionResults_ {};
@@ -425,6 +453,7 @@ private:
     std::array<double, 32> completedIgnitionPhaseLastCycle_ {};
     FlamePhysicsModel flamePhysics_ {};
     std::array<bool, 32> cylinderMisfires_ {};
+    bool previousAfrObservationCommandEnabled_ { false };
     std::unique_ptr<gasdynamics::ExhaustGasNetwork> physicalExhaustNetwork_;
     /** Heap-owned scratch keeps the bounded source list out of step()'s large
      * Windows stack frame. */

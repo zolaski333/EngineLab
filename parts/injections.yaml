@@ -1,8 +1,12 @@
 sequential_port:
   mode: port
+  # Meter the pulse before and through the intake event. Capacity comes from
+  # injector size, not from pretending the nozzle remains open for virtually
+  # the entire 720-degree cycle: the latter made port inventory control lag a
+  # DFCO->WOT transition. 16 g/s is roughly a 1,250 cc/min gasoline injector.
   start_angle_deg: 260
   end_angle_deg: 610
-  injector_flow_mg_s: 8000
+  injector_flow_mg_s: 16000
   fuel_temperature_c: 25
   rail_pressure_bar: 4.0
   reference_pressure_bar: 4.0
@@ -15,7 +19,7 @@ high_flow_port:
   mode: port
   start_angle_deg: 250
   end_angle_deg: 620
-  injector_flow_mg_s: 12000
+  injector_flow_mg_s: 18000
   fuel_temperature_c: 25
   rail_pressure_bar: 4.5
   reference_pressure_bar: 4.5

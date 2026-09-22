@@ -67,6 +67,20 @@ public:
         return 0;
     }
 };
+
+class DeliberateFuelCutEcu final : public enginelab::IEcuModel {
+public:
+    [[nodiscard]] enginelab::EcuCommand evaluate(
+        const enginelab::EngineConfig&, const enginelab::EngineState&,
+        const enginelab::EngineControls&) const noexcept override {
+        enginelab::EcuCommand command;
+        command.fuelEnabled = false;
+        command.sparkEnabled = true;
+        command.decelerationFuelCutActive = true;
+        command.lambdaLearningAllowed = false;
+        return command;
+    }
+};
 }
 
 int main() {
@@ -454,6 +468,19 @@ int main() {
         const auto nextFirstTimestamp = catchingUp.mapSimulationTime(2.0, 2.0, 1.0);
         require(previousLastTimestamp <= nextFirstTimestamp,
                 "successive realtime event timestamps must remain monotonic after a late frame");
+        enginelab::CylinderPressureSample physicalCadence;
+        physicalCadence.mechanicalSamplingFrequencyHz = 6'720.0F;
+        require(std::abs(
+                    enginelab::RealtimeEngineAudio::pressureSourceSamplingFrequencyHz(
+                        physicalCadence, 0.033)
+                    - 6'720.0) < 1.0e-6,
+                "wall-clock publication gaps must not retune the physical pressure source");
+        physicalCadence.mechanicalSamplingFrequencyHz = 0.0F;
+        require(std::abs(
+                    enginelab::RealtimeEngineAudio::pressureSourceSamplingFrequencyHz(
+                        physicalCadence, 0.002)
+                    - 500.0) < 1.0e-6,
+                "legacy pressure producers must retain timestamp-derived cadence");
     }
     {
         enginelab::RealtimeLoadGovernor governor;
@@ -799,6 +826,10 @@ int main() {
                 && dispersed.entrainedMoles < dispersed.vaporisedMoles
                 && std::abs(representedFuel - dispersed.meteredMoles) < 1.0e-15,
                 "direct spray must delay homogeneous fuel availability while conserving every metered mole");
+        require(std::abs(enginelab::FuelInjectionModel::representedDirectFuelMoles(
+                    dispersedState, dispersedCell)
+                    - (fuelBefore + dispersed.meteredMoles)) < 1.0e-15,
+                "direct-injection metering must count liquid spray and dispersing vapour as existing fuel");
 
         enginelab::GasCell coldSprayCell;
         enginelab::GasCell hotSprayCell;
@@ -1031,8 +1062,11 @@ int main() {
         transientState.simulationTimeSeconds += 0.01;
         transientControls.throttle = 0.40;
         const auto tipIn = transientEcu.evaluate(config, transientState, transientControls);
-        require(tipIn.fuelCorrection > 1.8,
-                "tip-in must command a solver-rate-independent transient fuel reserve");
+        require(tipIn.fuelCorrection > 0.98
+                    && tipIn.fuelCorrection < 1.02,
+                "physical wall-film compensation must be the sole tip-in fuel authority");
+        require(!tipIn.lambdaLearningAllowed,
+                "tip-in must suspend closed-loop trim learning while charge transport settles");
         for (int step = 0; step < 300; ++step) {
             transientState.simulationTimeSeconds += 0.01;
             (void)transientEcu.evaluate(config, transientState, transientControls);
@@ -1041,7 +1075,9 @@ int main() {
         const auto settledThrottle = transientEcu.evaluate(
             config, transientState, transientControls);
         require(settledThrottle.fuelCorrection < 1.02,
-                "acceleration fuel reserve must decay back to the steady-state map");
+                "settled tip-in must retain the steady-state fuel command");
+        require(settledThrottle.lambdaLearningAllowed,
+                "closed-loop learning must resume after the tip-in transient settles");
 
         transientState.simulationTimeSeconds += 0.01;
         transientState.rpm = config.idleRpm * 2.0;
@@ -1457,6 +1493,33 @@ int main() {
             [](const auto& cylinder) { return cylinder.indicatedWorkJoulesPerCycle > 0.0
                 && cylinder.intakeResonanceFrequencyHz > 0.0; }),
             "cylinder telemetry must expose P-dV work and runner resonance state");
+
+    {
+        auto fuelCutConfig = enginelab::makeDefaultInlineFour();
+        enginelab::normaliseEngineConfig(fuelCutConfig);
+        DeliberateFuelCutEcu fuelCutEcu;
+        enginelab::SimplifiedGasolinePhysics fuelCutPhysics;
+        enginelab::FourStrokeEventGenerator fuelCutEvents;
+        auto fuelCutExhaust = enginelab::ExhaustGraph::makeForEngine(
+            fuelCutConfig);
+        enginelab::EngineSimulator fuelCutSimulator(fuelCutConfig, fuelCutEcu,
+            fuelCutPhysics, fuelCutEvents, fuelCutExhaust);
+        enginelab::EngineControls motored;
+        motored.ignitionEnabled = true;
+        motored.externalTorqueNm = 80.0;
+        double peakFuelCutMisfireRate = 0.0;
+        for (int step = 0; step < 480; ++step) {
+            if (fuelCutSimulator.state().rpm > 2'000.0)
+                motored.externalTorqueNm = 0.0;
+            const auto frame = fuelCutSimulator.step(1.0 / 240.0, motored);
+            peakFuelCutMisfireRate = std::max(
+                peakFuelCutMisfireRate, frame.state.misfireRate);
+        }
+        require(fuelCutSimulator.state().rpm > 500.0,
+                "motored fuel-cut fixture must rotate through many spark events");
+        require(peakFuelCutMisfireRate < 1.0e-12,
+                "intentional fuel-cut sparks must not be classified as misfires");
+    }
 
     {
         auto overflowConfig = enginelab::makeDefaultInlineTwo();

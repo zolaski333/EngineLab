@@ -19,7 +19,8 @@ bool sameTime(double lhs, double rhs) noexcept {
 }
 
 bool telemetryFinite(const DynoCycleTelemetry& value) noexcept {
-    return std::isfinite(value.airFuelRatio)
+    return value.airFuelRatioValid
+        && std::isfinite(value.airFuelRatio)
         && std::isfinite(value.coolantTemperatureC)
         && std::isfinite(value.exhaustTemperatureC)
         && std::isfinite(value.ignitionAdvanceDegrees)

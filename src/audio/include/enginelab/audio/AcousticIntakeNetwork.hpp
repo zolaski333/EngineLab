@@ -60,6 +60,13 @@ public:
     void reset() noexcept;
     void beginBlock(std::span<const PathBoundary> paths,
                     double acousticTimeScale) noexcept;
+    /** Update gas/throttle targets at the producer interpolation cadence.
+     *
+     * Duct delay and wall-loss fits remain block-rate work in beginBlock();
+     * these lightweight boundary targets may be refreshed for every sample so
+     * the physical result cannot depend on the host callback size.
+     */
+    void updateBoundaryTargets(std::span<const PathBoundary> paths) noexcept;
 
     /** Return inlet pressure at both microphones per intake path, Pa. */
     [[nodiscard]] std::array<StereoPressure, maximumPaths> process(

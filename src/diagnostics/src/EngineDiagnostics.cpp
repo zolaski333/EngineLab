@@ -16,45 +16,37 @@ std::vector<Diagnostic> EngineDiagnostics::evaluate(const EngineConfig& config, 
         // load is normal and is not the gasoline lean-fault this diagnostic
         // historically reported. Its AFR command is instead a rich-side smoke
         // floor. Allow a small cycle/telemetry lag before reporting a breach.
-        if (state.load > 0.55 && state.airFuelRatio > 1.0
+        if (state.airFuelRatioValid && state.load > 0.55
+                && state.airFuelRatio > 1.0
                 && state.airFuelRatio < state.targetAirFuelRatio * 0.97) {
             result.push_back({ DiagnosticSeverity::warning,
                 "combustion.diesel_smoke_limit",
                 "Richesse Diesel au-dela de la limite fumee : reduisez la quantite injectee." });
         }
     } else {
-        if (state.load > 0.55 && state.lambda > 1.03)
+        if (state.airFuelRatioValid && state.load > 0.55
+                && state.lambda > 1.03)
             result.push_back({ DiagnosticSeverity::critical, "combustion.lean", "Melange trop pauvre sous charge." });
-        if (state.lambda < 0.74)
+        if (state.airFuelRatioValid && state.lambda < 0.74)
             result.push_back({ DiagnosticSeverity::warning, "combustion.rich", "Melange excessivement riche : dilution d'huile possible." });
     }
     if (state.solverResolutionLimited)
         result.push_back({ DiagnosticSeverity::critical, "solver.resolution", "Resolution angulaire du solveur insuffisante au regime actuel." });
     if (state.load > 0.40 && state.rpm > config.idleRpm * 1.2 && state.cylinderStateCount > 0) {
-        // `injectorCapacityRatio` is the headroom left on the injector's DUTY
-        // CYCLE (1 = shut, 0 = open for the whole 720 deg cycle), so the test is
-        // against a duty limit and the threshold comes from production practice:
-        // a port injector is sized to stay under roughly 85-90 % duty at rated
-        // power, and above that it cannot meter a larger pulse whatever the ECU
-        // commands. 0.10 of headroom is therefore the point at which the
-        // complaint is true.
-        //
-        // It used to compare the same field against 0.90, which was correct for
-        // what that field USED to hold and is why this warning was permanently
-        // on: measured across the catalogue at wide-open throttle the duty runs
-        // 7 % (Hayabusa at 3,000 rpm) to 39 % (Merlin), so no shipped engine is
-        // injector-limited at all and the message was pure false alarm. Do not
-        // raise this threshold to make the warning appear again -- if it never
-        // fires on this catalogue that is a measurement, not a broken test.
-        // One saturated cylinder is enough to run that cylinder lean. An
-        // average can hide it behind seven healthy injectors on a V8, so the
-        // diagnostic follows the worst (smallest-headroom) cylinder.
-        double injectorDutyHeadroom = 1.0;
-        for (std::size_t index = 0; index < state.cylinderStateCount; ++index)
-            injectorDutyHeadroom = std::min(injectorDutyHeadroom,
+        // Capacity is unused authored-window fraction; duty is open time over
+        // the complete 720-degree cycle. Less than 10 % window headroom or
+        // >90 % total-cycle duty means actuator authority is nearly exhausted.
+        // Follow the worst cylinder because an average can hide one lean hole.
+        double minimumCapacity = 1.0;
+        double maximumDuty = 0.0;
+        for (std::size_t index = 0; index < state.cylinderStateCount; ++index) {
+            minimumCapacity = std::min(minimumCapacity,
                 state.cylinderStates[index].injectorCapacityRatio);
-        if (injectorDutyHeadroom < 0.10)
-            result.push_back({ DiagnosticSeverity::warning, "injection.capacity", "Injecteurs satures : rapport cyclique au-dela de 90 % sous charge." });
+            maximumDuty = std::max(maximumDuty,
+                state.cylinderStates[index].injectorDutyCycle);
+        }
+        if (minimumCapacity < 0.10 || maximumDuty > 0.90)
+            result.push_back({ DiagnosticSeverity::warning, "injection.capacity", "Injecteurs satures : la masse commandee ne peut plus etre entierement injectee." });
     }
     // Back pressure is a MEAN. This test used to read `exhaustPressureKpa`,
     // which is the max over cylinders of the instantaneous runner pressure -- a

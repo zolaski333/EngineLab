@@ -37,6 +37,11 @@ struct FuelInjectionResult final {
  */
 class FuelInjectionModel final {
 public:
+    /** All direct-injected fuel already represented in the chamber or in the
+     *  two unresolved spray-transport inventories. */
+    [[nodiscard]] static double representedDirectFuelMoles(
+        const FuelInjectionState& state, const GasCell& target) noexcept;
+
     [[nodiscard]] static FuelInjectionResult deliver(const InjectionConfig& injection,
                                                        const FuelConfig& fuel,
                                                        FuelInjectionState& state,

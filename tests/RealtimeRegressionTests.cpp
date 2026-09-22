@@ -1327,6 +1327,51 @@ void acousticIntakeNetworkRegression() {
     }
     require(earlyEnergy == 0.0 && lateEnergy == 0.0,
         "a flow that is stationary from reset must create no acoustic source");
+
+    // Block-rate gas/throttle telemetry must not become an audible impulse
+    // train. Deliberately alternate a large but finite boundary step every 256
+    // samples while driving a smooth valve-flow tone. Before per-sample
+    // coefficient slewing, the intake stem's maximum derivative was 76x its
+    // median at this cadence; a continuous passive network stays well below
+    // the conservative 20x guard.
+    intake.reset();
+    constexpr std::size_t blockSize = 256;
+    constexpr std::size_t sampleCount = 48'000;
+    const float controlRamp = static_cast<float>(1.0 - std::exp(
+        -2.0 * std::numbers::pi * 10.0 / 48'000.0));
+    const std::array<enginelab::AcousticIntakeNetwork::PathBoundary, 1>
+        boundaryA {{ { 0.0025F, 1.20F, 343.0F } }};
+    const std::array<enginelab::AcousticIntakeNetwork::PathBoundary, 1>
+        boundaryB {{ { 0.0006F, 0.82F, 440.0F } }};
+    intake.beginBlock(boundaryA, 1.0);
+    std::vector<double> derivatives;
+    derivatives.reserve(sampleCount - 8'192U);
+    auto previous = 0.0F;
+    for (std::size_t sample = 0; sample < sampleCount; ++sample) {
+        if (sample > 0 && sample % blockSize == 0)
+            intake.beginBlock((sample / blockSize) % 2U == 0U
+                ? boundaryA : boundaryB, 1.0);
+        cylinders[0].massFlowKgPerSecond = 0.040F
+            + 0.018F * static_cast<float>(std::sin(
+                2.0 * std::numbers::pi * 120.0
+                    * static_cast<double>(sample) / 48'000.0));
+        const auto pressure = intake.process(cylinders, controlRamp)[0].leftPa;
+        require(std::isfinite(pressure),
+            "slewed intake boundary parameters must remain finite");
+        if (sample >= 8'192U)
+            derivatives.push_back(std::abs(
+                static_cast<double>(pressure - previous)));
+        previous = pressure;
+    }
+    const auto maximumDerivative = *std::max_element(
+        derivatives.begin(), derivatives.end());
+    const auto medianPosition = derivatives.begin()
+        + static_cast<std::ptrdiff_t>(derivatives.size() / 2U);
+    std::nth_element(derivatives.begin(), medianPosition, derivatives.end());
+    const auto medianDerivative = *medianPosition;
+    require(medianDerivative > 1.0e-12
+            && maximumDerivative < medianDerivative * 20.0,
+        "block-boundary intake parameter changes must not create an impulse train");
 }
 
 void forcedInductionAcousticsRegression() {

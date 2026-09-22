@@ -44,8 +44,9 @@ constexpr DynoQualityReason& operator|=(
 
 struct DynoQualityGateConfig final {
     double minimumSteadyContactFraction { 0.95 };
-    /** An inertial ramp may legitimately unload a passive brake. */
-    double minimumRampContactFraction { 0.0 };
+    /** This acquisition is a brake-dyno measurement, not an inferred inertial
+     * pull: material loss of absorber contact invalidates the cycle. */
+    double minimumRampContactFraction { 0.95 };
     double minimumEngineTorqueNm { 1.4 };
     double steadyMaximumSpeedErrorRpm { 60.0 };
     double rampMaximumSpeedErrorRpm { 150.0 };

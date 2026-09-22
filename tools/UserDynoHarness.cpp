@@ -21,6 +21,7 @@
 #include <iomanip>
 #include <iostream>
 #include <limits>
+#include <numbers>
 #include <string>
 #include <thread>
 
@@ -29,8 +30,11 @@ using Clock = std::chrono::steady_clock;
 
 [[nodiscard]] double sweepCeilingRpm(
     const enginelab::EngineConfig& config) noexcept {
-    return 0.95 * std::min(
+    const auto physicalLimitRpm = std::min(
         config.redlineRpm, config.ignition.revLimitRpm);
+    return std::max(500.0, std::min(
+        0.95 * physicalLimitRpm,
+        config.ignition.revLimitRpm - 300.0));
 }
 
 [[nodiscard]] double sweepEntryRpm(
@@ -59,6 +63,8 @@ struct Result final {
     std::uint32_t invalidQualityReasons {};
     double lastRecordedRpm {};
     bool exactRampGrid { false };
+    double maximumPowerIdentityError {};
+    double maximumIsolatedTorqueDeviation {};
     enginelab::DynoRunStatus runStatus { enginelab::DynoRunStatus::idle };
     enginelab::DynoStopReason stopReason { enginelab::DynoStopReason::none };
     enginelab::DynoSessionConfig sessionConfig {};
@@ -177,7 +183,29 @@ struct Result final {
         if (!point.valid) {
             ++result.invalidPointCount;
             result.invalidQualityReasons |= point.qualityReasons;
+            continue;
         }
+        const auto expectedPowerKw = point.torqueNm * point.rpm
+            * 2.0 * std::numbers::pi / 60.0 / 1'000.0;
+        result.maximumPowerIdentityError = std::max(
+            result.maximumPowerIdentityError,
+            std::abs(point.powerKw - expectedPowerKw)
+                / std::max(1.0, std::abs(expectedPowerKw)));
+    }
+    for (std::size_t index = 1; index + 1 < run.points.size(); ++index) {
+        const auto& previous = run.points[index - 1U];
+        const auto& point = run.points[index];
+        const auto& next = run.points[index + 1U];
+        if (!previous.valid || !point.valid || !next.valid) continue;
+        const auto rpmSpan = next.rpm - previous.rpm;
+        if (!(rpmSpan > 0.0)) continue;
+        const auto fraction = (point.rpm - previous.rpm) / rpmSpan;
+        const auto neighbourTorque = std::lerp(
+            previous.torqueNm, next.torqueNm, fraction);
+        result.maximumIsolatedTorqueDeviation = std::max(
+            result.maximumIsolatedTorqueDeviation,
+            std::abs(point.torqueNm - neighbourTorque)
+                / std::max(5.0, std::abs(neighbourTorque)));
     }
     if (!run.points.empty()) result.lastRecordedRpm = run.points.back().rpm;
     result.exactRampGrid = !run.points.empty()
@@ -234,6 +262,13 @@ struct Result final {
             + std::to_string(result.totalPointCount)
             + " invalidMask=" + std::to_string(result.invalidQualityReasons)
             + " exactGrid=" + (result.exactRampGrid ? "yes" : "no");
+    else if (completeSweep
+             && (result.maximumPowerIdentityError > 1.0e-10
+                 || result.maximumIsolatedTorqueDeviation > 0.25))
+        result.failure = "full sweep violated P=T*omega or contained an isolated torque outlier; powerError="
+            + std::to_string(result.maximumPowerIdentityError)
+            + " isolatedTorque="
+            + std::to_string(result.maximumIsolatedTorqueDeviation);
     else if (completeSweep
              && (result.runStatus != enginelab::DynoRunStatus::completed
                  || result.stopReason

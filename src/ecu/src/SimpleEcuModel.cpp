@@ -407,7 +407,12 @@ EcuCommand SimpleEcuModel::evaluate(const EngineConfig& config, const EngineStat
     }
     accelerationFuelEnrichment_.store(accelerationFuelEnrichment,
                                       std::memory_order_relaxed);
-    mappedAfr = std::clamp(mappedAfr - throttleIncrease * 2.2
+    // The physical X-tau wall-film model in EngineSimulator owns tip-in fuel.
+    // A second, solver-rate ECU enrichment used to multiply that compensation
+    // by as much as 1.98 and then taught the closed-loop trim against the
+    // uncorrected target. Keep the transient state only to suspend learning
+    // while charge transport settles; do not create a second fuel authority.
+    mappedAfr = std::clamp(mappedAfr
         - std::max(0.0, state.coolantTemperatureC - 108.0) * 0.025,
         minimumMappedAfr, maximumMappedAfr);
     mappedAdvance = std::clamp(mappedAdvance - state.knockLevel * 12.0
@@ -431,13 +436,19 @@ EcuCommand SimpleEcuModel::evaluate(const EngineConfig& config, const EngineStat
     const auto sparkEnabled = controls.ignitionEnabled && !limiterActive;
     auto decelerationFuelCut = decelerationFuelCutLatched_.load(
         std::memory_order_relaxed);
+    const auto decelerationFuelCutWasActive = decelerationFuelCut;
     const auto idleTargetRpm = std::max(300.0, config.idleRpm);
     // The ratio scales the refill window with each engine's idle speed while
     // retaining real hysteresis against the 1.65-times-idle entry threshold.
-    // An additive margin was tested here, but it changed the start-up DFCO
-    // sequence of low-idle, uneven-firing engines and could destabilise their
-    // learned idle mixture long after the initial coast event.
-    const auto decelerationFuelResumeRpm = idleTargetRpm * 1.25;
+    // Resume must precede the idle catch by enough crank travel to purge the
+    // retained port vapour and then deliver one complete, synchronised pulse.
+    // At 1.25-times idle the large-inertia Merlin crossed the threshold near
+    // 1,000 rpm but its first complete pulse did not arrive until about
+    // 765 rpm; the crank then fell through 300 rpm before combustion recovered.
+    // A 1.50 ratio leaves a real 0.15-idle hysteresis, starts transport settling
+    // before the governor catch, and remains below the normal DFCO entry point.
+    // Pedal tip-in still resumes immediately through the throttle clause below.
+    const auto decelerationFuelResumeRpm = idleTargetRpm * 1.50;
     // Deceleration fuel cut is an OVERRUN function: it presumes a running,
     // warmed engine coasting down under a shut throttle. The post-start flare
     // satisfies its speed threshold while being the exact opposite condition --
@@ -487,6 +498,8 @@ EcuCommand SimpleEcuModel::evaluate(const EngineConfig& config, const EngineStat
     }
     decelerationFuelCutLatched_.store(decelerationFuelCut,
                                       std::memory_order_relaxed);
+    const auto decelerationFuelResumeEvent =
+        decelerationFuelCutWasActive && !decelerationFuelCut;
     auto decelerationFuelResume = decelerationFuelResume_.load(
         std::memory_order_relaxed);
     if (decelerationFuelCut) {
@@ -597,7 +610,12 @@ EcuCommand SimpleEcuModel::evaluate(const EngineConfig& config, const EngineStat
                     0.02, 1.0)
                 : 1.0))
         : warmupCorrection * crankingCorrection
-            * (1.0 + accelerationFuelEnrichment * 1.40)
+            // Starting is the one phase in which the dry runner/port film has
+            // no preceding cycle to estimate. Retain the reserve only while
+            // the starter/post-start state proves that condition; a normal
+            // pedal tip-in is owned solely by the physical X-tau model.
+            * (1.0 + ((controls.starterEngaged || afterStartPhase)
+                ? accelerationFuelEnrichment * 1.40 : 0.0))
             * decelerationFuelResume;
     const auto commandedFuelEnabled = overrunAfterfireActive
         || (fuelEnabled && !decelerationFuelCut);
@@ -610,6 +628,19 @@ EcuCommand SimpleEcuModel::evaluate(const EngineConfig& config, const EngineStat
         && commandedFuelEnabled && !commandedSparkEnabled
         && !controls.starterEngaged
         && (limiterActive || alternatingCut);
+    const auto lambdaLearningAllowed = commandedFuelEnabled
+        && commandedSparkEnabled
+        && !decelerationFuelCut
+        && decelerationFuelResume > 0.98
+        // The dry port film has no usable pre-start reference. During the
+        // explicit starter/post-start state the measured chamber mixture is the
+        // feedback that converges it; suppressing learning here left the Merlin
+        // at AFR ~5 and negative cycle torque until it stalled. Outside that
+        // identified start state, suspend adaptation while a pedal transient is
+        // active so the controller cannot learn against unsettled transport.
+        && (controls.starterEngaged || afterStartPhase
+            || accelerationFuelEnrichment < 0.03)
+        && !overrunAfterfireActive;
     return { mappedAfr, mappedAdvance,
              effectiveThrottle, idleAirOpening,
              fuelCorrection, dieselFuelQuantityLimit,
@@ -621,6 +652,8 @@ EcuCommand SimpleEcuModel::evaluate(const EngineConfig& config, const EngineStat
              limiterActive,
              alternatingCut,
              decelerationFuelCut,
-             overrunAfterfireBlockers };
+             overrunAfterfireBlockers,
+             lambdaLearningAllowed,
+             decelerationFuelResumeEvent };
 }
 } // namespace enginelab

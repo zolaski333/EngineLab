@@ -958,9 +958,9 @@ struct CylinderState final {
     double intakeVelocityMps { 0.0 };
     double exhaustVelocityMps { 0.0 };
     double fuelDeliveryRatio { 0.0 };
-    /** Fraction of the commanded injector pulse actually metered this cycle.
-     *  1.0 means the injector kept up; a low value is real capacity saturation,
-     *  independent of the closed-loop trim (unlike fuelDeliveryRatio). */
+    /** Fraction of the authored injection window still unused (1 = closed,
+     *  0 = open for the entire window). This is actuator headroom, independent
+     *  of closed-loop trim and runner fuel transport. */
     double injectorCapacityRatio { 1.0 };
     double flameSpeedMps { 0.0 };
     double burnedFraction { 0.0 };
@@ -1131,6 +1131,31 @@ struct CylinderState final {
     std::uint32_t completedIgnitionEventsLastCycle { 0 };
     double commandedSparkPhaseLastCycle { -1.0 };
     double completedIgnitionPhaseLastCycle { -1.0 };
+    /** True only after this cylinder has produced a fuelled charge observation
+     * in the current observation epoch. Fuel cut and spark cut invalidate the
+     * epoch; the numeric AFR is then retained only as last-known telemetry. */
+    bool airFuelRatioValid { false };
+    /** Injector open time divided by the complete 720-degree cycle. */
+    double injectorDutyCycle { 0.0 };
+    /** Liquid fuel metered by this injector during its most recently completed
+     *  cycle, before port-film or spray transport. */
+    double meteredFuelMgPerCycle { 0.0 };
+    /** Fuel vapour currently resident in this cylinder's resolved intake
+     *  runner. Useful for distinguishing metering from transport starvation. */
+    double portFuelVapourInventoryMg { 0.0 };
+    /** Liquid fuel currently resident in this cylinder's port wall film. */
+    double portLiquidFilmFuelMg { 0.0 };
+    /** Vapour inventory inside the finite-volume cells actually touched by the
+     *  port injector source. This is the locally reachable subset of the whole
+     *  runner inventory above. */
+    double portInjectorFootprintFuelMg { 0.0 };
+    /** Oxygen-derived vapour inventory which would put that numerical injector
+     *  footprint at the current commanded AFR. */
+    double portInjectorFootprintTargetFuelMg { 0.0 };
+    /** False when an otherwise enabled spark is intentionally not a combustion
+     *  command, for example while DFCO resume waits for a complete port-injector
+     *  window. Event/audio consumers must not label that clean cut a misfire. */
+    bool combustionCommandAvailable { true };
 };
 
 enum class DynoMode : std::uint8_t {
@@ -1206,6 +1231,13 @@ struct EngineState final {
     double exhaustTemperatureC { 22.0 };
     double knockLevel { 0.0 };
     double misfireRate { 0.0 };
+    /** Monotonic physical event counters. `misfireRate` is deliberately
+     * smoothed for display and can retain history across a control edge; these
+     * counters let validation distinguish that decay from a new failed spark. */
+    std::uint64_t commandedSparkEventCount { 0 };
+    std::uint64_t misfireEventCount { 0 };
+    double lastMisfireAirFuelRatio { 0.0 };
+    double lastMisfireTimeSeconds { 0.0 };
     double airFuelRatio { 14.7 };
     double targetAirFuelRatio { 14.7 };
     double ignitionAdvanceDegrees { 0.0 };
@@ -1477,6 +1509,10 @@ struct EngineState final {
     RunningState runningState { RunningState::stopped };
     std::array<CylinderState, 32> cylinderStates {};
     std::size_t cylinderStateCount { 0 };
+    /** False during fuel/spark cut and until every cylinder has supplied one
+     * fresh fuelled observation. Consumers must not interpret the retained
+     * numeric AFR as a live mixture measurement while this is false. */
+    bool airFuelRatioValid { false };
 };
 
 struct EcuCommand final {
@@ -1502,6 +1538,13 @@ struct EcuCommand final {
     /** Bitmask of `AfterfireBlocker`. Append new members BELOW this one: the
      *  aggregate is initialised by position in SimpleEcuModel. */
     std::uint32_t overrunAfterfireBlockers { 0U };
+    /** Whether a lambda observation may update long-term trim. Tip-in, DFCO,
+     * fuel-resume and deliberate spark cuts are open-loop transients. */
+    bool lambdaLearningAllowed { true };
+    /** One-substep edge emitted when driver demand ends an active DFCO period.
+     *  The simulator uses it to start a bounded port-transport observation
+     *  epoch before accepting a new lambda sample. */
+    bool decelerationFuelResumeEvent { false };
 };
 
 // Output of the mean-value model SimplifiedGasolinePhysics::evaluateCombustion.
@@ -1579,6 +1622,7 @@ struct DynoPoint final {
     /** Bit representation of DynoQualityReason; zero means accepted. */
     std::uint32_t qualityReasons { 0 };
     bool valid { true };
+    bool airFuelRatioValid { false };
 };
 
 struct DynoRun final {

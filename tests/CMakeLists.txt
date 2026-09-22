@@ -217,15 +217,25 @@ if(TARGET EngineLabDynoSweepHarness)
 endif()
 if(TARGET EngineLabAudioRenderHarness)
     add_test(NAME EngineLab.AudioRender COMMAND EngineLabAudioRenderHarness)
+    add_test(NAME EngineLab.AudioRuntimeDiscontinuity
+        COMMAND EngineLabAudioRenderHarness
+            --runtime-filter "Merlin"
+            --runtime-stall-ms 80)
     add_test(NAME EngineLab.AudioTransients
         COMMAND EngineLabAudioRenderHarness
             --transient-only
             --output "${CMAKE_BINARY_DIR}/audio-transient-test")
     if(ENGINELAB_ENABLE_SANITIZERS)
-        set_tests_properties(EngineLab.AudioRender PROPERTIES TIMEOUT 600)
+        set_tests_properties(
+            EngineLab.AudioRender
+            EngineLab.AudioRuntimeDiscontinuity
+            PROPERTIES TIMEOUT 600)
         set_tests_properties(EngineLab.AudioTransients PROPERTIES TIMEOUT 600)
     else()
-        set_tests_properties(EngineLab.AudioRender PROPERTIES TIMEOUT 180)
+        set_tests_properties(
+            EngineLab.AudioRender
+            EngineLab.AudioRuntimeDiscontinuity
+            PROPERTIES TIMEOUT 180)
         set_tests_properties(EngineLab.AudioTransients PROPERTIES TIMEOUT 180)
     endif()
 endif()
@@ -252,10 +262,16 @@ if(TARGET EngineLabLoadedAccelerationHarness)
         COMMAND EngineLabLoadedAccelerationHarness
             --filter "Audi I5"
             --gear 3)
+    add_test(NAME EngineLab.LoadedAccelerationCatalogDfcoResume
+        COMMAND EngineLabLoadedAccelerationHarness
+            --dfco-tip-in)
     set_tests_properties(
         EngineLab.LoadedAccelerationCP2
         EngineLab.LoadedAccelerationAudi
         PROPERTIES TIMEOUT 120)
+    set_tests_properties(
+        EngineLab.LoadedAccelerationCatalogDfcoResume
+        PROPERTIES TIMEOUT 240)
 endif()
 if(TARGET EngineLabUserDynoHarness)
     add_test(NAME EngineLab.UserDynoHighRpmStart

@@ -777,6 +777,47 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 / std::max(1.0, config_.ambientPressureKpa), 0.0, 1.5);
         state_.load = smooth(state_.load, thermodynamicLoad, subDt, 12.0);
         const auto ecuCommand = ecu_.evaluate(config_, state_, safeControls);
+        const auto afrObservationCommandEnabled = compressionIgnitionEngine
+            ? ecuCommand.fuelEnabled
+            : ecuCommand.fuelEnabled && ecuCommand.sparkEnabled;
+        // Start a new observation epoch after any fuel/spark cut. Until every
+        // cylinder has fired a fresh fuelled charge, an engine-wide AFR would
+        // mix pre-cut, cut and post-cut cycles. Retain the last numeric values
+        // for diagnostics but mark them invalid instead of manufacturing 100:1.
+        if (!afrObservationCommandEnabled
+            || !previousAfrObservationCommandEnabled_) {
+            actualAfrValidLastCycle_.fill(false);
+        }
+        const auto portInjectedGasoline =
+            config_.fuel == FuelType::gasoline
+            && config_.injection.mode == InjectionMode::port;
+        if (portInjectedGasoline && ecuCommand.decelerationFuelResumeEvent) {
+            for (std::size_t cylinder = 0;
+                 cylinder < config_.cylinders.size(); ++cylinder) {
+                portFuelResumePending_[cylinder] = true;
+                portFuelResumePrepared_[cylinder] = false;
+                portFuelResumePurgeCycleSeen_[cylinder] = false;
+                // Require a continuously settled physical footprint below,
+                // rather than assuming the port is full after a blind delay.
+                portFuelResumeOpenLoopSecondsRemaining_[cylinder] =
+                    4.0 * std::max(0.0,
+                        config_.injection.vaporisationTimeConstantSeconds);
+                portFuelResumeEpochAgeSeconds_[cylinder] = 0.0;
+                // No post-cut observation exists for the first pulse. Start at
+                // the positive geometric midpoint between the authored map and
+                // the already identified high-load transport correction. This
+                // avoids both measured extremes (unity flooded the small/large
+                // NA engines; applying the full stale cell made the bikes lean)
+                // and hands authority to the observable resume loop after the
+                // first completed combustion.
+                portFuelResumeFuelTrim_[cylinder] = std::sqrt(std::sqrt(
+                    std::clamp(highLoadClosedLoopFuelTrim_[cylinder],
+                        0.55, 2.20)));
+            }
+            actualAfrValidLastCycle_.fill(false);
+        }
+        previousAfrObservationCommandEnabled_ =
+            afrObservationCommandEnabled;
         state_.exhaustAfterfireOverrunActive =
             ecuCommand.overrunAfterfireActive;
         state_.exhaustAfterfireBlockers = ecuCommand.overrunAfterfireBlockers;
@@ -1046,8 +1087,14 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
         }
         const auto backPressure = state_.exhaustPressureKpa;
         const auto combustion = physics_.evaluateCombustion(config_, state_, safeControls, ecuCommand, backPressure);
+        // A deliberate fuel cut leaves ignition enabled so the ECU can resume
+        // immediately, but an enabled coil is not a commanded combustion event
+        // without fuel. Counting those clean DFCO cycles as misfires polluted
+        // the rolling misfire state and made the following tip-in look faulty
+        // even before the first refuelled charge reached a spark.
         const auto sparkCombustionAvailable =
-            config_.fuel == FuelType::gasoline && ecuCommand.sparkEnabled
+            config_.fuel == FuelType::gasoline
+            && ecuCommand.fuelEnabled && ecuCommand.sparkEnabled
             && state_.rpm >= 220.0 && state_.damage < 1.0;
         const auto compressionIgnitionAvailable =
             config_.fuel == FuelType::diesel && ecuCommand.fuelEnabled
@@ -1093,7 +1140,6 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
         std::array<double, 32> structuralInertiaForceN {};
         std::array<double, 32> structuralSideRatio {};
         std::array<double, 32> instantaneousIntakeTransferredMassKg {};
-        std::array<std::uint8_t, 32> intakeInjectionRefused {};
         std::array<double, 32> exhaustMassFlowKgPerSecond {};
         std::array<double, 32> exhaustAcousticMassFlowKgPerSecond {};
         std::array<double, 32> exhaustPortDensityKgPerM3 {};
@@ -1268,6 +1314,22 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
             const auto injectionStartCrossed = crossedPhase(previousPhase, cyclePhase,
                 config_.injection.startAngleDegrees);
             if (injectionStartCrossed) {
+                if (portInjectedGasoline
+                        && portFuelResumePending_[cylinderIndex]
+                        && !portFuelResumePrepared_[cylinderIndex]) {
+                    if (portFuelResumePurgeCycleSeen_[cylinderIndex]) {
+                        portFuelResumePrepared_[cylinderIndex] = true;
+                    } else {
+                        // Reopening the throttle entrains vapour left in the
+                        // runner by the evaporating wall film. An immediate new
+                        // pulse burns that retained inventory and the fresh
+                        // request together; several catalogue engines entered
+                        // their first cycle at AFR 4-9. Let one real intake cycle
+                        // purge the conservative inventory, then arm a complete
+                        // crank-synchronised pulse at the following edge.
+                        portFuelResumePurgeCycleSeen_[cylinderIndex] = true;
+                    }
+                }
                 if (compressionIgnitionEngine) {
                     combustionCycleMultiplier_[cylinderIndex] =
                         CombustionCycleVariation::advance(
@@ -1282,7 +1344,9 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                     deliveredFuelMolesLastCycle_[cylinderIndex] =
                         entrainedFuelMolesThisCycle_[cylinderIndex];
                     injectorCapacityRatio_[cylinderIndex] =
-                        injectorDutyHeadroom(cylinderIndex);
+                        1.0 - injectorWindowUtilisation(cylinderIndex);
+                    injectorDutyCycle_[cylinderIndex] =
+                        injectorDutyCycle(cylinderIndex);
                     CompressionIgnitionModel::beginCycle(
                         compressionIgnitionStates_[cylinderIndex]);
                     compressionIgnitionResults_[cylinderIndex] = {};
@@ -1295,37 +1359,126 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 injectorOpenSubsteps_[cylinderIndex] = 0.0;
                 injectorWindowSubsteps_[cylinderIndex] = 0.0;
             }
+            const auto cylinderSparkCombustionAvailable =
+                sparkCombustionAvailable
+                && (!portInjectedGasoline
+                    || !portFuelResumePending_[cylinderIndex]
+                    || portFuelResumePrepared_[cylinderIndex]);
+            combustionCommandAvailable_[cylinderIndex] =
+                compressionIgnitionEngine
+                ? compressionIgnitionAvailable
+                : cylinderSparkCombustionAvailable;
             const auto oxygenEquivalentAirMassMg = cylinderGas_[cylinderIndex].mixture().oxygenMoles
                 / 0.21 * GasCell::airMolarMassKg * 1.0e6;
             const auto& chargeSource = decoupleSharedVolumes
                 ? parallelState->frozenPlenum[intakePathIndex]
                 : intakePlenumGas_[intakePathIndex];
-            const auto predictedPortChargeMassMg = TransientChargeEstimator::estimateFreshAirMassMg(
-                oxygenEquivalentAirMassMg,
+            const auto instantaneousPredictedPortChargeMassMg =
+                TransientChargeEstimator::estimateFreshAirMassMg(
+                0.0,
                 {
                     trappedAirMassMgLastCycle_[cylinderIndex],
                     trappedAirSourcePressureKpaLastCycle_[cylinderIndex],
                     trappedAirSourceTemperatureKLastCycle_[cylinderIndex],
                 },
-                chargeSource.pressureKpa(), chargeSource.temperatureK());
+                chargeSource.pressureKpa(),
+                chargeSource.temperatureK());
+            if (injectionStartCrossed) {
+                // Sample the speed-density prediction once per sequential
+                // pulse. Re-evaluating it every solver substep and keeping the
+                // maximum turned an intake acoustic crest into extra fuel for
+                // the whole cycle (measured as an isolated AFR-9.51 EJ25
+                // misfire with ample injector headroom). The chamber's resolved
+                // oxygen remains a live lower bound below, so real late filling
+                // and DFCO recovery are not discarded.
+                predictedPortChargeMassMgThisCycle_[cylinderIndex] =
+                    instantaneousPredictedPortChargeMassMg;
+            }
+            const auto dfcoResumeChargeTransientActive =
+                portFuelResumePending_[cylinderIndex]
+                || portFuelResumePrepared_[cylinderIndex]
+                || (portFuelResumeOpenLoopSecondsRemaining_[cylinderIndex] > 0.0
+                    // Source density is genuinely non-stationary immediately
+                    // after the throttle reopens, but that is a much shorter
+                    // phenomenon than the wall-film settling epoch. Coupling
+                    // the two kept the live peak detector active for two full
+                    // seconds: on the CP4 a late runner-pressure crest at
+                    // 6,040 rpm commanded 29.15 mg instead of roughly 23 mg,
+                    // delivered 26.48 mg for 269 mg of air and produced an
+                    // AFR-9.90 rich misfire. 0.35 s still covers more than 17
+                    // complete cycles at the lowest tested resume speed; after
+                    // that, retain the high-speed start-edge sample while the
+                    // independent footprint controller continues settling.
+                    && portFuelResumeEpochAgeSeconds_[cylinderIndex] < 0.35);
+            const auto highSpeedAcousticSamplingPosition = std::clamp(
+                (state_.rpm - 3'600.0) / 800.0, 0.0, 1.0);
+            const auto highSpeedAcousticSamplingBlend =
+                highSpeedAcousticSamplingPosition
+                * highSpeedAcousticSamplingPosition
+                * (3.0 - 2.0 * highSpeedAcousticSamplingPosition);
+            const auto livePredictedPortChargeMassMg =
+                TransientChargeEstimator::estimateFreshAirMassMg(
+                    oxygenEquivalentAirMassMg,
+                    {
+                        trappedAirMassMgLastCycle_[cylinderIndex],
+                        trappedAirSourcePressureKpaLastCycle_[cylinderIndex],
+                        trappedAirSourceTemperatureKLastCycle_[cylinderIndex],
+                    },
+                    chargeSource.pressureKpa(), chargeSource.temperatureK());
+            const auto sampledPredictedPortChargeMassMg = std::max(
+                oxygenEquivalentAirMassMg,
+                predictedPortChargeMassMgThisCycle_[cylinderIndex]);
+            const auto predictedPortChargeMassMg =
+                dfcoResumeChargeTransientActive
+                // Unlike steady running, the source density is genuinely
+                // moving quickly after a closed-throttle fuel cut. Keep the
+                // live speed-density prediction during this explicit bounded
+                // transient; the footprint balance and resume trim own its
+                // convergence. Freezing it made the 2JZ resume 24.1 % off
+                // target, while the same engine had passed with the live
+                // density signal.
+                ? livePredictedPortChargeMassMg
+                // At low speed the 350-degree injection window lasts long
+                // enough for the source-density change inside it to be a real
+                // throttle transient. Sampling it once made the Merlin's
+                // 0.5-second blip wet the port incorrectly, then relight from
+                // DFCO into an AFR-5 rich stall. Above roughly 4,400 rpm the
+                // same within-window signal is dominated by resolved intake
+                // acoustics; there the start-edge sample prevents the measured
+                // EJ25 AFR-9.51 false enrichment. Blend across the overlap so
+                // neither pulse width nor torque acquires a regime step.
+                : std::lerp(livePredictedPortChargeMassMg,
+                    sampledPredictedPortChargeMassMg,
+                    highSpeedAcousticSamplingBlend);
             const auto measuredChargeMassMg = config_.injection.mode == InjectionMode::direct
                 ? oxygenEquivalentAirMassMg
                 : predictedPortChargeMassMg;
             // Fuel adaptation belongs to an operating region, not to an entire
             // cylinder. Blend two learned cells using the smoothed physical
             // throttle so the command remains continuous through a tip-in/out.
-            if (state_.throttle > 0.10
-                    && !highLoadClosedLoopFuelTrimSeeded_[cylinderIndex]) {
-                highLoadClosedLoopFuelTrim_[cylinderIndex] =
-                    closedLoopFuelTrim_[cylinderIndex];
-                highLoadClosedLoopFuelTrimSeeded_[cylinderIndex] = true;
-            }
+            // The high-load cell starts from the authored map (unity), not from
+            // the learned idle cell. Copying the idle trim at the first pedal
+            // opening carried a 0.55 idle correction directly into WOT: the
+            // Hayabusa trace went from AFR 13 at idle to AFR 30 during a blip and
+            // stalled. The smoothed throttle blend below already provides a
+            // continuous hand-off while the independent high-load cell learns.
             const auto highLoadTrimBlend = std::clamp(
                 (state_.throttle - 0.10) / 0.15, 0.0, 1.0);
             const auto activeClosedLoopFuelTrim = std::lerp(
                 closedLoopFuelTrim_[cylinderIndex],
                 highLoadClosedLoopFuelTrim_[cylinderIndex],
                 highLoadTrimBlend);
+            // A learned trim is valid only in the observable steady region in
+            // which it was identified. During the explicit DFCO resume epoch,
+            // use the authored physical AFR map while the conservative footprint
+            // balance below refills the dry valve-side inventory. The charge
+            // reference is now frozen throughout the unobservable cut/resume
+            // interval, so unity here no longer amplifies repeatedly-counted
+            // residual oxygen on low-overlap engines.
+            const auto appliedClosedLoopFuelTrim =
+                portFuelResumeOpenLoopSecondsRemaining_[cylinderIndex] > 0.0
+                ? portFuelResumeFuelTrim_[cylinderIndex]
+                : activeClosedLoopFuelTrim;
             const auto dieselFuelDemand = compressionIgnitionEngine
                 ? std::clamp(std::max(state_.throttle,
                     ecuCommand.idleAirOpening * 0.20), 0.0, 1.0)
@@ -1340,7 +1493,7 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                     * dieselFuelDemand
                     * ecuCommand.fuelCorrection
                     * (compressionIgnitionEngine
-                        ? 1.0 : activeClosedLoopFuelTrim)
+                        ? 1.0 : appliedClosedLoopFuelTrim)
                     * 1.0e-6 / fuelMolarMassKg
                 : 0.0;
             if (compressionIgnitionEngine && ecuCommand.fuelEnabled) {
@@ -1359,6 +1512,10 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
             requestedFuelMolesThisCycle_[cylinderIndex] = std::max(
                 requestedFuelMolesThisCycle_[cylinderIndex], physicalFuelTargetMoles);
             const auto requestedFuelMoles = requestedFuelMolesThisCycle_[cylinderIndex];
+            const auto crankDegreesToSpark = std::fmod(
+                sparkPhase - cyclePhase + 720.0, 720.0);
+            const auto secondsToSpark = state_.rpm > 20.0
+                ? crankDegreesToSpark / (state_.rpm * 6.0) : 0.25;
             // Port injection sprays at the valve, which is now the inlet cell
             // of the 1-D runner duct. FuelInjectionModel keeps its GasCell
             // interface, so it meters against a scratch cell synchronised to
@@ -1368,6 +1525,9 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
             const auto portInjection = config_.injection.mode == InjectionMode::port;
             GasCell portInjectionScratch;
             auto portFuelMoles = 0.0;
+            auto portFuelPrimeDeficitMoles = 0.0;
+            portInjectorFootprintFuelMoles_[cylinderIndex] = 0.0;
+            portInjectorFootprintTargetFuelMoles_[cylinderIndex] = 0.0;
             if (portInjection) {
                 const auto& runnerDuct = intakeRunnerNetworks_[cylinderIndex]->ducts().front();
                 const auto portPrimitives = runnerDuct.cellPrimitives();
@@ -1378,9 +1538,105 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                     ? intakePortTemperatureK_[cylinderIndex]
                     : portPrimitives.front().temperatureK;
                 portInjectionScratch.initialise(portPressureKpa, 0.1, portTemperatureK);
-                portFuelMoles = runnerDuct.inventory().speciesMassKg[
-                        static_cast<std::size_t>(gasdynamics::GasSpecies::fuel)]
+                const auto fuelSpecies = static_cast<std::size_t>(
+                    gasdynamics::GasSpecies::fuel);
+                const auto runnerInventory = runnerDuct.inventory();
+                portFuelMoles = runnerInventory.speciesMassKg[fuelSpecies]
                     / fuelMolarMassKg;
+                {
+                    // A port pulse has two conservative jobs: fuel the imminent
+                    // trapped charge and cover any CURRENT deficit in the
+                    // valve-side spray/film footprint to the commanded mixture
+                    // concentration. The old deficit treated newly accumulated
+                    // vapour only as fuel available to the chamber, so filling a
+                    // dry runner stole that mass from the first post-DFCO charge.
+                    // Adding the full target on every cycle was measured and
+                    // rejected because it did not fall as the footprint filled.
+                    // Priming the entire runner was likewise
+                    // rejected: upstream air has not crossed the injector yet
+                    // and doing so made all three turbos severely rich. Match
+                    // injectSpeciesAtPort's physical 60 mm footprint and derive
+                    // its target from resolved oxygen mass. This target remains
+                    // in the balance: it cancels naturally against the existing
+                    // inventory once filled instead of disappearing at a timer
+                    // boundary. No calibrated per-engine scalar is involved.
+                    const auto oxygenSpecies = static_cast<std::size_t>(
+                        gasdynamics::GasSpecies::oxygen);
+                    constexpr double sprayAndFilmFootprintM = 0.060;
+                    const auto portCells = runnerDuct.cells();
+                    const auto footprintCells = std::min<std::size_t>(
+                        3, std::min(portCells.size(), std::max<std::size_t>(1,
+                            static_cast<std::size_t>(std::ceil(
+                                sprayAndFilmFootprintM
+                                    / runnerDuct.geometry().cellLengthM())))));
+                    auto footprintOxygenMassKg = 0.0;
+                    auto footprintFuelMassKg = 0.0;
+                    for (std::size_t cell = 0; cell < footprintCells; ++cell) {
+                        // injectSpeciesAtPort conservatively deposits into
+                        // complete finite-volume cells. A realtime 95 mm cell
+                        // cannot represent a 60 mm sub-cell source, so the
+                        // concentration target must use that same complete
+                        // numerical support. Applying a fractional 60/95
+                        // overlap here compared the injected inventory with a
+                        // smaller oxygen inventory and under-primed every
+                        // coarse-mesh post-DFCO pulse.
+                        footprintOxygenMassKg += portCells[cell]
+                            .speciesMassDensityKgPerM3[oxygenSpecies]
+                            * runnerDuct.geometry().cellVolumeM3(cell);
+                        footprintFuelMassKg += portCells[cell]
+                            .speciesMassDensityKgPerM3[fuelSpecies]
+                            * runnerDuct.geometry().cellVolumeM3(cell);
+                    }
+                    const auto footprintOxygenMoles = footprintOxygenMassKg
+                        / GasCell::oxygenMolarMassKg;
+                    const auto footprintFreshAirMassKg = footprintOxygenMoles
+                        / 0.21 * GasCell::airMolarMassKg;
+                    const auto targetInventoryMoles = ecuCommand.fuelEnabled
+                        ? footprintFreshAirMassKg / targetAirFuelRatio
+                            / fuelMolarMassKg
+                        : 0.0;
+                    portInjectorFootprintFuelMoles_[cylinderIndex] =
+                        footprintFuelMassKg / fuelMolarMassKg;
+                    portInjectorFootprintTargetFuelMoles_[cylinderIndex] =
+                        targetInventoryMoles;
+                    // Re-prime the runner only for the bounded DFCO-resume
+                    // transport epoch. Applying the same inventory deficit at
+                    // every port-injected start and throttle transient double-
+                    // counted a deliberately dry runner: large engines flooded
+                    // during cranking and several small engines stalled after a
+                    // throttle blip. Outside an observed fuel-cut resume the
+                    // ordinary pulse/film inventory model remains authoritative.
+                    const auto dfcoResumeTransportActive =
+                        portFuelResumePending_[cylinderIndex]
+                        || portFuelResumePrepared_[cylinderIndex]
+                        || (portFuelResumeOpenLoopSecondsRemaining_[cylinderIndex]
+                                > 0.0
+                            && portFuelResumeEpochAgeSeconds_[cylinderIndex]
+                                < 2.0);
+                    const auto resumeSettlingSeconds = 4.0 * std::max(
+                        1.0e-4,
+                        config_.injection.vaporisationTimeConstantSeconds);
+                    const auto footprintFuelMoles =
+                        footprintFuelMassKg / fuelMolarMassKg;
+                    const auto footprintDeficitMoles = std::max(
+                        0.0, targetInventoryMoles - footprintFuelMoles);
+                    // Debounce convergence in physical state: every footprint
+                    // observation more than five percent dry restarts a four-
+                    // X-tau settling interval. This kept the 2JZ/EJ25 refill
+                    // correction alive while boost was still raising the target,
+                    // instead of switching it off into a delayed lean hole.
+                    if (dfcoResumeTransportActive
+                            && targetInventoryMoles > 1.0e-15
+                            && footprintDeficitMoles
+                                > targetInventoryMoles * 0.05) {
+                        portFuelResumeOpenLoopSecondsRemaining_[cylinderIndex] =
+                            std::max(
+                                portFuelResumeOpenLoopSecondsRemaining_[cylinderIndex],
+                                resumeSettlingSeconds);
+                    }
+                    portFuelPrimeDeficitMoles = dfcoResumeTransportActive
+                        ? footprintDeficitMoles : 0.0;
+                }
             }
             auto& injectionTarget = portInjection
                 ? portInjectionScratch : cylinderGas_[cylinderIndex];
@@ -1400,12 +1656,23 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
             // large-inertia Big Twin then floods before the dyno start can
             // catch. Explicit ECU bits keep both audio strategies physical
             // without changing start behaviour elsewhere.
+            const auto insideInjectionWindow = phaseInsideWindow(cyclePhase,
+                config_.injection.startAngleDegrees,
+                config_.injection.endAngleDegrees);
             if ((combustion.combustionEnabled
                     || ecuCommand.overrunAfterfireActive
                     || ecuCommand.wetSparkCutActive)
                 && state_.rpm > 20.0
-                && phaseInsideWindow(cyclePhase,
-                    config_.injection.startAngleDegrees, config_.injection.endAngleDegrees)) {
+                // A DFCO resume that lands midway through an angular window
+                // must wait for the next injector-start edge. Otherwise some
+                // cylinders receive an arbitrary partial pulse while others
+                // receive a complete one, making the first valid engine AFR a
+                // firing-order artefact. The observation epoch already waits
+                // for this same `prepared` edge above.
+                && (!portInjection
+                    || !portFuelResumePending_[cylinderIndex]
+                    || portFuelResumePrepared_[cylinderIndex])
+                && insideInjectionWindow) {
                 // Meter to the requested physical inventory, accounting for
                 // vapour already present and port-wall film. Counting only the
                 // current-cycle injector pulse over-fuels residual-rich cells.
@@ -1428,11 +1695,11 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 // flooded the V12 at idle catch into an AFR-3 misfire lock-in;
                 // after a misfire the chamber fuel must count symmetrically.
                 const auto trappedCylinderFuel = portInjection
-                    && (valveTrain.intakeLiftMm > 0.01 || cylinderMisfires_[cylinderIndex])
+                    && (valveTrain.intakeLiftMm > 0.01
+                        || cylinderMisfires_[cylinderIndex]
+                        || portFuelResumePending_[cylinderIndex]
+                        || portFuelResumePrepared_[cylinderIndex])
                     ? cylinderGas_[cylinderIndex].mixture().fuelMoles : 0.0;
-                const auto crankDegreesToSpark = std::fmod(sparkPhase - cyclePhase + 720.0, 720.0);
-                const auto secondsToSpark = state_.rpm > 20.0
-                    ? crankDegreesToSpark / (state_.rpm * 6.0) : 0.25;
                 const auto filmTemperatureFactor = std::clamp(
                     (injectionTarget.temperatureK() - 240.0) / 120.0, 0.08, 2.0);
                 const auto filmAvailableFraction = 1.0 - std::exp(-secondsToSpark
@@ -1447,15 +1714,6 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                         requestedFuelMoles
                             - injectedFuelMolesThisCycle_[cylinderIndex]);
                 } else {
-                    const auto existingFuelInventory = (portInjection
-                            ? portFuelMoles : injectionTarget.mixture().fuelMoles)
-                        + (portInjection
-                            ? injectionStates_[cylinderIndex].liquidFilmMoles
-                                * filmAvailableFraction
-                                + trappedCylinderFuel
-                            : 0.0);
-                    const auto fuelInventoryDeficit = std::max(
-                        0.0, requestedFuelMoles - existingFuelInventory);
                     if (portInjection) {
                         // `requestedFuelMoles` is the fuel required in the
                         // trapped charge, while the injector meters liquid.
@@ -1473,9 +1731,28 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                         const auto newPulseAvailableFraction = std::max(
                             0.02, (1.0 - wallFilmFraction)
                                 + wallFilmFraction * filmAvailableFraction);
+                        const auto existingFuelInventory =
+                            portFuelMoles
+                            + injectionStates_[cylinderIndex].liquidFilmMoles
+                                * filmAvailableFraction
+                            + trappedCylinderFuel;
+                        const auto fuelInventoryDeficit = std::max(
+                            0.0, requestedFuelMoles
+                                + portFuelPrimeDeficitMoles
+                                - existingFuelInventory);
                         commandedFuelMoles =
                             fuelInventoryDeficit / newPulseAvailableFraction;
                     } else {
+                        // A direct pulse is not instantaneously homogeneous.
+                        // Liquid droplets and the dispersing vapour cloud are
+                        // already metered physical fuel, just not yet present
+                        // in GasCell::mixture(). Ignoring them requested the
+                        // same deficit again on every solver substep.
+                        const auto existingFuelInventory =
+                            FuelInjectionModel::representedDirectFuelMoles(
+                                injectionStates_[cylinderIndex], injectionTarget);
+                        const auto fuelInventoryDeficit = std::max(
+                            0.0, requestedFuelMoles - existingFuelInventory);
                         commandedFuelMoles = fuelInventoryDeficit;
                     }
                 }
@@ -1489,11 +1766,15 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
             const auto injectionResult = FuelInjectionModel::deliver(config_.injection,
                 config_.fuelProperties, injectionStates_[cylinderIndex], injectionTarget,
                 commandedFuelMoles, subDt);
-            // Duty accounting. Every sub-step reaching here is inside the
-            // angular window. Preserve the fractional final opening instead of
-            // rounding every non-zero pulse up to one complete sub-step.
-            injectorWindowSubsteps_[cylinderIndex] += 1.0;
-            injectorOpenSubsteps_[cylinderIndex] += injectionResult.openFraction;
+            // `deliver` also advances wall-film/spray state outside the pulse
+            // window, so reaching this line does not imply injector authority.
+            // Count only the actual crank window; the old unconditional
+            // denominator hid a saturated pulse as about 38 percent duty.
+            if (insideInjectionWindow && state_.rpm > 20.0) {
+                injectorWindowSubsteps_[cylinderIndex] += 1.0;
+                injectorOpenSubsteps_[cylinderIndex] +=
+                    injectionResult.openFraction;
+            }
             if (portInjection && injectionResult.vaporisedMoles > 0.0) {
                 // Each cylinder owns its runner network, so this write is as
                 // cylinder-private as the old runner-cell injection was.
@@ -1502,7 +1783,7 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                         injectionResult.vaporisedMoles * fuelMolarMassKg,
                         config_.injection.fuelTemperatureC + 273.15,
                         -injectionResult.chargeCoolingJoules))
-                    intakeInjectionRefused[cylinderIndex] = 1;
+                    state_.solverResolutionLimited = true;
             }
             injectedFuelMolesThisCycle_[cylinderIndex] += injectionResult.meteredMoles;
             entrainedFuelMolesThisCycle_[cylinderIndex] +=
@@ -1517,25 +1798,31 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                     ? std::clamp(entrainedFuelMolesThisCycle_[cylinderIndex]
                         / requestedFuelMoles, 0.0, 1.0)
                     : 0.0;
-                injectorCapacityRatio_[cylinderIndex] =
-                    injectorDutyHeadroom(cylinderIndex);
                 const auto deliveredFuelMassMg =
                     injectedFuelMolesThisCycle_[cylinderIndex]
                     * fuelMolarMassKg * 1.0e6;
                 const auto cycleFreshAirMassMg = std::max(
                     trappedAirMassMgLastCycle_[cylinderIndex],
                     oxygenEquivalentAirMassMg);
-                actualAfrLastCycle_[cylinderIndex] =
-                    deliveredFuelMassMg > 1.0e-12
-                    ? cycleFreshAirMassMg / deliveredFuelMassMg
-                    : 100.0;
-            } else if (!sparkCombustionAvailable) {
+                if (deliveredFuelMassMg > 1.0e-12
+                    && ecuCommand.fuelEnabled) {
+                    actualAfrLastCycle_[cylinderIndex] =
+                        cycleFreshAirMassMg / deliveredFuelMassMg;
+                    actualAfrFuelMassMgLastCycle_[cylinderIndex] =
+                        deliveredFuelMassMg;
+                    actualAfrValidLastCycle_[cylinderIndex] = true;
+                } else {
+                    actualAfrValidLastCycle_[cylinderIndex] = false;
+                    actualAfrFuelMassMgLastCycle_[cylinderIndex] = 0.0;
+                }
+            } else if (!cylinderSparkCombustionAvailable) {
                 cylinderMisfires_[cylinderIndex] = false;
                 flameEvents_[cylinderIndex] = {};
                 ignitionPending_[cylinderIndex] = false;
                 ignitionDelayRemainingSeconds_[cylinderIndex] = 0.0;
             } else if (sparkCrossed) {
                 ++commandedSparkEventsThisCycle_[cylinderIndex];
+                ++state_.commandedSparkEventCount;
                 commandedSparkPhaseThisCycle_[cylinderIndex] = sparkPhase;
                 combustionCycleMultiplier_[cylinderIndex] =
                     CombustionCycleVariation::advance(
@@ -1560,9 +1847,46 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 // short. See `injectorOpenSubsteps_` for why the two earlier
                 // formulations measured neither.
                 injectorCapacityRatio_[cylinderIndex] =
-                    injectorDutyHeadroom(cylinderIndex);
+                    1.0 - injectorWindowUtilisation(cylinderIndex);
+                injectorDutyCycle_[cylinderIndex] =
+                    injectorDutyCycle(cylinderIndex);
                 const auto mixtureAfr = airFuelRatioForCell(cylinderGas_[cylinderIndex], config_.fuelProperties);
-                actualAfrLastCycle_[cylinderIndex] = mixtureAfr;
+                const auto mixtureFuelMassMg = chamberFuelMoles
+                    * fuelMolarMassKg * 1.0e6;
+                const auto validAfrObservation = ecuCommand.fuelEnabled
+                    && ecuCommand.sparkEnabled
+                    && requestedFuelMoles > 1.0e-15
+                    && mixtureFuelMassMg > 1.0e-12
+                    && (!portFuelResumePending_[cylinderIndex]
+                        || portFuelResumePrepared_[cylinderIndex]);
+                if (validAfrObservation) {
+                    actualAfrLastCycle_[cylinderIndex] = mixtureAfr;
+                    actualAfrFuelMassMgLastCycle_[cylinderIndex] =
+                        mixtureFuelMassMg;
+                    actualAfrValidLastCycle_[cylinderIndex] = true;
+                    if (portFuelResumeOpenLoopSecondsRemaining_[cylinderIndex]
+                            > 0.0
+                        && mixtureAfr > 4.0 && mixtureAfr < 40.0) {
+                        // The simulation observes the completed in-cylinder
+                        // mixture directly, so the resume controller can correct
+                        // the following pulse without pretending that a delayed
+                        // wideband sensor is instantaneous. A quarter of the
+                        // logarithmic error per cycle is fast enough to end the
+                        // two-second rich lock, yet leaves transport/film state
+                        // authoritative and avoids a one-cycle sign oscillation.
+                        const auto targetAfr = std::clamp(
+                            ecuCommand.targetAirFuelRatio, 5.0, 30.0);
+                        const auto logarithmicError = std::clamp(
+                            std::log(mixtureAfr / targetAfr), -0.70, 0.70);
+                        portFuelResumeFuelTrim_[cylinderIndex] = std::clamp(
+                            portFuelResumeFuelTrim_[cylinderIndex]
+                                * std::exp(logarithmicError * 0.25),
+                            0.55, 2.20);
+                    }
+                } else {
+                    actualAfrValidLastCycle_[cylinderIndex] = false;
+                    actualAfrFuelMassMgLastCycle_[cylinderIndex] = 0.0;
+                }
                 // Closed-loop lambda correction is based on the mixture that
                 // actually reached the chamber, one cycle after injection.
                 // It compensates port-film and runner transport losses without
@@ -1578,6 +1902,7 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 // model relies on the measured chamber mixture to converge its
                 // initially dry port film; only a zero request is unobservable.
                 const auto observableFuelCommand = ecuCommand.fuelEnabled
+                    && ecuCommand.lambdaLearningAllowed
                     && requestedFuelMoles > 1.0e-15;
                 if (observableFuelCommand && state_.rpm > 450.0
                     && mixtureAfr > 4.0 && mixtureAfr < 40.0) {
@@ -1639,18 +1964,30 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                             trimAuthorityBlend);
                     }
                 }
-                const auto mixtureError = std::abs(mixtureAfr - ecuCommand.targetAirFuelRatio)
-                    / std::max(5.0, ecuCommand.targetAirFuelRatio);
+                if (portFuelResumePending_[cylinderIndex]
+                        && portFuelResumePrepared_[cylinderIndex]) {
+                    portFuelResumePending_[cylinderIndex] = false;
+                    portFuelResumePrepared_[cylinderIndex] = false;
+                    portFuelResumePurgeCycleSeen_[cylinderIndex] = false;
+                }
                 const auto stoichiometricAfr = config_.fuelProperties.stoichiometricAirFuelRatio;
                 const auto flammabilityPenalty = std::max(0.0,
                     mixtureAfr - stoichiometricAfr * 1.12) / (stoichiometricAfr * 0.35)
                     + std::max(0.0, stoichiometricAfr * 0.68 - mixtureAfr)
                         / (stoichiometricAfr * 0.28);
                 const auto actualMisfireProbability = std::clamp(
-                    std::max(0.0, mixtureError - 0.20) * 0.95
-                    + flammabilityPenalty * 0.72
+                    flammabilityPenalty * 0.72
                     + std::max(0.0, 380.0 - state_.rpm) / 1'400.0,
                     0.0, 0.92);
+                // A departure from the commanded AFR is a control error, not a
+                // combustion limit. The former implementation added a misfire
+                // probability once actual AFR differed from the enriched WOT
+                // map by 20 %. On the post-DFCO 2JZ that classified AFR 15.9
+                // (lambda 1.08, still comfortably combustible) as a random
+                // ignition failure. Physical rich/lean limits above already
+                // describe mixture flammability; diagnostics separately expose
+                // target tracking, so do not turn a calibration residual into
+                // invented mechanical torque holes.
                 // Do not add fuelDeliveryRatio as a second mixture penalty.
                 // It compares chamber inventory with the current command and
                 // legitimately sits below one on a port-injected transient;
@@ -1667,6 +2004,11 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 rng ^= rng << 5U;
                 const auto randomUnit = static_cast<double>(rng) / static_cast<double>(0xffffffffU);
                 cylinderMisfires_[cylinderIndex] = randomUnit < actualMisfireProbability;
+                if (cylinderMisfires_[cylinderIndex]) {
+                    ++state_.misfireEventCount;
+                    state_.lastMisfireAirFuelRatio = mixtureAfr;
+                    state_.lastMisfireTimeSeconds = state_.simulationTimeSeconds;
+                }
                 const auto totalMoles = cylinderGas_[cylinderIndex].totalMoles();
                 const FlameConditions flameConditions {
                     cylinder.boreMm * 0.001, chamberVolume * 0.001,
@@ -1688,6 +2030,14 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
             if (sparkCrossed)
                 sparkScheduleArmed_[cylinderIndex] = false;
             previousCylinderPhases_[cylinderIndex] = cyclePhase;
+            portFuelResumeOpenLoopSecondsRemaining_[cylinderIndex] = std::max(
+                0.0,
+                portFuelResumeOpenLoopSecondsRemaining_[cylinderIndex]
+                    - subDt);
+            if (portFuelResumeOpenLoopSecondsRemaining_[cylinderIndex] > 0.0)
+                portFuelResumeEpochAgeSeconds_[cylinderIndex] += subDt;
+            else
+                portFuelResumeEpochAgeSeconds_[cylinderIndex] = 0.0;
             const auto phaseTravel = forwardPhaseDegrees(previousPhase, cyclePhase);
             // Bank angle is spatial geometry, not cam timing. Valve events are
             // referenced to the cylinder's 720-degree thermodynamic phase.
@@ -1785,7 +2135,7 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                     : 0.0;
                 instantaneousCombustionPulse_[cylinderIndex] =
                     pulse * fuelDeliveryRatio_[cylinderIndex];
-                if (burnAdvance > 0.0 && sparkCombustionAvailable
+                if (burnAdvance > 0.0 && cylinderSparkCombustionAvailable
                         && !cylinderMisfires_[cylinderIndex]) {
                     const auto reaction =
                         ConservativeGasSystem::reactFuelMoles(
@@ -1806,7 +2156,7 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                         flameConditions.equivalenceRatio,
                         flameEvents_[cylinderIndex].burnedFraction,
                         config_.octaneRating,
-                        sparkCombustionAvailable
+                        cylinderSparkCombustionAvailable
                             && flameEvents_[cylinderIndex].active
                             && !cylinderMisfires_[cylinderIndex] },
                     combustionDt);
@@ -2637,8 +2987,6 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
             }
         }
         for (std::size_t index = 0; index < config_.cylinders.size(); ++index) {
-            if (intakeInjectionRefused[index] != 0)
-                state_.solverResolutionLimited = true;
             // The stagnation head the arriving column carries, published as a
             // diagnostic. The velocity is now the RESOLVED port state of the
             // 1-D runner — the duct carries the column's momentum, so the ram
@@ -2655,7 +3003,8 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 config_.runnerAcoustics.maximumPressureAmplitudeKpa);
             if (intakeCloseForTrappedAir[index]) {
                 trappedAirMassMgLastCycle_[index] = cylinderGas_[index]
-                    .mixture().oxygenMoles / 0.21 * GasCell::airMolarMassKg * 1.0e6;
+                    .mixture().oxygenMoles / 0.21 * GasCell::airMolarMassKg
+                        * 1.0e6;
                 const auto intakePathIndex =
                     intakePathIndexByCylinder_[index];
                 trappedAirSourcePressureKpaLastCycle_[index] =
@@ -2833,9 +3182,32 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
         // via stribeckFrictionForce. The two are complementary; their sum tracks
         // the gasoline FMEP band (~0.6 bar idle -> ~2.1 bar redline), verified by
         // the friction-MEP sweep in CoreTests.
+        // The base linear term is retained through the low/mid-speed range:
+        // increasing it globally made the large, low-revving Merlin marginal
+        // on idle catch. Above 4,000 rpm, windage/valvetrain/accessory losses add
+        // a common speed term. A small constant-power accessory/windage term is
+        // faded in over 3,500-4,500 rpm as well: unlike another RPM coefficient,
+        // its torque falls with speed and therefore cannot drive FMEP beyond the
+        // high-rpm literature envelope. Together they contribute about 0.08 bar
+        // at 6,000 rpm and 0.14 bar at 10,000 rpm, correcting the shared bias
+        // while leaving every catalogue idle/blip below the threshold untouched.
+        const auto highSpeedFrictionRpm = std::max(0.0, state_.rpm - 4'000.0);
+        const auto accessoryRampLinear = std::clamp(
+            (state_.rpm - 3'500.0) / 1'000.0, 0.0, 1.0);
+        const auto accessoryRamp = accessoryRampLinear * accessoryRampLinear
+            * (3.0 - 2.0 * accessoryRampLinear);
+        const auto highSpeedAccessoryTorque =
+            state_.angularVelocityRadPerSecond > 1.0
+            ? displacement * 200.0 * accessoryRamp
+                / state_.angularVelocityRadPerSecond
+            : 0.0;
         const auto bearingFriction = state_.rpm > 1.0
-            ? displacement * (1.4 + config_.frictionCoefficient * 10.0 + state_.rpm * 0.00055
-                              + state_.rpm * state_.rpm * 0.000000035) : 0.0;
+            ? displacement * (1.4 + config_.frictionCoefficient * 10.0
+                              + state_.rpm * 0.00055
+                              + highSpeedFrictionRpm * 0.00015
+                              + state_.rpm * state_.rpm * 0.000000035)
+                + highSpeedAccessoryTorque
+            : 0.0;
         const auto pistonFriction = state_.angularVelocityRadPerSecond > 1.0
             ? pistonFrictionPowerW / state_.angularVelocityRadPerSecond
             : pistonBreakawayTorqueNm;
@@ -2925,11 +3297,6 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 + static_cast<std::ptrdiff_t>(config_.cylinders.size()), true));
         state_.misfireRate = smooth(state_.misfireRate,
             misfiringCylinderCount / static_cast<double>(config_.cylinders.size()), subDt, 12.0);
-        state_.targetAirFuelRatio = compressionIgnitionEngine
-            ? std::max(config_.fuelProperties.stoichiometricAirFuelRatio
-                    * 1.16,
-                ecuCommand.targetAirFuelRatio)
-            : ecuCommand.targetAirFuelRatio;
         state_.ignitionAdvanceDegrees = ecuCommand.ignitionAdvanceDegrees;
         const auto physicalAirMassMg = std::accumulate(trappedAirMassMgLastCycle_.begin(),
             trappedAirMassMgLastCycle_.begin()
@@ -2940,6 +3307,33 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
             / (GasCell::universalGasConstant / GasCell::airMolarMassKg * ambientTemperatureK)
             * 1.0e6;
         state_.airMassMgPerCycle = state_.rpm > 20.0 ? physicalAirMassMg : 0.0;
+        if (compressionIgnitionEngine) {
+            const auto smokeBoundaryAfr = std::max(
+                config_.fuelProperties.stoichiometricAirFuelRatio * 1.16,
+                ecuCommand.targetAirFuelRatio);
+            const auto idleFuelDemand =
+                (safeControls.ignitionEnabled || safeControls.starterEngaged)
+                ? ecuCommand.idleAirOpening * 0.20 : 0.0;
+            const auto fuelDemand = std::clamp(std::max(
+                state_.throttle, idleFuelDemand), 0.0, 1.0);
+            const auto quantityLimitedFuelMassMg =
+                dieselFullLoadFuelLimitMg * fuelDemand
+                * static_cast<double>(config_.cylinders.size());
+            // Diesel pedal demand is a fuel-quantity command. When its torque
+            // limiter asks for less fuel than the smoke boundary permits, the
+            // effective AFR target is leaner by design. Reporting only the
+            // smoke boundary made a healthy high-rpm quantity taper look like
+            // a 60 percent fuelling error in the application and harness.
+            const auto quantityLimitedAfr =
+                quantityLimitedFuelMassMg > 1.0e-9
+                    && std::isfinite(quantityLimitedFuelMassMg)
+                ? state_.airMassMgPerCycle / quantityLimitedFuelMassMg
+                : smokeBoundaryAfr;
+            state_.targetAirFuelRatio = std::max(
+                smokeBoundaryAfr, quantityLimitedAfr);
+        } else {
+            state_.targetAirFuelRatio = ecuCommand.targetAirFuelRatio;
+        }
         state_.inductedChargeMassMgPerCycle = std::accumulate(
             intakeFlowMgPerCycle_.begin(),
             intakeFlowMgPerCycle_.begin()
@@ -2962,9 +3356,26 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 + static_cast<std::ptrdiff_t>(config_.cylinders.size()), 0.0);
         state_.deliveredFuelMgPerCycle = ecuCommand.fuelEnabled
             ? deliveredFuelMoles * config_.fuelProperties.molarMassGramsPerMole * 1'000.0 : 0.0;
-        const auto actualAfrSum = std::accumulate(actualAfrLastCycle_.begin(),
-            actualAfrLastCycle_.begin() + static_cast<std::ptrdiff_t>(config_.cylinders.size()), 0.0);
-        state_.airFuelRatio = actualAfrSum / static_cast<double>(config_.cylinders.size());
+        auto actualAfrFuelMassSumMg = 0.0;
+        auto fuelWeightedAfrSum = 0.0;
+        auto allAfrObservationsValid = !config_.cylinders.empty();
+        for (std::size_t index = 0; index < config_.cylinders.size(); ++index) {
+            allAfrObservationsValid = allAfrObservationsValid
+                && actualAfrValidLastCycle_[index];
+            if (!actualAfrValidLastCycle_[index]) continue;
+            const auto fuelMassMg =
+                actualAfrFuelMassMgLastCycle_[index];
+            actualAfrFuelMassSumMg += fuelMassMg;
+            fuelWeightedAfrSum += actualAfrLastCycle_[index] * fuelMassMg;
+        }
+        state_.airFuelRatioValid = allAfrObservationsValid
+            && actualAfrFuelMassSumMg > 1.0e-12;
+        if (state_.airFuelRatioValid) {
+            state_.airFuelRatio = fuelWeightedAfrSum
+                / actualAfrFuelMassSumMg;
+            state_.lambda = state_.airFuelRatio
+                / config_.fuelProperties.stoichiometricAirFuelRatio;
+        }
         const auto meteredFuelFlowGramsPerSecond = meteredFuelMassKg / subDt * 1'000.0;
         state_.fuelFlowGramsPerSecond = smooth(state_.fuelFlowGramsPerSecond,
             meteredFuelFlowGramsPerSecond, subDt, 22.0);
@@ -2972,7 +3383,6 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
         state_.fuelConsumedLitres = state_.fuelConsumedGrams * 0.001
             / config_.fuelProperties.densityKgPerL;
         state_.airFlowGramsPerSecond = state_.airMassMgPerCycle * (state_.rpm / 120.0) / 1'000.0;
-        state_.lambda = state_.airFuelRatio / config_.fuelProperties.stoichiometricAirFuelRatio;
         state_.exhaustPressureKpa = collectorPressureKpa;
         state_.intakeRunnerPressureKpa = intakeRunnerPressureSum / static_cast<double>(config_.cylinders.size());
         state_.exhaustRunnerPressureKpa = exhaustRunnerPressureSum / static_cast<double>(config_.cylinders.size());
@@ -3129,6 +3539,27 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 intakePortTemperatureK_[index] - 273.15;
             cylinderState.intakeRunnerChargePressureKpa = intakeRunnerPressureKpa_[index];
             cylinderState.airFuelRatio = actualAfrLastCycle_[index];
+            cylinderState.airFuelRatioValid =
+                actualAfrValidLastCycle_[index];
+            cylinderState.injectorDutyCycle = injectorDutyCycle_[index];
+            cylinderState.meteredFuelMgPerCycle =
+                meteredFuelMolesLastCycle_[index]
+                * config_.fuelProperties.molarMassGramsPerMole * 1'000.0;
+            cylinderState.portFuelVapourInventoryMg =
+                intakeRunnerNetworks_[index]->inventory().speciesMassKg[
+                    static_cast<std::size_t>(
+                        gasdynamics::GasSpecies::fuel)] * 1.0e6;
+            cylinderState.portLiquidFilmFuelMg =
+                injectionStates_[index].liquidFilmMoles
+                * config_.fuelProperties.molarMassGramsPerMole * 1'000.0;
+            cylinderState.portInjectorFootprintFuelMg =
+                portInjectorFootprintFuelMoles_[index]
+                * config_.fuelProperties.molarMassGramsPerMole * 1'000.0;
+            cylinderState.portInjectorFootprintTargetFuelMg =
+                portInjectorFootprintTargetFuelMoles_[index]
+                * config_.fuelProperties.molarMassGramsPerMole * 1'000.0;
+            cylinderState.combustionCommandAvailable =
+                combustionCommandAvailable_[index];
             cylinderState.requestedFuelMgPerCycle = requestedFuelMolesThisCycle_[index]
                 * config_.fuelProperties.molarMassGramsPerMole * 1'000.0;
             cylinderState.deliveredFuelMgPerCycle = deliveredFuelMolesLastCycle_[index]
@@ -3279,6 +3710,8 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
         if (pressureSamples_) {
             CylinderPressureSample pressureSample;
             pressureSample.timeSeconds = state_.simulationTimeSeconds;
+            pressureSample.mechanicalSamplingFrequencyHz = subDt > 0.0
+                ? static_cast<float>(1.0 / subDt) : 0.0F;
             pressureSample.cylinderCount = config_.cylinders.size();
             pressureSample.structural.cylinderCount = config_.cylinders.size();
             pressureSample.intakePathCount = intakePlenumCount_;
@@ -3573,6 +4006,7 @@ void EngineSimulator::reset() noexcept {
     combustionVariationNormalisedState_.fill(0.0);
     combustionCycleMultiplier_.fill(1.0);
     cylinderMisfires_.fill(false);
+    previousAfrObservationCommandEnabled_ = false;
     intakeFlowMgPerCycle_.fill(0.0);
     exhaustFlowMgPerCycle_.fill(0.0);
     intakeFlowMgThisCycle_.fill(0.0);
@@ -3588,18 +4022,30 @@ void EngineSimulator::reset() noexcept {
     meteredFuelMolesLastCycle_.fill(0.0);
     deliveredFuelMolesLastCycle_.fill(0.0);
     requestedFuelMolesThisCycle_.fill(0.0);
+    predictedPortChargeMassMgThisCycle_.fill(0.0);
     trappedAirMassMgLastCycle_.fill(0.0);
     trappedAirSourcePressureKpaLastCycle_.fill(config_.ambientPressureKpa);
     trappedAirSourceTemperatureKLastCycle_.fill(config_.ambientTemperatureC + 273.15);
     actualAfrLastCycle_.fill(config_.fuelProperties.stoichiometricAirFuelRatio);
+    actualAfrFuelMassMgLastCycle_.fill(0.0);
+    actualAfrValidLastCycle_.fill(false);
+    portFuelResumePending_.fill(false);
+    portFuelResumePrepared_.fill(false);
+    portFuelResumePurgeCycleSeen_.fill(false);
+    portFuelResumeOpenLoopSecondsRemaining_.fill(0.0);
+    portFuelResumeEpochAgeSeconds_.fill(0.0);
+    portFuelResumeFuelTrim_.fill(1.0);
+    portInjectorFootprintFuelMoles_.fill(0.0);
+    portInjectorFootprintTargetFuelMoles_.fill(0.0);
+    combustionCommandAvailable_.fill(false);
     fuelDeliveryRatio_.fill(0.0);
     commandedFuelMolesMaxThisCycle_.fill(0.0);
     injectorOpenSubsteps_.fill(0.0);
     injectorWindowSubsteps_.fill(0.0);
     injectorCapacityRatio_.fill(1.0);
+    injectorDutyCycle_.fill(0.0);
     closedLoopFuelTrim_.fill(1.0);
     highLoadClosedLoopFuelTrim_.fill(1.0);
-    highLoadClosedLoopFuelTrimSeeded_.fill(false);
     flameEvents_.fill({});
     compressionIgnitionStates_.fill({});
     compressionIgnitionResults_.fill({});

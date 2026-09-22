@@ -1,4 +1,5 @@
 #include <enginelab/runtime/DynoQualityGate.hpp>
+#include <enginelab/simulation/DynoAbsorberController.hpp>
 
 #include <cmath>
 #include <cstdlib>
@@ -111,8 +112,47 @@ int main() {
     absorber = validAbsorber();
     absorber.contactFraction = 0.0;
     absorber.contacted = false;
-    require(gate.evaluate(input, state, absorber).accepted(),
-            "a tracked inertial ramp may legitimately unload a passive brake");
+    requireOnly(gate.evaluate(input, state, absorber).reasons,
+                DynoQualityReason::noBrakeContact,
+                "a brake-dyno ramp without absorber contact must be rejected");
+
+    {
+        auto config = enginelab::makeDefaultInlineFour();
+        enginelab::DynoAbsorberController controller(config);
+        enginelab::EngineState rampState;
+        rampState.rpm = 2'000.0;
+        rampState.torqueNm = 100.0;
+        rampState.cycleAveragedTorqueNm = 100.0;
+        controller.reset(rampState.rpm, 100.0);
+        auto minimumSettledContact = 1.0;
+        auto settledRampBrakeTorqueNm = 0.0;
+        constexpr double dt = 0.001;
+        for (int step = 0; step < 3'000; ++step) {
+            const auto targetRpm = 2'000.0 + 500.0 * step * dt;
+            rampState.rpm = targetRpm;
+            const auto output = controller.advance(
+                dt, targetRpm, rampState);
+            if (step > 500) {
+                minimumSettledContact = std::min(
+                    minimumSettledContact, output.contactFraction);
+                settledRampBrakeTorqueNm = output.brakeTorqueNm;
+            }
+        }
+        require(minimumSettledContact > 0.999,
+            "an ideal 500 rpm/s follower must retain full absorber contact");
+
+        enginelab::DynoAbsorberController steadyController(config);
+        rampState.rpm = 3'500.0;
+        steadyController.reset(rampState.rpm, 100.0);
+        auto settledSteadyBrakeTorqueNm = 0.0;
+        for (int step = 0; step < 2'000; ++step) {
+            const auto output = steadyController.advance(
+                dt, rampState.rpm, rampState);
+            settledSteadyBrakeTorqueNm = output.brakeTorqueNm;
+        }
+        require(settledRampBrakeTorqueNm < settledSteadyBrakeTorqueNm,
+            "a positive target ramp must release inertial torque instead of braking an ideal follower");
+    }
 
     input = validInput();
     absorber = validAbsorber();

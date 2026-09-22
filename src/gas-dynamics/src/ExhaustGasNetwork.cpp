@@ -1755,14 +1755,19 @@ bool ExhaustGasNetwork::injectSpeciesAtPort(std::size_t portIndex,
     if (endpoint.type == ExhaustEndpointType::junction) return false;
     auto& duct = ducts_[endpoint.elementIndex];
     // The source is spread over the spray-and-film footprint next to the
-    // valve, not concentrated in the single adjacent cell. An injector cone
-    // and its wall film physically wet several centimetres of port, and with
-    // the valve shut the adjacent cell is a near-stagnant sliver of gas: on a
-    // large cylinder one cycle's evaporation cooling dumped there chills it
-    // by hundreds of kelvin (measured on the 2.25 L/cyl V12 at idle: the port
-    // reading fell 62 -> 27 degC within one valve event and kept falling,
-    // which starved vaporisation and stalled the engine).
-    const auto spreadCells = std::min<std::size_t>(3, duct.cells_.size());
+    // valve, not an arbitrary number of mesh cells. A port injector cone wets
+    // roughly a few centimetres. The old fixed three-cell footprint therefore
+    // changed physical length with solver resolution: 60 mm on a fine 20 mm
+    // mesh but 285 mm on the realtime 95 mm mesh, placing most of the fuel far
+    // upstream and creating the severe lean/misfire interval after DFCO. Keep
+    // the footprint at about 60 mm, bounded to the original three cells. A
+    // coarse first cell already represents a sufficiently large volume to
+    // avoid the single-sliver cooling failure measured on the 2.25 L/cyl V12.
+    constexpr double sprayAndFilmFootprintM = 0.060;
+    const auto spreadCells = std::min<std::size_t>(
+        3, std::min(duct.cells_.size(),
+            std::max<std::size_t>(1, static_cast<std::size_t>(std::ceil(
+                sprayAndFilmFootprintM / duct.geometry_.cellLengthM())))));
     if (spreadCells == 0) return false;
     const auto speciesIndex = static_cast<std::size_t>(species);
     const auto specificHeatCv =

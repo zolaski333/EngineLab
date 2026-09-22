@@ -50,6 +50,9 @@ std::size_t FourStrokeEventGenerator::generate(
                 && (!hasCylinderState
                     || !cylinderState->compressionIgnition))
             continue;
+        if (config.fuel == FuelType::gasoline && hasCylinderState
+                && !cylinderState->combustionCommandAvailable)
+            continue;
         const auto combustionPhase = config.fuel == FuelType::diesel
             ? cylinderState->combustionStartPhaseDegrees
             : cylinder->ignitionOffsetDegrees

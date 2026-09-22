@@ -114,7 +114,7 @@ RealtimeEngineAudio::RealtimeEngineAudio(FiringEventQueue& queue,
 }
 
 std::size_t RealtimeEngineAudio::runnerDelaySamples(double delaySeconds,
-                                                    double sampleRate) noexcept {
+                                                     double sampleRate) noexcept {
     const auto safeRate = std::isfinite(sampleRate) && sampleRate > 0.0 ? sampleRate : referenceSampleRate;
     const auto safeDelay = std::isfinite(delaySeconds)
         ? std::clamp(delaySeconds, 0.0, maximumPublishedDelaySeconds) : 0.0;
@@ -345,6 +345,9 @@ void RealtimeEngineAudio::release() noexcept {
     if (forcedInductionAcoustics_) forcedInductionAcoustics_->reset();
     physicalExhaustActive_ = false;
     pressureSampleIntervalSeconds_ = 0.0;
+    largeForwardClockDrifts_.store(0, std::memory_order_relaxed);
+    maximumForwardClockDriftSeconds_.store(0.0, std::memory_order_relaxed);
+    largeForwardClockDriftActive_ = false;
     levelLimitedSamples_.store(0, std::memory_order_relaxed);
     saturationProcessedSamples_.store(0, std::memory_order_relaxed);
     softLimitedSamples_.store(0, std::memory_order_relaxed);
@@ -355,6 +358,10 @@ void RealtimeEngineAudio::release() noexcept {
     minObservedLevelGain_.store(1.0F, std::memory_order_relaxed);
     maxObservedExhaustPressurePa_.store(0.0F, std::memory_order_relaxed);
     maxObservedExhaustJetNoisePressurePa_.store(
+        0.0F, std::memory_order_relaxed);
+    maxThermoacousticValveSourcePressurePa_.store(
+        0.0F, std::memory_order_relaxed);
+    maxObservedExhaustPressureWavePa_.store(
         0.0F, std::memory_order_relaxed);
     maxObservedIntakePressurePa_.store(0.0F, std::memory_order_relaxed);
     maxIntakeSourcePressurePa_.store(0.0F, std::memory_order_relaxed);
@@ -371,6 +378,18 @@ void RealtimeEngineAudio::release() noexcept {
     invalidBoundarySamples_.store(0, std::memory_order_relaxed);
     convolutionBank_.reset();
     if (oversampler_) oversampler_->reset();
+}
+
+double RealtimeEngineAudio::pressureSourceSamplingFrequencyHz(
+    const CylinderPressureSample& sample,
+    double timestampIntervalSeconds) noexcept {
+    const auto publishedRate = static_cast<double>(
+        sample.mechanicalSamplingFrequencyHz);
+    if (publishedRate > 0.0 && std::isfinite(publishedRate))
+        return publishedRate;
+    return timestampIntervalSeconds > 1.0e-7
+            && std::isfinite(timestampIntervalSeconds)
+        ? 1.0 / timestampIntervalSeconds : 0.0;
 }
 
 void RealtimeEngineAudio::activatePhysicalExhaust() noexcept {
@@ -593,15 +612,30 @@ void RealtimeEngineAudio::renderWithStems(
     // queue happens to empty.
     const auto producerTarget = producerClock_ - eventLatencySeconds_;
     double clockDrift = producerTarget - audioTimeSeconds_;
-    // Large gaps (device restart, time-scale jump, long stall) snap immediately;
-    // everything else is a slow crystal drift that we trim out gradually. The
-    // per-sample correction is capped to ~0.25% of the sample period, which
+    // Every gap is trimmed gradually. Skipping the cursor forward after a late
+    // callback used to discard 40-120 ms of boundary evolution while preserving
+    // the waveguide's old recursive state. On the V12 that phase-inconsistent
+    // splice excited a 2-4 kPa non-physical pressure burst. Keeping the sampled
+    // timeline continuous preserves every conservative boundary sample; the
+    // only cost of a host stall is temporarily increased monitoring latency.
+    // The per-sample correction is capped to ~0.25% of the sample period, which
     // comfortably exceeds real sound-card drift (<0.1%) while staying far too
     // small to disturb sample-accurate event placement within a block.
-    // Never jump backwards: on pause/device teardown a stale producer epoch must
-    // not replay already-consumed pressure or events. Forward discontinuities
-    // (restart/overrun) are safe to catch up immediately.
-    if (clockDrift > 0.040) { audioTimeSeconds_ = producerTarget; clockDrift = 0.0; }
+    // Never jump in either direction: prepare()/release() owns a real device
+    // restart, while a running stream must not fabricate or discard physics.
+    if (clockDrift > 0.040) {
+        if (!largeForwardClockDriftActive_) {
+            largeForwardClockDrifts_.fetch_add(1, std::memory_order_relaxed);
+            largeForwardClockDriftActive_ = true;
+        }
+        auto previousMaximum = maximumForwardClockDriftSeconds_.load(
+            std::memory_order_relaxed);
+        while (clockDrift > previousMaximum
+            && !maximumForwardClockDriftSeconds_.compare_exchange_weak(
+                previousMaximum, clockDrift, std::memory_order_relaxed)) {}
+    } else if (clockDrift < 0.030) {
+        largeForwardClockDriftActive_ = false;
+    }
     const auto maxClockCorrection = 0.0025 / sampleRate_;
     const auto clockCorrectionPerSample = std::clamp(clockDrift / (0.1 * sampleRate_),
                                                      -maxClockCorrection, maxClockCorrection);
@@ -927,6 +961,8 @@ void RealtimeEngineAudio::renderWithStems(
     }
     float blockPeakObservedExhaustPressurePa = 0.0F;
     float blockPeakObservedExhaustJetNoisePressurePa = 0.0F;
+    float blockPeakThermoacousticValveSourcePressurePa = 0.0F;
+    float blockPeakObservedExhaustPressureWavePa = 0.0F;
     float blockPeakObservedIntakePressurePa = 0.0F;
     float blockPeakObservedStructuralPressurePa = 0.0F;
     float blockPeakObservedForcedInductionPressurePa = 0.0F;
@@ -978,6 +1014,12 @@ void RealtimeEngineAudio::renderWithStems(
         std::array<float, maximumPaths> pathMeanMassFlowSum {};
         StructuralExcitationSample structuralExcitation;
         std::array<AcousticIntakeNetwork::CylinderBoundary, 32> intakeBoundaries {};
+        std::array<AcousticIntakeNetwork::PathBoundary, maximumPaths>
+            intakePathBoundaries {};
+        std::array<float, maximumPaths> intakeDensitySum {};
+        std::array<float, maximumPaths> intakeSoundSpeedSum {};
+        std::array<float, maximumPaths> intakeMediumWeight {};
+        auto intakePathBoundariesAvailable = false;
         // Once established, the SI path is latched. A missing producer sample
         // lets the passive network ring down; it must never resurrect noise and
         // oscillators for a callback and hide the telemetry dropout.
@@ -1083,14 +1125,19 @@ void RealtimeEngineAudio::renderWithStems(
                 const auto denominator = hasNextPressureSample_
                     ? nextPressureSample_.timeSeconds - currentPressureSample_.timeSeconds : 0.0;
                 auto valveFlowSourceRateChanged = false;
-                if (denominator > 1.0e-7
-                    && std::abs(denominator - pressureSampleIntervalSeconds_) > 1.0e-9) {
-                    pressureSampleIntervalSeconds_ = denominator;
+                const auto telemetryRate = pressureSourceSamplingFrequencyHz(
+                    currentPressureSample_, denominator);
+                const auto physicalSampleInterval = telemetryRate > 0.0
+                    ? 1.0 / telemetryRate : 0.0;
+                if (physicalSampleInterval > 0.0
+                    && std::abs(physicalSampleInterval
+                        - pressureSampleIntervalSeconds_) > 1.0e-9) {
+                    pressureSampleIntervalSeconds_ = physicalSampleInterval;
                     // The solver publishes an adaptive cadence.  Restrict the
                     // reconstructed pressure bandwidth to its actual Nyquist
-                    // region instead of applying a fixed 9.5 kHz cutoff to a
-                    // potentially 2-4 kHz source stream.
-                    const auto telemetryRate = 1.0 / denominator;
+                    // region instead of applying a fixed 9.5 kHz cutoff. The
+                    // published mechanical rate is deliberately independent of
+                    // wall-clock scheduling gaps inserted by EngineRuntime.
                     valveFlowSourceRateChanged = std::abs(telemetryRate
                         - valveFlowSourceSamplingHz_) > 0.01 * std::max(
                             telemetryRate, valveFlowSourceSamplingHz_);
@@ -1123,6 +1170,20 @@ void RealtimeEngineAudio::renderWithStems(
                 // overshoot when a substep cadence changes or a queue sample was
                 // deliberately rate-limited by the runtime.
                 const auto f = static_cast<float>(fraction);
+                for (std::size_t path = 0; path < maximumPaths; ++path) {
+                    const auto currentThrottle = path
+                            < currentPressureSample_.intakePathCount
+                        ? currentPressureSample_
+                            .intakeThrottleConductanceAreaM2[path]
+                        : 0.0F;
+                    const auto nextThrottle = hasNextPressureSample_
+                            && path < nextPressureSample_.intakePathCount
+                        ? nextPressureSample_
+                            .intakeThrottleConductanceAreaM2[path]
+                        : currentThrottle;
+                    intakePathBoundaries[path].throttleConductanceAreaM2 =
+                        std::lerp(currentThrottle, nextThrottle, f);
+                }
                 for (std::size_t index = 0; index < count; ++index) {
                     const auto nextPressure = hasNextPressureSample_
                         && index < nextPressureSample_.cylinderCount
@@ -1175,6 +1236,16 @@ void RealtimeEngineAudio::renderWithStems(
                         intakeBoundary.massFlowKgPerSecond)
                         && intakeBoundary.densityKgPerM3 > 0.0F
                         && intakeBoundary.soundSpeedMps > 0.0F;
+                    const auto intakePath = std::min<std::size_t>(
+                        currentPressureSample_.intakePathIndex[index],
+                        maximumPaths - 1U);
+                    if (intakeBoundary.physical) {
+                        intakeDensitySum[intakePath] +=
+                            intakeBoundary.densityKgPerM3;
+                        intakeSoundSpeedSum[intakePath] +=
+                            intakeBoundary.soundSpeedMps;
+                        intakeMediumWeight[intakePath] += 1.0F;
+                    }
                     const auto rawGaugePressure = pressureBar - ambientPressureKpa * 0.01F;
                     cylinderPressureHighPass_[index] = pressureHighPassPole_
                         * (cylinderPressureHighPass_[index] + rawGaugePressure
@@ -1365,6 +1436,9 @@ void RealtimeEngineAudio::renderWithStems(
                             sourceCoefficients.b0);
                         cylinderExhaustPulse[index] = std::isfinite(outgoingMeasured)
                             ? outgoingMeasured - reflectedIncoming : 0.0F;
+                        blockPeakThermoacousticValveSourcePressurePa = std::max(
+                            blockPeakThermoacousticValveSourcePressurePa,
+                            std::abs(cylinderExhaustPulse[index]));
                         runnerAdmittance[index] = areaM2
                             / (densityKgPerM3 * soundSpeedMps);
                         thermoacousticRunnerAdmittance_[index] = runnerAdmittance[index];
@@ -1418,6 +1492,15 @@ void RealtimeEngineAudio::renderWithStems(
                             * std::sqrt((1.0F + pan) * 0.5F);
                     }
                 }
+                for (std::size_t path = 0; path < maximumPaths; ++path) {
+                    if (intakeMediumWeight[path] > 0.0F) {
+                        intakePathBoundaries[path].densityKgPerM3 =
+                            intakeDensitySum[path] / intakeMediumWeight[path];
+                        intakePathBoundaries[path].soundSpeedMps =
+                            intakeSoundSpeedSum[path] / intakeMediumWeight[path];
+                    }
+                }
+                intakePathBoundariesAvailable = true;
             }
         }
         if (structuralModalRadiator_ && structuralExcitation.cylinderCount > 0) {
@@ -1430,6 +1513,9 @@ void RealtimeEngineAudio::renderWithStems(
                     pressurePa, acousticFullScaleSplDb));
         }
         if (acousticIntakeNetwork_ && activeCylinderCount > 0) {
+            if (intakePathBoundariesAvailable)
+                acousticIntakeNetwork_->updateBoundaryTargets(
+                    intakePathBoundaries);
             const auto inletPressure = acousticIntakeNetwork_->process(
                 std::span<const AcousticIntakeNetwork::CylinderBoundary>(
                     intakeBoundaries.data(), activeCylinderCount),
@@ -1568,6 +1654,10 @@ void RealtimeEngineAudio::renderWithStems(
                     - jetNoisePressure[path].leftPa;
                 const auto pressureWaveRightPa = observerPressure[path].rightPa
                     - jetNoisePressure[path].rightPa;
+                blockPeakObservedExhaustPressureWavePa = std::max(
+                    blockPeakObservedExhaustPressureWavePa,
+                    std::max(std::abs(pressureWaveLeftPa),
+                        std::abs(pressureWaveRightPa)));
                 blockPeakObservedExhaustPressurePa = std::max(
                     blockPeakObservedExhaustPressurePa,
                     std::max(std::abs(adjustedLeftPa),
@@ -2029,6 +2119,20 @@ void RealtimeEngineAudio::renderWithStems(
                 std::memory_order_relaxed)) {
         maxObservedExhaustJetNoisePressurePa_.store(
             blockPeakObservedExhaustJetNoisePressurePa,
+            std::memory_order_relaxed);
+    }
+    if (blockPeakThermoacousticValveSourcePressurePa
+            > maxThermoacousticValveSourcePressurePa_.load(
+                std::memory_order_relaxed)) {
+        maxThermoacousticValveSourcePressurePa_.store(
+            blockPeakThermoacousticValveSourcePressurePa,
+            std::memory_order_relaxed);
+    }
+    if (blockPeakObservedExhaustPressureWavePa
+            > maxObservedExhaustPressureWavePa_.load(
+                std::memory_order_relaxed)) {
+        maxObservedExhaustPressureWavePa_.store(
+            blockPeakObservedExhaustPressureWavePa,
             std::memory_order_relaxed);
     }
     if (blockPeakObservedIntakePressurePa
