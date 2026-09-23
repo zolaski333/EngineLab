@@ -263,9 +263,18 @@ StandingStartMetrics measureStandingStart(
         if (state.airFuelRatio > 0.0)
             metrics.minimumAfr = std::min(metrics.minimumAfr, state.airFuelRatio);
         if (traceEvents && tick % 12 == 0)
-            std::printf("    t=%.3f rpm=%.0f clutch=%.2f afr=%.2f misfires=%llu\n",
+            std::printf("    t=%.3f rpm=%.0f clutch=%.2f afr=%.2f misfires=%llu"
+                        " | c0 air=%.1f req=%.2f met=%.2f del=%.2f portV=%.2f"
+                        " film=%.2f trim=%.3f\n",
                 timeSeconds, state.rpm, clutch, state.airFuelRatio,
-                static_cast<unsigned long long>(state.misfireEventCount));
+                static_cast<unsigned long long>(state.misfireEventCount),
+                state.cylinderStates[0].trappedFreshAirMassMg,
+                state.cylinderStates[0].requestedFuelMgPerCycle,
+                state.cylinderStates[0].meteredFuelMgPerCycle,
+                state.cylinderStates[0].deliveredFuelMgPerCycle,
+                state.cylinderStates[0].portFuelVapourInventoryMg,
+                state.cylinderStates[0].portLiquidFilmFuelMg,
+                state.cylinderStates[0].closedLoopFuelTrim);
     }
     metrics.finalRpm = simulator.state().rpm;
     metrics.misfireEvents = simulator.state().misfireEventCount - misfiresBefore;
@@ -788,6 +797,8 @@ int main(int argc, char** argv) {
     double launchAtSeconds = 4.0;
     std::vector<std::string> skipped;
     std::vector<std::string> knownStalls;
+    std::vector<std::string> knownResumeMisfires;
+    double resumeAfrEnvelope = 0.18;
     std::optional<std::filesystem::path> csvDirectory;
     std::filesystem::path catalogRoot = ENGINELAB_CATALOG_ROOT;
     for (int index = 1; index < argc; ++index) {
@@ -805,6 +816,10 @@ int main(int argc, char** argv) {
         else if (argument == "--standing-start") standingStart = true;
         else if (argument == "--known-stall" && index + 1 < argc)
             knownStalls.emplace_back(argv[++index]);
+        else if (argument == "--known-resume-misfire" && index + 1 < argc)
+            knownResumeMisfires.emplace_back(argv[++index]);
+        else if (argument == "--resume-afr-envelope" && index + 1 < argc)
+            resumeAfrEnvelope = std::stod(argv[++index]);
         else if (argument == "--launch-at" && index + 1 < argc)
             launchAtSeconds = std::max(3.5, std::stod(argv[++index]));
         else if (argument == "--skip" && index + 1 < argc)
@@ -814,7 +829,8 @@ int main(int argc, char** argv) {
                 << "usage: EngineLabLoadedAccelerationHarness"
                    " [--filter NAME] [--gear 2|3] [--csv-dir DIR]"
                    " [--catalog-root DIR] [--trace] [--dfco-tip-in]"
-                   " [--standing-start] [--launch-at S] [--skip NAME]... [--known-stall NAME]...\n";
+                   " [--standing-start] [--launch-at S] [--skip NAME]... [--known-stall NAME]...\n"
+                   "  [--resume-afr-envelope X] [--known-resume-misfire NAME]...\n";
             return EXIT_FAILURE;
         }
     }
@@ -972,7 +988,14 @@ int main(int argc, char** argv) {
                     ? metrics.postDfcoMinimumAfr
                         >= entry->config.fuelProperties
                             .stoichiometricAirFuelRatio * 1.05
-                    : metrics.postDfcoMaximumAfrError <= 0.18;
+                    : metrics.postDfcoMaximumAfrError <= resumeAfrEnvelope;
+                // A declared engine may misfire on the resume; it is still
+                // printed, and tracked in docs/journal.md.
+                const auto resumeMisfireKnown = std::any_of(
+                    knownResumeMisfires.begin(), knownResumeMisfires.end(),
+                    [&](const std::string& token) {
+                        return entry->config.name.find(token) != std::string::npos;
+                    });
                 allRunnable = allRunnable && metrics.started
                     && metrics.gearEngaged
                     && metrics.dfcoObserved
@@ -986,7 +1009,7 @@ int main(int argc, char** argv) {
                         // AFR 20-30 lean excursion without pretending a brief
                         // AFR 15.1 transport transient is a flammability loss.
                     && postDfcoAfrWithinEnvelope
-                    && metrics.postDfcoMisfireEvents == 0;
+                    && (metrics.postDfcoMisfireEvents == 0 || resumeMisfireKnown);
             } else {
                 const auto afrTrackingValid =
                     entry->config.fuel == enginelab::FuelType::diesel

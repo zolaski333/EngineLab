@@ -4,6 +4,17 @@ Entrées courtes (10 lignes maximum), la plus récente en haut. Une entrée dit 
 qui a été mesuré, comment, et ce qui ne l'a pas été. Ce qui devient une règle
 durable va dans `CLAUDE.md`. L'historique antérieur est dans `docs/archive/`.
 
+## 2026-09-23 — Injection et ralenti
+
+- Jet indirect recalculé à chaque sous-pas : cliquet (CP2 : AFR 10,3, trim en
+  butée 0,55). Jet dimensionné 1 fois par cycle : 15/15 à φ 1,02-1,04 au ralenti.
+- Carburant refoulé par le papillon détruit (départ CP2 : 592/1 192 mg) ; gardé
+  dans la boîte à air et réaspiré : départ à 25 s 14/14 hors Aircooled.
+- **Déclaré, accepté** : reprise DFCO riche ~0,2 s, pic 16-32 % (HEAD 9-17 %),
+  3 ratés EJ25 ; LS3 cale au départ à 4 s (carburant stocké dans le plenum).
+- Son CP2 ralenti : +5,3 dB, plus sombre (−17 dB à 1-2 kHz). Réalisme inconnu.
+- Non mesuré : biais de trim restants (air prédit +17 % CP2, rendement 0,77).
+
 ## 2026-09-23 — Corrections après l'audit de l'afterfire
 
 - Calage au démarrage en côte : réserve ECU ×2,12 gardée ~14 s après démarrage

@@ -262,9 +262,16 @@ if(TARGET EngineLabLoadedAccelerationHarness)
         COMMAND EngineLabLoadedAccelerationHarness
             --filter "Audi I5"
             --gear 3)
+    # Declared regression, accepted by the owner (docs/journal.md 2026-09-23).
+    # Once-per-cycle port metering removed the ratchet that over-fuelled every
+    # idle; the same ratchet had been refilling the runner after a fuel cut.
+    # The resume now runs rich for ~0.2 s: peak |AFR error| 16-32 % against
+    # 9-17 % before, and the EJ25 misfires rich (AFR ~8.8). The envelope still
+    # rejects the old AFR 20-30 lean excursion (+55 % and more).
     add_test(NAME EngineLab.LoadedAccelerationCatalogDfcoResume
         COMMAND EngineLabLoadedAccelerationHarness
-            --dfco-tip-in)
+            --dfco-tip-in --resume-afr-envelope 0.35
+            --known-resume-misfire EJ25)
     # Standing start from idle, 1st gear, WOT, clutch over 0.9 s, 4 s after
     # the start (inside the ECU post-start window) and 25 s after it. d70e8b8
     # stalled six road engines at 4 s (x2.12 start reserve stacked on X-tau)
@@ -272,11 +279,13 @@ if(TARGET EngineLabLoadedAccelerationHarness)
     # on `vehicle: test_stand` and also stalled before d70e8b8: a road launch
     # is not a meaningful test for them. Declared stalls (lean and lugged
     # below idle by the clutch; an asynchronous tip-in pulse did not save
-    # them) are tracked in docs/journal.md; any other stall fails.
+    # them) are tracked in docs/journal.md; any other stall fails. At 4 s the
+    # LS3 pushes half its metered fuel back into its plenum and stalls lean
+    # (declared 2026-09-23); the 2JZ, declared before, now launches.
     add_test(NAME EngineLab.StandingStartCatalogue
         COMMAND EngineLabLoadedAccelerationHarness
             --standing-start --gear 1 --launch-at 4
-            --skip Merlin --skip Radial --known-stall 2JZ)
+            --skip Merlin --skip Radial --known-stall LS3)
     add_test(NAME EngineLab.StandingStartSettledIdle
         COMMAND EngineLabLoadedAccelerationHarness
             --standing-start --gear 1 --launch-at 25

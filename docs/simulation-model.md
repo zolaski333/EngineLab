@@ -113,6 +113,15 @@ La masse commandée, le film, la vapeur disponible à l'étincelle et le carbura
 réellement consommé restent distincts. Une fenêtre trop courte, un injecteur
 sous-dimensionné ou un film lent réduit donc le carburant effectivement brûlé.
 
+En injection indirecte, le jet est dimensionné une fois par cycle, au premier
+sous-pas de la fenêtre : besoin de la charge, moins le film disponible avant
+l'étincelle (X-tau) et le carburant d'une chambre qui a raté, divisé par la part
+du jet neuf disponible. La vapeur du conduit n'est pas créditée : c'est un
+réservoir stationnaire, pas du carburant pour la prochaine charge.
+
+Le gaz refoulé par le papillon est gardé dans la boîte à air (`airbox_volume_l`)
+et réaspiré en premier. Sans boîte à air, le carburant qu'il porte est perdu.
+
 L'AFR et lambda télémétrés proviennent des espèces piégées. Un correcteur par
 cylindre apprend les pertes de transport du cycle précédent. Sa bande passante
 dépend de la durée du cycle et, en injection indirecte, de la constante de

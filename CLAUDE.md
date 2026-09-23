@@ -184,6 +184,10 @@ Le détail de chaque mesure est dans `docs/archive/`.
   14 après 25 s de ralenti, et au coup de gaz (Hayabusa, CP3, Aircooled).
   Impulsion asynchrone au coup de pédale : ne sauve pas le 2JZ à 4 s, fait caler
   l'Aircooled à 8 s.
+- Créditer la vapeur du conduit au jet d'injection indirecte : c'est un
+  réservoir stationnaire, pas du carburant pour la charge (livré/demandé
+  0,47-0,77). Pour la reprise DFCO, 8 variantes échouent (amorçage du seul 1er
+  jet, film sur un cycle, report ∝ demande, niveau de vapeur de référence).
 
 ## Organisation des documents
 

@@ -173,6 +173,56 @@ constexpr double exhaustExternalHeatTransferWPerM2K = 18.0;
         * 1.0e-6;
 }
 
+/** Throttle flow between the plenum and its upstream boundary, keeping the
+ * fuel vapour that reverses through the throttle.
+ *
+ * The upstream side is a fixed-composition boundary, so fuel leaving the
+ * plenum there used to vanish. The reversed gas is tracked as a slug sitting
+ * just upstream of the throttle: a pulsating column is plug flow, so forward
+ * flow draws the slug back first, at its own fuel concentration. The slug
+ * cannot outgrow the airbox; what overflows it leaves through the snorkel.
+ * Without an airbox (open bellmouth) nothing is kept.
+ */
+void throttleFlowKeepingReversedFuel(GasCell& plenum, AirboxSlug& slug,
+                                     double airboxVolumeLitres,
+                                     double boundaryPressureKpa,
+                                     double boundaryTemperatureK,
+                                     double throttleAreaM2,
+                                     double dischargeCoefficient,
+                                     double dtSeconds) noexcept {
+    const auto fuelBeforeMoles = plenum.mixture().fuelMoles;
+    const auto massBeforeKg = plenum.massKg();
+    (void)ConservativeGasSystem::flowFromBoundary(plenum, boundaryPressureKpa,
+        boundaryTemperatureK, throttleAreaM2, dischargeCoefficient, dtSeconds,
+        0.0, -1.0); // plenum -> upstream compressor/atmosphere
+    if (!(airboxVolumeLitres > 0.0)) {
+        slug = {};
+        return;
+    }
+    const auto netInflowKg = plenum.massKg() - massBeforeKg;
+    if (netInflowKg < 0.0) {
+        constexpr double airMolarMassKgPerMol = 0.028965;
+        constexpr double gasConstantJPerMolK = 8.314462618;
+        const auto airboxMassKg = boundaryPressureKpa * airboxVolumeLitres
+            * airMolarMassKgPerMol
+            / (gasConstantJPerMolK * std::max(1.0, boundaryTemperatureK));
+        slug.massKg -= netInflowKg;
+        slug.fuelMoles += std::max(0.0, fuelBeforeMoles - plenum.mixture().fuelMoles);
+        if (slug.massKg > airboxMassKg) {
+            slug.fuelMoles *= airboxMassKg / slug.massKg;
+            slug.massKg = airboxMassKg;
+        }
+        return;
+    }
+    if (!(netInflowKg > 0.0) || !(slug.massKg > 0.0))
+        return;
+    const auto drawnFraction = std::min(1.0, netInflowKg / slug.massKg);
+    const auto returnedMoles = slug.fuelMoles * drawnFraction;
+    plenum.injectFuelMoles(returnedMoles, boundaryTemperatureK);
+    slug.fuelMoles -= returnedMoles;
+    slug.massKg -= slug.massKg * drawnFraction;
+}
+
 /** Isentropic ideal-gas orifice flow from an upstream reservoir.
  *
  * Used for the compressor bypass valve, whose upstream charge pipe is a
@@ -868,10 +918,10 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                             state_.throttle, intake.throttleGamma);
                 intakeThrottleConductanceAreaM2[pathIndex] = throttleAreaM2
                     * intake.throttleDischargeCoefficient;
-                (void)ConservativeGasSystem::flowFromBoundary(intakePlenumGas_[pathIndex],
+                throttleFlowKeepingReversedFuel(intakePlenumGas_[pathIndex],
+                    airboxSlug_[pathIndex], intake.airboxVolumeLitres,
                     config_.ambientPressureKpa, config_.ambientTemperatureC + 273.15,
-                    throttleAreaM2, intake.throttleDischargeCoefficient, subDt,
-                    0.0, -1.0); // plenum -> upstream atmosphere
+                    throttleAreaM2, intake.throttleDischargeCoefficient, subDt);
             }
         } else {
             constexpr double exhaustCpJPerKgK = 1'120.0;
@@ -1032,9 +1082,10 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                             state_.throttle, intake.throttleGamma);
                 intakeThrottleConductanceAreaM2[pathIndex] = throttleAreaM2
                     * intake.throttleDischargeCoefficient;
-                (void)ConservativeGasSystem::flowFromBoundary(intakePlenumGas_[pathIndex], intakeSourcePressureKpa,
-                    temperatureK, throttleAreaM2, intake.throttleDischargeCoefficient, subDt,
-                    0.0, -1.0); // plenum -> upstream compressor/atmosphere
+                throttleFlowKeepingReversedFuel(intakePlenumGas_[pathIndex],
+                    airboxSlug_[pathIndex], intake.airboxVolumeLitres,
+                    intakeSourcePressureKpa, temperatureK, throttleAreaM2,
+                    intake.throttleDischargeCoefficient, subDt);
             }
         }
         // Resolve plenum jet mixing as a sudden expansion loss. The equivalent
@@ -1355,6 +1406,7 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 injectedFuelMolesThisCycle_[cylinderIndex] = 0.0;
                 entrainedFuelMolesThisCycle_[cylinderIndex] = 0.0;
                 requestedFuelMolesThisCycle_[cylinderIndex] = 0.0;
+                portPulseCreditSampled_[cylinderIndex] = false;
                 commandedFuelMolesMaxThisCycle_[cylinderIndex] = 0.0;
                 injectorOpenSubsteps_[cylinderIndex] = 0.0;
                 injectorWindowSubsteps_[cylinderIndex] = 0.0;
@@ -1416,9 +1468,26 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 highSpeedAcousticSamplingPosition
                 * highSpeedAcousticSamplingPosition
                 * (3.0 - 2.0 * highSpeedAcousticSamplingPosition);
+            // The resolved-oxygen floor stands for a charge RETAINED in a
+            // closed chamber (a lean or misfired cycle). With a valve open the
+            // chamber is exchanging gas and its oxygen does not belong to the
+            // next trapped charge, yet the request is a maximum over the
+            // cycle. The floor locked onto the exhaust stroke, where gas
+            // flowing back from the exhaust raised the chamber above the
+            // trapped charge: at idle the CP2 requested for 71-72 mg against
+            // 52-55 mg trapped, the Merlin for 580-594 against ~306, and both
+            // sat on the 0.55 trim stop. With a valve open the density-scaled
+            // trapped reference owns the request, as in a speed-density ECU;
+            // before any trapped reference exists (cranking) the resolved
+            // chamber remains the only estimate.
+            const auto resolvedChargeFloorMg =
+                (valveTrain.intakeLiftMm > 0.01
+                    || valveTrain.exhaustLiftMm > 0.01)
+                    && trappedAirMassMgLastCycle_[cylinderIndex] > 0.0
+                ? 0.0 : oxygenEquivalentAirMassMg;
             const auto livePredictedPortChargeMassMg =
                 TransientChargeEstimator::estimateFreshAirMassMg(
-                    oxygenEquivalentAirMassMg,
+                    resolvedChargeFloorMg,
                     {
                         trappedAirMassMgLastCycle_[cylinderIndex],
                         trappedAirSourcePressureKpaLastCycle_[cylinderIndex],
@@ -1426,7 +1495,7 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                     },
                     chargeSource.pressureKpa(), chargeSource.temperatureK());
             const auto sampledPredictedPortChargeMassMg = std::max(
-                oxygenEquivalentAirMassMg,
+                resolvedChargeFloorMg,
                 predictedPortChargeMassMgThisCycle_[cylinderIndex]);
             const auto predictedPortChargeMassMg =
                 dfcoResumeChargeTransientActive
@@ -1524,7 +1593,6 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
             // deposited into the duct cell as a conservative species source.
             const auto portInjection = config_.injection.mode == InjectionMode::port;
             GasCell portInjectionScratch;
-            auto portFuelMoles = 0.0;
             auto portFuelPrimeDeficitMoles = 0.0;
             portInjectorFootprintFuelMoles_[cylinderIndex] = 0.0;
             portInjectorFootprintTargetFuelMoles_[cylinderIndex] = 0.0;
@@ -1540,9 +1608,6 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 portInjectionScratch.initialise(portPressureKpa, 0.1, portTemperatureK);
                 const auto fuelSpecies = static_cast<std::size_t>(
                     gasdynamics::GasSpecies::fuel);
-                const auto runnerInventory = runnerDuct.inventory();
-                portFuelMoles = runnerInventory.speciesMassKg[fuelSpecies]
-                    / fuelMolarMassKg;
                 {
                     // A port pulse has two conservative jobs: fuel the imminent
                     // trapped charge and cover any CURRENT deficit in the
@@ -1694,11 +1759,18 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 // Counting the air while hiding the fuel is the asymmetry that
                 // flooded the V12 at idle catch into an AFR-3 misfire lock-in;
                 // after a misfire the chamber fuel must count symmetrically.
+                // Symmetrically also means NOT while the exhaust valve is
+                // open: the floor ignores that oxygen because the charge is
+                // being expelled, and its fuel is leaving with it. A pulse
+                // sized once per cycle, in the exhaust stroke, that credited
+                // a misfired charge on its way out starved the next one; the
+                // CP2 blip went AFR 29-33, misfired every cycle and stalled.
                 const auto trappedCylinderFuel = portInjection
                     && (valveTrain.intakeLiftMm > 0.01
-                        || cylinderMisfires_[cylinderIndex]
-                        || portFuelResumePending_[cylinderIndex]
-                        || portFuelResumePrepared_[cylinderIndex])
+                        || ((cylinderMisfires_[cylinderIndex]
+                                || portFuelResumePending_[cylinderIndex]
+                                || portFuelResumePrepared_[cylinderIndex])
+                            && !(valveTrain.exhaustLiftMm > 0.01)))
                     ? cylinderGas_[cylinderIndex].mixture().fuelMoles : 0.0;
                 const auto filmTemperatureFactor = std::clamp(
                     (injectionTarget.temperatureK() - 240.0) / 120.0, 0.08, 2.0);
@@ -1731,17 +1803,45 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                         const auto newPulseAvailableFraction = std::max(
                             0.02, (1.0 - wallFilmFraction)
                                 + wallFilmFraction * filmAvailableFraction);
-                        const auto existingFuelInventory =
-                            portFuelMoles
-                            + injectionStates_[cylinderIndex].liquidFilmMoles
-                                * filmAvailableFraction
-                            + trappedCylinderFuel;
-                        const auto fuelInventoryDeficit = std::max(
+                        // A sequential port pulse is sized once per cycle:
+                        // credit, prime deficit and availability are sampled
+                        // at the first metering substep, then the remainder of
+                        // that pulse is delivered. Re-reading the live
+                        // inventory every substep of a 370-degree window was a
+                        // one-way ratchet: vapour pushed upstream by reversion,
+                        // or leaving the count at intake-valve closure, was
+                        // re-injected and then came back in the charge.
+                        // Measured on the CP2 at idle: the pulse sized at
+                        // window start was 0.5-1.5 mg, the injector metered
+                        // 6.3-7.4 mg for a 3.7 mg request, and the idle ran
+                        // AFR 10.3 with the lambda trim on its 0.55 stop.
+                        //
+                        // Only the wall film (the X-tau compensation of a real
+                        // ECU) and a misfired chamber are credited. Runner
+                        // vapour is fuel in transit: in steady state each
+                        // cycle's pulse replaces what the charge takes, so
+                        // crediting the standing vapour under-fuelled every
+                        // engine (delivered/requested 0.47-0.77, trims up to
+                        // 1.41). The request itself may still rise inside the
+                        // window (tip-in), so it is not frozen.
+                        if (!portPulseCreditSampled_[cylinderIndex]) {
+                            portPulseCreditSampled_[cylinderIndex] = true;
+                            portPulseInventoryCreditMoles_[cylinderIndex] =
+                                injectionStates_[cylinderIndex].liquidFilmMoles
+                                    * filmAvailableFraction
+                                + trappedCylinderFuel;
+                            portPulsePrimeDeficitMoles_[cylinderIndex] =
+                                portFuelPrimeDeficitMoles;
+                            portPulseAvailableFraction_[cylinderIndex] =
+                                newPulseAvailableFraction;
+                        }
+                        const auto pulseMoles = std::max(
                             0.0, requestedFuelMoles
-                                + portFuelPrimeDeficitMoles
-                                - existingFuelInventory);
-                        commandedFuelMoles =
-                            fuelInventoryDeficit / newPulseAvailableFraction;
+                                + portPulsePrimeDeficitMoles_[cylinderIndex]
+                                - portPulseInventoryCreditMoles_[cylinderIndex])
+                            / portPulseAvailableFraction_[cylinderIndex];
+                        commandedFuelMoles = std::max(0.0, pulseMoles
+                            - injectedFuelMolesThisCycle_[cylinderIndex]);
                     } else {
                         // A direct pulse is not instantaneously homogeneous.
                         // Liquid droplets and the dispersing vapour cloud are
@@ -4018,6 +4118,11 @@ void EngineSimulator::reset() noexcept {
     cylinderFlowCycleStarted_.fill(false);
     instantaneousCombustionPulse_.fill(0.0);
     injectedFuelMolesThisCycle_.fill(0.0);
+    portPulseCreditSampled_.fill(false);
+    portPulseInventoryCreditMoles_.fill(0.0);
+    portPulsePrimeDeficitMoles_.fill(0.0);
+    portPulseAvailableFraction_.fill(1.0);
+    airboxSlug_.fill({});
     entrainedFuelMolesThisCycle_.fill(0.0);
     meteredFuelMolesLastCycle_.fill(0.0);
     deliveredFuelMolesLastCycle_.fill(0.0);

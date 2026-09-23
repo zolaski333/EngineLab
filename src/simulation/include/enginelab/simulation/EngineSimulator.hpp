@@ -80,6 +80,12 @@ struct EngineSimulatorOptions final {
 };
 
 /** Orchestrates policies and integrates state; owns no thread and performs no audio work. */
+/** Gas reversed through a throttle and still upstream of it. */
+struct AirboxSlug final {
+    double massKg { 0.0 };
+    double fuelMoles { 0.0 };
+};
+
 class EngineSimulator final : public IEngineSimulation {
 public:
     EngineSimulator(EngineConfig, IEcuModel&, IPhysicsModel&, IFiringEventGenerator&,
@@ -339,6 +345,21 @@ private:
     std::array<double, 32> meteredFuelMolesLastCycle_ {};
     std::array<double, 32> deliveredFuelMolesLastCycle_ {};
     std::array<double, 32> requestedFuelMolesThisCycle_ {};
+    /** Port pulse terms, sampled once at the first metering substep of a
+     *  cycle: credited wall-film and misfired-chamber fuel, DFCO-resume prime
+     *  deficit and the fraction of a new pulse available before spark.
+     *  Re-reading them every substep turned transient vapour transport into
+     *  extra injector pulses that could never be taken back. */
+    std::array<bool, 32> portPulseCreditSampled_ {};
+    std::array<double, 32> portPulseInventoryCreditMoles_ {};
+    std::array<double, 32> portPulsePrimeDeficitMoles_ {};
+    std::array<double, 32> portPulseAvailableFraction_ {};
+    /** Gas pushed back through the throttle, held just upstream of it. A WOT
+     *  launch near 1000 rpm reverses about half the metered fuel out of the
+     *  plenum; the fixed-composition upstream boundary used to destroy it, so
+     *  the ECU saw a lean cylinder it could not correct (CP2: 592 of 1192 mg
+     *  lost). See throttleFlowKeepingReversedFuel(). */
+    std::array<AirboxSlug, 32> airboxSlug_ {};
     /** Density-scaled previous charge sampled once at the injector-start edge.
      *  Resolved chamber oxygen may raise the request later in the intake event,
      *  but sub-cycle plenum waves must not be peak-detected into pulse width. */

@@ -42,6 +42,8 @@ struct IdleResult final {
     double maxRpm { 0.0 };        // maximum over the final steady window
     double stdRpm { 0.0 };        // rpm std-dev over the final steady window (hunt)
     double driftRpm { 0.0 };      // second-half mean minus first-half mean
+    double afrRatio { 0.0 };      // settled mean AFR / target AFR (0 = no valid AFR)
+    bool diesel { false };
 };
 
 IdleResult measureIdle(const enginelab::EngineConfig& config, double blipThrottle,
@@ -49,6 +51,7 @@ IdleResult measureIdle(const enginelab::EngineConfig& config, double blipThrottl
     IdleResult result;
     result.name = config.name;
     result.idleRpm = config.idleRpm;
+    result.diesel = config.fuel == enginelab::FuelType::diesel;
 
     enginelab::SimpleEcuModel ecu;
     enginelab::SimplifiedGasolinePhysics physics;
@@ -87,6 +90,8 @@ IdleResult measureIdle(const enginelab::EngineConfig& config, double blipThrottl
     constexpr double idleSeconds = 16.0;
     constexpr double steadyWindowSeconds = 4.0; // measure only the settled tail
     std::vector<double> steadyRpm;
+    double afrRatioSum = 0.0;
+    std::size_t afrSamples = 0;
     const auto steadyStartStep =
         static_cast<int>((idleSeconds - steadyWindowSeconds) / stepSeconds);
     const auto idleSteps = static_cast<int>(idleSeconds / stepSeconds);
@@ -99,7 +104,14 @@ IdleResult measureIdle(const enginelab::EngineConfig& config, double blipThrottl
         (void)simulator.step(stepSeconds, controls);
         const auto rpm = simulator.state().rpm;
         if (rpm < stallFloorRpm) result.steadyStalled = true;
-        if (step >= steadyStartStep) steadyRpm.push_back(rpm);
+        if (step >= steadyStartStep) {
+            steadyRpm.push_back(rpm);
+            const auto& state = simulator.state();
+            if (state.airFuelRatioValid && state.targetAirFuelRatio > 0.0) {
+                afrRatioSum += state.airFuelRatio / state.targetAirFuelRatio;
+                ++afrSamples;
+            }
+        }
     }
 
     // Phase 3: throttle blip and return to idle -- the user's real scenario
@@ -119,6 +131,8 @@ IdleResult measureIdle(const enginelab::EngineConfig& config, double blipThrottl
         if (simulator.state().rpm < stallFloorRpm) result.blipStalled = true;
     }
 
+    if (afrSamples > 0)
+        result.afrRatio = afrRatioSum / static_cast<double>(afrSamples);
     if (!steadyRpm.empty()) {
         result.minRpm = *std::min_element(steadyRpm.begin(), steadyRpm.end());
         result.maxRpm = *std::max_element(steadyRpm.begin(), steadyRpm.end());
@@ -163,7 +177,7 @@ void traceIdle(const enginelab::EngineConfig& config) {
     std::printf("== TRACE %s (idle target %.0f) ==\n", config.name.c_str(), config.idleRpm);
     std::printf("    t   thr     rpm     MAP  fuel_g/s  cycTq  fricTq  AFR"
                 "   iac  postSt  integ cut resume  air_mg  req_mg del_mg"
-                " fDel trim phiSp  misf combEff\n");
+                " fDel trim phiSp  misf combEff met_mg vap_mg film_mg tAFR\n");
     double t = 0.0;
     // Mirrors measureIdle's schedule exactly, and is DERIVED from the same
     // constants so it cannot drift out of step with the gate again: crank
@@ -213,7 +227,8 @@ void traceIdle(const enginelab::EngineConfig& config) {
             const auto meanCombustion = combustionSum / cylinderCount;
             std::printf(" %5.2f %4.2f %7.1f %6.1f %8.4f %6.1f %7.1f %5.1f"
                         " %5.3f %6.3f %6.3f %3d %6.3f %7.1f %7.1f %6.1f"
-                        " %4.2f %4.2f %5.2f %5.2f %7.3f\n",
+                        " %4.2f %4.2f %5.2f %5.2f %7.3f %6.2f %6.2f %7.2f"
+                        " %5.2f\n",
                 t, controls.throttle, s.rpm, s.manifoldPressureKpa,
                 s.fuelFlowGramsPerSecond, s.cycleAveragedTorqueNm,
                 s.frictionTorqueNm, s.airFuelRatio,
@@ -225,7 +240,10 @@ void traceIdle(const enginelab::EngineConfig& config) {
                 fuelDeliverySum / cylinderCount,
                 fuelTrimSum / cylinderCount,
                 equivalenceRatioSum / cylinderCount,
-                s.misfireRate, meanCombustion);
+                s.misfireRate, meanCombustion,
+                s.cylinderStates[0].meteredFuelMgPerCycle,
+                s.cylinderStates[0].portFuelVapourInventoryMg,
+                s.cylinderStates[0].portLiquidFilmFuelMg, s.targetAirFuelRatio);
         }
     }
 }
@@ -271,7 +289,7 @@ int main(int argc, char** argv) {
         }
         std::printf("idle stability measurement (free idle; blip=%.2f)\n", blipThrottle);
         std::cout << "  engine                              target   mean    min    max"
-                     "   std  drift  caught steadyStall blipStall\n";
+                     "   std  drift  caught steadyStall blipStall afr/tgt\n";
 
         // A known, separately-tracked deficiency: on a throttle blip the very
         // largest / highest-motoring-drag engines relight from the decel fuel cut
@@ -297,10 +315,10 @@ int main(int argc, char** argv) {
                 continue;
             const auto r = measureIdle(
                 config, blipThrottle, exhaustTargetCellLengthM);
-            std::printf("  %-34s %6.0f %6.0f %6.0f %6.0f %5.1f %6.1f    %d       %d         %d\n",
+            std::printf("  %-34s %6.0f %6.0f %6.0f %6.0f %5.1f %6.1f    %d       %d         %d   %5.3f\n",
                 r.name.c_str(), r.idleRpm, r.settledMeanRpm, r.minRpm, r.maxRpm,
                 r.stdRpm, r.driftRpm, r.caught ? 1 : 0, r.steadyStalled ? 1 : 0,
-                r.blipStalled ? 1 : 0);
+                r.blipStalled ? 1 : 0, r.afrRatio);
 
             // (1) Every engine must catch during start.
             if (!r.caught) failures.push_back(r.name + ": did not start");
@@ -330,6 +348,14 @@ int main(int argc, char** argv) {
             if (std::abs(r.driftRpm) > 0.05 * r.idleRpm)
                 failures.push_back(r.name + ": steady idle has not settled (drift "
                     + std::to_string(static_cast<int>(r.driftRpm)) + " rpm)");
+            // (2c) A settled spark-ignition idle runs closed loop on its target.
+            //      Production lambda control holds idle within a few percent of
+            //      lambda 1; +/-10 % is a wide bound from that practice. Before
+            //      the once-per-cycle port pulse the CP2s idled at AFR 10.2
+            //      (ratio 0.70) with the trim on its stop, and nothing failed.
+            if (!r.diesel && (r.afrRatio < 0.90 || r.afrRatio > 1.10))
+                failures.push_back(r.name + ": settled idle AFR off target (ratio "
+                    + std::to_string(r.afrRatio) + ")");
             // (3) Returning to idle from a throttle blip must not stall, except
             //     for the documented, separately-tracked outliers above.
             const auto allowed = std::any_of(knownBlipStallAllow.begin(),
