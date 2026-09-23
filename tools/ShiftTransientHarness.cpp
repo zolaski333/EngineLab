@@ -433,9 +433,13 @@ ShiftMetrics measureShift(
     metrics.name = config.name;
 
     double t = 0.0;
-    // Phase A -- crank to a self-sustaining idle in neutral.
+    // Phase A -- crank to a self-sustaining idle in neutral, and let it settle
+    // past the ECU post-start window (up to ~17 s). The launch below only gets
+    // the car rolling; a launch 4 s after start is measured on its own by
+    // LoadedAccelerationHarness --standing-start, where the 2JZ is a declared
+    // stall since the start fuel reserve was limited to cranking (2026-09-23).
     driveline.requestGear(-1);
-    for (int step = 0; step < static_cast<int>(4.0 / stepSeconds); ++step, t += stepSeconds) {
+    for (int step = 0; step < static_cast<int>(20.0 / stepSeconds); ++step, t += stepSeconds) {
         const auto starter = simulator.state().rpm < config.idleRpm * 0.85 && t < 3.0;
         auto tick = coupledStep(
             simulator, driveline, 0.0, 0.0, starter);

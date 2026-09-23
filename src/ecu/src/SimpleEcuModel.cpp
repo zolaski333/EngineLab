@@ -610,11 +610,16 @@ EcuCommand SimpleEcuModel::evaluate(const EngineConfig& config, const EngineStat
                     0.02, 1.0)
                 : 1.0))
         : warmupCorrection * crankingCorrection
-            // Starting is the one phase in which the dry runner/port film has
-            // no preceding cycle to estimate. Retain the reserve only while
-            // the starter/post-start state proves that condition; a normal
-            // pedal tip-in is owned solely by the physical X-tau model.
-            * (1.0 + ((controls.starterEngaged || afterStartPhase)
+            // Cranking is the one phase in which the dry runner/port film has
+            // no preceding cycle to estimate, so the reserve is kept only while
+            // the starter turns. Once the engine has caught, every pedal tip-in
+            // is owned solely by the physical X-tau model. Keeping it through
+            // the post-start window (up to ~14 s after catch) stacked x2.12 on
+            // top of X-tau at a WOT launch: 6 of 14 road engines flooded to
+            // AFR 4.7-7 and stalled 4 s after start, while the same launch
+            // after 25 s of idle was fine (LoadedAccelerationHarness
+            // --standing-start --launch-at 4 / 25).
+            * (1.0 + (controls.starterEngaged
                 ? accelerationFuelEnrichment * 1.40 : 0.0))
             * decelerationFuelResume;
     const auto commandedFuelEnabled = overrunAfterfireActive

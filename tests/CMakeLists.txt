@@ -265,12 +265,30 @@ if(TARGET EngineLabLoadedAccelerationHarness)
     add_test(NAME EngineLab.LoadedAccelerationCatalogDfcoResume
         COMMAND EngineLabLoadedAccelerationHarness
             --dfco-tip-in)
+    # Standing start from idle, 1st gear, WOT, clutch over 0.9 s, 4 s after
+    # the start (inside the ECU post-start window) and 25 s after it. d70e8b8
+    # stalled six road engines at 4 s (x2.12 start reserve stacked on X-tau)
+    # and no other test launched this quickly. The Merlin and the radial sit
+    # on `vehicle: test_stand` and also stalled before d70e8b8: a road launch
+    # is not a meaningful test for them. Declared stalls (lean and lugged
+    # below idle by the clutch; an asynchronous tip-in pulse did not save
+    # them) are tracked in docs/journal.md; any other stall fails.
+    add_test(NAME EngineLab.StandingStartCatalogue
+        COMMAND EngineLabLoadedAccelerationHarness
+            --standing-start --gear 1 --launch-at 4
+            --skip Merlin --skip Radial --known-stall 2JZ)
+    add_test(NAME EngineLab.StandingStartSettledIdle
+        COMMAND EngineLabLoadedAccelerationHarness
+            --standing-start --gear 1 --launch-at 25
+            --skip Merlin --skip Radial --known-stall Aircooled)
     set_tests_properties(
         EngineLab.LoadedAccelerationCP2
         EngineLab.LoadedAccelerationAudi
         PROPERTIES TIMEOUT 120)
     set_tests_properties(
         EngineLab.LoadedAccelerationCatalogDfcoResume
+        EngineLab.StandingStartCatalogue
+        EngineLab.StandingStartSettledIdle
         PROPERTIES TIMEOUT 240)
 endif()
 if(TARGET EngineLabUserDynoHarness)

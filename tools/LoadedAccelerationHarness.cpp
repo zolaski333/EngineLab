@@ -15,11 +15,13 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <limits>
 #include <numeric>
 #include <optional>
 #include <stdexcept>
@@ -197,6 +199,77 @@ void detectSurges(const std::vector<CyclePoint>& cycles,
         if (metrics.firstSurgeRpm <= 0.0)
             metrics.firstSurgeRpm = cycles[index].rpm;
     }
+}
+
+struct StandingStartMetrics final {
+    std::string name;
+    bool started {};
+    double idleRpm {};
+    double launchRpm {};
+    double minimumRpm { std::numeric_limits<double>::infinity() };
+    double finalRpm {};
+    double minimumAfr { std::numeric_limits<double>::infinity() };
+    std::uint64_t misfireEvents {};
+};
+
+/** Standing start from idle: requested gear, WOT, clutch fed in over 0.9 s.
+ *
+ * This is the launch the afterfire harness and a user at the keyboard make. It
+ * is harsher than the rolling pull above (0.35 s delay, 1.65 s ramp), and it
+ * is the one d70e8b8 broke: with the high-load fuel cell starting at unity, the
+ * CP2 twins and the LS3 flooded to AFR 5-7 within 0.2 s and stalled, while no
+ * existing test launched from idle this quickly.
+ */
+StandingStartMetrics measureStandingStart(
+    enginelab::EngineConfig config, int gearNumber, bool traceEvents,
+    double launchAtSeconds) {
+    config.transmission.automaticShifting = false;
+    config.vehicle.tyreGripLimitEnabled = false;
+    enginelab::normaliseEngineConfig(config);
+
+    enginelab::SimpleEcuModel ecu;
+    enginelab::SimplifiedGasolinePhysics physics;
+    enginelab::FourStrokeEventGenerator events;
+    auto exhaust = enginelab::ExhaustGraph::makeForEngine(config);
+    enginelab::EngineSimulator simulator(config, ecu, physics, events, exhaust);
+    enginelab::DrivelineModel driveline(config);
+
+    StandingStartMetrics metrics;
+    metrics.name = config.name;
+    metrics.idleRpm = config.idleRpm;
+    // Same crank as the afterfire harness: starter until 3 s, launch at 4 s by
+    // default, while the post-start state is still decaying.
+    driveline.requestGear(-1);
+    auto timeSeconds = 0.0;
+    for (int tick = 0; tick < static_cast<int>(launchAtSeconds / stepSeconds);
+         ++tick, timeSeconds += stepSeconds) {
+        const auto starter = simulator.state().rpm < config.idleRpm * 0.85
+            && timeSeconds < 3.0;
+        (void)coupledStep(simulator, driveline, 0.0, 0.0, starter);
+    }
+    metrics.started = simulator.state().rpm >= config.idleRpm * 0.55;
+    metrics.launchRpm = simulator.state().rpm;
+    if (!metrics.started) return metrics;
+
+    driveline.requestGear(gearNumber - 1);
+    const auto misfiresBefore = simulator.state().misfireEventCount;
+    for (int tick = 0; tick < static_cast<int>(2.4 / stepSeconds);
+         ++tick, timeSeconds += stepSeconds) {
+        const auto clutch = std::clamp(
+            static_cast<double>(tick) * stepSeconds / 0.9, 0.0, 1.0);
+        const auto result = coupledStep(simulator, driveline, 1.0, clutch, false);
+        const auto& state = result.frame.state;
+        metrics.minimumRpm = std::min(metrics.minimumRpm, state.rpm);
+        if (state.airFuelRatio > 0.0)
+            metrics.minimumAfr = std::min(metrics.minimumAfr, state.airFuelRatio);
+        if (traceEvents && tick % 12 == 0)
+            std::printf("    t=%.3f rpm=%.0f clutch=%.2f afr=%.2f misfires=%llu\n",
+                timeSeconds, state.rpm, clutch, state.airFuelRatio,
+                static_cast<unsigned long long>(state.misfireEventCount));
+    }
+    metrics.finalRpm = simulator.state().rpm;
+    metrics.misfireEvents = simulator.state().misfireEventCount - misfiresBefore;
+    return metrics;
 }
 
 RunMetrics measureAcceleration(
@@ -711,6 +784,10 @@ int main(int argc, char** argv) {
     int gearNumber = 2;
     bool traceEvents = false;
     bool dfcoTipIn = false;
+    bool standingStart = false;
+    double launchAtSeconds = 4.0;
+    std::vector<std::string> skipped;
+    std::vector<std::string> knownStalls;
     std::optional<std::filesystem::path> csvDirectory;
     std::filesystem::path catalogRoot = ENGINELAB_CATALOG_ROOT;
     for (int index = 1; index < argc; ++index) {
@@ -725,11 +802,19 @@ int main(int argc, char** argv) {
             catalogRoot = argv[++index];
         else if (argument == "--trace") traceEvents = true;
         else if (argument == "--dfco-tip-in") dfcoTipIn = true;
+        else if (argument == "--standing-start") standingStart = true;
+        else if (argument == "--known-stall" && index + 1 < argc)
+            knownStalls.emplace_back(argv[++index]);
+        else if (argument == "--launch-at" && index + 1 < argc)
+            launchAtSeconds = std::max(3.5, std::stod(argv[++index]));
+        else if (argument == "--skip" && index + 1 < argc)
+            skipped.emplace_back(argv[++index]);
         else {
             std::cerr
                 << "usage: EngineLabLoadedAccelerationHarness"
                    " [--filter NAME] [--gear 2|3] [--csv-dir DIR]"
-                   " [--catalog-root DIR] [--trace] [--dfco-tip-in]\n";
+                   " [--catalog-root DIR] [--trace] [--dfco-tip-in]"
+                   " [--standing-start] [--launch-at S] [--skip NAME]... [--known-stall NAME]...\n";
             return EXIT_FAILURE;
         }
     }
@@ -764,6 +849,56 @@ int main(int argc, char** argv) {
             return EXIT_FAILURE;
         }
         selectedEntries.push_back(selected.entry);
+    }
+    std::erase_if(selectedEntries, [&skipped](const auto* entry) {
+        return std::any_of(skipped.begin(), skipped.end(),
+            [entry](const std::string& name) {
+                return entry->config.name.find(name) != std::string::npos;
+            });
+    });
+
+    if (standingStart) {
+        // Stalled: the crank fell below 220 rpm, where EngineSimulator stops
+        // offering spark combustion and nothing can recover it, or the engine
+        // has not regained three quarters of idle 1.5 s after the clutch is
+        // home. A healthy launch dips and then pulls.
+        constexpr double sparkCombustionFloorRpm = 220.0;
+        std::printf("standing start, gear %d, WOT, clutch over 0.9 s\n",
+            gearNumber);
+        std::printf("  %-32s %6s %7s %7s %7s %7s %7s %s\n", "engine", "idle",
+            "launch", "minRpm", "final", "minAFR", "misfire", "verdict");
+        auto allLaunched = true;
+        for (const auto* entry : selectedEntries) {
+            if (gearNumber
+                > static_cast<int>(entry->config.transmission.gearRatios.size()))
+                continue;
+            const auto metrics = measureStandingStart(
+                entry->config, gearNumber, traceEvents, launchAtSeconds);
+            const auto launched = metrics.started
+                && metrics.minimumRpm >= sparkCombustionFloorRpm
+                && metrics.finalRpm >= 0.75 * metrics.idleRpm;
+            // A declared, separately tracked stall still prints STALLED but
+            // does not fail the run; any other engine stalling does.
+            const auto known = std::any_of(knownStalls.begin(),
+                knownStalls.end(), [&](const std::string& token) {
+                    return metrics.name.find(token) != std::string::npos;
+                });
+            allLaunched = allLaunched && (launched || known);
+            std::printf("  %-32s %6.0f %7.0f %7.0f %7.0f %7.2f %7llu %s\n",
+                metrics.name.c_str(), metrics.idleRpm, metrics.launchRpm,
+                std::isfinite(metrics.minimumRpm) ? metrics.minimumRpm : 0.0,
+                metrics.finalRpm,
+                std::isfinite(metrics.minimumAfr) ? metrics.minimumAfr : 0.0,
+                static_cast<unsigned long long>(metrics.misfireEvents),
+                !metrics.started ? "NOT STARTED"
+                    : launched ? (known ? "ok (declared stall fixed?)" : "ok")
+                    : known ? "STALLED (known)" : "STALLED");
+        }
+        if (!allLaunched) {
+            std::cerr << "FAILED: at least one engine stalled on a standing start\n";
+            return EXIT_FAILURE;
+        }
+        return EXIT_SUCCESS;
     }
 
     std::printf(
