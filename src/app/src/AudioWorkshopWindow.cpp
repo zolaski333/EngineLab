@@ -452,36 +452,35 @@ public:
             juce::ToggleButton::textColourId, juce::Colour(0xffc4d0cb));
         afterfireToggle_.setComponentID("afterfire-enabled");
         afterfireToggle_.onClick = [this] {
-            if (!afterfireToggle_.getToggleState()) return;
-
-            // A completely unauthored catalogue entry describes clean DFCO:
-            // 900 K, 10 ms, no retained fuel, no chopping and no timing
-            // variation. Merely ticking "afterfire" used to preserve that
-            // calibration, which selected continuous anti-lag and produced a
-            // smooth periodic swell. On the first clean enable, prepare the
-            // discrete pop profile that the control promises. Existing
-            // authored anti-lag/afterfire calibrations are left untouched.
-            const auto cleanProfile =
-                std::abs(afterfireTemperatureSlider_.getValue() - 900.0) < 0.5
-                && std::abs(afterfireReactionSlider_.getValue() - 10.0) < 0.5
-                && overrunFuelSlider_.getValue() <= 0.0
-                && overrunPulseHzSlider_.getValue() <= 0.0
-                && overrunPulseTimingVariationSlider_.getValue() <= 0.0;
-            if (!cleanProfile) return;
-
-            afterfireTemperatureSlider_.setValue(
-                800.0, juce::dontSendNotification);
-            afterfireReactionSlider_.setValue(
-                2.0, juce::dontSendNotification);
-            overrunFuelSlider_.setValue(
-                0.08, juce::dontSendNotification);
-            overrunPulseHzSlider_.setValue(
-                2.0, juce::dontSendNotification);
-            overrunPulseDutySlider_.setValue(
-                0.08, juce::dontSendNotification);
-            overrunPulseTimingVariationSlider_.setValue(
-                0.40, juce::dontSendNotification);
+            if (afterfireToggle_.getToggleState())
+                prepareCleanAfterfireProfile();
         };
+        // The owner's switch: afterfire is an option of every engine, turned
+        // on and off from the mixer and applied at once. The physics group
+        // below keeps the detailed calibration and its explicit APPLY; this
+        // switch shows the live state, never the pending one.
+        mixAfterfireToggle_.setColour(
+            juce::ToggleButton::textColourId, juce::Colour(0xffefb08a));
+        mixAfterfireToggle_.setComponentID("mix-afterfire");
+        mixAfterfireToggle_.setTooltip(
+            "Petarades en deceleration (coupure d'allumage, carburant "
+            "conserve). Applique immediatement; reglage fin dans "
+            "PHYSIQUE AUDIO.");
+        mixAfterfireToggle_.onClick = [this] {
+            const auto enabled = mixAfterfireToggle_.getToggleState();
+            afterfireToggle_.setToggleState(enabled, juce::dontSendNotification);
+            if (enabled) prepareCleanAfterfireProfile();
+            if (!applyPhysics()) {
+                // Refused (dyno running or invalid): show the state that is
+                // actually live rather than the one the user asked for.
+                const auto live = engine_.exhaustAfterfire.enabled;
+                mixAfterfireToggle_.setToggleState(
+                    live, juce::dontSendNotification);
+                afterfireToggle_.setToggleState(
+                    live, juce::dontSendNotification);
+            }
+        };
+        addAndMakeVisible(mixAfterfireToggle_);
         wetLimiterToggle_.setColour(
             juce::ToggleButton::textColourId, juce::Colour(0xffc4d0cb));
         addAndMakeVisible(afterfireToggle_);
@@ -553,6 +552,8 @@ public:
             compiledIntakeTopology;
         measuredImpulseResponseAvailable_ =
             measuredImpulseResponseAvailable;
+        mixAfterfireToggle_.setToggleState(
+            engine_.exhaustAfterfire.enabled, juce::dontSendNotification);
         updateEnginePresentation();
         updateAvailability();
         publishMix();
@@ -597,7 +598,16 @@ public:
         physicsGroup_.setBounds(physicsArea);
 
         auto mixBody = mixArea.reduced(16, 28);
-        const auto generalRowHeight = 34;
+        // Bottom rows first, at fixed height; the fader rows share the rest.
+        // Fixed 34/38 px rows used to leave the voicing buttons 12 px at an
+        // 800 px window.
+        auto voicingButtons = mixBody.removeFromBottom(32);
+        mixBody.removeFromBottom(4);
+        mixAfterfireToggle_.setBounds(mixBody.removeFromBottom(28));
+        mixBody.removeFromBottom(4);
+        const auto rowScale = std::min(1.0,
+            static_cast<double>(mixBody.getHeight()) / (5 * 34 + 8 + 4 * 38));
+        const auto generalRowHeight = static_cast<int>(34 * rowScale);
         for (std::size_t index = 0; index < 5; ++index) {
             auto row = mixBody.removeFromTop(
                 generalRowHeight);
@@ -606,7 +616,7 @@ public:
             sliders()[index]->setBounds(row);
         }
         mixBody.removeFromTop(8);
-        const auto layerRowHeight = 38;
+        const auto layerRowHeight = static_cast<int>(38 * rowScale);
         for (std::size_t layer = 0; layer < 4; ++layer) {
             auto row = mixBody.removeFromTop(layerRowHeight);
             controlLabels_[layer + 5].setBounds(
@@ -617,7 +627,6 @@ public:
                 row.removeFromRight(58).reduced(2, 7));
             layerSliders()[layer]->setBounds(row);
         }
-        auto voicingButtons = mixBody.removeFromBottom(32);
         catalogueMixButton_.setBounds(
             voicingButtons.removeFromLeft(190));
         resetButton_.setBounds(
@@ -831,6 +840,8 @@ private:
             settings.cycleVariationCorrelation, juce::dontSendNotification);
         afterfireToggle_.setToggleState(
             settings.afterfireEnabled, juce::dontSendNotification);
+        mixAfterfireToggle_.setToggleState(
+            settings.afterfireEnabled, juce::dontSendNotification);
         wetLimiterToggle_.setToggleState(
             settings.limiterKeepsFuel, juce::dontSendNotification);
         afterfireTemperatureSlider_.setValue(
@@ -852,23 +863,70 @@ private:
             juce::dontSendNotification);
     }
 
-    void applyPhysics() {
+    /** A completely unauthored catalogue entry describes clean DFCO: 900 K,
+     *  10 ms, no retained fuel, no chopping and no timing variation. Merely
+     *  ticking "afterfire" used to preserve that calibration, which selected
+     *  continuous anti-lag and produced a smooth periodic swell -- and at zero
+     *  fuel, nothing at all. On the first clean enable, prepare the discrete
+     *  pop profile the control promises. Authored calibrations are kept. */
+    void prepareCleanAfterfireProfile() {
+        const auto cleanProfile =
+            std::abs(afterfireTemperatureSlider_.getValue() - 900.0) < 0.5
+            && std::abs(afterfireReactionSlider_.getValue() - 10.0) < 0.5
+            && overrunFuelSlider_.getValue() <= 0.0
+            && overrunPulseHzSlider_.getValue() <= 0.0
+            && overrunPulseTimingVariationSlider_.getValue() <= 0.0;
+        if (!cleanProfile) return;
+
+        afterfireTemperatureSlider_.setValue(
+            800.0, juce::dontSendNotification);
+        afterfireReactionSlider_.setValue(
+            2.0, juce::dontSendNotification);
+        overrunFuelSlider_.setValue(
+            0.08, juce::dontSendNotification);
+        overrunPulseHzSlider_.setValue(
+            2.0, juce::dontSendNotification);
+        overrunPulseDutySlider_.setValue(
+            0.08, juce::dontSendNotification);
+        overrunPulseTimingVariationSlider_.setValue(
+            0.40, juce::dontSendNotification);
+    }
+
+    bool applyPhysics() {
         if (!physicsApply_) {
             physicsStatusLabel_.setText(
                 "Lecture seule: aucun moteur hote.", juce::dontSendNotification);
-            return;
+            return false;
         }
         const auto settings = physicsSettings();
-        if (physicsApply_(settings)) {
-            applyAudioPhysicsSettings(engine_, settings);
-            physicsStatusLabel_.setText(
-                "Applique en direct. Etats thermiques et rotation conserves.",
-                juce::dontSendNotification);
-        } else {
+        if (!physicsApply_(settings)) {
             physicsStatusLabel_.setText(
                 "Refuse (banc actif ou configuration invalide).",
                 juce::dontSendNotification);
+            mixAfterfireToggle_.setToggleState(
+                engine_.exhaustAfterfire.enabled, juce::dontSendNotification);
+            return false;
         }
+        applyAudioPhysicsSettings(engine_, settings);
+        mixAfterfireToggle_.setToggleState(
+            engine_.exhaustAfterfire.enabled, juce::dontSendNotification);
+        if (afterfireRetainedChargeBelowLeanLimit(engine_.exhaustAfterfire)) {
+            // Measured: such a charge dumps raw fuel and never burns.
+            physicsStatusLabel_.setText(
+                "Applique, mais carburant retenu trop pauvre (richesse "
+                    + juce::String(afterfireRetainedChargeEquivalenceRatio(
+                        engine_.exhaustAfterfire), 2)
+                    + " < " + juce::String(
+                        engine_.exhaustAfterfire.minimumEquivalenceRatio, 2)
+                    + "): il ne peut pas bruler. Augmenter le carburant "
+                      "decel ou baisser le rapport cyclique.",
+                juce::dontSendNotification);
+        } else {
+            physicsStatusLabel_.setText(
+                "Applique en direct. Etats thermiques et rotation conserves.",
+                juce::dontSendNotification);
+        }
+        return true;
     }
 
     [[nodiscard]] OfflineAudioMix baseMix() const {
@@ -1307,6 +1365,9 @@ private:
     juce::TextButton catalogueMixButton_ { "VOICING CATALOGUE" };
     juce::TextButton resetButton_ { "NEUTRE" };
     juce::ToggleButton captureVoicingToggle_ { "MODE CAPTURE" };
+    juce::ToggleButton mixAfterfireToggle_ {
+        "AFTERFIRE  (petarades en deceleration)"
+    };
 
     juce::ComboBox sampleRateSelector_;
     juce::ComboBox formatSelector_;

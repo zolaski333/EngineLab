@@ -6,6 +6,8 @@ Le bouton **AUDIO HQ** ouvre un atelier séparé sans arrêter le moteur. Cette
 fenêtre réunit :
 
 - les faders du mix temps réel ;
+- l'interrupteur `AFTERFIRE`, appliqué immédiatement (voir
+  [physical-afterfire.md](physical-afterfire.md)) ;
 - `MUTE` et `SOLO` pour les quatre familles de sources ;
 - le choix 48/96/192 kHz et PCM 24 bits/float 32 bits ;
 - master seul ou master plus six stems ;

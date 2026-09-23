@@ -10,6 +10,7 @@
 #include <enginelab/audio/RealtimeEngineAudio.hpp>
 #include <enginelab/audio/StructuralModalRadiator.hpp>
 #include <enginelab/audio/ThermoacousticHeatReleaseSource.hpp>
+#include <enginelab/audio/ReactionCrackSynthesiser.hpp>
 #include <enginelab/audio/DuctModeCutoff.hpp>
 #include <enginelab/audio/DuctWallLoss.hpp>
 #include <enginelab/audio/ExpansionChamberMuffler.hpp>
@@ -863,6 +864,77 @@ void thermoacousticHeatReleaseSourceRegression() {
     }
     require(tailPeak < 1.0e-3,
         "steady anti-lag heat must remain in the mean-flow solver, not radiate DC");
+}
+
+// The crack band a 1-D network cannot carry: generic, driven by the physical
+// reaction only, and confined above the reconstruction crossover.
+void reactionCrackRegression() {
+    using Crack = enginelab::ReactionCrackSynthesiser;
+    using Source = enginelab::ThermoacousticHeatReleaseSource;
+    constexpr double sampleRate = 48'000.0;
+    constexpr double couplingRate = 8'000.0;
+    constexpr double powerW = 4'500.0;
+    constexpr double areaM2 = 0.003;
+    constexpr double soundSpeedMps = 500.0;
+    const auto coefficients = Crack::compute(couplingRate, sampleRate);
+    require(coefficients.valid, "a coupling-rate crack must build its shaping");
+    const auto jumpPa = Source::compactPressureJumpPa(
+        powerW, areaM2, soundSpeedMps);
+
+    Crack::State silent;
+    silent.reset(7U);
+    for (int sample = 0; sample < 4'800; ++sample)
+        require(Crack::process(coefficients, silent, 0.0, areaM2,
+                    soundSpeedMps, Crack::defaultCrackRatio) == 0.0F,
+            "no reaction, no crack: a clean engine stays bit-identical");
+
+    // Steady reaction: RMS follows ratio x jump; low band stays empty.
+    Crack::State steady;
+    steady.reset(7U);
+    Crack::State repeat;
+    repeat.reset(7U);
+    constexpr int samples = 96'000;
+    std::vector<double> output(samples);
+    auto energy = 0.0;
+    for (int sample = 0; sample < samples; ++sample) {
+        output[sample] = Crack::process(coefficients, steady, powerW, areaM2,
+            soundSpeedMps, Crack::defaultCrackRatio);
+        require(output[sample] == static_cast<double>(Crack::process(
+                    coefficients, repeat, powerW, areaM2, soundSpeedMps,
+                    Crack::defaultCrackRatio)),
+            "the crack noise must be bit-reproducible for offline renders");
+        if (sample >= 4'800) energy += output[sample] * output[sample];
+    }
+    const auto rms = std::sqrt(energy / (samples - 4'800));
+    // Energy two octaves under the crossover, through four one-pole
+    // low-passes there (about -49 dB of leakage at the crossover itself).
+    const auto lowHz = enginelab::BoundaryReconstructionFilter::
+        crossoverFrequencyHz(couplingRate, sampleRate) / 4.0;
+    const auto pole = std::exp(-2.0 * std::numbers::pi * lowHz / sampleRate);
+    std::array<double, 4> lowPass {};
+    auto lowEnergy = 0.0;
+    for (int sample = 0; sample < samples; ++sample) {
+        auto signal = output[sample];
+        for (auto& stage : lowPass) {
+            stage = (1.0 - pole) * signal + pole * stage;
+            signal = stage;
+        }
+        if (sample >= 4'800) lowEnergy += signal * signal;
+    }
+    const auto lowRms = std::sqrt(lowEnergy / (samples - 4'800));
+    std::cout << "reaction crack: jump_pa=" << jumpPa << " rms_pa=" << rms
+              << " below_crossover_rms_pa=" << lowRms << '\n';
+    require(std::abs(rms / (Crack::defaultCrackRatio * jumpPa) - 1.0) < 0.05,
+        "the crack RMS must be the ratio times the physical pressure jump");
+    require(lowRms < 0.01 * rms,
+        "the crack must stay above the band the physical source carries");
+
+    // It follows the reaction: silent within a few release constants.
+    auto tail = 0.0F;
+    for (int sample = 0; sample < 960; ++sample)
+        tail = Crack::process(coefficients, steady, 0.0, areaM2,
+            soundSpeedMps, Crack::defaultCrackRatio);
+    require(tail == 0.0F, "the crack must end with its reaction");
 }
 
 // A merge is a scattering point *and* a pipe. The audio network used to keep
@@ -3186,6 +3258,7 @@ int main(int argc, char** argv) {
         exhaustJetNoiseRegression();
         crossoverScatteringRegression();
         thermoacousticHeatReleaseSourceRegression();
+        reactionCrackRegression();
         reactionInjectionRegression();
         reactionXPipeSpatialisationRegression();
         branchedAcousticTopologyRegression();

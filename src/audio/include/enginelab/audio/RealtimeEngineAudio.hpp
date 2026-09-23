@@ -9,6 +9,7 @@
 #include <enginelab/audio/ExpansionChamberMuffler.hpp>
 #include <enginelab/audio/RealtimeConvolutionBank.hpp>
 #include <enginelab/audio/StructuralModalRadiator.hpp>
+#include <enginelab/audio/ReactionCrackSynthesiser.hpp>
 #include <enginelab/audio/ThermoacousticHeatReleaseSource.hpp>
 #include <enginelab/audio/ValveFlowAcousticSource.hpp>
 #include <enginelab/audio/ValvePortTermination.hpp>
@@ -159,6 +160,14 @@ public:
         return structuralModalRadiator_
             && structuralModalRadiator_
                 ->bankTopologyParticipationEnabled();
+    }
+    /** Diagnostic A/B switch for the generic reaction crack band
+     *  (ReactionCrackSynthesiser). The physical low band is unaffected. */
+    void setReactionCrackEnabled(bool enabled) noexcept {
+        reactionCrackEnabled_.store(enabled, std::memory_order_relaxed);
+    }
+    [[nodiscard]] bool reactionCrackEnabled() const noexcept {
+        return reactionCrackEnabled_.load(std::memory_order_relaxed);
     }
     [[nodiscard]] bool compiledIntakeTopologyActive() const noexcept {
         return acousticIntakeNetwork_ != nullptr;
@@ -426,10 +435,14 @@ private:
         double lastUpdateTimeSeconds { 0.0 };
         double holdSeconds { 0.001 };
         ThermoacousticHeatReleaseSource::State source {};
+        ReactionCrackSynthesiser::State crack {};
     };
     std::array<ThermoacousticReactionVoice, 64> reactionVoices_ {};
     double lastReactionEventSampleTime_ { -1.0 };
     ThermoacousticHeatReleaseSource::Coefficients reactionSourceCoefficients_ {};
+    ReactionCrackSynthesiser::Coefficients reactionCrackCoefficients_ {};
+    std::uint32_t reactionCrackSeedCounter_ { 0 };
+    std::atomic<bool> reactionCrackEnabled_ { true };
     double reactionSourceCouplingHz_ { 0.0 };
     std::array<Voice, 96> voices_ {};
     std::array<PendingEvent, 512> pendingEvents_ {};

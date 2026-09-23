@@ -310,6 +310,9 @@ void RealtimeEngineAudio::release() noexcept {
     lastReactionEventSampleTime_ = -1.0;
     reactionSourceCoefficients_ =
         ThermoacousticHeatReleaseSource::compute(0.0, sampleRate_);
+    // No coupling cadence yet means no crossover to complement: silent.
+    reactionCrackCoefficients_ = {};
+    reactionCrackSeedCounter_ = 0;
     reactionSourceCouplingHz_ = 0.0;
     cylinderPressureRawPrevious_.fill(0.0F);
     cylinderPressureHighPass_.fill(0.0F);
@@ -1070,8 +1073,14 @@ void RealtimeEngineAudio::renderWithStems(
                     if (!voice->active
                         || voice->nodeId != reactionEvent.nodeId
                         || voice->sourceComponentId
-                            != reactionEvent.sourceComponentId)
+                            != reactionEvent.sourceComponentId) {
                         *voice = {};
+                        // Deterministic per-voice noise: renders repeat bit
+                        // for bit, while simultaneous voices stay decorrelated.
+                        voice->crack.reset(0x9e3779b9U
+                            ^ (++reactionCrackSeedCounter_ * 0x85ebca6bU)
+                            ^ (reactionEvent.nodeId * 0xc2b2ae35U));
+                    }
                     voice->active = true;
                     voice->nodeId = reactionEvent.nodeId;
                     voice->sourceComponentId =
@@ -1615,18 +1624,30 @@ void RealtimeEngineAudio::renderWithStems(
                 reactionSourceCoefficients_ =
                     ThermoacousticHeatReleaseSource::compute(
                         couplingHz, sampleRate_);
+                reactionCrackCoefficients_ =
+                    ReactionCrackSynthesiser::compute(couplingHz, sampleRate_);
                 reactionSourceCouplingHz_ = couplingHz;
             }
+            const auto crackRatio = reactionCrackEnabled_.load(
+                    std::memory_order_relaxed)
+                ? ReactionCrackSynthesiser::defaultCrackRatio : 0.0;
             for (auto& voice : reactionVoices_) {
                 if (!voice.active) continue;
                 if (audioTimeSeconds_ - voice.lastUpdateTimeSeconds
                     > voice.holdSeconds)
                     voice.targetPowerW = 0.0;
+                // Physics owns when and how much (the resolved low band); the
+                // generic crack supplies only the band above the coupling
+                // crossover that the finite-volume network never computed.
                 const auto sourcePressurePa =
                     ThermoacousticHeatReleaseSource::process(
                         reactionSourceCoefficients_, voice.source,
                         voice.targetPowerW, voice.flowAreaM2,
-                        voice.speedOfSoundMps);
+                        voice.speedOfSoundMps)
+                    + ReactionCrackSynthesiser::process(
+                        reactionCrackCoefficients_, voice.crack,
+                        voice.targetPowerW, voice.flowAreaM2,
+                        voice.speedOfSoundMps, crackRatio);
                 if (std::abs(sourcePressurePa)
                     > AcousticExhaustNetwork::maximumReactionSourcePressurePa)
                     reactionPressureLimitedSamples_.fetch_add(

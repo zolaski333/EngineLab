@@ -27,8 +27,9 @@ Pistes connues, **non vérifiées**, à tester d'abord par la mesure :
 - Afterfire : causes **mesurées** le 2026-09-23 (voir `docs/journal.md`). Le
   son d'une pétarade est plafonné à ~3,8 kHz par la reconstruction de la
   source (0,47 × cadence de couplage ≤ 8 kHz), et elle ne dépasse la crête du
-  moteur que de 0 à +10 dB. La physique doit décider *quand* et *combien* ; la
-  bande au-dessus de ~4 kHz doit venir d'une synthèse générique.
+  moteur que de 0 à +10 dB. La physique décide *quand* et *combien* ; la
+  couche crack (`ReactionCrackSynthesiser`) fournit la bande > 4 kHz, non
+  calibrée. Sur le CP2, rien ne brûle au seuil de 800 K : à mesurer d'abord.
 - Au-delà de la coupure du mode plan (quelques kHz pour un tube de 50-80 mm),
   un modèle 1-D ne porte plus rien de physique : c'est la bande où la synthèse
   générique a le plus de chances d'aider.
@@ -178,6 +179,11 @@ Le détail de chaque mesure est dans `docs/archive/`.
 - « Résidu piégé trop faible » : erreur d'unité, le résidu est sain.
 - Quatre formulations d'inertance de runner : toutes instables ou déphasées.
 - Cache de télémétrie pour accélérer l'écoute : n'aurait rien gagné.
+- Amorcer la cellule de correction forte charge depuis celle du ralenti :
+  sauve un démarrage 4 s après la mise en route mais fait caler 10 moteurs sur
+  14 après 25 s de ralenti, et au coup de gaz (Hayabusa, CP3, Aircooled).
+  Impulsion asynchrone au coup de pédale : ne sauve pas le 2JZ à 4 s, fait caler
+  l'Aircooled à 8 s.
 
 ## Organisation des documents
 

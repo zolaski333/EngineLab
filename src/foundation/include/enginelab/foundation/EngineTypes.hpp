@@ -489,6 +489,40 @@ struct ExhaustAfterfireConfig final {
     return strategy != ExhaustAfterfireStrategy::cleanDfco;
 }
 
+/** Equivalence ratio of the charge the ECU retains on overrun, relative to a
+ * normally fuelled one. SimpleEcuModel meters `overrunFuelFraction` of the
+ * normal request, concentrated into the open window for the discrete strategy
+ * (fraction / duty, at most a full charge). Zero for clean DFCO. */
+[[nodiscard]] constexpr double afterfireRetainedChargeEquivalenceRatio(
+    const ExhaustAfterfireConfig& afterfire) noexcept {
+    if (!afterfireRetainsFuel(afterfire.strategy)
+        || !(afterfire.overrunFuelFraction > 0.0))
+        return 0.0;
+    if (afterfire.strategy != ExhaustAfterfireStrategy::discreteAfterfire)
+        return afterfire.overrunFuelFraction < 1.0
+            ? afterfire.overrunFuelFraction : 1.0;
+    const auto duty = afterfire.overrunPulseDutyCycle < 0.02 ? 0.02
+        : (afterfire.overrunPulseDutyCycle > 1.0 ? 1.0
+            : afterfire.overrunPulseDutyCycle);
+    const auto ratio = afterfire.overrunFuelFraction / duty;
+    return ratio < 1.0 ? ratio : 1.0;
+}
+
+/** True when a fuel-retaining calibration leaves the port below the exhaust
+ * chemistry's lean flammability limit and therefore cannot burn: it only
+ * dumps raw fuel. Measured 2026-09-23 on the 2JZ: continuous 18 % burned 0.0 %
+ * of its fuel; the same mass chopped into 18 %-duty slugs burned 89 %. A
+ * discrete slug just below the limit still burned 18 % at 8 %/25 % (mixing
+ * with the previous slug), so only the continuous case is a hard zero; the
+ * editor warns for both. */
+[[nodiscard]] constexpr bool afterfireRetainedChargeBelowLeanLimit(
+    const ExhaustAfterfireConfig& afterfire) noexcept {
+    return afterfire.enabled && afterfireRetainsFuel(afterfire.strategy)
+        && afterfire.overrunFuelFraction > 0.0
+        && afterfireRetainedChargeEquivalenceRatio(afterfire)
+            < afterfire.minimumEquivalenceRatio;
+}
+
 /** Coherent, allocation-free calibration copied into the simulation thread.
  * It deliberately contains no state and no geometry: applying it must not
  * rebuild a network or reset gas/wall/ECU history. */

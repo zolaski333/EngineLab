@@ -287,7 +287,8 @@ class AudioCapture final {
 public:
     AudioCapture(const enginelab::EngineConfig& config,
                  const std::filesystem::path& impulseResponsePath,
-                 bool reactionAcousticsEnabled)
+                 bool reactionAcousticsEnabled,
+                 bool reactionCrackEnabled)
         : runtime_(std::make_unique<enginelab::EngineRuntime>(config)),
           reactionAcousticsEnabled_(reactionAcousticsEnabled) {
         renderer_ = std::make_unique<enginelab::RealtimeEngineAudio>(
@@ -303,6 +304,7 @@ public:
             renderer_->setImpulseResponse(
                 std::move(impulse.samples), impulse.sampleRateHz, 0);
         }
+        renderer_->setReactionCrackEnabled(reactionCrackEnabled);
         renderer_->prepare(audioSampleRate, audioSamplesPerStep);
         std::this_thread::sleep_for(std::chrono::milliseconds(300));
         left_.reserve(static_cast<std::size_t>(30.0 * audioSampleRate));
@@ -529,6 +531,8 @@ struct Options final {
     /** Same-binary null for the schema-8 induction correlation. */
     bool flatInductionControl { false };
     bool reactionAcousticsEnabled { true };
+    /** Same-binary A/B of the generic crack band only. */
+    bool reactionCrackEnabled { true };
     // Speed the measured overrun opens at. Must be controlled: left to the
     // warm-up it lands on the rev limiter, where engine pumping buries the
     // afterfire and the audio verdict is about the wrong thing entirely.
@@ -625,7 +629,8 @@ Metrics measureAfterfire(const enginelab::EngineConfig& baseConfig,
         simulator.setPressureSamplingEnabled(true);
         audio = std::make_unique<AudioCapture>(
             config, options.impulseResponsePath,
-            options.reactionAcousticsEnabled);
+            options.reactionAcousticsEnabled,
+            options.reactionCrackEnabled);
     }
 
     Metrics metrics;
@@ -690,9 +695,31 @@ Metrics measureAfterfire(const enginelab::EngineConfig& baseConfig,
             audio->renderFrame(tick.frame, simulator, starter,
                 tick.drive.requestedLoad);
         record(tick, 0.0);
+        // Idle fuelling every 0.25 s (cylinder 1 for trim/request/metering,
+        // engine totals for air and fuel). A trim pinned at its 0.55 floor
+        // with AFR still rich is the metering bias recorded in the journal.
+        if (options.trace && step % 60 == 0) {
+            const auto& s = tick.frame.state;
+            const auto c = s.cylinderStateCount > 0
+                ? s.cylinderStates[0] : enginelab::CylinderState {};
+            std::printf("idle %5.2f rpm %5.0f map %5.1f afr %5.2f trapAir %6.1f"
+                " delivAir %6.1f injFuel %5.2f delivFuel %5.2f trim %4.2f"
+                " req %5.2f met %5.2f misf %llu\n", t, s.rpm,
+                s.manifoldPressureKpa, s.airFuelRatio, s.airMassMgPerCycle,
+                s.deliveredAirMassMgPerCycle, s.injectedFuelMgPerCycle,
+                s.deliveredFuelMgPerCycle, c.closedLoopFuelTrim,
+                c.requestedFuelMgPerCycle, c.meteredFuelMgPerCycle,
+                static_cast<unsigned long long>(s.misfireEventCount));
+        }
     }
     // Phase B -- launch in first, clutch fed in over 0.9 s.
     driveline.requestGear(0);
+    if (options.trace)
+        std::printf("launch (1st, WOT, clutch over 0.9 s):\n"
+                    "  %6s %6s %6s %6s %7s %7s %7s %6s %6s %6s %6s %6s %6s\n",
+                    "t_s", "rpm", "clutch", "map", "afr", "tgtAfr",
+                    "clNm", "misf", "trim", "reqMg", "metMg", "vapMg",
+                    "filmMg");
     for (int step = 0; step < static_cast<int>(0.9 / stepSeconds);
          ++step, t += stepSeconds) {
         const auto clutch = std::clamp(
@@ -702,6 +729,19 @@ Metrics measureAfterfire(const enginelab::EngineConfig& baseConfig,
             audio->renderFrame(tick.frame, simulator, false,
                 tick.drive.requestedLoad);
         record(tick, 1.0);
+        if (options.trace && step % 6 == 0) {
+            const auto& s = tick.frame.state;
+            const auto c = s.cylinderStateCount > 0
+                ? s.cylinderStates[0] : enginelab::CylinderState {};
+            std::printf("  %6.3f %6.0f %6.2f %6.1f %7.2f %7.2f %7.1f %6llu"
+                        " %6.2f %6.2f %6.2f %6.2f %6.2f\n", t, s.rpm, clutch,
+                        s.manifoldPressureKpa, s.airFuelRatio,
+                        s.targetAirFuelRatio, tick.drive.clutchTorqueNm,
+                        static_cast<unsigned long long>(s.misfireEventCount),
+                        c.closedLoopFuelTrim, c.requestedFuelMgPerCycle,
+                        c.meteredFuelMgPerCycle, c.portFuelVapourInventoryMg,
+                        c.portLiquidFilmFuelMg);
+        }
     }
 
     // Phase C -- HEAT THE PIPE, then reach the arming speed.
@@ -1223,6 +1263,12 @@ void report(const Metrics& metrics) {
         calibration.quenchTemperatureK,
         metrics.reactionAcousticsEnabled ? "on" : "OFF (instrumental)"
     );
+    if (enginelab::afterfireRetainedChargeBelowLeanLimit(calibration)) {
+        std::printf("    WARNING retained charge phi=%.2f is below the lean"
+                    " limit %.2f: this fuel cannot burn\n",
+            enginelab::afterfireRetainedChargeEquivalenceRatio(calibration),
+            calibration.minimumEquivalenceRatio);
+    }
     if (!metrics.ran) {
         std::printf("%-44s  NOT RUN (never reached the arming speed)\n",
             metrics.name.c_str());
@@ -1350,6 +1396,7 @@ void printUsage() {
         "  --overrun-seconds S            closed-throttle capture duration\n"
         "  --liftoff-rpm RPM              controlled lift-off speed\n"
         "  --no-reaction-acoustics        suppress only copied reaction events\n"
+        "  --no-reaction-crack            keep the physical pop, drop the generic crack band\n"
         "\nWithout calibration overrides, the selected engine is measured exactly as authored."
     );
 }
@@ -1375,6 +1422,8 @@ int main(int argc, char** argv) {
         else if (argument == "--force-demo") options.forceDemo = true;
         else if (argument == "--no-reaction-acoustics")
             options.reactionAcousticsEnabled = false;
+        else if (argument == "--no-reaction-crack")
+            options.reactionCrackEnabled = false;
         else if (argument == "--fuel-fraction")
             options.fuelFraction = std::stod(next());
         else if (argument == "--ignition-k")

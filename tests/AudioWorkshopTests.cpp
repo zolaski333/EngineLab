@@ -158,6 +158,7 @@ int main() {
     enginelab::OfflineAudioMix callbackBase;
     enginelab::OfflineAudioMix callbackEffective;
     int physicsApplyCount = 0;
+    bool refusePhysics = false;
     enginelab::AudioPhysicsSettings appliedPhysics;
     enginelab::AudioWorkshopWindow window(
         engine, ENGINELAB_CATALOG_ROOT, base,
@@ -170,6 +171,7 @@ int main() {
         },
         [&](const enginelab::AudioPhysicsSettings& settings) {
             ++physicsApplyCount;
+            if (refusePhysics) return false;
             appliedPhysics = settings;
             return true;
         },
@@ -217,6 +219,7 @@ int main() {
     juce::TextButton* demoPhysicsButton = nullptr;
     juce::TextButton* applyPhysicsButton = nullptr;
     juce::ToggleButton* afterfireToggle = nullptr;
+    juce::ToggleButton* mixAfterfireToggle = nullptr;
     juce::ToggleButton* captureModeToggle = nullptr;
     juce::Slider* exhaustMixSlider = nullptr;
     for (int index = 0;
@@ -258,6 +261,8 @@ int main() {
                 dynamic_cast<juce::ToggleButton*>(child)) {
             if (toggle->getComponentID() == "afterfire-enabled")
                 afterfireToggle = toggle;
+            else if (toggle->getComponentID() == "mix-afterfire")
+                mixAfterfireToggle = toggle;
             else if (toggle->getComponentID() == "monitor-capture")
                 captureModeToggle = toggle;
         }
@@ -277,6 +282,11 @@ int main() {
     require(demoPhysicsButton != nullptr && applyPhysicsButton != nullptr
                 && afterfireToggle != nullptr,
             "audible physics A/B and explicit apply actions are visible");
+    require(mixAfterfireToggle != nullptr,
+            "afterfire is switchable from the real-time mix group");
+    require(!mixAfterfireToggle->getToggleState()
+                && !engine.exhaustAfterfire.enabled,
+            "the mix switch shows the catalogue default (afterfire off)");
     require(captureModeToggle != nullptr,
             "the effective monitor mode is visible to the user");
     require(exhaustMixSlider != nullptr,
@@ -293,6 +303,8 @@ int main() {
 
     afterfireToggle->setToggleState(true, juce::dontSendNotification);
     afterfireToggle->onClick();
+    require(!mixAfterfireToggle->getToggleState() && physicsApplyCount == 0,
+            "a pending physics edit does not show as live in the mix switch");
     applyPhysicsButton->onClick();
     require(
         physicsApplyCount == 1
@@ -304,6 +316,8 @@ int main() {
             && near(appliedPhysics.overrunPulseDutyCycle, 0.08)
             && near(appliedPhysics.overrunPulseTimingVariation, 0.40),
         "enabling a clean afterfire prepares discrete irregular pops rather than continuous anti-lag");
+    require(mixAfterfireToggle->getToggleState(),
+            "the mix switch mirrors an afterfire applied from the physics group");
 
     demoPhysicsButton->onClick();
     require(
@@ -317,6 +331,59 @@ int main() {
             && near(appliedPhysics.overrunPulseDutyCycle, 0.08)
             && near(appliedPhysics.overrunPulseTimingVariation, 0.40),
         "demo action publishes an intentionally audible physical calibration");
+
+    mixAfterfireToggle->setToggleState(false, juce::dontSendNotification);
+    mixAfterfireToggle->onClick();
+    require(
+        physicsApplyCount == 3
+            && !appliedPhysics.afterfireEnabled
+            && !afterfireToggle->getToggleState(),
+        "switching afterfire off in the mix applies at once and mirrors the physics group");
+    mixAfterfireToggle->setToggleState(true, juce::dontSendNotification);
+    mixAfterfireToggle->onClick();
+    require(
+        physicsApplyCount == 4
+            && appliedPhysics.afterfireEnabled
+            && afterfireToggle->getToggleState()
+            && near(appliedPhysics.overrunFuelFraction, 0.08)
+            && near(appliedPhysics.overrunPulseDutyCycle, 0.08),
+        "switching afterfire back on applies at once and keeps the calibration");
+    refusePhysics = true;
+    mixAfterfireToggle->setToggleState(false, juce::dontSendNotification);
+    mixAfterfireToggle->onClick();
+    require(
+        physicsApplyCount == 5
+            && mixAfterfireToggle->getToggleState()
+            && afterfireToggle->getToggleState(),
+        "a refused switch shows the afterfire state that is actually live");
+    refusePhysics = false;
+
+    {
+        // Measured (docs/journal.md 2026-09-23): below the chemistry's lean
+        // limit the retained charge never ignites.
+        enginelab::ExhaustAfterfireConfig afterfire;
+        afterfire.enabled = true;
+        afterfire.strategy =
+            enginelab::ExhaustAfterfireStrategy::continuousAntiLag;
+        afterfire.overrunFuelFraction = 0.18;
+        require(enginelab::afterfireRetainedChargeBelowLeanLimit(afterfire),
+                "continuous 18 % retained fuel is flagged as unburnable");
+        afterfire.strategy =
+            enginelab::ExhaustAfterfireStrategy::discreteAfterfire;
+        afterfire.overrunFuelFraction = 0.08;
+        afterfire.overrunPulseHz = 2.0;
+        afterfire.overrunPulseDutyCycle = 0.08;
+        require(!enginelab::afterfireRetainedChargeBelowLeanLimit(afterfire)
+                    && near(enginelab::afterfireRetainedChargeEquivalenceRatio(
+                                afterfire), 1.0),
+                "the discrete pop profile retains a stoichiometric charge");
+        afterfire.overrunPulseDutyCycle = 0.25;
+        require(enginelab::afterfireRetainedChargeBelowLeanLimit(afterfire),
+                "8 % fuel spread over a 25 % duty is flagged as unburnable");
+        afterfire.enabled = false;
+        require(!enginelab::afterfireRetainedChargeBelowLeanLimit(afterfire),
+                "a disabled afterfire is never flagged");
+    }
 
     window.setMix(base);
     require(callbackCount > 0, "mix synchronisation publishes to MainComponent");

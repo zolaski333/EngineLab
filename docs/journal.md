@@ -4,6 +4,18 @@ Entrées courtes (10 lignes maximum), la plus récente en haut. Une entrée dit 
 qui a été mesuré, comment, et ce qui ne l'a pas été. Ce qui devient une règle
 durable va dans `CLAUDE.md`. L'historique antérieur est dans `docs/archive/`.
 
+## 2026-09-23 — Corrections après l'audit de l'afterfire
+
+- Calage au démarrage en côte : réserve ECU ×2,12 gardée ~14 s après démarrage
+  en plus du X-tau ; limitée au démarreur. À 4 s : 8 → 13/14 routiers ; à 25 s :
+  13/14 inchangé. Calages déclarés : 2JZ ≤ 8 s (pauvre, écrasé par l'embrayage),
+  Aircooled à 25 s. Accepté par le propriétaire : 2JZ 5 600 tr/min +14,81 →
+  +15,11 % (tolérance 16 %), passage de rapport lancé après 20 s de ralenti.
+- Couche crack (bruit > 4 kHz piloté par la réaction), rapport 1,0 non calibré,
+  borné entre 0,8 et 2,5 : +3,9 dB en 4-8 kHz pendant les pops du 2JZ.
+- **CP2 (standard et Full System) : le profil discret ne brûle rien** (0 % de
+  200 mg, paroi 390-424 °C) ; à 650 K au lieu de 800 K : 18 %. Non corrigé.
+
 ## 2026-09-23 — Audit de l'afterfire
 
 - **Régression de `d70e8b8`** : les deux CP2 et le LS3 calent au démarrage

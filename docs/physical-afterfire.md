@@ -120,12 +120,48 @@ source globale placée artificiellement à la sortie. Une borne de dernier recou
 à 100 kPa protège le réseau linéaire ; chaque échantillon qui l’atteindrait est
 compté, affiché et invalide les harness de validation.
 
+La reconstruction ne garde rien au-dessus de ~3,8 kHz : le réseau 1-D ne calcule
+pas cette bande. `ReactionCrackSynthesiser` l'ajoute à chaque voix de réaction :
+
+- un bruit blanc déterministe, passe-haut LR4 au même point de raccord, puis
+  une pente de −6 dB/octave (celle d'un front raide) ;
+- une enveloppe calée sur le saut de pression compact de la voix : attaque
+  0,1 ms, relâche 0,5 ms ;
+- un niveau RMS égal à `defaultCrackRatio` (1,0) × ce saut ;
+- rien sans réaction, donc un moteur sans afterfire reste identique au bit
+  près.
+
+Le rapport 1,0 n'est pas calibré. Sur des pops du 2JZ, prolonger la pente
+du simulateur demanderait 0,8, et prolonger un front idéal 2,5. Au rapport 1,0,
+la bande 4-8 kHz gagne +3,9 dB pendant les pops. `EngineLabAfterfireHarness
+--no-reaction-crack` rend la même trajectoire sans cette couche.
+
 Chaque voix conserve maintenant la puissance `énergie / durée` pendant la durée
 exacte du pas de réaction. L’ancien rendu la maintenait deux fois plus longtemps
 avec un minimum de 0,5 ms : il dupliquait l’énergie des événements courts et
 collait les noyaux voisins en une vague continue.
 
 ## Utilisation dans AUDIO HQ
+
+L'afterfire est une option de chaque moteur, désactivée par défaut au
+catalogue sauf pour le moteur qui l'authore. L'interrupteur
+`AFTERFIRE (petarades en deceleration)` du groupe `MIX TEMPS REEL` l'active ou
+le coupe et l'applique aussitôt, sans passer par `APPLIQUER EN DIRECT`. Il reste
+synchronisé avec la case du groupe physique. S'il est refusé (banc en cours), il
+revient à l'état réellement actif. Pour un profil resté propre, l'activation
+installe le profil discret décrit plus bas. Une calibration authorée est
+conservée.
+
+Après chaque application, l'éditeur affiche un avertissement si le carburant
+retenu est sous la limite pauvre de la chimie (`minimumEquivalenceRatio`,
+0,45). Ce test est `afterfireRetainedChargeBelowLeanLimit()` dans
+`EngineTypes.hpp`. Richesse retenue : `fraction` en continu, `fraction / duty`
+(plafonnée à 1) en discret. Mesuré sur le 2JZ :
+
+- 18 % continu brûle 0,0 % du carburant ;
+- la même masse en paquets brûle 89 %.
+
+Un tel réglage déverse seulement du carburant cru.
 
 Le bouton `APPLY` envoie désormais la calibration au thread de simulation par
 mailbox. Il ne reconstruit plus `EngineRuntime` et conserve donc régime, phase,
