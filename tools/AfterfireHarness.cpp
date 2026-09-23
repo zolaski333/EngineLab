@@ -745,6 +745,15 @@ Metrics measureAfterfire(const enginelab::EngineConfig& baseConfig,
         }
     }
     if (!reachedArm) {
+        // "NOT RUN" alone hides whether the engine stalled, hit the limiter or
+        // simply never had the torque. Show the warm-up trajectory.
+        if (options.trace) {
+            std::printf("warm-up trajectory (arm speed %.0f rpm):\n", armRpm);
+            std::printf("  %7s %8s %6s\n", "t_s", "rpm", "wall_C");
+            for (std::size_t index = 0; index < samples.size(); index += 120)
+                std::printf("  %7.2f %8.0f %6.0f\n", samples[index].t,
+                    samples[index].rpm, samples[index].exhaustWallC);
+        }
         captureAudioContract();
         return metrics;
     }

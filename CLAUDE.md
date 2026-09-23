@@ -24,10 +24,11 @@ accord explicite du propriétaire.
 
 Pistes connues, **non vérifiées**, à tester d'abord par la mesure :
 
-- L'afterfire ne sonne pas comme une pétarade. Hypothèse : une vraie pétarade
-  monte en ~1 ms, et le réseau 1-D (cellules de 95 à 300 mm) ne peut pas
-  transmettre un front aussi raide. Dans ce cas, la physique doit décider
-  *quand* et *combien*, et un transitoire synthétisé produit le son.
+- Afterfire : causes **mesurées** le 2026-09-23 (voir `docs/journal.md`). Le
+  son d'une pétarade est plafonné à ~3,8 kHz par la reconstruction de la
+  source (0,47 × cadence de couplage ≤ 8 kHz), et elle ne dépasse la crête du
+  moteur que de 0 à +10 dB. La physique doit décider *quand* et *combien* ; la
+  bande au-dessus de ~4 kHz doit venir d'une synthèse générique.
 - Au-delà de la coupure du mode plan (quelques kHz pour un tube de 50-80 mm),
   un modèle 1-D ne porte plus rien de physique : c'est la bande où la synthèse
   générique a le plus de chances d'aider.
@@ -168,6 +169,10 @@ Le détail de chaque mesure est dans `docs/archive/`.
 - Approfondir la chambre unique du silencieux : encoche de 16 dB sur le
   fondamental de l'EJ25.
 - Accélérer la chimie de l'afterfire pour obtenir des salves : forme inchangée.
+- « Le réseau 1-D ne peut pas porter le front raide d'une pétarade » : faux,
+  le front audio monte en 0,2-0,8 ms. Le verrou est la bande passante (~3,8 kHz).
+- Afterfire à carburant continu sous ~45 % de la demande normale : ne peut pas
+  brûler (richesse sous la limite pauvre de 0,45). Seuls des paquets brûlent.
 - Fermeture de variabilité cyclique par dilution : inerte (la variabilité existe
   déjà, 1,7-12,9 %).
 - « Résidu piégé trop faible » : erreur d'unité, le résidu est sain.

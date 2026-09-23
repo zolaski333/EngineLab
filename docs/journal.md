@@ -4,6 +4,18 @@ Entrées courtes (10 lignes maximum), la plus récente en haut. Une entrée dit 
 qui a été mesuré, comment, et ce qui ne l'a pas été. Ce qui devient une règle
 durable va dans `CLAUDE.md`. L'historique antérieur est dans `docs/archive/`.
 
+## 2026-09-23 — Audit de l'afterfire
+
+- **Régression de `d70e8b8`** : les deux CP2 et le LS3 calent au démarrage
+  (1re, plein gaz, embrayage 0,9 s) dans `EngineLabAfterfireHarness` ; à
+  `75f64fa` le même Twin labo démarre et atteint 4 284 tr/min. Aucun test ne
+  l'a vu. `--trace` affiche désormais la trajectoire si l'armement échoue.
+- Front audio d'une pétarade : 0,2-0,8 ms (médiane Twin 0,46, 2JZ 0,61),
+  durée 2-4 ms. Énergie : centroïde 450-790 Hz, 0,2-0,5 % entre 4 et 8 kHz,
+  0 au-dessus (coupure LR8 à 0,47 × couplage). Crête ON/OFF : -3 à +10 dB.
+- Carburant continu à 18 % : 0,0 % brûlé (richesse 0,18 < 0,45). Même masse en
+  paquets : 89 % brûlé (2JZ). Seul le moteur 16 authore l'afterfire.
+
 ## 2026-09-22 — Remise en ordre du projet
 
 - Écoute à l'aveugle faite par le propriétaire contre de vrais moteurs : **aucun
