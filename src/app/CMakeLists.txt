@@ -1,7 +1,8 @@
 juce_add_gui_app(EngineLabApp
     PRODUCT_NAME "EngineLab"
     COMPANY_NAME "EngineLab"
-    BUNDLE_ID "com.enginelab.desktop")
+    BUNDLE_ID "com.enginelab.desktop"
+    VERSION "${PROJECT_VERSION}")
 juce_generate_juce_header(EngineLabApp)
 target_sources(EngineLabApp PRIVATE
     src/Main.cpp src/MainComponent.cpp src/ActionMap.cpp src/AudioWorkshopWindow.cpp src/EcuTunerWindow.cpp

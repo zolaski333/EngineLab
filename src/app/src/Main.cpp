@@ -5,7 +5,7 @@ namespace enginelab {
 class EngineLabApplication final : public juce::JUCEApplication {
 public:
     [[nodiscard]] const juce::String getApplicationName() override { return "EngineLab"; }
-    [[nodiscard]] const juce::String getApplicationVersion() override { return "0.1.0"; }
+    [[nodiscard]] const juce::String getApplicationVersion() override { return ProjectInfo::versionString; }
     void initialise(const juce::String&) override { window_ = std::make_unique<MainWindow>(getApplicationName()); }
     void shutdown() override { window_.reset(); }
 private:

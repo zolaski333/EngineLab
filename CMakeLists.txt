@@ -6,7 +6,7 @@ cmake_minimum_required(VERSION 3.24)
 # that -- MSBuild picks the language from the file extension -- which is why the
 # windows-vs2022 cache has CMAKE_C_FLAGS but no CMAKE_C_COMPILER at all. Ninja
 # resolves the compile rule at generate time and fails outright.
-project(EngineLab VERSION 0.1.0 LANGUAGES CXX C)
+project(EngineLab VERSION 0.2.0 LANGUAGES CXX C)
 
 option(ENGINELAB_BUILD_TESTS "Build EngineLab unit tests" ON)
 option(ENGINELAB_BUILD_COMPARISON_HARNESS "Build deterministic comparison and regression harness" ON)
@@ -129,6 +129,9 @@ if(ENGINELAB_BUILD_TESTS)
     add_subdirectory(tests)
 endif()
 
+# Packaging: `--target package` produces EngineLab-<version>-win64.zip, the
+# archive attached to every GitHub release. It holds only what a user needs to
+# run the application; the documentation stays online.
 install(TARGETS EngineLabApp
     RUNTIME DESTINATION . COMPONENT EngineLab
     BUNDLE DESTINATION . COMPONENT EngineLab)
@@ -137,10 +140,18 @@ if(TARGET EngineLabOfflineAudioExporter AND TARGET EngineLabAbClipRenderer)
         RUNTIME DESTINATION tools COMPONENT EngineLab)
 endif()
 install(DIRECTORY engines parts assets examples voicing DESTINATION . COMPONENT EngineLab)
-install(DIRECTORY docs DESTINATION . COMPONENT EngineLab)
-install(FILES README.md LICENSE.md DESTINATION . COMPONENT EngineLab)
+install(FILES packaging/README.txt LICENSE.md THIRD_PARTY_NOTICES.md DESTINATION . COMPONENT EngineLab)
+
+# Ship the MSVC runtime next to the executable (app-local deployment), so the
+# archive runs on a machine without the Visual C++ Redistributable installed.
+set(CMAKE_INSTALL_SYSTEM_RUNTIME_DESTINATION .)
+set(CMAKE_INSTALL_SYSTEM_RUNTIME_COMPONENT EngineLab)
+set(CMAKE_INSTALL_UCRT_LIBRARIES OFF)
+include(InstallRequiredSystemLibraries)
+
 set(CPACK_PACKAGE_NAME "EngineLab")
 set(CPACK_PACKAGE_VERSION "${PROJECT_VERSION}")
+set(CPACK_PACKAGE_VENDOR "EngineLab contributors")
 set(CPACK_GENERATOR "ZIP")
 set(CPACK_INSTALL_CMAKE_PROJECTS "${CMAKE_BINARY_DIR};${PROJECT_NAME};EngineLab;/")
 include(CPack)

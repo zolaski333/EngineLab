@@ -1,0 +1,72 @@
+name: Release
+
+# Pushing a tag such as v0.2.0 builds, tests and packages that exact commit,
+# then publishes a GitHub Release with the Windows archive and its checksum.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    name: Build and publish (Windows x64)
+    runs-on: windows-2022
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Check that the tag matches the project version
+        shell: pwsh
+        run: |
+          $version = (Select-String -Path CMakeLists.txt -Pattern 'project\(EngineLab VERSION ([0-9.]+)').Matches[0].Groups[1].Value
+          if ("v$version" -ne "${{ github.ref_name }}") {
+            Write-Output "::error::Tag ${{ github.ref_name }} does not match project version $version in CMakeLists.txt"
+            exit 1
+          }
+          "VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Configure
+        run: cmake --preset windows-vs2022
+
+      # Two parallel MSBuild nodes: more runs the hosted runner's compiler out
+      # of heap space (C1060).
+      - name: Build
+        shell: pwsh
+        run: |
+          cmake --build --preset windows-release -- /m:2 /nologo /verbosity:minimal *>&1 | Tee-Object -FilePath build.log
+          if ($LASTEXITCODE -ne 0) {
+            Select-String -Path build.log -Pattern 'error [A-Z]+[0-9]+|fatal error' |
+              Select-Object -First 30 |
+              ForEach-Object { Write-Output "::error::$($_.Line.Trim())" }
+            exit 1
+          }
+
+      - name: Test
+        run: ctest --preset windows-release --parallel 2
+
+      - name: Package
+        shell: pwsh
+        run: |
+          cmake --build out/build/windows-vs2022 --config Release --target package
+          $zip = "out/build/windows-vs2022/EngineLab-$env:VERSION-win64.zip"
+          if (-not (Test-Path $zip)) { Write-Output "::error::$zip was not produced"; exit 1 }
+          $hash = (Get-FileHash -Algorithm SHA256 $zip).Hash.ToLower()
+          "$hash  EngineLab-$env:VERSION-win64.zip" | Out-File -Encoding ascii "$zip.sha256"
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: EngineLab ${{ env.VERSION }}
+          prerelease: true
+          generate_release_notes: true
+          body: |
+            **Windows 10/11 x64:** download `EngineLab-${{ env.VERSION }}-win64.zip`, extract it anywhere and run `EngineLab.exe`. Nothing else to install.
+
+            The executable is not code-signed: if SmartScreen warns about an unknown publisher, choose **More info → Run anyway**. The `.sha256` file holds the archive checksum.
+
+            What changed: see [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/${{ github.ref_name }}/CHANGELOG.md).
+          files: |
+            out/build/windows-vs2022/EngineLab-${{ env.VERSION }}-win64.zip
+            out/build/windows-vs2022/EngineLab-${{ env.VERSION }}-win64.zip.sha256
