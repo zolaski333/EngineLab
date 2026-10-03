@@ -5,7 +5,7 @@ All notable changes to EngineLab are listed here. The format follows
 [Semantic Versioning](https://semver.org/) (pre-1.0: minor versions may break
 file formats, always with an in-memory migration).
 
-## [0.2.0] — 2026-10
+## [0.2.0] — 2026-10-04
 
 ### Added
 
@@ -40,6 +40,6 @@ file formats, always with an in-memory migration).
 - Port-injection ratchet at idle.
 - Labels with a middle dot (dyno axes, ECU tuner status, gauges) showed `Â·`.
 
-## [0.1.0] — 2026-08
+## [0.1.0] — 2026-08-06
 
 First public pre-release.
