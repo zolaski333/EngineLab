@@ -15,6 +15,8 @@ tailpipe and radiated to a pair of virtual microphones.
 
 Design an engine, draw its exhaust system, put it on the dyno, listen to it.
 
+![EngineLab main window: cylinder and valvetrain view, live gauges and the brake dynamometer](docs/media/main-window.png)
+
 > **Project status: early.** The physics, tooling and real-time pipeline are
 > solid and heavily tested. The sound is not there yet: in blind listening
 > against real recordings, engines are recognisable by their cylinder count and

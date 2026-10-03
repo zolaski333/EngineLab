@@ -97,9 +97,9 @@ void EcuTunerComponent::setSessionLocked(bool locked) {
     for (auto& editor : valueEditors_)
         editor->setReadOnly(locked);
     statusLabel_.setText(locked
-        ? "DYNO SESSION · REVISION " + juce::String(baseRevision_)
-            + " PINNED · EDITING LOCKED"
-        : "REVISION " + juce::String(baseRevision_) + "  ·  LIVE MODE",
+        ? utf8("DYNO SESSION · REVISION ") + juce::String(baseRevision_)
+            + utf8(" PINNED · EDITING LOCKED")
+        : "REVISION " + juce::String(baseRevision_) + utf8("  ·  LIVE MODE"),
         juce::dontSendNotification);
 }
 
@@ -128,7 +128,7 @@ void EcuTunerComponent::reloadFromSnapshot(bool preserveSelection) {
     }
     if (mapSelector_.getText().isEmpty() && mapSelector_.getNumItems() > 0)
         mapSelector_.setSelectedItemIndex(0, juce::dontSendNotification);
-    statusLabel_.setText("REVISION " + juce::String(baseRevision_) + "  ·  "
+    statusLabel_.setText("REVISION " + juce::String(baseRevision_) + utf8("  ·  ")
         + (hotReloader_->watching() ? "HOT RELOAD: " + juce::String(hotReloader_->path().string())
                                     : juce::String("LIVE MODE")),
         juce::dontSendNotification);
@@ -289,7 +289,7 @@ void EcuTunerComponent::commitCell(std::size_t valueIndex) {
     }
     baseRevision_ = result.activeRevision;
     committedTexts_[valueIndex] = text;
-    statusLabel_.setText("REVISION " + juce::String(baseRevision_) + "  ·  APPLIED LIVE",
+    statusLabel_.setText("REVISION " + juce::String(baseRevision_) + utf8("  ·  APPLIED LIVE"),
                          juce::dontSendNotification);
 }
 
@@ -378,7 +378,7 @@ void EcuTunerComponent::paint(juce::Graphics& graphics) {
     graphics.setColour(juce::Colour(0xff77847f));
     graphics.setFont(11.0F);
     graphics.drawText("LOAD / RPM", 12, 76, 96, 18, juce::Justification::centredLeft);
-    graphics.drawText("Operating point  " + juce::String(operatingRpm_, 0) + " rpm  ·  "
+    graphics.drawText("Operating point  " + juce::String(operatingRpm_, 0) + utf8(" rpm  ·  ")
         + juce::String(operatingLoad_ * 100.0, 1) + " %", getWidth() - 270, 76, 255, 18,
         juce::Justification::centredRight);
 }
@@ -413,7 +413,7 @@ void EcuTunerComponent::resized() {
 }
 
 EcuTunerWindow::EcuTunerWindow(std::shared_ptr<calibration::CalibrationStore> store)
-    : juce::DocumentWindow("EngineLab · ECU tuner", juce::Colour(0xff111817),
+    : juce::DocumentWindow(utf8("EngineLab · ECU tuner"), juce::Colour(0xff111817),
                            juce::DocumentWindow::closeButton, true) {
     tuner_ = new EcuTunerComponent(std::move(store));
     setContentOwned(tuner_, true);

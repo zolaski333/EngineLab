@@ -38,6 +38,7 @@ file formats, always with an in-memory migration).
 
 - Stalls on a standing start caused by flooding.
 - Port-injection ratchet at idle.
+- Labels with a middle dot (dyno axes, ECU tuner status, gauges) showed `Â·`.
 
 ## [0.1.0] — 2026-08
 

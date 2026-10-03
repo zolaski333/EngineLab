@@ -983,7 +983,7 @@ void MainComponent::updateHistorySelector() {
             [](const DynoPoint& point) { return point.valid; });
         historySelector_.addItem(presentation.name
             + "  [" + dynoStatusLabel(run.status) + "]  "
-            + juce::String(static_cast<int>(validPoints)) + " pts  ·  "
+            + juce::String(static_cast<int>(validPoints)) + utf8(" pts  ·  ")
             + juce::String(run.peakCorrectedPowerKw > 0.0
                 ? run.peakCorrectedPowerKw : run.peakPowerKw, 1)
             + " kW corr.", index + 1);
@@ -1315,11 +1315,11 @@ void MainComponent::paint(juce::Graphics& g) {
             + juce::String(visibleState_.fuelFlowGramsPerSecond, 2) + " g/s",
         "Pmax " + juce::String(peakCylinderPressure, 1) + " bar  EXH "
             + juce::String(visibleState_.exhaustRunnerPressureKpa, 0) + " kPa",
-        utf8("Oil ") + juce::String(visibleState_.oilPressureKpa, 0) + " kPa · " + juce::String(visibleState_.oilTemperatureC, 0) + utf8("°C"),
+        utf8("Oil ") + juce::String(visibleState_.oilPressureKpa, 0) + utf8(" kPa · ") + juce::String(visibleState_.oilTemperatureC, 0) + utf8("°C"),
         "EGT " + juce::String(visibleState_.exhaustTemperatureC, 0) + utf8("°C"),
-        utf8("Piston ") + juce::String(visibleState_.meanPistonSpeedMps, 1) + " m/s · "
+        utf8("Piston ") + juce::String(visibleState_.meanPistonSpeedMps, 1) + utf8(" m/s · ")
             + juce::String(visibleState_.peakPistonAccelerationG, 0) + " g",
-        "V " + juce::String(visibleState_.vehicleSpeedMps * 3.6, 1) + " km/h · G "
+        "V " + juce::String(visibleState_.vehicleSpeedMps * 3.6, 1) + utf8(" km/h · G ")
             + gearName(visibleState_.gear)
     };
     auto detailBody = details.reduced(12.0F, 8.0F);
@@ -1345,7 +1345,7 @@ void MainComponent::paint(juce::Graphics& g) {
     g.drawFittedText(juce::String(static_cast<int>(visibleState_.rpm)) + " rpm", telemetry.removeFromLeft(telemetryColumnWidth).toNearestInt(), juce::Justification::centredLeft, 1);
     g.setFont(juce::FontOptions(17.0F));
     const auto torqueText = compactTelemetry
-        ? juce::String(visibleState_.cycleAveragedTorqueNm, 0) + " Nm  ·  "
+        ? juce::String(visibleState_.cycleAveragedTorqueNm, 0) + utf8(" Nm  ·  ")
             + juce::String(visibleState_.cycleAveragedPowerKw, 1) + " kW"
         : juce::String(visibleState_.cycleAveragedTorqueNm, 0) + " Nm avg  /  "
             + juce::String(visibleState_.torqueNm, 0) + " Nm inst.";
@@ -1441,7 +1441,7 @@ void MainComponent::drawMixerPanel(juce::Graphics& g, juce::Rectangle<float> are
     g.setColour(juce::Colour(0xff2b3834)); g.drawRoundedRectangle(area, 8.0F, 1.0F);
     auto body = area.reduced(18.0F);
     g.setColour(juce::Colour(0xffdce5e1)); g.setFont(juce::FontOptions(16.0F, juce::Font::bold));
-    g.drawText("MIXER / AUDIO  ·  AUDIO HQ = FULL WORKSHOP",
+    g.drawText(utf8("MIXER / AUDIO  ·  AUDIO HQ = FULL WORKSHOP"),
                body.removeFromTop(34.0F), juce::Justification::centredLeft);
     const std::array<const char*, 5> presetNames { "Street chamber", "Open headers", "Turbo muffled", "Long tube", "Motorcycle" };
     g.setColour(juce::Colour(0xff79b89f));
@@ -2072,7 +2072,7 @@ void MainComponent::drawDynoChart(juce::Graphics& g, juce::Rectangle<float> area
                 ? utf8("PREPARING  →  ")
                     + juce::String(visibleState_.dynoTargetRpm, 0) + " RPM"
                 : utf8("MEASURING  ")
-                    + juce::String(visibleState_.dynoTargetRpm, 0) + " RPM  ·  "
+                    + juce::String(visibleState_.dynoTargetRpm, 0) + utf8(" RPM  ·  ")
                     + juce::String(visibleState_.dynoProgress * 100.0, 0) + " %");
         g.drawText(status,
             juce::Rectangle<float>(plot.getX(), plot.getY() - 20.0F,
@@ -2089,9 +2089,9 @@ void MainComponent::drawDynoChart(juce::Graphics& g, juce::Rectangle<float> area
             g.drawText((presentation != nullptr
                     ? presentation->name
                     : juce::String::fromUTF8(run.engineName.c_str()))
-                    + "  ·  " + juce::String(dynoStatusLabel(run.status)) + "  ·  "
+                    + utf8("  ·  ") + juce::String(dynoStatusLabel(run.status)) + utf8("  ·  ")
                     + juce::String(dynoModeToken(run.sessionConfig.mode))
-                    + "  ·  #" + juce::String(run.id),
+                    + utf8("  ·  #") + juce::String(run.id),
                 juce::Rectangle<float>(plot.getX(), plot.getY() - 20.0F,
                                        plot.getWidth(), 18.0F),
                 juce::Justification::centredLeft);
@@ -2209,7 +2209,7 @@ void MainComponent::drawDynoChart(juce::Graphics& g, juce::Rectangle<float> area
         g.drawText(juce::String(maxRpm * static_cast<double>(grid) / 4.0, 0),
                    juce::Rectangle<float>(x - 25.0F, plot.getBottom() + 3.0F, 50.0F, 14.0F), juce::Justification::centred);
     }
-    g.drawText("Corrected · Nm left axis (dark) · kW right axis (light)",
+    g.drawText(utf8("Corrected · Nm left axis (dark) · kW right axis (light)"),
                juce::Rectangle<float>(plot.getX(), plot.getBottom() + 18.0F, plot.getWidth(), 18.0F), juce::Justification::centred);
     const auto mouse = getMouseXYRelative().toFloat();
     if (plot.contains(mouse)) {
@@ -2253,8 +2253,8 @@ void MainComponent::drawDynoChart(juce::Graphics& g, juce::Rectangle<float> area
             const auto power = nearestPoint->correctedPowerKw > 0.0
                 ? nearestPoint->correctedPowerKw : nearestPoint->powerKw;
             auto text = nearestName + "\n"
-                + juce::String(nearestPoint->rpm, 0) + " rpm  ·  "
-                + juce::String(torque, 1) + " Nm  ·  "
+                + juce::String(nearestPoint->rpm, 0) + utf8(" rpm  ·  ")
+                + juce::String(torque, 1) + utf8(" Nm  ·  ")
                 + juce::String(power, 1) + " kW\n"
                 + (nearestPoint->airFuelRatioValid
                     ? "AFR " + juce::String(nearestPoint->airFuelRatio, 2)
