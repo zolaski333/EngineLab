@@ -56,7 +56,7 @@ jobs:
           "$hash  EngineLab-$env:VERSION-win64.zip" | Out-File -Encoding ascii "$zip.sha256"
 
       - name: Publish release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           name: EngineLab ${{ env.VERSION }}
           prerelease: true
