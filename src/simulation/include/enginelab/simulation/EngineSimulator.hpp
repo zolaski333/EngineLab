@@ -134,7 +134,7 @@ private:
      * Intake tuning is a wave phenomenon: a lumped runner cell has no
      * propagation delay, so nothing can arrive at the valve in phase and the
      * fill can never exceed static manifold density. Four algebraic bias
-     * formulations were measured and refuted before this (docs/archive/physics-audit.md
+     * formulations were measured and refuted before this (physics-audit.md in the archive/docs-2026-09 tag
      * "L'inertance de runner"); what was missing is the dimension, not a
      * coefficient. Each runner reuses the exhaust's FV network machinery with
      * the intake valve as the cylinder Riemann port and the plenum as the

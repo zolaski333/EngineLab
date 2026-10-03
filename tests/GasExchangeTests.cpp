@@ -21,7 +21,7 @@
 // dilution, injector saturation, mixture at spark) before the apparent
 // "combustion cliff" at the top of the range turned out to be this instrument's
 // own absorber running the engine into its rev limiter. See
-// docs/archive/physics-audit.md.
+// physics-audit.md (archive/docs-2026-09 tag).
 //
 // Reference numbers come from engine literature, never from this simulator's
 // output, so the gate cannot become a re-calibration onto current behaviour:

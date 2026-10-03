@@ -151,7 +151,7 @@ private:
     bool forcedInductionAcousticsActive_ { false };
     bool impulseResponseAvailable_ { false };
     bool impulseResponseLoadError_ { false };
-    juce::String impulseResponseStatus_ { "IR  CHAMP LIBRE" };
+    juce::String impulseResponseStatus_ { "IR  FREE FIELD" };
     std::array<EngineState, 300> telemetryHistory_ {};
     std::size_t telemetryWrite_ { 0 };
     std::size_t telemetryCount_ { 0 };
@@ -172,23 +172,23 @@ private:
 
     juce::Label title_;
     juce::ComboBox engineSelector_;
-    juce::TextButton editButton_ { "EDITER JSON" };
-    juce::TextButton importButton_ { "IMPORTER" };
-    juce::TextButton exportButton_ { "EXPORTER" };
+    juce::TextButton editButton_ { "EDIT JSON" };
+    juce::TextButton importButton_ { "IMPORT" };
+    juce::TextButton exportButton_ { "EXPORT" };
     juce::TextButton csvButton_ { "CSV DYNO" };
-    juce::TextButton keyBindingsButton_ { "TOUCHES" };
+    juce::TextButton keyBindingsButton_ { "KEYS" };
     juce::TextButton ecuTunerButton_ { "ECU" };
-    juce::TextButton exhaustDesignerButton_ { "ECHAP. PRO" };
+    juce::TextButton exhaustDesignerButton_ { "EXHAUST PRO" };
     juce::TextButton audioWorkshopButton_ { "AUDIO HQ" };
     juce::ComboBox exhaustPresetSelector_;
-    juce::TextButton ignitionButton_ { "CONTACT" };
+    juce::TextButton ignitionButton_ { "IGNITION" };
     juce::TextButton starterButton_;
-    juce::TextButton dynoButton_ { "D  LANCER DYNO" };
+    juce::TextButton dynoButton_ { "D  START DYNO" };
     juce::ComboBox historySelector_;
-    juce::TextButton deleteRunButton_ { "SUPPRIMER COURBE" };
+    juce::TextButton deleteRunButton_ { "DELETE RUN" };
     juce::TextEditor runNameEditor_;
-    juce::TextButton runColourButton_ { "COULEUR" };
-    juce::TextButton runVisibilityButton_ { "MASQUER" };
+    juce::TextButton runColourButton_ { "COLOUR" };
+    juce::TextButton runVisibilityButton_ { "HIDE" };
     juce::Label throttleLabel_, loadLabel_, afrLabel_, advanceLabel_;
     juce::Slider throttleSlider_, loadSlider_, afrSlider_, advanceSlider_;
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(MainComponent)

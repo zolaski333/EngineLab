@@ -44,9 +44,9 @@ private:
     bool sessionLocked_ { false };
 
     juce::ComboBox mapSelector_;
-    juce::TextButton loadButton_ { "CHARGER" };
-    juce::TextButton saveButton_ { "ENREGISTRER" };
-    juce::TextButton refreshButton_ { "RECHARGER" };
+    juce::TextButton loadButton_ { "LOAD" };
+    juce::TextButton saveButton_ { "SAVE" };
+    juce::TextButton refreshButton_ { "RELOAD" };
     juce::Label statusLabel_;
     juce::Label descriptionLabel_;
     std::vector<std::unique_ptr<juce::Label>> xLabels_;

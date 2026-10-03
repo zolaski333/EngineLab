@@ -25,12 +25,12 @@ namespace {
     values.erase(std::unique(values.begin(), values.end(), [](double lhs, double rhs) {
         return std::abs(lhs - rhs) < 1.0;
     }), values.end());
-    return { { "rpm", "Régime moteur", AxisQuantity::engineSpeed,
+    return { { "rpm", "Engine speed", AxisQuantity::engineSpeed,
                CalibrationUnit::revolutionsPerMinute }, std::move(values) };
 }
 
 [[nodiscard]] CalibrationAxis loadAxis() {
-    return { { "load", "Charge normalisée", AxisQuantity::normalizedLoad,
+    return { { "load", "Normalised load", AxisQuantity::normalizedLoad,
                CalibrationUnit::ratio },
              { 0.0, 0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 3.0, 4.0 } };
 }
@@ -53,8 +53,8 @@ namespace {
 
 CalibrationDraft makeDefaultEcuCalibration(const EngineConfig& config) {
     CalibrationDraft draft;
-    draft.name = config.name + " - calibration ECU";
-    draft.description = "Tables ECU modifiables à chaud générées depuis la configuration moteur.";
+    draft.name = config.name + " - ECU calibration";
+    draft.description = "Live-editable ECU tables generated from the engine configuration.";
 
     const auto speed = rpmAxis(config);
     const auto load = loadAxis();
@@ -105,16 +105,16 @@ CalibrationDraft makeDefaultEcuCalibration(const EngineConfig& config) {
         : ecuLimits::maximumGasolineAirFuelRatio;
     draft.set(CalibrationTable2D {
         metadata(std::string(keys::targetAirFuelRatio),
-                 diesel ? "Limite fumée AFR" : "AFR cible",
+                 diesel ? "AFR smoke limit" : "Target AFR",
                  diesel
-                    ? "AFR minimum admissible. Augmenter appauvrit et réduit la fumée; le fonctionnement normal peut être plus pauvre."
-                    : "Richesse commandée par régime et charge.",
+                    ? "Minimum allowed AFR. Raising it leans the mixture and reduces smoke; normal running may be leaner."
+                    : "Commanded mixture by engine speed and load.",
                  CalibrationUnit::airFuelRatio, minimumAfr, maximumAfr),
         speed, load, std::move(afrValues)
     });
     if (diesel && !config.injection.fullLoadFuelLimit.empty()) {
         CalibrationAxis quantitySpeed {
-            { "rpm", "Régime moteur", AxisQuantity::engineSpeed,
+            { "rpm", "Engine speed", AxisQuantity::engineSpeed,
               CalibrationUnit::revolutionsPerMinute }, {}
         };
         std::vector<double> quantities;
@@ -127,8 +127,8 @@ CalibrationDraft makeDefaultEcuCalibration(const EngineConfig& config) {
         }
         draft.set(CalibrationCurve1D {
             metadata(std::string(keys::dieselFuelQuantityMgPerCycle),
-                     "Quantité gazole pleine charge",
-                     "Plafond injecté par cylindre et par cycle. C'est la carte de couple Diesel; la limite fumée reste prioritaire.",
+                     "Full-load diesel quantity",
+                     "Injected ceiling per cylinder per cycle. This is the diesel torque map; the smoke limit still takes priority.",
                      CalibrationUnit::milligram,
                      ecuLimits::minimumDieselFuelQuantityMgPerCycle,
                      ecuLimits::maximumDieselFuelQuantityMgPerCycle, 1),
@@ -136,13 +136,13 @@ CalibrationDraft makeDefaultEcuCalibration(const EngineConfig& config) {
         });
     }
     draft.set(CalibrationTable2D {
-        metadata(std::string(keys::ignitionAdvance), "Avance allumage", "Avance absolue vilebrequin.",
+        metadata(std::string(keys::ignitionAdvance), "Spark advance", "Absolute crankshaft spark advance.",
                  CalibrationUnit::degreeCrankshaft, ecuLimits::minimumIgnitionAdvanceDegrees,
                  ecuLimits::maximumIgnitionAdvanceDegrees),
         speed, load, std::move(ignitionValues)
     });
     draft.set(ScalarCalibration {
-        metadata(std::string(keys::revLimit), "Limiteur", "Seuil du limiteur de régime.",
+        metadata(std::string(keys::revLimit), "Rev limiter", "Rev limiter threshold.",
                  CalibrationUnit::revolutionsPerMinute, ecuLimits::minimumRevLimitRpm,
                  ecuLimits::maximumRevLimitRpm, 0),
         std::clamp(config.ignition.revLimitRpm, ecuLimits::minimumRevLimitRpm,

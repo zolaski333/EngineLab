@@ -134,9 +134,9 @@ void report(const std::string& label, const Cost& cost) {
               << " ducts " << std::setw(3) << cost.ducts
               << "  junctions " << std::setw(3) << cost.junctions
               << "  cells " << std::setw(4) << cost.cells
-              << "  longueur_CFL " << std::setw(8) << std::fixed
+              << "  CFL_length " << std::setw(8) << std::fixed
               << std::setprecision(2) << cost.limitingCflLengthM * 1'000.0 << " mm"
-              << (cost.valid ? "" : "  [LAYOUT INVALIDE]") << '\n';
+              << (cost.valid ? "" : "  [INVALID LAYOUT]") << '\n';
 }
 
 } // namespace
@@ -157,14 +157,14 @@ int main(int argc, char** argv) {
 
     const auto catalog = enginelab::loadEngineCatalog(catalogRoot);
     if (catalog.entries.empty()) {
-        std::cerr << "catalogue vide sous " << catalogRoot << '\n';
+        std::cerr << "empty catalogue under " << catalogRoot << '\n';
         return 1;
     }
 
-    std::cout << "Cout solveur d'echappement: reseau livre contre le MEME "
-                 "reseau exprime en composants.\n"
-                 "La longueur CFL inclut dx des conduits et V/somme(A) des "
-                 "jonctions.\n\n";
+    std::cout << "Exhaust solver cost: shipped network versus the SAME "
+                 "network expressed as components.\n"
+                 "The CFL length includes duct dx and junction "
+                 "V/sum(A).\n\n";
 
     auto worstRatio = 0.0;
     std::string worstEngine;
@@ -173,11 +173,11 @@ int main(int argc, char** argv) {
             && entry.config.name.find(filter) == std::string::npos) continue;
         const auto shipped = measure(entry.config);
         std::cout << "== " << entry.config.name << '\n';
-        report("livre (legacy)", shipped);
+        report("shipped (legacy)", shipped);
         const std::array<std::pair<const char*, DesignerLengths>, 3> variants { {
-            { "concepteur, cote", DesignerLengths { 120.0, 450.0, 400.0 } },
-            { "concepteur, court", DesignerLengths { 60.0, 200.0, 150.0 } },
-            { "concepteur, sortie vide", DesignerLengths { 120.0, 450.0, 0.0 } },
+            { "designer, dimensioned", DesignerLengths { 120.0, 450.0, 400.0 } },
+            { "designer, short", DesignerLengths { 60.0, 200.0, 150.0 } },
+            { "designer, blank outlet", DesignerLengths { 120.0, 450.0, 0.0 } },
         } };
         for (const auto& [label, lengths] : variants) {
             const auto designed = measure(asDesignerNetwork(entry.config, lengths));
@@ -187,7 +187,7 @@ int main(int argc, char** argv) {
                 continue;
             const auto ratio = shipped.limitingCflLengthM
                 / designed.limitingCflLengthM;
-            std::cout << "        -> cout solveur x" << std::fixed
+            std::cout << "        -> solver cost x" << std::fixed
                       << std::setprecision(2) << ratio << '\n';
             if (ratio > worstRatio) {
                 worstRatio = ratio;
@@ -197,7 +197,7 @@ int main(int argc, char** argv) {
         std::cout << '\n';
     }
     if (!worstEngine.empty())
-        std::cout << "pire cas: " << worstEngine << " x" << std::fixed
+        std::cout << "worst case: " << worstEngine << " x" << std::fixed
                   << std::setprecision(2) << worstRatio << '\n';
     return 0;
 }

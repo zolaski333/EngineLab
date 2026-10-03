@@ -200,7 +200,7 @@ struct DuctGeometry final {
      * it -- measured at 6.2% (coefficient chain), 11.0% (exchange) and ~10.8%
      * (the extra recover) of the duct solver respectively.
      *
-     * This is NOT the averaging trap documented in CLAUDE.md: no state is
+     * This is NOT the averaging trap documented in .claude/CLAUDE.md: no state is
      * averaged before entering a non-linear law. The heat-transfer
      * coefficient is *sampled* less often, and the exchange it then drives is
      * the same exact two-capacity solution over a longer interval.

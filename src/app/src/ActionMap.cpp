@@ -76,26 +76,26 @@ juce::String ActionMap::toJson() const {
 bool ActionMap::fromJson(const juce::String& json, juce::String& error) {
     const auto parsed = juce::JSON::parse(json);
     const auto* object = parsed.getDynamicObject();
-    if (object == nullptr) { error = "Le document doit être un objet JSON."; return false; }
+    if (object == nullptr) { error = "The document must be a JSON object."; return false; }
     const auto& properties = object->getProperties();
     for (int propertyIndex = 0; propertyIndex < properties.size(); ++propertyIndex) {
         const auto propertyName = properties.getName(propertyIndex).toString();
         const auto known = std::any_of(entries_.begin(), entries_.end(), [&propertyName](const Entry& entry) {
             return propertyName == entry.id;
         });
-        if (!known) { error = "Action inconnue : " + propertyName; return false; }
+        if (!known) { error = "Unknown action: " + propertyName; return false; }
     }
     auto candidate = entries_;
     for (auto& entry : candidate) {
         const auto value = object->getProperty(entry.id);
         if (value.isVoid()) continue;
-        if (!value.isString()) { error = juce::String(entry.id) + " doit être une chaîne."; return false; }
+        if (!value.isString()) { error = juce::String(entry.id) + " must be a string."; return false; }
         const auto key = juce::KeyPress::createFromDescription(value.toString());
-        if (!key.isValid()) { error = "Raccourci invalide pour " + juce::String(entry.id); return false; }
+        if (!key.isValid()) { error = "Invalid key binding for " + juce::String(entry.id); return false; }
         if (key.getKeyCode() == juce::KeyPress::escapeKey
             || key.getKeyCode() == juce::KeyPress::returnKey
             || (key.getKeyCode() >= juce::KeyPress::F1Key && key.getKeyCode() <= juce::KeyPress::F12Key)) {
-            error = "Raccourci réservé pour " + juce::String(entry.id);
+            error = "Reserved key binding for " + juce::String(entry.id);
             return false;
         }
         entry.key = key;
@@ -103,7 +103,7 @@ bool ActionMap::fromJson(const juce::String& json, juce::String& error) {
     for (std::size_t left = 0; left < candidate.size(); ++left) {
         for (std::size_t right = left + 1; right < candidate.size(); ++right) {
             if (candidate[left].key == candidate[right].key) {
-                error = "Conflit entre " + juce::String(candidate[left].id) + " et " + juce::String(candidate[right].id);
+                error = "Conflict between " + juce::String(candidate[left].id) + " and " + juce::String(candidate[right].id);
                 return false;
             }
         }

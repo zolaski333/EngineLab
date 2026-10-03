@@ -43,7 +43,7 @@ EcuTunerComponent::EcuTunerComponent(
     : store_(store ? std::move(store) : std::make_shared<calibration::CalibrationStore>()),
       hotReloader_(std::make_unique<calibration::CalibrationFileHotReloader>(*store_)) {
     setOpaque(true);
-    mapSelector_.setTextWhenNothingSelected("Sélectionner une cartographie");
+    mapSelector_.setTextWhenNothingSelected("Select a table");
     mapSelector_.onChange = [this] { rebuildCells(); };
     loadButton_.onClick = [this] { chooseCalibrationToLoad(); };
     saveButton_.onClick = [this] { chooseCalibrationToSave(); };
@@ -97,9 +97,9 @@ void EcuTunerComponent::setSessionLocked(bool locked) {
     for (auto& editor : valueEditors_)
         editor->setReadOnly(locked);
     statusLabel_.setText(locked
-        ? "SESSION DYNO · RÉVISION " + juce::String(baseRevision_)
-            + " ÉPINGLÉE · ÉDITION VERROUILLÉE"
-        : "RÉVISION " + juce::String(baseRevision_) + "  ·  MODE LIVE",
+        ? "DYNO SESSION · REVISION " + juce::String(baseRevision_)
+            + " PINNED · EDITING LOCKED"
+        : "REVISION " + juce::String(baseRevision_) + "  ·  LIVE MODE",
         juce::dontSendNotification);
 }
 
@@ -128,9 +128,9 @@ void EcuTunerComponent::reloadFromSnapshot(bool preserveSelection) {
     }
     if (mapSelector_.getText().isEmpty() && mapSelector_.getNumItems() > 0)
         mapSelector_.setSelectedItemIndex(0, juce::dontSendNotification);
-    statusLabel_.setText("RÉVISION " + juce::String(baseRevision_) + "  ·  "
+    statusLabel_.setText("REVISION " + juce::String(baseRevision_) + "  ·  "
         + (hotReloader_->watching() ? "HOT RELOAD: " + juce::String(hotReloader_->path().string())
-                                    : juce::String("MODE LIVE")),
+                                    : juce::String("LIVE MODE")),
         juce::dontSendNotification);
     rebuildCells();
 }
@@ -147,7 +147,7 @@ void EcuTunerComponent::rebuildCells() {
     const auto id = selectedCalibrationId().toStdString();
     const auto* entry = draft_.find(id);
     if (entry == nullptr) {
-        descriptionLabel_.setText("Aucune cartographie disponible.", juce::dontSendNotification);
+        descriptionLabel_.setText("No table available.", juce::dontSendNotification);
         rebuilding_ = false;
         resized();
         repaint();
@@ -260,7 +260,7 @@ void EcuTunerComponent::commitCell(std::size_t valueIndex) {
     if (!parseFinite(text, value)) {
         valueEditors_[valueIndex]->setText(committedTexts_[valueIndex], false);
         juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::WarningIcon,
-            "Valeur ECU invalide", "Saisissez un nombre fini.");
+            "Invalid ECU value", "Enter a finite number.");
         return;
     }
     const auto id = selectedCalibrationId().toStdString();
@@ -283,13 +283,13 @@ void EcuTunerComponent::commitCell(std::size_t valueIndex) {
     draft_.set(std::move(edited));
     const auto result = store_->publish(draft_, { baseRevision_, "ecu-tuner" });
     if (!result.published) {
-        showIssues(result, "Calibration refusée");
+        showIssues(result, "Calibration rejected");
         reloadFromSnapshot();
         return;
     }
     baseRevision_ = result.activeRevision;
     committedTexts_[valueIndex] = text;
-    statusLabel_.setText("RÉVISION " + juce::String(baseRevision_) + "  ·  APPLIQUÉE À CHAUD",
+    statusLabel_.setText("REVISION " + juce::String(baseRevision_) + "  ·  APPLIED LIVE",
                          juce::dontSendNotification);
 }
 
@@ -300,13 +300,13 @@ void EcuTunerComponent::showIssues(const calibration::PublishResult& result,
         if (message.isNotEmpty()) message << "\n";
         message << utf8(issue.path) << ": " << utf8(issue.message);
     }
-    if (message.isEmpty()) message = "La transaction n'a pas été publiée.";
+    if (message.isEmpty()) message = "The transaction was not published.";
     juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::WarningIcon, title, message);
 }
 
 void EcuTunerComponent::chooseCalibrationToLoad() {
     if (sessionLocked_) return;
-    fileChooser_ = std::make_unique<juce::FileChooser>("Charger une calibration ECU",
+    fileChooser_ = std::make_unique<juce::FileChooser>("Load an ECU calibration",
                                                        juce::File {}, "*.ecu.json;*.json");
     auto safe = juce::Component::SafePointer<EcuTunerComponent>(this);
     fileChooser_->launchAsync(juce::FileBrowserComponent::openMode
@@ -322,17 +322,17 @@ void EcuTunerComponent::chooseCalibrationToLoad() {
             if (result.published) {
                 safe->hotReloader_->watch(file.getFullPathName().toStdString());
                 safe->reloadFromSnapshot();
-            } else safe->showIssues(result, "Chargement ECU refusé");
+            } else safe->showIssues(result, "ECU load rejected");
         } else if (file != juce::File {}) {
             juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::WarningIcon,
-                "Chargement ECU impossible", "Fichier absent ou supérieur à 2 Mio.");
+                "ECU load failed", "File missing or larger than 2 MiB.");
         }
         safe->fileChooser_.reset();
     });
 }
 
 void EcuTunerComponent::chooseCalibrationToSave() {
-    fileChooser_ = std::make_unique<juce::FileChooser>("Enregistrer la calibration ECU",
+    fileChooser_ = std::make_unique<juce::FileChooser>("Save the ECU calibration",
         juce::File::getSpecialLocation(juce::File::userDocumentsDirectory)
             .getChildFile("EngineLab.ecu.json"), "*.ecu.json;*.json");
     auto safe = juce::Component::SafePointer<EcuTunerComponent>(this);
@@ -345,7 +345,7 @@ void EcuTunerComponent::chooseCalibrationToSave() {
             const auto encoded = calibration::CalibrationJson::serialize(*safe->store_->snapshot());
             if (!file.replaceWithText(juce::String::fromUTF8(encoded.data(), static_cast<int>(encoded.size()))))
                 juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::WarningIcon,
-                    "Enregistrement ECU impossible", "Le fichier n'a pas pu être écrit.");
+                    "ECU save failed", "The file could not be written.");
             else {
                 safe->hotReloader_->watch(file.getFullPathName().toStdString());
                 safe->reloadFromSnapshot();
@@ -362,7 +362,7 @@ void EcuTunerComponent::timerCallback() {
         if (reload.published()) reloadFromSnapshot();
         else if (!reload.error.empty())
             juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::WarningIcon,
-                "Hot reload ECU refusé", utf8(reload.error));
+                "ECU hot reload rejected", utf8(reload.error));
     } else if (store_->snapshot()->revision() != baseRevision_
                && std::none_of(valueEditors_.begin(), valueEditors_.end(), [](const auto& editor) {
                    return editor->hasKeyboardFocus(false);
@@ -377,8 +377,8 @@ void EcuTunerComponent::paint(juce::Graphics& graphics) {
     graphics.drawHorizontalLine(96, 12.0F, static_cast<float>(getWidth() - 12));
     graphics.setColour(juce::Colour(0xff77847f));
     graphics.setFont(11.0F);
-    graphics.drawText("CHARGE / RPM", 12, 76, 96, 18, juce::Justification::centredLeft);
-    graphics.drawText("Point actif  " + juce::String(operatingRpm_, 0) + " rpm  ·  "
+    graphics.drawText("LOAD / RPM", 12, 76, 96, 18, juce::Justification::centredLeft);
+    graphics.drawText("Operating point  " + juce::String(operatingRpm_, 0) + " rpm  ·  "
         + juce::String(operatingLoad_ * 100.0, 1) + " %", getWidth() - 270, 76, 255, 18,
         juce::Justification::centredRight);
 }
@@ -413,7 +413,7 @@ void EcuTunerComponent::resized() {
 }
 
 EcuTunerWindow::EcuTunerWindow(std::shared_ptr<calibration::CalibrationStore> store)
-    : juce::DocumentWindow("EngineLab · Tuner ECU", juce::Colour(0xff111817),
+    : juce::DocumentWindow("EngineLab · ECU tuner", juce::Colour(0xff111817),
                            juce::DocumentWindow::closeButton, true) {
     tuner_ = new EcuTunerComponent(std::move(store));
     setContentOwned(tuner_, true);

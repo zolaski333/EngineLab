@@ -5,7 +5,7 @@
  *
  * READ THIS BEFORE CHANGING IT. A per-cylinder fork-join already existed in
  * this project and was REMOVED after measurement, in four variants, all of
- * which lost to running inline (CLAUDE.md and docs/archive/physics-audit.md carry the
+ * which lost to running inline (.claude/CLAUDE.md and the archived physics audit carry the
  * numbers). This pool is not a reversal of that decision; it is aimed at a
  * different body.
  *

@@ -498,7 +498,7 @@ int main() {
         // a calibration -- so this gate cannot be re-tuned onto the simulator's
         // own behaviour. It caught a runner carrying 172 m/s where continuity
         // gave 54, which starved every naturally aspirated engine in the
-        // catalogue (docs/archive/physics-audit.md).
+        // catalogue (physics-audit.md in the archive/docs-2026-09 tag).
         constexpr auto runnerAreaM2 = 1.963e-3;   // 50 mm bore duct
         constexpr auto runnerVolumeLitres = 0.55;
         constexpr auto valveAreaM2 = 7.75e-4;

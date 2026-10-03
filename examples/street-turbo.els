@@ -1,4 +1,4 @@
-# EngineLab Script (.els) — sauvegarder ce fichier déclenche le hot reload.
+# EngineLab Script (.els) — saving this file triggers a hot reload.
 preset inline_four
 name "Street Turbo I4"
 

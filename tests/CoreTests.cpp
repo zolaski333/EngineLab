@@ -1171,7 +1171,7 @@ int main() {
                     enginelab::AfterfireBlocker::notArmed),
             "the blocker mask must not name conditions that are satisfied");
         require(std::string_view(enginelab::afterfireBlockerName(
-                    belowMinimum.overrunAfterfireBlockers)) == "regime trop bas",
+                    belowMinimum.overrunAfterfireBlockers)) == "engine speed too low",
             "the blocker name must resolve to the reason a user can act on");
 
         // An unauthored engine is the case a reader meets first, and it must
@@ -1187,7 +1187,7 @@ int main() {
                     unauthored.overrunAfterfireBlockers,
                     enginelab::AfterfireBlocker::notAuthored)
                 && std::string_view(enginelab::afterfireBlockerName(
-                    unauthored.overrunAfterfireBlockers)) == "non autorise",
+                    unauthored.overrunAfterfireBlockers)) == "not authored",
             "an engine that does not author an afterfire must say exactly that");
     }
 

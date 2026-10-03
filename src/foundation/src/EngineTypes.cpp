@@ -358,7 +358,7 @@ ValveControlSample interpolateValveControl(const ValveControlConfig& control, do
     // 26 deg at 5000 and never came back, holding intake valve closing ~30 deg
     // early through the entire power band. Disabling the phaser outright was
     // worth +16 % peak power, which is the size of the error being corrected
-    // here. See docs/archive/physics-audit.md.
+    // here. See physics-audit.md (archive/docs-2026-09 tag).
     //
     // Piecewise-linear in rpm is monotone between authored points, reproduces
     // the authored value exactly at each of them, and cannot extrapolate past
@@ -1490,15 +1490,15 @@ const char* afterfireBlockerName(std::uint32_t mask) noexcept {
     // Ordered by how much the reading tells someone who hears no pop. An
     // unauthored feature explains everything else, so it leads; the duty-cycle
     // chop is the mechanism of a WORKING pop map and therefore comes last.
-    if (afterfireBlocked(mask, AfterfireBlocker::notAuthored)) return "non autorise";
-    if (afterfireBlocked(mask, AfterfireBlocker::ignitionOff)) return "allumage coupe";
-    if (afterfireBlocked(mask, AfterfireBlocker::cranking)) return "demarreur";
-    if (afterfireBlocked(mask, AfterfireBlocker::notArmed)) return "jamais arme (monter en regime a fond)";
-    if (afterfireBlocked(mask, AfterfireBlocker::belowMinimumRpm)) return "regime trop bas";
-    if (afterfireBlocked(mask, AfterfireBlocker::throttleOpen)) return "papillon ouvert";
-    if (afterfireBlocked(mask, AfterfireBlocker::revLimiterActive)) return "rupteur";
-    if (afterfireBlocked(mask, AfterfireBlocker::fuelCutInactive)) return "pas en coupure decel";
-    if (afterfireBlocked(mask, AfterfireBlocker::pulseChopClosed)) return "hachage ferme";
+    if (afterfireBlocked(mask, AfterfireBlocker::notAuthored)) return "not authored";
+    if (afterfireBlocked(mask, AfterfireBlocker::ignitionOff)) return "ignition off";
+    if (afterfireBlocked(mask, AfterfireBlocker::cranking)) return "cranking";
+    if (afterfireBlocked(mask, AfterfireBlocker::notArmed)) return "never armed (rev it up at full throttle)";
+    if (afterfireBlocked(mask, AfterfireBlocker::belowMinimumRpm)) return "engine speed too low";
+    if (afterfireBlocked(mask, AfterfireBlocker::throttleOpen)) return "throttle open";
+    if (afterfireBlocked(mask, AfterfireBlocker::revLimiterActive)) return "rev limiter active";
+    if (afterfireBlocked(mask, AfterfireBlocker::fuelCutInactive)) return "not in overrun fuel cut";
+    if (afterfireBlocked(mask, AfterfireBlocker::pulseChopClosed)) return "pop chop closed";
     return "";
 }
 

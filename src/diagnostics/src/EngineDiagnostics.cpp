@@ -4,13 +4,13 @@
 namespace enginelab {
 std::vector<Diagnostic> EngineDiagnostics::evaluate(const EngineConfig& config, const EngineState& state) const {
     std::vector<Diagnostic> result;
-    if (state.knockLevel > 0.45) result.push_back({ DiagnosticSeverity::critical, "combustion.knock", "Cliquetis severe : reduisez compression, avance ou charge." });
-    if (state.coolantTemperatureC > 112.0) result.push_back({ DiagnosticSeverity::warning, "thermal.coolant", "Temperature de refroidissement excessive." });
-    if (state.misfireRate > 0.2) result.push_back({ DiagnosticSeverity::warning, "combustion.misfire", "Combustion instable : verifiez la richesse et l'allumage." });
-    if (state.rpm > config.redlineRpm) result.push_back({ DiagnosticSeverity::critical, "mechanical.overrev", "Regime superieur a la limite mecanique estimee." });
-    if (state.rpm > 900.0 && state.oilPressureKpa < 100.0) result.push_back({ DiagnosticSeverity::critical, "lubrication.pressure", "Pression d'huile insuffisante sous regime." });
-    if (state.exhaustTemperatureC > 920.0) result.push_back({ DiagnosticSeverity::warning, "thermal.exhaust", "Temperature d'echappement excessive." });
-    if (state.oilTemperatureC > 135.0) result.push_back({ DiagnosticSeverity::critical, "thermal.oil", "Temperature d'huile critique." });
+    if (state.knockLevel > 0.45) result.push_back({ DiagnosticSeverity::critical, "combustion.knock", "Severe knock: reduce compression, spark advance or load." });
+    if (state.coolantTemperatureC > 112.0) result.push_back({ DiagnosticSeverity::warning, "thermal.coolant", "Coolant temperature too high." });
+    if (state.misfireRate > 0.2) result.push_back({ DiagnosticSeverity::warning, "combustion.misfire", "Unstable combustion: check mixture and ignition." });
+    if (state.rpm > config.redlineRpm) result.push_back({ DiagnosticSeverity::critical, "mechanical.overrev", "Engine speed above the estimated mechanical limit." });
+    if (state.rpm > 900.0 && state.oilPressureKpa < 100.0) result.push_back({ DiagnosticSeverity::critical, "lubrication.pressure", "Oil pressure too low under load." });
+    if (state.exhaustTemperatureC > 920.0) result.push_back({ DiagnosticSeverity::warning, "thermal.exhaust", "Exhaust temperature too high." });
+    if (state.oilTemperatureC > 135.0) result.push_back({ DiagnosticSeverity::critical, "thermal.oil", "Critical oil temperature." });
     if (config.fuel == FuelType::diesel) {
         // A quality-governed diesel is deliberately lean: lambda 1.4-3 under
         // load is normal and is not the gasoline lean-fault this diagnostic
@@ -21,17 +21,17 @@ std::vector<Diagnostic> EngineDiagnostics::evaluate(const EngineConfig& config, 
                 && state.airFuelRatio < state.targetAirFuelRatio * 0.97) {
             result.push_back({ DiagnosticSeverity::warning,
                 "combustion.diesel_smoke_limit",
-                "Richesse Diesel au-dela de la limite fumee : reduisez la quantite injectee." });
+                "Diesel mixture past the smoke limit: reduce the injected quantity." });
         }
     } else {
         if (state.airFuelRatioValid && state.load > 0.55
                 && state.lambda > 1.03)
-            result.push_back({ DiagnosticSeverity::critical, "combustion.lean", "Melange trop pauvre sous charge." });
+            result.push_back({ DiagnosticSeverity::critical, "combustion.lean", "Mixture too lean under load." });
         if (state.airFuelRatioValid && state.lambda < 0.74)
-            result.push_back({ DiagnosticSeverity::warning, "combustion.rich", "Melange excessivement riche : dilution d'huile possible." });
+            result.push_back({ DiagnosticSeverity::warning, "combustion.rich", "Mixture far too rich: oil dilution possible." });
     }
     if (state.solverResolutionLimited)
-        result.push_back({ DiagnosticSeverity::critical, "solver.resolution", "Resolution angulaire du solveur insuffisante au regime actuel." });
+        result.push_back({ DiagnosticSeverity::critical, "solver.resolution", "Solver crank-angle resolution too coarse at the current engine speed." });
     if (state.load > 0.40 && state.rpm > config.idleRpm * 1.2 && state.cylinderStateCount > 0) {
         // Capacity is unused authored-window fraction; duty is open time over
         // the complete 720-degree cycle. Less than 10 % window headroom or
@@ -46,7 +46,7 @@ std::vector<Diagnostic> EngineDiagnostics::evaluate(const EngineConfig& config, 
                 state.cylinderStates[index].injectorDutyCycle);
         }
         if (minimumCapacity < 0.10 || maximumDuty > 0.90)
-            result.push_back({ DiagnosticSeverity::warning, "injection.capacity", "Injecteurs satures : la masse commandee ne peut plus etre entierement injectee." });
+            result.push_back({ DiagnosticSeverity::warning, "injection.capacity", "Injectors saturated: the commanded mass can no longer be fully injected." });
     }
     // Back pressure is a MEAN. This test used to read `exhaustPressureKpa`,
     // which is the max over cylinders of the instantaneous runner pressure -- a
@@ -79,22 +79,22 @@ std::vector<Diagnostic> EngineDiagnostics::evaluate(const EngineConfig& config, 
         if (stableHighLoad && postSpool && drivePressureRatio > 2.0)
             result.push_back({ DiagnosticSeverity::warning,
                 "exhaust.back_pressure",
-                "Pression motrice turbo excessive : verifiez turbine et wastegate." });
+                "Turbine drive pressure too high: check turbine and wastegate." });
     } else if (stableHighLoad && backPressureDeltaKpa > 40.0) {
         result.push_back({ DiagnosticSeverity::warning,
-            "exhaust.back_pressure", "Contre-pression d'echappement excessive." });
+            "exhaust.back_pressure", "Exhaust back pressure too high." });
     }
-    if (state.damage > 0.5) result.push_back({ DiagnosticSeverity::critical, "mechanical.damage", "Dommages mecaniques importants : puissance et fiabilite degradees." });
-    else if (state.wear > 0.35) result.push_back({ DiagnosticSeverity::warning, "mechanical.wear", "Usure mecanique mesurable." });
-    if (state.meanPistonSpeedMps > 25.0) result.push_back({ DiagnosticSeverity::warning, "mechanical.piston_speed", "Vitesse moyenne des pistons elevee." });
+    if (state.damage > 0.5) result.push_back({ DiagnosticSeverity::critical, "mechanical.damage", "Significant mechanical damage: power and reliability degraded." });
+    else if (state.wear > 0.35) result.push_back({ DiagnosticSeverity::warning, "mechanical.wear", "Measurable mechanical wear." });
+    if (state.meanPistonSpeedMps > 25.0) result.push_back({ DiagnosticSeverity::warning, "mechanical.piston_speed", "High mean piston speed." });
     if (state.peakPistonAccelerationG > 5'500.0)
-        result.push_back({ DiagnosticSeverity::critical, "mechanical.piston_acceleration", "Acceleration piston critique pour l'equipage mobile." });
+        result.push_back({ DiagnosticSeverity::critical, "mechanical.piston_acceleration", "Critical piston acceleration for the reciprocating assembly." });
     if (state.clutchTemperatureC >= config.transmission.clutchFailureTemperatureC)
-        result.push_back({ DiagnosticSeverity::critical, "driveline.clutch_failure", "Embrayage en surchauffe critique : capacite de couple perdue." });
+        result.push_back({ DiagnosticSeverity::critical, "driveline.clutch_failure", "Clutch critically overheated: torque capacity lost." });
     else if (state.clutchTemperatureC >= config.transmission.clutchFadeStartTemperatureC)
-        result.push_back({ DiagnosticSeverity::warning, "driveline.clutch_fade", "Embrayage surchauffe : la capacite de couple diminue." });
+        result.push_back({ DiagnosticSeverity::warning, "driveline.clutch_fade", "Clutch overheating: torque capacity dropping." });
     if (state.tractionLimited && state.throttle > 0.2)
-        result.push_back({ DiagnosticSeverity::information, "vehicle.traction_limit", "Force longitudinale limitee par l'adherence disponible." });
+        result.push_back({ DiagnosticSeverity::information, "vehicle.traction_limit", "Longitudinal force limited by available grip." });
     return result;
 }
 } // namespace enginelab

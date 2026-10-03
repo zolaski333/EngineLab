@@ -1002,7 +1002,7 @@ bool FiniteVolumeDuct::computeResidual(
     // count, measured by forcing the slopes to zero. That is the largest single
     // item left, and it is NOT available: zeroing the slopes is exactly
     // dropping the scheme to first order, and the runner mesh is already known
-    // not to be converged (see the mesh note in CLAUDE.md).
+    // not to be converged (see the mesh note in .claude/CLAUDE.md).
     for (std::size_t index = 0; index < count; ++index) {
         if (isZero(slopes_[index])) {
             reconstructedLeft_[index] = states[index];

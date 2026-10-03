@@ -433,7 +433,7 @@ void testOpenEndDischargesTowardFreeExpansion() {
     // and a Riemann ghost cell deliberately stops short of it; what this catches
     // is the order-of-magnitude error the previous boundary made, which
     // discharged a 180 kPa tailpipe at 68 m/s where free expansion gives 699 and
-    // left the whole exhaust 79 kPa above ambient (docs/archive/physics-audit.md).
+    // left the whole exhaust 79 kPa above ambient (physics-audit.md in the archive/docs-2026-09 tag).
     ExhaustGasNetworkConfig configuration;
     configuration.initialPressurePa = 180'000.0;
     configuration.initialTemperatureK = 1'580.0;

@@ -226,7 +226,7 @@ CombustionResult SimplifiedGasolinePhysics::evaluateCombustion(
     (void)controls;
     // Telemetry, not the crank-driving model. Each field is annotated with its
     // sole downstream reader (measured in Phase 6; see CombustionResult in
-    // EngineTypes.hpp and docs/archive/physics-audit.md). Designated init keeps the wiring
+    // EngineTypes.hpp and physics-audit.md (archive/docs-2026-09 tag)). Designated init keeps the wiring
     // legible; order still matches the struct declaration (C++20 requirement).
     return CombustionResult {
         .indicatedTorqueNm = indicatedTorque,                                   // -> meanWorkTorqueNm display

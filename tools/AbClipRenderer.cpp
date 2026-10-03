@@ -100,8 +100,8 @@ struct SegmentSpec final {
  * measurement useless for the idle: integrated loudness is dominated by the
  * rev-up and the limiter, which sit 20 dB or more above an idle, so the gain
  * that lands the gesture at -20 LUFS leaves the idle far below anything a
- * listener can judge. The first listening pass reported exactly that ("le son au
- * ralenti de chaque moteur est trop faible"), and part of it was this bias
+ * listener can judge. The first listening pass reported exactly that ("the idle
+ * of every engine is too quiet"), and part of it was this bias
  * rather than the engine.
  *
  * Each segment is therefore levelled on its own content. Note what this does NOT
@@ -1268,7 +1268,7 @@ int main(int argc, char** argv) {
                 row << "| " << pairNumber << " | " << segment.name << " | "
                     << segment.description << " | " << std::fixed << std::setprecision(2)
                     << segmentSeconds << " s | "
-                    << (haveRef ? "A/B" : "ecoute seule (un seul cote)") << " |";
+                    << (haveRef ? "A/B" : "listen only (one side)") << " |";
                 indexRows.push_back(row.str());
             }
 
@@ -1349,21 +1349,21 @@ int main(int argc, char** argv) {
             std::cerr << "Could not write the listener clip index.\n";
             return 1;
         }
-        index << "# Clips a ecouter\n\n"
-              << "Chaque clip est cale a " << targetLufs << " LUFS (ITU-R BS.1770)"
-                 " sur SON PROPRE contenu, donc un\nralenti et une montee"
-                 " s'ecoutent au meme niveau de monitoring. Regle le volume une\n"
-                 "fois et n'y touche plus -- surtout pas entre le A et le B d'une"
-                 " meme paire.\n\n"
-                 "`pair_N_<condition>_A.wav` et `..._B.wav` sont les deux cotes"
-                 " d'une comparaison en\naveugle. Un fichier `solo_N_<condition>.wav`"
-                 " n'a pas de vis-a-vis : il s'ecoute\nseul, il n'y a rien a"
-                 " comparer et il ne faut rien noter en A/B dessus.\n\n"
-              << "| Paire | Condition | Description | Duree | Comparaison |\n"
+        index << "# Clips to listen to\n\n"
+              << "Every clip is normalised to " << targetLufs << " LUFS (ITU-R BS.1770)"
+                 " on ITS OWN content, so an\nidle and a rev-up"
+                 " play back at the same monitoring level. Set the volume\n"
+                 "once and leave it alone -- above all, never between the A and the B"
+                 " of a pair.\n\n"
+                 "`pair_N_<condition>_A.wav` and `..._B.wav` are the two sides"
+                 " of a blind\ncomparison. A `solo_N_<condition>.wav` file"
+                 " has no counterpart: listen to it\non its own; there is nothing"
+                 " to compare and nothing to score as A/B.\n\n"
+              << "| Pair | Condition | Description | Duration | Comparison |\n"
               << "|---:|---|---|---:|---|\n";
         for (const auto& row : indexRows) index << row << '\n';
-        index << "\nLes noms de moteur et l'attribution A/B ne sont pas ici :"
-                 " ils sont dans\n`listening-key.json`, en dehors de ce dossier.\n";
+        index << "\nEngine names and the A/B assignment are not here:"
+                 " they are in\n`listening-key.json`, outside this folder.\n";
     }
 
     std::ofstream keyFile(outRoot / "listening-key.json"); // deliberately OUTSIDE clips/

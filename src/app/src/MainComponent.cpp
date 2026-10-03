@@ -28,17 +28,17 @@ constexpr std::array<std::uint32_t, 8> curveColours {
 }
 [[nodiscard]] const char* runningStateName(RunningState state) noexcept {
     switch (state) {
-    case RunningState::stopped: return "ARRÊTÉ";
-    case RunningState::cranking: return "DÉMARRAGE";
-    case RunningState::idling: return "RALENTI";
-    case RunningState::running: return "EN MARCHE";
-    case RunningState::unstable: return "INSTABLE";
-    case RunningState::knocking: return "CLIQUETIS";
-    case RunningState::overheating: return "SURCHAUFFE";
-    case RunningState::damaged: return "ENDOMMAGÉ";
-    case RunningState::destroyed: return "DÉTRUIT";
+    case RunningState::stopped: return "STOPPED";
+    case RunningState::cranking: return "CRANKING";
+    case RunningState::idling: return "IDLING";
+    case RunningState::running: return "RUNNING";
+    case RunningState::unstable: return "UNSTABLE";
+    case RunningState::knocking: return "KNOCKING";
+    case RunningState::overheating: return "OVERHEATING";
+    case RunningState::damaged: return "DAMAGED";
+    case RunningState::destroyed: return "DESTROYED";
     }
-    return "INCONNU";
+    return "UNKNOWN";
 }
 
 [[nodiscard]] const char* layoutName(EngineLayout layout) noexcept {
@@ -80,14 +80,14 @@ constexpr std::array<std::uint32_t, 8> curveColours {
 
 [[nodiscard]] const char* dynoStatusLabel(DynoRunStatus status) noexcept {
     switch (status) {
-    case DynoRunStatus::idle: return "INACTIF";
-    case DynoRunStatus::running: return "EN COURS";
-    case DynoRunStatus::completed: return "TERMINÉ";
-    case DynoRunStatus::cancelled: return "ANNULÉ";
+    case DynoRunStatus::idle: return "IDLE";
+    case DynoRunStatus::running: return "RUNNING";
+    case DynoRunStatus::completed: return "COMPLETED";
+    case DynoRunStatus::cancelled: return "CANCELLED";
     case DynoRunStatus::timedOut: return "TIMEOUT";
-    case DynoRunStatus::invalid: return "INVALIDE";
+    case DynoRunStatus::invalid: return "INVALID";
     }
-    return "INCONNU";
+    return "UNKNOWN";
 }
 
 [[nodiscard]] const char* dynoStopReasonToken(DynoStopReason reason) noexcept {
@@ -168,7 +168,7 @@ MainComponent::MainComponent() {
     const std::array<const char*, 5> exhaustPresets { "Street", "Open", "Turbo", "Long tube", "Moto" };
     for (int index = 0; index < static_cast<int>(exhaustPresets.size()); ++index)
         exhaustPresetSelector_.addItem(exhaustPresets[static_cast<std::size_t>(index)], index + 1);
-    exhaustPresetSelector_.addItem("GRAPHE PHYSIQUE", 6);
+    exhaustPresetSelector_.addItem("PHYSICAL GRAPH", 6);
     exhaustPresetSelector_.setSelectedItemIndex(exhaustPresetIndex_, juce::dontSendNotification);
     exhaustPresetSelector_.onChange = [this] {
         const auto selected = exhaustPresetSelector_.getSelectedItemIndex();
@@ -177,7 +177,7 @@ MainComponent::MainComponent() {
     addAndMakeVisible(exhaustPresetSelector_);
 
     ignitionButton_.setClickingTogglesState(true);
-    starterButton_.setButtonText(utf8("S  DÉMARREUR"));
+    starterButton_.setButtonText(utf8("S  STARTER"));
     ignitionButton_.setColour(juce::TextButton::buttonOnColourId, juce::Colour(0xffb94d2b));
     ignitionButton_.onClick = [this] { if (runtime_) runtime_->setIgnitionEnabled(ignitionButton_.getToggleState()); };
     starterButton_.onStateChange = [this] {
@@ -187,13 +187,13 @@ MainComponent::MainComponent() {
     dynoButton_.onClick = [this] { toggleDyno(); };
     addAndMakeVisible(ignitionButton_); addAndMakeVisible(starterButton_); addAndMakeVisible(dynoButton_);
 
-    historySelector_.setTextWhenNothingSelected(utf8("Courbes archivées"));
+    historySelector_.setTextWhenNothingSelected(utf8("Saved runs"));
     historySelector_.onChange = [this] {
         updateDynoPresentationControls();
         repaint();
     };
     runNameEditor_.setTextToShowWhenEmpty(
-        utf8("Nom de la courbe"), juce::Colour(0xff71827b));
+        utf8("Run name"), juce::Colour(0xff71827b));
     runNameEditor_.setSelectAllWhenFocused(true);
     runNameEditor_.onTextChange = [this] {
         if (dynoPresentationControlsUpdating_) return;
@@ -250,10 +250,10 @@ MainComponent::MainComponent() {
     addAndMakeVisible(runVisibilityButton_);
     addAndMakeVisible(deleteRunButton_);
 
-    throttleLabel_.setText(utf8("ACCÉLÉRATEUR  [W 10% / E 20% / R 100%]"), juce::dontSendNotification);
-    loadLabel_.setText("CHARGE MANUELLE", juce::dontSendNotification);
-    afrLabel_.setText(utf8("TRIM AFR (CARTE ±)"), juce::dontSendNotification);
-    advanceLabel_.setText(utf8("TRIM ALLUMAGE (CARTE + °)"), juce::dontSendNotification);
+    throttleLabel_.setText(utf8("THROTTLE  [W 10% / E 20% / R 100%]"), juce::dontSendNotification);
+    loadLabel_.setText("MANUAL LOAD", juce::dontSendNotification);
+    afrLabel_.setText(utf8("AFR TRIM (TABLE ±)"), juce::dontSendNotification);
+    advanceLabel_.setText(utf8("SPARK TRIM (TABLE + °)"), juce::dontSendNotification);
     for (auto* label : { &throttleLabel_, &loadLabel_, &afrLabel_, &advanceLabel_ }) {
         label->setColour(juce::Label::textColourId, juce::Colour(0xff87948f));
         label->setFont(juce::FontOptions(12.0F));
@@ -291,8 +291,8 @@ void MainComponent::selectEngine(int presetIndex) {
 bool MainComponent::applyConfig(const EngineConfig& newConfig, bool preserveScriptWatcher,
                                 bool preserveCalibration) {
     if (runtime_ && runtime_->dynoRunning()) {
-        showError(utf8("Modification refusée"),
-            utf8("Arrêtez le banc de puissance avant de remplacer la configuration moteur."));
+        showError(utf8("Change rejected"),
+            utf8("Stop the dyno before replacing the engine configuration."));
         return false;
     }
     std::unique_ptr<EngineRuntime> replacement;
@@ -307,7 +307,7 @@ bool MainComponent::applyConfig(const EngineConfig& newConfig, bool preserveScri
             canonicalConfig, retainedCalibration,
             EngineSimulatorOptions {}, dynoArchive_);
     } catch (const std::exception& error) {
-        showError(utf8("Configuration moteur invalide"), juce::String::fromUTF8(error.what()));
+        showError(utf8("Invalid engine configuration"), juce::String::fromUTF8(error.what()));
         return false;
     }
     if (!preserveScriptWatcher) stopEngineScriptWatcher();
@@ -322,8 +322,8 @@ bool MainComponent::applyConfig(const EngineConfig& newConfig, bool preserveScri
     if (!preserveCalibration)
         afrSlider_.setValue(0.0, juce::dontSendNotification);
     afrLabel_.setText(diesel
-        ? utf8("TRIM LIMITE FUMÉE (+ = MOINS DE GAZOLE)")
-        : utf8("TRIM AFR (CARTE ±)"),
+        ? utf8("SMOKE LIMIT TRIM (+ = LESS FUEL)")
+        : utf8("AFR TRIM (TABLE ±)"),
         juce::dontSendNotification);
     adoptAudioVoicing(config_.audioVoicing);
     voicingRevision_ = audioVoicingRevision(catalogRoot_);
@@ -372,14 +372,14 @@ void MainComponent::updateAudioControlAvailability() {
         exhaustPresetSelector_.setSelectedId(6, juce::dontSendNotification);
         exhaustPresetSelector_.setEnabled(false);
         exhaustPresetSelector_.setTooltip(utf8(
-            "Le graphe d'échappement physique possède le son. "
-            "Modifiez sa géométrie dans ECHAP. PRO au lieu d'appliquer un preset procédural."));
+            "The physical exhaust graph owns the sound. "
+            "Change its geometry in EXHAUST PRO instead of applying a procedural preset."));
     } else {
         exhaustPresetSelector_.setSelectedItemIndex(
             exhaustPresetIndex_, juce::dontSendNotification);
         exhaustPresetSelector_.setEnabled(true);
         exhaustPresetSelector_.setTooltip(utf8(
-            "Preset de compatibilité pour une configuration sans graphe physique."));
+            "Compatibility preset for a configuration without a physical graph."));
     }
 }
 
@@ -387,7 +387,7 @@ void MainComponent::configureImpulseResponse() {
     if (!audio_) return;
     constexpr juce::int64 maximumIrSamples = 262'144;
     impulseResponseLoadError_ = false;
-    impulseResponseStatus_ = "IR  CHAMP LIBRE";
+    impulseResponseStatus_ = "IR  FREE FIELD";
     juce::StringArray errors;
     std::size_t authoredCount = 0;
     std::size_t loadedCount = 0;
@@ -403,8 +403,8 @@ void MainComponent::configureImpulseResponse() {
         if (path.impulseResponsePath.empty()) continue;
         ++authoredCount;
         if (pathIndex >= RealtimeConvolutionBank::maximumPaths) {
-            errors.add("Chemin " + juce::String(static_cast<int>(pathIndex + 1))
-                + utf8(" : limite de huit réponses impulsionnelles dépassée."));
+            errors.add("Path " + juce::String(static_cast<int>(pathIndex + 1))
+                + utf8(": more than eight impulse responses."));
             continue;
         }
         const auto configuredPath = juce::String::fromUTF8(
@@ -421,39 +421,39 @@ void MainComponent::configureImpulseResponse() {
             juce::String reason;
             switch (decoded.error) {
                 case ImpulseResponseLoadError::missingFile:
-                    reason = utf8("fichier introuvable");
+                    reason = utf8("file not found");
                     break;
                 case ImpulseResponseLoadError::unsupportedOrCorrupt:
-                    reason = utf8("format illisible ou fichier corrompu");
+                    reason = utf8("unreadable format or corrupt file");
                     break;
                 case ImpulseResponseLoadError::invalidMetadata:
-                    reason = utf8("métadonnées audio invalides");
+                    reason = utf8("invalid audio metadata");
                     break;
                 case ImpulseResponseLoadError::empty:
-                    reason = utf8("réponse impulsionnelle vide");
+                    reason = utf8("empty impulse response");
                     break;
                 case ImpulseResponseLoadError::readFailure:
-                    reason = utf8("lecture audio impossible");
+                    reason = utf8("audio read failed");
                     break;
                 case ImpulseResponseLoadError::none:
-                    reason = utf8("échec de chargement non spécifié");
+                    reason = utf8("unspecified load failure");
                     break;
             }
-            errors.add("Chemin " + juce::String(static_cast<int>(pathIndex + 1))
-                + " : " + reason + " : " + file.getFullPathName());
+            errors.add("Path " + juce::String(static_cast<int>(pathIndex + 1))
+                + ": " + reason + ": " + file.getFullPathName());
         }
     }
 
     if (authoredCount != 0) {
         impulseResponseStatus_ = "IR  " + juce::String(static_cast<int>(loadedCount))
-            + "/" + juce::String(static_cast<int>(authoredCount)) + utf8(" CHARGÉE(S)");
+            + "/" + juce::String(static_cast<int>(authoredCount)) + utf8(" LOADED");
     }
     if (!errors.isEmpty()) {
         impulseResponseLoadError_ = true;
-        impulseResponseStatus_ += "  /  ERREUR";
-        showError(utf8("Réponse impulsionnelle non chargée"),
+        impulseResponseStatus_ += "  /  ERROR";
+        showError(utf8("Impulse response not loaded"),
             errors.joinIntoString("\n")
-                + utf8("\n\nLe chemin reste en champ libre ; aucun fallback caché n'a été appliqué."));
+                + utf8("\n\nThe path stays in free field; no hidden fallback was applied."));
     }
     impulseResponseAvailable_ = loadedCount != 0;
     if (audioWorkshopWindow_) {
@@ -475,8 +475,8 @@ void MainComponent::showConfigEditor() {
 
 void MainComponent::showConfigEditor(const juce::String& initialText) {
     if (configEditor_) return;
-    configEditor_ = std::make_unique<juce::AlertWindow>(utf8("Éditeur moteur JSON"),
-        utf8("La topologie remplace l'instance de simulation. Les cartes ECU s'éditent à chaud via ECU."),
+    configEditor_ = std::make_unique<juce::AlertWindow>(utf8("JSON engine editor"),
+        utf8("Applying a new topology replaces the simulation instance. ECU tables are edited live from the ECU window."),
         juce::MessageBoxIconType::NoIcon);
     configEditor_->addTextEditor("json", initialText, {}, false);
     if (auto* editor = configEditor_->getTextEditor("json")) {
@@ -485,8 +485,8 @@ void MainComponent::showConfigEditor(const juce::String& initialText) {
         editor->setSize(720, 470);
         editor->setFont(juce::FontOptions(14.0F));
     }
-    configEditor_->addButton(utf8("APPLIQUER"), 1, juce::KeyPress(juce::KeyPress::returnKey));
-    configEditor_->addButton("ANNULER", 0, juce::KeyPress(juce::KeyPress::escapeKey));
+    configEditor_->addButton(utf8("APPLY"), 1, juce::KeyPress(juce::KeyPress::returnKey));
+    configEditor_->addButton("CANCEL", 0, juce::KeyPress(juce::KeyPress::escapeKey));
     auto safe = juce::Component::SafePointer<MainComponent>(this);
     configEditor_->enterModalState(true, juce::ModalCallbackFunction::create([safe](int result) {
         if (!safe) return;
@@ -497,7 +497,7 @@ void MainComponent::showConfigEditor(const juce::String& initialText) {
                 const auto utf8Text = retryText.toRawUTF8();
                 const auto decoded = safe->jsonSerializer_.decode(utf8Text);
                 if (decoded) safe->applyConfig(*decoded.config, false, true);
-                else safe->showError(utf8("JSON invalide"), juce::String::fromUTF8(decoded.error.c_str()));
+                else safe->showError(utf8("Invalid JSON"), juce::String::fromUTF8(decoded.error.c_str()));
             }
         }
         safe->configEditor_.reset();
@@ -512,8 +512,8 @@ void MainComponent::showConfigEditor(const juce::String& initialText) {
 
 void MainComponent::showKeyBindingsEditor() {
     if (keyBindingsEditor_) return;
-    keyBindingsEditor_ = std::make_unique<juce::AlertWindow>(utf8("Raccourcis clavier"),
-        utf8("Modifiez les descriptions JUCE. Les doublons et touches invalides sont refusés."),
+    keyBindingsEditor_ = std::make_unique<juce::AlertWindow>(utf8("Key bindings"),
+        utf8("Edit the JUCE key descriptions. Duplicates and invalid keys are rejected."),
         juce::MessageBoxIconType::NoIcon);
     keyBindingsEditor_->addTextEditor("bindings", actionMap_.toJson(), {}, false);
     if (auto* editor = keyBindingsEditor_->getTextEditor("bindings")) {
@@ -521,9 +521,9 @@ void MainComponent::showKeyBindingsEditor() {
         editor->setReturnKeyStartsNewLine(true);
         editor->setSize(620, 520);
     }
-    keyBindingsEditor_->addButton("APPLIQUER", 1, juce::KeyPress(juce::KeyPress::returnKey,
+    keyBindingsEditor_->addButton("APPLY", 1, juce::KeyPress(juce::KeyPress::returnKey,
         juce::ModifierKeys::ctrlModifier, 0));
-    keyBindingsEditor_->addButton("ANNULER", 0, juce::KeyPress(juce::KeyPress::escapeKey));
+    keyBindingsEditor_->addButton("CANCEL", 0, juce::KeyPress(juce::KeyPress::escapeKey));
     auto safe = juce::Component::SafePointer<MainComponent>(this);
     keyBindingsEditor_->enterModalState(true, juce::ModalCallbackFunction::create([safe](int result) {
         if (!safe) return;
@@ -531,7 +531,7 @@ void MainComponent::showKeyBindingsEditor() {
             juce::String error;
             if (const auto* editor = safe->keyBindingsEditor_->getTextEditor("bindings");
                 !safe->actionMap_.fromJson(editor->getText(), error)) {
-                safe->showError("Raccourcis invalides", error);
+                safe->showError("Invalid key bindings", error);
             } else {
                 safe->actionMap_.save();
             }
@@ -637,15 +637,15 @@ void MainComponent::showAudioWorkshop() {
                 [safe](const AudioPhysicsSettings& settings) {
                     if (!safe) return false;
                     if (!safe->runtime_ || safe->runtime_->dynoRunning()) {
-                        safe->showError(utf8("Modification refusée"),
-                            utf8("Arrêtez le banc de puissance avant de modifier la calibration physique."));
+                        safe->showError(utf8("Change rejected"),
+                            utf8("Stop the dyno before changing the physical calibration."));
                         return false;
                     }
                     auto editedConfig = safe->config_;
                     applyAudioPhysicsSettings(editedConfig, settings);
                     normaliseEngineConfig(editedConfig);
                     if (const auto error = validateEngineConfig(editedConfig)) {
-                        safe->showError(utf8("Calibration physique invalide"),
+                        safe->showError(utf8("Invalid physical calibration"),
                             juce::String::fromUTF8(error->c_str()));
                         return false;
                     }
@@ -736,8 +736,8 @@ void MainComponent::pollEngineScript() {
                 << juce::String(static_cast<int>(diagnostic.location.column)) << "  "
                 << juce::String(diagnostic.code) << "  " << juce::String(diagnostic.message);
     }
-    message << "\n\nLa dernière configuration valide reste active.";
-    showError("Script moteur refusé", message);
+    message << "\n\nThe last valid configuration stays active.";
+    showError("Engine script rejected", message);
 }
 
 void MainComponent::pollAudioVoicing() {
@@ -751,9 +751,9 @@ void MainComponent::pollAudioVoicing() {
     const auto loaded = loadAudioVoicing(catalogRoot_,
         config_.audioVoicingFamily, config_.audioVoicingKey);
     if (!loaded) {
-        showError("Voicing audio refusee",
+        showError("Audio voicing rejected",
             juce::String::fromUTF8(loaded.error.c_str())
-                + "\n\nLa derniere voicing valide reste active.");
+                + "\n\nThe last valid voicing stays active.");
         return;
     }
     config_.audioVoicing = loaded.voicing;
@@ -764,7 +764,7 @@ void MainComponent::pollAudioVoicing() {
 }
 
 void MainComponent::importEngine() {
-    fileChooser_ = std::make_unique<juce::FileChooser>(utf8("Importer un moteur"), juce::File {},
+    fileChooser_ = std::make_unique<juce::FileChooser>(utf8("Import an engine"), juce::File {},
                                                        "*.json;*.yaml;*.yml;*.els;*.engine");
     auto safe = juce::Component::SafePointer<MainComponent>(this);
     fileChooser_->launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
@@ -773,7 +773,7 @@ void MainComponent::importEngine() {
             const auto file = chooser.getResult();
             if (file.existsAsFile()) {
                 if (file.getSize() > 2 * 1024 * 1024) {
-                    safe->showError(utf8("Import impossible"), utf8("Le fichier dépasse la limite de 2 Mio."));
+                    safe->showError(utf8("Import failed"), utf8("The file exceeds the 2 MiB limit."));
                     safe->fileChooser_.reset();
                     return;
                 }
@@ -787,14 +787,14 @@ void MainComponent::importEngine() {
                 const auto decoded = file.hasFileExtension("yaml;yml")
                     ? safe->yamlSerializer_.decode(bytes) : safe->jsonSerializer_.decode(bytes);
                 if (decoded) safe->applyConfig(*decoded.config);
-                else safe->showError(utf8("Import impossible"), juce::String::fromUTF8(decoded.error.c_str()));
+                else safe->showError(utf8("Import failed"), juce::String::fromUTF8(decoded.error.c_str()));
             }
             safe->fileChooser_.reset();
         });
 }
 
 void MainComponent::exportEngine() {
-    fileChooser_ = std::make_unique<juce::FileChooser>(utf8("Exporter le moteur"),
+    fileChooser_ = std::make_unique<juce::FileChooser>(utf8("Export the engine"),
         juce::File::getSpecialLocation(juce::File::userDocumentsDirectory)
             .getChildFile(juce::File::createLegalFileName(juce::String(config_.name)) + ".json"),
         "*.json;*.yaml");
@@ -808,7 +808,7 @@ void MainComponent::exportEngine() {
                 const auto encoded = file.hasFileExtension("yaml;yml")
                     ? safe->yamlSerializer_.encode(safe->config_) : safe->jsonSerializer_.encode(safe->config_);
                 if (!file.replaceWithText(juce::String::fromUTF8(encoded.data(), static_cast<int>(encoded.size()))))
-                    safe->showError(utf8("Export impossible"), utf8("Le fichier n'a pas pu être écrit."));
+                    safe->showError(utf8("Export failed"), utf8("The file could not be written."));
             }
             safe->fileChooser_.reset();
         });
@@ -822,7 +822,7 @@ void MainComponent::exportDynoCsv() {
         run = &archivedRuns_[static_cast<std::size_t>(selected)];
     else if (!archivedRuns_.empty()) run = &archivedRuns_.back();
     else if (!visibleCurrentRun_.points.empty()) run = &visibleCurrentRun_;
-    if (run == nullptr) { showError("CSV DYNO", utf8("Aucune courbe à exporter.")); return; }
+    if (run == nullptr) { showError("CSV DYNO", utf8("No run to export.")); return; }
     juce::String csv;
     csv << "#schema;enginelab-dyno-v3\n"
         << "#run_id;" << juce::String(static_cast<juce::int64>(run->id)) << '\n'
@@ -878,7 +878,7 @@ void MainComponent::exportDynoCsv() {
             << juce::String(point.atmosphericCorrectionFactor, 4) << ';'
             << juce::String(point.correctedTorqueNm, 2) << ';' << juce::String(point.correctedPowerKw, 2) << '\n';
     }
-    fileChooser_ = std::make_unique<juce::FileChooser>("Exporter CSV",
+    fileChooser_ = std::make_unique<juce::FileChooser>("Export CSV",
         juce::File::getSpecialLocation(juce::File::userDocumentsDirectory).getChildFile(juce::String(run->engineName) + ".csv"), "*.csv");
     auto safe = juce::Component::SafePointer<MainComponent>(this);
     fileChooser_->launchAsync(juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::warnAboutOverwriting,
@@ -886,7 +886,7 @@ void MainComponent::exportDynoCsv() {
             if (!safe) return;
             auto file = chooser.getResult();
             if (file != juce::File {} && !file.withFileExtension("csv").replaceWithText(csv))
-                safe->showError("CSV DYNO", utf8("Le fichier n'a pas pu être écrit."));
+                safe->showError("CSV DYNO", utf8("The file could not be written."));
             safe->fileChooser_.reset();
         });
 }
@@ -962,11 +962,11 @@ void MainComponent::updateDynoPresentationControls() {
                 juce::TextButton::buttonColourId,
                 juce::Colour(found->second.colour).darker(0.35F));
             runVisibilityButton_.setButtonText(found->second.visible
-                ? "MASQUER" : "AFFICHER");
+                ? "HIDE" : "SHOW");
         }
     } else {
         runNameEditor_.clear();
-        runVisibilityButton_.setButtonText("MASQUER");
+        runVisibilityButton_.setButtonText("HIDE");
     }
     dynoPresentationControlsUpdating_ = false;
 }
@@ -1261,11 +1261,11 @@ void MainComponent::timerCallback() {
         juce::dontSendNotification);
     dynoButton_.setButtonText(running
         ? (visibleState_.dynoPreparing
-            ? utf8("D  ANNULER PRÉPA")
+            ? utf8("D  CANCEL PREP")
             : (visibleState_.dynoMode == DynoMode::hold
-                ? utf8("D  TERMINER HOLD")
-                : utf8("D  ANNULER DYNO")))
-        : juce::String("D  LANCER DYNO"));
+                ? utf8("D  END HOLD")
+                : utf8("D  CANCEL DYNO")))
+        : juce::String("D  START DYNO"));
     dynoButton_.setToggleState(running, juce::dontSendNotification);
     ignitionButton_.setEnabled(!running);
     starterButton_.setEnabled(!running);
@@ -1311,11 +1311,11 @@ void MainComponent::paint(juce::Graphics& g) {
         utf8(runningStateName(visibleState_.runningState)),
         juce::String(layoutName(config_.layout)) + "  " + juce::String(config_.cylinders.size()) + " cyl",
         "VE " + juce::String(visibleState_.volumetricEfficiency * 100.0, 1) + " %",
-        utf8("Air/ess. ") + juce::String(visibleState_.airFlowGramsPerSecond, 1) + "/"
+        utf8("Air/fuel ") + juce::String(visibleState_.airFlowGramsPerSecond, 1) + "/"
             + juce::String(visibleState_.fuelFlowGramsPerSecond, 2) + " g/s",
         "Pmax " + juce::String(peakCylinderPressure, 1) + " bar  EXH "
             + juce::String(visibleState_.exhaustRunnerPressureKpa, 0) + " kPa",
-        utf8("Huile ") + juce::String(visibleState_.oilPressureKpa, 0) + " kPa · " + juce::String(visibleState_.oilTemperatureC, 0) + utf8("°C"),
+        utf8("Oil ") + juce::String(visibleState_.oilPressureKpa, 0) + " kPa · " + juce::String(visibleState_.oilTemperatureC, 0) + utf8("°C"),
         "EGT " + juce::String(visibleState_.exhaustTemperatureC, 0) + utf8("°C"),
         utf8("Piston ") + juce::String(visibleState_.meanPistonSpeedMps, 1) + " m/s · "
             + juce::String(visibleState_.peakPistonAccelerationG, 0) + " g",
@@ -1342,21 +1342,21 @@ void MainComponent::paint(juce::Graphics& g) {
     const auto telemetryColumnWidth = telemetry.getWidth() / 3.0F;
     const auto compactTelemetry = getWidth() < 1'450;
     g.setColour(juce::Colour(0xffe8eeeb)); g.setFont(juce::FontOptions(30.0F, juce::Font::bold));
-    g.drawFittedText(juce::String(static_cast<int>(visibleState_.rpm)) + " tr/min", telemetry.removeFromLeft(telemetryColumnWidth).toNearestInt(), juce::Justification::centredLeft, 1);
+    g.drawFittedText(juce::String(static_cast<int>(visibleState_.rpm)) + " rpm", telemetry.removeFromLeft(telemetryColumnWidth).toNearestInt(), juce::Justification::centredLeft, 1);
     g.setFont(juce::FontOptions(17.0F));
     const auto torqueText = compactTelemetry
         ? juce::String(visibleState_.cycleAveragedTorqueNm, 0) + " Nm  ·  "
             + juce::String(visibleState_.cycleAveragedPowerKw, 1) + " kW"
-        : juce::String(visibleState_.cycleAveragedTorqueNm, 0) + " Nm moy.  /  "
-            + juce::String(visibleState_.torqueNm, 0) + " Nm instant.";
+        : juce::String(visibleState_.cycleAveragedTorqueNm, 0) + " Nm avg  /  "
+            + juce::String(visibleState_.torqueNm, 0) + " Nm inst.";
     g.drawFittedText(torqueText,
                      telemetry.removeFromLeft(telemetryColumnWidth).toNearestInt(), juce::Justification::centred, 1);
     const auto diesel = config_.fuel == FuelType::diesel;
     const auto mixtureText = !visibleState_.airFuelRatioValid
-        ? utf8("AFR — COUPURE / SYNCHRO")
+        ? utf8("AFR — CUT / SYNC")
         : (diesel
             ? "AFR " + juce::String(visibleState_.airFuelRatio, 1)
-                + utf8(" ≥ limite fumée ")
+                + utf8(" ≥ smoke limit ")
                 + juce::String(visibleState_.targetAirFuelRatio, 1)
             : "AFR " + juce::String(visibleState_.airFuelRatio, 1) + "/"
                 + juce::String(visibleState_.targetAirFuelRatio, 1));
@@ -1365,7 +1365,7 @@ void MainComponent::paint(juce::Graphics& g) {
             + " kPa\n" + mixtureText + utf8(" · ")
             + juce::String(visibleState_.coolantTemperatureC, 0) + utf8("°C")
         : juce::String(visibleState_.manifoldPressureKpa, 0) + " kPa  / "
-            + mixtureText + utf8("  ·  Eau ")
+            + mixtureText + utf8("  ·  Coolant ")
             + juce::String(visibleState_.coolantTemperatureC, 0) + utf8("°C");
     g.drawFittedText(environmentText, telemetry.toNearestInt(), juce::Justification::centredRight,
                      compactTelemetry ? 2 : 1);
@@ -1379,7 +1379,7 @@ void MainComponent::paint(juce::Graphics& g) {
     g.fillRoundedRectangle(diagnosticArea, 7.0F);
     g.setColour(hasDiagnostic ? (critical ? juce::Colour(0xffff9a8c) : juce::Colour(0xffffd46a)) : juce::Colour(0xff79b89f));
     g.setFont(juce::FontOptions(11.0F, juce::Font::bold));
-    juce::String diagnosticText = utf8("DIAGNOSTIC  ·  Aucun défaut détecté");
+    juce::String diagnosticText = utf8("DIAGNOSTIC  ·  No fault detected");
     if (hasDiagnostic) {
         diagnosticText.clear();
         for (std::size_t index = 0; index < std::min<std::size_t>(3, visibleDiagnostics_.size()); ++index) {
@@ -1401,10 +1401,10 @@ void MainComponent::drawLoadSimulationPanel(juce::Graphics& g, juce::Rectangle<f
     // being drawn, so name the armed one. Hold wins over the sweep in
     // EngineRuntime::run, so it is reported first here for the same reason.
     const auto benchText = visibleState_.dynoHoldEnabled
-        ? juce::String("MAINTIEN")
+        ? juce::String("HOLD")
         : (visibleState_.dynoRampEnabled
-            ? "RAMPE " + juce::String(visibleState_.dynoRampRpmPerSecond, 0) + " tr/min/s"
-            : juce::String("PALIERS 250"));
+            ? "RAMP " + juce::String(visibleState_.dynoRampRpmPerSecond, 0) + " rpm/s"
+            : juce::String("STEPS 250"));
     const std::array<juce::String, 12> values {
         "GEAR  " + gearText + " / " + juce::String(visibleState_.gearCount),
         "CLUTCH  " + juce::String(visibleState_.clutchPressure * 100.0, 0) + " %",
@@ -1416,7 +1416,7 @@ void MainComponent::drawLoadSimulationPanel(juce::Graphics& g, juce::Rectangle<f
         "CLUTCH LOSS  " + juce::String(visibleState_.clutchPowerLossKw, 2) + " kW",
         "BRAKE  " + juce::String(visibleState_.brakePressure * 100.0, 0) + " %",
         "TIRE FORCE  " + juce::String(visibleState_.tireLongitudinalForceN, 0) + " N",
-        "BANC  " + benchText,
+        "DYNO  " + benchText,
         "HOLD RPM  " + juce::String(visibleState_.dynoHoldRpm, 0)
     };
     const auto columns = 2;
@@ -1441,16 +1441,16 @@ void MainComponent::drawMixerPanel(juce::Graphics& g, juce::Rectangle<float> are
     g.setColour(juce::Colour(0xff2b3834)); g.drawRoundedRectangle(area, 8.0F, 1.0F);
     auto body = area.reduced(18.0F);
     g.setColour(juce::Colour(0xffdce5e1)); g.setFont(juce::FontOptions(16.0F, juce::Font::bold));
-    g.drawText("MIXER / AUDIO  ·  AUDIO HQ = ATELIER COMPLET",
+    g.drawText("MIXER / AUDIO  ·  AUDIO HQ = FULL WORKSHOP",
                body.removeFromTop(34.0F), juce::Justification::centredLeft);
     const std::array<const char*, 5> presetNames { "Street chamber", "Open headers", "Turbo muffled", "Long tube", "Motorcycle" };
     g.setColour(juce::Colour(0xff79b89f));
     g.setFont(juce::FontOptions(13.0F, juce::Font::bold));
     const auto presetLabel = physicalExhaustTopology_
-        ? juce::String("GRAPHE PHYSIQUE")
+        ? juce::String("PHYSICAL GRAPH")
         : juce::String(presetNames[static_cast<std::size_t>(
             std::clamp(exhaustPresetIndex_, 0, 4))]);
-    g.drawText("ECHAPPEMENT  " + presetLabel,
+    g.drawText("EXHAUST  " + presetLabel,
                body.removeFromTop(28.0F), juce::Justification::centredLeft);
     g.setColour(impulseResponseLoadError_
         ? juce::Colour(0xffef6f3c) : juce::Colour(0xff83918c));
@@ -1459,8 +1459,8 @@ void MainComponent::drawMixerPanel(juce::Graphics& g, juce::Rectangle<float> are
                juce::Justification::centredLeft);
     const std::array<std::pair<juce::String, double>, 9> values {{
         { "Z  Volume", audioVolume_ / 2.0 },
-        { impulseResponseAvailable_ ? "X  Retour IR mesure"
-                                    : "X  Retour IR (N/A)",
+        { impulseResponseAvailable_ ? "X  Measured IR send"
+                                    : "X  IR send (N/A)",
           impulseResponseAvailable_ ? audioConvolution_ : 0.0 },
         { "C  High gain", highFrequencyGain_ / 2.5 },
         { physicalIntakeTopology_ ? "V  Noise intake legacy (N/A)"
@@ -1468,7 +1468,7 @@ void MainComponent::drawMixerPanel(juce::Graphics& g, juce::Rectangle<float> are
           physicalIntakeTopology_ ? 0.0 : lowFrequencyNoise_ / 1.5 },
         { physicalExhaustTopology_ ? "B  Noise legacy (N/A)" : "B  High noise",
           physicalExhaustTopology_ ? 0.0 : highFrequencyNoise_ / 1.5 },
-        { physicalExhaustTopology_ ? "J  Combustion directe (N/A)"
+        { physicalExhaustTopology_ ? "J  Direct combustion (N/A)"
                                    : "J  Combustion",
           physicalExhaustTopology_ ? 0.0 : combustionGain_ / 2.0 },
         { "K  Exhaust", exhaustGain_ / 2.0 },
@@ -1508,7 +1508,7 @@ void MainComponent::drawGaugeCluster(juce::Graphics& g, juce::Rectangle<float> a
     const std::array<Gauge, 8> gauges {{
         { "RPM", juce::String(visibleState_.rpm, 0), visibleState_.rpm / std::max(1.0, config_.redlineRpm), juce::Colour(0xffef6f3c) },
         { "MAP", juce::String(visibleState_.manifoldPressureKpa, 0) + " kPa", visibleState_.manifoldPressureKpa / std::max(1.0, config_.ambientPressureKpa), juce::Colour(0xff41b6d7) },
-        { diesel ? "AFR/FUM" : "AFR",
+        { diesel ? "AFR/SMK" : "AFR",
           visibleState_.airFuelRatioValid
             ? juce::String(visibleState_.airFuelRatio, 1) : utf8("—"),
           mixtureGauge,
@@ -1670,12 +1670,12 @@ void MainComponent::drawDebugPanel(juce::Graphics& g, juce::Rectangle<float> are
         // made a silent exhaust indistinguishable from missing combustion,
         // pressure starvation, or a saturated reaction voice pool. These are
         // atomic reads performed only by the 30 Hz UI paint path.
-        "Pertes firing    " + juce::String(runtime_ ? runtime_->droppedEventCount() : 0),
-        "Pertes pression  " + juce::String(runtime_ ? runtime_->droppedPressureSampleCount() : 0),
-        "Pertes acoust ech " + juce::String(runtime_ ? runtime_->droppedExhaustAcousticSampleCount() : 0),
-        "Pertes reaction  " + juce::String(audio_ ? audio_->droppedReactionEventCount() : 0),
-        "Limite pression AF " + juce::String(audio_ ? audio_->reactionPressureLimitedSampleCount() : 0),
-        "Pertes cycles dyno " + juce::String(runtime_ ? runtime_->droppedBrakeCycleSampleCount() : 0),
+        "Dropped firings  " + juce::String(runtime_ ? runtime_->droppedEventCount() : 0),
+        "Dropped pressure " + juce::String(runtime_ ? runtime_->droppedPressureSampleCount() : 0),
+        "Dropped exh acoustic " + juce::String(runtime_ ? runtime_->droppedExhaustAcousticSampleCount() : 0),
+        "Dropped reaction " + juce::String(audio_ ? audio_->droppedReactionEventCount() : 0),
+        "AF pressure limit " + juce::String(audio_ ? audio_->reactionPressureLimitedSampleCount() : 0),
+        "Dropped dyno cycles " + juce::String(runtime_ ? runtime_->droppedBrakeCycleSampleCount() : 0),
         "Dyno gate mask   " + juce::String(static_cast<juce::int64>(visibleState_.dynoQualityReasons)),
         "Dyno contact/sat " + juce::String(visibleState_.dynoBrakeContactFraction, 3)
             + " / " + (visibleState_.dynoAbsorberSaturatedHigh ? "HIGH"
@@ -1695,11 +1695,11 @@ void MainComponent::drawDebugPanel(juce::Graphics& g, juce::Rectangle<float> are
         "Realtime factor  " + juce::String(runtime_ ? runtime_->realtimeFactor() : 1.0, 3) + " x",
         "Runtime overruns " + juce::String(runtime_ ? runtime_->timingOverrunCount() : 0),
         "Audio late/pending " + juce::String(audio_ ? audio_->lateEventCount() : 0) + " / " + juce::String(audio_ ? audio_->droppedPendingEventCount() : 0),
-        "Protection charge "
+        "Load protection  "
             + juce::String(runtime_ && runtime_->realtimeLoadProtectionActive()
-                ? "ACTIF / " : "repos / ")
+                ? "ACTIVE / " : "idle / ")
             + juce::String(runtime_ ? runtime_->realtimeLoadProtectionActivationCount() : 0)
-            + " activ.",
+            + " activations",
         // Keep every output non-linearity distinct. levelLimitedSampleCount()
         // belongs to the slow safety AGC; labelling it as the limiter used to
         // hide the actual 2x soft-limiter and made saturation reports
@@ -1715,7 +1715,7 @@ void MainComponent::drawDebugPanel(juce::Graphics& g, juce::Rectangle<float> are
         // "does nothing" three times without any of them being identifiable
         // from outside. State first, diagnosis after.
         utf8("Afterfire        ") + (visibleState_.exhaustAfterfireOverrunActive
-            ? juce::String("ACTIF ") + juce::String(visibleState_.exhaustAfterfireHeatReleaseKw, 2) + " kW"
+            ? juce::String("ACTIVE ") + juce::String(visibleState_.exhaustAfterfireHeatReleaseKw, 2) + " kW"
             : juce::String(afterfireBlockerName(visibleState_.exhaustAfterfireBlockers))),
         "Induction AF I/t "
             + juce::String(visibleState_.exhaustAfterfireInductionProgress, 3)
@@ -1730,7 +1730,7 @@ void MainComponent::drawDebugPanel(juce::Graphics& g, juce::Rectangle<float> are
         // cold by construction once the spark is cut -- and 1.5 mm of steel has
         // a time constant near 55 s. A just-started engine cannot pop, and that
         // is correct, so the reading has to be visible beside the arming state.
-        utf8("Paroi echap. C   ") + juce::String(visibleState_.exhaustWallTemperatureC, 0)
+        utf8("Exhaust wall C   ") + juce::String(visibleState_.exhaustWallTemperatureC, 0)
             + " / " + juce::String(config_.exhaustAfterfire.ignitionTemperatureK - 273.15, 0)
     };
     const auto columns = area.getWidth() > 680.0F ? 3 : 2;
@@ -1773,7 +1773,7 @@ void MainComponent::drawTelemetryChart(juce::Graphics& g, juce::Rectangle<float>
     g.setFont(juce::FontOptions(11.0F, juce::Font::bold));
     g.setColour(juce::Colour(0xffef6f3c)); g.drawText("RPM", area.removeFromLeft(42.0F).removeFromTop(18.0F), juce::Justification::centredLeft);
     g.setColour(juce::Colour(0xff41b6d7)); g.drawText("MAP", area.removeFromLeft(42.0F).removeFromTop(18.0F), juce::Justification::centredLeft);
-    g.setColour(juce::Colour(0xffffca28)); g.drawText("EAU", area.removeFromLeft(42.0F).removeFromTop(18.0F), juce::Justification::centredLeft);
+    g.setColour(juce::Colour(0xffffca28)); g.drawText("CLT", area.removeFromLeft(42.0F).removeFromTop(18.0F), juce::Justification::centredLeft);
     if (runtime_ && audio_) {
         // The realtime factor leads, and turns amber below 0.95: a simulation
         // in slow motion is reported by users as an engine fault (late
@@ -1782,10 +1782,10 @@ void MainComponent::drawTelemetryChart(juce::Graphics& g, juce::Rectangle<float>
         // cumulative and say nothing about the present moment.
         const auto factor = runtime_->realtimeFactor();
         g.setColour(factor < 0.95 ? juce::Colour(0xffffca28) : juce::Colour(0xff70807a));
-        g.drawText("temps reel " + juce::String(factor, 2) + "x  RT drop "
-            + juce::String(runtime_->droppedEventCount()) + "  retard "
-            + juce::String(runtime_->timingOverrunCount()) + "  audio tardif "
-            + juce::String(audio_->lateEventCount()) + "  file audio "
+        g.drawText("realtime " + juce::String(factor, 2) + "x  RT drop "
+            + juce::String(runtime_->droppedEventCount()) + "  overruns "
+            + juce::String(runtime_->timingOverrunCount()) + "  late audio "
+            + juce::String(audio_->lateEventCount()) + "  audio queue "
             + juce::String(audio_->droppedPendingEventCount()), area.removeFromTop(18.0F), juce::Justification::centredRight);
     }
 }
@@ -1796,15 +1796,15 @@ void MainComponent::drawEngine(juce::Graphics& g, juce::Rectangle<float> area) c
     const auto showFlow = viewLayer_ == 0 || viewLayer_ == 3;
     const auto showCombustion = viewLayer_ == 0 || viewLayer_ == 1;
     const auto showValvetrain = viewLayer_ == 0 || viewLayer_ == 1;
-    static constexpr std::array<const char*, 4> layerNames { "ENSEMBLE", "COMBUSTION / DISTRIBUTION", "MECANIQUE", "FLUX GAZ" };
+    static constexpr std::array<const char*, 4> layerNames { "ALL", "COMBUSTION / VALVETRAIN", "MECHANICAL", "GAS FLOW" };
     g.setColour(juce::Colour(0xff82918b));
     g.setFont(juce::FontOptions(10.0F, juce::Font::bold));
-    g.drawText("COUCHE  " + juce::String(layerNames[static_cast<std::size_t>(std::clamp(viewLayer_, 0, 3))]),
+    g.drawText("LAYER  " + juce::String(layerNames[static_cast<std::size_t>(std::clamp(viewLayer_, 0, 3))]),
                area.removeFromTop(14.0F), juce::Justification::centredRight);
     if (config_.layout == EngineLayout::radial) {
         g.setFont(juce::FontOptions(12.0F, juce::Font::bold));
         g.setColour(juce::Colour(0xff82918b));
-        g.drawText("RADIAL  /  DISTRIBUTION  " + juce::String(config_.camshafts.intakeDurationDegrees, 0)
+        g.drawText("RADIAL  /  VALVETRAIN  " + juce::String(config_.camshafts.intakeDurationDegrees, 0)
             + " deg / " + juce::String(config_.camshafts.intakeLiftMm, 1) + " mm",
             area.removeFromTop(28.0F), juce::Justification::centred);
         auto body = area.reduced(10.0F);
@@ -1928,8 +1928,8 @@ void MainComponent::drawEngine(juce::Graphics& g, juce::Rectangle<float> area) c
             / static_cast<float>(bankCount))
         : area.getHeight() * 0.72F;
     g.setFont(juce::FontOptions(12.0F, juce::Font::bold)); g.setColour(juce::Colour(0xff82918b));
-    g.drawText(juce::String("DISTRIBUTION  ") + juce::String(config_.camshafts.intakeDurationDegrees, 0) + utf8("° / ")
-        + juce::String(config_.camshafts.intakeLiftMm, 1) + " mm  /  " + juce::String(static_cast<int>(bankCount)) + " banque(s)",
+    g.drawText(juce::String("VALVETRAIN  ") + juce::String(config_.camshafts.intakeDurationDegrees, 0) + utf8("° / ")
+        + juce::String(config_.camshafts.intakeLiftMm, 1) + " mm  /  " + juce::String(static_cast<int>(bankCount)) + " bank(s)",
         area.removeFromTop(28.0F), juce::Justification::centred);
 
     const auto runnerTop = area.getY() + 10.0F;
@@ -2031,7 +2031,7 @@ void MainComponent::drawDynoChart(juce::Graphics& g, juce::Rectangle<float> area
     g.setColour(juce::Colour(0xff2b3834)); g.drawRoundedRectangle(area, 10.0F, 1.0F);
     auto plot = area.reduced(48.0F, 48.0F); plot.removeFromTop(24.0F);
     g.setFont(juce::FontOptions(13.0F, juce::Font::bold)); g.setColour(juce::Colour(0xffdce5e1));
-    g.drawText(utf8("BANC DE PUISSANCE FREINÉ"), area.removeFromTop(38.0F), juce::Justification::centred);
+    g.drawText(utf8("BRAKE DYNAMOMETER"), area.removeFromTop(38.0F), juce::Justification::centred);
     const auto presentationFor = [this](std::uint64_t id)
             -> const DynoCurvePresentation* {
         const auto found = dynoCurvePresentation_.find(id);
@@ -2066,12 +2066,12 @@ void MainComponent::drawDynoChart(juce::Graphics& g, juce::Rectangle<float> area
         g.setColour(visibleState_.dynoPreparing
             ? juce::Colour(0xffffca55) : juce::Colour(0xff79b89f));
         const auto status = visibleState_.dynoPhase == DynoPhase::recovery
-            ? utf8("RÉCUPÉRATION CONTRÔLEUR  →  ")
+            ? utf8("CONTROLLER RECOVERY  →  ")
                 + juce::String(visibleState_.dynoTargetRpm, 0) + " RPM"
             : (visibleState_.dynoPreparing
-                ? utf8("PRÉPARATION PROGRESSIVE  →  ")
+                ? utf8("PREPARING  →  ")
                     + juce::String(visibleState_.dynoTargetRpm, 0) + " RPM"
-                : utf8("MESURE  ")
+                : utf8("MEASURING  ")
                     + juce::String(visibleState_.dynoTargetRpm, 0) + " RPM  ·  "
                     + juce::String(visibleState_.dynoProgress * 100.0, 0) + " %");
         g.drawText(status,
@@ -2209,7 +2209,7 @@ void MainComponent::drawDynoChart(juce::Graphics& g, juce::Rectangle<float> area
         g.drawText(juce::String(maxRpm * static_cast<double>(grid) / 4.0, 0),
                    juce::Rectangle<float>(x - 25.0F, plot.getBottom() + 3.0F, 50.0F, 14.0F), juce::Justification::centred);
     }
-    g.drawText("Corrigé · Nm axe G (foncé) · kW axe D (clair)",
+    g.drawText("Corrected · Nm left axis (dark) · kW right axis (light)",
                juce::Rectangle<float>(plot.getX(), plot.getBottom() + 18.0F, plot.getWidth(), 18.0F), juce::Justification::centred);
     const auto mouse = getMouseXYRelative().toFloat();
     if (plot.contains(mouse)) {
@@ -2245,7 +2245,7 @@ void MainComponent::drawDynoChart(juce::Graphics& g, juce::Rectangle<float> area
                     ? presentation->colour
                     : curveColours[index % curveColours.size()]));
         }
-        consider(visibleCurrentRun_, utf8("MESURE EN COURS"),
+        consider(visibleCurrentRun_, utf8("CURRENT RUN"),
             juce::Colour(0xffffffff));
         if (nearestPoint != nullptr && nearestDistance <= 14.0F) {
             const auto torque = nearestPoint->correctedTorqueNm > 0.0
@@ -2253,14 +2253,14 @@ void MainComponent::drawDynoChart(juce::Graphics& g, juce::Rectangle<float> area
             const auto power = nearestPoint->correctedPowerKw > 0.0
                 ? nearestPoint->correctedPowerKw : nearestPoint->powerKw;
             auto text = nearestName + "\n"
-                + juce::String(nearestPoint->rpm, 0) + " tr/min  ·  "
+                + juce::String(nearestPoint->rpm, 0) + " rpm  ·  "
                 + juce::String(torque, 1) + " Nm  ·  "
                 + juce::String(power, 1) + " kW\n"
                 + (nearestPoint->airFuelRatioValid
                     ? "AFR " + juce::String(nearestPoint->airFuelRatio, 2)
-                        + " / cible "
+                        + " / target "
                         + juce::String(nearestPoint->targetAirFuelRatio, 2)
-                    : utf8("AFR — mesure invalide"));
+                    : utf8("AFR — invalid reading"));
             auto tooltip = juce::Rectangle<float>(
                 std::min(mouse.x + 12.0F, plot.getRight() - 270.0F),
                 std::max(plot.getY(), mouse.y - 58.0F), 270.0F, 54.0F);

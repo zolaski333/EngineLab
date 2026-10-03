@@ -40,18 +40,18 @@ CalibrationReloadResult CalibrationFileHotReloader::poll() noexcept {
         const auto status = std::filesystem::status(path_, error);
         if (error || !std::filesystem::is_regular_file(status)) {
             observed_ = false;
-            return reportError("Le fichier de calibration surveillé est introuvable.");
+            return reportError("The watched calibration file was not found.");
         }
         const auto writeTime = std::filesystem::last_write_time(path_, error);
         if (error) {
             observed_ = false;
-            return reportError("La date de modification de la calibration est inaccessible.");
+            return reportError("The calibration modification time is not readable.");
         }
         const auto size = std::filesystem::file_size(path_, error);
         if (error || size > 2U * 1024U * 1024U) {
             observed_ = false;
-            return reportError(error ? "La taille de la calibration est inaccessible."
-                                     : "La calibration dépasse la limite de 2 Mio.");
+            return reportError(error ? "The calibration file size is not readable."
+                                     : "The calibration exceeds the 2 MiB limit.");
         }
         if (observed_ && writeTime == lastWriteTime_ && size == lastSize_) return result;
         lastError_.clear();
@@ -62,7 +62,7 @@ CalibrationReloadResult CalibrationFileHotReloader::poll() noexcept {
 
         std::ifstream input(path_, std::ios::binary);
         if (!input) {
-            return reportError("La calibration ne peut pas être ouverte.");
+            return reportError("The calibration cannot be opened.");
         }
         const std::string json((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
         result.publication = publishJson(store_, json, { {}, path_.string() });

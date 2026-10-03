@@ -1,6 +1,6 @@
 // Micro-instrument for the 1-D intake runner solver.
 //
-// The runner network is 75-84 % of the mechanical sub-step (see CLAUDE.md), so
+// The runner network is 75-84 % of the mechanical sub-step (see .claude/CLAUDE.md), so
 // this is where realtime capacity is won or lost. Iterating on it through the
 // full simulator costs ten minutes a round trip; this tool costs seconds, and
 // it answers the two questions that matter, together:

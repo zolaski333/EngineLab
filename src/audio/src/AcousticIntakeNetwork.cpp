@@ -141,7 +141,7 @@ struct AcousticIntakeNetwork::Impl final {
     // The loss is frequency dependent on purpose. A flat broadband loss inside
     // this junction would sit in a resonant loop and collapse the low-order
     // induction character the same way an absorption term once cost the EJ25
-    // 11 dB at its rev-range fundamental (see CLAUDE.md on the expansion
+    // 11 dB at its rev-range fundamental (see .claude/CLAUDE.md on the expansion
     // chamber). Damping the top while leaving the firing orders is the whole
     // point: a real filter lowers the Q of intake resonances, it does not mute
     // the intake.

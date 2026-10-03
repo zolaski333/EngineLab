@@ -1,19 +1,19 @@
 #!/usr/bin/env python3
-"""Feuilles de reponse et depouillement pour l'ecoute A/B en aveugle.
+"""Response sheets and scoring for blind A/B listening tests.
 
-Deux modes :
+Two modes:
 
-  python scripts/listening.py sheets  --pack <dossier> --listeners 5
-  python scripts/listening.py report  --pack <dossier>
+  python scripts/listening.py sheets  --pack <folder> --listeners 5
+  python scripts/listening.py report  --pack <folder>
 
-`sheets` ecrit des CSV vierges dans <dossier>/responses/. Il ne lit jamais
-`listening-key.json`, donc le dossier remis aux auditeurs reste aveugle.
+`sheets` writes blank CSVs into <folder>/responses/. It never reads
+`listening-key.json`, so the folder handed to listeners stays blind.
 
-`report` relit la cle et les CSV remplis, puis produit un rapport markdown et
-un JSON. Il refuse une feuille incomplete ou hors domaine plutot que de
-deviner : une reponse manquante est une reponse manquante.
+`report` reads the key and the filled CSVs back, then writes a markdown report
+and a JSON file. It refuses an incomplete or out-of-range sheet rather than
+guessing: a missing answer is a missing answer.
 
-Stdlib uniquement.
+Standard library only.
 """
 
 from __future__ import annotations
@@ -197,7 +197,7 @@ def report(pack: Path, allow_incomplete: bool) -> int:
     variant_mode = key.get("mode") == "variant"
     baseline = key.get("baseline_engine", "-")
     candidate = key.get("candidate_engine", "-")
-    subject_label = "Candidat" if variant_mode else "EngineLab"
+    subject_label = "Candidate" if variant_mode else "EngineLab"
     control_label = "Baseline" if variant_mode else "Reference"
 
     rows, problems = load_responses(pack)
@@ -285,31 +285,31 @@ def report(pack: Path, allow_incomplete: bool) -> int:
 
     lines: list[str] = []
     if variant_mode:
-        lines.append(f"# Ecoute A/B en aveugle - {candidate} contre {baseline}")
+        lines.append(f"# Blind A/B listening - {candidate} versus {baseline}")
     else:
         lines.append(
-            "# Resultat d'ecoute A/B en aveugle - EngineLab contre enregistrements reels"
+            "# Blind A/B listening result - EngineLab versus real recordings"
         )
     lines.append("")
-    lines.append(f"- dossier : `{pack.as_posix()}`")
-    lines.append(f"- graine de tirage : `{key.get('seed')}`")
-    lines.append(f"- sonie cible : {key.get('target_lufs')} LUFS (ITU-R BS.1770)")
-    lines.append(f"- auditeurs : {len(listeners)} ({', '.join(listeners)})")
-    lines.append(f"- jugements retenus : {total_n}")
+    lines.append(f"- pack: `{pack.as_posix()}`")
+    lines.append(f"- shuffle seed: `{key.get('seed')}`")
+    lines.append(f"- target loudness: {key.get('target_lufs')} LUFS (ITU-R BS.1770)")
+    lines.append(f"- listeners: {len(listeners)} ({', '.join(listeners)})")
+    lines.append(f"- judgements kept: {total_n}")
     if solo_pairs:
         dropped = sum(bucket["n"] for bucket in solo_pairs.values())
         lines.append(
-            f"- **jugements ecartes faute de reference : {dropped} "
-            f"sur {len(solo_pairs)} paire(s)**"
+            f"- **judgements discarded for lack of a reference: {dropped} "
+            f"over {len(solo_pairs)} pair(s)**"
         )
     if problems:
-        lines.append(f"- **lignes ecartees comme incompletes : {len(problems)}**")
+        lines.append(f"- **rows discarded as incomplete: {len(problems)}**")
     if unknown_pairs:
-        lines.append(f"- **paires inconnues ignorees : {sorted(unknown_pairs)}**")
+        lines.append(f"- **unknown pairs ignored: {sorted(unknown_pairs)}**")
     lines.append("")
 
-    # Counted from the key rather than asserted: a hardcoded "7 references sur 10
-    # sont des proxys" goes stale the moment the corpus changes, and a stale
+    # Counted from the key rather than asserted: a hardcoded "7 references out of
+    # 10 are proxies" goes stale the moment the corpus changes, and a stale
     # caveat is worse than none because it is read as current.
     qualities: dict[str, int] = {}
     for entry in key["pairs"]:
@@ -321,38 +321,38 @@ def report(pack: Path, allow_incomplete: bool) -> int:
     proxies = sum(count for label, count in qualities.items() if "proxy" in label)
     if variant_mode:
         lines.append(
-            f"Ce test compare deux moteurs du catalogue : **{candidate}** (le"
-            f" candidat) contre **{baseline}** (la reference interne). Il ne dit"
-            " rien du realisme absolu -- aucun enregistrement reel n'y participe."
-            " Il dit seulement lequel des deux un auditeur prefere, en aveugle et"
-            " a sonie egale."
+            f"This test compares two catalogue engines: **{candidate}** (the"
+            f" candidate) versus **{baseline}** (the internal reference). It says"
+            " nothing about absolute realism -- no real recording takes part."
+            " It only says which of the two a listener prefers, blind and"
+            " at equal loudness."
         )
     else:
         lines.append(
-            "Ce test mesure l'ecart a un enregistrement reel. Ce n'est pas un score "
-            f"absolu d'EngineLab : sur {paired} paire(s) appariee(s), {proxies} le "
-            "sont contre un proxy, et aucune reference n'a de trajectoire de regime "
-            "ni de position micro appariees. Sa valeur est le CLASSEMENT des "
-            "familles, qui dit ou porter l'effort."
+            "This test measures the distance to a real recording. It is not an absolute "
+            f"EngineLab score: of {paired} matched pair(s), {proxies} are matched "
+            "against a proxy, and no reference has a matched engine-speed trajectory "
+            "or microphone position. Its value is the RANKING of the "
+            "families, which says where to put the effort."
         )
     if qualities:
         detail = ", ".join(
             f"{label} x{count}" for label, count in sorted(qualities.items())
         )
         lines.append("")
-        lines.append(f"Correspondances presentes : {detail}.")
+        lines.append(f"Match qualities present: {detail}.")
     lines.append("")
 
     lines.append("## Global")
     lines.append("")
     lines.append(
-        f"| Question | {subject_label} choisi | Taux | IC 95 % (Wilson) | "
-        "p (test des signes) |"
+        f"| Question | {subject_label} chosen | Rate | 95 % CI (Wilson) | "
+        "p (sign test) |"
     )
     lines.append("|---|---:|---:|---|---:|")
     for label, successes in (
-        ("Le plus realiste", total_realistic),
-        ("Prefere", total_preferred),
+        ("Most realistic", total_realistic),
+        ("Preferred", total_preferred),
     ):
         low, high = wilson(successes, total_n)
         pvalue = two_sided_sign_test(successes, total_n)
@@ -363,12 +363,12 @@ def report(pack: Path, allow_incomplete: bool) -> int:
         )
     lines.append("")
 
-    lines.append("## Par famille, classe par ecart de realisme (le plus deficitaire d'abord)")
+    lines.append("## Per family, ranked by realism gap (largest deficit first)")
     lines.append("")
     lines.append(
-        f"| Paire | Moteur | Condition | Correspondance | n | Realisme "
-        f"{subject_label} | Realisme {control_label} | Ecart | {subject_label} juge "
-        "+ realiste | IC 95 % |"
+        f"| Pair | Engine | Condition | Match | n | Realism "
+        f"{subject_label} | Realism {control_label} | Gap | {subject_label} judged "
+        "more realistic | 95 % CI |"
     )
     lines.append("|---:|---|---|---|---:|---:|---:|---:|---:|---|")
     ordered = sorted(
@@ -381,7 +381,7 @@ def report(pack: Path, allow_incomplete: bool) -> int:
         low, high = wilson(bucket["chose_el_realistic"], bucket["n"])
         match = bucket["match_quality"]
         if bucket["window_matched"] is False:
-            match += " (fenetre non appariee)"
+            match += " (window not matched)"
         lines.append(
             f"| {pair} | {bucket['engine']} | {bucket['segment']} | {match} | "
             f"{bucket['n']} | {el_mean:.2f} | {ref_mean:.2f} | {el_mean - ref_mean:+.2f} | "
@@ -394,26 +394,26 @@ def report(pack: Path, allow_incomplete: bool) -> int:
     )
     if unmatched:
         lines.append(
-            "> **Attention.** Les paires "
+            "> **Warning.** Pairs "
             + ", ".join(str(pair) for pair in unmatched)
-            + " comparent un segment a une fenetre de reference qui n'est pas"
-            " appariee en condition : le ralenti simule peut y etre oppose a un"
-            " enregistrement en charge. Leur verdict ne vaut rien et ne doit pas"
-            " etre publie."
+            + " compare a segment with a reference window whose condition is not"
+            " matched: the simulated idle may be set against a recording"
+            " under load. Their verdict is worthless and must not"
+            " be published."
         )
         lines.append("")
 
     if solo_pairs:
-        lines.append("## Paires sans reference - non comparables, exclues des scores")
+        lines.append("## Pairs without a reference - not comparable, excluded from scores")
         lines.append("")
         lines.append(
-            "Ces paires n'ont qu'un seul cote sur le disque. Un auditeur qui a note"
-            " l'autre cote a note du silence, donc leurs jugements sont ecartes."
-            " Elles restent listees parce que c'est le corpus qui manque, pas"
-            " l'auditeur."
+            "These pairs have only one side on disk. A listener who scored"
+            " the other side scored silence, so their judgements are discarded."
+            " They stay listed because it is the corpus that is missing, not"
+            " the listener."
         )
         lines.append("")
-        lines.append("| Paire | Moteur | Condition | Jugements ecartes | Raison |")
+        lines.append("| Pair | Engine | Condition | Discarded judgements | Reason |")
         lines.append("|---:|---|---|---:|---|")
         for pair, bucket in sorted(solo_pairs.items()):
             lines.append(
@@ -422,19 +422,19 @@ def report(pack: Path, allow_incomplete: bool) -> int:
             )
         lines.append("")
 
-    lines.append("## Commentaires libres")
+    lines.append("## Free comments")
     lines.append("")
     for pair, bucket in sorted(per_pair.items()):
         if not bucket["comments"]:
             continue
-        lines.append(f"**Paire {pair} - {bucket['engine']}**")
+        lines.append(f"**Pair {pair} - {bucket['engine']}**")
         lines.append("")
         for comment in bucket["comments"]:
             lines.append(f"- {comment}")
         lines.append("")
 
     if problems:
-        lines.append("## Lignes ecartees")
+        lines.append("## Discarded rows")
         lines.append("")
         for problem in problems:
             lines.append(f"- {problem}")

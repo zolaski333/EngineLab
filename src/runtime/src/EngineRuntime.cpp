@@ -19,7 +19,7 @@ constexpr std::size_t maximumAudioExhaustPaths = 8;
  * The sweep used to step to `redlineRpm` inclusive, so its last point or two
  * sat on the latched rev limiter -- where a cut spark zeroes the published
  * combustion efficiency and the torque reading becomes an artefact rather than
- * a measurement (docs/archive/physics-audit.md records a Merlin row of 351 Nm one step
+ * a measurement (physics-audit.md in the archive/docs-2026-09 tag records a Merlin row of 351 Nm one step
  * after 2521 Nm). Both offline WOT instruments already stop at 0.95 of the
  * lower of the two limits; the bench the application drives did not, and its
  * curves collapsed at the top for that reason alone. A percentage margin is

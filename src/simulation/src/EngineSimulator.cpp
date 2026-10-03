@@ -2357,8 +2357,8 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
             // fill at static manifold density: intake tuning is a WAVE
             // phenomenon, and four algebraic bias formulations on the lumped
             // topology were measured and refuted before this
-            // (docs/archive/physics-audit.md, "L'inertance de runner" and "Le
-            // diagnostic architectural"). Do not re-add a pressure bias at the
+            // (physics-audit.md in the archive/docs-2026-09 tag, sections on runner
+            // inertance and the architectural diagnosis). Do not re-add a pressure bias at the
             // valve: the duct carries the column's momentum as state, which is
             // the thing every bias was trying to counterfeit.
             //
@@ -2542,7 +2542,7 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
         //
         // Measured, LS3: collapsing the split for ALL cylinders is worth 41% of
         // the sub-step but costs 2.3% of VE and 2.6% of torque at 3,628 rpm --
-        // refused, see docs/archive/physics-audit.md. Gating it on the valve keeps the
+        // refused, see physics-audit.md (archive/docs-2026-09 tag). Gating it on the valve keeps the
         // resolution where that error lives.
         //
         // `openIntakeValve` reads the same `intakeValveAreaM2` array in both

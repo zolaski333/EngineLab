@@ -60,16 +60,16 @@ constexpr std::size_t maximumConnections = 1'024;
 
 [[nodiscard]] const char* componentTypeName(ExhaustComponentType type) noexcept {
     switch (type) {
-    case ExhaustComponentType::pipe: return "Tube";
-    case ExhaustComponentType::merge: return "Collecteur";
-    case ExhaustComponentType::splitter: return "Separateur";
-    case ExhaustComponentType::resonator: return "Resonateur";
-    case ExhaustComponentType::muffler: return "Silencieux";
-    case ExhaustComponentType::catalyst: return "Catalyseur";
-    case ExhaustComponentType::outlet: return "Sortie";
+    case ExhaustComponentType::pipe: return "Pipe";
+    case ExhaustComponentType::merge: return "Collector";
+    case ExhaustComponentType::splitter: return "Splitter";
+    case ExhaustComponentType::resonator: return "Resonator";
+    case ExhaustComponentType::muffler: return "Muffler";
+    case ExhaustComponentType::catalyst: return "Catalyst";
+    case ExhaustComponentType::outlet: return "Outlet";
     case ExhaustComponentType::crossover: return "X-pipe";
     }
-    return "Inconnu";
+    return "Unknown";
 }
 
 [[nodiscard]] juce::Colour componentTypeColour(ExhaustComponentType type) noexcept {
@@ -227,7 +227,7 @@ public:
         if (path == nullptr || !path->network || path->network->components.empty()) {
             graphics.setColour(juce::Colour(0xff83908c));
             graphics.setFont(juce::FontOptions(15.0F));
-            graphics.drawFittedText("Aucun reseau personnalise. Generez le reseau legacy ou ajoutez des composants.",
+            graphics.drawFittedText("No custom network. Generate the legacy network or add components.",
                                     getLocalBounds().reduced(30), juce::Justification::centred, 3);
             return;
         }
@@ -400,7 +400,7 @@ public:
         selectedMappingRow_ = -1;
         rebuildPaths();
         selectFirstComponent();
-        setStatus("Copie de travail chargee. Aucune modification n'est encore appliquee.", false);
+        setStatus("Working copy loaded. No change has been applied yet.", false);
         rebuildAll();
     }
 
@@ -412,7 +412,7 @@ public:
         graphics.fillRect(header);
         graphics.setColour(juce::Colour(0xffdce7e3));
         graphics.setFont(juce::FontOptions(18.0F, juce::Font::bold));
-        graphics.drawText("CONCEPTEUR D'ECHAPPEMENT", 14, 0, 280, 54,
+        graphics.drawText("EXHAUST DESIGNER", 14, 0, 280, 54,
                           juce::Justification::centredLeft);
     }
 
@@ -516,10 +516,10 @@ public:
 
 private:
     void configureInterface() {
-        graphGroup_.setText("Vue du flux (cylindres vers sorties)");
-        componentGroup_.setText("Composants");
-        propertyGroup_.setText("Proprietes du composant");
-        topologyGroup_.setText("Liaisons et affectations");
+        graphGroup_.setText("Flow view (cylinders to outlets)");
+        componentGroup_.setText("Components");
+        propertyGroup_.setText("Component properties");
+        topologyGroup_.setText("Connections and assignments");
         for (auto* group : std::array<juce::GroupComponent*, 4> {
                  &graphGroup_, &componentGroup_, &propertyGroup_, &topologyGroup_ }) {
             group->setColour(juce::GroupComponent::outlineColourId, juce::Colour(0xff31413d));
@@ -527,7 +527,7 @@ private:
             addAndMakeVisible(*group);
         }
 
-        pathSelector_.setTextWhenNothingSelected("Chemin d'echappement");
+        pathSelector_.setTextWhenNothingSelected("Exhaust path");
         pathSelector_.onChange = [this] {
             const auto nextPathIndex = std::max(0, pathSelector_.getSelectedItemIndex());
             if (nextPathIndex != selectedPathIndex_ && !commitSelectedComponentEdits()) {
@@ -541,25 +541,25 @@ private:
             selectFirstComponent();
             rebuildAll();
         };
-        newPathButton_.setButtonText("+ CHEMIN");
+        newPathButton_.setButtonText("+ PATH");
         newPathButton_.setTooltip(
-            "Cree un chemin et y deplace le cylindre selectionne, sans chemin vide.");
+            "Creates a path and moves the selected cylinder into it, so no path is ever empty.");
         newPathButton_.onClick = [this] { createPath(); };
-        deletePathButton_.setButtonText("- CHEMIN");
+        deletePathButton_.setButtonText("- PATH");
         deletePathButton_.setTooltip(
-            "Supprime le chemin courant et transfere tous ses cylindres vers la destination.");
+            "Deletes the current path and moves all its cylinders to the destination.");
         deletePathButton_.onClick = [this] { deletePath(); };
-        legacyButton_.setButtonText("GENERER DEPUIS LEGACY");
-        legacyButton_.setTooltip("Remplace le graphe du chemin selectionne par un reseau simple et valide.");
+        legacyButton_.setButtonText("GENERATE FROM LEGACY");
+        legacyButton_.setTooltip("Replaces the selected path's graph with a simple, valid network.");
         legacyButton_.onClick = [this] { generateLegacyNetwork(); };
-        applyButton_.setButtonText("VALIDER ET APPLIQUER");
+        applyButton_.setButtonText("VALIDATE AND APPLY");
         applyButton_.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff477d68));
         applyButton_.onClick = [this] { apply(); };
-        pathCylinderSelector_.setTextWhenNothingSelected("Cylindre a deplacer");
-        destinationPathSelector_.setTextWhenNothingSelected("Chemin destination");
-        moveCylinderButton_.setButtonText("DEPLACER");
+        pathCylinderSelector_.setTextWhenNothingSelected("Cylinder to move");
+        destinationPathSelector_.setTextWhenNothingSelected("Destination path");
+        moveCylinderButton_.setButtonText("MOVE");
         moveCylinderButton_.setTooltip(
-            "Transfere le cylindre vers le chemin choisi et repare les racines du DAG custom.");
+            "Moves the cylinder to the chosen path and repairs the roots of the custom DAG.");
         moveCylinderButton_.onClick = [this] { moveCylinderToPath(); };
 
         componentList_.setModel(&componentModel_);
@@ -578,21 +578,21 @@ private:
 
         populateTypeSelector(addTypeSelector_);
         addTypeSelector_.setSelectedItemIndex(0, juce::dontSendNotification);
-        addButton_.setButtonText("AJOUTER");
+        addButton_.setButtonText("ADD");
         addButton_.onClick = [this] { addComponent(); };
-        deleteComponentButton_.setButtonText("SUPPRIMER");
+        deleteComponentButton_.setButtonText("DELETE");
         deleteComponentButton_.onClick = [this] { deleteComponent(); };
 
         componentTypeLabel_.setText("Type", juce::dontSendNotification);
         componentTypeLabel_.setColour(juce::Label::textColourId, juce::Colour(0xffaebbb7));
         populateTypeSelector(componentTypeSelector_);
         const std::array<const char*, 12> names {
-            "ID", "Longueur (mm)", "Diametre entree (mm)",
-            "Diametre sortie (mm, 0 = constant)", "Volume (L)",
-            "Restriction debit (K)", "Accord branche (Hz, 0 = longueur)",
-            "Gain fallback legacy", "Cd sortie",
-            "Resistivite garnissage (Pa.s/m2)", "Epaisseur garnissage (mm)",
-            "Taux ouvert perfore (0..1)"
+            "ID", "Length (mm)", "Inlet diameter (mm)",
+            "Outlet diameter (mm, 0 = constant)", "Volume (L)",
+            "Flow restriction (K)", "Branch tuning (Hz, 0 = length)",
+            "Legacy fallback gain", "Outlet Cd",
+            "Packing resistivity (Pa.s/m2)", "Packing thickness (mm)",
+            "Perforate open area (0..1)"
         };
         for (std::size_t index = 0; index < propertyLabels_.size(); ++index) {
             propertyLabels_[index].setText(names[index], juce::dontSendNotification);
@@ -607,58 +607,58 @@ private:
             addAndMakeVisible(propertyEditors_[index]);
         }
         propertyEditors_[4].setTooltip(
-            "Sur un resonateur terminal, ce volume est la cavite fermee au bout de la branche. "
-            "Sur un silencieux garni, c'est le volume brut du corps autour du noyau; "
-            "il doit depasser le volume balaye par le noyau. Zero donne une terminaison "
-            "rigide quart d'onde sur un resonateur.");
+            "On a terminal resonator, this volume is the closed cavity at the end of the branch. "
+            "On a packed muffler, it is the gross shell volume around the core; "
+            "it must exceed the volume swept by the core. Zero gives a rigid "
+            "quarter-wave termination on a resonator.");
         propertyEditors_[2].setTooltip(
-            "Silencieux garni: diametre du noyau perfore qui porte le debit. "
-            "Silencieux sec: diametre de la chambre reactive.");
+            "Packed muffler: diameter of the perforated core that carries the flow. "
+            "Dry muffler: diameter of the reactive chamber.");
         propertyEditors_[5].setTooltip(
-            "Coefficient de perte de charge du debit moyen. Son effet acoustique physique est "
-            "indirect, via la pression et le debit calcules par le solveur gaz.");
+            "Pressure-loss coefficient of the mean flow. Its physical acoustic effect is "
+            "indirect, through the pressure and flow computed by the gas solver.");
         propertyEditors_[6].setTooltip(
-            "Actif dans le reseau physique uniquement pour un resonateur terminal: la longueur "
-            "acoustique de reference vaut c/(4f). Sur un X-pipe, k est l'amplitude "
-            "de puissance croisee et sqrt(1-k^2) reste dans le tube apparie.");
+            "Used by the physical network only for a terminal resonator: the reference "
+            "acoustic length is c/(4f). On an X-pipe, k is the crossed power "
+            "amplitude and sqrt(1-k^2) stays in the paired pipe.");
         propertyEditors_[7].setTooltip(
-            "Compatibilite du rendu audio de secours. Le guide d'onde physique reste passif et "
-            "n'applique pas ce gain arbitraire.");
+            "Compatibility with the fallback audio render. The physical waveguide stays passive and "
+            "does not apply this arbitrary gain.");
         propertyEditors_[9].setTooltip(
-            "Silencieux: resistivite du garnissage. Catalyseur: densite de cellules par pouce carre.");
+            "Muffler: packing resistivity. Catalyst: cell density per square inch.");
         propertyEditors_[10].setTooltip(
-            "Silencieux: epaisseur du garnissage. Catalyseur: fraction de face reellement ouverte.");
+            "Muffler: packing thickness. Catalyst: fraction of the face that is actually open.");
         propertyEditors_[11].setTooltip(
-            "Silencieux: taux ouvert du tube perfore. Catalyseur: capacite thermique volumique effective du substrat solide.");
-        updateComponentButton_.setButtonText("METTRE A JOUR LE COMPOSANT");
+            "Muffler: open area of the perforated tube. Catalyst: effective volumetric heat capacity of the solid substrate.");
+        updateComponentButton_.setButtonText("UPDATE COMPONENT");
         updateComponentButton_.onClick = [this] { updateSelectedComponent(); };
-        packingDemoButton_.setButtonText("GARNISSAGE DEMO");
+        packingDemoButton_.setButtonText("DEMO PACKING");
         packingDemoButton_.onClick = [this] { setPackingPreset(true); };
-        packingBypassButton_.setButtonText("BYPASS GARNISSAGE");
+        packingBypassButton_.setButtonText("BYPASS PACKING");
         packingBypassButton_.onClick = [this] { setPackingPreset(false); };
         componentTypeSelector_.onChange = [this] {
             updatePackingEditorAvailability(true);
         };
 
-        connectionTitle_.setText("Connexions composant -> composant", juce::dontSendNotification);
-        mappingTitle_.setText("Cylindre -> premier composant", juce::dontSendNotification);
+        connectionTitle_.setText("Component -> component connections", juce::dontSendNotification);
+        mappingTitle_.setText("Cylinder -> first component", juce::dontSendNotification);
         for (auto* label : std::array<juce::Label*, 3> {
                  &componentTypeLabel_, &connectionTitle_, &mappingTitle_ }) {
             label->setColour(juce::Label::textColourId, juce::Colour(0xffb6c5c0));
             label->setFont(juce::FontOptions(12.0F, juce::Font::bold));
             addAndMakeVisible(*label);
         }
-        fromSelector_.setTextWhenNothingSelected("Depuis");
-        toSelector_.setTextWhenNothingSelected("Vers");
-        cylinderSelector_.setTextWhenNothingSelected("Cylindre");
-        mappingComponentSelector_.setTextWhenNothingSelected("Composant");
-        addConnectionButton_.setButtonText("CONNECTER");
+        fromSelector_.setTextWhenNothingSelected("From");
+        toSelector_.setTextWhenNothingSelected("To");
+        cylinderSelector_.setTextWhenNothingSelected("Cylinder");
+        mappingComponentSelector_.setTextWhenNothingSelected("Component");
+        addConnectionButton_.setButtonText("CONNECT");
         addConnectionButton_.onClick = [this] { addConnection(); };
-        deleteConnectionButton_.setButtonText("SUPPRIMER");
+        deleteConnectionButton_.setButtonText("DELETE");
         deleteConnectionButton_.onClick = [this] { deleteConnection(); };
-        assignCylinderButton_.setButtonText("AFFECTER");
+        assignCylinderButton_.setButtonText("ASSIGN");
         assignCylinderButton_.onClick = [this] { assignCylinder(); };
-        deleteMappingButton_.setButtonText("DESAFFECTER");
+        deleteMappingButton_.setButtonText("UNASSIGN");
         deleteMappingButton_.onClick = [this] { deleteMapping(); };
 
         statusLabel_.setFont(juce::FontOptions(12.0F));
@@ -748,7 +748,7 @@ private:
         pathSelector_.clear(juce::dontSendNotification);
         for (std::size_t index = 0; index < working_.exhaustPaths.size(); ++index) {
             const auto& path = working_.exhaustPaths[index];
-            pathSelector_.addItem("Chemin #" + juce::String(path.id) + "  ("
+            pathSelector_.addItem("Path #" + juce::String(path.id) + "  ("
                 + juce::String(path.cylinderIds.size()) + " cyl.)", static_cast<int>(index) + 1);
         }
         pathSelector_.setSelectedItemIndex(selectedPathIndex_, juce::dontSendNotification);
@@ -791,7 +791,7 @@ private:
         if (path != nullptr) {
             for (std::size_t index = 0; index < path->cylinderIds.size(); ++index) {
                 const auto cylinderId = path->cylinderIds[index];
-                pathCylinderSelector_.addItem("Cylindre " + juce::String(cylinderId),
+                pathCylinderSelector_.addItem("Cylinder " + juce::String(cylinderId),
                                                static_cast<int>(index) + 1);
             }
             const auto preserve = previousCylinder
@@ -811,7 +811,7 @@ private:
         for (std::size_t index = 0; index < working_.exhaustPaths.size(); ++index) {
             if (static_cast<int>(index) == selectedPathIndex_) continue;
             const auto& candidate = working_.exhaustPaths[index];
-            destinationPathSelector_.addItem("Vers chemin #" + juce::String(candidate.id)
+            destinationPathSelector_.addItem("To path #" + juce::String(candidate.id)
                 + " (" + juce::String(candidate.cylinderIds.size()) + " cyl.)",
                 static_cast<int>(index) + 1);
             if (previousDestination && candidate.id == *previousDestination)
@@ -855,17 +855,17 @@ private:
         const auto* source = selectedPath();
         const auto cylinderId = selectedPathCylinderId();
         if (source == nullptr || !cylinderId) {
-            setStatus("Selectionnez un cylindre du chemin courant.", true);
+            setStatus("Select a cylinder of the current path.", true);
             return;
         }
         const auto result = ExhaustPathTopologyEditor::createPathFromCylinder(
             working_, source->id, *cylinderId);
         if (!result) {
-            setStatus("Creation refusee: " + utf8(result.error), true);
+            setStatus("Creation rejected: " + utf8(result.error), true);
             return;
         }
         selectEditedPath(result.selectedPathId);
-        setStatus("Nouveau chemin cree; le cylindre a ete transfere atomiquement.", false);
+        setStatus("New path created; the cylinder was moved atomically.", false);
     }
 
     void moveCylinderToPath() {
@@ -874,17 +874,17 @@ private:
         const auto cylinderId = selectedPathCylinderId();
         const auto destinationId = selectedDestinationPathId();
         if (source == nullptr || !cylinderId || !destinationId) {
-            setStatus("Selectionnez le cylindre et le chemin destination.", true);
+            setStatus("Select the cylinder and the destination path.", true);
             return;
         }
         const auto result = ExhaustPathTopologyEditor::moveCylinder(
             working_, *cylinderId, source->id, *destinationId);
         if (!result) {
-            setStatus("Transfert refuse: " + utf8(result.error), true);
+            setStatus("Move rejected: " + utf8(result.error), true);
             return;
         }
         selectEditedPath(result.selectedPathId);
-        setStatus("Cylindre transfere; les racines des graphes ont ete reparees et validees.", false);
+        setStatus("Cylinder moved; the graph roots were repaired and validated.", false);
     }
 
     void deletePath() {
@@ -892,17 +892,17 @@ private:
         const auto* source = selectedPath();
         const auto destinationId = selectedDestinationPathId();
         if (source == nullptr || !destinationId) {
-            setStatus("Choisissez le chemin qui recevra les cylindres avant suppression.", true);
+            setStatus("Choose the path that will receive the cylinders before deleting.", true);
             return;
         }
         const auto result = ExhaustPathTopologyEditor::removePath(
             working_, source->id, *destinationId);
         if (!result) {
-            setStatus("Suppression refusee: " + utf8(result.error), true);
+            setStatus("Deletion rejected: " + utf8(result.error), true);
             return;
         }
         selectEditedPath(result.selectedPathId);
-        setStatus("Chemin supprime; tous ses cylindres ont ete fusionnes vers la destination.", false);
+        setStatus("Path deleted; all its cylinders were merged into the destination.", false);
     }
 
     void rebuildComponentSelectors() {
@@ -933,7 +933,7 @@ private:
         const auto* path = selectedPath();
         if (path == nullptr) return;
         for (std::size_t index = 0; index < path->cylinderIds.size(); ++index)
-            cylinderSelector_.addItem("Cylindre " + juce::String(path->cylinderIds[index]),
+            cylinderSelector_.addItem("Cylinder " + juce::String(path->cylinderIds[index]),
                                       static_cast<int>(index) + 1);
         if (!path->cylinderIds.empty())
             cylinderSelector_.setSelectedItemIndex(std::clamp(previousIndex, 0,
@@ -1061,7 +1061,7 @@ private:
         if (network == nullptr || row < 0
             || row >= static_cast<int>(network->cylinderConnections.size())) return {};
         const auto& mapping = network->cylinderConnections[static_cast<std::size_t>(row)];
-        return "Cylindre " + juce::String(mapping.cylinderId) + "  ->  #"
+        return "Cylinder " + juce::String(mapping.cylinderId) + "  ->  #"
             + juce::String(mapping.componentId);
     }
 
@@ -1136,27 +1136,27 @@ private:
         const auto crossover = selectedType
             == static_cast<int>(ExhaustComponentType::crossover);
         propertyLabels_[2].setText(available
-                ? "Diametre noyau garni / chambre seche (mm)"
-                : "Diametre entree (mm)",
+                ? "Packed core / dry chamber diameter (mm)"
+                : "Inlet diameter (mm)",
             juce::dontSendNotification);
         propertyLabels_[4].setText(available
-                ? "Volume brut du corps (L)" : "Volume (L)",
+                ? "Gross shell volume (L)" : "Volume (L)",
             juce::dontSendNotification);
         propertyLabels_[6].setText(crossover
-                ? "Couplage croise k (0..1)"
-                : "Accord branche (Hz, 0 = longueur)",
+                ? "Cross-coupling k (0..1)"
+                : "Branch tuning (Hz, 0 = length)",
             juce::dontSendNotification);
         propertyLabels_[9].setText(catalyst
-                ? "Densite cellules (cpsi)"
-                : "Resistivite garnissage (Pa.s/m2)",
+                ? "Cell density (cpsi)"
+                : "Packing resistivity (Pa.s/m2)",
             juce::dontSendNotification);
         propertyLabels_[10].setText(catalyst
-                ? "Aire ouverte monolithe (0..1)"
-                : "Epaisseur garnissage (mm)",
+                ? "Monolith open area (0..1)"
+                : "Packing thickness (mm)",
             juce::dontSendNotification);
         propertyLabels_[11].setText(catalyst
-                ? "Capacite vol. substrat (J/m3/K)"
-                : "Taux ouvert perfore (0..1)",
+                ? "Substrate vol. heat capacity (J/m3/K)"
+                : "Perforate open area (0..1)",
             juce::dontSendNotification);
         if (clearIfUnavailable) {
             propertyEditors_[9].setText(catalyst ? "400" : "0", false);
@@ -1181,7 +1181,7 @@ private:
     void setPackingPreset(bool enabled) {
         if (componentTypeSelector_.getSelectedItemIndex()
                 != static_cast<int>(ExhaustComponentType::muffler)) {
-            setStatus("Le garnissage poreux ne s'applique qu'a un silencieux.", true);
+            setStatus("Porous packing only applies to a muffler.", true);
             return;
         }
         propertyEditors_[9].setText(enabled ? "24000" : "0", false);
@@ -1193,14 +1193,14 @@ private:
     void generateLegacyNetwork() {
         auto* path = selectedPath();
         if (path == nullptr || path->cylinderIds.empty()) {
-            setStatus("Impossible de generer un reseau sans cylindre sur ce chemin.", true);
+            setStatus("Cannot generate a network: this path has no cylinder.", true);
             return;
         }
         path->network = makeEditableExhaustNetwork(*path);
         selectedComponentId_ = path->network->components.front().id;
         selectedConnectionRow_ = -1;
         selectedMappingRow_ = -1;
-        setStatus("Reseau simple genere depuis la geometrie legacy. Verifiez puis appliquez.", false);
+        setStatus("Simple network generated from the legacy geometry. Check it, then apply.", false);
         rebuildAll();
     }
 
@@ -1224,25 +1224,25 @@ private:
         if (!path->network) path->network.emplace();
         auto& network = *path->network;
         if (network.components.size() >= maximumComponents) {
-            setStatus("Limite atteinte: 256 composants par chemin.", true);
+            setStatus("Limit reached: 256 components per path.", true);
             return;
         }
         const auto typeIndex = addTypeSelector_.getSelectedItemIndex();
         if (typeIndex < 0) {
-            setStatus("Selectionnez un type de composant.", true);
+            setStatus("Select a component type.", true);
             return;
         }
         const auto id = nextComponentId();
         if (id == 0) {
-            setStatus("Aucun identifiant de composant disponible.", true);
+            setStatus("No component identifier available.", true);
             return;
         }
         const auto type = static_cast<ExhaustComponentType>(typeIndex);
         network.components.push_back(defaultComponent(type, id));
         selectedComponentId_ = id;
         setStatus(type == ExhaustComponentType::resonator
-                ? "Resonateur ajoute: une entree et aucune sortie forment une branche fermee; une sortie le rend inline."
-                : "Composant ajoute. Reliez-le avant de valider le reseau.",
+                ? "Resonator added: one inlet and no outlet make a closed branch; adding an outlet makes it inline."
+                : "Component added. Connect it before validating the network.",
             false);
         rebuildAll();
         componentList_.selectRow(static_cast<int>(network.components.size()) - 1);
@@ -1263,7 +1263,7 @@ private:
         selectedConnectionRow_ = -1;
         selectedMappingRow_ = -1;
         selectFirstComponent();
-        setStatus("Composant et references associees supprimes.", false);
+        setStatus("Component and its references deleted.", false);
         rebuildAll();
     }
 
@@ -1274,25 +1274,25 @@ private:
 
         std::uint32_t newId = 0;
         if (!parseId(propertyEditors_[0].getText(), newId)) {
-            setStatus("L'ID doit etre un entier unique compris entre 1 et 4294967295.", true);
+            setStatus("The ID must be a unique integer between 1 and 4294967295.", true);
             return;
         }
         if (newId != component->id && std::any_of(network->components.begin(), network->components.end(),
                 [newId](const auto& candidate) { return candidate.id == newId; })) {
-            setStatus("Cet identifiant est deja utilise dans le chemin.", true);
+            setStatus("This identifier is already used in the path.", true);
             return;
         }
         std::array<double, 11> values {};
         for (std::size_t index = 0; index < values.size(); ++index) {
             if (!parseFinite(propertyEditors_[index + 1].getText(), values[index])) {
-                setStatus("Toutes les proprietes doivent etre des nombres finis.", true);
+                setStatus("Every property must be a finite number.", true);
                 return;
             }
         }
         const auto typeIndex = componentTypeSelector_.getSelectedItemIndex();
         if (typeIndex < static_cast<int>(ExhaustComponentType::pipe)
             || typeIndex > static_cast<int>(ExhaustComponentType::crossover)) {
-            setStatus("Type de composant invalide.", true);
+            setStatus("Invalid component type.", true);
             return;
         }
         const auto type = static_cast<ExhaustComponentType>(typeIndex);
@@ -1313,7 +1313,7 @@ private:
             || values[8] < 0.0 || values[8] > 200'000.0
             || values[9] < 0.0 || values[9] > 300.0
             || values[10] < 0.0 || values[10] > 10'000'000.0) {
-            setStatus("Valeurs hors limites (L 0..10000, D entree 5..500, D sortie 0 ou 5..500, V 0..1000, restriction 0..20, "
+            setStatus("Values out of range (L 0..10000, inlet D 5..500, outlet D 0 or 5..500, V 0..1000, restriction 0..20, "
                       "resonance 0..20000, gain 0..8, Cd 0.02..1.5).", true);
             return;
         }
@@ -1330,13 +1330,13 @@ private:
             && monolith.active
             && monolith.cellPitchM <= values[1] * 0.001;
         if (!hasNoPacking && !hasCompletePacking && !hasCompleteMonolith) {
-            setStatus("Materiau invalide: garnissage complet sur silencieux, ou catalyseur 25..5000 cpsi, aire ouverte 0.05..0.99 et capacite 0.1..10 MJ/m3/K.", true);
+            setStatus("Invalid material: complete packing on a muffler, or a catalyst with 25..5000 cpsi, open area 0.05..0.99 and heat capacity 0.1..10 MJ/m3/K.", true);
             return;
         }
         if (type == ExhaustComponentType::crossover
             && (values[0] != 0.0 || values[2] != 0.0
                 || values[3] != 0.0)) {
-            setStatus("Un X-pipe compact exige longueur, diametre de sortie et volume nuls; dessinez ses quatre longueurs avec des tubes voisins.", true);
+            setStatus("A compact X-pipe needs zero length, outlet diameter and volume; draw its four legs with neighbouring pipes.", true);
             return;
         }
         if (hasCompletePacking) {
@@ -1351,7 +1351,7 @@ private:
                 + outletAreaM2) / 3.0;
             const auto coreVolumeLitres = coreMeanAreaM2 * values[0];
             if (!(values[3] > coreVolumeLitres * (1.0 + 1.0e-9))) {
-                setStatus("Silencieux garni invalide: le volume brut du corps doit depasser le volume du noyau perfore.", true);
+                setStatus("Invalid packed muffler: the gross shell volume must exceed the volume of the perforated core.", true);
                 return;
             }
         }
@@ -1401,7 +1401,7 @@ private:
             }
         }
         selectedComponentId_ = newId;
-        setStatus("Composant mis a jour dans la copie de travail.", false);
+        setStatus("Component updated in the working copy.", false);
         rebuildAll();
     }
 
@@ -1410,22 +1410,22 @@ private:
         const auto from = selectedId(fromSelector_);
         const auto to = selectedId(toSelector_);
         if (network == nullptr || !from || !to) {
-            setStatus("Selectionnez un composant source et un composant destination.", true);
+            setStatus("Select a source component and a destination component.", true);
             return;
         }
         if (*from == *to) {
-            setStatus("Un composant ne peut pas etre relie a lui-meme.", true);
+            setStatus("A component cannot be connected to itself.", true);
             return;
         }
         if (network->connections.size() >= maximumConnections) {
-            setStatus("Limite atteinte: 1024 connexions par chemin.", true);
+            setStatus("Limit reached: 1024 connections per path.", true);
             return;
         }
         if (std::any_of(network->connections.begin(), network->connections.end(),
                 [from, to](const auto& connection) {
                     return connection.fromComponentId == *from && connection.toComponentId == *to;
                 })) {
-            setStatus("Cette connexion existe deja.", true);
+            setStatus("This connection already exists.", true);
             return;
         }
         const auto componentType = [network](std::uint32_t id) {
@@ -1456,7 +1456,7 @@ private:
         if (componentType(*from) == ExhaustComponentType::crossover) {
             const auto port = nextPort(*from, true);
             if (!port) {
-                setStatus("Les deux ports de sortie du X-pipe sont deja utilises.", true);
+                setStatus("Both outlet ports of the X-pipe are already in use.", true);
                 return;
             }
             fromPort = *port;
@@ -1464,14 +1464,14 @@ private:
         if (componentType(*to) == ExhaustComponentType::crossover) {
             const auto port = nextPort(*to, false);
             if (!port) {
-                setStatus("Les deux ports d'entree du X-pipe sont deja utilises.", true);
+                setStatus("Both inlet ports of the X-pipe are already in use.", true);
                 return;
             }
             toPort = *port;
         }
         network->connections.push_back({ *from, *to, fromPort, toPort });
         selectedConnectionRow_ = static_cast<int>(network->connections.size()) - 1;
-        setStatus("Connexion ajoutee. La validation detectera cycles et cardinalites invalides.", false);
+        setStatus("Connection added. Validation will catch cycles and invalid cardinalities.", false);
         rebuildAll();
         connectionList_.selectRow(selectedConnectionRow_);
     }
@@ -1480,12 +1480,12 @@ private:
         auto* network = selectedNetwork();
         if (network == nullptr || selectedConnectionRow_ < 0
             || selectedConnectionRow_ >= static_cast<int>(network->connections.size())) {
-            setStatus("Selectionnez une connexion a supprimer.", true);
+            setStatus("Select a connection to delete.", true);
             return;
         }
         network->connections.erase(network->connections.begin() + selectedConnectionRow_);
         selectedConnectionRow_ = -1;
-        setStatus("Connexion supprimee.", false);
+        setStatus("Connection deleted.", false);
         rebuildAll();
     }
 
@@ -1496,7 +1496,7 @@ private:
         const auto cylinderIndex = cylinderSelector_.getSelectedItemIndex();
         if (network == nullptr || path == nullptr || !componentId || cylinderIndex < 0
             || cylinderIndex >= static_cast<int>(path->cylinderIds.size())) {
-            setStatus("Selectionnez un cylindre et son premier composant.", true);
+            setStatus("Select a cylinder and its first component.", true);
             return;
         }
         const auto cylinderId = path->cylinderIds[static_cast<std::size_t>(cylinderIndex)];
@@ -1511,7 +1511,7 @@ private:
             network->cylinderConnections.push_back({ cylinderId, *componentId });
             selectedMappingRow_ = static_cast<int>(network->cylinderConnections.size()) - 1;
         }
-        setStatus("Affectation cylindre mise a jour.", false);
+        setStatus("Cylinder assignment updated.", false);
         rebuildAll();
         mappingList_.selectRow(selectedMappingRow_);
     }
@@ -1520,12 +1520,12 @@ private:
         auto* network = selectedNetwork();
         if (network == nullptr || selectedMappingRow_ < 0
             || selectedMappingRow_ >= static_cast<int>(network->cylinderConnections.size())) {
-            setStatus("Selectionnez une affectation a supprimer.", true);
+            setStatus("Select an assignment to delete.", true);
             return;
         }
         network->cylinderConnections.erase(network->cylinderConnections.begin() + selectedMappingRow_);
         selectedMappingRow_ = -1;
-        setStatus("Affectation supprimee; le cylindre devra etre reaffecte avant validation.", false);
+        setStatus("Assignment deleted; the cylinder must be reassigned before validation.", false);
         rebuildAll();
     }
 
@@ -1544,24 +1544,24 @@ private:
         const auto appliedM = minimumExhaustCflLengthM(working_);
         const auto baselineM = minimumExhaustCflLengthM(baseline_);
         if (!(appliedM > 0.0)) return {};
-        auto text = "  Longueur CFL limitante " + juce::String(appliedM * 1'000.0, 1)
+        auto text = "  Limiting CFL length " + juce::String(appliedM * 1'000.0, 1)
             + " mm";
         if (!(baselineM > 0.0)) return text + ".";
         // Rate is proportional to 1/dx for the same gas, so this ratio is an
         // exact ratio of solver cost with nothing assumed about the gas state.
         const auto costRatio = baselineM / appliedM;
-        text += " contre " + juce::String(baselineM * 1'000.0, 1)
-            + " mm auparavant";
+        text += " versus " + juce::String(baselineM * 1'000.0, 1)
+            + " mm before";
         if (costRatio >= 1.5) {
-            text += " : le solveur d'echappement sous-cadencera "
+            text += ": the exhaust solver will sub-step "
                 + juce::String(costRatio, 1)
-                + "x plus vite. Verifiez le facteur temps reel;"
-                  " un element court impose son pas a TOUT le reseau.";
+                + "x faster. Check the realtime factor;"
+                  " one short element sets the time step of the WHOLE network.";
         } else if (costRatio <= 0.67) {
-            text += " : cout du solveur divise par "
+            text += ": solver cost divided by "
                 + juce::String(1.0 / costRatio, 1) + ".";
         } else {
-            text += " (cout du solveur inchange).";
+            text += " (solver cost unchanged).";
         }
         return text;
     }
@@ -1572,32 +1572,32 @@ private:
             if (statusIsError_) return;
         }
         if (const auto error = validateEngineConfig(working_)) {
-            setStatus("Configuration refusee: " + utf8(*error), true);
+            setStatus("Configuration rejected: " + utf8(*error), true);
             juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::WarningIcon,
-                "Reseau d'echappement invalide", utf8(*error));
+                "Invalid exhaust network", utf8(*error));
             return;
         }
         if (!applyCallback_) {
-            setStatus("Configuration valide, mais aucun callback d'application n'est installe.", true);
+            setStatus("Configuration valid, but no apply callback is installed.", true);
             return;
         }
         try {
             if (!applyCallback_(working_)) {
-                setStatus("La configuration valide a ete refusee par le moteur actif.", true);
+                setStatus("The valid configuration was rejected by the running engine.", true);
                 return;
             }
-            setStatus("Configuration validee et appliquee au moteur."
+            setStatus("Configuration validated and applied to the engine."
                 + solverCostAdvisory(), false);
         } catch (const std::exception& exception) {
-            setStatus("L'application a echoue: " + utf8(exception.what()), true);
+            setStatus("Apply failed: " + utf8(exception.what()), true);
         } catch (...) {
-            setStatus("L'application a echoue avec une erreur inconnue.", true);
+            setStatus("Apply failed with an unknown error.", true);
         }
     }
 
     void setStatus(const juce::String& message, bool error) {
         statusIsError_ = error;
-        statusLabel_.setText((error ? "ERREUR  |  " : "INFO  |  ") + message,
+        statusLabel_.setText((error ? "ERROR  |  " : "INFO  |  ") + message,
                              juce::dontSendNotification);
         statusLabel_.setColour(juce::Label::textColourId,
             error ? juce::Colour(0xffff8177) : juce::Colour(0xff8fc7ae));
@@ -1664,7 +1664,7 @@ private:
 
 ExhaustDesignerWindow::ExhaustDesignerWindow(const EngineConfig& config,
                                                ApplyCallback applyCallback)
-    : juce::DocumentWindow("EngineLab - Concepteur d'echappement", juce::Colour(0xff0d1312),
+    : juce::DocumentWindow("EngineLab - Exhaust designer", juce::Colour(0xff0d1312),
                            juce::DocumentWindow::closeButton, true) {
     content_ = new DesignerContent(config, std::move(applyCallback));
     setContentOwned(content_, true);

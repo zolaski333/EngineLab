@@ -236,9 +236,9 @@ public:
           progressBar_(progressValue_) {
         setOpaque(true);
 
-        mixGroup_.setText("MIX TEMPS REEL");
-        exportGroup_.setText("RENDU HQ HORS LIGNE");
-        physicsGroup_.setText("PHYSIQUE AUDIO  /  PRESSION -> ECHAPPEMENT");
+        mixGroup_.setText("REAL-TIME MIX");
+        exportGroup_.setText("OFFLINE HQ RENDER");
+        physicsGroup_.setText("AUDIO PHYSICS  /  PRESSURE -> EXHAUST");
         for (auto* group : { &mixGroup_, &exportGroup_, &physicsGroup_ }) {
             group->setColour(
                 juce::GroupComponent::outlineColourId,
@@ -265,14 +265,14 @@ public:
 
         const std::array<std::string_view, 9> names {
             "Master",
-            "Retour IR mesure (max +50 %)",
-            "Aigus master",
-            "Bruit admission legacy",
-            "Bruit echappement legacy",
-            "Combustion directe",
-            "Echappement",
-            "Admission + suralimentation",
-            "Structure / mecanique",
+            "Measured IR send (max +50 %)",
+            "Master treble",
+            "Legacy intake noise",
+            "Legacy exhaust noise",
+            "Direct combustion",
+            "Exhaust",
+            "Intake + forced induction",
+            "Structure / mechanical",
         };
         for (std::size_t index = 0;
              index < controlLabels_.size(); ++index) {
@@ -372,7 +372,7 @@ public:
             if (exportThread_.joinable()) {
                 exportThread_.request_stop();
                 statusLabel_.setText(
-                    "ANNULATION DEMANDEE...",
+                    "CANCELLING...",
                     juce::dontSendNotification);
             }
         };
@@ -407,19 +407,19 @@ public:
         proofLabel_.setJustificationType(
             juce::Justification::topLeft);
         proofLabel_.setText(
-            "Le rendu utilise EngineSimulator -> publishAudioFrame -> "
-            "RealtimeEngineAudio. Le manifeste enregistre les compteurs "
-            "du graphe physique et le format WAV reel.",
+            "The render runs EngineSimulator -> publishAudioFrame -> "
+            "RealtimeEngineAudio. The manifest records the physical-graph "
+            "counters and the actual WAV format.",
             juce::dontSendNotification);
         addAndMakeVisible(proofLabel_);
         addAndMakeVisible(progressBar_);
 
         const std::array<std::string_view, 9> physicsNames {
-            "Variation cycle (COV)", "Correlation cycles",
-            "Allumage afterfire (K)", "Reaction afterfire (ms)",
-            "Rendement afterfire", "Carburant decel",
-            "Hachage pops (Hz)", "Rapport cyclique pops",
-            "Irregularite cadence",
+            "Cycle variation (COV)", "Cycle correlation",
+            "Afterfire ignition (K)", "Afterfire reaction (ms)",
+            "Afterfire efficiency", "Overrun fuel",
+            "Pop chop rate (Hz)", "Pop duty cycle",
+            "Pop timing jitter",
         };
         for (std::size_t index = 0; index < physicsLabels_.size(); ++index) {
             physicsLabels_[index].setText(
@@ -463,9 +463,9 @@ public:
             juce::ToggleButton::textColourId, juce::Colour(0xffefb08a));
         mixAfterfireToggle_.setComponentID("mix-afterfire");
         mixAfterfireToggle_.setTooltip(
-            "Petarades en deceleration (coupure d'allumage, carburant "
-            "conserve). Applique immediatement; reglage fin dans "
-            "PHYSIQUE AUDIO.");
+            "Pops and bangs on overrun (spark cut, fuel kept). "
+            "Applied immediately; fine tuning in "
+            "AUDIO PHYSICS.");
         mixAfterfireToggle_.onClick = [this] {
             const auto enabled = mixAfterfireToggle_.getToggleState();
             afterfireToggle_.setToggleState(enabled, juce::dontSendNotification);
@@ -895,13 +895,13 @@ private:
     bool applyPhysics() {
         if (!physicsApply_) {
             physicsStatusLabel_.setText(
-                "Lecture seule: aucun moteur hote.", juce::dontSendNotification);
+                "Read-only: no host engine.", juce::dontSendNotification);
             return false;
         }
         const auto settings = physicsSettings();
         if (!physicsApply_(settings)) {
             physicsStatusLabel_.setText(
-                "Refuse (banc actif ou configuration invalide).",
+                "Rejected (dyno running or invalid configuration).",
                 juce::dontSendNotification);
             mixAfterfireToggle_.setToggleState(
                 engine_.exhaustAfterfire.enabled, juce::dontSendNotification);
@@ -913,17 +913,17 @@ private:
         if (afterfireRetainedChargeBelowLeanLimit(engine_.exhaustAfterfire)) {
             // Measured: such a charge dumps raw fuel and never burns.
             physicsStatusLabel_.setText(
-                "Applique, mais carburant retenu trop pauvre (richesse "
+                "Applied, but the retained fuel is too lean (equivalence ratio "
                     + juce::String(afterfireRetainedChargeEquivalenceRatio(
                         engine_.exhaustAfterfire), 2)
                     + " < " + juce::String(
                         engine_.exhaustAfterfire.minimumEquivalenceRatio, 2)
-                    + "): il ne peut pas bruler. Augmenter le carburant "
-                      "decel ou baisser le rapport cyclique.",
+                    + "): it cannot burn. Raise the overrun fuel "
+                      "or lower the duty cycle.",
                 juce::dontSendNotification);
         } else {
             physicsStatusLabel_.setText(
-                "Applique en direct. Etats thermiques et rotation conserves.",
+                "Applied live. Thermal state and engine speed kept.",
                 juce::dontSendNotification);
         }
         return true;
@@ -980,14 +980,14 @@ private:
 
     void updateEnginePresentation() {
         engineLabel_.setText(
-            "ATELIER AUDIO  /  "
+            "AUDIO WORKSHOP  /  "
                 + utf8(engine_.name),
             juce::dontSendNotification);
         if (!exportRunning_)
             statusLabel_.setText(
                 compiledExhaustTopology_
-                    ? "GRAPHE PHYSIQUE ACTIF"
-                    : "MODE COMPATIBILITE",
+                    ? "PHYSICAL GRAPH ACTIVE"
+                    : "COMPATIBILITY MODE",
                 juce::dontSendNotification);
     }
 
@@ -996,28 +996,28 @@ private:
             measuredImpulseResponseAvailable_);
         controlLabels_[1].setText(
             measuredImpulseResponseAvailable_
-                ? "Retour IR mesure (max +50 %)"
-                : "Retour IR (aucune mesure chargee)",
+                ? "Measured IR send (max +50 %)"
+                : "IR send (no measurement loaded)",
             juce::dontSendNotification);
         irSlider_.setTooltip(
             measuredImpulseResponseAvailable_
-                ? "Ajoute le retour de la reponse impulsionnelle mesuree; "
-                  "le signal sec reste intact."
-                : "Aucune reponse impulsionnelle mesuree n'est chargee.");
+                ? "Adds the measured impulse response as a send; "
+                  "the dry signal stays intact."
+                : "No measured impulse response is loaded.");
 
         lowNoiseSlider_.setEnabled(
             !compiledIntakeTopology_);
         controlLabels_[3].setText(
             compiledIntakeTopology_
-                ? "Bruit admission legacy (N/A)"
-                : "Bruit admission legacy",
+                ? "Legacy intake noise (N/A)"
+                : "Legacy intake noise",
             juce::dontSendNotification);
         highNoiseSlider_.setEnabled(
             !compiledExhaustTopology_);
         controlLabels_[4].setText(
             compiledExhaustTopology_
-                ? "Bruit echappement legacy (N/A)"
-                : "Bruit echappement legacy",
+                ? "Legacy exhaust noise (N/A)"
+                : "Legacy exhaust noise",
             juce::dontSendNotification);
 
         combustionSlider_.setEnabled(
@@ -1032,14 +1032,14 @@ private:
             soloButtons_[0]->setToggleState(
                 false, juce::dontSendNotification);
             controlLabels_[5].setText(
-                "Combustion directe (N/A: pression -> echappement)",
+                "Direct combustion (N/A: pressure -> exhaust)",
                 juce::dontSendNotification);
             combustionSlider_.setTooltip(
-                "Le graphe thermoacoustique possede la pression cylindre. "
-                "La voix synthetique directe est volontairement retiree.");
+                "The thermoacoustic graph owns the cylinder pressure. "
+                "The direct synthetic voice is deliberately removed.");
         } else {
             controlLabels_[5].setText(
-                "Combustion directe",
+                "Direct combustion",
                 juce::dontSendNotification);
             combustionSlider_.setTooltip({});
         }
@@ -1048,7 +1048,7 @@ private:
     void chooseScenario() {
         if (exportRunning_) return;
         fileChooser_ = std::make_unique<juce::FileChooser>(
-            "Choisir un scenario audio JSON",
+            "Choose a JSON audio scenario",
             juce::File::getSpecialLocation(
                 juce::File::userDocumentsDirectory),
             "*.json");
@@ -1075,7 +1075,7 @@ private:
                             showMessageBoxAsync(
                                 juce::MessageBoxIconType::
                                     WarningIcon,
-                                "Scenario invalide",
+                                "Invalid scenario",
                                 utf8(error));
                     }
                 }
@@ -1086,9 +1086,9 @@ private:
     void updateScenarioLabel() {
         scenarioLabel_.setText(
             scenarioPath_.empty()
-                ? "Scenario: showcase integre\n"
-                  "demarrage -> ralenti -> montee -> "
-                  "limiteur -> deceleration"
+                ? "Scenario: built-in showcase\n"
+                  "start -> idle -> rev-up -> "
+                  "limiter -> overrun"
                 : "Scenario JSON:\n"
                     + displayPath(scenarioPath_),
             juce::dontSendNotification);
@@ -1097,7 +1097,7 @@ private:
     void chooseExportDirectory() {
         if (exportRunning_) return;
         fileChooser_ = std::make_unique<juce::FileChooser>(
-            "Choisir le dossier parent de l'export HQ",
+            "Choose the parent folder for the HQ export",
             juce::File::getSpecialLocation(
                 juce::File::userMusicDirectory),
             juce::String {});
@@ -1128,7 +1128,7 @@ private:
                     scenarioPath_, scenario, error)) {
                 juce::AlertWindow::showMessageBoxAsync(
                     juce::MessageBoxIconType::WarningIcon,
-                    "Scenario invalide", utf8(error));
+                    "Invalid scenario", utf8(error));
                 return;
             }
         }
@@ -1187,7 +1187,7 @@ private:
         cancelButton_.setEnabled(true);
         revealButton_.setEnabled(false);
         statusLabel_.setText(
-            "PREPARATION DU RENDU...",
+            "PREPARING RENDER...",
             juce::dontSendNotification);
 
         auto safe =
@@ -1217,7 +1217,7 @@ private:
                                 [safe, stageCopy] {
                                     if (safe)
                                         safe->statusLabel_.setText(
-                                            "RENDU  "
+                                            "RENDERING  "
                                                 + utf8(stageCopy),
                                             juce::
                                                 dontSendNotification);
@@ -1253,37 +1253,37 @@ private:
             lastOutputDirectory_ = outputDirectory;
             revealButton_.setEnabled(true);
             statusLabel_.setText(
-                "EXPORT TERMINE  /  "
+                "EXPORT COMPLETE  /  "
                     + juce::String(
                         static_cast<juce::int64>(
                             result.renderedFrames))
                     + " FRAMES",
                 juce::dontSendNotification);
             juce::String message;
-            message << "Export termine.\n\n"
+            message << "Export complete.\n\n"
                     << displayPath(outputDirectory)
-                    << "\n\nGraphe echappement physique: "
+                    << "\n\nPhysical exhaust graph: "
                     << (result.physicalExhaustActive
-                            ? "actif" : "inactif")
-                    << "\nTroncatures de delai: "
+                            ? "active" : "inactive")
+                    << "\nDelay truncations: "
                     << static_cast<juce::int64>(
                            result.delayTruncationCount)
-                    << "\nFrontieres invalides: "
+                    << "\nInvalid boundary samples: "
                     << static_cast<juce::int64>(
                            result.invalidBoundarySampleCount)
-                    << "\nTelemetrie perdue: "
+                    << "\nLost telemetry: "
                     << static_cast<juce::int64>(
                            result.droppedFiringEvents
                            + result.droppedPressureSamples)
-                    << "\nVariation cycles: "
+                    << "\nCycle variation: "
                     << juce::String(result.cycleMultiplierMinimum, 3)
                     << " .. " << juce::String(result.cycleMultiplierMaximum, 3)
                     << "\nAfterfire: "
                     << juce::String(result.afterfirePeakHeatReleaseKw, 2)
                     << " kW peak / "
                     << juce::String(result.afterfireFuelBurnedMg, 1)
-                    << " mg brules"
-                    << "\nSilencieux poreux: "
+                    << " mg burned"
+                    << "\nPorous mufflers: "
                     << static_cast<int>(result.porousMufflerCount);
             if (!result.warnings.empty())
                 message << "\n\nWarnings: "
@@ -1291,20 +1291,20 @@ private:
                                result.warnings.size());
             juce::AlertWindow::showMessageBoxAsync(
                 juce::MessageBoxIconType::InfoIcon,
-                "Rendu audio HQ", message);
+                "HQ audio render", message);
         } else if (result.cancelled) {
             threadProgress_.store(
                 0.0, std::memory_order_relaxed);
             statusLabel_.setText(
-                "EXPORT ANNULE  /  AUCUN WAV PARTIEL",
+                "EXPORT CANCELLED  /  NO PARTIAL WAV",
                 juce::dontSendNotification);
         } else {
             statusLabel_.setText(
-                "ECHEC EXPORT",
+                "EXPORT FAILED",
                 juce::dontSendNotification);
             juce::AlertWindow::showMessageBoxAsync(
                 juce::MessageBoxIconType::WarningIcon,
-                "Echec du rendu audio HQ",
+                "HQ audio render failed",
                 utf8(result.error));
         }
     }
@@ -1323,7 +1323,7 @@ private:
                 + " kW / " + juce::String(telemetry.afterfireFuelBurnMgPerSecond, 1)
                 + " mg/s  |  decel "
                 + (telemetry.overrunAfterfireActive ? "ACTIVE" : "off")
-                + "  |  silencieux poreux "
+                + "  |  porous mufflers "
                 + juce::String(static_cast<int>(telemetry.porousMufflerCount)),
             juce::dontSendNotification);
     }
@@ -1363,30 +1363,30 @@ private:
     std::array<std::unique_ptr<juce::TextButton>, 4>
         soloButtons_;
     juce::TextButton catalogueMixButton_ { "VOICING CATALOGUE" };
-    juce::TextButton resetButton_ { "NEUTRE" };
-    juce::ToggleButton captureVoicingToggle_ { "MODE CAPTURE" };
+    juce::TextButton resetButton_ { "NEUTRAL" };
+    juce::ToggleButton captureVoicingToggle_ { "CAPTURE MODE" };
     juce::ToggleButton mixAfterfireToggle_ {
-        "AFTERFIRE  (petarades en deceleration)"
+        "AFTERFIRE  (pops and bangs on overrun)"
     };
 
     juce::ComboBox sampleRateSelector_;
     juce::ComboBox formatSelector_;
     juce::ToggleButton stemsToggle_ {
-        "Master + stems exacts + carte d'ordres"
+        "Master + exact stems + order map"
     };
     juce::TextButton scenarioButton_ {
         "SCENARIO JSON..."
     };
     juce::TextButton defaultScenarioButton_ {
-        "DEFAUT"
+        "DEFAULT"
     };
     juce::Label scenarioLabel_;
     juce::TextButton exportButton_ {
-        "CHOISIR DOSSIER ET EXPORTER"
+        "CHOOSE FOLDER AND EXPORT"
     };
-    juce::TextButton cancelButton_ { "ANNULER" };
+    juce::TextButton cancelButton_ { "CANCEL" };
     juce::TextButton revealButton_ {
-        "OUVRIR DOSSIER"
+        "OPEN FOLDER"
     };
     juce::Label proofLabel_;
     double progressValue_ { 0.0 };
@@ -1404,13 +1404,13 @@ private:
     juce::Slider overrunPulseHzSlider_;
     juce::Slider overrunPulseDutySlider_;
     juce::Slider overrunPulseTimingVariationSlider_;
-    juce::ToggleButton afterfireToggle_ { "AFTERFIRE PHYSIQUE ACTIF" };
+    juce::ToggleButton afterfireToggle_ { "PHYSICAL AFTERFIRE ON" };
     juce::ToggleButton wetLimiterToggle_ {
-        "RUPTEUR SPARK-CUT / CARBURANT CONSERVE"
+        "SPARK-CUT LIMITER / FUEL KEPT"
     };
-    juce::TextButton demoPhysicsButton_ { "DEMO AUDIBLE" };
+    juce::TextButton demoPhysicsButton_ { "AUDIBLE DEMO" };
     juce::TextButton bypassPhysicsButton_ { "BYPASS" };
-    juce::TextButton applyPhysicsButton_ { "APPLIQUER EN DIRECT" };
+    juce::TextButton applyPhysicsButton_ { "APPLY LIVE" };
     juce::Label physicsTelemetryLabel_;
     juce::Label physicsStatusLabel_;
 
@@ -1428,7 +1428,7 @@ AudioWorkshopWindow::AudioWorkshopWindow(
     PhysicsApplyCallback physicsApply,
     TelemetryProvider telemetryProvider)
     : juce::DocumentWindow(
-        "EngineLab - Atelier audio",
+        "EngineLab - Audio workshop",
         juce::Colour(0xff0d1312),
         juce::DocumentWindow::closeButton,
         true) {

@@ -160,7 +160,7 @@ StepMetrics measurePoint(
  * temperature) against `cyl_mass_mg` (trapped mass). Filling failures show up
  * there as a density problem long before they show up as a pressure one -- the
  * runner sitting at 333 degC while the manifold reads a healthy 96 kPa is what
- * exposed the jet-momentum defect in docs/archive/physics-audit.md.
+ * exposed the jet-momentum defect in physics-audit.md (archive/docs-2026-09 tag).
  *
  * The `residual` column is NOT a residual. It is
  * `CylinderState::residualGasFraction`, the INSTANTANEOUS burned mole fraction,
@@ -188,7 +188,7 @@ StepMetrics measurePoint(
  * one peaks at FULL LIFT and is ~3 % of peak once the valve seats, which is why
  * biasing the fill with it expels charge rather than trapping it. Compare their
  * magnitude at idle against the tuned speed before believing any forcing built on
- * them -- and see docs/archive/physics-audit.md, which records three refuted formulations.
+ * them -- and see physics-audit.md (archive/docs-2026-09 tag), which records three refuted formulations.
  * Use `--idle` for the low point, not `--throttle`: at a dyno-held rpm the load
  * controller answers a low throttle request with high load, the ECU raises
  * effectiveThrottle to meet it, and the manifold lands within 1 kPa of WOT. Idle

@@ -10,11 +10,11 @@
 // N different exhausts and reports the distance between the results, per third
 // octave. It reports three numbers per pair and they mean different things:
 //
-//   niveau     broadband level change, dB. "Everything got louder" lands here.
-//   forme      RMS over third-octave bands of the level difference AFTER the
+//   level      broadband level change, dB. "Everything got louder" lands here.
+//   shape      RMS over third-octave bands of the level difference AFTER the
 //              broadband offset is removed. This is the SHAPE change, and it is
 //              the number that says whether the geometry was heard.
-//   bande_max  the single most-changed third octave, same offset removed.
+//   worst_band the single most-changed third octave, same offset removed.
 //
 // The separation matters because a broadband gain is not a geometry effect --
 // moving the observer does that -- while a real silencer removes 15-25 dB from
@@ -360,18 +360,18 @@ void printCharacter(const Character& character) {
               << "      crest " << std::setprecision(1) << std::setw(5)
               << character.crestDb << " dB   p99.9 " << std::setw(5)
               << character.p999Db << " dB   modulation " << std::setw(5)
-              << character.modulationDb << " dB   pente "
+              << character.modulationDb << " dB   tilt "
               << std::showpos << std::setprecision(2) << std::setw(6)
               << character.spectralTiltDbPerOctave << " dB/oct" << std::noshowpos
-              << '\n' << "      allumage ";
+              << '\n' << "      firing ";
     if (character.impliedFiringHz > 0.0)
         std::cout << std::setprecision(1) << std::setw(6) << character.impliedFiringHz
-                  << " Hz (periodicite " << std::setprecision(2)
-                  << character.periodicityStrength << ")   COV cycle a cycle "
+                  << " Hz (periodicity " << std::setprecision(2)
+                  << character.periodicityStrength << ")   cycle-to-cycle COV "
                   << std::setprecision(1) << character.periodEnergyCovPercent
-                  << " % sur " << character.periodsCounted << " periodes\n";
+                  << " % over " << character.periodsCounted << " periods\n";
     else
-        std::cout << "non detecte (periodicite " << std::setprecision(2)
+        std::cout << "not detected (periodicity " << std::setprecision(2)
                   << character.periodicityStrength << ")\n";
 }
 
@@ -616,13 +616,13 @@ struct Variant final {
         // bank collectors, two silencers and two outlets. The graph rewrite
         // below bypasses only the common X section; all bank primaries,
         // collector bodies, silencers and terminal geometry remain authored.
-        { "double-4en1-sans-x", [](ExhaustConfig&) {} },
+        { "twin-4into1-no-x", [](ExhaustConfig&) {} },
         // Topology control matching the original user report: preserve each
         // authored primary but terminate it independently, with no collector,
         // crossover or silencer. This is not a length/diameter proxy; the DAG
         // itself is replaced below so a 4-2-1 and four open tubes cannot pass
         // by rendering the same network.
-        { "tubes-independants", [](ExhaustConfig&) {} },
+        { "independent-pipes", [](ExhaustConfig&) {} },
         // THE decisive variant, and it changes exactly ONE thing: the silencer
         // body is removed and nothing else moves. That makes the difference
         // against the reference a clean internal single-factor measurement.
@@ -630,7 +630,7 @@ struct Variant final {
         // An earlier version of this harness compared "short AND open" against
         // the reference and called the result silencer authority. It changed
         // two factors at once, which is the trap this project keeps paying for.
-        { "sans-silencieux", [](ExhaustConfig& exhaust) {
+        { "no-muffler", [](ExhaustConfig& exhaust) {
             exhaust.mufflerChamberDiameterMm = 0.0;
             exhaust.mufflerChamberLengthMm = 0.0;
             exhaust.mufflerPackingFlowResistivityPaSPerM2 = 0.0;
@@ -640,18 +640,18 @@ struct Variant final {
         // Single-factor length. The quarter-wave of a 250 mm primary is near
         // 340 Hz and of a 900 mm primary near 95 Hz, so these two must not
         // sound alike.
-        { "primaire-court", [](ExhaustConfig& exhaust) {
+        { "short-primary", [](ExhaustConfig& exhaust) {
             exhaust.primaryLengthMm = 250.0;
         } },
-        { "primaire-long", [](ExhaustConfig& exhaust) {
+        { "long-primary", [](ExhaustConfig& exhaust) {
             exhaust.primaryLengthMm = 900.0;
         } },
-        { "petit-diametre", [](ExhaustConfig& exhaust) {
+        { "small-diameter", [](ExhaustConfig& exhaust) {
             exhaust.primaryDiameterMm *= 0.65;
             exhaust.collectorDiameterMm *= 0.65;
             exhaust.outletDiameterMm *= 0.65;
         } },
-        { "gros-diametre", [](ExhaustConfig& exhaust) {
+        { "large-diameter", [](ExhaustConfig& exhaust) {
             exhaust.primaryDiameterMm *= 1.55;
             exhaust.collectorDiameterMm *= 1.55;
             exhaust.outletDiameterMm *= 1.55;
@@ -667,7 +667,7 @@ struct Variant final {
         // basalt roving behind a perforated core): flow resistivity
         // 10-30 kPa.s/m2, 25-50 mm thick, 20-35 % open area. They are estimates
         // of a material class, not manufacturer data.
-        { "avec-garnissage", [](ExhaustConfig& exhaust) {
+        { "with-packing", [](ExhaustConfig& exhaust) {
             exhaust.mufflerPackingFlowResistivityPaSPerM2 = 24'000.0;
             exhaust.mufflerPackingThicknessMm = 35.0;
             exhaust.mufflerPerforatedOpenAreaRatio = 0.28;
@@ -678,18 +678,18 @@ struct Variant final {
         // 1.5 and by 2.3 must raise the insertion loss along a known curve. If
         // it does not, the element is not reaching the output and there is no
         // point making it bigger.
-        { "chambre-x2.25", [](ExhaustConfig& exhaust) {
+        { "chamber-x2.25", [](ExhaustConfig& exhaust) {
             if (exhaust.mufflerChamberDiameterMm > 1.0)
                 exhaust.mufflerChamberDiameterMm *= 1.5;
         } },
-        { "chambre-x5.3", [](ExhaustConfig& exhaust) {
+        { "chamber-x5.3", [](ExhaustConfig& exhaust) {
             if (exhaust.mufflerChamberDiameterMm > 1.0)
                 exhaust.mufflerChamberDiameterMm *= 2.3;
         } },
         // The user's own test case, kept as a compound: "even a basic 125 with
         // a short pipe and no silencer makes an unbelievable racket". Read it
         // against the two single factors above rather than on its own.
-        { "court-ouvert", [](ExhaustConfig& exhaust) {
+        { "short-open", [](ExhaustConfig& exhaust) {
             exhaust.primaryLengthMm = 250.0;
             exhaust.mufflerChamberDiameterMm = 0.0;
             exhaust.mufflerChamberLengthMm = 0.0;
@@ -740,7 +740,7 @@ struct Variant final {
                 component.perforatedOpenAreaRatio = 0.0;
             }
         };
-        if (name == "double-4en1-sans-x") {
+        if (name == "twin-4into1-no-x") {
             std::vector<std::uint32_t> bankMergeIds;
             std::vector<std::uint32_t> mufflerIds;
             std::vector<std::uint32_t> outletIds;
@@ -789,7 +789,7 @@ struct Variant final {
                     network.connections.push_back(
                         { bankMergeIds[bank], mufflerIds[bank] });
             }
-        } else if (name == "tubes-independants") {
+        } else if (name == "independent-pipes") {
             const auto originalComponents = network.components;
             std::vector<ExhaustComponentConfig> independentComponents;
             independentComponents.reserve(primaryIds.size() * 2U);
@@ -828,32 +828,32 @@ struct Variant final {
                 network.connections.push_back({ primaryId, outlet.id });
             }
             network.components = std::move(independentComponents);
-        } else if (name == "sans-silencieux") {
+        } else if (name == "no-muffler") {
             bypassMufflers();
-        } else if (name == "primaire-court") {
+        } else if (name == "short-primary") {
             setPrimaryLength(250.0);
-        } else if (name == "primaire-long") {
+        } else if (name == "long-primary") {
             setPrimaryLength(900.0);
-        } else if (name == "petit-diametre" || name == "gros-diametre") {
-            const auto scale = name == "petit-diametre" ? 0.65 : 1.55;
+        } else if (name == "small-diameter" || name == "large-diameter") {
+            const auto scale = name == "small-diameter" ? 0.65 : 1.55;
             for (auto& component : network.components) {
                 component.diameterMm *= scale;
                 if (component.outletDiameterMm > 0.0)
                     component.outletDiameterMm *= scale;
             }
-        } else if (name == "avec-garnissage") {
+        } else if (name == "with-packing") {
             for (auto& component : network.components) {
                 if (component.type != ExhaustComponentType::muffler) continue;
                 component.packingFlowResistivityPaSPerM2 = 24'000.0;
                 component.packingThicknessMm = 35.0;
                 component.perforatedOpenAreaRatio = 0.28;
             }
-        } else if (name == "chambre-x2.25" || name == "chambre-x5.3") {
-            const auto areaScale = name == "chambre-x2.25" ? 2.25 : 5.29;
+        } else if (name == "chamber-x2.25" || name == "chamber-x5.3") {
+            const auto areaScale = name == "chamber-x2.25" ? 2.25 : 5.29;
             for (auto& component : network.components)
                 if (component.type == ExhaustComponentType::muffler)
                     component.volumeLitres *= areaScale;
-        } else if (name == "court-ouvert") {
+        } else if (name == "short-open") {
             setPrimaryLength(250.0);
             bypassMufflers();
         }
@@ -899,13 +899,13 @@ struct WavSignal final {
                                WavSignal& signal,
                                std::string& error) {
     std::ifstream stream(path, std::ios::binary);
-    if (!stream) { error = "fichier illisible"; return false; }
+    if (!stream) { error = "unreadable file"; return false; }
     const std::vector<std::uint8_t> bytes { std::istreambuf_iterator<char>(stream),
                                             std::istreambuf_iterator<char>() };
     if (bytes.size() < 44
         || std::memcmp(bytes.data(), "RIFF", 4) != 0
         || std::memcmp(bytes.data() + 8, "WAVE", 4) != 0) {
-        error = "en-tete RIFF/WAVE absent";
+        error = "missing RIFF/WAVE header";
         return false;
     }
 
@@ -938,22 +938,22 @@ struct WavSignal final {
     }
 
     if (channels == 0 || sampleRate == 0 || dataBytes == 0) {
-        error = "chunk fmt ou data absent";
+        error = "missing fmt or data chunk";
         return false;
     }
     // The band edges are mapped through the module-level `audioRate`, so a file
     // at another rate would be binned against the wrong frequencies and report a
     // confident, meaningless spectrum. Refuse rather than resample.
     if (std::abs(static_cast<double>(sampleRate) - audioRate) > 0.5) {
-        error = "echantillonnage " + std::to_string(sampleRate)
-            + " Hz, attendu " + std::to_string(static_cast<int>(audioRate));
+        error = "sample rate " + std::to_string(sampleRate)
+            + " Hz, expected " + std::to_string(static_cast<int>(audioRate));
         return false;
     }
 
     const std::size_t bytesPerSample = bitsPerSample / 8U;
-    if (bytesPerSample == 0) { error = "bits par echantillon nul"; return false; }
+    if (bytesPerSample == 0) { error = "zero bits per sample"; return false; }
     const std::size_t frames = dataBytes / (bytesPerSample * channels);
-    if (frames == 0) { error = "aucune image"; return false; }
+    if (frames == 0) { error = "no frames"; return false; }
 
     const auto decode = [&](std::size_t index) -> double {
         const auto at = dataBegin + index * bytesPerSample;
@@ -972,7 +972,7 @@ struct WavSignal final {
     };
 
     if (std::isnan(decode(0))) {
-        error = "encodage non gere (format " + std::to_string(formatCode) + ", "
+        error = "unsupported encoding (format " + std::to_string(formatCode) + ", "
             + std::to_string(bitsPerSample) + " bits)";
         return false;
     }
@@ -1052,11 +1052,11 @@ struct WavSignal final {
     std::vector<Spectrum> spectra;
     spectra.reserve(paths.size());
 
-    std::cout << "Sensibilite mesuree sur des ENREGISTREMENTS externes\n"
-              << "  meme code d'analyse que les rendus internes, donc les "
-                 "chiffres sont comparables.\n"
+    std::cout << "Sensitivity measured on external RECORDINGS\n"
+              << "  same analysis code as the internal renders, so the "
+                 "figures are comparable.\n"
               << "  " << std::setprecision(2) << skipSeconds
-              << " s ignorees en tete de chaque fichier.\n\n";
+              << " s skipped at the start of each file.\n\n";
 
     for (const auto& path : paths) {
         WavSignal signal;
@@ -1071,10 +1071,10 @@ struct WavSignal final {
         // zero-padded and the low bands stop meaning anything.
         const auto usable = signal.mono.size() - begin;
         if (usable < (std::size_t { 1 } << 16)) {
-            std::cerr << "  " << path.filename().string() << " : seulement "
+            std::cerr << "  " << path.filename().string() << ": only "
                       << std::setprecision(3)
                       << static_cast<double>(usable) / signal.sampleRate
-                      << " s exploitables, il en faut 1.37\n";
+                      << " s usable, 1.37 needed\n";
             return 1;
         }
         auto spectrum = analyse(signal.mono, begin);
@@ -1092,14 +1092,14 @@ struct WavSignal final {
     }
 
     if (spectra.size() < 2) {
-        std::cerr << "\n  il faut au moins une variante (--wav-variant)\n";
+        std::cerr << "\n  at least one variant is required (--wav-variant)\n";
         return 1;
     }
 
-    std::cout << "\n  Ecarts contre " << reference.filename().string() << ":\n"
-              << "  " << std::left << std::setw(28) << "variante"
-              << std::right << std::setw(10) << "niveau" << std::setw(10) << "forme"
-              << std::setw(12) << "bande_max" << "   a\n";
+    std::cout << "\n  Distances from " << reference.filename().string() << ":\n"
+              << "  " << std::left << std::setw(28) << "variant"
+              << std::right << std::setw(10) << "level" << std::setw(10) << "shape"
+              << std::setw(12) << "worst_band" << "   at\n";
     auto worstShape = 0.0;
     for (std::size_t index = 1; index < spectra.size(); ++index) {
         const auto gap = distance(spectra[0], spectra[index]);
@@ -1112,8 +1112,8 @@ struct WavSignal final {
                   << std::setw(11) << gap.worstBandDb << " dB"
                   << std::setw(8) << std::setprecision(0) << gap.worstBandHz << " Hz\n";
     }
-    std::cout << "\n  SENSIBILITE     " << std::fixed << std::setprecision(2)
-              << worstShape << " dB de FORME (pire variante)\n";
+    std::cout << "\n  SENSITIVITY     " << std::fixed << std::setprecision(2)
+              << worstShape << " dB of SHAPE (worst variant)\n";
     return 0;
 }
 
@@ -1162,7 +1162,7 @@ int main(int argc, char** argv) {
 
     const auto catalog = loadEngineCatalog(catalogRoot);
     if (catalog.entries.empty()) {
-        std::cerr << "catalogue vide sous " << catalogRoot << '\n';
+        std::cerr << "empty catalogue under " << catalogRoot << '\n';
         return 1;
     }
     if (listEngines) {
@@ -1173,13 +1173,13 @@ int main(int argc, char** argv) {
 
     const auto selected = selectSingleEngineCatalogEntry(catalog.entries, filter);
     if (selected.status == EngineCatalogSelectionStatus::notFound) {
-        std::cerr << "aucun moteur ne correspond a \"" << filter << "\"\n";
+        std::cerr << "no engine matches \"" << filter << "\"\n";
         return 1;
     }
     if (selected.status == EngineCatalogSelectionStatus::ambiguous) {
-        std::cerr << "\"" << filter << "\" correspond a "
+        std::cerr << "\"" << filter << "\" matches "
                   << selected.matches.size()
-                  << " moteurs, precisez:\n";
+                  << " engines, be more specific:\n";
         for (const auto* match : selected.matches)
             std::cerr << "  " << match->config.audioVoicingKey
                       << "  " << match->config.name << '\n';
@@ -1189,13 +1189,13 @@ int main(int argc, char** argv) {
     if (!(targetRpm > 0.0))
         targetRpm = std::max(engine.idleRpm * 2.0, engine.redlineRpm * 0.55);
 
-    std::cout << "Sensibilite du son a la geometrie d'echappement\n"
-              << "  moteur      " << engine.name << '\n'
-              << "  regime tenu " << std::fixed << std::setprecision(0)
-              << targetRpm << " tr/min, " << std::setprecision(1) << seconds
-              << " s par variante\n"
-              << "  forme = ecart RMS par tiers d'octave, offset large bande "
-                 "retire. C'est LE chiffre.\n\n";
+    std::cout << "Sound sensitivity to exhaust geometry\n"
+              << "  engine      " << engine.name << '\n'
+              << "  held speed  " << std::fixed << std::setprecision(0)
+              << targetRpm << " rpm, " << std::setprecision(1) << seconds
+              << " s per variant\n"
+              << "  shape = RMS third-octave distance, broadband offset "
+                 "removed. This is THE figure.\n\n";
 
     const auto catalogueVariants = variants();
     std::vector<RenderResult> results;
@@ -1206,7 +1206,7 @@ int main(int argc, char** argv) {
         try {
             result = render(config, targetRpm, seconds);
         } catch (const std::exception& error) {
-            std::cerr << "  ECHEC variante " << variant.name << ": "
+            std::cerr << "  FAILED variant " << variant.name << ": "
                       << error.what() << '\n';
             return 1;
         }
@@ -1214,7 +1214,7 @@ int main(int argc, char** argv) {
                   << std::right
                   << " rms " << std::setw(9) << std::fixed << std::setprecision(6)
                   << result.mix.rms
-                  << "  echap " << std::setw(9) << result.exhaust.rms
+                  << "  exh " << std::setw(9) << result.exhaust.rms
                   << "  rpm " << std::setw(5) << std::setprecision(0) << result.finalRpm
                   << "  CFL " << std::setw(6) << std::setprecision(1)
                   << result.limitingCflLengthMm << " mm"
@@ -1229,8 +1229,8 @@ int main(int argc, char** argv) {
                   << result.hardClampedSamples
                   << "  postLimPeak " << std::setprecision(4)
                   << result.maxPostLimiterPeak
-                  << (result.physicalActive ? "" : "  [CHEMIN NON PHYSIQUE]")
-                  << (result.finite ? "" : "  [NON FINI]")
+                  << (result.physicalActive ? "" : "  [NON-PHYSICAL PATH]")
+                  << (result.finite ? "" : "  [NOT FINITE]")
                   << '\n';
         results.push_back(std::move(result));
     }
@@ -1245,17 +1245,17 @@ int main(int argc, char** argv) {
     for (std::size_t index = 0; index < results.size(); ++index)
         if (!(results[index].finalRpm > 0.80 * targetRpm)) stalled.push_back(index);
     if (!stalled.empty()) {
-        std::cerr << "\n  MOTEUR NON TENU a " << std::fixed << std::setprecision(0)
-                  << targetRpm << " tr/min sur " << stalled.size() << " variante(s):\n";
+        std::cerr << "\n  ENGINE NOT HELD at " << std::fixed << std::setprecision(0)
+                  << targetRpm << " rpm on " << stalled.size() << " variant(s):\n";
         for (const auto index : stalled)
             std::cerr << "    " << catalogueVariants[index].name << " -> "
-                      << std::setprecision(0) << results[index].finalRpm << " tr/min\n";
-        std::cerr << "  L'absorbeur tient la vitesse au frein seul, gaz fixes a 0.85,"
-                     " donc une consigne\n  basse le sature et cale le moteur. Aucun"
-                     " chiffre de ce rendu n'est exploitable.\n"
-                     "  Note aussi qu'une consigne basse tenue serait du PLEIN GAZ EN"
-                     " SOUS-REGIME,\n  jamais un ralenti: ce harness ne peut pas"
-                     " mesurer un ralenti.\n";
+                      << std::setprecision(0) << results[index].finalRpm << " rpm\n";
+        std::cerr << "  The absorber holds speed with the brake alone at a fixed 0.85 throttle,"
+                     " so a low\n  setpoint saturates it and stalls the engine. No"
+                     " figure from this render is usable.\n"
+                     "  Note also that a low held setpoint would be FULL THROTTLE"
+                     " LUGGING,\n  never an idle: this harness cannot"
+                     " measure an idle.\n";
         return 1;
     }
 
@@ -1272,13 +1272,13 @@ int main(int argc, char** argv) {
     if (shapedOutput != results.end()) {
         const auto index = static_cast<std::size_t>(
             std::distance(results.begin(), shapedOutput));
-        std::cerr << "\n  SORTIE NON NEUTRE sur "
+        std::cerr << "\n  NON-NEUTRAL OUTPUT on "
                   << catalogueVariants[index].name
                   << ": AGC=" << shapedOutput->levelLimitedSamples
                   << " saturation=" << shapedOutput->saturationProcessedSamples
                   << " softLimit=" << shapedOutput->softLimitedSamples
                   << " hardClamp=" << shapedOutput->hardClampedSamples
-                  << ". Comparaison rejetee.\n";
+                  << ". Comparison rejected.\n";
         return 1;
     }
 
@@ -1286,23 +1286,23 @@ int main(int argc, char** argv) {
     // the same path as an external capture.
     if (!wavOut.empty() && !results.empty()) {
         if (!writeWavMono(wavOut, results[0].mixSignal)) {
-            std::cerr << "\n  ecriture impossible: " << wavOut.string() << '\n';
+            std::cerr << "\n  cannot write: " << wavOut.string() << '\n';
             return 1;
         }
-        std::cout << "\n  rendu de reference ecrit: " << wavOut.string() << " ("
+        std::cout << "\n  reference render written: " << wavOut.string() << " ("
                   << std::fixed << std::setprecision(2)
                   << static_cast<double>(results[0].mixSignal.size()) / audioRate
                   << " s)\n";
     }
 
-    std::cout << "\n  Caractere de la reference:\n";
+    std::cout << "\n  Character of the reference:\n";
     printCharacter(characterise(results[0].mixSignal, results[0].steadyBegin,
                                 results[0].mix));
 
-    std::cout << "\n  Ecarts contre la reference (variante - reference):\n"
-              << "  " << std::left << std::setw(17) << "variante"
-              << std::right << std::setw(10) << "niveau" << std::setw(10) << "forme"
-              << std::setw(12) << "bande_max" << "   a\n";
+    std::cout << "\n  Distances from the reference (variant - reference):\n"
+              << "  " << std::left << std::setw(17) << "variant"
+              << std::right << std::setw(10) << "level" << std::setw(10) << "shape"
+              << std::setw(12) << "worst_band" << "   at\n";
     auto worstShapeMix = 0.0;
     auto worstShapeExhaust = 0.0;
     for (std::size_t index = 1; index < results.size(); ++index) {
@@ -1316,16 +1316,16 @@ int main(int argc, char** argv) {
                   << std::setw(9) << mixDistance.shapeRmsDb << " dB"
                   << std::setw(11) << mixDistance.worstBandDb << " dB"
                   << std::setw(8) << std::setprecision(0) << mixDistance.worstBandHz << " Hz"
-                  << "   (echap seul: forme " << std::setprecision(2)
-                  << exhaustDistance.shapeRmsDb << " dB, bande_max "
+                  << "   (exhaust only: shape " << std::setprecision(2)
+                  << exhaustDistance.shapeRmsDb << " dB, worst_band "
                   << exhaustDistance.worstBandDb << " dB)"
                   << '\n';
     }
 
-    std::cout << "\n  SENSIBILITE     mix " << std::fixed << std::setprecision(2)
-              << worstShapeMix << " dB     echappement seul "
+    std::cout << "\n  SENSITIVITY     mix " << std::fixed << std::setprecision(2)
+              << worstShapeMix << " dB     exhaust only "
               << worstShapeExhaust << " dB\n"
-              << "  (pire ecart de FORME sur toutes les variantes)\n";
+              << "  (worst SHAPE distance over all variants)\n";
 
     // Compare like with like: both spans below are RMS levels over the exact
     // same settled two-second window. The former code compared a full-run,
@@ -1344,17 +1344,17 @@ int main(int argc, char** argv) {
         loudestExhaustDb = std::max(
             loudestExhaustDb, result.exhaust.broadbandDb);
     }
-    std::cout << "  DYNAMIQUE       rendu " << std::setprecision(2)
+    std::cout << "  DYNAMICS        render " << std::setprecision(2)
               << loudestDb - quietestDb << " dB"
-              << "     bus echappement "
+              << "     exhaust bus "
               << loudestExhaustDb - quietestExhaustDb << " dB\n"
-              << "  (RMS sur la meme fenetre stabilisee pour chaque variante.)\n";
+              << "  (RMS over the same settled window for every variant.)\n";
 
     // Single-factor comparison at this simulated operating point. This is an
     // internal authority check, not a claimed real-world insertion loss.
     const auto silencerVariant = std::ranges::find_if(
         catalogueVariants, [](const auto& variant) {
-            return std::string_view { variant.name } == "sans-silencieux";
+            return std::string_view { variant.name } == "no-muffler";
         });
     const auto silencerIndex = static_cast<std::size_t>(
         std::distance(catalogueVariants.begin(), silencerVariant));
@@ -1364,11 +1364,11 @@ int main(int argc, char** argv) {
             - results[0].mix.broadbandDb;
         const auto exhaustBusDb = results[silencerIndex].exhaust.broadbandDb
             - results[0].exhaust.broadbandDb;
-        std::cout << "  SILENCIEUX      retirer le corps seul: rendu "
+        std::cout << "  MUFFLER         removing the body alone: render "
                   << std::showpos << std::setprecision(2) << renderedDb
-                  << " dB, bus echappement " << exhaustBusDb << " dB"
+                  << " dB, exhaust bus " << exhaustBusDb << " dB"
                   << std::noshowpos
-                  << "\n  (A/B interne, meme regime et meme fenetre RMS.)\n";
+                  << "\n  (internal A/B, same engine speed and same RMS window.)\n";
     }
 
     // A large stem sensitivity with a small mix sensitivity has exactly one
@@ -1376,8 +1376,8 @@ int main(int argc, char** argv) {
     // louder than the exhaust in the bands where the geometry acts. Print the
     // margin per band so that claim is checkable rather than asserted.
     const auto margin = maskingMarginDb(results[0].exhaust, results[0].others);
-    std::cout << "\n  Marge de l'echappement sur le RESTE du mix, par tiers "
-                 "d'octave (reference):\n   ";
+    std::cout << "\n  Exhaust margin over the REST of the mix, per third "
+                 "octave (reference):\n   ";
     auto maskedBands = 0;
     auto presentBands = 0;
     for (std::size_t band = 0; band < margin.size(); ++band) {
@@ -1389,15 +1389,15 @@ int main(int argc, char** argv) {
                   << std::setw(6) << margin[band] << std::noshowpos;
         if ((band + 1) % 6 == 0) std::cout << "\n   ";
     }
-    std::cout << "\n  " << maskedBands << " bandes sur " << presentBands
-              << " ou l'echappement est SOUS le reste du mix"
-                 " -- la geometrie y est inaudible par construction.\n";
+    std::cout << "\n  " << maskedBands << " bands out of " << presentBands
+              << " where the exhaust is UNDER the rest of the mix"
+                 " -- geometry is inaudible there by construction.\n";
 
     // Which layer does the masking. A sum cannot be acted on; this can.
     constexpr std::array<const char*, 4> layerNames {
-        "combustion", "admission", "suralimentation", "mecanique" };
-    std::cout << "\n  Couche par couche (reference), niveau relatif a "
-                 "l'echappement:\n";
+        "combustion", "intake", "forced induction", "mechanical" };
+    std::cout << "\n  Layer by layer (reference), level relative to "
+                 "the exhaust:\n";
     for (std::size_t layer = 0; layer < layerNames.size(); ++layer) {
         const auto& spectrum = results[0].layers[layer];
         auto dominatedBands = 0;
@@ -1412,7 +1412,7 @@ int main(int argc, char** argv) {
                   << std::setprecision(1) << std::setw(7)
                   << spectrum.broadbandDb - results[0].exhaust.broadbandDb
                   << " dB" << std::noshowpos
-                  << "   domine " << std::setw(2) << dominatedBands << " bandes sur "
+                  << "   dominates " << std::setw(2) << dominatedBands << " bands out of "
                   << presentBands << '\n';
     }
     return 0;

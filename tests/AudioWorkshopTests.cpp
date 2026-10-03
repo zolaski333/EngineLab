@@ -245,15 +245,15 @@ int main() {
                 ++soloCount;
                 if (!button->isEnabled()) ++disabledSoloCount;
             } else if (text
-                       == "CHOISIR DOSSIER ET EXPORTER") {
+                       == "CHOOSE FOLDER AND EXPORT") {
                 exportButtonFound = true;
-            } else if (text == "DEMO AUDIBLE") {
+            } else if (text == "AUDIBLE DEMO") {
                 demoPhysicsButton = button;
             } else if (text == "VOICING CATALOGUE") {
                 catalogueMixButton = button;
-            } else if (text == "NEUTRE") {
+            } else if (text == "NEUTRAL") {
                 neutralMixButton = button;
-            } else if (text == "APPLIQUER EN DIRECT") {
+            } else if (text == "APPLY LIVE") {
                 applyPhysicsButton = button;
             }
         }
