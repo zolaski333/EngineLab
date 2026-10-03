@@ -1,92 +1,92 @@
-# Lot 6 — atelier audio et contrôles honnêtes (2026-07-29)
+# Audio workshop and truthful controls
 
-## Résultat livré
+## What it does
 
-Le bouton **AUDIO HQ** ouvre un atelier séparé sans arrêter le moteur. Cette
-fenêtre réunit :
+The **AUDIO HQ** button opens a separate workshop without stopping the engine.
+This window brings together:
 
-- les faders du mix temps réel ;
-- l'interrupteur `AFTERFIRE`, appliqué immédiatement (voir
-  [physical-afterfire.md](physical-afterfire.md)) ;
-- `MUTE` et `SOLO` pour les quatre familles de sources ;
-- le choix 48/96/192 kHz et PCM 24 bits/float 32 bits ;
-- master seul ou master plus six stems ;
-- le profil `showcase` intégré ou un scénario JSON choisi par l'utilisateur ;
-- un rendu hors ligne sur thread séparé ;
-- progression, annulation, ouverture du dossier produit et rapport final ;
-- l'identité du moteur et l'état du graphe physique.
+- the real-time mix faders;
+- the physical afterfire switch, applied immediately (see
+  [physical-afterfire.md](physical-afterfire.md));
+- `MUTE` and `SOLO` for the four source families;
+- a choice of 48/96/192 kHz and 24-bit PCM / 32-bit float;
+- master only, or master plus six stems;
+- the built-in `showcase` profile or a JSON scenario chosen by the user;
+- an offline render on a separate thread;
+- progress, cancellation, opening the output folder and a final report;
+- the engine identity and the state of the physical graph.
 
-Le rendu reste disponible pendant une simulation ou un passage au banc : il
-travaille sur une copie cohérente de la configuration et n'emprunte pas le
-thread audio. Fermer la fenêtre pendant un rendu ne détruit pas la tâche.
-Quitter l'application demande l'annulation puis attend proprement le thread.
+Rendering stays available during a simulation or a dyno run: it works on a
+consistent copy of the configuration and does not borrow the audio thread.
+Closing the window during a render does not destroy the job. Quitting the
+application requests cancellation, then waits for the thread cleanly.
 
-Chaque lancement crée un sous-dossier horodaté. L'application ne réutilise donc
-pas silencieusement un ancien `master.wav`.
+Every run creates a time-stamped sub-folder. The application therefore never
+silently reuses an old `master.wav`.
 
-## Contrôles honnêtes
+## Truthful controls
 
-L'ancien écran `MIXER / AUDIO` affichait plusieurs paramètres qui ne pouvaient
-plus agir après compilation des graphes physiques. Ce n'était pas un défaut du
-DSP : les voix procédurales correspondantes sont volontairement retirées. Le
-défaut était l'interface, qui continuait à présenter ces paramètres comme
-actifs.
+The old `MIXER / AUDIO` screen showed several parameters that could no longer
+act once the physical graphs were compiled. That was not a DSP defect: the
+corresponding procedural voices are deliberately removed. The defect was the
+interface, which kept presenting those parameters as active.
 
-L'atelier et les raccourcis appliquent maintenant la table suivante :
+The workshop and the shortcuts now apply the following table:
 
-| Contrôle | Graphe physique | Comportement |
+| Control | Physical graph | Behaviour |
 |---|---:|---|
-| Master | tous | actif |
-| Retour IR mesuré | seulement si une IR a été chargée | désactivé et forcé à zéro sans IR |
-| Aigus master | tous | actif |
-| Bruit admission legacy | seulement sans graphe d'admission | désactivé avec le graphe quasi-1D |
-| Bruit échappement legacy | seulement sans graphe d'échappement | désactivé avec le graphe thermoacoustique |
-| Combustion directe | seulement sans graphe d'échappement | désactivée : la pression cylindre excite déjà l'échappement |
-| Échappement | tous | actif, sec et retour IR |
-| Admission + suralimentation | tous | actif |
-| Structure / mécanique | tous | actif |
+| Master | all | active |
+| Measured IR return | only if an IR was loaded | disabled and forced to zero without an IR |
+| Master treble | all | active |
+| Legacy intake noise | only without an intake graph | disabled with the quasi-1D graph |
+| Legacy exhaust noise | only without an exhaust graph | disabled with the thermoacoustic graph |
+| Direct combustion | only without an exhaust graph | disabled: cylinder pressure already drives the exhaust |
+| Exhaust | all | active, dry and IR return |
+| Intake + forced induction | all | active |
+| Structure / mechanical | all | active |
 
-Les touches historiques `X`, `V`, `B` et `J` ne modifient plus une valeur
-inaudible dans les cas `N/A`. L'écran principal l'indique également au lieu
-d'afficher une jauge trompeuse.
+The legacy keys `X`, `V`, `B` and `J` no longer change an inaudible value in the
+`N/A` cases. The main screen says so as well, instead of showing a misleading
+gauge.
 
-Les faders visibles constituent le **mix de base**. Mute/solo produit un **mix
-effectif** distinct envoyé au thread audio et au rendu HQ. Ainsi, un solo ne
-détruit pas la valeur d'un autre fader ; la désactivation du solo restitue le
-mix précédent.
+The visible faders form the **base mix**. Mute/solo produces a separate
+**effective mix** sent to the audio thread and to the HQ render. A solo thus
+never destroys another fader's value; turning the solo off restores the
+previous mix.
 
-## Sémantique dry/IR
+## Dry/IR semantics
 
-Le contrôle IR est nommé **retour IR mesuré** et non « convolution » :
+The IR control is called **measured IR return**, not "convolution":
 
-- le dry n'est pas atténué ;
-- la valeur 0..1 ajoute jusqu'à 50 % de retour mesuré, conformément au routage
-  existant de `RealtimeEngineAudio` ;
-- sans fichier IR valide, le contrôle est désactivé et le mix effectif vaut
-  zéro ;
-- l'export HQ permet d'inspecter séparément `stem_exhaust_dry.wav` et
-  `stem_exhaust_ir.wav`.
+- the dry signal is not attenuated;
+- the 0..1 value adds up to 50 % of measured return, following the existing
+  routing of `RealtimeEngineAudio`;
+- without a valid IR file, the control is disabled and the effective mix is
+  zero;
+- the HQ export lets you inspect `stem_exhaust_dry.wav` and
+  `stem_exhaust_ir.wav` separately.
 
-Il n'y a donc ni preset de pièce caché, ni faux wet à 100 %.
+There is therefore no hidden room preset and no fake 100 % wet.
 
-## Preuves automatiques
+## Automated checks
 
-Le test `EngineLab.AudioWorkshop` construit la vraie fenêtre JUCE et vérifie :
+The `EngineLab.AudioWorkshop` test builds the real JUCE window and checks:
 
-- trois tailles, de la taille minimale 980×620 à 1600×900 ;
-- chaque composant visible possède des dimensions non nulles ;
-- aucun composant ne sort de la fenêtre ;
-- neuf faders sont présents ;
-- les quatre faders sans effet du cas physique sans IR sont désactivés ;
-- quatre paires MUTE/SOLO existent et la combustion directe est indisponible ;
-- l'action d'export HQ est visible ;
-- le routage de solo conserve l'échappement et son retour IR, puis coupe
-  admission et structure ;
-- `MUTE` reste prioritaire sur `SOLO` ;
-- le retour au mode de compatibilité réactive les contrôles réellement
-  disponibles.
+- three sizes, from the 980×620 minimum to 1600×900;
+- every visible component has non-zero dimensions;
+- no component extends outside the window;
+- nine faders are present;
+- the four faders with no effect in the physical case without an IR are
+  disabled;
+- four MUTE/SOLO pairs exist and direct combustion is unavailable;
+- the HQ export action is visible;
+- solo routing keeps the exhaust and its IR return, then cuts intake and
+  structure;
+- `MUTE` takes priority over `SOLO`;
+- returning to compatibility mode re-enables the controls that are really
+  available.
 
-Commande :
+Command:
 
 ```powershell
 cmake --build out\build\windows-vs2022 --config Release `
@@ -97,25 +97,17 @@ ctest --test-dir out\build\windows-vs2022 -C Release `
   -R "^EngineLab\.AudioWorkshop$" --output-on-failure
 ```
 
-Résultat :
+Result:
 
 ```text
 Audio workshop: layout, truthful availability, mute/solo routing
 and HQ export controls PASS
 ```
 
-Le `EngineLab.exe` Release a aussi été lancé depuis son chemin de build exact et
-a créé une fenêtre native `EngineLab`. La capture automatisée de cette fenêtre
-JUCE n'était pas disponible sur cette session Windows
-(`SetIsBorderRequired`, `0x80004002`) ; aucune coordonnée n'a donc été cliquée à
-l'aveugle. Le test de géométrie ci-dessus remplace explicitement cette preuve
-visuelle manquante.
+## Deliberate limitation
 
-## Limite volontaire
-
-Le bus suralimentation possède un stem hors ligne distinct, mais partage encore
-le fader temps réel de l'admission. Le séparer dans le runtime changerait le
-contrat historique des harnais qui utilisent « mute intake » pour isoler
-l'échappement. Cette séparation pourra être faite dans une évolution dédiée,
-avec A/B et mise à jour de tous les isolateurs ; elle n'a pas été glissée dans
-ce lot d'interface.
+The forced-induction bus has its own offline stem, but still shares the intake
+real-time fader. Splitting it in the runtime would change the historical
+contract of the harnesses that use "mute intake" to isolate the exhaust. That
+split can be made in a dedicated change, with an A/B and an update of every
+isolator.

@@ -1,31 +1,31 @@
-# Voicing audio declarative
+# Declarative audio voicing
 
-La voicing est la couche de monitorage non physique d'EngineLab. Elle ne
-modifie ni la combustion, ni les pressions cylindre, ni la dynamique des gaz,
-ni le couple. Son objectif est de permettre un travail d'ecoute rapide sans
-recompiler et sans cacher une correction physique dans un gain arbitraire.
+Voicing is EngineLab's non-physical monitoring layer. It changes neither
+combustion, cylinder pressures, gas dynamics nor torque. Its purpose is to
+allow fast listening work without recompiling and without hiding a physical
+correction inside an arbitrary gain.
 
-## Resolution par couches
+## Layered resolution
 
-Le catalogue fusionne, dans cet ordre :
+The catalogue merges, in this order:
 
-1. `voicing/default.yaml` ;
-2. `voicing/families/<famille_normalisee>.yaml`, si present ;
-3. `voicing/engines/<cle_moteur_normalisee>.yaml`, si present.
+1. `voicing/default.yaml`;
+2. `voicing/families/<normalised_family>.yaml`, if present;
+3. `voicing/engines/<normalised_engine_key>.yaml`, if present.
 
-Une couche ne remplace que les champs qu'elle declare. La famille vient du
-champ `family` du fichier moteur. La cle moteur vient du nom de fichier sans
-la derniere extension, puis est normalisee en minuscules avec des `_` (par
-exemple `11_yamaha_cp2_mt07_like.engine.yaml` devient
+A layer only replaces the fields it declares. The family comes from the
+`family` field of the engine file. The engine key comes from the file name
+without its last extension, normalised to lower case with `_` (for example
+`11_yamaha_cp2_mt07_like.engine.yaml` becomes
 `11_yamaha_cp2_mt07_like_engine.yaml`).
 
-Le schema est strict. Une cle inconnue, une valeur non finie, hors plage ou un
-placement de saturation inconnu refuse le nouvel instantane complet. Dans
-l'application, la derniere voicing valide reste alors active et l'erreur est
-affichee. Les fichiers sont sondes une fois par seconde sur le thread UI ; le
-callback audio ne fait aucune E/S et ne lit que des atomiques lock-free.
+The schema is strict. An unknown key, a non-finite or out-of-range value, or an
+unknown saturation placement rejects the whole new snapshot. In the
+application, the last valid voicing then stays active and the error is shown.
+Files are polled once per second on the UI thread; the audio callback does no
+I/O and only reads lock-free atomics.
 
-## Champs schema 1
+## Schema 1 fields
 
 ```yaml
 schema_version: 1
@@ -40,45 +40,43 @@ voicing:
   exhaust_gain: 1.0           # 0..2
   intake_gain: 0.85           # 0..2
   mechanical_gain: 0.70       # 0..2
-  stereo_width: 1.0           # 0 mono, 1 neutre, 2 large
-  outlet_jet_gain: 1.0        # 0..2, bruit de jet physique seulement
-  saturation_drive: 0.0       # 0 bypass exact, puis 0..4
-  saturation_placement: post_shelf # pre_shelf ou post_shelf
+  stereo_width: 1.0           # 0 mono, 1 neutral, 2 wide
+  outlet_jet_gain: 1.0        # 0..2, physical jet noise only
+  saturation_drive: 0.0       # 0 exact bypass, then 0..4
+  saturation_placement: post_shelf # pre_shelf or post_shelf
 ```
 
-La saturation a un gain petit-signal unitaire et son bypass `0.0` est exact.
-La largeur stereo utilise un traitement mid/side uniquement lorsqu'elle est
-differente de `1.0`. Le gain de jet agit sur la composante de pression de jet
-separee publiee par le reseau acoustique d'echappement.
+Saturation has unity small-signal gain and its `0.0` bypass is exact. Stereo
+width uses mid/side processing only when it differs from `1.0`. The jet gain
+acts on the separate jet pressure component published by the exhaust acoustic
+network.
 
-## Profils catalogue et A/B instantane
+## Catalogue profiles and instant A/B
 
-Les seize moteurs livres possedent maintenant un override sous
-`voicing/engines/`. Ces profils sont des presentations `estimatedFamily` : ils
-mettent en avant le caractere produit par la pression, la topologie et la
-geometrie, mais ne sont pas annonces comme des egalisations micro mesurees. Les
-prises CC0 dont le regime, la charge ou la geometrie micro sont inconnus ne
-servent qu'a encadrer le caractere attendu.
+All sixteen shipped engines now have an override under `voicing/engines/`.
+These profiles are `estimatedFamily` presentations: they bring out the
+character produced by pressure, topology and geometry, but are not presented as
+measured microphone equalisations. The CC0 takes whose engine speed, load or
+microphone geometry are unknown only serve to frame the expected character.
 
-Dans **AUDIO HQ**, **VOICING CATALOGUE** rappelle l'override complet du moteur et
-**NEUTRE** restaure toutes les valeurs du schema, pas seulement les neuf faders
-visibles. Le changement est instantane et ne redemarre pas le moteur. Deplacer
-un fader conserve desormais `low_frequency_gain`, `stereo_width`,
-`outlet_jet_gain`, `saturation_drive` et `saturation_placement`; ils etaient
-auparavant remis silencieusement au defaut par la reconstruction partielle du
-mix.
+In **AUDIO HQ**, **VOICING CATALOGUE** recalls the engine's full override and
+**NEUTRAL** restores every schema value, not just the nine visible faders. The
+change is instant and does not restart the engine. Moving a fader now keeps
+`low_frequency_gain`, `stereo_width`, `outlet_jet_gain`, `saturation_drive` and
+`saturation_placement`; previously they were silently reset to their defaults
+by the partial rebuild of the mix.
 
-Un changement de moteur pendant que l'atelier est ouvert recharge egalement son
-profil catalogue et ses disponibilites physiques. L'A/B n'est donc plus expose
-a un mix appartenant au moteur precedent.
+Changing engine while the workshop is open also reloads its catalogue profile
+and its physical availabilities. The A/B is therefore no longer exposed to a
+mix belonging to the previous engine.
 
-## Non-regression du defaut
+## Default non-regression
 
-Le fichier livre reprend exactement les anciennes constantes compilees. Sur le
-scenario K20A `showcase`, 48 kHz float32, master seul, le rendu avant et apres
-l'introduction du catalogue donne le meme SHA-256 :
+The shipped file reproduces exactly the old compiled constants. On the K20A
+`showcase` scenario, 48 kHz float32, master only, the render before and after
+the introduction of the catalogue gives the same SHA-256:
 
 `851B708DC02385D7A141746484002EED63B140425324FF778E10FF93648AE221`
 
-Cette egalite bit a bit est la condition de base : toute future voicing audible
-doit etre un override explicite et faire l'objet d'une ecoute A/B aveugle.
+This bit-exact equality is the baseline condition: any future audible voicing
+must be an explicit override and go through a blind A/B listening test.

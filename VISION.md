@@ -1,69 +1,67 @@
 # EngineLab — Vision
 
-Ce document fixe l'intention du projet. Il change rarement, et seulement par
-décision du propriétaire. Tout le reste (code, docs, priorités) doit s'y
-conformer.
+This document sets the intent of the project. It rarely changes, and only by
+decision of the owner. Everything else (code, docs, priorities) must conform to
+it.
 
-## Ce que doit être EngineLab
+## What EngineLab must be
 
-Un simulateur de moteur quatre temps **dont le son est le plus proche possible
-de la réalité**, pour n'importe quel moteur que l'utilisateur construit.
+A four-stroke engine simulator **whose sound is as close to reality as
+possible**, for any engine the user builds.
 
-1. **Le son d'abord.** Quelqu'un qui connaît le moteur réel doit pouvoir le
-   reconnaître à l'écoute : pas seulement « un bicylindre », mais « un CP2 ».
-   La méthode est libre : physique, synthèse, ou les deux. Ce qui compte est le
-   résultat audible, pas l'élégance du modèle.
-2. **Une physique correcte dans les grandes lignes.** Couple et puissance
-   plausibles (de l'ordre de ±15 % des valeurs constructeur), réactions
-   crédibles à l'accélérateur, au rapport, à l'échappement. La physique sert le
-   son et le ressenti ; elle n'est pas une fin en soi.
-3. **Temps réel sur un PC de milieu de gamme.** Machine de référence :
-   Intel i5-10600 (6 cœurs / 12 threads), 16 Go de RAM.
+1. **Sound first.** Someone who knows the real engine should recognise it by
+   ear: not just "a parallel twin", but "a CP2". The method is open: physics,
+   synthesis, or both. What counts is the audible result, not the elegance of
+   the model.
+2. **Physics that is broadly right.** Plausible torque and power (within about
+   ±15 % of the manufacturer figures), credible reactions to throttle, gear and
+   exhaust. Physics serves the sound and the feel; it is not an end in itself.
+3. **Real time on a mid-range PC.** Reference machine: Intel i5-10600
+   (6 cores / 12 threads), 16 GB of RAM.
 
-## Contrainte fondamentale : aucun enregistrement par moteur
+## Fundamental constraint: no per-engine recordings
 
-Un moteur construit par l'utilisateur (par exemple un W16) doit sonner de façon
-réaliste **à partir de sa seule description** : géométrie, ordre d'allumage,
-admission, échappement. L'utilisateur ne doit jamais avoir à fournir un
-enregistrement de son moteur.
+An engine built by the user (a W16, for example) must sound realistic **from
+its description alone**: geometry, firing order, intake, exhaust. The user must
+never have to supply a recording of their engine.
 
-- Les enregistrements réels servent à **calibrer le modèle générique** pendant
-  le développement. Ils ne sont jamais un ingrédient obligatoire du rendu.
-- Des éléments sonores **génériques**, non propres à un moteur précis, sont
-  autorisés dans le rendu : texture de bruit mécanique par famille, claquement
-  type d'une pétarade, réponse d'un environnement d'écoute, etc.
+- Real recordings are used to **calibrate the generic model** during
+  development. They are never a required ingredient of the render.
+- **Generic** sound elements, not specific to one engine, are allowed in the
+  render: a mechanical noise texture per family, the typical crack of a
+  backfire, the response of a listening environment, and so on.
 
-## Critère de réussite
+## Success criterion
 
-Le son est jugé **contre des enregistrements réels au régime connu**, jamais
-contre la sortie du simulateur lui-même.
+The sound is judged **against real recordings at a known engine speed**, never
+against the simulator's own output.
 
-- **Objectif :** écart de timbre simulation/réel au même régime et à la même
-  charge, mesuré par un outil dédié.
-- **Subjectif :** écoute à l'aveugle.
+- **Objective:** timbre distance between simulation and reality at the same
+  engine speed and load, measured by a dedicated tool.
+- **Subjective:** blind listening.
 
-Jalons :
+Milestones:
 
-1. **Moteur pilote : Yamaha CP2 (MT-07), échappement Arrow.** Enregistrements
-   faits par le propriétaire sur sa propre moto, régime connu.
-2. **Généralisation :** un second moteur très différent doit s'améliorer
-   **sans réglage spécifique**. C'est la preuve que la calibration sur le CP2 a
-   amélioré le modèle générique et ne s'est pas contentée d'imiter une moto.
+1. **Pilot engine: Yamaha CP2 (MT-07), Arrow exhaust.** Recordings made by the
+   owner on their own motorcycle, at a known engine speed.
+2. **Generalisation:** a second, very different engine must improve **without
+   specific tuning**. That is the proof that calibrating on the CP2 improved
+   the generic model rather than just imitating one motorcycle.
 
-## Non-objectifs
+## Non-goals
 
-- Une reproduction 1:1 d'un moteur réel.
-- De la physique pour elle-même : un modèle plus fidèle qui ne change rien
-  d'audible ou de ressenti n'est pas prioritaire.
-- Un outil d'analyse thermodynamique ou de calibration de vrai véhicule.
-- Ajouter un composant (silencieux garni, catalyseur, résonateur…) sans écart
-  audible mesuré qui le justifie.
+- A 1:1 reproduction of a real engine.
+- Physics for its own sake: a more faithful model that changes nothing audible
+  or felt is not a priority.
+- A thermodynamic analysis tool or a calibration tool for real vehicles.
+- Adding a component (packed muffler, catalyst, resonator…) without a measured
+  audible gap that justifies it.
 
-## Règle de décision
+## Decision rule
 
-Avant tout travail, répondre à une question :
+Before any work, answer one question:
 
-> **Quel écart mesuré entre la simulation et la réalité ce travail réduit-il ?**
+> **Which measured gap between simulation and reality does this work reduce?**
 
-Sans réponse, le travail attend. Exceptions : un bug qui casse le programme,
-et la performance temps réel sur la machine de référence.
+Without an answer, the work waits. Exceptions: a bug that breaks the program,
+and real-time performance on the reference machine.

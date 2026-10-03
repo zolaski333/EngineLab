@@ -1,99 +1,98 @@
-# Tuner ECU et hot reload
+# ECU tuner and hot reload
 
-Le bouton **ECU** ouvre un éditeur de cartographies inspiré des outils de
-calibration : sélection de table, axes régime/charge, cellules colorées, point
-de fonctionnement surligné, limites et révision active.
+The **ECU** button opens a map editor modelled on calibration tools: table
+selection, engine speed/load axes, coloured cells, highlighted operating point,
+limits and active revision.
 
-Ce tuner agit uniquement sur la simulation EngineLab. Ses fichiers et valeurs
-ne doivent jamais être injectés dans une ECU de véhicule réel.
+This tuner acts on the EngineLab simulation only. Its files and values must
+never be flashed into the ECU of a real vehicle.
 
-## Paramètres réellement actifs
+## Parameters that are actually live
 
-Le jeu créé avec chaque moteur contient :
+The set created with each engine contains:
 
-| Identifiant | Forme | Effet |
+| Identifier | Shape | Effect |
 |---|---|---|
-| `fuel.target_afr` | table 2D régime × charge | cible AFR interpolée bilinéairement |
-| `ignition.advance_deg` | table 2D régime × charge | avance absolue avant corrections dynamiques |
-| `limits.rev_rpm` | scalaire | seuil du limiteur |
+| `fuel.target_afr` | 2D table engine speed × load | bilinearly interpolated AFR target |
+| `ignition.advance_deg` | 2D table engine speed × load | absolute advance before dynamic corrections |
+| `limits.rev_rpm` | scalar | rev limiter threshold |
 
-La charge est actuellement `MAP / pression_ambiante`, bornée entre 0 et 4. Les
-tables par défaut couvrent 0 à 400 %, avec des points supplémentaires au-dessus
-de 100 % pour les moteurs suralimentés. Les coordonnées hors des axes sont
-clampées sur la première ou dernière cellule.
+Load is currently `MAP / ambient_pressure`, clamped between 0 and 4. The
+default tables cover 0 to 400 %, with extra points above 100 % for
+forced-induction engines. Coordinates outside the axes are clamped to the first
+or last cell.
 
-Le slider AFR de la fenêtre principale est un trim explicite de -3 à +3 AFR,
-neutre à 0. Le slider d'allumage ajoute un trim en degrés à la table. Démarrage,
-température, enrichissement transitoire, knock et logique de limiteur
-s'appliquent ensuite.
+The AFR slider in the main window is an explicit trim from -3 to +3 AFR,
+neutral at 0. The spark slider adds a trim in degrees to the table. Cranking,
+temperature, transient enrichment, knock and rev-limiter logic apply after
+that.
 
-Les bornes canoniques sont partagées par la validation, les métadonnées générées
-et l'ECU : 10,5 à 18 pour AFR, -10° à 55° pour l'avance, et 600 à 25 000 tr/min
-pour le rupteur. Une cellule acceptée par le tuner n'est donc plus silencieusement
-re-clampée sur une plage différente. Les corrections dynamiques restent bornées
-dans ce même domaine après application des trims.
+The canonical bounds are shared by validation, the generated metadata and the
+ECU: 10.5 to 18 for AFR, -10° to 55° for advance, and 600 to 25,000 rpm for the
+rev limiter. A cell accepted by the tuner is therefore no longer silently
+re-clamped to a different range. The dynamic corrections stay bounded to the
+same domain after the trims are applied.
 
-Le framework définit des clés réservées à de futures cartes de rendement
-volumétrique, VVT/VVL, boost ou wastegate. Elles ne sont pas instanciées dans
-la calibration par défaut et ne sont pas consommées par l'ECU actuelle.
+The framework defines reserved keys for future volumetric-efficiency, VVT/VVL,
+boost or wastegate maps. They are not instantiated in the default calibration
+and are not consumed by the current ECU.
 
-## Publication transactionnelle
+## Transactional publishing
 
-La fenêtre édite un `CalibrationDraft`. Quand une cellule perd le focus ou que
-la touche Entrée est pressée :
+The window edits a `CalibrationDraft`. When a cell loses focus or Enter is
+pressed:
 
-1. le texte est converti en nombre fini ;
-2. le brouillon complet est validé ;
-3. `expectedRevision` empêche d'écraser une modification concurrente ;
-4. un nouveau `CalibrationSnapshot` immuable est publié par échange atomique.
+1. the text is converted to a finite number;
+2. the complete draft is validated;
+3. `expectedRevision` prevents overwriting a concurrent change;
+4. a new immutable `CalibrationSnapshot` is published with an atomic swap.
 
-L'ECU charge ce pointeur une fois au début de chaque trame externe de simulation.
-Elle observe donc soit l'ancienne calibration complète, soit la nouvelle, jamais
-un mélange de cellules au milieu des sous-pas. Le lecteur ne prend pas le mutex
-des écrivains. Un epoch par lecteur retient les anciens snapshots jusqu'à ce que
-la simulation ait accusé réception de la nouvelle révision ; leur destruction
-reste ainsi sur le thread qui publie. `atomic<shared_ptr>` n'est toutefois pas
-présenté comme obligatoirement lock-free sur toutes les bibliothèques standard.
-Une limite dépassée, un axe invalide ou un conflit conserve la révision
-précédente et recharge l'éditeur depuis la source active.
+The ECU loads this pointer once at the start of each external simulation frame.
+It therefore sees either the complete old calibration or the new one, never a
+mix of cells in the middle of the sub-steps. The reader does not take the
+writers' mutex. A per-reader epoch holds old snapshots until the simulation has
+acknowledged the new revision; their destruction thus stays on the publishing
+thread. `atomic<shared_ptr>` is however not assumed to be lock-free on every
+standard library. An exceeded limit, an invalid axis or a conflict keeps the
+previous revision and reloads the editor from the active source.
 
-Cette publication ne remplace pas le runtime : régime, températures, cycle de
-combustion, film de carburant et transmission continuent sans reset.
+This publishing does not replace the runtime: engine speed, temperatures,
+combustion cycle, fuel film and transmission carry on without a reset.
 
-## Charger, enregistrer et surveiller
+## Loading, saving and watching
 
-**CHARGER** accepte un fichier `.ecu.json` ou `.json` de 2 Mio maximum, le
-valide et le publie en une transaction. **ENREGISTRER** écrit le snapshot
-courant. Dans les deux cas, ce chemin devient surveillé.
+**LOAD** accepts a `.ecu.json` or `.json` file of at most 2 MiB, validates it
+and publishes it in one transaction. **SAVE** writes the current snapshot. In
+both cases, that path becomes watched.
 
-Tant que la fenêtre tuner existe, son timer vérifie le fichier dix fois par
-seconde. Une sauvegarde externe valide publie une nouvelle révision ; un JSON
-malformé ou hors limites affiche l'erreur et laisse la dernière révision valide
-en service.
+As long as the tuner window exists, its timer checks the file ten times per
+second. A valid external save publishes a new revision; malformed or
+out-of-range JSON shows the error and leaves the last valid revision in
+service.
 
-Le watcher ne suit pas un fichier avant un premier chargement ou
-enregistrement. Les rechargements structurels déclenchés par le script live,
-l'éditeur JSON ou le concepteur d'échappement conservent le même magasin, la
-fenêtre et son watcher. Choisir ou importer explicitement un autre moteur ferme
-la fenêtre et crée le jeu par défaut de ce moteur.
+The watcher does not follow a file before a first load or save. Structural
+reloads triggered by the live script, the JSON editor or the exhaust designer
+keep the same store, the window and its watcher. Explicitly choosing or
+importing another engine closes the window and creates that engine's default
+set.
 
-## Format JSON de calibration
+## Calibration JSON format
 
-Le schéma actuel vaut `1`. Une calibration est un `scalar`, une `curve_1d` ou
-une `table_2d`. Cet exemple réduit montre une table AFR 2 × 2 et le rupteur :
+The current schema is `1`. A calibration is a `scalar`, a `curve_1d` or a
+`table_2d`. This reduced example shows a 2 × 2 AFR table and the rev limiter:
 
 ```json
 {
   "schema_version": 1,
-  "name": "Calibration exemple",
-  "description": "Carte minimale",
+  "name": "Example calibration",
+  "description": "Minimal map",
   "calibrations": [
     {
       "kind": "table_2d",
       "metadata": {
         "id": "fuel.target_afr",
-        "display_name": "AFR cible",
-        "description": "Régime et charge",
+        "display_name": "Target AFR",
+        "description": "Engine speed and load",
         "unit": "afr",
         "display_precision": 2,
         "live_editable": true,
@@ -101,14 +100,14 @@ une `table_2d`. Cet exemple réduit montre une table AFR 2 × 2 et le rupteur :
       },
       "x_axis": {
         "id": "rpm",
-        "display_name": "Régime",
+        "display_name": "Engine speed",
         "quantity": "engine_speed",
         "unit": "rpm",
         "breakpoints": [1000, 6000]
       },
       "y_axis": {
         "id": "load",
-        "display_name": "Charge",
+        "display_name": "Load",
         "quantity": "normalized_load",
         "unit": "ratio",
         "breakpoints": [0.0, 2.0]
@@ -119,8 +118,8 @@ une `table_2d`. Cet exemple réduit montre une table AFR 2 × 2 et le rupteur :
       "kind": "scalar",
       "metadata": {
         "id": "limits.rev_rpm",
-        "display_name": "Limiteur",
-        "description": "Seuil régime",
+        "display_name": "Rev limiter",
+        "description": "Engine speed threshold",
         "unit": "rpm",
         "display_precision": 0,
         "live_editable": true,
@@ -132,38 +131,37 @@ une `table_2d`. Cet exemple réduit montre une table AFR 2 × 2 et le rupteur :
 }
 ```
 
-Dans une table 2D, `values` est organisé par lignes : toutes les valeurs de
-l'axe X pour le premier point Y, puis toutes celles du deuxième point Y, etc.
-Le nombre de valeurs doit donc être `x_count × y_count`.
+In a 2D table, `values` is laid out by rows: every X-axis value for the first Y
+point, then every value for the second Y point, and so on. The number of values
+must therefore be `x_count × y_count`.
 
-Les axes doivent contenir des nombres finis strictement croissants. Leur unité
-doit correspondre à leur quantité. Pour les clés ECU connues, le contrat est
-plus strict afin d'éviter une carte valide mais ignorée : régime en
-`engine_speed/rpm`, puis charge en `normalized_load/ratio` pour une table 2D.
-Les limites sont dures : une seule cellule hors plage invalide tout le document.
+Axes must hold finite, strictly increasing numbers. Their unit must match their
+quantity. For the known ECU keys, the contract is stricter, to avoid a map that
+is valid but ignored: engine speed as `engine_speed/rpm`, then load as
+`normalized_load/ratio` for a 2D table. Limits are hard: a single out-of-range
+cell invalidates the whole document.
 
-## API C++
+## C++ API
 
-`CalibrationStore` est volontairement générique. Les lecteurs peuvent demander
-un scalaire, échantillonner une courbe linéaire ou une table bilinéaire avec des
-`AxisCoordinate` typés. Une unité ou quantité incompatible renvoie l'absence de
-valeur plutôt qu'une conversion implicite.
+`CalibrationStore` is deliberately generic. Readers can request a scalar, sample
+a linear curve or a bilinear table with typed `AxisCoordinate`s. An
+incompatible unit or quantity returns no value rather than an implicit
+conversion.
 
-`CalibrationJson::parse` produit un brouillon, `publishJson` combine parse,
-validation et publication, et `makeDraft` permet de repartir d'un snapshot.
-Les tests `EngineLab.Calibration` et `EngineLab.EcuCalibration` couvrent les
-dimensions, interpolations, limites, conflits de révision et lectures
-concurrentes.
+`CalibrationJson::parse` produces a draft, `publishJson` combines parsing,
+validation and publishing, and `makeDraft` starts again from a snapshot. The
+`EngineLab.Calibration` and `EngineLab.EcuCalibration` tests cover dimensions,
+interpolation, limits, revision conflicts and concurrent reads.
 
-## Limites et prochaines extensions
+## Limitations and next extensions
 
-- pas encore d'édition d'axes, sélection multi-cellules, lissage, undo/redo ou
-  comparaison visuelle de deux révisions ;
-- pas de datalogger synchronisé, de trace historique du point actif ou de
-  fonction d'auto-tune des tables ;
-- seules AFR, avance et limiteur ont un effet runtime ;
-- la correction lambda par cylindre compense le transport du carburant, mais il
-  n'existe pas encore de modèle détaillé de sondes, de trims court/long terme,
-  de stratégies OBD ou de torque management comparable à une ECU de production ;
-- un changement explicite vers un autre moteur ne transpose pas automatiquement
-  les cartes vers de nouveaux axes ; il démarre avec les valeurs de ce moteur.
+- no axis editing, multi-cell selection, smoothing, undo/redo or visual
+  comparison of two revisions yet;
+- no synchronised datalogger, history trace of the active point or table
+  auto-tune;
+- only AFR, advance and rev limiter have a runtime effect;
+- the per-cylinder lambda correction compensates for fuel transport, but there
+  is no detailed model yet of sensors, short/long-term trims, OBD strategies or
+  torque management comparable to a production ECU;
+- an explicit switch to another engine does not automatically transpose the
+  maps onto new axes; it starts with that engine's values.

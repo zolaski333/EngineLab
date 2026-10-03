@@ -1,28 +1,27 @@
-# Corpus de références moteur réelles
+# Real engine reference corpus
 
-Ce dossier décrit le corpus employé par `EngineLabAbClipRenderer`. Les cinq
-sources sont de vrais enregistrements de terrain publiés sous **CC0 1.0**. Les
-fichiers audio ne sont pas versionnés : le manifeste fixe leur URL de préécoute
-HQ, leur SHA-256, leur auteur, leur licence et le niveau réel de correspondance
-avec le moteur EngineLab.
+This folder describes the corpus used by `EngineLabAbClipRenderer`. The five
+sources are genuine field recordings published under **CC0 1.0**. The audio
+files are not versioned: the manifest pins their HQ preview URL, SHA-256,
+author, license and how closely each one actually matches the EngineLab engine.
 
-Le niveau `exact-platform` signifie que le véhicule est explicitement identifié.
-`platform-proxy`, `family-proxy` et `architecture-proxy` sont volontairement
-moins forts : ils servent à juger un caractère sonore, pas à revendiquer une
-corrélation exacte.
+The `exact-platform` level means the vehicle is explicitly identified.
+`platform-proxy`, `family-proxy` and `architecture-proxy` are deliberately
+weaker: they are for judging a sound character, not for claiming an exact
+correlation.
 
-## Récupération vérifiée
+## Verified download
 
-Depuis la racine du dépôt :
+From the repository root:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File references/real-engine-audio/fetch-corpus.ps1
 ```
 
-Le script ne conserve un fichier que si son SHA-256 correspond au manifeste.
-Les fichiers sont écrits sous `files/`, dossier ignoré par Git.
+The script keeps a file only if its SHA-256 matches the manifest. Files are
+written under `files/`, which Git ignores.
 
-## Rendu A/B complet
+## Full A/B render
 
 ```powershell
 out/build/windows-vs2022/tools/Release/EngineLabAbClipRenderer.exe `
@@ -32,8 +31,7 @@ out/build/windows-vs2022/tools/Release/EngineLabAbClipRenderer.exe `
   --require-references
 ```
 
-L’outil décode WAV/AIFF/FLAC/OGG, rééchantillonne automatiquement à 48 kHz,
-rogne les deux côtés à la même durée, applique les mêmes fondus et abaisse les
-deux côtés ensemble si l’un dépasse le plafond de crête. La clé JSON conserve
-la provenance, la licence, le taux d’échantillonnage original et le niveau de
-correspondance de chaque référence.
+The tool decodes WAV/AIFF/FLAC/OGG, resamples to 48 kHz automatically, trims
+both sides to the same duration, applies the same fades and lowers both sides
+together if either exceeds the peak ceiling. The JSON key keeps the provenance,
+license, original sample rate and match level of every reference.

@@ -1,63 +1,62 @@
-# Exports de diagnostic audio
+# Audio diagnostic exports
 
-Le paquet Windows livre aussi `tools/EngineLabOfflineAudioExporter.exe`. Depuis
-la racine extraite, un export directement exploitable s'obtient avec :
+The Windows package also ships `tools/EngineLabOfflineAudioExporter.exe`. From
+the extracted root, a directly usable export is obtained with:
 
 ```powershell
 .\tools\EngineLabOfflineAudioExporter.exe --catalog-root . --engine K20 --output .\exports\k20 --format float32 --stems
 ```
 
-Quand l'option de stems est activee, l'export offline ecrit :
+When the stems option is enabled, the offline export writes:
 
-- `master.wav` ;
-- six buses sources (`stem_combustion`, `stem_exhaust_dry`,
+- `master.wav`;
+- six source buses (`stem_combustion`, `stem_exhaust_dry`,
   `stem_exhaust_ir`, `stem_intake`, `stem_forced_induction`,
-  `stem_mechanical`) ;
-- `premaster.wav`, somme des six buses dans l'ordre ci-dessus ;
-- `master_processing_delta.wav`, difference entre le master livre et le
-  premaster ;
+  `stem_mechanical`);
+- `premaster.wav`, the sum of the six buses in the order above;
+- `master_processing_delta.wav`, the difference between the shipped master and
+  the premaster;
 - `engine-order-map.csv`.
 
-Deux sous-stems diagnostiques supplémentaires décomposent le bus sec sans être
-ajoutés une seconde fois au prémaster :
+Two extra diagnostic sub-stems break down the dry bus without being added a
+second time to the premaster:
 
-- `stem_exhaust_pressure_wave.wav` contient l'onde rayonnée par le réseau
-  (blowdown, réflexions et éventuel afterfire) ;
-- `stem_exhaust_jet.wav` contient uniquement la turbulence de sortie, après le
-  gain de jet auteur.
+- `stem_exhaust_pressure_wave.wav` holds the wave radiated by the network
+  (blowdown, reflections and any afterfire);
+- `stem_exhaust_jet.wav` holds only the outlet turbulence, after the authored
+  jet gain.
 
-Leur somme reconstruit `stem_exhaust_dry.wav`. Le manifeste publie l'erreur
-float dans `exhaust_dry_decomposition.sum_to_exhaust_dry_max_abs_error`. Cette
-séparation permet de décider à l'écoute si un excès d'aigu vient de la source
-de pression ou du bruit de jet sans changer le master.
+Their sum rebuilds `stem_exhaust_dry.wav`. The manifest publishes the float
+error in `exhaust_dry_decomposition.sum_to_exhaust_dry_max_abs_error`. This
+split lets you decide by ear whether excess treble comes from the pressure
+source or the jet noise, without changing the master.
 
-La relation auditable est :
+The auditable relation is:
 
 `master = premaster + master_processing_delta`
 
-Le manifeste schema 4 enregistre l'erreur absolue maximale des deux
-reconstructions dans le domaine float avant encodage WAV. En PCM24, chaque
-fichier est quantifie independamment : une reconstruction relue depuis les WAV
-peut donc differer de quelques LSB, ce qui est une limite de representation et
-non une source audio manquante. Utiliser `float32` pour une analyse numerique
-sans cette ambiguite.
+The schema 4 manifest records the maximum absolute error of both
+reconstructions in the float domain, before WAV encoding. In PCM24, each file is
+quantised independently: a reconstruction read back from the WAVs may therefore
+differ by a few LSB, which is a representation limit and not a missing audio
+source. Use `float32` for numerical analysis without that ambiguity.
 
-Le bloc `path_diagnostics` sépare aussi les quatre étages susceptibles de
-façonner la sortie : saturation de voicing, AGC lent, soft-limiter 2x et clamp
-de dernier recours. `maximum_post_limiter_sample_magnitude` est exactement la
-crête des échantillons au taux hôte après le soft-limiter et juste avant le
-clamp final. Elle n'est volontairement pas appelée « true peak » : aucun
-mesureur inter-échantillon normalisé n'est exécuté dans le callback temps réel.
+The `path_diagnostics` block also separates the four stages that can shape the
+output: voicing saturation, slow AGC, 2x soft limiter and last-resort clamp.
+`maximum_post_limiter_sample_magnitude` is exactly the sample peak at the host
+rate after the soft limiter and just before the final clamp. It is deliberately
+not called "true peak": no standardised inter-sample meter runs in the
+real-time callback.
 
-La carte d'ordres emploie des fenetres de 1/12 s, recouvrees a 50 %, avec une
-fenetre de Hann et une evaluation de Goertzel aux ordres 0.5 a 24 par pas de
-0.5. Chaque ligne contient le temps central, le regime moyen mesure, l'ordre,
-sa frequence et son niveau dBFS. Le regime vient de la simulation pendant le
-rendu ; il n'est pas estime a partir du son.
+The order map uses 1/12 s windows with 50 % overlap, a Hann window and a
+Goertzel evaluation at orders 0.5 to 24 in steps of 0.5. Each row holds the
+centre time, the measured mean engine speed, the order, its frequency and its
+level in dBFS. The engine speed comes from the simulation during the render;
+it is not estimated from the sound.
 
-Le bloc `audio_physics` du manifeste distingue configuration et activite
-mesuree : COV/correlation auteurs, afterfire active, rupteur humide, minimum et
-maximum des multiplicateurs de cycle, nombre d'echantillons de variation,
-chaleur afterfire maximale, masse de carburant reellement brulee et nombre de
-silencieux poreux. Cela evite de conclure qu'une case cochee a produit un effet
-quand la ligne etait froide ou qu'aucun carburant imbrule n'etait disponible.
+The manifest's `audio_physics` block distinguishes configuration from measured
+activity: authored COV/correlation, afterfire enabled, wet rev limiter, minimum
+and maximum cycle multipliers, number of variation samples, maximum afterfire
+heat, fuel mass actually burned and number of porous mufflers. This avoids
+concluding that a ticked box produced an effect when the line was cold or no
+unburned fuel was available.

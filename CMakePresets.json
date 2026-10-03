@@ -28,7 +28,7 @@
     {
       "name": "ninja-release",
       "displayName": "Ninja Release (inner loop; NOT the authoritative tree)",
-      "description": "Fast compile-error and targeted-test loop. Gates, commits and every performance number belong to windows-vs2022 -- see CLAUDE.md. Requires `. scripts/vsenv.ps1` first.",
+      "description": "Fast compile-error and targeted-test loop. Gates, commits and every performance number belong to windows-vs2022 -- see .claude/CLAUDE.md. Requires `. scripts/vsenv.ps1` first.",
       "generator": "Ninja",
       "binaryDir": "${sourceDir}/out/build/ninja-release",
       "cacheVariables": {

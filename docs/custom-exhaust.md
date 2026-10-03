@@ -1,56 +1,52 @@
-# Concevoir un échappement personnalisé
+# Designing a custom exhaust
 
-Chaque `ExhaustPathConfig` peut contenir un `graph` optionnel. Ce graphe décrit
-un réseau orienté acyclique de composants entre les cylindres et une ou
-plusieurs sorties. Il est sérialisé en JSON et YAML et compilé par
-`ExhaustGraph` en routes utilisées par les outils de diagnostic historiques.
-En production, `ExhaustNetworkLayout` conserve chaque composant dans le solveur
-gazeux quasi-1D et `AcousticExhaustNetwork` compile le même DAG en guides
-bidirectionnels pour la haute bande. Il n'existe donc plus de réduction globale
-du réseau à une seule restriction ou à un seul tube acoustique par chemin.
+Each `ExhaustPathConfig` can hold an optional `graph`. This graph describes a
+directed acyclic network of components between the cylinders and one or more
+outlets. It is serialised as JSON and YAML and compiled by `ExhaustGraph` into
+routes used by the historical diagnostic tools. In production,
+`ExhaustNetworkLayout` keeps every component in the quasi-1D gas solver and
+`AcousticExhaustNetwork` compiles the same DAG into bidirectional guides for the
+high band. The network is therefore never reduced globally to a single
+restriction or a single acoustic tube per path.
 
-Le bouton **ECHAP. PRO** ouvre un concepteur graphique pour les opérations les
-plus courantes. JSON/YAML reste le format de persistance et permet encore les
-modifications structurelles que l'interface ne couvre pas. Un script `.els`
-peut utiliser ce fichier comme `base`, mais le DSL ne crée pas encore les nœuds
-du graphe lui-même.
+The **EXHAUST PRO** button opens a graphical designer for the most common
+operations. JSON/YAML stays the persistence format and still allows the
+structural changes the interface does not cover. A `.els` script can use this
+file as its `base`, but the DSL does not create the graph nodes itself yet.
 
-## Utiliser le concepteur
+## Using the designer
 
-La fenêtre charge une copie de travail : ajouter, supprimer ou modifier un
-composant ne touche pas le moteur qui tourne tant que la copie n'est pas
-appliquée.
+The window loads a working copy: adding, removing or editing a component does
+not touch the running engine until the copy is applied.
 
-1. Choisir un chemin dans la liste. **+ CHEMIN** extrait le cylindre choisi avec
-   sa branche de graphe ; **- CHEMIN** transfère ses cylindres vers une
-   destination avant suppression. Le sélecteur **DEPLACER** réaffecte un
-   cylindre entre deux chemins sans créer de doublon. L'IR reste dans le fichier
-   moteur.
-2. Si le chemin n'a pas encore de graphe, sélectionner **GENERER DEPUIS
-   LEGACY**. Un primaire par cylindre, une jonction, un silencieux et une sortie
-   sont créés à partir de `geometry`.
-3. Ajouter les composants, puis éditer leur type, ID, dimensions, restriction,
-   résonance, gain et coefficient de décharge. Le canevas utilise un placement
-   automatique et un clic sur un nœud sélectionne le composant correspondant.
-4. Créer les connexions orientées dans l'ordre du flux et affecter chaque
-   cylindre à son premier composant. Sur un X-pipe, le concepteur attribue le
-   premier port libre `0`, puis `1`, et affiche ce port dans la liste. Supprimer
-   puis recréer les deux liaisons permet d'inverser l'appariement.
-5. Sélectionner **VALIDER ET APPLIQUER**. La validation complète décrite plus
-   bas s'exécute avant toute modification du moteur.
-6. Utiliser **EXPORTER** dans la fenêtre principale pour enregistrer la
-   configuration appliquée en JSON ou YAML.
+1. Pick a path in the list. **+ PATH** extracts the chosen cylinder with its
+   graph branch; **- PATH** moves its cylinders to a destination before
+   deletion. The **MOVE** selector reassigns a cylinder between two paths
+   without creating a duplicate. The IR stays in the engine file.
+2. If the path has no graph yet, select **GENERATE FROM LEGACY**. One primary
+   per cylinder, a junction, a muffler and an outlet are created from
+   `geometry`.
+3. Add the components, then edit their type, ID, dimensions, restriction,
+   resonance, gain and discharge coefficient. The canvas uses automatic layout,
+   and clicking a node selects the matching component.
+4. Create the directed connections in flow order and assign each cylinder to
+   its first component. On an X-pipe, the designer assigns the first free port
+   `0`, then `1`, and shows that port in the list. Deleting then recreating both
+   links swaps the pairing.
+5. Select **VALIDATE AND APPLY**. The complete validation described below runs
+   before any change to the engine.
+6. Use **EXPORT** in the main window to save the applied configuration as JSON
+   or YAML.
 
-Une erreur conserve la copie pour correction et laisse le runtime courant
-inchangé. Une application valide est un changement structurel : elle remplace
-le runtime, réinitialise le régime et les états thermiques, et n'est pas
-autorisée pendant un passage au banc. Ce n'est donc pas le hot reload sans reset
-du tuner ECU.
+An error keeps the copy for correction and leaves the current runtime
+unchanged. A valid application is a structural change: it replaces the runtime,
+resets engine speed and thermal states, and is not allowed during a dyno run.
+It is therefore not the no-reset hot reload of the ECU tuner.
 
-## Exemple YAML
+## YAML example
 
-Le bloc suivant remplace `engine.exhaust_paths` pour un I4 dont les cylindres
-ont les identifiants 1 à 4 :
+The following block replaces `engine.exhaust_paths` for an I4 whose cylinders
+have the identifiers 1 to 4:
 
 ```yaml
 exhaust_paths:
@@ -91,371 +87,363 @@ exhaust_paths:
         - { from_component_id: 401, to_component_id: 501 }
 ```
 
-Les mêmes clés existent en JSON sous `engine.exhaust_paths[].graph`.
+The same keys exist in JSON under `engine.exhaust_paths[].graph`.
 
-### Garnissage poreux mesure
+### Measured porous packing
 
-ECHAP PRO expose maintenant les trois champs ci-dessous lorsqu'un composant
-`muffler` est selectionne. **GARNISSAGE DEMO** remplit 24 000 Pa.s/m2, 35 mm et
-0,28 ; **BYPASS GARNISSAGE** remet les trois champs a zero. Une mise a jour est
-un changement structurel et redemarre le moteur lors de l'application du graphe.
+EXHAUST PRO exposes the three fields below when a `muffler` component is
+selected. **DEMO PACKING** fills in 24,000 Pa·s/m², 35 mm and 0.28;
+**BYPASS PACKING** sets all three fields back to zero. An update is a
+structural change and restarts the engine when the graph is applied.
 
-Un composant `muffler` peut maintenant decrire son absorption avec trois
-mesures independantes de la perte de charge :
+A `muffler` component can describe its absorption with three measurements
+independent of the pressure loss:
 
-- `packing_flow_resistivity_pa_s_m2`, resistivite au flux du materiau poreux ;
-- `packing_thickness_mm`, epaisseur radiale du garnissage ;
-- `perforated_open_area_ratio`, fraction ouverte du tube perfore, entre 0 et 1.
+- `packing_flow_resistivity_pa_s_m2`, the flow resistivity of the porous
+  material;
+- `packing_thickness_mm`, the radial thickness of the packing;
+- `perforated_open_area_ratio`, the open fraction of the perforated tube,
+  between 0 and 1.
 
-Les trois champs doivent etre strictement positifs ensemble et ne sont valides
-que sur un `muffler`. Un silencieux garni distingue alors explicitement deux
-geometries :
+All three fields must be strictly positive together and are only valid on a
+`muffler`. A packed muffler then explicitly distinguishes two geometries:
 
-- `diameter_mm` et `outlet_diameter_mm` decrivent le noyau perfore qui porte le
-  debit moyen et le delai de propagation ;
-- `volume_l` decrit le volume brut du corps exterieur. Il doit etre strictement
-  superieur au volume balaye par le noyau. La difference est l'anneau ferme
-  rempli de materiau, jamais une section de debit supplementaire.
+- `diameter_mm` and `outlet_diameter_mm` describe the perforated core that
+  carries the mean flow and the propagation delay;
+- `volume_l` describes the gross volume of the outer body. It must be strictly
+  greater than the volume swept by the core. The difference is the closed
+  annulus filled with material, never an extra flow area.
 
-En leur absence, le filtre compile en identite exacte : EngineLab n'invente pas
-une absorption a partir de `restriction`, de `acoustic_gain` ou du volume du
-corps. Lorsqu'ils sont renseignes, l'impedance de surface suit Delany-Bazley et
-la perte de propagation reste passive. La fraction ouverte couple aussi une
-part du volume annulaire aux deux extremites du noyau sous forme de compliance
-acoustique passive. Faire varier le volume du corps change donc le transfert
-sans elargir le conduit de gaz ni ajouter de maille. Ces valeurs doivent
-provenir de la fiche du materiau ou d'une mesure du silencieux.
+Without them, the filter compiles to an exact identity: EngineLab does not
+invent absorption from `restriction`, `acoustic_gain` or the body volume. When
+they are provided, the surface impedance follows Delany-Bazley and the
+propagation loss stays passive. The open fraction also couples part of the
+annular volume to both ends of the core as passive acoustic compliance.
+Changing the body volume therefore changes the transfer without widening the
+gas duct or adding a cell. These values must come from the material data sheet
+or a measurement of the muffler.
 
-Ce modele est volontairement d'ordre reduit : il represente le mode de
-compression dominant du volume annulaire et la perte du materiau. Il ne simule
-pas les trous un par un, ni leur inertance, car le graphe ne possede pas encore
-le diametre des perforations ou l'epaisseur de la tole. Ajouter ces effets sans
-ces donnees serait un accordage sonore cache, pas une correction physique.
+This model is deliberately reduced-order: it represents the dominant
+compression mode of the annular volume and the loss of the material. It does
+not simulate the holes one by one, nor their inertance, because the graph does
+not yet hold the perforation diameter or the sheet thickness. Adding those
+effects without that data would be hidden sound tuning, not a physical
+correction.
 
-Les memes trois champs existent sur une geometrie scalaire sans `graph`, avec
-les noms `muffler_packing_flow_resistivity_pa_s_m2`,
-`muffler_packing_thickness_mm` et `muffler_perforated_open_area_ratio`. Ils sont
-copies dans le vrai noeud muffler lors de la compilation ou de **GENERER DEPUIS
-LEGACY**. `cp2_full_system` et `cp2_absorptive_lab` ont la meme geometrie et la
-meme restriction, mais des proprietes de materiau estimees differentes pour une
-A/B controlee. EngineLab n'en deduit jamais depuis le nom d'un silencieux.
+The same three fields exist on a scalar geometry without `graph`, under the
+names `muffler_packing_flow_resistivity_pa_s_m2`,
+`muffler_packing_thickness_mm` and `muffler_perforated_open_area_ratio`. They
+are copied into the real muffler node during compilation or **GENERATE FROM
+LEGACY**. `cp2_full_system` and `cp2_absorptive_lab` share the same geometry
+and the same restriction, but different estimated material properties for a
+controlled A/B. EngineLab never infers them from a muffler's name.
 
-### Monolithe de catalyseur homogénéisé
+### Homogenised catalyst monolith
 
-Un composant `catalyst` peut décrire explicitement son substrat cellulaire avec
-trois champs :
+A `catalyst` component can describe its cellular substrate explicitly with
+three fields:
 
-- `catalyst_cell_density_cpsi`, densité de cellules par pouce carré ;
-- `catalyst_open_area_ratio`, fraction de surface frontale réellement ouverte ;
-- `catalyst_substrate_volumetric_heat_capacity_j_m3_k`, capacité thermique du
-  solide par volume de substrat occupé.
+- `catalyst_cell_density_cpsi`, cell density per square inch;
+- `catalyst_open_area_ratio`, the fraction of frontal area that is really
+  open;
+- `catalyst_substrate_volumetric_heat_capacity_j_m3_k`, heat capacity of the
+  solid per volume of occupied substrate.
 
-Les trois valeurs doivent être nulles ensemble ou positives ensemble. Zéro
-conserve exactement le catalyseur historique : un conduit ordinaire portant la
-longueur, le diamètre et le coefficient `restriction`. Quand le substrat est
-renseigné, la validation accepte 25 à 5 000 cpsi, une aire ouverte de 0,05 à
-0,99 et exige qu'au moins un pas de cellule tienne dans le diamètre du boîtier.
-ECHAP PRO propose 400 cpsi, 0,80 et 2,0 MJ/m3/K comme point de départ éditable ;
-ces nombres ne sont pas déduits du nom du moteur ni appliqués aux anciens
-catalogues.
+All three values must be zero together or positive together. Zero keeps the
+historical catalyst exactly: an ordinary duct carrying the length, the diameter
+and the `restriction` coefficient. When the substrate is provided, validation
+accepts 25 to 5,000 cpsi and an open area of 0.05 to 0.99, and requires at least
+one cell pitch to fit in the housing diameter. EXHAUST PRO offers 400 cpsi, 0.80
+and 2.0 MJ/m³/K as an editable starting point; these numbers are neither
+inferred from the engine name nor applied to older catalogues.
 
-Le modèle suppose des canaux carrés. Avec `N` en cpsi et `phi` comme fraction
-ouverte :
+The model assumes square channels. With `N` in cpsi and `phi` as the open
+fraction:
 
 ```text
-pas        = 0,0254 / sqrt(N)
-largeur    = pas * sqrt(phi)
-Dh canal   = largeur
-aire débit = aire boîtier * phi
+pitch      = 0.0254 / sqrt(N)
+width      = pitch * sqrt(phi)
+channel Dh = width
+flow area  = housing area * phi
 ```
 
-Le faisceau complet reste **un seul conduit quasi-1D**. L'aire ouverte fixe
-l'admittance de débit et le diamètre hydraulique d'un canal fixe le frottement
-distribué et les pertes thermo-visqueuses acoustiques. Le nombre de cellules du
-solveur gaz et le nombre de lignes audio restent donc identiques au bypass,
-quelle que soit la valeur cpsi. Chaque cellule axiale agrège aussi la surface
-mouillée de tous les canaux, la capacité du solide et celle de l'enveloppe
-métallique dans un unique état thermique. Ce modèle ne prétend pas calculer la
-chimie de dépollution, la conduction radiale interne ni chaque canal réel.
+The complete bundle stays **a single quasi-1D duct**. The open area sets the
+flow admittance, and the hydraulic diameter of one channel sets the distributed
+friction and the thermo-viscous acoustic losses. The number of gas solver cells
+and the number of audio lines therefore stay identical to the bypass, whatever
+the cpsi value. Each axial cell also aggregates the wetted area of all
+channels, the heat capacity of the solid and that of the metal shell into a
+single thermal state. This model does not claim to compute the emission
+chemistry, internal radial conduction or each real channel.
 
-## Types de composant
+## Component types
 
-| Type | Rôle compilé |
+| Type | Compiled role |
 |---|---|
-| `pipe` | longueur, diamètre, perte géométrique et résonance quart d'onde |
-| `merge` | rassemble au moins deux entrées vers une sortie |
-| `splitter` | partage une entrée vers au moins deux branches |
-| `resonator` | conduit inline s'il possède une sortie ; branche acoustique fermée s'il n'en possède aucune |
-| `muffler` | chambre/conduit inline et, si renseigné, garnissage poreux distribué |
-| `catalyst` | conduit physique et, si renseigné, substrat cellulaire homogénéisé passif |
-| `outlet` | termine une route et applique diamètre/coefficient de décharge |
-| `crossover` | X-pipe compact à deux entrées/deux sorties appariées, avec matrice acoustique passive |
+| `pipe` | length, diameter, geometric loss and quarter-wave resonance |
+| `merge` | gathers at least two inlets into one outlet |
+| `splitter` | splits one inlet into at least two branches |
+| `resonator` | inline duct if it has an outlet; closed acoustic side branch if it has none |
+| `muffler` | inline chamber/duct and, if provided, distributed porous packing |
+| `catalyst` | physical duct and, if provided, a passive homogenised cellular substrate |
+| `outlet` | ends a route and applies diameter/discharge coefficient |
+| `crossover` | compact X-pipe with two paired inlets/two outlets and a passive acoustic matrix |
 
-Chaque composant possède :
+Each component has:
 
-- `id`, unique à l'intérieur du chemin ;
-- `length_mm`, `diameter_mm`, éventuellement `outlet_diameter_mm` et
-  `volume_l` ;
-- `restriction`, coefficient de perte additionnel sans dimension ;
-- `resonance_hz`, accord de référence d'un `resonator` terminal ; zéro conserve
-  sa longueur géométrique ;
-- `acoustic_gain`, conservé pour le rendu audio de secours historique, mais
-  jamais appliqué au guide d'onde physique passif ;
-- `discharge_coefficient`, principalement utilisé par la sortie.
-- `crossover_coupling`, uniquement sur `crossover`, amplitude de puissance
-  croisée `k` entre 0 et 1.
+- `id`, unique within the path;
+- `length_mm`, `diameter_mm`, and optionally `outlet_diameter_mm` and
+  `volume_l`;
+- `restriction`, an additional dimensionless loss coefficient;
+- `resonance_hz`, the reference tuning of a terminal `resonator`; zero keeps its
+  geometric length;
+- `acoustic_gain`, kept for the historical fallback audio render, but never
+  applied to the passive physical waveguide;
+- `discharge_coefficient`, mainly used by the outlet;
+- `crossover_coupling`, only on `crossover`, the cross-power amplitude `k`
+  between 0 and 1.
 
-La restriction finale additionne la perte géométrique calculée et
-`restriction`. Elle change le débit et la pression calculés, donc peut modifier
-indirectement la source acoustique physique ; elle n'est pas encore une
-impédance acoustique complexe. Modifier seulement `acoustic_gain` ne change pas
-le réseau physique de production. Ce champ n'agit que si le rendu doit utiliser
-son ancien chemin reconstruit de secours.
+The final restriction adds the computed geometric loss and `restriction`. It
+changes the computed flow and pressure, so it can indirectly change the
+physical acoustic source; it is not yet a complex acoustic impedance. Changing
+only `acoustic_gain` does not change the production physical network. That
+field only acts if the render has to use its old reconstructed fallback path.
 
-### X-pipe directionnel
+### Directional X-pipe
 
-Un X-pipe n'est pas un `merge` suivi d'un `splitter`. Cette ancienne écriture
-forme un plénum commun idéal : une onde du banc 0 et la même onde du banc 1
-deviennent exactement identiques en aval. Le type `crossover` du schéma 9 garde
-donc quatre ports explicites :
+An X-pipe is not a `merge` followed by a `splitter`. That old notation forms an
+ideal common plenum: a wave from bank 0 and the same wave from bank 1 become
+exactly identical downstream. The schema 9 `crossover` type therefore keeps
+four explicit ports:
 
 ```yaml
 - { id: 200, type: crossover, length_mm: 0, diameter_mm: 80,
     volume_l: 0, restriction: 0.06, crossover_coupling: 0.30 }
-# entree du banc 0 / banc 1
+# inlet from bank 0 / bank 1
 - { from_component_id: 110, to_component_id: 200, to_port: 0 }
 - { from_component_id: 120, to_component_id: 200, to_port: 1 }
-# sortie droite 0 / 1
+# straight-through outlet 0 / 1
 - { from_component_id: 200, from_port: 0, to_component_id: 210 }
 - { from_component_id: 200, from_port: 1, to_component_id: 220 }
 ```
 
-Chaque port doit être relié une fois, par un composant de conduit fini. Le X
-lui-même exige `length_mm: 0` et `volume_l: 0` : les longueurs réellement
-mesurables avant et après l'intersection appartiennent aux quatre tubes voisins,
-ce qui évite une longueur cachée ou comptée deux fois. Une connexion directe à
-un cylindre, merge, splitter ou autre crossover est refusée.
+Each port must be connected once, by a finite duct component. The X itself
+requires `length_mm: 0` and `volume_l: 0`: the really measurable lengths before
+and after the intersection belong to the four neighbouring tubes, which avoids
+a hidden or double-counted length. A direct connection to a cylinder, merge,
+splitter or another crossover is rejected.
 
-Dans les coordonnées de pression normalisées par la puissance
-`q=sqrt(Y)*p`, avec `t=sqrt(1-k²)`, l'ordre des ports étant entrée 0, entrée 1,
-sortie 0, sortie 1 :
-
-```text
-q'_entree0 =  t q_sortie0 + k q_sortie1
-q'_entree1 = -k q_sortie0 + t q_sortie1
-q'_sortie0 =  t q_entree0 - k q_entree1
-q'_sortie1 =  k q_entree0 + t q_entree1
-```
-
-La matrice est réelle, orthogonale et réciproque : elle conserve exactement
-`sum(Y p²)` et n'ajoute aucun gain. `k=0` donne deux passages droits séparés ;
-`k=1` échange les sorties. Le signe du mode croisé conserve la parité modale,
-au lieu de sommer quatre pressions en phase dans un nœud commun.
-
-Le solveur gaz basse bande conserve un seul volume bien mélangé pour
-l'intersection. En l'absence de volume auteur, il dérive `2 A d`, soit deux
-sections de tube d'un diamètre. Cette dérivation évite de sous-estimer de moitié
-un composant quatre ports et maintient sa longueur CFL `V/sum(A_port)` à `d/2`.
-Le coût audio reste quatre mélanges par échantillon, sans voix, allocation,
-maille ou ligne à retard supplémentaire dans le X lui-même.
-Les quatre `sqrt(Y)` sont recalculées uniquement quand l'état gaz cible est
-publié au début d'un bloc, puis interpolées par échantillon ; elles ne sont pas
-inutilement recalculées à 48 kHz.
-
-`crossover_coupling` doit être une calibration mesurée ou estimée et étiquetée
-comme telle. Le modèle actuel est compact et indépendant de la fréquence : il
-ne déduit pas le couplage d'un angle, d'une longueur de recouvrement ou d'une
-géométrie 3D qui ne figurent pas encore dans le schéma.
-
-### Résonateur terminal
-
-Un `resonator` relié depuis un composant, sans aucune sortie et sans mapping de
-cylindre, est une branche latérale scellée. Elle n'ajoute aucune route de débit
-moyen. L'audio ajoute une ligne bidirectionnelle avec une réflexion de pression
-`+1` à son extrémité. Un `volume_l` positif transforme cette extrémité en cavité
-compliant passive ; zéro donne une branche quart d'onde rigide.
-
-Avec `resonance_hz = 0`, `length_mm` est la longueur acoustique. Une fréquence
-positive remplace cette longueur, à la température de référence du graphe, par
-`c/(4f)`. Le milieu simulé continue ensuite à faire varier la vitesse du son et
-donc l'accord. Il n'y a ni oscillateur ajouté, ni filtre correctif. Si une
-cavité est également configurée, la fréquence saisie accorde la longueur du col
-et non la résonance finale de l'ensemble col-cavité.
-
-Le `discharge_coefficient` de la sortie est un coefficient de contraction
-d'écoulement. Il est appliqué une seule fois, comme section effective `A·Cd` de
-la sortie, et n'entre donc plus comme facteur `1/Cd²` dans la restriction : ce
-double comptage réduisait une seconde fois la même section effective et
-sous-estimait le débit de sortie.
-
-### Section variable
-
-`diameter_mm` est le diamètre à l'entrée du composant.
-`outlet_diameter_mm` est facultatif : zéro conserve une section constante,
-tandis qu'une valeur non nulle décrit un raccord conique dont le rayon varie
-linéairement. Le volume implicite est celui du tronc de cône,
+In power-normalised pressure coordinates `q=sqrt(Y)*p`, with `t=sqrt(1-k²)`,
+the port order being inlet 0, inlet 1, outlet 0, outlet 1:
 
 ```text
-V = pi L (r_entree² + r_entree r_sortie + r_sortie²) / 3
+q'_inlet0  =  t q_outlet0 + k q_outlet1
+q'_inlet1  = -k q_outlet0 + t q_outlet1
+q'_outlet0 =  t q_inlet0  - k q_inlet1
+q'_outlet1 =  k q_inlet0  + t q_inlet1
 ```
 
-et non une moyenne arbitraire des diamètres. Le maillage quasi-1D emploie les
-aires exactes de chaque face, pondère les flux conservatifs par ces aires et
-ajoute le terme géométrique `p dA/dx` à l'équation de quantité de mouvement.
-Une pression uniforme au repos reste donc un équilibre exact. Les aires
-d'entrée et de sortie sont aussi conservées jusqu'au réseau acoustique pour que
-chaque jonction utilise sa propre admittance `A/(rho c)`.
+The matrix is real, orthogonal and reciprocal: it conserves `sum(Y p²)` exactly
+and adds no gain. `k=0` gives two separate straight passages; `k=1` swaps the
+outlets. The sign of the cross mode preserves the modal parity, instead of
+summing four in-phase pressures in a common node.
 
-Le concepteur graphique expose les deux diamètres. Les documents antérieurs
-qui ne possèdent pas `outlet_diameter_mm` gardent exactement leur conduit
-cylindrique historique.
+The low-band gas solver keeps a single well-mixed volume for the intersection.
+Without an authored volume, it derives `2 A d`, i.e. two tube sections one
+diameter long. This avoids underestimating a four-port component by half and
+keeps its CFL length `V/sum(A_port)` at `d/2`. The audio cost stays four mixes
+per sample, with no extra voice, allocation, cell or delay line in the X itself.
+The four `sqrt(Y)` are only recomputed when the target gas state is published at
+the start of a block, then interpolated per sample; they are not needlessly
+recomputed at 48 kHz.
 
-## Règles de connexion
+`crossover_coupling` must be a measured calibration, or an estimate labelled as
+such. The current model is compact and frequency-independent: it does not
+infer the coupling from an angle, an overlap length or a 3D geometry that the
+schema does not hold yet.
 
-La validation impose :
+### Terminal resonator
 
-- un à huit chemins, chaque cylindre affecté exactement une fois ;
-- 1 à 256 composants et au plus 1 024 connexions par graphe ;
-- au plus 4 096 routes développées entre cylindres et sorties ;
-- au plus huit `resonator` terminaux sur l'ensemble du moteur, borne explicite
-  du nombre de lignes de délai acoustiques supplémentaires ;
-- un ID de composant unique et des arêtes uniques sans auto-boucle ;
-- un mapping unique pour chaque cylindre du chemin ;
-- une entrée et une sortie pour `pipe`, `muffler`, `catalyst` et un
-  `resonator` inline ;
-- exactement une connexion composant entrante, aucun mapping cylindre et
-  aucune sortie pour un `resonator` utilisé comme branche latérale ;
-- au moins deux entrées et exactement une sortie pour `merge` ;
-- exactement une entrée et au moins deux sorties pour `splitter` ;
-- au moins une entrée et aucune sortie pour `outlet` ;
-- aucun cycle, aucun composant inaccessible et chaque branche de débit terminée
-  par une sortie (les `resonator` terminaux sont les seules feuilles scellées).
+A `resonator` connected from a component, with no outlet and no cylinder
+mapping, is a sealed side branch. It adds no mean-flow route. The audio adds a
+bidirectional line with a `+1` pressure reflection at its end. A positive
+`volume_l` turns that end into a passive compliant cavity; zero gives a rigid
+quarter-wave branch.
 
-Une erreur fait échouer l'import complet ; l'application ne lance pas un
-réseau partiellement valide.
+With `resonance_hz = 0`, `length_mm` is the acoustic length. A positive
+frequency replaces that length, at the graph's reference temperature, with
+`c/(4f)`. The simulated medium then keeps varying the speed of sound and
+therefore the tuning. There is no added oscillator and no corrective filter. If
+a cavity is also configured, the entered frequency tunes the neck length and
+not the final resonance of the neck-cavity assembly.
 
-## Diagnostics du compilateur
+The outlet's `discharge_coefficient` is a flow contraction coefficient. It is
+applied once, as the effective outlet area `A·Cd`, and therefore no longer
+enters the restriction as a `1/Cd²` factor: that double counting reduced the
+same effective area a second time and underestimated the outlet flow.
 
-`ExhaustGraph::makeForEngine` rend toujours un graphe exploitable, y compris
-lorsqu'il reçoit une topologie que la validation applicative aurait refusée : le
-solveur gazeux et l'audio doivent rester sûrs en toute circonstance. Mais chaque
-repli qu'il prend écarte une partie de l'intention de l'auteur, et il le signale
-désormais au lieu de substituer un défaut en silence. `ExhaustGraph::diagnostics()`
-est vide quand la topologie a été compilée telle qu'elle est écrite.
+### Variable cross-section
 
-| Diagnostic | Sens | `relatedId` |
+`diameter_mm` is the diameter at the component inlet. `outlet_diameter_mm` is
+optional: zero keeps a constant area, while a non-zero value describes a
+conical fitting whose radius varies linearly. The implicit volume is that of
+the truncated cone,
+
+```text
+V = pi L (r_inlet² + r_inlet r_outlet + r_outlet²) / 3
+```
+
+and not an arbitrary average of the diameters. The quasi-1D mesh uses the exact
+area of each face, weights the conservative fluxes by those areas and adds the
+geometric term `p dA/dx` to the momentum equation. A uniform pressure at rest
+therefore stays an exact equilibrium. The inlet and outlet areas are also kept
+all the way to the acoustic network so that each junction uses its own
+admittance `A/(rho c)`.
+
+The graphical designer exposes both diameters. Older documents without
+`outlet_diameter_mm` keep exactly their historical cylindrical duct.
+
+## Connection rules
+
+Validation enforces:
+
+- one to eight paths, each cylinder assigned exactly once;
+- 1 to 256 components and at most 1,024 connections per graph;
+- at most 4,096 expanded routes between cylinders and outlets;
+- at most eight terminal `resonator`s across the whole engine, an explicit
+  bound on the number of extra acoustic delay lines;
+- a unique component ID and unique edges without self-loops;
+- a unique mapping for each cylinder of the path;
+- one inlet and one outlet for `pipe`, `muffler`, `catalyst` and an inline
+  `resonator`;
+- exactly one incoming component connection, no cylinder mapping and no outlet
+  for a `resonator` used as a side branch;
+- at least two inlets and exactly one outlet for `merge`;
+- exactly one inlet and at least two outlets for `splitter`;
+- at least one inlet and no outlet for `outlet`;
+- no cycle, no unreachable component and every flow branch ending in an outlet
+  (terminal `resonator`s are the only sealed leaves).
+
+An error fails the whole import; the application never runs a partially valid
+network.
+
+## Compiler diagnostics
+
+`ExhaustGraph::makeForEngine` always returns a usable graph, even when it
+receives a topology that application validation would have rejected: the gas
+solver and the audio must stay safe in every circumstance. But every fallback
+it takes discards part of the author's intent, and it now reports it instead of
+silently substituting a default. `ExhaustGraph::diagnostics()` is empty when the
+topology was compiled as written.
+
+| Diagnostic | Meaning | `relatedId` |
 |---|---|---|
-| `topologyRejected` | un cylindre n'est pas couvert exactement une fois ; les chemins écrits ont été remplacés par un chemin unique généré | le cylindre fautif |
-| `routeLimitReached` | la limite de 4 096 routes est atteinte ; les routes suivantes ne sont pas compilées | le cylindre en cours |
-| `unresolvedRestriction` | une route n'a pas de restriction équivalente finie (branche pendante ou cycle) et s'est vu imputer le maximum | le cylindre concerné |
-| `nodeIdSpaceExhausted` | l'espace d'ID générés est épuisé | 0 |
-| `acousticBranchLimitReached` | plus de huit branches acoustiques ont été fournies sans passer par la validation ; les suivantes sont omises | premier composant omis |
+| `topologyRejected` | a cylinder is not covered exactly once; the written paths were replaced by a single generated path | the faulty cylinder |
+| `routeLimitReached` | the 4,096-route limit is reached; later routes are not compiled | the current cylinder |
+| `unresolvedRestriction` | a route has no finite equivalent restriction (dangling branch or cycle) and was assigned the maximum | the cylinder concerned |
+| `nodeIdSpaceExhausted` | the space of generated IDs is exhausted | 0 |
+| `acousticBranchLimitReached` | more than eight acoustic branches were provided without going through validation; the extra ones are omitted | first omitted component |
 
-`topologyRejected` est le cas à surveiller : il fait disparaître tout un
-échappement personnalisé au profit d'un collecteur générique. À l'oreille, c'est
-indiscernable d'une conception simplement décevante.
+`topologyRejected` is the one to watch: it makes a whole custom exhaust
+disappear in favour of a generic collector. By ear, that is indistinguishable
+from a design that is merely disappointing.
 
-## Valeurs non finies
+## Non-finite values
 
-Un champ non fini (NaN, infini) issu d'un fichier mal formé ne rend plus le pire
-résultat possible. Une `restriction` non finie retombe sur « aucune restriction
-additionnelle » et laisse la perte géométrique seule, au lieu d'imputer le
-maximum et de museler la ligne sans symptôme. Un `acoustic_gain` non fini est
-traité comme un silence, jamais comme un gain maximal.
+A non-finite field (NaN, infinity) from a malformed file no longer produces the
+worst possible result. A non-finite `restriction` falls back to "no additional
+restriction" and leaves the geometric loss alone, instead of assigning the
+maximum and muzzling the line with no symptom. A non-finite `acoustic_gain` is
+treated as silence, never as maximum gain.
 
-## Séries, branches et routes
+## Series, branches and routes
 
-Pour la perte de charge, les composants communs sont en série. Les branches
-aval d'un splitter sont combinées en parallèle avec :
+For pressure loss, common components are in series. The downstream branches of
+a splitter are combined in parallel with:
 
 ```text
-K_parallèle = 1 / (Σ 1 / √K_branche)²
+K_parallel = 1 / (Σ 1 / √K_branch)²
 ```
 
-La restriction équivalente de chaque cylindre contribue à la conductance
-physique du chemin et à l'atténuation de l'événement. Toutes les routes
-cylindre-sortie sont également énumérées. Leur délai utilise
-`c = √(γRT)` à une température d'échappement de référence (ambiante + 405 °C
-par défaut, ou une température explicitement fournie au compilateur). Chaque
-route conserve jusqu'à huit modes : modes impairs quart d'onde de la route,
-résonateurs et silencieux locaux. Les modes proches sont fusionnés et classés
-par énergie, au lieu de retenir simplement la fréquence maximale rencontrée.
+The equivalent restriction of each cylinder contributes to the physical
+conductance of the path and to the attenuation of the event. Every
+cylinder-to-outlet route is also enumerated. Its delay uses `c = √(γRT)` at a
+reference exhaust temperature (ambient + 405 °C by default, or a temperature
+explicitly given to the compiler). Each route keeps up to eight modes: the
+route's odd quarter-wave modes, and local resonators and mufflers. Close modes
+are merged and ranked by energy, instead of simply keeping the highest frequency
+encountered.
 
-À une séparation, l'énergie est répartie selon l'admittance aval approximée
-`A / √(1 + K_aval)`. L'amplitude de la branche reçoit la racine de cette part
-d'énergie. Les produits de gains sont accumulés en domaine logarithmique et
-bornés à 8 afin de rester finis même sur un grand DAG.
+At a split, energy is shared according to the approximate downstream admittance
+`A / √(1 + K_downstream)`. The branch amplitude receives the square root of that
+share of energy. Gain products are accumulated in the log domain and clamped to
+8 so as to stay finite even on a large DAG.
 
-Pour un DAG auteur, `ExhaustNetworkLayout` conserve chaque composant physique :
+For an authored DAG, `ExhaustNetworkLayout` keeps every physical component:
 
-- tubes, catalyseurs, silencieux, résonateurs et sorties deviennent des conduits
-  quasi-1D avec longueur, volume, section, diamètre hydraulique et perte ;
-- merges, splitters et crossovers deviennent des volumes de jonction finis
-  pour le gaz ; le crossover conserve séparément ses ports acoustiques ;
-- chaque soupape et chaque sortie garde sa section et son coefficient de
-  décharge ;
-- les interfaces partagent un unique flux de Riemann, donc une branche ne peut
-  créer ni masse ni énergie selon l'ordre d'itération.
+- tubes, catalysts, mufflers, resonators and outlets become quasi-1D ducts with
+  length, volume, area, hydraulic diameter and loss;
+- merges, splitters and crossovers become finite junction volumes for the gas;
+  the crossover keeps its acoustic ports separately;
+- each valve and each outlet keeps its area and discharge coefficient;
+- the interfaces share a single Riemann flux, so a branch can create neither
+  mass nor energy depending on iteration order.
 
-Le solveur basse bande calcule directement pression, température, composition,
-débit et réversion dans chaque composant. Les anciennes conductances agrégées et
-la fermeture analytique de contre-pression ne sont plus utilisées par
-`EngineSimulator`.
+The low-band solver directly computes pressure, temperature, composition, flow
+and reversion in each component. The old aggregated conductances and the
+analytic back-pressure closure are no longer used by `EngineSimulator`.
 
-Pour l'audio physique, le DAG complet fournit les longueurs et sections des
-guides caractéristiques. Les métriques historiques `audio_volume`,
-`sound_attenuation`, gains de composants, modes de preset et transmission de
-`FiringEvent` ne colorent pas la frontière SI. Firing order, pression, débit,
-température et géométrie suffisent à produire les caractéristiques acoustiques.
+For physical audio, the complete DAG provides the lengths and areas of the
+characteristic guides. The historical metrics `audio_volume`,
+`sound_attenuation`, component gains, preset modes and `FiringEvent`
+transmission do not colour the SI boundary. Firing order, pressure, flow,
+temperature and geometry are enough to produce the acoustic characteristics.
 
-Chaque composant de longueur finie devient une ligne à retard bidirectionnelle.
-Les interfaces directes, merges et splitters utilisent une dispersion passive
-par admittance ; un crossover utilise sa matrice quatre ports passive et
-appariée. Les longueurs de tronc portées par une branche restent des
-conduits, et chaque sortie conserve sa propre charge de rayonnement, sa position
-et son axe. Un 4-1 et un 4-2-1 ne sont donc pas réduits au même chemin dès lors
-que leurs géométries diffèrent. Les preuves causales et analytiques sont dans
-`tests/RealtimeRegressionTests.cpp` et résumées dans
-[exhaust-audio-topology-validation-2026-08-01.md](archive/exhaust-audio-topology-validation-2026-08-01.md).
+Each component of finite length becomes a bidirectional delay line. Direct
+interfaces, merges and splitters use passive admittance scattering; a crossover
+uses its passive, matched four-port matrix. Trunk lengths carried by a branch
+stay ducts, and each outlet keeps its own radiation load, position and axis. A
+4-1 and a 4-2-1 are therefore not reduced to the same path as soon as their
+geometries differ. The causal and analytical proofs are in
+`tests/RealtimeRegressionTests.cpp`.
 
-## Chemins multiples
+## Multiple paths
 
-Un V ou un flat peut déclarer deux `exhaust_paths`, chacun avec ses cylindres,
-son graphe et, facultativement, une IR mesurée explicite. Le gaz et l'audio
-conservent ces chemins séparés.
-Les indices runtime suivent l'ordre du tableau, tandis que les IDs auteur
-restent les références des banques et de la sérialisation.
+A V or a flat engine can declare two `exhaust_paths`, each with its cylinders,
+its graph and, optionally, an explicit measured IR. Gas and audio keep these
+paths separate. Runtime indices follow the array order, while the authored IDs
+stay the references for banks and serialisation.
 
-## Compatibilité avec les configurations existantes
+## Compatibility with existing configurations
 
-`graph` est optionnel. En son absence, EngineLab compile les anciens champs de
-géométrie en primaires, merge, silencieux et sortie. Les fichiers moteur des
-schémas 1 à 8 restent lisibles et sont migrés en mémoire vers le schéma 9. Tout
-nouvel export JSON/YAML porte `schema_version: 9`. Le schéma 8 ajoute la
-corrélation d'induction afterfire explicitement paramétrée ; le schéma 9 ajoute
-le type `crossover`, `crossover_coupling`, `from_port` et `to_port`. Un document
-antérieur au schéma 8 reçoit des exposants nuls et conserve exactement son timer plat. Les
-fichiers historiques du catalogue restent volontairement des fixtures de
-migration ; l'absence des trois champs de substrat conserve le bypass exact.
+`graph` is optional. Without it, EngineLab compiles the old geometry fields
+into primaries, merge, muffler and outlet. Engine files of schemas 1 to 8 stay
+readable and are migrated in memory to schema 9. Every new JSON/YAML export
+carries `schema_version: 9`. Schema 8 adds the explicitly parameterised
+afterfire induction correlation; schema 9 adds the `crossover` type,
+`crossover_coupling`, `from_port` and `to_port`. A document older than schema 8
+receives zero exponents and keeps its flat timer exactly. The historical
+catalogue files deliberately stay migration fixtures; the absence of the three
+substrate fields keeps the exact bypass.
 
-Même avec un graphe, le bloc `geometry` reste utile : il fournit les valeurs de
-secours nécessaires à la compilation physique d'une ancienne configuration.
-L'absence de WAV signifie désormais champ libre ; aucune IR n'est générée.
+Even with a graph, the `geometry` block stays useful: it provides the fallback
+values needed for the physical compilation of an old configuration. No WAV now
+means free field; no IR is generated.
 
-## Ce que le graphe ne simule pas
+## What the graph does not simulate
 
-Le solveur non linéaire résout bien chaque composant, mais seulement dans la
-bande nécessaire au débit et à la contre-pression temps réel. La haute bande
-audio conserve le DAG, mais reste linéaire et plane. Elle ne résout pas les
-modes transverses, les coudes 3D ni la correction complète du rayonnement par
-écoulement moyen. La directivité simple de terminaison et les positions/axes
-indépendants des sorties sont résolus vers une paire de microphones commune ;
-le modèle n'est pas un champ acoustique 3D ni une simulation de local. Le X
-compact n'est pas encore dispersif en fréquence et le DAG interdit toujours la
-boucle nécessaire à un H-pipe littéral ; ces deux limites sont explicites.
+The non-linear solver does resolve each component, but only in the band needed
+for real-time flow and back-pressure. The audio high band keeps the DAG, but
+stays linear and plane. It does not resolve transverse modes, 3D bends or the
+complete mean-flow correction of radiation. The simple termination directivity
+and the independent outlet positions/axes are resolved towards a common
+microphone pair; the model is neither a 3D acoustic field nor a room
+simulation. The compact X is not yet frequency-dispersive, and the DAG still
+forbids the loop needed for a literal H-pipe; both limitations are explicit.
 
-Les réflexions haute fréquence du guide ne reviennent pas dans le cylindre 0D ;
-le retour physique est fourni par le réseau non linéaire basse bande. Les IR ne
-sont chargées que par `impulse_response` explicite et doivent représenter une
-mesure aval. Voir [thermoacoustic-architecture.md](thermoacoustic-architecture.md)
-pour les équations, invariants et fichiers propriétaires.
+The guide's high-frequency reflections do not return into the 0D cylinder; the
+physical feedback is provided by the non-linear low-band network. IRs are
+loaded only through an explicit `impulse_response` and must represent a
+downstream measurement. See
+[thermoacoustic-architecture.md](thermoacoustic-architecture.md) for the
+equations, invariants and owning files.

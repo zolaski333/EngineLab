@@ -1,22 +1,22 @@
-# Afterfire physique dans l’échappement
+# Physical afterfire in the exhaust
 
-L’afterfire d’EngineLab n’est ni un sample ni un bruit ajouté. L’ECU transporte
-des paquets de carburant imbrûlé et d’oxygène dans le réseau quasi-1D ; une
-réaction locale libère ensuite de l’énergie dans la maille ou la jonction où les
-conditions sont réunies. La hausse de pression traverse le même DAG acoustique,
-les mêmes collecteurs, silencieux et sorties que le blowdown normal.
+EngineLab's afterfire is neither a sample nor added noise. The ECU carries
+packets of unburned fuel and oxygen into the quasi-1D network; a local reaction
+then releases energy in the cell or junction where the conditions are met. The
+pressure rise travels through the same acoustic DAG, the same collectors,
+mufflers and outlets as the normal blowdown.
 
-## Stratégies ECU
+## ECU strategies
 
-Le schéma moteur 6 distingue explicitement trois intentions :
+Engine schema 6 explicitly separates three intents:
 
-- `clean_dfco` : coupure propre, aucun carburant retenu ;
-- `continuous_anti_lag` : carburant et allumage échappement continus, destiné à
-  un grondement/anti-lag et non à des pops isolés ;
-- `discrete_afterfire` : paquets de carburant hachés, destinés à produire des
-  combustions séparées après un lever de pied.
+- `clean_dfco`: clean fuel cut, no fuel retained;
+- `continuous_anti_lag`: continuous fuel and exhaust ignition, meant for a
+  rumble/anti-lag and not for isolated pops;
+- `discrete_afterfire`: chopped fuel packets, meant to produce separate
+  combustions after lifting off the throttle.
 
-Exemple de calibration discrète :
+Example of a discrete calibration:
 
 ```yaml
 schema_version: 8
@@ -44,181 +44,171 @@ engine:
     quench_temperature_k: 520
 ```
 
-La fraction de carburant est une valeur moyenne. En mode pulsé, l’ECU la
-normalise par le rapport cyclique. Le profil final garde fraction et duty à 8 % :
-la commande instantanée atteint donc la pleine injection normale pendant une
-fenêtre de 40 ms, deux fois par seconde, pour seulement 8 % de masse moyenne.
-L’ancien profil 18 % / 35 % / 4 Hz ouvrait pendant 87,5 ms. Il traversait de
-nombreuses opportunités d’injection et a mesuré 76,6 % de duty chimique sur le
-Twin, presque 100 % sur le K20 : c’était un grondement proche de l’anti-lag, pas
-une suite de pops. Une fenêtre de 25 ms à 5 % pouvait au contraire manquer les
-injections d’un bicylindre et laisser jusqu’à quatre secondes entre réactions.
+The fuel fraction is a mean value. In pulsed mode, the ECU normalises it by the
+duty cycle. The final profile keeps fraction and duty at 8 %: the instantaneous
+command therefore reaches full normal injection during a 40 ms window, twice a
+second, for only 8 % mean mass. The old 18 % / 35 % / 4 Hz profile stayed open
+for 87.5 ms. It spanned many injection opportunities and measured a 76.6 %
+chemical duty on the Twin, almost 100 % on the K20: it was a rumble close to
+anti-lag, not a series of pops. A 25 ms window at 5 %, on the other hand, could
+miss the injections of a twin and leave up to four seconds between reactions.
 
-La cadence de `discrete_afterfire` n’est plus un carré parfaitement périodique.
-`overrun_pulse_timing_variation` décale les frontières des paquets avec une
-séquence déterministe à faible répétition. Une valeur de 0,40 autour de 2 Hz
-borne chaque intervalle entre 300 et 700 ms au niveau ECU ; le front de
-réaction mesuré peut s’en écarter légèrement à cause du transport et de
-l’induction. Chaque paquet garde le même duty relatif à son intervalle, donc la
-masse moyenne prescrite est conservée. Une valeur nulle restitue exactement la
-cadence régulière historique.
+The `discrete_afterfire` cadence is no longer a perfectly periodic square wave.
+`overrun_pulse_timing_variation` shifts the packet boundaries with a
+deterministic low-repetition sequence. A value of 0.40 around 2 Hz bounds each
+interval between 300 and 700 ms at the ECU level; the measured reaction front
+may deviate slightly from it because of transport and induction. Each packet
+keeps the same duty relative to its interval, so the prescribed mean mass is
+preserved. A value of zero restores exactly the historical regular cadence.
 
-## Conditions physiques
+## Physical conditions
 
-Un site ne brûle que si toutes les conditions suivantes sont vraies :
+A site burns only if all of the following hold:
 
-1. carburant et oxygène coexistent localement ;
-2. l’équivalence locale est dans la fenêtre de flammabilité ;
-3. le gaz ou la paroi dépasse la température d’allumage ;
-4. ce mélange reste actif pendant le délai d’induction ;
-5. une flamme établie n’est pas sous la température de quench.
+1. fuel and oxygen coexist locally;
+2. the local equivalence ratio is inside the flammability window;
+3. the gas or the wall exceeds the ignition temperature;
+4. this mixture stays active for the induction delay;
+5. an established flame is not below the quench temperature.
 
-Chaque maille et chaque jonction possède son propre état persistant d’induction
-et de combustion. La réaction consomme les espèces de manière conservative et
-ajoute `masse_carburant × PCI` à l’énergie. Elle publie un événement borné qui
-contient le nœud exact, la position axiale, l’énergie, la durée, la densité, la
-célérité et la section locale.
+Each cell and each junction has its own persistent induction and combustion
+state. The reaction consumes the species conservatively and adds
+`fuel_mass × LHV` to the energy. It publishes a bounded event holding the exact
+node, the axial position, the energy, the duration, the density, the speed of
+sound and the local area.
 
-`induction_time_s` est le délai de référence au seuil, à la pression de
-référence et à `phi=1`. Le schéma 8 intègre `dt/tau(T,p,phi)` avec une loi
-Arrhenius dont tous les coefficients sont exposés ; les schémas 1 à 7 migrent
-avec des exposants nuls et retrouvent exactement leur durée plate. L’ancien
-calcul divisait silencieusement le temps par
-`(T - T_allumage) / 450 K` : un délai écrit à 4 ms devenait ainsi 1,8 s seulement
-1 K au-dessus du seuil. Ce facteur caché reste supprimé. L’origine paroi/gaz de
-la flamme est mémorisée à l’allumage ; elle n’est plus réinterprétée après que la
-réaction elle-même a chauffé le gaz. Équation, provenance, A/B et limites :
-[afterfire-induction-implementation-2026-08-22.md](archive/afterfire-induction-implementation-2026-08-22.md).
+`induction_time_s` is the reference delay at the threshold, at the reference
+pressure and at `phi=1`. Schema 8 integrates `dt/tau(T,p,phi)` with an
+Arrhenius law whose coefficients are all exposed; schemas 1 to 7 migrate with
+zero exponents and get exactly their flat duration back. The old computation
+silently divided the time by `(T - T_ignition) / 450 K`: a delay written as
+4 ms thus became 1.8 s just 1 K above the threshold. That hidden factor stays
+removed. The wall/gas origin of the flame is stored at ignition; it is no
+longer reinterpreted after the reaction itself has heated the gas.
 
-La chimie conserve son état dès qu’une stratégie de réaction est authorée, y
-compris sous charge. Cela oxyde les traces d’hydrocarbures au fil de leur
-transport au lieu d’accumuler artificiellement soixante secondes de carburant
-puis d’enflammer cet ancien inventaire au lever. Cette oxydation d’entretien ne
-publie toutefois ni télémétrie afterfire ni source acoustique. Ces deux sorties
-restent strictement réservées au DFCO qui retient du carburant ou au rupteur
-humide actif ; le contrôle chargé juste avant le lever mesure toujours zéro
-événement acoustique.
+The chemistry keeps its state as soon as a reaction strategy is authored,
+including under load. That oxidises hydrocarbon traces as they travel instead
+of artificially accumulating sixty seconds of fuel and then igniting that old
+inventory on lift-off. This maintenance oxidation publishes neither afterfire
+telemetry nor an acoustic source, though. Both outputs stay strictly reserved
+for a DFCO that retains fuel or an active wet rev limiter; the loaded check
+just before lift-off always measures zero acoustic events.
 
-La source acoustique compacte est dérivée de la chaleur libérée. Le saut total
-de pression vaut :
+The compact acoustic source is derived from the released heat. The total
+pressure jump is:
 
 ```text
 Delta p = (gamma - 1) × Qdot / (A × c)
 ```
 
-Le réseau le partage ensuite entre ses deux caractéristiques voyageuses ; chaque
-onde sortante reçoit donc `(gamma - 1) × Qdot / (2 × A × c)`. Le signal à la
-cadence du solveur est reconstruit par le même filtre anti-imaging LR8 que les
-frontières physiques. Un bloqueur continu à deux pôles et 25 Hz retire seulement
-la chaleur quasi stationnaire déjà portée par l’écoulement moyen. L’ancien
-passe-haut vers 3–6 kHz supprimait au contraire presque toute une réaction de
-quelques millisecondes.
+The network then splits it between its two travelling characteristics; each
+outgoing wave therefore receives `(gamma - 1) × Qdot / (2 × A × c)`. The signal
+at the solver rate is reconstructed by the same LR8 anti-imaging filter as the
+physical boundaries. A two-pole 25 Hz DC blocker only removes the quasi-steady
+heat already carried by the mean flow. The old high-pass around 3–6 kHz, by
+contrast, removed almost all of a reaction lasting a few milliseconds.
 
-La source est injectée au nœud et à la position axiale de la réaction. Il
-n’existe ni oscillateur « pop », ni sample, ni périodicité audio imposée, ni
-source globale placée artificiellement à la sortie. Une borne de dernier recours
-à 100 kPa protège le réseau linéaire ; chaque échantillon qui l’atteindrait est
-compté, affiché et invalide les harness de validation.
+The source is injected at the node and axial position of the reaction. There
+is no "pop" oscillator, no sample, no imposed audio periodicity and no global
+source artificially placed at the outlet. A last-resort 100 kPa bound protects
+the linear network; every sample that would reach it is counted, shown and
+invalidates the validation harnesses.
 
-La reconstruction ne garde rien au-dessus de ~3,8 kHz : le réseau 1-D ne calcule
-pas cette bande. `ReactionCrackSynthesiser` l'ajoute à chaque voix de réaction :
+The reconstruction keeps nothing above ~3.8 kHz: the 1-D network does not
+compute that band. `ReactionCrackSynthesiser` adds it to every reaction voice:
 
-- un bruit blanc déterministe, passe-haut LR4 au même point de raccord, puis
-  une pente de −6 dB/octave (celle d'un front raide) ;
-- une enveloppe calée sur le saut de pression compact de la voix : attaque
-  0,1 ms, relâche 0,5 ms ;
-- un niveau RMS égal à `defaultCrackRatio` (1,0) × ce saut ;
-- rien sans réaction, donc un moteur sans afterfire reste identique au bit
-  près.
+- deterministic white noise, LR4 high-passed at the same crossover point, then
+  a −6 dB/octave slope (that of a steep front);
+- an envelope locked to the voice's compact pressure jump: 0.1 ms attack,
+  0.5 ms release;
+- an RMS level equal to `defaultCrackRatio` (1.0) × that jump;
+- nothing without a reaction, so an engine without afterfire stays
+  bit-identical.
 
-Le rapport 1,0 n'est pas calibré. Sur des pops du 2JZ, prolonger la pente
-du simulateur demanderait 0,8, et prolonger un front idéal 2,5. Au rapport 1,0,
-la bande 4-8 kHz gagne +3,9 dB pendant les pops. `EngineLabAfterfireHarness
---no-reaction-crack` rend la même trajectoire sans cette couche.
+The 1.0 ratio is not calibrated. On 2JZ pops, extending the simulator's slope
+would call for 0.8, and extending an ideal front for 2.5. At ratio 1.0, the
+4-8 kHz band gains +3.9 dB during the pops. `EngineLabAfterfireHarness
+--no-reaction-crack` renders the same trajectory without this layer.
 
-Chaque voix conserve maintenant la puissance `énergie / durée` pendant la durée
-exacte du pas de réaction. L’ancien rendu la maintenait deux fois plus longtemps
-avec un minimum de 0,5 ms : il dupliquait l’énergie des événements courts et
-collait les noyaux voisins en une vague continue.
+Each voice now keeps the power `energy / duration` for the exact duration of
+the reaction step. The old render held it twice as long with a 0.5 ms minimum:
+it duplicated the energy of short events and glued neighbouring kernels into a
+continuous wave.
 
-## Utilisation dans AUDIO HQ
+## Using it in AUDIO HQ
 
-L'afterfire est une option de chaque moteur, désactivée par défaut au
-catalogue sauf pour le moteur qui l'authore. L'interrupteur
-`AFTERFIRE (petarades en deceleration)` du groupe `MIX TEMPS REEL` l'active ou
-le coupe et l'applique aussitôt, sans passer par `APPLIQUER EN DIRECT`. Il reste
-synchronisé avec la case du groupe physique. S'il est refusé (banc en cours), il
-revient à l'état réellement actif. Pour un profil resté propre, l'activation
-installe le profil discret décrit plus bas. Une calibration authorée est
-conservée.
+Afterfire is a per-engine option, disabled by default in the catalogue except
+for the engine that authors it. The `AFTERFIRE  (pops and bangs on overrun)`
+switch in the `REAL-TIME MIX` group turns it on or off and applies it at once,
+without going through `APPLY LIVE`. It stays in sync with the box in the
+physics group. If it is refused (dyno run in progress), it returns to the state
+that is really active. For a profile that was left clean, enabling it installs
+the discrete profile described below. An authored calibration is kept.
 
-Après chaque application, l'éditeur affiche un avertissement si le carburant
-retenu est sous la limite pauvre de la chimie (`minimumEquivalenceRatio`,
-0,45). Ce test est `afterfireRetainedChargeBelowLeanLimit()` dans
-`EngineTypes.hpp`. Richesse retenue : `fraction` en continu, `fraction / duty`
-(plafonnée à 1) en discret. Mesuré sur le 2JZ :
+After each application, the editor shows a warning if the retained fuel is
+below the chemistry's lean limit (`minimumEquivalenceRatio`, 0.45). This check
+is `afterfireRetainedChargeBelowLeanLimit()` in `EngineTypes.hpp`. Retained
+equivalence: `fraction` in continuous mode, `fraction / duty` (capped at 1) in
+discrete mode. Measured on the 2JZ:
 
-- 18 % continu brûle 0,0 % du carburant ;
-- la même masse en paquets brûle 89 %.
+- 18 % continuous burns 0.0 % of the fuel;
+- the same mass in packets burns 89 %.
 
-Un tel réglage déverse seulement du carburant cru.
+Such a setting only dumps raw fuel.
 
-Le bouton `APPLY` envoie désormais la calibration au thread de simulation par
-mailbox. Il ne reconstruit plus `EngineRuntime` et conserve donc régime, phase,
-inventaires gazeux et températures de paroi. L’application est refusée pendant
-un pull dyno afin de ne pas modifier une mesure en cours.
+The `APPLY LIVE` button now sends the calibration to the simulation thread
+through a mailbox. It no longer rebuilds `EngineRuntime` and therefore keeps
+engine speed, phase, gas inventories and wall temperatures. Applying is refused
+during a dyno pull so as not to alter a measurement in progress.
 
-`DEMO AUDIBLE` sélectionne `discrete_afterfire`, une réaction compacte de 2 ms,
-2 Hz nominaux, 8 % de duty, 40 % de variation temporelle et 8 % de carburant
-moyen. Le simple toggle complète aussi une calibration restée à zéro et installe
-la corrélation d’induction thermochimique du schéma 8. Une calibration anti-lag
-ou afterfire déjà authorée reste inchangée.
+`AUDIBLE DEMO` selects `discrete_afterfire`, a compact 2 ms reaction, 2 Hz
+nominal, 8 % duty, 40 % timing variation and 8 % mean fuel. The plain toggle
+also completes a calibration left at zero and installs the schema 8
+thermochemical induction correlation. An already authored anti-lag or
+afterfire calibration stays unchanged.
 
-Pour le test direct :
+For a direct test:
 
-1. sélectionner `Audio Physics Lab 689 Twin` ;
-2. activer `DEMO AUDIBLE` ;
-3. tenir le moteur au-dessus de 3 000 tr/min avec plus de 20 % de gaz ;
-4. relâcher complètement.
+1. select `Audio Physics Lab 689 Twin`;
+2. enable `AUDIBLE DEMO`;
+3. hold the engine above 3,000 rpm with more than 20 % throttle;
+4. release completely.
 
-La télémétrie indique la stratégie, les bloqueurs ECU, les kW, les mg/s, le
-nombre de volumes réactifs et les événements perdus. Une puissance nulle reste
-un résultat physique possible : ligne froide, mélange hors fenêtre, DFCO propre
-ou stratégie non armée.
+The telemetry shows the strategy, the ECU blockers, the kW, the mg/s, the
+number of reacting volumes and the lost events. Zero power is still a possible
+physical result: cold line, mixture outside the window, clean DFCO or strategy
+not armed.
 
-## Preuve mesurée du chemin acoustique (profil produit du 23 août)
+## Measured proof of the acoustic path (product profile, 23 August)
 
-Le contrôle final emploie le Twin laboratoire tel qu’il est catalogué, 60 s de
-chauffe, un intervalle chargé juste avant le lever et 8 s d’overrun. Les deux
-rendus ci-dessous ont une trajectoire moteur, une chimie et une énergie
-strictement identiques ; le contrôle retire seulement la copie des événements de
-réaction vers le réseau audio.
+The final check uses the lab Twin as catalogued, 60 s of warm-up, a loaded
+interval just before lift-off and 8 s of overrun. The two renders below have a
+strictly identical engine trajectory, chemistry and energy; the control only
+removes the copy of the reaction events to the audio network.
 
-| Cas | Réactions avant lever | Carburant brûlé | Événements chaleur | Puissance crête | Crête audio | P99,9 | Crest |
+| Case | Reactions before lift-off | Fuel burned | Heat events | Peak power | Audio peak | P99.9 | Crest |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| événements réaction non injectés | 0 | 89,373 mg | 10 | 15,068 kW | 0,04764 | 0,03310 | 4,75 |
-| événements réaction injectés | 0 | 89,373 mg | 10 | 15,068 kW | 0,05835 | 0,03349 | 5,73 |
+| reaction events not injected | 0 | 89.373 mg | 10 | 15.068 kW | 0.04764 | 0.03310 | 4.75 |
+| reaction events injected | 0 | 89.373 mg | 10 | 15.068 kW | 0.05835 | 0.03349 | 5.73 |
 
-La soustraction des WAV donne une contribution de réaction à 0,03415 de crête.
-Son RMS médian sur des fenêtres de 5 ms est exactement nul, puis atteint 0,01229
-sur les pops : ce n’est plus une hausse continue du volume. Les dix fronts
-audio isolés sont espacés de 460 à 1 090 ms. Leur énergie se répartit à 15,35 %
-entre 20–120 Hz, 64,60 % entre 120–500 Hz, 19,65 % entre 500 Hz–2 kHz et 0,39 %
-entre 2–8 kHz. Les 1 479 événements de volumes finis transportent 5 419,634 J ;
-le saut compact maximal est 80,902 kPa, sans atteindre la borne de 100 kPa.
+Subtracting the WAVs gives a reaction contribution with a 0.03415 peak. Its
+median RMS over 5 ms windows is exactly zero, then reaches 0.01229 on the pops:
+it is no longer a continuous rise in volume. The ten isolated audio fronts are
+460 to 1,090 ms apart. Their energy splits as 15.35 % between 20–120 Hz,
+64.60 % between 120–500 Hz, 19.65 % between 500 Hz–2 kHz and 0.39 % between
+2–8 kHz. The 1,479 finite-volume events carry 5,419.634 J; the maximum compact
+jump is 80.902 kPa, without reaching the 100 kPa bound.
 
-Le rendu actif consomme 13,5 % du budget moyen d’un bloc de 200 échantillons et
-15,9 % au p99, contre 13,1 % et 14,2 % dans le contrôle. La simulation consomme
-20,6 % du pas de 4,167 ms en moyenne et 24,4 % au p99. Aucun des 1 920 blocs ou
-pas n’a dépassé sa durée. Les WAV frais sont sous
-`out/audit-2026-08-23-afterfire-twin-fuel08-duty08/` et
-`out/audit-2026-08-23-afterfire-twin-fuel08-duty08-no-source/`.
+The active render uses 13.5 % of the mean budget of a 200-sample block and
+15.9 % at p99, against 13.1 % and 14.2 % in the control. The simulation uses
+20.6 % of the 4.167 ms step on average and 24.4 % at p99. None of the 1,920
+blocks or steps overran.
 
-Ces nombres valident le chemin logiciel et la non-vacuité du modèle. La
-calibration de 2 ms reste une estimation d’ingénierie du moteur laboratoire,
-pas une identification issue d’un enregistrement ou d’un banc instrumenté.
+These figures validate the software path and that the model is not empty. The
+2 ms calibration remains an engineering estimate for the lab engine, not an
+identification from a recording or an instrumented bench.
 
-La preuve schéma-8 avec induction thermochimique se trouve dans
-[afterfire-induction-implementation-2026-08-22.md](archive/afterfire-induction-implementation-2026-08-22.md).
-Le diagnostic complet du niveau et du nouveau profil se trouve dans
-[audio-level-afterfire-correction-2026-08-23.md](archive/audio-level-afterfire-correction-2026-08-23.md).
+The detailed write-ups of the schema 8 thermochemical induction and of the
+level/profile correction are in the docs archive (git tag
+`archive/docs-2026-09`): `afterfire-induction-implementation-2026-08-22.md` and
+`audio-level-afterfire-correction-2026-08-23.md`.

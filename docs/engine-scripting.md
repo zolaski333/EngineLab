@@ -1,17 +1,16 @@
-# Scripts moteur `.els`
+# `.els` engine scripts
 
-Le DSL EngineLab est un langage déclaratif sûr qui compile vers un
-`EngineConfig`. Il sert à choisir une base et à surcharger des valeurs avec des
-unités explicites. Les extensions reconnues par l'application sont `.els` et
-`.engine`.
+The EngineLab DSL is a safe declarative language that compiles to an
+`EngineConfig`. It is used to pick a base and override values with explicit
+units. The extensions recognised by the application are `.els` and `.engine`.
 
-Ce langage n'est pas compatible avec les fichiers `.mr` d'ES2D et n'essaie pas
-encore d'en reproduire toute l'expressivité.
+This language is not compatible with ES2D `.mr` files and does not yet try to
+reproduce all of their expressiveness.
 
-## Exemple complet minimal
+## Minimal complete example
 
 ```text
-# Les commentaires commencent par # ou //.
+# Comments start with # or //.
 preset inline_four
 name "Street Turbo I4"
 
@@ -38,89 +37,87 @@ ignition point 3500 rpm, 29 deg
 ignition point 7350 rpm, 28 deg
 ```
 
-Le dépôt contient aussi `examples/street-turbo.els`.
+The repository also contains `examples/street-turbo.els`.
 
-## Choisir une base
+## Choosing a base
 
-Sans instruction de base, le compilateur part d'un quatre-cylindres en ligne.
-Les presets intégrés sont :
+Without a base instruction, the compiler starts from an inline four. The
+built-in presets are:
 
-- `inline_two`/`i2`, `inline_four`/`i4`, `inline_five`/`i5` ;
-- `v6`, `v8` ;
-- `flat_six`/`boxer_six` ;
+- `inline_two`/`i2`, `inline_four`/`i4`, `inline_five`/`i5`;
+- `v6`, `v8`;
+- `flat_six`/`boxer_six`;
 - `radial_five`.
 
-Un moteur complet existant peut remplacer cette base :
+A complete existing engine can replace that base:
 
 ```text
 base "../engines/my-engine.yaml"
-name "Variante piste"
+name "Track variant"
 set engine.redline_rpm = 8200 rpm
 ```
 
-`base` accepte un JSON ou YAML moteur v1 ou v2. Une base v1 est migrée en
-mémoire et le résultat compilé utilise le schéma courant v2. Le chemin est
-relatif au fichier qui contient l'instruction.
+`base` accepts a v1 or v2 engine JSON or YAML. A v1 base is migrated in memory
+and the compiled result uses the current v2 schema. The path is relative to the
+file that holds the instruction.
 
-`include` lit un autre script dans le même contexte de variables et de
-configuration :
+`include` reads another script in the same variable and configuration context:
 
 ```text
 include "shared/intake.els"
 include "shared/track-ignition.els"
 ```
 
-L'ordre des instructions est significatif : un `preset` ou `base` rencontré
-plus tard remplace la configuration accumulée jusque-là.
+Instruction order matters: a `preset` or `base` met later replaces the
+configuration accumulated so far.
 
-## Variables, expressions et unités
+## Variables, expressions and units
 
-`let` définit une variable une seule fois. Les noms ne sont pas sensibles à la
-casse. Les expressions acceptent `+`, `-`, `*`, `/`, les parenthèses, les
-signes unaires et `pi`.
+`let` defines a variable once. Names are case-insensitive. Expressions accept
+`+`, `-`, `*`, `/`, parentheses, unary signs and `pi`.
 
-L'addition et la soustraction exigent la même dimension. La multiplication
-n'accepte qu'un facteur dimensionnel et un facteur sans dimension. Une division
-par une valeur de même dimension produit un ratio ; les unités composées
-arbitraires ne sont pas inférées.
+Addition and subtraction require the same dimension. Multiplication only
+accepts one dimensional factor and one dimensionless factor. Dividing by a
+value of the same dimension produces a ratio; arbitrary compound units are not
+inferred.
 
-Unités reconnues :
+Recognised units:
 
-| Grandeur | Symboles |
+| Quantity | Symbols |
 |---|---|
 | ratio | `ratio`, `%`, `percent`, `pct` |
-| longueur / volume | `mm`, `cm`, `m` / `l`, `ml`, `cc`, `cm3` |
-| masse | `mg`, `g`, `kg` |
-| pression / température | `pa`, `kpa`, `bar` / `c`, `degc`, `celsius` |
-| angle / temps | `deg`, `degree`, `rad` / `us`, `ms`, `s`, `sec` |
-| fréquence / régime | `hz`, `khz` / `rpm` |
-| section | `mm2`, `cm2`, `m2` |
-| débit massique | `mg_s`, `mgps`, `mg_per_s`, `g_s`, `kg_s` |
-| énergie massique | `j_kg`, `kj_kg` |
-| vitesse / force | `mm_s`, `m_s`, `mps` / `n` |
-| frottement / inertie | `ns_m` / `kg_m2` |
-| puissance / couple | `w`, `kw` / `nm` |
+| length / volume | `mm`, `cm`, `m` / `l`, `ml`, `cc`, `cm3` |
+| mass | `mg`, `g`, `kg` |
+| pressure / temperature | `pa`, `kpa`, `bar` / `c`, `degc`, `celsius` |
+| angle / time | `deg`, `degree`, `rad` / `us`, `ms`, `s`, `sec` |
+| frequency / engine speed | `hz`, `khz` / `rpm` |
+| area | `mm2`, `cm2`, `m2` |
+| mass flow | `mg_s`, `mgps`, `mg_per_s`, `g_s`, `kg_s` |
+| specific energy | `j_kg`, `kj_kg` |
+| velocity / force | `mm_s`, `m_s`, `mps` / `n` |
+| friction / inertia | `ns_m` / `kg_m2` |
+| power / torque | `w`, `kw` / `nm` |
 
-Par exemple `20 MPa` est refusé car `MPa` n'appartient pas à cette liste ;
-écrire `200 bar` ou `20000 kpa`.
+For example `20 MPa` is rejected because `MPa` is not in this list; write
+`200 bar` or `20000 kpa`.
 
-## Propriétés modifiables
+## Settable properties
 
-`set idle_rpm = ...` est un raccourci pour `set engine.idle_rpm = ...`.
-Les familles actuellement prises en charge couvrent :
+`set idle_rpm = ...` is a shorthand for `set engine.idle_rpm = ...`. The
+families currently supported cover:
 
-- moteur : ralenti, rupteur mécanique, inertie, friction, octane, ambiance,
-  refroidissement, angle de banc, layout et nom ;
-- admission et échappement géométriques globaux ;
-- limiteur et courbe d'allumage ;
-- mode, fenêtre, rail, débit, film et refroidissement d'injection ;
-- variabilité physique cycle-à-cycle de combustion et afterfire physique ;
-- fréquence, sous-pas et résolution du solveur ;
-- activation et paramètres principaux de suralimentation ;
-- géométrie, masses, friction, journal, banque et atténuation par cylindre.
+- engine: idle, mechanical rev limiter, inertia, friction, octane, ambient,
+  cooling, bank angle, layout and name;
+- global intake and exhaust geometry;
+- rev limiter and spark curve;
+- injection mode, window, rail, flow, film and cooling;
+- physical cycle-to-cycle combustion variability and physical afterfire;
+- solver frequency, sub-steps and resolution;
+- forced-induction enable and main parameters;
+- per-cylinder geometry, masses, friction, journal, bank and attenuation.
 
-Une cible `cylinder.all` modifie tous les cylindres. Une cible numérique utilise
-l'identifiant du cylindre, jamais sa position dans le tableau :
+A `cylinder.all` target changes every cylinder. A numeric target uses the
+cylinder identifier, never its position in the array:
 
 ```text
 set cylinder.all.compression_ratio = 10.5 ratio
@@ -128,57 +125,54 @@ set cylinder.7.exhaust_primary_length_mm = 620 mm
 set cylinder.7.connecting_rod_type = articulated
 ```
 
-Une propriété inconnue est une erreur ; elle n'est pas ignorée. La liste
-exécutable de référence se trouve dans les tables de
-`src/scripting/src/EngineScriptCompiler.cpp`.
+An unknown property is an error; it is not ignored. The executable reference
+list lives in the tables of `src/scripting/src/EngineScriptCompiler.cpp`.
 
-L'exemple [`physical-audio-lab.els`](../examples/physical-audio-lab.els)
-active une dispersion de combustion modérée et la réaction d'afterfire. Cette
-dernière ne programme aucun pop : sans carburant imbrûlé, oxygène et gaz assez
-chauds dans l'échappement, elle reste correctement silencieuse.
+The [`physical-audio-lab.els`](../examples/physical-audio-lab.els) example
+enables a moderate combustion spread and the afterfire reaction. The latter
+schedules no pops: without unburned fuel, oxygen and hot enough gas in the
+exhaust, it correctly stays silent.
 
-## Diagnostics et validation
+## Diagnostics and validation
 
-Chaque erreur contient un code `ESxxx`, le fichier, la ligne et la colonne. Le
-compilateur contrôle notamment :
+Each error carries an `ESxxx` code, the file, the line and the column. The
+compiler checks in particular:
 
-- unités incompatibles, division par zéro et résultat non fini ;
-- identifiant de cylindre absent et propriété inconnue ;
-- cycle d'inclusion et profondeur maximale de 32 fichiers ;
-- source supérieure à 2 Mio ;
-- lecture et décodage d'un fichier de base ;
-- normalisation et validation finale complète de `EngineConfig`.
+- incompatible units, division by zero and non-finite results;
+- missing cylinder identifier and unknown property;
+- include cycles and a maximum depth of 32 files;
+- sources larger than 2 MiB;
+- reading and decoding a base file;
+- normalisation and complete final validation of `EngineConfig`.
 
-Le runtime actuel refuse finalement les moteurs qui ne sont pas des quatre
-temps essence, même si les symboles réservés `two_stroke` ou `diesel` existent
-dans le parseur pour préparer une extension future.
+The current runtime ultimately rejects engines that are not four-stroke petrol
+engines, even though the reserved symbols `two_stroke` and `diesel` exist in
+the parser in preparation for a future extension.
 
-## Hot reload dans l'application
+## Hot reload in the application
 
-Après import d'un `.els` ou `.engine`, un worker surveille toutes les
-dépendances environ toutes les 250 ms. Une sauvegarde déclenche une compilation
-hors du thread UI :
+After importing a `.els` or `.engine` file, a worker watches every dependency
+roughly every 250 ms. A save triggers a compilation off the UI thread:
 
-- si elle réussit, une nouvelle révision immuable est publiée et l'application
-  construit un nouveau runtime ;
-- si elle échoue, la révision et le pointeur vers la dernière configuration
-  valide sont conservés, et les diagnostics sont affichés.
+- if it succeeds, a new immutable revision is published and the application
+  builds a new runtime;
+- if it fails, the revision and the pointer to the last valid configuration
+  are kept, and the diagnostics are shown.
 
-Le watcher reste actif après une reconfiguration réussie. Il détecte aussi la
-modification d'un `include` ou du JSON/YAML chargé par `base`.
+The watcher stays active after a successful reconfiguration. It also detects
+changes to an `include` or to the JSON/YAML loaded by `base`.
 
-Ce hot reload est structurel. Il évite de relancer l'application, mais il
-remplace le moteur simulé et réinitialise régime, températures, combustion,
-transmission et audio. Le `CalibrationStore` courant est partagé avec le nouveau
-runtime : les modifications live et le fichier `.ecu.json` surveillé restent
-actifs sans repasser par un chargement. Pour modifier AFR, avance ou rupteur sans
-réinitialiser les états dynamiques, utiliser directement le
-[tuner ECU](ecu-tuning.md).
+This hot reload is structural. It avoids restarting the application, but it
+replaces the simulated engine and resets engine speed, temperatures,
+combustion, transmission and audio. The current `CalibrationStore` is shared
+with the new runtime: live edits and the watched `.ecu.json` file stay active
+without going through a reload. To change AFR, advance or the rev limiter
+without resetting the dynamic states, use the [ECU tuner](ecu-tuning.md)
+directly.
 
-## Limites face au `.mr` d'ES2D
+## Limitations compared with ES2D `.mr`
 
-Le langage ne permet pas encore de déclarer de nouveaux types de nœuds, des
-fonctions utilisateur, boucles, conditions, collections de pièces ou une
-topologie complète à partir de zéro. Il surcharge un preset ou une
-configuration canonique. C'est plus borné et facile à valider, mais nettement
-moins expressif que l'écosystème Piranha/`.mr` d'ES2D.
+The language cannot yet declare new node types, user functions, loops,
+conditions, part collections or a complete topology from scratch. It overrides
+a preset or a canonical configuration. That is more bounded and easier to
+validate, but much less expressive than the Piranha/`.mr` ecosystem of ES2D.

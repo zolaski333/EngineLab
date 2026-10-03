@@ -1,107 +1,107 @@
-# Architecture thermoacoustique physique
+# Physical thermoacoustic architecture
 
-Ce document décrit l’implémentation livrée et son contrat physique. La chaîne
-d’échappement par défaut n’est plus un voicing de presets : sa source, sa
-propagation et son rayonnement dérivent de grandeurs SI produites par la
-simulation. Toute modification future doit préserver cette séparation.
+This document describes the shipped implementation and its physical contract.
+The default exhaust chain is no longer a voicing of presets: its source, its
+propagation and its radiation derive from SI quantities produced by the
+simulation. Any future change must preserve this separation.
 
-## Chaîne active
+## Active chain
 
 ```text
-combustion et chambre 0D (GasCell)
-        ↕ flux de Riemann conservatif à chaque soupape
-réseau gaz quasi-1D non linéaire (DAG complet, bande de retour physique)
-        → frontière SI instantanée p, ρ, c, ṁ, CdA
-décomposition en caractéristiques p+ / p−
-        ↔ guides d’onde + jonctions à admittance
-charge passive de rayonnement de chaque sortie
-        → pression libre vers deux microphones + retard r/c + directivité
-        → IR mesurée explicitement fournie, facultative
+combustion and 0D chamber (GasCell)
+        ↕ conservative Riemann flux at each valve
+non-linear quasi-1D gas network (complete DAG, physical feedback band)
+        → instantaneous SI boundary p, ρ, c, ṁ, CdA
+decomposition into characteristics p+ / p−
+        ↔ waveguides + admittance junctions
+passive radiation load at each outlet
+        → free-field pressure towards two microphones + r/c delay + directivity
+        → explicitly provided measured IR, optional
 ```
 
-Il n’existe aucun repli runner/collecteur 0D dans `EngineSimulator`. Une
-topologie physique invalide empêche la construction du simulateur. Dès qu’une
-topologie SI valide est compilée, le chemin physique possède la sortie dès le
-premier échantillon : il propage le silence jusqu’à la première frontière, puis
-reste verrouillé. Les voix procédurales ne peuvent donc ni apparaître pendant
-le démarrage, ni revenir lors d’une perte ultérieure de télémétrie.
+There is no 0D runner/collector fallback in `EngineSimulator`. An invalid
+physical topology prevents the simulator from being built. As soon as a valid SI
+topology is compiled, the physical path owns the output from the first sample:
+it propagates silence up to the first boundary, then stays locked. Procedural
+voices can therefore neither appear during start-up nor come back after a later
+telemetry loss.
 
-## 1. Réseau gaz non linéaire
+## 1. Non-linear gas network
 
-`EngineLabGasDynamics` transporte, par volume fini :
+`EngineLabGasDynamics` carries, per finite volume:
 
-- la masse de chaque espèce (`O₂`, inerte, carburant, gaz brûlés) ;
-- la quantité de mouvement axiale ;
-- l’énergie totale.
+- the mass of each species (`O₂`, inert, fuel, burned gas);
+- the axial momentum;
+- the total energy.
 
-Le noyau utilise un flux HLLC avec repli de sûreté HLLE, une reconstruction TVD,
-SSP-RK2 et un pas CFL. Une tentative non physique est rejetée puis reprise avec
-un pas réduit ; aucune masse ni énergie n’est créée par un plancher numérique.
-Les pertes locales, le frottement de paroi et le transfert thermique sont des
-termes sources déclarés. Les parois du réseau moteur possèdent désormais une
-capacité thermique finie : l’échange gaz-métal conserve l’énergie combinée et
-seule la convection externe rejette explicitement la chaleur vers l’ambiance.
+The kernel uses an HLLC flux with an HLLE safety fallback, a TVD
+reconstruction, SSP-RK2 and a CFL step. A non-physical attempt is rejected and
+retried with a smaller step; no mass or energy is created by a numerical floor.
+Local losses, wall friction and heat transfer are declared source terms. The
+engine network walls now have a finite heat capacity: the gas-metal exchange
+conserves the combined energy and only external convection explicitly rejects
+heat to the ambient.
 
-Une soupape n’est pas traitée comme la continuation sans épaisseur d’un tube.
-Son `CdA` alimente une loi de tuyère compressible isentropique, subcritique ou
-étranglée selon le rapport de pression. La composition et l’enthalpie totale de
-l’amont sont transportées dans les deux sens. Le débit sonique fait l’objet d’un
-test analytique indépendant ; cette correction était nécessaire, car un flux de
-tube HLLC sous-estimait fortement le soufflage d’un réservoir cylindre.
+A valve is not treated as the zero-thickness continuation of a tube. Its `CdA`
+feeds a compressible isentropic nozzle law, subcritical or choked depending on
+the pressure ratio. The composition and total enthalpy of the upstream side are
+carried in both directions. The sonic flow has an independent analytical test;
+this fix was necessary because an HLLC tube flux strongly underestimated the
+blowdown of a cylinder reservoir.
 
-`ExhaustNetworkLayout` compile chaque composant auteur : tubes, catalyseurs,
-silencieux, résonateurs et sorties deviennent des conduits ; merges et splitters
-deviennent des volumes de jonction finis. Longueur, volume, section de connexion,
-diamètre hydraulique, perte et coefficient de décharge gardent leur unité et
-leur propriétaire. L’ordre du tableau de frontières ne change pas le résultat.
+`ExhaustNetworkLayout` compiles every authored component: tubes, catalysts,
+mufflers, resonators and outlets become ducts; merges and splitters become
+finite junction volumes. Length, volume, connection area, hydraulic diameter,
+loss and discharge coefficient keep their unit and their owner. The order of
+the boundary array does not change the result.
 
-### Séparation d’échelles temps réel
+### Real-time scale separation
 
-Résoudre tout le spectre audible par volumes finis imposerait des dizaines de
-milliers de mises à jour par seconde et par cellule. L’implémentation adopte une
-décomposition multirate physique :
+Resolving the whole audible spectrum with finite volumes would require tens of
+thousands of updates per second per cell. The implementation adopts a physical
+multirate decomposition:
 
-- le maillage non linéaire a une longueur de cellule maximale de 300 mm ; il
-  résout le débit moyen, la contre-pression et les fondamentales d’allumage
-  jusqu’à environ 330–360 Hz dans les gaz chauds ;
-- un composant plus court reste un volume de contrôle conservatif unique, avec
-  son volume, ses ports et ses pertes exacts ; son délai audio appartient au
-  réseau caractéristique ;
-- la frontière macro est intégrée au minimum 16 fois par période d’allumage,
-  avec une fenêtre absolue maximale de 125 µs à bas régime (voir §14 ; le cap a
-  été divisé par deux depuis 250 µs le 2026-07-28) ;
-- état conservatif, volume de chambre, `CdA` de soupape et ouverture de sortie
-  sont intégrés dans le temps sur chaque fenêtre ;
-- chaque échange macro reste bidirectionnel et ferme exactement les bilans de
-  masse d’espèces et d’énergie ;
-- le débit de Riemann instantané est néanmoins observé à chaque sous-pas
-  mécanique pour ne pas décimer l’excitation audio.
+- the non-linear mesh has a maximum cell length of 300 mm; it resolves the mean
+  flow, the back-pressure and the firing fundamentals up to about 330–360 Hz in
+  hot gas;
+- a shorter component stays a single conservative control volume, with its
+  exact volume, ports and losses; its audio delay belongs to the characteristic
+  network;
+- the macro boundary is integrated at least 16 times per firing period, with an
+  absolute maximum window of 125 µs at low engine speed (see §14; the cap was
+  halved from 250 µs on 2026-07-28);
+- conservative state, chamber volume, valve `CdA` and outlet opening are
+  integrated over time across each window;
+- each macro exchange stays bidirectional and closes the species mass and
+  energy balances exactly;
+- the instantaneous Riemann flow is nonetheless observed at every mechanical
+  sub-step so as not to decimate the audio excitation.
 
-Ce n’est pas un saut de trame ni un cache de waveform. C’est un couplage
-partitionné de deux bandes dont les domaines de validité sont explicites.
+This is neither frame skipping nor a waveform cache. It is a partitioned
+coupling of two bands whose validity domains are explicit.
 
-## 2. Contrat simulation → audio
+## 2. Simulation → audio contract
 
-Pour chaque cylindre, `CylinderPressureSample` publie :
+For each cylinder, `CylinderPressureSample` publishes:
 
-| Grandeur | Unité | Convention |
+| Quantity | Unit | Convention |
 |---|---:|---|
-| pression chambre | bar | absolue |
-| pression au runner | kPa | absolue |
-| débit massique | kg/s | positif cylindre → réseau, négatif en réversion |
-| masse volumique | kg/m³ | état local réseau |
-| célérité | m/s | état local réseau |
-| conductance de soupape | m² | aire géométrique × coefficient de décharge |
-| indice de chemin | — | route d’échappement compilée |
-| validité thermoacoustique | booléen | toutes les grandeurs ci-dessus sont physiques |
+| chamber pressure | bar | absolute |
+| runner pressure | kPa | absolute |
+| mass flow | kg/s | positive cylinder → network, negative on reversion |
+| density | kg/m³ | local network state |
+| speed of sound | m/s | local network state |
+| valve conductance | m² | geometric area × discharge coefficient |
+| path index | — | compiled exhaust route |
+| thermoacoustic validity | boolean | all the quantities above are physical |
 
-Le runtime publie une trame par sous-pas mécanique lorsque l’audio est actif.
-Les files SPSC sont bornées et le callback n’alloue pas.
+The runtime publishes one frame per mechanical sub-step when audio is active.
+The SPSC queues are bounded and the callback does not allocate.
 
-## 3. Réseau caractéristique audible
+## 3. Audible characteristic network
 
-Le renderer retire une moyenne lente de la pression et du débit, puis construit
-les caractéristiques planes à partir de la frontière mesurée :
+The renderer removes a slow average from the pressure and the flow, then builds
+the plane characteristics from the measured boundary:
 
 ```text
 Zc = ρ c / A
@@ -110,1035 +110,1014 @@ p+ = 1/2 (p′ + Zc U′)
 p− = 1/2 (p′ − Zc U′)
 ```
 
-La réflexion au port n’est pas déduite d’un preset d’ouverture. Elle vient de la
-linéarisation locale de la loi d’orifice autour du débit moyen. Les runners et
-collecteurs sont des guides bidirectionnels ; les jonctions N-ports diffusent
-les ondes selon les admittances `A/(ρc)`. Firing order, longueurs, sections et
-température déterminent donc naturellement la phase, le croisement entre
-cylindres et les résonances.
+The port reflection is not derived from an opening preset. It comes from the
+local linearisation of the orifice law around the mean flow. Runners and
+collectors are bidirectional guides; the N-port junctions scatter the waves
+according to the admittances `A/(ρc)`. Firing order, lengths, areas and
+temperature therefore naturally determine the phase, the cross-talk between
+cylinders and the resonances.
 
-La haute bande caractéristique est linéaire et passive. Elle propage le signal
-audio mais ses réflexions haute fréquence ne sont pas réinjectées dans la
-chambre 0D ; le réseau non linéaire basse bande reste propriétaire de la
-contre-pression physique.
+The characteristic high band is linear and passive. It propagates the audio
+signal, but its high-frequency reflections are not fed back into the 0D
+chamber; the non-linear low-band network stays the owner of the physical
+back-pressure.
 
-Le débit de soupape possède désormais deux propriétaires spectraux explicites.
-La paire pression/débit issue du réseau passe dans un passe-bas
-Linkwitz–Riley d’ordre 4 à `0,45 × fréquence de couplage`. Le débit de Riemann
-instantané passe dans le passe-haut complémentaire, calculé à la cadence
-mécanique. Cette seconde branche n’est jamais associée à la pression plus lente :
-elle devient une source de vitesse de volume au port, soit les caractéristiques
-antisymétriques `(+Zc U/2, -Zc U/2)`, puis traverse la même impédance physique de
-soupape que les ondes du runner. Les deux filtres ont une somme cohérente
-all-pass ; il n’existe donc ni bande doublée, ni gain de timbre caché. Si la
-frontière est déjà publiée pleine bande (`fréquence de couplage = 0`), la source
-complémentaire est exactement nulle.
+The valve flow now has two explicit spectral owners. The pressure/flow pair
+from the network goes through a 4th-order Linkwitz–Riley low-pass at
+`0.45 × coupling rate`. The instantaneous Riemann flow goes through the
+complementary high-pass, computed at the mechanical rate. This second branch is
+never paired with the slower pressure: it becomes a volume-velocity source at
+the port, i.e. the antisymmetric characteristics `(+Zc U/2, -Zc U/2)`, then
+goes through the same physical valve impedance as the runner waves. The two
+filters sum coherently to an all-pass; there is therefore neither a doubled
+band nor a hidden timbre gain. If the boundary is already published full-band
+(`coupling rate = 0`), the complementary source is exactly zero.
 
-Cette branche instantanée reste elle-même un signal échantillonné par le solveur
-mécanique. Deux sections Butterworth passe-bas bornent donc sa reconstruction à
-`0,42 × cadence mécanique` (Linkwitz–Riley d’ordre 4). Sans cette borne haute,
-les images de l’interpolation au-dessus du Nyquist mécanique étaient amplifiées
-par la dérivée de rayonnement et produisaient des clics isolés — le grésillement
-observé surtout sur le Merlin et le 2JZ. Ce filtre ne retire aucune fréquence
-représentable par le producteur ; il interdit uniquement à l’audio d’inventer
-une bande que la simulation n’a jamais échantillonnée.
+This instantaneous branch is itself a signal sampled by the mechanical solver.
+Two Butterworth low-pass sections therefore bound its reconstruction at
+`0.42 × mechanical rate` (4th-order Linkwitz–Riley). Without this upper bound,
+the interpolation images above the mechanical Nyquist were amplified by the
+radiation derivative and produced isolated clicks — the crackle heard mostly on
+the Merlin and the 2JZ. This filter removes no frequency the producer can
+represent; it only forbids the audio from inventing a band the simulation never
+sampled.
 
-## 4. Rayonnement et calibration
+## 4. Radiation and calibration
 
-La sortie est terminée par `UnflangedPipeRadiation`, approximation causale de
-Padé (1,2) de la solution de Levine–Schwinger ajustée par Silva et al. Le filtre
-retourne la pression réfléchie dans le guide. La vitesse de volume nette à la
-bouche puis son accélération donnent la pression monopolaire en champ libre.
+The outlet is terminated by `UnflangedPipeRadiation`, a causal Padé (1,2)
+approximation of the Levine–Schwinger solution fitted by Silva et al. The
+filter returns the reflected pressure into the guide. The net volume velocity
+at the mouth, then its acceleration, give the free-field monopole pressure.
 
-Chaque sortie publie désormais sa position, son axe, son diamètre et son type de
-terminaison (libre ou bridée). `FreeFieldObserver` calcule séparément les deux
-distances sortie–microphone, les retards `r/c`, la décroissance `1/r` et la
-directivité fréquentielle liée à `ka`. Une sortie centrée peut légitimement
-rester presque mono ; deux sorties séparées acquièrent leur largeur par leurs
-temps d’arrivée et non par un panoramique inventé.
+Each outlet now publishes its position, its axis, its diameter and its
+termination type (unflanged or flanged). `FreeFieldObserver` computes
+separately the two outlet–microphone distances, the `r/c` delays, the `1/r`
+decay and the frequency-dependent directivity tied to `ka`. A centred outlet can
+legitimately stay almost mono; two separate outlets acquire their width through
+their arrival times and not through invented panning.
 
-Les pascals n’ont pas de correspondance universelle en dBFS : celle-ci
-dépend nécessairement du microphone et du préamplificateur. La chaîne de capture
-est donc un objet de calibration explicite (`AcousticMonitorCalibration`), avec
-20 µPa comme pression SPL de référence et 144 dB SPL RMS à 0 dBFS par défaut.
-Ce choix donne la marge d’un enregistrement moteur à fort niveau ; il est
-modifiable indépendamment de la physique et du volume d’écoute. Il n’existe pas
-de gain caché de « réalisme » sur le bus d’échappement physique, et le limiteur
-de sécurité reste à gain unitaire dans les scénarios de validation.
+Pascals have no universal mapping to dBFS: it necessarily depends on the
+microphone and the preamp. The capture chain is therefore an explicit
+calibration object (`AcousticMonitorCalibration`), with 20 µPa as the SPL
+reference pressure and 144 dB SPL RMS at 0 dBFS by default. This choice gives
+the headroom of a high-level engine recording; it can be changed independently
+of the physics and of the listening volume. There is no hidden "realism" gain on
+the physical exhaust bus, and the safety limiter stays at unity gain in the
+validation scenarios.
 
-Références :
+References:
 
-- [H. Levine et J. Schwinger, *On the Radiation of Sound from an Unflanged
+- [H. Levine and J. Schwinger, *On the Radiation of Sound from an Unflanged
   Circular Pipe*](https://doi.org/10.1103/PhysRev.73.383), Physical Review 73
-  (1948), 383–406 ;
+  (1948), 383–406;
 - [F. Silva et al., *Approximation formulae for the acoustic radiation impedance
   of a cylindrical pipe*](https://doi.org/10.1016/j.jsv.2008.11.008), Journal of
   Sound and Vibration 322 (2009), 255–263.
 
-## 5. Réponses impulsionnelles
+## 5. Impulse responses
 
-Le champ libre est le défaut. L’application ne charge plus d’IR de preset,
-d’IR générique ni d’IR synthétisée depuis la géométrie. Une convolution est
-active uniquement si `exhaust_paths[].impulse_response` désigne explicitement
-un WAV. Cette IR doit représenter une mesure aval — cabine, pièce, microphone
-ou système complet identifié — et non remplacer une dynamique de gaz absente.
+Free field is the default. The application no longer loads a preset IR, a
+generic IR or an IR synthesised from the geometry. A convolution is active only
+if `exhaust_paths[].impulse_response` explicitly names a WAV. That IR must
+represent a downstream measurement — cabin, room, microphone or a complete
+identified system — and not replace missing gas dynamics.
 
-## 6. Ce qui a été volontairement retiré du chemin physique
+## 6. What was deliberately removed from the physical path
 
-Une fois la frontière SI active, l’échappement n’utilise plus :
+Once the SI boundary is active, the exhaust no longer uses:
 
-- oscillateurs de blowdown ou de « crack » ;
-- bruit aléatoire de jet ;
-- jitter de débit ;
-- FDN de silencieux ;
-- coloration de preset, saturation de collecteur ou gain de transmission audio
-  du DAG ;
-- IR implicite ou générée.
+- blowdown or "crack" oscillators;
+- random jet noise;
+- flow jitter;
+- muffler FDN;
+- preset colouring, collector saturation or DAG audio transmission gain;
+- an implicit or generated IR.
 
-Le code historique reste isolé pour certains harnais de compatibilité sans
-frontière SI. Il n’est pas mélangé à la sortie livrée par `EngineRuntime`.
+The historical code stays isolated for some compatibility harnesses without an
+SI boundary. It is not mixed into the output delivered by `EngineRuntime`.
 
-## 7. Compatibilité physique — réponse honnête
+## 7. Physical compatibility — an honest answer
 
-La physique précédente n’était pas suffisante pour ce saut qualitatif. Il a
-fallu ajouter le réseau quasi-1D conservatif, les réservoirs cylindres finis, les
-flux bidirectionnels aux soupapes, les jonctions globales, le débit signé et les
-états SI locaux. La combustion 0D existante était structurellement compatible :
-elle fournit déjà pression, énergie, composition et volume à la frontière.
+The previous physics was not enough for this qualitative leap. It took the
+conservative quasi-1D network, finite cylinder reservoirs, bidirectional fluxes
+at the valves, global junctions, signed flow and local SI states. The existing
+0D combustion was structurally compatible: it already provides pressure,
+energy, composition and volume at the boundary.
 
-Le débit de soupape corrigé a également révélé le retard d’un cycle de
-l’injection indirecte pendant une remontée rapide de pression admission. Il ne
-a pas été masqué par un enrichissement. `TransientChargeEstimator` conserve la
-dernière masse d’air réellement piégée à la fermeture admission — donc le vrai
-remplissage et les ondes du moteur — puis la projette par le seul rapport de
-densité idéal-gaz `p/T` du plénum. L’oxygène déjà résolu dans la chambre reste une
-borne inférieure et la boucle fermée conserve son rôle de correction.
+The corrected valve flow also revealed the one-cycle lag of port injection
+during a fast rise in intake pressure. It was not hidden by enrichment.
+`TransientChargeEstimator` keeps the last air mass actually trapped at intake
+closing — hence the real filling and the engine's waves — then projects it by
+the plenum's ideal-gas density ratio `p/T` alone. The oxygen already resolved in
+the chamber stays a lower bound and the closed loop keeps its correcting role.
 
-Elle n’est cependant pas une validation absolue. Pour corréler un moteur réel,
-il reste nécessaire de comparer pression cylindre, pression de runner, débit et
-température à des mesures, puis d’améliorer au besoin combustion, transferts
-thermiques, coefficients de soupape et géométrie.
+It is not an absolute validation, however. To correlate a real engine, cylinder
+pressure, runner pressure, flow and temperature still need to be compared with
+measurements, and combustion, heat transfer, valve coefficients and geometry
+improved as needed.
 
-L’échappement, l’admission et le rayonnement du bloc/culasses sont désormais des
-chemins physiques pilotés par le solveur. La suralimentation est solver-driven
-mais reste semi-empirique sur son rendement acoustique ; distribution,
-démarreur et transmission ne disposent pas encore tous d’un modèle rayonnant
-identifié. Ces limites ne sont remplacées par aucun oscillateur dans un chemin
-physique déjà disponible.
+The exhaust, the intake and the radiation of the block/heads are now physical
+paths driven by the solver. Forced induction is solver-driven but stays
+semi-empirical in its acoustic efficiency; valvetrain, starter and transmission
+do not all have an identified radiating model yet. These limitations are not
+replaced by any oscillator in a physical path that is already available.
 
-Autres limites explicites : acoustique plane linéaire dans la haute bande,
-correction d’écoulement moyen au rayonnement non modélisée, modes transverses et
-acoustique de coudes non résolus, modes structurels estimés tant qu’aucune mesure
-NVH n’est fournie.
+Other explicit limitations: linear plane acoustics in the high band, mean-flow
+correction of radiation not modelled, transverse modes and bend acoustics not
+resolved, structural modes estimated as long as no NVH measurement is provided.
 
-## 8. Carte du code pour les prochains agents
+## 8. Code map
 
-| Responsabilité | Fichiers principaux |
+| Responsibility | Main files |
 |---|---|
-| volumes finis et thermodynamique | `src/gas-dynamics/*/FiniteVolumeDuct.*` |
-| compilation du DAG | `src/gas-dynamics/*/ExhaustNetworkLayout.*` |
-| couplage global/jonctions/soupapes | `src/gas-dynamics/*/ExhaustGasNetwork.*` |
-| orchestration multirate et télémétrie | `src/simulation/src/EngineSimulator.cpp` |
-| anticipation physique de charge PFI | `src/simulation/*/TransientChargeEstimator.hpp` |
-| radiation passive | `src/audio/*/PipeRadiationModel.*` |
-| sorties et microphones stéréo | `src/audio/*/FreeFieldObserver.*` |
-| réseau d’admission | `src/audio/*/AcousticIntakeNetwork.*` |
-| rayonnement structurel | `src/audio/*/StructuralModalRadiator.*` |
-| acoustique de suralimentation | `src/audio/*/ForcedInductionAcoustics.*` |
-| calibration Pa → dBFS | `src/audio/*/AcousticMonitorCalibration.hpp` |
-| raidissement de conduit (amplitude finie) | `src/audio/*/NonlinearDuctAcoustics.hpp` |
-| caractéristiques et rendu | `src/audio/*/RealtimeEngineAudio.*` |
-| chargement d’IR explicite | `src/app/src/MainComponent.cpp` |
+| finite volumes and thermodynamics | `src/gas-dynamics/*/FiniteVolumeDuct.*` |
+| DAG compilation | `src/gas-dynamics/*/ExhaustNetworkLayout.*` |
+| global coupling/junctions/valves | `src/gas-dynamics/*/ExhaustGasNetwork.*` |
+| multirate orchestration and telemetry | `src/simulation/src/EngineSimulator.cpp` |
+| physical PFI charge anticipation | `src/simulation/*/TransientChargeEstimator.hpp` |
+| passive radiation | `src/audio/*/PipeRadiationModel.*` |
+| stereo outlets and microphones | `src/audio/*/FreeFieldObserver.*` |
+| intake network | `src/audio/*/AcousticIntakeNetwork.*` |
+| structural radiation | `src/audio/*/StructuralModalRadiator.*` |
+| forced-induction acoustics | `src/audio/*/ForcedInductionAcoustics.*` |
+| Pa → dBFS calibration | `src/audio/*/AcousticMonitorCalibration.hpp` |
+| duct steepening (finite amplitude) | `src/audio/*/NonlinearDuctAcoustics.hpp` |
+| characteristics and rendering | `src/audio/*/RealtimeEngineAudio.*` |
+| explicit IR loading | `src/app/src/MainComponent.cpp` |
 
-Ne pas réintroduire un fallback silencieux si le réseau échoue. Une erreur de
-configuration doit être observable ; une limite de résolution doit alimenter
+Do not reintroduce a silent fallback if the network fails. A configuration
+error must be observable; a resolution limit must feed
 `solverResolutionLimited`.
 
-## 9. Validation obligatoire
+## 9. Required validation
 
-Les tests couvrent notamment : état uniforme, tube à choc de Sod, positivité,
-conservation espèce/énergie, volume unique, propagation, interfaces directes,
-ordre des frontières, tuyère subcritique et sonique, soufflage/réversion,
-projection de charge par densité, calibration SPL, rayonnement passif,
-déterminisme, invariance aux presets/bruits/gains hérités, géométrie et
-invariance 48/96 kHz.
+The tests cover in particular: uniform state, Sod shock tube, positivity,
+species/energy conservation, single volume, propagation, direct interfaces,
+boundary order, subcritical and sonic nozzle, blowdown/reversion, charge
+projection by density, SPL calibration, passive radiation, determinism,
+invariance to inherited presets/noises/gains, geometry and 48/96 kHz
+invariance.
 
-Avant livraison :
+Before shipping:
 
 ```powershell
-cmake --build out/build/windows-vs2022 --config Release --parallel 4
+cmake --build out/build/windows-vs2022 --config Release
 ctest --test-dir out/build/windows-vs2022 -C Release --output-on-failure
 ```
 
-Le harnais LS3 doit aussi rester sous les 4,167 ms de la boucle 240 Hz.
+The LS3 harness must also stay under the 4.167 ms of the 240 Hz loop.
 
-## 10. État mesuré et limites connues
+## 10. Measured state and known limitations
 
-Cette section enregistre ce qui a été **mesuré**, y compris ce qui ne tient pas
-le budget. Elle prime sur toute affirmation antérieure de ce document.
+This section records what was **measured**, including what does not hold the
+budget. It takes precedence over any earlier claim in this document.
 
-### Performance (`EngineLabPhysicsPerfHarness`, Release, 3 passages)
+### Performance (`EngineLabPhysicsPerfHarness`, Release, 3 runs)
 
-| Moteur | tr/min | moyenne | p50 | p95 | max |
+| Engine | rpm | mean | p50 | p95 | max |
 |---|---|---|---|---|---|
-| LS3 V8 | 3630 | 2,38–2,44 ms | 2,37–2,42 | 2,55–2,74 | 2,79–3,27 |
-| LS3 V8 | 5940 | 3,22–3,32 ms | 3,19–3,25 | 3,48–3,75 | 3,83–**5,09** |
-| Merlin V12 | 1760 | 3,95–4,02 ms | 3,93–4,01 | **4,17–4,26** | 4,40–4,63 |
-| Merlin V12 | 2880 | **4,94–5,08 ms** | 5,01–5,15 | **5,26–5,39** | 5,50–6,05 |
+| LS3 V8 | 3630 | 2.38–2.44 ms | 2.37–2.42 | 2.55–2.74 | 2.79–3.27 |
+| LS3 V8 | 5940 | 3.22–3.32 ms | 3.19–3.25 | 3.48–3.75 | 3.83–**5.09** |
+| Merlin V12 | 1760 | 3.95–4.02 ms | 3.93–4.01 | **4.17–4.26** | 4.40–4.63 |
+| Merlin V12 | 2880 | **4.94–5.08 ms** | 5.01–5.15 | **5.26–5.39** | 5.50–6.05 |
 
-Le LS3 tient le budget en moyenne mais son maximum atteint 5,09 ms, soit 22 %
-au-dessus de la cadence. **Le Merlin V12 dépasse le budget sur la moyenne** à
-2880 tr/min et son p95 dépasse déjà à 1760 tr/min : ce moteur ne soutient pas
-le temps réel. Ne pas citer les seules moyennes LS3 comme preuve de conformité.
+The LS3 holds the budget on average but its maximum reaches 5.09 ms, 22 % above
+the rate. **The Merlin V12 exceeds the budget on average** at 2,880 rpm and its
+p95 already exceeds it at 1,760 rpm: this engine does not sustain real time.
+Do not quote the LS3 averages alone as proof of compliance.
 
-### Chemin audio
+### Audio path
 
-La voix de production est la somme de chemins physiques séparément mesurables :
-réseau d’échappement complet, réseau d’admission, modes structurels et, lorsque
-présente, suralimentation solver-driven. Les étapes correspondantes sont
-détaillées aux §20–23. Les voix à oscillateurs historiques restent disponibles
-uniquement pour les harnais de compatibilité dépourvus de configuration
-physique ; le catalogue et `EngineRuntime` exigent zéro échantillon de ce chemin.
+The production voice is the sum of physical paths that can be measured
+separately: complete exhaust network, intake network, structural modes and,
+when present, solver-driven forced induction. The corresponding steps are
+detailed in §20–23. The historical oscillator voices stay available only for
+compatibility harnesses lacking a physical
+configuration; the catalogue and `EngineRuntime` require zero samples from that path.
 
-### Niveaux mesurés aux observateurs publiés
+### Levels measured at the published observers
 
-Le plein échelle du moniteur reste fixé à 134 dB SPL. Le rendu emploie la position
-de microphone publiée par chaque moteur ; la garde de puissance extrapole cette
-pression à un mètre par la même loi `1/r` avant d’appliquer 90–130 dB SPL. Elle ne
-confond donc pas un observateur lointain avec une source faible. Le harnais impose
-en plus que la somme des
-couches physiques reste sous le genou du limiteur (`0,82`) avec gain de sécurité
-strictement unitaire. Un changement de calibration ou un AGC ne peut donc pas
-faire passer un moteur mal dimensionné.
+The monitor full scale stays fixed at 134 dB SPL. The render uses the microphone
+position published by each engine; the power guard extrapolates that pressure to
+one metre with the same `1/r` law before applying 90–130 dB SPL. It therefore
+does not confuse a distant observer with a weak source. The harness additionally
+requires the sum of the physical layers to stay under the limiter knee (`0.82`)
+with a strictly unity safety gain. A calibration change or an AGC therefore
+cannot let a badly sized engine through.
 
-## 11. Cadence de couplage : ce qui a été mesuré, et pourquoi elle n'a pas bougé
+## 11. Coupling rate: what was measured, and why it did not move
 
-La frontière d'échappement qui excite le guide d'ondes est échantillonnée à la
-cadence de couplage multirate. Tout contenu spectral au-dessus de la moitié de
-cette cadence ne peut pas venir de la frontière : c'est une image de
-reconstruction. `EngineState` publie désormais `exhaustCouplingFrequencyHz` et
-`exhaustNetworkSubstepFrequencyHz` pour que la comparaison soit directe au lieu
-d'être devinée, et le harnais de rendu les rapporte par moteur.
+The exhaust boundary that drives the waveguide is sampled at the multirate
+coupling rate. Any spectral content above half that rate cannot come from the
+boundary: it is a reconstruction image. `EngineState` now publishes
+`exhaustCouplingFrequencyHz` and `exhaustNetworkSubstepFrequencyHz` so that the
+comparison is direct instead of guessed, and the render harness reports them
+per engine.
 
-Deux corrections ont été distinguées, et une seule a été retenue.
+Two fixes were told apart, and only one was kept.
 
-**Retenue — cohérence de la frontière.** Pression, densité et vitesse du son
-étaient reconstruites en mélangeant deux nœuds du réseau, tandis que le débit
-massique venait du seul nœud le plus récent. La décomposition caractéristique
-`0.5 (p' ± Zc U')` exige que les deux décrivent le même instant du même champ.
-L'écart valait `(1 − phase) (to.p − from.p)` : une dent de scie cadencée au
-couplage, dont les harmoniques dépassent largement le Nyquist de couplage. Elle
-était injectée dans le terme source, donc aucune correction du guide d'ondes ne
-pouvait l'atteindre. Corrigée en publiant deux débits aux contrats distincts.
-Coût CPU nul.
+**Kept — boundary consistency.** Pressure, density and speed of sound were
+reconstructed by blending two network nodes, while the mass flow came from the
+most recent node alone. The characteristic decomposition `0.5 (p' ± Zc U')`
+requires both to describe the same instant of the same field. The discrepancy
+was `(1 − phase) (to.p − from.p)`: a sawtooth clocked at the coupling rate,
+whose harmonics extend far above the coupling Nyquist. It was injected into the
+source term, so no waveguide fix could reach it. Fixed by publishing two flows
+with separate contracts. Zero CPU cost.
 
-**Écartée — relèvement de la cadence.** Acoustiquement, cela fonctionne. Mesuré
-en couplant à chaque sous-pas mécanique, tous les pics repassent sous le Nyquist
-de couplage pour la première fois (674–1583 Hz, donc des modes réellement
-représentables), la fraction de haute bande de l'I4 tombe de 3.8 % à 0.5 % et
-celle du V8 de 7.9 % à 0.8 %.
+**Rejected — raising the rate.** Acoustically, it works. Measured by coupling
+at every mechanical sub-step, all the peaks drop back below the coupling Nyquist
+for the first time (674–1583 Hz, so modes that can really be represented), the
+I4 high-band fraction falls from 3.8 % to 0.5 % and the V8's from 7.9 % to
+0.8 %.
 
-Le budget l'interdit. Le LS3 passe de ~3.76 ms à ~4.55 ms pour une trame de
-4.167 ms à 3630 tr/min, soit de dedans à dehors ; à 5940 tr/min il va de 5.13 à
-7.14 ms. Le surcoût n'est pas le sous-cyclage CFL — dont le nombre total de
-sous-pas dépend du temps physique parcouru, pas du nombre d'appels — mais le
-travail fixe par couplage : moyennage de frontière sur tous les cylindres et
-mise en place de l'avance. À stride 1 ce coût fixe se paie à chaque sous-pas.
+The budget forbids it. The LS3 goes from ~3.76 ms to ~4.55 ms for a 4.167 ms
+frame at 3,630 rpm, i.e. from inside to outside; at 5,940 rpm it goes from 5.13
+to 7.14 ms. The overhead is not the CFL sub-cycling — whose total number of
+sub-steps depends on the physical time covered, not on the number of calls — but
+the fixed work per coupling: boundary averaging over every cylinder and setting
+up the advance. At stride 1 that fixed cost is paid at every sub-step.
 
-Une borne absolue sur la cadence a aussi été essayée, pour épargner les moteurs
-à beaucoup de cylindres. Elle **dégrade** : le V8 remonte à 36.1 dB @ 5754 Hz,
-une image de premier rang sur son propre couplage. Le contenu de la bouffée de
-détente suit bien la cadence d'allumage, donc la règle par période d'allumage
-est physiquement fondée et une borne en Hz absolus la casse. Ne pas réessayer
-sans traiter d'abord le coût fixe par couplage.
+An absolute bound on the rate was also tried, to spare engines with many
+cylinders. It **degrades**: the V8 climbs back to 36.1 dB @ 5754 Hz, a
+first-order image of its own coupling. The content of the blowdown puff does
+follow the firing rate, so the per-firing-period rule is physically grounded and
+a bound in absolute Hz breaks it. Do not retry without first addressing the
+fixed cost per coupling.
 
-Le chemin praticable est donc de réduire ce coût fixe, pas de relever la cadence
-telle quelle.
+The practical path is therefore to reduce that fixed cost, not to raise the
+rate as is.
 
-### Limite honnête qui subsiste
+### Honest remaining limitation
 
-Les pics étroits ne sont pas éliminés. Après la correction de cohérence, le
-harnais mesure encore 16–32 dB au-dessus du plancher local, pire cas V8 à
-31.9 dB @ 3833 Hz, et plusieurs restent au-dessus du Nyquist de couplage : il
-demeure de l'imagerie que cette correction n'explique pas. La bande réellement
-physique reste bornée à ~1.1–2 kHz par le couplage. C'est une limite
-structurelle, pas un réglage.
+The narrow peaks are not eliminated. After the consistency fix, the harness
+still measures 16–32 dB above the local floor, worst case V8 at 31.9 dB @
+3833 Hz, and several stay above the coupling Nyquist: there is imaging left
+that this fix does not explain. The really physical band stays bounded at
+~1.1–2 kHz by the coupling. It is a structural limitation, not a setting.
 
-Aucun test de non-régression ne garde cette correction. Le seul invariant propre
-envisagé — « pas d'énergie au-dessus du Nyquist de couplage » — est faux en
-toute rigueur, la terminaison de soupape étant non linéaire et créant
-légitimement des harmoniques. Un seuil inventé aurait été pire que rien.
+No non-regression test guards this fix. The only clean invariant considered —
+"no energy above the coupling Nyquist" — is strictly false, since the valve
+termination is non-linear and legitimately creates harmonics. An invented
+threshold would have been worse than nothing.
 
-## 12. Le peigne de trame : la vraie origine du « métallique » (résolu)
+## 12. The frame comb: the real origin of the "metallic" sound (resolved)
 
-La section 11 laissait des pics « au-dessus du Nyquist de couplage » inexpliqués.
-Leur origine est désormais établie et corrigée. Les pics dominants de tout le
-catalogue tombaient sur des multiples exacts de 240.07 Hz — la cadence de trame
-— identiques d'un moteur à l'autre (4081 Hz sur le V8 **et** l'I2), avec des
-bandes latérales au taux d'allumage de chaque moteur. Le repliage synchrone à
-200 échantillons (fold) a mesuré la composante verrouillée trame à ~−32 dB du
-RMS total.
+Section 11 left peaks "above the coupling Nyquist" unexplained. Their origin is
+now established and fixed. The dominant peaks across the whole catalogue fell
+on exact multiples of 240.07 Hz — the frame rate — identical from one engine to
+another (4081 Hz on the V8 **and** the I2), with sidebands at each engine's
+firing rate. Synchronous folding at 200 samples measured the frame-locked
+component at ~−32 dB of the total RMS.
 
-Attribution par élimination, chaque étape mesurée : couches synthétiques
-coupées (`--mute-combustion/-mechanical/-intake`) → persiste ; IR remplacée par
-un Dirac → persiste ; refits par bloc gelés → persiste ; dyno du harnais lissé
-à 2 Hz → persiste ; sous-blocs de rendu de 100 (`--audio-chunk`) → le peigne ne
-suit pas la taille de bloc. Conclusion forcée : le peigne entre par la
-télémétrie — la **solution du réseau elle-même** était modulée à la trame.
+Attribution by elimination, each step measured: synthetic layers cut
+(`--mute-combustion/-mechanical/-intake`) → persists; IR replaced by a Dirac →
+persists; per-block refits frozen → persists; harness dyno smoothed at 2 Hz →
+persists; render sub-blocks of 100 (`--audio-chunk`) → the comb does not follow
+the block size. Forced conclusion: the comb enters through the telemetry — **the
+network solution itself** was modulated at the frame rate.
 
-Cause : la vidange du réseau était forcée au dernier sous-pas de chaque trame.
-Quand le nombre de sous-pas n'est pas multiple du stride (V8 : 49 sous-pas,
-stride 2), la dernière fenêtre de moyennage est tronquée — le même motif
-irrégulier répété à 240 Hz. Quatre corrections, par ordre d'élimination :
-filtre de reconstruction anti-imagerie suivant la cadence publiée ;
-reconstruction à délai constant (625 µs) sur anneau de nœuds horodatés ;
-rampes à 10 Hz sur les délais pilotés par télémétrie de trame ; et la décisive,
-une **grille d'intégration réseau libre** (accumulateurs membres, vidange par
-durée accumulée, plus jamais par fin de trame).
+Cause: the network drain was forced at the last sub-step of every frame. When
+the number of sub-steps is not a multiple of the stride (V8: 49 sub-steps,
+stride 2), the last averaging window is truncated — the same irregular pattern
+repeated at 240 Hz. Four fixes, in order of elimination: an anti-imaging
+reconstruction filter following the published rate; constant-delay
+reconstruction (625 µs) over a ring of time-stamped nodes; 10 Hz ramps on the
+delays driven by frame telemetry; and the decisive one, a **free-running network
+integration grid** (member accumulators, drained by accumulated duration, never
+again at the end of a frame).
 
-Résultat en configuration d'usine : plus aucun pic dominant sur le peigne.
-I4 16.5 dB @ 2241 Hz (mode réel), V8 34.6 dB @ 983 Hz (4e harmonique
-d'allumage — contenu moteur), I2 12.1 dB @ 678 Hz, Radial 17.7 dB @ 523 Hz.
-Haute bande 0.2–0.6 % (contre 3–15 % en début de chantier). La suppression de
-la fenêtre dégénérée rend en outre ~20 % de CPU : LS3 3.73 → 2.89 ms à
-3630 tr/min, 5.13 → 4.15 ms à 5940 — de retour dans le budget.
+Result in the factory configuration: no dominant peak left on the comb. I4
+16.5 dB @ 2241 Hz (real mode), V8 34.6 dB @ 983 Hz (4th firing harmonic — engine
+content), I2 12.1 dB @ 678 Hz, Radial 17.7 dB @ 523 Hz. High band 0.2–0.6 %
+(against 3–15 % at the start of the work). Removing the degenerate window also
+gives back ~20 % of CPU: LS3 3.73 → 2.89 ms at 3,630 rpm, 5.13 → 4.15 ms at
+5,940 — back within budget.
 
-Résidu documenté : le radial garde une raie faible à 32×240 Hz, sa grille de
-couplage étant réellement commensurable avec la trame (8 vidanges par trame
-exactement) ; énergie haute bande 0.0 %. La composante verrouillée trame
-restante est concentrée à 240/480 Hz — la réponse authentique du moteur aux
-commandes par trame — et non plus dans l'aigu.
+Documented residue: the radial keeps a weak line at 32×240 Hz, its coupling grid
+being genuinely commensurate with the frame (exactly 8 drains per frame); high
+band energy 0.0 %. The remaining frame-locked component is concentrated at
+240/480 Hz — the authentic response of the engine to per-frame commands — and
+no longer in the treble.
 
-## 13. « Étouffé » et « tous pareils » : ce qui a été mesuré, et la distinction qui compte
+## 13. "Muffled" and "all the same": what was measured, and the distinction that matters
 
-Deux plaintes d'écoute distinctes ont été confondues au départ, et il faut les
-garder séparées parce que **leurs causes n'ont rien à voir** :
+Two separate listening complaints were confused at first, and they must be kept
+apart because **their causes have nothing in common**:
 
-- **« étouffé / muffled »** — le haut du spectre manque. Cause réelle : la bande
-  physique était bornée par le couplage.
-- **« tous les moteurs sonnent pareil »** — le caractère par moteur ne ressort
-  pas. Ce n'est **pas** un problème de bande passante.
+- **"muffled"** — the top of the spectrum is missing. Real cause: the physical
+  band was bounded by the coupling.
+- **"all engines sound the same"** — per-engine character does not come
+  through. This is **not** a bandwidth problem.
 
-### La mesure qui a tranché « tous pareils »
+### The measurement that settled "all the same"
 
-La corrélation de forme spectrale (log-spectre, 80–6000 Hz) entre moteurs vaut
-0.55–0.74. Le réflexe est de conclure « ils se ressemblent trop ». C'est faux, et
-la mesure qui le prouve est le **spread par tiers d'octave** : dans chaque bande,
-l'écart entre le moteur le plus fort et le plus faible est de **15 à 30 dB**
-(`scratchpad overlay.py`). Les moteurs diffèrent énormément bande par bande. La
-corrélation de 0.55–0.74 ne capture que la **tendance commune** — tout roule vers
-l'aigu — qui est physiquement universelle et correcte. Il n'y a **aucune**
-résonance commune parasite (la seule bande à faible spread, 160 Hz, est à 14 dB ;
-tout le reste ≥ 17 dB). Donc : pas de bug d'homogénéisation à corriger.
+The spectral shape correlation (log spectrum, 80–6000 Hz) between engines is
+0.55–0.74. The reflex is to conclude "they are too alike". That is wrong, and
+the measurement that proves it is the **third-octave spread**: in each band, the
+gap between the loudest and the quietest engine is **15 to 30 dB**. The engines
+differ enormously band by band. The 0.55–0.74 correlation only captures the
+**common trend** — everything rolls off towards the treble — which is physically
+universal and correct. There is **no** common spurious resonance (the only
+low-spread band, 160 Hz, is at 14 dB; everything else ≥ 17 dB). So: no
+homogenisation bug to fix.
 
-Piège à éviter pour le prochain agent : **la corrélation de forme spectrale
-monte quand tous les moteurs deviennent plus brillants « de la même façon »**.
-Élargir la bande (§14) et ajouter le raidissement (§15) font *monter* cette
-corrélation de ~0.02–0.03 chacun (attribution isolée par A/B, `meancorr.py`),
-alors même qu'ils *améliorent* le son. C'est un artefact de métrique, pas une
-régression : la métrique pénalise « tout le monde a gagné de l'aigu » même quand
-cet aigu est souhaitable. Ne pas « corriger » cette hausse.
+Trap to avoid: **the spectral shape correlation rises when every engine becomes
+brighter "in the same way"**. Widening the band (§14) and adding steepening
+(§15) each *raise* that correlation by ~0.02–0.03 (attribution isolated by A/B),
+even though they *improve* the sound. It is a metric artefact, not a
+regression: the metric penalises "everyone gained treble" even when that treble
+is desirable. Do not "fix" this rise.
 
-### Ce que la différenciation est réellement
+### What differentiation really is
 
-Le caractère par moteur vit surtout dans le **motif d'allumage** (l'enveloppe),
-pas dans la forme spectrale stationnaire. Deux sondes le confirment :
+Per-engine character lives mostly in the **firing pattern** (the envelope), not
+in the stationary spectral shape. Two probes confirm it:
 
-- **Spectre de modulation d'enveveloppe au ralenti** (`character.py`) : chaque
-  moteur a une signature de pics distincte (K20 62.5 Hz, LS3 196 Hz, Hayabusa
-  82 Hz, Big Twin 20.5 Hz…). Ces « rythmes » d'échappement sont bien distincts.
-- **Burble du V8 crossplane** (`burble.py`) : l'énergie de modulation
-  sous-allumage rapportée à l'allumage vaut **0.09 pour le LS3** contre **0.00**
-  pour les I4 à allumage régulier — le grondement « rageur » issu de l'allumage
-  inégal par banc (intervalles 180/270/180/90° dans chaque banc) est présent.
+- **Envelope modulation spectrum at idle**: each engine has a distinct peak
+  signature (K20 62.5 Hz, LS3 196 Hz, Hayabusa 82 Hz, Big Twin 20.5 Hz…). These
+  exhaust "rhythms" are clearly distinct.
+- **Crossplane V8 burble**: the sub-firing modulation energy relative to firing
+  is **0.09 for the LS3** against **0.00** for the evenly firing I4s — the
+  "angry" rumble from uneven firing per bank (180/270/180/90° intervals in each
+  bank) is present.
 
-Conclusion mesurée : les moteurs **sont** différenciés ; l'étouffement masquait
-cette différence. Retirer l'étouffement (§14, §15) rend la différence audible
-sans avoir à « forcer » une différenciation artificielle — ce qui aurait été un
-hack.
+Measured conclusion: the engines **are** differentiated; the muffling hid that
+difference. Removing the muffling (§14, §15) makes the difference audible
+without having to "force" an artificial differentiation — which would have been
+a hack.
 
-## 14. Doubler la bande physique à bas régime (cap de couplage 500 → 250 → 125 µs)
+> **Update, 2026-09-22.** A blind listening test by the owner against real
+> engines found that no engine is recognisable beyond its cylinder count (see
+> `docs/journal.md`). The differentiation measured here is real, but it is not
+> enough to identify a specific engine.
 
-> **État livré (2026-07-28).** Le cap a été divisé une seconde fois, de 250 à
-> **125 µs** : `maximumLowSpeedExhaustCouplingSeconds.value_or(125.0e-6)` dans
-> `EngineSimulator::step`. La fréquence de couplage LS3 passe de 3 760 à
-> 11 280 Hz (Nyquist physique 1 880 → **5 640 Hz**) et celle du Merlin de 3 480 à
-> 6 960 Hz (1 740 → **3 480 Hz**). Les chiffres « ~2 kHz » du texte d'origine
-> ci-dessous décrivent l'étape 250 µs et sont conservés comme historique du
-> raisonnement, pas comme état courant. Mesures : `docs/archive/validation-2026-07-28.md`.
+## 14. Doubling the physical band at low engine speed (coupling cap 500 → 250 → 125 µs)
 
-`EngineSimulator::step` borne l'intervalle de couplage par
-`maximumLowSpeedCouplingSeconds`. Ce cap ne mord **que là où la règle par période
-d'allumage est plus lente que lui** : au ralenti, à bas régime, et sur toute la
-plage des moteurs à peu de cylindres. C'est exactement le régime où l'auditeur
-entendait « étouffé », parce que le Nyquist de couplage y valait ~1 kHz et que la
-reconstruction anti-imagerie lissait chaque front de détente au même endroit pour
-tous les moteurs. À 250 µs le Nyquist passe à ~2 kHz.
+> **Shipped state (2026-07-28).** The cap was halved a second time, from 250 to
+> **125 µs**: `maximumLowSpeedExhaustCouplingSeconds.value_or(125.0e-6)` in
+> `EngineSimulator::step`. The LS3 coupling rate goes from 3,760 to 11,280 Hz
+> (physical Nyquist 1,880 → **5,640 Hz**) and the Merlin's from 3,480 to
+> 6,960 Hz (1,740 → **3,480 Hz**). The "~2 kHz" figures in the original text
+> below describe the 250 µs step and are kept as a history of the reasoning, not
+> as the current state.
 
-**Pourquoi ceci ne rouvre pas le mur de budget de la §11.** La §11 a écarté le
-*stride 1* (coupler à chaque sous-pas mécanique), qui paie le coût fixe par
-couplage à chaque sous-pas et fait exploser le LS3 à haut régime. Le cap 250 µs
-est différent : au régime maxi, la règle par période d'allumage donne déjà un
-intervalle plus court que 250 µs (LS3 à 5940 tr/min : ~158 µs), donc **le cap ne
-mord pas là où le budget est tendu**. Mesuré : à 5940 tr/min le nombre de sous-pas
-de couplage est identique à 250 et 500 µs (`perf-*.csv`, colonne substeps
-inchangée) — le travail physique à haut régime est le même. Le cap n'ajoute des
-vidanges qu'au ralenti/bas régime, où il reste ~3–5 % du budget de trame. Un point
-de mesure explicite à `idle_rpm × 1.1` a été ajouté à `PhysicsPerfHarness` pour
-que cette région, où le cap agit, soit suivie indépendamment des points de charge.
+`EngineSimulator::step` bounds the coupling interval by
+`maximumLowSpeedCouplingSeconds`. This cap only bites **where the
+per-firing-period rule is slower than it**: at idle, at low engine speed, and
+across the whole range of engines with few cylinders. That is exactly the regime
+where the listener heard "muffled", because the coupling Nyquist was ~1 kHz
+there and the anti-imaging reconstruction smoothed every blowdown front at the
+same place for every engine. At 250 µs the Nyquist goes to ~2 kHz.
 
-## 15. Raidissement de front : la propagation à amplitude finie dans les conduits
+**Why this does not reopen the budget wall of §11.** §11 rejected *stride 1*
+(coupling at every mechanical sub-step), which pays the fixed cost per coupling
+at every sub-step and blows up the LS3 at high engine speed. The 250 µs cap is
+different: at maximum engine speed, the per-firing-period rule already gives an
+interval shorter than 250 µs (LS3 at 5,940 rpm: ~158 µs), so **the cap does not
+bite where the budget is tight**. Measured: at 5,940 rpm the number of coupling
+sub-steps is identical at 250 and 500 µs — the physical work at high engine
+speed is the same. The cap only adds drains at idle/low engine speed, where it
+stays ~3–5 % of the frame budget. An explicit measurement point at
+`idle_rpm × 1.1` was added to `PhysicsPerfHarness` so that this region, where
+the cap acts, is tracked independently of the load points.
 
-`src/audio/include/enginelab/audio/NonlinearDuctAcoustics.hpp` (nouveau) ajoute la
-seule non-linéarité de propagation que le chemin physique n'avait pas. Les niveaux
-en conduit derrière une bouffée de détente sont de l'ordre du kilopascal
-(150–175 dB SPL) : la vitesse locale d'une onde simple y dépend de l'amplitude
-(`dx/dt = c + β·u`, `β = (γ+1)/2`). Les crêtes rattrapent les creux, les fronts
-se raidissent, et ce raidissement peuple les harmoniques au-dessus de la bande de
-télémétrie — l'origine physique du « bark »/crackle d'un échappement libre, le
-même mécanisme que le cuivrage des cuivres (Hirschberg 1996, Msallam 2000).
+## 15. Front steepening: finite-amplitude propagation in the ducts
 
-Implémentation : une **lecture à retard modulé par l'amplitude** sur les lignes de
-guide d'ondes existantes (runners et collecteur). Un échantillon lu à un retard
-nominal `D` est relu à `D · delayScale(p')`, où `delayScale = 1/(1 + β·p'/(ρc²))`.
-Pur gauchissement temporel : ne crée pas d'énergie (passif par construction),
-exactement transparent quand `p' → 0`, capture de choc implicite par
-l'interpolation fractionnaire. Le milieu (`ρc²`) vient de l'état de gaz déjà suivi
-par runner et par collecteur ; les runners hérités publient `ρc² = 0` et lisent
-donc exactement au retard nominal (bit-identique à l'ancien chemin).
+`src/audio/include/enginelab/audio/NonlinearDuctAcoustics.hpp` adds the only
+propagation non-linearity the physical path was missing. In-duct levels behind
+a blowdown puff are of the order of a kilopascal (150–175 dB SPL): the local
+speed of a simple wave there depends on amplitude (`dx/dt = c + β·u`,
+`β = (γ+1)/2`). Crests catch up with troughs, fronts steepen, and this
+steepening fills the harmonics above the telemetry band — the physical origin of
+the "bark"/crackle of an open exhaust, the same mechanism as the brassiness of
+brass instruments (Hirschberg 1996, Msallam 2000).
 
-**Non-vacuité et référence littérature.** Le test `nonlinearDuctAcousticsRegression`
-(dans `RealtimeRegressionTests.cpp`) vérifie ce que la théorie au **premier ordre**
-garantit, pas la sortie du simulateur : la loi de croissance du 2e harmonique
-`B₂/B₁ → σ/2` (terme dominant de la série de Fubini), une cascade harmonique
-présente et décroissante, la croissance avec le niveau, la passivité, et un
-contrôle linéaire (milieu désactivé → pas de distorsion). **Piège documenté** : le
-schéma à sonde unique est d'ordre 1 ; il reproduit le 2e harmonique mais
-sous-génère le 3e (~44 % de Fubini, mesuré `fubini_probe.cpp`). Ne pas resserrer le
-test sur une correspondance Fubini exacte du 3e harmonique — ce schéma ne peut pas
-la livrer, et un seuil calé sur la sortie mesurée violerait la règle « références
-issues de la littérature ». Une correspondance exacte exigerait un solveur de
-caractéristiques à capture de choc, hors sujet pour un effet de bande audio.
+Implementation: an **amplitude-modulated delay read** on the existing waveguide
+lines (runners and collector). A sample read at a nominal delay `D` is read
+again at `D · delayScale(p')`, where `delayScale = 1/(1 + β·p'/(ρc²))`. A pure
+time warp: it creates no energy (passive by construction), is exactly
+transparent when `p' → 0`, and captures shocks implicitly through the
+fractional interpolation. The medium (`ρc²`) comes from the gas state already
+tracked per runner and per collector; the inherited runners publish `ρc² = 0`
+and therefore read exactly at the nominal delay (bit-identical to the old
+path).
 
-Effet mesuré (limiter, `character.py`) : le contenu 1.5–4 kHz bondit (Hayabusa
-10.9 → 34.2 %, K20 2.8 → 37.8 %, EJ25 1.5 → 25.0 %) et le 4 kHz+ suit. Effet sur la
-différenciation : neutre (§13). Ajouter la carte : `raidissement de conduit` →
-`src/audio/*/NonlinearDuctAcoustics.hpp`.
+**Non-vacuity and literature reference.** The `nonlinearDuctAcousticsRegression`
+test (in `RealtimeRegressionTests.cpp`) checks what **first-order** theory
+guarantees, not the simulator's output: the 2nd-harmonic growth law
+`B₂/B₁ → σ/2` (leading term of the Fubini series), a present and decreasing
+harmonic cascade, growth with level, passivity, and a linear control (medium
+disabled → no distortion). **Documented trap**: the single-probe scheme is
+first order; it reproduces the 2nd harmonic but under-generates the 3rd (~44 %
+of Fubini, measured). Do not tighten the test to an exact Fubini match on the
+3rd harmonic — this scheme cannot deliver it, and a threshold set on the
+measured output would break the "references come from the literature" rule. An
+exact match would require a shock-capturing characteristic solver, out of scope
+for an audio-band effect.
 
-## 16. Voix du Merlin V12 : stacks courts au lieu d'un collecteur long
+Measured effect (limiter): the 1.5–4 kHz content jumps (Hayabusa 10.9 → 34.2 %,
+K20 2.8 → 37.8 %, EJ25 1.5 → 25.0 %) and 4 kHz+ follows. Effect on
+differentiation: neutral (§13).
 
-`parts/exhausts.yaml`, preset `aircraft_manifold` : les primaires de 980 mm dans
-un collecteur de 128 mm enterraient le crack de détente dans un boom grave et
-coûtaient ~3× les mailles FV (poussant le V12 hors budget). Un vrai Merlin
-échappe chaque cylindre par son propre stack d'éjection court (~150 mm) sans
-silencieux. La géométrie corrigée (primaire 150 mm, restriction 0.02) est **plus**
-fidèle, pas un maquillage. Mesuré : contenu 500–1500 Hz du Merlin ~triplé, punch
-transitoire le plus élevé du catalogue (3.13). Le V12 reste le moteur le plus
-sombre — c'est en partie physique pour un 19.8 L tournant à 3800 tr/min — mais il
-crache désormais au lieu de bourdonner.
+## 16. Merlin V12 voice: short stacks instead of a long collector
 
-## 17. Le silencieux est acoustiquement inerte sur le chemin physique (mesuré — corrigé en §19)
+`parts/exhausts.yaml`, `aircraft_manifold` preset: the 980 mm primaries in a
+128 mm collector buried the blowdown crack in a low boom and cost ~3× the FV
+cells (pushing the V12 out of budget). A real Merlin exhausts each cylinder
+through its own short ejector stack (~150 mm) without a muffler. The corrected
+geometry (150 mm primary, 0.02 restriction) is **more** faithful, not make-up.
+Measured: the Merlin's 500–1500 Hz content roughly tripled, the highest
+transient punch of the catalogue (3.13). The V12 stays the darkest engine —
+partly physical for a 19.8 L turning at 3,800 rpm — but it now spits instead of
+droning.
 
-Constat le plus important pour qui veut différencier les moteurs de route :
-**`muffler_restriction` ne filtre rien dans le chemin physique livré.**
+## 17. The muffler is acoustically inert on the physical path (measured — fixed in §19)
 
-La branche physique de `RealtimeEngineAudio::render` (`sampleUsesPhysicalExhaust`,
-`RealtimeEngineAudio.cpp` §« Collector -> outlet characteristic ») enchaîne
-exactement : ligne aller → `DuctWallLoss` → raidissement → `PipeRadiationModel`
-→ ligne retour → observateur → calibration → `continue`. Elle ne lit ni
-`pathOpenness`, ni `collectorReflection`, ni le FDN. Le `continue` saute toute la
-branche héritée, qui est la *seule* à consommer `openness` (lignes ~1188, ~1239,
-~1267/1270) et la seule à appeler `processMufflerFdn`.
+The most important finding for anyone wanting to differentiate road engines:
+**`muffler_restriction` filters nothing in the shipped physical path.**
 
-Conséquences, dans l'ordre d'importance :
+The physical branch of `RealtimeEngineAudio::render` (`sampleUsesPhysicalExhaust`,
+`RealtimeEngineAudio.cpp`, "Collector -> outlet characteristic") chains exactly:
+forward line → `DuctWallLoss` → steepening → `PipeRadiationModel` → return line
+→ observer → calibration → `continue`. It reads neither `pathOpenness`, nor
+`collectorReflection`, nor the FDN. The `continue` skips the whole inherited
+branch, which is the *only* one to consume `openness` and the only one to call
+`processMufflerFdn`.
 
-1. **Aucun élément silencieux n'existe dans le guide d'ondes.** Le nœud
-   `muffler` du DAG (`ExhaustGraph.cpp`) n'apporte qu'une *longueur* (450 mm) et
-   une perte de charge pour la physique. Acoustiquement, chaque moteur est un
-   tuyau droit terminé par une charge de rayonnement non baffée. Pas de chambre
-   d'expansion, pas de discontinuité de section, pas de perte par transmission.
-2. **Le FDN, lui, est indépendant de la géométrie.** `referenceFdnSamples`
-   (1493/2111/2791/3557) est constant pour tous les moteurs ; seul
-   `presetFdngain_` varie, et il vient de la table de voicing, pas du YAML.
-   De toute façon il n'est pas atteint quand la télémétrie est présente.
-3. **`openness` a une dynamique dérisoire même là où il agit.** Calculé sur les
-   neuf presets de `parts/exhausts.yaml`, `1/sqrt(1 + 1.35*K)` vaut 0.80 à 0.87
-   pour sept d'entre eux ; seuls `aircraft_manifold` (0.99) et `radial_collector`
-   (0.95) s'en écartent. Ses usages sont des interpolations plates
+Consequences, in order of importance:
+
+1. **No muffler element exists in the waveguide.** The DAG `muffler` node
+   (`ExhaustGraph.cpp`) only contributes a *length* (450 mm) and a pressure loss
+   for the physics. Acoustically, every engine is a straight pipe ended by an
+   unbaffled radiation load. No expansion chamber, no area discontinuity, no
+   transmission loss.
+2. **The FDN, for its part, is independent of the geometry.**
+   `referenceFdnSamples` (1493/2111/2791/3557) is constant for every engine;
+   only `presetFdngain_` varies, and it comes from the voicing table, not from
+   the YAML. In any case it is not reached when telemetry is present.
+3. **`openness` has a negligible dynamic range even where it acts.** Computed on
+   the nine presets of `parts/exhausts.yaml`, `1/sqrt(1 + 1.35*K)` is 0.80 to
+   0.87 for seven of them; only `aircraft_manifold` (0.99) and
+   `radial_collector` (0.95) differ. Its uses are flat interpolations
    (`0.42 + 0.10*o`, `0.13 + 0.05*o`, `1.12 − 0.30*o`).
 
-### La mesure qui tranche
+### The measurement that settles it
 
-`scratchpad/muffdiff.py` compare deux rendus `EngineLabAbClipRenderer` à graine
-identique, seul `muffler_restriction` changeant : LS3 0.30 → 0.95 et K20
-0.25 → 0.95, c'est-à-dire d'un échappement sport à un conduit quasi bouché.
+Two `EngineLabAbClipRenderer` renders with an identical seed were compared, with
+only `muffler_restriction` changing: LS3 0.30 → 0.95 and K20 0.25 → 0.95, i.e.
+from a sport exhaust to an almost blocked duct.
 
-| moteur | segment | écart max par tiers d'octave | écart global |
+| engine | segment | max difference per third octave | overall difference |
 |---|---|---|---|
-| K20 | ralenti / montée / limiter | ≤ 0.52 dB | +0.02 / +0.04 / +0.07 dB |
-| LS3 | ralenti / montée / limiter | ≤ 1.39 dB | −0.16 / −0.00 / +0.16 dB |
+| K20 | idle / rev-up / limiter | ≤ 0.52 dB | +0.02 / +0.04 / +0.07 dB |
+| LS3 | idle / rev-up / limiter | ≤ 1.39 dB | −0.16 / −0.00 / +0.16 dB |
 
-Un vrai silencieux de série, c'est 20 à 30 dB de perte par transmission dans la
-bande d'allumage. Le résidu mesuré ici est de la contre-pression qui remonte par
-la physique, plus le jitter d'ordonnancement de §18 — pas de l'acoustique.
+A real production muffler is 20 to 30 dB of transmission loss in the firing
+band. The residue measured here is back-pressure travelling up through the
+physics, plus the scheduling jitter of §18 — not acoustics.
 
-**Ce que cela explique.** Les moteurs jugés réussis à l'écoute (Merlin V12,
-flat-6, radial) sont précisément ceux dont l'échappement réel *est* un tuyau
-quasi ouvert : le modèle est fortuitement juste pour eux. Tous les moteurs de
-route sont rendus comme des tuyaux droits, d'où la convergence vers un timbre
-générique. Ce n'est donc **pas** une erreur de valeurs dans `parts/exhausts.yaml` :
-c'est un composant absent du modèle. Corriger les chiffres du YAML ne peut rien
-donner tant qu'un élément de perte par transmission n'existe pas dans le guide
-d'ondes.
+**What this explains.** The engines judged successful by ear (Merlin V12,
+flat-6, radial) are precisely those whose real exhaust *is* an almost open pipe:
+the model happens to be right for them. Every road engine is rendered as a
+straight pipe, hence the convergence towards a generic timbre. It is therefore
+**not** a matter of wrong values in `parts/exhausts.yaml`: it is a component
+missing from the model. Fixing the YAML figures can achieve nothing as long as
+no transmission-loss element exists in the waveguide.
 
-## 18. Budget temps réel de bout en bout : l'audio va bien, la physique déborde
+## 18. End-to-end real-time budget: audio is fine, physics overflows
 
-Mesuré sur AMD Ryzen 7 8840U (8c/16t, portable récent), build Release.
+Measured on an AMD Ryzen 7 8840U (8c/16t, recent laptop), Release build.
 
-**Rappel audio** (`EngineLabAudioRenderHarness`, bloc 256 à 48 kHz, budget
-5333 µs, fil physique concurrent) — le callback est confortable :
+**Audio reminder** (`EngineLabAudioRenderHarness`, 256-sample block at 48 kHz,
+5,333 µs budget, concurrent physics thread) — the callback is comfortable:
 
-| moteur | callback p95 | charge |
+| engine | callback p95 | load |
 |---|---|---|
 | K20 I4 | 804 µs | 15 % |
 | 2JZ I6 | 877 µs | 16 % |
 | LS3 V8 | 1543 µs | 29 % |
 | Merlin V12 | 1755 µs | 33 % |
 
-**La boucle physique, elle, rate ses échéances.** `EngineRuntime::run` tourne à
-240 Hz, soit 4167 µs par pas. Le même harnais rapporte désormais les dépassements
-du runtime (`physicsOverruns`) pendant que l'audio rend :
+**The physics loop, on the other hand, misses its deadlines.**
+`EngineRuntime::run` runs at 240 Hz, i.e. 4,167 µs per step. The same harness
+now reports the runtime overruns (`physicsOverruns`) while the audio renders:
 
-| moteur | pas en retard / 1440 | retard max |
+| engine | late steps / 1440 | max lateness |
 |---|---|---|
 | 2JZ I6 | 21 (1.5 %) | 0.7 ms |
 | K20 I4 | 134 (9 %) | 1.2 ms |
-| Merlin V12 (3100 tr/min) | 162 (11 %) | 1.9 ms |
-| **LS3 V8 (6500 tr/min)** | **498 (35 %)** | **17.5 ms** |
+| Merlin V12 (3,100 rpm) | 162 (11 %) | 1.9 ms |
+| **LS3 V8 (6,500 rpm)** | **498 (35 %)** | **17.5 ms** |
 
-`EngineLabPhysicsPerfHarness` au banc, pleine charge, médiane du p50 sur trois
-passages (budget 4167 us/pas) :
+`EngineLabPhysicsPerfHarness` on the dyno, full load, median of p50 over three
+runs (budget 4,167 µs/step):
 
-| moteur | ralenti | mi-régime | haut régime |
+| engine | idle | mid-range | high rpm |
 |---|---|---|---|
 | I2 | 7 % | 17 % | 25 % |
 | V8 EL-50 | 24 % | 63 % | **96 %** |
 | LS3 V8 | 26 % | 69 % | **99 %** |
 | Merlin V12 | 49 % | 72 % | 77 % |
 
-**Correctif de mesure, à retenir.** Une première version de ce tableau donnait le
-V12 à 158-164 % du budget et le disait hors budget au ralenti. C'était un CSV
-capturé **avant** le passage du Merlin aux stacks courts (§16), qui a divisé son
-coût par deux comme le commit l'annonçait. Le V12 n'est pas le cas critique ; le
-V8 à haut régime l'est. Ne pas comparer un CSV de perf à travers un changement de
-géométrie d'échappement.
+**Measurement correction, worth remembering.** A first version of this table
+put the V12 at 158-164 % of the budget and called it out of budget at idle. That
+was a CSV captured **before** the Merlin moved to short stacks (§16), which
+halved its cost as the commit said. The V12 is not the critical case; the V8 at
+high engine speed is. Do not compare a perf CSV across an exhaust geometry
+change.
 
-### Où va le temps (sonde de phase temporaire, part de la trame)
+### Where the time goes (temporary phase probe, share of the frame)
 
-| moteur | cylindres | réseau FV | reste | sous-pas FV/trame |
+| engine | cylinders | FV network | rest | FV sub-steps/frame |
 |---|---|---|---|---|
 | I2 | 53 % | 16 % | 31 % | 31.1 |
 | LS3 V8 | 41 % | 29 % | 30 % | 31.5 |
 | Merlin V12 | 20 % | **52 %** | 28 % | **60.7** |
 
-Trois lectures :
+Three readings:
 
-1. **Le cas qui borde le budget (V8 à haut régime) est dominé par la physique
-   par cylindre (41 %)**, déjà parallélisée. Le réseau FV n'y est que 29 %.
-2. **Le V12 est l'inverse** : le réseau FV y prend la moitié de la trame, avec
-   presque le double de sous-pas acceptés du V8 alors qu'il tourne deux fois
-   moins vite. C'est le maillage des 12 runners plus le collecteur large.
-3. **Un ~30 % de "reste" existe sur les trois moteurs**, indépendamment de leur
-   taille : environ 800 us par trame sur le V8. C'est du travail hors cylindres
-   et hors réseau (transmission, télémétrie, génération d'événements), et il
-   n'est pas parallélisé. C'est la piste la moins explorée.
+1. **The case at the edge of the budget (V8 at high rpm) is dominated by the
+   per-cylinder physics (41 %)**, already parallelised. The FV network is only
+   29 % there.
+2. **The V12 is the opposite**: the FV network takes half the frame, with
+   almost twice the accepted sub-steps of the V8 although it turns half as fast.
+   That is the mesh of the 12 runners plus the wide collector.
+3. **A ~30 % "rest" exists on all three engines**, independently of their size:
+   about 800 µs per frame on the V8. It is work outside the cylinders and the
+   network (transmission, telemetry, event generation), and it is not
+   parallelised. It is the least explored lead.
 
-Rien n'est *perdu* (`droppedPressure=0`, `boundaryDropouts=0`) : le flux de
-télémétrie arrive en retard et irrégulièrement, pas amputé. Mais c'est ce flux,
-et lui seul, qui excite la chaîne d'échappement — le rendu du LS3 n'est
-d'ailleurs pas reproductible d'un passage à l'autre (RMS 0.073 à 0.090 sur trois
-rendus identiques), ce que ne montrent pas les moteurs qui tiennent leur cadence.
+Nothing is *lost* (`droppedPressure=0`, `boundaryDropouts=0`): the telemetry
+stream arrives late and irregularly, not truncated. But it is that stream, and
+that stream alone, that drives the exhaust chain — the LS3 render is in fact not
+reproducible from one run to the next (RMS 0.073 to 0.090 over three identical
+renders), which the engines that hold their rate do not show.
 
-**À retenir pour la suite : le goulot est le fil physique, jamais le callback
-audio.** Toute optimisation qui vise le rendu audio se trompe de cible ; c'est le
-coût par sous-pas de `EngineSimulator::step` (et le nombre de sous-pas) qu'il
-faut réduire. Le pool `SubstepParallel` est déjà correct — il ne spinne qu'entre
-sous-pas d'une même trame et part sur variable de condition ensuite — donc le
-levier n'est pas là non plus.
+**Key takeaway: the bottleneck is the physics thread, never the audio
+callback.** Any optimisation aimed at the audio render misses the target; it is
+the per-sub-step cost of `EngineSimulator::step` (and the number of sub-steps)
+that must come down. The `SubstepParallel` pool is already correct — it only
+spins between sub-steps of the same frame and goes to a condition variable
+afterwards — so the lever is not there either.
 
+## 19. The physical muffler: expansion chamber (correction of §17)
 
-## 19. Le silencieux physique : chambre d'expansion (correction de §17)
+`src/audio/include/enginelab/audio/ExpansionChamberMuffler.hpp`. Two
+Kelly-Lochbaum junctions and a bidirectional delay line on the
+collector -> outlet duct. The transmission loss is Munjal's closed form,
 
-`src/audio/include/enginelab/audio/ExpansionChamberMuffler.hpp`. Deux jonctions
-de Kelly-Lochbaum et une ligne de retard bidirectionnelle sur le conduit
-collecteur -> sortie. La perte par transmission est la forme fermée de Munjal,
+    TL = 10 log10 [ 1 + 1/4 (m - 1/m)^2 sin^2(kL) ],   m = S_chamber / S_duct
 
-    TL = 10 log10 [ 1 + 1/4 (m - 1/m)^2 sin^2(kL) ],   m = S_chambre / S_conduit
+and `expansionChamberMufflerRegression` drives the element with sines to check
+the law, its pass bands, its passivity and its transparency. Non-vacuity
+checked: flipping a junction sign makes the test fail.
 
-et `expansionChamberMufflerRegression` pilote l'élément par sinus pour vérifier
-la loi, ses bandes passantes, sa passivité et sa transparence. Non vacuité
-vérifiée : inverser un signe de jonction fait tomber le test.
+**Transparency guarantee.** Without a configured chamber, `process` is an exact
+pass-through. Checked in the shipped render, not just in the test: the Merlin
+measures **+0.00 dB in every band and every segment**.
 
-**Garantie de transparence.** Sans chambre configurée, `process` est une
-connexion traversante exacte. Vérifié dans le rendu livré, pas seulement dans le
-test : le Merlin mesure **+0.00 dB dans chaque bande et chaque segment**.
+### Two fixes that only measurement found
 
-### Deux corrections que seule la mesure a trouvées
+- **The invented absorption was the real problem.** A first version dissipated
+  in the chamber through a gain and a pole driven by `muffler_restriction`. That
+  mapping was invented (the restriction is a pressure-loss coefficient, not an
+  absorption coefficient) and, **in the collector <-> outlet feedback loop, a
+  loss of 2 dB per pass compounds and collapses the low-frequency resonance**:
+  the EJ25 lost 11 dB on its fundamental during a rev-up. Loudness normalisation
+  then raised the clip and unmasked the render's pre-existing HF floor — 40 % of
+  the energy above 4 kHz. The chamber did not manufacture hiss: it erased the
+  engine. The element is now purely reactive; everything follows from two areas
+  and a length.
+  **Trap for the future: do not put broadband loss back into this loop without
+  measuring the low end.**
+- **False lead, noted so it is not repeated.** The first hypothesis was the
+  delay applied as a step at the block (the trap documented in §12). Ramping was
+  added — it is the invariant the runner and reflection delays already follow —
+  but **measured, it changes nothing** on these clips. It is kept as prevention,
+  not as a fix.
 
-- **L'absorption inventée était le vrai problème.** Une première version
-  dissipait dans la chambre via un gain et un pôle pilotés par
-  `muffler_restriction`. Cette correspondance était inventée (la restriction est
-  un coefficient de perte de charge, pas d'absorption) et, **dans la boucle de
-  réaction collecteur <-> sortie, une perte de 2 dB par traversée se compose et
-  effondre la résonance basse fréquence** : l'EJ25 perdait 11 dB sur son
-  fondamental en montée. La normalisation de loudness remontait alors le clip et
-  démasquait le plancher HF préexistant du rendu -- 40 % de l'énergie au-dessus
-  de 4 kHz. La chambre ne fabriquait pas de souffle : elle effaçait le moteur.
-  L'élément est désormais purement réactif ; tout découle de deux aires et d'une
-  longueur.
-  **Piège pour la suite : ne pas remettre de perte large bande dans cette
-  boucle sans mesurer le grave.**
-- **Fausse piste, notée pour ne pas être refaite.** La première hypothèse était
-  le retard appliqué en marche d'escalier au bloc (le piège documenté en §12).
-  Le rampage a été ajouté -- c'est l'invariant que suivent déjà les retards de
-  runner et de réflexion -- mais **mesuré, il ne change rien** sur ces clips. Il
-  est conservé comme prévention, pas comme correctif.
+### Geometry and measured effect
 
-### Géométrie et effet mesuré
+Deliberately modest expansion ratios (peak TL 1.6 to 7.0 dB, not the 10-13 dB of
+a big stock body): it is a **single** chamber, and a real multi-chamber muffler
+is designed so that its dips avoid the firing orders. At stock depth, the model
+dug a notch on the EJ25 fundamental and halved the top of the K20 and LS3
+spectra.
 
-Rapports d'expansion volontairement modestes (TL crête 1.6 à 7.0 dB, pas les
-10-13 dB d'un gros corps d'origine) : c'est une chambre **unique**, et un vrai
-silencieux multi-chambres est conçu pour que ses creux évitent les ordres
-d'allumage. À profondeur d'origine, le modèle creusait un notch sur le
-fondamental de l'EJ25 et divisait par deux le haut du spectre du K20 et du LS3.
+At the limiter, 1.5-4 kHz content without -> with chamber: Hayabusa 41.9 ->
+43.2 %, Big Twin 12.1 -> 13.1, K20 34.8 -> 28.3, LS3 11.2 -> 9.2. The
+between-engine standard deviation per third octave rises at idle (8.01 ->
+8.24 dB) and at the limiter (6.31 -> 6.48 dB). CPU cost: zero (LS3 p95 29.8 %
+against 28.9 % before).
 
-Au limiteur, contenu 1.5-4 kHz sans -> avec chambre : Hayabusa 41.9 -> 43.2 %,
-Big Twin 12.1 -> 13.1, K20 34.8 -> 28.3, LS3 11.2 -> 9.2. L'écart-type
-inter-moteurs par tiers d'octave monte au ralenti (8.01 -> 8.24 dB) et au
-limiteur (6.31 -> 6.48 dB). Coût CPU : nul (LS3 p95 29.8 % contre 28.9 % avant).
+### HF floor re-audit — 2026-07-29
 
-### Réaudit du plancher HF — 2026-07-29
+The suspicion above was replayed on the current Release binary, and it is no
+longer reproducible. On a four-point governed rev-up, the EJ25 measures 1.2 % of
+energy above 4 kHz at the top point, and 0.4 % at the previous point; at
+mid-range, the short harness measures 0.5 %. The old 20.9 % figure therefore
+described an earlier state of the renderer and must no longer drive a
+calibration.
 
-Le soupçon ci-dessus a été rejoué sur le binaire Release actuel, et il n'est
-plus reproductible. Sur une montée gouvernée en quatre points, l'EJ25 mesure
-1,2 % d'énergie au-dessus de 4 kHz au point haut, et 0,4 % au point précédent ;
-à mi-régime, le harnais court mesure 0,5 %. L'ancien chiffre de 20,9 % décrivait
-donc un état antérieur du renderer et ne doit plus piloter une calibration.
+The audit of the turbo layer did find three structural defects independent of
+level:
 
-L'audit de la couche turbo a néanmoins trouvé trois défauts structurels
-indépendants du niveau :
+- compressor and turbine used the same noise sequence, one the negative of the
+  other. With the same flow and geometry, the two sources cancelled exactly;
+- power, shaft speed and flows arrived as 240 Hz telemetry steps, which produced
+  amplitude discontinuities and their sidebands;
+- the total flow was radiated once by the turbine, then again by the wastegate
+  multiplied by its opening. An open wastegate therefore duplicated mass instead
+  of sharing the flow between two parallel areas.
 
-- compresseur et turbine employaient la même suite de bruit, l'une négative de
-  l'autre. Avec mêmes débit et géométrie, les deux sources s'annulaient
-  exactement ;
-- la puissance, la vitesse d'arbre et les débits arrivaient par marches de
-  télémétrie à 240 Hz, ce qui produisait des discontinuités d'amplitude et leurs
-  bandes latérales ;
-- le débit total était rayonné une première fois par la turbine, puis à nouveau
-  par la wastegate multipliée par son ouverture. Une wastegate ouverte dupliquait
-  donc de la masse au lieu de partager le débit entre deux aires parallèles.
+`ForcedInductionAcoustics` now has four independent deterministic generators,
+reconstructs the telemetry per sample (5 ms; dump valve 0.75 ms on attack and
+12 ms on release), and shares the flow according to
+`A_turbine / (A_turbine + opening*A_wastegate)`. The sum of the two branches
+stays exactly the measured flow. The turbine jet velocity uses the passage area
+`turbine_flow_area_mm2`; the exducer diameter is still needed to declare a real
+acoustic source.
 
-`ForcedInductionAcoustics` possède désormais quatre générateurs déterministes
-indépendants, reconstruit la télémétrie par échantillon (5 ms ; dump valve
-0,75 ms à l'attaque et 12 ms au relâchement), et partage le débit selon
-`A_turbine / (A_turbine + ouverture*A_wastegate)`. La somme des deux branches
-reste exactement le débit mesuré. La vitesse de jet turbine emploie la section
-de passage `turbine_flow_area_mm2`; le diamètre d'exducer reste nécessaire pour
-déclarer une source acoustique réelle.
+The added test first failed on the exact cancellation, then passes along with
+the continuity and conservation tests. On complete normalised clips, the change
+stays targeted: before/after correlation 0.99821 on the 2JZ and 0.99803 on the
+EJ25, aligned RMS difference 5.98 % and 6.28 %. Naturally aspirated engines are
+bit-identical and the >4 kHz share stays practically unchanged (2JZ 0.701 ->
+0.703 %, EJ25 0.326 -> 0.327 %): the fix removes source artefacts without
+artificially brightening the whole engine.
 
-Le test ajouté a d'abord échoué sur l'annulation exacte, puis passe avec les
-tests de continuité et de conservation. Sur les clips complets normalisés, le
-changement reste ciblé : corrélation avant/après 0,99821 sur le 2JZ et 0,99803
-sur l'EJ25, différence RMS alignée 5,98 % et 6,28 %. Les moteurs sans
-suralimentation sont bit-identiques et la part >4 kHz reste pratiquement
-inchangée (2JZ 0,701 -> 0,703 %, EJ25 0,326 -> 0,327 %) : le correctif retire
-des artefacts de source sans éclaircir artificiellement tout le moteur.
+## 20. Complete acoustic network compiled from the DAG
 
-## 20. Réseau acoustique complet compilé depuis le DAG
+`AcousticExhaustNetwork` now compiles the exact `ExhaustGraph` into a real-time
+wave network. Each duct keeps its length and area in a bidirectional line with
+wall losses and finite-amplitude propagation; merges and splitters use N-port
+scattering weighted by the admittances. Each outlet has its own radiation load
+and its delay to the observer. A 4-into-1-into-2 topology therefore stays six
+ducts and two outlets, instead of being reduced to a mean runner and a mean
+collector.
 
-`AcousticExhaustNetwork` compile désormais l'`ExhaustGraph` exact en réseau
-d'ondes temps réel. Chaque conduit conserve sa longueur et sa section dans une
-ligne bidirectionnelle avec pertes de paroi et propagation à amplitude finie ;
-les merges et splitters utilisent une diffusion N-ports pondérée par les
-admittances. Chaque sortie possède sa propre charge de rayonnement et son retard
-jusqu'à l'observateur. Une topologie 4-vers-1-vers-2 reste donc six conduits et
-deux sorties, au lieu d'être réduite à un runner moyen et un collecteur moyen.
+The expansion chamber is also derived from its published geometry: its volume
+and length give its internal area. `muffler_restriction` stays a mean-flow
+pressure loss; it is deliberately not turned into a broadband acoustic gain
+without a physical absorption law.
 
-La chambre d'expansion est elle aussi issue de sa géométrie publiée : son volume
-et sa longueur donnent sa section interne. `muffler_restriction` reste une perte
-de charge de l'écoulement moyen ; elle n'est volontairement pas transformée en
-gain acoustique large bande sans loi physique d'absorption.
+> **Correction (§25).** This section claimed that "the connection diameter keeps
+> both real discontinuities". That was false: `connectionAreaM2` is computed by
+> `ExhaustNetworkLayout` but was never read by `AcousticExhaustNetwork`, which
+> only sees `flowAreaM2`. The two real discontinuities now come from the
+> collector trunk, realised from the authored length of the junction — see §25.
 
-> **Correction (§25).** Cette section affirmait que « le diamètre de connexion
-> conserve les deux discontinuités réelles ». C'était faux : `connectionAreaM2`
-> est calculé par `ExhaustNetworkLayout` mais n'a jamais été lu par
-> `AcousticExhaustNetwork`, qui ne voit que `flowAreaM2`. Les deux vraies
-> discontinuités viennent maintenant du tronc de collecteur, réalisé depuis la
-> longueur authorée de la jonction — voir §25.
+All the memory for ducts, junctions, outlets and delays is reserved in
+`prepare()`. `process()` does not allocate, and the render harness now rejects
+a production engine if the complete DAG is not active. The historical reduced
+network only survives as a compatibility path for producers and tests that do
+not provide an `ExhaustGraph` yet.
 
-Toute la mémoire des conduits, jonctions, sorties et retards est réservée dans
-`prepare()`. `process()` n'alloue pas et le harnais de rendu refuse maintenant
-un moteur de production si le DAG complet n'est pas actif. Le réseau réduit
-historique ne subsiste que comme chemin de compatibilité pour les producteurs
-et tests qui ne fournissent pas encore d'`ExhaustGraph`.
+Accepted limitation: the junctions are instantaneous acoustic scatterers,
+without a lumped compliance of their own. Finite volumes that have a published
+length do become ducts; later modelling a compact plenum without a length will
+require a dedicated compliance element, not a voicing gain.
 
-Limite assumée : les jonctions sont des diffuseurs acoustiques instantanés,
-sans compliance concentrée propre. Les volumes finis qui ont une longueur
-publiée deviennent bien des conduits ; modéliser ultérieurement un plénum
-compact sans longueur exigera un élément de compliance dédié, pas un gain de
-voicing.
+## 21. Modal radiation of the block and heads
 
-## 21. Rayonnement modal du bloc et des culasses
+`StructuralExcitationSample` publishes at every mechanical sub-step, per
+cylinder and in SI units, the gas force on the piston, the inertia force of the
+reciprocating assembly, their signed reaction at the bearing, the side thrust
+and the reaction torque at the crankshaft. These quantities share exactly the
+time stamp of the cylinder pressure; the renderer therefore interpolates them
+without rebuilding a force from the engine speed or the audio level.
 
-`StructuralExcitationSample` publie à chaque sous-pas mécanique, par cylindre et
-en unités SI, la force gazeuse sur le piston, la force d'inertie de l'ensemble
-alternatif, leur réaction signée au palier, la poussée latérale et le couple de
-réaction au vilebrequin. Ces grandeurs partagent exactement l'horodatage de la
-pression cylindre ; le renderer les interpole donc sans reconstruire une force
-depuis le régime ou le niveau audio.
-
-`StructuralModalRadiator` fait évoluer 8 à 24 oscillateurs amortis selon
+`StructuralModalRadiator` evolves 8 to 24 damped oscillators according to
 
     q'' + 2*zeta*omega*q' + omega^2*q = F_modal / m_modal
 
-avec une transition analytique exacte pour une force tenue sur un échantillon.
-La pression à l’observateur publié vient ensuite de la puissance rayonnée par la
-vitesse RMS de surface du mode, son aire et l'efficacité de rayonnement du
-piston bafflé. Le passage vitesse d’antinœud → vitesse RMS emploie la forme
-modale (poutre/torsion ou plaque), sans gain de calibration caché. Le
-chemin de production ne contient plus le sinus de vilebrequin, le cliquetis
-bruité ou le « piston slap » façonné qui tenaient auparavant lieu de structure.
+with an exact analytical transition for a force held over one sample. The
+pressure at the published observer then comes from the power radiated by the
+mode's RMS surface velocity, its area and the radiation efficiency of the
+baffled piston. Going from antinode velocity to RMS velocity uses the mode shape
+(beam/torsion or plate), with no hidden calibration gain. The production path no
+longer contains the crankshaft sine, the noisy rattle or the shaped "piston
+slap" that used to stand in for the structure.
 
-Sans section `structural_nvh`, les fréquences sont explicitement marquées
-`estimatedFamily` : bloc assimilé à une coque creuse, culasses à des plaques
-minces, dimensions déduites de l'alésage, de la course, de la bielle et de la
-famille d'implantation. Ce modèle est le meilleur compromis temps réel avec les
-données disponibles, mais il ne doit pas être présenté comme une corrélation
-NVH constructeur.
+Without a `structural_nvh` section, the frequencies are explicitly marked
+`estimatedFamily`: block treated as a hollow shell, heads as thin plates,
+dimensions inferred from bore, stroke, connecting rod and layout family. This
+model is the best real-time compromise with the available data, but it must not
+be presented as a manufacturer NVH correlation.
 
-Le schéma 5 peut maintenant remplacer ce jeu par des modes `measured` ou
-`calculatedGeometry`. Chaque mode porte fréquence, amortissement, masse modale,
-aire et efficacité rayonnantes, facteur RMS de forme, type d'effort et
-participation signée par cylindre. Une source traçable est obligatoire et il
-n'existe aucun gain de voicing. Aucun moteur du catalogue livré ne revendique
-encore une mesure : l'absence de données réelles reste visible au runtime.
-Format et protocole :
+Schema 5 can now replace this set with `measured` or `calculatedGeometry`
+modes. Each mode carries frequency, damping, modal mass, radiating area and
+efficiency, RMS shape factor, drive type and signed participation per cylinder.
+A traceable source is mandatory and there is no voicing gain. No engine of the
+shipped catalogue claims a measurement yet: the absence of real data stays
+visible at runtime. Format and protocol:
 [`structural-nvh-configuration.md`](structural-nvh-configuration.md).
 
-Les tests imposent silence exact sans force, paramètres physiques finis,
-amplification à la résonance calculée et décroissance de l'énergie avec un
-amortissement positif. `EngineLab.StructuralNvh` ajoute le chargement catalogue,
-les round-trips, l'excitation du mode mesuré et les gardes de provenance. Le
-harnais catalogue impose aussi que ce chemin soit réellement actif dans le
-câblage de l'application.
+The tests require exact silence without force, finite physical parameters,
+amplification at the computed resonance and decaying energy with positive
+damping. `EngineLab.StructuralNvh` adds catalogue loading, round-trips,
+excitation of the measured mode and provenance guards. The catalogue harness
+also requires this path to be really active in the application wiring.
 
-## 22. Admission complète et suralimentation
+## 22. Complete intake and forced induction
 
-`CylinderPressureSample` transporte désormais le débit massique instantané
-signé de chaque soupape d'admission, la pression, la masse volumique, la vitesse
-du son et la section conductrice réellement employée par le solveur. Le débit
-publié est l'intégrale des deux demi-pas symétriques divisée par la durée du
-sous-pas : la source audio et le bilan de masse décrivent donc exactement le
-même échange, sans reconstruire une impulsion depuis le régime moteur.
+`CylinderPressureSample` now carries the signed instantaneous mass flow of each
+intake valve, the pressure, the density, the speed of sound and the conducting
+area actually used by the solver. The published flow is the integral of the two
+symmetric half-steps divided by the sub-step duration: the audio source and the
+mass balance therefore describe exactly the same exchange, without rebuilding a
+pulse from the engine speed.
 
-`AcousticIntakeNetwork` compile chaque chemin d'admission en runners
-bidirectionnels individuels, compliance WDF de plénum, étranglement de papillon
-à admittance variable, compliance optionnelle de boîte à air, conduit d'entrée
-avec pertes thermovisqueuses, puis charge de rayonnement de pavillon/embouchure
-et retard jusqu'à l'observateur. Les volumes, longueurs, diamètres et sections
-viennent exclusivement de `EngineConfig`. Une valeur nulle de boîte à air ou de
-conduit signifie que la pièce est absente ; elle ne déclenche aucune géométrie
-inventée. Le réseau ne transporte que la perturbation acoustique : une moyenne
-glissante à 5 Hz retire le débit conservé, si bien qu'un débit parfaitement
-stationnaire depuis `reset()` produit un silence exact.
+`AcousticIntakeNetwork` compiles each intake path into individual bidirectional
+runners, a WDF plenum compliance, a variable-admittance throttle restriction, an
+optional airbox compliance, an inlet duct with thermo-viscous losses, then a
+horn/mouth radiation load and the delay to the observer. Volumes, lengths,
+diameters and areas come exclusively from `EngineConfig`. A zero value for the
+airbox or the duct means the part is absent; it triggers no invented geometry.
+The network only carries the acoustic perturbation: a 5 Hz moving average
+removes the conserved flow, so that a perfectly stationary flow since `reset()`
+produces exact silence.
 
-`ForcedInductionAcoustics` emploie les ordres de passage écrits dans la
-configuration : nombre de pales du compresseur et de la turbine, nombre de
-lobes d'un compresseur volumétrique, vitesse d'arbre et rapport d'entraînement.
-La pression des raies est issue de la puissance d'arbre résolue et d'un
-rendement acoustique explicite. Les composantes larges bandes du compresseur,
-de la turbine, de la wastegate et de la dump valve suivent une loi de jet
-compact en U^8, centrée par un Strouhal de 0,2, avec débit corrigé, débit
-d'échappement et sections physiques.
+`ForcedInductionAcoustics` uses the passing orders written in the
+configuration: number of compressor and turbine blades, number of lobes of a
+supercharger, shaft speed and drive ratio. The pressure of the lines comes from
+the resolved shaft power and an explicit acoustic efficiency. The broadband
+components of the compressor, the turbine, the wastegate and the dump valve
+follow a jet law for a compact jet in U^8, centred on a Strouhal number of 0.2, with corrected
+flow, exhaust flow and physical areas.
 
-Les quatre sources broadband disposent de suites de bruit déterministes mais
-indépendantes. Le débit d'échappement est partagé entre turbine et wastegate
-proportionnellement à leurs aires effectives ; il n'est jamais compté deux fois.
-Les grandeurs de télémétrie sont lissées à cadence audio afin que les mises à
-jour du thread physique ne deviennent pas une modulation à 240 Hz.
+The four broadband sources have deterministic but independent noise sequences.
+The exhaust flow is shared between turbine and wastegate in proportion to their
+effective areas; it is never counted twice. The telemetry quantities are
+smoothed at audio rate so that updates from the physics thread do not become a
+240 Hz modulation.
 
-Le filtre différentiel de chaque bruit calcule aussi sa variance analytique :
-sa sortie est normalisée à un RMS unitaire avant d’être multipliée par la
-pression RMS issue de la puissance. L’ancien code compensait le bruit uniforme
-mais pas la perte du filtre, puis appliquait une pression de pic prévue pour un
-sinus. La correction et les A/B sont dans
-[`audio-lot4-fi-broadband-power-2026-07-29.md`](archive/audio-lot4-fi-broadband-power-2026-07-29.md).
+The differential filter of each noise also computes its analytical variance: its
+output is normalised to unity RMS before being multiplied by the RMS pressure
+derived from the power. The old code compensated for the uniform noise but not
+for the filter loss, then applied a peak pressure intended for a sine.
 
-La dump valve n'est plus une enveloppe déclenchée par une fermeture de pédale.
-Le solveur l'ouvre lorsque le rapport de pression entre le réservoir de sortie
-compresseur et le collecteur dépasse le seuil configuré ; son débit est calculé
-par une loi d'orifice compressible, sous-critique ou étranglée. Seul ce débit
-peut exciter son rayonnement. Le réservoir amont reste toutefois le réservoir
-zéro-dimensionnel du modèle de boost : il n'existe pas encore de conduit de
-suralimentation discrétisé ni de CFD de roue.
+The dump valve is no longer an envelope triggered by closing the pedal. The
+solver opens it when the pressure ratio between the compressor outlet reservoir
+and the manifold exceeds the configured threshold; its flow is computed by a
+compressible orifice law, subcritical or choked. Only that flow can drive its
+radiation. The upstream reservoir is nonetheless still the zero-dimensional
+reservoir of the boost model: there is no discretised boost duct or wheel CFD
+yet.
 
-La fréquence des ordres de pales/lobes et les puissances thermodynamiques sont
-calculées. Les nombres de pales, diamètres et coefficients ajoutés aux moteurs
-« like » du catalogue sont explicitement des estimations de famille. Les
-niveaux absolus de suralimentation restent donc semi-empiriques ; une carte
-compresseur et des mesures acoustiques propres au turbo pourraient remplacer
-ces paramètres sans modifier l'architecture. Les tests imposent fréquence de
-passage exacte, pression proportionnelle à la racine de la puissance, silence
-sans puissance/débit, et absence exacte de wastegate ou dump valve lorsque son
-débit physique est nul.
+The frequency of the blade/lobe orders and the thermodynamic powers are
+computed. The blade counts, diameters and coefficients added to the "like"
+engines of the catalogue are explicitly family estimates. Absolute
+forced-induction levels therefore stay semi-empirical; a compressor map and
+acoustic measurements specific to the turbo could replace these parameters
+without changing the architecture. The tests require an exact passing
+frequency, a pressure proportional to the square root of the power, silence
+without power/flow, and the exact absence of wastegate or dump valve when its
+physical flow is zero.
 
-## 23. Sorties physiques, directivité et observateur stéréo
+## 23. Physical outlets, directivity and stereo observer
 
-Le schéma moteur 4 ajoute, en unités SI, un couple de microphones, la célérité
-locale facultative, ainsi que pour chaque sortie sa position, son axe, son
-diamètre et sa terminaison libre/bridée. YAML, JSON, catalogue, script et graphe
-compilé transportent ces valeurs sans conversion implicite. Les documents plus
-anciens migrent vers une géométrie de champ libre documentée.
+Engine schema 4 adds, in SI units, a microphone pair, an optional local speed of
+sound, and for each outlet its position, axis, diameter and unflanged/flanged
+termination. YAML, JSON, catalogue, script and compiled graph carry these values
+without implicit conversion. Older documents migrate to a documented free-field
+geometry.
 
-`FreeFieldObserver` est un opérateur causal par sortie et par canal. Il réserve
-ses lignes de retard dans `prepare()`, puis applique :
+`FreeFieldObserver` is a causal operator per outlet and per channel. It reserves
+its delay lines in `prepare()`, then applies:
 
-- la distance géométrique exacte et le temps d’arrivée `r/c` ;
-- la décroissance sphérique `1/r` ;
-- une directivité dépendante de l’angle et de `ka`, séparée en bandes basse et
-  haute autour de `ka = 1` ;
-- le comportement avant/arrière propre à une terminaison libre ou bridée.
+- the exact geometric distance and the `r/c` arrival time;
+- the spherical `1/r` decay;
+- a directivity depending on the angle and on `ka`, split into low and high
+  bands around `ka = 1`;
+- the front/back behaviour specific to an unflanged or flanged termination.
 
-L’échappement et l’admission renvoient donc directement une pression stéréo en
-pascals. Structure et suralimentation emploient la distance moyenne du même
-couple de microphones tant que leur configuration ne publie pas encore une
-position de source complète. Une IR de pièce ou de cabine reste un élément aval
-explicitement mesuré ; le champ libre est toujours le défaut.
+Exhaust and intake therefore return a stereo pressure in pascals directly.
+Structure and forced induction use the mean distance of the same microphone
+pair as long as their configuration does not publish a complete source position
+yet. A room or cabin IR stays an explicitly measured downstream element; free
+field is always the default.
 
-## 24. Validation catalogue et suppression des anciens chemins
+## 24. Catalogue validation and removal of the old paths
 
-La validation Release rend désormais **chaque moteur du catalogue**, et pas
-seulement quelques fixtures synthétiques. Pour chaque rendu, elle impose :
+Release validation now renders **every engine in the catalogue**, not just a few
+synthetic fixtures. For each render, it requires:
 
-- activation réelle des réseaux échappement/admission et du rayonnement modal ;
-- zéro événement, frontière ou échantillon de pression perdu ;
-- zéro échantillon issu du chemin procédural de compatibilité ;
-- valeurs finies, absence de plateau d’écrêtage et dynamique non impulsionnelle ;
-- gain du limiteur de sécurité exactement unitaire et pic avant limiteur `< 0,82` ;
-- niveau SPL plausible aux microphones publiés et équilibre spectral borné.
+- real activation of the exhaust/intake networks and the modal radiation;
+- zero lost events, boundaries or pressure samples;
+- zero samples from the procedural compatibility path;
+- finite values, no clipping plateau and non-impulsive dynamics;
+- a safety limiter gain of exactly unity and a pre-limiter peak `< 0.82`;
+- a plausible SPL at the published microphones and a bounded spectral balance.
 
-Les observateurs de pression par couche (`exhaust`, `intake`, `structure`) et le
-pic pré-limiteur sont des mesures atomiques en lecture seule : ils n’agissent
-jamais sur le rendu. Les tests analytiques couvrent en outre décroissance `1/r`,
-directivité arrière bridée, rejet des images au-dessus du Nyquist mécanique,
-passivité et conservation des éléments réseau.
+The per-layer pressure observers (`exhaust`, `intake`, `structure`) and the
+pre-limiter peak are read-only atomic measurements: they never act on the
+render. The analytical tests also cover `1/r` decay, flanged back directivity,
+rejection of images above the mechanical Nyquist, passivity and conservation of
+the network elements.
 
-Le chemin procédural n’a pas été supprimé aveuglément : il reste isolé pour une
-API de compatibilité sans graphe physique. En production, la présence d’un
-graphe compilé lui retire la propriété de la sortie dès le premier échantillon.
-Cette séparation permet encore un diagnostic A/B explicite sans maintenir deux
-voix concurrentes dans l’application livrée.
+The procedural path was not removed blindly: it stays isolated for a
+compatibility API without a physical graph. In production, the presence of a
+compiled graph takes ownership of the output away from it from the first
+sample. This separation still allows an explicit A/B diagnosis without keeping
+two competing voices in the shipped application.
 
-## 25. Audit échappement : la loi de paroi, le tronc de collecteur, le milieu par conduit
+## 25. Exhaust audit: the wall law, the collector trunk, the per-duct medium
 
-Audit du seul système d'échappement, puis correction. Cinq défauts, tous mesurés
-avant et après. Ce sont des changements de voicing assumés.
+An audit of the exhaust system alone, then a fix. Five defects, all measured
+before and after. These are deliberate voicing changes.
 
-### 25.1 `DuctWallLoss` n'appliquait pas la loi qu'elle implémente
+### 25.1 `DuctWallLoss` did not apply the law it implements
 
-La classe dérive l'atténuation de Kirchhoff-Rayleigh en `exp(-k*sqrt(f))` puis
-l'approximait par **un simple pôle calé à 1 kHz**. Un pôle ne peut pas suivre
-`sqrt(f)` : sa pente file vers 6 dB/octave alors que la cible est une inclinaison
-très douce (0,2 à 2,5 dB sur toute la bande audio pour un conduit du catalogue).
-Mesuré contre sa propre loi, la chaîne LS3 livrée sur-atténuait de **1,0 dB à
-2 kHz, 4,2 dB à 4 kHz et 11,1 dB à 8 kHz**, par traversée simple, dans un réseau
-bidirectionnel. Pire, le pôle ajusté tombait entre 0,31 et 0,67 pour *tous* les
-moteurs : le haut de la bande était façonné par le coin du filtre, pas par la
-géométrie — exactement ce qui aplatit les différences entre moteurs.
+The class derives the Kirchhoff-Rayleigh attenuation as `exp(-k*sqrt(f))` and
+then approximated it with **a single pole fitted at 1 kHz**. A pole cannot
+follow `sqrt(f)`: its slope runs off towards 6 dB/octave, whereas the target is
+a very gentle tilt (0.2 to 2.5 dB across the whole audio band for a catalogue
+duct). Measured against its own law, the shipped LS3 chain over-attenuated by
+**1.0 dB at 2 kHz, 4.2 dB at 4 kHz and 11.1 dB at 8 kHz**, per single pass, in a
+bidirectional network. Worse, the fitted pole fell between 0.31 and 0.67 for
+*every* engine: the top of the band was shaped by the corner of the filter, not
+by the geometry — exactly what flattens the differences between engines.
 
-Remplacé par un **shelf un pôle / un zéro**. En normalisant le gain continu, le
-module carré se réduit à une fonction de Möbius de `s = sin^2(w/2)` :
+Replaced by a **one-pole / one-zero shelf**. Normalising the DC gain, the
+squared magnitude reduces to a Möbius function of `s = sin^2(w/2)`:
 
 ```
 |H(w)|^2 = (1 + Z s) / (1 + P s),   Z = 4z/(1-z)^2,  P = 4p/(1-p)^2
 ```
 
-Caler deux points est donc un système **linéaire 2x2**, et les paramètres
-déformés s'inversent en forme close, `z = (sqrt(1+Z) - 1)^2 / Z`. Ni itération ni
-recherche, et la passivité s'écrit `0 <= Z <= P`. Calé à 2,5 et 15 kHz, le shelf
-suit la loi exacte à **0,35 dB** de 80 Hz à Nyquist, contre 11,9 dB au pire pour
-le pôle seul. Au-delà d'environ 9,4 dB de perte par traversée au point bas,
-aucun shelf passif du premier ordre ne joint les deux points ; `fit()` retombe
-alors sur le pôle pur. Le conduit le plus long et le plus étroit du catalogue est
-à 7 % de ce seuil.
+Fitting two points is therefore a **linear 2x2** system, and the warped
+parameters invert in closed form, `z = (sqrt(1+Z) - 1)^2 / Z`. No iteration and
+no search, and passivity reads `0 <= Z <= P`. Fitted at 2.5 and 15 kHz, the
+shelf follows the exact law within **0.35 dB** from 80 Hz to Nyquist, against
+11.9 dB at worst for the single pole. Beyond about 9.4 dB of loss per pass at
+the low point, no first-order passive shelf joins the two points; `fit()` then
+falls back to the pure pole. The longest and narrowest duct of the catalogue is
+within 7 % of that threshold.
 
-### 25.2 Le mécanisme qui manquait : la coupure du mode plan
+### 25.2 The missing mechanism: the plane-mode cutoff
 
-Corriger 25.1 a retiré un amortissement dont le réseau dépendait sans le dire :
-K20 et Hayabusa ont attaqué le limiteur de sécurité. Le mécanisme manquant est
-celui que `DuctWallLoss` citait déjà comme excuse pour sur-atténuer.
+Fixing 25.1 removed damping the network depended on without saying so: K20 and
+Hayabusa hit the safety limiter. The missing mechanism is the one `DuctWallLoss`
+already cited as an excuse to over-attenuate.
 
-Au-dessus de `f_c = 1,8412 c / (2 pi a)` un conduit circulaire porte des modes
-d'ordre supérieur, et chaque discontinuité y diffuse de l'énergie du mode plan —
-où elle ne suit plus la ligne à retard. `DuctModeCutoff` applique un
-**Butterworth d'ordre 4 à `f_c`, une fois par traversée**. Aucune profondeur
-réglable : rayon et célérité sont les seules entrées. Ordre 4 parce que la
-section vit dans la boucle collecteur-sortie où toute perte par traversée
-s'accumule (elle est à 0,017 dB une octave sous la coupure, là où l'ordre 2
-serait à 0,264 dB), et parce que l'apparition modale est réellement abrupte. Le
-filtre est un état-variable TPT, stable pour tout `g > 0`, donc l'interpolation
-par échantillon de la coupure est sûre par construction.
+Above `f_c = 1.8412 c / (2 pi a)` a circular duct carries higher-order modes,
+and every discontinuity there scatters plane-mode energy — where it no longer
+follows the delay line. `DuctModeCutoff` applies a **4th-order Butterworth at
+`f_c`, once per pass**. No adjustable depth: radius and speed of sound are the
+only inputs. Order 4 because the section lives in the collector-outlet loop
+where any per-pass loss accumulates (it is at 0.017 dB one octave below the
+cutoff, where order 2 would be at 0.264 dB), and because modal onset really is
+abrupt. The filter is a TPT state-variable filter, stable for any `g > 0`, so
+per-sample interpolation of the cutoff is safe by construction.
 
-La bande est maintenant fixée par la géométrie, et le catalogue la balaye :
-**2,1 à 2,9 kHz dans une chambre d'expansion contre 7 à 11 kHz dans un primaire**.
+The band is now set by the geometry, and the catalogue spans it: **2.1 to
+2.9 kHz in an expansion chamber against 7 to 11 kHz in a primary**.
 
-### 25.3 Le collecteur n'existait pas dans le guide d'ondes
+### 25.3 The collector did not exist in the waveguide
 
-`ExhaustNetworkLayout` routait tout `merge`/`splitter` vers une jonction sans
-jamais lire son `lengthMm`, et `AcousticExhaustNetwork` traitait une jonction
-comme un point sans étendue. Le compilateur historique authore pourtant un
-collecteur de 120 mm au diamètre de collecteur pour **les dix moteurs du
-catalogue**, et rien n'en arrivait à l'audio : quatre primaires diffusaient
-directement dans le corps du silencieux. Mesuré sur le LS3, un primaire voyait
-une réflexion de **-0,843 au lieu de -0,693**, et l'entrée de chambre un rapport
-d'expansion de **2,19 au lieu de 3,49** — une perte par transmission de Munjal
-de 2,4 dB là où la géométrie en décrit 5,5.
+`ExhaustNetworkLayout` routed every `merge`/`splitter` to a junction without
+ever reading its `lengthMm`, and `AcousticExhaustNetwork` treated a junction as
+a point without extent. Yet the historical compiler authors a 120 mm collector
+at collector diameter for **all ten engines of the catalogue**, and none of it
+reached the audio: four primaries scattered directly into the muffler body.
+Measured on the LS3, a primary saw a reflection of **-0.843 instead of
+-0.693**, and the chamber inlet an expansion ratio of **2.19 instead of 3.49** —
+a Munjal transmission loss of 2.4 dB where the geometry describes 5.5.
 
-Une bifurcation est un point de diffusion **et** un tuyau. La longueur authorée
-est publiée en `CompiledExhaustJunction::trunkLengthM` et réalisée comme conduit
-du côté de la bifurcation qui porte exactement une connexion — le tuyau commun
-d'un collecteur est en aval d'un merge, celui d'une sortie double en amont d'un
-splitter. Avec plus d'une connexion des deux côtés la longueur n'est
-attribuable à aucun côté et la jonction reste un point.
+A bifurcation is a scattering point **and** a pipe. The authored length is
+published as `CompiledExhaustJunction::trunkLengthM` and realised as a duct on
+the side of the bifurcation that carries exactly one connection — the common
+pipe of a collector is downstream of a merge, that of a dual outlet upstream of
+a splitter. With more than one connection on both sides, the length cannot be
+attributed to either side and the junction stays a point.
 
-Le réseau volumes finis est **délibérément inchangé** : il modélise une jonction
-comme un plénum bien mélangé et replie l'étendue dans `volumeM3`, ce qui est le
-bon choix localisé aux fréquences qu'il résout. Un guide d'ondes ne le peut pas,
-parce que la longueur y est un retard. Les deux discrétisations lisent
-maintenant la même géométrie authorée.
+The finite-volume network is **deliberately unchanged**: it models a junction as
+a well-mixed plenum and folds the extent into `volumeM3`, which is the right
+lumped choice at the frequencies it resolves. A waveguide cannot, because length
+is a delay there. Both discretisations now read the same authored geometry.
 
-### 25.4 Un seul milieu par chemin, pris au point le plus chaud
+### 25.4 A single medium per path, taken at the hottest point
 
-Le renderer prenait un `(rho, c)` par chemin, construit depuis l'état **au
-port**, et l'appliquait à tous les conduits. Le solveur résolvait la température
-par conduit depuis toujours : `outletSamples()` n'était lu que pour la
-comptabilité de masse, et `ducts()` pas du tout.
+The renderer took one `(rho, c)` per path, built from the state **at the port**,
+and applied it to every duct. The solver had always resolved temperature per
+duct: `outletSamples()` was only read for mass accounting, and `ducts()` not at
+all.
 
-Mesuré sur le K20 au-dessus de 3000 tr/min, état au port contre état par conduit :
+Measured on the K20 above 3,000 rpm, port state against per-duct state:
 
-| élément | c (m/s) | rho (kg/m3) |
+| element | c (m/s) | rho (kg/m3) |
 |---|---:|---:|
-| port (ce que tout conduit recevait) | 562,8 | 0,505 |
-| primaires | 561,7 / 580,7 / 568,0 / 571,9 | |
-| chambre | 554,0 | 0,444 |
-| tuyau de sortie | 545,8 | 0,459 |
+| port (what every duct received) | 562.8 | 0.505 |
+| primaries | 561.7 / 580.7 / 568.0 / 571.9 | |
+| chamber | 554.0 | 0.444 |
+| tail pipe | 545.8 | 0.459 |
 
-Cela **corrige l'estimation de l'audit lui-même**, qui supposait un gradient
-bien plus raide. L'erreur de retard est d'environ 3 % par conduit et 6,4 % sur
-la chaîne, pas 20-25 % — soit ~20 Hz sur le peigne d'une chambre de 400 mm, pas
-165 Hz. L'erreur importante était ailleurs : dans l'impédance caractéristique
-`rho*c`, qui fixe la diffusion aux jonctions — 284 au port contre 246 en chambre
-et 250 en sortie, donc **12 à 14 % d'erreur sur tous les coefficients de
-diffusion en aval**, cumulée au rapport d'expansion à l'entrée de chambre.
+This **corrects the audit's own estimate**, which assumed a much steeper
+gradient. The delay error is about 3 % per duct and 6.4 % over the chain, not
+20-25 % — i.e. ~20 Hz on the comb of a 400 mm chamber, not 165 Hz. The important
+error was elsewhere: in the characteristic impedance `rho*c`, which sets the
+scattering at the junctions — 284 at the port against 246 in the chamber and 250
+at the outlet, hence **a 12 to 14 % error on every downstream scattering
+coefficient**, compounded with the expansion ratio at the chamber inlet.
 
-### 25.5 Reconstruction de frontière : ordre 8
+### 25.5 Boundary reconstruction: order 8
 
-Le filtre anti-imagerie était un Linkwitz-Riley d'ordre 4 à 0,45x la cadence de
-couplage, ce que sa propre docstring décrivait comme laissant la première raie
-d'image à seulement 28 dB — au-dessus du seuil « métallique » de 20 dB que le
-harnais utilise lui-même. Passé à l'ordre 8 avec le coin porté à 0,47x :
+The anti-imaging filter was a 4th-order Linkwitz-Riley at 0.45x the coupling
+rate, which its own docstring described as leaving the first image line only
+28 dB down — above the 20 dB "metallic" threshold the harness itself uses.
+Moved to order 8 with the corner raised to 0.47x:
 
-| | 0,25x couplage | 0,5x couplage | 1,0x couplage |
+| | 0.25x coupling | 0.5x coupling | 1.0x coupling |
 |---|---:|---:|---:|
-| LR4 à 0,45x | -0,79 dB | -8,0 dB | -28,1 dB |
-| LR8 à 0,47x | -0,06 dB | -8,4 dB | -52,5 dB |
+| LR4 at 0.45x | -0.79 dB | -8.0 dB | -28.1 dB |
+| LR8 at 0.47x | -0.06 dB | -8.4 dB | -52.5 dB |
 
-Meilleur des deux côtés à la fois : un filtre plus raide peut placer son coin
-plus près du bord de bande. La somme des deux moitiés reste all-pass, donc
-aucune des deux bandes physiques n'a eu besoin d'être réaccordée.
+Better on both sides at once: a steeper filter can place its corner closer to
+the band edge. The sum of the two halves stays all-pass, so neither physical
+band needed retuning.
 
-### 25.6 Ce qui n'est toujours pas résolu, et pourquoi ce n'est pas gaté
+### 25.6 What is still not resolved, and why it is not gated
 
-Le harnais mesure et **affiche** maintenant `outOfBandResonance`, la proéminence
-d'une raie étroite au-dessus du Nyquist de couplage. Elle n'est délibérément
-**pas** transformée en critère de succès.
+The harness now measures and **prints** `outOfBandResonance`, the prominence of
+a narrow line above the coupling Nyquist. It is deliberately **not** turned into
+a pass criterion.
 
-L'argument tentant — « au-dessus du Nyquist de couplage la frontière ne porte
-aucune information, donc rien ne peut y être un mode » — est vrai de la
-*frontière* et faux du *réseau* : les modes du guide d'ondes ne s'arrêtent pas
-là, et la source complémentaire de débit de soupape les excite. Mesuré sur le
-quatre-cylindres de référence, couper cette source fait tomber le pic de 4107 Hz
-de **31,2 à 22,1 dB** : ce n'est donc ni purement une image ni purement un mode.
-Et ce moteur de référence, en géométrie par défaut sans chambre, est un
-échappement droit ouvert — qui résonne réellement.
+The tempting argument — "above the coupling Nyquist the boundary carries no
+information, so nothing there can be a mode" — is true of the *boundary* and
+false of the *network*: the waveguide modes do not stop there, and the
+complementary valve-flow source excites them. Measured on the reference
+four-cylinder, cutting that source drops the 4107 Hz peak from **31.2 to
+22.1 dB**: it is therefore neither purely an image nor purely a mode. And that
+reference engine, in its default geometry without a chamber, is an open
+straight exhaust — which really does resonate.
 
-Passer la reconstruction à l'ordre 8 ne l'a pas déplacé, ce qui **écarte** le
-chemin de reconstruction comme cause principale. Piste restante, non poursuivie
-ici : le milieu au port, la conductance de soupape et la levée sont des flux
-bloqués d'ordre zéro à la cadence de couplage qui **multiplient** la frontière au
-lieu de s'y ajouter, et que le filtre de reconstruction ne voit donc jamais.
+Moving the reconstruction to order 8 did not shift it, which **rules out** the
+reconstruction path as the main cause. Remaining lead, not pursued here: the
+port medium, the valve conductance and the lift are zero-order-held streams at
+the coupling rate that **multiply** the boundary instead of adding to it, and
+that the reconstruction filter therefore never sees.
 
-Ce qui est gatable sainement, c'est le filtre lui-même, et sa régression exige
-maintenant 40 dB sur la première image et 80 dB sur la seconde (contre 24 et 40).
+What can soundly be gated is the filter itself, and its regression now requires
+40 dB on the first image and 80 dB on the second (against 24 and 40).
 
-### 25.7 Correction : `ExpansionChamberMuffler` n'est pas du code mort
+### 25.7 Correction: `ExpansionChamberMuffler` is not dead code
 
-L'audit affirmait que `RealtimeEngineAudio.cpp:1431` (`if (useCompiledTopology)
-continue;`) rendait cet élément inaccessible. C'est trop fort :
-`useCompiledTopology = sampleUsesPhysicalExhaust && acousticExhaustNetwork_`, et
-`sampleUsesPhysicalExhaust` est faux tant qu'aucun cylindre n'a de frontière
-thermoacoustique valide. Le chemin réduit est donc un vrai repli, pas du code
-mort. Il reste que le catalogue livré rapporte `legacySamples=0` partout : les
-chiffres de §19 décrivent le repli, pas la voix livrée.
+The audit claimed that `if (useCompiledTopology) continue;` in
+`RealtimeEngineAudio.cpp` made this element unreachable. That is too strong:
+`useCompiledTopology = sampleUsesPhysicalExhaust && acousticExhaustNetwork_`,
+and `sampleUsesPhysicalExhaust` is false as long as no cylinder has a valid
+thermoacoustic boundary. The reduced path is therefore a real fallback, not dead
+code. It remains that the shipped catalogue reports `legacySamples=0`
+everywhere: the figures of §19 describe the fallback, not the shipped voice.
 
-### 25.8 Mesures livrées
+### 25.8 Shipped measurements
 
-Base de comparaison : l'état avant cette passe.
+Comparison baseline: the state before this pass.
 
-- Résonance au ralenti du Big Twin **27,0 dB -> 15,7 dB**, et elle n'est plus une
-  raie étroite à 439 Hz. Plancher de queue d'échappement **-70,0 -> -80,3 dB**.
-- Tous les pics étroits situés au-dessus du Nyquist de couplage de leur moteur
-  ont disparu : LS3 19,1 dB@4156 Hz -> 498 Hz, K20 18,3 dB@4128 -> 967 Hz,
-  Flat-6 14,6 dB@4312 -> 492 Hz. C'étaient bien du contenu hors modèle.
-- Différenciation en progrès sur quatre paires du catalogue sur six ; V8 contre
-  radial 0,308 -> 0,228, I2 contre radial 0,679 -> 0,616.
-- La brillance monte sur les moteurs à conduits étroits et baisse sur ceux à
-  chambre large : c'est la géométrie qui travaille.
+- Big Twin idle resonance **27.0 dB -> 15.7 dB**, and it is no longer a narrow
+  line at 439 Hz. Exhaust tail floor **-70.0 -> -80.3 dB**.
+- Every narrow peak above its engine's coupling Nyquist disappeared: LS3
+  19.1 dB@4156 Hz -> 498 Hz, K20 18.3 dB@4128 -> 967 Hz, Flat-6 14.6 dB@4312 ->
+  492 Hz. They really were out-of-model content.
+- Differentiation improved on four of six catalogue pairs; V8 versus radial
+  0.308 -> 0.228, I2 versus radial 0.679 -> 0.616.
+- Brightness rises on engines with narrow ducts and falls on those with a wide
+  chamber: it is the geometry doing the work.
 
-### 25.9 Tests ajoutés
+### 25.9 Tests added
 
-Tous non vacués (vérifiés en cassant délibérément le code testé) :
+All non-vacuous (checked by deliberately breaking the code under test):
 
-- `ductWallLossRegression` borne désormais l'erreur d'ajustement **sur toute la
-  bande** au lieu du seul point où l'ajustement est exact par construction, et
-  vérifie l'équation aux différences contre le module analytique. Un simple pôle
-  rate la nouvelle borne de 1,6 à 6,6 dB sur chaque conduit du catalogue.
-- `ductModeCutoffRegression`, ancré sur la valeur de manuel : un conduit de
-  50 mm dans l'air coupe à 4 kHz.
-- `branchTrunkDelayRegression` mesure l'attaque causale à la sortie avec et sans
-  tronc de 400 mm : **35 échantillons mesurés contre 35,9 prédits**.
-- `ductMediumRegression` exige que donner à chaque conduit l'état froid
-  reproduise exactement le réseau à qui l'on dit que tout le chemin est froid.
-- `areaStepScatteringRegression` cale la diffusion d'un saut de section sur la
-  forme close `T(m) = 4m/(1+m)^2` — la limite basse fréquence de la perte par
-  transmission de Munjal — à 0,05 près pour m = 2, 4 et 9.
+- `ductWallLossRegression` now bounds the fit error **across the whole band**
+  instead of only at the point where the fit is exact by construction, and
+  checks the difference equation against the analytical magnitude. A single
+  pole misses the new bound by 1.6 to 6.6 dB on every catalogue duct.
+- `ductModeCutoffRegression`, anchored on the textbook value: a 50 mm duct in
+  air cuts off at 4 kHz.
+- `branchTrunkDelayRegression` measures the causal onset at the outlet with and
+  without a 400 mm trunk: **35 samples measured against 35.9 predicted**.
+- `ductMediumRegression` requires that giving every duct the cold state exactly
+  reproduces the network that is told the whole path is cold.
+- `areaStepScatteringRegression` pins the scattering of an area step on the
+  closed form `T(m) = 4m/(1+m)^2` — the low-frequency limit of Munjal's
+  transmission loss — within 0.05 for m = 2, 4 and 9.
 
-## 26. Source turbulente au débouché
+## 26. Turbulent source at the outlet
 
-Le réseau physique reconstruisait le blowdown et le rayonnement de conduit, mais
-ne créait aucune source de mélange turbulent au contact du jet chaud et de
-l’air extérieur. `ExhaustJetNoise` remplit uniquement ce rôle :
+The physical network reconstructed the blowdown and the duct radiation, but
+created no turbulent mixing source where the hot jet meets the outside air.
+`ExhaustJetNoise` fills only that role:
 
-- débit moyen réparti entre les débouchés par aire ;
-- vitesse `m_dot/(rho*A)` et puissance `K*rho*A*U^8/c^5` ;
-- centre spectral à `St = 0,2` ;
-- modulation causale par le débit volumique audio de la terminaison ;
-- borne subsonique et borne `4,5 ×` sur l’excursion instantanée ;
-- observateur stéréo, directivité, distance et IR identiques au débouché ;
-- aucune rétroaction vers le solveur gaz.
+- mean flow shared between the outlets by area;
+- velocity `m_dot/(rho*A)` and power `K*rho*A*U^8/c^5`;
+- spectral centre at `St = 0.2`;
+- causal modulation by the audio volume flow of the termination;
+- a subsonic bound and a `4.5 ×` bound on the instantaneous excursion;
+- stereo observer, directivity, distance and IR identical to the outlet;
+- no feedback into the gas solver.
 
-Le multiplicateur moteur de puissance `100` est une valeur authored, isolée du
-coefficient de jet propre `1e-4`. Il ne prétend pas être une constante physique
-mesurée. Un contrôle nul coupe toute la couche pour les comparaisons sonores et
-CPU. La validation complète, dont les calibrations refusées, est dans
-[`audio-lot3-outlet-turbulence-2026-07-29.md`](archive/audio-lot3-outlet-turbulence-2026-07-29.md).
+The driving power multiplier `100` is an authored value, isolated from the jet's
+own coefficient `1e-4`. It does not claim to be a measured physical constant. A
+zero setting cuts the whole layer for sound and CPU comparisons.

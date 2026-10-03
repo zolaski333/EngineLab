@@ -1,10 +1,11 @@
-# Instructions pour agents
+# Instructions for agents
 
-Les instructions de ce dépôt sont dans deux fichiers, à lire **avant toute
-tâche** :
+The instructions for this repository live in two files, to be read **before any
+task**:
 
-- `VISION.md` : l'intention du projet et le critère de réussite ;
-- `CLAUDE.md` : la méthode de travail, le build, les instruments et les pièges.
+- `VISION.md`: the intent of the project and the success criterion;
+- `.claude/CLAUDE.md`: the working method, the build, the instruments and the
+  traps.
 
-Ce fichier n'en contient volontairement pas de copie, pour qu'aucune version ne
-diverge de l'autre.
+This file deliberately holds no copy of them, so that no version can drift from
+the other.

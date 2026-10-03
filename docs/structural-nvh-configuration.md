@@ -1,34 +1,31 @@
-# Modes NVH structurels mesurés ou calculés
+# Measured or computed structural NVH modes
 
-## Principe
+## Principle
 
-Le rayonnement mécanique est toujours excité par les forces SI publiées par le
-solveur : effort gazeux sur le piston, réactions axiale et latérale de palier,
-et couple de réaction du vilebrequin. Une configuration NVH ne remplace donc pas
-le moteur par des oscillateurs “musicaux” ; elle remplace uniquement le jeu de
-modes réduit qui transforme ces efforts en vitesse de surface puis en pression
-rayonnée.
+Mechanical radiation is always driven by the SI forces published by the
+solver: gas force on the piston, axial and lateral bearing reactions, and the
+crankshaft reaction torque. An NVH configuration therefore does not replace the
+engine with "musical" oscillators; it only replaces the reduced mode set that
+turns those forces into surface velocity and then into radiated pressure.
 
-Sans section `structural_nvh`, EngineLab conserve son modèle de famille
-coque/poutre/plaques et publie la provenance `estimatedFamily`. Aucun des 14
-moteurs livrés ne prétend actuellement posséder une mesure NVH constructeur.
-Pour ce fallback, la coordonnée longitudinale de chaque cylindre vient de sa
-position dans `banks[].cylinderIds`, jamais de son index global. Cette distinction
-est indispensable aux configurations V et flat dont le stockage alterne les
-bancs. Le correctif et ses A/B sont documentés dans
-[`audio-lot4-structural-bank-topology-2026-07-29.md`](archive/audio-lot4-structural-bank-topology-2026-07-29.md).
+Without a `structural_nvh` section, EngineLab keeps its shell/beam/plate family
+model and publishes the `estimatedFamily` provenance. None of the shipped
+engines currently claims a manufacturer NVH measurement. For this fallback,
+each cylinder's longitudinal coordinate comes from its position in
+`banks[].cylinderIds`, never from its global index. That distinction is
+essential for V and flat configurations whose storage alternates banks.
 
-## Schéma 5
+## Schema 5
 
-Exemple de forme, volontairement illustratif et **non utilisable comme
-calibration d'un moteur réel** :
+Example of the shape, deliberately illustrative and **not usable as the
+calibration of a real engine**:
 
 ```yaml
 structural_nvh:
   provenance: measured
-  source: "rapport modal, montage et révision identifiables"
+  source: "modal report, identifiable mounting and revision"
   modes:
-    - name: "flexion verticale bloc 1"
+    - name: "block vertical bending 1"
       drive: bearing_axial
       frequency_hz: 1234.5
       damping_ratio: 0.025
@@ -40,58 +37,57 @@ structural_nvh:
       cylinder_participation: [1.0, -0.65, 0.65, -1.0]
 ```
 
-Valeurs acceptées :
+Accepted values:
 
-- `provenance`: `estimated_family`, `calculated_geometry` ou `measured` ;
-- `drive`: `head_gas`, `bearing_axial`, `bearing_lateral` ou `torsion` ;
-- une participation signée, normalisée à l'antinœud, par cylindre et dans
-  l'ordre de `engine.cylinders` ;
-- fréquence, amortissement, masse modale, aire rayonnante, efficacité de
-  rayonnement, facteur RMS de forme et rayon équivalent de couple en unités SI.
+- `provenance`: `estimated_family`, `calculated_geometry` or `measured`;
+- `drive`: `head_gas`, `bearing_axial`, `bearing_lateral` or `torsion`;
+- a signed participation, normalised at the antinode, per cylinder and in the
+  order of `engine.cylinders`;
+- frequency, damping, modal mass, radiating area, radiation efficiency, RMS
+  shape factor and equivalent torque radius in SI units.
 
-`torque_radius_m` n'est consommé que par un mode `torsion`, mais il reste
-persisté pour que tous les modes partagent un schéma fixe. Il n'existe aucun
-champ de gain arbitraire.
+`torque_radius_m` is only consumed by a `torsion` mode, but it is still
+persisted so that every mode shares a fixed schema. There is no arbitrary gain
+field.
 
-## Conditions pour déclarer `measured`
+## Conditions for declaring `measured`
 
-Une campagne exploitable doit au minimum conserver :
+A usable campaign must at least keep:
 
-1. le montage, les points d'impact/excitation et les accéléromètres ou le champ
-   vibrométrique ;
-2. les FRF ayant fourni fréquence et amortissement ;
-3. la convention de normalisation de la forme modale et la masse modale
-   cohérente avec elle ;
-4. le calcul ou la mesure de l'aire/efficacité rayonnante ;
-5. l'identifiant du rapport ou du dataset dans `source`.
+1. the mounting, the impact/excitation points and the accelerometers or the
+   vibrometer field;
+2. the FRFs that gave the frequency and damping;
+3. the normalisation convention of the mode shape and a modal mass consistent
+   with it;
+4. the computation or measurement of the radiating area/efficiency;
+5. the identifier of the report or dataset in `source`.
 
-La validation refuse :
+Validation rejects:
 
-- une provenance mesurée sans mode ;
-- un jeu de modes sans source ;
-- plus de 64 modes ;
-- une forme qui n'a pas exactement une valeur par cylindre ;
-- une forme nulle, non finie ou hors de l'intervalle `[-1, 1]` ;
-- les paramètres non physiques ou hors bande.
+- a measured provenance without modes;
+- a mode set without a source;
+- more than 64 modes;
+- a shape that does not have exactly one value per cylinder;
+- a zero, non-finite or out-of-`[-1, 1]` shape;
+- non-physical or out-of-band parameters.
 
-Cette discipline empêche de transformer une estimation agréable à l'oreille en
-fausse donnée constructeur.
+This discipline prevents turning an estimate that pleases the ear into fake
+manufacturer data.
 
-## Preuve automatisée
+## Automated check
 
-`EngineLab.StructuralNvh` construit un mini-catalogue temporaire contenant un
-mode de banc synthétique à 1 234,5 Hz. Le test prouve :
+`EngineLab.StructuralNvh` builds a temporary mini-catalogue holding a synthetic
+bench mode at 1,234.5 Hz. The test proves:
 
-- le chargement par le même décodeur YAML que le catalogue de production ;
-- la provenance et la source accessibles au runtime ;
-- la transmission exacte de fréquence, amortissement, masse, aire et
-  efficacité ;
-- les round-trips JSON/YAML ;
-- une réponse finie et non nulle à la force de palier à la résonance ;
-- le rejet d'une fausse provenance mesurée et d'une forme incomplète ;
-- le maintien du fallback `estimatedFamily` lorsque la section est absente.
+- loading through the same YAML decoder as the production catalogue;
+- provenance and source reachable at runtime;
+- exact transmission of frequency, damping, mass, area and efficiency;
+- JSON/YAML round-trips;
+- a finite, non-zero response to the bearing force at resonance;
+- rejection of a fake measured provenance and of an incomplete shape;
+- the `estimatedFamily` fallback kept when the section is missing.
 
-Commande :
+Command:
 
 ```powershell
 ctest --test-dir out/build/windows-vs2022 -C Release `

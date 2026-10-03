@@ -1,12 +1,12 @@
-# Variabilite cycle-a-cycle de combustion
+# Cycle-to-cycle combustion variability
 
-EngineLab peut appliquer une dispersion cycle-a-cycle au chemin physique de
-combustion. Elle agit sur la turbulence/vitesse de flamme d'un moteur a
-allumage commande et sur le temps de melange d'un diesel. La pression cylindre,
-le travail indique, le debit d'echappement et enfin le son voient donc tous le
-meme evenement. Ce n'est pas un bruit ajoute dans le renderer.
+EngineLab can apply a cycle-to-cycle spread to the physical combustion path. It
+acts on the turbulence/flame speed of a spark-ignition engine and on the mixing
+time of a diesel. Cylinder pressure, indicated work, exhaust flow and finally
+the sound therefore all see the same event. It is not noise added in the
+renderer.
 
-Deux champs de `combustion_calibration` la pilotent :
+Two `combustion_calibration` fields drive it:
 
 ```yaml
 combustion_calibration:
@@ -14,76 +14,77 @@ combustion_calibration:
   cycle_variation_correlation: 0.55
 ```
 
-- `cycle_variation_cov` est l'ecart-type du multiplicateur de vitesse de
-  combustion. La plage valide est 0 a 0,20. Zero, valeur par defaut, est un
-  contournement exact qui n'avance meme pas le generateur pseudo-aleatoire.
-- `cycle_variation_correlation` est la correlation AR(1) entre deux cycles
-  consecutifs du meme cylindre, de 0 a 0,98.
+- `cycle_variation_cov` is the standard deviation of the combustion speed
+  multiplier. The valid range is 0 to 0.20. Zero, the default, is an exact
+  bypass that does not even advance the pseudo-random generator.
+- `cycle_variation_correlation` is the AR(1) correlation between two
+  consecutive cycles of the same cylinder, from 0 to 0.98.
 
-Le tirage est deterministe, borne entre 0,55 et 1,45 et utilise un flux aleatoire
-independant par cylindre. Il ne modifie pas la sequence des vrais rates
-d'allumage. `CylinderState::combustionCycleMultiplier` publie la valeur active
-pour les mesures et les exports.
+The draw is deterministic, clamped between 0.55 and 1.45, and uses an
+independent random stream per cylinder. It does not change the sequence of
+real misfires. `CylinderState::combustionCycleMultiplier` publishes the active
+value for measurements and exports.
 
-Les moteurs de production restent volontairement non calibres dans le
-catalogue. La variante explicitement nommee `Audio Physics Lab 689 Twin` est
-une exception pedagogique : son COV de 0,06 est un reglage d'ecoute estime et
-annonce comme tel, pas une valeur constructeur. Pour un moteur calibre, une
-valeur doit etre choisie depuis une serie de cycles mesures (IMEP ou pression
-cylindre), pas pour fabriquer artificiellement un ralenti irregulier. Comme ordre de
-grandeur de depart pour une ecoute A/B, 0,02 a 0,05 convient a un moteur chaud
-stable ; les valeurs plus fortes doivent correspondre a un regime pauvre,
-dilue ou instable que la simulation explique aussi physiquement.
+The production engines deliberately stay uncalibrated in the catalogue. The
+variant explicitly named `Audio Physics Lab 689 Twin` is a teaching exception:
+its COV of 0.06 is an estimated listening setting, declared as such, not a
+manufacturer figure. For a calibrated engine, a value must be chosen from a
+series of measured cycles (IMEP or cylinder pressure), not to artificially
+manufacture an irregular idle. As a starting order of magnitude for an A/B
+listening test, 0.02 to 0.05 suits a stable warm engine; higher values must
+match a lean, diluted or unstable condition that the simulation also explains
+physically.
 
-**AUDIO HQ** publie en direct le minimum et le maximum des multiplicateurs vus
-sur les cylindres. Le bouton **BYPASS** remet le COV a zero, ce qui conserve le
-contournement bit-exact et permet une comparaison sans tirage aleatoire cache.
+**AUDIO HQ** publishes the minimum and maximum multipliers seen across the
+cylinders live. The **BYPASS** button sets the COV back to zero, which keeps the
+bit-exact bypass and allows a comparison without any hidden random draw.
 
-## Ce que le catalogue delivre reellement (mesure du 2 aout 2026)
+## What the catalogue actually delivers (measured 2 August 2026)
 
-`cycle_variation_cov` vaut 0 sur quinze des seize moteurs, et il serait naturel
-d'en conclure que leurs cycles se repetent. **C'est faux, et cela a ete mesure.**
+`cycle_variation_cov` is 0 on fifteen of the sixteen engines, and it would be
+natural to conclude that their cycles repeat. **That is wrong, and it has been
+measured.**
 
-`EngineLabCyclicVariabilityHarness` mesure le COV du travail indique par cycle
-et par cylindre -- soit COV(PMI) -- chaque cylindre autour de sa propre moyenne.
-Sur le catalogue livre, sans aucune dispersion autoree :
+`EngineLabCyclicVariabilityHarness` measures the COV of indicated work per cycle
+and per cylinder -- i.e. COV(IMEP) -- each cylinder around its own mean. On the
+shipped catalogue, with no authored spread at all:
 
-- charge partielle, regime tenu : **1,7 a 7,0 %** ;
-- pleine charge, regime tenu : **0,9 a 12,9 %**.
+- part load, held engine speed: **1.7 to 7.0 %**;
+- full load, held engine speed: **0.9 to 12.9 %**.
 
-La dispersion vient du couplage dynamique des gaz, du film de paroi, des ondes
-de conduit et de l'ECU. Le simulateur est deterministe -- deux executions sont
-identiques -- mais il n'est pas periodique. Une proposition d'ajouter de la
-variabilite doit donc partir de cette table, pas du champ a zero.
+The spread comes from the dynamic coupling of the gases, the wall film, duct
+waves and the ECU. The simulator is deterministic -- two runs are identical --
+but it is not periodic. Any proposal to add variability must therefore start
+from this table, not from the zero field.
 
-Trois consequences pratiques :
+Three practical consequences:
 
-1. Une fermeture physique pilotee par la dilution a ete prototypee puis
-   **retiree** : a la condition `light` de ce harnais, la fraction de produits
-   brules a l'allumage vaut 0,004 a 0,026, sous son seuil de 0,06, donc son terme
-   y etait nul. **Attention, deux corrections du 2026-08-02** : ce champ n'est
-   pas une fraction de gaz residuels mais une fraction molaire de PRODUITS, soit
-   0,266 x RGF ; et au ralenti libre il vaut 0,063 a 0,142, donc au-dessus du
-   seuil. L'affirmation « nul sur tout le catalogue » est retiree. Voir
-   `docs/archive/physics-audit.md`, section « Retrait : la dilution piegee n'est pas trop
-   faible ».
-2. L'ordre est **inverse** sur sept moteurs, plus disperses a pleine charge qu'a
-   charge partielle. Ce n'est pas l'absorbeur : la colonne `dN%` montre le
-   regime tenu a 0,10-0,48 % pendant que le travail varie de 5 a 13 %.
-3. Un **ralenti libre n'est pas un instrument valide** pour cette question : son
-   COV(PMI) est domine par la chasse du regulateur (90 % mesures sur le radial).
-   Tenir le regime, ou utiliser `EngineLab.IdleStabilityRegression`, qui repond a
-   une autre question.
+1. A physical closure driven by dilution was prototyped then **removed**: at
+   this harness's `light` condition, the burned-product fraction at spark is
+   0.004 to 0.026, below its 0.06 threshold, so its term was zero there.
+   **Note two corrections from 2026-08-02**: this field is not a residual gas
+   fraction but a mole fraction of PRODUCTS, i.e. 0.266 × RGF; and at free idle
+   it is 0.063 to 0.142, so above the threshold. The claim "zero across the
+   whole catalogue" is withdrawn. See `physics-audit.md` in the docs archive
+   (git tag `archive/docs-2026-09`), section on the trapped dilution not being
+   too low.
+2. The order is **reversed** on seven engines, which spread more at full load
+   than at part load. It is not the absorber: the `dN%` column shows the engine
+   speed held to 0.10-0.48 % while the work varies by 5 to 13 %.
+3. A **free idle is not a valid instrument** for this question: its COV(IMEP)
+   is dominated by governor hunting (90 % measured on the radial). Hold the
+   engine speed, or use `EngineLab.IdleStabilityRegression`, which answers a
+   different question.
 
-Le harnais n'est volontairement **pas** enregistre comme test : ses bandes de
-reference viennent de la litterature et neuf moteurs en sortent aujourd'hui. En
-faire une porte maintenant obligerait a elargir les bandes jusqu'au comportement
-courant, ce qui detruirait leur valeur. Voir `docs/archive/physics-audit.md`.
+The harness is deliberately **not** registered as a test: its reference bands
+come from the literature and nine engines fall outside them today. Turning it
+into a gate now would force widening the bands to the current behaviour, which
+would destroy their value.
 
 ```
 out/build/windows-vs2022/tools/Release/EngineLabCyclicVariabilityHarness.exe
 ```
 
-`--cov X` force la dispersion autoree pour un A/B dans une seule session et un
-seul binaire ; `--filter NOM` restreint le catalogue ; `--enforce` transforme les
-bandes en porte, une fois qu'elles seront tenables.
+`--cov X` forces the authored spread for an A/B within a single session and a
+single binary; `--filter NAME` restricts the catalogue; `--enforce` turns the
+bands into a gate, once they can be met.

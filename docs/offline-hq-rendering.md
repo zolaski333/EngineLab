@@ -1,43 +1,43 @@
-# Lot 5 — rendu audio hors ligne haute qualité (2026-07-29)
+# High-quality offline audio rendering
 
-## Résultat livré
+## What it does
 
-EngineLab possède désormais un seul chemin de rendu hors ligne partagé par
-l'outil en ligne de commande et l'application :
+EngineLab has a single offline render path shared by the command-line tool and
+the application:
 
 ```text
 EngineSimulator -> publishAudioFrame -> RealtimeEngineAudio -> WAV
 ```
 
-Il ne s'agit pas d'un synthétiseur parallèle. Le rendu HQ consomme les mêmes
-événements d'allumage, échantillons de pression cylindre, graphes acoustiques,
-sources forcées et contrôles de mix que l'application temps réel. Seules la
-cadence de sortie et l'écriture disque changent.
+It is not a parallel synthesiser. The HQ render consumes the same firing
+events, cylinder pressure samples, acoustic graphs, forced sources and mix
+controls as the real-time application. Only the output rate and the disk
+writing change.
 
-Fonctions disponibles :
+Available features:
 
-- 48, 96 ou 192 kHz ;
-- WAV stéréo PCM 24 bits (code de format RIFF 1) ou float 32 bits IEEE
-  (code 3) ;
-- master plus six stems optionnels : combustion, échappement sec, retour IR,
-  admission, suralimentation et mécanique ;
-- scénario reproductible en JSON, versionné par `schema_version: 1` ;
-- fondu de 20 ms au début et à la fin ;
-- chargement des réponses impulsionnelles réellement écrites dans la
-  configuration moteur, sans IR de remplacement cachée ;
-- manifeste JSON avec format, nombre exact de frames, mix, fichiers, warnings
-  et compteurs du chemin physique ;
-- écriture d'abord en fichiers `.partial`, puis promotion seulement quand le
-  rendu et les métadonnées sont complets ;
-- annulation par callback et refus d'écraser un résultat existant par défaut.
+- 48, 96 or 192 kHz;
+- stereo WAV, 24-bit PCM (RIFF format code 1) or 32-bit IEEE float (code 3);
+- master plus six optional stems: combustion, dry exhaust, IR return, intake,
+  forced induction and mechanical;
+- reproducible JSON scenario, versioned by `schema_version: 1`;
+- 20 ms fade at the start and the end;
+- loading of the impulse responses actually written in the engine
+  configuration, with no hidden substitute IR;
+- JSON manifest with format, exact frame count, mix, files, warnings and
+  physical-path counters;
+- writing to `.partial` files first, promoted only once the render and the
+  metadata are complete;
+- cancellation through a callback, and refusal to overwrite an existing result
+  by default.
 
-L'API partagée est déclarée dans
-`src/audio/include/enginelab/audio/OfflineAudioExporter.hpp`. L'outil est
+The shared API is declared in
+`src/audio/include/enginelab/audio/OfflineAudioExporter.hpp`. The tool is
 `EngineLabOfflineAudioExporter`.
 
-## Utilisation
+## Usage
 
-Exemple recommandé pour travailler le son :
+Recommended example for sound work:
 
 ```powershell
 .\EngineLabOfflineAudioExporter.exe `
@@ -48,26 +48,26 @@ Exemple recommandé pour travailler le son :
   --stems
 ```
 
-Le profil par défaut est :
+The default profile is:
 
 ```text
-démarrage -> ralenti -> montée à pleine charge -> limiteur -> décélération
+start -> idle -> full-load rev-up -> rev limiter -> deceleration
 ```
 
-Chaque export écrit sa copie canonique dans `scenario.json`. Elle peut être
-modifiée puis rejouée :
+Every export writes its canonical copy to `scenario.json`. It can be edited and
+replayed:
 
 ```powershell
 .\EngineLabOfflineAudioExporter.exe `
   --engine K20 `
   --output .\exports\k20-custom `
-  --scenario .\mon-scenario.json `
+  --scenario .\my-scenario.json `
   --sample-rate 192000 `
   --format float32 `
   --no-stems
 ```
 
-Le schéma d'une étape contient :
+The schema of a step contains:
 
 ```json
 {
@@ -85,52 +85,51 @@ Le schéma d'une étape contient :
 }
 ```
 
-Avec `governed: true`, le banc hors ligne suit la cible RPM et ignore
-`load_start/load_end`. Sans gouverneur, la charge est interpolée directement.
-Les scénarios sont limités à 120 secondes pour rester dans un WAV RIFF 32 bits
-et éviter une création accidentelle de plusieurs gigaoctets de stems.
+With `governed: true`, the offline dyno follows the RPM target and ignores
+`load_start/load_end`. Without the governor, the load is interpolated directly.
+Scenarios are limited to 120 seconds to stay within a 32-bit RIFF WAV and to
+avoid accidentally creating several gigabytes of stems.
 
-## Preuves automatiques
+## Automated checks
 
-Commande :
+Command:
 
 ```powershell
 cmake --build out\build\windows-vs2022 --config Release `
   --target EngineLabOfflineAudioExportTests EngineLabOfflineAudioExporter `
   --parallel 1 -- /nr:false /m:1 /v:minimal
 
-.\out\build\windows-vs2022\tests\Release\
-  EngineLabOfflineAudioExportTests.exe
+.\out\build\windows-vs2022\tests\Release\EngineLabOfflineAudioExportTests.exe
 ```
 
-Résultat :
+Result:
 
 ```text
 Offline audio export: PCM24 stems, float32 192 kHz, JSON scenario,
 manifest and cancellation PASS
 ```
 
-Le test ouvre les fichiers générés et vérifie, octet par octet :
+The test opens the generated files and checks, byte by byte:
 
-- signature RIFF/WAVE ;
-- code format 1 en PCM et 3 en float IEEE ;
-- deux canaux ;
-- fréquence et profondeur demandées ;
-- taille du chunk data et taille physique du fichier ;
-- master + six stems + métadonnées ;
-- scénario JSON aller-retour ;
-- manifeste indiquant le vrai chemin de rendu ;
-- refus de 44,1 kHz ;
-- annulation sans WAV final ;
-- zéro troncature de délai et zéro télémétrie perdue.
+- the RIFF/WAVE signature;
+- format code 1 for PCM and 3 for IEEE float;
+- two channels;
+- the requested sample rate and bit depth;
+- the data chunk size and the physical file size;
+- master + six stems + metadata;
+- the JSON scenario round-trip;
+- a manifest naming the real render path;
+- rejection of 44.1 kHz;
+- cancellation without a final WAV;
+- zero delay truncations and zero lost telemetry.
 
-## Deux rendus complets de contrôle
+## Two complete control renders
 
-Ces chiffres prouvent ce run du 29 juillet 2026 sur la machine actuelle. Ce ne
-sont ni une nouvelle référence absolue de performance, ni une comparaison de
-qualité perceptive.
+These figures prove the run of 29 July 2026 on the machine of the time. They
+are neither a new absolute performance reference nor a perceptual quality
+comparison.
 
-### K20, 96 kHz, PCM 24 bits, master + six stems
+### K20, 96 kHz, 24-bit PCM, master + six stems
 
 ```text
 988800 frames / 10.300000 s
@@ -140,7 +139,7 @@ delay truncations 0 / invalid boundaries 0
 dropped firing events 0 / dropped pressure samples 0
 ```
 
-### K20, 192 kHz, float 32 bits, master
+### K20, 192 kHz, 32-bit float, master
 
 ```text
 1977600 frames / 10.300000 s
@@ -150,19 +149,12 @@ delay truncations 0 / invalid boundaries 0
 dropped firing events 0 / dropped pressure samples 0
 ```
 
-Les manifests et WAV de preuve locaux se trouvent sous
-`out/evidence/offline-hq-k20-96k-pcm24` et
-`out/evidence/offline-hq-k20-192k-float`. `out/` reste volontairement hors Git :
-les preuves versionnées sont le test, les commandes et ce relevé.
+## What this does not claim
 
-## Ce que cette étape ne prétend pas
-
-- Monter à 192 kHz ne rend pas automatiquement un moteur plus réaliste. Cela
-  fournit de la marge pour le travail spectral et évite que le débit audio
-  temps réel bloque une écoute de laboratoire.
-- Un test de structure WAV ne juge pas le timbre. Les stems permettent
-  justement de diagnostiquer et d'écouter séparément les sources lors du lot
-  atelier audio.
-- La réussite hors ligne ne remplace pas la garde temps réel du catalogue.
-  Celle-ci reste mesurée séparément avec
-  `EngineLabRealtimeBudgetHarness --free-run`.
+- Going to 192 kHz does not automatically make an engine more realistic. It
+  gives headroom for spectral work and keeps the real-time audio throughput
+  from blocking lab listening.
+- A WAV structure test does not judge timbre. The stems exist precisely to
+  diagnose and listen to the sources separately.
+- Offline success does not replace the catalogue's real-time guard. That is
+  still measured separately with `EngineLabRealtimeBudgetHarness --free-run`.

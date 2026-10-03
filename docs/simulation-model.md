@@ -1,247 +1,241 @@
-# Modèle de simulation
+# Simulation model
 
-EngineLab est un simulateur temps réel à volumes de contrôle. Ses équations
-sont conçues pour rester cohérentes et observables dans un budget interactif ;
-elles ne constituent pas un modèle CFD ni une homologation de performances.
+EngineLab is a real-time control-volume simulator. Its equations are designed
+to stay consistent and observable within an interactive budget; they are
+neither a CFD model nor a performance certification.
 
-## Intégration et résolution angulaire
+## Integration and angular resolution
 
-L'appel public `EngineSimulator::step(dt, controls)` est découpé en sous-pas.
-La fréquence demandée est le maximum entre la cadence mécanique minimale,
-incluant `gasSubsteps`, et la cadence requise pour respecter
-`maximumCrankDegreesPerStep` au régime courant. Elle reste bornée par
-`maximumMechanicalFrequencyHz`.
+The public `EngineSimulator::step(dt, controls)` call is split into sub-steps.
+The requested rate is the maximum of the minimum mechanical rate, including
+`gasSubsteps`, and the rate required to honour `maximumCrankDegreesPerStep` at
+the current engine speed. It stays bounded by `maximumMechanicalFrequencyHz`.
 
-La validation refuse une configuration dont la fréquence maximale ne pourrait
-pas tenir la résolution angulaire promise au rupteur. Le solveur publie le pas
-angulaire réellement atteint et le dépassement éventuel ; il ne masque pas une
-sous-résolution derrière une fréquence nominale.
+Validation rejects a configuration whose maximum rate could not hold the
+promised angular resolution at the rev limiter. The solver publishes the
+angular step actually reached and any overshoot; it does not hide an
+under-resolution behind a nominal rate.
 
-## Cinématique, pression et couple
+## Kinematics, pressure and torque
 
-`MechanicalKinematics` résout la géométrie bielle-manivelle à partir des
-crankshafts et journaux normalisés. Les bielles conventionnelles, maîtresses et
-articulées partagent la même API de position, vitesse, accélération et bras de
-levier. Les dimensions de deck, hauteur de compression, offset d'axe et rayon
-du journal articulé participent à la position du PMH lorsque renseignés.
+`MechanicalKinematics` solves the slider-crank geometry from the normalised
+crankshafts and journals. Conventional, master and articulated rods share the
+same API for position, velocity, acceleration and lever arm. Deck height,
+compression height, pin offset and articulated-journal radius take part in the
+TDC position when provided.
 
-À chaque sous-pas, la pression de chaque cylindre agit sur l'aire du piston et
-le bras de levier exact. Les efforts gazeux, alternatifs, de friction, de
-démarreur, de charge et de transmission forment le couple net, puis :
-
-```text
-accélération angulaire = couple net / inertie équivalente
-```
-
-Le couple en fonctionnement vient de cette pression résolue. Aucun couple moyen
-empirique n'est mélangé à la dynamique du vilebrequin.
-
-En parallèle, `IndicatedWorkModel` intègre par trapèzes la boucle signée
-`∮(P_cylindre - P_ambiante)dV`. Au changement de cycle, il publie travail
-indiqué, IMEP, puissance indiquée et couple moyen équivalent. Cette lecture sert
-au diagnostic et au bilan, sans devenir une seconde source de couple.
-
-Les frottements piston/chemise utilisent une loi de Stribeck par cylindre :
-force de décollage, Coulomb, transition à basse vitesse et terme visqueux. Le
-sens est défini même au voisinage de la vitesse nulle, ce qui évite une friction
-qui accélérerait artificiellement le piston.
-
-## Réseau gazeux conservatif
-
-L'atmosphère, les plénums, runners, cylindres, primaires et collecteurs sont des
-`GasCell`. Une cellule stocke les quantités de matière par espèce, l'énergie
-interne, le volume, une orientation, une section caractéristique et une
-quantité de mouvement 2D.
-
-Les restrictions utilisent leur aire réelle et un coefficient de décharge.
-Le débit devient critique lorsque le rapport de pression atteint la condition
-sonique ; sinon il suit la relation isentropique subsonique. La pression
-dynamique directionnelle est signée : un momentum dirigé vers la restriction
-augmente sa pression totale effective, un momentum opposé la diminue.
-
-Un transfert transporte simultanément :
-
-- oxygène, gaz inerte, vapeur de carburant et produits brûlés ;
-- masse et quantité de mouvement sur les deux axes ;
-- enthalpie de stagnation et énergie cinétique macroscopique.
-
-Une recherche d'équilibre borne le transfert avant l'inversion non physique du
-gradient. La dissipation d'un momentum excédant la vitesse du son reconvertit
-l'énergie cinétique en chaleur. Les propriétés effectives `Cv`, `gamma`, masse
-molaire et vitesse du son dépendent de la composition.
-
-La température et la pression restent dérivées de toute l'énergie interne
-conservée, y compris au-delà de la plage thermique habituelle du moteur : aucun
-plafond d'affichage ne peut masquer une réserve d'énergie dans une cellule.
-
-Pendant le croisement des soupapes, admission et échappement sont évalués à
-partir du même état de départ puis appliqués ensemble. Cette transaction évite
-qu'un ordre d'appel arbitraire modifie le gradient vu par la seconde soupape.
-
-Le modèle reste toutefois 0D par volume. La quantité de mouvement apporte une
-inertie directionnelle ; elle ne transforme pas un runner en tube maillé où une
-onde se propage spatialement.
-
-## Distribution et admission
-
-`ValveTrainModel` évalue le profil de la banque du cylindre. Les profils de
-levée et courbes levée/coefficient de débit sont échantillonnés et interpolés.
-Une calibration RPM/charge peut commander en continu l'avance admission,
-l'avance échappement et le multiplicateur de levée ; les actionneurs suivent
-leur cible à une fréquence de réponse configurable. Le profil haut commuté est
-conservé pour les anciennes configurations.
-
-`HelmholtzRunnerModel` associe un mode amorti à chaque runner. Sa fréquence
-dépend de la section, de la longueur, du volume et de la vitesse locale du son.
-La pression de ce mode modifie l'admittance de la restriction conservative :
-elle ne crée ni masse ni bonus de couple indépendant du remplissage.
-
-## Injection et mélange
-
-Le débit injecteur dépend de sa capacité nominale et de la racine du différentiel
-de pression. Pour une injection indirecte, `rail_pressure_bar` est la pression
-différentielle régulée par rapport au collecteur : le débit ne s'effondre donc
-pas sous boost. Pour une injection directe, c'est une pression de rail absolue
-et la contre-pression instantanée du cylindre est soustraite.
-
-- En injection directe, le carburant rejoint le cylindre et sa chaleur latente
-  refroidit la charge selon le rendement configuré.
-- En injection indirecte, une fraction rejoint un film liquide persistant sur
-  le port. Son évaporation dépend de la température et d'une constante de temps.
-
-La masse commandée, le film, la vapeur disponible à l'étincelle et le carburant
-réellement consommé restent distincts. Une fenêtre trop courte, un injecteur
-sous-dimensionné ou un film lent réduit donc le carburant effectivement brûlé.
-
-En injection indirecte, le jet est dimensionné une fois par cycle, au premier
-sous-pas de la fenêtre : besoin de la charge, moins le film disponible avant
-l'étincelle (X-tau) et le carburant d'une chambre qui a raté, divisé par la part
-du jet neuf disponible. La vapeur du conduit n'est pas créditée : c'est un
-réservoir stationnaire, pas du carburant pour la prochaine charge.
-
-Le gaz refoulé par le papillon est gardé dans la boîte à air (`airbox_volume_l`)
-et réaspiré en premier. Sans boîte à air, le carburant qu'il porte est perdu.
-
-L'AFR et lambda télémétrés proviennent des espèces piégées. Un correcteur par
-cylindre apprend les pertes de transport du cycle précédent. Sa bande passante
-dépend de la durée du cycle et, en injection indirecte, de la constante de
-vaporisation du film ; cela évite la chasse lambda des gros moteurs lents. Les tables ECU
-fixent la cible AFR et l'avance en fonction du régime et d'une charge
-normalisée ; enrichissement d'accélération, démarrage à froid, température,
-knock et limiteur s'appliquent ensuite.
-
-## Allumage, flamme et knock
-
-Une étincelle est planifiée par cylindre. Avant la naissance du noyau, un délai
-d'inflammation dépend de la pression, de la température, de l'équivalence et
-des résiduels. La vitesse laminaire suit une corrélation de type
-Metghalchi-Keck ; une fermeture par vitesse moyenne du piston ajoute la
-turbulence, tandis que la dilution réduit vitesse et rendement.
-
-La géométrie de progression actuelle est un volume effectif cylindrique :
+At every sub-step, each cylinder's pressure acts on the piston area and the
+exact lever arm. Gas, reciprocating, friction, starter, load and transmission
+forces form the net torque, then:
 
 ```text
-V_brûlé = π × trajet_radial² × trajet_axial
+angular acceleration = net torque / equivalent inertia
 ```
 
-Les deux trajets sont bornés par le rayon d'alésage et la hauteur instantanée
-équivalente de chambre. Il ne s'agit ni d'un front ellipsoïdal, ni d'une surface
-3D résolue. La fraction géométrique commande un nombre absolu de moles à faire
-réagir ; l'énergie libérée emploie le PCI et la stœchiométrie du carburant.
+Running torque comes from this resolved pressure. No empirical mean torque is
+mixed into the crankshaft dynamics.
 
-Le knock utilise une intégrale de Livengood-Wu sur le gaz de fin de combustion.
-Lorsque son seuil est atteint, une part du reliquat s'auto-enflamme réellement
-dans la cellule, augmente la pression et alimente la télémétrie. L'ECU retire
-ensuite de l'avance. Cette corrélation globale n'est pas une cinétique chimique
-multi-espèces.
+In parallel, `IndicatedWorkModel` integrates the signed loop
+`∮(P_cylinder - P_ambient)dV` with the trapezoidal rule. At each cycle change,
+it publishes indicated work, IMEP, indicated power and equivalent mean torque.
+This reading is for diagnostics and balances, without becoming a second torque
+source.
 
-## Suralimentation
+Piston/liner friction uses a Stribeck law per cylinder: breakaway force,
+Coulomb, low-speed transition and a viscous term. The direction is defined even
+near zero velocity, which avoids a friction that would artificially accelerate
+the piston.
 
-Le turbocompresseur suit un bilan de puissance : turbine moins compresseur et
-pertes de palier, intégré avec l'inertie d'arbre. Les sections de turbine et de
-wastegate influencent le débit du collecteur et donc la contre-pression, le
-spool et le rapport de pression. Le compresseur volumétrique utilise une
-fermeture distincte, sans prétendre modéliser une carte compresseur complète.
+## Conservative gas network
 
-## Échappement
+The atmosphere, plenums, runners, cylinders, primaries and collectors are
+`GasCell`s. A cell stores the amount of each species, the internal energy, the
+volume, an orientation, a characteristic area and a 2D momentum.
 
-Chaque `ExhaustPathConfig` peut contenir un DAG personnalisé. Le compilateur
-physique conserve composant par composant tubes, résonateurs, silencieux,
-catalyseurs et sorties sous forme de conduits quasi-1D ; merges et splitters
-deviennent des volumes de jonction finis. Les interfaces, soupapes et sorties
-échangent un flux de Riemann bidirectionnel commun. Pressions, températures,
-composition, débit et contre-pression viennent donc du réseau conservatif et non
-d'une gorge ou d'un collecteur 0D équivalent. Sans graphe, la géométrie
-historique est d'abord développée en un DAG physique compatible. Voir
-[custom-exhaust.md](custom-exhaust.md).
+Restrictions use their real area and a discharge coefficient. The flow becomes
+choked when the pressure ratio reaches the sonic condition; otherwise it
+follows the subsonic isentropic relation. The directional dynamic pressure is
+signed: momentum directed towards the restriction raises its effective total
+pressure, opposing momentum lowers it.
 
-Les cylindres emploient la corrélation convective instantanée de Woschni plutôt
-qu'une conductance constante. Les conduits d'admission et chaque cellule du
-réseau d'échappement possèdent une paroi métallique à capacité thermique finie.
-L'échange interne est intégré analytiquement et conserve l'énergie gaz + paroi ;
-seule la convection extérieure explicitement comptabilisée rejette de l'énergie
-vers l'ambiance. Le modèle ne borne donc jamais l'EGT pour masquer une énergie
-excédentaire.
+A transfer simultaneously carries:
 
-Le réseau thermodynamique et le renderer audio ont volontairement deux échelles :
-un maillage non linéaire basse bande pour débit/contre-pression et un réseau de
-caractéristiques linéaire pour la propagation audible. Le débit instantané SI
-relie les deux à chaque sous-pas mécanique. La charge de sortie est un modèle de
-rayonnement passif ; une IR n'est utilisée que si elle est explicitement fournie.
-Voir [thermoacoustic-architecture.md](thermoacoustic-architecture.md).
+- oxygen, inert gas, fuel vapour and burned products;
+- mass and momentum on both axes;
+- stagnation enthalpy and macroscopic kinetic energy.
 
-Les runners d'admission peuvent également définir
-`runner_plenum_diameter_mm`. Le diamètre historique `runner_diameter_mm`
-désigne alors le côté soupape et le nouveau champ le côté plénum ; zéro garde
-une section constante. Admission et échappement partagent la même discrétisation
-conique conservatrice (volume exact, aires locales, frottement et échange
-thermique calculés avec le diamètre hydraulique local).
+An equilibrium search bounds the transfer before the non-physical reversal of
+the gradient. Dissipating momentum beyond the speed of sound converts the
+kinetic energy back into heat. The effective properties `Cv`, `gamma`, molar
+mass and speed of sound depend on the composition.
 
-## Transmission et véhicule
+Temperature and pressure stay derived from all the conserved internal energy,
+including beyond the usual thermal range of the engine: no display ceiling can
+hide an energy reserve in a cell.
 
-`DrivelineModel` possède embrayage, arbre de boîte, différentiel, roue motrice
-et véhicule. Marche arrière, point mort et rapports avant partagent une machine
-d'état avec débrayage, changement, réembrayage et réduction de couple.
+During valve overlap, intake and exhaust are evaluated from the same starting
+state and then applied together. This transaction prevents an arbitrary call
+order from changing the gradient seen by the second valve.
 
-L'embrayage est un frein sec à loi collé/glissé (Karnopp), pas un coupleur
-visqueux. Hors de la fenêtre de verrouillage `clutch_lock_speed_rpm`, il glisse
-et transmet toute sa capacité en s'opposant au glissement (frottement cinétique,
-indépendant de l'amplitude) : c'est ce qui démarre le véhicule et échauffe le
-disque. Dans la fenêtre, il colle : vilebrequin et arbre primaire forment un
-seul corps et l'on résout leur accélération commune à partir des deux inerties,
-du couple propre du moteur et de la charge route ramenée ; on en déduit le couple
-exact qui tient le synchronisme. Comme c'est la solution de la contrainte et non
-une pente raide, la réaction ne peut pas dépasser sur un pas, donc un embrayage
-engagé tient le couple moteur à quelques tr/min de glissement résiduel au lieu de
-patiner sans fin. La capacité — bornée puis dégradée par l'échauffement et le
-fading — le limite toujours : au-delà, il décroche et glisse. La roue reste un
-degré de liberté distinct de la vitesse véhicule. Son glissement génère une force
-longitudinale bornée par l'adhérence. La charge normale de l'essieu moteur
-répond à la motricité et au transfert quasi-statique `m*a*h/L` ; une accélération
-avant charge une propulsion, décharge une traction et conserve le poids total
-disponible en transmission intégrale. Traînée, roulement et frein dissipent
-ensuite l'énergie. Le runtime sous-échantillonne ce couplage à 1 ms.
+The model nonetheless stays 0D per volume. Momentum provides directional
+inertia; it does not turn a runner into a meshed tube where a wave propagates
+spatially.
 
-En mode véhicule, la charge manuelle est une force résistante longitudinale ;
-elle revient au vilebrequin uniquement par la roue, la boîte et l'embrayage. En
-mode dyno, le frein agit directement au vilebrequin et le véhicule est découplé.
-Les deux chemins ne sont jamais appliqués simultanément.
+## Valvetrain and intake
 
-Les bilans publient énergie stockée, dissipée et résidu. Le modèle n'inclut ni
-dynamique de suspension/tangage, ni ABS, ni synchroniseurs détaillés, ni Pacejka
-complet ; le transfert de charge est un équilibre longitudinal quasi-statique.
+`ValveTrainModel` evaluates the profile of the cylinder's bank. Lift profiles
+and lift/discharge-coefficient curves are sampled and interpolated. An
+RPM/load calibration can continuously drive intake advance, exhaust advance and
+the lift multiplier; the actuators follow their target at a configurable
+response rate. The switched high profile is kept for older configurations.
 
-## Limites et interprétation
+`HelmholtzRunnerModel` attaches a damped mode to each runner. Its frequency
+depends on the area, the length, the volume and the local speed of sound. The
+pressure of this mode changes the admittance of the conservative restriction:
+it creates neither mass nor a torque bonus independent of filling.
 
-- essence quatre temps seulement malgré la présence de types réservés à des
-  extensions futures ;
-- volumes gazeux 0D et mode Helmholtz agrégé, sans CFD ou acoustique 1D maillée ;
-- réaction globale, turbulence, parois, blow-by, film et knock semi-empiriques ;
-- pas de spray, champ de température ou front de flamme 3D ;
-- vilebrequins multiples liés par des rapports rigides, sans torsion propre ;
-- paramètres de catalogue non certifiés par flowbench ou banc moteur ;
-- puissance et couple utiles à la comparaison interne, pas à une décision
-  d'ingénierie ou de tuning sur un véhicule réel.
+## Injection and mixture
 
-Les tests vérifient invariants, finitude, tendances et régressions. Ils ne
-remplacent pas un étalonnage expérimental.
+Injector flow depends on its nominal capacity and the square root of the
+pressure differential. For port injection, `rail_pressure_bar` is the
+differential pressure regulated against the manifold: flow therefore does not
+collapse under boost. For direct injection, it is an absolute rail pressure and
+the instantaneous cylinder back-pressure is subtracted.
+
+- With direct injection, fuel goes into the cylinder and its latent heat cools
+  the charge according to the configured efficiency.
+- With port injection, a fraction joins a persistent liquid film on the port.
+  Its evaporation depends on temperature and a time constant.
+
+The commanded mass, the film, the vapour available at spark and the fuel
+actually consumed stay separate. A window that is too short, an undersized
+injector or a slow film therefore reduce the fuel actually burned.
+
+With port injection, the pulse is sized once per cycle, at the first sub-step
+of the window: the charge's need, minus the film available before spark
+(X-tau) and the fuel of a chamber that misfired, divided by the share of the
+fresh pulse that is available. The port vapour is not credited: it is a
+stationary reservoir, not fuel for the next charge.
+
+Gas pushed back past the throttle is kept in the airbox (`airbox_volume_l`) and
+drawn back in first. Without an airbox, the fuel it carries is lost.
+
+The reported AFR and lambda come from the trapped species. A per-cylinder
+corrector learns the transport losses of the previous cycle. Its bandwidth
+depends on the cycle duration and, with port injection, on the film's
+vaporisation constant; this avoids lambda hunting on big slow engines. The ECU
+tables set the AFR target and the advance as a function of engine speed and a
+normalised load; acceleration enrichment, cold start, temperature, knock and
+rev limiter apply after that.
+
+## Ignition, flame and knock
+
+A spark is scheduled per cylinder. Before the kernel is born, an ignition delay
+depends on pressure, temperature, equivalence ratio and residuals. The laminar
+speed follows a Metghalchi-Keck type correlation; a closure based on mean
+piston speed adds turbulence, while dilution reduces speed and efficiency.
+
+The current progression geometry is a cylindrical effective volume:
+
+```text
+V_burned = π × radial_travel² × axial_travel
+```
+
+Both travels are bounded by the bore radius and the equivalent instantaneous
+chamber height. It is neither an ellipsoidal front nor a resolved 3D surface.
+The geometric fraction drives an absolute number of moles to react; the
+released energy uses the fuel's LHV and stoichiometry.
+
+Knock uses a Livengood-Wu integral on the end gas. When its threshold is
+reached, a share of the remainder really auto-ignites in the cell, raises the
+pressure and feeds the telemetry. The ECU then pulls advance. This global
+correlation is not multi-species chemical kinetics.
+
+## Forced induction
+
+The turbocharger follows a power balance: turbine minus compressor and bearing
+losses, integrated with the shaft inertia. The turbine and wastegate areas
+influence the manifold flow and therefore back-pressure, spool and pressure
+ratio. The supercharger uses a separate closure, without claiming to model a
+complete compressor map.
+
+## Exhaust
+
+Each `ExhaustPathConfig` can hold a custom DAG. The physical compiler keeps
+tubes, resonators, mufflers, catalysts and outlets component by component as
+quasi-1D ducts; merges and splitters become finite junction volumes. Interfaces,
+valves and outlets exchange a common bidirectional Riemann flux. Pressures,
+temperatures, composition, flow and back-pressure therefore come from the
+conservative network and not from an equivalent 0D throat or collector.
+Without a graph, the historical geometry is first expanded into a compatible
+physical DAG. See [custom-exhaust.md](custom-exhaust.md).
+
+Cylinders use Woschni's instantaneous convective correlation rather than a
+constant conductance. Intake ducts and every cell of the exhaust network have a
+metal wall with finite heat capacity. Internal exchange is integrated
+analytically and conserves gas + wall energy; only the explicitly accounted
+external convection rejects energy to the ambient. The model therefore never
+clamps EGT to hide excess energy.
+
+The thermodynamic network and the audio renderer deliberately use two scales:
+a non-linear low-band mesh for flow/back-pressure, and a linear characteristic
+network for audible propagation. The instantaneous SI flow links the two at
+every mechanical sub-step. The outlet load is a passive radiation model; an IR
+is used only if it is explicitly provided. See
+[thermoacoustic-architecture.md](thermoacoustic-architecture.md).
+
+Intake runners can also define `runner_plenum_diameter_mm`. The historical
+`runner_diameter_mm` then designates the valve side and the new field the
+plenum side; zero keeps a constant area. Intake and exhaust share the same
+conservative conical discretisation (exact volume, local areas, friction and
+heat exchange computed with the local hydraulic diameter).
+
+## Transmission and vehicle
+
+`DrivelineModel` owns the clutch, gearbox shaft, differential, driven wheel and
+vehicle. Reverse, neutral and forward gears share a state machine with
+declutching, shifting, re-engagement and torque reduction.
+
+The clutch is a dry brake with a stick/slip law (Karnopp), not a viscous
+coupling. Outside the `clutch_lock_speed_rpm` lock window, it slips and
+transmits its full capacity opposing the slip (kinetic friction, independent of
+the magnitude): that is what launches the vehicle and heats the disc. Inside
+the window, it sticks: crankshaft and input shaft form a single body, and their
+common acceleration is solved from both inertias, the engine's own torque and
+the reflected road load; the exact torque that holds synchronism follows from
+it. Since this is the solution of the constraint and not a steep slope, the
+reaction cannot overshoot over one step, so an engaged clutch holds the engine
+torque with a few rpm of residual slip instead of slipping endlessly. The
+capacity — bounded, then degraded by heating and fade — always limits it:
+beyond it, the clutch breaks away and slips. The wheel stays a degree of
+freedom separate from vehicle speed. Its slip generates a longitudinal force
+bounded by grip. The normal load on the driven axle responds to traction and to
+the quasi-static transfer `m*a*h/L`; forward acceleration loads a rear-wheel
+drive, unloads a front-wheel drive and keeps the total weight available for
+all-wheel drive. Drag, rolling resistance and brakes then dissipate the energy.
+The runtime sub-samples this coupling at 1 ms.
+
+In vehicle mode, the manual load is a longitudinal resisting force; it reaches
+the crankshaft only through the wheel, gearbox and clutch. In dyno mode, the
+brake acts directly on the crankshaft and the vehicle is decoupled. The two
+paths are never applied at the same time.
+
+The balances publish stored energy, dissipated energy and residual. The model
+includes no suspension/pitch dynamics, no ABS, no detailed synchronisers and no
+full Pacejka; load transfer is a quasi-static longitudinal equilibrium.
+
+## Limitations and interpretation
+
+- four-stroke petrol only, despite the presence of types reserved for future
+  extensions;
+- 0D gas volumes and an aggregated Helmholtz mode, without CFD or meshed 1D
+  acoustics on the intake side;
+- semi-empirical global reaction, turbulence, walls, blow-by, film and knock;
+- no spray, temperature field or 3D flame front;
+- multiple crankshafts linked by rigid ratios, without torsion of their own;
+- catalogue parameters not certified by a flow bench or an engine dyno;
+- power and torque useful for internal comparison, not for an engineering or
+  tuning decision on a real vehicle.
+
+The tests check invariants, finiteness, trends and regressions. They do not
+replace experimental calibration.

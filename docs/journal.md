@@ -1,67 +1,67 @@
-# Journal de mesures
+# Measurement journal
 
-Entrées courtes (10 lignes maximum), la plus récente en haut. Une entrée dit ce
-qui a été mesuré, comment, et ce qui ne l'a pas été. Ce qui devient une règle
-durable va dans `CLAUDE.md`. L'historique antérieur est dans `docs/archive/`.
+Short entries (10 lines maximum), most recent first. An entry says what was
+measured, how, and what was not. Anything that becomes a lasting rule goes into
+`.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
+(`docs/archive/`).
 
-## 2026-09-23 — Injection et ralenti
+## 2026-09-23 — Injection and idle
 
-- Jet indirect recalculé à chaque sous-pas : cliquet (CP2 : AFR 10,3, trim en
-  butée 0,55). Jet dimensionné 1 fois par cycle : 15/15 à φ 1,02-1,04 au ralenti.
-- Carburant refoulé par le papillon détruit (départ CP2 : 592/1 192 mg) ; gardé
-  dans la boîte à air et réaspiré : départ à 25 s 14/14 hors Aircooled.
-- **Déclaré, accepté** : reprise DFCO riche ~0,2 s, pic 16-32 % (HEAD 9-17 %),
-  3 ratés EJ25 ; LS3 cale au départ à 4 s (carburant stocké dans le plenum).
-- Son CP2 ralenti : +5,3 dB, plus sombre (−17 dB à 1-2 kHz). Réalisme inconnu.
-- Non mesuré : biais de trim restants (air prédit +17 % CP2, rendement 0,77).
+- Port-injection pulse recomputed every sub-step: ratchet (CP2: AFR 10.3, trim
+  pinned at 0.55). Pulse sized once per cycle: 15/15 at φ 1.02-1.04 at idle.
+- Fuel pushed back past the throttle was destroyed (CP2 start: 592/1,192 mg);
+  kept in the airbox and drawn back in: 25 s start 14/14 except Aircooled.
+- **Declared, accepted**: rich DFCO recovery ~0.2 s, peak 16-32 % (HEAD 9-17 %),
+  3 EJ25 misfires; LS3 stalls at the 4 s start (fuel stored in the plenum).
+- CP2 idle sound: +5.3 dB, darker (−17 dB at 1-2 kHz). Realism unknown.
+- Not measured: remaining trim biases (predicted air +17 % CP2, efficiency 0.77).
 
-## 2026-09-23 — Corrections après l'audit de l'afterfire
+## 2026-09-23 — Fixes after the afterfire audit
 
-- Calage au démarrage en côte : réserve ECU ×2,12 gardée ~14 s après démarrage
-  en plus du X-tau ; limitée au démarreur. À 4 s : 8 → 13/14 routiers ; à 25 s :
-  13/14 inchangé. Calages déclarés : 2JZ ≤ 8 s (pauvre, écrasé par l'embrayage),
-  Aircooled à 25 s. Accepté par le propriétaire : 2JZ 5 600 tr/min +14,81 →
-  +15,11 % (tolérance 16 %), passage de rapport lancé après 20 s de ralenti.
-- Couche crack (bruit > 4 kHz piloté par la réaction), rapport 1,0 non calibré,
-  borné entre 0,8 et 2,5 : +3,9 dB en 4-8 kHz pendant les pops du 2JZ.
-- **CP2 (standard et Full System) : le profil discret ne brûle rien** (0 % de
-  200 mg, paroi 390-424 °C) ; à 650 K au lieu de 800 K : 18 %. Non corrigé.
+- Hill-start stall: ECU reserve ×2.12 kept ~14 s after start on top of the
+  X-tau; limited to the starter. At 4 s: 8 → 13/14 road engines; at 25 s:
+  13/14 unchanged. Declared stalls: 2JZ ≤ 8 s (lean, crushed by the clutch),
+  Aircooled at 25 s. Accepted by the owner: 2JZ 5,600 rpm +14.81 →
+  +15.11 % (16 % tolerance), gear change launched after 20 s of idle.
+- Crack layer (noise > 4 kHz driven by the reaction), ratio 1.0 uncalibrated,
+  clamped between 0.8 and 2.5: +3.9 dB in 4-8 kHz during the 2JZ pops.
+- **CP2 (standard and Full System): the discrete profile burns nothing** (0 % of
+  200 mg, wall 390-424 °C); at 650 K instead of 800 K: 18 %. Not fixed.
 
-## 2026-09-23 — Audit de l'afterfire
+## 2026-09-23 — Afterfire audit
 
-- **Régression de `d70e8b8`** : les deux CP2 et le LS3 calent au démarrage
-  (1re, plein gaz, embrayage 0,9 s) dans `EngineLabAfterfireHarness` ; à
-  `75f64fa` le même Twin labo démarre et atteint 4 284 tr/min. Aucun test ne
-  l'a vu. `--trace` affiche désormais la trajectoire si l'armement échoue.
-- Front audio d'une pétarade : 0,2-0,8 ms (médiane Twin 0,46, 2JZ 0,61),
-  durée 2-4 ms. Énergie : centroïde 450-790 Hz, 0,2-0,5 % entre 4 et 8 kHz,
-  0 au-dessus (coupure LR8 à 0,47 × couplage). Crête ON/OFF : -3 à +10 dB.
-- Carburant continu à 18 % : 0,0 % brûlé (richesse 0,18 < 0,45). Même masse en
-  paquets : 89 % brûlé (2JZ). Seul le moteur 16 authore l'afterfire.
+- **Regression from `d70e8b8`**: both CP2s and the LS3 stall at launch
+  (1st gear, full throttle, 0.9 s clutch) in `EngineLabAfterfireHarness`; at
+  `75f64fa` the same lab Twin launches and reaches 4,284 rpm. No test caught
+  it. `--trace` now prints the trajectory when arming fails.
+- Audio front of a backfire: 0.2-0.8 ms (median Twin 0.46, 2JZ 0.61),
+  duration 2-4 ms. Energy: centroid 450-790 Hz, 0.2-0.5 % between 4 and 8 kHz,
+  0 above (LR8 cutoff at 0.47 × coupling rate). ON/OFF peak: -3 to +10 dB.
+- Continuous fuel at 18 %: 0.0 % burned (equivalence 0.18 < 0.45). Same mass in
+  packets: 89 % burned (2JZ). Only engine 16 authors the afterfire.
 
-## 2026-09-22 — Remise en ordre du projet
+## 2026-09-22 — Project reorganisation
 
-- Écoute à l'aveugle faite par le propriétaire contre de vrais moteurs : **aucun
-  moteur n'est reconnaissable au-delà du nombre de cylindres**. Le rythme
-  (ordre d'allumage) est juste ; le timbre ne ressemble à aucun moteur précis.
-- L'afterfire ne sonne pas comme une pétarade, malgré une douzaine de commits.
-- Le corpus `references/real-engine-audio/` ne permet pas de mesurer l'écart :
-  10 enregistrements sur 10 ont un régime inconnu, 7 sont des proxys, et aucun
-  n'est un CP2. Il n'y a jamais eu de cible sonore mesurable.
-- Nouvelle direction : voir `VISION.md`. Moteur pilote CP2 (MT-07, Arrow),
-  enregistré par le propriétaire.
+- Blind listening by the owner against real engines: **no engine is
+  recognisable beyond its cylinder count**. The rhythm (firing order) is right;
+  the timbre resembles no specific engine.
+- The afterfire does not sound like a backfire, despite a dozen commits.
+- The `references/real-engine-audio/` corpus cannot measure the gap: 10 of 10
+  recordings have an unknown engine speed, 7 are proxies, and none is a CP2.
+  There has never been a measurable sound target.
+- New direction: see `VISION.md`. Pilot engine CP2 (MT-07, Arrow), recorded by
+  the owner.
 
-## 2026-09-22 — Commit du travail de l'audit du 27 août
+## 2026-09-22 — Commit of the 27 August audit work
 
-Travail en cours (34 fichiers : AFR, banc, lissage admission, reprise DFCO)
-commité après un build Release sans avertissement et 44/44 tests verts. Deux
-points à connaître :
+Work in progress (34 files: AFR, dyno, intake smoothing, DFCO recovery)
+committed after a warning-free Release build and 44/44 green tests. Two points
+to know:
 
-- La reprise DFCO passe de 1,25× à **1,50× le ralenti**, ce qu'une note
-  antérieure déconseillait (1,50× seul calait encore sans la correction du
-  film carburant). Les deux corrections coexistent. À réexaminer seulement si
-  un problème de ralenti ou de reprise réapparaît.
-- Un terme de pertes mécaniques commun au-dessus de 4 000 tr/min a été ajouté
-  pour recaler le haut régime : c'est une compensation, pas un modèle.
-- Audit du 27 août : LS3 à 1,151× le temps réel en free-run, Merlin à 88 % d'un
-  bloc audio en P99, sur la machine de référence, sans l'interface ouverte.
+- DFCO recovery goes from 1.25× to **1.50× idle**, which an earlier note
+  advised against (1.50× alone still stalled without the fuel-film fix). Both
+  fixes coexist. Revisit only if an idle or recovery problem comes back.
+- A common mechanical loss term above 4,000 rpm was added to pull the top end
+  back into line: it is a compensation, not a model.
+- 27 August audit: LS3 at 1.151× real time in free-run, Merlin at 88 % of an
+  audio block at P99, on the reference machine, without the UI open.

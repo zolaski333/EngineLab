@@ -1,35 +1,34 @@
-# Audio temps réel
+# Real-time audio
 
-Le mix livré par `EngineRuntime` assemble des renderers en unités SI pour
-l’échappement, l’admission et le rayonnement modal du bloc/culasses. La
-suralimentation est pilotée par le solveur mais son rendement acoustique reste
-semi-empirique. La description physique complète et ses limites se trouvent dans
+The mix delivered by `EngineRuntime` assembles renderers in SI units for the
+exhaust, the intake and the modal radiation of the block/heads. Forced
+induction is driven by the solver, but its acoustic efficiency is still
+semi-empirical. The complete physical description and its limits are in
 [thermoacoustic-architecture.md](thermoacoustic-architecture.md).
 
-## Flux simulation → callback
+## Simulation → callback flow
 
-Deux files SPSC séparent les responsabilités :
+Two SPSC queues separate the responsibilities:
 
-- `CylinderPressureSample` porte à chaque sous-pas la pression chambre et la
-  frontière d’échappement (`p`, `ṁ`, `ρ`, `c`, `CdA`, chemin, validité) ;
-- `FiringEvent` porte le phasage combustion, les ratés, le knock et les sources
-  non liées à l’échappement physique.
+- `CylinderPressureSample` carries, at every sub-step, the chamber pressure and
+  the exhaust boundary (`p`, `ṁ`, `ρ`, `c`, `CdA`, path, validity);
+- `FiringEvent` carries the combustion phasing, misfires, knock and the sources
+  not tied to the physical exhaust.
 
-Les débits sont signés en kg/s. Une valeur négative représente une réversion
-réelle du réseau vers le cylindre. Les horodatages utilisent le temps de
-simulation ; une PLL logicielle lente compense la dérive entre horloge producteur
-et horloge de la carte son sans déplacer brutalement les événements.
+Flows are signed, in kg/s. A negative value represents a real reversion from
+the network back into the cylinder. Timestamps use simulation time; a slow
+software PLL compensates for the drift between the producer clock and the
+sound card clock without abruptly moving events.
 
-Lorsqu’un graphe thermoacoustique valide est compilé, il possède la sortie dès le
-premier échantillon et propage le silence jusqu’à la première frontière. Si la
-télémétrie devient ensuite invalide, les guides physiques se vident
-naturellement ; le synthétiseur historique n’apparaît ni au démarrage ni après
-une perte de producteur.
+When a valid thermoacoustic graph is compiled, it owns the output from the
+first sample and propagates silence up to the first boundary. If the telemetry
+later becomes invalid, the physical guides drain naturally; the historical
+synthesiser appears neither at start-up nor after a producer loss.
 
-## Source physique
+## Physical source
 
-Le renderer interpole monotoniquement les trames adaptatives. Une moyenne lente
-sépare l’état de fonctionnement des perturbations acoustiques, puis :
+The renderer interpolates the adaptive frames monotonically. A slow average
+separates the operating state from the acoustic perturbations, then:
 
 ```text
 Zc = ρc/A
@@ -38,169 +37,159 @@ p+ = (p′ + ZcU′)/2
 p− = (p′ - ZcU′)/2
 ```
 
-La résistance différentielle de la soupape est dérivée de la loi d’orifice
-autour du débit courant ; elle fixe le coefficient de réflexion du port. Les
-caractéristiques sont ensuite propagées dans des lignes aller/retour dont les
-délais viennent des longueurs physiques et de la célérité locale. Les jonctions
-de collecteur emploient les admittances `A/(ρc)` et conservent le croisement
-entre cylindres d’un même chemin.
+The valve's differential resistance is derived from the orifice law around the
+current flow; it sets the port reflection coefficient. The characteristics are
+then propagated through forward/backward lines whose delays come from the
+physical lengths and the local speed of sound. Collector junctions use the
+admittances `A/(ρc)` and keep the cross-talk between cylinders of the same
+path.
 
-Les paramètres historiques `exhaustPreset`, bruit basse/haute fréquence,
-transmission audio du DAG, FDN, jitter, saturation de collecteur et voix de
-blowdown ne participent pas à ce calcul. Des tests de régression vérifient cette
-invariance.
+The historical parameters `exhaustPreset`, low/high-frequency noise, DAG audio
+transmission, FDN, jitter, collector saturation and blowdown voices take no
+part in this computation. Regression tests check that invariance.
 
-## Sortie, rayonnement et niveau
+## Outlet, radiation and level
 
-Chaque sortie aboutit à une charge causale passive d’ouverture circulaire libre
-ou bridée. L’onde réfléchie retourne au collecteur ; l’accélération de vitesse
-de volume donne une pression monopolaire de référence. `FreeFieldObserver`
-propage ensuite séparément vers les microphones gauche et droit avec distance
-exacte, décroissance `1/r`, retard `r/c` et directivité dépendante de `ka`.
+Each outlet ends in a passive causal load of a free or flanged circular
+opening. The reflected wave returns to the collector; the volume-velocity
+acceleration gives a reference monopole pressure. `FreeFieldObserver` then
+propagates separately to the left and right microphones with exact distance,
+`1/r` decay, `r/c` delay and `ka`-dependent directivity.
 
-Le signal reste en pascals jusqu’à la conversion de monitoring. Puisque les
-dBFS décrivent une chaîne électrique/numérique et non une pression universelle,
-la pleine échelle SPL du micro/préampli est publiée explicitement dans
-`RealtimeAudioState::acousticFullScaleSplDb`. Par défaut :
+The signal stays in pascals until the monitoring conversion. Since dBFS
+describes an electrical/digital chain and not a universal pressure, the full
+scale SPL of the microphone/preamp is published explicitly in
+`RealtimeAudioState::acousticFullScaleSplDb`. By default:
 
 ```text
-141,757 Pa crête = 100,237 Pa RMS = 134 dB SPL = 0 dBFS
+141.757 Pa peak = 100.237 Pa RMS = 134 dB SPL = 0 dBFS
 ```
 
-La conversion utilise toujours la référence acoustique de 20 µPa. Modifier
-cette calibration simule le gain/la marge de la chaîne de capture ; cela ne
-modifie ni la pression physique calculée, ni la propagation, ni le volume
-d’écoute. Le pic de pression SI observé et l’activité du leveler sont exposés
-séparément aux harnais de validation.
+The conversion always uses the 20 µPa acoustic reference. Changing this
+calibration simulates the gain/headroom of the capture chain; it changes
+neither the computed physical pressure, nor propagation, nor listening volume.
+The observed SI pressure peak and the leveler activity are exposed separately
+to the validation harnesses.
 
-Les positions/axes 3D des sorties et le couple de microphones sont publiés par
-le schéma moteur 4. La stéréo provient donc des différences physiques de trajet,
-pas d’un panoramique. Une IR stéréo mesurée peut ajouter la pièce ou la cabine en
-aval.
+The 3D positions/axes of the outlets and the microphone pair are published by
+engine schema 4. Stereo therefore comes from physical path differences, not
+from panning. A measured stereo IR can add the room or cabin downstream.
 
-## Réponses impulsionnelles
+## Impulse responses
 
-`RealtimeConvolutionBank` conserve jusqu’à huit convolutions partitionnées,
-préallouées hors callback. L’application ne charge une IR que si le chemin
-déclare explicitement `impulse_response` dans JSON/YAML. Sans fichier déclaré,
-le résultat est le champ libre calculé.
+`RealtimeConvolutionBank` holds up to eight partitioned convolutions,
+preallocated outside the callback. The application loads an IR only if the path
+explicitly declares `impulse_response` in JSON/YAML. Without a declared file,
+the result is the computed free field.
 
-Il n’existe plus de sélection automatique par preset, d’IR générique par défaut
-ni d’IR synthétisée depuis les longueurs et restrictions. Une IR explicite est
-considérée comme une mesure de propagation aval ; elle ne doit pas doubler la
-réponse du tube déjà simulée.
+There is no longer automatic selection by preset, a generic default IR or an IR
+synthesised from lengths and restrictions. An explicit IR is treated as a
+measurement of downstream propagation; it must not double the tube response
+that is already simulated.
 
-L’application rend maintenant ce contrat visible :
+The application now makes this contract visible:
 
-- lorsqu’un DAG d’échappement physique est compilé, le sélecteur historique
-  `Street / Open / Turbo / Long tube / Moto` est remplacé par
-  **GRAPHE PHYSIQUE** et désactivé ; changer le son passe par la géométrie du
-  concepteur d’échappement, pas par un preset procédural sans effet ;
-- la commande de bruit aigu héritée est signalée comme non applicable et ne
-  bouge plus en mode physique ;
-- une IR explicitement déclarée mais absente, vide, corrompue ou illisible
-  produit une erreur avec le chemin concerné. Le mixer affiche le nombre d’IR
-  effectivement chargées. Le champ libre reste utilisable, mais il n’est plus
-  un fallback silencieux.
+- when a physical exhaust DAG is compiled, the historical
+  `Street / Open / Turbo / Long tube / Moto` selector is replaced by
+  **PHYSICAL GRAPH** and disabled; changing the sound goes through the exhaust
+  designer's geometry, not through a procedural preset with no effect;
+- the inherited high-frequency noise control is flagged as not applicable and
+  no longer moves in physical mode;
+- an IR that is explicitly declared but missing, empty, corrupt or unreadable
+  produces an error naming the path. The mixer shows the number of IRs actually
+  loaded. The free field stays usable, but it is no longer a silent fallback.
 
-Le décodage hors callback est centralisé dans `ImpulseResponseLoader`. Les tests
-ouvrent une IR livrée et refusent explicitement les cas fichier absent et WAV
-corrompu.
+Decoding outside the callback is centralised in `ImpulseResponseLoader`. The
+tests open a shipped IR and explicitly reject the missing-file and corrupt-WAV
+cases.
 
-## Autres couches
+## Other layers
 
-`AcousticIntakeNetwork` propage les débits de soupapes dans les runners, le
-plénum, le papillon et l’entrée d’air. `StructuralModalRadiator` reçoit forces
-gazeuses, inerties et réactions de paliers en SI. La suralimentation emploie
-puissance d’arbre, ordres de pales/lobes et débits de wastegate/dump valve ; ses
-niveaux absolus restent semi-empiriques tant qu’aucune mesure composant ne les
-remplace. Ses sources de bruit sont indépendantes, ses marches de télémétrie
-sont reconstruites à cadence audio et le débit total est conservé lorsqu'il se
-partage entre turbine et wastegate. Le filtre large bande conserve désormais la
-pression RMS déduite de sa puissance configurée ; le correctif, son faible effet
-sur le master et son coût sont consignés dans
-[`audio-lot4-fi-broadband-power-2026-07-29.md`](archive/audio-lot4-fi-broadband-power-2026-07-29.md).
-Voir aussi les §21–24 du document d’architecture.
+`AcousticIntakeNetwork` propagates the valve flows through the runners, the
+plenum, the throttle and the air inlet. `StructuralModalRadiator` receives gas
+forces, inertias and bearing reactions in SI. Forced induction uses shaft
+power, blade/lobe orders and wastegate/dump-valve flows; its absolute levels
+stay semi-empirical until a component measurement replaces them. Its noise
+sources are independent, its telemetry steps are reconstructed at audio rate
+and the total flow is conserved when it splits between turbine and wastegate.
+The broadband filter now keeps the RMS pressure derived from its configured
+power. See also §21–24 of the architecture document.
 
-Pour les modes structurels estimés, la participation longitudinale suit l’ordre
-explicite des cylindres dans chaque banc. Le précédent modulo sur l’index global
-déformait les V et les flat ; l’I4 témoin reste bit-identique. Voir
-[`audio-lot4-structural-bank-topology-2026-07-29.md`](archive/audio-lot4-structural-bank-topology-2026-07-29.md).
+For the estimated structural modes, the longitudinal participation follows the
+explicit cylinder order within each bank. The previous modulo on the global
+index distorted V and flat engines; the reference I4 stays bit-identical.
 
-## Stems de diagnostic
+## Diagnostic stems
 
-`RealtimeEngineAudio::renderWithStems` peut observer six bus stéréo pré-master
-sans les réinjecter dans la sortie :
+`RealtimeEngineAudio::renderWithStems` can observe six pre-master stereo buses
+without feeding them back into the output:
 
-- combustion ;
-- échappement sec ;
-- retour de l’IR d’échappement ;
-- admission ;
-- induction forcée ;
-- mécanique/structure.
+- combustion;
+- dry exhaust;
+- exhaust IR return;
+- intake;
+- forced induction;
+- mechanical/structure.
 
-Les taps se trouvent avant le shelf commun, le bloqueur DC, le filtre de
-reconstruction, le volume, le leveler et le limiteur. L’échappement sec et l’IR
-restent séparés pour ne pas confondre la source moteur avec la pièce ou la
-cabine. Les buffers sont fournis par l’appelant et remplis sans allocation.
+The taps sit before the common shelf, the DC blocker, the reconstruction
+filter, the volume, the leveler and the limiter. Dry exhaust and IR stay
+separate so as not to confuse the engine source with the room or cabin. The
+buffers are supplied by the caller and filled without allocation.
 
-Le rendu utilisateur haute qualité réutilise ce chemin dans
-`OfflineAudioExporter` : 48/96/192 kHz, PCM 24 bits ou float 32 bits, scénario
-JSON, master et stems, manifeste et annulation. Voir
-[`audio-lot5-offline-hq-2026-07-29.md`](offline-hq-rendering.md).
-Le bouton **AUDIO HQ**, ses contrôles mute/solo et la neutralisation explicite
-des réglages legacy sans effet sont documentés dans
-[`audio-lot6-workshop-2026-07-29.md`](audio-workshop.md).
+The high-quality user render reuses this path in `OfflineAudioExporter`:
+48/96/192 kHz, 24-bit PCM or 32-bit float, JSON scenario, master and stems,
+manifest and cancellation. See [offline-hq-rendering.md](offline-hq-rendering.md).
+The **AUDIO HQ** button, its mute/solo controls and the explicit neutralisation
+of legacy settings with no effect are documented in
+[audio-workshop.md](audio-workshop.md).
 
-Export ciblé :
+Targeted export:
 
 ```powershell
 out/build/windows-vs2022/tools/Release/EngineLabAudioRenderHarness.exe `
   --stems K20 `
-  --output out/validation/audio-stems-k20-v2-2026-07-29
+  --output out/validation/audio-stems-k20
 ```
 
-Preuve Release du 29 juillet 2026 :
+Release proof of 29 July 2026:
 
-| Stem K20 | RMS | Pic |
+| K20 stem | RMS | Peak |
 |---|---:|---:|
-| combustion directe | 0,000000 | 0,000000 |
-| échappement sec | 0,030013 | 0,316187 |
-| IR échappement | 0,003014 | 0,015993 |
-| admission | 0,030953 | 0,522270 |
-| induction forcée | 0,000000 | 0,000000 |
-| mécanique/structure | 0,027226 | 0,114039 |
+| direct combustion | 0.000000 | 0.000000 |
+| dry exhaust | 0.030013 | 0.316187 |
+| exhaust IR | 0.003014 | 0.015993 |
+| intake | 0.030953 | 0.522270 |
+| forced induction | 0.000000 | 0.000000 |
+| mechanical/structure | 0.027226 | 0.114039 |
 
-Les deux zéros sont attendus : le K20 est atmosphérique et, dès que la frontière
-physique prend la main, la pression cylindre excite l’échappement et la
-structure au lieu d’être doublée par une voix procédurale directe. Le test
-`EngineLab.RealtimeRegression` rend deux instances déterministes, l’une avec
-stems et l’autre sans, puis exige l’égalité **bit à bit de chaque échantillon du
-master**. Il vérifie aussi les bornes du buffer et le silence des bus inactifs.
+Both zeros are expected: the K20 is naturally aspirated and, as soon as the
+physical boundary takes over, cylinder pressure drives the exhaust and the
+structure instead of being doubled by a direct procedural voice. The
+`EngineLab.RealtimeRegression` test renders two deterministic instances, one
+with stems and one without, then requires **bit-exact equality of every master
+sample**. It also checks the buffer bounds and the silence of inactive buses.
 
-## Turbulence au débouché d’échappement
+## Turbulence at the exhaust outlet
 
-`ExhaustJetNoise` ajoute au débouché une source large bande causale dérivée du
-débit, de la densité, de la célérité et du diamètre déjà résolus. Sa puissance
-suit la loi subsonique en `U^8` et son centre spectral `St = 0,2`. La modulation
-audio vient du débit volumique de la charge de rayonnement ; elle n’est jamais
-réinjectée dans le réseau gaz.
+`ExhaustJetNoise` adds a causal broadband source at the outlet, derived from
+the flow, density, speed of sound and diameter already solved. Its power
+follows the subsonic `U^8` law and its spectral centre `St = 0.2`. The audio
+modulation comes from the volume flow of the radiation load; it is never fed
+back into the gas network.
 
-La source traverse le même observateur stéréo et la même IR que le débouché.
-Elle est déterministe et ne fait aucune allocation dans le callback. Son
-coefficient moteur demeure semi-empirique et doit encore passer un vote
-d’écoute aveugle. Modèle, valeurs authored, essais rejetés, A/B cinq familles et
-coût temps réel sont consignés dans
-[`audio-lot3-outlet-turbulence-2026-07-29.md`](archive/audio-lot3-outlet-turbulence-2026-07-29.md).
+The source goes through the same stereo observer and the same IR as the outlet.
+It is deterministic and does no allocation in the callback. Its driving
+coefficient remains semi-empirical and still has to pass a blind listening
+vote.
 
-Contrôle A/B sonore :
+A/B sound check:
 
 ```powershell
 out/build/windows-vs2022/tools/Release/EngineLabAudioRenderHarness.exe `
   --exhaust-jet-comparison "LS3" --output out/validation/jet-ls3
 ```
 
-Contrôle A/B CPU, même binaire :
+A/B CPU check, same binary:
 
 ```powershell
 out/build/windows-vs2022/tools/Release/EngineLabRealtimeBudgetHarness.exe `
@@ -208,40 +197,40 @@ out/build/windows-vs2022/tools/Release/EngineLabRealtimeBudgetHarness.exe `
   --disable-exhaust-jet-noise
 ```
 
-## Contrat du callback
+## Callback contract
 
-`RealtimeEngineAudio::render` :
+`RealtimeEngineAudio::render`:
 
-- n’effectue ni allocation, ni I/O, ni journalisation, ni verrou ;
-- respecte exactement `startSample` et `sampleCount` ;
-- alloue guides, buffers d’observateur et convolutions dans `prepare()` ;
-- dimensionne les lignes depuis la géométrie publiée et compte toute troncature ;
-- neutralise les denormals ;
-- reste invariant à 48, 96 et 192 kHz pour les constantes physiques testées.
+- does no allocation, I/O, logging or locking;
+- honours `startSample` and `sampleCount` exactly;
+- allocates guides, observer buffers and convolutions in `prepare()`;
+- sizes the lines from the published geometry and counts any truncation;
+- neutralises denormals;
+- stays invariant at 48, 96 and 192 kHz for the tested physical constants.
 
-Après le mix, un shelf utilisateur, un bloqueur DC, un filtre de reconstruction,
-un leveler de sûreté lent et un limiteur doux suréchantillonné protègent le
-périphérique. Ces traitements ne servent pas à créer la signature de
-l’échappement. Au voicing normal, le leveler doit rester à gain unité ; ses
-compteurs sont observables par les harnais.
+After the mix, a user shelf, a DC blocker, a reconstruction filter, a slow
+safety leveler and an oversampled soft limiter protect the device. These stages
+do not serve to create the exhaust signature. At normal voicing, the leveler
+must stay at unity gain; its counters are observable by the harnesses.
 
 ## Tests
 
-`EngineLab.RealtimeRegression` couvre notamment :
+`EngineLab.RealtimeRegression` covers in particular:
 
-- passivité et causalité du rayonnement ;
-- déterminisme du rendu SI ;
-- loi en `U^8`, Strouhal, niveau RMS et silence à débit nul du jet de sortie ;
-- influence du signe du débit ;
-- silence d’une frontière SI stationnaire ;
-- invariance aux presets, événements et bruits hérités ;
-- dépendance aux longueurs de tailpipe ;
-- cohérence de délai à 48 et 96 kHz ;
-- exactitude de la conversion SPL ↔ pression ↔ dBFS ;
-- absence de réactivation du chemin procédural après verrouillage physique.
+- passivity and causality of radiation;
+- determinism of the SI render;
+- the `U^8` law, Strouhal, RMS level and silence at zero flow of the outlet
+  jet;
+- the influence of the flow sign;
+- silence of a stationary SI boundary;
+- invariance to the inherited presets, events and noises;
+- dependence on tailpipe lengths;
+- delay consistency at 48 and 96 kHz;
+- exactness of the SPL ↔ pressure ↔ dBFS conversion;
+- no re-activation of the procedural path after the physical lock.
 
-Le banc de capacité peut également exécuter le renderer en concurrence avec le
-vrai thread runtime :
+The capacity bench can also run the renderer concurrently with the real runtime
+thread:
 
 ```powershell
 out/build/windows-vs2022/tools/Release/EngineLabRealtimeBudgetHarness.exe `
@@ -249,46 +238,42 @@ out/build/windows-vs2022/tools/Release/EngineLabRealtimeBudgetHarness.exe `
   --with-audio --audio-rate 48000 --audio-block 256
 ```
 
-En `--free-run`, le consommateur suit le temps simulé accéléré et compare chaque
-durée de rendu à l'échéance réelle du bloc. Il refuse pertes de files, frontière
-invalide, fallback historique, sortie non finie, callback hors budget et
-intervention du leveler. La baseline locale est consignée dans
-[audio-first-baseline-2026-07-29.md](archive/audio-first-baseline-2026-07-29.md).
+In `--free-run`, the consumer follows the accelerated simulated time and
+compares each render duration with the block's real deadline. It rejects queue
+losses, invalid boundaries, the historical fallback, non-finite output,
+over-budget callbacks and leveler intervention.
 
-`EngineLab.Core` vérifie en plus qu’une frontière SI finie est publiée à chaque
-sous-pas mécanique malgré le couplage multirate du réseau non linéaire. Il
-refuse aussi l'annulation compresseur/turbine, une discontinuité de puissance à
-la frontière de télémétrie et toute duplication de débit
-turbine/wastegate. `EngineLab.RealtimeRegression` conserve les tests d'ordre de
-pales, de racine de puissance, de silence sans débit et de rayonnement des
-valves réellement ouvertes.
+`EngineLab.Core` additionally checks that a finite SI boundary is published at
+every mechanical sub-step despite the multirate coupling of the non-linear
+network. It also rejects compressor/turbine cancellation, a power discontinuity
+at the telemetry boundary and any turbine/wastegate flow duplication.
+`EngineLab.RealtimeRegression` keeps the tests for blade order, power root,
+silence without flow and radiation of the valves that are actually open.
 
-La suite transitoire Release est séparée du rendu stationnaire :
+The Release transient suite is separate from the stationary render:
 
-- `EngineLab.AudioTransients` rend la chaîne de production pendant un
-  démarrage, un ralenti stabilisé, un coup de gaz, le retour au ralenti, un
-  lever/reprise de papillon sous boost avec dump valve, puis une entrée dans la
-  zone de coupure du rupteur ;
-- `EngineLab.AudioShiftTransientNA` et
-  `EngineLab.AudioShiftTransientBoosted` rendent un passage de rapport
-  clutchless WOT complet, vérifient le verrouillage de l'embrayage et écrivent
-  les WAV de preuve ;
-- chaque cas refuse les valeurs non finies, les pertes d'événements ou de
-  pression, le vol de voix, le fallback physique, le leveler ou le limiteur
-  utilisés comme cache-misère et une discontinuité isolée.
+- `EngineLab.AudioTransients` renders the production chain during a start, a
+  settled idle, a blip, the return to idle, a throttle lift/reapply under boost
+  with a dump valve, then an entry into the rev limiter's cut zone;
+- `EngineLab.AudioShiftTransientNA` and
+  `EngineLab.AudioShiftTransientBoosted` render a complete clutchless WOT gear
+  change, check the clutch lock-up and write the proof WAVs;
+- each case rejects non-finite values, event or pressure losses, voice
+  stealing, the physical fallback, the leveler or limiter used as a band-aid,
+  and an isolated discontinuity.
 
-Le détecteur de clic compare un pas à la distribution locale des pas pendant
-le même événement. Comparer une dump valve active au seul plateau WOT
-pré-transitoire est invalide : le bruit de jet large bande attendu augmente
-précisément pendant le passage et ferait échouer un signal continu.
+The click detector compares a step with the local distribution of steps during
+the same event. Comparing an active dump valve with the pre-transient WOT
+plateau alone is invalid: the expected broadband jet noise rises precisely
+during the shift and would fail a continuous signal.
 
-## Limites connues
+## Known limitations
 
-- huit chemins et 32 cylindres maximum ;
-- acoustique plane et linéaire pour la bande audio ;
-- pas de correction de rayonnement par écoulement moyen ;
-- modes structurels estimés lorsque aucune section NVH sourcée n’est fournie ;
-- aucune mesure NVH réelle livrée dans le catalogue à ce jour, malgré le chemin
-  `measured` désormais configurable ;
-- rendement acoustique de suralimentation encore semi-empirique ;
-- corrélation multi-microphone réelle encore à effectuer moteur par moteur.
+- eight paths and 32 cylinders maximum;
+- plane, linear acoustics for the audio band;
+- no mean-flow correction of radiation;
+- estimated structural modes when no sourced NVH section is provided;
+- no real NVH measurement shipped in the catalogue to date, although the
+  `measured` path is now configurable;
+- forced-induction acoustic efficiency still semi-empirical;
+- real multi-microphone correlation still to be done engine by engine.
