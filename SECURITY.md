@@ -1,18 +1,21 @@
-# Security Policy
+# Security policy
 
-## Supported Versions
+## Supported versions
 
-We actively support and fix security issues in the following versions of EngineLab:
+Only the latest release receives fixes.
 
-| Version | Supported          |
-| ------- | ------------------ |
-| 0.1.x   | :white_check_mark: |
-| < 0.1.0 | :x:                |
+| Version | Supported |
+| ------- | --------- |
+| 0.2.x   | yes       |
+| < 0.2   | no        |
 
----
+## Reporting a vulnerability
 
-## Reporting a Vulnerability
+EngineLab is a desktop application that reads engine, calibration, script and
+audio files. A file that crashes the application or makes it read or write
+outside its folder is worth reporting.
 
-If you discover a security vulnerability in this project, please do not report it via public issues. Instead, contact the maintainers directly or send an email to the security contact listed in the repository profile.
-
-We will acknowledge your report within 48 hours and work with you to analyze and patch the issue before releasing a public disclosure.
+Please do not open a public issue for a vulnerability. Use GitHub's private
+reporting instead: **Security → Report a vulnerability** on the repository page.
+You will get an answer as soon as possible, and the fix will be released before
+the details are made public.

@@ -1,47 +1,69 @@
 # Contributing to EngineLab
 
-First off, thank you for considering contributing to EngineLab! It is people like you who make open-source software a better place.
+Thank you for considering a contribution. EngineLab is a small project with a
+strict method; this page explains it so that your time is well spent.
 
----
+By taking part you agree to the [code of conduct](CODE_OF_CONDUCT.md).
 
-## 📋 Code of Conduct
+## Before you start
 
-By participating in this project, you agree to abide by our [Code of Conduct](CODE_OF_CONDUCT.md).
+Read [VISION.md](VISION.md). EngineLab's goal is a sound that is as close as
+possible to real engines, judged against real recordings. Every change should
+be able to answer one question: *which measured gap between simulation and
+reality does it reduce?* Bug fixes and real-time performance are the
+exceptions.
 
----
+For anything larger than a small fix, open an issue first so the approach can be
+agreed before you write the code.
 
-## 🛠️ How Can I Contribute?
+## Reporting bugs and suggesting features
 
-### 1. Reporting Bugs
-- Always check if the bug has already been reported in the Issues section.
-- Use a clear and descriptive title.
-- Provide a step-by-step description of how to reproduce the bug, including your operating system and CPU details.
-- Include logs, screenshots, or error traces if available.
+Use the issue templates. A good bug report says which engine, which action, what
+you expected and what happened, plus the EngineLab version (title bar) and your
+CPU. For sound problems, an exported clip (AUDIO HQ) is worth more than a
+description.
 
-### 2. Suggesting Enhancements
-- Open an Issue with a suggestion.
-- Explain the behavior you would like to see and why it would be beneficial to the simulation or audio synthesis.
+## Building and testing
 
-### 3. Submitting Pull Requests
-- Fork the repository and create your branch from `main`.
-- Write clean, senior-level code following C++20 standards.
-- Keep comments up-to-date and maintain existing documentation.
-- Add unit tests inside the `tests/` directory for any new logic or physical equations.
-- Ensure that the project compiles with no warnings and no errors (`/WX` is enabled on MSVC compilers).
-- Run the test suite before submitting:
-  ```powershell
-  ctest --test-dir build -C Release --output-on-failure
-  ```
+Windows, Visual Studio 2022 (*Desktop development with C++*), CMake 3.24+:
 
----
+```powershell
+cmake --preset windows-vs2022
+cmake --build --preset windows-release
+ctest --preset windows-release
+```
 
-## 🎨 Style Guide
+The full suite takes about 15 minutes. If MSBuild fails with `C1060` (compiler
+out of heap space), rebuild with fewer parallel nodes, for example
+`cmake --build --preset windows-release -- /m:1`.
 
-- **Language:** Standard C++20.
-- **Naming Conventions:**
-  - Classes/Structs: PascalCase (e.g., `EngineSimulator`).
-  - Variables/Functions: camelCase (e.g., `indicatedTorqueNm`).
-  - Private member variables: camelCase ending with an underscore (e.g., `dynoMutex_`).
-  - Constants: camelCase or UPPERCASE (e.g., `airGasConstant`).
-- **Safety:** Use `noexcept` on functions where possible. Prefer standard library types and headers.
-- **No Blocking in Audio Threads:** Any audio rendering code must not allocate memory on the heap, take locks, or communicate with UI threads directly. Use the SPSC queues.
+## Pull requests
+
+- Branch from `main` and keep each PR to one topic.
+- The build must have **zero warnings** (warnings are errors) and the **whole**
+  `ctest` suite must pass. CI checks both on every push.
+- A new test must fail without your fix.
+- **Measure, don't guess.** If the change touches physics or audio, include the
+  output of the matching harness before and after (see the README's *Measure,
+  don't guess* section). A change that alters two factors at once proves
+  nothing.
+- **Do not change the default sound** unless that is the explicit purpose of
+  the PR, shown with the harness before/after.
+- Reference values come from the literature or from real recordings, never from
+  the simulator's own current output.
+- Update the matching page under `docs/` when behaviour changes, and add a line
+  to `CHANGELOG.md` for anything users will notice.
+- Everything is written in English: code, comments, UI strings, docs and commit
+  messages.
+
+## Style
+
+- Standard C++20; follow the style of the surrounding code.
+- Classes and structs in `PascalCase`, functions and variables in `camelCase`,
+  private members with a trailing underscore (`dynoMutex_`).
+- Quantities carry their unit in the name (`indicatedTorqueNm`,
+  `exhaustBackPressureKpa`).
+- **Nothing blocking on the audio thread:** no heap allocation, no locks, no file
+  access and no direct UI calls. Use the existing SPSC queues.
+- Comments explain *why*, especially when a value compensates for something
+  elsewhere.

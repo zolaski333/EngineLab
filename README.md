@@ -1,19 +1,50 @@
 # EngineLab
 
-**A four-stroke internal combustion engine simulator and real-time audio
-synthesiser**, written in C++20 with JUCE.
+[![CI](https://github.com/zolaski333/EngineLab/actions/workflows/ci.yml/badge.svg)](https://github.com/zolaski333/EngineLab/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/zolaski333/EngineLab?include_prereleases&sort=semver)](https://github.com/zolaski333/EngineLab/releases)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE.md)
+![Platform: Windows x64](https://img.shields.io/badge/platform-Windows%20x64-lightgrey)
 
-EngineLab simulates engine thermodynamics cycle by cycle — induction,
-combustion, exhaust — and makes that simulation *audible*: the sound comes
-neither from samples nor from a bank of oscillators, but from the pressure
-actually computed at the valves, propagated through a quasi-1-D duct network out
-to the tailpipe.
+**A four-stroke engine simulator whose sound comes from the simulated gas
+dynamics, not from samples.** Written in C++20 with JUCE.
+
+EngineLab simulates an engine cycle by cycle — induction, combustion, exhaust —
+and makes that simulation *audible*: the exhaust sound is the pressure actually
+computed at the valves, propagated through a quasi-1-D duct network out to the
+tailpipe and radiated to a pair of virtual microphones.
 
 Design an engine, draw its exhaust system, put it on the dyno, listen to it.
 
-> ⚠️ EngineLab is a simulator built for exploration and listening. It is not
-> validated thermodynamic analysis software, not an engine test bench, and not a
-> calibration tool for a real vehicle.
+> **Project status: early.** The physics, tooling and real-time pipeline are
+> solid and heavily tested. The sound is not there yet: in blind listening
+> against real recordings, engines are recognisable by their cylinder count and
+> firing rhythm, but not yet as a specific engine. Closing that gap, starting
+> with the Yamaha CP2 (MT-07), is the current milestone — see
+> [VISION.md](VISION.md).
+
+---
+
+## Download
+
+**Windows 10/11 x64:** grab `EngineLab-<version>-win64.zip` from the
+[latest release](https://github.com/zolaski333/EngineLab/releases), extract it
+anywhere and run `EngineLab.exe`. No installer and no separate runtime are
+needed.
+
+The executable is not code-signed, so Windows SmartScreen may warn about an
+unknown publisher: choose **More info → Run anyway**. Every release archive is
+built by GitHub Actions from the tagged commit and comes with a SHA-256
+checksum.
+
+Then:
+
+1. pick an engine in the selector at the top of the window;
+2. hold `A` to switch the ignition on, then hold `S` to crank;
+3. throttle with `Q` (1 %), `W` (10 %), `E` (20 %) and `R` (100 %);
+4. press `D` for an automatic dyno run, `Tab` to change screen.
+
+Large engines (V8, V12) can fall below real time on a modest CPU; the realtime
+factor is shown in the diagnostics.
 
 ---
 
@@ -27,45 +58,43 @@ Design an engine, draw its exhaust system, put it on the dyno, listen to it.
 - **Conservative quasi-1-D intake and exhaust**: every duct is meshed and
   solved, with signed SI mass flow at the valves, characteristic waveguides, a
   thermal wall model, and a passive radiation load at the outlet.
-- **Physical exhaust elements**: primaries, collectors, junctions, resonators,
-  expansion chambers (Munjal), porous packing (Delany-Bazley), catalysts, and
-  multiple outlets.
+- **Physical exhaust elements**: primaries, collectors, junctions, X-pipes,
+  resonators, expansion chambers (Munjal), porous packing (Delany-Bazley),
+  catalysts and multiple outlets.
 - **Emergent cycle-to-cycle variability**: the coupling between gas dynamics,
   fuel film, wave action and the ECU makes consecutive cycles genuinely
   different, with no authored random dispersion.
 - **Exhaust afterfire** fed by unburned fuel on overrun and ignited by the pipe
-  wall — which has to heat up first, exactly as on a real engine.
-- **Vehicle dynamics**: gearbox, clutch, and longitudinal load transfer driven by
-  wheelbase, centre-of-gravity height and driven-axle layout.
+  wall — which has to heat up first, as on a real engine.
+- **Vehicle dynamics**: gearbox, stick/slip clutch, and longitudinal load
+  transfer driven by wheelbase, centre-of-gravity height and driven axle.
 
 ### Audio
 
 - **The exhaust path is driven entirely by simulated pressure.** No preset,
   noise source or blowdown oscillator is mixed into that physical path.
-- Separate, individually soloable layers for intake, mechanical noise, the
-  starter and forced induction (compressor, turbine, wastegate), each with its
-  own aeroacoustic sources.
-- **Structural NVH modes** of the head and block, either estimated per engine
-  family or configured from measured, sourced data.
+- Separate, individually soloable layers for intake, structure, the starter and
+  forced induction (compressor, turbine, wastegate, dump valve).
+- **Structural NVH modes** of the head and block, estimated per engine family or
+  configured from measured, sourced data.
 - The real-time audio callback performs **no allocation, no locking and no file
-  access**; physics telemetry crosses SPSC queues.
+  access**; physics telemetry crosses lock-free SPSC queues.
 - **Declarative, hot-reloadable voicing** (`voicing/*.yaml`): the mix is data,
   not code.
 
 ### Tooling
 
-- **A catalogue of 16 engines** — naturally aspirated and turbocharged I4s, a V8,
-  a flat-six, a supercharged V12, motorcycle twins and triples, an inline five,
-  a TDI diesel, a five-cylinder radial — all in readable, editable YAML.
-- **ÉCHAP. PRO**, a validated graph editor for exhaust systems: it rejects
+- **A catalogue of 16 engines** — naturally aspirated and turbocharged I4s, a
+  V8, a flat-six, a supercharged V12, motorcycle twins and triples, an inline
+  five, a TDI diesel, a five-cylinder radial — all in readable, editable YAML.
+- **EXHAUST PRO**, a validated graph editor for exhaust systems: it rejects
   cycles, incomplete branches and inconsistent cardinalities, and reports the
   solver cost of an unusual geometry before applying it.
 - **ECU tuner**: AFR and spark tables plus the rev limiter, applied live through
   a transactional snapshot — the engine keeps running and keeps its thermal
   state.
-- **`.els` DSL**, declarative and unit-typed, with automatic watching of the
-  script, its includes and its base file; an invalid save keeps the last valid
-  configuration running and surfaces the diagnostics.
+- **`.els` DSL**, declarative and unit-typed, hot-reloaded on save; an invalid
+  save keeps the last valid configuration running and shows the diagnostics.
 - **AUDIO HQ**: mute/solo, JSON scenarios, and WAV export at 48/96/192 kHz in
   24-bit PCM or 32-bit float, with optional stems.
 - **Automatic dyno**, stepped or as a continuous ramp, with history, curves and
@@ -73,33 +102,38 @@ Design an engine, draw its exhaust system, put it on the dyno, listen to it.
 
 ---
 
-## Quick start
+## Building from source
 
-Windows prerequisites: Visual Studio 2022 (or 2026) with the C++ desktop
-workload, CMake 3.24 or newer, and Git. JUCE, nlohmann-json and yaml-cpp are
-fetched by CMake at pinned revisions.
-
-```powershell
-cmake -S . -B build -G "Visual Studio 17 2022" -A x64
-cmake --build build --config Release --target EngineLabApp
-```
-
-On Visual Studio 2026, use `-G "Visual Studio 18 2026"`. The executable lands in
-`build/src/app/EngineLabApp_artefacts/Release/EngineLab.exe`.
-
-To build and run the full validation suite (44 test suites):
+Prerequisites: Windows, Visual Studio 2022 with the *Desktop development with
+C++* workload, CMake 3.24 or newer, and Git. JUCE, nlohmann/json and yaml-cpp
+are fetched by CMake at pinned versions.
 
 ```powershell
-cmake --build build --config Release
-ctest --test-dir build -C Release --output-on-failure
+git clone https://github.com/zolaski333/EngineLab.git
+cd EngineLab
+cmake --preset windows-vs2022
+cmake --build --preset windows-release
 ```
 
-Details on the tests, the deterministic harnesses and sanitizer builds are in
+The application lands in
+`out/build/windows-vs2022/src/app/EngineLabApp_artefacts/Release/EngineLab.exe`.
+
+Run the test suite and build the release archive:
+
+```powershell
+ctest --preset windows-release
+cmake --build out/build/windows-vs2022 --config Release --target package
+```
+
+The project builds with warnings as errors. Details on the tests, the
+deterministic harnesses and sanitizer builds are in
 [docs/tests-and-validation.md](docs/tests-and-validation.md).
 
-### Controls
+---
 
-Key bindings are editable from the **TOUCHES** button; `keybindings.json`
+## Controls
+
+Key bindings can be changed from the **KEYS** button; `keybindings.json`
 rejects unknown actions, duplicates and reserved shortcuts.
 
 | Input | Default action |
@@ -125,23 +159,23 @@ bands, mix layers, simulation speed and fine throttle.
 Three levels are deliberately kept separate, from the most structural to the
 lightest:
 
-1. **JSON / YAML** describes the whole engine structure. Applying it replaces the
+1. **JSON / YAML** describes the whole engine. Applying it replaces the
    simulation instance and resets its dynamic state.
 2. **An `.els` script** picks a preset or a base file, then applies unit-typed
-   modifications. The application watches the file and hot-reloads it.
+   changes. The application watches the file and hot-reloads it.
 3. **The ECU tuner** publishes a calibration without replacing the runtime: a
-   validated cell becomes visible to the ECU on the next evaluation, with the
-   engine still running.
+   validated cell reaches the ECU on its next evaluation, with the engine still
+   running.
 
-The distinction matters. An ECU hot reload keeps the engine, its speed and its
-thermal states; changing displacement, topology or geometry requires a new
-instance and starts from its initial state. Replacements coming from the live
-script, the JSON editor and the exhaust designer do however reuse the same ECU
-store, so the maps and the tuner window stay active.
+An ECU change keeps the engine, its speed and its thermal state; changing
+displacement, topology or geometry requires a new instance and starts from the
+initial state. Reloads from the live script, the JSON editor and the exhaust
+designer reuse the same ECU store, so the maps and the tuner window stay
+active.
 
-**ÉCHAP. PRO** works on a copy of the engine: generate a starting network, add
+**EXHAUST PRO** works on a copy of the engine: generate a starting network, add
 and configure its components, connect the nodes, assign every cylinder, then
-**VALIDER ET APPLIQUER** (refused during a dyno run) and **EXPORTER** to JSON or
+**VALIDATE AND APPLY** (refused during a dyno run) and **EXPORT** to JSON or
 YAML.
 
 Two example scripts are ready to import: `examples/street-turbo.els` and
@@ -151,15 +185,16 @@ Two example scripts are ready to import: `examples/street-turbo.els` and
 
 ## Measure, don't guess
 
-EngineLab ships a set of deterministic harnesses used as instruments, not only
-as regression tests: each makes a physical quantity observable and comparable
-against the literature.
+EngineLab ships deterministic harnesses used as instruments, not only as
+regression tests: each makes a physical quantity observable and comparable
+against the literature or a real recording.
 
 | Harness | What it measures |
 |---|---|
 | `AudioRenderHarness` | renders the real real-time path offline: RMS, crest, DC, per-band spectral balance, exhaust-chain RT60 |
-| `GeometrySensitivityHarness` | does changing the exhaust change the sound? — timbre per third octave, one factor changed at a time |
-| `RealtimeBudgetHarness` | realtime factor: simulated seconds produced per wall-clock second, on the real runtime thread |
+| `GeometrySensitivityHarness` | does changing the exhaust change the sound? — timbre per third octave, one factor at a time |
+| `AbClipRenderer` | loudness-matched blind A/B clips against real recordings or another engine |
+| `RealtimeBudgetHarness` | realtime factor: simulated seconds per wall-clock second, on the real runtime thread |
 | `CombustionPhasingTests` | LPP, CA10-50-90 and IMEP across an rpm sweep |
 | `PhysicsPerfHarness` | gas-exchange trace at crank-degree resolution, on both sides of the valve |
 | `CyclicVariabilityHarness` | COV(IMEP) per cylinder, at held engine speed |
@@ -167,115 +202,86 @@ against the literature.
 | `AfterfireHarness` | the shape of overrun heat release, and its real effect on the audio |
 | `IntakeDuctBench` | bit-exact fingerprint of the duct solver: proves an optimisation is not a physics change |
 
-Reference figures come from engine and DSP literature, never from the
-simulator's own current output.
+Reference figures come from engine and acoustics literature or from real
+recordings, never from the simulator's own output.
 
 ---
 
 ## Documentation
 
-The documentation under `docs/` is currently written in French.
+The [documentation index](docs/README.md) lists every guide. The main entry
+points:
 
-**Models**
+- [VISION.md](VISION.md) — what EngineLab is for and how success is judged;
+- [Architecture](docs/architecture.md) and
+  [simulation model](docs/simulation-model.md);
+- [Physical thermoacoustic architecture](docs/thermoacoustic-architecture.md);
+- [Custom exhaust systems](docs/custom-exhaust.md),
+  [the `.els` DSL](docs/engine-scripting.md) and
+  [the ECU tuner](docs/ecu-tuning.md);
+- [Measurement journal](docs/journal.md) — current results, short entries;
+- [CHANGELOG.md](CHANGELOG.md).
 
-- [Simulation model](docs/simulation-model.md)
-- [Overall architecture](docs/architecture.md)
-- [Physical thermoacoustic architecture](docs/thermoacoustic-architecture.md)
-- [Real-time audio architecture](docs/realtime-audio.md)
-- [Cycle-to-cycle physical variability](docs/combustion-variability.md)
-- [Physical exhaust afterfire](docs/physical-afterfire.md)
-- [Structural NVH mode configuration](docs/structural-nvh-configuration.md)
-
-**Guides**
-
-- [The EngineLab DSL](docs/engine-scripting.md)
-- [ECU tuner and file format](docs/ecu-tuning.md)
-- [Custom exhaust systems](docs/custom-exhaust.md)
-- [Declarative audio voicing](docs/audio-voicing.md)
-- [Diagnostic exports, stems and order maps](docs/audio-diagnostics.md)
-- [Offline HQ audio rendering](docs/offline-hq-rendering.md)
-- [Audio workshop and honest controls](docs/audio-workshop.md)
-
-**Project direction and measurements**
-
-- [VISION.md](VISION.md) — what EngineLab is for, and how success is judged:
-  against real recordings, never against the simulator's own output.
-- [Measurement journal](docs/journal.md) — current results, short entries.
-- [Recording protocol, pilot engine](docs/protocole-enregistrement-cp2.md)
-- [Archive](docs/archive/) — the full history up to September 2026 (audits,
-  validation logs, refuted hypotheses). Read-only; may be stale.
-
-`CLAUDE.md` holds the working rules, build notes and verified traps of this
-repository. Read it with `VISION.md` before touching the code.
+Working on the code with an AI agent? [.claude/CLAUDE.md](.claude/CLAUDE.md)
+holds the working rules, build notes and verified traps of this repository.
 
 ---
 
 ## Known limitations
 
-- four-stroke only; petrol and direct-injection diesel still rely on global,
-  semi-empirical models;
+- four-stroke only; petrol and direct-injection diesel rely on global,
+  semi-empirical combustion models;
 - 0-D cylinder chambers and low-band quasi-1-D networks — this is not 3-D CFD;
-- audible propagation is linear, through characteristics aggregated per path:
-  transverse modes, 3-D bends and mean-flow radiation correction are not
-  resolved;
-- global chemistry, and semi-empirical flame, knock and heat-transfer models;
-- at most eight audio exhaust paths; branches are preserved in the gas solver,
-  but their outlets do not yet have independent 3-D audio positions;
-- the exhaust designer has no drag-and-drop, no undo/redo and no IR picker in
-  the interface — the IR remains editable in JSON/YAML;
-- catalogue structural modes stay estimated per engine family until sourced
-  measurements are supplied; validation on a real bench with multiple
-  microphones is still missing;
-- **no 3-D backend.** The `render` module prepares the transforms, stable
-  identifiers, scene bounds, snapshot interpolation and the `IEngineRenderer`
-  interface, but the current view is direct 2-D JUCE rendering. See
-  [the architecture document](docs/architecture.md#préparation-du-rendu-3d);
-- no OBD diagnostics aimed at a real ECU;
-- large engines (V8, V12) remain expensive for the physics thread. The
-  application displays its realtime factor so that cost is visible rather than
-  silently endured.
+- audible propagation is linear and plane: transverse modes, 3-D bends and the
+  mean-flow correction of radiation are not resolved;
+- at most eight audio exhaust paths and 32 cylinders;
+- the exhaust designer has no drag-and-drop, no undo/redo and no IR picker —
+  the IR stays editable in JSON/YAML;
+- structural modes stay estimated per engine family until sourced measurements
+  are supplied;
+- **no 3-D view yet**: the `render` module prepares transforms, snapshots and
+  the `IEngineRenderer` interface, but the current view is 2-D JUCE drawing
+  (see [the architecture document](docs/architecture.md#3d-rendering-groundwork));
+- Windows only for now: the code is standard C++20 and JUCE, but no other
+  platform is built or tested;
+- large engines (V8, V12) are expensive for the physics thread; the application
+  shows its realtime factor so that cost is visible.
 
 ---
 
 ## Contributing
 
 Contributions are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) and the
-[code of conduct](CODE_OF_CONDUCT.md). Two rules are worth knowing before
-opening a PR:
+[code of conduct](CODE_OF_CONDUCT.md). Two rules matter most:
 
-- the project builds with **zero warnings** (`/WX`), and a green PR means a full
-  green `ctest`;
-- this repository trusts measurement over code reading: if a change touches
-  physics or audio, include the output of the matching harness.
-
-Note that the user interface and the documents under `docs/` are in French,
-while the code, its comments and this README are in English.
+- the project builds with **zero warnings**, and a green PR means a full green
+  `ctest`;
+- measurement beats code reading: if a change touches physics or audio, include
+  the output of the matching harness, before and after.
 
 ---
 
 ## Acknowledgements
 
-EngineLab owes its existence to **[Engine Sim
-2D](https://github.com/ange-yaghi/engine-sim)** by **AngeTheGreat** (Ange
-Yaghi): that project is what showed a simulated engine could be *heard*, and it
-is the direct inspiration for this one.
+EngineLab owes its existence to
+**[Engine Sim](https://github.com/ange-yaghi/engine-sim)** by **AngeTheGreat**
+(Ange Yaghi): that project showed that a simulated engine could be *heard*, and
+it is the direct inspiration for this one. The exhaust impulse responses in
+`assets/ir/` come from it under the MIT license (© 2022 Ange Yaghi); see
+[assets/ir/README.md](assets/ir/README.md).
 
-The exhaust impulse responses shipped in `assets/ir/` are in fact taken from it
-under the MIT license; per-file provenance is documented in
-[assets/ir/README.md](assets/ir/README.md) and the full license text is
-reproduced in [assets/ir/LICENSE-es2d.txt](assets/ir/LICENSE-es2d.txt).
-Copyright © 2022 Ange Yaghi.
+The real recordings used for A/B listening are CC0 field recordings, credited
+in [references/real-engine-audio/manifest.json](references/real-engine-audio/manifest.json).
 
-The corpus of real recordings used for A/B listening tests is made of CC0
-sources, credited in
-[references/real-engine-audio/manifest.json](references/real-engine-audio/manifest.json).
-
-Dependencies: [JUCE](https://juce.com/),
-[nlohmann/json](https://github.com/nlohmann/json),
+Built with [JUCE](https://juce.com/),
+[nlohmann/json](https://github.com/nlohmann/json) and
 [yaml-cpp](https://github.com/jbeder/yaml-cpp).
 
 ---
 
 ## License
 
-Distributed under the MIT license — see [LICENSE.md](LICENSE.md).
+EngineLab's source code is released under the MIT license — see
+[LICENSE.md](LICENSE.md). The prebuilt binaries also contain third-party code
+under its own terms, notably JUCE; see
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

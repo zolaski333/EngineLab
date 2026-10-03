@@ -1,0 +1,48 @@
+name: Bug report
+description: Something does not work, crashes or behaves unexpectedly.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: Thanks for taking the time to report this. Please search existing issues first.
+  - type: input
+    id: version
+    attributes:
+      label: EngineLab version
+      description: Shown in the title bar, or the release archive name.
+      placeholder: 0.2.0
+    validations:
+      required: true
+  - type: input
+    id: engine
+    attributes:
+      label: Engine
+      description: The catalogue engine or your own engine file.
+      placeholder: Yamaha CP2 MT-07-like 689 Twin
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Select the engine
+        2. Hold A, then S
+        3. Press R
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected and what happened
+    validations:
+      required: true
+  - type: input
+    id: system
+    attributes:
+      label: System
+      description: Windows version, CPU and audio device.
+      placeholder: Windows 11, Intel i5-10600, Realtek speakers
+  - type: textarea
+    id: extra
+    attributes:
+      label: Logs, screenshots or audio
+      description: For a sound problem, an export from AUDIO HQ helps a lot. Drag files here.
