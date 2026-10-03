@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows:
+    name: Windows (MSVC, Release)
+    runs-on: windows-2022
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Configure
+        run: cmake --preset windows-vs2022
+
+      # Two parallel MSBuild nodes: the hosted runner runs out of compiler heap
+      # (C1060) with the default one-node-per-core when JUCE is compiling.
+      - name: Build
+        shell: pwsh
+        run: |
+          cmake --build --preset windows-release -- /m:2 /nologo /verbosity:minimal *>&1 | Tee-Object -FilePath build.log
+          if ($LASTEXITCODE -ne 0) {
+            Select-String -Path build.log -Pattern 'error [A-Z]+[0-9]+|fatal error' |
+              Select-Object -First 30 |
+              ForEach-Object { Write-Output "::error::$($_.Line.Trim())" }
+            exit 1
+          }
+
+      - name: Test
+        run: ctest --preset windows-release --parallel 2
+
+      - name: Package
+        run: cmake --build out/build/windows-vs2022 --config Release --target package
+
+      - name: Upload package
+        uses: actions/upload-artifact@v4
+        with:
+          name: EngineLab-win64
+          path: out/build/windows-vs2022/EngineLab-*-win64.zip
+          retention-days: 14
