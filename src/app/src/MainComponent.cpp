@@ -210,6 +210,7 @@ bool MainComponent::applyConfig(const EngineConfig& newConfig, bool preserveScri
     selectedPresetIndex_ = preset != presets_.end()
         ? static_cast<int>(std::distance(presets_.begin(), preset)) : -1;
     topBar_.setEngine(config_, selectedPresetIndex_);
+    viewport_.setEngine(config_);
     viewport_.refresh();
     return true;
 }

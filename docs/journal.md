@@ -5,6 +5,17 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-04 — Cost of the 3-D engine view
+
+- `EngineLabRealtimeBudgetHarness --filter 2JZ --free-run --rpm 4000`, 10 s,
+  run while the app drove its own 2JZ at the rev limiter; i5-10600, GTX 1660
+  Super, 60 fps cap. Alternated, 2 to 4 runs each: app closed 2.08-2.10, 2-D
+  1.98-1.99, 3-D without blur 1.94-1.95, 3-D blur every 6° (≤ 24 sub-frames)
+  1.89, every 12° (≤ 12) 1.93-1.95. Kept 12°.
+- Frame submission costs 0.07-0.2 ms on the OpenGL thread; the rest is the
+  driver. Overruns at the limiter exist in 2-D too.
+- Not measured: integrated GPUs, other drivers, frame-time jitter.
+
 ## 2026-09-23 — Injection and idle
 
 - Port-injection pulse recomputed every sub-step: ratchet (CP2: AFR 10.3, trim

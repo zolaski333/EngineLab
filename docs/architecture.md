@@ -84,7 +84,7 @@ constructor.
 |---|---|
 | `TopBar` | engine picker, run state, Exhaust / ECU / Audio windows, `⋯` menu |
 | `ControlPanel` | ignition, starter, dyno, throttle column and presets, load and trims |
-| `EngineViewport` | layer tabs and the 2D cutaway (zoom, pan, recentre) |
+| `EngineViewport` | the GPU 3-D engine view with its overlays, or the 2-D cutaway |
 | `ReadoutStrip` | tachometer and six live readouts |
 | `SidePanel` | Dyno, Telemetry, Audio and Diagnostics tabs |
 | `StatusBar` | fault summary, real-time factor, simulation speed, counters |
@@ -145,28 +145,51 @@ importing another engine creates its default set.
   and propagates its high band through passive characteristics, separately for
   each path.
 
-## 3D rendering groundwork
+## 3-D engine view
 
-The `render` module depends on neither JUCE nor OpenGL. `RenderSnapshotBuilder`
-converts `EngineConfig` and `EngineState` into parts with a stable identifier,
-parent, XYZ transform, activity and temperature. Cylinder stations are placed
-along Z, while the solver kinematics stay resolved in their XY plane. A fixed
-array caps the number of published parts at 256.
+The engine view is drawn by the GPU through OpenGL 3.2 (`juce_opengl`). Three
+pieces split the work:
 
-`RenderSnapshotInterpolator` keeps two frames and interpolates the transforms,
-including angles along the shortest path. `IEngineRenderer` only defines
-`prepare`, `resize`, `render` and `release` with a neutral camera and viewport.
+| Piece | Module | Role |
+|---|---|---|
+| `render::EngineModel3D` | `render`, no JUCE | meshes built from `EngineConfig` (mm, +Y up, +Z along the crank) and a pose per crank angle |
+| `render::CrankClock` | `render`, no JUCE | the crank angle to draw at any display time |
+| `ui::EngineSceneRenderer` | `app` | shaders, buffers, multisampling and motion blur |
 
-This groundwork makes an OpenGL integration possible without touching the
-physics, but it is not a renderer yet. Still to do:
+Every moving part is placed with `evaluateCylinderKinematics()`, the function
+the simulator uses, so inline, V, flat, radial and articulated-rod engines are
+drawn as they are simulated. `EngineLab.EngineModel3D` checks every catalogue
+engine at 72 angles: rods keep their length, wrist pins stay on the cylinder
+axis, crowns stay below the deck.
 
-- write the backend and manage the OpenGL context;
-- define meshes, materials, lighting, shaders and a resource cache;
-- choose the synchronisation with the render thread;
-- wire the camera and interaction to the backend;
-- extend the scene to collectors, intakes, accessories and effects;
-- replace or adapt the JUCE 2D view, which still reads the simulation state
-  directly despite producing a `RenderSnapshot` in parallel.
+Threads:
+
+- the message thread copies the crank angle, engine speed, simulation rate
+  (time scale × real-time factor, 0 when paused) and per-cylinder burn
+  strength at 30 Hz into a mutex-protected block;
+- the OpenGL thread runs `CrankClock`: in real time it extrapolates the last
+  sample with the engine speed and acceleration and pulls back onto each new
+  sample (time constant 80 ms, jump beyond 90°), so the picture turns at the
+  simulated speed between samples. In slow motion it integrates rpm × factor
+  instead;
+- a pacing thread triggers frames at the chosen cap (30 to 240 fps). It also
+  triggers the overlay repaints, so each tick renders one frame.
+  "Unlimited" repaints continuously.
+
+`EngineSceneRenderer` writes every part's transform and material into a buffer
+texture and draws each material group with one call. Each frame goes into a 4×
+multisampled buffer; with motion blur, the scene is drawn every 12° the crank
+sweeps during half a frame (12 sub-frames at most) and the sub-frames are
+averaged in a half-float buffer. Overlays are JUCE child components painted
+over the OpenGL frame. View settings live in `view.json` next to the key
+bindings. If the context cannot be created or a shader fails, the view falls
+back to the 2-D cutaway and says why.
+
+The older `RenderSnapshotBuilder` / `IEngineRenderer` groundwork is not used by
+this view.
+
+Still to do: the exhaust and intake laid out from the configured paths, the
+solver's pressure waves on the ducts, exhaust heat glow and a part inspector.
 
 ## Extension rule
 

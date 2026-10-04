@@ -17,7 +17,7 @@ target_sources(EngineLabApp PRIVATE
     src/Main.cpp src/MainComponent.cpp src/ActionMap.cpp src/AudioWorkshopWindow.cpp src/EcuTunerWindow.cpp
     src/ExhaustDesignerWindow.cpp
     src/Theme.cpp src/Widgets.cpp src/DashboardModel.cpp src/TopBar.cpp src/ControlPanel.cpp
-    src/EngineViewport.cpp src/ReadoutStrip.cpp src/DynoPanel.cpp src/SidePanel.cpp src/StatusBar.cpp
+    src/EngineViewport.cpp src/EngineScene.cpp src/ReadoutStrip.cpp src/DynoPanel.cpp src/SidePanel.cpp src/StatusBar.cpp
     include/enginelab/app/MainComponent.hpp include/enginelab/app/ActionMap.hpp
     include/enginelab/app/AudioWorkshopWindow.hpp
     include/enginelab/app/EcuTunerWindow.hpp
@@ -25,13 +25,14 @@ target_sources(EngineLabApp PRIVATE
     include/enginelab/app/Theme.hpp include/enginelab/app/Widgets.hpp
     include/enginelab/app/DashboardModel.hpp include/enginelab/app/TopBar.hpp
     include/enginelab/app/ControlPanel.hpp include/enginelab/app/EngineViewport.hpp
+    include/enginelab/app/EngineScene.hpp
     include/enginelab/app/ReadoutStrip.hpp include/enginelab/app/DynoPanel.hpp
     include/enginelab/app/SidePanel.hpp include/enginelab/app/StatusBar.hpp)
 target_include_directories(EngineLabApp PRIVATE include)
 target_link_libraries(EngineLabApp PRIVATE
     EngineLab::Audio EngineLab::Runtime EngineLab::Diagnostics EngineLab::Serialization EngineLab::Catalog
     EngineLab::Calibration EngineLab::Render EngineLab::Scripting EngineLabFonts
-    juce::juce_audio_utils juce::juce_gui_extra
+    juce::juce_audio_utils juce::juce_gui_extra juce::juce_opengl
     PUBLIC juce::juce_recommended_config_flags juce::juce_recommended_lto_flags)
 target_compile_definitions(EngineLabApp PRIVATE
     JUCE_WEB_BROWSER=0

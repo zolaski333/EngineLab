@@ -59,6 +59,7 @@ The main registered tests are:
 | `EngineLab.ExhaustSimulation` | effect of the authored K on pressure/flow/torque, independence from the legacy geometry |
 | `EngineLab.Scripting` | units, diagnostics, base/include, cycles and keeping the last valid script |
 | `EngineLab.RenderSnapshot` | bounded scene, 3D layout and angle interpolation |
+| `EngineLab.EngineModel3D` | 3-D meshes and poses of every catalogue engine (rod length, wrist pin on axis, crown below deck) and the display crank clock (steady, accelerating, slow motion, freeze, pause) |
 | `EngineLab.RealtimeRegression` | timing, audio rate, buffers, path isolation and DAG transmission |
 | `EngineLab.CatalogPhysics` | deterministic scenarios and loaded holds governed by a PI brake across the whole catalogue |
 | `EngineLab.AudioRender` | multi-engine renders at normalised engine speed, finiteness, dynamics, limiter ceiling and long-run stability |

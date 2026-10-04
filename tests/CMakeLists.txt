@@ -328,3 +328,9 @@ if(MSVC AND ENGINELAB_ENABLE_SANITIZERS)
     set_tests_properties(EngineLab.Core PROPERTIES
         ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${ENGINELAB_MSVC_RUNTIME_DIR}")
 endif()
+
+add_executable(EngineLabEngineModel3DTests EngineModel3DTests.cpp)
+target_link_libraries(EngineLabEngineModel3DTests PRIVATE EngineLab::Render EngineLab::Catalog)
+target_compile_definitions(EngineLabEngineModel3DTests PRIVATE ENGINELAB_CATALOG_ROOT="${CMAKE_SOURCE_DIR}")
+enginelab_set_warnings(EngineLabEngineModel3DTests)
+add_test(NAME EngineLab.EngineModel3D COMMAND EngineLabEngineModel3DTests)

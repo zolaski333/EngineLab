@@ -23,6 +23,17 @@ file formats, always with an in-memory migration).
   they trigger. Inter and JetBrains Mono are embedded, so the interface looks
   the same on every machine.
 
+### Added
+
+- 3-D engine view rendered on the GPU, replacing the 2-D cutaway: pistons,
+  rods, crank throws, valves and flames follow the simulator's kinematics and
+  turn at the simulated engine speed. X-ray or solid block, four layers,
+  front / side / three-quarter views, an orbit camera, real time, 1:50, 1:250
+  or frozen playback, and a per-cylinder cycle panel. The settings menu offers
+  a 30 to 240 fps cap or unlimited, VSync, motion blur and 4× anti-aliasing.
+  The 2-D cutaway stays available there, and is used automatically without
+  OpenGL 3.2.
+
 ## [0.2.0] — 2026-10-04
 
 ### Added

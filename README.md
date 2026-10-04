@@ -15,7 +15,7 @@ tailpipe and radiated to a pair of virtual microphones.
 
 Design an engine, draw its exhaust system, put it on the dyno, listen to it.
 
-![EngineLab main window: cylinder and valvetrain view, live gauges and the brake dynamometer](docs/media/main-window.png)
+![EngineLab main window: the GPU-rendered 3-D engine in X-ray, live gauges and telemetry](docs/media/main-window.png)
 
 > **Project status: early.** The physics, tooling and real-time pipeline are
 > solid and heavily tested. The sound is not there yet: in blind listening
@@ -87,6 +87,12 @@ factor is shown in the diagnostics.
 
 ### Tooling
 
+- **A 3-D engine view rendered on the GPU** (OpenGL 3.2): pistons, rods, crank
+  throws, valves and flames placed by the simulator's own kinematics, so
+  4,000 rpm on the tachometer is 4,000 rpm on screen. X-ray or solid block,
+  layers (all, combustion, mechanical, gas flow), front / side / three-quarter
+  views, 1:50 and 1:250 slow motion, motion blur and a frame-rate cap from 30
+  fps to unlimited. A 2-D cutaway remains for machines without OpenGL 3.2.
 - **A catalogue of 16 engines** — naturally aspirated and turbocharged I4s, a
   V8, a flat-six, a supercharged V12, motorcycle twins and triples, an inline
   five, a TDI diesel, a five-cylinder radial — all in readable, editable YAML.
@@ -150,7 +156,8 @@ rejects unknown actions, duplicates and reserved shortcuts.
 | up / down / left arrow | upshift, downshift, wheel brake |
 | hold `Y` or `Shift` | declutch; `T` / `U` adjust the setpoint |
 | `;` | next exhaust acoustic preset |
-| wheel / drag / double-click | zoom, pan and recentre the engine view |
+| wheel / drag / right-drag | zoom, orbit and pan the 3-D engine view |
+| double-click | back to the selected camera view |
 
 Holding `G`, `Z`, `X`, `C`, `V`, `B`, `J`, `K`, `L`, `O`, `N` or `Space` while
 scrolling adjusts, respectively, the speed hold, volume, convolution, noise
@@ -243,9 +250,10 @@ holds the working rules, build notes and verified traps of this repository.
   the IR stays editable in JSON/YAML;
 - structural modes stay estimated per engine family until sourced measurements
   are supplied;
-- **no 3-D view yet**: the `render` module prepares transforms, snapshots and
-  the `IEngineRenderer` interface, but the current view is 2-D JUCE drawing
-  (see [the architecture document](docs/architecture.md#3d-rendering-groundwork));
+- the 3-D view draws generic ports and runners: the exhaust and intake are
+  not yet laid out from the configured geometry, and the pressure waves of the
+  solver are not shown yet (see
+  [the architecture document](docs/architecture.md#3-d-engine-view));
 - Windows only for now: the code is standard C++20 and JUCE, but no other
   platform is built or tested;
 - large engines (V8, V12) are expensive for the physics thread; the application
