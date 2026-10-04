@@ -59,7 +59,7 @@ character produced by pressure, topology and geometry, but are not presented as
 measured microphone equalisations. The CC0 takes whose engine speed, load or
 microphone geometry are unknown only serve to frame the expected character.
 
-In **AUDIO HQ**, **VOICING CATALOGUE** recalls the engine's full override and
+In the **Audio workshop**, **VOICING CATALOGUE** recalls the engine's full override and
 **NEUTRAL** restores every schema value, not just the nine visible faders. The
 change is instant and does not restart the engine. Moving a fader now keeps
 `low_frequency_gain`, `stereo_width`, `outlet_jet_gain`, `saturation_drive` and

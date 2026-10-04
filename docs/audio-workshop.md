@@ -2,7 +2,7 @@
 
 ## What it does
 
-The **AUDIO HQ** button opens a separate workshop without stopping the engine.
+The **Audio** button in the top bar opens a separate workshop without stopping the engine.
 This window brings together:
 
 - the real-time mix faders;

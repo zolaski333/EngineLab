@@ -30,10 +30,10 @@ date when the code changes; measurement results go into the
 ## Guides
 
 - [Custom exhaust systems](custom-exhaust.md) — the exhaust graph and the
-  EXHAUST PRO designer.
+  exhaust designer.
 - [`.els` engine scripts](engine-scripting.md)
 - [ECU tuner and calibration format](ecu-tuning.md)
-- [Audio workshop](audio-workshop.md) — the AUDIO HQ window.
+- [Audio workshop](audio-workshop.md) — the Audio workshop window.
 - [Declarative audio voicing](audio-voicing.md)
 - [Offline high-quality rendering](offline-hq-rendering.md)
 - [Audio diagnostic exports](audio-diagnostics.md) — stems and order maps.

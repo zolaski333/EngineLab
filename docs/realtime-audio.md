@@ -139,7 +139,7 @@ buffers are supplied by the caller and filled without allocation.
 The high-quality user render reuses this path in `OfflineAudioExporter`:
 48/96/192 kHz, 24-bit PCM or 32-bit float, JSON scenario, master and stems,
 manifest and cancellation. See [offline-hq-rendering.md](offline-hq-rendering.md).
-The **AUDIO HQ** button, its mute/solo controls and the explicit neutralisation
+The **Audio workshop**, its mute/solo controls and the explicit neutralisation
 of legacy settings with no effect are documented in
 [audio-workshop.md](audio-workshop.md).
 

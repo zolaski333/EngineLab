@@ -5,6 +5,24 @@ All notable changes to EngineLab are listed here. The format follows
 [Semantic Versioning](https://semver.org/) (pre-1.0: minor versions may break
 file formats, always with an in-memory migration).
 
+## [Unreleased]
+
+### Changed
+
+- New main window. A top bar holds the engine picker, the run state and the
+  Exhaust, ECU and Audio windows. Engine controls and a vertical throttle with
+  1/10/20/100 % presets are on the left. The engine view sits in the middle with
+  layer tabs, and the tachometer and six live readouts run below it. A tabbed
+  side panel shows the dyno, telemetry, audio mix and diagnostics, and a status
+  bar shows faults and real-time counters. The old full-screen pages
+  (load simulation, mixer, oscilloscope, physics debug) are now side-panel
+  tabs, and `Tab` cycles through them.
+- Edit JSON, import/export, dyno CSV export, key bindings and full screen moved
+  to the `⋯` menu in the top bar.
+- One dark theme for every window, with key caps shown on the controls
+  they trigger. Inter and JetBrains Mono are embedded, so the interface looks
+  the same on every machine.
+
 ## [0.2.0] — 2026-10-04
 
 ### Added

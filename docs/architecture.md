@@ -42,7 +42,7 @@ catalog + diagnostics + serialization + scripting
 | `EngineLabCatalog` | Loading of the shipped engines and parts |
 | `EngineLabDiagnostics` | Explanatory diagnostics for the UI |
 | `EngineLabRender` | API-independent 3D scene, fixed snapshots and interpolation |
-| `EngineLabApp` | JUCE composition, files, ECU tuner, exhaust designer, 2D rendering and interaction |
+| `EngineLabApp` | JUCE composition, files, main window panels, ECU tuner, exhaust designer, audio workshop |
 
 ## State ownership and threads
 
@@ -69,6 +69,32 @@ snapshots alive until they are acknowledged; their destruction therefore
 happens on the publishing thread, not on the simulation thread. This strategy
 avoids a reader mutex but does not assume that `atomic<shared_ptr>` is
 lock-free in hardware.
+
+## Main window
+
+`MainComponent` owns the runtime, the audio device and the files. It no longer
+paints anything itself. Once per 30 Hz tick it copies everything the screen
+shows into a `DashboardModel`: the engine state, the render snapshot, the
+telemetry ring, dyno runs, faults, runtime counters and the audio mix. It then
+asks each panel to refresh. Panels read the model and never touch the runtime.
+User actions come back as callbacks that `MainComponent` wires in its
+constructor.
+
+| Panel | Area |
+|---|---|
+| `TopBar` | engine picker, run state, Exhaust / ECU / Audio windows, `⋯` menu |
+| `ControlPanel` | ignition, starter, dyno, throttle column and presets, load and trims |
+| `EngineViewport` | layer tabs and the 2D cutaway (zoom, pan, recentre) |
+| `ReadoutStrip` | tachometer and six live readouts |
+| `SidePanel` | Dyno, Telemetry, Audio and Diagnostics tabs |
+| `StatusBar` | fault summary, real-time factor, simulation speed, counters |
+
+`Theme` holds the colour tokens, fonts and the `ui::LookAndFeel` installed for
+the whole application, so the tool windows and alerts share it. `Widgets` holds
+the buttons, segmented controls and slider rows the panels are built from. The
+main component keeps the keyboard: no button or slider takes focus, and a
+mouse wheel a child does not use goes up to the main component's mouse-wheel
+handler (`mouseWheelMove`).
 
 ## Transactional boundaries
 

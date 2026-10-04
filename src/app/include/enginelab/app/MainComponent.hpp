@@ -2,8 +2,15 @@
 #include <enginelab/audio/RealtimeEngineAudio.hpp>
 #include <enginelab/app/ActionMap.hpp>
 #include <enginelab/app/AudioWorkshopWindow.hpp>
+#include <enginelab/app/ControlPanel.hpp>
+#include <enginelab/app/DashboardModel.hpp>
 #include <enginelab/app/EcuTunerWindow.hpp>
+#include <enginelab/app/EngineViewport.hpp>
 #include <enginelab/app/ExhaustDesignerWindow.hpp>
+#include <enginelab/app/ReadoutStrip.hpp>
+#include <enginelab/app/SidePanel.hpp>
+#include <enginelab/app/StatusBar.hpp>
+#include <enginelab/app/TopBar.hpp>
 #include <enginelab/catalog/EngineCatalog.hpp>
 #include <enginelab/diagnostics/EngineDiagnostics.hpp>
 #include <enginelab/foundation/EngineTypes.hpp>
@@ -18,10 +25,12 @@
 #include <array>
 #include <filesystem>
 #include <limits>
-#include <unordered_map>
 
 namespace enginelab {
-/** Desktop presentation layer. It only writes controls and renders snapshots. */
+/** Desktop presentation layer. It owns the runtime and the audio device, writes
+    controls and refreshes the panels from one snapshot per UI frame. The panels
+    (top bar, controls, engine view, readouts, side tabs, status bar) only read
+    the shared DashboardModel. */
 class MainComponent final : public juce::AudioAppComponent, private juce::Timer {
 public:
     MainComponent();
@@ -35,12 +44,8 @@ public:
     bool keyStateChanged(bool isKeyDown) override;
     void focusLost(FocusChangeType cause) override;
     void mouseWheelMove(const juce::MouseEvent&, const juce::MouseWheelDetails&) override;
-    void mouseDown(const juce::MouseEvent&) override;
-    void mouseDrag(const juce::MouseEvent&) override;
-    void mouseDoubleClick(const juce::MouseEvent&) override;
 private:
     void timerCallback() override;
-    void configureSlider(juce::Slider&, double minimum, double maximum, double value, const juce::String& suffix);
     void selectEngine(int presetIndex);
     bool applyConfig(const EngineConfig&, bool preserveScriptWatcher = false,
                      bool preserveCalibration = false);
@@ -50,6 +55,7 @@ private:
     void showAudioWorkshop();
     void showEcuTuner();
     void showExhaustDesigner();
+    void showMoreMenu();
     void startEngineScriptWatcher(const std::filesystem::path&);
     void stopEngineScriptWatcher() noexcept;
     void pollEngineScript();
@@ -61,56 +67,41 @@ private:
     void showError(const juce::String& title, const juce::String& message);
     void reloadEngine();
     void collectFinishedRuns();
-    void updateHistorySelector();
-    void updateDynoPresentationControls();
+    void selectRun(int runIndex);
     void ensureDynoPresentation(const DynoRun&, std::size_t paletteIndex);
+    [[nodiscard]] DynoCurvePresentation* selectedPresentation();
     void setThrottlePreset(double value);
     void updateMomentaryThrottle();
     void toggleDyno();
     void applyExhaustPreset(int presetIndex);
     void updateAudioControlAvailability();
     void configureImpulseResponse();
+    void refreshKeyCaps();
+    void refreshAudioView();
+    void refreshRuntimeHealth();
+    [[nodiscard]] bool wheelModifierDown() const noexcept;
     [[nodiscard]] OfflineAudioMix currentAudioMix() const noexcept;
     void applyAudioWorkshopMix(
         const OfflineAudioMix& baseMix,
         const OfflineAudioMix& effectiveMix);
     void syncAudioWorkshopMix();
     void adjustAudioOrSimulation(double wheelDelta);
-    void drawLoadSimulationPanel(juce::Graphics&, juce::Rectangle<float> area) const;
-    void drawMixerPanel(juce::Graphics&, juce::Rectangle<float> area) const;
-    void drawOscilloscopePanel(juce::Graphics&, juce::Rectangle<float> area) const;
-    void drawDebugPanel(juce::Graphics&, juce::Rectangle<float> area) const;
-    void drawGaugeCluster(juce::Graphics&, juce::Rectangle<float> area) const;
-    void drawEngine(juce::Graphics&, juce::Rectangle<float> area) const;
-    void drawDynoChart(juce::Graphics&, juce::Rectangle<float> area) const;
-    void drawTelemetryChart(juce::Graphics&, juce::Rectangle<float> area) const;
 
     std::vector<EngineConfig> presets_ { makeBaseEnginePresets() };
     std::filesystem::path catalogRoot_;
     EngineConfig config_ { presets_[1] };
+    int selectedPresetIndex_ { -1 };
     std::unique_ptr<EngineRuntime> runtime_;
     std::unique_ptr<RealtimeEngineAudio> audio_;
     EngineDiagnostics diagnostics_;
     ActionMap actionMap_;
     JsonEngineSerializer jsonSerializer_;
     YamlEngineSerializer yamlSerializer_;
-    EngineState visibleState_;
+    DashboardModel model_ { config_ };
     std::unique_ptr<RenderSnapshotBuilder> renderSnapshotBuilder_;
     RenderSnapshotInterpolator renderSnapshotInterpolator_;
-    RenderSnapshot visibleRenderSnapshot_;
-    DynoRun visibleCurrentRun_;
     std::shared_ptr<DynoRunArchive> dynoArchive_ {
         std::make_shared<DynoRunArchive>() };
-    std::vector<DynoRun> archivedRuns_;
-    struct DynoCurvePresentation final {
-        juce::String name;
-        std::uint32_t colour { 0xffffffffU };
-        bool visible { true };
-    };
-    std::unordered_map<std::uint64_t, DynoCurvePresentation>
-        dynoCurvePresentation_;
-    bool dynoPresentationControlsUpdating_ { false };
-    std::vector<Diagnostic> visibleDiagnostics_;
     std::uint64_t visibleDynoArchiveRevision_ {
         std::numeric_limits<std::uint64_t>::max() };
     bool starterKeyDown_ { false };
@@ -118,12 +109,6 @@ private:
     bool throttleKeyActive_ { false };
     double targetClutchPressure_ { 1.0 };
     double currentClutchPressure_ { 1.0 };
-    int screen_ { 0 };
-    int viewLayer_ { 0 };
-    float engineViewZoom_ { 1.0F };
-    juce::Point<float> engineViewPan_ {};
-    juce::Point<float> dragStartPan_ {};
-    juce::Rectangle<float> engineViewportArea_ {};
     bool showDynoStats_ { true };
     double audioVolume_ { 1.0 };
     double audioConvolution_ { 0.45 };
@@ -151,10 +136,7 @@ private:
     bool forcedInductionAcousticsActive_ { false };
     bool impulseResponseAvailable_ { false };
     bool impulseResponseLoadError_ { false };
-    juce::String impulseResponseStatus_ { "IR  FREE FIELD" };
-    std::array<EngineState, 300> telemetryHistory_ {};
-    std::size_t telemetryWrite_ { 0 };
-    std::size_t telemetryCount_ { 0 };
+    juce::String impulseResponseStatus_ { "IR free field" };
     std::unique_ptr<juce::FileChooser> fileChooser_;
     std::unique_ptr<juce::AlertWindow> configEditor_;
     std::unique_ptr<juce::AlertWindow> keyBindingsEditor_;
@@ -170,27 +152,13 @@ private:
     std::uint32_t voicingPollTicks_ {};
     std::uint64_t voicingReloadCount_ {};
 
-    juce::Label title_;
-    juce::ComboBox engineSelector_;
-    juce::TextButton editButton_ { "EDIT JSON" };
-    juce::TextButton importButton_ { "IMPORT" };
-    juce::TextButton exportButton_ { "EXPORT" };
-    juce::TextButton csvButton_ { "CSV DYNO" };
-    juce::TextButton keyBindingsButton_ { "KEYS" };
-    juce::TextButton ecuTunerButton_ { "ECU" };
-    juce::TextButton exhaustDesignerButton_ { "EXHAUST PRO" };
-    juce::TextButton audioWorkshopButton_ { "AUDIO HQ" };
-    juce::ComboBox exhaustPresetSelector_;
-    juce::TextButton ignitionButton_ { "IGNITION" };
-    juce::TextButton starterButton_;
-    juce::TextButton dynoButton_ { "D  START DYNO" };
-    juce::ComboBox historySelector_;
-    juce::TextButton deleteRunButton_ { "DELETE RUN" };
-    juce::TextEditor runNameEditor_;
-    juce::TextButton runColourButton_ { "COLOUR" };
-    juce::TextButton runVisibilityButton_ { "HIDE" };
-    juce::Label throttleLabel_, loadLabel_, afrLabel_, advanceLabel_;
-    juce::Slider throttleSlider_, loadSlider_, afrSlider_, advanceSlider_;
+    ui::TopBar topBar_;
+    ui::ControlPanel controls_;
+    ui::EngineViewport viewport_ { model_ };
+    ui::ReadoutStrip readouts_ { model_ };
+    ui::SidePanel side_ { model_, [this] { return wheelModifierDown(); } };
+    ui::StatusBar status_ { model_ };
+    juce::TooltipWindow tooltipWindow_ { this, 650 };
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(MainComponent)
 };
 } // namespace enginelab
