@@ -295,9 +295,14 @@ void testBackgroundHotReloadKeepsLastValidConfig() {
 
     writeFile(shared, "name \"Recovered\"\n");
     reloader.requestReload();
-    require(waitUntil([&] { return reloader.poll()->revision == second->revision + 1; }),
-            "valid repair should publish the next revision");
-    require(reloader.poll()->config->name == "Recovered", "recovered configuration should become active");
+    // The polling watcher may see the write before the explicit request is
+    // served, so the repair can publish twice; both carry the repaired file.
+    require(waitUntil([&] {
+                const auto state = reloader.poll();
+                return state->revision > second->revision && state->config->name == "Recovered";
+            }),
+            "valid repair should publish a new revision with the recovered configuration");
+    require(reloader.poll()->lastAttemptSucceeded, "the recovered configuration should stay active");
     reloader.stop();
     require(!reloader.running(), "stop should join the polling worker");
     require(firstConfig->name == "First", "previous immutable configuration remains safe for existing readers");
