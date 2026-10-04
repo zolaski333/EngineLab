@@ -11,6 +11,35 @@ namespace {
 constexpr float pi = std::numbers::pi_v<float>;
 constexpr Vec3 zAxis { 0.0F, 0.0F, 1.0F };
 
+/** Where each vertex of a duct sits along its centreline, 0..1: the arc length
+    of its nearest centreline point over the whole length. */
+[[nodiscard]] std::vector<float> stationsAlong(const Mesh& mesh, const std::vector<Vec3>& centreline) {
+    if (centreline.size() < 2U) return {};
+    std::vector<float> arc(centreline.size(), 0.0F);
+    for (std::size_t i = 1; i < centreline.size(); ++i) arc[i] = arc[i - 1] + length(centreline[i] - centreline[i - 1]);
+    const auto total = std::max(arc.back(), 1.0e-3F);
+    std::vector<float> stations;
+    stations.reserve(mesh.vertices.size());
+    for (const auto& vertex : mesh.vertices) {
+        auto best = 1.0e30F;
+        auto station = 0.0F;
+        for (std::size_t i = 1; i < centreline.size(); ++i) {
+            const auto a = centreline[i - 1];
+            const auto segment = centreline[i] - a;
+            const auto span = dot(segment, segment);
+            const auto t = span > 0.0F ? std::clamp(dot(vertex.position - a, segment) / span, 0.0F, 1.0F) : 0.0F;
+            const auto offset = vertex.position - (a + segment * t);
+            const auto distance = dot(offset, offset);
+            if (distance < best) {
+                best = distance;
+                station = (arc[i - 1] + t * (arc[i] - arc[i - 1])) / total;
+            }
+        }
+        stations.push_back(station);
+    }
+    return stations;
+}
+
 [[nodiscard]] const CylinderBankConfig* bankFor(const EngineConfig& config, const CylinderConfig& cylinder) noexcept {
     const auto bank = std::find_if(config.banks.begin(), config.banks.end(),
         [&cylinder](const CylinderBankConfig& item) {
@@ -205,7 +234,7 @@ void EngineModel3D::buildCylinders() {
         const auto linerBottom = bottomWrist - axis * (skirt + 0.1F * b);
         appendCylinder(liner, cylinderFrame(linerBottom, axis), 0.56F * b, 0.56F * b,
                        length(cylinder.deckCentre - linerBottom), 40, false, false);
-        (void)addPart(std::move(liner), SceneMaterial::blockShell, layerStructure);
+        cylinder.linerPart = addPart(std::move(liner), SceneMaterial::blockShell, layerStructure);
 
         cylinders_.push_back(cylinder);
     }
@@ -415,6 +444,7 @@ void EngineModel3D::buildDucts() {
             const auto material = !intake ? SceneMaterial::exhaustPipe
                 : piece.kind == DuctKind::intakeThrottle ? SceneMaterial::forged : SceneMaterial::intakeFlow;
             const auto part = addPart(std::move(piece.mesh), material, intake ? layerIntake : layerExhaust);
+            parts_[part].stations = stationsAlong(parts_[part].mesh, piece.centreline);
             if (farParts_.size() < parts_.size()) farParts_.resize(parts_.size(), false);
             farParts_[part] = !piece.nearEngine;
             ducts_.push_back({ piece.kind, piece.pathId, piece.elementId, piece.componentType, part,
@@ -426,6 +456,29 @@ void EngineModel3D::buildDucts() {
     };
     add(layoutIntake(config_, intakePorts_, bore, radialLike_));
     add(layoutExhaust(config_, exhaustPorts_, bore));
+
+    // A plume at every outlet, lit only by an afterfire.
+    const auto ductCount = ducts_.size();
+    for (std::size_t d = 0; d < ductCount; ++d) {
+        const auto& duct = ducts_[d];
+        if (duct.kind != DuctKind::exhaustComponent || duct.componentType != ExhaustComponentType::outlet
+            || duct.centreline.size() < 2U)
+            continue;
+        const auto tip = duct.centreline.back();
+        const auto axis = normalise(tip - duct.centreline[duct.centreline.size() - 2U]);
+        float radius = 0.0F;
+        const auto& part = parts_[duct.part];
+        for (std::size_t v = 0; v < part.mesh.vertices.size(); ++v)
+            if (part.stations[v] > 0.98F) {
+                const auto offset = part.mesh.vertices[v].position - tip;
+                radius = std::max(radius, length(offset - axis * dot(offset, axis)));
+            }
+        radius = std::max(radius, 0.15F * bore);
+        Mesh plume;
+        appendCylinder(plume, Mat4::frameAlongY(tip, axis), 0.85F * radius, 1.7F * radius, 5.0F * radius, 20, false, false);
+        appendSphere(plume, Mat4::translation(tip + axis * (1.2F * radius)), 0.95F * radius, 16, 10);
+        outletFlameParts_.push_back(addPart(std::move(plume), SceneMaterial::flame, layerExhaust));
+    }
     farParts_.resize(parts_.size(), false);
 }
 
@@ -496,6 +549,7 @@ void EngineModel3D::pose(const ScenePoseInput& input, std::vector<SceneInstance>
         if (cylinder.runnerPart < out.size())
             out[cylinder.runnerPart].intensity = static_cast<float>(std::clamp(intakeLift / maximumLift, 0.0, 1.0));
     }
+    for (const auto part : outletFlameParts_) out[part].intensity = std::clamp(input.afterfire, 0.0F, 1.0F);
     // Plenum, airbox and inlet duct glow with the mean draw of their runners.
     for (const auto& duct : ducts_) {
         if (duct.kind != DuctKind::intakePlenum && duct.kind != DuctKind::intakeAirbox
@@ -511,6 +565,66 @@ void EngineModel3D::pose(const ScenePoseInput& input, std::vector<SceneInstance>
         const auto share = duct.kind == DuctKind::intakePlenum ? 0.5F : 0.3F;
         out[duct.part].intensity = runners > 0 ? share * draw / static_cast<float>(runners) : 0.0F;
     }
+}
+
+PartIdentity EngineModel3D::identify(std::uint16_t part) const noexcept {
+    for (std::size_t i = 0; i < cylinders_.size(); ++i) {
+        const auto& c = cylinders_[i];
+        const auto cylinder = static_cast<int>(i);
+        if (part == c.pistonPart) return { PartRole::piston, cylinder, -1 };
+        if (part == c.rodPart) return { PartRole::rod, cylinder, -1 };
+        if (part == c.intakeValvePart) return { PartRole::intakeValve, cylinder, -1 };
+        if (part == c.exhaustValvePart) return { PartRole::exhaustValve, cylinder, -1 };
+        if (part == c.flamePart) return { PartRole::combustion, cylinder, -1 };
+        if (part == c.linerPart) return { PartRole::liner, cylinder, -1 };
+    }
+    for (std::size_t d = 0; d < ducts_.size(); ++d)
+        if (ducts_[d].part == part) {
+            int cylinder = -1;
+            if (ducts_[d].kind == DuctKind::intakeRunner)
+                for (std::size_t i = 0; i < config_.cylinders.size(); ++i)
+                    if (config_.cylinders[i].id == ducts_[d].elementId) cylinder = static_cast<int>(i);
+            return { PartRole::duct, cylinder, static_cast<int>(d) };
+        }
+    if (std::find(outletFlameParts_.begin(), outletFlameParts_.end(), part) != outletFlameParts_.end())
+        return { PartRole::afterfire, -1, -1 };
+    if (part >= parts_.size()) return {};
+    switch (parts_[part].material) {
+    case SceneMaterial::headShell: return { PartRole::head, -1, -1 };
+    case SceneMaterial::exhaustPipe: return { PartRole::exhaustPorts, -1, -1 };
+    case SceneMaterial::intakeFlow: return { PartRole::intakePorts, -1, -1 };
+    case SceneMaterial::steel:
+    case SceneMaterial::forged: return { PartRole::crankshaft, -1, -1 };
+    default: return { PartRole::block, -1, -1 };
+    }
+}
+
+std::optional<PartHit> pickPart(const EngineModel3D& model, const std::vector<SceneInstance>& instances, Vec3 origin,
+                                Vec3 direction, const std::function<bool(std::uint16_t)>& pickable) {
+    std::optional<PartHit> best;
+    for (const auto& instance : instances) {
+        if (instance.part >= model.parts().size() || !pickable(instance.part)) continue;
+        const auto& mesh = model.parts()[instance.part].mesh;
+        for (std::size_t i = 0; i + 2U < mesh.indices.size(); i += 3U) {
+            // Moller-Trumbore, both faces.
+            const auto a = instance.transform.transformPoint(mesh.vertices[mesh.indices[i]].position);
+            const auto e1 = instance.transform.transformPoint(mesh.vertices[mesh.indices[i + 1U]].position) - a;
+            const auto e2 = instance.transform.transformPoint(mesh.vertices[mesh.indices[i + 2U]].position) - a;
+            const auto p = cross(direction, e2);
+            const auto determinant = dot(e1, p);
+            if (std::abs(determinant) < 1.0e-9F) continue;
+            const auto inverse = 1.0F / determinant;
+            const auto t = origin - a;
+            const auto u = dot(t, p) * inverse;
+            if (u < 0.0F || u > 1.0F) continue;
+            const auto q = cross(t, e1);
+            const auto v = dot(direction, q) * inverse;
+            if (v < 0.0F || u + v > 1.0F) continue;
+            const auto distance = dot(e2, q) * inverse;
+            if (distance > 0.0F && (!best || distance < best->distance)) best = PartHit { instance.part, distance };
+        }
+    }
+    return best;
 }
 
 void EngineModel3D::computeBounds() {

@@ -38,6 +38,13 @@ file formats, always with an in-memory migration).
   diameter and volume, and the runners, plenum, throttle bores, airbox and
   inlet duct of each intake path. A new *Exhaust* camera view frames the whole
   system.
+- The exhaust shows the gas solver's pressure waves at the crank angle on
+  screen (in slow motion, the latest cycle at that angle): violet below each
+  cell's running mean, grey at it, orange to pale yellow above, with a legend
+  giving the scale. Exhaust walls glow red above 798 K, and an afterfire lights a
+  flame at the outlets.
+- Click a part in the 3-D view to inspect it: its authored dimensions and, for
+  an exhaust duct, the solver's pressures and temperatures in it.
 
 ## [0.2.0] — 2026-10-04
 

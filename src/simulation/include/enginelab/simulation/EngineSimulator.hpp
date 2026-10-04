@@ -13,6 +13,7 @@
 #include <enginelab/physics/HelmholtzRunnerModel.hpp>
 #include <enginelab/physics/MechanicalKinematics.hpp>
 #include <enginelab/physics/DuctWallHeatTransferModel.hpp>
+#include <enginelab/foundation/GasFieldSnapshot.hpp>
 #include <enginelab/simulation/CylinderWorkerPool.hpp>
 #include <enginelab/simulation/IEngineSimulation.hpp>
 #include <enginelab/events/CylinderPressureSample.hpp>
@@ -126,7 +127,23 @@ public:
         exhaustCouplingEverySubstep_ = enabled;
     }
     void reset() noexcept override;
+    /** Keep the gas field (GasFieldSnapshot) captured at a crank angle over
+     * the cycle: each time the crank crosses it between two sub-steps, and at
+     * the end of a frame once 0.25 s of simulated time has passed without a
+     * crossing (a stopped engine). Calling it again moves the angle without
+     * losing a crossing in progress. Reading the solver state does not
+     * change it. Simulation thread only, like step(). */
+    void trackGasFieldAngle(double crankAngleDegrees) noexcept;
+    void stopGasFieldTracking() noexcept { gasFieldArmed_ = false; }
+    /** Capture the gas field at the current crank angle. */
+    void captureGasFieldNow() noexcept { captureGasField(); }
+    /** The latest capture; sequence 0 until the first one. */
+    [[nodiscard]] const GasFieldSnapshot& gasField() const noexcept { return gasField_; }
 private:
+    /** Sized once the networks exist, so a capture never allocates. */
+    void configureGasFieldSnapshot();
+    void pollGasFieldCapture() noexcept;
+    void captureGasField() noexcept;
     /** Compile and allocate the mandatory nonlinear exhaust network. */
     void configurePhysicalExhaustNetwork();
     /** Assemble one 1-D finite-volume runner duct per cylinder.
@@ -297,6 +314,11 @@ private:
      * time-averaged valve boundary, split symmetrically around exhaust
      * coupling. Cylinders still interact only through the shared plenum. */
     std::array<std::unique_ptr<gasdynamics::ExhaustGasNetwork>, 32> intakeRunnerNetworks_;
+    GasFieldSnapshot gasField_;
+    double gasFieldTargetDegrees_ { 0.0 };
+    double gasFieldLastDegrees_ { 0.0 };
+    double gasFieldCaptureSeconds_ { 0.0 };
+    bool gasFieldArmed_ { false };
     /** Workers for the per-cylinder half of the runner advance, which the
      * profiler puts at 75-84% of the mechanical sub-step. Null when the engine
      * is too small or the machine too narrow for a barrier to pay for itself,

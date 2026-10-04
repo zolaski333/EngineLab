@@ -1,6 +1,7 @@
 #pragma once
 
 #include <enginelab/render/EngineModel3D.hpp>
+#include <enginelab/render/GasFieldView.hpp>
 #include <juce_opengl/juce_opengl.h>
 #include <memory>
 #include <vector>
@@ -22,7 +23,16 @@ struct SceneFrame final {
         draws a sharp frame. */
     std::vector<double> angles;
     render::ScenePoseInput pose;
+    /** The solver's gas along the exhaust, or null. Waves are drawn in the
+        All and Gas flow layers; hot walls glow in every layer. */
+    const render::GasFieldView* gasField {};
+    /** Part highlighted by the inspector, or -1. */
+    int selectedPart { -1 };
 };
+
+/** Whether a click can select this part in the given layer: hidden parts,
+    flames and X-ray shells let the click through. */
+[[nodiscard]] bool scenePartPickable(const render::ScenePart&, SceneLayerMode, bool xray) noexcept;
 
 /**
  * OpenGL 3.2 renderer of an EngineModel3D. Lives on the OpenGL thread: create

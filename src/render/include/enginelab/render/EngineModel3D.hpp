@@ -5,8 +5,11 @@
 #include <enginelab/render/DuctLayout3D.hpp>
 #include <enginelab/render/Mesh.hpp>
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
+#include <functional>
+#include <optional>
 #include <vector>
 
 namespace enginelab::render {
@@ -41,6 +44,9 @@ struct ScenePart final {
     Mesh mesh;
     SceneMaterial material { SceneMaterial::steel };
     std::uint8_t layers { layerMechanism };
+    /** For a duct, where each vertex sits along its centreline: 0 at the
+        inlet, 1 at the outlet. Empty for every other part. */
+    std::vector<float> stations;
 };
 
 struct SceneInstance final {
@@ -58,6 +64,8 @@ struct ScenePoseInput final {
     /** Engine speed and throttle, for a variable cam profile switch. */
     double rpm {};
     double throttle {};
+    /** Strength of the flame at the exhaust outlets, 0..1 (afterfire). */
+    float afterfire {};
 };
 
 struct SceneBounds final {
@@ -77,6 +85,31 @@ struct SceneDuct final {
     std::uint16_t part {};
     std::vector<Vec3> centreline;
     float authoredLengthMm {};
+};
+
+/** What a part is, for the part inspector. */
+enum class PartRole : std::uint8_t {
+    block,
+    head,
+    liner,
+    crankshaft,
+    piston,
+    rod,
+    intakeValve,
+    exhaustValve,
+    combustion,
+    intakePorts,
+    exhaustPorts,
+    duct,
+    afterfire,
+};
+
+struct PartIdentity final {
+    PartRole role { PartRole::block };
+    /** Index in the configuration's cylinders; -1 when not one cylinder's. */
+    int cylinder { -1 };
+    /** Index in EngineModel3D::ducts(); -1 when not a duct. */
+    int duct { -1 };
 };
 
 /**
@@ -124,6 +157,12 @@ public:
     };
     [[nodiscard]] CylinderProbe probe(std::size_t cylinder, double crankAngleDegrees) const noexcept;
 
+    [[nodiscard]] PartIdentity identify(std::uint16_t part) const noexcept;
+    /** The camshafts that drive a cylinder's valves (its bank's, or the engine's). */
+    [[nodiscard]] const CamshaftConfig& camshaftsOf(std::size_t cylinder) const noexcept {
+        return *cylinders_[std::min(cylinder, cylinders_.size() - 1U)].cams;
+    }
+
 private:
     struct Cylinder final {
         Vec3 axis;
@@ -142,6 +181,7 @@ private:
         std::uint16_t intakeValvePart {};
         std::uint16_t exhaustValvePart {};
         std::uint16_t flamePart {};
+        std::uint16_t linerPart { 0xFFFFU };
         std::uint16_t runnerPart { 0xFFFFU };
     };
     struct Throw final {
@@ -169,6 +209,8 @@ private:
     std::vector<PortAnchor> intakePorts_;
     std::vector<PortAnchor> exhaustPorts_;
     std::vector<SceneDuct> ducts_;
+    /** Flames at the exhaust outlets, lit by an afterfire. */
+    std::vector<std::uint16_t> outletFlameParts_;
     /** Parts left out of the engine framing (exhaust trunk, airbox, inlet duct). */
     std::vector<bool> farParts_;
     SceneBounds bounds_ {};
@@ -176,5 +218,15 @@ private:
     float pitch_ {};
     bool radialLike_ {};
 };
+
+struct PartHit final {
+    std::uint16_t part {};
+    /** Distance along the ray, millimetres. */
+    float distance {};
+};
+
+/** The nearest part a ray meets, among the posed instances `pickable` accepts. */
+[[nodiscard]] std::optional<PartHit> pickPart(const EngineModel3D&, const std::vector<SceneInstance>&, Vec3 origin,
+                                              Vec3 direction, const std::function<bool(std::uint16_t)>& pickable);
 
 } // namespace enginelab::render

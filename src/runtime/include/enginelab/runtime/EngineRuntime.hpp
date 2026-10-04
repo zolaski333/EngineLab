@@ -280,6 +280,13 @@ public:
     [[nodiscard]] std::vector<DynoRun> dynoHistory() const;
     void deleteDynoRun(std::uint64_t id);
     [[nodiscard]] EngineState snapshot() const;
+    /** Ask for the gas field at a crank angle over the cycle, or, with a
+     * negative angle, the latest one. Any thread; the latest request wins, and
+     * the simulator stops capturing a quarter of a second after the last one. */
+    void requestGasField(double crankAngleDegrees) noexcept;
+    /** Copies the latest captured field into `out` when it is newer than
+     * `out.sequence`. Any thread. */
+    bool latestGasField(GasFieldSnapshot& out) const;
     [[nodiscard]] FiringEventQueue& audioEvents() noexcept { return eventQueue_; }
     [[nodiscard]] CylinderPressureQueue& cylinderPressureSamples() noexcept { return *pressureQueue_; }
     [[nodiscard]] ExhaustAcousticQueue& exhaustAcousticSamples() noexcept {
@@ -391,6 +398,14 @@ private:
     RealtimeAudioState audioState_;
     mutable std::mutex snapshotMutex_;
     EngineState snapshot_;
+    std::atomic<double> gasFieldRequestDegrees_ { -1.0 };
+    std::atomic<std::uint64_t> gasFieldRequestSequence_ { 0 };
+    // Simulation thread only.
+    std::uint64_t gasFieldServedRequest_ { 0 };
+    std::uint64_t gasFieldPublished_ { 0 };
+    int gasFieldIdleFrames_ { 0 };
+    mutable std::mutex gasFieldMutex_;
+    GasFieldSnapshot gasFieldMailbox_;
     std::atomic<bool> ignition_ { false };
     std::atomic<bool> starter_ { false };
     std::atomic<double> throttle_ { 0.0 };

@@ -11,30 +11,35 @@ using namespace juce::gl;
 using render::Mat4;
 using render::SceneMaterial;
 using render::Vec3;
+using enginelab::GasFieldElement;
 
 namespace {
 // ------------------------------------------------------------------ shaders
-// Every part's transform and material live in a buffer texture, six texels
+// Every part's transform and material live in a buffer texture, seven texels
 // per part (4 matrix columns, colour + metalness, roughness / opacity / rim /
-// glow), so a whole material group is one draw call.
+// glow, gas-field row / sample count), so a whole material group is one draw
+// call.
 constexpr const char* meshVertexSource = R"(#version 150
 in vec3 aPosition;
 in vec3 aNormal;
 in float aPart;
+in float aStation;
 uniform samplerBuffer uParts;
 uniform mat4 uViewProjection;
 uniform int uSkipDark;
 out vec3 vWorld;
 out vec3 vNormal;
+out float vStation;
 flat out int vPart;
 void main() {
-    int base = int(aPart + 0.5) * 6;
+    int base = int(aPart + 0.5) * 7;
     mat4 model = mat4(texelFetch(uParts, base), texelFetch(uParts, base + 1),
                       texelFetch(uParts, base + 2), texelFetch(uParts, base + 3));
     vec4 world = model * vec4(aPosition, 1.0);
     vWorld = world.xyz;
     vNormal = mat3(model) * aNormal;
     vPart = base;
+    vStation = aStation;
     gl_Position = uViewProjection * world;
     // An unlit flame is moved outside the clip volume instead of drawn black.
     if (uSkipDark == 1 && texelFetch(uParts, base + 5).w < 0.003) gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
@@ -48,8 +53,11 @@ void main() {
 constexpr const char* surfaceFragmentSource = R"(#version 150
 in vec3 vWorld;
 in vec3 vNormal;
+in float vStation;
 flat in int vPart;
 uniform samplerBuffer uParts;
+uniform samplerBuffer uField;
+uniform int uShowWaves;
 uniform vec3 uEye;
 uniform int uLightCount;
 uniform vec4 uLightPosition[8];
@@ -107,6 +115,13 @@ vec3 environmentBrdf(vec3 f0, float rough, float nv) {
     return f0 * ab.x + ab.y;
 }
 
+// Hot steel: visibly red from the Draper point (798 K), orange-yellow by
+// 1,300 K.
+vec3 incandescence(float kelvin) {
+    float k = clamp((kelvin - 798.0) / 500.0, 0.0, 1.0);
+    return mix(vec3(0.6, 0.04, 0.0), vec3(2.2, 0.9, 0.25), k) * k;
+}
+
 vec3 aces(vec3 x) {
     return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0);
 }
@@ -120,6 +135,23 @@ void main() {
     float uOpacity = finish.y;
     float uRim = finish.z;
     vec3 uEmissive = look.rgb * finish.w;
+    // A duct with a gas field: the solver's pressure wave colours it (only
+    // the departure from ambient glows, so quiet pipe stays plain metal),
+    // and its wall glows when hot.
+    vec4 field = texelFetch(uParts, vPart + 6);
+    if (field.x >= 0.0 && vStation >= 0.0) {
+        float n = field.y;
+        float x = clamp(vStation * n - 0.5, 0.0, n - 1.0);
+        int i0 = int(x);
+        int i1 = min(i0 + 1, int(n) - 1);
+        int row = int(field.x + 0.5) * 16;
+        vec4 gas = mix(texelFetch(uField, row + i0), texelFetch(uField, row + i1), x - float(i0));
+        if (uShowWaves == 1) {
+            uBaseColour = gas.rgb;
+            uEmissive += max(gas.rgb - vec3(0.0656, 0.0868, 0.0805), 0.0) * 1.6;
+        }
+        uEmissive += incandescence(gas.a);
+    }
     vec3 n = normalize(vNormal);
     vec3 v = normalize(uEye - vWorld);
     float facing = dot(n, v);
@@ -288,6 +320,17 @@ constexpr std::array<MaterialLook, render::sceneMaterialCount> looks { {
     return frame.layer == SceneLayerMode::gasFlow ? 2 : 1;
 }
 
+} // namespace
+
+bool scenePartPickable(const render::ScenePart& part, SceneLayerMode layer, bool xray) noexcept {
+    SceneFrame frame;
+    frame.layer = layer;
+    frame.xray = xray;
+    const auto pass = passOf(part.material, part.layers, frame);
+    return pass != 0 && pass != 5 && !(xray && pass == 4);
+}
+
+namespace {
 // ------------------------------------------------------------------ helpers
 [[nodiscard]] GLuint compileShader(GLenum type, const char* source, juce::String& error) {
     const auto shader = glCreateShader(type);
@@ -318,6 +361,7 @@ constexpr std::array<MaterialLook, render::sceneMaterialCount> looks { {
     glBindAttribLocation(program, 0, "aPosition");
     glBindAttribLocation(program, 1, "aNormal");
     glBindAttribLocation(program, 2, "aPart");
+    glBindAttribLocation(program, 3, "aStation");
     glBindFragDataLocation(program, 0, "fragColour");
     glLinkProgram(program);
     glDeleteShader(vertex);
@@ -354,20 +398,27 @@ struct EngineSceneRenderer::Impl final {
         Vec3 position;
         Vec3 normal;
         float part {};
+        /** Position along a duct, 0..1; -1 for every other part. */
+        float station {};
     };
-    static constexpr std::size_t texelsPerPart = 6;
+    static constexpr std::size_t texelsPerPart = 7;
+    static constexpr std::size_t fieldSamples = GasFieldElement::maximumSamples;
 
     GLuint surface {}, flame {}, background {}, copyProgram {}, floorProgram {};
-    GLint surfaceViewProjection {}, surfaceEye {}, surfaceSkipDark {}, lightCount {}, lightPosition {}, lightColour {};
+    GLint surfaceViewProjection {}, surfaceEye {}, surfaceSkipDark {}, surfaceShowWaves {}, lightCount {}, lightPosition {},
+        lightColour {};
     GLint flameViewProjection {}, flameEye {}, flameColour {}, flameSkipDark {};
     GLint backgroundSize {};
     GLint copyTexture {}, copyWeight {};
     GLint floorViewProjection {}, floorMode {}, floorColour {}, floorCentreUniform {}, floorExtent {}, floorRadiusUniform {};
 
     GLuint emptyVao {}, meshVao {}, meshVbo {}, meshEbo {}, floorVao {}, floorVbo {};
-    GLuint partBuffer {}, partTexture {};
+    GLuint partBuffer {}, partTexture {}, fieldBuffer {}, fieldTexture {};
     std::vector<Group> groups;
     std::vector<float> partData;
+    /** Gas-field rows of this frame, and the row of each part (-1: none). */
+    std::vector<float> fieldData;
+    std::vector<int> fieldRow;
     GLsizei radialLineVertices {}, circleLineVertices {}, shadowVertices {};
     Vec3 floorCentre {};
     float floorRadius {};
@@ -438,12 +489,13 @@ struct EngineSceneRenderer::Impl final {
     }
 
     void destroyGeometry() {
-        const std::array<GLuint, 4> buffers { meshVbo, meshEbo, floorVbo, partBuffer };
-        glDeleteBuffers(4, buffers.data());
+        const std::array<GLuint, 5> buffers { meshVbo, meshEbo, floorVbo, partBuffer, fieldBuffer };
+        glDeleteBuffers(5, buffers.data());
         const std::array<GLuint, 2> arrays { meshVao, floorVao };
         glDeleteVertexArrays(2, arrays.data());
-        if (partTexture != 0) glDeleteTextures(1, &partTexture);
-        meshVbo = meshEbo = floorVbo = partBuffer = meshVao = floorVao = partTexture = 0;
+        const std::array<GLuint, 2> textures { partTexture, fieldTexture };
+        glDeleteTextures(2, textures.data());
+        meshVbo = meshEbo = floorVbo = partBuffer = meshVao = floorVao = partTexture = fieldBuffer = fieldTexture = 0;
         groups.clear();
     }
 
@@ -464,8 +516,9 @@ struct EngineSceneRenderer::Impl final {
                 groups.push_back({ part.material, part.layers, 0,
                                    static_cast<std::uintptr_t>(indices.size() * sizeof(std::uint32_t)) });
             const auto base = static_cast<std::uint32_t>(vertices.size());
-            for (const auto& vertex : part.mesh.vertices)
-                vertices.push_back({ vertex.position, vertex.normal, static_cast<float>(index) });
+            for (std::size_t v = 0; v < part.mesh.vertices.size(); ++v)
+                vertices.push_back({ part.mesh.vertices[v].position, part.mesh.vertices[v].normal,
+                                     static_cast<float>(index), part.stations.empty() ? -1.0F : part.stations[v] });
             for (const auto i : part.mesh.indices) indices.push_back(base + i);
             groups.back().count += static_cast<GLsizei>(part.mesh.indices.size());
         }
@@ -487,6 +540,9 @@ struct EngineSceneRenderer::Impl final {
         glEnableVertexAttribArray(2);
         glVertexAttribPointer(2, 1, GL_FLOAT, GL_FALSE, sizeof(GpuVertex),
                               reinterpret_cast<const void*>(offsetof(GpuVertex, part)));
+        glEnableVertexAttribArray(3);
+        glVertexAttribPointer(3, 1, GL_FLOAT, GL_FALSE, sizeof(GpuVertex),
+                              reinterpret_cast<const void*>(offsetof(GpuVertex, station)));
         glBindVertexArray(0);
 
         partData.assign(parts.size() * texelsPerPart * 4, 0.0F);
@@ -497,6 +553,16 @@ struct EngineSceneRenderer::Impl final {
         glGenTextures(1, &partTexture);
         glBindTexture(GL_TEXTURE_BUFFER, partTexture);
         glTexBuffer(GL_TEXTURE_BUFFER, GL_RGBA32F, partBuffer);
+        // One row of gas-field samples per duct part at most.
+        fieldRow.assign(parts.size(), -1);
+        fieldData.assign((parts.size() + 1U) * fieldSamples * 4, 0.0F);
+        glGenBuffers(1, &fieldBuffer);
+        glBindBuffer(GL_TEXTURE_BUFFER, fieldBuffer);
+        glBufferData(GL_TEXTURE_BUFFER, static_cast<GLsizeiptr>(fieldData.size() * sizeof(float)), nullptr,
+                     GL_STREAM_DRAW);
+        glGenTextures(1, &fieldTexture);
+        glBindTexture(GL_TEXTURE_BUFFER, fieldTexture);
+        glTexBuffer(GL_TEXTURE_BUFFER, GL_RGBA32F, fieldBuffer);
         glBindTexture(GL_TEXTURE_BUFFER, 0);
         glBindBuffer(GL_TEXTURE_BUFFER, 0);
 
@@ -551,6 +617,26 @@ struct EngineSceneRenderer::Impl final {
         glBindBuffer(GL_ARRAY_BUFFER, 0);
     }
 
+    /** Uploads the gas field of this frame, one row per duct part. */
+    void writeFieldData(const SceneFrame& frame) {
+        std::fill(fieldRow.begin(), fieldRow.end(), -1);
+        if (frame.gasField == nullptr) return;
+        int rows = 0;
+        for (const auto& part : frame.gasField->parts()) {
+            if (part.part >= fieldRow.size()) continue;
+            fieldRow[part.part] = rows;
+            std::copy(part.samples.begin(), part.samples.end(),
+                      fieldData.begin() + static_cast<std::ptrdiff_t>(static_cast<std::size_t>(rows) * fieldSamples * 4));
+            ++rows;
+        }
+        if (rows == 0) return;
+        glBindBuffer(GL_TEXTURE_BUFFER, fieldBuffer);
+        glBufferSubData(GL_TEXTURE_BUFFER, 0,
+                        static_cast<GLsizeiptr>(static_cast<std::size_t>(rows) * fieldSamples * 4 * sizeof(float)),
+                        fieldData.data());
+        glBindBuffer(GL_TEXTURE_BUFFER, 0);
+    }
+
     /** Writes every part's transform and material for this sub-frame. */
     void writePartData(const render::EngineModel3D& model, const SceneFrame& frame) {
         for (const auto& instance : instances) {
@@ -571,6 +657,10 @@ struct EngineSceneRenderer::Impl final {
                 rim = 0.22F;
             }
             if (pass == 5) glow = instance.intensity;
+            if (static_cast<int>(instance.part) == frame.selectedPart) {
+                glow += 0.35F;
+                opacity = std::max(opacity, 0.45F);
+            }
             auto* out = partData.data() + static_cast<std::size_t>(instance.part) * texelsPerPart * 4;
             std::copy(instance.transform.m.begin(), instance.transform.m.end(), out);
             out[16] = base.x;
@@ -581,6 +671,11 @@ struct EngineSceneRenderer::Impl final {
             out[21] = opacity;
             out[22] = rim;
             out[23] = glow;
+            const auto row = fieldRow[instance.part];
+            out[24] = static_cast<float>(row);
+            out[25] = row >= 0 ? static_cast<float>(frame.gasField->parts()[static_cast<std::size_t>(row)].count) : 0.0F;
+            out[26] = 0.0F;
+            out[27] = 0.0F;
         }
         glBindBuffer(GL_TEXTURE_BUFFER, partBuffer);
         const auto bytes = static_cast<GLsizeiptr>(partData.size() * sizeof(float));
@@ -645,12 +740,15 @@ struct EngineSceneRenderer::Impl final {
             }
         }
 
+        glActiveTexture(GL_TEXTURE2);
+        glBindTexture(GL_TEXTURE_BUFFER, fieldTexture);
         glActiveTexture(GL_TEXTURE1);
         glBindTexture(GL_TEXTURE_BUFFER, partTexture);
         glUseProgram(surface);
         setMatrix(surfaceViewProjection, viewProjection);
         setVec3(surfaceEye, frame.eye);
         glUniform1i(surfaceSkipDark, 0);
+        glUniform1i(surfaceShowWaves, frame.layer == SceneLayerMode::all || frame.layer == SceneLayerMode::gasFlow ? 1 : 0);
         glUniform1i(lightCount, lights);
         glUniform4fv(lightPosition, 8, lightPositions.data());
         glUniform3fv(lightColour, 8, lightColours.data());
@@ -682,6 +780,8 @@ struct EngineSceneRenderer::Impl final {
         setVec3(flameColour, displayColour(flameLook.srgb) * flameLook.opacity);
         drawPass(5);
         glDepthMask(GL_TRUE);
+        glBindTexture(GL_TEXTURE_BUFFER, 0);
+        glActiveTexture(GL_TEXTURE2);
         glBindTexture(GL_TEXTURE_BUFFER, 0);
         glActiveTexture(GL_TEXTURE0);
     }
@@ -717,6 +817,7 @@ bool EngineSceneRenderer::initialise(juce::String& error) {
     s.surfaceViewProjection = uniform(s.surface, "uViewProjection");
     s.surfaceEye = uniform(s.surface, "uEye");
     s.surfaceSkipDark = uniform(s.surface, "uSkipDark");
+    s.surfaceShowWaves = uniform(s.surface, "uShowWaves");
     s.lightCount = uniform(s.surface, "uLightCount");
     s.lightPosition = uniform(s.surface, "uLightPosition");
     s.lightColour = uniform(s.surface, "uLightColour");
@@ -733,11 +834,13 @@ bool EngineSceneRenderer::initialise(juce::String& error) {
     s.floorCentreUniform = uniform(s.floorProgram, "uCentre");
     s.floorExtent = uniform(s.floorProgram, "uExtent");
     s.floorRadiusUniform = uniform(s.floorProgram, "uRadius");
-    // The part buffer texture always sits on unit 1.
+    // The part buffer texture always sits on unit 1, the gas field on unit 2.
     for (const auto program : { s.surface, s.flame }) {
         glUseProgram(program);
         glUniform1i(uniform(program, "uParts"), 1);
     }
+    glUseProgram(s.surface);
+    glUniform1i(uniform(s.surface, "uField"), 2);
     glUseProgram(0);
     glGenVertexArrays(1, &s.emptyVao);
     glGetIntegerv(GL_MAX_SAMPLES, &s.maximumSamples);
@@ -769,6 +872,7 @@ void EngineSceneRenderer::render(const SceneFrame& frame, int width, int height)
     glGetIntegerv(GL_FRAMEBUFFER_BINDING, &entryFramebuffer);
     s.ensureTargets(width, height, frame.antiAliasing ? std::min(4, s.maximumSamples) : 0);
 
+    s.writeFieldData(frame);
     auto pose = frame.pose;
     const auto subframes = frame.angles.size();
     for (std::size_t k = 0; k < subframes; ++k) {

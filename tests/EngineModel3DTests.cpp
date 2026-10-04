@@ -1,12 +1,20 @@
 #include <enginelab/catalog/EngineCatalog.hpp>
+#include <enginelab/ecu/SimpleEcuModel.hpp>
+#include <enginelab/events/FourStrokeEventGenerator.hpp>
+#include <enginelab/exhaust/ExhaustGraph.hpp>
 #include <enginelab/exhaust/LegacyExhaustNetwork.hpp>
+#include <enginelab/physics/SimplifiedGasolinePhysics.hpp>
 #include <enginelab/render/CrankClock.hpp>
 #include <enginelab/render/EngineModel3D.hpp>
+#include <enginelab/render/GasFieldView.hpp>
+#include <enginelab/simulation/EngineSimulator.hpp>
 
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
 #include <iostream>
+#include <memory>
+#include <numbers>
 #include <string>
 
 namespace {
@@ -39,6 +47,148 @@ void require(bool condition, const std::string& message) {
 
 int stretchedPipes = 0;
 int checkedPipes = 0;
+
+/** A simulator with the models it borrows. */
+struct Bench final {
+    explicit Bench(const EngineConfig& config)
+        : exhaust(ExhaustGraph::makeForEngine(config)),
+          simulator(std::make_unique<EngineSimulator>(config, ecu, physics, events, exhaust)) {}
+    SimpleEcuModel ecu;
+    SimplifiedGasolinePhysics physics;
+    FourStrokeEventGenerator events;
+    ExhaustGraph exhaust;
+    std::unique_ptr<EngineSimulator> simulator;
+};
+
+/** Every drawn exhaust component, runner and plenum shows the solver's own gas. */
+void checkGasFieldBinding(const EngineModel3D& model) {
+    const auto& config = model.config();
+    Bench bench(config);
+    bench.simulator->captureGasFieldNow();
+    const auto& field = bench.simulator->gasField();
+    require(field.sequence == 1, config.name + ": a capture is taken on request");
+    const auto binding = bindGasField(model, field);
+    for (std::size_t d = 0; d < model.ducts().size(); ++d) {
+        const auto& duct = model.ducts()[d];
+        const auto label = config.name + " path " + std::to_string(duct.pathId) + " element "
+                         + std::to_string(duct.elementId);
+        if (duct.kind == DuctKind::exhaustComponent) {
+            // A resonator with no outlet is an acoustic side branch the gas
+            // solver does not carry.
+            const auto& path = *std::find_if(config.exhaustPaths.begin(), config.exhaustPaths.end(),
+                [&duct](const ExhaustPathConfig& item) { return item.id == duct.pathId; });
+            const auto network = path.network ? *path.network : makeEditableExhaustNetwork(path);
+            const auto sideBranch = duct.componentType == ExhaustComponentType::resonator
+                && std::none_of(network.connections.begin(), network.connections.end(),
+                       [&duct](const ExhaustComponentConnectionConfig& c) { return c.fromComponentId == duct.elementId; });
+            require(sideBranch || binding[d] >= 0, label + ": an exhaust component shows its solver duct");
+        }
+        if (duct.kind == DuctKind::intakeRunner || duct.kind == DuctKind::intakePlenum)
+            require(binding[d] >= 0, label + ": an intake runner or plenum shows its solver gas");
+        if (binding[d] < 0) continue;
+        const auto& element = field.elements[static_cast<std::size_t>(binding[d])];
+        require(element.sampleCount > 0, label + ": a bound element has samples");
+        for (std::size_t s = 0; s < element.sampleCount; ++s)
+            require(element.pressurePa[s] > 1'000.0F && element.gasTemperatureK[s] > 100.0F,
+                    label + ": the captured gas is physical");
+    }
+    // Two components never share one solver element.
+    for (std::size_t a = 0; a < binding.size(); ++a)
+        for (std::size_t b = a + 1; b < binding.size(); ++b)
+            require(binding[a] < 0 || binding[a] != binding[b] || model.ducts()[a].kind != DuctKind::exhaustComponent
+                        || model.ducts()[b].kind != DuctKind::exhaustComponent,
+                    config.name + ": two exhaust components are bound to one solver element");
+}
+
+/** The colours show the wave, not the mean: an exhaust held 200 kPa above
+    ambient (a turbocharged one) still shows rarefaction and compression. */
+void checkWaveColours(const EngineModel3D& model) {
+    const auto& config = model.config();
+    Bench bench(config);
+    bench.simulator->captureGasFieldNow();
+    auto field = bench.simulator->gasField();
+    GasFieldView view;
+    for (int k = 0; k < 200; ++k) {
+        ++field.sequence;
+        field.simulationTimeSeconds += 0.01;
+        for (std::size_t e = 0; e < field.elements.size(); ++e) {
+            auto& element = field.elements[e];
+            for (std::size_t s = 0; s < element.sampleCount; ++s)
+                element.pressurePa[s] = static_cast<float>(field.ambientPressurePa + 200'000.0
+                    + 10'000.0 * std::sin(2.0 * std::numbers::pi * k / 16.0 + static_cast<double>(s + e)));
+        }
+        view.update(model, field);
+    }
+    require(view.valid(), config.name + ": the exhaust has a field to draw");
+    require(view.pressureScalePa() > 5'000.0F && view.pressureScalePa() < 20'000.0F,
+            config.name + ": the scale follows the wave, not the back pressure ("
+                + std::to_string(view.pressureScalePa()) + " Pa)");
+    bool below = false;
+    bool above = false;
+    for (const auto& part : view.parts())
+        for (std::size_t s = 0; s < part.count; ++s) {
+            below = below || part.samples[4 * s + 2] > part.samples[4 * s + 0];
+            above = above || part.samples[4 * s + 0] > part.samples[4 * s + 2];
+        }
+    require(below && above, config.name + ": a wave over a high mean shows both violet and orange");
+}
+
+/** The field is captured at the angle asked for, and capturing it changes nothing. */
+void checkGasFieldCapture(const EngineConfig& config) {
+    Bench watched(config);
+    Bench control(config);
+    const auto controls = [](int frame) {
+        const auto time = frame / 240.0;
+        EngineControls value;
+        value.ignitionEnabled = true;
+        value.starterEngaged = time < 1.0;
+        value.throttle = 0.35;
+        value.load = 0.2;
+        return value;
+    };
+    for (int frame = 0; frame < 360; ++frame) {
+        (void)watched.simulator->step(1.0 / 240.0, controls(frame));
+        (void)control.simulator->step(1.0 / 240.0, controls(frame));
+    }
+    require(watched.simulator->state().rpm > 400.0, config.name + ": the engine runs before the capture is checked");
+    const auto cycle = watched.events.cycleDegrees();
+    const auto forward = [cycle](double degrees) { return std::fmod(std::fmod(degrees, cycle) + cycle, cycle); };
+    int captures = 0;
+    for (int frame = 360; frame < 480; ++frame) {
+        const auto target = forward(37.0 * frame);
+        watched.simulator->trackGasFieldAngle(target);
+        const auto before = watched.simulator->gasField().sequence;
+        (void)watched.simulator->step(1.0 / 240.0, controls(frame));
+        (void)control.simulator->step(1.0 / 240.0, controls(frame));
+        const auto& field = watched.simulator->gasField();
+        if (field.sequence == before) continue;
+        ++captures;
+        const auto late = forward(field.crankAngleDegrees - target);
+        require(late <= watched.simulator->state().crankDegreesPerSolverStep + 1.0e-6,
+                config.name + ": the field is captured within one sub-step after the angle asked for (late by "
+                    + std::to_string(late) + " deg)");
+        if (frame % 7 == 0) watched.simulator->captureGasFieldNow();
+    }
+    require(captures > 20, config.name + ": a tracked angle is captured once per crossing (" + std::to_string(captures) + ")");
+    watched.simulator->stopGasFieldTracking();
+    require(watched.simulator->state().rpm == control.simulator->state().rpm
+                && watched.simulator->state().crankAngleDegrees == control.simulator->state().crankAngleDegrees,
+            config.name + ": capturing the gas field does not change the simulation");
+}
+
+void checkStations(const EngineModel3D& model) {
+    for (const auto& duct : model.ducts()) {
+        const auto& part = model.parts()[duct.part];
+        if (duct.centreline.size() < 2U) {
+            require(part.stations.empty(), model.config().name + ": a box has no stations");
+            continue;
+        }
+        require(part.stations.size() == part.mesh.vertices.size(), model.config().name + ": one station per duct vertex");
+        const auto [low, high] = std::minmax_element(part.stations.begin(), part.stations.end());
+        require(*low >= 0.0F && *high <= 1.0F && *low < 0.05F && *high > 0.95F,
+                model.config().name + ": duct stations run from inlet to outlet");
+    }
+}
 
 /** The intake and exhaust drawn from the engine's own configuration. */
 void checkDucts(const EngineModel3D& model) {
@@ -113,6 +263,9 @@ void checkEngine(const EngineConfig& config) {
             name + ": the engine bounds are finite and engine-sized");
 
     checkDucts(model);
+    checkStations(model);
+    checkGasFieldBinding(model);
+    checkWaveColours(model);
 
     std::vector<SceneInstance> instances;
     for (int step = 0; step < 72; ++step) {
@@ -220,6 +373,7 @@ int main() {
     require(stretchedPipes <= 6, "no more exhaust pipes are drawn longer than authored than when measured ("
                                      + std::to_string(stretchedPipes) + ")");
     checkCrankClock();
+    checkGasFieldCapture(catalogue.entries.front().config);
     std::cout << "EngineModel3D: " << catalogue.entries.size() << " engines checked; " << stretchedPipes << " of "
               << checkedPipes << " exhaust pipes drawn more than 3% longer than authored\n";
     return 0;

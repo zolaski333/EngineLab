@@ -3,7 +3,9 @@
 #include <enginelab/app/DashboardModel.hpp>
 #include <enginelab/app/EngineScene.hpp>
 #include <enginelab/app/Widgets.hpp>
+#include <enginelab/foundation/GasFieldSnapshot.hpp>
 #include <enginelab/render/CrankClock.hpp>
+#include <enginelab/render/GasFieldView.hpp>
 #include <atomic>
 #include <condition_variable>
 #include <functional>
@@ -65,6 +67,36 @@ private:
     std::vector<juce::String> labels_;
 };
 
+/** Colour scale of the exhaust waves, bottom centre of the view. */
+class WaveLegend final : public juce::Component {
+public:
+    void setScale(float pascals);
+    void paint(juce::Graphics&) override;
+
+private:
+    float scalePa_ {};
+};
+
+/** What the clicked part is, with its authored geometry and live gas state. */
+class PartInspector final : public juce::Component {
+public:
+    struct Row final {
+        juce::String label;
+        juce::String value;
+    };
+    std::function<void()> onClose;
+    void show(juce::String title, juce::String subtitle, std::vector<Row> rows);
+    [[nodiscard]] int idealHeight() const;
+    void paint(juce::Graphics&) override;
+    void mouseUp(const juce::MouseEvent&) override;
+
+private:
+    [[nodiscard]] juce::Rectangle<int> closeArea() const;
+    juce::String title_;
+    juce::String subtitle_;
+    std::vector<Row> rows_;
+};
+
 /**
  * Centre of the window: the GPU-rendered 3-D engine with its floating
  * overlays, or the 2-D cutaway.
@@ -81,6 +113,9 @@ public:
     ~EngineViewport() override;
 
     void setWheelModifierCheck(std::function<bool()>);
+    /** Where the gas field comes from: asks for the field at a crank angle
+        (negative: the latest) and copies a newer one into the snapshot. */
+    void setGasFieldSource(std::function<bool(double crankAngleDegrees, GasFieldSnapshot&)>);
     /** Rebuilds the 3-D model; call after every engine change. */
     void setEngine(const EngineConfig&);
     void stepLayer(int delta);
@@ -120,6 +155,8 @@ private:
         bool vsync { true };
         Orbit goal;
         float smoothingSeconds { 0.08F };
+        std::shared_ptr<const GasFieldSnapshot> gasField;
+        int selectedPart { -1 };
     };
 
     void newOpenGLContextCreated() override;
@@ -138,6 +175,10 @@ private:
     [[nodiscard]] Orbit presetOrbit(int view) const;
     [[nodiscard]] Orbit goal() const;
     void setGoal(const Orbit&, float smoothingSeconds);
+    void selectPartAt(juce::Point<float>);
+    void setSelectedPart(int part);
+    void updateInspector();
+    void updateLegend();
 
     const DashboardModel& model_;
     EngineCutawayView cutaway_;
@@ -147,7 +188,15 @@ private:
     SegmentedControl playback_ { { "Real time", "1:50", "1:250", "Freeze" } };
     ActionButton settingsButton_ { {}, ActionButton::Style::tool };
     CyclePanel cycle_;
+    WaveLegend legend_;
+    PartInspector inspector_;
     std::function<bool()> wheelModifierActive_;
+    std::function<bool(double, GasFieldSnapshot&)> gasFieldSource_;
+    /** Latest field on the message thread, and the ducts it binds to. */
+    GasFieldSnapshot gasField_;
+    std::vector<int> gasFieldBinding_;
+    int selectedPart_ { -1 };
+    bool dragged_ { false };
 
     ViewSettings settings_;
     std::shared_ptr<const render::EngineModel3D> scene_;
@@ -171,6 +220,8 @@ private:
     render::CrankClock clock_;
     std::uint64_t renderedModelRevision_ {};
     std::uint64_t observedSequence_ {};
+    std::uint64_t renderedGasField_ {};
+    render::GasFieldView gasFieldView_;
     Orbit orbit_ {};
     bool orbitValid_ { false };
     double lastFrameWall_ {};
@@ -182,6 +233,7 @@ private:
     std::atomic<double> displayedAngle_ { 0.0 };
     std::atomic<std::uint64_t> framesRendered_ { 0 };
     std::atomic<bool> initialiseFailed_ { false };
+    std::atomic<float> pressureScalePa_ { 0.0F };
     std::uint64_t lastFrameCount_ {};
     double lastFpsWall_ {};
     double measuredFps_ {};

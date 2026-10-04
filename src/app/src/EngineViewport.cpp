@@ -1,4 +1,5 @@
 #include <enginelab/app/EngineViewport.hpp>
+#include <enginelab/exhaust/LegacyExhaustNetwork.hpp>
 
 #include <enginelab/app/Theme.hpp>
 #include <algorithm>
@@ -398,6 +399,109 @@ void CyclePanel::paint(juce::Graphics& g) {
     }
 }
 
+// --------------------------------------------------------------- wave legend
+namespace {
+/** The scale as the legend prints it. juce::String(float, 0) means "default
+    precision", not "no decimals". */
+juce::String legendFigure(float pascals) {
+    return pascals < 10'000.0F ? juce::String(pascals / 1'000.0F, 1) : juce::String(juce::roundToInt(pascals / 1'000.0F));
+}
+} // namespace
+
+void WaveLegend::setScale(float pascals) {
+    // Repaint only when the shown figure changes.
+    if (legendFigure(pascals) == legendFigure(scalePa_)) return;
+    scalePa_ = pascals;
+    repaint();
+}
+
+void WaveLegend::paint(juce::Graphics& g) {
+    auto area = getLocalBounds().toFloat();
+    g.setColour(juce::Colour(0xd10d1211));
+    g.fillRoundedRectangle(area, 9.0F);
+    g.setColour(colours::lineStrong);
+    g.drawRoundedRectangle(area.reduced(0.5F), 9.0F, 1.0F);
+    area = area.reduced(12.0F, 8.0F);
+
+    auto header = area.removeFromTop(14.0F);
+    g.setFont(uiFont(10.5F, true).withExtraKerningFactor(0.06F));
+    g.setColour(colours::muted);
+    g.drawText(utf8("EXHAUST PRESSURE WAVES"), header, juce::Justification::centredLeft, false);
+    g.setFont(monoFont(10.5F, false));
+    g.drawText(utf8("±") + legendFigure(scalePa_) + " kPa", header,
+               juce::Justification::centredRight, false);
+
+    // The bar of the prototype: violet, grey at the mean, orange, pale yellow.
+    const auto bar = area.removeFromTop(14.0F).withSizeKeepingCentre(area.getWidth(), 8.0F);
+    juce::ColourGradient gradient(juce::Colour(0xff9a7bff), bar.getX(), 0.0F, juce::Colour(0xffffe6b0), bar.getRight(),
+                                  0.0F, false);
+    gradient.addColour(0.5, juce::Colour(0xff4a5451));
+    gradient.addColour(0.85, juce::Colour(0xffff6a2b));
+    g.setGradientFill(gradient);
+    g.fillRoundedRectangle(bar, 4.0F);
+
+    g.setFont(uiFont(11.0F));
+    g.setColour(colours::muted);
+    const auto ticks = area.removeFromTop(14.0F);
+    g.drawText(utf8("below mean"), ticks, juce::Justification::centredLeft, false);
+    g.drawText(utf8("cycle mean"), ticks, juce::Justification::centred, false);
+    g.drawText(utf8("above mean"), ticks, juce::Justification::centredRight, false);
+}
+
+// ------------------------------------------------------------ part inspector
+namespace {
+constexpr int inspectorRowHeight = 19;
+constexpr int inspectorHeader = 46;
+} // namespace
+
+void PartInspector::show(juce::String title, juce::String subtitle, std::vector<Row> rows) {
+    const auto resize = rows.size() != rows_.size();
+    title_ = std::move(title);
+    subtitle_ = std::move(subtitle);
+    rows_ = std::move(rows);
+    if (resize) setSize(getWidth(), idealHeight());
+    repaint();
+}
+
+int PartInspector::idealHeight() const { return inspectorHeader + inspectorRowHeight * static_cast<int>(rows_.size()) + 10; }
+
+juce::Rectangle<int> PartInspector::closeArea() const { return { getWidth() - 30, 6, 24, 24 }; }
+
+void PartInspector::mouseUp(const juce::MouseEvent& event) {
+    if (closeArea().contains(event.getPosition()) && onClose) onClose();
+}
+
+void PartInspector::paint(juce::Graphics& g) {
+    auto area = getLocalBounds().toFloat();
+    g.setColour(juce::Colour(0xeb0d1211));
+    g.fillRoundedRectangle(area, 9.0F);
+    g.setColour(colours::lineStrong);
+    g.drawRoundedRectangle(area.reduced(0.5F), 9.0F, 1.0F);
+
+    const auto close = closeArea().toFloat().reduced(7.0F);
+    g.setColour(colours::muted);
+    g.drawLine({ close.getTopLeft(), close.getBottomRight() }, 1.4F);
+    g.drawLine({ close.getTopRight(), close.getBottomLeft() }, 1.4F);
+
+    auto content = getLocalBounds().reduced(12, 8);
+    g.setColour(colours::text);
+    g.setFont(uiFont(13.5F, true));
+    g.drawText(title_, content.removeFromTop(18).withTrimmedRight(24), juce::Justification::centredLeft, true);
+    g.setColour(colours::faint);
+    g.setFont(uiFont(11.5F));
+    g.drawText(subtitle_, content.removeFromTop(16).withTrimmedRight(24), juce::Justification::centredLeft, true);
+    content.removeFromTop(4);
+    for (const auto& row : rows_) {
+        auto line = content.removeFromTop(inspectorRowHeight);
+        g.setColour(colours::muted);
+        g.setFont(uiFont(12.0F));
+        g.drawText(row.label, line, juce::Justification::centredLeft, true);
+        g.setColour(colours::text);
+        g.setFont(monoFont(11.5F, false));
+        g.drawText(row.value, line, juce::Justification::centredRight, true);
+    }
+}
+
 // ------------------------------------------------------------------ viewport
 namespace {
 constexpr float fieldOfViewRadians = 32.0F * std::numbers::pi_v<float> / 180.0F;
@@ -417,6 +521,22 @@ constexpr std::array<double, 4> playbackFactors { 1.0, 1.0 / 50.0, 1.0 / 250.0, 
 [[nodiscard]] render::Vec3 orbitEye(render::Vec3 target, float yaw, float pitch, float distance) noexcept {
     return target + render::Vec3 { std::cos(pitch) * std::sin(yaw), std::sin(pitch), std::cos(pitch) * std::cos(yaw) }
         * distance;
+}
+
+[[nodiscard]] juce::String millimetres(double value) { return juce::String(value, value < 100.0 ? 1 : 0) + " mm"; }
+
+[[nodiscard]] juce::String exhaustComponentName(ExhaustComponentType type) {
+    switch (type) {
+    case ExhaustComponentType::pipe: return "Pipe";
+    case ExhaustComponentType::merge: return "Collector";
+    case ExhaustComponentType::splitter: return "Splitter";
+    case ExhaustComponentType::resonator: return "Resonator";
+    case ExhaustComponentType::muffler: return "Muffler";
+    case ExhaustComponentType::catalyst: return "Catalyst";
+    case ExhaustComponentType::outlet: return "Outlet";
+    case ExhaustComponentType::crossover: return "Crossover";
+    }
+    return "Component";
 }
 } // namespace
 
@@ -458,8 +578,12 @@ EngineViewport::EngineViewport(const DashboardModel& model) : model_(model), cut
         return 0.0;
     };
     cycle_.setInterceptsMouseClicks(false, false);
+    legend_.setInterceptsMouseClicks(false, false);
+    inspector_.onClose = [this] { setSelectedPart(-1); };
 
     addChildComponent(cutaway_);
+    addChildComponent(legend_);
+    addChildComponent(inspector_);
     for (auto* overlay : std::initializer_list<juce::Component*> { &layers_, &views_, &shading_, &playback_,
                                                                    &settingsButton_, &cycle_ })
         addAndMakeVisible(overlay);
@@ -482,6 +606,10 @@ void EngineViewport::setWheelModifierCheck(std::function<bool()> check) {
     wheelModifierActive_ = std::move(check);
 }
 
+void EngineViewport::setGasFieldSource(std::function<bool(double, GasFieldSnapshot&)> source) {
+    gasFieldSource_ = std::move(source);
+}
+
 void EngineViewport::setEngine(const EngineConfig& config) {
     try {
         scene_ = std::make_shared<const render::EngineModel3D>(config);
@@ -495,9 +623,16 @@ void EngineViewport::setEngine(const EngineConfig& config) {
         const std::lock_guard lock(sharedMutex_);
         shared_.model = scene_;
         shared_.modelRevision = ++modelRevision_;
+        shared_.gasField.reset();
+        shared_.selectedPart = -1;
         if (scene_) shared_.goal = presetOrbit(view_);
         shared_.smoothingSeconds = 0.0F;
     }
+    gasField_ = {};
+    gasFieldBinding_.clear();
+    selectedPart_ = -1;
+    inspector_.setVisible(false);
+    pressureScalePa_ = 0.0F;
     resized();
     cutaway_.repaint();
 }
@@ -542,6 +677,19 @@ void EngineViewport::updateOverlayVisibility() {
     views_.setVisible(use3d);
     shading_.setVisible(use3d);
     playback_.setVisible(use3d);
+    updateLegend();
+    if (!use3d) setSelectedPart(-1);
+}
+
+void EngineViewport::updateLegend() {
+    const auto layer = layers_.selected();
+    const auto show = context_.getTargetComponent() != nullptr && pressureScalePa_.load() > 0.0F
+        && (layer == static_cast<int>(SceneLayerMode::all) || layer == static_cast<int>(SceneLayerMode::gasFlow));
+    legend_.setScale(pressureScalePa_.load());
+    if (show != legend_.isVisible()) {
+        legend_.setVisible(show);
+        repaint(infoArea().getUnion(infoArea().withY(getHeight() - 30)));
+    }
 }
 
 void EngineViewport::startPacing() {
@@ -649,6 +797,7 @@ void EngineViewport::applyView(int view, bool animate) {
 
 void EngineViewport::mouseDown(const juce::MouseEvent& event) {
     dragStart_ = event.position;
+    dragged_ = false;
     dragStartOrbit_ = goal();
     panning_ = event.mods.isRightButtonDown() || event.mods.isMiddleButtonDown();
 }
@@ -656,6 +805,8 @@ void EngineViewport::mouseDown(const juce::MouseEvent& event) {
 void EngineViewport::mouseDrag(const juce::MouseEvent& event) {
     if (!scene_) return;
     const auto delta = event.position - dragStart_;
+    if (delta.getDistanceFromOrigin() > 4.0F) dragged_ = true;
+    if (!dragged_) return;
     auto orbit = dragStartOrbit_;
     if (panning_) {
         const auto forward = -render::normalise(orbitEye({}, orbit.yaw, orbit.pitch, 1.0F));
@@ -671,7 +822,205 @@ void EngineViewport::mouseDrag(const juce::MouseEvent& event) {
     setGoal(orbit, 0.06F);
 }
 
-void EngineViewport::mouseUp(const juce::MouseEvent&) { panning_ = false; }
+void EngineViewport::mouseUp(const juce::MouseEvent& event) {
+    // A click without a drag selects the part under the pointer.
+    if (!dragged_ && !panning_ && event.mods.isLeftButtonDown() && context_.getTargetComponent() != nullptr)
+        selectPartAt(event.position);
+    panning_ = false;
+}
+
+void EngineViewport::selectPartAt(juce::Point<float> position) {
+    if (!scene_ || getWidth() <= 0 || getHeight() <= 0) return;
+    const auto orbit = goal();
+    const auto eye = orbitEye(orbit.target, orbit.yaw, orbit.pitch, orbit.distance);
+    const auto forward = render::normalise(orbit.target - eye);
+    const auto right = render::normalise(render::cross(forward, { 0.0F, 1.0F, 0.0F }));
+    const auto up = render::cross(right, forward);
+    const auto halfHeight = std::tan(0.5F * fieldOfViewRadians);
+    const auto aspect = static_cast<float>(getWidth()) / static_cast<float>(getHeight());
+    const auto x = 2.0F * position.x / static_cast<float>(getWidth()) - 1.0F;
+    const auto y = 1.0F - 2.0F * position.y / static_cast<float>(getHeight());
+    const auto direction = render::normalise(forward + right * (x * halfHeight * aspect) + up * (y * halfHeight));
+
+    render::ScenePoseInput pose;
+    {
+        const std::lock_guard lock(sharedMutex_);
+        pose = shared_.pose;
+    }
+    pose.crankAngleDegrees = displayedAngle_.load();
+    std::vector<render::SceneInstance> instances;
+    scene_->pose(pose, instances);
+    const auto layer = static_cast<SceneLayerMode>(std::clamp(layers_.selected(), 0, 3));
+    const auto xray = shading_.selected() == 0;
+    const auto hit = render::pickPart(*scene_, instances, eye, direction, [this, layer, xray](std::uint16_t part) {
+        return scenePartPickable(scene_->parts()[part], layer, xray);
+    });
+    setSelectedPart(hit ? static_cast<int>(hit->part) : -1);
+}
+
+void EngineViewport::setSelectedPart(int part) {
+    selectedPart_ = part;
+    {
+        const std::lock_guard lock(sharedMutex_);
+        shared_.selectedPart = part;
+    }
+    updateInspector();
+    inspector_.setVisible(part >= 0);
+    resized();
+}
+
+void EngineViewport::updateInspector() {
+    if (!scene_ || selectedPart_ < 0 || selectedPart_ >= static_cast<int>(scene_->parts().size())) return;
+    const auto& config = scene_->config();
+    const auto& state = model_.state;
+    const auto identity = scene_->identify(static_cast<std::uint16_t>(selectedPart_));
+    const auto cylinderIndex = identity.cylinder >= 0 ? static_cast<std::size_t>(identity.cylinder) : 0U;
+    const auto* cylinder = identity.cylinder >= 0 && cylinderIndex < config.cylinders.size()
+        ? &config.cylinders[cylinderIndex] : nullptr;
+    const auto* live = identity.cylinder >= 0 && cylinderIndex < state.cylinderStateCount
+        ? &state.cylinderStates[cylinderIndex] : nullptr;
+    const auto cylinderName = cylinder != nullptr ? "Cylinder " + juce::String(cylinder->id) : juce::String();
+    juce::String title;
+    juce::String subtitle = cylinderName;
+    std::vector<PartInspector::Row> rows;
+    const auto add = [&rows](juce::String label, juce::String value) { rows.push_back({ std::move(label), std::move(value) }); };
+
+    switch (identity.role) {
+    case render::PartRole::block:
+        title = "Cylinder block";
+        subtitle = juce::String(config.name);
+        add("Cylinders", juce::String(static_cast<int>(config.cylinders.size())));
+        add("Displacement", juce::String(engineDisplacementLitres(config), 2) + " L");
+        break;
+    case render::PartRole::head:
+        title = "Cylinder heads";
+        subtitle = juce::String(config.name);
+        add("Engine speed", juce::String(juce::roundToInt(state.rpm)) + " rpm");
+        break;
+    case render::PartRole::liner:
+        title = "Cylinder liner";
+        if (cylinder != nullptr) {
+            add("Bore", millimetres(cylinder->boreMm));
+            add("Stroke", millimetres(cylinder->strokeMm));
+            add("Compression ratio", juce::String(cylinder->compressionRatio, 1) + utf8(" : 1"));
+        }
+        break;
+    case render::PartRole::crankshaft:
+        title = "Crankshaft";
+        subtitle = juce::String(config.name);
+        add("Engine speed", juce::String(juce::roundToInt(state.rpm)) + " rpm");
+        add("Crank angle", juce::String(juce::roundToInt(displayedAngle_.load())) + utf8("°"));
+        break;
+    case render::PartRole::piston:
+        title = "Piston";
+        if (cylinder != nullptr) {
+            add("Bore", millimetres(cylinder->boreMm));
+            add("Mass", juce::String(juce::roundToInt(cylinder->pistonMassGrams)) + " g");
+        }
+        if (live != nullptr) {
+            add("Cylinder pressure", juce::String(live->pressureEstimateBar, 1) + " bar");
+            add("Gas temperature", juce::String(juce::roundToInt(live->gasTemperatureC)) + utf8(" °""C"));
+        }
+        break;
+    case render::PartRole::rod:
+        title = "Connecting rod";
+        if (cylinder != nullptr) {
+            add("Length", millimetres(cylinder->connectingRodMm));
+            add("Mass", juce::String(juce::roundToInt(cylinder->connectingRodMassGrams)) + " g");
+        }
+        break;
+    case render::PartRole::intakeValve:
+    case render::PartRole::exhaustValve: {
+        const auto intake = identity.role == render::PartRole::intakeValve;
+        title = intake ? "Intake valve" : "Exhaust valve";
+        const auto& cams = scene_->camshaftsOf(cylinderIndex);
+        add("Lift", millimetres(intake ? cams.intakeLiftMm : cams.exhaustLiftMm));
+        add("Duration", juce::String(juce::roundToInt(intake ? cams.intakeDurationDegrees : cams.exhaustDurationDegrees))
+                            + utf8("°"));
+        add("Centreline", juce::String(juce::roundToInt(intake ? cams.intakeCenterlineDegrees : cams.exhaustCenterlineDegrees))
+                              + utf8("°"));
+        if (live != nullptr)
+            add("Lift now", millimetres(intake ? live->intakeValveLiftMm : live->exhaustValveLiftMm));
+        break;
+    }
+    case render::PartRole::combustion:
+        title = "Combustion";
+        if (live != nullptr) {
+            add("Burned fraction", juce::String(juce::roundToInt(100.0 * live->burnedFraction)) + " %");
+            add("Flame speed", juce::String(live->flameSpeedMps, 1) + " m/s");
+            add("Misfiring", live->misfiring ? "yes" : "no");
+        }
+        break;
+    case render::PartRole::intakePorts:
+        title = "Intake ports";
+        break;
+    case render::PartRole::exhaustPorts:
+        title = "Exhaust ports";
+        if (live != nullptr) add("Exhaust gas", juce::String(juce::roundToInt(live->exhaustTemperatureC)) + utf8(" °""C"));
+        break;
+    case render::PartRole::afterfire:
+        title = "Afterfire";
+        subtitle = "Flame at the outlet";
+        add("Heat release", juce::String(state.exhaustAfterfireHeatReleaseKw, 2) + " kW");
+        break;
+    case render::PartRole::duct: {
+        const auto& duct = scene_->ducts()[static_cast<std::size_t>(identity.duct)];
+        switch (duct.kind) {
+        case render::DuctKind::exhaustComponent: title = exhaustComponentName(duct.componentType); break;
+        case render::DuctKind::exhaustFeeder: title = "Junction"; break;
+        case render::DuctKind::intakeRunner: title = "Intake runner"; break;
+        case render::DuctKind::intakePlenum: title = "Plenum"; break;
+        case render::DuctKind::intakeThrottle: title = "Throttle body"; break;
+        case render::DuctKind::intakeAirbox: title = "Airbox"; break;
+        case render::DuctKind::intakeInletDuct: title = "Air inlet"; break;
+        }
+        const auto exhaust = duct.kind == render::DuctKind::exhaustComponent || duct.kind == render::DuctKind::exhaustFeeder;
+        subtitle = (exhaust ? "Exhaust path " : "Intake path ") + juce::String(duct.pathId);
+        if (duct.kind == render::DuctKind::intakeRunner) subtitle = cylinderName;
+        if (duct.authoredLengthMm > 1.0F) add("Length", millimetres(duct.authoredLengthMm));
+        if (exhaust) {
+            for (const auto& path : config.exhaustPaths) {
+                if (path.id != duct.pathId) continue;
+                const auto network = path.network ? *path.network : makeEditableExhaustNetwork(path);
+                for (const auto& component : network.components) {
+                    if (component.id != duct.elementId || duct.kind != render::DuctKind::exhaustComponent) continue;
+                    add("Diameter", millimetres(component.diameterMm));
+                    if (component.volumeLitres > 0.0) add("Volume", juce::String(component.volumeLitres, 2) + " L");
+                }
+            }
+        }
+        if (duct.kind == render::DuctKind::intakePlenum || duct.kind == render::DuctKind::intakeAirbox)
+            for (const auto& path : config.intakePaths)
+                if (path.id == duct.pathId)
+                    add("Volume", juce::String(duct.kind == render::DuctKind::intakePlenum ? path.geometry.plenumVolumeLitres
+                                                                                         : path.geometry.airboxVolumeLitres, 2)
+                                      + " L");
+        // The solver's gas in it, at the angle the view shows.
+        const auto index = static_cast<std::size_t>(identity.duct);
+        if (index < gasFieldBinding_.size() && gasFieldBinding_[index] >= 0) {
+            const auto& element = gasField_.elements[static_cast<std::size_t>(gasFieldBinding_[index])];
+            const auto ambient = static_cast<float>(gasField_.ambientPressurePa);
+            float low = 1.0e9F, high = -1.0e9F, gas = 0.0F, wall = 0.0F;
+            for (std::size_t s = 0; s < element.sampleCount; ++s) {
+                low = std::min(low, element.pressurePa[s] - ambient);
+                high = std::max(high, element.pressurePa[s] - ambient);
+                gas += element.gasTemperatureK[s];
+                wall = std::max(wall, element.wallTemperatureK[s]);
+            }
+            if (element.sampleCount > 0) {
+                const auto kpa = [](float pa) { return (pa >= 0.0F ? "+" : "") + juce::String(pa / 1'000.0F, 1); };
+                add("Pressure vs ambient", element.sampleCount > 1 ? kpa(low) + " to " + kpa(high) + " kPa" : kpa(low) + " kPa");
+                add("Gas temperature",
+                    juce::String(juce::roundToInt(gas / static_cast<float>(element.sampleCount) - 273.15F)) + utf8(" °""C"));
+                if (wall > 0.0F) add("Wall temperature", juce::String(juce::roundToInt(wall - 273.15F)) + utf8(" °""C"));
+                add("Solver cells", juce::String(static_cast<int>(element.sampleCount)));
+            }
+        }
+        break;
+    }
+    }
+    inspector_.show(title, subtitle, std::move(rows));
+}
 
 void EngineViewport::mouseWheelMove(const juce::MouseEvent& event, const juce::MouseWheelDetails& wheel) {
     if (!scene_ || (wheelModifierActive_ && wheelModifierActive_())) {
@@ -728,12 +1077,24 @@ void EngineViewport::showSettingsMenu() {
 void EngineViewport::refresh() {
     const auto now = wallSeconds();
     const auto use3d = context_.getTargetComponent() != nullptr;
+    std::shared_ptr<const GasFieldSnapshot> newField;
+    if (use3d && gasFieldSource_) {
+        // In real time the latest field; slowed down or frozen, the field at
+        // the angle on screen, from the most recent cycle.
+        const auto realTime = playback_.selected() == 0;
+        if (gasFieldSource_(realTime ? -1.0 : displayedAngle_.load(), gasField_)) {
+            if (scene_ && gasFieldBinding_.size() != scene_->ducts().size())
+                gasFieldBinding_ = render::bindGasField(*scene_, gasField_);
+            newField = std::make_shared<const GasFieldSnapshot>(gasField_);
+        }
+    }
     if (use3d) {
         const auto& state = model_.state;
         const auto& health = model_.health;
         const auto firing = (state.ecuSparkEnabled || model_.config.fuel == FuelType::diesel) && state.ecuFuelEnabled
             && !state.ecuDecelerationFuelCutActive && state.rpm > 60.0;
         const std::lock_guard lock(sharedMutex_);
+        if (newField) shared_.gasField = std::move(newField);
         shared_.sampleWall = now;
         shared_.crankAngle = state.crankAngleDegrees;
         shared_.rpm = state.rpm;
@@ -768,6 +1129,8 @@ void EngineViewport::refresh() {
     }
 
     if (!pacer_.joinable()) cycle_.repaint();
+    updateLegend();
+    if (inspector_.isVisible()) updateInspector();
 
     if (now - lastFpsWall_ >= 1.0) {
         const auto frames = framesRendered_.load();
@@ -795,7 +1158,9 @@ void EngineViewport::refresh() {
 juce::Rectangle<int> EngineViewport::infoArea() const {
     const auto left = cycle_.getRight() + 12;
     const auto right = playback_.isVisible() ? playback_.getX() - 12 : getWidth() - 12;
-    return { left, getHeight() - 30, std::max(0, right - left), 18 };
+    // Above the legend when it shows.
+    const auto bottom = legend_.isVisible() ? legend_.getY() - 6 : getHeight() - 12;
+    return { left, bottom - 18, std::max(0, right - left), 18 };
 }
 
 void EngineViewport::paint(juce::Graphics& g) {
@@ -823,6 +1188,8 @@ void EngineViewport::resized() {
     playback_.setBounds(getWidth() - 12 - playback_.idealWidth(), getHeight() - 44, playback_.idealWidth(), 32);
     const auto cycleHeight = cycle_.idealHeight();
     cycle_.setBounds(12, getHeight() - 12 - cycleHeight, 250, cycleHeight);
+    legend_.setBounds((getWidth() - 300) / 2, getHeight() - 12 - 58, 300, 58);
+    inspector_.setBounds(getWidth() - 12 - 280, 12 + 32 + 10, 280, inspector_.idealHeight());
 }
 
 // ------------------------------------------------------------ OpenGL thread
@@ -860,6 +1227,13 @@ void EngineViewport::renderOpenGL() {
         orbitValid_ = false;
         observedSequence_ = 0;
         clock_.reset();
+        gasFieldView_.clear();
+        renderedGasField_ = 0;
+    }
+    if (shared.gasField && shared.gasField->sequence != renderedGasField_ && renderer_->model() != nullptr) {
+        gasFieldView_.update(*renderer_->model(), *shared.gasField);
+        renderedGasField_ = shared.gasField->sequence;
+        pressureScalePa_.store(gasFieldView_.pressureScalePa());
     }
     if (shared.sampleSequence != observedSequence_) {
         clock_.observe(shared.sampleWall, shared.crankAngle, shared.rpm, shared.rate);
@@ -911,6 +1285,9 @@ void EngineViewport::renderOpenGL() {
     frame_.xray = shared.xray;
     frame_.antiAliasing = shared.antiAliasing;
     frame_.pose = shared.pose;
+    frame_.pose.afterfire = gasFieldView_.afterfire();
+    frame_.gasField = gasFieldView_.valid() ? &gasFieldView_ : nullptr;
+    frame_.selectedPart = shared.selectedPart;
 
     // Motion blur: the shutter stays open for half a frame, and the crank is
     // drawn every 12 degrees it sweeps in that time (12 sub-frames at most).

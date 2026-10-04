@@ -111,6 +111,11 @@ MainComponent::MainComponent() {
     dyno.onExportCsv = [this] { exportDynoCsv(); };
     side_.audio.onExhaustPreset = [this](int presetIndex) { applyExhaustPreset(presetIndex); };
     viewport_.setWheelModifierCheck([this] { return wheelModifierDown(); });
+    viewport_.setGasFieldSource([this](double crankAngleDegrees, GasFieldSnapshot& field) {
+        if (!runtime_) return false;
+        runtime_->requestGasField(crankAngleDegrees);
+        return runtime_->latestGasField(field);
+    });
 
     for (juce::Component* panel : { static_cast<juce::Component*>(&topBar_),
                                     static_cast<juce::Component*>(&controls_),

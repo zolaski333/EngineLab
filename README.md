@@ -257,8 +257,9 @@ holds the working rules, build notes and verified traps of this repository.
 - the 3-D view lays the exhaust and intake out automatically: lengths,
   diameters and volumes are the configured ones, but the routing is invented
   (a pipe that must span more than its length is drawn longer), and the
-  pressure waves of the solver are not shown yet (see
-  [the architecture document](docs/architecture.md#3-d-engine-view));
+  pressure waves shown on it are the real-time gas solver's, whose cells are
+  about 0.36 m long (see
+  [the architecture document](docs/architecture.md#gas-field-on-the-ducts));
 - Windows only for now: the code is standard C++20 and JUCE, but no other
   platform is built or tested;
 - large engines (V8, V12) are expensive for the physics thread; the application

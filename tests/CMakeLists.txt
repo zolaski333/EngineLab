@@ -330,7 +330,8 @@ if(MSVC AND ENGINELAB_ENABLE_SANITIZERS)
 endif()
 
 add_executable(EngineLabEngineModel3DTests EngineModel3DTests.cpp)
-target_link_libraries(EngineLabEngineModel3DTests PRIVATE EngineLab::Render EngineLab::Catalog EngineLab::Exhaust)
+target_link_libraries(EngineLabEngineModel3DTests PRIVATE EngineLab::Render EngineLab::Catalog EngineLab::Exhaust
+    EngineLab::Ecu EngineLab::Events EngineLab::Physics EngineLab::Simulation)
 target_compile_definitions(EngineLabEngineModel3DTests PRIVATE ENGINELAB_CATALOG_ROOT="${CMAKE_SOURCE_DIR}")
 enginelab_set_warnings(EngineLabEngineModel3DTests)
 add_test(NAME EngineLab.EngineModel3D COMMAND EngineLabEngineModel3DTests)

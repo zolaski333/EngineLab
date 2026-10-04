@@ -155,6 +155,7 @@ pieces split the work:
 | `render::EngineModel3D` | `render`, no JUCE | meshes built from `EngineConfig` (mm, +Y up, +Z along the crank) and a pose per crank angle |
 | `render::layoutExhaust` / `layoutIntake` | `render`, no JUCE | ducts laid out from the configured exhaust graphs and intake paths |
 | `render::CrankClock` | `render`, no JUCE | the crank angle to draw at any display time |
+| `render::GasFieldView` / `bindGasField` | `render`, no JUCE | the solver's gas field mapped onto the drawn ducts, as wave colours and wall temperatures |
 | `ui::EngineSceneRenderer` | `app` | shaders, buffers, multisampling and motion blur |
 
 Every moving part is placed with `evaluateCylinderKinematics()`, the function
@@ -216,8 +217,53 @@ the LS3's X, the end primaries of the 2JZ and the I5), a count
 with its ports, runners, plenum and primaries; the *Exhaust* view frames the
 whole system.
 
-Still to do: the solver's pressure waves on the ducts, exhaust heat glow and a
-part inspector.
+### Gas field on the ducts
+
+The exhaust is coloured by the gas solver's own state, not by an animation:
+
+- **Capture.** The view asks `EngineRuntime::requestGasField()` for the field at
+  the crank angle on screen. The simulator tracks that angle and copies the
+  state (`GasFieldSnapshot`: up to 16 cells per exhaust duct and junction,
+  intake runner and plenum) between two sub-steps when its crank crosses it,
+  so in slow motion or frozen the picture is the most recent cycle at the
+  displayed angle. In real time the view takes the latest field instead. A
+  request that waits 0.25 s of simulated time (a stopped engine) is served at
+  the end of a frame. The copy reads conservative states only, so the
+  simulation is unchanged (`EngineLab.EngineModel3D` compares two
+  simulators bit for bit); the runtime publishes it through a `try_lock`
+  mailbox and stops capturing a quarter of a second after the view stops
+  asking (the 2-D cutaway never asks).
+- **Mapping.** `bindGasField` matches each drawn duct to its solver element by
+  component id, or, on a path compiled from the scalar geometry, by node type
+  and cylinder. Resonators with no outlet are acoustic side branches the gas
+  solver does not carry; they keep their metal colour. Each duct vertex has a
+  station (0 at the inlet, 1 at the outlet) and the shader interpolates
+  between cell centres.
+- **Resolution.** The real-time mesh has cells of about 0.36 m, so a primary
+  shows one to three cells. The view shows what the solver resolves, not the
+  audio band, which the characteristic network carries separately.
+- **Colours.** The wave, not the pressure: each cell's departure from its
+  own running mean (an exponential average over 0.5 s of simulated time, so a
+  slowed or frozen view keeps it). Against ambient, a turbocharged exhaust
+  reads as one colour: the turbine is the network's restricted outlet, so the
+  whole drawn exhaust, silencer included, sits at turbine inlet pressure in
+  the solver. The prototype's scale: violet below the mean, grey at the mean,
+  orange then pale yellow above, compressed with a 0.75 power. The scale is
+  the strongest departure in the exhaust, decaying by 6 % per snapshot and
+  never below 2 kPa; the legend prints it. A transient (a rev-limiter cut, a
+  throttle step) shows as the whole exhaust above or below its mean until the
+  mean catches up. The inspector gives the pressure against ambient. Waves
+  show in the All and Gas flow layers.
+- **Heat.** Each cell's wall temperature (the solver's finite-capacity wall)
+  makes the steel glow from the Draper point, 798 K, to orange-yellow at
+  1,300 K, in every layer.
+- **Afterfire.** A flame at every outlet, lit by
+  `1 − exp(−heat release / 10 kW)` of the afterfire at the captured instant.
+
+Clicking a part opens an inspector: the part's authored geometry and, for a
+duct, the solver's pressure range, gas and wall temperatures and cell count
+at the displayed angle. The pick is a ray cast on the CPU against the posed
+meshes of the visible layer; X-ray shells let the click through.
 
 ## Extension rule
 

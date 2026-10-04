@@ -5,6 +5,19 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-04 — Gas field on the 3-D view
+
+- `EngineLab.EngineModel3D`, 16 engines: every drawn exhaust component,
+  runner and plenum bound to its solver element; capture within one sub-step
+  of the asked angle (fails without the guard), simulation bit-identical;
+  waves over a 200 kPa mean show (fails against ambient: scale 204 kPa).
+- Against ambient the 2JZ exhaust was one orange (the turbine is the 1-D
+  network's restricted outlet): colours show the departure from a mean.
+- Budget harness as below, alternated: with 1.896-1.923 (7 runs), without
+  1.919-1.956 (4). At most ~2 %, the ranges overlap.
+- Not observed: the wall glow (798 K not reached in a 15 s run), the
+  afterfire flame.
+
 ## 2026-10-04 — Exhaust and intake laid out from the configuration
 
 - `EngineLab.EngineModel3D`, 16 catalogue engines: every exhaust component is
