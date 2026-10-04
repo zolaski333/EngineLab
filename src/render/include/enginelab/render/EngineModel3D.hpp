@@ -2,6 +2,7 @@
 
 #include <enginelab/foundation/EngineTypes.hpp>
 #include <enginelab/physics/MechanicalKinematics.hpp>
+#include <enginelab/render/DuctLayout3D.hpp>
 #include <enginelab/render/Mesh.hpp>
 
 #include <array>
@@ -67,12 +68,15 @@ struct SceneBounds final {
     [[nodiscard]] float diagonal() const noexcept { return length(maximum - minimum); }
 };
 
-/** Where a cylinder's port leaves the head, for routing intake and exhaust ducts. */
-struct PortAnchor final {
-    std::uint32_t cylinderId {};
-    Vec3 position;
-    Vec3 direction;
-    float diameterMm {};
+/** A laid-out intake or exhaust duct and the part that draws it. */
+struct SceneDuct final {
+    DuctKind kind { DuctKind::exhaustComponent };
+    std::uint32_t pathId {};
+    std::uint32_t elementId {};
+    ExhaustComponentType componentType { ExhaustComponentType::pipe };
+    std::uint16_t part {};
+    std::vector<Vec3> centreline;
+    float authoredLengthMm {};
 };
 
 /**
@@ -90,7 +94,12 @@ public:
     explicit EngineModel3D(EngineConfig config);
 
     [[nodiscard]] const std::vector<ScenePart>& parts() const noexcept { return parts_; }
+    /** The engine with its ports, runners, plenum and primaries: what the
+        engine camera views frame. */
     [[nodiscard]] const SceneBounds& bounds() const noexcept { return bounds_; }
+    /** Everything, down to the last exhaust outlet and the air intake mouth. */
+    [[nodiscard]] const SceneBounds& systemBounds() const noexcept { return systemBounds_; }
+    [[nodiscard]] const std::vector<SceneDuct>& ducts() const noexcept { return ducts_; }
     [[nodiscard]] std::size_t cylinderCount() const noexcept { return cylinders_.size(); }
     [[nodiscard]] const EngineConfig& config() const noexcept { return config_; }
     [[nodiscard]] const std::vector<PortAnchor>& intakePorts() const noexcept { return intakePorts_; }
@@ -133,7 +142,7 @@ private:
         std::uint16_t intakeValvePart {};
         std::uint16_t exhaustValvePart {};
         std::uint16_t flamePart {};
-        std::uint16_t runnerPart {};
+        std::uint16_t runnerPart { 0xFFFFU };
     };
     struct Throw final {
         Vec3 origin;
@@ -159,8 +168,11 @@ private:
     std::vector<std::size_t> rotatingThrow_;
     std::vector<PortAnchor> intakePorts_;
     std::vector<PortAnchor> exhaustPorts_;
+    std::vector<SceneDuct> ducts_;
+    /** Parts left out of the engine framing (exhaust trunk, airbox, inlet duct). */
+    std::vector<bool> farParts_;
     SceneBounds bounds_ {};
-    int plenumPart_ { -1 };
+    SceneBounds systemBounds_ {};
     float pitch_ {};
     bool radialLike_ {};
 };

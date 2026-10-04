@@ -437,6 +437,7 @@ EngineViewport::EngineViewport(const DashboardModel& model) : model_(model), cut
     views_.setOptionTooltip(0, utf8("Look along the crankshaft"));
     views_.setOptionTooltip(1, utf8("Look across the crankshaft"));
     views_.setOptionTooltip(2, utf8("Three-quarter view"));
+    views_.setOptionTooltip(3, utf8("The whole exhaust and intake, laid out from the configuration"));
     views_.setSelected(view_);
     views_.onChange = [this](int view) { applyView(view, true); };
     shading_.setOptionTooltip(0, utf8("See-through block and heads"));
@@ -595,17 +596,32 @@ void EngineViewport::pacingLoop() {
 
 EngineViewport::Orbit EngineViewport::presetOrbit(int view) const {
     if (!scene_) return {};
-    // Front looks at the crank nose (the flywheel is at +Z).
+    view = std::clamp(view, 0, 3);
+    // Front looks at the crank nose (the flywheel is at +Z); the 3/4 view is
+    // from the nose side too, so the exhaust runs away from the camera.
     static constexpr std::array<render::Vec3, 3> directions { render::Vec3 { -0.02F, 0.18F, -1.0F },
                                                               render::Vec3 { 1.0F, 0.18F, 0.02F },
-                                                              render::Vec3 { 1.05F, 0.55F, 0.85F } };
-    const auto direction = render::normalise(directions[static_cast<std::size_t>(std::clamp(view, 0, 2))]);
-    const auto& bounds = scene_->bounds();
+                                                              render::Vec3 { 1.05F, 0.55F, -0.85F } };
+    auto direction = view < 3 ? directions[static_cast<std::size_t>(view)] : render::Vec3 {};
+    if (view == 3) {
+        // The whole exhaust and intake, from the side the exhaust runs on.
+        float sum = 0.0F;
+        std::size_t count = 0;
+        for (const auto& duct : scene_->ducts()) {
+            if (duct.kind != render::DuctKind::exhaustComponent) continue;
+            for (const auto& point : duct.centreline) sum += point.x;
+            count += duct.centreline.size();
+        }
+        const auto side = count > 0 && sum / static_cast<float>(count) < scene_->bounds().centre().x - 1.0F ? -1.0F : 1.0F;
+        direction = { side, 0.5F, 0.3F };
+    }
+    direction = render::normalise(direction);
+    const auto& bounds = view == 3 ? scene_->systemBounds() : scene_->bounds();
     Orbit orbit;
     orbit.target = bounds.centre();
     orbit.pitch = std::asin(direction.y);
     orbit.yaw = std::atan2(direction.x, direction.z);
-    orbit.distance = 0.5F * bounds.diagonal() / std::sin(0.5F * fieldOfViewRadians) * 0.9F;
+    orbit.distance = 0.5F * bounds.diagonal() / std::sin(0.5F * fieldOfViewRadians) * (view == 3 ? 0.8F : 0.9F);
     return orbit;
 }
 
@@ -621,7 +637,7 @@ void EngineViewport::setGoal(const Orbit& orbit, float smoothingSeconds) {
 }
 
 void EngineViewport::applyView(int view, bool animate) {
-    view_ = std::clamp(view, 0, 2);
+    view_ = std::clamp(view, 0, 3);
     if (!scene_) return;
     auto orbit = presetOrbit(view_);
     // Turn the short way round.
@@ -885,7 +901,7 @@ void EngineViewport::renderOpenGL() {
     }
 
     const auto eye = orbitEye(orbit_.target, orbit_.yaw, orbit_.pitch, orbit_.distance);
-    const auto diagonal = scene->bounds().diagonal();
+    const auto diagonal = scene->systemBounds().diagonal();
     frame_.eye = eye;
     frame_.view = render::Mat4::lookAt(eye, orbit_.target, { 0.0F, 1.0F, 0.0F });
     frame_.projection = render::Mat4::perspective(fieldOfViewRadians,

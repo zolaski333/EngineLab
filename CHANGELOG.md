@@ -33,6 +33,11 @@ file formats, always with an in-memory migration).
   a 30 to 240 fps cap or unlimited, VSync, motion blur and 4× anti-aliasing.
   The 2-D cutaway stays available there, and is used automatically without
   OpenGL 3.2.
+- The 3-D view lays out the exhaust and intake from the engine's
+  configuration: every component of the exhaust graph with its length,
+  diameter and volume, and the runners, plenum, throttle bores, airbox and
+  inlet duct of each intake path. A new *Exhaust* camera view frames the whole
+  system.
 
 ## [0.2.0] — 2026-10-04
 

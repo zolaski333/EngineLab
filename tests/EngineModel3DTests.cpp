@@ -1,7 +1,9 @@
 #include <enginelab/catalog/EngineCatalog.hpp>
+#include <enginelab/exhaust/LegacyExhaustNetwork.hpp>
 #include <enginelab/render/CrankClock.hpp>
 #include <enginelab/render/EngineModel3D.hpp>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdlib>
 #include <iostream>
@@ -23,6 +25,79 @@ void require(bool condition, const std::string& message) {
     return true;
 }
 
+/** Volume enclosed by a closed triangle mesh (divergence theorem). */
+[[nodiscard]] double enclosedVolume(const Mesh& mesh) {
+    double volume = 0.0;
+    for (std::size_t i = 0; i + 2U < mesh.indices.size(); i += 3U) {
+        const auto a = mesh.vertices[mesh.indices[i]].position;
+        const auto b = mesh.vertices[mesh.indices[i + 1U]].position;
+        const auto c = mesh.vertices[mesh.indices[i + 2U]].position;
+        volume += static_cast<double>(dot(a, cross(b, c))) / 6.0;
+    }
+    return std::abs(volume);
+}
+
+int stretchedPipes = 0;
+int checkedPipes = 0;
+
+/** The intake and exhaust drawn from the engine's own configuration. */
+void checkDucts(const EngineModel3D& model) {
+    const auto& config = model.config();
+    const auto& name = config.name;
+    require(model.systemBounds().diagonal() >= model.bounds().diagonal(),
+            name + ": the whole system frames at least the engine");
+    for (const auto& duct : model.ducts()) {
+        require(duct.part < model.parts().size(), name + ": every duct has a part");
+        for (const auto& point : duct.centreline)
+            require(std::isfinite(point.x) && std::isfinite(point.y) && std::isfinite(point.z),
+                    name + ": duct centrelines are finite");
+    }
+
+    // Every component of every exhaust graph is drawn once.
+    for (const auto& path : config.exhaustPaths) {
+        const auto network = path.network ? *path.network : makeEditableExhaustNetwork(path);
+        for (const auto& component : network.components) {
+            const auto drawn = std::count_if(model.ducts().begin(), model.ducts().end(), [&](const SceneDuct& duct) {
+                return duct.kind == DuctKind::exhaustComponent && duct.pathId == path.id
+                    && duct.elementId == component.id;
+            });
+            require(drawn == 1, name + ": exhaust component " + std::to_string(component.id) + " of path "
+                                    + std::to_string(path.id) + " is drawn once");
+        }
+    }
+
+    for (const auto& duct : model.ducts()) {
+        const auto drawn = polylineLength(duct.centreline);
+        const auto label = name + " path " + std::to_string(duct.pathId) + " element " + std::to_string(duct.elementId);
+        if (duct.kind == DuctKind::exhaustComponent && duct.componentType == ExhaustComponentType::pipe
+            && duct.authoredLengthMm > 1.0F) {
+            // A pipe is never drawn shorter than it is; it is drawn longer
+            // only when it must span more than its length.
+            require(drawn > 0.99F * duct.authoredLengthMm, label + ": a pipe is never drawn shorter than authored ("
+                        + std::to_string(drawn) + " for " + std::to_string(duct.authoredLengthMm) + " mm)");
+            ++checkedPipes;
+            if (drawn > 1.03F * duct.authoredLengthMm) ++stretchedPipes;
+        }
+        if (duct.kind == DuctKind::intakeRunner) {
+            require(std::abs(drawn - duct.authoredLengthMm) < 0.03F * duct.authoredLengthMm,
+                    label + ": a runner keeps its authored length (" + std::to_string(drawn) + " for "
+                        + std::to_string(duct.authoredLengthMm) + " mm)");
+        }
+        if (duct.kind == DuctKind::intakePlenum || duct.kind == DuctKind::intakeAirbox) {
+            const auto& path = *std::find_if(config.intakePaths.begin(), config.intakePaths.end(),
+                [&duct](const IntakePathConfig& item) { return item.id == duct.pathId; });
+            const auto authored = 1.0e6 * (duct.kind == DuctKind::intakePlenum ? path.geometry.plenumVolumeLitres
+                                                                                : path.geometry.airboxVolumeLitres);
+            const auto volume = enclosedVolume(model.parts()[duct.part].mesh);
+            require(volume > 0.97 * authored, label + ": an intake volume is drawn at least as large as authored ("
+                        + std::to_string(volume * 1.0e-6) + " L)");
+            // Only a plenum too thin to cover its runners is drawn larger.
+            require(duct.kind == DuctKind::intakePlenum || volume < 1.03 * authored,
+                    label + ": an airbox is drawn with its authored volume");
+        }
+    }
+}
+
 void checkEngine(const EngineConfig& config) {
     const EngineModel3D model(config);
     const auto& name = config.name;
@@ -36,6 +111,8 @@ void checkEngine(const EngineConfig& config) {
     const auto& bounds = model.bounds();
     require(std::isfinite(bounds.diagonal()) && bounds.diagonal() > 100.0F && bounds.diagonal() < 20'000.0F,
             name + ": the engine bounds are finite and engine-sized");
+
+    checkDucts(model);
 
     std::vector<SceneInstance> instances;
     for (int step = 0; step < 72; ++step) {
@@ -138,7 +215,12 @@ int main() {
     const auto catalogue = loadEngineCatalog(ENGINELAB_CATALOG_ROOT);
     require(catalogue.errors.empty() && !catalogue.entries.empty(), "the shipped catalogue loads");
     for (const auto& entry : catalogue.entries) checkEngine(entry.config);
+    // Measured 2026-10-04: the four 140 mm pipes of the LS3's X, which must
+    // cross between the banks, and the end primaries of the 2JZ and the I5.
+    require(stretchedPipes <= 6, "no more exhaust pipes are drawn longer than authored than when measured ("
+                                     + std::to_string(stretchedPipes) + ")");
     checkCrankClock();
-    std::cout << "EngineModel3D: " << catalogue.entries.size() << " engines checked\n";
+    std::cout << "EngineModel3D: " << catalogue.entries.size() << " engines checked; " << stretchedPipes << " of "
+              << checkedPipes << " exhaust pipes drawn more than 3% longer than authored\n";
     return 0;
 }

@@ -500,8 +500,9 @@ struct EngineSceneRenderer::Impl final {
         glBindTexture(GL_TEXTURE_BUFFER, 0);
         glBindBuffer(GL_TEXTURE_BUFFER, 0);
 
-        // Floor: polar grid (16 spokes, 12 rings) and the contact-shadow quad.
-        const auto& bounds = model.bounds();
+        // Floor: polar grid (16 spokes, 12 rings) and the contact-shadow
+        // quad, under the whole system so the exhaust never sinks into it.
+        const auto& bounds = model.systemBounds();
         const auto diagonal = bounds.diagonal();
         const auto centre = bounds.centre();
         const auto y = bounds.minimum.y - 0.03F * diagonal;

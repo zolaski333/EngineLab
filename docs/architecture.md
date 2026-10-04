@@ -153,6 +153,7 @@ pieces split the work:
 | Piece | Module | Role |
 |---|---|---|
 | `render::EngineModel3D` | `render`, no JUCE | meshes built from `EngineConfig` (mm, +Y up, +Z along the crank) and a pose per crank angle |
+| `render::layoutExhaust` / `layoutIntake` | `render`, no JUCE | ducts laid out from the configured exhaust graphs and intake paths |
 | `render::CrankClock` | `render`, no JUCE | the crank angle to draw at any display time |
 | `ui::EngineSceneRenderer` | `app` | shaders, buffers, multisampling and motion blur |
 
@@ -188,8 +189,35 @@ back to the 2-D cutaway and says why.
 The older `RenderSnapshotBuilder` / `IEngineRenderer` groundwork is not used by
 this view.
 
-Still to do: the exhaust and intake laid out from the configured paths, the
-solver's pressure waves on the ducts, exhaust heat glow and a part inspector.
+### Ducts from the configuration
+
+`DuctLayout3D` draws what the solver simulates, not a generic manifold:
+
+- **Exhaust.** Each path's component graph (or, without one, the graph the
+  editor compiles from the scalar geometry) is drawn component by component,
+  at its authored length and diameter; mufflers, catalysts, resonators and
+  merges get the diameter of their authored volume. Pipes fed by a port, or
+  feeding a junction with several inputs, are *routed*: they leave along the
+  port and sag (or, on a radial, bend outwards) until their centreline has
+  the real length. Junctions and bodies sit on a trunk that runs along +Z
+  (towards the flywheel), placed out from their ports and no higher than the
+  crankshaft; a splitter spreads its branches, an X sends each bank back to
+  its side.
+- **Intake.** Each runner has its length and taper, from the port to a
+  plenum box of the authored volume (a drum round the crank axis on a
+  radial). Upstream follow the throttle bores (on the plenum end, or on its
+  face when there are several), the airbox volume, the inlet duct and its
+  bellmouth, in the order the air crosses them.
+
+The routing itself is invented. A pipe that must span more than its length is
+drawn longer: 6 of the 72 catalogue exhaust pipes (the four 140 mm pipes of
+the LS3's X, the end primaries of the 2JZ and the I5), a count
+`EngineLab.EngineModel3D` keeps from growing. Engine views frame the engine
+with its ports, runners, plenum and primaries; the *Exhaust* view frames the
+whole system.
+
+Still to do: the solver's pressure waves on the ducts, exhaust heat glow and a
+part inspector.
 
 ## Extension rule
 

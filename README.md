@@ -92,7 +92,11 @@ factor is shown in the diagnostics.
   4,000 rpm on the tachometer is 4,000 rpm on screen. X-ray or solid block,
   layers (all, combustion, mechanical, gas flow), front / side / three-quarter
   views, 1:50 and 1:250 slow motion, motion blur and a frame-rate cap from 30
-  fps to unlimited. A 2-D cutaway remains for machines without OpenGL 3.2.
+  fps to unlimited. The exhaust and intake are laid out from the engine's own
+  configuration — the component graph with its real lengths, diameters and
+  volumes (4-2-1, X-pipe, twin mufflers…), runners, plenum, throttle bores,
+  airbox and inlet duct — and an *Exhaust* view frames the whole system. A
+  2-D cutaway remains for machines without OpenGL 3.2.
 - **A catalogue of 16 engines** — naturally aspirated and turbocharged I4s, a
   V8, a flat-six, a supercharged V12, motorcycle twins and triples, an inline
   five, a TDI diesel, a five-cylinder radial — all in readable, editable YAML.
@@ -250,9 +254,10 @@ holds the working rules, build notes and verified traps of this repository.
   the IR stays editable in JSON/YAML;
 - structural modes stay estimated per engine family until sourced measurements
   are supplied;
-- the 3-D view draws generic ports and runners: the exhaust and intake are
-  not yet laid out from the configured geometry, and the pressure waves of the
-  solver are not shown yet (see
+- the 3-D view lays the exhaust and intake out automatically: lengths,
+  diameters and volumes are the configured ones, but the routing is invented
+  (a pipe that must span more than its length is drawn longer), and the
+  pressure waves of the solver are not shown yet (see
   [the architecture document](docs/architecture.md#3-d-engine-view));
 - Windows only for now: the code is standard C++20 and JUCE, but no other
   platform is built or tested;

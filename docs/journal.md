@@ -5,6 +5,18 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-04 — Exhaust and intake laid out from the configuration
+
+- `EngineLab.EngineModel3D`, 16 catalogue engines: every exhaust component is
+  drawn once; no pipe is drawn shorter than authored; runners within 3 % of
+  their length; plenum ≥ and airbox = authored volume (mesh volume).
+- 6 of 72 exhaust pipes are drawn > 3 % longer than authored: the LS3 X
+  (140 mm pipes crossing ~400 mm between banks, ×2.9-3.1), 2JZ cylinder 6
+  primary (+16 %), I5 cylinder 5 primary (+6 %). Gated at 6.
+- Budget harness as in the entry below, same hour, 4 runs each: with the
+  ducts 1.93-1.95, without 1.91-1.93. No measurable cost.
+- Not measured: whether the invented routing matches any real engine.
+
 ## 2026-10-04 — Cost of the 3-D engine view
 
 - `EngineLabRealtimeBudgetHarness --filter 2JZ --free-run --rpm 4000`, 10 s,

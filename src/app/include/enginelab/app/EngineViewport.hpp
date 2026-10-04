@@ -142,7 +142,7 @@ private:
     const DashboardModel& model_;
     EngineCutawayView cutaway_;
     SegmentedControl layers_ { { "All", "Combustion", "Mechanical", "Gas flow" } };
-    SegmentedControl views_ { { "Front", "Side", "3/4" } };
+    SegmentedControl views_ { { "Front", "Side", "3/4", "Exhaust" } };
     SegmentedControl shading_ { { "X-ray", "Solid" } };
     SegmentedControl playback_ { { "Real time", "1:50", "1:250", "Freeze" } };
     ActionButton settingsButton_ { {}, ActionButton::Style::tool };

@@ -379,60 +379,54 @@ void EngineModel3D::buildStructure() {
 
 void EngineModel3D::buildDucts() {
     Mesh exhaust;
-    std::vector<Vec3> runnerEnds;
+    float bore = 0.0F;
     for (std::size_t i = 0; i < cylinders_.size(); ++i) {
-        auto& cylinder = cylinders_[i];
+        const auto& cylinder = cylinders_[i];
         const auto& config = config_.cylinders[i];
         const auto b = cylinder.bore;
+        bore = std::max(bore, b);
         const auto axis = cylinder.axis;
         const auto side = cylinder.exhaustSide;
 
-        // Intake: from behind the intake valves, out of the head, then up and
-        // away towards the plenum.
+        // Intake port: behind the intake valves, out of the head; the runner
+        // itself is laid out from the intake path.
         const auto intakeDiameter = config.intakeRunnerDiameterMm > 0.0
             ? static_cast<float>(config.intakeRunnerDiameterMm) : 0.36F * b;
         const auto intakePort = cylinder.deckCentre + axis * (0.42F * b) - side * (0.70F * b);
         const auto intakeOut = radialLike_ ? -side : normalise(axis * 0.35F - side);
-        const auto runnerEnd = intakePort + intakeOut * (0.9F * b) + axis * (radialLike_ ? 0.2F * b : 0.7F * b);
-        runnerEnds.push_back(runnerEnd);
-        Mesh runner;
-        appendTube(runner,
-            catmullRom({ cylinder.deckCentre + axis * (0.12F * b) - side * (0.22F * b), intakePort,
-                         intakePort + intakeOut * (0.45F * b) + axis * (0.2F * b), runnerEnd }, 10),
-            { intakeDiameter * 0.5F }, 18, false, true);
-        cylinder.runnerPart = addPart(std::move(runner), SceneMaterial::intakeFlow, layerIntake);
-        intakePorts_.push_back({ config.id, intakePort, intakeOut, intakeDiameter });
+        intakePorts_.push_back({ config.id, intakePort, intakeOut, intakeDiameter,
+                                 cylinder.deckCentre + axis * (0.12F * b) - side * (0.22F * b) });
 
         // Exhaust port stub: out of the head on the exhaust side.
         const auto exhaustDiameter = 0.34F * b;
+        const auto exhaustInner = cylinder.deckCentre + axis * (0.1F * b) + side * (0.22F * b);
         const auto exhaustPort = cylinder.deckCentre + axis * (0.3F * b) + side * (0.70F * b);
         const auto exhaustOut = normalise(side - axis * 0.25F);
         const auto exhaustEnd = exhaustPort + exhaustOut * (0.6F * b);
-        appendTube(exhaust,
-            catmullRom({ cylinder.deckCentre + axis * (0.1F * b) + side * (0.22F * b), exhaustPort, exhaustEnd }, 10),
-            { exhaustDiameter * 0.5F }, 18);
-        exhaustPorts_.push_back({ config.id, exhaustEnd, exhaustOut, exhaustDiameter });
+        appendTube(exhaust, catmullRom({ exhaustInner, exhaustPort, exhaustEnd }, 10), { exhaustDiameter * 0.5F }, 18);
+        exhaustPorts_.push_back({ config.id, exhaustEnd, exhaustOut, exhaustDiameter, exhaustInner });
     }
     (void)addPart(std::move(exhaust), SceneMaterial::exhaustPipe, layerExhaust);
 
-    if (!radialLike_ && !runnerEnds.empty()) {
-        // One box over every runner end, both banks of a V included.
-        Vec3 centre {};
-        float xMin = 1.0e9F, xMax = -1.0e9F, zMin = 1.0e9F, zMax = -1.0e9F, b = 0.0F;
-        for (const auto& end : runnerEnds) {
-            centre += end;
-            xMin = std::min(xMin, end.x);
-            xMax = std::max(xMax, end.x);
-            zMin = std::min(zMin, end.z);
-            zMax = std::max(zMax, end.z);
+    const auto add = [this](std::vector<DuctPiece> pieces) {
+        for (auto& piece : pieces) {
+            if (piece.mesh.empty()) continue;
+            const auto intake = piece.kind != DuctKind::exhaustComponent && piece.kind != DuctKind::exhaustFeeder;
+            const auto material = !intake ? SceneMaterial::exhaustPipe
+                : piece.kind == DuctKind::intakeThrottle ? SceneMaterial::forged : SceneMaterial::intakeFlow;
+            const auto part = addPart(std::move(piece.mesh), material, intake ? layerIntake : layerExhaust);
+            if (farParts_.size() < parts_.size()) farParts_.resize(parts_.size(), false);
+            farParts_[part] = !piece.nearEngine;
+            ducts_.push_back({ piece.kind, piece.pathId, piece.elementId, piece.componentType, part,
+                               std::move(piece.centreline), piece.authoredLengthMm });
+            if (piece.kind == DuctKind::intakeRunner)
+                for (std::size_t i = 0; i < cylinders_.size(); ++i)
+                    if (config_.cylinders[i].id == piece.elementId) cylinders_[i].runnerPart = part;
         }
-        for (const auto& c : cylinders_) b = std::max(b, c.bore);
-        centre = centre * (1.0F / static_cast<float>(runnerEnds.size()));
-        Mesh plenum;
-        appendBox(plenum, Mat4::translation({ 0.5F * (xMin + xMax), centre.y + 0.25F * b, 0.5F * (zMin + zMax) }),
-                  { xMax - xMin + 0.9F * b, 0.75F * b, zMax - zMin + pitch_ * 0.8F });
-        plenumPart_ = addPart(std::move(plenum), SceneMaterial::intakeFlow, layerIntake);
-    }
+    };
+    add(layoutIntake(config_, intakePorts_, bore, radialLike_));
+    add(layoutExhaust(config_, exhaustPorts_, bore));
+    farParts_.resize(parts_.size(), false);
 }
 
 float EngineModel3D::throwRotation(const Throw& item, double crankAngleDegrees) const noexcept {
@@ -499,26 +493,43 @@ void EngineModel3D::pose(const ScenePoseInput& input, std::vector<SceneInstance>
                                                          cylinder.chamberCentre);
         out[cylinder.flamePart].intensity = burn;
         const auto maximumLift = std::max(0.1, high ? cams.highIntakeLiftMm : cams.intakeLiftMm);
-        out[cylinder.runnerPart].intensity = static_cast<float>(std::clamp(intakeLift / maximumLift, 0.0, 1.0));
+        if (cylinder.runnerPart < out.size())
+            out[cylinder.runnerPart].intensity = static_cast<float>(std::clamp(intakeLift / maximumLift, 0.0, 1.0));
     }
-    // The plenum glows with the mean draw of its runners.
-    if (plenumPart_ >= 0 && !cylinders_.empty()) {
+    // Plenum, airbox and inlet duct glow with the mean draw of their runners.
+    for (const auto& duct : ducts_) {
+        if (duct.kind != DuctKind::intakePlenum && duct.kind != DuctKind::intakeAirbox
+            && duct.kind != DuctKind::intakeInletDuct)
+            continue;
         float draw = 0.0F;
-        for (const auto& cylinder : cylinders_) draw += out[cylinder.runnerPart].intensity;
-        out[static_cast<std::size_t>(plenumPart_)].intensity = 0.5F * draw / static_cast<float>(cylinders_.size());
+        int runners = 0;
+        for (const auto& other : ducts_)
+            if (other.kind == DuctKind::intakeRunner && other.pathId == duct.pathId) {
+                draw += out[other.part].intensity;
+                ++runners;
+            }
+        const auto share = duct.kind == DuctKind::intakePlenum ? 0.5F : 0.3F;
+        out[duct.part].intensity = runners > 0 ? share * draw / static_cast<float>(runners) : 0.0F;
     }
 }
 
 void EngineModel3D::computeBounds() {
     std::vector<SceneInstance> instances;
     pose({}, instances);
-    bounds_ = { { 1.0e9F, 1.0e9F, 1.0e9F }, { -1.0e9F, -1.0e9F, -1.0e9F } };
+    const SceneBounds empty { { 1.0e9F, 1.0e9F, 1.0e9F }, { -1.0e9F, -1.0e9F, -1.0e9F } };
+    bounds_ = empty;
+    systemBounds_ = empty;
+    const auto grow = [](SceneBounds& bounds, Vec3 p) {
+        bounds.minimum = { std::min(bounds.minimum.x, p.x), std::min(bounds.minimum.y, p.y), std::min(bounds.minimum.z, p.z) };
+        bounds.maximum = { std::max(bounds.maximum.x, p.x), std::max(bounds.maximum.y, p.y), std::max(bounds.maximum.z, p.z) };
+    };
     for (const auto& instance : instances) {
         if (parts_[instance.part].material == SceneMaterial::flame) continue;
+        const auto near = instance.part >= farParts_.size() || !farParts_[instance.part];
         for (const auto& vertex : parts_[instance.part].mesh.vertices) {
             const auto p = instance.transform.transformPoint(vertex.position);
-            bounds_.minimum = { std::min(bounds_.minimum.x, p.x), std::min(bounds_.minimum.y, p.y), std::min(bounds_.minimum.z, p.z) };
-            bounds_.maximum = { std::max(bounds_.maximum.x, p.x), std::max(bounds_.maximum.y, p.y), std::max(bounds_.maximum.z, p.z) };
+            grow(systemBounds_, p);
+            if (near) grow(bounds_, p);
         }
     }
 }
