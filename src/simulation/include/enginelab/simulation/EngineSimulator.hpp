@@ -127,6 +127,23 @@ public:
         exhaustCouplingEverySubstep_ = enabled;
     }
     void reset() noexcept override;
+    /** The nonlinear exhaust network of `config` built as the simulator builds
+     * its own, at `targetCellLengthM` (absent: the construction mesh), for
+     * replaceExhaustNetwork(). Null when it does not compile or does not have
+     * the topology the simulator was built with: a live change may resize and
+     * remesh the exhaust, never reconnect it. Not realtime-safe; any thread,
+     * since it reads only what construction fixed. */
+    [[nodiscard]] std::unique_ptr<gasdynamics::ExhaustGasNetwork> buildLiveExhaustNetwork(
+        const EngineConfig& config,
+        std::optional<double> targetCellLengthM = {}) const;
+    /** Swap in a network from buildLiveExhaustNetwork() for `config`'s exhaust,
+     * between two steps, without a restart: the new network takes over the
+     * running gas and wall state (ExhaustGasNetwork::adoptStateFrom). On success
+     * `network` holds the previous network; on failure nothing changes.
+     * Simulation thread only, like step(). */
+    [[nodiscard]] bool replaceExhaustNetwork(
+        std::unique_ptr<gasdynamics::ExhaustGasNetwork>& network,
+        const EngineConfig& config);
     /** Keep the gas field (GasFieldSnapshot) captured at a crank angle over
      * the cycle: each time the crank crosses it between two sub-steps, and at
      * the end of a frame once 0.25 s of simulated time has passed without a
@@ -158,6 +175,8 @@ private:
     void recordGasProbe() noexcept;
     /** Compile and allocate the mandatory nonlinear exhaust network. */
     void configurePhysicalExhaustNetwork();
+    [[nodiscard]] std::unique_ptr<gasdynamics::ExhaustGasNetwork> buildPhysicalExhaustNetwork(
+        const EngineConfig& config, double targetCellLengthM) const;
     /** Assemble one 1-D finite-volume runner duct per cylinder.
      *
      * Intake tuning is a wave phenomenon: a lumped runner cell has no
@@ -513,6 +532,11 @@ private:
     std::array<bool, 32> cylinderMisfires_ {};
     bool previousAfrObservationCommandEnabled_ { false };
     std::unique_ptr<gasdynamics::ExhaustGasNetwork> physicalExhaustNetwork_;
+    /** The exhaust layout at construction. Live changes keep its topology, so
+     * it stays the reference a new network is checked against, from any
+     * thread. */
+    gasdynamics::ExhaustNetworkLayout constructionExhaustLayout_;
+    double constructionExhaustCellLengthM_ { 0.0 };
     /** Heap-owned scratch keeps the bounded source list out of step()'s large
      * Windows stack frame. */
     gasdynamics::ExhaustFuelReactionResult exhaustFuelReactionScratch_ {};

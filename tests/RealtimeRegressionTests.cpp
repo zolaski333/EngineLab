@@ -39,6 +39,7 @@
 
 namespace enginelab::tests {
 void exhaustTransferRegression();
+void liveChangeRegression();
 }
 
 namespace {
@@ -3240,6 +3241,11 @@ int main(int argc, char** argv) {
             && std::string_view { argv[1] } == "--exhaust-transfer-only") {
             enginelab::tests::exhaustTransferRegression();
             std::cout << "Deterministic exhaust transfer tests passed\n";
+            return 0;
+        }
+        if (argc == 2 && std::string_view { argv[1] } == "--live-change-only") {
+            enginelab::tests::liveChangeRegression();
+            std::cout << "Live change tests passed\n";
             return 0;
         }
         monitorCalibrationDefaultRegression();

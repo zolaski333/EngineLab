@@ -125,6 +125,35 @@ script, JSON editor, exhaust designer), the new runtime reuses the same
 `CalibrationStore`: maps, tuner and ECU watcher survive. Explicitly choosing or
 importing another engine creates its default set.
 
+### Live exhaust changes
+
+An edit of `exhaust` and `exhaustPaths` only (the inspector's steppers, the
+Exhaust editor) that keeps the network's topology (same ducts, junctions,
+ports and outlets) is taken by the running engine:
+
+1. `EngineRuntime::applyLiveExhaust`, on the caller's thread, builds the new
+   graph and gas network (`EngineSimulator::buildLiveExhaustNetwork`), which
+   is the costly part, and leaves them in a mutex-guarded mailbox.
+2. The simulation thread takes it between two frames: the new network adopts
+   the running one's state (`ExhaustGasNetwork::adoptStateFrom`), the
+   simulator swaps it in, the runtime swaps its graph (the simulator holds a
+   reference to it) and republishes the exhaust's static telemetry.
+3. The app hands the audio its own graph built from the same configuration.
+   `RealtimeEngineAudio::replaceExhaustGraph` builds and prepares the new
+   acoustic network off the audio thread; the audio thread feeds it silently
+   for 150 ms while its pipes fill, then crossfades over 30 ms. The retired
+   network is freed by the app's timer, never on the audio thread.
+
+`adoptStateFrom` keeps the intensive state where it was: equal meshes copy
+cell for cell, different meshes take overlap-weighted means of densities,
+momentum, energy and wall temperature. A resized pipe therefore holds more or
+less gas at the same pressure and temperature. The wall temperature is the
+state that matters: its time constant is tens of seconds, while the gas
+refills in milliseconds (an exhaust swapped with a fresh network shows no
+engine-speed step, but a cold wall). Anything else (another topology, the
+dyno running, an audio network that fails to prepare) restarts the runtime
+as above.
+
 ## Physical contracts
 
 - `GasCell` conserves species, internal energy, volume and 2D momentum.
@@ -339,9 +368,9 @@ have no length; a silencer is sized by its body). It refuses an edit that
 would change which components the path has (a silencer no wider than its
 pipes stops being one) and, on the only path, mirrors the geometry into
 `EngineConfig::exhaust`, which normalisation copies back and the solver
-reads. *Apply* restarts the engine with the edited configuration through the
-same path as the Exhaust editor; the camera stays and the part stays
-selected.
+reads. A stepper press reaches the running engine 250 ms after the last one
+(a live exhaust change, see above); *Reset* goes back to the size the part
+had when it was selected. The camera stays and the part stays selected.
 
 ## Extension rule
 

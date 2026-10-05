@@ -243,6 +243,24 @@ public:
                              double temperatureK,
                              GasComposition composition = GasComposition::dryAir()) noexcept;
 
+    /** Take over the gas and wall state of a network of the same topology
+     * (ExhaustNetworkLayout::sameTopology) compiled at other sizes or another
+     * mesh: an exhaust resized while the engine runs.
+     *
+     * Each duct is remapped along its normalised length: a new cell takes the
+     * overlap-weighted mean of the old cells it covers, for the gas (per unit
+     * volume, so pressure, temperature, velocity and composition stay where
+     * they were along the pipe) and for the wall temperature; a reaction site
+     * takes the old site at its centre. Junctions, cylinder reservoirs and the
+     * wall-exchange clocks are copied. A duct with the same cell count is
+     * copied exactly, so adopting from an identical network changes nothing.
+     * Mass is conserved only where the volume is: a longer or wider pipe holds
+     * more gas at the same state.
+     *
+     * Allocation-free. Returns false, leaving this network unchanged, when a
+     * network is unconfigured, the topologies differ or a remapped state is
+     * not physical. */
+    [[nodiscard]] bool adoptStateFrom(const ExhaustGasNetwork& previous) noexcept;
     [[nodiscard]] bool configured() const noexcept { return configured_; }
     [[nodiscard]] const EulerMixtureModel& mixtureModel() const noexcept { return mixtureModel_; }
     [[nodiscard]] const ExhaustNetworkLayout& layout() const noexcept { return layout_; }

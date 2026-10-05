@@ -79,7 +79,7 @@ private:
 };
 
 /** What the clicked part is, with its authored geometry and live gas state. */
-class PartInspector final : public juce::Component {
+class PartInspector final : public juce::Component, private juce::Timer {
 public:
     struct Row final {
         juce::String label;
@@ -105,7 +105,8 @@ public:
         juce::String note;
     };
     PartInspector();
-    /** Called with the edited length and diameter when Apply is pressed. */
+    /** Called with the edited length and diameter a moment after the last
+        stepper press, and at once by Reset: the engine hears each size live. */
     std::function<void(double lengthMm, double diameterMm)> onApplyEdit;
     /** `note`, if any, is a short paragraph under the rows. */
     void show(juce::String title, juce::String subtitle, std::vector<Row> rows, juce::String note = {});
@@ -120,7 +121,12 @@ public:
     void resized() override;
     void mouseUp(const juce::MouseEvent&) override;
 
+    /** Stepper presses closer together than this make a single edit. */
+    static constexpr int editSettleMs = 250;
+
 private:
+    void timerCallback() override;
+    void sendEdit();
     [[nodiscard]] juce::Rectangle<int> closeArea() const;
     juce::String title_;
     juce::String subtitle_;
@@ -130,12 +136,14 @@ private:
     std::optional<Edit> edit_;
     double pendingLengthMm_ {};
     double pendingDiameterMm_ {};
+    /** The size when the component was selected, which Reset goes back to. */
+    double originLengthMm_ {};
+    double originDiameterMm_ {};
     juce::String editStatus_;
     ActionButton lengthDown_ { "-", ActionButton::Style::compact };
     ActionButton lengthUp_ { "+", ActionButton::Style::compact };
     ActionButton diameterDown_ { "-", ActionButton::Style::compact };
     ActionButton diameterUp_ { "+", ActionButton::Style::compact };
-    ActionButton applyEdit_ { "Apply", ActionButton::Style::primary };
     ActionButton resetEdit_ { "Reset", ActionButton::Style::compact };
     [[nodiscard]] juce::TextLayout noteLayout(const juce::String& text, juce::Colour, float width) const;
     [[nodiscard]] int editHeight() const;

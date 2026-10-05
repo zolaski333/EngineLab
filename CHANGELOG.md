@@ -49,8 +49,13 @@ file formats, always with an in-memory migration).
   exhaust or intake duct, an oscilloscope traces the pressure of the clicked
   cell over the engine cycle, recorded at every solver step.
 - Resize an exhaust component from the 3-D view: length and diameter
-  steppers in the part inspector, applied to the running engine like the
-  Exhaust editor's changes.
+  steppers in the part inspector. Each press is heard a quarter of a second
+  later, and Reset goes back to the size the part had when it was selected.
+- Exhaust changes no longer restart the engine. A resize from the inspector or
+  an Exhaust editor change that keeps the same pipes and junctions reaches the
+  running engine: speed, load, temperatures and the ECU carry on, the gas stays
+  where it was, and the sound crossfades to the new exhaust in 0.2 s. A change
+  of topology (adding or removing a component) still restarts the engine.
 - Exhaust and intake pipes in the 3-D view are routed like real ones: they no
   longer pass through each other, the engine or the intake, bend no tighter
   than 1.25 diameters and keep their authored length. A collector is wide

@@ -899,6 +899,187 @@ void testHotUnburnedFuelReactsConservatively() {
               << " energy_j=" << hotWallReaction.releasedEnergyJoules << '\n';
 }
 
+[[nodiscard]] ExhaustGasNetwork makeMeshedNetwork(const EngineConfig& config,
+                                                  double targetCellLengthM,
+                                                  ExhaustGasNetworkConfig networkConfig) {
+    auto mesh = realtimeExhaustFeedbackDiscretisation();
+    mesh.targetCellLengthM = targetCellLengthM;
+    const auto layout = ExhaustNetworkLayout::compile(
+        ExhaustGraph::makeForEngine(config), mesh);
+    requireNetwork(layout.valid(), "meshed test graph must compile to a valid layout");
+    ExhaustGasNetwork network;
+    requireNetwork(network.configure(layout, networkConfig),
+                   "meshed test network must configure");
+    return network;
+}
+
+[[nodiscard]] ExhaustGasNetworkConfig hotWallNetworkConfig() {
+    ExhaustGasNetworkConfig configuration;
+    configuration.dynamicWallHeatTransferEnabled = true;
+    configuration.wallTemperatureK = 300.0;
+    configuration.externalWallHeatTransferWPerM2K = 15.0;
+    configuration.externalTemperatureK = 300.0;
+    return configuration;
+}
+
+/** Blow hot gas into the first port, then let the waves travel with every
+ * valve shut, so the network holds a non-uniform gas and wall state. */
+void perturbWithBlowdown(ExhaustGasNetwork& network, double durationSeconds) {
+    const auto hotState = network.mixtureModel().conservativeFromPressureTemperature(
+        320'000.0, 1'050.0);
+    requireNetwork(hotState.has_value(), "blowdown fixture must be physical");
+    const CylinderValveBoundary cylinder {
+        network.layout().cylinderPorts().front().cylinderId,
+        *hotState, 0.00050, 0.00030, 0.78 };
+    const auto ambient = ambientFor(network, 101'325.0, 300.0, 1.0);
+    requireNetwork(network.advance(durationSeconds,
+            std::span<const CylinderValveBoundary>(&cylinder, 1), ambient).completed,
+        "blowdown fixture must advance");
+    requireNetwork(network.advance(0.0015, {}, ambient).completed,
+        "blowdown fixture must ring down");
+}
+
+void testAdoptingFromAnIdenticalNetworkChangesNothing() {
+    const auto config = makeDefaultInlineFour();
+    auto running = makeMeshedNetwork(config, 0.360, hotWallNetworkConfig());
+    perturbWithBlowdown(running, 0.004);
+    auto adopted = makeMeshedNetwork(config, 0.360, hotWallNetworkConfig());
+    auto reference = makeMeshedNetwork(config, 0.360, hotWallNetworkConfig());
+    perturbWithBlowdown(reference, 0.004);
+    requireNetwork(adopted.adoptStateFrom(running),
+        "a network must adopt the state of an identical network");
+    // Both continue identically: the adopted network is the running one.
+    const auto ambient = ambientFor(running, 101'325.0, 300.0, 1.0);
+    for (auto* network : { &adopted, &reference })
+        requireNetwork(network->advance(0.003, {}, ambient).completed,
+                       "adopted and reference networks must advance");
+    for (std::size_t duct = 0; duct < adopted.ducts().size(); ++duct) {
+        const auto left = adopted.ducts()[duct].cells();
+        const auto right = reference.ducts()[duct].cells();
+        for (std::size_t cell = 0; cell < left.size(); ++cell)
+            requireNetwork(left[cell].totalEnergyDensityJPerM3
+                        == right[cell].totalEnergyDensityJPerM3
+                    && left[cell].momentumDensityKgPerM2S
+                        == right[cell].momentumDensityKgPerM2S
+                    && adopted.ducts()[duct].wallStates()[cell].temperatureK
+                        == reference.ducts()[duct].wallStates()[cell].temperatureK,
+                "adopting an identical network must continue bit-identically");
+    }
+    for (std::size_t junction = 0; junction < adopted.junctionStates().size(); ++junction)
+        requireNetwork(adopted.junctionStates()[junction].totalEnergyDensityJPerM3
+                == reference.junctionStates()[junction].totalEnergyDensityJPerM3,
+            "adopting an identical network must continue bit-identically in the junctions");
+}
+
+void testAdoptingAcrossMeshesKeepsTheGasWhereItWas() {
+    const auto config = makeDefaultInlineFour();
+    auto coarse = makeMeshedNetwork(config, 0.360, hotWallNetworkConfig());
+    perturbWithBlowdown(coarse, 0.004);
+    auto fine = makeMeshedNetwork(config, 0.045, hotWallNetworkConfig());
+    auto refinedDucts = std::size_t { 0 };
+    for (std::size_t duct = 0; duct < fine.ducts().size(); ++duct)
+        if (fine.ducts()[duct].cells().size() > coarse.ducts()[duct].cells().size())
+            ++refinedDucts;
+    requireNetwork(refinedDucts > 0, "the fine mesh must refine at least one duct");
+    requireNetwork(fine.adoptStateFrom(coarse),
+        "a network must adopt the state of the same exhaust at another mesh");
+    const auto& model = coarse.mixtureModel();
+    auto comparedCells = std::size_t { 0 };
+    for (std::size_t duct = 0; duct < fine.ducts().size(); ++duct) {
+        const auto& from = coarse.ducts()[duct];
+        const auto& to = fine.ducts()[duct];
+        if (from.geometry().hasVariableArea()) continue;
+        // Same geometry, another mesh: every duct holds the same gas.
+        const auto before = from.inventory();
+        const auto after = to.inventory();
+        requireNetwork(relativeError(totalMass(after.speciesMassKg),
+                                     totalMass(before.speciesMassKg)) < 1.0e-12
+                && relativeError(after.totalEnergyJ, before.totalEnergyJ) < 1.0e-12
+                && relativeError(to.wallThermalEnergyJ(), from.wallThermalEnergyJ()) < 1.0e-12,
+            "a remap at constant geometry must conserve each duct's gas and wall energy");
+        // And where it was along the pipe: a fine cell inside one coarse cell
+        // takes that cell's gas.
+        const auto ratio = to.cells().size() / from.cells().size();
+        if (ratio * from.cells().size() != to.cells().size()) continue;
+        for (std::size_t cell = 0; cell < to.cells().size(); ++cell) {
+            const auto fineCell = model.primitiveFromConservative(to.cells()[cell]);
+            const auto coarseCell = model.primitiveFromConservative(
+                from.cells()[cell / ratio]);
+            requireNetwork(fineCell && coarseCell
+                    && relativeError(fineCell->pressurePa, coarseCell->pressurePa) < 1.0e-12,
+                "a fine cell inside one coarse cell must take that cell's pressure");
+            ++comparedCells;
+        }
+    }
+    requireNetwork(comparedCells > 0, "the mesh test must compare at least one cell");
+    // Back to the coarse mesh: each coarse cell gets back the gas it gave.
+    auto coarseAgain = makeMeshedNetwork(config, 0.360, hotWallNetworkConfig());
+    requireNetwork(coarseAgain.adoptStateFrom(fine),
+        "a network must adopt the state back onto the coarse mesh");
+    for (std::size_t duct = 0; duct < coarse.ducts().size(); ++duct) {
+        const auto ratio = fine.ducts()[duct].cells().size()
+            / coarse.ducts()[duct].cells().size();
+        if (ratio * coarse.ducts()[duct].cells().size()
+                != fine.ducts()[duct].cells().size()) continue;
+        for (std::size_t cell = 0; cell < coarse.ducts()[duct].cells().size(); ++cell)
+            requireNetwork(relativeError(
+                    coarseAgain.ducts()[duct].cells()[cell].totalEnergyDensityJPerM3,
+                    coarse.ducts()[duct].cells()[cell].totalEnergyDensityJPerM3) < 1.0e-12,
+                "refining then coarsening must return every coarse cell");
+    }
+}
+
+void testAdoptingAResizedExhaustKeepsTheRunningState() {
+    const auto config = makeDefaultInlineFour();
+    auto running = makeMeshedNetwork(config, 0.360, hotWallNetworkConfig());
+    perturbWithBlowdown(running, 0.004);
+    auto resizedConfig = config;
+    resizedConfig.exhaust.primaryDiameterMm += 4.0;
+    auto resized = makeMeshedNetwork(resizedConfig, 0.360, hotWallNetworkConfig());
+    requireNetwork(resized.layout().sameTopology(running.layout()),
+        "a resized exhaust must keep its topology");
+    requireNetwork(resized.adoptStateFrom(running),
+        "a resized exhaust must adopt the running state");
+    const auto& model = running.mixtureModel();
+    for (std::size_t junction = 0; junction < resized.junctionStates().size(); ++junction)
+        requireNetwork(resized.junctionStates()[junction].totalEnergyDensityJPerM3
+                == running.junctionStates()[junction].totalEnergyDensityJPerM3,
+            "a resized exhaust must keep the junction gas");
+    auto widened = std::size_t { 0 };
+    for (std::size_t duct = 0; duct < resized.ducts().size(); ++duct) {
+        const auto& from = running.ducts()[duct];
+        const auto& to = resized.ducts()[duct];
+        if (to.cells().size() != from.cells().size()) continue;
+        for (std::size_t cell = 0; cell < to.cells().size(); ++cell) {
+            const auto after = model.primitiveFromConservative(to.cells()[cell]);
+            const auto before = model.primitiveFromConservative(from.cells()[cell]);
+            requireNetwork(after && before
+                    && after->pressurePa == before->pressurePa
+                    && after->temperatureK == before->temperatureK
+                    && after->velocityMps == before->velocityMps,
+                "a resized duct on the same mesh must keep each cell's gas");
+        }
+        if (to.geometry().areaM2() > from.geometry().areaM2() * 1.05) {
+            // Wider at the same state: more gas.
+            requireNetwork(totalMass(to.inventory().speciesMassKg)
+                    > totalMass(from.inventory().speciesMassKg) * 1.05,
+                "a wider duct at the same state must hold more gas");
+            ++widened;
+        }
+    }
+    requireNetwork(widened > 0, "the resize must widen at least one duct");
+    const auto ambient = ambientFor(resized, 101'325.0, 300.0, 1.0);
+    requireNetwork(resized.advance(0.003, {}, ambient).completed,
+        "a resized exhaust must keep advancing after adopting the state");
+
+    // Another topology is refused and leaves the network untouched.
+    auto otherTopology = makeMeshedNetwork(makeDefaultV8(), 0.360, hotWallNetworkConfig());
+    const auto untouched = otherTopology.inventory();
+    requireNetwork(!otherTopology.adoptStateFrom(running)
+            && otherTopology.inventory().totalEnergyJ == untouched.totalEnergyJ,
+        "a network of another topology must refuse the state and stay unchanged");
+}
+
 } // namespace
 
 void runExhaustGasNetworkTests() {
@@ -915,4 +1096,7 @@ void runExhaustGasNetworkTests() {
     testCatalystThermalStateAggregatesTheWholeSubstrate();
     testBoundaryInputOrderIsIrrelevant();
     testHotUnburnedFuelReactsConservatively();
+    testAdoptingFromAnIdenticalNetworkChangesNothing();
+    testAdoptingAcrossMeshesKeepsTheGasWhereItWas();
+    testAdoptingAResizedExhaustKeepsTheRunningState();
 }

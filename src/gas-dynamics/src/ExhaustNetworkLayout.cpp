@@ -560,4 +560,66 @@ double ExhaustNetworkLayout::minimumCflLengthM() const noexcept {
     return shortest;
 }
 
+namespace {
+
+[[nodiscard]] bool sameEndpoint(const ExhaustEndpoint& left,
+                                const ExhaustEndpoint& right) noexcept {
+    return left.type == right.type && left.elementIndex == right.elementIndex
+        && left.nodeId == right.nodeId;
+}
+
+} // namespace
+
+bool ExhaustNetworkLayout::sameTopology(
+    const ExhaustNetworkLayout& other) const noexcept {
+    if (!valid_ || !other.valid_ || ducts_.size() != other.ducts_.size()
+        || junctions_.size() != other.junctions_.size()
+        || interfaces_.size() != other.interfaces_.size()
+        || cylinderPorts_.size() != other.cylinderPorts_.size()
+        || outlets_.size() != other.outlets_.size())
+        return false;
+    for (std::size_t index = 0; index < ducts_.size(); ++index) {
+        const auto& left = ducts_[index];
+        const auto& right = other.ducts_[index];
+        if (left.nodeId != right.nodeId
+            || left.sourceComponentId != right.sourceComponentId
+            || left.pathIndex != right.pathIndex
+            || left.sourceType != right.sourceType)
+            return false;
+    }
+    for (std::size_t index = 0; index < junctions_.size(); ++index) {
+        const auto& left = junctions_[index];
+        const auto& right = other.junctions_[index];
+        if (left.nodeId != right.nodeId
+            || left.sourceComponentId != right.sourceComponentId
+            || left.pathIndex != right.pathIndex
+            || left.sourceType != right.sourceType)
+            return false;
+    }
+    for (std::size_t index = 0; index < interfaces_.size(); ++index) {
+        const auto& left = interfaces_[index];
+        const auto& right = other.interfaces_[index];
+        if (!sameEndpoint(left.upstream, right.upstream)
+            || !sameEndpoint(left.downstream, right.downstream)
+            || left.upstreamPort != right.upstreamPort
+            || left.downstreamPort != right.downstreamPort)
+            return false;
+    }
+    for (std::size_t index = 0; index < cylinderPorts_.size(); ++index) {
+        const auto& left = cylinderPorts_[index];
+        const auto& right = other.cylinderPorts_[index];
+        if (left.cylinderId != right.cylinderId || left.pathIndex != right.pathIndex
+            || !sameEndpoint(left.networkEndpoint, right.networkEndpoint))
+            return false;
+    }
+    for (std::size_t index = 0; index < outlets_.size(); ++index) {
+        const auto& left = outlets_[index];
+        const auto& right = other.outlets_[index];
+        if (left.outletNodeId != right.outletNodeId || left.pathIndex != right.pathIndex
+            || !sameEndpoint(left.networkEndpoint, right.networkEndpoint))
+            return false;
+    }
+    return true;
+}
+
 } // namespace enginelab::gasdynamics

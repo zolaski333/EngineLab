@@ -49,6 +49,9 @@ private:
     void selectEngine(int presetIndex);
     bool applyConfig(const EngineConfig&, bool preserveScriptWatcher = false,
                      bool preserveCalibration = false);
+    /** An edit of config.exhaust and config.exhaustPaths only: taken by the
+        running engine when it keeps the network's topology, else a restart. */
+    bool applyExhaustEdit(const EngineConfig&);
     void showConfigEditor();
     void showConfigEditor(const juce::String& initialText);
     void showKeyBindingsEditor();

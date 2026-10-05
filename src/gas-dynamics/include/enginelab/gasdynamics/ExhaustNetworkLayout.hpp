@@ -245,6 +245,13 @@ public:
     [[nodiscard]] const ExhaustNetworkDiscretisation& discretisation() const noexcept {
         return discretisation_;
     }
+    /** Same elements, connected the same way, whatever their sizes and cell
+     * counts: every duct, junction, interface, cylinder port and outlet has
+     * the same identity, type and endpoints in the same order. Two such
+     * layouts index their elements identically, so a network compiled from
+     * one can take over the state of a network compiled from the other
+     * (ExhaustGasNetwork::adoptStateFrom). */
+    [[nodiscard]] bool sameTopology(const ExhaustNetworkLayout& other) const noexcept;
 
 private:
     ExhaustNetworkDiscretisation discretisation_ {};

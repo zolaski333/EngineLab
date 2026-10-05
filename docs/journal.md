@@ -5,6 +5,18 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-05 — Live exhaust changes
+
+- Gas: an identical exhaust adopted continues bit-identically; 360 to 45 mm
+  conserves mass, energy and wall energy per duct. Physics, CP2/K20A/LS3 held
+  at 60 % redline, +500 mm and x0.70 diameter swapped at 6 s: settled brake
+  torque within 0.2 % of an engine built with it (CP2 56.64/56.64 Nm, 60.26
+  untouched). No speed step either way: a fresh network refills in ms. What
+  the state transfer keeps is the wall (CP2 332 K at 6 s, < 3 % change).
+- Audio: identical swap -75 dB during the crossfade, -114 dB after. 60 ms of
+  warm-up left -33 dB, 150 ms -74 dB. Outlet jet noise is seeded: disabled.
+- Mutations caught: no wall copy, nearest-cell remap, no adoption, no fade.
+
 ## 2026-10-05 — Resizing the exhaust from the 3-D view
 
 - `EngineLab.EngineModel3D`, 16 engines and a scalar-geometry copy of the

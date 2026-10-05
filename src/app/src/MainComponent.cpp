@@ -116,7 +116,7 @@ MainComponent::MainComponent() {
         runtime_->requestGasField(crankAngleDegrees);
         return runtime_->latestGasField(field);
     });
-    viewport_.setConfigEditor([this](const EngineConfig& edited) { return applyConfig(edited, false, true); });
+    viewport_.setConfigEditor([this](const EngineConfig& edited) { return applyExhaustEdit(edited); });
     viewport_.setGasProbeSource([this](std::int32_t element, std::uint8_t sample, GasProbeTrace& trace) {
         if (!runtime_) return false;
         runtime_->requestGasProbe(element, sample);
@@ -221,6 +221,25 @@ bool MainComponent::applyConfig(const EngineConfig& newConfig, bool preserveScri
     selectedPresetIndex_ = preset != presets_.end()
         ? static_cast<int>(std::distance(presets_.begin(), preset)) : -1;
     topBar_.setEngine(config_, selectedPresetIndex_);
+    viewport_.setEngine(config_);
+    viewport_.refresh();
+    return true;
+}
+
+bool MainComponent::applyExhaustEdit(const EngineConfig& edited) {
+    if (!runtime_ || !audio_ || runtime_->dynoRunning() || !runtime_->applyLiveExhaust(edited))
+        return applyConfig(edited, false, true);
+    // The simulation thread swaps the runtime's own graph: the audio gets one
+    // built here from the same configuration.
+    config_.exhaust = runtime_->engineConfig().exhaust;
+    config_.exhaustPaths = runtime_->engineConfig().exhaustPaths;
+    try {
+        if (!audio_->replaceExhaustGraph(ExhaustGraph::makeForEngine(config_)) && physicalExhaustTopology_)
+            return applyConfig(config_, false, true);
+    } catch (const std::exception&) {
+        return applyConfig(config_, false, true);
+    }
+    if (exhaustDesignerWindow_) exhaustDesignerWindow_->setConfig(config_);
     viewport_.setEngine(config_);
     viewport_.refresh();
     return true;
@@ -594,7 +613,7 @@ void MainComponent::showExhaustDesigner() {
                 if (!safe) return false;
                 // applyConfig intentionally keeps the designer alive. Its content
                 // invokes this callback synchronously and resumes afterwards.
-                return safe->applyConfig(editedConfig, false, true);
+                return safe->applyExhaustEdit(editedConfig);
             });
     }
     exhaustDesignerWindow_->setVisible(true);
@@ -1101,6 +1120,9 @@ void MainComponent::timerCallback() {
     pollEngineScript();
     pollAudioVoicing();
     if (!runtime_) return;
+    // A live exhaust change retires the audio's previous network here, off
+    // the audio thread.
+    if (audio_) audio_->collectRetiredExhaustNetworks();
     if (throttleKeyActive_) updateMomentaryThrottle();
     const auto clutchTarget = (actionMap_.isDown(AppAction::clutchHold)
         || juce::ModifierKeys::getCurrentModifiersRealtime().isShiftDown())

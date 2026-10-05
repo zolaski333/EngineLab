@@ -464,7 +464,7 @@ constexpr int inspectorValueWidth = 78;
 } // namespace
 
 PartInspector::PartInspector() {
-    for (auto* button : { &lengthDown_, &lengthUp_, &diameterDown_, &diameterUp_, &applyEdit_, &resetEdit_ })
+    for (auto* button : { &lengthDown_, &lengthUp_, &diameterDown_, &diameterUp_, &resetEdit_ })
         addChildComponent(button);
     lengthDown_.onClick = [this] { stepEdit(true, -1.0); };
     lengthUp_.onClick = [this] { stepEdit(true, 1.0); };
@@ -474,17 +474,26 @@ PartInspector::PartInspector() {
     lengthUp_.setTooltip("Longer by 10 mm (Shift: 1 mm)");
     diameterDown_.setTooltip("Narrower by 1 mm (Shift: 0.1 mm)");
     diameterUp_.setTooltip("Wider by 1 mm (Shift: 0.1 mm)");
-    applyEdit_.setTooltip("Restarts the engine with the resized exhaust");
-    applyEdit_.onClick = [this] {
-        if (edit_ && onApplyEdit) onApplyEdit(pendingLengthMm_, pendingDiameterMm_);
-    };
+    resetEdit_.setTooltip("Back to the size this part had when you selected it");
     resetEdit_.onClick = [this] {
         if (!edit_) return;
-        pendingLengthMm_ = edit_->lengthMm;
-        pendingDiameterMm_ = edit_->diameterMm;
+        pendingLengthMm_ = originLengthMm_;
+        pendingDiameterMm_ = originDiameterMm_;
         setEditStatus({});
         updateEditButtons();
+        sendEdit();
     };
+}
+
+void PartInspector::timerCallback() { sendEdit(); }
+
+void PartInspector::sendEdit() {
+    stopTimer();
+    if (!edit_ || !onApplyEdit) return;
+    if (std::abs(pendingLengthMm_ - edit_->lengthMm) < 1.0e-6
+        && std::abs(pendingDiameterMm_ - edit_->diameterMm) < 1.0e-6)
+        return;
+    onApplyEdit(pendingLengthMm_, pendingDiameterMm_);
 }
 
 void PartInspector::setEdit(std::optional<Edit> edit) {
@@ -492,15 +501,25 @@ void PartInspector::setEdit(std::optional<Edit> edit) {
         && edit->diameterMm == edit_->diameterMm;
     const auto resize = edit.has_value() != edit_.has_value()
         || (edit && edit_ && (edit->lengthEditable != edit_->lengthEditable || edit->note != edit_->note));
+    // A live edit comes back as the same component with its new size: the
+    // origin stays, so Reset still knows where the editing started.
+    const auto sameComponent = edit && edit_ && edit->key == edit_->key;
     if (!keep && edit) {
         pendingLengthMm_ = edit->lengthMm;
         pendingDiameterMm_ = edit->diameterMm;
+        if (!sameComponent) {
+            originLengthMm_ = edit->lengthMm;
+            originDiameterMm_ = edit->diameterMm;
+        }
     }
-    if (!keep) editStatus_.clear();
+    if (!keep) {
+        editStatus_.clear();
+        stopTimer();
+    }
     edit_ = std::move(edit);
     for (auto* button : { &lengthDown_, &lengthUp_ })
         button->setVisible(edit_.has_value() && edit_->lengthEditable);
-    for (auto* button : { &diameterDown_, &diameterUp_, &applyEdit_, &resetEdit_ }) button->setVisible(edit_.has_value());
+    for (auto* button : { &diameterDown_, &diameterUp_, &resetEdit_ }) button->setVisible(edit_.has_value());
     updateEditButtons();
     if (resize) setSize(getWidth(), idealHeight());
     resized();
@@ -525,12 +544,12 @@ void PartInspector::stepEdit(bool length, double direction) {
     value = length ? std::clamp(value, 10.0, 5'000.0) : std::clamp(value, 10.0, 400.0);
     setEditStatus({});
     updateEditButtons();
+    startTimer(editSettleMs);
 }
 
 void PartInspector::updateEditButtons() {
-    const auto changed = edit_ && (std::abs(pendingLengthMm_ - edit_->lengthMm) > 1.0e-6
-                                   || std::abs(pendingDiameterMm_ - edit_->diameterMm) > 1.0e-6);
-    applyEdit_.setEnabled(changed);
+    const auto changed = edit_ && (std::abs(pendingLengthMm_ - originLengthMm_) > 1.0e-6
+                                   || std::abs(pendingDiameterMm_ - originDiameterMm_) > 1.0e-6);
     resetEdit_.setEnabled(changed);
     repaint();
 }
@@ -559,8 +578,6 @@ void PartInspector::resized() {
     if (edit_->lengthEditable) place(lengthDown_, lengthUp_);
     place(diameterDown_, diameterUp_);
     auto buttons = area.removeFromTop(inspectorEditButtons).withTrimmedTop(4);
-    applyEdit_.setBounds(buttons.removeFromRight(80));
-    buttons.removeFromRight(6);
     resetEdit_.setBounds(buttons.removeFromRight(64));
 }
 
@@ -583,8 +600,8 @@ void PartInspector::paintEdit(juce::Graphics& g, juce::Rectangle<int> area) cons
         const auto decimals = std::abs(value - std::round(value)) > 1.0e-6 ? 1 : 0;
         g.drawText(juce::String(value, decimals) + " mm", valueArea, juce::Justification::centred, false);
     };
-    if (edit_->lengthEditable) row("Length", pendingLengthMm_, edit_->lengthMm);
-    row("Diameter", pendingDiameterMm_, edit_->diameterMm);
+    if (edit_->lengthEditable) row("Length", pendingLengthMm_, originLengthMm_);
+    row("Diameter", pendingDiameterMm_, originDiameterMm_);
     area.removeFromTop(inspectorEditButtons);
     for (const auto* text : { &edit_->note, &editStatus_ }) {
         if (text->isEmpty()) continue;

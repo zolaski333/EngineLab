@@ -136,8 +136,11 @@ add_test(NAME EngineLab.EcuCalibration COMMAND EngineLabEcuCalibrationIntegratio
 
 add_executable(EngineLabRealtimeRegressionTests
     RealtimeRegressionTests.cpp
-    ExhaustTransferTests.cpp)
-target_link_libraries(EngineLabRealtimeRegressionTests PRIVATE EngineLab::Audio)
+    ExhaustTransferTests.cpp
+    LiveChangeTests.cpp)
+target_link_libraries(EngineLabRealtimeRegressionTests PRIVATE EngineLab::Audio EngineLab::Catalog)
+target_compile_definitions(EngineLabRealtimeRegressionTests PRIVATE
+    ENGINELAB_CATALOG_ROOT="${CMAKE_SOURCE_DIR}")
 enginelab_set_warnings(EngineLabRealtimeRegressionTests)
 add_test(NAME EngineLab.RealtimeRegression COMMAND EngineLabRealtimeRegressionTests)
 if(MSVC)
@@ -152,6 +155,11 @@ endif()
 add_test(NAME EngineLab.ExhaustTransfer
     COMMAND EngineLabRealtimeRegressionTests --exhaust-transfer-only)
 set_tests_properties(EngineLab.ExhaustTransfer PROPERTIES TIMEOUT 30)
+
+# Live exhaust changes: the running simulator and renderer take a resized
+# exhaust without a restart. Same binary, for the same reason.
+add_test(NAME EngineLab.LiveChange
+    COMMAND EngineLabRealtimeRegressionTests --live-change-only)
 
 add_executable(EngineLabOfflineAudioExportTests OfflineAudioExportTests.cpp)
 target_link_libraries(EngineLabOfflineAudioExportTests PRIVATE
