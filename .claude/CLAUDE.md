@@ -123,6 +123,7 @@ Non-deterministic:
   the same hour (`git stash`, rebuild, measure, `stash pop`), with a control
   engine the change cannot affect, alternating which variant runs first and
   ignoring a first warm-up run. Take the minimum of N runs, not the mean.
+  `--gas-view` adds the 3-D view's gas-field and probe requests at 60 Hz.
 
 ## Verified technical traps
 

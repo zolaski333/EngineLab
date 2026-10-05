@@ -432,6 +432,56 @@ struct Measurement final {
     std::uint64_t droppedExhaustAcousticSamples {};
     float minimumLevelGain { 1.0F };
     float maximumPreLimiterMagnitude {};
+    std::uint64_t gasFieldsReceived {};
+    std::uint64_t gasProbeTracesReceived {};
+};
+
+/**
+ * Stands in for the 3-D view on its own thread: at the display rate it asks
+ * for the latest gas field and for the pressure trace of one place, the way
+ * MainComponent's gas-field and probe sources do, so the capture cost lands on
+ * the simulation thread exactly as with the view open.
+ */
+class GasViewEmulator final {
+public:
+    explicit GasViewEmulator(enginelab::EngineRuntime& runtime)
+        : runtime_(runtime), thread_([this] { run(); }) {}
+    ~GasViewEmulator() { stop(); }
+    GasViewEmulator(const GasViewEmulator&) = delete;
+    GasViewEmulator& operator=(const GasViewEmulator&) = delete;
+
+    void stop() {
+        stopping_.store(true, std::memory_order_release);
+        if (thread_.joinable()) thread_.join();
+    }
+    [[nodiscard]] std::uint64_t fields() const noexcept {
+        return fields_.load(std::memory_order_acquire);
+    }
+    [[nodiscard]] std::uint64_t traces() const noexcept {
+        return traces_.load(std::memory_order_acquire);
+    }
+
+private:
+    void run() {
+        enginelab::GasFieldSnapshot field;
+        enginelab::GasProbeTrace trace;
+        while (!stopping_.load(std::memory_order_acquire)) {
+            runtime_.requestGasField(-1.0);
+            if (runtime_.latestGasField(field))
+                fields_.fetch_add(1, std::memory_order_acq_rel);
+            runtime_.requestGasProbe(0, 0);
+            if (runtime_.latestGasProbe(trace))
+                traces_.fetch_add(1, std::memory_order_acq_rel);
+            std::this_thread::sleep_for(std::chrono::milliseconds(16));
+        }
+        runtime_.requestGasProbe(-1, 0);
+    }
+
+    enginelab::EngineRuntime& runtime_;
+    std::atomic<bool> stopping_ { false };
+    std::atomic<std::uint64_t> fields_ { 0 };
+    std::atomic<std::uint64_t> traces_ { 0 };
+    std::thread thread_;
 };
 // Pressure and exhaust-acoustic queue losses are meaningful only with the audio
 // consumer running. The counters are still sampled without audio for a uniform
@@ -462,6 +512,7 @@ struct Measurement final {
                                         std::optional<double> intakeWallHeatUpdateSeconds,
                                         bool useWellMixedExhaustJunctions,
                                         bool withAudio,
+                                        bool gasView,
                                         bool outletJetNoiseEnabled,
                                         bool forcedInductionPowerNormalisationEnabled,
                                         const std::filesystem::path& catalogRoot,
@@ -516,6 +567,8 @@ struct Measurement final {
     result.targetRpm = runtime->dynoHoldRpm();
     runtime->start();
     runtime->startDyno();
+    std::unique_ptr<GasViewEmulator> gasViewer;
+    if (gasView) gasViewer = std::make_unique<GasViewEmulator>(*runtime);
 
     // Do not begin a sample merely because a wall-clock warm-up expired. The
     // catalogue spans twins to a V12, and in free-run mode each engine advances
@@ -693,6 +746,11 @@ struct Measurement final {
         runtime->droppedExhaustAcousticSampleCount();
     const auto audioEnd = audioProbe
         ? audioProbe->snapshot() : AudioProbeSnapshot {};
+    if (gasViewer) {
+        gasViewer->stop();
+        result.gasFieldsReceived = gasViewer->fields();
+        result.gasProbeTracesReceived = gasViewer->traces();
+    }
 
     result.wallSeconds = std::chrono::duration<double>(wallEnd - wallStart).count();
     result.simulatedSeconds = simulatedEnd - simulatedStart;
@@ -829,6 +887,7 @@ int main(int argc, char** argv) {
     bool useWellMixedExhaustJunctions = false;
     bool disableMufflerPacking = false;
     bool withAudio = false;
+    bool gasView = false;
     bool outletJetNoiseEnabled = true;
     bool forcedInductionPowerNormalisationEnabled = true;
     double audioSampleRate = 48'000.0;
@@ -866,6 +925,7 @@ int main(int argc, char** argv) {
         else if (argument == "--enforce" && index + 1 < argc) failBelow = std::stod(argv[++index]);
         else if (argument == "--free-run") freeRun = true;
         else if (argument == "--with-audio") withAudio = true;
+        else if (argument == "--gas-view") gasView = true;
         else if (argument == "--disable-exhaust-jet-noise")
             outletJetNoiseEnabled = false;
         else if (argument == "--disable-fi-power-normalisation")
@@ -892,13 +952,15 @@ int main(int argc, char** argv) {
                          "[--well-mixed-junctions] "
                          "[--disable-muffler-packing] "
                          "[--enforce FACTOR] [--free-run] "
-                         "[--with-audio] [--disable-exhaust-jet-noise] "
+                         "[--with-audio] [--gas-view] [--disable-exhaust-jet-noise] "
                          "[--disable-fi-power-normalisation] "
                          "[--audio-rate HZ] [--audio-block N]\n"
                          "  --free-run  remove the loop's wall-clock sleep, so the factor\n"
                          "              reads capacity instead of saturating at 1.0.\n"
                          "  --with-audio  run the production renderer on a fixed-period\n"
                          "                consumer thread and enforce its realtime contract.\n"
+                         "  --gas-view  ask for the gas field and a probe trace at 60 Hz from\n"
+                         "              another thread, as the 3-D view does when open.\n"
                          "  --disable-exhaust-jet-noise  same-binary null control for\n"
                          "                               outlet-noise CPU measurements.\n"
                          "  --disable-fi-power-normalisation  same-binary null for\n"
@@ -1059,7 +1121,7 @@ int main(int argc, char** argv) {
             exhaustTargetCellLengthM,
             exhaustCouplingSeconds, intakeFirstOrderTimeIntegration,
             intakeWallHeatUpdateSeconds,
-            useWellMixedExhaustJunctions, withAudio, outletJetNoiseEnabled,
+            useWellMixedExhaustJunctions, withAudio, gasView, outletJetNoiseEnabled,
             forcedInductionPowerNormalisationEnabled,
             catalogRoot,
             audioSampleRate, audioBlockSize);
@@ -1102,6 +1164,11 @@ int main(int argc, char** argv) {
                       << std::setw(8) << measurement.audio.levelLimitedSamples;
         }
         std::cout << '\n';
+        if (gasView) {
+            std::cout << "  gas view: " << measurement.gasFieldsReceived
+                      << " fields, " << measurement.gasProbeTracesReceived
+                      << " probe traces received\n";
+        }
         if (withAudio) {
             std::cout << "  audio gain min " << std::fixed
                       << std::setprecision(4)

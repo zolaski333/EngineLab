@@ -299,8 +299,53 @@ public:
         return *exhaustAcousticQueue_;
     }
     [[nodiscard]] RealtimeAudioState& audioState() noexcept { return audioState_; }
+    /** The configuration the engine runs, live exhaust and cylinder changes
+     * included (as requested: a ramp may still be under way). Read it on the
+     * thread that calls applyLiveExhaust(). */
     [[nodiscard]] const EngineConfig& engineConfig() const noexcept { return config_; }
+    /** The exhaust graph as constructed: read it before start(). After a live
+     * exhaust change the simulation thread owns it. */
     [[nodiscard]] const ExhaustGraph& exhaustGraph() const noexcept { return exhaust_; }
+    /**
+     * Resize or remesh the exhaust of the running engine without restarting
+     * it: the exhaust of `edited` (its `exhaust` and `exhaustPaths`; nothing
+     * else is read) replaces the running one at the next 240 Hz boundary, and
+     * the new gas network takes over the gas and wall state of the old one.
+     * `targetCellLengthM` remeshes it; absent keeps the current mesh.
+     *
+     * Returns false, changing nothing, when that exhaust is not the running
+     * one resized: other components or connections, an invalid geometry. The
+     * caller then restarts the engine instead. The heavy work (graph, layout,
+     * allocation) runs here, on the caller's thread; one thread only, the
+     * one that owns the runtime. A request not yet applied is replaced by the
+     * next one.
+     */
+    [[nodiscard]] bool applyLiveExhaust(const EngineConfig& edited,
+                                        std::optional<double> targetCellLengthM = {});
+    /** Live exhaust changes the simulation thread has applied. */
+    [[nodiscard]] std::uint64_t liveExhaustChangeCount() const noexcept {
+        return liveExhaustChangesApplied_.load(std::memory_order_acquire);
+    }
+    /** Mesh of the exhaust gas network, as last requested. Caller's thread. */
+    [[nodiscard]] double exhaustCellLengthM() const noexcept { return exhaustCellLengthM_; }
+    /**
+     * Resize the cylinders of the running engine: the bore, stroke, deck
+     * height and compression ratio of `edited`'s cylinders and the throws of
+     * its crank journals (as resizeCylinders() writes them; nothing else is
+     * read) reach the running engine at the next 240 Hz boundary, each crank
+     * journal at its next gas-exchange TDC, or gradually over `rampSeconds`
+     * (EngineSimulator::beginCylinderResize).
+     *
+     * Returns false, changing nothing, when `edited` has other cylinders or
+     * journals or an invalid geometry: cylinder count, layout and fuel need a
+     * restart. Same thread rules as applyLiveExhaust().
+     */
+    [[nodiscard]] bool applyLiveCylinderResize(const EngineConfig& edited, double rampSeconds = 0.0);
+    /** Cylinder geometry changes the simulation thread has applied (a ramp
+     * applies one per journal per cycle). */
+    [[nodiscard]] std::uint64_t cylinderGeometryRevision() const noexcept {
+        return cylinderGeometryRevision_.load(std::memory_order_acquire);
+    }
     /** Publish a coherent live calibration without reconstructing the runtime.
      * The simulation thread consumes it at its next 240 Hz boundary. */
     void applyAudioPhysicsCalibration(
@@ -384,6 +429,26 @@ private:
                            DynoStopReason reason);
     void updateDriveline(double dtSeconds, const EngineState& engineState,
                          double requestedLoad) noexcept;
+    /** Static exhaust telemetry for the audio (paths, areas, delays, gains),
+     * from the configuration and the graph compiled from it. */
+    void publishExhaustTelemetry(const EngineConfig& config,
+                                 const ExhaustGraph& graph) noexcept;
+    /** Simulation thread: apply the pending live exhaust change, if any. */
+    void consumeLiveExhaustChange() noexcept;
+    /** Displacement, bore and stroke for the audio, and the engine inertia. */
+    void publishCylinderTelemetry(const EngineConfig& config) noexcept;
+    /** Simulation thread: start the pending cylinder resize, if any, and
+     * refresh what depends on the geometry once the simulator changed it. */
+    void consumeLiveCylinderResize() noexcept;
+    struct LiveCylinderResize final {
+        EngineConfig config;
+        double rampSeconds {};
+    };
+    struct LiveExhaustChange final {
+        EngineConfig config;
+        ExhaustGraph graph;
+        std::unique_ptr<gasdynamics::ExhaustGasNetwork> network;
+    };
     EngineConfig config_;
     SimpleEcuModel ecu_;
     SimplifiedGasolinePhysics physics_;
@@ -447,6 +512,22 @@ private:
     std::atomic<bool> realtimeLoadProtectionActive_ { false };
     std::atomic<std::uint64_t> realtimeLoadProtectionActivations_ { 0 };
     std::atomic<double> timeScale_ { 1.0 };
+    std::mutex liveExhaustMutex_;
+    std::unique_ptr<LiveExhaustChange> pendingExhaustChange_;
+    std::atomic<std::uint64_t> liveExhaustChangesRequested_ { 0 };
+    std::atomic<std::uint64_t> liveExhaustChangesApplied_ { 0 };
+    // Guarded by liveExhaustMutex_.
+    std::unique_ptr<LiveCylinderResize> pendingCylinderResize_;
+    std::atomic<std::uint64_t> liveCylinderResizesRequested_ { 0 };
+    std::atomic<std::uint64_t> cylinderGeometryRevision_ { 0 };
+    // Simulation thread only.
+    std::uint64_t liveExhaustChangesConsumed_ { 0 };
+    std::uint64_t liveCylinderResizesConsumed_ { 0 };
+    std::uint64_t consumedCylinderGeometryRevision_ { 0 };
+    /** effectiveRotatingInertiaKgM2() of the running geometry. */
+    double engineInertiaKgM2_ { 0.0 };
+    // Caller's thread only.
+    double exhaustCellLengthM_ { 0.0 };
     mutable std::mutex audioPhysicsCalibrationMutex_;
     AudioPhysicsCalibration pendingAudioPhysicsCalibration_ {};
     std::atomic<std::uint64_t> audioPhysicsCalibrationRevision_ { 0 };

@@ -125,6 +125,67 @@ script, JSON editor, exhaust designer), the new runtime reuses the same
 `CalibrationStore`: maps, tuner and ECU watcher survive. Explicitly choosing or
 importing another engine creates its default set.
 
+### Live exhaust changes
+
+An edit of `exhaust` and `exhaustPaths` only (the inspector's steppers, the
+Exhaust editor) that keeps the network's topology (same ducts, junctions,
+ports and outlets) is taken by the running engine:
+
+1. `EngineRuntime::applyLiveExhaust`, on the caller's thread, builds the new
+   graph and gas network (`EngineSimulator::buildLiveExhaustNetwork`), which
+   is the costly part, and leaves them in a mutex-guarded mailbox.
+2. The simulation thread takes it between two frames: the new network adopts
+   the running one's state (`ExhaustGasNetwork::adoptStateFrom`), the
+   simulator swaps it in, the runtime swaps its graph (the simulator holds a
+   reference to it) and republishes the exhaust's static telemetry.
+3. The app hands the audio its own graph built from the same configuration.
+   `RealtimeEngineAudio::replaceExhaustGraph` builds and prepares the new
+   acoustic network off the audio thread; the audio thread feeds it silently
+   for 150 ms while its pipes fill, then crossfades over 30 ms. The retired
+   network is freed by the app's timer, never on the audio thread.
+
+`adoptStateFrom` keeps the intensive state where it was: equal meshes copy
+cell for cell, different meshes take overlap-weighted means of densities,
+momentum, energy and wall temperature. A resized pipe therefore holds more or
+less gas at the same pressure and temperature. The wall temperature is the
+state that matters: its time constant is tens of seconds, while the gas
+refills in milliseconds (an exhaust swapped with a fresh network shows no
+engine-speed step, but a cold wall). Anything else (another topology, the
+dyno running, an audio network that fails to prepare) restarts the runtime
+as above.
+
+The same path remeshes the running exhaust: the view settings' *Exhaust
+waves* choice (`ViewSettings::fineExhaustWaves`) passes 180 mm instead of the
+production 360 mm as the target cell length, and every later restart of the
+runtime keeps it. 360 mm cells show 29 to 61 % less pressure swing than a
+45 mm reference, 180 mm within 5 % on most engines; the simulation then has
+13 to 20 % less headroom. The audio does not depend on it.
+
+### Live bore and stroke changes
+
+`resizeCylinders` (foundation) gives every cylinder one bore and stroke and
+the crank journals half the stroke as throw. An engine authored by
+compression ratio keeps it; one authored by chamber geometry keeps its
+piston-to-deck clearance and its compression ratio follows.
+`EngineRuntime::applyLiveCylinderResize` hands the sizes to the simulation
+thread, where `EngineSimulator::beginCylinderResize` applies them one crank
+journal at a time, at the gas-exchange TDC (phase 360) of the first of its
+cylinders to reach it: the chamber then holds its clearance volume and both
+valves are near their crossing. The gas keeps its mass through the volume
+step (`setVolumeAdiabatic`). With a ramp, each such TDC takes the size
+interpolated at that moment until the target. A stopped engine takes the
+target at once. Changed at once, the first cycle of each cylinder burns fuel
+metered for the old one (one lean cycle on a larger engine); a ramp spreads
+that over many small steps.
+
+What was derived from the geometry follows it: the kinematics reference is
+rebuilt after each change; the runtime republishes displacement, bore and
+stroke to the audio, gives the driveline the new engine inertia and, outside
+a dyno run, re-sizes the dyno absorber. Everything else reads the
+configuration at every step. Not updated until a restart: the audio's
+structural modes (`StructuralModalRadiator`, built from the mean bore and
+stroke). Cylinder count, layout and fuel stay restart-only.
+
 ## Physical contracts
 
 - `GasCell` conserves species, internal energy, volume and 2D momentum.
@@ -256,8 +317,18 @@ counts from the configuration (7 and 10 when unset). The wheels turn at the
 simulated shaft speed, slowed with the crank, motion-blurred over the same
 sub-frames. Housings are translucent in X-ray. Since the solver's restriction
 sits at the outlets, the gas field shows the whole drawn exhaust, downpipe
-included, at turbine inlet pressure; the inspector says so. A supercharger
-(the Merlin's) is not drawn, nor is the charge piping.
+included, at turbine inlet pressure; the inspector says so. A turbo's charge
+piping is not drawn.
+
+**Supercharger.** The solver has no compressor in its network either: the
+supercharger raises the intake pressure by its ratio, geared to the crank.
+The view draws it (`SuperchargerPlacement`) between the airbox and the
+throttle of the first intake path with a single throttle mouth, beside the
+throttle on the side away from the engine: the airbox or the inlet duct
+feeds its eye along the throttle axis, a charge pipe runs from its volute
+back to the throttle. Wheel size from the inducer diameter (an eye 1.2 times
+the throttle when unset), blade count from the configuration. The impeller
+turns at the drive ratio times the displayed crank angle.
 
 Engine views frame the engine with its ports, runners, plenum and primaries;
 the *Exhaust* view frames the whole system.
@@ -339,9 +410,14 @@ have no length; a silencer is sized by its body). It refuses an edit that
 would change which components the path has (a silencer no wider than its
 pipes stops being one) and, on the only path, mirrors the geometry into
 `EngineConfig::exhaust`, which normalisation copies back and the solver
-reads. *Apply* restarts the engine with the edited configuration through the
-same path as the Exhaust editor; the camera stays and the part stays
-selected.
+reads. A stepper press reaches the running engine 250 ms after the last one
+(a live exhaust change, see above); *Reset* goes back to the size the part
+had when it was selected. The camera stays and the part stays selected.
+
+A cylinder liner or piston offers the engine's bore and stroke the same way
+(1 mm, 0.1 mm with Shift), with a choice between the next cycle and a 3 s
+ramp (a live bore and stroke change, see above). The view shows the target
+size at once.
 
 ## Extension rule
 

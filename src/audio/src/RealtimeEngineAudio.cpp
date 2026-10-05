@@ -113,6 +113,69 @@ RealtimeEngineAudio::RealtimeEngineAudio(FiringEventQueue& queue,
     }
 }
 
+RealtimeEngineAudio::~RealtimeEngineAudio() {
+    delete incomingExhaustNetwork_.exchange(nullptr);
+    delete retiredExhaustNetwork_.exchange(nullptr);
+    delete swappingExhaustNetwork_;
+}
+
+bool RealtimeEngineAudio::replaceExhaustGraph(const ExhaustGraph& graph) {
+    collectRetiredExhaustNetworks();
+    const auto sampleRate = preparedSampleRate_.load(std::memory_order_acquire);
+    if (!acousticExhaustNetwork_ || !(sampleRate > 0.0)) return false;
+    std::array<std::uint32_t, maxRunners> cylinderIds {};
+    const auto count = std::clamp<std::size_t>(static_cast<std::size_t>(
+        std::lround(realtimeState_.cylinderCount.load(std::memory_order_relaxed))),
+        1U, maxRunners);
+    for (std::size_t index = 0; index < count; ++index)
+        cylinderIds[index] = realtimeState_.cylinderId[index].load(std::memory_order_relaxed);
+    auto handoff = std::make_unique<ExhaustNetworkHandoff>();
+    handoff->network = std::make_unique<AcousticExhaustNetwork>(
+        graph, std::span<const std::uint32_t>(cylinderIds.data(), count));
+    if (!handoff->network->valid()
+        || !handoff->network->prepare(sampleRate, maximumAcousticDelayScale, observerDistanceM))
+        return false;
+    handoff->network->setOutletJetNoiseEnabled(outletJetNoiseEnabled_);
+    handoff->sampleRate = sampleRate;
+    // A change the audio thread has not taken yet is replaced, and freed here.
+    delete incomingExhaustNetwork_.exchange(handoff.release(), std::memory_order_acq_rel);
+    return true;
+}
+
+void RealtimeEngineAudio::collectRetiredExhaustNetworks() noexcept {
+    delete retiredExhaustNetwork_.exchange(nullptr, std::memory_order_acq_rel);
+}
+
+void RealtimeEngineAudio::beginExhaustSwapIfWaiting() noexcept {
+    // One change at a time, and only once the previous network has been
+    // collected: the retired slot then always has room for the next one.
+    if (swappingExhaustNetwork_ != nullptr || !acousticExhaustNetwork_
+        || retiredExhaustNetwork_.load(std::memory_order_acquire) != nullptr)
+        return;
+    auto* incoming = incomingExhaustNetwork_.exchange(nullptr, std::memory_order_acq_rel);
+    if (incoming == nullptr) return;
+    if (incoming->sampleRate != sampleRate_) {
+        // Prepared for a rate the device no longer runs at; drop it.
+        retiredExhaustNetwork_.store(incoming, std::memory_order_release);
+        return;
+    }
+    swappingExhaustNetwork_ = incoming;
+    exhaustSwapSamples_ = 0;
+    exhaustSwapWarmupSamples_ = static_cast<std::int64_t>(
+        std::llround(exhaustSwapWarmupSeconds * sampleRate_));
+    exhaustSwapFadeSamples_ = std::max<std::int64_t>(1, static_cast<std::int64_t>(
+        std::llround(exhaustSwapFadeSeconds * sampleRate_)));
+}
+
+void RealtimeEngineAudio::completeExhaustSwap() noexcept {
+    if (swappingExhaustNetwork_ == nullptr) return;
+    // The playing network leaves in the handoff that brought its successor.
+    std::swap(acousticExhaustNetwork_, swappingExhaustNetwork_->network);
+    retiredExhaustNetwork_.store(swappingExhaustNetwork_, std::memory_order_release);
+    swappingExhaustNetwork_ = nullptr;
+    exhaustSwaps_.fetch_add(1, std::memory_order_release);
+}
+
 std::size_t RealtimeEngineAudio::runnerDelaySamples(double delaySeconds,
                                                      double sampleRate) noexcept {
     const auto safeRate = std::isfinite(sampleRate) && sampleRate > 0.0 ? sampleRate : referenceSampleRate;
@@ -234,6 +297,7 @@ void RealtimeEngineAudio::prepare(double sampleRate, int maximumBlockSize) noexc
     gainAttackCoefficient_ = rateInvariantCoefficient(0.0020F, sampleRate_);
     gainReleaseCoefficient_ = levelReleaseCoefficient_;
     allocateDelayLines();
+    completeExhaustSwap();
     if (acousticExhaustNetwork_
         && !acousticExhaustNetwork_->prepare(
             sampleRate_, maximumAcousticDelayScale, observerDistanceM))
@@ -259,6 +323,7 @@ void RealtimeEngineAudio::prepare(double sampleRate, int maximumBlockSize) noexc
     oversampler_->reset();
     release();
     updateExhaustPreset(realtimeState_.exhaustPreset.load(std::memory_order_relaxed));
+    preparedSampleRate_.store(sampleRate_, std::memory_order_release);
 }
 void RealtimeEngineAudio::release() noexcept {
     voices_.fill({}); pendingEvents_.fill({}); pendingEventCount_ = 0;
@@ -342,6 +407,7 @@ void RealtimeEngineAudio::release() noexcept {
     for (auto& state : boundaryReconstructionFlow_) state.reset();
     valveFlowAcousticSource_ = {};
     for (auto& state : valveFlowAcousticSourceState_) state.reset();
+    completeExhaustSwap();
     if (acousticExhaustNetwork_) acousticExhaustNetwork_->reset();
     if (structuralModalRadiator_) structuralModalRadiator_->reset();
     if (acousticIntakeNetwork_) acousticIntakeNetwork_->reset();
@@ -917,15 +983,21 @@ void RealtimeEngineAudio::renderWithStems(
                 };
             }
         }
-        acousticExhaustNetwork_->beginBlock(
-            std::span<const AcousticExhaustNetwork::Medium>(
-                media.data(), exhaustPathCount),
-            acousticTimeScale,
-            std::span<const float>(meanMassFlow.data(), exhaustPathCount),
-            std::span<const AcousticExhaustNetwork::Medium>(
-                ductMedia.data(), ductMediumCount),
-            std::span<const AcousticExhaustNetwork::OutletBoundary>(
-                outletBoundaries.data(), outletBoundaryCount));
+        beginExhaustSwapIfWaiting();
+        for (auto* network : { acousticExhaustNetwork_.get(),
+                 swappingExhaustNetwork_ != nullptr
+                     ? swappingExhaustNetwork_->network.get() : nullptr }) {
+            if (network == nullptr) continue;
+            network->beginBlock(
+                std::span<const AcousticExhaustNetwork::Medium>(
+                    media.data(), exhaustPathCount),
+                acousticTimeScale,
+                std::span<const float>(meanMassFlow.data(), exhaustPathCount),
+                std::span<const AcousticExhaustNetwork::Medium>(
+                    ductMedia.data(), ductMediumCount),
+                std::span<const AcousticExhaustNetwork::OutletBoundary>(
+                    outletBoundaries.data(), outletBoundaryCount));
+        }
     }
     if (acousticIntakeNetwork_) {
         std::array<AcousticIntakeNetwork::PathBoundary, maximumPaths> paths {};
@@ -1655,17 +1727,51 @@ void RealtimeEngineAudio::renderWithStems(
                 (void) acousticExhaustNetwork_->injectReactionPressure(
                     voice.nodeId, voice.axialPosition,
                     sourcePressurePa);
+                if (swappingExhaustNetwork_ != nullptr)
+                    (void) swappingExhaustNetwork_->network->injectReactionPressure(
+                        voice.nodeId, voice.axialPosition,
+                        sourcePressurePa);
                 if (voice.targetPowerW == 0.0
                     && audioTimeSeconds_ - voice.lastUpdateTimeSeconds
                         > voice.holdSeconds + 0.35)
                     voice = {};
             }
-            const auto observerPressure = acousticExhaustNetwork_->process(
+            auto observerPressure = acousticExhaustNetwork_->process(
                 std::span<const float>(cylinderExhaustPulse.data(), activeCylinderCount),
                 std::span<const PortBoundary>(portBoundary_.data(), activeCylinderCount),
                 controlRampCoefficient_);
-            const auto jetNoisePressure =
+            auto jetNoisePressure =
                 acousticExhaustNetwork_->lastOutletJetNoisePressure();
+            if (swappingExhaustNetwork_ != nullptr) {
+                // A live exhaust change: the incoming network hears the same
+                // sources, silently while its pipes fill, then takes over.
+                auto& incoming = *swappingExhaustNetwork_->network;
+                const auto incomingPressure = incoming.process(
+                    std::span<const float>(cylinderExhaustPulse.data(), activeCylinderCount),
+                    std::span<const PortBoundary>(portBoundary_.data(), activeCylinderCount),
+                    controlRampCoefficient_);
+                const auto incomingJetNoise = incoming.lastOutletJetNoisePressure();
+                const auto fadeSamples = exhaustSwapSamples_ - exhaustSwapWarmupSamples_;
+                const auto weight = static_cast<float>(std::clamp(
+                    static_cast<double>(fadeSamples)
+                        / static_cast<double>(exhaustSwapFadeSamples_), 0.0, 1.0));
+                for (std::size_t path = 0; path < observerPressure.size(); ++path) {
+                    const auto blend = [weight](auto from, auto to) {
+                        return from + weight * (to - from);
+                    };
+                    observerPressure[path].leftPa = blend(
+                        observerPressure[path].leftPa, incomingPressure[path].leftPa);
+                    observerPressure[path].rightPa = blend(
+                        observerPressure[path].rightPa, incomingPressure[path].rightPa);
+                    jetNoisePressure[path].leftPa = blend(
+                        jetNoisePressure[path].leftPa, incomingJetNoise[path].leftPa);
+                    jetNoisePressure[path].rightPa = blend(
+                        jetNoisePressure[path].rightPa, incomingJetNoise[path].rightPa);
+                }
+                if (++exhaustSwapSamples_
+                        >= exhaustSwapWarmupSamples_ + exhaustSwapFadeSamples_)
+                    completeExhaustSwap();
+            }
             for (std::size_t path = 0; path < exhaustPathCount; ++path) {
                 const auto adjustedLeftPa = observerPressure[path].leftPa
                     + (outletJetGain - 1.0F) * jetNoisePressure[path].leftPa;

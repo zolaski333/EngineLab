@@ -560,6 +560,125 @@ bool ExhaustGasNetwork::reset(double pressurePa,
     return true;
 }
 
+namespace {
+
+/** Share of new cell `to` (of `toCount`) covered by old cell `from` (of
+ * `fromCount`), both meshes spanning the same normalised length. */
+[[nodiscard]] double remapOverlap(std::size_t from, std::size_t fromCount,
+                                  std::size_t to, std::size_t toCount) noexcept {
+    const auto fromStart = static_cast<double>(from) / static_cast<double>(fromCount);
+    const auto fromEnd = static_cast<double>(from + 1U) / static_cast<double>(fromCount);
+    const auto toStart = static_cast<double>(to) / static_cast<double>(toCount);
+    const auto toEnd = static_cast<double>(to + 1U) / static_cast<double>(toCount);
+    return std::max(0.0, std::min(fromEnd, toEnd) - std::max(fromStart, toStart))
+        * static_cast<double>(toCount);
+}
+
+} // namespace
+
+bool ExhaustGasNetwork::adoptStateFrom(const ExhaustGasNetwork& previous) noexcept {
+    if (!configured_ || !previous.configured_
+        || !layout_.sameTopology(previous.layout_)
+        || ducts_.size() != previous.ducts_.size()
+        || junctionStates_.size() != previous.junctionStates_.size()
+        || cylinderReservoirStates_.size() != previous.cylinderReservoirStates_.size())
+        return false;
+
+    // Remap into the candidate buffers first so a refused state leaves the
+    // network untouched.
+    for (std::size_t ductIndex = 0; ductIndex < ducts_.size(); ++ductIndex) {
+        auto& duct = ducts_[ductIndex];
+        const auto& source = previous.ducts_[ductIndex];
+        const auto fromCount = source.cells_.size();
+        const auto toCount = duct.cells_.size();
+        if (fromCount == 0 || toCount == 0 || duct.candidate_.size() != toCount
+            || duct.candidateWallStates_.size() != duct.wallStates_.size()
+            || source.wallStates_.size() != fromCount
+            || duct.wallStates_.size() != toCount)
+            return false;
+        for (std::size_t to = 0; to < toCount; ++to) {
+            if (fromCount == toCount) {
+                duct.candidate_[to] = source.cells_[to];
+                duct.candidateWallStates_[to] = source.wallStates_[to];
+            } else {
+                ConservativeState state {};
+                auto wallTemperatureK = 0.0;
+                auto weightSum = 0.0;
+                for (std::size_t from = 0; from < fromCount; ++from) {
+                    const auto weight = remapOverlap(from, fromCount, to, toCount);
+                    if (weight <= 0.0) continue;
+                    const auto& cell = source.cells_[from];
+                    for (std::size_t species = 0; species < gasSpeciesCount; ++species)
+                        state.speciesMassDensityKgPerM3[species] +=
+                            weight * cell.speciesMassDensityKgPerM3[species];
+                    state.momentumDensityKgPerM2S += weight * cell.momentumDensityKgPerM2S;
+                    state.totalEnergyDensityJPerM3 += weight * cell.totalEnergyDensityJPerM3;
+                    wallTemperatureK += weight * source.wallStates_[from].temperatureK;
+                    weightSum += weight;
+                }
+                if (!(weightSum > 0.0)) return false;
+                for (auto& species : state.speciesMassDensityKgPerM3) species /= weightSum;
+                state.momentumDensityKgPerM2S /= weightSum;
+                state.totalEnergyDensityJPerM3 /= weightSum;
+                duct.candidate_[to] = state;
+                duct.candidateWallStates_[to].temperatureK = wallTemperatureK / weightSum;
+            }
+            if (!mixtureModel_.isPhysical(duct.candidate_[to])) return false;
+        }
+    }
+    for (std::size_t index = 0; index < junctionStates_.size(); ++index) {
+        const auto primitive = mixtureModel_.primitiveFromConservative(
+            previous.junctionStates_[index]);
+        if (!primitive) return false;
+        junctionCandidatePrimitives_[index] = *primitive;
+    }
+
+    for (std::size_t ductIndex = 0; ductIndex < ducts_.size(); ++ductIndex) {
+        auto& duct = ducts_[ductIndex];
+        const auto& source = previous.ducts_[ductIndex];
+        auto cells = duct.cells();
+        std::copy(duct.candidate_.begin(), duct.candidate_.end(), cells.begin());
+        std::copy(duct.candidateWallStates_.begin(), duct.candidateWallStates_.end(),
+                  duct.wallStates_.begin());
+        duct.wallHeatPendingSeconds_ = source.wallHeatPendingSeconds_;
+        auto& sites = ductReactionStates_[ductIndex];
+        const auto& sourceSites = previous.ductReactionStates_[ductIndex];
+        for (std::size_t to = 0; to < sites.size(); ++to) {
+            const auto from = std::min(sourceSites.size() - 1U,
+                static_cast<std::size_t>((static_cast<double>(to) + 0.5)
+                    * static_cast<double>(sourceSites.size())
+                    / static_cast<double>(sites.size())));
+            sites[to] = sourceSites[from];
+        }
+        if (!duct.refreshCellStateCache()) return false;
+    }
+    std::copy(previous.junctionStates_.begin(), previous.junctionStates_.end(),
+              junctionStates_.begin());
+    std::copy(junctionCandidatePrimitives_.begin(), junctionCandidatePrimitives_.end(),
+              junctionPrimitives_.begin());
+    std::copy(previous.junctionReactionStates_.begin(),
+              previous.junctionReactionStates_.end(), junctionReactionStates_.begin());
+    std::copy(previous.cylinderReservoirStates_.begin(),
+              previous.cylinderReservoirStates_.end(), cylinderReservoirStates_.begin());
+    std::copy(previous.cylinderReservoirPrimitives_.begin(),
+              previous.cylinderReservoirPrimitives_.end(),
+              cylinderReservoirPrimitives_.begin());
+    std::copy(previous.cylinderReservoirVolumesM3_.begin(),
+              previous.cylinderReservoirVolumesM3_.end(),
+              cylinderReservoirVolumesM3_.begin());
+    std::copy(previous.cylinderReservoirActive_.begin(),
+              previous.cylinderReservoirActive_.end(), cylinderReservoirActive_.begin());
+    std::copy(previous.cylinderExchanges_.begin(), previous.cylinderExchanges_.end(),
+              cylinderExchanges_.begin());
+    for (std::size_t index = 0; index < outletSamples_.size(); ++index) {
+        outletSamples_[index] = previous.outletSamples_[index];
+        outletSamples_[index].openingAreaM2 = layout_.outlets()[index].openingAreaM2;
+    }
+    wallHeatPendingSeconds_ = previous.wallHeatPendingSeconds_;
+    wallHeatUpdateRequested_ = previous.wallHeatUpdateRequested_;
+    return true;
+}
+
 ExhaustNetworkInventory ExhaustGasNetwork::inventory() const noexcept {
     ExhaustNetworkInventory result;
     for (const auto& duct : ducts_) {

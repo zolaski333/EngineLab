@@ -66,8 +66,33 @@ public:
                         const ExhaustGraph* exhaustGraph,
                         const EngineConfig* engineConfig,
                         ExhaustAcousticQueue* exhaustAcousticQueue);
+    ~RealtimeEngineAudio() override;
     void prepare(double sampleRate, int maximumBlockSize) noexcept override;
     void release() noexcept override;
+    /**
+     * Change the compiled exhaust to one built from `graph` while the engine
+     * plays: the same components resized (a live exhaust change). The new
+     * network is fed the same sources as the playing one for
+     * `exhaustSwapWarmupSeconds` so its pipes fill, then the output fades
+     * linearly to it over `exhaustSwapFadeSeconds`; both are measured in
+     * RealtimeRegressionTests. A change sent while another is in progress
+     * waits for it, and a newer one replaces a change still waiting.
+     *
+     * Message thread, after prepare(). Returns false, changing nothing, when
+     * no compiled exhaust plays or `graph` does not compile. Call
+     * collectRetiredExhaustNetworks() now and then from the same thread: it
+     * frees the networks the audio thread has finished with.
+     */
+    bool replaceExhaustGraph(const ExhaustGraph& graph);
+    void collectRetiredExhaustNetworks() noexcept;
+    /** Live exhaust changes the audio thread has completed. */
+    [[nodiscard]] std::uint64_t exhaustSwapCount() const noexcept {
+        return exhaustSwaps_.load(std::memory_order_acquire);
+    }
+    // Measured on the CP2 swapping in its own exhaust: 60 ms leaves the
+    // difference 33 dB below the engine, 150 ms 74 dB.
+    static constexpr double exhaustSwapWarmupSeconds = 0.150;
+    static constexpr double exhaustSwapFadeSeconds = 0.030;
     void render(juce::AudioBuffer<float>& output, int startSample, int sampleCount) noexcept override;
     /** Render the identical master while observing optional pre-master stems. */
     void renderWithStems(juce::AudioBuffer<float>& output, int startSample,
@@ -139,6 +164,7 @@ public:
     }
     /** Diagnostic A/B switch for the semi-empirical outlet turbulence layer. */
     void setOutletJetNoiseEnabled(bool enabled) noexcept {
+        outletJetNoiseEnabled_ = enabled;
         if (acousticExhaustNetwork_)
             acousticExhaustNetwork_->setOutletJetNoiseEnabled(enabled);
     }
@@ -459,6 +485,26 @@ private:
     /** Complete compiled DAG used by production engines. Null only for legacy
      * producers/tests that did not supply topology. */
     std::unique_ptr<AcousticExhaustNetwork> acousticExhaustNetwork_;
+    /** A compiled exhaust on its way in, with the rate it was prepared at. */
+    struct ExhaustNetworkHandoff final {
+        std::unique_ptr<AcousticExhaustNetwork> network;
+        double sampleRate { 0.0 };
+    };
+    /** Message thread -> audio thread: the next network, prepared. */
+    std::atomic<ExhaustNetworkHandoff*> incomingExhaustNetwork_ { nullptr };
+    /** Audio thread -> message thread: a network to free. */
+    std::atomic<ExhaustNetworkHandoff*> retiredExhaustNetwork_ { nullptr };
+    /** Audio thread: the network warming up then fading in, and how far. */
+    ExhaustNetworkHandoff* swappingExhaustNetwork_ { nullptr };
+    std::int64_t exhaustSwapSamples_ { 0 };
+    std::int64_t exhaustSwapWarmupSamples_ { 0 };
+    std::int64_t exhaustSwapFadeSamples_ { 1 };
+    std::atomic<std::uint64_t> exhaustSwaps_ { 0 };
+    std::atomic<double> preparedSampleRate_ { 0.0 };
+    bool outletJetNoiseEnabled_ { true };
+    /** Audio thread: take a waiting network, or finish the one in progress. */
+    void beginExhaustSwapIfWaiting() noexcept;
+    void completeExhaustSwap() noexcept;
     /** Block/head modes compiled from immutable engine geometry. */
     std::unique_ptr<StructuralModalRadiator> structuralModalRadiator_;
     /** Runners/plenums/throttles/inlets compiled from EngineConfig. */

@@ -48,6 +48,27 @@ void appendTurboHousings(Mesh& turbine, Mesh& compressor, const TurboPlacement& 
                    0.9F * tube, 1.4F * rk + tube, 20, false, true);
 }
 
+void appendSuperchargerHousing(Mesh& mesh, const SuperchargerPlacement& supercharger) {
+    if (!supercharger.placed) return;
+    const auto axis = supercharger.axis;
+    const auto wheel = supercharger.wheelRadius;
+    const auto width = supercharger.width;
+    // A volute ring, a back plate towards the throttle, a shroud closing in
+    // to the inducer, and the inducer's mouth open so the impeller shows.
+    const auto ring = 1.45F * wheel;
+    const auto tube = supercharger.outerRadius - ring;
+    appendTorus(mesh, Mat4::frameAlongY(supercharger.centre, axis), ring, tube, 40, 14);
+    appendCylinder(mesh, Mat4::frameAlongY(supercharger.centre, -axis), ring, ring, 0.5F * width, 40, false, true);
+    appendCylinder(mesh, Mat4::frameAlongY(supercharger.centre, axis), ring, wheel + 3.0F, 0.5F * width, 40, false,
+                   false);
+    const auto front = supercharger.centre + axis * (0.5F * width);
+    appendCylinder(mesh, Mat4::frameAlongY(front, axis), wheel + 3.0F, supercharger.eyeRadius,
+                   length(supercharger.eye - front), 40, false, false);
+    // The charge pipe, from the back of the volute to the throttle.
+    appendTube(mesh, { supercharger.chargeOutlet, supercharger.throttleInlet },
+               { supercharger.chargeRadius, supercharger.chargeRadius }, 24);
+}
+
 void appendTurboWheel(Mesh& mesh, float radius, float width, int blades, float noseSign) {
     const auto nose = noseSign < 0.0F ? -1.0F : 1.0F;
     const Vec3 y { 0.0F, nose, 0.0F };

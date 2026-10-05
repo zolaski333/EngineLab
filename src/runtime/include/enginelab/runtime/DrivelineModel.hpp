@@ -2,6 +2,8 @@
 
 #include <enginelab/foundation/EngineTypes.hpp>
 
+#include <algorithm>
+
 namespace enginelab {
 
 struct DrivelineOutput final {
@@ -48,6 +50,8 @@ public:
     void shiftUp() noexcept;
     void shiftDown() noexcept;
     [[nodiscard]] int requestedGear() const noexcept { return requestedGear_; }
+    /** The engine's rotating inertia after a live change of its geometry. */
+    void setEngineInertia(double kgM2) noexcept { engineInertiaKgM2_ = std::max(0.001, kgM2); }
     [[nodiscard]] DrivelineOutput advance(double dtSeconds, const EngineState&, double requestedLoad,
                                           double clutchPedalPressure, double brakePressure) noexcept;
 private:

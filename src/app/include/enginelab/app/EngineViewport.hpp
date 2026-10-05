@@ -50,6 +50,10 @@ struct ViewSettings final {
     bool vsync { true };
     bool motionBlur { true };
     bool antiAliasing { true };
+    /** 180 mm exhaust gas cells instead of 360 mm: the waves keep their
+        shape; the simulation has 13 to 20 % less headroom (LS3 at 60 %
+        of redline: 1.05 times real time instead of 1.31). */
+    bool fineExhaustWaves { false };
 
     static juce::File file();
     void load();
@@ -79,7 +83,7 @@ private:
 };
 
 /** What the clicked part is, with its authored geometry and live gas state. */
-class PartInspector final : public juce::Component {
+class PartInspector final : public juce::Component, private juce::Timer {
 public:
     struct Row final {
         juce::String label;
@@ -94,19 +98,34 @@ public:
         double cycleDegrees { 720.0 };
         juce::String caption;
     };
-    /** The size of an exhaust component, edited with steppers: no text
-        field, since every key drives the engine. */
+    /** Two sizes edited with steppers, in millimetres: an exhaust
+        component's length and diameter, or the cylinders' bore and stroke.
+        No text field, since every key drives the engine. */
     struct Edit final {
-        /** Which component: the same key keeps the values being edited. */
+        /** Which part: the same key keeps the values being edited. */
         std::uint64_t key {};
-        double lengthMm {};
-        double diameterMm {};
-        bool lengthEditable {};
+        juce::String firstLabel { "Length" };
+        juce::String secondLabel { "Diameter" };
+        double first {};
+        double second {};
+        bool firstEditable { true };
+        /** A press, and a press with Shift. */
+        double firstStep { 10.0 };
+        double firstFineStep { 1.0 };
+        double secondStep { 1.0 };
+        double secondFineStep { 0.1 };
+        double minimum { 10.0 };
+        double firstMaximum { 5'000.0 };
+        double secondMaximum { 400.0 };
+        /** Offers the choice between the next cycle and a gradual change. */
+        bool offersRamp {};
         juce::String note;
     };
     PartInspector();
-    /** Called with the edited length and diameter when Apply is pressed. */
-    std::function<void(double lengthMm, double diameterMm)> onApplyEdit;
+    /** Called with the edited sizes a moment after the last stepper press,
+        and at once by Reset: the engine hears each size live. `gradual` is
+        the ramp choice, when offered. */
+    std::function<void(double first, double second, bool gradual)> onApplyEdit;
     /** `note`, if any, is a short paragraph under the rows. */
     void show(juce::String title, juce::String subtitle, std::vector<Row> rows, juce::String note = {});
     /** Shows a trace under the rows, or none. */
@@ -120,7 +139,12 @@ public:
     void resized() override;
     void mouseUp(const juce::MouseEvent&) override;
 
+    /** Stepper presses closer together than this make a single edit. */
+    static constexpr int editSettleMs = 250;
+
 private:
+    void timerCallback() override;
+    void sendEdit();
     [[nodiscard]] juce::Rectangle<int> closeArea() const;
     juce::String title_;
     juce::String subtitle_;
@@ -128,15 +152,19 @@ private:
     juce::String note_;
     std::optional<Scope> scope_;
     std::optional<Edit> edit_;
-    double pendingLengthMm_ {};
-    double pendingDiameterMm_ {};
+    double pendingFirst_ {};
+    double pendingSecond_ {};
+    /** The size when the component was selected, which Reset goes back to. */
+    double originFirst_ {};
+    double originSecond_ {};
     juce::String editStatus_;
-    ActionButton lengthDown_ { "-", ActionButton::Style::compact };
-    ActionButton lengthUp_ { "+", ActionButton::Style::compact };
-    ActionButton diameterDown_ { "-", ActionButton::Style::compact };
-    ActionButton diameterUp_ { "+", ActionButton::Style::compact };
-    ActionButton applyEdit_ { "Apply", ActionButton::Style::primary };
+    ActionButton firstDown_ { "-", ActionButton::Style::compact };
+    ActionButton firstUp_ { "+", ActionButton::Style::compact };
+    ActionButton secondDown_ { "-", ActionButton::Style::compact };
+    ActionButton secondUp_ { "+", ActionButton::Style::compact };
     ActionButton resetEdit_ { "Reset", ActionButton::Style::compact };
+    ActionButton rampEdit_ { "Next cycle", ActionButton::Style::compact };
+    bool gradual_ {};
     [[nodiscard]] juce::TextLayout noteLayout(const juce::String& text, juce::Colour, float width) const;
     [[nodiscard]] int editHeight() const;
     void stepEdit(bool length, double direction);
@@ -170,6 +198,19 @@ public:
     /** Where a resize made in the part inspector goes: applies the edited
         configuration to the engine, or refuses it. */
     void setConfigEditor(std::function<bool(const EngineConfig&)>);
+    /** Where a bore and stroke change goes, with its ramp in seconds (0: at
+        the next cycle). */
+    void setCylinderEditor(std::function<bool(const EngineConfig&, double rampSeconds)>);
+    /** Seconds over which a gradual bore and stroke change happens. */
+    static constexpr double cylinderRampSeconds = 3.0;
+    /** The exhaust gas network's cell length chosen in the view settings:
+        the finer mesh shows the waves' shape, at a cost in simulation time.
+        Empty: the production mesh. */
+    [[nodiscard]] std::optional<double> exhaustCellLengthM() const noexcept {
+        return settings_.fineExhaustWaves ? std::optional<double> { 0.180 } : std::nullopt;
+    }
+    /** Called when that choice changes. */
+    std::function<void()> onExhaustResolutionChanged;
     /** Rebuilds the 3-D model; call after every engine change. */
     void setEngine(const EngineConfig&);
     void stepLayer(int delta);
@@ -235,7 +276,9 @@ private:
     void updateInspector();
     /** Asks for the oscilloscope trace of the selected duct and shows it. */
     void updateScope();
+    void applyEdit(double first, double second, bool gradual);
     void applyExhaustEdit(double lengthMm, double diameterMm);
+    void applyCylinderEdit(double boreMm, double strokeMm, bool gradual);
     void updateLegend();
 
     const DashboardModel& model_;
@@ -252,11 +295,14 @@ private:
     std::function<bool(double, GasFieldSnapshot&)> gasFieldSource_;
     std::function<bool(std::int32_t, std::uint8_t, GasProbeTrace&)> gasProbeSource_;
     std::function<bool(const EngineConfig&)> configEditor_;
-    /** The exhaust component an edit resized: selected again, with the
-        camera kept, when the engine comes back. */
+    std::function<bool(const EngineConfig&, double)> cylinderEditor_;
+    /** The part an edit resized: selected again, with the camera kept, when
+        the engine comes back. An exhaust component by its ids (the scene's
+        parts change), a cylinder part by its index (they do not). */
     struct Reselect final {
         std::uint32_t pathId {};
         std::uint32_t elementId {};
+        int part { -1 };
     };
     std::optional<Reselect> reselect_;
     GasProbeTrace gasProbe_;

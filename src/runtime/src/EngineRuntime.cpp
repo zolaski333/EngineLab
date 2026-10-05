@@ -286,29 +286,19 @@ EngineRuntime::EngineRuntime(EngineConfig config,
     : config_(normalised(std::move(config))), ecu_(std::move(calibrations)),
       exhaust_(ExhaustGraph::makeForEngine(config_)),
       simulator_(config_, ecu_, physics_, eventGenerator_, exhaust_,
-                 std::move(simulatorOptions)), dynoAbsorber_(config_),
+                 simulatorOptions), dynoAbsorber_(config_),
       driveline_(config_),
       pressureQueue_(std::make_unique<CylinderPressureQueue>()),
       exhaustAcousticQueue_(std::make_unique<ExhaustAcousticQueue>()),
       dynoArchive_(dynoArchive ? std::move(dynoArchive)
                                : std::make_shared<DynoRunArchive>()) {
     simulator_.setPressureSamplingEnabled(true);
+    exhaustCellLengthM_ = simulatorOptions.exhaustTargetCellLengthM.value_or(
+        gasdynamics::realtimeExhaustFeedbackDiscretisation().targetCellLengthM);
     applyAudioVoicing(config_.audioVoicing);
     audioState_.cylinderCount.store(static_cast<float>(config_.cylinders.size()), std::memory_order_relaxed);
-    const auto displacement = engineDisplacementLitres(config_);
-    double boreSum = 0.0;
-    double strokeSum = 0.0;
-    for (const auto& cylinder : config_.cylinders) {
-        boreSum += cylinder.boreMm;
-        strokeSum += cylinder.strokeMm;
-    }
-    const auto cylinderCount = std::max<std::size_t>(1, config_.cylinders.size());
-    const auto meanBore = boreSum / static_cast<double>(cylinderCount);
-    const auto meanStroke = strokeSum / static_cast<double>(cylinderCount);
     audioState_.redlineRpm.store(static_cast<float>(config_.redlineRpm), std::memory_order_relaxed);
-    audioState_.displacementLitres.store(static_cast<float>(displacement), std::memory_order_relaxed);
-    audioState_.cylinderDisplacementLitres.store(static_cast<float>(displacement / static_cast<double>(cylinderCount)), std::memory_order_relaxed);
-    audioState_.boreStrokeRatio.store(static_cast<float>(meanBore / std::max(1.0, meanStroke)), std::memory_order_relaxed);
+    publishCylinderTelemetry(config_);
     const auto bankSeparation = config_.layout == EngineLayout::vLayout ? 1.0F
         : (config_.layout == EngineLayout::flat ? 0.92F : (config_.layout == EngineLayout::radial ? 0.74F : 0.0F));
     audioState_.bankSeparation.store(bankSeparation, std::memory_order_relaxed);
@@ -334,17 +324,26 @@ EngineRuntime::EngineRuntime(EngineConfig config,
                                          std::memory_order_relaxed);
     audioState_.ambientTemperatureC.store(static_cast<float>(config_.ambientTemperatureC),
                                           std::memory_order_relaxed);
-    const auto pathCount = std::clamp<std::size_t>(config_.exhaustPaths.empty()
-        ? 1U : config_.exhaustPaths.size(), 1U, maximumAudioExhaustPaths);
+    publishExhaustTelemetry(config_, exhaust_);
+    audioState_.boostPressureRatio.store(static_cast<float>(config_.forcedInduction.enabled
+        ? config_.forcedInduction.pressureRatio : 1.0), std::memory_order_relaxed);
+    audioState_.forcedInductionKind.store(config_.forcedInduction.enabled
+        ? (config_.forcedInduction.type == ForcedInductionType::supercharger ? 2 : 1) : 0,
+        std::memory_order_relaxed);
+}
+void EngineRuntime::publishExhaustTelemetry(const EngineConfig& config,
+                                            const ExhaustGraph& graph) noexcept {
+    const auto pathCount = std::clamp<std::size_t>(config.exhaustPaths.empty()
+        ? 1U : config.exhaustPaths.size(), 1U, maximumAudioExhaustPaths);
     audioState_.exhaustPathCount.store(static_cast<std::uint32_t>(pathCount), std::memory_order_relaxed);
-    const auto exhaustSoundSpeedMps = std::clamp(exhaust_.referenceWaveSpeedMps(), 300.0, 900.0);
+    const auto exhaustSoundSpeedMps = std::clamp(graph.referenceWaveSpeedMps(), 300.0, 900.0);
     const auto exhaustSoundSpeedMmPerSecond = exhaustSoundSpeedMps * 1'000.0;
     audioState_.exhaustReferenceSoundSpeedMps.store(
         static_cast<float>(exhaustSoundSpeedMps), std::memory_order_relaxed);
     audioState_.exhaustTemperatureC.store(
-        static_cast<float>(config_.ambientTemperatureC), std::memory_order_relaxed);
+        static_cast<float>(config.ambientTemperatureC), std::memory_order_relaxed);
     // These route averages remain part of RealtimeAudioState for compatibility
-    // with graph-less producers. Production audio receives exhaust_ directly
+    // with graph-less producers. Production audio receives the exhaust graph directly
     // and compiles every duct, junction and outlet instead of consuming this
     // reduced path geometry.
     std::array<double, maximumAudioExhaustPaths> pathLengthSum {};
@@ -357,10 +356,10 @@ EngineRuntime::EngineRuntime(EngineConfig config,
     // arbitrary gain: its amplitude follows the simulated pressure and flow,
     // while the passive topology supplies the transfer function.
     for (std::size_t index = 0;
-         index < config_.cylinders.size() && index < audioState_.cylinderExhaustGain.size(); ++index) {
-        const auto& cylinder = config_.cylinders[index];
-        const auto acoustics = exhaust_.acousticsForCylinder(cylinder.id);
-        const auto fallbackPathIndex = exhaustPathIndexFor(config_, cylinder);
+         index < config.cylinders.size() && index < audioState_.cylinderExhaustGain.size(); ++index) {
+        const auto& cylinder = config.cylinders[index];
+        const auto acoustics = graph.acousticsForCylinder(cylinder.id);
+        const auto fallbackPathIndex = exhaustPathIndexFor(config, cylinder);
         const auto compiledPathIndex = acoustics.routeCount > 0
             ? static_cast<std::size_t>(acoustics.pathIndex) : fallbackPathIndex;
         const auto pathIndex = std::min(compiledPathIndex, pathCount - 1U);
@@ -369,8 +368,8 @@ EngineRuntime::EngineRuntime(EngineConfig config,
         audioState_.cylinderExhaustGain[index].store(static_cast<float>(std::clamp(
             acoustics.transmissionGain, 0.0, 8.0)), std::memory_order_relaxed);
 
-        const auto& fallbackGeometry = exhaustGeometryAt(config_, pathIndex);
-        const auto flowProperties = exhaust_.cylinderFlowProperties(cylinder.id);
+        const auto& fallbackGeometry = exhaustGeometryAt(config, pathIndex);
+        const auto flowProperties = graph.cylinderFlowProperties(cylinder.id);
         const auto runnerAreaM2 = flowProperties.inletAreaM2 > 1.0e-8
             ? flowProperties.inletAreaM2
             : circularAreaM2(fallbackGeometry.primaryDiameterMm);
@@ -399,8 +398,8 @@ EngineRuntime::EngineRuntime(EngineConfig config,
     }
 
     for (std::size_t pathIndex = 0; pathIndex < maximumAudioExhaustPaths; ++pathIndex) {
-        const auto& geometry = exhaustGeometryAt(config_, pathIndex);
-        const auto flowProperties = exhaust_.pathFlowProperties(pathIndex);
+        const auto& geometry = exhaustGeometryAt(config, pathIndex);
+        const auto flowProperties = graph.pathFlowProperties(pathIndex);
         const auto outletAreaM2 = flowProperties.effectiveOutletAreaM2 > 1.0e-8
             ? flowProperties.effectiveOutletAreaM2
             : circularAreaM2(geometry.outletDiameterMm)
@@ -460,16 +459,160 @@ EngineRuntime::EngineRuntime(EngineConfig config,
     }
     audioState_.exhaustOpenness.store(audioState_.exhaustPathOpenness[0].load(std::memory_order_relaxed),
                                       std::memory_order_relaxed);
-    audioState_.boostPressureRatio.store(static_cast<float>(config_.forcedInduction.enabled
-        ? config_.forcedInduction.pressureRatio : 1.0), std::memory_order_relaxed);
     audioState_.exhaustReflectionSeconds.store(
         audioState_.exhaustPathReflectionSeconds[0].load(std::memory_order_relaxed),
         std::memory_order_relaxed);
-    audioState_.meanBoreMm.store(static_cast<float>(std::max(20.0, meanBore)), std::memory_order_relaxed);
-    audioState_.forcedInductionKind.store(config_.forcedInduction.enabled
-        ? (config_.forcedInduction.type == ForcedInductionType::supercharger ? 2 : 1) : 0,
-        std::memory_order_relaxed);
 }
+
+bool EngineRuntime::applyLiveExhaust(const EngineConfig& edited,
+                                     std::optional<double> targetCellLengthM) {
+    const auto cellLengthM = targetCellLengthM.value_or(exhaustCellLengthM_);
+    if (!std::isfinite(cellLengthM)) return false;
+    // The running engine with the edited exhaust: the graph also reads the
+    // cylinders and the observer, which stay the running ones.
+    auto change = std::make_unique<LiveExhaustChange>();
+    change->config = config_;
+    change->config.exhaust = edited.exhaust;
+    change->config.exhaustPaths = edited.exhaustPaths;
+    try {
+        normaliseEngineConfig(change->config);
+        if (validateEngineConfig(change->config)) return false;
+        change->graph = ExhaustGraph::makeForEngine(change->config);
+    } catch (const std::exception&) {
+        return false;
+    }
+    change->network = simulator_.buildLiveExhaustNetwork(change->config, cellLengthM);
+    if (!change->network) return false;
+    // The simulation thread never reads these two fields of config_.
+    config_.exhaust = change->config.exhaust;
+    config_.exhaustPaths = change->config.exhaustPaths;
+    exhaustCellLengthM_ = cellLengthM;
+    {
+        const std::scoped_lock lock(liveExhaustMutex_);
+        std::swap(pendingExhaustChange_, change);
+    }
+    liveExhaustChangesRequested_.fetch_add(1, std::memory_order_release);
+    // `change` now holds a request the simulation thread never took, if any;
+    // it is freed here, on the caller's thread.
+    return true;
+}
+
+void EngineRuntime::publishCylinderTelemetry(const EngineConfig& config) noexcept {
+    const auto displacement = engineDisplacementLitres(config);
+    double boreSum = 0.0;
+    double strokeSum = 0.0;
+    for (const auto& cylinder : config.cylinders) {
+        boreSum += cylinder.boreMm;
+        strokeSum += cylinder.strokeMm;
+    }
+    const auto cylinderCount = std::max<std::size_t>(1, config.cylinders.size());
+    const auto meanBore = boreSum / static_cast<double>(cylinderCount);
+    const auto meanStroke = strokeSum / static_cast<double>(cylinderCount);
+    audioState_.displacementLitres.store(static_cast<float>(displacement), std::memory_order_relaxed);
+    audioState_.cylinderDisplacementLitres.store(static_cast<float>(displacement / static_cast<double>(cylinderCount)), std::memory_order_relaxed);
+    audioState_.boreStrokeRatio.store(static_cast<float>(meanBore / std::max(1.0, meanStroke)), std::memory_order_relaxed);
+    audioState_.meanBoreMm.store(static_cast<float>(std::max(20.0, meanBore)), std::memory_order_relaxed);
+    engineInertiaKgM2_ = effectiveRotatingInertiaKgM2(config);
+}
+
+bool EngineRuntime::applyLiveCylinderResize(const EngineConfig& edited, double rampSeconds) {
+    if (!std::isfinite(rampSeconds) || rampSeconds < 0.0
+        || edited.cylinders.size() != config_.cylinders.size()
+        || edited.crankJournals.size() != config_.crankJournals.size())
+        return false;
+    auto change = std::make_unique<LiveCylinderResize>();
+    change->config = config_;
+    change->rampSeconds = rampSeconds;
+    for (std::size_t index = 0; index < edited.cylinders.size(); ++index) {
+        const auto& source = edited.cylinders[index];
+        auto& cylinder = change->config.cylinders[index];
+        if (source.id != cylinder.id || source.crankJournalId != cylinder.crankJournalId) return false;
+        cylinder.boreMm = source.boreMm;
+        cylinder.strokeMm = source.strokeMm;
+        cylinder.deckHeightMm = source.deckHeightMm;
+        cylinder.compressionRatio = source.compressionRatio;
+    }
+    for (std::size_t index = 0; index < edited.crankJournals.size(); ++index) {
+        if (edited.crankJournals[index].id != change->config.crankJournals[index].id) return false;
+        change->config.crankJournals[index].throwMm = edited.crankJournals[index].throwMm;
+    }
+    try {
+        normaliseEngineConfig(change->config);
+        if (validateEngineConfig(change->config)) return false;
+    } catch (const std::exception&) {
+        return false;
+    }
+    if (change->config.cylinders.size() != config_.cylinders.size()
+        || change->config.crankJournals.size() != config_.crankJournals.size())
+        return false;
+    // Field by field: the simulation thread reads these vectors' sizes, never
+    // these fields, so they must not be reallocated.
+    for (std::size_t index = 0; index < config_.cylinders.size(); ++index) {
+        const auto& source = change->config.cylinders[index];
+        auto& cylinder = config_.cylinders[index];
+        cylinder.boreMm = source.boreMm;
+        cylinder.strokeMm = source.strokeMm;
+        cylinder.deckHeightMm = source.deckHeightMm;
+        cylinder.compressionRatio = source.compressionRatio;
+    }
+    for (std::size_t index = 0; index < config_.crankJournals.size(); ++index)
+        config_.crankJournals[index].throwMm = change->config.crankJournals[index].throwMm;
+    {
+        const std::scoped_lock lock(liveExhaustMutex_);
+        std::swap(pendingCylinderResize_, change);
+    }
+    liveCylinderResizesRequested_.fetch_add(1, std::memory_order_release);
+    return true;
+}
+
+void EngineRuntime::consumeLiveCylinderResize() noexcept {
+    const auto requested = liveCylinderResizesRequested_.load(std::memory_order_acquire);
+    if (requested != liveCylinderResizesConsumed_) {
+        liveCylinderResizesConsumed_ = requested;
+        std::unique_ptr<LiveCylinderResize> change;
+        {
+            const std::scoped_lock lock(liveExhaustMutex_);
+            std::swap(pendingCylinderResize_, change);
+        }
+        try {
+            if (change) (void) simulator_.beginCylinderResize(change->config, change->rampSeconds);
+        } catch (const std::exception&) {
+        }
+    }
+    const auto revision = simulator_.cylinderGeometryRevision();
+    if (revision == consumedCylinderGeometryRevision_) return;
+    consumedCylinderGeometryRevision_ = revision;
+    const auto& running = simulator_.config();
+    publishCylinderTelemetry(running);
+    driveline_.setEngineInertia(engineInertiaKgM2_);
+    // The absorber is sized from the displacement; a run in progress keeps
+    // the controller it started with.
+    if (!dynoActive_) dynoAbsorber_ = DynoAbsorberController(running);
+    cylinderGeometryRevision_.store(revision, std::memory_order_release);
+}
+
+void EngineRuntime::consumeLiveExhaustChange() noexcept {
+    const auto requested = liveExhaustChangesRequested_.load(std::memory_order_acquire);
+    if (requested == liveExhaustChangesConsumed_) return;
+    liveExhaustChangesConsumed_ = requested;
+    std::unique_ptr<LiveExhaustChange> change;
+    {
+        const std::scoped_lock lock(liveExhaustMutex_);
+        std::swap(pendingExhaustChange_, change);
+    }
+    if (!change) return;
+    try {
+        if (!simulator_.replaceExhaustNetwork(change->network, change->config)) return;
+    } catch (const std::exception&) {
+        return;
+    }
+    // The simulator holds a reference to exhaust_; swapping keeps it valid.
+    std::swap(exhaust_, change->graph);
+    publishExhaustTelemetry(change->config, exhaust_);
+    liveExhaustChangesApplied_.fetch_add(1, std::memory_order_release);
+    // The previous network and graph are freed here, between two frames.
+}
+
 EngineRuntime::~EngineRuntime() { stop(); }
 
 void EngineRuntime::start() {
@@ -1026,6 +1169,8 @@ void EngineRuntime::run(std::stop_token stopToken) {
             simulator_.applyAudioPhysicsCalibration(calibration);
             consumedAudioPhysicsRevision = requestedAudioPhysicsRevision;
         }
+        consumeLiveExhaustChange();
+        consumeLiveCylinderResize();
         const EngineControls controls { ignition_.load(), starter_.load(),
             (dynoActive_ ? dynoThrottleCommand_
                          : std::clamp(throttle_.load(), 0.0, 1.0))
@@ -1425,7 +1570,7 @@ void EngineRuntime::run(std::stop_token stopToken) {
             frame.state.clutchDissipatedEnergyJoules = drivelineOutput_.clutchDissipatedEnergyJoules;
             frame.state.clutchPowerLossKw = drivelineOutput_.clutchPowerLossKw;
             frame.state.drivelineStoredEnergyJoules = drivelineOutput_.storedEnergyJoules
-                + 0.5 * effectiveRotatingInertiaKgM2(config_)
+                + 0.5 * engineInertiaKgM2_
                     * frame.state.angularVelocityRadPerSecond * frame.state.angularVelocityRadPerSecond;
             frame.state.drivelineEnergyResidualJoules = drivelineOutput_.energyResidualJoules;
             const auto displayedDynoMode = dynoActive_

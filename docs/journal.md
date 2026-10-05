@@ -5,6 +5,52 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-05 — Merlin supercharger drawn; cost of the gas view
+
+- `EngineLab.EngineModel3D`: drawn on the Merlin only, eye fed by the airbox,
+  charge pipe on the throttle, clear of the engine, impeller at ratio x crank.
+  Route counts unchanged. Mutation caught: impeller frozen.
+- Budget harness `--gas-view` (field + probe asked at 60 Hz), free-run, 60 %
+  redline, best of 4 alternated, off/on: CP2 3.28/3.24, LS3 1.31/1.30, K20A
+  1.92/1.92. Within the ±4 % noise: no measurable simulation-thread cost.
+- Not measured: GPU and message thread; not seen in the app (the scene
+  viewer does not draw in a hidden pane).
+
+## 2026-10-05 — Fine exhaust mesh on demand
+
+- The view's *Fine* setting remeshes the running exhaust from 360 to 180 mm.
+  Held at 60 % redline, remeshed at 6 s: LS3 625.94 Nm, against 625.80 for an
+  engine started at 180 mm and 629.19 at 360 mm; CP2 60.16/60.33/60.29 (the
+  mesh barely moves its torque, so it only proves nothing breaks). Cells:
+  CP2 6 -> 11, LS3 26 -> 44. No stall.
+- Mutation caught: the live build ignoring the requested cell length.
+- Not tested: the menu itself, and the cost in the app (see 2026-10-05 wave
+  resolution entry: 13-20 % less headroom).
+
+## 2026-10-05 — Live bore and stroke changes
+
+- CP2/K20A/LS3 at 60 % redline, +3 mm bore and stroke at 5 s: settled brake
+  torque within 0.3 % of an engine built that way (CP2 67.80 at once, 67.77
+  over 2 s, 67.89 built); resized back, within 0.06 % of untouched.
+- At once, one cycle leaves the variability band (CP2 58.9 Nm, AFR 14.8
+  against 13.3): its fuel was metered for the old cylinder. Then ~69 Nm,
+  drifting to 68 over seconds as the walls warm. Over a ramp: no cycle out.
+- 16 engines, 2 mm at 3 s of idle: none stalls (2JZ dips to 625 rpm, idle 760).
+- Mutations caught: no TDC wait, no ramp, no kinematics rebuild (74.4 Nm).
+- Not tested: the runtime's telemetry, inertia and dyno re-sizing.
+
+## 2026-10-05 — Live exhaust changes
+
+- Gas: an identical exhaust adopted continues bit-identically; 360 to 45 mm
+  conserves mass, energy and wall energy per duct. Physics, CP2/K20A/LS3 held
+  at 60 % redline, +500 mm and x0.70 diameter swapped at 6 s: settled brake
+  torque within 0.2 % of an engine built with it (CP2 56.64/56.64 Nm, 60.26
+  untouched). No speed step either way: a fresh network refills in ms. What
+  the state transfer keeps is the wall (CP2 332 K at 6 s, < 3 % change).
+- Audio: identical swap -75 dB during the crossfade, -114 dB after. 60 ms of
+  warm-up left -33 dB, 150 ms -74 dB. Outlet jet noise is seeded: disabled.
+- Mutations caught: no wall copy, nearest-cell remap, no adoption, no fade.
+
 ## 2026-10-05 — Resizing the exhaust from the 3-D view
 
 - `EngineLab.EngineModel3D`, 16 engines and a scalar-geometry copy of the

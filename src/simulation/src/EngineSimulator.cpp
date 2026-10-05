@@ -624,8 +624,9 @@ void EngineSimulator::configurePhysicalIntakeNetworks() {
     }
 }
 
-void EngineSimulator::configurePhysicalExhaustNetwork() {
-    const auto physicalGraph = ExhaustGraph::makeForEngine(config_);
+std::unique_ptr<gasdynamics::ExhaustGasNetwork> EngineSimulator::buildPhysicalExhaustNetwork(
+    const EngineConfig& config, double targetCellLengthM) const {
+    const auto physicalGraph = ExhaustGraph::makeForEngine(config);
     auto feedbackMesh =
         gasdynamics::realtimeExhaustFeedbackDiscretisation();
     // The realtime FV mesh owns nonlinear mean-flow/back-pressure feedback,
@@ -636,10 +637,7 @@ void EngineSimulator::configurePhysicalExhaustNetwork() {
     // every exhaust cell to run at more than 100 kHz. This is an explicit
     // physical scale separation: no
     // authored component, volume, area or loss is removed from either model.
-    feedbackMesh.targetCellLengthM = std::clamp(
-        options_.exhaustTargetCellLengthM.value_or(
-            feedbackMesh.targetCellLengthM),
-        0.025, 0.600);
+    feedbackMesh.targetCellLengthM = std::clamp(targetCellLengthM, 0.025, 0.600);
     // Components shorter than the feedback scale remain one conservative
     // finite volume with their exact volume, ports and loss. Their propagation
     // delay is owned by the characteristic network, so duplicating a second FV
@@ -647,30 +645,39 @@ void EngineSimulator::configurePhysicalExhaustNetwork() {
     const auto layout = gasdynamics::ExhaustNetworkLayout::compile(
         physicalGraph, feedbackMesh);
     auto network = std::make_unique<gasdynamics::ExhaustGasNetwork>(
-        exhaustThermodynamicsFor(config_));
+        exhaustThermodynamicsFor(config));
     gasdynamics::ExhaustGasNetworkConfig networkConfig;
-    networkConfig.initialPressurePa = config_.ambientPressureKpa * 1'000.0;
-    networkConfig.initialTemperatureK = config_.ambientTemperatureC + 273.15;
+    networkConfig.initialPressurePa = config.ambientPressureKpa * 1'000.0;
+    networkConfig.initialTemperatureK = config.ambientTemperatureC + 273.15;
     networkConfig.absoluteRoughnessM = 4.5e-5;
     networkConfig.maximumCourantNumber = 0.8;
     // Exhaust-wall temperature is a finite-capacity state. Internal exchange
     // conserves gas plus metal energy; only the explicit outside convection
     // below rejects heat from that combined subsystem to the environment.
     networkConfig.wallHeatTransferWPerM2K = 0.0;
-    networkConfig.wallTemperatureK = config_.ambientTemperatureC + 273.15;
+    networkConfig.wallTemperatureK = config.ambientTemperatureC + 273.15;
     networkConfig.dynamicWallHeatTransferEnabled = true;
     networkConfig.wallThicknessM = stainlessExhaustWallThicknessM;
     networkConfig.wallDensityKgPerM3 = stainlessDensityKgPerM3;
     networkConfig.wallSpecificHeatJPerKgK = stainlessSpecificHeatJPerKgK;
     networkConfig.externalWallHeatTransferWPerM2K =
         exhaustExternalHeatTransferWPerM2K;
-    networkConfig.externalTemperatureK = config_.ambientTemperatureC + 273.15;
+    networkConfig.externalTemperatureK = config.ambientTemperatureC + 273.15;
     networkConfig.wallHeatUpdateIntervalSeconds =
         ductWallHeatUpdateIntervalSeconds;
     networkConfig.evolveJunctionAxialMomentum =
         options_.evolveExhaustJunctionAxialMomentum.value_or(true);
     if (!network->configure(layout, networkConfig))
         throw std::runtime_error("failed to configure conservative exhaust network");
+    return network;
+}
+
+void EngineSimulator::configurePhysicalExhaustNetwork() {
+    constructionExhaustCellLengthM_ = options_.exhaustTargetCellLengthM.value_or(
+        gasdynamics::realtimeExhaustFeedbackDiscretisation().targetCellLengthM);
+    auto network = buildPhysicalExhaustNetwork(config_, constructionExhaustCellLengthM_);
+    const auto& layout = network->layout();
+    constructionExhaustLayout_ = layout;
     const auto ambientState = network->mixtureModel().conservativeFromPressureTemperature(
         config_.ambientPressureKpa * 1'000.0,
         config_.ambientTemperatureC + 273.15);
@@ -690,6 +697,103 @@ void EngineSimulator::configurePhysicalExhaustNetwork() {
             std::distance(config_.cylinders.begin(), cylinder));
     }
     physicalExhaustNetwork_ = std::move(network);
+}
+
+std::unique_ptr<gasdynamics::ExhaustGasNetwork> EngineSimulator::buildLiveExhaustNetwork(
+    const EngineConfig& config, std::optional<double> targetCellLengthM) const {
+    std::unique_ptr<gasdynamics::ExhaustGasNetwork> network;
+    try {
+        network = buildPhysicalExhaustNetwork(
+            config, targetCellLengthM.value_or(constructionExhaustCellLengthM_));
+    } catch (const std::exception&) {
+        return {};
+    }
+    if (!network->layout().sameTopology(constructionExhaustLayout_)) return {};
+    return network;
+}
+
+bool EngineSimulator::beginCylinderResize(const EngineConfig& target, double rampSeconds) {
+    if (!std::isfinite(rampSeconds) || rampSeconds < 0.0
+        || target.cylinders.size() != config_.cylinders.size()
+        || target.crankJournals.size() != config_.crankJournals.size())
+        return false;
+    for (std::size_t index = 0; index < config_.cylinders.size(); ++index) {
+        const auto& running = config_.cylinders[index];
+        const auto& wanted = target.cylinders[index];
+        if (running.id != wanted.id || running.crankJournalId != wanted.crankJournalId) return false;
+    }
+    CylinderResize resize;
+    resize.startSeconds = state_.simulationTimeSeconds;
+    resize.rampSeconds = rampSeconds;
+    for (std::size_t index = 0; index < config_.cylinders.size(); ++index) {
+        const auto& running = config_.cylinders[index];
+        const auto& wanted = target.cylinders[index];
+        resize.from.push_back({ running.boreMm, running.strokeMm, running.deckHeightMm,
+                                running.compressionRatio });
+        resize.to.push_back({ wanted.boreMm, wanted.strokeMm, wanted.deckHeightMm,
+                              wanted.compressionRatio });
+        resize.pending.push_back(true);
+    }
+    cylinderResize_ = std::move(resize);
+    return true;
+}
+
+void EngineSimulator::advanceCylinderResize() {
+    if (!cylinderResize_) return;
+    auto& resize = *cylinderResize_;
+    // A stopped engine crosses no TDC: it takes the target at once.
+    const auto stopped = std::abs(state_.rpm) < 1.0;
+    const auto fraction = resize.rampSeconds > 0.0 && !stopped
+        ? std::clamp((state_.simulationTimeSeconds - resize.startSeconds) / resize.rampSeconds, 0.0, 1.0)
+        : 1.0;
+    const auto at = [fraction](double from, double to) {
+        return fraction >= 1.0 ? to : from + (to - from) * fraction;
+    };
+    auto changed = false;
+    for (std::size_t index = 0; index < config_.cylinders.size(); ++index) {
+        if (!resize.pending[index]) continue;
+        const auto& cylinder = config_.cylinders[index];
+        const auto phase = std::fmod(state_.crankAngleDegrees - crankOffsetDegreesFor(config_, cylinder)
+            + 1'440.0, 720.0);
+        // Phase 0 is firing TDC: 360 is the overlap TDC, the chamber at its
+        // clearance volume with both valves near their crossing.
+        if (!stopped && !crossedPhase(previousCylinderPhases_[index], phase, 360.0)) continue;
+        const auto journalId = cylinder.crankJournalId;
+        for (std::size_t member = 0; member < config_.cylinders.size(); ++member) {
+            auto& sized = config_.cylinders[member];
+            if (sized.crankJournalId != journalId) continue;
+            const auto& from = resize.from[member];
+            const auto& to = resize.to[member];
+            sized.boreMm = at(from.boreMm, to.boreMm);
+            sized.strokeMm = at(from.strokeMm, to.strokeMm);
+            sized.deckHeightMm = at(from.deckHeightMm, to.deckHeightMm);
+            sized.compressionRatio = at(from.compressionRatio, to.compressionRatio);
+            if (fraction >= 1.0) resize.pending[member] = false;
+        }
+        for (auto& journal : config_.crankJournals)
+            if (journal.id == journalId) journal.throwMm = cylinder.strokeMm * 0.5;
+        changed = true;
+    }
+    if (!changed) return;
+    kinematicsReference_ = buildEngineKinematicsReference(config_);
+    ++cylinderGeometryRevision_;
+    if (std::none_of(resize.pending.begin(), resize.pending.end(), [](bool pending) { return pending; }))
+        cylinderResize_.reset();
+}
+
+bool EngineSimulator::replaceExhaustNetwork(
+    std::unique_ptr<gasdynamics::ExhaustGasNetwork>& network,
+    const EngineConfig& config) {
+    if (!network || !physicalExhaustNetwork_
+        || !network->layout().sameTopology(constructionExhaustLayout_)
+        || !network->adoptStateFrom(*physicalExhaustNetwork_))
+        return false;
+    std::swap(network, physicalExhaustNetwork_);
+    // Only the network reads the exhaust geometry; the copy keeps config_
+    // describing the engine that runs.
+    config_.exhaust = config.exhaust;
+    config_.exhaustPaths = config.exhaustPaths;
+    return true;
 }
 
 void EngineSimulator::setPressureSamplingEnabled(bool enabled) {
@@ -811,6 +915,7 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
     for (std::size_t subStep = 0; subStep < subStepCount; ++subStep) {
         pollGasFieldCapture();
         recordGasProbe();
+        advanceCylinderResize();
         const auto subStepStartTime = state_.simulationTimeSeconds;
         const auto subPreviousRpm = state_.rpm;
         const auto subPreviousAngle = state_.crankAngleDegrees;

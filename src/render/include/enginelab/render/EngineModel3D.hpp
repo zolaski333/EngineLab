@@ -109,6 +109,7 @@ enum class PartRole : std::uint8_t {
     duct,
     afterfire,
     turbo,
+    supercharger,
 };
 
 struct PartIdentity final {
@@ -150,6 +151,12 @@ public:
     /** The turbocharger as drawn; `placed` is false without one. Its solids
         are at the end of solids(). */
     [[nodiscard]] const TurboPlacement& turbo() const noexcept { return turbo_; }
+    /** The supercharger as drawn; `placed` is false without one. Its solid is
+        in solids(), after the engine's. */
+    [[nodiscard]] const SuperchargerPlacement& supercharger() const noexcept { return supercharger_; }
+    /** The impeller's angle about its axis at a crank angle: the crank's
+        times the drive ratio, degrees. */
+    [[nodiscard]] double superchargerImpellerDegrees(double crankAngleDegrees) const noexcept;
 
     /** Cycle phase of one cylinder: 0 = firing TDC, 360 = overlap TDC. */
     [[nodiscard]] double cyclePhaseDegrees(std::size_t cylinder, double crankAngleDegrees) const noexcept;
@@ -211,6 +218,7 @@ private:
     void buildStructure();
     void buildDucts();
     void buildTurbo();
+    void buildSupercharger();
     void computeBounds();
 
     EngineConfig config_;
@@ -227,6 +235,9 @@ private:
     TurboPlacement turbo_;
     /** Turbine housing, compressor housing, turbine wheel, compressor wheel. */
     std::array<std::uint16_t, 4> turboParts_ { 0xFFFFU, 0xFFFFU, 0xFFFFU, 0xFFFFU };
+    SuperchargerPlacement supercharger_;
+    /** Housing (with the charge pipe) and impeller. */
+    std::array<std::uint16_t, 2> superchargerParts_ { 0xFFFFU, 0xFFFFU };
     /** Flames at the exhaust outlets, lit by an afterfire. */
     std::vector<std::uint16_t> outletFlameParts_;
     /** Parts left out of the engine framing (exhaust trunk, airbox, inlet duct). */

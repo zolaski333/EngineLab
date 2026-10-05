@@ -1,5 +1,6 @@
 #include <enginelab/app/MainComponent.hpp>
 #include <enginelab/app/Theme.hpp>
+#include <enginelab/gasdynamics/ExhaustNetworkLayout.hpp>
 #include <enginelab/audio/ImpulseResponseLoader.hpp>
 #include <enginelab/calibration/EcuCalibrationKeys.hpp>
 #include <algorithm>
@@ -116,7 +117,11 @@ MainComponent::MainComponent() {
         runtime_->requestGasField(crankAngleDegrees);
         return runtime_->latestGasField(field);
     });
-    viewport_.setConfigEditor([this](const EngineConfig& edited) { return applyConfig(edited, false, true); });
+    viewport_.setConfigEditor([this](const EngineConfig& edited) { return applyExhaustEdit(edited); });
+    viewport_.setCylinderEditor([this](const EngineConfig& edited, double rampSeconds) {
+        return applyCylinderResize(edited, rampSeconds);
+    });
+    viewport_.onExhaustResolutionChanged = [this] { applyExhaustResolution(); };
     viewport_.setGasProbeSource([this](std::int32_t element, std::uint8_t sample, GasProbeTrace& trace) {
         if (!runtime_) return false;
         runtime_->requestGasProbe(element, sample);
@@ -167,9 +172,10 @@ bool MainComponent::applyConfig(const EngineConfig& newConfig, bool preserveScri
         normaliseEngineConfig(canonicalConfig);
         if (const auto error = validateEngineConfig(canonicalConfig))
             throw std::invalid_argument(*error);
+        EngineSimulatorOptions options;
+        options.exhaustTargetCellLengthM = viewport_.exhaustCellLengthM();
         replacement = std::make_unique<EngineRuntime>(
-            canonicalConfig, retainedCalibration,
-            EngineSimulatorOptions {}, dynoArchive_);
+            canonicalConfig, retainedCalibration, options, dynoArchive_);
     } catch (const std::exception& error) {
         showError(utf8("Invalid engine configuration"), juce::String::fromUTF8(error.what()));
         return false;
@@ -224,6 +230,49 @@ bool MainComponent::applyConfig(const EngineConfig& newConfig, bool preserveScri
     viewport_.setEngine(config_);
     viewport_.refresh();
     return true;
+}
+
+bool MainComponent::applyExhaustEdit(const EngineConfig& edited) {
+    if (!runtime_ || !audio_ || runtime_->dynoRunning() || !runtime_->applyLiveExhaust(edited))
+        return applyConfig(edited, false, true);
+    // The simulation thread swaps the runtime's own graph: the audio gets one
+    // built here from the same configuration.
+    config_.exhaust = runtime_->engineConfig().exhaust;
+    config_.exhaustPaths = runtime_->engineConfig().exhaustPaths;
+    try {
+        if (!audio_->replaceExhaustGraph(ExhaustGraph::makeForEngine(config_)) && physicalExhaustTopology_)
+            return applyConfig(config_, false, true);
+    } catch (const std::exception&) {
+        return applyConfig(config_, false, true);
+    }
+    if (exhaustDesignerWindow_) exhaustDesignerWindow_->setConfig(config_);
+    viewport_.setEngine(config_);
+    viewport_.refresh();
+    return true;
+}
+
+bool MainComponent::applyCylinderResize(const EngineConfig& edited, double rampSeconds) {
+    if (!runtime_ || runtime_->dynoRunning() || !runtime_->applyLiveCylinderResize(edited, rampSeconds))
+        return applyConfig(edited, false, true);
+    // The view shows the target size at once; a ramp reaches it on the
+    // simulation thread.
+    config_.cylinders = runtime_->engineConfig().cylinders;
+    config_.crankJournals = runtime_->engineConfig().crankJournals;
+    renderSnapshotBuilder_ = std::make_unique<RenderSnapshotBuilder>(config_);
+    renderSnapshotInterpolator_.reset();
+    if (exhaustDesignerWindow_) exhaustDesignerWindow_->setConfig(config_);
+    topBar_.setEngine(config_, selectedPresetIndex_);
+    viewport_.setEngine(config_);
+    viewport_.refresh();
+    return true;
+}
+
+void MainComponent::applyExhaustResolution() {
+    if (!runtime_) return;
+    const auto cellLengthM = viewport_.exhaustCellLengthM().value_or(
+        gasdynamics::realtimeExhaustFeedbackDiscretisation().targetCellLengthM);
+    if (runtime_->dynoRunning() || !runtime_->applyLiveExhaust(config_, cellLengthM))
+        (void) applyConfig(config_, false, true);
 }
 
 void MainComponent::updateAudioControlAvailability() {
@@ -594,7 +643,7 @@ void MainComponent::showExhaustDesigner() {
                 if (!safe) return false;
                 // applyConfig intentionally keeps the designer alive. Its content
                 // invokes this callback synchronously and resumes afterwards.
-                return safe->applyConfig(editedConfig, false, true);
+                return safe->applyExhaustEdit(editedConfig);
             });
     }
     exhaustDesignerWindow_->setVisible(true);
@@ -1101,6 +1150,9 @@ void MainComponent::timerCallback() {
     pollEngineScript();
     pollAudioVoicing();
     if (!runtime_) return;
+    // A live exhaust change retires the audio's previous network here, off
+    // the audio thread.
+    if (audio_) audio_->collectRetiredExhaustNetworks();
     if (throttleKeyActive_) updateMomentaryThrottle();
     const auto clutchTarget = (actionMap_.isDown(AppAction::clutchHold)
         || juce::ModifierKeys::getCurrentModifiersRealtime().isShiftDown())

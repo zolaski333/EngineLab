@@ -49,8 +49,21 @@ file formats, always with an in-memory migration).
   exhaust or intake duct, an oscilloscope traces the pressure of the clicked
   cell over the engine cycle, recorded at every solver step.
 - Resize an exhaust component from the 3-D view: length and diameter
-  steppers in the part inspector, applied to the running engine like the
-  Exhaust editor's changes.
+  steppers in the part inspector. Each press is heard a quarter of a second
+  later, and Reset goes back to the size the part had when it was selected.
+- Exhaust changes no longer restart the engine. A resize from the inspector or
+  an Exhaust editor change that keeps the same pipes and junctions reaches the
+  running engine: speed, load, temperatures and the ECU carry on, the gas stays
+  where it was, and the sound crossfades to the new exhaust in 0.2 s. A change
+  of topology (adding or removing a component) still restarts the engine.
+- *Exhaust waves* in the 3-D view's settings: *Fine* remeshes the running
+  exhaust with 180 mm cells instead of 360 mm, so the gas field and the
+  oscilloscope show the waves' real shape, at 13 to 20 % less simulation
+  headroom. The engine keeps running through the change.
+- Change the bore and stroke while the engine runs: click a cylinder liner or
+  a piston in the 3-D view. Each crank throw takes the new size at its next
+  gas-exchange TDC, or gradually over 3 s. The number of cylinders, the
+  layout and the fuel still need a restart.
 - Exhaust and intake pipes in the 3-D view are routed like real ones: they no
   longer pass through each other, the engine or the intake, bend no tighter
   than 1.25 diameters and keep their authored length. A collector is wide
@@ -62,6 +75,9 @@ file formats, always with an in-memory migration).
   exducer, and both wheels turn at the simulated shaft speed. Click it for the
   shaft speed, pressure ratio, wastegate opening, turbine and compressor power,
   and how the solver models it.
+- The Merlin's supercharger is drawn between its airbox and its throttle, with
+  the charge pipe to the throttle; its impeller turns geared to the crank.
+  Click it for the drive ratio, impeller speed, pressure ratio and power.
 
 ## [0.2.0] — 2026-10-04
 

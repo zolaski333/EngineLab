@@ -1,5 +1,6 @@
 #include <enginelab/app/EngineViewport.hpp>
 #include <enginelab/exhaust/ExhaustComponentResize.hpp>
+#include <enginelab/foundation/CylinderResize.hpp>
 #include <enginelab/exhaust/LegacyExhaustNetwork.hpp>
 
 #include <enginelab/app/Theme.hpp>
@@ -326,6 +327,7 @@ void ViewSettings::load() {
     vsync = flag("vsync", vsync);
     motionBlur = flag("motionBlur", motionBlur);
     antiAliasing = flag("antiAliasing", antiAliasing);
+    fineExhaustWaves = flag("fineExhaustWaves", fineExhaustWaves);
 }
 
 void ViewSettings::save() const {
@@ -335,6 +337,7 @@ void ViewSettings::save() const {
     object->setProperty("vsync", vsync);
     object->setProperty("motionBlur", motionBlur);
     object->setProperty("antiAliasing", antiAliasing);
+    object->setProperty("fineExhaustWaves", fineExhaustWaves);
     const auto target = file();
     (void)target.getParentDirectory().createDirectory();
     (void)target.replaceWithText(juce::JSON::toString(juce::var(object.release())));
@@ -464,43 +467,78 @@ constexpr int inspectorValueWidth = 78;
 } // namespace
 
 PartInspector::PartInspector() {
-    for (auto* button : { &lengthDown_, &lengthUp_, &diameterDown_, &diameterUp_, &applyEdit_, &resetEdit_ })
+    for (auto* button : { &firstDown_, &firstUp_, &secondDown_, &secondUp_, &resetEdit_, &rampEdit_ })
         addChildComponent(button);
-    lengthDown_.onClick = [this] { stepEdit(true, -1.0); };
-    lengthUp_.onClick = [this] { stepEdit(true, 1.0); };
-    diameterDown_.onClick = [this] { stepEdit(false, -1.0); };
-    diameterUp_.onClick = [this] { stepEdit(false, 1.0); };
-    lengthDown_.setTooltip("Shorter by 10 mm (Shift: 1 mm)");
-    lengthUp_.setTooltip("Longer by 10 mm (Shift: 1 mm)");
-    diameterDown_.setTooltip("Narrower by 1 mm (Shift: 0.1 mm)");
-    diameterUp_.setTooltip("Wider by 1 mm (Shift: 0.1 mm)");
-    applyEdit_.setTooltip("Restarts the engine with the resized exhaust");
-    applyEdit_.onClick = [this] {
-        if (edit_ && onApplyEdit) onApplyEdit(pendingLengthMm_, pendingDiameterMm_);
+    firstDown_.onClick = [this] { stepEdit(true, -1.0); };
+    firstUp_.onClick = [this] { stepEdit(true, 1.0); };
+    secondDown_.onClick = [this] { stepEdit(false, -1.0); };
+    secondUp_.onClick = [this] { stepEdit(false, 1.0); };
+    rampEdit_.setTooltip("When the cylinders take a new size: at their next gas-exchange TDC, or gradually over "
+                         + juce::String(EngineViewport::cylinderRampSeconds, 0) + " s");
+    rampEdit_.onClick = [this] {
+        gradual_ = !gradual_;
+        rampEdit_.setButtonText(gradual_ ? "Over " + juce::String(EngineViewport::cylinderRampSeconds, 0) + " s"
+                                         : juce::String("Next cycle"));
     };
+    resetEdit_.setTooltip("Back to the size this part had when you selected it");
     resetEdit_.onClick = [this] {
         if (!edit_) return;
-        pendingLengthMm_ = edit_->lengthMm;
-        pendingDiameterMm_ = edit_->diameterMm;
+        pendingFirst_ = originFirst_;
+        pendingSecond_ = originSecond_;
         setEditStatus({});
         updateEditButtons();
+        sendEdit();
     };
 }
 
+void PartInspector::timerCallback() { sendEdit(); }
+
+void PartInspector::sendEdit() {
+    stopTimer();
+    if (!edit_ || !onApplyEdit) return;
+    if (std::abs(pendingFirst_ - edit_->first) < 1.0e-6
+        && std::abs(pendingSecond_ - edit_->second) < 1.0e-6)
+        return;
+    onApplyEdit(pendingFirst_, pendingSecond_, gradual_);
+}
+
 void PartInspector::setEdit(std::optional<Edit> edit) {
-    const auto keep = edit && edit_ && edit->key == edit_->key && edit->lengthMm == edit_->lengthMm
-        && edit->diameterMm == edit_->diameterMm;
+    const auto keep = edit && edit_ && edit->key == edit_->key && edit->first == edit_->first
+        && edit->second == edit_->second;
     const auto resize = edit.has_value() != edit_.has_value()
-        || (edit && edit_ && (edit->lengthEditable != edit_->lengthEditable || edit->note != edit_->note));
+        || (edit && edit_ && (edit->firstEditable != edit_->firstEditable || edit->note != edit_->note));
+    // A live edit comes back as the same component with its new size: the
+    // origin stays, so Reset still knows where the editing started.
+    const auto sameComponent = edit && edit_ && edit->key == edit_->key;
     if (!keep && edit) {
-        pendingLengthMm_ = edit->lengthMm;
-        pendingDiameterMm_ = edit->diameterMm;
+        pendingFirst_ = edit->first;
+        pendingSecond_ = edit->second;
+        if (!sameComponent) {
+            originFirst_ = edit->first;
+            originSecond_ = edit->second;
+        }
     }
-    if (!keep) editStatus_.clear();
+    if (!keep) {
+        editStatus_.clear();
+        stopTimer();
+    }
     edit_ = std::move(edit);
-    for (auto* button : { &lengthDown_, &lengthUp_ })
-        button->setVisible(edit_.has_value() && edit_->lengthEditable);
-    for (auto* button : { &diameterDown_, &diameterUp_, &applyEdit_, &resetEdit_ }) button->setVisible(edit_.has_value());
+    for (auto* button : { &firstDown_, &firstUp_ })
+        button->setVisible(edit_.has_value() && edit_->firstEditable);
+    for (auto* button : { &secondDown_, &secondUp_, &resetEdit_ }) button->setVisible(edit_.has_value());
+    rampEdit_.setVisible(edit_.has_value() && edit_->offersRamp);
+    if (edit_) {
+        const auto tip = [](const juce::String& label, double sign, double step, double fine) {
+            const auto mm = [](double value) {
+                return juce::String(value, std::abs(value - std::round(value)) > 1.0e-6 ? 1 : 0) + " mm";
+            };
+            return label + (sign > 0.0 ? " +" : utf8(" \xe2\x88\x92")) + mm(step) + " (Shift: " + mm(fine) + ")";
+        };
+        firstDown_.setTooltip(tip(edit_->firstLabel, -1.0, edit_->firstStep, edit_->firstFineStep));
+        firstUp_.setTooltip(tip(edit_->firstLabel, 1.0, edit_->firstStep, edit_->firstFineStep));
+        secondDown_.setTooltip(tip(edit_->secondLabel, -1.0, edit_->secondStep, edit_->secondFineStep));
+        secondUp_.setTooltip(tip(edit_->secondLabel, 1.0, edit_->secondStep, edit_->secondFineStep));
+    }
     updateEditButtons();
     if (resize) setSize(getWidth(), idealHeight());
     resized();
@@ -517,20 +555,21 @@ void PartInspector::setEditStatus(juce::String status) {
 void PartInspector::stepEdit(bool length, double direction) {
     if (!edit_) return;
     const auto fine = juce::ModifierKeys::currentModifiers.isShiftDown();
-    auto& value = length ? pendingLengthMm_ : pendingDiameterMm_;
-    const auto step = length ? (fine ? 1.0 : 10.0) : (fine ? 0.1 : 1.0);
+    auto& value = length ? pendingFirst_ : pendingSecond_;
+    const auto step = length ? (fine ? edit_->firstFineStep : edit_->firstStep)
+                             : (fine ? edit_->secondFineStep : edit_->secondStep);
     // Snap to the step, so a 452 mm pipe goes to 460 then 470.
     value = direction > 0.0 ? std::floor(value / step + 1.0e-6) * step + step
                             : std::ceil(value / step - 1.0e-6) * step - step;
-    value = length ? std::clamp(value, 10.0, 5'000.0) : std::clamp(value, 10.0, 400.0);
+    value = std::clamp(value, edit_->minimum, length ? edit_->firstMaximum : edit_->secondMaximum);
     setEditStatus({});
     updateEditButtons();
+    startTimer(editSettleMs);
 }
 
 void PartInspector::updateEditButtons() {
-    const auto changed = edit_ && (std::abs(pendingLengthMm_ - edit_->lengthMm) > 1.0e-6
-                                   || std::abs(pendingDiameterMm_ - edit_->diameterMm) > 1.0e-6);
-    applyEdit_.setEnabled(changed);
+    const auto changed = edit_ && (std::abs(pendingFirst_ - originFirst_) > 1.0e-6
+                                   || std::abs(pendingSecond_ - originSecond_) > 1.0e-6);
     resetEdit_.setEnabled(changed);
     repaint();
 }
@@ -538,7 +577,7 @@ void PartInspector::updateEditButtons() {
 int PartInspector::editHeight() const {
     if (!edit_) return 0;
     const auto width = static_cast<float>((getWidth() > 0 ? getWidth() : 280) - 24);
-    auto height = inspectorEditHeader + inspectorEditRow * (edit_->lengthEditable ? 2 : 1) + inspectorEditButtons;
+    auto height = inspectorEditHeader + inspectorEditRow * (edit_->firstEditable ? 2 : 1) + inspectorEditButtons;
     for (const auto* text : { &edit_->note, &editStatus_ })
         if (text->isNotEmpty())
             height += 4 + static_cast<int>(std::ceil(noteLayout(*text, colours::faint, width).getHeight()));
@@ -556,12 +595,12 @@ void PartInspector::resized() {
         row.removeFromRight(inspectorValueWidth);
         down.setBounds(row.removeFromRight(inspectorStepperWidth));
     };
-    if (edit_->lengthEditable) place(lengthDown_, lengthUp_);
-    place(diameterDown_, diameterUp_);
+    if (edit_->firstEditable) place(firstDown_, firstUp_);
+    place(secondDown_, secondUp_);
     auto buttons = area.removeFromTop(inspectorEditButtons).withTrimmedTop(4);
-    applyEdit_.setBounds(buttons.removeFromRight(80));
-    buttons.removeFromRight(6);
     resetEdit_.setBounds(buttons.removeFromRight(64));
+    buttons.removeFromRight(6);
+    rampEdit_.setBounds(buttons.removeFromRight(92));
 }
 
 void PartInspector::paintEdit(juce::Graphics& g, juce::Rectangle<int> area) const {
@@ -583,8 +622,8 @@ void PartInspector::paintEdit(juce::Graphics& g, juce::Rectangle<int> area) cons
         const auto decimals = std::abs(value - std::round(value)) > 1.0e-6 ? 1 : 0;
         g.drawText(juce::String(value, decimals) + " mm", valueArea, juce::Justification::centred, false);
     };
-    if (edit_->lengthEditable) row("Length", pendingLengthMm_, edit_->lengthMm);
-    row("Diameter", pendingDiameterMm_, edit_->diameterMm);
+    if (edit_->firstEditable) row(edit_->firstLabel, pendingFirst_, originFirst_);
+    row(edit_->secondLabel, pendingSecond_, originSecond_);
     area.removeFromTop(inspectorEditButtons);
     for (const auto* text : { &edit_->note, &editStatus_ }) {
         if (text->isEmpty()) continue;
@@ -817,7 +856,7 @@ EngineViewport::EngineViewport(const DashboardModel& model) : model_(model), cut
     cycle_.setInterceptsMouseClicks(false, false);
     legend_.setInterceptsMouseClicks(false, false);
     inspector_.onClose = [this] { setSelectedPart(-1); };
-    inspector_.onApplyEdit = [this](double lengthMm, double diameterMm) { applyExhaustEdit(lengthMm, diameterMm); };
+    inspector_.onApplyEdit = [this](double first, double second, bool gradual) { applyEdit(first, second, gradual); };
 
     addChildComponent(cutaway_);
     addChildComponent(legend_);
@@ -854,6 +893,36 @@ void EngineViewport::setGasProbeSource(std::function<bool(std::int32_t, std::uin
 
 void EngineViewport::setConfigEditor(std::function<bool(const EngineConfig&)> editor) {
     configEditor_ = std::move(editor);
+}
+
+void EngineViewport::setCylinderEditor(std::function<bool(const EngineConfig&, double)> editor) {
+    cylinderEditor_ = std::move(editor);
+}
+
+void EngineViewport::applyEdit(double first, double second, bool gradual) {
+    if (!scene_ || selectedPart_ < 0) return;
+    const auto role = scene_->identify(static_cast<std::uint16_t>(selectedPart_)).role;
+    if (role == render::PartRole::duct) applyExhaustEdit(first, second);
+    else if (role == render::PartRole::liner || role == render::PartRole::piston)
+        applyCylinderEdit(first, second, gradual);
+}
+
+void EngineViewport::applyCylinderEdit(double boreMm, double strokeMm, bool gradual) {
+    if (!scene_ || !cylinderEditor_ || selectedPart_ < 0) return;
+    auto edited = scene_->config();
+    if (const auto error = resizeCylinders(edited, boreMm, strokeMm); !error.empty()) {
+        inspector_.setEditStatus(juce::String::fromUTF8(error.c_str()));
+        return;
+    }
+    if (const auto invalid = validateEngineConfig(edited)) {
+        inspector_.setEditStatus(juce::String::fromUTF8(invalid->c_str()));
+        return;
+    }
+    reselect_ = Reselect { 0, 0, selectedPart_ };
+    if (!cylinderEditor_(edited, gradual ? cylinderRampSeconds : 0.0)) {
+        reselect_.reset();
+        inspector_.setEditStatus("The engine did not take the edit.");
+    }
 }
 
 void EngineViewport::applyExhaustEdit(double lengthMm, double diameterMm) {
@@ -908,7 +977,9 @@ void EngineViewport::setEngine(const EngineConfig& config) {
     pressureScalePa_ = 0.0F;
     resized();
     cutaway_.repaint();
-    if (reselect && scene_)
+    if (reselect && scene_ && reselect->part >= 0) {
+        if (reselect->part < static_cast<int>(scene_->parts().size())) setSelectedPart(reselect->part);
+    } else if (reselect && scene_)
         for (const auto& duct : scene_->ducts())
             if (duct.kind == render::DuctKind::exhaustComponent && duct.pathId == reselect->pathId
                 && duct.elementId == reselect->elementId) {
@@ -1186,6 +1257,25 @@ void EngineViewport::updateInspector() {
     std::optional<PartInspector::Edit> edit;
     std::vector<PartInspector::Row> rows;
     const auto add = [&rows](juce::String label, juce::String value) { rows.push_back({ std::move(label), std::move(value) }); };
+    // Bore and stroke are one engine-wide edit, offered on any cylinder.
+    const auto cylinderEdit = [this, &config]() -> std::optional<PartInspector::Edit> {
+        const auto size = cylinderSize(config);
+        if (!cylinderEditor_ || !size) return std::nullopt;
+        PartInspector::Edit result;
+        result.key = std::uint64_t { 1 } << 63U;
+        result.firstLabel = "Bore";
+        result.secondLabel = "Stroke";
+        result.first = size->boreMm;
+        result.second = size->strokeMm;
+        result.firstStep = 1.0;
+        result.firstFineStep = 0.1;
+        result.minimum = 20.0;
+        result.firstMaximum = 200.0;
+        result.secondMaximum = 200.0;
+        result.offersRamp = true;
+        result.note = "Every cylinder changes, each crank throw at its gas-exchange TDC.";
+        return result;
+    };
 
     switch (identity.role) {
     case render::PartRole::block:
@@ -1201,6 +1291,7 @@ void EngineViewport::updateInspector() {
         break;
     case render::PartRole::liner:
         title = "Cylinder liner";
+        edit = cylinderEdit();
         if (cylinder != nullptr) {
             add("Bore", millimetres(cylinder->boreMm));
             add("Stroke", millimetres(cylinder->strokeMm));
@@ -1215,6 +1306,7 @@ void EngineViewport::updateInspector() {
         break;
     case render::PartRole::piston:
         title = "Piston";
+        edit = cylinderEdit();
         if (cylinder != nullptr) {
             add("Bore", millimetres(cylinder->boreMm));
             add("Mass", juce::String(juce::roundToInt(cylinder->pistonMassGrams)) + " g");
@@ -1291,6 +1383,20 @@ void EngineViewport::updateInspector() {
                "flow. Drawn where a real one sits, after the collector; the charge piping is not drawn.";
         break;
     }
+    case render::PartRole::supercharger: {
+        const auto& forced = config.forcedInduction;
+        title = "Supercharger";
+        subtitle = "On intake path " + juce::String(scene_->supercharger().pathId);
+        add("Drive ratio", juce::String(forced.superchargerDriveRatio, 2) + utf8(" : 1"));
+        add("Impeller speed", juce::String(state.rpm * forced.superchargerDriveRatio / 1'000.0, 1) + " krpm");
+        add("Pressure ratio", juce::String(state.boostPressureRatio, 2) + " (target " + juce::String(forced.pressureRatio, 2) + ")");
+        add("Compressor", juce::String(state.compressorPowerKw, 1) + " kW");
+        if (forced.compressorInducerDiameterMm > 0.0) add("Inducer", millimetres(forced.compressorInducerDiameterMm));
+        if (forced.compressorBladeCount > 0U) add("Blades", juce::String(static_cast<int>(forced.compressorBladeCount)));
+        note = "The gas solver has no compressor in its network: the supercharger raises the intake pressure by its "
+               "ratio, geared to the crank. Drawn between the airbox and the throttle, with its charge pipe.";
+        break;
+    }
     case render::PartRole::duct: {
         const auto& duct = scene_->ducts()[static_cast<std::size_t>(identity.duct)];
         switch (duct.kind) {
@@ -1305,8 +1411,11 @@ void EngineViewport::updateInspector() {
         const auto exhaust = duct.kind == render::DuctKind::exhaustComponent || duct.kind == render::DuctKind::exhaustFeeder;
         if (duct.kind == render::DuctKind::exhaustComponent && configEditor_) {
             if (const auto size = exhaustComponentSize(config, duct.pathId, duct.elementId)) {
-                edit = PartInspector::Edit { (static_cast<std::uint64_t>(duct.pathId) << 32U) | duct.elementId,
-                                             size->lengthMm, size->diameterMm, size->lengthEditable, {} };
+                edit = PartInspector::Edit {};
+                edit->key = (static_cast<std::uint64_t>(duct.pathId) << 32U) | duct.elementId;
+                edit->first = size->lengthMm;
+                edit->second = size->diameterMm;
+                edit->firstEditable = size->lengthEditable;
                 if (size->sharedByPrimaries)
                     edit->note = "The configuration gives the primaries of a path one size: all of them change.";
             }
@@ -1414,6 +1523,9 @@ void EngineViewport::showSettingsMenu() {
     menu.addItem(20, utf8("VSync"), use3d, settings_.vsync);
     menu.addItem(21, utf8("Motion blur"), use3d, settings_.motionBlur);
     menu.addItem(22, utf8("Anti-aliasing (4\xc3\x97 MSAA)"), use3d, settings_.antiAliasing);
+    menu.addSectionHeader(utf8("Exhaust waves"));
+    menu.addItem(30, utf8("Standard (360 mm cells)"), true, !settings_.fineExhaustWaves);
+    menu.addItem(31, utf8("Fine (180 mm cells, slower)"), true, settings_.fineExhaustWaves);
     menu.showMenuAsync(juce::PopupMenu::Options {}.withTargetComponent(&settingsButton_),
         [safe = juce::Component::SafePointer<EngineViewport>(this)](int result) {
             if (safe == nullptr || result == 0) return;
@@ -1430,6 +1542,11 @@ void EngineViewport::showSettingsMenu() {
                 settings.motionBlur = !settings.motionBlur;
             } else if (result == 22) {
                 settings.antiAliasing = !settings.antiAliasing;
+            } else if ((result == 30 || result == 31) && settings.fineExhaustWaves != (result == 31)) {
+                settings.fineExhaustWaves = result == 31;
+                settings.save();
+                if (safe->onExhaustResolutionChanged) safe->onExhaustResolutionChanged();
+                return;
             }
             settings.save();
             safe->pushSettings();
