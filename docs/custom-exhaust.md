@@ -9,7 +9,7 @@ routes used by the historical diagnostic tools. In production,
 high band. The network is therefore never reduced globally to a single
 restriction or a single acoustic tube per path.
 
-The **EXHAUST PRO** button opens a graphical designer for the most common
+The **Exhaust** button in the top bar opens a graphical designer for the most common
 operations. JSON/YAML stays the persistence format and still allows the
 structural changes the interface does not cover. A `.els` script can use this
 file as its `base`, but the DSL does not create the graph nodes itself yet.
@@ -91,7 +91,7 @@ The same keys exist in JSON under `engine.exhaust_paths[].graph`.
 
 ### Measured porous packing
 
-EXHAUST PRO exposes the three fields below when a `muffler` component is
+The designer exposes the three fields below when a `muffler` component is
 selected. **DEMO PACKING** fills in 24,000 Pa·s/m², 35 mm and 0.28;
 **BYPASS PACKING** sets all three fields back to zero. An update is a
 structural change and restarts the engine when the graph is applied.
@@ -153,7 +153,7 @@ All three values must be zero together or positive together. Zero keeps the
 historical catalyst exactly: an ordinary duct carrying the length, the diameter
 and the `restriction` coefficient. When the substrate is provided, validation
 accepts 25 to 5,000 cpsi and an open area of 0.05 to 0.99, and requires at least
-one cell pitch to fit in the housing diameter. EXHAUST PRO offers 400 cpsi, 0.80
+one cell pitch to fit in the housing diameter. The designer offers 400 cpsi, 0.80
 and 2.0 MJ/m³/K as an editable starting point; these numbers are neither
 inferred from the engine name nor applied to older catalogues.
 

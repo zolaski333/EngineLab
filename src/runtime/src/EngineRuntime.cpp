@@ -496,6 +496,31 @@ EngineState EngineRuntime::snapshot() const {
     return snapshot_;
 }
 
+void EngineRuntime::requestGasField(double crankAngleDegrees) noexcept {
+    gasFieldRequestDegrees_.store(std::isfinite(crankAngleDegrees) ? crankAngleDegrees : -1.0,
+                                  std::memory_order_relaxed);
+    gasFieldRequestSequence_.fetch_add(1, std::memory_order_release);
+}
+
+void EngineRuntime::requestGasProbe(std::int32_t element, std::uint8_t sample) noexcept {
+    gasProbeRequest_.store(element < 0 ? -1 : static_cast<std::int64_t>(element) * 256 + sample, std::memory_order_relaxed);
+    gasProbeRequestSequence_.fetch_add(1, std::memory_order_release);
+}
+
+bool EngineRuntime::latestGasProbe(GasProbeTrace& out) const {
+    const std::scoped_lock lock(gasProbeMutex_);
+    if (gasProbeMailbox_.sequence == 0 || gasProbeMailbox_.sequence == out.sequence) return false;
+    out = gasProbeMailbox_;
+    return true;
+}
+
+bool EngineRuntime::latestGasField(GasFieldSnapshot& out) const {
+    const std::scoped_lock lock(gasFieldMutex_);
+    if (gasFieldMailbox_.sequence == 0 || gasFieldMailbox_.sequence == out.sequence) return false;
+    out = gasFieldMailbox_;
+    return true;
+}
+
 void EngineRuntime::applyAudioPhysicsCalibration(
     const AudioPhysicsCalibration& calibration) noexcept {
     {
@@ -1009,7 +1034,45 @@ void EngineRuntime::run(std::stop_token stopToken) {
             dynoActive_ ? 0.0 : brakePressure_.load(std::memory_order_relaxed),
             dynoActive_ ? dynoBrakeTorqueNm_ : 0.0,
             dynoActive_ ? 0.0 : drivelineReflectedInertiaKgM2_ };
+        // The 3-D view's gas field: tracked at the angle it shows, or taken
+        // as it is when it shows real time. Nothing runs once it stops asking.
+        const auto gasFieldRequest = gasFieldRequestSequence_.load(std::memory_order_acquire);
+        const auto gasFieldDegrees = gasFieldRequestDegrees_.load(std::memory_order_relaxed);
+        const auto gasFieldRequested = gasFieldRequest != gasFieldServedRequest_;
+        gasFieldServedRequest_ = gasFieldRequest;
+        gasFieldIdleFrames_ = gasFieldRequested ? 0 : gasFieldIdleFrames_ + 1;
+        if (gasFieldIdleFrames_ > 60 || gasFieldDegrees < 0.0)
+            simulator_.stopGasFieldTracking();
+        else
+            simulator_.trackGasFieldAngle(gasFieldDegrees);
+        // The inspector's oscilloscope, the same way.
+        const auto gasProbeRequest = gasProbeRequestSequence_.load(std::memory_order_acquire);
+        const auto gasProbePlace = gasProbeRequest_.load(std::memory_order_relaxed);
+        gasProbeIdleFrames_ = gasProbeRequest != gasProbeServedRequest_ ? 0 : gasProbeIdleFrames_ + 1;
+        gasProbeServedRequest_ = gasProbeRequest;
+        if (gasProbeIdleFrames_ > 60 || gasProbePlace < 0)
+            simulator_.stopGasProbe();
+        else
+            simulator_.probeGasField(static_cast<std::int32_t>(gasProbePlace / 256),
+                                     static_cast<std::uint8_t>(gasProbePlace % 256));
         auto frame = simulationDt > 0.0 ? simulator_.step(simulationDt, controls) : SimulationFrame { simulator_.state() };
+        if (gasFieldRequested && gasFieldDegrees < 0.0 && simulationDt > 0.0)
+            simulator_.captureGasFieldNow();
+        if (simulator_.gasField().sequence != gasFieldPublished_) {
+            // Never wait for the view: a frame it holds the lock is skipped.
+            const std::unique_lock lock(gasFieldMutex_, std::try_to_lock);
+            if (lock.owns_lock()) {
+                gasFieldMailbox_ = simulator_.gasField();
+                gasFieldPublished_ = gasFieldMailbox_.sequence;
+            }
+        }
+        if (simulator_.gasProbe().element >= 0 && simulator_.gasProbe().sequence != gasProbePublished_) {
+            const std::unique_lock lock(gasProbeMutex_, std::try_to_lock);
+            if (lock.owns_lock()) {
+                gasProbeMailbox_ = simulator_.gasProbe();
+                gasProbePublished_ = gasProbeMailbox_.sequence;
+            }
+        }
         if (simulationDt > 0.0) {
             const auto simulationStart = frame.state.simulationTimeSeconds - simulationDt;
             const auto publicationWindow = publicationTimeline.beginWindow(

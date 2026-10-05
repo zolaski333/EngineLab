@@ -135,7 +135,7 @@ the reaction step. The old render held it twice as long with a 0.5 ms minimum:
 it duplicated the energy of short events and glued neighbouring kernels into a
 continuous wave.
 
-## Using it in AUDIO HQ
+## Using it in the Audio workshop
 
 Afterfire is a per-engine option, disabled by default in the catalogue except
 for the engine that authors it. The `AFTERFIRE  (pops and bangs on overrun)`

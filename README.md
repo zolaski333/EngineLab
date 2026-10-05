@@ -15,7 +15,7 @@ tailpipe and radiated to a pair of virtual microphones.
 
 Design an engine, draw its exhaust system, put it on the dyno, listen to it.
 
-![EngineLab main window: cylinder and valvetrain view, live gauges and the brake dynamometer](docs/media/main-window.png)
+![EngineLab main window: the GPU-rendered 3-D engine in X-ray, live gauges and telemetry](docs/media/main-window.png)
 
 > **Project status: early.** The physics, tooling and real-time pipeline are
 > solid and heavily tested. The sound is not there yet: in blind listening
@@ -43,7 +43,8 @@ Then:
 1. pick an engine in the selector at the top of the window;
 2. hold `A` to switch the ignition on, then hold `S` to crank;
 3. throttle with `Q` (1 %), `W` (10 %), `E` (20 %) and `R` (100 %);
-4. press `D` for an automatic dyno run, `Tab` to change screen.
+4. press `D` for an automatic dyno run, `Tab` to cycle the side panel
+   (dyno, telemetry, audio, diagnostics).
 
 Large engines (V8, V12) can fall below real time on a modest CPU; the realtime
 factor is shown in the diagnostics.
@@ -86,10 +87,20 @@ factor is shown in the diagnostics.
 
 ### Tooling
 
+- **A 3-D engine view rendered on the GPU** (OpenGL 3.2): pistons, rods, crank
+  throws, valves and flames placed by the simulator's own kinematics, so
+  4,000 rpm on the tachometer is 4,000 rpm on screen. X-ray or solid block,
+  layers (all, combustion, mechanical, gas flow), front / side / three-quarter
+  views, 1:50 and 1:250 slow motion, motion blur and a frame-rate cap from 30
+  fps to unlimited. The exhaust and intake are laid out from the engine's own
+  configuration — the component graph with its real lengths, diameters and
+  volumes (4-2-1, X-pipe, twin mufflers…), runners, plenum, throttle bores,
+  airbox and inlet duct — and an *Exhaust* view frames the whole system. A
+  2-D cutaway remains for machines without OpenGL 3.2.
 - **A catalogue of 16 engines** — naturally aspirated and turbocharged I4s, a
   V8, a flat-six, a supercharged V12, motorcycle twins and triples, an inline
   five, a TDI diesel, a five-cylinder radial — all in readable, editable YAML.
-- **EXHAUST PRO**, a validated graph editor for exhaust systems: it rejects
+- **Exhaust designer**, a validated graph editor for exhaust systems: it rejects
   cycles, incomplete branches and inconsistent cardinalities, and reports the
   solver cost of an unusual geometry before applying it.
 - **ECU tuner**: AFR and spark tables plus the rev limiter, applied live through
@@ -97,7 +108,7 @@ factor is shown in the diagnostics.
   state.
 - **`.els` DSL**, declarative and unit-typed, hot-reloaded on save; an invalid
   save keeps the last valid configuration running and shows the diagnostics.
-- **AUDIO HQ**: mute/solo, JSON scenarios, and WAV export at 48/96/192 kHz in
+- **Audio workshop**: mute/solo, JSON scenarios, and WAV export at 48/96/192 kHz in
   24-bit PCM or 32-bit float, with optional stems.
 - **Automatic dyno**, stepped or as a continuous ramp, with history, curves and
   CSV export.
@@ -135,7 +146,7 @@ deterministic harnesses and sanitizer builds are in
 
 ## Controls
 
-Key bindings can be changed from the **KEYS** button; `keybindings.json`
+Key bindings can be changed from **Key bindings…** in the `⋯` menu; `keybindings.json`
 rejects unknown actions, duplicates and reserved shortcuts.
 
 | Input | Default action |
@@ -143,12 +154,14 @@ rejects unknown actions, duplicates and reserved shortcuts.
 | hold `A` / `S` | ignition / starter |
 | `Q`, `W`, `E`, `R` | throttle 1 %, 10 %, 20 %, 100 % |
 | `D` / `H` | automatic dyno / hold engine speed |
-| `P` / `Tab` | pause / next screen |
+| `P` / `Tab` | pause / next side-panel tab |
+| `M` / `,` | next / previous engine view layer |
 | `1` to `5` | time scale 0.25×, 0.5×, 1×, 2×, 4× |
 | up / down / left arrow | upshift, downshift, wheel brake |
 | hold `Y` or `Shift` | declutch; `T` / `U` adjust the setpoint |
 | `;` | next exhaust acoustic preset |
-| wheel / drag / double-click | zoom, pan and recentre the engine view |
+| wheel / drag / right-drag | zoom, orbit and pan the 3-D engine view |
+| double-click | back to the selected camera view |
 
 Holding `G`, `Z`, `X`, `C`, `V`, `B`, `J`, `K`, `L`, `O`, `N` or `Space` while
 scrolling adjusts, respectively, the speed hold, volume, convolution, noise
@@ -175,10 +188,10 @@ initial state. Reloads from the live script, the JSON editor and the exhaust
 designer reuse the same ECU store, so the maps and the tuner window stay
 active.
 
-**EXHAUST PRO** works on a copy of the engine: generate a starting network, add
-and configure its components, connect the nodes, assign every cylinder, then
-**VALIDATE AND APPLY** (refused during a dyno run) and **EXPORT** to JSON or
-YAML.
+The **Exhaust designer** works on a copy of the engine: generate a starting
+network, add and configure its components, connect the nodes, assign every
+cylinder and **VALIDATE AND APPLY** (refused during a dyno run). **Export
+engine…** in the `⋯` menu then saves the engine to JSON or YAML.
 
 Two example scripts are ready to import: `examples/street-turbo.els` and
 `examples/physical-audio-lab.els`.
@@ -203,6 +216,7 @@ against the literature or a real recording.
 | `DynoSweepHarness` / `UserDynoHarness` | torque and power curves, CSV export |
 | `AfterfireHarness` | the shape of overrun heat release, and its real effect on the audio |
 | `IntakeDuctBench` | bit-exact fingerprint of the duct solver: proves an optimisation is not a physics change |
+| `SceneExport` | the 3-D scene of catalogue engines as JSON (meshes, duct centrelines and radii, ports, engine solids, route check issues), to inspect the laid-out ducts outside the app; prints the issue counts per engine |
 
 Reference figures come from engine and acoustics literature or from real
 recordings, never from the simulator's own output.
@@ -241,9 +255,12 @@ holds the working rules, build notes and verified traps of this repository.
   the IR stays editable in JSON/YAML;
 - structural modes stay estimated per engine family until sourced measurements
   are supplied;
-- **no 3-D view yet**: the `render` module prepares transforms, snapshots and
-  the `IEngineRenderer` interface, but the current view is 2-D JUCE drawing
-  (see [the architecture document](docs/architecture.md#3d-rendering-groundwork));
+- the 3-D view lays the exhaust and intake out automatically: lengths,
+  diameters and volumes are the configured ones, but the routing is invented
+  (a pipe that must span more than its length is drawn longer), and the
+  pressure waves shown on it are the real-time gas solver's, whose cells are
+  about 0.36 m long (see
+  [the architecture document](docs/architecture.md#gas-field-on-the-ducts));
 - Windows only for now: the code is standard C++20 and JUCE, but no other
   platform is built or tested;
 - large engines (V8, V12) are expensive for the physics thread; the application

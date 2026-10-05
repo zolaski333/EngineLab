@@ -483,6 +483,7 @@ EngineSimulator::EngineSimulator(EngineConfig config, IEcuModel& ecu, IPhysicsMo
     configurePhysicalExhaustNetwork();
     configurePhysicalIntakeNetworks();
     configureIntakeWorkerPool();
+    configureGasFieldSnapshot();
     reset();
 }
 
@@ -808,6 +809,8 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
     double frameMaximumAfterfireInductionDelaySeconds = 0.0;
 
     for (std::size_t subStep = 0; subStep < subStepCount; ++subStep) {
+        pollGasFieldCapture();
+        recordGasProbe();
         const auto subStepStartTime = state_.simulationTimeSeconds;
         const auto subPreviousRpm = state_.rpm;
         const auto subPreviousAngle = state_.crankAngleDegrees;
@@ -3916,8 +3919,219 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
     state_.exhaustNetworkSubstepFrequencyHz = exhaustNetworkAdvancedSeconds > 0.0
         ? static_cast<double>(exhaustNetworkAcceptedSubsteps) / exhaustNetworkAdvancedSeconds
         : 0.0;
+    pollGasFieldCapture();
+    if (gasFieldArmed_ && state_.simulationTimeSeconds - gasFieldCaptureSeconds_ > 0.25)
+        captureGasField();
+    recordGasProbe();
+    if (gasProbe_.element >= 0) ++gasProbe_.sequence;
     frame.state = state_;
     return frame;
+}
+
+void EngineSimulator::configureGasFieldSnapshot() {
+    auto& elements = gasField_.elements;
+    elements.clear();
+    if (physicalExhaustNetwork_) {
+        const auto& layout = physicalExhaustNetwork_->layout();
+        for (const auto& duct : layout.ducts()) {
+            GasFieldElement element;
+            element.kind = GasFieldElementKind::exhaustDuct;
+            element.pathIndex = duct.pathIndex;
+            element.componentId = duct.sourceComponentId;
+            element.nodeId = duct.nodeId;
+            element.nodeType = static_cast<std::uint8_t>(duct.sourceType);
+            elements.push_back(element);
+        }
+        for (const auto& junction : layout.junctions()) {
+            GasFieldElement element;
+            element.kind = GasFieldElementKind::exhaustJunction;
+            element.pathIndex = junction.pathIndex;
+            element.componentId = junction.sourceComponentId;
+            element.nodeId = junction.nodeId;
+            element.nodeType = static_cast<std::uint8_t>(junction.sourceType);
+            elements.push_back(element);
+        }
+    }
+    for (std::size_t index = 0; index < config_.cylinders.size() && index < intakeRunnerNetworks_.size(); ++index) {
+        if (!intakeRunnerNetworks_[index]) continue;
+        GasFieldElement element;
+        element.kind = GasFieldElementKind::intakeRunner;
+        element.pathIndex = static_cast<std::uint32_t>(intakePathIndexByCylinder_[index]);
+        element.cylinderId = config_.cylinders[index].id;
+        elements.push_back(element);
+    }
+    for (std::size_t pathIndex = 0; pathIndex < intakePlenumCount_; ++pathIndex) {
+        GasFieldElement element;
+        element.kind = GasFieldElementKind::intakePlenum;
+        element.pathIndex = static_cast<std::uint32_t>(pathIndex);
+        elements.push_back(element);
+    }
+}
+
+void EngineSimulator::trackGasFieldAngle(double crankAngleDegrees) noexcept {
+    const auto cycle = eventGenerator_.cycleDegrees();
+    gasFieldTargetDegrees_ = std::isfinite(crankAngleDegrees)
+        ? std::fmod(std::fmod(crankAngleDegrees, cycle) + cycle, cycle) : 0.0;
+    if (gasFieldArmed_) return;
+    gasFieldArmed_ = true;
+    gasFieldLastDegrees_ = state_.crankAngleDegrees;
+    gasFieldCaptureSeconds_ = state_.simulationTimeSeconds;
+}
+
+void EngineSimulator::pollGasFieldCapture() noexcept {
+    if (!gasFieldArmed_) return;
+    // Remaining distances, never absolute angles: the crank wraps.
+    const auto cycle = eventGenerator_.cycleDegrees();
+    const auto forward = [cycle](double degrees) { return std::fmod(std::fmod(degrees, cycle) + cycle, cycle); };
+    const auto travelled = forward(state_.crankAngleDegrees - gasFieldLastDegrees_);
+    const auto toTarget = forward(gasFieldTargetDegrees_ - gasFieldLastDegrees_);
+    gasFieldLastDegrees_ = state_.crankAngleDegrees;
+    // A sub-step never turns the crank by half a turn: more means it ran
+    // backwards (a stall rocking back), which crosses nothing.
+    if (travelled <= 180.0 && toTarget <= travelled) captureGasField();
+}
+
+void EngineSimulator::probeGasField(std::int32_t element, std::uint8_t sample) noexcept {
+    if (element < 0 || static_cast<std::size_t>(element) >= gasField_.elements.size()) {
+        gasProbe_.element = -1;
+        return;
+    }
+    if (element == gasProbe_.element && sample == gasProbe_.sample) return;
+    gasProbe_.element = element;
+    gasProbe_.sample = sample;
+    gasProbe_.pressurePa.fill(0.0F);
+    gasProbe_.latestBin = -1;
+    gasProbeStarted_ = false;
+}
+
+double EngineSimulator::gasFieldPressurePa(std::size_t element, std::size_t sample) const noexcept {
+    // The same cells captureGasField() samples: count the elements of the
+    // same kind before this one.
+    const auto& elements = gasField_.elements;
+    const auto kind = elements[element].kind;
+    std::size_t index = 0;
+    for (std::size_t e = 0; e < element; ++e)
+        if (elements[e].kind == kind) ++index;
+    const auto cellPressure = [sample](const gasdynamics::FiniteVolumeDuct& duct, bool reversed) {
+        const auto cells = duct.cells();
+        const auto count = std::min(cells.size(), GasFieldElement::maximumSamples);
+        if (count == 0) return 0.0;
+        const auto s = std::min(sample, count - 1U);
+        auto cell = std::min(cells.size() - 1U, static_cast<std::size_t>(
+            (static_cast<double>(s) + 0.5) * static_cast<double>(cells.size()) / static_cast<double>(count)));
+        if (reversed) cell = cells.size() - 1U - cell;
+        const auto primitive = duct.mixtureModel().primitiveFromConservative(cells[cell]);
+        return primitive ? primitive->pressurePa : 0.0;
+    };
+    switch (kind) {
+    case GasFieldElementKind::exhaustDuct:
+        return physicalExhaustNetwork_ ? cellPressure(physicalExhaustNetwork_->ducts()[index], false) : 0.0;
+    case GasFieldElementKind::exhaustJunction: {
+        if (!physicalExhaustNetwork_) return 0.0;
+        const auto primitive = physicalExhaustNetwork_->mixtureModel().primitiveFromConservative(
+            physicalExhaustNetwork_->junctionStates()[index]);
+        return primitive ? primitive->pressurePa : 0.0;
+    }
+    case GasFieldElementKind::intakeRunner: {
+        std::size_t runner = 0;
+        for (std::size_t seen = 0; runner < intakeRunnerNetworks_.size(); ++runner) {
+            if (!intakeRunnerNetworks_[runner]) continue;
+            if (seen++ == index) break;
+        }
+        return runner < intakeRunnerNetworks_.size()
+            ? cellPressure(intakeRunnerNetworks_[runner]->ducts().front(), true) : 0.0;
+    }
+    case GasFieldElementKind::intakePlenum:
+        return intakePlenumGas_[elements[element].pathIndex].pressureKpa() * 1'000.0;
+    }
+    return 0.0;
+}
+
+void EngineSimulator::recordGasProbe() noexcept {
+    if (gasProbe_.element < 0) return;
+    const auto cycle = eventGenerator_.cycleDegrees();
+    const auto forward = [cycle](double degrees) { return std::fmod(std::fmod(degrees, cycle) + cycle, cycle); };
+    const auto binOf = [&](double degrees) {
+        return std::min<std::int32_t>(static_cast<std::int32_t>(GasProbeTrace::bins) - 1,
+            static_cast<std::int32_t>(forward(degrees) / cycle * static_cast<double>(GasProbeTrace::bins)));
+    };
+    const auto pressure = static_cast<float>(
+        gasFieldPressurePa(static_cast<std::size_t>(gasProbe_.element), gasProbe_.sample));
+    gasProbe_.cycleDegrees = cycle;
+    gasProbe_.ambientPressurePa = config_.ambientPressureKpa * 1'000.0;
+    const auto bin = binOf(state_.crankAngleDegrees);
+    // Every bin the crank crossed since the last sub-step takes this value;
+    // a step backwards (a stall rocking back) only rewrites the current bin.
+    const auto travelled = forward(state_.crankAngleDegrees - gasProbeLastDegrees_);
+    if (gasProbeStarted_ && travelled <= 180.0) {
+        for (auto b = gasProbe_.latestBin; b != bin;) {
+            b = (b + 1) % static_cast<std::int32_t>(GasProbeTrace::bins);
+            gasProbe_.pressurePa[static_cast<std::size_t>(b)] = pressure;
+        }
+    }
+    gasProbe_.pressurePa[static_cast<std::size_t>(bin)] = pressure;
+    gasProbe_.latestBin = bin;
+    gasProbeLastDegrees_ = state_.crankAngleDegrees;
+    gasProbeStarted_ = true;
+}
+
+void EngineSimulator::captureGasField() noexcept {
+    gasFieldCaptureSeconds_ = state_.simulationTimeSeconds;
+    ++gasField_.sequence;
+    gasField_.crankAngleDegrees = state_.crankAngleDegrees;
+    gasField_.simulationTimeSeconds = state_.simulationTimeSeconds;
+    gasField_.ambientPressurePa = config_.ambientPressureKpa * 1'000.0;
+    gasField_.ambientTemperatureK = config_.ambientTemperatureC + 273.15;
+    gasField_.afterfireHeatReleaseKw = state_.exhaustAfterfireHeatReleaseKw;
+
+    // Sample s sits at (s + 0.5) / sampleCount of the element's length: every
+    // cell when it has few, evenly spread cells otherwise.
+    const auto sampleDuct = [](GasFieldElement& element, const gasdynamics::FiniteVolumeDuct& duct, bool reversed) {
+        const auto cells = duct.cells();
+        const auto walls = duct.wallStates();
+        const auto count = std::min(cells.size(), GasFieldElement::maximumSamples);
+        element.sampleCount = static_cast<std::uint8_t>(count);
+        for (std::size_t s = 0; s < count; ++s) {
+            auto cell = std::min(cells.size() - 1U, static_cast<std::size_t>(
+                (static_cast<double>(s) + 0.5) * static_cast<double>(cells.size()) / static_cast<double>(count)));
+            if (reversed) cell = cells.size() - 1U - cell;
+            const auto primitive = duct.mixtureModel().primitiveFromConservative(cells[cell]);
+            element.pressurePa[s] = primitive ? static_cast<float>(primitive->pressurePa) : 0.0F;
+            element.gasTemperatureK[s] = primitive ? static_cast<float>(primitive->temperatureK) : 0.0F;
+            element.wallTemperatureK[s] = walls.empty() ? 0.0F : static_cast<float>(
+                walls[std::min(walls.size() - 1U, cell * walls.size() / cells.size())].temperatureK);
+        }
+    };
+
+    std::size_t ductIndex = 0;
+    std::size_t junctionIndex = 0;
+    std::size_t runnerIndex = 0;
+    for (auto& element : gasField_.elements) {
+        switch (element.kind) {
+        case GasFieldElementKind::exhaustDuct:
+            sampleDuct(element, physicalExhaustNetwork_->ducts()[ductIndex++], false);
+            break;
+        case GasFieldElementKind::exhaustJunction: {
+            const auto primitive = physicalExhaustNetwork_->mixtureModel().primitiveFromConservative(
+                physicalExhaustNetwork_->junctionStates()[junctionIndex++]);
+            element.sampleCount = 1;
+            element.pressurePa[0] = primitive ? static_cast<float>(primitive->pressurePa) : 0.0F;
+            element.gasTemperatureK[0] = primitive ? static_cast<float>(primitive->temperatureK) : 0.0F;
+            break;
+        }
+        case GasFieldElementKind::intakeRunner:
+            while (runnerIndex < intakeRunnerNetworks_.size() && !intakeRunnerNetworks_[runnerIndex]) ++runnerIndex;
+            // The runner's cells run from the valve to the plenum; the field
+            // runs the way the air flows.
+            sampleDuct(element, intakeRunnerNetworks_[runnerIndex++]->ducts().front(), true);
+            break;
+        case GasFieldElementKind::intakePlenum:
+            element.sampleCount = 1;
+            element.pressurePa[0] = static_cast<float>(intakePlenumGas_[element.pathIndex].pressureKpa() * 1'000.0);
+            element.gasTemperatureK[0] = static_cast<float>(intakePlenumGas_[element.pathIndex].temperatureK());
+            break;
+        }
+    }
 }
 
 void EngineSimulator::accumulateCycleTelemetry(double previousAngleDegrees,

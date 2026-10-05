@@ -141,6 +141,8 @@ if(TARGET EngineLabOfflineAudioExporter AND TARGET EngineLabAbClipRenderer)
 endif()
 install(DIRECTORY engines parts assets examples voicing DESTINATION . COMPONENT EngineLab)
 install(FILES packaging/README.txt LICENSE.md THIRD_PARTY_NOTICES.md DESTINATION . COMPONENT EngineLab)
+install(FILES src/app/resources/fonts/OFL-Inter.txt src/app/resources/fonts/OFL-JetBrainsMono.txt
+    DESTINATION licenses COMPONENT EngineLab)
 
 # Ship the MSVC runtime next to the executable (app-local deployment), so the
 # archive runs on a machine without the Visual C++ Redistributable installed.

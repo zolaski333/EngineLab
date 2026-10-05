@@ -42,7 +42,7 @@ catalog + diagnostics + serialization + scripting
 | `EngineLabCatalog` | Loading of the shipped engines and parts |
 | `EngineLabDiagnostics` | Explanatory diagnostics for the UI |
 | `EngineLabRender` | API-independent 3D scene, fixed snapshots and interpolation |
-| `EngineLabApp` | JUCE composition, files, ECU tuner, exhaust designer, 2D rendering and interaction |
+| `EngineLabApp` | JUCE composition, files, main window panels, ECU tuner, exhaust designer, audio workshop |
 
 ## State ownership and threads
 
@@ -69,6 +69,32 @@ snapshots alive until they are acknowledged; their destruction therefore
 happens on the publishing thread, not on the simulation thread. This strategy
 avoids a reader mutex but does not assume that `atomic<shared_ptr>` is
 lock-free in hardware.
+
+## Main window
+
+`MainComponent` owns the runtime, the audio device and the files. It no longer
+paints anything itself. Once per 30 Hz tick it copies everything the screen
+shows into a `DashboardModel`: the engine state, the render snapshot, the
+telemetry ring, dyno runs, faults, runtime counters and the audio mix. It then
+asks each panel to refresh. Panels read the model and never touch the runtime.
+User actions come back as callbacks that `MainComponent` wires in its
+constructor.
+
+| Panel | Area |
+|---|---|
+| `TopBar` | engine picker, run state, Exhaust / ECU / Audio windows, `⋯` menu |
+| `ControlPanel` | ignition, starter, dyno, throttle column and presets, load and trims |
+| `EngineViewport` | the GPU 3-D engine view with its overlays, or the 2-D cutaway |
+| `ReadoutStrip` | tachometer and six live readouts |
+| `SidePanel` | Dyno, Telemetry, Audio and Diagnostics tabs |
+| `StatusBar` | fault summary, real-time factor, simulation speed, counters |
+
+`Theme` holds the colour tokens, fonts and the `ui::LookAndFeel` installed for
+the whole application, so the tool windows and alerts share it. `Widgets` holds
+the buttons, segmented controls and slider rows the panels are built from. The
+main component keeps the keyboard: no button or slider takes focus, and a
+mouse wheel a child does not use goes up to the main component's mouse-wheel
+handler (`mouseWheelMove`).
 
 ## Transactional boundaries
 
@@ -119,28 +145,203 @@ importing another engine creates its default set.
   and propagates its high band through passive characteristics, separately for
   each path.
 
-## 3D rendering groundwork
+## 3-D engine view
 
-The `render` module depends on neither JUCE nor OpenGL. `RenderSnapshotBuilder`
-converts `EngineConfig` and `EngineState` into parts with a stable identifier,
-parent, XYZ transform, activity and temperature. Cylinder stations are placed
-along Z, while the solver kinematics stay resolved in their XY plane. A fixed
-array caps the number of published parts at 256.
+The engine view is drawn by the GPU through OpenGL 3.2 (`juce_opengl`). Three
+pieces split the work:
 
-`RenderSnapshotInterpolator` keeps two frames and interpolates the transforms,
-including angles along the shortest path. `IEngineRenderer` only defines
-`prepare`, `resize`, `render` and `release` with a neutral camera and viewport.
+| Piece | Module | Role |
+|---|---|---|
+| `render::EngineModel3D` | `render`, no JUCE | meshes built from `EngineConfig` (mm, +Y up, +Z along the crank) and a pose per crank angle |
+| `render::layoutExhaust` / `layoutIntake` | `render`, no JUCE | ducts laid out from the configured exhaust graphs and intake paths |
+| `render::relaxRoutes` / `checkRoutes` | `render`, no JUCE | pipes bent clear of each other and of the engine; what a real system could not do, counted |
+| `render::CrankClock` | `render`, no JUCE | the crank angle to draw at any display time |
+| `render::GasFieldView` / `bindGasField` | `render`, no JUCE | the solver's gas field mapped onto the drawn ducts, as wave colours and wall temperatures |
+| `ui::EngineSceneRenderer` | `app` | shaders, buffers, multisampling and motion blur |
 
-This groundwork makes an OpenGL integration possible without touching the
-physics, but it is not a renderer yet. Still to do:
+Every moving part is placed with `evaluateCylinderKinematics()`, the function
+the simulator uses, so inline, V, flat, radial and articulated-rod engines are
+drawn as they are simulated. `EngineLab.EngineModel3D` checks every catalogue
+engine at 72 angles: rods keep their length, wrist pins stay on the cylinder
+axis, crowns stay below the deck.
 
-- write the backend and manage the OpenGL context;
-- define meshes, materials, lighting, shaders and a resource cache;
-- choose the synchronisation with the render thread;
-- wire the camera and interaction to the backend;
-- extend the scene to collectors, intakes, accessories and effects;
-- replace or adapt the JUCE 2D view, which still reads the simulation state
-  directly despite producing a `RenderSnapshot` in parallel.
+Threads:
+
+- the message thread copies the crank angle, engine speed, simulation rate
+  (time scale × real-time factor, 0 when paused) and per-cylinder burn
+  strength at 30 Hz into a mutex-protected block;
+- the OpenGL thread runs `CrankClock`: in real time it extrapolates the last
+  sample with the engine speed and acceleration and pulls back onto each new
+  sample (time constant 80 ms, jump beyond 90°), so the picture turns at the
+  simulated speed between samples. In slow motion it integrates rpm × factor
+  instead;
+- a pacing thread triggers frames at the chosen cap (30 to 240 fps). It also
+  triggers the overlay repaints, so each tick renders one frame.
+  "Unlimited" repaints continuously.
+
+`EngineSceneRenderer` writes every part's transform and material into a buffer
+texture and draws each material group with one call. Each frame goes into a 4×
+multisampled buffer; with motion blur, the scene is drawn every 12° the crank
+sweeps during half a frame (12 sub-frames at most) and the sub-frames are
+averaged in a half-float buffer. Overlays are JUCE child components painted
+over the OpenGL frame. View settings live in `view.json` next to the key
+bindings. If the context cannot be created or a shader fails, the view falls
+back to the 2-D cutaway and says why.
+
+The older `RenderSnapshotBuilder` / `IEngineRenderer` groundwork is not used by
+this view.
+
+### Ducts from the configuration
+
+`DuctLayout3D` draws what the solver simulates, not a generic manifold:
+
+- **Exhaust.** Each path's component graph (or, without one, the graph the
+  editor compiles from the scalar geometry) is drawn component by component,
+  at its authored length and diameter; mufflers, catalysts, resonators and
+  merges get the diameter of their authored volume. Pipes fed by a port, or
+  feeding a junction with several inputs, are *routed* (below). Junctions and
+  bodies sit on a trunk that runs along +Z (towards the flywheel), placed out
+  from their ports and no higher than the crankshaft; a splitter spreads its
+  branches, an X sends each bank back to its side. A collector's mouth is wide
+  enough for its inputs side by side (they sit on a circle of radius
+  (r + gap/2) / sin(π/N)). A collector fed by primaries sits behind the last
+  port when every primary still reaches it (long tubes), else as far back as
+  the shortest allows; the junctions of one path that would overlap (the two
+  Y pieces of a 4-2-1) sit side by side across the trunk. An outlet is the open end of the pipe before it: with no authored
+  length it is only a short collar with a rolled lip, and the inside of an
+  open opaque tube is shaded dark, so the opening reads as a hole.
+- **Intake.** Each runner has its length and taper, from the port to a
+  plenum box of the authored volume (a drum round the crank axis on a
+  radial). Upstream follow the throttle bores (on the plenum end, or on its
+  face when there are several), the airbox volume, the inlet duct and its
+  bellmouth, in the order the air crosses them.
+
+**Routing.** `relaxRoutes` bends every routed pipe of the engine together.
+Each is a chain of equal segments with straight ends held fixed: 0.8 diameter
+out of its port, one diameter into its junction, along the trunk (the inputs
+of a collector arrive side by side, as on a real one). Contacts with the other
+pipes, with the intake ducts, and with the engine's solids (block, heads,
+crankcase, sump, liners, pulley, flywheel, plenum and airbox boxes) are
+projected out, then bends are held at 1.25 diameters or more and segments at
+their length, until nothing moves (200 contact passes at most). Each input of
+a collector takes the slot that makes the straight joins shortest in total.
+Intake runners are routed the same way, clear of their plenum. The shapes are
+invented; only their length, diameter and taper are the configuration's.
+
+**Route check.** `checkRoutes` measures what a physical system could not do:
+two ducts through each other, a duct through itself, a duct through the
+engine, a centreline bent tighter than one diameter (circle through the
+points half a diameter either side), a pipe drawn more than 3 % longer than
+authored. Joints are not clashes: near an end that plugs into a port, a box
+or another duct, within two radii. Over the 16 catalogue engines, before the
+router: 107 clashes, 51 self-clashes, 0 through the engine, 259 tight bends,
+6 stretched; with it: 7, 4, 0, 48, 7. `EngineLab.EngineModel3D` keeps every
+count from growing. A pipe that must span more than its length is drawn
+longer: the four 140 mm pipes of the LS3's X, the end primary of the I5, and
+the two end primaries of the 2JZ, whose 430 mm cannot reach a collector they
+must enter along its axis. `EngineLabSceneExport` writes the scene and the
+issues as JSON, to look at them outside the app.
+
+**Turbocharger.** The gas solver has no turbine in its network: it narrows
+every exhaust outlet by the turbine and open wastegate areas (a restriction
+in series) and drives the shaft from the exhaust pressure and flow. The view
+draws one where a real one sits (`TurboPlacement`): on the first junction
+where all of a path's primaries have met, in the first path that has one
+(the EJ25's left bank). Gas bends out of the collector, enters the volute
+tangentially and leaves the exducer along the trunk, where the path resumes;
+the shaft runs along the crankshaft, the compressor on the far side of the
+bearing housing, far enough out to clear the collector. Wheel sizes come from
+the inducer and exducer diameters (about 70 % and 85 % of the wheels), blade
+counts from the configuration (7 and 10 when unset). The wheels turn at the
+simulated shaft speed, slowed with the crank, motion-blurred over the same
+sub-frames. Housings are translucent in X-ray. Since the solver's restriction
+sits at the outlets, the gas field shows the whole drawn exhaust, downpipe
+included, at turbine inlet pressure; the inspector says so. A supercharger
+(the Merlin's) is not drawn, nor is the charge piping.
+
+Engine views frame the engine with its ports, runners, plenum and primaries;
+the *Exhaust* view frames the whole system.
+
+### Gas field on the ducts
+
+The exhaust and the intake runners and plenums are coloured by the gas
+solver's own state, not by an animation:
+
+- **Capture.** The view asks `EngineRuntime::requestGasField()` for the field at
+  the crank angle on screen. The simulator tracks that angle and copies the
+  state (`GasFieldSnapshot`: up to 16 cells per exhaust duct and junction,
+  intake runner and plenum) between two sub-steps when its crank crosses it,
+  so in slow motion or frozen the picture is the most recent cycle at the
+  displayed angle. In real time the view takes the latest field instead. A
+  request that waits 0.25 s of simulated time (a stopped engine) is served at
+  the end of a frame. The copy reads conservative states only, so the
+  simulation is unchanged (`EngineLab.EngineModel3D` compares two
+  simulators bit for bit); the runtime publishes it through a `try_lock`
+  mailbox and stops capturing a quarter of a second after the view stops
+  asking (the 2-D cutaway never asks).
+- **Mapping.** `bindGasField` matches each drawn duct to its solver element by
+  component id, or, on a path compiled from the scalar geometry, by node type
+  and cylinder. Resonators with no outlet are acoustic side branches the gas
+  solver does not carry; they keep their metal colour. Each duct vertex has a
+  station (0 at the inlet, 1 at the outlet) and the shader interpolates
+  between cell centres.
+- **Resolution.** The real-time mesh has cells of about 0.36 m, so a primary
+  shows one to three cells. The view shows what the solver resolves, not the
+  audio band, which the characteristic network carries separately. Measured
+  against a 45 mm mesh at full load: in a primary it shows 29 to 61 % less
+  peak-to-peak; 180 mm closes most of it but costs 13 to 20 % of real-time
+  capacity (the LS3 drops to about 1.0), so the production mesh stays.
+- **Colours.** The wave, not the pressure: each cell's departure from its
+  own running mean (an exponential average over 0.5 s of simulated time, so a
+  slowed or frozen view keeps it). Against ambient, a turbocharged exhaust
+  reads as one colour: the turbine is the network's restricted outlet, so the
+  whole drawn exhaust, silencer included, sits at turbine inlet pressure in
+  the solver. The prototype's scale: violet below the mean, grey at the mean,
+  orange then pale yellow above, compressed with a 0.75 power. The scale is
+  the strongest departure anywhere, decaying by 6 % per snapshot and never
+  below 2 kPa; the legend prints it. Intake and exhaust share it, so their
+  relative strength reads true: at idle and at full load (60 % of redline)
+  the intake's peak is 0.6 to 4.8 times the exhaust's over the catalogue.
+  The plenum is one lumped volume, so it shows one colour. A transient (a rev-limiter cut, a
+  throttle step) shows as the whole exhaust above or below its mean until the
+  mean catches up. The inspector gives the pressure against ambient. Waves
+  show in the All and Gas flow layers.
+- **Heat.** Each cell's wall temperature (the solver's finite-capacity wall)
+  makes the steel glow from the Draper point, 798 K, to orange-yellow at
+  1,300 K, in every layer.
+- **Afterfire.** A flame at every outlet, lit by
+  `1 − exp(−heat release / 10 kW)` of the afterfire at the captured instant.
+
+Clicking a part opens an inspector: the part's authored geometry and, for a
+duct, the solver's pressure range, gas and wall temperatures and cell count
+at the displayed angle. The pick is a ray cast on the CPU against the posed
+meshes of the visible layer; X-ray shells let the click through.
+
+For a duct the inspector also draws an oscilloscope: the pressure of the
+clicked cell (the cell nearest the click along the centreline) over one
+engine cycle, against ambient. The view asks `EngineRuntime::requestGasProbe()`
+for that cell; the simulator records it at every sub-step into 360 crank
+bins (2° on a four-stroke), each bin keeping the latest cycle that crossed
+it, and the runtime publishes the trace through a `try_lock` mailbox once per
+frame. It reads the same cell the gas field shows (runners reversed to
+gas-flow order) from conservative states only, so the simulation is
+unchanged; it stops 60 frames after the view stops asking. A marker shows the
+bin last written. Its sub-step resolution is what the snapshot cannot give:
+a capture is one instant per crank angle.
+
+An exhaust component can be resized from the inspector: steppers for its
+length (10 mm, 1 mm with Shift) and diameter (1 mm, 0.1 mm), no text field
+since every key drives the engine. `resizeExhaustComponent` (exhaust
+library, no JUCE) writes the edit into the configuration: the component of
+the path's network or, on a path authored as scalar geometry, the scalar
+field behind it (the primaries share one size; a collector and an outlet
+have no length; a silencer is sized by its body). It refuses an edit that
+would change which components the path has (a silencer no wider than its
+pipes stops being one) and, on the only path, mirrors the geometry into
+`EngineConfig::exhaust`, which normalisation copies back and the solver
+reads. *Apply* restarts the engine with the edited configuration through the
+same path as the Exhaust editor; the camera stays and the part stays
+selected.
 
 ## Extension rule
 

@@ -35,7 +35,7 @@ listening test, 0.02 to 0.05 suits a stable warm engine; higher values must
 match a lean, diluted or unstable condition that the simulation also explains
 physically.
 
-**AUDIO HQ** publishes the minimum and maximum multipliers seen across the
+The **Audio workshop** publishes the minimum and maximum multipliers seen across the
 cylinders live. The **BYPASS** button sets the COV back to zero, which keeps the
 bit-exact bypass and allows a comparison without any hidden random draw.
 

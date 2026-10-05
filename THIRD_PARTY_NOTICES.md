@@ -21,6 +21,19 @@ The MIT license of EngineLab covers EngineLab's own source code only. Anyone
 redistributing a binary that links JUCE must do so under one of JUCE's own
 licences.
 
+## Fonts
+
+The interface embeds two typefaces in the executable, both under the
+[SIL Open Font License 1.1](https://openfontlicense.org):
+
+| Typeface | Version | Weights | Source |
+|---|---|---|---|
+| Inter | 4.1 | Regular, SemiBold, Bold | <https://github.com/rsms/inter> |
+| JetBrains Mono | 2.304 | Medium, Bold | <https://github.com/JetBrains/JetBrainsMono> |
+
+The font files and their license texts are in `src/app/resources/fonts/`.
+Release archives include the license texts in `licenses/`.
+
 ## Exhaust impulse responses
 
 The impulse responses in `assets/ir/` come from

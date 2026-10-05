@@ -1,4 +1,5 @@
 add_library(EngineLabExhaust STATIC
+    src/ExhaustComponentResize.cpp
     src/ExhaustGraph.cpp
     src/ExhaustPathTopologyEditor.cpp
     src/LegacyExhaustNetwork.cpp)
