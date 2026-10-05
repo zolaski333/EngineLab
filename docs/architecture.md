@@ -375,8 +375,17 @@ solver's own state, not by an animation:
   the intake's peak is 0.6 to 4.8 times the exhaust's over the catalogue.
   The plenum is one lumped volume, so it shows one colour. A transient (a rev-limiter cut, a
   throttle step) shows as the whole exhaust above or below its mean until the
-  mean catches up. The inspector gives the pressure against ambient. Waves
-  show in the All and Gas flow layers.
+  mean catches up. The inspector gives the pressure against ambient.
+- **Display mode.** *Pressure waves* in the settings menu (saved in
+  `view.json`) chooses what the All layer shows: *Hidden* (the default:
+  plain metal, nothing flickers), *Pulsation strength* or *Live pulses* (the
+  wave above). The strength is each cell's root-mean-square departure,
+  its square averaged twice over 0.5 s (once leaves a 5 % ripple at an idle's
+  cycle rate, a visible shimmer), on a scale that is the strongest anywhere, never below
+  1 kPa and decaying by 2 % per snapshot, from grey (still) to orange and pale
+  yellow; it shows where the gas pulses hardest and holds still while the
+  engine runs steadily. The Gas flow layer shows the strength when the mode
+  is *Hidden*; the other layers show no waves.
 - **Heat.** Each cell's wall temperature (the solver's finite-capacity wall)
   makes the steel glow from the Draper point, 798 K, to orange-yellow at
   1,300 K, in every layer.
@@ -401,8 +410,10 @@ bin last written. Its sub-step resolution is what the snapshot cannot give:
 a capture is one instant per crank angle.
 
 An exhaust component can be resized from the inspector: steppers for its
-length (10 mm, 1 mm with Shift) and diameter (1 mm, 0.1 mm), no text field
-since every key drives the engine. `resizeExhaustComponent` (exhaust
+length (10 mm, 1 mm with Shift) and diameter (1 mm, 0.1 mm), or a click on
+the value to type it. Enter applies the typed value at once (clamped to the
+stepper limits), Escape or a click elsewhere cancels it, and both hand the
+keyboard back to the engine controls. `resizeExhaustComponent` (exhaust
 library, no JUCE) writes the edit into the configuration: the component of
 the path's network or, on a path authored as scalar geometry, the scalar
 field behind it (the primaries share one size; a collector and an outlet
@@ -418,6 +429,15 @@ A cylinder liner or piston offers the engine's bore and stroke the same way
 (1 mm, 0.1 mm with Shift), with a choice between the next cycle and a 3 s
 ramp (a live bore and stroke change, see above). The view shows the target
 size at once.
+
+Two controls at the bottom right slow things down, and they are different.
+*0.25x / 0.5x / 1x* is the simulation's time scale
+(`EngineRuntime::setTimeScale`, also on the time keys and the wheel): the
+physics runs slower, and the sound with it. *Live / Strobe 1:50 / Strobe
+1:250 / Freeze* is a stroboscope: only the picture slows down, showing the
+most recent cycle at the displayed angle, while the engine and its sound run
+on. A click in the 3-D view, like Enter or Escape in a text field (the dyno's
+run name, a typed size), gives the keyboard back to the engine controls.
 
 ## Extension rule
 

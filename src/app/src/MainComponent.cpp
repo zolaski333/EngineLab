@@ -76,6 +76,7 @@ MainComponent::MainComponent() {
 
     auto& dyno = side_.dyno;
     dyno.onSelectRun = [this](int runIndex) { selectRun(runIndex); };
+    dyno.onDoneTyping = [this] { grabKeyboardFocus(); };
     dyno.onRenameRun = [this](const juce::String& name) {
         auto* presentation = selectedPresentation();
         if (presentation == nullptr || name.isEmpty()) return;
@@ -122,6 +123,12 @@ MainComponent::MainComponent() {
         return applyCylinderResize(edited, rampSeconds);
     });
     viewport_.onExhaustResolutionChanged = [this] { applyExhaustResolution(); };
+    viewport_.onClaimKeyboard = [this] {
+        if (!hasKeyboardFocus(false)) grabKeyboardFocus();
+    };
+    viewport_.onTimeScaleRequested = [this](double timeScale) {
+        if (runtime_) runtime_->setTimeScale(timeScale);
+    };
     viewport_.setGasProbeSource([this](std::int32_t element, std::uint8_t sample, GasProbeTrace& trace) {
         if (!runtime_) return false;
         runtime_->requestGasProbe(element, sample);

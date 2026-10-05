@@ -753,7 +753,8 @@ struct EngineSceneRenderer::Impl final {
         setMatrix(surfaceViewProjection, viewProjection);
         setVec3(surfaceEye, frame.eye);
         glUniform1i(surfaceSkipDark, 0);
-        glUniform1i(surfaceShowWaves, frame.layer == SceneLayerMode::all || frame.layer == SceneLayerMode::gasFlow ? 1 : 0);
+        glUniform1i(surfaceShowWaves,
+                    frame.showWaves && (frame.layer == SceneLayerMode::all || frame.layer == SceneLayerMode::gasFlow) ? 1 : 0);
         glUniform1i(lightCount, lights);
         glUniform4fv(lightPosition, 8, lightPositions.data());
         glUniform3fv(lightColour, 8, lightColours.data());

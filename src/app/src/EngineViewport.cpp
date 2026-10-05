@@ -328,6 +328,10 @@ void ViewSettings::load() {
     motionBlur = flag("motionBlur", motionBlur);
     antiAliasing = flag("antiAliasing", antiAliasing);
     fineExhaustWaves = flag("fineExhaustWaves", fineExhaustWaves);
+    const auto waves = object->getProperty("pressureWaves").toString();
+    if (waves == "strength") pressureWaves = PressureWaves::strength;
+    else if (waves == "live") pressureWaves = PressureWaves::live;
+    else pressureWaves = PressureWaves::hidden;
 }
 
 void ViewSettings::save() const {
@@ -338,6 +342,9 @@ void ViewSettings::save() const {
     object->setProperty("motionBlur", motionBlur);
     object->setProperty("antiAliasing", antiAliasing);
     object->setProperty("fineExhaustWaves", fineExhaustWaves);
+    object->setProperty("pressureWaves", pressureWaves == PressureWaves::strength ? "strength"
+                                         : pressureWaves == PressureWaves::live   ? "live"
+                                                                                  : "hidden");
     const auto target = file();
     (void)target.getParentDirectory().createDirectory();
     (void)target.replaceWithText(juce::JSON::toString(juce::var(object.release())));
@@ -421,6 +428,12 @@ void WaveLegend::setScale(float pascals) {
     repaint();
 }
 
+void WaveLegend::setStrength(bool strength) {
+    if (strength == strength_) return;
+    strength_ = strength;
+    repaint();
+}
+
 void WaveLegend::paint(juce::Graphics& g) {
     auto area = getLocalBounds().toFloat();
     g.setColour(juce::Colour(0xd10d1211));
@@ -432,23 +445,31 @@ void WaveLegend::paint(juce::Graphics& g) {
     auto header = area.removeFromTop(14.0F);
     g.setFont(uiFont(10.5F, true).withExtraKerningFactor(0.06F));
     g.setColour(colours::muted);
-    g.drawText(utf8("PRESSURE WAVES"), header, juce::Justification::centredLeft, false);
+    g.drawText(strength_ ? utf8("PULSATION STRENGTH") : utf8("PRESSURE WAVES"), header,
+               juce::Justification::centredLeft, false);
     g.setFont(monoFont(10.5F, false));
-    g.drawText(utf8("±") + legendFigure(scalePa_) + " kPa", header,
-               juce::Justification::centredRight, false);
+    g.drawText(strength_ ? legendFigure(scalePa_) + " kPa rms" : utf8("±") + legendFigure(scalePa_) + " kPa",
+               header, juce::Justification::centredRight, false);
 
     // The bar of the prototype: violet, grey at the mean, orange, pale yellow.
+    // The strength bar starts at the grey: a root mean square is never
+    // negative.
     const auto bar = area.removeFromTop(14.0F).withSizeKeepingCentre(area.getWidth(), 8.0F);
-    juce::ColourGradient gradient(juce::Colour(0xff9a7bff), bar.getX(), 0.0F, juce::Colour(0xffffe6b0), bar.getRight(),
-                                  0.0F, false);
-    gradient.addColour(0.5, juce::Colour(0xff4a5451));
-    gradient.addColour(0.85, juce::Colour(0xffff6a2b));
+    juce::ColourGradient gradient(juce::Colour(strength_ ? 0xff4a5451 : 0xff9a7bff), bar.getX(), 0.0F,
+                                  juce::Colour(0xffffe6b0), bar.getRight(), 0.0F, false);
+    if (!strength_) gradient.addColour(0.5, juce::Colour(0xff4a5451));
+    gradient.addColour(strength_ ? 0.7 : 0.85, juce::Colour(0xffff6a2b));
     g.setGradientFill(gradient);
     g.fillRoundedRectangle(bar, 4.0F);
 
     g.setFont(uiFont(11.0F));
     g.setColour(colours::muted);
     const auto ticks = area.removeFromTop(14.0F);
+    if (strength_) {
+        g.drawText(utf8("still"), ticks, juce::Justification::centredLeft, false);
+        g.drawText(utf8("strong pulses"), ticks, juce::Justification::centredRight, false);
+        return;
+    }
     g.drawText(utf8("below mean"), ticks, juce::Justification::centredLeft, false);
     g.drawText(utf8("cycle mean"), ticks, juce::Justification::centred, false);
     g.drawText(utf8("above mean"), ticks, juce::Justification::centredRight, false);
@@ -480,6 +501,18 @@ PartInspector::PartInspector() {
         rampEdit_.setButtonText(gradual_ ? "Over " + juce::String(EngineViewport::cylinderRampSeconds, 0) + " s"
                                          : juce::String("Next cycle"));
     };
+    valueEditor_.setJustification(juce::Justification::centred);
+    valueEditor_.setFont(monoFont(11.5F, false));
+    valueEditor_.setIndents(4, 3);
+    valueEditor_.setInputRestrictions(8, "0123456789.,");
+    valueEditor_.setColour(juce::TextEditor::backgroundColourId, colours::panelRaised);
+    valueEditor_.setColour(juce::TextEditor::textColourId, colours::text);
+    valueEditor_.setColour(juce::TextEditor::outlineColourId, colours::accent);
+    valueEditor_.setColour(juce::TextEditor::focusedOutlineColourId, colours::accent);
+    valueEditor_.onReturnKey = [this] { endTyping(true); };
+    valueEditor_.onEscapeKey = [this] { endTyping(false); };
+    valueEditor_.onFocusLost = [this] { endTyping(false); };
+    addChildComponent(valueEditor_);
     resetEdit_.setTooltip("Back to the size this part had when you selected it");
     resetEdit_.onClick = [this] {
         if (!edit_) return;
@@ -521,6 +554,10 @@ void PartInspector::setEdit(std::optional<Edit> edit) {
     if (!keep) {
         editStatus_.clear();
         stopTimer();
+        if (typing_ >= 0) {
+            typing_ = -1;
+            valueEditor_.setVisible(false);
+        }
     }
     edit_ = std::move(edit);
     for (auto* button : { &firstDown_, &firstUp_ })
@@ -597,6 +634,7 @@ void PartInspector::resized() {
     };
     if (edit_->firstEditable) place(firstDown_, firstUp_);
     place(secondDown_, secondUp_);
+    if (typing_ >= 0) valueEditor_.setBounds(valueArea(typing_ == 0));
     auto buttons = area.removeFromTop(inspectorEditButtons).withTrimmedTop(4);
     resetEdit_.setBounds(buttons.removeFromRight(64));
     buttons.removeFromRight(6);
@@ -617,6 +655,9 @@ void PartInspector::paintEdit(juce::Graphics& g, juce::Rectangle<int> area) cons
         g.drawText(label, line, juce::Justification::centredLeft, true);
         line.removeFromRight(inspectorStepperWidth);
         const auto valueArea = line.removeFromRight(inspectorValueWidth);
+        // A faint box: the value can be clicked and typed.
+        g.setColour(colours::line);
+        g.drawRoundedRectangle(valueArea.reduced(2, 3).toFloat(), 4.0F, 1.0F);
         g.setColour(std::abs(value - original) > 1.0e-6 ? colours::accentLight : colours::text);
         g.setFont(monoFont(11.5F, false));
         const auto decimals = std::abs(value - std::round(value)) > 1.0e-6 ? 1 : 0;
@@ -673,6 +714,59 @@ juce::Rectangle<int> PartInspector::closeArea() const { return { getWidth() - 30
 
 void PartInspector::mouseUp(const juce::MouseEvent& event) {
     if (closeArea().contains(event.getPosition()) && onClose) onClose();
+    if (!edit_ || event.mouseWasDraggedSinceMouseDown()) return;
+    if (edit_->firstEditable && valueArea(true).contains(event.getPosition())) beginTyping(true);
+    else if (valueArea(false).contains(event.getPosition())) beginTyping(false);
+}
+
+void PartInspector::mouseMove(const juce::MouseEvent& event) {
+    const auto overValue = edit_
+        && ((edit_->firstEditable && valueArea(true).contains(event.getPosition()))
+            || valueArea(false).contains(event.getPosition()));
+    setMouseCursor(overValue ? juce::MouseCursor::IBeamCursor : juce::MouseCursor::NormalCursor);
+}
+
+juce::Rectangle<int> PartInspector::valueArea(bool first) const {
+    if (!edit_) return {};
+    auto area = getLocalBounds().reduced(12, 8);
+    area = area.removeFromBottom(editHeight());
+    area.removeFromTop(inspectorEditHeader);
+    if (edit_->firstEditable && !first) area.removeFromTop(inspectorEditRow);
+    auto row = area.removeFromTop(inspectorEditRow).reduced(0, 2);
+    row.removeFromRight(inspectorStepperWidth);
+    return row.removeFromRight(inspectorValueWidth);
+}
+
+void PartInspector::beginTyping(bool first) {
+    if (!edit_) return;
+    stopTimer();
+    sendEdit();
+    typing_ = first ? 0 : 1;
+    const auto value = first ? pendingFirst_ : pendingSecond_;
+    valueEditor_.setText(juce::String(value, std::abs(value - std::round(value)) > 1.0e-6 ? 1 : 0), false);
+    valueEditor_.setBounds(valueArea(first));
+    valueEditor_.setVisible(true);
+    valueEditor_.grabKeyboardFocus();
+    valueEditor_.selectAll();
+    repaint();
+}
+
+void PartInspector::endTyping(bool apply) {
+    // Hiding the editor takes its focus, which calls this again.
+    if (typing_ < 0) return;
+    const auto first = typing_ == 0;
+    typing_ = -1;
+    const auto text = valueEditor_.getText().replaceCharacter(',', '.').trim();
+    valueEditor_.setVisible(false);
+    if (apply && edit_ && text.containsAnyOf("0123456789")) {
+        auto& value = first ? pendingFirst_ : pendingSecond_;
+        value = std::clamp(text.getDoubleValue(), edit_->minimum, first ? edit_->firstMaximum : edit_->secondMaximum);
+        setEditStatus({});
+        updateEditButtons();
+        sendEdit();
+    }
+    repaint();
+    if (onDoneTyping) onDoneTyping();
 }
 
 void PartInspector::paint(juce::Graphics& g) {
@@ -783,8 +877,20 @@ namespace {
 constexpr float fieldOfViewRadians = 32.0F * std::numbers::pi_v<float> / 180.0F;
 constexpr std::array<int, 6> frameRateCaps { 30, 60, 120, 144, 240, 0 };
 constexpr std::array<double, 4> playbackFactors { 1.0, 1.0 / 50.0, 1.0 / 250.0, 0.0 };
+constexpr std::array<double, 3> simulationSpeeds { 0.25, 0.5, 1.0 };
 
 [[nodiscard]] double wallSeconds() noexcept { return juce::Time::getMillisecondCounterHiRes() * 1.0e-3; }
+
+/** The setting applies to the All layer; the Gas flow layer exists to show
+    the gas, so it falls back to the steady strength instead of nothing. The
+    other layers draw no waves. */
+[[nodiscard]] ViewSettings::PressureWaves effectivePressureWaves(ViewSettings::PressureWaves setting,
+                                                                 SceneLayerMode layer) noexcept {
+    if (layer == SceneLayerMode::gasFlow && setting == ViewSettings::PressureWaves::hidden)
+        return ViewSettings::PressureWaves::strength;
+    if (layer != SceneLayerMode::all && layer != SceneLayerMode::gasFlow) return ViewSettings::PressureWaves::hidden;
+    return setting;
+}
 
 [[nodiscard]] juce::Path settingsIcon() {
     // Three sliders.
@@ -839,10 +945,20 @@ EngineViewport::EngineViewport(const DashboardModel& model) : model_(model), cut
     shading_.setOptionTooltip(0, utf8("See-through block and heads"));
     shading_.setOptionTooltip(1, utf8("Opaque block and heads"));
     shading_.onChange = [this](int) { pushSettings(); };
-    playback_.setOptionTooltip(0, utf8("The crank turns at the simulated speed"));
-    playback_.setOptionTooltip(1, utf8("Fifty times slower than the engine"));
-    playback_.setOptionTooltip(2, utf8("250 times slower than the engine"));
-    playback_.setOptionTooltip(3, utf8("Hold the crank where it is"));
+    speed_.setOptionTooltip(0, utf8("Simulate four times slower: the engine and its sound slow down"));
+    speed_.setOptionTooltip(1, utf8("Simulate twice slower: the engine and its sound slow down"));
+    speed_.setOptionTooltip(2, utf8("Simulate in real time"));
+    speed_.onChange = [this](int index) {
+        if (index >= 0 && onTimeScaleRequested) onTimeScaleRequested(simulationSpeeds[static_cast<std::size_t>(index)]);
+    };
+    speed_.setSelected(2);
+    playback_.setOptionTooltip(0, utf8("The picture follows the simulation"));
+    playback_.setOptionTooltip(1, utf8("Stroboscope: the picture turns fifty times slower; the engine and its sound "
+                                       "do not change"));
+    playback_.setOptionTooltip(2, utf8("Stroboscope: the picture turns 250 times slower; the engine and its sound "
+                                       "do not change"));
+    playback_.setOptionTooltip(3, utf8("Stroboscope: the picture holds the crank where it is; the engine keeps "
+                                       "running"));
     playback_.onChange = [this](int) { pushSettings(); };
     settingsButton_.setIcon(settingsIcon());
     settingsButton_.setTooltip(utf8("Renderer, frame rate, VSync, motion blur, anti-aliasing"));
@@ -857,12 +973,13 @@ EngineViewport::EngineViewport(const DashboardModel& model) : model_(model), cut
     legend_.setInterceptsMouseClicks(false, false);
     inspector_.onClose = [this] { setSelectedPart(-1); };
     inspector_.onApplyEdit = [this](double first, double second, bool gradual) { applyEdit(first, second, gradual); };
+    inspector_.onDoneTyping = [this] { if (onClaimKeyboard) onClaimKeyboard(); };
 
     addChildComponent(cutaway_);
     addChildComponent(legend_);
     addChildComponent(inspector_);
-    for (auto* overlay : std::initializer_list<juce::Component*> { &layers_, &views_, &shading_, &playback_,
-                                                                   &settingsButton_, &cycle_ })
+    for (auto* overlay : std::initializer_list<juce::Component*> { &layers_, &views_, &shading_, &speed_,
+                                                                   &playback_, &settingsButton_, &cycle_ })
         addAndMakeVisible(overlay);
 
     context_.setRenderer(this);
@@ -995,6 +1112,7 @@ void EngineViewport::stepLayer(int delta) {
 void EngineViewport::pushSettings() {
     const std::lock_guard lock(sharedMutex_);
     shared_.layer = static_cast<SceneLayerMode>(std::clamp(layers_.selected(), 0, 3));
+    shared_.pressureWaves = settings_.pressureWaves;
     shared_.xray = shading_.selected() == 0;
     shared_.playbackFactor = playbackFactors[static_cast<std::size_t>(std::clamp(playback_.selected(), 0, 3))];
     shared_.motionBlur = settings_.motionBlur;
@@ -1028,14 +1146,17 @@ void EngineViewport::updateOverlayVisibility() {
     views_.setVisible(use3d);
     shading_.setVisible(use3d);
     playback_.setVisible(use3d);
+    speed_.setVisible(use3d);
     updateLegend();
     if (!use3d) setSelectedPart(-1);
 }
 
 void EngineViewport::updateLegend() {
-    const auto layer = layers_.selected();
+    const auto layer = static_cast<SceneLayerMode>(std::clamp(layers_.selected(), 0, 3));
+    const auto waves = effectivePressureWaves(settings_.pressureWaves, layer);
     const auto show = context_.getTargetComponent() != nullptr && pressureScalePa_.load() > 0.0F
-        && (layer == static_cast<int>(SceneLayerMode::all) || layer == static_cast<int>(SceneLayerMode::gasFlow));
+        && waves != ViewSettings::PressureWaves::hidden;
+    legend_.setStrength(waves == ViewSettings::PressureWaves::strength);
     legend_.setScale(pressureScalePa_.load());
     if (show != legend_.isVisible()) {
         legend_.setVisible(show);
@@ -1147,6 +1268,9 @@ void EngineViewport::applyView(int view, bool animate) {
 }
 
 void EngineViewport::mouseDown(const juce::MouseEvent& event) {
+    // A field being typed in (a run name...) lets the keys go back to the
+    // engine.
+    if (onClaimKeyboard) onClaimKeyboard();
     dragStart_ = event.position;
     dragged_ = false;
     dragStartOrbit_ = goal();
@@ -1526,6 +1650,11 @@ void EngineViewport::showSettingsMenu() {
     menu.addSectionHeader(utf8("Exhaust waves"));
     menu.addItem(30, utf8("Standard (360 mm cells)"), true, !settings_.fineExhaustWaves);
     menu.addItem(31, utf8("Fine (180 mm cells, slower)"), true, settings_.fineExhaustWaves);
+    menu.addSectionHeader(utf8("Pressure waves (All layer)"));
+    menu.addItem(40, utf8("Hidden"), use3d, settings_.pressureWaves == ViewSettings::PressureWaves::hidden);
+    menu.addItem(41, utf8("Pulsation strength (steady)"), use3d,
+                 settings_.pressureWaves == ViewSettings::PressureWaves::strength);
+    menu.addItem(42, utf8("Live pulses"), use3d, settings_.pressureWaves == ViewSettings::PressureWaves::live);
     menu.showMenuAsync(juce::PopupMenu::Options {}.withTargetComponent(&settingsButton_),
         [safe = juce::Component::SafePointer<EngineViewport>(this)](int result) {
             if (safe == nullptr || result == 0) return;
@@ -1542,6 +1671,9 @@ void EngineViewport::showSettingsMenu() {
                 settings.motionBlur = !settings.motionBlur;
             } else if (result == 22) {
                 settings.antiAliasing = !settings.antiAliasing;
+            } else if (result >= 40 && result <= 42) {
+                settings.pressureWaves = static_cast<ViewSettings::PressureWaves>(result - 40);
+                safe->pressureScalePa_ = 0.0F;
             } else if ((result == 30 || result == 31) && settings.fineExhaustWaves != (result == 31)) {
                 settings.fineExhaustWaves = result == 31;
                 settings.save();
@@ -1570,6 +1702,11 @@ void EngineViewport::refresh() {
     if (use3d) {
         const auto& state = model_.state;
         const auto& health = model_.health;
+        // The keys and the wheel change the time scale too.
+        auto speed = -1;
+        for (std::size_t i = 0; i < simulationSpeeds.size(); ++i)
+            if (std::abs(health.timeScale - simulationSpeeds[i]) < 1.0e-3) speed = static_cast<int>(i);
+        speed_.setSelected(speed);
         const auto firing = (state.ecuSparkEnabled || model_.config.fuel == FuelType::diesel) && state.ecuFuelEnabled
             && !state.ecuDecelerationFuelCutActive && state.rpm > 60.0;
         const std::lock_guard lock(sharedMutex_);
@@ -1640,7 +1777,7 @@ void EngineViewport::refresh() {
 
 juce::Rectangle<int> EngineViewport::infoArea() const {
     const auto left = cycle_.getRight() + 12;
-    const auto right = playback_.isVisible() ? playback_.getX() - 12 : getWidth() - 12;
+    const auto right = speed_.isVisible() ? speed_.getX() - 12 : getWidth() - 12;
     // Above the legend when it shows.
     const auto bottom = legend_.isVisible() ? legend_.getY() - 6 : getHeight() - 12;
     return { left, bottom - 18, std::max(0, right - left), 18 };
@@ -1669,6 +1806,7 @@ void EngineViewport::resized() {
     right -= shading_.idealWidth() + 6;
     views_.setBounds(right - views_.idealWidth(), 12, views_.idealWidth(), 32);
     playback_.setBounds(getWidth() - 12 - playback_.idealWidth(), getHeight() - 44, playback_.idealWidth(), 32);
+    speed_.setBounds(playback_.getX() - 10 - speed_.idealWidth(), getHeight() - 44, speed_.idealWidth(), 32);
     const auto cycleHeight = cycle_.idealHeight();
     cycle_.setBounds(12, getHeight() - 12 - cycleHeight, 250, cycleHeight);
     legend_.setBounds((getWidth() - 300) / 2, getHeight() - 12 - 58, 300, 58);
@@ -1713,6 +1851,9 @@ void EngineViewport::renderOpenGL() {
         gasFieldView_.clear();
         renderedGasField_ = 0;
     }
+    const auto waves = effectivePressureWaves(shared.pressureWaves, shared.layer);
+    gasFieldView_.setColouring(waves == ViewSettings::PressureWaves::live ? render::GasFieldView::Colouring::wave
+                                                                          : render::GasFieldView::Colouring::strength);
     if (shared.gasField && shared.gasField->sequence != renderedGasField_ && renderer_->model() != nullptr) {
         gasFieldView_.update(*renderer_->model(), *shared.gasField);
         renderedGasField_ = shared.gasField->sequence;
@@ -1765,6 +1906,7 @@ void EngineViewport::renderOpenGL() {
         static_cast<float>(width) / static_cast<float>(height),
         std::max(0.5F, 0.01F * orbit_.distance), orbit_.distance + 4.0F * diagonal);
     frame_.layer = shared.layer;
+    frame_.showWaves = waves != ViewSettings::PressureWaves::hidden;
     frame_.xray = shared.xray;
     frame_.antiAliasing = shared.antiAliasing;
     frame_.pose = shared.pose;

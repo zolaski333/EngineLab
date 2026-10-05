@@ -54,6 +54,12 @@ struct ViewSettings final {
         shape; the simulation has 13 to 20 % less headroom (LS3 at 60 %
         of redline: 1.05 times real time instead of 1.31). */
     bool fineExhaustWaves { false };
+    /** How the gas field colours the ducts in the All layer: not at all
+        (the default: nothing flickers), by how strongly each cell pulses
+        (steady), or by each pulse as it travels. The Gas flow layer shows
+        the strength when this is `hidden`. */
+    enum class PressureWaves { hidden, strength, live };
+    PressureWaves pressureWaves { PressureWaves::hidden };
 
     static juce::File file();
     void load();
@@ -76,10 +82,13 @@ private:
 class WaveLegend final : public juce::Component {
 public:
     void setScale(float pascals);
+    /** Root-mean-square scale (strength colouring) instead of ± departure. */
+    void setStrength(bool strength);
     void paint(juce::Graphics&) override;
 
 private:
     float scalePa_ {};
+    bool strength_ {};
 };
 
 /** What the clicked part is, with its authored geometry and live gas state. */
@@ -98,9 +107,10 @@ public:
         double cycleDegrees { 720.0 };
         juce::String caption;
     };
-    /** Two sizes edited with steppers, in millimetres: an exhaust
-        component's length and diameter, or the cylinders' bore and stroke.
-        No text field, since every key drives the engine. */
+    /** Two sizes edited in millimetres: an exhaust component's length and
+        diameter, or the cylinders' bore and stroke. Steppers, or a click on
+        the value to type it (Enter applies, Escape cancels; both hand the
+        keyboard back to the engine). */
     struct Edit final {
         /** Which part: the same key keeps the values being edited. */
         std::uint64_t key {};
@@ -126,6 +136,9 @@ public:
         and at once by Reset: the engine hears each size live. `gradual` is
         the ramp choice, when offered. */
     std::function<void(double first, double second, bool gradual)> onApplyEdit;
+    /** Called when a typed value is applied or cancelled, to hand the
+        keyboard back. */
+    std::function<void()> onDoneTyping;
     /** `note`, if any, is a short paragraph under the rows. */
     void show(juce::String title, juce::String subtitle, std::vector<Row> rows, juce::String note = {});
     /** Shows a trace under the rows, or none. */
@@ -138,6 +151,7 @@ public:
     void paint(juce::Graphics&) override;
     void resized() override;
     void mouseUp(const juce::MouseEvent&) override;
+    void mouseMove(const juce::MouseEvent&) override;
 
     /** Stepper presses closer together than this make a single edit. */
     static constexpr int editSettleMs = 250;
@@ -165,6 +179,12 @@ private:
     ActionButton resetEdit_ { "Reset", ActionButton::Style::compact };
     ActionButton rampEdit_ { "Next cycle", ActionButton::Style::compact };
     bool gradual_ {};
+    juce::TextEditor valueEditor_;
+    /** The value being typed: 0 the first, 1 the second, -1 none. */
+    int typing_ { -1 };
+    [[nodiscard]] juce::Rectangle<int> valueArea(bool first) const;
+    void beginTyping(bool first);
+    void endTyping(bool apply);
     [[nodiscard]] juce::TextLayout noteLayout(const juce::String& text, juce::Colour, float width) const;
     [[nodiscard]] int editHeight() const;
     void stepEdit(bool length, double direction);
@@ -211,6 +231,12 @@ public:
     }
     /** Called when that choice changes. */
     std::function<void()> onExhaustResolutionChanged;
+    /** Called by a click in the view or a finished typed value: the
+        keyboard goes back to driving the engine. */
+    std::function<void()> onClaimKeyboard;
+    /** Asks the runtime to simulate at this pace: physics and sound slow
+        down together, unlike the stroboscope, which only slows the picture. */
+    std::function<void(double timeScale)> onTimeScaleRequested;
     /** Rebuilds the 3-D model; call after every engine change. */
     void setEngine(const EngineConfig&);
     void stepLayer(int delta);
@@ -245,6 +271,7 @@ private:
         render::ScenePoseInput pose;
         double playbackFactor { 1.0 };
         SceneLayerMode layer { SceneLayerMode::all };
+        ViewSettings::PressureWaves pressureWaves { ViewSettings::PressureWaves::hidden };
         bool xray { true };
         bool motionBlur { true };
         bool antiAliasing { true };
@@ -286,7 +313,8 @@ private:
     SegmentedControl layers_ { { "All", "Combustion", "Mechanical", "Gas flow" } };
     SegmentedControl views_ { { "Front", "Side", "3/4", "Exhaust" } };
     SegmentedControl shading_ { { "X-ray", "Solid" } };
-    SegmentedControl playback_ { { "Real time", "1:50", "1:250", "Freeze" } };
+    SegmentedControl speed_ { { "0.25x", "0.5x", "1x" } };
+    SegmentedControl playback_ { { "Live", "Strobe 1:50", "Strobe 1:250", "Freeze" } };
     ActionButton settingsButton_ { {}, ActionButton::Style::tool };
     CyclePanel cycle_;
     WaveLegend legend_;

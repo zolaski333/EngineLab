@@ -139,7 +139,7 @@ SegmentedControl::SegmentedControl(juce::StringArray options, Style style)
 }
 
 void SegmentedControl::setSelected(int index, juce::NotificationType notification) {
-    index = std::clamp(index, 0, std::max(0, options_.size() - 1));
+    index = std::clamp(index, -1, options_.size() - 1);
     if (index == selected_) return;
     selected_ = index;
     repaint();

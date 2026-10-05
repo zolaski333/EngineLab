@@ -161,7 +161,6 @@ void checkWaveColours(const EngineModel3D& model) {
     require(intakeBelow && intakeAbove, config.name + ": an intake wave below ambient shows both colours");
 }
 
-/** The field is captured at the angle asked for, and capturing it changes nothing. */
 /** Largest departure of an intake runner or plenum sample from `referencePa`. */
 double intakeDeparturePa(const GasFieldSnapshot& field, double referencePa) {
     double worst = 0.0;
@@ -218,6 +217,62 @@ void checkStoppedIntakeAtRest(const EngineConfig& config, bool shutDown) {
     }
 }
 
+/** The pulsation strength holds still while the wave moves: over a quarter
+    of a pulse every wave colour changes and no strength colour does; a
+    pulsing duct is warm, a quiet one grey. */
+void checkStrengthColours(const EngineModel3D& model) {
+    const auto& config = model.config();
+    Bench bench(config);
+    bench.simulator->captureGasFieldNow();
+    const auto start = bench.simulator->gasField();
+    const auto run = [&](GasFieldView::Colouring colouring, double amplitudePa, int frames) {
+        auto field = start;
+        GasFieldView view;
+        view.setColouring(colouring);
+        std::vector<std::vector<float>> history;
+        for (int k = 0; k < frames; ++k) {
+            ++field.sequence;
+            field.simulationTimeSeconds += 0.01;
+            for (std::size_t e = 0; e < field.elements.size(); ++e)
+                for (std::size_t s = 0; s < field.elements[e].sampleCount; ++s)
+                    field.elements[e].pressurePa[s] = static_cast<float>(field.ambientPressurePa + 50'000.0
+                        + amplitudePa * std::sin(2.0 * std::numbers::pi * k / 16.0 + static_cast<double>(s + e)));
+            view.update(model, field);
+            std::vector<float> colours;
+            for (const auto& part : view.parts())
+                colours.insert(colours.end(), part.samples.begin(), part.samples.begin() + 4 * part.count);
+            history.push_back(std::move(colours));
+        }
+        return history;
+    };
+    const auto change = [](const std::vector<std::vector<float>>& history) {
+        // The largest colour change over the last quarter pulse.
+        float worst = 0.0F;
+        const auto& last = history.back();
+        for (std::size_t back = 1; back <= 4; ++back) {
+            const auto& earlier = history[history.size() - 1 - back];
+            for (std::size_t i = 0; i < last.size(); ++i)
+                if (i % 4 != 3) worst = std::max(worst, std::abs(last[i] - earlier[i]));
+        }
+        return worst;
+    };
+    const auto wave = run(GasFieldView::Colouring::wave, 10'000.0, 400);
+    const auto strength = run(GasFieldView::Colouring::strength, 10'000.0, 400);
+    require(change(wave) > 0.1F, config.name + ": the live wave colours move");
+    require(change(strength) < 0.02F, config.name + ": the strength colours hold still ("
+                                          + std::to_string(change(strength)) + ")");
+    bool warm = !strength.back().empty();
+    for (std::size_t i = 0; i + 2 < strength.back().size(); i += 4)
+        warm = warm && strength.back()[i] > 1.5F * strength.back()[i + 2];
+    require(warm, config.name + ": every pulsing duct shows a warm strength colour");
+    const auto still = run(GasFieldView::Colouring::strength, 0.0, 40);
+    bool grey = !still.back().empty();
+    for (std::size_t i = 0; i + 2 < still.back().size(); i += 4)
+        grey = grey && still.back()[i] < still.back()[i + 2];
+    require(grey, config.name + ": a duct that does not pulse stays grey");
+}
+
+/** The field is captured at the angle asked for, and capturing it changes nothing. */
 void checkGasFieldCapture(const EngineConfig& config) {
     Bench watched(config);
     Bench control(config);
@@ -637,6 +692,7 @@ void checkEngine(const EngineConfig& config) {
     checkSupercharger(model);
     checkGasFieldBinding(model);
     checkWaveColours(model);
+    checkStrengthColours(model);
     checkExhaustResize(model);
 
     std::vector<SceneInstance> instances;

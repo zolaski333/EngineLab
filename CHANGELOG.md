@@ -60,6 +60,15 @@ file formats, always with an in-memory migration).
   exhaust with 180 mm cells instead of 360 mm, so the gas field and the
   oscilloscope show the waves' real shape, at 13 to 20 % less simulation
   headroom. The engine keeps running through the change.
+- *Pressure waves* in the 3-D view's settings: *Hidden* (the new default,
+  nothing flickers), *Pulsation strength*, a steady map of how strongly each
+  part of the exhaust and intake pulses, or *Live pulses*, the moving waves.
+  The Gas flow layer shows the strength unless *Live pulses* is chosen.
+- Slow the simulation itself from the 3-D view: *0.25x* and *0.5x* slow the
+  physics and the sound together. The picture-only slow motion is now labelled
+  as a stroboscope (*Strobe 1:50*, *Strobe 1:250*, *Freeze*).
+- Type a size in the part inspector: click the value, type, Enter applies.
+  The steppers stay for small steps.
 - Change the bore and stroke while the engine runs: click a cylinder liner or
   a piston in the 3-D view. Each crank throw takes the new size at its next
   gas-exchange TDC, or gradually over 3 s. The number of cylinders, the

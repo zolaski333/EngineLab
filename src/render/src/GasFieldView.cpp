@@ -125,8 +125,11 @@ void GasFieldView::clear() {
     binding_.clear();
     parts_.clear();
     meanPa_.clear();
+    meanSquarePa2_.clear();
+    strengthPa2_.clear();
     meanSeconds_ = 0.0;
     scalePa_ = 0.0F;
+    strengthScalePa_ = 0.0F;
     afterfire_ = 0.0F;
 }
 
@@ -143,21 +146,35 @@ void GasFieldView::update(const EngineModel3D& model, const GasFieldSnapshot& fi
     // view leaves it alone.
     const auto elapsed = field.simulationTimeSeconds - meanSeconds_;
     const auto restart = meanPa_.size() != field.elements.size() || elapsed < 0.0;
-    if (restart) meanPa_.assign(field.elements.size(), {});
+    if (restart) {
+        meanPa_.assign(field.elements.size(), {});
+        meanSquarePa2_.assign(field.elements.size(), {});
+        strengthPa2_.assign(field.elements.size(), {});
+    }
     const auto weight = restart ? 1.0F : static_cast<float>(1.0 - std::exp(-elapsed / 0.5));
     meanSeconds_ = field.simulationTimeSeconds;
     float peak = 0.0F;
+    float peakSquare = 0.0F;
     for (std::size_t e = 0; e < field.elements.size(); ++e) {
         const auto& element = field.elements[e];
         for (std::size_t s = 0; s < element.sampleCount; ++s) {
             auto& mean = meanPa_[e][s];
             mean += weight * (element.pressurePa[s] - mean);
-            peak = std::max(peak, std::abs(element.pressurePa[s] - mean));
+            const auto departure = element.pressurePa[s] - mean;
+            peak = std::max(peak, std::abs(departure));
+            auto& meanSquare = meanSquarePa2_[e][s];
+            // The first capture has no history: it would read as no pulse.
+            meanSquare = restart ? 0.0F : meanSquare + weight * (departure * departure - meanSquare);
+            auto& strength = strengthPa2_[e][s];
+            strength += weight * (meanSquare - strength);
+            peakSquare = std::max(peakSquare, strength);
         }
     }
     // A slowly decaying peak, never under 2 kPa: a quiet engine is not
     // amplified into noise.
     scalePa_ = std::max({ 2'000.0F, peak, 0.94F * scalePa_ });
+    // The strength map holds still, so its scale may too: 1 kPa at least.
+    strengthScalePa_ = std::max({ 1'000.0F, std::sqrt(peakSquare), 0.98F * strengthScalePa_ });
     afterfire_ = static_cast<float>(1.0 - std::exp(-std::max(0.0, field.afterfireHeatReleaseKw) / 10.0));
 
     parts_.clear();
@@ -166,12 +183,15 @@ void GasFieldView::update(const EngineModel3D& model, const GasFieldSnapshot& fi
         if (binding_[d] < 0) continue;
         const auto& element = field.elements[static_cast<std::size_t>(binding_[d])];
         const auto& mean = meanPa_[static_cast<std::size_t>(binding_[d])];
+        const auto& strength = strengthPa2_[static_cast<std::size_t>(binding_[d])];
         if (element.sampleCount == 0) continue;
         PartField part;
         part.part = duct.part;
         part.count = element.sampleCount;
         for (std::size_t s = 0; s < element.sampleCount; ++s) {
-            const auto colour = pressureColour((element.pressurePa[s] - mean[s]) / scalePa_);
+            const auto colour = colouring_ == Colouring::strength
+                ? pressureColour(std::sqrt(strength[s]) / strengthScalePa_)
+                : pressureColour((element.pressurePa[s] - mean[s]) / scalePa_);
             part.samples[4 * s + 0] = colour.x;
             part.samples[4 * s + 1] = colour.y;
             part.samples[4 * s + 2] = colour.z;
