@@ -287,7 +287,10 @@ solver's own state, not by an animation:
   between cell centres.
 - **Resolution.** The real-time mesh has cells of about 0.36 m, so a primary
   shows one to three cells. The view shows what the solver resolves, not the
-  audio band, which the characteristic network carries separately.
+  audio band, which the characteristic network carries separately. Measured
+  against a 45 mm mesh at full load: in a primary it shows 29 to 61 % less
+  peak-to-peak; 180 mm closes most of it but costs 13 to 20 % of real-time
+  capacity (the LS3 drops to about 1.0), so the production mesh stays.
 - **Colours.** The wave, not the pressure: each cell's departure from its
   own running mean (an exponential average over 0.5 s of simulated time, so a
   slowed or frozen view keeps it). Against ambient, a turbocharged exhaust

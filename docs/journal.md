@@ -5,6 +5,17 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-05 — Wave resolution of the exhaust mesh
+
+- First primary, cell at 1/4 of its length, full load held at 60 % of
+  redline, probe at every sub-step averaged over 12 × 1/8 s, against 45 mm:
+  360 mm (production) shows 29-61 % less peak-to-peak (CP2 89/127 kPa, LS3
+  37/85, K20A 36/94, Hayabusa 51/96), RMS shape error 27-76 %. 180 mm: within
+  5 % on CP2, LS3, Hayabusa; the K20A needs 90 mm (cells sampled up to 1/8 of
+  the length off the reference point).
+- Cost, budget harness free-run, best of 4 alternated, 360/180/90 mm: CP2
+  3.28/2.85/2.39, LS3 1.31/1.05/0.73, K20A 1.92/1.67/1.32. Nothing changed.
+
 ## 2026-10-05 — Oscilloscope in the part inspector
 
 - `EngineLab.EngineModel3D` (first catalogue engine): a probed cycle fills
