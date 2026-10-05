@@ -67,9 +67,10 @@ engine:
     exhaust: compact_sport
     transmission: sport_6_speed
     vehicle: rally_sedan
-  exhaust_paths:
-    - { id: 1, cylinder_ids: [1, 3], audio_volume: 1.00, acoustic_position_m: { x: -0.35, y: 0.0, z: 0.0 } }
-    - { id: 2, cylinder_ids: [2, 4], audio_volume: 0.94, acoustic_position_m: { x: 0.35, y: 0.0, z: 0.0 } }
+  # One exhaust path: the four primaries meet in one collector, which feeds
+  # the single turbo (an STI up-pipe), then one silencer and outlet. Two
+  # paths, one per bank, left the second bank's gas bypassing the drawn turbo
+  # while the solver's one turbine took the whole flow.
   cylinder_template:
     bore_mm: 99.5
     stroke_mm: 79.0

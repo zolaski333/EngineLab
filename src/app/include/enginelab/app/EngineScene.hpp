@@ -17,6 +17,8 @@ struct SceneFrame final {
     render::Mat4 projection;
     render::Vec3 eye;
     SceneLayerMode layer { SceneLayerMode::all };
+    /** Whether the gas field colours the ducts (hot walls glow either way). */
+    bool showWaves { true };
     bool xray { true };
     bool antiAliasing { true };
     /** Crank angles of the motion-blur sub-frames, oldest first; one angle
@@ -27,7 +29,7 @@ struct SceneFrame final {
     double turboShaftSweepDegrees {};
     render::ScenePoseInput pose;
     /** The solver's gas along the exhaust, or null. Waves are drawn in the
-        All and Gas flow layers; hot walls glow in every layer. */
+        All and Gas flow layers when showWaves; hot walls glow in every layer. */
     const render::GasFieldView* gasField {};
     /** Part highlighted by the inspector, or -1. */
     int selectedPart { -1 };

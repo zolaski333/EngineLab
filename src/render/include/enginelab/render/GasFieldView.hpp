@@ -35,6 +35,11 @@ namespace enginelab::render {
  */
 class GasFieldView final {
 public:
+    /** What the colour shows: each cell's departure from its mean, changing
+        with every pulse, or how strongly the cell pulses (the departure's
+        root mean square over the same half second), which holds still. */
+    enum class Colouring { wave, strength };
+
     struct PartField final {
         std::uint16_t part {};
         std::uint8_t count {};
@@ -46,10 +51,16 @@ public:
         when the engine changes. */
     void update(const EngineModel3D&, const GasFieldSnapshot&);
     void clear();
+    /** Takes effect from the next update. */
+    void setColouring(Colouring colouring) noexcept { colouring_ = colouring; }
+    [[nodiscard]] Colouring colouring() const noexcept { return colouring_; }
 
     [[nodiscard]] const std::vector<PartField>& parts() const noexcept { return parts_; }
-    /** Departure from the mean shown at either end of the colour scale. */
-    [[nodiscard]] float pressureScalePa() const noexcept { return scalePa_; }
+    /** Departure from the mean shown at either end of the colour scale, or
+        the root mean square shown at its top in `strength`. */
+    [[nodiscard]] float pressureScalePa() const noexcept {
+        return colouring_ == Colouring::strength ? strengthScalePa_ : scalePa_;
+    }
     /** Strength of the flash at the outlets, 0..1. */
     [[nodiscard]] float afterfire() const noexcept { return afterfire_; }
     [[nodiscard]] bool valid() const noexcept { return !parts_.empty(); }
@@ -61,8 +72,15 @@ private:
     std::vector<PartField> parts_;
     /** Per snapshot element and sample, the running mean pressure (Pa). */
     std::vector<std::array<float, GasFieldElement::maximumSamples>> meanPa_;
+    /** Per element and sample, the running mean of the squared departure,
+        and that mean averaged again: one average still ripples by about 5 %
+        at an idle's cycle rate, which shows as a shimmer. */
+    std::vector<std::array<float, GasFieldElement::maximumSamples>> meanSquarePa2_;
+    std::vector<std::array<float, GasFieldElement::maximumSamples>> strengthPa2_;
     double meanSeconds_ {};
+    Colouring colouring_ { Colouring::wave };
     float scalePa_ {};
+    float strengthScalePa_ {};
     float afterfire_ {};
 };
 

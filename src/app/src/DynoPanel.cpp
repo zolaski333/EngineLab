@@ -279,7 +279,12 @@ DynoPanel::DynoPanel(const DashboardModel& model, std::function<bool()> wheelMod
     runName_.onTextChange = [this] {
         if (!updatingName_ && onRenameRun) onRenameRun(runName_.getText().trim());
     };
-    runName_.onReturnKey = [this] { unfocusAllComponents(); };
+    const auto doneTyping = [this] {
+        if (onDoneTyping) onDoneTyping();
+        else unfocusAllComponents();
+    };
+    runName_.onReturnKey = doneTyping;
+    runName_.onEscapeKey = doneTyping;
     colourButton_.onClick = [this] { if (onCycleColour) onCycleColour(); };
     visibilityButton_.onClick = [this] { if (onToggleVisibility) onToggleVisibility(); };
     deleteButton_.onClick = [this] { if (onDeleteRun) onDeleteRun(); };

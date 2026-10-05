@@ -60,6 +60,15 @@ file formats, always with an in-memory migration).
   exhaust with 180 mm cells instead of 360 mm, so the gas field and the
   oscilloscope show the waves' real shape, at 13 to 20 % less simulation
   headroom. The engine keeps running through the change.
+- *Pressure waves* in the 3-D view's settings: *Hidden* (the new default,
+  nothing flickers), *Pulsation strength*, a steady map of how strongly each
+  part of the exhaust and intake pulses, or *Live pulses*, the moving waves.
+  The Gas flow layer shows the strength unless *Live pulses* is chosen.
+- Slow the simulation itself from the 3-D view: *0.25x* and *0.5x* slow the
+  physics and the sound together. The picture-only slow motion is now labelled
+  as a stroboscope (*Strobe 1:50*, *Strobe 1:250*, *Freeze*).
+- Type a size in the part inspector: click the value, type, Enter applies.
+  The steppers stay for small steps.
 - Change the bore and stroke while the engine runs: click a cylinder liner or
   a piston in the 3-D view. Each crank throw takes the new size at its next
   gas-exchange TDC, or gradually over 3 s. The number of cylinders, the
@@ -78,6 +87,22 @@ file formats, always with an in-memory migration).
 - The Merlin's supercharger is drawn between its airbox and its throttle, with
   the charge pipe to the throttle; its impeller turns geared to the crank.
   Click it for the drive ratio, impeller speed, pressure ratio and power.
+
+### Fixed
+
+- A stopped engine's intake no longer churns. From rest, every engine rang
+  its intake runners to ±14 to ±111 kPa within a second, which the 3-D view
+  showed as an intake flashing as if the engine ran. Behind a stopped crank
+  the valves now pass no gas and the runners stand at their plenum's
+  pressure. The sound of a running engine is unchanged.
+- The EJ25's four primaries now meet in one collector feeding its one turbo,
+  then one silencer and outlet. Its two banks used to be separate exhausts,
+  one of which bypassed the turbo in the 3-D view. The sound changes (about
+  2 dB quieter, darker, mono); the turbo no longer overshoots its boost at
+  the top of the range (402 instead of 462 N.m at 6,000 rpm, closer to the
+  WRX STI's rating) and spools later at 2,000 rpm (313 instead of 359 N.m).
+- The dyno's run name no longer keeps the keyboard: Enter, Escape or a click in
+  the 3-D view hands it back to the throttle and the other engine keys.
 
 ## [0.2.0] — 2026-10-04
 

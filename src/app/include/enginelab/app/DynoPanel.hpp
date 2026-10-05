@@ -46,6 +46,8 @@ public:
 
     std::function<void(int runIndex)> onSelectRun;
     std::function<void(const juce::String&)> onRenameRun;
+    /** Enter or Escape in the run name: the keyboard goes back to the engine. */
+    std::function<void()> onDoneTyping;
     std::function<void()> onCycleColour;
     std::function<void()> onToggleVisibility;
     std::function<void()> onDeleteRun;

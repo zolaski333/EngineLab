@@ -91,7 +91,8 @@ factor is shown in the diagnostics.
   throws, valves and flames placed by the simulator's own kinematics, so
   4,000 rpm on the tachometer is 4,000 rpm on screen. X-ray or solid block,
   layers (all, combustion, mechanical, gas flow), front / side / three-quarter
-  views, 1:50 and 1:250 slow motion, motion blur and a frame-rate cap from 30
+  views, a 0.25x or 0.5x simulation speed (the sound slows too) and a 1:50 or
+  1:250 stroboscope (the picture only), motion blur and a frame-rate cap from 30
   fps to unlimited. The exhaust and intake are laid out from the engine's own
   configuration — the component graph with its real lengths, diameters and
   volumes (4-2-1, X-pipe, twin mufflers…), runners, plenum, throttle bores,

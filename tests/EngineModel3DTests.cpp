@@ -161,6 +161,117 @@ void checkWaveColours(const EngineModel3D& model) {
     require(intakeBelow && intakeAbove, config.name + ": an intake wave below ambient shows both colours");
 }
 
+/** Largest departure of an intake runner or plenum sample from `referencePa`. */
+double intakeDeparturePa(const GasFieldSnapshot& field, double referencePa) {
+    double worst = 0.0;
+    for (const auto& element : field.elements) {
+        if (element.kind != GasFieldElementKind::intakeRunner && element.kind != GasFieldElementKind::intakePlenum)
+            continue;
+        for (std::size_t s = 0; s < element.sampleCount; ++s)
+            worst = std::max(worst, std::abs(element.pressurePa[s] - referencePa));
+    }
+    return worst;
+}
+
+/** A stopped engine's intake holds still. Measured 2026-10-06 before the fix:
+ * from a uniform ambient start, every catalogue engine rang its runners to
+ * ±14 to ±111 kPa within a second, valves open or shut. */
+void checkStoppedIntakeAtRest(const EngineConfig& config, bool shutDown) {
+    Bench bench(config);
+    for (int frame = 0; frame < 240; ++frame) {
+        (void)bench.simulator->step(1.0 / 240.0, EngineControls {});
+        if (frame % 24 != 23) continue;
+        bench.simulator->captureGasFieldNow();
+        const auto departure = intakeDeparturePa(bench.simulator->gasField(), config.ambientPressureKpa * 1'000.0);
+        require(departure < 1.0, config.name + ": a never-started intake stays at ambient pressure (off by "
+                                     + std::to_string(departure) + " Pa)");
+    }
+    if (!shutDown) return;
+    // Run, then switch off: once the crank stops, the runners stand at their
+    // plenum's pressure, which refills through the shut throttle.
+    for (int frame = 0; frame < 6 * 240; ++frame) {
+        EngineControls controls;
+        controls.ignitionEnabled = frame < 4 * 240;
+        controls.starterEngaged = frame < 360;
+        (void)bench.simulator->step(1.0 / 240.0, controls);
+        if (frame == 4 * 240 - 1)
+            require(bench.simulator->state().rpm > 400.0, config.name + ": the engine runs before it is switched off");
+    }
+    require(bench.simulator->state().rpm == 0.0, config.name + ": the engine has stopped");
+    for (int frame = 0; frame < 240; ++frame) {
+        (void)bench.simulator->step(1.0 / 240.0, EngineControls {});
+        if (frame % 24 != 23) continue;
+        bench.simulator->captureGasFieldNow();
+        const auto& field = bench.simulator->gasField();
+        double runnerSpread = 0.0;
+        for (const auto& element : field.elements) {
+            if (element.kind != GasFieldElementKind::intakeRunner) continue;
+            const auto plenumPa = std::find_if(field.elements.begin(), field.elements.end(), [&](const auto& e) {
+                return e.kind == GasFieldElementKind::intakePlenum && e.pathIndex == element.pathIndex;
+            })->pressurePa[0];
+            for (std::size_t s = 0; s < element.sampleCount; ++s)
+                runnerSpread = std::max(runnerSpread, static_cast<double>(std::abs(element.pressurePa[s] - plenumPa)));
+        }
+        require(runnerSpread < 1.0, config.name + ": a stopped engine's runners stand at their plenum's pressure (off by "
+                                        + std::to_string(runnerSpread) + " Pa)");
+    }
+}
+
+/** The pulsation strength holds still while the wave moves: over a quarter
+    of a pulse every wave colour changes and no strength colour does; a
+    pulsing duct is warm, a quiet one grey. */
+void checkStrengthColours(const EngineModel3D& model) {
+    const auto& config = model.config();
+    Bench bench(config);
+    bench.simulator->captureGasFieldNow();
+    const auto start = bench.simulator->gasField();
+    const auto run = [&](GasFieldView::Colouring colouring, double amplitudePa, int frames) {
+        auto field = start;
+        GasFieldView view;
+        view.setColouring(colouring);
+        std::vector<std::vector<float>> history;
+        for (int k = 0; k < frames; ++k) {
+            ++field.sequence;
+            field.simulationTimeSeconds += 0.01;
+            for (std::size_t e = 0; e < field.elements.size(); ++e)
+                for (std::size_t s = 0; s < field.elements[e].sampleCount; ++s)
+                    field.elements[e].pressurePa[s] = static_cast<float>(field.ambientPressurePa + 50'000.0
+                        + amplitudePa * std::sin(2.0 * std::numbers::pi * k / 16.0 + static_cast<double>(s + e)));
+            view.update(model, field);
+            std::vector<float> colours;
+            for (const auto& part : view.parts())
+                colours.insert(colours.end(), part.samples.begin(), part.samples.begin() + 4 * part.count);
+            history.push_back(std::move(colours));
+        }
+        return history;
+    };
+    const auto change = [](const std::vector<std::vector<float>>& history) {
+        // The largest colour change over the last quarter pulse.
+        float worst = 0.0F;
+        const auto& last = history.back();
+        for (std::size_t back = 1; back <= 4; ++back) {
+            const auto& earlier = history[history.size() - 1 - back];
+            for (std::size_t i = 0; i < last.size(); ++i)
+                if (i % 4 != 3) worst = std::max(worst, std::abs(last[i] - earlier[i]));
+        }
+        return worst;
+    };
+    const auto wave = run(GasFieldView::Colouring::wave, 10'000.0, 400);
+    const auto strength = run(GasFieldView::Colouring::strength, 10'000.0, 400);
+    require(change(wave) > 0.1F, config.name + ": the live wave colours move");
+    require(change(strength) < 0.02F, config.name + ": the strength colours hold still ("
+                                          + std::to_string(change(strength)) + ")");
+    bool warm = !strength.back().empty();
+    for (std::size_t i = 0; i + 2 < strength.back().size(); i += 4)
+        warm = warm && strength.back()[i] > 1.5F * strength.back()[i + 2];
+    require(warm, config.name + ": every pulsing duct shows a warm strength colour");
+    const auto still = run(GasFieldView::Colouring::strength, 0.0, 40);
+    bool grey = !still.back().empty();
+    for (std::size_t i = 0; i + 2 < still.back().size(); i += 4)
+        grey = grey && still.back()[i] < still.back()[i + 2];
+    require(grey, config.name + ": a duct that does not pulse stays grey");
+}
+
 /** The field is captured at the angle asked for, and capturing it changes nothing. */
 void checkGasFieldCapture(const EngineConfig& config) {
     Bench watched(config);
@@ -361,6 +472,13 @@ void checkTurbo(const EngineModel3D& model) {
     require(turbo.placed == wanted, name + ": a turbocharger is drawn when one is configured, and only then");
     if (!turbo.placed) return;
     ++turbosDrawn;
+
+    // The solver's one turbine takes the whole exhaust flow, so the drawn
+    // turbo is fed by every cylinder: a second path would bypass it.
+    const auto turboPath = std::find_if(config.exhaustPaths.begin(), config.exhaustPaths.end(),
+        [&turbo](const ExhaustPathConfig& path) { return path.id == turbo.pathId; });
+    require(turboPath != config.exhaustPaths.end() && turboPath->cylinderIds.size() == config.cylinders.size(),
+            name + ": every cylinder's exhaust reaches the turbo");
 
     // It is bolted to its collector, and the path resumes at its outlet.
     bool fed = false, resumes = false;
@@ -581,6 +699,7 @@ void checkEngine(const EngineConfig& config) {
     checkSupercharger(model);
     checkGasFieldBinding(model);
     checkWaveColours(model);
+    checkStrengthColours(model);
     checkExhaustResize(model);
 
     std::vector<SceneInstance> instances;
@@ -796,6 +915,9 @@ int main() {
     checkCrankClock();
     checkGasFieldCapture(catalogue.entries.front().config);
     checkGasProbe(catalogue.entries.front().config);
+    for (const auto& entry : catalogue.entries)
+        checkStoppedIntakeAtRest(entry.config, entry.config.name.find("CP2") != std::string::npos
+                                                   || entry.config.name.find("LS3") != std::string::npos);
     std::cout << "EngineModel3D: routes: " << routeIssues[0] << " clashes, " << routeIssues[1] << " self-clashes, "
               << routeIssues[2] << " engine clashes, " << routeIssues[3] << " tight bends, " << routeIssues[4]
               << " stretched\n";

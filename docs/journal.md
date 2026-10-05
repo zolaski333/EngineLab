@@ -5,6 +5,31 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-06 — EJ25: one exhaust path into its one turbo
+
+- Two paths (one per bank) left cylinders 2/4 bypassing the drawn turbo; the
+  solver's single turbine already took the whole flow. Now one path (4-1).
+- Dyno sweep, WOT, before/after: 2,000 rpm 359/313 N.m (boost 185/151 kPa);
+  2,500-5,000 rpm -2 to +3 %; 5,500-6,000 rpm 453-462/402-404 N.m, boost
+  236-257/211 kPa (the overshoot past the 2.05 wastegate is gone).
+- CatalogReference: 4,000 rpm -6.4/-7.1 %, 6,000 rpm power +10.6/+7.0 %.
+- AudioRenderHarness: rms 0.0341/0.0265 (-2.2 dB), bands 39/60 -> 63/37 %,
+  main resonance 350 Hz -> 3,986 Hz, mono (LRcorr 1.0). Not listened to.
+- DFCO resume (declared rich regression): peak AFR error 31.6 -> 35.1 %,
+  misfires 3 -> 1; the test envelope went from 0.35 to 0.40.
+
+## 2026-10-06 — A stopped engine's intake rang by itself
+
+- From a uniform ambient start, ignition off, every engine's runners reached
+  ±14 to ±111 kPa in a second (CP2 ±14, LS3 ±54, Radial ±111). Two causes,
+  each measured alone: an open valve at zero pressure difference (the
+  quasi-steady law has unbounded gain), and, valves shut, the explicit
+  plenum coupling (growth ~3.7x per 400 us flush; ±30-70 kPa at 400 us,
+  ±5-45 at 100 us, ±0.05-0.25 at 20 us). Mesh 30 mm and RK2: no better.
+- Fix: |rpm| < 20 without starter seals the valves and settles the runners
+  at plenum pressure. AudioRenderHarness deterministic renders bit-identical.
+- Not measured: whether the same coupling adds noise to a running intake.
+
 ## 2026-10-05 — Merlin supercharger drawn; cost of the gas view
 
 - `EngineLab.EngineModel3D`: drawn on the Merlin only, eye fed by the airbox,

@@ -278,10 +278,12 @@ if(TARGET EngineLabLoadedAccelerationHarness)
     # idle; the same ratchet had been refilling the runner after a fuel cut.
     # The resume now runs rich for ~0.2 s: peak |AFR error| 16-32 % against
     # 9-17 % before, and the EJ25 misfires rich (AFR ~8.8). The envelope still
-    # rejects the old AFR 20-30 lean excursion (+55 % and more).
+    # rejects the old AFR 20-30 lean excursion (+55 % and more). 0.35 became
+    # 0.40 when the EJ25's two exhausts merged into one (2026-10-06): its peak
+    # went from 31.6 to 35.1 %, its resume misfires from 3 to 1.
     add_test(NAME EngineLab.LoadedAccelerationCatalogDfcoResume
         COMMAND EngineLabLoadedAccelerationHarness
-            --dfco-tip-in --resume-afr-envelope 0.35
+            --dfco-tip-in --resume-afr-envelope 0.40
             --known-resume-misfire EJ25)
     # Standing start from idle, 1st gear, WOT, clutch over 0.9 s, 4 s after
     # the start (inside the ECU post-start window) and 25 s after it. d70e8b8

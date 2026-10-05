@@ -41,6 +41,7 @@ public:
     enum class Style { pill, tabs };
 
     SegmentedControl(juce::StringArray options, Style = Style::pill);
+    /** -1 selects nothing (a value the options do not list). */
     void setSelected(int index, juce::NotificationType = juce::dontSendNotification);
     [[nodiscard]] int selected() const noexcept { return selected_; }
     [[nodiscard]] int idealWidth() const;
