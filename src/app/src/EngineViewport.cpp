@@ -6,6 +6,7 @@
 #include <array>
 #include <chrono>
 #include <cmath>
+#include <limits>
 #include <numbers>
 #include <utility>
 
@@ -452,7 +453,15 @@ void WaveLegend::paint(juce::Graphics& g) {
 namespace {
 constexpr int inspectorRowHeight = 19;
 constexpr int inspectorHeader = 46;
+constexpr int inspectorScopeHeight = 118;
 } // namespace
+
+void PartInspector::setScope(std::optional<Scope> scope) {
+    const auto resize = scope.has_value() != scope_.has_value();
+    scope_ = std::move(scope);
+    if (resize) setSize(getWidth(), idealHeight());
+    repaint();
+}
 
 void PartInspector::show(juce::String title, juce::String subtitle, std::vector<Row> rows, juce::String note) {
     const auto resize = rows.size() != rows_.size() || note != note_;
@@ -474,7 +483,8 @@ juce::TextLayout PartInspector::noteLayout(float width) const {
 }
 
 int PartInspector::idealHeight() const {
-    const auto rows = inspectorHeader + inspectorRowHeight * static_cast<int>(rows_.size()) + 10;
+    const auto rows = inspectorHeader + inspectorRowHeight * static_cast<int>(rows_.size()) + 10
+        + (scope_ ? inspectorScopeHeight : 0);
     if (note_.isEmpty()) return rows;
     // The viewport gives the inspector 280 px; before that, assume it.
     const auto width = static_cast<float>((getWidth() > 0 ? getWidth() : 280) - 24);
@@ -516,10 +526,77 @@ void PartInspector::paint(juce::Graphics& g) {
         g.setFont(monoFont(11.5F, false));
         g.drawText(row.value, line, juce::Justification::centredRight, true);
     }
+    if (scope_) paintScope(g, content.removeFromTop(inspectorScopeHeight).toFloat());
     if (note_.isNotEmpty()) {
         content.removeFromTop(6);
         noteLayout(static_cast<float>(content.getWidth())).draw(g, content.toFloat());
     }
+}
+
+void PartInspector::paintScope(juce::Graphics& g, juce::Rectangle<float> area) const {
+    area.removeFromTop(6.0F);
+    g.setFont(uiFont(11.0F));
+    g.setColour(colours::muted);
+    g.drawText(scope_->caption, area.removeFromTop(15.0F), juce::Justification::centredLeft, true);
+    const auto ticks = area.removeFromBottom(14.0F);
+    auto plot = area.reduced(0.0F, 3.0F);
+    g.setColour(juce::Colour(0xff0a0e0d));
+    g.fillRoundedRectangle(plot, 4.0F);
+    g.setColour(colours::line);
+    g.drawRoundedRectangle(plot, 4.0F, 1.0F);
+    plot = plot.reduced(4.0F, 6.0F);
+
+    const auto& kpa = scope_->kpa;
+    float low = 0.0F, high = 0.0F;
+    for (const auto value : kpa)
+        if (std::isfinite(value)) {
+            low = std::min(low, value);
+            high = std::max(high, value);
+        }
+    // At least 1 kPa either side of ambient, so a quiet duct is not magnified.
+    low = std::min(low, -1.0F);
+    high = std::max(high, 1.0F);
+    const auto yOf = [&](float value) { return plot.getBottom() - (value - low) / (high - low) * plot.getHeight(); };
+    const auto bins = static_cast<float>(std::max<std::size_t>(1U, kpa.size()));
+    const auto xOf = [&](std::size_t bin) { return plot.getX() + (static_cast<float>(bin) + 0.5F) / bins * plot.getWidth(); };
+
+    // Ambient, and the crank revolutions.
+    g.setColour(colours::lineStrong);
+    g.drawHorizontalLine(juce::roundToInt(yOf(0.0F)), plot.getX(), plot.getRight());
+    const auto revolutions = juce::roundToInt(scope_->cycleDegrees / 360.0);
+    for (int r = 1; r < revolutions; ++r) {
+        const auto x = plot.getX() + plot.getWidth() * static_cast<float>(r) / static_cast<float>(revolutions);
+        g.drawVerticalLine(juce::roundToInt(x), plot.getY(), plot.getBottom());
+    }
+    juce::Path trace;
+    bool open = false;
+    for (std::size_t bin = 0; bin < kpa.size(); ++bin) {
+        if (!std::isfinite(kpa[bin])) {
+            open = false;
+            continue;
+        }
+        const juce::Point<float> point { xOf(bin), yOf(kpa[bin]) };
+        if (open) trace.lineTo(point);
+        else trace.startNewSubPath(point);
+        open = true;
+    }
+    g.setColour(colours::accentLight);
+    g.strokePath(trace, juce::PathStrokeType(1.4F, juce::PathStrokeType::curved));
+    if (scope_->latestBin >= 0 && static_cast<std::size_t>(scope_->latestBin) < kpa.size()) {
+        const auto x = xOf(static_cast<std::size_t>(scope_->latestBin));
+        g.setColour(colours::text.withAlpha(0.5F));
+        g.drawVerticalLine(juce::roundToInt(x), plot.getY(), plot.getBottom());
+    }
+    g.setFont(monoFont(10.0F, false));
+    g.setColour(colours::faint);
+    const auto kpaText = [](float value) { return (value >= 0.0F ? "+" : "") + juce::String(value, 1) + " kPa"; };
+    g.drawText(kpaText(high), plot.withHeight(12.0F), juce::Justification::topRight, false);
+    g.drawText(kpaText(low), plot.withTrimmedTop(plot.getHeight() - 12.0F), juce::Justification::bottomRight, false);
+    g.setFont(uiFont(10.5F));
+    g.drawText(utf8("0°"), ticks, juce::Justification::centredLeft, false);
+    g.drawText(utf8("crank angle"), ticks, juce::Justification::centred, false);
+    g.drawText(juce::String(juce::roundToInt(scope_->cycleDegrees)) + utf8("°"), ticks,
+               juce::Justification::centredRight, false);
 }
 
 // ------------------------------------------------------------------ viewport
@@ -628,6 +705,10 @@ void EngineViewport::setWheelModifierCheck(std::function<bool()> check) {
 
 void EngineViewport::setGasFieldSource(std::function<bool(double, GasFieldSnapshot&)> source) {
     gasFieldSource_ = std::move(source);
+}
+
+void EngineViewport::setGasProbeSource(std::function<bool(std::int32_t, std::uint8_t, GasProbeTrace&)> source) {
+    gasProbeSource_ = std::move(source);
 }
 
 void EngineViewport::setEngine(const EngineConfig& config) {
@@ -875,11 +956,31 @@ void EngineViewport::selectPartAt(juce::Point<float> position) {
     const auto hit = render::pickPart(*scene_, instances, eye, direction, [this, layer, xray](std::uint16_t part) {
         return scenePartPickable(scene_->parts()[part], layer, xray);
     });
+    // The oscilloscope probes the duct where the click landed.
+    probeStation_ = 0.5F;
+    if (hit) {
+        const auto point = eye + direction * hit->distance;
+        for (const auto& duct : scene_->ducts()) {
+            if (duct.part != hit->part || duct.centreline.size() < 2U) continue;
+            float walked = 0.0F, at = 0.0F, nearest = std::numeric_limits<float>::max();
+            for (std::size_t i = 0; i < duct.centreline.size(); ++i) {
+                if (i > 0) walked += render::length(duct.centreline[i] - duct.centreline[i - 1U]);
+                const auto distance = render::length(duct.centreline[i] - point);
+                if (distance < nearest) {
+                    nearest = distance;
+                    at = walked;
+                }
+            }
+            probeStation_ = walked > 0.0F ? at / walked : 0.5F;
+        }
+    }
     setSelectedPart(hit ? static_cast<int>(hit->part) : -1);
 }
 
 void EngineViewport::setSelectedPart(int part) {
     selectedPart_ = part;
+    gasProbe_ = {};
+    inspector_.setScope(std::nullopt);
     {
         const std::lock_guard lock(sharedMutex_);
         shared_.selectedPart = part;
@@ -1069,6 +1170,31 @@ void EngineViewport::updateInspector() {
     inspector_.show(title, subtitle, std::move(rows), note);
 }
 
+void EngineViewport::updateScope() {
+    if (!scene_ || !gasProbeSource_ || selectedPart_ < 0) return;
+    const auto identity = scene_->identify(static_cast<std::uint16_t>(selectedPart_));
+    const auto index = static_cast<std::size_t>(std::max(0, identity.duct));
+    if (identity.role != render::PartRole::duct || index >= gasFieldBinding_.size() || gasFieldBinding_[index] < 0) return;
+    const auto element = gasFieldBinding_[index];
+    const auto count = static_cast<int>(gasField_.elements[static_cast<std::size_t>(element)].sampleCount);
+    if (count == 0) return;
+    const auto sample = static_cast<std::uint8_t>(std::clamp(static_cast<int>(probeStation_ * static_cast<float>(count)), 0, count - 1));
+    if (!gasProbeSource_(element, sample, gasProbe_) || gasProbe_.element != element || gasProbe_.sample != sample) return;
+    PartInspector::Scope scope;
+    scope.kpa.resize(GasProbeTrace::bins);
+    for (std::size_t bin = 0; bin < GasProbeTrace::bins; ++bin) {
+        const auto pressure = gasProbe_.pressurePa[bin];
+        scope.kpa[bin] = pressure > 0.0F ? (pressure - static_cast<float>(gasProbe_.ambientPressurePa)) / 1'000.0F
+                                         : std::numeric_limits<float>::quiet_NaN();
+    }
+    scope.latestBin = gasProbe_.latestBin;
+    scope.cycleDegrees = gasProbe_.cycleDegrees;
+    scope.caption = count > 1 ? "Pressure, cell " + juce::String(sample + 1) + " of " + juce::String(count)
+                                    + ", at every solver step"
+                              : juce::String("Pressure, at every solver step");
+    inspector_.setScope(std::move(scope));
+}
+
 void EngineViewport::mouseWheelMove(const juce::MouseEvent& event, const juce::MouseWheelDetails& wheel) {
     if (!scene_ || (wheelModifierActive_ && wheelModifierActive_())) {
         juce::Component::mouseWheelMove(event, wheel);
@@ -1178,7 +1304,10 @@ void EngineViewport::refresh() {
 
     if (!pacer_.joinable()) cycle_.repaint();
     updateLegend();
-    if (inspector_.isVisible()) updateInspector();
+    if (inspector_.isVisible()) {
+        updateInspector();
+        updateScope();
+    }
 
     if (now - lastFpsWall_ >= 1.0) {
         const auto frames = framesRendered_.load();

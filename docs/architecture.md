@@ -314,6 +314,18 @@ duct, the solver's pressure range, gas and wall temperatures and cell count
 at the displayed angle. The pick is a ray cast on the CPU against the posed
 meshes of the visible layer; X-ray shells let the click through.
 
+For a duct the inspector also draws an oscilloscope: the pressure of the
+clicked cell (the cell nearest the click along the centreline) over one
+engine cycle, against ambient. The view asks `EngineRuntime::requestGasProbe()`
+for that cell; the simulator records it at every sub-step into 360 crank
+bins (2° on a four-stroke), each bin keeping the latest cycle that crossed
+it, and the runtime publishes the trace through a `try_lock` mailbox once per
+frame. It reads the same cell the gas field shows (runners reversed to
+gas-flow order) from conservative states only, so the simulation is
+unchanged; it stops 60 frames after the view stops asking. A marker shows the
+bin last written. Its sub-step resolution is what the snapshot cannot give:
+a capture is one instant per crank angle.
+
 ## Extension rule
 
 A two-stroke or diesel engine, a torsional crankshaft, a 1D acoustic solver or

@@ -116,6 +116,11 @@ MainComponent::MainComponent() {
         runtime_->requestGasField(crankAngleDegrees);
         return runtime_->latestGasField(field);
     });
+    viewport_.setGasProbeSource([this](std::int32_t element, std::uint8_t sample, GasProbeTrace& trace) {
+        if (!runtime_) return false;
+        runtime_->requestGasProbe(element, sample);
+        return runtime_->latestGasProbe(trace);
+    });
 
     for (juce::Component* panel : { static_cast<juce::Component*>(&topBar_),
                                     static_cast<juce::Component*>(&controls_),

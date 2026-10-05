@@ -45,7 +45,9 @@ file formats, always with an in-memory migration).
   giving the scale. Exhaust walls glow red above 798 K, and an afterfire lights a
   flame at the outlets.
 - Click a part in the 3-D view to inspect it: its authored dimensions and, for
-  an exhaust duct, the solver's pressures and temperatures in it.
+  an exhaust duct, the solver's pressures and temperatures in it. For an
+  exhaust or intake duct, an oscilloscope traces the pressure of the clicked
+  cell over the engine cycle, recorded at every solver step.
 - Exhaust and intake pipes in the 3-D view are routed like real ones: they no
   longer pass through each other, the engine or the intake, bend no tighter
   than 1.25 diameters and keep their authored length. A collector is wide

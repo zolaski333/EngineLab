@@ -5,6 +5,15 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-05 — Oscilloscope in the part inspector
+
+- `EngineLab.EngineModel3D` (first catalogue engine): a probed cycle fills
+  all 360 bins; on every element the probe reads the captured cell exactly;
+  rpm and crank angle bit-identical to an unprobed simulator.
+- Mutation: runner cells not reversed to gas-flow order fails (element 8).
+- Not measured: its cost on the budget harness. It only runs while a duct
+  is inspected: one cell read per sub-step.
+
 ## 2026-10-05 — Intake waves in the 3-D view
 
 - Premise checked first: is the intake wave too weak for the exhaust's

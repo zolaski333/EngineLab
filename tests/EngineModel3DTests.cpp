@@ -202,6 +202,56 @@ void checkGasFieldCapture(const EngineConfig& config) {
             config.name + ": capturing the gas field does not change the simulation");
 }
 
+/** The probe records one cell at every solver step, reads the cell the gas
+    field shows, and changes nothing. */
+void checkGasProbe(const EngineConfig& config) {
+    Bench watched(config);
+    Bench control(config);
+    const auto controls = [](int frame) {
+        EngineControls value;
+        value.ignitionEnabled = true;
+        value.starterEngaged = frame < 240;
+        value.throttle = 0.35;
+        value.load = 0.2;
+        return value;
+    };
+    const auto step = [&](int frame) {
+        (void)watched.simulator->step(1.0 / 240.0, controls(frame));
+        (void)control.simulator->step(1.0 / 240.0, controls(frame));
+    };
+    int frame = 0;
+    for (; frame < 360; ++frame) step(frame);
+    watched.simulator->captureGasFieldNow();
+    const auto elements = watched.simulator->gasField().elements;
+    require(!elements.empty(), config.name + ": the gas field has elements to probe");
+
+    // A whole cycle on the first element fills every crank bin.
+    watched.simulator->probeGasField(0, 0);
+    for (const auto end = frame + 120; frame < end; ++frame) step(frame);
+    const auto& trace = watched.simulator->gasProbe();
+    const auto filled = std::count_if(trace.pressurePa.begin(), trace.pressurePa.end(), [](float p) { return p > 0.0F; });
+    require(filled == static_cast<std::ptrdiff_t>(GasProbeTrace::bins),
+            config.name + ": a probed cycle fills every crank bin (" + std::to_string(filled) + ")");
+    require(trace.sequence > 0 && trace.latestBin >= 0, config.name + ": the probe publishes its trace");
+
+    // Every element and sample reads the same cell a capture shows.
+    for (std::size_t e = 0; e < elements.size(); ++e) {
+        const auto count = std::max<std::size_t>(1U, elements[e].sampleCount);
+        const auto sample = static_cast<std::uint8_t>(e % count);
+        watched.simulator->probeGasField(static_cast<std::int32_t>(e), sample);
+        step(frame++);
+        watched.simulator->captureGasFieldNow();
+        const auto& now = watched.simulator->gasProbe();
+        require(now.pressurePa[static_cast<std::size_t>(now.latestBin)]
+                    == watched.simulator->gasField().elements[e].pressurePa[sample],
+                config.name + ": the probe reads the cell the gas field shows (element " + std::to_string(e) + ")");
+    }
+    watched.simulator->stopGasProbe();
+    require(watched.simulator->state().rpm == control.simulator->state().rpm
+                && watched.simulator->state().crankAngleDegrees == control.simulator->state().crankAngleDegrees,
+            config.name + ": probing the gas field does not change the simulation");
+}
+
 void checkStations(const EngineModel3D& model) {
     for (const auto& duct : model.ducts()) {
         const auto& part = model.parts()[duct.part];
@@ -587,6 +637,7 @@ int main() {
                                                    + std::to_string(routeIssues[k]) + ")");
     checkCrankClock();
     checkGasFieldCapture(catalogue.entries.front().config);
+    checkGasProbe(catalogue.entries.front().config);
     std::cout << "EngineModel3D: routes: " << routeIssues[0] << " clashes, " << routeIssues[1] << " self-clashes, "
               << routeIssues[2] << " engine clashes, " << routeIssues[3] << " tight bends, " << routeIssues[4]
               << " stretched\n";

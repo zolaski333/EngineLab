@@ -810,6 +810,7 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
 
     for (std::size_t subStep = 0; subStep < subStepCount; ++subStep) {
         pollGasFieldCapture();
+        recordGasProbe();
         const auto subStepStartTime = state_.simulationTimeSeconds;
         const auto subPreviousRpm = state_.rpm;
         const auto subPreviousAngle = state_.crankAngleDegrees;
@@ -3921,6 +3922,8 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
     pollGasFieldCapture();
     if (gasFieldArmed_ && state_.simulationTimeSeconds - gasFieldCaptureSeconds_ > 0.25)
         captureGasField();
+    recordGasProbe();
+    if (gasProbe_.element >= 0) ++gasProbe_.sequence;
     frame.state = state_;
     return frame;
 }
@@ -3986,6 +3989,90 @@ void EngineSimulator::pollGasFieldCapture() noexcept {
     // A sub-step never turns the crank by half a turn: more means it ran
     // backwards (a stall rocking back), which crosses nothing.
     if (travelled <= 180.0 && toTarget <= travelled) captureGasField();
+}
+
+void EngineSimulator::probeGasField(std::int32_t element, std::uint8_t sample) noexcept {
+    if (element < 0 || static_cast<std::size_t>(element) >= gasField_.elements.size()) {
+        gasProbe_.element = -1;
+        return;
+    }
+    if (element == gasProbe_.element && sample == gasProbe_.sample) return;
+    gasProbe_.element = element;
+    gasProbe_.sample = sample;
+    gasProbe_.pressurePa.fill(0.0F);
+    gasProbe_.latestBin = -1;
+    gasProbeStarted_ = false;
+}
+
+double EngineSimulator::gasFieldPressurePa(std::size_t element, std::size_t sample) const noexcept {
+    // The same cells captureGasField() samples: count the elements of the
+    // same kind before this one.
+    const auto& elements = gasField_.elements;
+    const auto kind = elements[element].kind;
+    std::size_t index = 0;
+    for (std::size_t e = 0; e < element; ++e)
+        if (elements[e].kind == kind) ++index;
+    const auto cellPressure = [sample](const gasdynamics::FiniteVolumeDuct& duct, bool reversed) {
+        const auto cells = duct.cells();
+        const auto count = std::min(cells.size(), GasFieldElement::maximumSamples);
+        if (count == 0) return 0.0;
+        const auto s = std::min(sample, count - 1U);
+        auto cell = std::min(cells.size() - 1U, static_cast<std::size_t>(
+            (static_cast<double>(s) + 0.5) * static_cast<double>(cells.size()) / static_cast<double>(count)));
+        if (reversed) cell = cells.size() - 1U - cell;
+        const auto primitive = duct.mixtureModel().primitiveFromConservative(cells[cell]);
+        return primitive ? primitive->pressurePa : 0.0;
+    };
+    switch (kind) {
+    case GasFieldElementKind::exhaustDuct:
+        return physicalExhaustNetwork_ ? cellPressure(physicalExhaustNetwork_->ducts()[index], false) : 0.0;
+    case GasFieldElementKind::exhaustJunction: {
+        if (!physicalExhaustNetwork_) return 0.0;
+        const auto primitive = physicalExhaustNetwork_->mixtureModel().primitiveFromConservative(
+            physicalExhaustNetwork_->junctionStates()[index]);
+        return primitive ? primitive->pressurePa : 0.0;
+    }
+    case GasFieldElementKind::intakeRunner: {
+        std::size_t runner = 0;
+        for (std::size_t seen = 0; runner < intakeRunnerNetworks_.size(); ++runner) {
+            if (!intakeRunnerNetworks_[runner]) continue;
+            if (seen++ == index) break;
+        }
+        return runner < intakeRunnerNetworks_.size()
+            ? cellPressure(intakeRunnerNetworks_[runner]->ducts().front(), true) : 0.0;
+    }
+    case GasFieldElementKind::intakePlenum:
+        return intakePlenumGas_[elements[element].pathIndex].pressureKpa() * 1'000.0;
+    }
+    return 0.0;
+}
+
+void EngineSimulator::recordGasProbe() noexcept {
+    if (gasProbe_.element < 0) return;
+    const auto cycle = eventGenerator_.cycleDegrees();
+    const auto forward = [cycle](double degrees) { return std::fmod(std::fmod(degrees, cycle) + cycle, cycle); };
+    const auto binOf = [&](double degrees) {
+        return std::min<std::int32_t>(static_cast<std::int32_t>(GasProbeTrace::bins) - 1,
+            static_cast<std::int32_t>(forward(degrees) / cycle * static_cast<double>(GasProbeTrace::bins)));
+    };
+    const auto pressure = static_cast<float>(
+        gasFieldPressurePa(static_cast<std::size_t>(gasProbe_.element), gasProbe_.sample));
+    gasProbe_.cycleDegrees = cycle;
+    gasProbe_.ambientPressurePa = config_.ambientPressureKpa * 1'000.0;
+    const auto bin = binOf(state_.crankAngleDegrees);
+    // Every bin the crank crossed since the last sub-step takes this value;
+    // a step backwards (a stall rocking back) only rewrites the current bin.
+    const auto travelled = forward(state_.crankAngleDegrees - gasProbeLastDegrees_);
+    if (gasProbeStarted_ && travelled <= 180.0) {
+        for (auto b = gasProbe_.latestBin; b != bin;) {
+            b = (b + 1) % static_cast<std::int32_t>(GasProbeTrace::bins);
+            gasProbe_.pressurePa[static_cast<std::size_t>(b)] = pressure;
+        }
+    }
+    gasProbe_.pressurePa[static_cast<std::size_t>(bin)] = pressure;
+    gasProbe_.latestBin = bin;
+    gasProbeLastDegrees_ = state_.crankAngleDegrees;
+    gasProbeStarted_ = true;
 }
 
 void EngineSimulator::captureGasField() noexcept {

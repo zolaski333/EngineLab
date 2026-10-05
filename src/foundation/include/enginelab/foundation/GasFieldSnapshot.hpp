@@ -66,4 +66,26 @@ struct GasFieldSnapshot final {
     std::vector<GasFieldElement> elements;
 };
 
+/**
+ * Pressure at one place of the gas field over the cycle, recorded at every
+ * solver sub-step: the part inspector's oscilloscope. A snapshot holds one
+ * instant; this holds the history, so the waves in a duct read as a trace.
+ */
+struct GasProbeTrace final {
+    /** Crank bins over the cycle (2 degrees each over a four-stroke cycle). */
+    static constexpr std::size_t bins = 360;
+
+    std::uint64_t sequence {};
+    /** Index in GasFieldSnapshot::elements, and the sample along it. */
+    std::int32_t element { -1 };
+    std::uint8_t sample {};
+    double cycleDegrees { 720.0 };
+    double ambientPressurePa {};
+    /** Pressure in each crank bin, the latest pass of the crank (Pa); 0 where
+        the crank has not passed since the probe was set. */
+    std::array<float, bins> pressurePa {};
+    /** Bin the crank is in. */
+    std::int32_t latestBin { -1 };
+};
+
 } // namespace enginelab

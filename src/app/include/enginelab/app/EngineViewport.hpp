@@ -11,6 +11,7 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <thread>
 
 namespace enginelab::ui {
@@ -85,8 +86,18 @@ public:
         juce::String value;
     };
     std::function<void()> onClose;
+    /** An oscilloscope trace over the engine cycle. */
+    struct Scope final {
+        /** Pressure against ambient per crank bin (kPa); NaN where empty. */
+        std::vector<float> kpa;
+        int latestBin { -1 };
+        double cycleDegrees { 720.0 };
+        juce::String caption;
+    };
     /** `note`, if any, is a short paragraph under the rows. */
     void show(juce::String title, juce::String subtitle, std::vector<Row> rows, juce::String note = {});
+    /** Shows a trace under the rows, or none. */
+    void setScope(std::optional<Scope> scope);
     [[nodiscard]] int idealHeight() const;
     void paint(juce::Graphics&) override;
     void mouseUp(const juce::MouseEvent&) override;
@@ -97,7 +108,9 @@ private:
     juce::String subtitle_;
     std::vector<Row> rows_;
     juce::String note_;
+    std::optional<Scope> scope_;
     [[nodiscard]] juce::TextLayout noteLayout(float width) const;
+    void paintScope(juce::Graphics&, juce::Rectangle<float> area) const;
 };
 
 /**
@@ -119,6 +132,9 @@ public:
     /** Where the gas field comes from: asks for the field at a crank angle
         (negative: the latest) and copies a newer one into the snapshot. */
     void setGasFieldSource(std::function<bool(double crankAngleDegrees, GasFieldSnapshot&)>);
+    /** Where the inspector's oscilloscope comes from: asks for the pressure
+        trace of a gas field element and sample, and copies a newer one. */
+    void setGasProbeSource(std::function<bool(std::int32_t element, std::uint8_t sample, GasProbeTrace&)>);
     /** Rebuilds the 3-D model; call after every engine change. */
     void setEngine(const EngineConfig&);
     void stepLayer(int delta);
@@ -182,6 +198,8 @@ private:
     void selectPartAt(juce::Point<float>);
     void setSelectedPart(int part);
     void updateInspector();
+    /** Asks for the oscilloscope trace of the selected duct and shows it. */
+    void updateScope();
     void updateLegend();
 
     const DashboardModel& model_;
@@ -196,6 +214,10 @@ private:
     PartInspector inspector_;
     std::function<bool()> wheelModifierActive_;
     std::function<bool(double, GasFieldSnapshot&)> gasFieldSource_;
+    std::function<bool(std::int32_t, std::uint8_t, GasProbeTrace&)> gasProbeSource_;
+    GasProbeTrace gasProbe_;
+    /** Where along the selected duct the click landed, 0..1 from its inlet. */
+    float probeStation_ { 0.5F };
     /** Latest field on the message thread, and the ducts it binds to. */
     GasFieldSnapshot gasField_;
     std::vector<int> gasFieldBinding_;

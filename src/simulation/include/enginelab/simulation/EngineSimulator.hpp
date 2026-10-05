@@ -139,11 +139,23 @@ public:
     void captureGasFieldNow() noexcept { captureGasField(); }
     /** The latest capture; sequence 0 until the first one. */
     [[nodiscard]] const GasFieldSnapshot& gasField() const noexcept { return gasField_; }
+    /** Record the pressure of one gas field element and sample (as in
+     * gasField().elements) at every sub-step, binned by crank angle over the
+     * cycle (GasProbeTrace). Setting another place clears the trace. Reading
+     * the solver state does not change it. Simulation thread only. */
+    void probeGasField(std::int32_t element, std::uint8_t sample) noexcept;
+    void stopGasProbe() noexcept { gasProbe_.element = -1; }
+    /** The probe's trace; its sequence grows at the end of every frame it
+        records. */
+    [[nodiscard]] const GasProbeTrace& gasProbe() const noexcept { return gasProbe_; }
 private:
     /** Sized once the networks exist, so a capture never allocates. */
     void configureGasFieldSnapshot();
     void pollGasFieldCapture() noexcept;
     void captureGasField() noexcept;
+    /** Pressure of one cell of the solver, by gas field element and sample. */
+    [[nodiscard]] double gasFieldPressurePa(std::size_t element, std::size_t sample) const noexcept;
+    void recordGasProbe() noexcept;
     /** Compile and allocate the mandatory nonlinear exhaust network. */
     void configurePhysicalExhaustNetwork();
     /** Assemble one 1-D finite-volume runner duct per cylinder.
@@ -319,6 +331,9 @@ private:
     double gasFieldLastDegrees_ { 0.0 };
     double gasFieldCaptureSeconds_ { 0.0 };
     bool gasFieldArmed_ { false };
+    GasProbeTrace gasProbe_;
+    double gasProbeLastDegrees_ { 0.0 };
+    bool gasProbeStarted_ { false };
     /** Workers for the per-cylinder half of the runner advance, which the
      * profiler puts at 75-84% of the mechanical sub-step. Null when the engine
      * is too small or the machine too narrow for a barrier to pay for itself,

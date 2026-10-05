@@ -502,6 +502,18 @@ void EngineRuntime::requestGasField(double crankAngleDegrees) noexcept {
     gasFieldRequestSequence_.fetch_add(1, std::memory_order_release);
 }
 
+void EngineRuntime::requestGasProbe(std::int32_t element, std::uint8_t sample) noexcept {
+    gasProbeRequest_.store(element < 0 ? -1 : static_cast<std::int64_t>(element) * 256 + sample, std::memory_order_relaxed);
+    gasProbeRequestSequence_.fetch_add(1, std::memory_order_release);
+}
+
+bool EngineRuntime::latestGasProbe(GasProbeTrace& out) const {
+    const std::scoped_lock lock(gasProbeMutex_);
+    if (gasProbeMailbox_.sequence == 0 || gasProbeMailbox_.sequence == out.sequence) return false;
+    out = gasProbeMailbox_;
+    return true;
+}
+
 bool EngineRuntime::latestGasField(GasFieldSnapshot& out) const {
     const std::scoped_lock lock(gasFieldMutex_);
     if (gasFieldMailbox_.sequence == 0 || gasFieldMailbox_.sequence == out.sequence) return false;
@@ -1033,6 +1045,16 @@ void EngineRuntime::run(std::stop_token stopToken) {
             simulator_.stopGasFieldTracking();
         else
             simulator_.trackGasFieldAngle(gasFieldDegrees);
+        // The inspector's oscilloscope, the same way.
+        const auto gasProbeRequest = gasProbeRequestSequence_.load(std::memory_order_acquire);
+        const auto gasProbePlace = gasProbeRequest_.load(std::memory_order_relaxed);
+        gasProbeIdleFrames_ = gasProbeRequest != gasProbeServedRequest_ ? 0 : gasProbeIdleFrames_ + 1;
+        gasProbeServedRequest_ = gasProbeRequest;
+        if (gasProbeIdleFrames_ > 60 || gasProbePlace < 0)
+            simulator_.stopGasProbe();
+        else
+            simulator_.probeGasField(static_cast<std::int32_t>(gasProbePlace / 256),
+                                     static_cast<std::uint8_t>(gasProbePlace % 256));
         auto frame = simulationDt > 0.0 ? simulator_.step(simulationDt, controls) : SimulationFrame { simulator_.state() };
         if (gasFieldRequested && gasFieldDegrees < 0.0 && simulationDt > 0.0)
             simulator_.captureGasFieldNow();
@@ -1042,6 +1064,13 @@ void EngineRuntime::run(std::stop_token stopToken) {
             if (lock.owns_lock()) {
                 gasFieldMailbox_ = simulator_.gasField();
                 gasFieldPublished_ = gasFieldMailbox_.sequence;
+            }
+        }
+        if (simulator_.gasProbe().element >= 0 && simulator_.gasProbe().sequence != gasProbePublished_) {
+            const std::unique_lock lock(gasProbeMutex_, std::try_to_lock);
+            if (lock.owns_lock()) {
+                gasProbeMailbox_ = simulator_.gasProbe();
+                gasProbePublished_ = gasProbeMailbox_.sequence;
             }
         }
         if (simulationDt > 0.0) {
