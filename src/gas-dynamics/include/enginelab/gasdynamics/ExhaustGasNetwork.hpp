@@ -261,6 +261,17 @@ public:
      * network is unconfigured, the topologies differ or a remapped state is
      * not physical. */
     [[nodiscard]] bool adoptStateFrom(const ExhaustGasNetwork& previous) noexcept;
+
+    /** Bring the gas to rest at one pressure: every cell and junction keeps
+     * its temperature and composition, loses its velocity and takes
+     * `pressurePa`. Walls and reaction sites are untouched.
+     *
+     * For a network whose boundaries hold still, such as an intake runner
+     * behind a stopped crank: its explicit reservoir coupling amplifies
+     * roundoff into a limit cycle that a quiescent duct cannot have.
+     * Allocation-free. Returns false, leaving this network unchanged, when a
+     * settled state is not physical. */
+    [[nodiscard]] bool settleAtRest(double pressurePa) noexcept;
     [[nodiscard]] bool configured() const noexcept { return configured_; }
     [[nodiscard]] const EulerMixtureModel& mixtureModel() const noexcept { return mixtureModel_; }
     [[nodiscard]] const ExhaustNetworkLayout& layout() const noexcept { return layout_; }

@@ -679,6 +679,43 @@ bool ExhaustGasNetwork::adoptStateFrom(const ExhaustGasNetwork& previous) noexce
     return true;
 }
 
+bool ExhaustGasNetwork::settleAtRest(double pressurePa) noexcept {
+    if (!configured_) return false;
+    const auto settled = [this, pressurePa](const ConservativeState& state)
+        -> std::optional<ConservativeState> {
+        const auto primitive = mixtureModel_.primitiveFromConservative(state);
+        if (!primitive) return std::nullopt;
+        return mixtureModel_.conservativeFromPressureTemperature(
+            pressurePa, primitive->temperatureK, 0.0, { primitive->massFractions });
+    };
+    // Into the candidate buffers first, so a refused state changes nothing.
+    for (auto& duct : ducts_) {
+        if (duct.candidate_.size() != duct.cells_.size()) return false;
+        for (std::size_t index = 0; index < duct.cells_.size(); ++index) {
+            const auto state = settled(duct.cells_[index]);
+            if (!state) return false;
+            duct.candidate_[index] = *state;
+        }
+    }
+    for (std::size_t index = 0; index < junctionStates_.size(); ++index) {
+        const auto state = settled(junctionStates_[index]);
+        if (!state) return false;
+        const auto primitive = mixtureModel_.primitiveFromConservative(*state);
+        if (!primitive) return false;
+        junctionCandidate_[index] = *state;
+        junctionCandidatePrimitives_[index] = *primitive;
+    }
+    for (auto& duct : ducts_) {
+        auto cells = duct.cells();
+        std::copy(duct.candidate_.begin(), duct.candidate_.end(), cells.begin());
+        if (!duct.refreshCellStateCache()) return false;
+    }
+    std::copy(junctionCandidate_.begin(), junctionCandidate_.end(), junctionStates_.begin());
+    std::copy(junctionCandidatePrimitives_.begin(), junctionCandidatePrimitives_.end(),
+              junctionPrimitives_.begin());
+    return true;
+}
+
 ExhaustNetworkInventory ExhaustGasNetwork::inventory() const noexcept {
     ExhaustNetworkInventory result;
     for (const auto& duct : ducts_) {

@@ -79,6 +79,14 @@ file formats, always with an in-memory migration).
   the charge pipe to the throttle; its impeller turns geared to the crank.
   Click it for the drive ratio, impeller speed, pressure ratio and power.
 
+### Fixed
+
+- A stopped engine's intake no longer churns. From rest, every engine rang
+  its intake runners to ±14 to ±111 kPa within a second, which the 3-D view
+  showed as an intake flashing as if the engine ran. Behind a stopped crank
+  the valves now pass no gas and the runners stand at their plenum's
+  pressure. The sound of a running engine is unchanged.
+
 ## [0.2.0] — 2026-10-04
 
 ### Added

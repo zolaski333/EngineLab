@@ -81,6 +81,12 @@ The model nonetheless stays 0D per volume. Momentum provides directional
 inertia; it does not turn a runner into a meshed tube where a wave propagates
 spatially.
 
+A stopped crank (below 20 rpm, starter off) passes no gas through its valves,
+and the 1-D intake runners stand at their plenum's pressure instead of
+advancing (`ExhaustGasNetwork::settleAtRest`). Held at equilibrium, an open
+valve's quasi-steady law and the runners' explicit plenum coupling both grew
+roundoff into tens of kPa (see `docs/journal.md`, 2026-10-06).
+
 ## Valvetrain and intake
 
 `ValveTrainModel` evaluates the profile of the cylinder's bank. Lift profiles

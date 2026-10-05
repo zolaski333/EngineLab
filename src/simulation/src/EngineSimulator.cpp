@@ -1003,6 +1003,13 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 subDt, 18.0);
         }
         const auto stationary = state_.rpm < 20.0 && !safeControls.starterEngaged;
+        // A crank that is not turning passes no gas through its valves. The
+        // quasi-steady valve law has an unbounded gain at zero pressure
+        // difference, so an open valve held at equilibrium by a stopped crank
+        // rang its runner into a self-sustained limit cycle (±15 to ±55 kPa,
+        // measured on every engine, from a uniform ambient start).
+        const auto valvesSealed = std::abs(state_.rpm) < 20.0
+            && !safeControls.starterEngaged;
         if (stationary) {
             state_.boostPressureRatio = 1.0;
             state_.forcedInductionShaftSpeedRpm = 0.0;
@@ -2427,11 +2434,13 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
             // Both areas already carry their discharge coefficient, so the
             // coefficient that travels with them is unity. Everything
             // downstream multiplies the pair, so the product is what matters.
-            exhaustValveAreaM2[cylinderIndex] = exhaustArea * 1.0e-6
+            // mm2 to m2, or shut on a stopped crank.
+            const auto valveAreaScale = valvesSealed ? 0.0 : 1.0e-6;
+            exhaustValveAreaM2[cylinderIndex] = exhaustArea * valveAreaScale
                 * std::clamp(options_.exhaustValveAreaMultiplier.value_or(1.0),
                     0.05, 8.0);
             exhaustValveDischargeCoefficient[cylinderIndex] = 1.0;
-            intakeValveAreaM2[cylinderIndex] = intakeArea * 1.0e-6
+            intakeValveAreaM2[cylinderIndex] = intakeArea * valveAreaScale
                 * std::clamp(options_.intakeValveAreaMultiplier.value_or(1.0),
                     0.05, 8.0);
             intakeValveDischargeCoefficient[cylinderIndex] = 1.0;
@@ -2917,7 +2926,22 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 commitGroup(begin, end);
             }
         };
-        if (flushIntakeNetworks)
+        // Behind a stopped crank the runners hold still at their plenum's
+        // pressure instead of advancing: with every valve shut, the explicit
+        // plenum coupling alone grew roundoff about 3.7-fold per 400 us
+        // flush, to ±30 to ±70 kPa, and the growth followed the coupling lag
+        // (±0.05 to 0.25 kPa at 20 us), so it is numerical.
+        const auto settleIntakeRunners = [&]() noexcept {
+            for (std::size_t index = 0; index < config_.cylinders.size(); ++index) {
+                const auto plenumKpa =
+                    intakePlenumGas_[intakePathIndexByCylinder_[index]].pressureKpa();
+                if (!intakeRunnerNetworks_[index]->settleAtRest(plenumKpa * 1'000.0))
+                    state_.solverResolutionLimited = true;
+                intakeRunnerPressureKpa_[index] = plenumKpa;
+                intakeValveColumnVelocityMps_[index] = 0.0;
+            }
+        };
+        if (flushIntakeNetworks && !valvesSealed)
             advanceIntakeRunners(intakeAdvanceDurationSeconds * 0.5, true);
 
         auto configuredOutletConductanceM2 = 0.0;
@@ -3186,7 +3210,10 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
         // mechanical cadence even on substeps where the slower network state is
         // held, so valve overlap and trapped charge are never decimated.
         if (flushIntakeNetworks) {
-            advanceIntakeRunners(intakeAdvanceDurationSeconds * 0.5, false);
+            if (valvesSealed)
+                settleIntakeRunners();
+            else
+                advanceIntakeRunners(intakeAdvanceDurationSeconds * 0.5, false);
             if (multirateIntake) {
                 intakeBoundaryStateTimeIntegral_.fill({});
                 intakeBoundaryVolumeTimeIntegralM3S_.fill(0.0);

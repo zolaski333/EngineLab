@@ -162,6 +162,62 @@ void checkWaveColours(const EngineModel3D& model) {
 }
 
 /** The field is captured at the angle asked for, and capturing it changes nothing. */
+/** Largest departure of an intake runner or plenum sample from `referencePa`. */
+double intakeDeparturePa(const GasFieldSnapshot& field, double referencePa) {
+    double worst = 0.0;
+    for (const auto& element : field.elements) {
+        if (element.kind != GasFieldElementKind::intakeRunner && element.kind != GasFieldElementKind::intakePlenum)
+            continue;
+        for (std::size_t s = 0; s < element.sampleCount; ++s)
+            worst = std::max(worst, std::abs(element.pressurePa[s] - referencePa));
+    }
+    return worst;
+}
+
+/** A stopped engine's intake holds still. Measured 2026-10-06 before the fix:
+ * from a uniform ambient start, every catalogue engine rang its runners to
+ * ±14 to ±111 kPa within a second, valves open or shut. */
+void checkStoppedIntakeAtRest(const EngineConfig& config, bool shutDown) {
+    Bench bench(config);
+    for (int frame = 0; frame < 240; ++frame) {
+        (void)bench.simulator->step(1.0 / 240.0, EngineControls {});
+        if (frame % 24 != 23) continue;
+        bench.simulator->captureGasFieldNow();
+        const auto departure = intakeDeparturePa(bench.simulator->gasField(), config.ambientPressureKpa * 1'000.0);
+        require(departure < 1.0, config.name + ": a never-started intake stays at ambient pressure (off by "
+                                     + std::to_string(departure) + " Pa)");
+    }
+    if (!shutDown) return;
+    // Run, then switch off: once the crank stops, the runners stand at their
+    // plenum's pressure, which refills through the shut throttle.
+    for (int frame = 0; frame < 6 * 240; ++frame) {
+        EngineControls controls;
+        controls.ignitionEnabled = frame < 4 * 240;
+        controls.starterEngaged = frame < 360;
+        (void)bench.simulator->step(1.0 / 240.0, controls);
+        if (frame == 4 * 240 - 1)
+            require(bench.simulator->state().rpm > 400.0, config.name + ": the engine runs before it is switched off");
+    }
+    require(bench.simulator->state().rpm == 0.0, config.name + ": the engine has stopped");
+    for (int frame = 0; frame < 240; ++frame) {
+        (void)bench.simulator->step(1.0 / 240.0, EngineControls {});
+        if (frame % 24 != 23) continue;
+        bench.simulator->captureGasFieldNow();
+        const auto& field = bench.simulator->gasField();
+        double runnerSpread = 0.0;
+        for (const auto& element : field.elements) {
+            if (element.kind != GasFieldElementKind::intakeRunner) continue;
+            const auto plenumPa = std::find_if(field.elements.begin(), field.elements.end(), [&](const auto& e) {
+                return e.kind == GasFieldElementKind::intakePlenum && e.pathIndex == element.pathIndex;
+            })->pressurePa[0];
+            for (std::size_t s = 0; s < element.sampleCount; ++s)
+                runnerSpread = std::max(runnerSpread, static_cast<double>(std::abs(element.pressurePa[s] - plenumPa)));
+        }
+        require(runnerSpread < 1.0, config.name + ": a stopped engine's runners stand at their plenum's pressure (off by "
+                                        + std::to_string(runnerSpread) + " Pa)");
+    }
+}
+
 void checkGasFieldCapture(const EngineConfig& config) {
     Bench watched(config);
     Bench control(config);
@@ -796,6 +852,9 @@ int main() {
     checkCrankClock();
     checkGasFieldCapture(catalogue.entries.front().config);
     checkGasProbe(catalogue.entries.front().config);
+    for (const auto& entry : catalogue.entries)
+        checkStoppedIntakeAtRest(entry.config, entry.config.name.find("CP2") != std::string::npos
+                                                   || entry.config.name.find("LS3") != std::string::npos);
     std::cout << "EngineModel3D: routes: " << routeIssues[0] << " clashes, " << routeIssues[1] << " self-clashes, "
               << routeIssues[2] << " engine clashes, " << routeIssues[3] << " tight bends, " << routeIssues[4]
               << " stretched\n";
