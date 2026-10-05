@@ -203,7 +203,9 @@ this view.
   the real length. Junctions and bodies sit on a trunk that runs along +Z
   (towards the flywheel), placed out from their ports and no higher than the
   crankshaft; a splitter spreads its branches, an X sends each bank back to
-  its side.
+  its side. An outlet is the open end of the pipe before it: with no authored
+  length it is only a short collar with a rolled lip, and the inside of an
+  open opaque tube is shaded dark, so the opening reads as a hole.
 - **Intake.** Each runner has its length and taper, from the port to a
   plenum box of the authored volume (a drum round the crank axis on a
   radial). Upstream follow the throttle bores (on the plenum end, or on its

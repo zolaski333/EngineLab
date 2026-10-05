@@ -213,6 +213,17 @@ void checkDucts(const EngineModel3D& model) {
             });
             require(drawn == 1, name + ": exhaust component " + std::to_string(component.id) + " of path "
                                     + std::to_string(path.id) + " is drawn once");
+            if (component.type != ExhaustComponentType::outlet || drawn != 1) continue;
+            // An outlet is the open end of its pipe: no length of its own
+            // unless one is authored.
+            const auto& outlet = *std::find_if(model.ducts().begin(), model.ducts().end(), [&](const SceneDuct& duct) {
+                return duct.kind == DuctKind::exhaustComponent && duct.pathId == path.id && duct.elementId == component.id;
+            });
+            const auto outletLength = polylineLength(outlet.centreline);
+            require(component.lengthMm > 1.0 ? outletLength > 0.99 * component.lengthMm
+                                             : outletLength <= 0.5 * component.diameterMm,
+                    name + ": outlet " + std::to_string(component.id) + " is drawn as an open end ("
+                        + std::to_string(outletLength) + " mm)");
         }
     }
 

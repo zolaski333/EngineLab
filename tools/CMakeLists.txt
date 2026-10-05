@@ -175,3 +175,8 @@ if(MSVC)
     target_link_options(EngineLabOfflineAudioExporter PRIVATE /STACK:8388608)
 endif()
 enginelab_set_warnings(EngineLabOfflineAudioExporter)
+
+add_executable(EngineLabSceneExport SceneExport.cpp)
+target_link_libraries(EngineLabSceneExport PRIVATE EngineLab::Render EngineLab::Catalog EngineLab::Foundation)
+target_compile_definitions(EngineLabSceneExport PRIVATE ENGINELAB_CATALOG_ROOT="${CMAKE_SOURCE_DIR}")
+enginelab_set_warnings(EngineLabSceneExport)

@@ -155,6 +155,9 @@ void main() {
     vec3 n = normalize(vNormal);
     vec3 v = normalize(uEye - vWorld);
     float facing = dot(n, v);
+    // The inside of an opaque open tube (an exhaust outlet) is in shadow, so
+    // the opening reads as a hole; the ramp avoids darkening silhouettes.
+    float inside = uOpacity > 0.99 ? 1.0 - smoothstep(-0.35, -0.05, facing) : 0.0;
     if (facing < 0.0) { n = -n; facing = -facing; }
     float rough = clamp(uRoughness, 0.05, 1.0);
     float a = rough * rough;
@@ -172,6 +175,7 @@ void main() {
     colour += hemisphere * uBaseColour * (1.0 - uMetalness);
     colour += studio(reflect(-v, n), rough) * environmentBrdf(f0, rough, facing);
     colour += studio(n, 1.0) * 0.25 * uBaseColour * (1.0 - uMetalness);
+    colour *= mix(1.0, 0.12, inside);
     colour += uEmissive;
 
     vec3 display = pow(aces(colour * 1.05), vec3(1.0 / 2.2));

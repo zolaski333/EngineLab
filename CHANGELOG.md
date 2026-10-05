@@ -37,7 +37,8 @@ file formats, always with an in-memory migration).
   configuration: every component of the exhaust graph with its length,
   diameter and volume, and the runners, plenum, throttle bores, airbox and
   inlet duct of each intake path. A new *Exhaust* camera view frames the whole
-  system.
+  system. An outlet is drawn as the open end of its pipe (a short collar
+  with a rolled lip), not as a closed can.
 - The exhaust shows the gas solver's pressure waves at the crank angle on
   screen (in slow motion, the latest cycle at that angle): violet below each
   cell's running mean, grey at it, orange to pale yellow above, with a legend

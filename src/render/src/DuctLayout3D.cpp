@@ -233,7 +233,9 @@ void buildNodes(PathLayout& layout) {
                 drawLength = std::max(1.4F * node.diameter, volume > 0.0F ? 1.2F * std::cbrt(volume) : 0.0F);
                 break;
             case ExhaustComponentType::crossover: drawLength = 2.0F * node.diameter; break;
-            case ExhaustComponentType::outlet: drawLength = node.diameter; break;
+            // An outlet with no length is the open end of the pipe before it:
+            // only a collar, so the opening shows.
+            case ExhaustComponentType::outlet: drawLength = 0.35F * node.diameter; break;
             default: drawLength = 0.6F * node.diameter; break;
             }
         }
@@ -385,6 +387,13 @@ void shapeComponent(DuctPiece& piece, const Node& node, std::vector<Vec3> points
         });
     }
     appendTube(piece.mesh, points, radii, segmentsFor(node.body), capStart, false);
+    if (c.type == ExhaustComponentType::outlet && points.size() >= 2U) {
+        // A rolled lip round the open end.
+        const auto tip = points.back();
+        const auto axis = normalise(tip - points[points.size() - 2U]);
+        appendTorus(piece.mesh, Mat4::frameAlongY(tip, axis), end, std::max(0.8F, 0.05F * node.outletDiameter),
+                    segmentsFor(node.outletDiameter), 8);
+    }
     piece.centreline = std::move(points);
 }
 
