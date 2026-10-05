@@ -106,7 +106,8 @@ void checkGasFieldBinding(const EngineModel3D& model) {
 }
 
 /** The colours show the wave, not the mean: an exhaust held 200 kPa above
-    ambient (a turbocharged one) still shows rarefaction and compression. */
+    ambient (a turbocharged one) still shows rarefaction and compression, and
+    so does the intake, below ambient, on the same scale. */
 void checkWaveColours(const EngineModel3D& model) {
     const auto& config = model.config();
     Bench bench(config);
@@ -118,8 +119,10 @@ void checkWaveColours(const EngineModel3D& model) {
         field.simulationTimeSeconds += 0.01;
         for (std::size_t e = 0; e < field.elements.size(); ++e) {
             auto& element = field.elements[e];
+            const auto intake = element.kind == GasFieldElementKind::intakeRunner
+                             || element.kind == GasFieldElementKind::intakePlenum;
             for (std::size_t s = 0; s < element.sampleCount; ++s)
-                element.pressurePa[s] = static_cast<float>(field.ambientPressurePa + 200'000.0
+                element.pressurePa[s] = static_cast<float>(field.ambientPressurePa + (intake ? -20'000.0 : 200'000.0)
                     + 10'000.0 * std::sin(2.0 * std::numbers::pi * k / 16.0 + static_cast<double>(s + e)));
         }
         view.update(model, field);
@@ -136,6 +139,24 @@ void checkWaveColours(const EngineModel3D& model) {
             above = above || part.samples[4 * s + 0] > part.samples[4 * s + 2];
         }
     require(below && above, config.name + ": a wave over a high mean shows both violet and orange");
+
+    std::vector<bool> intakePart(model.parts().size(), false);
+    for (const auto& duct : model.ducts())
+        intakePart[duct.part] = duct.kind == DuctKind::intakeRunner || duct.kind == DuctKind::intakePlenum;
+    std::size_t intakeShown = 0;
+    bool intakeBelow = false;
+    bool intakeAbove = false;
+    for (const auto& part : view.parts()) {
+        if (!intakePart[part.part]) continue;
+        ++intakeShown;
+        for (std::size_t s = 0; s < part.count; ++s) {
+            intakeBelow = intakeBelow || part.samples[4 * s + 2] > part.samples[4 * s + 0];
+            intakeAbove = intakeAbove || part.samples[4 * s + 0] > part.samples[4 * s + 2];
+        }
+    }
+    const auto drawnIntakes = static_cast<std::size_t>(std::count(intakePart.begin(), intakePart.end(), true));
+    require(intakeShown == drawnIntakes, config.name + ": every intake runner and plenum shows its wave");
+    require(intakeBelow && intakeAbove, config.name + ": an intake wave below ambient shows both colours");
 }
 
 /** The field is captured at the angle asked for, and capturing it changes nothing. */

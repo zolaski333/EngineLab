@@ -39,8 +39,8 @@ file formats, always with an in-memory migration).
   inlet duct of each intake path. A new *Exhaust* camera view frames the whole
   system. An outlet is drawn as the open end of its pipe (a short collar
   with a rolled lip), not as a closed can.
-- The exhaust shows the gas solver's pressure waves at the crank angle on
-  screen (in slow motion, the latest cycle at that angle): violet below each
+- The exhaust and intake show the gas solver's pressure waves at the crank
+  angle on screen (in slow motion, the latest cycle at that angle): violet below each
   cell's running mean, grey at it, orange to pale yellow above, with a legend
   giving the scale. Exhaust walls glow red above 798 K, and an afterfire lights a
   flame at the outlets.

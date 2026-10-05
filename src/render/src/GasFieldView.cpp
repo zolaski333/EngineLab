@@ -152,7 +152,7 @@ void GasFieldView::update(const EngineModel3D& model, const GasFieldSnapshot& fi
         for (std::size_t s = 0; s < element.sampleCount; ++s) {
             auto& mean = meanPa_[e][s];
             mean += weight * (element.pressurePa[s] - mean);
-            if (isExhaust(element.kind)) peak = std::max(peak, std::abs(element.pressurePa[s] - mean));
+            peak = std::max(peak, std::abs(element.pressurePa[s] - mean));
         }
     }
     // A slowly decaying peak, never under 2 kPa: a quiet engine is not
@@ -163,8 +163,7 @@ void GasFieldView::update(const EngineModel3D& model, const GasFieldSnapshot& fi
     parts_.clear();
     for (std::size_t d = 0; d < binding_.size(); ++d) {
         const auto& duct = model.ducts()[d];
-        if (binding_[d] < 0 || (duct.kind != DuctKind::exhaustComponent && duct.kind != DuctKind::exhaustFeeder))
-            continue;
+        if (binding_[d] < 0) continue;
         const auto& element = field.elements[static_cast<std::size_t>(binding_[d])];
         const auto& mean = meanPa_[static_cast<std::size_t>(binding_[d])];
         if (element.sampleCount == 0) continue;

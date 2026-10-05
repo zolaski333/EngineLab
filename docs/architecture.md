@@ -264,7 +264,8 @@ the *Exhaust* view frames the whole system.
 
 ### Gas field on the ducts
 
-The exhaust is coloured by the gas solver's own state, not by an animation:
+The exhaust and the intake runners and plenums are coloured by the gas
+solver's own state, not by an animation:
 
 - **Capture.** The view asks `EngineRuntime::requestGasField()` for the field at
   the crank angle on screen. The simulator tracks that angle and copies the
@@ -294,8 +295,11 @@ The exhaust is coloured by the gas solver's own state, not by an animation:
   whole drawn exhaust, silencer included, sits at turbine inlet pressure in
   the solver. The prototype's scale: violet below the mean, grey at the mean,
   orange then pale yellow above, compressed with a 0.75 power. The scale is
-  the strongest departure in the exhaust, decaying by 6 % per snapshot and
-  never below 2 kPa; the legend prints it. A transient (a rev-limiter cut, a
+  the strongest departure anywhere, decaying by 6 % per snapshot and never
+  below 2 kPa; the legend prints it. Intake and exhaust share it, so their
+  relative strength reads true: at idle and at full load (60 % of redline)
+  the intake's peak is 0.6 to 4.8 times the exhaust's over the catalogue.
+  The plenum is one lumped volume, so it shows one colour. A transient (a rev-limiter cut, a
   throttle step) shows as the whole exhaust above or below its mean until the
   mean catches up. The inspector gives the pressure against ambient. Waves
   show in the All and Gas flow layers.

@@ -426,7 +426,7 @@ void WaveLegend::paint(juce::Graphics& g) {
     auto header = area.removeFromTop(14.0F);
     g.setFont(uiFont(10.5F, true).withExtraKerningFactor(0.06F));
     g.setColour(colours::muted);
-    g.drawText(utf8("EXHAUST PRESSURE WAVES"), header, juce::Justification::centredLeft, false);
+    g.drawText(utf8("PRESSURE WAVES"), header, juce::Justification::centredLeft, false);
     g.setFont(monoFont(10.5F, false));
     g.drawText(utf8("±") + legendFigure(scalePa_) + " kPa", header,
                juce::Justification::centredRight, false);

@@ -67,7 +67,7 @@ private:
     std::vector<juce::String> labels_;
 };
 
-/** Colour scale of the exhaust waves, bottom centre of the view. */
+/** Colour scale of the pressure waves, bottom centre of the view. */
 class WaveLegend final : public juce::Component {
 public:
     void setScale(float pascals);

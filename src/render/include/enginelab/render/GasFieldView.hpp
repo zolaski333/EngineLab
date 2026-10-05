@@ -20,15 +20,18 @@ namespace enginelab::render {
 [[nodiscard]] Vec3 pressureColour(float normalised) noexcept;
 
 /**
- * What the renderer draws along the exhaust: per duct part, the wave colour
- * and the wall temperature at up to GasFieldElement::maximumSamples stations.
+ * What the renderer draws along the exhaust and the intake runners and
+ * plenums: per duct part, the wave colour and the wall temperature at up to
+ * GasFieldElement::maximumSamples stations.
  *
  * The colour is the wave: each cell's departure from its own running mean
  * (averaged over simulated time, so a slowed or frozen view keeps it). Against
  * ambient, a turbocharged exhaust, whose whole 1-D network sits upstream of
  * the turbine, would read as one saturated colour. The scale follows the
- * strongest departure in the exhaust, decaying slowly, so an idle shows its
- * waves as clearly as full load; the legend states the scale.
+ * strongest departure anywhere, decaying slowly, so an idle shows its waves
+ * as clearly as full load; the legend states the scale. Intake and exhaust
+ * share it, so their relative strength reads true: the intake's peak is 0.6
+ * to 5 times the exhaust's over the catalogue.
  */
 class GasFieldView final {
 public:

@@ -5,6 +5,17 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-05 — Intake waves in the 3-D view
+
+- Premise checked first: is the intake wave too weak for the exhaust's
+  scale? Peak departure from each cell's mean over 1 s, 16 engines, idle and
+  full load held at 60 % of redline: intake/exhaust 0.57-4.8. Refuted: one
+  shared scale, no separate intake scale.
+- Runners and plenums now take the wave colours. Mutation: the old
+  exhaust-only filter fails `EngineLab.EngineModel3D`.
+- Not done: the plenum is lumped (one colour); the airbox, throttle bores and
+  inlet duct have no solver cells and stay plain.
+
 ## 2026-10-05 — Turbocharger in the 3-D view
 
 - Drawn on the 4 catalogue turbos (2JZ, EJ25, I5, TDI), after the collector
