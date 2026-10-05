@@ -307,8 +307,10 @@ issues as JSON, to look at them outside the app.
 every exhaust outlet by the turbine and open wastegate areas (a restriction
 in series) and drives the shaft from the exhaust pressure and flow. The view
 draws one where a real one sits (`TurboPlacement`): on the first junction
-where all of a path's primaries have met, in the first path that has one
-(the EJ25's left bank). Gas bends out of the collector, enters the volute
+where all of a path's primaries have met, in the first path that has one.
+Since the solver's one turbine takes the whole exhaust flow, every catalogue
+turbo engine has a single path that all its cylinders exhaust into
+(`EngineLab.EngineModel3D` checks it). Gas bends out of the collector, enters the volute
 tangentially and leaves the exducer along the trunk, where the path resumes;
 the shaft runs along the crankshaft, the compressor on the far side of the
 bearing housing, far enough out to clear the collector. Wheel sizes come from

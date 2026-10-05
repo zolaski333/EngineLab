@@ -95,6 +95,14 @@ file formats, always with an in-memory migration).
   showed as an intake flashing as if the engine ran. Behind a stopped crank
   the valves now pass no gas and the runners stand at their plenum's
   pressure. The sound of a running engine is unchanged.
+- The EJ25's four primaries now meet in one collector feeding its one turbo,
+  then one silencer and outlet. Its two banks used to be separate exhausts,
+  one of which bypassed the turbo in the 3-D view. The sound changes (about
+  2 dB quieter, darker, mono); the turbo no longer overshoots its boost at
+  the top of the range (402 instead of 462 N.m at 6,000 rpm, closer to the
+  WRX STI's rating) and spools later at 2,000 rpm (313 instead of 359 N.m).
+- The dyno's run name no longer keeps the keyboard: Enter, Escape or a click in
+  the 3-D view hands it back to the throttle and the other engine keys.
 
 ## [0.2.0] — 2026-10-04
 

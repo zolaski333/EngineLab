@@ -5,6 +5,17 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-06 — EJ25: one exhaust path into its one turbo
+
+- Two paths (one per bank) left cylinders 2/4 bypassing the drawn turbo; the
+  solver's single turbine already took the whole flow. Now one path (4-1).
+- Dyno sweep, WOT, before/after: 2,000 rpm 359/313 N.m (boost 185/151 kPa);
+  2,500-5,000 rpm -2 to +3 %; 5,500-6,000 rpm 453-462/402-404 N.m, boost
+  236-257/211 kPa (the overshoot past the 2.05 wastegate is gone).
+- CatalogReference: 4,000 rpm -6.4/-7.1 %, 6,000 rpm power +10.6/+7.0 %.
+- AudioRenderHarness: rms 0.0341/0.0265 (-2.2 dB), bands 39/60 -> 63/37 %,
+  main resonance 350 Hz -> 3,986 Hz, mono (LRcorr 1.0). Not listened to.
+
 ## 2026-10-06 — A stopped engine's intake rang by itself
 
 - From a uniform ambient start, ignition off, every engine's runners reached

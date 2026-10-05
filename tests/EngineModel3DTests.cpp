@@ -473,6 +473,13 @@ void checkTurbo(const EngineModel3D& model) {
     if (!turbo.placed) return;
     ++turbosDrawn;
 
+    // The solver's one turbine takes the whole exhaust flow, so the drawn
+    // turbo is fed by every cylinder: a second path would bypass it.
+    const auto turboPath = std::find_if(config.exhaustPaths.begin(), config.exhaustPaths.end(),
+        [&turbo](const ExhaustPathConfig& path) { return path.id == turbo.pathId; });
+    require(turboPath != config.exhaustPaths.end() && turboPath->cylinderIds.size() == config.cylinders.size(),
+            name + ": every cylinder's exhaust reaches the turbo");
+
     // It is bolted to its collector, and the path resumes at its outlet.
     bool fed = false, resumes = false;
     for (const auto& duct : model.ducts()) {
