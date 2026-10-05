@@ -329,6 +329,20 @@ unchanged; it stops 60 frames after the view stops asking. A marker shows the
 bin last written. Its sub-step resolution is what the snapshot cannot give:
 a capture is one instant per crank angle.
 
+An exhaust component can be resized from the inspector: steppers for its
+length (10 mm, 1 mm with Shift) and diameter (1 mm, 0.1 mm), no text field
+since every key drives the engine. `resizeExhaustComponent` (exhaust
+library, no JUCE) writes the edit into the configuration: the component of
+the path's network or, on a path authored as scalar geometry, the scalar
+field behind it (the primaries share one size; a collector and an outlet
+have no length; a silencer is sized by its body). It refuses an edit that
+would change which components the path has (a silencer no wider than its
+pipes stops being one) and, on the only path, mirrors the geometry into
+`EngineConfig::exhaust`, which normalisation copies back and the solver
+reads. *Apply* restarts the engine with the edited configuration through the
+same path as the Exhaust editor; the camera stays and the part stays
+selected.
+
 ## Extension rule
 
 A two-stroke or diesel engine, a torsional crankshaft, a 1D acoustic solver or

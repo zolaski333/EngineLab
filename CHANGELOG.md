@@ -48,6 +48,9 @@ file formats, always with an in-memory migration).
   an exhaust duct, the solver's pressures and temperatures in it. For an
   exhaust or intake duct, an oscilloscope traces the pressure of the clicked
   cell over the engine cycle, recorded at every solver step.
+- Resize an exhaust component from the 3-D view: length and diameter
+  steppers in the part inspector, applied to the running engine like the
+  Exhaust editor's changes.
 - Exhaust and intake pipes in the 3-D view are routed like real ones: they no
   longer pass through each other, the engine or the intake, bend no tighter
   than 1.25 diameters and keep their authored length. A collector is wide

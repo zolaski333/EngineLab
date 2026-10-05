@@ -5,6 +5,17 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-05 — Resizing the exhaust from the 3-D view
+
+- `EngineLab.EngineModel3D`, 16 engines and a scalar-geometry copy of the
+  K20A: the resized component is drawn 80 mm longer (a pipe also 4 mm
+  wider), every other component unchanged, the configuration valid.
+- Found by the test: on a single scalar path the edit did not reach the
+  drawing (normalisation copies `exhaust` over the path); fixed by mirroring.
+- Mutation: without the silencer guard, the test fails (a silencer narrowed
+  to its outlet is accepted).
+- Not done: no live preview before Apply; the intake is not editable.
+
 ## 2026-10-05 — Wave resolution of the exhaust mesh
 
 - First primary, cell at 1/4 of its length, full load held at 60 % of

@@ -94,12 +94,30 @@ public:
         double cycleDegrees { 720.0 };
         juce::String caption;
     };
+    /** The size of an exhaust component, edited with steppers: no text
+        field, since every key drives the engine. */
+    struct Edit final {
+        /** Which component: the same key keeps the values being edited. */
+        std::uint64_t key {};
+        double lengthMm {};
+        double diameterMm {};
+        bool lengthEditable {};
+        juce::String note;
+    };
+    PartInspector();
+    /** Called with the edited length and diameter when Apply is pressed. */
+    std::function<void(double lengthMm, double diameterMm)> onApplyEdit;
     /** `note`, if any, is a short paragraph under the rows. */
     void show(juce::String title, juce::String subtitle, std::vector<Row> rows, juce::String note = {});
     /** Shows a trace under the rows, or none. */
     void setScope(std::optional<Scope> scope);
+    /** Offers the size steppers, or none. */
+    void setEdit(std::optional<Edit> edit);
+    /** Why the last edit was refused, under the steppers; empty clears it. */
+    void setEditStatus(juce::String status);
     [[nodiscard]] int idealHeight() const;
     void paint(juce::Graphics&) override;
+    void resized() override;
     void mouseUp(const juce::MouseEvent&) override;
 
 private:
@@ -109,8 +127,22 @@ private:
     std::vector<Row> rows_;
     juce::String note_;
     std::optional<Scope> scope_;
-    [[nodiscard]] juce::TextLayout noteLayout(float width) const;
+    std::optional<Edit> edit_;
+    double pendingLengthMm_ {};
+    double pendingDiameterMm_ {};
+    juce::String editStatus_;
+    ActionButton lengthDown_ { "-", ActionButton::Style::compact };
+    ActionButton lengthUp_ { "+", ActionButton::Style::compact };
+    ActionButton diameterDown_ { "-", ActionButton::Style::compact };
+    ActionButton diameterUp_ { "+", ActionButton::Style::compact };
+    ActionButton applyEdit_ { "Apply", ActionButton::Style::primary };
+    ActionButton resetEdit_ { "Reset", ActionButton::Style::compact };
+    [[nodiscard]] juce::TextLayout noteLayout(const juce::String& text, juce::Colour, float width) const;
+    [[nodiscard]] int editHeight() const;
+    void stepEdit(bool length, double direction);
+    void updateEditButtons();
     void paintScope(juce::Graphics&, juce::Rectangle<float> area) const;
+    void paintEdit(juce::Graphics&, juce::Rectangle<int> area) const;
 };
 
 /**
@@ -135,6 +167,9 @@ public:
     /** Where the inspector's oscilloscope comes from: asks for the pressure
         trace of a gas field element and sample, and copies a newer one. */
     void setGasProbeSource(std::function<bool(std::int32_t element, std::uint8_t sample, GasProbeTrace&)>);
+    /** Where a resize made in the part inspector goes: applies the edited
+        configuration to the engine, or refuses it. */
+    void setConfigEditor(std::function<bool(const EngineConfig&)>);
     /** Rebuilds the 3-D model; call after every engine change. */
     void setEngine(const EngineConfig&);
     void stepLayer(int delta);
@@ -200,6 +235,7 @@ private:
     void updateInspector();
     /** Asks for the oscilloscope trace of the selected duct and shows it. */
     void updateScope();
+    void applyExhaustEdit(double lengthMm, double diameterMm);
     void updateLegend();
 
     const DashboardModel& model_;
@@ -215,6 +251,14 @@ private:
     std::function<bool()> wheelModifierActive_;
     std::function<bool(double, GasFieldSnapshot&)> gasFieldSource_;
     std::function<bool(std::int32_t, std::uint8_t, GasProbeTrace&)> gasProbeSource_;
+    std::function<bool(const EngineConfig&)> configEditor_;
+    /** The exhaust component an edit resized: selected again, with the
+        camera kept, when the engine comes back. */
+    struct Reselect final {
+        std::uint32_t pathId {};
+        std::uint32_t elementId {};
+    };
+    std::optional<Reselect> reselect_;
     GasProbeTrace gasProbe_;
     /** Where along the selected duct the click landed, 0..1 from its inlet. */
     float probeStation_ { 0.5F };

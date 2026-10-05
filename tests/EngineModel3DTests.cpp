@@ -1,6 +1,7 @@
 #include <enginelab/catalog/EngineCatalog.hpp>
 #include <enginelab/ecu/SimpleEcuModel.hpp>
 #include <enginelab/events/FourStrokeEventGenerator.hpp>
+#include <enginelab/exhaust/ExhaustComponentResize.hpp>
 #include <enginelab/exhaust/ExhaustGraph.hpp>
 #include <enginelab/exhaust/LegacyExhaustNetwork.hpp>
 #include <enginelab/physics/SimplifiedGasolinePhysics.hpp>
@@ -19,6 +20,7 @@
 #include <limits>
 #include <memory>
 #include <numbers>
+#include <optional>
 #include <string>
 
 namespace {
@@ -410,6 +412,82 @@ void checkTurbo(const EngineModel3D& model) {
     require(moved == 2 && turbines == 4, name + ": two wheels turn, in two housings");
 }
 
+int silencersKept = 0;
+
+/** Resizing a drawn exhaust component from the 3-D view changes that
+    component, and only that, in the configuration the scene is drawn from. */
+void checkExhaustResize(const EngineModel3D& model) {
+    const auto& config = model.config();
+    const auto& name = config.name;
+    const SceneDuct* target = nullptr;
+    std::optional<ExhaustComponentSize> size;
+    for (const auto& duct : model.ducts()) {
+        if (duct.kind != DuctKind::exhaustComponent) continue;
+        const auto found = exhaustComponentSize(config, duct.pathId, duct.elementId);
+        require(found.has_value(), name + ": every drawn exhaust component has a size to edit");
+        if (found->lengthEditable)
+            require(std::abs(found->lengthMm - duct.authoredLengthMm) < 0.5,
+                    name + ": the editor shows the length the scene draws");
+        // A pipe if there is one (the Merlin has only stacks).
+        const auto pipe = duct.componentType == ExhaustComponentType::pipe;
+        if (found->lengthEditable && (target == nullptr || (pipe && target->componentType != ExhaustComponentType::pipe))) {
+            target = &duct;
+            size = found;
+        }
+        // A length on a component without one is refused, and changes nothing.
+        if (!found->lengthEditable) {
+            auto refused = config;
+            require(!resizeExhaustComponent(refused, duct.pathId, duct.elementId, 300.0, found->diameterMm).empty()
+                        && refused.exhaustPaths[0].geometry.primaryLengthMm == config.exhaustPaths[0].geometry.primaryLengthMm,
+                    name + ": a length on a collector or an outlet is refused");
+        }
+        // A silencer narrowed to its pipes would stop being one: refused.
+        if (duct.componentType == ExhaustComponentType::muffler) {
+            const auto& path = *std::find_if(config.exhaustPaths.begin(), config.exhaustPaths.end(),
+                [&duct](const ExhaustPathConfig& item) { return item.id == duct.pathId; });
+            if (!path.network) {
+                auto narrowed = config;
+                require(!resizeExhaustComponent(narrowed, duct.pathId, duct.elementId, found->lengthMm,
+                                                path.geometry.outletDiameterMm).empty(),
+                        name + ": a silencer no wider than its outlet is refused");
+                ++silencersKept;
+            }
+        }
+    }
+    require(target != nullptr, name + ": the exhaust has a component with a length to resize");
+
+    auto edited = config;
+    auto outOfRange = config;
+    require(!resizeExhaustComponent(outOfRange, target->pathId, target->elementId, size->lengthMm, 4.0).empty(),
+            name + ": a 4 mm diameter is refused");
+    const auto error = resizeExhaustComponent(edited, target->pathId, target->elementId, size->lengthMm + 80.0,
+                                              size->diameterMm + 4.0);
+    require(error.empty(), name + ": 80 mm longer and 4 mm wider is accepted (" + error + ")");
+    const auto invalid = validateEngineConfig(edited);
+    require(!invalid, name + ": the resized configuration is valid (" + invalid.value_or("") + ")");
+
+    const EngineModel3D redrawn(edited);
+    require(redrawn.ducts().size() == model.ducts().size(), name + ": resizing keeps every drawn duct");
+    for (std::size_t d = 0; d < model.ducts().size(); ++d) {
+        const auto& before = model.ducts()[d];
+        const auto& after = redrawn.ducts()[d];
+        if (before.kind != DuctKind::exhaustComponent) continue;
+        const auto resized = (before.pathId == target->pathId && before.elementId == target->elementId)
+            || (size->sharedByPrimaries && before.pathId == target->pathId
+                && before.componentType == ExhaustComponentType::pipe);
+        if (!resized) {
+            require(after.authoredLengthMm == before.authoredLengthMm,
+                    name + ": resizing one component leaves the others' lengths alone");
+            continue;
+        }
+        require(std::abs(after.authoredLengthMm - (before.authoredLengthMm + 80.0F)) < 0.5F,
+                name + ": the resized component is drawn 80 mm longer");
+        if (before.componentType == ExhaustComponentType::pipe)
+            require(!before.radii.empty() && std::abs(after.radii.front() - before.radii.front() - 2.0F) < 0.25F,
+                    name + ": the resized pipe is drawn 4 mm wider");
+    }
+}
+
 void checkEngine(const EngineConfig& config) {
     const EngineModel3D model(config);
     const auto& name = config.name;
@@ -431,6 +509,7 @@ void checkEngine(const EngineConfig& config) {
     checkTurbo(model);
     checkGasFieldBinding(model);
     checkWaveColours(model);
+    checkExhaustResize(model);
 
     std::vector<SceneInstance> instances;
     for (int step = 0; step < 72; ++step) {
@@ -621,6 +700,12 @@ int main() {
     for (const auto& entry : catalogue.entries) checkEngine(entry.config);
     // 2JZ, EJ25, I5 and TDI; the Merlin's supercharger is not a turbo.
     require(turbosDrawn == 4, "the four catalogue turbochargers are drawn (" + std::to_string(turbosDrawn) + ")");
+    // The catalogue compiles every exhaust path into a network at load; a
+    // path authored as scalar geometry (an imported file) on a copy.
+    auto scalar = catalogue.entries.front().config;
+    for (auto& path : scalar.exhaustPaths) path.network.reset();
+    checkExhaustResize(EngineModel3D(scalar));
+    require(silencersKept > 0, "a scalar silencer narrowed to its outlet is refused");
     // Measured 2026-10-05: the four 140 mm pipes of the X of the LS3, which
     // must cross between the banks, the end primary of the I5, and the two
     // end primaries of the 2JZ, whose 430 mm cannot reach a collector they

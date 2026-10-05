@@ -116,6 +116,7 @@ MainComponent::MainComponent() {
         runtime_->requestGasField(crankAngleDegrees);
         return runtime_->latestGasField(field);
     });
+    viewport_.setConfigEditor([this](const EngineConfig& edited) { return applyConfig(edited, false, true); });
     viewport_.setGasProbeSource([this](std::int32_t element, std::uint8_t sample, GasProbeTrace& trace) {
         if (!runtime_) return false;
         runtime_->requestGasProbe(element, sample);
