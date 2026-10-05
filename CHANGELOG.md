@@ -52,6 +52,11 @@ file formats, always with an in-memory migration).
   enough for its primaries, which enter it side by side along its axis; long
   primaries meet behind the last cylinder, and the two Y pieces of a 4-2-1 sit
   side by side.
+- Turbocharged engines show their turbo in the 3-D view, bolted to the
+  collector: the exhaust enters the turbine volute and leaves through the
+  exducer, and both wheels turn at the simulated shaft speed. Click it for the
+  shaft speed, pressure ratio, wastegate opening, turbine and compressor power,
+  and how the solver models it.
 
 ## [0.2.0] — 2026-10-04
 

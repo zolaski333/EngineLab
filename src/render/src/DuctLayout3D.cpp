@@ -143,6 +143,11 @@ struct Node final {
     /** Slot of each input (ins, then cylinders); empty: in order. */
     std::vector<std::size_t> slotOf;
     std::vector<Vec3> curve;
+    /** A turbo is bolted to its outlet: the trunk resumes at `exitLane`,
+        `exitZ`, past the turbine. */
+    bool turbo {};
+    Vec3 exitLane;
+    float exitZ {};
 };
 
 struct PathLayout final {
@@ -268,7 +273,7 @@ void buildNodes(PathLayout& layout) {
     inputs) sends each output back to the side its input came from. */
 [[nodiscard]] Vec3 outLane(const PathLayout& layout, const Node& node, std::size_t k) {
     const auto n = node.outs.size();
-    if (n <= 1U) return node.lane;
+    if (n <= 1U) return node.turbo ? node.exitLane : node.lane;
     if (node.ins.size() == n) return layout.nodes[node.ins[k]].lane;
     float widest = node.body;
     for (const auto out : node.outs) widest = std::max(widest, layout.nodes[out].body);
@@ -276,6 +281,9 @@ void buildNodes(PathLayout& layout) {
 }
 
 [[nodiscard]] Vec3 at(Vec3 lane, float z) noexcept { return { lane.x, lane.y, z }; }
+
+/** Where along the trunk what follows a node starts. */
+[[nodiscard]] float exitZ(const Node& node) noexcept { return node.turbo ? node.exitZ : node.zOut; }
 
 [[nodiscard]] float slotRadius(const Node& node) noexcept {
     return std::max(node.slots, 0.28F * std::max(node.body, 1.3F * node.diameter));
@@ -317,6 +325,7 @@ void sizeSlots(PathLayout& layout, const std::vector<PortAnchor>& ports, float g
 
 [[nodiscard]] Vec3 outSlot(const PathLayout& layout, const Node& node, std::size_t k) {
     const auto n = node.outs.size();
+    if (node.turbo) return at(node.exitLane, node.exitZ);
     if (n > 1U && node.ins.size() == n) {
         // An X: each branch leaves on the side it is heading to.
         const auto target = outLane(layout, node, k);
@@ -326,10 +335,98 @@ void sizeSlots(PathLayout& layout, const std::vector<PortAnchor>& ports, float g
     return slot(at(node.lane, node.zOut), k, n, 0.3F * node.body, node.spread);
 }
 
-void placePath(PathLayout& layout, const std::vector<PortAnchor>& ports, float clearance) {
+/** Sizes of the turbocharger, from the configuration where it gives them. */
+struct TurboSpec final {
+    bool wanted {};
+    float turbineWheelRadius {};
+    float compressorWheelRadius {};
+};
+
+[[nodiscard]] TurboSpec turboSpec(const EngineConfig& config) {
+    TurboSpec spec;
+    const auto& forced = config.forcedInduction;
+    spec.wanted = forced.enabled && forced.type == ForcedInductionType::turbocharger;
+    // A turbine exducer is about 85 % of its wheel, a compressor inducer about
+    // 70 %; without them, a wheel the size of a small turbo.
+    spec.turbineWheelRadius = forced.turbineExducerDiameterMm > 1.0 ? 0.5F * mm(forced.turbineExducerDiameterMm) / 0.85F : 26.0F;
+    spec.compressorWheelRadius
+        = forced.compressorInducerDiameterMm > 1.0 ? 0.5F * mm(forced.compressorInducerDiameterMm) / 0.7F : 32.0F;
+    return spec;
+}
+
+/** Places the turbo on the outlet of `node`, a collector already in place:
+    the gas bends outwards, enters the volute tangentially, and leaves the
+    exducer along the trunk, where the rest of the path resumes. */
+void placeTurbo(const PathLayout& layout, Node& node, const TurboSpec& spec, TurboPlacement& turbo) {
+    const auto inlet = at(node.lane, node.zOut);
+    const auto rc = 0.5F * node.outletDiameter;
+    const auto rt = std::max(spec.turbineWheelRadius, 0.6F * rc);
+    const auto rk = std::max(spec.compressorWheelRadius, 0.6F * rc);
+    turbo.turbineWheelRadius = rt;
+    turbo.compressorWheelRadius = rk;
+    turbo.turbineWidth = 0.9F * node.outletDiameter;
+    turbo.compressorWidth = 1.1F * rk;
+    turbo.compressorOuterRadius = 2.15F * rk;
+    const auto bearing = rt + 12.0F;
+
+    // Out, away from the engine; the volute below the bend if it can be.
+    const Vec3 out { node.spread.y, -node.spread.x, 0.0F };
+    const auto lane = Vec3 { node.lane.x, node.lane.y, 0.0F };
+    Vec3 across = normalise(cross(zAxis, out));
+    const auto score = [&](Vec3 n) {
+        return (length(lane) > 1.0F ? dot(n, normalise(lane)) : 0.0F) - 0.5F * n.y;
+    };
+    if (score(across * -1.0F) > score(across)) across = across * -1.0F;
+    const auto bend = 1.25F * node.outletDiameter;
+    const auto volute = rt + 0.9F * rc + 4.0F;
+    // Far enough out that the compressor, beside the collector, clears it.
+    const auto collectorRadius = std::max({ 0.5F * node.body, node.mouth, rc });
+    const auto need = turbo.compressorOuterRadius + collectorRadius + 10.0F;
+    const auto reach = std::max(bend, std::sqrt(std::max(0.0F, need * need - volute * volute)));
+
+    std::vector<Vec3> path;
+    constexpr int bendSteps = 10;
+    for (int k = 0; k <= bendSteps; ++k) {
+        const auto a = 0.5F * pi * static_cast<float>(k) / bendSteps;
+        path.push_back(inlet + out * (bend * (1.0F - std::cos(a))) + zAxis * (bend * std::sin(a)));
+    }
+    const auto entry = inlet + out * reach + zAxis * bend;
+    if (reach > bend + 1.0F) path.push_back(entry);
+    const auto centre = entry + across * volute;
+    // Round the wheel, narrowing as the volute feeds it.
+    const auto toEntry = across * -1.0F;
+    const auto inner = rt + 0.35F * rc + 3.0F;
+    constexpr int scrollSteps = 36;
+    std::vector<float> radii(path.size(), rc);
+    for (int k = 1; k <= scrollSteps; ++k) {
+        const auto t = static_cast<float>(k) / scrollSteps;
+        const auto a = 1.9F * pi * t;
+        const auto r = volute + (inner - volute) * t;
+        path.push_back(centre + (toEntry * std::cos(a) + out * std::sin(a)) * r);
+        radii.push_back(rc * (1.0F - 0.65F * t));
+    }
+    turbo.placed = true;
+    turbo.pathId = layout.path->id;
+    turbo.collectorId = node.component->id;
+    turbo.scroll = std::move(path);
+    turbo.scrollRadii = std::move(radii);
+    turbo.axis = zAxis;
+    turbo.radial = toEntry;
+    turbo.turbineCentre = centre;
+    turbo.compressorCentre = centre - zAxis * (0.5F * turbo.turbineWidth + bearing + 0.5F * turbo.compressorWidth);
+    // The exducer, then a cone down to the pipe that follows.
+    turbo.outletRadius = rc;
+    turbo.outlet = centre + zAxis * (0.5F * turbo.turbineWidth + node.outletDiameter);
+    node.exitLane = { centre.x, centre.y, 0.0F };
+    node.exitZ = turbo.outlet.z;
+}
+
+void placePath(PathLayout& layout, const std::vector<PortAnchor>& ports, float clearance, const TurboSpec& spec,
+               TurboPlacement* turbo) {
     auto& nodes = layout.nodes;
     for (const auto i : layout.order) {
         auto& node = nodes[i];
+        if (node.firstJunction && node.turbo && turbo != nullptr) placeTurbo(layout, node, spec, *turbo);
         if (node.stack || node.firstJunction) continue;
         if (node.routed) {
             if (node.ins.empty()) {
@@ -363,13 +460,13 @@ void placePath(PathLayout& layout, const std::vector<PortAnchor>& ports, float c
                 candidate = upstream.portZ + 0.5F * upstream.drawLength;
                 laneSum += upstream.lane;
             } else if (upstream.routed) {
-                const auto from = nodes[upstream.ins.front()].zOut;
+                const auto from = exitZ(nodes[upstream.ins.front()]);
                 routedEarliest = std::min(routedEarliest, from + 0.75F * upstream.drawLength);
                 routedLatest = std::max(routedLatest, from + 0.25F * upstream.drawLength);
                 candidate = -std::numeric_limits<float>::max();
                 laneSum += upstream.lane;
             } else {
-                candidate = upstream.zOut;
+                candidate = exitZ(upstream);
                 laneSum += outLane(layout, upstream, indexIn(upstream.outs, i));
             }
             if (!spreadSet) {
@@ -396,6 +493,7 @@ void placePath(PathLayout& layout, const std::vector<PortAnchor>& ports, float c
         node.lane = lanes > 0 ? laneSum * (1.0F / static_cast<float>(lanes)) : Vec3 {};
         node.zIn = z;
         node.zOut = z + node.drawLength;
+        if (node.turbo && turbo != nullptr) placeTurbo(layout, node, spec, *turbo);
     }
 }
 
@@ -529,7 +627,8 @@ void shapeComponent(DuctPiece& piece, const Node& node, std::vector<Vec3> points
 } // namespace
 
 std::vector<DuctPiece> layoutExhaust(const EngineConfig& config, const std::vector<PortAnchor>& ports, float boreMm,
-                                     const std::vector<RouteTube>& avoid, const std::vector<EngineSolid>& solids) {
+                                     const std::vector<RouteTube>& avoid, const std::vector<EngineSolid>& solids,
+                                     TurboPlacement* turbo) {
     const auto clearance = std::max(60.0F, 0.8F * boreMm);
     const RouteSettings routing;
     std::vector<PathLayout> layouts(config.exhaustPaths.size());
@@ -607,6 +706,30 @@ std::vector<DuctPiece> layoutExhaust(const EngineConfig& config, const std::vect
             node.zOut = node.zIn + node.drawLength;
         }
     }
+
+    // The turbo goes on the first junction where every primary of a path has
+    // met, in the first path that has one.
+    const auto spec = turboSpec(config);
+    if (turbo != nullptr) *turbo = {};
+    for (std::size_t p = 0; turbo != nullptr && spec.wanted && p < layouts.size(); ++p) {
+        auto& nodes = layouts[p].nodes;
+        std::size_t total = 0;
+        for (const auto& node : nodes) total += node.cylinders.size();
+        std::vector<std::size_t> fed(nodes.size(), 0);
+        bool found = false;
+        for (const auto i : layouts[p].order) {
+            auto& node = nodes[i];
+            fed[i] = node.cylinders.size();
+            for (const auto in : node.ins) fed[i] += fed[in];
+            if (node.routed || node.stack || node.outs.size() != 1U || node.ins.size() + node.cylinders.size() < 2U
+                || fed[i] < total)
+                continue;
+            node.turbo = true;
+            found = true;
+            break;
+        }
+        if (found) break;
+    }
     for (std::size_t a = 0; a < junctions.size(); ++a) {
         auto& node = layouts[junctions[a].path].nodes[junctions[a].node];
         for (int attempt = 0; attempt < 8; ++attempt) {
@@ -634,7 +757,7 @@ std::vector<DuctPiece> layoutExhaust(const EngineConfig& config, const std::vect
     std::vector<RoutedPipe> routes;
     for (std::size_t l = 0; l < layouts.size(); ++l) {
         auto& layout = layouts[l];
-        placePath(layout, ports, clearance);
+        placePath(layout, ports, clearance, spec, turbo);
         assignSlots(layout, ports);
         auto& nodes = layout.nodes;
         const auto pathId = layout.path->id;
@@ -742,13 +865,42 @@ std::vector<DuctPiece> layoutExhaust(const EngineConfig& config, const std::vect
     for (const auto& piece : pieces)
         if (piece.radii.size() == piece.centreline.size() && piece.centreline.size() >= 2U)
             obstacles.push_back({ piece.centreline, piece.radii });
-    relaxRoutes(routes, obstacles, solids, routing);
+    auto blocks = solids;
+    if (turbo != nullptr && turbo->placed) {
+        obstacles.push_back({ turbo->scroll, turbo->scrollRadii });
+        for (const auto& solid : turboSolids(*turbo)) blocks.push_back(solid);
+    }
+    relaxRoutes(routes, obstacles, blocks, routing);
     for (std::size_t r = 0; r < pending.size(); ++r) {
         auto& item = pending[r];
         shapeComponent(item.piece, layouts[item.layout].nodes[item.node], std::move(routes[r].points));
         pieces.push_back(std::move(item.piece));
     }
     return pieces;
+}
+
+std::vector<EngineSolid> turboSolids(const TurboPlacement& turbo) {
+    std::vector<EngineSolid> result;
+    if (!turbo.placed) return result;
+    const auto ring = [&](Vec3 centre, float radius, float halfLength) {
+        EngineSolid solid;
+        solid.shape = EngineSolid::Shape::cylinder;
+        solid.centre = centre;
+        solid.axes[1] = turbo.axis;
+        solid.axes[0] = turbo.radial;
+        solid.axes[2] = normalise(cross(turbo.radial, turbo.axis));
+        solid.half = { radius, halfLength, 0.0F };
+        result.push_back(solid);
+    };
+    // The turbine housing's centre round the wheel (its volute is a tube),
+    // the bearing housing, and the compressor with its volute.
+    ring(turbo.turbineCentre, turbo.turbineWheelRadius + 5.0F, 0.5F * turbo.turbineWidth);
+    const auto bearingStart = turbo.turbineCentre - turbo.axis * (0.5F * turbo.turbineWidth);
+    const auto bearingEnd = turbo.compressorCentre + turbo.axis * (0.5F * turbo.compressorWidth);
+    ring((bearingStart + bearingEnd) * 0.5F, 0.6F * turbo.turbineWheelRadius + 6.0F,
+         0.5F * length(bearingStart - bearingEnd));
+    ring(turbo.compressorCentre, turbo.compressorOuterRadius, 0.5F * turbo.compressorWidth);
+    return result;
 }
 
 // ------------------------------------------------------------------- intake

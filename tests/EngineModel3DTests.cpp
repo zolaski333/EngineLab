@@ -264,6 +264,81 @@ void checkDucts(const EngineModel3D& model) {
     }
 }
 
+int turbosDrawn = 0;
+
+/** Points on the surface of a cylinder solid. */
+[[nodiscard]] std::vector<Vec3> surfaceOf(const EngineSolid& solid) {
+    std::vector<Vec3> points;
+    for (int a = 0; a < 24; ++a) {
+        const auto angle = 2.0F * std::numbers::pi_v<float> * static_cast<float>(a) / 24.0F;
+        const auto radial = solid.axes[0] * std::cos(angle) + solid.axes[2] * std::sin(angle);
+        for (int k = 0; k <= 4; ++k) {
+            const auto along = solid.half.y * (static_cast<float>(k) / 2.0F - 1.0F);
+            points.push_back(solid.centre + solid.axes[1] * along + radial * solid.half.x);
+        }
+    }
+    return points;
+}
+
+void checkTurbo(const EngineModel3D& model) {
+    const auto& config = model.config();
+    const auto& name = config.name;
+    const auto& turbo = model.turbo();
+    const auto wanted = config.forcedInduction.enabled && config.forcedInduction.type == ForcedInductionType::turbocharger;
+    require(turbo.placed == wanted, name + ": a turbocharger is drawn when one is configured, and only then");
+    if (!turbo.placed) return;
+    ++turbosDrawn;
+
+    // It is bolted to its collector, and the path resumes at its outlet.
+    bool fed = false, resumes = false;
+    for (const auto& duct : model.ducts()) {
+        if (duct.pathId != turbo.pathId || duct.kind != DuctKind::exhaustComponent || duct.centreline.empty()) continue;
+        if (duct.elementId == turbo.collectorId && length(duct.centreline.back() - turbo.scroll.front()) < 0.5F) fed = true;
+        if (length(duct.centreline.front() - turbo.outlet) < 0.5F) resumes = true;
+    }
+    require(fed, name + ": the turbine volute starts at its collector's outlet");
+    require(resumes, name + ": the exhaust resumes at the turbine outlet");
+    require(std::abs(dot(turbo.outlet - turbo.turbineCentre, turbo.axis)) > 0.5F * turbo.turbineWidth
+                && dot(turbo.turbineCentre - turbo.compressorCentre, turbo.axis) > 0.0F,
+            name + ": gas leaves the turbine along the shaft, on the side away from the compressor");
+
+    // Clear of the engine: the turbo's solids against the engine's.
+    const auto ownSolids = turboSolids(turbo);
+    const auto& solids = model.solids();
+    require(solids.size() >= ownSolids.size(), name + ": the turbo's solids are listed with the engine's");
+    float deepest = 0.0F;
+    for (std::size_t s = 0; s + ownSolids.size() < solids.size(); ++s)
+        for (const auto& own : ownSolids)
+            for (const auto& point : surfaceOf(own)) deepest = std::max(deepest, -signedDistance(solids[s], point));
+    require(deepest < 1.0F, name + ": the turbo stays out of the engine (" + std::to_string(deepest) + " mm in)");
+
+    // The wheels turn about the shaft, and only they move.
+    std::vector<SceneInstance> still, turned;
+    ScenePoseInput input;
+    model.pose(input, still);
+    input.turboShaftDegrees = 90.0;
+    model.pose(input, turned);
+    int moved = 0, turbines = 0;
+    for (std::size_t part = 0; part < still.size(); ++part) {
+        const auto& a = still[part].transform;
+        const auto& b = turned[part].transform;
+        if (model.identify(static_cast<std::uint16_t>(part)).role == PartRole::turbo) ++turbines;
+        if (a.m == b.m) continue;
+        ++moved;
+        require(model.identify(static_cast<std::uint16_t>(part)).role == PartRole::turbo,
+                name + ": the shaft angle moves only the turbo's wheels");
+        const auto origin = b.transformPoint({});
+        const auto axis = b.transformDirection({ 0.0F, 1.0F, 0.0F });
+        require((length(origin - turbo.turbineCentre) < 1.0e-3F || length(origin - turbo.compressorCentre) < 1.0e-3F)
+                    && dot(axis, turbo.axis) > 0.999F,
+                name + ": a wheel turns about the shaft");
+        const auto spun = b.transformDirection({ 1.0F, 0.0F, 0.0F });
+        const auto rest = a.transformDirection({ 1.0F, 0.0F, 0.0F });
+        require(std::abs(dot(spun, rest)) < 1.0e-3F, name + ": a quarter turn of the shaft turns the wheel a quarter");
+    }
+    require(moved == 2 && turbines == 4, name + ": two wheels turn, in two housings");
+}
+
 void checkEngine(const EngineConfig& config) {
     const EngineModel3D model(config);
     const auto& name = config.name;
@@ -282,6 +357,7 @@ void checkEngine(const EngineConfig& config) {
     const auto routes = checkRoutes(model);
     for (std::size_t k = 0; k < routeIssues.size(); ++k) routeIssues[k] += routes.count(static_cast<RouteIssueKind>(k));
     checkStations(model);
+    checkTurbo(model);
     checkGasFieldBinding(model);
     checkWaveColours(model);
 
@@ -472,6 +548,8 @@ int main() {
     const auto catalogue = loadEngineCatalog(ENGINELAB_CATALOG_ROOT);
     require(catalogue.errors.empty() && !catalogue.entries.empty(), "the shipped catalogue loads");
     for (const auto& entry : catalogue.entries) checkEngine(entry.config);
+    // 2JZ, EJ25, I5 and TDI; the Merlin's supercharger is not a turbo.
+    require(turbosDrawn == 4, "the four catalogue turbochargers are drawn (" + std::to_string(turbosDrawn) + ")");
     // Measured 2026-10-05: the four 140 mm pipes of the X of the LS3, which
     // must cross between the banks, the end primary of the I5, and the two
     // end primaries of the 2JZ, whose 430 mm cannot reach a collector they

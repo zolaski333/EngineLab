@@ -283,6 +283,7 @@ constexpr std::array<MaterialLook, render::sceneMaterialCount> looks { {
     { 0x41b6d7, 0.40F, 0.40F, 0.55F },  // intake flow
     { 0xa3958b, 0.55F, 0.38F, 1.0F },   // exhaust pipe
     { 0xff7a3d, 0.00F, 1.00F, 0.85F },  // flame
+    { 0x8f8a84, 0.60F, 0.45F, 0.30F },  // turbo housing
 } };
 
 [[nodiscard]] Vec3 linearColour(std::uint32_t srgb) noexcept {
@@ -317,7 +318,7 @@ constexpr std::array<MaterialLook, render::sceneMaterialCount> looks { {
         break;
     }
     if (material == SceneMaterial::flame) return 5;
-    if (isShell(material)) return frame.xray ? 4 : 1;
+    if (isShell(material) || material == SceneMaterial::turboHousing) return frame.xray ? 4 : 1;
     if (material == SceneMaterial::intakeFlow) return 3;
     if (material == SceneMaterial::exhaustPipe) return 1;
     // The gas-flow layer fades the metal so the ducts read through it.
@@ -881,6 +882,8 @@ void EngineSceneRenderer::render(const SceneFrame& frame, int width, int height)
     const auto subframes = frame.angles.size();
     for (std::size_t k = 0; k < subframes; ++k) {
         pose.crankAngleDegrees = frame.angles[k];
+        pose.turboShaftDegrees = frame.pose.turboShaftDegrees
+            - frame.turboShaftSweepDegrees * static_cast<double>(subframes - 1U - k) / static_cast<double>(subframes);
         model_->pose(pose, s.instances);
         glBindFramebuffer(GL_FRAMEBUFFER, s.msaaFbo);
         s.drawScene(*model_, frame, width, height);

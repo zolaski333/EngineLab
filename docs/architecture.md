@@ -242,6 +242,23 @@ the two end primaries of the 2JZ, whose 430 mm cannot reach a collector they
 must enter along its axis. `EngineLabSceneExport` writes the scene and the
 issues as JSON, to look at them outside the app.
 
+**Turbocharger.** The gas solver has no turbine in its network: it narrows
+every exhaust outlet by the turbine and open wastegate areas (a restriction
+in series) and drives the shaft from the exhaust pressure and flow. The view
+draws one where a real one sits (`TurboPlacement`): on the first junction
+where all of a path's primaries have met, in the first path that has one
+(the EJ25's left bank). Gas bends out of the collector, enters the volute
+tangentially and leaves the exducer along the trunk, where the path resumes;
+the shaft runs along the crankshaft, the compressor on the far side of the
+bearing housing, far enough out to clear the collector. Wheel sizes come from
+the inducer and exducer diameters (about 70 % and 85 % of the wheels), blade
+counts from the configuration (7 and 10 when unset). The wheels turn at the
+simulated shaft speed, slowed with the crank, motion-blurred over the same
+sub-frames. Housings are translucent in X-ray. Since the solver's restriction
+sits at the outlets, the gas field shows the whole drawn exhaust, downpipe
+included, at turbine inlet pressure; the inspector says so. A supercharger
+(the Merlin's) is not drawn, nor is the charge piping.
+
 Engine views frame the engine with its ports, runners, plenum and primaries;
 the *Exhaust* view frames the whole system.
 

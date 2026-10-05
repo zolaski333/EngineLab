@@ -22,6 +22,9 @@ struct SceneFrame final {
     /** Crank angles of the motion-blur sub-frames, oldest first; one angle
         draws a sharp frame. */
     std::vector<double> angles;
+    /** Angle the turbo shaft sweeps over the same sub-frames, ending at
+        pose.turboShaftDegrees. */
+    double turboShaftSweepDegrees {};
     render::ScenePoseInput pose;
     /** The solver's gas along the exhaust, or null. Waves are drawn in the
         All and Gas flow layers; hot walls glow in every layer. */

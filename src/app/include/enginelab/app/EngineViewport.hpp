@@ -85,7 +85,8 @@ public:
         juce::String value;
     };
     std::function<void()> onClose;
-    void show(juce::String title, juce::String subtitle, std::vector<Row> rows);
+    /** `note`, if any, is a short paragraph under the rows. */
+    void show(juce::String title, juce::String subtitle, std::vector<Row> rows, juce::String note = {});
     [[nodiscard]] int idealHeight() const;
     void paint(juce::Graphics&) override;
     void mouseUp(const juce::MouseEvent&) override;
@@ -95,6 +96,8 @@ private:
     juce::String title_;
     juce::String subtitle_;
     std::vector<Row> rows_;
+    juce::String note_;
+    [[nodiscard]] juce::TextLayout noteLayout(float width) const;
 };
 
 /**
@@ -145,6 +148,7 @@ private:
         double crankAngle {};
         double rpm {};
         double rate { 1.0 };
+        double turboShaftRpm {};
         std::uint64_t sampleSequence {};
         render::ScenePoseInput pose;
         double playbackFactor { 1.0 };
@@ -226,6 +230,7 @@ private:
     bool orbitValid_ { false };
     double lastFrameWall_ {};
     double frameInterval_ { 1.0 / 60.0 };
+    double turboShaftDegrees_ {};
     int appliedSwapInterval_ { -1 };
     SceneFrame frame_;
 

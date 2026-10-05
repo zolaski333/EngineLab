@@ -454,16 +454,32 @@ constexpr int inspectorRowHeight = 19;
 constexpr int inspectorHeader = 46;
 } // namespace
 
-void PartInspector::show(juce::String title, juce::String subtitle, std::vector<Row> rows) {
-    const auto resize = rows.size() != rows_.size();
+void PartInspector::show(juce::String title, juce::String subtitle, std::vector<Row> rows, juce::String note) {
+    const auto resize = rows.size() != rows_.size() || note != note_;
     title_ = std::move(title);
     subtitle_ = std::move(subtitle);
     rows_ = std::move(rows);
+    note_ = std::move(note);
     if (resize) setSize(getWidth(), idealHeight());
     repaint();
 }
 
-int PartInspector::idealHeight() const { return inspectorHeader + inspectorRowHeight * static_cast<int>(rows_.size()) + 10; }
+juce::TextLayout PartInspector::noteLayout(float width) const {
+    juce::AttributedString text;
+    text.append(note_, uiFont(11.0F), colours::faint);
+    text.setWordWrap(juce::AttributedString::byWord);
+    juce::TextLayout layout;
+    layout.createLayout(text, width);
+    return layout;
+}
+
+int PartInspector::idealHeight() const {
+    const auto rows = inspectorHeader + inspectorRowHeight * static_cast<int>(rows_.size()) + 10;
+    if (note_.isEmpty()) return rows;
+    // The viewport gives the inspector 280 px; before that, assume it.
+    const auto width = static_cast<float>((getWidth() > 0 ? getWidth() : 280) - 24);
+    return rows + 6 + static_cast<int>(std::ceil(noteLayout(width).getHeight()));
+}
 
 juce::Rectangle<int> PartInspector::closeArea() const { return { getWidth() - 30, 6, 24, 24 }; }
 
@@ -499,6 +515,10 @@ void PartInspector::paint(juce::Graphics& g) {
         g.setColour(colours::text);
         g.setFont(monoFont(11.5F, false));
         g.drawText(row.value, line, juce::Justification::centredRight, true);
+    }
+    if (note_.isNotEmpty()) {
+        content.removeFromTop(6);
+        noteLayout(static_cast<float>(content.getWidth())).draw(g, content.toFloat());
     }
 }
 
@@ -882,6 +902,7 @@ void EngineViewport::updateInspector() {
     const auto cylinderName = cylinder != nullptr ? "Cylinder " + juce::String(cylinder->id) : juce::String();
     juce::String title;
     juce::String subtitle = cylinderName;
+    juce::String note;
     std::vector<PartInspector::Row> rows;
     const auto add = [&rows](juce::String label, juce::String value) { rows.push_back({ std::move(label), std::move(value) }); };
 
@@ -963,6 +984,32 @@ void EngineViewport::updateInspector() {
         subtitle = "Flame at the outlet";
         add("Heat release", juce::String(state.exhaustAfterfireHeatReleaseKw, 2) + " kW");
         break;
+    case render::PartRole::turbo: {
+        const auto& forced = config.forcedInduction;
+        const auto krpm = [](double rpm) { return juce::String(rpm / 1'000.0, 1) + " krpm"; };
+        const auto area = [](double mm2) { return juce::String(juce::roundToInt(mm2)) + utf8(" mm²"); };
+        title = "Turbocharger";
+        subtitle = "On exhaust path " + juce::String(scene_->turbo().pathId);
+        add("Shaft speed", krpm(state.forcedInductionShaftSpeedRpm));
+        add("Pressure ratio", juce::String(state.boostPressureRatio, 2) + " (target " + juce::String(forced.pressureRatio, 2) + ")");
+        add("Turbine outlet", juce::String(state.turbineOutletPressureKpa, 1) + " kPa");
+        add("Wastegate", juce::String(juce::roundToInt(100.0 * state.wastegateOpening)) + " % open");
+        add("Turbine / compressor", juce::String(state.turbinePowerKw, 1) + " / " + juce::String(state.compressorPowerKw, 1) + " kW");
+        add("Design shaft speed", krpm(forced.designShaftSpeedRpm));
+        add("Turbine flow area", area(forced.turbineFlowAreaMm2));
+        add("Wastegate flow area", area(forced.wastegateFlowAreaMm2));
+        add("Blades (compressor / turbine)", forced.compressorBladeCount > 0U && forced.turbineBladeCount > 0U
+                ? juce::String(static_cast<int>(forced.compressorBladeCount)) + " / "
+                    + juce::String(static_cast<int>(forced.turbineBladeCount))
+                : juce::String("not set"));
+        if (forced.compressorInducerDiameterMm > 0.0 && forced.turbineExducerDiameterMm > 0.0)
+            add("Inducer / exducer", juce::String(juce::roundToInt(forced.compressorInducerDiameterMm)) + " / "
+                                         + millimetres(forced.turbineExducerDiameterMm));
+        note = "The gas solver has no turbine in its network: the turbine and open wastegate areas narrow every "
+               "exhaust outlet, as a restriction in series, and the shaft is driven by the exhaust pressure and "
+               "flow. Drawn where a real one sits, after the collector; the charge piping is not drawn.";
+        break;
+    }
     case render::PartRole::duct: {
         const auto& duct = scene_->ducts()[static_cast<std::size_t>(identity.duct)];
         switch (duct.kind) {
@@ -1019,7 +1066,7 @@ void EngineViewport::updateInspector() {
         break;
     }
     }
-    inspector_.show(title, subtitle, std::move(rows));
+    inspector_.show(title, subtitle, std::move(rows), note);
 }
 
 void EngineViewport::mouseWheelMove(const juce::MouseEvent& event, const juce::MouseWheelDetails& wheel) {
@@ -1104,6 +1151,7 @@ void EngineViewport::refresh() {
         shared_.sampleSequence = ++sampleSequence_;
         shared_.pose.rpm = state.rpm;
         shared_.pose.throttle = state.throttle;
+        shared_.turboShaftRpm = state.forcedInductionShaftSpeedRpm;
         shared_.pose.combustion.fill(0.0F);
         const auto count = std::min(state.cylinderStateCount, shared_.pose.combustion.size());
         for (std::size_t i = 0; i < count; ++i) {
@@ -1286,6 +1334,11 @@ void EngineViewport::renderOpenGL() {
     frame_.antiAliasing = shared.antiAliasing;
     frame_.pose = shared.pose;
     frame_.pose.afterfire = gasFieldView_.afterfire();
+    // The turbo shaft turns at its simulated speed, slowed down with the crank.
+    const auto shaftDegreesPerSecond
+        = 6.0 * shared.turboShaftRpm * (shared.playbackFactor >= 0.999 ? shared.rate : shared.playbackFactor);
+    turboShaftDegrees_ = std::fmod(turboShaftDegrees_ + shaftDegreesPerSecond * dt, 360.0);
+    frame_.pose.turboShaftDegrees = turboShaftDegrees_;
     frame_.gasField = gasFieldView_.valid() ? &gasFieldView_ : nullptr;
     frame_.selectedPart = shared.selectedPart;
 
@@ -1298,6 +1351,7 @@ void EngineViewport::renderOpenGL() {
     frame_.angles.resize(static_cast<std::size_t>(subframes));
     for (int k = 0; k < subframes; ++k)
         frame_.angles[static_cast<std::size_t>(k)] = angle - sweep * static_cast<double>(subframes - 1 - k) / subframes;
+    frame_.turboShaftSweepDegrees = shared.motionBlur ? shaftDegreesPerSecond * 0.5 * frameInterval_ : 0.0;
 
     renderer_->render(frame_, width, height);
     displayedAngle_.store(angle);

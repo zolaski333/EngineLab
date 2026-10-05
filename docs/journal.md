@@ -5,6 +5,17 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-05 — Turbocharger in the 3-D view
+
+- Drawn on the 4 catalogue turbos (2JZ, EJ25, I5, TDI), after the collector
+  where all of a path's primaries meet. Route check unchanged (7, 4, 0, 48,
+  7); the turbo's solids clear the engine's on all four.
+- Mutations: the trunk not resuming at the turbine outlet, a wheel that does
+  not turn: both fail `EngineLab.EngineModel3D`.
+- Not done: the solver's turbine is a restriction at the outlets, so the gas
+  field shows the downpipe at turbine inlet pressure. No charge piping, no
+  supercharger (Merlin).
+
 ## 2026-10-05 — Pipe routing in the 3-D view
 
 - Route check (`checkRoutes`), 16 catalogue engines. Old layout: 107 clashes,

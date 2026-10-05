@@ -26,8 +26,10 @@ enum class SceneMaterial : std::uint8_t {
     intakeFlow,
     exhaustPipe,
     flame,
+    /** Turbine and compressor housings: translucent in X-ray, so the wheels show. */
+    turboHousing,
 };
-inline constexpr std::size_t sceneMaterialCount = 10;
+inline constexpr std::size_t sceneMaterialCount = 11;
 
 /** Bits for the view layers (All / Combustion / Mechanical / Gas flow). */
 enum SceneLayer : std::uint8_t {
@@ -66,6 +68,8 @@ struct ScenePoseInput final {
     double throttle {};
     /** Strength of the flame at the exhaust outlets, 0..1 (afterfire). */
     float afterfire {};
+    /** Turbocharger shaft angle, degrees. */
+    double turboShaftDegrees {};
 };
 
 struct SceneBounds final {
@@ -104,6 +108,7 @@ enum class PartRole : std::uint8_t {
     exhaustPorts,
     duct,
     afterfire,
+    turbo,
 };
 
 struct PartIdentity final {
@@ -142,6 +147,9 @@ public:
     /** Block, heads, crankcase, sump, liners, pulley and flywheel, as simple
         solids the ducts must stay out of. */
     [[nodiscard]] const std::vector<EngineSolid>& solids() const noexcept { return solids_; }
+    /** The turbocharger as drawn; `placed` is false without one. Its solids
+        are at the end of solids(). */
+    [[nodiscard]] const TurboPlacement& turbo() const noexcept { return turbo_; }
 
     /** Cycle phase of one cylinder: 0 = firing TDC, 360 = overlap TDC. */
     [[nodiscard]] double cyclePhaseDegrees(std::size_t cylinder, double crankAngleDegrees) const noexcept;
@@ -202,6 +210,7 @@ private:
     void buildCrankshaft();
     void buildStructure();
     void buildDucts();
+    void buildTurbo();
     void computeBounds();
 
     EngineConfig config_;
@@ -215,6 +224,9 @@ private:
     std::vector<PortAnchor> intakePorts_;
     std::vector<PortAnchor> exhaustPorts_;
     std::vector<SceneDuct> ducts_;
+    TurboPlacement turbo_;
+    /** Turbine housing, compressor housing, turbine wheel, compressor wheel. */
+    std::array<std::uint16_t, 4> turboParts_ { 0xFFFFU, 0xFFFFU, 0xFFFFU, 0xFFFFU };
     /** Flames at the exhaust outlets, lit by an afterfire. */
     std::vector<std::uint16_t> outletFlameParts_;
     /** Parts left out of the engine framing (exhaust trunk, airbox, inlet duct). */
