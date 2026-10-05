@@ -46,6 +46,12 @@ file formats, always with an in-memory migration).
   flame at the outlets.
 - Click a part in the 3-D view to inspect it: its authored dimensions and, for
   an exhaust duct, the solver's pressures and temperatures in it.
+- Exhaust and intake pipes in the 3-D view are routed like real ones: they no
+  longer pass through each other, the engine or the intake, bend no tighter
+  than 1.25 diameters and keep their authored length. A collector is wide
+  enough for its primaries, which enter it side by side along its axis; long
+  primaries meet behind the last cylinder, and the two Y pieces of a 4-2-1 sit
+  side by side.
 
 ## [0.2.0] — 2026-10-04
 

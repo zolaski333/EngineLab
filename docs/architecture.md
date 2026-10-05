@@ -154,6 +154,7 @@ pieces split the work:
 |---|---|---|
 | `render::EngineModel3D` | `render`, no JUCE | meshes built from `EngineConfig` (mm, +Y up, +Z along the crank) and a pose per crank angle |
 | `render::layoutExhaust` / `layoutIntake` | `render`, no JUCE | ducts laid out from the configured exhaust graphs and intake paths |
+| `render::relaxRoutes` / `checkRoutes` | `render`, no JUCE | pipes bent clear of each other and of the engine; what a real system could not do, counted |
 | `render::CrankClock` | `render`, no JUCE | the crank angle to draw at any display time |
 | `render::GasFieldView` / `bindGasField` | `render`, no JUCE | the solver's gas field mapped onto the drawn ducts, as wave colours and wall temperatures |
 | `ui::EngineSceneRenderer` | `app` | shaders, buffers, multisampling and motion blur |
@@ -198,12 +199,15 @@ this view.
   editor compiles from the scalar geometry) is drawn component by component,
   at its authored length and diameter; mufflers, catalysts, resonators and
   merges get the diameter of their authored volume. Pipes fed by a port, or
-  feeding a junction with several inputs, are *routed*: they leave along the
-  port and sag (or, on a radial, bend outwards) until their centreline has
-  the real length. Junctions and bodies sit on a trunk that runs along +Z
-  (towards the flywheel), placed out from their ports and no higher than the
-  crankshaft; a splitter spreads its branches, an X sends each bank back to
-  its side. An outlet is the open end of the pipe before it: with no authored
+  feeding a junction with several inputs, are *routed* (below). Junctions and
+  bodies sit on a trunk that runs along +Z (towards the flywheel), placed out
+  from their ports and no higher than the crankshaft; a splitter spreads its
+  branches, an X sends each bank back to its side. A collector's mouth is wide
+  enough for its inputs side by side (they sit on a circle of radius
+  (r + gap/2) / sin(π/N)). A collector fed by primaries sits behind the last
+  port when every primary still reaches it (long tubes), else as far back as
+  the shortest allows; the junctions of one path that would overlap (the two
+  Y pieces of a 4-2-1) sit side by side across the trunk. An outlet is the open end of the pipe before it: with no authored
   length it is only a short collar with a rolled lip, and the inside of an
   open opaque tube is shaded dark, so the opening reads as a hole.
 - **Intake.** Each runner has its length and taper, from the port to a
@@ -212,12 +216,34 @@ this view.
   face when there are several), the airbox volume, the inlet duct and its
   bellmouth, in the order the air crosses them.
 
-The routing itself is invented. A pipe that must span more than its length is
-drawn longer: 6 of the 72 catalogue exhaust pipes (the four 140 mm pipes of
-the LS3's X, the end primaries of the 2JZ and the I5), a count
-`EngineLab.EngineModel3D` keeps from growing. Engine views frame the engine
-with its ports, runners, plenum and primaries; the *Exhaust* view frames the
-whole system.
+**Routing.** `relaxRoutes` bends every routed pipe of the engine together.
+Each is a chain of equal segments with straight ends held fixed: 0.8 diameter
+out of its port, one diameter into its junction, along the trunk (the inputs
+of a collector arrive side by side, as on a real one). Contacts with the other
+pipes, with the intake ducts, and with the engine's solids (block, heads,
+crankcase, sump, liners, pulley, flywheel, plenum and airbox boxes) are
+projected out, then bends are held at 1.25 diameters or more and segments at
+their length, until nothing moves (200 contact passes at most). Each input of
+a collector takes the slot that makes the straight joins shortest in total.
+Intake runners are routed the same way, clear of their plenum. The shapes are
+invented; only their length, diameter and taper are the configuration's.
+
+**Route check.** `checkRoutes` measures what a physical system could not do:
+two ducts through each other, a duct through itself, a duct through the
+engine, a centreline bent tighter than one diameter (circle through the
+points half a diameter either side), a pipe drawn more than 3 % longer than
+authored. Joints are not clashes: near an end that plugs into a port, a box
+or another duct, within two radii. Over the 16 catalogue engines, before the
+router: 107 clashes, 51 self-clashes, 0 through the engine, 259 tight bends,
+6 stretched; with it: 7, 4, 0, 48, 7. `EngineLab.EngineModel3D` keeps every
+count from growing. A pipe that must span more than its length is drawn
+longer: the four 140 mm pipes of the LS3's X, the end primary of the I5, and
+the two end primaries of the 2JZ, whose 430 mm cannot reach a collector they
+must enter along its axis. `EngineLabSceneExport` writes the scene and the
+issues as JSON, to look at them outside the app.
+
+Engine views frame the engine with its ports, runners, plenum and primaries;
+the *Exhaust* view frames the whole system.
 
 ### Gas field on the ducts
 

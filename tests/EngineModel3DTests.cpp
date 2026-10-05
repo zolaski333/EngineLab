@@ -7,12 +7,16 @@
 #include <enginelab/render/CrankClock.hpp>
 #include <enginelab/render/EngineModel3D.hpp>
 #include <enginelab/render/GasFieldView.hpp>
+#include <enginelab/render/RouteCheck.hpp>
+#include <enginelab/render/RouteSolver.hpp>
 #include <enginelab/simulation/EngineSimulator.hpp>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdlib>
 #include <iostream>
+#include <limits>
 #include <memory>
 #include <numbers>
 #include <string>
@@ -47,6 +51,7 @@ void require(bool condition, const std::string& message) {
 
 int stretchedPipes = 0;
 int checkedPipes = 0;
+std::array<std::size_t, 5> routeIssues {};
 
 /** A simulator with the models it borrows. */
 struct Bench final {
@@ -274,6 +279,8 @@ void checkEngine(const EngineConfig& config) {
             name + ": the engine bounds are finite and engine-sized");
 
     checkDucts(model);
+    const auto routes = checkRoutes(model);
+    for (std::size_t k = 0; k < routeIssues.size(); ++k) routeIssues[k] += routes.count(static_cast<RouteIssueKind>(k));
     checkStations(model);
     checkGasFieldBinding(model);
     checkWaveColours(model);
@@ -305,6 +312,90 @@ void checkEngine(const EngineConfig& config) {
                     label + ": the crown stays below the deck");
         }
     }
+}
+
+/** Tightest centreline bend, as the radius of the circle through points half
+    a diameter apart along the arc, over the diameter. */
+[[nodiscard]] float tightestBend(const std::vector<Vec3>& p, float diameter) {
+    std::vector<float> arc(p.size(), 0.0F);
+    for (std::size_t i = 1; i < p.size(); ++i) arc[i] = arc[i - 1U] + length(p[i] - p[i - 1U]);
+    float tightest = std::numeric_limits<float>::max();
+    for (std::size_t i = 1; i + 1U < p.size(); ++i) {
+        std::size_t before = i, after = i;
+        while (before > 0 && arc[i] - arc[before] < 0.5F * diameter) --before;
+        while (after + 1U < p.size() && arc[after] - arc[i] < 0.5F * diameter) ++after;
+        const auto ab = p[i] - p[before], bc = p[after] - p[i], ca = p[before] - p[after];
+        const auto area2 = length(cross(ab, bc));
+        if (area2 > 1.0e-6F) tightest = std::min(tightest, length(ab) * length(bc) * length(ca) / (2.0F * area2) / diameter);
+    }
+    return tightest;
+}
+
+void checkTubeContact() {
+    // A wide body along +Z from its inlet plane at z = 0.
+    const std::vector<Vec3> body { { 0, 0, 0 }, { 0, 0, 20 }, { 0, 0, 40 }, { 0, 0, 60 }, { 0, 0, 80 } };
+    const std::vector<float> radii(body.size(), 60.0F);
+    // Its open end is flat: just in front of the inlet, inside the rim, a
+    // ball clear of the plane does not touch it, whatever the radius behind.
+    require(tubeContact({ 40, 0, -10 }, 8.0F, body, &radii).depth < 0.0F,
+            "a tube does not bulge out past its open end");
+    const auto face = tubeContact({ 40, 0, -5 }, 8.0F, body, &radii);
+    require(std::abs(face.depth - 3.0F) < 1.0e-3F && face.normal.z < -0.99F,
+            "a ball pressing on an open end is pushed back out along the axis");
+    const auto wall = tubeContact({ 70, 0, 40 }, 15.0F, body, &radii);
+    require(std::abs(wall.depth - 5.0F) < 1.0e-3F && wall.normal.x > 0.99F, "a ball against the wall is pushed out radially");
+}
+
+void checkRouter() {
+    // Two pipes whose first guesses pass through each other, the first also
+    // through a box: relaxed, they part and clear the box, keep their length,
+    // and bend no tighter than one diameter.
+    std::vector<RoutedPipe> pipes(3);
+    pipes[0].points = { { -300, 0, 0 }, { 0, 0, 10 }, { 300, 0, 0 } };
+    pipes[0].startDirection = pipes[0].endDirection = { 1, 0, 0 };
+    pipes[1].points = { { 0, -300, 0 }, { 0, 0, -10 }, { 0, 300, 0 } };
+    pipes[1].startDirection = pipes[1].endDirection = { 0, 1, 0 };
+    // A third, well clear and already smooth, stays where it was put.
+    for (int k = 0; k <= 200; ++k) {
+        const auto angle = std::numbers::pi_v<float> * static_cast<float>(k) / 200.0F;
+        pipes[2].points.push_back({ -150.0F * std::cos(angle), 600.0F, 150.0F * std::sin(angle) });
+    }
+    pipes[2].startDirection = { 0, 0, 1 };
+    pipes[2].endDirection = { 0, 0, -1 };
+    for (std::size_t k = 0; k < pipes.size(); ++k) {
+        pipes[k].radius = 20.0F;
+        pipes[k].lengthMm = k == 2U ? polylineLength(pipes[k].points) : 720.0F;
+        pipes[k].startLead = pipes[k].endLead = k == 2U ? 0.0F : 30.0F;
+    }
+    const auto clear = pipes[2].points;
+    const std::vector<EngineSolid> solids { boxBetween({ -140, -20, -20 }, { -100, 20, 20 }) };
+    relaxRoutes(pipes, {}, solids);
+    for (std::size_t k = 0; k < 2U; ++k) {
+        const auto& pipe = pipes[k];
+        const auto label = "router pipe " + std::to_string(k);
+        require(std::abs(polylineLength(pipe.points) - 720.0F) < 0.01F * 720.0F, label + " keeps its length");
+        require(tightestBend(pipe.points, 40.0F) >= 1.0F, label + " bends no tighter than one diameter ("
+                                                              + std::to_string(tightestBend(pipe.points, 40.0F)) + ")");
+        for (const auto& point : pipe.points) {
+            require(tubeContact(point, 20.0F, pipes[1U - k].points, nullptr, 20.0F).depth < 0.5F,
+                    label + " no longer passes through the other");
+            require(signedDistance(solids.front(), point) > 19.5F, label + " stays out of the box");
+        }
+    }
+    require(length(pipes[0].points.front() - Vec3 { -300, 0, 0 }) < 1.0e-3F
+                && length(pipes[0].points.back() - Vec3 { 300, 0, 0 }) < 1.0e-3F,
+            "the router keeps the ends of a pipe");
+    float drift = 0.0F;
+    for (const auto& point : pipes[2].points) {
+        float nearest = std::numeric_limits<float>::max();
+        for (std::size_t i = 0; i + 1U < clear.size(); ++i) {
+            const auto d = clear[i + 1U] - clear[i];
+            const auto t = std::clamp(dot(point - clear[i], d) / dot(d, d), 0.0F, 1.0F);
+            nearest = std::min(nearest, length(point - (clear[i] + d * t)));
+        }
+        drift = std::max(drift, nearest);
+    }
+    require(drift < 0.5F, "a pipe that already fits stays where it was put (" + std::to_string(drift) + " mm)");
 }
 
 void checkCrankClock() {
@@ -376,15 +467,30 @@ void checkCrankClock() {
 } // namespace
 
 int main() {
+    checkTubeContact();
+    checkRouter();
     const auto catalogue = loadEngineCatalog(ENGINELAB_CATALOG_ROOT);
     require(catalogue.errors.empty() && !catalogue.entries.empty(), "the shipped catalogue loads");
     for (const auto& entry : catalogue.entries) checkEngine(entry.config);
-    // Measured 2026-10-04: the four 140 mm pipes of the LS3's X, which must
-    // cross between the banks, and the end primaries of the 2JZ and the I5.
-    require(stretchedPipes <= 6, "no more exhaust pipes are drawn longer than authored than when measured ("
+    // Measured 2026-10-05: the four 140 mm pipes of the X of the LS3, which
+    // must cross between the banks, the end primary of the I5, and the two
+    // end primaries of the 2JZ, whose 430 mm cannot reach a collector they
+    // must enter along its axis.
+    require(stretchedPipes <= 7, "no more exhaust pipes are drawn longer than authored than when measured ("
                                      + std::to_string(stretchedPipes) + ")");
+    // Route check over the catalogue, measured 2026-10-05 with the router
+    // (before it: 107 clashes, 51 self-clashes, 0, 259 tight bends, 6).
+    const std::array<std::size_t, 5> measured { 7, 4, 0, 48, 7 };
+    const std::array<const char*, 5> names { "duct clashes", "self-clashes", "engine clashes", "tight bends",
+                                             "stretched pipes" };
+    for (std::size_t k = 0; k < measured.size(); ++k)
+        require(routeIssues[k] <= measured[k], std::string("no more ") + names[k] + " than when measured ("
+                                                   + std::to_string(routeIssues[k]) + ")");
     checkCrankClock();
     checkGasFieldCapture(catalogue.entries.front().config);
+    std::cout << "EngineModel3D: routes: " << routeIssues[0] << " clashes, " << routeIssues[1] << " self-clashes, "
+              << routeIssues[2] << " engine clashes, " << routeIssues[3] << " tight bends, " << routeIssues[4]
+              << " stretched\n";
     std::cout << "EngineModel3D: " << catalogue.entries.size() << " engines checked; " << stretchedPipes << " of "
               << checkedPipes << " exhaust pipes drawn more than 3% longer than authored\n";
     return 0;

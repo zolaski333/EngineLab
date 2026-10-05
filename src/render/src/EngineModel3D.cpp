@@ -9,6 +9,8 @@
 namespace enginelab::render {
 namespace {
 constexpr float pi = std::numbers::pi_v<float>;
+constexpr Vec3 xAxis { 1.0F, 0.0F, 0.0F };
+constexpr Vec3 yAxis { 0.0F, 1.0F, 0.0F };
 constexpr Vec3 zAxis { 0.0F, 0.0F, 1.0F };
 
 /** Where each vertex of a duct sits along its centreline, 0..1: the arc length
@@ -57,6 +59,27 @@ constexpr Vec3 zAxis { 0.0F, 0.0F, 1.0F };
 }
 
 /** Cylinder along the crankshaft (+Z) from `zStart` over `length`. */
+/** A box solid of full `size` along the orthonormal axes x, y, z. */
+[[nodiscard]] EngineSolid boxSolid(Vec3 x, Vec3 y, Vec3 z, Vec3 centre, Vec3 size) noexcept {
+    EngineSolid solid;
+    solid.centre = centre;
+    solid.axes[0] = x;
+    solid.axes[1] = y;
+    solid.axes[2] = z;
+    solid.half = size * 0.5F;
+    return solid;
+}
+
+/** A cylinder solid from `base` along the unit `axis`. */
+[[nodiscard]] EngineSolid cylinderSolid(Vec3 base, Vec3 axis, float radius, float height) noexcept {
+    EngineSolid solid;
+    solid.shape = EngineSolid::Shape::cylinder;
+    solid.centre = base + axis * (0.5F * height);
+    solid.axes[1] = axis;
+    solid.half = { radius, 0.5F * height, 0.0F };
+    return solid;
+}
+
 void appendShaft(Mesh& mesh, Vec3 centreXY, float zStart, float length, float radius, int segments) {
     appendCylinder(mesh, Mat4::translation({ centreXY.x, centreXY.y, zStart }) * Mat4::rotationX(pi * 0.5F),
                    radius, radius, length, segments);
@@ -234,6 +257,7 @@ void EngineModel3D::buildCylinders() {
         const auto linerBottom = bottomWrist - axis * (skirt + 0.1F * b);
         appendCylinder(liner, cylinderFrame(linerBottom, axis), 0.56F * b, 0.56F * b,
                        length(cylinder.deckCentre - linerBottom), 40, false, false);
+        solids_.push_back(cylinderSolid(linerBottom, axis, 0.56F * b, length(cylinder.deckCentre - linerBottom)));
         cylinder.linerPart = addPart(std::move(liner), SceneMaterial::blockShell, layerStructure);
 
         cylinders_.push_back(cylinder);
@@ -326,6 +350,8 @@ void EngineModel3D::buildCrankshaft() {
         // round parts, so the marks are what shows the rotation.
         const auto pulleyLength = 0.3F * b;
         appendShaft(shaft, {}, start - pulleyLength, pulleyLength, 0.6F * b, 40);
+        const auto origin = throws_[firstThrow].origin;
+        solids_.push_back(cylinderSolid(origin + zAxis * (start - pulleyLength), zAxis, 0.6F * b, pulleyLength));
         appendTorus(shaft, Mat4::translation({ 0, 0, start - pulleyLength * 0.5F }) * Mat4::rotationX(pi * 0.5F),
                     0.6F * b, 0.035F * b, 40, 6);
         appendBox(shaft, Mat4::translation({ 0, 0.5F * b, start - pulleyLength - 0.01F * b }),
@@ -333,6 +359,7 @@ void EngineModel3D::buildCrankshaft() {
         const auto flywheelRadius = std::max(radius + 0.8F * b, 1.15F * b);
         const auto flywheelThickness = 0.22F * b;
         appendShaft(shaft, {}, end, flywheelThickness, flywheelRadius, 64);
+        solids_.push_back(cylinderSolid(origin + zAxis * end, zAxis, flywheelRadius, flywheelThickness));
         appendTorus(shaft, Mat4::translation({ 0, 0, end + flywheelThickness * 0.5F }) * Mat4::rotationX(pi * 0.5F),
                     flywheelRadius, 0.04F * b, 64, 6);
         for (int bolt = 0; bolt < 6; ++bolt) {
@@ -382,16 +409,20 @@ void EngineModel3D::buildStructure() {
         deck = deck * (1.0F / static_cast<float>(group.size()));
         const auto span = radialLike_ ? 1.2F * b : groupMax - groupMin + pitch_ * 0.92F;
         appendBox(heads, Mat4::basis(side, axis, lateral, deck + axis * (0.31F * b)), { 1.4F * b, 0.62F * b, span });
+        solids_.push_back(boxSolid(side, axis, lateral, deck + axis * (0.31F * b), { 1.4F * b, 0.62F * b, span }));
         if (!radialLike_) {
             const auto deckDistance = dot(deck - crankOrigin, axis);
             const auto height = std::max(0.2F * b, deckDistance - 0.25F * b);
             const auto centre = Vec3 { crankOrigin.x, crankOrigin.y, deck.z } + axis * (0.25F * b + height * 0.5F);
             appendBox(block, Mat4::basis(side, axis, lateral, centre), { 1.25F * b, height, span });
+            solids_.push_back(boxSolid(side, axis, lateral, centre, { 1.25F * b, height, span }));
         }
     }
     const auto length = zMax - zMin + pitch_;
     if (radialLike_) {
         appendShaft(block, crankOrigin, zMin - 0.75F * b, 1.5F * b + (zMax - zMin), radius + 0.7F * b, 48);
+        solids_.push_back(cylinderSolid(Vec3 { crankOrigin.x, crankOrigin.y, zMin - 0.75F * b }, zAxis, radius + 0.7F * b,
+                                        1.5F * b + (zMax - zMin)));
     } else {
         const auto halfWidth = radius + 0.7F * b;
         const auto top = crankOrigin.y + 0.3F * b;
@@ -401,6 +432,10 @@ void EngineModel3D::buildStructure() {
                   { 2.0F * halfWidth, top - bottom, length + pitch_ * 0.1F });
         appendBox(block, Mat4::translation({ crankOrigin.x, bottom - 0.28F * b, zCentre }),
                   { 1.7F * halfWidth, 0.56F * b, length * 0.92F });
+        solids_.push_back(boxSolid(xAxis, yAxis, zAxis, { crankOrigin.x, 0.5F * (top + bottom), zCentre },
+                                   { 2.0F * halfWidth, top - bottom, length + pitch_ * 0.1F }));
+        solids_.push_back(boxSolid(xAxis, yAxis, zAxis, { crankOrigin.x, bottom - 0.28F * b, zCentre },
+                                   { 1.7F * halfWidth, 0.56F * b, length * 0.92F }));
     }
     (void)addPart(std::move(block), SceneMaterial::blockShell, layerStructure);
     (void)addPart(std::move(heads), SceneMaterial::headShell, layerStructure);
@@ -448,14 +483,33 @@ void EngineModel3D::buildDucts() {
             if (farParts_.size() < parts_.size()) farParts_.resize(parts_.size(), false);
             farParts_[part] = !piece.nearEngine;
             ducts_.push_back({ piece.kind, piece.pathId, piece.elementId, piece.componentType, part,
-                               std::move(piece.centreline), piece.authoredLengthMm });
+                               std::move(piece.centreline), piece.authoredLengthMm, std::move(piece.radii) });
             if (piece.kind == DuctKind::intakeRunner)
                 for (std::size_t i = 0; i < cylinders_.size(); ++i)
                     if (config_.cylinders[i].id == piece.elementId) cylinders_[i].runnerPart = part;
         }
     };
-    add(layoutIntake(config_, intakePorts_, bore, radialLike_));
-    add(layoutExhaust(config_, exhaustPorts_, bore));
+    add(layoutIntake(config_, intakePorts_, bore, radialLike_, solids_));
+    // The exhaust is routed round the intake: its tubes, and its boxes
+    // (plenum, throttle bodies, airbox) as solids.
+    std::vector<RouteTube> intakeTubes;
+    auto avoid = solids_;
+    for (const auto& duct : ducts_) {
+        if (duct.radii.size() == duct.centreline.size() && duct.centreline.size() >= 2U) {
+            intakeTubes.push_back({ duct.centreline, duct.radii });
+            continue;
+        }
+        const auto& mesh = parts_[duct.part].mesh;
+        if (mesh.vertices.empty()) continue;
+        auto low = mesh.vertices.front().position, high = low;
+        for (const auto& vertex : mesh.vertices) {
+            const auto p = vertex.position;
+            low = { std::min(low.x, p.x), std::min(low.y, p.y), std::min(low.z, p.z) };
+            high = { std::max(high.x, p.x), std::max(high.y, p.y), std::max(high.z, p.z) };
+        }
+        avoid.push_back(boxBetween(low, high));
+    }
+    add(layoutExhaust(config_, exhaustPorts_, bore, intakeTubes, avoid));
 
     // A plume at every outlet, lit only by an afterfire.
     const auto ductCount = ducts_.size();

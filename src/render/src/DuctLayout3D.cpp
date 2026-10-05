@@ -136,6 +136,12 @@ struct Node final {
     float outletDiameter {};
     float body {};
     float drawLength {};
+    /** Radius of the circle the inputs plug into, and of the mouth that
+        holds them: wide enough for every input side by side. */
+    float slots {};
+    float mouth {};
+    /** Slot of each input (ins, then cylinders); empty: in order. */
+    std::vector<std::size_t> slotOf;
     std::vector<Vec3> curve;
 };
 
@@ -271,10 +277,42 @@ void buildNodes(PathLayout& layout) {
 
 [[nodiscard]] Vec3 at(Vec3 lane, float z) noexcept { return { lane.x, lane.y, z }; }
 
-[[nodiscard]] float slotRadius(const Node& node) noexcept { return 0.28F * std::max(node.body, 1.3F * node.diameter); }
+[[nodiscard]] float slotRadius(const Node& node) noexcept {
+    return std::max(node.slots, 0.28F * std::max(node.body, 1.3F * node.diameter));
+}
+
+[[nodiscard]] Vec3 slotPosition(const Node& node, std::size_t index) {
+    return slot(at(node.lane, node.zIn), index, node.ins.size() + node.cylinders.size(), slotRadius(node), node.spread);
+}
 
 [[nodiscard]] Vec3 inSlot(const Node& node, std::size_t k) {
-    return slot(at(node.lane, node.zIn), k, node.ins.size() + node.cylinders.size(), slotRadius(node), node.spread);
+    return slotPosition(node, k < node.slotOf.size() ? node.slotOf[k] : k);
+}
+
+/** Straight run a routed pipe keeps where it leaves a port or a junction. */
+[[nodiscard]] float startLead(const Node& node, bool fromPort) noexcept {
+    return (fromPort ? 0.8F : 0.5F) * node.diameter;
+}
+
+/** Straight run a routed pipe keeps into its junction: one diameter, so the
+    inputs of a collector arrive side by side along it. */
+[[nodiscard]] float endLead(const Node& node) noexcept { return std::max(node.diameter, node.outletDiameter); }
+
+/** Sizes each junction's mouth so that its inputs fit side by side with the
+    router's clearance between them. */
+void sizeSlots(PathLayout& layout, const std::vector<PortAnchor>& ports, float gap) {
+    for (auto& node : layout.nodes) {
+        const auto n = node.ins.size() + node.cylinders.size();
+        if (n < 2U) continue;
+        float entry = 0.0F;
+        for (const auto in : node.ins)
+            entry = std::max(entry, 0.5F * std::max(layout.nodes[in].diameter, layout.nodes[in].outletDiameter));
+        for (const auto cylinder : node.cylinders)
+            if (const auto* port = portOf(ports, cylinder)) entry = std::max(entry, 0.5F * port->diameterMm);
+        const auto half = entry + 0.5F * gap;
+        node.slots = n == 2U ? half : half / std::sin(pi / static_cast<float>(n));
+        node.mouth = node.slots + entry + 1.0F;
+    }
 }
 
 [[nodiscard]] Vec3 outSlot(const PathLayout& layout, const Node& node, std::size_t k) {
@@ -361,6 +399,96 @@ void placePath(PathLayout& layout, const std::vector<PortAnchor>& ports, float c
     }
 }
 
+/** How far back along the trunk a collector fed by primaries sits: behind
+    the last port when every primary still reaches it with room to bend (long
+    tubes), else no further back than the shortest allows, and never ahead of
+    `centre`, the middle of its ports. Primaries enter along the trunk, so one
+    whose port lies behind the mouth has to turn back to reach it. */
+[[nodiscard]] float collectorZ(const std::vector<Node>& nodes, const Node& node, const std::vector<PortAnchor>& ports,
+                               float centre) {
+    float last = centre;
+    for (const auto in : node.ins)
+        for (const auto cylinder : nodes[in].cylinders)
+            if (const auto* port = portOf(ports, cylinder)) last = std::max(last, port->position.z);
+    const auto reaches = [&](float z) {
+        for (const auto in : node.ins) {
+            const auto& primary = nodes[in];
+            const auto* port = primary.cylinders.empty() ? nullptr : portOf(ports, primary.cylinders.front());
+            if (port == nullptr) continue;
+            const auto lead = startLead(primary, true);
+            const auto entry = endLead(primary);
+            const auto from = port->position + port->direction * lead;
+            const auto to = Vec3 { node.lane.x, node.lane.y, z - entry };
+            // Straight-line reach plus a fifth for the bends.
+            if (lead + entry + 1.2F * length(to - from) > primary.drawLength) return false;
+        }
+        return true;
+    };
+    const auto back = last + node.diameter;
+    constexpr int steps = 24;
+    for (int k = 0; k <= steps; ++k) {
+        const auto z = back + (centre - back) * static_cast<float>(k) / static_cast<float>(steps);
+        if (reaches(z)) return z;
+    }
+    return centre;
+}
+
+/** Where a routed pipe leaves from: its port, or its parent's outlet slot. */
+[[nodiscard]] bool routeStart(const PathLayout& layout, std::size_t i, const std::vector<PortAnchor>& ports, Vec3& at,
+                              Vec3& direction, bool& fromPort) {
+    const auto& node = layout.nodes[i];
+    fromPort = node.ins.empty();
+    if (fromPort) {
+        const auto* port = node.cylinders.empty() ? nullptr : portOf(ports, node.cylinders.front());
+        if (port == nullptr) return false;
+        at = port->position;
+        direction = port->direction;
+        return true;
+    }
+    const auto& parent = layout.nodes[node.ins.front()];
+    at = outSlot(layout, parent, indexIn(parent.outs, i));
+    direction = zAxis;
+    return true;
+}
+
+/** Gives the routed inputs of each junction the slots that make the straight
+    joins from their starts shortest in total; in a plane such joins never
+    cross, so the pipes do not have to pass round one another. */
+void assignSlots(PathLayout& layout, const std::vector<PortAnchor>& ports) {
+    for (auto& node : layout.nodes) {
+        const auto n = node.ins.size() + node.cylinders.size();
+        node.slotOf.resize(n);
+        for (std::size_t k = 0; k < n; ++k) node.slotOf[k] = k;
+        std::vector<std::size_t> routed;
+        std::vector<Vec3> from;
+        for (std::size_t k = 0; k < node.ins.size(); ++k) {
+            const auto upstream = node.ins[k];
+            if (!layout.nodes[upstream].routed) continue;
+            Vec3 start, direction;
+            bool fromPort = false;
+            if (!routeStart(layout, upstream, ports, start, direction, fromPort)) continue;
+            routed.push_back(k);
+            from.push_back(start + direction * startLead(layout.nodes[upstream], fromPort));
+        }
+        if (routed.size() < 2U || routed.size() > 8U) continue;
+        auto order = routed;
+        auto best = order;
+        float shortest = std::numeric_limits<float>::max();
+        do {
+            float total = 0.0F;
+            for (std::size_t j = 0; j < routed.size(); ++j) {
+                const auto& upstream = layout.nodes[node.ins[routed[j]]];
+                total += length(slotPosition(node, order[j]) - zAxis * endLead(upstream) - from[j]);
+            }
+            if (total < shortest - 1.0e-3F) {
+                shortest = total;
+                best = order;
+            }
+        } while (std::next_permutation(order.begin(), order.end()));
+        for (std::size_t j = 0; j < routed.size(); ++j) node.slotOf[routed[j]] = best[j];
+    }
+}
+
 void shapeComponent(DuctPiece& piece, const Node& node, std::vector<Vec3> points) {
     const auto& c = *node.component;
     points = resample(points, 12.0F);
@@ -370,7 +498,7 @@ void shapeComponent(DuctPiece& piece, const Node& node, std::vector<Vec3> points
     if (c.type == ExhaustComponentType::pipe || c.type == ExhaustComponentType::outlet || node.body <= node.diameter * 1.02F) {
         if (c.type == ExhaustComponentType::merge) {
             // A collector: a wide mouth over the feeders, narrowing to its pipe.
-            const auto mouth = std::max(body, 0.68F * node.diameter);
+            const auto mouth = std::max({ body, 0.68F * node.diameter, node.mouth });
             radii = radiiAlong(points, [&](float t) { return t < 0.6F ? mouth + (end - mouth) * (t / 0.6F) : end; });
             capStart = true;
         } else {
@@ -378,7 +506,7 @@ void shapeComponent(DuctPiece& piece, const Node& node, std::vector<Vec3> points
         }
     } else {
         const auto cone = std::clamp(0.8F * (body - std::min(start, end)) / std::max(1.0F, node.drawLength), 0.04F, 0.3F);
-        const auto mouth = c.type == ExhaustComponentType::merge ? body : start;
+        const auto mouth = c.type == ExhaustComponentType::merge ? std::max(body, node.mouth) : start;
         capStart = c.type == ExhaustComponentType::merge;
         radii = radiiAlong(points, [&](float t) {
             if (t < cone) return mouth + (body - mouth) * (t / cone);
@@ -395,18 +523,22 @@ void shapeComponent(DuctPiece& piece, const Node& node, std::vector<Vec3> points
                     segmentsFor(node.outletDiameter), 8);
     }
     piece.centreline = std::move(points);
+    piece.radii = std::move(radii);
 }
 
 } // namespace
 
-std::vector<DuctPiece> layoutExhaust(const EngineConfig& config, const std::vector<PortAnchor>& ports, float boreMm) {
+std::vector<DuctPiece> layoutExhaust(const EngineConfig& config, const std::vector<PortAnchor>& ports, float boreMm,
+                                     const std::vector<RouteTube>& avoid, const std::vector<EngineSolid>& solids) {
     const auto clearance = std::max(60.0F, 0.8F * boreMm);
+    const RouteSettings routing;
     std::vector<PathLayout> layouts(config.exhaustPaths.size());
     for (std::size_t p = 0; p < layouts.size(); ++p) {
         auto& layout = layouts[p];
         layout.path = &config.exhaustPaths[p];
         layout.network = layout.path->network ? *layout.path->network : makeEditableExhaustNetwork(*layout.path);
         buildNodes(layout);
+        sizeSlots(layout, ports, routing.gapMm);
     }
 
     // First junctions: fed only by ports, placed out from those ports.
@@ -439,38 +571,40 @@ std::vector<DuctPiece> layoutExhaust(const EngineConfig& config, const std::vect
             node.lane = base.lane;
             node.spread = base.spread;
             node.zIn = base.z;
+            if (node.cylinders.empty()) node.zIn = collectorZ(nodes, node, ports, base.z);
             junctions.push_back({ p, i });
         }
     }
-    // Junctions of one path that would overlap queue up along the trunk,
-    // centred on their ports (the two Y pieces of a 4-2-1); another path's
-    // junction moves across instead.
+    // Junctions of one path that would overlap sit side by side across the
+    // trunk, each level with its own ports (the two Y pieces of a 4-2-1), so
+    // that the pipe leaving one does not have to pass the other; another
+    // path's junction moves across instead.
     std::vector<bool> done(junctions.size(), false);
     for (std::size_t a = 0; a < junctions.size(); ++a) {
         if (done[a]) continue;
         std::vector<std::size_t> cluster { a };
-        auto& first = layouts[junctions[a].path].nodes[junctions[a].node];
+        const auto& first = layouts[junctions[a].path].nodes[junctions[a].node];
         for (std::size_t b = a + 1U; b < junctions.size(); ++b) {
             if (done[b] || junctions[b].path != junctions[a].path) continue;
             const auto& other = layouts[junctions[b].path].nodes[junctions[b].node];
             if (length(other.lane - first.lane) < 1.5F * std::max(first.body, other.body)) cluster.push_back(b);
         }
-        float total = 0.0F, centre = 0.0F, gap = 0.0F;
+        Vec3 centre {};
+        float width = 0.0F;
+        const auto extent = [](const Node& node) { return std::max(0.5F * node.body, node.mouth); };
         for (const auto k : cluster) {
             const auto& node = layouts[junctions[k].path].nodes[junctions[k].node];
-            total += node.drawLength;
-            centre += node.zIn;
-            gap = std::max(gap, 0.8F * node.body);
+            centre += node.lane;
+            width += 2.0F * extent(node) + 10.0F;
             done[k] = true;
         }
-        centre /= static_cast<float>(cluster.size());
-        total += gap * static_cast<float>(cluster.size() - 1U);
-        auto z = cluster.size() > 1U ? centre - 0.5F * total : centre;
+        centre = centre * (1.0F / static_cast<float>(cluster.size()));
+        auto across = -0.5F * (width - 10.0F);
         for (const auto k : cluster) {
             auto& node = layouts[junctions[k].path].nodes[junctions[k].node];
-            node.zIn = z;
-            node.zOut = z + node.drawLength;
-            z = node.zOut + gap;
+            if (cluster.size() > 1U) node.lane = centre + node.spread * (across + extent(node));
+            across += 2.0F * extent(node) + 10.0F;
+            node.zOut = node.zIn + node.drawLength;
         }
     }
     for (std::size_t a = 0; a < junctions.size(); ++a) {
@@ -490,8 +624,18 @@ std::vector<DuctPiece> layoutExhaust(const EngineConfig& config, const std::vect
     }
 
     std::vector<DuctPiece> pieces;
-    for (auto& layout : layouts) {
+    // Routed pipes are bent together once everything else is in place.
+    struct Pending final {
+        std::size_t layout;
+        std::size_t node;
+        DuctPiece piece;
+    };
+    std::vector<Pending> pending;
+    std::vector<RoutedPipe> routes;
+    for (std::size_t l = 0; l < layouts.size(); ++l) {
+        auto& layout = layouts[l];
         placePath(layout, ports, clearance);
+        assignSlots(layout, ports);
         auto& nodes = layout.nodes;
         const auto pathId = layout.path->id;
         const auto pieceFor = [&](const Node& node, DuctKind kind) {
@@ -544,7 +688,8 @@ std::vector<DuctPiece> layoutExhaust(const EngineConfig& config, const std::vect
                 joint.authoredLengthMm = 0.0F;
                 const auto lead = 0.3F * length(b - a);
                 joint.centreline = resample(smoothCurve({ a, a + zAxis * lead, b - zAxis * lead, b }, 10), 12.0F);
-                appendTube(joint.mesh, joint.centreline, { 0.5F * upstream.outletDiameter }, segmentsFor(upstream.outletDiameter));
+                joint.radii.assign(joint.centreline.size(), 0.5F * upstream.outletDiameter);
+                appendTube(joint.mesh, joint.centreline, joint.radii, segmentsFor(upstream.outletDiameter));
                 pieces.push_back(std::move(joint));
             }
             for (std::size_t k = 0; k < node.cylinders.size(); ++k) {
@@ -554,7 +699,8 @@ std::vector<DuctPiece> layoutExhaust(const EngineConfig& config, const std::vect
                 joint.authoredLengthMm = 0.0F;
                 const auto b = inSlot(node, node.ins.size() + k);
                 joint.centreline = resample(routeWithLength(port->position, port->direction, b, zAxis, 0.0F, downAxis), 12.0F);
-                appendTube(joint.mesh, joint.centreline, { 0.5F * port->diameterMm }, 16);
+                joint.radii.assign(joint.centreline.size(), 0.5F * port->diameterMm);
+                appendTube(joint.mesh, joint.centreline, joint.radii, 16);
                 joint.nearEngine = true;
                 pieces.push_back(std::move(joint));
             }
@@ -563,38 +709,44 @@ std::vector<DuctPiece> layoutExhaust(const EngineConfig& config, const std::vect
             auto& node = nodes[i];
             if (!node.routed) continue;
             Vec3 a, dirA;
-            const PortAnchor* port = nullptr;
-            if (node.ins.empty()) {
-                port = node.cylinders.empty() ? nullptr : portOf(ports, node.cylinders.front());
-                if (port == nullptr) continue;
-                a = port->position;
-                dirA = port->direction;
-            } else {
-                const auto& parent = nodes[node.ins.front()];
-                a = outSlot(layout, parent, indexIn(parent.outs, i));
-                dirA = zAxis;
-            }
-            Vec3 b;
-            if (node.outs.empty()) {
-                b = a + dirA * node.drawLength;
-            } else {
+            bool fromPort = false;
+            if (!routeStart(layout, i, ports, a, dirA, fromPort)) continue;
+            const auto joins = !node.outs.empty();
+            Vec3 b = a + dirA * node.drawLength;
+            if (joins) {
                 const auto& downstream = nodes[node.outs.front()];
                 b = inSlot(downstream, indexIn(downstream.ins, i));
             }
             auto piece = pieceFor(node, DuctKind::exhaustComponent);
-            piece.nearEngine = port != nullptr;
-            // Primaries drop into their collector instead of turning round
-            // to arrive along the trunk.
-            const auto arrival = port != nullptr ? normalise(Vec3 { 0.0F, -1.0F, 0.6F }) : zAxis;
+            piece.nearEngine = fromPort;
             // A port facing along the crankshaft (a radial) bends outwards,
             // away from the axis; everything else sags.
             auto bulge = downAxis;
-            if (port != nullptr && std::abs(port->direction.z) > 0.9F
-                && std::abs(port->position.x) + std::abs(port->position.y) > 1.0F)
-                bulge = normalise(Vec3 { port->position.x, port->position.y, 0.0F });
-            shapeComponent(piece, node, routeWithLength(a, dirA, b, arrival, node.drawLength, bulge));
-            pieces.push_back(std::move(piece));
+            if (fromPort && std::abs(dirA.z) > 0.9F && std::abs(a.x) + std::abs(a.y) > 1.0F)
+                bulge = normalise(Vec3 { a.x, a.y, 0.0F });
+            RoutedPipe route;
+            route.points = routeWithLength(a, dirA, b, zAxis, node.drawLength, bulge);
+            route.radius = 0.5F * std::max(node.diameter, node.outletDiameter);
+            route.lengthMm = node.drawLength;
+            route.startDirection = dirA;
+            route.endDirection = joins ? zAxis : dirA;
+            route.startLead = startLead(node, fromPort);
+            route.endLead = joins ? endLead(node) : 0.0F;
+            routes.push_back(std::move(route));
+            pending.push_back({ l, i, std::move(piece) });
         }
+    }
+
+    // Everything already laid out, and what the caller asks to avoid, is fixed.
+    auto obstacles = avoid;
+    for (const auto& piece : pieces)
+        if (piece.radii.size() == piece.centreline.size() && piece.centreline.size() >= 2U)
+            obstacles.push_back({ piece.centreline, piece.radii });
+    relaxRoutes(routes, obstacles, solids, routing);
+    for (std::size_t r = 0; r < pending.size(); ++r) {
+        auto& item = pending[r];
+        shapeComponent(item.piece, layouts[item.layout].nodes[item.node], std::move(routes[r].points));
+        pieces.push_back(std::move(item.piece));
     }
     return pieces;
 }
@@ -676,7 +828,8 @@ void appendUpstream(std::vector<DuctPiece>& pieces, std::uint32_t pathId, const 
         // Gas-flow order: from the open mouth towards the engine.
         const auto mouth = inlet + direction * ductLength;
         duct.centreline = resample({ mouth, inlet }, 12.0F);
-        appendTube(duct.mesh, duct.centreline, { 0.5F * ductDiameter }, segmentsFor(ductDiameter));
+        duct.radii.assign(duct.centreline.size(), 0.5F * ductDiameter);
+        appendTube(duct.mesh, duct.centreline, duct.radii, segmentsFor(ductDiameter));
         if (bellmouth > 1.05F * ductDiameter)
             appendCylinder(duct.mesh, Mat4::frameAlongY(mouth, direction), 0.5F * ductDiameter, 0.5F * bellmouth,
                            0.35F * ductDiameter, segmentsFor(bellmouth), false, false);
@@ -687,8 +840,16 @@ void appendUpstream(std::vector<DuctPiece>& pieces, std::uint32_t pathId, const 
 } // namespace
 
 std::vector<DuctPiece> layoutIntake(const EngineConfig& config, const std::vector<PortAnchor>& ports, float boreMm,
-                                    bool radial) {
+                                    bool radial, const std::vector<EngineSolid>& solids) {
     std::vector<DuctPiece> pieces;
+    // Runners are bent together once every plenum is in place.
+    struct Pending final {
+        std::size_t piece;
+        IntakeRunner runner;
+    };
+    std::vector<Pending> pending;
+    std::vector<RoutedPipe> routes;
+    auto avoid = solids;
     const auto pathCount = std::max<std::size_t>(1U, config.intakePaths.size());
     for (std::size_t p = 0; p < pathCount; ++p) {
         const auto& geometry = p < config.intakePaths.size() ? config.intakePaths[p].geometry : config.intake;
@@ -764,6 +925,14 @@ std::vector<DuctPiece> layoutIntake(const EngineConfig& config, const std::vecto
             }
             appendCylinder(plenum.mesh, Mat4::translation(hub - zAxis * (0.5F * drumLength)) * Mat4::rotationX(0.5F * pi),
                            drum, drum, drumLength, 48);
+            EngineSolid solid;
+            solid.shape = EngineSolid::Shape::cylinder;
+            solid.centre = hub;
+            solid.axes[0] = { 1.0F, 0.0F, 0.0F };
+            solid.axes[1] = zAxis;
+            solid.axes[2] = { 0.0F, 1.0F, 0.0F };
+            solid.half = { drum, 0.5F * drumLength, 0.0F };
+            avoid.push_back(solid);
             plenum.centreline = { hub - zAxis * (0.5F * drumLength), hub + zAxis * (0.5F * drumLength) };
             faces.push_back(hub + downAxis * drum);
             upstream = downAxis;
@@ -803,6 +972,13 @@ std::vector<DuctPiece> layoutIntake(const EngineConfig& config, const std::vecto
             const auto boxCentre = Vec3 { centre.x, centre.y, 0.5F * (zMin + zMax) } + out * (reach + 0.5F * height)
                 + lateral * (0.5F * (latMin + latMax));
             addBox(plenum, lateral, out, zAxis, boxCentre, { width, height, depth });
+            EngineSolid solid;
+            solid.centre = boxCentre;
+            solid.axes[0] = lateral;
+            solid.axes[1] = out;
+            solid.axes[2] = zAxis;
+            solid.half = Vec3 { width, height, depth } * 0.5F;
+            avoid.push_back(solid);
             plenum.centreline = { boxCentre - out * (0.5F * height), boxCentre + out * (0.5F * height) };
             const auto throttles = std::max<std::uint32_t>(1U, geometry.throttleCount);
             if (throttles == 1U) {
@@ -825,23 +1001,41 @@ std::vector<DuctPiece> layoutIntake(const EngineConfig& config, const std::vecto
             piece.elementId = runner.port->cylinderId;
             piece.authoredLengthMm = runner.lengthMm;
             piece.nearEngine = true;
-            // Gas-flow order: from the plenum to the valves.
-            auto route = resample(routeWithLength(runner.port->position, runner.port->direction, ends[i], arrivals[i],
-                                                  runner.lengthMm, bulges[i]), 10.0F);
-            std::reverse(route.begin(), route.end());
-            auto radii = radiiAlong(route, [&](float t) {
-                return 0.5F * (runner.plenumDiameter + (runner.diameter - runner.plenumDiameter) * t);
-            });
-            // The port inside the head, behind the valves, closes the runner.
-            route.push_back(runner.port->inner);
-            radii.push_back(0.5F * runner.diameter);
-            appendTube(piece.mesh, route, radii, 18, false, true);
-            route.pop_back();
-            piece.centreline = std::move(route);
+            RoutedPipe route;
+            route.points = routeWithLength(runner.port->position, runner.port->direction, ends[i], arrivals[i],
+                                           runner.lengthMm, bulges[i]);
+            route.radius = 0.5F * std::max(runner.diameter, runner.plenumDiameter);
+            route.lengthMm = runner.lengthMm;
+            route.startDirection = runner.port->direction;
+            route.endDirection = arrivals[i];
+            route.startLead = 0.8F * runner.diameter;
+            route.endLead = 2.0F * route.radius;
+            routes.push_back(std::move(route));
+            pending.push_back({ pieces.size(), runner });
             pieces.push_back(std::move(piece));
         }
         pieces.push_back(std::move(plenum));
         appendUpstream(pieces, pathId, geometry, faces, upstream);
+    }
+
+    relaxRoutes(routes, {}, avoid);
+    for (std::size_t r = 0; r < pending.size(); ++r) {
+        const auto& runner = pending[r].runner;
+        auto& piece = pieces[pending[r].piece];
+        // Gas-flow order: from the plenum to the valves.
+        auto route = std::move(routes[r].points);
+        std::reverse(route.begin(), route.end());
+        auto radii = radiiAlong(route, [&](float t) {
+            return 0.5F * (runner.plenumDiameter + (runner.diameter - runner.plenumDiameter) * t);
+        });
+        // The port inside the head, behind the valves, closes the runner.
+        route.push_back(runner.port->inner);
+        radii.push_back(0.5F * runner.diameter);
+        appendTube(piece.mesh, route, radii, 18, false, true);
+        route.pop_back();
+        radii.pop_back();
+        piece.centreline = std::move(route);
+        piece.radii = std::move(radii);
     }
     return pieces;
 }

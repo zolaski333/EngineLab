@@ -5,6 +5,18 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-05 — Pipe routing in the 3-D view
+
+- Route check (`checkRoutes`), 16 catalogue engines. Old layout: 107 clashes,
+  51 self-clashes, 0 through the engine, 259 bends < 1 D, 6 stretched. Router
+  and placement: 7, 4, 0, 48, 7. Gated at these counts.
+- A first checker gave 161 clashes: inner segments bulged past a flat end by
+  their radius (a 65 mm collector reached 50 mm out of its mouth). Fixed.
+- Stiffness (pull to straight) tried at 0.1-0.5: more bends (97-244 vs 87):
+  with the length held it acts as tension. Removed.
+- Not done: the 2JZ six-into-one stays a dense knot; +1 stretched pipe there.
+  Layout cost: export of 16 engines 1.3 → 4.1 s.
+
 ## 2026-10-04 — Gas field on the 3-D view
 
 - `EngineLab.EngineModel3D`, 16 engines: every drawn exhaust component,

@@ -5,11 +5,14 @@
 //
 // One <index>.json per engine: every part (material, layers, posed transform,
 // positions in mm, triangle indices), every duct (kind, ids, centreline), the
-// port anchors; plus index.json listing the files.
+// port anchors, and the route check (RouteCheck) issues; plus index.json
+// listing the files. Prints the issue counts per engine.
 
 #include <enginelab/catalog/EngineCatalog.hpp>
 #include <enginelab/render/EngineModel3D.hpp>
+#include <enginelab/render/RouteCheck.hpp>
 
+#include <array>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
@@ -47,8 +50,9 @@ void writeVec(std::ostream& out, Vec3 v) {
     out << ']';
 }
 
-void writeEngine(const EngineConfig& config, double crankDegrees, const std::filesystem::path& file) {
+RouteReport writeEngine(const EngineConfig& config, double crankDegrees, const std::filesystem::path& file) {
     const EngineModel3D model(config);
+    const auto report = checkRoutes(model);
     std::vector<SceneInstance> instances;
     ScenePoseInput input;
     input.crankAngleDegrees = crankDegrees;
@@ -96,7 +100,38 @@ void writeEngine(const EngineConfig& config, double crankDegrees, const std::fil
             if (i > 0) out << ',';
             writeVec(out, duct.centreline[i]);
         }
+        out << "],\"radii\":[";
+        for (std::size_t i = 0; i < duct.radii.size(); ++i) {
+            if (i > 0) out << ',';
+            writeNumber(out, duct.radii[i]);
+        }
         out << "]}";
+    }
+    out << "],\"issues\":[";
+    for (std::size_t i = 0; i < report.issues.size(); ++i) {
+        const auto& issue = report.issues[i];
+        if (i > 0) out << ',';
+        out << "{\"kind\":" << static_cast<int>(issue.kind) << ",\"duct\":" << issue.duct << ",\"other\":" << issue.other
+            << ",\"value\":";
+        writeNumber(out, issue.value);
+        out << ",\"where\":";
+        writeVec(out, issue.where);
+        out << '}';
+    }
+    out << "],\"solids\":[";
+    for (std::size_t i = 0; i < model.solids().size(); ++i) {
+        const auto& solid = model.solids()[i];
+        if (i > 0) out << ',';
+        out << "{\"cylinder\":" << (solid.shape == EngineSolid::Shape::cylinder ? 1 : 0) << ",\"centre\":";
+        writeVec(out, solid.centre);
+        out << ",\"axes\":[";
+        for (int a = 0; a < 3; ++a) {
+            if (a > 0) out << ',';
+            writeVec(out, solid.axes[a]);
+        }
+        out << "],\"half\":";
+        writeVec(out, solid.half);
+        out << '}';
     }
     out << "],\"exhaustPorts\":[";
     for (std::size_t i = 0; i < model.exhaustPorts().size(); ++i) {
@@ -109,6 +144,7 @@ void writeEngine(const EngineConfig& config, double crankDegrees, const std::fil
         out << '}';
     }
     out << "]}\n";
+    return report;
 }
 } // namespace
 
@@ -135,15 +171,24 @@ int main(int argc, char** argv) {
     std::ofstream index(outDirectory / "index.json", std::ios::binary);
     index << '[';
     int written = 0;
+    std::array<std::size_t, 5> totals {};
     for (std::size_t e = 0; e < catalogue.entries.size(); ++e) {
         const auto& config = catalogue.entries[e].config;
         if (!filter.empty() && config.name.find(filter) == std::string::npos) continue;
         const auto file = std::to_string(e + 1U) + ".json";
-        writeEngine(config, crank, outDirectory / file);
+        const auto report = writeEngine(config, crank, outDirectory / file);
         if (written++ > 0) index << ',';
         index << "{\"name\":\"" << escape(config.name) << "\",\"file\":\"" << file << "\"}";
-        std::cout << file << "  " << config.name << '\n';
+        char line[256];
+        std::snprintf(line, sizeof(line), "%-8s %-46s clash %3zu  self %3zu  engine %3zu  bend %3zu  stretch %3zu\n",
+                      file.c_str(), config.name.c_str(), report.count(RouteIssueKind::ductClash),
+                      report.count(RouteIssueKind::selfClash), report.count(RouteIssueKind::engineClash),
+                      report.count(RouteIssueKind::tightBend), report.count(RouteIssueKind::stretched));
+        std::cout << line;
+        for (std::size_t k = 0; k < totals.size(); ++k) totals[k] += report.count(static_cast<RouteIssueKind>(k));
     }
     index << "]\n";
+    std::cout << "total: clash " << totals[0] << ", self " << totals[1] << ", engine " << totals[2] << ", bend "
+              << totals[3] << ", stretch " << totals[4] << '\n';
     return 0;
 }

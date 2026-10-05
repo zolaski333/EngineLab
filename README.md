@@ -216,7 +216,7 @@ against the literature or a real recording.
 | `DynoSweepHarness` / `UserDynoHarness` | torque and power curves, CSV export |
 | `AfterfireHarness` | the shape of overrun heat release, and its real effect on the audio |
 | `IntakeDuctBench` | bit-exact fingerprint of the duct solver: proves an optimisation is not a physics change |
-| `SceneExport` | the 3-D scene of catalogue engines as JSON (meshes, duct centrelines, ports), to inspect the laid-out ducts outside the app |
+| `SceneExport` | the 3-D scene of catalogue engines as JSON (meshes, duct centrelines and radii, ports, engine solids, route check issues), to inspect the laid-out ducts outside the app; prints the issue counts per engine |
 
 Reference figures come from engine and acoustics literature or from real
 recordings, never from the simulator's own output.

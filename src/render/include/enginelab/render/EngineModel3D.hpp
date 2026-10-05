@@ -85,6 +85,8 @@ struct SceneDuct final {
     std::uint16_t part {};
     std::vector<Vec3> centreline;
     float authoredLengthMm {};
+    /** Outer radius at each centreline point; empty for boxes. */
+    std::vector<float> radii;
 };
 
 /** What a part is, for the part inspector. */
@@ -137,6 +139,9 @@ public:
     [[nodiscard]] const EngineConfig& config() const noexcept { return config_; }
     [[nodiscard]] const std::vector<PortAnchor>& intakePorts() const noexcept { return intakePorts_; }
     [[nodiscard]] const std::vector<PortAnchor>& exhaustPorts() const noexcept { return exhaustPorts_; }
+    /** Block, heads, crankcase, sump, liners, pulley and flywheel, as simple
+        solids the ducts must stay out of. */
+    [[nodiscard]] const std::vector<EngineSolid>& solids() const noexcept { return solids_; }
 
     /** Cycle phase of one cylinder: 0 = firing TDC, 360 = overlap TDC. */
     [[nodiscard]] double cyclePhaseDegrees(std::size_t cylinder, double crankAngleDegrees) const noexcept;
@@ -204,6 +209,7 @@ private:
     std::vector<ScenePart> parts_;
     std::vector<Cylinder> cylinders_;
     std::vector<Throw> throws_;
+    std::vector<EngineSolid> solids_;
     std::vector<std::uint16_t> rotatingParts_;
     std::vector<std::size_t> rotatingThrow_;
     std::vector<PortAnchor> intakePorts_;
