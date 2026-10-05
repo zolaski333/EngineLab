@@ -1383,6 +1383,20 @@ void EngineViewport::updateInspector() {
                "flow. Drawn where a real one sits, after the collector; the charge piping is not drawn.";
         break;
     }
+    case render::PartRole::supercharger: {
+        const auto& forced = config.forcedInduction;
+        title = "Supercharger";
+        subtitle = "On intake path " + juce::String(scene_->supercharger().pathId);
+        add("Drive ratio", juce::String(forced.superchargerDriveRatio, 2) + utf8(" : 1"));
+        add("Impeller speed", juce::String(state.rpm * forced.superchargerDriveRatio / 1'000.0, 1) + " krpm");
+        add("Pressure ratio", juce::String(state.boostPressureRatio, 2) + " (target " + juce::String(forced.pressureRatio, 2) + ")");
+        add("Compressor", juce::String(state.compressorPowerKw, 1) + " kW");
+        if (forced.compressorInducerDiameterMm > 0.0) add("Inducer", millimetres(forced.compressorInducerDiameterMm));
+        if (forced.compressorBladeCount > 0U) add("Blades", juce::String(static_cast<int>(forced.compressorBladeCount)));
+        note = "The gas solver has no compressor in its network: the supercharger raises the intake pressure by its "
+               "ratio, geared to the crank. Drawn between the airbox and the throttle, with its charge pipe.";
+        break;
+    }
     case render::PartRole::duct: {
         const auto& duct = scene_->ducts()[static_cast<std::size_t>(identity.duct)];
         switch (duct.kind) {

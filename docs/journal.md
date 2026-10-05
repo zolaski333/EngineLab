@@ -5,6 +5,17 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-05 — Merlin supercharger drawn; cost of the gas view
+
+- `EngineLab.EngineModel3D`: drawn on the Merlin only, eye fed by the airbox,
+  charge pipe on the throttle, clear of the engine, impeller at ratio x crank.
+  Route counts unchanged. Mutation caught: impeller frozen.
+- Budget harness `--gas-view` (field + probe asked at 60 Hz), free-run, 60 %
+  redline, best of 4 alternated, off/on: CP2 3.28/3.24, LS3 1.31/1.30, K20A
+  1.92/1.92. Within the ±4 % noise: no measurable simulation-thread cost.
+- Not measured: GPU and message thread; not seen in the app (the scene
+  viewer does not draw in a hidden pane).
+
 ## 2026-10-05 — Fine exhaust mesh on demand
 
 - The view's *Fine* setting remeshes the running exhaust from 360 to 180 mm.

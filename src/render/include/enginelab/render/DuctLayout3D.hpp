@@ -90,6 +90,46 @@ struct TurboPlacement final {
 };
 
 /**
+ * Where a geared supercharger sits on the intake. The simulator applies it as
+ * a pressure ratio on the intake, with no compressor in its gas network, so
+ * the picture puts a centrifugal one where the air passes it: the charge
+ * leaves the back of its volute through a straight pipe to the throttle, and
+ * the airbox or inlet duct feeds its eye.
+ *
+ * The impeller turns about `axis`, the direction the air comes from at the
+ * throttle, offset away from the engine by the volute's radius so that the
+ * charge pipe runs straight along the throttle's axis.
+ */
+struct SuperchargerPlacement final {
+    bool placed {};
+    std::uint32_t pathId {};
+    /** Unit axis, from the impeller's back plate towards its eye. */
+    Vec3 axis { 0.0F, 0.0F, -1.0F };
+    /** Unit radial from the impeller's axis towards the charge outlet. */
+    Vec3 radial { 1.0F, 0.0F, 0.0F };
+    Vec3 centre;
+    float wheelRadius {};
+    /** Axial width of the impeller's housing, and its outer radius. */
+    float width {};
+    float outerRadius {};
+    /** The charge pipe, from the back of the volute to the throttle. */
+    Vec3 chargeOutlet;
+    Vec3 throttleInlet;
+    float chargeRadius {};
+    /** The inducer's mouth, where the airbox or inlet duct joins. */
+    Vec3 eye;
+    float eyeRadius {};
+};
+
+/** The solid a placed supercharger occupies, for the router and the route
+    check. */
+[[nodiscard]] std::vector<EngineSolid> superchargerSolids(const SuperchargerPlacement& supercharger);
+
+/** The supercharger housing (volute, back plate, inducer) and its charge
+    pipe, in world coordinates. */
+void appendSuperchargerHousing(Mesh& mesh, const SuperchargerPlacement& supercharger);
+
+/**
  * Lays out every exhaust path of `config` from its component graph (or from
  * the scalar geometry when the path has none), with the authored lengths and
  * diameters: junctions and bodies sit on a trunk running along +Z (towards
@@ -134,10 +174,15 @@ void appendTurboWheel(Mesh& mesh, float radius, float width, int blades, float n
  * crosses them. `radial` gathers the runners on a drum around the crank axis.
  * The runners are bent together by relaxRoutes, clear of one another, of the
  * plenums and of `solids`.
+ *
+ * With `supercharger` given and a supercharger configured, the first path
+ * with a single throttle gets it between its throttle and its airbox (see
+ * SuperchargerPlacement).
  */
 [[nodiscard]] std::vector<DuctPiece> layoutIntake(const EngineConfig& config,
                                                   const std::vector<PortAnchor>& ports,
                                                   float boreMm, bool radial,
-                                                  const std::vector<EngineSolid>& solids = {});
+                                                  const std::vector<EngineSolid>& solids = {},
+                                                  SuperchargerPlacement* supercharger = nullptr);
 
 } // namespace enginelab::render

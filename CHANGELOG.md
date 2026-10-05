@@ -75,6 +75,9 @@ file formats, always with an in-memory migration).
   exducer, and both wheels turn at the simulated shaft speed. Click it for the
   shaft speed, pressure ratio, wastegate opening, turbine and compressor power,
   and how the solver models it.
+- The Merlin's supercharger is drawn between its airbox and its throttle, with
+  the charge pipe to the throttle; its impeller turns geared to the crank.
+  Click it for the drive ratio, impeller speed, pressure ratio and power.
 
 ## [0.2.0] — 2026-10-04
 

@@ -489,7 +489,8 @@ void EngineModel3D::buildDucts() {
                     if (config_.cylinders[i].id == piece.elementId) cylinders_[i].runnerPart = part;
         }
     };
-    add(layoutIntake(config_, intakePorts_, bore, radialLike_, solids_));
+    add(layoutIntake(config_, intakePorts_, bore, radialLike_, solids_, &supercharger_));
+    buildSupercharger();
     // The exhaust is routed round the intake: its tubes, and its boxes
     // (plenum, throttle bodies, airbox) as solids.
     std::vector<RouteTube> intakeTubes;
@@ -552,6 +553,23 @@ void EngineModel3D::buildTurbo() {
     turboParts_[2] = addPart(std::move(turbineWheel), SceneMaterial::forged, layerExhaust);
     turboParts_[3] = addPart(std::move(compressorWheel), SceneMaterial::steel, layerIntake);
     for (const auto& solid : turboSolids(turbo_)) solids_.push_back(solid);
+}
+
+void EngineModel3D::buildSupercharger() {
+    if (!supercharger_.placed) return;
+    Mesh housing, impeller;
+    appendSuperchargerHousing(housing, supercharger_);
+    // Without a blade count, a typical impeller: it is only drawn.
+    const auto blades = config_.forcedInduction.compressorBladeCount > 0U
+        ? static_cast<int>(config_.forcedInduction.compressorBladeCount) : 12;
+    appendTurboWheel(impeller, supercharger_.wheelRadius, 0.7F * supercharger_.width, blades, 1.0F);
+    superchargerParts_[0] = addPart(std::move(housing), SceneMaterial::turboHousing, layerIntake);
+    superchargerParts_[1] = addPart(std::move(impeller), SceneMaterial::steel, layerIntake);
+    for (const auto& solid : superchargerSolids(supercharger_)) solids_.push_back(solid);
+}
+
+double EngineModel3D::superchargerImpellerDegrees(double crankAngleDegrees) const noexcept {
+    return std::fmod(crankAngleDegrees * config_.forcedInduction.superchargerDriveRatio, 360.0);
 }
 
 float EngineModel3D::throwRotation(const Throw& item, double crankAngleDegrees) const noexcept {
@@ -631,6 +649,13 @@ void EngineModel3D::pose(const ScenePoseInput& input, std::vector<SceneInstance>
         out[turboParts_[2]].transform = Mat4::basis(x, axis, z, turbo_.turbineCentre);
         out[turboParts_[3]].transform = Mat4::basis(x, axis, z, turbo_.compressorCentre);
     }
+    if (supercharger_.placed) {
+        // Geared to the crank.
+        const auto impeller = static_cast<float>(superchargerImpellerDegrees(input.crankAngleDegrees) * (pi / 180.0F));
+        const auto axis = supercharger_.axis;
+        const auto x = supercharger_.radial * std::cos(impeller) + cross(axis, supercharger_.radial) * std::sin(impeller);
+        out[superchargerParts_[1]].transform = Mat4::basis(x, axis, cross(x, axis), supercharger_.centre);
+    }
     // Plenum, airbox and inlet duct glow with the mean draw of their runners.
     for (const auto& duct : ducts_) {
         if (duct.kind != DuctKind::intakePlenum && duct.kind != DuctKind::intakeAirbox
@@ -670,6 +695,8 @@ PartIdentity EngineModel3D::identify(std::uint16_t part) const noexcept {
     if (std::find(outletFlameParts_.begin(), outletFlameParts_.end(), part) != outletFlameParts_.end())
         return { PartRole::afterfire, -1, -1 };
     if (std::find(turboParts_.begin(), turboParts_.end(), part) != turboParts_.end()) return { PartRole::turbo, -1, -1 };
+    if (std::find(superchargerParts_.begin(), superchargerParts_.end(), part) != superchargerParts_.end())
+        return { PartRole::supercharger, -1, -1 };
     if (part >= parts_.size()) return {};
     switch (parts_[part].material) {
     case SceneMaterial::headShell: return { PartRole::head, -1, -1 };

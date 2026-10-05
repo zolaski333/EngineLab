@@ -317,8 +317,18 @@ counts from the configuration (7 and 10 when unset). The wheels turn at the
 simulated shaft speed, slowed with the crank, motion-blurred over the same
 sub-frames. Housings are translucent in X-ray. Since the solver's restriction
 sits at the outlets, the gas field shows the whole drawn exhaust, downpipe
-included, at turbine inlet pressure; the inspector says so. A supercharger
-(the Merlin's) is not drawn, nor is the charge piping.
+included, at turbine inlet pressure; the inspector says so. A turbo's charge
+piping is not drawn.
+
+**Supercharger.** The solver has no compressor in its network either: the
+supercharger raises the intake pressure by its ratio, geared to the crank.
+The view draws it (`SuperchargerPlacement`) between the airbox and the
+throttle of the first intake path with a single throttle mouth, beside the
+throttle on the side away from the engine: the airbox or the inlet duct
+feeds its eye along the throttle axis, a charge pipe runs from its volute
+back to the throttle. Wheel size from the inducer diameter (an eye 1.2 times
+the throttle when unset), blade count from the configuration. The impeller
+turns at the drive ratio times the displayed crank angle.
 
 Engine views frame the engine with its ports, runners, plenum and primaries;
 the *Exhaust* view frames the whole system.

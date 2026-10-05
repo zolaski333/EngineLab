@@ -879,6 +879,20 @@ std::vector<DuctPiece> layoutExhaust(const EngineConfig& config, const std::vect
     return pieces;
 }
 
+std::vector<EngineSolid> superchargerSolids(const SuperchargerPlacement& supercharger) {
+    std::vector<EngineSolid> result;
+    if (!supercharger.placed) return result;
+    EngineSolid solid;
+    solid.shape = EngineSolid::Shape::cylinder;
+    solid.centre = supercharger.centre;
+    solid.axes[1] = supercharger.axis;
+    solid.axes[0] = supercharger.radial;
+    solid.axes[2] = normalise(cross(supercharger.radial, supercharger.axis));
+    solid.half = { supercharger.outerRadius, 0.5F * supercharger.width + 0.5F * (supercharger.outerRadius - 1.45F * supercharger.wheelRadius), 0.0F };
+    result.push_back(solid);
+    return result;
+}
+
 std::vector<EngineSolid> turboSolids(const TurboPlacement& turbo) {
     std::vector<EngineSolid> result;
     if (!turbo.placed) return result;
@@ -919,10 +933,43 @@ void addBox(DuctPiece& piece, Vec3 x, Vec3 y, Vec3 z, Vec3 centre, Vec3 size) {
     appendBox(piece.mesh, Mat4::basis(x, y, z, centre), size);
 }
 
+/** A supercharger upstream of a single throttle whose mouth is `mouth`,
+    offset `away` from the engine. */
+SuperchargerPlacement placeSupercharger(const ForcedInductionConfig& forced, std::uint32_t pathId, float throttle,
+                                        Vec3 mouth, Vec3 direction, Vec3 away) {
+    SuperchargerPlacement result;
+    // Without an inducer diameter, an eye a little wider than the throttle;
+    // an inducer is about 70 % of its wheel.
+    const auto eye = forced.compressorInducerDiameterMm > 1.0 ? 0.5F * mm(forced.compressorInducerDiameterMm)
+                                                              : 0.6F * throttle;
+    const auto wheel = eye / 0.7F;
+    auto side = away - direction * dot(away, direction);
+    if (length(side) < 1.0e-3F) side = normalise(cross(direction, length(cross(direction, zAxis)) > 0.1F ? zAxis : downAxis));
+    side = normalise(side);
+    const auto ring = 1.45F * wheel;
+    const auto gap = 1.2F * throttle;
+    result.placed = true;
+    result.pathId = pathId;
+    result.axis = direction;
+    result.radial = -side;
+    result.wheelRadius = wheel;
+    result.width = 0.8F * wheel;
+    result.outerRadius = 1.85F * wheel;
+    result.centre = mouth + direction * (gap + 0.5F * result.width) + side * ring;
+    result.chargeOutlet = mouth + direction * gap;
+    result.throttleInlet = mouth;
+    result.chargeRadius = 0.55F * throttle;
+    result.eye = result.centre + direction * (0.5F * result.width + 0.6F * wheel);
+    result.eyeRadius = eye + 3.0F;
+    return result;
+}
+
 /** Throttle bores, airbox and inlet duct upstream of a plenum, in the order
-    the air crosses them from the atmosphere. */
+    the air crosses them from the atmosphere; a supercharger between the
+    throttle and the airbox when `supercharger` is given. */
 void appendUpstream(std::vector<DuctPiece>& pieces, std::uint32_t pathId, const IntakeConfig& geometry,
-                    const std::vector<Vec3>& faces, Vec3 direction) {
+                    const std::vector<Vec3>& faces, Vec3 direction, const ForcedInductionConfig& forced,
+                    Vec3 away, SuperchargerPlacement* supercharger) {
     const auto throttle = std::max(5.0F, mm(geometry.throttleDiameterMm));
     const auto bodyLength = 1.1F * throttle;
     DuctPiece bodies;
@@ -940,12 +987,20 @@ void appendUpstream(std::vector<DuctPiece>& pieces, std::uint32_t pathId, const 
         mouthCentre += mouths.back();
     }
     mouthCentre = mouthCentre * (1.0F / static_cast<float>(std::max<std::size_t>(1U, mouths.size())));
+    const auto charged = supercharger != nullptr && mouths.size() == 1U;
+    if (charged) {
+        *supercharger = placeSupercharger(forced, pathId, throttle, mouthCentre, direction, away);
+        // The air reaches the throttle through the supercharger: the airbox
+        // and the inlet duct feed its eye.
+        mouths = { supercharger->eye };
+        mouthCentre = supercharger->eye;
+    }
 
     const auto airbox = mm(geometry.airboxVolumeLitres) * litre;
     const auto ductLength = mm(geometry.inletDuctLengthMm);
     const auto ductDiameter = geometry.inletDuctDiameterMm > 1.0 ? mm(geometry.inletDuctDiameterMm) : throttle;
     const auto bellmouth = geometry.bellmouthDiameterMm > 1.0 ? mm(geometry.bellmouthDiameterMm) : ductDiameter;
-    if (airbox <= 0.0F && ductLength <= 1.0F && bellmouth > 1.05F * throttle) {
+    if (!charged && airbox <= 0.0F && ductLength <= 1.0F && bellmouth > 1.05F * throttle) {
         // Open throttle mouths: a velocity stack on each.
         for (const auto mouth : mouths)
             appendCylinder(bodies.mesh, Mat4::frameAlongY(mouth, direction), 0.5F * throttle, 0.5F * bellmouth,
@@ -992,7 +1047,11 @@ void appendUpstream(std::vector<DuctPiece>& pieces, std::uint32_t pathId, const 
 } // namespace
 
 std::vector<DuctPiece> layoutIntake(const EngineConfig& config, const std::vector<PortAnchor>& ports, float boreMm,
-                                    bool radial, const std::vector<EngineSolid>& solids) {
+                                    bool radial, const std::vector<EngineSolid>& solids,
+                                    SuperchargerPlacement* supercharger) {
+    if (supercharger != nullptr) *supercharger = {};
+    const auto& forced = config.forcedInduction;
+    const auto superchargerWanted = forced.enabled && forced.type == ForcedInductionType::supercharger;
     std::vector<DuctPiece> pieces;
     // Runners are bent together once every plenum is in place.
     struct Pending final {
@@ -1051,6 +1110,8 @@ std::vector<DuctPiece> layoutIntake(const EngineConfig& config, const std::vecto
         plenum.nearEngine = true;
         std::vector<Vec3> faces;
         Vec3 upstream;
+        // Away from the engine, for a supercharger beside the throttle.
+        Vec3 away;
 
         if (radial) {
             // A drum around the crank axis, in front of the cylinders.
@@ -1088,6 +1149,7 @@ std::vector<DuctPiece> layoutIntake(const EngineConfig& config, const std::vecto
             plenum.centreline = { hub - zAxis * (0.5F * drumLength), hub + zAxis * (0.5F * drumLength) };
             faces.push_back(hub + downAxis * drum);
             upstream = downAxis;
+            away = -zAxis;
         } else {
             // A box whose face holds every runner end, as far out as the
             // shortest runner allows.
@@ -1132,6 +1194,7 @@ std::vector<DuctPiece> layoutIntake(const EngineConfig& config, const std::vecto
             solid.half = Vec3 { width, height, depth } * 0.5F;
             avoid.push_back(solid);
             plenum.centreline = { boxCentre - out * (0.5F * height), boxCentre + out * (0.5F * height) };
+            away = out;
             const auto throttles = std::max<std::uint32_t>(1U, geometry.throttleCount);
             if (throttles == 1U) {
                 faces.push_back(boxCentre - zAxis * (0.5F * depth));
@@ -1167,7 +1230,13 @@ std::vector<DuctPiece> layoutIntake(const EngineConfig& config, const std::vecto
             pieces.push_back(std::move(piece));
         }
         pieces.push_back(std::move(plenum));
-        appendUpstream(pieces, pathId, geometry, faces, upstream);
+        const auto wantsSupercharger = superchargerWanted && supercharger != nullptr && !supercharger->placed;
+        appendUpstream(pieces, pathId, geometry, faces, upstream, forced, away,
+                       wantsSupercharger ? supercharger : nullptr);
+        if (wantsSupercharger && supercharger->placed) {
+            // The runners and the exhaust stay clear of it.
+            for (const auto& solid : superchargerSolids(*supercharger)) avoid.push_back(solid);
+        }
     }
 
     relaxRoutes(routes, {}, avoid);

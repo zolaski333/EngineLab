@@ -412,6 +412,77 @@ void checkTurbo(const EngineModel3D& model) {
     require(moved == 2 && turbines == 4, name + ": two wheels turn, in two housings");
 }
 
+int superchargersDrawn = 0;
+
+/** A supercharger is drawn where one is configured: fed by the airbox or the
+    inlet duct, feeding the throttle through its charge pipe, clear of the
+    engine, its impeller geared to the crank. */
+void checkSupercharger(const EngineModel3D& model) {
+    const auto& config = model.config();
+    const auto& name = config.name;
+    const auto& supercharger = model.supercharger();
+    const auto& forced = config.forcedInduction;
+    const auto wanted = forced.enabled && forced.type == ForcedInductionType::supercharger;
+    require(supercharger.placed == wanted, name + ": a supercharger is drawn when one is configured, and only then");
+    if (!supercharger.placed) return;
+    ++superchargersDrawn;
+
+    bool fed = false, feeds = false;
+    for (const auto& duct : model.ducts()) {
+        if (duct.pathId != supercharger.pathId) continue;
+        if ((duct.kind == DuctKind::intakeAirbox || duct.kind == DuctKind::intakeInletDuct) && !duct.centreline.empty()
+            && (length(duct.centreline.front() - supercharger.eye) < 0.5F
+                || length(duct.centreline.back() - supercharger.eye) < 0.5F))
+            fed = true;
+        if (duct.kind == DuctKind::intakeThrottle) {
+            // The charge pipe ends on the throttle body's mouth.
+            float nearest = 1.0e9F;
+            for (const auto& vertex : model.parts()[duct.part].mesh.vertices)
+                nearest = std::min(nearest, length(vertex.position - supercharger.throttleInlet));
+            feeds = nearest < 1.1F * supercharger.chargeRadius;
+        }
+    }
+    require(fed, name + ": the airbox or the inlet duct feeds the supercharger's eye");
+    require(feeds, name + ": the charge pipe ends at the throttle");
+    require(dot(supercharger.eye - supercharger.centre, supercharger.axis) > 0.5F * supercharger.width
+                && dot(supercharger.centre - supercharger.chargeOutlet, supercharger.axis) > 0.0F,
+            name + ": air enters the eye on one side and leaves for the throttle on the other");
+
+    const auto ownSolids = superchargerSolids(supercharger);
+    const auto& solids = model.solids();
+    float deepest = 0.0F;
+    for (const auto& solid : solids) {
+        if (length(solid.centre - ownSolids.front().centre) < 1.0e-3F) continue;
+        for (const auto& point : surfaceOf(ownSolids.front()))
+            deepest = std::max(deepest, -signedDistance(solid, point));
+    }
+    require(deepest < 1.0F, name + ": the supercharger stays out of the engine (" + std::to_string(deepest) + " mm in)");
+
+    // Geared to the crank: 10 degrees of crank turn the impeller by the
+    // drive ratio times as much, about its axis.
+    std::vector<SceneInstance> still, turned;
+    ScenePoseInput input;
+    model.pose(input, still);
+    input.crankAngleDegrees = 10.0;
+    model.pose(input, turned);
+    int impellers = 0;
+    for (std::size_t part = 0; part < still.size(); ++part) {
+        if (model.identify(static_cast<std::uint16_t>(part)).role != PartRole::supercharger) continue;
+        const auto& a = still[part].transform;
+        const auto& b = turned[part].transform;
+        if (a.m == b.m) continue;
+        ++impellers;
+        require(length(b.transformPoint({}) - supercharger.centre) < 1.0e-3F
+                    && dot(b.transformDirection({ 0.0F, 1.0F, 0.0F }), supercharger.axis) > 0.999F,
+                name + ": the impeller turns about its axis");
+        const auto expected = std::cos(10.0 * forced.superchargerDriveRatio * std::numbers::pi / 180.0);
+        const auto turnedBy = dot(a.transformDirection({ 1.0F, 0.0F, 0.0F }), b.transformDirection({ 1.0F, 0.0F, 0.0F }));
+        require(std::abs(turnedBy - static_cast<float>(expected)) < 1.0e-3F,
+                name + ": the impeller turns at the drive ratio times the crank");
+    }
+    require(impellers == 1, name + ": one impeller turns with the crank");
+}
+
 int silencersKept = 0;
 
 /** Resizing a drawn exhaust component from the 3-D view changes that
@@ -507,6 +578,7 @@ void checkEngine(const EngineConfig& config) {
     for (std::size_t k = 0; k < routeIssues.size(); ++k) routeIssues[k] += routes.count(static_cast<RouteIssueKind>(k));
     checkStations(model);
     checkTurbo(model);
+    checkSupercharger(model);
     checkGasFieldBinding(model);
     checkWaveColours(model);
     checkExhaustResize(model);
@@ -700,6 +772,7 @@ int main() {
     for (const auto& entry : catalogue.entries) checkEngine(entry.config);
     // 2JZ, EJ25, I5 and TDI; the Merlin's supercharger is not a turbo.
     require(turbosDrawn == 4, "the four catalogue turbochargers are drawn (" + std::to_string(turbosDrawn) + ")");
+    require(superchargersDrawn == 1, "the Merlin's supercharger is drawn (" + std::to_string(superchargersDrawn) + ")");
     // The catalogue compiles every exhaust path into a network at load; a
     // path authored as scalar geometry (an imported file) on a copy.
     auto scalar = catalogue.entries.front().config;
