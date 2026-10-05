@@ -50,6 +50,10 @@ struct ViewSettings final {
     bool vsync { true };
     bool motionBlur { true };
     bool antiAliasing { true };
+    /** 180 mm exhaust gas cells instead of 360 mm: the waves keep their
+        shape; the simulation has 13 to 20 % less headroom (LS3 at 60 %
+        of redline: 1.05 times real time instead of 1.31). */
+    bool fineExhaustWaves { false };
 
     static juce::File file();
     void load();
@@ -199,6 +203,14 @@ public:
     void setCylinderEditor(std::function<bool(const EngineConfig&, double rampSeconds)>);
     /** Seconds over which a gradual bore and stroke change happens. */
     static constexpr double cylinderRampSeconds = 3.0;
+    /** The exhaust gas network's cell length chosen in the view settings:
+        the finer mesh shows the waves' shape, at a cost in simulation time.
+        Empty: the production mesh. */
+    [[nodiscard]] std::optional<double> exhaustCellLengthM() const noexcept {
+        return settings_.fineExhaustWaves ? std::optional<double> { 0.180 } : std::nullopt;
+    }
+    /** Called when that choice changes. */
+    std::function<void()> onExhaustResolutionChanged;
     /** Rebuilds the 3-D model; call after every engine change. */
     void setEngine(const EngineConfig&);
     void stepLayer(int delta);

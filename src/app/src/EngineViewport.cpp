@@ -327,6 +327,7 @@ void ViewSettings::load() {
     vsync = flag("vsync", vsync);
     motionBlur = flag("motionBlur", motionBlur);
     antiAliasing = flag("antiAliasing", antiAliasing);
+    fineExhaustWaves = flag("fineExhaustWaves", fineExhaustWaves);
 }
 
 void ViewSettings::save() const {
@@ -336,6 +337,7 @@ void ViewSettings::save() const {
     object->setProperty("vsync", vsync);
     object->setProperty("motionBlur", motionBlur);
     object->setProperty("antiAliasing", antiAliasing);
+    object->setProperty("fineExhaustWaves", fineExhaustWaves);
     const auto target = file();
     (void)target.getParentDirectory().createDirectory();
     (void)target.replaceWithText(juce::JSON::toString(juce::var(object.release())));
@@ -1507,6 +1509,9 @@ void EngineViewport::showSettingsMenu() {
     menu.addItem(20, utf8("VSync"), use3d, settings_.vsync);
     menu.addItem(21, utf8("Motion blur"), use3d, settings_.motionBlur);
     menu.addItem(22, utf8("Anti-aliasing (4\xc3\x97 MSAA)"), use3d, settings_.antiAliasing);
+    menu.addSectionHeader(utf8("Exhaust waves"));
+    menu.addItem(30, utf8("Standard (360 mm cells)"), true, !settings_.fineExhaustWaves);
+    menu.addItem(31, utf8("Fine (180 mm cells, slower)"), true, settings_.fineExhaustWaves);
     menu.showMenuAsync(juce::PopupMenu::Options {}.withTargetComponent(&settingsButton_),
         [safe = juce::Component::SafePointer<EngineViewport>(this)](int result) {
             if (safe == nullptr || result == 0) return;
@@ -1523,6 +1528,11 @@ void EngineViewport::showSettingsMenu() {
                 settings.motionBlur = !settings.motionBlur;
             } else if (result == 22) {
                 settings.antiAliasing = !settings.antiAliasing;
+            } else if ((result == 30 || result == 31) && settings.fineExhaustWaves != (result == 31)) {
+                settings.fineExhaustWaves = result == 31;
+                settings.save();
+                if (safe->onExhaustResolutionChanged) safe->onExhaustResolutionChanged();
+                return;
             }
             settings.save();
             safe->pushSettings();

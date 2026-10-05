@@ -5,6 +5,17 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-05 — Fine exhaust mesh on demand
+
+- The view's *Fine* setting remeshes the running exhaust from 360 to 180 mm.
+  Held at 60 % redline, remeshed at 6 s: LS3 625.94 Nm, against 625.80 for an
+  engine started at 180 mm and 629.19 at 360 mm; CP2 60.16/60.33/60.29 (the
+  mesh barely moves its torque, so it only proves nothing breaks). Cells:
+  CP2 6 -> 11, LS3 26 -> 44. No stall.
+- Mutation caught: the live build ignoring the requested cell length.
+- Not tested: the menu itself, and the cost in the app (see 2026-10-05 wave
+  resolution entry: 13-20 % less headroom).
+
 ## 2026-10-05 — Live bore and stroke changes
 
 - CP2/K20A/LS3 at 60 % redline, +3 mm bore and stroke at 5 s: settled brake

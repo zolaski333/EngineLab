@@ -1,5 +1,6 @@
 #include <enginelab/app/MainComponent.hpp>
 #include <enginelab/app/Theme.hpp>
+#include <enginelab/gasdynamics/ExhaustNetworkLayout.hpp>
 #include <enginelab/audio/ImpulseResponseLoader.hpp>
 #include <enginelab/calibration/EcuCalibrationKeys.hpp>
 #include <algorithm>
@@ -120,6 +121,7 @@ MainComponent::MainComponent() {
     viewport_.setCylinderEditor([this](const EngineConfig& edited, double rampSeconds) {
         return applyCylinderResize(edited, rampSeconds);
     });
+    viewport_.onExhaustResolutionChanged = [this] { applyExhaustResolution(); };
     viewport_.setGasProbeSource([this](std::int32_t element, std::uint8_t sample, GasProbeTrace& trace) {
         if (!runtime_) return false;
         runtime_->requestGasProbe(element, sample);
@@ -170,9 +172,10 @@ bool MainComponent::applyConfig(const EngineConfig& newConfig, bool preserveScri
         normaliseEngineConfig(canonicalConfig);
         if (const auto error = validateEngineConfig(canonicalConfig))
             throw std::invalid_argument(*error);
+        EngineSimulatorOptions options;
+        options.exhaustTargetCellLengthM = viewport_.exhaustCellLengthM();
         replacement = std::make_unique<EngineRuntime>(
-            canonicalConfig, retainedCalibration,
-            EngineSimulatorOptions {}, dynoArchive_);
+            canonicalConfig, retainedCalibration, options, dynoArchive_);
     } catch (const std::exception& error) {
         showError(utf8("Invalid engine configuration"), juce::String::fromUTF8(error.what()));
         return false;
@@ -262,6 +265,14 @@ bool MainComponent::applyCylinderResize(const EngineConfig& edited, double rampS
     viewport_.setEngine(config_);
     viewport_.refresh();
     return true;
+}
+
+void MainComponent::applyExhaustResolution() {
+    if (!runtime_) return;
+    const auto cellLengthM = viewport_.exhaustCellLengthM().value_or(
+        gasdynamics::realtimeExhaustFeedbackDiscretisation().targetCellLengthM);
+    if (runtime_->dynoRunning() || !runtime_->applyLiveExhaust(config_, cellLengthM))
+        (void) applyConfig(config_, false, true);
 }
 
 void MainComponent::updateAudioControlAvailability() {

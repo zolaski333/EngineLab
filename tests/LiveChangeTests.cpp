@@ -12,6 +12,7 @@
 #include <enginelab/exhaust/ExhaustComponentResize.hpp>
 #include <enginelab/exhaust/ExhaustGraph.hpp>
 #include <enginelab/foundation/CylinderResize.hpp>
+#include <enginelab/gasdynamics/ExhaustGasNetwork.hpp>
 #include <enginelab/physics/SimplifiedGasolinePhysics.hpp>
 #include <enginelab/runtime/EngineRuntime.hpp>
 #include <enginelab/simulation/EngineSimulator.hpp>
@@ -38,9 +39,9 @@ constexpr double frameSeconds = 1.0 / 240.0;
 
 /** One simulated engine, owned on the heap like the harnesses do. */
 struct Rig final {
-    explicit Rig(EngineConfig engine)
+    explicit Rig(EngineConfig engine, EngineSimulatorOptions options = {})
         : config(std::move(engine)), exhaust(ExhaustGraph::makeForEngine(config)),
-          simulator(std::make_unique<EngineSimulator>(config, ecu, physics, events, exhaust)) {
+          simulator(std::make_unique<EngineSimulator>(config, ecu, physics, events, exhaust, std::move(options))) {
         simulator->setPressureSamplingEnabled(true);
     }
     EngineConfig config;
@@ -207,6 +208,64 @@ void resizedSwapSettlesLikeARestart() {
                 std::string(name) + ": the swap stays within the engine's own frame-to-frame steps");
         require(std::abs(swappedMean - builtMean) <= 0.25 * std::abs(untouchedMean - builtMean),
                 std::string(name) + ": the swapped engine settles where the resized engine runs");
+    }
+}
+
+/** The view's fine wave resolution: the running exhaust remeshed from the
+ * production 360 mm cells to 180 mm runs like an engine started with them. */
+void remeshSettlesLikeARestart() {
+    constexpr double fineCellM = 0.180;
+    for (const auto* name : { "Yamaha CP2", "LS3" }) {
+        const auto config = catalogueEngine(name);
+        EngineSimulatorOptions fine;
+        fine.exhaustTargetCellLengthM = fineCellM;
+        Rig built(config, fine);
+        Rig remeshed(config);
+        Rig untouched(config);
+        constexpr auto swapFrame = 6 * 240;
+        constexpr auto frames = 12 * 240;
+        std::array<Rig*, 3> rigs { &built, &remeshed, &untouched };
+        std::array<double, 3> rpm {};
+        std::array<double, 3> torque {};
+        std::size_t productionCells = 0;
+        std::size_t fineCells = 0;
+        const auto cellsOf = [](const gasdynamics::ExhaustGasNetwork& network) {
+            std::size_t cells = 0;
+            for (const auto& duct : network.layout().ducts()) cells += duct.cellCount;
+            return cells;
+        };
+        double minimumRpm = 1.0e9;
+        for (auto frame = 0; frame < frames; ++frame) {
+            const auto t = frame * frameSeconds;
+            if (frame == swapFrame) {
+                auto network = remeshed.simulator->buildLiveExhaustNetwork(config, fineCellM);
+                require(network != nullptr, std::string(name) + ": the remeshed exhaust builds");
+                fineCells = cellsOf(*network);
+                require(remeshed.simulator->replaceExhaustNetwork(network, config),
+                        std::string(name) + ": the simulator takes the remeshed exhaust");
+                productionCells = cellsOf(*network);
+            }
+            for (std::size_t index = 0; index < rigs.size(); ++index) {
+                const auto controls = heldAt(t, rpm[index], config);
+                const auto state = rigs[index]->simulator->step(frameSeconds, controls).state;
+                rpm[index] = state.rpm;
+                if (frame >= frames - 4 * 240) torque[index] += controls.dynamometerTorqueNm / (4.0 * 240.0);
+                if (index == 1 && frame >= swapFrame) minimumRpm = std::min(minimumRpm, rpm[index]);
+            }
+        }
+        std::cout << "  " << name << ": settled brake torque, Nm: built at 180 mm " << torque[0]
+                  << ", remeshed " << torque[1] << ", at 360 mm " << torque[2] << "; exhaust cells "
+                  << productionCells << " -> " << fineCells << "; lowest rpm " << minimumRpm << std::endl;
+        require(minimumRpm > 0.5 * config.idleRpm, std::string(name) + ": the engine keeps running");
+        require(fineCells > productionCells * 3 / 2, std::string(name) + ": the remeshed exhaust has finer cells");
+        require(std::abs(torque[1] - torque[0]) <= 0.005 * torque[0],
+                std::string(name) + ": the remeshed engine settles where one started with the finer mesh runs");
+        // Where the mesh moves the torque measurably (LS3, not the CP2), the
+        // remeshed engine must land on the finer mesh's side of it.
+        const auto effect = std::abs(torque[2] - torque[0]);
+        if (effect > 0.003 * torque[0])
+            require(std::abs(torque[1] - torque[0]) <= 0.25 * effect,
+                    std::string(name) + ": the remeshed engine runs like the finer mesh, not the production one");
     }
 }
 
@@ -587,6 +646,7 @@ void resizeAtIdleKeepsEveryEngineRunning() {
 void liveChangeRegression() {
     identicalSwapIsInvisible();
     resizedSwapSettlesLikeARestart();
+    remeshSettlesLikeARestart();
     identicalAudioSwapIsInaudible();
     resizedAudioSwapHasNoClick();
 }

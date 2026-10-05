@@ -56,6 +56,10 @@ file formats, always with an in-memory migration).
   running engine: speed, load, temperatures and the ECU carry on, the gas stays
   where it was, and the sound crossfades to the new exhaust in 0.2 s. A change
   of topology (adding or removing a component) still restarts the engine.
+- *Exhaust waves* in the 3-D view's settings: *Fine* remeshes the running
+  exhaust with 180 mm cells instead of 360 mm, so the gas field and the
+  oscilloscope show the waves' real shape, at 13 to 20 % less simulation
+  headroom. The engine keeps running through the change.
 - Change the bore and stroke while the engine runs: click a cylinder liner or
   a piston in the 3-D view. Each crank throw takes the new size at its next
   gas-exchange TDC, or gradually over 3 s. The number of cylinders, the
