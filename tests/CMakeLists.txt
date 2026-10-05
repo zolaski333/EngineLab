@@ -160,6 +160,9 @@ set_tests_properties(EngineLab.ExhaustTransfer PROPERTIES TIMEOUT 30)
 # exhaust without a restart. Same binary, for the same reason.
 add_test(NAME EngineLab.LiveChange
     COMMAND EngineLabRealtimeRegressionTests --live-change-only)
+# Live bore and stroke changes, on the same simulator path.
+add_test(NAME EngineLab.LiveCylinderResize
+    COMMAND EngineLabRealtimeRegressionTests --live-resize-only)
 
 add_executable(EngineLabOfflineAudioExportTests OfflineAudioExportTests.cpp)
 target_link_libraries(EngineLabOfflineAudioExportTests PRIVATE

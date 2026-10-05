@@ -52,6 +52,9 @@ private:
     /** An edit of config.exhaust and config.exhaustPaths only: taken by the
         running engine when it keeps the network's topology, else a restart. */
     bool applyExhaustEdit(const EngineConfig&);
+    /** A bore and stroke edit (resizeCylinders()): taken by the running
+        engine over `rampSeconds` (0: at the next cycle), else a restart. */
+    bool applyCylinderResize(const EngineConfig&, double rampSeconds);
     void showConfigEditor();
     void showConfigEditor(const juce::String& initialText);
     void showKeyBindingsEditor();

@@ -1,14 +1,17 @@
 // A live exhaust change: the engine keeps running while its exhaust is
 // resized. The simulator swaps its gas network between two steps and the new
 // one takes over the gas state; the audio feeds the incoming acoustic network
-// silently, then fades to it. These tests drive the real simulator and the
-// real renderer the way EngineRuntime does, deterministically.
+// silently, then fades to it. A live cylinder resize: each crank journal takes
+// the new bore and stroke at its gas-exchange TDC. These tests drive the real
+// simulator and the real renderer the way EngineRuntime does,
+// deterministically.
 #include <enginelab/audio/RealtimeEngineAudio.hpp>
 #include <enginelab/catalog/EngineCatalog.hpp>
 #include <enginelab/ecu/SimpleEcuModel.hpp>
 #include <enginelab/events/FourStrokeEventGenerator.hpp>
 #include <enginelab/exhaust/ExhaustComponentResize.hpp>
 #include <enginelab/exhaust/ExhaustGraph.hpp>
+#include <enginelab/foundation/CylinderResize.hpp>
 #include <enginelab/physics/SimplifiedGasolinePhysics.hpp>
 #include <enginelab/runtime/EngineRuntime.hpp>
 #include <enginelab/simulation/EngineSimulator.hpp>
@@ -353,11 +356,246 @@ void resizedAudioSwapHasNoClick() {
 
 } // namespace
 
+/** The engine with every cylinder `boreMm` and `strokeMm` larger, through the
+ * same function the 3-D view's inspector uses. */
+[[nodiscard]] EngineConfig resizedCylinders(EngineConfig config, double boreMm, double strokeMm) {
+    const auto size = cylinderSize(config);
+    require(size.has_value(), config.name + ": the cylinders share one size");
+    const auto error = resizeCylinders(config, size->boreMm + boreMm, size->strokeMm + strokeMm);
+    require(error.empty(), config.name + ": " + error);
+    normaliseEngineConfig(config);
+    const auto invalid = validateEngineConfig(config);
+    require(!invalid, config.name + ": " + invalid.value_or(""));
+    return config;
+}
+
+/** Whether the phase passed `target` going from `previous` to `current`. */
+[[nodiscard]] bool crossed(double previous, double current, double target) {
+    const auto travel = std::fmod(current - previous + 720.0, 720.0);
+    return std::fmod(target - previous + 720.0, 720.0) <= travel;
+}
+
+/** Resizing to the running size changes nothing, at once or over a ramp. */
+void identicalResizeIsInvisible() {
+    const auto config = catalogueEngine("Yamaha CP2");
+    for (const auto rampSeconds : { 0.0, 0.5 }) {
+        Rig reference(config);
+        Rig resized(config);
+        for (auto frame = 0; frame < 4 * 240; ++frame) {
+            const auto t = frame * frameSeconds;
+            if (frame == 3 * 240)
+                require(resized.simulator->beginCylinderResize(config, rampSeconds),
+                        "the simulator takes a resize to its own size");
+            const auto a = reference.simulator->step(frameSeconds, controlsAt(t, 0.25));
+            const auto b = resized.simulator->step(frameSeconds, controlsAt(t, 0.25));
+            require(a.state.rpm == b.state.rpm
+                    && a.state.crankAngleDegrees == b.state.crankAngleDegrees
+                    && a.state.cycleAveragedTorqueNm == b.state.cycleAveragedTorqueNm
+                    && a.state.exhaustBackPressureKpa == b.state.exhaustBackPressureKpa,
+                "resizing to the same size must leave the run bit-identical");
+        }
+        // Otherwise the comparison above proves nothing.
+        require(resized.simulator->cylinderGeometryRevision() > 0 && !resized.simulator->cylinderResizeActive(),
+                "the identical resize was applied to every journal");
+    }
+}
+
+/** Each crank journal changes at the gas-exchange TDC of its cylinder, one
+ * after the other, never all at once. */
+void resizeHappensAtGasExchangeTdc() {
+    const auto original = catalogueEngine("K20A");
+    const auto target = resizedCylinders(original, 3.0, 0.0);
+    Rig rig(original);
+    const auto count = original.cylinders.size();
+    std::vector<std::array<double, 2>> phases(count, { 0.0, 0.0 });
+    std::vector<int> changedAtFrame(count, -1);
+    for (auto frame = 0; frame < 4 * 240; ++frame) {
+        const auto t = frame * frameSeconds;
+        if (frame == 3 * 240) require(rig.simulator->beginCylinderResize(target, 0.0), "the K20A takes a bore change");
+        const auto result = rig.simulator->step(frameSeconds, controlsAt(t, 0.25));
+        for (std::size_t index = 0; index < count; ++index) {
+            const auto phase = result.state.cylinderStates[index].cyclePhaseDegrees;
+            if (changedAtFrame[index] < 0
+                && rig.simulator->config().cylinders[index].boreMm == target.cylinders[index].boreMm) {
+                changedAtFrame[index] = frame;
+                // The resize applies at the start of the sub-step after the
+                // crossing, which may fall in the next frame.
+                require(crossed(phases[index][0], phase, 360.0),
+                        "cylinder " + std::to_string(index + 1) + " changes at its gas-exchange TDC (phase "
+                            + std::to_string(phases[index][0]) + " to " + std::to_string(phase) + ")");
+            }
+            phases[index] = { phases[index][1], phase };
+        }
+    }
+    std::vector<int> frames(changedAtFrame);
+    std::sort(frames.begin(), frames.end());
+    require(frames.front() >= 3 * 240, "every cylinder changed after the request");
+    require(std::unique(frames.begin(), frames.end()) - frames.begin() >= 3,
+            "the cylinders change one after the other, at their own TDC");
+}
+
+/** A bore and stroke change while the engine runs, at once or over 2 s:
+ * no stall, no overshoot beyond the cycle-to-cycle variability, the brake
+ * torque of an engine built that way, and the original engine's again once
+ * resized back. */
+void resizeSettlesLikeARestart() {
+    for (const auto* name : { "Yamaha CP2", "K20A", "LS3" }) {
+        const auto original = catalogueEngine(name);
+        const auto resized = resizedCylinders(original, 3.0, 3.0);
+        Rig built(resized);
+        Rig instant(original);
+        Rig ramped(original);
+        Rig back(original);
+        Rig untouched(original);
+        constexpr auto swapFrame = 5 * 240;
+        constexpr auto backFrame = 8 * 240;
+        constexpr auto frames = 12 * 240;
+        constexpr double rampSeconds = 2.0;
+        std::array<Rig*, 5> rigs { &built, &instant, &ramped, &back, &untouched };
+        std::array<double, 5> rpm {};
+        std::array<std::vector<double>, 5> brake;
+        std::vector<double> instantTorque;
+        std::vector<double> rampedTorque;
+        double minimumRpm = 1.0e9;
+        auto boreMidRamp = 0.0;
+        for (auto frame = 0; frame < frames; ++frame) {
+            const auto t = frame * frameSeconds;
+            if (frame == swapFrame) {
+                require(instant.simulator->beginCylinderResize(resized, 0.0), std::string(name) + ": instant resize");
+                require(ramped.simulator->beginCylinderResize(resized, rampSeconds), std::string(name) + ": ramped resize");
+                require(back.simulator->beginCylinderResize(resized, 0.0), std::string(name) + ": resize");
+            }
+            if (frame == backFrame)
+                require(back.simulator->beginCylinderResize(original, 0.0), std::string(name) + ": resize back");
+            if (frame == swapFrame + static_cast<int>(rampSeconds * 120.0))
+                boreMidRamp = ramped.simulator->config().cylinders.front().boreMm;
+            for (std::size_t index = 0; index < rigs.size(); ++index) {
+                const auto controls = heldAt(t, rpm[index], original);
+                const auto result = rigs[index]->simulator->step(frameSeconds, controls);
+                rpm[index] = result.state.rpm;
+                brake[index].push_back(controls.dynamometerTorqueNm);
+                if (index == 1) instantTorque.push_back(result.state.cycleAveragedTorqueNm);
+                if (index == 2) rampedTorque.push_back(result.state.cycleAveragedTorqueNm);
+                if (frame >= swapFrame && index >= 1 && index <= 3) minimumRpm = std::min(minimumRpm, rpm[index]);
+            }
+        }
+        const auto mean = [](const std::vector<double>& values, int from, int to) {
+            double sum = 0.0;
+            for (auto frame = from; frame < to; ++frame) sum += values[static_cast<std::size_t>(frame)];
+            return sum / static_cast<double>(to - from);
+        };
+        const auto deviation = [&mean](const std::vector<double>& values, int from, int to) {
+            const auto average = mean(values, from, to);
+            double sum = 0.0;
+            for (auto frame = from; frame < to; ++frame)
+                sum += std::pow(values[static_cast<std::size_t>(frame)] - average, 2.0);
+            return std::sqrt(sum / static_cast<double>(to - from));
+        };
+        constexpr auto settled = frames - 3 * 240;
+        const auto builtMean = mean(brake[0], settled, frames);
+        const auto instantMean = mean(brake[1], settled, frames);
+        const auto rampedMean = mean(brake[2], settled, frames);
+        const auto backMean = mean(brake[3], settled, frames);
+        const auto untouchedMean = mean(brake[4], settled, frames);
+        const auto beforeTorque = mean(instantTorque, swapFrame - 2 * 240, swapFrame);
+        const auto afterTorque = mean(instantTorque, settled, frames);
+        const auto spread = std::max(deviation(instantTorque, swapFrame - 2 * 240, swapFrame),
+                                     deviation(instantTorque, settled, frames));
+        // The cycle torque, one value per cycle, against the band its
+        // cycle-to-cycle variability allows between the level before and the
+        // levels after (the one just after the change, walls still at the old
+        // temperature, and the settled one). Counts the cycles outside it.
+        const auto rampFrames = static_cast<int>(rampSeconds * 240.0);
+        const auto cyclesOutside = [&](const std::vector<double>& torque, int settleFrom, int to) {
+            const auto early = mean(torque, settleFrom + 24, settleFrom + 120);
+            const auto low = std::min({ beforeTorque, afterTorque, early }) - 4.0 * spread;
+            const auto high = std::max({ beforeTorque, afterTorque, early }) + 4.0 * spread;
+            auto outside = 0;
+            for (auto frame = swapFrame; frame < to; ++frame) {
+                const auto value = torque[static_cast<std::size_t>(frame)];
+                if (value == torque[static_cast<std::size_t>(frame - 1)]) continue;
+                if (value < low || value > high) ++outside;
+            }
+            return outside;
+        };
+        const auto instantOutside = cyclesOutside(instantTorque, swapFrame, swapFrame + 240);
+        const auto rampedOutside = cyclesOutside(rampedTorque, swapFrame + rampFrames, swapFrame + rampFrames + 240);
+        const auto from = original.cylinders.front().boreMm;
+        const auto to = resized.cylinders.front().boreMm;
+        std::cout << "  " << name << ": settled brake torque, Nm: built " << builtMean << ", instant "
+                  << instantMean << ", ramped " << rampedMean << ", resized and back " << backMean
+                  << ", untouched " << untouchedMean << "; cycle torque " << beforeTorque << " -> "
+                  << afterTorque << " (spread " << spread << "), cycles outside it: " << instantOutside
+                  << " at once, " << rampedOutside << " over the ramp; bore " << boreMidRamp << " mm half-way through the ramp ("
+                  << from << " -> " << to << "); lowest rpm " << minimumRpm << "\n";
+        require(minimumRpm > 0.5 * original.idleRpm, std::string(name) + ": the resized engine keeps running");
+        const auto effect = std::abs(untouchedMean - builtMean);
+        require(effect > 0.01 * builtMean, std::string(name) + ": the resize changes the brake torque");
+        require(std::abs(instantMean - builtMean) <= 0.25 * effect,
+                std::string(name) + ": resized at once, the engine settles like one built that way");
+        require(std::abs(rampedMean - builtMean) <= 0.25 * effect,
+                std::string(name) + ": resized over a ramp, the engine settles like one built that way");
+        require(std::abs(backMean - untouchedMean) <= 0.25 * effect,
+                std::string(name) + ": resized and back, the engine settles where it was");
+        // At once, the first cycle burns fuel metered for the old cylinder.
+        require(instantOutside <= 1,
+                std::string(name) + ": resized at once, the cycle torque steps to its new level");
+        require(rampedOutside == 0,
+                std::string(name) + ": resized over a ramp, the cycle torque stays within its variability");
+        require(boreMidRamp > from + 0.2 * (to - from) && boreMidRamp < from + 0.8 * (to - from),
+                std::string(name) + ": half-way through the ramp the bore is half-way");
+    }
+}
+
+/** Every catalogue engine takes a bore and stroke change at idle and keeps
+ * idling. */
+void resizeAtIdleKeepsEveryEngineRunning() {
+    static const auto catalogue = loadEngineCatalog(ENGINELAB_CATALOG_ROOT);
+    std::size_t engines = 0;
+    for (const auto& entry : catalogue.entries) {
+        auto original = entry.config;
+        normaliseEngineConfig(original);
+        // Larger, unless that takes the engine past what the configuration
+        // allows (the Merlin is at the 20 litre ceiling): then smaller.
+        auto larger = original;
+        const auto size = cylinderSize(original);
+        require(size.has_value(), original.name + ": the cylinders share one size");
+        const auto grows = resizeCylinders(larger, size->boreMm + 2.0, size->strokeMm + 2.0).empty()
+            && !validateEngineConfig(larger);
+        const auto step = grows ? 2.0 : -2.0;
+        const auto resized = resizedCylinders(original, step, step);
+        Rig rig(original);
+        double lowestAfter = 1.0e9;
+        double rpm = 0.0;
+        for (auto frame = 0; frame < 6 * 240; ++frame) {
+            const auto t = frame * frameSeconds;
+            if (frame == 3 * 240)
+                require(rig.simulator->beginCylinderResize(resized, 0.0), original.name + ": resize");
+            rpm = rig.simulator->step(frameSeconds, controlsAt(t, 0.0)).state.rpm;
+            if (frame >= 3 * 240) lowestAfter = std::min(lowestAfter, rpm);
+        }
+        std::cout << "  " << original.name << ": " << (step > 0.0 ? "+" : "") << step
+                  << " mm, lowest rpm after the resize " << lowestAfter
+                  << " (idle " << original.idleRpm << "), " << rpm << " at 6 s\n";
+        require(lowestAfter > 0.5 * original.idleRpm, original.name + ": the resized engine keeps idling");
+        require(!rig.simulator->cylinderResizeActive(), original.name + ": every journal was resized");
+        ++engines;
+    }
+    require(engines >= 16, "the whole catalogue was resized");
+}
+
 void liveChangeRegression() {
     identicalSwapIsInvisible();
     resizedSwapSettlesLikeARestart();
     identicalAudioSwapIsInaudible();
     resizedAudioSwapHasNoClick();
+}
+
+void liveCylinderResizeRegression() {
+    identicalResizeIsInvisible();
+    resizeHappensAtGasExchangeTdc();
+    resizeSettlesLikeARestart();
+    resizeAtIdleKeepsEveryEngineRunning();
 }
 
 } // namespace enginelab::tests

@@ -56,6 +56,10 @@ file formats, always with an in-memory migration).
   running engine: speed, load, temperatures and the ECU carry on, the gas stays
   where it was, and the sound crossfades to the new exhaust in 0.2 s. A change
   of topology (adding or removing a component) still restarts the engine.
+- Change the bore and stroke while the engine runs: click a cylinder liner or
+  a piston in the 3-D view. Each crank throw takes the new size at its next
+  gas-exchange TDC, or gradually over 3 s. The number of cylinders, the
+  layout and the fuel still need a restart.
 - Exhaust and intake pipes in the 3-D view are routed like real ones: they no
   longer pass through each other, the engine or the intake, bend no tighter
   than 1.25 diameters and keep their authored length. A collector is wide

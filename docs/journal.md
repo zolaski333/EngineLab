@@ -5,6 +5,18 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-05 — Live bore and stroke changes
+
+- CP2/K20A/LS3 at 60 % redline, +3 mm bore and stroke at 5 s: settled brake
+  torque within 0.3 % of an engine built that way (CP2 67.80 at once, 67.77
+  over 2 s, 67.89 built); resized back, within 0.06 % of untouched.
+- At once, one cycle leaves the variability band (CP2 58.9 Nm, AFR 14.8
+  against 13.3): its fuel was metered for the old cylinder. Then ~69 Nm,
+  drifting to 68 over seconds as the walls warm. Over a ramp: no cycle out.
+- 16 engines, 2 mm at 3 s of idle: none stalls (2JZ dips to 625 rpm, idle 760).
+- Mutations caught: no TDC wait, no ramp, no kinematics rebuild (74.4 Nm).
+- Not tested: the runtime's telemetry, inertia and dyno re-sizing.
+
 ## 2026-10-05 — Live exhaust changes
 
 - Gas: an identical exhaust adopted continues bit-identically; 360 to 45 mm

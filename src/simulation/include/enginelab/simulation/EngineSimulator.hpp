@@ -23,8 +23,10 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdint>
 #include <memory>
 #include <optional>
+#include <vector>
 namespace enginelab {
 
 /** Diagnostic/runtime policy knobs that do not belong in an engine file.
@@ -144,6 +146,27 @@ public:
     [[nodiscard]] bool replaceExhaustNetwork(
         std::unique_ptr<gasdynamics::ExhaustGasNetwork>& network,
         const EngineConfig& config);
+    /** Move the cylinders to `target`'s bore, stroke, deck height and
+     * compression ratio while the engine runs; nothing else of `target` is
+     * read. The cylinders on one crank journal change together, at the
+     * gas-exchange TDC of the first of them to reach it, when the chamber
+     * holds only its clearance volume; the gas keeps its mass through the
+     * volume step. With `rampSeconds` > 0 each such TDC takes the size
+     * interpolated at that moment, until the target. False, with nothing
+     * changed, if `target` does not have the same cylinders and journals.
+     * Replaces a resize still in progress, from where it got to. Simulation
+     * thread only, like step(). */
+    [[nodiscard]] bool beginCylinderResize(const EngineConfig& target, double rampSeconds);
+    /** True while a resize has cylinders still to change. */
+    [[nodiscard]] bool cylinderResizeActive() const noexcept { return cylinderResize_.has_value(); }
+    /** Counts the cylinder geometry changes applied, so an owner can refresh
+     * what it derived from the configuration (config()). */
+    [[nodiscard]] std::uint64_t cylinderGeometryRevision() const noexcept {
+        return cylinderGeometryRevision_;
+    }
+    /** The configuration the simulator runs, live changes included.
+     * Simulation thread only. */
+    [[nodiscard]] const EngineConfig& config() const noexcept { return config_; }
     /** Keep the gas field (GasFieldSnapshot) captured at a crank angle over
      * the cycle: each time the crank crosses it between two sub-steps, and at
      * the end of a frame once 0.25 s of simulated time has passed without a
@@ -537,6 +560,25 @@ private:
      * thread. */
     gasdynamics::ExhaustNetworkLayout constructionExhaustLayout_;
     double constructionExhaustCellLengthM_ { 0.0 };
+    /** The cylinder fields a live resize moves. */
+    struct CylinderGeometry final {
+        double boreMm {};
+        double strokeMm {};
+        double deckHeightMm {};
+        double compressionRatio {};
+    };
+    struct CylinderResize final {
+        std::vector<CylinderGeometry> from;
+        std::vector<CylinderGeometry> to;
+        std::vector<bool> pending;
+        double startSeconds {};
+        double rampSeconds {};
+    };
+    /** Applies the resize to the journals whose cylinders reach their
+     * gas-exchange TDC in the coming sub-step. */
+    void advanceCylinderResize();
+    std::optional<CylinderResize> cylinderResize_;
+    std::uint64_t cylinderGeometryRevision_ { 0 };
     /** Heap-owned scratch keeps the bounded source list out of step()'s large
      * Windows stack frame. */
     gasdynamics::ExhaustFuelReactionResult exhaustFuelReactionScratch_ {};

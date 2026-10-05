@@ -712,6 +712,75 @@ std::unique_ptr<gasdynamics::ExhaustGasNetwork> EngineSimulator::buildLiveExhaus
     return network;
 }
 
+bool EngineSimulator::beginCylinderResize(const EngineConfig& target, double rampSeconds) {
+    if (!std::isfinite(rampSeconds) || rampSeconds < 0.0
+        || target.cylinders.size() != config_.cylinders.size()
+        || target.crankJournals.size() != config_.crankJournals.size())
+        return false;
+    for (std::size_t index = 0; index < config_.cylinders.size(); ++index) {
+        const auto& running = config_.cylinders[index];
+        const auto& wanted = target.cylinders[index];
+        if (running.id != wanted.id || running.crankJournalId != wanted.crankJournalId) return false;
+    }
+    CylinderResize resize;
+    resize.startSeconds = state_.simulationTimeSeconds;
+    resize.rampSeconds = rampSeconds;
+    for (std::size_t index = 0; index < config_.cylinders.size(); ++index) {
+        const auto& running = config_.cylinders[index];
+        const auto& wanted = target.cylinders[index];
+        resize.from.push_back({ running.boreMm, running.strokeMm, running.deckHeightMm,
+                                running.compressionRatio });
+        resize.to.push_back({ wanted.boreMm, wanted.strokeMm, wanted.deckHeightMm,
+                              wanted.compressionRatio });
+        resize.pending.push_back(true);
+    }
+    cylinderResize_ = std::move(resize);
+    return true;
+}
+
+void EngineSimulator::advanceCylinderResize() {
+    if (!cylinderResize_) return;
+    auto& resize = *cylinderResize_;
+    // A stopped engine crosses no TDC: it takes the target at once.
+    const auto stopped = std::abs(state_.rpm) < 1.0;
+    const auto fraction = resize.rampSeconds > 0.0 && !stopped
+        ? std::clamp((state_.simulationTimeSeconds - resize.startSeconds) / resize.rampSeconds, 0.0, 1.0)
+        : 1.0;
+    const auto at = [fraction](double from, double to) {
+        return fraction >= 1.0 ? to : from + (to - from) * fraction;
+    };
+    auto changed = false;
+    for (std::size_t index = 0; index < config_.cylinders.size(); ++index) {
+        if (!resize.pending[index]) continue;
+        const auto& cylinder = config_.cylinders[index];
+        const auto phase = std::fmod(state_.crankAngleDegrees - crankOffsetDegreesFor(config_, cylinder)
+            + 1'440.0, 720.0);
+        // Phase 0 is firing TDC: 360 is the overlap TDC, the chamber at its
+        // clearance volume with both valves near their crossing.
+        if (!stopped && !crossedPhase(previousCylinderPhases_[index], phase, 360.0)) continue;
+        const auto journalId = cylinder.crankJournalId;
+        for (std::size_t member = 0; member < config_.cylinders.size(); ++member) {
+            auto& sized = config_.cylinders[member];
+            if (sized.crankJournalId != journalId) continue;
+            const auto& from = resize.from[member];
+            const auto& to = resize.to[member];
+            sized.boreMm = at(from.boreMm, to.boreMm);
+            sized.strokeMm = at(from.strokeMm, to.strokeMm);
+            sized.deckHeightMm = at(from.deckHeightMm, to.deckHeightMm);
+            sized.compressionRatio = at(from.compressionRatio, to.compressionRatio);
+            if (fraction >= 1.0) resize.pending[member] = false;
+        }
+        for (auto& journal : config_.crankJournals)
+            if (journal.id == journalId) journal.throwMm = cylinder.strokeMm * 0.5;
+        changed = true;
+    }
+    if (!changed) return;
+    kinematicsReference_ = buildEngineKinematicsReference(config_);
+    ++cylinderGeometryRevision_;
+    if (std::none_of(resize.pending.begin(), resize.pending.end(), [](bool pending) { return pending; }))
+        cylinderResize_.reset();
+}
+
 bool EngineSimulator::replaceExhaustNetwork(
     std::unique_ptr<gasdynamics::ExhaustGasNetwork>& network,
     const EngineConfig& config) {
@@ -846,6 +915,7 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
     for (std::size_t subStep = 0; subStep < subStepCount; ++subStep) {
         pollGasFieldCapture();
         recordGasProbe();
+        advanceCylinderResize();
         const auto subStepStartTime = state_.simulationTimeSeconds;
         const auto subPreviousRpm = state_.rpm;
         const auto subPreviousAngle = state_.crankAngleDegrees;

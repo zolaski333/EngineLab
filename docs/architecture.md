@@ -154,6 +154,31 @@ engine-speed step, but a cold wall). Anything else (another topology, the
 dyno running, an audio network that fails to prepare) restarts the runtime
 as above.
 
+### Live bore and stroke changes
+
+`resizeCylinders` (foundation) gives every cylinder one bore and stroke and
+the crank journals half the stroke as throw. An engine authored by
+compression ratio keeps it; one authored by chamber geometry keeps its
+piston-to-deck clearance and its compression ratio follows.
+`EngineRuntime::applyLiveCylinderResize` hands the sizes to the simulation
+thread, where `EngineSimulator::beginCylinderResize` applies them one crank
+journal at a time, at the gas-exchange TDC (phase 360) of the first of its
+cylinders to reach it: the chamber then holds its clearance volume and both
+valves are near their crossing. The gas keeps its mass through the volume
+step (`setVolumeAdiabatic`). With a ramp, each such TDC takes the size
+interpolated at that moment until the target. A stopped engine takes the
+target at once. Changed at once, the first cycle of each cylinder burns fuel
+metered for the old one (one lean cycle on a larger engine); a ramp spreads
+that over many small steps.
+
+What was derived from the geometry follows it: the kinematics reference is
+rebuilt after each change; the runtime republishes displacement, bore and
+stroke to the audio, gives the driveline the new engine inertia and, outside
+a dyno run, re-sizes the dyno absorber. Everything else reads the
+configuration at every step. Not updated until a restart: the audio's
+structural modes (`StructuralModalRadiator`, built from the mean bore and
+stroke). Cylinder count, layout and fuel stay restart-only.
+
 ## Physical contracts
 
 - `GasCell` conserves species, internal energy, volume and 2D momentum.
@@ -371,6 +396,11 @@ pipes stops being one) and, on the only path, mirrors the geometry into
 reads. A stepper press reaches the running engine 250 ms after the last one
 (a live exhaust change, see above); *Reset* goes back to the size the part
 had when it was selected. The camera stays and the part stays selected.
+
+A cylinder liner or piston offers the engine's bore and stroke the same way
+(1 mm, 0.1 mm with Shift), with a choice between the next cycle and a 3 s
+ramp (a live bore and stroke change, see above). The view shows the target
+size at once.
 
 ## Extension rule
 

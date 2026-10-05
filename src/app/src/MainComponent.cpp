@@ -117,6 +117,9 @@ MainComponent::MainComponent() {
         return runtime_->latestGasField(field);
     });
     viewport_.setConfigEditor([this](const EngineConfig& edited) { return applyExhaustEdit(edited); });
+    viewport_.setCylinderEditor([this](const EngineConfig& edited, double rampSeconds) {
+        return applyCylinderResize(edited, rampSeconds);
+    });
     viewport_.setGasProbeSource([this](std::int32_t element, std::uint8_t sample, GasProbeTrace& trace) {
         if (!runtime_) return false;
         runtime_->requestGasProbe(element, sample);
@@ -240,6 +243,22 @@ bool MainComponent::applyExhaustEdit(const EngineConfig& edited) {
         return applyConfig(config_, false, true);
     }
     if (exhaustDesignerWindow_) exhaustDesignerWindow_->setConfig(config_);
+    viewport_.setEngine(config_);
+    viewport_.refresh();
+    return true;
+}
+
+bool MainComponent::applyCylinderResize(const EngineConfig& edited, double rampSeconds) {
+    if (!runtime_ || runtime_->dynoRunning() || !runtime_->applyLiveCylinderResize(edited, rampSeconds))
+        return applyConfig(edited, false, true);
+    // The view shows the target size at once; a ramp reaches it on the
+    // simulation thread.
+    config_.cylinders = runtime_->engineConfig().cylinders;
+    config_.crankJournals = runtime_->engineConfig().crankJournals;
+    renderSnapshotBuilder_ = std::make_unique<RenderSnapshotBuilder>(config_);
+    renderSnapshotInterpolator_.reset();
+    if (exhaustDesignerWindow_) exhaustDesignerWindow_->setConfig(config_);
+    topBar_.setEngine(config_, selectedPresetIndex_);
     viewport_.setEngine(config_);
     viewport_.refresh();
     return true;
