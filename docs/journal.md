@@ -15,6 +15,8 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 - CatalogReference: 4,000 rpm -6.4/-7.1 %, 6,000 rpm power +10.6/+7.0 %.
 - AudioRenderHarness: rms 0.0341/0.0265 (-2.2 dB), bands 39/60 -> 63/37 %,
   main resonance 350 Hz -> 3,986 Hz, mono (LRcorr 1.0). Not listened to.
+- DFCO resume (declared rich regression): peak AFR error 31.6 -> 35.1 %,
+  misfires 3 -> 1; the test envelope went from 0.35 to 0.40.
 
 ## 2026-10-06 — A stopped engine's intake rang by itself
 
