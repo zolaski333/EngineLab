@@ -215,6 +215,27 @@ configuration at every step. Not updated until a restart: the audio's
 structural modes (`StructuralModalRadiator`, built from the mean bore and
 stroke). Cylinder count, layout and fuel stay restart-only.
 
+### Live injector and turbo changes
+
+The simulator reads `injection` and `forcedInduction` only inside `step()`,
+and caches nothing derived from them, so `EngineSimulator::replaceSettings`
+swaps both between two frames. `EngineRuntime::applyLiveSettings` posts them
+the same way as an exhaust. Refused, for a restart: another injection mode, a
+forced induction added, removed or of another type, another blade or lobe
+count (`settingsReplaceable`). The sound's turbo layer takes the new
+configuration at the start of an audio block
+(`RealtimeEngineAudio::replaceForcedInduction`, `ForcedInductionAcoustics::
+updateConfig`); its rotor and filter states carry on.
+
+### Which edits are live
+
+`engineEditScope` (serialization) compares a running and an edited
+configuration, both normalised, through their JSON, and sorts the difference
+into the groups above: exhaust, cylinder sizes, settings, or `other`.
+`MainComponent::applyEngineEdit` takes each group live in turn and restarts
+only for `other` or a group the running engine refuses. The JSON editor and
+the 3-D view's inspector go through it.
+
 ## Physical contracts
 
 - `GasCell` conserves species, internal energy, volume and 2D momentum.

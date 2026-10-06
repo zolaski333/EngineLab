@@ -18,6 +18,7 @@
 #include <enginelab/render/RenderSnapshot.hpp>
 #include <enginelab/runtime/EngineRuntime.hpp>
 #include <enginelab/scripting/EngineScriptHotReloader.hpp>
+#include <enginelab/serialization/EngineEditScope.hpp>
 #include <enginelab/serialization/JsonEngineSerializer.hpp>
 #include <enginelab/serialization/YamlEngineSerializer.hpp>
 #include <juce_audio_utils/juce_audio_utils.h>
@@ -94,9 +95,17 @@ private:
     void writeSavedEngine(const std::string& name, const std::filesystem::path& file);
     void deleteSavedEngine();
     void removeSavedEngine(const std::filesystem::path& file);
+    /** Any edit of the running engine: the groups it can take live
+        (engineEditScope) are taken live, one after the other; anything else
+        restarts it with its tables kept. Nothing changed, nothing done. */
+    bool applyEngineEdit(const EngineConfig&);
     /** An edit of config.exhaust and config.exhaustPaths only: taken by the
         running engine when it keeps the network's topology, else a restart. */
     bool applyExhaustEdit(const EngineConfig&);
+    /** An edit of config.injection and config.forcedInduction only: taken by
+        the running engine and its sound when the machine stays the same
+        (EngineSimulator::settingsReplaceable), else a restart. */
+    bool applySettingsEdit(const EngineConfig&);
     /** A bore and stroke edit (resizeCylinders()): taken by the running
         engine over `rampSeconds` (0: at the next cycle), else a restart. */
     bool applyCylinderResize(const EngineConfig&, double rampSeconds);

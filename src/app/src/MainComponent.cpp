@@ -140,7 +140,7 @@ MainComponent::MainComponent() {
         runtime_->requestGasField(crankAngleDegrees);
         return runtime_->latestGasField(field);
     });
-    viewport_.setConfigEditor([this](const EngineConfig& edited) { return applyExhaustEdit(edited); });
+    viewport_.setConfigEditor([this](const EngineConfig& edited) { return applyEngineEdit(edited); });
     viewport_.setCylinderEditor([this](const EngineConfig& edited, double rampSeconds) {
         return applyCylinderResize(edited, rampSeconds);
     });
@@ -372,6 +372,36 @@ bool MainComponent::applyConfig(const EngineConfig& newConfig, bool preserveScri
     return true;
 }
 
+bool MainComponent::applyEngineEdit(const EngineConfig& edited) {
+    auto scope = engineEditScope(config_, edited);
+    if (!scope.any()) return true;
+    if (scope.other || !runtime_ || !audio_ || runtime_->dynoRunning())
+        return applyConfig(edited, false, true);
+    // Each step either takes its group live or restarts with the whole edit;
+    // what is left is measured again after it.
+    if (scope.settings && !applySettingsEdit(edited)) return false;
+    scope = engineEditScope(config_, edited);
+    if (scope.exhaust && !applyExhaustEdit(edited)) return false;
+    scope = engineEditScope(config_, edited);
+    if (scope.cylinders) return applyCylinderResize(edited, ui::EngineViewport::cylinderRampSeconds);
+    return true;
+}
+
+bool MainComponent::applySettingsEdit(const EngineConfig& edited) {
+    if (!runtime_ || !audio_ || runtime_->dynoRunning() || !runtime_->applyLiveSettings(edited))
+        return applyConfig(edited, false, true);
+    config_.injection = runtime_->engineConfig().injection;
+    config_.forcedInduction = runtime_->engineConfig().forcedInduction;
+    // The simulation has the new settings: a sound that cannot follow them
+    // needs the restart after all.
+    if (!audio_->replaceForcedInduction(config_.forcedInduction))
+        return applyConfig(config_, false, true);
+    viewport_.setEngine(config_);
+    viewport_.refresh();
+    configChanged_ = true;
+    return true;
+}
+
 bool MainComponent::applyExhaustEdit(const EngineConfig& edited) {
     if (!runtime_ || !audio_ || runtime_->dynoRunning() || !runtime_->applyLiveExhaust(edited))
         return applyConfig(edited, false, true);
@@ -545,7 +575,7 @@ void MainComponent::configureImpulseResponse() {
     }
     if (!errors.isEmpty()) {
         impulseResponseLoadError_ = true;
-        impulseResponseStatus_ += utf8("  ·  load error");
+        impulseResponseStatus_ += utf8("  Â·  load error");
         showError(utf8("Impulse response not loaded"),
             errors.joinIntoString("\n")
                 + utf8("\n\nThe path stays in free field; no hidden fallback was applied."));
@@ -571,7 +601,7 @@ void MainComponent::showConfigEditor() {
 void MainComponent::showConfigEditor(const juce::String& initialText) {
     if (configEditor_) return;
     configEditor_ = std::make_unique<juce::AlertWindow>(utf8("JSON engine editor"),
-        utf8("Applying a new topology replaces the simulation instance. ECU tables are edited live from the ECU window."),
+        utf8("Exhaust, bore and stroke, injector and turbo edits are taken by the running engine; any other edit restarts it. ECU tables are edited live from the ECU window."),
         juce::MessageBoxIconType::NoIcon);
     configEditor_->addTextEditor("json", initialText, {}, false);
     if (auto* editor = configEditor_->getTextEditor("json")) {
@@ -593,7 +623,7 @@ void MainComponent::showConfigEditor(const juce::String& initialText) {
                 auto decoded = safe->jsonSerializer_.decode(utf8Text);
                 if (decoded) {
                     (void)restoreAudioVoicing(*decoded.config, safe->catalogRoot_);
-                    safe->applyConfig(*decoded.config, false, true);
+                    safe->applyEngineEdit(*decoded.config);
                 }
                 else safe->showError(utf8("Invalid JSON"), juce::String::fromUTF8(decoded.error.c_str()));
             }
@@ -809,18 +839,18 @@ void MainComponent::showMoreMenu() {
     };
     const auto savedEngine = selectedPresetIndex_ >= 0
         && !presets_[static_cast<std::size_t>(selectedPresetIndex_)].file.empty();
-    add(savedEngine ? utf8("Save engine") : utf8("Save engine…"), runtime_ != nullptr, {}, &MainComponent::saveEngine);
-    add(utf8("Save engine as…"), runtime_ != nullptr, {}, &MainComponent::saveEngineAs);
-    add(utf8("Delete saved engine…"), savedEngine, {}, &MainComponent::deleteSavedEngine);
+    add(savedEngine ? utf8("Save engine") : utf8("Save engineâ€¦"), runtime_ != nullptr, {}, &MainComponent::saveEngine);
+    add(utf8("Save engine asâ€¦"), runtime_ != nullptr, {}, &MainComponent::saveEngineAs);
+    add(utf8("Delete saved engineâ€¦"), savedEngine, {}, &MainComponent::deleteSavedEngine);
     menu.addSeparator();
-    add(utf8("Edit engine JSON…"), !running, {},
+    add(utf8("Edit engine JSONâ€¦"), !running, {},
         static_cast<void (MainComponent::*)()>(&MainComponent::showConfigEditor));
-    add(utf8("Import engine…"), !running, {}, &MainComponent::importEngine);
-    add(utf8("Export engine…"), true, {}, &MainComponent::exportEngine);
-    add(utf8("Export dyno CSV…"), true, {}, &MainComponent::exportDynoCsv);
+    add(utf8("Import engineâ€¦"), !running, {}, &MainComponent::importEngine);
+    add(utf8("Export engineâ€¦"), true, {}, &MainComponent::exportEngine);
+    add(utf8("Export dyno CSVâ€¦"), true, {}, &MainComponent::exportDynoCsv);
     menu.addSeparator();
     add(utf8("Reload engine"), !running, "Return", &MainComponent::reloadEngine);
-    add(utf8("Key bindings…"), true, {}, &MainComponent::showKeyBindingsEditor);
+    add(utf8("Key bindingsâ€¦"), true, {}, &MainComponent::showKeyBindingsEditor);
     juce::PopupMenu::Item fullScreen(utf8("Full screen"));
     fullScreen.shortcutKeyDescription = actionMap_.shortcut(AppAction::fullscreen);
     fullScreen.action = [safe] {
@@ -1167,7 +1197,7 @@ void MainComponent::deleteSavedEngine() {
     juce::AlertWindow::showOkCancelBox(juce::MessageBoxIconType::QuestionIcon, utf8("Delete the saved engine?"),
         utf8("\"") + utf8(preset.config.name)
             + utf8("\" goes to the recycle bin with its ECU tables. The running engine keeps running: "
-                   "Save engine as… saves it again."),
+                   "Save engine asâ€¦ saves it again."),
         utf8("Delete"), utf8("Cancel"), nullptr,
         juce::ModalCallbackFunction::create([safe, file = preset.file](int result) {
             if (safe && result == 1) safe->removeSavedEngine(file);

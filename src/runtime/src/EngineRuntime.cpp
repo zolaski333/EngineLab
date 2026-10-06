@@ -572,6 +572,43 @@ bool EngineRuntime::applyLiveCylinderResize(const EngineConfig& edited, double r
     return true;
 }
 
+bool EngineRuntime::applyLiveSettings(const EngineConfig& edited) {
+    auto change = std::make_unique<LiveSettingsChange>();
+    change->config = config_;
+    change->config.injection = edited.injection;
+    change->config.forcedInduction = edited.forcedInduction;
+    try {
+        normaliseEngineConfig(change->config);
+        if (validateEngineConfig(change->config)) return false;
+    } catch (const std::exception&) {
+        return false;
+    }
+    if (!EngineSimulator::settingsReplaceable(config_, change->config)) return false;
+    // The simulation thread never reads these two fields of config_.
+    config_.injection = change->config.injection;
+    config_.forcedInduction = change->config.forcedInduction;
+    {
+        const std::scoped_lock lock(liveExhaustMutex_);
+        std::swap(pendingSettingsChange_, change);
+    }
+    liveSettingsChangesRequested_.fetch_add(1, std::memory_order_release);
+    return true;
+}
+
+void EngineRuntime::consumeLiveSettingsChange() noexcept {
+    const auto requested = liveSettingsChangesRequested_.load(std::memory_order_acquire);
+    if (requested == liveSettingsChangesConsumed_) return;
+    liveSettingsChangesConsumed_ = requested;
+    std::unique_ptr<LiveSettingsChange> change;
+    {
+        const std::scoped_lock lock(liveExhaustMutex_);
+        std::swap(pendingSettingsChange_, change);
+    }
+    if (!change || !simulator_.replaceSettings(change->config)) return;
+    liveSettingsChangesApplied_.fetch_add(1, std::memory_order_release);
+    // The previous settings leave with `change`, between two frames.
+}
+
 void EngineRuntime::consumeLiveCylinderResize() noexcept {
     const auto requested = liveCylinderResizesRequested_.load(std::memory_order_acquire);
     if (requested != liveCylinderResizesConsumed_) {
@@ -1178,6 +1215,7 @@ void EngineRuntime::run(std::stop_token stopToken) {
         }
         consumeLiveExhaustChange();
         consumeLiveCylinderResize();
+        consumeLiveSettingsChange();
         const EngineControls controls { ignition_.load(), starter_.load(),
             (dynoActive_ ? dynoThrottleCommand_
                          : std::clamp(throttle_.load(), 0.0, 1.0))

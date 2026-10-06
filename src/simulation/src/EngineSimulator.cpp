@@ -796,6 +796,24 @@ bool EngineSimulator::replaceExhaustNetwork(
     return true;
 }
 
+bool EngineSimulator::settingsReplaceable(const EngineConfig& running,
+                                          const EngineConfig& edited) noexcept {
+    const auto& was = running.forcedInduction;
+    const auto& now = edited.forcedInduction;
+    return running.injection.mode == edited.injection.mode
+        && was.enabled == now.enabled && was.type == now.type
+        && was.compressorBladeCount == now.compressorBladeCount
+        && was.turbineBladeCount == now.turbineBladeCount
+        && was.superchargerLobeCount == now.superchargerLobeCount;
+}
+
+bool EngineSimulator::replaceSettings(EngineConfig& config) noexcept {
+    if (!settingsReplaceable(config_, config)) return false;
+    std::swap(config_.injection, config.injection);
+    std::swap(config_.forcedInduction, config.forcedInduction);
+    return true;
+}
+
 void EngineSimulator::setPressureSamplingEnabled(bool enabled) {
     if (enabled && !pressureSamples_) {
         pressureSamples_ = std::make_unique<SpscQueue<CylinderPressureSample, 1'024>>();

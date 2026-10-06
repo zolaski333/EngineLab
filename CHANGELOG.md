@@ -81,6 +81,9 @@ file formats, always with an in-memory migration).
 - *Export engine* in JSON writes the ECU tables beside the engine
   (`<name>.ecu.json`), and *Import engine* reads them back. An exported engine
   keeps its voicing.
+- Injector and turbo settings edited in the JSON editor no longer restart the
+  engine: it takes them while running, and its turbo sound follows. A change
+  of injection mode, of turbo type or of blade count still restarts it.
 - Change the bore and stroke while the engine runs: click a cylinder liner or
   a piston in the 3-D view. The size glides over 3 s by default, or each crank
   throw takes it at its next gas-exchange TDC. The number of cylinders, the

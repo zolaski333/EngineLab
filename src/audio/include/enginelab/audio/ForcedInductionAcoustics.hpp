@@ -59,6 +59,15 @@ public:
         double totalKgPerSecond, float wastegateOpening) const noexcept;
 
     [[nodiscard]] bool valid() const noexcept { return valid_; }
+    /** Whether `a` and `b` describe the same machine, which only its sizes,
+     * areas and efficiencies tell apart: on or off alike, the same type, the
+     * same blade and lobe counts. */
+    [[nodiscard]] static bool sameMachine(const ForcedInductionConfig& a,
+                                          const ForcedInductionConfig& b) noexcept;
+    /** Take another configuration of the same machine while it plays: nothing
+     * is derived from it ahead of process(). False, changing nothing, when it
+     * is another machine or would not be valid. Allocates nothing. */
+    [[nodiscard]] bool updateConfig(const ForcedInductionConfig& config) noexcept;
     [[nodiscard]] bool semiEmpirical() const noexcept { return true; }
 
 private:

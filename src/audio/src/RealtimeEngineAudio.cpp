@@ -106,6 +106,7 @@ RealtimeEngineAudio::RealtimeEngineAudio(FiringEventQueue& queue,
         if (structural->valid()) structuralModalRadiator_ = std::move(structural);
         auto intake = std::make_unique<AcousticIntakeNetwork>(*engineConfig);
         if (intake->valid()) acousticIntakeNetwork_ = std::move(intake);
+        forcedInductionConfig_ = engineConfig->forcedInduction;
         auto forcedInduction = std::make_unique<ForcedInductionAcoustics>(
             engineConfig->forcedInduction, observerDistance);
         if (forcedInduction->valid())
@@ -117,6 +118,8 @@ RealtimeEngineAudio::~RealtimeEngineAudio() {
     delete incomingExhaustNetwork_.exchange(nullptr);
     delete retiredExhaustNetwork_.exchange(nullptr);
     delete swappingExhaustNetwork_;
+    delete incomingForcedInduction_.exchange(nullptr);
+    delete retiredForcedInduction_.exchange(nullptr);
 }
 
 bool RealtimeEngineAudio::replaceExhaustGraph(const ExhaustGraph& graph) {
@@ -144,6 +147,35 @@ bool RealtimeEngineAudio::replaceExhaustGraph(const ExhaustGraph& graph) {
 
 void RealtimeEngineAudio::collectRetiredExhaustNetworks() noexcept {
     delete retiredExhaustNetwork_.exchange(nullptr, std::memory_order_acq_rel);
+    delete retiredForcedInduction_.exchange(nullptr, std::memory_order_acq_rel);
+}
+
+bool RealtimeEngineAudio::replaceForcedInduction(const ForcedInductionConfig& config) {
+    collectRetiredExhaustNetworks();
+    const auto sounds = ForcedInductionAcoustics(config, 1.0).valid();
+    if (!forcedInductionAcoustics_) {
+        if (sounds) return false;
+        forcedInductionConfig_ = config;
+        return true;
+    }
+    if (!sounds || !ForcedInductionAcoustics::sameMachine(forcedInductionConfig_, config))
+        return false;
+    forcedInductionConfig_ = config;
+    // A change the audio thread has not taken yet is replaced, and freed here.
+    delete incomingForcedInduction_.exchange(new ForcedInductionConfig(config),
+                                             std::memory_order_acq_rel);
+    return true;
+}
+
+void RealtimeEngineAudio::takeForcedInductionUpdate() noexcept {
+    // Only once the previous settings have been collected: the retired slot
+    // then always has room.
+    if (retiredForcedInduction_.load(std::memory_order_acquire) != nullptr) return;
+    auto* incoming = incomingForcedInduction_.exchange(nullptr, std::memory_order_acq_rel);
+    if (incoming == nullptr) return;
+    if (forcedInductionAcoustics_ && forcedInductionAcoustics_->updateConfig(*incoming))
+        forcedInductionUpdates_.fetch_add(1, std::memory_order_release);
+    retiredForcedInduction_.store(incoming, std::memory_order_release);
 }
 
 void RealtimeEngineAudio::beginExhaustSwapIfWaiting() noexcept {
@@ -984,6 +1016,7 @@ void RealtimeEngineAudio::renderWithStems(
             }
         }
         beginExhaustSwapIfWaiting();
+        takeForcedInductionUpdate();
         for (auto* network : { acousticExhaustNetwork_.get(),
                  swappingExhaustNetwork_ != nullptr
                      ? swappingExhaustNetwork_->network.get() : nullptr }) {

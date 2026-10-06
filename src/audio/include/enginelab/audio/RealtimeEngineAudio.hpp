@@ -84,7 +84,23 @@ public:
      * frees the networks the audio thread has finished with.
      */
     bool replaceExhaustGraph(const ExhaustGraph& graph);
+    /** Frees what the audio thread has finished with: exhaust networks and
+     * forced-induction settings. */
     void collectRetiredExhaustNetworks() noexcept;
+    /**
+     * Give the playing turbocharger or supercharger new sizes, areas and
+     * efficiencies (a live settings change): the audio thread takes them at
+     * its next block. Message thread. True when the sound now follows
+     * `config`, or when neither the old nor the new settings make a sound.
+     * False, changing nothing, when `config` is another machine
+     * (ForcedInductionAcoustics::sameMachine) or would start or stop the
+     * sound: that needs a new renderer.
+     */
+    bool replaceForcedInduction(const ForcedInductionConfig& config);
+    /** Forced-induction settings the audio thread has taken. */
+    [[nodiscard]] std::uint64_t forcedInductionUpdateCount() const noexcept {
+        return forcedInductionUpdates_.load(std::memory_order_acquire);
+    }
     /** Live exhaust changes the audio thread has completed. */
     [[nodiscard]] std::uint64_t exhaustSwapCount() const noexcept {
         return exhaustSwaps_.load(std::memory_order_acquire);
@@ -502,6 +518,14 @@ private:
     std::atomic<std::uint64_t> exhaustSwaps_ { 0 };
     std::atomic<double> preparedSampleRate_ { 0.0 };
     bool outletJetNoiseEnabled_ { true };
+    /** Message thread: the forced-induction settings the sound follows. */
+    ForcedInductionConfig forcedInductionConfig_ {};
+    /** Message thread -> audio thread: forced-induction settings to take;
+     * the audio thread hands them back through the retired slot. */
+    std::atomic<ForcedInductionConfig*> incomingForcedInduction_ { nullptr };
+    std::atomic<ForcedInductionConfig*> retiredForcedInduction_ { nullptr };
+    std::atomic<std::uint64_t> forcedInductionUpdates_ { 0 };
+    void takeForcedInductionUpdate() noexcept;
     /** Audio thread: take a waiting network, or finish the one in progress. */
     void beginExhaustSwapIfWaiting() noexcept;
     void completeExhaustSwap() noexcept;

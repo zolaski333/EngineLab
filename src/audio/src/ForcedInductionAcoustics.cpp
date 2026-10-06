@@ -33,6 +33,22 @@ ForcedInductionAcoustics::ForcedInductionAcoustics(
                 || config_.compressorBladeCount > 0)));
 }
 
+bool ForcedInductionAcoustics::sameMachine(const ForcedInductionConfig& a,
+                                           const ForcedInductionConfig& b) noexcept {
+    return a.enabled == b.enabled && a.type == b.type
+        && a.compressorBladeCount == b.compressorBladeCount
+        && a.turbineBladeCount == b.turbineBladeCount
+        && a.superchargerLobeCount == b.superchargerLobeCount;
+}
+
+bool ForcedInductionAcoustics::updateConfig(const ForcedInductionConfig& config) noexcept {
+    if (!sameMachine(config_, config)
+        || !ForcedInductionAcoustics(config, configuredObserverDistanceM_).valid())
+        return false;
+    config_ = config;
+    return true;
+}
+
 bool ForcedInductionAcoustics::prepare(double sampleRateHz,
                                        double observerDistanceM) noexcept {
     if (!(observerDistanceM > 0.0))

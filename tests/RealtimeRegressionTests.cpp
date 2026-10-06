@@ -41,6 +41,7 @@ namespace enginelab::tests {
 void exhaustTransferRegression();
 void liveChangeRegression();
 void liveCylinderResizeRegression();
+void liveSettingsRegression();
 }
 
 namespace {
@@ -3252,6 +3253,11 @@ int main(int argc, char** argv) {
         if (argc == 2 && std::string_view { argv[1] } == "--live-resize-only") {
             enginelab::tests::liveCylinderResizeRegression();
             std::cout << "Live cylinder resize tests passed\n";
+            return 0;
+        }
+        if (argc == 2 && std::string_view { argv[1] } == "--live-settings-only") {
+            enginelab::tests::liveSettingsRegression();
+            std::cout << "Live settings tests passed\n";
             return 0;
         }
         monitorCalibrationDefaultRegression();

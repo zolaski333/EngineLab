@@ -344,6 +344,15 @@ public:
      * restart. Same thread rules as applyLiveExhaust().
      */
     [[nodiscard]] bool applyLiveCylinderResize(const EngineConfig& edited, double rampSeconds = 0.0);
+    /** An edit of config.injection and config.forcedInduction only: the
+     * running engine takes the new injectors, boost and turbine settings
+     * between two frames. False, changing nothing, when the edit changes what
+     * the engine was built around (EngineSimulator::settingsReplaceable):
+     * that needs a restart. Same thread rules as applyLiveExhaust(). */
+    [[nodiscard]] bool applyLiveSettings(const EngineConfig& edited);
+    [[nodiscard]] std::uint64_t liveSettingsChangeCount() const noexcept {
+        return liveSettingsChangesApplied_.load(std::memory_order_acquire);
+    }
     /** Cylinder geometry changes the simulation thread has applied (a ramp
      * applies one per journal per cycle). */
     [[nodiscard]] std::uint64_t cylinderGeometryRevision() const noexcept {
@@ -443,6 +452,10 @@ private:
     /** Simulation thread: start the pending cylinder resize, if any, and
      * refresh what depends on the geometry once the simulator changed it. */
     void consumeLiveCylinderResize() noexcept;
+    void consumeLiveSettingsChange() noexcept;
+    struct LiveSettingsChange final {
+        EngineConfig config;
+    };
     struct LiveCylinderResize final {
         EngineConfig config;
         double rampSeconds {};
@@ -517,6 +530,10 @@ private:
     std::atomic<double> timeScale_ { 1.0 };
     std::mutex liveExhaustMutex_;
     std::unique_ptr<LiveExhaustChange> pendingExhaustChange_;
+    std::unique_ptr<LiveSettingsChange> pendingSettingsChange_;
+    std::atomic<std::uint64_t> liveSettingsChangesRequested_ { 0 };
+    std::uint64_t liveSettingsChangesConsumed_ { 0 };
+    std::atomic<std::uint64_t> liveSettingsChangesApplied_ { 0 };
     std::atomic<std::uint64_t> liveExhaustChangesRequested_ { 0 };
     std::atomic<std::uint64_t> liveExhaustChangesApplied_ { 0 };
     // Guarded by liveExhaustMutex_.

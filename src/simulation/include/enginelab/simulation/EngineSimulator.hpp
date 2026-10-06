@@ -146,6 +146,19 @@ public:
     [[nodiscard]] bool replaceExhaustNetwork(
         std::unique_ptr<gasdynamics::ExhaustGasNetwork>& network,
         const EngineConfig& config);
+    /** Whether `edited`'s injectors and forced induction can replace
+     * `running`'s in a running engine (replaceSettings): the same injection
+     * mode, forced induction on or off alike, of the same type, with the same
+     * blade and lobe counts (the sound is built around them). */
+    [[nodiscard]] static bool settingsReplaceable(const EngineConfig& running,
+                                                  const EngineConfig& edited) noexcept;
+    /** Take `config`'s injector and forced-induction settings between two
+     * steps, without a restart: the simulation reads them at every step and
+     * keeps nothing derived from them. They are swapped in, so this thread
+     * does not allocate; `config` leaves with the previous ones. False, with
+     * nothing changed, when !settingsReplaceable(). Simulation thread only,
+     * like step(). */
+    [[nodiscard]] bool replaceSettings(EngineConfig& config) noexcept;
     /** Move the cylinders to `target`'s bore, stroke, deck height and
      * compression ratio while the engine runs; nothing else of `target` is
      * read. The cylinders on one crank journal change together, at the

@@ -5,6 +5,17 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-06 — Injectors and turbo while running
+
+- `EngineLab.LiveSettings`, held at 60 % of redline, change at 6 s, mean of
+  the last 4 s. 2JZ wastegate 1.89 -> 1.42: boost ratio 1.94 -> 1.68 (built)
+  and 1.69 (swapped). Its brake torque moved 1 % only: not limited by boost.
+- CP2 injectors: x0.45 and 4-8 g/s change nothing (its own are 20 g/s);
+  2 g/s each gives 60 -> 46 Nm, swapped 45.8.
+- Mutations caught: no turbo swap, no injection swap, audio update not taken,
+  scope blind to the turbo, runtime without its check, layer taking another
+  compressor. The app starts; the JSON editor path not exercised on screen.
+
 ## 2026-10-06 — Saving an engine as it is
 
 - `EngineLab.SavedEngine`: the 16 catalogue engines, edited (bore -1 mm,
