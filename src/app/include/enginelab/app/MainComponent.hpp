@@ -12,6 +12,7 @@
 #include <enginelab/app/StatusBar.hpp>
 #include <enginelab/app/TopBar.hpp>
 #include <enginelab/catalog/EngineCatalog.hpp>
+#include <enginelab/catalog/SavedEngines.hpp>
 #include <enginelab/diagnostics/EngineDiagnostics.hpp>
 #include <enginelab/foundation/EngineTypes.hpp>
 #include <enginelab/render/RenderSnapshot.hpp>
@@ -25,6 +26,10 @@
 #include <array>
 #include <filesystem>
 #include <limits>
+#include <map>
+#include <optional>
+#include <string>
+#include <utility>
 
 namespace enginelab {
 /** Desktop presentation layer. It owns the runtime and the audio device, writes
@@ -45,10 +50,50 @@ public:
     void focusLost(FocusChangeType cause) override;
     void mouseWheelMove(const juce::MouseEvent&, const juce::MouseWheelDetails&) override;
 private:
+    /** An engine of the menu: from the catalogue, or saved by the user. */
+    struct Preset final {
+        EngineConfig config;
+        /** The saved tables; a catalogue engine runs on the ones its
+            configuration implies. */
+        std::optional<calibration::CalibrationDraft> calibration;
+        /** The saved engine's file, empty for a catalogue engine. */
+        std::filesystem::path file;
+    };
+    /** Edits to a preset not saved yet, kept while another engine runs. */
+    struct SessionEdit final {
+        EngineConfig config;
+        std::shared_ptr<calibration::CalibrationStore> calibration;
+    };
+
     void timerCallback() override;
+    /** The running engine's edits are kept for when it is selected again. */
     void selectEngine(int presetIndex);
+    /** `calibration`: the store the new runtime reads, unless the running
+        one is preserved; none for the tables the configuration implies. */
     bool applyConfig(const EngineConfig&, bool preserveScriptWatcher = false,
-                     bool preserveCalibration = false);
+                     bool preserveCalibration = false,
+                     std::shared_ptr<calibration::CalibrationStore> calibration = {});
+    /** Replaces the running engine by a loaded one (a preset, a restored
+        session edit, an import) and resets what "modified" compares with. */
+    bool switchEngine(const EngineConfig&, std::shared_ptr<calibration::CalibrationStore>,
+                      const std::optional<calibration::CalibrationDraft>& loadedTables);
+    /** The running preset's unsaved edits, if it has any. */
+    [[nodiscard]] std::optional<std::pair<std::string, SessionEdit>> unsavedEdit() const;
+    /** A store holding a preset's saved tables, or none for a catalogue engine. */
+    [[nodiscard]] std::shared_ptr<calibration::CalibrationStore> storeFor(const Preset&);
+    /** The catalogue, then the saved engines; returns what could not be read. */
+    juce::StringArray loadPresets();
+    void refreshEngineChoices();
+    [[nodiscard]] int presetIndexOf(const std::string& name) const noexcept;
+    [[nodiscard]] std::vector<std::string> catalogueNames() const;
+    void setBaseline(const EngineConfig&, const std::optional<calibration::CalibrationDraft>&);
+    void updateModified();
+    void saveEngine();
+    void saveEngineAs();
+    void confirmSaveAs(const juce::String& name);
+    void writeSavedEngine(const std::string& name, const std::filesystem::path& file);
+    void deleteSavedEngine();
+    void removeSavedEngine(const std::filesystem::path& file);
     /** An edit of config.exhaust and config.exhaustPaths only: taken by the
         running engine when it keeps the network's topology, else a restart. */
     bool applyExhaustEdit(const EngineConfig&);
@@ -95,9 +140,17 @@ private:
     void syncAudioWorkshopMix();
     void adjustAudioOrSimulation(double wheelDelta);
 
-    std::vector<EngineConfig> presets_ { makeBaseEnginePresets() };
+    std::vector<Preset> presets_;
+    /** By preset name. */
+    std::map<std::string, SessionEdit> sessionEdits_;
+    /** The running engine as it was loaded. */
+    EngineBaseline baseline_;
+    bool configChanged_ { true };
+    bool configModified_ { false };
+    bool calibrationModified_ { false };
+    std::shared_ptr<const calibration::CalibrationSnapshot> seenCalibration_;
     std::filesystem::path catalogRoot_;
-    EngineConfig config_ { presets_[1] };
+    EngineConfig config_;
     int selectedPresetIndex_ { -1 };
     std::unique_ptr<EngineRuntime> runtime_;
     std::unique_ptr<RealtimeEngineAudio> audio_;
@@ -148,6 +201,7 @@ private:
     std::unique_ptr<juce::FileChooser> fileChooser_;
     std::unique_ptr<juce::AlertWindow> configEditor_;
     std::unique_ptr<juce::AlertWindow> keyBindingsEditor_;
+    std::unique_ptr<juce::AlertWindow> saveDialog_;
     std::unique_ptr<EcuTunerWindow> ecuTunerWindow_;
     std::unique_ptr<ExhaustDesignerWindow> exhaustDesignerWindow_;
     std::unique_ptr<AudioWorkshopWindow> audioWorkshopWindow_;

@@ -125,6 +125,35 @@ script, JSON editor, exhaust designer), the new runtime reuses the same
 `CalibrationStore`: maps, tuner and ECU watcher survive. Explicitly choosing or
 importing another engine creates its default set.
 
+### Saved engines and session edits
+
+The engine menu lists the catalogue, then *My engines*: the files of
+`%APPDATA%/EngineLab/engines` (`loadSavedEngines`, `SavedEngines.hpp`). A saved
+engine is two files sharing a stem: `<name>.json`, the configuration as
+*Export engine* writes it, and `<name>.ecu.json`, its ECU tables. Each is
+written to a temporary file renamed over the old one, the tables first. A
+damaged table file fails the whole read: the engine never runs on other tables
+than its own. The JSON names the voicing the engine speaks with
+(`audio_voicing`: family and key); the voicing itself is read back from the
+catalogue's voicing files (`restoreAudioVoicing`).
+
+Leaving an edited engine for another one keeps its edits for the session:
+`MainComponent` stores its configuration and its `CalibrationStore`, and
+choosing it again builds the runtime from them. *Return* reloads the engine
+from disk and drops them. "Edited" is measured against the engine as it was
+loaded (`EngineBaseline`): the configuration through its JSON encoding, the
+tables through the JSON of their entries, without the store's revision. A dot
+on the engine picker shows it; the menu marks the engines that hold edits.
+
+*Save engine* writes a saved engine over its file; on a catalogue engine it
+asks for a name (*Save engine as…*). A catalogue name is refused, since the
+menu tells engines apart by name. Saving does not restart the engine:
+`EngineRuntime::renameEngine` gives the running engine its new name, which a
+dyno run reads when it starts. *Delete saved engine…* moves both files to the
+recycle bin; the running engine carries on, unsaved. *Export engine* in JSON
+writes the tables beside the engine the same way, and *Import engine* reads
+them back when they are there.
+
 ### Live exhaust changes
 
 An edit of `exhaust` and `exhaustPaths` only (the inspector's steppers, the

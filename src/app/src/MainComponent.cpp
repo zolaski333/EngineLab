@@ -2,6 +2,7 @@
 #include <enginelab/app/Theme.hpp>
 #include <enginelab/gasdynamics/ExhaustNetworkLayout.hpp>
 #include <enginelab/audio/ImpulseResponseLoader.hpp>
+#include <enginelab/calibration/EcuCalibration.hpp>
 #include <enginelab/calibration/EcuCalibrationKeys.hpp>
 #include <algorithm>
 #include <cmath>
@@ -28,6 +29,29 @@ constexpr std::array<std::uint32_t, 8> curveColours {
     return std::filesystem::path(ENGINELAB_CATALOG_ROOT);
 }
 
+[[nodiscard]] juce::String utf8(const std::string& text) { return juce::String::fromUTF8(text.c_str()); }
+
+/** A path that keeps every character of the file name, on Windows too. */
+[[nodiscard]] std::filesystem::path pathOf(const juce::File& file) {
+    return std::filesystem::path(file.getFullPathName().toWideCharPointer());
+}
+
+[[nodiscard]] juce::File fileOf(const std::filesystem::path& path) {
+    return juce::File(juce::String(path.wstring().c_str()));
+}
+
+/** Where "Save engine" writes. */
+[[nodiscard]] juce::File savedEnginesFolder() {
+    return juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory)
+        .getChildFile("EngineLab").getChildFile("engines");
+}
+
+[[nodiscard]] juce::String issuesText(const std::vector<calibration::CalibrationIssue>& issues) {
+    juce::StringArray lines;
+    for (const auto& issue : issues) lines.add(utf8(issue.path + ": " + issue.message));
+    return lines.joinIntoString("\n");
+}
+
 [[nodiscard]] juce::String csvField(const std::string& source) {
     auto value = juce::String::fromUTF8(source.c_str());
     value = value.replace("\"", "\"\"");
@@ -37,15 +61,13 @@ constexpr std::array<std::uint32_t, 8> curveColours {
 
 MainComponent::MainComponent() {
     catalogRoot_ = resolveCatalogRoot();
-    presets_ = makeCatalogOrBasePresets(catalogRoot_);
-    config_ = presets_[std::min<std::size_t>(1, presets_.size() - 1)];
+    const auto savedEngineErrors = loadPresets();
+    config_ = presets_[std::min<std::size_t>(1, presets_.size() - 1)].config;
     setSize(1'440, 860);
     setOpaque(true);
     setWantsKeyboardFocus(true);
 
-    juce::StringArray presetNames;
-    for (const auto& preset : presets_) presetNames.add(juce::String::fromUTF8(preset.name.c_str()));
-    topBar_.setPresetNames(presetNames);
+    refreshEngineChoices();
     topBar_.onEngineSelected = [this](int presetIndex) { selectEngine(presetIndex); };
     topBar_.exhaustButton.onClick = [this] { showExhaustDesigner(); };
     topBar_.ecuButton.onClick = [this] { showEcuTuner(); };
@@ -145,6 +167,8 @@ MainComponent::MainComponent() {
     refreshKeyCaps();
 
     selectEngine(std::min(1, static_cast<int>(presets_.size()) - 1));
+    if (!savedEngineErrors.isEmpty())
+        showError(utf8("Saved engines skipped"), savedEngineErrors.joinIntoString("\n"));
     startTimerHz(30);
     juce::MessageManager::callAsync([safe = juce::Component::SafePointer<MainComponent>(this)] { if (safe) safe->grabKeyboardFocus(); });
 }
@@ -159,13 +183,123 @@ MainComponent::~MainComponent() {
     if (runtime_) runtime_->stop();
 }
 
+juce::StringArray MainComponent::loadPresets() {
+    juce::StringArray errors;
+    presets_.clear();
+    for (auto& config : makeCatalogOrBasePresets(catalogRoot_))
+        presets_.push_back({ std::move(config), std::nullopt, {} });
+    auto saved = loadSavedEngines(pathOf(savedEnginesFolder()), catalogRoot_);
+    for (const auto& error : saved.errors) errors.add(utf8(error));
+    for (auto& engine : saved.engines) {
+        // The menu tells engines apart by name.
+        if (presetIndexOf(engine.config.name) >= 0) {
+            errors.add(fileOf(engine.file).getFileName() + utf8(": another engine is already named \"")
+                       + utf8(engine.config.name) + "\"");
+            continue;
+        }
+        presets_.push_back({ std::move(engine.config), std::move(engine.calibration), std::move(engine.file) });
+    }
+    return errors;
+}
+
+void MainComponent::refreshEngineChoices() {
+    std::vector<ui::TopBar::EngineChoice> choices;
+    choices.reserve(presets_.size());
+    for (const auto& preset : presets_)
+        choices.push_back({ utf8(preset.config.name), !preset.file.empty(),
+                            sessionEdits_.contains(preset.config.name) });
+    topBar_.setEngineChoices(std::move(choices));
+}
+
+int MainComponent::presetIndexOf(const std::string& name) const noexcept {
+    const auto preset = std::find_if(presets_.begin(), presets_.end(),
+        [&name](const Preset& candidate) { return candidate.config.name == name; });
+    return preset != presets_.end() ? static_cast<int>(std::distance(presets_.begin(), preset)) : -1;
+}
+
+std::vector<std::string> MainComponent::catalogueNames() const {
+    std::vector<std::string> names;
+    for (const auto& preset : presets_)
+        if (preset.file.empty()) names.push_back(preset.config.name);
+    return names;
+}
+
+std::shared_ptr<calibration::CalibrationStore> MainComponent::storeFor(const Preset& preset) {
+    if (!preset.calibration) return {};
+    auto store = std::make_shared<calibration::CalibrationStore>();
+    const auto published = store->publish(*preset.calibration, { 0, "saved-engine" });
+    if (published.published) return store;
+    showError(utf8("Saved ECU tables rejected"),
+              issuesText(published.issues) + utf8("\n\nThe engine runs on the tables its configuration implies."));
+    return {};
+}
+
+void MainComponent::setBaseline(const EngineConfig& config,
+                                const std::optional<calibration::CalibrationDraft>& tables) {
+    auto canonical = config;
+    normaliseEngineConfig(canonical);
+    baseline_ = EngineBaseline(canonical, tables ? *tables : calibration::makeDefaultEcuCalibration(canonical));
+    configChanged_ = true;
+    seenCalibration_.reset();
+    updateModified();
+}
+
+void MainComponent::updateModified() {
+    if (!runtime_) return;
+    if (configChanged_) {
+        configModified_ = baseline_.configDiffers(config_);
+        configChanged_ = false;
+    }
+    // Only the ECU window publishes tables: compare them when it has.
+    if (auto snapshot = runtime_->calibrationStore()->snapshot(); snapshot != seenCalibration_) {
+        calibrationModified_ = baseline_.calibrationDiffers(*snapshot);
+        seenCalibration_ = std::move(snapshot);
+    }
+    topBar_.setModified(configModified_ || calibrationModified_);
+}
+
+std::optional<std::pair<std::string, MainComponent::SessionEdit>> MainComponent::unsavedEdit() const {
+    if (!runtime_ || selectedPresetIndex_ < 0) return std::nullopt;
+    const auto store = runtime_->calibrationStore();
+    if (!baseline_.configDiffers(config_) && !baseline_.calibrationDiffers(*store->snapshot())) return std::nullopt;
+    return std::pair { presets_[static_cast<std::size_t>(selectedPresetIndex_)].config.name,
+                       SessionEdit { config_, store } };
+}
+
+bool MainComponent::switchEngine(const EngineConfig& config, std::shared_ptr<calibration::CalibrationStore> store,
+                                 const std::optional<calibration::CalibrationDraft>& loadedTables) {
+    auto kept = unsavedEdit();
+    if (!applyConfig(config, false, false, std::move(store))) return false;
+    if (kept && kept->first != config_.name) sessionEdits_.insert_or_assign(kept->first, std::move(kept->second));
+    if (selectedPresetIndex_ >= 0) {
+        // The edits now run; they are kept again when another engine is chosen.
+        const auto& preset = presets_[static_cast<std::size_t>(selectedPresetIndex_)];
+        sessionEdits_.erase(preset.config.name);
+        setBaseline(preset.config, preset.calibration);
+    } else {
+        setBaseline(config_, loadedTables);
+    }
+    refreshEngineChoices();
+    return true;
+}
+
 void MainComponent::selectEngine(int presetIndex) {
     if (presetIndex < 0 || presetIndex >= static_cast<int>(presets_.size())) return;
-    applyConfig(presets_[static_cast<std::size_t>(presetIndex)]);
+    // Choosing the running engine again keeps it as it is; Return reloads it.
+    if (presetIndex == selectedPresetIndex_ && runtime_) return;
+    const auto& preset = presets_[static_cast<std::size_t>(presetIndex)];
+    if (const auto edit = sessionEdits_.find(preset.config.name); edit != sessionEdits_.end()) {
+        const auto restored = edit->second;
+        (void)switchEngine(restored.config, restored.calibration, std::nullopt);
+        return;
+    }
+    const auto loaded = preset;
+    (void)switchEngine(loaded.config, storeFor(loaded), loaded.calibration);
 }
 
 bool MainComponent::applyConfig(const EngineConfig& newConfig, bool preserveScriptWatcher,
-                                bool preserveCalibration) {
+                                bool preserveCalibration,
+                                std::shared_ptr<calibration::CalibrationStore> calibration) {
     if (runtime_ && runtime_->dynoRunning()) {
         showError(utf8("Change rejected"),
             utf8("Stop the dyno before replacing the engine configuration."));
@@ -174,7 +308,7 @@ bool MainComponent::applyConfig(const EngineConfig& newConfig, bool preserveScri
     std::unique_ptr<EngineRuntime> replacement;
     EngineConfig canonicalConfig = newConfig;
     auto retainedCalibration = preserveCalibration && runtime_
-        ? runtime_->calibrationStore() : std::shared_ptr<calibration::CalibrationStore> {};
+        ? runtime_->calibrationStore() : std::move(calibration);
     try {
         normaliseEngineConfig(canonicalConfig);
         if (const auto error = validateEngineConfig(canonicalConfig))
@@ -188,7 +322,8 @@ bool MainComponent::applyConfig(const EngineConfig& newConfig, bool preserveScri
         return false;
     }
     if (!preserveScriptWatcher) stopEngineScriptWatcher();
-    if (!retainedCalibration) ecuTunerWindow_.reset();
+    // The ECU window edits one store: another store, another window.
+    if (!runtime_ || retainedCalibration != runtime_->calibrationStore()) ecuTunerWindow_.reset();
     shutdownAudio();
     if (runtime_) runtime_->stop();
     collectFinishedRuns();
@@ -229,13 +364,11 @@ bool MainComponent::applyConfig(const EngineConfig& newConfig, bool preserveScri
     setAudioChannels(0, 2);
     // Like the old selector's setText(), an engine whose name matches a preset
     // counts as that preset: Enter then reloads it from the catalogue.
-    const auto preset = std::find_if(presets_.begin(), presets_.end(),
-        [this](const EngineConfig& candidate) { return candidate.name == config_.name; });
-    selectedPresetIndex_ = preset != presets_.end()
-        ? static_cast<int>(std::distance(presets_.begin(), preset)) : -1;
+    selectedPresetIndex_ = presetIndexOf(config_.name);
     topBar_.setEngine(config_, selectedPresetIndex_);
     viewport_.setEngine(config_);
     viewport_.refresh();
+    configChanged_ = true;
     return true;
 }
 
@@ -255,6 +388,7 @@ bool MainComponent::applyExhaustEdit(const EngineConfig& edited) {
     if (exhaustDesignerWindow_) exhaustDesignerWindow_->setConfig(config_);
     viewport_.setEngine(config_);
     viewport_.refresh();
+    configChanged_ = true;
     return true;
 }
 
@@ -271,6 +405,7 @@ bool MainComponent::applyCylinderResize(const EngineConfig& edited, double rampS
     topBar_.setEngine(config_, selectedPresetIndex_);
     viewport_.setEngine(config_);
     viewport_.refresh();
+    configChanged_ = true;
     return true;
 }
 
@@ -455,8 +590,11 @@ void MainComponent::showConfigEditor(const juce::String& initialText) {
             if (const auto* editor = safe->configEditor_->getTextEditor("json")) {
                 retryText = editor->getText();
                 const auto utf8Text = retryText.toRawUTF8();
-                const auto decoded = safe->jsonSerializer_.decode(utf8Text);
-                if (decoded) safe->applyConfig(*decoded.config, false, true);
+                auto decoded = safe->jsonSerializer_.decode(utf8Text);
+                if (decoded) {
+                    (void)restoreAudioVoicing(*decoded.config, safe->catalogRoot_);
+                    safe->applyConfig(*decoded.config, false, true);
+                }
                 else safe->showError(utf8("Invalid JSON"), juce::String::fromUTF8(decoded.error.c_str()));
             }
         }
@@ -669,6 +807,12 @@ void MainComponent::showMoreMenu() {
         item.action = [safe, action] { if (safe) (safe.getComponent()->*action)(); };
         menu.addItem(std::move(item));
     };
+    const auto savedEngine = selectedPresetIndex_ >= 0
+        && !presets_[static_cast<std::size_t>(selectedPresetIndex_)].file.empty();
+    add(savedEngine ? utf8("Save engine") : utf8("Save engine…"), runtime_ != nullptr, {}, &MainComponent::saveEngine);
+    add(utf8("Save engine as…"), runtime_ != nullptr, {}, &MainComponent::saveEngineAs);
+    add(utf8("Delete saved engine…"), savedEngine, {}, &MainComponent::deleteSavedEngine);
+    menu.addSeparator();
     add(utf8("Edit engine JSON…"), !running, {},
         static_cast<void (MainComponent::*)()>(&MainComponent::showConfigEditor));
     add(utf8("Import engine…"), !running, {}, &MainComponent::importEngine);
@@ -776,12 +920,25 @@ void MainComponent::importEngine() {
                     safe->fileChooser_.reset();
                     return;
                 }
-                const auto text = file.loadFileAsString();
-                const auto bytes = text.toRawUTF8();
-                const auto decoded = file.hasFileExtension("yaml;yml")
-                    ? safe->yamlSerializer_.decode(bytes) : safe->jsonSerializer_.decode(bytes);
-                if (decoded) safe->applyConfig(*decoded.config);
-                else safe->showError(utf8("Import failed"), juce::String::fromUTF8(decoded.error.c_str()));
+                std::optional<SavedEngine> engine;
+                if (file.hasFileExtension("yaml;yml")) {
+                    const auto text = file.loadFileAsString();
+                    auto decoded = safe->yamlSerializer_.decode(text.toRawUTF8());
+                    if (decoded) engine = SavedEngine { std::move(*decoded.config), std::nullopt, pathOf(file) };
+                    else safe->showError(utf8("Import failed"), utf8(decoded.error));
+                } else {
+                    // An engine exported with its ECU tables brings them along.
+                    auto read = readSavedEngine(pathOf(file));
+                    if (read.engine) engine = std::move(read.engine);
+                    else safe->showError(utf8("Import failed"), utf8(read.error));
+                }
+                if (engine) {
+                    if (const auto error = restoreAudioVoicing(engine->config, safe->catalogRoot_))
+                        safe->showError(utf8("Voicing not found"), utf8(*error));
+                    auto store = safe->storeFor(Preset { engine->config, engine->calibration, engine->file });
+                    if (!store) engine->calibration.reset();
+                    (void)safe->switchEngine(engine->config, std::move(store), engine->calibration);
+                }
             }
             safe->fileChooser_.reset();
         });
@@ -799,10 +956,16 @@ void MainComponent::exportEngine() {
             auto file = chooser.getResult();
             if (file != juce::File {}) {
                 if (!file.hasFileExtension("json;yaml;yml")) file = file.withFileExtension("json");
-                const auto encoded = file.hasFileExtension("yaml;yml")
-                    ? safe->yamlSerializer_.encode(safe->config_) : safe->jsonSerializer_.encode(safe->config_);
-                if (!file.replaceWithText(juce::String::fromUTF8(encoded.data(), static_cast<int>(encoded.size()))))
-                    safe->showError(utf8("Export failed"), utf8("The file could not be written."));
+                if (file.hasFileExtension("yaml;yml")) {
+                    const auto encoded = safe->yamlSerializer_.encode(safe->config_);
+                    if (!file.replaceWithText(juce::String::fromUTF8(encoded.data(), static_cast<int>(encoded.size()))))
+                        safe->showError(utf8("Export failed"), utf8("The file could not be written."));
+                } else if (safe->runtime_) {
+                    // The ECU tables go beside it, as a saved engine's do.
+                    const auto snapshot = safe->runtime_->calibrationStore()->snapshot();
+                    if (const auto error = enginelab::saveEngine(pathOf(file), safe->config_, snapshot.get()))
+                        safe->showError(utf8("Export failed"), utf8(*error));
+                }
             }
             safe->fileChooser_.reset();
         });
@@ -884,19 +1047,149 @@ void MainComponent::exportDynoCsv() {
 }
 
 void MainComponent::reloadEngine() {
+    if (runtime_ && runtime_->dynoRunning()) {
+        showError(utf8("Change rejected"), utf8("Stop the dyno before replacing the engine configuration."));
+        return;
+    }
     if (selectedPresetIndex_ >= 0) {
-        auto reloadedPresets = makeCatalogOrBasePresets(catalogRoot_);
-        if (!reloadedPresets.empty()) {
-            presets_ = std::move(reloadedPresets);
-            juce::StringArray names;
-            for (const auto& preset : presets_) names.add(juce::String::fromUTF8(preset.name.c_str()));
-            topBar_.setPresetNames(names);
-            const auto clampedIndex = std::clamp(selectedPresetIndex_, 0, static_cast<int>(presets_.size()) - 1);
-            applyConfig(presets_[static_cast<std::size_t>(clampedIndex)]);
+        // The engine as it is on disk: its unsaved edits are dropped.
+        const auto name = presets_[static_cast<std::size_t>(selectedPresetIndex_)].config.name;
+        const auto previousIndex = selectedPresetIndex_;
+        const auto errors = loadPresets();
+        sessionEdits_.erase(name);
+        if (!errors.isEmpty()) showError(utf8("Saved engines skipped"), errors.joinIntoString("\n"));
+        auto index = presetIndexOf(name);
+        if (index < 0) index = std::clamp(previousIndex, 0, static_cast<int>(presets_.size()) - 1);
+        // Not an edit to keep: the selection forgets the running engine first.
+        selectedPresetIndex_ = -1;
+        const auto loaded = presets_[static_cast<std::size_t>(index)];
+        if (!switchEngine(loaded.config, storeFor(loaded), loaded.calibration)) refreshEngineChoices();
+        return;
+    }
+    applyConfig(config_, false, true);
+}
+
+void MainComponent::saveEngine() {
+    if (!runtime_) return;
+    if (selectedPresetIndex_ < 0 || presets_[static_cast<std::size_t>(selectedPresetIndex_)].file.empty()) {
+        saveEngineAs();
+        return;
+    }
+    const auto& preset = presets_[static_cast<std::size_t>(selectedPresetIndex_)];
+    writeSavedEngine(preset.config.name, preset.file);
+}
+
+void MainComponent::saveEngineAs() {
+    if (!runtime_ || saveDialog_) return;
+    const auto savedEngine = selectedPresetIndex_ >= 0
+        && !presets_[static_cast<std::size_t>(selectedPresetIndex_)].file.empty();
+    const auto suggested = savedEngine ? utf8(config_.name) : utf8(config_.name) + utf8(" (mine)");
+    saveDialog_ = std::make_unique<juce::AlertWindow>(utf8("Save engine"),
+        utf8("The engine is saved as it runs now: exhaust, intake, cylinders, every setting and the ECU tables. "
+             "It is then listed under My engines."),
+        juce::MessageBoxIconType::NoIcon);
+    saveDialog_->addTextEditor("name", suggested, utf8("Name"));
+    saveDialog_->addButton(utf8("SAVE"), 1, juce::KeyPress(juce::KeyPress::returnKey));
+    saveDialog_->addButton(utf8("CANCEL"), 0, juce::KeyPress(juce::KeyPress::escapeKey));
+    auto safe = juce::Component::SafePointer<MainComponent>(this);
+    saveDialog_->enterModalState(true, juce::ModalCallbackFunction::create([safe](int result) {
+        if (!safe) return;
+        juce::String name;
+        if (const auto* editor = safe->saveDialog_ ? safe->saveDialog_->getTextEditor("name") : nullptr)
+            name = editor->getText();
+        safe->saveDialog_.reset();
+        safe->grabKeyboardFocus();
+        if (result == 1) safe->confirmSaveAs(name);
+    }), false);
+}
+
+void MainComponent::confirmSaveAs(const juce::String& typedName) {
+    const auto name = typedName.trim().toStdString();
+    if (const auto error = savedEngineNameError(name, catalogueNames())) {
+        showError(utf8("Engine not saved"), utf8(*error));
+        return;
+    }
+    const auto file = savedEngineFile(pathOf(savedEnginesFolder()), name);
+    // Another saved engine with this name, or this file, is replaced: ask.
+    const auto replaced = std::find_if(presets_.begin(), presets_.end(), [&](const Preset& preset) {
+        return !preset.file.empty() && (preset.config.name == name || preset.file == file);
+    });
+    const auto replacesOther = replaced != presets_.end()
+        && static_cast<int>(std::distance(presets_.begin(), replaced)) != selectedPresetIndex_;
+    if (!replacesOther && !fileOf(file).existsAsFile()) {
+        writeSavedEngine(name, file);
+        return;
+    }
+    auto safe = juce::Component::SafePointer<MainComponent>(this);
+    juce::AlertWindow::showOkCancelBox(juce::MessageBoxIconType::QuestionIcon, utf8("Replace the saved engine?"),
+        utf8("\"") + fileOf(file).getFileNameWithoutExtension()
+            + utf8("\" is already saved. Replace it with the running engine?"),
+        utf8("Replace"), utf8("Cancel"), nullptr,
+        juce::ModalCallbackFunction::create([safe, name, file](int result) {
+            if (safe && result == 1) safe->writeSavedEngine(name, file);
+        }));
+}
+
+void MainComponent::writeSavedEngine(const std::string& name, const std::filesystem::path& file) {
+    if (!runtime_) return;
+    auto config = config_;
+    config.name = name;
+    const auto snapshot = runtime_->calibrationStore()->snapshot();
+    if (const auto error = enginelab::saveEngine(file, config, snapshot.get())) {
+        showError(utf8("Engine not saved"), utf8(*error));
+        return;
+    }
+    // The edits are saved: the engine they were made on is as on disk again.
+    if (selectedPresetIndex_ >= 0) sessionEdits_.erase(presets_[static_cast<std::size_t>(selectedPresetIndex_)].config.name);
+    sessionEdits_.erase(name);
+    std::erase_if(presets_, [&](const Preset& preset) {
+        return !preset.file.empty() && (preset.file == file || preset.config.name == name);
+    });
+    // Saved engines follow the catalogue, by file name, as they load.
+    const auto position = std::find_if(presets_.begin(), presets_.end(),
+        [&file](const Preset& preset) { return !preset.file.empty() && file < preset.file; });
+    auto tables = calibration::makeDraft(*snapshot);
+    presets_.insert(position, Preset { config, tables, file });
+    // The running engine is the saved one now, without a restart.
+    config_.name = name;
+    runtime_->renameEngine(name);
+    selectedPresetIndex_ = presetIndexOf(name);
+    topBar_.setEngine(config_, selectedPresetIndex_);
+    setBaseline(config_, tables);
+    refreshEngineChoices();
+}
+
+void MainComponent::deleteSavedEngine() {
+    if (selectedPresetIndex_ < 0) return;
+    const auto& preset = presets_[static_cast<std::size_t>(selectedPresetIndex_)];
+    if (preset.file.empty()) return;
+    auto safe = juce::Component::SafePointer<MainComponent>(this);
+    juce::AlertWindow::showOkCancelBox(juce::MessageBoxIconType::QuestionIcon, utf8("Delete the saved engine?"),
+        utf8("\"") + utf8(preset.config.name)
+            + utf8("\" goes to the recycle bin with its ECU tables. The running engine keeps running: "
+                   "Save engine as… saves it again."),
+        utf8("Delete"), utf8("Cancel"), nullptr,
+        juce::ModalCallbackFunction::create([safe, file = preset.file](int result) {
+            if (safe && result == 1) safe->removeSavedEngine(file);
+        }));
+}
+
+void MainComponent::removeSavedEngine(const std::filesystem::path& file) {
+    for (const auto& path : { file, savedCalibrationFile(file) }) {
+        const auto target = fileOf(path);
+        if (target.existsAsFile() && !target.moveToTrash()) {
+            showError(utf8("Engine not deleted"), target.getFullPathName() + utf8(" could not be moved to the recycle bin."));
             return;
         }
     }
-    applyConfig(config_, false, true);
+    const auto removed = std::find_if(presets_.begin(), presets_.end(),
+        [&file](const Preset& preset) { return preset.file == file; });
+    if (removed == presets_.end()) return;
+    sessionEdits_.erase(removed->config.name);
+    presets_.erase(removed);
+    selectedPresetIndex_ = presetIndexOf(config_.name);
+    topBar_.setEngine(config_, selectedPresetIndex_);
+    refreshEngineChoices();
 }
 
 void MainComponent::prepareToPlay(int blockSize, double sampleRate) { if (audio_) audio_->prepare(sampleRate, blockSize); }
@@ -1194,6 +1487,7 @@ void MainComponent::timerCallback() {
     if (ecuTunerWindow_) ecuTunerWindow_->setSessionLocked(running);
     topBar_.ecuButton.setEnabled(!running);
     topBar_.exhaustButton.setEnabled(!running);
+    updateModified();
 
     // Each panel repaints only its own area; the static chrome does not
     // repaint at all unless its content changed.

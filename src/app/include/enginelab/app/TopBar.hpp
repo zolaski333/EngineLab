@@ -3,16 +3,28 @@
 #include <enginelab/app/DashboardModel.hpp>
 #include <enginelab/app/Widgets.hpp>
 #include <functional>
+#include <vector>
 
 namespace enginelab::ui {
 
 /** Brand, engine picker, running-state pill and the tool buttons. */
 class TopBar final : public juce::Component {
 public:
+    /** One line of the engine menu. */
+    struct EngineChoice final {
+        juce::String name;
+        /** Saved by the user, listed under "My engines". */
+        bool saved { false };
+        /** Edited this session and not saved: switching back restores the edits. */
+        bool edited { false };
+    };
+
     TopBar();
-    void setPresetNames(const juce::StringArray& names);
+    void setEngineChoices(std::vector<EngineChoice>);
     /** `presetIndex` is -1 for an engine that is not one of the presets. */
     void setEngine(const EngineConfig&, int presetIndex);
+    /** The running engine differs from the one loaded: a dot on the picker. */
+    void setModified(bool);
     void refresh(const DashboardModel&);
 
     std::function<void(int presetIndex)> onEngineSelected;
@@ -30,15 +42,17 @@ private:
     public:
         EnginePicker();
         void setEngine(const juce::String& name, const juce::String& spec);
+        void setModified(bool);
         void paintButton(juce::Graphics&, bool highlighted, bool down) override;
     private:
         juce::String name_;
         juce::String spec_;
+        bool modified_ { false };
     };
 
     void showEngineMenu();
     EnginePicker picker_;
-    juce::StringArray presetNames_;
+    std::vector<EngineChoice> choices_;
     int presetIndex_ { -1 };
     juce::String stateText_;
     juce::Colour stateColour_;

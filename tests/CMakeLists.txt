@@ -134,6 +134,19 @@ target_link_libraries(EngineLabEcuCalibrationIntegrationTests PRIVATE
 enginelab_set_warnings(EngineLabEcuCalibrationIntegrationTests)
 add_test(NAME EngineLab.EcuCalibration COMMAND EngineLabEcuCalibrationIntegrationTests)
 
+add_executable(EngineLabSavedEngineTests SavedEngineTests.cpp)
+target_link_libraries(EngineLabSavedEngineTests PRIVATE
+    EngineLab::Foundation EngineLab::Calibration EngineLab::Events EngineLab::Physics EngineLab::Ecu
+    EngineLab::Exhaust EngineLab::Simulation EngineLab::Serialization EngineLab::Catalog EngineLab::Runtime
+    EngineLab::Audio)
+target_compile_definitions(EngineLabSavedEngineTests PRIVATE ENGINELAB_CATALOG_ROOT="${CMAKE_SOURCE_DIR}")
+enginelab_set_warnings(EngineLabSavedEngineTests)
+add_test(NAME EngineLab.SavedEngine COMMAND EngineLabSavedEngineTests)
+set_tests_properties(EngineLab.SavedEngine PROPERTIES TIMEOUT 600)
+if(MSVC)
+    target_link_options(EngineLabSavedEngineTests PRIVATE /STACK:8388608)
+endif()
+
 add_executable(EngineLabRealtimeRegressionTests
     RealtimeRegressionTests.cpp
     ExhaustTransferTests.cpp

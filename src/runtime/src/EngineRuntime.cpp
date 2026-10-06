@@ -464,6 +464,13 @@ void EngineRuntime::publishExhaustTelemetry(const EngineConfig& config,
         std::memory_order_relaxed);
 }
 
+void EngineRuntime::renameEngine(std::string name) {
+    // The simulation thread reads the name only when a dyno run starts, under
+    // this lock.
+    const std::scoped_lock lock(dynoMutex_);
+    config_.name = std::move(name);
+}
+
 bool EngineRuntime::applyLiveExhaust(const EngineConfig& edited,
                                      std::optional<double> targetCellLengthM) {
     const auto cellLengthM = targetCellLengthM.value_or(exhaustCellLengthM_);

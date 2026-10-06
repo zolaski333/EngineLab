@@ -5,6 +5,20 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-06 — Saving an engine as it is
+
+- `EngineLab.SavedEngine`: the 16 catalogue engines, edited (bore -1 mm,
+  runners +40 mm), saved and read back run bit-identical over 2.5 s
+  (cranking to 70 % throttle); tables retarded 6° likewise.
+- The JSON did not name the voicing: a copy lost it (K20, voiced monitor:
+  rms 0.0341 instead of 0.0363; the physical reference monitor ignores the
+  voicing). Family and key are now in the JSON; the 16 render the same master
+  rms and peak once saved.
+- Mutations caught: runner length not decoded, tables not read, voicing not
+  restored, revision in the "edited" test, rename not applied.
+- Not checked: the menu, dialogs and picker dot on screen (no screen here);
+  the app starts and closes with the change.
+
 ## 2026-10-06 — EJ25: one exhaust path into its one turbo
 
 - Two paths (one per bank) left cylinders 2/4 bypassing the drawn turbo; the

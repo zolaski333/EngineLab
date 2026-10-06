@@ -303,6 +303,9 @@ public:
      * included (as requested: a ramp may still be under way). Read it on the
      * thread that calls applyLiveExhaust(). */
     [[nodiscard]] const EngineConfig& engineConfig() const noexcept { return config_; }
+    /** The engine saved under another name keeps running: dyno runs started
+     * from now on carry the new name. Same thread as applyLiveExhaust(). */
+    void renameEngine(std::string name);
     /** The exhaust graph as constructed: read it before start(). After a live
      * exhaust change the simulation thread owns it. */
     [[nodiscard]] const ExhaustGraph& exhaustGraph() const noexcept { return exhaust_; }

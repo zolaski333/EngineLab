@@ -19,6 +19,10 @@ without its last extension, normalised to lower case with `_` (for example
 `11_yamaha_cp2_mt07_like.engine.yaml` becomes
 `11_yamaha_cp2_mt07_like_engine.yaml`).
 
+An engine written to JSON (export, saved engine) names its family and key under
+`audio_voicing`; reading it back loads the same layers, so a copy keeps the
+voice of the engine it came from.
+
 The schema is strict. An unknown key, a non-finite or out-of-range value, or an
 unknown saturation placement rejects the whole new snapshot. In the
 application, the last valid voicing then stays active and the error is shown.
