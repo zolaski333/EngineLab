@@ -15,10 +15,15 @@ class TelemetryPanel final : public juce::Component {
 public:
     explicit TelemetryPanel(const DashboardModel&);
     [[nodiscard]] int preferredHeight() const;
+    /** Called by the fuel-injection section's button: show the injectors in
+        the 3-D view, with their inspector. */
+    std::function<void()> onShowInjectors;
     void paint(juce::Graphics&) override;
+    void resized() override;
 
 private:
     const DashboardModel& model_;
+    ActionButton showInjectors_ { "Show in 3-D", ActionButton::Style::compact };
 };
 
 /** Exhaust preset, impulse response and the mix levels the wheel adjusts. */
@@ -64,6 +69,8 @@ public:
 
     DynoPanel dyno;
     AudioPanel audio;
+    /** The Telemetry tab asks to show the injectors in the 3-D view. */
+    std::function<void()> onShowInjectors;
 
     void paint(juce::Graphics&) override;
     void resized() override;

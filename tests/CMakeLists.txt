@@ -373,3 +373,8 @@ target_link_libraries(EngineLabEngineModel3DTests PRIVATE EngineLab::Render Engi
 target_compile_definitions(EngineLabEngineModel3DTests PRIVATE ENGINELAB_CATALOG_ROOT="${CMAKE_SOURCE_DIR}")
 enginelab_set_warnings(EngineLabEngineModel3DTests)
 add_test(NAME EngineLab.EngineModel3D COMMAND EngineLabEngineModel3DTests)
+
+# UTF-8 text decoded as Windows-1252 and saved again ("â€¦" for an ellipsis)
+# has reached the menus twice; no source file may hold it.
+add_test(NAME EngineLab.SourceEncoding
+    COMMAND ${CMAKE_COMMAND} -DROOT=${CMAKE_SOURCE_DIR} -P ${CMAKE_CURRENT_SOURCE_DIR}/SourceEncoding.cmake)

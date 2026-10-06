@@ -678,6 +678,52 @@ void checkExhaustResize(const EngineModel3D& model) {
     }
 }
 
+int portInjectorsDrawn = 0;
+int directInjectorsDrawn = 0;
+
+/** One injector per cylinder, named by a click, at its place: a port injector
+    in the runner out of the head spraying at the intake valves, a direct one
+    in the chamber's roof on the intake side spraying into the cylinder. */
+void checkInjectors(const EngineModel3D& model) {
+    const auto& config = model.config();
+    const auto& name = config.name;
+    const auto direct = config.injection.mode == InjectionMode::direct;
+    for (std::size_t c = 0; c < model.cylinderCount(); ++c) {
+        const auto label = name + " cylinder " + std::to_string(c + 1) + ": ";
+        const auto part = model.injectorPart(c);
+        require(part < model.parts().size(), label + "an injector is drawn");
+        const auto identity = model.identify(part);
+        require(identity.role == PartRole::injector && identity.cylinder == static_cast<int>(c),
+                label + "a click on the injector names it and its cylinder");
+        const auto tip = model.injectorTip(c);
+        const auto aim = model.injectorAim(c);
+        require(std::abs(length(aim) - 1.0F) < 1.0e-3F, label + "the spray direction is a unit vector");
+        // The nozzle ends at the tip: no vertex of the injector lies beyond it.
+        float furthest = -std::numeric_limits<float>::max();
+        for (const auto& vertex : model.parts()[part].mesh.vertices) furthest = std::max(furthest, dot(vertex.position, aim));
+        require(std::abs(furthest - dot(tip, aim)) < 0.5F, label + "the injector's nozzle ends at its tip");
+        const auto probe = model.probe(c, 0.0);
+        const auto bore = static_cast<float>(config.cylinders[c].boreMm);
+        const auto& intake = model.intakePorts()[c];
+        const auto& exhaust = model.exhaustPorts()[c];
+        require(length(tip - intake.inner) < length(tip - exhaust.inner), label + "the injector is on the intake side");
+        if (direct) {
+            // In the roof of the chamber, within the bore, spraying down into it.
+            const auto offset = tip - probe.deckCentre;
+            const auto height = dot(offset, probe.axis);
+            require(height > 0.0F && height < 0.3F * bore, label + "a direct injector sits in the chamber's roof");
+            require(length(offset - probe.axis * height) < 0.5F * bore, label + "a direct injector sits within the bore");
+            require(dot(aim, probe.axis) < -0.5F, label + "a direct injector sprays into the cylinder");
+            ++directInjectorsDrawn;
+        } else {
+            // Out of the head (above the port's inner end) and spraying at the valves.
+            require(dot(tip - probe.deckCentre, probe.axis) > 0.3F * bore, label + "a port injector sits out of the head");
+            require(dot(aim, normalise(intake.inner - tip)) > 0.99F, label + "a port injector sprays at the intake valves");
+            ++portInjectorsDrawn;
+        }
+    }
+}
+
 void checkEngine(const EngineConfig& config) {
     const EngineModel3D model(config);
     const auto& name = config.name;
@@ -702,6 +748,7 @@ void checkEngine(const EngineConfig& config) {
     checkWaveColours(model);
     checkStrengthColours(model);
     checkExhaustResize(model);
+    checkInjectors(model);
 
     std::vector<SceneInstance> instances;
     for (int step = 0; step < 72; ++step) {
@@ -1008,6 +1055,13 @@ int main() {
     const auto catalogue = loadEngineCatalog(ENGINELAB_CATALOG_ROOT);
     require(catalogue.errors.empty() && !catalogue.entries.empty(), "the shipped catalogue loads");
     for (const auto& entry : catalogue.entries) checkEngine(entry.config);
+    // Both kinds of injection are checked, on a direct-injection copy of the first engine if the catalogue has none.
+    if (directInjectorsDrawn == 0 || portInjectorsDrawn == 0) {
+        auto other = catalogue.entries.front().config;
+        other.injection.mode = portInjectorsDrawn == 0 ? InjectionMode::port : InjectionMode::direct;
+        checkInjectors(EngineModel3D(other));
+    }
+    require(portInjectorsDrawn > 0 && directInjectorsDrawn > 0, "port and direct injectors are both checked");
     for (const auto& entry : catalogue.entries) checkListenerFrame(entry.config);
     for (const auto& entry : catalogue.entries) checkSoundSources(entry.config);
     require(listenersChecked >= 12, "most catalogue engines have a drawn tailpipe to listen behind ("

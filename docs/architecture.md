@@ -514,9 +514,15 @@ The other parts edit the same way, each through `MainComponent::applyEngineEdit`
   else the path's, which every runner on it shares), a plenum (volume) and a
   throttle (bore): `resizeIntakePart` (foundation), which mirrors a single
   path into `EngineConfig::intake` and the legacy fields;
-- the injectors, on the intake ports for port injection or on the combustion
-  for direct injection: flow in g/min (the configuration keeps mg/s) and fuel
-  pressure in bar;
+- the injectors, on each drawn injector (`PartRole::injector`: in the runner
+  out of the head for port injection, in the chamber's roof on the intake side
+  for direct injection), and also on the intake ports or the combustion: flow
+  in g/min (the configuration keeps mg/s) and fuel pressure in bar, with the
+  window, live duty cycle, fuel per cycle and, for port injection, the wall
+  film. The side panel's Telemetry tab has a *Fuel injection* section whose
+  *Show in 3-D* button selects cylinder 1's injector
+  (`EngineViewport::showInjectors`, back to the All layer if the current one
+  hides it);
 - a turbo: the wastegate pressure ratio, the rated ratio keeping its
   distance to it, and the turbine flow area; a supercharger: its pressure
   and drive ratios.

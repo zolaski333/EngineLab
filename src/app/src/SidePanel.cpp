@@ -55,6 +55,26 @@ void drawRows(juce::Graphics& g, juce::Rectangle<float>& area, const Rows& rows,
     };
 }
 
+[[nodiscard]] Rows injectionRows(const DashboardModel& model) {
+    const auto& state = model.state;
+    const auto& injection = model.config.injection;
+    const auto direct = injection.mode == InjectionMode::direct;
+    double duty = 0.0;
+    double fuel = 0.0;
+    for (std::size_t index = 0; index < state.cylinderStateCount; ++index) {
+        duty = std::max(duty, state.cylinderStates[index].injectorDutyCycle);
+        fuel = std::max(fuel, state.cylinderStates[index].meteredFuelMgPerCycle);
+    }
+    return {
+        { "Injection", juce::String(direct ? "Direct" : "Port") + utf8("  \xc2\xb7  ")
+              + juce::String(static_cast<int>(model.config.cylinders.size())) + " injectors" },
+        { "Flow / pressure", fixed(injection.injectorFlowMgPerSecond * 0.06, 0) + " g/min / "
+              + juce::String(injection.railPressureBar, direct ? 0 : 1) + " bar" },
+        { "Duty cycle (highest)", juce::String(duty * 100.0, 1) + " %" },
+        { "Fuel per cycle (highest)", juce::String(fuel, 1) + " mg" },
+    };
+}
+
 [[nodiscard]] Rows drivelineRows(const DashboardModel& model) {
     const auto& state = model.state;
     const auto benchText = state.dynoHoldEnabled
@@ -89,17 +109,33 @@ struct Trace final {
 
 constexpr int traceChartHeight = 190;
 constexpr int engineRowCount = 12;
+constexpr int injectionRowCount = 4;
 constexpr int drivelineRowCount = 13;
 constexpr int mixRowHeight = 34;
 constexpr int mixRowCount = 9;
 } // namespace
 
-TelemetryPanel::TelemetryPanel(const DashboardModel& model) : model_(model) {}
+TelemetryPanel::TelemetryPanel(const DashboardModel& model) : model_(model) {
+    showInjectors_.setTooltip("Selects cylinder 1's injector in the 3-D view, to see it and edit every injector.");
+    showInjectors_.onClick = [this] {
+        if (onShowInjectors) onShowInjectors();
+    };
+    addAndMakeVisible(showInjectors_);
+}
 
 int TelemetryPanel::preferredHeight() const {
     return padding + sectionHeight + traceChartHeight + 30 + 12
         + sectionHeight + engineRowCount * rowHeight + 18
+        + sectionHeight + injectionRowCount * rowHeight + 18
         + sectionHeight + drivelineRowCount * rowHeight + padding;
+}
+
+void TelemetryPanel::resized() {
+    // On the right of the fuel-injection section's label.
+    const auto top = padding + sectionHeight + traceChartHeight + 30 + 12 + sectionHeight
+        + engineRowCount * rowHeight + 18;
+    const auto width = showInjectors_.idealWidth();
+    showInjectors_.setBounds(getWidth() - padding - width, top, width, sectionHeight - 2);
 }
 
 void TelemetryPanel::paint(juce::Graphics& g) {
@@ -154,6 +190,9 @@ void TelemetryPanel::paint(juce::Graphics& g) {
     area.removeFromTop(12.0F);
     drawSectionLabel(g, area.removeFromTop(sectionHeight), "Engine");
     drawRows(g, area, engineRows(model_));
+    area.removeFromTop(18.0F);
+    drawSectionLabel(g, area.removeFromTop(sectionHeight), "Fuel injection");
+    drawRows(g, area, injectionRows(model_));
     area.removeFromTop(18.0F);
     drawSectionLabel(g, area.removeFromTop(sectionHeight), "Driveline");
     drawRows(g, area, drivelineRows(model_));
@@ -443,6 +482,9 @@ std::vector<std::pair<juce::String, juce::String>> DiagnosticsPanel::debugRows()
 SidePanel::SidePanel(const DashboardModel& model, std::function<bool()> wheelModifierActive)
     : dyno(model, wheelModifierActive), audio(model), model_(model), telemetry_(model), diagnostics_(model) {
     tabs_.onChange = [this](int tab) { showTab(tab); };
+    telemetry_.onShowInjectors = [this] {
+        if (onShowInjectors) onShowInjectors();
+    };
     addAndMakeVisible(tabs_);
     addAndMakeVisible(dyno);
     for (auto* pane : { &telemetryPane_, &audioPane_, &diagnosticsPane_ }) {

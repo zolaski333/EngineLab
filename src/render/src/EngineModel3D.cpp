@@ -469,6 +469,30 @@ void EngineModel3D::buildDucts() {
         const auto exhaustEnd = exhaustPort + exhaustOut * (0.6F * b);
         appendTube(exhaust, catmullRom({ exhaustInner, exhaustPort, exhaustEnd }, 10), { exhaustDiameter * 0.5F }, 18);
         exhaustPorts_.push_back({ config.id, exhaustEnd, exhaustOut, exhaustDiameter, exhaustInner });
+
+        // The injector. A port injector sits in the runner just out of the
+        // head, above it, spraying at the back of the intake valves; a direct
+        // injector sits in the head on the intake side, under the valves,
+        // spraying across the chamber.
+        const auto direct = config_.injection.mode == InjectionMode::direct;
+        auto& drawn = cylinders_[i];
+        drawn.injectorTip = direct ? cylinder.deckCentre + axis * (0.10F * b) - side * (0.42F * b)
+                                   : intakePort + intakeOut * (0.30F * b) + axis * (0.22F * b);
+        const auto target = direct ? cylinder.deckCentre - axis * (0.35F * b) + side * (0.10F * b)
+                                   : intakePorts_.back().inner;
+        drawn.injectorAim = normalise(target - drawn.injectorTip);
+        Mesh injector;
+        const auto nozzle = 0.10F * b;
+        const auto bodyLength = 0.34F * b;
+        const auto back = drawn.injectorTip - drawn.injectorAim * (nozzle + bodyLength + 0.12F * b);
+        const auto frame = Mat4::frameAlongY(back, drawn.injectorAim);
+        // Connector, body, then the nozzle ending at the tip.
+        appendCylinder(injector, frame, 0.07F * b, 0.07F * b, 0.12F * b, 12);
+        appendCylinder(injector, frame * Mat4::translation({ 0.0F, 0.12F * b, 0.0F }), 0.085F * b, 0.07F * b,
+                       bodyLength, 16);
+        appendCylinder(injector, frame * Mat4::translation({ 0.0F, 0.12F * b + bodyLength, 0.0F }), 0.04F * b,
+                       0.025F * b, nozzle, 12);
+        drawn.injectorPart = addPart(std::move(injector), SceneMaterial::steel, direct ? layerCombustion : layerIntake);
     }
     (void)addPart(std::move(exhaust), SceneMaterial::exhaustPipe, layerExhaust);
 
@@ -684,6 +708,7 @@ PartIdentity EngineModel3D::identify(std::uint16_t part) const noexcept {
         if (part == c.exhaustValvePart) return { PartRole::exhaustValve, cylinder, -1 };
         if (part == c.flamePart) return { PartRole::combustion, cylinder, -1 };
         if (part == c.linerPart) return { PartRole::liner, cylinder, -1 };
+        if (part == c.injectorPart) return { PartRole::injector, cylinder, -1 };
     }
     for (std::size_t d = 0; d < ducts_.size(); ++d)
         if (ducts_[d].part == part) {

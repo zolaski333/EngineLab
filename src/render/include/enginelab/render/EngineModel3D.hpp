@@ -114,6 +114,9 @@ enum class PartRole : std::uint8_t {
     afterfire,
     turbo,
     supercharger,
+    /** A cylinder's fuel injector: in its intake port, or in the head for
+        direct injection. */
+    injector,
 };
 
 struct PartIdentity final {
@@ -155,6 +158,16 @@ public:
     /** The turbocharger as drawn; `placed` is false without one. Its solids
         are at the end of solids(). */
     [[nodiscard]] const TurboPlacement& turbo() const noexcept { return turbo_; }
+    /** Cylinder `index`'s injector: its part, nozzle tip and spray direction. */
+    [[nodiscard]] std::uint16_t injectorPart(std::size_t index) const noexcept {
+        return index < cylinders_.size() ? cylinders_[index].injectorPart : std::uint16_t { 0xFFFFU };
+    }
+    [[nodiscard]] Vec3 injectorTip(std::size_t index) const noexcept {
+        return index < cylinders_.size() ? cylinders_[index].injectorTip : Vec3 {};
+    }
+    [[nodiscard]] Vec3 injectorAim(std::size_t index) const noexcept {
+        return index < cylinders_.size() ? cylinders_[index].injectorAim : Vec3 {};
+    }
     /** The supercharger as drawn; `placed` is false without one. Its solid is
         in solids(), after the engine's. */
     [[nodiscard]] const SuperchargerPlacement& supercharger() const noexcept { return supercharger_; }
@@ -207,6 +220,10 @@ private:
         std::uint16_t flamePart {};
         std::uint16_t linerPart { 0xFFFFU };
         std::uint16_t runnerPart { 0xFFFFU };
+        std::uint16_t injectorPart { 0xFFFFU };
+        /** Where the injector sprays from, and the unit direction it sprays. */
+        Vec3 injectorTip;
+        Vec3 injectorAim;
     };
     struct Throw final {
         Vec3 origin;

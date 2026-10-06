@@ -86,9 +86,6 @@ MainComponent::MainComponent() {
     controls_.throttle.onValueChange = [this] {
         if (runtime_) runtime_->setThrottle(controls_.throttle.getValue() / 100.0);
     };
-    controls_.load.slider.onValueChange = [this] {
-        if (runtime_) runtime_->setLoad(controls_.load.slider.getValue() / 100.0);
-    };
     controls_.afrTrim.slider.onValueChange = [this] {
         if (runtime_) runtime_->setAirFuelRatioTrim(controls_.afrTrim.slider.getValue());
     };
@@ -134,6 +131,7 @@ MainComponent::MainComponent() {
     };
     dyno.onExportCsv = [this] { exportDynoCsv(); };
     side_.audio.onExhaustPreset = [this](int presetIndex) { applyExhaustPreset(presetIndex); };
+    side_.onShowInjectors = [this] { (void)viewport_.showInjectors(); };
     viewport_.setWheelModifierCheck([this] { return wheelModifierDown(); });
     viewport_.setGasFieldSource([this](double crankAngleDegrees, GasFieldSnapshot& field) {
         if (!runtime_) return false;
@@ -346,7 +344,8 @@ bool MainComponent::applyConfig(const EngineConfig& newConfig, bool preserveScri
         &runtime_->engineConfig(), &runtime_->exhaustAcousticSamples());
     model_.telemetry.clear();
     runtime_->setThrottle(controls_.throttle.getValue() / 100.0);
-    runtime_->setLoad(controls_.load.slider.getValue() / 100.0);
+    // No external load: the dyno and the vehicle load the engine.
+    runtime_->setLoad(0.0);
     runtime_->setAirFuelRatioTrim(controls_.afrTrim.slider.getValue());
     runtime_->setIgnitionTrimDegrees(controls_.sparkTrim.slider.getValue());
     runtime_->setIgnitionEnabled(controls_.ignition.getToggleState());
@@ -598,7 +597,7 @@ void MainComponent::configureImpulseResponse() {
     }
     if (!errors.isEmpty()) {
         impulseResponseLoadError_ = true;
-        impulseResponseStatus_ += utf8("  Â·  load error");
+        impulseResponseStatus_ += utf8("  ·  load error");
         showError(utf8("Impulse response not loaded"),
             errors.joinIntoString("\n")
                 + utf8("\n\nThe path stays in free field; no hidden fallback was applied."));
@@ -862,18 +861,19 @@ void MainComponent::showMoreMenu() {
     };
     const auto savedEngine = selectedPresetIndex_ >= 0
         && !presets_[static_cast<std::size_t>(selectedPresetIndex_)].file.empty();
-    add(savedEngine ? utf8("Save engine") : utf8("Save engineâ€¦"), runtime_ != nullptr, {}, &MainComponent::saveEngine);
-    add(utf8("Save engine asâ€¦"), runtime_ != nullptr, {}, &MainComponent::saveEngineAs);
-    add(utf8("Delete saved engineâ€¦"), savedEngine, {}, &MainComponent::deleteSavedEngine);
+    add(savedEngine ? utf8("Save engine") : utf8("Save engine…"), runtime_ != nullptr, utf8("Ctrl+S"),
+        &MainComponent::saveEngine);
+    add(utf8("Save engine as…"), runtime_ != nullptr, utf8("Ctrl+Shift+S"), &MainComponent::saveEngineAs);
+    add(utf8("Delete saved engine…"), savedEngine, {}, &MainComponent::deleteSavedEngine);
     menu.addSeparator();
-    add(utf8("Edit engine JSONâ€¦"), !running, {},
+    add(utf8("Edit engine JSON…"), !running, {},
         static_cast<void (MainComponent::*)()>(&MainComponent::showConfigEditor));
-    add(utf8("Import engineâ€¦"), !running, {}, &MainComponent::importEngine);
-    add(utf8("Export engineâ€¦"), true, {}, &MainComponent::exportEngine);
-    add(utf8("Export dyno CSVâ€¦"), true, {}, &MainComponent::exportDynoCsv);
+    add(utf8("Import engine…"), !running, {}, &MainComponent::importEngine);
+    add(utf8("Export engine…"), true, {}, &MainComponent::exportEngine);
+    add(utf8("Export dyno CSV…"), true, {}, &MainComponent::exportDynoCsv);
     menu.addSeparator();
     add(utf8("Reload engine"), !running, "Return", &MainComponent::reloadEngine);
-    add(utf8("Key bindingsâ€¦"), true, {}, &MainComponent::showKeyBindingsEditor);
+    add(utf8("Key bindings…"), true, {}, &MainComponent::showKeyBindingsEditor);
     juce::PopupMenu::Item fullScreen(utf8("Full screen"));
     fullScreen.shortcutKeyDescription = actionMap_.shortcut(AppAction::fullscreen);
     fullScreen.action = [safe] {
@@ -1122,6 +1122,36 @@ void MainComponent::reloadEngine() {
     applyConfig(config_, false, true);
 }
 
+juce::StringArray MainComponent::unsavedEngineNames() const {
+    juce::StringArray names;
+    if (runtime_ && (baseline_.configDiffers(config_)
+                     || baseline_.calibrationDiffers(*runtime_->calibrationStore()->snapshot())))
+        names.add(utf8(config_.name));
+    for (const auto& [name, edit] : sessionEdits_) names.addIfNotAlreadyThere(utf8(name));
+    return names;
+}
+
+void MainComponent::requestQuit() {
+    if (quitDialogOpen_) return;
+    const auto names = unsavedEngineNames();
+    if (names.isEmpty()) {
+        juce::JUCEApplicationBase::quit();
+        return;
+    }
+    quitDialogOpen_ = true;
+    auto safe = juce::Component::SafePointer<MainComponent>(this);
+    juce::AlertWindow::showOkCancelBox(juce::MessageBoxIconType::WarningIcon, utf8("Quit without saving?"),
+        utf8("Edits not saved: ") + names.joinIntoString(utf8(", "))
+            + utf8(". They are lost if you quit now; Save engine (Ctrl+S) keeps them."),
+        utf8("Quit"), utf8("Cancel"), nullptr,
+        juce::ModalCallbackFunction::create([safe](int result) {
+            if (!safe) return;
+            safe->quitDialogOpen_ = false;
+            if (result == 1) juce::JUCEApplicationBase::quit();
+            else safe->grabKeyboardFocus();
+        }));
+}
+
 void MainComponent::saveEngine() {
     if (!runtime_) return;
     if (selectedPresetIndex_ < 0 || presets_[static_cast<std::size_t>(selectedPresetIndex_)].file.empty()) {
@@ -1220,7 +1250,7 @@ void MainComponent::deleteSavedEngine() {
     juce::AlertWindow::showOkCancelBox(juce::MessageBoxIconType::QuestionIcon, utf8("Delete the saved engine?"),
         utf8("\"") + utf8(preset.config.name)
             + utf8("\" goes to the recycle bin with its ECU tables. The running engine keeps running: "
-                   "Save engine asâ€¦ saves it again."),
+                   "Save engine as… saves it again."),
         utf8("Delete"), utf8("Cancel"), nullptr,
         juce::ModalCallbackFunction::create([safe, file = preset.file](int result) {
             if (safe && result == 1) safe->removeSavedEngine(file);
@@ -1413,7 +1443,15 @@ bool MainComponent::keyPressed(const juce::KeyPress& key) {
             selectEngine(presetIndex);
         return true;
     }
-    if (key == juce::KeyPress::escapeKey) { juce::JUCEApplicationBase::quit(); return true; }
+    // Ctrl+S saves, Ctrl+Shift+S saves as (the starter ignores S with Ctrl
+    // held; see keyStateChanged).
+    if (const auto mods = key.getModifiers();
+        mods.isCommandDown() && !mods.isAltDown() && (key.getKeyCode() == 'S' || key.getKeyCode() == 's')) {
+        if (mods.isShiftDown()) saveEngineAs();
+        else saveEngine();
+        return true;
+    }
+    if (key == juce::KeyPress::escapeKey) { requestQuit(); return true; }
     if (key == juce::KeyPress::returnKey) { reloadEngine(); return true; }
     if (actionMap_.matches(AppAction::nextScreen, key)) { side_.nextTab(); return true; }
     if (actionMap_.matches(AppAction::shiftUp, key)) { if (runtime_) runtime_->shiftUp(); return true; }
@@ -1467,7 +1505,11 @@ bool MainComponent::keyStateChanged(bool) {
         || actionMap_.isDown(AppAction::throttleHalf)
         || actionMap_.isDown(AppAction::throttleFull);
     if (anyThrottleDown || throttleKeyActive_) updateMomentaryThrottle();
-    const auto down = actionMap_.isDown(AppAction::starter);
+    const auto starterHeld = actionMap_.isDown(AppAction::starter);
+    if (!starterHeld) starterChord_ = false;
+    else if (!starterKeyDown_ && juce::ModifierKeys::getCurrentModifiersRealtime().isCommandDown())
+        starterChord_ = true;
+    const auto down = starterHeld && !starterChord_;
     if (down != starterKeyDown_) {
         starterKeyDown_ = down;
         if (runtime_) runtime_->setStarterEngaged(down || controls_.starter.getState() == juce::Button::buttonDown);

@@ -13,6 +13,13 @@ public:
         juce::LookAndFeel::setDefaultLookAndFeel(&lookAndFeel_);
         window_ = std::make_unique<MainWindow>(getApplicationName());
     }
+    void systemRequestedQuit() override {
+        // The main view asks first when an engine has edits not saved.
+        if (auto* main = window_ ? dynamic_cast<MainComponent*>(window_->getContentComponent()) : nullptr)
+            main->requestQuit();
+        else
+            quit();
+    }
     void shutdown() override {
         window_.reset();
         juce::LookAndFeel::setDefaultLookAndFeel(nullptr);

@@ -5,6 +5,17 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-06 — Injectors drawn, Ctrl+S, quit warning, no manual load
+
+- `EngineLab.EngineModel3D`: one injector per cylinder on the 16 catalogue
+  engines (port and direct), named with its cylinder by a click, port in the
+  runner spraying at the valves, direct in the roof spraying down.
+  Mutations caught: 6 of 6.
+- `EngineLab.SourceEncoding` fails on the `⋯` menu text corrupted in 8af95bd
+  (UTF-8 read as Latin-1) and passes on the 258 repaired files.
+- Not exercised on screen: the inspector, the side panel's *Show in 3-D*,
+  Ctrl+S against the starter, the quit dialog (no screen here).
+
 ## 2026-10-06 — Sound sources at their drawn places
 
 - With the camera microphone on, the exhaust and intake still radiated from

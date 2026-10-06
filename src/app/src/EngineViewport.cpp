@@ -1406,6 +1406,17 @@ void EngineViewport::selectPartAt(juce::Point<float> position) {
     setSelectedPart(hit ? static_cast<int>(hit->part) : -1);
 }
 
+bool EngineViewport::showInjectors() {
+    if (!scene_) return false;
+    const auto part = scene_->injectorPart(0);
+    if (part >= scene_->parts().size()) return false;
+    const auto layer = static_cast<SceneLayerMode>(std::clamp(layers_.selected(), 0, 3));
+    if (!scenePartPickable(scene_->parts()[part], layer, shading_.selected() == 0))
+        layers_.setSelected(0, juce::sendNotificationSync);
+    setSelectedPart(static_cast<int>(part));
+    return true;
+}
+
 void EngineViewport::setSelectedPart(int part) {
     selectedPart_ = part;
     gasProbe_ = {};
@@ -1570,6 +1581,20 @@ void EngineViewport::updateInspector() {
             add("Injection", "Port");
         }
         break;
+    case render::PartRole::injector: {
+        const auto direct = config.injection.mode == InjectionMode::direct;
+        title = "Injector";
+        edit = injectorEdit();
+        add("Injection", direct ? "Direct" : "Port");
+        add("Window", juce::String(juce::roundToInt(config.injection.startAngleDegrees)) + utf8("° to ")
+                          + juce::String(juce::roundToInt(config.injection.endAngleDegrees)) + utf8("°"));
+        if (live != nullptr) {
+            add("Duty cycle", juce::String(100.0 * live->injectorDutyCycle, 1) + " %");
+            add("Fuel per cycle", juce::String(live->meteredFuelMgPerCycle, 1) + " mg");
+            if (!direct) add("Port wall film", juce::String(live->portLiquidFilmFuelMg, 1) + " mg");
+        }
+        break;
+    }
     case render::PartRole::exhaustPorts:
         title = "Exhaust ports";
         if (live != nullptr) add("Exhaust gas", juce::String(juce::roundToInt(live->exhaustTemperatureC)) + utf8(" °""C"));

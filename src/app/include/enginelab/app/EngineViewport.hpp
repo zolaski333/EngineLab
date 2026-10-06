@@ -228,6 +228,9 @@ public:
     ~EngineViewport() override;
 
     void setWheelModifierCheck(std::function<bool()>);
+    /** Selects cylinder 1's injector, with its inspector (the layer goes back
+        to All when the current one hides it). False without a drawn engine. */
+    bool showInjectors();
     /** Where the gas field comes from: asks for the field at a crank angle
         (negative: the latest) and copies a newer one into the snapshot. */
     void setGasFieldSource(std::function<bool(double crankAngleDegrees, GasFieldSnapshot&)>);

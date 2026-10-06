@@ -115,9 +115,25 @@ file formats, always with an in-memory migration).
 - The Merlin's supercharger is drawn between its airbox and its throttle, with
   the charge pipe to the throttle; its impeller turns geared to the crank.
   Click it for the drive ratio, impeller speed, pressure ratio and power.
+- The injectors are drawn in the 3-D view, one per cylinder: in the runner
+  for port injection, in the head for direct injection. A click shows their
+  window, duty cycle, fuel per cycle and wall film, and edits their flow and
+  fuel pressure. The side panel's Telemetry tab gains a *Fuel injection*
+  section with a *Show in 3-D* button.
+- Ctrl+S saves the engine and Ctrl+Shift+S saves it under another name; S
+  with Ctrl held no longer cranks the starter.
+- Quitting (the window's close button or Escape) with edits not saved asks
+  first and names the engines that would lose them.
+
+### Removed
+
+- The *Manual load* slider: the dyno and the vehicle load the engine.
 
 ### Fixed
 
+- The `⋯` menu showed `â€¦` instead of an ellipsis (Save engine…, Import
+  engine…) and an impulse response load error `Â·`; a test now refuses such
+  text in the sources.
 - A stopped engine's intake no longer churns. From rest, every engine rang
   its intake runners to ±14 to ±111 kPa within a second, which the 3-D view
   showed as an intake flashing as if the engine ran. Behind a stopped crank
