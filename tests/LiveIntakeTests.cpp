@@ -9,6 +9,7 @@
 #include <enginelab/ecu/SimpleEcuModel.hpp>
 #include <enginelab/events/FourStrokeEventGenerator.hpp>
 #include <enginelab/exhaust/ExhaustGraph.hpp>
+#include <enginelab/foundation/IntakeResize.hpp>
 #include <enginelab/physics/ConservativeGasSystem.hpp>
 #include <enginelab/physics/SimplifiedGasolinePhysics.hpp>
 #include <enginelab/runtime/EngineRuntime.hpp>
@@ -467,7 +468,67 @@ void audioIntakeSwap() {
 
 } // namespace
 
+/** The 3-D view's intake edits: sizes read and written where the engine
+ * keeps them, refused out of range, and taken by the running engine. */
+void intakePartsResize() {
+    const auto config = catalogueEngine("Yamaha CP2");
+    const auto pathId = config.intakePaths.front().id;
+    const auto runner = intakePartSize(config, pathId, IntakePart::runner, 1);
+    require(runner && runner->first == config.intake.runnerLengthMm
+                && runner->second == config.intake.runnerDiameterMm && runner->sharedByRunners,
+            "a CP2 runner reads its path's size, shared by both runners");
+    require(!intakePartSize(config, pathId + 7, IntakePart::plenum), "no such path, no size");
+
+    auto edited = config;
+    require(resizeIntakePart(edited, pathId, IntakePart::runner, 1, runner->first + 30.0,
+                             runner->second + 2.0).empty(),
+            "a runner takes a size in range");
+    require(edited.intakePaths.front().geometry.runnerLengthMm == config.intake.runnerLengthMm + 30.0
+                && edited.intake.runnerLengthMm == config.intake.runnerLengthMm + 30.0
+                && edited.intake.runnerDiameterMm == config.intake.runnerDiameterMm + 2.0,
+            "one path keeps the engine-wide intake mirrored");
+    auto normalised = edited;
+    normaliseEngineConfig(normalised);
+    require(normalised.intakePaths.front().geometry.runnerLengthMm == config.intake.runnerLengthMm + 30.0,
+            "normalising keeps the new runner");
+    const auto scope = engineEditScope(config, edited);
+    require(scope.intake && !scope.other, "an inspector runner edit is an intake edit only");
+
+    auto plenum = config;
+    require(resizeIntakePart(plenum, pathId, IntakePart::plenum, 0, 2.5).empty()
+                && plenum.plenumVolumeLitres == 2.5 && plenum.intake.plenumVolumeLitres == 2.5,
+            "a plenum takes a volume, the legacy field too");
+    auto throttle = config;
+    require(resizeIntakePart(throttle, pathId, IntakePart::throttle, 0, 52.0).empty()
+                && throttle.throttleDiameterMm == 52.0,
+            "a throttle takes a bore, the legacy field too");
+    auto refused = config;
+    require(!resizeIntakePart(refused, pathId, IntakePart::plenum, 0, 0.01).empty()
+                && !resizeIntakePart(refused, pathId, IntakePart::runner, 0, 10.0, 40.0).empty()
+                && !resizeIntakePart(refused, pathId + 7, IntakePart::throttle, 0, 40.0).empty(),
+            "out of range or no such path is refused");
+    require(engineEditScope(config, refused).any() == false, "a refused edit changes nothing");
+
+    // A cylinder with a runner of its own: that one alone changes.
+    auto own = config;
+    own.cylinders[1].intakeRunnerLengthMm = config.intake.runnerLengthMm + 10.0;
+    const auto ownSize = intakePartSize(own, pathId, IntakePart::runner, 1);
+    require(ownSize && ownSize->first == own.cylinders[1].intakeRunnerLengthMm && !ownSize->sharedByRunners,
+            "a runner of its own reads its own length");
+    auto ownEdited = own;
+    require(resizeIntakePart(ownEdited, pathId, IntakePart::runner, 1, ownSize->first + 20.0,
+                             ownSize->second).empty()
+                && ownEdited.cylinders[1].intakeRunnerLengthMm == own.cylinders[1].intakeRunnerLengthMm + 20.0
+                && ownEdited.intake.runnerLengthMm == own.intake.runnerLengthMm,
+            "a runner of its own changes alone");
+
+    auto runtime = std::make_unique<EngineRuntime>(config);
+    require(runtime->applyLiveIntake(edited) && runtime->applyLiveIntake(plenum),
+            "the running engine takes the inspector's intake edits");
+}
+
 void liveIntakeRegression() {
+    intakePartsResize();
     plenumKeepsItsState();
     editScopeSortsIntakeEdits();
     identicalIntakeIsInvisible();

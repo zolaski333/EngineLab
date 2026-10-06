@@ -87,6 +87,11 @@ file formats, always with an in-memory migration).
 - The intake's sizes too: runner length and diameter, plenum volume and
   throttle bore are taken while running, sound included. Adding or removing
   a path, a throttle or the airbox still restarts.
+- In the 3-D view, click an intake runner, the plenum or the throttle to
+  resize it; the intake ports (or the combustion, for direct injection) for
+  the injectors' flow and fuel pressure; the turbo for its wastegate and
+  turbine; the supercharger for its pressure and drive ratios. Each edit is
+  taken by the running engine.
 - Change the bore and stroke while the engine runs: click a cylinder liner or
   a piston in the 3-D view. The size glides over 3 s by default, or each crank
   throw takes it at its next gas-exchange TDC. The number of cylinders, the

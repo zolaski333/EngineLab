@@ -107,15 +107,22 @@ public:
         double cycleDegrees { 720.0 };
         juce::String caption;
     };
-    /** Two sizes edited in millimetres: an exhaust component's length and
-        diameter, or the cylinders' bore and stroke. Steppers, or a click on
-        the value to type it (Enter applies, Escape cancels; both hand the
-        keyboard back to the engine). */
+    /** Two values edited live: an exhaust component's or a runner's length
+        and diameter, the cylinders' bore and stroke, a plenum's volume, the
+        turbo's boost, the injectors' flow. Steppers, or a click on the value
+        to type it (Enter applies, Escape cancels; both hand the keyboard back
+        to the engine). */
     struct Edit final {
         /** Which part: the same key keeps the values being edited. */
         std::uint64_t key {};
+        juce::String heading { "RESIZE" };
         juce::String firstLabel { "Length" };
         juce::String secondLabel { "Diameter" };
+        juce::String firstUnit { " mm" };
+        juce::String secondUnit { " mm" };
+        /** Digits shown; -1 shows a tenth only when the value has one. */
+        int firstDecimals { -1 };
+        int secondDecimals { -1 };
         double first {};
         double second {};
         bool firstEditable { true };
@@ -125,6 +132,8 @@ public:
         double secondStep { 1.0 };
         double secondFineStep { 0.1 };
         double minimum { 10.0 };
+        /** The second value's lower bound, when not `minimum`. */
+        std::optional<double> secondMinimum;
         double firstMaximum { 5'000.0 };
         double secondMaximum { 400.0 };
         /** Offers the choice between the next cycle and a gradual change. */
@@ -159,6 +168,8 @@ public:
 private:
     void timerCallback() override;
     void sendEdit();
+    [[nodiscard]] juce::String formatValue(double value, bool first, bool withUnit = true) const;
+    [[nodiscard]] double lowest(bool first) const;
     [[nodiscard]] juce::Rectangle<int> closeArea() const;
     juce::String title_;
     juce::String subtitle_;
@@ -308,6 +319,8 @@ private:
     void applyEdit(double first, double second, bool gradual);
     void applyExhaustEdit(double lengthMm, double diameterMm);
     void applyCylinderEdit(double boreMm, double strokeMm, bool gradual);
+    /** Applies the selected part's partEditor_ through configEditor_. */
+    void applyPartEdit(double first, double second);
     void updateLegend();
 
     const DashboardModel& model_;
@@ -326,6 +339,10 @@ private:
     std::function<bool(std::int32_t, std::uint8_t, GasProbeTrace&)> gasProbeSource_;
     std::function<bool(const EngineConfig&)> configEditor_;
     std::function<bool(const EngineConfig&, double)> cylinderEditor_;
+    /** How the selected intake part, turbo or injectors take an edit: the two
+        values into a copy of the configuration, or why not. Set by
+        updateInspector(). */
+    std::function<std::string(EngineConfig&, double, double)> partEditor_;
     /** The part an edit resized: selected again, with the camera kept, when
         the engine comes back. An exhaust component by its ids (the scene's
         parts change), a cylinder part by its index (they do not). */

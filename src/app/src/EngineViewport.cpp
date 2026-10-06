@@ -1,6 +1,7 @@
 #include <enginelab/app/EngineViewport.hpp>
 #include <enginelab/exhaust/ExhaustComponentResize.hpp>
 #include <enginelab/foundation/CylinderResize.hpp>
+#include <enginelab/foundation/IntakeResize.hpp>
 #include <enginelab/exhaust/LegacyExhaustNetwork.hpp>
 
 #include <enginelab/app/Theme.hpp>
@@ -569,20 +570,33 @@ void PartInspector::setEdit(std::optional<Edit> edit) {
     for (auto* button : { &secondDown_, &secondUp_, &resetEdit_ }) button->setVisible(edit_.has_value());
     rampEdit_.setVisible(edit_.has_value() && edit_->offersRamp);
     if (edit_) {
-        const auto tip = [](const juce::String& label, double sign, double step, double fine) {
-            const auto mm = [](double value) {
-                return juce::String(value, std::abs(value - std::round(value)) > 1.0e-6 ? 1 : 0) + " mm";
-            };
-            return label + (sign > 0.0 ? " +" : utf8(" \xe2\x88\x92")) + mm(step) + " (Shift: " + mm(fine) + ")";
+        const auto tip = [this](bool first, double sign) {
+            const auto& label = first ? edit_->firstLabel : edit_->secondLabel;
+            const auto step = first ? edit_->firstStep : edit_->secondStep;
+            const auto fine = first ? edit_->firstFineStep : edit_->secondFineStep;
+            return label + (sign > 0.0 ? " +" : utf8(" \xe2\x88\x92")) + formatValue(step, first)
+                + " (Shift: " + formatValue(fine, first) + ")";
         };
-        firstDown_.setTooltip(tip(edit_->firstLabel, -1.0, edit_->firstStep, edit_->firstFineStep));
-        firstUp_.setTooltip(tip(edit_->firstLabel, 1.0, edit_->firstStep, edit_->firstFineStep));
-        secondDown_.setTooltip(tip(edit_->secondLabel, -1.0, edit_->secondStep, edit_->secondFineStep));
-        secondUp_.setTooltip(tip(edit_->secondLabel, 1.0, edit_->secondStep, edit_->secondFineStep));
+        firstDown_.setTooltip(tip(true, -1.0));
+        firstUp_.setTooltip(tip(true, 1.0));
+        secondDown_.setTooltip(tip(false, -1.0));
+        secondUp_.setTooltip(tip(false, 1.0));
     }
     updateEditButtons();
     if (resize) setSize(getWidth(), idealHeight());
     resized();
+}
+
+juce::String PartInspector::formatValue(double value, bool first, bool withUnit) const {
+    if (!edit_) return {};
+    const auto fixed = first ? edit_->firstDecimals : edit_->secondDecimals;
+    const auto decimals = fixed >= 0 ? fixed : (std::abs(value - std::round(value)) > 1.0e-6 ? 1 : 0);
+    return juce::String(value, decimals) + (withUnit ? (first ? edit_->firstUnit : edit_->secondUnit) : juce::String());
+}
+
+double PartInspector::lowest(bool first) const {
+    if (!edit_) return 0.0;
+    return first ? edit_->minimum : edit_->secondMinimum.value_or(edit_->minimum);
 }
 
 void PartInspector::setEditStatus(juce::String status) {
@@ -602,7 +616,7 @@ void PartInspector::stepEdit(bool length, double direction) {
     // Snap to the step, so a 452 mm pipe goes to 460 then 470.
     value = direction > 0.0 ? std::floor(value / step + 1.0e-6) * step + step
                             : std::ceil(value / step - 1.0e-6) * step - step;
-    value = std::clamp(value, edit_->minimum, length ? edit_->firstMaximum : edit_->secondMaximum);
+    value = std::clamp(value, lowest(length), length ? edit_->firstMaximum : edit_->secondMaximum);
     setEditStatus({});
     updateEditButtons();
     startTimer(editSettleMs);
@@ -651,8 +665,8 @@ void PartInspector::paintEdit(juce::Graphics& g, juce::Rectangle<int> area) cons
     g.drawHorizontalLine(header.getY() + 6, static_cast<float>(header.getX()), static_cast<float>(header.getRight()));
     g.setColour(colours::muted);
     g.setFont(uiFont(10.5F, true).withExtraKerningFactor(0.06F));
-    g.drawText(utf8("RESIZE"), header.withTrimmedTop(8), juce::Justification::centredLeft, false);
-    const auto row = [&](const juce::String& label, double value, double original) {
+    g.drawText(edit_->heading, header.withTrimmedTop(8), juce::Justification::centredLeft, false);
+    const auto row = [&](const juce::String& label, double value, double original, bool first) {
         auto line = area.removeFromTop(inspectorEditRow);
         g.setColour(colours::muted);
         g.setFont(uiFont(12.0F));
@@ -664,11 +678,10 @@ void PartInspector::paintEdit(juce::Graphics& g, juce::Rectangle<int> area) cons
         g.drawRoundedRectangle(valueArea.reduced(2, 3).toFloat(), 4.0F, 1.0F);
         g.setColour(std::abs(value - original) > 1.0e-6 ? colours::accentLight : colours::text);
         g.setFont(monoFont(11.5F, false));
-        const auto decimals = std::abs(value - std::round(value)) > 1.0e-6 ? 1 : 0;
-        g.drawText(juce::String(value, decimals) + " mm", valueArea, juce::Justification::centred, false);
+        g.drawText(formatValue(value, first), valueArea, juce::Justification::centred, false);
     };
-    if (edit_->firstEditable) row(edit_->firstLabel, pendingFirst_, originFirst_);
-    row(edit_->secondLabel, pendingSecond_, originSecond_);
+    if (edit_->firstEditable) row(edit_->firstLabel, pendingFirst_, originFirst_, true);
+    row(edit_->secondLabel, pendingSecond_, originSecond_, false);
     area.removeFromTop(inspectorEditButtons);
     for (const auto* text : { &edit_->note, &editStatus_ }) {
         if (text->isEmpty()) continue;
@@ -747,7 +760,7 @@ void PartInspector::beginTyping(bool first) {
     sendEdit();
     typing_ = first ? 0 : 1;
     const auto value = first ? pendingFirst_ : pendingSecond_;
-    valueEditor_.setText(juce::String(value, std::abs(value - std::round(value)) > 1.0e-6 ? 1 : 0), false);
+    valueEditor_.setText(formatValue(value, first, false), false);
     valueEditor_.setBounds(valueArea(first));
     valueEditor_.setVisible(true);
     valueEditor_.grabKeyboardFocus();
@@ -764,7 +777,7 @@ void PartInspector::endTyping(bool apply) {
     valueEditor_.setVisible(false);
     if (apply && edit_ && text.containsAnyOf("0123456789")) {
         auto& value = first ? pendingFirst_ : pendingSecond_;
-        value = std::clamp(text.getDoubleValue(), edit_->minimum, first ? edit_->firstMaximum : edit_->secondMaximum);
+        value = std::clamp(text.getDoubleValue(), lowest(first), first ? edit_->firstMaximum : edit_->secondMaximum);
         setEditStatus({});
         updateEditButtons();
         sendEdit();
@@ -1023,9 +1036,33 @@ void EngineViewport::setCylinderEditor(std::function<bool(const EngineConfig&, d
 void EngineViewport::applyEdit(double first, double second, bool gradual) {
     if (!scene_ || selectedPart_ < 0) return;
     const auto role = scene_->identify(static_cast<std::uint16_t>(selectedPart_)).role;
-    if (role == render::PartRole::duct) applyExhaustEdit(first, second);
+    const auto identity = scene_->identify(static_cast<std::uint16_t>(selectedPart_));
+    if (role == render::PartRole::duct && identity.duct >= 0
+        && scene_->ducts()[static_cast<std::size_t>(identity.duct)].kind == render::DuctKind::exhaustComponent)
+        applyExhaustEdit(first, second);
     else if (role == render::PartRole::liner || role == render::PartRole::piston)
         applyCylinderEdit(first, second, gradual);
+    else if (partEditor_)
+        applyPartEdit(first, second);
+}
+
+void EngineViewport::applyPartEdit(double first, double second) {
+    if (!scene_ || !configEditor_ || !partEditor_ || selectedPart_ < 0) return;
+    auto edited = scene_->config();
+    if (const auto error = partEditor_(edited, first, second); !error.empty()) {
+        inspector_.setEditStatus(juce::String::fromUTF8(error.c_str()));
+        return;
+    }
+    if (const auto invalid = validateEngineConfig(edited)) {
+        inspector_.setEditStatus(juce::String::fromUTF8(invalid->c_str()));
+        return;
+    }
+    // The part keeps its index: these edits resize, they add nothing.
+    reselect_ = Reselect { 0, 0, selectedPart_ };
+    if (!configEditor_(edited)) {
+        reselect_.reset();
+        inspector_.setEditStatus("The engine did not take the edit.");
+    }
 }
 
 void EngineViewport::applyCylinderEdit(double boreMm, double strokeMm, bool gradual) {
@@ -1383,6 +1420,7 @@ void EngineViewport::updateInspector() {
     juce::String subtitle = cylinderName;
     juce::String note;
     std::optional<PartInspector::Edit> edit;
+    partEditor_ = {};
     std::vector<PartInspector::Row> rows;
     const auto add = [&rows](juce::String label, juce::String value) { rows.push_back({ std::move(label), std::move(value) }); };
     // Bore and stroke are one engine-wide edit, offered on any cylinder.
@@ -1402,6 +1440,40 @@ void EngineViewport::updateInspector() {
         result.secondMaximum = 200.0;
         result.offersRamp = true;
         result.note = "Every cylinder changes, each crank throw at its gas-exchange TDC.";
+        return result;
+    };
+    const auto injectorEdit = [this, &config]() -> std::optional<PartInspector::Edit> {
+        if (!configEditor_) return std::nullopt;
+        const auto& injection = config.injection;
+        const auto direct = injection.mode == InjectionMode::direct;
+        PartInspector::Edit result;
+        result.key = std::uint64_t { 2 } << 60U;
+        result.heading = "INJECTORS";
+        result.firstLabel = "Flow";
+        result.secondLabel = "Fuel pressure";
+        result.firstUnit = " g/min";
+        result.secondUnit = " bar";
+        result.firstDecimals = 0;
+        result.secondDecimals = direct ? 0 : 1;
+        // mg/s to g/min.
+        result.first = injection.injectorFlowMgPerSecond * 0.06;
+        result.second = injection.railPressureBar;
+        result.firstStep = 10.0;
+        result.firstFineStep = 1.0;
+        result.secondStep = direct ? 10.0 : 0.5;
+        result.secondFineStep = direct ? 1.0 : 0.1;
+        result.minimum = 1.0;
+        result.secondMinimum = 1.2;
+        result.firstMaximum = 30'000.0;
+        result.secondMaximum = 3'000.0;
+        result.note = "Every injector changes. The flow is rated at "
+            + juce::String(injection.referencePressureBar, direct ? 0 : 1)
+            + " bar; the fuel pressure moves it as its square root. The running engine takes them.";
+        partEditor_ = [](EngineConfig& edited, double flowGPerMin, double pressureBar) {
+            edited.injection.injectorFlowMgPerSecond = flowGPerMin / 0.06;
+            edited.injection.railPressureBar = pressureBar;
+            return std::string();
+        };
         return result;
     };
 
@@ -1467,6 +1539,10 @@ void EngineViewport::updateInspector() {
     }
     case render::PartRole::combustion:
         title = "Combustion";
+        if (config.injection.mode == InjectionMode::direct) {
+            edit = injectorEdit();
+            add("Injection", "Direct");
+        }
         if (live != nullptr) {
             add("Burned fraction", juce::String(juce::roundToInt(100.0 * live->burnedFraction)) + " %");
             add("Flame speed", juce::String(live->flameSpeedMps, 1) + " m/s");
@@ -1475,6 +1551,10 @@ void EngineViewport::updateInspector() {
         break;
     case render::PartRole::intakePorts:
         title = "Intake ports";
+        if (config.injection.mode != InjectionMode::direct) {
+            edit = injectorEdit();
+            add("Injection", "Port");
+        }
         break;
     case render::PartRole::exhaustPorts:
         title = "Exhaust ports";
@@ -1509,6 +1589,37 @@ void EngineViewport::updateInspector() {
         note = "The gas solver has no turbine in its network: the turbine and open wastegate areas narrow every "
                "exhaust outlet, as a restriction in series, and the shaft is driven by the exhaust pressure and "
                "flow. Drawn where a real one sits, after the collector; the charge piping is not drawn.";
+        if (configEditor_) {
+            edit = PartInspector::Edit {};
+            edit->key = std::uint64_t { 3 } << 60U;
+            edit->heading = "TUNE";
+            edit->firstLabel = "Wastegate opens at";
+            edit->secondLabel = "Turbine flow area";
+            edit->firstUnit = utf8(" \xc3\x97");
+            edit->secondUnit = utf8(" mm\xc2\xb2");
+            edit->firstDecimals = 2;
+            edit->secondDecimals = 0;
+            edit->first = forced.wastegatePressureRatio;
+            edit->second = forced.turbineFlowAreaMm2;
+            edit->firstStep = 0.05;
+            edit->firstFineStep = 0.01;
+            edit->secondStep = 50.0;
+            edit->secondFineStep = 5.0;
+            edit->minimum = 1.0;
+            edit->secondMinimum = 20.0;
+            edit->firstMaximum = 4.0;
+            edit->secondMaximum = 20'000.0;
+            edit->note = "The wastegate pressure ratio limits the boost; the rated ratio keeps its distance to it. "
+                         "The running engine takes both.";
+            partEditor_ = [](EngineConfig& edited, double wastegate, double turbineAreaMm2) {
+                auto& turbo = edited.forcedInduction;
+                const auto margin = turbo.pressureRatio - turbo.wastegatePressureRatio;
+                turbo.wastegatePressureRatio = wastegate;
+                turbo.pressureRatio = std::max(1.0, wastegate + margin);
+                turbo.turbineFlowAreaMm2 = turbineAreaMm2;
+                return std::string();
+            };
+        }
         break;
     }
     case render::PartRole::supercharger: {
@@ -1523,6 +1634,33 @@ void EngineViewport::updateInspector() {
         if (forced.compressorBladeCount > 0U) add("Blades", juce::String(static_cast<int>(forced.compressorBladeCount)));
         note = "The gas solver has no compressor in its network: the supercharger raises the intake pressure by its "
                "ratio, geared to the crank. Drawn between the airbox and the throttle, with its charge pipe.";
+        if (configEditor_) {
+            edit = PartInspector::Edit {};
+            edit->key = std::uint64_t { 4 } << 60U;
+            edit->heading = "TUNE";
+            edit->firstLabel = "Pressure ratio";
+            edit->secondLabel = "Drive ratio";
+            edit->firstUnit = utf8(" \xc3\x97");
+            edit->secondUnit = utf8(" : 1");
+            edit->firstDecimals = 2;
+            edit->secondDecimals = 2;
+            edit->first = forced.pressureRatio;
+            edit->second = forced.superchargerDriveRatio;
+            edit->firstStep = 0.05;
+            edit->firstFineStep = 0.01;
+            edit->secondStep = 0.1;
+            edit->secondFineStep = 0.01;
+            edit->minimum = 1.0;
+            edit->secondMinimum = 0.2;
+            edit->firstMaximum = 4.0;
+            edit->secondMaximum = 20.0;
+            edit->note = "The running engine takes both.";
+            partEditor_ = [](EngineConfig& edited, double ratio, double drive) {
+                edited.forcedInduction.pressureRatio = ratio;
+                edited.forcedInduction.superchargerDriveRatio = drive;
+                return std::string();
+            };
+        }
         break;
     }
     case render::PartRole::duct: {
@@ -1546,6 +1684,46 @@ void EngineViewport::updateInspector() {
                 edit->firstEditable = size->lengthEditable;
                 if (size->sharedByPrimaries)
                     edit->note = "The configuration gives the primaries of a path one size: all of them change.";
+            }
+        }
+        std::optional<IntakePart> intakePart;
+        if (duct.kind == render::DuctKind::intakeRunner) intakePart = IntakePart::runner;
+        else if (duct.kind == render::DuctKind::intakePlenum) intakePart = IntakePart::plenum;
+        else if (duct.kind == render::DuctKind::intakeThrottle) intakePart = IntakePart::throttle;
+        if (intakePart && configEditor_) {
+            if (const auto size = intakePartSize(config, duct.pathId, *intakePart, cylinderIndex)) {
+                const auto part = *intakePart;
+                const auto pathId = duct.pathId;
+                edit = PartInspector::Edit {};
+                edit->key = (std::uint64_t { 5 } << 60U) | (static_cast<std::uint64_t>(pathId) << 32U)
+                    | (static_cast<std::uint64_t>(part) << 16U) | (part == IntakePart::runner ? cylinderIndex : 0U);
+                edit->firstEditable = part == IntakePart::runner;
+                if (part == IntakePart::runner) {
+                    edit->first = size->first;
+                    edit->second = size->second;
+                    edit->firstMaximum = 2'000.0;
+                    edit->secondMaximum = 200.0;
+                    if (size->sharedByRunners)
+                        edit->note = "The configuration gives the runners of a path one size: all of them change.";
+                } else if (part == IntakePart::plenum) {
+                    edit->secondLabel = "Volume";
+                    edit->secondUnit = " L";
+                    edit->secondDecimals = 2;
+                    edit->second = size->first;
+                    edit->secondStep = 0.1;
+                    edit->secondFineStep = 0.01;
+                    edit->minimum = 0.05;
+                    edit->secondMaximum = 40.0;
+                } else {
+                    edit->secondLabel = "Bore";
+                    edit->second = size->first;
+                    edit->secondMaximum = 150.0;
+                }
+                partEditor_ = [part, pathId, cylinderIndex](EngineConfig& edited, double first, double second) {
+                    return part == IntakePart::runner
+                        ? resizeIntakePart(edited, pathId, part, cylinderIndex, first, second)
+                        : resizeIntakePart(edited, pathId, part, cylinderIndex, second);
+                };
             }
         }
         subtitle = (exhaust ? "Exhaust path " : "Intake path ") + juce::String(duct.pathId);

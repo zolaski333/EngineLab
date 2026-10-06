@@ -5,6 +5,16 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-06 — Inspector edits for intake, injectors and boost
+
+- `resizeIntakePart`: read and written where the engine keeps them (own
+  runner or the path's), mirrored on a single path (without it, normalising
+  puts the old runner back), refused out of range; the runtime takes them.
+  Mutations caught: no mirror, own runner ignored.
+- The turbine flow area is read at every step (outlet restriction) and by
+  the turbo sound per sample: a live edit is not stale. Not exercised on
+  screen: the app starts; no click in its window from here.
+
 ## 2026-10-06 — Intake sizes while running
 
 - `EngineLab.LiveIntake`, 60 % of redline, change at 6 s (runners +120 mm,

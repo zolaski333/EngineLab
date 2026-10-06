@@ -497,6 +497,20 @@ A cylinder liner or piston offers the engine's bore and stroke the same way
 the next cycle (a live bore and stroke change, see above). The view shows the target
 size at once.
 
+The other parts edit the same way, each through `MainComponent::applyEngineEdit`
+(see *Which edits are live*):
+
+- an intake runner (length and diameter, its own if the cylinder has one,
+  else the path's, which every runner on it shares), a plenum (volume) and a
+  throttle (bore): `resizeIntakePart` (foundation), which mirrors a single
+  path into `EngineConfig::intake` and the legacy fields;
+- the injectors, on the intake ports for port injection or on the combustion
+  for direct injection: flow in g/min (the configuration keeps mg/s) and fuel
+  pressure in bar;
+- a turbo: the wastegate pressure ratio, the rated ratio keeping its
+  distance to it, and the turbine flow area; a supercharger: its pressure
+  and drive ratios.
+
 Two controls at the bottom right slow things down, and they are different.
 *0.25x / 0.5x / 1x* is the simulation's time scale
 (`EngineRuntime::setTimeScale`, also on the time keys and the wheel): the
