@@ -227,11 +227,26 @@ configuration at the start of an audio block
 (`RealtimeEngineAudio::replaceForcedInduction`, `ForcedInductionAcoustics::
 updateConfig`); its rotor and filter states carry on.
 
+### Live intake changes
+
+An edit of the intake's sizes (runner length and diameter, per path or per
+cylinder, plenum volume, throttle bore) that keeps its topology (same paths
+and cylinders, throttle count, airbox or none: `intakeReplaceable`) is taken
+like an exhaust. `EngineRuntime::applyLiveIntake` builds the new runner
+networks (`EngineSimulator::buildLiveIntake`) off the simulation thread;
+`replaceIntake` has them adopt the running state, swaps them in, and resizes
+each plenum keeping its pressure, temperature and velocity
+(`GasCell::resizeKeepingState`); the throttle area is read at every step.
+The sound's intake network is rebuilt from the configuration and handed over
+like the exhaust's (`RealtimeEngineAudio::replaceIntake`: 150 ms filling
+silently, 30 ms crossfade).
+
 ### Which edits are live
 
 `engineEditScope` (serialization) compares a running and an edited
 configuration, both normalised, through their JSON, and sorts the difference
-into the groups above: exhaust, cylinder sizes, settings, or `other`.
+into the groups above: exhaust, cylinder sizes, settings, intake, or
+`other`.
 `MainComponent::applyEngineEdit` takes each group live in turn and restarts
 only for `other` or a group the running engine refuses. The JSON editor and
 the 3-D view's inspector go through it.

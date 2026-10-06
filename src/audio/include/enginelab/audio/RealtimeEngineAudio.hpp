@@ -97,6 +97,21 @@ public:
      * sound: that needs a new renderer.
      */
     bool replaceForcedInduction(const ForcedInductionConfig& config);
+    /**
+     * Swap the playing intake network for one compiled from `config`'s intake
+     * (a live intake change), the way replaceExhaustGraph() swaps the
+     * exhaust: the incoming network hears the same sources silently for
+     * `exhaustSwapWarmupSeconds`, then the output fades to it over
+     * `exhaustSwapFadeSeconds`. Message thread, after prepare(). True, with
+     * nothing to swap, when neither the playing engine nor `config` has a
+     * compiled intake. False, changing nothing, when only one of them has, or
+     * the network does not compile: that needs a new renderer.
+     */
+    bool replaceIntake(const EngineConfig& config);
+    /** Live intake changes the audio thread has completed. */
+    [[nodiscard]] std::uint64_t intakeSwapCount() const noexcept {
+        return intakeSwaps_.load(std::memory_order_acquire);
+    }
     /** Forced-induction settings the audio thread has taken. */
     [[nodiscard]] std::uint64_t forcedInductionUpdateCount() const noexcept {
         return forcedInductionUpdates_.load(std::memory_order_acquire);
@@ -518,6 +533,18 @@ private:
     std::atomic<std::uint64_t> exhaustSwaps_ { 0 };
     std::atomic<double> preparedSampleRate_ { 0.0 };
     bool outletJetNoiseEnabled_ { true };
+    /** The same handoff for the intake network. */
+    struct IntakeNetworkHandoff final {
+        std::unique_ptr<AcousticIntakeNetwork> network;
+        double sampleRate { 0.0 };
+    };
+    std::atomic<IntakeNetworkHandoff*> incomingIntakeNetwork_ { nullptr };
+    std::atomic<IntakeNetworkHandoff*> retiredIntakeNetwork_ { nullptr };
+    IntakeNetworkHandoff* swappingIntakeNetwork_ { nullptr };
+    std::int64_t intakeSwapSamples_ { 0 };
+    std::atomic<std::uint64_t> intakeSwaps_ { 0 };
+    void beginIntakeSwapIfWaiting() noexcept;
+    void completeIntakeSwap() noexcept;
     /** Message thread: the forced-induction settings the sound follows. */
     ForcedInductionConfig forcedInductionConfig_ {};
     /** Message thread -> audio thread: forced-induction settings to take;

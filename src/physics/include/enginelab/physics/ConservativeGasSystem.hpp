@@ -64,6 +64,11 @@ public:
 
     // --- State mutations -------------------------------------------------
     void setVolumeAdiabatic(double volumeLitres) noexcept;
+    /** Give the cell another volume holding the same gas state: pressure,
+     * temperature, composition and velocity stay, the amount of gas follows
+     * the volume (a resized part, not a compression). The same volume changes
+     * nothing. */
+    void resizeKeepingState(double volumeLitres) noexcept;
     void addHeatJoules(double joules) noexcept;
     void injectFuelMoles(double moles, double temperatureK = 293.15) noexcept;
     void configureFuelChemistry(double fuelMolarMassKg, double oxygenMolesPerFuelMole,

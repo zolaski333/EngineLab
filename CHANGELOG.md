@@ -84,6 +84,9 @@ file formats, always with an in-memory migration).
 - Injector and turbo settings edited in the JSON editor no longer restart the
   engine: it takes them while running, and its turbo sound follows. A change
   of injection mode, of turbo type or of blade count still restarts it.
+- The intake's sizes too: runner length and diameter, plenum volume and
+  throttle bore are taken while running, sound included. Adding or removing
+  a path, a throttle or the airbox still restarts.
 - Change the bore and stroke while the engine runs: click a cylinder liner or
   a piston in the 3-D view. The size glides over 3 s by default, or each crank
   throw takes it at its next gas-exchange TDC. The number of cylinders, the

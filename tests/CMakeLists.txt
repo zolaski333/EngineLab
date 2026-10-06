@@ -151,7 +151,8 @@ add_executable(EngineLabRealtimeRegressionTests
     RealtimeRegressionTests.cpp
     ExhaustTransferTests.cpp
     LiveChangeTests.cpp
-    LiveSettingsTests.cpp)
+    LiveSettingsTests.cpp
+    LiveIntakeTests.cpp)
 target_link_libraries(EngineLabRealtimeRegressionTests PRIVATE EngineLab::Audio EngineLab::Catalog)
 target_compile_definitions(EngineLabRealtimeRegressionTests PRIVATE
     ENGINELAB_CATALOG_ROOT="${CMAKE_SOURCE_DIR}")
@@ -180,6 +181,9 @@ add_test(NAME EngineLab.LiveCylinderResize
 # Live injector and forced-induction settings, simulator and turbo sound.
 add_test(NAME EngineLab.LiveSettings
     COMMAND EngineLabRealtimeRegressionTests --live-settings-only)
+# Live intake sizes (runners, plenums, throttles), simulator and intake sound.
+add_test(NAME EngineLab.LiveIntake
+    COMMAND EngineLabRealtimeRegressionTests --live-intake-only)
 
 add_executable(EngineLabOfflineAudioExportTests OfflineAudioExportTests.cpp)
 target_link_libraries(EngineLabOfflineAudioExportTests PRIVATE

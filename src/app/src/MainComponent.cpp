@@ -381,6 +381,8 @@ bool MainComponent::applyEngineEdit(const EngineConfig& edited) {
     // what is left is measured again after it.
     if (scope.settings && !applySettingsEdit(edited)) return false;
     scope = engineEditScope(config_, edited);
+    if (scope.intake && !applyIntakeEdit(edited)) return false;
+    scope = engineEditScope(config_, edited);
     if (scope.exhaust && !applyExhaustEdit(edited)) return false;
     scope = engineEditScope(config_, edited);
     if (scope.cylinders) return applyCylinderResize(edited, ui::EngineViewport::cylinderRampSeconds);
@@ -396,6 +398,27 @@ bool MainComponent::applySettingsEdit(const EngineConfig& edited) {
     // needs the restart after all.
     if (!audio_->replaceForcedInduction(config_.forcedInduction))
         return applyConfig(config_, false, true);
+    viewport_.setEngine(config_);
+    viewport_.refresh();
+    configChanged_ = true;
+    return true;
+}
+
+bool MainComponent::applyIntakeEdit(const EngineConfig& edited) {
+    if (!runtime_ || !audio_ || runtime_->dynoRunning() || !runtime_->applyLiveIntake(edited))
+        return applyConfig(edited, false, true);
+    const auto& running = runtime_->engineConfig();
+    config_.intake = running.intake;
+    config_.intakePaths = running.intakePaths;
+    config_.plenumVolumeLitres = running.plenumVolumeLitres;
+    config_.throttleDiameterMm = running.throttleDiameterMm;
+    for (std::size_t index = 0; index < config_.cylinders.size() && index < running.cylinders.size(); ++index) {
+        config_.cylinders[index].intakeRunnerLengthMm = running.cylinders[index].intakeRunnerLengthMm;
+        config_.cylinders[index].intakeRunnerDiameterMm = running.cylinders[index].intakeRunnerDiameterMm;
+    }
+    // The simulation has the new intake: a sound that cannot follow it needs
+    // the restart after all.
+    if (!audio_->replaceIntake(config_)) return applyConfig(config_, false, true);
     viewport_.setEngine(config_);
     viewport_.refresh();
     configChanged_ = true;
@@ -601,7 +624,7 @@ void MainComponent::showConfigEditor() {
 void MainComponent::showConfigEditor(const juce::String& initialText) {
     if (configEditor_) return;
     configEditor_ = std::make_unique<juce::AlertWindow>(utf8("JSON engine editor"),
-        utf8("Exhaust, bore and stroke, injector and turbo edits are taken by the running engine; any other edit restarts it. ECU tables are edited live from the ECU window."),
+        utf8("Exhaust, intake, bore and stroke, injector and turbo edits are taken by the running engine; any other edit restarts it. ECU tables are edited live from the ECU window."),
         juce::MessageBoxIconType::NoIcon);
     configEditor_->addTextEditor("json", initialText, {}, false);
     if (auto* editor = configEditor_->getTextEditor("json")) {

@@ -17,9 +17,12 @@ struct EngineEditScope final {
     bool cylinders { false };
     /** config.injection and config.forcedInduction (applyLiveSettings). */
     bool settings { false };
+    /** config.intake, config.intakePaths, the legacy plenum volume and
+     *  throttle bore, and each cylinder's own runner size (applyLiveIntake). */
+    bool intake { false };
     bool other { false };
 
-    [[nodiscard]] bool any() const noexcept { return exhaust || cylinders || settings || other; }
+    [[nodiscard]] bool any() const noexcept { return exhaust || cylinders || settings || intake || other; }
 };
 
 /**

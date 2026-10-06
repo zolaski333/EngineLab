@@ -176,6 +176,20 @@ void GasCell::setVolumeAdiabatic(double volumeLitres) noexcept {
     volumeM3_ = newVolume;
 }
 
+void GasCell::resizeKeepingState(double volumeLitres) noexcept {
+    const auto newVolume = std::max(minimumVolumeM3, volumeLitres * 0.001);
+    if (!std::isfinite(newVolume) || newVolume == volumeM3_) return;
+    const auto scale = newVolume / volumeM3_;
+    mixture_.oxygenMoles *= scale;
+    mixture_.inertMoles *= scale;
+    mixture_.fuelMoles *= scale;
+    mixture_.burnedMoles *= scale;
+    internalEnergyJ_ *= scale;
+    momentumXKgMps_ *= scale;
+    momentumYKgMps_ *= scale;
+    volumeM3_ = newVolume;
+}
+
 void GasCell::addHeatJoules(double joules) noexcept {
     if (std::isfinite(joules)) internalEnergyJ_ = std::max(0.0, internalEnergyJ_ + joules);
 }

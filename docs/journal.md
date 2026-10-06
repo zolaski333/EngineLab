@@ -5,6 +5,18 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-06 — Intake sizes while running
+
+- `EngineLab.LiveIntake`, 60 % of redline, change at 6 s (runners +120 mm,
+  plenum x1.6, throttle +6 mm): torque built/swapped/untouched CP2
+  78.4/78.6/60.3, K20A 223.6/223.6/229.1, LS3 685.6/685.7/628.7 Nm.
+- The stiff dyno moves the speed to its new equilibrium within a few frames
+  (LS3: 28 rpm): a first "no step" bound (1.5 x the engine's own) failed on
+  that legitimate shift; the bound now adds it.
+- Mutations caught: runners without their state, plenum not resized, resize
+  not keeping its state, scope blind to a path's own size (needed a two-path
+  CP2: no catalogue engine has two), audio swap not begun, no warm-up.
+
 ## 2026-10-06 — Injectors and turbo while running
 
 - `EngineLab.LiveSettings`, held at 60 % of redline, change at 6 s, mean of

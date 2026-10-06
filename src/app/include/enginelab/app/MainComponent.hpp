@@ -106,6 +106,10 @@ private:
         the running engine and its sound when the machine stays the same
         (EngineSimulator::settingsReplaceable), else a restart. */
     bool applySettingsEdit(const EngineConfig&);
+    /** An edit of the intake's sizes only (runners, plenums, throttles):
+        taken by the running engine and its sound when the intake keeps its
+        topology (EngineSimulator::intakeReplaceable), else a restart. */
+    bool applyIntakeEdit(const EngineConfig&);
     /** A bore and stroke edit (resizeCylinders()): taken by the running
         engine over `rampSeconds` (0: at the next cycle), else a restart. */
     bool applyCylinderResize(const EngineConfig&, double rampSeconds);

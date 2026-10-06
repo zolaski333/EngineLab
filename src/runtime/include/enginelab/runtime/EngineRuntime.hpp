@@ -353,6 +353,16 @@ public:
     [[nodiscard]] std::uint64_t liveSettingsChangeCount() const noexcept {
         return liveSettingsChangesApplied_.load(std::memory_order_acquire);
     }
+    /** An edit of config.intake, config.intakePaths and the cylinders' own
+     * runner sizes only: the running engine takes the resized runners,
+     * plenums and throttles between two frames. False, changing nothing, when
+     * the edit adds or removes parts (EngineSimulator::intakeReplaceable) or
+     * does not compile: that needs a restart. Same thread rules as
+     * applyLiveExhaust(). */
+    [[nodiscard]] bool applyLiveIntake(const EngineConfig& edited);
+    [[nodiscard]] std::uint64_t liveIntakeChangeCount() const noexcept {
+        return liveIntakeChangesApplied_.load(std::memory_order_acquire);
+    }
     /** Cylinder geometry changes the simulation thread has applied (a ramp
      * applies one per journal per cycle). */
     [[nodiscard]] std::uint64_t cylinderGeometryRevision() const noexcept {
@@ -453,6 +463,11 @@ private:
      * refresh what depends on the geometry once the simulator changed it. */
     void consumeLiveCylinderResize() noexcept;
     void consumeLiveSettingsChange() noexcept;
+    void consumeLiveIntakeChange() noexcept;
+    struct LiveIntakeChange final {
+        EngineConfig config;
+        std::unique_ptr<EngineSimulator::LiveIntake> intake;
+    };
     struct LiveSettingsChange final {
         EngineConfig config;
     };
@@ -534,6 +549,10 @@ private:
     std::atomic<std::uint64_t> liveSettingsChangesRequested_ { 0 };
     std::uint64_t liveSettingsChangesConsumed_ { 0 };
     std::atomic<std::uint64_t> liveSettingsChangesApplied_ { 0 };
+    std::unique_ptr<LiveIntakeChange> pendingIntakeChange_;
+    std::atomic<std::uint64_t> liveIntakeChangesRequested_ { 0 };
+    std::uint64_t liveIntakeChangesConsumed_ { 0 };
+    std::atomic<std::uint64_t> liveIntakeChangesApplied_ { 0 };
     std::atomic<std::uint64_t> liveExhaustChangesRequested_ { 0 };
     std::atomic<std::uint64_t> liveExhaustChangesApplied_ { 0 };
     // Guarded by liveExhaustMutex_.

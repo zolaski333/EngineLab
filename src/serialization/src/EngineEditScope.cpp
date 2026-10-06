@@ -17,6 +17,24 @@ void takeSettings(EngineConfig& probe, const EngineConfig& edited) {
     probe.forcedInduction = edited.forcedInduction;
 }
 
+/** False when the cylinders are not the same ones: that edit is not an
+ *  intake change. */
+bool takeIntake(EngineConfig& probe, const EngineConfig& edited) {
+    if (probe.cylinders.size() != edited.cylinders.size()) return false;
+    for (std::size_t index = 0; index < probe.cylinders.size(); ++index) {
+        const auto& source = edited.cylinders[index];
+        auto& cylinder = probe.cylinders[index];
+        if (source.id != cylinder.id) return false;
+        cylinder.intakeRunnerLengthMm = source.intakeRunnerLengthMm;
+        cylinder.intakeRunnerDiameterMm = source.intakeRunnerDiameterMm;
+    }
+    probe.intake = edited.intake;
+    probe.intakePaths = edited.intakePaths;
+    probe.plenumVolumeLitres = edited.plenumVolumeLitres;
+    probe.throttleDiameterMm = edited.throttleDiameterMm;
+    return true;
+}
+
 /** False when the cylinders or journals are not the same ones: that edit is
  *  not a resize. */
 bool takeCylinderSizes(EngineConfig& probe, const EngineConfig& edited) {
@@ -63,10 +81,11 @@ EngineEditScope engineEditScope(const EngineConfig& running, const EngineConfig&
         };
         scope.exhaust = differs([&](EngineConfig& probe) { takeExhaust(probe, now); return true; });
         scope.settings = differs([&](EngineConfig& probe) { takeSettings(probe, now); return true; });
+        scope.intake = differs([&](EngineConfig& probe) { return takeIntake(probe, now); });
         auto probe = was;
         takeExhaust(probe, now);
         takeSettings(probe, now);
-        const auto resizable = takeCylinderSizes(probe, now);
+        const auto resizable = takeCylinderSizes(probe, now) && takeIntake(probe, now);
         scope.cylinders = resizable && differs([&](EngineConfig& sized) { return takeCylinderSizes(sized, now); });
         normaliseEngineConfig(probe);
         scope.other = !resizable || json.encode(probe) != target;

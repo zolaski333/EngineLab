@@ -120,6 +120,9 @@ RealtimeEngineAudio::~RealtimeEngineAudio() {
     delete swappingExhaustNetwork_;
     delete incomingForcedInduction_.exchange(nullptr);
     delete retiredForcedInduction_.exchange(nullptr);
+    delete incomingIntakeNetwork_.exchange(nullptr);
+    delete retiredIntakeNetwork_.exchange(nullptr);
+    delete swappingIntakeNetwork_;
 }
 
 bool RealtimeEngineAudio::replaceExhaustGraph(const ExhaustGraph& graph) {
@@ -148,6 +151,45 @@ bool RealtimeEngineAudio::replaceExhaustGraph(const ExhaustGraph& graph) {
 void RealtimeEngineAudio::collectRetiredExhaustNetworks() noexcept {
     delete retiredExhaustNetwork_.exchange(nullptr, std::memory_order_acq_rel);
     delete retiredForcedInduction_.exchange(nullptr, std::memory_order_acq_rel);
+    delete retiredIntakeNetwork_.exchange(nullptr, std::memory_order_acq_rel);
+}
+
+bool RealtimeEngineAudio::replaceIntake(const EngineConfig& config) {
+    collectRetiredExhaustNetworks();
+    const auto sampleRate = preparedSampleRate_.load(std::memory_order_acquire);
+    if (!(sampleRate > 0.0)) return false;
+    auto handoff = std::make_unique<IntakeNetworkHandoff>();
+    handoff->network = std::make_unique<AcousticIntakeNetwork>(config);
+    const auto compiles = handoff->network->valid()
+        && handoff->network->prepare(sampleRate, observerDistanceM);
+    if (!acousticIntakeNetwork_) return !compiles;
+    if (!compiles) return false;
+    handoff->sampleRate = sampleRate;
+    // A change the audio thread has not taken yet is replaced, and freed here.
+    delete incomingIntakeNetwork_.exchange(handoff.release(), std::memory_order_acq_rel);
+    return true;
+}
+
+void RealtimeEngineAudio::beginIntakeSwapIfWaiting() noexcept {
+    if (swappingIntakeNetwork_ != nullptr || !acousticIntakeNetwork_
+        || retiredIntakeNetwork_.load(std::memory_order_acquire) != nullptr)
+        return;
+    auto* incoming = incomingIntakeNetwork_.exchange(nullptr, std::memory_order_acq_rel);
+    if (incoming == nullptr) return;
+    if (incoming->sampleRate != sampleRate_) {
+        retiredIntakeNetwork_.store(incoming, std::memory_order_release);
+        return;
+    }
+    swappingIntakeNetwork_ = incoming;
+    intakeSwapSamples_ = 0;
+}
+
+void RealtimeEngineAudio::completeIntakeSwap() noexcept {
+    if (swappingIntakeNetwork_ == nullptr) return;
+    std::swap(acousticIntakeNetwork_, swappingIntakeNetwork_->network);
+    retiredIntakeNetwork_.store(swappingIntakeNetwork_, std::memory_order_release);
+    swappingIntakeNetwork_ = nullptr;
+    intakeSwaps_.fetch_add(1, std::memory_order_release);
 }
 
 bool RealtimeEngineAudio::replaceForcedInduction(const ForcedInductionConfig& config) {
@@ -330,6 +372,7 @@ void RealtimeEngineAudio::prepare(double sampleRate, int maximumBlockSize) noexc
     gainReleaseCoefficient_ = levelReleaseCoefficient_;
     allocateDelayLines();
     completeExhaustSwap();
+    completeIntakeSwap();
     if (acousticExhaustNetwork_
         && !acousticExhaustNetwork_->prepare(
             sampleRate_, maximumAcousticDelayScale, observerDistanceM))
@@ -440,6 +483,7 @@ void RealtimeEngineAudio::release() noexcept {
     valveFlowAcousticSource_ = {};
     for (auto& state : valveFlowAcousticSourceState_) state.reset();
     completeExhaustSwap();
+    completeIntakeSwap();
     if (acousticExhaustNetwork_) acousticExhaustNetwork_->reset();
     if (structuralModalRadiator_) structuralModalRadiator_->reset();
     if (acousticIntakeNetwork_) acousticIntakeNetwork_->reset();
@@ -1016,6 +1060,7 @@ void RealtimeEngineAudio::renderWithStems(
             }
         }
         beginExhaustSwapIfWaiting();
+        beginIntakeSwapIfWaiting();
         takeForcedInductionUpdate();
         for (auto* network : { acousticExhaustNetwork_.get(),
                  swappingExhaustNetwork_ != nullptr
@@ -1066,6 +1111,8 @@ void RealtimeEngineAudio::renderWithStems(
             }
         }
         acousticIntakeNetwork_->beginBlock(paths, acousticTimeScale);
+        if (swappingIntakeNetwork_ != nullptr)
+            swappingIntakeNetwork_->network->beginBlock(paths, acousticTimeScale);
     }
     float blockPeakObservedExhaustPressurePa = 0.0F;
     float blockPeakObservedExhaustJetNoisePressurePa = 0.0F;
@@ -1630,10 +1677,36 @@ void RealtimeEngineAudio::renderWithStems(
             if (intakePathBoundariesAvailable)
                 acousticIntakeNetwork_->updateBoundaryTargets(
                     intakePathBoundaries);
-            const auto inletPressure = acousticIntakeNetwork_->process(
+            auto inletPressure = acousticIntakeNetwork_->process(
                 std::span<const AcousticIntakeNetwork::CylinderBoundary>(
                     intakeBoundaries.data(), activeCylinderCount),
                 controlRampCoefficient_);
+            if (swappingIntakeNetwork_ != nullptr) {
+                // A live intake change: the incoming network hears the same
+                // sources, silently while it fills, then takes over.
+                auto& incoming = *swappingIntakeNetwork_->network;
+                if (intakePathBoundariesAvailable)
+                    incoming.updateBoundaryTargets(intakePathBoundaries);
+                const auto incomingPressure = incoming.process(
+                    std::span<const AcousticIntakeNetwork::CylinderBoundary>(
+                        intakeBoundaries.data(), activeCylinderCount),
+                    controlRampCoefficient_);
+                const auto warmupSamples = static_cast<double>(std::llround(
+                    exhaustSwapWarmupSeconds * sampleRate_));
+                const auto fadeSamples = std::max(1.0, static_cast<double>(std::llround(
+                    exhaustSwapFadeSeconds * sampleRate_)));
+                const auto weight = static_cast<float>(std::clamp(
+                    (static_cast<double>(intakeSwapSamples_) - warmupSamples) / fadeSamples,
+                    0.0, 1.0));
+                for (std::size_t path = 0; path < inletPressure.size(); ++path) {
+                    inletPressure[path].leftPa += weight
+                        * (incomingPressure[path].leftPa - inletPressure[path].leftPa);
+                    inletPressure[path].rightPa += weight
+                        * (incomingPressure[path].rightPa - inletPressure[path].rightPa);
+                }
+                if (static_cast<double>(++intakeSwapSamples_) >= warmupSamples + fadeSamples)
+                    completeIntakeSwap();
+            }
             for (const auto pressure : inletPressure) {
                 blockPeakObservedIntakePressurePa = std::max(
                     blockPeakObservedIntakePressurePa,
