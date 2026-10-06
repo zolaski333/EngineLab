@@ -54,6 +54,8 @@ constexpr double sampleRate = 48'000.0;
     return largest;
 }
 
+[[nodiscard]] std::size_t at(double seconds) { return static_cast<std::size_t>(seconds * sampleRate); }
+
 [[nodiscard]] AcousticPoint3M scaled(const AcousticPoint3M& point, double scale) {
     return { point.x * scale, point.y * scale, point.z * scale };
 }
@@ -159,6 +161,46 @@ void observerGlides() {
     require(std::abs(nearly.distanceM(0) - FreeFieldObserver::minimumMicrophoneDistanceM) < 1.0e-9
                 && std::abs(nearly.distanceM(1) - FreeFieldObserver::minimumMicrophoneDistanceM) < 1.0e-9,
             "a microphone inside the closest distance is kept there");
+}
+
+/** Moving the opening to where it is changes nothing, bit for bit; moved
+ * halfway to the microphones, a 1 kHz tone is louder as 1/r says; moved back,
+ * the glide lands on the unmoved sound exactly. */
+void observerMovesItsSource() {
+    const AcousticObserverConfig authored;
+    const auto left = effectiveMicrophonePosition(authored, false);
+    const auto right = effectiveMicrophonePosition(authored, true);
+    auto reference = preparedObserver();
+    auto same = preparedObserver();
+    same.moveSource({}, { 0.0, 2.0, 0.0 });
+    constexpr double toneHz = 1'000.0;
+    const AcousticPoint3M halfway { 0.25 * (left.x + right.x), 0.25 * (left.y + right.y), 0.25 * (left.z + right.z) };
+    auto mover = preparedObserver();
+    std::vector<float> referenceLeft;
+    std::vector<float> movedLeft;
+    for (auto sample = 0; sample < static_cast<int>(8.0 * sampleRate); ++sample) {
+        if (sample == static_cast<int>(1.0 * sampleRate)) mover.moveSource(halfway, { 0.0, 1.0, 0.0 });
+        if (sample == static_cast<int>(3.0 * sampleRate)) mover.moveSource({}, { 0.0, 1.0, 0.0 });
+        const auto input = static_cast<float>(std::sin(2.0 * std::numbers::pi * toneHz * sample / sampleRate));
+        const auto a = reference.process(input);
+        const auto b = same.process(input);
+        require(a.leftPa == b.leftPa && a.rightPa == b.rightPa, "an opening moved to where it is changes nothing");
+        referenceLeft.push_back(a.leftPa);
+        movedLeft.push_back(mover.process(input).leftPa);
+    }
+    const auto distance = [](const AcousticPoint3M& a, const AcousticPoint3M& b) {
+        return std::hypot(a.x - b.x, a.y - b.y, a.z - b.z);
+    };
+    const auto expectedDb = decibels(distance(left, {}) / distance(left, halfway));
+    const auto db = decibels(rms(movedLeft, at(2.5), at(3.0)) / rms(referenceLeft, at(2.5), at(3.0)));
+    std::size_t lastDifferent = 0;
+    for (auto index = at(3.0); index < movedLeft.size(); ++index)
+        if (movedLeft[index] != referenceLeft[index]) lastDifferent = index;
+    const auto backAtSeconds = static_cast<double>(lastDifferent) / sampleRate;
+    std::cout << "  opening moved halfway to the listener: " << db << " dB (1/r: " << expectedDb
+              << " dB); moved back at 3 s, the unmoved sound bit for bit from " << backAtSeconds << " s\n";
+    require(std::abs(db - expectedDb) < 0.2, "an opening halfway to the listener is louder as 1/r says");
+    require(lastDifferent > at(3.0) && backAtSeconds < 5.0, "moved back, the opening sounds as before, bit for bit");
 }
 
 /** One simulator heard by two renderers; the second one is `listen`ed to by
@@ -269,7 +311,6 @@ struct Rig final {
     return result;
 }
 
-[[nodiscard]] std::size_t at(double seconds) { return static_cast<std::size_t>(seconds * sampleRate); }
 
 [[nodiscard]] std::optional<std::array<AcousticPoint3M, 2>> authoredMicrophones(const EngineConfig& config,
                                                                                 double scale = 1.0) {
@@ -350,6 +391,112 @@ void rendererFollowsTheListener() {
     require(std::abs(turboDb + 6.02) < 0.3, "the turbo is 6 dB quieter twice as far");
 }
 
+/** Every opening of `config` placed `metres` from the authored microphones'
+ * centre, towards the engine and facing them; the turbo at `turboScale` of
+ * that centre. */
+[[nodiscard]] AcousticSourcePlacements placedBeforeTheListener(const EngineConfig& config, double metres,
+                                                                double turboScale) {
+    const auto left = effectiveMicrophonePosition(config.acousticObserver, false);
+    const auto right = effectiveMicrophonePosition(config.acousticObserver, true);
+    const AcousticPoint3M centre { 0.5 * (left.x + right.x), 0.5 * (left.y + right.y), 0.5 * (left.z + right.z) };
+    const auto distance = std::hypot(centre.x, centre.y, centre.z);
+    AcousticSourcePlacement placement;
+    placement.positionM = scaled(centre, 1.0 - metres / distance);
+    placement.axis = scaled(centre, 1.0 / distance);
+    AcousticSourcePlacements result;
+    const auto graph = ExhaustGraph::makeForEngine(config);
+    for (const auto& node : graph.nodes()) {
+        if (node.type != ExhaustNodeType::outlet) continue;
+        placement.pathIndex = node.pathIndex;
+        placement.componentId = node.sourceComponentId;
+        result.exhaustOutlets.push_back(placement);
+    }
+    placement.componentId = 0;
+    for (std::uint32_t path = 0; path < std::max<std::size_t>(1U, config.intakePaths.size()); ++path) {
+        placement.pathIndex = path;
+        result.intakeMouths.push_back(placement);
+    }
+    result.forcedInductionM = scaled(centre, turboScale);
+    return result;
+}
+
+/** The openings radiate from where the picture draws them, while the
+ * microphones are moved; at the authored microphones, the default sound. */
+void rendererHearsTheDrawnOpenings() {
+    const auto cp2 = catalogueEngine("Yamaha CP2");
+    const auto close = placedBeforeTheListener(cp2, 1.0, 0.5);
+    // Placements alone, microphones not moved: the default sound exactly.
+    const auto unmoved = listen(cp2, 4.0, [&](RealtimeEngineAudio& audio, double t) {
+        if (t == 0.0) audio.setSoundSources(close);
+    });
+    require(unmoved.referenceMaster == unmoved.movedMaster,
+            "placements leave the sound bit-identical while the microphones are not moved");
+
+    // Microphones moved at 3 s, the openings placed 1 m before them a little
+    // later (the engine edited while heard from the camera), switched off
+    // at 6 s.
+    const auto placed = listen(cp2, 10.0, [&](RealtimeEngineAudio& audio, double t) {
+        if (std::abs(t - 3.0) < 1.0e-9) audio.setMicrophones(authoredMicrophones(cp2));
+        if (std::abs(t - 3.2) < 1.0e-9) audio.setSoundSources(close);
+        if (std::abs(t - 6.0) < 1.0e-9) audio.setMicrophones(std::nullopt);
+    });
+    const auto exhaustDb = decibels(rms(placed.movedExhaust, at(4.5), at(6.0))
+                                    / rms(placed.referenceExhaust, at(4.5), at(6.0)));
+    const auto intakeDb = decibels(rms(placed.movedIntake, at(4.5), at(6.0))
+                                   / rms(placed.referenceIntake, at(4.5), at(6.0)));
+    std::size_t lastDifferent = 0;
+    for (auto index = at(6.0); index < at(10.0); ++index)
+        if (placed.movedMaster[index] != placed.referenceMaster[index]) lastDifferent = index;
+    const auto backAtSeconds = static_cast<double>(lastDifferent) / sampleRate;
+    std::cout << "  CP2 openings 1 m before the microphones: exhaust " << exhaustDb << " dB, intake " << intakeDb
+              << " dB; switched off at 6 s, the default sound bit for bit from " << backAtSeconds << " s\n";
+    require(exhaustDb > 8.0, "an exhaust outlet before the microphones is louder");
+    require(intakeDb > 8.0, "an intake mouth before the microphones is louder");
+    require(lastDifferent > at(6.0) && backAtSeconds < 8.5,
+            "switched off, the openings go back and the default sound returns bit for bit");
+
+    // A live exhaust and intake change takes the placements too.
+    const auto graph = ExhaustGraph::makeForEngine(cp2);
+    std::array<std::uint64_t, 2> swaps {};
+    const auto swapped = listen(cp2, 7.0, [&](RealtimeEngineAudio& audio, double t) {
+        if (t == 0.0) audio.setSoundSources(close);
+        if (std::abs(t - 3.0) < 1.0e-9) audio.setMicrophones(authoredMicrophones(cp2));
+        if (std::abs(t - 4.5) < 1.0e-9) {
+            require(audio.replaceExhaustGraph(graph) && audio.replaceIntake(cp2), "the renderer takes the live change");
+        }
+        swaps = { audio.exhaustSwapCount(), audio.intakeSwapCount() };
+    });
+    require(swaps == std::array<std::uint64_t, 2> { 1U, 1U }, "both networks were swapped");
+    const auto swappedExhaustDb = decibels(rms(swapped.movedExhaust, at(5.5), at(7.0))
+                                           / rms(swapped.referenceExhaust, at(5.5), at(7.0)));
+    const auto swappedIntakeDb = decibels(rms(swapped.movedIntake, at(5.5), at(7.0))
+                                          / rms(swapped.referenceIntake, at(5.5), at(7.0)));
+    std::cout << "  CP2 swapped with its openings placed: exhaust " << swappedExhaustDb << " dB, intake "
+              << swappedIntakeDb << " dB\n";
+    require(std::abs(swappedExhaustDb - exhaustDb) < 1.5, "a swapped-in exhaust sounds from its placed outlets");
+    require(std::abs(swappedIntakeDb - intakeDb) < 1.5, "a swapped-in intake sounds from its placed mouths");
+
+    // The turbo is heard at the microphones' mean distance from its place.
+    const auto turbo = catalogueEngine("2JZ");
+    const auto turboPlaced = placedBeforeTheListener(turbo, 1.0, 0.5);
+    const auto boost = listen(turbo, 7.0, [&](RealtimeEngineAudio& audio, double t) {
+        if (t == 0.0) audio.setSoundSources(turboPlaced);
+        if (std::abs(t - 3.0) < 1.0e-9) audio.setMicrophones(authoredMicrophones(turbo));
+    });
+    const auto left = effectiveMicrophonePosition(turbo.acousticObserver, false);
+    const auto right = effectiveMicrophonePosition(turbo.acousticObserver, true);
+    const auto& at2jz = *turboPlaced.forcedInductionM;
+    const auto from = [](const AcousticPoint3M& a, const AcousticPoint3M& b) {
+        return std::hypot(a.x - b.x, a.y - b.y, a.z - b.z);
+    };
+    const auto expectedDb = decibels(effectiveObserverDistanceM(turbo.acousticObserver)
+                                     / (0.5 * (from(left, at2jz) + from(right, at2jz))));
+    const auto turboDb = decibels(rms(boost.movedTurbo, at(5.5), at(7.0)) / rms(boost.referenceTurbo, at(5.5), at(7.0)));
+    std::cout << "  2JZ turbo placed halfway: " << turboDb << " dB (1/r: " << expectedDb << " dB)\n";
+    require(rms(boost.referenceTurbo, at(5.5), at(7.0)) > 0.0, "the 2JZ's turbo is heard (else this proves nothing)");
+    require(expectedDb > 3.0 && std::abs(turboDb - expectedDb) < 0.3, "the turbo is heard from its place");
+}
+
 /** The block's radiation follows the listener's distance as 1/r. */
 void structureFollowsTheListener() {
     const auto cp2 = catalogueEngine("Yamaha CP2");
@@ -376,8 +523,10 @@ void structureFollowsTheListener() {
 
 void cameraMicrophoneRegression() {
     observerGlides();
+    observerMovesItsSource();
     structureFollowsTheListener();
     rendererFollowsTheListener();
+    rendererHearsTheDrawnOpenings();
 }
 
 } // namespace enginelab::tests

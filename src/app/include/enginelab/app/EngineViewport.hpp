@@ -10,6 +10,7 @@
 #include <array>
 #include <atomic>
 #include <condition_variable>
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -253,6 +254,11 @@ public:
         where it is heading (render::ListenerFrame), spaced as the engine's
         authored pair; empty when off or with no 3-D model. */
     [[nodiscard]] std::optional<std::array<AcousticPoint3M, 2>> cameraMicrophones() const;
+    /** Where the 3-D model draws the openings and the turbo, in the frame of
+        cameraMicrophones() (render::ListenerFrame::sources); empty with no
+        3-D model. `soundSourcesVersion` changes whenever they do. */
+    [[nodiscard]] const AcousticSourcePlacements& soundSources() const noexcept { return soundSources_; }
+    [[nodiscard]] std::uint64_t soundSourcesVersion() const noexcept { return soundSourcesVersion_; }
     /** Called by a click in the view or a finished typed value: the
         keyboard goes back to driving the engine. */
     std::function<void()> onClaimKeyboard;
@@ -373,6 +379,8 @@ private:
     ViewSettings settings_;
     std::shared_ptr<const render::EngineModel3D> scene_;
     render::ListenerFrame listenerFrame_;
+    AcousticSourcePlacements soundSources_;
+    std::uint64_t soundSourcesVersion_ { 0 };
     double microphoneSpacingM_ { 0.36 };
     juce::String glError_;
     bool glFailed_ { false };

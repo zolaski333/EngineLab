@@ -619,6 +619,9 @@ void shapeComponent(DuctPiece& piece, const Node& node, std::vector<Vec3> points
         const auto axis = normalise(tip - points[points.size() - 2U]);
         appendTorus(piece.mesh, Mat4::frameAlongY(tip, axis), end, std::max(0.8F, 0.05F * node.outletDiameter),
                     segmentsFor(node.outletDiameter), 8);
+        piece.opensToAtmosphere = true;
+        piece.openEnd = tip;
+        piece.openAxis = axis;
     }
     piece.centreline = std::move(points);
     piece.radii = std::move(radii);
@@ -1042,6 +1045,12 @@ void appendUpstream(std::vector<DuctPiece>& pieces, std::uint32_t pathId, const 
                            0.35F * ductDiameter, segmentsFor(bellmouth), false, false);
         pieces.push_back(std::move(duct));
     }
+    // The outermost piece is where the air comes in, and the path's mouth
+    // radiates from.
+    auto& outermost = pieces.back();
+    outermost.opensToAtmosphere = true;
+    outermost.openEnd = ductLength > 1.0F ? inlet + direction * ductLength : inlet;
+    outermost.openAxis = normalise(direction);
 }
 
 } // namespace

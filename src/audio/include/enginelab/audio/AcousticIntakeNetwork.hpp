@@ -1,5 +1,6 @@
 #pragma once
 
+#include <enginelab/foundation/AcousticSourcePlacement.hpp>
 #include <enginelab/foundation/EngineTypes.hpp>
 #include <enginelab/audio/FreeFieldObserver.hpp>
 
@@ -62,6 +63,11 @@ public:
      * (FreeFieldObserver::moveMicrophones). Audio thread. */
     void moveMicrophones(const AcousticPoint3M& left, const AcousticPoint3M& right,
                          bool immediately = false) noexcept;
+    /** Each path's mouth radiates from its placement in `mouths` (matched by
+     * path index), or from the engine's origin, as prepared, when none
+     * matches (FreeFieldObserver::moveSource). Audio thread. */
+    void placeMouths(std::span<const AcousticSourcePlacement> mouths,
+                     bool immediately = false) noexcept;
     void beginBlock(std::span<const PathBoundary> paths,
                     double acousticTimeScale) noexcept;
     /** Update gas/throttle targets at the producer interpolation cadence.

@@ -458,7 +458,11 @@ solver's own state, not by an animation:
   camera is heading: `EngineViewport::cameraMicrophones()` maps the eye and
   its right vector through `render::ListenerFrame`, and `MainComponent`
   passes them to `RealtimeEngineAudio::setMicrophones` when they change or a
-  new renderer plays (see `realtime-audio.md`, *Camera microphone*).
+  new renderer plays. The drawn openings (`EngineViewport::soundSources()`,
+  from `render::ListenerFrame::sources`, rebuilt with each 3-D model) go to
+  `RealtimeEngineAudio::setSoundSources` in the same way, so the exhaust is
+  heard from the drawn tailpipe and the intake from its drawn mouth (see
+  `realtime-audio.md`, *Camera microphone*).
 - **Heat.** Each cell's wall temperature (the solver's finite-capacity wall)
   makes the steel glow from the Draper point, 798 K, to orange-yellow at
   1,300 K, in every layer.

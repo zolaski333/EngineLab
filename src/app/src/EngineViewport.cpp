@@ -1118,6 +1118,8 @@ void EngineViewport::setEngine(const EngineConfig& config) {
         scene_.reset();
     }
     if (scene_) listenerFrame_ = render::ListenerFrame::of(*scene_);
+    soundSources_ = scene_ ? listenerFrame_.sources(*scene_) : AcousticSourcePlacements {};
+    ++soundSourcesVersion_;
     const auto& authored = config.acousticObserver;
     const auto spacing = std::hypot(authored.rightMicrophoneM.x - authored.leftMicrophoneM.x,
                                     authored.rightMicrophoneM.y - authored.leftMicrophoneM.y,

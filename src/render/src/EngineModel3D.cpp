@@ -483,7 +483,8 @@ void EngineModel3D::buildDucts() {
             if (farParts_.size() < parts_.size()) farParts_.resize(parts_.size(), false);
             farParts_[part] = !piece.nearEngine;
             ducts_.push_back({ piece.kind, piece.pathId, piece.elementId, piece.componentType, part,
-                               std::move(piece.centreline), piece.authoredLengthMm, std::move(piece.radii) });
+                               std::move(piece.centreline), piece.authoredLengthMm, std::move(piece.radii),
+                               piece.opensToAtmosphere, piece.openEnd, piece.openAxis });
             if (piece.kind == DuctKind::intakeRunner)
                 for (std::size_t i = 0; i < cylinders_.size(); ++i)
                     if (config_.cylinders[i].id == piece.elementId) cylinders_[i].runnerPart = part;

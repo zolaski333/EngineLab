@@ -5,6 +5,18 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-06 — Sound sources at their drawn places
+
+- With the camera microphone on, the exhaust and intake still radiated from
+  the origin (their authored, schematic place). Now each outlet sounds from
+  its drawn tip and each intake path from its drawn mouth, the turbo from its
+  compressor. `EngineLab.EngineModel3D`: every compiled outlet of the 16
+  catalogue engines and a scalar copy finds its drawn tip and axis.
+- `EngineLab.CameraMicrophone`: CP2 openings 1 m before the microphones
+  +11.9 dB exhaust, +11.9 dB intake; 2JZ turbo halfway +6.00 dB (1/r 6.00);
+  switched off, bit for bit again at 7.11 s. Mutations caught: 13 of 13.
+  Not listened to in the application.
+
 ## 2026-10-06 — Camera microphone
 
 - `EngineLab.CameraMicrophone`: twice as far, -6.02 dB for a tone, the CP2

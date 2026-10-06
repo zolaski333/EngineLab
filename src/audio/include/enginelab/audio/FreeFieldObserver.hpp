@@ -41,6 +41,11 @@ public:
      * nothing. */
     void moveMicrophones(const AcousticPoint3M& left, const AcousticPoint3M& right,
                          bool immediately = false) noexcept;
+    /** Move the opening to `positionM`, radiating along `axis`: the
+     * microphones glide to what they hear from there, as moveMicrophones()
+     * does. Audio thread, after prepare(); allocates nothing. */
+    void moveSource(const AcousticPoint3M& positionM, const AcousticPoint3M& axis,
+                    bool immediately = false) noexcept;
     static constexpr double minimumMicrophoneDistanceM = 0.25;
     static constexpr double maximumMicrophoneDistanceM = 40.0;
     static constexpr double microphoneGlideSeconds = 0.2;
@@ -77,6 +82,8 @@ private:
                                         float minimumStep, float maximumStep) noexcept;
 
     std::array<Microphone, 2> microphones_;
+    /** Where the microphones were last asked to be, before any clamp. */
+    std::array<AcousticPoint3M, 2> requestedMicrophones_ {};
     float lowPassCoefficient_ {};
     float glideCoefficient_ {};
     double sampleRateHz_ { 48'000.0 };

@@ -328,6 +328,23 @@ void AcousticIntakeNetwork::moveMicrophones(const AcousticPoint3M& left,
     for (auto& path : impl_->paths) path.observer.moveMicrophones(left, right, immediately);
 }
 
+void AcousticIntakeNetwork::placeMouths(std::span<const AcousticSourcePlacement> mouths,
+                                        bool immediately) noexcept {
+    if (!impl_) return;
+    for (std::size_t index = 0; index < impl_->paths.size(); ++index) {
+        // Where prepare() put every mouth.
+        AcousticPoint3M position {};
+        AcousticPoint3M axis { 0.0, 1.0, 0.0 };
+        for (const auto& placement : mouths)
+            if (placement.pathIndex == index) {
+                position = placement.positionM;
+                axis = placement.axis;
+                break;
+            }
+        impl_->paths[index].observer.moveSource(position, axis, immediately);
+    }
+}
+
 void AcousticIntakeNetwork::reset() noexcept {
     if (!impl_) return;
     impl_->diagnostics = {};

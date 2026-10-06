@@ -91,6 +91,10 @@ struct SceneDuct final {
     float authoredLengthMm {};
     /** Outer radius at each centreline point; empty for boxes. */
     std::vector<float> radii;
+    /** DuctPiece::opensToAtmosphere, openEnd and openAxis. */
+    bool opensToAtmosphere {};
+    Vec3 openEnd;
+    Vec3 openAxis { 0.0F, 1.0F, 0.0F };
 };
 
 /** What a part is, for the part inspector. */

@@ -89,8 +89,9 @@ file formats, always with an in-memory migration).
   a path, a throttle or the airbox still restarts.
 - *Microphone on the camera* in the 3-D view's settings (off by default):
   the sound is heard from where the camera is, and follows it smoothly as it
-  moves. Exhaust and intake outlets, the turbo and the engine block move with
-  it; switched off, the usual listener comes back.
+  moves. The exhaust is heard from its drawn tailpipe, the intake from its
+  drawn mouth and the turbo from where it is drawn, no longer from the middle
+  of the engine; switched off, the usual listener comes back.
 - In the 3-D view, click an intake runner, the plenum or the throttle to
   resize it; the intake ports (or the combustion, for direct injection) for
   the injectors' flow and fuel pressure; the turbo for its wastegate and

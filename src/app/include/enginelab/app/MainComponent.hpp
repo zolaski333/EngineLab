@@ -115,6 +115,7 @@ private:
     void pushCameraMicrophones();
     std::optional<std::array<AcousticPoint3M, 2>> pushedMicrophones_;
     const void* microphoneRenderer_ { nullptr };
+    std::uint64_t pushedSoundSourcesVersion_ { 0 };
     /** A bore and stroke edit (resizeCylinders()): taken by the running
         engine over `rampSeconds` (0: at the next cycle), else a restart. */
     bool applyCylinderResize(const EngineConfig&, double rampSeconds);

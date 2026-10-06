@@ -13,6 +13,7 @@
 #include <enginelab/audio/ThermoacousticHeatReleaseSource.hpp>
 #include <enginelab/audio/ValveFlowAcousticSource.hpp>
 #include <enginelab/audio/ValvePortTermination.hpp>
+#include <enginelab/foundation/AcousticSourcePlacement.hpp>
 #include <enginelab/runtime/EngineRuntime.hpp>
 #include <algorithm>
 #include <array>
@@ -137,6 +138,17 @@ public:
      * positions at its next block.
      */
     void setMicrophones(const std::optional<std::array<AcousticPoint3M, 2>>& positions) noexcept;
+    /**
+     * Where the drawn engine puts its openings and its turbo
+     * (render::ListenerFrame::sources). While the microphones are moved
+     * (setMicrophones), each exhaust outlet and intake mouth radiates from its
+     * placement (AcousticExhaustNetwork::placeOutlets,
+     * AcousticIntakeNetwork::placeMouths) and the turbo is heard at the
+     * microphones' mean distance from its own; switched off, every source is
+     * back where the engine authored it. Message thread, the same one as
+     * collectRetiredExhaustNetworks(), which frees the replaced placements.
+     */
+    void setSoundSources(const AcousticSourcePlacements& sources);
     void render(juce::AudioBuffer<float>& output, int startSample, int sampleCount) noexcept override;
     /** Render the identical master while observing optional pre-master stems. */
     void renderWithStems(juce::AudioBuffer<float>& output, int startSample,
@@ -559,8 +571,18 @@ private:
      * distance (effectiveMicrophonePosition, effectiveObserverDistanceM). */
     std::array<AcousticPoint3M, 2> authoredMicrophones_ {};
     double authoredObserverDistanceM_ { 1.0 };
-    /** Audio thread, at the start of a block: newly published positions. */
+    /** setSoundSources() -> audio thread, and back to be freed. */
+    std::atomic<AcousticSourcePlacements*> incomingSoundSources_ { nullptr };
+    std::atomic<AcousticSourcePlacements*> retiredSoundSources_ { nullptr };
+    /** Audio thread: the placements in use; null for none. */
+    AcousticSourcePlacements* soundSources_ { nullptr };
+    /** Audio thread, at the start of a block: newly published positions and
+     * placements. */
     void takeMicrophones() noexcept;
+    /** The outlet and mouth placements the networks use now: none while the
+     * microphones are where the engine authored them. */
+    [[nodiscard]] std::span<const AcousticSourcePlacement> placedOutlets() const noexcept;
+    [[nodiscard]] std::span<const AcousticSourcePlacement> placedMouths() const noexcept;
     /** The same handoff for the intake network. */
     struct IntakeNetworkHandoff final {
         std::unique_ptr<AcousticIntakeNetwork> network;

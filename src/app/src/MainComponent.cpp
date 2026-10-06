@@ -1564,10 +1564,15 @@ void MainComponent::pushCameraMicrophones() {
                 return false;
         return true;
     };
-    // A new renderer starts at the authored positions.
+    // A new renderer starts at the authored positions, with no placements.
     if (microphoneRenderer_ != audio_.get()) {
         microphoneRenderer_ = audio_.get();
         pushedMicrophones_.reset();
+        pushedSoundSourcesVersion_ = 0;
+    }
+    if (pushedSoundSourcesVersion_ != viewport_.soundSourcesVersion()) {
+        audio_->setSoundSources(viewport_.soundSources());
+        pushedSoundSourcesVersion_ = viewport_.soundSourcesVersion();
     }
     if (same(microphones, pushedMicrophones_)) return;
     audio_->setMicrophones(microphones);
