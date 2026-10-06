@@ -43,6 +43,7 @@ void liveChangeRegression();
 void liveCylinderResizeRegression();
 void liveSettingsRegression();
 void liveIntakeRegression();
+void cameraMicrophoneRegression();
 }
 
 namespace {
@@ -3264,6 +3265,11 @@ int main(int argc, char** argv) {
         if (argc == 2 && std::string_view { argv[1] } == "--live-intake-only") {
             enginelab::tests::liveIntakeRegression();
             std::cout << "Live intake tests passed\n";
+            return 0;
+        }
+        if (argc == 2 && std::string_view { argv[1] } == "--camera-microphone-only") {
+            enginelab::tests::cameraMicrophoneRegression();
+            std::cout << "Camera microphone tests passed\n";
             return 0;
         }
         monitorCalibrationDefaultRegression();

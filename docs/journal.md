@@ -5,6 +5,17 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-06 — Camera microphone
+
+- `EngineLab.CameraMicrophone`: twice as far, -6.02 dB for a tone, the CP2
+  block (-6.02), exhaust (-6.02), intake (-5.99), 2JZ turbo (-6.02); pitch
+  979.98-1000 Hz during a 1 kHz glide; largest sample step while moving 0.0049
+  against 0.0128 before; a live exhaust/intake swap heard at -6.00/-6.00 dB.
+- Switched off, the CP2 stayed 35 dB off its default sound: the float glide
+  stalls 0.3 sample short (step < half an ulp). A linear tail lands it: bit
+  for bit again 1.25 s after switching off. Mutations caught: 9 of 10, the
+  survivor equivalent. Off by default; not listened to or exercised on screen.
+
 ## 2026-10-06 — Inspector edits for intake, injectors and boost
 
 - `resizeIntakePart`: read and written where the engine keeps them (own

@@ -110,6 +110,11 @@ private:
         taken by the running engine and its sound when the intake keeps its
         topology (EngineSimulator::intakeReplaceable), else a restart. */
     bool applyIntakeEdit(const EngineConfig&);
+    /** The camera microphone's positions to the sound, when they change or
+        a new renderer plays. */
+    void pushCameraMicrophones();
+    std::optional<std::array<AcousticPoint3M, 2>> pushedMicrophones_;
+    const void* microphoneRenderer_ { nullptr };
     /** A bore and stroke edit (resizeCylinders()): taken by the running
         engine over `rampSeconds` (0: at the next cycle), else a restart. */
     bool applyCylinderResize(const EngineConfig&, double rampSeconds);

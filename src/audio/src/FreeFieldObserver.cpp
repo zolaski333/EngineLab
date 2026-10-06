@@ -54,6 +54,13 @@ bool FreeFieldObserver::prepare(double sampleRateHz, double apertureRadiusM,
         return false;
 
     const auto axis = normalised(sourceAxis, { 0.0, 1.0, 0.0 });
+    sampleRateHz_ = sampleRateHz;
+    soundSpeedMps_ = soundSpeedMps;
+    sourcePositionM_ = sourcePositionM;
+    axis_ = axis;
+    termination_ = termination;
+    glideCoefficient_ = static_cast<float>(1.0 - std::exp(
+        -1.0 / (microphoneGlideSeconds * sampleRateHz)));
     // Place the listener at the scene's listening distance.
     //
     // The scale is taken about the ENGINE ORIGIN and applied to the microphone
@@ -69,25 +76,14 @@ bool FreeFieldObserver::prepare(double sampleRateHz, double apertureRadiusM,
         effectiveMicrophonePosition(observer, true) };
     for (std::size_t index = 0; index < microphones_.size(); ++index) {
         auto& microphone = microphones_[index];
-        const auto offset = subtract(positions[index], sourcePositionM);
-        microphone.distanceM = length(offset);
-        if (!(microphone.distanceM >= 0.05)
-            || !std::isfinite(microphone.distanceM))
-            return false;
-        const auto direction = normalised(offset, axis);
-        const auto cosine = std::clamp(dot(axis, direction), -1.0, 1.0);
-        // An unflanged opening remains partly visible from behind; a flanged
-        // aperture is mounted in an ideal rigid baffle and has no rear high-
-        // frequency hemisphere.  The low band remains the physical monopole.
-        microphone.highBandDirectivity = static_cast<float>(
-            termination == AcousticTerminationType::flanged
-                ? std::max(0.0, cosine)
-                : std::sqrt(std::max(0.0, 0.5 * (1.0 + cosine))));
-        microphone.distanceScale = static_cast<float>(1.0 / microphone.distanceM);
-        microphone.delaySamples = static_cast<float>(
-            microphone.distanceM / soundSpeedMps * sampleRateHz);
+        if (!aim(microphone, positions[index])) return false;
+        microphone.delaySamples = microphone.targetDelaySamples;
+        microphone.distanceScale = microphone.targetDistanceScale;
+        microphone.highBandDirectivity = microphone.targetDirectivity;
+        // Room for a microphone moved as far as moveMicrophones() allows.
+        const auto farthest = std::max(microphone.distanceM, maximumMicrophoneDistanceM);
         const auto required = static_cast<std::size_t>(
-            std::ceil(microphone.delaySamples)) + 4U;
+            std::ceil(farthest / soundSpeedMps * sampleRateHz)) + 4U;
         const auto size = std::max<std::size_t>(64U, nextPowerOfTwo(required));
         microphone.delay.assign(size, 0.0F);
         microphone.mask = size - 1U;
@@ -103,6 +99,84 @@ bool FreeFieldObserver::prepare(double sampleRateHz, double apertureRadiusM,
     prepared_ = true;
     reset();
     return true;
+}
+
+bool FreeFieldObserver::aim(Microphone& microphone, const AcousticPoint3M& position) const noexcept {
+    const auto offset = subtract(position, sourcePositionM_);
+    const auto distanceM = length(offset);
+    if (!(distanceM >= 0.05) || !std::isfinite(distanceM)) return false;
+    microphone.distanceM = distanceM;
+    const auto direction = normalised(offset, axis_);
+    const auto cosine = std::clamp(dot(axis_, direction), -1.0, 1.0);
+    // An unflanged opening remains partly visible from behind; a flanged
+    // aperture is mounted in an ideal rigid baffle and has no rear high-
+    // frequency hemisphere.  The low band remains the physical monopole.
+    microphone.targetDirectivity = static_cast<float>(
+        termination_ == AcousticTerminationType::flanged
+            ? std::max(0.0, cosine)
+            : std::sqrt(std::max(0.0, 0.5 * (1.0 + cosine))));
+    microphone.targetDistanceScale = static_cast<float>(1.0 / distanceM);
+    microphone.targetDelaySamples = static_cast<float>(
+        distanceM / soundSpeedMps_ * sampleRateHz_);
+    return true;
+}
+
+void FreeFieldObserver::moveMicrophones(const AcousticPoint3M& left,
+                                        const AcousticPoint3M& right, bool immediately) noexcept {
+    if (!prepared_) return;
+    const std::array positions { left, right };
+    for (std::size_t index = 0; index < microphones_.size(); ++index) {
+        auto& microphone = microphones_[index];
+        auto position = positions[index];
+        // Not farther than the delay line reaches, nor inside the opening.
+        const auto offset = subtract(position, sourcePositionM_);
+        const auto distanceM = length(offset);
+        if (!std::isfinite(distanceM)) continue;
+        const auto limit = std::min(maximumMicrophoneDistanceM,
+            (static_cast<double>(microphone.delay.size()) - 4.0) / sampleRateHz_ * soundSpeedMps_);
+        const auto wanted = std::clamp(distanceM, minimumMicrophoneDistanceM, limit);
+        if (distanceM > 1.0e-9 && wanted != distanceM) {
+            const auto scale = wanted / distanceM;
+            position = { sourcePositionM_.x + offset.x * scale, sourcePositionM_.y + offset.y * scale,
+                         sourcePositionM_.z + offset.z * scale };
+        } else if (!(distanceM > 1.0e-9)) {
+            position = { sourcePositionM_.x + axis_.x * minimumMicrophoneDistanceM,
+                         sourcePositionM_.y + axis_.y * minimumMicrophoneDistanceM,
+                         sourcePositionM_.z + axis_.z * minimumMicrophoneDistanceM };
+        }
+        if (!aim(microphone, position) || !immediately) continue;
+        microphone.delaySamples = microphone.targetDelaySamples;
+        microphone.distanceScale = microphone.targetDistanceScale;
+        microphone.highBandDirectivity = microphone.targetDirectivity;
+    }
+}
+
+float FreeFieldObserver::approach(float value, float target, float coefficient,
+                                  float minimumStep, float maximumStep) noexcept {
+    // An exponential step alone stalls in float once it falls below half an
+    // ulp of the value (a 560-sample delay stops 0.3 sample short): the tail
+    // moves by at least minimumStep and lands on the target exactly.
+    const auto difference = target - value;
+    if (!(std::abs(difference) > minimumStep)) return target;
+    return value + std::copysign(
+        std::clamp(std::abs(coefficient * difference), minimumStep, maximumStep), difference);
+}
+
+double FreeFieldObserver::glideDistance(double current, double target, double coefficient) noexcept {
+    const auto tail = 1.0e-5 * target;
+    const auto difference = target - current;
+    if (!(std::abs(difference) > tail)) return target;
+    return current + std::copysign(std::max(std::abs(coefficient * difference), tail), difference);
+}
+
+void FreeFieldObserver::glide(Microphone& microphone) const noexcept {
+    constexpr auto unlimited = std::numeric_limits<float>::max();
+    microphone.delaySamples = approach(microphone.delaySamples, microphone.targetDelaySamples,
+        glideCoefficient_, minimumDelayRate, maximumDelayRate);
+    microphone.distanceScale = approach(microphone.distanceScale, microphone.targetDistanceScale,
+        glideCoefficient_, 1.0e-5F * microphone.targetDistanceScale, unlimited);
+    microphone.highBandDirectivity = approach(microphone.highBandDirectivity,
+        microphone.targetDirectivity, glideCoefficient_, 1.0e-5F, unlimited);
 }
 
 void FreeFieldObserver::reset() noexcept {
@@ -121,6 +195,12 @@ StereoPressure FreeFieldObserver::process(float pressureAtOneMetrePa) noexcept {
     std::array<float, 2> values {};
     for (std::size_t index = 0; index < microphones_.size(); ++index) {
         auto& microphone = microphones_[index];
+        // Only a moved microphone glides: an unmoved one runs the exact
+        // arithmetic it always has.
+        if (microphone.delaySamples != microphone.targetDelaySamples
+            || microphone.distanceScale != microphone.targetDistanceScale
+            || microphone.highBandDirectivity != microphone.targetDirectivity)
+            glide(microphone);
         microphone.lowState += lowPassCoefficient_
             * (input - microphone.lowState);
         const auto high = input - microphone.lowState;

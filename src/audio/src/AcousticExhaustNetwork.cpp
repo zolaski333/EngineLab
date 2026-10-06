@@ -1077,6 +1077,15 @@ bool AcousticExhaustNetwork::prepare(double sampleRateHz,
     return true;
 }
 
+void AcousticExhaustNetwork::moveMicrophones(const AcousticPoint3M& left,
+                                             const AcousticPoint3M& right, bool immediately) noexcept {
+    if (!impl_) return;
+    for (auto& outlet : impl_->outlets) {
+        outlet.observer.moveMicrophones(left, right, immediately);
+        outlet.jetNoiseObserver.moveMicrophones(left, right, immediately);
+    }
+}
+
 void AcousticExhaustNetwork::reset() noexcept {
     if (!impl_) return;
     for (auto& duct : impl_->ducts) {

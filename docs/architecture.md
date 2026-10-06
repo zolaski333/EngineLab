@@ -453,6 +453,12 @@ solver's own state, not by an animation:
   yellow; it shows where the gas pulses hardest and holds still while the
   engine runs steadily. The Gas flow layer shows the strength when the mode
   is *Hidden*; the other layers show no waves.
+- **Camera microphone.** *Microphone on the camera* (settings menu, *Sound*,
+  saved in `view.json`, off by default) hears the engine from where the
+  camera is heading: `EngineViewport::cameraMicrophones()` maps the eye and
+  its right vector through `render::ListenerFrame`, and `MainComponent`
+  passes them to `RealtimeEngineAudio::setMicrophones` when they change or a
+  new renderer plays (see `realtime-audio.md`, *Camera microphone*).
 - **Heat.** Each cell's wall temperature (the solver's finite-capacity wall)
   makes the steel glow from the Draper point, 798 K, to orange-yellow at
   1,300 K, in every layer.

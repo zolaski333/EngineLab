@@ -2,6 +2,7 @@
 #include <enginelab/exhaust/ExhaustComponentResize.hpp>
 #include <enginelab/foundation/CylinderResize.hpp>
 #include <enginelab/foundation/IntakeResize.hpp>
+#include <enginelab/render/ListenerFrame.hpp>
 #include <enginelab/exhaust/LegacyExhaustNetwork.hpp>
 
 #include <enginelab/app/Theme.hpp>
@@ -329,6 +330,7 @@ void ViewSettings::load() {
     motionBlur = flag("motionBlur", motionBlur);
     antiAliasing = flag("antiAliasing", antiAliasing);
     fineExhaustWaves = flag("fineExhaustWaves", fineExhaustWaves);
+    cameraMicrophone = flag("cameraMicrophone", cameraMicrophone);
     const auto waves = object->getProperty("pressureWaves").toString();
     if (waves == "strength") pressureWaves = PressureWaves::strength;
     else if (waves == "live") pressureWaves = PressureWaves::live;
@@ -343,6 +345,7 @@ void ViewSettings::save() const {
     object->setProperty("motionBlur", motionBlur);
     object->setProperty("antiAliasing", antiAliasing);
     object->setProperty("fineExhaustWaves", fineExhaustWaves);
+    object->setProperty("cameraMicrophone", cameraMicrophone);
     object->setProperty("pressureWaves", pressureWaves == PressureWaves::strength ? "strength"
                                          : pressureWaves == PressureWaves::live   ? "live"
                                                                                   : "hidden");
@@ -1114,6 +1117,12 @@ void EngineViewport::setEngine(const EngineConfig& config) {
     } catch (const std::exception&) {
         scene_.reset();
     }
+    if (scene_) listenerFrame_ = render::ListenerFrame::of(*scene_);
+    const auto& authored = config.acousticObserver;
+    const auto spacing = std::hypot(authored.rightMicrophoneM.x - authored.leftMicrophoneM.x,
+                                    authored.rightMicrophoneM.y - authored.leftMicrophoneM.y,
+                                    authored.rightMicrophoneM.z - authored.leftMicrophoneM.z);
+    microphoneSpacingM_ = std::isfinite(spacing) && spacing > 0.01 && spacing < 2.0 ? spacing : 0.36;
     std::vector<juce::String> labels;
     for (const auto& cylinder : config.cylinders) labels.push_back("C" + juce::String(cylinder.id));
     cycle_.setCylinders(std::move(labels));
@@ -1812,6 +1821,16 @@ void EngineViewport::mouseWheelMove(const juce::MouseEvent& event, const juce::M
 
 void EngineViewport::mouseDoubleClick(const juce::MouseEvent&) { applyView(view_, true); }
 
+std::optional<std::array<AcousticPoint3M, 2>> EngineViewport::cameraMicrophones() const {
+    if (!settings_.cameraMicrophone || !scene_ || context_.getTargetComponent() == nullptr) return std::nullopt;
+    // Where the camera is going: the sound glides there on its own.
+    const auto orbit = goal();
+    const auto eye = orbitEye(orbit.target, orbit.yaw, orbit.pitch, orbit.distance);
+    const auto forward = render::normalise(orbit.target - eye);
+    const auto right = render::normalise(render::cross(forward, { 0.0F, 1.0F, 0.0F }));
+    return listenerFrame_.microphones(eye, right, microphoneSpacingM_);
+}
+
 void EngineViewport::showSettingsMenu() {
     const auto gpuAvailable = !glFailed_;
     const auto use3d = settings_.renderer3d && gpuAvailable;
@@ -1837,6 +1856,8 @@ void EngineViewport::showSettingsMenu() {
     menu.addItem(41, utf8("Pulsation strength (steady)"), use3d,
                  settings_.pressureWaves == ViewSettings::PressureWaves::strength);
     menu.addItem(42, utf8("Live pulses"), use3d, settings_.pressureWaves == ViewSettings::PressureWaves::live);
+    menu.addSectionHeader(utf8("Sound"));
+    menu.addItem(50, utf8("Microphone on the camera"), use3d, settings_.cameraMicrophone);
     menu.showMenuAsync(juce::PopupMenu::Options {}.withTargetComponent(&settingsButton_),
         [safe = juce::Component::SafePointer<EngineViewport>(this)](int result) {
             if (safe == nullptr || result == 0) return;
@@ -1853,6 +1874,8 @@ void EngineViewport::showSettingsMenu() {
                 settings.motionBlur = !settings.motionBlur;
             } else if (result == 22) {
                 settings.antiAliasing = !settings.antiAliasing;
+            } else if (result == 50) {
+                settings.cameraMicrophone = !settings.cameraMicrophone;
             } else if (result >= 40 && result <= 42) {
                 settings.pressureWaves = static_cast<ViewSettings::PressureWaves>(result - 40);
                 safe->pressureScalePa_ = 0.0F;

@@ -58,6 +58,10 @@ public:
     [[nodiscard]] bool prepare(double sampleRateHz,
                                double observerDistanceM = 1.0);
     void reset() noexcept;
+    /** Every inlet's microphones glide to `left` and `right`
+     * (FreeFieldObserver::moveMicrophones). Audio thread. */
+    void moveMicrophones(const AcousticPoint3M& left, const AcousticPoint3M& right,
+                         bool immediately = false) noexcept;
     void beginBlock(std::span<const PathBoundary> paths,
                     double acousticTimeScale) noexcept;
     /** Update gas/throttle targets at the producer interpolation cadence.

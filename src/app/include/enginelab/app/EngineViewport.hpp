@@ -6,6 +6,8 @@
 #include <enginelab/foundation/GasFieldSnapshot.hpp>
 #include <enginelab/render/CrankClock.hpp>
 #include <enginelab/render/GasFieldView.hpp>
+#include <enginelab/render/ListenerFrame.hpp>
+#include <array>
 #include <atomic>
 #include <condition_variable>
 #include <functional>
@@ -60,6 +62,9 @@ struct ViewSettings final {
         the strength when this is `hidden`. */
     enum class PressureWaves { hidden, strength, live };
     PressureWaves pressureWaves { PressureWaves::hidden };
+    /** The sound is heard from the camera (EngineViewport::cameraMicrophones)
+        instead of the engine's authored listener. */
+    bool cameraMicrophone { false };
 
     static juce::File file();
     void load();
@@ -244,6 +249,10 @@ public:
     }
     /** Called when that choice changes. */
     std::function<void()> onExhaustResolutionChanged;
+    /** With the camera microphone on, the two microphones at the camera
+        where it is heading (render::ListenerFrame), spaced as the engine's
+        authored pair; empty when off or with no 3-D model. */
+    [[nodiscard]] std::optional<std::array<AcousticPoint3M, 2>> cameraMicrophones() const;
     /** Called by a click in the view or a finished typed value: the
         keyboard goes back to driving the engine. */
     std::function<void()> onClaimKeyboard;
@@ -363,6 +372,8 @@ private:
 
     ViewSettings settings_;
     std::shared_ptr<const render::EngineModel3D> scene_;
+    render::ListenerFrame listenerFrame_;
+    double microphoneSpacingM_ { 0.36 };
     juce::String glError_;
     bool glFailed_ { false };
     double attachedAt_ {};

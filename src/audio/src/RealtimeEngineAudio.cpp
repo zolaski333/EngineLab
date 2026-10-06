@@ -4,6 +4,7 @@
 #include <enginelab/foundation/ExhaustGasAcoustics.hpp>
 #include <algorithm>
 #include <cmath>
+#include <utility>
 #include <numbers>
 
 namespace enginelab {
@@ -90,6 +91,10 @@ RealtimeEngineAudio::RealtimeEngineAudio(FiringEventQueue& queue,
             *exhaustGraph,
             std::span<const std::uint32_t>(cylinderIds.data(), count));
         if (compiled->valid()) acousticExhaustNetwork_ = std::move(compiled);
+        authoredMicrophones_ = {
+            effectiveMicrophonePosition(exhaustGraph->acousticObserver(), false),
+            effectiveMicrophonePosition(exhaustGraph->acousticObserver(), true) };
+        authoredObserverDistanceM_ = effectiveObserverDistanceM(exhaustGraph->acousticObserver());
     }
     if (engineConfig != nullptr) {
         const auto microphoneDistance = [](const AcousticPoint3M& point) {
@@ -111,6 +116,10 @@ RealtimeEngineAudio::RealtimeEngineAudio(FiringEventQueue& queue,
             engineConfig->forcedInduction, observerDistance);
         if (forcedInduction->valid())
             forcedInductionAcoustics_ = std::move(forcedInduction);
+        authoredMicrophones_ = {
+            effectiveMicrophonePosition(engineConfig->acousticObserver, false),
+            effectiveMicrophonePosition(engineConfig->acousticObserver, true) };
+        authoredObserverDistanceM_ = observerDistance;
     }
 }
 
@@ -148,6 +157,57 @@ bool RealtimeEngineAudio::replaceExhaustGraph(const ExhaustGraph& graph) {
     return true;
 }
 
+void RealtimeEngineAudio::setMicrophones(
+    const std::optional<std::array<AcousticPoint3M, 2>>& positions) noexcept {
+    const auto sequence = microphoneSequence_.load(std::memory_order_relaxed);
+    microphoneSequence_.store(sequence + 1U, std::memory_order_relaxed);
+    std::atomic_thread_fence(std::memory_order_release);
+    publishedMicrophonesMoved_.store(positions.has_value(), std::memory_order_relaxed);
+    if (positions) {
+        for (std::size_t index = 0; index < 2; ++index) {
+            const auto& point = (*positions)[index];
+            publishedMicrophones_[3 * index].store(point.x, std::memory_order_relaxed);
+            publishedMicrophones_[3 * index + 1].store(point.y, std::memory_order_relaxed);
+            publishedMicrophones_[3 * index + 2].store(point.z, std::memory_order_relaxed);
+        }
+    }
+    microphoneSequence_.store(sequence + 2U, std::memory_order_release);
+}
+
+void RealtimeEngineAudio::takeMicrophones() noexcept {
+    const auto sequence = microphoneSequence_.load(std::memory_order_acquire);
+    if (sequence == appliedMicrophoneSequence_ || (sequence & 1U) != 0U) return;
+    const auto moved = publishedMicrophonesMoved_.load(std::memory_order_relaxed);
+    std::array<AcousticPoint3M, 2> positions = authoredMicrophones_;
+    if (moved) {
+        for (std::size_t index = 0; index < 2; ++index)
+            positions[index] = { publishedMicrophones_[3 * index].load(std::memory_order_relaxed),
+                                 publishedMicrophones_[3 * index + 1].load(std::memory_order_relaxed),
+                                 publishedMicrophones_[3 * index + 2].load(std::memory_order_relaxed) };
+    }
+    std::atomic_thread_fence(std::memory_order_acquire);
+    // Written meanwhile: the next block reads it whole.
+    if (microphoneSequence_.load(std::memory_order_relaxed) != sequence) return;
+    appliedMicrophoneSequence_ = sequence;
+    microphonesMoved_ = moved;
+    currentMicrophones_ = positions;
+    const auto immediately = std::exchange(jumpMicrophones_, false);
+    const auto& [left, right] = positions;
+    if (acousticExhaustNetwork_) acousticExhaustNetwork_->moveMicrophones(left, right, immediately);
+    if (swappingExhaustNetwork_ != nullptr)
+        swappingExhaustNetwork_->network->moveMicrophones(left, right, immediately);
+    if (acousticIntakeNetwork_) acousticIntakeNetwork_->moveMicrophones(left, right, immediately);
+    if (swappingIntakeNetwork_ != nullptr)
+        swappingIntakeNetwork_->network->moveMicrophones(left, right, immediately);
+    const auto magnitude = [](const AcousticPoint3M& point) {
+        return std::sqrt(point.x * point.x + point.y * point.y + point.z * point.z);
+    };
+    // The authored distance exactly, so switching off restores the sound.
+    const auto distanceM = moved ? 0.5 * (magnitude(left) + magnitude(right)) : authoredObserverDistanceM_;
+    if (forcedInductionAcoustics_) forcedInductionAcoustics_->moveObserver(distanceM, immediately);
+    if (structuralModalRadiator_) structuralModalRadiator_->moveObserver(distanceM, immediately);
+}
+
 void RealtimeEngineAudio::collectRetiredExhaustNetworks() noexcept {
     delete retiredExhaustNetwork_.exchange(nullptr, std::memory_order_acq_rel);
     delete retiredForcedInduction_.exchange(nullptr, std::memory_order_acq_rel);
@@ -181,6 +241,8 @@ void RealtimeEngineAudio::beginIntakeSwapIfWaiting() noexcept {
         return;
     }
     swappingIntakeNetwork_ = incoming;
+    if (microphonesMoved_)
+        incoming->network->moveMicrophones(currentMicrophones_[0], currentMicrophones_[1], true);
     intakeSwapSamples_ = 0;
 }
 
@@ -234,6 +296,8 @@ void RealtimeEngineAudio::beginExhaustSwapIfWaiting() noexcept {
         return;
     }
     swappingExhaustNetwork_ = incoming;
+    if (microphonesMoved_)
+        incoming->network->moveMicrophones(currentMicrophones_[0], currentMicrophones_[1], true);
     exhaustSwapSamples_ = 0;
     exhaustSwapWarmupSamples_ = static_cast<std::int64_t>(
         std::llround(exhaustSwapWarmupSeconds * sampleRate_));
@@ -398,6 +462,9 @@ void RealtimeEngineAudio::prepare(double sampleRate, int maximumBlockSize) noexc
     oversampler_->reset();
     release();
     updateExhaustPreset(realtimeState_.exhaustPreset.load(std::memory_order_relaxed));
+    appliedMicrophoneSequence_ = 0;
+    microphonesMoved_ = false;
+    jumpMicrophones_ = microphoneSequence_.load(std::memory_order_acquire) != 0U;
     preparedSampleRate_.store(sampleRate_, std::memory_order_release);
 }
 void RealtimeEngineAudio::release() noexcept {
@@ -599,6 +666,7 @@ void RealtimeEngineAudio::renderWithStems(
     // costs 10-100x and eventually overruns the callback (audible dropouts).
     const juce::ScopedNoDenormals noDenormals;
     output.clear(startSample, sampleCount);
+    takeMicrophones();
     const auto writableStem = [&](juce::AudioBuffer<float>* candidate) {
         return candidate != nullptr && candidate != &output
             && candidate->getNumChannels() > 0

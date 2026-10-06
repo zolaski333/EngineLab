@@ -1547,9 +1547,31 @@ void MainComponent::timerCallback() {
     topBar_.refresh(model_);
     controls_.refresh(model_);
     viewport_.refresh();
+    pushCameraMicrophones();
     readouts_.repaint();
     side_.refresh();
     status_.refresh();
+}
+
+void MainComponent::pushCameraMicrophones() {
+    if (!audio_) return;
+    const auto microphones = viewport_.cameraMicrophones();
+    const auto same = [](const auto& a, const auto& b) {
+        if (a.has_value() != b.has_value()) return false;
+        if (!a) return true;
+        for (std::size_t index = 0; index < 2; ++index)
+            if ((*a)[index].x != (*b)[index].x || (*a)[index].y != (*b)[index].y || (*a)[index].z != (*b)[index].z)
+                return false;
+        return true;
+    };
+    // A new renderer starts at the authored positions.
+    if (microphoneRenderer_ != audio_.get()) {
+        microphoneRenderer_ = audio_.get();
+        pushedMicrophones_.reset();
+    }
+    if (same(microphones, pushedMicrophones_)) return;
+    audio_->setMicrophones(microphones);
+    pushedMicrophones_ = microphones;
 }
 
 void MainComponent::paint(juce::Graphics& g) {

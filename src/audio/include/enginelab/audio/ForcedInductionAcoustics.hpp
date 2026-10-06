@@ -43,6 +43,11 @@ public:
     [[nodiscard]] bool prepare(double sampleRateHz,
                                double observerDistanceM = 0.0) noexcept;
     void reset() noexcept;
+    /** The listener glides to `distanceM` from the engine (kept within
+     * FreeFieldObserver's microphone distances) with the microphones' time
+     * constant (FreeFieldObserver::microphoneGlideSeconds); `immediately`
+     * jumps there. Audio thread. */
+    void moveObserver(double distanceM, bool immediately = false) noexcept;
     /** Same-binary diagnostic control for the pre-fix unnormalised bandpass. */
     void setBroadbandPowerNormalisationEnabled(bool enabled) noexcept {
         broadbandPowerNormalisationEnabled_ = enabled;
@@ -89,6 +94,8 @@ private:
 
     ForcedInductionConfig config_;
     double sampleRateHz_ { 48'000.0 };
+    double targetObserverDistanceM_ { 1.0 };
+    double observerGlideCoefficient_ { 1.0 };
     double observerDistanceM_ { 1.0 };
     double configuredObserverDistanceM_ { 1.0 };
     double compressorPhase_ {};

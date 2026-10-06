@@ -19,6 +19,7 @@
 #include <atomic>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <span>
 #include <vector>
 namespace enginelab {
@@ -124,6 +125,18 @@ public:
     // difference 33 dB below the engine, 150 ms 74 dB.
     static constexpr double exhaustSwapWarmupSeconds = 0.150;
     static constexpr double exhaustSwapFadeSeconds = 0.030;
+    /**
+     * Puts the listener's two microphones at `positions` (metres, in the
+     * acoustic frame of AcousticObserverConfig, used as given: no
+     * listening-distance scale), or back where the engine's observer put them
+     * when empty. Every spatialised layer glides there
+     * (FreeFieldObserver::moveMicrophones): each exhaust outlet and intake
+     * inlet from its own position, the turbo and the structure by the
+     * microphones' mean distance from the engine. Other layers do not move.
+     * One thread at a time; lock-free; the audio thread takes the newest
+     * positions at its next block.
+     */
+    void setMicrophones(const std::optional<std::array<AcousticPoint3M, 2>>& positions) noexcept;
     void render(juce::AudioBuffer<float>& output, int startSample, int sampleCount) noexcept override;
     /** Render the identical master while observing optional pre-master stems. */
     void renderWithStems(juce::AudioBuffer<float>& output, int startSample,
@@ -533,6 +546,21 @@ private:
     std::atomic<std::uint64_t> exhaustSwaps_ { 0 };
     std::atomic<double> preparedSampleRate_ { 0.0 };
     bool outletJetNoiseEnabled_ { true };
+    /** setMicrophones() -> audio thread, a sequence lock: odd while written. */
+    std::atomic<std::uint64_t> microphoneSequence_ { 0 };
+    std::array<std::atomic<double>, 6> publishedMicrophones_ {};
+    std::atomic<bool> publishedMicrophonesMoved_ { false };
+    /** Audio thread: the positions the layers are going to. */
+    std::uint64_t appliedMicrophoneSequence_ { 0 };
+    bool microphonesMoved_ { false };
+    bool jumpMicrophones_ { false };
+    std::array<AcousticPoint3M, 2> currentMicrophones_ {};
+    /** Where the engine's observer puts the microphones, and their mean
+     * distance (effectiveMicrophonePosition, effectiveObserverDistanceM). */
+    std::array<AcousticPoint3M, 2> authoredMicrophones_ {};
+    double authoredObserverDistanceM_ { 1.0 };
+    /** Audio thread, at the start of a block: newly published positions. */
+    void takeMicrophones() noexcept;
     /** The same handoff for the intake network. */
     struct IntakeNetworkHandoff final {
         std::unique_ptr<AcousticIntakeNetwork> network;
