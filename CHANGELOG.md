@@ -131,6 +131,11 @@ file formats, always with an in-memory migration).
 
 ### Fixed
 
+- The 2JZ's turbo holds its ~0.9 bar to the limiter. Its wastegate was too
+  small to bypass the exhaust at high speed: fully open from 5,500 rpm, the
+  boost ran to 246 kPa at 6,000 rpm (and 297 kPa at 6,500). It now holds
+  190-194 kPa, and the rated power falls from 275 to 259 kW (Toyota: 239 kW).
+  The sound changes only above about 5,000 rpm under load.
 - The `⋯` menu showed `â€¦` instead of an ellipsis (Save engine…, Import
   engine…) and an impulse response load error `Â·`; a test now refuses such
   text in the sources.

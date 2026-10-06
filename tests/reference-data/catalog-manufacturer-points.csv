@@ -12,10 +12,7 @@ K20A-like,power_kw,8000,162.0,0.15,Honda K20A rated specification
 LS3-like,torque_nm,4600,575.0,0.15,GM LS3 rated specification
 LS3-like,power_kw,5900,321.0,0.15,GM LS3 rated specification
 2JZ-GTE-like,torque_nm,4000,427.0,0.15,Toyota 2JZ-GTE export rated specification
-# 2JZ power over-predicted by ~15 % before 2026-09-23 (274.39 kW, +14.81 %);
-# limiting the start fuel reserve to cranking moved it to 275.12 kW (+15.11 %).
-# Tolerance 0.16 is a declared, owner-approved exception, not a validation.
-2JZ-GTE-like,power_kw,5600,239.0,0.16,Toyota 2JZ-GTE export rated specification
+2JZ-GTE-like,power_kw,5600,239.0,0.15,Toyota 2JZ-GTE export rated specification
 EJ25-like,torque_nm,4000,393.0,0.15,Subaru 2021 WRX STI EJ257 rated specification
 EJ25-like,power_kw,6000,231.0,0.15,Subaru 2021 WRX STI EJ257 rated specification
 Audi I5-like,torque_nm,4000,500.0,0.15,Audi RS 3 2.5 TFSI rated specification

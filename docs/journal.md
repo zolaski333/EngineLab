@@ -5,6 +5,18 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-06 — 2JZ boost ran past its wastegate
+
+- DynoSweepHarness: at 520 mm2 (the default gate) the 2JZ's gate is fully
+  open from 5,500 rpm and the pressure ratio keeps rising: MAP 202 kPa at
+  5,000, 246 at 6,000, 297 at 6,500. EJ25, I5 and TDI hold theirs.
+- Turbine inlet at the mean back pressure instead of the port peak: 252 kPa
+  at 6,500, not a fix; not kept. Gate 900 mm2 (a 34 mm port): 190-194 kPa
+  from 3,000 to 6,500; 1,300 mm2 gives the same curve.
+- CatalogReference: power 275.2 -> 259.2 kW (+15.2 -> +8.4 %), torque 371.3 ->
+  373.2 N.m at 4,000 (-12.6 %). Audio harness (holds ~3,700 rpm): RMS and peak
+  equal, crest 6.33 -> 6.84. New test CatalogBoostHold (fails at 520 mm2: 2.47).
+
 ## 2026-10-06 — DFCO resume: the EJ25's peak is lean, not rich
 
 - LoadedAccelerationHarness now splits the resume error: rich 16-30 %, lean

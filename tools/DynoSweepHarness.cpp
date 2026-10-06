@@ -64,6 +64,8 @@ struct Sample final {
     double egtC {};
     double mapKpa {};
     double exhaustKpa {};
+    /** Compressor pressure ratio, window mean; not a CSV column. */
+    double boostPressureRatio {};
     double airMgPerCycle {};
     double fuelGramsPerSecond {};
     double minimumRpm {};
@@ -204,6 +206,7 @@ Sample holdPoint(enginelab::EngineSimulator& simulator,
     auto peak = 0.0;
     auto cylN = 0.0;
     auto veAcc = 0.0, lambdaAcc = 0.0, imepAcc = 0.0, egtAcc = 0.0, mapAcc = 0.0;
+    auto boostAcc = 0.0;
     auto airAcc = 0.0, fuelAcc = 0.0, rpmAcc = 0.0;
     auto brakeWorkJoules = 0.0;
     auto brakeCrankRadians = 0.0;
@@ -297,6 +300,7 @@ Sample holdPoint(enginelab::EngineSimulator& simulator,
             grossImepAcc += frame.state.grossIndicatedMeanEffectivePressureBar;
             egtAcc += frame.state.exhaustTemperatureC;
             mapAcc += frame.state.manifoldPressureKpa;
+            boostAcc += frame.state.boostPressureRatio;
             exhaustAcc += frame.state.exhaustPressureKpa;
             airAcc += frame.state.airMassMgPerCycle;
             fuelAcc += frame.state.fuelFlowGramsPerSecond;
@@ -332,6 +336,7 @@ Sample holdPoint(enginelab::EngineSimulator& simulator,
     acc.peakCylBar = peak;
     acc.egtC = egtAcc / d;
     acc.mapKpa = mapAcc / d;
+    acc.boostPressureRatio = boostAcc / d;
     acc.exhaustKpa = exhaustAcc / d;
     acc.airMgPerCycle = airAcc / d;
     acc.fuelGramsPerSecond = fuelAcc / d;
@@ -358,8 +363,9 @@ Sample holdPoint(enginelab::EngineSimulator& simulator,
     return acc;
 }
 
-void sweepEngine(const enginelab::EngineConfig& baseConfig, double stepRpm,
-                 bool useWellMixedExhaustJunctions) {
+// Returns the highest held compressor pressure ratio over the sweep.
+double sweepEngine(const enginelab::EngineConfig& baseConfig, double stepRpm,
+                   bool useWellMixedExhaustJunctions) {
     auto config = baseConfig;
     enginelab::normaliseEngineConfig(config);
     enginelab::SimpleEcuModel ecu;
@@ -390,13 +396,17 @@ void sweepEngine(const enginelab::EngineConfig& baseConfig, double stepRpm,
     const auto maxRpm = 0.95 * std::min(config.redlineRpm, config.ignition.revLimitRpm);
     const auto startRpm = std::max(2000.0, std::round(config.idleRpm * 1.5 / stepRpm) * stepRpm);
     auto first = true;
+    auto highestBoostPressureRatio = 0.0;
     for (double target = startRpm; target <= maxRpm + 1.0; target += stepRpm) {
         // Longer settle for the first point (cold ramp), shorter warm-started.
         const auto sample = holdPoint(
             simulator, config, target, first ? 5.0 : 2.0, 1.0);
         first = false;
         writeRow(std::cout, config, target, sample);
+        highestBoostPressureRatio = std::max(
+            highestBoostPressureRatio, sample.boostPressureRatio);
     }
+    return highestBoostPressureRatio;
 }
 
 bool validateReferencePoints(const std::filesystem::path& catalogRoot,
@@ -531,6 +541,10 @@ int main(int argc, char** argv) {
     auto stepRpm = 500.0;
     auto schemaOnly = false;
     auto useWellMixedExhaustJunctions = false;
+    // Wide-open-throttle boost must stay under the wastegate's control: at
+    // most this far above the ratio where the gate is fully open. Turbocharged
+    // engines only.
+    auto boostHoldMargin = -1.0;
     for (int index = 1; index < argc; ++index) {
         const std::string argument = argv[index];
         if (argument == "--catalog-root" && index + 1 < argc) catalogRoot = argv[++index];
@@ -541,11 +555,13 @@ int main(int argc, char** argv) {
         else if (argument == "--schema-only") schemaOnly = true;
         else if (argument == "--well-mixed-junctions")
             useWellMixedExhaustJunctions = true;
+        else if (argument == "--boost-hold-margin" && index + 1 < argc)
+            boostHoldMargin = std::stod(argv[++index]);
         else {
             std::cerr << "usage: EngineLabDynoSweepHarness [--catalog-root dir]"
                          " [--filter name-fragment] [--step rpm]"
                          " [--reference-file csv] [--schema-only]"
-                         " [--well-mixed-junctions]\n";
+                         " [--well-mixed-junctions] [--boost-hold-margin ratio]\n";
             return EXIT_FAILURE;
         }
     }
@@ -589,7 +605,22 @@ int main(int argc, char** argv) {
         engines.push_back(selected.entry->config);
     }
 
-    for (const auto& engine : engines)
-        sweepEngine(engine, stepRpm, useWellMixedExhaustJunctions);
-    return EXIT_SUCCESS;
+    auto boostHeld = true;
+    for (const auto& engine : engines) {
+        const auto& turbo = engine.forcedInduction;
+        const auto checkBoost = boostHoldMargin >= 0.0 && turbo.enabled
+            && turbo.type == enginelab::ForcedInductionType::turbocharger;
+        if (boostHoldMargin >= 0.0 && !checkBoost) continue;
+        const auto highest = sweepEngine(
+            engine, stepRpm, useWellMixedExhaustJunctions);
+        if (!checkBoost) continue;
+        // The simulator's gate is fully open 0.06 above its set ratio.
+        const auto limit = turbo.wastegatePressureRatio + 0.06 + boostHoldMargin;
+        const auto held = highest <= limit;
+        boostHeld = boostHeld && held;
+        std::cerr << "boost hold: " << engine.name << " highest pressure ratio "
+                  << highest << ", limit " << limit
+                  << (held ? " PASS" : " FAIL") << '\n';
+    }
+    return boostHeld ? EXIT_SUCCESS : EXIT_FAILURE;
 }

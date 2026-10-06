@@ -250,6 +250,14 @@ if(TARGET EngineLabDynoSweepHarness)
         PASS_REGULAR_EXPRESSION
             "exhaust_stroke_mep_bar,intake_stroke_mep_bar")
     set_tests_properties(EngineLab.CatalogReference PROPERTIES TIMEOUT 600)
+    # Every catalogue turbo holds its boost at wide-open throttle across the
+    # range. The 2JZ's 520 mm2 default gate was fully open from 5,500 rpm and
+    # let the pressure ratio reach 2.47 at 6,000 rpm (journal 2026-10-06).
+    add_test(NAME EngineLab.CatalogBoostHold
+        COMMAND EngineLabDynoSweepHarness
+            --catalog-root "${CMAKE_SOURCE_DIR}"
+            --step 1000 --boost-hold-margin 0.05)
+    set_tests_properties(EngineLab.CatalogBoostHold PROPERTIES TIMEOUT 600)
 endif()
 if(TARGET EngineLabAudioRenderHarness)
     add_test(NAME EngineLab.AudioRender COMMAND EngineLabAudioRenderHarness)
