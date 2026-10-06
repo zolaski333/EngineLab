@@ -65,7 +65,7 @@ struct ViewSettings final {
     PressureWaves pressureWaves { PressureWaves::hidden };
     /** The sound is heard from the camera (EngineViewport::cameraMicrophones)
         instead of the engine's authored listener. */
-    bool cameraMicrophone { false };
+    bool cameraMicrophone { true };
 
     static juce::File file();
     void load();

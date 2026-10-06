@@ -58,7 +58,7 @@ propagates separately to the left and right microphones with exact distance,
 
 ### Camera microphone
 
-*Microphone on the camera* (view settings, off by default) moves the pair to
+*Microphone on the camera* (view settings, on by default) moves the pair to
 the 3-D view's camera. `RealtimeEngineAudio::setMicrophones` publishes the
 positions lock-free (a sequence lock); the audio thread takes them at the next
 block and every spatialised layer moves: each exhaust outlet and intake inlet

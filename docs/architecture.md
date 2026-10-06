@@ -454,7 +454,7 @@ solver's own state, not by an animation:
   engine runs steadily. The Gas flow layer shows the strength when the mode
   is *Hidden*; the other layers show no waves.
 - **Camera microphone.** *Microphone on the camera* (settings menu, *Sound*,
-  saved in `view.json`, off by default) hears the engine from where the
+  saved in `view.json` as `microphoneOnCamera`, on by default) hears the engine from where the
   camera is heading: `EngineViewport::cameraMicrophones()` maps the eye and
   its right vector through `render::ListenerFrame`, and `MainComponent`
   passes them to `RealtimeEngineAudio::setMicrophones` when they change or a

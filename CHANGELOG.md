@@ -87,7 +87,7 @@ file formats, always with an in-memory migration).
 - The intake's sizes too: runner length and diameter, plenum volume and
   throttle bore are taken while running, sound included. Adding or removing
   a path, a throttle or the airbox still restarts.
-- *Microphone on the camera* in the 3-D view's settings (off by default):
+- *Microphone on the camera* in the 3-D view's settings (on by default):
   the sound is heard from where the camera is, and follows it smoothly as it
   moves. The exhaust is heard from its drawn tailpipe, the intake from its
   drawn mouth and the turbo from where it is drawn, no longer from the middle
