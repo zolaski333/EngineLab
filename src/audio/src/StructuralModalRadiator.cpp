@@ -1,4 +1,5 @@
 #include <enginelab/audio/StructuralModalRadiator.hpp>
+#include <enginelab/audio/FreeFieldObserver.hpp>
 
 #include <algorithm>
 #include <cmath>
@@ -276,6 +277,8 @@ bool StructuralModalRadiator::prepare(double sampleRateHz,
         return false;
     sampleRateHz_ = sampleRateHz;
     observerDistanceM_ = observerDistanceM;
+    targetObserverDistanceM_ = observerDistanceM;
+    observerGlideCoefficient_ = 1.0 - std::exp(-1.0 / (FreeFieldObserver::microphoneGlideSeconds * sampleRateHz));
     const auto dt = 1.0 / sampleRateHz_;
     for (auto& mode : modes_) {
         if (!(mode.info.frequencyHz > 0.0)
@@ -305,8 +308,18 @@ void StructuralModalRadiator::reset() noexcept {
     }
 }
 
+void StructuralModalRadiator::moveObserver(double distanceM, bool immediately) noexcept {
+    if (!std::isfinite(distanceM)) return;
+    targetObserverDistanceM_ = std::clamp(distanceM, FreeFieldObserver::minimumMicrophoneDistanceM,
+                                          FreeFieldObserver::maximumMicrophoneDistanceM);
+    if (immediately) observerDistanceM_ = targetObserverDistanceM_;
+}
+
 float StructuralModalRadiator::process(
     const StructuralExcitationSample& excitation) noexcept {
+    if (observerDistanceM_ != targetObserverDistanceM_)
+        observerDistanceM_ = FreeFieldObserver::glideDistance(
+            observerDistanceM_, targetObserverDistanceM_, observerGlideCoefficient_);
     const auto count = std::min<std::size_t>(
         excitation.cylinderCount, excitation.gasForceN.size());
     auto pressurePa = 0.0;

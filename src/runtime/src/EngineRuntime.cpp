@@ -464,6 +464,13 @@ void EngineRuntime::publishExhaustTelemetry(const EngineConfig& config,
         std::memory_order_relaxed);
 }
 
+void EngineRuntime::renameEngine(std::string name) {
+    // The simulation thread reads the name only when a dyno run starts, under
+    // this lock.
+    const std::scoped_lock lock(dynoMutex_);
+    config_.name = std::move(name);
+}
+
 bool EngineRuntime::applyLiveExhaust(const EngineConfig& edited,
                                      std::optional<double> targetCellLengthM) {
     const auto cellLengthM = targetCellLengthM.value_or(exhaustCellLengthM_);
@@ -563,6 +570,97 @@ bool EngineRuntime::applyLiveCylinderResize(const EngineConfig& edited, double r
     }
     liveCylinderResizesRequested_.fetch_add(1, std::memory_order_release);
     return true;
+}
+
+bool EngineRuntime::applyLiveSettings(const EngineConfig& edited) {
+    auto change = std::make_unique<LiveSettingsChange>();
+    change->config = config_;
+    change->config.injection = edited.injection;
+    change->config.forcedInduction = edited.forcedInduction;
+    try {
+        normaliseEngineConfig(change->config);
+        if (validateEngineConfig(change->config)) return false;
+    } catch (const std::exception&) {
+        return false;
+    }
+    if (!EngineSimulator::settingsReplaceable(config_, change->config)) return false;
+    // The simulation thread never reads these two fields of config_.
+    config_.injection = change->config.injection;
+    config_.forcedInduction = change->config.forcedInduction;
+    {
+        const std::scoped_lock lock(liveExhaustMutex_);
+        std::swap(pendingSettingsChange_, change);
+    }
+    liveSettingsChangesRequested_.fetch_add(1, std::memory_order_release);
+    return true;
+}
+
+bool EngineRuntime::applyLiveIntake(const EngineConfig& edited) {
+    if (edited.cylinders.size() != config_.cylinders.size()) return false;
+    auto change = std::make_unique<LiveIntakeChange>();
+    change->config = config_;
+    change->config.intake = edited.intake;
+    change->config.intakePaths = edited.intakePaths;
+    change->config.plenumVolumeLitres = edited.plenumVolumeLitres;
+    change->config.throttleDiameterMm = edited.throttleDiameterMm;
+    for (std::size_t index = 0; index < config_.cylinders.size(); ++index) {
+        auto& cylinder = change->config.cylinders[index];
+        cylinder.intakeRunnerLengthMm = edited.cylinders[index].intakeRunnerLengthMm;
+        cylinder.intakeRunnerDiameterMm = edited.cylinders[index].intakeRunnerDiameterMm;
+    }
+    try {
+        normaliseEngineConfig(change->config);
+        if (validateEngineConfig(change->config)) return false;
+    } catch (const std::exception&) {
+        return false;
+    }
+    if (!EngineSimulator::intakeReplaceable(config_, change->config)) return false;
+    change->intake = simulator_.buildLiveIntake(change->config);
+    if (!change->intake) return false;
+    // The simulation thread never reads these fields of config_.
+    config_.intake = change->config.intake;
+    config_.intakePaths = change->config.intakePaths;
+    config_.plenumVolumeLitres = change->config.plenumVolumeLitres;
+    config_.throttleDiameterMm = change->config.throttleDiameterMm;
+    for (std::size_t index = 0; index < config_.cylinders.size(); ++index) {
+        const auto& source = change->config.cylinders[index];
+        config_.cylinders[index].intakeRunnerLengthMm = source.intakeRunnerLengthMm;
+        config_.cylinders[index].intakeRunnerDiameterMm = source.intakeRunnerDiameterMm;
+    }
+    {
+        const std::scoped_lock lock(liveExhaustMutex_);
+        std::swap(pendingIntakeChange_, change);
+    }
+    liveIntakeChangesRequested_.fetch_add(1, std::memory_order_release);
+    return true;
+}
+
+void EngineRuntime::consumeLiveIntakeChange() noexcept {
+    const auto requested = liveIntakeChangesRequested_.load(std::memory_order_acquire);
+    if (requested == liveIntakeChangesConsumed_) return;
+    liveIntakeChangesConsumed_ = requested;
+    std::unique_ptr<LiveIntakeChange> change;
+    {
+        const std::scoped_lock lock(liveExhaustMutex_);
+        std::swap(pendingIntakeChange_, change);
+    }
+    if (!change || !change->intake || !simulator_.replaceIntake(*change->intake, change->config)) return;
+    liveIntakeChangesApplied_.fetch_add(1, std::memory_order_release);
+    // The previous runners leave with `change`, between two frames.
+}
+
+void EngineRuntime::consumeLiveSettingsChange() noexcept {
+    const auto requested = liveSettingsChangesRequested_.load(std::memory_order_acquire);
+    if (requested == liveSettingsChangesConsumed_) return;
+    liveSettingsChangesConsumed_ = requested;
+    std::unique_ptr<LiveSettingsChange> change;
+    {
+        const std::scoped_lock lock(liveExhaustMutex_);
+        std::swap(pendingSettingsChange_, change);
+    }
+    if (!change || !simulator_.replaceSettings(change->config)) return;
+    liveSettingsChangesApplied_.fetch_add(1, std::memory_order_release);
+    // The previous settings leave with `change`, between two frames.
 }
 
 void EngineRuntime::consumeLiveCylinderResize() noexcept {
@@ -1171,6 +1269,8 @@ void EngineRuntime::run(std::stop_token stopToken) {
         }
         consumeLiveExhaustChange();
         consumeLiveCylinderResize();
+        consumeLiveSettingsChange();
+        consumeLiveIntakeChange();
         const EngineControls controls { ignition_.load(), starter_.load(),
             (dynoActive_ ? dynoThrottleCommand_
                          : std::clamp(throttle_.load(), 0.0, 1.0))

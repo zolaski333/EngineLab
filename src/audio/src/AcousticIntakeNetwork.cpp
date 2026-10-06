@@ -322,6 +322,12 @@ bool AcousticIntakeNetwork::prepare(double sampleRateHz,
     return true;
 }
 
+void AcousticIntakeNetwork::moveMicrophones(const AcousticPoint3M& left,
+                                            const AcousticPoint3M& right, bool immediately) noexcept {
+    if (!impl_) return;
+    for (auto& path : impl_->paths) path.observer.moveMicrophones(left, right, immediately);
+}
+
 void AcousticIntakeNetwork::reset() noexcept {
     if (!impl_) return;
     impl_->diagnostics = {};

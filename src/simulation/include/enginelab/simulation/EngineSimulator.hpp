@@ -146,6 +146,42 @@ public:
     [[nodiscard]] bool replaceExhaustNetwork(
         std::unique_ptr<gasdynamics::ExhaustGasNetwork>& network,
         const EngineConfig& config);
+    /** Whether `edited`'s injectors and forced induction can replace
+     * `running`'s in a running engine (replaceSettings): the same injection
+     * mode, forced induction on or off alike, of the same type, with the same
+     * blade and lobe counts (the sound is built around them). */
+    [[nodiscard]] static bool settingsReplaceable(const EngineConfig& running,
+                                                  const EngineConfig& edited) noexcept;
+    /** Take `config`'s injector and forced-induction settings between two
+     * steps, without a restart: the simulation reads them at every step and
+     * keeps nothing derived from them. They are swapped in, so this thread
+     * does not allocate; `config` leaves with the previous ones. False, with
+     * nothing changed, when !settingsReplaceable(). Simulation thread only,
+     * like step(). */
+    [[nodiscard]] bool replaceSettings(EngineConfig& config) noexcept;
+    /** The intake runners of a live intake change (buildLiveIntake). */
+    struct LiveIntake final {
+        std::array<std::unique_ptr<gasdynamics::ExhaustGasNetwork>, 32> runners;
+    };
+    /** Whether `edited`'s intake can replace `running`'s in a running engine
+     * (replaceIntake): the same cylinders on the same intake paths, the same
+     * throttle count, an airbox only where there was one. Lengths,
+     * diameters, volumes and coefficients may change. */
+    [[nodiscard]] static bool intakeReplaceable(const EngineConfig& running,
+                                                const EngineConfig& edited) noexcept;
+    /** The intake runners of `config` built as the simulator builds its own,
+     * for replaceIntake(). Null when they do not compile. The caller checks
+     * intakeReplaceable() first. Not realtime-safe; any thread, since it reads
+     * only `config` and what construction fixed. */
+    [[nodiscard]] std::unique_ptr<LiveIntake> buildLiveIntake(const EngineConfig& config) const;
+    /** Take `config`'s intake between two steps, without a restart: each new
+     * runner takes over its predecessor's gas and wall state
+     * (ExhaustGasNetwork::adoptStateFrom), each plenum keeps its gas state at
+     * its new volume (GasCell::resizeKeepingState) and takes its new throttle
+     * area; the rest of the intake is read at every step. On success `intake`
+     * and `config` hold the previous runners and intake, freed by the caller;
+     * on failure nothing changes. Simulation thread only, like step(). */
+    [[nodiscard]] bool replaceIntake(LiveIntake& intake, EngineConfig& config) noexcept;
     /** Move the cylinders to `target`'s bore, stroke, deck height and
      * compression ratio while the engine runs; nothing else of `target` is
      * read. The cylinders on one crank journal change together, at the
@@ -212,6 +248,8 @@ private:
      * ambient reservoir behind the runner mouth.
      */
     void configurePhysicalIntakeNetworks();
+    [[nodiscard]] std::unique_ptr<gasdynamics::ExhaustGasNetwork> buildIntakeRunnerNetwork(
+        const EngineConfig& config, std::size_t cylinderIndex) const;
     void configureIntakeWorkerPool();
     [[nodiscard]] RunningState determineRunningState(const EngineControls&) const noexcept;
     /** Injector open time divided by the complete 720-degree cycle. */

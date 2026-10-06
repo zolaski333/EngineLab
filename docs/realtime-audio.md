@@ -56,6 +56,38 @@ acceleration gives a reference monopole pressure. `FreeFieldObserver` then
 propagates separately to the left and right microphones with exact distance,
 `1/r` decay, `r/c` delay and `ka`-dependent directivity.
 
+### Camera microphone
+
+*Microphone on the camera* (view settings, off by default) moves the pair to
+the 3-D view's camera. `RealtimeEngineAudio::setMicrophones` publishes the
+positions lock-free (a sequence lock); the audio thread takes them at the next
+block and every spatialised layer moves: each exhaust outlet and intake inlet
+from its own position (`FreeFieldObserver::moveMicrophones`), the turbo and
+the structure by the pair's mean distance. Combustion and the legacy layers
+do not move.
+
+A moved microphone glides, with a 0.2 s time constant, its delay changing by
+at most 0.02 sample per sample: a pitch shift of 2 % at most, never a step.
+The glide ends in a short linear tail that lands on the target exactly; a
+plain exponential step in float stalls once it falls below half an ulp (a
+560-sample delay stopped 0.3 sample short, leaving the sound 35 dB off the
+default one after switching off).
+It stays 0.25 to 40 m from each source (closer, a 1/r point source is no
+model of a pipe mouth). Switched off, the pair glides back to the authored
+positions and the sound becomes the default one again. An unmoved
+microphone runs the exact arithmetic it always has.
+
+The view maps its frame (millimetres, +Y up, +Z along the crankshaft) to the
+sound's with `render::ListenerFrame`: up stays up, distances from the origin
+are kept, and the frame is turned about the vertical so that the drawn
+tailpipe points along the first outlet's acoustic axis. The sound's sources
+are schematic (outlets near the origin): a camera close to a drawn tailpipe
+that sits half a metre from the origin hears the outlet where the sound
+places it, not where it is drawn. The camera is usually within a metre or two
+of the engine, against 4 m for the authored listener, so the level and the
+balance between layers change; the master's safety gain and limiter catch
+what is too loud.
+
 The signal stays in pascals until the monitoring conversion. Since dBFS
 describes an electrical/digital chain and not a universal pressure, the full
 scale SPL of the microphone/preamp is published explicitly in

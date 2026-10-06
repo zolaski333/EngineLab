@@ -5,6 +5,64 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-06 — Camera microphone
+
+- `EngineLab.CameraMicrophone`: twice as far, -6.02 dB for a tone, the CP2
+  block (-6.02), exhaust (-6.02), intake (-5.99), 2JZ turbo (-6.02); pitch
+  979.98-1000 Hz during a 1 kHz glide; largest sample step while moving 0.0049
+  against 0.0128 before; a live exhaust/intake swap heard at -6.00/-6.00 dB.
+- Switched off, the CP2 stayed 35 dB off its default sound: the float glide
+  stalls 0.3 sample short (step < half an ulp). A linear tail lands it: bit
+  for bit again 1.25 s after switching off. Mutations caught: 9 of 10, the
+  survivor equivalent. Off by default; not listened to or exercised on screen.
+
+## 2026-10-06 — Inspector edits for intake, injectors and boost
+
+- `resizeIntakePart`: read and written where the engine keeps them (own
+  runner or the path's), mirrored on a single path (without it, normalising
+  puts the old runner back), refused out of range; the runtime takes them.
+  Mutations caught: no mirror, own runner ignored.
+- The turbine flow area is read at every step (outlet restriction) and by
+  the turbo sound per sample: a live edit is not stale. Not exercised on
+  screen: the app starts; no click in its window from here.
+
+## 2026-10-06 — Intake sizes while running
+
+- `EngineLab.LiveIntake`, 60 % of redline, change at 6 s (runners +120 mm,
+  plenum x1.6, throttle +6 mm): torque built/swapped/untouched CP2
+  78.4/78.6/60.3, K20A 223.6/223.6/229.1, LS3 685.6/685.7/628.7 Nm.
+- The stiff dyno moves the speed to its new equilibrium within a few frames
+  (LS3: 28 rpm): a first "no step" bound (1.5 x the engine's own) failed on
+  that legitimate shift; the bound now adds it.
+- Mutations caught: runners without their state, plenum not resized, resize
+  not keeping its state, scope blind to a path's own size (needed a two-path
+  CP2: no catalogue engine has two), audio swap not begun, no warm-up.
+
+## 2026-10-06 — Injectors and turbo while running
+
+- `EngineLab.LiveSettings`, held at 60 % of redline, change at 6 s, mean of
+  the last 4 s. 2JZ wastegate 1.89 -> 1.42: boost ratio 1.94 -> 1.68 (built)
+  and 1.69 (swapped). Its brake torque moved 1 % only: not limited by boost.
+- CP2 injectors: x0.45 and 4-8 g/s change nothing (its own are 20 g/s);
+  2 g/s each gives 60 -> 46 Nm, swapped 45.8.
+- Mutations caught: no turbo swap, no injection swap, audio update not taken,
+  scope blind to the turbo, runtime without its check, layer taking another
+  compressor. The app starts; the JSON editor path not exercised on screen.
+
+## 2026-10-06 — Saving an engine as it is
+
+- `EngineLab.SavedEngine`: the 16 catalogue engines, edited (bore -1 mm,
+  runners +40 mm), saved and read back run bit-identical over 2.5 s
+  (cranking to 70 % throttle); tables retarded 6° likewise.
+- The JSON did not name the voicing: a copy lost it (K20, voiced monitor:
+  rms 0.0341 instead of 0.0363; the physical reference monitor ignores the
+  voicing). Family and key are now in the JSON; the 16 render the same master
+  rms and peak once saved.
+- Mutations caught: runner length not decoded, tables not read, voicing not
+  restored, revision in the "edited" test, rename not applied.
+- Not checked: the menu, dialogs and picker dot on screen (no screen here);
+  the app starts and closes with the change.
+
 ## 2026-10-06 — EJ25: one exhaust path into its one turbo
 
 - Two paths (one per bank) left cylinders 2/4 bypassing the drawn turbo; the

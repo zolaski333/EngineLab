@@ -46,6 +46,15 @@ void TopBar::EnginePicker::setEngine(const juce::String& name, const juce::Strin
     repaint();
 }
 
+void TopBar::EnginePicker::setModified(bool modified) {
+    if (modified == modified_) return;
+    modified_ = modified;
+    setTooltip(modified ? utf8("Edited since it was loaded: ⋯ › Save engine keeps the edits, "
+                               "Return reloads the engine as it was")
+                        : utf8("Choose an engine (F1 to F12 select the first twelve directly)"));
+    repaint();
+}
+
 void TopBar::EnginePicker::paintButton(juce::Graphics& g, bool highlighted, bool down) {
     const auto bounds = getLocalBounds().toFloat().reduced(0.5F);
     const auto alpha = isEnabled() ? 1.0F : 0.5F;
@@ -63,6 +72,12 @@ void TopBar::EnginePicker::paintButton(juce::Graphics& g, bool highlighted, bool
     g.strokePath(arrow, juce::PathStrokeType(1.6F, juce::PathStrokeType::curved,
                                              juce::PathStrokeType::rounded));
     content.removeFromRight(8.0F);
+    if (modified_) {
+        const auto dot = content.removeFromRight(10.0F).withSizeKeepingCentre(7.0F, 7.0F);
+        g.setColour(colours::warn.withMultipliedAlpha(alpha));
+        g.fillEllipse(dot);
+        content.removeFromRight(6.0F);
+    }
     g.setColour(colours::text.withMultipliedAlpha(alpha));
     g.setFont(uiFont(16.5F, true));
     g.drawFittedText(name_, content.removeFromTop(content.getHeight() * 0.54F).toNearestInt(),
@@ -88,17 +103,25 @@ TopBar::TopBar() {
         addAndMakeVisible(*button);
 }
 
-void TopBar::setPresetNames(const juce::StringArray& names) { presetNames_ = names; }
+void TopBar::setEngineChoices(std::vector<EngineChoice> choices) { choices_ = std::move(choices); }
 
 void TopBar::setEngine(const EngineConfig& config, int presetIndex) {
     presetIndex_ = presetIndex;
     picker_.setEngine(juce::String::fromUTF8(config.name.c_str()), engineSpecLine(config));
 }
 
+void TopBar::setModified(bool modified) { picker_.setModified(modified); }
+
 void TopBar::showEngineMenu() {
     juce::PopupMenu menu;
-    for (int index = 0; index < presetNames_.size(); ++index) {
-        juce::PopupMenu::Item item(presetNames_[index]);
+    auto savedHeader = false;
+    for (int index = 0; index < static_cast<int>(choices_.size()); ++index) {
+        const auto& choice = choices_[static_cast<std::size_t>(index)];
+        if (choice.saved && !savedHeader) {
+            menu.addSectionHeader(utf8("My engines"));
+            savedHeader = true;
+        }
+        juce::PopupMenu::Item item(choice.edited ? choice.name + utf8("  • edited") : choice.name);
         item.itemID = index + 1;
         item.isTicked = index == presetIndex_;
         if (index < 12) item.shortcutKeyDescription = "F" + juce::String(index + 1);

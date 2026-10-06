@@ -134,10 +134,26 @@ target_link_libraries(EngineLabEcuCalibrationIntegrationTests PRIVATE
 enginelab_set_warnings(EngineLabEcuCalibrationIntegrationTests)
 add_test(NAME EngineLab.EcuCalibration COMMAND EngineLabEcuCalibrationIntegrationTests)
 
+add_executable(EngineLabSavedEngineTests SavedEngineTests.cpp)
+target_link_libraries(EngineLabSavedEngineTests PRIVATE
+    EngineLab::Foundation EngineLab::Calibration EngineLab::Events EngineLab::Physics EngineLab::Ecu
+    EngineLab::Exhaust EngineLab::Simulation EngineLab::Serialization EngineLab::Catalog EngineLab::Runtime
+    EngineLab::Audio)
+target_compile_definitions(EngineLabSavedEngineTests PRIVATE ENGINELAB_CATALOG_ROOT="${CMAKE_SOURCE_DIR}")
+enginelab_set_warnings(EngineLabSavedEngineTests)
+add_test(NAME EngineLab.SavedEngine COMMAND EngineLabSavedEngineTests)
+set_tests_properties(EngineLab.SavedEngine PROPERTIES TIMEOUT 600)
+if(MSVC)
+    target_link_options(EngineLabSavedEngineTests PRIVATE /STACK:8388608)
+endif()
+
 add_executable(EngineLabRealtimeRegressionTests
     RealtimeRegressionTests.cpp
     ExhaustTransferTests.cpp
-    LiveChangeTests.cpp)
+    LiveChangeTests.cpp
+    LiveSettingsTests.cpp
+    LiveIntakeTests.cpp
+    CameraMicrophoneTests.cpp)
 target_link_libraries(EngineLabRealtimeRegressionTests PRIVATE EngineLab::Audio EngineLab::Catalog)
 target_compile_definitions(EngineLabRealtimeRegressionTests PRIVATE
     ENGINELAB_CATALOG_ROOT="${CMAKE_SOURCE_DIR}")
@@ -163,6 +179,15 @@ add_test(NAME EngineLab.LiveChange
 # Live bore and stroke changes, on the same simulator path.
 add_test(NAME EngineLab.LiveCylinderResize
     COMMAND EngineLabRealtimeRegressionTests --live-resize-only)
+# Live injector and forced-induction settings, simulator and turbo sound.
+add_test(NAME EngineLab.LiveSettings
+    COMMAND EngineLabRealtimeRegressionTests --live-settings-only)
+# Live intake sizes (runners, plenums, throttles), simulator and intake sound.
+add_test(NAME EngineLab.LiveIntake
+    COMMAND EngineLabRealtimeRegressionTests --live-intake-only)
+# The camera microphone: a listener that moves, glides and comes back.
+add_test(NAME EngineLab.CameraMicrophone
+    COMMAND EngineLabRealtimeRegressionTests --camera-microphone-only)
 
 add_executable(EngineLabOfflineAudioExportTests OfflineAudioExportTests.cpp)
 target_link_libraries(EngineLabOfflineAudioExportTests PRIVATE

@@ -1,4 +1,5 @@
 #include <enginelab/audio/ForcedInductionAcoustics.hpp>
+#include <enginelab/audio/FreeFieldObserver.hpp>
 #include <enginelab/foundation/ForcedInductionFlow.hpp>
 
 #include <algorithm>
@@ -33,6 +34,22 @@ ForcedInductionAcoustics::ForcedInductionAcoustics(
                 || config_.compressorBladeCount > 0)));
 }
 
+bool ForcedInductionAcoustics::sameMachine(const ForcedInductionConfig& a,
+                                           const ForcedInductionConfig& b) noexcept {
+    return a.enabled == b.enabled && a.type == b.type
+        && a.compressorBladeCount == b.compressorBladeCount
+        && a.turbineBladeCount == b.turbineBladeCount
+        && a.superchargerLobeCount == b.superchargerLobeCount;
+}
+
+bool ForcedInductionAcoustics::updateConfig(const ForcedInductionConfig& config) noexcept {
+    if (!sameMachine(config_, config)
+        || !ForcedInductionAcoustics(config, configuredObserverDistanceM_).valid())
+        return false;
+    config_ = config;
+    return true;
+}
+
 bool ForcedInductionAcoustics::prepare(double sampleRateHz,
                                        double observerDistanceM) noexcept {
     if (!(observerDistanceM > 0.0))
@@ -42,6 +59,8 @@ bool ForcedInductionAcoustics::prepare(double sampleRateHz,
         return false;
     sampleRateHz_ = sampleRateHz;
     observerDistanceM_ = observerDistanceM;
+    targetObserverDistanceM_ = observerDistanceM;
+    observerGlideCoefficient_ = 1.0 - std::exp(-1.0 / (FreeFieldObserver::microphoneGlideSeconds * sampleRateHz));
     telemetrySmoothingCoefficient_ = static_cast<float>(1.0 - std::exp(
         -1.0 / (0.005 * sampleRateHz_)));
     transientAttackCoefficient_ = static_cast<float>(1.0 - std::exp(
@@ -196,7 +215,17 @@ void ForcedInductionAcoustics::smoothTelemetry(const Input& input) noexcept {
     smoothedInput_.acousticTimeScale = target.acousticTimeScale;
 }
 
+void ForcedInductionAcoustics::moveObserver(double distanceM, bool immediately) noexcept {
+    if (!std::isfinite(distanceM)) return;
+    targetObserverDistanceM_ = std::clamp(distanceM, FreeFieldObserver::minimumMicrophoneDistanceM,
+                                          FreeFieldObserver::maximumMicrophoneDistanceM);
+    if (immediately) observerDistanceM_ = targetObserverDistanceM_;
+}
+
 float ForcedInductionAcoustics::process(const Input& input) noexcept {
+    if (observerDistanceM_ != targetObserverDistanceM_)
+        observerDistanceM_ = FreeFieldObserver::glideDistance(
+            observerDistanceM_, targetObserverDistanceM_, observerGlideCoefficient_);
     if (!valid_ || !std::isfinite(input.shaftSpeedRpm)
         || !std::isfinite(input.correctedAirFlowKgPerSecond)
         || !std::isfinite(input.pressureRatio)

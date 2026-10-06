@@ -303,6 +303,9 @@ public:
      * included (as requested: a ramp may still be under way). Read it on the
      * thread that calls applyLiveExhaust(). */
     [[nodiscard]] const EngineConfig& engineConfig() const noexcept { return config_; }
+    /** The engine saved under another name keeps running: dyno runs started
+     * from now on carry the new name. Same thread as applyLiveExhaust(). */
+    void renameEngine(std::string name);
     /** The exhaust graph as constructed: read it before start(). After a live
      * exhaust change the simulation thread owns it. */
     [[nodiscard]] const ExhaustGraph& exhaustGraph() const noexcept { return exhaust_; }
@@ -341,6 +344,25 @@ public:
      * restart. Same thread rules as applyLiveExhaust().
      */
     [[nodiscard]] bool applyLiveCylinderResize(const EngineConfig& edited, double rampSeconds = 0.0);
+    /** An edit of config.injection and config.forcedInduction only: the
+     * running engine takes the new injectors, boost and turbine settings
+     * between two frames. False, changing nothing, when the edit changes what
+     * the engine was built around (EngineSimulator::settingsReplaceable):
+     * that needs a restart. Same thread rules as applyLiveExhaust(). */
+    [[nodiscard]] bool applyLiveSettings(const EngineConfig& edited);
+    [[nodiscard]] std::uint64_t liveSettingsChangeCount() const noexcept {
+        return liveSettingsChangesApplied_.load(std::memory_order_acquire);
+    }
+    /** An edit of config.intake, config.intakePaths and the cylinders' own
+     * runner sizes only: the running engine takes the resized runners,
+     * plenums and throttles between two frames. False, changing nothing, when
+     * the edit adds or removes parts (EngineSimulator::intakeReplaceable) or
+     * does not compile: that needs a restart. Same thread rules as
+     * applyLiveExhaust(). */
+    [[nodiscard]] bool applyLiveIntake(const EngineConfig& edited);
+    [[nodiscard]] std::uint64_t liveIntakeChangeCount() const noexcept {
+        return liveIntakeChangesApplied_.load(std::memory_order_acquire);
+    }
     /** Cylinder geometry changes the simulation thread has applied (a ramp
      * applies one per journal per cycle). */
     [[nodiscard]] std::uint64_t cylinderGeometryRevision() const noexcept {
@@ -440,6 +462,15 @@ private:
     /** Simulation thread: start the pending cylinder resize, if any, and
      * refresh what depends on the geometry once the simulator changed it. */
     void consumeLiveCylinderResize() noexcept;
+    void consumeLiveSettingsChange() noexcept;
+    void consumeLiveIntakeChange() noexcept;
+    struct LiveIntakeChange final {
+        EngineConfig config;
+        std::unique_ptr<EngineSimulator::LiveIntake> intake;
+    };
+    struct LiveSettingsChange final {
+        EngineConfig config;
+    };
     struct LiveCylinderResize final {
         EngineConfig config;
         double rampSeconds {};
@@ -514,6 +545,14 @@ private:
     std::atomic<double> timeScale_ { 1.0 };
     std::mutex liveExhaustMutex_;
     std::unique_ptr<LiveExhaustChange> pendingExhaustChange_;
+    std::unique_ptr<LiveSettingsChange> pendingSettingsChange_;
+    std::atomic<std::uint64_t> liveSettingsChangesRequested_ { 0 };
+    std::uint64_t liveSettingsChangesConsumed_ { 0 };
+    std::atomic<std::uint64_t> liveSettingsChangesApplied_ { 0 };
+    std::unique_ptr<LiveIntakeChange> pendingIntakeChange_;
+    std::atomic<std::uint64_t> liveIntakeChangesRequested_ { 0 };
+    std::uint64_t liveIntakeChangesConsumed_ { 0 };
+    std::atomic<std::uint64_t> liveIntakeChangesApplied_ { 0 };
     std::atomic<std::uint64_t> liveExhaustChangesRequested_ { 0 };
     std::atomic<std::uint64_t> liveExhaustChangesApplied_ { 0 };
     // Guarded by liveExhaustMutex_.

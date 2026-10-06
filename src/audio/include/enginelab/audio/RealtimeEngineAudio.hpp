@@ -19,6 +19,7 @@
 #include <atomic>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <span>
 #include <vector>
 namespace enginelab {
@@ -84,7 +85,38 @@ public:
      * frees the networks the audio thread has finished with.
      */
     bool replaceExhaustGraph(const ExhaustGraph& graph);
+    /** Frees what the audio thread has finished with: exhaust networks and
+     * forced-induction settings. */
     void collectRetiredExhaustNetworks() noexcept;
+    /**
+     * Give the playing turbocharger or supercharger new sizes, areas and
+     * efficiencies (a live settings change): the audio thread takes them at
+     * its next block. Message thread. True when the sound now follows
+     * `config`, or when neither the old nor the new settings make a sound.
+     * False, changing nothing, when `config` is another machine
+     * (ForcedInductionAcoustics::sameMachine) or would start or stop the
+     * sound: that needs a new renderer.
+     */
+    bool replaceForcedInduction(const ForcedInductionConfig& config);
+    /**
+     * Swap the playing intake network for one compiled from `config`'s intake
+     * (a live intake change), the way replaceExhaustGraph() swaps the
+     * exhaust: the incoming network hears the same sources silently for
+     * `exhaustSwapWarmupSeconds`, then the output fades to it over
+     * `exhaustSwapFadeSeconds`. Message thread, after prepare(). True, with
+     * nothing to swap, when neither the playing engine nor `config` has a
+     * compiled intake. False, changing nothing, when only one of them has, or
+     * the network does not compile: that needs a new renderer.
+     */
+    bool replaceIntake(const EngineConfig& config);
+    /** Live intake changes the audio thread has completed. */
+    [[nodiscard]] std::uint64_t intakeSwapCount() const noexcept {
+        return intakeSwaps_.load(std::memory_order_acquire);
+    }
+    /** Forced-induction settings the audio thread has taken. */
+    [[nodiscard]] std::uint64_t forcedInductionUpdateCount() const noexcept {
+        return forcedInductionUpdates_.load(std::memory_order_acquire);
+    }
     /** Live exhaust changes the audio thread has completed. */
     [[nodiscard]] std::uint64_t exhaustSwapCount() const noexcept {
         return exhaustSwaps_.load(std::memory_order_acquire);
@@ -93,6 +125,18 @@ public:
     // difference 33 dB below the engine, 150 ms 74 dB.
     static constexpr double exhaustSwapWarmupSeconds = 0.150;
     static constexpr double exhaustSwapFadeSeconds = 0.030;
+    /**
+     * Puts the listener's two microphones at `positions` (metres, in the
+     * acoustic frame of AcousticObserverConfig, used as given: no
+     * listening-distance scale), or back where the engine's observer put them
+     * when empty. Every spatialised layer glides there
+     * (FreeFieldObserver::moveMicrophones): each exhaust outlet and intake
+     * inlet from its own position, the turbo and the structure by the
+     * microphones' mean distance from the engine. Other layers do not move.
+     * One thread at a time; lock-free; the audio thread takes the newest
+     * positions at its next block.
+     */
+    void setMicrophones(const std::optional<std::array<AcousticPoint3M, 2>>& positions) noexcept;
     void render(juce::AudioBuffer<float>& output, int startSample, int sampleCount) noexcept override;
     /** Render the identical master while observing optional pre-master stems. */
     void renderWithStems(juce::AudioBuffer<float>& output, int startSample,
@@ -502,6 +546,41 @@ private:
     std::atomic<std::uint64_t> exhaustSwaps_ { 0 };
     std::atomic<double> preparedSampleRate_ { 0.0 };
     bool outletJetNoiseEnabled_ { true };
+    /** setMicrophones() -> audio thread, a sequence lock: odd while written. */
+    std::atomic<std::uint64_t> microphoneSequence_ { 0 };
+    std::array<std::atomic<double>, 6> publishedMicrophones_ {};
+    std::atomic<bool> publishedMicrophonesMoved_ { false };
+    /** Audio thread: the positions the layers are going to. */
+    std::uint64_t appliedMicrophoneSequence_ { 0 };
+    bool microphonesMoved_ { false };
+    bool jumpMicrophones_ { false };
+    std::array<AcousticPoint3M, 2> currentMicrophones_ {};
+    /** Where the engine's observer puts the microphones, and their mean
+     * distance (effectiveMicrophonePosition, effectiveObserverDistanceM). */
+    std::array<AcousticPoint3M, 2> authoredMicrophones_ {};
+    double authoredObserverDistanceM_ { 1.0 };
+    /** Audio thread, at the start of a block: newly published positions. */
+    void takeMicrophones() noexcept;
+    /** The same handoff for the intake network. */
+    struct IntakeNetworkHandoff final {
+        std::unique_ptr<AcousticIntakeNetwork> network;
+        double sampleRate { 0.0 };
+    };
+    std::atomic<IntakeNetworkHandoff*> incomingIntakeNetwork_ { nullptr };
+    std::atomic<IntakeNetworkHandoff*> retiredIntakeNetwork_ { nullptr };
+    IntakeNetworkHandoff* swappingIntakeNetwork_ { nullptr };
+    std::int64_t intakeSwapSamples_ { 0 };
+    std::atomic<std::uint64_t> intakeSwaps_ { 0 };
+    void beginIntakeSwapIfWaiting() noexcept;
+    void completeIntakeSwap() noexcept;
+    /** Message thread: the forced-induction settings the sound follows. */
+    ForcedInductionConfig forcedInductionConfig_ {};
+    /** Message thread -> audio thread: forced-induction settings to take;
+     * the audio thread hands them back through the retired slot. */
+    std::atomic<ForcedInductionConfig*> incomingForcedInduction_ { nullptr };
+    std::atomic<ForcedInductionConfig*> retiredForcedInduction_ { nullptr };
+    std::atomic<std::uint64_t> forcedInductionUpdates_ { 0 };
+    void takeForcedInductionUpdate() noexcept;
     /** Audio thread: take a waiting network, or finish the one in progress. */
     void beginExhaustSwapIfWaiting() noexcept;
     void completeExhaustSwap() noexcept;

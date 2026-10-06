@@ -596,6 +596,11 @@ std::string JsonEngineSerializer::encode(const EngineConfig& config) const {
                       {"wheelbase_m", config.vehicle.wheelbaseM},
                       {"center_of_gravity_height_m", config.vehicle.centerOfGravityHeightM},
                       {"maximum_brake_force_n", config.vehicle.maximumBrakeForceN}}} }} };
+    // The voicing itself lives in the catalogue's voicing files: an engine
+    // names the one it speaks with, so a copy keeps its voice.
+    if (!config.audioVoicingKey.empty())
+        document["engine"]["audio_voicing"] = { {"family", config.audioVoicingFamily},
+                                                {"key", config.audioVoicingKey} };
     return document.dump(2);
 }
 
@@ -1099,6 +1104,10 @@ EngineDecodeResult JsonEngineSerializer::decode(std::string_view text) const noe
             cylinder.intakeValveDiameterMm = item.value("intake_valve_diameter_mm", 0.0);
             cylinder.exhaustValveDiameterMm = item.value("exhaust_valve_diameter_mm", 0.0);
             config.cylinders.push_back(cylinder);
+        }
+        if (const auto voicing = engine.find("audio_voicing"); voicing != engine.end()) {
+            config.audioVoicingFamily = voicing->value("family", std::string {});
+            config.audioVoicingKey = voicing->value("key", std::string {});
         }
         normaliseEngineConfig(config);
         if (const auto error = validateEngineConfig(config)) return { std::nullopt, *error };

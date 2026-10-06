@@ -74,7 +74,9 @@ The watcher does not follow a file before a first load or save. Structural
 reloads triggered by the live script, the JSON editor or the exhaust designer
 keep the same store, the window and its watcher. Explicitly choosing or
 importing another engine closes the window and creates that engine's default
-set.
+set, unless that engine brings its own: a saved engine, an engine left with
+unsaved edits this session, or an imported JSON engine with a `.ecu.json` file
+beside it (see "Saved engines and session edits" in `architecture.md`).
 
 ## Calibration JSON format
 

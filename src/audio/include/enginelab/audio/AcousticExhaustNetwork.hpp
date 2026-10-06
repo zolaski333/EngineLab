@@ -98,6 +98,10 @@ public:
 
     /** Diagnostic A/B switch. Production leaves the source enabled. */
     void setOutletJetNoiseEnabled(bool enabled) noexcept;
+    /** Every outlet's microphones glide to `left` and `right`
+     * (FreeFieldObserver::moveMicrophones). Audio thread. */
+    void moveMicrophones(const AcousticPoint3M& left, const AcousticPoint3M& right,
+                         bool immediately = false) noexcept;
     [[nodiscard]] bool outletJetNoiseEnabled() const noexcept;
     /** Last sample contributed by outlet turbulence, after both microphones. */
     [[nodiscard]] std::array<StereoPressure, maximumPaths>

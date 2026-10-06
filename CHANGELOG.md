@@ -69,9 +69,36 @@ file formats, always with an in-memory migration).
   as a stroboscope (*Strobe 1:50*, *Strobe 1:250*, *Freeze*).
 - Type a size in the part inspector: click the value, type, Enter applies.
   The steppers stay for small steps.
+- Save an engine as it is. *Save engine* in the `⋯` menu writes the running
+  engine with every setting (exhaust, intake, cylinders, turbo…) and its ECU
+  tables; it is then listed under *My engines* in the engine menu, kept in
+  `%APPDATA%/EngineLab/engines`. Saving does not restart the engine. *Delete
+  saved engine…* moves it to the recycle bin.
+- Switching to another engine no longer loses your edits: an edited engine
+  keeps them for the session, and the engine menu marks it. A dot on the
+  engine picker shows that the running engine differs from the one loaded;
+  *Return* reloads it as it was.
+- *Export engine* in JSON writes the ECU tables beside the engine
+  (`<name>.ecu.json`), and *Import engine* reads them back. An exported engine
+  keeps its voicing.
+- Injector and turbo settings edited in the JSON editor no longer restart the
+  engine: it takes them while running, and its turbo sound follows. A change
+  of injection mode, of turbo type or of blade count still restarts it.
+- The intake's sizes too: runner length and diameter, plenum volume and
+  throttle bore are taken while running, sound included. Adding or removing
+  a path, a throttle or the airbox still restarts.
+- *Microphone on the camera* in the 3-D view's settings (off by default):
+  the sound is heard from where the camera is, and follows it smoothly as it
+  moves. Exhaust and intake outlets, the turbo and the engine block move with
+  it; switched off, the usual listener comes back.
+- In the 3-D view, click an intake runner, the plenum or the throttle to
+  resize it; the intake ports (or the combustion, for direct injection) for
+  the injectors' flow and fuel pressure; the turbo for its wastegate and
+  turbine; the supercharger for its pressure and drive ratios. Each edit is
+  taken by the running engine.
 - Change the bore and stroke while the engine runs: click a cylinder liner or
-  a piston in the 3-D view. Each crank throw takes the new size at its next
-  gas-exchange TDC, or gradually over 3 s. The number of cylinders, the
+  a piston in the 3-D view. The size glides over 3 s by default, or each crank
+  throw takes it at its next gas-exchange TDC. The number of cylinders, the
   layout and the fuel still need a restart.
 - Exhaust and intake pipes in the 3-D view are routed like real ones: they no
   longer pass through each other, the engine or the intake, bend no tighter

@@ -125,6 +125,35 @@ script, JSON editor, exhaust designer), the new runtime reuses the same
 `CalibrationStore`: maps, tuner and ECU watcher survive. Explicitly choosing or
 importing another engine creates its default set.
 
+### Saved engines and session edits
+
+The engine menu lists the catalogue, then *My engines*: the files of
+`%APPDATA%/EngineLab/engines` (`loadSavedEngines`, `SavedEngines.hpp`). A saved
+engine is two files sharing a stem: `<name>.json`, the configuration as
+*Export engine* writes it, and `<name>.ecu.json`, its ECU tables. Each is
+written to a temporary file renamed over the old one, the tables first. A
+damaged table file fails the whole read: the engine never runs on other tables
+than its own. The JSON names the voicing the engine speaks with
+(`audio_voicing`: family and key); the voicing itself is read back from the
+catalogue's voicing files (`restoreAudioVoicing`).
+
+Leaving an edited engine for another one keeps its edits for the session:
+`MainComponent` stores its configuration and its `CalibrationStore`, and
+choosing it again builds the runtime from them. *Return* reloads the engine
+from disk and drops them. "Edited" is measured against the engine as it was
+loaded (`EngineBaseline`): the configuration through its JSON encoding, the
+tables through the JSON of their entries, without the store's revision. A dot
+on the engine picker shows it; the menu marks the engines that hold edits.
+
+*Save engine* writes a saved engine over its file; on a catalogue engine it
+asks for a name (*Save engine as…*). A catalogue name is refused, since the
+menu tells engines apart by name. Saving does not restart the engine:
+`EngineRuntime::renameEngine` gives the running engine its new name, which a
+dyno run reads when it starts. *Delete saved engine…* moves both files to the
+recycle bin; the running engine carries on, unsaved. *Export engine* in JSON
+writes the tables beside the engine the same way, and *Import engine* reads
+them back when they are there.
+
 ### Live exhaust changes
 
 An edit of `exhaust` and `exhaustPaths` only (the inspector's steppers, the
@@ -185,6 +214,42 @@ a dyno run, re-sizes the dyno absorber. Everything else reads the
 configuration at every step. Not updated until a restart: the audio's
 structural modes (`StructuralModalRadiator`, built from the mean bore and
 stroke). Cylinder count, layout and fuel stay restart-only.
+
+### Live injector and turbo changes
+
+The simulator reads `injection` and `forcedInduction` only inside `step()`,
+and caches nothing derived from them, so `EngineSimulator::replaceSettings`
+swaps both between two frames. `EngineRuntime::applyLiveSettings` posts them
+the same way as an exhaust. Refused, for a restart: another injection mode, a
+forced induction added, removed or of another type, another blade or lobe
+count (`settingsReplaceable`). The sound's turbo layer takes the new
+configuration at the start of an audio block
+(`RealtimeEngineAudio::replaceForcedInduction`, `ForcedInductionAcoustics::
+updateConfig`); its rotor and filter states carry on.
+
+### Live intake changes
+
+An edit of the intake's sizes (runner length and diameter, per path or per
+cylinder, plenum volume, throttle bore) that keeps its topology (same paths
+and cylinders, throttle count, airbox or none: `intakeReplaceable`) is taken
+like an exhaust. `EngineRuntime::applyLiveIntake` builds the new runner
+networks (`EngineSimulator::buildLiveIntake`) off the simulation thread;
+`replaceIntake` has them adopt the running state, swaps them in, and resizes
+each plenum keeping its pressure, temperature and velocity
+(`GasCell::resizeKeepingState`); the throttle area is read at every step.
+The sound's intake network is rebuilt from the configuration and handed over
+like the exhaust's (`RealtimeEngineAudio::replaceIntake`: 150 ms filling
+silently, 30 ms crossfade).
+
+### Which edits are live
+
+`engineEditScope` (serialization) compares a running and an edited
+configuration, both normalised, through their JSON, and sorts the difference
+into the groups above: exhaust, cylinder sizes, settings, intake, or
+`other`.
+`MainComponent::applyEngineEdit` takes each group live in turn and restarts
+only for `other` or a group the running engine refuses. The JSON editor and
+the 3-D view's inspector go through it.
 
 ## Physical contracts
 
@@ -388,6 +453,12 @@ solver's own state, not by an animation:
   yellow; it shows where the gas pulses hardest and holds still while the
   engine runs steadily. The Gas flow layer shows the strength when the mode
   is *Hidden*; the other layers show no waves.
+- **Camera microphone.** *Microphone on the camera* (settings menu, *Sound*,
+  saved in `view.json`, off by default) hears the engine from where the
+  camera is heading: `EngineViewport::cameraMicrophones()` maps the eye and
+  its right vector through `render::ListenerFrame`, and `MainComponent`
+  passes them to `RealtimeEngineAudio::setMicrophones` when they change or a
+  new renderer plays (see `realtime-audio.md`, *Camera microphone*).
 - **Heat.** Each cell's wall temperature (the solver's finite-capacity wall)
   makes the steel glow from the Draper point, 798 K, to orange-yellow at
   1,300 K, in every layer.
@@ -428,9 +499,23 @@ reads. A stepper press reaches the running engine 250 ms after the last one
 had when it was selected. The camera stays and the part stays selected.
 
 A cylinder liner or piston offers the engine's bore and stroke the same way
-(1 mm, 0.1 mm with Shift), with a choice between the next cycle and a 3 s
-ramp (a live bore and stroke change, see above). The view shows the target
+(1 mm, 0.1 mm with Shift), with a choice between a 3 s ramp (the default) and
+the next cycle (a live bore and stroke change, see above). The view shows the target
 size at once.
+
+The other parts edit the same way, each through `MainComponent::applyEngineEdit`
+(see *Which edits are live*):
+
+- an intake runner (length and diameter, its own if the cylinder has one,
+  else the path's, which every runner on it shares), a plenum (volume) and a
+  throttle (bore): `resizeIntakePart` (foundation), which mirrors a single
+  path into `EngineConfig::intake` and the legacy fields;
+- the injectors, on the intake ports for port injection or on the combustion
+  for direct injection: flow in g/min (the configuration keeps mg/s) and fuel
+  pressure in bar;
+- a turbo: the wastegate pressure ratio, the rated ratio keeping its
+  distance to it, and the turbine flow area; a supercharger: its pressure
+  and drive ratios.
 
 Two controls at the bottom right slow things down, and they are different.
 *0.25x / 0.5x / 1x* is the simulation's time scale

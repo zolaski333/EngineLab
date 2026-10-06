@@ -4,6 +4,7 @@
 #include <enginelab/foundation/ExhaustGasAcoustics.hpp>
 #include <algorithm>
 #include <cmath>
+#include <utility>
 #include <numbers>
 
 namespace enginelab {
@@ -90,6 +91,10 @@ RealtimeEngineAudio::RealtimeEngineAudio(FiringEventQueue& queue,
             *exhaustGraph,
             std::span<const std::uint32_t>(cylinderIds.data(), count));
         if (compiled->valid()) acousticExhaustNetwork_ = std::move(compiled);
+        authoredMicrophones_ = {
+            effectiveMicrophonePosition(exhaustGraph->acousticObserver(), false),
+            effectiveMicrophonePosition(exhaustGraph->acousticObserver(), true) };
+        authoredObserverDistanceM_ = effectiveObserverDistanceM(exhaustGraph->acousticObserver());
     }
     if (engineConfig != nullptr) {
         const auto microphoneDistance = [](const AcousticPoint3M& point) {
@@ -106,10 +111,15 @@ RealtimeEngineAudio::RealtimeEngineAudio(FiringEventQueue& queue,
         if (structural->valid()) structuralModalRadiator_ = std::move(structural);
         auto intake = std::make_unique<AcousticIntakeNetwork>(*engineConfig);
         if (intake->valid()) acousticIntakeNetwork_ = std::move(intake);
+        forcedInductionConfig_ = engineConfig->forcedInduction;
         auto forcedInduction = std::make_unique<ForcedInductionAcoustics>(
             engineConfig->forcedInduction, observerDistance);
         if (forcedInduction->valid())
             forcedInductionAcoustics_ = std::move(forcedInduction);
+        authoredMicrophones_ = {
+            effectiveMicrophonePosition(engineConfig->acousticObserver, false),
+            effectiveMicrophonePosition(engineConfig->acousticObserver, true) };
+        authoredObserverDistanceM_ = observerDistance;
     }
 }
 
@@ -117,6 +127,11 @@ RealtimeEngineAudio::~RealtimeEngineAudio() {
     delete incomingExhaustNetwork_.exchange(nullptr);
     delete retiredExhaustNetwork_.exchange(nullptr);
     delete swappingExhaustNetwork_;
+    delete incomingForcedInduction_.exchange(nullptr);
+    delete retiredForcedInduction_.exchange(nullptr);
+    delete incomingIntakeNetwork_.exchange(nullptr);
+    delete retiredIntakeNetwork_.exchange(nullptr);
+    delete swappingIntakeNetwork_;
 }
 
 bool RealtimeEngineAudio::replaceExhaustGraph(const ExhaustGraph& graph) {
@@ -142,8 +157,129 @@ bool RealtimeEngineAudio::replaceExhaustGraph(const ExhaustGraph& graph) {
     return true;
 }
 
+void RealtimeEngineAudio::setMicrophones(
+    const std::optional<std::array<AcousticPoint3M, 2>>& positions) noexcept {
+    const auto sequence = microphoneSequence_.load(std::memory_order_relaxed);
+    microphoneSequence_.store(sequence + 1U, std::memory_order_relaxed);
+    std::atomic_thread_fence(std::memory_order_release);
+    publishedMicrophonesMoved_.store(positions.has_value(), std::memory_order_relaxed);
+    if (positions) {
+        for (std::size_t index = 0; index < 2; ++index) {
+            const auto& point = (*positions)[index];
+            publishedMicrophones_[3 * index].store(point.x, std::memory_order_relaxed);
+            publishedMicrophones_[3 * index + 1].store(point.y, std::memory_order_relaxed);
+            publishedMicrophones_[3 * index + 2].store(point.z, std::memory_order_relaxed);
+        }
+    }
+    microphoneSequence_.store(sequence + 2U, std::memory_order_release);
+}
+
+void RealtimeEngineAudio::takeMicrophones() noexcept {
+    const auto sequence = microphoneSequence_.load(std::memory_order_acquire);
+    if (sequence == appliedMicrophoneSequence_ || (sequence & 1U) != 0U) return;
+    const auto moved = publishedMicrophonesMoved_.load(std::memory_order_relaxed);
+    std::array<AcousticPoint3M, 2> positions = authoredMicrophones_;
+    if (moved) {
+        for (std::size_t index = 0; index < 2; ++index)
+            positions[index] = { publishedMicrophones_[3 * index].load(std::memory_order_relaxed),
+                                 publishedMicrophones_[3 * index + 1].load(std::memory_order_relaxed),
+                                 publishedMicrophones_[3 * index + 2].load(std::memory_order_relaxed) };
+    }
+    std::atomic_thread_fence(std::memory_order_acquire);
+    // Written meanwhile: the next block reads it whole.
+    if (microphoneSequence_.load(std::memory_order_relaxed) != sequence) return;
+    appliedMicrophoneSequence_ = sequence;
+    microphonesMoved_ = moved;
+    currentMicrophones_ = positions;
+    const auto immediately = std::exchange(jumpMicrophones_, false);
+    const auto& [left, right] = positions;
+    if (acousticExhaustNetwork_) acousticExhaustNetwork_->moveMicrophones(left, right, immediately);
+    if (swappingExhaustNetwork_ != nullptr)
+        swappingExhaustNetwork_->network->moveMicrophones(left, right, immediately);
+    if (acousticIntakeNetwork_) acousticIntakeNetwork_->moveMicrophones(left, right, immediately);
+    if (swappingIntakeNetwork_ != nullptr)
+        swappingIntakeNetwork_->network->moveMicrophones(left, right, immediately);
+    const auto magnitude = [](const AcousticPoint3M& point) {
+        return std::sqrt(point.x * point.x + point.y * point.y + point.z * point.z);
+    };
+    // The authored distance exactly, so switching off restores the sound.
+    const auto distanceM = moved ? 0.5 * (magnitude(left) + magnitude(right)) : authoredObserverDistanceM_;
+    if (forcedInductionAcoustics_) forcedInductionAcoustics_->moveObserver(distanceM, immediately);
+    if (structuralModalRadiator_) structuralModalRadiator_->moveObserver(distanceM, immediately);
+}
+
 void RealtimeEngineAudio::collectRetiredExhaustNetworks() noexcept {
     delete retiredExhaustNetwork_.exchange(nullptr, std::memory_order_acq_rel);
+    delete retiredForcedInduction_.exchange(nullptr, std::memory_order_acq_rel);
+    delete retiredIntakeNetwork_.exchange(nullptr, std::memory_order_acq_rel);
+}
+
+bool RealtimeEngineAudio::replaceIntake(const EngineConfig& config) {
+    collectRetiredExhaustNetworks();
+    const auto sampleRate = preparedSampleRate_.load(std::memory_order_acquire);
+    if (!(sampleRate > 0.0)) return false;
+    auto handoff = std::make_unique<IntakeNetworkHandoff>();
+    handoff->network = std::make_unique<AcousticIntakeNetwork>(config);
+    const auto compiles = handoff->network->valid()
+        && handoff->network->prepare(sampleRate, observerDistanceM);
+    if (!acousticIntakeNetwork_) return !compiles;
+    if (!compiles) return false;
+    handoff->sampleRate = sampleRate;
+    // A change the audio thread has not taken yet is replaced, and freed here.
+    delete incomingIntakeNetwork_.exchange(handoff.release(), std::memory_order_acq_rel);
+    return true;
+}
+
+void RealtimeEngineAudio::beginIntakeSwapIfWaiting() noexcept {
+    if (swappingIntakeNetwork_ != nullptr || !acousticIntakeNetwork_
+        || retiredIntakeNetwork_.load(std::memory_order_acquire) != nullptr)
+        return;
+    auto* incoming = incomingIntakeNetwork_.exchange(nullptr, std::memory_order_acq_rel);
+    if (incoming == nullptr) return;
+    if (incoming->sampleRate != sampleRate_) {
+        retiredIntakeNetwork_.store(incoming, std::memory_order_release);
+        return;
+    }
+    swappingIntakeNetwork_ = incoming;
+    if (microphonesMoved_)
+        incoming->network->moveMicrophones(currentMicrophones_[0], currentMicrophones_[1], true);
+    intakeSwapSamples_ = 0;
+}
+
+void RealtimeEngineAudio::completeIntakeSwap() noexcept {
+    if (swappingIntakeNetwork_ == nullptr) return;
+    std::swap(acousticIntakeNetwork_, swappingIntakeNetwork_->network);
+    retiredIntakeNetwork_.store(swappingIntakeNetwork_, std::memory_order_release);
+    swappingIntakeNetwork_ = nullptr;
+    intakeSwaps_.fetch_add(1, std::memory_order_release);
+}
+
+bool RealtimeEngineAudio::replaceForcedInduction(const ForcedInductionConfig& config) {
+    collectRetiredExhaustNetworks();
+    const auto sounds = ForcedInductionAcoustics(config, 1.0).valid();
+    if (!forcedInductionAcoustics_) {
+        if (sounds) return false;
+        forcedInductionConfig_ = config;
+        return true;
+    }
+    if (!sounds || !ForcedInductionAcoustics::sameMachine(forcedInductionConfig_, config))
+        return false;
+    forcedInductionConfig_ = config;
+    // A change the audio thread has not taken yet is replaced, and freed here.
+    delete incomingForcedInduction_.exchange(new ForcedInductionConfig(config),
+                                             std::memory_order_acq_rel);
+    return true;
+}
+
+void RealtimeEngineAudio::takeForcedInductionUpdate() noexcept {
+    // Only once the previous settings have been collected: the retired slot
+    // then always has room.
+    if (retiredForcedInduction_.load(std::memory_order_acquire) != nullptr) return;
+    auto* incoming = incomingForcedInduction_.exchange(nullptr, std::memory_order_acq_rel);
+    if (incoming == nullptr) return;
+    if (forcedInductionAcoustics_ && forcedInductionAcoustics_->updateConfig(*incoming))
+        forcedInductionUpdates_.fetch_add(1, std::memory_order_release);
+    retiredForcedInduction_.store(incoming, std::memory_order_release);
 }
 
 void RealtimeEngineAudio::beginExhaustSwapIfWaiting() noexcept {
@@ -160,6 +296,8 @@ void RealtimeEngineAudio::beginExhaustSwapIfWaiting() noexcept {
         return;
     }
     swappingExhaustNetwork_ = incoming;
+    if (microphonesMoved_)
+        incoming->network->moveMicrophones(currentMicrophones_[0], currentMicrophones_[1], true);
     exhaustSwapSamples_ = 0;
     exhaustSwapWarmupSamples_ = static_cast<std::int64_t>(
         std::llround(exhaustSwapWarmupSeconds * sampleRate_));
@@ -298,6 +436,7 @@ void RealtimeEngineAudio::prepare(double sampleRate, int maximumBlockSize) noexc
     gainReleaseCoefficient_ = levelReleaseCoefficient_;
     allocateDelayLines();
     completeExhaustSwap();
+    completeIntakeSwap();
     if (acousticExhaustNetwork_
         && !acousticExhaustNetwork_->prepare(
             sampleRate_, maximumAcousticDelayScale, observerDistanceM))
@@ -323,6 +462,9 @@ void RealtimeEngineAudio::prepare(double sampleRate, int maximumBlockSize) noexc
     oversampler_->reset();
     release();
     updateExhaustPreset(realtimeState_.exhaustPreset.load(std::memory_order_relaxed));
+    appliedMicrophoneSequence_ = 0;
+    microphonesMoved_ = false;
+    jumpMicrophones_ = microphoneSequence_.load(std::memory_order_acquire) != 0U;
     preparedSampleRate_.store(sampleRate_, std::memory_order_release);
 }
 void RealtimeEngineAudio::release() noexcept {
@@ -408,6 +550,7 @@ void RealtimeEngineAudio::release() noexcept {
     valveFlowAcousticSource_ = {};
     for (auto& state : valveFlowAcousticSourceState_) state.reset();
     completeExhaustSwap();
+    completeIntakeSwap();
     if (acousticExhaustNetwork_) acousticExhaustNetwork_->reset();
     if (structuralModalRadiator_) structuralModalRadiator_->reset();
     if (acousticIntakeNetwork_) acousticIntakeNetwork_->reset();
@@ -523,6 +666,7 @@ void RealtimeEngineAudio::renderWithStems(
     // costs 10-100x and eventually overruns the callback (audible dropouts).
     const juce::ScopedNoDenormals noDenormals;
     output.clear(startSample, sampleCount);
+    takeMicrophones();
     const auto writableStem = [&](juce::AudioBuffer<float>* candidate) {
         return candidate != nullptr && candidate != &output
             && candidate->getNumChannels() > 0
@@ -984,6 +1128,8 @@ void RealtimeEngineAudio::renderWithStems(
             }
         }
         beginExhaustSwapIfWaiting();
+        beginIntakeSwapIfWaiting();
+        takeForcedInductionUpdate();
         for (auto* network : { acousticExhaustNetwork_.get(),
                  swappingExhaustNetwork_ != nullptr
                      ? swappingExhaustNetwork_->network.get() : nullptr }) {
@@ -1033,6 +1179,8 @@ void RealtimeEngineAudio::renderWithStems(
             }
         }
         acousticIntakeNetwork_->beginBlock(paths, acousticTimeScale);
+        if (swappingIntakeNetwork_ != nullptr)
+            swappingIntakeNetwork_->network->beginBlock(paths, acousticTimeScale);
     }
     float blockPeakObservedExhaustPressurePa = 0.0F;
     float blockPeakObservedExhaustJetNoisePressurePa = 0.0F;
@@ -1597,10 +1745,36 @@ void RealtimeEngineAudio::renderWithStems(
             if (intakePathBoundariesAvailable)
                 acousticIntakeNetwork_->updateBoundaryTargets(
                     intakePathBoundaries);
-            const auto inletPressure = acousticIntakeNetwork_->process(
+            auto inletPressure = acousticIntakeNetwork_->process(
                 std::span<const AcousticIntakeNetwork::CylinderBoundary>(
                     intakeBoundaries.data(), activeCylinderCount),
                 controlRampCoefficient_);
+            if (swappingIntakeNetwork_ != nullptr) {
+                // A live intake change: the incoming network hears the same
+                // sources, silently while it fills, then takes over.
+                auto& incoming = *swappingIntakeNetwork_->network;
+                if (intakePathBoundariesAvailable)
+                    incoming.updateBoundaryTargets(intakePathBoundaries);
+                const auto incomingPressure = incoming.process(
+                    std::span<const AcousticIntakeNetwork::CylinderBoundary>(
+                        intakeBoundaries.data(), activeCylinderCount),
+                    controlRampCoefficient_);
+                const auto warmupSamples = static_cast<double>(std::llround(
+                    exhaustSwapWarmupSeconds * sampleRate_));
+                const auto fadeSamples = std::max(1.0, static_cast<double>(std::llround(
+                    exhaustSwapFadeSeconds * sampleRate_)));
+                const auto weight = static_cast<float>(std::clamp(
+                    (static_cast<double>(intakeSwapSamples_) - warmupSamples) / fadeSamples,
+                    0.0, 1.0));
+                for (std::size_t path = 0; path < inletPressure.size(); ++path) {
+                    inletPressure[path].leftPa += weight
+                        * (incomingPressure[path].leftPa - inletPressure[path].leftPa);
+                    inletPressure[path].rightPa += weight
+                        * (incomingPressure[path].rightPa - inletPressure[path].rightPa);
+                }
+                if (static_cast<double>(++intakeSwapSamples_) >= warmupSamples + fadeSamples)
+                    completeIntakeSwap();
+            }
             for (const auto pressure : inletPressure) {
                 blockPeakObservedIntakePressurePa = std::max(
                     blockPeakObservedIntakePressurePa,

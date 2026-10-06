@@ -526,10 +526,16 @@ void EngineSimulator::configureIntakeWorkerPool() {
 }
 
 void EngineSimulator::configurePhysicalIntakeNetworks() {
-    for (std::size_t index = 0; index < config_.cylinders.size(); ++index) {
-        const auto& cylinder = config_.cylinders[index];
+    for (std::size_t index = 0; index < config_.cylinders.size(); ++index)
+        intakeRunnerNetworks_[index] = buildIntakeRunnerNetwork(config_, index);
+}
+
+std::unique_ptr<gasdynamics::ExhaustGasNetwork> EngineSimulator::buildIntakeRunnerNetwork(
+    const EngineConfig& config, std::size_t index) const {
+    {
+        const auto& cylinder = config.cylinders[index];
         const auto intakePathIndex = intakePathIndexByCylinder_[index];
-        const auto& intake = intakeGeometryAt(config_, intakePathIndex);
+        const auto& intake = intakeGeometryAt(config, intakePathIndex);
         const auto lengthM = (cylinder.intakeRunnerLengthMm > 0.0
             ? cylinder.intakeRunnerLengthMm : intake.runnerLengthMm) * 0.001;
         const auto inletDiameterM = (cylinder.intakeRunnerDiameterMm > 0.0
@@ -595,21 +601,21 @@ void EngineSimulator::configurePhysicalIntakeNetworks() {
         if (!layout.valid())
             throw std::runtime_error("failed to assemble intake runner layout");
         auto network = std::make_unique<gasdynamics::ExhaustGasNetwork>(
-            exhaustThermodynamicsFor(config_));
+            exhaustThermodynamicsFor(config));
         gasdynamics::ExhaustGasNetworkConfig networkConfig;
-        networkConfig.initialPressurePa = config_.ambientPressureKpa * 1'000.0;
-        networkConfig.initialTemperatureK = config_.ambientTemperatureC + 273.15;
+        networkConfig.initialPressurePa = config.ambientPressureKpa * 1'000.0;
+        networkConfig.initialTemperatureK = config.ambientTemperatureC + 273.15;
         networkConfig.absoluteRoughnessM = 1.5e-6; // smooth aluminium/plastic
         networkConfig.maximumCourantNumber = 0.8;
         networkConfig.wallHeatTransferWPerM2K = 0.0;
-        networkConfig.wallTemperatureK = config_.ambientTemperatureC + 273.15;
+        networkConfig.wallTemperatureK = config.ambientTemperatureC + 273.15;
         networkConfig.dynamicWallHeatTransferEnabled = true;
         networkConfig.wallThicknessM = aluminiumRunnerWallThicknessM;
         networkConfig.wallDensityKgPerM3 = aluminiumDensityKgPerM3;
         networkConfig.wallSpecificHeatJPerKgK = aluminiumSpecificHeatJPerKgK;
         networkConfig.externalWallHeatTransferWPerM2K =
             runnerExternalHeatTransferWPerM2K;
-        networkConfig.externalTemperatureK = config_.ambientTemperatureC + 273.15;
+        networkConfig.externalTemperatureK = config.ambientTemperatureC + 273.15;
         // The runner networks are advanced concurrently, so the cadence is
         // driven from `advanceIntakeRunners` on the second half-step, where
         // every cylinder is dispatched together. A self-timed network would
@@ -620,8 +626,80 @@ void EngineSimulator::configurePhysicalIntakeNetworks() {
             options_.intakeFirstOrderTimeIntegration.value_or(true);
         if (!network->configure(layout, networkConfig))
             throw std::runtime_error("failed to configure intake runner network");
-        intakeRunnerNetworks_[index] = std::move(network);
+        return network;
     }
+}
+
+bool EngineSimulator::intakeReplaceable(const EngineConfig& running,
+                                        const EngineConfig& edited) noexcept {
+    if (running.cylinders.size() != edited.cylinders.size()
+        || running.cylinders.size() > 32
+        || running.intakePaths.size() != edited.intakePaths.size())
+        return false;
+    for (std::size_t index = 0; index < running.cylinders.size(); ++index)
+        if (running.cylinders[index].id != edited.cylinders[index].id) return false;
+    const auto sameParts = [](const IntakeConfig& was, const IntakeConfig& now) {
+        return was.throttleCount == now.throttleCount
+            && (was.airboxVolumeLitres > 0.0) == (now.airboxVolumeLitres > 0.0);
+    };
+    if (!sameParts(running.intake, edited.intake)) return false;
+    for (std::size_t index = 0; index < running.intakePaths.size(); ++index) {
+        const auto& was = running.intakePaths[index];
+        const auto& now = edited.intakePaths[index];
+        if (was.id != now.id || was.cylinderIds != now.cylinderIds
+            || was.inheritsGlobalGeometry != now.inheritsGlobalGeometry
+            || !sameParts(was.geometry, now.geometry))
+            return false;
+    }
+    return true;
+}
+
+std::unique_ptr<EngineSimulator::LiveIntake> EngineSimulator::buildLiveIntake(
+    const EngineConfig& config) const {
+    auto intake = std::make_unique<LiveIntake>();
+    try {
+        for (std::size_t index = 0; index < config.cylinders.size() && index < intake->runners.size(); ++index)
+            intake->runners[index] = buildIntakeRunnerNetwork(config, index);
+    } catch (const std::exception&) {
+        return {};
+    }
+    return intake;
+}
+
+bool EngineSimulator::replaceIntake(LiveIntake& intake, EngineConfig& config) noexcept {
+    if (!intakeReplaceable(config_, config)) return false;
+    const auto count = config_.cylinders.size();
+    for (std::size_t index = 0; index < count; ++index) {
+        const auto& incoming = intake.runners[index];
+        const auto& running = intakeRunnerNetworks_[index];
+        if (!incoming || !running || !incoming->layout().sameTopology(running->layout()))
+            return false;
+    }
+    // Every runner takes its state before any is swapped in: a refusal half
+    // way leaves the running ones untouched.
+    for (std::size_t index = 0; index < count; ++index)
+        if (!intake.runners[index]->adoptStateFrom(*intakeRunnerNetworks_[index])) return false;
+    for (std::size_t index = 0; index < count; ++index)
+        std::swap(intake.runners[index], intakeRunnerNetworks_[index]);
+    // Swapped, so this thread does not allocate; `config` leaves with the
+    // previous intake.
+    std::swap(config_.intake, config.intake);
+    std::swap(config_.intakePaths, config.intakePaths);
+    std::swap(config_.plenumVolumeLitres, config.plenumVolumeLitres);
+    std::swap(config_.throttleDiameterMm, config.throttleDiameterMm);
+    for (std::size_t index = 0; index < count; ++index) {
+        std::swap(config_.cylinders[index].intakeRunnerLengthMm, config.cylinders[index].intakeRunnerLengthMm);
+        std::swap(config_.cylinders[index].intakeRunnerDiameterMm, config.cylinders[index].intakeRunnerDiameterMm);
+    }
+    for (std::size_t pathIndex = 0; pathIndex < intakePlenumCount_; ++pathIndex) {
+        const auto& geometry = intakeGeometryAt(config_, pathIndex);
+        auto& plenum = intakePlenumGas_[pathIndex];
+        plenum.resizeKeepingState(geometry.plenumVolumeLitres);
+        const auto throttleRadius = geometry.throttleDiameterMm * 0.0005;
+        plenum.setGeometry(std::numbers::pi * throttleRadius * throttleRadius,
+                           plenum.orientationDx(), plenum.orientationDy());
+    }
+    return true;
 }
 
 std::unique_ptr<gasdynamics::ExhaustGasNetwork> EngineSimulator::buildPhysicalExhaustNetwork(
@@ -793,6 +871,24 @@ bool EngineSimulator::replaceExhaustNetwork(
     // describing the engine that runs.
     config_.exhaust = config.exhaust;
     config_.exhaustPaths = config.exhaustPaths;
+    return true;
+}
+
+bool EngineSimulator::settingsReplaceable(const EngineConfig& running,
+                                          const EngineConfig& edited) noexcept {
+    const auto& was = running.forcedInduction;
+    const auto& now = edited.forcedInduction;
+    return running.injection.mode == edited.injection.mode
+        && was.enabled == now.enabled && was.type == now.type
+        && was.compressorBladeCount == now.compressorBladeCount
+        && was.turbineBladeCount == now.turbineBladeCount
+        && was.superchargerLobeCount == now.superchargerLobeCount;
+}
+
+bool EngineSimulator::replaceSettings(EngineConfig& config) noexcept {
+    if (!settingsReplaceable(config_, config)) return false;
+    std::swap(config_.injection, config.injection);
+    std::swap(config_.forcedInduction, config.forcedInduction);
     return true;
 }
 

@@ -8,6 +8,7 @@
 #include <enginelab/render/CrankClock.hpp>
 #include <enginelab/render/EngineModel3D.hpp>
 #include <enginelab/render/GasFieldView.hpp>
+#include <enginelab/render/ListenerFrame.hpp>
 #include <enginelab/render/RouteCheck.hpp>
 #include <enginelab/render/RouteSolver.hpp>
 #include <enginelab/simulation/EngineSimulator.hpp>
@@ -815,6 +816,52 @@ void checkRouter() {
     require(drift < 0.5F, "a pipe that already fits stays where it was put (" + std::to_string(drift) + " mm)");
 }
 
+int listenersChecked = 0;
+
+/** A camera 4 m behind the drawn tailpipe, along it, hears the first outlet
+ * on its acoustic axis; the frame keeps distances from the origin. */
+void checkListenerFrame(const EngineConfig& config) {
+    const EngineModel3D scene(config);
+    const auto frame = ListenerFrame::of(scene);
+    const Vec3 probe { 312.0F, -147.0F, 905.0F };
+    const auto mapped = frame.acoustic(probe);
+    require(std::abs(std::hypot(mapped.x, mapped.y, mapped.z) - 0.001 * length(probe)) < 1.0e-6,
+            config.name + ": the listener frame keeps distances");
+    require(std::abs(mapped.z - 0.001 * probe.y) < 1.0e-9, config.name + ": up stays up");
+    const SceneDuct* outlet = nullptr;
+    for (const auto& duct : scene.ducts())
+        if (duct.kind == DuctKind::exhaustComponent && duct.componentType == ExhaustComponentType::outlet
+            && duct.centreline.size() >= 2U) {
+            outlet = &duct;
+            break;
+        }
+    if (outlet == nullptr) return;
+    const auto tip = outlet->centreline.back();
+    auto along = tip - outlet->centreline[outlet->centreline.size() - 2U];
+    along.y = 0.0F;
+    if (length(along) < 1.0e-3F) return;
+    const auto eye = tip + normalise(along) * 4'000.0F;
+    const auto heard = frame.acoustic(eye);
+    const auto& path = config.exhaustPaths.front();
+    auto source = path.acousticPositionM;
+    auto axis = path.acousticAxis;
+    if (path.network)
+        for (const auto& component : path.network->components)
+            if (component.type == ExhaustComponentType::outlet) {
+                source = component.acousticPositionM;
+                axis = component.acousticAxis;
+                break;
+            }
+    const auto dx = heard.x - source.x;
+    const auto dy = heard.y - source.y;
+    const auto cosine = (dx * axis.x + dy * axis.y)
+        / std::max(1.0e-9, std::hypot(dx, dy) * std::hypot(axis.x, axis.y));
+    std::cout << "  " << config.name << ": camera behind the drawn tailpipe at " << std::hypot(dx, dy)
+              << " m from the outlet, cosine to its acoustic axis " << cosine << "\n";
+    require(cosine > 0.9, config.name + ": a camera behind the drawn tailpipe is on the outlet's acoustic axis");
+    ++listenersChecked;
+}
+
 void checkCrankClock() {
     // Constant 3,000 rpm sampled at 30 Hz, displayed at 144 Hz.
     CrankClock clock;
@@ -889,6 +936,9 @@ int main() {
     const auto catalogue = loadEngineCatalog(ENGINELAB_CATALOG_ROOT);
     require(catalogue.errors.empty() && !catalogue.entries.empty(), "the shipped catalogue loads");
     for (const auto& entry : catalogue.entries) checkEngine(entry.config);
+    for (const auto& entry : catalogue.entries) checkListenerFrame(entry.config);
+    require(listenersChecked >= 12, "most catalogue engines have a drawn tailpipe to listen behind ("
+                                        + std::to_string(listenersChecked) + ")");
     // 2JZ, EJ25, I5 and TDI; the Merlin's supercharger is not a turbo.
     require(turbosDrawn == 4, "the four catalogue turbochargers are drawn (" + std::to_string(turbosDrawn) + ")");
     require(superchargersDrawn == 1, "the Merlin's supercharger is drawn (" + std::to_string(superchargersDrawn) + ")");

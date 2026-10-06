@@ -43,6 +43,11 @@ public:
     [[nodiscard]] bool prepare(double sampleRateHz,
                                double observerDistanceM = 0.0) noexcept;
     void reset() noexcept;
+    /** The listener glides to `distanceM` from the engine (kept within
+     * FreeFieldObserver's microphone distances) with the microphones' time
+     * constant (FreeFieldObserver::microphoneGlideSeconds); `immediately`
+     * jumps there. Audio thread. */
+    void moveObserver(double distanceM, bool immediately = false) noexcept;
     /** Same-binary diagnostic control for the pre-fix unnormalised bandpass. */
     void setBroadbandPowerNormalisationEnabled(bool enabled) noexcept {
         broadbandPowerNormalisationEnabled_ = enabled;
@@ -59,6 +64,15 @@ public:
         double totalKgPerSecond, float wastegateOpening) const noexcept;
 
     [[nodiscard]] bool valid() const noexcept { return valid_; }
+    /** Whether `a` and `b` describe the same machine, which only its sizes,
+     * areas and efficiencies tell apart: on or off alike, the same type, the
+     * same blade and lobe counts. */
+    [[nodiscard]] static bool sameMachine(const ForcedInductionConfig& a,
+                                          const ForcedInductionConfig& b) noexcept;
+    /** Take another configuration of the same machine while it plays: nothing
+     * is derived from it ahead of process(). False, changing nothing, when it
+     * is another machine or would not be valid. Allocates nothing. */
+    [[nodiscard]] bool updateConfig(const ForcedInductionConfig& config) noexcept;
     [[nodiscard]] bool semiEmpirical() const noexcept { return true; }
 
 private:
@@ -80,6 +94,8 @@ private:
 
     ForcedInductionConfig config_;
     double sampleRateHz_ { 48'000.0 };
+    double targetObserverDistanceM_ { 1.0 };
+    double observerGlideCoefficient_ { 1.0 };
     double observerDistanceM_ { 1.0 };
     double configuredObserverDistanceM_ { 1.0 };
     double compressorPhase_ {};
