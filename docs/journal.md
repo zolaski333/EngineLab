@@ -5,6 +5,18 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-06 — DFCO resume: the EJ25's peak is lean, not rich
+
+- LoadedAccelerationHarness now splits the resume error: rich 16-30 %, lean
+  5-35 %. The EJ25's 35.1 % (which loosened the envelope to 0.40) is its first
+  post-cut cycle, lean: first four charges 219 mg metered, 120 mg in the
+  chambers (162 needed); the dry runner and film kept the rest.
+- The rich side is the resume trim: it starts at the fourth root of the
+  learned high-load cell (EJ25 0.92 against 0.73 settled), ~3 cycles to fall.
+- One factor each, catalogue max: no prime 51 % lean; start sqrt 41 %; full
+  cell 58 % lean; unity 30 % but Hayabusa/CP3 misfire; 150 mm footprint 34 %
+  but 2JZ 23 misfires; both 40 % (EJ25) and 26 misfires. Kept: rich 0.35, lean 0.40.
+
 ## 2026-10-06 — Injectors drawn, Ctrl+S, quit warning, no manual load
 
 - `EngineLab.EngineModel3D`: one injector per cylinder on the 16 catalogue
