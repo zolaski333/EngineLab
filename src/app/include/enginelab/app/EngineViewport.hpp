@@ -178,7 +178,9 @@ private:
     ActionButton secondUp_ { "+", ActionButton::Style::compact };
     ActionButton resetEdit_ { "Reset", ActionButton::Style::compact };
     ActionButton rampEdit_ { "Next cycle", ActionButton::Style::compact };
-    bool gradual_ {};
+    /** The owner's choice (2026-10-06): a resize glides over the ramp by
+        default, which also avoids the lean cycle of an instant change. */
+    bool gradual_ { true };
     juce::TextEditor valueEditor_;
     /** The value being typed: 0 the first, 1 the second, -1 none. */
     int typing_ { -1 };

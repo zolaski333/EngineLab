@@ -428,8 +428,8 @@ reads. A stepper press reaches the running engine 250 ms after the last one
 had when it was selected. The camera stays and the part stays selected.
 
 A cylinder liner or piston offers the engine's bore and stroke the same way
-(1 mm, 0.1 mm with Shift), with a choice between the next cycle and a 3 s
-ramp (a live bore and stroke change, see above). The view shows the target
+(1 mm, 0.1 mm with Shift), with a choice between a 3 s ramp (the default) and
+the next cycle (a live bore and stroke change, see above). The view shows the target
 size at once.
 
 Two controls at the bottom right slow things down, and they are different.

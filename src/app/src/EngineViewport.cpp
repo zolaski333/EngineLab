@@ -496,11 +496,15 @@ PartInspector::PartInspector() {
     secondUp_.onClick = [this] { stepEdit(false, 1.0); };
     rampEdit_.setTooltip("When the cylinders take a new size: at their next gas-exchange TDC, or gradually over "
                          + juce::String(EngineViewport::cylinderRampSeconds, 0) + " s");
-    rampEdit_.onClick = [this] {
-        gradual_ = !gradual_;
+    const auto showRamp = [this] {
         rampEdit_.setButtonText(gradual_ ? "Over " + juce::String(EngineViewport::cylinderRampSeconds, 0) + " s"
                                          : juce::String("Next cycle"));
     };
+    rampEdit_.onClick = [this, showRamp] {
+        gradual_ = !gradual_;
+        showRamp();
+    };
+    showRamp();
     valueEditor_.setJustification(juce::Justification::centred);
     valueEditor_.setFont(monoFont(11.5F, false));
     valueEditor_.setIndents(4, 3);

@@ -70,8 +70,8 @@ file formats, always with an in-memory migration).
 - Type a size in the part inspector: click the value, type, Enter applies.
   The steppers stay for small steps.
 - Change the bore and stroke while the engine runs: click a cylinder liner or
-  a piston in the 3-D view. Each crank throw takes the new size at its next
-  gas-exchange TDC, or gradually over 3 s. The number of cylinders, the
+  a piston in the 3-D view. The size glides over 3 s by default, or each crank
+  throw takes it at its next gas-exchange TDC. The number of cylinders, the
   layout and the fuel still need a restart.
 - Exhaust and intake pipes in the 3-D view are routed like real ones: they no
   longer pass through each other, the engine or the intake, bend no tighter
