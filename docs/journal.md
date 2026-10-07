@@ -5,6 +5,18 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-07 — Hayabusa and 2JZ curve swings come from the intake runner waves
+
+- A rated peak torque is its curve's maximum. Sweep maxima over it: Hayabusa +29 % (178 Nm at 7,500, VE 1.26
+  where 138 Nm needs ~1.03), EJ25 +22 %, Big Twin +16 %, the rest ≤ +13 %.
+- Hayabusa, one factor each: intake oracle mesh (30 mm, RK2) keeps VE 1.17-1.24 at 7,500-10,000, so not
+  numerical; plenum momentum fully dissipated: inert; 8 L plenum: MAP 107.8 -> 103.4 kPa, peak 178 -> 164 Nm,
+  but it stands in for throttles the model can only put upstream of it. CR 11.0 (the 1999 engine's; 12.5 is
+  2008's): -2 % at 7,000 but VE at 9,500 1.14 -> 1.22. Not applied. Its WOT misfire sits on the VE jump at 7,000.
+- 2JZ dip (369 Nm at 4,000 for 427): boost held at 192 kPa, charge over plenum density 0.62-0.81. Well-mixed
+  junctions and 650 mm primaries: inert; runners 330 -> 450 mm move the peak 5,500 -> 4,750. Runner waves swing
+  ±20 % where real curves move 5-8 %. Next: their damping, against a measured full curve.
+
 ## 2026-10-07 — Catalogue exhausts at their real length
 
 - Routes were 0.9-1.3 m (LS3 2.07). `midpipe_length_mm` gives the K20A 3.5 m, LS3 3.0 (realtime: 3.73 m cost
