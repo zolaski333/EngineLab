@@ -23,6 +23,14 @@ namespace {
     return none || complete;
 }
 
+[[nodiscard]] bool validMidpipe(const ExhaustConfig& exhaust) noexcept {
+    const auto length = exhaust.midpipeLengthMm;
+    const auto diameter = exhaust.midpipeDiameterMm;
+    return std::isfinite(length) && length >= 0.0 && length <= 6'000.0
+        && std::isfinite(diameter)
+        && (diameter == 0.0 || (diameter >= 15.0 && diameter <= 300.0));
+}
+
 [[nodiscard]] IntakePathConfig makeDefaultIntakePath(const EngineConfig& config) {
     IntakePathConfig path;
     path.id = 1;
@@ -682,6 +690,7 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
         || !inRange(config.exhaust.mufflerPackingThicknessMm, 0.0, 300.0)
         || !inRange(config.exhaust.mufflerPerforatedOpenAreaRatio, 0.0, 1.0)
         || !validMufflerPacking(config.exhaust)
+        || !validMidpipe(config.exhaust)
         || !inRange(config.transmission.finalDriveRatio, 1.0, 8.0)
         || !inRange(config.transmission.maxClutchTorqueNm, 10.0, 10'000.0)
         || !inRange(config.transmission.drivelineEfficiency, 0.2, 1.0)
@@ -1143,6 +1152,7 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
             || !inRange(exhaust.mufflerPackingThicknessMm, 0.0, 300.0)
             || !inRange(exhaust.mufflerPerforatedOpenAreaRatio, 0.0, 1.0)
             || !validMufflerPacking(exhaust)
+            || !validMidpipe(exhaust)
             || !validPoint(path.acousticPositionM)
             || !validPoint(path.acousticAxis)
             || path.acousticAxis.x * path.acousticAxis.x

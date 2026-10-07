@@ -1,5 +1,6 @@
 #pragma once
 
+#include <enginelab/foundation/AcousticSourcePlacement.hpp>
 #include <enginelab/foundation/EngineTypes.hpp>
 #include <enginelab/render/Math3D.hpp>
 
@@ -25,6 +26,12 @@ struct ListenerFrame final {
 
     [[nodiscard]] static ListenerFrame of(const EngineModel3D& scene) noexcept;
     [[nodiscard]] AcousticPoint3M acoustic(Vec3 pointMm) const noexcept;
+    /** A unit direction of the view, turned into the sound's axes. */
+    [[nodiscard]] AcousticPoint3M direction(Vec3 axis) const noexcept;
+    /** Where `scene` draws its openings, in the sound's frame: each exhaust
+     * outlet's tip and each intake path's mouth with the direction out of it,
+     * and the turbo's compressor or the supercharger. */
+    [[nodiscard]] AcousticSourcePlacements sources(const EngineModel3D& scene) const;
     /** Two microphones `spacingM` apart along `right` (the camera's right,
      * a unit vector), centred on `eyeMm`: left first. */
     [[nodiscard]] std::array<AcousticPoint3M, 2> microphones(Vec3 eyeMm, Vec3 right,

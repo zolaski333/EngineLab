@@ -1,3 +1,4 @@
+#include <enginelab/exhaust/ExhaustComponentResize.hpp>
 #include <enginelab/exhaust/ExhaustGraph.hpp>
 #include <enginelab/exhaust/LegacyExhaustNetwork.hpp>
 #include <enginelab/serialization/JsonEngineSerializer.hpp>
@@ -896,6 +897,43 @@ void testEditableLegacyConversionIsNeutral() {
         [](const auto& item) { return item.type == ExhaustComponentType::muffler; }),
         "an open scalar path must not become a default muffler when edited");
 }
+
+// The mid pipe gives a scalar path its real length. The solver's compiler,
+// the editable network (3-D view, designer) and the inspector must all carry
+// it, or the length would vanish as soon as the exhaust is drawn or edited.
+void testMidpipeIsCarriedEverywhere() {
+    auto config = makeDefaultInlineFour();
+    require(config.exhaustPaths.size() == 1 && !config.exhaustPaths.front().network,
+        "the mid pipe fixture needs one scalar path");
+    const auto routeLengthMm = [](const ExhaustGraph& graph) {
+        return graph.routes().empty() ? 0.0 : graph.routes().front().lengthMm;
+    };
+    const auto withoutMm = routeLengthMm(ExhaustGraph::makeForEngine(config));
+    config.exhaust.midpipeLengthMm = 2'000.0;
+    config.exhaustPaths.front().geometry.midpipeLengthMm = 2'000.0;
+    require(std::abs(routeLengthMm(ExhaustGraph::makeForEngine(config)) - withoutMm - 2'000.0) < 1.0e-6,
+        "a 2,000 mm mid pipe must lengthen every route by 2,000 mm");
+
+    const auto& path = config.exhaustPaths.front();
+    const auto network = makeEditableExhaustNetwork(path);
+    const auto midpipe = std::find_if(network.components.begin(), network.components.end(),
+        [&network](const ExhaustComponentConfig& component) {
+            return component.type == ExhaustComponentType::pipe
+                && std::none_of(network.cylinderConnections.begin(), network.cylinderConnections.end(),
+                    [&component](const auto& connection) { return connection.componentId == component.id; });
+        });
+    require(midpipe != network.components.end() && std::abs(midpipe->lengthMm - 2'000.0) < 1.0e-9
+            && std::abs(midpipe->diameterMm - path.geometry.collectorDiameterMm) < 1.0e-9,
+        "the editable network must draw the mid pipe at its length, in the collector's bore");
+
+    auto edited = config;
+    const auto primaryLengthMm = path.geometry.primaryLengthMm;
+    const auto error = resizeExhaustComponent(edited, path.id, midpipe->id, 1'500.0, 60.0);
+    require(error.empty() && std::abs(edited.exhaust.midpipeLengthMm - 1'500.0) < 1.0e-9
+            && std::abs(edited.exhaust.midpipeDiameterMm - 60.0) < 1.0e-9
+            && std::abs(edited.exhaust.primaryLengthMm - primaryLengthMm) < 1.0e-9,
+        "resizing the mid pipe must change the mid pipe, not the primaries: " + error);
+}
 } // namespace
 
 int main() {
@@ -904,6 +942,7 @@ int main() {
         testTopologyRejectionIsReported();
         testDegenerateChamberIsFlooredToItsResolutionLimit();
         testEditableLegacyConversionIsNeutral();
+        testMidpipeIsCarriedEverywhere();
         testValidationAndRouting();
         testDirectionalCrossoverRouting();
         testTerminalResonatorIsAcousticOnly();

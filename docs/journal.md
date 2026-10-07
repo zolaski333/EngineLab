@@ -5,6 +5,77 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-07 — Hayabusa and 2JZ curve swings come from the intake runner waves
+
+- A rated peak torque is its curve's maximum. Sweep maxima over it: Hayabusa +29 % (178 Nm at 7,500, VE 1.26
+  where 138 Nm needs ~1.03), EJ25 +22 %, Big Twin +16 %, the rest ≤ +13 %.
+- Hayabusa, one factor each: intake oracle mesh (30 mm, RK2) keeps VE 1.17-1.24 at 7,500-10,000, so not
+  numerical; plenum momentum fully dissipated: inert; 8 L plenum: MAP 107.8 -> 103.4 kPa, peak 178 -> 164 Nm,
+  but it stands in for throttles the model can only put upstream of it. CR 11.0 (the 1999 engine's; 12.5 is
+  2008's): -2 % at 7,000 but VE at 9,500 1.14 -> 1.22. Not applied. Its WOT misfire sits on the VE jump at 7,000.
+- 2JZ dip (369 Nm at 4,000 for 427): boost held at 192 kPa, charge over plenum density 0.62-0.81. Well-mixed
+  junctions and 650 mm primaries: inert; runners 330 -> 450 mm move the peak 5,500 -> 4,750. Runner waves swing
+  ±20 % where real curves move 5-8 %. Next: their damping, against a measured full curve.
+
+## 2026-10-07 — Catalogue exhausts at their real length
+
+- Routes were 0.9-1.3 m (LS3 2.07). `midpipe_length_mm` gives the K20A 3.5 m, LS3 3.0 (realtime: 3.73 m cost
+  8 % and one INVALID run, median 1.06 -> 1.02 at 3.0), flat-six 1.57, bikes 1.22-1.49. CatalogReference moves ≤ 4.4 %.
+- Turbos refuted: the turbine is the outlet restriction, so the mid pipe sat on its hot side. 2.6 m slowed
+  the spool (90 % of the step at 3,000 rpm) 1.30 -> 1.72 s (2JZ), 2.47 -> 3.53 s (I5), EJ25 and TDI alike;
+  the 2JZ no longer reached its shift point. 2JZ, EJ25, I5 and TDI keep their old length.
+- AudioRenderHarness: level -1.2 dB (LS3) to +2.5 dB (flat-six); the share below 250 Hz falls (CP2 64 -> 47 %,
+  Arrow 64 -> 41 %, Lab 53 -> 23 %). Not judged by ear yet.
+- Open: the CP3 and CP4 misfire once on the DFCO resume (first charge, CP3 AFR 9.05); the CP2's live remesh
+  lands 37 % short of a fine-built engine, already before this change.
+
+## 2026-10-06 — 2JZ boost ran past its wastegate
+
+- DynoSweepHarness: at 520 mm2 (the default gate) the 2JZ's gate is fully
+  open from 5,500 rpm and the pressure ratio keeps rising: MAP 202 kPa at
+  5,000, 246 at 6,000, 297 at 6,500. EJ25, I5 and TDI hold theirs.
+- Turbine inlet at the mean back pressure instead of the port peak: 252 kPa
+  at 6,500, not a fix; not kept. Gate 900 mm2 (a 34 mm port): 190-194 kPa
+  from 3,000 to 6,500; 1,300 mm2 gives the same curve.
+- CatalogReference: power 275.2 -> 259.2 kW (+15.2 -> +8.4 %), torque 371.3 ->
+  373.2 N.m at 4,000 (-12.6 %). Audio harness (holds ~3,700 rpm): RMS and peak
+  equal, crest 6.33 -> 6.84. New test CatalogBoostHold (fails at 520 mm2: 2.47).
+
+## 2026-10-06 — DFCO resume: the EJ25's peak is lean, not rich
+
+- LoadedAccelerationHarness now splits the resume error: rich 16-30 %, lean
+  5-35 %. The EJ25's 35.1 % (which loosened the envelope to 0.40) is its first
+  post-cut cycle, lean: first four charges 219 mg metered, 120 mg in the
+  chambers (162 needed); the dry runner and film kept the rest.
+- The rich side is the resume trim: it starts at the fourth root of the
+  learned high-load cell (EJ25 0.92 against 0.73 settled), ~3 cycles to fall.
+- One factor each, catalogue max: no prime 51 % lean; start sqrt 41 %; full
+  cell 58 % lean; unity 30 % but Hayabusa/CP3 misfire; 150 mm footprint 34 %
+  but 2JZ 23 misfires; both 40 % (EJ25) and 26 misfires. Kept: rich 0.35, lean 0.40.
+
+## 2026-10-06 — Injectors drawn, Ctrl+S, quit warning, no manual load
+
+- `EngineLab.EngineModel3D`: one injector per cylinder on the 16 catalogue
+  engines (port and direct), named with its cylinder by a click, port in the
+  runner spraying at the valves, direct in the roof spraying down.
+  Mutations caught: 6 of 6.
+- `EngineLab.SourceEncoding` fails on the `⋯` menu text corrupted in 8af95bd
+  (UTF-8 read as Latin-1) and passes on the 258 repaired files.
+- Not exercised on screen: the inspector, the side panel's *Show in 3-D*,
+  Ctrl+S against the starter, the quit dialog (no screen here).
+
+## 2026-10-06 — Sound sources at their drawn places
+
+- With the camera microphone on, the exhaust and intake still radiated from
+  the origin (their authored, schematic place). Now each outlet sounds from
+  its drawn tip and each intake path from its drawn mouth, the turbo from its
+  compressor. `EngineLab.EngineModel3D`: every compiled outlet of the 16
+  catalogue engines and a scalar copy finds its drawn tip and axis.
+- `EngineLab.CameraMicrophone`: CP2 openings 1 m before the microphones
+  +11.9 dB exhaust, +11.9 dB intake; 2JZ turbo halfway +6.00 dB (1/r 6.00);
+  switched off, bit for bit again at 7.11 s. Mutations caught: 13 of 13.
+  Not listened to in the application.
+
 ## 2026-10-06 — Camera microphone
 
 - `EngineLab.CameraMicrophone`: twice as far, -6.02 dB for a tone, the CP2

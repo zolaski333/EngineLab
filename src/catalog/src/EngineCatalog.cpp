@@ -155,6 +155,18 @@ void compileCatalogueExhaustPath(ExhaustPathConfig& path,
         terminalComponent = 200;
     }
 
+    if (geometry.midpipeLengthMm > 0.0) {
+        const auto midpipeId = std::uint32_t { 500 };
+        const auto upstreamDiameter = primaryIds.size() == 1
+            ? primaryDiameter : collectorDiameter;
+        network.components.push_back(exhaustComponent(midpipeId,
+            ExhaustComponentType::pipe, geometry.midpipeLengthMm,
+            geometry.midpipeDiameterMm > 0.0
+                ? geometry.midpipeDiameterMm : upstreamDiameter));
+        addConnection(terminalComponent, midpipeId);
+        terminalComponent = midpipeId;
+    }
+
     const auto chamberConfigured =
         geometry.mufflerChamberDiameterMm > 1.0
         && geometry.mufflerChamberLengthMm > 1.0;
@@ -391,6 +403,8 @@ template <typename T>
         value.mufflerPackingThicknessMm);
     assignIfPresent(node, "muffler_perforated_open_area_ratio",
         value.mufflerPerforatedOpenAreaRatio);
+    assignIfPresent(node, "midpipe_length_mm", value.midpipeLengthMm);
+    assignIfPresent(node, "midpipe_diameter_mm", value.midpipeDiameterMm);
     return value;
 }
 

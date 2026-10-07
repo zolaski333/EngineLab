@@ -24,8 +24,8 @@ not touch the running engine until the copy is applied.
    deletion. The **MOVE** selector reassigns a cylinder between two paths
    without creating a duplicate. The IR stays in the engine file.
 2. If the path has no graph yet, select **GENERATE FROM LEGACY**. One primary
-   per cylinder, a junction, a muffler and an outlet are created from
-   `geometry`.
+   per cylinder, a junction, a mid pipe (when `midpipe_length_mm` is set), a
+   muffler and an outlet are created from `geometry`.
 3. Add the components, then edit their type, ID, dimensions, restriction,
    resonance, gain and discharge coefficient. The canvas uses automatic layout,
    and clicking a node selects the matching component.
@@ -88,6 +88,30 @@ exhaust_paths:
 ```
 
 The same keys exist in JSON under `engine.exhaust_paths[].graph`.
+
+## Scalar geometry and real lengths
+
+Without a `graph`, `geometry` (or `engine.exhaust`, or a preset in
+`parts/exhausts.yaml`) describes primaries, a collector, an optional silencer
+and an outlet. `midpipe_length_mm` adds a straight pipe from the collector to
+the silencer: a car's downpipe, cat and mid pipe, a bike's link pipe.
+`midpipe_diameter_mm` sets its bore; zero keeps the collector's (the
+primary's on a single-cylinder path). Both default to zero, which leaves the
+path as it was before these fields existed.
+
+The catalogue uses it to give every system its family's length from port to
+tip: 3.0-3.7 m under a front-engined car, 1.6 m behind the rear-engined
+flat-six, 1.2-1.5 m on a motorcycle. `EngineLab.Core` holds those bands. A
+long pipe costs realtime solver cells (one per 0.36 m): check a costly engine
+with `EngineLabRealtimeBudgetHarness --free-run --with-audio` before
+lengthening it.
+
+Turbocharged engines keep no mid pipe. The solver's turbine is a restriction
+in series with the network's outlets, so the whole network is its hot side:
+a mid pipe there is gas volume the turbine has to fill, which a real downpipe
+behind the turbine is not. 2.6 m of it slowed the spool at 3,000 rpm by 25 to
+43 % (2026-10-07). Their systems stay 0.9-1.4 m long until the turbine sits
+at the collector.
 
 ### Measured porous packing
 

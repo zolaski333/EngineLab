@@ -77,6 +77,7 @@ bool FreeFieldObserver::prepare(double sampleRateHz, double apertureRadiusM,
     for (std::size_t index = 0; index < microphones_.size(); ++index) {
         auto& microphone = microphones_[index];
         if (!aim(microphone, positions[index])) return false;
+        requestedMicrophones_[index] = positions[index];
         microphone.delaySamples = microphone.targetDelaySamples;
         microphone.distanceScale = microphone.targetDistanceScale;
         microphone.highBandDirectivity = microphone.targetDirectivity;
@@ -125,6 +126,7 @@ void FreeFieldObserver::moveMicrophones(const AcousticPoint3M& left,
                                         const AcousticPoint3M& right, bool immediately) noexcept {
     if (!prepared_) return;
     const std::array positions { left, right };
+    requestedMicrophones_ = positions;
     for (std::size_t index = 0; index < microphones_.size(); ++index) {
         auto& microphone = microphones_[index];
         auto position = positions[index];
@@ -149,6 +151,15 @@ void FreeFieldObserver::moveMicrophones(const AcousticPoint3M& left,
         microphone.distanceScale = microphone.targetDistanceScale;
         microphone.highBandDirectivity = microphone.targetDirectivity;
     }
+}
+
+void FreeFieldObserver::moveSource(const AcousticPoint3M& positionM, const AcousticPoint3M& axis,
+                                   bool immediately) noexcept {
+    if (!prepared_) return;
+    sourcePositionM_ = positionM;
+    axis_ = normalised(axis, { 0.0, 1.0, 0.0 });
+    const auto requested = requestedMicrophones_;
+    moveMicrophones(requested[0], requested[1], immediately);
 }
 
 float FreeFieldObserver::approach(float value, float target, float coefficient,

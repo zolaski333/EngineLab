@@ -43,15 +43,12 @@ ControlPanel::ControlPanel() {
         addAndMakeVisible(*button);
     }
 
-    prepareSlider(load.slider, 0.0, 100.0, 1.0, 0.0);
-    load.format = [](double value) { return fixed(value, 0) + " %"; };
     prepareSlider(afrTrim.slider, -3.0, 3.0, 0.1, 0.0);
     afrTrim.slider.setDoubleClickReturnValue(true, 0.0);
     afrTrim.format = [](double value) { return signedValue(value, 1, {}); };
     prepareSlider(sparkTrim.slider, -15.0, 15.0, 0.1, 0.0);
     sparkTrim.slider.setDoubleClickReturnValue(true, 0.0);
     sparkTrim.format = [](double value) { return signedValue(value, 1, utf8("\xc2\xb0")); };
-    addAndMakeVisible(load);
     addChildComponent(afrTrim);
     addChildComponent(sparkTrim);
 }
@@ -89,7 +86,6 @@ void ControlPanel::refresh(const DashboardModel& model) {
                                        static_cast<juce::Component*>(&throttleLow),
                                        static_cast<juce::Component*>(&throttleMid),
                                        static_cast<juce::Component*>(&throttleFull),
-                                       static_cast<juce::Component*>(&load),
                                        static_cast<juce::Component*>(&afrTrim),
                                        static_cast<juce::Component*>(&sparkTrim) })
         control->setEnabled(!running);
@@ -143,8 +139,6 @@ void ControlPanel::resized() {
     throttleMid.setBounds(bottomPresets.removeFromLeft(half));
     throttleFull.setBounds(bottomPresets.removeFromRight(half));
     area.removeFromTop(20);
-    load.setBounds(area.removeFromTop(SliderRow::preferredHeight));
-    area.removeFromTop(16);
     trimsHeader_ = area.removeFromTop(22).toFloat();
     area.removeFromTop(4);
     if (trimsOpen_) {

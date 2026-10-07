@@ -191,6 +191,12 @@ struct ExhaustConfig final {
     double mufflerPackingFlowResistivityPaSPerM2 { 0.0 };
     double mufflerPackingThicknessMm { 0.0 };
     double mufflerPerforatedOpenAreaRatio { 0.0 };
+    /** Straight pipe from the collector to the silencer: the downpipe and mid
+     * pipe that carry a car's exhaust to its rear box. Zero length means none,
+     * as every engine that predates this field had. Zero diameter keeps the
+     * collector's (the primary's on a single-cylinder path). */
+    double midpipeLengthMm { 0.0 };
+    double midpipeDiameterMm { 0.0 };
 };
 
 struct IntakeConfig final {

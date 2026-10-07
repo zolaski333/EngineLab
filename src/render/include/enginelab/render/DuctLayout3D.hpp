@@ -50,6 +50,13 @@ struct DuctPiece final {
     float authoredLengthMm {};
     /** Framed by the engine camera views (ports, runners, plenum, primaries). */
     bool nearEngine {};
+    /** Where the gas meets the atmosphere: an exhaust outlet's tip, or the
+        mouth of an intake path's outermost piece (bellmouth, airbox inlet,
+        throttle mouths or supercharger eye). The sound of that opening
+        radiates from `openEnd` along the unit `openAxis`, pointing out. */
+    bool opensToAtmosphere {};
+    Vec3 openEnd;
+    Vec3 openAxis { 0.0F, 1.0F, 0.0F };
 };
 
 /**

@@ -4,6 +4,7 @@
 #include <enginelab/audio/ValvePortTermination.hpp>
 #include <enginelab/audio/FreeFieldObserver.hpp>
 #include <enginelab/exhaust/ExhaustGraph.hpp>
+#include <enginelab/foundation/AcousticSourcePlacement.hpp>
 
 #include <array>
 #include <cstddef>
@@ -102,6 +103,11 @@ public:
      * (FreeFieldObserver::moveMicrophones). Audio thread. */
     void moveMicrophones(const AcousticPoint3M& left, const AcousticPoint3M& right,
                          bool immediately = false) noexcept;
+    /** Each outlet radiates from its placement in `outlets` (matched by path
+     * index and component id), or from where its graph authored it when none
+     * matches (FreeFieldObserver::moveSource). Audio thread. */
+    void placeOutlets(std::span<const AcousticSourcePlacement> outlets,
+                      bool immediately = false) noexcept;
     [[nodiscard]] bool outletJetNoiseEnabled() const noexcept;
     /** Last sample contributed by outlet turbulence, after both microphones. */
     [[nodiscard]] std::array<StereoPressure, maximumPaths>

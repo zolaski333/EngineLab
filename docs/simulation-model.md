@@ -221,8 +221,10 @@ drive, unloads a front-wheel drive and keeps the total weight available for
 all-wheel drive. Drag, rolling resistance and brakes then dissipate the energy.
 The runtime sub-samples this coupling at 1 ms.
 
-In vehicle mode, the manual load is a longitudinal resisting force; it reaches
-the crankshaft only through the wheel, gearbox and clutch. In dyno mode, the
+In vehicle mode, the runtime's external load (`EngineRuntime::setLoad`; the
+application keeps it at zero since it no longer has a *Manual load* control)
+is a longitudinal resisting force; it reaches the crankshaft only through the
+wheel, gearbox and clutch. In dyno mode, the
 brake acts directly on the crankshaft and the vehicle is decoupled. The two
 paths are never applied at the same time.
 

@@ -10,6 +10,7 @@
 #include <array>
 #include <atomic>
 #include <condition_variable>
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -64,7 +65,7 @@ struct ViewSettings final {
     PressureWaves pressureWaves { PressureWaves::hidden };
     /** The sound is heard from the camera (EngineViewport::cameraMicrophones)
         instead of the engine's authored listener. */
-    bool cameraMicrophone { false };
+    bool cameraMicrophone { true };
 
     static juce::File file();
     void load();
@@ -227,6 +228,9 @@ public:
     ~EngineViewport() override;
 
     void setWheelModifierCheck(std::function<bool()>);
+    /** Selects cylinder 1's injector, with its inspector (the layer goes back
+        to All when the current one hides it). False without a drawn engine. */
+    bool showInjectors();
     /** Where the gas field comes from: asks for the field at a crank angle
         (negative: the latest) and copies a newer one into the snapshot. */
     void setGasFieldSource(std::function<bool(double crankAngleDegrees, GasFieldSnapshot&)>);
@@ -253,6 +257,11 @@ public:
         where it is heading (render::ListenerFrame), spaced as the engine's
         authored pair; empty when off or with no 3-D model. */
     [[nodiscard]] std::optional<std::array<AcousticPoint3M, 2>> cameraMicrophones() const;
+    /** Where the 3-D model draws the openings and the turbo, in the frame of
+        cameraMicrophones() (render::ListenerFrame::sources); empty with no
+        3-D model. `soundSourcesVersion` changes whenever they do. */
+    [[nodiscard]] const AcousticSourcePlacements& soundSources() const noexcept { return soundSources_; }
+    [[nodiscard]] std::uint64_t soundSourcesVersion() const noexcept { return soundSourcesVersion_; }
     /** Called by a click in the view or a finished typed value: the
         keyboard goes back to driving the engine. */
     std::function<void()> onClaimKeyboard;
@@ -373,6 +382,8 @@ private:
     ViewSettings settings_;
     std::shared_ptr<const render::EngineModel3D> scene_;
     render::ListenerFrame listenerFrame_;
+    AcousticSourcePlacements soundSources_;
+    std::uint64_t soundSourcesVersion_ { 0 };
     double microphoneSpacingM_ { 0.36 };
     juce::String glError_;
     bool glFailed_ { false };

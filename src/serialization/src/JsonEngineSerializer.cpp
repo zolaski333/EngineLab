@@ -371,7 +371,9 @@ std::string JsonEngineSerializer::encode(const EngineConfig& config) const {
                 {"muffler_chamber_length_mm", path.geometry.mufflerChamberLengthMm},
                 {"muffler_packing_flow_resistivity_pa_s_m2", path.geometry.mufflerPackingFlowResistivityPaSPerM2},
                 {"muffler_packing_thickness_mm", path.geometry.mufflerPackingThicknessMm},
-                {"muffler_perforated_open_area_ratio", path.geometry.mufflerPerforatedOpenAreaRatio}}} };
+                {"muffler_perforated_open_area_ratio", path.geometry.mufflerPerforatedOpenAreaRatio},
+                {"midpipe_length_mm", path.geometry.midpipeLengthMm},
+                {"midpipe_diameter_mm", path.geometry.midpipeDiameterMm}}} };
         if (path.network) {
             Json components = Json::array();
             for (const auto& component : path.network->components)
@@ -565,7 +567,9 @@ std::string JsonEngineSerializer::encode(const EngineConfig& config) const {
                       {"muffler_chamber_length_mm", config.exhaust.mufflerChamberLengthMm},
                       {"muffler_packing_flow_resistivity_pa_s_m2", config.exhaust.mufflerPackingFlowResistivityPaSPerM2},
                       {"muffler_packing_thickness_mm", config.exhaust.mufflerPackingThicknessMm},
-                      {"muffler_perforated_open_area_ratio", config.exhaust.mufflerPerforatedOpenAreaRatio}}},
+                      {"muffler_perforated_open_area_ratio", config.exhaust.mufflerPerforatedOpenAreaRatio},
+                      {"midpipe_length_mm", config.exhaust.midpipeLengthMm},
+                      {"midpipe_diameter_mm", config.exhaust.midpipeDiameterMm}}},
         {"transmission", {{"gear_ratios", config.transmission.gearRatios},
                            {"final_drive_ratio", config.transmission.finalDriveRatio},
                            {"max_clutch_torque_nm", config.transmission.maxClutchTorqueNm},
@@ -804,7 +808,9 @@ EngineDecodeResult JsonEngineSerializer::decode(std::string_view text) const noe
                 exhaust.value("muffler_chamber_length_mm", 0.0),
                 exhaust.value("muffler_packing_flow_resistivity_pa_s_m2", 0.0),
                 exhaust.value("muffler_packing_thickness_mm", 0.0),
-                exhaust.value("muffler_perforated_open_area_ratio", 0.0) };
+                exhaust.value("muffler_perforated_open_area_ratio", 0.0),
+                exhaust.value("midpipe_length_mm", 0.0),
+                exhaust.value("midpipe_diameter_mm", 0.0) };
         }
         if (engine.contains("transmission")) {
             const auto& transmission = engine.at("transmission");
@@ -986,6 +992,10 @@ EngineDecodeResult JsonEngineSerializer::decode(std::string_view text) const noe
                         "muffler_packing_thickness_mm", path.geometry.mufflerPackingThicknessMm);
                     path.geometry.mufflerPerforatedOpenAreaRatio = geometry.value(
                         "muffler_perforated_open_area_ratio", path.geometry.mufflerPerforatedOpenAreaRatio);
+                    path.geometry.midpipeLengthMm = geometry.value(
+                        "midpipe_length_mm", path.geometry.midpipeLengthMm);
+                    path.geometry.midpipeDiameterMm = geometry.value(
+                        "midpipe_diameter_mm", path.geometry.midpipeDiameterMm);
                 }
                 if (item.contains("graph") && !item.at("graph").is_null()) {
                     const auto& encodedGraph = item.at("graph");

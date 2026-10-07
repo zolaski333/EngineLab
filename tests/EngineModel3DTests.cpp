@@ -678,6 +678,52 @@ void checkExhaustResize(const EngineModel3D& model) {
     }
 }
 
+int portInjectorsDrawn = 0;
+int directInjectorsDrawn = 0;
+
+/** One injector per cylinder, named by a click, at its place: a port injector
+    in the runner out of the head spraying at the intake valves, a direct one
+    in the chamber's roof on the intake side spraying into the cylinder. */
+void checkInjectors(const EngineModel3D& model) {
+    const auto& config = model.config();
+    const auto& name = config.name;
+    const auto direct = config.injection.mode == InjectionMode::direct;
+    for (std::size_t c = 0; c < model.cylinderCount(); ++c) {
+        const auto label = name + " cylinder " + std::to_string(c + 1) + ": ";
+        const auto part = model.injectorPart(c);
+        require(part < model.parts().size(), label + "an injector is drawn");
+        const auto identity = model.identify(part);
+        require(identity.role == PartRole::injector && identity.cylinder == static_cast<int>(c),
+                label + "a click on the injector names it and its cylinder");
+        const auto tip = model.injectorTip(c);
+        const auto aim = model.injectorAim(c);
+        require(std::abs(length(aim) - 1.0F) < 1.0e-3F, label + "the spray direction is a unit vector");
+        // The nozzle ends at the tip: no vertex of the injector lies beyond it.
+        float furthest = -std::numeric_limits<float>::max();
+        for (const auto& vertex : model.parts()[part].mesh.vertices) furthest = std::max(furthest, dot(vertex.position, aim));
+        require(std::abs(furthest - dot(tip, aim)) < 0.5F, label + "the injector's nozzle ends at its tip");
+        const auto probe = model.probe(c, 0.0);
+        const auto bore = static_cast<float>(config.cylinders[c].boreMm);
+        const auto& intake = model.intakePorts()[c];
+        const auto& exhaust = model.exhaustPorts()[c];
+        require(length(tip - intake.inner) < length(tip - exhaust.inner), label + "the injector is on the intake side");
+        if (direct) {
+            // In the roof of the chamber, within the bore, spraying down into it.
+            const auto offset = tip - probe.deckCentre;
+            const auto height = dot(offset, probe.axis);
+            require(height > 0.0F && height < 0.3F * bore, label + "a direct injector sits in the chamber's roof");
+            require(length(offset - probe.axis * height) < 0.5F * bore, label + "a direct injector sits within the bore");
+            require(dot(aim, probe.axis) < -0.5F, label + "a direct injector sprays into the cylinder");
+            ++directInjectorsDrawn;
+        } else {
+            // Out of the head (above the port's inner end) and spraying at the valves.
+            require(dot(tip - probe.deckCentre, probe.axis) > 0.3F * bore, label + "a port injector sits out of the head");
+            require(dot(aim, normalise(intake.inner - tip)) > 0.99F, label + "a port injector sprays at the intake valves");
+            ++portInjectorsDrawn;
+        }
+    }
+}
+
 void checkEngine(const EngineConfig& config) {
     const EngineModel3D model(config);
     const auto& name = config.name;
@@ -702,6 +748,7 @@ void checkEngine(const EngineConfig& config) {
     checkWaveColours(model);
     checkStrengthColours(model);
     checkExhaustResize(model);
+    checkInjectors(model);
 
     std::vector<SceneInstance> instances;
     for (int step = 0; step < 72; ++step) {
@@ -862,6 +909,78 @@ void checkListenerFrame(const EngineConfig& config) {
     ++listenersChecked;
 }
 
+int sourcesChecked = 0;
+int inletDuctsChecked = 0;
+
+/** Every outlet the exhaust compiles finds the tip drawn for it, every intake
+ * path its drawn mouth, and a drawn turbo its place: the sound radiates from
+ * where the picture shows the opening. */
+void checkSoundSources(const EngineConfig& config) {
+    const EngineModel3D scene(config);
+    const auto frame = ListenerFrame::of(scene);
+    const auto sources = frame.sources(scene);
+    const auto graph = ExhaustGraph::makeForEngine(config);
+    std::size_t outlets = 0;
+    for (const auto& node : graph.nodes()) {
+        if (node.type != ExhaustNodeType::outlet) continue;
+        ++outlets;
+        const auto placed = std::find_if(sources.exhaustOutlets.begin(), sources.exhaustOutlets.end(),
+                                         [&node](const auto& placement) {
+                                             return placement.pathIndex == node.pathIndex
+                                                 && placement.componentId == node.sourceComponentId;
+                                         });
+        require(placed != sources.exhaustOutlets.end(),
+                config.name + ": outlet " + std::to_string(node.sourceComponentId) + " of path "
+                    + std::to_string(node.pathIndex) + " has a drawn place");
+        // Its drawn tip, and the direction out of it.
+        const auto drawn = std::find_if(scene.ducts().begin(), scene.ducts().end(), [&](const SceneDuct& duct) {
+            return duct.kind == DuctKind::exhaustComponent && duct.componentType == ExhaustComponentType::outlet
+                && duct.pathId == config.exhaustPaths[node.pathIndex].id
+                && (node.sourceComponentId == 0U || duct.elementId == node.sourceComponentId);
+        });
+        require(drawn != scene.ducts().end() && drawn->centreline.size() >= 2U, config.name + ": the outlet is drawn");
+        const auto tip = frame.acoustic(drawn->centreline.back());
+        const auto before = frame.acoustic(drawn->centreline[drawn->centreline.size() - 2U]);
+        const AcousticPoint3M out { tip.x - before.x, tip.y - before.y, tip.z - before.z };
+        require(std::hypot(placed->positionM.x - tip.x, placed->positionM.y - tip.y, placed->positionM.z - tip.z) < 1.0e-6,
+                config.name + ": an outlet sounds from its drawn tip");
+        require((placed->axis.x * out.x + placed->axis.y * out.y + placed->axis.z * out.z)
+                        / std::hypot(out.x, out.y, out.z) > 0.999,
+                config.name + ": an outlet sounds along its drawn axis");
+        require(std::hypot(tip.x, tip.y, tip.z) > 0.2, config.name + ": a drawn tailpipe is away from the origin");
+    }
+    require(outlets > 0 && sources.exhaustOutlets.size() == outlets,
+            config.name + ": one drawn place per compiled outlet");
+    const auto intakePaths = std::max<std::size_t>(1U, config.intakePaths.size());
+    for (std::uint32_t path = 0; path < intakePaths; ++path) {
+        const auto mouths = std::count_if(sources.intakeMouths.begin(), sources.intakeMouths.end(),
+                                          [path](const auto& placement) { return placement.pathIndex == path; });
+        require(mouths == 1, config.name + ": intake path " + std::to_string(path) + " has one drawn mouth");
+    }
+    for (const auto& mouth : sources.intakeMouths) {
+        require(std::hypot(mouth.positionM.x, mouth.positionM.y, mouth.positionM.z) > 0.05,
+                config.name + ": a drawn intake mouth is away from the origin");
+        // With an inlet duct, the mouth is its open end, the air coming in
+        // along it.
+        const auto pathId = config.intakePaths.empty() ? 1U : config.intakePaths[mouth.pathIndex].id;
+        for (const auto& duct : scene.ducts()) {
+            if (duct.kind != DuctKind::intakeInletDuct || duct.pathId != pathId || duct.centreline.size() < 2U) continue;
+            const auto open = frame.acoustic(duct.centreline.front());
+            const auto inward = frame.acoustic(duct.centreline[1]);
+            const AcousticPoint3M out { open.x - inward.x, open.y - inward.y, open.z - inward.z };
+            require(std::hypot(mouth.positionM.x - open.x, mouth.positionM.y - open.y, mouth.positionM.z - open.z) < 1.0e-6,
+                    config.name + ": an inlet duct sounds from its open end");
+            require((mouth.axis.x * out.x + mouth.axis.y * out.y + mouth.axis.z * out.z) / std::hypot(out.x, out.y, out.z)
+                        > 0.999,
+                    config.name + ": an inlet duct sounds out of its open end");
+            ++inletDuctsChecked;
+        }
+    }
+    require(sources.forcedInductionM.has_value() == (scene.turbo().placed || scene.supercharger().placed),
+            config.name + ": a drawn turbo or supercharger sounds from its place");
+    ++sourcesChecked;
+}
+
 void checkCrankClock() {
     // Constant 3,000 rpm sampled at 30 Hz, displayed at 144 Hz.
     CrankClock clock;
@@ -936,7 +1055,15 @@ int main() {
     const auto catalogue = loadEngineCatalog(ENGINELAB_CATALOG_ROOT);
     require(catalogue.errors.empty() && !catalogue.entries.empty(), "the shipped catalogue loads");
     for (const auto& entry : catalogue.entries) checkEngine(entry.config);
+    // Both kinds of injection are checked, on a direct-injection copy of the first engine if the catalogue has none.
+    if (directInjectorsDrawn == 0 || portInjectorsDrawn == 0) {
+        auto other = catalogue.entries.front().config;
+        other.injection.mode = portInjectorsDrawn == 0 ? InjectionMode::port : InjectionMode::direct;
+        checkInjectors(EngineModel3D(other));
+    }
+    require(portInjectorsDrawn > 0 && directInjectorsDrawn > 0, "port and direct injectors are both checked");
     for (const auto& entry : catalogue.entries) checkListenerFrame(entry.config);
+    for (const auto& entry : catalogue.entries) checkSoundSources(entry.config);
     require(listenersChecked >= 12, "most catalogue engines have a drawn tailpipe to listen behind ("
                                         + std::to_string(listenersChecked) + ")");
     // 2JZ, EJ25, I5 and TDI; the Merlin's supercharger is not a turbo.
@@ -947,6 +1074,10 @@ int main() {
     auto scalar = catalogue.entries.front().config;
     for (auto& path : scalar.exhaustPaths) path.network.reset();
     checkExhaustResize(EngineModel3D(scalar));
+    checkSoundSources(scalar);
+    require(sourcesChecked == static_cast<int>(catalogue.entries.size()) + 1,
+            "every catalogue engine sounds from its drawn openings");
+    require(inletDuctsChecked > 0, "an inlet duct's mouth was checked (else this proves nothing)");
     require(silencersKept > 0, "a scalar silencer narrowed to its outlet is refused");
     // Measured 2026-10-05: the four 140 mm pipes of the X of the LS3, which
     // must cross between the banks, the end primary of the I5, and the two
@@ -956,7 +1087,9 @@ int main() {
                                      + std::to_string(stretchedPipes) + ")");
     // Route check over the catalogue, measured 2026-10-05 with the router
     // (before it: 107 clashes, 51 self-clashes, 0, 259 tight bends, 6).
-    const std::array<std::size_t, 5> measured { 7, 4, 0, 48, 7 };
+    // 2026-10-07: 43 tight bends once a branch leaving an X turns away at
+    // once (the LS3's 1,070 mm pipes ran through each other otherwise).
+    const std::array<std::size_t, 5> measured { 7, 4, 0, 43, 7 };
     const std::array<const char*, 5> names { "duct clashes", "self-clashes", "engine clashes", "tight bends",
                                              "stretched pipes" };
     for (std::size_t k = 0; k < measured.size(); ++k)

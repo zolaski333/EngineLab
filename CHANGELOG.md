@@ -9,6 +9,15 @@ file formats, always with an in-memory migration).
 
 ### Changed
 
+- Catalogue exhausts run their real length from port to tip: 3.0-3.5 m
+  under the naturally aspirated front-engined cars, 1.6 m behind the
+  rear-engined flat-six and 1.2-1.5 m on the motorcycles. They used to end
+  0.9-1.3 m from the port. The turbocharged cars keep theirs: the solver's
+  turbine sits at the outlet, and a longer pipe ahead of it slowed the spool.
+  The manufacturer torque and power points move by less than 5 %. Exhaust
+  presets and paths gain `midpipe_length_mm` and `midpipe_diameter_mm`.
+- The two pipes leaving an X crossover turn away from each other at once in
+  the 3-D view instead of running through each other.
 - New main window. A top bar holds the engine picker, the run state and the
   Exhaust, ECU and Audio windows. Engine controls and a vertical throttle with
   1/10/20/100 % presets are on the left. The engine view sits in the middle with
@@ -87,10 +96,11 @@ file formats, always with an in-memory migration).
 - The intake's sizes too: runner length and diameter, plenum volume and
   throttle bore are taken while running, sound included. Adding or removing
   a path, a throttle or the airbox still restarts.
-- *Microphone on the camera* in the 3-D view's settings (off by default):
+- *Microphone on the camera* in the 3-D view's settings (on by default):
   the sound is heard from where the camera is, and follows it smoothly as it
-  moves. Exhaust and intake outlets, the turbo and the engine block move with
-  it; switched off, the usual listener comes back.
+  moves. The exhaust is heard from its drawn tailpipe, the intake from its
+  drawn mouth and the turbo from where it is drawn, no longer from the middle
+  of the engine; switched off, the usual listener comes back.
 - In the 3-D view, click an intake runner, the plenum or the throttle to
   resize it; the intake ports (or the combustion, for direct injection) for
   the injectors' flow and fuel pressure; the turbo for its wastegate and
@@ -114,9 +124,30 @@ file formats, always with an in-memory migration).
 - The Merlin's supercharger is drawn between its airbox and its throttle, with
   the charge pipe to the throttle; its impeller turns geared to the crank.
   Click it for the drive ratio, impeller speed, pressure ratio and power.
+- The injectors are drawn in the 3-D view, one per cylinder: in the runner
+  for port injection, in the head for direct injection. A click shows their
+  window, duty cycle, fuel per cycle and wall film, and edits their flow and
+  fuel pressure. The side panel's Telemetry tab gains a *Fuel injection*
+  section with a *Show in 3-D* button.
+- Ctrl+S saves the engine and Ctrl+Shift+S saves it under another name; S
+  with Ctrl held no longer cranks the starter.
+- Quitting (the window's close button or Escape) with edits not saved asks
+  first and names the engines that would lose them.
+
+### Removed
+
+- The *Manual load* slider: the dyno and the vehicle load the engine.
 
 ### Fixed
 
+- The 2JZ's turbo holds its ~0.9 bar to the limiter. Its wastegate was too
+  small to bypass the exhaust at high speed: fully open from 5,500 rpm, the
+  boost ran to 246 kPa at 6,000 rpm (and 297 kPa at 6,500). It now holds
+  190-194 kPa, and the rated power falls from 275 to 259 kW (Toyota: 239 kW).
+  The sound changes only above about 5,000 rpm under load.
+- The `⋯` menu showed `â€¦` instead of an ellipsis (Save engine…, Import
+  engine…) and an impulse response load error `Â·`; a test now refuses such
+  text in the sources.
 - A stopped engine's intake no longer churns. From rest, every engine rang
   its intake runners to ±14 to ±111 kPa within a second, which the 3-D view
   showed as an intake flashing as if the engine ran. Behind a stopped crank

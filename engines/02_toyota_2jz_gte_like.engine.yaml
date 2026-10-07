@@ -36,6 +36,11 @@ engine:
     turbine_efficiency: 0.70
     shaft_inertia_kg_m2: 0.00016
     wastegate_pressure_ratio: 1.89
+    # The real pair holds its ~0.9 bar to the limiter. The 520 mm2 default
+    # bypass could not: fully open from 5,500 rpm, boost ran to 297 kPa at
+    # 6,500 (DynoSweepHarness). 900 mm2 (a 34 mm port) holds 190-194 kPa to
+    # 6,500; 1,300 mm2 gives the same curve.
+    wastegate_flow_area_mm2: 900
     charge_temperature_rise_c: 42
     # Family-level acoustic estimates; replace with measured turbo geometry.
     compressor_blade_count: 6

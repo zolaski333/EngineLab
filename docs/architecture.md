@@ -454,11 +454,15 @@ solver's own state, not by an animation:
   engine runs steadily. The Gas flow layer shows the strength when the mode
   is *Hidden*; the other layers show no waves.
 - **Camera microphone.** *Microphone on the camera* (settings menu, *Sound*,
-  saved in `view.json`, off by default) hears the engine from where the
+  saved in `view.json` as `microphoneOnCamera`, on by default) hears the engine from where the
   camera is heading: `EngineViewport::cameraMicrophones()` maps the eye and
   its right vector through `render::ListenerFrame`, and `MainComponent`
   passes them to `RealtimeEngineAudio::setMicrophones` when they change or a
-  new renderer plays (see `realtime-audio.md`, *Camera microphone*).
+  new renderer plays. The drawn openings (`EngineViewport::soundSources()`,
+  from `render::ListenerFrame::sources`, rebuilt with each 3-D model) go to
+  `RealtimeEngineAudio::setSoundSources` in the same way, so the exhaust is
+  heard from the drawn tailpipe and the intake from its drawn mouth (see
+  `realtime-audio.md`, *Camera microphone*).
 - **Heat.** Each cell's wall temperature (the solver's finite-capacity wall)
   makes the steel glow from the Draper point, 798 K, to orange-yellow at
   1,300 K, in every layer.
@@ -510,9 +514,15 @@ The other parts edit the same way, each through `MainComponent::applyEngineEdit`
   else the path's, which every runner on it shares), a plenum (volume) and a
   throttle (bore): `resizeIntakePart` (foundation), which mirrors a single
   path into `EngineConfig::intake` and the legacy fields;
-- the injectors, on the intake ports for port injection or on the combustion
-  for direct injection: flow in g/min (the configuration keeps mg/s) and fuel
-  pressure in bar;
+- the injectors, on each drawn injector (`PartRole::injector`: in the runner
+  out of the head for port injection, in the chamber's roof on the intake side
+  for direct injection), and also on the intake ports or the combustion: flow
+  in g/min (the configuration keeps mg/s) and fuel pressure in bar, with the
+  window, live duty cycle, fuel per cycle and, for port injection, the wall
+  film. The side panel's Telemetry tab has a *Fuel injection* section whose
+  *Show in 3-D* button selects cylinder 1's injector
+  (`EngineViewport::showInjectors`, back to the All layer if the current one
+  hides it);
 - a turbo: the wastegate pressure ratio, the rated ratio keeping its
   distance to it, and the turbine flow area; a supercharger: its pressure
   and drive ratios.

@@ -619,6 +619,9 @@ void shapeComponent(DuctPiece& piece, const Node& node, std::vector<Vec3> points
         const auto axis = normalise(tip - points[points.size() - 2U]);
         appendTorus(piece.mesh, Mat4::frameAlongY(tip, axis), end, std::max(0.8F, 0.05F * node.outletDiameter),
                     segmentsFor(node.outletDiameter), 8);
+        piece.opensToAtmosphere = true;
+        piece.openEnd = tip;
+        piece.openAxis = axis;
     }
     piece.centreline = std::move(points);
     piece.radii = std::move(radii);
@@ -790,9 +793,12 @@ std::vector<DuctPiece> layoutExhaust(const EngineConfig& config, const std::vect
                 const auto& parent = nodes[node.ins.front()];
                 const auto start = outSlot(layout, parent, indexIn(parent.outs, i));
                 if (length(start - inlet) > 1.0F) {
-                    // A branch moving to its own lane bends on the way.
+                    // A branch moving to its own lane bends on the way, and
+                    // turns away at once: the branches of an X start side by
+                    // side and would otherwise run through each other.
                     const auto lead = 0.3F * node.drawLength;
-                    points = smoothCurve({ start, start + zAxis * lead, outlet - zAxis * lead, outlet }, 12);
+                    const auto leave = std::min(lead, 0.25F * node.diameter);
+                    points = smoothCurve({ start, start + zAxis * leave, outlet - zAxis * lead, outlet }, 12);
                 }
             }
             shapeComponent(piece, node, std::move(points));
@@ -1042,6 +1048,12 @@ void appendUpstream(std::vector<DuctPiece>& pieces, std::uint32_t pathId, const 
                            0.35F * ductDiameter, segmentsFor(bellmouth), false, false);
         pieces.push_back(std::move(duct));
     }
+    // The outermost piece is where the air comes in, and the path's mouth
+    // radiates from.
+    auto& outermost = pieces.back();
+    outermost.opensToAtmosphere = true;
+    outermost.openEnd = ductLength > 1.0F ? inlet + direction * ductLength : inlet;
+    outermost.openAxis = normalise(direction);
 }
 
 } // namespace

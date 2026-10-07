@@ -190,7 +190,8 @@ Details of each measurement are in the docs archive (tag `archive/docs-2026-09`)
 - Crediting port vapour to the port-injection pulse: it is a stationary
   reservoir, not fuel for the charge (delivered/demanded 0.47-0.77). For DFCO
   recovery, 8 variants fail (priming the 1st pulse only, film over one cycle,
-  carry-over ∝ demand, reference vapour level).
+  carry-over ∝ demand, reference vapour level); 5 more trade the lean first
+  cycle against rich or misfires (resume trim, footprint; journal 2026-10-06).
 
 ## Document layout
 

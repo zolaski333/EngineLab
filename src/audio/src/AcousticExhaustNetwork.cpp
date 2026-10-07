@@ -127,6 +127,8 @@ struct AcousticExhaustNetwork::Impl final {
     struct Outlet final {
         std::uint32_t nodeId {};
         std::uint32_t pathIndex {};
+        /** The outlet's component id in its path's network; 0 when generated. */
+        std::uint32_t sourceComponentId {};
         double areaM2 {};
         bool virtualTerminal { false };
         std::size_t endpointOrJunction {};
@@ -727,6 +729,8 @@ struct AcousticExhaustNetwork::Impl final {
             Outlet compiled;
             compiled.nodeId = outlet.outletNodeId;
             compiled.pathIndex = outlet.pathIndex;
+            for (const auto& node : graph.nodes())
+                if (node.id == outlet.outletNodeId) compiled.sourceComponentId = node.sourceComponentId;
             compiled.areaM2 = outlet.openingAreaM2;
             compiled.acousticPositionM = outlet.acousticPositionM;
             compiled.acousticAxis = outlet.acousticAxis;
@@ -1083,6 +1087,23 @@ void AcousticExhaustNetwork::moveMicrophones(const AcousticPoint3M& left,
     for (auto& outlet : impl_->outlets) {
         outlet.observer.moveMicrophones(left, right, immediately);
         outlet.jetNoiseObserver.moveMicrophones(left, right, immediately);
+    }
+}
+
+void AcousticExhaustNetwork::placeOutlets(std::span<const AcousticSourcePlacement> outlets,
+                                          bool immediately) noexcept {
+    if (!impl_) return;
+    for (auto& outlet : impl_->outlets) {
+        auto position = outlet.acousticPositionM;
+        auto axis = outlet.acousticAxis;
+        for (const auto& placement : outlets)
+            if (placement.pathIndex == outlet.pathIndex && placement.componentId == outlet.sourceComponentId) {
+                position = placement.positionM;
+                axis = placement.axis;
+                break;
+            }
+        outlet.observer.moveSource(position, axis, immediately);
+        outlet.jetNoiseObserver.moveSource(position, axis, immediately);
     }
 }
 

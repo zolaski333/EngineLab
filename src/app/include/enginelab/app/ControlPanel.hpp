@@ -7,8 +7,8 @@
 
 namespace enginelab::ui {
 
-/** Left column: ignition, starter, dyno, throttle, manual load and the
-    calibration trims. The main component wires the controls to the runtime. */
+/** Left column: ignition, starter, dyno, throttle and the calibration
+    trims. The main component wires the controls to the runtime. */
 class ControlPanel final : public juce::Component, private juce::Slider::Listener {
 public:
     ControlPanel();
@@ -28,7 +28,6 @@ public:
     ActionButton throttleLow { percentLabel(10), ActionButton::Style::compact };
     ActionButton throttleMid { percentLabel(20), ActionButton::Style::compact };
     ActionButton throttleFull { percentLabel(100), ActionButton::Style::compact };
-    SliderRow load { "Manual load" };
     SliderRow afrTrim { "AFR trim" };
     SliderRow sparkTrim { "Spark trim" };
 

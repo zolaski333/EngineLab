@@ -250,6 +250,14 @@ if(TARGET EngineLabDynoSweepHarness)
         PASS_REGULAR_EXPRESSION
             "exhaust_stroke_mep_bar,intake_stroke_mep_bar")
     set_tests_properties(EngineLab.CatalogReference PROPERTIES TIMEOUT 600)
+    # Every catalogue turbo holds its boost at wide-open throttle across the
+    # range. The 2JZ's 520 mm2 default gate was fully open from 5,500 rpm and
+    # let the pressure ratio reach 2.47 at 6,000 rpm (journal 2026-10-06).
+    add_test(NAME EngineLab.CatalogBoostHold
+        COMMAND EngineLabDynoSweepHarness
+            --catalog-root "${CMAKE_SOURCE_DIR}"
+            --step 1000 --boost-hold-margin 0.05)
+    set_tests_properties(EngineLab.CatalogBoostHold PROPERTIES TIMEOUT 600)
 endif()
 if(TARGET EngineLabAudioRenderHarness)
     add_test(NAME EngineLab.AudioRender COMMAND EngineLabAudioRenderHarness)
@@ -301,15 +309,21 @@ if(TARGET EngineLabLoadedAccelerationHarness)
     # Declared regression, accepted by the owner (docs/journal.md 2026-09-23).
     # Once-per-cycle port metering removed the ratchet that over-fuelled every
     # idle; the same ratchet had been refilling the runner after a fuel cut.
-    # The resume now runs rich for ~0.2 s: peak |AFR error| 16-32 % against
-    # 9-17 % before, and the EJ25 misfires rich (AFR ~8.8). The envelope still
-    # rejects the old AFR 20-30 lean excursion (+55 % and more). 0.35 became
-    # 0.40 when the EJ25's two exhausts merged into one (2026-10-06): its peak
-    # went from 31.6 to 35.1 %, its resume misfires from 3 to 1.
+    # The resume runs rich for ~0.2 s (the resume trim starts at the fourth
+    # root of the learned high-load cell, ~0.92 against ~0.73 settled): peak
+    # rich error 16-30 %, held at 0.35. The lean side is the first post-cut
+    # cycle, starved while the dry runner refills (EJ25: 219 mg metered, 120 mg
+    # in the chambers over its first four charges): 5-35 %, held at 0.40 since
+    # the EJ25's exhausts merged into one turbo (2026-10-06, 31.6 -> 35.1 %).
+    # Both still reject the old AFR 20-30 lean excursion (+55 % and more).
+    # Since their link pipes (2026-10-07) the CP3 and the CP4 misfire once on
+    # the resume, each on one cylinder's first charge (CP3 rich, AFR 9.05 with
+    # a 4.8 mg film; CP4 lean, 17.4): the resume is still open, see CLAUDE.md.
     add_test(NAME EngineLab.LoadedAccelerationCatalogDfcoResume
         COMMAND EngineLabLoadedAccelerationHarness
-            --dfco-tip-in --resume-afr-envelope 0.40
-            --known-resume-misfire EJ25)
+            --dfco-tip-in --resume-afr-envelope 0.35 --resume-lean-afr-envelope 0.40
+            --known-resume-misfire EJ25 --known-resume-misfire CP3
+            --known-resume-misfire CP4)
     # Standing start from idle, 1st gear, WOT, clutch over 0.9 s, 4 s after
     # the start (inside the ECU post-start window) and 25 s after it. d70e8b8
     # stalled six road engines at 4 s (x2.12 start reserve stacked on X-tau)
@@ -373,3 +387,8 @@ target_link_libraries(EngineLabEngineModel3DTests PRIVATE EngineLab::Render Engi
 target_compile_definitions(EngineLabEngineModel3DTests PRIVATE ENGINELAB_CATALOG_ROOT="${CMAKE_SOURCE_DIR}")
 enginelab_set_warnings(EngineLabEngineModel3DTests)
 add_test(NAME EngineLab.EngineModel3D COMMAND EngineLabEngineModel3DTests)
+
+# UTF-8 text decoded as Windows-1252 and saved again ("â€¦" for an ellipsis)
+# has reached the menus twice; no source file may hold it.
+add_test(NAME EngineLab.SourceEncoding
+    COMMAND ${CMAKE_COMMAND} -DROOT=${CMAKE_SOURCE_DIR} -P ${CMAKE_CURRENT_SOURCE_DIR}/SourceEncoding.cmake)

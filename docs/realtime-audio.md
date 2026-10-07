@@ -58,7 +58,7 @@ propagates separately to the left and right microphones with exact distance,
 
 ### Camera microphone
 
-*Microphone on the camera* (view settings, off by default) moves the pair to
+*Microphone on the camera* (view settings, on by default) moves the pair to
 the 3-D view's camera. `RealtimeEngineAudio::setMicrophones` publishes the
 positions lock-free (a sequence lock); the audio thread takes them at the next
 block and every spatialised layer moves: each exhaust outlet and intake inlet
@@ -80,13 +80,26 @@ microphone runs the exact arithmetic it always has.
 The view maps its frame (millimetres, +Y up, +Z along the crankshaft) to the
 sound's with `render::ListenerFrame`: up stays up, distances from the origin
 are kept, and the frame is turned about the vertical so that the drawn
-tailpipe points along the first outlet's acoustic axis. The sound's sources
-are schematic (outlets near the origin): a camera close to a drawn tailpipe
-that sits half a metre from the origin hears the outlet where the sound
-places it, not where it is drawn. The camera is usually within a metre or two
-of the engine, against 4 m for the authored listener, so the level and the
-balance between layers change; the master's safety gain and limiter catch
-what is too loud.
+tailpipe points along the first outlet's acoustic axis.
+
+The authored sources are schematic (outlets and intake mouths near the
+origin). While the microphones are on the camera, every opening radiates from
+where the 3-D view draws it instead: `render::ListenerFrame::sources` gives
+each exhaust outlet's tip and each intake path's mouth (bellmouth, airbox
+inlet, throttle mouths or supercharger eye), with the direction out of it, and
+the turbo's compressor or the supercharger. `RealtimeEngineAudio::
+setSoundSources` hands them to the audio thread (a pointer swapped at the
+next block, the old one freed by `collectRetiredExhaustNetworks`), and
+`AcousticExhaustNetwork::placeOutlets` / `AcousticIntakeNetwork::placeMouths`
+move each `FreeFieldObserver`'s source (`moveSource`), matched by path index
+and, for an exhaust outlet, its component id. The source glides like a
+microphone. The turbo is heard at the pair's mean distance from its drawn
+place, the structure from the origin. Switched off, every source goes back to
+its authored place, and the sound is the default one again bit for bit.
+
+The camera is usually within a metre or two of the engine, against 4 m for
+the authored listener, so the level and the balance between layers change;
+the master's safety gain and limiter catch what is too loud.
 
 The signal stays in pascals until the monitoring conversion. Since dBFS
 describes an electrical/digital chain and not a universal pressure, the full

@@ -132,6 +132,9 @@ RealtimeEngineAudio::~RealtimeEngineAudio() {
     delete incomingIntakeNetwork_.exchange(nullptr);
     delete retiredIntakeNetwork_.exchange(nullptr);
     delete swappingIntakeNetwork_;
+    delete incomingSoundSources_.exchange(nullptr);
+    delete retiredSoundSources_.exchange(nullptr);
+    delete soundSources_;
 }
 
 bool RealtimeEngineAudio::replaceExhaustGraph(const ExhaustGraph& graph) {
@@ -174,44 +177,90 @@ void RealtimeEngineAudio::setMicrophones(
     microphoneSequence_.store(sequence + 2U, std::memory_order_release);
 }
 
+void RealtimeEngineAudio::setSoundSources(const AcousticSourcePlacements& sources) {
+    collectRetiredExhaustNetworks();
+    // Placements the audio thread has not taken yet are replaced, and freed here.
+    delete incomingSoundSources_.exchange(new AcousticSourcePlacements(sources), std::memory_order_acq_rel);
+}
+
+std::span<const AcousticSourcePlacement> RealtimeEngineAudio::placedOutlets() const noexcept {
+    if (!microphonesMoved_ || soundSources_ == nullptr) return {};
+    return soundSources_->exhaustOutlets;
+}
+
+std::span<const AcousticSourcePlacement> RealtimeEngineAudio::placedMouths() const noexcept {
+    if (!microphonesMoved_ || soundSources_ == nullptr) return {};
+    return soundSources_->intakeMouths;
+}
+
 void RealtimeEngineAudio::takeMicrophones() noexcept {
-    const auto sequence = microphoneSequence_.load(std::memory_order_acquire);
-    if (sequence == appliedMicrophoneSequence_ || (sequence & 1U) != 0U) return;
-    const auto moved = publishedMicrophonesMoved_.load(std::memory_order_relaxed);
-    std::array<AcousticPoint3M, 2> positions = authoredMicrophones_;
-    if (moved) {
-        for (std::size_t index = 0; index < 2; ++index)
-            positions[index] = { publishedMicrophones_[3 * index].load(std::memory_order_relaxed),
-                                 publishedMicrophones_[3 * index + 1].load(std::memory_order_relaxed),
-                                 publishedMicrophones_[3 * index + 2].load(std::memory_order_relaxed) };
+    // New placements, once the previous ones have been collected: the
+    // retired slot then always has room.
+    auto sourcesChanged = false;
+    if (retiredSoundSources_.load(std::memory_order_acquire) == nullptr) {
+        if (auto* incoming = incomingSoundSources_.exchange(nullptr, std::memory_order_acq_rel)) {
+            retiredSoundSources_.store(std::exchange(soundSources_, incoming), std::memory_order_release);
+            sourcesChanged = true;
+        }
     }
-    std::atomic_thread_fence(std::memory_order_acquire);
-    // Written meanwhile: the next block reads it whole.
-    if (microphoneSequence_.load(std::memory_order_relaxed) != sequence) return;
-    appliedMicrophoneSequence_ = sequence;
-    microphonesMoved_ = moved;
-    currentMicrophones_ = positions;
+    auto microphonesChanged = false;
+    const auto sequence = microphoneSequence_.load(std::memory_order_acquire);
+    if (sequence != appliedMicrophoneSequence_ && (sequence & 1U) == 0U) {
+        const auto moved = publishedMicrophonesMoved_.load(std::memory_order_relaxed);
+        std::array<AcousticPoint3M, 2> positions = authoredMicrophones_;
+        if (moved) {
+            for (std::size_t index = 0; index < 2; ++index)
+                positions[index] = { publishedMicrophones_[3 * index].load(std::memory_order_relaxed),
+                                     publishedMicrophones_[3 * index + 1].load(std::memory_order_relaxed),
+                                     publishedMicrophones_[3 * index + 2].load(std::memory_order_relaxed) };
+        }
+        std::atomic_thread_fence(std::memory_order_acquire);
+        // Written meanwhile: the next block reads it whole.
+        if (microphoneSequence_.load(std::memory_order_relaxed) == sequence) {
+            appliedMicrophoneSequence_ = sequence;
+            microphonesMoved_ = moved;
+            currentMicrophones_ = positions;
+            microphonesChanged = true;
+        }
+    }
+    // Placements only count while the microphones are moved.
+    if (!microphonesChanged && !(sourcesChanged && microphonesMoved_)) return;
     const auto immediately = std::exchange(jumpMicrophones_, false);
-    const auto& [left, right] = positions;
-    if (acousticExhaustNetwork_) acousticExhaustNetwork_->moveMicrophones(left, right, immediately);
-    if (swappingExhaustNetwork_ != nullptr)
-        swappingExhaustNetwork_->network->moveMicrophones(left, right, immediately);
-    if (acousticIntakeNetwork_) acousticIntakeNetwork_->moveMicrophones(left, right, immediately);
-    if (swappingIntakeNetwork_ != nullptr)
-        swappingIntakeNetwork_->network->moveMicrophones(left, right, immediately);
-    const auto magnitude = [](const AcousticPoint3M& point) {
-        return std::sqrt(point.x * point.x + point.y * point.y + point.z * point.z);
+    const auto& [left, right] = currentMicrophones_;
+    const auto outlets = placedOutlets();
+    const auto mouths = placedMouths();
+    for (auto* network : { acousticExhaustNetwork_.get(),
+                           swappingExhaustNetwork_ != nullptr ? swappingExhaustNetwork_->network.get() : nullptr }) {
+        if (network == nullptr) continue;
+        network->placeOutlets(outlets, immediately);
+        network->moveMicrophones(left, right, immediately);
+    }
+    for (auto* network : { acousticIntakeNetwork_.get(),
+                           swappingIntakeNetwork_ != nullptr ? swappingIntakeNetwork_->network.get() : nullptr }) {
+        if (network == nullptr) continue;
+        network->placeMouths(mouths, immediately);
+        network->moveMicrophones(left, right, immediately);
+    }
+    const auto distance = [&left, &right](const AcousticPoint3M& source) {
+        const auto from = [&source](const AcousticPoint3M& point) {
+            return std::sqrt((point.x - source.x) * (point.x - source.x) + (point.y - source.y) * (point.y - source.y)
+                             + (point.z - source.z) * (point.z - source.z));
+        };
+        return 0.5 * (from(left) + from(right));
     };
     // The authored distance exactly, so switching off restores the sound.
-    const auto distanceM = moved ? 0.5 * (magnitude(left) + magnitude(right)) : authoredObserverDistanceM_;
-    if (forcedInductionAcoustics_) forcedInductionAcoustics_->moveObserver(distanceM, immediately);
-    if (structuralModalRadiator_) structuralModalRadiator_->moveObserver(distanceM, immediately);
+    const auto structureM = microphonesMoved_ ? distance({}) : authoredObserverDistanceM_;
+    const auto turboM = microphonesMoved_ && soundSources_ != nullptr && soundSources_->forcedInductionM
+        ? distance(*soundSources_->forcedInductionM) : structureM;
+    if (forcedInductionAcoustics_) forcedInductionAcoustics_->moveObserver(turboM, immediately);
+    if (structuralModalRadiator_) structuralModalRadiator_->moveObserver(structureM, immediately);
 }
 
 void RealtimeEngineAudio::collectRetiredExhaustNetworks() noexcept {
     delete retiredExhaustNetwork_.exchange(nullptr, std::memory_order_acq_rel);
     delete retiredForcedInduction_.exchange(nullptr, std::memory_order_acq_rel);
     delete retiredIntakeNetwork_.exchange(nullptr, std::memory_order_acq_rel);
+    delete retiredSoundSources_.exchange(nullptr, std::memory_order_acq_rel);
 }
 
 bool RealtimeEngineAudio::replaceIntake(const EngineConfig& config) {
@@ -241,8 +290,10 @@ void RealtimeEngineAudio::beginIntakeSwapIfWaiting() noexcept {
         return;
     }
     swappingIntakeNetwork_ = incoming;
-    if (microphonesMoved_)
+    if (microphonesMoved_) {
+        incoming->network->placeMouths(placedMouths(), true);
         incoming->network->moveMicrophones(currentMicrophones_[0], currentMicrophones_[1], true);
+    }
     intakeSwapSamples_ = 0;
 }
 
@@ -296,8 +347,10 @@ void RealtimeEngineAudio::beginExhaustSwapIfWaiting() noexcept {
         return;
     }
     swappingExhaustNetwork_ = incoming;
-    if (microphonesMoved_)
+    if (microphonesMoved_) {
+        incoming->network->placeOutlets(placedOutlets(), true);
         incoming->network->moveMicrophones(currentMicrophones_[0], currentMicrophones_[1], true);
+    }
     exhaustSwapSamples_ = 0;
     exhaustSwapWarmupSamples_ = static_cast<std::int64_t>(
         std::llround(exhaustSwapWarmupSeconds * sampleRate_));

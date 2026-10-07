@@ -42,6 +42,13 @@ template <typename Config>
     return false;
 }
 
+[[nodiscard]] bool isPrimary(const ExhaustNetworkConfig& network, std::uint32_t componentId) noexcept {
+    return std::any_of(network.cylinderConnections.begin(), network.cylinderConnections.end(),
+        [componentId](const ExhaustCylinderConnectionConfig& connection) {
+            return connection.componentId == componentId;
+        });
+}
+
 [[nodiscard]] std::vector<ExhaustComponentType> typesOf(const ExhaustNetworkConfig& network) {
     std::vector<ExhaustComponentType> types;
     types.reserve(network.components.size());
@@ -69,7 +76,8 @@ std::optional<ExhaustComponentSize> exhaustComponentSize(const EngineConfig& con
             || component->type == ExhaustComponentType::muffler;
         if (component->type == ExhaustComponentType::muffler)
             size.diameterMm = path->geometry.mufflerChamberDiameterMm;
-        size.sharedByPrimaries = component->type == ExhaustComponentType::pipe && path->cylinderIds.size() > 1U;
+        size.sharedByPrimaries = component->type == ExhaustComponentType::pipe && path->cylinderIds.size() > 1U
+            && isPrimary(network, componentId);
     } else {
         size.lengthEditable = hasLength(component->type) || component->lengthMm > 0.0;
     }
@@ -95,8 +103,13 @@ std::string resizeExhaustComponent(EngineConfig& config, std::uint32_t pathId, s
         auto& geometry = path.geometry;
         switch (findComponent(before, componentId)->type) {
         case ExhaustComponentType::pipe:
-            geometry.primaryLengthMm = lengthMm;
-            geometry.primaryDiameterMm = diameterMm;
+            if (isPrimary(before, componentId)) {
+                geometry.primaryLengthMm = lengthMm;
+                geometry.primaryDiameterMm = diameterMm;
+            } else {
+                geometry.midpipeLengthMm = lengthMm;
+                geometry.midpipeDiameterMm = diameterMm;
+            }
             break;
         case ExhaustComponentType::merge: geometry.collectorDiameterMm = diameterMm; break;
         case ExhaustComponentType::muffler:

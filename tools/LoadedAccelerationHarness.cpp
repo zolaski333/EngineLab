@@ -98,6 +98,9 @@ struct RunMetrics final {
     double postDfcoLiftRpm {};
     double postDfcoTimeToValidSeconds {};
     double postDfcoMaximumAfrError {};
+    /** The same error split by side: richest and leanest, both positive. */
+    double postDfcoRichAfrError {};
+    double postDfcoLeanAfrError {};
     double postDfcoMinimumAfr { std::numeric_limits<double>::infinity() };
     double postDfcoMaximumMisfireRate {};
     std::uint64_t postDfcoCommandedSparkEvents {};
@@ -423,6 +426,10 @@ RunMetrics measureAcceleration(
                 / std::max(1.0, state.targetAirFuelRatio);
             metrics.postDfcoMaximumAfrError = std::max(
                 metrics.postDfcoMaximumAfrError, error);
+            if (state.airFuelRatio < state.targetAirFuelRatio)
+                metrics.postDfcoRichAfrError = std::max(metrics.postDfcoRichAfrError, error);
+            else
+                metrics.postDfcoLeanAfrError = std::max(metrics.postDfcoLeanAfrError, error);
             metrics.postDfcoMinimumAfr = std::min(
                 metrics.postDfcoMinimumAfr, state.airFuelRatio);
             metrics.postDfcoMaximumMisfireRate = std::max(
@@ -799,6 +806,8 @@ int main(int argc, char** argv) {
     std::vector<std::string> knownStalls;
     std::vector<std::string> knownResumeMisfires;
     double resumeAfrEnvelope = 0.18;
+    // The lean side's own envelope; by default the same as the rich side.
+    double resumeLeanAfrEnvelope = -1.0;
     std::optional<std::filesystem::path> csvDirectory;
     std::filesystem::path catalogRoot = ENGINELAB_CATALOG_ROOT;
     for (int index = 1; index < argc; ++index) {
@@ -820,6 +829,8 @@ int main(int argc, char** argv) {
             knownResumeMisfires.emplace_back(argv[++index]);
         else if (argument == "--resume-afr-envelope" && index + 1 < argc)
             resumeAfrEnvelope = std::stod(argv[++index]);
+        else if (argument == "--resume-lean-afr-envelope" && index + 1 < argc)
+            resumeLeanAfrEnvelope = std::stod(argv[++index]);
         else if (argument == "--launch-at" && index + 1 < argc)
             launchAtSeconds = std::max(3.5, std::stod(argv[++index]));
         else if (argument == "--skip" && index + 1 < argc)
@@ -830,7 +841,8 @@ int main(int argc, char** argv) {
                    " [--filter NAME] [--gear 2|3] [--csv-dir DIR]"
                    " [--catalog-root DIR] [--trace] [--dfco-tip-in]"
                    " [--standing-start] [--launch-at S] [--skip NAME]... [--known-stall NAME]...\n"
-                   "  [--resume-afr-envelope X] [--known-resume-misfire NAME]...\n";
+                   "  [--resume-afr-envelope X] [--resume-lean-afr-envelope X]"
+                   " [--known-resume-misfire NAME]...\n";
             return EXIT_FAILURE;
         }
     }
@@ -957,7 +969,7 @@ int main(int argc, char** argv) {
             if (dfcoTipIn) {
                 std::printf(
                     "    DFCO->WOT: warmIdle=%.0f preLift=%.0f postLift=%.0f "
-                    "cut=%s valid=%s tValid=%.3fs afrPeak=%.1f%% "
+                    "cut=%s valid=%s tValid=%.3fs afrPeak=%.1f%% (rich %.1f%%, lean %.1f%%) "
                     "misfirePeak=%.1f%% events=%llu/%llu lastMisfireAFR=%.2f at=%.3fs\n",
                     metrics.preDfcoWarmIdleRpm,
                     metrics.preDfcoLiftRpm,
@@ -966,6 +978,8 @@ int main(int argc, char** argv) {
                     metrics.postDfcoAfrRecovered ? "yes" : "NO",
                     metrics.postDfcoTimeToValidSeconds,
                     metrics.postDfcoMaximumAfrError * 100.0,
+                    metrics.postDfcoRichAfrError * 100.0,
+                    metrics.postDfcoLeanAfrError * 100.0,
                     metrics.postDfcoMaximumMisfireRate * 100.0,
                     static_cast<unsigned long long>(metrics.postDfcoMisfireEvents),
                     static_cast<unsigned long long>(
@@ -988,7 +1002,12 @@ int main(int argc, char** argv) {
                     ? metrics.postDfcoMinimumAfr
                         >= entry->config.fuelProperties
                             .stoichiometricAirFuelRatio * 1.05
-                    : metrics.postDfcoMaximumAfrError <= resumeAfrEnvelope;
+                    // The rich and the lean side are held apart: a first
+                    // post-cut cycle starved while the runner refills is not
+                    // the same fault as an over-trimmed resume.
+                    : metrics.postDfcoRichAfrError <= resumeAfrEnvelope
+                        && metrics.postDfcoLeanAfrError
+                            <= (resumeLeanAfrEnvelope >= 0.0 ? resumeLeanAfrEnvelope : resumeAfrEnvelope);
                 // A declared engine may misfire on the resume; it is still
                 // printed, and tracked in docs/journal.md.
                 const auto resumeMisfireKnown = std::any_of(

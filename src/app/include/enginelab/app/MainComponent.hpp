@@ -50,6 +50,9 @@ public:
     bool keyStateChanged(bool isKeyDown) override;
     void focusLost(FocusChangeType cause) override;
     void mouseWheelMove(const juce::MouseEvent&, const juce::MouseWheelDetails&) override;
+    /** Quits, after asking when an engine has edits not saved (the window's
+        close button, Escape, the system). */
+    void requestQuit();
 private:
     /** An engine of the menu: from the catalogue, or saved by the user. */
     struct Preset final {
@@ -115,6 +118,7 @@ private:
     void pushCameraMicrophones();
     std::optional<std::array<AcousticPoint3M, 2>> pushedMicrophones_;
     const void* microphoneRenderer_ { nullptr };
+    std::uint64_t pushedSoundSourcesVersion_ { 0 };
     /** A bore and stroke edit (resizeCylinders()): taken by the running
         engine over `rampSeconds` (0: at the next cycle), else a restart. */
     bool applyCylinderResize(const EngineConfig&, double rampSeconds);
@@ -184,6 +188,13 @@ private:
     std::uint64_t visibleDynoArchiveRevision_ {
         std::numeric_limits<std::uint64_t>::max() };
     bool starterKeyDown_ { false };
+    /** The starter key went down with Ctrl held (Ctrl+S saves): it does not
+        crank until released. */
+    bool starterChord_ { false };
+    bool quitDialogOpen_ { false };
+    /** The engines whose edits are not saved: the running one and those kept
+        from earlier in the session. */
+    [[nodiscard]] juce::StringArray unsavedEngineNames() const;
     bool brakeKeyDown_ { false };
     bool throttleKeyActive_ { false };
     double targetClutchPressure_ { 1.0 };

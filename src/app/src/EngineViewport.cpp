@@ -330,7 +330,10 @@ void ViewSettings::load() {
     motionBlur = flag("motionBlur", motionBlur);
     antiAliasing = flag("antiAliasing", antiAliasing);
     fineExhaustWaves = flag("fineExhaustWaves", fineExhaustWaves);
-    cameraMicrophone = flag("cameraMicrophone", cameraMicrophone);
+    // Saved under a new key since it is on by default: every view.json
+    // written while it was off by default holds "cameraMicrophone": false
+    // without anyone having chosen it.
+    cameraMicrophone = flag("microphoneOnCamera", cameraMicrophone);
     const auto waves = object->getProperty("pressureWaves").toString();
     if (waves == "strength") pressureWaves = PressureWaves::strength;
     else if (waves == "live") pressureWaves = PressureWaves::live;
@@ -345,7 +348,7 @@ void ViewSettings::save() const {
     object->setProperty("motionBlur", motionBlur);
     object->setProperty("antiAliasing", antiAliasing);
     object->setProperty("fineExhaustWaves", fineExhaustWaves);
-    object->setProperty("cameraMicrophone", cameraMicrophone);
+    object->setProperty("microphoneOnCamera", cameraMicrophone);
     object->setProperty("pressureWaves", pressureWaves == PressureWaves::strength ? "strength"
                                          : pressureWaves == PressureWaves::live   ? "live"
                                                                                   : "hidden");
@@ -1118,6 +1121,8 @@ void EngineViewport::setEngine(const EngineConfig& config) {
         scene_.reset();
     }
     if (scene_) listenerFrame_ = render::ListenerFrame::of(*scene_);
+    soundSources_ = scene_ ? listenerFrame_.sources(*scene_) : AcousticSourcePlacements {};
+    ++soundSourcesVersion_;
     const auto& authored = config.acousticObserver;
     const auto spacing = std::hypot(authored.rightMicrophoneM.x - authored.leftMicrophoneM.x,
                                     authored.rightMicrophoneM.y - authored.leftMicrophoneM.y,
@@ -1401,6 +1406,17 @@ void EngineViewport::selectPartAt(juce::Point<float> position) {
     setSelectedPart(hit ? static_cast<int>(hit->part) : -1);
 }
 
+bool EngineViewport::showInjectors() {
+    if (!scene_) return false;
+    const auto part = scene_->injectorPart(0);
+    if (part >= scene_->parts().size()) return false;
+    const auto layer = static_cast<SceneLayerMode>(std::clamp(layers_.selected(), 0, 3));
+    if (!scenePartPickable(scene_->parts()[part], layer, shading_.selected() == 0))
+        layers_.setSelected(0, juce::sendNotificationSync);
+    setSelectedPart(static_cast<int>(part));
+    return true;
+}
+
 void EngineViewport::setSelectedPart(int part) {
     selectedPart_ = part;
     gasProbe_ = {};
@@ -1565,6 +1581,20 @@ void EngineViewport::updateInspector() {
             add("Injection", "Port");
         }
         break;
+    case render::PartRole::injector: {
+        const auto direct = config.injection.mode == InjectionMode::direct;
+        title = "Injector";
+        edit = injectorEdit();
+        add("Injection", direct ? "Direct" : "Port");
+        add("Window", juce::String(juce::roundToInt(config.injection.startAngleDegrees)) + utf8("° to ")
+                          + juce::String(juce::roundToInt(config.injection.endAngleDegrees)) + utf8("°"));
+        if (live != nullptr) {
+            add("Duty cycle", juce::String(100.0 * live->injectorDutyCycle, 1) + " %");
+            add("Fuel per cycle", juce::String(live->meteredFuelMgPerCycle, 1) + " mg");
+            if (!direct) add("Port wall film", juce::String(live->portLiquidFilmFuelMg, 1) + " mg");
+        }
+        break;
+    }
     case render::PartRole::exhaustPorts:
         title = "Exhaust ports";
         if (live != nullptr) add("Exhaust gas", juce::String(juce::roundToInt(live->exhaustTemperatureC)) + utf8(" °""C"));
