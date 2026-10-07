@@ -793,9 +793,12 @@ std::vector<DuctPiece> layoutExhaust(const EngineConfig& config, const std::vect
                 const auto& parent = nodes[node.ins.front()];
                 const auto start = outSlot(layout, parent, indexIn(parent.outs, i));
                 if (length(start - inlet) > 1.0F) {
-                    // A branch moving to its own lane bends on the way.
+                    // A branch moving to its own lane bends on the way, and
+                    // turns away at once: the branches of an X start side by
+                    // side and would otherwise run through each other.
                     const auto lead = 0.3F * node.drawLength;
-                    points = smoothCurve({ start, start + zAxis * lead, outlet - zAxis * lead, outlet }, 12);
+                    const auto leave = std::min(lead, 0.25F * node.diameter);
+                    points = smoothCurve({ start, start + zAxis * leave, outlet - zAxis * lead, outlet }, 12);
                 }
             }
             shapeComponent(piece, node, std::move(points));

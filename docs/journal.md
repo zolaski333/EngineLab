@@ -5,6 +5,18 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-07 — Catalogue exhausts at their real length
+
+- Routes were 0.9-1.3 m (LS3 2.07). `midpipe_length_mm` gives the K20A 3.5 m, LS3 3.0 (realtime: 3.73 m cost
+  8 % and one INVALID run, median 1.06 -> 1.02 at 3.0), flat-six 1.57, bikes 1.22-1.49. CatalogReference moves ≤ 4.4 %.
+- Turbos refuted: the turbine is the outlet restriction, so the mid pipe sat on its hot side. 2.6 m slowed
+  the spool (90 % of the step at 3,000 rpm) 1.30 -> 1.72 s (2JZ), 2.47 -> 3.53 s (I5), EJ25 and TDI alike;
+  the 2JZ no longer reached its shift point. 2JZ, EJ25, I5 and TDI keep their old length.
+- AudioRenderHarness: level -1.2 dB (LS3) to +2.5 dB (flat-six); the share below 250 Hz falls (CP2 64 -> 47 %,
+  Arrow 64 -> 41 %, Lab 53 -> 23 %). Not judged by ear yet.
+- Open: the CP3 and CP4 misfire once on the DFCO resume (first charge, CP3 AFR 9.05); the CP2's live remesh
+  lands 37 % short of a fine-built engine, already before this change.
+
 ## 2026-10-06 — 2JZ boost ran past its wastegate
 
 - DynoSweepHarness: at 520 mm2 (the default gate) the 2JZ's gate is fully

@@ -9,6 +9,15 @@ file formats, always with an in-memory migration).
 
 ### Changed
 
+- Catalogue exhausts run their real length from port to tip: 3.0-3.5 m
+  under the naturally aspirated front-engined cars, 1.6 m behind the
+  rear-engined flat-six and 1.2-1.5 m on the motorcycles. They used to end
+  0.9-1.3 m from the port. The turbocharged cars keep theirs: the solver's
+  turbine sits at the outlet, and a longer pipe ahead of it slowed the spool.
+  The manufacturer torque and power points move by less than 5 %. Exhaust
+  presets and paths gain `midpipe_length_mm` and `midpipe_diameter_mm`.
+- The two pipes leaving an X crossover turn away from each other at once in
+  the 3-D view instead of running through each other.
 - New main window. A top bar holds the engine picker, the run state and the
   Exhaust, ECU and Audio windows. Engine controls and a vertical throttle with
   1/10/20/100 % presets are on the left. The engine view sits in the middle with

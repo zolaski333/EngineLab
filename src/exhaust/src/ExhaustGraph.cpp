@@ -600,7 +600,23 @@ ExhaustGraph ExhaustGraph::makeForEngine(
         graph.nodes_.back().acousticPositionM = path.acousticPositionM;
         graph.nodes_.back().acousticAxis = path.acousticAxis;
         graph.nodes_.back().acousticTermination = path.acousticTermination;
-        graph.edges_.push_back({ mergeId, mufflerId });
+        auto mufflerFeedId = mergeId;
+        if (geometry.midpipeLengthMm > 0.0) {
+            // Allocated last so that a path without one keeps its node ids.
+            const auto midpipeId = allocateNodeId();
+            const auto length = finiteClamped(geometry.midpipeLengthMm, 1.0, 10'000.0, 1.0);
+            const auto diameter = geometry.midpipeDiameterMm > 0.0
+                ? finiteClamped(geometry.midpipeDiameterMm, 20.0, 500.0, collectorDiameter)
+                : collectorDiameter;
+            graph.nodes_.push_back({ midpipeId, ExhaustNodeType::pipe, length, diameter,
+                0.04 * (length / 480.0) * std::pow(42.0 / diameter, 4.0), 0.0, 1.0,
+                runtimePathIndex, 0, 0.0,
+                std::numbers::pi * std::pow(diameter * 0.0005, 2.0) * (length * 0.001) * 1'000.0,
+                1.0, 0.0 });
+            graph.edges_.push_back({ mergeId, midpipeId });
+            mufflerFeedId = midpipeId;
+        }
+        graph.edges_.push_back({ mufflerFeedId, mufflerId });
         graph.edges_.push_back({ mufflerId, outletId });
     }
 

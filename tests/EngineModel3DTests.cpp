@@ -1087,7 +1087,9 @@ int main() {
                                      + std::to_string(stretchedPipes) + ")");
     // Route check over the catalogue, measured 2026-10-05 with the router
     // (before it: 107 clashes, 51 self-clashes, 0, 259 tight bends, 6).
-    const std::array<std::size_t, 5> measured { 7, 4, 0, 48, 7 };
+    // 2026-10-07: 43 tight bends once a branch leaving an X turns away at
+    // once (the LS3's 1,070 mm pipes ran through each other otherwise).
+    const std::array<std::size_t, 5> measured { 7, 4, 0, 43, 7 };
     const std::array<const char*, 5> names { "duct clashes", "self-clashes", "engine clashes", "tight bends",
                                              "stretched pipes" };
     for (std::size_t k = 0; k < measured.size(); ++k)

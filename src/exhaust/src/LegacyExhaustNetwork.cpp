@@ -21,7 +21,7 @@ namespace {
 
 ExhaustNetworkConfig makeEditableExhaustNetwork(const ExhaustPathConfig& path) {
     ExhaustNetworkConfig network;
-    network.components.reserve(path.cylinderIds.size() + 3U);
+    network.components.reserve(path.cylinderIds.size() + 4U);
     network.cylinderConnections.reserve(path.cylinderIds.size());
     network.connections.reserve(path.cylinderIds.size() + 2U);
 
@@ -49,6 +49,19 @@ ExhaustNetworkConfig makeEditableExhaustNetwork(const ExhaustPathConfig& path) {
             network.connections.push_back({ primaryId, collector.id });
     } else if (!primaryIds.empty()) {
         previousId = primaryIds.front();
+    }
+
+    if (path.geometry.midpipeLengthMm > 0.0) {
+        auto midpipe = component(ExhaustComponentType::pipe, nextId++);
+        midpipe.lengthMm = path.geometry.midpipeLengthMm;
+        midpipe.diameterMm = path.geometry.midpipeDiameterMm > 0.0
+            ? path.geometry.midpipeDiameterMm
+            : primaryIds.size() > 1U ? path.geometry.collectorDiameterMm
+                                     : path.geometry.primaryDiameterMm;
+        network.components.push_back(midpipe);
+        if (previousId != 0)
+            network.connections.push_back({ previousId, midpipe.id });
+        previousId = midpipe.id;
     }
 
     // An authored expansion chamber is geometry, not the editor's generic

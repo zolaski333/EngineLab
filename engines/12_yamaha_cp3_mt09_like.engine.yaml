@@ -67,6 +67,7 @@ engine:
     outlet_discharge_coefficient: 1.0
     muffler_chamber_diameter_mm: 88
     muffler_chamber_length_mm: 260
+    midpipe_length_mm: 150
   # Valve diameters are deliberately NOT authored here. They were, at 25.5/21.5,
   # and that was the single biggest error in this file: it is roughly a 4-valve
   # head's worth of area short, and it capped the engine at 64 % of the

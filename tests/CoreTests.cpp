@@ -1685,6 +1685,8 @@ int main() {
     extendedPhysicsConfig.exhaust.mufflerPackingFlowResistivityPaSPerM2 = 24'000.0;
     extendedPhysicsConfig.exhaust.mufflerPackingThicknessMm = 35.0;
     extendedPhysicsConfig.exhaust.mufflerPerforatedOpenAreaRatio = 0.28;
+    extendedPhysicsConfig.exhaust.midpipeLengthMm = 2'400.0;
+    extendedPhysicsConfig.exhaust.midpipeDiameterMm = 57.0;
     extendedPhysicsConfig.exhaustPaths.front().geometry = extendedPhysicsConfig.exhaust;
     extendedPhysicsConfig.runnerAcoustics.dampingRatio = 0.21;
     extendedPhysicsConfig.intake.runnerPlenumDiameterMm = 49.0;
@@ -1763,6 +1765,8 @@ int main() {
             && std::abs(extendedJsonRoundTrip.config->exhaust.mufflerPackingFlowResistivityPaSPerM2 - 24'000.0) < 0.001
             && std::abs(extendedJsonRoundTrip.config->exhaustPaths.front().geometry.mufflerPackingThicknessMm - 35.0) < 0.001
             && std::abs(extendedJsonRoundTrip.config->exhaustPaths.front().geometry.mufflerPerforatedOpenAreaRatio - 0.28) < 0.001
+            && std::abs(extendedJsonRoundTrip.config->exhaust.midpipeLengthMm - 2'400.0) < 0.001
+            && std::abs(extendedJsonRoundTrip.config->exhaustPaths.front().geometry.midpipeDiameterMm - 57.0) < 0.001
             && std::abs(extendedJsonRoundTrip.config->intake
                     .runnerPlenumDiameterMm - 49.0) < 0.001
             && std::abs(extendedJsonRoundTrip.config->transmission.reverseRatio - 3.55) < 0.001
@@ -1838,6 +1842,8 @@ int main() {
             && std::abs(extendedYamlRoundTrip.config->exhaustAfterfire.quenchTemperatureK - 545.0) < 0.001
             && std::abs(extendedYamlRoundTrip.config->exhaust.mufflerPackingFlowResistivityPaSPerM2 - 24'000.0) < 0.001
             && std::abs(extendedYamlRoundTrip.config->exhaustPaths.front().geometry.mufflerPackingThicknessMm - 35.0) < 0.001
+            && std::abs(extendedYamlRoundTrip.config->exhaust.midpipeDiameterMm - 57.0) < 0.001
+            && std::abs(extendedYamlRoundTrip.config->exhaustPaths.front().geometry.midpipeLengthMm - 2'400.0) < 0.001
             && std::abs(extendedYamlRoundTrip.config->intake
                     .runnerPlenumDiameterMm - 49.0) < 0.001
             && std::abs(extendedYamlRoundTrip.config->transmission.clutchThermalCapacityJPerC - 24'000.0) < 0.001
@@ -2074,6 +2080,40 @@ int main() {
         }
         require(!enginelab::validateEngineConfig(entry.config), "every catalog engine must validate");
         require(!entry.sourcePath.empty(), "catalog entries must retain their source path");
+        // Every system runs from port to tip at its family's real length.
+        // Until 2026-10-07 they all ended just past the collector (0.9-1.3 m,
+        // the LS3 2.1 m), three times too short for a front-engined car. The
+        // aircraft keep their test-stand stacks.
+        if (entry.family != "aircraft" && entry.family != "radial aircraft") {
+            auto routeMinMm = 3'000.0;
+            auto routeMaxMm = 4'000.0;
+            if (entry.family == "motorcycle") {
+                routeMinMm = 1'200.0;
+                routeMaxMm = 1'500.0;
+            } else if (entry.family == "aircooled flat-six") {
+                // Rear-engined: the silencer sits right behind the engine.
+                routeMinMm = 1'400.0;
+                routeMaxMm = 2'000.0;
+            }
+            if (entry.config.forcedInduction.enabled
+                && entry.config.forcedInduction.type == enginelab::ForcedInductionType::turbocharger) {
+                // Not yet: the solver's turbine is the restriction at the
+                // outlets, so the network is all hot side. A 2.6 m mid pipe
+                // there slowed the spool by 25-43 % at 3,000 rpm (2026-10-07).
+                routeMinMm = 800.0;
+                routeMaxMm = 1'400.0;
+            }
+            auto lengthConfig = entry.config;
+            enginelab::normaliseEngineConfig(lengthConfig);
+            const auto graph = enginelab::ExhaustGraph::makeForEngine(lengthConfig);
+            require(!graph.routes().empty(), "every catalogue exhaust must reach an outlet");
+            for (const auto& route : graph.routes()) {
+                if (route.lengthMm >= routeMinMm && route.lengthMm <= routeMaxMm) continue;
+                std::cerr << entry.config.name << ": exhaust route " << route.lengthMm << " mm, expected "
+                          << routeMinMm << '-' << routeMaxMm << " mm\n";
+                require(false, "every catalogue exhaust must have its family's real length");
+            }
+        }
     }
     require(found2jz && foundV8 && foundMotorcycle && foundFlatSix && foundRadial && foundCalibratedVtec,
             "catalog must cover iconic layouts and an explicit variable-valvetrain calibration");

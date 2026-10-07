@@ -73,6 +73,7 @@ engine:
     outlet_discharge_coefficient: 1.0
     muffler_chamber_diameter_mm: 90
     muffler_chamber_length_mm: 250
+    midpipe_length_mm: 150
   # Valve diameters intentionally left to the derived fallback (0.40 / 0.34 x
   # bore per valve for a multi-valve head -> 31.6 / 26.9 mm). The explicit
   # 25.0 / 22.0 authored here originally was a guess, and it was far too small.

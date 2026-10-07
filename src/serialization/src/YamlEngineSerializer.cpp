@@ -435,7 +435,9 @@ std::string YamlEngineSerializer::encode(const EngineConfig& config) const {
         << YAML::Key << "muffler_chamber_length_mm" << YAML::Value << config.exhaust.mufflerChamberLengthMm
         << YAML::Key << "muffler_packing_flow_resistivity_pa_s_m2" << YAML::Value << config.exhaust.mufflerPackingFlowResistivityPaSPerM2
         << YAML::Key << "muffler_packing_thickness_mm" << YAML::Value << config.exhaust.mufflerPackingThicknessMm
-        << YAML::Key << "muffler_perforated_open_area_ratio" << YAML::Value << config.exhaust.mufflerPerforatedOpenAreaRatio << YAML::EndMap
+        << YAML::Key << "muffler_perforated_open_area_ratio" << YAML::Value << config.exhaust.mufflerPerforatedOpenAreaRatio
+        << YAML::Key << "midpipe_length_mm" << YAML::Value << config.exhaust.midpipeLengthMm
+        << YAML::Key << "midpipe_diameter_mm" << YAML::Value << config.exhaust.midpipeDiameterMm << YAML::EndMap
         << YAML::Key << "transmission" << YAML::Value << YAML::BeginMap
         << YAML::Key << "gear_ratios" << YAML::Value << YAML::Flow << config.transmission.gearRatios
         << YAML::Key << "final_drive_ratio" << YAML::Value << config.transmission.finalDriveRatio
@@ -604,6 +606,8 @@ std::string YamlEngineSerializer::encode(const EngineConfig& config) const {
             << YAML::Key << "muffler_packing_flow_resistivity_pa_s_m2" << YAML::Value << path.geometry.mufflerPackingFlowResistivityPaSPerM2
             << YAML::Key << "muffler_packing_thickness_mm" << YAML::Value << path.geometry.mufflerPackingThicknessMm
             << YAML::Key << "muffler_perforated_open_area_ratio" << YAML::Value << path.geometry.mufflerPerforatedOpenAreaRatio
+            << YAML::Key << "midpipe_length_mm" << YAML::Value << path.geometry.midpipeLengthMm
+            << YAML::Key << "midpipe_diameter_mm" << YAML::Value << path.geometry.midpipeDiameterMm
             << YAML::EndMap;
         if (path.network) {
             out << YAML::Key << "graph" << YAML::Value << YAML::BeginMap
@@ -891,7 +895,9 @@ EngineDecodeResult YamlEngineSerializer::decode(std::string_view text) const noe
             exhaust["muffler_chamber_length_mm"].as<double>(0.0),
             exhaust["muffler_packing_flow_resistivity_pa_s_m2"].as<double>(0.0),
             exhaust["muffler_packing_thickness_mm"].as<double>(0.0),
-            exhaust["muffler_perforated_open_area_ratio"].as<double>(0.0) };
+            exhaust["muffler_perforated_open_area_ratio"].as<double>(0.0),
+            exhaust["midpipe_length_mm"].as<double>(0.0),
+            exhaust["midpipe_diameter_mm"].as<double>(0.0) };
         if (const auto transmission = engine["transmission"]) {
             if (transmission["gear_ratios"]) config.transmission.gearRatios = transmission["gear_ratios"].as<std::vector<double>>();
             if (transmission["final_drive_ratio"]) config.transmission.finalDriveRatio = transmission["final_drive_ratio"].as<double>();
@@ -1100,7 +1106,9 @@ EngineDecodeResult YamlEngineSerializer::decode(std::string_view text) const noe
                     geometry["muffler_chamber_length_mm"].as<double>(0.0),
                     geometry["muffler_packing_flow_resistivity_pa_s_m2"].as<double>(0.0),
                     geometry["muffler_packing_thickness_mm"].as<double>(0.0),
-                    geometry["muffler_perforated_open_area_ratio"].as<double>(0.0) };
+                    geometry["muffler_perforated_open_area_ratio"].as<double>(0.0),
+                    geometry["midpipe_length_mm"].as<double>(0.0),
+                    geometry["midpipe_diameter_mm"].as<double>(0.0) };
                 if (const auto encodedGraph = item["graph"]) {
                     ExhaustNetworkConfig network;
                     for (const auto& encodedComponent : encodedGraph["components"]) {

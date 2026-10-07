@@ -64,15 +64,19 @@ engine:
           - { id: 108, type: pipe, length_mm: 690, diameter_mm: 48 }
           - { id: 201, type: merge, length_mm: 620, diameter_mm: 76, volume_l: 3.0, restriction: 0.04 }
           - { id: 202, type: merge, length_mm: 620, diameter_mm: 76, volume_l: 3.0, restriction: 0.04 }
-          # The four 140 mm pipes retain the same 280 mm route length as the
-          # former merge+splitter pseudo-X, but no longer collapse both banks
-          # into one pressure node. crossover_coupling=0.30 is an authored
-          # estimate, not a measured calibration.
+          # The 140 mm pipes either side of the X retain the 280 mm route
+          # length of the former merge+splitter pseudo-X, but no longer
+          # collapse both banks into one pressure node. crossover_coupling=0.30
+          # is an authored estimate, not a measured calibration. The two pipes
+          # after it run back to the rear boxes: 1,070 mm brings each route to
+          # 3.0 m (they were 140 mm, 2.07 m). A real V8 car runs nearer 3.7 m,
+          # but 1,800 mm cost the realtime solver ~8 % and dropped this engine
+          # below real time with audio (journal 2026-10-07).
           - { id: 211, type: pipe, length_mm: 140, diameter_mm: 80 }
           - { id: 212, type: pipe, length_mm: 140, diameter_mm: 80 }
           - { id: 303, type: crossover, length_mm: 0, diameter_mm: 80, volume_l: 0, restriction: 0.06, crossover_coupling: 0.30 }
-          - { id: 311, type: pipe, length_mm: 140, diameter_mm: 80 }
-          - { id: 312, type: pipe, length_mm: 140, diameter_mm: 80 }
+          - { id: 311, type: pipe, length_mm: 1070, diameter_mm: 80 }
+          - { id: 312, type: pipe, length_mm: 1070, diameter_mm: 80 }
           - { id: 401, type: muffler, length_mm: 400, diameter_mm: 76, volume_l: 6.3, restriction: 0.30, packing_flow_resistivity_pa_s_m2: 10000, packing_thickness_mm: 15, perforated_open_area_ratio: 0.35 }
           - { id: 402, type: muffler, length_mm: 400, diameter_mm: 76, volume_l: 6.3, restriction: 0.30, packing_flow_resistivity_pa_s_m2: 10000, packing_thickness_mm: 15, perforated_open_area_ratio: 0.35 }
           - { id: 501, type: outlet, length_mm: 80, diameter_mm: 82, discharge_coefficient: 0.72, acoustic_position_m: { x: -0.45, y: 0.0, z: 0.0 } }
