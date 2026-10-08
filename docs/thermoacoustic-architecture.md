@@ -829,6 +829,100 @@ symmetric half-steps divided by the sub-step duration: the audio source and the
 mass balance therefore describe exactly the same exchange, without rebuilding a
 pulse from the engine speed.
 
+### Nonlinear intake coupling
+
+The physical intake runners use MUSCL reconstruction and SSP-RK2. Forward Euler
+remains an explicit diagnostic option: conservation of total energy alone does
+not prevent an acoustic perturbation from growing. The intake grid, CFL limit
+and mechanical coupling interval must be refined separately when investigating
+a curve; changing all three together cannot identify the responsible error.
+
+Production advances one joint network per intake path on both mechanical
+half-steps. Every runner and cylinder port on that path sees the same finite
+plenum in the same RK stages. The caller commits the sum of mouth transfers
+once to that path's external plenum; network time is counted once per path.
+Cylinder-to-path and cylinder-to-local-port mappings also govern fuel injection,
+live geometry adoption, gas fields and probes. Closed cylinder valves do not
+stop the corresponding runner's acoustic evolution.
+
+The former partitioned-runner policy remains an explicit diagnostic option,
+with its historical 400-microsecond coupling window. An explicit positive
+coupling interval can also test a lagged joint network. The phase accumulator
+survives intake-valve-closing flushes, and leaving periodic coupling commits all
+pending exchanges. Cylinder state, volume and valve conductance are averaged
+over the window. The first intake half-exchange and intervening exhaust exchange
+are carried into the same averaged reservoir before the second intake
+half-step. This closes the split inventory; it does not remove the moving-piston
+boundary approximation. Refining only the FV time step cannot establish the
+convergence of that delayed mechanical exchange.
+
+The runner mouth matches the reservoir's stagnation state to the outgoing
+interior wave. Inflow uses a compatible subsonic wave-curve solve, with a sonic
+limit and the upstream composition and entropy. A zero-volume ambient boundary
+remains an infinite prescribed reservoir. For a finite intake plenum, its actual
+volume, species masses and energy evolve at the accepted network substeps and
+RK stages, using the same mouth fluxes as the duct. The caller books the returned
+integral once; the virtual reservoir is excluded from the network inventory.
+
+Partitioned diagnostic runners use a reconstructed shared-plenum staircase.
+Its Heun outlet predictor includes the adjacent internal face and declared wall
+sources: a uniform equilibrium must predict no transfer. It remains a local
+estimate with the supplied reservoir fixed; the actual advance replaces it.
+Single-runner passivity and exact species/energy balances alone do not establish
+convergence of the complete multi-runner engine.
+
+`EngineLab.IntakeTuning` also checks the production mesh against an internal
+numerical reference: a 30-mm target with the same 12-cell cap, SSP-RK2 and CFL
+0.1. The reference time step was qualified by a complete CFL-0.05 comparison
+over both runner lengths; it is not a manufacturer curve or a complete spatial
+convergence study. The pointwise production/reference tolerance remains 15%.
+Both grids stop below the limiter using the application dyno's operating
+margin. Explicit reference-CFL options retain historical diagnostic controls.
+
+Mechanical substeps are sized again as shaft speed changes within an outer
+frame, using current speed and a positive-acceleration estimate. The observed
+crank travel, rather than the requested nominal solver frequency, determines
+whether a step satisfies the configured angular resolution. The hard solver
+cap still applies; unresolved travel is reported and latched into cycle quality.
+
+Completed brake-cycle records latch any mechanical resolution fault throughout
+the cycle. The dynamometer rejects these cycles, and rejected cylinder or
+plenum transfers, as `simulationNumericalFault`. A successfully recovered
+finite-volume trial rejection alone does not invalidate a cycle. A failed
+zero-time network call clears its published exchanges; an accepted partial
+advance preserves the transfers that actually happened.
+
+The analytical mouth checks and isolated passivity fixtures are separate from
+the engine curve acquisitions. Curves export their settlement status, work
+cycles, thermal drift, actual coupling intervals and current/predictor CFL
+values; an unsettled row remains diagnostic evidence and is not silently
+promoted to a stationary operating point.
+
+Variable cam profiles have simulator-owned demand and actuator state. A complete
+physical 720-degree shaft cycle requests the high profile only when its minimum
+RPM reaches the authored threshold, and the low profile when its maximum RPM
+remains below it. A cycle spanning the threshold retains the preceding request;
+there is no added RPM band or dyno-derived control. Missing cycle observations
+cancel pending demand, and the authored throttle condition can request low.
+
+The actuator changes profiles only in a common base circle after two safe
+evaluations. Both candidate intake/exhaust lifts must be closed at the current
+phase/current VVT and at the preceding phase/actual preceding VVT. The complete
+travelled shaft arc is checked against both profiles' nominal supports using
+the current VVT geometry. Support endpoints are included because physical
+EVO/IVC crossing also includes the beginning and end of an arc. VVT advances
+once; an accepted change re-evaluates the lifts with zero elapsed time. Physical
+gas exchange, EVO/IVC handling and pressure-sample lift normalization use the
+same applied profile. The unresolved-charge mean-model fallback and nominal procedural-audio
+event timing retain their existing profile interpretation.
+
+Reset clears the joint-intake wall-heat clock along with the coupling clocks;
+the next run must not inherit the preceding run's deferred thermal time.
+
+Relevant contracts are [joint intake coupling](../tests/JointIntakeManifoldTests.cpp),
+[cycle numerical quality](../tests/BrakeCycleNumericalQualityTests.cpp) and
+[owned valve-profile transitions](../tests/ValveProfileTransitionTests.cpp).
+
 `AcousticIntakeNetwork` compiles each intake path into individual bidirectional
 runners, a WDF plenum compliance, a variable-admittance throttle restriction, an
 optional airbox compliance, an inlet duct with thermo-viscous losses, then a

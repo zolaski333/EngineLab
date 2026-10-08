@@ -5,6 +5,16 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-08 — Curve spikes: intake numerics, crank step, VTEC switching
+
+- Intake runners on MUSCL/Forward Euler amplified a closed perturbation 823-962x; SSP-RK2 holds the gain at 1. The inflow boundary had a singular small-signal admittance, and the finite plenum was not advanced in the RK stages: both fixed, each with a passivity fixture.
+- A 400 us delayed cylinder/plenum exchange moved trapped mass +4.6 % and work -7 % (isolated); exchange now on both half-steps, one joint network per path.
+- The crank step was sized from the initial speed and could overrun its angle; it now follows the travelled angle, and a fault rejects the whole 720-degree dyno cycle.
+- K20 VTEC switched on instantaneous rpm, valves open, 106 times/s/cylinder: torque CV 3.48 % at 5,800 rpm. Requested per shaft cycle and switched on a common base circle: 0.14 %.
+- Adjacent 50-rpm torque steps: K20 8.8-11.4 % -> 1.9-3.5 %, CP2 2.6-5.8 % -> 1.8-2.1 %. Against rated points (100-rpm sweep): 2JZ 4,000 rpm 369 -> 416 Nm (427), Hayabusa max 178 -> 153 Nm (138).
+- Refutes the 2026-10-07 "not numerical": that oracle changed mesh and integrator together, on a stale binary.
+- Not fixed: Merlin audio over the limiter (pre-limiter 2.7x full scale), LS3 realtime 0.75-0.87. 931 of 942 sweep points are thermally unsettled. Threaded/reuse prototypes in `out/evidence` were never built.
+
 ## 2026-10-07 — Hayabusa and 2JZ curve swings come from the intake runner waves
 
 - A rated peak torque is its curve's maximum. Sweep maxima over it: Hayabusa +29 % (178 Nm at 7,500, VE 1.26
