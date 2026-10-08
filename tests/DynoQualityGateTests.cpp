@@ -67,6 +67,78 @@ int main() {
     require(gate.evaluate(input, state, absorber).accepted(),
             "a prepared, tracked, continuous sample must pass");
 
+    {
+        auto primingInput = validInput();
+        primingInput.mode = DynoAcquisitionMode::continuousRamp;
+        primingInput.rampRateRpmPerSecond = 500.0;
+        // EngineRuntime supplies this phase flag while its target is held at
+        // entry. The observation deliberately passes the later ramp limits.
+        primingInput.rampPrimed = false;
+        primingInput.measuredRpm = 3'100.0;
+        auto primingAbsorber = validAbsorber();
+        primingAbsorber.filteredRpm = primingInput.measuredRpm;
+        primingAbsorber.filteredAccelerationRpmPerSecond = 300.0;
+        auto primingGate = gate.evaluate(primingInput, state, primingAbsorber);
+        std::cout << "ramp priming accepted=" << primingGate.accepted()
+            << " speed_limit=" << primingGate.maximumAllowedSpeedErrorRpm
+            << " acceleration_limit=" << primingGate.maximumAllowedAccelerationRpmPerSecond
+            << " reasons=" << static_cast<std::uint32_t>(primingGate.reasons) << '\n';
+        require(primingGate.reasons == (DynoQualityReason::speedTrackingError
+                | DynoQualityReason::accelerationOutOfBounds)
+            && primingGate.maximumAllowedSpeedErrorRpm == 60.0
+            && primingGate.maximumAllowedAccelerationRpmPerSecond == 120.0
+            && primingGate.taintsCycle(),
+            "a configured ramp's entry hold must use the unchanged steady gate throughout priming");
+
+        primingInput.rampPrimed = true;
+        primingGate = gate.evaluate(primingInput, state, primingAbsorber);
+        require(primingGate.accepted()
+            && primingGate.maximumAllowedSpeedErrorRpm == 150.0
+            && primingGate.maximumAllowedAccelerationRpmPerSecond == 1'500.0,
+            "a primed forward pull must retain the unchanged ramp limits");
+
+        primingInput.rampPrimed = false;
+        primingInput.measuredRpm = 3'000.0;
+        primingAbsorber.filteredRpm = primingInput.measuredRpm;
+        primingAbsorber.filteredAccelerationRpmPerSecond = 0.0;
+        require(gate.evaluate(primingInput, state, primingAbsorber).accepted(),
+            "steady clean priming observations must pass instead of deadlocking the pull");
+    }
+
+    {
+        constexpr DynoAcquisitionMode modes[] = {
+            DynoAcquisitionMode::steppedCalibration,
+            DynoAcquisitionMode::continuousRamp,
+            DynoAcquisitionMode::hold
+        };
+        for (const auto mode : modes) {
+            auto numericalInput = validInput();
+            numericalInput.mode = mode;
+            auto numericalState = validState();
+            numericalState.solverResolutionLimited = true;
+            requireOnly(gate.evaluate(numericalInput, numericalState, absorber).reasons,
+                DynoQualityReason::simulationNumericalFault,
+                "an unresolved simulation step must explicitly reject every dyno mode");
+
+            numericalState = validState();
+            numericalState.intakeCylinderTransferFailures = 1;
+            requireOnly(gate.evaluate(numericalInput, numericalState, absorber).reasons,
+                DynoQualityReason::simulationNumericalFault,
+                "a rejected cylinder inventory transfer must not become a physical dyno point");
+
+            numericalState = validState();
+            numericalState.intakePlenumTransferFailures = 1;
+            requireOnly(gate.evaluate(numericalInput, numericalState, absorber).reasons,
+                DynoQualityReason::simulationNumericalFault,
+                "a rejected plenum inventory transfer must not become a physical dyno point");
+
+            numericalState = validState();
+            numericalState.intakeNetworkRejectedSubsteps = 1;
+            require(gate.evaluate(numericalInput, numericalState, absorber).accepted(),
+                "a recovered internal trial rejection alone must not invalidate a completed simulation step");
+        }
+    }
+
     input.prepared = false;
     requireOnly(gate.evaluate(input, state, absorber).reasons,
                 DynoQualityReason::notPrepared,

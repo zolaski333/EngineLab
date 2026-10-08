@@ -76,12 +76,91 @@ target_link_libraries(EngineLabIntakeTuningTests PRIVATE
     EngineLab::Exhaust EngineLab::Simulation)
 enginelab_set_warnings(EngineLabIntakeTuningTests)
 # --enforce-tuning keeps the four literature criteria hard. --compare-oracle
-# additionally constrains the realtime 95 mm/Euler/multirate reduction to 15%
-# point-by-point against the former 30 mm/RK2/every-substep configuration.
+# additionally constrains the production intake mesh to 15% point-by-point
+# against the 30 mm target/12-cell cap/RK2/every-substep numerical reference,
+# temporally qualified at Courant 0.1, on the same
+# joint-manifold or explicitly selected historical intake topology.
 # These are independent guards: real-engine curve shape and numerical drift.
 add_test(NAME EngineLab.IntakeTuning COMMAND EngineLabIntakeTuningTests
     --enforce-tuning --compare-oracle)
 set_tests_properties(EngineLab.IntakeTuning PROPERTIES TIMEOUT 600)
+
+add_executable(EngineLabIntakeAcousticConvergenceTests
+    IntakeAcousticConvergenceTests.cpp)
+target_link_libraries(EngineLabIntakeAcousticConvergenceTests PRIVATE
+    EngineLab::GasDynamics EngineLab::Simulation)
+enginelab_set_warnings(EngineLabIntakeAcousticConvergenceTests)
+add_test(NAME EngineLab.IntakeAcousticConvergence
+    COMMAND EngineLabIntakeAcousticConvergenceTests)
+set_tests_properties(EngineLab.IntakeAcousticConvergence PROPERTIES TIMEOUT 60)
+
+add_executable(EngineLabIntakePlenumPassivityTests IntakePlenumPassivityTests.cpp)
+target_link_libraries(EngineLabIntakePlenumPassivityTests PRIVATE EngineLab::GasDynamics)
+enginelab_set_warnings(EngineLabIntakePlenumPassivityTests)
+add_test(NAME EngineLab.IntakePlenumPassivity COMMAND EngineLabIntakePlenumPassivityTests)
+set_tests_properties(EngineLab.IntakePlenumPassivity PROPERTIES TIMEOUT 60)
+add_test(NAME EngineLab.IntakeBoundaryAdmittance
+    COMMAND EngineLabIntakePlenumPassivityTests --boundary-admittance)
+add_test(NAME EngineLab.IntakeOutletPredictionEquilibrium
+    COMMAND EngineLabIntakePlenumPassivityTests --outlet-prediction-equilibrium)
+set_tests_properties(EngineLab.IntakeBoundaryAdmittance
+    EngineLab.IntakeOutletPredictionEquilibrium PROPERTIES TIMEOUT 60)
+
+add_executable(EngineLabIntakeCouplingContinuityTests IntakeCouplingContinuityTests.cpp)
+target_link_libraries(EngineLabIntakeCouplingContinuityTests PRIVATE
+    EngineLab::Foundation EngineLab::Events EngineLab::Physics EngineLab::Ecu
+    EngineLab::Exhaust EngineLab::Simulation)
+enginelab_set_warnings(EngineLabIntakeCouplingContinuityTests)
+add_test(NAME EngineLab.IntakeCouplingContinuity COMMAND EngineLabIntakeCouplingContinuityTests)
+set_tests_properties(EngineLab.IntakeCouplingContinuity PROPERTIES TIMEOUT 60)
+
+add_executable(EngineLabIntakeSplitReservoirContinuityTests
+    IntakeSplitReservoirContinuityTests.cpp)
+target_link_libraries(EngineLabIntakeSplitReservoirContinuityTests PRIVATE
+    EngineLab::Foundation EngineLab::Events EngineLab::Physics EngineLab::Ecu
+    EngineLab::Exhaust EngineLab::Simulation EngineLab::Catalog)
+target_compile_definitions(EngineLabIntakeSplitReservoirContinuityTests PRIVATE
+    ENGINELAB_CATALOG_ROOT="${CMAKE_SOURCE_DIR}")
+enginelab_set_warnings(EngineLabIntakeSplitReservoirContinuityTests)
+add_test(NAME EngineLab.IntakeSplitReservoirContinuity
+    COMMAND EngineLabIntakeSplitReservoirContinuityTests)
+set_tests_properties(EngineLab.IntakeSplitReservoirContinuity PROPERTIES TIMEOUT 60)
+
+add_executable(EngineLabIntakeMovingBoundaryTests IntakeMovingBoundaryTests.cpp)
+target_link_libraries(EngineLabIntakeMovingBoundaryTests PRIVATE EngineLab::GasDynamics)
+enginelab_set_warnings(EngineLabIntakeMovingBoundaryTests)
+add_test(NAME EngineLab.IntakeMovingBoundary COMMAND EngineLabIntakeMovingBoundaryTests)
+set_tests_properties(EngineLab.IntakeMovingBoundary PROPERTIES TIMEOUT 60)
+
+add_executable(EngineLabJointIntakeManifoldTests JointIntakeManifoldTests.cpp)
+target_link_libraries(EngineLabJointIntakeManifoldTests PRIVATE
+    EngineLab::Foundation EngineLab::Events EngineLab::Physics EngineLab::Ecu
+    EngineLab::Exhaust EngineLab::Simulation EngineLab::Catalog)
+target_compile_definitions(EngineLabJointIntakeManifoldTests PRIVATE
+    ENGINELAB_CATALOG_ROOT="${CMAKE_SOURCE_DIR}")
+enginelab_set_warnings(EngineLabJointIntakeManifoldTests)
+add_test(NAME EngineLab.JointIntakeManifold COMMAND EngineLabJointIntakeManifoldTests)
+set_tests_properties(EngineLab.JointIntakeManifold PROPERTIES TIMEOUT 120)
+
+add_executable(EngineLabAngularStepResolutionTests AngularStepResolutionTests.cpp)
+target_link_libraries(EngineLabAngularStepResolutionTests PRIVATE
+    EngineLab::Foundation EngineLab::Events EngineLab::Physics EngineLab::Ecu
+    EngineLab::Exhaust EngineLab::Simulation EngineLab::Catalog)
+target_compile_definitions(EngineLabAngularStepResolutionTests PRIVATE
+    ENGINELAB_CATALOG_ROOT="${CMAKE_SOURCE_DIR}")
+enginelab_set_warnings(EngineLabAngularStepResolutionTests)
+add_test(NAME EngineLab.AngularStepResolution COMMAND EngineLabAngularStepResolutionTests)
+set_tests_properties(EngineLab.AngularStepResolution PROPERTIES TIMEOUT 240)
+
+add_executable(EngineLabBrakeCycleNumericalQualityTests
+    BrakeCycleNumericalQualityTests.cpp)
+target_link_libraries(EngineLabBrakeCycleNumericalQualityTests PRIVATE
+    EngineLab::Foundation EngineLab::Events EngineLab::Physics EngineLab::Ecu
+    EngineLab::Exhaust EngineLab::Simulation)
+enginelab_set_warnings(EngineLabBrakeCycleNumericalQualityTests)
+add_test(NAME EngineLab.BrakeCycleNumericalQuality
+    COMMAND EngineLabBrakeCycleNumericalQualityTests)
+set_tests_properties(EngineLab.BrakeCycleNumericalQuality PROPERTIES TIMEOUT 60)
 
 add_executable(EngineLabGasExchangeTests GasExchangeTests.cpp)
 target_link_libraries(EngineLabGasExchangeTests PRIVATE
@@ -392,3 +471,15 @@ add_test(NAME EngineLab.EngineModel3D COMMAND EngineLabEngineModel3DTests)
 # has reached the menus twice; no source file may hold it.
 add_test(NAME EngineLab.SourceEncoding
     COMMAND ${CMAKE_COMMAND} -DROOT=${CMAKE_SOURCE_DIR} -P ${CMAKE_CURRENT_SOURCE_DIR}/SourceEncoding.cmake)
+
+
+add_executable(EngineLabValveProfileTransitionTests
+    ValveProfileTransitionTests.cpp ValveProfileActuatorContracts.cpp)
+target_link_libraries(EngineLabValveProfileTransitionTests PRIVATE
+    EngineLab::Foundation EngineLab::Events EngineLab::Physics EngineLab::Ecu
+    EngineLab::Exhaust EngineLab::Simulation EngineLab::Catalog)
+target_compile_definitions(EngineLabValveProfileTransitionTests PRIVATE
+    ENGINELAB_CATALOG_ROOT="${CMAKE_SOURCE_DIR}")
+enginelab_set_warnings(EngineLabValveProfileTransitionTests)
+add_test(NAME EngineLab.ValveProfileTransition COMMAND EngineLabValveProfileTransitionTests)
+set_tests_properties(EngineLab.ValveProfileTransition PROPERTIES TIMEOUT 120)

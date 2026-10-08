@@ -68,11 +68,17 @@ struct CylinderValveBoundary final {
     double dischargeCoefficient { 1.0 };
 };
 
-/** Atmosphere seen by all configured outlets during one requested advance. */
+/** Shared reservoir seen by all configured outlets during one requested advance. */
 struct ExhaustAmbientBoundary final {
     ConservativeState reservoirState {};
     /** 0 closes every outlet, 1 uses the authored opening conductance. */
     double openingScale { 1.0 };
+    /** Physical volume of a well-mixed reservoir, evolved with the network's
+     * stages when positive. Zero preserves an infinite fixed atmosphere.
+     * The caller owns its inventory and applies the returned outlet transfers
+     * once after the advance; this volume does not add to network inventory.
+     */
+    double reservoirVolumeM3 { 0.0 };
 };
 
 /** Time-integrated transfer, positive from the cylinder into the network. */
@@ -145,6 +151,16 @@ struct ExhaustNetworkAdvanceResult final {
     std::size_t rejectedSubsteps { 0 };
     bool completed { true };
     double wallHeatRejectedJ { 0.0 };
+    // Accepted-step observations only; zero when no step is accepted.
+    double minimumAcceptedTimeStepSeconds { 0.0 };
+    double maximumAcceptedTimeStepSeconds { 0.0 };
+    // Ratio to the coded cap, which includes CFL and source/boundary limits.
+    double maximumAcceptedStableStepRatio { 0.0 };
+    // dt * max(|u| + c) / cell length, measured before the commit.
+    double maximumAcceptedDuctCourantCurrent { 0.0 };
+    // The validated Euler predictor used by the RK2 second stage.
+    // It is also observed in first-order mode, where it is the candidate.
+    double maximumAcceptedDuctCourantPredictor { 0.0 };
 };
 
 struct ExhaustFuelReactionConfig final {
@@ -276,6 +292,7 @@ public:
     [[nodiscard]] const EulerMixtureModel& mixtureModel() const noexcept { return mixtureModel_; }
     [[nodiscard]] const ExhaustNetworkLayout& layout() const noexcept { return layout_; }
     [[nodiscard]] std::span<const FiniteVolumeDuct> ducts() const noexcept { return ducts_; }
+    [[nodiscard]] const ExhaustGasNetworkConfig& config() const noexcept { return config_; }
     [[nodiscard]] std::span<FiniteVolumeDuct> ducts() noexcept { return ducts_; }
     /** Hottest pipe wall anywhere in the network.
      *
@@ -340,14 +357,15 @@ public:
      * on the engine's intake plenum was measured to converge to the wrong
      * pressure -- see EngineSimulator's runner pass.
      *
-     * It is deliberately the first-stage flux only, not the two-stage integral
-     * `advance` reports: the point is a same-instant estimate of the ORDERING
-     * correction, and the exact transfer replaces it afterwards. A lagged
-     * estimate would not do -- the reservoir/duct coupling responds in tens of
-     * microseconds and one sub-step of lag drives it into a limit cycle.
+     * It approximates the two-stage transfer using a local Heun prediction of
+     * the terminal cell. Its complete current residual includes the adjoining
+     * internal face, geometric pressure force and cached wall sources. It does
+     * not advance the other cells or the reservoir; the exact integrated
+     * transfer from `advance` replaces this ordering estimate afterwards.
      *
-     * Returns nullopt for an unknown outlet, a non-positive duration, or a
-     * state the primitive recovery rejects.
+     * Returns nullopt for an unknown outlet, a non-positive duration, a state
+     * the primitive recovery rejects, a junction endpoint, or a one-cell duct
+     * whose opposite graph boundary cannot be inferred locally.
      */
     [[nodiscard]] std::optional<ExhaustOutletFlowSample> predictOutletTransfer(
         std::size_t outletIndex,
@@ -431,6 +449,9 @@ private:
     std::vector<PrimitiveState> cylinderReservoirCandidatePrimitives_;
     std::vector<double> cylinderReservoirVolumesM3_;
     std::vector<std::uint8_t> cylinderReservoirActive_;
+    // A shut supplied valve has no RK source; unchanged stage states reuse the
+    // already validated primitive while retaining the normal state arithmetic.
+    std::vector<std::uint8_t> cylinderReservoirClosed_;
     /** Port-order lookup into the caller's boundary span, rebuilt once/advance. */
     std::vector<std::size_t> cylinderBoundaryIndices_;
     std::vector<std::uint8_t> ductInletAssigned_;
@@ -451,7 +472,18 @@ private:
     };
     std::vector<std::vector<ReactionSiteState>> ductReactionStates_;
     std::vector<ReactionSiteState> junctionReactionStates_;
+    // One optional well-mixed external reservoir, shared by all outlets. Its
+    // scratch inventory is excluded from inventory(); the caller books the
+    // returned outlet integrals once into its own reservoir after advance.
+    ConservativeState ambientReservoirState_ {};
+    ConservativeState ambientReservoirStage_ {};
+    ConservativeState ambientReservoirCandidate_ {};
+    ConservativeState ambientReservoirResidual_ {};
+    ConservativeState ambientReservoirStageResidual_ {};
+    double ambientReservoirVolumeM3_ { 0.0 };
     PrimitiveState ambientPrimitive_ {};
+    PrimitiveState ambientStagePrimitive_ {};
+    PrimitiveState ambientCandidatePrimitive_ {};
     bool configured_ { false };
 };
 

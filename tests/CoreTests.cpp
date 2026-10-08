@@ -43,6 +43,7 @@
 #include <tuple>
 #include <stdexcept>
 #include <thread>
+#include <vector>
 
 namespace {
 void require(bool condition, const char* message) {
@@ -159,13 +160,16 @@ int main() {
     }
     {
         // Total friction mean effective pressure must track the gasoline
-        // literature band across the whole rev range, not just be finite. The
-        // model sums an empirical non-piston polynomial (bearings + valvetrain +
+        // literature band across the whole rev range, not just be finite.
+        // Compare work over complete four-stroke cycles: instantaneous friction
+        // sampled at caller-frame endpoints can repeatedly land on one crank
+        // phase, especially near the limiter. That endpoint mean is not FMEP.
+        // The model sums an empirical non-piston polynomial (bearings + valvetrain +
         // accessories, misleadingly named bearingFriction) with a resolved
         // Stribeck piston friction; this guards their sum against a future
         // double-count or miscalibration. Reference FMEP for a small gasoline
         // four: ~0.5-0.8 bar near idle, ~1.0-1.3 bar mid, ~1.8-2.5 bar at redline.
-        // Measured baseline: 0.56 @750, 0.99 @2750, 1.11 @3250, 2.14 @7250.
+        // Historical endpoint means: 0.56 @750, 0.99 @2750, 1.11 @3250, 2.14 @7250.
         auto cfg = enginelab::makeDefaultInlineFour();
         enginelab::normaliseEngineConfig(cfg);
         enginelab::SimpleEcuModel ecu;
@@ -175,6 +179,9 @@ int main() {
         enginelab::EngineSimulator sim(cfg, ecu, physics, events, exhaust);
         constexpr double dt = 1.0 / 2000.0;
         std::array<double, 16> fmepSum {}; std::array<int, 16> fmepN {};
+        std::array<double, 16> cycleFmepSum {};
+        std::array<int, 16> cycleFmepN {};
+        std::size_t completedFrictionSampleCount = 0;
         double maximumSweepRpm = 0.0;
         for (int step = 0; step < static_cast<int>(8.0 / dt); ++step) {
             const auto time = step * dt;
@@ -192,12 +199,40 @@ int main() {
             if (time > 0.3 && bin >= 0 && bin < 16) {
                 fmepSum[bin] += f.state.frictionMeanEffectivePressureBar; ++fmepN[bin];
             }
+            for (std::size_t index = 0;
+                 index < f.completedBrakeCycleSampleCount; ++index) {
+                const auto& cycle = f.completedBrakeCycleSamples[index];
+                const auto cycleBin = static_cast<int>(cycle.meanRpm / 500.0);
+                if (cycle.startTimeSeconds <= 0.3 || cycleBin < 1 || cycleBin >= 16)
+                    continue;
+                require(cycle.numericallyValid,
+                        "friction literature measurements must use resolved complete cycles");
+                cycleFmepSum[cycleBin] += (cycle.indicatedWorkJoules
+                    - cycle.brakeWorkJoules)
+                    / (enginelab::engineDisplacementLitres(cfg) * 0.001) / 100'000.0;
+                ++cycleFmepN[cycleBin];
+                ++completedFrictionSampleCount;
+            }
         }
-        const auto binFmep = [&](int b) { return fmepN[b] > 0 ? fmepSum[b] / fmepN[b] : -1.0; };
+        const auto binFmep = [&](int b) {
+            return cycleFmepN[b] > 0 ? cycleFmepSum[b] / cycleFmepN[b] : -1.0;
+        };
+        require(completedFrictionSampleCount > 30,
+                "friction literature measurements must cover many complete cycles");
         // Every populated running bin must stay inside a physical FMEP envelope.
         for (int b = 1; b < 16; ++b) { // skip bin 0 (<500 rpm, cranking/stall)
-            if (fmepN[b] == 0) continue;
+            if (cycleFmepN[b] == 0) continue;
             const auto fmep = binFmep(b);
+            if (!(fmep > 0.35 && fmep < 2.7)) {
+                for (int index = 1; index < 16; ++index) {
+                    std::cerr << "FMEP bin=" << index << " snapshot_mean_bar="
+                        << (fmepN[index] > 0 ? fmepSum[index] / fmepN[index] : -1.0)
+                        << " snapshot_count=" << fmepN[index]
+                        << " cycle_mean_bar=" << (cycleFmepN[index] != 0
+                            ? cycleFmepSum[index] / cycleFmepN[index] : -1.0)
+                        << " cycle_count=" << cycleFmepN[index] << '\n';
+                }
+            }
             require(fmep > 0.35 && fmep < 2.7,
                     "friction MEP must stay within the gasoline literature envelope across rpm");
         }
@@ -1394,16 +1429,154 @@ int main() {
     std::uint64_t previousBrakeCycleId = 0;
     double previousBrakeCycleEndTime = 0.0;
     std::size_t completedBrakeCycleCount = 0;
+    std::size_t validBrakeCycleCount = 0;
+    std::size_t startupAngularFaultFrameCount = 0;
+    std::uint64_t lastValidBrakeCycleId = 0;
+    struct BrakeCycleFrameObservation final {
+        int step { 0 };
+        double startTimeSeconds { 0.0 };
+        double endTimeSeconds { 0.0 };
+        double entryRpm { 0.0 };
+        double exitRpm { 0.0 };
+        double maximumCrankStepDegrees { 0.0 };
+        double solverFrequencyHz { 0.0 };
+        bool resolutionLimited { false };
+        std::uint64_t cylinderTransferFailures { 0 };
+        std::uint64_t plenumTransferFailures { 0 };
+    };
+    std::vector<BrakeCycleFrameObservation> brakeCycleFrameObservations;
+    brakeCycleFrameObservations.reserve(2'400);
+    auto reportedFirstSolverFault = false;
     for (int step = 0; step < 2'400; ++step) {
         const enginelab::EngineControls controls { true, step < 600, 0.45, 0.05 };
+        const auto frameStartTimeSeconds = simulator.state().simulationTimeSeconds;
+        const auto frameEntryRpm = simulator.state().rpm;
+        const auto previousLatchedTorqueNm = simulator.state().cycleAveragedTorqueNm;
+        const auto previousLatchedPowerKw = simulator.state().cycleAveragedPowerKw;
+        auto expectedLatchedTorqueNm = previousLatchedTorqueNm;
+        auto expectedLatchedPowerKw = previousLatchedPowerKw;
+        auto frameLastValidBrakeCycleId = std::uint64_t { 0 };
         const auto frame = simulator.step(1.0 / 240.0, controls);
+        startupAngularFaultFrameCount += frame.state.crankDegreesPerSolverStep
+            > config.solver.maximumCrankDegreesPerStep + 1.0e-9 ? 1 : 0;
+        brakeCycleFrameObservations.push_back({ step, frameStartTimeSeconds,
+            frame.state.simulationTimeSeconds, frameEntryRpm, frame.state.rpm,
+            frame.state.crankDegreesPerSolverStep, frame.state.solverFrequencyHz,
+            frame.state.solverResolutionLimited, frame.state.intakeCylinderTransferFailures,
+            frame.state.intakePlenumTransferFailures });
+        if (frame.state.solverResolutionLimited && !reportedFirstSolverFault) {
+            reportedFirstSolverFault = true;
+            std::cerr.precision(17);
+            std::cerr << "first Core solver fault: step=" << step << " time=["
+                << frameStartTimeSeconds << ',' << frame.state.simulationTimeSeconds
+                << "] rpm=[" << frameEntryRpm << ',' << frame.state.rpm
+                << "] max_degrees=" << frame.state.crankDegreesPerSolverStep
+                << " configured_max_degrees=" << config.solver.maximumCrankDegreesPerStep
+                << " solver_Hz=" << frame.state.solverFrequencyHz << " solver_substeps="
+                << frame.state.solverSubsteps << " cylinder_failures="
+                << frame.state.intakeCylinderTransferFailures << " plenum_failures="
+                << frame.state.intakePlenumTransferFailures << '\n';
+        }
         for (std::size_t index = 0; index < frame.firingEventCount; ++index)
             firedCylinders.insert(frame.firingEvents[index].cylinderId);
         for (std::size_t index = 0;
              index < frame.completedBrakeCycleSampleCount; ++index) {
             const auto& sample = frame.completedBrakeCycleSamples[index];
-            require(sample.numericallyValid,
-                    "a completed brake cycle must satisfy its numerical contract");
+            auto overlappingFrames = std::size_t { 0 };
+            auto overlappingFaultFrames = std::size_t { 0 };
+            auto interiorFaultFrames = std::size_t { 0 };
+            auto maximumObservedCrankStepDegrees = 0.0;
+            auto overlappingCylinderFailures = std::uint64_t { 0 };
+            auto overlappingPlenumFailures = std::uint64_t { 0 };
+            for (const auto& observation : brakeCycleFrameObservations) {
+                // A fault frame touching a boundary is ambiguous: its public
+                // flag does not reveal which private substep carried the fault.
+                if (observation.endTimeSeconds < sample.startTimeSeconds
+                    || observation.startTimeSeconds > sample.endTimeSeconds)
+                    continue;
+                const auto observedFault = observation.resolutionLimited
+                    || observation.cylinderTransferFailures != 0
+                    || observation.plenumTransferFailures != 0;
+                ++overlappingFrames;
+                overlappingFaultFrames += observedFault ? 1 : 0;
+                interiorFaultFrames += observedFault
+                    && observation.startTimeSeconds > sample.startTimeSeconds
+                    && observation.endTimeSeconds < sample.endTimeSeconds ? 1 : 0;
+                maximumObservedCrankStepDegrees = std::max(
+                    maximumObservedCrankStepDegrees, observation.maximumCrankStepDegrees);
+                overlappingCylinderFailures += observation.cylinderTransferFailures;
+                overlappingPlenumFailures += observation.plenumTransferFailures;
+            }
+            const auto invalidFaultPublication = sample.numericallyValid
+                && interiorFaultFrames != 0;
+            const auto unexplainedInvalidCycle = !sample.numericallyValid
+                && overlappingFaultFrames == 0;
+            const auto allPublicValuesFinite = std::isfinite(sample.startTimeSeconds)
+                && std::isfinite(sample.endTimeSeconds) && std::isfinite(sample.durationSeconds)
+                && std::isfinite(sample.integratedCrankRadians)
+                && std::isfinite(sample.indicatedWorkJoules) && std::isfinite(sample.brakeWorkJoules)
+                && std::isfinite(sample.meanRpm) && std::isfinite(sample.meanTorqueNm)
+                && std::isfinite(sample.meanPowerKw);
+            if (invalidFaultPublication || unexplainedInvalidCycle) {
+                std::cerr.precision(17);
+                for (const auto& observation : brakeCycleFrameObservations) {
+                    if (observation.endTimeSeconds < sample.startTimeSeconds
+                        || observation.startTimeSeconds > sample.endTimeSeconds)
+                        continue;
+                    if (observation.resolutionLimited || observation.cylinderTransferFailures != 0
+                        || observation.plenumTransferFailures != 0) {
+                        std::cerr << "cycle-policy overlapping fault frame: step=" << observation.step
+                            << " time=[" << observation.startTimeSeconds << ','
+                            << observation.endTimeSeconds << "] rpm=[" << observation.entryRpm
+                            << ',' << observation.exitRpm << "] max_degrees="
+                            << observation.maximumCrankStepDegrees << " solver_Hz="
+                            << observation.solverFrequencyHz << " cylinder_failures="
+                            << observation.cylinderTransferFailures << " plenum_failures="
+                            << observation.plenumTransferFailures << '\n';
+                    }
+                }
+                const auto expectedCycleRadians = 4.0 * std::numbers::pi;
+                const auto angleToleranceRadians = 1.0e-9
+                    * std::max(1.0, std::abs(expectedCycleRadians));
+                const auto publicDurationErrorSeconds = sample.durationSeconds
+                    - (sample.endTimeSeconds - sample.startTimeSeconds);
+                const auto angleErrorRadians = sample.integratedCrankRadians - expectedCycleRadians;
+                const auto torqueWorkErrorJ = sample.meanTorqueNm * sample.integratedCrankRadians
+                    - sample.brakeWorkJoules;
+                const auto powerWorkErrorJ = sample.meanPowerKw * sample.durationSeconds * 1'000.0
+                    - sample.brakeWorkJoules;
+                // Outer-frame observations can straddle a cycle boundary; they
+                // locate a fault without inventing its private substep order.
+                std::cerr << "cycle validity policy violation: step=" << step << " id=" << sample.cycleId
+                    << " numerically_valid=" << sample.numericallyValid
+                    << " time=[" << sample.startTimeSeconds << ',' << sample.endTimeSeconds
+                    << "] dt=" << sample.durationSeconds << " radians=" << sample.integratedCrankRadians
+                    << " mean_rpm=" << sample.meanRpm << " finite=" << allPublicValuesFinite
+                    << " positive_denominators=" << (sample.durationSeconds > 1.0e-12
+                        && sample.integratedCrankRadians > 1.0e-12)
+                    << " public_duration_error_s=" << publicDurationErrorSeconds
+                    << " angle_error_rad=" << angleErrorRadians << " angle_tolerance_rad="
+                    << angleToleranceRadians << " torque_work_error_J=" << torqueWorkErrorJ
+                    << " power_work_error_J=" << powerWorkErrorJ << " overlapping_frames="
+                    << overlappingFrames << " overlapping_fault_frames=" << overlappingFaultFrames
+                    << " interior_fault_frames=" << interiorFaultFrames
+                    << " maximum_observed_degrees=" << maximumObservedCrankStepDegrees
+                    << " configured_max_degrees=" << config.solver.maximumCrankDegreesPerStep
+                    << " observed_cylinder_failures=" << overlappingCylinderFailures
+                    << " observed_plenum_failures=" << overlappingPlenumFailures
+                    << " frame_latched_T_before_after=[" << previousLatchedTorqueNm << ','
+                    << frame.state.cycleAveragedTorqueNm << "] frame_latched_P_before_after=["
+                    << previousLatchedPowerKw << ',' << frame.state.cycleAveragedPowerKw
+                    << "] previous_valid_cycle_id=" << lastValidBrakeCycleId
+                    << " private_elapsed_accumulator_unobserved=1\n";
+            }
+            require(!invalidFaultPublication,
+                    "a cycle containing an entirely interior fault frame must not be numerically valid");
+            require(!unexplainedInvalidCycle,
+                    "an invalid cycle must have an observed fault frame intersecting its interval");
+            require(allPublicValuesFinite && sample.durationSeconds > 1.0e-12
+                    && sample.integratedCrankRadians > 1.0e-12,
+                    "all completed samples must preserve finite values and positive work denominators");
             require(sample.cycleId == previousBrakeCycleId + 1,
                     "undropped completed brake cycles must have contiguous IDs");
             require(sample.endTimeSeconds > sample.startTimeSeconds
@@ -1432,17 +1605,28 @@ int main() {
             previousBrakeCycleId = sample.cycleId;
             previousBrakeCycleEndTime = sample.endTimeSeconds;
             ++completedBrakeCycleCount;
+            if (sample.numericallyValid) {
+                ++validBrakeCycleCount;
+                frameLastValidBrakeCycleId = sample.cycleId;
+                expectedLatchedTorqueNm = sample.meanTorqueNm;
+                expectedLatchedPowerKw = sample.meanPowerKw;
+            }
         }
         require(frame.droppedCompletedBrakeCycleSampleCount == 0,
                 "ordinary four-stroke stepping must not overflow cycle samples");
-        if (frame.completedBrakeCycleSampleCount > 0) {
-            const auto& latest = frame.completedBrakeCycleSamples[
-                frame.completedBrakeCycleSampleCount - 1];
+        if (frameLastValidBrakeCycleId != 0) {
+            require(frameLastValidBrakeCycleId > lastValidBrakeCycleId,
+                    "the valid-cycle latch witness must advance to the last valid sample ID");
             require(std::abs(frame.state.cycleAveragedTorqueNm
-                        - latest.meanTorqueNm) < 1.0e-10
+                        - expectedLatchedTorqueNm) < 1.0e-10
                     && std::abs(frame.state.cycleAveragedPowerKw
-                        - latest.meanPowerKw) < 1.0e-10,
-                    "EngineState cycle averages must latch the latest complete cycle");
+                        - expectedLatchedPowerKw) < 1.0e-10,
+                    "EngineState cycle averages must latch only the last valid sample in the frame");
+            lastValidBrakeCycleId = frameLastValidBrakeCycleId;
+        } else {
+            require(frame.state.cycleAveragedTorqueNm == previousLatchedTorqueNm
+                    && frame.state.cycleAveragedPowerKw == previousLatchedPowerKw,
+                    "a frame without a valid completed cycle must preserve the previous cycle averages");
         }
         observedCylinderTelemetry = observedCylinderTelemetry || std::any_of(frame.state.cylinderStates.begin(),
             frame.state.cylinderStates.begin() + static_cast<std::ptrdiff_t>(frame.state.cylinderStateCount),
@@ -1484,6 +1668,10 @@ int main() {
             "cycle-averaged output must remain finite for UI and dyno consumers");
     require(completedBrakeCycleCount >= 20,
             "the cycle-sample regression must observe many real completed cycles");
+    require(validBrakeCycleCount > 30,
+            "the cycle-sample regression must observe more than thirty numerically valid cycles");
+    require(startupAngularFaultFrameCount == 0,
+            "ordinary startup must remain within the configured crank-angle resolution");
     require(simulator.state().indicatedWorkJoulesPerCycle > 0.0
             && simulator.state().indicatedMeanEffectivePressureBar > 0.0
             && simulator.state().indicatedPowerKw > 0.0,

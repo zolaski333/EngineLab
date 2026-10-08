@@ -1,4 +1,5 @@
 #include <enginelab/runtime/DynoEstimator.hpp>
+#include <enginelab/runtime/DynoQualityGate.hpp>
 
 #include <algorithm>
 #include <array>
@@ -51,6 +52,136 @@ enginelab::CompletedBrakeCycleSample cycle(std::uint64_t id,
 int main() {
     using enginelab::DynoCycleAcceptance;
     using enginelab::DynoEstimateQuality;
+
+    {
+        // After a rejected interval the runtime clears its interpolation
+        // predecessor, while its established-ramp flag remains true. The
+        // physical target must stay held until that missing bin is acquired.
+        const auto missingReferenceReady = enginelab::dynoRampReferenceReady(true, false);
+        std::cout << "ramp recovery primed=1 preceding_bin=0 ready="
+            << missingReferenceReady << '\n';
+        require(!missingReferenceReady,
+            "a previously primed ramp must hold its target until its recovery bin is acquired");
+        require(!enginelab::dynoRampReferenceReady(false, false)
+            && !enginelab::dynoRampReferenceReady(false, true),
+            "a fresh unprimed entry cannot advance even if an old predecessor exists");
+        require(enginelab::dynoRampReferenceReady(true, true),
+            "a primed ramp with a clean acquired predecessor must preserve forward progress");
+    }
+
+    // A clean endpoint does not repair a tracking excursion inside its 720-degree
+    // cycle. Exercise the same gate predicate and boundary admission used by the
+    // runtime, with actual complete-cycle integral samples and a nonempty window.
+    {
+        constexpr enginelab::DynoMode modes[] = {
+            enginelab::DynoMode::steppedCalibration,
+            enginelab::DynoMode::continuousRamp,
+            enginelab::DynoMode::hold
+        };
+        for (const auto mode : modes) {
+            for (const auto accelerationExcursion : { false, true }) {
+                enginelab::DynoEstimator estimator;
+                const enginelab::DynoQualityGate gate;
+                enginelab::DynoQualityGateInput input;
+                input.mode = mode;
+                input.targetRpm = 3'000.0;
+                input.measuredRpm = 3'000.0;
+                input.measuredCycleTorqueNm = 100.0;
+                input.prepared = true;
+                input.protocolReady = true;
+                input.cycleContinuous = true;
+                enginelab::EngineState state;
+                state.rpm = input.measuredRpm;
+                enginelab::DynoAbsorberOutput absorber;
+                absorber.brakeTorqueNm = 100.0;
+                absorber.filteredRpm = input.measuredRpm;
+                absorber.contactFraction = 1.0;
+                absorber.unclampedBrakeTorqueNm = 100.0;
+                require(gate.evaluate(input, state, absorber).accepted(),
+                    "the excursion fixture must start from an accepted observation");
+
+                auto startTime = 0.0;
+                for (std::uint64_t id = 1; id <= 7; ++id) {
+                    const auto sample = cycle(id, startTime, 3'000.0, 100.0);
+                    const auto update = estimator.push(sample);
+                    require(update.acceptance == DynoCycleAcceptance::accepted,
+                        "the fixture must contain a clean continuous pre-excursion window");
+                    startTime = sample.endTimeSeconds;
+                }
+                require(estimator.estimate().quality == DynoEstimateQuality::ready
+                    && estimator.estimate().cycleCount == 7,
+                    "the clean pre-excursion window must already be ready and nonvacuous");
+
+                if (accelerationExcursion)
+                    absorber.filteredAccelerationRpmPerSecond =
+                        mode == enginelab::DynoMode::continuousRamp
+                            ? 1'501.0 : 121.0;
+                else {
+                    input.measuredRpm +=
+                        mode == enginelab::DynoMode::continuousRamp
+                            ? 151.0 : 61.0;
+                    absorber.filteredRpm = input.measuredRpm;
+                }
+                const auto interiorGate = gate.evaluate(input, state, absorber);
+                const auto expectedReason = accelerationExcursion
+                    ? enginelab::DynoQualityReason::accelerationOutOfBounds
+                    : enginelab::DynoQualityReason::speedTrackingError;
+                require(interiorGate.reasons == expectedReason,
+                    "the interior frame must isolate one unchanged tracking threshold");
+                const auto cycleTainted = interiorGate.taintsCycle();
+
+                // Restore the observation before the cycle completes. The sample
+                // remains numerically valid: this regression is a bank protocol
+                // defect, not the simulator's independently latched fault contract.
+                input.measuredRpm = 3'000.0;
+                absorber.filteredRpm = input.measuredRpm;
+                absorber.filteredAccelerationRpmPerSecond = 0.0;
+                require(gate.evaluate(input, state, absorber).accepted(),
+                    "the completed-cycle boundary must be clean after the interior excursion");
+                const auto progressAllowedAfterRecovery = !cycleTainted
+                    && estimator.estimate().quality == DynoEstimateQuality::ready;
+                const auto contaminated = cycle(8, startTime, 3'000.0, 500.0);
+                const auto update = estimator.push(contaminated);
+                require(update.acceptance == DynoCycleAcceptance::accepted
+                    && update.estimate.quality == DynoEstimateQuality::ready,
+                    "valid physical integrals alone must not reject the protocol fixture");
+                input.measuredCycleTorqueNm = contaminated.meanTorqueNm;
+                input.cycleContinuous = update.acceptance == DynoCycleAcceptance::accepted
+                    && !cycleTainted;
+                const auto boundaryGate = gate.evaluate(input, state, absorber);
+                if (!boundaryGate.accepted()) estimator.breakContinuity();
+                std::cout << "interior " << (accelerationExcursion ? "acceleration" : "speed")
+                    << " mode=" << static_cast<int>(mode)
+                    << " tainted=" << cycleTainted
+                    << " accepted_boundary=" << boundaryGate.accepted()
+                    << " candidate_window_torque=" << update.estimate.meanTorqueNm
+                    << " remaining_cycles=" << estimator.estimate().cycleCount << '\n';
+                require(!boundaryGate.accepted()
+                    && boundaryGate.reasons == enginelab::DynoQualityReason::discontinuousCycle
+                    && estimator.estimate().cycleCount == 0
+                    && estimator.estimate().quality == DynoEstimateQuality::unavailable,
+                    "a mid-cycle tracking excursion must discard the complete containing cycle and old window");
+                require(!progressAllowedAfterRecovery,
+                    "a clean frame must not resume a ramp from the old window before its tainted cycle completes");
+
+                startTime = contaminated.endTimeSeconds;
+                for (std::uint64_t id = 9; id <= 15; ++id) {
+                    const auto clean = cycle(id, startTime, 3'000.0, 100.0);
+                    const auto cleanUpdate = estimator.push(clean);
+                    require(cleanUpdate.acceptance == DynoCycleAcceptance::accepted,
+                        "clean cycles after a protocol break must reacquire normally");
+                    require(cleanUpdate.estimate.firstCycleId == 9,
+                        "reacquisition must not retain the contaminated cycle or old window");
+                    require(cleanUpdate.estimate.quality
+                        == (id < 15 ? DynoEstimateQuality::warmingUp : DynoEstimateQuality::ready),
+                        "reacquisition must cover the full unchanged quarter-second window");
+                    requireNear(cleanUpdate.estimate.meanTorqueNm, 100.0, 1.0e-10,
+                        "reacquired torque must contain only clean physical work");
+                    startTime = clean.endTimeSeconds;
+                }
+            }
+        }
+    }
 
     // Conserved-integral oracle: unlike an arithmetic average of RPM or power,
     // these values remain correct when consecutive cycles have unequal times.

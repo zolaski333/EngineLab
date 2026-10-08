@@ -343,8 +343,9 @@ Sample holdPoint(enginelab::EngineSimulator& simulator,
     acc.minimumRpm = std::isfinite(minimumRpm)
         ? minimumRpm : acc.actualRpm;
     acc.maximumRpm = maximumRpm;
+    const auto meanFrameRpm = rpmAcc / d;
     acc.rpmStandardDeviation = std::sqrt(std::max(
-        0.0, rpmSquareAcc / d - acc.actualRpm * acc.actualRpm));
+        0.0, rpmSquareAcc / d - meanFrameRpm * meanFrameRpm));
     acc.rpmDrift = secondHalfRpmAcc / std::max(1.0, secondHalfCount)
         - firstHalfRpmAcc / std::max(1.0, firstHalfCount);
     const auto meanHeldRpm = heldRpmAcc / d;
@@ -393,7 +394,8 @@ double sweepEngine(const enginelab::EngineConfig& baseConfig, double stepRpm,
     // bar for the same speed with the limiter moved out of the way. A
     // manufacturer quotes rated power below the limiter. See
     // tests/GasExchangeTests.cpp and physics-audit.md (archive/docs-2026-09 tag).
-    const auto maxRpm = 0.95 * std::min(config.redlineRpm, config.ignition.revLimitRpm);
+    const auto maxRpm = std::min(0.95 * std::min(config.redlineRpm, config.ignition.revLimitRpm),
+        config.ignition.revLimitRpm - 300.0);
     const auto startRpm = std::max(2000.0, std::round(config.idleRpm * 1.5 / stepRpm) * stepRpm);
     auto first = true;
     auto highestBoostPressureRatio = 0.0;

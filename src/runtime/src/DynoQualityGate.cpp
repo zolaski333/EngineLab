@@ -38,7 +38,8 @@ DynoQualityGateResult DynoQualityGate::evaluate(
     const EngineState& engineState,
     const DynoAbsorberOutput& absorber) const noexcept {
     DynoQualityGateResult result;
-    const auto ramp = input.mode == DynoAcquisitionMode::continuousRamp;
+    const auto ramp = input.mode == DynoAcquisitionMode::continuousRamp
+        && input.rampPrimed;
     result.maximumAllowedSpeedErrorRpm = ramp
         ? config_.rampMaximumSpeedErrorRpm
         : config_.steadyMaximumSpeedErrorRpm;
@@ -94,6 +95,10 @@ DynoQualityGateResult DynoQualityGate::evaluate(
         || engineState.ecuHardRevLimiterActive
         || engineState.ecuAlternatingSparkCutActive)
         result.reasons |= DynoQualityReason::revLimiterActive;
+    if (engineState.solverResolutionLimited
+        || engineState.intakeCylinderTransferFailures != 0U
+        || engineState.intakePlenumTransferFailures != 0U)
+        result.reasons |= DynoQualityReason::simulationNumericalFault;
 
     // Low saturation means a passive absorber would have to motor the engine.
     // It is not a capacity overrun: a ramp may still be valid while the engine

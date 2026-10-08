@@ -16,6 +16,19 @@ target_link_libraries(EngineLabDynoSweepHarness PRIVATE
     EngineLab::Ecu EngineLab::Events EngineLab::Exhaust EngineLab::Catalog)
 enginelab_set_warnings(EngineLabDynoSweepHarness)
 
+add_executable(EngineLabDynoCurveHarness DynoCurveHarness.cpp)
+target_link_libraries(EngineLabDynoCurveHarness PRIVATE
+    EngineLab::Simulation EngineLab::Foundation EngineLab::Physics
+    EngineLab::Ecu EngineLab::Events EngineLab::Exhaust EngineLab::Catalog
+    nlohmann_json::nlohmann_json)
+execute_process(COMMAND git rev-parse HEAD WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+    OUTPUT_VARIABLE ENGINELAB_CURVE_SOURCE_REVISION OUTPUT_STRIP_TRAILING_WHITESPACE
+    ERROR_QUIET)
+target_compile_definitions(EngineLabDynoCurveHarness PRIVATE
+    ENGINELAB_CATALOG_ROOT="${CMAKE_SOURCE_DIR}"
+    ENGINELAB_CURVE_SOURCE_REVISION="${ENGINELAB_CURVE_SOURCE_REVISION}")
+enginelab_set_warnings(EngineLabDynoCurveHarness)
+
 add_executable(EngineLabIntakeDuctBench IntakeDuctBench.cpp)
 target_link_libraries(EngineLabIntakeDuctBench PRIVATE
     EngineLab::GasDynamics EngineLab::Physics EngineLab::Foundation)
@@ -77,6 +90,17 @@ if(MSVC)
     target_link_options(EngineLabUserDynoHarness PRIVATE /STACK:8388608)
 endif()
 enginelab_set_warnings(EngineLabUserDynoHarness)
+
+add_executable(EngineLabDynoRuntimeCurveHarness DynoRuntimeCurveHarness.cpp)
+target_link_libraries(EngineLabDynoRuntimeCurveHarness PRIVATE
+    EngineLab::Runtime EngineLab::Simulation EngineLab::Foundation EngineLab::Physics
+    EngineLab::Ecu EngineLab::Events EngineLab::Exhaust EngineLab::Catalog)
+target_compile_definitions(EngineLabDynoRuntimeCurveHarness PRIVATE
+    ENGINELAB_CATALOG_ROOT="${CMAKE_SOURCE_DIR}")
+if(MSVC)
+    target_link_options(EngineLabDynoRuntimeCurveHarness PRIVATE /STACK:8388608)
+endif()
+enginelab_set_warnings(EngineLabDynoRuntimeCurveHarness)
 
 add_executable(EngineLabDieselControlHarness DieselControlHarness.cpp)
 target_link_libraries(EngineLabDieselControlHarness PRIVATE

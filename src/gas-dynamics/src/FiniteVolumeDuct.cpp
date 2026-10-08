@@ -280,7 +280,7 @@ EulerMixtureModel::EulerMixtureModel(ThermodynamicModel model) noexcept
 std::optional<ConservativeState> EulerMixtureModel::conservativeFromPrimitive(
     double density, double velocity, double pressure,
     GasComposition composition) const noexcept {
-    if (!model_.valid() || !finite(density) || !(density > minimumDensityKgPerM3)
+    if (!modelIsValid_ || !finite(density) || !(density > minimumDensityKgPerM3)
         || !finite(velocity) || !finite(pressure) || !(pressure > 0.0))
         return std::nullopt;
 
@@ -316,7 +316,7 @@ std::optional<ConservativeState> EulerMixtureModel::conservativeFromPrimitive(
 std::optional<ConservativeState> EulerMixtureModel::conservativeFromPressureTemperature(
     double pressure, double temperature, double velocity,
     GasComposition composition) const noexcept {
-    if (!model_.valid() || !finite(pressure) || !(pressure > 0.0)
+    if (!modelIsValid_ || !finite(pressure) || !(pressure > 0.0)
         || !finite(temperature) || !(temperature > 0.0) || !finite(velocity))
         return std::nullopt;
     auto fractionSum = 0.0;
@@ -965,6 +965,63 @@ bool FiniteVolumeDuct::refreshCellStateCache() const noexcept {
         cells_, cellPrimitives_, cellSourceTerms_, maximumCellSignalSpeedMps_,
         cellSourceLimitedTimeStepSeconds_);
     return cellStateCacheIsValid_;
+}
+
+bool FiniteVolumeDuct::currentTerminalCellResidual(
+    bool atInlet, const EulerFlux& areaAveragedMouthFlux,
+    ConservativeState& residual) const noexcept {
+    const auto count = cells_.size();
+    if (count < 2 || !cellStateCacheIsValid_) return false;
+    const auto terminal = atInlet ? std::size_t { 0 } : count - 1;
+    const auto adjacent = atInlet ? std::size_t { 1 } : count - 2;
+    auto adjoiningState = cells_[adjacent];
+    auto adjoiningPrimitive = cellPrimitives_[adjacent];
+    // The opposite endpoint also has zero slope in a two-cell duct. Otherwise
+    // the adjoining face uses the same MC reconstruction and physical-state
+    // fallback as computeResidual, from current cells rather than RK scratch.
+    if (count > 2) {
+        const auto slope = monotonisedCentralSlope(
+            cells_[adjacent - 1], cells_[adjacent], cells_[adjacent + 1]);
+        if (!isZero(slope)) {
+            auto reconstructed = addScaled(cells_[adjacent], slope,
+                atInlet ? -0.5 : 0.5);
+            PrimitiveState reconstructedPrimitive;
+            if (mixtureModel_.recoverPrimitive(reconstructed, reconstructedPrimitive)) {
+                adjoiningState = reconstructed;
+                adjoiningPrimitive = reconstructedPrimitive;
+            }
+        }
+    }
+    const auto internalFlux = atInlet
+        ? mixtureModel_.riemannFluxPrepared(
+            cells_[terminal], cellPrimitives_[terminal],
+            adjoiningState, adjoiningPrimitive)
+        : mixtureModel_.riemannFluxPrepared(
+            adjoiningState, adjoiningPrimitive,
+            cells_[terminal], cellPrimitives_[terminal]);
+    const auto& leftFlux = atInlet ? areaAveragedMouthFlux : internalFlux;
+    const auto& rightFlux = atInlet ? internalFlux : areaAveragedMouthFlux;
+    const auto leftAreaM2 = faceAreasM2_[terminal];
+    const auto rightAreaM2 = faceAreasM2_[terminal + 1];
+    const auto inverseCellVolumeM3 = inverseCellVolumesM3_[terminal];
+    for (std::size_t species = 0; species < gasSpeciesCount; ++species) {
+        residual.speciesMassDensityKgPerM3[species] = -inverseCellVolumeM3
+            * (rightAreaM2 * rightFlux.speciesMassFluxKgPerM2S[species]
+               - leftAreaM2 * leftFlux.speciesMassFluxKgPerM2S[species]);
+    }
+    residual.momentumDensityKgPerM2S = -inverseCellVolumeM3
+        * (rightAreaM2 * rightFlux.momentumFluxPa
+           - leftAreaM2 * leftFlux.momentumFluxPa)
+        + cellPrimitives_[terminal].pressurePa
+            * (rightAreaM2 - leftAreaM2) * inverseCellVolumeM3;
+    residual.totalEnergyDensityJPerM3 = -inverseCellVolumeM3
+        * (rightAreaM2 * rightFlux.totalEnergyFluxWPerM2
+           - leftAreaM2 * leftFlux.totalEnergyFluxWPerM2);
+    residual.momentumDensityKgPerM2S +=
+        cellSourceTerms_[terminal].momentumDensityKgPerM2S;
+    residual.totalEnergyDensityJPerM3 +=
+        cellSourceTerms_[terminal].totalEnergyDensityJPerM3;
+    return true;
 }
 
 bool FiniteVolumeDuct::computeResidual(

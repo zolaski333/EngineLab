@@ -1339,6 +1339,9 @@ struct EngineState final {
     double manifoldGasMassGrams { 0.0 };
     double cylinderGasMassGrams { 0.0 };
     double gasInternalEnergyJoules { 0.0 };
+    /** Actual accepted mechanical steps / caller-frame duration. Adaptive
+     * durations can differ within that frame; each pressure sample carries its
+     * own reciprocal duration. This is not a requested nominal frequency. */
     double solverFrequencyHz { 0.0 };
     double crankDegreesPerSolverStep { 0.0 };
     std::uint32_t solverSubsteps { 0 };
@@ -1352,7 +1355,7 @@ struct EngineState final {
      * from any other measurement.
      */
     std::uint64_t exhaustNetworkAcceptedSubsteps { 0 };
-    /** Wall-clock rate of those substeps, Hz. Compare against the coupling
+    /** Rate over advanced simulation time, Hz. Compare against the coupling
      * cadence to see how much resolved bandwidth reaches the audio path.
      */
     double exhaustNetworkSubstepFrequencyHz { 0.0 };
@@ -1360,6 +1363,28 @@ struct EngineState final {
      * above half this frequency cannot be physical.
      */
     double exhaustCouplingFrequencyHz { 0.0 };
+    /** Actual intake advances in the last frame, summed across runner networks.
+     * Rates use advanced simulation time, rather than the requested cadence. */
+    std::uint64_t intakeNetworkAcceptedSubsteps { 0 };
+    std::uint64_t intakeNetworkRejectedSubsteps { 0 };
+    double intakeNetworkAdvancedSeconds { 0.0 };
+    std::uint32_t intakeCouplingFlushCount { 0 };
+    /** Scheduled coupling duration, including the sealed-valve rest path.
+     * Actual FV integration time is intakeNetworkAdvancedSeconds. */
+    double intakeCouplingAdvancedSeconds { 0.0 };
+    double intakeCouplingMinimumIntervalSeconds { 0.0 };
+    double intakeCouplingMaximumIntervalSeconds { 0.0 };
+    std::uint32_t intakeCylinderTransferFailures { 0 };
+    std::uint32_t intakePlenumTransferFailures { 0 };
+    /** Last-frame maxima over accepted gas steps. Stable-step ratio includes
+     * every coded source/boundary cap; duct Courant uses actual cell length
+     * and cached signal speeds, separately at current and predictor states. */
+    double intakeNetworkMaximumAcceptedStepRatio { 0.0 };
+    double intakeNetworkMaximumCourantCurrent { 0.0 };
+    double intakeNetworkMaximumCourantPredictor { 0.0 };
+    double exhaustNetworkMaximumAcceptedStepRatio { 0.0 };
+    double exhaustNetworkMaximumCourantCurrent { 0.0 };
+    double exhaustNetworkMaximumCourantPredictor { 0.0 };
     double volumetricEfficiency { 0.0 };
     double airMassMgPerCycle { 0.0 };
     /**

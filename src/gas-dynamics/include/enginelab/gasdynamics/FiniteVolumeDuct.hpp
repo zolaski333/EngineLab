@@ -341,6 +341,13 @@ private:
         std::span<const ConservativeState> states,
         std::span<PrimitiveState> primitives) const noexcept;
     [[nodiscard]] bool refreshCellStateCache() const noexcept;
+    /** Current non-periodic terminal-cell residual with its graph mouth flux.
+     * Reconstructs only the adjoining internal face; a one-cell duct cannot
+     * supply its opposite graph boundary and is unsupported.
+     */
+    [[nodiscard]] bool currentTerminalCellResidual(
+        bool atInlet, const EulerFlux& areaAveragedMouthFlux,
+        ConservativeState& residual) const noexcept;
     [[nodiscard]] bool applyDynamicWallHeatTransfer(
         std::span<ConservativeState> states,
         std::span<const PrimitiveState> primitives,
