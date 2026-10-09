@@ -140,6 +140,24 @@ file formats, always with an in-memory migration).
 
 ### Fixed
 
+- Torque curves no longer swing from one 50 rpm step to the next because of
+  the solver. The intake runners amplified their own waves, the cylinders
+  exchanged gas with the plenum up to 400 µs late, and the crank step could
+  overrun its angle as the engine accelerated. Adjacent steps now differ by
+  2-3.5 % on the K20 (8.8-11.4 % before) and about 2 % on the CP2. The 2JZ
+  gives 416 N.m at 4,000 rpm (369 before; Toyota: 427), and the Hayabusa's
+  maximum falls from 178 to 153 N.m (Suzuki: 138). The dyno discards a whole
+  720° cycle when the solver faulted during it. Cost: the LS3 and the Merlin
+  no longer run in real time on the development machine (about 0.78 and
+  0.80 of real time, against 1.14 and 1.45 before).
+- The K20's VTEC switches once per camshaft revolution on a common base
+  circle, instead of on the instantaneous engine speed with its valves open
+  (up to 106 switches per second per cylinder around 5,800 rpm).
+- The exhaust is coupled to the cylinders at least every 125 µs, as
+  intended. The interval could run half a sub-step past it, and switch
+  between one and two sub-steps from one frame to the next. The level of
+  some engines moves (CP3 +16 %, CP4 -19 % in-duct pressure, flat-six +10 %,
+  LS3 -4 %); the K20 needs 7 % more CPU.
 - The 2JZ's turbo holds its ~0.9 bar to the limiter. Its wastegate was too
   small to bypass the exhaust at high speed: fully open from 5,500 rpm, the
   boost ran to 246 kPa at 6,000 rpm (and 297 kPa at 6,500). It now holds

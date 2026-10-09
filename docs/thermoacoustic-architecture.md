@@ -69,7 +69,11 @@ multirate decomposition:
   network;
 - the macro boundary is integrated at least 16 times per firing period, with an
   absolute maximum window of 125 µs at low engine speed (see §14; the cap was
-  halved from 250 µs on 2026-07-28);
+  halved from 250 µs on 2026-07-28). Both bounds are maxima: the network is
+  flushed on the last mechanical sub-step that keeps the window within them.
+  Until 2026-10-09 it flushed on the sub-step nearest the bound, which could
+  overrun it by half a sub-step and, with sub-steps sized from the crank angle,
+  switch between one and two sub-steps per window from one frame to the next;
 - conservative state, chamber volume, valve `CdA` and outlet opening are
   integrated over time across each window;
 - each macro exchange stays bidirectional and closes the species mass and

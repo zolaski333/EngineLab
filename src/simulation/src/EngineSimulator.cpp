@@ -3459,12 +3459,16 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
         }
 
         // Duration-based flush, deliberately NOT forced at the end of the
-        // frame: see the accumulator members in the header. The half-substep
-        // bias flushes on the nearest substep to the target interval, so the
-        // network's integration grid is uniform in time and free-running with
-        // respect to both the frame grid and the substep grid.
-        const auto flushExhaustNetwork = exhaustCouplingDurationSeconds_
-            >= maximumExhaustCouplingSeconds - 0.5 * subDt;
+        // frame: see the accumulator members in the header. The interval is a
+        // MAXIMUM: flush now if one more substep would exceed it. Flushing on
+        // the substep nearest the target instead let the interval run half a
+        // substep past it, and the stride flipped between one and two
+        // substeps whenever the crank-angle step crossed ~2/3 of the cap: on
+        // the Merlin, 82 us substeps against the 125 us cap coupled every
+        // 164 us for single frames, and the valve flow zigzagged at the
+        // mechanical Nyquist inside those frames.
+        const auto flushExhaustNetwork = exhaustCouplingDurationSeconds_ + subDt
+            > maximumExhaustCouplingSeconds * (1.0 + 1.0e-9);
         auto exhaustNetworkCompleted = true;
         auto exhaustAdvanceDurationSeconds = 0.0;
         auto outletMassKg = 0.0;

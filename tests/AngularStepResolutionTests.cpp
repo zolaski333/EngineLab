@@ -119,6 +119,52 @@ Result measure(const enginelab::EngineConfig& config, std::size_t frames,
     return result;
 }
 
+// The exhaust coupling interval is a maximum, not a target to round to. The
+// nearest-substep rule could couple half a substep past the cap, and on the
+// Merlin flipped between one and two substeps per flush as the crank-angle
+// step moved, so the valve flow zigzagged at the mechanical Nyquist.
+std::size_t exhaustCouplingCapViolations(const enginelab::EngineConfig& config,
+                                         double capSeconds, std::size_t frames) {
+    enginelab::SimpleEcuModel ecu;
+    enginelab::SimplifiedGasolinePhysics physics;
+    enginelab::FourStrokeEventGenerator events;
+    auto exhaust = enginelab::ExhaustGraph::makeForEngine(config);
+    enginelab::EngineSimulatorOptions options;
+    options.maximumLowSpeedExhaustCouplingSeconds = capSeconds;
+    auto simulator = std::make_unique<enginelab::EngineSimulator>(
+        config, ecu, physics, events, exhaust, options);
+    std::size_t violations = 0;
+    std::size_t subStrideFrames = 0;
+    auto longestExcess = 0.0;
+    for (std::size_t step = 0; step < frames; ++step) {
+        enginelab::EngineControls controls;
+        controls.ignitionEnabled = true;
+        controls.starterEngaged = step < 600;
+        controls.throttle = 0.45;
+        controls.load = 0.05;
+        const auto frame = simulator->step(frameSeconds, controls);
+        const auto& state = frame.state;
+        if (!(state.exhaustCouplingFrequencyHz > 0.0) || state.solverSubsteps == 0)
+            continue;
+        // A substep longer than the cap is itself the shortest possible
+        // interval; only a stride of several substeps can be chosen wrongly.
+        const auto substepSeconds = frameSeconds
+            / static_cast<double>(state.solverSubsteps);
+        if (substepSeconds >= capSeconds) continue;
+        ++subStrideFrames;
+        const auto interval = 1.0 / state.exhaustCouplingFrequencyHz;
+        if (interval > capSeconds * (1.0 + 1.0e-6)) {
+            ++violations;
+            longestExcess = std::max(longestExcess, interval - capSeconds);
+        }
+    }
+    std::cout << "engine=" << config.name << " coupling_cap_s=" << capSeconds
+        << " sub_cap_substep_frames=" << subStrideFrames
+        << " cap_violation_frames=" << violations
+        << " longest_excess_s=" << longestExcess << '\n';
+    return subStrideFrames > 100 ? violations : frames;
+}
+
 bool passes(const Result& result) {
     return result.finite && result.angularViolationFrames == 0
         && result.completedCycles > 10 && result.validCycles > 10
@@ -139,6 +185,9 @@ int main(int argc, char** argv) {
     const auto rapid = measure(enginelab::makeDefaultInlineTwo(), 600, true, true);
     const auto startup = measure(enginelab::makeDefaultInlineFour(), 2'400, false, false);
     auto valid = passes(rapid) && passes(startup) && rapid.changingSpeedFrames > 10;
+    constexpr double couplingCapSeconds = 160.0e-6;
+    valid = exhaustCouplingCapViolations(enginelab::makeDefaultInlineFour(),
+        couplingCapSeconds, 1'200) == 0 && valid;
     for (const auto filename : { "11_yamaha_cp2_mt07_like.engine.yaml",
                                  "07_harley_v_twin_like.engine.yaml" }) {
         const auto entry = std::find_if(catalog.entries.begin(), catalog.entries.end(),

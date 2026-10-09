@@ -5,6 +5,15 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-09 — Exhaust coupling cap; LS3 realtime and Merlin clicks still open
+
+- The exhaust flushed on the sub-step nearest its 125 us cap: up to half a sub-step past it, and with crank-angle sub-steps the stride flipped 1 <-> 2 per frame (Merlin: 82 us sub-steps, 164 us windows). Now the last sub-step within the cap; default I4 at a 160 us cap: 941 frames over -> 0.
+- AudioRenderHarness, catalogue: most engines < 5 %; CP3 rms +16 %, CP4 in-duct Pa -19 %, flat-six +10 %, EL-09 Pa +12 %, LS3 -4 %. Not judged by ear.
+- Realtime, free-run, min of 2 back-to-back: all ±1.5 % except K20A 1.21 -> 1.12 (its 62-83 us sub-steps now couple every sub-step).
+- LS3 0.78 vs main 1.13-1.14, Merlin 0.80 vs 1.45: structural. The joint intake network advances every runner on both half-steps (main advanced closed runners once per sub-step). Profiling found ~1 % recoverable without changing results; main's intake workers gained ~1 % too.
+- Merlin over the limiter (catalogue pre-limiter 1.49-1.51, gate 0.82): sparse ~5 kHz clicks clipped in the exhaust-dry stem (1.34-1.82 s), same RMS as main; late steady state is quieter (master RMS 0.030 vs 0.044). Ruled out: coupling cadence (fix leaves 1.51), exhaust reactions, firing voices, port state, low-pressure EVOs.
+- Reverting only the inflow law: 0.79; only the joint network (per-runner): 0.76; neither: 1.66. An interaction, not one cause. main's own build also fails the non-deterministic runtime Merlin gate.
+
 ## 2026-10-08 — Curve spikes: intake numerics, crank step, VTEC switching
 
 - Intake runners on MUSCL/Forward Euler amplified a closed perturbation 823-962x; SSP-RK2 holds the gain at 1. The inflow boundary had a singular small-signal admittance, and the finite plenum was not advanced in the RK stages: both fixed, each with a passivity fixture.
