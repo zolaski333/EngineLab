@@ -57,11 +57,24 @@ struct EngineSimulatorOptions final {
      * the same RK stages. False retains the historical separate-runner path
      * for numerical controls. Production uses the joint manifold. */
     std::optional<bool> intakeJointManifold;
-    /** Diagnostic maximum conservative intake coupling interval. Production
-     * joint manifolds exchange on every mechanical substep; the historical
-     * separate-runner path defaults to400us. A positive override holds a
-     * time-averaged boundary and intake-valve closing forces a flush. */
+    /** Maximum intake coupling interval. Joint manifolds run forward over it
+     * (below); absent selects 330 us there. Zero, or an interval shorter than
+     * 1.5 mechanical substeps, exchanges on every substep. With forward
+     * coupling off, a positive interval holds a time-averaged boundary and
+     * intake-valve closing forces a flush; the historical separate-runner
+     * path defaults to 400 us. */
     std::optional<double> intakeCouplingIntervalSeconds;
+    /** Joint manifold only, with a coupling interval above: advance the
+     * network AHEAD of the chambers over the interval, each chamber volume and
+     * valve area moving at its current rate (and an open exhaust valve
+     * draining it at its latest rate), and hand its transfers to the chambers
+     * evenly across the interval instead of averaging a past one. Absent
+     * selects it; false restores the time-averaged diagnostic. */
+    std::optional<bool> intakeForwardCoupling;
+    /** Meter the intake valves with the characteristic valve boundary
+     * (ExhaustGasNetworkConfig::characteristicValveBoundary). Absent selects
+     * it; false restores the quasi-steady nozzle for A/B controls. */
+    std::optional<bool> intakeCharacteristicValve;
     /** Low-speed cap for the nonlinear exhaust coupling interval. Absent uses
      * 125 us (at least 4 kHz physical-boundary Nyquist); harnesses can A/B it
      * against the historical 250 us cap and the full-substep oracle. */
@@ -491,6 +504,19 @@ private:
     /** Periodic deadline phase, independent of forced valve-closing flushes.
      * Retaining the rounding residual avoids RPM-dependent cadence jumps. */
     double intakeSchedulingPhaseSeconds_ { 0.0 };
+    /** Forward intake coupling (EngineSimulatorOptions::intakeForwardCoupling):
+     * transfers the network has already computed for the current interval and
+     * not yet handed over, and the mechanical substeps left in that interval. */
+    std::array<gasdynamics::CylinderGasExchange, 32> intakeForwardPendingExchange_ {};
+    /** Each chamber's latest exhaust exchange as rates out of the chamber
+     * (species kg/s, total energy W): what a forward intake advance must
+     * also drain from its reservoir while the exhaust valve is open. */
+    std::array<std::array<double, gasdynamics::gasSpeciesCount>, 32> exhaustOutflowSpeciesKgPerS_ {};
+    std::array<double, 32> exhaustOutflowEnergyW_ {};
+    std::array<GasInventoryDelta, 32> intakeForwardPendingPlenumDelta_ {};
+    std::size_t intakeForwardRemainingSubsteps_ { 0 };
+    // How far the forward intake network's clock runs ahead of the chambers'.
+    double intakeForwardClockLeadSeconds_ { 0.0 };
     bool intakeSplitReservoirDiagnosticsEnabled_ { false };
     IntakeSplitReservoirDiagnostics intakeSplitReservoirDiagnostics_ {};
     /** How many serial groups the concurrent runner pass is split into. One is

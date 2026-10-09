@@ -5,6 +5,30 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-09 — Merlin runtime gate still red, not from the intake
+
+- `AudioRenderHarness --runtime-filter Merlin` (free rev at 50 % throttle onto the 3,200 rpm limiter), 3 runs each: new intake pre-limiter 0.88 / 1.43 / 1.50, physics overruns 393-565 of 1,440 frames; `--intake-legacy` 2.68 / 2.78 / 2.73, 576-586. Both fail; the legacy path is worse.
+- RealtimeBudget paced with audio at 3,040 rpm WOT: soft-limiter 403 / hard-clamp 61 (legacy intake 448 / 68). The Merlin is too loud at full load before any limiter bounce.
+- The catalogue point's new 37.6 dB peak at 3,368 Hz sits on the coupling Nyquist (3,360) by coincidence: stems put it in the forced-induction layer (supercharger blade passing), at the same level with the legacy intake. Not a period-2 numerical artefact.
+
+## 2026-10-09 — Exhaust junction step: the duct cells' convention
+
+- A junction's explicit bound was C V / sum(A (|u|+c)); a duct cell's is C dx / (|u|+c) = 2 C V / sum(A (|u|+c)). The LS3's derived X crossover (2 A d, four 80 mm ports) took half its pipes' step and bound the whole exhaust (~42 us vs ~84 us).
+- LS3, one factor (junction bound x0.5 / x1 / x2): torque at 3,000 / 4,500 / 6,000 rpm within 0.15 %; catalogue sound octave bands within 0.2 dB, spectral cosine 0.9987.
+- Realtime, LS3 free-run at 0.9 of the limiter (5,940 rpm), alternated: 0.915 / 0.905 -> 1.031 / 1.043. At the limiter (6,270) it was 0.886 before; not remeasured.
+- Closed X fixture (`EngineLab.ExhaustJunctionStep`): passive at the new bound and at twice it.
+
+## 2026-10-09 — Intake valve: characteristic boundary; forward coupling 330 us
+
+- Root cause of the intake bias: the quasi-steady valve nozzle fed by the first cell's average made the trapped charge depend on the internal Courant number (single runner + moving piston, Courant 0.8 vs 0.08: -6.5 % at 1,300 mm2, -11 % at 2,000 mm2). Ruled out before: MUSCL limiter, finite plenum, wall heat, valve linearisation, forward coupling alone.
+- Characteristic boundary (face on the interior wave curve, mass flux = valve nozzle): 0.07-0.09 % at the same points. Joint manifold then accurate at Courant 0.8; the coupling interval sets the cost.
+- Forward coupling with the exhaust overlap drain, K20 vs exchange every substep: 150 us -0.49 % worst, 250 -0.79, 330 -1.26, 400 -1.48 %. Default 330 us.
+- Front-loaded delivery (6,500: -2.28 % unchanged) and trajectory-resolved delivery (-0.78 vs -0.79 %): no effect, removed.
+- Warm-started secant: 4.3 residual evaluations per solve (was 8.4). Live intake swap now copies these warm starts (bit-identity test caught it).
+- Forward intervals counted their substeps at their opening size; over 2,500 <-> 6,500 rpm ramps the network's clock drifted beyond one interval from the chambers'. Each interval now runs to the chambers' expected time from the network's own clock.
+- Realtime, free-run, 5,000 rpm (Merlin 3,040): LS3 1.08, Merlin 1.15 (were 0.78 / 0.80). At --relative-rpm 0.9 every catalogue engine > 1.1 except LS3 0.918 at 5,940 rpm: its exhaust step is bound by the 4-port crossover junction (derived ~0.8 L, ~42 us vs ducts ~84 us).
+- Sound, AudioRenderHarness catalogue point, `--intake-legacy` (nozzle, every substep) vs new: RMS within ±4 % on 12 of 16; 2JZ -15 %, EJ25 -11 %, Hayabusa +19 % (brightness 0.176 -> 0.143). Merlin pre-limiter 1.51 -> 0.66: its catalogue gate (0.82) now passes. Not judged by ear; full 50-rpm curves not rerun.
+
 ## 2026-10-09 — Exhaust coupling cap; LS3 realtime and Merlin clicks still open
 
 - The exhaust flushed on the sub-step nearest its 125 us cap: up to half a sub-step past it, and with crank-angle sub-steps the stride flipped 1 <-> 2 per frame (Merlin: 82 us sub-steps, 164 us windows). Now the last sub-step within the cap; default I4 at a 160 us cap: 941 frames over -> 0.

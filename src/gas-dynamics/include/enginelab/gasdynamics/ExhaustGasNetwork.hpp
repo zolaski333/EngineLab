@@ -6,6 +6,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <optional>
 #include <span>
 #include <vector>
@@ -51,6 +52,12 @@ struct ExhaustGasNetworkConfig final {
      * momentum left after the junction wall balances its static pressure, which
      * is the appropriate model for an exhaust collector with a directed trunk. */
     bool evolveJunctionAxialMomentum { false };
+    /** Meter a valve at a duct inlet with the characteristic (Benson-type)
+     * boundary: the face state lies on the interior's wave curve and the
+     * valve nozzle closes the problem. False keeps the quasi-steady nozzle
+     * against the first cell's average, whose stiffness near zero pressure
+     * difference makes the result depend on the Courant number. */
+    bool characteristicValveBoundary { false };
     double maximumCourantNumber { 0.42 };
     std::size_t maximumSubstepsPerAdvance { 100'000 };
 
@@ -66,6 +73,22 @@ struct CylinderValveBoundary final {
     /** Geometric curtain/seat area before the valve discharge coefficient. */
     double effectiveValveAreaM2 { 0.0 };
     double dischargeCoefficient { 1.0 };
+    /** For an advance that runs AHEAD of the chamber: the reservoir volume
+     * moves linearly at its rate, the piston doing p dV work on the reservoir;
+     * the valve is shut before `valveOpensAfterSeconds` and from
+     * `valveClosesAfterSeconds` on, and in between its area moves linearly from
+     * the value above, starting at the opening. The defaults keep a fixed
+     * reservoir and a fixed valve. */
+    double cylinderVolumeRateM3PerS { 0.0 };
+    double effectiveValveAreaRateM2PerS { 0.0 };
+    double valveOpensAfterSeconds { 0.0 };
+    double valveClosesAfterSeconds { std::numeric_limits<double>::infinity() };
+    /** For an advance AHEAD of the chamber: what leaves the reservoir through
+     * its other openings over the advance (an exhaust valve during overlap),
+     * as species and total-energy rates. Zero for a reservoir with only this
+     * valve. */
+    std::array<double, gasSpeciesCount> otherOutflowSpeciesKgPerS {};
+    double otherOutflowEnergyW { 0.0 };
 };
 
 /** Shared reservoir seen by all configured outlets during one requested advance. */
@@ -267,8 +290,8 @@ public:
      * overlap-weighted mean of the old cells it covers, for the gas (per unit
      * volume, so pressure, temperature, velocity and composition stay where
      * they were along the pipe) and for the wall temperature; a reaction site
-     * takes the old site at its centre. Junctions, cylinder reservoirs and the
-     * wall-exchange clocks are copied. A duct with the same cell count is
+     * takes the old site at its centre. Junctions, cylinder reservoirs, the
+     * valve solves' warm starts and the wall-exchange clocks are copied. A duct with the same cell count is
      * copied exactly, so adopting from an identical network changes nothing.
      * Mass is conserved only where the volume is: a longer or wider pipe holds
      * more gas at the same state.
@@ -448,6 +471,11 @@ private:
     std::vector<PrimitiveState> cylinderReservoirStagePrimitives_;
     std::vector<PrimitiveState> cylinderReservoirCandidatePrimitives_;
     std::vector<double> cylinderReservoirVolumesM3_;
+    /** Volumes at the start of the advance; the current ones follow the
+     * supplied volume rate (CylinderValveBoundary::cylinderVolumeRateM3PerS). */
+    std::vector<double> cylinderReservoirInitialVolumesM3_;
+    /** Time into the current advance at which the stage being evaluated sits. */
+    double boundaryElapsedSeconds_ { 0.0 };
     std::vector<std::uint8_t> cylinderReservoirActive_;
     // A shut supplied valve has no RK source; unchanged stage states reuse the
     // already validated primitive while retaining the normal state arithmetic.
@@ -461,6 +489,9 @@ private:
     std::vector<ConservedFlowRate> outletFirstStageFlow_;
     std::vector<ConservedFlowRate> outletSecondStageFlow_;
     std::vector<CylinderGasExchange> cylinderExchanges_;
+    /** Each valve's last characteristic face pressure and residual slope:
+     * the next solve's starting point (see characteristicValveBoundary). */
+    std::vector<std::array<double, 2>> valveFaceSolve_;
     std::vector<ExhaustOutletFlowSample> outletSamples_;
     struct ReactionSiteState final {
         /** Dimensionless Livengood-Wu integral; ignition occurs at one. */

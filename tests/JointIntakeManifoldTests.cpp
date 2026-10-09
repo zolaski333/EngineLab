@@ -156,9 +156,13 @@ void verifyField(enginelab::EngineSimulator& simulator) {
         "the field must retain every runner and every authored finite plenum");
 }
 
-void measure(enginelab::EngineConfig config, bool legacyControl = false, bool liveSwap = false) {
+// Production runs each shared manifold forward over intervals of at most
+// 330 us; `everySubstep` selects the exchange on every mechanical substep.
+void measure(enginelab::EngineConfig config, bool legacyControl = false, bool liveSwap = false,
+             bool everySubstep = false) {
     constexpr auto frameSeconds = 1.0 / 240.0;
-    constexpr auto targetRpm = 5'000.0;
+    constexpr auto heldRpm = 5'000.0;
+    auto targetRpm = heldRpm;
     constexpr auto extraInertia = 2.0;
     enginelab::SimpleEcuModel ecu;
     enginelab::SimplifiedGasolinePhysics physics;
@@ -166,6 +170,13 @@ void measure(enginelab::EngineConfig config, bool legacyControl = false, bool li
     auto exhaust = enginelab::ExhaustGraph::makeForEngine(config);
     enginelab::EngineSimulatorOptions options;
     options.intakeJointManifold = !legacyControl;
+    if (everySubstep) options.intakeCouplingIntervalSeconds = 0.0;
+    constexpr auto forwardIntervalSeconds = 330.0e-6;
+    // Forward intervals straddle frames, and an interval counts its substeps
+    // at the size they had when it opened while the shaft re-sizes them as
+    // it accelerates. The network's clock may therefore lead or trail the
+    // chambers', by less than one interval and without drifting.
+    auto aheadSeconds = 0.0;
     auto simulator = std::make_unique<enginelab::EngineSimulator>(config, ecu, physics, events, exhaust, options);
     simulator->setPressureSamplingEnabled(true);
     require(simulator->intakeWorkerCount() == 0, "a shared RK reservoir must not dispatch independent runner advances");
@@ -190,6 +201,10 @@ void measure(enginelab::EngineConfig config, bool legacyControl = false, bool li
             -5'000.0, 5'000.0);
         controls.externalRotatingInertiaKgM2 = extraInertia;
         auto frame = simulator->step(frameSeconds, controls);
+        // A stopped crank settles the network instead of advancing it; the
+        // clock is compared from the first turning frame on.
+        if (frame.state.rpm > 500.0)
+            aheadSeconds += frame.state.intakeCouplingAdvancedSeconds - frameSeconds;
         previousTorque = controls.externalTorqueNm;
         enginelab::CylinderPressureSample sample;
         while (simulator->tryPopCylinderPressureSample(sample)) {
@@ -210,14 +225,25 @@ void measure(enginelab::EngineConfig config, bool legacyControl = false, bool li
         return frame;
     };
     const auto checkTimely = [&](const enginelab::EngineState& state) {
-        require(state.intakeCouplingFlushCount == state.solverSubsteps,
-            "production must refresh the intake at every actual mechanical step");
-        require(std::abs(state.intakeCouplingAdvancedSeconds - frameSeconds) < 1.0e-11,
-            "production cannot hold or lose a physical intake interval");
-        require(std::abs(state.intakeNetworkAdvancedSeconds - static_cast<double>(pathCount) * frameSeconds) < 1.0e-11,
+        if (everySubstep) {
+            require(state.intakeCouplingFlushCount == state.solverSubsteps,
+                "every-substep coupling must refresh the intake at every actual mechanical step");
+            require(std::abs(state.intakeCouplingAdvancedSeconds - frameSeconds) < 1.0e-11,
+                "every-substep coupling cannot hold or lose a physical intake interval");
+            require(state.intakeNetworkAcceptedSubsteps >= pathCount * 2 * state.solverSubsteps,
+                "each shared manifold must actually complete both mechanical half-advances");
+        } else {
+            require(state.intakeCouplingFlushCount > 0
+                && state.intakeCouplingFlushCount <= state.solverSubsteps,
+                "forward coupling must exchange within every frame, at most once per substep");
+            require(state.intakeCouplingMaximumIntervalSeconds <= forwardIntervalSeconds + 1.0e-12,
+                "a forward interval must never exceed its cap");
+            require(std::abs(aheadSeconds) < forwardIntervalSeconds + 1.0e-11,
+                "the forward network's clock must stay within one interval of the chambers'");
+        }
+        require(std::abs(state.intakeNetworkAdvancedSeconds
+                - static_cast<double>(pathCount) * state.intakeCouplingAdvancedSeconds) < 1.0e-11,
             "FV time must be accounted once per shared manifold, not once per runner");
-        require(state.intakeNetworkAcceptedSubsteps >= pathCount * 2 * state.solverSubsteps,
-            "each shared manifold must actually complete both mechanical half-advances");
         require(state.intakeCylinderTransferFailures == 0 && state.intakePlenumTransferFailures == 0,
             "each real cylinder and finite plenum must accept its conservative transfer");
     };
@@ -226,7 +252,7 @@ void measure(enginelab::EngineConfig config, bool legacyControl = false, bool li
         if (step < 180) continue;
         ++observedFrames;
         const auto& state = frame.state;
-        require(std::isfinite(state.rpm) && state.rpm > targetRpm * 0.98 && state.rpm < targetRpm * 1.02,
+        require(std::isfinite(state.rpm) && state.rpm > heldRpm * 0.98 && state.rpm < heldRpm * 1.02,
             "the motor must hold the prescribed nonzero physical operating point");
         checkTimely(state);
         for (std::size_t index = 0; index < state.cylinderStateCount; ++index) {
@@ -270,6 +296,16 @@ void measure(enginelab::EngineConfig config, bool legacyControl = false, bool li
         simulator->stopGasProbe();
     };
     verifyProbes();
+    // Ramps between 2,500 and 6,500 rpm re-size the substeps inside open
+    // intervals; the network's clock must not drift away over them.
+    if (!everySubstep) {
+        for (std::size_t step = 0; step < 8 * 120; ++step) {
+            targetRpm = (step / 120) % 2 == 0 ? 6'500.0 : 2'500.0;
+            checkTimely(stepMotor().state);
+        }
+        targetRpm = heldRpm;
+        for (std::size_t step = 0; step < 120; ++step) checkTimely(stepMotor().state);
+    }
     if (liveSwap) {
         for (std::size_t path = 0; path < config.intakePaths.size(); ++path) {
             config.intakePaths[path].geometry.runnerLengthMm += 40.0 + static_cast<double>(path) * 15.0;
@@ -305,6 +341,7 @@ int main(int argc, char** argv) {
     }
     measure(catalogue("11_yamaha_cp2_mt07_like"), legacyControl);
     measure(catalogue("01_honda_k20a_like"));
+    measure(catalogue("01_honda_k20a_like"), false, false, true);
     measure(catalogue("03_gm_ls3_like"));
     measure(oneLitre());
     auto split = splitIntakes(oneLitre(), {{1, 3}, {2, 4}});

@@ -148,6 +148,14 @@ namespace {
 // air_mg agree to every printed digit).
 constexpr std::size_t decoupledSharedVolumeCylinderThreshold = 8;
 
+// Forward intake coupling interval. With the characteristic valve boundary the
+// joint network is accurate at Courant 0.8, so the interval, not the Courant
+// limit, sets its cost. K20, against exchange on every substep: 250 us within
+// 0.8 % of torque, 330 us within 1.3 %, 400 us within 1.5 %. Realtime at
+// 5000 rpm (Merlin 3040): LS3 1.04 / 1.08, Merlin 0.98-1.01 / 1.15 at
+// 250 / 330 us (journal 2026-10-09).
+constexpr double defaultForwardIntakeIntervalSeconds = 330.0e-6;
+
 // Representative metal defaults for thermal walls. They describe
 // geometry/material, never a target gas temperature: both wall temperatures
 // emerge from conserved exchange with the simulated gas.
@@ -700,6 +708,8 @@ std::unique_ptr<gasdynamics::ExhaustGasNetwork> EngineSimulator::buildIntakeRunn
         networkConfig.wallHeatUpdateExternallyTriggered = true;
         networkConfig.firstOrderTimeIntegration =
             options_.intakeUsesForwardEuler();
+        networkConfig.characteristicValveBoundary =
+            options_.intakeCharacteristicValve.value_or(true);
         if (!network->configure(layout, networkConfig))
             throw std::runtime_error("failed to configure intake runner network");
         return network;
@@ -1556,6 +1566,34 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
         // loop into back pressure and intake depression.
         std::array<bool, 32> exhaustStrokeForWork {};
         std::array<bool, 32> intakeCloseForTrappedAir {};
+        // Forward intake coupling (EngineSimulatorOptions::intakeForwardCoupling)
+        // is decided before the cylinder pass, so that a substep opening a new
+        // interval can sample where each chamber and intake valve will be at
+        // its end. An interval already under way is always finished.
+        const auto forwardIntakeRequestedSeconds = std::clamp(
+            options_.intakeCouplingIntervalSeconds.value_or(
+                defaultForwardIntakeIntervalSeconds), 0.0, 500.0e-6);
+        const auto forwardIntake = jointIntakeManifold()
+            && options_.intakeForwardCoupling.value_or(true)
+            && (intakeForwardRemainingSubsteps_ > 0
+                || forwardIntakeRequestedSeconds > subDt * 1.5);
+        const auto forwardIntakeFlush = forwardIntake
+            && intakeForwardRemainingSubsteps_ == 0;
+        // A whole number of substeps, so the interval is a maximum.
+        const auto forwardIntervalSubsteps = std::max<std::size_t>(1,
+            static_cast<std::size_t>(std::floor(
+                forwardIntakeRequestedSeconds / subDt + 1.0e-9)));
+        const auto forwardIntervalSeconds =
+            static_cast<double>(forwardIntervalSubsteps) * subDt;
+        // The chambers re-size their substeps as the shaft accelerates, so an
+        // interval rarely lasts exactly what it was opened for. The network
+        // runs to where the chambers will be, from where its own clock is.
+        const auto forwardNetworkSeconds = std::max(0.5 * forwardIntervalSeconds,
+            forwardIntervalSeconds - intakeForwardClockLeadSeconds_);
+        std::array<double, 32> intakeValveAreaAheadM2 {};
+        std::array<double, 32> chamberVolumeAheadM3 {};
+        std::array<double, 32> secondsToIntakeOpen {};
+        std::array<double, 32> secondsToIntakeClose {};
 
         // Small engines retain Gauss-Seidel shared-volume updates and a shared
         // PRNG sequence; from this cylinder count up, the sub-step switches to a
@@ -2769,6 +2807,37 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 + cams.intakeDuration() * 0.5 + 720.0, 720.0);
             intakeCloseForTrappedAir[cylinderIndex] = crossedPhase(
                 previousPhase, cyclePhase, intakeClosePhase);
+            if (forwardIntakeFlush) {
+                // Where this chamber and its intake valve will be at the end of
+                // the interval the network is about to run ahead over. The
+                // valve train is evaluated on a copy of its state, with no time
+                // step, so nothing here moves the real valve train.
+                const auto degreesPerSecond = std::max(1.0e-9,
+                    std::abs(state_.angularVelocityRadPerSecond) * 180.0 / std::numbers::pi);
+                const auto aheadDegrees = degreesPerSecond * forwardIntervalSeconds;
+                const auto intakeOpenPhase = std::fmod(intakeClosePhase
+                    - cams.intakeDuration() + 720.0, 720.0);
+                secondsToIntakeOpen[cylinderIndex] = std::fmod(
+                    intakeOpenPhase - cyclePhase + 720.0, 720.0) / degreesPerSecond;
+                secondsToIntakeClose[cylinderIndex] = std::fmod(
+                    intakeClosePhase - cyclePhase + 720.0, 720.0) / degreesPerSecond;
+                auto aheadValveTrainState = valveTrainStates_[cylinderIndex];
+                const auto ahead = ValveTrainModel::evaluate(*cams.config, cams.highProfile,
+                    aheadValveTrainState, std::fmod(cyclePhase + aheadDegrees, 720.0),
+                    state_.rpm, state_.load, 0.0);
+                intakeValveAreaAheadM2[cylinderIndex] = effectiveValveAreaMm2(
+                    cylinder.boreMm, ahead.intakeLiftMm, cylinder.intakeValveCount,
+                    cylinder.intakeValveDiameterMm, ahead.intakeDischargeCoefficient,
+                    0.40, 0.50, 0.58) * valveAreaScale
+                    * std::clamp(options_.intakeValveAreaMultiplier.value_or(1.0),
+                        0.05, 8.0);
+                const auto aheadKinematics = evaluateCylinderKinematics(config_,
+                    kinematicsReference_, cylinderIndex,
+                    state_.crankAngleDegrees + aheadDegrees,
+                    state_.angularVelocityRadPerSecond, predictedAngularAcceleration);
+                chamberVolumeAheadM3[cylinderIndex] = cylinderGas_[cylinderIndex].volumeM3()
+                    * aheadKinematics.chamberVolumeLitres / std::max(1.0e-9, chamberVolume);
+            }
             // Intake mass accounting and the published runner state now come
             // from the network advances outside this pass.
             const auto resolvedPulse =
@@ -2832,8 +2901,8 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
         const auto requestedIntakeCouplingSeconds = std::clamp(
             options_.intakeCouplingIntervalSeconds.value_or(jointIntakeManifold() ? 0.0 : 400.0e-6),
             0.0, 500.0e-6);
-        const auto periodicMultirateIntake = requestedIntakeCouplingSeconds
-            > subDt * 1.5;
+        const auto periodicMultirateIntake = !forwardIntake
+            && requestedIntakeCouplingSeconds > subDt * 1.5;
         // A cadence change must first commit any pending boundary history.
         // The period clock is independent of that history: IVC may flush a
         // partial interval without moving the next periodic deadline.
@@ -2876,9 +2945,8 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
         const auto periodicIntakeDue = periodicMultirateIntake
             && intakeSchedulingPhaseSeconds_
                 >= requestedIntakeCouplingSeconds - 0.5 * subDt;
-        const auto flushIntakeNetworks = !periodicMultirateIntake
-            || intakeValveClosing
-            || periodicIntakeDue;
+        const auto flushIntakeNetworks = !forwardIntake
+            && (!periodicMultirateIntake || intakeValveClosing || periodicIntakeDue);
         if (periodicIntakeDue)
             intakeSchedulingPhaseSeconds_ -= requestedIntakeCouplingSeconds;
         const auto intakeAdvanceDurationSeconds = multirateIntake
@@ -3405,8 +3473,172 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 intakeValveColumnVelocityMps_[index] = 0.0;
             }
         };
-        if (flushIntakeNetworks && !valvesSealed)
-            advanceIntakeRunners(intakeAdvanceDurationSeconds * 0.5, true);
+        // Hands `fraction` of what the forward advance computed for this
+        // cylinder (and below, for each plenum) over to the real volume.
+        const auto deliverIntakeForward = [&](std::size_t index, double fraction) noexcept {
+            auto& pending = intakeForwardPendingExchange_[index];
+            auto part = pending;
+            for (std::size_t species = 0; species < gasdynamics::gasSpeciesCount; ++species) {
+                part.speciesMassKg[species] *= fraction;
+                pending.speciesMassKg[species] = fraction >= 1.0
+                    ? 0.0 : pending.speciesMassKg[species] - part.speciesMassKg[species];
+            }
+            part.totalEnergyJ *= fraction;
+            part.axialMomentumImpulseNs *= fraction;
+            pending.totalEnergyJ = fraction >= 1.0
+                ? 0.0 : pending.totalEnergyJ - part.totalEnergyJ;
+            pending.axialMomentumImpulseNs = fraction >= 1.0
+                ? 0.0 : pending.axialMomentumImpulseNs - part.axialMomentumImpulseNs;
+            recordIntakeCylinderExchange(index, {}, part,
+                intakeNetworkForCylinder(index).mixtureModel(), false,
+                intakeValveAreaM2[index] > 0.0, true);
+            if (intakePhaseFailed[index] != 0) state_.solverResolutionLimited = true;
+        };
+        const auto advanceIntakeForward = [&]() noexcept {
+            if (forwardIntakeFlush) {
+                intakeWallHeatPendingSeconds_ += forwardNetworkSeconds;
+                if (intakeWallHeatPendingSeconds_ >= intakeWallHeatUpdateIntervalSeconds_) {
+                    intakeWallHeatPendingSeconds_ = 0.0;
+                    for (auto& network : intakeManifoldNetworks_)
+                        if (network) network->requestWallHeatUpdate();
+                }
+                for (std::size_t path = 0; path < intakePlenumCount_; ++path) {
+                    auto& pointer = intakeManifoldNetworks_[path];
+                    if (!pointer) continue;
+                    auto& network = *pointer;
+                    std::array<gasdynamics::CylinderValveBoundary, 32> boundaries {};
+                    std::array<std::size_t, 32> cylinderIndices {};
+                    const auto portCount = network.layout().cylinderPorts().size();
+                    for (std::size_t index = 0; index < config_.cylinders.size(); ++index) {
+                        if (intakePathIndexByCylinder_[index] != path) continue;
+                        const auto port = intakeRunnerDuctIndex_[index];
+                        cylinderIndices[port] = index;
+                        auto& boundary = boundaries[port];
+                        boundary.cylinderId = config_.cylinders[index].id;
+                        boundary.cylinderState = networkStateForGasCell(cylinderGas_[index]);
+                        boundary.cylinderVolumeM3 = cylinderGas_[index].volumeM3();
+                        boundary.dischargeCoefficient = intakeValveDischargeCoefficient[index];
+                        if (exhaustValveAreaM2[index] > 0.0) {
+                            boundary.otherOutflowSpeciesKgPerS = exhaustOutflowSpeciesKgPerS_[index];
+                            boundary.otherOutflowEnergyW = exhaustOutflowEnergyW_[index];
+                        }
+                        boundary.cylinderVolumeRateM3PerS = (chamberVolumeAheadM3[index]
+                            - boundary.cylinderVolumeM3) / forwardIntervalSeconds;
+                        const auto areaNow = intakeValveAreaM2[index];
+                        const auto areaAhead = intakeValveAreaAheadM2[index];
+                        boundary.effectiveValveAreaM2 = areaNow;
+                        if (areaNow > 0.0 && secondsToIntakeClose[index] < forwardIntervalSeconds) {
+                            boundary.valveClosesAfterSeconds = secondsToIntakeClose[index];
+                            boundary.effectiveValveAreaRateM2PerS = -areaNow
+                                / std::max(1.0e-9, secondsToIntakeClose[index]);
+                        } else if (areaNow > 0.0) {
+                            boundary.effectiveValveAreaRateM2PerS =
+                                (areaAhead - areaNow) / forwardIntervalSeconds;
+                        } else if (areaAhead > 0.0
+                                   && secondsToIntakeOpen[index] < forwardIntervalSeconds) {
+                            boundary.valveOpensAfterSeconds = secondsToIntakeOpen[index];
+                            boundary.effectiveValveAreaRateM2PerS = areaAhead
+                                / std::max(1.0e-9, forwardIntervalSeconds
+                                    - secondsToIntakeOpen[index]);
+                        }
+                    }
+                    const auto advance = network.advance(forwardNetworkSeconds,
+                        std::span<const gasdynamics::CylinderValveBoundary>(boundaries.data(), portCount),
+                        { networkStateForGasCell(intakePlenumGas_[path]), 1.0,
+                            intakePlenumGas_[path].volumeM3() });
+                    const auto anchor = cylinderIndices[0];
+                    intakeNetworkAcceptedSubsteps[anchor] += advance.acceptedSubsteps;
+                    intakeNetworkRejectedSubsteps[anchor] += advance.rejectedSubsteps;
+                    intakeNetworkAdvancedSeconds[anchor] += advance.advancedTimeSeconds;
+                    auto& diagnostic = intakeStepDiagnostics[anchor];
+                    diagnostic.maximumAcceptedStableStepRatio = std::max(
+                        diagnostic.maximumAcceptedStableStepRatio, advance.maximumAcceptedStableStepRatio);
+                    diagnostic.maximumAcceptedDuctCourantCurrent = std::max(
+                        diagnostic.maximumAcceptedDuctCourantCurrent, advance.maximumAcceptedDuctCourantCurrent);
+                    diagnostic.maximumAcceptedDuctCourantPredictor = std::max(
+                        diagnostic.maximumAcceptedDuctCourantPredictor, advance.maximumAcceptedDuctCourantPredictor);
+                    if (!advance.completed) state_.solverResolutionLimited = true;
+                    const auto exchanges = network.cylinderExchanges();
+                    for (std::size_t port = 0; port < portCount; ++port)
+                        intakeForwardPendingExchange_[cylinderIndices[port]] = exchanges[port];
+                    GasInventoryDelta plenumDelta {};
+                    for (const auto& mouth : network.outletSamples()) {
+                        const auto delta = plenumDeltaForMouthSample(mouth, intakePlenumGas_[path]);
+                        plenumDelta.mixture.oxygenMoles += delta.mixture.oxygenMoles;
+                        plenumDelta.mixture.inertMoles += delta.mixture.inertMoles;
+                        plenumDelta.mixture.fuelMoles += delta.mixture.fuelMoles;
+                        plenumDelta.mixture.burnedMoles += delta.mixture.burnedMoles;
+                        plenumDelta.internalEnergyJ += delta.internalEnergyJ;
+                    }
+                    intakeForwardPendingPlenumDelta_[path] = plenumDelta;
+                }
+                intakeForwardRemainingSubsteps_ = forwardIntervalSubsteps;
+                intakeForwardClockLeadSeconds_ += forwardNetworkSeconds;
+                ++state_.intakeCouplingFlushCount;
+                state_.intakeCouplingAdvancedSeconds += forwardNetworkSeconds;
+                state_.intakeCouplingMinimumIntervalSeconds =
+                    state_.intakeCouplingMinimumIntervalSeconds == 0.0
+                    ? forwardIntervalSeconds
+                    : std::min(state_.intakeCouplingMinimumIntervalSeconds, forwardIntervalSeconds);
+                state_.intakeCouplingMaximumIntervalSeconds = std::max(
+                    state_.intakeCouplingMaximumIntervalSeconds, forwardIntervalSeconds);
+            }
+            if (intakeForwardRemainingSubsteps_ == 0) return;
+            // An even share per substep; a cylinder whose valve shuts on this
+            // substep takes all it has left, so its trapped charge is complete.
+            const auto share = 1.0 / static_cast<double>(intakeForwardRemainingSubsteps_);
+            --intakeForwardRemainingSubsteps_;
+            intakeForwardClockLeadSeconds_ -= subDt;
+            for (std::size_t index = 0; index < config_.cylinders.size(); ++index) {
+                intakePhaseFailed[index] = 0;
+                deliverIntakeForward(index, intakeCloseForTrappedAir[index] ? 1.0 : share);
+            }
+            for (std::size_t path = 0; path < intakePlenumCount_; ++path) {
+                auto& pending = intakeForwardPendingPlenumDelta_[path];
+                auto part = pending;
+                part.mixture.oxygenMoles *= share;
+                part.mixture.inertMoles *= share;
+                part.mixture.fuelMoles *= share;
+                part.mixture.burnedMoles *= share;
+                part.internalEnergyJ *= share;
+                const auto last = share >= 1.0;
+                pending.mixture.oxygenMoles = last ? 0.0 : pending.mixture.oxygenMoles - part.mixture.oxygenMoles;
+                pending.mixture.inertMoles = last ? 0.0 : pending.mixture.inertMoles - part.mixture.inertMoles;
+                pending.mixture.fuelMoles = last ? 0.0 : pending.mixture.fuelMoles - part.mixture.fuelMoles;
+                pending.mixture.burnedMoles = last ? 0.0 : pending.mixture.burnedMoles - part.mixture.burnedMoles;
+                pending.internalEnergyJ = last ? 0.0 : pending.internalEnergyJ - part.internalEnergyJ;
+                const auto nonzero = part.internalEnergyJ != 0.0
+                    || part.mixture.oxygenMoles != 0.0 || part.mixture.inertMoles != 0.0
+                    || part.mixture.fuelMoles != 0.0 || part.mixture.burnedMoles != 0.0;
+                if (nonzero && !intakePlenumGas_[path].tryApplyInventoryDelta(part)) {
+                    state_.solverResolutionLimited = true;
+                    ++state_.intakePlenumTransferFailures;
+                }
+            }
+        };
+        if (forwardIntake) {
+            if (valvesSealed) {
+                // A stopped crank: nothing still owed crosses a shut valve.
+                settleIntakeRunners();
+                for (auto& pending : intakeForwardPendingExchange_) {
+                    const auto cylinderId = pending.cylinderId;
+                    const auto pathIndex = pending.pathIndex;
+                    pending = {};
+                    pending.cylinderId = cylinderId;
+                    pending.pathIndex = pathIndex;
+                }
+                intakeForwardPendingPlenumDelta_.fill({});
+                intakeForwardRemainingSubsteps_ = 0;
+                intakeForwardClockLeadSeconds_ = 0.0;
+            } else {
+                advanceIntakeForward();
+            }
+        } else {
+            // Every-substep coupling keeps the network on the chambers' clock.
+            intakeForwardClockLeadSeconds_ = 0.0;
+            if (flushIntakeNetworks && !valvesSealed)
+                advanceIntakeRunners(intakeAdvanceDurationSeconds * 0.5, true);
+        }
 
         auto configuredOutletConductanceM2 = 0.0;
         for (const auto& outlet : physicalExhaustNetwork.layout().outlets())
@@ -3678,6 +3910,14 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                     }
                 }
                 exhaustFlowMgThisCycle_[index] += exchange.totalMassKg() * 1.0e6;
+                if (applied && networkAdvance.advancedTimeSeconds > 0.0) {
+                    const auto inverseSeconds = 1.0 / networkAdvance.advancedTimeSeconds;
+                    for (std::size_t species = 0;
+                         species < gasdynamics::gasSpeciesCount; ++species)
+                        exhaustOutflowSpeciesKgPerS_[index][species] =
+                            exchange.speciesMassKg[species] * inverseSeconds;
+                    exhaustOutflowEnergyW_[index] = exchange.totalEnergyJ * inverseSeconds;
+                }
             }
             for (const auto& outlet : physicalExhaustNetwork.outletSamples()) {
                 auto transferredMassKg = 0.0;
@@ -5003,6 +5243,12 @@ void EngineSimulator::reset() noexcept {
     intakeValveConductanceTimeIntegralM2S_.fill(0.0);
     intakeCouplingDurationSeconds_ = 0.0;
     intakeSchedulingPhaseSeconds_ = 0.0;
+    intakeForwardPendingExchange_.fill({});
+    intakeForwardPendingPlenumDelta_.fill({});
+    exhaustOutflowSpeciesKgPerS_ = {};
+    exhaustOutflowEnergyW_.fill(0.0);
+    intakeForwardRemainingSubsteps_ = 0;
+    intakeForwardClockLeadSeconds_ = 0.0;
     intakeWallHeatPendingSeconds_ = 0.0;
     intakeSplitReservoirDiagnostics_ = {};
     exhaustBoundaryKnotWrite_ = 0;

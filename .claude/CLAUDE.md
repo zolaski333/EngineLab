@@ -172,8 +172,8 @@ Details of each measurement are in the docs archive (tag `archive/docs-2026-09`)
 
 - "Unified duct" rewrite: the 300 mm mesh does carry the audible geometry (the
   timbre moves by 12 to 14 dB).
-- Fork-join per cylinder: every threaded variant loses.
-- AVX / AVX2: slower (latency of dependent divisions, not throughput).
+- Fork-join per cylinder (every threaded variant loses); AVX / AVX2 (slower:
+  latency of dependent divisions, not throughput).
 - Deepening the muffler's single chamber: 16 dB notch on the EJ25 fundamental.
 - Speeding up the afterfire chemistry to get bursts: shape unchanged.
 - "The 1-D network cannot carry the steep front of a backfire": false, the audio
@@ -183,7 +183,10 @@ Details of each measurement are in the docs archive (tag `archive/docs-2026-09`)
 - Closing cyclic variability through dilution: inert (variability already
   exists, 1.7-12.9 %).
 - "Trapped residual too low": a unit error, the residual is sound.
-- Four runner inertance formulations: all unstable or out of phase.
+- Intake runners: four inertance formulations are unstable or out of phase.
+  The intake charge bias was not the MUSCL limiter, the finite plenum, wall
+  heat or valve linearisation (it was the valve nozzle boundary, Courant-
+  dependent). Front-loaded or trajectory-resolved forward delivery: inert.
 - Telemetry cache to speed up listening: would have gained nothing.
 - Seeding the high-load correction cell from the idle cell: saves a start 4 s
   after cranking but stalls 10 engines out of 14 after 25 s of idle, and on a

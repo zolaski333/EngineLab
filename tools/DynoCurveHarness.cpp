@@ -506,7 +506,7 @@ void usage() {
         " [--settle-min s --settle-max s]"
         " [--sample-seconds s --min-cycles n] [--stable-window s --stable-windows n]"
         " [--stable-relative fraction --thermal-drift-c-per-s rate]"
-        " [--intake-cell-mm mm --intake-rk2|--intake-euler --intake-coupling-us us]"
+        " [--intake-cell-mm mm --intake-rk2|--intake-euler --intake-coupling-us us --intake-forward --intake-nozzle-valve]"
         " [--intake-cfl number --intake-workers integer --intake-joint-manifold 0|1]"
         " [--exhaust-every-substep --exhaust-coupling-us us]"
         " [--mechanical-min-hz hz --mechanical-cap-hz hz --crank-step-deg deg --outer-hz hz]"
@@ -546,6 +546,8 @@ Settings parse(int argc, char** argv) {
         else if (arg == "--intake-rk2") s.simulatorOptions.intakeFirstOrderTimeIntegration = false;
         else if (arg == "--intake-euler") s.simulatorOptions.intakeFirstOrderTimeIntegration = true;
         else if (arg == "--intake-coupling-us") s.simulatorOptions.intakeCouplingIntervalSeconds = number() * 1.0e-6;
+        else if (arg == "--intake-forward") s.simulatorOptions.intakeForwardCoupling = true;
+        else if (arg == "--intake-nozzle-valve") s.simulatorOptions.intakeCharacteristicValve = false;
         else if (arg == "--intake-cfl") s.simulatorOptions.intakeMaximumCourantNumber = number();
         else if (arg == "--intake-joint-manifold") {
             const auto value = next();

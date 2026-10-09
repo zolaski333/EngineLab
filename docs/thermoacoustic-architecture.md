@@ -841,17 +841,54 @@ not prevent an acoustic perturbation from growing. The intake grid, CFL limit
 and mechanical coupling interval must be refined separately when investigating
 a curve; changing all three together cannot identify the responsible error.
 
-Production advances one joint network per intake path on both mechanical
-half-steps. Every runner and cylinder port on that path sees the same finite
-plenum in the same RK stages. The caller commits the sum of mouth transfers
+Production advances one joint network per intake path. Every runner and
+cylinder port on that path sees the same finite plenum in the same RK stages. The caller commits the sum of mouth transfers
 once to that path's external plenum; network time is counted once per path.
 Cylinder-to-path and cylinder-to-local-port mappings also govern fuel injection,
 live geometry adoption, gas fields and probes. Closed cylinder valves do not
 stop the corresponding runner's acoustic evolution.
 
+**Valve boundary.** Each intake valve is a characteristic boundary on the
+runner's first face, not a quasi-steady nozzle fed by the first cell's
+average. The face state lies on the wave curve of the runner interior (Toro's
+shock and rarefaction branches), and the face pressure is the one where the
+mass flux on that curve equals the valve's compressible nozzle flux (outflow
+from the cylinder's stagnation state, or inflow from the face's stagnation
+state into the cylinder). With the valve shut the solve reduces to the
+reflecting wall. The flux is per unit face area and is booked identically on
+the cylinder reservoir and on the duct face, so the exchange stays
+conservative. The root is a bracketed secant, warm-started from the previous
+solve of the same valve: 4.3 residual evaluations on average. The old nozzle
+boundary made the trapped charge depend on the internal Courant number:
+-6.5 % at Courant 0.8 against 0.08 with a 1,300 mm2 valve, -11 % with
+2,000 mm2. Its square-root law is stiff as the pressure difference vanishes,
+and the 15 % tolerance of `EngineLab.IntakeTuning` hid the bias. The
+characteristic boundary holds within 0.1 %
+([`IntakeRunnerCourantTests`](../tests/IntakeRunnerCourantTests.cpp));
+`EngineSimulatorOptions::intakeCharacteristicValve = false` restores the
+nozzle as a diagnostic.
+
+**Forward coupling.** A joint manifold exchanges with the cylinders over a
+330-microsecond interval (`intakeCouplingIntervalSeconds`), never rounded
+above it. At the start of an interval the network runs AHEAD of the
+chambers: each chamber volume and valve area moves at its current rate, an
+open exhaust valve drains the reservoir at the latest exhaust exchange rate
+(overlap), and the network's transfers are handed to the chambers evenly
+across the interval. The shaft re-sizes its substeps as it accelerates, so
+an interval rarely lasts what it was opened for: each one runs the network
+to where the chambers will be, from where the network's own clock stands.
+Without that lock the network's clock drifted from the chambers' over rev
+ramps (`EngineLab.JointIntakeManifold`). An interval shorter than 1.5
+mechanical substeps, or zero, exchanges on every substep. K20, torque against exchange on every
+substep: +0.18 / -1.26 / -0.60 % at 3,500 / 5,000 / 6,500 rpm (250 us:
+-0.79 % worst; 400 us: -1.48 %). The interval sets the cost: at 5,000 rpm,
+LS3 realtime 1.04 at 250 us and 1.08 at 330 us, Merlin (3,040 rpm) 0.98-1.01
+and 1.15. Front-loading the transfers or resolving their timing within the
+interval changed nothing measurable (journal 2026-10-09).
+
 The former partitioned-runner policy remains an explicit diagnostic option,
-with its historical 400-microsecond coupling window. An explicit positive
-coupling interval can also test a lagged joint network. The phase accumulator
+with its historical 400-microsecond coupling window. `intakeForwardCoupling =
+false` with a positive interval tests a lagged, time-averaged joint network. The phase accumulator
 survives intake-valve-closing flushes, and leaving periodic coupling commits all
 pending exchanges. Cylinder state, volume and valve conductance are averaged
 over the window. The first intake half-exchange and intervening exhaust exchange

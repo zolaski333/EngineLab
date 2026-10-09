@@ -9,6 +9,19 @@ file formats, always with an in-memory migration).
 
 ### Changed
 
+- Intake valves are a characteristic boundary on the runner: the trapped
+  charge no longer depends on the solver's internal time step (it lost up to
+  11 % before). The cylinders exchange with the intake network every 330 us,
+  with the network running ahead of them, instead of on every sub-step. The
+  LS3 and the Merlin are back above real time (1.08 and 1.15 at 5,000 /
+  3,040 rpm, from 0.78 and 0.80). Torque curves and the sound move: most
+  engines by less than 4 % in level, the 2JZ -15 %, the EJ25 -11 % and the
+  Hayabusa +19 %. The Merlin no longer drives its limiter at steady load
+  (pre-limiter peak 1.51 -> 0.66 of full scale).
+- Exhaust junctions take the same explicit step rule as the pipe cells
+  around them. A compact X crossover no longer halves the step of the whole
+  exhaust: the LS3 runs 13 % faster near its limiter, with the same torque
+  and sound.
 - Catalogue exhausts run their real length from port to tip: 3.0-3.5 m
   under the naturally aspirated front-engined cars, 1.6 m behind the
   rear-engined flat-six and 1.2-1.5 m on the motorcycles. They used to end

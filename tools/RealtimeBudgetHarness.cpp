@@ -505,6 +505,9 @@ private:
                                         std::optional<std::size_t> intakeMaximumCells,
                                         std::optional<std::size_t> intakeStaircaseRounds,
                                         std::optional<double> intakeCouplingSeconds,
+                                        bool intakeForwardCoupling,
+                                        std::optional<double> intakeCourant,
+                                        bool intakeNozzleValve,
                                         std::optional<double> intakeTargetCellLengthM,
                                         std::optional<double> exhaustTargetCellLengthM,
                                         std::optional<double> exhaustCouplingSeconds,
@@ -523,6 +526,9 @@ private:
     simulatorOptions.intakeMaximumCellCount = intakeMaximumCells;
     simulatorOptions.intakeStaircaseRounds = intakeStaircaseRounds;
     simulatorOptions.intakeCouplingIntervalSeconds = intakeCouplingSeconds;
+    if (intakeForwardCoupling) simulatorOptions.intakeForwardCoupling = true;
+    simulatorOptions.intakeMaximumCourantNumber = intakeCourant;
+    if (intakeNozzleValve) simulatorOptions.intakeCharacteristicValve = false;
     simulatorOptions.intakeTargetCellLengthM = intakeTargetCellLengthM;
     simulatorOptions.exhaustTargetCellLengthM = exhaustTargetCellLengthM;
     simulatorOptions.maximumLowSpeedExhaustCouplingSeconds =
@@ -879,6 +885,9 @@ int main(int argc, char** argv) {
     std::optional<std::size_t> intakeMaximumCells;
     std::optional<std::size_t> intakeStaircaseRounds;
     std::optional<double> intakeCouplingSeconds;
+    bool intakeForwardCoupling = false;
+    std::optional<double> intakeCourant;
+    bool intakeNozzleValve = false;
     std::optional<double> intakeTargetCellLengthM;
     std::optional<double> exhaustTargetCellLengthM;
     std::optional<double> exhaustCouplingSeconds;
@@ -908,6 +917,12 @@ int main(int argc, char** argv) {
             intakeStaircaseRounds = static_cast<std::size_t>(std::stoull(argv[++index]));
         else if (argument == "--intake-coupling-us" && index + 1 < argc)
             intakeCouplingSeconds = std::stod(argv[++index]) * 1.0e-6;
+        else if (argument == "--intake-forward")
+            intakeForwardCoupling = true;
+        else if (argument == "--intake-nozzle-valve")
+            intakeNozzleValve = true;
+        else if (argument == "--intake-cfl" && index + 1 < argc)
+            intakeCourant = std::stod(argv[++index]);
         else if (argument == "--intake-cell-mm" && index + 1 < argc)
             intakeTargetCellLengthM = std::stod(argv[++index]) * 1.0e-3;
         else if (argument == "--exhaust-cell-mm" && index + 1 < argc)
@@ -943,7 +958,7 @@ int main(int argc, char** argv) {
                          "[--filter NAME] [--rpm N] [--warmup S] [--seconds S] "
                          "[--relative-rpm FRACTION] [--intake-workers N] "
                          "[--intake-max-cells N] [--intake-staircase-rounds N] "
-                         "[--intake-coupling-us N] "
+                         "[--intake-coupling-us N] [--intake-forward] [--intake-cfl C] [--intake-nozzle-valve] "
                          "[--intake-cell-mm N] "
                          "[--exhaust-cell-mm N] "
                          "[--exhaust-coupling-us N] "
@@ -1117,7 +1132,7 @@ int main(int argc, char** argv) {
         const auto measurement = measureEngine(
             measurementConfig, requestedRpm, warmupSeconds, measureSeconds, freeRun,
             intakeWorkers, intakeMaximumCells, intakeStaircaseRounds,
-            intakeCouplingSeconds, intakeTargetCellLengthM,
+            intakeCouplingSeconds, intakeForwardCoupling, intakeCourant, intakeNozzleValve, intakeTargetCellLengthM,
             exhaustTargetCellLengthM,
             exhaustCouplingSeconds, intakeFirstOrderTimeIntegration,
             intakeWallHeatUpdateSeconds,

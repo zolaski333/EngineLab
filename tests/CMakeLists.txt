@@ -94,6 +94,16 @@ add_test(NAME EngineLab.IntakeAcousticConvergence
     COMMAND EngineLabIntakeAcousticConvergenceTests)
 set_tests_properties(EngineLab.IntakeAcousticConvergence PROPERTIES TIMEOUT 60)
 
+add_executable(EngineLabIntakeRunnerCourantTests IntakeRunnerCourantTests.cpp)
+target_link_libraries(EngineLabIntakeRunnerCourantTests PRIVATE EngineLab::GasDynamics)
+enginelab_set_warnings(EngineLabIntakeRunnerCourantTests)
+add_test(NAME EngineLab.IntakeRunnerCourant COMMAND EngineLabIntakeRunnerCourantTests)
+
+add_executable(EngineLabExhaustJunctionStepTests ExhaustJunctionStepTests.cpp)
+target_link_libraries(EngineLabExhaustJunctionStepTests PRIVATE EngineLab::GasDynamics)
+enginelab_set_warnings(EngineLabExhaustJunctionStepTests)
+add_test(NAME EngineLab.ExhaustJunctionStep COMMAND EngineLabExhaustJunctionStepTests)
+
 add_executable(EngineLabIntakePlenumPassivityTests IntakePlenumPassivityTests.cpp)
 target_link_libraries(EngineLabIntakePlenumPassivityTests PRIVATE EngineLab::GasDynamics)
 enginelab_set_warnings(EngineLabIntakePlenumPassivityTests)
