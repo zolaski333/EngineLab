@@ -5,6 +5,14 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-12 — CP2 exhaust lengths: header and silencer do interact
+
+- Owner's report: the sound is only right when header AND silencer are both very long. `GeometrySensitivityHarness --factorial primary|midpipe` (x2 each), CP2 held at 3,500 and 7,000 rpm, third octaves, interaction LL-LS-SL+SS.
+- Null (same plan at x1.001): interaction RMS 0.7 dB (3,500) and 1.1 dB (7,000). Primary x silencer: 5.2 / 5.6 dB on the mix, 6.0 / 6.9 dB on the exhaust bus; long-both +13 to +18 dB at 250 Hz where neither alone does it. Midpipe x silencer: 2.1 / 4.3 dB. So the model is non-additive, mostly below 1 kHz; the header length matters more than the midpipe. Caveat: the brake holds each cell within ±130 rpm, the null within ±10.
+- At 3,500 rpm the mechanical layer is 20-44 dB above the exhaust from 1 kHz up (12 of 28 bands): the mix does not move there whatever the geometry (pipe x2 changes the exhaust bus by +8 dB at 1.6 kHz, the mix by 0.0). At 7,000 rpm only 4 bands are masked.
+- Removing the silencer changes the unweighted RMS by +0.07 dB (3,500) and +0.29 dB (7,000); the exhaust bus rises up to +9 dB at 1.6 kHz. Not compared with a measured insertion loss (none in hand, and the RMS is dominated by < 200 Hz).
+- Not measured: whether the real CP2's mechanical noise sits that high over an Arrow can; it decides between "mechanical too loud" and "exhaust too dull above 1 kHz".
+
 ## 2026-10-11 — Gas networks on the worker pool, bit-identical
 
 - Each duct's share of an RK stage (update, cache, wall heat, interior residual, its ports' and outlets' face fluxes) runs on the existing worker pool; coupling stays serial in a fixed order. Euler stage and second-stage pass fused (3 barriers per step). WAVs of all 16 catalogue engines byte-identical to the serial build; `EngineLab.GasDynamics` reverses the dispatch order (a misplaced plenum sum fails it with 6 runners, not with 3).
