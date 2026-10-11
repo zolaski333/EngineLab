@@ -221,7 +221,7 @@ public:
     /** Shortest DUCT cell anywhere in the network, metres. Zero if none.
      *
      * This remains useful for mesh inspection, but it is not the complete CFL
-     * scale: a finite junction may impose a smaller V/sum(A_port) bound. Use
+     * scale: a finite junction may impose a smaller 2 V/sum(A_port) bound. Use
      * `minimumCflLengthM()` for editor warnings and cost comparisons.
      *
      * It is deliberately separate from `totalCellCount()`, which is what the
@@ -237,7 +237,7 @@ public:
     [[nodiscard]] double minimumCellLengthM() const noexcept;
     /** Smallest geometry-only length entering the production CFL bound.
      *
-     * This includes both duct dx and each finite junction's V/sum(A_port),
+     * This includes both duct dx and each finite junction's 2 V/sum(A_port),
      * matching ExhaustGasNetwork's static area accounting. It intentionally
      * excludes the live |u|+c signal speed: ratios between two layouts at the
      * same operating state are the intended editor/benchmark use. */

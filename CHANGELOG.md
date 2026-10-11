@@ -21,7 +21,7 @@ file formats, always with an in-memory migration).
 - Exhaust junctions take the same explicit step rule as the pipe cells
   around them. A compact X crossover no longer halves the step of the whole
   exhaust: the LS3 runs 13 % faster near its limiter, with the same torque
-  and sound.
+  and sound. The Exhaust editor's cost estimate uses the same rule.
 - Catalogue exhausts run their real length from port to tip: 3.0-3.5 m
   under the naturally aspirated front-engined cars, 1.6 m behind the
   rear-engined flat-six and 1.2-1.5 m on the motorcycles. They used to end

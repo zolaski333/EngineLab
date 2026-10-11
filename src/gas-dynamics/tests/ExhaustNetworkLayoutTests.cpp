@@ -253,8 +253,8 @@ void testCrossoverUsesTwoPhysicalSectionsAndRetainsPorts() {
         ExhaustGraph::makeForEngine(config), productionMesh);
     requireLayout(production.valid()
             && std::abs(production.minimumCellLengthM() - 0.180) < 1.0e-12
-            && std::abs(production.minimumCflLengthM() - 0.030) < 1.0e-12,
-        "CFL metrology must expose crossover V/sum(A), not only duct dx");
+            && std::abs(production.minimumCflLengthM() - 0.060) < 1.0e-12,
+        "CFL metrology must expose crossover 2 V/sum(A), not only duct dx");
 }
 
 void testPerforatedCoreMufflerSeparatesFlowDuctFromOuterCan() {
