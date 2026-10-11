@@ -5,6 +5,14 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-12 — Bike WOT torque shapes against Cycle World dyno traces
+
+- `DynoSweepHarness` (250 rpm) against `tests/reference-data/measured-curves/` (rear-wheel), each curve divided by its own peak. Peak rpm, sim vs real: CP3 7,250 vs 7,000; CP4 9,000 vs 9,250; Big Twin 3,500 vs 3,000; CP2 4,000 vs 6,250. Shape RMS: CP2 7.5 %, CP3 6.6 %, CP4 12.7 %, Big Twin 7.1 %.
+- Common to the three Yamahas: too much torque below the peak relative to it (CP2 +10 % at 2-3k, CP3 +11 % at 5k, CP4 +15 to +22 % at 3-6k, where the real CP4 has a flat 5-6k hole). Big Twin: -15 % at 5,000.
+- CP2: VE is nearly flat (0.915 at 2,000, 0.988 at 7,000); gross IMEP per unit VE flat within 2 % from 4,000 to 8,000; FMEP 0.74 -> 2.63 bar and PMEP up to 1.2 bar at 9,000. The torque falls from 4,000 because friction and pumping grow while VE barely rises. Crank peak 74 Nm vs 67-68 Nm rated.
+- One factor, CP2 intake runner 120 -> 240 / 360 mm: peak moves to 5,500 (VE 1.08 / 1.14 at 6,500 / 5,500) but 8-9k collapses (-11 / -29 % vs the trace); shape RMS 8.1 / 15.4 %. The CP2 full-system exhaust (a twin's 42 mm primaries) changes nothing (6.9 %).
+- Not found: a single cause. Not measured: real CP2 VE, ignition and lambda at WOT; no catalogue value changed.
+
 ## 2026-10-12 — Individual throttle bodies as a small cell per cylinder: refuted
 
 - Tried on the CP2 (real hardware: one 38 mm body per cylinder) with configuration only: two intake paths, each one throttle into a 0.05 L cell (the volume behind the plate), then the 120 mm runner. `DynoSweepHarness`, WOT, 500 rpm steps.
