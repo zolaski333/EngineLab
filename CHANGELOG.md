@@ -153,6 +153,11 @@ file formats, always with an in-memory migration).
 
 ### Fixed
 
+- No more isolated clicks in the exhaust sound of the Merlin at full load and
+  of the Radial at its catalogue point. The high-band valve source switched on
+  for a few milliseconds whenever one crank-angle sub-step was shorter than
+  the others, then off again; it now follows the slowest recent sub-step rate.
+  The level of every catalogue engine is unchanged.
 - Torque curves no longer swing from one 50 rpm step to the next because of
   the solver. The intake runners amplified their own waves, the cylinders
   exchanged gas with the plenum up to 400 µs late, and the crank step could

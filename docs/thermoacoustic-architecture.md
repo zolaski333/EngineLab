@@ -127,8 +127,8 @@ chamber; the non-linear low-band network stays the owner of the physical
 back-pressure.
 
 The valve flow now has two explicit spectral owners. The pressure/flow pair
-from the network goes through a 4th-order Linkwitz–Riley low-pass at
-`0.45 × coupling rate`. The instantaneous Riemann flow goes through the
+from the network goes through an 8th-order Linkwitz–Riley low-pass at
+`0.47 × coupling rate`. The instantaneous Riemann flow goes through the
 complementary high-pass, computed at the mechanical rate. This second branch is
 never paired with the slower pressure: it becomes a volume-velocity source at
 the port, i.e. the antisymmetric characteristics `(+Zc U/2, -Zc U/2)`, then
@@ -138,13 +138,23 @@ band nor a hidden timbre gain. If the boundary is already published full-band
 (`coupling rate = 0`), the complementary source is exactly zero.
 
 This instantaneous branch is itself a signal sampled by the mechanical solver.
-Two Butterworth low-pass sections therefore bound its reconstruction at
-`0.42 × mechanical rate` (4th-order Linkwitz–Riley). Without this upper bound,
+An 8th-order Linkwitz–Riley low-pass therefore bounds its reconstruction at
+`0.42 × mechanical rate`. Without this upper bound,
 the interpolation images above the mechanical Nyquist were amplified by the
 radiation derivative and produced isolated clicks — the crackle heard mostly on
 the Merlin and the 2JZ. This filter removes no frequency the producer can
 represent; it only forbids the audio from inventing a band the simulation never
 sampled.
+
+The mechanical rate is not constant: crank-angle sub-steps shorten for a single
+step around events, so the published rate spikes above its cycle floor for a
+few milliseconds. A non-uniformly sampled stream resolves no more than its
+widest spacing allows, so the band follows the slowest recent cadence
+(`ValveFlowAcousticSource::SourceRateTracker`: down at once, up over 0.25 s).
+Fitted to each published rate, the band opened for one spike, closed again with
+stale state, and radiated clicks up to 3× full scale on the Merlin at
+3,040 rpm, where the floor (~9.8 kHz) leaves the band empty. A band that closes
+also forgets its state, so reopening settles on the flow of that moment.
 
 ## 4. Radiation and calibration
 

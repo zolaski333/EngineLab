@@ -50,6 +50,45 @@ public:
         void reset() noexcept { *this = State {}; }
     };
 
+    /** The source rate the band is fitted to.
+     *
+     * The band ends at the Nyquist frequency of the stream it reads, and a
+     * non-uniformly sampled stream resolves no more than its widest spacing
+     * allows. Crank-angle sub-steps shorten for a single step around events,
+     * so the published rate spikes above its cycle floor for a few
+     * milliseconds at a time. Fitting to each published rate switched the
+     * source on and off with stale state: the Merlin at 3,040 rpm took ~30
+     * such bursts in 8 s and radiated clicks up to 3x full scale. The tracker
+     * follows the slowest recent cadence instead: it drops to a lower rate at
+     * once and rises towards a higher one over riseSeconds.
+     */
+    struct SourceRateTracker final {
+        static constexpr double riseSeconds = 0.25;
+        double floorHz {};
+        double fittedHz {};
+
+        [[nodiscard]] static double riseCoefficient(double sampleRateHz) noexcept {
+            return sampleRateHz > 0.0
+                ? 1.0 - std::exp(-1.0 / (riseSeconds * sampleRateHz)) : 1.0;
+        }
+
+        /** One audio sample; true when fittedHz moved by more than 1 %, i.e.
+         *  the coefficients have to be recomputed. */
+        bool update(double publishedHz, double rise) noexcept {
+            if (!(publishedHz > 0.0) || !std::isfinite(publishedHz)) return false;
+            if (!(floorHz > 0.0) || publishedHz < floorHz)
+                floorHz = publishedHz;
+            else
+                floorHz += rise * (publishedHz - floorHz);
+            if (std::abs(floorHz - fittedHz) <= 0.01 * std::max(floorHz, fittedHz))
+                return false;
+            fittedHz = floorHz;
+            return true;
+        }
+
+        void reset() noexcept { *this = SourceRateTracker {}; }
+    };
+
     struct Waves final {
         double outgoingPressurePa {};
         double incomingPressurePa {};
@@ -125,7 +164,13 @@ public:
         double instantaneousMassFlowKgPerSecond,
         double densityKgPerM3,
         double characteristicImpedancePaSPerM3) noexcept {
-        if (!coefficients.active) return {};
+        if (!coefficients.active) {
+            // The state stops following the flow while the band is empty, so
+            // a later activation must settle on the flow of that moment, not
+            // resume from whatever it held when the band closed.
+            state.primed = false;
+            return {};
+        }
         const auto input = std::isfinite(instantaneousMassFlowKgPerSecond)
             ? instantaneousMassFlowKgPerSecond : 0.0;
         if (!state.primed) {

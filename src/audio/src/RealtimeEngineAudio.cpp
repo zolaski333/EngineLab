@@ -475,6 +475,8 @@ void RealtimeEngineAudio::prepare(double sampleRate, int maximumBlockSize) noexc
         * std::min(9'500.0, sampleRate_ * 0.38) / sampleRate_));
     thermoacousticMeanCoefficient_ = static_cast<float>(1.0 - std::exp(
         -2.0 * std::numbers::pi * 8.0 / sampleRate_));
+    valveFlowSourceRateRise_ =
+        ValveFlowAcousticSource::SourceRateTracker::riseCoefficient(sampleRate_);
     // 10 Hz: fast enough to track real temperature drift and rpm sweeps, slow
     // enough to attenuate frame-rate telemetry steps by about 28 dB at 240 Hz.
     controlRampCoefficient_ = static_cast<float>(1.0 - std::exp(
@@ -601,6 +603,7 @@ void RealtimeEngineAudio::release() noexcept {
     for (auto& state : boundaryReconstructionPressure_) state.reset();
     for (auto& state : boundaryReconstructionFlow_) state.reset();
     valveFlowAcousticSource_ = {};
+    valveFlowSourceRate_.reset();
     for (auto& state : valveFlowAcousticSourceState_) state.reset();
     completeExhaustSwap();
     completeIntakeSwap();
@@ -1406,7 +1409,6 @@ void RealtimeEngineAudio::renderWithStems(
                 structuralExcitation.cylinderCount = count;
                 const auto denominator = hasNextPressureSample_
                     ? nextPressureSample_.timeSeconds - currentPressureSample_.timeSeconds : 0.0;
-                auto valveFlowSourceRateChanged = false;
                 const auto telemetryRate = pressureSourceSamplingFrequencyHz(
                     currentPressureSample_, denominator);
                 const auto physicalSampleInterval = telemetryRate > 0.0
@@ -1420,15 +1422,15 @@ void RealtimeEngineAudio::renderWithStems(
                     // region instead of applying a fixed 9.5 kHz cutoff. The
                     // published mechanical rate is deliberately independent of
                     // wall-clock scheduling gaps inserted by EngineRuntime.
-                    valveFlowSourceRateChanged = std::abs(telemetryRate
-                        - valveFlowSourceSamplingHz_) > 0.01 * std::max(
-                            telemetryRate, valveFlowSourceSamplingHz_);
                     const auto cutoffHz = std::clamp(telemetryRate * 0.42, 180.0,
                         std::min(9'500.0, sampleRate_ * 0.38));
                     pressureBandCoefficient_ = static_cast<float>(1.0 - std::exp(
                         -2.0 * std::numbers::pi * cutoffHz / sampleRate_));
-                    valveFlowSourceSamplingHz_ = telemetryRate;
                 }
+                // The valve-flow band follows the slowest recent cadence, not
+                // each published rate; see SourceRateTracker.
+                const auto valveFlowSourceRateChanged = valveFlowSourceRate_.update(
+                    telemetryRate, valveFlowSourceRateRise_);
                 // Track the producer's boundary sampling rate and refit the
                 // anti-imaging reconstruction when it moves by more than 1%.
                 // The rate follows engine speed, so refits are rare relative to
@@ -1441,7 +1443,7 @@ void RealtimeEngineAudio::renderWithStems(
                     boundaryReconstruction_ = BoundaryReconstructionFilter::compute(
                         couplingHz, sampleRate_);
                     valveFlowAcousticSource_ = ValveFlowAcousticSource::compute(
-                        couplingHz, sampleRate_, valveFlowSourceSamplingHz_);
+                        couplingHz, sampleRate_, valveFlowSourceRate_.fittedHz);
                     boundaryReconstructionCouplingHz_ = couplingHz;
                 }
                 const auto fraction = denominator > 1.0e-9

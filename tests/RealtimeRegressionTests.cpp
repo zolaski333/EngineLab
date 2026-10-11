@@ -2885,6 +2885,53 @@ void valveFlowAcousticSourceRegression() {
     require(guarded.outgoingPressurePa == 0.0
             && guarded.incomingPressurePa == 0.0,
         "invalid valve medium data must fail silent without non-finite waves");
+
+    // Crank-angle sub-steps publish a cadence that spikes for one short step
+    // around events (measured on the Merlin at 3,040 rpm: a ~9,840 Hz floor
+    // with single-step excursions to 12-20 kHz). The stream still resolves no
+    // more than its widest spacing, so those spikes must not open the band;
+    // a sustained faster cadence must.
+    {
+        constexpr double mergedCouplingHz = 10'080.0;
+        Source::SourceRateTracker tracker;
+        const auto rise = Source::SourceRateTracker::riseCoefficient(sampleRate);
+        auto opened = false;
+        for (int sample = 0; sample < 96'000; ++sample) {
+            const auto spike = (sample + 850) % 1'700 < 5;
+            const auto published = spike
+                ? (sample % 3'400 < 5 ? 20'160.0 : 14'400.0)
+                : (sample % 4'000 < 2'000 ? 9'840.0 : 10'320.0);
+            tracker.update(published, rise);
+            opened = opened || Source::compute(
+                mergedCouplingHz, sampleRate, tracker.fittedHz).active;
+        }
+        require(!opened,
+            "single-step cadence spikes must not open the valve-flow band");
+        for (int sample = 0; sample < 96'000; ++sample)
+            tracker.update(30'000.0, rise);
+        require(std::abs(tracker.fittedHz - 30'000.0) < 0.02 * 30'000.0
+                && Source::compute(mergedCouplingHz, sampleRate,
+                    tracker.fittedHz).active,
+            "a sustained faster cadence must open the valve-flow band");
+        tracker.update(9'840.0, rise);
+        require(tracker.fittedHz == 9'840.0,
+            "a slower cadence must narrow the band at once");
+    }
+
+    // A band that closes and reopens must settle on the flow of the moment it
+    // reopens, not resume from the flow it held when it closed.
+    {
+        Source::State reopened;
+        for (int sample = 0; sample < 4'800; ++sample)
+            (void)Source::process(high, reopened, 0.05, 0.5, 200'000.0);
+        const auto closed = Source::compute(4'000.0, sampleRate, 1'000.0);
+        require(!closed.active, "fixture: an empty band must disable the source");
+        for (int sample = 0; sample < 480; ++sample)
+            (void)Source::process(closed, reopened, 0.20, 0.5, 200'000.0);
+        const auto first = Source::process(high, reopened, 0.20, 0.5, 200'000.0);
+        require(std::abs(first.highBandMassFlowKgPerSecond) < 1.0e-12,
+            "a reopened valve-flow band must not radiate the flow change it missed");
+    }
 }
 
 // ---------------------------------------------------------------------------
