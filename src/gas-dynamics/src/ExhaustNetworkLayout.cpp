@@ -551,7 +551,9 @@ double ExhaustNetworkLayout::minimumCflLengthM() const noexcept {
     }
     for (std::size_t index = 0; index < junctions_.size(); ++index) {
         if (!(junctionPortAreaSums[index] > 0.0)) continue;
-        const auto characteristicLengthM = junctions_[index].volumeM3
+        // ExhaustGasNetwork's junction bound, 2 C V / sum(A (|u| + c)): a
+        // duct cell's C dx / (|u| + c) with dx = 2 V / sum(A).
+        const auto characteristicLengthM = 2.0 * junctions_[index].volumeM3
             / junctionPortAreaSums[index];
         if (characteristicLengthM > 0.0
             && (shortest == 0.0 || characteristicLengthM < shortest))

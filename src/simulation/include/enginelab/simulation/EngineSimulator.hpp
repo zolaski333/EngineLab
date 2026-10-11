@@ -10,6 +10,7 @@
 #include <enginelab/physics/EndGasKnockModel.hpp>
 #include <enginelab/physics/IndicatedWorkModel.hpp>
 #include <enginelab/physics/ValveTrainModel.hpp>
+#include <enginelab/simulation/ValveProfileActuator.hpp>
 #include <enginelab/physics/HelmholtzRunnerModel.hpp>
 #include <enginelab/physics/MechanicalKinematics.hpp>
 #include <enginelab/physics/DuctWallHeatTransferModel.hpp>
@@ -46,14 +47,34 @@ struct EngineSimulatorOptions final {
     /** Diagnostic spatial target for the intake FV oracle/reduced mesh.
      * Absent selects the measured production target (95 mm). */
     std::optional<double> intakeTargetCellLengthM;
+    /** Diagnostic temporal refinement at a fixed intake mesh and coupling
+     * interval. Absent retains the production maximum Courant number, 0.8. */
+    std::optional<double> intakeMaximumCourantNumber;
     /** Fixed-point rounds used to reconstruct the shared-plenum staircase
      * before concurrent runner advances. */
     std::optional<std::size_t> intakeStaircaseRounds;
-    /** Maximum conservative intake coupling interval. Absent selects the
-     * measured 400 us production interval; zero restores every-mechanical-
-     * substep oracle coupling. The valve boundary is time-averaged over the
-     * interval and intake-valve closing forces a flush. */
+    /** Integrate all runners on an intake path against one finite plenum in
+     * the same RK stages. False retains the historical separate-runner path
+     * for numerical controls. Production uses the joint manifold. */
+    std::optional<bool> intakeJointManifold;
+    /** Maximum intake coupling interval. Joint manifolds run forward over it
+     * (below); absent selects 330 us there. Zero, or an interval shorter than
+     * 1.5 mechanical substeps, exchanges on every substep. With forward
+     * coupling off, a positive interval holds a time-averaged boundary and
+     * intake-valve closing forces a flush; the historical separate-runner
+     * path defaults to 400 us. */
     std::optional<double> intakeCouplingIntervalSeconds;
+    /** Joint manifold only, with a coupling interval above: advance the
+     * network AHEAD of the chambers over the interval, each chamber volume and
+     * valve area moving at its current rate (and an open exhaust valve
+     * draining it at its latest rate), and hand its transfers to the chambers
+     * evenly across the interval instead of averaging a past one. Absent
+     * selects it; false restores the time-averaged diagnostic. */
+    std::optional<bool> intakeForwardCoupling;
+    /** Meter the intake valves with the characteristic valve boundary
+     * (ExhaustGasNetworkConfig::characteristicValveBoundary). Absent selects
+     * it; false restores the quasi-steady nozzle for A/B controls. */
+    std::optional<bool> intakeCharacteristicValve;
     /** Low-speed cap for the nonlinear exhaust coupling interval. Absent uses
      * 125 us (at least 4 kHz physical-boundary Nyquist); harnesses can A/B it
      * against the historical 250 us cap and the full-substep oracle. */
@@ -74,9 +95,12 @@ struct EngineSimulatorOptions final {
     std::optional<double> exhaustMaximumHeadAreaFraction;
     /** A/B override for directed exhaust-collector momentum. Production uses it. */
     std::optional<bool> evolveExhaustJunctionAxialMomentum;
-    /** Reduced intake temporal integration. Spatial reconstruction remains
-     * second-order MUSCL; only the RK2 corrector stage is omitted. */
+    /** Historical Euler diagnostic. Production uses SSP-RK2: omitting its
+     * corrector with MUSCL can amplify passive acoustic modes. */
     std::optional<bool> intakeFirstOrderTimeIntegration;
+    [[nodiscard]] bool intakeUsesForwardEuler() const noexcept {
+        return intakeFirstOrderTimeIntegration.value_or(false);
+    }
     /** Diagnostic cadence for the finite-capacity intake-wall heat exchange.
      * Gas/solid energy is accumulated between updates rather than discarded. */
     std::optional<double> intakeWallHeatUpdateIntervalSeconds;
@@ -89,12 +113,43 @@ struct AirboxSlug final {
     double fuelMoles { 0.0 };
 };
 
+/** Observed continuity of a finite, time-averaged cylinder reservoir between
+ * two intake half-advances. These are measurements of the supplied boundaries,
+ * not adjustments to them. Read by the simulation owner after step(). */
+struct IntakeSplitReservoirDiagnostics final {
+    std::uint64_t observationCount { 0 };
+    std::uint32_t observedCylinderMask { 0 };
+    double absoluteFirstHalfTransferredMassKg { 0.0 };
+    std::uint64_t interveningExhaustObservationCount { 0 };
+    std::uint32_t interveningExhaustCylinderMask { 0 };
+    double absoluteInterveningExhaustTransferredMassKg { 0.0 };
+    double maximumSpeciesInventoryMismatchKg { 0.0 };
+    double maximumEnergyInventoryMismatchJ { 0.0 };
+    double maximumObservedSpeciesInventoryKg { 0.0 };
+    double maximumObservedEnergyInventoryJ { 0.0 };
+    double maximumVolumeMismatchM3 { 0.0 };
+};
+
 class EngineSimulator final : public IEngineSimulation {
 public:
     EngineSimulator(EngineConfig, IEcuModel&, IPhysicsModel&, IFiringEventGenerator&,
                     IExhaustModel&, EngineSimulatorOptions = {});
     [[nodiscard]] SimulationFrame step(double dtSeconds, const EngineControls&) noexcept override;
     [[nodiscard]] const EngineState& state() const noexcept override { return state_; }
+    /** Actual discrete valve profile, indexed by configuration cylinder order.
+     * Read by the simulation owner after step(); invalid indices return low. */
+    [[nodiscard]] bool appliedHighValveProfile(std::size_t cylinderIndex) const noexcept {
+        return cylinderIndex < config_.cylinders.size()
+            && valveProfileActuators_[cylinderIndex].appliedHigh();
+    }
+    void setIntakeSplitReservoirDiagnosticsEnabled(bool enabled) noexcept {
+        intakeSplitReservoirDiagnosticsEnabled_ = enabled;
+        intakeSplitReservoirDiagnostics_ = {};
+    }
+    [[nodiscard]] const IntakeSplitReservoirDiagnostics&
+    intakeSplitReservoirDiagnostics() const noexcept {
+        return intakeSplitReservoirDiagnostics_;
+    }
     /** Apply only live audio/combustion calibration. Called by the owning
      * simulation thread; it intentionally leaves every dynamic state and
      * compiled gas network untouched. */
@@ -162,6 +217,8 @@ public:
     /** The intake runners of a live intake change (buildLiveIntake). */
     struct LiveIntake final {
         std::array<std::unique_ptr<gasdynamics::ExhaustGasNetwork>, 32> runners;
+        std::array<std::unique_ptr<gasdynamics::ExhaustGasNetwork>, 32> manifolds;
+        std::array<std::size_t, 32> runnerDuctIndex {};
     };
     /** Whether `edited`'s intake can replace `running`'s in a running engine
      * (replaceIntake): the same cylinders on the same intake paths, the same
@@ -250,7 +307,20 @@ private:
     void configurePhysicalIntakeNetworks();
     [[nodiscard]] std::unique_ptr<gasdynamics::ExhaustGasNetwork> buildIntakeRunnerNetwork(
         const EngineConfig& config, std::size_t cylinderIndex) const;
+    [[nodiscard]] std::unique_ptr<gasdynamics::ExhaustGasNetwork> buildIntakeManifoldNetwork(
+        const EngineConfig& config, std::size_t pathIndex,
+        std::array<std::size_t, 32>& runnerDuctIndex) const;
+    [[nodiscard]] bool jointIntakeManifold() const noexcept {
+        return options_.intakeJointManifold.value_or(true);
+    }
+    [[nodiscard]] gasdynamics::ExhaustGasNetwork& intakeNetworkForCylinder(std::size_t index) noexcept;
+    [[nodiscard]] const gasdynamics::ExhaustGasNetwork& intakeNetworkForCylinder(std::size_t index) const noexcept;
+    [[nodiscard]] const gasdynamics::FiniteVolumeDuct& intakeDuctForCylinder(std::size_t index) const noexcept;
     void configureIntakeWorkerPool();
+    /** Points the exhaust network and the joint intake networks at
+     *  intakeWorkerPool_ (or at nothing). Per-runner intake networks are
+     *  advanced inside the pool and must never be given it. */
+    void attachNetworkParallelFor() noexcept;
     [[nodiscard]] RunningState determineRunningState(const EngineControls&) const noexcept;
     /** Injector open time divided by the complete 720-degree cycle. */
     [[nodiscard]] double injectorDutyCycle(std::size_t cylinderIndex) const noexcept {
@@ -398,14 +468,14 @@ private:
     std::array<double, 32> cylinderWallTemperatureC_ {};
     std::array<GasCell, 32> intakePlenumGas_ {};
     std::size_t intakePlenumCount_ { 1 };
-    /** One 1-D finite-volume runner per cylinder (see
-     * configurePhysicalIntakeNetworks). The plenum stays a lumped cell — a
-     * plenum is physically a compliance — while the runner, which is the organ
-     * pipe intake tuning lives in, remains resolved in space. Production
-     * advances it at a 400 us conservative multirate cadence against a
-     * time-averaged valve boundary, split symmetrically around exhaust
-     * coupling. Cylinders still interact only through the shared plenum. */
+    /** Historical separate-runner network ownership retained for numerical
+     * controls. Production owns one multi-duct network per intake path below,
+     * with timely mechanical half-step exchange and a common finite plenum. */
     std::array<std::unique_ptr<gasdynamics::ExhaustGasNetwork>, 32> intakeRunnerNetworks_;
+    /** One shared finite-plenum RK solve per authored intake path. The runner
+     * duct and cylinder-port order match, and both are indexed by this map. */
+    std::array<std::unique_ptr<gasdynamics::ExhaustGasNetwork>, 32> intakeManifoldNetworks_;
+    std::array<std::size_t, 32> intakeRunnerDuctIndex_ {};
     GasFieldSnapshot gasField_;
     double gasFieldTargetDegrees_ { 0.0 };
     double gasFieldLastDegrees_ { 0.0 };
@@ -427,15 +497,32 @@ private:
      * mechanical sub-step. Nothing outside that pre-pass reads it, and it is
      * fully overwritten at the start of every pass. */
     std::array<GasCell, 32> plenumStaircaseScratch_ {};
-    /** Time integrals used only by the diagnostic/production multirate intake
-     * coupling. They mirror the exhaust accumulators: no mass or energy is
-     * approximated algebraically; the full conservative runner advances less
-     * often against a boundary averaged over every mechanical substep. */
+    /** Historical boundary-history reduction for positive diagnostic coupling
+     * overrides. Conservation of the applied transfer does not establish the
+     * accuracy of an averaged moving-cylinder thermodynamic trajectory. */
     std::array<gasdynamics::ConservativeState, 32>
         intakeBoundaryStateTimeIntegral_ {};
     std::array<double, 32> intakeBoundaryVolumeTimeIntegralM3S_ {};
     std::array<double, 32> intakeValveConductanceTimeIntegralM2S_ {};
     double intakeCouplingDurationSeconds_ { 0.0 };
+    /** Periodic deadline phase, independent of forced valve-closing flushes.
+     * Retaining the rounding residual avoids RPM-dependent cadence jumps. */
+    double intakeSchedulingPhaseSeconds_ { 0.0 };
+    /** Forward intake coupling (EngineSimulatorOptions::intakeForwardCoupling):
+     * transfers the network has already computed for the current interval and
+     * not yet handed over, and the mechanical substeps left in that interval. */
+    std::array<gasdynamics::CylinderGasExchange, 32> intakeForwardPendingExchange_ {};
+    /** Each chamber's latest exhaust exchange as rates out of the chamber
+     * (species kg/s, total energy W): what a forward intake advance must
+     * also drain from its reservoir while the exhaust valve is open. */
+    std::array<std::array<double, gasdynamics::gasSpeciesCount>, 32> exhaustOutflowSpeciesKgPerS_ {};
+    std::array<double, 32> exhaustOutflowEnergyW_ {};
+    std::array<GasInventoryDelta, 32> intakeForwardPendingPlenumDelta_ {};
+    std::size_t intakeForwardRemainingSubsteps_ { 0 };
+    // How far the forward intake network's clock runs ahead of the chambers'.
+    double intakeForwardClockLeadSeconds_ { 0.0 };
+    bool intakeSplitReservoirDiagnosticsEnabled_ { false };
+    IntakeSplitReservoirDiagnostics intakeSplitReservoirDiagnostics_ {};
     /** How many serial groups the concurrent runner pass is split into. One is
      * full concurrency; a group per cylinder is the old serial scheme exactly,
      * which is what an engine with no worker pool gets. Chosen from the
@@ -653,5 +740,10 @@ private:
     double cycleStartTimeSeconds_ { 0.0 };
     std::uint64_t nextCompletedBrakeCycleId_ { 1 };
     bool cycleTelemetryStarted_ { false };
+    bool cycleNumericalFault_ { false };
+    // Appended owned state: no EngineState ABI or per-engine tuning.
+    cam_controller::ShaftCycleWindow valveProfileShaftCycle_;
+    std::array<cam_controller::ValveProfileActuator, 32> valveProfileActuators_ {};
+    bool hasVariableValveProfiles_ { false };
 };
 } // namespace enginelab

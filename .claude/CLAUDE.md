@@ -147,9 +147,10 @@ Non-deterministic:
   products only (× ~3.8 for a Heywood residual gas fraction).
   `residualGasFraction` is instantaneous. `volumetricEfficiency` is a trapped
   filling; `deliveredVolumetricEfficiency` is Heywood's.
-- **A sweep row with `ve / delivered_ve > 1.05` is contaminated** (limiter or
-  misfire). CSVs older than the stop at `0.95 × min(redline, limiter)` are wrong
-  at the top of the range.
+- **Screen a sweep row with `ve / delivered_ve > 1.05` separately.** Check
+  actual limiter/misfire/fault counters; the ratio alone does not prove their
+  cause, especially with lean residual oxygen. Preserve the `0.95 ×
+  min(redline, limiter)` ceiling and inspect older top-range CSVs.
 - **Any average over a window mixing very different levels reflects the loudest
   part** (loudness, event thresholds, cycle averages). Same for a fixed window
   over an unsettled signal: check the drift.
@@ -159,8 +160,9 @@ Non-deterministic:
 - **Wrapping phases**: a crank event is a remaining distance, not an absolute
   angle. An accumulator must not receive `forwardPhaseDegrees` without a guard
   (at most 180° per sub-step).
-- **A flow bias must be a state, never a derivative of the flow** it drives
-  (an instability that worsens as the step shrinks).
+- **Conservation is not acoustic passivity.** A flow bias must be a state,
+  never a derivative of the flow it drives. Check a closed perturbation and a
+  finite plenum; refine mesh, FV time step and reservoir refresh independently.
 - **Thread barrier**: count the workers, not the items (an 8 h 52 hang already
   happened). Signature: a single core at 100 %, the others idle.
 
@@ -170,8 +172,8 @@ Details of each measurement are in the docs archive (tag `archive/docs-2026-09`)
 
 - "Unified duct" rewrite: the 300 mm mesh does carry the audible geometry (the
   timbre moves by 12 to 14 dB).
-- Fork-join per cylinder: every threaded variant loses.
-- AVX / AVX2: slower (latency of dependent divisions, not throughput).
+- Fork-join per cylinder (every threaded variant loses); AVX / AVX2 (slower:
+  latency of dependent divisions, not throughput).
 - Deepening the muffler's single chamber: 16 dB notch on the EJ25 fundamental.
 - Speeding up the afterfire chemistry to get bursts: shape unchanged.
 - "The 1-D network cannot carry the steep front of a backfire": false, the audio
@@ -181,8 +183,13 @@ Details of each measurement are in the docs archive (tag `archive/docs-2026-09`)
 - Closing cyclic variability through dilution: inert (variability already
   exists, 1.7-12.9 %).
 - "Trapped residual too low": a unit error, the residual is sound.
-- Four runner inertance formulations: all unstable or out of phase.
-- Telemetry cache to speed up listening: would have gained nothing.
+- Intake runners: four inertance formulations are unstable or out of phase.
+  The intake charge bias was not the MUSCL limiter, the finite plenum, wall
+  heat or valve linearisation (it was the valve nozzle boundary, Courant-
+  dependent). Front-loaded or trajectory-resolved forward delivery: inert.
+- Telemetry cache to speed up listening: would have gained nothing. State-
+  variable valve-flow reconstruction against clicks: inert (the source rate
+  toggled the band; journal 2026-10-11).
 - Seeding the high-load correction cell from the idle cell: saves a start 4 s
   after cranking but stalls 10 engines out of 14 after 25 s of idle, and on a
   blip (Hayabusa, CP3, Aircooled). Asynchronous pulse on pedal tip-in: does not

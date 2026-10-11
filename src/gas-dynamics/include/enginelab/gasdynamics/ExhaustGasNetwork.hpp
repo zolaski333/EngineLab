@@ -6,6 +6,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <optional>
 #include <span>
 #include <vector>
@@ -51,6 +52,12 @@ struct ExhaustGasNetworkConfig final {
      * momentum left after the junction wall balances its static pressure, which
      * is the appropriate model for an exhaust collector with a directed trunk. */
     bool evolveJunctionAxialMomentum { false };
+    /** Meter a valve at a duct inlet with the characteristic (Benson-type)
+     * boundary: the face state lies on the interior's wave curve and the
+     * valve nozzle closes the problem. False keeps the quasi-steady nozzle
+     * against the first cell's average, whose stiffness near zero pressure
+     * difference makes the result depend on the Courant number. */
+    bool characteristicValveBoundary { false };
     double maximumCourantNumber { 0.42 };
     std::size_t maximumSubstepsPerAdvance { 100'000 };
 
@@ -66,13 +73,35 @@ struct CylinderValveBoundary final {
     /** Geometric curtain/seat area before the valve discharge coefficient. */
     double effectiveValveAreaM2 { 0.0 };
     double dischargeCoefficient { 1.0 };
+    /** For an advance that runs AHEAD of the chamber: the reservoir volume
+     * moves linearly at its rate, the piston doing p dV work on the reservoir;
+     * the valve is shut before `valveOpensAfterSeconds` and from
+     * `valveClosesAfterSeconds` on, and in between its area moves linearly from
+     * the value above, starting at the opening. The defaults keep a fixed
+     * reservoir and a fixed valve. */
+    double cylinderVolumeRateM3PerS { 0.0 };
+    double effectiveValveAreaRateM2PerS { 0.0 };
+    double valveOpensAfterSeconds { 0.0 };
+    double valveClosesAfterSeconds { std::numeric_limits<double>::infinity() };
+    /** For an advance AHEAD of the chamber: what leaves the reservoir through
+     * its other openings over the advance (an exhaust valve during overlap),
+     * as species and total-energy rates. Zero for a reservoir with only this
+     * valve. */
+    std::array<double, gasSpeciesCount> otherOutflowSpeciesKgPerS {};
+    double otherOutflowEnergyW { 0.0 };
 };
 
-/** Atmosphere seen by all configured outlets during one requested advance. */
+/** Shared reservoir seen by all configured outlets during one requested advance. */
 struct ExhaustAmbientBoundary final {
     ConservativeState reservoirState {};
     /** 0 closes every outlet, 1 uses the authored opening conductance. */
     double openingScale { 1.0 };
+    /** Physical volume of a well-mixed reservoir, evolved with the network's
+     * stages when positive. Zero preserves an infinite fixed atmosphere.
+     * The caller owns its inventory and applies the returned outlet transfers
+     * once after the advance; this volume does not add to network inventory.
+     */
+    double reservoirVolumeM3 { 0.0 };
 };
 
 /** Time-integrated transfer, positive from the cylinder into the network. */
@@ -145,6 +174,16 @@ struct ExhaustNetworkAdvanceResult final {
     std::size_t rejectedSubsteps { 0 };
     bool completed { true };
     double wallHeatRejectedJ { 0.0 };
+    // Accepted-step observations only; zero when no step is accepted.
+    double minimumAcceptedTimeStepSeconds { 0.0 };
+    double maximumAcceptedTimeStepSeconds { 0.0 };
+    // Ratio to the coded cap, which includes CFL and source/boundary limits.
+    double maximumAcceptedStableStepRatio { 0.0 };
+    // dt * max(|u| + c) / cell length, measured before the commit.
+    double maximumAcceptedDuctCourantCurrent { 0.0 };
+    // The validated Euler predictor used by the RK2 second stage.
+    // It is also observed in first-order mode, where it is the candidate.
+    double maximumAcceptedDuctCourantPredictor { 0.0 };
 };
 
 struct ExhaustFuelReactionConfig final {
@@ -251,8 +290,8 @@ public:
      * overlap-weighted mean of the old cells it covers, for the gas (per unit
      * volume, so pressure, temperature, velocity and composition stay where
      * they were along the pipe) and for the wall temperature; a reaction site
-     * takes the old site at its centre. Junctions, cylinder reservoirs and the
-     * wall-exchange clocks are copied. A duct with the same cell count is
+     * takes the old site at its centre. Junctions, cylinder reservoirs, the
+     * valve solves' warm starts and the wall-exchange clocks are copied. A duct with the same cell count is
      * copied exactly, so adopting from an identical network changes nothing.
      * Mass is conserved only where the volume is: a longer or wider pipe holds
      * more gas at the same state.
@@ -276,6 +315,7 @@ public:
     [[nodiscard]] const EulerMixtureModel& mixtureModel() const noexcept { return mixtureModel_; }
     [[nodiscard]] const ExhaustNetworkLayout& layout() const noexcept { return layout_; }
     [[nodiscard]] std::span<const FiniteVolumeDuct> ducts() const noexcept { return ducts_; }
+    [[nodiscard]] const ExhaustGasNetworkConfig& config() const noexcept { return config_; }
     [[nodiscard]] std::span<FiniteVolumeDuct> ducts() noexcept { return ducts_; }
     /** Hottest pipe wall anywhere in the network.
      *
@@ -340,14 +380,15 @@ public:
      * on the engine's intake plenum was measured to converge to the wrong
      * pressure -- see EngineSimulator's runner pass.
      *
-     * It is deliberately the first-stage flux only, not the two-stage integral
-     * `advance` reports: the point is a same-instant estimate of the ORDERING
-     * correction, and the exact transfer replaces it afterwards. A lagged
-     * estimate would not do -- the reservoir/duct coupling responds in tens of
-     * microseconds and one sub-step of lag drives it into a limit cycle.
+     * It approximates the two-stage transfer using a local Heun prediction of
+     * the terminal cell. Its complete current residual includes the adjoining
+     * internal face, geometric pressure force and cached wall sources. It does
+     * not advance the other cells or the reservoir; the exact integrated
+     * transfer from `advance` replaces this ordering estimate afterwards.
      *
-     * Returns nullopt for an unknown outlet, a non-positive duration, or a
-     * state the primitive recovery rejects.
+     * Returns nullopt for an unknown outlet, a non-positive duration, a state
+     * the primitive recovery rejects, a junction endpoint, or a one-cell duct
+     * whose opposite graph boundary cannot be inferred locally.
      */
     [[nodiscard]] std::optional<ExhaustOutletFlowSample> predictOutletTransfer(
         std::size_t outletIndex,
@@ -365,6 +406,25 @@ public:
      * See the config field for what happens when a network times it alone.
      */
     void requestWallHeatUpdate() noexcept { wallHeatUpdateRequested_ = true; }
+
+    /** Runs `body(context, i)` once for every i in [0, count), possibly on
+     *  several threads, and returns once all of them have completed. */
+    struct ParallelFor final {
+        using Body = void (*)(void*, std::size_t) noexcept;
+        void (*run)(void* executor, std::size_t count, Body body,
+                    void* context) noexcept { nullptr };
+        void* executor { nullptr };
+    };
+
+    /** Spreads the per-duct part of every RK stage over `parallelFor`: the
+     * stage update, the primitive and source cache, the wall heat exchange and
+     * the interior residual, plus the face flux of any port or outlet at the
+     * duct's ends. Each duct writes only its own buffers; applying those
+     * fluxes and the coupling between ducts (interfaces, junctions, the shared
+     * reservoir) stays serial in a fixed order, so the result is bit-identical
+     * to the serial path whatever the schedule. The executor must outlive the
+     * network, or be cleared with a default ParallelFor. */
+    void setParallelFor(ParallelFor parallelFor) noexcept { parallelFor_ = parallelFor; }
 
     /** Add species mass as a source in the duct cell adjacent to a cylinder
      * port, together with its sensible internal energy at temperatureK and an
@@ -398,10 +458,52 @@ private:
         bool useStageState,
         std::span<const CylinderValveBoundary> cylinderBoundaries,
         const ExhaustAmbientBoundary& ambient) noexcept;
-    [[nodiscard]] bool prepareStageStates(
-        bool candidateStage,
-        bool deferDynamicWallSources = false) noexcept;
+    /** Which half of a stage evaluation to run: the per-duct pass (interior
+     *  residuals and boundary face fluxes), the serial coupling that applies
+     *  them, or both. */
+    enum class StagePart : std::uint8_t { whole, ductPass, coupling };
+    /** As above; `prelude(i)` runs on duct i just before its own pass, inside
+     *  the same parallel dispatch, and a false return abandons the pass. */
+    template <typename Prelude>
+    [[nodiscard]] bool evaluateStage(
+        bool useStageState,
+        std::span<const CylinderValveBoundary> cylinderBoundaries,
+        const ExhaustAmbientBoundary& ambient,
+        StagePart part,
+        const Prelude& prelude) noexcept;
+    /** Junction, reservoir and shared-reservoir primitives of a stage; the
+     *  ducts' own caches are prepared per duct inside advance(). */
+    [[nodiscard]] bool prepareNonDuctStageStates(bool candidateStage) noexcept;
+    /** `body(i)` for every duct, through parallelFor_ when one is set; true
+     *  when every call returned true. */
+    template <typename Body>
+    [[nodiscard]] bool forEachDuct(const Body& body) noexcept;
     void updateOutletSamples(double durationSeconds) noexcept;
+
+    /** A port's or outlet's face flux. Computed alongside its duct's interior
+     *  residual (in parallel when an executor is set), then applied serially
+     *  in port and outlet order, so the accumulation order never changes. */
+    struct BoundaryFlux final {
+        EulerFlux rawFlux {};
+        /** The flux the duct's end face receives (unused at a junction). */
+        EulerFlux ductFlux {};
+        double openingAreaM2 { 0.0 };
+        /** The area `rawFlux` is integrated over. */
+        double flowAreaM2 { 0.0 };
+        /** A port's valve-face warm start after this solve. */
+        std::array<double, 2> faceSolve {};
+    };
+
+    ParallelFor parallelFor_ {};
+    std::vector<std::uint8_t> ductSucceeded_;
+    /** Set by a duct whose Euler stage is inadmissible in this attempt. */
+    std::vector<std::uint8_t> ductStageRejected_;
+    std::vector<double> ductWallHeatRejectedJ_;
+    std::vector<BoundaryFlux> portFluxes_;
+    std::vector<BoundaryFlux> outletFluxes_;
+    /** Ports and outlets attached to each duct's ends, in index order. */
+    std::vector<std::vector<std::size_t>> ductPorts_;
+    std::vector<std::vector<std::size_t>> ductOutlets_;
 
     EulerMixtureModel mixtureModel_;
     ExhaustNetworkLayout layout_;
@@ -430,7 +532,15 @@ private:
     std::vector<PrimitiveState> cylinderReservoirStagePrimitives_;
     std::vector<PrimitiveState> cylinderReservoirCandidatePrimitives_;
     std::vector<double> cylinderReservoirVolumesM3_;
+    /** Volumes at the start of the advance; the current ones follow the
+     * supplied volume rate (CylinderValveBoundary::cylinderVolumeRateM3PerS). */
+    std::vector<double> cylinderReservoirInitialVolumesM3_;
+    /** Time into the current advance at which the stage being evaluated sits. */
+    double boundaryElapsedSeconds_ { 0.0 };
     std::vector<std::uint8_t> cylinderReservoirActive_;
+    // A shut supplied valve has no RK source; unchanged stage states reuse the
+    // already validated primitive while retaining the normal state arithmetic.
+    std::vector<std::uint8_t> cylinderReservoirClosed_;
     /** Port-order lookup into the caller's boundary span, rebuilt once/advance. */
     std::vector<std::size_t> cylinderBoundaryIndices_;
     std::vector<std::uint8_t> ductInletAssigned_;
@@ -440,6 +550,9 @@ private:
     std::vector<ConservedFlowRate> outletFirstStageFlow_;
     std::vector<ConservedFlowRate> outletSecondStageFlow_;
     std::vector<CylinderGasExchange> cylinderExchanges_;
+    /** Each valve's last characteristic face pressure and residual slope:
+     * the next solve's starting point (see characteristicValveBoundary). */
+    std::vector<std::array<double, 2>> valveFaceSolve_;
     std::vector<ExhaustOutletFlowSample> outletSamples_;
     struct ReactionSiteState final {
         /** Dimensionless Livengood-Wu integral; ignition occurs at one. */
@@ -451,7 +564,18 @@ private:
     };
     std::vector<std::vector<ReactionSiteState>> ductReactionStates_;
     std::vector<ReactionSiteState> junctionReactionStates_;
+    // One optional well-mixed external reservoir, shared by all outlets. Its
+    // scratch inventory is excluded from inventory(); the caller books the
+    // returned outlet integrals once into its own reservoir after advance.
+    ConservativeState ambientReservoirState_ {};
+    ConservativeState ambientReservoirStage_ {};
+    ConservativeState ambientReservoirCandidate_ {};
+    ConservativeState ambientReservoirResidual_ {};
+    ConservativeState ambientReservoirStageResidual_ {};
+    double ambientReservoirVolumeM3_ { 0.0 };
     PrimitiveState ambientPrimitive_ {};
+    PrimitiveState ambientStagePrimitive_ {};
+    PrimitiveState ambientCandidatePrimitive_ {};
     bool configured_ { false };
 };
 

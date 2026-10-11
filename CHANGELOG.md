@@ -9,6 +9,24 @@ file formats, always with an in-memory migration).
 
 ### Changed
 
+- The exhaust and the intake manifold spread their pipes over the
+  simulation's worker threads, with bit-identical results. At 95 % of the
+  limiter with audio, every catalogue engine now runs above real time: the
+  LS3 at 1.07 (0.95 before, 1.05 with the 3-D view open) and the Merlin at
+  1.40.
+- Intake valves are a characteristic boundary on the runner: the trapped
+  charge no longer depends on the solver's internal time step (it lost up to
+  11 % before). The cylinders exchange with the intake network every 330 us,
+  with the network running ahead of them, instead of on every sub-step. The
+  LS3 and the Merlin are back above real time (1.08 and 1.15 at 5,000 /
+  3,040 rpm, from 0.78 and 0.80). Torque curves and the sound move: most
+  engines by less than 4 % in level, the 2JZ -15 %, the EJ25 -11 % and the
+  Hayabusa +19 %. The Merlin no longer drives its limiter at steady load
+  (pre-limiter peak 1.51 -> 0.66 of full scale).
+- Exhaust junctions take the same explicit step rule as the pipe cells
+  around them. A compact X crossover no longer halves the step of the whole
+  exhaust: the LS3 runs 13 % faster near its limiter, with the same torque
+  and sound. The Exhaust editor's cost estimate uses the same rule.
 - Catalogue exhausts run their real length from port to tip: 3.0-3.5 m
   under the naturally aspirated front-engined cars, 1.6 m behind the
   rear-engined flat-six and 1.2-1.5 m on the motorcycles. They used to end
@@ -140,6 +158,29 @@ file formats, always with an in-memory migration).
 
 ### Fixed
 
+- No more isolated clicks in the exhaust sound of the Merlin at full load and
+  of the Radial at its catalogue point. The high-band valve source switched on
+  for a few milliseconds whenever one crank-angle sub-step was shorter than
+  the others, then off again; it now follows the slowest recent sub-step rate.
+  The level of every catalogue engine is unchanged.
+- Torque curves no longer swing from one 50 rpm step to the next because of
+  the solver. The intake runners amplified their own waves, the cylinders
+  exchanged gas with the plenum up to 400 µs late, and the crank step could
+  overrun its angle as the engine accelerated. Adjacent steps now differ by
+  2-3.5 % on the K20 (8.8-11.4 % before) and about 2 % on the CP2. The 2JZ
+  gives 416 N.m at 4,000 rpm (369 before; Toyota: 427), and the Hayabusa's
+  maximum falls from 178 to 153 N.m (Suzuki: 138). The dyno discards a whole
+  720° cycle when the solver faulted during it. Cost: the LS3 and the Merlin
+  no longer run in real time on the development machine (about 0.78 and
+  0.80 of real time, against 1.14 and 1.45 before).
+- The K20's VTEC switches once per camshaft revolution on a common base
+  circle, instead of on the instantaneous engine speed with its valves open
+  (up to 106 switches per second per cylinder around 5,800 rpm).
+- The exhaust is coupled to the cylinders at least every 125 µs, as
+  intended. The interval could run half a sub-step past it, and switch
+  between one and two sub-steps from one frame to the next. The level of
+  some engines moves (CP3 +16 %, CP4 -19 % in-duct pressure, flat-six +10 %,
+  LS3 -4 %); the K20 needs 7 % more CPU.
 - The 2JZ's turbo holds its ~0.9 bar to the limiter. Its wastegate was too
   small to bypass the exhaust at high speed: fully open from 5,500 rpm, the
   boost ran to 246 kPa at 6,000 rpm (and 297 kPa at 6,500). It now holds

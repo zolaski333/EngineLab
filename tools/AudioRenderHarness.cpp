@@ -1483,7 +1483,7 @@ bool runtimePathCheck(const EngineConfig& baseConfig, const WavData& ir,
                       std::optional<double> intakeWallHeatUpdateSeconds = {}) {
     auto config = baseConfig;
     normaliseEngineConfig(config);
-    EngineSimulatorOptions simulatorOptions;
+    auto simulatorOptions = renderSimulatorOptions;
     simulatorOptions.intakeWorkerCount = intakeWorkers;
     simulatorOptions.intakeWallHeatUpdateIntervalSeconds =
         intakeWallHeatUpdateSeconds;
@@ -1726,6 +1726,12 @@ int main(int argc, char** argv) {
             intakeWorkers = static_cast<std::size_t>(std::stoull(argv[++i]));
         else if (a == "--intake-wall-us" && i + 1 < argc)
             intakeWallHeatUpdateSeconds = std::stod(argv[++i]) * 1.0e-6;
+        else if (a == "--intake-legacy") {
+            // Before/after of the intake valve: the quasi-steady nozzle,
+            // exchanged on every substep.
+            renderSimulatorOptions.intakeCharacteristicValve = false;
+            renderSimulatorOptions.intakeCouplingIntervalSeconds = 0.0;
+        }
         else if (a == "--mute-combustion") muteCombustionLayer = true;
         else if (a == "--mute-mechanical") muteMechanicalLayer = true;
         else if (a == "--mute-intake") muteIntakeLayer = true;

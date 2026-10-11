@@ -34,7 +34,7 @@ catalog + diagnostics + serialization + scripting
 | `EngineLabPhysics` | Conservative gas, kinematics, P·dV, injection, flame, knock, valvetrain and Helmholtz intake |
 | `EngineLabEcu` | Map interpolation, enrichments, corrections and rev limiter |
 | `EngineLabExhaust` | Topology compilation, routes, aggregated gas properties and acoustic metadata |
-| `EngineLabSimulation` | Deterministic orchestration of the models and state integration; no threads |
+| `EngineLabSimulation` | Deterministic orchestration of the models and state integration; a bit-identical worker pool for the gas networks |
 | `EngineLabRuntime` | Simulation thread, transmission/vehicle, dyno, snapshots and bridge to audio |
 | `EngineLabAudio` | SI exhaust characteristics, passive radiation, explicit convolution and non-exhaust layers |
 | `EngineLabSerialization` | JSON/YAML round-trip in engine schema 2 and migration of v1 files |
@@ -51,6 +51,18 @@ invokes `step`. `EngineRuntime` is its application-level owner and runs the
 simulation on a `std::jthread`. It publishes a protected `EngineState` for the
 UI, slow telemetry through atomics and two SPSC streams: discrete events and
 continuous pressure frames.
+
+Inside a step, `EngineSimulator` may borrow a small `CylinderWorkerPool` (on
+engines with three cylinders or more: at most half the reported hardware
+threads, two workers, three from ten cylinders). Per-runner intakes advance
+their runners on it; the exhaust network and a joint intake manifold use it
+through `ExhaustGasNetwork::setParallelFor` for each duct's share of an RK
+stage: its update, cache, wall heat, interior residual and the face fluxes of
+its ports and outlets. Everything that couples ducts (interfaces, junctions,
+applying those fluxes, the shared plenum) stays serial in a fixed order, so
+the result is bit-identical whatever the worker count, including none
+(`EngineLab.GasDynamics` checks a reversed dispatch order). Cylinders
+themselves are never split across threads.
 
 The JUCE callback consumes these streams. It compiles no script, reads no file
 and takes no mutex. Impulse-response decoding, allocations and DSP preparation

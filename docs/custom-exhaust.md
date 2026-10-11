@@ -274,8 +274,12 @@ summing four in-phase pressures in a common node.
 
 The low-band gas solver keeps a single well-mixed volume for the intersection.
 Without an authored volume, it derives `2 A d`, i.e. two tube sections one
-diameter long. This avoids underestimating a four-port component by half and
-keeps its CFL length `V/sum(A_port)` at `d/2`. The audio cost stays four mixes
+diameter long. This avoids underestimating a four-port component by half.
+Every junction takes its explicit step under the duct cells' convention,
+`2 V/sum(A_port)` as its CFL length, which is `d` for this X: one pipe
+diameter, like a duct cell of that length. The former `V/sum(A_port)` gave
+the X half its pipes' step and set the whole network's; torque and sound did
+not move between half and twice the step (journal 2026-10-09). The audio cost stays four mixes
 per sample, with no extra voice, allocation, cell or delay line in the X itself.
 The four `sqrt(Y)` are only recomputed when the target gas state is published at
 the start of a block, then interpolated per sample; they are not needlessly

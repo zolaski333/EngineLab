@@ -1195,7 +1195,9 @@ void EngineRuntime::run(std::stop_token stopToken) {
                     // The former `target /= 1 + dt` path was not a pause: at
                     // normal speeds it could command a multi-thousand-rpm/s
                     // fall after one weak cycle and invalidate the next bins.
-                    if (dynoRampPrimed_ && dynoGateAllowsProgress_) {
+                    if (dynoRampReferenceReady(dynoRampPrimed_,
+                            previousRampEstimate_.has_value())
+                        && dynoGateAllowsProgress_) {
                         const auto rampCeilingRpm =
                             activeDynoConfig_.sweepCeilingRpm;
                         dynoTargetRpm_ = std::min(rampCeilingRpm,
@@ -1402,6 +1404,8 @@ void EngineRuntime::run(std::stop_token stopToken) {
                 input.protocolReady = true;
                 input.recoveryActive = false;
                 input.cycleContinuous = cycleContinuous;
+                input.rampPrimed = dynoRampReferenceReady(
+                    dynoRampPrimed_, previousRampEstimate_.has_value());
                 return input;
             };
             const auto storePoint = [&](const DynoPoint& point,
@@ -1446,7 +1450,8 @@ void EngineRuntime::run(std::stop_token stopToken) {
                     DynoQualityReason::discontinuousCycle;
             }
 
-            // Frame-level faults taint the complete cycle which contains them;
+            // Every rejected observation taints its complete cycle, including
+            // a tracking excursion which recovers before the cycle boundary;
             // they also freeze a ramp immediately instead of waiting for its
             // boundary event. Cycle continuity itself is evaluated at the
             // boundary below, hence `true` in this instantaneous observation.
@@ -1459,24 +1464,15 @@ void EngineRuntime::run(std::stop_token stopToken) {
             latestDynoQualityReasons_ = liveGate.reasons;
             if (!liveGate.accepted()) {
                 dynoGateAllowsProgress_ = false;
-                const auto physicallyTaintsCycle =
-                    hasDynoQualityReason(liveGate.reasons,
-                        DynoQualityReason::nonFinite)
-                    || hasDynoQualityReason(liveGate.reasons,
-                        DynoQualityReason::noBrakeContact)
-                    || hasDynoQualityReason(liveGate.reasons,
-                        DynoQualityReason::absorberCapacityLimited)
-                    || hasDynoQualityReason(liveGate.reasons,
-                        DynoQualityReason::revLimiterActive)
-                    || hasDynoQualityReason(liveGate.reasons,
-                        DynoQualityReason::recoveryActive);
-                if (physicallyTaintsCycle) {
+                if (liveGate.taintsCycle()) {
                     dynoCycleTainted_ = true;
                     pendingDynoInvalidReasons_ |= liveGate.reasons;
                 }
             } else {
                 dynoGateAllowsProgress_ = !rampingSweep
-                    || (dynoRampPrimed_
+                    || (!dynoCycleTainted_
+                        && dynoRampReferenceReady(dynoRampPrimed_,
+                            previousRampEstimate_.has_value())
                         && dynoEstimator_.estimate().quality
                             == DynoEstimateQuality::ready);
             }

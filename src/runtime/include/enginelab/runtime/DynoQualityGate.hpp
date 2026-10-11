@@ -9,6 +9,12 @@ namespace enginelab {
 
 using DynoAcquisitionMode = DynoMode;
 
+/** Whether a ramp has an acquired bin from which its target can advance. */
+[[nodiscard]] constexpr bool dynoRampReferenceReady(
+    bool rampPrimed, bool precedingBinAcquired) noexcept {
+    return rampPrimed && precedingBinAcquired;
+}
+
 enum class DynoQualityReason : std::uint32_t {
     none = 0,
     nonFinite = 1U << 0,
@@ -21,7 +27,9 @@ enum class DynoQualityReason : std::uint32_t {
     absorberCapacityLimited = 1U << 7,
     revLimiterActive = 1U << 8,
     recoveryActive = 1U << 9,
-    discontinuousCycle = 1U << 10
+    discontinuousCycle = 1U << 10,
+    /** An unresolved solver step or a rejected conservative inventory transfer. */
+    simulationNumericalFault = 1U << 11
 };
 
 [[nodiscard]] constexpr DynoQualityReason operator|(
@@ -66,6 +74,9 @@ struct DynoQualityGateInput final {
     bool protocolReady { false };
     bool recoveryActive { false };
     bool cycleContinuous { false };
+    /** A configured ramp holds its entry or recovery bin. Runtime supplies
+     * false until a complete steady window has acquired that bin. */
+    bool rampPrimed { true };
 };
 
 struct DynoQualityGateResult final {
@@ -76,6 +87,14 @@ struct DynoQualityGateResult final {
 
     [[nodiscard]] bool accepted() const noexcept {
         return reasons == DynoQualityReason::none;
+    }
+
+    /**
+     * A rejected observation invalidates the complete cycle containing it.
+     * Restoring tracking at the boundary cannot repair an interior excursion.
+     */
+    [[nodiscard]] bool taintsCycle() const noexcept {
+        return !accepted();
     }
 };
 

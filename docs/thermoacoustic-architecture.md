@@ -69,7 +69,11 @@ multirate decomposition:
   network;
 - the macro boundary is integrated at least 16 times per firing period, with an
   absolute maximum window of 125 µs at low engine speed (see §14; the cap was
-  halved from 250 µs on 2026-07-28);
+  halved from 250 µs on 2026-07-28). Both bounds are maxima: the network is
+  flushed on the last mechanical sub-step that keeps the window within them.
+  Until 2026-10-09 it flushed on the sub-step nearest the bound, which could
+  overrun it by half a sub-step and, with sub-steps sized from the crank angle,
+  switch between one and two sub-steps per window from one frame to the next;
 - conservative state, chamber volume, valve `CdA` and outlet opening are
   integrated over time across each window;
 - each macro exchange stays bidirectional and closes the species mass and
@@ -123,8 +127,8 @@ chamber; the non-linear low-band network stays the owner of the physical
 back-pressure.
 
 The valve flow now has two explicit spectral owners. The pressure/flow pair
-from the network goes through a 4th-order Linkwitz–Riley low-pass at
-`0.45 × coupling rate`. The instantaneous Riemann flow goes through the
+from the network goes through an 8th-order Linkwitz–Riley low-pass at
+`0.47 × coupling rate`. The instantaneous Riemann flow goes through the
 complementary high-pass, computed at the mechanical rate. This second branch is
 never paired with the slower pressure: it becomes a volume-velocity source at
 the port, i.e. the antisymmetric characteristics `(+Zc U/2, -Zc U/2)`, then
@@ -134,13 +138,23 @@ band nor a hidden timbre gain. If the boundary is already published full-band
 (`coupling rate = 0`), the complementary source is exactly zero.
 
 This instantaneous branch is itself a signal sampled by the mechanical solver.
-Two Butterworth low-pass sections therefore bound its reconstruction at
-`0.42 × mechanical rate` (4th-order Linkwitz–Riley). Without this upper bound,
+An 8th-order Linkwitz–Riley low-pass therefore bounds its reconstruction at
+`0.42 × mechanical rate`. Without this upper bound,
 the interpolation images above the mechanical Nyquist were amplified by the
 radiation derivative and produced isolated clicks — the crackle heard mostly on
 the Merlin and the 2JZ. This filter removes no frequency the producer can
 represent; it only forbids the audio from inventing a band the simulation never
 sampled.
+
+The mechanical rate is not constant: crank-angle sub-steps shorten for a single
+step around events, so the published rate spikes above its cycle floor for a
+few milliseconds. A non-uniformly sampled stream resolves no more than its
+widest spacing allows, so the band follows the slowest recent cadence
+(`ValveFlowAcousticSource::SourceRateTracker`: down at once, up over 0.25 s).
+Fitted to each published rate, the band opened for one spike, closed again with
+stale state, and radiated clicks up to 3× full scale on the Merlin at
+3,040 rpm, where the floor (~9.8 kHz) leaves the band empty. A band that closes
+also forgets its state, so reopening settles on the flow of that moment.
 
 ## 4. Radiation and calibration
 
@@ -828,6 +842,137 @@ area actually used by the solver. The published flow is the integral of the two
 symmetric half-steps divided by the sub-step duration: the audio source and the
 mass balance therefore describe exactly the same exchange, without rebuilding a
 pulse from the engine speed.
+
+### Nonlinear intake coupling
+
+The physical intake runners use MUSCL reconstruction and SSP-RK2. Forward Euler
+remains an explicit diagnostic option: conservation of total energy alone does
+not prevent an acoustic perturbation from growing. The intake grid, CFL limit
+and mechanical coupling interval must be refined separately when investigating
+a curve; changing all three together cannot identify the responsible error.
+
+Production advances one joint network per intake path. Every runner and
+cylinder port on that path sees the same finite plenum in the same RK stages. The caller commits the sum of mouth transfers
+once to that path's external plenum; network time is counted once per path.
+Cylinder-to-path and cylinder-to-local-port mappings also govern fuel injection,
+live geometry adoption, gas fields and probes. Closed cylinder valves do not
+stop the corresponding runner's acoustic evolution.
+
+**Valve boundary.** Each intake valve is a characteristic boundary on the
+runner's first face, not a quasi-steady nozzle fed by the first cell's
+average. The face state lies on the wave curve of the runner interior (Toro's
+shock and rarefaction branches), and the face pressure is the one where the
+mass flux on that curve equals the valve's compressible nozzle flux (outflow
+from the cylinder's stagnation state, or inflow from the face's stagnation
+state into the cylinder). With the valve shut the solve reduces to the
+reflecting wall. The flux is per unit face area and is booked identically on
+the cylinder reservoir and on the duct face, so the exchange stays
+conservative. The root is a bracketed secant, warm-started from the previous
+solve of the same valve: 4.3 residual evaluations on average. The old nozzle
+boundary made the trapped charge depend on the internal Courant number:
+-6.5 % at Courant 0.8 against 0.08 with a 1,300 mm2 valve, -11 % with
+2,000 mm2. Its square-root law is stiff as the pressure difference vanishes,
+and the 15 % tolerance of `EngineLab.IntakeTuning` hid the bias. The
+characteristic boundary holds within 0.1 %
+([`IntakeRunnerCourantTests`](../tests/IntakeRunnerCourantTests.cpp));
+`EngineSimulatorOptions::intakeCharacteristicValve = false` restores the
+nozzle as a diagnostic.
+
+**Forward coupling.** A joint manifold exchanges with the cylinders over a
+330-microsecond interval (`intakeCouplingIntervalSeconds`), never rounded
+above it. At the start of an interval the network runs AHEAD of the
+chambers: each chamber volume and valve area moves at its current rate, an
+open exhaust valve drains the reservoir at the latest exhaust exchange rate
+(overlap), and the network's transfers are handed to the chambers evenly
+across the interval. The shaft re-sizes its substeps as it accelerates, so
+an interval rarely lasts what it was opened for: each one runs the network
+to where the chambers will be, from where the network's own clock stands.
+Without that lock the network's clock drifted from the chambers' over rev
+ramps (`EngineLab.JointIntakeManifold`). An interval shorter than 1.5
+mechanical substeps, or zero, exchanges on every substep. K20, torque against exchange on every
+substep: +0.18 / -1.26 / -0.60 % at 3,500 / 5,000 / 6,500 rpm (250 us:
+-0.79 % worst; 400 us: -1.48 %). The interval sets the cost: at 5,000 rpm,
+LS3 realtime 1.04 at 250 us and 1.08 at 330 us, Merlin (3,040 rpm) 0.98-1.01
+and 1.15. Front-loading the transfers or resolving their timing within the
+interval changed nothing measurable (journal 2026-10-09).
+
+The former partitioned-runner policy remains an explicit diagnostic option,
+with its historical 400-microsecond coupling window. `intakeForwardCoupling =
+false` with a positive interval tests a lagged, time-averaged joint network. The phase accumulator
+survives intake-valve-closing flushes, and leaving periodic coupling commits all
+pending exchanges. Cylinder state, volume and valve conductance are averaged
+over the window. The first intake half-exchange and intervening exhaust exchange
+are carried into the same averaged reservoir before the second intake
+half-step. This closes the split inventory; it does not remove the moving-piston
+boundary approximation. Refining only the FV time step cannot establish the
+convergence of that delayed mechanical exchange.
+
+The runner mouth matches the reservoir's stagnation state to the outgoing
+interior wave. Inflow uses a compatible subsonic wave-curve solve, with a sonic
+limit and the upstream composition and entropy. A zero-volume ambient boundary
+remains an infinite prescribed reservoir. For a finite intake plenum, its actual
+volume, species masses and energy evolve at the accepted network substeps and
+RK stages, using the same mouth fluxes as the duct. The caller books the returned
+integral once; the virtual reservoir is excluded from the network inventory.
+
+Partitioned diagnostic runners use a reconstructed shared-plenum staircase.
+Its Heun outlet predictor includes the adjacent internal face and declared wall
+sources: a uniform equilibrium must predict no transfer. It remains a local
+estimate with the supplied reservoir fixed; the actual advance replaces it.
+Single-runner passivity and exact species/energy balances alone do not establish
+convergence of the complete multi-runner engine.
+
+`EngineLab.IntakeTuning` also checks the production mesh against an internal
+numerical reference: a 30-mm target with the same 12-cell cap, SSP-RK2 and CFL
+0.1. The reference time step was qualified by a complete CFL-0.05 comparison
+over both runner lengths; it is not a manufacturer curve or a complete spatial
+convergence study. The pointwise production/reference tolerance remains 15%.
+Both grids stop below the limiter using the application dyno's operating
+margin. Explicit reference-CFL options retain historical diagnostic controls.
+
+Mechanical substeps are sized again as shaft speed changes within an outer
+frame, using current speed and a positive-acceleration estimate. The observed
+crank travel, rather than the requested nominal solver frequency, determines
+whether a step satisfies the configured angular resolution. The hard solver
+cap still applies; unresolved travel is reported and latched into cycle quality.
+
+Completed brake-cycle records latch any mechanical resolution fault throughout
+the cycle. The dynamometer rejects these cycles, and rejected cylinder or
+plenum transfers, as `simulationNumericalFault`. A successfully recovered
+finite-volume trial rejection alone does not invalidate a cycle. A failed
+zero-time network call clears its published exchanges; an accepted partial
+advance preserves the transfers that actually happened.
+
+The analytical mouth checks and isolated passivity fixtures are separate from
+the engine curve acquisitions. Curves export their settlement status, work
+cycles, thermal drift, actual coupling intervals and current/predictor CFL
+values; an unsettled row remains diagnostic evidence and is not silently
+promoted to a stationary operating point.
+
+Variable cam profiles have simulator-owned demand and actuator state. A complete
+physical 720-degree shaft cycle requests the high profile only when its minimum
+RPM reaches the authored threshold, and the low profile when its maximum RPM
+remains below it. A cycle spanning the threshold retains the preceding request;
+there is no added RPM band or dyno-derived control. Missing cycle observations
+cancel pending demand, and the authored throttle condition can request low.
+
+The actuator changes profiles only in a common base circle after two safe
+evaluations. Both candidate intake/exhaust lifts must be closed at the current
+phase/current VVT and at the preceding phase/actual preceding VVT. The complete
+travelled shaft arc is checked against both profiles' nominal supports using
+the current VVT geometry. Support endpoints are included because physical
+EVO/IVC crossing also includes the beginning and end of an arc. VVT advances
+once; an accepted change re-evaluates the lifts with zero elapsed time. Physical
+gas exchange, EVO/IVC handling and pressure-sample lift normalization use the
+same applied profile. The unresolved-charge mean-model fallback and nominal procedural-audio
+event timing retain their existing profile interpretation.
+
+Reset clears the joint-intake wall-heat clock along with the coupling clocks;
+the next run must not inherit the preceding run's deferred thermal time.
+
+Relevant contracts are [joint intake coupling](../tests/JointIntakeManifoldTests.cpp),
+[cycle numerical quality](../tests/BrakeCycleNumericalQualityTests.cpp) and
+[owned valve-profile transitions](../tests/ValveProfileTransitionTests.cpp).
 
 `AcousticIntakeNetwork` compiles each intake path into individual bidirectional
 runners, a WDF plenum compliance, a variable-admittance throttle restriction, an

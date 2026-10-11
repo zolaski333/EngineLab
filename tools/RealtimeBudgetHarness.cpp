@@ -51,6 +51,9 @@
 #include <vector>
 
 namespace {
+// --intake-per-runner: one network per runner instead of the joint manifold.
+std::optional<bool> intakeJointManifoldOverride;
+
 using Clock = std::chrono::steady_clock;
 
 constexpr std::size_t audioUtilisationHistogramBins = 201;
@@ -298,6 +301,16 @@ public:
         return renderer_.maxPreLimiterMagnitude();
     }
 
+    /** Peak pascals per layer at the observer, to name the layer behind a
+     *  pre-limiter peak. */
+    [[nodiscard]] std::array<float, 5> layerPeaksPa() const noexcept {
+        return { renderer_.maxObservedExhaustPressurePa(),
+            renderer_.maxObservedExhaustJetNoisePressurePa(),
+            renderer_.maxObservedIntakePressurePa(),
+            renderer_.maxObservedStructuralPressurePa(),
+            renderer_.maxObservedForcedInductionPressurePa() };
+    }
+
 private:
     class ProbeThread final : public juce::Thread {
     public:
@@ -432,6 +445,7 @@ struct Measurement final {
     std::uint64_t droppedExhaustAcousticSamples {};
     float minimumLevelGain { 1.0F };
     float maximumPreLimiterMagnitude {};
+    std::array<float, 5> layerPeaksPa {};
     std::uint64_t gasFieldsReceived {};
     std::uint64_t gasProbeTracesReceived {};
 };
@@ -505,6 +519,9 @@ private:
                                         std::optional<std::size_t> intakeMaximumCells,
                                         std::optional<std::size_t> intakeStaircaseRounds,
                                         std::optional<double> intakeCouplingSeconds,
+                                        bool intakeForwardCoupling,
+                                        std::optional<double> intakeCourant,
+                                        bool intakeNozzleValve,
                                         std::optional<double> intakeTargetCellLengthM,
                                         std::optional<double> exhaustTargetCellLengthM,
                                         std::optional<double> exhaustCouplingSeconds,
@@ -523,6 +540,10 @@ private:
     simulatorOptions.intakeMaximumCellCount = intakeMaximumCells;
     simulatorOptions.intakeStaircaseRounds = intakeStaircaseRounds;
     simulatorOptions.intakeCouplingIntervalSeconds = intakeCouplingSeconds;
+    if (intakeForwardCoupling) simulatorOptions.intakeForwardCoupling = true;
+    simulatorOptions.intakeMaximumCourantNumber = intakeCourant;
+    if (intakeNozzleValve) simulatorOptions.intakeCharacteristicValve = false;
+    simulatorOptions.intakeJointManifold = intakeJointManifoldOverride;
     simulatorOptions.intakeTargetCellLengthM = intakeTargetCellLengthM;
     simulatorOptions.exhaustTargetCellLengthM = exhaustTargetCellLengthM;
     simulatorOptions.maximumLowSpeedExhaustCouplingSeconds =
@@ -785,6 +806,7 @@ private:
         result.minimumLevelGain = audioProbe->minimumLevelGain();
         result.maximumPreLimiterMagnitude =
             audioProbe->maximumPreLimiterMagnitude();
+        result.layerPeaksPa = audioProbe->layerPeaksPa();
     }
     result.iterations = static_cast<std::uint64_t>(result.simulatedSeconds * 240.0);
     result.maximumLatenessMs = runtime->maximumTimingLatenessSeconds() * 1.0e3;
@@ -879,6 +901,9 @@ int main(int argc, char** argv) {
     std::optional<std::size_t> intakeMaximumCells;
     std::optional<std::size_t> intakeStaircaseRounds;
     std::optional<double> intakeCouplingSeconds;
+    bool intakeForwardCoupling = false;
+    std::optional<double> intakeCourant;
+    bool intakeNozzleValve = false;
     std::optional<double> intakeTargetCellLengthM;
     std::optional<double> exhaustTargetCellLengthM;
     std::optional<double> exhaustCouplingSeconds;
@@ -908,6 +933,14 @@ int main(int argc, char** argv) {
             intakeStaircaseRounds = static_cast<std::size_t>(std::stoull(argv[++index]));
         else if (argument == "--intake-coupling-us" && index + 1 < argc)
             intakeCouplingSeconds = std::stod(argv[++index]) * 1.0e-6;
+        else if (argument == "--intake-forward")
+            intakeForwardCoupling = true;
+        else if (argument == "--intake-nozzle-valve")
+            intakeNozzleValve = true;
+        else if (argument == "--intake-per-runner")
+            intakeJointManifoldOverride = false;
+        else if (argument == "--intake-cfl" && index + 1 < argc)
+            intakeCourant = std::stod(argv[++index]);
         else if (argument == "--intake-cell-mm" && index + 1 < argc)
             intakeTargetCellLengthM = std::stod(argv[++index]) * 1.0e-3;
         else if (argument == "--exhaust-cell-mm" && index + 1 < argc)
@@ -943,7 +976,7 @@ int main(int argc, char** argv) {
                          "[--filter NAME] [--rpm N] [--warmup S] [--seconds S] "
                          "[--relative-rpm FRACTION] [--intake-workers N] "
                          "[--intake-max-cells N] [--intake-staircase-rounds N] "
-                         "[--intake-coupling-us N] "
+                         "[--intake-coupling-us N] [--intake-forward] [--intake-cfl C] [--intake-nozzle-valve] [--intake-per-runner] "
                          "[--intake-cell-mm N] "
                          "[--exhaust-cell-mm N] "
                          "[--exhaust-coupling-us N] "
@@ -1117,7 +1150,7 @@ int main(int argc, char** argv) {
         const auto measurement = measureEngine(
             measurementConfig, requestedRpm, warmupSeconds, measureSeconds, freeRun,
             intakeWorkers, intakeMaximumCells, intakeStaircaseRounds,
-            intakeCouplingSeconds, intakeTargetCellLengthM,
+            intakeCouplingSeconds, intakeForwardCoupling, intakeCourant, intakeNozzleValve, intakeTargetCellLengthM,
             exhaustTargetCellLengthM,
             exhaustCouplingSeconds, intakeFirstOrderTimeIntegration,
             intakeWallHeatUpdateSeconds,
@@ -1174,7 +1207,12 @@ int main(int argc, char** argv) {
                       << std::setprecision(4)
                       << measurement.minimumLevelGain
                       << ", pre-limiter peak "
-                      << measurement.maximumPreLimiterMagnitude << '\n';
+                      << measurement.maximumPreLimiterMagnitude << '\n'
+                      << "  observer peaks (Pa): exhaust " << std::setprecision(1)
+                      << measurement.layerPeaksPa[0] << ", jet " << measurement.layerPeaksPa[1]
+                      << ", intake " << measurement.layerPeaksPa[2]
+                      << ", structure " << measurement.layerPeaksPa[3]
+                      << ", forced induction " << measurement.layerPeaksPa[4] << '\n';
             std::cout << "  audio contract: dropF="
                       << measurement.droppedEvents
                       << " dropP=" << measurement.droppedPressureSamples

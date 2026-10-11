@@ -861,6 +861,42 @@ struct Variant final {
     return config;
 }
 
+/** Which pipe the length factorial lengthens beside the silencer body. */
+enum class FactorialPipe { primary, midpipe };
+
+/** One cell of a 2x2 length factorial: the pipe and the silencer body are
+ *  each kept or lengthened, and nothing else moves. A longer silencer keeps
+ *  its diameter, so its volume grows with its length as a longer can would. */
+[[nodiscard]] EngineConfig withLengths(const EngineConfig& source, FactorialPipe pipe,
+                                       double pipeScale, double mufflerScale) {
+    auto config = source;
+    const auto scaleGeometry = [&](ExhaustConfig& exhaust) {
+        if (pipe == FactorialPipe::primary) exhaust.primaryLengthMm *= pipeScale;
+        else exhaust.midpipeLengthMm *= pipeScale;
+        if (exhaust.mufflerChamberLengthMm > 0.0)
+            exhaust.mufflerChamberLengthMm *= mufflerScale;
+    };
+    scaleGeometry(config.exhaust);
+    for (auto& path : config.exhaustPaths) {
+        scaleGeometry(path.geometry);
+        if (!path.network) continue;
+        std::set<std::uint32_t> primaryIds;
+        for (const auto& connection : path.network->cylinderConnections)
+            primaryIds.insert(connection.componentId);
+        for (auto& component : path.network->components) {
+            if (component.type == ExhaustComponentType::muffler) {
+                component.lengthMm *= mufflerScale;
+                component.volumeLitres *= mufflerScale;
+            } else if (component.type == ExhaustComponentType::pipe
+                       && primaryIds.contains(component.id)
+                           == (pipe == FactorialPipe::primary)) {
+                component.lengthMm *= pipeScale;
+            }
+        }
+    }
+    return config;
+}
+
 /** A mono signal read from a WAV file, plus what the file said about itself.
  *
  *  This exists so an EXTERNAL recording can be measured by exactly the same
@@ -1117,6 +1153,104 @@ struct WavSignal final {
     return 0;
 }
 
+/** The 2x2 factorial: does lengthening the pipe change the sound differently
+ *  when the silencer is long too? The interaction LL - LS - SL + SS is zero
+ *  per band when the two effects simply add (in dB); anything else is the
+ *  part neither length explains on its own. */
+[[nodiscard]] int runLengthFactorial(const EngineConfig& engine, double targetRpm,
+                                     double seconds, FactorialPipe pipe,
+                                     double pipeScale, double mufflerScale) {
+    const auto pipeName = pipe == FactorialPipe::primary ? "primary" : "midpipe";
+    struct Cell final { const char* name; bool longPipe; bool longMuffler; };
+    const std::array<Cell, 4> cells { {
+        { "reference", false, false },
+        { "long-pipe", true, false },
+        { "long-muffler", false, true },
+        { "long-both", true, true },
+    } };
+    std::cout << "Length factorial: " << pipeName << " x" << std::fixed
+              << std::setprecision(2) << pipeScale << ", silencer body x"
+              << mufflerScale << '\n'
+              << "  engine      " << engine.name << '\n'
+              << "  held speed  " << std::setprecision(0) << targetRpm << " rpm, "
+              << std::setprecision(1) << seconds << " s per cell\n\n";
+    std::array<RenderResult, 4> results {};
+    for (std::size_t index = 0; index < cells.size(); ++index) {
+        const auto config = withLengths(engine, pipe,
+            cells[index].longPipe ? pipeScale : 1.0,
+            cells[index].longMuffler ? mufflerScale : 1.0);
+        try {
+            results[index] = render(config, targetRpm, seconds);
+        } catch (const std::exception& error) {
+            std::cerr << "  FAILED cell " << cells[index].name << ": "
+                      << error.what() << '\n';
+            return 1;
+        }
+        const auto& result = results[index];
+        if (!(result.finalRpm > 0.80 * targetRpm)) {
+            std::cerr << "  ENGINE NOT HELD on " << cells[index].name << " ("
+                      << std::setprecision(0) << result.finalRpm << " rpm)\n";
+            return 1;
+        }
+        if (result.minLevelGain < 0.99999 || result.levelLimitedSamples != 0
+            || result.saturationProcessedSamples != 0 || result.softLimitedSamples != 0
+            || result.hardClampedSamples != 0) {
+            std::cerr << "  NON-NEUTRAL OUTPUT on " << cells[index].name
+                      << ". Comparison rejected.\n";
+            return 1;
+        }
+        std::cout << "  " << std::left << std::setw(13) << cells[index].name << std::right
+                  << " mix " << std::setprecision(2) << std::setw(7) << result.mix.broadbandDb
+                  << " dB  exhaust " << std::setw(7) << result.exhaust.broadbandDb
+                  << " dB  rpm " << std::setprecision(0) << result.finalRpm
+                  << (result.physicalActive ? "" : "  [NON-PHYSICAL PATH]") << '\n';
+        printCharacter(characterise(result.mixSignal, result.steadyBegin, result.mix));
+    }
+
+    const auto report = [&](const char* label, auto spectrumOf) {
+        std::cout << "\n  " << label << ", third-octave level relative to the reference"
+                     " (dB), and the interaction LL-LS-SL+SS:\n"
+                  << "  " << std::setw(7) << "Hz" << std::setw(10) << "pipe"
+                  << std::setw(10) << "muffler" << std::setw(10) << "both"
+                  << std::setw(13) << "interaction\n";
+        auto squareSum = 0.0;
+        auto counted = 0;
+        for (std::size_t band = 0; band < thirdOctaveCentresHz.size(); ++band) {
+            const auto present = std::ranges::all_of(results, [&](const auto& result) {
+                return spectrumOf(result).bandPresent[band];
+            });
+            if (!present) continue;
+            const auto level = [&](std::size_t cell) {
+                return spectrumOf(results[cell]).bandDb[band]
+                    - spectrumOf(results[0]).bandDb[band];
+            };
+            const auto interaction = level(3) - level(1) - level(2);
+            squareSum += interaction * interaction;
+            ++counted;
+            std::cout << "  " << std::setw(7) << std::setprecision(0)
+                      << thirdOctaveCentresHz[band] << std::showpos << std::setprecision(1)
+                      << std::setw(10) << level(1) << std::setw(10) << level(2)
+                      << std::setw(10) << level(3) << std::setw(12) << interaction
+                      << std::noshowpos << '\n';
+        }
+        std::cout << "  interaction RMS over " << counted << " bands: "
+                  << std::setprecision(2)
+                  << std::sqrt(squareSum / std::max(1, counted)) << " dB\n";
+        for (std::size_t cell = 1; cell < cells.size(); ++cell) {
+            const auto gap = distance(spectrumOf(results[0]), spectrumOf(results[cell]));
+            std::cout << "  " << std::left << std::setw(13) << cells[cell].name << std::right
+                      << " level " << std::showpos << std::setprecision(2) << gap.levelDb
+                      << std::noshowpos << " dB  shape " << gap.shapeRmsDb
+                      << " dB  worst " << std::showpos << gap.worstBandDb << std::noshowpos
+                      << " dB at " << std::setprecision(0) << gap.worstBandHz << " Hz\n";
+        }
+    };
+    report("Mix", [](const RenderResult& result) -> const Spectrum& { return result.mix; });
+    report("Exhaust bus",
+        [](const RenderResult& result) -> const Spectrum& { return result.exhaust; });
+    return 0;
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -1129,6 +1263,9 @@ int main(int argc, char** argv) {
     std::vector<std::filesystem::path> wavVariants;
     std::filesystem::path wavOut;
     double wavSkipSeconds = 1.0;
+    std::optional<FactorialPipe> factorialPipe;
+    double factorialPipeScale = 2.0;
+    double factorialMufflerScale = 2.0;
     for (int index = 1; index < argc; ++index) {
         const std::string argument = argv[index];
         if (argument == "--catalog-root" && index + 1 < argc) catalogRoot = argv[++index];
@@ -1144,10 +1281,23 @@ int main(int argc, char** argv) {
             wavSkipSeconds = std::stod(argv[++index]);
         else if (argument == "--wav-out" && index + 1 < argc)
             wavOut = argv[++index];
+        else if (argument == "--factorial" && index + 1 < argc) {
+            const std::string_view pipe { argv[++index] };
+            if (pipe == "primary") factorialPipe = FactorialPipe::primary;
+            else if (pipe == "midpipe") factorialPipe = FactorialPipe::midpipe;
+            else { std::cerr << "--factorial takes primary or midpipe\n"; return 2; }
+        }
+        else if (argument == "--pipe-scale" && index + 1 < argc)
+            factorialPipeScale = std::stod(argv[++index]);
+        else if (argument == "--muffler-scale" && index + 1 < argc)
+            factorialMufflerScale = std::stod(argv[++index]);
         else {
             std::cout << "usage: " << argv[0]
                       << " [--catalog-root path] [--filter name-fragment]"
                          " [--rpm N] [--seconds S] [--list]\n"
+                         "       " << argv[0]
+                      << " --factorial primary|midpipe [--pipe-scale X]"
+                         " [--muffler-scale Y] [--filter ...] [--rpm N]\n"
                          "       " << argv[0]
                       << " --wav-reference ref.wav --wav-variant v.wav [...]"
                          " [--wav-skip S]\n";
@@ -1188,6 +1338,14 @@ int main(int argc, char** argv) {
     const auto& engine = selected.entry->config;
     if (!(targetRpm > 0.0))
         targetRpm = std::max(engine.idleRpm * 2.0, engine.redlineRpm * 0.55);
+    if (factorialPipe) {
+        if (!(factorialPipeScale > 0.0) || !(factorialMufflerScale > 0.0)) {
+            std::cerr << "scales must be positive\n";
+            return 2;
+        }
+        return runLengthFactorial(engine, targetRpm, seconds, *factorialPipe,
+                                  factorialPipeScale, factorialMufflerScale);
+    }
 
     std::cout << "Sound sensitivity to exhaust geometry\n"
               << "  engine      " << engine.name << '\n'

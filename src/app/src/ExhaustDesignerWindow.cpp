@@ -34,7 +34,7 @@ constexpr std::size_t maximumConnections = 1'024;
  *
  * Validation checks ranges and topology and nothing else, so a network that is
  * perfectly legal can still be ruinously expensive: the explicit solver's time
- * step is set by the minimum duct dx or junction V/sum(A), and every other
+ * step is set by the minimum duct dx or junction 2 V/sum(A), and every other
  * duct then substeps at that rate. A user who rebuilt a 2JZ exhaust with an
  * 80 x 10 mm silencer body reported that the engine had "gained inertia, lost
  * its liveliness and made almost no sound" -- three descriptions of one cause,

@@ -5,6 +5,57 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-11 — Gas networks on the worker pool, bit-identical
+
+- Each duct's share of an RK stage (update, cache, wall heat, interior residual, its ports' and outlets' face fluxes) runs on the existing worker pool; coupling stays serial in a fixed order. Euler stage and second-stage pass fused (3 barriers per step). WAVs of all 16 catalogue engines byte-identical to the serial build; `EngineLab.GasDynamics` reverses the dispatch order (a misplaced plenum sum fails it with 6 runners, not with 3).
+- Free-run, 0.95 x limiter, alternated, 2-3 runs each: Merlin 1.15 (0 workers) -> 1.47; LS3 1.01 -> 1.12. Fusion alone +2-3 %. Duct interiors only (no boundaries) gave Merlin +5-8 %, LS3 nothing.
+- With audio, whole catalogue, same hour vs main: worst LS3 1.07 (main 0.95); Merlin 1.40 (1.35). Twins (no pool) 1.98-2.06 vs 2.10-2.22, not investigated. LS3 with audio + 3-D view: 1.05-1.06 (main 0.94-0.96 or invalid, dropped pressure).
+- Runtime scenario (`--runtime-filter`, limiter at 50 % throttle), overruns of 1,440: Merlin 115-117 (main 59-112), LS3 267-306 (main 530).
+- Not tried: residual of the next step fused into the candidate pass (one barrier fewer except on each call's last step).
+
+## 2026-10-11 — Merlin and Radial clicks: the valve-flow band toggled
+
+- Corrects the 2026-10-09 entry "Merlin runtime gate still red, not from the intake": the cause was in the audio. The complementary valve-flow band is fitted to the published mechanical rate; single short crank sub-steps spiked it to 12-20 kHz for a few ms. On the Merlin the floor (~9.8 kHz) leaves the band empty, so it switched on ~30 times in 8 s with stale state: clicks up to 3x full scale.
+- Fix: follow the slowest recent rate (down at once, up over 0.25 s) and unprime a closed band. Offline Merlin peak 3.15 -> 0.45, crest 32 -> 5.0; runtime gate passes (pre-limiter 0.42-0.46). Catalogue RMS unchanged (Radial -1.1 %), Radial window crest 8.91 -> 1.81.
+- Refuted: re-tuning the reconstruction as a state-variable filter instead of DF1 sections (-65 dB difference, clicks unchanged).
+
+## 2026-10-09 — Exhaust junction step: the duct cells' convention
+
+- A junction's explicit bound was C V / sum(A (|u|+c)); a duct cell's is C dx / (|u|+c) = 2 C V / sum(A (|u|+c)). The LS3's derived X crossover (2 A d, four 80 mm ports) took half its pipes' step and bound the whole exhaust (~42 us vs ~84 us).
+- LS3, one factor (junction bound x0.5 / x1 / x2): torque at 3,000 / 4,500 / 6,000 rpm within 0.15 %; catalogue sound octave bands within 0.2 dB, spectral cosine 0.9987.
+- Realtime, LS3 free-run at 0.9 of the limiter (5,940 rpm), alternated: 0.915 / 0.905 -> 1.031 / 1.043. At the limiter (6,270) it was 0.886 before; not remeasured.
+- Closed X fixture (`EngineLab.ExhaustJunctionStep`): passive at the new bound and at twice it.
+
+## 2026-10-09 — Intake valve: characteristic boundary; forward coupling 330 us
+
+- Root cause of the intake bias: the quasi-steady valve nozzle fed by the first cell's average made the trapped charge depend on the internal Courant number (single runner + moving piston, Courant 0.8 vs 0.08: -6.5 % at 1,300 mm2, -11 % at 2,000 mm2). Ruled out before: MUSCL limiter, finite plenum, wall heat, valve linearisation, forward coupling alone.
+- Characteristic boundary (face on the interior wave curve, mass flux = valve nozzle): 0.07-0.09 % at the same points. Joint manifold then accurate at Courant 0.8; the coupling interval sets the cost.
+- Forward coupling with the exhaust overlap drain, K20 vs exchange every substep: 150 us -0.49 % worst, 250 -0.79, 330 -1.26, 400 -1.48 %. Default 330 us.
+- Front-loaded delivery (6,500: -2.28 % unchanged) and trajectory-resolved delivery (-0.78 vs -0.79 %): no effect, removed.
+- Warm-started secant: 4.3 residual evaluations per solve (was 8.4). Live intake swap now copies these warm starts (bit-identity test caught it).
+- Forward intervals counted their substeps at their opening size; over 2,500 <-> 6,500 rpm ramps the network's clock drifted beyond one interval from the chambers'. Each interval now runs to the chambers' expected time from the network's own clock.
+- Realtime, free-run, 5,000 rpm (Merlin 3,040): LS3 1.08, Merlin 1.15 (were 0.78 / 0.80). At --relative-rpm 0.9 every catalogue engine > 1.1 except LS3 0.918 at 5,940 rpm: its exhaust step is bound by the 4-port crossover junction (derived ~0.8 L, ~42 us vs ducts ~84 us).
+- Sound, AudioRenderHarness catalogue point, `--intake-legacy` (nozzle, every substep) vs new: RMS within ±4 % on 12 of 16; 2JZ -15 %, EJ25 -11 %, Hayabusa +19 % (brightness 0.176 -> 0.143). Merlin pre-limiter 1.51 -> 0.66: its catalogue gate (0.82) now passes. Not judged by ear; full 50-rpm curves not rerun.
+
+## 2026-10-09 — Exhaust coupling cap; LS3 realtime and Merlin clicks still open
+
+- The exhaust flushed on the sub-step nearest its 125 us cap: up to half a sub-step past it, and with crank-angle sub-steps the stride flipped 1 <-> 2 per frame (Merlin: 82 us sub-steps, 164 us windows). Now the last sub-step within the cap; default I4 at a 160 us cap: 941 frames over -> 0.
+- AudioRenderHarness, catalogue: most engines < 5 %; CP3 rms +16 %, CP4 in-duct Pa -19 %, flat-six +10 %, EL-09 Pa +12 %, LS3 -4 %. Not judged by ear.
+- Realtime, free-run, min of 2 back-to-back: all ±1.5 % except K20A 1.21 -> 1.12 (its 62-83 us sub-steps now couple every sub-step).
+- LS3 0.78 vs main 1.13-1.14, Merlin 0.80 vs 1.45: structural. The joint intake network advances every runner on both half-steps (main advanced closed runners once per sub-step). Profiling found ~1 % recoverable without changing results; main's intake workers gained ~1 % too.
+- Merlin over the limiter (catalogue pre-limiter 1.49-1.51, gate 0.82): sparse ~5 kHz clicks clipped in the exhaust-dry stem (1.34-1.82 s), same RMS as main; late steady state is quieter (master RMS 0.030 vs 0.044). Ruled out: coupling cadence (fix leaves 1.51), exhaust reactions, firing voices, port state, low-pressure EVOs.
+- Reverting only the inflow law: 0.79; only the joint network (per-runner): 0.76; neither: 1.66. An interaction, not one cause. main's own build also fails the non-deterministic runtime Merlin gate.
+
+## 2026-10-08 — Curve spikes: intake numerics, crank step, VTEC switching
+
+- Intake runners on MUSCL/Forward Euler amplified a closed perturbation 823-962x; SSP-RK2 holds the gain at 1. The inflow boundary had a singular small-signal admittance, and the finite plenum was not advanced in the RK stages: both fixed, each with a passivity fixture.
+- A 400 us delayed cylinder/plenum exchange moved trapped mass +4.6 % and work -7 % (isolated); exchange now on both half-steps, one joint network per path.
+- The crank step was sized from the initial speed and could overrun its angle; it now follows the travelled angle, and a fault rejects the whole 720-degree dyno cycle.
+- K20 VTEC switched on instantaneous rpm, valves open, 106 times/s/cylinder: torque CV 3.48 % at 5,800 rpm. Requested per shaft cycle and switched on a common base circle: 0.14 %.
+- Adjacent 50-rpm torque steps: K20 8.8-11.4 % -> 1.9-3.5 %, CP2 2.6-5.8 % -> 1.8-2.1 %. Against rated points (100-rpm sweep): 2JZ 4,000 rpm 369 -> 416 Nm (427), Hayabusa max 178 -> 153 Nm (138).
+- Refutes the 2026-10-07 "not numerical": that oracle changed mesh and integrator together, on a stale binary.
+- Not fixed: Merlin audio over the limiter (pre-limiter 2.7x full scale), LS3 realtime 0.75-0.87. 931 of 942 sweep points are thermally unsettled. Threaded/reuse prototypes in `out/evidence` were never built.
+
 ## 2026-10-07 — Hayabusa and 2JZ curve swings come from the intake runner waves
 
 - A rated peak torque is its curve's maximum. Sweep maxima over it: Hayabusa +29 % (178 Nm at 7,500, VE 1.26

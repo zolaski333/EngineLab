@@ -6,6 +6,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <iostream>
+#include <limits>
 #include <numbers>
 #include <string_view>
 #include <vector>
@@ -419,6 +420,197 @@ void testOutletFlowIsPhysicalAndConservative() {
         "outlet telemetry must expose finite pressure, temperature and signed flow");
     requireMassEnergyBalance(before, network.inventory(),
                              network.cylinderExchanges(), network.outletSamples(), 3.0e-9);
+}
+
+void testFailedAdvancePublishesOnlyTransfersFromItsAdvancedTime() {
+    ExhaustGasNetworkConfig configuration;
+    configuration.initialPressurePa = 165'000.0;
+    configuration.initialTemperatureK = 680.0;
+    auto network = makeNetwork(makeDefaultInlineFour(), configuration);
+    const auto cylinderId = network.layout().cylinderPorts().front().cylinderId;
+    const auto cylinderState = network.mixtureModel().conservativeFromPressureTemperature(
+        360'000.0, 1'050.0);
+    requireNetwork(cylinderState.has_value(), "failed-advance drive must be physical");
+    CylinderValveBoundary boundary {
+        cylinderId, *cylinderState, 5.0e-4, 1.8e-4, 0.78
+    };
+    const auto boundarySpan = std::span<const CylinderValveBoundary>(&boundary, 1);
+    const auto ambient = ambientFor(network, 101'325.0, 300.0, 1.0);
+
+    // A failed call which did accept time must keep that time's real transfers.
+    auto partialConfiguration = configuration;
+    partialConfiguration.maximumSubstepsPerAdvance = 1;
+    auto partialNetwork = makeNetwork(makeDefaultInlineFour(), partialConfiguration);
+    const auto partialAmbient = ambientFor(partialNetwork, 101'325.0, 300.0, 1.0);
+    const auto beforePartial = partialNetwork.inventory();
+    const auto partial = partialNetwork.advance(0.010, boundarySpan, partialAmbient);
+    requireNetwork(!partial.completed && partial.advancedTimeSeconds > 0.0
+            && partial.acceptedSubsteps == 1,
+        "substep-limited fixture must fail after accepting positive time");
+    requireNetwork(std::any_of(partialNetwork.cylinderExchanges().begin(),
+        partialNetwork.cylinderExchanges().end(), [](const CylinderGasExchange& exchange) {
+            return exchange.totalMassKg() > 0.0 && exchange.totalEnergyJ > 0.0;
+        }), "a positive partial advance must keep its actual cylinder transfer");
+    requireNetwork(std::any_of(partialNetwork.outletSamples().begin(),
+        partialNetwork.outletSamples().end(), [](const ExhaustOutletFlowSample& sample) {
+            return totalMass(sample.speciesMassKg) > 0.0 && sample.transferredEnergyJ > 0.0;
+        }), "a positive partial advance must keep its actual outlet transfer");
+    requireMassEnergyBalance(beforePartial, partialNetwork.inventory(),
+        partialNetwork.cylinderExchanges(), partialNetwork.outletSamples(), 3.0e-9);
+
+    const auto first = network.advance(0.00035, boundarySpan, ambient);
+    requireNetwork(first.completed && first.advancedTimeSeconds > 0.0,
+        "valid failed-advance primer must advance positive time");
+    requireNetwork(std::any_of(network.cylinderExchanges().begin(),
+        network.cylinderExchanges().end(), [](const CylinderGasExchange& exchange) {
+            return exchange.totalMassKg() > 0.0 && exchange.totalEnergyJ > 0.0;
+        }), "primer must publish a nonzero cylinder transfer before invalid input");
+    requireNetwork(std::any_of(network.outletSamples().begin(),
+        network.outletSamples().end(), [](const ExhaustOutletFlowSample& sample) {
+            return totalMass(sample.speciesMassKg) > 0.0 && sample.transferredEnergyJ > 0.0;
+        }), "primer must publish a nonzero outlet transfer before invalid input");
+    const auto beforeInvalid = network.inventory();
+    const std::vector<CylinderGasExchange> publishedCylinders(
+        network.cylinderExchanges().begin(), network.cylinderExchanges().end());
+    const std::vector<ExhaustOutletFlowSample> publishedOutlets(
+        network.outletSamples().begin(), network.outletSamples().end());
+    boundary.cylinderVolumeM3 = 0.0;
+    const auto invalid = network.advance(0.00035, boundarySpan, ambient);
+    requireNetwork(!invalid.completed && invalid.advancedTimeSeconds == 0.0
+            && invalid.acceptedSubsteps == 0,
+        "invalid boundary must fail before accepting any time");
+    const auto afterInvalid = network.inventory();
+    requireNetwork(afterInvalid.speciesMassKg == beforeInvalid.speciesMassKg
+            && afterInvalid.totalEnergyJ == beforeInvalid.totalEnergyJ,
+        "invalid boundary must leave network inventory unchanged");
+    requireNetwork(std::equal(publishedCylinders.begin(), publishedCylinders.end(),
+        network.cylinderExchanges().begin(), [](const CylinderGasExchange& before,
+                                               const CylinderGasExchange& after) {
+            return before.cylinderId == after.cylinderId && before.pathIndex == after.pathIndex;
+        }) && std::equal(publishedOutlets.begin(), publishedOutlets.end(),
+        network.outletSamples().begin(), [](const ExhaustOutletFlowSample& before,
+                                           const ExhaustOutletFlowSample& after) {
+            return before.outletNodeId == after.outletNodeId
+                && before.pathIndex == after.pathIndex
+                && before.openingAreaM2 == after.openingAreaM2;
+        }), "rejected advance must retain cylinder and outlet identity metadata");
+    const auto cylindersAreZero = std::all_of(network.cylinderExchanges().begin(),
+        network.cylinderExchanges().end(), [](const CylinderGasExchange& exchange) {
+            return std::all_of(exchange.speciesMassKg.begin(), exchange.speciesMassKg.end(),
+                       [](double mass) { return mass == 0.0; })
+                && exchange.totalEnergyJ == 0.0 && exchange.axialMomentumImpulseNs == 0.0;
+        });
+    const auto outletsAreZero = std::all_of(network.outletSamples().begin(),
+        network.outletSamples().end(), [](const ExhaustOutletFlowSample& sample) {
+            return std::all_of(sample.speciesMassKg.begin(), sample.speciesMassKg.end(),
+                       [](double mass) { return mass == 0.0; })
+                && sample.transferredEnergyJ == 0.0 && sample.massFlowKgPerS == 0.0
+                && sample.volumeFlowM3PerS == 0.0 && sample.totalEnergyFlowW == 0.0;
+        });
+    if (!cylindersAreZero || !outletsAreZero) {
+        std::cerr << "zero-time rejected advance: cylinder transfers zero="
+                  << cylindersAreZero << " outlet transfers zero=" << outletsAreZero << '\n';
+    }
+    requireNetwork(cylindersAreZero && outletsAreZero,
+        "zero-time rejected advance must publish zero cylinder and outlet transfers");
+
+    boundary.cylinderVolumeM3 = 5.0e-4;
+    for (const auto invalidVolume : { -1.0e-3, std::numeric_limits<double>::quiet_NaN() }) {
+        const auto primer = network.advance(0.00035, boundarySpan, ambient);
+        requireNetwork(primer.completed
+                && std::any_of(network.outletSamples().begin(), network.outletSamples().end(),
+                    [](const ExhaustOutletFlowSample& sample) {
+                        return totalMass(sample.speciesMassKg) > 0.0;
+                    }), "invalid ambient-volume rejection must follow a nonzero valid transfer");
+        const auto beforeRejectedVolume = network.inventory();
+        auto invalidAmbient = ambient;
+        invalidAmbient.reservoirVolumeM3 = invalidVolume;
+        const auto rejectedVolume = network.advance(0.00035, boundarySpan, invalidAmbient);
+        const auto afterRejectedVolume = network.inventory();
+        requireNetwork(!rejectedVolume.completed && rejectedVolume.advancedTimeSeconds == 0.0
+                && rejectedVolume.acceptedSubsteps == 0
+                && afterRejectedVolume.speciesMassKg == beforeRejectedVolume.speciesMassKg
+                && afterRejectedVolume.totalEnergyJ == beforeRejectedVolume.totalEnergyJ,
+            "negative or nonfinite ambient volume must reject without advancing inventory");
+        requireNetwork(std::all_of(network.cylinderExchanges().begin(),
+                network.cylinderExchanges().end(), [](const CylinderGasExchange& exchange) {
+                    return exchange.speciesMassKg == std::array<double, gasSpeciesCount> {}
+                        && exchange.totalEnergyJ == 0.0 && exchange.axialMomentumImpulseNs == 0.0;
+                })
+                && std::all_of(network.outletSamples().begin(), network.outletSamples().end(),
+                    [](const ExhaustOutletFlowSample& sample) {
+                        return sample.speciesMassKg == std::array<double, gasSpeciesCount> {}
+                            && sample.transferredEnergyJ == 0.0 && sample.massFlowKgPerS == 0.0
+                            && sample.totalEnergyFlowW == 0.0;
+                    }), "invalid ambient volume must clear previously published transfers");
+    }
+}
+
+void testSmallSignalReservoirInflowUsesInteriorWaveAndReservoirDensity() {
+    constexpr auto areaM2 = 1.0e-3;
+    constexpr auto reservoirPressurePa = 101'325.0;
+    constexpr auto pressurePerturbationPa = 100.0;
+    constexpr auto durationSeconds = 1.0e-9;
+    CompiledExhaustDuct duct;
+    duct.nodeId = 100;
+    duct.lengthM = 0.25;
+    duct.flowAreaM2 = areaM2;
+    duct.inletFlowAreaM2 = areaM2;
+    duct.outletFlowAreaM2 = areaM2;
+    duct.connectionAreaM2 = areaM2;
+    duct.inletConnectionAreaM2 = areaM2;
+    duct.outletConnectionAreaM2 = areaM2;
+    duct.hydraulicDiameterM = std::sqrt(4.0 * areaM2 / std::numbers::pi);
+    duct.volumeM3 = areaM2 * duct.lengthM;
+    duct.cellCount = 8;
+    CompiledCylinderPort port;
+    port.cylinderId = 1;
+    port.networkEndpoint = { ExhaustEndpointType::ductInlet, 0, duct.nodeId };
+    port.runnerConnectionAreaM2 = areaM2;
+    port.dischargeCoefficient = 1.0;
+    CompiledExhaustOutlet outlet;
+    outlet.outletNodeId = 200;
+    outlet.networkEndpoint = { ExhaustEndpointType::ductOutlet, 0, duct.nodeId };
+    outlet.openingAreaM2 = areaM2;
+    outlet.dischargeCoefficient = 1.0;
+    const auto layout = ExhaustNetworkLayout::assemble({ duct }, {}, {}, { port }, { outlet });
+    requireNetwork(layout.valid(), "small-signal boundary fixture must compile");
+    auto allInflowObservationsMatch = true;
+    for (const auto interiorTemperatureK : { 300.0, 900.0 }) {
+        ExhaustGasNetworkConfig configuration;
+        configuration.initialPressurePa = reservoirPressurePa - pressurePerturbationPa;
+        configuration.initialTemperatureK = interiorTemperatureK;
+        ExhaustGasNetwork network;
+        requireNetwork(network.configure(layout, configuration),
+            "small-signal boundary fixture must configure");
+        const auto ambient = ambientFor(network, reservoirPressurePa, 300.0, 1.0);
+        const auto interior = network.mixtureModel().primitiveFromConservative(
+            network.ducts().front().cells().back());
+        const auto reservoir = network.mixtureModel().primitiveFromConservative(
+            ambient.reservoirState);
+        requireNetwork(interior && reservoir, "both boundary gases must be physical");
+        // Linear outgoing-wave compatibility sets u=-dp/(rho_i*c_i).
+        // Incoming material has reservoir density, even when the duct is hot.
+        const auto expectedMassFlowKgPerS = -areaM2 * reservoir->densityKgPerM3
+            * pressurePerturbationPa
+            / (interior->densityKgPerM3 * interior->speedOfSoundMps);
+        const auto step = network.advance(durationSeconds, {}, ambient);
+        requireNetwork(step.completed && step.acceptedSubsteps == 1
+                && step.rejectedSubsteps == 0,
+            "tiny boundary observation must accept one step without retries");
+        const auto measuredMassFlowKgPerS = network.outletSamples().front().massFlowKgPerS;
+        const auto error = relativeError(measuredMassFlowKgPerS, expectedMassFlowKgPerS);
+        std::cout << "  small-signal reservoir inflow: interior T=" << interiorTemperatureK
+                  << " K measured=" << measuredMassFlowKgPerS
+                  << " expected=" << expectedMassFlowKgPerS
+                  << " kg/s relative error=" << error << '\n';
+        // dp/p is ~0.001; leave room for nonlinear and approximate-Riemann
+        // corrections while excluding the square-root head-law response.
+        allInflowObservationsMatch = allInflowObservationsMatch
+            && measuredMassFlowKgPerS < 0.0 && error < 0.02;
+    }
+    requireNetwork(allInflowObservationsMatch,
+        "small-signal inflow must use finite interior acoustic response and reservoir density");
 }
 
 void testOpenEndDischargesTowardFreeExpansion() {
@@ -1091,6 +1283,8 @@ void runExhaustGasNetworkTests() {
     testInstantaneousBoundarySamplingIsSignedAndNonMutating();
     testResetIsAllocationFreeStateReinitialisation();
     testOutletFlowIsPhysicalAndConservative();
+    testFailedAdvancePublishesOnlyTransfersFromItsAdvancedTime();
+    testSmallSignalReservoirInflowUsesInteriorWaveAndReservoirDensity();
     testOpenEndDischargesTowardFreeExpansion();
     testDirectDuctInterfaceTransmitsWavesWithoutInventoryLoss();
     testCatalystThermalStateAggregatesTheWholeSubstrate();

@@ -14,7 +14,9 @@
 #include <enginelab/gasdynamics/ExhaustGasNetwork.hpp>
 
 #include <array>
+#include <bit>
 #include <cmath>
+#include <cstdint>
 #include <cstdlib>
 #include <iostream>
 #include <string_view>
@@ -322,6 +324,109 @@ void testPortSpeciesInjectionIsConservativeAndGuarded() {
                   "to most of the runner");
 }
 
+[[nodiscard]] bool sameBits(double left, double right) noexcept {
+    return std::bit_cast<std::uint64_t>(left) == std::bit_cast<std::uint64_t>(right);
+}
+
+[[nodiscard]] bool sameBits(const ConservativeState& left,
+                            const ConservativeState& right) noexcept {
+    for (std::size_t species = 0; species < gasSpeciesCount; ++species)
+        if (!sameBits(left.speciesMassDensityKgPerM3[species],
+                      right.speciesMassDensityKgPerM3[species]))
+            return false;
+    return sameBits(left.momentumDensityKgPerM2S, right.momentumDensityKgPerM2S)
+        && sameBits(left.totalEnergyDensityJPerM3, right.totalEnergyDensityJPerM3);
+}
+
+// Runs a parallel-for's indices last to first on the calling thread: any
+// order-dependent write inside a per-duct pass then changes the result.
+struct ReversedExecutor final {
+    std::size_t dispatches { 0 };
+    static void run(void* executor, std::size_t count,
+                    ExhaustGasNetwork::ParallelFor::Body body, void* context) noexcept {
+        ++static_cast<ReversedExecutor*>(executor)->dispatches;
+        for (auto index = count; index > 0; --index) body(context, index - 1);
+    }
+};
+
+// A joint manifold (six runners sharing one finite plenum, characteristic
+// valve faces, one valve opening and one closing) must give bit-identical
+// states and transfers whatever order the per-duct pass runs in.
+void testPerDuctPassIsOrderIndependent() {
+    std::vector<CompiledExhaustDuct> runners;
+    std::vector<CompiledCylinderPort> ports;
+    std::vector<CompiledExhaustOutlet> mouths;
+    const auto single = makeRunnerLayout(5);
+    constexpr std::size_t runnerCount = 6;
+    for (std::uint32_t index = 0; index < runnerCount; ++index) {
+        auto runner = single.ducts().front();
+        runner.nodeId = 100 + index;
+        runner.lengthM = 0.20 + 0.05 * index;
+        runner.volumeM3 = runner.flowAreaM2 * runner.lengthM;
+        runners.push_back(runner);
+        auto port = single.cylinderPorts().front();
+        port.cylinderId = index + 1;
+        port.networkEndpoint = { ExhaustEndpointType::ductInlet, index, runner.nodeId };
+        ports.push_back(port);
+        auto mouth = single.outlets().front();
+        mouth.outletNodeId = 200 + index;
+        mouth.networkEndpoint = { ExhaustEndpointType::ductOutlet, index, runner.nodeId };
+        mouths.push_back(mouth);
+    }
+    const auto layout = ExhaustNetworkLayout::assemble(runners, {}, {}, ports, mouths);
+    requireIntake(layout.valid(), "a six-runner manifold must assemble");
+    ExhaustGasNetworkConfig configuration;
+    configuration.characteristicValveBoundary = true;
+    ExhaustGasNetwork serial;
+    ExhaustGasNetwork reversed;
+    requireIntake(serial.configure(layout, configuration)
+                      && reversed.configure(layout, configuration),
+                  "the manifold networks must configure");
+    ReversedExecutor executor;
+    reversed.setParallelFor({ &ReversedExecutor::run, &executor });
+
+    const auto& model = serial.mixtureModel();
+    auto plenum = model.conservativeFromPressureTemperature(97'000.0, 305.0);
+    requireIntake(plenum.has_value(), "plenum fixture must be physical");
+    for (int window = 0; window < 40; ++window) {
+        std::array<CylinderValveBoundary, runnerCount> boundaries {};
+        for (std::size_t index = 0; index < runnerCount; ++index) {
+            const auto state = model.conservativeFromPressureTemperature(
+                50'000.0 + 15'000.0 * index + 500.0 * window, 320.0 + 20.0 * index);
+            requireIntake(state.has_value(), "cylinder fixture must be physical");
+            boundaries[index] = { static_cast<std::uint32_t>(index + 1), *state,
+                4.0e-4, 1.5e-4 * static_cast<double>(index % 3), 0.62 };
+        }
+        boundaries[1].effectiveValveAreaRateM2PerS = -0.4;
+        boundaries[1].valveClosesAfterSeconds = 2.0e-4;
+        const ExhaustAmbientBoundary reservoir { *plenum, 1.0, 1.5e-3 };
+        const auto serialAdvance = serial.advance(3.3e-4, boundaries, reservoir);
+        const auto reversedAdvance = reversed.advance(3.3e-4, boundaries, reservoir);
+        requireIntake(serialAdvance.completed && reversedAdvance.completed
+                          && serialAdvance.acceptedSubsteps
+                              == reversedAdvance.acceptedSubsteps,
+                      "both manifolds must advance through the same substeps");
+        for (std::size_t duct = 0; duct < runnerCount; ++duct) {
+            const auto serialCells = serial.ducts()[duct].cells();
+            const auto reversedCells = reversed.ducts()[duct].cells();
+            for (std::size_t cell = 0; cell < serialCells.size(); ++cell)
+                requireIntake(sameBits(serialCells[cell], reversedCells[cell]),
+                              "a reordered per-duct pass must leave every cell "
+                              "bit-identical");
+        }
+        for (std::size_t index = 0; index < runnerCount; ++index) {
+            requireIntake(sameBits(serial.cylinderExchanges()[index].totalEnergyJ,
+                                   reversed.cylinderExchanges()[index].totalEnergyJ)
+                              && sameBits(serial.outletSamples()[index].transferredEnergyJ,
+                                          reversed.outletSamples()[index].transferredEnergyJ),
+                          "a reordered per-duct pass must leave every transfer "
+                          "bit-identical");
+        }
+    }
+    requireIntake(executor.dispatches > 0,
+                  "the reversed network must actually dispatch through its executor");
+}
+
 } // namespace
 
 void runIntakeNetworkTests() {
@@ -329,4 +434,5 @@ void runIntakeNetworkTests() {
     testDrawingFromThePlenumReservoirConserves();
     testSteadyDrawMatchesIsentropicValveFlow();
     testPortSpeciesInjectionIsConservativeAndGuarded();
+    testPerDuctPassIsOrderIndependent();
 }

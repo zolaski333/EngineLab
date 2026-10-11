@@ -13,7 +13,7 @@
 // which is exactly the failure their report describes.
 //
 // The geometry number that decides it is the minimum of every duct dx and every
-// junction V/sum(A_port). The explicit time step divides that scale by c+|u|,
+// junction 2 V/sum(A_port). The explicit time step divides that scale by c+|u|,
 // so ONE small component sets the substep rate for every duct. A ratio of two
 // limiting lengths is the static solver-cost ratio at the same gas state.
 
@@ -164,7 +164,7 @@ int main(int argc, char** argv) {
     std::cout << "Exhaust solver cost: shipped network versus the SAME "
                  "network expressed as components.\n"
                  "The CFL length includes duct dx and junction "
-                 "V/sum(A).\n\n";
+                 "2 V/sum(A).\n\n";
 
     auto worstRatio = 0.0;
     std::string worstEngine;
