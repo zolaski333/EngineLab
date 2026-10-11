@@ -317,6 +317,10 @@ private:
     [[nodiscard]] const gasdynamics::ExhaustGasNetwork& intakeNetworkForCylinder(std::size_t index) const noexcept;
     [[nodiscard]] const gasdynamics::FiniteVolumeDuct& intakeDuctForCylinder(std::size_t index) const noexcept;
     void configureIntakeWorkerPool();
+    /** Points the exhaust network and the joint intake networks at
+     *  intakeWorkerPool_ (or at nothing). Per-runner intake networks are
+     *  advanced inside the pool and must never be given it. */
+    void attachNetworkParallelFor() noexcept;
     [[nodiscard]] RunningState determineRunningState(const EngineControls&) const noexcept;
     /** Injector open time divided by the complete 720-degree cycle. */
     [[nodiscard]] double injectorDutyCycle(std::size_t cylinderIndex) const noexcept {

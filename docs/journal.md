@@ -5,11 +5,19 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
-## 2026-10-09 — Merlin runtime gate still red, not from the intake
+## 2026-10-11 — Gas networks on the worker pool, bit-identical
 
-- `AudioRenderHarness --runtime-filter Merlin` (free rev at 50 % throttle onto the 3,200 rpm limiter), 3 runs each: new intake pre-limiter 0.88 / 1.43 / 1.50, physics overruns 393-565 of 1,440 frames; `--intake-legacy` 2.68 / 2.78 / 2.73, 576-586. Both fail; the legacy path is worse.
-- RealtimeBudget paced with audio at 3,040 rpm WOT: soft-limiter 403 / hard-clamp 61 (legacy intake 448 / 68). The Merlin is too loud at full load before any limiter bounce.
-- The catalogue point's new 37.6 dB peak at 3,368 Hz sits on the coupling Nyquist (3,360) by coincidence: stems put it in the forced-induction layer (supercharger blade passing), at the same level with the legacy intake. Not a period-2 numerical artefact.
+- Each duct's share of an RK stage (update, cache, wall heat, interior residual, its ports' and outlets' face fluxes) runs on the existing worker pool; coupling stays serial in a fixed order. Euler stage and second-stage pass fused (3 barriers per step). WAVs of all 16 catalogue engines byte-identical to the serial build; `EngineLab.GasDynamics` reverses the dispatch order (a misplaced plenum sum fails it with 6 runners, not with 3).
+- Free-run, 0.95 x limiter, alternated, 2-3 runs each: Merlin 1.15 (0 workers) -> 1.47; LS3 1.01 -> 1.12. Fusion alone +2-3 %. Duct interiors only (no boundaries) gave Merlin +5-8 %, LS3 nothing.
+- With audio, whole catalogue, same hour vs main: worst LS3 1.07 (main 0.95); Merlin 1.40 (1.35). Twins (no pool) 1.98-2.06 vs 2.10-2.22, not investigated. LS3 with audio + 3-D view: 1.05-1.06 (main 0.94-0.96 or invalid, dropped pressure).
+- Runtime scenario (`--runtime-filter`, limiter at 50 % throttle), overruns of 1,440: Merlin 115-117 (main 59-112), LS3 267-306 (main 530).
+- Not tried: residual of the next step fused into the candidate pass (one barrier fewer except on each call's last step).
+
+## 2026-10-11 — Merlin and Radial clicks: the valve-flow band toggled
+
+- Corrects the 2026-10-09 entry "Merlin runtime gate still red, not from the intake": the cause was in the audio. The complementary valve-flow band is fitted to the published mechanical rate; single short crank sub-steps spiked it to 12-20 kHz for a few ms. On the Merlin the floor (~9.8 kHz) leaves the band empty, so it switched on ~30 times in 8 s with stale state: clicks up to 3x full scale.
+- Fix: follow the slowest recent rate (down at once, up over 0.25 s) and unprime a closed band. Offline Merlin peak 3.15 -> 0.45, crest 32 -> 5.0; runtime gate passes (pre-limiter 0.42-0.46). Catalogue RMS unchanged (Radial -1.1 %), Radial window crest 8.91 -> 1.81.
+- Refuted: re-tuning the reconstruction as a state-variable filter instead of DF1 sections (-65 dB difference, clicks unchanged).
 
 ## 2026-10-09 — Exhaust junction step: the duct cells' convention
 

@@ -11,7 +11,9 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cmath>
+#include <cstdint>
 #include <cstdlib>
 #include <iomanip>
 #include <iostream>
@@ -179,7 +181,6 @@ void measure(enginelab::EngineConfig config, bool legacyControl = false, bool li
     auto aheadSeconds = 0.0;
     auto simulator = std::make_unique<enginelab::EngineSimulator>(config, ecu, physics, events, exhaust, options);
     simulator->setPressureSamplingEnabled(true);
-    require(simulator->intakeWorkerCount() == 0, "a shared RK reservoir must not dispatch independent runner advances");
     const auto& normalized = simulator->config();
     const auto pathCount = std::max<std::size_t>(1, normalized.intakePaths.size());
     const auto inertia = enginelab::effectiveRotatingInertiaKgM2(config) + extraInertia;
@@ -330,6 +331,61 @@ void measure(enginelab::EngineConfig config, bool legacyControl = false, bool li
         << " workers=" << simulator->intakeWorkerCount() << " pressure_samples=" << pressureSamples
         << " probed_physical_paths=" << pathCount << " live_swap=" << liveSwap << " joint_timely=true" << '\n';
 }
+// The worker pool only spreads per-duct work inside each RK stage (exhaust and
+// joint intake alike); a fired run must not change by a single bit with it.
+void verifyWorkersAreInvisible(const enginelab::EngineConfig& config) {
+    struct Run final {
+        explicit Run(const enginelab::EngineConfig& engine)
+            : exhaust(enginelab::ExhaustGraph::makeForEngine(engine)) {}
+        enginelab::SimpleEcuModel ecu;
+        enginelab::SimplifiedGasolinePhysics physics;
+        enginelab::FourStrokeEventGenerator events;
+        enginelab::ExhaustGraph exhaust;
+        std::unique_ptr<enginelab::EngineSimulator> simulator;
+    };
+    const auto start = [&](std::size_t workers) {
+        auto run = std::make_unique<Run>(config);
+        enginelab::EngineSimulatorOptions options;
+        options.intakeJointManifold = true;
+        options.intakeWorkerCount = workers;
+        run->simulator = std::make_unique<enginelab::EngineSimulator>(config, run->ecu,
+            run->physics, run->events, run->exhaust, options);
+        return run;
+    };
+    const auto serial = start(0);
+    const auto pooled = start(3);
+    require(serial->simulator->intakeWorkerCount() == 0
+            && pooled->simulator->intakeWorkerCount() > 0,
+        "the comparison needs one serial and one pooled simulator");
+    // Held at 3,000 rpm by an external torque, fired, at full throttle.
+    constexpr auto frameSeconds = 1.0 / 240.0;
+    const auto inertia = enginelab::effectiveRotatingInertiaKgM2(config);
+    const auto targetRadPerSecond = 3'000.0 * 2.0 * std::numbers::pi / 60.0;
+    for (std::size_t frame = 0; frame < 240; ++frame) {
+        enginelab::EngineControls controls;
+        controls.ignitionEnabled = true;
+        controls.throttle = 1.0;
+        controls.externalTorqueNm = std::clamp(inertia * (targetRadPerSecond
+            - serial->simulator->state().angularVelocityRadPerSecond) / frameSeconds,
+            -5'000.0, 5'000.0);
+        const auto serialFrame = serial->simulator->step(frameSeconds, controls);
+        const auto pooledFrame = pooled->simulator->step(frameSeconds, controls);
+        const auto& a = serialFrame.state;
+        const auto& b = pooledFrame.state;
+        require(std::bit_cast<std::uint64_t>(a.angularVelocityRadPerSecond)
+                    == std::bit_cast<std::uint64_t>(b.angularVelocityRadPerSecond)
+                && std::bit_cast<std::uint64_t>(a.manifoldPressureKpa)
+                    == std::bit_cast<std::uint64_t>(b.manifoldPressureKpa)
+                && std::bit_cast<std::uint64_t>(a.exhaustBackPressureKpa)
+                    == std::bit_cast<std::uint64_t>(b.exhaustBackPressureKpa),
+            "the worker pool must leave a fired run bit-identical");
+    }
+    require(serial->simulator->state().rpm > 2'500.0,
+        "the comparison must run the engine, not a stopped crank");
+    std::cout << "workers invisible: " << config.name << " rpm="
+              << serial->simulator->state().rpm << '\n';
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -343,6 +399,7 @@ int main(int argc, char** argv) {
     measure(catalogue("01_honda_k20a_like"));
     measure(catalogue("01_honda_k20a_like"), false, false, true);
     measure(catalogue("03_gm_ls3_like"));
+    verifyWorkersAreInvisible(catalogue("03_gm_ls3_like"));
     measure(oneLitre());
     auto split = splitIntakes(oneLitre(), {{1, 3}, {2, 4}});
     split.name = "Two unequal intake paths with noncontiguous cylinders and live replacement";

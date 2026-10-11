@@ -9,6 +9,11 @@ file formats, always with an in-memory migration).
 
 ### Changed
 
+- The exhaust and the intake manifold spread their pipes over the
+  simulation's worker threads, with bit-identical results. At 95 % of the
+  limiter with audio, every catalogue engine now runs above real time: the
+  LS3 at 1.07 (0.95 before, 1.05 with the 3-D view open) and the Merlin at
+  1.40.
 - Intake valves are a characteristic boundary on the runner: the trapped
   charge no longer depends on the solver's internal time step (it lost up to
   11 % before). The cylinders exchange with the intake network every 330 us,

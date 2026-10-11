@@ -187,7 +187,9 @@ Details of each measurement are in the docs archive (tag `archive/docs-2026-09`)
   The intake charge bias was not the MUSCL limiter, the finite plenum, wall
   heat or valve linearisation (it was the valve nozzle boundary, Courant-
   dependent). Front-loaded or trajectory-resolved forward delivery: inert.
-- Telemetry cache to speed up listening: would have gained nothing.
+- Telemetry cache to speed up listening: would have gained nothing. State-
+  variable valve-flow reconstruction against clicks: inert (the source rate
+  toggled the band; journal 2026-10-11).
 - Seeding the high-load correction cell from the idle cell: saves a start 4 s
   after cranking but stalls 10 engines out of 14 after 25 s of idle, and on a
   blip (Hayabusa, CP3, Aircooled). Asynchronous pulse on pedal tip-in: does not

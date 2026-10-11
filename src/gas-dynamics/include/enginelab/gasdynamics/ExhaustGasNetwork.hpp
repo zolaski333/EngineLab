@@ -407,6 +407,25 @@ public:
      */
     void requestWallHeatUpdate() noexcept { wallHeatUpdateRequested_ = true; }
 
+    /** Runs `body(context, i)` once for every i in [0, count), possibly on
+     *  several threads, and returns once all of them have completed. */
+    struct ParallelFor final {
+        using Body = void (*)(void*, std::size_t) noexcept;
+        void (*run)(void* executor, std::size_t count, Body body,
+                    void* context) noexcept { nullptr };
+        void* executor { nullptr };
+    };
+
+    /** Spreads the per-duct part of every RK stage over `parallelFor`: the
+     * stage update, the primitive and source cache, the wall heat exchange and
+     * the interior residual, plus the face flux of any port or outlet at the
+     * duct's ends. Each duct writes only its own buffers; applying those
+     * fluxes and the coupling between ducts (interfaces, junctions, the shared
+     * reservoir) stays serial in a fixed order, so the result is bit-identical
+     * to the serial path whatever the schedule. The executor must outlive the
+     * network, or be cleared with a default ParallelFor. */
+    void setParallelFor(ParallelFor parallelFor) noexcept { parallelFor_ = parallelFor; }
+
     /** Add species mass as a source in the duct cell adjacent to a cylinder
      * port, together with its sensible internal energy at temperatureK and an
      * optional additional heat term (negative for evaporation charge cooling).
@@ -439,10 +458,52 @@ private:
         bool useStageState,
         std::span<const CylinderValveBoundary> cylinderBoundaries,
         const ExhaustAmbientBoundary& ambient) noexcept;
-    [[nodiscard]] bool prepareStageStates(
-        bool candidateStage,
-        bool deferDynamicWallSources = false) noexcept;
+    /** Which half of a stage evaluation to run: the per-duct pass (interior
+     *  residuals and boundary face fluxes), the serial coupling that applies
+     *  them, or both. */
+    enum class StagePart : std::uint8_t { whole, ductPass, coupling };
+    /** As above; `prelude(i)` runs on duct i just before its own pass, inside
+     *  the same parallel dispatch, and a false return abandons the pass. */
+    template <typename Prelude>
+    [[nodiscard]] bool evaluateStage(
+        bool useStageState,
+        std::span<const CylinderValveBoundary> cylinderBoundaries,
+        const ExhaustAmbientBoundary& ambient,
+        StagePart part,
+        const Prelude& prelude) noexcept;
+    /** Junction, reservoir and shared-reservoir primitives of a stage; the
+     *  ducts' own caches are prepared per duct inside advance(). */
+    [[nodiscard]] bool prepareNonDuctStageStates(bool candidateStage) noexcept;
+    /** `body(i)` for every duct, through parallelFor_ when one is set; true
+     *  when every call returned true. */
+    template <typename Body>
+    [[nodiscard]] bool forEachDuct(const Body& body) noexcept;
     void updateOutletSamples(double durationSeconds) noexcept;
+
+    /** A port's or outlet's face flux. Computed alongside its duct's interior
+     *  residual (in parallel when an executor is set), then applied serially
+     *  in port and outlet order, so the accumulation order never changes. */
+    struct BoundaryFlux final {
+        EulerFlux rawFlux {};
+        /** The flux the duct's end face receives (unused at a junction). */
+        EulerFlux ductFlux {};
+        double openingAreaM2 { 0.0 };
+        /** The area `rawFlux` is integrated over. */
+        double flowAreaM2 { 0.0 };
+        /** A port's valve-face warm start after this solve. */
+        std::array<double, 2> faceSolve {};
+    };
+
+    ParallelFor parallelFor_ {};
+    std::vector<std::uint8_t> ductSucceeded_;
+    /** Set by a duct whose Euler stage is inadmissible in this attempt. */
+    std::vector<std::uint8_t> ductStageRejected_;
+    std::vector<double> ductWallHeatRejectedJ_;
+    std::vector<BoundaryFlux> portFluxes_;
+    std::vector<BoundaryFlux> outletFluxes_;
+    /** Ports and outlets attached to each duct's ends, in index order. */
+    std::vector<std::vector<std::size_t>> ductPorts_;
+    std::vector<std::vector<std::size_t>> ductOutlets_;
 
     EulerMixtureModel mixtureModel_;
     ExhaustNetworkLayout layout_;

@@ -511,20 +511,24 @@ EngineSimulator::EngineSimulator(EngineConfig config, IEcuModel& ecu, IPhysicsMo
     configurePhysicalExhaustNetwork();
     configurePhysicalIntakeNetworks();
     configureIntakeWorkerPool();
+    attachNetworkParallelFor();
     configureGasFieldSnapshot();
     reset();
 }
 
 void EngineSimulator::configureIntakeWorkerPool() {
-    // A joint manifold owns one finite plenum in its RK stages. Dispatching
-    // independent runners would split that shared reservoir again.
-    if (jointIntakeManifold()) return;
-    // Only the 1-D runner advance is dispatched, and only its per-cylinder
-    // half. The 95 mm production mesh makes each item too short to amortise one
-    // participant per cylinder: on the 12-thread reference machine a same-hour,
-    // counterbalanced free-run sweep found two workers best for the V8 and
-    // three for the V12. Four and five workers lost to barrier/atomic traffic;
-    // an undispatched twin tracked machine drift as the null control.
+    // Per-runner intakes dispatch only the 1-D runner advance, and only its
+    // per-cylinder half. The 95 mm production mesh makes each item too short
+    // to amortise one participant per cylinder: on the 12-thread reference
+    // machine a same-hour, counterbalanced free-run sweep found two workers
+    // best for the V8 and three for the V12. Four and five workers lost to
+    // barrier/atomic traffic; an undispatched twin tracked machine drift as
+    // the null control.
+    //
+    // A joint manifold owns one finite plenum in its RK stages, so whole
+    // runners cannot be dispatched: that would split the shared reservoir
+    // again. The pool serves it, and the exhaust, per duct inside each stage
+    // instead (attachNetworkParallelFor), with bit-identical results.
     //
     // The work-cardinality cap below preserves those measured optima. The
     // hardware cap is still lower when necessary, and half the reported
@@ -535,25 +539,41 @@ void EngineSimulator::configureIntakeWorkerPool() {
         intakeStaircaseRounds_ = std::clamp<std::size_t>(
             *options_.intakeStaircaseRounds, 0, 4);
     if (cylinderCount < 3) return;
+    std::size_t workerCount = 0;
     if (options_.intakeWorkerCount.has_value()) {
-        const auto workerCount = std::min(*options_.intakeWorkerCount, cylinderCount - 1);
-        if (workerCount == 0) return;
-        intakeWorkerPool_ = std::make_unique<CylinderWorkerPool>(workerCount);
-        intakePredictionGroupCount_ = 1;
-        return;
+        workerCount = std::min(*options_.intakeWorkerCount, cylinderCount - 1);
+    } else {
+        const auto reportedConcurrency = std::thread::hardware_concurrency();
+        if (reportedConcurrency < 4) return;
+        const auto usableThreads = std::max<std::size_t>(1, reportedConcurrency / 2);
+        const std::size_t workloadWorkerCap = cylinderCount >= 10 ? 3 : 2;
+        workerCount = std::min(
+            { cylinderCount - 1, usableThreads - 1, workloadWorkerCap });
     }
-    const auto reportedConcurrency = std::thread::hardware_concurrency();
-    if (reportedConcurrency < 4) return;
-    const auto usableThreads = std::max<std::size_t>(1, reportedConcurrency / 2);
-    const std::size_t workloadWorkerCap = cylinderCount >= 10 ? 3 : 2;
-    const auto workerCount = std::min(
-        { cylinderCount - 1, usableThreads - 1, workloadWorkerCap });
     if (workerCount == 0) return;
     intakeWorkerPool_ = std::make_unique<CylinderWorkerPool>(workerCount);
     // Only a group with more than one cylinder in it needs the plenum staircase
     // reconstructed. Without a pool the groups stay singletons and the runner
     // pass is the original serial Gauss-Seidel, exactly, at the original cost.
-    intakePredictionGroupCount_ = 1;
+    if (!jointIntakeManifold()) intakePredictionGroupCount_ = 1;
+}
+
+void EngineSimulator::attachNetworkParallelFor() noexcept {
+    // The exhaust network is advanced on the simulation thread between pool
+    // dispatches, so it can borrow the same workers; see setParallelFor.
+    gasdynamics::ExhaustGasNetwork::ParallelFor parallelFor;
+    if (intakeWorkerPool_) {
+        parallelFor.run = [](void* executor, std::size_t count,
+                             gasdynamics::ExhaustGasNetwork::ParallelFor::Body body,
+                             void* context) noexcept {
+            static_cast<CylinderWorkerPool*>(executor)->runIndices(count, body, context);
+        };
+        parallelFor.executor = intakeWorkerPool_.get();
+    }
+    if (physicalExhaustNetwork_) physicalExhaustNetwork_->setParallelFor(parallelFor);
+    if (!jointIntakeManifold()) return;
+    for (auto& network : intakeManifoldNetworks_)
+        if (network) network->setParallelFor(parallelFor);
 }
 
 void EngineSimulator::configurePhysicalIntakeNetworks() {
@@ -776,6 +796,9 @@ bool EngineSimulator::replaceIntake(LiveIntake& intake, EngineConfig& config) no
     for (std::size_t index = 0; index < networkCount; ++index)
         std::swap(incomingNetworks[index], runningNetworks[index]);
     if (jointIntakeManifold()) std::swap(intake.runnerDuctIndex, intakeRunnerDuctIndex_);
+    // The outgoing networks keep a pointer to the pool but are never advanced
+    // again; the incoming ones are built without one.
+    attachNetworkParallelFor();
     // Swapped, so this thread does not allocate; `config` leaves with the
     // previous intake.
     std::swap(config_.intake, config.intake);
@@ -962,6 +985,7 @@ bool EngineSimulator::replaceExhaustNetwork(
         || !network->adoptStateFrom(*physicalExhaustNetwork_))
         return false;
     std::swap(network, physicalExhaustNetwork_);
+    attachNetworkParallelFor();
     // Only the network reads the exhaust geometry; the copy keeps config_
     // describing the engine that runs.
     config_.exhaust = config.exhaust;

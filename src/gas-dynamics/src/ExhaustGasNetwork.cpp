@@ -816,6 +816,23 @@ bool ExhaustGasNetwork::configure(const ExhaustNetworkLayout& layout,
 
     ductInletAssigned_.resize(ducts_.size());
     ductOutletAssigned_.resize(ducts_.size());
+    ductSucceeded_.assign(ducts_.size(), std::uint8_t { 1 });
+    ductStageRejected_.assign(ducts_.size(), std::uint8_t { 0 });
+    ductWallHeatRejectedJ_.assign(ducts_.size(), 0.0);
+    portFluxes_.assign(layout_.cylinderPorts().size(), BoundaryFlux {});
+    outletFluxes_.assign(layout_.outlets().size(), BoundaryFlux {});
+    ductPorts_.assign(ducts_.size(), {});
+    ductOutlets_.assign(ducts_.size(), {});
+    for (std::size_t index = 0; index < layout_.cylinderPorts().size(); ++index) {
+        const auto& endpoint = layout_.cylinderPorts()[index].networkEndpoint;
+        if (endpoint.type != ExhaustEndpointType::junction)
+            ductPorts_[endpoint.elementIndex].push_back(index);
+    }
+    for (std::size_t index = 0; index < layout_.outlets().size(); ++index) {
+        const auto& endpoint = layout_.outlets()[index].networkEndpoint;
+        if (endpoint.type != ExhaustEndpointType::junction)
+            ductOutlets_[endpoint.elementIndex].push_back(index);
+    }
     cylinderFirstStageFlow_.resize(layout_.cylinderPorts().size());
     cylinderSecondStageFlow_.resize(layout_.cylinderPorts().size());
     outletFirstStageFlow_.resize(layout_.outlets().size());
@@ -1517,53 +1534,63 @@ double ExhaustGasNetwork::maximumStableTimeStep(
     return stableStep;
 }
 
+template <typename Body>
+bool ExhaustGasNetwork::forEachDuct(const Body& body) noexcept {
+    const auto count = ducts_.size();
+    if (parallelFor_.run == nullptr || count < 2) {
+        // Every duct runs even after a failure, exactly as in a parallel
+        // dispatch, so both schedules leave the same per-duct flags behind.
+        auto succeeded = true;
+        for (std::size_t index = 0; index < count; ++index)
+            succeeded = body(index) && succeeded;
+        return succeeded;
+    }
+    struct Context final {
+        const Body* body;
+        std::uint8_t* succeeded;
+    } context { &body, ductSucceeded_.data() };
+    parallelFor_.run(parallelFor_.executor, count,
+        [](void* raw, std::size_t index) noexcept {
+            const auto& job = *static_cast<Context*>(raw);
+            job.succeeded[index] = (*job.body)(index) ? 1 : 0;
+        },
+        &context);
+    return std::all_of(ductSucceeded_.begin(), ductSucceeded_.end(),
+        [](std::uint8_t succeeded) { return succeeded != 0; });
+}
+
 bool ExhaustGasNetwork::evaluateStage(
     bool useStageState,
     std::span<const CylinderValveBoundary> cylinderBoundaries,
     const ExhaustAmbientBoundary& ambient) noexcept {
-    std::fill(ductInletAssigned_.begin(), ductInletAssigned_.end(), std::uint8_t { 0 });
-    std::fill(ductOutletAssigned_.begin(), ductOutletAssigned_.end(), std::uint8_t { 0 });
+    return evaluateStage(useStageState, cylinderBoundaries, ambient, StagePart::whole,
+        [](std::size_t) noexcept { return true; });
+}
+
+template <typename Prelude>
+bool ExhaustGasNetwork::evaluateStage(
+    bool useStageState,
+    std::span<const CylinderValveBoundary> cylinderBoundaries,
+    const ExhaustAmbientBoundary& ambient,
+    StagePart part,
+    const Prelude& prelude) noexcept {
     auto& cylinderFlows = useStageState ? cylinderSecondStageFlow_ : cylinderFirstStageFlow_;
     auto& outletFlows = useStageState ? outletSecondStageFlow_ : outletFirstStageFlow_;
-    std::fill(cylinderFlows.begin(), cylinderFlows.end(), ConservedFlowRate {});
-    std::fill(outletFlows.begin(), outletFlows.end(), ConservedFlowRate {});
     auto& junctionResiduals = useStageState ? junctionStageResidual_ : junctionResidual_;
-    std::fill(junctionResiduals.begin(), junctionResiduals.end(), ConservativeState {});
     auto& cylinderResiduals = useStageState
         ? cylinderReservoirStageResidual_ : cylinderReservoirResidual_;
-    std::fill(cylinderResiduals.begin(), cylinderResiduals.end(), ConservativeState {});
     auto& ambientResidual = useStageState
         ? ambientReservoirStageResidual_ : ambientReservoirResidual_;
-    if (ambientReservoirVolumeM3_ > 0.0) ambientResidual = {};
     const auto& ambientState = ambientReservoirVolumeM3_ > 0.0
         ? (useStageState ? ambientReservoirStage_ : ambientReservoirState_)
         : ambient.reservoirState;
     const auto& ambientPrimitive = ambientReservoirVolumeM3_ > 0.0 && useStageState
         ? ambientStagePrimitive_ : ambientPrimitive_;
-    std::optional<ReservoirInflowConstants> sharedInflowConstants;
-
-    const auto transmissive = DuctBoundaryCondition::transmissive();
-    for (auto& duct : ducts_) {
-        const auto states = useStageState
-            ? std::span<const ConservativeState>(duct.stage_)
-            : std::span<const ConservativeState>(duct.cells_);
-        const auto primitives = useStageState
-            ? std::span<const PrimitiveState>(duct.stagePrimitives_)
-            : std::span<const PrimitiveState>(duct.cellPrimitives_);
-        const auto sourceTerms = useStageState
-            ? std::span<const ConservativeState>(duct.stageSourceTerms_)
-            : std::span<const ConservativeState>(duct.cellSourceTerms_);
-        auto residual = useStageState
-            ? std::span<ConservativeState>(duct.stageResidual_)
-            : std::span<ConservativeState>(duct.residual_);
-        auto faceFluxes = useStageState
-            ? std::span<EulerFlux>(duct.stageFaceFluxes_)
-            : std::span<EulerFlux>(duct.faceFluxes_);
-        if (!duct.computeResidual(states, primitives, sourceTerms,
-                                  transmissive, transmissive, residual, faceFluxes,
-                                  false))
-            return false;
-    }
+    // Every mouth in this stage sees the same reservoir. Prepared once up
+    // front (the same arithmetic as preparing it on the first drawing mouth),
+    // so the per-duct pass below shares it without a race.
+    std::optional<ReservoirInflowConstants> sharedInflowConstants =
+        reservoirInflowConstants(ambientPrimitive);
 
     const auto& junctionStates = useStageState ? junctionStage_ : junctionStates_;
     const auto& junctionPrimitives = useStageState
@@ -1708,15 +1735,9 @@ bool ExhaustGasNetwork::evaluateStage(
         return true;
     };
 
-    for (const auto& connection : layout_.interfaces()) {
-        if (!connect(connection.upstream, connection.downstream,
-                     std::min(endpointArea(connection.upstream),
-                              endpointArea(connection.downstream)),
-                     nullptr))
-            return false;
-    }
-
-    for (std::size_t index = 0; index < layout_.cylinderPorts().size(); ++index) {
+    // A port's face flux depends only on its cylinder reservoir and its own
+    // duct end, so it can be computed with that duct; it is applied below.
+    const auto computePortFlux = [&](std::size_t index) noexcept {
         const auto& port = layout_.cylinderPorts()[index];
         const auto suppliedIndex = cylinderBoundaryIndices_[index];
         auto openingArea = 0.0;
@@ -1736,65 +1757,31 @@ bool ExhaustGasNetwork::evaluateStage(
         // which then needs no area averaging.
         std::optional<EulerFlux> faceFlux;
         auto faceAreaM2 = 0.0;
+        auto& result = portFluxes_[index];
+        // The solve's warm start is committed only where the serial loop
+        // applies this flux, so a stage abandoned earlier leaves it untouched.
+        result.faceSolve = valveFaceSolve_[index];
         if (openingArea > 0.0 && config_.characteristicValveBoundary
             && port.networkEndpoint.type == ExhaustEndpointType::ductInlet) {
             faceAreaM2 = ducts_[port.networkEndpoint.elementIndex].faceAreasM2_.front();
             faceFlux = characteristicInletValveFlux(
                 activeCylinderState, cylinderPrimitives[index],
                 networkState, endpointPrimitive(port.networkEndpoint),
-                openingArea, faceAreaM2, mixtureModel_, valveFaceSolve_[index].data());
+                openingArea, faceAreaM2, mixtureModel_, result.faceSolve.data());
         }
-        const auto rawFlux = faceFlux ? *faceFlux
+        result.rawFlux = faceFlux ? *faceFlux
             : openingArea > 0.0
             ? compressibleValveFlux(
                 activeCylinderState, cylinderPrimitives[index],
                 networkState, endpointPrimitive(port.networkEndpoint))
             : EulerFlux {};
-        cylinderFlows[index] = makeFlowRate(rawFlux, faceFlux ? faceAreaM2 : openingArea);
-        if (openingArea > 0.0 && cylinderReservoirActive_[index] != 0) {
-            const auto inverseVolume = 1.0 / cylinderReservoirVolumesM3_[index];
-            for (std::size_t species = 0; species < gasSpeciesCount; ++species) {
-                cylinderResiduals[index].speciesMassDensityKgPerM3[species] -=
-                    cylinderFlows[index].speciesMassKgPerS[species] * inverseVolume;
-            }
-            cylinderResiduals[index].totalEnergyDensityJPerM3 -=
-                cylinderFlows[index].totalEnergyW * inverseVolume;
-        }
-        // A moving piston: the reservoir densities dilute with its volume and
-        // the gas does p dV work on the piston.
-        if (suppliedIndex < cylinderBoundaries.size()
-            && cylinderReservoirActive_[index] != 0) {
-            const auto volumeRate =
-                cylinderBoundaries[suppliedIndex].cylinderVolumeRateM3PerS;
-            if (volumeRate != 0.0) {
-                const auto dilution = volumeRate / cylinderReservoirVolumesM3_[index];
-                for (std::size_t species = 0; species < gasSpeciesCount; ++species)
-                    cylinderResiduals[index].speciesMassDensityKgPerM3[species] -=
-                        activeCylinderState.speciesMassDensityKgPerM3[species] * dilution;
-                cylinderResiduals[index].totalEnergyDensityJPerM3 -=
-                    (activeCylinderState.totalEnergyDensityJPerM3
-                        + cylinderPrimitives[index].pressurePa) * dilution;
-            }
-            const auto& supplied = cylinderBoundaries[suppliedIndex];
-            if (supplied.otherOutflowEnergyW != 0.0) {
-                const auto inverseVolume = 1.0 / cylinderReservoirVolumesM3_[index];
-                for (std::size_t species = 0; species < gasSpeciesCount; ++species)
-                    cylinderResiduals[index].speciesMassDensityKgPerM3[species] -=
-                        supplied.otherOutflowSpeciesKgPerS[species] * inverseVolume;
-                cylinderResiduals[index].totalEnergyDensityJPerM3 -=
-                    supplied.otherOutflowEnergyW * inverseVolume;
-            }
-        }
-        if (port.networkEndpoint.type == ExhaustEndpointType::junction) {
-            addJunctionFlow(port.networkEndpoint.elementIndex, cylinderFlows[index],
-                openingArea, 1.0);
-        } else if (!assignDuctBoundary(port.networkEndpoint, faceFlux ? *faceFlux
-                       : ductBoundaryFlux(port.networkEndpoint, rawFlux, openingArea))) {
-            return false;
-        }
-    }
-
-    for (std::size_t index = 0; index < layout_.outlets().size(); ++index) {
+        result.openingAreaM2 = openingArea;
+        result.flowAreaM2 = faceFlux ? faceAreaM2 : openingArea;
+        if (port.networkEndpoint.type != ExhaustEndpointType::junction)
+            result.ductFlux = faceFlux ? *faceFlux
+                : ductBoundaryFlux(port.networkEndpoint, result.rawFlux, openingArea);
+    };
+    const auto computeOutletFlux = [&](std::size_t index) noexcept {
         const auto& outlet = layout_.outlets()[index];
         auto openingArea = std::min(endpointArea(outlet.networkEndpoint),
             outlet.openingAreaM2 * outlet.dischargeCoefficient
@@ -1838,7 +1825,118 @@ bool ExhaustGasNetwork::evaluateStage(
                     endpointState(outlet.networkEndpoint), interiorPrimitive,
                     ambientState, ambientPrimitive);
         }
-        outletFlows[index] = makeFlowRate(rawFlux, openingArea);
+        auto& result = outletFluxes_[index];
+        result.rawFlux = rawFlux;
+        result.openingAreaM2 = openingArea;
+        result.flowAreaM2 = openingArea;
+        if (outlet.networkEndpoint.type != ExhaustEndpointType::junction)
+            result.ductFlux = ductBoundaryFlux(outlet.networkEndpoint, rawFlux, openingArea);
+    };
+
+    const auto transmissive = DuctBoundaryCondition::transmissive();
+    const auto ductPass = [&](std::size_t ductIndex) noexcept {
+        auto& duct = ducts_[ductIndex];
+        const auto states = useStageState
+            ? std::span<const ConservativeState>(duct.stage_)
+            : std::span<const ConservativeState>(duct.cells_);
+        const auto primitives = useStageState
+            ? std::span<const PrimitiveState>(duct.stagePrimitives_)
+            : std::span<const PrimitiveState>(duct.cellPrimitives_);
+        const auto sourceTerms = useStageState
+            ? std::span<const ConservativeState>(duct.stageSourceTerms_)
+            : std::span<const ConservativeState>(duct.cellSourceTerms_);
+        auto residual = useStageState
+            ? std::span<ConservativeState>(duct.stageResidual_)
+            : std::span<ConservativeState>(duct.residual_);
+        auto faceFluxes = useStageState
+            ? std::span<EulerFlux>(duct.stageFaceFluxes_)
+            : std::span<EulerFlux>(duct.faceFluxes_);
+        if (!prelude(ductIndex)) return false;
+        if (!duct.computeResidual(states, primitives, sourceTerms,
+                transmissive, transmissive, residual, faceFluxes, false))
+            return false;
+        for (const auto port : ductPorts_[ductIndex]) computePortFlux(port);
+        for (const auto outlet : ductOutlets_[ductIndex]) computeOutletFlux(outlet);
+        return true;
+    };
+    if (part != StagePart::coupling && !forEachDuct(ductPass)) return false;
+    if (part == StagePart::ductPass) return true;
+
+    std::fill(ductInletAssigned_.begin(), ductInletAssigned_.end(), std::uint8_t { 0 });
+    std::fill(ductOutletAssigned_.begin(), ductOutletAssigned_.end(), std::uint8_t { 0 });
+    std::fill(cylinderFlows.begin(), cylinderFlows.end(), ConservedFlowRate {});
+    std::fill(outletFlows.begin(), outletFlows.end(), ConservedFlowRate {});
+    std::fill(junctionResiduals.begin(), junctionResiduals.end(), ConservativeState {});
+    std::fill(cylinderResiduals.begin(), cylinderResiduals.end(), ConservativeState {});
+    if (ambientReservoirVolumeM3_ > 0.0) ambientResidual = {};
+
+    for (const auto& connection : layout_.interfaces()) {
+        if (!connect(connection.upstream, connection.downstream,
+                     std::min(endpointArea(connection.upstream),
+                              endpointArea(connection.downstream)),
+                     nullptr))
+            return false;
+    }
+
+    for (std::size_t index = 0; index < layout_.cylinderPorts().size(); ++index) {
+        const auto& port = layout_.cylinderPorts()[index];
+        const auto suppliedIndex = cylinderBoundaryIndices_[index];
+        if (port.networkEndpoint.type == ExhaustEndpointType::junction)
+            computePortFlux(index);
+        const auto& flux = portFluxes_[index];
+        valveFaceSolve_[index] = flux.faceSolve;
+        const auto openingArea = flux.openingAreaM2;
+        const auto& activeCylinderState = useStageState
+            ? cylinderReservoirStage_[index] : cylinderReservoirStates_[index];
+        cylinderFlows[index] = makeFlowRate(flux.rawFlux, flux.flowAreaM2);
+        if (openingArea > 0.0 && cylinderReservoirActive_[index] != 0) {
+            const auto inverseVolume = 1.0 / cylinderReservoirVolumesM3_[index];
+            for (std::size_t species = 0; species < gasSpeciesCount; ++species) {
+                cylinderResiduals[index].speciesMassDensityKgPerM3[species] -=
+                    cylinderFlows[index].speciesMassKgPerS[species] * inverseVolume;
+            }
+            cylinderResiduals[index].totalEnergyDensityJPerM3 -=
+                cylinderFlows[index].totalEnergyW * inverseVolume;
+        }
+        // A moving piston: the reservoir densities dilute with its volume and
+        // the gas does p dV work on the piston.
+        if (suppliedIndex < cylinderBoundaries.size()
+            && cylinderReservoirActive_[index] != 0) {
+            const auto volumeRate =
+                cylinderBoundaries[suppliedIndex].cylinderVolumeRateM3PerS;
+            if (volumeRate != 0.0) {
+                const auto dilution = volumeRate / cylinderReservoirVolumesM3_[index];
+                for (std::size_t species = 0; species < gasSpeciesCount; ++species)
+                    cylinderResiduals[index].speciesMassDensityKgPerM3[species] -=
+                        activeCylinderState.speciesMassDensityKgPerM3[species] * dilution;
+                cylinderResiduals[index].totalEnergyDensityJPerM3 -=
+                    (activeCylinderState.totalEnergyDensityJPerM3
+                        + cylinderPrimitives[index].pressurePa) * dilution;
+            }
+            const auto& supplied = cylinderBoundaries[suppliedIndex];
+            if (supplied.otherOutflowEnergyW != 0.0) {
+                const auto inverseVolume = 1.0 / cylinderReservoirVolumesM3_[index];
+                for (std::size_t species = 0; species < gasSpeciesCount; ++species)
+                    cylinderResiduals[index].speciesMassDensityKgPerM3[species] -=
+                        supplied.otherOutflowSpeciesKgPerS[species] * inverseVolume;
+                cylinderResiduals[index].totalEnergyDensityJPerM3 -=
+                    supplied.otherOutflowEnergyW * inverseVolume;
+            }
+        }
+        if (port.networkEndpoint.type == ExhaustEndpointType::junction) {
+            addJunctionFlow(port.networkEndpoint.elementIndex, cylinderFlows[index],
+                openingArea, 1.0);
+        } else if (!assignDuctBoundary(port.networkEndpoint, flux.ductFlux)) {
+            return false;
+        }
+    }
+
+    for (std::size_t index = 0; index < layout_.outlets().size(); ++index) {
+        const auto& outlet = layout_.outlets()[index];
+        if (outlet.networkEndpoint.type == ExhaustEndpointType::junction)
+            computeOutletFlux(index);
+        const auto& flux = outletFluxes_[index];
+        outletFlows[index] = makeFlowRate(flux.rawFlux, flux.flowAreaM2);
         if (ambientReservoirVolumeM3_ > 0.0) {
             const auto inverseVolume = 1.0 / ambientReservoirVolumeM3_;
             for (std::size_t species = 0; species < gasSpeciesCount; ++species) {
@@ -1850,9 +1948,8 @@ bool ExhaustGasNetwork::evaluateStage(
         }
         if (outlet.networkEndpoint.type == ExhaustEndpointType::junction) {
             addJunctionFlow(outlet.networkEndpoint.elementIndex, outletFlows[index],
-                openingArea, -1.0);
-        } else if (!assignDuctBoundary(outlet.networkEndpoint,
-                       ductBoundaryFlux(outlet.networkEndpoint, rawFlux, openingArea))) {
+                flux.openingAreaM2, -1.0);
+        } else if (!assignDuctBoundary(outlet.networkEndpoint, flux.ductFlux)) {
             return false;
         }
     }
@@ -1863,29 +1960,7 @@ bool ExhaustGasNetwork::evaluateStage(
                [](std::uint8_t assigned) { return assigned != 0; });
 }
 
-bool ExhaustGasNetwork::prepareStageStates(
-    bool candidateStage,
-    bool deferDynamicWallSources) noexcept {
-    for (auto& duct : ducts_) {
-        const auto& states = candidateStage ? duct.candidate_ : duct.stage_;
-        auto& primitives = candidateStage
-            ? duct.candidatePrimitives_ : duct.stagePrimitives_;
-        auto& sourceTerms = candidateStage
-            ? duct.candidateSourceTerms_ : duct.stageSourceTerms_;
-        auto& maximumSignalSpeed = candidateStage
-            ? duct.maximumCandidateSignalSpeedMps_ : duct.maximumStageSignalSpeedMps_;
-        auto& sourceLimitedTimeStep = candidateStage
-            ? duct.candidateSourceLimitedTimeStepSeconds_
-            : duct.stageSourceLimitedTimeStepSeconds_;
-        if (candidateStage && deferDynamicWallSources
-            && duct.geometry_.dynamicWallHeatTransferEnabled) {
-            if (!duct.recoverPrimitiveStates(states, primitives)) return false;
-        } else {
-            if (!duct.prepareStateCache(states, primitives, sourceTerms,
-                    maximumSignalSpeed, sourceLimitedTimeStep))
-                return false;
-        }
-    }
+bool ExhaustGasNetwork::prepareNonDuctStageStates(bool candidateStage) noexcept {
     const auto& states = candidateStage ? junctionCandidate_ : junctionStage_;
     auto& junctionPrimitives = candidateStage
         ? junctionCandidatePrimitives_ : junctionStagePrimitives_;
@@ -2059,11 +2134,16 @@ ExhaustNetworkAdvanceResult ExhaustGasNetwork::advance(
                 result.completed = false;
                 break;
             }
-            for (auto& duct : ducts_) {
-                for (std::size_t index = 0; index < duct.cells_.size(); ++index)
-                    duct.stage_[index] = addScaled(
-                        duct.cells_[index], duct.residual_[index], trialStep);
-            }
+            const auto rejectAttempt = [&]() noexcept {
+                ++result.rejectedSubsteps;
+                trialStep *= 0.5;
+                return trialStep > std::numeric_limits<double>::epsilon()
+                    * std::max(1.0, durationSeconds);
+            };
+            // Euler stage of everything that is not a duct first: it reads
+            // only this step's residuals, and the ducts' second-stage pass
+            // below needs these stage primitives (reservoir faces, the shared
+            // reservoir's state).
             for (std::size_t index = 0; index < junctionStates_.size(); ++index) {
                 junctionStage_[index] = addScaled(
                     junctionStates_[index], junctionResidual_[index], trialStep);
@@ -2082,29 +2162,52 @@ ExhaustNetworkAdvanceResult ExhaustGasNetwork::advance(
                     ambientReservoirResidual_, trialStep);
                 ambientReservoirStage_.momentumDensityKgPerM2S = 0.0;
             }
-            for (auto& duct : ducts_)
-                for (auto& state : duct.stage_)
-                    (void) mixtureModel_.canonicaliseSpeciesRoundoff(state);
             for (auto& state : junctionStage_)
                 (void) mixtureModel_.canonicaliseSpeciesRoundoff(state);
             for (std::size_t index = 0; index < cylinderReservoirStage_.size(); ++index)
                 if (cylinderReservoirActive_[index] != 0)
                     (void) mixtureModel_.canonicaliseSpeciesRoundoff(
                         cylinderReservoirStage_[index]);
-            if (!prepareStageStates(false)) {
-                ++result.rejectedSubsteps;
-                trialStep *= 0.5;
-                if (!(trialStep > std::numeric_limits<double>::epsilon()
-                                  * std::max(1.0, durationSeconds)))
-                    break;
+            if (!prepareNonDuctStageStates(false)) {
+                if (!rejectAttempt()) break;
                 continue;
             }
 
+            // Each duct's Euler update, round-off canonicalisation and
+            // primitive/source cache, and (for RK2) its second-stage interior
+            // residual and boundary face fluxes, form one per-duct pass, so a
+            // parallel schedule crosses a single barrier here. A duct whose
+            // own stage is inadmissible rejects the attempt; a stage that is
+            // admissible but cannot be evaluated ends the advance, as before.
+            std::fill(ductStageRejected_.begin(), ductStageRejected_.end(),
+                      std::uint8_t { 0 });
+            const auto eulerStage = [&](std::size_t ductIndex) noexcept {
+                auto& duct = ducts_[ductIndex];
+                for (std::size_t index = 0; index < duct.cells_.size(); ++index)
+                    duct.stage_[index] = addScaled(
+                        duct.cells_[index], duct.residual_[index], trialStep);
+                for (auto& state : duct.stage_)
+                    (void) mixtureModel_.canonicaliseSpeciesRoundoff(state);
+                if (duct.prepareStateCache(duct.stage_, duct.stagePrimitives_,
+                        duct.stageSourceTerms_, duct.maximumStageSignalSpeedMps_,
+                        duct.stageSourceLimitedTimeStepSeconds_))
+                    return true;
+                ductStageRejected_[ductIndex] = 1;
+                return false;
+            };
+            const auto stageRejected = [&]() noexcept {
+                return std::any_of(ductStageRejected_.begin(), ductStageRejected_.end(),
+                    [](std::uint8_t rejected) { return rejected != 0; });
+            };
+
             if (config_.firstOrderTimeIntegration) {
+                if (!forEachDuct(eulerStage)) {
+                    if (!rejectAttempt()) break;
+                    continue;
+                }
                 // The validated stage is the conservative Euler candidate.
                 // Reuse the normal candidate/commit path so positivity, wall
                 // heat and conservation accounting remain common with RK2.
-                for (auto& duct : ducts_) duct.candidate_ = duct.stage_;
                 junctionCandidate_ = junctionStage_;
                 cylinderReservoirCandidate_ = cylinderReservoirStage_;
                 if (ambientReservoirVolumeM3_ > 0.0)
@@ -2115,16 +2218,17 @@ ExhaustNetworkAdvanceResult ExhaustGasNetwork::advance(
                 outletSecondStageFlow_ = outletFirstStageFlow_;
             } else {
                 placeBoundaries(durationSeconds - remaining + trialStep);
-                if (!evaluateStage(true, cylinderBoundaries, ambient)) {
+                const auto stagePassed = evaluateStage(true, cylinderBoundaries,
+                    ambient, StagePart::ductPass, eulerStage);
+                if (stageRejected()) {
+                    if (!rejectAttempt()) break;
+                    continue;
+                }
+                if (!stagePassed || !evaluateStage(true, cylinderBoundaries, ambient,
+                        StagePart::coupling,
+                        [](std::size_t) noexcept { return true; })) {
                     result.completed = false;
                     break;
-                }
-                for (auto& duct : ducts_) {
-                    for (std::size_t index = 0; index < duct.cells_.size(); ++index) {
-                        duct.candidate_[index] = rk2Combination(
-                            duct.cells_[index], duct.stage_[index],
-                            duct.stageResidual_[index], trialStep);
-                    }
                 }
                 for (std::size_t index = 0; index < junctionStates_.size(); ++index) {
                     junctionCandidate_[index] = rk2Combination(
@@ -2148,9 +2252,6 @@ ExhaustNetworkAdvanceResult ExhaustGasNetwork::advance(
                     ambientReservoirCandidate_.momentumDensityKgPerM2S = 0.0;
                 }
             }
-            for (auto& duct : ducts_)
-                for (auto& state : duct.candidate_)
-                    (void) mixtureModel_.canonicaliseSpeciesRoundoff(state);
             for (auto& state : junctionCandidate_)
                 (void) mixtureModel_.canonicaliseSpeciesRoundoff(state);
             for (std::size_t index = 0; index < cylinderReservoirCandidate_.size(); ++index)
@@ -2159,44 +2260,51 @@ ExhaustNetworkAdvanceResult ExhaustGasNetwork::advance(
                         cylinderReservoirCandidate_[index]);
             // Decided before any work from this attempt's own trial step, so a
             // halved retry re-decides consistently and nothing is committed
-            // until the sub-step is accepted. `prepareStageStates` only defers
-            // the candidate cache when the walls are actually going to run;
-            // skipping the exchange therefore also skips the extra
-            // `recoverPrimitiveStates` pass that exists solely to feed it,
-            // which is the larger half of what sub-rating buys.
+            // until the sub-step is accepted. A duct only defers its candidate
+            // cache when its walls are actually going to run; skipping the
+            // exchange therefore also skips the extra `recoverPrimitiveStates`
+            // pass that exists solely to feed it, which is the larger half of
+            // what sub-rating buys.
             const auto wallPendingSeconds = wallHeatPendingSeconds_ + trialStep;
             const auto applyWallHeat = config_.wallHeatUpdateExternallyTriggered
                 ? wallHeatUpdateRequested_
                 : wallPendingSeconds >= config_.wallHeatUpdateIntervalSeconds;
-            if (!prepareStageStates(true, applyWallHeat)) {
-                ++result.rejectedSubsteps;
-                trialStep *= 0.5;
-                if (!(trialStep > std::numeric_limits<double>::epsilon()
-                                  * std::max(1.0, durationSeconds)))
-                    break;
-                continue;
-            }
-
-            auto candidateWallHeatRejectedJ = 0.0;
-            auto candidateWallsAreValid = true;
-            for (auto& duct : ducts_) {
-                if (!applyWallHeat) break;
-                if (!duct.geometry_.dynamicWallHeatTransferEnabled) continue;
-                duct.candidateWallStates_ = duct.wallStates_;
-                if (!duct.applyDynamicWallHeatTransfer(
-                        duct.candidate_, duct.candidatePrimitives_,
-                        duct.candidateWallStates_, wallPendingSeconds,
-                        candidateWallHeatRejectedJ)
-                    || !duct.prepareStateCache(
-                        duct.candidate_, duct.candidatePrimitives_,
-                        duct.candidateSourceTerms_,
-                        duct.maximumCandidateSignalSpeedMps_,
-                        duct.candidateSourceLimitedTimeStepSeconds_)) {
-                    candidateWallsAreValid = false;
-                    break;
+            // Candidate: RK2 combination (or the Euler stage), canonicalisation,
+            // wall heat and cache, again one per-duct pass.
+            const auto firstOrder = config_.firstOrderTimeIntegration;
+            const auto candidateStage = [&](std::size_t ductIndex) noexcept {
+                auto& duct = ducts_[ductIndex];
+                if (firstOrder) {
+                    duct.candidate_ = duct.stage_;
+                } else {
+                    for (std::size_t index = 0; index < duct.cells_.size(); ++index)
+                        duct.candidate_[index] = rk2Combination(
+                            duct.cells_[index], duct.stage_[index],
+                            duct.stageResidual_[index], trialStep);
                 }
-            }
-            if (!candidateWallsAreValid) {
+                for (auto& state : duct.candidate_)
+                    (void) mixtureModel_.canonicaliseSpeciesRoundoff(state);
+                auto& heatRejectedJ = ductWallHeatRejectedJ_[ductIndex];
+                heatRejectedJ = 0.0;
+                if (applyWallHeat && duct.geometry_.dynamicWallHeatTransferEnabled) {
+                    if (!duct.recoverPrimitiveStates(
+                            duct.candidate_, duct.candidatePrimitives_))
+                        return false;
+                    duct.candidateWallStates_ = duct.wallStates_;
+                    if (!duct.applyDynamicWallHeatTransfer(
+                            duct.candidate_, duct.candidatePrimitives_,
+                            duct.candidateWallStates_, wallPendingSeconds,
+                            heatRejectedJ))
+                        return false;
+                }
+                return duct.prepareStateCache(
+                    duct.candidate_, duct.candidatePrimitives_,
+                    duct.candidateSourceTerms_,
+                    duct.maximumCandidateSignalSpeedMps_,
+                    duct.candidateSourceLimitedTimeStepSeconds_);
+            };
+            const auto ductCandidatesValid = forEachDuct(candidateStage);
+            if (!ductCandidatesValid || !prepareNonDuctStageStates(true)) {
                 ++result.rejectedSubsteps;
                 trialStep *= 0.5;
                 if (!(trialStep > std::numeric_limits<double>::epsilon()
@@ -2204,6 +2312,10 @@ ExhaustNetworkAdvanceResult ExhaustGasNetwork::advance(
                     break;
                 continue;
             }
+            auto candidateWallHeatRejectedJ = 0.0;
+            if (applyWallHeat)
+                for (const auto heatRejectedJ : ductWallHeatRejectedJ_)
+                    candidateWallHeatRejectedJ += heatRejectedJ;
 
             const auto integrationWeight = 0.5 * trialStep;
             for (std::size_t index = 0; index < cylinderExchanges_.size(); ++index) {
