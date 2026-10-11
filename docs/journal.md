@@ -5,6 +5,13 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-12 — Individual throttle bodies as a small cell per cylinder: refuted
+
+- Tried on the CP2 (real hardware: one 38 mm body per cylinder) with configuration only: two intake paths, each one throttle into a 0.05 L cell (the volume behind the plate), then the 120 mm runner. `DynoSweepHarness`, WOT, 500 rpm steps.
+- Torque vs today's shared 1 L plenum: -3 % at 2,000 rpm, -15 % at 4,000, -30 % at 6,500 (48 vs 70 Nm), -54 % at 9,500; VE 0.98 -> 0.74 at 6,000.
+- One factor, today's topology with the shared plenum at 0.1 L: -7 % at 4,000, -16 % at 6,000, -29 % at 9,000. The loss is the orifice dumping a pulsating jet into a small well-mixed cell (peak velocity ~3x the mean, loss as v^2). A real open plate sits in a continuous bore and recovers that pressure.
+- So an ITB needs the plate inside the 1-D runner (a restriction face between two ducts, choked at idle), with the runner mouth on the airbox. Not built: it moves the MAP signal, the idle bypass and the ECU load the plenum carries today.
+
 ## 2026-10-12 — CP2 exhaust lengths: header and silencer do interact
 
 - Owner's report: the sound is only right when header AND silencer are both very long. `GeometrySensitivityHarness --factorial primary|midpipe` (x2 each), CP2 held at 3,500 and 7,000 rpm, third octaves, interaction LL-LS-SL+SS.

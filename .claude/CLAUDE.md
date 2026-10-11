@@ -187,6 +187,8 @@ Details of each measurement are in the docs archive (tag `archive/docs-2026-09`)
   The intake charge bias was not the MUSCL limiter, the finite plenum, wall
   heat or valve linearisation (it was the valve nozzle boundary, Courant-
   dependent). Front-loaded or trajectory-resolved forward delivery: inert.
+  Individual throttles as a small 0-D cell per cylinder: -30 % WOT torque at
+  6,500 rpm (orifice dump loss); the plate belongs inside the 1-D runner.
 - Telemetry cache to speed up listening: would have gained nothing. State-
   variable valve-flow reconstruction against clicks: inert (the source rate
   toggled the band; journal 2026-10-11).
