@@ -140,7 +140,7 @@ MainComponent::MainComponent() {
     });
     viewport_.setConfigEditor([this](const EngineConfig& edited) { return applyEngineEdit(edited); });
     viewport_.setCylinderEditor([this](const EngineConfig& edited, double rampSeconds) {
-        return applyCylinderResize(edited, rampSeconds);
+        return applyEngineEdit(edited, rampSeconds);
     });
     viewport_.onExhaustResolutionChanged = [this] { applyExhaustResolution(); };
     viewport_.onClaimKeyboard = [this] {
@@ -371,7 +371,7 @@ bool MainComponent::applyConfig(const EngineConfig& newConfig, bool preserveScri
     return true;
 }
 
-bool MainComponent::applyEngineEdit(const EngineConfig& edited) {
+bool MainComponent::applyEngineEdit(const EngineConfig& edited, double rampSeconds) {
     auto scope = engineEditScope(config_, edited);
     if (!scope.any()) return true;
     if (scope.other || !runtime_ || !audio_ || runtime_->dynoRunning())
@@ -384,7 +384,22 @@ bool MainComponent::applyEngineEdit(const EngineConfig& edited) {
     scope = engineEditScope(config_, edited);
     if (scope.exhaust && !applyExhaustEdit(edited)) return false;
     scope = engineEditScope(config_, edited);
-    if (scope.cylinders) return applyCylinderResize(edited, ui::EngineViewport::cylinderRampSeconds);
+    if (scope.camshafts && !applyCamshaftEdit(edited, rampSeconds)) return false;
+    scope = engineEditScope(config_, edited);
+    if (scope.cylinders) return applyCylinderResize(edited, rampSeconds);
+    return true;
+}
+
+bool MainComponent::applyCamshaftEdit(const EngineConfig& edited, double rampSeconds) {
+    if (!runtime_ || runtime_->dynoRunning() || !runtime_->applyLiveCamshafts(edited, rampSeconds))
+        return applyConfig(edited, false, true);
+    const auto& running = runtime_->engineConfig();
+    config_.camshafts = running.camshafts;
+    for (std::size_t index = 0; index < config_.banks.size() && index < running.banks.size(); ++index)
+        config_.banks[index].camshafts = running.banks[index].camshafts;
+    viewport_.setEngine(config_);
+    viewport_.refresh();
+    configChanged_ = true;
     return true;
 }
 
@@ -398,6 +413,8 @@ bool MainComponent::applySettingsEdit(const EngineConfig& edited) {
     config_.exhaustAfterfire = running.exhaustAfterfire;
     config_.crankshafts = running.crankshafts;
     config_.rotatingInertiaKgM2 = running.rotatingInertiaKgM2;
+    config_.ambientPressureKpa = running.ambientPressureKpa;
+    config_.ambientTemperatureC = running.ambientTemperatureC;
     // The simulation has the new settings: a sound that cannot follow them
     // needs the restart after all.
     if (!audio_->replaceForcedInduction(config_.forcedInduction))

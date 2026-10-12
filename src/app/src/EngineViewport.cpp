@@ -501,7 +501,7 @@ PartInspector::PartInspector() {
     firstUp_.onClick = [this] { stepEdit(true, 1.0); };
     secondDown_.onClick = [this] { stepEdit(false, -1.0); };
     secondUp_.onClick = [this] { stepEdit(false, 1.0); };
-    rampEdit_.setTooltip("When the cylinders take a new size: at their next gas-exchange TDC, or gradually over "
+    rampEdit_.setTooltip("When the engine takes the change: at the next cycle, or gradually over "
                          + juce::String(EngineViewport::cylinderRampSeconds, 0) + " s");
     const auto showRamp = [this] {
         rampEdit_.setButtonText(gradual_ ? "Over " + juce::String(EngineViewport::cylinderRampSeconds, 0) + " s"
@@ -930,6 +930,27 @@ constexpr std::array<double, 3> simulationSpeeds { 0.25, 0.5, 1.0 };
 
 [[nodiscard]] juce::String millimetres(double value) { return juce::String(value, value < 100.0 ? 1 : 0) + " mm"; }
 
+/** The standard atmosphere's pressure at `altitudeM`, and back. */
+[[nodiscard]] double pressureKpaAtAltitude(double altitudeM) noexcept {
+    return 101.325 * std::pow(1.0 - 2.25577e-5 * altitudeM, 5.25588);
+}
+
+[[nodiscard]] double altitudeForPressureKpa(double pressureKpa) noexcept {
+    return (1.0 - std::pow(pressureKpa / 101.325, 1.0 / 5.25588)) / 2.25577e-5;
+}
+
+/** Moves `field` (and `highField`, the variable profile's, when given) of the
+    engine's camshafts and of every bank's by `delta`. */
+void shiftCamshafts(EngineConfig& config, double CamshaftConfig::*field, double CamshaftConfig::*highField,
+                    double delta) {
+    const auto shift = [&](CamshaftConfig& camshafts) {
+        camshafts.*field += delta;
+        if (highField != nullptr) camshafts.*highField += delta;
+    };
+    shift(config.camshafts);
+    for (auto& bank : config.banks) shift(bank.camshafts);
+}
+
 [[nodiscard]] juce::String exhaustComponentName(ExhaustComponentType type) {
     switch (type) {
     case ExhaustComponentType::pipe: return "Pipe";
@@ -1050,8 +1071,17 @@ void EngineViewport::applyEdit(double first, double second, bool gradual) {
         applyCylinderEdit(first, second, gradual);
     else if (role == render::PartRole::rod)
         applyRodEdit(second, gradual);
+    else if (partEditor_ && (role == render::PartRole::head || role == render::PartRole::intakeValve
+                             || role == render::PartRole::exhaustValve))
+        applyCamshaftEdit(first, second, gradual);
     else if (partEditor_)
         applyPartEdit(first, second);
+}
+
+void EngineViewport::applyCamshaftEdit(double first, double second, bool gradual) {
+    if (!scene_ || !cylinderEditor_ || !partEditor_ || selectedPart_ < 0) return;
+    auto edited = scene_->config();
+    sendCylinderEdit(edited, partEditor_(edited, first, second), gradual);
 }
 
 void EngineViewport::applyPartEdit(double first, double second) {
@@ -1522,12 +1552,81 @@ void EngineViewport::updateInspector() {
         subtitle = juce::String(config.name);
         add("Cylinders", juce::String(static_cast<int>(config.cylinders.size())));
         add("Displacement", juce::String(engineDisplacementLitres(config), 2) + " L");
+        add("Air pressure", juce::String(config.ambientPressureKpa, 1) + " kPa");
+        if (configEditor_) {
+            edit = PartInspector::Edit {};
+            edit->key = std::uint64_t { 8 } << 60U;
+            edit->heading = "AIR";
+            edit->firstLabel = "Altitude";
+            edit->secondLabel = "Temperature";
+            edit->firstUnit = " m";
+            edit->secondUnit = utf8(" \xc2\xb0""C");
+            edit->firstDecimals = 0;
+            edit->secondDecimals = 0;
+            edit->first = std::round(altitudeForPressureKpa(config.ambientPressureKpa));
+            edit->second = config.ambientTemperatureC;
+            edit->firstStep = 250.0;
+            edit->firstFineStep = 50.0;
+            edit->secondStep = 5.0;
+            edit->secondFineStep = 1.0;
+            edit->minimum = 0.0;
+            edit->firstMaximum = 5'000.0;
+            edit->secondMinimum = -30.0;
+            edit->secondMaximum = 50.0;
+            edit->note = "The air the engine breathes and its exhaust leaves into: the standard atmosphere's "
+                         "pressure at that altitude. The running engine takes it.";
+            partEditor_ = [](EngineConfig& edited, double altitudeM, double temperatureC) {
+                edited.ambientPressureKpa = pressureKpaAtAltitude(altitudeM);
+                edited.ambientTemperatureC = temperatureC;
+                return std::string();
+            };
+        }
         break;
-    case render::PartRole::head:
+    case render::PartRole::head: {
         title = "Cylinder heads";
         subtitle = juce::String(config.name);
         add("Engine speed", juce::String(juce::roundToInt(state.rpm)) + " rpm");
+        const auto& cams = config.banks.empty() ? config.camshafts : config.banks.front().camshafts;
+        const auto degrees = [](double value) { return juce::String(juce::roundToInt(value)) + utf8("\xc2\xb0"); };
+        add("Lobe separation", degrees(0.5 * (cams.intakeCenterlineDegrees + cams.exhaustCenterlineDegrees)));
+        add("Valve overlap", degrees(std::max(0.0, 0.5 * (cams.intakeDurationDegrees + cams.exhaustDurationDegrees)
+                                                       - cams.intakeCenterlineDegrees - cams.exhaustCenterlineDegrees)));
+        if (cams.variableProfileEnabled)
+            add("Profile switch", juce::String(juce::roundToInt(cams.switchRpm)) + " rpm");
+        if (cylinderEditor_) {
+            PartInspector::Edit timing;
+            timing.key = std::uint64_t { 7 } << 60U;
+            timing.heading = "CAM TIMING";
+            timing.firstLabel = "Intake centreline";
+            timing.secondLabel = "Exhaust centreline";
+            timing.firstUnit = utf8("\xc2\xb0");
+            timing.secondUnit = utf8("\xc2\xb0");
+            timing.firstDecimals = 0;
+            timing.secondDecimals = 0;
+            timing.first = cams.intakeCenterlineDegrees;
+            timing.second = cams.exhaustCenterlineDegrees;
+            timing.firstStep = 2.0;
+            timing.firstFineStep = 1.0;
+            timing.secondStep = 2.0;
+            timing.secondFineStep = 1.0;
+            timing.minimum = 60.0;
+            timing.firstMaximum = 160.0;
+            timing.secondMaximum = 160.0;
+            timing.offersRamp = true;
+            timing.note = "Degrees after TDC for the intake, before it for the exhaust: smaller centrelines, more "
+                          "overlap. Every camshaft moves by as much. The running engine takes it.";
+            edit = timing;
+            const auto intakeNow = cams.intakeCenterlineDegrees;
+            const auto exhaustNow = cams.exhaustCenterlineDegrees;
+            partEditor_ = [=](EngineConfig& edited, double intakeCentreline, double exhaustCentreline) {
+                shiftCamshafts(edited, &CamshaftConfig::intakeCenterlineDegrees, nullptr, intakeCentreline - intakeNow);
+                shiftCamshafts(edited, &CamshaftConfig::exhaustCenterlineDegrees, nullptr,
+                               exhaustCentreline - exhaustNow);
+                return std::string();
+            };
+        }
         break;
+    }
     case render::PartRole::liner:
         title = "Cylinder liner";
         edit = cylinderEdit();
@@ -1607,6 +1706,43 @@ void EngineViewport::updateInspector() {
         const auto intake = identity.role == render::PartRole::intakeValve;
         title = intake ? "Intake valve" : "Exhaust valve";
         const auto& cams = scene_->camshaftsOf(cylinderIndex);
+        if (cylinderEditor_) {
+            PartInspector::Edit camEdit;
+            camEdit.key = (std::uint64_t { 7 } << 60U) | (intake ? 1U : 2U);
+            camEdit.heading = intake ? "INTAKE CAM" : "EXHAUST CAM";
+            camEdit.firstLabel = "Duration";
+            camEdit.secondLabel = "Lift";
+            camEdit.firstUnit = utf8("\xc2\xb0");
+            camEdit.secondUnit = " mm";
+            camEdit.firstDecimals = 0;
+            camEdit.secondDecimals = 1;
+            camEdit.first = intake ? cams.intakeDurationDegrees : cams.exhaustDurationDegrees;
+            camEdit.second = intake ? cams.intakeLiftMm : cams.exhaustLiftMm;
+            camEdit.firstStep = 5.0;
+            camEdit.firstFineStep = 1.0;
+            camEdit.secondStep = 0.5;
+            camEdit.secondFineStep = 0.1;
+            camEdit.minimum = 120.0;
+            camEdit.firstMaximum = 360.0;
+            camEdit.secondMinimum = 1.0;
+            camEdit.secondMaximum = 20.0;
+            camEdit.offersRamp = true;
+            camEdit.note = "Every camshaft moves by as much, its high profile too. The running engine takes it.";
+            edit = camEdit;
+            const auto durationField = intake ? &CamshaftConfig::intakeDurationDegrees
+                                              : &CamshaftConfig::exhaustDurationDegrees;
+            const auto liftField = intake ? &CamshaftConfig::intakeLiftMm : &CamshaftConfig::exhaustLiftMm;
+            const auto highDurationField = intake ? &CamshaftConfig::highIntakeDurationDegrees
+                                                  : &CamshaftConfig::highExhaustDurationDegrees;
+            const auto highLiftField = intake ? &CamshaftConfig::highIntakeLiftMm : &CamshaftConfig::highExhaustLiftMm;
+            const auto durationNow = cams.*durationField;
+            const auto liftNow = cams.*liftField;
+            partEditor_ = [=](EngineConfig& edited, double duration, double lift) {
+                shiftCamshafts(edited, durationField, highDurationField, duration - durationNow);
+                shiftCamshafts(edited, liftField, highLiftField, lift - liftNow);
+                return std::string();
+            };
+        }
         add("Lift", millimetres(intake ? cams.intakeLiftMm : cams.exhaustLiftMm));
         add("Duration", juce::String(juce::roundToInt(intake ? cams.intakeDurationDegrees : cams.exhaustDurationDegrees))
                             + utf8("°"));

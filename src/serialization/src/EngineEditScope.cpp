@@ -19,6 +19,20 @@ void takeSettings(EngineConfig& probe, const EngineConfig& edited) {
     probe.exhaustAfterfire = edited.exhaustAfterfire;
     probe.crankshafts = edited.crankshafts;
     probe.rotatingInertiaKgM2 = edited.rotatingInertiaKgM2;
+    probe.ambientPressureKpa = edited.ambientPressureKpa;
+    probe.ambientTemperatureC = edited.ambientTemperatureC;
+}
+
+/** False when the banks are not the same ones: that edit is not a camshaft
+ *  change. */
+bool takeCamshafts(EngineConfig& probe, const EngineConfig& edited) {
+    if (probe.banks.size() != edited.banks.size()) return false;
+    for (std::size_t index = 0; index < probe.banks.size(); ++index) {
+        if (probe.banks[index].id != edited.banks[index].id) return false;
+        probe.banks[index].camshafts = edited.banks[index].camshafts;
+    }
+    probe.camshafts = edited.camshafts;
+    return true;
 }
 
 /** False when the cylinders are not the same ones: that edit is not an
@@ -87,9 +101,12 @@ EngineEditScope engineEditScope(const EngineConfig& running, const EngineConfig&
         scope.exhaust = differs([&](EngineConfig& probe) { takeExhaust(probe, now); return true; });
         scope.settings = differs([&](EngineConfig& probe) { takeSettings(probe, now); return true; });
         scope.intake = differs([&](EngineConfig& probe) { return takeIntake(probe, now); });
+        scope.camshafts = differs([&](EngineConfig& probe) { return takeCamshafts(probe, now); });
         auto probe = was;
         takeExhaust(probe, now);
         takeSettings(probe, now);
+        // Banks of other cylinders stay in the difference: `other`.
+        (void)takeCamshafts(probe, now);
         const auto resizable = takeCylinderSizes(probe, now) && takeIntake(probe, now);
         scope.cylinders = resizable && differs([&](EngineConfig& sized) { return takeCylinderSizes(sized, now); });
         normaliseEngineConfig(probe);

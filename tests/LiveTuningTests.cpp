@@ -1,4 +1,4 @@
-// Live tuning: the running engine takes a new flywheel between two steps,
+// Live tuning: the running engine takes a new flywheel and new camshafts
 // without a restart. These tests drive the real simulator the way
 // EngineRuntime does, deterministically.
 #include <enginelab/catalog/EngineCatalog.hpp>
@@ -124,11 +124,189 @@ void flywheelIsASetting() {
     require(!runtime->applyLiveSettings(turned), "the runtime refuses another crankshaft");
 }
 
+/** Cranked to 1.5 s, then full throttle from 2 s held at 60 % of redline by
+ * a proportional brake: the settled brake torque is what a cam changes. */
+[[nodiscard]] EngineControls heldAt(double timeSeconds, double rpm, const EngineConfig& config) {
+    EngineControls controls;
+    controls.ignitionEnabled = true;
+    controls.starterEngaged = timeSeconds < 1.5;
+    controls.throttle = timeSeconds < 2.0 ? 0.0 : 1.0;
+    if (timeSeconds >= 2.0)
+        controls.dynamometerTorqueNm = std::max(0.0, 2.0 * (rpm - 0.6 * config.redlineRpm));
+    return controls;
+}
+
+/** Every camshaft, high profiles too, milder: 40 degrees shorter and 30 %
+ * less lift on both valves. */
+[[nodiscard]] EngineConfig milderCams(EngineConfig config) {
+    const auto soften = [](CamshaftConfig& cams) {
+        cams.intakeDurationDegrees -= 40.0;
+        cams.exhaustDurationDegrees -= 40.0;
+        cams.highIntakeDurationDegrees -= 40.0;
+        cams.highExhaustDurationDegrees -= 40.0;
+        cams.intakeLiftMm *= 0.7;
+        cams.exhaustLiftMm *= 0.7;
+        cams.highIntakeLiftMm *= 0.7;
+        cams.highExhaustLiftMm *= 0.7;
+    };
+    soften(config.camshafts);
+    for (auto& bank : config.banks) soften(bank.camshafts);
+    normaliseEngineConfig(config);
+    return config;
+}
+
+[[nodiscard]] const CamshaftConfig& firstCamshafts(const EngineConfig& config) {
+    return config.banks.empty() ? config.camshafts : config.banks.front().camshafts;
+}
+
+/** Taking the camshafts it already runs with changes nothing, bit for bit,
+ * at once or over a ramp; other banks or a profile switch added are
+ * refused; a cam edit is a camshaft edit only. */
+void sameCamshaftsAreInvisible() {
+    for (const auto* name : { "Yamaha CP2", "K20A" }) {
+        const auto config = catalogueEngine(name);
+        for (const auto ramp : { 0.0, 1.0 }) {
+            Rig reference(config);
+            Rig swapped(config);
+            double rpm = 0.0;
+            for (auto frame = 0; frame < 5 * 240; ++frame) {
+                const auto t = frame * frameSeconds;
+                if (frame == 3 * 240) {
+                    auto incoming = config;
+                    require(swapped.simulator->beginCamshaftChange(incoming, ramp),
+                            std::string(name) + ": the simulator takes its own camshafts");
+                }
+                const auto controls = heldAt(t, rpm, config);
+                const auto a = reference.simulator->step(frameSeconds, controls);
+                const auto b = swapped.simulator->step(frameSeconds, controls);
+                rpm = a.state.rpm;
+                require(a.state.rpm == b.state.rpm && a.state.crankAngleDegrees == b.state.crankAngleDegrees,
+                        std::string(name) + ": the same camshafts must leave the run bit-identical");
+            }
+        }
+    }
+    const auto k20 = catalogueEngine("K20A");
+    const auto scope = engineEditScope(k20, milderCams(k20));
+    require(scope.camshafts && !scope.settings && !scope.cylinders && !scope.other,
+            "a cam edit is a camshaft edit only");
+    auto switched = k20;
+    switched.camshafts.variableProfileEnabled = !switched.camshafts.variableProfileEnabled;
+    for (auto& bank : switched.banks) bank.camshafts.variableProfileEnabled = switched.camshafts.variableProfileEnabled;
+    require(!EngineSimulator::camshaftsReplaceable(k20, switched), "a profile switch added or removed is refused");
+    auto runtime = std::make_unique<EngineRuntime>(k20);
+    require(runtime->applyLiveCamshafts(milderCams(k20), 2.0), "the runtime takes milder cams");
+    require(firstCamshafts(runtime->engineConfig()).intakeDurationDegrees
+                == firstCamshafts(k20).intakeDurationDegrees - 40.0,
+            "the runtime's configuration carries the new cams");
+    require(!runtime->applyLiveCamshafts(switched, 0.0), "the runtime refuses a profile switch added");
+}
+
+/** Milder cams taken at 6 s, at once or over 2 s: no stall, the duration
+ * half-way at half the ramp, and the engine settles where an engine built
+ * with them runs. */
+void camshaftsSettleLikeARestart() {
+    for (const auto* name : { "Yamaha CP2", "K20A" }) {
+        const auto original = catalogueEngine(name);
+        const auto edited = milderCams(original);
+        require(EngineSimulator::camshaftsReplaceable(original, edited), std::string(name) + ": replaceable");
+        for (const auto ramp : { 0.0, 2.0 }) {
+            Rig built(edited);
+            Rig swapped(original);
+            Rig untouched(original);
+            constexpr auto swapFrame = 6 * 240;
+            constexpr auto frames = 14 * 240;
+            std::array<double, 3> rpm {};
+            std::array<double, 3> torque {};
+            double minimumRpm = 1.0e9;
+            double halfWay = -1.0;
+            for (auto frame = 0; frame < frames; ++frame) {
+                const auto t = frame * frameSeconds;
+                if (frame == swapFrame) {
+                    auto incoming = edited;
+                    require(swapped.simulator->beginCamshaftChange(incoming, ramp),
+                            std::string(name) + ": the cams are taken");
+                }
+                std::size_t index = 0;
+                for (auto* rig : { &built, &swapped, &untouched }) {
+                    const auto controls = heldAt(t, rpm[index], original);
+                    rpm[index] = rig->simulator->step(frameSeconds, controls).state.rpm;
+                    if (frame >= frames - 4 * 240) torque[index] += controls.dynamometerTorqueNm / (4.0 * 240.0);
+                    ++index;
+                }
+                if (frame >= swapFrame) minimumRpm = std::min(minimumRpm, rpm[1]);
+                if (ramp > 0.0 && frame == swapFrame + static_cast<int>(0.5 * ramp * 240.0))
+                    halfWay = firstCamshafts(swapped.simulator->config()).intakeDurationDegrees
+                        - firstCamshafts(original).intakeDurationDegrees;
+            }
+            std::cout << "  " << name << ", cams -40 deg, -30 % lift " << (ramp > 0.0 ? "over 2 s" : "at once")
+                      << ": settled brake torque, Nm: built " << torque[0] << ", swapped " << torque[1]
+                      << ", untouched " << torque[2] << "; lowest rpm after the change " << minimumRpm
+                      << (ramp > 0.0 ? "; duration at half the ramp " + std::to_string(halfWay) : std::string())
+                      << "\n";
+            require(std::abs(torque[2] - torque[0]) > 0.03 * std::abs(torque[2]),
+                    std::string(name) + ": the cams change the torque (else this proves nothing)");
+            require(minimumRpm > 0.5 * original.idleRpm, std::string(name) + ": the engine keeps running");
+            require(std::abs(torque[1] - torque[0]) <= 0.15 * std::abs(torque[2] - torque[0]),
+                    std::string(name) + ": the changed engine settles where an engine built with the cams runs");
+            if (ramp > 0.0)
+                require(halfWay < -17.0 && halfWay > -23.0, std::string(name) + ": half-way at half the ramp");
+        }
+    }
+}
+
+/** The air at 2,000 m (79.5 kPa) and 35 degC, taken at 6 s while held at 60 %
+ * of redline: no stall, and the engine settles where an engine built there
+ * runs. An ambient edit is a settings edit. */
+void ambientSettlesLikeARestart() {
+    for (const auto* name : { "Yamaha CP2", "2JZ" }) {
+        const auto original = catalogueEngine(name);
+        auto edited = original;
+        edited.ambientPressureKpa = 79.5;
+        edited.ambientTemperatureC = 35.0;
+        const auto scope = engineEditScope(original, edited);
+        require(scope.settings && !scope.other, std::string(name) + ": an ambient edit is a settings edit only");
+        Rig built(edited);
+        Rig swapped(original);
+        Rig untouched(original);
+        constexpr auto swapFrame = 6 * 240;
+        constexpr auto frames = 14 * 240;
+        std::array<double, 3> rpm {};
+        std::array<double, 3> torque {};
+        double minimumRpm = 1.0e9;
+        for (auto frame = 0; frame < frames; ++frame) {
+            const auto t = frame * frameSeconds;
+            if (frame == swapFrame) {
+                auto incoming = edited;
+                require(swapped.simulator->replaceSettings(incoming), std::string(name) + ": the air is taken");
+            }
+            std::size_t index = 0;
+            for (auto* rig : { &built, &swapped, &untouched }) {
+                const auto controls = heldAt(t, rpm[index], original);
+                rpm[index] = rig->simulator->step(frameSeconds, controls).state.rpm;
+                if (frame >= frames - 4 * 240) torque[index] += controls.dynamometerTorqueNm / (4.0 * 240.0);
+                ++index;
+            }
+            if (frame >= swapFrame) minimumRpm = std::min(minimumRpm, rpm[1]);
+        }
+        std::cout << "  " << name << ", 2,000 m and 35 degC: settled brake torque, Nm: built " << torque[0]
+                  << ", swapped " << torque[1] << ", untouched " << torque[2] << "; lowest rpm after the change "
+                  << minimumRpm << "\n";
+        require(std::abs(torque[2] - torque[0]) > 0.03 * std::abs(torque[2]),
+                std::string(name) + ": the air changes the torque (else this proves nothing)");
+        require(minimumRpm > 0.5 * original.idleRpm, std::string(name) + ": the engine keeps running");
+        require(std::abs(torque[1] - torque[0]) <= 0.15 * std::abs(torque[2] - torque[0]),
+                std::string(name) + ": the changed engine settles where an engine built in that air runs");
+    }
+}
+
 } // namespace
 
 void liveTuningRegression() {
+    ambientSettlesLikeARestart();
     flywheelIsASetting();
     flywheelRevsLikeARestart();
+    sameCamshaftsAreInvisible();
+    camshaftsSettleLikeARestart();
 }
 
 } // namespace enginelab::tests

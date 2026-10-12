@@ -1158,6 +1158,94 @@ void EngineSimulator::advanceCylinderResize() {
         cylinderResize_.reset();
 }
 
+namespace {
+
+/** What a live camshaft change glides; the rest is swapped at once. */
+constexpr std::array<double CamshaftConfig::*, 14> camshaftTimingFields {
+    &CamshaftConfig::intakeDurationDegrees, &CamshaftConfig::exhaustDurationDegrees,
+    &CamshaftConfig::intakeLiftMm, &CamshaftConfig::exhaustLiftMm,
+    &CamshaftConfig::intakeCenterlineDegrees, &CamshaftConfig::exhaustCenterlineDegrees,
+    &CamshaftConfig::intakeFlowCoefficient, &CamshaftConfig::exhaustFlowCoefficient,
+    &CamshaftConfig::switchRpm, &CamshaftConfig::switchThrottle,
+    &CamshaftConfig::highIntakeDurationDegrees, &CamshaftConfig::highExhaustDurationDegrees,
+    &CamshaftConfig::highIntakeLiftMm, &CamshaftConfig::highExhaustLiftMm,
+};
+
+[[nodiscard]] CamshaftConfig& camshaftAt(EngineConfig& config, std::size_t index) noexcept {
+    return index == 0 ? config.camshafts : config.banks[index - 1].camshafts;
+}
+
+[[nodiscard]] const CamshaftConfig& camshaftAt(const EngineConfig& config, std::size_t index) noexcept {
+    return index == 0 ? config.camshafts : config.banks[index - 1].camshafts;
+}
+
+} // namespace
+
+bool EngineSimulator::camshaftsReplaceable(const EngineConfig& running,
+                                           const EngineConfig& edited) noexcept {
+    if (running.banks.size() != edited.banks.size()) return false;
+    for (std::size_t index = 0; index < running.banks.size(); ++index)
+        if (running.banks[index].id != edited.banks[index].id
+            || running.banks[index].cylinderIds != edited.banks[index].cylinderIds)
+            return false;
+    for (std::size_t index = 0; index <= running.banks.size(); ++index) {
+        const auto& was = camshaftAt(running, index);
+        const auto& now = camshaftAt(edited, index);
+        if (was.variableProfileEnabled != now.variableProfileEnabled
+            || was.continuousControl.enabled != now.continuousControl.enabled)
+            return false;
+    }
+    return true;
+}
+
+bool EngineSimulator::beginCamshaftChange(EngineConfig& target, double rampSeconds) {
+    if (!std::isfinite(rampSeconds) || rampSeconds < 0.0 || !camshaftsReplaceable(config_, target))
+        return false;
+    CamshaftChange change;
+    change.startSeconds = state_.simulationTimeSeconds;
+    change.rampSeconds = rampSeconds;
+    for (std::size_t index = 0; index <= config_.banks.size(); ++index) {
+        auto& running = camshaftAt(config_, index);
+        auto& wanted = camshaftAt(target, index);
+        CamshaftTiming from;
+        CamshaftTiming to;
+        for (std::size_t field = 0; field < camshaftTimingFields.size(); ++field) {
+            from.values[field] = running.*camshaftTimingFields[field];
+            to.values[field] = wanted.*camshaftTimingFields[field];
+        }
+        change.from.push_back(from);
+        change.to.push_back(to);
+        std::swap(running.intakeLiftProfile, wanted.intakeLiftProfile);
+        std::swap(running.exhaustLiftProfile, wanted.exhaustLiftProfile);
+        std::swap(running.highIntakeLiftProfile, wanted.highIntakeLiftProfile);
+        std::swap(running.highExhaustLiftProfile, wanted.highExhaustLiftProfile);
+        std::swap(running.intakeFlowCurve, wanted.intakeFlowCurve);
+        std::swap(running.exhaustFlowCurve, wanted.exhaustFlowCurve);
+        std::swap(running.continuousControl, wanted.continuousControl);
+    }
+    camshaftChange_ = std::move(change);
+    advanceCamshaftChange();
+    return true;
+}
+
+void EngineSimulator::advanceCamshaftChange() {
+    if (!camshaftChange_) return;
+    const auto& change = *camshaftChange_;
+    const auto stopped = std::abs(state_.rpm) < 1.0;
+    const auto fraction = change.rampSeconds > 0.0 && !stopped
+        ? std::clamp((state_.simulationTimeSeconds - change.startSeconds) / change.rampSeconds, 0.0, 1.0)
+        : 1.0;
+    for (std::size_t index = 0; index < change.from.size(); ++index) {
+        auto& camshaft = camshaftAt(config_, index);
+        for (std::size_t field = 0; field < camshaftTimingFields.size(); ++field) {
+            const auto from = change.from[index].values[field];
+            const auto to = change.to[index].values[field];
+            camshaft.*camshaftTimingFields[field] = fraction >= 1.0 ? to : from + (to - from) * fraction;
+        }
+    }
+    if (fraction >= 1.0) camshaftChange_.reset();
+}
+
 bool EngineSimulator::replaceExhaustNetwork(
     std::unique_ptr<gasdynamics::ExhaustGasNetwork>& network,
     const EngineConfig& config) {
@@ -1196,6 +1284,18 @@ bool EngineSimulator::settingsReplaceable(const EngineConfig& running,
 
 bool EngineSimulator::replaceSettings(EngineConfig& config) noexcept {
     if (!settingsReplaceable(config_, config)) return false;
+    // The exhaust outlet's reservoir is the one ambient state kept between
+    // steps; everything else reads the ambient at every step.
+    if (physicalExhaustNetwork_
+        && (config.ambientPressureKpa != config_.ambientPressureKpa
+            || config.ambientTemperatureC != config_.ambientTemperatureC)) {
+        const auto ambientState = physicalExhaustNetwork_->mixtureModel().conservativeFromPressureTemperature(
+            config.ambientPressureKpa * 1'000.0, config.ambientTemperatureC + 273.15);
+        if (!ambientState) return false;
+        physicalExhaustAmbientState_ = *ambientState;
+    }
+    config_.ambientPressureKpa = config.ambientPressureKpa;
+    config_.ambientTemperatureC = config.ambientTemperatureC;
     std::swap(config_.injection, config.injection);
     std::swap(config_.forcedInduction, config.forcedInduction);
     std::swap(config_.ignition, config.ignition);
@@ -1387,6 +1487,7 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
         pollGasFieldCapture();
         recordGasProbe();
         advanceCylinderResize();
+        advanceCamshaftChange();
         const auto subStepStartTime = state_.simulationTimeSeconds;
         const auto subPreviousRpm = state_.rpm;
         const auto subPreviousAngle = state_.crankAngleDegrees;

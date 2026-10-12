@@ -583,6 +583,8 @@ bool EngineRuntime::applyLiveSettings(const EngineConfig& edited) {
     change->config.exhaustAfterfire = edited.exhaustAfterfire;
     change->config.crankshafts = edited.crankshafts;
     change->config.rotatingInertiaKgM2 = edited.rotatingInertiaKgM2;
+    change->config.ambientPressureKpa = edited.ambientPressureKpa;
+    change->config.ambientTemperatureC = edited.ambientTemperatureC;
     try {
         normaliseEngineConfig(change->config);
         if (validateEngineConfig(change->config)) return false;
@@ -599,12 +601,61 @@ bool EngineRuntime::applyLiveSettings(const EngineConfig& edited) {
     for (std::size_t index = 0; index < config_.crankshafts.size(); ++index)
         config_.crankshafts[index] = change->config.crankshafts[index];
     config_.rotatingInertiaKgM2 = change->config.rotatingInertiaKgM2;
+    config_.ambientPressureKpa = change->config.ambientPressureKpa;
+    config_.ambientTemperatureC = change->config.ambientTemperatureC;
     {
         const std::scoped_lock lock(liveExhaustMutex_);
         std::swap(pendingSettingsChange_, change);
     }
     liveSettingsChangesRequested_.fetch_add(1, std::memory_order_release);
     return true;
+}
+
+bool EngineRuntime::applyLiveCamshafts(const EngineConfig& edited, double rampSeconds) {
+    if (!std::isfinite(rampSeconds) || rampSeconds < 0.0 || edited.banks.size() != config_.banks.size())
+        return false;
+    auto change = std::make_unique<LiveCamshaftChange>();
+    change->config = config_;
+    change->rampSeconds = rampSeconds;
+    change->config.camshafts = edited.camshafts;
+    for (std::size_t index = 0; index < config_.banks.size(); ++index) {
+        if (edited.banks[index].id != config_.banks[index].id) return false;
+        change->config.banks[index].camshafts = edited.banks[index].camshafts;
+    }
+    try {
+        normaliseEngineConfig(change->config);
+        if (validateEngineConfig(change->config)) return false;
+    } catch (const std::exception&) {
+        return false;
+    }
+    if (!EngineSimulator::camshaftsReplaceable(config_, change->config)) return false;
+    // The simulation thread never reads these fields of config_.
+    config_.camshafts = change->config.camshafts;
+    for (std::size_t index = 0; index < config_.banks.size(); ++index)
+        config_.banks[index].camshafts = change->config.banks[index].camshafts;
+    {
+        const std::scoped_lock lock(liveExhaustMutex_);
+        std::swap(pendingCamshaftChange_, change);
+    }
+    liveCamshaftChangesRequested_.fetch_add(1, std::memory_order_release);
+    return true;
+}
+
+void EngineRuntime::consumeLiveCamshaftChange() noexcept {
+    const auto requested = liveCamshaftChangesRequested_.load(std::memory_order_acquire);
+    if (requested == liveCamshaftChangesConsumed_) return;
+    liveCamshaftChangesConsumed_ = requested;
+    std::unique_ptr<LiveCamshaftChange> change;
+    {
+        const std::scoped_lock lock(liveExhaustMutex_);
+        std::swap(pendingCamshaftChange_, change);
+    }
+    try {
+        if (!change || !simulator_.beginCamshaftChange(change->config, change->rampSeconds)) return;
+    } catch (const std::exception&) {
+        return;
+    }
+    liveCamshaftChangesApplied_.fetch_add(1, std::memory_order_release);
 }
 
 bool EngineRuntime::applyLiveIntake(const EngineConfig& edited) {
@@ -674,6 +725,10 @@ void EngineRuntime::consumeLiveSettingsChange() noexcept {
     // A new flywheel: the clutch and the vehicle feel it too.
     engineInertiaKgM2_ = effectiveRotatingInertiaKgM2(simulator_.config());
     driveline_.setEngineInertia(engineInertiaKgM2_);
+    audioState_.ambientPressureKpa.store(static_cast<float>(simulator_.config().ambientPressureKpa),
+                                         std::memory_order_relaxed);
+    audioState_.ambientTemperatureC.store(static_cast<float>(simulator_.config().ambientTemperatureC),
+                                          std::memory_order_relaxed);
     liveSettingsChangesApplied_.fetch_add(1, std::memory_order_release);
     // The previous settings leave with `change`, between two frames.
 }
@@ -1288,6 +1343,7 @@ void EngineRuntime::run(std::stop_token stopToken) {
         consumeLiveCylinderResize();
         consumeLiveSettingsChange();
         consumeLiveIntakeChange();
+        consumeLiveCamshaftChange();
         const EngineControls controls { ignition_.load(), starter_.load(),
             (dynoActive_ ? dynoThrottleCommand_
                          : std::clamp(throttle_.load(), 0.0, 1.0))

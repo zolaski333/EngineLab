@@ -69,6 +69,16 @@ file formats, always with an in-memory migration).
 
 ### Added
 
+- Change the air while the engine runs: click the cylinder block and set
+  the altitude and the temperature. At 2,000 m and 35 degC the CP2 loses
+  27 % of its torque. The 2JZ loses 25 %: its boost is controlled as a ratio
+  to the outside pressure, so it does not make up for the thinner air the
+  way a real wastegate would.
+- Change the camshafts while the engine runs: click an intake or exhaust
+  valve for its cam's duration and lift, or the cylinder heads for the cam
+  timing (intake and exhaust centrelines, with the overlap shown). The
+  valves glide to the new cams over 3 s, or take them at the next cycle.
+  Switching a variable profile (VTEC) on or off still restarts the engine.
 - Change the flywheel while the engine runs: click the crankshaft in the
   3-D view and set its inertia (crank and flywheel). A lighter one revs up
   and down faster. Ignition limiter and afterfire settings edited in the

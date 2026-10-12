@@ -355,6 +355,16 @@ public:
     [[nodiscard]] std::uint64_t liveSettingsChangeCount() const noexcept {
         return liveSettingsChangesApplied_.load(std::memory_order_acquire);
     }
+    /** An edit of the camshafts only (the engine's and every bank's): the
+     * running engine's valves glide to the new durations, lifts and
+     * centrelines over `rampSeconds` (EngineSimulator::beginCamshaftChange).
+     * False, changing nothing, for other banks or a variable profile or
+     * continuous control switched on or off: that needs a restart. Same
+     * thread rules as applyLiveExhaust(). */
+    [[nodiscard]] bool applyLiveCamshafts(const EngineConfig& edited, double rampSeconds = 0.0);
+    [[nodiscard]] std::uint64_t liveCamshaftChangeCount() const noexcept {
+        return liveCamshaftChangesApplied_.load(std::memory_order_acquire);
+    }
     /** An edit of config.intake, config.intakePaths and the cylinders' own
      * runner sizes only: the running engine takes the resized runners,
      * plenums and throttles between two frames. False, changing nothing, when
@@ -466,6 +476,11 @@ private:
     void consumeLiveCylinderResize() noexcept;
     void consumeLiveSettingsChange() noexcept;
     void consumeLiveIntakeChange() noexcept;
+    void consumeLiveCamshaftChange() noexcept;
+    struct LiveCamshaftChange final {
+        EngineConfig config;
+        double rampSeconds {};
+    };
     struct LiveIntakeChange final {
         EngineConfig config;
         std::unique_ptr<EngineSimulator::LiveIntake> intake;
@@ -551,6 +566,10 @@ private:
     std::atomic<std::uint64_t> liveSettingsChangesRequested_ { 0 };
     std::uint64_t liveSettingsChangesConsumed_ { 0 };
     std::atomic<std::uint64_t> liveSettingsChangesApplied_ { 0 };
+    std::unique_ptr<LiveCamshaftChange> pendingCamshaftChange_;
+    std::atomic<std::uint64_t> liveCamshaftChangesRequested_ { 0 };
+    std::uint64_t liveCamshaftChangesConsumed_ { 0 };
+    std::atomic<std::uint64_t> liveCamshaftChangesApplied_ { 0 };
     std::unique_ptr<LiveIntakeChange> pendingIntakeChange_;
     std::atomic<std::uint64_t> liveIntakeChangesRequested_ { 0 };
     std::uint64_t liveIntakeChangesConsumed_ { 0 };

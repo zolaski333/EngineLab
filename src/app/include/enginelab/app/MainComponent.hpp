@@ -100,8 +100,13 @@ private:
     void removeSavedEngine(const std::filesystem::path& file);
     /** Any edit of the running engine: the groups it can take live
         (engineEditScope) are taken live, one after the other; anything else
-        restarts it with its tables kept. Nothing changed, nothing done. */
-    bool applyEngineEdit(const EngineConfig&);
+        restarts it with its tables kept. Nothing changed, nothing done.
+        Cylinder sizes and camshafts glide over `rampSeconds`. */
+    bool applyEngineEdit(const EngineConfig&, double rampSeconds = ui::EngineViewport::cylinderRampSeconds);
+    /** An edit of the camshafts only: taken by the running engine over
+        `rampSeconds` when its banks and valve controls stay
+        (EngineSimulator::camshaftsReplaceable), else a restart. */
+    bool applyCamshaftEdit(const EngineConfig&, double rampSeconds);
     /** An edit of config.exhaust and config.exhaustPaths only: taken by the
         running engine when it keeps the network's topology, else a restart. */
     bool applyExhaustEdit(const EngineConfig&);

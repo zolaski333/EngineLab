@@ -252,6 +252,22 @@ public:
      * Replaces a resize still in progress, from where it got to. Simulation
      * thread only, like step(). */
     [[nodiscard]] bool beginCylinderResize(const EngineConfig& target, double rampSeconds);
+    /** Whether `edited`'s camshafts can replace `running`'s in a running
+     * engine (beginCamshaftChange): the same banks, and variable profiles
+     * and continuous valve control switched on or off alike. */
+    [[nodiscard]] static bool camshaftsReplaceable(const EngineConfig& running,
+                                                   const EngineConfig& edited) noexcept;
+    /** Move the camshafts (the engine's and every bank's) to `target`'s while
+     * the engine runs; nothing else of `target` is read. Durations, lifts,
+     * centrelines, flow coefficients and the profile switch glide over
+     * `rampSeconds`, or change at the next sub-step with 0; lift profiles,
+     * flow curves and continuous control are swapped in at once, `target`
+     * leaving with the previous ones. The valve train reads the camshafts at
+     * every sub-step and keeps only its phaser state. False, with nothing
+     * changed, when !camshaftsReplaceable(). Replaces a change still in
+     * progress, from where it got to. Simulation thread only, like step(). */
+    [[nodiscard]] bool beginCamshaftChange(EngineConfig& target, double rampSeconds);
+    [[nodiscard]] bool camshaftChangeActive() const noexcept { return camshaftChange_.has_value(); }
     /** True while a resize has cylinders still to change. */
     [[nodiscard]] bool cylinderResizeActive() const noexcept { return cylinderResize_.has_value(); }
     /** Counts the cylinder geometry changes applied, so an owner can refresh
@@ -724,6 +740,19 @@ private:
      * gas-exchange TDC in the coming sub-step. */
     void advanceCylinderResize();
     std::optional<CylinderResize> cylinderResize_;
+    /** The camshaft fields a live change glides. */
+    struct CamshaftTiming final {
+        std::array<double, 14> values {};
+    };
+    /** Index 0 is config_.camshafts, index 1 + i is config_.banks[i]'s. */
+    struct CamshaftChange final {
+        std::vector<CamshaftTiming> from;
+        std::vector<CamshaftTiming> to;
+        double startSeconds {};
+        double rampSeconds {};
+    };
+    void advanceCamshaftChange();
+    std::optional<CamshaftChange> camshaftChange_;
     std::uint64_t cylinderGeometryRevision_ { 0 };
     /** Heap-owned scratch keeps the bounded source list out of step()'s large
      * Windows stack frame. */

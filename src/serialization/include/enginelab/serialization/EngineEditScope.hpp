@@ -23,9 +23,13 @@ struct EngineEditScope final {
     /** config.intake, config.intakePaths, the legacy plenum volume and
      *  throttle bore, and each cylinder's own runner size (applyLiveIntake). */
     bool intake { false };
+    /** config.camshafts and every bank's camshafts (applyLiveCamshafts). */
+    bool camshafts { false };
     bool other { false };
 
-    [[nodiscard]] bool any() const noexcept { return exhaust || cylinders || settings || intake || other; }
+    [[nodiscard]] bool any() const noexcept {
+        return exhaust || cylinders || settings || intake || camshafts || other;
+    }
 };
 
 /**
