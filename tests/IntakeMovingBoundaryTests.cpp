@@ -571,8 +571,50 @@ void sharedMoving(double couplingSeconds, bool jointManifold, bool macroPrefix =
 }
 } // namespace
 
+// Overlap at the limiter with the throttle shut: the exhaust valve's outflow
+// is handed over from the previous window, when the chamber held hot burned
+// gas, but the chamber now refills with cold charge. At the hot gas's
+// enthalpy, that outflow carries three times the energy the cold chamber
+// holds over one 400 us advance. Fixed rates drained it to 0 K and the
+// network rejected every later attempt (102,000 rejected substeps in 3 s of
+// CP4 limiter); the outflow must leave with the chamber's own gas instead.
+void hotOverlapDrain() {
+    constexpr double chamberVolumeM3 = 30.0e-6;
+    constexpr double advanceSeconds = 400.0e-6;
+    constexpr double outflowKgPerS = 0.05;
+    ExhaustGasNetwork network;
+    configure(network);
+    const auto& model = network.mixtureModel();
+    const auto cold = model.conservativeFromPressureTemperature(pressurePa, temperatureK);
+    const auto hot = model.conservativeFromPressureTemperature(pressurePa, 1'000.0);
+    require(cold.has_value() && hot.has_value(), "both reference states must recover");
+    CylinderValveBoundary boundary { 1, *cold, chamberVolumeM3, 100.0e-6, 1.0 };
+    const auto hotEnthalpyJPerKg =
+        (hot->totalEnergyDensityJPerM3 + pressurePa) / hot->densityKgPerM3();
+    for (std::size_t species = 0; species < gasSpeciesCount; ++species)
+        boundary.otherOutflowSpeciesKgPerS[species] = outflowKgPerS
+            * hot->speciesMassDensityKgPerM3[species] / hot->densityKgPerM3();
+    boundary.otherOutflowEnergyW = outflowKgPerS * hotEnthalpyJPerKg;
+    const auto chamberEnergyJ = cold->totalEnergyDensityJPerM3 * chamberVolumeM3;
+    require(boundary.otherOutflowEnergyW * advanceSeconds > 2.0 * chamberEnergyJ,
+        "the fixture must hand over more energy than the cold chamber holds");
+    const auto advance = network.advance(advanceSeconds, std::span(&boundary, 1),
+        { *cold, 1.0, 0.0 });
+    const auto& exchange = network.cylinderExchanges().front();
+    std::cout << "hot overlap drain completed=" << advance.completed
+        << " accepted_steps=" << advance.acceptedSubsteps
+        << " rejected_steps=" << advance.rejectedSubsteps
+        << " chamber_temperature_after_k=" << exchange.cylinderTemperatureKAfter << '\n';
+    require(advance.completed, "the advance must complete");
+    require(advance.rejectedSubsteps == 0, "no substep may be rejected");
+    // The chamber expands into the valve and the exhaust; it cools, but stays gas.
+    require(exchange.cylinderTemperatureKAfter > 150.0,
+        "the chamber must keep a physical temperature");
+}
+
 int main() {
     std::cout << std::setprecision(15);
+    hotOverlapDrain();
     for (const auto rpm : { 3'600.0, 4'200.0, 5'000.0 }) {
         for (const auto coupling : { 400.0e-6, 125.0e-6, 50.0e-6, mechanicalStepSeconds })
             frozenHistory(rpm, coupling);

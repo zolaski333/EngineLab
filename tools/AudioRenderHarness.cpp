@@ -81,6 +81,10 @@ int audioChunkSamples = 200;
 // is the production-path measurement; non-zero sleeps once during the runtime
 // check and deliberately emulates an audio device/host stall.
 int runtimeDiagnosticStallMilliseconds = 0;
+// `--runtime-blip`: wide open from 2 s into the limiter, shut at 5.5 s, 9 s in
+// all, with the physics overruns reported per phase. What a user does, and
+// where a slow lift-off shows.
+bool runtimeBlip = false;
 // Starter release ends at 1.1 s and the dyno controller starts at 1.2 s. The
 // slowest catalogue charge path (EA288 diesel) still crosses the final 2-3 s
 // window with an intake filling transient, whose single peak gives a false
@@ -1528,7 +1532,16 @@ bool runtimePathCheck(const EngineConfig& baseConfig, const WavData& ir,
     // belonging to this harness rather than to the application.
     const auto startTime = std::chrono::steady_clock::now();
     auto diagnosticStallInjected = false;
-    while (rendered < 6.0) {
+    const auto scenarioSeconds = runtimeBlip ? 9.0 : 6.0;
+    std::uint64_t overrunsAtWideOpen = 0;
+    std::uint64_t overrunsAtLiftOff = 0;
+    auto wideOpenMarked = false;
+    auto liftOffMarked = false;
+    // The realtime factor the diagnostics display, lowest per phase. A late
+    // frame the next ones absorb is no loss; a window below 1 is.
+    auto wideOpenMinimumFactor = 1.0e9;
+    auto liftOffMinimumFactor = 1.0e9;
+    while (rendered < scenarioSeconds) {
         if (!diagnosticStallInjected && runtimeDiagnosticStallMilliseconds > 0
             && rendered > 4.0) {
             std::this_thread::sleep_for(std::chrono::milliseconds(
@@ -1536,7 +1549,25 @@ bool runtimePathCheck(const EngineConfig& baseConfig, const WavData& ir,
             diagnosticStallInjected = true;
         }
         if (rendered > 1.5) runtime->setStarterEngaged(false);
-        if (rendered > 3.0) runtime->setThrottle(0.5);
+        if (runtimeBlip) {
+            if (rendered > 2.0 && !wideOpenMarked) {
+                overrunsAtWideOpen = runtime->timingOverrunCount();
+                wideOpenMarked = true;
+            }
+            if (rendered > 5.5 && !liftOffMarked) {
+                overrunsAtLiftOff = runtime->timingOverrunCount();
+                liftOffMarked = true;
+            }
+            runtime->setThrottle(rendered > 2.0 && rendered <= 5.5 ? 1.0 : 0.0);
+            // Skip each phase's first 0.3 s: the window still holds the last one.
+            const auto factor = runtime->realtimeFactor();
+            if (rendered > 2.3 && rendered <= 5.5)
+                wideOpenMinimumFactor = std::min(wideOpenMinimumFactor, factor);
+            else if (rendered > 5.8)
+                liftOffMinimumFactor = std::min(liftOffMinimumFactor, factor);
+        } else if (rendered > 3.0) {
+            runtime->setThrottle(0.5);
+        }
         block.clear();
         const auto renderBegin = std::chrono::steady_clock::now();
         renderer->render(block, 0, blockSize);
@@ -1560,7 +1591,19 @@ bool runtimePathCheck(const EngineConfig& baseConfig, const WavData& ir,
             std::this_thread::sleep_until(coarse);
         while (std::chrono::steady_clock::now() < deadline) std::this_thread::yield();
     }
+    const auto overrunsAtEnd = runtime->timingOverrunCount();
     runtime->stop();
+    if (runtimeBlip)
+        std::cout << "  blip overruns: start " << overrunsAtWideOpen
+                  << ", wide open " << overrunsAtLiftOff - overrunsAtWideOpen
+                  << " of " << static_cast<std::uint64_t>(3.5 * 240.0)
+                  << ", lift-off " << overrunsAtEnd - overrunsAtLiftOff
+                  << " of " << static_cast<std::uint64_t>(3.5 * 240.0)
+                  << "; lowest realtime factor: wide open " << std::fixed
+                  << std::setprecision(3) << wideOpenMinimumFactor
+                  << ", lift-off " << liftOffMinimumFactor
+                  << "; worst lateness " << std::setprecision(1)
+                  << runtime->maximumTimingLatenessSeconds() * 1.0e3 << " ms\n";
 
     const auto rms = sampleCount != 0
         ? std::sqrt(squareSum / static_cast<double>(sampleCount)) : 0.0;
@@ -1739,6 +1782,7 @@ int main(int argc, char** argv) {
             audioChunkSamples = std::clamp(std::atoi(argv[++i]), 1, 200);
         else if (a == "--runtime-stall-ms" && i + 1 < argc)
             runtimeDiagnosticStallMilliseconds = std::max(0, std::atoi(argv[++i]));
+        else if (a == "--runtime-blip") runtimeBlip = true;
     }
     std::filesystem::create_directories(outDir);
 

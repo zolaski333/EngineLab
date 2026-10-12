@@ -174,6 +174,10 @@ constexpr double runnerExternalHeatTransferWPerM2K = 12.0;
 // residence time and about thirty across an intake valve event at 7,000 rpm,
 // while cutting the wall work by four.
 constexpr double ductWallHeatUpdateIntervalSeconds = 150.0e-6;
+// Ring blow-by is sub-rated the same way. Its ~0.1 mm2 leak passes well under
+// one per cent of the charge per cycle; 100 us is 7 crank degrees at 12,000 rpm
+// and leaves every sub-step longer than that (idle, cruise) exactly as it was.
+constexpr double blowByUpdateIntervalSeconds = 100.0e-6;
 constexpr double stainlessExhaustWallThicknessM = 0.0015;
 constexpr double stainlessDensityKgPerM3 = 7'900.0;
 constexpr double stainlessSpecificHeatJPerKgK = 500.0;
@@ -2819,11 +2823,22 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 intakeLift > 0.01 || exhaustLift > 0.01,
             });
             cylinderGas_[cylinderIndex].addHeatJoules(wallHeatTransfer.heatToGasJ);
-            if (cylinder.blowByCoefficient > 0.0)
-                (void)ConservativeGasSystem::flowFromBoundary(cylinderGas_[cylinderIndex],
-                    config_.ambientPressureKpa, config_.ambientTemperatureC + 273.15,
-                    std::numbers::pi * std::pow(cylinder.boreMm * 0.0005, 2.0) * cylinder.blowByCoefficient,
-                    0.65, subDt);
+            if (cylinder.blowByCoefficient > 0.0) {
+                // Ring blow-by is a leak of ~0.1 mm2: applied at most every
+                // blowByUpdateIntervalSeconds over the time accumulated since,
+                // not on every crank sub-step. At 12,300 rpm that is 7 crank
+                // degrees instead of 1, and the flow solve with its equilibrium
+                // search cost 12 % of a CP4 step at the limiter.
+                auto& pending = blowByPendingSeconds_[cylinderIndex];
+                pending += subDt;
+                if (pending >= blowByUpdateIntervalSeconds) {
+                    (void)ConservativeGasSystem::flowFromBoundary(cylinderGas_[cylinderIndex],
+                        config_.ambientPressureKpa, config_.ambientTemperatureC + 273.15,
+                        std::numbers::pi * std::pow(cylinder.boreMm * 0.0005, 2.0) * cylinder.blowByCoefficient,
+                        0.65, pending);
+                    pending = 0.0;
+                }
+            }
             chamberKpa = cylinderGas_[cylinderIndex].pressureKpa();
             chamberPressureBar_[cylinderIndex] = chamberKpa / 100.0;
             const auto intakeClosePhase = std::fmod(360.0 + cams.config->intakeCenterlineDegrees
@@ -5429,6 +5444,7 @@ void EngineSimulator::reset() noexcept {
         exhaustBoundaryKnots_[index].fill({});
         chamberPressureBar_[index] = config_.ambientPressureKpa / 100.0;
         cylinderWallTemperatureC_[index] = config_.ambientTemperatureC;
+        blowByPendingSeconds_[index] = 0.0;
         configureFuel(cylinderGas_[index]);
 
         const auto& cyl = config_.cylinders[index];

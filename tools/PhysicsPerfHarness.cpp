@@ -356,7 +356,7 @@ void traceEngine(const enginelab::EngineConfig& baseConfig, double targetRpm,
  * clean.
  */
 void traceFreeRev(const enginelab::EngineConfig& baseConfig, double throttle,
-                  double durationSeconds) {
+                  double durationSeconds, double releaseSeconds) {
     auto config = baseConfig;
     enginelab::normaliseEngineConfig(config);
     enginelab::SimpleEcuModel ecu;
@@ -380,15 +380,23 @@ void traceFreeRev(const enginelab::EngineConfig& baseConfig, double throttle,
 
     std::cout << "time_s,rpm,throttle_cmd,map_kpa,net_nm,afr,afr_target,lambda,"
                  "fuel_req_mg,fuel_del_mg,trim,misfire,inj_cap_mean,inj_cap_min,"
-                 "knock,ve\n";
+                 "knock,ve,step_ms,substeps,exhaust_substeps,intake_accepted,"
+                 "intake_rejected\n";
     const auto steps = static_cast<int>(durationSeconds / dt);
     for (int step = 0; step < steps; ++step) {
         enginelab::EngineControls controls;
         controls.ignitionEnabled = true;
         controls.starterEngaged = false;
-        controls.throttle = throttle;
+        // `--release S` shuts the throttle after S seconds: the limiter,
+        // then lift-off, as a user does it.
+        const auto released = releaseSeconds >= 0.0
+            && static_cast<double>(step) * dt >= releaseSeconds;
+        controls.throttle = released ? 0.0 : throttle;
         controls.load = 0.0;
+        const auto stepStart = std::chrono::steady_clock::now();
         const auto frame = simulator.step(dt, controls);
+        const auto stepMs = std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - stepStart).count();
         const auto& state = frame.state;
         auto capacitySum = 0.0;
         auto capacityMin = 1.0;
@@ -413,7 +421,12 @@ void traceFreeRev(const enginelab::EngineConfig& baseConfig, double throttle,
                   << ',' << capacityMean
                   << ',' << capacityMin
                   << ',' << state.knockLevel
-                  << ',' << state.volumetricEfficiency << '\n';
+                  << ',' << state.volumetricEfficiency
+                  << ',' << stepMs
+                  << ',' << state.solverSubsteps
+                  << ',' << state.exhaustNetworkAcceptedSubsteps
+                  << ',' << state.intakeNetworkAcceptedSubsteps
+                  << ',' << state.intakeNetworkRejectedSubsteps << '\n';
     }
 }
 
@@ -542,6 +555,7 @@ int main(int argc, char** argv) {
     auto overrunSeconds = 0.0;
     auto freeRevThrottle = -1.0;
     auto freeRevSeconds = 12.0;
+    auto freeRevReleaseSeconds = -1.0;
     for (int index = 1; index < argc; ++index) {
         const std::string argument = argv[index];
         if (argument == "--catalog-root" && index + 1 < argc) catalogRoot = argv[++index];
@@ -557,11 +571,13 @@ int main(int argc, char** argv) {
             freeRevThrottle = std::clamp(std::stod(argv[++index]), 0.0, 1.0);
         else if (argument == "--seconds" && index + 1 < argc)
             freeRevSeconds = std::max(1.0, std::stod(argv[++index]));
+        else if (argument == "--release" && index + 1 < argc)
+            freeRevReleaseSeconds = std::max(0.0, std::stod(argv[++index]));
         else {
             std::cerr << "usage: EngineLabPhysicsPerfHarness [--catalog-root dir]"
                          " [--filter name-fragment] [--runs count] [--trace rpm]"
                          " [--throttle 0..1] [--idle] [--overrun seconds]"
-                         " [--freerev 0..1 [--seconds S]]\n";
+                         " [--freerev 0..1 [--seconds S] [--release S]]\n";
             return EXIT_FAILURE;
         }
     }
@@ -591,7 +607,8 @@ int main(int argc, char** argv) {
         return EXIT_SUCCESS;
     }
     if (freeRevThrottle >= 0.0) {
-        traceFreeRev(engines.front(), freeRevThrottle, freeRevSeconds);
+        traceFreeRev(engines.front(), freeRevThrottle, freeRevSeconds,
+                     freeRevReleaseSeconds);
         return EXIT_SUCCESS;
     }
     if (overrunSeconds > 0.0) {
