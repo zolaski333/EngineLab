@@ -408,12 +408,18 @@ void resizedAudioSwapHasNoClick() {
         + RealtimeEngineAudio::exhaustSwapFadeSeconds;
     const auto before = largestJump(at(swapSeconds - 1.0), at(swapSeconds));
     const auto during = largestJump(at(swapSeconds), at(swapEnd + 0.05));
+    // The resized exhaust is its own sound: once faded in, its largest step
+    // can exceed the old one's (the CP2's: 0.0036 against 0.0018 with no
+    // mechanical layer over it). A click is a step neither exhaust makes.
+    const auto after = largestJump(at(swapEnd + 0.1), at(5.0));
     const auto signal = rms(pair.reference, at(swapEnd + 0.1), at(5.0));
     const auto heard = rmsDifference(pair, at(swapEnd + 0.1), at(5.0));
     std::cout << "  resized exhaust swap: largest sample step before " << before
-              << ", during " << during << "; the resized exhaust differs by "
+              << ", during " << during << ", after " << after
+              << "; the resized exhaust differs by "
               << 20.0 * std::log10(heard / signal) << " dB\n";
-    require(during <= 1.25 * before, "the resized exhaust fades in without a click");
+    require(during <= 1.25 * std::max(before, after),
+            "the resized exhaust fades in without a click");
     require(heard > 0.03 * signal, "the resized exhaust is heard once the swap is over");
 }
 
