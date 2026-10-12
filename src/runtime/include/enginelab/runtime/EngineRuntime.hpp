@@ -345,9 +345,10 @@ public:
      * restart. Same thread rules as applyLiveExhaust().
      */
     [[nodiscard]] bool applyLiveCylinderResize(const EngineConfig& edited, double rampSeconds = 0.0);
-    /** An edit of config.injection and config.forcedInduction only: the
-     * running engine takes the new injectors, boost and turbine settings
-     * between two frames. False, changing nothing, when the edit changes what
+    /** An edit of config.injection, config.forcedInduction, config.ignition,
+     * config.exhaustAfterfire and the crankshafts' inertia only: the running
+     * engine takes the new injectors, boost, turbine, limiter, afterfire and
+     * flywheel between two frames. False, changing nothing, when the edit changes what
      * the engine was built around (EngineSimulator::settingsReplaceable):
      * that needs a restart. Same thread rules as applyLiveExhaust(). */
     [[nodiscard]] bool applyLiveSettings(const EngineConfig& edited);

@@ -1178,6 +1178,15 @@ bool EngineSimulator::settingsReplaceable(const EngineConfig& running,
                                           const EngineConfig& edited) noexcept {
     const auto& was = running.forcedInduction;
     const auto& now = edited.forcedInduction;
+    if (running.crankshafts.size() != edited.crankshafts.size()) return false;
+    for (std::size_t index = 0; index < running.crankshafts.size(); ++index) {
+        const auto& before = running.crankshafts[index];
+        const auto& after = edited.crankshafts[index];
+        if (before.id != after.id || before.rotationRatio != after.rotationRatio
+            || before.phaseOffsetDegrees != after.phaseOffsetDegrees
+            || before.positionXMm != after.positionXMm || before.positionYMm != after.positionYMm)
+            return false;
+    }
     return running.injection.mode == edited.injection.mode
         && was.enabled == now.enabled && was.type == now.type
         && was.compressorBladeCount == now.compressorBladeCount
@@ -1189,6 +1198,19 @@ bool EngineSimulator::replaceSettings(EngineConfig& config) noexcept {
     if (!settingsReplaceable(config_, config)) return false;
     std::swap(config_.injection, config.injection);
     std::swap(config_.forcedInduction, config.forcedInduction);
+    std::swap(config_.ignition, config.ignition);
+    std::swap(config_.exhaustAfterfire, config.exhaustAfterfire);
+    // Field by field: the kinematics read the crankshafts' layout, which
+    // stays. effectiveRotatingInertiaKgM2() reads these at every step.
+    for (std::size_t index = 0; index < config_.crankshafts.size(); ++index) {
+        auto& crankshaft = config_.crankshafts[index];
+        const auto& source = config.crankshafts[index];
+        crankshaft.momentOfInertiaKgM2 = source.momentOfInertiaKgM2;
+        crankshaft.frictionTorqueNm = source.frictionTorqueNm;
+        crankshaft.massKg = source.massKg;
+        crankshaft.flywheelMassKg = source.flywheelMassKg;
+    }
+    config_.rotatingInertiaKgM2 = config.rotatingInertiaKgM2;
     return true;
 }
 

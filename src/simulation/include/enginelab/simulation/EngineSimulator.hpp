@@ -204,10 +204,12 @@ public:
     /** Whether `edited`'s injectors and forced induction can replace
      * `running`'s in a running engine (replaceSettings): the same injection
      * mode, forced induction on or off alike, of the same type, with the same
-     * blade and lobe counts (the sound is built around them). */
+     * blade and lobe counts (the sound is built around them), and the same
+     * crankshafts (count, ratios, phases, positions). */
     [[nodiscard]] static bool settingsReplaceable(const EngineConfig& running,
                                                   const EngineConfig& edited) noexcept;
-    /** Take `config`'s injector and forced-induction settings between two
+    /** Take `config`'s injector, forced-induction, ignition and afterfire
+     * settings and its crankshafts' inertia, friction and masses between two
      * steps, without a restart: the simulation reads them at every step and
      * keeps nothing derived from them. They are swapped in, so this thread
      * does not allocate; `config` leaves with the previous ones. False, with

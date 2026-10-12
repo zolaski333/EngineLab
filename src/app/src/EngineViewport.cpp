@@ -1542,6 +1542,30 @@ void EngineViewport::updateInspector() {
         subtitle = juce::String(config.name);
         add("Engine speed", juce::String(juce::roundToInt(state.rpm)) + " rpm");
         add("Crank angle", juce::String(juce::roundToInt(displayedAngle_.load())) + utf8("°"));
+        add("Crank + flywheel", juce::String(config.rotatingInertiaKgM2, 3) + utf8(" kg·m²"));
+        add("With the rods", juce::String(effectiveRotatingInertiaKgM2(config), 3) + utf8(" kg·m²"));
+        if (configEditor_ && config.rotatingInertiaKgM2 > 0.0) {
+            edit = PartInspector::Edit {};
+            edit->key = std::uint64_t { 6 } << 60U;
+            edit->heading = "FLYWHEEL";
+            edit->firstEditable = false;
+            edit->secondLabel = "Inertia";
+            edit->secondUnit = utf8(" kg\xc2\xb7m\xc2\xb2");
+            edit->secondDecimals = 3;
+            edit->second = config.rotatingInertiaKgM2;
+            edit->secondStep = 0.01;
+            edit->secondFineStep = 0.001;
+            edit->secondMinimum = 0.01;
+            edit->secondMaximum = 5.0;
+            edit->note = "The crankshaft and its flywheel, every shaft scaled alike. A lighter flywheel revs up and "
+                         "down faster. The running engine takes it.";
+            partEditor_ = [](EngineConfig& edited, double, double inertia) {
+                const auto scale = inertia / std::max(1.0e-6, edited.rotatingInertiaKgM2);
+                for (auto& crankshaft : edited.crankshafts) crankshaft.momentOfInertiaKgM2 *= scale;
+                edited.rotatingInertiaKgM2 = inertia;
+                return std::string();
+            };
+        }
         break;
     case render::PartRole::piston:
         title = "Piston";

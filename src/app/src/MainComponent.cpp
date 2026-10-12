@@ -391,8 +391,13 @@ bool MainComponent::applyEngineEdit(const EngineConfig& edited) {
 bool MainComponent::applySettingsEdit(const EngineConfig& edited) {
     if (!runtime_ || !audio_ || runtime_->dynoRunning() || !runtime_->applyLiveSettings(edited))
         return applyConfig(edited, false, true);
-    config_.injection = runtime_->engineConfig().injection;
-    config_.forcedInduction = runtime_->engineConfig().forcedInduction;
+    const auto& running = runtime_->engineConfig();
+    config_.injection = running.injection;
+    config_.forcedInduction = running.forcedInduction;
+    config_.ignition = running.ignition;
+    config_.exhaustAfterfire = running.exhaustAfterfire;
+    config_.crankshafts = running.crankshafts;
+    config_.rotatingInertiaKgM2 = running.rotatingInertiaKgM2;
     // The simulation has the new settings: a sound that cannot follow them
     // needs the restart after all.
     if (!audio_->replaceForcedInduction(config_.forcedInduction))

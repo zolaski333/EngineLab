@@ -69,6 +69,10 @@ file formats, always with an in-memory migration).
 
 ### Added
 
+- Change the flywheel while the engine runs: click the crankshaft in the
+  3-D view and set its inertia (crank and flywheel). A lighter one revs up
+  and down faster. Ignition limiter and afterfire settings edited in the
+  JSON editor are also taken live now, without a restart.
 - Change the connecting rods' length while the engine runs: click a rod in
   the 3-D view. The compression ratio stays (the deck moves with the rod),
   and the change glides or lands at each throw's gas-exchange TDC, like the

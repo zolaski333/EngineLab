@@ -231,14 +231,19 @@ configuration at every step. Not updated until a restart: the audio's
 structural modes (`StructuralModalRadiator`, built from the mean bore and
 stroke). Cylinder count, layout and fuel stay restart-only.
 
-### Live injector and turbo changes
+### Live injector, turbo, limiter, afterfire and flywheel changes
 
-The simulator reads `injection` and `forcedInduction` only inside `step()`,
-and caches nothing derived from them, so `EngineSimulator::replaceSettings`
-swaps both between two frames. `EngineRuntime::applyLiveSettings` posts them
-the same way as an exhaust. Refused, for a restart: another injection mode, a
-forced induction added, removed or of another type, another blade or lobe
-count (`settingsReplaceable`). The sound's turbo layer takes the new
+The simulator reads `injection`, `forcedInduction`, `ignition`,
+`exhaustAfterfire` and the crankshafts' inertia only inside `step()`, and
+caches nothing derived from them, so `EngineSimulator::replaceSettings` swaps
+them between two frames (the crankshafts field by field: their layout
+stays). `EngineRuntime::applyLiveSettings` posts them the same way as an
+exhaust, then gives the driveline the new engine inertia. Refused, for a
+restart: another injection mode, a forced induction added, removed or of
+another type, another blade or lobe count, another crankshaft count, ratio,
+phase or position (`settingsReplaceable`). The ECU tables (advance, AFR, rev
+limit) are live through the ECU tuner, and override `ignition`'s curve and
+limit whenever the store holds them. The sound's turbo layer takes the new
 configuration at the start of an audio block
 (`RealtimeEngineAudio::replaceForcedInduction`, `ForcedInductionAcoustics::
 updateConfig`); its rotor and filter states carry on.
@@ -539,7 +544,9 @@ The other parts edit the same way, each through `MainComponent::applyEngineEdit`
   hides it);
 - a turbo: the wastegate pressure ratio, the rated ratio keeping its
   distance to it, and the turbine flow area; a supercharger: its pressure
-  and drive ratios.
+  and drive ratios;
+- the crankshaft: the inertia of the crank and flywheel (every shaft scaled
+  alike), with the total including the rods.
 
 Two controls at the bottom right slow things down, and they are different.
 *0.25x / 0.5x / 1x* is the simulation's time scale

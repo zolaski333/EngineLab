@@ -579,6 +579,10 @@ bool EngineRuntime::applyLiveSettings(const EngineConfig& edited) {
     change->config = config_;
     change->config.injection = edited.injection;
     change->config.forcedInduction = edited.forcedInduction;
+    change->config.ignition = edited.ignition;
+    change->config.exhaustAfterfire = edited.exhaustAfterfire;
+    change->config.crankshafts = edited.crankshafts;
+    change->config.rotatingInertiaKgM2 = edited.rotatingInertiaKgM2;
     try {
         normaliseEngineConfig(change->config);
         if (validateEngineConfig(change->config)) return false;
@@ -586,9 +590,15 @@ bool EngineRuntime::applyLiveSettings(const EngineConfig& edited) {
         return false;
     }
     if (!EngineSimulator::settingsReplaceable(config_, change->config)) return false;
-    // The simulation thread never reads these two fields of config_.
+    // The simulation thread never reads these fields of config_; the
+    // crankshafts keep their storage.
     config_.injection = change->config.injection;
     config_.forcedInduction = change->config.forcedInduction;
+    config_.ignition = change->config.ignition;
+    config_.exhaustAfterfire = change->config.exhaustAfterfire;
+    for (std::size_t index = 0; index < config_.crankshafts.size(); ++index)
+        config_.crankshafts[index] = change->config.crankshafts[index];
+    config_.rotatingInertiaKgM2 = change->config.rotatingInertiaKgM2;
     {
         const std::scoped_lock lock(liveExhaustMutex_);
         std::swap(pendingSettingsChange_, change);
@@ -661,6 +671,9 @@ void EngineRuntime::consumeLiveSettingsChange() noexcept {
         std::swap(pendingSettingsChange_, change);
     }
     if (!change || !simulator_.replaceSettings(change->config)) return;
+    // A new flywheel: the clutch and the vehicle feel it too.
+    engineInertiaKgM2_ = effectiveRotatingInertiaKgM2(simulator_.config());
+    driveline_.setEngineInertia(engineInertiaKgM2_);
     liveSettingsChangesApplied_.fetch_add(1, std::memory_order_release);
     // The previous settings leave with `change`, between two frames.
 }

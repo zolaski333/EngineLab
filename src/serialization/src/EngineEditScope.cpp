@@ -15,6 +15,10 @@ void takeExhaust(EngineConfig& probe, const EngineConfig& edited) {
 void takeSettings(EngineConfig& probe, const EngineConfig& edited) {
     probe.injection = edited.injection;
     probe.forcedInduction = edited.forcedInduction;
+    probe.ignition = edited.ignition;
+    probe.exhaustAfterfire = edited.exhaustAfterfire;
+    probe.crankshafts = edited.crankshafts;
+    probe.rotatingInertiaKgM2 = edited.rotatingInertiaKgM2;
 }
 
 /** False when the cylinders are not the same ones: that edit is not an
