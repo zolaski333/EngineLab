@@ -160,8 +160,12 @@ correlation is not multi-species chemical kinetics.
 ## Forced induction
 
 The turbocharger follows a power balance: turbine minus compressor and bearing
-losses, integrated with the shaft inertia. The supercharger uses a separate
-closure, without claiming to model a complete compressor map.
+losses, integrated with the shaft inertia. The wastegate (or variable vanes)
+follows a proportional-integral boost controller that holds
+`wastegate_pressure_ratio` exactly: fully open 0.25 above it on the
+proportional term alone, integral time 0.5 s, frozen while the gate is
+saturated. The supercharger uses a separate closure, without claiming to
+model a complete compressor map.
 
 The turbine lives in the exhaust gas network, as a restriction face (the same
 primitive as an individual throttle) on the single outgoing face of the first

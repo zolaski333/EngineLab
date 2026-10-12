@@ -741,6 +741,8 @@ private:
     /** What the turbine faces did over the last exhaust advance. */
     double networkTurbinePowerW_ { 0.0 };
     double networkTurbineOutletPressureKpa_ { 0.0 };
+    /** The boost controller's integral term, as a wastegate opening. */
+    double wastegateIntegral_ { 0.0 };
     /** Network-port order -> EngineConfig cylinder order, compiled once. */
     std::array<std::size_t, 32> exhaustNetworkCylinderIndex_ {};
     std::unique_ptr<SpscQueue<CylinderPressureSample, 1'024>> pressureSamples_;
