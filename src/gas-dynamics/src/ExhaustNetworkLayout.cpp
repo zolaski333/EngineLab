@@ -476,10 +476,10 @@ ExhaustNetworkLayout ExhaustNetworkLayout::assemble(
             || !endpointInRange(connection.downstream)
             || connection.upstream.type == ExhaustEndpointType::ductInlet
             || connection.downstream.type == ExhaustEndpointType::ductOutlet
-            // A plate sits in a bore: both sides are ducts.
+            // A restriction meets a duct on at least one side.
             || (connection.restriction
-                && (connection.upstream.type == ExhaustEndpointType::junction
-                    || connection.downstream.type == ExhaustEndpointType::junction))
+                && connection.upstream.type == ExhaustEndpointType::junction
+                && connection.downstream.type == ExhaustEndpointType::junction)
             || !claim(connection.upstream) || !claim(connection.downstream))
             reject(connection.upstream.nodeId);
     }
@@ -626,6 +626,16 @@ bool ExhaustNetworkLayout::sameTopology(
             || !sameEndpoint(left.networkEndpoint, right.networkEndpoint))
             return false;
     }
+    return true;
+}
+
+bool ExhaustNetworkLayout::makeRestriction(std::size_t interfaceIndex) noexcept {
+    if (interfaceIndex >= interfaces_.size()) return false;
+    auto& connection = interfaces_[interfaceIndex];
+    if (connection.upstream.type == ExhaustEndpointType::junction
+        && connection.downstream.type == ExhaustEndpointType::junction)
+        return false;
+    connection.restriction = true;
     return true;
 }
 

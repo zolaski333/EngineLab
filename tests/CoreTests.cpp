@@ -2285,9 +2285,9 @@ int main() {
             }
             if (entry.config.forcedInduction.enabled
                 && entry.config.forcedInduction.type == enginelab::ForcedInductionType::turbocharger) {
-                // Not yet: the solver's turbine is the restriction at the
-                // outlets, so the network is all hot side. A 2.6 m mid pipe
-                // there slowed the spool by 25-43 % at 3,000 rpm (2026-10-07).
+                // Not yet: with the turbine at the outlets, a 2.6 m mid pipe
+                // slowed the spool by 25-43 % at 3,000 rpm (2026-10-07). The
+                // turbine now sits at the collector; not measured again.
                 routeMinMm = 800.0;
                 routeMaxMm = 1'400.0;
             }

@@ -124,12 +124,13 @@ struct CompiledExhaustInterface final {
     ExhaustEndpoint downstream {};
     std::uint8_t upstreamPort { unspecifiedExhaustComponentPort };
     std::uint8_t downstreamPort { unspecifiedExhaustComponentPort };
-    /** A throttle plate on a duct-to-duct face. The ducts then exchange
-     *  through an isentropic orifice fed by the approaching side's stagnation
-     *  state (choked when it must be), and the jet re-expands into the
-     *  receiving duct's face as a pressure-loaded wall around it. The open
-     *  area is set while running (ExhaustGasNetwork::setRestrictionOpeningAreaM2)
-     *  and starts at the full face. */
+    /** A throttle plate (or a turbine) on a face with a duct on at least one
+     *  side. The elements then exchange through an isentropic orifice fed by
+     *  the approaching side's stagnation state (a junction's own state, at
+     *  rest), choked when it must be, and the jet re-expands into a receiving
+     *  duct's face as a pressure-loaded wall around it. The open area is set
+     *  while running (ExhaustGasNetwork::setRestrictionOpeningAreaM2) and
+     *  starts at the smaller face. */
     bool restriction { false };
 };
 
@@ -259,6 +260,11 @@ public:
      * one can take over the state of a network compiled from the other
      * (ExhaustGasNetwork::adoptStateFrom). */
     [[nodiscard]] bool sameTopology(const ExhaustNetworkLayout& other) const noexcept;
+
+    /** Turns a compiled interface into a restriction (see
+     *  CompiledExhaustInterface::restriction). False, and nothing changes, for
+     *  an index out of range or a junction-to-junction face. */
+    [[nodiscard]] bool makeRestriction(std::size_t interfaceIndex) noexcept;
 
 private:
     ExhaustNetworkDiscretisation discretisation_ {};

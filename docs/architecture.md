@@ -380,24 +380,22 @@ the two end primaries of the 2JZ, whose 430 mm cannot reach a collector they
 must enter along its axis. `EngineLabSceneExport` writes the scene and the
 issues as JSON, to look at them outside the app.
 
-**Turbocharger.** The gas solver has no turbine in its network: it narrows
-every exhaust outlet by the turbine and open wastegate areas (a restriction
-in series) and drives the shaft from the exhaust pressure and flow. The view
-draws one where a real one sits (`TurboPlacement`): on the first junction
-where all of a path's primaries have met, in the first path that has one.
-Since the solver's one turbine takes the whole exhaust flow, every catalogue
-turbo engine has a single path that all its cylinders exhaust into
-(`EngineLab.EngineModel3D` checks it). Gas bends out of the collector, enters the volute
+**Turbocharger.** The gas solver's turbine is a restriction face on the
+outgoing face of the first junction where all of a path's cylinders have met
+(see [simulation-model.md](simulation-model.md#forced-induction)). The view
+draws it at the same place (`TurboPlacement`), in the first path that has
+one. The view draws one turbo, so every catalogue turbo engine has a single
+path that all its cylinders exhaust into (`EngineLab.EngineModel3D` checks
+it). Gas bends out of the collector, enters the volute
 tangentially and leaves the exducer along the trunk, where the path resumes;
 the shaft runs along the crankshaft, the compressor on the far side of the
 bearing housing, far enough out to clear the collector. Wheel sizes come from
 the inducer and exducer diameters (about 70 % and 85 % of the wheels), blade
 counts from the configuration (7 and 10 when unset). The wheels turn at the
 simulated shaft speed, slowed with the crank, motion-blurred over the same
-sub-frames. Housings are translucent in X-ray. Since the solver's restriction
-sits at the outlets, the gas field shows the whole drawn exhaust, downpipe
-included, at turbine inlet pressure; the inspector says so. A turbo's charge
-piping is not drawn.
+sub-frames. Housings are translucent in X-ray. The gas field shows the
+manifold at turbine inlet pressure and the downpipe at turbine outlet
+pressure. A turbo's charge piping is not drawn.
 
 **Supercharger.** The solver has no compressor in its network either: the
 supercharger raises the intake pressure by its ratio, geared to the crank.
@@ -443,10 +441,9 @@ solver's own state, not by an animation:
   capacity (the LS3 drops to about 1.0), so the production mesh stays.
 - **Colours.** The wave, not the pressure: each cell's departure from its
   own running mean (an exponential average over 0.5 s of simulated time, so a
-  slowed or frozen view keeps it). Against ambient, a turbocharged exhaust
-  reads as one colour: the turbine is the network's restricted outlet, so the
-  whole drawn exhaust, silencer included, sits at turbine inlet pressure in
-  the solver. The prototype's scale: violet below the mean, grey at the mean,
+  slowed or frozen view keeps it). Against ambient, a turbocharged manifold
+  would read as one colour, at turbine inlet pressure. The prototype's scale:
+  violet below the mean, grey at the mean,
   orange then pale yellow above, compressed with a 0.75 power. The scale is
   the strongest departure anywhere, decaying by 6 % per snapshot and never
   below 2 kPa; the legend prints it. Intake and exhaust share it, so their

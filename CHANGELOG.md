@@ -9,6 +9,13 @@ file formats, always with an in-memory migration).
 
 ### Changed
 
+- The turbocharger's turbine sits in the exhaust gas network, on the
+  collector, instead of narrowing the tailpipes: every pulse crosses it, it
+  takes its work from the gas, and the downpipe carries cooler gas at the
+  turbine outlet pressure. The old model overstated the turbine's power, so
+  the catalogue turbine areas are re-fitted to the rated curves (2JZ 600,
+  EJ25 500, I5 450, TDI 280 mm2). The turbo engines sound different: the
+  EJ25 2.7 dB quieter and darker, the TDI 3 dB louder, the I5 1.3 dB louder.
 - The exhaust and the intake manifold spread their pipes over the
   simulation's worker threads, with bit-identical results. At 95 % of the
   limiter with audio, every catalogue engine now runs above real time: the
@@ -31,7 +38,8 @@ file formats, always with an in-memory migration).
   under the naturally aspirated front-engined cars, 1.6 m behind the
   rear-engined flat-six and 1.2-1.5 m on the motorcycles. They used to end
   0.9-1.3 m from the port. The turbocharged cars keep theirs: the solver's
-  turbine sits at the outlet, and a longer pipe ahead of it slowed the spool.
+  turbine then sat at the outlet, and a longer pipe ahead of it slowed the
+  spool.
   The manufacturer torque and power points move by less than 5 %. Exhaust
   presets and paths gain `midpipe_length_mm` and `midpipe_diameter_mm`.
 - The two pipes leaving an X crossover turn away from each other at once in

@@ -160,10 +160,29 @@ correlation is not multi-species chemical kinetics.
 ## Forced induction
 
 The turbocharger follows a power balance: turbine minus compressor and bearing
-losses, integrated with the shaft inertia. The turbine and wastegate areas
-influence the manifold flow and therefore back-pressure, spool and pressure
-ratio. The supercharger uses a separate closure, without claiming to model a
-complete compressor map.
+losses, integrated with the shaft inertia. The supercharger uses a separate
+closure, without claiming to model a complete compressor map.
+
+The turbine lives in the exhaust gas network, as a restriction face (the same
+primitive as an individual throttle) on the single outgoing face of the first
+junction where all of a path's cylinders have met. The face opens to the
+turbine plus open wastegate area, times the path's share of the cylinders.
+Every pulse crosses it as an isentropic orifice fed by the collector's
+stagnation state; the turbine's share of the flow (its area over the total)
+gives up `eta * cp * T0 * (1 - (p_out/p0)^((gamma-1)/gamma))` per kilogram,
+taken from the downpipe's energy, so the downpipe receives cooled gas and the
+shaft the work. The receiving side gets no jet momentum: the turbine took it,
+and the wastegate jet is dissipated in the housing. `EngineLab.RestrictionFace`
+checks the choked flow, the work against its isentropic ceiling, the energy
+balance and the cooling. The manifold therefore sits at turbine inlet
+pressure and the downpipe at turbine outlet pressure, pulse by pulse.
+
+If a path has no such junction (a custom graph without a collector), the
+older model applies: every outlet is narrowed by the turbine and wastegate
+areas, and the shaft is driven from the peak exhaust pressure with a
+quasi-steady expansion. That expansion overstated the work, so the catalogue
+turbine areas were re-fitted when the turbine moved (2026-10-12, see
+`docs/journal.md`).
 
 ## Exhaust
 

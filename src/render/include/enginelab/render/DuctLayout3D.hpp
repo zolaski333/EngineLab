@@ -60,10 +60,9 @@ struct DuctPiece final {
 };
 
 /**
- * Where a turbocharger sits on the exhaust. The simulator has no turbine in
- * its gas network (it applies the turbine as a restriction on every outlet),
- * so the picture puts it where a real one sits: bolted to the collector of
- * the first path, the trunk resuming at its turbine outlet.
+ * Where a turbocharger sits on the exhaust: bolted to the collector of the
+ * first path, the trunk resuming at its turbine outlet. The simulator puts
+ * its turbine on the same collector's outgoing face.
  *
  * The shaft runs along the crankshaft (+Z). Gas leaves the collector, bends
  * outwards and enters the turbine volute tangentially; it leaves through the

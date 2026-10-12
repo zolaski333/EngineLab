@@ -40,8 +40,10 @@ engine:
     design_shaft_speed_rpm: 165000
     bearing_friction_power_w: 220
     # Small effective VGT throat for low-speed spool; the larger bypass area
-    # represents vanes opening at the boost target.
-    turbine_flow_area_mm2: 320
+    # represents vanes opening at the boost target. 280, not 320, since the
+    # turbine expands the gas at the collector (2026-10-12): 320 gave 283 N.m
+    # at 2,000 rpm against the rated 320 from 1,750; 280 gives 351 (as before).
+    turbine_flow_area_mm2: 280
     wastegate_flow_area_mm2: 700
     charge_temperature_rise_c: 28
     compressor_blade_count: 6

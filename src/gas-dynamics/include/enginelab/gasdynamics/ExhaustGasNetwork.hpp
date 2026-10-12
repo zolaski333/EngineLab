@@ -410,7 +410,7 @@ public:
     void requestWallHeatUpdate() noexcept { wallHeatUpdateRequested_ = true; }
 
     /** Open area of a restriction face (CompiledExhaustInterface::restriction),
-     *  discharge coefficient included, clamped to the smaller of its two duct
+     *  discharge coefficient included, clamped to the smaller of its two
      *  faces. Applies from the next advance. Returns false for an interface
      *  that is not a restriction or an area that is not finite. */
     [[nodiscard]] bool setRestrictionOpeningAreaM2(std::size_t interfaceIndex,
@@ -418,6 +418,25 @@ public:
     [[nodiscard]] double restrictionOpeningAreaM2(std::size_t interfaceIndex) const noexcept {
         return interfaceIndex < interfaceOpeningAreasM2_.size()
             ? interfaceOpeningAreasM2_[interfaceIndex] : 0.0;
+    }
+    /** Makes a restriction a turbine. Of the gas crossing it forward (upstream
+     *  to downstream), `wheelShare` expands through a wheel of total-to-static
+     *  isentropic efficiency `efficiency` down to the receiving side's static
+     *  pressure; the rest bypasses it (a wastegate) without work. The work
+     *  leaves the gas on the receiving side of the face. Zero share or
+     *  efficiency: a plain restriction. Applies from the next advance. */
+    [[nodiscard]] bool setRestrictionTurbine(std::size_t interfaceIndex,
+                                             double wheelShare,
+                                             double efficiency) noexcept;
+    /** Over the last advance: the shaft work a restriction's turbine took, J,
+     *  and the mass that crossed the face forward minus backward, kg. */
+    [[nodiscard]] double restrictionWorkJ(std::size_t interfaceIndex) const noexcept {
+        return interfaceIndex < interfaceTransfers_.size()
+            ? interfaceTransfers_[interfaceIndex].workJ : 0.0;
+    }
+    [[nodiscard]] double restrictionMassKg(std::size_t interfaceIndex) const noexcept {
+        return interfaceIndex < interfaceTransfers_.size()
+            ? interfaceTransfers_[interfaceIndex].massKg : 0.0;
     }
 
     /** Runs `body(context, i)` once for every i in [0, count), possibly on
@@ -539,6 +558,14 @@ private:
     /** Per interface: the full face for a plain one, the plate's open area
      *  for a restriction. */
     std::vector<double> interfaceOpeningAreasM2_;
+    struct TurbineSetting final { double wheelShare { 0.0 }; double efficiency { 0.0 }; };
+    std::vector<TurbineSetting> interfaceTurbines_;
+    /** Rates for one RK stage (kg/s, W), and their integral over an advance
+     *  (kg, J). Only restrictions carry them. */
+    struct InterfaceTransfer final { double massKg { 0.0 }; double workJ { 0.0 }; };
+    std::vector<InterfaceTransfer> interfaceFirstStageRate_;
+    std::vector<InterfaceTransfer> interfaceSecondStageRate_;
+    std::vector<InterfaceTransfer> interfaceTransfers_;
     std::vector<ConservativeState> cylinderReservoirStates_;
     std::vector<ConservativeState> cylinderReservoirStage_;
     std::vector<ConservativeState> cylinderReservoirCandidate_;
