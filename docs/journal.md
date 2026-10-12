@@ -5,6 +5,13 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-12 — Mechanical layer over the exhaust above 1 kHz, catalogue-wide
+
+- Owner's listening: the CP2 sounds better with the mechanical slider at 0. `GeometrySensitivityHarness` (WOT held, runtime default mechanical gain 0.70, voicing not applied), mechanical stem minus exhaust stem per third octave:
+- CP2 3,500 rpm: over the exhaust from 1 kHz up, by 20-44 dB at 1.25-5 kHz (12 bands of 28); 7,000 rpm: up to 10 dB at 2-5 kHz (4 bands). CP4 5,000: 9-18 dB from 1.6 kHz (14 bands). 2JZ 3,500: 24-47 dB from 1 kHz (22 bands).
+- Reference (literature, not a recording): on a 125 cc motocross bike at full load the silencer is predominant from 500 Hz to 3 kHz, the cylinder a substantial contribution at 1-2 kHz (Astrup, IOA). A constant gain cannot match both CP2 speeds: the excess falls 30 dB from 3,500 to 7,000 rpm, so the layer's speed scaling is suspect, not only its level.
+- Changed: CP2 and CP2 full-system voicing `mechanical_gain` 0.82 / 0.78 -> 0 (linear gain: the mix loses exactly the mechanical stem; no render needed to know it). Not changed: the layer itself, the other engines.
+
 ## 2026-10-12 — CP4 below real time at the limiter and on lift-off: overlap drain
 
 - Owner's report. `PhysicsPerfHarness --freerev 1 --release 4` (new step_ms, intake accepted/rejected columns): limiter 3.87 ms per 4.17 ms frame, lift-off 4.23 ms; 102k / 94k rejected intake substeps in 3.3 s / 1 s.

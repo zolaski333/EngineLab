@@ -7,7 +7,10 @@ voicing:
   low_frequency_gain: 1.10
   exhaust_gain: 1.08
   intake_gain: 0.94
-  mechanical_gain: 0.82
+  # Owner's listening, 2026-10-12: better at 0. At 3,500 rpm WOT the layer
+  # sat 20-44 dB over the exhaust from 1.25 kHz up (journal), where the
+  # published motorcycle source ranking has the exhaust predominant.
+  mechanical_gain: 0.0
   stereo_width: 1.04
   outlet_jet_gain: 1.06
   saturation_drive: 0.16
