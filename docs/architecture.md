@@ -231,7 +231,7 @@ configuration at every step. Not updated until a restart: the audio's
 structural modes (`StructuralModalRadiator`, built from the mean bore and
 stroke). Cylinder count, layout and fuel stay restart-only.
 
-### Live injector, turbo, limiter, afterfire, flywheel and air changes
+### Live injector, turbo, limiter, afterfire, flywheel, air and gearbox changes
 
 The simulator reads `injection`, `forcedInduction`, `ignition`,
 `exhaustAfterfire`, the crankshafts' inertia and the ambient pressure and
@@ -241,10 +241,11 @@ the exhaust outlet's ambient reservoir, which it rebuilds, so
 crankshafts field by field: their layout stays). The pipes' outer walls keep
 the outside temperature they were built with until a restart.
 `EngineRuntime::applyLiveSettings` posts them the same way as an exhaust,
-then gives the driveline the new engine inertia and the audio the new
-ambient. Refused, for a
+then gives the driveline the new engine inertia, gearbox and vehicle
+(`DrivelineModel::replaceVehicle`, same gear count: the clutch, wheel and
+vehicle states carry on) and the audio the new ambient. Refused, for a
 restart: another injection mode, a forced induction added, removed or of
-another type, another blade or lobe count, another crankshaft count, ratio,
+another type, another blade or lobe count, another number of gears, another crankshaft count, ratio,
 phase or position (`settingsReplaceable`). The ECU tables (advance, AFR, rev
 limit) are live through the ECU tuner, and override `ignition`'s curve and
 limit whenever the store holds them. The sound's turbo layer takes the new

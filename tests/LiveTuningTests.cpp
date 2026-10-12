@@ -6,6 +6,7 @@
 #include <enginelab/events/FourStrokeEventGenerator.hpp>
 #include <enginelab/exhaust/ExhaustGraph.hpp>
 #include <enginelab/physics/SimplifiedGasolinePhysics.hpp>
+#include <enginelab/runtime/DrivelineModel.hpp>
 #include <enginelab/runtime/EngineRuntime.hpp>
 #include <enginelab/serialization/EngineEditScope.hpp>
 #include <enginelab/simulation/EngineSimulator.hpp>
@@ -15,6 +16,7 @@
 #include <cmath>
 #include <iostream>
 #include <memory>
+#include <numbers>
 #include <stdexcept>
 #include <string>
 
@@ -299,9 +301,56 @@ void ambientSettlesLikeARestart() {
     }
 }
 
+/** A final drive 30 % shorter taken at 1 s, in first gear with the clutch
+ * engaged and the engine held at 2,000 rpm: the car settles at the road speed
+ * of one built with it. Another gear count is refused; a gearbox edit is a
+ * settings edit. */
+void gearboxSettlesLikeARestart() {
+    const auto original = catalogueEngine("K20A");
+    auto edited = original;
+    edited.transmission.finalDriveRatio *= 1.3;
+    edited.vehicle.massKg += 200.0;
+    const auto scope = engineEditScope(original, edited);
+    require(scope.settings && !scope.other, "a gearbox edit is a settings edit only");
+    EngineState engine;
+    engine.rpm = 2'000.0;
+    engine.angularVelocityRadPerSecond = engine.rpm * 2.0 * std::numbers::pi / 60.0;
+    engine.throttle = 0.5;
+    DrivelineModel built(edited);
+    DrivelineModel swapped(original);
+    DrivelineModel untouched(original);
+    std::array<DrivelineOutput, 3> output {};
+    std::size_t index = 0;
+    for (auto* driveline : { &built, &swapped, &untouched }) {
+        driveline->requestGear(0);
+        for (int step = 0; step < 4'000; ++step) {
+            if (driveline == &swapped && step == 1'000)
+                require(swapped.replaceVehicle(edited.transmission, edited.vehicle), "the driveline takes it");
+            engine.simulationTimeSeconds = step * 0.001;
+            output[index] = driveline->advance(0.001, engine, 0.0, 1.0, 0.0);
+        }
+        ++index;
+    }
+    std::cout << "  K20A, final drive x1.3 and +200 kg at 2,000 rpm in first: road speed built "
+              << output[0].vehicleSpeedMps << ", swapped " << output[1].vehicleSpeedMps << ", untouched "
+              << output[2].vehicleSpeedMps << " m/s\n";
+    require(output[2].vehicleSpeedMps > 1.2 * output[0].vehicleSpeedMps,
+            "the shorter final drive slows the car (else this proves nothing)");
+    require(std::abs(output[1].vehicleSpeedMps - output[0].vehicleSpeedMps)
+                <= 0.02 * (output[2].vehicleSpeedMps - output[0].vehicleSpeedMps),
+            "the changed driveline settles where one built with it runs");
+    auto fewer = original.transmission;
+    fewer.gearRatios.pop_back();
+    require(!swapped.replaceVehicle(fewer, original.vehicle), "another gear count is refused");
+    auto fewerGears = original;
+    fewerGears.transmission = fewer;
+    require(!EngineSimulator::settingsReplaceable(original, fewerGears), "the simulator refuses it too");
+}
+
 } // namespace
 
 void liveTuningRegression() {
+    gearboxSettlesLikeARestart();
     ambientSettlesLikeARestart();
     flywheelIsASetting();
     flywheelRevsLikeARestart();

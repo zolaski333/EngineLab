@@ -585,6 +585,8 @@ bool EngineRuntime::applyLiveSettings(const EngineConfig& edited) {
     change->config.rotatingInertiaKgM2 = edited.rotatingInertiaKgM2;
     change->config.ambientPressureKpa = edited.ambientPressureKpa;
     change->config.ambientTemperatureC = edited.ambientTemperatureC;
+    change->config.transmission = edited.transmission;
+    change->config.vehicle = edited.vehicle;
     try {
         normaliseEngineConfig(change->config);
         if (validateEngineConfig(change->config)) return false;
@@ -603,6 +605,9 @@ bool EngineRuntime::applyLiveSettings(const EngineConfig& edited) {
     config_.rotatingInertiaKgM2 = change->config.rotatingInertiaKgM2;
     config_.ambientPressureKpa = change->config.ambientPressureKpa;
     config_.ambientTemperatureC = change->config.ambientTemperatureC;
+    // Same gear count: the ratios are copied into the existing storage.
+    config_.transmission = change->config.transmission;
+    config_.vehicle = change->config.vehicle;
     {
         const std::scoped_lock lock(liveExhaustMutex_);
         std::swap(pendingSettingsChange_, change);
@@ -725,6 +730,7 @@ void EngineRuntime::consumeLiveSettingsChange() noexcept {
     // A new flywheel: the clutch and the vehicle feel it too.
     engineInertiaKgM2_ = effectiveRotatingInertiaKgM2(simulator_.config());
     driveline_.setEngineInertia(engineInertiaKgM2_);
+    (void)driveline_.replaceVehicle(simulator_.config().transmission, simulator_.config().vehicle);
     audioState_.ambientPressureKpa.store(static_cast<float>(simulator_.config().ambientPressureKpa),
                                          std::memory_order_relaxed);
     audioState_.ambientTemperatureC.store(static_cast<float>(simulator_.config().ambientTemperatureC),

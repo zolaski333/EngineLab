@@ -1276,6 +1276,7 @@ bool EngineSimulator::settingsReplaceable(const EngineConfig& running,
             return false;
     }
     return running.injection.mode == edited.injection.mode
+        && running.transmission.gearRatios.size() == edited.transmission.gearRatios.size()
         && was.enabled == now.enabled && was.type == now.type
         && was.compressorBladeCount == now.compressorBladeCount
         && was.turbineBladeCount == now.turbineBladeCount
@@ -1300,6 +1301,10 @@ bool EngineSimulator::replaceSettings(EngineConfig& config) noexcept {
     std::swap(config_.forcedInduction, config.forcedInduction);
     std::swap(config_.ignition, config.ignition);
     std::swap(config_.exhaustAfterfire, config.exhaustAfterfire);
+    // The driveline (EngineRuntime) runs on these; the copy keeps config()
+    // describing the engine that runs.
+    std::swap(config_.transmission, config.transmission);
+    std::swap(config_.vehicle, config.vehicle);
     // Field by field: the kinematics read the crankshafts' layout, which
     // stays. effectiveRotatingInertiaKgM2() reads these at every step.
     for (std::size_t index = 0; index < config_.crankshafts.size(); ++index) {

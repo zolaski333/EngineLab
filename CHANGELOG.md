@@ -69,6 +69,9 @@ file formats, always with an in-memory migration).
 
 ### Added
 
+- Gearbox and vehicle edits in the JSON editor (ratios, final drive, mass,
+  tyres, clutch) are taken while the engine runs, without a restart, as long
+  as the number of gears stays.
 - Change the air while the engine runs: click the cylinder block and set
   the altitude and the temperature. At 2,000 m and 35 degC the CP2 loses
   27 % of its torque. The 2JZ loses 25 %: its boost is controlled as a ratio

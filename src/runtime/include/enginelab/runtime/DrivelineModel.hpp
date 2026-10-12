@@ -52,6 +52,11 @@ public:
     [[nodiscard]] int requestedGear() const noexcept { return requestedGear_; }
     /** The engine's rotating inertia after a live change of its geometry. */
     void setEngineInertia(double kgM2) noexcept { engineInertiaKgM2_ = std::max(0.001, kgM2); }
+    /** A live change of the gearbox and the vehicle: read at every advance(),
+     * the clutch, wheel and vehicle states carry on. False, with nothing
+     * changed, for another number of gears. Copies into the existing
+     * storage: no allocation. */
+    [[nodiscard]] bool replaceVehicle(const TransmissionConfig& transmission, const VehicleConfig& vehicle);
     [[nodiscard]] DrivelineOutput advance(double dtSeconds, const EngineState&, double requestedLoad,
                                           double clutchPedalPressure, double brakePressure) noexcept;
 private:

@@ -24,6 +24,13 @@ DrivelineModel::DrivelineModel(const EngineConfig& config) : config_(config) {
     engineInertiaKgM2_ = std::max(0.001, effectiveRotatingInertiaKgM2(config_));
 }
 
+bool DrivelineModel::replaceVehicle(const TransmissionConfig& transmission, const VehicleConfig& vehicle) {
+    if (transmission.gearRatios.size() != config_.transmission.gearRatios.size()) return false;
+    config_.transmission = transmission;
+    config_.vehicle = vehicle;
+    return true;
+}
+
 void DrivelineModel::requestGear(int gear) noexcept {
     const auto maximum = static_cast<int>(config_.transmission.gearRatios.size()) - 1;
     const auto selected = std::clamp(gear, -2, maximum);

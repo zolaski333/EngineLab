@@ -21,6 +21,8 @@ void takeSettings(EngineConfig& probe, const EngineConfig& edited) {
     probe.rotatingInertiaKgM2 = edited.rotatingInertiaKgM2;
     probe.ambientPressureKpa = edited.ambientPressureKpa;
     probe.ambientTemperatureC = edited.ambientTemperatureC;
+    probe.transmission = edited.transmission;
+    probe.vehicle = edited.vehicle;
 }
 
 /** False when the banks are not the same ones: that edit is not a camshaft
