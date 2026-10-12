@@ -5,6 +5,15 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-12 — CP4 below real time at the limiter and on lift-off: overlap drain
+
+- Owner's report. `PhysicsPerfHarness --freerev 1 --release 4` (new step_ms, intake accepted/rejected columns): limiter 3.87 ms per 4.17 ms frame, lift-off 4.23 ms; 102k / 94k rejected intake substeps in 3.3 s / 1 s.
+- Cause: during overlap the intake network subtracted the exhaust outflow handed over from the previous window (hot burned gas, ~6-10e4 W) from a chamber refilling with cold charge: energy to 0 K, every attempt rejected. Now the outflow leaves at its mass rate relative to the content, with the chamber's own composition and enthalpy, and caps the step. `EngineLab.IntakeMovingBoundary` fails without it (549 rejections, 5.6e-10 K).
+- Second, separate: ring blow-by applied every 100 us instead of every sub-step (12 % of a CP4 limiter step); idle and cruise sub-steps are longer, bit-identical WAVs on 7 engines.
+- Runtime with audio, `AudioRenderHarness --runtime-blip` (WOT 2-5.5 s, shut to 9 s), 3 alternated runs: lowest realtime factor on lift-off 0.73-0.80 -> 0.995, worst lateness 18 ms -> 1.8 ms. Whole catalogue after: >= 0.992 in both phases, worst 5.6 ms (2JZ).
+- Effect: torque <= 1.1 % (CP4 6,750 rpm), peak 124.0 -> 123.2 kW; WAV level within 3 %, bands within 4 points. The two changes were not separated on the curves.
+- Still counted: ~320 of 840 CP4 WOT frames late by under one frame (sub-frame jitter, absorbed).
+
 ## 2026-10-12 — Bike WOT torque shapes against Cycle World dyno traces
 
 - `DynoSweepHarness` (250 rpm) against `tests/reference-data/measured-curves/` (rear-wheel), each curve divided by its own peak. Peak rpm, sim vs real: CP3 7,250 vs 7,000; CP4 9,000 vs 9,250; Big Twin 3,500 vs 3,000; CP2 4,000 vs 6,250. Shape RMS: CP2 7.5 %, CP3 6.6 %, CP4 12.7 %, Big Twin 7.1 %.

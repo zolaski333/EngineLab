@@ -86,7 +86,9 @@ struct CylinderValveBoundary final {
     /** For an advance AHEAD of the chamber: what leaves the reservoir through
      * its other openings over the advance (an exhaust valve during overlap),
      * as species and total-energy rates. Zero for a reservoir with only this
-     * valve. */
+     * valve. A net outflow is applied as its mass rate relative to the
+     * starting content, leaving with the reservoir's own composition and
+     * enthalpy: the rates may describe gas that has already left. */
     std::array<double, gasSpeciesCount> otherOutflowSpeciesKgPerS {};
     double otherOutflowEnergyW { 0.0 };
 };

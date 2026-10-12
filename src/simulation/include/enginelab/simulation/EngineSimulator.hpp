@@ -466,6 +466,9 @@ private:
     std::array<double, 32> deliveredAirMgThisCycle_ {};
     std::array<bool, 32> cylinderFlowCycleStarted_ {};
     std::array<double, 32> cylinderWallTemperatureC_ {};
+    /** Time each chamber's ring blow-by has not yet been applied for; see
+     *  blowByUpdateIntervalSeconds in EngineSimulator.cpp. */
+    std::array<double, 32> blowByPendingSeconds_ {};
     std::array<GasCell, 32> intakePlenumGas_ {};
     std::size_t intakePlenumCount_ { 1 };
     /** Historical separate-runner network ownership retained for numerical

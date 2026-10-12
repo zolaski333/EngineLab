@@ -262,6 +262,23 @@ struct ReservoirInflowConstants final {
     return result;
 }
 
+/** Net mass a chamber loses through its other openings, as a fraction per
+ *  second of the content it starts the advance with; zero when nothing net
+ *  leaves (an inflow keeps its supplied rates). */
+[[nodiscard]] double otherOutflowDrainRatePerS(
+    const CylinderValveBoundary& boundary) noexcept {
+    auto outflowKgPerS = 0.0;
+    auto densityKgPerM3 = 0.0;
+    for (std::size_t species = 0; species < gasSpeciesCount; ++species) {
+        outflowKgPerS += boundary.otherOutflowSpeciesKgPerS[species];
+        densityKgPerM3 += boundary.cylinderState.speciesMassDensityKgPerM3[species];
+    }
+    const auto massKg = densityKgPerM3 * boundary.cylinderVolumeM3;
+    if (!(outflowKgPerS > 0.0) || !(massKg > 0.0) || !finite(outflowKgPerS / massKg))
+        return 0.0;
+    return outflowKgPerS / massKg;
+}
+
 [[nodiscard]] ConservativeState rk2Combination(
     const ConservativeState& initial,
     const ConservativeState& firstStage,
@@ -1507,6 +1524,11 @@ double ExhaustGasNetwork::maximumStableTimeStep(
                 config_.maximumCourantNumber * cylinderReservoirVolumesM3_[index]
                     / (opening * signalSpeed));
         }
+        // The drain through the other valve may take at most the Courant share
+        // of the content in one step.
+        const auto drainRate = otherOutflowDrainRatePerS(boundary);
+        if (drainRate > 0.0)
+            stableStep = std::min(stableStep, config_.maximumCourantNumber / drainRate);
     }
     auto ambientAreaSignalSumM3PerS = 0.0;
     for (const auto& outlet : layout_.outlets()) {
@@ -1914,7 +1936,21 @@ bool ExhaustGasNetwork::evaluateStage(
                         + cylinderPrimitives[index].pressurePa) * dilution;
             }
             const auto& supplied = cylinderBoundaries[suppliedIndex];
-            if (supplied.otherOutflowEnergyW != 0.0) {
+            const auto drainRate = otherOutflowDrainRatePerS(supplied);
+            if (drainRate > 0.0) {
+                // A net outflow leaves with the reservoir's own composition and
+                // stagnation enthalpy, at its rate relative to the content the
+                // advance started from. Fixed rates computed on the previous
+                // window's hot burned gas drained the energy of a chamber
+                // refilling with cold charge (a closed throttle at the
+                // limiter) to 0 K, and every later attempt was rejected.
+                for (std::size_t species = 0; species < gasSpeciesCount; ++species)
+                    cylinderResiduals[index].speciesMassDensityKgPerM3[species] -=
+                        activeCylinderState.speciesMassDensityKgPerM3[species] * drainRate;
+                cylinderResiduals[index].totalEnergyDensityJPerM3 -=
+                    (activeCylinderState.totalEnergyDensityJPerM3
+                        + cylinderPrimitives[index].pressurePa) * drainRate;
+            } else if (supplied.otherOutflowEnergyW != 0.0) {
                 const auto inverseVolume = 1.0 / cylinderReservoirVolumesM3_[index];
                 for (std::size_t species = 0; species < gasSpeciesCount; ++species)
                     cylinderResiduals[index].speciesMassDensityKgPerM3[species] -=

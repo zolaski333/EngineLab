@@ -158,6 +158,13 @@ file formats, always with an in-memory migration).
 
 ### Fixed
 
+- The CP4 no longer drops below real time on the limiter or when the throttle
+  is shut after it (0.73-0.80 on lift-off before, 18 ms late at worst). During
+  valve overlap, the intake side drained the chamber at the previous window's
+  rate of hot exhaust gas while it was refilling with cold charge, down to
+  0 K, and the solver retried its step thousands of times per second. Every
+  catalogue engine now stays at or above 0.99 through a limiter blip. Torque
+  curves move by 1.1 % at most, the sound by less than 3 % in level.
 - No more isolated clicks in the exhaust sound of the Merlin at full load and
   of the Radial at its catalogue point. The high-band valve source switched on
   for a few milliseconds whenever one crank-angle sub-step was shorter than
