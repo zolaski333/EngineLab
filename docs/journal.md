@@ -5,12 +5,19 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-12 — Individual throttles as a restriction face in the runner
+
+- New 1-D primitive: a plate on a duct-to-duct face (isentropic orifice fed by the approaching cell's stagnation state; jet re-expanding against the loaded face; the supplying side keeps its own momentum). `EngineLab.RestrictionFace`: choked flow -0.2 % vs isentropic (-1.4 % with the throat momentum on the supplying side), full bore +0.003 % vs no plate, shut 0, mass to 1e-14.
+- CP2 with `individual_throttles: true` only (plate 66 mm from the valve, same bores and Cd 0.72, plenum fed through the bores fully open). `DynoSweepHarness`: VE -2 to -8 % above 3,500 rpm; torque -10 to -19 % with the ECU reading the cell behind the plate (62-70 kPa at WOT), -5 to -10 % reading the mean of the valve-side duct (83-87 kPa), kept. The peak stays at 3,500-4,000 rpm: no help for the shape gap.
+- Idle (`PhysicsPerfHarness --idle`, 20 s): 1,399 rpm (1,383-1,419) vs 1,408 (1,389-1,439). Free-run at 5,000 rpm: 2.66 vs 3.18 (more cells). Catalogue WAVs byte-identical (no engine uses it).
+- Not done: the CP2 is not switched; the audio intake network and the 3-D view still draw one plenum throttle; the ECU still reads a pressure, not the throttle angle.
+
 ## 2026-10-12 — Mechanical layer over the exhaust above 1 kHz, catalogue-wide
 
 - Owner's listening: the CP2 sounds better with the mechanical slider at 0. `GeometrySensitivityHarness` (WOT held, runtime default mechanical gain 0.70, voicing not applied), mechanical stem minus exhaust stem per third octave:
 - CP2 3,500 rpm: over the exhaust from 1 kHz up, by 20-44 dB at 1.25-5 kHz (12 bands of 28); 7,000 rpm: up to 10 dB at 2-5 kHz (4 bands). CP4 5,000: 9-18 dB from 1.6 kHz (14 bands). 2JZ 3,500: 24-47 dB from 1 kHz (22 bands).
 - Reference (literature, not a recording): on a 125 cc motocross bike at full load the silencer is predominant from 500 Hz to 3 kHz, the cylinder a substantial contribution at 1-2 kHz (Astrup, IOA). A constant gain cannot match both CP2 speeds: the excess falls 30 dB from 3,500 to 7,000 rpm, so the layer's speed scaling is suspect, not only its level.
-- Changed: CP2 and CP2 full-system voicing `mechanical_gain` 0.82 / 0.78 -> 0 (linear gain: the mix loses exactly the mechanical stem; no render needed to know it). Not changed: the layer itself, the other engines.
+- Changed: CP2 and CP2 full-system voicing `mechanical_gain` 0.82 / 0.78 -> 0 (linear gain: the mix loses exactly the mechanical stem). `AudioRenderHarness` CP2 catalogue point (5,430 rpm): RMS 0.0150 -> 0.0146 (-0.23 dB), physics byte-identical. Not changed: the layer itself, the other engines.
 
 ## 2026-10-12 — CP4 below real time at the limiter and on lift-off: overlap drain
 

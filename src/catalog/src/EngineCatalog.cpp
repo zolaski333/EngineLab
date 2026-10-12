@@ -854,6 +854,8 @@ void applyCrankOffsets(EngineConfig& config) {
         assignIfPresent(intake, "runner_diameter_mm", config.intake.runnerDiameterMm);
         assignIfPresent(intake, "runner_plenum_diameter_mm", config.intake.runnerPlenumDiameterMm);
         assignIfPresent(intake, "airbox_volume_l", config.intake.airboxVolumeLitres);
+        assignIfPresent(intake, "individual_throttles", config.intake.individualThrottles);
+        assignIfPresent(intake, "throttle_distance_from_valve_mm", config.intake.throttleDistanceFromValveMm);
         assignIfPresent(intake, "inlet_duct_length_mm", config.intake.inletDuctLengthMm);
         assignIfPresent(intake, "inlet_duct_diameter_mm", config.intake.inletDuctDiameterMm);
         assignIfPresent(intake, "bellmouth_diameter_mm", config.intake.bellmouthDiameterMm);
@@ -986,6 +988,8 @@ void applyCrankOffsets(EngineConfig& config) {
                 assignIfPresent(geometry, "runner_diameter_mm", pathConfig.geometry.runnerDiameterMm);
                 assignIfPresent(geometry, "runner_plenum_diameter_mm", pathConfig.geometry.runnerPlenumDiameterMm);
                 assignIfPresent(geometry, "airbox_volume_l", pathConfig.geometry.airboxVolumeLitres);
+                assignIfPresent(geometry, "individual_throttles", pathConfig.geometry.individualThrottles);
+                assignIfPresent(geometry, "throttle_distance_from_valve_mm", pathConfig.geometry.throttleDistanceFromValveMm);
                 assignIfPresent(geometry, "inlet_duct_length_mm", pathConfig.geometry.inletDuctLengthMm);
                 assignIfPresent(geometry, "inlet_duct_diameter_mm", pathConfig.geometry.inletDuctDiameterMm);
                 assignIfPresent(geometry, "bellmouth_diameter_mm", pathConfig.geometry.bellmouthDiameterMm);

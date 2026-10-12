@@ -409,6 +409,17 @@ public:
      */
     void requestWallHeatUpdate() noexcept { wallHeatUpdateRequested_ = true; }
 
+    /** Open area of a restriction face (CompiledExhaustInterface::restriction),
+     *  discharge coefficient included, clamped to the smaller of its two duct
+     *  faces. Applies from the next advance. Returns false for an interface
+     *  that is not a restriction or an area that is not finite. */
+    [[nodiscard]] bool setRestrictionOpeningAreaM2(std::size_t interfaceIndex,
+                                                   double areaM2) noexcept;
+    [[nodiscard]] double restrictionOpeningAreaM2(std::size_t interfaceIndex) const noexcept {
+        return interfaceIndex < interfaceOpeningAreasM2_.size()
+            ? interfaceOpeningAreasM2_[interfaceIndex] : 0.0;
+    }
+
     /** Runs `body(context, i)` once for every i in [0, count), possibly on
      *  several threads, and returns once all of them have completed. */
     struct ParallelFor final {
@@ -525,6 +536,9 @@ private:
     std::vector<PrimitiveState> junctionStagePrimitives_;
     std::vector<PrimitiveState> junctionCandidatePrimitives_;
     std::vector<double> junctionPortAreaSums_;
+    /** Per interface: the full face for a plain one, the plate's open area
+     *  for a restriction. */
+    std::vector<double> interfaceOpeningAreasM2_;
     std::vector<ConservativeState> cylinderReservoirStates_;
     std::vector<ConservativeState> cylinderReservoirStage_;
     std::vector<ConservativeState> cylinderReservoirCandidate_;

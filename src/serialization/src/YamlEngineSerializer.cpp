@@ -479,6 +479,8 @@ std::string YamlEngineSerializer::encode(const EngineConfig& config) const {
         << YAML::Key << "runner_diameter_mm" << YAML::Value << config.intake.runnerDiameterMm
         << YAML::Key << "runner_plenum_diameter_mm" << YAML::Value << config.intake.runnerPlenumDiameterMm
         << YAML::Key << "airbox_volume_l" << YAML::Value << config.intake.airboxVolumeLitres
+        << YAML::Key << "individual_throttles" << YAML::Value << config.intake.individualThrottles
+        << YAML::Key << "throttle_distance_from_valve_mm" << YAML::Value << config.intake.throttleDistanceFromValveMm
         << YAML::Key << "inlet_duct_length_mm" << YAML::Value << config.intake.inletDuctLengthMm
         << YAML::Key << "inlet_duct_diameter_mm" << YAML::Value << config.intake.inletDuctDiameterMm
         << YAML::Key << "bellmouth_diameter_mm" << YAML::Value << config.intake.bellmouthDiameterMm
@@ -497,6 +499,8 @@ std::string YamlEngineSerializer::encode(const EngineConfig& config) const {
             << YAML::Key << "runner_diameter_mm" << YAML::Value << path.geometry.runnerDiameterMm
             << YAML::Key << "runner_plenum_diameter_mm" << YAML::Value << path.geometry.runnerPlenumDiameterMm
             << YAML::Key << "airbox_volume_l" << YAML::Value << path.geometry.airboxVolumeLitres
+            << YAML::Key << "individual_throttles" << YAML::Value << path.geometry.individualThrottles
+            << YAML::Key << "throttle_distance_from_valve_mm" << YAML::Value << path.geometry.throttleDistanceFromValveMm
             << YAML::Key << "inlet_duct_length_mm" << YAML::Value << path.geometry.inletDuctLengthMm
             << YAML::Key << "inlet_duct_diameter_mm" << YAML::Value << path.geometry.inletDuctDiameterMm
             << YAML::Key << "bellmouth_diameter_mm" << YAML::Value << path.geometry.bellmouthDiameterMm
@@ -952,6 +956,8 @@ EngineDecodeResult YamlEngineSerializer::decode(std::string_view text) const noe
             config.intake.runnerDiameterMm = intake["runner_diameter_mm"].as<double>(config.intake.runnerDiameterMm);
             config.intake.runnerPlenumDiameterMm = intake["runner_plenum_diameter_mm"].as<double>(config.intake.runnerPlenumDiameterMm);
             config.intake.airboxVolumeLitres = intake["airbox_volume_l"].as<double>(config.intake.airboxVolumeLitres);
+            config.intake.individualThrottles = intake["individual_throttles"].as<bool>(config.intake.individualThrottles);
+            config.intake.throttleDistanceFromValveMm = intake["throttle_distance_from_valve_mm"].as<double>(config.intake.throttleDistanceFromValveMm);
             config.intake.inletDuctLengthMm = intake["inlet_duct_length_mm"].as<double>(config.intake.inletDuctLengthMm);
             config.intake.inletDuctDiameterMm = intake["inlet_duct_diameter_mm"].as<double>(config.intake.inletDuctDiameterMm);
             config.intake.bellmouthDiameterMm = intake["bellmouth_diameter_mm"].as<double>(config.intake.bellmouthDiameterMm);
@@ -972,6 +978,8 @@ EngineDecodeResult YamlEngineSerializer::decode(std::string_view text) const noe
                     path.geometry.runnerDiameterMm = geometry["runner_diameter_mm"].as<double>(path.geometry.runnerDiameterMm);
                     path.geometry.runnerPlenumDiameterMm = geometry["runner_plenum_diameter_mm"].as<double>(path.geometry.runnerPlenumDiameterMm);
                     path.geometry.airboxVolumeLitres = geometry["airbox_volume_l"].as<double>(path.geometry.airboxVolumeLitres);
+                    path.geometry.individualThrottles = geometry["individual_throttles"].as<bool>(path.geometry.individualThrottles);
+                    path.geometry.throttleDistanceFromValveMm = geometry["throttle_distance_from_valve_mm"].as<double>(path.geometry.throttleDistanceFromValveMm);
                     path.geometry.inletDuctLengthMm = geometry["inlet_duct_length_mm"].as<double>(path.geometry.inletDuctLengthMm);
                     path.geometry.inletDuctDiameterMm = geometry["inlet_duct_diameter_mm"].as<double>(path.geometry.inletDuctDiameterMm);
                     path.geometry.bellmouthDiameterMm = geometry["bellmouth_diameter_mm"].as<double>(path.geometry.bellmouthDiameterMm);

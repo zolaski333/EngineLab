@@ -305,6 +305,13 @@ private:
      * ambient reservoir behind the runner mouth.
      */
     void configurePhysicalIntakeNetworks();
+    /** Individual throttles: `conductanceAreaM2` (discharge coefficient
+     *  included) shared equally by the plates of the path's runners. */
+    void setIndividualThrottleAreas(std::size_t pathIndex, double conductanceAreaM2) noexcept;
+    /** Individual throttles: the manifold pressure behind the path's plates,
+     *  as a balance manifold reads it; advanced by `subDt`. */
+    [[nodiscard]] double individualThrottleManifoldPressureKpa(std::size_t pathIndex,
+                                                               double subDt) noexcept;
     [[nodiscard]] std::unique_ptr<gasdynamics::ExhaustGasNetwork> buildIntakeRunnerNetwork(
         const EngineConfig& config, std::size_t cylinderIndex) const;
     [[nodiscard]] std::unique_ptr<gasdynamics::ExhaustGasNetwork> buildIntakeManifoldNetwork(
@@ -469,6 +476,9 @@ private:
     /** Time each chamber's ring blow-by has not yet been applied for; see
      *  blowByUpdateIntervalSeconds in EngineSimulator.cpp. */
     std::array<double, 32> blowByPendingSeconds_ {};
+    /** Per intake path with individual throttles: the filtered pressure
+     *  behind the plates (individualThrottleManifoldPressureKpa). */
+    std::array<double, 32> individualThrottleMapKpa_ {};
     std::array<GasCell, 32> intakePlenumGas_ {};
     std::size_t intakePlenumCount_ { 1 };
     /** Historical separate-runner network ownership retained for numerical

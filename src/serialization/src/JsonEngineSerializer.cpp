@@ -345,6 +345,8 @@ std::string JsonEngineSerializer::encode(const EngineConfig& config) const {
             {"runner_length_mm", path.geometry.runnerLengthMm}, {"runner_diameter_mm", path.geometry.runnerDiameterMm},
             {"runner_plenum_diameter_mm", path.geometry.runnerPlenumDiameterMm},
             {"airbox_volume_l", path.geometry.airboxVolumeLitres},
+            {"individual_throttles", path.geometry.individualThrottles},
+            {"throttle_distance_from_valve_mm", path.geometry.throttleDistanceFromValveMm},
             {"inlet_duct_length_mm", path.geometry.inletDuctLengthMm},
             {"inlet_duct_diameter_mm", path.geometry.inletDuctDiameterMm},
             {"bellmouth_diameter_mm", path.geometry.bellmouthDiameterMm},
@@ -521,6 +523,8 @@ std::string JsonEngineSerializer::encode(const EngineConfig& config) const {
                      {"runner_length_mm", config.intake.runnerLengthMm}, {"runner_diameter_mm", config.intake.runnerDiameterMm},
                      {"runner_plenum_diameter_mm", config.intake.runnerPlenumDiameterMm},
                      {"airbox_volume_l", config.intake.airboxVolumeLitres},
+                     {"individual_throttles", config.intake.individualThrottles},
+                     {"throttle_distance_from_valve_mm", config.intake.throttleDistanceFromValveMm},
                      {"inlet_duct_length_mm", config.intake.inletDuctLengthMm},
                      {"inlet_duct_diameter_mm", config.intake.inletDuctDiameterMm},
                      {"bellmouth_diameter_mm", config.intake.bellmouthDiameterMm},
@@ -771,6 +775,8 @@ EngineDecodeResult JsonEngineSerializer::decode(std::string_view text) const noe
             config.intake.runnerDiameterMm = intake.value("runner_diameter_mm", config.intake.runnerDiameterMm);
             config.intake.runnerPlenumDiameterMm = intake.value("runner_plenum_diameter_mm", config.intake.runnerPlenumDiameterMm);
             config.intake.airboxVolumeLitres = intake.value("airbox_volume_l", config.intake.airboxVolumeLitres);
+            config.intake.individualThrottles = intake.value("individual_throttles", config.intake.individualThrottles);
+            config.intake.throttleDistanceFromValveMm = intake.value("throttle_distance_from_valve_mm", config.intake.throttleDistanceFromValveMm);
             config.intake.inletDuctLengthMm = intake.value("inlet_duct_length_mm", config.intake.inletDuctLengthMm);
             config.intake.inletDuctDiameterMm = intake.value("inlet_duct_diameter_mm", config.intake.inletDuctDiameterMm);
             config.intake.bellmouthDiameterMm = intake.value("bellmouth_diameter_mm", config.intake.bellmouthDiameterMm);
@@ -936,6 +942,8 @@ EngineDecodeResult JsonEngineSerializer::decode(std::string_view text) const noe
                     path.geometry.runnerDiameterMm = geometry.value("runner_diameter_mm", path.geometry.runnerDiameterMm);
                     path.geometry.runnerPlenumDiameterMm = geometry.value("runner_plenum_diameter_mm", path.geometry.runnerPlenumDiameterMm);
                     path.geometry.airboxVolumeLitres = geometry.value("airbox_volume_l", path.geometry.airboxVolumeLitres);
+                    path.geometry.individualThrottles = geometry.value("individual_throttles", path.geometry.individualThrottles);
+                    path.geometry.throttleDistanceFromValveMm = geometry.value("throttle_distance_from_valve_mm", path.geometry.throttleDistanceFromValveMm);
                     path.geometry.inletDuctLengthMm = geometry.value("inlet_duct_length_mm", path.geometry.inletDuctLengthMm);
                     path.geometry.inletDuctDiameterMm = geometry.value("inlet_duct_diameter_mm", path.geometry.inletDuctDiameterMm);
                     path.geometry.bellmouthDiameterMm = geometry.value("bellmouth_diameter_mm", path.geometry.bellmouthDiameterMm);

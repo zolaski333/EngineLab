@@ -142,6 +142,12 @@ enginelab_set_warnings(EngineLabIntakeMovingBoundaryTests)
 add_test(NAME EngineLab.IntakeMovingBoundary COMMAND EngineLabIntakeMovingBoundaryTests)
 set_tests_properties(EngineLab.IntakeMovingBoundary PROPERTIES TIMEOUT 60)
 
+add_executable(EngineLabRestrictionFaceTests RestrictionFaceTests.cpp)
+target_link_libraries(EngineLabRestrictionFaceTests PRIVATE EngineLab::GasDynamics)
+enginelab_set_warnings(EngineLabRestrictionFaceTests)
+add_test(NAME EngineLab.RestrictionFace COMMAND EngineLabRestrictionFaceTests)
+set_tests_properties(EngineLab.RestrictionFace PROPERTIES TIMEOUT 60)
+
 add_executable(EngineLabJointIntakeManifoldTests JointIntakeManifoldTests.cpp)
 target_link_libraries(EngineLabJointIntakeManifoldTests PRIVATE
     EngineLab::Foundation EngineLab::Events EngineLab::Physics EngineLab::Ecu

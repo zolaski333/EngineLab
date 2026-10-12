@@ -805,6 +805,8 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
         || !(config.intake.runnerPlenumDiameterMm == 0.0
             || inRange(config.intake.runnerPlenumDiameterMm, 10.0, 150.0))
         || !inRange(config.intake.airboxVolumeLitres, 0.0, 100.0)
+        || !(config.intake.throttleDistanceFromValveMm >= 0.0
+            && config.intake.throttleDistanceFromValveMm < config.intake.runnerLengthMm)
         || !inRange(config.intake.inletDuctLengthMm, 0.0, 5'000.0)
         || !inRange(config.intake.inletDuctDiameterMm, 0.0, 500.0)
         || !inRange(config.intake.bellmouthDiameterMm, 0.0, 1'000.0)
@@ -1098,6 +1100,8 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
             || !(intake.runnerPlenumDiameterMm == 0.0
                 || inRange(intake.runnerPlenumDiameterMm, 10.0, 150.0))
             || !inRange(intake.airboxVolumeLitres, 0.0, 100.0)
+            || !(intake.throttleDistanceFromValveMm >= 0.0
+                && intake.throttleDistanceFromValveMm < intake.runnerLengthMm)
             || !inRange(intake.inletDuctLengthMm, 0.0, 5'000.0)
             || !inRange(intake.inletDuctDiameterMm, 0.0, 500.0)
             || !inRange(intake.bellmouthDiameterMm, 0.0, 1'000.0)

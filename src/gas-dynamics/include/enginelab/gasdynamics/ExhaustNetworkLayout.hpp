@@ -124,6 +124,13 @@ struct CompiledExhaustInterface final {
     ExhaustEndpoint downstream {};
     std::uint8_t upstreamPort { unspecifiedExhaustComponentPort };
     std::uint8_t downstreamPort { unspecifiedExhaustComponentPort };
+    /** A throttle plate on a duct-to-duct face. The ducts then exchange
+     *  through an isentropic orifice fed by the approaching side's stagnation
+     *  state (choked when it must be), and the jet re-expands into the
+     *  receiving duct's face as a pressure-loaded wall around it. The open
+     *  area is set while running (ExhaustGasNetwork::setRestrictionOpeningAreaM2)
+     *  and starts at the full face. */
+    bool restriction { false };
 };
 
 struct CompiledCylinderPort final {

@@ -52,6 +52,12 @@ file formats, always with an in-memory migration).
 
 ### Added
 
+- Individual throttle bodies: `individual_throttles: true` in an engine's
+  intake puts one plate in each runner instead of one ahead of the plenum,
+  at `throttle_distance_from_valve_mm`. The plate is a real restriction in
+  the 1-D runner: choked when nearly shut, free when wide open. No catalogue
+  engine uses it yet, and the intake sound and 3-D view still show a single
+  throttle.
 - 3-D engine view rendered on the GPU, replacing the 2-D cutaway: pistons,
   rods, crank throws, valves and flames follow the simulator's kinematics and
   turn at the simulated engine speed. X-ray or solid block, four layers,

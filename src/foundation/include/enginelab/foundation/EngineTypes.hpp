@@ -251,6 +251,18 @@ struct IntakeConfig final {
      * schedule, not this.
      */
     double closedThrottleLeakageAreaMm2 { 0.6 };
+    /**
+     * One throttle plate in each runner instead of one ahead of the plenum
+     * (individual throttle bodies). The plenum is then the airbox the runner
+     * mouths draw from, fed through the bores fully open, and each runner is
+     * two 1-D ducts meeting at a restriction face: the plate, with its share
+     * of the bores, leakage and idle bypass. The manifold pressure the ECU
+     * reads is the mean behind the plates, through a 30 ms tapping manifold.
+     */
+    bool individualThrottles { false };
+    /** Plate position along the runner, from the valve. Zero places it at
+     *  55 % of the runner length (not measured on any engine). */
+    double throttleDistanceFromValveMm { 0.0 };
 };
 
 struct IntakePathConfig final {

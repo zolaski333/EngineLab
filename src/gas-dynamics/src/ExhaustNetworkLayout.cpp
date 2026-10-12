@@ -476,6 +476,10 @@ ExhaustNetworkLayout ExhaustNetworkLayout::assemble(
             || !endpointInRange(connection.downstream)
             || connection.upstream.type == ExhaustEndpointType::ductInlet
             || connection.downstream.type == ExhaustEndpointType::ductOutlet
+            // A plate sits in a bore: both sides are ducts.
+            || (connection.restriction
+                && (connection.upstream.type == ExhaustEndpointType::junction
+                    || connection.downstream.type == ExhaustEndpointType::junction))
             || !claim(connection.upstream) || !claim(connection.downstream))
             reject(connection.upstream.nodeId);
     }
@@ -604,7 +608,8 @@ bool ExhaustNetworkLayout::sameTopology(
         if (!sameEndpoint(left.upstream, right.upstream)
             || !sameEndpoint(left.downstream, right.downstream)
             || left.upstreamPort != right.upstreamPort
-            || left.downstreamPort != right.downstreamPort)
+            || left.downstreamPort != right.downstreamPort
+            || left.restriction != right.restriction)
             return false;
     }
     for (std::size_t index = 0; index < cylinderPorts_.size(); ++index) {
