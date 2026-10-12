@@ -5,6 +5,13 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-13 — Do the cams change the sound?
+
+- Owner report: editing valve lift/duration changes the engine but not the sound. `EngineLabGeometrySensitivityHarness --cam-duration-delta D --cam-lift-scale S --wav-out`, then `--wav-reference`, CP2 held at 6,000 rpm, 0.85 throttle, every cam (low and high profile).
+- Cams -40 deg and lift x0.7 (CP2 torque -22 % in LiveTuning): level -0.74 dB, shape 4.07 dB, worst band -11.8 dB at 315 Hz. Cams +40 deg, lift x1.2: -0.69 dB, shape 2.38 dB, worst -9.1 dB at 200 Hz.
+- Same run, exhaust variants for scale: no muffler body 2.70, long primaries 4.08, independent pipes 12.0 dB of shape. The cams do reach the sound, as much as a modest exhaust change; the level barely follows the torque.
+- Not measured: idle (a long-duration cam's lope), light load, any real recording of a cam change. The harness's default `CP2` filter had become ambiguous (two CP2 engines); it is now `Yamaha CP2`.
+
 ## 2026-10-12 — Live flywheel, camshafts and air
 
 - `EngineLab.LiveTuning`, deterministic, built / swapped / untouched engines. Flywheel x2 taken at idle: free rev to 75 % of redline CP2 0.938 / 0.925 / 0.525 s, 2JZ 1.404 / 1.421 / 0.842 s.
