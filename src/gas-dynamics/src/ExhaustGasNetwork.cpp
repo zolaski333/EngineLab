@@ -445,6 +445,82 @@ struct ReservoirInflowConstants final {
             2.0 * gamma / (gamma - 1.0) * (root * root - ratio * root)));
 }
 
+/**
+ * Flux through a throttle plate between two duct ends, per unit open area,
+ * positive from the left duct (whose outlet meets the plate) to the right.
+ *
+ * The gas approaching the plate keeps its kinetic energy: the orifice is fed
+ * by the approaching cell's stagnation state, not its static state, so a
+ * plate open to the full bore passes the duct's own flow without a loss. The
+ * loss is the jet re-expanding into the receiving duct, which the caller
+ * carries by loading the closed part of each face with that cell's pressure
+ * (Borda-Carnot). The flow runs from the side whose stagnation pressure
+ * exceeds the other's static pressure by more.
+ */
+[[nodiscard]] EulerFlux restrictionOrificeFlux(
+    const ConservativeState& leftState,
+    const PrimitiveState& left,
+    const ConservativeState& rightState,
+    const PrimitiveState& right) noexcept {
+    EulerFlux result;
+    result.momentumFluxPa = 0.5 * (left.pressurePa + right.pressurePa);
+    struct Stagnation final { double pressurePa; double temperatureK; };
+    const auto stagnation = [](const PrimitiveState& state,
+                               double towardPlateMps) noexcept {
+        const auto gamma = std::clamp(state.heatCapacityRatio, 1.01, 2.0);
+        const auto mach = state.speedOfSoundMps > 0.0
+            ? std::max(0.0, towardPlateMps) / state.speedOfSoundMps : 0.0;
+        const auto ratio = 1.0 + 0.5 * (gamma - 1.0) * mach * mach;
+        return Stagnation { state.pressurePa * std::pow(ratio, gamma / (gamma - 1.0)),
+                            state.temperatureK * ratio };
+    };
+    // The left duct's outlet faces the plate along +x, the right duct's inlet
+    // along -x.
+    const auto leftTotal = stagnation(left, left.velocityMps);
+    const auto rightTotal = stagnation(right, -right.velocityMps);
+    const auto forwardDrivePa = leftTotal.pressurePa - right.pressurePa;
+    const auto reverseDrivePa = rightTotal.pressurePa - left.pressurePa;
+    if (!(forwardDrivePa > 0.0) && !(reverseDrivePa > 0.0)) return result;
+    const auto forward = forwardDrivePa >= reverseDrivePa;
+    const auto& upstreamState = forward ? leftState : rightState;
+    const auto& upstream = forward ? left : right;
+    const auto& downstream = forward ? right : left;
+    const auto& total = forward ? leftTotal : rightTotal;
+    const auto gamma = std::clamp(upstream.heatCapacityRatio, 1.01, 2.0);
+    const auto gasConstant = upstream.pressurePa
+        / (upstream.densityKgPerM3 * upstream.temperatureK);
+    if (!(gasConstant > 0.0) || !finite(gasConstant)
+        || !(total.pressurePa > 0.0) || !(total.temperatureK > 0.0))
+        return result;
+    const auto criticalPressureRatio = std::pow(
+        2.0 / (gamma + 1.0), gamma / (gamma - 1.0));
+    const auto massFluxMagnitude = nozzleMassFlux(total.pressurePa,
+        total.temperatureK, gasConstant, gamma, criticalPressureRatio,
+        downstream.pressurePa);
+    // The throat: the receiving pressure, or the critical one when choked.
+    const auto exitPressurePa = std::max(downstream.pressurePa,
+        total.pressurePa * criticalPressureRatio);
+    const auto exitTemperatureK = total.temperatureK
+        * std::pow(exitPressurePa / total.pressurePa, (gamma - 1.0) / gamma);
+    const auto exitDensity = exitPressurePa / (gasConstant * exitTemperatureK);
+    if (!(massFluxMagnitude >= 0.0) || !finite(massFluxMagnitude)
+        || !(exitDensity > 0.0) || !finite(exitDensity))
+        return result;
+
+    const auto signedMassFlux = (forward ? 1.0 : -1.0) * massFluxMagnitude;
+    const auto upstreamDensity = upstream.densityKgPerM3;
+    for (std::size_t species = 0; species < gasSpeciesCount; ++species)
+        result.speciesMassFluxKgPerM2S[species] = signedMassFlux
+            * upstreamState.speciesMassDensityKgPerM3[species] / upstreamDensity;
+    result.totalEnergyFluxWPerM2 = signedMassFlux
+        * (upstreamState.totalEnergyDensityJPerM3 + upstream.pressurePa)
+        / upstreamDensity;
+    // rho*u^2 is positive in either direction.
+    result.momentumFluxPa = exitPressurePa
+        + massFluxMagnitude * massFluxMagnitude / exitDensity;
+    return result;
+}
+
 /** Root of a monotone function on [low, high], or the end it tends to when
  * the root lies outside. Secant steps from `guess` (the previous solution, or
  * the middle) and `slope` (the previous secant slope, in/out), each value
@@ -785,9 +861,11 @@ bool ExhaustGasNetwork::configure(const ExhaustNetworkLayout& layout,
             ? std::min(duct.inletConnectionAreaM2, duct.inletFlowAreaM2)
             : std::min(duct.outletConnectionAreaM2, duct.outletFlowAreaM2);
     };
+    interfaceOpeningAreasM2_.clear();
     for (const auto& connection : layout_.interfaces()) {
         const auto area = std::min(endpointArea(connection.upstream),
                                    endpointArea(connection.downstream));
+        interfaceOpeningAreasM2_.push_back(area);
         if (connection.upstream.type == ExhaustEndpointType::junction)
             junctionPortAreaSums_[connection.upstream.elementIndex] += area;
         if (connection.downstream.type == ExhaustEndpointType::junction)
@@ -1042,6 +1120,30 @@ bool ExhaustGasNetwork::adoptStateFrom(const ExhaustGasNetwork& previous) noexce
     }
     wallHeatPendingSeconds_ = previous.wallHeatPendingSeconds_;
     wallHeatUpdateRequested_ = previous.wallHeatUpdateRequested_;
+    // A plate keeps its opening, within the new bore.
+    for (std::size_t index = 0; index < layout_.interfaces().size(); ++index)
+        if (layout_.interfaces()[index].restriction)
+            static_cast<void>(setRestrictionOpeningAreaM2(
+                index, previous.interfaceOpeningAreasM2_[index]));
+    return true;
+}
+
+bool ExhaustGasNetwork::setRestrictionOpeningAreaM2(std::size_t interfaceIndex,
+                                                    double areaM2) noexcept {
+    if (interfaceIndex >= layout_.interfaces().size()
+        || interfaceIndex >= interfaceOpeningAreasM2_.size()
+        || !std::isfinite(areaM2))
+        return false;
+    const auto& connection = layout_.interfaces()[interfaceIndex];
+    if (!connection.restriction) return false;
+    const auto faceAreaM2 = [this](const ExhaustEndpoint& endpoint) noexcept {
+        const auto& duct = layout_.ducts()[endpoint.elementIndex];
+        return endpoint.type == ExhaustEndpointType::ductInlet
+            ? std::min(duct.inletConnectionAreaM2, duct.inletFlowAreaM2)
+            : std::min(duct.outletConnectionAreaM2, duct.outletFlowAreaM2);
+    };
+    interfaceOpeningAreasM2_[interfaceIndex] = std::clamp(areaM2, 0.0,
+        std::min(faceAreaM2(connection.upstream), faceAreaM2(connection.downstream)));
     return true;
 }
 
@@ -1892,7 +1994,38 @@ bool ExhaustGasNetwork::evaluateStage(
     std::fill(cylinderResiduals.begin(), cylinderResiduals.end(), ConservativeState {});
     if (ambientReservoirVolumeM3_ > 0.0) ambientResidual = {};
 
-    for (const auto& connection : layout_.interfaces()) {
+    for (std::size_t index = 0; index < layout_.interfaces().size(); ++index) {
+        const auto& connection = layout_.interfaces()[index];
+        if (connection.restriction) {
+            // Both sides are ducts (ExhaustNetworkLayout::assemble).
+            const auto openingAreaM2 = interfaceOpeningAreasM2_[index];
+            const auto rawFlux = openingAreaM2 > 0.0
+                ? restrictionOrificeFlux(
+                    endpointState(connection.upstream),
+                    endpointPrimitive(connection.upstream),
+                    endpointState(connection.downstream),
+                    endpointPrimitive(connection.downstream))
+                : EulerFlux {};
+            // The receiving duct takes the jet (Borda-Carnot). The supplying
+            // duct loses its gas at its own velocity against its own
+            // pressure: the acceleration to the throat happens past the face,
+            // and the plate's upstream side carries its reaction. Handing it
+            // the throat's momentum instead (up to 1.27 p0 when choked) gave
+            // -1.4 % against the isentropic choked flow (-0.2 % this way).
+            const auto forward =
+                sumSpecies(rawFlux.speciesMassFluxKgPerM2S) >= 0.0;
+            const auto& supplying = forward ? connection.upstream : connection.downstream;
+            const auto& receiving = forward ? connection.downstream : connection.upstream;
+            auto supplyFlux = ductBoundaryFlux(supplying, rawFlux, openingAreaM2);
+            const auto& supplyCell = endpointPrimitive(supplying);
+            supplyFlux.momentumFluxPa = supplyCell.pressurePa
+                + sumSpecies(supplyFlux.speciesMassFluxKgPerM2S) * supplyCell.velocityMps;
+            if (!assignDuctBoundary(supplying, supplyFlux)
+                || !assignDuctBoundary(receiving,
+                    ductBoundaryFlux(receiving, rawFlux, openingAreaM2)))
+                return false;
+            continue;
+        }
         if (!connect(connection.upstream, connection.downstream,
                      std::min(endpointArea(connection.upstream),
                               endpointArea(connection.downstream)),

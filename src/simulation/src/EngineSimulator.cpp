@@ -201,6 +201,14 @@ constexpr double exhaustExternalHeatTransferWPerM2K = 18.0;
         * 1.0e-6;
 }
 
+/** What feeds the plenum: the throttle, or with individual throttles the bores
+ *  held fully open, the plenum being the airbox and the plates in the runners. */
+[[nodiscard]] double plenumInletAreaM2(const IntakeConfig& intake,
+                                       double throttleAreaM2,
+                                       double throttlePlateAreaM2) noexcept {
+    return intake.individualThrottles ? throttlePlateAreaM2 : throttleAreaM2;
+}
+
 /** Throttle flow between the plenum and its upstream boundary, keeping the
  * fuel vapour that reverses through the throttle.
  *
@@ -593,6 +601,44 @@ void EngineSimulator::configurePhysicalIntakeNetworks() {
     }
 }
 
+double EngineSimulator::individualThrottleManifoldPressureKpa(std::size_t pathIndex,
+                                                               double subDt) noexcept {
+    // Each runner taps the cell behind its plate, and the taps meet in a small
+    // balance manifold: a first-order lag over the intake pulses.
+    constexpr double tappingTimeConstantSeconds = 0.030;
+    auto sumKpa = 0.0;
+    auto runners = std::size_t { 0 };
+    for (std::size_t index = 0; index < config_.cylinders.size(); ++index) {
+        if (intakePathIndexByCylinder_[index] != pathIndex) continue;
+        const auto cells = intakeDuctForCylinder(index).cellPrimitives();
+        if (cells.empty()) continue;
+        auto ductKpa = 0.0;
+        for (const auto& cell : cells) ductKpa += cell.pressurePa * 0.001;
+        sumKpa += ductKpa / static_cast<double>(cells.size());
+        ++runners;
+    }
+    auto& filteredKpa = individualThrottleMapKpa_[pathIndex];
+    if (runners != 0)
+        filteredKpa += (sumKpa / static_cast<double>(runners) - filteredKpa)
+            * (1.0 - std::exp(-std::max(0.0, subDt) / tappingTimeConstantSeconds));
+    return filteredKpa;
+}
+
+void EngineSimulator::setIndividualThrottleAreas(std::size_t pathIndex,
+                                                 double conductanceAreaM2) noexcept {
+    auto runners = std::size_t { 0 };
+    for (std::size_t index = 0; index < config_.cylinders.size(); ++index)
+        if (intakePathIndexByCylinder_[index] == pathIndex) ++runners;
+    if (runners == 0) return;
+    const auto perRunnerM2 = conductanceAreaM2 / static_cast<double>(runners);
+    for (std::size_t index = 0; index < config_.cylinders.size(); ++index) {
+        if (intakePathIndexByCylinder_[index] != pathIndex) continue;
+        // In a joint manifold the plates are numbered like the runners.
+        static_cast<void>(intakeNetworkForCylinder(index).setRestrictionOpeningAreaM2(
+            jointIntakeManifold() ? intakeRunnerDuctIndex_[index] : 0, perRunnerM2));
+    }
+}
+
 gasdynamics::ExhaustGasNetwork& EngineSimulator::intakeNetworkForCylinder(std::size_t index) noexcept {
     return jointIntakeManifold() ? *intakeManifoldNetworks_[intakePathIndexByCylinder_[index]]
         : *intakeRunnerNetworks_[index];
@@ -611,6 +657,8 @@ std::unique_ptr<gasdynamics::ExhaustGasNetwork> EngineSimulator::buildIntakeMani
     const EngineConfig& config, std::size_t pathIndex,
     std::array<std::size_t, 32>& runnerDuctIndex) const {
     std::vector<gasdynamics::CompiledExhaustDuct> ducts;
+    std::vector<gasdynamics::CompiledExhaustDuct> bellmouthDucts;
+    std::vector<gasdynamics::CompiledExhaustInterface> plates;
     std::vector<gasdynamics::CompiledCylinderPort> ports;
     std::vector<gasdynamics::CompiledExhaustOutlet> mouths;
     gasdynamics::ExhaustGasNetworkConfig networkConfig;
@@ -618,19 +666,34 @@ std::unique_ptr<gasdynamics::ExhaustGasNetwork> EngineSimulator::buildIntakeMani
         if (intakePathIndexFor(config, config.cylinders[index]) != pathIndex) continue;
         const auto runner = buildIntakeRunnerNetwork(config, index);
         networkConfig = runner->config();
-        auto duct = runner->layout().ducts().front();
         auto port = runner->layout().cylinderPorts().front();
         auto mouth = runner->layout().outlets().front();
         runnerDuctIndex[index] = ducts.size();
         port.networkEndpoint.elementIndex = ducts.size();
         mouth.networkEndpoint.elementIndex = ducts.size();
-        ducts.push_back(duct);
+        ducts.push_back(runner->layout().ducts().front());
+        if (!runner->layout().interfaces().empty()) {
+            // The bellmouth sides follow every valve side; indices are
+            // rebased below, once the valve-side count is known.
+            auto plate = runner->layout().interfaces().front();
+            plate.upstream.elementIndex = ducts.size() - 1;
+            plate.downstream.elementIndex = bellmouthDucts.size();
+            mouth.networkEndpoint.elementIndex = bellmouthDucts.size();
+            plates.push_back(plate);
+            bellmouthDucts.push_back(runner->layout().ducts().back());
+        }
         ports.push_back(port);
         mouths.push_back(mouth);
     }
     if (ducts.empty()) return {};
+    if (!bellmouthDucts.empty()) {
+        const auto valveSides = ducts.size();
+        for (auto& plate : plates) plate.downstream.elementIndex += valveSides;
+        for (auto& mouth : mouths) mouth.networkEndpoint.elementIndex += valveSides;
+        ducts.insert(ducts.end(), bellmouthDucts.begin(), bellmouthDucts.end());
+    }
     const auto layout = gasdynamics::ExhaustNetworkLayout::assemble(
-        std::move(ducts), {}, {}, std::move(ports), std::move(mouths));
+        std::move(ducts), {}, std::move(plates), std::move(ports), std::move(mouths));
     auto network = std::make_unique<gasdynamics::ExhaustGasNetwork>(exhaustThermodynamicsFor(config));
     if (!network->configure(layout, networkConfig))
         throw std::runtime_error("failed to configure shared intake manifold");
@@ -649,27 +712,12 @@ std::unique_ptr<gasdynamics::ExhaustGasNetwork> EngineSimulator::buildIntakeRunn
             ? cylinder.intakeRunnerDiameterMm : intake.runnerDiameterMm) * 0.001;
         const auto outletDiameterM = (intake.runnerPlenumDiameterMm > 0.0
             ? intake.runnerPlenumDiameterMm : inletDiameterM * 1'000.0) * 0.001;
-        const auto inletAreaM2 =
-            std::numbers::pi * inletDiameterM * inletDiameterM * 0.25;
-        const auto outletAreaM2 =
-            std::numbers::pi * outletDiameterM * outletDiameterM * 0.25;
-        const auto meanAreaM2 = (inletAreaM2
-            + std::sqrt(inletAreaM2 * outletAreaM2) + outletAreaM2) / 3.0;
-
-        gasdynamics::CompiledExhaustDuct runner;
-        runner.nodeId = cylinder.id;
-        runner.sourceComponentId = cylinder.id;
-        runner.pathIndex = static_cast<std::uint32_t>(intakePathIndex);
-        runner.lengthM = std::max(0.03, lengthM);
-        runner.flowAreaM2 = meanAreaM2;
-        runner.inletFlowAreaM2 = inletAreaM2;
-        runner.outletFlowAreaM2 = outletAreaM2;
-        runner.connectionAreaM2 = meanAreaM2;
-        runner.inletConnectionAreaM2 = inletAreaM2;
-        runner.outletConnectionAreaM2 = outletAreaM2;
-        runner.hydraulicDiameterM =
-            2.0 * std::sqrt(meanAreaM2 / std::numbers::pi);
-        runner.volumeM3 = meanAreaM2 * runner.lengthM;
+        const auto areaAt = [](double diameterM) noexcept {
+            return std::numbers::pi * diameterM * diameterM * 0.25;
+        };
+        const auto inletAreaM2 = areaAt(inletDiameterM);
+        const auto outletAreaM2 = areaAt(outletDiameterM);
+        const auto runnerLengthM = std::max(0.03, lengthM);
         // The realtime mesh targets 95 mm while retaining at least three
         // volumes: a quarter-wave fundamental (lambda ~= 4L) therefore has at
         // least twelve cells per wavelength under the unchanged MUSCL spatial
@@ -678,33 +726,75 @@ std::unique_ptr<gasdynamics::ExhaustGasNetwork> EngineSimulator::buildIntakeRunn
         const auto targetCellLengthM = std::clamp(
             options_.intakeTargetCellLengthM.value_or(0.095),
             0.010, 0.150);
-        constexpr auto minimumCellCount = 3U;
-        runner.cellCount = std::clamp<std::size_t>(
-            static_cast<std::size_t>(
-                std::llround(runner.lengthM / targetCellLengthM)),
-            minimumCellCount, 12);
-        if (options_.intakeMaximumCellCount.has_value())
-            runner.cellCount = std::min(
-                runner.cellCount,
-                std::clamp<std::size_t>(*options_.intakeMaximumCellCount, 3, 12));
+        const auto makeDuct = [&](std::uint32_t nodeId, double ductLengthM,
+                                  double ductInletAreaM2, double ductOutletAreaM2,
+                                  std::size_t minimumCellCount) {
+            const auto meanAreaM2 = (ductInletAreaM2
+                + std::sqrt(ductInletAreaM2 * ductOutletAreaM2) + ductOutletAreaM2) / 3.0;
+            gasdynamics::CompiledExhaustDuct duct;
+            duct.nodeId = nodeId;
+            duct.sourceComponentId = cylinder.id;
+            duct.pathIndex = static_cast<std::uint32_t>(intakePathIndex);
+            duct.lengthM = ductLengthM;
+            duct.flowAreaM2 = meanAreaM2;
+            duct.inletFlowAreaM2 = ductInletAreaM2;
+            duct.outletFlowAreaM2 = ductOutletAreaM2;
+            duct.connectionAreaM2 = meanAreaM2;
+            duct.inletConnectionAreaM2 = ductInletAreaM2;
+            duct.outletConnectionAreaM2 = ductOutletAreaM2;
+            duct.hydraulicDiameterM = 2.0 * std::sqrt(meanAreaM2 / std::numbers::pi);
+            duct.volumeM3 = meanAreaM2 * duct.lengthM;
+            duct.cellCount = std::clamp<std::size_t>(
+                static_cast<std::size_t>(std::llround(duct.lengthM / targetCellLengthM)),
+                minimumCellCount, 12);
+            if (options_.intakeMaximumCellCount.has_value())
+                duct.cellCount = std::min(duct.cellCount, std::clamp<std::size_t>(
+                    *options_.intakeMaximumCellCount, minimumCellCount, 12));
+            return duct;
+        };
+
+        std::vector<gasdynamics::CompiledExhaustDuct> ducts;
+        std::vector<gasdynamics::CompiledExhaustInterface> plates;
+        if (intake.individualThrottles) {
+            // Valve side first, so a runner's port index stays its duct index
+            // in a joint manifold; the bellmouth side carries the mouth. Two
+            // cells each keep three faces per side for the reconstruction and
+            // an interior face for the mouth's transfer prediction.
+            const auto plateFromValveM = std::clamp(intake.throttleDistanceFromValveMm > 0.0
+                    ? intake.throttleDistanceFromValveMm * 0.001 : 0.55 * runnerLengthM,
+                0.015, runnerLengthM - 0.015);
+            const auto plateAreaM2 = areaAt(inletDiameterM
+                + (outletDiameterM - inletDiameterM) * plateFromValveM / runnerLengthM);
+            ducts.push_back(makeDuct(cylinder.id, plateFromValveM, inletAreaM2, plateAreaM2, 2));
+            ducts.push_back(makeDuct(cylinder.id + 1'000U, runnerLengthM - plateFromValveM,
+                plateAreaM2, outletAreaM2, 2));
+            gasdynamics::CompiledExhaustInterface plate;
+            plate.upstream = { gasdynamics::ExhaustEndpointType::ductOutlet, 0, cylinder.id };
+            plate.downstream = {
+                gasdynamics::ExhaustEndpointType::ductInlet, 1, cylinder.id + 1'000U };
+            plate.restriction = true;
+            plates.push_back(plate);
+        } else {
+            ducts.push_back(makeDuct(cylinder.id, runnerLengthM, inletAreaM2, outletAreaM2, 3));
+        }
 
         gasdynamics::CompiledCylinderPort port;
         port.cylinderId = cylinder.id;
-        port.pathIndex = runner.pathIndex;
+        port.pathIndex = ducts.front().pathIndex;
         port.networkEndpoint = {
             gasdynamics::ExhaustEndpointType::ductInlet, 0, cylinder.id };
         port.runnerConnectionAreaM2 = inletAreaM2;
         port.dischargeCoefficient = 1.0; // the valve Cd arrives per advance
         gasdynamics::CompiledExhaustOutlet mouth;
         mouth.outletNodeId = cylinder.id;
-        mouth.pathIndex = runner.pathIndex;
-        mouth.networkEndpoint = {
-            gasdynamics::ExhaustEndpointType::ductOutlet, 0, cylinder.id };
+        mouth.pathIndex = ducts.front().pathIndex;
+        mouth.networkEndpoint = { gasdynamics::ExhaustEndpointType::ductOutlet,
+            ducts.size() - 1, ducts.back().nodeId };
         mouth.openingAreaM2 = outletAreaM2;
         mouth.dischargeCoefficient = 1.0; // a runner mouth is a bellmouth
 
         const auto layout = gasdynamics::ExhaustNetworkLayout::assemble(
-            { runner }, {}, {}, { port }, { mouth });
+            std::move(ducts), {}, std::move(plates), { port }, { mouth });
         if (!layout.valid())
             throw std::runtime_error("failed to assemble intake runner layout");
         auto network = std::make_unique<gasdynamics::ExhaustGasNetwork>(
@@ -750,7 +840,8 @@ bool EngineSimulator::intakeReplaceable(const EngineConfig& running,
         if (running.cylinders[index].id != edited.cylinders[index].id) return false;
     const auto sameParts = [](const IntakeConfig& was, const IntakeConfig& now) {
         return was.throttleCount == now.throttleCount
-            && (was.airboxVolumeLitres > 0.0) == (now.airboxVolumeLitres > 0.0);
+            && (was.airboxVolumeLitres > 0.0) == (now.airboxVolumeLitres > 0.0)
+            && was.individualThrottles == now.individualThrottles;
     };
     if (!sameParts(running.intake, edited.intake)) return false;
     for (std::size_t index = 0; index < running.intakePaths.size(); ++index) {
@@ -1310,7 +1401,11 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 throttleFlowKeepingReversedFuel(intakePlenumGas_[pathIndex],
                     airboxSlug_[pathIndex], intake.airboxVolumeLitres,
                     config_.ambientPressureKpa, config_.ambientTemperatureC + 273.15,
-                    throttleAreaM2, intake.throttleDischargeCoefficient, subDt);
+                    plenumInletAreaM2(intake, throttleAreaM2, throttlePlateAreaM2),
+                    intake.throttleDischargeCoefficient, subDt);
+                if (intake.individualThrottles)
+                    setIndividualThrottleAreas(pathIndex, throttleAreaM2
+                        * intake.throttleDischargeCoefficient);
             }
         } else {
             constexpr double exhaustCpJPerKgK = 1'120.0;
@@ -1473,8 +1568,12 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                     * intake.throttleDischargeCoefficient;
                 throttleFlowKeepingReversedFuel(intakePlenumGas_[pathIndex],
                     airboxSlug_[pathIndex], intake.airboxVolumeLitres,
-                    intakeSourcePressureKpa, temperatureK, throttleAreaM2,
+                    intakeSourcePressureKpa, temperatureK,
+                    plenumInletAreaM2(intake, throttleAreaM2, throttlePlateAreaM2),
                     intake.throttleDischargeCoefficient, subDt);
+                if (intake.individualThrottles)
+                    setIndividualThrottleAreas(pathIndex, throttleAreaM2
+                        * intake.throttleDischargeCoefficient);
             }
         }
         // Resolve plenum jet mixing as a sudden expansion loss. The equivalent
@@ -1495,7 +1594,9 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
         }
         state_.manifoldPressureKpa = 0.0;
         for (std::size_t pathIndex = 0; pathIndex < intakePlenumCount_; ++pathIndex)
-            state_.manifoldPressureKpa += intakePlenumGas_[pathIndex].pressureKpa();
+            state_.manifoldPressureKpa += intakeGeometryAt(config_, pathIndex).individualThrottles
+                ? individualThrottleManifoldPressureKpa(pathIndex, subDt)
+                : intakePlenumGas_[pathIndex].pressureKpa();
         state_.manifoldPressureKpa /= static_cast<double>(intakePlenumCount_);
 
         // The nonlinear network is mandatory and is compiled by the
@@ -5445,6 +5546,7 @@ void EngineSimulator::reset() noexcept {
         chamberPressureBar_[index] = config_.ambientPressureKpa / 100.0;
         cylinderWallTemperatureC_[index] = config_.ambientTemperatureC;
         blowByPendingSeconds_[index] = 0.0;
+        individualThrottleMapKpa_[index] = config_.ambientPressureKpa;
         configureFuel(cylinderGas_[index]);
 
         const auto& cyl = config_.cylinders[index];

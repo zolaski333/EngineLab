@@ -196,6 +196,22 @@ plenum side; zero keeps a constant area. Intake and exhaust share the same
 conservative conical discretisation (exact volume, local areas, friction and
 heat exchange computed with the local hydraulic diameter).
 
+`individual_throttles: true` puts one plate in each runner instead of one
+ahead of the plenum (motorcycle and racing throttle bodies). The plenum is then
+the airbox the runner mouths draw from, fed through the bores held fully open.
+Each runner becomes two 1-D ducts meeting at a restriction face, placed
+`throttle_distance_from_valve_mm` from the valve (zero: 55 % of the runner, a
+default not measured on any engine). The face is an isentropic orifice fed by
+the approaching cell's stagnation state, choked when it must be; the jet
+re-expands into the receiving duct against the pressure-loaded rest of the
+face, so the plate costs nothing fully open and its loss is the Borda-Carnot
+expansion otherwise. Each plate takes its share of the throttle, leakage and
+idle bypass area. The manifold pressure the ECU reads is the mean over the
+valve-side ducts (all their cells, all runners) through a 30 ms first-order
+tapping manifold; the cell right behind the plate reads the jet's low pressure
+and costs 10-19 % torque through a false load reading. A small 0-D
+cell per cylinder was tried first and refuted (`.claude/CLAUDE.md`).
+
 ## Transmission and vehicle
 
 `DrivelineModel` owns the clutch, gearbox shaft, differential, driven wheel and
