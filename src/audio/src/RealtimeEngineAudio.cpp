@@ -1269,6 +1269,8 @@ void RealtimeEngineAudio::renderWithStems(
         float intakeRight = 0.0F;
         float mechanicalLeft = 0.0F;
         float mechanicalRight = 0.0F;
+        float starterLeft = 0.0F;
+        float starterRight = 0.0F;
         float physicalStructural = 0.0F;
         float physicalIntakeLeft = 0.0F;
         float physicalIntakeRight = 0.0F;
@@ -2113,9 +2115,15 @@ void RealtimeEngineAudio::renderWithStems(
                 * intakeResonanceAmp * (0.05F + intakeDepression * 0.05F);
             intake = whoosh + intakeHonk;
         }
-        const auto starterSound = starter * (static_cast<float>(std::sin(starterPhase_)) * 0.028F + noise() * 0.006F);
-        mechanicalLeft += mechanical + starterSound;
-        mechanicalRight += mechanical * 0.96F + starterSound * 0.94F;
+        // The starter keeps the level it had under the old default mechanical
+        // gain, now that the mechanical layer is off by default.
+        constexpr auto starterGain = 0.70F;
+        const auto starterSound = starterGain
+            * starter * (static_cast<float>(std::sin(starterPhase_)) * 0.028F + noise() * 0.006F);
+        starterLeft += starterSound;
+        starterRight += starterSound * 0.94F;
+        mechanicalLeft += mechanical;
+        mechanicalRight += mechanical * 0.96F;
         intakeLeft += intake * 0.92F;
         intakeRight += intake;
         for (auto& voice : voices_) {
@@ -2442,19 +2450,19 @@ void RealtimeEngineAudio::renderWithStems(
                 physicalForcedInduction * intakeGain,
                 physicalForcedInduction * intakeGain);
             writeStem(writable.mechanical, sample,
-                mechanicalLeft * mechanicalGain * legacyMonitorScale
+                (mechanicalLeft * mechanicalGain + starterLeft) * legacyMonitorScale
                     + physicalStructural * mechanicalGain,
-                mechanicalRight * mechanicalGain * legacyMonitorScale
+                (mechanicalRight * mechanicalGain + starterRight) * legacyMonitorScale
                     + physicalStructural * mechanicalGain);
         }
         auto left = (combustionLeft * combustionGain + intakeLeft * intakeGain
-            + mechanicalLeft * mechanicalGain) * legacyMonitorScale
+            + mechanicalLeft * mechanicalGain + starterLeft) * legacyMonitorScale
             + physicalStructural * mechanicalGain
             + physicalIntakeLeft * intakeGain
             + physicalForcedInduction * intakeGain
             + radiatedExhaustLeft * exhaustGain * exhaustMonitorScale;
         auto right = (combustionRight * combustionGain + intakeRight * intakeGain
-            + mechanicalRight * mechanicalGain) * legacyMonitorScale
+            + mechanicalRight * mechanicalGain + starterRight) * legacyMonitorScale
             + physicalStructural * mechanicalGain
             + physicalIntakeRight * intakeGain
             + physicalForcedInduction * intakeGain

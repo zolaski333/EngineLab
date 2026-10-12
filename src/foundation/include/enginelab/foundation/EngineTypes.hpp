@@ -915,7 +915,7 @@ struct AudioVoicingConfig final {
     double combustionGain { 1.0 };
     double exhaustGain { 1.0 };
     double intakeGain { 0.85 };
-    double mechanicalGain { 0.70 };
+    double mechanicalGain { 0.0 };
     double stereoWidth { 1.0 };
     double outletJetGain { 1.0 };
     double saturationDrive { 0.0 };

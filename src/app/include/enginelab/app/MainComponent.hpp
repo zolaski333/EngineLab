@@ -209,7 +209,7 @@ private:
     double combustionGain_ { 1.0 };
     double exhaustGain_ { 1.0 };
     double intakeGain_ { 0.85 };
-    double mechanicalGain_ { 0.70 };
+    double mechanicalGain_ { 0.0 };
     double stereoWidth_ { 1.0 };
     double outletJetGain_ { 1.0 };
     double saturationDrive_ { 0.0 };

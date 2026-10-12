@@ -5,6 +5,13 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-12 — Mechanical layer off by default
+
+- Owner's listening: the layer adds nothing and an unpleasant sound; always switched off. Every voicing `mechanical_gain` (0.66-1.18; CP2s already 0) and the code defaults (0.70) -> 0; the fader stays. The starter leaves the mechanical bus for a fixed 0.70 (`EngineLab.RealtimeRegression`: starter RMS 0.0484 at fader 0 and 2; before, 0 at fader 0).
+- `AudioRenderHarness` catalogue point, old binary + old voicing vs new: RMS -5.7 dB I5, -5.3 2JZ, -2.8 Hayabusa, -1.2 LS3, -0.9 K20A, -0.8 Merlin, -0.4 EJ25, -0.3 Radial and APL, -0.2 CP4, 0 to +0.1 Big Twin, Aircooled, CP3, TDI, CP2s. Brightness falls on every engine that changes (2JZ 0.177 -> 0.138, K20A 0.180 -> 0.081): at these points the layer was mostly upper band, not low. The starter is now audible while cranking where the voicing had 0 (CP2 peak 0.095 -> 0.115 in the first 1.3 s).
+- The layer was compensating: the synthetic EL-R5 radial goes from 48 % to 0.9 % of its energy above 250 Hz without it (catalogue Radial 5 % either way). The synthetic fixtures keep 0.70 so the harness still checks the renderer with every layer.
+- Not compared with any recording. Not measured: what the owner hears as "low" (the harness shows the layer bright at these points).
+
 ## 2026-10-12 — Live connecting-rod length
 
 - `resizeConnectingRods` moves the deck with the rod, so the clearance volume and the compression ratio stay; the live resize now carries the rod (the kinematics already read it live). `LiveCylinderResize`, rod + 0.3 stroke, 60 % of redline, brake torque over the last 3 s: CP2 115 -> 135.6 mm, built 71.50, at once 71.80, over 2 s 71.75, untouched 70.74 N.m; K20A 139 -> 164.8 mm, built 223.96, at once 223.93, ramp 223.92, untouched 222.73. Without the simulator carrying the rod: 70.74 (fails). The longer rod gains ~0.5-1 % at that point; not compared with any measurement.

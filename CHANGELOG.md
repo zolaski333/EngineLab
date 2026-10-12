@@ -9,6 +9,10 @@ file formats, always with an in-memory migration).
 
 ### Changed
 
+- The mechanical sound layer is off by default on every engine; its fader
+  still turns it back on. The mix gets quieter where it was loud (I5 and 2JZ
+  about -5.5 dB, Hayabusa -2.8 dB) and less bright. The starter keeps its own
+  fixed level, so it is heard on every engine while cranking.
 - The turbocharger's turbine sits in the exhaust gas network, on the
   collector, instead of narrowing the tailpipes: every pulse crosses it, it
   takes its work from the gas, and the downpipe carries cooler gas at the
