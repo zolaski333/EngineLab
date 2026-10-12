@@ -1105,9 +1105,9 @@ bool EngineSimulator::beginCylinderResize(const EngineConfig& target, double ram
         const auto& running = config_.cylinders[index];
         const auto& wanted = target.cylinders[index];
         resize.from.push_back({ running.boreMm, running.strokeMm, running.deckHeightMm,
-                                running.compressionRatio });
+                                running.compressionRatio, running.connectingRodMm });
         resize.to.push_back({ wanted.boreMm, wanted.strokeMm, wanted.deckHeightMm,
-                              wanted.compressionRatio });
+                              wanted.compressionRatio, wanted.connectingRodMm });
         resize.pending.push_back(true);
     }
     cylinderResize_ = std::move(resize);
@@ -1144,6 +1144,7 @@ void EngineSimulator::advanceCylinderResize() {
             sized.strokeMm = at(from.strokeMm, to.strokeMm);
             sized.deckHeightMm = at(from.deckHeightMm, to.deckHeightMm);
             sized.compressionRatio = at(from.compressionRatio, to.compressionRatio);
+            sized.connectingRodMm = at(from.connectingRodMm, to.connectingRodMm);
             if (fraction >= 1.0) resize.pending[member] = false;
         }
         for (auto& journal : config_.crankJournals)

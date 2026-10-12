@@ -49,6 +49,7 @@ bool takeCylinderSizes(EngineConfig& probe, const EngineConfig& edited) {
         cylinder.boreMm = source.boreMm;
         cylinder.strokeMm = source.strokeMm;
         cylinder.deckHeightMm = source.deckHeightMm;
+        cylinder.connectingRodMm = source.connectingRodMm;
         cylinder.compressionRatio = source.compressionRatio;
     }
     for (std::size_t index = 0; index < probe.crankJournals.size(); ++index) {

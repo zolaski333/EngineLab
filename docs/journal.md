@@ -5,7 +5,12 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
-## 2026-10-13 — TDI boost controller limit cycle at full load
+## 2026-10-12 — Live connecting-rod length
+
+- `resizeConnectingRods` moves the deck with the rod, so the clearance volume and the compression ratio stay; the live resize now carries the rod (the kinematics already read it live). `LiveCylinderResize`, rod + 0.3 stroke, 60 % of redline, brake torque over the last 3 s: CP2 115 -> 135.6 mm, built 71.50, at once 71.80, over 2 s 71.75, untouched 70.74 N.m; K20A 139 -> 164.8 mm, built 223.96, at once 223.93, ramp 223.92, untouched 222.73. Without the simulator carrying the rod: 70.74 (fails). The longer rod gains ~0.5-1 % at that point; not compared with any measurement.
+- Not done: the rod keeps its mass (a real longer rod is heavier); the structural radiator keeps the built rod length until a restart. The 3-D edit was not driven by hand.
+
+## 2026-10-12 — TDI boost controller limit cycle at full load
 
 - Owner's report: the TDI "misfires" at WOT from 2,500 rpm, the dyno curve full of quick dips. `DynoSweepHarness`: held brake torque swing 13 % at 2,500, 32 % at 3,000 rpm (base before the turbine move: 3-7 %); other turbos within 9 %. No misfire: `PhysicsPerfHarness --trace 3000 --watch` (new turbo columns) shows a 4 Hz cycle, gate 0 -> 0.45, back pressure 148 -> 239 kPa, turbine 2 -> 16 kW, cycle torque 322 -> 352 N.m.
 - Cause: the proportional gate (fully open 0.08 above its ratio) against a turbine that now loses its inlet pressure as soon as the gate opens: loop gain ~30 on a 4e-5 kg.m2 shaft. A gate lag of 0.1 / 0.3 s made it worse (swing 302-358 / 292-356 N.m); band 0.25 alone settled it (339-346) but droops.
