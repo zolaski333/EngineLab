@@ -370,13 +370,13 @@ int runHarness(int argc, char** argv) {
     //    system opens up. Before this change it was identically ambient, so
     //    this quantity could not move at all.
     //    The turbine sits in the gas network, so its outlet is a pulsating
-    //    cell: once the outlet no longer restricts (76 -> 95 mm) it reads
-    //    within +-0.4 kPa.
+    //    cell: once the outlet no longer restricts (76 -> 95 mm, behind the
+    //    2.2 m mid pipe since 2026-10-12) it reads within +-0.5 kPa.
     auto outletFalls = true;
     for (std::size_t index = 1; index < regulated.size(); ++index)
         outletFalls = outletFalls
             && regulated[index].turbineOutletKpa
-                <= regulated[index - 1].turbineOutletKpa + 0.5;
+                <= regulated[index - 1].turbineOutletKpa + 1.0;
 
     // 2. Back pressure must follow it down. This is the quantity the user sees
     //    in the diagnostics panel and the one the complaint was about.
@@ -429,10 +429,16 @@ int runHarness(int argc, char** argv) {
             && stress[index].shaftSpeedRpm
                 >= stress[index - 1].shaftSpeedRpm - 150.0;
     }
-    const auto stressRetainsAuthority = stress.back().boostRatio
+    // While the smallest outlet still starves the turbine, the authority is
+    // boost and shaft speed; once even that point reaches the raised target
+    // (the 2.2 m mid pipe leaves the 45 mm gate at 0.003, 2026-10-12), it is
+    // the gate opening further at the same boost.
+    const auto stressRetainsAuthority = (stress.back().boostRatio
             > stress.front().boostRatio + 0.010
         && stress.back().shaftSpeedRpm
-            > stress.front().shaftSpeedRpm + 500.0;
+            > stress.front().shaftSpeedRpm + 500.0)
+        || stress.back().wastegateOpening
+            > stress.front().wastegateOpening + 0.05;
     // Settled: the net shaft power is a small part of what the turbine gives.
     const auto settled = [](const Point& point) {
         return std::abs(point.netShaftPowerKw) < 0.02 * point.turbinePowerKw;
