@@ -80,9 +80,8 @@ file formats, always with an in-memory migration).
   as the number of gears stays.
 - Change the air while the engine runs: click the cylinder block and set
   the altitude and the temperature. At 2,000 m and 35 degC the CP2 loses
-  27 % of its torque. The 2JZ loses 25 %: its boost is controlled as a ratio
-  to the outside pressure, so it does not make up for the thinner air the
-  way a real wastegate would.
+  27 % of its torque, the turbocharged 2JZ 20 %: its wastegate holds the
+  same boost above the outside pressure, as a real one does.
 - Change the camshafts while the engine runs: click an intake or exhaust
   valve for its cam's duration and lift, or the cylinder heads for the cam
   timing (intake and exhaust centrelines, with the overlap shown). The

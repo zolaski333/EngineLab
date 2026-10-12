@@ -164,7 +164,9 @@ losses, integrated with the shaft inertia. The wastegate (or variable vanes)
 follows a proportional-integral boost controller that holds
 `wastegate_pressure_ratio` exactly: fully open 0.25 above it on the
 proportional term alone, integral time 0.5 s, frozen while the gate is
-saturated. The supercharger uses a separate closure, without claiming to
+saturated. Like an actuator spring set against the atmosphere, it holds a
+gauge boost: the ratio is the one at sea level (101.325 kPa), and in
+thinner air the ratio it allows rises so the gauge boost stays the same. The supercharger uses a separate closure, without claiming to
 model a complete compressor map.
 
 The turbine lives in the exhaust gas network, as a restriction face (the same

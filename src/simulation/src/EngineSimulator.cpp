@@ -1715,8 +1715,17 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 // saturated in the direction it would push.
                 constexpr double wastegateBandRatio = 0.25;
                 constexpr double wastegateIntegralSeconds = 0.5;
+                // The actuator's spring works against the atmosphere, so it
+                // holds a gauge boost: the configured ratio is the one at
+                // sea-level pressure, and up high the ratio it allows rises.
+                // A ratio target lost as much manifold pressure as an
+                // unblown engine (2JZ at 2,000 m: -25 % torque).
+                constexpr double seaLevelPressureKpa = 101.325;
+                const auto wastegateRatio = config_.forcedInduction.wastegatePressureRatio
+                    + (config_.forcedInduction.wastegatePressureRatio - 1.0)
+                        * (seaLevelPressureKpa / std::max(1.0, config_.ambientPressureKpa) - 1.0);
                 const auto proportional = (state_.boostPressureRatio
-                    - config_.forcedInduction.wastegatePressureRatio) / wastegateBandRatio;
+                    - wastegateRatio) / wastegateBandRatio;
                 const auto unclamped = proportional + wastegateIntegral_;
                 if ((unclamped < 1.0 || proportional < 0.0) && (unclamped > 0.0 || proportional > 0.0))
                     wastegateIntegral_ = std::clamp(wastegateIntegral_

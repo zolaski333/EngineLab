@@ -301,6 +301,41 @@ void ambientSettlesLikeARestart() {
     }
 }
 
+/** A wastegate spring works against the atmosphere: up high the turbo holds
+ * the same gauge boost, so the manifold loses only the ambient drop. A boost
+ * held as a ratio to ambient lost 21 % of it, like an unblown engine. Only
+ * the pressure changes; the 2JZ is held at 60 % of redline, above full boost. */
+void wastegateHoldsGaugeBoostUpHigh() {
+    const auto seaLevel = catalogueEngine("2JZ");
+    auto upHigh = seaLevel;
+    upHigh.ambientPressureKpa = 79.5;
+    Rig low(seaLevel);
+    Rig high(upHigh);
+    constexpr auto frames = 10 * 240;
+    std::array<double, 2> rpm {};
+    std::array<double, 2> gaugeKpa {};
+    std::array<double, 2> torque {};
+    for (auto frame = 0; frame < frames; ++frame) {
+        const auto t = frame * frameSeconds;
+        std::size_t index = 0;
+        for (auto* rig : { &low, &high }) {
+            const auto controls = heldAt(t, rpm[index], seaLevel);
+            const auto state = rig->simulator->step(frameSeconds, controls).state;
+            rpm[index] = state.rpm;
+            if (frame >= frames - 3 * 240) {
+                gaugeKpa[index] += (state.boostPressureRatio - 1.0) * rig->config.ambientPressureKpa / (3.0 * 240.0);
+                torque[index] += controls.dynamometerTorqueNm / (3.0 * 240.0);
+            }
+            ++index;
+        }
+    }
+    std::cout << "  2JZ held at 60 % of redline: gauge boost at sea level " << gaugeKpa[0] << " kPa, at 79.5 kPa "
+              << gaugeKpa[1] << " kPa; brake torque " << torque[0] << " -> " << torque[1] << " Nm\n";
+    require(gaugeKpa[0] > 50.0, "the 2JZ is on its wastegate (else this proves nothing)");
+    require(std::abs(gaugeKpa[1] - gaugeKpa[0]) <= 0.08 * gaugeKpa[0],
+            "up high the wastegate holds the same gauge boost");
+}
+
 /** A final drive 30 % shorter taken at 1 s, in first gear with the clutch
  * engaged and the engine held at 2,000 rpm: the car settles at the road speed
  * of one built with it. Another gear count is refused; a gearbox edit is a
@@ -352,6 +387,7 @@ void gearboxSettlesLikeARestart() {
 void liveTuningRegression() {
     gearboxSettlesLikeARestart();
     ambientSettlesLikeARestart();
+    wastegateHoldsGaugeBoostUpHigh();
     flywheelIsASetting();
     flywheelRevsLikeARestart();
     sameCamshaftsAreInvisible();

@@ -5,6 +5,12 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-13 — Wastegate holds a gauge boost
+
+- The boost controller held `wastegate_pressure_ratio` as a ratio to ambient: up high it lost as much manifold pressure as an unblown engine. It now holds the sea-level gauge boost, like a spring against the atmosphere. Bit-identical at 101.325 kPa (the added term is exactly zero).
+- `EngineLab.LiveTuning`, 2JZ held at 60 % of redline, pressure only: gauge boost 90.19 kPa at sea level, 70.76 -> 90.19 kPa at 79.5 kPa; brake torque at 79.5 kPa 358.5 -> 382.8 Nm (sea level 457.4). The new check fails without the fix.
+- 2,000 m and 35 degC: 2JZ 455 -> 339 Nm before, 455 -> 362 Nm now (-20 %). Not compared with a measured altitude curve; turbo overspeed up high is not limited.
+
 ## 2026-10-13 — Do the cams change the sound?
 
 - Owner report: editing valve lift/duration changes the engine but not the sound. `EngineLabGeometrySensitivityHarness --cam-duration-delta D --cam-lift-scale S --wav-out`, then `--wav-reference`, CP2 held at 6,000 rpm, 0.85 throttle, every cam (low and high profile).
