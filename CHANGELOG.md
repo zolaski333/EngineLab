@@ -9,6 +9,11 @@ file formats, always with an in-memory migration).
 
 ### Changed
 
+- The turbocharged cars' exhausts have their real length (about 3.4 m from
+  port to tip, like the other cars): a 2.2 m mid pipe behind the turbine.
+  Spool and power stay within a few per cent. The sound changes: 2JZ about
+  6 dB louder and darker, I5 3 dB louder, EJ25 2 dB and TDI 4 dB quieter and
+  brighter.
 - The mechanical sound layer is off by default on every engine; its fader
   still turns it back on. The mix gets quieter where it was loud (I5 and 2JZ
   about -5.5 dB, Hayabusa -2.8 dB) and less bright. The starter keeps its own

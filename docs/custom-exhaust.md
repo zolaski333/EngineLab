@@ -106,12 +106,12 @@ long pipe costs realtime solver cells (one per 0.36 m): check a costly engine
 with `EngineLabRealtimeBudgetHarness --free-run --with-audio` before
 lengthening it.
 
-Turbocharged engines keep no mid pipe. When the solver's turbine was a
-restriction in series with the network's outlets, the whole network was its
-hot side: 2.6 m of mid pipe slowed the spool at 3,000 rpm by 25 to 43 %
-(2026-10-07). The turbine now sits on the collector's outgoing face
-(2026-10-12), so a mid pipe is downpipe volume; it has not been measured
-again, and the systems stay 0.9-1.4 m long until it is.
+Turbocharged cars have the same 2.2 m mid pipe. The turbine sits on the
+collector's outgoing face, so the mid pipe is downstream of it, as on the
+car: the spool at 2,000 and 3,000 rpm moves by -5 to +3 %, the rated points
+by less than 0.5 point (journal 2026-10-12). When the turbine was a
+restriction in series with the network's outlets, the same pipe slowed the
+spool by 25 to 43 % (2026-10-07).
 
 ### Measured porous packing
 
