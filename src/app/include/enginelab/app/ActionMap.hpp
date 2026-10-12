@@ -17,6 +17,7 @@ enum class AppAction : std::size_t {
     // actions go here, at the end, immediately before `count`. Inserting one in
     // the middle silently rebinds every action after it.
     dynoRamp,
+    abSwitch,
     count
 };
 

@@ -170,6 +170,13 @@ private:
     std::vector<Preset> presets_;
     /** By preset name. */
     std::map<std::string, SessionEdit> sessionEdits_;
+    /** The A/B versions of the running engine: the one not running keeps
+        its configuration here; empty until first switched to. */
+    std::array<std::optional<EngineConfig>, 2> abVersions_;
+    std::size_t abActive_ { 0 };
+    /** Runs the other A/B version: live where the edit allows, instantly. */
+    void switchAbVersion();
+    void resetAbVersions();
     /** The running engine as it was loaded. */
     EngineBaseline baseline_;
     bool configChanged_ { true };

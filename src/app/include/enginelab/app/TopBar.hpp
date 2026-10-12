@@ -28,6 +28,8 @@ public:
     void refresh(const DashboardModel&);
 
     std::function<void(int presetIndex)> onEngineSelected;
+    /** Switches between two versions of the running engine. */
+    ActionButton abButton { "A", ActionButton::Style::tool };
     ActionButton exhaustButton { "Exhaust", ActionButton::Style::tool };
     ActionButton ecuButton { "ECU", ActionButton::Style::tool };
     ActionButton audioButton { "Audio", ActionButton::Style::tool };

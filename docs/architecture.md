@@ -292,6 +292,12 @@ only for `other` or a group the running engine refuses; cylinder sizes and
 camshafts take its ramp (the inspector's choice, 3 s from the JSON editor).
 The JSON editor and the 3-D view's inspector go through it.
 
+The top bar's A/B button (`MainComponent::switchAbVersion`, key 7) keeps the
+version not running in `abVersions_` and hands the other one to
+`applyEngineEdit` with no ramp, so the switch is heard at once. The
+calibration store (ECU tables) is not part of a version. Switching engine or
+reloading the engine file clears both versions.
+
 ## Physical contracts
 
 - `GasCell` conserves species, internal energy, volume and 2D momentum.
