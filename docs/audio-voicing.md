@@ -43,12 +43,17 @@ voicing:
   combustion_gain: 1.0        # 0..2
   exhaust_gain: 1.0           # 0..2
   intake_gain: 0.85           # 0..2
-  mechanical_gain: 0.70       # 0..2
+  mechanical_gain: 0.0        # 0..2; off: see below
   stereo_width: 1.0           # 0 mono, 1 neutral, 2 wide
   outlet_jet_gain: 1.0        # 0..2, physical jet noise only
   saturation_drive: 0.0       # 0 exact bypass, then 0..4
   saturation_placement: post_shelf # pre_shelf or post_shelf
 ```
+
+The mechanical layer (valvetrain and structure) is off in every shipped
+profile: by ear it added only an unpleasant low hum, and measured it sat 20-47
+dB over the exhaust above 1 kHz (journal, 2026-10-12). Its fader still works.
+The starter is mixed apart from it, at a fixed level.
 
 Saturation has unity small-signal gain and its `0.0` bypass is exact. Stereo
 width uses mid/side processing only when it differs from `1.0`. The jet gain

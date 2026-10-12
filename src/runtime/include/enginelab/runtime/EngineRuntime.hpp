@@ -98,7 +98,7 @@ struct RealtimeAudioState final {
     std::atomic<float> combustionGain { 1.0F };
     std::atomic<float> exhaustGain { 1.0F };
     std::atomic<float> intakeGain { 0.85F };
-    std::atomic<float> mechanicalGain { 0.70F };
+    std::atomic<float> mechanicalGain { 0.0F };
     std::atomic<float> stereoWidth { 1.0F };
     std::atomic<float> outletJetGain { 1.0F };
     std::atomic<float> saturationDrive { 0.0F };

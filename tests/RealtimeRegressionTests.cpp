@@ -1783,6 +1783,39 @@ std::array<std::vector<float>, 2> renderMaximumMix() {
     return channels;
 }
 
+double renderStarterRms(float mechanicalGain) {
+    enginelab::FiringEventQueue queue;
+    enginelab::RealtimeAudioState state;
+    state.combustionGain.store(0.0F);
+    state.exhaustGain.store(0.0F);
+    state.intakeGain.store(0.0F);
+    state.mechanicalGain.store(mechanicalGain);
+    state.convolution.store(0.0F);
+    state.starter.store(1.0F);
+    auto renderer = std::make_unique<enginelab::RealtimeEngineAudio>(
+        queue, state, nullptr, nullptr, nullptr, nullptr);
+    renderer->prepare(48'000.0, 256);
+    constexpr int sampleCount = 24'000;
+    juce::AudioBuffer<float> output(2, sampleCount);
+    for (int offset = 0; offset < sampleCount; offset += 256)
+        renderer->render(output, offset, std::min(256, sampleCount - offset));
+    double sum = 0.0;
+    for (int sample = 0; sample < sampleCount; ++sample)
+        sum += static_cast<double>(output.getSample(0, sample)) * output.getSample(0, sample);
+    return std::sqrt(sum / sampleCount);
+}
+
+// The mechanical layer is off by default (owner's listening, 2026-10-12); the
+// starter must not go silent with it.
+void starterIndependentOfMechanicalRegression() {
+    const auto silentLayer = renderStarterRms(0.0F);
+    const auto loudLayer = renderStarterRms(2.0F);
+    std::cout << "  starter RMS, mechanical gain 0: " << silentLayer << ", gain 2: " << loudLayer << '\n';
+    require(silentLayer > 1.0e-4, "the starter is audible with the mechanical layer off");
+    require(std::abs(silentLayer - loudLayer) <= 0.01 * loudLayer,
+            "the starter does not follow the mechanical fader");
+}
+
 void outputQualityRegression() {
     const auto channels = renderMaximumMix();
     for (const auto& channel : channels) {
@@ -1996,6 +2029,8 @@ void diagnosticStemRegression() {
         state.throttle.store(0.72F);
         state.load.store(0.55F);
         state.mechanicalStress.store(0.30F);
+        // Off by default; every stem must still carry its layer.
+        state.mechanicalGain.store(0.70F);
         state.manifoldPressureKpa.store(72.0F);
         state.exhaustPressureKpa.store(158.0F);
         state.exhaustFlowGramsPerSecond.store(62.0F);
@@ -3352,6 +3387,7 @@ int main(int argc, char** argv) {
         pipeRadiationRegression();
         acousticMonitorCalibrationRegression();
         outputQualityRegression();
+        starterIndependentOfMechanicalRegression();
         std::cout << "Realtime audio/runtime regression tests passed\n";
         return 0;
     } catch (const std::exception& error) {

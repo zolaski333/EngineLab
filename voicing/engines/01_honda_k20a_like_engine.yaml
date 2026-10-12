@@ -8,7 +8,7 @@ voicing:
   low_frequency_gain: 0.90
   exhaust_gain: 1.06
   intake_gain: 1.12
-  mechanical_gain: 0.84
+  mechanical_gain: 0.0
   stereo_width: 0.94
   outlet_jet_gain: 0.96
   saturation_drive: 0.12

@@ -3115,6 +3115,8 @@ int main() {
         enginelab::RealtimeAudioState scaledState;
         scaledState.rpm.store(3'000.0F);
         scaledState.timeScale.store(1.0F);
+        // The layer is off by default; these fixtures need it on.
+        scaledState.mechanicalGain.store(0.70F);
         enginelab::RealtimeEngineAudio scaledRenderer(
             *scaledQueue, scaledState, nullptr, nullptr, nullptr, nullptr);
         scaledRenderer.prepare(48'000.0, 256);
@@ -3127,6 +3129,7 @@ int main() {
         enginelab::RealtimeAudioState pausedState;
         pausedState.rpm.store(3'000.0F);
         pausedState.timeScale.store(0.0F);
+        pausedState.mechanicalGain.store(0.70F);
         enginelab::RealtimeEngineAudio pausedRenderer(
             *pausedQueue, pausedState, nullptr, nullptr, nullptr, nullptr);
         pausedRenderer.prepare(48'000.0, 256);

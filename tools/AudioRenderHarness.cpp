@@ -2378,7 +2378,14 @@ int main(int argc, char** argv) {
 
     std::cout << "\n--- Per-engine render (3.0 s) ---\n";
     std::vector<Metrics> metrics;
-    for (auto& e : engines) metrics.push_back(renderEngine(e.config, ir, outDir, 3.0, true));
+    // These synthetic fixtures check the renderer with every layer on. The
+    // mechanical layer is off by default since 2026-10-12; without it the
+    // EL-R5 radial is 99 % below 250 Hz (51.6 % with it), see the journal.
+    for (auto& e : engines) {
+        auto config = e.config;
+        config.audioVoicing.mechanicalGain = 0.70;
+        metrics.push_back(renderEngine(config, ir, outDir, 3.0, true));
+    }
 
     std::cout << "\n--- Spectral differentiation (cosine similarity, lower = more distinct) ---\n";
     double worstSimilarity = 0.0;
