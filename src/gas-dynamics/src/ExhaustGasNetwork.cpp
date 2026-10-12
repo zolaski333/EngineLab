@@ -521,6 +521,29 @@ struct ReservoirInflowConstants final {
     return result;
 }
 
+/** Isentropic enthalpy drop, J/kg, from the stagnation state of gas
+ * approaching a face at `towardFaceMps` down to `outletPressurePa`: what a
+ * turbine wheel of unit total-to-static efficiency would take from it. */
+[[nodiscard]] double isentropicExpansionWorkJPerKg(const PrimitiveState& inlet,
+                                                   double towardFaceMps,
+                                                   double outletPressurePa) noexcept {
+    const auto gamma = std::clamp(inlet.heatCapacityRatio, 1.01, 2.0);
+    const auto gasConstant = inlet.pressurePa
+        / (inlet.densityKgPerM3 * inlet.temperatureK);
+    if (!(gasConstant > 0.0) || !finite(gasConstant)) return 0.0;
+    const auto mach = inlet.speedOfSoundMps > 0.0
+        ? std::max(0.0, towardFaceMps) / inlet.speedOfSoundMps : 0.0;
+    const auto ratio = 1.0 + 0.5 * (gamma - 1.0) * mach * mach;
+    const auto exponent = (gamma - 1.0) / gamma;
+    const auto stagnationTemperatureK = inlet.temperatureK * ratio;
+    // (p_out / p0)^((g-1)/g) = (p_out / p)^((g-1)/g) / ratio.
+    const auto expansion = std::pow(
+        std::max(0.0, outletPressurePa) / inlet.pressurePa, exponent) / ratio;
+    const auto work = gasConstant * stagnationTemperatureK / exponent
+        * (1.0 - std::min(1.0, expansion));
+    return finite(work) ? work : 0.0;
+}
+
 /** Root of a monotone function on [low, high], or the end it tends to when
  * the root lies outside. Secant steps from `guess` (the previous solution, or
  * the middle) and `slope` (the previous secant slope, in/out), each value
@@ -862,6 +885,10 @@ bool ExhaustGasNetwork::configure(const ExhaustNetworkLayout& layout,
             : std::min(duct.outletConnectionAreaM2, duct.outletFlowAreaM2);
     };
     interfaceOpeningAreasM2_.clear();
+    interfaceTurbines_.assign(layout_.interfaces().size(), {});
+    interfaceFirstStageRate_.assign(layout_.interfaces().size(), {});
+    interfaceSecondStageRate_.assign(layout_.interfaces().size(), {});
+    interfaceTransfers_.assign(layout_.interfaces().size(), {});
     for (const auto& connection : layout_.interfaces()) {
         const auto area = std::min(endpointArea(connection.upstream),
                                    endpointArea(connection.downstream));
@@ -997,6 +1024,7 @@ bool ExhaustGasNetwork::reset(double pressurePa,
         outletSamples_[index].pathIndex = layout_.outlets()[index].pathIndex;
         outletSamples_[index].openingAreaM2 = layout_.outlets()[index].openingAreaM2;
     }
+    std::fill(interfaceTransfers_.begin(), interfaceTransfers_.end(), InterfaceTransfer {});
     updateOutletSamples(0.0);
     return true;
 }
@@ -1120,11 +1148,26 @@ bool ExhaustGasNetwork::adoptStateFrom(const ExhaustGasNetwork& previous) noexce
     }
     wallHeatPendingSeconds_ = previous.wallHeatPendingSeconds_;
     wallHeatUpdateRequested_ = previous.wallHeatUpdateRequested_;
-    // A plate keeps its opening, within the new bore.
+    // A plate keeps its opening, within the new bore, and a turbine its wheel.
     for (std::size_t index = 0; index < layout_.interfaces().size(); ++index)
         if (layout_.interfaces()[index].restriction)
             static_cast<void>(setRestrictionOpeningAreaM2(
                 index, previous.interfaceOpeningAreasM2_[index]));
+    interfaceTurbines_ = previous.interfaceTurbines_;
+    interfaceTransfers_ = previous.interfaceTransfers_;
+    return true;
+}
+
+bool ExhaustGasNetwork::setRestrictionTurbine(std::size_t interfaceIndex,
+                                              double wheelShare,
+                                              double efficiency) noexcept {
+    if (interfaceIndex >= layout_.interfaces().size()
+        || interfaceIndex >= interfaceTurbines_.size()
+        || !layout_.interfaces()[interfaceIndex].restriction
+        || !std::isfinite(wheelShare) || !std::isfinite(efficiency))
+        return false;
+    interfaceTurbines_[interfaceIndex] = {
+        std::clamp(wheelShare, 0.0, 1.0), std::clamp(efficiency, 0.0, 1.0) };
     return true;
 }
 
@@ -1137,6 +1180,11 @@ bool ExhaustGasNetwork::setRestrictionOpeningAreaM2(std::size_t interfaceIndex,
     const auto& connection = layout_.interfaces()[interfaceIndex];
     if (!connection.restriction) return false;
     const auto faceAreaM2 = [this](const ExhaustEndpoint& endpoint) noexcept {
+        if (endpoint.type == ExhaustEndpointType::junction) {
+            const auto diameter = layout_.junctions()[endpoint.elementIndex]
+                .characteristicDiameterM;
+            return 0.25 * std::acos(-1.0) * diameter * diameter;
+        }
         const auto& duct = layout_.ducts()[endpoint.elementIndex];
         return endpoint.type == ExhaustEndpointType::ductInlet
             ? std::min(duct.inletConnectionAreaM2, duct.inletFlowAreaM2)
@@ -1700,6 +1748,8 @@ bool ExhaustGasNetwork::evaluateStage(
     const Prelude& prelude) noexcept {
     auto& cylinderFlows = useStageState ? cylinderSecondStageFlow_ : cylinderFirstStageFlow_;
     auto& outletFlows = useStageState ? outletSecondStageFlow_ : outletFirstStageFlow_;
+    auto& interfaceRates = useStageState
+        ? interfaceSecondStageRate_ : interfaceFirstStageRate_;
     auto& junctionResiduals = useStageState ? junctionStageResidual_ : junctionResidual_;
     auto& cylinderResiduals = useStageState
         ? cylinderReservoirStageResidual_ : cylinderReservoirResidual_;
@@ -1997,32 +2047,62 @@ bool ExhaustGasNetwork::evaluateStage(
     for (std::size_t index = 0; index < layout_.interfaces().size(); ++index) {
         const auto& connection = layout_.interfaces()[index];
         if (connection.restriction) {
-            // Both sides are ducts (ExhaustNetworkLayout::assemble).
+            // At most one side is a junction (ExhaustNetworkLayout::assemble).
+            // A junction side exchanges through the open area itself; it has
+            // no face to load around the jet.
             const auto openingAreaM2 = interfaceOpeningAreasM2_[index];
+            const auto& upstreamCell = endpointPrimitive(connection.upstream);
+            const auto& downstreamCell = endpointPrimitive(connection.downstream);
             const auto rawFlux = openingAreaM2 > 0.0
                 ? restrictionOrificeFlux(
-                    endpointState(connection.upstream),
-                    endpointPrimitive(connection.upstream),
-                    endpointState(connection.downstream),
-                    endpointPrimitive(connection.downstream))
+                    endpointState(connection.upstream), upstreamCell,
+                    endpointState(connection.downstream), downstreamCell)
                 : EulerFlux {};
-            // The receiving duct takes the jet (Borda-Carnot). The supplying
-            // duct loses its gas at its own velocity against its own
-            // pressure: the acceleration to the throat happens past the face,
-            // and the plate's upstream side carries its reaction. Handing it
-            // the throat's momentum instead (up to 1.27 p0 when choked) gave
-            // -1.4 % against the isentropic choked flow (-0.2 % this way).
-            const auto forward =
-                sumSpecies(rawFlux.speciesMassFluxKgPerM2S) >= 0.0;
-            const auto& supplying = forward ? connection.upstream : connection.downstream;
-            const auto& receiving = forward ? connection.downstream : connection.upstream;
-            auto supplyFlux = ductBoundaryFlux(supplying, rawFlux, openingAreaM2);
-            const auto& supplyCell = endpointPrimitive(supplying);
-            supplyFlux.momentumFluxPa = supplyCell.pressurePa
-                + sumSpecies(supplyFlux.speciesMassFluxKgPerM2S) * supplyCell.velocityMps;
-            if (!assignDuctBoundary(supplying, supplyFlux)
-                || !assignDuctBoundary(receiving,
-                    ductBoundaryFlux(receiving, rawFlux, openingAreaM2)))
+            const auto massFlux = sumSpecies(rawFlux.speciesMassFluxKgPerM2S);
+            const auto forward = massFlux >= 0.0;
+            // The supplying side loses its gas at its own velocity against
+            // its own pressure: the acceleration to the throat happens past
+            // the face, and the plate's upstream side carries its reaction.
+            // Handing it the throat's momentum instead (up to 1.27 p0 when
+            // choked) gave -1.4 % against the isentropic choked flow (-0.2 %
+            // this way). The receiving side takes the jet (Borda-Carnot),
+            // less what a turbine wheel takes from it.
+            auto upstreamFlux = rawFlux;
+            auto downstreamFlux = rawFlux;
+            auto& supplyFlux = forward ? upstreamFlux : downstreamFlux;
+            const auto& supplyCell = forward ? upstreamCell : downstreamCell;
+            supplyFlux.momentumFluxPa = supplyCell.pressurePa + massFlux * supplyCell.velocityMps;
+            const auto& turbine = interfaceTurbines_[index];
+            auto workFlux = 0.0;
+            if (massFlux > 0.0 && turbine.wheelShare > 0.0 && turbine.efficiency > 0.0) {
+                workFlux = massFlux * turbine.wheelShare * turbine.efficiency
+                    * isentropicExpansionWorkJPerKg(upstreamCell,
+                        upstreamCell.velocityMps, downstreamCell.pressurePa);
+                downstreamFlux.totalEnergyFluxWPerM2 -= workFlux;
+                // The wheel turns its nozzles' jet into shaft work: what
+                // leaves it carries no jet into the outlet. Left in, the
+                // jet held the outlet cell at a quarter of the inlet
+                // pressure and the wheel took 1.7 times what expanding to
+                // the atmosphere could give. The bypass jet is dropped too
+                // (its dynamic head fully dissipated, the Borda-Carnot limit
+                // of a gate small against its outlet): half open, it still
+                // drew the outlet down and gave the wheel +32 % per kg.
+                downstreamFlux.momentumFluxPa = downstreamCell.pressurePa
+                    + massFlux * downstreamCell.velocityMps;
+            }
+            interfaceRates[index] = { massFlux * openingAreaM2, workFlux * openingAreaM2 };
+            const auto apply = [&](const ExhaustEndpoint& endpoint, const EulerFlux& flux,
+                                   double sign) noexcept {
+                if (endpoint.type == ExhaustEndpointType::junction) {
+                    addJunctionFlow(endpoint.elementIndex,
+                        makeFlowRate(flux, openingAreaM2), openingAreaM2, sign);
+                    return true;
+                }
+                return assignDuctBoundary(endpoint,
+                    ductBoundaryFlux(endpoint, flux, openingAreaM2));
+            };
+            if (!apply(connection.upstream, upstreamFlux, -1.0)
+                || !apply(connection.downstream, downstreamFlux, 1.0))
                 return false;
             continue;
         }
@@ -2186,6 +2266,7 @@ ExhaustNetworkAdvanceResult ExhaustGasNetwork::advance(
         sample.pathIndex = pathIndex;
         sample.openingAreaM2 = openingArea;
     }
+    std::fill(interfaceTransfers_.begin(), interfaceTransfers_.end(), InterfaceTransfer {});
     if (!configured_ || !finite(durationSeconds) || durationSeconds < 0.0
         || !finite(ambient.openingScale) || ambient.openingScale < 0.0
         || ambient.openingScale > 1.0 || !finite(ambient.reservoirVolumeM3)
@@ -2385,6 +2466,7 @@ ExhaustNetworkAdvanceResult ExhaustGasNetwork::advance(
                 // dt*f(U_n) when both slots carry the first-stage flow.
                 cylinderSecondStageFlow_ = cylinderFirstStageFlow_;
                 outletSecondStageFlow_ = outletFirstStageFlow_;
+                interfaceSecondStageRate_ = interfaceFirstStageRate_;
             } else {
                 placeBoundaries(durationSeconds - remaining + trialStep);
                 const auto stagePassed = evaluateStage(true, cylinderBoundaries,
@@ -2509,6 +2591,14 @@ ExhaustNetworkAdvanceResult ExhaustGasNetwork::advance(
                 outletSamples_[index].transferredEnergyJ += integrationWeight
                     * (outletFirstStageFlow_[index].totalEnergyW
                        + outletSecondStageFlow_[index].totalEnergyW);
+            }
+            for (std::size_t index = 0; index < interfaceTransfers_.size(); ++index) {
+                interfaceTransfers_[index].massKg += integrationWeight
+                    * (interfaceFirstStageRate_[index].massKg
+                       + interfaceSecondStageRate_[index].massKg);
+                interfaceTransfers_[index].workJ += integrationWeight
+                    * (interfaceFirstStageRate_[index].workJ
+                       + interfaceSecondStageRate_[index].workJ);
             }
 
             for (auto& duct : ducts_) {

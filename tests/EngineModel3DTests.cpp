@@ -474,12 +474,17 @@ void checkTurbo(const EngineModel3D& model) {
     if (!turbo.placed) return;
     ++turbosDrawn;
 
-    // The solver's one turbine takes the whole exhaust flow, so the drawn
-    // turbo is fed by every cylinder: a second path would bypass it.
+    // One turbo is drawn, so it is fed by every cylinder: a second path would
+    // bypass it.
     const auto turboPath = std::find_if(config.exhaustPaths.begin(), config.exhaustPaths.end(),
         [&turbo](const ExhaustPathConfig& path) { return path.id == turbo.pathId; });
     require(turboPath != config.exhaustPaths.end() && turboPath->cylinderIds.size() == config.cylinders.size(),
             name + ": every cylinder's exhaust reaches the turbo");
+    // The solver's turbine sits on that collector too, not at the outlets.
+    const Bench bench(config);
+    require(bench.simulator->exhaustTurbineFaceCount() == 1,
+            name + ": the solver's turbine sits on the collector (" + std::to_string(
+                bench.simulator->exhaustTurbineFaceCount()) + " faces)");
 
     // It is bolted to its collector, and the path resumes at its outlet.
     bool fed = false, resumes = false;

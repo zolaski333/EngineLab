@@ -5,6 +5,15 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-12 — Turbine on the collector face, in the gas network
+
+- The turbine is a restriction face on the collector's outgoing face (orifice from the collector's stagnation state; turbine share of the flow gives up `eta cp T0 (1 - (p_out/p0)^k)`, removed from the downpipe's energy; no jet on the receiving side). `EngineLab.RestrictionFace`: choked junction face -0.2 % vs isentropic, work 37.7 kJ/kg under its 37.9 ceiling, energy closed to 3e-12, cooling 33.9 K vs w/cp 37.5 K, half share 0.50 of the work. With the jet kept on the receiving side: work over the ceiling, half share 0.66.
+- At the old areas (700 mm2) the spool at 3,000 rpm (`TurboDownstreamAuthorityHarness --spool`, t90) went 1.09 -> 3.60 s (2JZ), 1.69 -> 5.29 (EJ25), 1.98 -> 5.55 (I5): the old outlet model drove the shaft from the peak exhaust pressure, and the areas had been fitted to it. Re-fitted to the rated curves (`DynoSweepHarness`), not measured: 2JZ 600, EJ25 500, I5 450, TDI 320 -> 280. t90 then 2.25 / 2.34 / 1.98 / 0.98 s (TDI 0.89 before); CatalogReference and CatalogBoostHold pass.
+- Authority harness: outlet monotone tolerance 0.05 -> 0.5 kPa (pulse-resolved outlet), boost hold within the gate's 0.08 proportional band, shaft balance within 2 % of turbine power (was 0.26 kW at the 45 mm stress point).
+- Realtime free-run, 4 alternated rounds, minimum: 2JZ 1.61 -> 1.60, EJ25 1.92 -> 1.91, I5 1.77 -> 1.83, TDI 2.18 -> 2.25, K20A control 1.82 -> 1.80; at 95 % of redline 1.59-2.34 -> 1.59-2.27. `--runtime-blip` with audio: lowest 0.992, worst lateness 4.7 ms (TDI lift-off).
+- Sound (`AudioRenderHarness` catalogue point, rpm floats with torque so it is not held): RMS 2JZ -1.6 %, EJ25 -27 %, I5 +16 %, TDI +42 %; low-band share 2JZ 14 -> 45 %, EJ25 43 -> 84 %. The turbine move alone (old areas) gave -0.5 / -16 / +33 / +50 %. Not compared with any recording.
+- Not done: turbo mid pipes (the downpipe is now cold side); several paths each with a turbine (supported, no catalogue engine uses it).
+
 ## 2026-10-12 — Individual throttles as a restriction face in the runner
 
 - New 1-D primitive: a plate on a duct-to-duct face (isentropic orifice fed by the approaching cell's stagnation state; jet re-expanding against the loaded face; the supplying side keeps its own momentum). `EngineLab.RestrictionFace`: choked flow -0.2 % vs isentropic (-1.4 % with the throat momentum on the supplying side), full bore +0.003 % vs no plate, shut 0, mass to 1e-14.

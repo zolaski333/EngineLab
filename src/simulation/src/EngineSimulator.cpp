@@ -209,6 +209,77 @@ constexpr double exhaustExternalHeatTransferWPerM2K = 18.0;
     return intake.individualThrottles ? throttlePlateAreaM2 : throttleAreaM2;
 }
 
+/** Where a turbine sits: the face out of each exhaust path's collector, the
+ *  first junction all of the path's cylinders reach (where the 3-D view bolts
+ *  the turbo), when it leaves through a single face into a duct. Each face
+ *  carries its path's share of the cylinders. Empty unless every path with
+ *  cylinders has one. */
+struct TurbineFace final {
+    std::size_t interfaceIndex { 0 };
+    double cylinderShare { 0.0 };
+};
+[[nodiscard]] std::vector<TurbineFace> collectorTurbineFaces(
+    const gasdynamics::ExhaustNetworkLayout& layout) {
+    using gasdynamics::ExhaustEndpointType;
+    const auto ductCount = layout.ducts().size();
+    const auto slot = [ductCount](const gasdynamics::ExhaustEndpoint& endpoint) {
+        return endpoint.type == ExhaustEndpointType::junction
+            ? ductCount + endpoint.elementIndex : endpoint.elementIndex;
+    };
+    // Cylinders reaching each element (ducts, then junctions), relaxed along
+    // the faces until it settles: the graph is a DAG of finite depth.
+    std::vector<std::size_t> own(ductCount + layout.junctions().size(), 0);
+    std::vector<std::size_t> pathCylinders;
+    for (const auto& port : layout.cylinderPorts()) {
+        ++own[slot(port.networkEndpoint)];
+        if (port.pathIndex >= pathCylinders.size()) pathCylinders.resize(port.pathIndex + 1, 0);
+        ++pathCylinders[port.pathIndex];
+    }
+    auto fed = own;
+    for (std::size_t pass = 0; pass <= fed.size(); ++pass) {
+        auto next = own;
+        for (const auto& connection : layout.interfaces())
+            next[slot(connection.downstream)] += fed[slot(connection.upstream)];
+        if (next == fed) break;
+        fed = std::move(next);
+    }
+    const auto totalCylinders = layout.cylinderPorts().size();
+    std::vector<TurbineFace> faces;
+    for (std::size_t path = 0; path < pathCylinders.size(); ++path) {
+        if (pathCylinders[path] == 0) continue;
+        auto found = false;
+        for (std::size_t junction = 0; junction < layout.junctions().size() && !found; ++junction) {
+            if (layout.junctions()[junction].pathIndex != path
+                || fed[ductCount + junction] != pathCylinders[path])
+                continue;
+            std::size_t outgoing = 0;
+            std::size_t outgoingIndex = 0;
+            auto upstreamComplete = false;
+            for (std::size_t index = 0; index < layout.interfaces().size(); ++index) {
+                const auto& connection = layout.interfaces()[index];
+                if (connection.upstream.type == ExhaustEndpointType::junction
+                    && connection.upstream.elementIndex == junction) {
+                    ++outgoing;
+                    outgoingIndex = index;
+                }
+                if (connection.downstream.type == ExhaustEndpointType::junction
+                    && connection.downstream.elementIndex == junction
+                    && fed[slot(connection.upstream)] == pathCylinders[path])
+                    upstreamComplete = true;
+            }
+            if (upstreamComplete || outgoing != 1
+                || layout.interfaces()[outgoingIndex].downstream.type
+                    == ExhaustEndpointType::junction)
+                continue;
+            faces.push_back({ outgoingIndex, static_cast<double>(pathCylinders[path])
+                / static_cast<double>(std::max<std::size_t>(1, totalCylinders)) });
+            found = true;
+        }
+        if (!found) return {};
+    }
+    return faces;
+}
+
 /** Throttle flow between the plenum and its upstream boundary, keeping the
  * fuel vapour that reverses through the throttle.
  *
@@ -933,8 +1004,15 @@ std::unique_ptr<gasdynamics::ExhaustGasNetwork> EngineSimulator::buildPhysicalEx
     // finite volume with their exact volume, ports and loss. Their propagation
     // delay is owned by the characteristic network, so duplicating a second FV
     // cell would add cost but no resolved mean-flow information.
-    const auto layout = gasdynamics::ExhaustNetworkLayout::compile(
+    auto layout = gasdynamics::ExhaustNetworkLayout::compile(
         physicalGraph, feedbackMesh);
+    // A turbocharger's turbine is a face of the network, at the collector:
+    // what follows it (downpipe, mid pipe, silencer) is its cold side.
+    if (config.forcedInduction.enabled
+        && config.forcedInduction.type == ForcedInductionType::turbocharger)
+        for (const auto& face : collectorTurbineFaces(layout))
+            if (!layout.makeRestriction(face.interfaceIndex))
+                throw std::runtime_error("failed to place the turbine");
     auto network = std::make_unique<gasdynamics::ExhaustGasNetwork>(
         exhaustThermodynamicsFor(config));
     gasdynamics::ExhaustGasNetworkConfig networkConfig;
@@ -969,6 +1047,13 @@ void EngineSimulator::configurePhysicalExhaustNetwork() {
     auto network = buildPhysicalExhaustNetwork(config_, constructionExhaustCellLengthM_);
     const auto& layout = network->layout();
     constructionExhaustLayout_ = layout;
+    exhaustTurbineFaces_.clear();
+    for (const auto& face : collectorTurbineFaces(layout))
+        if (layout.interfaces()[face.interfaceIndex].restriction)
+            exhaustTurbineFaces_.push_back(
+                ExhaustTurbineFace { face.interfaceIndex, face.cylinderShare });
+    networkTurbinePowerW_ = 0.0;
+    networkTurbineOutletPressureKpa_ = config_.ambientPressureKpa;
     const auto ambientState = network->mixtureModel().conservativeFromPressureTemperature(
         config_.ambientPressureKpa * 1'000.0,
         config_.ambientTemperatureC + 273.15);
@@ -1484,6 +1569,12 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                     * (1.0 - std::pow(turbineExpansionRatio,
                         -turboIsentropicExponent))
                     * config_.forcedInduction.turbineEfficiency;
+                if (!exhaustTurbineFaces_.empty()) {
+                    // The network's turbine faces expand the gas itself, pulse
+                    // by pulse, into the pressure their downpipe actually holds.
+                    turbinePowerW = networkTurbinePowerW_;
+                    state_.turbineOutletPressureKpa = networkTurbineOutletPressureKpa_;
+                }
                 state_.wastegateOpening = std::clamp((state_.boostPressureRatio
                     - config_.forcedInduction.wastegatePressureRatio + 0.02) / 0.08, 0.0, 1.0);
                 const auto shaftAdvance = advanceTurboShaft(
@@ -3789,7 +3880,8 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
         exhaustOutletConductanceM2_ = configuredOutletConductanceM2;
         auto instantaneousOutletOpeningScale = 1.0;
         if (config_.forcedInduction.enabled
-            && config_.forcedInduction.type == ForcedInductionType::turbocharger) {
+            && config_.forcedInduction.type == ForcedInductionType::turbocharger
+            && exhaustTurbineFaces_.empty()) {
             const auto turbineAreaM2 = (config_.forcedInduction.turbineFlowAreaMm2
                 + state_.wastegateOpening
                     * config_.forcedInduction.wastegateFlowAreaMm2) * 1.0e-6;
@@ -3882,6 +3974,21 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 physicalExhaustAmbientState_,
                 outletOpeningScaleTimeIntegralSeconds_ / exhaustCouplingDurationSeconds_,
             };
+            // The turbine and its wastegate in parallel, as one face per
+            // collector; the gate's share of the gas does no work.
+            const auto turbineAreaM2 = std::max(0.0,
+                config_.forcedInduction.turbineFlowAreaMm2) * 1.0e-6;
+            const auto gateAreaM2 = std::clamp(state_.wastegateOpening, 0.0, 1.0)
+                * std::max(0.0, config_.forcedInduction.wastegateFlowAreaMm2) * 1.0e-6;
+            const auto wheelShare = turbineAreaM2 + gateAreaM2 > 0.0
+                ? turbineAreaM2 / (turbineAreaM2 + gateAreaM2) : 0.0;
+            for (const auto& face : exhaustTurbineFaces_) {
+                static_cast<void>(physicalExhaustNetwork.setRestrictionOpeningAreaM2(
+                    face.interfaceIndex, (turbineAreaM2 + gateAreaM2) * face.cylinderShare));
+                static_cast<void>(physicalExhaustNetwork.setRestrictionTurbine(
+                    face.interfaceIndex, wheelShare,
+                    config_.forcedInduction.turbineEfficiency));
+            }
             const auto networkAdvance = physicalExhaustNetwork.advance(
                 exhaustCouplingDurationSeconds_,
                 std::span<const gasdynamics::CylinderValveBoundary>(
@@ -3889,6 +3996,20 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 ambient);
             exhaustNetworkCompleted = networkAdvance.completed;
             if (networkAdvance.completed) ++completedExhaustCouplingAdvances;
+            if (!exhaustTurbineFaces_.empty() && networkAdvance.advancedTimeSeconds > 0.0) {
+                auto workJ = 0.0;
+                auto outletPressureKpa = 0.0;
+                for (const auto& face : exhaustTurbineFaces_) {
+                    workJ += physicalExhaustNetwork.restrictionWorkJ(face.interfaceIndex);
+                    const auto& outlet = physicalExhaustNetwork.layout()
+                        .interfaces()[face.interfaceIndex].downstream;
+                    outletPressureKpa += face.cylinderShare * 0.001
+                        * physicalExhaustNetwork.ducts()[outlet.elementIndex]
+                            .cellPrimitives().front().pressurePa;
+                }
+                networkTurbinePowerW_ = workJ / networkAdvance.advancedTimeSeconds;
+                networkTurbineOutletPressureKpa_ = outletPressureKpa;
+            }
             exhaustAdvanceDurationSeconds = networkAdvance.advancedTimeSeconds;
             exhaustNetworkAcceptedSubsteps += networkAdvance.acceptedSubsteps;
             exhaustNetworkAdvancedSeconds += networkAdvance.advancedTimeSeconds;
@@ -5397,6 +5518,8 @@ void EngineSimulator::reset() noexcept {
     exhaustBoundaryVolumeTimeIntegralM3S_.fill(0.0);
     exhaustCouplingDurationSeconds_ = 0.0;
     outletOpeningScaleTimeIntegralSeconds_ = 0.0;
+    networkTurbinePowerW_ = 0.0;
+    networkTurbineOutletPressureKpa_ = config_.ambientPressureKpa;
     lastExhaustAcousticStatePublishSeconds_ = -1.0;
     if (pressureSamples_) {
         CylinderPressureSample discarded;

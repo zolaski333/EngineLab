@@ -260,6 +260,11 @@ public:
     /** The configuration the simulator runs, live changes included.
      * Simulation thread only. */
     [[nodiscard]] const EngineConfig& config() const noexcept { return config_; }
+    /** How many collector faces carry the turbocharger's turbine in the gas
+     * network; 0 when the turbine is the older restriction at the outlets. */
+    [[nodiscard]] std::size_t exhaustTurbineFaceCount() const noexcept {
+        return exhaustTurbineFaces_.size();
+    }
     /** Keep the gas field (GasFieldSnapshot) captured at a crank angle over
      * the cycle: each time the crank crosses it between two sub-steps, and at
      * the end of a frame once 0.25 s of simulated time has passed without a
@@ -725,6 +730,17 @@ private:
      *  Cached from the compiled layout so the forced-induction block can charge
      *  the turbine its real downstream back pressure. */
     double exhaustOutletConductanceM2_ { 0.0 };
+    /** A turbocharger's turbine faces in the exhaust network (one per path,
+     *  at its collector) with each one's share of the cylinders; empty when
+     *  the turbine is applied at the outlets instead (no collector found). */
+    struct ExhaustTurbineFace final {
+        std::size_t interfaceIndex { 0 };
+        double cylinderShare { 0.0 };
+    };
+    std::vector<ExhaustTurbineFace> exhaustTurbineFaces_;
+    /** What the turbine faces did over the last exhaust advance. */
+    double networkTurbinePowerW_ { 0.0 };
+    double networkTurbineOutletPressureKpa_ { 0.0 };
     /** Network-port order -> EngineConfig cylinder order, compiled once. */
     std::array<std::size_t, 32> exhaustNetworkCylinderIndex_ {};
     std::unique_ptr<SpscQueue<CylinderPressureSample, 1'024>> pressureSamples_;
