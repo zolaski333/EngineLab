@@ -364,9 +364,15 @@ Sample holdPoint(enginelab::EngineSimulator& simulator,
     return acc;
 }
 
-// Returns the highest held compressor pressure ratio over the sweep.
-double sweepEngine(const enginelab::EngineConfig& baseConfig, double stepRpm,
-                   bool useWellMixedExhaustJunctions) {
+struct SweepSummary final {
+    /** The highest held compressor pressure ratio. */
+    double highestBoostPressureRatio {};
+    /** The widest held brake torque swing, (max - min) / mean. */
+    double widestBrakeSwing {};
+};
+
+SweepSummary sweepEngine(const enginelab::EngineConfig& baseConfig, double stepRpm,
+                         bool useWellMixedExhaustJunctions) {
     auto config = baseConfig;
     enginelab::normaliseEngineConfig(config);
     enginelab::SimpleEcuModel ecu;
@@ -398,17 +404,21 @@ double sweepEngine(const enginelab::EngineConfig& baseConfig, double stepRpm,
         config.ignition.revLimitRpm - 300.0);
     const auto startRpm = std::max(2000.0, std::round(config.idleRpm * 1.5 / stepRpm) * stepRpm);
     auto first = true;
-    auto highestBoostPressureRatio = 0.0;
+    SweepSummary summary;
     for (double target = startRpm; target <= maxRpm + 1.0; target += stepRpm) {
         // Longer settle for the first point (cold ramp), shorter warm-started.
         const auto sample = holdPoint(
             simulator, config, target, first ? 5.0 : 2.0, 1.0);
         first = false;
         writeRow(std::cout, config, target, sample);
-        highestBoostPressureRatio = std::max(
-            highestBoostPressureRatio, sample.boostPressureRatio);
+        summary.highestBoostPressureRatio = std::max(
+            summary.highestBoostPressureRatio, sample.boostPressureRatio);
+        if (sample.meanBrakeTorqueNm > 1.0)
+            summary.widestBrakeSwing = std::max(summary.widestBrakeSwing,
+                (sample.maximumBrakeTorqueNm - sample.minimumBrakeTorqueNm)
+                    / sample.meanBrakeTorqueNm);
     }
-    return highestBoostPressureRatio;
+    return summary;
 }
 
 bool validateReferencePoints(const std::filesystem::path& catalogRoot,
@@ -613,16 +623,23 @@ int main(int argc, char** argv) {
         const auto checkBoost = boostHoldMargin >= 0.0 && turbo.enabled
             && turbo.type == enginelab::ForcedInductionType::turbocharger;
         if (boostHoldMargin >= 0.0 && !checkBoost) continue;
-        const auto highest = sweepEngine(
+        const auto summary = sweepEngine(
             engine, stepRpm, useWellMixedExhaustJunctions);
         if (!checkBoost) continue;
-        // The simulator's gate is fully open 0.06 above its set ratio.
+        // The simulator's controller holds its set ratio while the gate has
+        // travel; 0.06 is what it may still overshoot.
         const auto limit = turbo.wastegatePressureRatio + 0.06 + boostHoldMargin;
-        const auto held = highest <= limit;
-        boostHeld = boostHeld && held;
+        const auto held = summary.highestBoostPressureRatio <= limit;
+        // A boost controller in a limit cycle shows as brake torque swinging
+        // every quarter second: the TDI's swung 32 % at 3,000 rpm (journal
+        // 2026-10-13); a settled turbo stays within 9 %.
+        const auto steady = summary.widestBrakeSwing <= 0.15;
+        boostHeld = boostHeld && held && steady;
         std::cerr << "boost hold: " << engine.name << " highest pressure ratio "
-                  << highest << ", limit " << limit
-                  << (held ? " PASS" : " FAIL") << '\n';
+                  << summary.highestBoostPressureRatio << ", limit " << limit
+                  << (held ? " PASS" : " FAIL") << "; widest brake swing "
+                  << summary.widestBrakeSwing * 100.0 << " %, limit 15 %"
+                  << (steady ? " PASS" : " FAIL") << '\n';
     }
     return boostHeld ? EXIT_SUCCESS : EXIT_FAILURE;
 }

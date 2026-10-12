@@ -244,10 +244,11 @@ void traceEngine(const enginelab::EngineConfig& baseConfig, double targetRpm,
     // trace can never show (a flooded idle is a death spiral; the seed is in
     // the first seconds, not in the state it converges to).
     if (watchSettle)
-        std::cout << "t_s,rpm,map_kpa,throttle,afr,fuel_mg,misfire,irt_c,net_nm,cylp_bar\n";
+        std::cout << "t_s,rpm,map_kpa,throttle,afr,fuel_mg,misfire,irt_c,net_nm,cylp_bar,"
+                     "boost,wastegate,shaft_krpm,turbine_kw,back_kpa,cycle_nm\n";
     for (int step = 0; step < static_cast<int>((freeIdle ? 12.0 : 4.0) / dt); ++step) {
         const auto frame = drive(dt);
-        if (watchSettle && step % 24 == 0) {
+        if (watchSettle && step % 6 == 0) {
             const auto& c = frame.state.cylinderStates[0];
             std::cout << static_cast<double>(step) * dt << ',' << frame.state.rpm
                       << ',' << frame.state.manifoldPressureKpa
@@ -256,7 +257,13 @@ void traceEngine(const enginelab::EngineConfig& baseConfig, double targetRpm,
                       << ',' << frame.state.misfireRate
                       << ',' << c.intakeRunnerTemperatureC
                       << ',' << frame.state.netTorqueNm
-                      << ',' << c.pressureEstimateBar << '\n';
+                      << ',' << c.pressureEstimateBar
+                      << ',' << frame.state.boostPressureRatio
+                      << ',' << frame.state.wastegateOpening
+                      << ',' << frame.state.forcedInductionShaftSpeedRpm * 1.0e-3
+                      << ',' << frame.state.turbinePowerKw
+                      << ',' << frame.state.exhaustBackPressureKpa
+                      << ',' << frame.state.cycleAveragedTorqueNm << '\n';
         }
     }
     for (std::size_t index = 0;

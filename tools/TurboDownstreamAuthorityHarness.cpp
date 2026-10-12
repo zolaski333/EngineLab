@@ -405,13 +405,12 @@ int runHarness(int argc, char** argv) {
     // 5. The stock wastegate must HOLD its boost target across the sweep. A
     //    regulator answers extra turbine power by opening further, not by
     //    overboosting; a model that raised boost here would have no regulator.
-    //    The gate is proportional (fully open 0.08 above where it starts), so
-    //    its boost droops by 0.08 per unit of opening and no more.
+    //    The controller has an integral term, so the boost holds the target
+    //    wherever the gate still has travel left.
     const auto regulatedBoostHolds = std::all_of(
         regulated.begin(), regulated.end(), [&regulated](const Point& point) {
-            return std::abs(point.boostRatio - regulated.back().boostRatio)
-                <= 0.08 * std::abs(point.wastegateOpening
-                    - regulated.back().wastegateOpening) + 0.005;
+            return point.wastegateOpening > 0.98
+                || std::abs(point.boostRatio - regulated.back().boostRatio) < 0.02;
         });
 
     // 6. The deliberately raised-target stress must cross the former 1.16x

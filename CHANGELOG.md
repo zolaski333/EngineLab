@@ -172,6 +172,11 @@ file formats, always with an in-memory migration).
 
 ### Fixed
 
+- The TDI no longer surges at full throttle from 2,500 rpm (torque swinging
+  by up to 32 % four times a second, which looked like misfires on the
+  dyno). Its boost controller oscillated once the turbine sat on the
+  collector; every turbo now uses a proportional-integral boost controller
+  and holds its wastegate pressure exactly.
 - The CP4 no longer drops below real time on the limiter or when the throttle
   is shut after it (0.73-0.80 on lift-off before, 18 ms late at worst). During
   valve overlap, the intake side drained the chamber at the previous window's

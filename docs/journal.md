@@ -5,6 +5,12 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-13 — TDI boost controller limit cycle at full load
+
+- Owner's report: the TDI "misfires" at WOT from 2,500 rpm, the dyno curve full of quick dips. `DynoSweepHarness`: held brake torque swing 13 % at 2,500, 32 % at 3,000 rpm (base before the turbine move: 3-7 %); other turbos within 9 %. No misfire: `PhysicsPerfHarness --trace 3000 --watch` (new turbo columns) shows a 4 Hz cycle, gate 0 -> 0.45, back pressure 148 -> 239 kPa, turbine 2 -> 16 kW, cycle torque 322 -> 352 N.m.
+- Cause: the proportional gate (fully open 0.08 above its ratio) against a turbine that now loses its inlet pressure as soon as the gate opens: loop gain ~30 on a 4e-5 kg.m2 shaft. A gate lag of 0.1 / 0.3 s made it worse (swing 302-358 / 292-356 N.m); band 0.25 alone settled it (339-346) but droops.
+- Fix: PI, band 0.25, integral 0.5 s, anti-windup. Swing <= 6 % on all four turbos (TDI 4 %); boost exactly at the gate ratio (2JZ 1.890, EJ25 2.050, I5 2.450, TDI 2.250); spool t90 within 1 %; TurboDownstreamAuthority boost 1.890 at every outlet. Sound vs the previous build: RMS -4 to +1 %. CatalogBoostHold now fails a 15 % swing (P gate: 30.5 %).
+
 ## 2026-10-12 — Turbine on the collector face, in the gas network
 
 - The turbine is a restriction face on the collector's outgoing face (orifice from the collector's stagnation state; turbine share of the flow gives up `eta cp T0 (1 - (p_out/p0)^k)`, removed from the downpipe's energy; no jet on the receiving side). `EngineLab.RestrictionFace`: choked junction face -0.2 % vs isentropic, work 37.7 kJ/kg under its 37.9 ceiling, energy closed to 3e-12, cooling 33.9 K vs w/cp 37.5 K, half share 0.50 of the work. With the jet kept on the receiving side: work over the ceiling, half share 0.66.

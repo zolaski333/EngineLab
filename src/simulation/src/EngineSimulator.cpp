@@ -1464,6 +1464,7 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
             state_.boostPressureRatio = 1.0;
             state_.forcedInductionShaftSpeedRpm = 0.0;
             state_.wastegateOpening = 0.0;
+            wastegateIntegral_ = 0.0;
             state_.blowOffMassFlowKgPerSecond = 0.0;
             state_.compressorPowerKw = 0.0;
             state_.turbinePowerKw = 0.0;
@@ -1575,8 +1576,23 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                     turbinePowerW = networkTurbinePowerW_;
                     state_.turbineOutletPressureKpa = networkTurbineOutletPressureKpa_;
                 }
-                state_.wastegateOpening = std::clamp((state_.boostPressureRatio
-                    - config_.forcedInduction.wastegatePressureRatio + 0.02) / 0.08, 0.0, 1.0);
+                // Boost control: proportional-integral on the pressure ratio,
+                // holding the wastegate ratio exactly. A proportional gate
+                // fully open 0.08 above it was a loop gain of ~30 once the
+                // turbine sat in the gas network (opening the gate drops the
+                // manifold pressure at once): on the TDI's light shaft it ran a
+                // 4 Hz limit cycle, gate 0 -> 0.45, torque +-15 N.m (journal
+                // 2026-10-13). The integral is frozen while the gate is
+                // saturated in the direction it would push.
+                constexpr double wastegateBandRatio = 0.25;
+                constexpr double wastegateIntegralSeconds = 0.5;
+                const auto proportional = (state_.boostPressureRatio
+                    - config_.forcedInduction.wastegatePressureRatio) / wastegateBandRatio;
+                const auto unclamped = proportional + wastegateIntegral_;
+                if ((unclamped < 1.0 || proportional < 0.0) && (unclamped > 0.0 || proportional > 0.0))
+                    wastegateIntegral_ = std::clamp(wastegateIntegral_
+                        + proportional * subDt / wastegateIntegralSeconds, 0.0, 1.0);
+                state_.wastegateOpening = std::clamp(proportional + wastegateIntegral_, 0.0, 1.0);
                 const auto shaftAdvance = advanceTurboShaft(
                     config_.forcedInduction, shaftOmega, turbinePowerW,
                     compressorMassFlowKgPerSecond, ambientTemperatureK,
@@ -5520,6 +5536,7 @@ void EngineSimulator::reset() noexcept {
     outletOpeningScaleTimeIntegralSeconds_ = 0.0;
     networkTurbinePowerW_ = 0.0;
     networkTurbineOutletPressureKpa_ = config_.ambientPressureKpa;
+    wastegateIntegral_ = 0.0;
     lastExhaustAcousticStatePublishSeconds_ = -1.0;
     if (pressureSamples_) {
         CylinderPressureSample discarded;
