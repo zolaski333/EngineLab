@@ -5,6 +5,14 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-12 — Turbo mid pipes, behind the turbine
+
+- `turbo_downpipe` (2JZ, I5, TDI) and the EJ25's `compact_sport` get the K20A's 2.2 m mid pipe: routes ~1.2 -> ~3.4 m. Same binary, catalogue copies with and without, deterministic harnesses.
+- Spool t90 (`TurboDownstreamAuthorityHarness --spool`), 3,000 rpm: 2JZ 2.263 -> 2.321, EJ25 2.358 -> 2.392, I5 1.979 -> 1.887, TDI 0.979 -> 0.979 s; 2,000 rpm within 2 %. `DynoSweepHarness`: within 1 % from 3,000 rpm up (top end -0.6 to -1 %, back pressure +4 to +7 kPa), EJ25 -2.4 % and I5 +8.5 % at 2,000. CatalogReference: every gap within 0.5 point (2JZ power +11.8 -> +11.4 %, I5 -6.4 -> -6.7 %). CatalogBoostHold passes (swing <= 6.7 %).
+- Realtime free-run, alternated, minimum: default point 2JZ 1.67 -> 1.79, EJ25 2.08 -> 1.83, I5 1.91 -> 1.86, TDI 2.24 -> 2.03, K20A control 1.72 -> 1.79; 95 % of redline with audio 2JZ 1.49 -> 1.35, EJ25 1.64 -> 1.60, I5 1.56 -> 1.44, TDI 2.11 -> 1.88. `--runtime-blip`: lowest 0.992, worst lateness 1.8 ms (without: 0.994, 8.6 ms).
+- Sound, `AudioRenderHarness` catalogue point: RMS 2JZ +5.8 dB (brightness 0.138 -> 0.086), I5 +3.1, EJ25 -2.1 (0.096 -> 0.132), TDI -4.0 dB (0.080 -> 0.127); K20A control identical. One held point each: not a level over the range, and not compared with any recording.
+- `TurboDownstreamAuthority` (tailpipe sweep 45-95 mm, 2JZ): behind the mid pipe 76 -> 95 mm reads +0.5 kPa (tolerance 0.5 -> 1.0), and the raised-target stress holds 3.42 even at 45 mm (gate 0.003), so its authority is now the gate (0.003 -> 0.27) when boost cannot rise. A turbo-back sweep (mid pipe at the tip's bore) was rejected: a 95 mm pipe between 64 mm sections raises back pressure, the K20A control's too (101.0 -> 107.4 kPa).
+
 ## 2026-10-12 — Mechanical layer off by default
 
 - Owner's listening: the layer adds nothing and an unpleasant sound; always switched off. Every voicing `mechanical_gain` (0.66-1.18; CP2s already 0) and the code defaults (0.70) -> 0; the fader stays. The starter leaves the mechanical bus for a fixed 0.70 (`EngineLab.RealtimeRegression`: starter RMS 0.0484 at fader 0 and 2; before, 0 at fader 0).

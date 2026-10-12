@@ -2283,14 +2283,8 @@ int main() {
                 routeMinMm = 1'400.0;
                 routeMaxMm = 2'000.0;
             }
-            if (entry.config.forcedInduction.enabled
-                && entry.config.forcedInduction.type == enginelab::ForcedInductionType::turbocharger) {
-                // Not yet: with the turbine at the outlets, a 2.6 m mid pipe
-                // slowed the spool by 25-43 % at 3,000 rpm (2026-10-07). The
-                // turbine now sits at the collector; not measured again.
-                routeMinMm = 800.0;
-                routeMaxMm = 1'400.0;
-            }
+            // Turbo cars included: the turbine sits on the collector face, so
+            // the mid pipe is downstream of it (spool -5 to +3 %, 2026-10-12).
             auto lengthConfig = entry.config;
             enginelab::normaliseEngineConfig(lengthConfig);
             const auto graph = enginelab::ExhaustGraph::makeForEngine(lengthConfig);
