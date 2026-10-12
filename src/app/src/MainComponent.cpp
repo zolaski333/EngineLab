@@ -394,12 +394,20 @@ bool MainComponent::applyEngineEdit(const EngineConfig& edited, double rampSecon
 
 void MainComponent::switchAbVersion() {
     if (!runtime_ || runtime_->dynoRunning()) return;
-    abVersions_[abActive_] = config_;
+    abVersions_[abActive_] = AbVersion { config_, runtime_->calibrationStore()->snapshot() };
     const auto next = 1U - abActive_;
-    if (!abVersions_[next]) abVersions_[next] = config_;
+    if (!abVersions_[next]) abVersions_[next] = abVersions_[abActive_];
     // No ramp: the point is to hear the two versions back to back.
     const auto target = *abVersions_[next];
-    if (!applyEngineEdit(target, 0.0)) return;
+    if (!applyEngineEdit(target.config, 0.0)) return;
+    // A restart keeps the store, so its tables are the running version's.
+    const auto store = runtime_->calibrationStore();
+    if (store->snapshot() != target.tables) {
+        const auto published = store->publish(calibration::makeDraft(*target.tables), { std::nullopt, "ab-switch" });
+        if (!published.published)
+            showError(utf8("ECU tables of version ") + (next == 0 ? "A" : "B") + " rejected",
+                      issuesText(published.issues) + utf8("\n\nThe engine keeps the tables it was running."));
+    }
     abActive_ = next;
     topBar_.abButton.setButtonText(abActive_ == 0 ? "A" : "B");
     topBar_.abButton.setEngaged(abActive_ == 1);

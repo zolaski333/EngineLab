@@ -170,9 +170,14 @@ private:
     std::vector<Preset> presets_;
     /** By preset name. */
     std::map<std::string, SessionEdit> sessionEdits_;
-    /** The A/B versions of the running engine: the one not running keeps
-        its configuration here; empty until first switched to. */
-    std::array<std::optional<EngineConfig>, 2> abVersions_;
+    /** One A/B version of the running engine: its configuration and its
+        ECU tables. */
+    struct AbVersion final {
+        EngineConfig config;
+        std::shared_ptr<const calibration::CalibrationSnapshot> tables;
+    };
+    /** The one not running is kept here; empty until first switched to. */
+    std::array<std::optional<AbVersion>, 2> abVersions_;
     std::size_t abActive_ { 0 };
     /** Runs the other A/B version: live where the edit allows, instantly. */
     void switchAbVersion();

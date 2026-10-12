@@ -72,7 +72,7 @@ file formats, always with an in-memory migration).
 - An **A/B** button in the top bar (key 7) keeps two versions of the
   running engine. Switch to B, change the cams, the exhaust or the air, then
   switch back and forth to hear the difference at once. Each version keeps
-  its own edits; the ECU tables are shared. Parts that cannot change live
+  its own edits and its own ECU tables. Parts that cannot change live
   (the firing order, for example) restart the engine. Choosing another
   engine or reloading its file starts again from A.
 - Gearbox and vehicle edits in the JSON editor (ratios, final drive, mass,

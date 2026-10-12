@@ -294,8 +294,10 @@ The JSON editor and the 3-D view's inspector go through it.
 
 The top bar's A/B button (`MainComponent::switchAbVersion`, key 7) keeps the
 version not running in `abVersions_` and hands the other one to
-`applyEngineEdit` with no ramp, so the switch is heard at once. The
-calibration store (ECU tables) is not part of a version. Switching engine or
+`applyEngineEdit` with no ramp, so the switch is heard at once. Each version
+also keeps its ECU tables (a calibration snapshot), published back into the
+running store when it is switched to; the ECU tuner reloads on the new
+revision. Switching engine or
 reloading the engine file clears both versions.
 
 ## Physical contracts
