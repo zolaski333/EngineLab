@@ -202,12 +202,16 @@ runtime keeps it. 360 mm cells show 29 to 61 % less pressure swing than a
 45 mm reference, 180 mm within 5 % on most engines; the simulation then has
 13 to 20 % less headroom. The audio does not depend on it.
 
-### Live bore and stroke changes
+### Live bore, stroke and rod changes
 
 `resizeCylinders` (foundation) gives every cylinder one bore and stroke and
 the crank journals half the stroke as throw. An engine authored by
 compression ratio keeps it; one authored by chamber geometry keeps its
 piston-to-deck clearance and its compression ratio follows.
+`resizeConnectingRods` gives every cylinder one rod length (at least 1.2
+strokes; a radial's articulated rods are refused) and keeps the compression
+ratio: one authored by chamber geometry keeps its piston-to-deck clearance,
+its deck moving by the added length.
 `EngineRuntime::applyLiveCylinderResize` hands the sizes to the simulation
 thread, where `EngineSimulator::beginCylinderResize` applies them one crank
 journal at a time, at the gas-exchange TDC (phase 360) of the first of its
@@ -514,7 +518,8 @@ had when it was selected. The camera stays and the part stays selected.
 A cylinder liner or piston offers the engine's bore and stroke the same way
 (1 mm, 0.1 mm with Shift), with a choice between a 3 s ramp (the default) and
 the next cycle (a live bore and stroke change, see above). The view shows the target
-size at once.
+size at once. A connecting rod offers the rods' length the same way (5 mm,
+0.5 mm with Shift).
 
 The other parts edit the same way, each through `MainComponent::applyEngineEdit`
 (see *Which edits are live*):

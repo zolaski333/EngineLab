@@ -1048,6 +1048,8 @@ void EngineViewport::applyEdit(double first, double second, bool gradual) {
         applyExhaustEdit(first, second);
     else if (role == render::PartRole::liner || role == render::PartRole::piston)
         applyCylinderEdit(first, second, gradual);
+    else if (role == render::PartRole::rod)
+        applyRodEdit(second, gradual);
     else if (partEditor_)
         applyPartEdit(first, second);
 }
@@ -1074,7 +1076,19 @@ void EngineViewport::applyPartEdit(double first, double second) {
 void EngineViewport::applyCylinderEdit(double boreMm, double strokeMm, bool gradual) {
     if (!scene_ || !cylinderEditor_ || selectedPart_ < 0) return;
     auto edited = scene_->config();
-    if (const auto error = resizeCylinders(edited, boreMm, strokeMm); !error.empty()) {
+    const auto error = resizeCylinders(edited, boreMm, strokeMm);
+    sendCylinderEdit(edited, error, gradual);
+}
+
+void EngineViewport::applyRodEdit(double rodMm, bool gradual) {
+    if (!scene_ || !cylinderEditor_ || selectedPart_ < 0) return;
+    auto edited = scene_->config();
+    const auto error = resizeConnectingRods(edited, rodMm);
+    sendCylinderEdit(edited, error, gradual);
+}
+
+void EngineViewport::sendCylinderEdit(const EngineConfig& edited, const std::string& error, bool gradual) {
+    if (!error.empty()) {
         inspector_.setEditStatus(juce::String::fromUTF8(error.c_str()));
         return;
     }
@@ -1543,8 +1557,24 @@ void EngineViewport::updateInspector() {
         break;
     case render::PartRole::rod:
         title = "Connecting rod";
+        if (const auto rodMm = connectingRodLength(config); cylinderEditor_ && rodMm && cylinder != nullptr) {
+            PartInspector::Edit rodEdit;
+            rodEdit.key = std::uint64_t { 3 } << 60U;
+            rodEdit.firstEditable = false;
+            rodEdit.secondLabel = "Length";
+            rodEdit.second = *rodMm;
+            rodEdit.secondStep = 5.0;
+            rodEdit.secondFineStep = 0.5;
+            rodEdit.secondMinimum = std::ceil(12.0 * cylinder->strokeMm) / 10.0;
+            rodEdit.secondMaximum = 500.0;
+            rodEdit.offersRamp = true;
+            rodEdit.note = "Every rod changes, each crank throw at its gas-exchange TDC. "
+                           "The compression ratio stays.";
+            edit = rodEdit;
+        }
         if (cylinder != nullptr) {
             add("Length", millimetres(cylinder->connectingRodMm));
+            add("Rod / stroke", juce::String(cylinder->connectingRodMm / std::max(1.0, cylinder->strokeMm), 2));
             add("Mass", juce::String(juce::roundToInt(cylinder->connectingRodMassGrams)) + " g");
         }
         break;

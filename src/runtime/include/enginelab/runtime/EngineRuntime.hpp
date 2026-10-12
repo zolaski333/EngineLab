@@ -332,11 +332,12 @@ public:
     /** Mesh of the exhaust gas network, as last requested. Caller's thread. */
     [[nodiscard]] double exhaustCellLengthM() const noexcept { return exhaustCellLengthM_; }
     /**
-     * Resize the cylinders of the running engine: the bore, stroke, deck
+     * Resize the cylinders of the running engine: the bore, stroke, rod, deck
      * height and compression ratio of `edited`'s cylinders and the throws of
-     * its crank journals (as resizeCylinders() writes them; nothing else is
-     * read) reach the running engine at the next 240 Hz boundary, each crank
-     * journal at its next gas-exchange TDC, or gradually over `rampSeconds`
+     * its crank journals (as resizeCylinders() and resizeConnectingRods()
+     * write them; nothing else is read) reach the running engine at the next
+     * 240 Hz boundary, each crank journal at its next gas-exchange TDC, or
+     * gradually over `rampSeconds`
      * (EngineSimulator::beginCylinderResize).
      *
      * Returns false, changing nothing, when `edited` has other cylinders or

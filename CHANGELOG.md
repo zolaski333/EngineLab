@@ -60,6 +60,11 @@ file formats, always with an in-memory migration).
 
 ### Added
 
+- Change the connecting rods' length while the engine runs: click a rod in
+  the 3-D view. The compression ratio stays (the deck moves with the rod),
+  and the change glides or lands at each throw's gas-exchange TDC, like the
+  bore and stroke. An engine with articulated rods (the radial) keeps its
+  rods.
 - Individual throttle bodies: `individual_throttles: true` in an engine's
   intake puts one plate in each runner instead of one ahead of the plenum,
   at `throttle_distance_from_valve_mm`. The plate is a real restriction in

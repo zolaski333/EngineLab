@@ -31,4 +31,21 @@ struct CylinderSize final {
  */
 [[nodiscard]] std::string resizeCylinders(EngineConfig& config, double boreMm, double strokeMm);
 
+/** The connecting rod length every cylinder shares, or nothing when the rods
+ *  differ or one is a radial's master or articulated rod. */
+[[nodiscard]] std::optional<double> connectingRodLength(const EngineConfig& config);
+
+/**
+ * Gives every cylinder a connecting rod `rodMm` long, in place. Returns an
+ * empty string on success, or why the edit was refused (the configuration is
+ * then unchanged): rods that differ or are articulated, or a rod shorter
+ * than 1.2 strokes (the angularity no real engine runs) or over 500 mm.
+ *
+ * The compression ratio stays: the piston reaches the same height at TDC.
+ * An engine authored by chamber geometry keeps its piston-to-deck clearance,
+ * so its deck rises by the added length, as with a taller block. The caller
+ * still validates the whole configuration.
+ */
+[[nodiscard]] std::string resizeConnectingRods(EngineConfig& config, double rodMm);
+
 } // namespace enginelab

@@ -537,6 +537,7 @@ bool EngineRuntime::applyLiveCylinderResize(const EngineConfig& edited, double r
         cylinder.boreMm = source.boreMm;
         cylinder.strokeMm = source.strokeMm;
         cylinder.deckHeightMm = source.deckHeightMm;
+        cylinder.connectingRodMm = source.connectingRodMm;
         cylinder.compressionRatio = source.compressionRatio;
     }
     for (std::size_t index = 0; index < edited.crankJournals.size(); ++index) {
@@ -560,6 +561,7 @@ bool EngineRuntime::applyLiveCylinderResize(const EngineConfig& edited, double r
         cylinder.boreMm = source.boreMm;
         cylinder.strokeMm = source.strokeMm;
         cylinder.deckHeightMm = source.deckHeightMm;
+        cylinder.connectingRodMm = source.connectingRodMm;
         cylinder.compressionRatio = source.compressionRatio;
     }
     for (std::size_t index = 0; index < config_.crankJournals.size(); ++index)

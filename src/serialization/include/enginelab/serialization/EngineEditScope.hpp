@@ -12,8 +12,9 @@ namespace enginelab {
 struct EngineEditScope final {
     /** config.exhaust and config.exhaustPaths (EngineRuntime::applyLiveExhaust). */
     bool exhaust { false };
-    /** Bore, stroke, deck height and compression ratio of the same cylinders,
-     *  the throws of the same journals (applyLiveCylinderResize). */
+    /** Bore, stroke, connecting rod, deck height and compression ratio of the
+     *  same cylinders, the throws of the same journals
+     *  (applyLiveCylinderResize). */
     bool cylinders { false };
     /** config.injection and config.forcedInduction (applyLiveSettings). */
     bool settings { false };

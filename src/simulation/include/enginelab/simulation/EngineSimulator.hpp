@@ -239,8 +239,8 @@ public:
      * and `config` hold the previous runners and intake, freed by the caller;
      * on failure nothing changes. Simulation thread only, like step(). */
     [[nodiscard]] bool replaceIntake(LiveIntake& intake, EngineConfig& config) noexcept;
-    /** Move the cylinders to `target`'s bore, stroke, deck height and
-     * compression ratio while the engine runs; nothing else of `target` is
+    /** Move the cylinders to `target`'s bore, stroke, connecting rod, deck
+     * height and compression ratio while the engine runs; nothing else of `target` is
      * read. The cylinders on one crank journal change together, at the
      * gas-exchange TDC of the first of them to reach it, when the chamber
      * holds only its clearance volume; the gas keeps its mass through the
@@ -709,6 +709,7 @@ private:
         double strokeMm {};
         double deckHeightMm {};
         double compressionRatio {};
+        double connectingRodMm {};
     };
     struct CylinderResize final {
         std::vector<CylinderGeometry> from;

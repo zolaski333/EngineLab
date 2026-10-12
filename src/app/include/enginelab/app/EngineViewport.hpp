@@ -337,6 +337,9 @@ private:
     void applyEdit(double first, double second, bool gradual);
     void applyExhaustEdit(double lengthMm, double diameterMm);
     void applyCylinderEdit(double boreMm, double strokeMm, bool gradual);
+    void applyRodEdit(double rodMm, bool gradual);
+    /** Hands a resized engine to cylinderEditor_, or says why it was refused. */
+    void sendCylinderEdit(const EngineConfig& edited, const std::string& error, bool gradual);
     /** Applies the selected part's partEditor_ through configEditor_. */
     void applyPartEdit(double first, double second);
     void updateLegend();

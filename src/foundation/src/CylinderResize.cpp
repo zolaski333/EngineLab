@@ -44,4 +44,30 @@ std::string resizeCylinders(EngineConfig& config, double boreMm, double strokeMm
     return {};
 }
 
+std::optional<double> connectingRodLength(const EngineConfig& config) {
+    if (config.cylinders.empty()) return std::nullopt;
+    const auto& first = config.cylinders.front();
+    for (const auto& cylinder : config.cylinders)
+        if (cylinder.connectingRodType != ConnectingRodType::conventional
+            || cylinder.connectingRodMm != first.connectingRodMm)
+            return std::nullopt;
+    return first.connectingRodMm;
+}
+
+std::string resizeConnectingRods(EngineConfig& config, double rodMm) {
+    if (!connectingRodLength(config))
+        return "The cylinders do not share one conventional connecting rod.";
+    if (!std::isfinite(rodMm) || rodMm > 500.0) return "The connecting rod must be at most 500 mm.";
+    for (const auto& cylinder : config.cylinders)
+        if (rodMm < 1.2 * cylinder.strokeMm)
+            return "The connecting rod must be at least 1.2 times the stroke.";
+    for (auto& cylinder : config.cylinders) {
+        // Same piston-to-deck clearance at TDC, so the same chamber.
+        if (cylinder.headChamberVolumeCc > 0.0)
+            cylinder.deckHeightMm += rodMm - cylinder.connectingRodMm;
+        cylinder.connectingRodMm = rodMm;
+    }
+    return {};
+}
+
 } // namespace enginelab

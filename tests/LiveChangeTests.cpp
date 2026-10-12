@@ -664,10 +664,85 @@ void liveChangeRegression() {
     resizedAudioSwapHasNoClick();
 }
 
+/** A connecting rod change while the engine runs, at once or over 2 s: the
+ * compression ratio stays, no stall, and the brake torque of an engine built
+ * with those rods. A radial's articulated rods are refused. */
+void rodChangeSettlesLikeARestart() {
+    auto radial = catalogueEngine("Radial");
+    const auto radialBefore = radial.cylinders.front().connectingRodMm;
+    require(!resizeConnectingRods(radial, radialBefore + 10.0).empty()
+                && radial.cylinders.front().connectingRodMm == radialBefore,
+            "a radial's articulated rods are refused and left as they were");
+    for (const auto* name : { "Yamaha CP2", "K20A" }) {
+        const auto original = catalogueEngine(name);
+        const auto rod = connectingRodLength(original);
+        require(rod.has_value(), std::string(name) + ": the cylinders share one rod");
+        // A rod 0.3 stroke longer: rod/stroke 1.68 -> 1.98 on the CP2.
+        const auto targetRod = *rod + 0.3 * original.cylinders.front().strokeMm;
+        auto longer = original;
+        const auto error = resizeConnectingRods(longer, targetRod);
+        require(error.empty(), std::string(name) + ": " + error);
+        normaliseEngineConfig(longer);
+        const auto invalid = validateEngineConfig(longer);
+        require(!invalid, std::string(name) + ": " + invalid.value_or(""));
+        for (std::size_t index = 0; index < original.cylinders.size(); ++index)
+            require(longer.cylinders[index].compressionRatio == original.cylinders[index].compressionRatio,
+                    std::string(name) + ": the compression ratio stays");
+        Rig built(longer);
+        Rig instant(original);
+        Rig ramped(original);
+        Rig untouched(original);
+        constexpr auto swapFrame = 5 * 240;
+        constexpr auto frames = 12 * 240;
+        constexpr double rampSeconds = 2.0;
+        std::array<Rig*, 4> rigs { &built, &instant, &ramped, &untouched };
+        std::array<double, 4> rpm {};
+        std::array<double, 4> brakeSum {};
+        double minimumRpm = 1.0e9;
+        auto rodMidRamp = 0.0;
+        constexpr auto settled = frames - 3 * 240;
+        for (auto frame = 0; frame < frames; ++frame) {
+            const auto t = frame * frameSeconds;
+            if (frame == swapFrame) {
+                require(instant.simulator->beginCylinderResize(longer, 0.0), std::string(name) + ": instant rod change");
+                require(ramped.simulator->beginCylinderResize(longer, rampSeconds), std::string(name) + ": ramped rod change");
+            }
+            if (frame == swapFrame + static_cast<int>(rampSeconds * 120.0))
+                rodMidRamp = ramped.simulator->config().cylinders.front().connectingRodMm;
+            for (std::size_t index = 0; index < rigs.size(); ++index) {
+                const auto controls = heldAt(t, rpm[index], original);
+                rpm[index] = rigs[index]->simulator->step(frameSeconds, controls).state.rpm;
+                if (frame >= settled) brakeSum[index] += controls.dynamometerTorqueNm;
+                if (frame >= swapFrame && (index == 1 || index == 2)) minimumRpm = std::min(minimumRpm, rpm[index]);
+            }
+        }
+        const auto mean = [&brakeSum](std::size_t index) { return brakeSum[index] / (frames - settled); };
+        const auto builtMean = mean(0);
+        const auto effect = std::abs(mean(3) - builtMean);
+        std::cout << "  " << name << ": rod " << *rod << " -> " << targetRod << " mm; settled brake torque, Nm: built "
+                  << builtMean << ", instant " << mean(1) << ", ramped " << mean(2) << ", untouched " << mean(3)
+                  << "; rod " << rodMidRamp << " mm half-way through the ramp; lowest rpm " << minimumRpm << "\n";
+        require(minimumRpm > 0.5 * original.idleRpm, std::string(name) + ": the engine keeps running");
+        require(instant.simulator->config().cylinders.back().connectingRodMm == targetRod
+                    && ramped.simulator->config().cylinders.back().connectingRodMm == targetRod,
+                std::string(name) + ": the running engine takes the new rods");
+        // The rod moves the torque by less than a bore does; the cycle-to-
+        // cycle variability then sets the tolerance.
+        const auto tolerance = std::max(0.25 * effect, 0.005 * builtMean);
+        require(std::abs(mean(1) - builtMean) <= tolerance,
+                std::string(name) + ": the rods changed at once, the engine settles like one built that way");
+        require(std::abs(mean(2) - builtMean) <= tolerance,
+                std::string(name) + ": the rods changed over a ramp, the engine settles like one built that way");
+        require(rodMidRamp > *rod + 0.2 * (targetRod - *rod) && rodMidRamp < *rod + 0.8 * (targetRod - *rod),
+                std::string(name) + ": half-way through the ramp the rod is half-way");
+    }
+}
+
 void liveCylinderResizeRegression() {
     identicalResizeIsInvisible();
     resizeHappensAtGasExchangeTdc();
     resizeSettlesLikeARestart();
+    rodChangeSettlesLikeARestart();
     resizeAtIdleKeepsEveryEngineRunning();
 }
 
