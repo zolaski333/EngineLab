@@ -240,8 +240,8 @@ public:
     /** Where a resize made in the part inspector goes: applies the edited
         configuration to the engine, or refuses it. */
     void setConfigEditor(std::function<bool(const EngineConfig&)>);
-    /** Where a bore and stroke change goes, with its ramp in seconds (0: at
-        the next cycle). */
+    /** Where a bore, stroke, rod or camshaft change goes, with its ramp in
+        seconds (0: at the next cycle). */
     void setCylinderEditor(std::function<bool(const EngineConfig&, double rampSeconds)>);
     /** Seconds over which a gradual bore and stroke change happens. */
     static constexpr double cylinderRampSeconds = 3.0;
@@ -338,6 +338,8 @@ private:
     void applyExhaustEdit(double lengthMm, double diameterMm);
     void applyCylinderEdit(double boreMm, double strokeMm, bool gradual);
     void applyRodEdit(double rodMm, bool gradual);
+    /** A valve's cam or the heads' cam timing, through the ramped editor. */
+    void applyCamshaftEdit(double first, double second, bool gradual);
     /** Hands a resized engine to cylinderEditor_, or says why it was refused. */
     void sendCylinderEdit(const EngineConfig& edited, const std::string& error, bool gradual);
     /** Applies the selected part's partEditor_ through configEditor_. */

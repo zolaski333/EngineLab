@@ -33,7 +33,8 @@ ActionMap::ActionMap()
         { "wheel_simulation_rate", letter('N') },
         { "wheel_fine_throttle", juce::KeyPress(juce::KeyPress::spaceKey) },
         // Every letter A-Z is already bound, hence a digit.
-        { "dyno_ramp", letter('6') }
+        { "dyno_ramp", letter('6') },
+        { "ab_switch", letter('7') }
     }} {
     load();
 }

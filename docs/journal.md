@@ -5,6 +5,14 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-12 — Live flywheel, camshafts and air
+
+- `EngineLab.LiveTuning`, deterministic, built / swapped / untouched engines. Flywheel x2 taken at idle: free rev to 75 % of redline CP2 0.938 / 0.925 / 0.525 s, 2JZ 1.404 / 1.421 / 0.842 s.
+- Cams 40 deg shorter, 30 % less lift, taken at 6 s at 60 % of redline: CP2 55.16 / 55.14 (55.13 over 2 s) / 70.84 Nm, K20A 142.2 / 142.1 / 222.6 Nm. Each fails without its copy into the running configuration.
+- Air of 2,000 m (79.5 kPa) and 35 degC: CP2 51.6 / 51.5 / 70.8 Nm (-27 %), 2JZ 338.7 / 339.3 / 454.7 Nm (-25 %). The turbo's boost target is a pressure ratio to ambient, so it does not hold manifold pressure up high as a gauge-referenced wastegate (about -11 % MAP) or an absolute-MAP controller would. Not changed; not compared with a measured altitude curve.
+- Gearbox: K20A driveline, first gear, engine held at 2,000 rpm, final drive x1.3 at 1 s: 3.093 / 3.085 / 3.997 m/s.
+- Not done: the pipes' outer walls keep the built ambient until a restart; the 3-D edits were not driven by hand.
+
 ## 2026-10-12 — Turbo mid pipes, behind the turbine
 
 - `turbo_downpipe` (2JZ, I5, TDI) and the EJ25's `compact_sport` get the K20A's 2.2 m mid pipe: routes ~1.2 -> ~3.4 m. Same binary, catalogue copies with and without, deterministic harnesses.

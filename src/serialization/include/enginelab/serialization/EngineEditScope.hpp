@@ -16,14 +16,20 @@ struct EngineEditScope final {
      *  same cylinders, the throws of the same journals
      *  (applyLiveCylinderResize). */
     bool cylinders { false };
-    /** config.injection and config.forcedInduction (applyLiveSettings). */
+    /** config.injection, config.forcedInduction, config.ignition,
+     *  config.exhaustAfterfire and the crankshafts' inertia
+     *  (applyLiveSettings). */
     bool settings { false };
     /** config.intake, config.intakePaths, the legacy plenum volume and
      *  throttle bore, and each cylinder's own runner size (applyLiveIntake). */
     bool intake { false };
+    /** config.camshafts and every bank's camshafts (applyLiveCamshafts). */
+    bool camshafts { false };
     bool other { false };
 
-    [[nodiscard]] bool any() const noexcept { return exhaust || cylinders || settings || intake || other; }
+    [[nodiscard]] bool any() const noexcept {
+        return exhaust || cylinders || settings || intake || camshafts || other;
+    }
 };
 
 /**

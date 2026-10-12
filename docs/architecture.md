@@ -231,17 +231,41 @@ configuration at every step. Not updated until a restart: the audio's
 structural modes (`StructuralModalRadiator`, built from the mean bore and
 stroke). Cylinder count, layout and fuel stay restart-only.
 
-### Live injector and turbo changes
+### Live injector, turbo, limiter, afterfire, flywheel, air and gearbox changes
 
-The simulator reads `injection` and `forcedInduction` only inside `step()`,
-and caches nothing derived from them, so `EngineSimulator::replaceSettings`
-swaps both between two frames. `EngineRuntime::applyLiveSettings` posts them
-the same way as an exhaust. Refused, for a restart: another injection mode, a
-forced induction added, removed or of another type, another blade or lobe
-count (`settingsReplaceable`). The sound's turbo layer takes the new
+The simulator reads `injection`, `forcedInduction`, `ignition`,
+`exhaustAfterfire`, the crankshafts' inertia and the ambient pressure and
+temperature only inside `step()`, and caches nothing derived from them but
+the exhaust outlet's ambient reservoir, which it rebuilds, so
+`EngineSimulator::replaceSettings` swaps them between two frames (the
+crankshafts field by field: their layout stays). The pipes' outer walls keep
+the outside temperature they were built with until a restart.
+`EngineRuntime::applyLiveSettings` posts them the same way as an exhaust,
+then gives the driveline the new engine inertia, gearbox and vehicle
+(`DrivelineModel::replaceVehicle`, same gear count: the clutch, wheel and
+vehicle states carry on) and the audio the new ambient. Refused, for a
+restart: another injection mode, a forced induction added, removed or of
+another type, another blade or lobe count, another number of gears, another crankshaft count, ratio,
+phase or position (`settingsReplaceable`). The ECU tables (advance, AFR, rev
+limit) are live through the ECU tuner, and override `ignition`'s curve and
+limit whenever the store holds them. The sound's turbo layer takes the new
 configuration at the start of an audio block
 (`RealtimeEngineAudio::replaceForcedInduction`, `ForcedInductionAcoustics::
 updateConfig`); its rotor and filter states carry on.
+
+### Live camshaft changes
+
+The valve train reads the camshafts (the engine's and each bank's) at every
+sub-step and keeps only its phaser state, so an edit of the camshafts that
+keeps the banks, and variable profiles and continuous valve control switched
+on or off alike (`camshaftsReplaceable`), is taken live.
+`EngineRuntime::applyLiveCamshafts` posts it like the other groups;
+`EngineSimulator::beginCamshaftChange` swaps in the lift profiles, flow curves
+and continuous control at once and glides durations, lifts, centrelines, flow
+coefficients and the profile switch from their running values over the ramp
+(`advanceCamshaftChange`, at every sub-step), or takes them at the next
+sub-step without one. A valve open at that moment changes its lift on the
+spot; the ramp spreads that.
 
 ### Live intake changes
 
@@ -261,11 +285,18 @@ silently, 30 ms crossfade).
 
 `engineEditScope` (serialization) compares a running and an edited
 configuration, both normalised, through their JSON, and sorts the difference
-into the groups above: exhaust, cylinder sizes, settings, intake, or
-`other`.
+into the groups above: exhaust, cylinder sizes, settings, intake, camshafts,
+or `other`.
 `MainComponent::applyEngineEdit` takes each group live in turn and restarts
-only for `other` or a group the running engine refuses. The JSON editor and
-the 3-D view's inspector go through it.
+only for `other` or a group the running engine refuses; cylinder sizes and
+camshafts take its ramp (the inspector's choice, 3 s from the JSON editor).
+The JSON editor and the 3-D view's inspector go through it.
+
+The top bar's A/B button (`MainComponent::switchAbVersion`, key 7) keeps the
+version not running in `abVersions_` and hands the other one to
+`applyEngineEdit` with no ramp, so the switch is heard at once. The
+calibration store (ECU tables) is not part of a version. Switching engine or
+reloading the engine file clears both versions.
 
 ## Physical contracts
 
@@ -539,7 +570,15 @@ The other parts edit the same way, each through `MainComponent::applyEngineEdit`
   hides it);
 - a turbo: the wastegate pressure ratio, the rated ratio keeping its
   distance to it, and the turbine flow area; a supercharger: its pressure
-  and drive ratios.
+  and drive ratios;
+- the cylinder block: the air around the engine, as an altitude (the
+  standard atmosphere's pressure there) and a temperature;
+- the crankshaft: the inertia of the crank and flywheel (every shaft scaled
+  alike), with the total including the rods;
+- an intake or exhaust valve: its cam's duration and lift; the cylinder
+  heads: the intake and exhaust centrelines, with the lobe separation and
+  the overlap. Every camshaft moves by the same amount, a variable profile's
+  high cam too, over the 3 s ramp or at the next cycle.
 
 Two controls at the bottom right slow things down, and they are different.
 *0.25x / 0.5x / 1x* is the simulation's time scale

@@ -248,6 +248,7 @@ add_executable(EngineLabRealtimeRegressionTests
     LiveChangeTests.cpp
     LiveSettingsTests.cpp
     LiveIntakeTests.cpp
+    LiveTuningTests.cpp
     CameraMicrophoneTests.cpp)
 target_link_libraries(EngineLabRealtimeRegressionTests PRIVATE EngineLab::Audio EngineLab::Catalog)
 target_compile_definitions(EngineLabRealtimeRegressionTests PRIVATE
@@ -280,6 +281,9 @@ add_test(NAME EngineLab.LiveSettings
 # Live intake sizes (runners, plenums, throttles), simulator and intake sound.
 add_test(NAME EngineLab.LiveIntake
     COMMAND EngineLabRealtimeRegressionTests --live-intake-only)
+# Live tuning (flywheel, cams, ambient, gearbox) on a running simulator.
+add_test(NAME EngineLab.LiveTuning
+    COMMAND EngineLabRealtimeRegressionTests --live-tuning-only)
 # The camera microphone: a listener that moves, glides and comes back.
 add_test(NAME EngineLab.CameraMicrophone
     COMMAND EngineLabRealtimeRegressionTests --camera-microphone-only)

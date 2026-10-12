@@ -69,6 +69,29 @@ file formats, always with an in-memory migration).
 
 ### Added
 
+- An **A/B** button in the top bar (key 7) keeps two versions of the
+  running engine. Switch to B, change the cams, the exhaust or the air, then
+  switch back and forth to hear the difference at once. Each version keeps
+  its own edits; the ECU tables are shared. Parts that cannot change live
+  (the firing order, for example) restart the engine. Choosing another
+  engine or reloading its file starts again from A.
+- Gearbox and vehicle edits in the JSON editor (ratios, final drive, mass,
+  tyres, clutch) are taken while the engine runs, without a restart, as long
+  as the number of gears stays.
+- Change the air while the engine runs: click the cylinder block and set
+  the altitude and the temperature. At 2,000 m and 35 degC the CP2 loses
+  27 % of its torque. The 2JZ loses 25 %: its boost is controlled as a ratio
+  to the outside pressure, so it does not make up for the thinner air the
+  way a real wastegate would.
+- Change the camshafts while the engine runs: click an intake or exhaust
+  valve for its cam's duration and lift, or the cylinder heads for the cam
+  timing (intake and exhaust centrelines, with the overlap shown). The
+  valves glide to the new cams over 3 s, or take them at the next cycle.
+  Switching a variable profile (VTEC) on or off still restarts the engine.
+- Change the flywheel while the engine runs: click the crankshaft in the
+  3-D view and set its inertia (crank and flywheel). A lighter one revs up
+  and down faster. Ignition limiter and afterfire settings edited in the
+  JSON editor are also taken live now, without a restart.
 - Change the connecting rods' length while the engine runs: click a rod in
   the 3-D view. The compression ratio stays (the deck moves with the rod),
   and the change glides or lands at each throw's gas-exchange TDC, like the

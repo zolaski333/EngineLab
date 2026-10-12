@@ -69,6 +69,7 @@ MainComponent::MainComponent() {
 
     refreshEngineChoices();
     topBar_.onEngineSelected = [this](int presetIndex) { selectEngine(presetIndex); };
+    topBar_.abButton.onClick = [this] { switchAbVersion(); };
     topBar_.exhaustButton.onClick = [this] { showExhaustDesigner(); };
     topBar_.ecuButton.onClick = [this] { showEcuTuner(); };
     topBar_.audioButton.onClick = [this] { showAudioWorkshop(); };
@@ -140,7 +141,7 @@ MainComponent::MainComponent() {
     });
     viewport_.setConfigEditor([this](const EngineConfig& edited) { return applyEngineEdit(edited); });
     viewport_.setCylinderEditor([this](const EngineConfig& edited, double rampSeconds) {
-        return applyCylinderResize(edited, rampSeconds);
+        return applyEngineEdit(edited, rampSeconds);
     });
     viewport_.onExhaustResolutionChanged = [this] { applyExhaustResolution(); };
     viewport_.onClaimKeyboard = [this] {
@@ -268,6 +269,7 @@ bool MainComponent::switchEngine(const EngineConfig& config, std::shared_ptr<cal
                                  const std::optional<calibration::CalibrationDraft>& loadedTables) {
     auto kept = unsavedEdit();
     if (!applyConfig(config, false, false, std::move(store))) return false;
+    resetAbVersions();
     if (kept && kept->first != config_.name) sessionEdits_.insert_or_assign(kept->first, std::move(kept->second));
     if (selectedPresetIndex_ >= 0) {
         // The edits now run; they are kept again when another engine is chosen.
@@ -371,7 +373,7 @@ bool MainComponent::applyConfig(const EngineConfig& newConfig, bool preserveScri
     return true;
 }
 
-bool MainComponent::applyEngineEdit(const EngineConfig& edited) {
+bool MainComponent::applyEngineEdit(const EngineConfig& edited, double rampSeconds) {
     auto scope = engineEditScope(config_, edited);
     if (!scope.any()) return true;
     if (scope.other || !runtime_ || !audio_ || runtime_->dynoRunning())
@@ -384,15 +386,59 @@ bool MainComponent::applyEngineEdit(const EngineConfig& edited) {
     scope = engineEditScope(config_, edited);
     if (scope.exhaust && !applyExhaustEdit(edited)) return false;
     scope = engineEditScope(config_, edited);
-    if (scope.cylinders) return applyCylinderResize(edited, ui::EngineViewport::cylinderRampSeconds);
+    if (scope.camshafts && !applyCamshaftEdit(edited, rampSeconds)) return false;
+    scope = engineEditScope(config_, edited);
+    if (scope.cylinders) return applyCylinderResize(edited, rampSeconds);
+    return true;
+}
+
+void MainComponent::switchAbVersion() {
+    if (!runtime_ || runtime_->dynoRunning()) return;
+    abVersions_[abActive_] = config_;
+    const auto next = 1U - abActive_;
+    if (!abVersions_[next]) abVersions_[next] = config_;
+    // No ramp: the point is to hear the two versions back to back.
+    const auto target = *abVersions_[next];
+    if (!applyEngineEdit(target, 0.0)) return;
+    abActive_ = next;
+    topBar_.abButton.setButtonText(abActive_ == 0 ? "A" : "B");
+    topBar_.abButton.setEngaged(abActive_ == 1);
+}
+
+void MainComponent::resetAbVersions() {
+    abVersions_ = {};
+    abActive_ = 0;
+    topBar_.abButton.setButtonText("A");
+    topBar_.abButton.setEngaged(false);
+}
+
+bool MainComponent::applyCamshaftEdit(const EngineConfig& edited, double rampSeconds) {
+    if (!runtime_ || runtime_->dynoRunning() || !runtime_->applyLiveCamshafts(edited, rampSeconds))
+        return applyConfig(edited, false, true);
+    const auto& running = runtime_->engineConfig();
+    config_.camshafts = running.camshafts;
+    for (std::size_t index = 0; index < config_.banks.size() && index < running.banks.size(); ++index)
+        config_.banks[index].camshafts = running.banks[index].camshafts;
+    viewport_.setEngine(config_);
+    viewport_.refresh();
+    configChanged_ = true;
     return true;
 }
 
 bool MainComponent::applySettingsEdit(const EngineConfig& edited) {
     if (!runtime_ || !audio_ || runtime_->dynoRunning() || !runtime_->applyLiveSettings(edited))
         return applyConfig(edited, false, true);
-    config_.injection = runtime_->engineConfig().injection;
-    config_.forcedInduction = runtime_->engineConfig().forcedInduction;
+    const auto& running = runtime_->engineConfig();
+    config_.injection = running.injection;
+    config_.forcedInduction = running.forcedInduction;
+    config_.ignition = running.ignition;
+    config_.exhaustAfterfire = running.exhaustAfterfire;
+    config_.crankshafts = running.crankshafts;
+    config_.rotatingInertiaKgM2 = running.rotatingInertiaKgM2;
+    config_.ambientPressureKpa = running.ambientPressureKpa;
+    config_.ambientTemperatureC = running.ambientTemperatureC;
+    config_.transmission = running.transmission;
+    config_.vehicle = running.vehicle;
     // The simulation has the new settings: a sound that cannot follow them
     // needs the restart after all.
     if (!audio_->replaceForcedInduction(config_.forcedInduction))
@@ -912,7 +958,10 @@ void MainComponent::pollEngineScript() {
         // once the run has stopped, without requiring another file save.
         if (runtime_ && runtime_->dynoRunning()) return;
         scriptAttempt_ = reload->attempt;
-        if (applyConfig(*reload->config, true, true)) scriptRevision_ = reload->revision;
+        if (applyConfig(*reload->config, true, true)) {
+            scriptRevision_ = reload->revision;
+            resetAbVersions();
+        }
         return;
     }
     scriptAttempt_ = reload->attempt;
@@ -1488,6 +1537,7 @@ bool MainComponent::keyPressed(const juce::KeyPress& key) {
     if (actionMap_.matches(AppAction::dyno, key)) { toggleDyno(); return true; }
     if (actionMap_.matches(AppAction::dynoHold, key)) { if (runtime_) runtime_->setDynoHoldEnabled(!runtime_->dynoHoldEnabled()); return true; }
     if (actionMap_.matches(AppAction::dynoRamp, key)) { if (runtime_) runtime_->setDynoRampEnabled(!runtime_->dynoRampEnabled()); return true; }
+    if (actionMap_.matches(AppAction::abSwitch, key)) { switchAbVersion(); return true; }
     if (actionMap_.matches(AppAction::clutchDecrease, key)) {
         targetClutchPressure_ = std::clamp(targetClutchPressure_ - 0.08, 0.0, 1.0);
         return true;
