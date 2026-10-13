@@ -233,6 +233,15 @@ target_compile_definitions(EngineLabShiftStyleTests PRIVATE
 enginelab_set_warnings(EngineLabShiftStyleTests)
 add_test(NAME EngineLab.ShiftStyle COMMAND EngineLabShiftStyleTests)
 
+add_executable(EngineLabTurboFitTests TurboFitTests.cpp)
+target_link_libraries(EngineLabTurboFitTests PRIVATE
+    EngineLab::Foundation EngineLab::Events EngineLab::Physics EngineLab::Ecu
+    EngineLab::Exhaust EngineLab::Simulation EngineLab::Catalog)
+target_compile_definitions(EngineLabTurboFitTests PRIVATE
+    ENGINELAB_CATALOG_ROOT="${CMAKE_SOURCE_DIR}")
+enginelab_set_warnings(EngineLabTurboFitTests)
+add_test(NAME EngineLab.TurboFit COMMAND EngineLabTurboFitTests)
+
 add_executable(EngineLabEcuCalibrationIntegrationTests EcuCalibrationIntegrationTests.cpp)
 target_link_libraries(EngineLabEcuCalibrationIntegrationTests PRIVATE
     EngineLab::Foundation EngineLab::Calibration EngineLab::Ecu)

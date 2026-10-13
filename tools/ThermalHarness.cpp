@@ -20,6 +20,7 @@
 #include <enginelab/events/FourStrokeEventGenerator.hpp>
 #include <enginelab/exhaust/ExhaustGraph.hpp>
 #include <enginelab/foundation/EngineTypes.hpp>
+#include <enginelab/foundation/TurboSizing.hpp>
 #include <enginelab/physics/SimplifiedGasolinePhysics.hpp>
 #include <enginelab/simulation/DynoAbsorberController.hpp>
 #include <enginelab/simulation/EngineSimulator.hpp>
@@ -172,6 +173,7 @@ int main(int argc, char** argv) {
     double idleSeconds = 20.0;
     double cooldownSeconds = 120.0;
     bool realistic = false;
+    bool addTurbo = false;
     double warmupMinutes = 0.0;
     double rideSeconds = 0.0;
     double rideAirSpeedMps = 25.0;
@@ -183,6 +185,7 @@ int main(int argc, char** argv) {
         else if (argument == "--idle-seconds" && index + 1 < argc) idleSeconds = std::stod(argv[++index]);
         else if (argument == "--cooldown-seconds" && index + 1 < argc) cooldownSeconds = std::stod(argv[++index]);
         else if (argument == "--realistic") realistic = true;
+        else if (argument == "--add-turbo") addTurbo = true;
         else if (argument == "--air-speed" && index + 1 < argc) airSpeedMps = std::stod(argv[++index]);
         else if (argument == "--warmup-minutes" && index + 1 < argc) warmupMinutes = std::stod(argv[++index]);
         else if (argument == "--ride-seconds" && index + 1 < argc) rideSeconds = std::stod(argv[++index]);
@@ -190,7 +193,7 @@ int main(int argc, char** argv) {
         else {
             std::cout << "usage: " << argv[0]
                       << " [--filter name] [--passes N] [--idle-seconds S] [--cooldown-seconds S]"
-                         " [--realistic] [--air-speed M/S] [--warmup-minutes M] [--ride-seconds S]"
+                         " [--realistic] [--add-turbo] [--air-speed M/S] [--warmup-minutes M] [--ride-seconds S]"
                          " [--ride-air-speed M/S] [--catalog-root path]\n";
             return argument == "--help" ? 0 : 2;
         }
@@ -203,6 +206,7 @@ int main(int argc, char** argv) {
     }
     auto config = selected.entry->config;
     if (realistic) config.thermal.regulated = false;
+    if (addTurbo && !config.forcedInduction.enabled) config = withTurbocharger(config);
     normaliseEngineConfig(config);
     auto rig = std::make_unique<Rig>(config);
 

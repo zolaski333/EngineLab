@@ -30,6 +30,7 @@
 #include <enginelab/audio/RealtimeEngineAudio.hpp>
 #include <enginelab/diagnostics/EngineDiagnostics.hpp>
 #include <enginelab/foundation/EngineTypes.hpp>
+#include <enginelab/foundation/TurboSizing.hpp>
 #include <enginelab/runtime/EngineRuntime.hpp>
 
 #include <algorithm>
@@ -911,6 +912,7 @@ int main(int argc, char** argv) {
     std::optional<double> intakeWallHeatUpdateSeconds;
     bool useWellMixedExhaustJunctions = false;
     bool disableMufflerPacking = false;
+    bool addTurbo = false;
     bool withAudio = false;
     bool gasView = false;
     bool outletJetNoiseEnabled = true;
@@ -969,6 +971,8 @@ int main(int argc, char** argv) {
             audioBlockSize = std::stoi(argv[++index]);
         else if (argument == "--well-mixed-junctions")
             useWellMixedExhaustJunctions = true;
+        else if (argument == "--add-turbo")
+            addTurbo = true;
         else if (argument == "--disable-muffler-packing")
             disableMufflerPacking = true;
         else if (argument == "--help") {
@@ -1025,7 +1029,10 @@ int main(int argc, char** argv) {
         return 2;
     }
 
-    const auto catalog = enginelab::loadEngineCatalog(catalogRoot);
+    auto catalog = enginelab::loadEngineCatalog(catalogRoot);
+    if (addTurbo)
+        for (auto& entry : catalog.entries)
+            if (!entry.config.forcedInduction.enabled) entry.config = enginelab::withTurbocharger(entry.config);
     if (catalog.entries.empty()) {
         std::cerr << "FAIL: no engines found under " << catalogRoot << '\n';
         return 1;
