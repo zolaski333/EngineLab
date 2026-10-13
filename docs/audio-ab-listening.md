@@ -351,6 +351,19 @@ EngineLabAbClipRenderer --compare "Yamaha CP2,Full System" `
   the one documented in `engines/15_cp2_full_system_like.engine.yaml`.
 - The **65 %** threshold applies to this mode, not to the diagnostic mode.
 
+## A/B through an output stage (`--output-stage`)
+
+`--output-stage <substring>` renders one engine once and pairs the render as
+rendered (control) against the same samples driven +40 dB into
+`AutoGainSoftClipper` (subject): a level-normalising gain with a 1 s hold,
+followed by a tanh. One physics run, so the output stage is the only factor.
+The key carries `mode: "output-stage"`, `engine` and `output_stage`, and
+`scripts/listening.py` scores it as a variant test. The same reference
+restrictions as `--compare` apply. `EngineLabGeometrySensitivityHarness
+--output-stage-ab` measures the same stage (crest factor, gain, band shape) at
+a steady engine speed. The stage is a mixing stage, not acoustics, and is not on
+the default audio path.
+
 ## Remaining limitations
 
 - The gestures of the real recordings do not follow the EngineLab trajectory

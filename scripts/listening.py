@@ -194,9 +194,15 @@ def report(pack: Path, allow_incomplete: bool) -> int:
     # a blind binary choice, Wilson, sign test. Only the LABELS differ, and getting
     # them wrong would report "EngineLab beat a real recording" about a run where
     # no recording was involved.
-    variant_mode = key.get("mode") == "variant"
+    # An output-stage pack is a variant too: one render against itself through
+    # the output stage.
+    variant_mode = key.get("mode") in ("variant", "output-stage")
     baseline = key.get("baseline_engine", "-")
     candidate = key.get("candidate_engine", "-")
+    if key.get("mode") == "output-stage":
+        engine = key.get("engine", "-")
+        baseline = f"{engine} as rendered"
+        candidate = f"{engine} through the output stage"
     subject_label = "Candidate" if variant_mode else "EngineLab"
     control_label = "Baseline" if variant_mode else "Reference"
 

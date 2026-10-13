@@ -28,6 +28,7 @@
 // This instrument compares simulator variants against one another. It does not
 // turn those internal A/Bs into claims about a real exhaust or listening test.
 
+#include <enginelab/audio/AutoGainSoftClipper.hpp>
 #include <enginelab/audio/RealtimeEngineAudio.hpp>
 #include <enginelab/catalog/EngineCatalog.hpp>
 #include <enginelab/ecu/SimpleEcuModel.hpp>
@@ -1251,6 +1252,88 @@ struct WavSignal final {
     return 0;
 }
 
+/** One render, measured twice: as rendered, and after the AutoGainSoftClipper
+ *  output stage. The physics is the same run, so the stage is the only factor.
+ *  Its output level is normalised by construction, so `level` below says
+ *  nothing; `shape` and the character axes are the figures. */
+[[nodiscard]] int runOutputStageAb(const EngineConfig& engine, double targetRpm,
+                                   double seconds,
+                                   const std::filesystem::path& wavOut) {
+    std::cout << "Output stage A/B: as rendered, then through AutoGainSoftClipper\n"
+              << "  engine      " << engine.name << '\n'
+              << "  held speed  " << std::fixed << std::setprecision(0) << targetRpm
+              << " rpm, " << std::setprecision(1) << seconds << " s\n\n";
+    RenderResult result;
+    try {
+        result = render(engine, targetRpm, seconds);
+    } catch (const std::exception& error) {
+        std::cerr << "  FAILED: " << error.what() << '\n';
+        return 1;
+    }
+    if (!(result.finalRpm > 0.80 * targetRpm)) {
+        std::cerr << "  ENGINE NOT HELD (" << std::setprecision(0) << result.finalRpm
+                  << " rpm). No figure from this render is usable.\n";
+        return 1;
+    }
+    std::cout << "  as rendered      rms " << std::setprecision(6) << result.mix.rms
+              << "  rpm " << std::setprecision(0) << result.finalRpm
+              << (result.physicalActive ? "" : "  [NON-PHYSICAL PATH]") << '\n';
+    printCharacter(characterise(result.mixSignal, result.steadyBegin, result.mix));
+
+    // The stage normalises only while its gain stays under the x10 cap. The
+    // render's full scale is 134 dB SPL, so an engine's mean level sits 20-40 dB
+    // under the point where that holds, and at unity drive the stage is a fixed
+    // x10 into a mostly linear tanh. The other simulator feeds it pressures of
+    // order ten (its outlet values over metres), where the cap never binds. A
+    // +40 dB drive puts this render in that regime; above it the result no
+    // longer depends on the drive.
+    std::vector<float> staged;
+    for (const auto driveDb : { 0.0, 40.0 }) {
+        const auto drive = std::pow(10.0, driveDb / 20.0);
+        AutoGainSoftClipper stage;
+        stage.prepare(audioRate, {});
+        staged.assign(result.mixSignal.size(), 0.0F);
+        double gainSum = 0.0;
+        double gainMinimum = std::numeric_limits<double>::infinity();
+        double gainMaximum = 0.0;
+        for (std::size_t index = 0; index < staged.size(); ++index) {
+            staged[index] = stage.process(static_cast<float>(drive * result.mixSignal[index]));
+            if (index >= result.steadyBegin) {
+                gainSum += stage.gain();
+                gainMinimum = std::min(gainMinimum, stage.gain());
+                gainMaximum = std::max(gainMaximum, stage.gain());
+            }
+        }
+        const auto stagedSpectrum = analyse(staged, result.steadyBegin);
+        const auto counted = static_cast<double>(
+            std::max<std::size_t>(1, staged.size() - result.steadyBegin));
+        std::cout << "  output stage, drive " << std::showpos << std::setprecision(0)
+                  << driveDb << std::noshowpos << " dB   rms " << std::setprecision(6)
+                  << stagedSpectrum.rms << "  gain mean " << std::setprecision(3)
+                  << gainSum / counted << " (" << gainMinimum << " - " << gainMaximum
+                  << ", cap 10)\n";
+        printCharacter(characterise(staged, result.steadyBegin, stagedSpectrum));
+        const auto gap = distance(result.mix, stagedSpectrum);
+        std::cout << "      shape " << std::setprecision(2) << gap.shapeRmsDb
+                  << " dB, worst band " << std::showpos << gap.worstBandDb << std::noshowpos
+                  << " dB at " << std::setprecision(0) << gap.worstBandHz << " Hz\n";
+    }
+    // `staged` now holds the +40 dB drive, the regime the other simulator runs.
+
+    if (!wavOut.empty()) {
+        auto stagedPath = wavOut;
+        stagedPath.replace_filename(wavOut.stem().string() + "-output-stage"
+            + wavOut.extension().string());
+        if (!writeWavMono(wavOut, result.mixSignal) || !writeWavMono(stagedPath, staged)) {
+            std::cerr << "  cannot write " << wavOut.string() << '\n';
+            return 1;
+        }
+        std::cout << "  written: " << wavOut.string() << " and " << stagedPath.string()
+                  << '\n';
+    }
+    return 0;
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -1270,6 +1353,7 @@ int main(int argc, char** argv) {
     // profile), so a --wav-out render can be compared against a stock one.
     double camDurationDeltaDegrees = 0.0;
     double camLiftScale = 1.0;
+    bool outputStageAb = false;
     for (int index = 1; index < argc; ++index) {
         const std::string argument = argv[index];
         if (argument == "--catalog-root" && index + 1 < argc) catalogRoot = argv[++index];
@@ -1277,6 +1361,7 @@ int main(int argc, char** argv) {
         else if (argument == "--rpm" && index + 1 < argc) targetRpm = std::stod(argv[++index]);
         else if (argument == "--seconds" && index + 1 < argc) seconds = std::stod(argv[++index]);
         else if (argument == "--list") listEngines = true;
+        else if (argument == "--output-stage-ab") outputStageAb = true;
         else if (argument == "--wav-reference" && index + 1 < argc)
             wavReference = argv[++index];
         else if (argument == "--wav-variant" && index + 1 < argc)
@@ -1307,6 +1392,7 @@ int main(int argc, char** argv) {
                       << " --factorial primary|midpipe [--pipe-scale X]"
                          " [--muffler-scale Y] [--filter ...] [--rpm N]\n"
                          "       " << argv[0]
+                      << " --output-stage-ab [--filter ...] [--rpm N] [--wav-out f.wav]\n"                         "       " << argv[0]
                       << " --wav-reference ref.wav --wav-variant v.wav [...]"
                          " [--wav-skip S]\n";
             return argument == "--help" ? 0 : 2;
@@ -1368,6 +1454,7 @@ int main(int argc, char** argv) {
         return runLengthFactorial(engine, targetRpm, seconds, *factorialPipe,
                                   factorialPipeScale, factorialMufflerScale);
     }
+    if (outputStageAb) return runOutputStageAb(engine, targetRpm, seconds, wavOut);
 
     std::cout << "Sound sensitivity to exhaust geometry\n"
               << "  engine      " << engine.name << '\n'

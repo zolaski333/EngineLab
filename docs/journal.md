@@ -5,6 +5,14 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-13 — How much character an output stage alone gives
+
+- Spec from a static analysis of another simulator, whose sound the owner prefers: after its room convolution it ends in a level-normalising gain (5 Hz envelope, 4x attack, 1 s hold, gain <= 10) into a tanh, on by default. Its August 2026 measurement gave crest 7.4 dB, periodicity 0.92, tilt -4.6 dB/oct (archive). Re-expressed as `AutoGainSoftClipper` (off the default path).
+- Step 0, today's EngineLab at steady wide-open throttle (`GeometrySensitivityHarness`): periodicity 0.77-0.98, crest 7.8-14.5 dB, tilt -4.9 to +2.3 dB/oct. The August EngineLab figures (crest 18-25, periodicity 0.38-0.50) are stale.
+- Step 1, `--output-stage-ab`, same render with the stage at +40 dB drive (at 0 dB the gain sits on the x10 cap, so the stage is just a gain; shape 0.09-1.72 dB). Crest raw -> staged: CP2 Full System 4,000 rpm 11.2 -> 6.2, 7,000 rpm 14.5 -> 7.0; CP2 6,000 11.3 -> 6.3; K20 6,000 9.5 -> 6.1; LS3 4,500 11.3 -> 6.3; Hayabusa 7,000 7.8 -> 5.4; 2JZ 4,500 11.1 -> 6.4. Band shape moves 1.3-3.4 dB; periodicity and tilt are almost unchanged.
+- So the other simulator's low crest factor can come from its output stage alone, not from its gas dynamics. Blind clips: `EngineLabAbClipRenderer --output-stage "Full System"`.
+- Not measured: any listening result, either simulator against the owner's CP2 recordings, transients (idle, rev) beyond the clips, or the other steps of that spec (room response, outlet radiation, fine mesh).
+
 ## 2026-10-13 — A turbo fitted to any engine
 
 - `sizedTurbocharger()`: laws fitted to the four catalogue turbos (turbine 0.028 mm² per L per redline rpm, within 10 %; inducer within 15 %). Boost by compression: 0.5 bar from 10.5:1, 0.7 from 9.5, 0.9 below.
