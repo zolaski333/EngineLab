@@ -154,8 +154,11 @@ released energy uses the fuel's LHV and stoichiometry.
 
 Knock uses a Livengood-Wu integral on the end gas. When its threshold is
 reached, a share of the remainder really auto-ignites in the cell, raises the
-pressure and feeds the telemetry. The ECU then pulls advance. This global
-correlation is not multi-species chemical kinetics.
+pressure and feeds the telemetry. The ECU then pulls advance in proportion to
+the knock level, so at WOT engines sit at a light, constant knock (0.1-0.4)
+rather than stepping back and holding as a real knock control does. Only knock
+above 0.45 (the diagnostics' "severe") adds damage, which lowers efficiency for
+good. This global correlation is not multi-species chemical kinetics.
 
 ## Forced induction
 
@@ -164,7 +167,9 @@ losses, integrated with the shaft inertia. The wastegate (or variable vanes)
 follows a proportional-integral boost controller that holds
 `wastegate_pressure_ratio` exactly: fully open 0.25 above it on the
 proportional term alone, integral time 0.5 s, frozen while the gate is
-saturated. The supercharger uses a separate closure, without claiming to
+saturated. Like an actuator spring set against the atmosphere, it holds a
+gauge boost: the ratio is the one at sea level (101.325 kPa), and in
+thinner air the ratio it allows rises so the gauge boost stays the same. The supercharger uses a separate closure, without claiming to
 model a complete compressor map.
 
 The turbine lives in the exhaust gas network, as a restriction face (the same
@@ -234,6 +239,19 @@ valve-side ducts (all their cells, all runners) through a 30 ms first-order
 tapping manifold; the cell right behind the plate reads the jet's low pressure
 and costs 10-19 % torque through a false load reading. A small 0-D
 cell per cylinder was tried first and refuted (`.claude/CLAUDE.md`).
+
+## Engine temperatures
+
+By default the thermal model is **regulated** (`thermal.regulated`): coolant
+and oil sit at `regulated_coolant_c` (90 degC) and `regulated_oil_c`
+(100 degC) from the start and never move, as a dyno cell's conditioning unit
+holds them. Every run, A/B switch and harness measurement is then made on a
+warm engine at one temperature, the state the CP2 recording protocol asks
+for. Unregulated, both start at the ambient temperature and integrate the
+heat released into them against a radiator whose airflow follows the
+thermostat and the engine speed (`thermal.*`, `cooling_efficiency`); the
+ECU enriches and retards a cold or hot engine from the coolant temperature.
+The switch is a settings edit, taken live.
 
 ## Transmission and vehicle
 

@@ -294,8 +294,10 @@ The JSON editor and the 3-D view's inspector go through it.
 
 The top bar's A/B button (`MainComponent::switchAbVersion`, key 7) keeps the
 version not running in `abVersions_` and hands the other one to
-`applyEngineEdit` with no ramp, so the switch is heard at once. The
-calibration store (ECU tables) is not part of a version. Switching engine or
+`applyEngineEdit` with no ramp, so the switch is heard at once. Each version
+also keeps its ECU tables (a calibration snapshot), published back into the
+running store when it is switched to; the ECU tuner reloads on the new
+revision. Switching engine or
 reloading the engine file clears both versions.
 
 ## Physical contracts
@@ -572,7 +574,9 @@ The other parts edit the same way, each through `MainComponent::applyEngineEdit`
   distance to it, and the turbine flow area; a supercharger: its pressure
   and drive ratios;
 - the cylinder block: the air around the engine, as an altitude (the
-  standard atmosphere's pressure there) and a temperature;
+  standard atmosphere's pressure there) and a temperature, and a switch
+  between regulated and realistic engine temperatures (`thermal.regulated`;
+  the inspector's edit `toggle`, taken at once);
 - the crankshaft: the inertia of the crank and flywheel (every shaft scaled
   alike), with the total including the rods;
 - an intake or exhaust valve: its cam's duration and lift; the cylinder

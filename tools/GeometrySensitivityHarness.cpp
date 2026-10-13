@@ -1255,7 +1255,7 @@ struct WavSignal final {
 
 int main(int argc, char** argv) {
     std::filesystem::path catalogRoot = ENGINELAB_CATALOG_ROOT;
-    std::string filter = "CP2";
+    std::string filter = "Yamaha CP2";
     double targetRpm = 0.0;
     double seconds = 6.0;
     bool listEngines = false;
@@ -1266,6 +1266,10 @@ int main(int argc, char** argv) {
     std::optional<FactorialPipe> factorialPipe;
     double factorialPipeScale = 2.0;
     double factorialMufflerScale = 2.0;
+    // Cam edits as the 3-D inspector makes them (every cam, low and high
+    // profile), so a --wav-out render can be compared against a stock one.
+    double camDurationDeltaDegrees = 0.0;
+    double camLiftScale = 1.0;
     for (int index = 1; index < argc; ++index) {
         const std::string argument = argv[index];
         if (argument == "--catalog-root" && index + 1 < argc) catalogRoot = argv[++index];
@@ -1291,6 +1295,10 @@ int main(int argc, char** argv) {
             factorialPipeScale = std::stod(argv[++index]);
         else if (argument == "--muffler-scale" && index + 1 < argc)
             factorialMufflerScale = std::stod(argv[++index]);
+        else if (argument == "--cam-duration-delta" && index + 1 < argc)
+            camDurationDeltaDegrees = std::stod(argv[++index]);
+        else if (argument == "--cam-lift-scale" && index + 1 < argc)
+            camLiftScale = std::stod(argv[++index]);
         else {
             std::cout << "usage: " << argv[0]
                       << " [--catalog-root path] [--filter name-fragment]"
@@ -1335,7 +1343,21 @@ int main(int argc, char** argv) {
                       << "  " << match->config.name << '\n';
         return 1;
     }
-    const auto& engine = selected.entry->config;
+    auto engine = selected.entry->config;
+    if (camDurationDeltaDegrees != 0.0 || camLiftScale != 1.0) {
+        const auto editCam = [&](CamshaftConfig& cam) {
+            for (auto* duration : { &cam.intakeDurationDegrees, &cam.exhaustDurationDegrees,
+                                    &cam.highIntakeDurationDegrees, &cam.highExhaustDurationDegrees })
+                *duration += camDurationDeltaDegrees;
+            for (auto* lift : { &cam.intakeLiftMm, &cam.exhaustLiftMm,
+                                &cam.highIntakeLiftMm, &cam.highExhaustLiftMm })
+                *lift *= camLiftScale;
+        };
+        editCam(engine.camshafts);
+        for (auto& bank : engine.banks) editCam(bank.camshafts);
+        std::cout << "  cams        duration " << std::showpos << camDurationDeltaDegrees
+                  << std::noshowpos << " deg, lift x" << camLiftScale << '\n';
+    }
     if (!(targetRpm > 0.0))
         targetRpm = std::max(engine.idleRpm * 2.0, engine.redlineRpm * 0.55);
     if (factorialPipe) {

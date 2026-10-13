@@ -301,6 +301,114 @@ void ambientSettlesLikeARestart() {
     }
 }
 
+/** A wastegate spring works against the atmosphere: up high the turbo holds
+ * the same gauge boost, so the manifold loses only the ambient drop. A boost
+ * held as a ratio to ambient lost 21 % of it, like an unblown engine. Only
+ * the pressure changes; the 2JZ is held at 60 % of redline, above full boost. */
+void wastegateHoldsGaugeBoostUpHigh() {
+    const auto seaLevel = catalogueEngine("2JZ");
+    auto upHigh = seaLevel;
+    upHigh.ambientPressureKpa = 79.5;
+    Rig low(seaLevel);
+    Rig high(upHigh);
+    constexpr auto frames = 10 * 240;
+    std::array<double, 2> rpm {};
+    std::array<double, 2> gaugeKpa {};
+    std::array<double, 2> torque {};
+    for (auto frame = 0; frame < frames; ++frame) {
+        const auto t = frame * frameSeconds;
+        std::size_t index = 0;
+        for (auto* rig : { &low, &high }) {
+            const auto controls = heldAt(t, rpm[index], seaLevel);
+            const auto state = rig->simulator->step(frameSeconds, controls).state;
+            rpm[index] = state.rpm;
+            if (frame >= frames - 3 * 240) {
+                gaugeKpa[index] += (state.boostPressureRatio - 1.0) * rig->config.ambientPressureKpa / (3.0 * 240.0);
+                torque[index] += controls.dynamometerTorqueNm / (3.0 * 240.0);
+            }
+            ++index;
+        }
+    }
+    std::cout << "  2JZ held at 60 % of redline: gauge boost at sea level " << gaugeKpa[0] << " kPa, at 79.5 kPa "
+              << gaugeKpa[1] << " kPa; brake torque " << torque[0] << " -> " << torque[1] << " Nm\n";
+    require(gaugeKpa[0] > 50.0, "the 2JZ is on its wastegate (else this proves nothing)");
+    require(std::abs(gaugeKpa[1] - gaugeKpa[0]) <= 0.08 * gaugeKpa[0],
+            "up high the wastegate holds the same gauge boost");
+}
+
+/** A regulated engine runs at its set temperatures from the start and through
+ * a full-load run, as on a dyno cell; one let free starts at the ambient
+ * temperature and warms up. Regulating a running cold engine is a settings
+ * edit that sets the temperatures at once. */
+void regulatedTemperaturesHold() {
+    const auto regulated = catalogueEngine("Yamaha CP2");
+    require(regulated.thermal.regulated, "the thermal model is regulated by default");
+    auto unregulated = regulated;
+    unregulated.thermal.regulated = false;
+    const auto scope = engineEditScope(unregulated, regulated);
+    require(scope.settings && !scope.other, "regulating the temperatures is a settings edit only");
+    Rig held(regulated);
+    Rig warming(unregulated);
+    Rig switched(unregulated);
+    constexpr auto frames = 12 * 240;
+    std::array<double, 3> rpm {};
+    std::array<double, 3> lowestCoolant { 1.0e9, 1.0e9, 1.0e9 };
+    std::array<double, 3> highestCoolant {};
+    for (auto frame = 0; frame < frames; ++frame) {
+        const auto t = frame * frameSeconds;
+        if (frame == 4 * 240) {
+            auto incoming = regulated;
+            require(switched.simulator->replaceSettings(incoming), "the regulation is taken");
+            require(switched.simulator->state().coolantTemperatureC == regulated.thermal.regulatedCoolantTemperatureC
+                        && switched.simulator->state().oilTemperatureC == regulated.thermal.regulatedOilTemperatureC,
+                    "a regulated engine is at its set temperatures at once");
+        }
+        std::size_t index = 0;
+        for (auto* rig : { &held, &warming, &switched }) {
+            const auto state = rig->simulator->step(frameSeconds, heldAt(t, rpm[index], regulated)).state;
+            rpm[index] = state.rpm;
+            if (index != 2 || frame >= 4 * 240) {
+                lowestCoolant[index] = std::min(lowestCoolant[index], state.coolantTemperatureC);
+                highestCoolant[index] = std::max(highestCoolant[index], state.coolantTemperatureC);
+            }
+            ++index;
+        }
+    }
+    std::cout << "  Yamaha CP2 at full load for 10 s: coolant regulated " << lowestCoolant[0] << " to "
+              << highestCoolant[0] << " degC, free " << lowestCoolant[1] << " to " << highestCoolant[1]
+              << " degC, regulated at 4 s " << lowestCoolant[2] << " to " << highestCoolant[2] << " degC\n";
+    require(lowestCoolant[0] == 90.0 && highestCoolant[0] == 90.0, "a regulated engine stays at 90 degC");
+    require(lowestCoolant[1] < 30.0 && highestCoolant[1] > lowestCoolant[1] + 1.0,
+            "a free engine starts cold and warms up (else this proves nothing)");
+    require(lowestCoolant[2] == 90.0 && highestCoolant[2] == 90.0, "a regulated running engine stays at 90 degC");
+}
+
+/** Light knock does not wear the engine: the 2JZ held at full load knocks
+ * lightly the whole time, as every catalogue engine does at WOT, and ends with
+ * no damage. Counted linearly, it lost 0.3-0.5 % of power for good per dyno
+ * pass. */
+void lightKnockDoesNotWear() {
+    const auto config = catalogueEngine("2JZ");
+    Rig rig(config);
+    constexpr auto frames = 10 * 240;
+    double rpm = 0.0;
+    double meanKnock = 0.0;
+    double peakKnock = 0.0;
+    for (auto frame = 0; frame < frames; ++frame) {
+        const auto state = rig.simulator->step(frameSeconds, heldAt(frame * frameSeconds, rpm, config)).state;
+        rpm = state.rpm;
+        if (frame >= 3 * 240) {
+            meanKnock += state.knockLevel / (7.0 * 240.0);
+            peakKnock = std::max(peakKnock, state.knockLevel);
+        }
+    }
+    const auto damage = rig.simulator->state().damage;
+    std::cout << "  2JZ at full load for 8 s: knock mean " << meanKnock << ", peak " << peakKnock << ", damage "
+              << damage << '\n';
+    require(meanKnock > 0.1 && peakKnock < 0.45, "the 2JZ knocks lightly at full load (else this proves nothing)");
+    require(damage < 1.0e-9, "light knock does not damage the engine");
+}
+
 /** A final drive 30 % shorter taken at 1 s, in first gear with the clutch
  * engaged and the engine held at 2,000 rpm: the car settles at the road speed
  * of one built with it. Another gear count is refused; a gearbox edit is a
@@ -352,6 +460,9 @@ void gearboxSettlesLikeARestart() {
 void liveTuningRegression() {
     gearboxSettlesLikeARestart();
     ambientSettlesLikeARestart();
+    wastegateHoldsGaugeBoostUpHigh();
+    regulatedTemperaturesHold();
+    lightKnockDoesNotWear();
     flywheelIsASetting();
     flywheelRevsLikeARestart();
     sameCamshaftsAreInvisible();

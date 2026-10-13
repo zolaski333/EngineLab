@@ -331,6 +331,9 @@ std::string YamlEngineSerializer::encode(const EngineConfig& config) const {
         << YAML::Key << "turbulent_jet_noise_coefficient" << YAML::Value << config.forcedInduction.turbulentJetNoiseCoefficient
         << YAML::EndMap
         << YAML::Key << "thermal" << YAML::Value << YAML::BeginMap
+        << YAML::Key << "regulated" << YAML::Value << config.thermal.regulated
+        << YAML::Key << "regulated_coolant_c" << YAML::Value << config.thermal.regulatedCoolantTemperatureC
+        << YAML::Key << "regulated_oil_c" << YAML::Value << config.thermal.regulatedOilTemperatureC
         << YAML::Key << "coolant_mass_kj_per_c" << YAML::Value << config.thermal.coolantMassKjPerC
         << YAML::Key << "oil_mass_kj_per_c" << YAML::Value << config.thermal.oilMassKjPerC
         << YAML::Key << "coolant_heat_share" << YAML::Value << config.thermal.coolantHeatShare
@@ -795,6 +798,9 @@ EngineDecodeResult YamlEngineSerializer::decode(std::string_view text) const noe
             config.forcedInduction.turbulentJetNoiseCoefficient = forced["turbulent_jet_noise_coefficient"].as<double>(config.forcedInduction.turbulentJetNoiseCoefficient);
         }
         if (const auto thermal = engine["thermal"]) {
+            config.thermal.regulated = thermal["regulated"].as<bool>(config.thermal.regulated);
+            config.thermal.regulatedCoolantTemperatureC = thermal["regulated_coolant_c"].as<double>(config.thermal.regulatedCoolantTemperatureC);
+            config.thermal.regulatedOilTemperatureC = thermal["regulated_oil_c"].as<double>(config.thermal.regulatedOilTemperatureC);
             config.thermal.coolantMassKjPerC = thermal["coolant_mass_kj_per_c"].as<double>(config.thermal.coolantMassKjPerC);
             config.thermal.oilMassKjPerC = thermal["oil_mass_kj_per_c"].as<double>(config.thermal.oilMassKjPerC);
             config.thermal.coolantHeatShare = thermal["coolant_heat_share"].as<double>(config.thermal.coolantHeatShare);

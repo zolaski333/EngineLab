@@ -9,6 +9,13 @@ file formats, always with an in-memory migration).
 
 ### Changed
 
+- The engine runs warm from the start: coolant and oil are held at 90 and
+  100 degC, as on a dyno cell, so every run and every A/B comparison is made
+  at one temperature (before, every engine started at 22 degC and warmed up
+  over many minutes). Click the cylinder block to switch to realistic
+  temperatures, which start cold and warm up. The sound barely moves (within
+  0.6 dB across the catalogue).
+
 - The turbocharged cars' exhausts have their real length (about 3.4 m from
   port to tip, like the other cars): a 2.2 m mid pipe behind the turbine.
   Spool and power stay within a few per cent. The sound changes: 2JZ about
@@ -72,7 +79,7 @@ file formats, always with an in-memory migration).
 - An **A/B** button in the top bar (key 7) keeps two versions of the
   running engine. Switch to B, change the cams, the exhaust or the air, then
   switch back and forth to hear the difference at once. Each version keeps
-  its own edits; the ECU tables are shared. Parts that cannot change live
+  its own edits and its own ECU tables. Parts that cannot change live
   (the firing order, for example) restart the engine. Choosing another
   engine or reloading its file starts again from A.
 - Gearbox and vehicle edits in the JSON editor (ratios, final drive, mass,
@@ -80,9 +87,8 @@ file formats, always with an in-memory migration).
   as the number of gears stays.
 - Change the air while the engine runs: click the cylinder block and set
   the altitude and the temperature. At 2,000 m and 35 degC the CP2 loses
-  27 % of its torque. The 2JZ loses 25 %: its boost is controlled as a ratio
-  to the outside pressure, so it does not make up for the thinner air the
-  way a real wastegate would.
+  27 % of its torque, the turbocharged 2JZ 20 %: its wastegate holds the
+  same boost above the outside pressure, as a real one does.
 - Change the camshafts while the engine runs: click an intake or exhaust
   valve for its cam's duration and lift, or the cylinder heads for the cam
   timing (intake and exhaust centrelines, with the overlap shown). The
@@ -209,6 +215,12 @@ file formats, always with an in-memory migration).
 
 ### Fixed
 
+- Dyno passes no longer cost power for good. Every engine knocks lightly at
+  full throttle, and that light knock was counted as damage: each pass took
+  0.3-0.5 % of power that never came back. Only severe knock damages the
+  engine now. Known limit: warm, the EJ25, the I5 and the Big Twin can stall
+  on a full-throttle launch straight from idle (about 1 launch in 5 for the
+  EJ25); give them some revs before letting the clutch out.
 - The TDI no longer surges at full throttle from 2,500 rpm (torque swinging
   by up to 32 % four times a second, which looked like misfires on the
   dyno). Its boost controller oscillated once the turbine sat on the

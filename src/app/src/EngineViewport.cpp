@@ -495,8 +495,15 @@ constexpr int inspectorValueWidth = 78;
 } // namespace
 
 PartInspector::PartInspector() {
-    for (auto* button : { &firstDown_, &firstUp_, &secondDown_, &secondUp_, &resetEdit_, &rampEdit_ })
+    for (auto* button : { &firstDown_, &firstUp_, &secondDown_, &secondUp_, &resetEdit_, &rampEdit_, &toggleEdit_ })
         addChildComponent(button);
+    toggleEdit_.onClick = [this] {
+        if (!edit_ || !edit_->toggle) return;
+        auto& toggle = *edit_->toggle;
+        toggle.on = !toggle.on;
+        toggleEdit_.setButtonText(toggle.on ? toggle.onText : toggle.offText);
+        if (onToggle) onToggle(toggle.on);
+    };
     firstDown_.onClick = [this] { stepEdit(true, -1.0); };
     firstUp_.onClick = [this] { stepEdit(true, 1.0); };
     secondDown_.onClick = [this] { stepEdit(false, -1.0); };
@@ -575,6 +582,11 @@ void PartInspector::setEdit(std::optional<Edit> edit) {
         button->setVisible(edit_.has_value() && edit_->firstEditable);
     for (auto* button : { &secondDown_, &secondUp_, &resetEdit_ }) button->setVisible(edit_.has_value());
     rampEdit_.setVisible(edit_.has_value() && edit_->offersRamp);
+    toggleEdit_.setVisible(edit_.has_value() && edit_->toggle.has_value());
+    if (edit_ && edit_->toggle) {
+        toggleEdit_.setButtonText(edit_->toggle->on ? edit_->toggle->onText : edit_->toggle->offText);
+        toggleEdit_.setTooltip(edit_->toggle->tooltip);
+    }
     if (edit_) {
         const auto tip = [this](bool first, double sign) {
             const auto& label = first ? edit_->firstLabel : edit_->secondLabel;
@@ -663,6 +675,7 @@ void PartInspector::resized() {
     resetEdit_.setBounds(buttons.removeFromRight(64));
     buttons.removeFromRight(6);
     rampEdit_.setBounds(buttons.removeFromRight(92));
+    toggleEdit_.setBounds(rampEdit_.getBounds());
 }
 
 void PartInspector::paintEdit(juce::Graphics& g, juce::Rectangle<int> area) const {
@@ -1017,6 +1030,7 @@ EngineViewport::EngineViewport(const DashboardModel& model) : model_(model), cut
     legend_.setInterceptsMouseClicks(false, false);
     inspector_.onClose = [this] { setSelectedPart(-1); };
     inspector_.onApplyEdit = [this](double first, double second, bool gradual) { applyEdit(first, second, gradual); };
+    inspector_.onToggle = [this](bool on) { applyPartToggle(on); };
     inspector_.onDoneTyping = [this] { if (onClaimKeyboard) onClaimKeyboard(); };
 
     addChildComponent(cutaway_);
@@ -1096,6 +1110,21 @@ void EngineViewport::applyPartEdit(double first, double second) {
         return;
     }
     // The part keeps its index: these edits resize, they add nothing.
+    reselect_ = Reselect { 0, 0, selectedPart_ };
+    if (!configEditor_(edited)) {
+        reselect_.reset();
+        inspector_.setEditStatus("The engine did not take the edit.");
+    }
+}
+
+void EngineViewport::applyPartToggle(bool on) {
+    if (!scene_ || !configEditor_ || !partToggle_ || selectedPart_ < 0) return;
+    auto edited = scene_->config();
+    partToggle_(edited, on);
+    if (const auto invalid = validateEngineConfig(edited)) {
+        inspector_.setEditStatus(juce::String::fromUTF8(invalid->c_str()));
+        return;
+    }
     reselect_ = Reselect { 0, 0, selectedPart_ };
     if (!configEditor_(edited)) {
         reselect_.reset();
@@ -1490,6 +1519,7 @@ void EngineViewport::updateInspector() {
     juce::String note;
     std::optional<PartInspector::Edit> edit;
     partEditor_ = {};
+    partToggle_ = {};
     std::vector<PartInspector::Row> rows;
     const auto add = [&rows](juce::String label, juce::String value) { rows.push_back({ std::move(label), std::move(value) }); };
     // Bore and stroke are one engine-wide edit, offered on any cylinder.
@@ -1553,6 +1583,8 @@ void EngineViewport::updateInspector() {
         add("Cylinders", juce::String(static_cast<int>(config.cylinders.size())));
         add("Displacement", juce::String(engineDisplacementLitres(config), 2) + " L");
         add("Air pressure", juce::String(config.ambientPressureKpa, 1) + " kPa");
+        add("Coolant", juce::String(juce::roundToInt(state.coolantTemperatureC)) + utf8(" \xc2\xb0""C")
+                           + (config.thermal.regulated ? ", held" : ", free"));
         if (configEditor_) {
             edit = PartInspector::Edit {};
             edit->key = std::uint64_t { 8 } << 60U;
@@ -1575,6 +1607,15 @@ void EngineViewport::updateInspector() {
             edit->secondMaximum = 50.0;
             edit->note = "The air the engine breathes and its exhaust leaves into: the standard atmosphere's "
                          "pressure at that altitude. The running engine takes it.";
+            edit->toggle = PartInspector::Edit::Toggle {
+                "Realistic", "Regulated",
+                utf8("Regulated: coolant and oil held at ")
+                    + juce::String(juce::roundToInt(config.thermal.regulatedCoolantTemperatureC))
+                    + utf8(" and ") + juce::String(juce::roundToInt(config.thermal.regulatedOilTemperatureC))
+                    + utf8(" \xc2\xb0""C, as on a dyno cell, so every run is made warm and alike. Realistic: the "
+                           "engine starts at the air temperature, warms up with load and cools by its radiator."),
+                config.thermal.regulated };
+            partToggle_ = [](EngineConfig& edited, bool regulated) { edited.thermal.regulated = regulated; };
             partEditor_ = [](EngineConfig& edited, double altitudeM, double temperatureC) {
                 edited.ambientPressureKpa = pressureKpaAtAltitude(altitudeM);
                 edited.ambientTemperatureC = temperatureC;

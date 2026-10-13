@@ -5,6 +5,39 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-13 — Warm standing starts: three engines with no margin
+
+- `EngineLab.StandingStartSettledIdle` (launch at 25 s, 1st gear, WOT, clutch over 0.9 s) failed once engines ran regulated at 90 degC: the EJ25 stalled. New `--unregulated-thermal` flag in `EngineLabLoadedAccelerationHarness` for the one-factor comparison.
+- EJ25, 41 launch times from 6 to 34 s: 9 stalls warm, 0 free (cold, ~25-30 degC). Catalogue, 8 launch times each: warm EJ25 0/8, Audi I5 1/8, Big Twin 2/8; free 0 everywhere. All three already sagged to 240-440 rpm cold.
+- Trace (EJ25, 25 s): the first cycle after the tip-in gets 67 % of its metered fuel (the late part of the extended pulse stays in the port), AFR ~18 cold and ~19.7 warm; at 19.7 the misfire chance is 45 %, two misfires in a row and the clutch drags it under 220 rpm. Min AFR after: ~10 cold, ~11.2 warm, consistent with the lost warm-up enrichment (x1.09-1.12). Not proven to be the only difference.
+- Declared as a known stall (EJ25), not compensated. Stalls are the next step, with the owner's scenarios; an asynchronous tip-in pulse is refuted cold and would need new evidence warm.
+
+## 2026-10-13 — Light knock no longer wears the engine
+
+- `EngineLabThermalHarness` now prints knock per pass. At WOT every engine knocks lightly through the whole pass, held there by the ECU's proportional retard (`knockLevel * 12` deg): mean CP2 0.14, 2JZ 0.27, LS3 0.37; above the 0.45 "severe" threshold 0 % of the pass (LS3 0.2 %).
+- Damage counted that light knock linearly: +0.003 to +0.005 per pass, a permanent 0.82 x damage efficiency loss. Now only knock above 0.45 counts, scaled so full knock keeps its rate. 2 passes: damage 0.006 -> 0 (CP2), 0.011 -> 0 (LS3). `EngineLab.LiveTuning`: 2JZ at full load 8 s, knock mean 0.34, damage 0 (0.0029 without the fix).
+- Sound: within the first pass the old damage reached 0.003, at most -0.02 dB by efficiency (computed, not rendered). The ECU's knock control itself is unchanged: a real one retards in steps and holds, it does not sit at constant light knock. Not measured against a real knock trace.
+
+## 2026-10-13 — Engine temperature over a dyno session; regulated by default
+
+- New `EngineLabThermalHarness`: idle, 5 app-like dyno passes (entry to ceiling, 500 rpm/s), 20 s of idle between, 120 s of idle after. Deterministic.
+- Before, every engine started at 22 degC (car-sized thermal mass, 180 kJ/degC, on all but Merlin and Radial). After 5 passes: CP2 36.8, K20A 54.2, 2JZ 65.2, LS3 77.7 degC (highest of 16); 120 s of idle then cools 0 to 2.9 degC. The owner's "excessive after 5 passes" is NOT reproduced from a cold start; harness renders were all of a cold engine.
+- Power over 5 passes: -0.0 to -1.2 % (Lab twin -4.3 %), cold and warm alike. It follows `damage`, +0.003 to +0.006 per pass from end-gas knock at WOT (`knockLevel * throttle * 0.0012`), which lowers efficiency by 0.82 x damage for good. Fixed the same day (light knock no longer counts).
+- Now `thermal.regulated` (default): coolant 90, oil 100 degC from the start. Sound, cold -> warm: CP2 at 6,000 rpm +0.32 dB, shape 0.57 dB; AudioRenderHarness catalogue within +0.24 / -0.62 dB (EJ25), brightness within 0.009. Not compared with a recording.
+
+## 2026-10-13 — Wastegate holds a gauge boost
+
+- The boost controller held `wastegate_pressure_ratio` as a ratio to ambient: up high it lost as much manifold pressure as an unblown engine. It now holds the sea-level gauge boost, like a spring against the atmosphere. Bit-identical at 101.325 kPa (the added term is exactly zero).
+- `EngineLab.LiveTuning`, 2JZ held at 60 % of redline, pressure only: gauge boost 90.19 kPa at sea level, 70.76 -> 90.19 kPa at 79.5 kPa; brake torque at 79.5 kPa 358.5 -> 382.8 Nm (sea level 457.4). The new check fails without the fix.
+- 2,000 m and 35 degC: 2JZ 455 -> 339 Nm before, 455 -> 362 Nm now (-20 %). Not compared with a measured altitude curve; turbo overspeed up high is not limited.
+
+## 2026-10-13 — Do the cams change the sound?
+
+- Owner report: editing valve lift/duration changes the engine but not the sound. `EngineLabGeometrySensitivityHarness --cam-duration-delta D --cam-lift-scale S --wav-out`, then `--wav-reference`, CP2 held at 6,000 rpm, 0.85 throttle, every cam (low and high profile).
+- Cams -40 deg and lift x0.7 (CP2 torque -22 % in LiveTuning): level -0.74 dB, shape 4.07 dB, worst band -11.8 dB at 315 Hz. Cams +40 deg, lift x1.2: -0.69 dB, shape 2.38 dB, worst -9.1 dB at 200 Hz.
+- Same run, exhaust variants for scale: no muffler body 2.70, long primaries 4.08, independent pipes 12.0 dB of shape. The cams do reach the sound, as much as a modest exhaust change; the level barely follows the torque.
+- Not measured: idle (a long-duration cam's lope), light load, any real recording of a cam change. The harness's default `CP2` filter had become ambiguous (two CP2 engines); it is now `Yamaha CP2`.
+
 ## 2026-10-12 — Live flywheel, camshafts and air
 
 - `EngineLab.LiveTuning`, deterministic, built / swapped / untouched engines. Flywheel x2 taken at idle: free rev to 75 % of redline CP2 0.938 / 0.925 / 0.525 s, 2JZ 1.404 / 1.421 / 0.842 s.

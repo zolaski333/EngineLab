@@ -1228,6 +1228,12 @@ bool EngineSimulator::beginCamshaftChange(EngineConfig& target, double rampSecon
     return true;
 }
 
+void EngineSimulator::applyRegulatedTemperatures() noexcept {
+    if (!config_.thermal.regulated) return;
+    state_.coolantTemperatureC = config_.thermal.regulatedCoolantTemperatureC;
+    state_.oilTemperatureC = config_.thermal.regulatedOilTemperatureC;
+}
+
 void EngineSimulator::advanceCamshaftChange() {
     if (!camshaftChange_) return;
     const auto& change = *camshaftChange_;
@@ -1305,6 +1311,10 @@ bool EngineSimulator::replaceSettings(EngineConfig& config) noexcept {
     // describing the engine that runs.
     std::swap(config_.transmission, config.transmission);
     std::swap(config_.vehicle, config.vehicle);
+    // A regulated engine is at its set temperatures at once; one let free
+    // starts from where it is.
+    config_.thermal = config.thermal;
+    applyRegulatedTemperatures();
     // Field by field: the kinematics read the crankshafts' layout, which
     // stays. effectiveRotatingInertiaKgM2() reads these at every step.
     for (std::size_t index = 0; index < config_.crankshafts.size(); ++index) {
@@ -1715,8 +1725,17 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 // saturated in the direction it would push.
                 constexpr double wastegateBandRatio = 0.25;
                 constexpr double wastegateIntegralSeconds = 0.5;
+                // The actuator's spring works against the atmosphere, so it
+                // holds a gauge boost: the configured ratio is the one at
+                // sea-level pressure, and up high the ratio it allows rises.
+                // A ratio target lost as much manifold pressure as an
+                // unblown engine (2JZ at 2,000 m: -25 % torque).
+                constexpr double seaLevelPressureKpa = 101.325;
+                const auto wastegateRatio = config_.forcedInduction.wastegatePressureRatio
+                    + (config_.forcedInduction.wastegatePressureRatio - 1.0)
+                        * (seaLevelPressureKpa / std::max(1.0, config_.ambientPressureKpa) - 1.0);
                 const auto proportional = (state_.boostPressureRatio
-                    - config_.forcedInduction.wastegatePressureRatio) / wastegateBandRatio;
+                    - wastegateRatio) / wastegateBandRatio;
                 const auto unclamped = proportional + wastegateIntegral_;
                 if ((unclamped < 1.0 || proportional < 0.0) && (unclamped > 0.0 || proportional > 0.0))
                     wastegateIntegral_ = std::clamp(wastegateIntegral_
@@ -4869,17 +4888,25 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
             * config_.thermal.oilCoolingPowerKwPerC * std::max(0.35, coolingAirflow * 0.72);
         const auto exhaustTarget = exhaustTemperatureSumK
             / static_cast<double>(config_.cylinders.size()) - 273.15;
-        state_.coolantTemperatureC = std::clamp(state_.coolantTemperatureC
-            + (coolantHeatKw - coolantRejectedKw) / config_.thermal.coolantMassKjPerC * subDt,
-            config_.ambientTemperatureC - 5.0, 150.0);
-        state_.oilTemperatureC = std::clamp(state_.oilTemperatureC
-            + (oilHeatKw - oilRejectedKw) / config_.thermal.oilMassKjPerC * subDt,
-            config_.ambientTemperatureC - 5.0, 170.0);
+        if (!config_.thermal.regulated) {
+            state_.coolantTemperatureC = std::clamp(state_.coolantTemperatureC
+                + (coolantHeatKw - coolantRejectedKw) / config_.thermal.coolantMassKjPerC * subDt,
+                config_.ambientTemperatureC - 5.0, 150.0);
+            state_.oilTemperatureC = std::clamp(state_.oilTemperatureC
+                + (oilHeatKw - oilRejectedKw) / config_.thermal.oilMassKjPerC * subDt,
+                config_.ambientTemperatureC - 5.0, 170.0);
+        }
         state_.exhaustTemperatureC = smooth(state_.exhaustTemperatureC, exhaustTarget, subDt, 0.18);
         const auto overrev = std::max(0.0, state_.rpm / config_.redlineRpm - 1.0);
         const auto oilStarvation = state_.rpm > 800.0 && state_.oilPressureKpa < 90.0 ? 1.0 : 0.0;
         const auto excessivePistonAcceleration = std::max(0.0, state_.peakPistonAccelerationG - 5'500.0) / 5'500.0;
-        const auto damageRate = state_.knockLevel * state_.throttle * 0.0012 + overrev * overrev * 0.022
+        // Only severe knock (above the 0.45 the diagnostics call severe) wears
+        // the engine; full knock keeps its former rate. Counting light knock
+        // linearly cost every catalogue engine a permanent 0.3-0.5 % of power
+        // per WOT dyno pass: they all sit at a light 0.14-0.37 there, held by
+        // the ECU's proportional retard (journal 2026-10-13).
+        const auto severeKnock = std::max(0.0, state_.knockLevel - 0.45) / 0.55;
+        const auto damageRate = severeKnock * state_.throttle * 0.0012 + overrev * overrev * 0.022
                               + std::max(0.0, state_.coolantTemperatureC - 115.0) * 0.000025 + oilStarvation * 0.002
                               + excessivePistonAcceleration * excessivePistonAcceleration * 0.002;
         state_.damage = std::clamp(state_.damage + damageRate * subDt, 0.0, 1.0);
@@ -5678,6 +5705,7 @@ void EngineSimulator::reset() noexcept {
     state_ = {};
     state_.coolantTemperatureC = config_.ambientTemperatureC;
     state_.oilTemperatureC = config_.ambientTemperatureC;
+    applyRegulatedTemperatures();
     state_.exhaustTemperatureC = config_.ambientTemperatureC;
     state_.manifoldPressureKpa = config_.ambientPressureKpa;
     state_.boostPressureRatio = 1.0;
