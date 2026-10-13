@@ -28,6 +28,11 @@ struct DrivelineOutput final {
     double clutchStickFraction { 0.0 };
     double shiftProgress { 0.0 };
     bool shiftInProgress { false };
+    /** A quickshifter upshift: the ignition is cut while the dogs change. */
+    bool ignitionCut { false };
+    /** An auto-blipper downshift: the throttle opening it commands while the
+     * dogs are free, to bring the engine to the new gear's speed. */
+    double blipThrottle { 0.0 };
     double brakePressure { 0.0 };
     double brakeForceN { 0.0 };
     double roadLoadForceN { 0.0 };
@@ -60,8 +65,27 @@ public:
     [[nodiscard]] DrivelineOutput advance(double dtSeconds, const EngineState&, double requestedLoad,
                                           double clutchPedalPressure, double brakePressure) noexcept;
 private:
+    /** How the shift under way is made (TransmissionConfig::shiftStyle). */
+    enum class ShiftAction : std::uint8_t {
+        /** The driver's clutch dip and throttle lift, over a timer. */
+        timed,
+        /** Ignition cut while the dogs change, clutch left in. */
+        quickshift,
+        /** Dogs free, throttle blipped to the new gear's speed. */
+        blip,
+        /** The oncoming clutch takes the drive and pulls the engine down. */
+        handOver
+    };
+    [[nodiscard]] ShiftAction chooseShiftAction() const noexcept;
+    [[nodiscard]] double ratioForGear(int gear) const noexcept;
     [[nodiscard]] double selectedRatio() const noexcept;
     EngineConfig config_;
+    ShiftAction shiftAction_ { ShiftAction::timed };
+    // While a blipped downshift frees the dogs, no gear carries the drive.
+    bool dogsFree_ { false };
+    // The slip the oncoming clutch of a hand-over must take out, captured
+    // when it takes the drive.
+    double handOverReferenceSlipRadPerSecond_ { 0.0 };
     // Engine + flywheel rotating inertia, cached so the locked-clutch constraint can
     // share one acceleration between the crank and the driveline.
     double engineInertiaKgM2_ { 0.24 };

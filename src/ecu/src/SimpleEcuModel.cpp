@@ -445,9 +445,13 @@ EcuCommand SimpleEcuModel::evaluate(const EngineConfig& config, const EngineStat
     // start-mode retard is gated on the ECU's run/start state, not on speed.
     const auto softLimit = state.rpm > revLimit - 220.0;
     const auto alternatingCut = softLimit && (static_cast<std::uint64_t>(state.simulationTimeSeconds * 120.0) & 1U) != 0U;
+    // A quickshifter cuts the way the limiter does: spark, and fuel too
+    // unless the limiter keeps it, so a wet cut sends the charge unburnt to
+    // the exhaust.
+    const auto shiftCut = controls.shiftIgnitionCut;
     const auto fuelEnabled = controls.ignitionEnabled
-        && (!limiterActive || config.ignition.limiterKeepsFuel);
-    const auto sparkEnabled = controls.ignitionEnabled && !limiterActive;
+        && (!(limiterActive || shiftCut) || config.ignition.limiterKeepsFuel);
+    const auto sparkEnabled = controls.ignitionEnabled && !limiterActive && !shiftCut;
     auto decelerationFuelCut = decelerationFuelCutLatched_.load(
         std::memory_order_relaxed);
     const auto decelerationFuelCutWasActive = decelerationFuelCut;
@@ -673,7 +677,7 @@ EcuCommand SimpleEcuModel::evaluate(const EngineConfig& config, const EngineStat
         && !overrunAfterfireActive
         && commandedFuelEnabled && !commandedSparkEnabled
         && !controls.starterEngaged
-        && (limiterActive || alternatingCut);
+        && (limiterActive || alternatingCut || shiftCut);
     const auto lambdaLearningAllowed = commandedFuelEnabled
         && commandedSparkEnabled
         && !decelerationFuelCut

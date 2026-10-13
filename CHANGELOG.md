@@ -86,6 +86,15 @@ file formats, always with an in-memory migration).
 
 ### Added
 
+- Gearboxes can now shift the way real ones do (`transmission.shift_style`,
+  changeable live in the engine file). `manual` is the driver's lift and
+  clutch, as before. `sequential` is a motorcycle or race dog box: an upshift
+  through a quickshifter cuts the ignition for a set time
+  (`quickshifter_cut_s`) with the clutch left in, and an auto-blipper revs
+  the engine to the lower gear's speed on a downshift. `dual_clutch` hands the
+  drive from one clutch to the other with no torque gap. The CP2 engines now
+  shift up through a quickshifter (65 ms cut): the drive comes back in about
+  20 ms instead of 55 ms through the clutch. Every other engine is unchanged.
 - An **A/B** button in the top bar (key 7) keeps two versions of the
   running engine. Switch to B, change the cams, the exhaust or the air, then
   switch back and forth to hear the difference at once. Each version keeps

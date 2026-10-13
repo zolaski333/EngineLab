@@ -461,7 +461,11 @@ std::string YamlEngineSerializer::encode(const EngineConfig& config) const {
         << YAML::Key << "clutch_cooling_w_per_c" << YAML::Value << config.transmission.clutchCoolingWPerC
         << YAML::Key << "clutch_fade_start_temperature_c" << YAML::Value << config.transmission.clutchFadeStartTemperatureC
         << YAML::Key << "clutch_failure_temperature_c" << YAML::Value << config.transmission.clutchFailureTemperatureC
-        << YAML::Key << "shift_torque_cut_fraction" << YAML::Value << config.transmission.shiftTorqueCutFraction << YAML::EndMap
+        << YAML::Key << "shift_torque_cut_fraction" << YAML::Value << config.transmission.shiftTorqueCutFraction
+        << YAML::Key << "shift_style" << YAML::Value << shiftStyleName(config.transmission.shiftStyle)
+        << YAML::Key << "quickshifter" << YAML::Value << config.transmission.quickshifter
+        << YAML::Key << "quickshifter_cut_s" << YAML::Value << config.transmission.quickshifterCutSeconds
+        << YAML::Key << "auto_blipper" << YAML::Value << config.transmission.autoBlipper << YAML::EndMap
         << YAML::Key << "vehicle" << YAML::Value << YAML::BeginMap
         << YAML::Key << "mass_kg" << YAML::Value << config.vehicle.massKg
         << YAML::Key << "drag_coefficient" << YAML::Value << config.vehicle.dragCoefficient
@@ -931,6 +935,15 @@ EngineDecodeResult YamlEngineSerializer::decode(std::string_view text) const noe
             if (transmission["clutch_fade_start_temperature_c"]) config.transmission.clutchFadeStartTemperatureC = transmission["clutch_fade_start_temperature_c"].as<double>();
             if (transmission["clutch_failure_temperature_c"]) config.transmission.clutchFailureTemperatureC = transmission["clutch_failure_temperature_c"].as<double>();
             if (transmission["shift_torque_cut_fraction"]) config.transmission.shiftTorqueCutFraction = transmission["shift_torque_cut_fraction"].as<double>();
+            if (transmission["shift_style"]) {
+                const auto styleName = transmission["shift_style"].as<std::string>();
+                const auto style = parseShiftStyle(styleName);
+                if (!style) throw std::invalid_argument("Unknown shift style: " + styleName);
+                config.transmission.shiftStyle = *style;
+            }
+            if (transmission["quickshifter"]) config.transmission.quickshifter = transmission["quickshifter"].as<bool>();
+            if (transmission["quickshifter_cut_s"]) config.transmission.quickshifterCutSeconds = transmission["quickshifter_cut_s"].as<double>();
+            if (transmission["auto_blipper"]) config.transmission.autoBlipper = transmission["auto_blipper"].as<bool>();
         }
         if (const auto vehicle = engine["vehicle"]) {
             if (vehicle["mass_kg"]) config.vehicle.massKg = vehicle["mass_kg"].as<double>();

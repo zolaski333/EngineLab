@@ -45,6 +45,19 @@ motorcycle_6_speed:
   final_drive_ratio: 5.174   # primary 1.925 x chain 2.688
   max_clutch_torque_nm: 320
 
+# The same box with an upshift quickshifter: a motorcycle gearbox is a
+# sequential dog box, and the shifter cuts the ignition while the dogs change
+# (65 ms, within the 50-80 ms of aftermarket units). Downshifts keep the
+# clutch: no auto-blipper.
+motorcycle_6_speed_quickshifter:
+  gear_ratios: [2.846, 1.947, 1.500, 1.269, 1.111, 1.040]
+  final_drive_ratio: 5.174   # primary 1.925 x chain 2.688
+  max_clutch_torque_nm: 320
+  shift_style: sequential
+  quickshifter: true
+  quickshifter_cut_s: 0.065
+  auto_blipper: false
+
 # Same correction: a big-twin cruiser runs a primary around 1.6 and a belt final
 # near 2.2, so the reduction outside the gearbox is ~3.5, not 2.10.
 cruiser_6_speed:

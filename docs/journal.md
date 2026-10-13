@@ -5,6 +5,14 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-13 — Shift styles: quickshifter, blipper, dual clutch
+
+- `EngineLab.ShiftStyle`: real engine, ECU and driveline coupled as the runtime couples them; 1 -> 2 at WOT, 70 % of redline. Gap = time the wheel torque stays below half the new gear's.
+- CP2 manual (lift + clutch, 0.18 s): gap 54 ms, synchronised at 204 ms. Quickshifter (65 ms ignition cut, clutch in): cut 62.5 ms (240 Hz frames), spark really off, gap 21 ms, synchronised at 67 ms, 0.3 % off the gear's speed.
+- 2JZ manual: gap 62 ms, sync 379 ms. Dual clutch: no gap (wheel torque never below the new gear's), sync 200 ms; no torque reduction during the inertia phase, so the wheel gets a push.
+- CP2 3 -> 2 on a shut throttle: blipped, engaged at 0.988 of the gear's speed, slip 35 rpm; through the clutch, 0.756 and 1,517 rpm. Disabling the styles fails the test.
+- Not measured: any real quickshift or dual-clutch shift trace; the 15 ms dog change is a guess. Wet cut pops depend on the CP2 afterfire (nothing burns at 800 K).
+
 ## 2026-10-13 — Stalls after a blip: three ECU causes
 
 - `EngineLabPhysicsPerfHarness --freerev 1 --release S --settle S` (new `--settle`, fuel and air columns). 2JZ, warm, WOT blip then release: down to 516-548 rpm (760 target). After the fuel-cut resume the charge reference ran 20-30 % above the trapped air for ~1.5 s (AFR 10-12); lambda learning took the idle trim 0.81 -> 0.57 in 2 s, then the refilled manifold ran AFR 17.4, 30 % misfires. Learning now holds 2 s after a resume.

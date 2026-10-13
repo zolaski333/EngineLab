@@ -49,7 +49,7 @@ engine:
   uses:
     injection: high_flow_port
     exhaust: motorcycle_4_2_1
-    transmission: motorcycle_6_speed
+    transmission: motorcycle_6_speed_quickshifter
     vehicle: motorcycle
   # Valve diameters intentionally left to the derived fallback (0.40 / 0.34 x
   # bore per valve for a multi-valve head -> 32.0 / 27.2 mm). The explicit
