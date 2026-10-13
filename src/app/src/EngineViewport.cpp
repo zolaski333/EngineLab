@@ -2,6 +2,7 @@
 #include <enginelab/exhaust/ExhaustComponentResize.hpp>
 #include <enginelab/foundation/CylinderResize.hpp>
 #include <enginelab/foundation/IntakeResize.hpp>
+#include <enginelab/foundation/TurboSizing.hpp>
 #include <enginelab/render/ListenerFrame.hpp>
 #include <enginelab/exhaust/LegacyExhaustNetwork.hpp>
 
@@ -495,14 +496,14 @@ constexpr int inspectorValueWidth = 78;
 } // namespace
 
 PartInspector::PartInspector() {
-    for (auto* button : { &firstDown_, &firstUp_, &secondDown_, &secondUp_, &resetEdit_, &rampEdit_, &toggleEdit_ })
+    for (auto* button : { &firstDown_, &firstUp_, &secondDown_, &secondUp_, &resetEdit_, &rampEdit_, &choiceEdit_ })
         addChildComponent(button);
-    toggleEdit_.onClick = [this] {
-        if (!edit_ || !edit_->toggle) return;
-        auto& toggle = *edit_->toggle;
-        toggle.on = !toggle.on;
-        toggleEdit_.setButtonText(toggle.on ? toggle.onText : toggle.offText);
-        if (onToggle) onToggle(toggle.on);
+    choiceEdit_.onClick = [this] {
+        if (!edit_ || !edit_->choice || edit_->choice->options.empty()) return;
+        auto& choice = *edit_->choice;
+        choice.index = (choice.index + 1) % static_cast<int>(choice.options.size());
+        choiceEdit_.setButtonText(choice.options[static_cast<std::size_t>(choice.index)]);
+        if (onChoice) onChoice(choice.index);
     };
     firstDown_.onClick = [this] { stepEdit(true, -1.0); };
     firstUp_.onClick = [this] { stepEdit(true, 1.0); };
@@ -582,10 +583,12 @@ void PartInspector::setEdit(std::optional<Edit> edit) {
         button->setVisible(edit_.has_value() && edit_->firstEditable);
     for (auto* button : { &secondDown_, &secondUp_, &resetEdit_ }) button->setVisible(edit_.has_value());
     rampEdit_.setVisible(edit_.has_value() && edit_->offersRamp);
-    toggleEdit_.setVisible(edit_.has_value() && edit_->toggle.has_value());
-    if (edit_ && edit_->toggle) {
-        toggleEdit_.setButtonText(edit_->toggle->on ? edit_->toggle->onText : edit_->toggle->offText);
-        toggleEdit_.setTooltip(edit_->toggle->tooltip);
+    choiceEdit_.setVisible(edit_.has_value() && edit_->choice.has_value() && !edit_->choice->options.empty());
+    if (edit_ && edit_->choice && !edit_->choice->options.empty()) {
+        auto& choice = *edit_->choice;
+        choice.index = std::clamp(choice.index, 0, static_cast<int>(choice.options.size()) - 1);
+        choiceEdit_.setButtonText(choice.options[static_cast<std::size_t>(choice.index)]);
+        choiceEdit_.setTooltip(choice.tooltip);
     }
     if (edit_) {
         const auto tip = [this](bool first, double sign) {
@@ -675,7 +678,7 @@ void PartInspector::resized() {
     resetEdit_.setBounds(buttons.removeFromRight(64));
     buttons.removeFromRight(6);
     rampEdit_.setBounds(buttons.removeFromRight(92));
-    toggleEdit_.setBounds(rampEdit_.getBounds());
+    choiceEdit_.setBounds(rampEdit_.getBounds());
 }
 
 void PartInspector::paintEdit(juce::Graphics& g, juce::Rectangle<int> area) const {
@@ -1030,7 +1033,7 @@ EngineViewport::EngineViewport(const DashboardModel& model) : model_(model), cut
     legend_.setInterceptsMouseClicks(false, false);
     inspector_.onClose = [this] { setSelectedPart(-1); };
     inspector_.onApplyEdit = [this](double first, double second, bool gradual) { applyEdit(first, second, gradual); };
-    inspector_.onToggle = [this](bool on) { applyPartToggle(on); };
+    inspector_.onChoice = [this](int index) { applyPartChoice(index); };
     inspector_.onDoneTyping = [this] { if (onClaimKeyboard) onClaimKeyboard(); };
 
     addChildComponent(cutaway_);
@@ -1117,15 +1120,15 @@ void EngineViewport::applyPartEdit(double first, double second) {
     }
 }
 
-void EngineViewport::applyPartToggle(bool on) {
-    if (!scene_ || !configEditor_ || !partToggle_ || selectedPart_ < 0) return;
+void EngineViewport::applyPartChoice(int index) {
+    if (!scene_ || !configEditor_ || !partChoice_ || selectedPart_ < 0) return;
     auto edited = scene_->config();
-    partToggle_(edited, on);
+    partChoice_(edited, index);
     if (const auto invalid = validateEngineConfig(edited)) {
         inspector_.setEditStatus(juce::String::fromUTF8(invalid->c_str()));
         return;
     }
-    reselect_ = Reselect { 0, 0, selectedPart_ };
+    reselect_ = partChoiceSelects_ ? Reselect { 0, 0, -1, partChoiceSelects_ } : Reselect { 0, 0, selectedPart_ };
     if (!configEditor_(edited)) {
         reselect_.reset();
         inspector_.setEditStatus("The engine did not take the edit.");
@@ -1222,7 +1225,13 @@ void EngineViewport::setEngine(const EngineConfig& config) {
     pressureScalePa_ = 0.0F;
     resized();
     cutaway_.repaint();
-    if (reselect && scene_ && reselect->part >= 0) {
+    if (reselect && scene_ && reselect->role) {
+        for (std::size_t part = 0; part < scene_->parts().size(); ++part)
+            if (scene_->identify(static_cast<std::uint16_t>(part)).role == *reselect->role) {
+                setSelectedPart(static_cast<int>(part));
+                break;
+            }
+    } else if (reselect && scene_ && reselect->part >= 0) {
         if (reselect->part < static_cast<int>(scene_->parts().size())) setSelectedPart(reselect->part);
     } else if (reselect && scene_)
         for (const auto& duct : scene_->ducts())
@@ -1519,7 +1528,8 @@ void EngineViewport::updateInspector() {
     juce::String note;
     std::optional<PartInspector::Edit> edit;
     partEditor_ = {};
-    partToggle_ = {};
+    partChoice_ = {};
+    partChoiceSelects_.reset();
     std::vector<PartInspector::Row> rows;
     const auto add = [&rows](juce::String label, juce::String value) { rows.push_back({ std::move(label), std::move(value) }); };
     // Bore and stroke are one engine-wide edit, offered on any cylinder.
@@ -1576,6 +1586,28 @@ void EngineViewport::updateInspector() {
         return result;
     };
 
+    // Fits a turbocharger sized for the engine, or takes it off: a restart.
+    // Not offered on a supercharged engine.
+    const auto turboChoice = [this, &config]() -> std::optional<PartInspector::Edit::Choice> {
+        const auto& forced = config.forcedInduction;
+        if (forced.enabled && forced.type != ForcedInductionType::turbocharger) return std::nullopt;
+        const auto sized = sizedTurbocharger(config);
+        partChoice_ = [](EngineConfig& edited, int index) {
+            edited = index == 1 ? withTurbocharger(edited) : withoutForcedInduction(edited);
+        };
+        partChoiceSelects_ = render::PartRole::turbo;
+        return PartInspector::Edit::Choice {
+            { "No turbo", "Turbo" },
+            utf8("Fits a turbocharger sized for this engine, and restarts it: turbine ")
+                + juce::String(juce::roundToInt(sized.turbineFlowAreaMm2)) + utf8(" mm\xc2\xb2 on each exhaust path's "
+                "collector (at the outlets without one), ")
+                + juce::String(sized.pressureRatio - 1.0, 1) + utf8(" bar of boost from ")
+                + juce::String(juce::roundToInt(sized.fullBoostRpm)) + utf8(" rpm (a lower boost the higher the "
+                "compression). The ignition map stays the engine's own: a high-compression engine may knock at "
+                "boost. Or takes the turbo off."),
+            forced.enabled ? 1 : 0 };
+    };
+
     switch (identity.role) {
     case render::PartRole::block:
         title = "Cylinder block";
@@ -1607,16 +1639,16 @@ void EngineViewport::updateInspector() {
             edit->secondMaximum = 50.0;
             edit->note = "The air the engine breathes and its exhaust leaves into: the standard atmosphere's "
                          "pressure at that altitude. The running engine takes it.";
-            edit->toggle = PartInspector::Edit::Toggle {
-                "Realistic", "Regulated",
+            edit->choice = PartInspector::Edit::Choice {
+                { "Realistic", "Regulated" },
                 utf8("Regulated: coolant and oil held at ")
                     + juce::String(juce::roundToInt(config.thermal.regulatedCoolantTemperatureC))
                     + utf8(" and ") + juce::String(juce::roundToInt(config.thermal.regulatedOilTemperatureC))
                     + utf8(" \xc2\xb0""C, as on a dyno cell, so every run is made warm and alike. Realistic: the "
                            "engine starts at the air temperature, warms up with load and cools by its radiator, "
                            "the air of its speed and its fan (a dyno cell's fan on the dyno)."),
-                config.thermal.regulated };
-            partToggle_ = [](EngineConfig& edited, bool regulated) { edited.thermal.regulated = regulated; };
+                config.thermal.regulated ? 1 : 0 };
+            partChoice_ = [](EngineConfig& edited, int index) { edited.thermal.regulated = index == 1; };
             partEditor_ = [](EngineConfig& edited, double altitudeM, double temperatureC) {
                 edited.ambientPressureKpa = pressureKpaAtAltitude(altitudeM);
                 edited.ambientTemperatureC = temperatureC;
@@ -1857,9 +1889,9 @@ void EngineViewport::updateInspector() {
         if (forced.compressorInducerDiameterMm > 0.0 && forced.turbineExducerDiameterMm > 0.0)
             add("Inducer / exducer", juce::String(juce::roundToInt(forced.compressorInducerDiameterMm)) + " / "
                                          + millimetres(forced.turbineExducerDiameterMm));
-        note = "The gas solver has no turbine in its network: the turbine and open wastegate areas narrow every "
-               "exhaust outlet, as a restriction in series, and the shaft is driven by the exhaust pressure and "
-               "flow. Drawn where a real one sits, after the collector; the charge piping is not drawn.";
+        note = "The turbine is a face of the exhaust network at the collector (at the outlets on a path without "
+               "one): what follows it is its cold side, and its shaft is driven by the pressure and flow across "
+               "it. The compressor raises the intake pressure; the charge piping is not drawn.";
         if (configEditor_) {
             edit = PartInspector::Edit {};
             edit->key = std::uint64_t { 3 } << 60U;
@@ -1890,6 +1922,7 @@ void EngineViewport::updateInspector() {
                 turbo.turbineFlowAreaMm2 = turbineAreaMm2;
                 return std::string();
             };
+            edit->choice = turboChoice();
         }
         break;
     }
@@ -1934,6 +1967,75 @@ void EngineViewport::updateInspector() {
         }
         break;
     }
+    case render::PartRole::gearbox: {
+        const auto& transmission = config.transmission;
+        const auto gears = static_cast<int>(transmission.gearRatios.size());
+        title = "Gearbox";
+        const auto style = transmission.shiftStyle;
+        subtitle = style == ShiftStyle::dualClutch ? juce::String("Dual clutch")
+            : style == ShiftStyle::manual ? juce::String("Manual, clutch and lift")
+            : juce::String("Sequential") + (transmission.quickshifter ? ", quickshifter" : "")
+                + (transmission.autoBlipper ? ", auto-blipper" : "");
+        const auto gear = state.gear;
+        add("Gear", gear == -2 ? juce::String("Reverse") : gear < 0 || gear >= gears ? juce::String("Neutral")
+                : juce::String(gear + 1) + " of " + juce::String(gears));
+        if (gear >= 0 && gear < gears) {
+            const auto ratio = transmission.gearRatios[static_cast<std::size_t>(gear)];
+            add("Ratio", juce::String(ratio, 3) + utf8(" : 1, ") + juce::String(ratio * transmission.finalDriveRatio, 2)
+                             + utf8(" : 1 overall"));
+        }
+        add("Input shaft", juce::String(juce::roundToInt(gear == -1 ? state.rpm : state.rpm - state.clutchSlipRpm)) + " rpm");
+        add("Clutch slip", juce::String(juce::roundToInt(gear == -1 ? 0.0 : state.clutchSlipRpm)) + " rpm");
+        add("Road speed", juce::String(state.vehicleSpeedMps * 3.6, 0) + " km/h");
+        if (state.shiftInProgress) add("Shifting", juce::String(juce::roundToInt(state.shiftProgress * 100.0)) + " %");
+        note = "Each pair turns at its own ratio; the blue collar locks the engaged gear to the output shaft. "
+               "A shift is made the way its style makes it: clutch and lift, an ignition cut, a blip on the way "
+               "down, or one clutch handing over to the other.";
+        if (configEditor_) {
+            edit = PartInspector::Edit {};
+            edit->key = std::uint64_t { 9 } << 60U;
+            edit->heading = "SHIFT";
+            edit->firstLabel = style == ShiftStyle::dualClutch ? "Hand-over" : "Clutch shift";
+            edit->secondLabel = "Ignition cut";
+            edit->firstUnit = " ms";
+            edit->secondUnit = " ms";
+            edit->firstDecimals = 0;
+            edit->secondDecimals = 0;
+            edit->first = std::round(transmission.shiftDurationSeconds * 1'000.0);
+            edit->second = std::round(transmission.quickshifterCutSeconds * 1'000.0);
+            edit->firstStep = 20.0;
+            edit->firstFineStep = 5.0;
+            edit->secondStep = 10.0;
+            edit->secondFineStep = 1.0;
+            edit->minimum = 10.0;
+            edit->firstMaximum = 3'000.0;
+            edit->secondMaximum = 500.0;
+            edit->note = "Clutch shift: the time a shift made with the clutch takes (a dual clutch's hand-over). "
+                         "Ignition cut: the quickshifter's, on the way up. The running engine takes them.";
+            const auto index = style == ShiftStyle::manual ? 0 : style == ShiftStyle::dualClutch ? 3
+                : transmission.autoBlipper ? 2 : 1;
+            edit->choice = PartInspector::Edit::Choice {
+                { "Manual", "Quickshifter", "QS + blipper", "Dual clutch" },
+                "How a gear change is made. Manual: the clutch dips and the throttle lifts. Quickshifter: a "
+                "sequential box, clutch left in, the ignition cut while the dogs change on the way up. "
+                "QS + blipper: the same, and the throttle blipped to the lower gear's speed on the way down. "
+                "Dual clutch: one clutch hands the drive to the other with no gap, and blips down.",
+                index };
+            partChoice_ = [](EngineConfig& edited, int choice) {
+                auto& box = edited.transmission;
+                box.shiftStyle = choice == 0 ? ShiftStyle::manual
+                    : choice == 3 ? ShiftStyle::dualClutch : ShiftStyle::sequential;
+                if (choice == 1 || choice == 2) box.quickshifter = true;
+                if (choice >= 1) box.autoBlipper = choice != 1;
+            };
+            partEditor_ = [](EngineConfig& edited, double shiftMs, double cutMs) {
+                edited.transmission.shiftDurationSeconds = shiftMs / 1'000.0;
+                edited.transmission.quickshifterCutSeconds = cutMs / 1'000.0;
+                return std::string();
+            };
+        }
+        break;
+    }
     case render::PartRole::duct: {
         const auto& duct = scene_->ducts()[static_cast<std::size_t>(identity.duct)];
         switch (duct.kind) {
@@ -1955,6 +2057,7 @@ void EngineViewport::updateInspector() {
                 edit->firstEditable = size->lengthEditable;
                 if (size->sharedByPrimaries)
                     edit->note = "The configuration gives the primaries of a path one size: all of them change.";
+                edit->choice = turboChoice();
             }
         }
         std::optional<IntakePart> intakePart;
@@ -2188,6 +2291,10 @@ void EngineViewport::refresh() {
         shared_.pose.rpm = state.rpm;
         shared_.pose.throttle = state.throttle;
         shared_.turboShaftRpm = state.forcedInductionShaftSpeedRpm;
+        // In gear the input shaft runs at the clutch's driven side; in
+        // neutral the engaged clutch spins it with the crank.
+        shared_.pose.engagedGear = state.gear;
+        shared_.gearboxInputRpm = state.gear == -1 ? state.rpm : state.rpm - state.clutchSlipRpm;
         shared_.pose.combustion.fill(0.0F);
         const auto count = std::min(state.cylinderStateCount, shared_.pose.combustion.size());
         for (std::size_t i = 0; i < count; ++i) {
@@ -2383,6 +2490,10 @@ void EngineViewport::renderOpenGL() {
         = 6.0 * shared.turboShaftRpm * (shared.playbackFactor >= 0.999 ? shared.rate : shared.playbackFactor);
     turboShaftDegrees_ = std::fmod(turboShaftDegrees_ + shaftDegreesPerSecond * dt, 360.0);
     frame_.pose.turboShaftDegrees = turboShaftDegrees_;
+    const auto gearboxDegreesPerSecond
+        = 6.0 * shared.gearboxInputRpm * (shared.playbackFactor >= 0.999 ? shared.rate : shared.playbackFactor);
+    gearboxInputDegrees_ += gearboxDegreesPerSecond * dt;
+    frame_.pose.gearboxInputDegrees = gearboxInputDegrees_;
     frame_.gasField = gasFieldView_.valid() ? &gasFieldView_ : nullptr;
     frame_.selectedPart = shared.selectedPart;
 
@@ -2396,6 +2507,7 @@ void EngineViewport::renderOpenGL() {
     for (int k = 0; k < subframes; ++k)
         frame_.angles[static_cast<std::size_t>(k)] = angle - sweep * static_cast<double>(subframes - 1 - k) / subframes;
     frame_.turboShaftSweepDegrees = shared.motionBlur ? shaftDegreesPerSecond * 0.5 * frameInterval_ : 0.0;
+    frame_.gearboxInputSweepDegrees = shared.motionBlur ? gearboxDegreesPerSecond * 0.5 * frameInterval_ : 0.0;
 
     renderer_->render(frame_, width, height);
     displayedAngle_.store(angle);

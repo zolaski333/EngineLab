@@ -4,6 +4,7 @@
 #include <enginelab/exhaust/ExhaustComponentResize.hpp>
 #include <enginelab/exhaust/ExhaustGraph.hpp>
 #include <enginelab/exhaust/LegacyExhaustNetwork.hpp>
+#include <enginelab/foundation/TurboSizing.hpp>
 #include <enginelab/physics/SimplifiedGasolinePhysics.hpp>
 #include <enginelab/render/CrankClock.hpp>
 #include <enginelab/render/EngineModel3D.hpp>
@@ -536,6 +537,90 @@ void checkTurbo(const EngineModel3D& model) {
     require(moved == 2 && turbines == 4, name + ": two wheels turn, in two housings");
 }
 
+int gearboxesDrawn = 0;
+
+/** A gearbox is drawn wherever there are gears to change: one pair per
+    gear at its ratio, the pairs in mesh at every input angle, the collar
+    against the engaged gear (between first and second in neutral) and the
+    output shaft turning with the engaged gear. */
+void checkGearbox(const EngineModel3D& model) {
+    const auto& config = model.config();
+    const auto& name = config.name;
+    const auto& box = model.gearbox();
+    const auto& ratios = config.transmission.gearRatios;
+    require(box.placed == (ratios.size() >= 2U), name + ": a gearbox is drawn when there are gears to change");
+    if (!box.placed) return;
+    ++gearboxesDrawn;
+    const auto pairs = ratios.size();
+    require(box.pairZ.size() == pairs && box.inputTeeth.size() == pairs && box.outputTeeth.size() == pairs,
+            name + ": one gear pair per gear");
+    for (std::size_t k = 0; k < pairs; ++k) {
+        const auto drawn = static_cast<double>(box.outputTeeth[k]) / static_cast<double>(box.inputTeeth[k]);
+        require(std::abs(drawn / ratios[k] - 1.0) < 0.06,
+                name + ": gear " + std::to_string(k + 1) + "'s teeth give its ratio within 6 %");
+    }
+    const auto centre = length(box.outputAxis - box.inputAxis);
+    const auto spacing = box.pairZ[1] - box.pairZ[0];
+    const auto near = [](const Mat4& transform, Vec3 axis) {
+        return std::abs(transform.at(0, 3) - axis.x) < 1.0e-3F && std::abs(transform.at(1, 3) - axis.y) < 1.0e-3F;
+    };
+    const auto angleOf = [](const Mat4& transform) { return std::atan2(transform.at(1, 0), transform.at(0, 0)); };
+    std::vector<SceneInstance> instances;
+    for (const auto engaged : { -1, 0, static_cast<int>(pairs) - 1 })
+        for (const auto inputDegrees : { 0.0, 37.0, 1'234.5, 98'765.4 }) {
+            ScenePoseInput input;
+            input.gearboxInputDegrees = inputDegrees;
+            input.engagedGear = engaged;
+            model.pose(input, instances);
+            std::optional<Mat4> inputShaft, outputShaft, collar;
+            std::vector<Mat4> outputGears;
+            for (const auto& instance : instances) {
+                if (model.identify(instance.part).role != PartRole::gearbox) continue;
+                const auto material = model.parts()[instance.part].material;
+                if (material == SceneMaterial::forged && near(instance.transform, box.inputAxis)) inputShaft = instance.transform;
+                else if (material == SceneMaterial::forged) outputGears.push_back(instance.transform);
+                else if (material == SceneMaterial::steel) outputShaft = instance.transform;
+                else if (material == SceneMaterial::intakeValve) collar = instance.transform;
+            }
+            const auto label = name + " in gear " + std::to_string(engaged) + " at " + std::to_string(inputDegrees) + " deg";
+            require(inputShaft && outputShaft && collar && outputGears.size() == pairs,
+                    label + ": the input shaft, output shaft, collar and every output gear are drawn");
+            for (const auto& gear : outputGears)
+                require(near(gear, box.outputAxis), label + ": the output gears turn about the output shaft");
+            // Tooth centres of a pair never meet: they interleave half a pitch apart.
+            for (std::size_t k = 0; k < pairs; ++k) {
+                const auto teethIn = box.inputTeeth[k], teethOut = box.outputTeeth[k];
+                const auto toothModule = 2.0F * centre / static_cast<float>(teethIn + teethOut);
+                const auto teeth = [&](const Mat4& transform, int count) {
+                    std::vector<Vec3> points;
+                    const auto radius = 0.5F * toothModule * static_cast<float>(count) - 0.05F * toothModule;
+                    for (int t = 0; t < count; ++t) {
+                        const auto a = 2.0F * std::numbers::pi_v<float> * static_cast<float>(t) / static_cast<float>(count);
+                        points.push_back(transform.transformPoint({ -radius * std::sin(a), radius * std::cos(a), box.pairZ[k] }));
+                    }
+                    return points;
+                };
+                float closest = std::numeric_limits<float>::max();
+                for (const auto& a : teeth(*inputShaft, teethIn))
+                    for (const auto& b : teeth(outputGears[k], teethOut)) closest = std::min(closest, length(a - b));
+                require(closest > 1.2F * toothModule,
+                        label + ": the teeth of pair " + std::to_string(k + 1) + " mesh ("
+                            + std::to_string(closest / toothModule) + " modules apart)");
+            }
+            const auto collarZ = collar->at(2, 3);
+            if (engaged >= 0) {
+                const auto target = box.pairZ[static_cast<std::size_t>(engaged)];
+                require(std::abs(collarZ - target) < 0.5F * spacing, label + ": the collar sits against the engaged gear");
+                require(std::abs(std::remainder(angleOf(*outputShaft) - angleOf(outputGears[static_cast<std::size_t>(engaged)]),
+                                                2.0F * std::numbers::pi_v<float>)) < 1.0e-3F,
+                        label + ": the output shaft turns with the engaged gear");
+            } else {
+                require(collarZ > box.pairZ[0] + 0.3F * spacing && collarZ < box.pairZ[1] - 0.3F * spacing,
+                        label + ": in neutral the collar sits between first and second");
+            }
+        }
+}
+
 int superchargersDrawn = 0;
 
 /** A supercharger is drawn where one is configured: fed by the airbox or the
@@ -749,6 +834,7 @@ void checkEngine(const EngineConfig& config) {
     checkStations(model);
     checkTurbo(model);
     checkSupercharger(model);
+    checkGearbox(model);
     checkGasFieldBinding(model);
     checkWaveColours(model);
     checkStrengthColours(model);
@@ -1074,6 +1160,31 @@ int main() {
     // 2JZ, EJ25, I5 and TDI; the Merlin's supercharger is not a turbo.
     require(turbosDrawn == 4, "the four catalogue turbochargers are drawn (" + std::to_string(turbosDrawn) + ")");
     require(superchargersDrawn == 1, "the Merlin's supercharger is drawn (" + std::to_string(superchargersDrawn) + ")");
+    // A turbo fitted to an engine without forced induction is drawn the same
+    // way where one exhaust path takes every cylinder through a collector.
+    // Measured 2026-10-13: the Aircooled's two banks get a turbine each in the
+    // simulation and the view draws the first; the LS3's X-pipe and the Big
+    // Twin's two pipes have no collector, so the turbine sits at the outlets
+    // and is not drawn.
+    auto turbosFitted = 0, turbosFittedDrawn = 0;
+    for (const auto& entry : catalogue.entries) {
+        if (entry.config.forcedInduction.enabled) continue;
+        const EngineModel3D fitted(withTurbocharger(entry.config));
+        ++turbosFitted;
+        if (!fitted.turbo().placed) {
+            std::cout << "EngineModel3D: a fitted turbo is not drawn on " << entry.config.name << '\n';
+            continue;
+        }
+        ++turbosFittedDrawn;
+        if (entry.config.exhaustPaths.size() == 1U) checkTurbo(fitted);
+    }
+    require(turbosFitted >= 10 && turbosFittedDrawn >= turbosFitted - 2,
+            "a fitted turbo is drawn on all but two of the engines without one (" + std::to_string(turbosFittedDrawn)
+                + " of " + std::to_string(turbosFitted) + ")");
+    const auto withGears = std::count_if(catalogue.entries.begin(), catalogue.entries.end(),
+        [](const auto& entry) { return entry.config.transmission.gearRatios.size() >= 2U; });
+    require(gearboxesDrawn == static_cast<int>(withGears) && gearboxesDrawn >= 10,
+            "every catalogue engine with gears has its gearbox drawn (" + std::to_string(gearboxesDrawn) + ")");
     // The catalogue compiles every exhaust path into a network at load; a
     // path authored as scalar geometry (an imported file) on a copy.
     auto scalar = catalogue.entries.front().config;
