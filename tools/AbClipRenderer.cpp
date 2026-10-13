@@ -558,7 +558,7 @@ void applyGain(Clip& c, double gain) {
     for (auto& v : c.right) v = static_cast<float>(v * gain);
 }
 
-/** Drive into AutoGainSoftClipper. The render's full scale is 134 dB SPL, so at
+/** Drive into AutoGainSoftClipper. The render's full scale is 140 dB SPL, so at
  *  unity its gain sits on the x10 cap; +40 dB puts it in the normalising regime
  *  the other simulator runs (see GeometrySensitivityHarness --output-stage-ab). */
 constexpr double outputStageDriveDb = 40.0;

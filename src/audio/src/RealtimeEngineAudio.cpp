@@ -123,6 +123,15 @@ RealtimeEngineAudio::RealtimeEngineAudio(FiringEventQueue& queue,
     }
 }
 
+double RealtimeEngineAudio::ambientAirDensityKgPerM3() const noexcept {
+    constexpr double dryAirGasConstantJPerKgK = 287.05;
+    const auto pressurePa = 1'000.0 * std::clamp(static_cast<double>(
+        realtimeState_.ambientPressureKpa.load(std::memory_order_relaxed)), 50.0, 120.0);
+    const auto temperatureK = 273.15 + std::clamp(static_cast<double>(
+        realtimeState_.ambientTemperatureC.load(std::memory_order_relaxed)), -50.0, 60.0);
+    return pressurePa / (dryAirGasConstantJPerKgK * temperatureK);
+}
+
 RealtimeEngineAudio::~RealtimeEngineAudio() {
     delete incomingExhaustNetwork_.exchange(nullptr);
     delete retiredExhaustNetwork_.exchange(nullptr);
@@ -154,7 +163,7 @@ bool RealtimeEngineAudio::replaceExhaustGraph(const ExhaustGraph& graph) {
         || !handoff->network->prepare(sampleRate, maximumAcousticDelayScale, observerDistanceM))
         return false;
     handoff->network->setOutletJetNoiseEnabled(outletJetNoiseEnabled_);
-    handoff->network->setOutletFarFieldDensity(outletFarFieldDensityKgPerM3_);
+    handoff->network->setOutletFarFieldDensity(resolvedOutletFarFieldDensityKgPerM3());
     handoff->network->setOutletPressureRelease(outletPressureRelease_);
     handoff->sampleRate = sampleRate;
     // A change the audio thread has not taken yet is replaced, and freed here.
@@ -1188,10 +1197,14 @@ void RealtimeEngineAudio::renderWithStems(
         beginExhaustSwapIfWaiting();
         beginIntakeSwapIfWaiting();
         takeForcedInductionUpdate();
+        // The outlets radiate into ambient air, whose density follows the
+        // live ambient conditions (altitude and temperature edits).
+        const auto farFieldDensity = resolvedOutletFarFieldDensityKgPerM3();
         for (auto* network : { acousticExhaustNetwork_.get(),
                  swappingExhaustNetwork_ != nullptr
                      ? swappingExhaustNetwork_->network.get() : nullptr }) {
             if (network == nullptr) continue;
+            network->setOutletFarFieldDensity(farFieldDensity);
             network->beginBlock(
                 std::span<const AcousticExhaustNetwork::Medium>(
                     media.data(), exhaustPathCount),
@@ -1907,6 +1920,8 @@ void RealtimeEngineAudio::renderWithStems(
                 exhaustPaths_[path].meanExhaustMassFlowKgPerSecond =
                     pathMeanMassFlowSum[path];
                 (void) exhaustPaths_[path].radiation.setMedium(density, soundSpeed);
+                (void) exhaustPaths_[path].radiation.setFarFieldDensity(
+                    resolvedOutletFarFieldDensityKgPerM3());
             }
         }
         const auto useCompiledTopology = sampleUsesPhysicalExhaust

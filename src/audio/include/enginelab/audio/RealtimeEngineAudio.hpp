@@ -224,14 +224,18 @@ public:
         if (acousticExhaustNetwork_)
             acousticExhaustNetwork_->setOutletJetNoiseEnabled(enabled);
     }
-    /** Diagnostic: density of the air the exhaust outlets radiate into; zero
-     * (production) keeps the duct medium. Not thread-safe against a running
-     * audio callback: set it before prepare(), as the harnesses do. */
+    /** Density of the air the exhaust outlets radiate into. Negative (the
+     * default, production): ambient air, from the live ambient pressure and
+     * temperature, refreshed every block. Zero: the duct medium, the model
+     * before 2026-10-13. Positive: that density. A diagnostic override; not
+     * thread-safe against a running audio callback, so set it before
+     * prepare(), as the harnesses do. */
     void setOutletFarFieldDensity(double densityKgPerM3) noexcept {
-        outletFarFieldDensityKgPerM3_ = densityKgPerM3;
-        if (acousticExhaustNetwork_)
-            acousticExhaustNetwork_->setOutletFarFieldDensity(densityKgPerM3);
+        outletFarFieldDensityOverrideKgPerM3_ = densityKgPerM3;
     }
+    /** Ambient air density from the realtime ambient conditions (ideal gas,
+     * dry air). */
+    [[nodiscard]] double ambientAirDensityKgPerM3() const noexcept;
     /** Diagnostic: ideal pressure-release outlets instead of the
      * Levine-Schwinger load. Same threading rule as above. */
     void setOutletPressureRelease(bool enabled) noexcept {
@@ -573,7 +577,12 @@ private:
     std::atomic<std::uint64_t> exhaustSwaps_ { 0 };
     std::atomic<double> preparedSampleRate_ { 0.0 };
     bool outletJetNoiseEnabled_ { true };
-    double outletFarFieldDensityKgPerM3_ { 0.0 };
+    double outletFarFieldDensityOverrideKgPerM3_ { -1.0 };
+    /** The far-field density the outlets use this block (see above). */
+    [[nodiscard]] double resolvedOutletFarFieldDensityKgPerM3() const noexcept {
+        return outletFarFieldDensityOverrideKgPerM3_ < 0.0
+            ? ambientAirDensityKgPerM3() : outletFarFieldDensityOverrideKgPerM3_;
+    }
     bool outletPressureRelease_ { false };
     /** setMicrophones() -> audio thread, a sequence lock: odd while written. */
     std::atomic<std::uint64_t> microphoneSequence_ { 0 };

@@ -72,9 +72,9 @@ constexpr double frameDt = 1.0 / 240.0;
 constexpr int samplesPerFrame = 200; // 48000 / 240
 /** Diagnostic outlet settings; the defaults are production. */
 struct OutletVariant final {
-    /** Density the outlets radiate into; zero keeps the duct medium
-     *  (RealtimeEngineAudio::setOutletFarFieldDensity). */
-    double farFieldDensityKgPerM3 { 0.0 };
+    /** Density the outlets radiate into: negative = ambient air (production),
+     *  zero = the duct medium (RealtimeEngineAudio::setOutletFarFieldDensity). */
+    double farFieldDensityKgPerM3 { -1.0 };
     /** Ideal pressure release instead of the Levine-Schwinger load. */
     bool pressureRelease { false };
 };
@@ -1293,7 +1293,7 @@ struct WavSignal final {
     printCharacter(characterise(result.mixSignal, result.steadyBegin, result.mix));
 
     // The stage normalises only while its gain stays under the x10 cap. The
-    // render's full scale is 134 dB SPL, so an engine's mean level sits 20-40 dB
+    // render's full scale is 140 dB SPL, so an engine's mean level sits 20-40 dB
     // under the point where that holds, and at unity drive the stage is a fixed
     // x10 into a mostly linear tanh. The other simulator feeds it pressures of
     // order ten (its outlet values over metres), where the cap never binds. A
@@ -1349,8 +1349,8 @@ struct WavSignal final {
 /** One factor at the exhaust outlets: production first, then `candidate`.
  *  Two renders of the same engine, everything else equal.
  *    --radiation-density-ab: the density the far field is computed with.
- *      Production uses the duct medium (hot gas); outside the mouth the field
- *      is in ambient air.
+ *      Production uses ambient air from the live ambient conditions; 0 gives
+ *      the duct medium (hot gas), the model before 2026-10-13.
  *    --pressure-release-ab: the Levine-Schwinger load against an ideal
  *      pressure release that returns every frequency into the pipe. */
 [[nodiscard]] int runOutletAb(const EngineConfig& engine, double targetRpm,
@@ -1450,7 +1450,7 @@ int main(int argc, char** argv) {
     double camDurationDeltaDegrees = 0.0;
     double camLiftScale = 1.0;
     bool outputStageAb = false;
-    double radiationDensityAb = 0.0;
+    std::optional<double> radiationDensityAb;
     bool pressureReleaseAb = false;
     for (int index = 1; index < argc; ++index) {
         const std::string argument = argv[index];
@@ -1560,17 +1560,21 @@ int main(int argc, char** argv) {
                                   factorialPipeScale, factorialMufflerScale);
     }
     if (outputStageAb) return runOutputStageAb(engine, targetRpm, seconds, wavOut);
-    if (radiationDensityAb != 0.0) {
-        if (!(radiationDensityAb > 0.0)) {
-            std::cerr << "--radiation-density-ab takes a density in kg/m3\n";
+    if (radiationDensityAb) {
+        if (!(*radiationDensityAb >= 0.0)) {
+            std::cerr << "--radiation-density-ab takes a density in kg/m3,"
+                         " or 0 for the duct medium\n";
             return 2;
         }
         OutletVariant candidate;
-        candidate.farFieldDensityKgPerM3 = radiationDensityAb;
+        candidate.farFieldDensityKgPerM3 = *radiationDensityAb;
         std::ostringstream label;
-        label << "far field in " << radiationDensityAb << " kg/m3";
+        if (*radiationDensityAb == 0.0) label << "far field in the duct medium";
+        else label << "far field in " << *radiationDensityAb << " kg/m3";
         return runOutletAb(engine, targetRpm, seconds, candidate, label.str(),
-                           "-ambient-radiation", wavOut);
+                           *radiationDensityAb == 0.0 ? "-duct-radiation"
+                                                      : "-fixed-radiation",
+                           wavOut);
     }
     if (pressureReleaseAb) {
         OutletVariant candidate;

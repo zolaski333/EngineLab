@@ -107,7 +107,7 @@ scale SPL of the microphone/preamp is published explicitly in
 `RealtimeAudioState::acousticFullScaleSplDb`. By default:
 
 ```text
-141.757 Pa peak = 100.237 Pa RMS = 134 dB SPL = 0 dBFS
+282.843 Pa peak = 200 Pa RMS = 140 dB SPL = 0 dBFS
 ```
 
 The conversion always uses the 20 µPa acoustic reference. Changing this

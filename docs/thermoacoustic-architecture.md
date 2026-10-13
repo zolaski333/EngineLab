@@ -163,16 +163,17 @@ approximation of the Levine–Schwinger solution fitted by Silva et al. The
 filter returns the reflected pressure into the guide. The net volume velocity
 at the mouth, then its acceleration, give the free-field monopole pressure.
 
-That monopole uses the duct medium's density, p = rho_duct dQ/dt / (4 pi r).
 Outside the mouth the field travels in ambient air, and the volume velocity is
-continuous across the hot/cold interface, so the textbook far field is
-rho_ambient dQ/dt / (4 pi r). `setOutletFarFieldDensity` (on
-`RealtimeEngineAudio`, off by default) switches only that factor, and
-`EngineLabGeometrySensitivityHarness --radiation-density-ab 1.2` measures it.
-Measured 2026-10-13: +4 to +4.5 dB on the CP2, +8 to +10 dB on hotter
-engines, plus a load- and temperature-dependent level. The band shape changes
-only through the balance with the outlet jet noise, which keeps its own jet
-density (journal).
+continuous across the hot/cold interface, so the far field is
+p = rho_ambient dQ/dt / (4 pi r). `RealtimeEngineAudio` computes rho_ambient
+every block from the live ambient pressure and temperature (dry air, ideal
+gas), for the compiled network and the fallback paths alike. Before
+2026-10-13 the monopole used the hot duct gas's density, 4 to 12 dB lower;
+`setOutletFarFieldDensity(0)` restores it for measurement, and
+`EngineLabGeometrySensitivityHarness --radiation-density-ab 0` compares the
+two. The band shape changes only through the balance with the outlet jet
+noise, which keeps its own jet density (journal). The monitor full scale rose
+from 134 to 140 dB SPL with it (§ levels below).
 
 `setOutletPressureRelease` (also off by default; `--pressure-release-ab`)
 replaces the load by an ideal pressure release, R = -1 at every frequency.
@@ -190,7 +191,7 @@ their arrival times and not through invented panning.
 Pascals have no universal mapping to dBFS: it necessarily depends on the
 microphone and the preamp. The capture chain is therefore an explicit
 calibration object (`AcousticMonitorCalibration`), with 20 µPa as the SPL
-reference pressure and 144 dB SPL RMS at 0 dBFS by default. This choice gives
+reference pressure and 140 dB SPL RMS at 0 dBFS by default. This choice gives
 the headroom of a high-level engine recording; it can be changed independently
 of the physics and of the listening volume. There is no hidden "realism" gain on
 the physical exhaust bus, and the safety limiter stays at unity gain in the
@@ -328,7 +329,8 @@ configuration; the catalogue and `EngineRuntime` require zero samples from that 
 
 ### Levels measured at the published observers
 
-The monitor full scale stays fixed at 134 dB SPL. The render uses the microphone
+The monitor full scale stays fixed at 140 dB SPL (134 dB until the outlets
+radiated into ambient air, 2026-10-13). The render uses the microphone
 position published by each engine; the power guard extrapolates that pressure to
 one metre with the same `1/r` law before applying 90–130 dB SPL. It therefore
 does not confuse a distant observer with a weak source. The harness additionally
