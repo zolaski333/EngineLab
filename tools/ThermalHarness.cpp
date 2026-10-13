@@ -96,6 +96,17 @@ struct Pass final {
     /** Share of the pass above the simulator's "knocking" state (0.45). */
     double heavyKnockShare { 0.0 };
     double damageGain { 0.0 };
+    /** Means over the ramp within 150 rpm of 80 % of the way to the ceiling. */
+    struct Probe final {
+        double samples { 0.0 };
+        double torqueNm { 0.0 };
+        double boostRatio { 0.0 };
+        double afr { 0.0 };
+        double advanceDeg { 0.0 };
+        double volumetricEfficiency { 0.0 };
+        double exhaustWallC { 0.0 };
+        double knock { 0.0 };
+    } probe;
 };
 
 /** Two seconds held at the entry, then the ramp to the ceiling. */
@@ -125,6 +136,17 @@ struct Pass final {
         pass.peakKnock = std::max(pass.peakKnock, state.knockLevel);
         if (state.knockLevel > 0.45) pass.heavyKnockShare += 1.0 / frames;
         if (t < holdSeconds) continue;
+        if (std::abs(state.rpm - (entry + 0.8 * (ceiling - entry))) < 150.0) {
+            auto& probe = pass.probe;
+            probe.samples += 1.0;
+            probe.torqueNm += output.brakeTorqueNm;
+            probe.boostRatio += state.boostPressureRatio;
+            probe.afr += state.airFuelRatio;
+            probe.advanceDeg += state.ignitionAdvanceDegrees;
+            probe.volumetricEfficiency += state.volumetricEfficiency;
+            probe.exhaustWallC += state.exhaustWallTemperatureC;
+            probe.knock += state.knockLevel;
+        }
         const auto powerKw = output.brakeTorqueNm * state.angularVelocityRadPerSecond / 1'000.0;
         if (powerKw > pass.peakPowerKw) {
             pass.peakPowerKw = powerKw;
@@ -210,6 +232,15 @@ int main(int argc, char** argv) {
                   << pass.damageGain << std::setprecision(1) << "; at its end ";
         printTemperatures(rig->simulator->state());
         std::cout << '\n';
+        if (const auto& probe = pass.probe; probe.samples > 0.0) {
+            const auto n = probe.samples;
+            std::cout << "    at 80 % of the ramp: torque " << std::setprecision(2) << probe.torqueNm / n
+                      << " Nm, boost " << std::setprecision(4) << probe.boostRatio / n << ", AFR "
+                      << probe.afr / n << ", advance " << probe.advanceDeg / n << " deg, VE "
+                      << probe.volumetricEfficiency / n << ", exhaust wall " << std::setprecision(1)
+                      << probe.exhaustWallC / n << " degC, knock " << std::setprecision(3) << probe.knock / n
+                      << std::setprecision(1) << '\n';
+        }
         idle(*rig, idleSeconds);
     }
     const auto hot = rig->simulator->state().coolantTemperatureC;

@@ -5,6 +5,13 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-13 — Air-cooled oil thermostat; why turbo engines overheated
+
+- Big Twin ran at 34-47 degC on the dyno: its fins were always fully open, so its temperature scaled with load. Air-cooled engines now get a tenth of their fin cooling always and the rest through an oil thermostat (85 -> 100 degC). Realistic, cell fan, 5 passes: Big Twin 42 -> 83 degC, 74 after 60 s of idle, 89.6 on a ride; Aircooled 48 -> 90, ride 87. `EngineLab.LiveTuning`: Big Twin cruise 87.5, flat out at 30 m/s 97.3 degC.
+- The owner's overheating (turbo engines, hot by pass 5, big loss at 8-10) reproduced with the former free model from 3 min of warm-up: 2JZ +8 degC per pass, 32.7 -> 100.3 degC at pass 10 (EJ25 90.7, I5 99.8): heading for the 108 degC derate and 115 degC damage. New model, same run: 2JZ, EJ25, I5 level off at 92.9-93.5 degC (oil 105-110).
+- Power still drifts -1.2 to -1.9 % over 10 passes. Probe at 80 % of each ramp: boost, AFR, advance and knock constant; exhaust wall 154 -> 608 degC (2JZ), 143 -> 538 (CP2), still climbing; VE -0.9 %, torque -1.2 %. Heat soak of the pipes, physical. Harness renders all start with cold pipes.
+- Not compared with any recorded air-cooled temperature or dyno-session power trace.
+
 ## 2026-10-13 — Realistic temperatures (EngineThermalModel)
 
 - The former free model stalled cold: a car-sized 180 kJ/K on every engine and radiator air through a closed thermostat (CP2 36.8 degC after 5 passes). Now: capacities from displacement, a thermostat (82-94 degC), air of the vehicle's speed (12 m/s of cell fan on the dyno), a fan on at 100 / off at 95 degC, all friction heat into the oil, heat shares 24 % / 5 % (Heywood, coolant 17-26 %). Sizes are plausible, not measured.

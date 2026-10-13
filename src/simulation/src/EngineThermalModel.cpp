@@ -25,7 +25,12 @@ constexpr double thermostatBleed = 0.03;
 constexpr double stillRadiatorAirFraction = 0.005;
 /** An air-cooled engine's fins in still air: the skin term carries it; the
  * temperature stands for the oil's, which climbs at a standstill. */
-constexpr double stillFinAirFraction = 0.001;
+constexpr double stillFinAirFraction = 0.0016;
+/** Share of an air-cooled engine's design cooling its fins give with the oil
+ * cooler shut. */
+constexpr double finBleed = 0.10;
+constexpr double oilThermostatStartC = 85.0;
+constexpr double oilThermostatFullC = 100.0;
 
 } // namespace
 
@@ -88,6 +93,12 @@ void EngineThermalModel::advance(State& state, const Inputs& inputs, double dtSe
         const auto blower = engineDrivenFan_
             ? blowerAirSpeedAtRedlineMps * std::max(0.0, inputs.rpm) / redlineRpm_ : 0.0;
         coreAirFraction = std::max(stillFinAirFraction, (airSpeed + blower) / designAirSpeedMps);
+        // Fins always shed some heat; an oil thermostat (the 911's opens its
+        // front cooler at 83 degC) adds the rest. Without it a lumped model
+        // runs a cruising air-cooled engine near 45 degC: its temperature
+        // would scale with load, while a real one's oil sits near 90.
+        opening = std::clamp((state.coolantTemperatureC - oilThermostatStartC)
+                / (oilThermostatFullC - oilThermostatStartC), finBleed, 1.0);
     }
     const auto radiator = radiatorKwPerC_ * airflowScale_ * opening * std::pow(coreAirFraction, 0.8);
     const auto skinAir = 1.0 + 0.1 * airSpeed;

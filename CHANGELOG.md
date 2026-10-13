@@ -22,7 +22,9 @@ file formats, always with an in-memory migration).
   cools it. On the dyno a cell fan blows on it, so repeated passes level off
   instead of climbing. The block's inspector shows when the fan is on.
   Air-cooled engines (Aircooled, Big Twin, Radial) have no radiator fan; the
-  Aircooled's blower follows the engine speed.
+  Aircooled's blower follows the engine speed, and air-cooled engines hold
+  their oil near 90 degC through an oil thermostat (the Big Twin no longer
+  stays near 40 degC on the dyno).
 
 - The turbocharged cars' exhausts have their real length (about 3.4 m from
   port to tip, like the other cars): a 2.2 m mid pipe behind the turbine.

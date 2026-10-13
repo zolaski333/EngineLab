@@ -434,6 +434,22 @@ void realisticTemperaturesFollowHeatAndAir() {
     auto aircooledFan = false;
     run(aircooled, fins, aircooled.estimatedRatedPowerKw() / 0.30, 0.15 * aircooled.estimatedRatedPowerKw(), 0.0, 120.0,
         [&](double, const EngineThermalModel::State& state) { aircooledFan = aircooledFan || state.fanOn; });
+    // An air-cooled Big Twin cruising (a fifth of its rated heat, 28 m/s)
+    // and pulling flat out at 30 m/s, from cold, for 15 min each.
+    auto twinConfig = catalogueEngine("Big Twin");
+    twinConfig.thermal.regulated = false;
+    const EngineThermalModel twin(twinConfig);
+    const auto twinRated = twin.estimatedRatedPowerKw();
+    EngineThermalModel::State cruising;
+    run(twin, cruising, 0.2 * twinRated / 0.30, 0.2 * 0.15 * twinRated, 28.0, 900.0,
+        [](double, const EngineThermalModel::State&) {});
+    EngineThermalModel::State flatOut;
+    run(twin, flatOut, twinRated / 0.30, 0.15 * twinRated, 30.0, 900.0,
+        [](double, const EngineThermalModel::State&) {});
+    std::cout << "  Big Twin (air-cooled) thermal model: cruising " << cruising.coolantTemperatureC
+              << " degC, flat out at 30 m/s " << flatOut.coolantTemperatureC << " degC\n";
+    require(cruising.coolantTemperatureC > 80.0, "an air-cooled engine cruising warms up like a real one's oil");
+    require(flatOut.coolantTemperatureC < 105.0, "its oil cooler holds it flat out at 30 m/s");
     std::cout << "  Yamaha CP2 thermal model (" << model.coolantCapacityKjPerC() << " kJ/K, radiator "
               << model.radiatorKwPerC() << " kW/K, rated " << model.estimatedRatedPowerKw() << " kW): idle to 80 degC in "
               << secondsTo80 / 60.0 << " min, hottest idle " << hottestIdle << " degC; rated heat standing: fan on after "
