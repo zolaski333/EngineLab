@@ -170,18 +170,18 @@ Non-deterministic:
 
 Details of each measurement are in the docs archive (tag `archive/docs-2026-09`).
 
-- "Unified duct" rewrite: the 300 mm mesh does carry the audible geometry (the
-  timbre moves by 12 to 14 dB).
-- Fork-join per cylinder (every threaded variant loses); AVX / AVX2 (slower:
-  latency of dependent divisions, not throughput).
+- "Unified duct" rewrite: the 300 mm mesh carries the audible geometry (12-14 dB).
+- Fork-join per cylinder; AVX/AVX2 (slower: dependent-division latency).
 - Deepening the muffler's single chamber: 16 dB notch on the EJ25 fundamental.
-- Speeding up the afterfire chemistry to get bursts: shape unchanged.
-- "The 1-D network cannot carry the steep front of a backfire": false, the audio
-  front rises in 0.2-0.8 ms. The lock is the bandwidth (~3.8 kHz).
-- Continuous-fuel afterfire below ~45 % of the normal demand: cannot burn
-  (equivalence below the 0.45 lean limit). Only packets burn.
-- Closing cyclic variability through dilution: inert (variability already
-  exists, 1.7-12.9 %).
+- Afterfire: faster chemistry (shape unchanged); "1-D cannot carry a backfire
+  front" (it rises in 0.2-0.8 ms, the lock is the ~3.8 kHz bandwidth);
+  continuous fuel below ~45 % of demand (below the lean limit; packets burn).
+- Knock, one input at a time (journal 2026-10-13): the end-gas integral reads
+  the MEAN chamber temperature, offset by a delay 2-5 x slower than Douaud-
+  Eyzat. Isentropic end gas alone: no knock even at RON 80. Plus Douaud-Eyzat:
+  2JZ and K20A knock at 12 deg of retard (end gas 1,000-1,200 K, measured
+  engines ~850-950). Integral knock control on either: pulls 12 deg for nothing.
+- Closing cyclic variability through dilution: inert (it exists, 1.7-12.9 %).
 - "Trapped residual too low": a unit error, the residual is sound.
 - Intake runners: four inertance formulations are unstable or out of phase.
   The intake charge bias was not the MUSCL limiter, the finite plenum, wall

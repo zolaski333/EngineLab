@@ -13,7 +13,8 @@ namespace enginelab {
  * that its thermostat opens (82 -> 94 degC), cooled by the air of its own
  * speed and by an electric fan (on at 100 degC, off at 95 degC); an air-cooled
  * one through its fins, by the air of its speed and, if it has one, by an
- * engine-driven blower. Both lose a little through their skin.
+ * engine-driven blower, a tenth of it always and the rest through an oil
+ * thermostat (85 -> 100 degC). Both lose a little through their skin.
  *
  * Unauthored sizes (zero in the configuration) follow the displacement: the
  * capacities scale with it, and the radiator rejects the engine's heat at its

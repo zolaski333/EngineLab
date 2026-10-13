@@ -10,6 +10,11 @@ namespace enginelab {
 namespace {
 constexpr std::array<double, 4> rpmAxis { 0.0, 2'000.0, 4'500.0, 8'000.0 };
 constexpr std::array<double, 3> loadAxis { 0.0, 0.5, 1.0 };
+/** Lambda learning stays suspended this long after a fuel-cut resume. */
+constexpr double postFuelCutLambdaLearningHoldSeconds = 2.0;
+/** A shut-throttle engine losing at least this share of its idle speed per
+ * second is coasting down (a tip-out from a rev loses ~1). */
+constexpr double coastingNormalizedRpmRate = 0.05;
 using CalibrationTable = std::array<std::array<double, loadAxis.size()>, rpmAxis.size()>;
 
 double interpolate(const CalibrationTable& table, double rpm, double load) noexcept {
@@ -216,8 +221,10 @@ EcuCommand SimpleEcuModel::evaluate(const EngineConfig& config, const EngineStat
             // the PI loop resumes sole authority.
             idleDashpot = std::max(idleDashpot,
                 std::clamp(effectiveThrottle * 2.0, 0.0, 0.65));
-        } else if (state.rpm < targetRpm * 1.30) {
-            // Near idle: hand back to the governor, bleeding the dashpot out.
+        } else if (state.rpm < targetRpm * 1.30
+                || normalizedRpmRate > -coastingNormalizedRpmRate) {
+            // Near idle, or no longer coasting down: hand back to the
+            // governor, bleeding the dashpot out.
             idleDashpot *= std::exp(-idleDt * 1.25);
         }
         // Above ~1.3x idle at a shut throttle the dashpot is HELD, not decayed.
@@ -231,6 +238,13 @@ EcuCommand SimpleEcuModel::evaluate(const EngineConfig& config, const EngineStat
         // keeps a live manifold charge so combustion re-establishes at idle. It
         // only ever charges from a throttle-open condition, so a pure motoring
         // overrun (throttle never opened) is unaffected.
+        //
+        // Held only while the engine is actually coasting down. A fuelled
+        // engine can sustain its own speed on the dashpot's air: once the
+        // learned lambda trim no longer went lean after a fuel-cut resume, the
+        // EJ25 sat at 1,200 rpm (1.46 x idle) for good, the dashpot held by
+        // the very speed it was holding.
+        //
         // Post-start air.
         //
         // Cranking air was commanded only below 350 rpm, so it vanished the
@@ -484,10 +498,24 @@ EcuCommand SimpleEcuModel::evaluate(const EngineConfig& config, const EngineStat
     }
     overrunAfterfireArmed_.store(overrunAfterfireArmed,
         std::memory_order_relaxed);
+    // The same holds for every engine: once the driver has opened the
+    // throttle past the flare, the start is over, and a lift-off is an
+    // overrun. Blipped 6 s after a start, the 2JZ coasted down from 6,800 rpm
+    // fuelled, its wet runner flooding the charge to lambda 0.27 with 90 %
+    // misfires for 4 s, and the fuel cut came at 1,800 rpm.
+    auto driverRevvedSinceStart = driverRevvedSinceStart_.load(
+        std::memory_order_relaxed);
+    if (!controls.ignitionEnabled || controls.starterEngaged)
+        driverRevvedSinceStart = false;
+    else if (effectiveThrottle > 0.20)
+        driverRevvedSinceStart = true;
+    driverRevvedSinceStart_.store(driverRevvedSinceStart,
+        std::memory_order_relaxed);
     const auto afterStartPhase =
         postStartAirOpening_.load(std::memory_order_relaxed) > 0.05
         && !overrunAfterfireArmed;
-    if (controls.starterEngaged || effectiveThrottle > 0.02 || afterStartPhase
+    if (controls.starterEngaged || effectiveThrottle > 0.02
+            || (afterStartPhase && !driverRevvedSinceStart)
             || state.rpm < decelerationFuelResumeRpm) {
         decelerationFuelCut = false;
     } else if (state.throttle < 0.02 && state.rpm > idleTargetRpm * 1.65) {
@@ -512,6 +540,19 @@ EcuCommand SimpleEcuModel::evaluate(const EngineConfig& config, const EngineStat
     }
     decelerationFuelResume_.store(decelerationFuelResume,
                                   std::memory_order_relaxed);
+    // Production ECUs close the lambda loop again only seconds after a fuel
+    // cut ends. For about 1.5 s after the resume the charge reference still
+    // carries the cut's air-rich residual while the manifold pumps down, and
+    // the mixture runs rich (2JZ: AFR 10-12). Learning it took the 2JZ idle
+    // trim from 0.81 to 0.57 in 2 s; once the governor refilled the manifold
+    // the engine ran AFR 17.4, misfired and fell to 516 rpm (760 target).
+    auto lambdaLearningHold = lambdaLearningHoldSeconds_.load(
+        std::memory_order_relaxed);
+    lambdaLearningHold = decelerationFuelResumeEvent
+        ? postFuelCutLambdaLearningHoldSeconds
+        : std::max(0.0, lambdaLearningHold - idleDt);
+    lambdaLearningHoldSeconds_.store(lambdaLearningHold,
+                                     std::memory_order_relaxed);
     // This is an ECU calibration, not a pop scheduler. It only retains a small
     // authored fraction of the normal fuel request while the existing DFCO
     // state proves that the engine is in closed-throttle overrun. Spark is cut,
@@ -637,6 +678,7 @@ EcuCommand SimpleEcuModel::evaluate(const EngineConfig& config, const EngineStat
         && commandedSparkEnabled
         && !decelerationFuelCut
         && decelerationFuelResume > 0.98
+        && !(lambdaLearningHold > 0.0)
         // The dry port film has no usable pre-start reference. During the
         // explicit starter/post-start state the measured chamber mixture is the
         // feedback that converges it; suppressing learning here left the Merlin

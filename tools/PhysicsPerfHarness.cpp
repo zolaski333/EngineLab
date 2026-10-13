@@ -363,7 +363,7 @@ void traceEngine(const enginelab::EngineConfig& baseConfig, double targetRpm,
  * clean.
  */
 void traceFreeRev(const enginelab::EngineConfig& baseConfig, double throttle,
-                  double durationSeconds, double releaseSeconds) {
+                  double durationSeconds, double releaseSeconds, double settleSeconds) {
     auto config = baseConfig;
     enginelab::normaliseEngineConfig(config);
     enginelab::SimpleEcuModel ecu;
@@ -376,7 +376,7 @@ void traceFreeRev(const enginelab::EngineConfig& baseConfig, double throttle,
     // Settle a real idle first, the same way `--idle` does. Opening the
     // throttle on a cold-started engine measures the after-start flare, not
     // the part-load transient under investigation.
-    for (int step = 0; step < static_cast<int>(6.0 / dt); ++step) {
+    for (int step = 0; step < static_cast<int>(settleSeconds / dt); ++step) {
         enginelab::EngineControls controls;
         controls.ignitionEnabled = true;
         controls.starterEngaged = simulator.state().rpm < config.idleRpm * 0.85;
@@ -388,7 +388,8 @@ void traceFreeRev(const enginelab::EngineConfig& baseConfig, double throttle,
     std::cout << "time_s,rpm,throttle_cmd,map_kpa,net_nm,afr,afr_target,lambda,"
                  "fuel_req_mg,fuel_del_mg,trim,misfire,inj_cap_mean,inj_cap_min,"
                  "knock,ve,step_ms,substeps,exhaust_substeps,intake_accepted,"
-                 "intake_rejected\n";
+                 "intake_rejected,metered_mg,runner_vapour_mg,film_mg,cyl_afr,"
+                 "trapped_air_mg\n";
     const auto steps = static_cast<int>(durationSeconds / dt);
     for (int step = 0; step < steps; ++step) {
         enginelab::EngineControls controls;
@@ -433,7 +434,12 @@ void traceFreeRev(const enginelab::EngineConfig& baseConfig, double throttle,
                   << ',' << state.solverSubsteps
                   << ',' << state.exhaustNetworkAcceptedSubsteps
                   << ',' << state.intakeNetworkAcceptedSubsteps
-                  << ',' << state.intakeNetworkRejectedSubsteps << '\n';
+                  << ',' << state.intakeNetworkRejectedSubsteps
+                  << ',' << state.cylinderStates[0].meteredFuelMgPerCycle
+                  << ',' << state.cylinderStates[0].portFuelVapourInventoryMg
+                  << ',' << state.cylinderStates[0].portLiquidFilmFuelMg
+                  << ',' << state.cylinderStates[0].airFuelRatio
+                  << ',' << state.cylinderStates[0].trappedFreshAirMassMg << '\n';
     }
 }
 
@@ -563,6 +569,7 @@ int main(int argc, char** argv) {
     auto freeRevThrottle = -1.0;
     auto freeRevSeconds = 12.0;
     auto freeRevReleaseSeconds = -1.0;
+    auto freeRevSettleSeconds = 6.0;
     for (int index = 1; index < argc; ++index) {
         const std::string argument = argv[index];
         if (argument == "--catalog-root" && index + 1 < argc) catalogRoot = argv[++index];
@@ -580,6 +587,8 @@ int main(int argc, char** argv) {
             freeRevSeconds = std::max(1.0, std::stod(argv[++index]));
         else if (argument == "--release" && index + 1 < argc)
             freeRevReleaseSeconds = std::max(0.0, std::stod(argv[++index]));
+        else if (argument == "--settle" && index + 1 < argc)
+            freeRevSettleSeconds = std::max(1.0, std::stod(argv[++index]));
         else {
             std::cerr << "usage: EngineLabPhysicsPerfHarness [--catalog-root dir]"
                          " [--filter name-fragment] [--runs count] [--trace rpm]"
@@ -615,7 +624,7 @@ int main(int argc, char** argv) {
     }
     if (freeRevThrottle >= 0.0) {
         traceFreeRev(engines.front(), freeRevThrottle, freeRevSeconds,
-                     freeRevReleaseSeconds);
+                     freeRevReleaseSeconds, freeRevSettleSeconds);
         return EXIT_SUCCESS;
     }
     if (overrunSeconds > 0.0) {

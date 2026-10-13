@@ -258,7 +258,9 @@ in the air of its speed (`EngineControls::coolingAirSpeedMps`: the vehicle's
 speed, or 12 m/s of dyno cell fan on the dyno) and of an electric fan, on at
 100 and off at 95 degC. An air-cooled one (`liquid_cooled: false`) sheds it
 through its fins, in the air of its speed and of its blower if it is driven by
-the crank (`engine_driven_fan`); its temperature stands for the oil's, as its
+the crank (`engine_driven_fan`): a tenth of their design cooling always, the
+rest through an oil thermostat opening from 85 to 100 degC (the 911's opens its
+front cooler near 83 degC); its temperature stands for the oil's, as its
 gauge reads it. Unauthored sizes (`0`) follow the displacement: 14 kJ/K per
 litre plus 3 for the coolant side, a radiator that rejects the heat of the
 estimated rated power (9 kW per litre per 1,000 rpm of redline, more with

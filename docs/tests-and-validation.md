@@ -55,6 +55,7 @@ The main registered tests are:
 | `EngineLab.PhysicsRegression` | authoritative topology, presets, signed dynamic pressure, flows and kinematics |
 | `EngineLab.Calibration` | types, interpolation, validation, transactions, concurrency, JSON and file watcher |
 | `EngineLab.EcuCalibration` | immediate application of the tables and the rev limiter by the ECU |
+| `EngineLab.IdleStabilityRegression` | every catalogue engine idles at its target and comes back from throttle blips without stalling: a 1.2 s full-throttle blip after the idle settles (lowest speed at least 0.78 × idle, settled within 0.85-1.15 × idle) and a 0.5 s one 6 s after the start (lowest at least 0.78 × idle) |
 | `EngineLab.Exhaust` | DAG validation, series/parallel losses, aggregated flow properties, routes, migration and JSON/YAML round-trips |
 | `EngineLab.ExhaustSimulation` | effect of the authored K on pressure/flow/torque, independence from the legacy geometry |
 | `EngineLab.Scripting` | units, diagnostics, base/include, cycles and keeping the last valid script |
