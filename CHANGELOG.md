@@ -9,6 +9,13 @@ file formats, always with an in-memory migration).
 
 ### Changed
 
+- The engine runs warm from the start: coolant and oil are held at 90 and
+  100 degC, as on a dyno cell, so every run and every A/B comparison is made
+  at one temperature (before, every engine started at 22 degC and warmed up
+  over many minutes). Click the cylinder block to switch to realistic
+  temperatures, which start cold and warm up. The sound barely moves (within
+  0.6 dB across the catalogue).
+
 - The turbocharged cars' exhausts have their real length (about 3.4 m from
   port to tip, like the other cars): a 2.2 m mid pipe behind the turbine.
   Spool and power stay within a few per cent. The sound changes: 2JZ about

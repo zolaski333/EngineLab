@@ -209,8 +209,9 @@ public:
     [[nodiscard]] static bool settingsReplaceable(const EngineConfig& running,
                                                   const EngineConfig& edited) noexcept;
     /** Take `config`'s injector, forced-induction, ignition and afterfire
-     * settings and its crankshafts' inertia, friction and masses between two
-     * steps, without a restart: the simulation reads them at every step and
+     * settings, its crankshafts' inertia, friction and masses, its ambient
+     * air, gearbox, vehicle and thermal model between two steps, without a
+     * restart (a regulated thermal model sets the temperatures at once): the simulation reads them at every step and
      * keeps nothing derived from them. They are swapped in, so this thread
      * does not allocate; `config` leaves with the previous ones. False, with
      * nothing changed, when !settingsReplaceable(). Simulation thread only,
@@ -752,6 +753,9 @@ private:
         double rampSeconds {};
     };
     void advanceCamshaftChange();
+    /** Coolant and oil at their set temperatures when the thermal model is
+     *  regulated; nothing otherwise. */
+    void applyRegulatedTemperatures() noexcept;
     std::optional<CamshaftChange> camshaftChange_;
     std::uint64_t cylinderGeometryRevision_ { 0 };
     /** Heap-owned scratch keeps the bounded source list out of step()'s large

@@ -16,6 +16,13 @@ target_link_libraries(EngineLabDynoSweepHarness PRIVATE
     EngineLab::Ecu EngineLab::Events EngineLab::Exhaust EngineLab::Catalog)
 enginelab_set_warnings(EngineLabDynoSweepHarness)
 
+add_executable(EngineLabThermalHarness ThermalHarness.cpp)
+target_link_libraries(EngineLabThermalHarness PRIVATE
+    EngineLab::Simulation EngineLab::Foundation EngineLab::Physics
+    EngineLab::Ecu EngineLab::Events EngineLab::Exhaust EngineLab::Catalog)
+target_compile_definitions(EngineLabThermalHarness PRIVATE ENGINELAB_CATALOG_ROOT="${CMAKE_SOURCE_DIR}")
+enginelab_set_warnings(EngineLabThermalHarness)
+
 add_executable(EngineLabDynoCurveHarness DynoCurveHarness.cpp)
 target_link_libraries(EngineLabDynoCurveHarness PRIVATE
     EngineLab::Simulation EngineLab::Foundation EngineLab::Physics

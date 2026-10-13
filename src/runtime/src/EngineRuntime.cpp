@@ -587,6 +587,7 @@ bool EngineRuntime::applyLiveSettings(const EngineConfig& edited) {
     change->config.ambientTemperatureC = edited.ambientTemperatureC;
     change->config.transmission = edited.transmission;
     change->config.vehicle = edited.vehicle;
+    change->config.thermal = edited.thermal;
     try {
         normaliseEngineConfig(change->config);
         if (validateEngineConfig(change->config)) return false;
@@ -608,6 +609,7 @@ bool EngineRuntime::applyLiveSettings(const EngineConfig& edited) {
     // Same gear count: the ratios are copied into the existing storage.
     config_.transmission = change->config.transmission;
     config_.vehicle = change->config.vehicle;
+    config_.thermal = change->config.thermal;
     {
         const std::scoped_lock lock(liveExhaustMutex_);
         std::swap(pendingSettingsChange_, change);

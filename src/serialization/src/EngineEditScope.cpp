@@ -23,6 +23,7 @@ void takeSettings(EngineConfig& probe, const EngineConfig& edited) {
     probe.ambientTemperatureC = edited.ambientTemperatureC;
     probe.transmission = edited.transmission;
     probe.vehicle = edited.vehicle;
+    probe.thermal = edited.thermal;
 }
 
 /** False when the banks are not the same ones: that edit is not a camshaft

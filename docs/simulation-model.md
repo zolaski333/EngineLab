@@ -237,6 +237,19 @@ tapping manifold; the cell right behind the plate reads the jet's low pressure
 and costs 10-19 % torque through a false load reading. A small 0-D
 cell per cylinder was tried first and refuted (`.claude/CLAUDE.md`).
 
+## Engine temperatures
+
+By default the thermal model is **regulated** (`thermal.regulated`): coolant
+and oil sit at `regulated_coolant_c` (90 degC) and `regulated_oil_c`
+(100 degC) from the start and never move, as a dyno cell's conditioning unit
+holds them. Every run, A/B switch and harness measurement is then made on a
+warm engine at one temperature, the state the CP2 recording protocol asks
+for. Unregulated, both start at the ambient temperature and integrate the
+heat released into them against a radiator whose airflow follows the
+thermostat and the engine speed (`thermal.*`, `cooling_efficiency`); the
+ECU enriches and retards a cold or hot engine from the coolant temperature.
+The switch is a settings edit, taken live.
+
 ## Transmission and vehicle
 
 `DrivelineModel` owns the clutch, gearbox shaft, differential, driven wheel and

@@ -5,6 +5,13 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-13 — Engine temperature over a dyno session; regulated by default
+
+- New `EngineLabThermalHarness`: idle, 5 app-like dyno passes (entry to ceiling, 500 rpm/s), 20 s of idle between, 120 s of idle after. Deterministic.
+- Before, every engine started at 22 degC (car-sized thermal mass, 180 kJ/degC, on all but Merlin and Radial). After 5 passes: CP2 36.8, K20A 54.2, 2JZ 65.2, LS3 77.7 degC (highest of 16); 120 s of idle then cools 0 to 2.9 degC. The owner's "excessive after 5 passes" is NOT reproduced from a cold start; harness renders were all of a cold engine.
+- Power over 5 passes: -0.0 to -1.2 % (Lab twin -4.3 %), cold and warm alike. It follows `damage`, +0.003 to +0.006 per pass from end-gas knock at WOT (`knockLevel * throttle * 0.0012`), which lowers efficiency by 0.82 x damage for good. Not changed yet.
+- Now `thermal.regulated` (default): coolant 90, oil 100 degC from the start. Sound, cold -> warm: CP2 at 6,000 rpm +0.32 dB, shape 0.57 dB; AudioRenderHarness catalogue within +0.24 / -0.62 dB (EJ25), brightness within 0.009. Not compared with a recording.
+
 ## 2026-10-13 — Wastegate holds a gauge boost
 
 - The boost controller held `wastegate_pressure_ratio` as a ratio to ambient: up high it lost as much manifold pressure as an unblown engine. It now holds the sea-level gauge boost, like a spring against the atmosphere. Bit-identical at 101.325 kPa (the added term is exactly zero).

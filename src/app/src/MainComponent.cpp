@@ -447,6 +447,7 @@ bool MainComponent::applySettingsEdit(const EngineConfig& edited) {
     config_.ambientTemperatureC = running.ambientTemperatureC;
     config_.transmission = running.transmission;
     config_.vehicle = running.vehicle;
+    config_.thermal = running.thermal;
     // The simulation has the new settings: a sound that cannot follow them
     // needs the restart after all.
     if (!audio_->replaceForcedInduction(config_.forcedInduction))

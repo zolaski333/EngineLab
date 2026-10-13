@@ -472,7 +472,10 @@ std::string JsonEngineSerializer::encode(const EngineConfig& config) const {
                                {"blow_off_valve_discharge_coefficient", config.forcedInduction.blowOffValveDischargeCoefficient},
                                {"tonal_acoustic_efficiency", config.forcedInduction.tonalAcousticEfficiency},
                                {"turbulent_jet_noise_coefficient", config.forcedInduction.turbulentJetNoiseCoefficient}}},
-        {"thermal", {{"coolant_mass_kj_per_c", config.thermal.coolantMassKjPerC},
+        {"thermal", {{"regulated", config.thermal.regulated},
+                      {"regulated_coolant_c", config.thermal.regulatedCoolantTemperatureC},
+                      {"regulated_oil_c", config.thermal.regulatedOilTemperatureC},
+                      {"coolant_mass_kj_per_c", config.thermal.coolantMassKjPerC},
                       {"oil_mass_kj_per_c", config.thermal.oilMassKjPerC},
                       {"coolant_heat_share", config.thermal.coolantHeatShare},
                       {"oil_heat_share", config.thermal.oilHeatShare},
@@ -702,6 +705,9 @@ EngineDecodeResult JsonEngineSerializer::decode(std::string_view text) const noe
         }
         if (engine.contains("thermal")) {
             const auto& thermal = engine.at("thermal");
+            config.thermal.regulated = thermal.value("regulated", config.thermal.regulated);
+            config.thermal.regulatedCoolantTemperatureC = thermal.value("regulated_coolant_c", config.thermal.regulatedCoolantTemperatureC);
+            config.thermal.regulatedOilTemperatureC = thermal.value("regulated_oil_c", config.thermal.regulatedOilTemperatureC);
             config.thermal.coolantMassKjPerC = thermal.value("coolant_mass_kj_per_c", config.thermal.coolantMassKjPerC);
             config.thermal.oilMassKjPerC = thermal.value("oil_mass_kj_per_c", config.thermal.oilMassKjPerC);
             config.thermal.coolantHeatShare = thermal.value("coolant_heat_share", config.thermal.coolantHeatShare);

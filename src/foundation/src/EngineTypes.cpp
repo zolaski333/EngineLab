@@ -663,6 +663,8 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
         || !inRange(config.forcedInduction.bearingFrictionPowerWatts, 0.0, 20'000.0)
         || !inRange(config.forcedInduction.turbineFlowAreaMm2, 10.0, 20'000.0)
         || !inRange(config.forcedInduction.wastegateFlowAreaMm2, 0.0, 20'000.0)
+        || !inRange(config.thermal.regulatedCoolantTemperatureC, 40.0, 130.0)
+        || !inRange(config.thermal.regulatedOilTemperatureC, 40.0, 150.0)
         || !inRange(config.thermal.coolantMassKjPerC, 20.0, 5'000.0)
         || !inRange(config.thermal.oilMassKjPerC, 10.0, 2'500.0)
         || !inRange(config.thermal.coolantHeatShare, 0.0, 1.0)

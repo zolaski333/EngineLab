@@ -574,7 +574,9 @@ The other parts edit the same way, each through `MainComponent::applyEngineEdit`
   distance to it, and the turbine flow area; a supercharger: its pressure
   and drive ratios;
 - the cylinder block: the air around the engine, as an altitude (the
-  standard atmosphere's pressure there) and a temperature;
+  standard atmosphere's pressure there) and a temperature, and a switch
+  between regulated and realistic engine temperatures (`thermal.regulated`;
+  the inspector's edit `toggle`, taken at once);
 - the crankshaft: the inertia of the crank and flywheel (every shaft scaled
   alike), with the total including the rods;
 - an intake or exhaust valve: its cam's duration and lift; the cylinder

@@ -801,6 +801,14 @@ struct ThermalConfig final {
     double oilHeatShare { 0.18 };
     double coolingPowerKwPerC { 0.42 };
     double oilCoolingPowerKwPerC { 0.22 };
+    // Filled positionally (makeDefaultRadialFive): add members below this line only.
+    /** Regulated: coolant and oil are held at their operating temperatures
+     * from the start, as a dyno cell's conditioning unit holds them, so runs
+     * and A/B comparisons are made at one temperature. Otherwise they start
+     * at the ambient temperature, warm up and cool by the model above. */
+    bool regulated { true };
+    double regulatedCoolantTemperatureC { 90.0 };
+    double regulatedOilTemperatureC { 100.0 };
 };
 
 struct CombustionCalibrationConfig final {

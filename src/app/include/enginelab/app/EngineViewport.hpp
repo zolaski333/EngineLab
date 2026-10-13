@@ -144,6 +144,15 @@ public:
         double secondMaximum { 400.0 };
         /** Offers the choice between the next cycle and a gradual change. */
         bool offersRamp {};
+        /** A two-way switch the engine takes at once (the block's regulated
+            temperatures), in the ramp choice's place. */
+        struct Toggle final {
+            juce::String offText;
+            juce::String onText;
+            juce::String tooltip;
+            bool on {};
+        };
+        std::optional<Toggle> toggle;
         juce::String note;
     };
     PartInspector();
@@ -151,6 +160,8 @@ public:
         and at once by Reset: the engine hears each size live. `gradual` is
         the ramp choice, when offered. */
     std::function<void(double first, double second, bool gradual)> onApplyEdit;
+    /** Called at once when the edit's toggle is switched, with its new state. */
+    std::function<void(bool on)> onToggle;
     /** Called when a typed value is applied or cancelled, to hand the
         keyboard back. */
     std::function<void()> onDoneTyping;
@@ -195,6 +206,7 @@ private:
     ActionButton secondUp_ { "+", ActionButton::Style::compact };
     ActionButton resetEdit_ { "Reset", ActionButton::Style::compact };
     ActionButton rampEdit_ { "Next cycle", ActionButton::Style::compact };
+    ActionButton toggleEdit_ { {}, ActionButton::Style::compact };
     /** The owner's choice (2026-10-06): a resize glides over the ramp by
         default, which also avoids the lean cycle of an instant change. */
     bool gradual_ { true };
@@ -344,6 +356,8 @@ private:
     void sendCylinderEdit(const EngineConfig& edited, const std::string& error, bool gradual);
     /** Applies the selected part's partEditor_ through configEditor_. */
     void applyPartEdit(double first, double second);
+    /** Applies the selected part's partToggle_ through configEditor_. */
+    void applyPartToggle(bool on);
     void updateLegend();
 
     const DashboardModel& model_;
@@ -366,6 +380,8 @@ private:
         values into a copy of the configuration, or why not. Set by
         updateInspector(). */
     std::function<std::string(EngineConfig&, double, double)> partEditor_;
+    /** How the selected part takes its edit's toggle, when it has one. */
+    std::function<void(EngineConfig&, bool)> partToggle_;
     /** The part an edit resized: selected again, with the camera kept, when
         the engine comes back. An exhaust component by its ids (the scene's
         parts change), a cylinder part by its index (they do not). */

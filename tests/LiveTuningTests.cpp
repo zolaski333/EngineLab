@@ -336,6 +336,53 @@ void wastegateHoldsGaugeBoostUpHigh() {
             "up high the wastegate holds the same gauge boost");
 }
 
+/** A regulated engine runs at its set temperatures from the start and through
+ * a full-load run, as on a dyno cell; one let free starts at the ambient
+ * temperature and warms up. Regulating a running cold engine is a settings
+ * edit that sets the temperatures at once. */
+void regulatedTemperaturesHold() {
+    const auto regulated = catalogueEngine("Yamaha CP2");
+    require(regulated.thermal.regulated, "the thermal model is regulated by default");
+    auto unregulated = regulated;
+    unregulated.thermal.regulated = false;
+    const auto scope = engineEditScope(unregulated, regulated);
+    require(scope.settings && !scope.other, "regulating the temperatures is a settings edit only");
+    Rig held(regulated);
+    Rig warming(unregulated);
+    Rig switched(unregulated);
+    constexpr auto frames = 12 * 240;
+    std::array<double, 3> rpm {};
+    std::array<double, 3> lowestCoolant { 1.0e9, 1.0e9, 1.0e9 };
+    std::array<double, 3> highestCoolant {};
+    for (auto frame = 0; frame < frames; ++frame) {
+        const auto t = frame * frameSeconds;
+        if (frame == 4 * 240) {
+            auto incoming = regulated;
+            require(switched.simulator->replaceSettings(incoming), "the regulation is taken");
+            require(switched.simulator->state().coolantTemperatureC == regulated.thermal.regulatedCoolantTemperatureC
+                        && switched.simulator->state().oilTemperatureC == regulated.thermal.regulatedOilTemperatureC,
+                    "a regulated engine is at its set temperatures at once");
+        }
+        std::size_t index = 0;
+        for (auto* rig : { &held, &warming, &switched }) {
+            const auto state = rig->simulator->step(frameSeconds, heldAt(t, rpm[index], regulated)).state;
+            rpm[index] = state.rpm;
+            if (index != 2 || frame >= 4 * 240) {
+                lowestCoolant[index] = std::min(lowestCoolant[index], state.coolantTemperatureC);
+                highestCoolant[index] = std::max(highestCoolant[index], state.coolantTemperatureC);
+            }
+            ++index;
+        }
+    }
+    std::cout << "  Yamaha CP2 at full load for 10 s: coolant regulated " << lowestCoolant[0] << " to "
+              << highestCoolant[0] << " degC, free " << lowestCoolant[1] << " to " << highestCoolant[1]
+              << " degC, regulated at 4 s " << lowestCoolant[2] << " to " << highestCoolant[2] << " degC\n";
+    require(lowestCoolant[0] == 90.0 && highestCoolant[0] == 90.0, "a regulated engine stays at 90 degC");
+    require(lowestCoolant[1] < 30.0 && highestCoolant[1] > lowestCoolant[1] + 1.0,
+            "a free engine starts cold and warms up (else this proves nothing)");
+    require(lowestCoolant[2] == 90.0 && highestCoolant[2] == 90.0, "a regulated running engine stays at 90 degC");
+}
+
 /** A final drive 30 % shorter taken at 1 s, in first gear with the clutch
  * engaged and the engine held at 2,000 rpm: the car settles at the road speed
  * of one built with it. Another gear count is refused; a gearbox edit is a
@@ -388,6 +435,7 @@ void liveTuningRegression() {
     gearboxSettlesLikeARestart();
     ambientSettlesLikeARestart();
     wastegateHoldsGaugeBoostUpHigh();
+    regulatedTemperaturesHold();
     flywheelIsASetting();
     flywheelRevsLikeARestart();
     sameCamshaftsAreInvisible();

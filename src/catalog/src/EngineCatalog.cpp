@@ -619,6 +619,9 @@ template <typename T>
 
 [[nodiscard]] ThermalConfig decodeThermal(const YAML::Node& node) {
     ThermalConfig value;
+    assignIfPresent(node, "regulated", value.regulated);
+    assignIfPresent(node, "regulated_coolant_c", value.regulatedCoolantTemperatureC);
+    assignIfPresent(node, "regulated_oil_c", value.regulatedOilTemperatureC);
     assignIfPresent(node, "coolant_mass_kj_per_c", value.coolantMassKjPerC);
     assignIfPresent(node, "oil_mass_kj_per_c", value.oilMassKjPerC);
     assignIfPresent(node, "coolant_heat_share", value.coolantHeatShare);

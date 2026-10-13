@@ -1228,6 +1228,12 @@ bool EngineSimulator::beginCamshaftChange(EngineConfig& target, double rampSecon
     return true;
 }
 
+void EngineSimulator::applyRegulatedTemperatures() noexcept {
+    if (!config_.thermal.regulated) return;
+    state_.coolantTemperatureC = config_.thermal.regulatedCoolantTemperatureC;
+    state_.oilTemperatureC = config_.thermal.regulatedOilTemperatureC;
+}
+
 void EngineSimulator::advanceCamshaftChange() {
     if (!camshaftChange_) return;
     const auto& change = *camshaftChange_;
@@ -1305,6 +1311,10 @@ bool EngineSimulator::replaceSettings(EngineConfig& config) noexcept {
     // describing the engine that runs.
     std::swap(config_.transmission, config.transmission);
     std::swap(config_.vehicle, config.vehicle);
+    // A regulated engine is at its set temperatures at once; one let free
+    // starts from where it is.
+    config_.thermal = config.thermal;
+    applyRegulatedTemperatures();
     // Field by field: the kinematics read the crankshafts' layout, which
     // stays. effectiveRotatingInertiaKgM2() reads these at every step.
     for (std::size_t index = 0; index < config_.crankshafts.size(); ++index) {
@@ -4878,12 +4888,14 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
             * config_.thermal.oilCoolingPowerKwPerC * std::max(0.35, coolingAirflow * 0.72);
         const auto exhaustTarget = exhaustTemperatureSumK
             / static_cast<double>(config_.cylinders.size()) - 273.15;
-        state_.coolantTemperatureC = std::clamp(state_.coolantTemperatureC
-            + (coolantHeatKw - coolantRejectedKw) / config_.thermal.coolantMassKjPerC * subDt,
-            config_.ambientTemperatureC - 5.0, 150.0);
-        state_.oilTemperatureC = std::clamp(state_.oilTemperatureC
-            + (oilHeatKw - oilRejectedKw) / config_.thermal.oilMassKjPerC * subDt,
-            config_.ambientTemperatureC - 5.0, 170.0);
+        if (!config_.thermal.regulated) {
+            state_.coolantTemperatureC = std::clamp(state_.coolantTemperatureC
+                + (coolantHeatKw - coolantRejectedKw) / config_.thermal.coolantMassKjPerC * subDt,
+                config_.ambientTemperatureC - 5.0, 150.0);
+            state_.oilTemperatureC = std::clamp(state_.oilTemperatureC
+                + (oilHeatKw - oilRejectedKw) / config_.thermal.oilMassKjPerC * subDt,
+                config_.ambientTemperatureC - 5.0, 170.0);
+        }
         state_.exhaustTemperatureC = smooth(state_.exhaustTemperatureC, exhaustTarget, subDt, 0.18);
         const auto overrev = std::max(0.0, state_.rpm / config_.redlineRpm - 1.0);
         const auto oilStarvation = state_.rpm > 800.0 && state_.oilPressureKpa < 90.0 ? 1.0 : 0.0;
@@ -5687,6 +5699,7 @@ void EngineSimulator::reset() noexcept {
     state_ = {};
     state_.coolantTemperatureC = config_.ambientTemperatureC;
     state_.oilTemperatureC = config_.ambientTemperatureC;
+    applyRegulatedTemperatures();
     state_.exhaustTemperatureC = config_.ambientTemperatureC;
     state_.manifoldPressureKpa = config_.ambientPressureKpa;
     state_.boostPressureRatio = 1.0;
