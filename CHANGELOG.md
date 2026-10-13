@@ -225,6 +225,12 @@ file formats, always with an in-memory migration).
 
 ### Fixed
 
+- A throttle blip no longer risks stalling the engine on its way back to
+  idle. Warm, the 2JZ fell to about 520 rpm (target 760) and the Audi I5,
+  Big Twin and Aircooled nearly as low; blipped in the first seconds after a
+  start, the LS3, the Merlin and the Radial stalled. Every catalogue engine
+  now stays above about 0.8 x its idle speed. The idle also comes back down
+  after a blip: the EJ25, CP4 and TDI could hang at 1.4-1.5 x idle.
 - Dyno passes no longer cost power for good. Every engine knocks lightly at
   full throttle, and that light knock was counted as damage: each pass took
   0.3-0.5 % of power that never came back. Only severe knock damages the

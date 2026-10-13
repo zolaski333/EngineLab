@@ -33,6 +33,23 @@ rev limiter. A cell accepted by the tuner is therefore no longer silently
 re-clamped to a different range. The dynamic corrections stay bounded to the
 same domain after the trims are applied.
 
+### Idle and fuel-cut strategies (not tunable)
+
+- **Fuel cut on overrun**: below 2 % throttle and above 1.65 × the idle
+  target; fuel resumes below 1.5 × idle, ramped in at 3/s.
+- **After-start phase**: right after a start the fuel cut is inhibited while
+  the start air opening decays. Opening the throttle past 20 % lifts that
+  inhibit until the next start (lambda learning keeps its start state): a blip
+  from a fresh start coasts down on a fuel cut, not fuelled through an
+  idle-air opening.
+- **Idle dashpot**: an idle-air opening that softens the return to idle. It is
+  held only while the engine is still coasting down (losing at least 5 % of
+  the idle speed per second) above 1.3 × idle; otherwise it decays, so an
+  engine cannot hang at 1.4-1.5 × idle.
+- **Lambda learning** is suspended for 2 s after a fuel-cut resume: the
+  resume's transient mixture would otherwise be learnt as a steady error and
+  lean the idle out.
+
 The framework defines reserved keys for future volumetric-efficiency, VVT/VVL,
 boost or wastegate maps. They are not instantiated in the default calibration
 and are not consumed by the current ECU.

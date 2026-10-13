@@ -32,6 +32,7 @@ public:
         limiterLatched_.store(false, std::memory_order_relaxed);
         decelerationFuelCutLatched_.store(false, std::memory_order_relaxed);
         decelerationFuelResume_.store(1.0, std::memory_order_relaxed);
+        lambdaLearningHoldSeconds_.store(0.0, std::memory_order_relaxed);
         limiterReleaseTime_.store(0.0, std::memory_order_relaxed);
         previousThrottle_.store(0.0, std::memory_order_relaxed);
         accelerationFuelEnrichment_.store(0.0, std::memory_order_relaxed);
@@ -42,6 +43,7 @@ public:
         previousIdleEvaluationTime_.store(0.0, std::memory_order_relaxed);
         postStartAirOpening_.store(0.0, std::memory_order_relaxed);
         overrunAfterfireArmed_.store(false, std::memory_order_relaxed);
+        driverRevvedSinceStart_.store(false, std::memory_order_relaxed);
         afterfireOverrunWindow_.store(false, std::memory_order_relaxed);
         afterfirePulseEpochSeconds_.store(0.0, std::memory_order_relaxed);
     }
@@ -92,6 +94,7 @@ private:
     mutable std::atomic<bool> limiterLatched_ { false };
     mutable std::atomic<bool> decelerationFuelCutLatched_ { false };
     mutable std::atomic<double> decelerationFuelResume_ { 1.0 };
+    mutable std::atomic<double> lambdaLearningHoldSeconds_ { 0.0 };
     mutable std::atomic<double> limiterReleaseTime_ { 0.0 };
     mutable std::atomic<double> previousThrottle_ { 0.0 };
     mutable std::atomic<double> accelerationFuelEnrichment_ { 0.0 };
@@ -104,6 +107,7 @@ private:
     mutable std::atomic<double> postStartAirOpening_ { 0.0 };
     /** Latched only after a deliberate high-speed driver power request. */
     mutable std::atomic<bool> overrunAfterfireArmed_ { false };
+    mutable std::atomic<bool> driverRevvedSinceStart_ { false };
     /** The pulse scheduler is anchored to the actual lift-off transition, not
      * an arbitrary absolute simulation-time grid. */
     mutable std::atomic<bool> afterfireOverrunWindow_ { false };

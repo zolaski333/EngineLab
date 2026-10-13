@@ -5,6 +5,20 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-13 — Stalls after a blip: three ECU causes
+
+- `EngineLabPhysicsPerfHarness --freerev 1 --release S --settle S` (new `--settle`, fuel and air columns). 2JZ, warm, WOT blip then release: down to 516-548 rpm (760 target). After the fuel-cut resume the charge reference ran 20-30 % above the trapped air for ~1.5 s (AFR 10-12); lambda learning took the idle trim 0.81 -> 0.57 in 2 s, then the refilled manifold ran AFR 17.4, 30 % misfires. Learning now holds 2 s after a resume.
+- That exposed a hung idle: the dashpot was held above 1.3 x idle, so a fuelled EJ25 sat at 1,200 rpm on its air for good (CP4 1,814 and TDI 1,161-1,288 already did in the base). Held now only while coasting down (losing > 5 % of idle per second).
+- Blipped 6 s after the start the fuel cut was inhibited (after-start phase): the 2JZ coasted from 6,800 rpm fuelled at lambda 0.27, 90 % misfires; LS3, Merlin, Radial stalled. Opening the throttle past 0.2 now lifts that inhibit, as for afterfire engines; ending the whole start phase also stopped its lambda learning and moved the default renders (EL-20 dyno 3,820 -> 4,843 rpm). Renders now unchanged except the Big Twin rev return (771 -> 776 rpm).
+- Catalogue, WOT 0.5 / 1.2 s after 6 or 30 s of idle: base 6 stalls, worst warm 0.67 x idle; all three: no stall, lowest 0.83 x idle (Aircooled), idle back. Each change alone left a stall (Radial, LS3). `EngineLab.IdleStabilityRegression` gained these blips; base fails on 12 engines.
+- Not reproduced in the application itself, nor with a gear engaged.
+
+## 2026-10-13 — Knock model checked: not physical, not changed
+
+- Trace of every auto-ignition, one dyno pass: 2JZ 2,029, K20A 1,877, CP2 875 events, at 50-95 % burned. The integral reads the mean chamber temperature (1,850-3,070 K, clamped to 1,500) where the end gas is the unburned charge, isentropic from the flame start: 830-1,200 K. The delay fit is 2-5 x slower than Douaud-Eyzat (18 vs 8.2 ms at 850 K, 20 bar, RON 95); the two errors offset.
+- Isentropic end gas alone: no knock on any engine (peak power -0.7 to +1.1 %), none even at RON 80. Plus Douaud-Eyzat: CP2 clean at 98, light knock from 95 (realistic); 2JZ and K20A knock 0.33-0.44 whatever the octane, still 0.2-0.36 with an integral knock control at its 12 deg stop: their end gas (1,000-1,200 K) is hotter than measured engines at knock onset (~850-950 K). The charge temperature is the next suspect, unverified.
+- Kept as it was: light knock on every engine at WOT (mean 0.12-0.37), no damage since the earlier fix, held by a proportional retard (`knockLevel * 12`).
+
 ## 2026-10-13 — Air-cooled oil thermostat; why turbo engines overheated
 
 - Big Twin ran at 34-47 degC on the dyno: its fins were always fully open, so its temperature scaled with load. Air-cooled engines now get a tenth of their fin cooling always and the rest through an oil thermostat (85 -> 100 degC). Realistic, cell fan, 5 passes: Big Twin 42 -> 83 degC, 74 after 60 s of idle, 89.6 on a ride; Aircooled 48 -> 90, ride 87. `EngineLab.LiveTuning`: Big Twin cruise 87.5, flat out at 30 m/s 97.3 degC.

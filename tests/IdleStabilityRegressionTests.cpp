@@ -44,7 +44,44 @@ struct IdleResult final {
     double driftRpm { 0.0 };      // second-half mean minus first-half mean
     double afrRatio { 0.0 };      // settled mean AFR / target AFR (0 = no valid AFR)
     bool diesel { false };
+    double wideOpenBlipMinRpm { 0.0 };     // lowest speed after a 1.2 s WOT blip
+    double wideOpenBlipSettledRpm { 0.0 }; // mean over the last 2 s of its recovery
+    double earlyBlipMinRpm { 0.0 };        // lowest speed after a WOT blip 6 s after start
 };
+
+/** Shuts the throttle for `seconds` and returns the lowest speed reached;
+ * `settledRpm` receives the mean over the last two seconds. */
+double recoverFromBlip(enginelab::EngineSimulator& simulator, double seconds,
+                       double* settledRpm = nullptr) {
+    auto lowest = simulator.state().rpm;
+    double settledSum = 0.0;
+    int settledSamples = 0;
+    const auto steps = static_cast<int>(seconds / stepSeconds);
+    const auto settledFrom = static_cast<int>((seconds - 2.0) / stepSeconds);
+    for (int step = 0; step < steps; ++step) {
+        enginelab::EngineControls controls;
+        controls.ignitionEnabled = true;
+        controls.throttle = 0.0;
+        (void)simulator.step(stepSeconds, controls);
+        lowest = std::min(lowest, simulator.state().rpm);
+        if (step >= settledFrom) {
+            settledSum += simulator.state().rpm;
+            ++settledSamples;
+        }
+    }
+    if (settledRpm)
+        *settledRpm = settledSamples > 0 ? settledSum / settledSamples : 0.0;
+    return lowest;
+}
+
+void holdThrottle(enginelab::EngineSimulator& simulator, double throttle, double seconds) {
+    for (int step = 0; step < static_cast<int>(seconds / stepSeconds); ++step) {
+        enginelab::EngineControls controls;
+        controls.ignitionEnabled = true;
+        controls.throttle = throttle;
+        (void)simulator.step(stepSeconds, controls);
+    }
+}
 
 IdleResult measureIdle(const enginelab::EngineConfig& config, double blipThrottle,
                        std::optional<double> exhaustTargetCellLengthM = {}) {
@@ -131,6 +168,15 @@ IdleResult measureIdle(const enginelab::EngineConfig& config, double blipThrottl
         if (simulator.state().rpm < stallFloorRpm) result.blipStalled = true;
     }
 
+    // Phase 4: the owner's scenario, a warm engine blipped wide open for 1.2 s
+    // (most engines reach their limiter) and released. Before the post-resume
+    // lambda learning hold the 2JZ fell to 516 rpm against its 760 target, the
+    // Audi I5 to 521, the Radial stalled; before the coasting-only dashpot the
+    // CP4 and the TDI hung at 1.4-1.5 x idle.
+    holdThrottle(simulator, 1.0, 1.2);
+    result.wideOpenBlipMinRpm = recoverFromBlip(
+        simulator, 12.0, &result.wideOpenBlipSettledRpm);
+
     if (afrSamples > 0)
         result.afrRatio = afrRatioSum / static_cast<double>(afrSamples);
     if (!steadyRpm.empty()) {
@@ -165,6 +211,30 @@ IdleResult measureIdle(const enginelab::EngineConfig& config, double blipThrottl
         }
     }
     return result;
+}
+
+/** A WOT blip 6 s after the start, inside the after-start phase. The lift-off
+ * used to coast down fuelled (no fuel cut through the start phase): the LS3,
+ * the Merlin and the Radial stalled, the Aircooled fell to 299 rpm. */
+double measureEarlyBlip(const enginelab::EngineConfig& config,
+                        std::optional<double> exhaustTargetCellLengthM = {}) {
+    enginelab::SimpleEcuModel ecu;
+    enginelab::SimplifiedGasolinePhysics physics;
+    enginelab::FourStrokeEventGenerator events;
+    auto exhaust = enginelab::ExhaustGraph::makeForEngine(config);
+    enginelab::EngineSimulatorOptions simulatorOptions;
+    simulatorOptions.exhaustTargetCellLengthM = exhaustTargetCellLengthM;
+    enginelab::EngineSimulator simulator(
+        config, ecu, physics, events, exhaust, simulatorOptions);
+    for (int step = 0; step < static_cast<int>(6.0 / stepSeconds); ++step) {
+        enginelab::EngineControls controls;
+        controls.ignitionEnabled = true;
+        controls.starterEngaged = simulator.state().rpm < config.idleRpm * 0.85;
+        controls.throttle = 0.0;
+        (void)simulator.step(stepSeconds, controls);
+    }
+    holdThrottle(simulator, 1.0, 0.5);
+    return recoverFromBlip(simulator, 10.0);
 }
 } // namespace
 
@@ -313,12 +383,15 @@ int main(int argc, char** argv) {
             if (!engineFilter.empty()
                 && config.name.find(engineFilter) == std::string::npos)
                 continue;
-            const auto r = measureIdle(
+            auto r = measureIdle(
                 config, blipThrottle, exhaustTargetCellLengthM);
-            std::printf("  %-34s %6.0f %6.0f %6.0f %6.0f %5.1f %6.1f    %d       %d         %d   %5.3f\n",
+            r.earlyBlipMinRpm = measureEarlyBlip(config, exhaustTargetCellLengthM);
+            std::printf("  %-34s %6.0f %6.0f %6.0f %6.0f %5.1f %6.1f    %d       %d         %d   %5.3f"
+                        "  WOT blip min %5.0f settled %5.0f, early blip min %5.0f\n",
                 r.name.c_str(), r.idleRpm, r.settledMeanRpm, r.minRpm, r.maxRpm,
                 r.stdRpm, r.driftRpm, r.caught ? 1 : 0, r.steadyStalled ? 1 : 0,
-                r.blipStalled ? 1 : 0, r.afrRatio);
+                r.blipStalled ? 1 : 0, r.afrRatio, r.wideOpenBlipMinRpm,
+                r.wideOpenBlipSettledRpm, r.earlyBlipMinRpm);
 
             // (1) Every engine must catch during start.
             if (!r.caught) failures.push_back(r.name + ": did not start");
@@ -364,6 +437,20 @@ int main(int argc, char** argv) {
                 });
             if (r.blipStalled && !allowed)
                 failures.push_back(r.name + ": stalled recovering from a blip");
+            // (4) A wide-open blip, warm or right after the start, comes back
+            //     to idle without dipping further than the steady idle may
+            //     (0.78 x target, (2) above), and does not hang above it.
+            if (r.wideOpenBlipMinRpm < 0.78 * r.idleRpm)
+                failures.push_back(r.name + ": dips toward stall after a WOT blip ("
+                    + std::to_string(static_cast<int>(r.wideOpenBlipMinRpm)) + " rpm)");
+            if (r.wideOpenBlipSettledRpm < 0.85 * r.idleRpm
+                    || r.wideOpenBlipSettledRpm > 1.15 * r.idleRpm)
+                failures.push_back(r.name + ": idle not back 12 s after a WOT blip ("
+                    + std::to_string(static_cast<int>(r.wideOpenBlipSettledRpm)) + " rpm)");
+            if (r.earlyBlipMinRpm < 0.78 * r.idleRpm)
+                failures.push_back(r.name + ": dips toward stall after a WOT blip 6 s"
+                    " after the start (" + std::to_string(static_cast<int>(r.earlyBlipMinRpm))
+                    + " rpm)");
         }
 
         if (!failures.empty()) {
