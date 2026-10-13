@@ -293,6 +293,34 @@ drive, unloads a front-wheel drive and keeps the total weight available for
 all-wheel drive. Drag, rolling resistance and brakes then dissipate the energy.
 The runtime sub-samples this coupling at 1 ms.
 
+### Shift styles
+
+`transmission.shift_style` says how a change between two forward gears is
+made; neutral and reverse are always selected the manual way. It is a settings
+edit, taken live.
+
+- `manual` (default): the driver lifts (`shift_torque_cut_fraction` of the
+  throttle) and dips the clutch over `shift_duration_s`; after the timer the
+  torque comes back with the clutch slip, not the clock.
+- `sequential`: a dog box, clutch left in. With `quickshifter` (default on),
+  an upshift cuts the ignition for `quickshifter_cut_s` (default 65 ms); the
+  ECU cuts as its rev limiter does (spark, and fuel too unless
+  `ignition.limiter_keeps_fuel`, in which case the unburnt charge reaches the
+  exhaust). The dogs change after 15 ms (drum travel, not measured) and the
+  clutch pulls the engine down to the new gear's speed while it makes no
+  torque; a cut too short leaves the engine firing into the slip. With
+  `auto_blipper` (default on), a downshift frees the dogs and opens the
+  throttle (wide open until the last 15 % of the climb) until the engine
+  reaches 98 % of the new gear's speed, at most 0.3 s, then engages. Without
+  either device, that shift is made the manual way.
+- `dual_clutch`: an upshift hands the drive to the oncoming clutch at once,
+  with no torque gap. Its pressure carries the engine's torque plus what pulls
+  the engine down to the new speed over `shift_duration_s`; the engine's torque
+  is not reduced meanwhile, so the wheel feels that inertia as a push. A
+  downshift is blipped as above.
+
+There is no dog-box engagement noise and no torque converter.
+
 In vehicle mode, the runtime's external load (`EngineRuntime::setLoad`; the
 application keeps it at zero since it no longer has a *Manual load* control)
 is a longitudinal resisting force; it reaches the crankshaft only through the

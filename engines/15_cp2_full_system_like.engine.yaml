@@ -69,7 +69,7 @@ engine:
     injection: high_flow_port
     # The only functional difference from engine 11.
     exhaust: cp2_full_system
-    transmission: motorcycle_6_speed
+    transmission: motorcycle_6_speed_quickshifter
     vehicle: motorcycle
   camshafts:
     intake_duration_deg: 256

@@ -710,6 +710,7 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
         || !inRange(config.transmission.clutchFailureTemperatureC,
                     config.transmission.clutchFadeStartTemperatureC + 1.0, 1'200.0)
         || !inRange(config.transmission.shiftTorqueCutFraction, 0.0, 1.0)
+        || !inRange(config.transmission.quickshifterCutSeconds, 0.01, 0.5)
         || !inRange(config.vehicle.massKg, 50.0, 20'000.0)
         || !inRange(config.vehicle.dragCoefficient, 0.05, 2.0)
         || !inRange(config.vehicle.frontalAreaM2, 0.1, 20.0)
@@ -1516,6 +1517,22 @@ const char* afterfireBlockerName(std::uint32_t mask) noexcept {
     if (afterfireBlocked(mask, AfterfireBlocker::fuelCutInactive)) return "not in overrun fuel cut";
     if (afterfireBlocked(mask, AfterfireBlocker::pulseChopClosed)) return "pop chop closed";
     return "";
+}
+
+const char* shiftStyleName(ShiftStyle style) noexcept {
+    switch (style) {
+    case ShiftStyle::manual: return "manual";
+    case ShiftStyle::sequential: return "sequential";
+    case ShiftStyle::dualClutch: return "dual_clutch";
+    }
+    return "manual";
+}
+
+std::optional<ShiftStyle> parseShiftStyle(const std::string& name) noexcept {
+    if (name == "manual") return ShiftStyle::manual;
+    if (name == "sequential") return ShiftStyle::sequential;
+    if (name == "dual_clutch") return ShiftStyle::dualClutch;
+    return std::nullopt;
 }
 
 } // namespace enginelab

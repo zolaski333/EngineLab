@@ -55,6 +55,7 @@ The main registered tests are:
 | `EngineLab.PhysicsRegression` | authoritative topology, presets, signed dynamic pressure, flows and kinematics |
 | `EngineLab.Calibration` | types, interpolation, validation, transactions, concurrency, JSON and file watcher |
 | `EngineLab.EcuCalibration` | immediate application of the tables and the rev limiter by the ECU |
+| `EngineLab.ShiftStyle` | shift styles on a real engine, ECU and driveline: a CP2 quickshifter upshift cuts the ignition for its cut length (one frame of rounding), drops the spark, keeps the drive gap under 0.6 of a clutch shift's and ends at the new gear's speed; a 2JZ dual-clutch upshift has no torque gap; a CP2 blipped downshift engages at more than 0.95 of the new gear's speed and slips under 0.3 of an unblipped one; the catalogue CP2 is sequential with a quickshifter; the style, shifter and blipper survive YAML and JSON, an unknown style is refused |
 | `EngineLab.IdleStabilityRegression` | every catalogue engine idles at its target and comes back from throttle blips without stalling: a 1.2 s full-throttle blip after the idle settles (lowest speed at least 0.78 × idle, settled within 0.85-1.15 × idle) and a 0.5 s one 6 s after the start (lowest at least 0.78 × idle) |
 | `EngineLab.Exhaust` | DAG validation, series/parallel losses, aggregated flow properties, routes, migration and JSON/YAML round-trips |
 | `EngineLab.ExhaustSimulation` | effect of the authored K on pressure/flow/torque, independence from the legacy geometry |

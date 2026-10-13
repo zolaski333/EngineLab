@@ -498,6 +498,16 @@ template <typename T>
     assignIfPresent(node, "clutch_fade_start_temperature_c", value.clutchFadeStartTemperatureC);
     assignIfPresent(node, "clutch_failure_temperature_c", value.clutchFailureTemperatureC);
     assignIfPresent(node, "shift_torque_cut_fraction", value.shiftTorqueCutFraction);
+    if (node["shift_style"]) {
+        const auto styleName = node["shift_style"].as<std::string>();
+        const auto style = parseShiftStyle(styleName);
+        if (!style)
+            throw std::invalid_argument("Unknown shift style: " + styleName);
+        value.shiftStyle = *style;
+    }
+    assignIfPresent(node, "quickshifter", value.quickshifter);
+    assignIfPresent(node, "quickshifter_cut_s", value.quickshifterCutSeconds);
+    assignIfPresent(node, "auto_blipper", value.autoBlipper);
     return value;
 }
 

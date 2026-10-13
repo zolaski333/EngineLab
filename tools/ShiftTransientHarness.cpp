@@ -48,6 +48,7 @@
 #include <iostream>
 #include <memory>
 #include <numbers>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -403,8 +404,11 @@ TickResult coupledStep(enginelab::EngineSimulator& simulator,
     enginelab::EngineControls controls;
     controls.ignitionEnabled = true;
     controls.starterEngaged = starter;
-    result.engineThrottle = std::clamp(throttleCmd, 0.0, 1.0) * result.drive.torqueCutMultiplier;
+    result.engineThrottle = std::max(
+        std::clamp(throttleCmd, 0.0, 1.0) * result.drive.torqueCutMultiplier,
+        result.drive.blipThrottle);
     controls.throttle = result.engineThrottle;
+    controls.shiftIgnitionCut = result.drive.ignitionCut;
     controls.externalTorqueNm = result.drive.engineCouplingTorqueNm;
     controls.externalRotatingInertiaKgM2 =
         result.drive.reflectedRotatingInertiaKgM2;
@@ -685,6 +689,7 @@ int main(int argc, char** argv) {
     double triggerRpm = 0.0;   // 0 -> derive from redline
     double triggerFraction = 0.86;
     bool trace = false;
+    std::optional<enginelab::ShiftStyle> shiftStyle;
     std::filesystem::path audioOutputDirectory;
     std::filesystem::path impulseResponsePath =
         std::filesystem::path(ENGINELAB_CATALOG_ROOT)
@@ -699,9 +704,12 @@ int main(int argc, char** argv) {
         else if (arg == "--ir" && index + 1 < argc)
             impulseResponsePath = argv[++index];
         else if (arg == "--trace") trace = true;
+        else if (arg == "--style" && index + 1 < argc
+                 && (shiftStyle = enginelab::parseShiftStyle(argv[index + 1]))) ++index;
         else { std::cerr << "usage: ShiftTransientHarness [--filter frag] [--rpm r]"
                             " [--fraction f] [--trace] [--audio-output dir]"
-                            " [--ir file]\n"; return EXIT_FAILURE; }
+                            " [--ir file] [--style manual|sequential|dual_clutch]\n";
+               return EXIT_FAILURE; }
     }
     if (!audioOutputDirectory.empty())
         std::filesystem::create_directories(audioOutputDirectory);
@@ -757,6 +765,7 @@ int main(int argc, char** argv) {
         // own output, which is the one thing it must never be; pinning the
         // condition it was measured under keeps it non-vacuous instead.
         config.vehicle.tyreGripLimitEnabled = true;
+        if (shiftStyle) config.transmission.shiftStyle = *shiftStyle;
         enginelab::normaliseEngineConfig(config);
         const auto rpm = triggerRpm > 0.0 ? triggerRpm : config.redlineRpm * triggerFraction;
         ShiftMetrics m;

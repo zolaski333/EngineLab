@@ -596,7 +596,11 @@ std::string JsonEngineSerializer::encode(const EngineConfig& config) const {
                            {"clutch_cooling_w_per_c", config.transmission.clutchCoolingWPerC},
                            {"clutch_fade_start_temperature_c", config.transmission.clutchFadeStartTemperatureC},
                            {"clutch_failure_temperature_c", config.transmission.clutchFailureTemperatureC},
-                           {"shift_torque_cut_fraction", config.transmission.shiftTorqueCutFraction}}},
+                           {"shift_torque_cut_fraction", config.transmission.shiftTorqueCutFraction},
+                           {"shift_style", shiftStyleName(config.transmission.shiftStyle)},
+                           {"quickshifter", config.transmission.quickshifter},
+                           {"quickshifter_cut_s", config.transmission.quickshifterCutSeconds},
+                           {"auto_blipper", config.transmission.autoBlipper}}},
         {"vehicle", {{"mass_kg", config.vehicle.massKg},
                       {"drag_coefficient", config.vehicle.dragCoefficient},
                       {"frontal_area_m2", config.vehicle.frontalAreaM2},
@@ -848,6 +852,15 @@ EngineDecodeResult JsonEngineSerializer::decode(std::string_view text) const noe
             config.transmission.clutchFadeStartTemperatureC = transmission.value("clutch_fade_start_temperature_c", config.transmission.clutchFadeStartTemperatureC);
             config.transmission.clutchFailureTemperatureC = transmission.value("clutch_failure_temperature_c", config.transmission.clutchFailureTemperatureC);
             config.transmission.shiftTorqueCutFraction = transmission.value("shift_torque_cut_fraction", config.transmission.shiftTorqueCutFraction);
+            if (transmission.contains("shift_style")) {
+                const auto styleName = transmission.at("shift_style").get<std::string>();
+                const auto style = parseShiftStyle(styleName);
+                if (!style) throw std::invalid_argument("Unknown shift style: " + styleName);
+                config.transmission.shiftStyle = *style;
+            }
+            config.transmission.quickshifter = transmission.value("quickshifter", config.transmission.quickshifter);
+            config.transmission.quickshifterCutSeconds = transmission.value("quickshifter_cut_s", config.transmission.quickshifterCutSeconds);
+            config.transmission.autoBlipper = transmission.value("auto_blipper", config.transmission.autoBlipper);
         }
         if (engine.contains("vehicle")) {
             const auto& vehicle = engine.at("vehicle");

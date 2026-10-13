@@ -20,6 +20,7 @@ enum class EngineLayout : std::uint8_t { inlineLayout, vLayout, flat, radial, cu
 enum class ConnectingRodType : std::uint8_t { conventional, master, articulated };
 enum class ForcedInductionType : std::uint8_t { turbocharger, supercharger };
 enum class DrivenAxleLayout : std::uint8_t { front, rear, all };
+enum class ShiftStyle : std::uint8_t { manual, sequential, dualClutch };
 enum class StructuralNvhProvenance : std::uint8_t {
     estimatedFamily, calculatedGeometry, measured
 };
@@ -730,6 +731,21 @@ struct TransmissionConfig final {
     double clutchFadeStartTemperatureC { 220.0 };
     double clutchFailureTemperatureC { 420.0 };
     double shiftTorqueCutFraction { 0.85 };
+    /** How a gear change is made.
+     *  - manual: the driver lifts and dips the clutch, over
+     *    shiftDurationSeconds with shiftTorqueCutFraction of throttle lift.
+     *  - sequential: a dog box, clutch left in. An upshift with the
+     *    quickshifter cuts the ignition for quickshifterCutSeconds while the
+     *    dogs change over; a downshift with the auto-blipper frees the dogs
+     *    and opens the throttle until the engine reaches the new gear's speed.
+     *    Without them, a shift is made as a manual one.
+     *  - dualClutch: one clutch hands the drive over to the other with no
+     *    torque gap; the oncoming clutch pulls the engine to the new speed
+     *    over shiftDurationSeconds. Downshifts are blipped. */
+    ShiftStyle shiftStyle { ShiftStyle::manual };
+    bool quickshifter { true };
+    double quickshifterCutSeconds { 0.065 };
+    bool autoBlipper { true };
 };
 
 struct VehicleConfig final {
@@ -1010,6 +1026,9 @@ struct EngineControls final {
      * dyno cell fan; it cools an engine whose temperatures are not
      * regulated. */
     double coolingAirSpeedMps { 0.0 };
+    /** A quickshifter's ignition cut: the ECU cuts as its rev limiter does
+     * (spark, and fuel too unless `ignition.limiter_keeps_fuel`). */
+    bool shiftIgnitionCut { false };
 };
 
 struct CylinderState final {
@@ -1741,6 +1760,10 @@ struct DynoRun final {
     double peakCorrectedTorqueNm { 0.0 };
     double peakCorrectedPowerKw { 0.0 };
 };
+
+/** "manual", "sequential" or "dual_clutch", as in the engine files. */
+[[nodiscard]] const char* shiftStyleName(ShiftStyle) noexcept;
+[[nodiscard]] std::optional<ShiftStyle> parseShiftStyle(const std::string&) noexcept;
 
 [[nodiscard]] EngineConfig makeDefaultInlineFour();
 [[nodiscard]] EngineConfig makeDefaultInlineTwo();

@@ -1355,15 +1355,19 @@ void EngineRuntime::run(std::stop_token stopToken) {
         consumeLiveSettingsChange();
         consumeLiveIntakeChange();
         consumeLiveCamshaftChange();
+        // A blipped downshift opens the throttle past the driver's foot.
+        const auto blipThrottle = dynoActive_ ? 0.0 : drivelineOutput_.blipThrottle;
         const EngineControls controls { ignition_.load(), starter_.load(),
-            (dynoActive_ ? dynoThrottleCommand_
-                         : std::clamp(throttle_.load(), 0.0, 1.0))
-                * torqueCutMultiplier,
+            std::max((dynoActive_ ? dynoThrottleCommand_
+                                  : std::clamp(throttle_.load(), 0.0, 1.0))
+                         * torqueCutMultiplier,
+                     blipThrottle),
             dynoActive_ ? requestedLoad : 0.0, dynoActive_ ? 0.0 : engineCouplingTorqueNm_,
             dynoActive_ ? 0.0 : brakePressure_.load(std::memory_order_relaxed),
             dynoActive_ ? dynoBrakeTorqueNm_ : 0.0,
             dynoActive_ ? 0.0 : drivelineReflectedInertiaKgM2_,
-            dynoActive_ ? dynoCellFanAirSpeedMps : std::abs(vehicleSpeedMps_) };
+            dynoActive_ ? dynoCellFanAirSpeedMps : std::abs(vehicleSpeedMps_),
+            !dynoActive_ && drivelineOutput_.ignitionCut };
         // The 3-D view's gas field: tracked at the angle it shows, or taken
         // as it is when it shows real time. Nothing runs once it stops asking.
         const auto gasFieldRequest = gasFieldRequestSequence_.load(std::memory_order_acquire);

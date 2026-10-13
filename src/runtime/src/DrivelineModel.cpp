@@ -47,11 +47,34 @@ void DrivelineModel::requestGear(int gear) noexcept {
 void DrivelineModel::shiftUp() noexcept { requestGear(requestedGear_ + 1); }
 void DrivelineModel::shiftDown() noexcept { requestGear(requestedGear_ - 1); }
 
-double DrivelineModel::selectedRatio() const noexcept {
-    if (engagedGear_ == -2) return -config_.transmission.reverseRatio * config_.transmission.finalDriveRatio;
-    if (engagedGear_ < 0 || engagedGear_ >= static_cast<int>(config_.transmission.gearRatios.size())) return 0.0;
-    return config_.transmission.gearRatios[static_cast<std::size_t>(engagedGear_)]
+double DrivelineModel::ratioForGear(int gear) const noexcept {
+    if (gear == -2) return -config_.transmission.reverseRatio * config_.transmission.finalDriveRatio;
+    if (gear < 0 || gear >= static_cast<int>(config_.transmission.gearRatios.size())) return 0.0;
+    return config_.transmission.gearRatios[static_cast<std::size_t>(gear)]
         * config_.transmission.finalDriveRatio;
+}
+
+double DrivelineModel::selectedRatio() const noexcept {
+    return dogsFree_ ? 0.0 : ratioForGear(engagedGear_);
+}
+
+DrivelineModel::ShiftAction DrivelineModel::chooseShiftAction() const noexcept {
+    const auto& transmission = config_.transmission;
+    // Only a change between two forward gears; neutral and reverse are
+    // always selected the manual way.
+    if (shiftFromGear_ < 0 || shiftTargetGear_ < 0 || shiftFromGear_ == shiftTargetGear_)
+        return ShiftAction::timed;
+    if (shiftTargetGear_ > shiftFromGear_) {
+        if (transmission.shiftStyle == ShiftStyle::sequential && transmission.quickshifter)
+            return ShiftAction::quickshift;
+        if (transmission.shiftStyle == ShiftStyle::dualClutch)
+            return ShiftAction::handOver;
+        return ShiftAction::timed;
+    }
+    if ((transmission.shiftStyle == ShiftStyle::sequential && transmission.autoBlipper)
+            || transmission.shiftStyle == ShiftStyle::dualClutch)
+        return ShiftAction::blip;
+    return ShiftAction::timed;
 }
 
 DrivelineOutput DrivelineModel::advance(double dt, const EngineState& engineState,
@@ -66,6 +89,22 @@ DrivelineOutput DrivelineModel::advance(double dt, const EngineState& engineStat
     const auto& vehicle = config_.vehicle;
     const auto maximumGear = static_cast<int>(transmission.gearRatios.size()) - 1;
 
+    const auto engineOmega = engineState.angularVelocityRadPerSecond;
+    // The crank's own torque this tick (combustion brake torque plus any starter),
+    // used by the locked-clutch constraint. It is a one-tick estimate of a quantity
+    // that changes slowly next to the tick, and the friction capacity bounds it.
+    // The driveline advances once per public 240 Hz frame while chamber torque
+    // is resolved at many crank-angle substeps. Feeding the last instantaneous
+    // pressure torque into a one-frame-ahead rigid-clutch constraint aliases a
+    // firing pulse into an equal-and-opposite reaction on the next frame. Use
+    // the completed-cycle work for the mean constraint load; torsional ripple
+    // remains in EngineSimulator, but cannot be phase-inverted by the slower
+    // vehicle coupling.
+    const auto engineDriveTorque =
+        (engineState.simulationTimeSeconds > 0.0 && engineState.rpm > 220.0
+            ? engineState.cycleAveragedTorqueNm
+            : engineState.torqueNm)
+        + engineState.starterTorqueNm;
     if (transmission.automaticShifting && !shiftInProgress_ && engagedGear_ >= 0) {
         if (engineState.rpm >= transmission.automaticUpshiftRpm && engagedGear_ < maximumGear
             && engineState.throttle > 0.12) requestGear(engagedGear_ + 1);
@@ -78,10 +117,80 @@ DrivelineOutput DrivelineModel::advance(double dt, const EngineState& engineStat
         shiftFromGear_ = engagedGear_;
         shiftElapsedSeconds_ = 0.0;
         resyncReferenceSlipRpm_ = 0.0;
+        shiftAction_ = chooseShiftAction();
+        handOverReferenceSlipRadPerSecond_ = 0.0;
     }
     double shiftProgress = 0.0;
     double effectiveClutch = clutchPedal;
-    if (shiftInProgress_) {
+    const auto finishShift = [&]() noexcept {
+        engagedGear_ = shiftTargetGear_;
+        dogsFree_ = false;
+        shiftInProgress_ = false;
+        shiftProgress = 0.0;
+    };
+    if (shiftInProgress_ && shiftAction_ == ShiftAction::quickshift) {
+        // The shift sensor trips, the ignition is cut and the unloaded dogs
+        // slide over to the next gear with the clutch left in; the clutch
+        // then pulls the engine down to the new gear's speed while it makes
+        // no torque. A cut too short for that leaves the engine firing into
+        // the slip. The drum and dog travel is not measured; a sequential
+        // drum turns in about 10-20 ms.
+        constexpr double dogChangeSeconds = 0.015;
+        const auto cutSeconds = std::max(0.01, transmission.quickshifterCutSeconds);
+        shiftElapsedSeconds_ += dt;
+        shiftProgress = std::clamp(shiftElapsedSeconds_ / cutSeconds, 0.0, 1.0);
+        output.ignitionCut = shiftElapsedSeconds_ <= cutSeconds;
+        if (shiftElapsedSeconds_ >= std::min(dogChangeSeconds, 0.5 * cutSeconds))
+            engagedGear_ = shiftTargetGear_;
+        if (shiftElapsedSeconds_ >= cutSeconds) finishShift();
+    } else if (shiftInProgress_ && shiftAction_ == ShiftAction::blip) {
+        // The blip unloads the dogs, which come free; the throttle stays open
+        // until the engine reaches the speed the new gear will turn it at,
+        // and the dogs engage there. A blipper that cannot get there in time
+        // engages anyway and the clutch takes the rest.
+        constexpr double maximumBlipSeconds = 0.30;
+        constexpr double matchedFraction = 0.98;
+        shiftElapsedSeconds_ += dt;
+        dogsFree_ = true;
+        const auto targetOmega = std::abs(
+            wheelAngularVelocityRadPerSecond_ * ratioForGear(shiftTargetGear_));
+        const auto missing = targetOmega - engineOmega;
+        // Wide open until the last 15 % of the climb, then closing with it.
+        output.blipThrottle = targetOmega > 0.0
+            ? std::clamp(missing / (0.15 * targetOmega), 0.0, 1.0) : 0.0;
+        shiftProgress = std::clamp(shiftElapsedSeconds_ / maximumBlipSeconds, 0.0, 1.0);
+        if (engineOmega >= targetOmega * matchedFraction
+                || shiftElapsedSeconds_ >= maximumBlipSeconds) {
+            output.blipThrottle = 0.0;
+            finishShift();
+        }
+    } else if (shiftInProgress_ && shiftAction_ == ShiftAction::handOver) {
+        // The oncoming clutch takes the drive at once: no torque gap. Its
+        // pressure is held to carry the engine's torque plus what pulls the
+        // engine down to the new gear's speed over shiftDurationSeconds; the
+        // engine's torque is not reduced meanwhile, so the wheel feels that
+        // released inertia as a push.
+        shiftElapsedSeconds_ += dt;
+        engagedGear_ = shiftTargetGear_;
+        const auto slipOmega = engineOmega
+            - wheelAngularVelocityRadPerSecond_ * ratioForGear(shiftTargetGear_);
+        if (!(handOverReferenceSlipRadPerSecond_ > 0.0))
+            handOverReferenceSlipRadPerSecond_ = std::max(1.0, std::abs(slipOmega));
+        const auto lockBandOmega = std::max(1.0, transmission.clutchLockSpeedRpm)
+            * 2.0 * std::numbers::pi / 60.0;
+        const auto syncTorque = engineInertiaKgM2_ * handOverReferenceSlipRadPerSecond_
+            / std::max(0.02, transmission.shiftDurationSeconds);
+        const auto neededCapacity = std::abs(engineDriveTorque) + syncTorque;
+        effectiveClutch = clutchPedal * std::clamp(
+            neededCapacity / std::max(1.0, transmission.maxClutchTorqueNm), 0.0, 1.0);
+        shiftProgress = std::clamp(
+            1.0 - std::abs(slipOmega) / handOverReferenceSlipRadPerSecond_, 0.0, 1.0);
+        if (std::abs(slipOmega) <= lockBandOmega
+                || shiftElapsedSeconds_ >= 4.0 * transmission.shiftDurationSeconds) {
+            effectiveClutch = clutchPedal;
+            finishShift();
+        }
+    } else if (shiftInProgress_) {
         shiftElapsedSeconds_ += dt;
         shiftProgress = std::clamp(shiftElapsedSeconds_ / transmission.shiftDurationSeconds, 0.0, 1.0);
         if (shiftProgress < 0.35) effectiveClutch *= 1.0 - shiftProgress / 0.35;
@@ -159,22 +268,6 @@ DrivelineOutput DrivelineModel::advance(double dt, const EngineState& engineStat
     }
 
     const auto totalRatio = selectedRatio();
-    const auto engineOmega = engineState.angularVelocityRadPerSecond;
-    // The crank's own torque this tick (combustion brake torque plus any starter),
-    // used by the locked-clutch constraint. It is a one-tick estimate of a quantity
-    // that changes slowly next to the tick, and the friction capacity bounds it.
-    // The driveline advances once per public 240 Hz frame while chamber torque
-    // is resolved at many crank-angle substeps. Feeding the last instantaneous
-    // pressure torque into a one-frame-ahead rigid-clutch constraint aliases a
-    // firing pulse into an equal-and-opposite reaction on the next frame. Use
-    // the completed-cycle work for the mean constraint load; torsional ripple
-    // remains in EngineSimulator, but cannot be phase-inverted by the slower
-    // vehicle coupling.
-    const auto engineDriveTorque =
-        (engineState.simulationTimeSeconds > 0.0 && engineState.rpm > 220.0
-            ? engineState.cycleAveragedTorqueNm
-            : engineState.torqueNm)
-        + engineState.starterTorqueNm;
     const auto wheelInertia = std::max(0.01, transmission.drivenWheelInertiaKgM2
         + transmission.differentialInertiaKgM2
         + transmission.gearboxInputInertiaKgM2 * totalRatio * totalRatio);
