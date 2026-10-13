@@ -163,6 +163,17 @@ approximation of the Levine–Schwinger solution fitted by Silva et al. The
 filter returns the reflected pressure into the guide. The net volume velocity
 at the mouth, then its acceleration, give the free-field monopole pressure.
 
+That monopole uses the duct medium's density, p = rho_duct dQ/dt / (4 pi r).
+Outside the mouth the field travels in ambient air, and the volume velocity is
+continuous across the hot/cold interface, so the textbook far field is
+rho_ambient dQ/dt / (4 pi r). `setOutletFarFieldDensity` (on
+`RealtimeEngineAudio`, off by default) switches only that factor, and
+`EngineLabGeometrySensitivityHarness --radiation-density-ab 1.2` measures it.
+Measured 2026-10-13: +4 to +4.5 dB on the CP2, +8 to +10 dB on hotter
+engines, plus a load- and temperature-dependent level. The band shape changes
+only through the balance with the outlet jet noise, which keeps its own jet
+density (journal).
+
 Each outlet now publishes its position, its axis, its diameter and its
 termination type (unflanged or flanged). `FreeFieldObserver` computes
 separately the two outlet–microphone distances, the `r/c` delays, the `1/r`

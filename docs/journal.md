@@ -5,6 +5,13 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-13 — Outlet far field: duct density versus ambient air
+
+- The outlet monopole is p = rho dQ/dt / (4 pi r) with rho = the path's duct medium (hot gas). Outside the mouth the field is in ambient air and Q is continuous across the interface, so the textbook rho is the ambient one. New switch `setOutletFarFieldDensity`, off by default (renders byte-identical); `GeometrySensitivityHarness --radiation-density-ab 1.2`.
+- Same seven points as the output-stage entry, same render otherwise. Exhaust level: CP2 Full System +4.0 dB at 4,000 rpm and +4.5 at 7,000; CP2 +4.4; K20 +8.2; 2JZ +9.4; LS3 +9.9; Hayabusa +10.0. That implies a duct density of 0.4-0.75 kg/m3, i.e. a mean path medium of ~490 K on the CP2 and 740-930 K on the others. Leveler never engaged.
+- Shape 0.9-4.1 dB, but not from the physics of the main band: on the CP2 at 6,000 rpm, 50 Hz-1.6 kHz moves as one block (+-1 dB), and above 2 kHz it rises 1.5-4.4 dB less. That is the outlet jet noise (own jet density, not switched) taking a smaller share. Crest, periodicity and tilt are unchanged within 0.6 dB, 0.01 and 0.35 dB/oct.
+- At equal loudness, then, this is mostly a balance change against the jet noise, plus a level that grows with gas temperature. It does not explain the other simulator's character. Not changed by default: it is a sound change and needs the owner's go-ahead. The absolute SPL is still unchecked against any calibrated CP2 recording.
+
 ## 2026-10-13 — How much character an output stage alone gives
 
 - Spec from a static analysis of another simulator, whose sound the owner prefers: after its room convolution it ends in a level-normalising gain (5 Hz envelope, 4x attack, 1 s hold, gain <= 10) into a tanh, on by default. Its August 2026 measurement gave crest 7.4 dB, periodicity 0.92, tilt -4.6 dB/oct (archive). Re-expressed as `AutoGainSoftClipper` (off the default path).

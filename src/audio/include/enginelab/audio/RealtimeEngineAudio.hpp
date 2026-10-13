@@ -224,6 +224,14 @@ public:
         if (acousticExhaustNetwork_)
             acousticExhaustNetwork_->setOutletJetNoiseEnabled(enabled);
     }
+    /** Diagnostic: density of the air the exhaust outlets radiate into; zero
+     * (production) keeps the duct medium. Not thread-safe against a running
+     * audio callback: set it before prepare(), as the harnesses do. */
+    void setOutletFarFieldDensity(double densityKgPerM3) noexcept {
+        outletFarFieldDensityKgPerM3_ = densityKgPerM3;
+        if (acousticExhaustNetwork_)
+            acousticExhaustNetwork_->setOutletFarFieldDensity(densityKgPerM3);
+    }
     [[nodiscard]] bool outletJetNoiseEnabled() const noexcept {
         return acousticExhaustNetwork_
             && acousticExhaustNetwork_->outletJetNoiseEnabled();
@@ -558,6 +566,7 @@ private:
     std::atomic<std::uint64_t> exhaustSwaps_ { 0 };
     std::atomic<double> preparedSampleRate_ { 0.0 };
     bool outletJetNoiseEnabled_ { true };
+    double outletFarFieldDensityKgPerM3_ { 0.0 };
     /** setMicrophones() -> audio thread, a sequence lock: odd while written. */
     std::atomic<std::uint64_t> microphoneSequence_ { 0 };
     std::array<std::atomic<double>, 6> publishedMicrophones_ {};

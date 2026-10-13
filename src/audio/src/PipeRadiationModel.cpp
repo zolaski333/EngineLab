@@ -104,7 +104,9 @@ PipeRadiationSample UnflangedPipeRadiation::process(
 
     result.reflectedPressurePa = std::isfinite(reflected) ? reflected : 0.0;
     result.outletVolumeVelocityM3PerS = volumeVelocity;
-    result.farFieldPressurePa = densityKgPerM3_ * volumeAcceleration
+    const auto farFieldDensity = farFieldDensityKgPerM3_ > 0.0
+        ? farFieldDensityKgPerM3_ : densityKgPerM3_;
+    result.farFieldPressurePa = farFieldDensity * volumeAcceleration
         / (4.0 * std::numbers::pi * observerDistanceM_);
     if (!std::isfinite(result.farFieldPressurePa)) result.farFieldPressurePa = 0.0;
     return result;

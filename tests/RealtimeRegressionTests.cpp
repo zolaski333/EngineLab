@@ -2253,6 +2253,36 @@ void pipeRadiationRegression() {
             "vortex shedding must dissipate returned wave energy at high level");
     require(lossyReflectedEnergy <= incidentEnergy * (1.0 + 1.0e-9),
             "positive nonlinear resistance must never reflect more energy than arrives");
+
+    // The far-field density switch scales the radiated pressure by
+    // rho_far / rho_duct and touches nothing else: the wave returned into the
+    // pipe and the mouth volume velocity stay bit-identical.
+    constexpr double ambientDensityKgPerM3 = 1.2;
+    enginelab::UnflangedPipeRadiation ductRadiation;
+    enginelab::UnflangedPipeRadiation ambientRadiation;
+    require(ductRadiation.prepare(sampleRateHz, radiusM, 1.0)
+            && ambientRadiation.prepare(sampleRateHz, radiusM, 1.0)
+            && ductRadiation.setMedium(densityKgPerM3, soundSpeedMps)
+            && ambientRadiation.setMedium(densityKgPerM3, soundSpeedMps)
+            && !ambientRadiation.setFarFieldDensity(-1.0)
+            && ambientRadiation.setFarFieldDensity(ambientDensityKgPerM3),
+            "the far-field density must accept only a finite non-negative value");
+    double ductFarSquares = 0.0;
+    double ambientFarSquares = 0.0;
+    for (int index = 0; index < 4'800; ++index) {
+        const auto incident = 500.0 * std::sin(
+            2.0 * std::numbers::pi * 300.0 * index / sampleRateHz);
+        const auto duct = ductRadiation.process(incident);
+        const auto ambient = ambientRadiation.process(incident);
+        require(duct.reflectedPressurePa == ambient.reflectedPressurePa
+                && duct.outletVolumeVelocityM3PerS == ambient.outletVolumeVelocityM3PerS,
+                "the far-field density must not change the wave inside the pipe");
+        ductFarSquares += duct.farFieldPressurePa * duct.farFieldPressurePa;
+        ambientFarSquares += ambient.farFieldPressurePa * ambient.farFieldPressurePa;
+    }
+    require(std::abs(std::sqrt(ambientFarSquares / ductFarSquares)
+                     - ambientDensityKgPerM3 / densityKgPerM3) < 1.0e-9,
+            "radiating into ambient air must scale the far field by rho_ambient / rho_duct");
 }
 
 void acousticMonitorCalibrationRegression() {
