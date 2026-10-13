@@ -247,11 +247,24 @@ and oil sit at `regulated_coolant_c` (90 degC) and `regulated_oil_c`
 (100 degC) from the start and never move, as a dyno cell's conditioning unit
 holds them. Every run, A/B switch and harness measurement is then made on a
 warm engine at one temperature, the state the CP2 recording protocol asks
-for. Unregulated, both start at the ambient temperature and integrate the
-heat released into them against a radiator whose airflow follows the
-thermostat and the engine speed (`thermal.*`, `cooling_efficiency`); the
-ECU enriches and retards a cold or hot engine from the coolant temperature.
-The switch is a settings edit, taken live.
+for. Unregulated (realistic, `EngineThermalModel`), both start at the
+ambient temperature. The coolant capacity stands for what a closed thermostat
+circulates (the water jacket and the metal around it), the oil exchanges heat
+with it through the block, and they take shares of the heat released by
+combustion (24 % and 5 % by default; Heywood gives 17-26 % to the coolant at
+full load) while the oil takes all the friction heat. A liquid-cooled
+engine sheds heat through a radiator its thermostat opens from 82 to 94 degC,
+in the air of its speed (`EngineControls::coolingAirSpeedMps`: the vehicle's
+speed, or 12 m/s of dyno cell fan on the dyno) and of an electric fan, on at
+100 and off at 95 degC. An air-cooled one (`liquid_cooled: false`) sheds it
+through its fins, in the air of its speed and of its blower if it is driven by
+the crank (`engine_driven_fan`); its temperature stands for the oil's, as its
+gauge reads it. Unauthored sizes (`0`) follow the displacement: 14 kJ/K per
+litre plus 3 for the coolant side, a radiator that rejects the heat of the
+estimated rated power (9 kW per litre per 1,000 rpm of redline, more with
+boost) and its friction at 30 m/s and 65 K above the air. These are sizes for a plausible engine,
+not measured ones. The ECU enriches and retards a cold or hot engine from the
+coolant temperature. The switch is a settings edit, taken live.
 
 ## Transmission and vehicle
 

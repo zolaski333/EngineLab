@@ -480,7 +480,9 @@ std::string JsonEngineSerializer::encode(const EngineConfig& config) const {
                       {"coolant_heat_share", config.thermal.coolantHeatShare},
                       {"oil_heat_share", config.thermal.oilHeatShare},
                       {"cooling_power_kw_per_c", config.thermal.coolingPowerKwPerC},
-                      {"oil_cooling_power_kw_per_c", config.thermal.oilCoolingPowerKwPerC}}},
+                      {"oil_cooling_power_kw_per_c", config.thermal.oilCoolingPowerKwPerC},
+                      {"liquid_cooled", config.thermal.liquidCooled},
+                      {"engine_driven_fan", config.thermal.engineDrivenFan}}},
         {"combustion_calibration", {{"base_ignition_delay_s", config.combustionCalibration.baseIgnitionDelaySeconds},
                       {"ignition_delay_temperature_exponent", config.combustionCalibration.ignitionDelayTemperatureExponent},
                       {"ignition_delay_pressure_exponent", config.combustionCalibration.ignitionDelayPressureExponent},
@@ -714,6 +716,8 @@ EngineDecodeResult JsonEngineSerializer::decode(std::string_view text) const noe
             config.thermal.oilHeatShare = thermal.value("oil_heat_share", config.thermal.oilHeatShare);
             config.thermal.coolingPowerKwPerC = thermal.value("cooling_power_kw_per_c", config.thermal.coolingPowerKwPerC);
             config.thermal.oilCoolingPowerKwPerC = thermal.value("oil_cooling_power_kw_per_c", config.thermal.oilCoolingPowerKwPerC);
+            config.thermal.liquidCooled = thermal.value("liquid_cooled", config.thermal.liquidCooled);
+            config.thermal.engineDrivenFan = thermal.value("engine_driven_fan", config.thermal.engineDrivenFan);
         }
         if (engine.contains("combustion_calibration")) {
             const auto& calibration = engine.at("combustion_calibration");

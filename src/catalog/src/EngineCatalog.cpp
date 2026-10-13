@@ -628,6 +628,8 @@ template <typename T>
     assignIfPresent(node, "oil_heat_share", value.oilHeatShare);
     assignIfPresent(node, "cooling_power_kw_per_c", value.coolingPowerKwPerC);
     assignIfPresent(node, "oil_cooling_power_kw_per_c", value.oilCoolingPowerKwPerC);
+    assignIfPresent(node, "liquid_cooled", value.liquidCooled);
+    assignIfPresent(node, "engine_driven_fan", value.engineDrivenFan);
     return value;
 }
 

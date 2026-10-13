@@ -1584,7 +1584,7 @@ void EngineViewport::updateInspector() {
         add("Displacement", juce::String(engineDisplacementLitres(config), 2) + " L");
         add("Air pressure", juce::String(config.ambientPressureKpa, 1) + " kPa");
         add("Coolant", juce::String(juce::roundToInt(state.coolantTemperatureC)) + utf8(" \xc2\xb0""C")
-                           + (config.thermal.regulated ? ", held" : ", free"));
+                           + (config.thermal.regulated ? ", held" : state.coolingFanOn ? ", fan on" : ", free"));
         if (configEditor_) {
             edit = PartInspector::Edit {};
             edit->key = std::uint64_t { 8 } << 60U;
@@ -1613,7 +1613,8 @@ void EngineViewport::updateInspector() {
                     + juce::String(juce::roundToInt(config.thermal.regulatedCoolantTemperatureC))
                     + utf8(" and ") + juce::String(juce::roundToInt(config.thermal.regulatedOilTemperatureC))
                     + utf8(" \xc2\xb0""C, as on a dyno cell, so every run is made warm and alike. Realistic: the "
-                           "engine starts at the air temperature, warms up with load and cools by its radiator."),
+                           "engine starts at the air temperature, warms up with load and cools by its radiator, "
+                           "the air of its speed and its fan (a dyno cell's fan on the dyno)."),
                 config.thermal.regulated };
             partToggle_ = [](EngineConfig& edited, bool regulated) { edited.thermal.regulated = regulated; };
             partEditor_ = [](EngineConfig& edited, double altitudeM, double temperatureC) {

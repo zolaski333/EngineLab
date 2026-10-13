@@ -15,6 +15,14 @@ file formats, always with an in-memory migration).
   over many minutes). Click the cylinder block to switch to realistic
   temperatures, which start cold and warm up. The sound barely moves (within
   0.6 dB across the catalogue).
+- Realistic temperatures now behave like a real engine: it warms up in
+  minutes rather than never (a CP2 idling in still air reaches 80 degC in
+  about 18 min; on the dyno it is warm after one or two passes), the
+  thermostat holds it near 90 degC, a fan comes on at 100 degC, and riding
+  cools it. On the dyno a cell fan blows on it, so repeated passes level off
+  instead of climbing. The block's inspector shows when the fan is on.
+  Air-cooled engines (Aircooled, Big Twin, Radial) have no radiator fan; the
+  Aircooled's blower follows the engine speed.
 
 - The turbocharged cars' exhausts have their real length (about 3.4 m from
   port to tip, like the other cars): a 2.2 m mid pipe behind the turbine.

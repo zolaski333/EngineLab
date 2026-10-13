@@ -576,7 +576,8 @@ The other parts edit the same way, each through `MainComponent::applyEngineEdit`
 - the cylinder block: the air around the engine, as an altitude (the
   standard atmosphere's pressure there) and a temperature, and a switch
   between regulated and realistic engine temperatures (`thermal.regulated`;
-  the inspector's edit `toggle`, taken at once);
+  the inspector's edit `toggle`, taken at once; its rows show the coolant
+  temperature and, realistic, when the radiator fan is on);
 - the crankshaft: the inertia of the crank and flywheel (every shaft scaled
   alike), with the total including the rods;
 - an intake or exhaust valve: its cam's duration and lift; the cylinder

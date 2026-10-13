@@ -1,5 +1,6 @@
 #include <enginelab/simulation/EngineSimulator.hpp>
 #include <enginelab/foundation/ForcedInductionFlow.hpp>
+#include <enginelab/simulation/EngineThermalModel.hpp>
 #include <enginelab/simulation/TransientChargeEstimator.hpp>
 #include <enginelab/exhaust/ExhaustGraph.hpp>
 #include <enginelab/physics/MechanicalKinematics.hpp>
@@ -4875,26 +4876,25 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
             ? std::clamp(80.0 + state_.rpm * 0.055 - std::max(0.0, state_.oilTemperatureC - 105.0) * 2.0, 0.0, 520.0) : 0.0;
         state_.peakPistonAccelerationG = peakPistonAcceleration / 9.80665;
 
-        const auto thermostatOpening = std::clamp((state_.coolantTemperatureC - 82.0) / 12.0, 0.08, 1.0);
-        const auto coolingAirflow = config_.coolingEfficiency * (0.18 + thermostatOpening
-            * (0.42 + state_.rpm / std::max(1.0, config_.redlineRpm) * 0.8));
         state_.resolvedHeatReleaseKw = releasedEnergyJoules / subDt / 1'000.0;
-        const auto coolantHeatKw = state_.resolvedHeatReleaseKw * config_.thermal.coolantHeatShare;
-        const auto oilHeatKw = state_.resolvedHeatReleaseKw * config_.thermal.oilHeatShare
-            + mechanicalFriction * state_.angularVelocityRadPerSecond / 1'000.0 * 0.18;
-        const auto coolantRejectedKw = std::max(0.0, state_.coolantTemperatureC - config_.ambientTemperatureC)
-            * config_.thermal.coolingPowerKwPerC * coolingAirflow;
-        const auto oilRejectedKw = std::max(0.0, state_.oilTemperatureC - config_.ambientTemperatureC)
-            * config_.thermal.oilCoolingPowerKwPerC * std::max(0.35, coolingAirflow * 0.72);
         const auto exhaustTarget = exhaustTemperatureSumK
             / static_cast<double>(config_.cylinders.size()) - 273.15;
         if (!config_.thermal.regulated) {
-            state_.coolantTemperatureC = std::clamp(state_.coolantTemperatureC
-                + (coolantHeatKw - coolantRejectedKw) / config_.thermal.coolantMassKjPerC * subDt,
-                config_.ambientTemperatureC - 5.0, 150.0);
-            state_.oilTemperatureC = std::clamp(state_.oilTemperatureC
-                + (oilHeatKw - oilRejectedKw) / config_.thermal.oilMassKjPerC * subDt,
-                config_.ambientTemperatureC - 5.0, 170.0);
+            // Sized from the running configuration at every step: a cylinder
+            // resize ramp or a settings edit is followed at once.
+            const EngineThermalModel thermalModel(config_);
+            EngineThermalModel::State thermal { state_.coolantTemperatureC,
+                state_.oilTemperatureC, state_.coolingFanOn };
+            thermalModel.advance(thermal, { state_.resolvedHeatReleaseKw,
+                    mechanicalFriction * state_.angularVelocityRadPerSecond / 1'000.0,
+                    std::isfinite(safeControls.coolingAirSpeedMps) ? safeControls.coolingAirSpeedMps : 0.0,
+                    state_.rpm, config_.ambientTemperatureC },
+                subDt);
+            state_.coolantTemperatureC = thermal.coolantTemperatureC;
+            state_.oilTemperatureC = thermal.oilTemperatureC;
+            state_.coolingFanOn = thermal.fanOn;
+        } else {
+            state_.coolingFanOn = false;
         }
         state_.exhaustTemperatureC = smooth(state_.exhaustTemperatureC, exhaustTarget, subDt, 0.18);
         const auto overrev = std::max(0.0, state_.rpm / config_.redlineRpm - 1.0);

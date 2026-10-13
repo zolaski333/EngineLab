@@ -10,6 +10,7 @@
 #include <enginelab/runtime/EngineRuntime.hpp>
 #include <enginelab/serialization/EngineEditScope.hpp>
 #include <enginelab/simulation/EngineSimulator.hpp>
+#include <enginelab/simulation/EngineThermalModel.hpp>
 
 #include <algorithm>
 #include <array>
@@ -383,6 +384,69 @@ void regulatedTemperaturesHold() {
     require(lowestCoolant[2] == 90.0 && highestCoolant[2] == 90.0, "a regulated running engine stays at 90 degC");
 }
 
+/** The realistic temperatures, on the thermal model alone (EngineThermalModel).
+ * A CP2 at an idle like the simulated one (2.8 kW released, about 1.2 kW of
+ * friction) warms past 80 degC behind
+ * its closed thermostat, then its fan holds it; the former model leaked through
+ * the closed thermostat and stalled near 37 degC after five dyno passes. At its
+ * rated heat it overheats standing, fan on, but holds below 100 degC in the
+ * air of 30 m/s; the fan stops at 95 degC; an air-cooled engine has none. */
+void realisticTemperaturesFollowHeatAndAir() {
+    auto config = catalogueEngine("Yamaha CP2");
+    config.thermal.regulated = false;
+    const EngineThermalModel model(config);
+    const auto ratedHeatKw = model.estimatedRatedPowerKw() / 0.30;
+    const auto ratedFrictionKw = 0.15 * model.estimatedRatedPowerKw();
+    constexpr double dt = 0.05;
+    const auto run = [&](const EngineThermalModel& thermal, EngineThermalModel::State& state, double heatKw, double frictionKw,
+                         double airMps, double seconds, auto&& observe) {
+        for (auto t = 0.0; t < seconds; t += dt) {
+            thermal.advance(state, { heatKw, frictionKw, airMps, 1'300.0, 22.0 }, dt);
+            observe(t, state);
+        }
+    };
+    EngineThermalModel::State idling;
+    double secondsTo80 = -1.0;
+    double hottestIdle = 0.0;
+    run(model, idling, 2.8, 1.2, 0.0, 40.0 * 60.0, [&](double t, const EngineThermalModel::State& state) {
+        if (secondsTo80 < 0.0 && state.coolantTemperatureC >= 80.0) secondsTo80 = t;
+        hottestIdle = std::max(hottestIdle, state.coolantTemperatureC);
+    });
+    EngineThermalModel::State standing { 90.0, 100.0, false };
+    double fanOnAfter = -1.0;
+    run(model, standing, ratedHeatKw, ratedFrictionKw, 0.0, 120.0, [&](double t, const EngineThermalModel::State& state) {
+        if (fanOnAfter < 0.0 && state.fanOn) fanOnAfter = t;
+    });
+    const auto standingAfter2Min = standing.coolantTemperatureC;
+    double fanOffAt = -1.0;
+    run(model, standing, 0.0, 0.0, 0.0, 600.0, [&](double, const EngineThermalModel::State& state) {
+        if (fanOffAt < 0.0 && !state.fanOn) fanOffAt = state.coolantTemperatureC;
+    });
+    EngineThermalModel::State riding { 90.0, 100.0, false };
+    double hottestRide = 0.0;
+    run(model, riding, ratedHeatKw, ratedFrictionKw, 30.0, 600.0, [&](double, const EngineThermalModel::State& state) {
+        hottestRide = std::max(hottestRide, state.coolantTemperatureC);
+    });
+    auto aircooledConfig = catalogueEngine("Aircooled");
+    aircooledConfig.thermal.regulated = false;
+    const EngineThermalModel aircooled(aircooledConfig);
+    EngineThermalModel::State fins { 90.0, 100.0, false };
+    auto aircooledFan = false;
+    run(aircooled, fins, aircooled.estimatedRatedPowerKw() / 0.30, 0.15 * aircooled.estimatedRatedPowerKw(), 0.0, 120.0,
+        [&](double, const EngineThermalModel::State& state) { aircooledFan = aircooledFan || state.fanOn; });
+    std::cout << "  Yamaha CP2 thermal model (" << model.coolantCapacityKjPerC() << " kJ/K, radiator "
+              << model.radiatorKwPerC() << " kW/K, rated " << model.estimatedRatedPowerKw() << " kW): idle to 80 degC in "
+              << secondsTo80 / 60.0 << " min, hottest idle " << hottestIdle << " degC; rated heat standing: fan on after "
+              << fanOnAfter << " s, " << standingAfter2Min << " degC at 2 min, fan off at " << fanOffAt
+              << " degC; at 30 m/s hottest " << hottestRide << " degC\n";
+    require(secondsTo80 > 0.0 && secondsTo80 < 30.0 * 60.0, "an idling engine warms past 80 degC within 30 min");
+    require(hottestIdle <= EngineThermalModel::fanOnC + 0.5, "an idling engine in still air is held by its fan");
+    require(fanOnAfter > 0.0 && standingAfter2Min > 105.0, "a standing engine at full power overheats, fan on");
+    require(fanOffAt > 0.0 && fanOffAt <= EngineThermalModel::fanOffC + 0.01, "the fan stops at 95 degC");
+    require(hottestRide < 100.0, "at 30 m/s the radiator holds full power below 100 degC");
+    require(!aircooledFan, "an air-cooled engine has no radiator fan");
+}
+
 /** Light knock does not wear the engine: the 2JZ held at full load knocks
  * lightly the whole time, as every catalogue engine does at WOT, and ends with
  * no damage. Counted linearly, it lost 0.3-0.5 % of power for good per dyno
@@ -462,6 +526,7 @@ void liveTuningRegression() {
     ambientSettlesLikeARestart();
     wastegateHoldsGaugeBoostUpHigh();
     regulatedTemperaturesHold();
+    realisticTemperaturesFollowHeatAndAir();
     lightKnockDoesNotWear();
     flywheelIsASetting();
     flywheelRevsLikeARestart();

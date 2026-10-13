@@ -5,6 +5,13 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-13 — Realistic temperatures (EngineThermalModel)
+
+- The former free model stalled cold: a car-sized 180 kJ/K on every engine and radiator air through a closed thermostat (CP2 36.8 degC after 5 passes). Now: capacities from displacement, a thermostat (82-94 degC), air of the vehicle's speed (12 m/s of cell fan on the dyno), a fan on at 100 / off at 95 degC, all friction heat into the oil, heat shares 24 % / 5 % (Heywood, coolant 17-26 %). Sizes are plausible, not measured.
+- `EngineLabThermalHarness --realistic`. CP2 in still air, idle: 42 / 59 / 73 / 85 degC at 5 / 10 / 15 / 20 min (simulated idle ~2.8 kW released). With the cell fan, 5 passes from cold: CP2 81 then 94 degC (oil 113), K20A 62 -> 94, LS3 49 -> 91; 60 s of idle after: ~80; a 60 s ride at 25 m/s, half redline, quarter throttle: 86-87 degC. Peak power within -1.8 % (CP2 pass 2, run-to-run spread; no damage).
+- Air-cooled Big Twin with the cell fan: only 34 -> 47 degC over the passes, 29 degC after 60 s of idle: probably too cool; its fins are sized like a radiator. Not changed.
+- Not compared with any recorded warm-up or temperature trace. Default (regulated) behaviour and sound unchanged.
+
 ## 2026-10-13 — Warm standing starts: three engines with no margin
 
 - `EngineLab.StandingStartSettledIdle` (launch at 25 s, 1st gear, WOT, clutch over 0.9 s) failed once engines ran regulated at 90 degC: the EJ25 stalled. New `--unregulated-thermal` flag in `EngineLabLoadedAccelerationHarness` for the one-factor comparison.
