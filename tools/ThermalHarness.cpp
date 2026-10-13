@@ -7,6 +7,12 @@
 // It prints, per pass, the coolant and oil temperatures and the peak brake
 // power, so a pass-to-pass power loss can be tied to the temperature.
 //
+// --realistic lets the temperatures free (EngineThermalModel); --air-speed
+// is the air at the radiator during idles and passes (the application's dyno
+// cell fan: 12 m/s), --warmup-minutes idles from cold first, --ride-seconds
+// ends with a ride: the engine held at half its redline, a quarter throttle,
+// in the air of --ride-air-speed.
+//
 // Deterministic: the simulator is stepped directly, 240 frames a second, as
 // the application's runtime does.
 #include <enginelab/catalog/EngineCatalog.hpp>
@@ -32,6 +38,7 @@ namespace {
 using namespace enginelab;
 
 constexpr double frameSeconds = 1.0 / 240.0;
+double airSpeedMps = 0.0;
 
 /** The application's sweep endpoints (EngineRuntime.cpp). */
 [[nodiscard]] double sweepCeilingRpm(const EngineConfig& config) {
@@ -59,9 +66,23 @@ struct Rig final {
 void idle(Rig& rig, double seconds) {
     EngineControls controls;
     controls.ignitionEnabled = true;
+    controls.coolingAirSpeedMps = airSpeedMps;
     const auto frames = static_cast<int>(seconds / frameSeconds);
     for (auto frame = 0; frame < frames; ++frame) {
         controls.starterEngaged = rig.simulator->state().rpm < 300.0;
+        (void) rig.simulator->step(frameSeconds, controls);
+    }
+}
+
+/** Held at half the redline by a proportional brake, a quarter throttle. */
+void ride(Rig& rig, double seconds, double rideAirSpeedMps) {
+    EngineControls controls;
+    controls.ignitionEnabled = true;
+    controls.throttle = 0.25;
+    controls.coolingAirSpeedMps = rideAirSpeedMps;
+    const auto frames = static_cast<int>(seconds / frameSeconds);
+    for (auto frame = 0; frame < frames; ++frame) {
+        controls.dynamometerTorqueNm = std::max(0.0, 2.0 * (rig.simulator->state().rpm - 0.5 * rig.config.redlineRpm));
         (void) rig.simulator->step(frameSeconds, controls);
     }
 }
@@ -97,6 +118,7 @@ struct Pass final {
         controls.ignitionEnabled = true;
         controls.throttle = 1.0;
         controls.dynamometerTorqueNm = output.brakeTorqueNm;
+        controls.coolingAirSpeedMps = airSpeedMps;
         const auto state = rig.simulator->step(frameSeconds, controls).state;
         pass.minimumRpm = std::min(pass.minimumRpm, state.rpm);
         pass.meanKnock += state.knockLevel / frames;
@@ -115,8 +137,8 @@ struct Pass final {
 
 void printTemperatures(const EngineState& state) {
     std::cout << "coolant " << std::setw(6) << state.coolantTemperatureC << " degC, oil " << std::setw(6)
-              << state.oilTemperatureC << " degC, damage " << std::setprecision(3) << state.damage << ", wear "
-              << state.wear << std::setprecision(1);
+              << state.oilTemperatureC << " degC" << (state.coolingFanOn ? " (fan on)" : "") << ", damage "
+              << std::setprecision(3) << state.damage << ", wear " << state.wear << std::setprecision(1);
 }
 
 } // namespace
@@ -127,6 +149,10 @@ int main(int argc, char** argv) {
     int passes = 5;
     double idleSeconds = 20.0;
     double cooldownSeconds = 120.0;
+    bool realistic = false;
+    double warmupMinutes = 0.0;
+    double rideSeconds = 0.0;
+    double rideAirSpeedMps = 25.0;
     for (int index = 1; index < argc; ++index) {
         const std::string argument = argv[index];
         if (argument == "--catalog-root" && index + 1 < argc) catalogRoot = argv[++index];
@@ -134,10 +160,16 @@ int main(int argc, char** argv) {
         else if (argument == "--passes" && index + 1 < argc) passes = std::stoi(argv[++index]);
         else if (argument == "--idle-seconds" && index + 1 < argc) idleSeconds = std::stod(argv[++index]);
         else if (argument == "--cooldown-seconds" && index + 1 < argc) cooldownSeconds = std::stod(argv[++index]);
+        else if (argument == "--realistic") realistic = true;
+        else if (argument == "--air-speed" && index + 1 < argc) airSpeedMps = std::stod(argv[++index]);
+        else if (argument == "--warmup-minutes" && index + 1 < argc) warmupMinutes = std::stod(argv[++index]);
+        else if (argument == "--ride-seconds" && index + 1 < argc) rideSeconds = std::stod(argv[++index]);
+        else if (argument == "--ride-air-speed" && index + 1 < argc) rideAirSpeedMps = std::stod(argv[++index]);
         else {
             std::cout << "usage: " << argv[0]
                       << " [--filter name] [--passes N] [--idle-seconds S] [--cooldown-seconds S]"
-                         " [--catalog-root path]\n";
+                         " [--realistic] [--air-speed M/S] [--warmup-minutes M] [--ride-seconds S]"
+                         " [--ride-air-speed M/S] [--catalog-root path]\n";
             return argument == "--help" ? 0 : 2;
         }
     }
@@ -148,6 +180,7 @@ int main(int argc, char** argv) {
         return 2;
     }
     auto config = selected.entry->config;
+    if (realistic) config.thermal.regulated = false;
     normaliseEngineConfig(config);
     auto rig = std::make_unique<Rig>(config);
 
@@ -158,6 +191,12 @@ int main(int argc, char** argv) {
     std::cout << "  after 10 s of idle   ";
     printTemperatures(rig->simulator->state());
     std::cout << '\n';
+    for (auto minute = 1; minute <= static_cast<int>(warmupMinutes); ++minute) {
+        idle(*rig, 60.0);
+        std::cout << "  idle minute " << std::setw(3) << minute << "      ";
+        printTemperatures(rig->simulator->state());
+        std::cout << '\n';
+    }
     double firstPeakKw = 0.0;
     for (auto index = 0; index < passes; ++index) {
         const auto pass = dynoPass(*rig);
@@ -179,5 +218,12 @@ int main(int argc, char** argv) {
     printTemperatures(rig->simulator->state());
     std::cout << "; coolant " << std::showpos << rig->simulator->state().coolantTemperatureC - hot
               << std::noshowpos << " degC, rpm " << rig->simulator->state().rpm << '\n';
+    for (auto elapsed = 0.0; elapsed + 1.0e-9 < rideSeconds; elapsed += 10.0) {
+        ride(*rig, std::min(10.0, rideSeconds - elapsed), rideAirSpeedMps);
+        std::cout << "  ride " << std::setw(5) << elapsed + 10.0 << " s at " << rideAirSpeedMps << " m/s, "
+                  << std::setw(6) << rig->simulator->state().rpm << " rpm ";
+        printTemperatures(rig->simulator->state());
+        std::cout << '\n';
+    }
     return 0;
 }

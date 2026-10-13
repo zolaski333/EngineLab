@@ -13,6 +13,9 @@
 namespace enginelab {
 namespace {
 constexpr std::size_t maximumAudioExhaustPaths = 8;
+/** A dyno cell's fan in front of the engine (about 43 km/h); it cools an
+ * engine whose temperatures are not regulated. */
+constexpr double dynoCellFanAirSpeedMps = 12.0;
 
 /** Highest speed a swept bench run is allowed to sample.
  *
@@ -1359,7 +1362,8 @@ void EngineRuntime::run(std::stop_token stopToken) {
             dynoActive_ ? requestedLoad : 0.0, dynoActive_ ? 0.0 : engineCouplingTorqueNm_,
             dynoActive_ ? 0.0 : brakePressure_.load(std::memory_order_relaxed),
             dynoActive_ ? dynoBrakeTorqueNm_ : 0.0,
-            dynoActive_ ? 0.0 : drivelineReflectedInertiaKgM2_ };
+            dynoActive_ ? 0.0 : drivelineReflectedInertiaKgM2_,
+            dynoActive_ ? dynoCellFanAirSpeedMps : std::abs(vehicleSpeedMps_) };
         // The 3-D view's gas field: tracked at the angle it shows, or taken
         // as it is when it shows real time. Nothing runs once it stops asking.
         const auto gasFieldRequest = gasFieldRequestSequence_.load(std::memory_order_acquire);

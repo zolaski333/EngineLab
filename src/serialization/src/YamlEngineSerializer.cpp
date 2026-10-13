@@ -340,6 +340,8 @@ std::string YamlEngineSerializer::encode(const EngineConfig& config) const {
         << YAML::Key << "oil_heat_share" << YAML::Value << config.thermal.oilHeatShare
         << YAML::Key << "cooling_power_kw_per_c" << YAML::Value << config.thermal.coolingPowerKwPerC
         << YAML::Key << "oil_cooling_power_kw_per_c" << YAML::Value << config.thermal.oilCoolingPowerKwPerC
+        << YAML::Key << "liquid_cooled" << YAML::Value << config.thermal.liquidCooled
+        << YAML::Key << "engine_driven_fan" << YAML::Value << config.thermal.engineDrivenFan
         << YAML::EndMap
         << YAML::Key << "combustion_calibration" << YAML::Value << YAML::BeginMap
         << YAML::Key << "base_ignition_delay_s" << YAML::Value << config.combustionCalibration.baseIgnitionDelaySeconds
@@ -807,6 +809,8 @@ EngineDecodeResult YamlEngineSerializer::decode(std::string_view text) const noe
             config.thermal.oilHeatShare = thermal["oil_heat_share"].as<double>(config.thermal.oilHeatShare);
             config.thermal.coolingPowerKwPerC = thermal["cooling_power_kw_per_c"].as<double>(config.thermal.coolingPowerKwPerC);
             config.thermal.oilCoolingPowerKwPerC = thermal["oil_cooling_power_kw_per_c"].as<double>(config.thermal.oilCoolingPowerKwPerC);
+            config.thermal.liquidCooled = thermal["liquid_cooled"].as<bool>(config.thermal.liquidCooled);
+            config.thermal.engineDrivenFan = thermal["engine_driven_fan"].as<bool>(config.thermal.engineDrivenFan);
         }
         if (const auto calibration = engine["combustion_calibration"]) {
             config.combustionCalibration.baseIgnitionDelaySeconds = calibration["base_ignition_delay_s"].as<double>(config.combustionCalibration.baseIgnitionDelaySeconds);

@@ -49,6 +49,7 @@ engine:
     oil_heat_share: 0.16
     cooling_power_kw_per_c: 0.92
     oil_cooling_power_kw_per_c: 0.46
+    liquid_cooled: false
   crank_journals:
     - { id: 1, angle_deg: 0.0, throw_mm: 63.5 }
   cylinders:

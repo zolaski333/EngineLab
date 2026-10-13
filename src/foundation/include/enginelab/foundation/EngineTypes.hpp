@@ -794,13 +794,17 @@ struct ForcedInductionConfig final {
     double turbulentJetNoiseCoefficient { 1.0e-5 };
 };
 
+/** Engine temperatures; the realistic (unregulated) model is
+ * EngineThermalModel. A zero capacity or conductance is sized from the
+ * displacement and the estimated rated power. The heat shares are of the heat
+ * released by combustion (Heywood: 17-26 % to the coolant at full load). */
 struct ThermalConfig final {
-    double coolantMassKjPerC { 180.0 };
-    double oilMassKjPerC { 95.0 };
-    double coolantHeatShare { 0.34 };
-    double oilHeatShare { 0.18 };
-    double coolingPowerKwPerC { 0.42 };
-    double oilCoolingPowerKwPerC { 0.22 };
+    double coolantMassKjPerC { 0.0 };
+    double oilMassKjPerC { 0.0 };
+    double coolantHeatShare { 0.24 };
+    double oilHeatShare { 0.05 };
+    double coolingPowerKwPerC { 0.0 };
+    double oilCoolingPowerKwPerC { 0.0 };
     // Filled positionally (makeDefaultRadialFive): add members below this line only.
     /** Regulated: coolant and oil are held at their operating temperatures
      * from the start, as a dyno cell's conditioning unit holds them, so runs
@@ -809,6 +813,12 @@ struct ThermalConfig final {
     bool regulated { true };
     double regulatedCoolantTemperatureC { 90.0 };
     double regulatedOilTemperatureC { 100.0 };
+    /** A radiator behind a thermostat, with an electric fan; otherwise fins
+     * in the air, the "coolant" temperature standing for the oil's, as an
+     * air-cooled engine's gauge reads it. */
+    bool liquidCooled { true };
+    /** An air-cooled engine's blower, driven by the crank. */
+    bool engineDrivenFan { false };
 };
 
 struct CombustionCalibrationConfig final {
@@ -996,6 +1006,10 @@ struct EngineControls final {
      * integrated against the coupled shaft instead of a one-frame-delayed
      * clutch reaction. Zero preserves standalone/dyno behaviour. */
     double externalRotatingInertiaKgM2 { 0.0 };
+    /** Air speed at the radiator or the fins, from the vehicle's speed or a
+     * dyno cell fan; it cools an engine whose temperatures are not
+     * regulated. */
+    double coolingAirSpeedMps { 0.0 };
 };
 
 struct CylinderState final {
@@ -1598,6 +1612,8 @@ struct EngineState final {
      * fresh fuelled observation. Consumers must not interpret the retained
      * numeric AFR as a live mixture measurement while this is false. */
     bool airFuelRatioValid { false };
+    /** The electric radiator fan, realistic temperatures only. */
+    bool coolingFanOn { false };
 };
 
 struct EcuCommand final {

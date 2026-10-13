@@ -15,6 +15,8 @@ engine:
   plenum_volume_l: 4.2
   throttle_diameter_mm: 74
   acoustic_observer: { left_microphone_m: { x: -0.18, y: 4.0, z: 0.8 }, right_microphone_m: { x: 0.18, y: 4.0, z: 0.8 }, sound_speed_mps: 0 }
+  # Air-cooled, its blower driven by the crank.
+  thermal: { liquid_cooled: false, engine_driven_fan: true }
   intake:
     plenum_volume_l: 4.2
     throttle_diameter_mm: 74
