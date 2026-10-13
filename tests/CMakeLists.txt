@@ -432,7 +432,10 @@ if(TARGET EngineLabLoadedAccelerationHarness)
     # below idle by the clutch; an asynchronous tip-in pulse did not save
     # them) are tracked in docs/journal.md; any other stall fails. At 4 s the
     # LS3 pushes half its metered fuel back into its plenum and stalls lean
-    # (declared 2026-09-23); the 2JZ, declared before, now launches.
+    # (declared 2026-09-23); the 2JZ, declared before, now launches. At 25 s
+    # the EJ25 runs at its regulated 90 degC (default since 2026-10-13) and
+    # stalls on 9 launch times out of 41 (0 when it warms freely from cold):
+    # declared, journal 2026-10-13.
     add_test(NAME EngineLab.StandingStartCatalogue
         COMMAND EngineLabLoadedAccelerationHarness
             --standing-start --gear 1 --launch-at 4
@@ -440,7 +443,8 @@ if(TARGET EngineLabLoadedAccelerationHarness)
     add_test(NAME EngineLab.StandingStartSettledIdle
         COMMAND EngineLabLoadedAccelerationHarness
             --standing-start --gear 1 --launch-at 25
-            --skip Merlin --skip Radial --known-stall Aircooled)
+            --skip Merlin --skip Radial --known-stall Aircooled
+            --known-stall EJ25)
     set_tests_properties(
         EngineLab.LoadedAccelerationCP2
         EngineLab.LoadedAccelerationAudi

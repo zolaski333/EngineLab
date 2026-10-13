@@ -383,6 +383,32 @@ void regulatedTemperaturesHold() {
     require(lowestCoolant[2] == 90.0 && highestCoolant[2] == 90.0, "a regulated running engine stays at 90 degC");
 }
 
+/** Light knock does not wear the engine: the 2JZ held at full load knocks
+ * lightly the whole time, as every catalogue engine does at WOT, and ends with
+ * no damage. Counted linearly, it lost 0.3-0.5 % of power for good per dyno
+ * pass. */
+void lightKnockDoesNotWear() {
+    const auto config = catalogueEngine("2JZ");
+    Rig rig(config);
+    constexpr auto frames = 10 * 240;
+    double rpm = 0.0;
+    double meanKnock = 0.0;
+    double peakKnock = 0.0;
+    for (auto frame = 0; frame < frames; ++frame) {
+        const auto state = rig.simulator->step(frameSeconds, heldAt(frame * frameSeconds, rpm, config)).state;
+        rpm = state.rpm;
+        if (frame >= 3 * 240) {
+            meanKnock += state.knockLevel / (7.0 * 240.0);
+            peakKnock = std::max(peakKnock, state.knockLevel);
+        }
+    }
+    const auto damage = rig.simulator->state().damage;
+    std::cout << "  2JZ at full load for 8 s: knock mean " << meanKnock << ", peak " << peakKnock << ", damage "
+              << damage << '\n';
+    require(meanKnock > 0.1 && peakKnock < 0.45, "the 2JZ knocks lightly at full load (else this proves nothing)");
+    require(damage < 1.0e-9, "light knock does not damage the engine");
+}
+
 /** A final drive 30 % shorter taken at 1 s, in first gear with the clutch
  * engaged and the engine held at 2,000 rpm: the car settles at the road speed
  * of one built with it. Another gear count is refused; a gearbox edit is a
@@ -436,6 +462,7 @@ void liveTuningRegression() {
     ambientSettlesLikeARestart();
     wastegateHoldsGaugeBoostUpHigh();
     regulatedTemperaturesHold();
+    lightKnockDoesNotWear();
     flywheelIsASetting();
     flywheelRevsLikeARestart();
     sameCamshaftsAreInvisible();

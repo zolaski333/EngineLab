@@ -154,8 +154,11 @@ released energy uses the fuel's LHV and stoichiometry.
 
 Knock uses a Livengood-Wu integral on the end gas. When its threshold is
 reached, a share of the remainder really auto-ignites in the cell, raises the
-pressure and feeds the telemetry. The ECU then pulls advance. This global
-correlation is not multi-species chemical kinetics.
+pressure and feeds the telemetry. The ECU then pulls advance in proportion to
+the knock level, so at WOT engines sit at a light, constant knock (0.1-0.4)
+rather than stepping back and holding as a real knock control does. Only knock
+above 0.45 (the diagnostics' "severe") adds damage, which lowers efficiency for
+good. This global correlation is not multi-species chemical kinetics.
 
 ## Forced induction
 

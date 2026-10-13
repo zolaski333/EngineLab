@@ -215,6 +215,12 @@ file formats, always with an in-memory migration).
 
 ### Fixed
 
+- Dyno passes no longer cost power for good. Every engine knocks lightly at
+  full throttle, and that light knock was counted as damage: each pass took
+  0.3-0.5 % of power that never came back. Only severe knock damages the
+  engine now. Known limit: warm, the EJ25, the I5 and the Big Twin can stall
+  on a full-throttle launch straight from idle (about 1 launch in 5 for the
+  EJ25); give them some revs before letting the clutch out.
 - The TDI no longer surges at full throttle from 2,500 rpm (torque swinging
   by up to 32 % four times a second, which looked like misfires on the
   dyno). Its boost controller oscillated once the turbine sat on the
