@@ -58,6 +58,7 @@
 #include <memory>
 #include <numbers>
 #include <set>
+#include <sstream>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -69,9 +70,15 @@ using namespace enginelab;
 constexpr double audioRate = 48'000.0;
 constexpr double frameDt = 1.0 / 240.0;
 constexpr int samplesPerFrame = 200; // 48000 / 240
-/** Density the exhaust outlets radiate into; zero keeps the production duct
- *  medium (RealtimeEngineAudio::setOutletFarFieldDensity). */
-double outletFarFieldDensityKgPerM3 = 0.0;
+/** Diagnostic outlet settings; the defaults are production. */
+struct OutletVariant final {
+    /** Density the outlets radiate into; zero keeps the duct medium
+     *  (RealtimeEngineAudio::setOutletFarFieldDensity). */
+    double farFieldDensityKgPerM3 { 0.0 };
+    /** Ideal pressure release instead of the Levine-Schwinger load. */
+    bool pressureRelease { false };
+};
+OutletVariant outletVariant;
 
 // ISO third-octave centres from 25 Hz to 12.5 kHz. The band edges are
 // fc * 2^(+-1/6), so they tile without gaps.
@@ -468,7 +475,8 @@ maskingMarginDb(const Spectrum& exhaust, const Spectrum& others) {
         eventQueue, audioState, &pressureQueue, &runtimeOwner->exhaustGraph(),
         &runtimeOwner->engineConfig(), &runtimeOwner->exhaustAcousticSamples());
     auto& renderer = *rendererOwner;
-    renderer.setOutletFarFieldDensity(outletFarFieldDensityKgPerM3);
+    renderer.setOutletFarFieldDensity(outletVariant.farFieldDensityKgPerM3);
+    renderer.setOutletPressureRelease(outletVariant.pressureRelease);
     renderer.prepare(audioRate, samplesPerFrame);
     std::this_thread::sleep_for(std::chrono::milliseconds(200));
 
@@ -1338,36 +1346,40 @@ struct WavSignal final {
     return 0;
 }
 
-/** One factor: the density the outlet far field is computed with. Production
- *  uses the duct medium (hot gas); outside the mouth the field is in ambient
- *  air. Two renders of the same engine, everything else equal. */
-[[nodiscard]] int runRadiationDensityAb(const EngineConfig& engine, double targetRpm,
-                                        double seconds, double ambientDensityKgPerM3,
-                                        const std::filesystem::path& wavOut) {
-    std::cout << "Outlet radiation density A/B: duct medium, then "
-              << std::fixed << std::setprecision(3) << ambientDensityKgPerM3
-              << " kg/m3\n"
+/** One factor at the exhaust outlets: production first, then `candidate`.
+ *  Two renders of the same engine, everything else equal.
+ *    --radiation-density-ab: the density the far field is computed with.
+ *      Production uses the duct medium (hot gas); outside the mouth the field
+ *      is in ambient air.
+ *    --pressure-release-ab: the Levine-Schwinger load against an ideal
+ *      pressure release that returns every frequency into the pipe. */
+[[nodiscard]] int runOutletAb(const EngineConfig& engine, double targetRpm,
+                              double seconds, const OutletVariant& candidate,
+                              const std::string& candidateLabel,
+                              const std::string& wavSuffix,
+                              const std::filesystem::path& wavOut) {
+    std::cout << "Outlet A/B: production, then " << candidateLabel << '\n'
               << "  engine      " << engine.name << '\n'
-              << "  held speed  " << std::setprecision(0) << targetRpm << " rpm, "
-              << std::setprecision(1) << seconds << " s\n\n";
+              << "  held speed  " << std::fixed << std::setprecision(0) << targetRpm
+              << " rpm, " << std::setprecision(1) << seconds << " s\n\n";
     std::array<RenderResult, 2> results;
     for (std::size_t side = 0; side < results.size(); ++side) {
-        outletFarFieldDensityKgPerM3 = side == 0 ? 0.0 : ambientDensityKgPerM3;
+        outletVariant = side == 0 ? OutletVariant {} : candidate;
         try {
             results[side] = render(engine, targetRpm, seconds);
         } catch (const std::exception& error) {
-            outletFarFieldDensityKgPerM3 = 0.0;
+            outletVariant = {};
             std::cerr << "  FAILED: " << error.what() << '\n';
             return 1;
         }
-        outletFarFieldDensityKgPerM3 = 0.0;
+        outletVariant = {};
         const auto& result = results[side];
         if (!(result.finalRpm > 0.80 * targetRpm)) {
             std::cerr << "  ENGINE NOT HELD (" << std::setprecision(0) << result.finalRpm
                       << " rpm). No figure from this render is usable.\n";
             return 1;
         }
-        std::cout << (side == 0 ? "  duct medium   " : "  ambient air   ")
+        std::cout << (side == 0 ? "  production    " : "  candidate     ")
                   << "rms " << std::setprecision(6) << result.mix.rms
                   << "  rpm " << std::setprecision(0) << result.finalRpm
                   << (result.physicalActive ? "" : "  [NON-PHYSICAL PATH]")
@@ -1392,7 +1404,7 @@ struct WavSignal final {
     // after: the balance is what a level-matched listening test hears.
     const auto before = maskingMarginDb(results[0].exhaust, results[0].others);
     const auto after = maskingMarginDb(results[1].exhaust, results[1].others);
-    std::cout << "  exhaust over the other layers, dB (duct -> ambient):\n";
+    std::cout << "  exhaust over the other layers, dB (production -> candidate):\n";
     for (std::size_t band = 0; band < before.size(); band += 3) {
         std::cout << "    " << std::setw(6) << std::setprecision(0)
                   << thirdOctaveCentresHz[band] << " Hz  ";
@@ -1404,16 +1416,16 @@ struct WavSignal final {
                       << std::noshowpos << '\n';
     }
     if (!wavOut.empty()) {
-        auto ambientPath = wavOut;
-        ambientPath.replace_filename(wavOut.stem().string() + "-ambient-radiation"
+        auto candidatePath = wavOut;
+        candidatePath.replace_filename(wavOut.stem().string() + wavSuffix
             + wavOut.extension().string());
         if (!writeWavMono(wavOut, results[0].mixSignal)
-            || !writeWavMono(ambientPath, results[1].mixSignal)) {
+            || !writeWavMono(candidatePath, results[1].mixSignal)) {
             std::cerr << "  cannot write " << wavOut.string() << '\n';
             return 1;
         }
-        std::cout << "  written: " << wavOut.string() << " and " << ambientPath.string()
-                  << '\n';
+        std::cout << "  written: " << wavOut.string() << " and "
+                  << candidatePath.string() << '\n';
     }
     return 0;
 }
@@ -1439,6 +1451,7 @@ int main(int argc, char** argv) {
     double camLiftScale = 1.0;
     bool outputStageAb = false;
     double radiationDensityAb = 0.0;
+    bool pressureReleaseAb = false;
     for (int index = 1; index < argc; ++index) {
         const std::string argument = argv[index];
         if (argument == "--catalog-root" && index + 1 < argc) catalogRoot = argv[++index];
@@ -1449,6 +1462,7 @@ int main(int argc, char** argv) {
         else if (argument == "--output-stage-ab") outputStageAb = true;
         else if (argument == "--radiation-density-ab" && index + 1 < argc)
             radiationDensityAb = std::stod(argv[++index]);
+        else if (argument == "--pressure-release-ab") pressureReleaseAb = true;
         else if (argument == "--wav-reference" && index + 1 < argc)
             wavReference = argv[++index];
         else if (argument == "--wav-variant" && index + 1 < argc)
@@ -1481,8 +1495,8 @@ int main(int argc, char** argv) {
                          "       " << argv[0]
                       << " --output-stage-ab [--filter ...] [--rpm N] [--wav-out f.wav]\n"
                          "       " << argv[0]
-                      << " --radiation-density-ab RHO [--filter ...] [--rpm N]"
-                         " [--wav-out f.wav]\n"
+                      << " --radiation-density-ab RHO | --pressure-release-ab"
+                         " [--filter ...] [--rpm N] [--wav-out f.wav]\n"
                          "       " << argv[0]
                       << " --wav-reference ref.wav --wav-variant v.wav [...]"
                          " [--wav-skip S]\n";
@@ -1551,8 +1565,18 @@ int main(int argc, char** argv) {
             std::cerr << "--radiation-density-ab takes a density in kg/m3\n";
             return 2;
         }
-        return runRadiationDensityAb(engine, targetRpm, seconds, radiationDensityAb,
-                                     wavOut);
+        OutletVariant candidate;
+        candidate.farFieldDensityKgPerM3 = radiationDensityAb;
+        std::ostringstream label;
+        label << "far field in " << radiationDensityAb << " kg/m3";
+        return runOutletAb(engine, targetRpm, seconds, candidate, label.str(),
+                           "-ambient-radiation", wavOut);
+    }
+    if (pressureReleaseAb) {
+        OutletVariant candidate;
+        candidate.pressureRelease = true;
+        return runOutletAb(engine, targetRpm, seconds, candidate,
+                           "pressure-release outlets", "-pressure-release", wavOut);
     }
 
     std::cout << "Sound sensitivity to exhaust geometry\n"

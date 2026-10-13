@@ -174,6 +174,12 @@ engines, plus a load- and temperature-dependent level. The band shape changes
 only through the balance with the outlet jet noise, which keeps its own jet
 density (journal).
 
+`setOutletPressureRelease` (also off by default; `--pressure-release-ab`)
+replaces the load by an ideal pressure release, R = -1 at every frequency.
+Measured 2026-10-13: level within 0.4 dB, but up to +10 dB in the top band,
+where the tailpipe keeps resonances the load would radiate. It is kept for
+measurement only.
+
 Each outlet now publishes its position, its axis, its diameter and its
 termination type (unflanged or flanged). `FreeFieldObserver` computes
 separately the two outlet–microphone distances, the `r/c` delays, the `1/r`

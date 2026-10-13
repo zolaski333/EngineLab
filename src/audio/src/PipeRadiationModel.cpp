@@ -153,6 +153,10 @@ void UnflangedPipeRadiation::updateCoefficients() noexcept {
     b2_ = numerator2 / denominator0;
     a1_ = denominator1 / denominator0;
     a2_ = denominator2 / denominator0;
+    if (pressureRelease_) {
+        b0_ = -1.0;
+        b1_ = b2_ = a1_ = a2_ = 0.0;
+    }
 }
 
 } // namespace enginelab

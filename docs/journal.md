@@ -5,6 +5,12 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-13 — Pressure-release outlet versus the Levine-Schwinger load
+
+- The other simulator terminates its pipes with an imposed pressure and no radiation load (R = -1 at every frequency). New switch `setOutletPressureRelease`, off by default (renders byte-identical); `GeometrySensitivityHarness --pressure-release-ab`, same seven points.
+- Level: -0.04 to +0.42 dB. Shape 0.47-3.45 dB. Worst band: +7 to +10 dB at 5-10 kHz on CP2 Full System, K20 and LS3; +1.5 to +2.5 dB at 1.25-2 kHz on CP2, Hayabusa and 2JZ. The tailpipe keeps the resonances that the load would radiate away. Crest -0.1 to +0.9 dB, tilt up to +0.9 dB/oct, periodicity unchanged except the 2JZ (0.77 -> 0.72).
+- Verdict: it moves the sound away from the other simulator's character (crest rises), and only above the plane-mode cutoff, where a 1-D pipe means nothing physical. Kept off; only a real CP2 recording could argue otherwise.
+
 ## 2026-10-13 — Outlet far field: duct density versus ambient air
 
 - The outlet monopole is p = rho dQ/dt / (4 pi r) with rho = the path's duct medium (hot gas). Outside the mouth the field is in ambient air and Q is continuous across the interface, so the textbook rho is the ambient one. New switch `setOutletFarFieldDensity`, off by default (renders byte-identical); `GeometrySensitivityHarness --radiation-density-ab 1.2`.

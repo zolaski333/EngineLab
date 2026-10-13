@@ -2283,6 +2283,35 @@ void pipeRadiationRegression() {
     require(std::abs(std::sqrt(ambientFarSquares / ductFarSquares)
                      - ambientDensityKgPerM3 / densityKgPerM3) < 1.0e-9,
             "radiating into ambient air must scale the far field by rho_ambient / rho_duct");
+
+    // The pressure-release switch: R = -1 at every frequency, the far field
+    // still radiates, and switching back restores the Levine-Schwinger load.
+    enginelab::UnflangedPipeRadiation release;
+    require(release.prepare(sampleRateHz, radiusM, 1.0)
+            && release.setMedium(densityKgPerM3, soundSpeedMps),
+            "pressure-release fixture must prepare");
+    const auto loadedAtFourKilohertz = release.reflectionCoefficient(4'000.0);
+    release.setPressureRelease(true);
+    for (const auto frequencyHz : { 0.0, 500.0, 4'000.0, 12'000.0 })
+        require(std::abs(release.reflectionCoefficient(frequencyHz)
+                         - std::complex<double> { -1.0, 0.0 }) < 1.0e-12,
+                "a pressure-release outlet must reflect R = -1 at every frequency");
+    require(release.setMedium(densityKgPerM3 * 1.1, soundSpeedMps * 1.05)
+            && std::abs(release.reflectionCoefficient(4'000.0).real() + 1.0) < 1.0e-12,
+            "a medium update must keep the pressure release");
+    double releasedFarSquares = 0.0;
+    for (int index = 0; index < 4'800; ++index) {
+        const auto sample = release.process(500.0 * std::sin(
+            2.0 * std::numbers::pi * 300.0 * index / sampleRateHz));
+        releasedFarSquares += sample.farFieldPressurePa * sample.farFieldPressurePa;
+    }
+    require(releasedFarSquares > 0.0,
+            "a pressure-release outlet must still radiate from its volume velocity");
+    release.setPressureRelease(false);
+    require(release.setMedium(densityKgPerM3, soundSpeedMps)
+            && std::abs(release.reflectionCoefficient(4'000.0)
+                        - loadedAtFourKilohertz) < 1.0e-12,
+            "switching the pressure release off must restore the radiation load");
 }
 
 void acousticMonitorCalibrationRegression() {

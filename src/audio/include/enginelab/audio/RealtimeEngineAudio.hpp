@@ -232,6 +232,13 @@ public:
         if (acousticExhaustNetwork_)
             acousticExhaustNetwork_->setOutletFarFieldDensity(densityKgPerM3);
     }
+    /** Diagnostic: ideal pressure-release outlets instead of the
+     * Levine-Schwinger load. Same threading rule as above. */
+    void setOutletPressureRelease(bool enabled) noexcept {
+        outletPressureRelease_ = enabled;
+        if (acousticExhaustNetwork_)
+            acousticExhaustNetwork_->setOutletPressureRelease(enabled);
+    }
     [[nodiscard]] bool outletJetNoiseEnabled() const noexcept {
         return acousticExhaustNetwork_
             && acousticExhaustNetwork_->outletJetNoiseEnabled();
@@ -567,6 +574,7 @@ private:
     std::atomic<double> preparedSampleRate_ { 0.0 };
     bool outletJetNoiseEnabled_ { true };
     double outletFarFieldDensityKgPerM3_ { 0.0 };
+    bool outletPressureRelease_ { false };
     /** setMicrophones() -> audio thread, a sequence lock: odd while written. */
     std::atomic<std::uint64_t> microphoneSequence_ { 0 };
     std::array<std::atomic<double>, 6> publishedMicrophones_ {};

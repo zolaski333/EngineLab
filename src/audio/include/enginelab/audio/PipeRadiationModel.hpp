@@ -55,6 +55,16 @@ public:
         return true;
     }
 
+    /** Replace the Levine-Schwinger load by an ideal pressure release, R = -1
+     * at every frequency: the mouth returns all the energy to the pipe and the
+     * far field still follows the mouth volume acceleration. Not physical above
+     * ka ~ 0.3; it exists to measure what the radiation load does to the sound
+     * (another simulator terminates its pipes this way). Diagnostic switch. */
+    void setPressureRelease(bool enabled) noexcept {
+        pressureRelease_ = enabled;
+        if (prepared_) updateCoefficients();
+    }
+
     /** Add a passive amplitude-dependent series resistance at the open edge.
      *
      * The dimensionless resistance is coefficient * |u| / c, where u is mouth
@@ -100,6 +110,7 @@ private:
     double previousVolumeVelocityM3PerS_ { 0.0 };
     double nonlinearLossCoefficient_ { 0.0 };
     double farFieldDensityKgPerM3_ { 0.0 };
+    bool pressureRelease_ { false };
     bool prepared_ { false };
 };
 
