@@ -70,6 +70,11 @@ struct Pass final {
     double peakPowerKw { 0.0 };
     double peakPowerRpm { 0.0 };
     double minimumRpm { 1.0e9 };
+    double meanKnock { 0.0 };
+    double peakKnock { 0.0 };
+    /** Share of the pass above the simulator's "knocking" state (0.45). */
+    double heavyKnockShare { 0.0 };
+    double damageGain { 0.0 };
 };
 
 /** Two seconds held at the entry, then the ramp to the ceiling. */
@@ -79,6 +84,7 @@ struct Pass final {
     DynoAbsorberController absorber(rig.config);
     absorber.reset(rig.simulator->state().rpm, rig.simulator->state().torqueNm);
     Pass pass;
+    const auto damageBefore = rig.simulator->state().damage;
     constexpr double holdSeconds = 2.0;
     constexpr double rampRpmPerSecond = 500.0;
     const auto rampSeconds = (ceiling - entry) / rampRpmPerSecond;
@@ -93,6 +99,9 @@ struct Pass final {
         controls.dynamometerTorqueNm = output.brakeTorqueNm;
         const auto state = rig.simulator->step(frameSeconds, controls).state;
         pass.minimumRpm = std::min(pass.minimumRpm, state.rpm);
+        pass.meanKnock += state.knockLevel / frames;
+        pass.peakKnock = std::max(pass.peakKnock, state.knockLevel);
+        if (state.knockLevel > 0.45) pass.heavyKnockShare += 1.0 / frames;
         if (t < holdSeconds) continue;
         const auto powerKw = output.brakeTorqueNm * state.angularVelocityRadPerSecond / 1'000.0;
         if (powerKw > pass.peakPowerKw) {
@@ -100,6 +109,7 @@ struct Pass final {
             pass.peakPowerRpm = state.rpm;
         }
     }
+    pass.damageGain = rig.simulator->state().damage - damageBefore;
     return pass;
 }
 
@@ -155,7 +165,10 @@ int main(int argc, char** argv) {
         std::cout << "  pass " << index + 1 << "  peak " << std::setw(6) << pass.peakPowerKw << " kW at "
                   << std::setw(6) << pass.peakPowerRpm << " rpm (" << std::showpos
                   << 100.0 * (pass.peakPowerKw / std::max(1.0e-9, firstPeakKw) - 1.0) << std::noshowpos
-                  << " %), lowest " << std::setw(6) << pass.minimumRpm << " rpm; at its end ";
+                  << " %), lowest " << std::setw(6) << pass.minimumRpm << " rpm; knock mean " << std::setprecision(3)
+                  << pass.meanKnock << " peak " << pass.peakKnock << ", heavy " << std::setprecision(1)
+                  << 100.0 * pass.heavyKnockShare << " % of the pass, damage +" << std::setprecision(4)
+                  << pass.damageGain << std::setprecision(1) << "; at its end ";
         printTemperatures(rig->simulator->state());
         std::cout << '\n';
         idle(*rig, idleSeconds);

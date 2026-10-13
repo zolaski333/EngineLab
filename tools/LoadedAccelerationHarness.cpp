@@ -225,9 +225,11 @@ struct StandingStartMetrics final {
  */
 StandingStartMetrics measureStandingStart(
     enginelab::EngineConfig config, int gearNumber, bool traceEvents,
-    double launchAtSeconds) {
+    double launchAtSeconds, bool unregulatedThermal) {
     config.transmission.automaticShifting = false;
     config.vehicle.tyreGripLimitEnabled = false;
+    // Diagnostic: the pre-2026-10-13 behaviour, a cold block warming freely.
+    if (unregulatedThermal) config.thermal.regulated = false;
     enginelab::normaliseEngineConfig(config);
 
     enginelab::SimpleEcuModel ecu;
@@ -801,6 +803,7 @@ int main(int argc, char** argv) {
     bool traceEvents = false;
     bool dfcoTipIn = false;
     bool standingStart = false;
+    bool unregulatedThermal = false;
     double launchAtSeconds = 4.0;
     std::vector<std::string> skipped;
     std::vector<std::string> knownStalls;
@@ -823,6 +826,7 @@ int main(int argc, char** argv) {
         else if (argument == "--trace") traceEvents = true;
         else if (argument == "--dfco-tip-in") dfcoTipIn = true;
         else if (argument == "--standing-start") standingStart = true;
+        else if (argument == "--unregulated-thermal") unregulatedThermal = true;
         else if (argument == "--known-stall" && index + 1 < argc)
             knownStalls.emplace_back(argv[++index]);
         else if (argument == "--known-resume-misfire" && index + 1 < argc)
@@ -840,7 +844,7 @@ int main(int argc, char** argv) {
                 << "usage: EngineLabLoadedAccelerationHarness"
                    " [--filter NAME] [--gear 2|3] [--csv-dir DIR]"
                    " [--catalog-root DIR] [--trace] [--dfco-tip-in]"
-                   " [--standing-start] [--launch-at S] [--skip NAME]... [--known-stall NAME]...\n"
+                   " [--standing-start] [--unregulated-thermal] [--launch-at S] [--skip NAME]... [--known-stall NAME]...\n"
                    "  [--resume-afr-envelope X] [--resume-lean-afr-envelope X]"
                    " [--known-resume-misfire NAME]...\n";
             return EXIT_FAILURE;
@@ -901,7 +905,8 @@ int main(int argc, char** argv) {
                 > static_cast<int>(entry->config.transmission.gearRatios.size()))
                 continue;
             const auto metrics = measureStandingStart(
-                entry->config, gearNumber, traceEvents, launchAtSeconds);
+                entry->config, gearNumber, traceEvents, launchAtSeconds,
+                unregulatedThermal);
             const auto launched = metrics.started
                 && metrics.minimumRpm >= sparkCombustionFloorRpm
                 && metrics.finalRpm >= 0.75 * metrics.idleRpm;
