@@ -95,6 +95,20 @@ file formats, always with an in-memory migration).
   drive from one clutch to the other with no torque gap. The CP2 engines now
   shift up through a quickshifter (65 ms cut): the drive comes back in about
   20 ms instead of 55 ms through the clutch. Every other engine is unchanged.
+- The 3-D view draws the gearbox: a car's in line behind the flywheel, a
+  motorcycle's behind the crank with its clutch pack and sprocket. Each
+  gear pair turns at its own ratio, and a blue collar slides against the
+  engaged gear. Click it to see the gear, the ratio, the clutch slip and the
+  road speed, to change the shift style (manual, quickshifter, quickshifter
+  and blipper, dual clutch) and to set the shift time and the
+  quickshifter's ignition cut; the running engine takes them.
+- A turbo can be fitted to any engine: click an exhaust part (or the turbo)
+  and switch *No turbo* to *Turbo*. It is sized for the engine (its
+  displacement, redline and compression: about 0.5 bar on a high-compression
+  engine, more on a low one), sits on the collector, and the engine
+  restarts. A CP2 goes from 54 to 80 kW. The ignition map stays the engine's,
+  so it may knock lightly at boost. On engines without a collector (LS3,
+  Big Twin) the turbo works but is not drawn, and the Big Twin overboosts.
 - An **A/B** button in the top bar (key 7) keeps two versions of the
   running engine. Switch to B, change the cams, the exhaust or the air, then
   switch back and forth to hear the difference at once. Each version keeps

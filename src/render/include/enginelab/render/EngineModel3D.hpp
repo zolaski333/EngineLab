@@ -70,6 +70,11 @@ struct ScenePoseInput final {
     float afterfire {};
     /** Turbocharger shaft angle, degrees. */
     double turboShaftDegrees {};
+    /** Gearbox input shaft angle, degrees, never wrapped: each output gear
+        turns at its own ratio of it. */
+    double gearboxInputDegrees {};
+    /** The engaged gear: 0 for first, -1 for neutral, -2 for reverse. */
+    int engagedGear { -1 };
 };
 
 struct SceneBounds final {
@@ -117,6 +122,8 @@ enum class PartRole : std::uint8_t {
     /** A cylinder's fuel injector: in its intake port, or in the head for
         direct injection. */
     injector,
+    /** The gearbox: case, shafts, gear pairs and selector. */
+    gearbox,
 };
 
 struct PartIdentity final {
@@ -174,6 +181,22 @@ public:
     /** The impeller's angle about its axis at a crank angle: the crank's
         times the drive ratio, degrees. */
     [[nodiscard]] double superchargerImpellerDegrees(double crankAngleDegrees) const noexcept;
+
+    /** The gearbox as drawn; `placed` is false with fewer than two gears. */
+    struct GearboxPlacement final {
+        bool placed {};
+        /** A point on each shaft axis (both run along +Z), z = 0. */
+        Vec3 inputAxis;
+        Vec3 outputAxis;
+        /** Teeth of each pair, input then output, and where the pair sits on Z. */
+        std::vector<int> inputTeeth;
+        std::vector<int> outputTeeth;
+        std::vector<float> pairZ;
+    };
+    [[nodiscard]] const GearboxPlacement& gearbox() const noexcept { return gearbox_; }
+    /** Output gear `pair`'s angle about its shaft, radians, for an input shaft
+        angle: it turns the other way at the pair's tooth ratio. */
+    [[nodiscard]] float outputGearRadians(std::size_t pair, double inputDegrees) const noexcept;
 
     /** Cycle phase of one cylinder: 0 = firing TDC, 360 = overlap TDC. */
     [[nodiscard]] double cyclePhaseDegrees(std::size_t cylinder, double crankAngleDegrees) const noexcept;
@@ -240,6 +263,7 @@ private:
     void buildDucts();
     void buildTurbo();
     void buildSupercharger();
+    void buildGearbox();
     void computeBounds();
 
     EngineConfig config_;
@@ -259,6 +283,19 @@ private:
     SuperchargerPlacement supercharger_;
     /** Housing (with the charge pipe) and impeller. */
     std::array<std::uint16_t, 2> superchargerParts_ { 0xFFFFU, 0xFFFFU };
+    GearboxPlacement gearbox_;
+    /** Case, input shaft with its gears, output shaft, selector collar. */
+    std::array<std::uint16_t, 4> gearboxParts_ { 0xFFFFU, 0xFFFFU, 0xFFFFU, 0xFFFFU };
+    std::vector<std::uint16_t> outputGearParts_;
+    /** Output gear phase that meshes its teeth with the input gear's. */
+    std::vector<float> outputGearPhase_;
+    /** Z of the collar per gear, then in neutral. */
+    std::vector<float> collarZ_;
+    /** +1 when the input shaft turns positively about +Z in the world. */
+    float inputSense_ { 1.0F };
+    /** Where the flywheel ends along +Z, its radius; set by buildCrankshaft(). */
+    float flywheelEndZ_ { -1.0e9F };
+    float flywheelRadius_ {};
     /** Flames at the exhaust outlets, lit by an afterfire. */
     std::vector<std::uint16_t> outletFlameParts_;
     /** Parts left out of the engine framing (exhaust trunk, airbox, inlet duct). */

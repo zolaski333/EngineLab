@@ -885,6 +885,8 @@ void EngineSceneRenderer::render(const SceneFrame& frame, int width, int height)
         pose.crankAngleDegrees = frame.angles[k];
         pose.turboShaftDegrees = frame.pose.turboShaftDegrees
             - frame.turboShaftSweepDegrees * static_cast<double>(subframes - 1U - k) / static_cast<double>(subframes);
+        pose.gearboxInputDegrees = frame.pose.gearboxInputDegrees
+            - frame.gearboxInputSweepDegrees * static_cast<double>(subframes - 1U - k) / static_cast<double>(subframes);
         model_->pose(pose, s.instances);
         glBindFramebuffer(GL_FRAMEBUFFER, s.msaaFbo);
         s.drawScene(*model_, frame, width, height);

@@ -16,6 +16,7 @@
 #include <enginelab/events/FourStrokeEventGenerator.hpp>
 #include <enginelab/exhaust/ExhaustGraph.hpp>
 #include <enginelab/foundation/EngineTypes.hpp>
+#include <enginelab/foundation/TurboSizing.hpp>
 #include <enginelab/physics/SimplifiedGasolinePhysics.hpp>
 #include <enginelab/simulation/DynoAbsorberController.hpp>
 #include <enginelab/simulation/EngineSimulator.hpp>
@@ -557,6 +558,8 @@ int main(int argc, char** argv) {
     // most this far above the ratio where the gate is fully open. Turbocharged
     // engines only.
     auto boostHoldMargin = -1.0;
+    // Fits sizedTurbocharger() to every engine without forced induction.
+    auto addTurbo = false;
     for (int index = 1; index < argc; ++index) {
         const std::string argument = argv[index];
         if (argument == "--catalog-root" && index + 1 < argc) catalogRoot = argv[++index];
@@ -569,11 +572,13 @@ int main(int argc, char** argv) {
             useWellMixedExhaustJunctions = true;
         else if (argument == "--boost-hold-margin" && index + 1 < argc)
             boostHoldMargin = std::stod(argv[++index]);
+        else if (argument == "--add-turbo") addTurbo = true;
         else {
             std::cerr << "usage: EngineLabDynoSweepHarness [--catalog-root dir]"
                          " [--filter name-fragment] [--step rpm]"
                          " [--reference-file csv] [--schema-only]"
-                         " [--well-mixed-junctions] [--boost-hold-margin ratio]\n";
+                         " [--well-mixed-junctions] [--boost-hold-margin ratio]"
+                         " [--add-turbo]\n";
             return EXIT_FAILURE;
         }
     }
@@ -616,6 +621,9 @@ int main(int argc, char** argv) {
         }
         engines.push_back(selected.entry->config);
     }
+    if (addTurbo)
+        for (auto& engine : engines)
+            if (!engine.forcedInduction.enabled) engine = enginelab::withTurbocharger(engine);
 
     auto boostHeld = true;
     for (const auto& engine : engines) {

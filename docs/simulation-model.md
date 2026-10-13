@@ -193,6 +193,22 @@ quasi-steady expansion. That expansion overstated the work, so the catalogue
 turbine areas were re-fitted when the turbine moved (2026-10-12, see
 `docs/journal.md`).
 
+### Fitting a turbo to any engine
+
+`sizedTurbocharger()` (foundation, `TurboSizing.hpp`) sizes a turbocharger for
+an engine that has none, from scaling laws fitted to the four catalogue
+turbochargers (turbine area 0.028 mm² per litre and per redline rpm, full
+boost at 45 % of the redline, inducer from the square root of the air flow,
+rotor inertia from the inducer). The boost follows the compression ratio, as
+on a street conversion: 0.5 bar from 10.5:1, 0.7 from 9.5:1, 0.9 below, 1.3 on
+a diesel. The engine keeps its own ignition map, so a high-compression engine
+may knock at boost. The 3-D view's inspector fits it (or takes it off) from any
+exhaust component or from the turbo, and the engine restarts. Every engine
+with a collector gets the turbine face described above, one per path. An
+engine without one (the LS3's X-pipe, the Big Twin's two pipes) falls back to
+the older outlet model, whose shaft work is overstated, and the view does not
+draw it.
+
 ## Exhaust
 
 Each `ExhaustPathConfig` can hold a custom DAG. The physical compiler keeps

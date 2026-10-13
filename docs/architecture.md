@@ -572,12 +572,30 @@ The other parts edit the same way, each through `MainComponent::applyEngineEdit`
   hides it);
 - a turbo: the wastegate pressure ratio, the rated ratio keeping its
   distance to it, and the turbine flow area; a supercharger: its pressure
-  and drive ratios;
+  and drive ratios. A turbo and every exhaust component also offer a
+  `choice` between *No turbo* and *Turbo*: it fits `sizedTurbocharger()` or
+  takes the turbo off, which restarts the engine; the view then selects the
+  new turbo (`Reselect::role`), since the parts have changed;
 - the cylinder block: the air around the engine, as an altitude (the
   standard atmosphere's pressure there) and a temperature, and a switch
   between regulated and realistic engine temperatures (`thermal.regulated`;
-  the inspector's edit `toggle`, taken at once; its rows show the coolant
+  the inspector's edit `choice`, taken at once; its rows show the coolant
   temperature and, realistic, when the radiator fan is on);
+- the gearbox (`PartRole::gearbox`, drawn on every engine with two gears or
+  more): the clutch shift time and the quickshifter's ignition cut in ms,
+  and the shift style as a `choice` (manual, quickshifter, quickshifter and
+  blipper, dual clutch; see *Shift styles* in `simulation-model.md`). Its
+  rows show the engaged gear, its ratio, the input shaft speed, the clutch
+  slip and the road speed. A car's box sits in line behind the flywheel and
+  its clutch disc, the layshaft below; a motorcycle's (vehicle under 500 kg)
+  behind the crank, driven against it by the primary gear, with its clutch
+  pack and sprocket. Each pair has the teeth of its ratio (within 6 %) and
+  turns at that tooth ratio of the input shaft, whose angle the view
+  integrates from the engine speed less the clutch slip (the crank's in
+  neutral), never wrapped; a blue collar slides against the engaged gear
+  and turns the output shaft with it. Its parts sit out of the engine
+  framing and out of the ducts' solids, so neither the camera views nor the
+  routing change;
 - the crankshaft: the inertia of the crank and flywheel (every shaft scaled
   alike), with the total including the rods;
 - an intake or exhaust valve: its cam's duration and lift; the cylinder

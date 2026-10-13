@@ -5,6 +5,15 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-13 — A turbo fitted to any engine
+
+- `sizedTurbocharger()`: laws fitted to the four catalogue turbos (turbine 0.028 mm² per L per redline rpm, within 10 %; inducer within 15 %). Boost by compression: 0.5 bar from 10.5:1, 0.7 from 9.5, 0.9 below.
+- `EngineLabDynoSweepHarness --add-turbo`, 1,000 rpm steps, every engine without forced induction: peak power +38 to +85 % (CP2 54 -> 80 kW, K20A 166 -> 229, LS3 315 -> 440, Aircooled 198 -> 368 at 0.7 bar), lambda 0.84-0.90, boost at target except the Big Twin (1.79 for 1.66: no collector, so the older outlet turbine, whose work is overstated).
+- `EngineLabThermalHarness --add-turbo`, CP2, 3 passes: 61.5 -> 92.1 kW, knock mean 0.30 (heavy 0 %), no damage; the ECU retards from 30.5 to 24 deg.
+- `EngineLabRealtimeBudgetHarness --free-run --relative-rpm 0.8`, alternated: a fitted turbo costs 0-5 %; lowest LS3 1.24 (1.27 without).
+- `EngineLab.TurboFit`: CP2 at 7,000 rpm, torque x1.41 for a charge density x1.28, lambda 0.88, peak knock 0.41.
+- Not measured: spool against a real kit, any real turbo conversion's curve. The LS3 and Big Twin turbines are not drawn; the Aircooled's second bank turbine is not drawn.
+
 ## 2026-10-13 — Shift styles: quickshifter, blipper, dual clutch
 
 - `EngineLab.ShiftStyle`: real engine, ECU and driveline coupled as the runtime couples them; 1 -> 2 at WOT, 70 % of redline. Gap = time the wheel torque stays below half the new gear's.

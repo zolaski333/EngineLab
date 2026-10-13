@@ -27,6 +27,8 @@ struct SceneFrame final {
     /** Angle the turbo shaft sweeps over the same sub-frames, ending at
         pose.turboShaftDegrees. */
     double turboShaftSweepDegrees {};
+    /** The same for the gearbox input shaft, ending at pose.gearboxInputDegrees. */
+    double gearboxInputSweepDegrees {};
     render::ScenePoseInput pose;
     /** The solver's gas along the exhaust, or null. Waves are drawn in the
         All and Gas flow layers when showWaves; hot walls glow in every layer. */

@@ -117,6 +117,7 @@ EngineModel3D::EngineModel3D(EngineConfig config) : config_(std::move(config)) {
     buildCrankshaft();
     buildStructure();
     buildDucts();
+    buildGearbox();
     computeBounds();
 }
 
@@ -358,6 +359,8 @@ void EngineModel3D::buildCrankshaft() {
                   { 0.06F * b, 0.2F * b, 0.03F * b });
         const auto flywheelRadius = std::max(radius + 0.8F * b, 1.15F * b);
         const auto flywheelThickness = 0.22F * b;
+        flywheelEndZ_ = std::max(flywheelEndZ_, end + flywheelThickness);
+        flywheelRadius_ = std::max(flywheelRadius_, flywheelRadius);
         appendShaft(shaft, {}, end, flywheelThickness, flywheelRadius, 64);
         solids_.push_back(cylinderSolid(origin + zAxis * end, zAxis, flywheelRadius, flywheelThickness));
         appendTorus(shaft, Mat4::translation({ 0, 0, end + flywheelThickness * 0.5F }) * Mat4::rotationX(pi * 0.5F),
@@ -593,6 +596,130 @@ void EngineModel3D::buildSupercharger() {
     for (const auto& solid : superchargerSolids(supercharger_)) solids_.push_back(solid);
 }
 
+void EngineModel3D::buildGearbox() {
+    const auto& ratios = config_.transmission.gearRatios;
+    if (ratios.size() < 2U || throws_.empty() || flywheelRadius_ <= 0.0F) return;
+    float b = 0.0F, zMin = 1.0e9F, zMax = -1.0e9F;
+    for (const auto& c : cylinders_) {
+        b = std::max(b, c.bore);
+        zMin = std::min(zMin, c.z);
+        zMax = std::max(zMax, c.z);
+    }
+    const auto origin = throws_.front().origin;
+    const auto pairCount = ratios.size();
+    // Shaft centre distance, gear face width and pair pitch, in bores: an
+    // MT-07 box runs about 70 mm between its shafts for an 80 mm bore.
+    const auto centre = 0.95F * b;
+    const auto width = 0.15F * b;
+    const auto spacing = 0.26F * b;
+    const auto span = spacing * static_cast<float>(pairCount + 1U);
+    const auto turn = std::remainder(throwRotation(throws_.front(), 10.0) - throwRotation(throws_.front(), 0.0), 2.0F * pi);
+    const auto crankSense = turn >= 0.0F ? 1.0F : -1.0F;
+    const auto motorcycle = config_.vehicle.massKg < 500.0;
+    float zStart = 0.0F;
+    if (motorcycle) {
+        // Stacked behind the crank, away from the exhaust, driven by a
+        // primary gear: the input shaft turns against the crank.
+        auto back = cylinders_.front().exhaustSide * -1.0F;
+        back = Vec3 { back.x, back.y, 0.0F };
+        back = length(back) > 1.0e-3F ? normalise(back) : Vec3 { -1.0F, 0.0F, 0.0F };
+        gearbox_.inputAxis = Vec3 { origin.x, origin.y, 0.0F } + back * (flywheelRadius_ + 0.45F * b) - yAxis * (0.1F * b);
+        gearbox_.outputAxis = gearbox_.inputAxis + normalise(back * 0.55F - yAxis * 0.85F) * centre;
+        zStart = 0.5F * (zMin + zMax) - 0.5F * span;
+        inputSense_ = -crankSense;
+    } else {
+        // In line behind the flywheel and clutch, the layshaft below.
+        gearbox_.inputAxis = Vec3 { origin.x, origin.y, 0.0F };
+        gearbox_.outputAxis = gearbox_.inputAxis - yAxis * centre;
+        zStart = flywheelEndZ_ + 0.35F * b;
+        inputSense_ = crankSense;
+    }
+    const auto toOutput = normalise(gearbox_.outputAxis - gearbox_.inputAxis);
+    // Angle of the contact direction from +Y, counter-clockwise about +Z.
+    const auto contact = std::atan2(-toOutput.x, toOutput.y);
+
+    const auto appendGear = [](Mesh& mesh, float z, int teeth, float toothModule, float faceWidth) {
+        const auto pitchRadius = 0.5F * toothModule * static_cast<float>(teeth);
+        appendShaft(mesh, {}, z - 0.5F * faceWidth, faceWidth, pitchRadius - 1.1F * toothModule, std::max(24, teeth * 2));
+        for (int t = 0; t < teeth; ++t) {
+            const auto a = 2.0F * pi * static_cast<float>(t) / static_cast<float>(teeth);
+            appendBox(mesh, Mat4::translation({ 0.0F, 0.0F, z }) * Mat4::rotationZ(a)
+                          * Mat4::translation({ 0.0F, pitchRadius - 0.05F * toothModule, 0.0F }),
+                      { 1.4F * toothModule, 2.1F * toothModule, faceWidth });
+        }
+    };
+
+    Mesh inputMesh, outputShaft, collar, casing;
+    float inputReach = 0.0F, outputReach = 0.0F;
+    const auto targetToothModule = 0.12F * b / pi;
+    for (std::size_t k = 0; k < pairCount; ++k) {
+        const auto ratio = static_cast<float>(std::max(0.2, ratios[k]));
+        const auto inputTarget = centre / (1.0F + ratio);
+        const auto inputTeeth = std::max(9, static_cast<int>(std::lround(2.0F * inputTarget / targetToothModule)));
+        const auto outputTeeth = std::max(9, static_cast<int>(std::lround(static_cast<float>(inputTeeth) * ratio)));
+        const auto toothModule = 2.0F * centre / static_cast<float>(inputTeeth + outputTeeth);
+        const auto z = zStart + spacing * static_cast<float>(k + 1U);
+        gearbox_.inputTeeth.push_back(inputTeeth);
+        gearbox_.outputTeeth.push_back(outputTeeth);
+        gearbox_.pairZ.push_back(z);
+        appendGear(inputMesh, z, inputTeeth, toothModule, width);
+        Mesh outputGear;
+        appendGear(outputGear, z, outputTeeth, toothModule, width);
+        outputGearParts_.push_back(addPart(std::move(outputGear), SceneMaterial::forged, layerMechanism));
+        // Input tooth 0 at the contact meets a gap of the output gear.
+        const auto share = static_cast<float>(inputTeeth) / static_cast<float>(outputTeeth);
+        outputGearPhase_.push_back(contact * (1.0F + share) + pi + pi / static_cast<float>(outputTeeth));
+        inputReach = std::max(inputReach, 0.5F * toothModule * static_cast<float>(inputTeeth) + toothModule);
+        outputReach = std::max(outputReach, 0.5F * toothModule * static_cast<float>(outputTeeth) + toothModule);
+    }
+
+    // Shafts: the input carries the clutch disc (car) or the clutch pack
+    // (motorcycle), the output the sprocket of a motorcycle.
+    const auto shaftRadius = 0.1F * b;
+    const auto zEnd = zStart + span;
+    if (motorcycle) {
+        appendShaft(inputMesh, {}, zStart - 0.05F * b, span + 0.45F * b, shaftRadius, 20);
+        appendShaft(inputMesh, {}, zEnd + 0.1F * b, 0.3F * b, 0.7F * b, 48);
+        appendShaft(outputShaft, {}, zStart - 0.35F * b, span + 0.4F * b, 1.2F * shaftRadius, 20);
+        appendGear(outputShaft, zStart - 0.25F * b, 16, 0.07F * b, 0.08F * b);
+    } else {
+        appendShaft(inputMesh, {}, flywheelEndZ_ + 0.02F * b, zEnd - flywheelEndZ_, shaftRadius, 20);
+        appendShaft(inputMesh, {}, flywheelEndZ_ + 0.05F * b, 0.06F * b, 0.75F * flywheelRadius_, 48);
+        appendShaft(outputShaft, {}, zStart + 0.05F * b, span + 0.5F * b, 1.2F * shaftRadius, 20);
+    }
+    // The selector collar: a ring with dogs, slid against the engaged gear.
+    const auto collarWidth = 0.07F * b;
+    appendShaft(collar, {}, -0.5F * collarWidth, collarWidth, 0.26F * b, 32);
+    for (int dog = 0; dog < 6; ++dog)
+        appendBox(collar, Mat4::rotationZ(2.0F * pi * static_cast<float>(dog) / 6.0F) * Mat4::translation({ 0.0F, 0.2F * b, 0.0F }),
+                  { 0.06F * b, 0.08F * b, collarWidth + 0.03F * b });
+    for (const auto z : gearbox_.pairZ) collarZ_.push_back(z - 0.5F * width - 0.5F * collarWidth - 0.005F * b);
+    collarZ_.push_back(gearbox_.pairZ[0] + 0.5F * spacing);
+
+    // The case: a box round both gear stacks.
+    const auto side = cross(zAxis, toOutput);
+    const auto margin = 0.12F * b;
+    const auto widest = std::max(inputReach, outputReach) + margin;
+    const auto low = -(inputReach + margin), high = centre + outputReach + margin;
+    const auto middle = gearbox_.inputAxis + toOutput * (0.5F * (low + high)) + zAxis * (zStart + 0.5F * span);
+    appendBox(casing, Mat4::basis(toOutput, side, zAxis, middle), { high - low, 2.0F * widest, span });
+
+    gearboxParts_[0] = addPart(std::move(casing), SceneMaterial::blockShell, layerStructure);
+    gearboxParts_[1] = addPart(std::move(inputMesh), SceneMaterial::forged, layerMechanism);
+    gearboxParts_[2] = addPart(std::move(outputShaft), SceneMaterial::steel, layerMechanism);
+    gearboxParts_[3] = addPart(std::move(collar), SceneMaterial::intakeValve, layerMechanism);
+    // Out of the engine framing: the camera views keep framing the engine.
+    farParts_.resize(parts_.size(), true);
+    gearbox_.placed = true;
+}
+
+float EngineModel3D::outputGearRadians(std::size_t pair, double inputDegrees) const noexcept {
+    if (pair >= outputGearPhase_.size()) return 0.0F;
+    const auto share = static_cast<double>(gearbox_.inputTeeth[pair]) / static_cast<double>(gearbox_.outputTeeth[pair]);
+    const auto degrees = std::fmod(static_cast<double>(inputSense_) * inputDegrees * share, 360.0);
+    return -static_cast<float>(degrees * (std::numbers::pi / 180.0)) + outputGearPhase_[pair];
+}
+
 double EngineModel3D::superchargerImpellerDegrees(double crankAngleDegrees) const noexcept {
     return std::fmod(crankAngleDegrees * config_.forcedInduction.superchargerDriveRatio, 360.0);
 }
@@ -681,6 +808,25 @@ void EngineModel3D::pose(const ScenePoseInput& input, std::vector<SceneInstance>
         const auto x = supercharger_.radial * std::cos(impeller) + cross(axis, supercharger_.radial) * std::sin(impeller);
         out[superchargerParts_[1]].transform = Mat4::basis(x, axis, cross(x, axis), supercharger_.centre);
     }
+    if (gearbox_.placed) {
+        // Every input gear turns with its shaft, every output gear at its own
+        // ratio on the output shaft; the engaged one carries the shaft and
+        // the collar with it.
+        const auto about = [](Vec3 axis, float radians, float z) {
+            return Mat4::translation({ axis.x, axis.y, z }) * Mat4::rotationZ(radians);
+        };
+        const auto inputRadians = inputSense_
+            * static_cast<float>(std::fmod(input.gearboxInputDegrees, 360.0) * (std::numbers::pi / 180.0));
+        out[gearboxParts_[1]].transform = about(gearbox_.inputAxis, inputRadians, 0.0F);
+        for (std::size_t k = 0; k < outputGearParts_.size(); ++k)
+            out[outputGearParts_[k]].transform
+                = about(gearbox_.outputAxis, outputGearRadians(k, input.gearboxInputDegrees), 0.0F);
+        const auto engaged = input.engagedGear >= 0 && static_cast<std::size_t>(input.engagedGear) < outputGearParts_.size();
+        const auto gear = engaged ? static_cast<std::size_t>(input.engagedGear) : outputGearParts_.size();
+        const auto shaft = engaged ? outputGearRadians(gear, input.gearboxInputDegrees) : 0.0F;
+        out[gearboxParts_[2]].transform = about(gearbox_.outputAxis, shaft, 0.0F);
+        out[gearboxParts_[3]].transform = about(gearbox_.outputAxis, shaft, collarZ_[gear]);
+    }
     // Plenum, airbox and inlet duct glow with the mean draw of their runners.
     for (const auto& duct : ducts_) {
         if (duct.kind != DuctKind::intakePlenum && duct.kind != DuctKind::intakeAirbox
@@ -723,6 +869,9 @@ PartIdentity EngineModel3D::identify(std::uint16_t part) const noexcept {
     if (std::find(turboParts_.begin(), turboParts_.end(), part) != turboParts_.end()) return { PartRole::turbo, -1, -1 };
     if (std::find(superchargerParts_.begin(), superchargerParts_.end(), part) != superchargerParts_.end())
         return { PartRole::supercharger, -1, -1 };
+    if (std::find(gearboxParts_.begin(), gearboxParts_.end(), part) != gearboxParts_.end()
+        || std::find(outputGearParts_.begin(), outputGearParts_.end(), part) != outputGearParts_.end())
+        return { PartRole::gearbox, -1, -1 };
     if (part >= parts_.size()) return {};
     switch (parts_[part].material) {
     case SceneMaterial::headShell: return { PartRole::head, -1, -1 };
