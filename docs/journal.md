@@ -12,6 +12,7 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 - Earlier blind listening, recorded here: the owner preferred the rev without the output stage (`--output-stage`). Not adopted.
 - A private mesh ablation of the other simulator (owner's captures, kept out of the repo) found its default mesh not converged in the 1-2 kHz band, and no sign that a finer mesh is what the owner hears. The 4 cm lockstep prototype is not pursued.
 - Same analysis on EngineLab CP2 at 3,148 rpm, steady part only (a render starts with a ~5,500 rpm transient 15 dB louder: skip the first 4 s): energy above 2 kHz -50 dB of total, tilt -9.8 dB/oct, crest 10.8 dB, cycle-synchronous share 93.7 %.
+- Merlin spike: `EngineLab.AudioRender` (runtime wiring) failed 4 times in ~17 runs on this branch: Merlin at 3,106 instead of 3,040 rpm, observer up to 4,092 Pa. On `main` (c423400) its 2nd run failed the same way (3,090 rpm, preLimiter 1.53). Pre-existing, still open.
 - Not measured: anything against a real CP2 recording, which remains the arbiter.
 
 ## 2026-10-13 — Valve turbulence noise, and the first IR clips
