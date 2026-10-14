@@ -333,7 +333,21 @@ edit, taken live.
   with no torque gap. Its pressure carries the engine's torque plus what pulls
   the engine down to the new speed over `shift_duration_s`; the engine's torque
   is not reduced meanwhile, so the wheel feels that inertia as a push. A
-  downshift is blipped as above.
+  downshift is blipped as above. The clutch pedal is not connected: the
+  gearbox runs its own launch clutch. At idle, foot off, it holds a creep
+  torque (25 Nm, or 5 % of the clutch's capacity if lower), released on the
+  brake. With the throttle open it closes with the engine's speed, fully at a
+  launch speed that rises with the throttle to 38 % of the redline. It opens
+  before the engine stalls, stays shut once in sync above 1.2 × idle, and
+  opens again below 1.1 × idle. It fills in 0.10 s and dumps in 0.03 s (not
+  measured). A downshift that would land the engine above the active rev
+  limit goes only as far as the lowest gear that does not; a manual or
+  sequential box lets the driver over-rev.
+
+Whatever the style, a shift started with the driver's clutch held out (pedal
+below half) is the driver's own: the gear changes at once and no device
+(torque cut, quickshifter, blipper) acts. Pulling the clutch during a blip
+ends the blip.
 
 There is no dog-box engagement noise and no torque converter.
 
@@ -342,7 +356,7 @@ There is no dog-box engagement noise and no torque converter.
 `DriverCommandArbiter` (`src/runtime`) is the one place where the driver's
 pedals and the driveline's own devices become engine commands. Each public
 frame, `advanceVehicle()` gives the driveline the clutch the arbiter chooses
-(today the driver's pedal), advances it on the previous frame's engine state,
+(the driver's pedal; a dual clutch ignores it), advances it on the previous frame's engine state,
 then sets the engine throttle to `max(driver x torque cut, blip)` and passes a
 quickshifter's ignition cut through. It also records who held the throttle
 (`driver`, `shiftTorqueCut` or `blipper`). `EngineRuntime`, `EngineLab.ShiftStyle`

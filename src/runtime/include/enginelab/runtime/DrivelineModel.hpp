@@ -56,6 +56,11 @@ public:
     void shiftDown() noexcept;
     [[nodiscard]] int requestedGear() const noexcept { return requestedGear_; }
     [[nodiscard]] const TransmissionConfig& transmission() const noexcept { return config_.transmission; }
+    /** Whether the driver's clutch pedal reaches the clutch: not on a dual
+     * clutch, which runs its own launch clutch. */
+    [[nodiscard]] bool driverClutchConnected() const noexcept {
+        return config_.transmission.shiftStyle != ShiftStyle::dualClutch;
+    }
     /** The engine's rotating inertia after a live change of its geometry. */
     void setEngineInertia(double kgM2) noexcept { engineInertiaKgM2_ = std::max(0.001, kgM2); }
     /** A live change of the gearbox and the vehicle: read at every advance(),
@@ -75,9 +80,21 @@ private:
         /** Dogs free, throttle blipped to the new gear's speed. */
         blip,
         /** The oncoming clutch takes the drive and pulls the engine down. */
-        handOver
+        handOver,
+        /** The driver holds the clutch out: the gear changes at once, no
+         * device acts and the clutch stays where the driver holds it. */
+        driverClutch
     };
-    [[nodiscard]] ShiftAction chooseShiftAction() const noexcept;
+    [[nodiscard]] ShiftAction chooseShiftAction(double clutchPedal) const noexcept;
+    /** A dual-clutch gearbox's own launch clutch, which replaces the pedal:
+     * it creeps at idle, engages with the engine's speed up to a launch speed
+     * that rises with the throttle, opens before the engine stalls and stays
+     * shut once in sync. */
+    [[nodiscard]] double dualClutchLaunchPressure(const EngineState&, double brakePressure,
+                                                  double dtSeconds) noexcept;
+    /** The lowest gear between the request and the engaged one at which the
+     * engine lands under its active rev limit (a dual clutch's protection). */
+    [[nodiscard]] int protectedDownshiftTarget(const EngineState&) const noexcept;
     [[nodiscard]] double ratioForGear(int gear) const noexcept;
     [[nodiscard]] double selectedRatio() const noexcept;
     EngineConfig config_;
@@ -87,6 +104,10 @@ private:
     // The slip the oncoming clutch of a hand-over must take out, captured
     // when it takes the drive.
     double handOverReferenceSlipRadPerSecond_ { 0.0 };
+    // The dual-clutch launch clutch's pressure, and whether it has closed on
+    // a synchronised engine (it then stays shut until the engine nears idle).
+    double launchClutchPressure_ { 0.0 };
+    bool launchClutchLocked_ { false };
     // Engine + flywheel rotating inertia, cached so the locked-clutch constraint can
     // share one acceleration between the crank and the driveline.
     double engineInertiaKgM2_ { 0.24 };

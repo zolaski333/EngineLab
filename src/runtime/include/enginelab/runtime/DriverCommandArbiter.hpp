@@ -52,7 +52,8 @@ struct VehicleStep final {
  * The dyno bypasses all of it: the bench, not a driver, holds the engine. */
 class DriverCommandArbiter final {
 public:
-    /** The clutch the driveline is given this frame. */
+    /** The clutch the driveline is given this frame: the driver's pedal. A
+     * dual clutch ignores it and runs its own launch clutch. */
     [[nodiscard]] static double drivelineClutch(const DriverInputs& inputs,
                                                 const TransmissionConfig& transmission) noexcept;
     /** The engine commands for this frame's driveline output. */

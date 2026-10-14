@@ -66,10 +66,10 @@ public:
         enginelab::EngineState state;
     };
 
-    Tick step(double throttle, double clutch, bool starter = false) {
+    Tick step(double throttle, double clutch, bool starter = false, double brake = 0.0) {
         Tick tick;
         const auto vehicle = enginelab::advanceVehicle(driveline_, stepSeconds, simulator_.state(), 0.0,
-            enginelab::DriverInputs { throttle, clutch, 0.0 });
+            enginelab::DriverInputs { throttle, clutch, brake });
         tick.drive = vehicle.drive;
         enginelab::EngineControls controls;
         controls.ignitionEnabled = true;
@@ -101,6 +101,7 @@ public:
     }
 
     enginelab::DrivelineModel& driveline() { return driveline_; }
+    double rpm() const { return simulator_.state().rpm; }
     const enginelab::EngineConfig& config() const { return config_; }
     double wheelOmega(const Tick& tick) const {
         return tick.drive.vehicleSpeedMps / config_.vehicle.tireRadiusM;
@@ -206,6 +207,86 @@ DownshiftResult measureDownshift(enginelab::EngineConfig config, bool blipper) {
     return result;
 }
 
+/** Third gear, throttle shut, the driver pulls the clutch and changes down
+ * with it held out: the gear must change at once and no blipper may act. */
+void checkClutchHeldDownshift(enginelab::EngineConfig config) {
+    config.transmission.shiftStyle = enginelab::ShiftStyle::sequential;
+    config.transmission.autoBlipper = true;
+    auto rig = std::make_unique<Rig>(config);
+    rig->launchTo(config.redlineRpm * 0.55);
+    rig->driveline().requestGear(2);
+    for (int index = 0; index < static_cast<int>(1.5 / stepSeconds); ++index) rig->step(0.35, 1.0);
+    Rig::Tick before {};
+    // Long enough for the engine to fall below the lower gear's speed, so a
+    // blipper would have something to do.
+    for (int index = 0; index < static_cast<int>(1.0 / stepSeconds); ++index) before = rig->step(0.0, 0.0);
+    std::printf("  before the downshift: gear %d, %.0f rpm, %.1f m/s\n",
+        before.drive.engagedGear + 1, before.state.rpm, before.drive.vehicleSpeedMps);
+    rig->driveline().shiftDown();
+    double peakBlip = 0.0;
+    int framesToEngage = -1;
+    for (int index = 0; index < static_cast<int>(0.5 / stepSeconds); ++index) {
+        const auto tick = rig->step(0.0, 0.0);
+        peakBlip = std::max(peakBlip, tick.drive.blipThrottle);
+        if (framesToEngage < 0 && tick.drive.engagedGear == 1) framesToEngage = index + 1;
+    }
+    std::printf("  %-34s clutch held: engaged after %d frame(s), peak blip %4.2f\n",
+        config.name.c_str(), framesToEngage, peakBlip);
+    require(peakBlip == 0.0, "no blip while the driver holds the clutch out");
+    require(framesToEngage == 1, "with the clutch held out the gear changes at once");
+}
+
+/** A dual clutch ignores the pedal: in first at idle, foot off everything,
+ * it creeps; on the brake it stops; it never stalls. */
+void checkDualClutchCreep(enginelab::EngineConfig config) {
+    config.transmission.shiftStyle = enginelab::ShiftStyle::dualClutch;
+    config.transmission.automaticShifting = false;
+    auto rig = std::make_unique<Rig>(config);
+    rig->driveline().requestGear(-1);
+    for (int index = 0; index < static_cast<int>(6.0 / stepSeconds); ++index)
+        rig->step(0.0, 0.0, rig->rpm() < config.idleRpm * 0.85 && index * stepSeconds < 3.0);
+    rig->driveline().requestGear(0);
+    double lowestRpm = 1.0e9;
+    Rig::Tick last {};
+    for (int index = 0; index < static_cast<int>(8.0 / stepSeconds); ++index) {
+        last = rig->step(0.0, 0.0);
+        lowestRpm = std::min(lowestRpm, last.state.rpm);
+    }
+    const auto creepSpeed = last.drive.vehicleSpeedMps;
+    for (int index = 0; index < static_cast<int>(6.0 / stepSeconds); ++index) {
+        last = rig->step(0.0, 0.0, false, 1.0);
+        lowestRpm = std::min(lowestRpm, last.state.rpm);
+    }
+    std::printf("  %-34s dual clutch creep %.2f m/s, braked %.2f m/s, lowest %4.0f rpm\n",
+        config.name.c_str(), creepSpeed, last.drive.vehicleSpeedMps, lowestRpm);
+    require(creepSpeed > 0.5, "a dual clutch creeps at idle with the pedal ignored");
+    require(std::abs(last.drive.vehicleSpeedMps) < 0.05, "on the brake a creeping dual clutch stops");
+    require(lowestRpm > 0.6 * config.idleRpm, "a dual clutch never stalls the engine");
+}
+
+/** Second gear high in the revs, first requested: a dual clutch refuses a
+ * downshift that would over-rev the engine; a manual box lets the driver do
+ * it (the money shift). Returns the gear engaged after the request. */
+int overRevDownshift(enginelab::EngineConfig config, enginelab::ShiftStyle style) {
+    config.transmission.shiftStyle = style;
+    config.transmission.automaticShifting = false;
+    auto rig = std::make_unique<Rig>(config);
+    rig->launchTo(config.redlineRpm * 0.55);
+    rig->driveline().requestGear(1);
+    for (int index = 0; index < static_cast<int>(6.0 / stepSeconds); ++index) {
+        const auto tick = rig->step(1.0, 1.0);
+        if (tick.drive.engagedGear == 1 && !tick.drive.shiftInProgress
+                && tick.state.rpm > 0.75 * config.redlineRpm) break;
+    }
+    rig->driveline().requestGear(0);
+    int engaged = -1;
+    for (int index = 0; index < static_cast<int>(1.0 / stepSeconds); ++index)
+        engaged = rig->step(0.0, 1.0).drive.engagedGear;
+    std::printf("  %-34s %-11s second at 75 %% of redline, first requested: gear %d engaged\n",
+        config.name.c_str(), enginelab::shiftStyleName(style), engaged + 1);
+    return engaged;
+}
+
 void checkSerialisation() {
     auto config = enginelab::makeDefaultInlineFour();
     config.transmission.shiftStyle = enginelab::ShiftStyle::sequential;
@@ -282,6 +363,14 @@ int main() {
         require(blipped.peakSlipRpm < 0.3 * unblipped.peakSlipRpm,
             "a blipped downshift must slip far less than an unblipped one");
         require(unblipped.peakBlip == 0.0, "no blip without the blipper");
+
+        std::printf("driver's clutch and the dual clutch's own\n");
+        checkClutchHeldDownshift(cp2);
+        checkDualClutchCreep(jz);
+        require(overRevDownshift(jz, enginelab::ShiftStyle::dualClutch) == 1,
+            "a dual clutch must refuse a downshift that over-revs the engine");
+        require(overRevDownshift(jz, enginelab::ShiftStyle::manual) == 0,
+            "a manual box lets the driver over-rev on a downshift");
     } catch (const std::exception& error) {
         std::cerr << "FAIL: " << error.what() << '\n';
         return EXIT_FAILURE;
