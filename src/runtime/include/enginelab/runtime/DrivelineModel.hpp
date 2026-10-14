@@ -55,6 +55,7 @@ public:
     void shiftUp() noexcept;
     void shiftDown() noexcept;
     [[nodiscard]] int requestedGear() const noexcept { return requestedGear_; }
+    [[nodiscard]] const TransmissionConfig& transmission() const noexcept { return config_.transmission; }
     /** The engine's rotating inertia after a live change of its geometry. */
     void setEngineInertia(double kgM2) noexcept { engineInertiaKgM2_ = std::max(0.001, kgM2); }
     /** A live change of the gearbox and the vehicle: read at every advance(),

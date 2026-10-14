@@ -87,6 +87,15 @@ if(MSVC)
 endif()
 enginelab_set_warnings(EngineLabLoadedAccelerationHarness)
 
+add_executable(EngineLabDriveScenarioHarness DriveScenarioHarness.cpp)
+target_link_libraries(EngineLabDriveScenarioHarness PRIVATE
+    EngineLab::Runtime EngineLab::Simulation EngineLab::Foundation EngineLab::Physics
+    EngineLab::Ecu EngineLab::Events EngineLab::Exhaust EngineLab::Catalog
+    nlohmann_json::nlohmann_json)
+target_compile_definitions(EngineLabDriveScenarioHarness PRIVATE
+    ENGINELAB_CATALOG_ROOT="${CMAKE_SOURCE_DIR}")
+enginelab_set_warnings(EngineLabDriveScenarioHarness)
+
 add_executable(EngineLabUserDynoHarness UserDynoHarness.cpp)
 target_link_libraries(EngineLabUserDynoHarness PRIVATE
     EngineLab::Runtime EngineLab::Simulation EngineLab::Foundation EngineLab::Physics

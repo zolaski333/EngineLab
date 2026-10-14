@@ -373,6 +373,21 @@ private:
         return std::clamp(injectorOpenSubsteps_[cylinderIndex]
             / windowSubsteps, 0.0, 1.0);
     }
+    /** `ActiveLimit` bits the simulator observes itself (the ECU adds its
+     *  own): an open wastegate, a capped diesel, a saturated injector. */
+    [[nodiscard]] std::uint32_t publishedSimulatorLimits() const noexcept {
+        constexpr double regulatingWastegateOpening = 0.02;
+        constexpr double saturatedInjectorUtilisation = 0.99;
+        auto bits = state_.wastegateOpening > regulatingWastegateOpening
+            ? static_cast<std::uint32_t>(ActiveLimit::boostAtTarget) : 0U;
+        const auto cylinders = std::min<std::size_t>(config_.cylinders.size(), dieselFuelLimitBits_.size());
+        for (std::size_t index = 0; index < cylinders; ++index) {
+            bits |= dieselFuelLimitBits_[index];
+            if (injectorWindowUtilisation(index) >= saturatedInjectorUtilisation)
+                bits |= static_cast<std::uint32_t>(ActiveLimit::injectorSaturated);
+        }
+        return bits;
+    }
     void accumulateCycleTelemetry(double previousAngleDegrees, double travelledDegrees,
                                   double dtSeconds, double indicatedTorqueNm,
                                   double brakeTorqueNm,
@@ -586,6 +601,10 @@ private:
     std::array<double, 32> meteredFuelMolesLastCycle_ {};
     std::array<double, 32> deliveredFuelMolesLastCycle_ {};
     std::array<double, 32> requestedFuelMolesThisCycle_ {};
+    /** `ActiveLimit` bits of each diesel cylinder's last fuel decision: which
+     *  ceiling (smoke or quantity) capped it. Per cylinder: cylinders may be
+     *  stepped on worker threads. Telemetry only. */
+    std::array<std::uint32_t, 32> dieselFuelLimitBits_ {};
     /** Port pulse terms, sampled once at the first metering substep of a
      *  cycle: credited wall-film and misfired-chamber fuel, DFCO-resume prime
      *  deficit and the fraction of a new pulse available before spark.

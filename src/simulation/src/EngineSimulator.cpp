@@ -1576,6 +1576,8 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
         state_.ecuSparkEnabled = ecuCommand.sparkEnabled;
         state_.ecuSoftRevLimiterActive = ecuCommand.softRevLimiterActive;
         state_.ecuHardRevLimiterActive = ecuCommand.hardRevLimiterActive;
+        state_.activeRevLimitRpm = ecuCommand.revLimitRpm;
+        state_.activeLimits = ecuCommand.activeLimits;
         state_.ecuAlternatingSparkCutActive =
             ecuCommand.alternatingSparkCutActive;
         state_.ecuDecelerationFuelCutActive =
@@ -2372,9 +2374,11 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 const auto quantityLimitMoles =
                     dieselFullLoadFuelLimitMg
                     * dieselFuelDemand * 1.0e-6 / fuelMolarMassKg;
-                physicalFuelTargetMoles = std::min(
-                    physicalFuelTargetMoles,
-                    std::min(smokeLimitMoles, quantityLimitMoles));
+                const auto fuelCeilingMoles = std::min(smokeLimitMoles, quantityLimitMoles);
+                dieselFuelLimitBits_[cylinderIndex] = physicalFuelTargetMoles < fuelCeilingMoles ? 0U
+                    : static_cast<std::uint32_t>(smokeLimitMoles <= quantityLimitMoles
+                        ? ActiveLimit::dieselSmokeLimit : ActiveLimit::dieselQuantityLimit);
+                physicalFuelTargetMoles = std::min(physicalFuelTargetMoles, fuelCeilingMoles);
             }
             requestedFuelMolesThisCycle_[cylinderIndex] = std::max(
                 requestedFuelMolesThisCycle_[cylinderIndex], physicalFuelTargetMoles);
@@ -5322,6 +5326,12 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
         captureGasField();
     recordGasProbe();
     if (gasProbe_.element >= 0) ++gasProbe_.sequence;
+    // The ECU's own limit bits come from its last command; the simulator's
+    // are read here, once the wastegate and injectors have their final state.
+    constexpr auto ecuLimitBits = static_cast<std::uint32_t>(ActiveLimit::revLimiter)
+        | static_cast<std::uint32_t>(ActiveLimit::knockRetard)
+        | static_cast<std::uint32_t>(ActiveLimit::coolantProtection);
+    state_.activeLimits = (state_.activeLimits & ecuLimitBits) | publishedSimulatorLimits();
     frame.state = state_;
     return frame;
 }
@@ -5712,6 +5722,7 @@ void EngineSimulator::reset() noexcept {
     state_.forcedInductionShaftSpeedRpm = 0.0;
     state_.wastegateOpening = 0.0;
     state_.blowOffMassFlowKgPerSecond = 0.0;
+    dieselFuelLimitBits_.fill(0U);
     state_.exhaustPressureKpa = config_.ambientPressureKpa;
     state_.exhaustBackPressureKpa = config_.ambientPressureKpa;
     state_.intakeRunnerPressureKpa = config_.ambientPressureKpa;

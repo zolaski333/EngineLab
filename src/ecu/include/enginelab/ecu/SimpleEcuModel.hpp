@@ -7,6 +7,12 @@
 #include <cmath>
 #include <memory>
 namespace enginelab {
+/** The rev limit the ECU applies: the calibration's `limits.rev_rpm`, else the
+ *  authored `ignition.revLimitRpm`, in the tuner's range. Everything that must
+ *  stop where the limiter does (the dyno's sweep, over-rev damage) reads it
+ *  here rather than from the authored config. */
+[[nodiscard]] double activeRevLimitRpm(const EngineConfig& config,
+                                       const calibration::CalibrationSnapshot& calibration) noexcept;
 /** Configured ignition curve plus live AFR/advance trims, transient enrichment and latched limiter. */
 class SimpleEcuModel final : public IEcuModel {
 public:

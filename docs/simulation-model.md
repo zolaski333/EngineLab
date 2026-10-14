@@ -337,6 +337,19 @@ edit, taken live.
 
 There is no dog-box engagement noise and no torque converter.
 
+### Driver commands
+
+`DriverCommandArbiter` (`src/runtime`) is the one place where the driver's
+pedals and the driveline's own devices become engine commands. Each public
+frame, `advanceVehicle()` gives the driveline the clutch the arbiter chooses
+(today the driver's pedal), advances it on the previous frame's engine state,
+then sets the engine throttle to `max(driver x torque cut, blip)` and passes a
+quickshifter's ignition cut through. It also records who held the throttle
+(`driver`, `shiftTorqueCut` or `blipper`). `EngineRuntime`, `EngineLab.ShiftStyle`
+and the shift, loaded-acceleration, afterfire and drive-scenario harnesses all
+step the vehicle through it, so they cannot drift from the product. The dyno
+bypasses it: the bench, not a driver, holds the engine.
+
 In vehicle mode, the runtime's external load (`EngineRuntime::setLoad`; the
 application keeps it at zero since it no longer has a *Manual load* control)
 is a longitudinal resisting force; it reaches the crankshaft only through the

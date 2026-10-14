@@ -918,8 +918,8 @@ void EngineRuntime::setDynoHoldRpm(double value) noexcept {
 
 void EngineRuntime::updateDriveline(double dtSeconds, const EngineState& engineState,
                                     double requestedLoad) noexcept {
-    drivelineOutput_ = driveline_.advance(dtSeconds, engineState, requestedLoad,
-        clutchPressure_.load(std::memory_order_relaxed), brakePressure_.load(std::memory_order_relaxed));
+    drivelineOutput_ = advanceVehicle(driveline_, dtSeconds, engineState, requestedLoad,
+        driverInputs()).drive;
     engagedGear_ = drivelineOutput_.engagedGear;
     effectiveClutchPressure_ = drivelineOutput_.clutchPressure;
     engineClutchTorqueNm_ = drivelineOutput_.engineReactionTorqueNm;
@@ -1337,8 +1337,6 @@ void EngineRuntime::run(std::stop_token stopToken) {
                     consumedGearCommand = modelRequest;
             }
         }
-        const auto torqueCutMultiplier = dynoActive_
-            ? 1.0 : drivelineOutput_.torqueCutMultiplier;
         const auto requestedAudioPhysicsRevision =
             audioPhysicsCalibrationRevision_.load(std::memory_order_acquire);
         if (requestedAudioPhysicsRevision != consumedAudioPhysicsRevision) {
@@ -1355,19 +1353,21 @@ void EngineRuntime::run(std::stop_token stopToken) {
         consumeLiveSettingsChange();
         consumeLiveIntakeChange();
         consumeLiveCamshaftChange();
-        // A blipped downshift opens the throttle past the driver's foot.
-        const auto blipThrottle = dynoActive_ ? 0.0 : drivelineOutput_.blipThrottle;
-        const EngineControls controls { ignition_.load(), starter_.load(),
-            std::max((dynoActive_ ? dynoThrottleCommand_
-                                  : std::clamp(throttle_.load(), 0.0, 1.0))
-                         * torqueCutMultiplier,
-                     blipThrottle),
-            dynoActive_ ? requestedLoad : 0.0, dynoActive_ ? 0.0 : engineCouplingTorqueNm_,
-            dynoActive_ ? 0.0 : brakePressure_.load(std::memory_order_relaxed),
-            dynoActive_ ? dynoBrakeTorqueNm_ : 0.0,
-            dynoActive_ ? 0.0 : drivelineReflectedInertiaKgM2_,
-            dynoActive_ ? dynoCellFanAirSpeedMps : std::abs(vehicleSpeedMps_),
-            !dynoActive_ && drivelineOutput_.ignitionCut };
+        // The bench holds the engine on the dyno; otherwise the driver and
+        // the driveline's own devices are arbitrated in one place.
+        EngineControls controls;
+        controls.ignitionEnabled = ignition_.load();
+        controls.starterEngaged = starter_.load();
+        if (dynoActive_) {
+            controls.throttle = std::max(dynoThrottleCommand_, 0.0);
+            controls.load = requestedLoad;
+            controls.dynamometerTorqueNm = dynoBrakeTorqueNm_;
+            controls.coolingAirSpeedMps = dynoCellFanAirSpeedMps;
+        } else {
+            VehicleStep vehicle { drivelineOutput_ };
+            DriverCommandArbiter::arbitrate(driverInputs(), vehicle);
+            applyVehicleStep(controls, vehicle);
+        }
         // The 3-D view's gas field: tracked at the angle it shows, or taken
         // as it is when it shows real time. Nothing runs once it stops asking.
         const auto gasFieldRequest = gasFieldRequestSequence_.load(std::memory_order_acquire);

@@ -5,6 +5,14 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-15 — Drive-scenario harness: first runs on the CP2
+
+- New `EngineLabDriveScenarioHarness`, through the product's coupling (`advanceVehicle`). The shift, loaded-acceleration and afterfire harnesses now use it too: before, they skipped the cooling air, and two of them skipped the quickshifter cut and the blip. Their ctest gates still pass.
+- CP2 `pull` (launch, upshift at 9,000 rpm): measured engine/road ratio within +0.13 to +0.37 % of the authored ratio in every gear (clutch slip, tyre). Manual gearbox: same within 0.4 % (gear 3 -0.05 %). **"The quickshifter changes the gear spacing" does not reproduce on the catalogue CP2.** Still open: an engine or setting the owner used.
+- Same run: 0-100 km/h 5.86 s from first motion (manual 5.85), top speed 204 km/h. Injectors open for 99 % or more of their window for 9.3 s of the 45 s. Knock retard of 0.5° or more for 3.6 s. Nothing compared with a real MT-07 yet.
+- CP2 `downshift-clutch` with `--blipper 1`: the blipper opened the throttle for 93 frames (0.39 s) with the clutch pulled. Bug confirmed, to be fixed in B1.
+- Not measured: any other engine; whether the 5.86 s is a driveline-inertia problem (plan E).
+
 ## 2026-10-14 — Blind listening of the valve noise and the IR, and the fine-mesh question
 
 - Owner, blind, one trial per pair, CP2 Full System clips (`--valve-noise`, `--impulse-response`). Valve turbulence noise: no preference at idle; on the rev the control was preferred ("deeper, less muffled"). It stays off.

@@ -33,6 +33,17 @@ rev limiter. A cell accepted by the tuner is therefore no longer silently
 re-clamped to a different range. The dynamic corrections stay bounded to the
 same domain after the trims are applied.
 
+### Active limits
+
+`activeRevLimitRpm()` (`SimpleEcuModel.hpp`) is the rev limit the ECU applies:
+`limits.rev_rpm` when the calibration has it, else the authored
+`ignition.rev_limit_rpm`. The engine state publishes it as `activeRevLimitRpm`,
+next to `activeLimits`, a bitmask of `ActiveLimit` saying what holds the engine
+back this frame: the rev limiter, knock retard (at least 0.5°), coolant
+protection (above 108 °C), a diesel's smoke or quantity ceiling, an open
+wastegate (boost held at its target) and a saturated injector (open for at
+least 99 % of its window). It is telemetry: nothing reads it back.
+
 ### Idle and fuel-cut strategies (not tunable)
 
 - **Fuel cut on overrun**: below 2 % throttle and above 1.65 × the idle

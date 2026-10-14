@@ -61,6 +61,7 @@
 #include <enginelab/events/FourStrokeEventGenerator.hpp>
 #include <enginelab/exhaust/ExhaustGraph.hpp>
 #include <enginelab/physics/SimplifiedGasolinePhysics.hpp>
+#include <enginelab/runtime/DriverCommandArbiter.hpp>
 #include <enginelab/runtime/DrivelineModel.hpp>
 #include <enginelab/runtime/EngineRuntime.hpp>
 #include <enginelab/simulation/EngineSimulator.hpp>
@@ -481,17 +482,14 @@ TickResult coupledStep(enginelab::EngineSimulator& simulator,
     // Same ordering as EngineRuntime::run: the driveline advances on the
     // PREVIOUS engine state, then the simulator steps with this tick's reaction.
     TickResult result;
-    result.drive = driveline.advance(
-        stepSeconds, simulator.state(), 0.0, clutchPedal, brakePressure);
+    const auto vehicle = enginelab::advanceVehicle(driveline, stepSeconds, simulator.state(), 0.0,
+        enginelab::DriverInputs { throttleCmd, clutchPedal, brakePressure });
+    result.drive = vehicle.drive;
+    result.engineThrottle = vehicle.engineThrottle;
     enginelab::EngineControls controls;
     controls.ignitionEnabled = true;
     controls.starterEngaged = starter;
-    result.engineThrottle =
-        std::clamp(throttleCmd, 0.0, 1.0) * result.drive.torqueCutMultiplier;
-    controls.throttle = result.engineThrottle;
-    controls.externalTorqueNm = result.drive.engineCouplingTorqueNm;
-    controls.externalRotatingInertiaKgM2 =
-        result.drive.reflectedRotatingInertiaKgM2;
+    enginelab::applyVehicleStep(controls, vehicle);
     result.frame = simulator.step(stepSeconds, controls);
     return result;
 }

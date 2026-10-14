@@ -56,6 +56,8 @@ The main registered tests are:
 | `EngineLab.Calibration` | types, interpolation, validation, transactions, concurrency, JSON and file watcher |
 | `EngineLab.EcuCalibration` | immediate application of the tables and the rev limiter by the ECU |
 | `EngineLab.ShiftStyle` | shift styles on a real engine, ECU and driveline: a CP2 quickshifter upshift cuts the ignition for its cut length (one frame of rounding), drops the spark, keeps the drive gap under 0.6 of a clutch shift's and ends at the new gear's speed; a 2JZ dual-clutch upshift has no torque gap; a CP2 blipped downshift engages at more than 0.95 of the new gear's speed and slips under 0.3 of an unblipped one; the catalogue CP2 is sequential with a quickshifter; the style, shifter and blipper survive YAML and JSON, an unknown style is refused |
+| `EngineLab.DriverCommand` | driver-command arbitration: the driver's throttle alone, lifted by a torque cut, opened past by a blipper but never closed by it, a non-finite pedal closed, a quickshifter's ignition cut passed through; the engine controls carry throttle, cut, brake, coupling torque, inertia and the cooling air of a reversing vehicle; `advanceVehicle` drives a CP2 driveline bit-identically to a direct `advance` over 10 s |
+| `EngineLab.ActiveLimits` | the active rev limit is the authored one untuned and the tuned one after a publish; the ECU reports the rev limiter at the tuned limit, knock retard from 0.5° (not below), coolant protection above 108 °C, nothing on a warm engine below its limit; a free-revving CP2 reports its limiter and no diesel or boost limit, and a CP2 tuned to 6,000 rpm publishes and holds it; a TDI held at 2,500 rpm at full load reports a diesel fuel ceiling and its wastegate, the boost bit following the wastegate on every frame |
 | `EngineLab.TurboFit` | a turbo fitted by `sizedTurbocharger()`: the laws hold on the four catalogue turbos (turbine area within 10 %, inducer within 15 %, full boost at 35-55 % of the redline); every engine without forced induction takes it and stays valid, and it comes off again; a lower compression takes more boost; the CP2 at 7,000 rpm WOT holds the wastegate boost, gains torque between 0.9 and 1.35 x the charge density ratio, stays rich (lambda 0.78-0.95) and does not knock heavily |
 | `EngineLab.IdleStabilityRegression` | every catalogue engine idles at its target and comes back from throttle blips without stalling: a 1.2 s full-throttle blip after the idle settles (lowest speed at least 0.78 × idle, settled within 0.85-1.15 × idle) and a 0.5 s one 6 s after the start (lowest at least 0.78 × idle) |
 | `EngineLab.Exhaust` | DAG validation, series/parallel losses, aggregated flow properties, routes, migration and JSON/YAML round-trips |
@@ -123,6 +125,25 @@ The complete JUCE renderer can be run separately:
 ```powershell
 cmake --build out/build/windows-vs2022 --config Release --target EngineLabAudioRenderHarness
 out\build\windows-vs2022\tools\Release\EngineLabAudioRenderHarness.exe --output audio-render-output
+```
+
+## Drive-scenario harness
+
+`EngineLabDriveScenarioHarness` plays a timeline of driver inputs (pedals with
+ramps, gear lever, starter, "upshift at N rpm") against one catalogue engine
+through the product's own coupling (`advanceVehicle`). It writes one CSV row
+per public frame (`--csv`) and prints the engine-to-road ratio measured in each
+gear (clutch locked, no shift, no wheelspin) against the authored one, 0-100
+km/h and 0-60 mph from first motion, top speed, who held the throttle and how
+long each active limit held. `--shift-style`, `--quickshifter`, `--blipper` and
+`--automatic` override the engine's gearbox so one factor changes at a time.
+Built-in scenarios: `pull` (launch, upshift at 90 % of the ceiling through
+every gear) and `downshift-clutch` (two downshifts with the clutch pulled). A
+scenario file is JSON; its format is in the source header.
+
+```powershell
+out\build\windows-vs2022\tools\Release\EngineLabDriveScenarioHarness.exe `
+  --engine "CP2 MT-07" --builtin pull --csv cp2-pull.csv
 ```
 
 ## Sanitizers and static analysis
