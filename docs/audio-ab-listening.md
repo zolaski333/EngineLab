@@ -351,6 +351,32 @@ EngineLabAbClipRenderer --compare "Yamaha CP2,Full System" `
   the one documented in `engines/15_cp2_full_system_like.engine.yaml`.
 - The **65 %** threshold applies to this mode, not to the diagnostic mode.
 
+## A/B through an output stage (`--output-stage`)
+
+`--output-stage <substring>` renders one engine once and pairs the render as
+rendered (control) against the same samples driven +40 dB into
+`AutoGainSoftClipper` (subject): a level-normalising gain with a 1 s hold,
+followed by a tanh. One physics run, so the output stage is the only factor.
+The key carries `mode: "output-stage"`, `engine` and `output_stage`, and
+`scripts/listening.py` scores it as a variant test. The same reference
+restrictions as `--compare` apply. `EngineLabGeometrySensitivityHarness
+--output-stage-ab` measures the same stage (crest factor, gain, band shape) at
+a steady engine speed. The stage is a mixing stage, not acoustics, and is not on
+the default audio path.
+
+## One factor on one engine (`--valve-noise`, `--impulse-response`)
+
+`--valve-noise <substring>` and `--impulse-response <substring> <file>` render
+the same engine twice and pair the render as the application plays it
+(control) against a render with one factor switched on (subject): the valve
+turbulence noise (`ValveTurbulenceNoise`), or `<file>` convolved on every
+exhaust path at the default convolution amount. No catalogue engine authors an
+impulse response, so the control is free field. The offline render is
+deterministic (two controls are bit-identical), so the factor is the only
+difference. The keys carry `mode: "valve-noise"` or `"impulse-response"` and
+`engine`; `scripts/listening.py` scores them as variant tests. An IR of unknown
+provenance stays outside the repository; only its path is written to the key.
+
 ## Remaining limitations
 
 - The gestures of the real recordings do not follow the EngineLab trajectory

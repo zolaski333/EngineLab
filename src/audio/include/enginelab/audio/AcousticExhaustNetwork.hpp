@@ -99,6 +99,13 @@ public:
 
     /** Diagnostic A/B switch. Production leaves the source enabled. */
     void setOutletJetNoiseEnabled(bool enabled) noexcept;
+    /** Diagnostic: density of the air each outlet radiates into. Zero (the
+     * default) keeps the duct medium (UnflangedPipeRadiation::setFarFieldDensity). */
+    void setOutletFarFieldDensity(double densityKgPerM3) noexcept;
+    /** Diagnostic: every outlet becomes an ideal pressure release
+     * (UnflangedPipeRadiation::setPressureRelease). Production keeps the
+     * Levine-Schwinger load. */
+    void setOutletPressureRelease(bool enabled) noexcept;
     /** Every outlet's microphones glide to `left` and `right`
      * (FreeFieldObserver::moveMicrophones). Audio thread. */
     void moveMicrophones(const AcousticPoint3M& left, const AcousticPoint3M& right,

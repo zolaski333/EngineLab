@@ -18,6 +18,9 @@
 // (see docs/audio-ab-listening.md); es2d could not be built locally (empty
 // submodules), so no es2d clip is produced.
 
+#include <enginelab/audio/AutoGainSoftClipper.hpp>
+#include <enginelab/audio/ImpulseResponseLoader.hpp>
+#include <enginelab/audio/RealtimeConvolutionBank.hpp>
 #include <enginelab/audio/RealtimeEngineAudio.hpp>
 #include <enginelab/catalog/EngineCatalog.hpp>
 #include <enginelab/ecu/SimpleEcuModel.hpp>
@@ -557,6 +560,25 @@ void applyGain(Clip& c, double gain) {
     for (auto& v : c.right) v = static_cast<float>(v * gain);
 }
 
+/** Drive into AutoGainSoftClipper. The render's full scale is 140 dB SPL, so at
+ *  unity its gain sits on the x10 cap; +40 dB puts it in the normalising regime
+ *  the other simulator runs (see GeometrySensitivityHarness --output-stage-ab). */
+constexpr double outputStageDriveDb = 40.0;
+
+void applyOutputStage(Clip& clip, double driveDb) {
+    AutoGainSoftClipper stage;
+    stage.prepare(clip.sampleRate, {});
+    const auto drive = static_cast<float>(std::pow(10.0, driveDb / 20.0));
+    const auto frames = std::min(clip.left.size(), clip.right.size());
+    for (std::size_t i = 0; i < frames; ++i) {
+        auto left = drive * clip.left[i];
+        auto right = drive * clip.right[i];
+        stage.process(left, right);
+        clip.left[i] = left;
+        clip.right[i] = right;
+    }
+}
+
 void selectReferenceWindow(Clip& clip, double startSeconds, std::size_t maximumFrames) {
     const auto available = std::min(clip.left.size(), clip.right.size());
     const auto requestedStart = static_cast<std::size_t>(
@@ -614,8 +636,17 @@ void applySymmetricFade(Clip& clip, double seconds) {
 // it holds a low idle target, releases as the target ramps to the limiter under
 // full throttle (the ECU rev limiter then bounces at redline), and brakes the
 // overrun back down with the throttle shut.
+/** One factor switched on for the subject side of a paired render; the
+ *  defaults are what the application plays. */
+struct RenderOptions final {
+    bool valveTurbulenceNoise { false };
+    /** Loaded on every exhaust path. Empty = free field: no catalogue engine
+     *  authors an impulse response. */
+    std::filesystem::path impulseResponse;
+};
+
 Clip renderTrajectory(const EngineConfig& baseConfig, double sampleRate,
-                      const TrajectoryTiming& timing) {
+                      const TrajectoryTiming& timing, const RenderOptions& options = {}) {
     auto config = baseConfig;
     normaliseEngineConfig(config);
     SimpleEcuModel ecu; SimplifiedGasolinePhysics physics; FourStrokeEventGenerator events;
@@ -638,7 +669,22 @@ Clip renderTrajectory(const EngineConfig& baseConfig, double sampleRate,
         &audioConfiguration->engineConfig(),
         &audioConfiguration->exhaustAcousticSamples());
     auto& renderer = *rendererPtr;
+    renderer.setValveTurbulenceNoiseEnabled(options.valveTurbulenceNoise);
+    if (!options.impulseResponse.empty()) {
+        const auto paths = std::min<std::size_t>(
+            std::max<std::size_t>(config.exhaustPaths.size(), 1U),
+            RealtimeConvolutionBank::maximumPaths);
+        for (std::size_t path = 0; path < paths; ++path) {
+            auto decoded = loadImpulseResponseFile(
+                juce::File(juce::String(options.impulseResponse.string())));
+            if (!decoded.ok())
+                throw std::runtime_error("cannot load the impulse response "
+                                         + options.impulseResponse.string());
+            renderer.setImpulseResponse(std::move(decoded.samples), decoded.sampleRateHz, path);
+        }
+    }
     renderer.prepare(sampleRate, samplesPerStep);
+    // Also lets the convolver's background IR load settle.
     std::this_thread::sleep_for(std::chrono::milliseconds(300));
 
     const auto redline = config.redlineRpm;
@@ -764,6 +810,13 @@ int main(int argc, char** argv) {
     // "louder is better" and "I know which one I built" bias a variant judgement
     // at least as hard.
     std::vector<std::string> comparedEngines;
+    // Output-stage mode: blind A/B between one render as it comes out of the
+    // engine and the SAME render through AutoGainSoftClipper. One physics run,
+    // so the output stage is the only factor.
+    std::string stageEngine;
+    std::string valveNoiseEngine;
+    std::string irEngine;
+    std::filesystem::path irFile;
     const auto splitList = [](const std::string& list) {
         std::vector<std::string> tokens;
         for (std::size_t pos = 0; pos <= list.size();) {
@@ -793,6 +846,12 @@ int main(int argc, char** argv) {
         else if (a == "--compare" && i + 1 < argc) {
             comparedEngines = splitList(argv[++i]);
         }
+        else if (a == "--output-stage" && i + 1 < argc) stageEngine = argv[++i];
+        else if (a == "--valve-noise" && i + 1 < argc) valveNoiseEngine = argv[++i];
+        else if (a == "--impulse-response" && i + 2 < argc) {
+            irEngine = argv[++i];
+            irFile = argv[++i];
+        }
         else if (a == "--ref" && i + 1 < argc) {
             const std::string kv = argv[++i]; const auto eq = kv.find('=');
             if (eq != std::string::npos) refs[kv.substr(0, eq)] = kv.substr(eq + 1);
@@ -805,6 +864,15 @@ int main(int argc, char** argv) {
                 << "  --compare <baseline-substring>,<candidate-substring>\n"
                 << "      blind A/B between two catalogue engines instead of\n"
                 << "      engine-against-recording; references are not used\n"
+                << "  --output-stage <substring>\n"
+                << "      blind A/B between one render as rendered and the same\n"
+                << "      render through AutoGainSoftClipper (+40 dB drive)\n"
+                << "  --valve-noise <substring>\n"
+                << "      blind A/B between one engine as played and the same engine\n"
+                << "      with the valve turbulence noise (two renders)\n"
+                << "  --impulse-response <substring> <file>\n"
+                << "      blind A/B between one engine in free field (as played) and\n"
+                << "      the same engine with <file> on every exhaust path\n"
                 << "  --reference-manifest <manifest.json>\n"
                 << "  --require-references\n"
                 << "  --validate-manifest\n"
@@ -830,6 +898,26 @@ int main(int argc, char** argv) {
         return 1;
     }
     const auto variantMode = !comparedEngines.empty();
+    const auto stageMode = !stageEngine.empty();
+    const auto valveNoiseMode = !valveNoiseEngine.empty();
+    const auto irMode = !irEngine.empty();
+    // One engine against itself with one factor switched.
+    const auto selfMode = stageMode || valveNoiseMode || irMode;
+    // Both sides come out of the simulator: no recording to pair.
+    const auto pairedMode = variantMode || selfMode;
+    if (selfMode && (static_cast<int>(stageMode) + static_cast<int>(valveNoiseMode)
+                         + static_cast<int>(irMode) > 1
+                     || variantMode || !requestedEngines.empty() || !manifestPath.empty()
+                     || !refs.empty() || requireReferences)) {
+        std::cerr << "--output-stage, --valve-noise and --impulse-response pair one"
+                     " engine with itself; they take no other engine or reference"
+                     " option, and only one of them at a time.\n";
+        return 1;
+    }
+    if (irMode && !std::filesystem::is_regular_file(irFile)) {
+        std::cerr << "No impulse response at " << irFile.string() << '\n';
+        return 1;
+    }
     if (variantMode) {
         // Refuse the combinations rather than silently ignoring an argument: a
         // run that quietly dropped --reference-manifest would look like a
@@ -906,6 +994,8 @@ int main(int argc, char** argv) {
     // Default: the three near-equivalent archetypes present in both catalogues.
     std::vector<std::string> wanted { "2JZ", "LS3", "Hayabusa" };
     if (variantMode) wanted = comparedEngines;
+    else if (selfMode)
+        wanted = { stageMode ? stageEngine : valveNoiseMode ? valveNoiseEngine : irEngine };
     else if (!requestedEngines.empty()) wanted = requestedEngines;
     struct Selected { std::string label; const EngineConfig* config; };
     std::vector<Selected> selected;
@@ -925,12 +1015,12 @@ int main(int argc, char** argv) {
             return 1;
         }
         if (matches.size() > 1) {
-            std::cerr << (variantMode ? "Ambiguous" : "Warning: ambiguous")
+            std::cerr << (pairedMode ? "Ambiguous" : "Warning: ambiguous")
                       << " engine filter '" << key << "' matches " << matches.size()
                       << " entries:\n";
             for (const auto* match : matches)
                 std::cerr << "    " << match->name << '\n';
-            if (variantMode) {
+            if (pairedMode) {
                 std::cerr << "  Pass a substring that selects exactly one engine.\n";
                 return 1;
             }
@@ -955,7 +1045,7 @@ int main(int argc, char** argv) {
     bool missingRequiredReference = false;
     // Variant mode has no recordings on either side, so there is nothing to
     // preflight; both sides come out of the simulator.
-    for (std::size_t p = 0; p < (variantMode ? 0U : selected.size()); ++p) {
+    for (std::size_t p = 0; p < (pairedMode ? 0U : selected.size()); ++p) {
         const auto& sel = selected[p];
         auto& destination = prepared[p];
         if (const auto manual = refs.find(sel.label); manual != refs.end()) {
@@ -1020,7 +1110,7 @@ int main(int argc, char** argv) {
     std::vector<std::vector<SegmentReference>> segmentReferences(
         selected.size(), std::vector<SegmentReference>(segments.size()));
     bool anyUnusableSegmentReference = false;
-    for (std::size_t p = 0; p < (variantMode ? 0U : selected.size()); ++p) {
+    for (std::size_t p = 0; p < (pairedMode ? 0U : selected.size()); ++p) {
         for (std::size_t s = 0; s < segments.size(); ++s) {
             auto& resolved = segmentReferences[p][s];
             const auto& segment = segments[s];
@@ -1084,6 +1174,8 @@ int main(int argc, char** argv) {
     std::vector<RenderCase> cases;
     if (variantMode) {
         cases.push_back({ selected[1].config, 0, selected[0].config });
+    } else if (selfMode) {
+        cases.push_back({ selected[0].config, 0, selected[0].config });
     } else {
         for (std::size_t p = 0; p < selected.size(); ++p)
             cases.push_back({ selected[p].config, p, nullptr });
@@ -1092,7 +1184,10 @@ int main(int argc, char** argv) {
     std::mt19937 rng(seed);
     Json key {
         { "schema_version", 3 },
-        { "mode", variantMode ? "variant" : "reference" },
+        { "mode", variantMode ? "variant"
+                  : stageMode ? "output-stage"
+                  : valveNoiseMode ? "valve-noise"
+                  : irMode ? "impulse-response" : "reference" },
         { "target_lufs", targetLufs },
         { "peak_ceiling", peakCeiling },
         { "seed", seed },
@@ -1105,6 +1200,29 @@ int main(int argc, char** argv) {
     if (variantMode) {
         key["baseline_engine"] = selected[0].config->name;
         key["candidate_engine"] = selected[1].config->name;
+    }
+    if (stageMode) {
+        key["engine"] = selected[0].config->name;
+        key["output_stage"] = {
+            { "class", "AutoGainSoftClipper" },
+            { "drive_db", outputStageDriveDb },
+            { "applies_to", "subject side only; the control is the same render as rendered" },
+        };
+    }
+    if (valveNoiseMode) {
+        key["engine"] = selected[0].config->name;
+        key["valve_turbulence_noise"] = {
+            { "class", "ValveTurbulenceNoise" },
+            { "applies_to", "subject side only; the control is a second render as played" },
+        };
+    }
+    if (irMode) {
+        key["engine"] = selected[0].config->name;
+        key["impulse_response"] = {
+            { "file", std::filesystem::absolute(irFile).string() },
+            { "applies_to", "subject side only, every exhaust path; the control is"
+                            " a second render in free field" },
+        };
     }
     for (const auto& segment : segments) {
         key["segments"].push_back({
@@ -1142,13 +1260,25 @@ int main(int argc, char** argv) {
         std::cout << " ===\n";
         // Rendered ONCE and cut up: the segments must come from the same physics
         // run, or an idle and a rev clip could disagree about the engine's state.
-        const auto fullClip = renderTrajectory(*renderCase.subject, sampleRate, timing);
+        RenderOptions subjectOptions;
+        subjectOptions.valveTurbulenceNoise = valveNoiseMode;
+        if (irMode) subjectOptions.impulseResponse = irFile;
+        auto fullClip = renderTrajectory(*renderCase.subject, sampleRate, timing,
+                                         subjectOptions);
         // In variant mode the control is a second full render of the baseline
         // engine, cut on exactly the same segment boundaries -- so the two sides
         // are the same conditions on two engines, not two moments on one.
-        const auto controlFullClip = renderCase.controlEngine != nullptr
-            ? renderTrajectory(*renderCase.controlEngine, sampleRate, timing)
-            : Clip {};
+        // In output-stage mode it is the very same render, before the stage.
+        Clip controlFullClip;
+        if (stageMode) {
+            controlFullClip = fullClip;
+            applyOutputStage(fullClip, outputStageDriveDb);
+        } else if (valveNoiseMode || irMode) {
+            // A second render of the same engine as the application plays it.
+            controlFullClip = renderTrajectory(*renderCase.subject, sampleRate, timing);
+        } else if (renderCase.controlEngine != nullptr) {
+            controlFullClip = renderTrajectory(*renderCase.controlEngine, sampleRate, timing);
+        }
 
         // The whole-trajectory loudness is what the single-gain scheme measured,
         // and it is reported so the per-segment offsets below stay auditable: the
@@ -1167,8 +1297,8 @@ int main(int argc, char** argv) {
 
             auto elClip = extractSegment(fullClip, segment.startSeconds, segment.endSeconds);
             Clip refClip;
-            auto haveRef = variantMode || resolved.usable;
-            if (variantMode) {
+            auto haveRef = pairedMode || resolved.usable;
+            if (pairedMode) {
                 refClip = extractSegment(
                     controlFullClip, segment.startSeconds, segment.endSeconds);
                 const auto pairFrames = std::min({ elClip.left.size(), elClip.right.size(),
@@ -1220,10 +1350,10 @@ int main(int argc, char** argv) {
             const auto segmentSeconds = static_cast<double>(elClip.left.size()) / sampleRate;
             std::cout << "  pair " << pairNumber << ' ' << segment.name << ": "
                       << std::fixed << std::setprecision(2) << segmentSeconds << " s, "
-                      << (variantMode ? "candidate " : "EngineLab ")
+                      << (pairedMode ? "candidate " : "EngineLab ")
                       << elLufsBefore << " -> " << elLufsAfter
                       << " LUFS, peak " << std::setprecision(3) << elPeak;
-            if (variantMode) {
+            if (pairedMode) {
                 std::cout << " | baseline " << std::setprecision(2) << refLufsBefore
                           << " -> " << refLufsAfter << " LUFS, peak "
                           << std::setprecision(3) << refPeak;
@@ -1296,9 +1426,9 @@ int main(int argc, char** argv) {
                 { "solo", !haveRef },
             };
             if (!haveRef) pair["subject_side"] = "";
-            if (variantMode) {
+            if (pairedMode) {
                 pair["control"] = {
-                    { "kind", "enginelab-baseline" },
+                    { "kind", stageMode ? "enginelab-as-rendered" : "enginelab-baseline" },
                     { "engine", renderCase.controlEngine->name },
                     { "match_quality", "enginelab-baseline" },
                     { "window_condition_matched", true },
@@ -1373,7 +1503,7 @@ int main(int argc, char** argv) {
     }
     keyFile << key.dump(2) << '\n';
     std::cout << "\nWrote " << key["pairs"].size() << " pairs ("
-              << cases.size() << (variantMode ? " comparison x " : " engines x ")
+              << cases.size() << (pairedMode ? " comparison x " : " engines x ")
               << segments.size() << " segments) to "
               << listeningDir.string() << ", with INDEX.md alongside them,\nand the key to "
               << (outRoot / "listening-key.json").string() << '\n';

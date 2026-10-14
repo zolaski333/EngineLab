@@ -123,6 +123,15 @@ RealtimeEngineAudio::RealtimeEngineAudio(FiringEventQueue& queue,
     }
 }
 
+double RealtimeEngineAudio::ambientAirDensityKgPerM3() const noexcept {
+    constexpr double dryAirGasConstantJPerKgK = 287.05;
+    const auto pressurePa = 1'000.0 * std::clamp(static_cast<double>(
+        realtimeState_.ambientPressureKpa.load(std::memory_order_relaxed)), 50.0, 120.0);
+    const auto temperatureK = 273.15 + std::clamp(static_cast<double>(
+        realtimeState_.ambientTemperatureC.load(std::memory_order_relaxed)), -50.0, 60.0);
+    return pressurePa / (dryAirGasConstantJPerKgK * temperatureK);
+}
+
 RealtimeEngineAudio::~RealtimeEngineAudio() {
     delete incomingExhaustNetwork_.exchange(nullptr);
     delete retiredExhaustNetwork_.exchange(nullptr);
@@ -154,6 +163,8 @@ bool RealtimeEngineAudio::replaceExhaustGraph(const ExhaustGraph& graph) {
         || !handoff->network->prepare(sampleRate, maximumAcousticDelayScale, observerDistanceM))
         return false;
     handoff->network->setOutletJetNoiseEnabled(outletJetNoiseEnabled_);
+    handoff->network->setOutletFarFieldDensity(resolvedOutletFarFieldDensityKgPerM3());
+    handoff->network->setOutletPressureRelease(outletPressureRelease_);
     handoff->sampleRate = sampleRate;
     // A change the audio thread has not taken yet is replaced, and freed here.
     delete incomingExhaustNetwork_.exchange(handoff.release(), std::memory_order_acq_rel);
@@ -605,6 +616,8 @@ void RealtimeEngineAudio::release() noexcept {
     valveFlowAcousticSource_ = {};
     valveFlowSourceRate_.reset();
     for (auto& state : valveFlowAcousticSourceState_) state.reset();
+    for (std::size_t valve = 0; valve < valveTurbulenceNoise_.size(); ++valve)
+        valveTurbulenceNoise_[valve].reset(static_cast<std::uint32_t>(0x2545F491U * (valve + 1U)));
     completeExhaustSwap();
     completeIntakeSwap();
     if (acousticExhaustNetwork_) acousticExhaustNetwork_->reset();
@@ -1186,10 +1199,14 @@ void RealtimeEngineAudio::renderWithStems(
         beginExhaustSwapIfWaiting();
         beginIntakeSwapIfWaiting();
         takeForcedInductionUpdate();
+        // The outlets radiate into ambient air, whose density follows the
+        // live ambient conditions (altitude and temperature edits).
+        const auto farFieldDensity = resolvedOutletFarFieldDensityKgPerM3();
         for (auto* network : { acousticExhaustNetwork_.get(),
                  swappingExhaustNetwork_ != nullptr
                      ? swappingExhaustNetwork_->network.get() : nullptr }) {
             if (network == nullptr) continue;
+            network->setOutletFarFieldDensity(farFieldDensity);
             network->beginBlock(
                 std::span<const AcousticExhaustNetwork::Medium>(
                     media.data(), exhaustPathCount),
@@ -1689,12 +1706,23 @@ void RealtimeEngineAudio::renderWithStems(
                             valveFlowAcousticSourceState_[index],
                             massFlowKgPerSecond, densityKgPerM3,
                             characteristicImpedance);
+                        // Turbulent area fluctuation, the same Norton split as
+                        // the high-band source. Off by default.
+                        const auto turbulencePressurePa = valveTurbulenceNoiseEnabled_
+                            ? static_cast<float>(0.5 * characteristicImpedance
+                                * valveTurbulenceNoise_[index].process(
+                                    valveConductanceAreaM2, areaM2, massFlowKgPerSecond,
+                                    densityKgPerM3, sampleRate_)
+                                / densityKgPerM3)
+                            : 0.0F;
                         const auto outgoingMeasured = 0.5F * (pressurePerturbationPa
                             + characteristicImpedance * volumeVelocityPerturbation)
-                            + static_cast<float>(highBandSource.outgoingPressurePa);
+                            + static_cast<float>(highBandSource.outgoingPressurePa)
+                            + turbulencePressurePa;
                         const auto incomingMeasured = 0.5F * (pressurePerturbationPa
                             - characteristicImpedance * volumeVelocityPerturbation)
-                            + static_cast<float>(highBandSource.incomingPressurePa);
+                            + static_cast<float>(highBandSource.incomingPressurePa)
+                            - turbulencePressurePa;
 
                         // Publish the valve state; the termination itself is
                         // evaluated inside the waveguide, where the acoustic
@@ -1905,6 +1933,8 @@ void RealtimeEngineAudio::renderWithStems(
                 exhaustPaths_[path].meanExhaustMassFlowKgPerSecond =
                     pathMeanMassFlowSum[path];
                 (void) exhaustPaths_[path].radiation.setMedium(density, soundSpeed);
+                (void) exhaustPaths_[path].radiation.setFarFieldDensity(
+                    resolvedOutletFarFieldDensityKgPerM3());
             }
         }
         const auto useCompiledTopology = sampleUsesPhysicalExhaust

@@ -177,10 +177,9 @@ Details of each measurement are in the docs archive (tag `archive/docs-2026-09`)
   front" (it rises in 0.2-0.8 ms, the lock is the ~3.8 kHz bandwidth);
   continuous fuel below ~45 % of demand (below the lean limit; packets burn).
 - Knock, one input at a time (journal 2026-10-13): the end-gas integral reads
-  the MEAN chamber temperature, offset by a delay 2-5 x slower than Douaud-
-  Eyzat. Isentropic end gas alone: no knock even at RON 80. Plus Douaud-Eyzat:
-  2JZ and K20A knock at 12 deg of retard (end gas 1,000-1,200 K, measured
-  engines ~850-950). Integral knock control on either: pulls 12 deg for nothing.
+  the MEAN chamber temperature with a delay 2-5 x slow. Isentropic end gas never
+  knocks; plus Douaud-Eyzat it over-knocks (1,000-1,200 K); integral control
+  pulls 12 deg for nothing.
 - Closing cyclic variability through dilution: inert (it exists, 1.7-12.9 %).
 - "Trapped residual too low": a unit error, the residual is sound.
 - Intake runners: four inertance formulations are unstable or out of phase.
@@ -189,9 +188,11 @@ Details of each measurement are in the docs archive (tag `archive/docs-2026-09`)
   dependent). Front-loaded or trajectory-resolved forward delivery: inert.
   Individual throttles as a small 0-D cell per cylinder: -30 % WOT torque at
   6,500 rpm (orifice dump loss); the plate belongs inside the 1-D runner.
-- Telemetry cache to speed up listening: would have gained nothing. State-
-  variable valve-flow reconstruction against clicks: inert (the source rate
-  toggled the band; journal 2026-10-11).
+- Telemetry cache for listening: nothing gained. State-variable valve-flow
+  reconstruction against clicks: inert (journal 2026-10-11).
+- The other simulator's ingredients, one at a time (journal 2026-10-13/14):
+  output stage, pressure-release outlet, valve-area noise, mild room IR: none
+  kept (blind listening or measurement). Its fine mesh is not shown to matter.
 - Seeding the high-load correction cell from the idle cell: saves a start 4 s
   after cranking but stalls 10 engines out of 14 after 25 s of idle, and on a
   blip (Hayabusa, CP3, Aircooled). Asynchronous pulse on pedal tip-in: does not

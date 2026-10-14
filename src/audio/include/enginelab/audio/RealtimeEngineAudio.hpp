@@ -12,6 +12,7 @@
 #include <enginelab/audio/ReactionCrackSynthesiser.hpp>
 #include <enginelab/audio/ThermoacousticHeatReleaseSource.hpp>
 #include <enginelab/audio/ValveFlowAcousticSource.hpp>
+#include <enginelab/audio/ValveTurbulenceNoise.hpp>
 #include <enginelab/audio/ValvePortTermination.hpp>
 #include <enginelab/foundation/AcousticSourcePlacement.hpp>
 #include <enginelab/runtime/EngineRuntime.hpp>
@@ -223,6 +224,30 @@ public:
         outletJetNoiseEnabled_ = enabled;
         if (acousticExhaustNetwork_)
             acousticExhaustNetwork_->setOutletJetNoiseEnabled(enabled);
+    }
+    /** Density of the air the exhaust outlets radiate into. Negative (the
+     * default, production): ambient air, from the live ambient pressure and
+     * temperature, refreshed every block. Zero: the duct medium, the model
+     * before 2026-10-13. Positive: that density. A diagnostic override; not
+     * thread-safe against a running audio callback, so set it before
+     * prepare(), as the harnesses do. */
+    void setOutletFarFieldDensity(double densityKgPerM3) noexcept {
+        outletFarFieldDensityOverrideKgPerM3_ = densityKgPerM3;
+    }
+    /** Ambient air density from the realtime ambient conditions (ideal gas,
+     * dry air). */
+    [[nodiscard]] double ambientAirDensityKgPerM3() const noexcept;
+    /** Diagnostic: ideal pressure-release outlets instead of the
+     * Levine-Schwinger load. Same threading rule as above. */
+    void setOutletPressureRelease(bool enabled) noexcept {
+        outletPressureRelease_ = enabled;
+        if (acousticExhaustNetwork_)
+            acousticExhaustNetwork_->setOutletPressureRelease(enabled);
+    }
+    /** Turbulent fluctuation of each exhaust valve's effective area
+     * (ValveTurbulenceNoise), off by default. Same threading rule as above. */
+    void setValveTurbulenceNoiseEnabled(bool enabled) noexcept {
+        valveTurbulenceNoiseEnabled_ = enabled;
     }
     [[nodiscard]] bool outletJetNoiseEnabled() const noexcept {
         return acousticExhaustNetwork_
@@ -558,6 +583,13 @@ private:
     std::atomic<std::uint64_t> exhaustSwaps_ { 0 };
     std::atomic<double> preparedSampleRate_ { 0.0 };
     bool outletJetNoiseEnabled_ { true };
+    double outletFarFieldDensityOverrideKgPerM3_ { -1.0 };
+    /** The far-field density the outlets use this block (see above). */
+    [[nodiscard]] double resolvedOutletFarFieldDensityKgPerM3() const noexcept {
+        return outletFarFieldDensityOverrideKgPerM3_ < 0.0
+            ? ambientAirDensityKgPerM3() : outletFarFieldDensityOverrideKgPerM3_;
+    }
+    bool outletPressureRelease_ { false };
     /** setMicrophones() -> audio thread, a sequence lock: odd while written. */
     std::atomic<std::uint64_t> microphoneSequence_ { 0 };
     std::array<std::atomic<double>, 6> publishedMicrophones_ {};
@@ -705,6 +737,8 @@ private:
     std::array<BoundaryReconstructionFilter::State, 32> boundaryReconstructionFlow_ {};
     ValveFlowAcousticSource::Coefficients valveFlowAcousticSource_ {};
     std::array<ValveFlowAcousticSource::State, 32> valveFlowAcousticSourceState_ {};
+    bool valveTurbulenceNoiseEnabled_ { false };
+    std::array<ValveTurbulenceNoise, 32> valveTurbulenceNoise_ {};
     std::array<bool, 32> thermoacousticMeanInitialised_ {};
     float thermoacousticMeanCoefficient_ { 0.0F };
     // Atomic so a monitoring thread can observe which path is producing audio

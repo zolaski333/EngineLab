@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cmath>
 #include <complex>
 
 namespace enginelab {
@@ -41,6 +42,28 @@ public:
     /** Update the locally linearised gas medium without clearing history. */
     [[nodiscard]] bool setMedium(double densityKgPerM3,
                                  double speedOfSoundMps) noexcept;
+
+    /** Density of the medium the far field travels through. Zero (the
+     * default) uses the duct medium of setMedium. Outside the mouth the field
+     * is in ambient air while the volume velocity is continuous across the
+     * hot/cold interface, so p = rho_ambient dQ/dt / (4 pi r); the duct value
+     * scales it by rho_duct / rho_ambient. Only the far field changes: the
+     * reflection and the volume velocity are untouched. Diagnostic switch. */
+    [[nodiscard]] bool setFarFieldDensity(double densityKgPerM3) noexcept {
+        if (!std::isfinite(densityKgPerM3) || densityKgPerM3 < 0.0) return false;
+        farFieldDensityKgPerM3_ = densityKgPerM3;
+        return true;
+    }
+
+    /** Replace the Levine-Schwinger load by an ideal pressure release, R = -1
+     * at every frequency: the mouth returns all the energy to the pipe and the
+     * far field still follows the mouth volume acceleration. Not physical above
+     * ka ~ 0.3; it exists to measure what the radiation load does to the sound
+     * (another simulator terminates its pipes this way). Diagnostic switch. */
+    void setPressureRelease(bool enabled) noexcept {
+        pressureRelease_ = enabled;
+        if (prepared_) updateCoefficients();
+    }
 
     /** Add a passive amplitude-dependent series resistance at the open edge.
      *
@@ -86,6 +109,8 @@ private:
     double output2_ { 0.0 };
     double previousVolumeVelocityM3PerS_ { 0.0 };
     double nonlinearLossCoefficient_ { 0.0 };
+    double farFieldDensityKgPerM3_ { 0.0 };
+    bool pressureRelease_ { false };
     bool prepared_ { false };
 };
 

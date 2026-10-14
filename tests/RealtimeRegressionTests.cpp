@@ -2253,6 +2253,65 @@ void pipeRadiationRegression() {
             "vortex shedding must dissipate returned wave energy at high level");
     require(lossyReflectedEnergy <= incidentEnergy * (1.0 + 1.0e-9),
             "positive nonlinear resistance must never reflect more energy than arrives");
+
+    // The far-field density switch scales the radiated pressure by
+    // rho_far / rho_duct and touches nothing else: the wave returned into the
+    // pipe and the mouth volume velocity stay bit-identical.
+    constexpr double ambientDensityKgPerM3 = 1.2;
+    enginelab::UnflangedPipeRadiation ductRadiation;
+    enginelab::UnflangedPipeRadiation ambientRadiation;
+    require(ductRadiation.prepare(sampleRateHz, radiusM, 1.0)
+            && ambientRadiation.prepare(sampleRateHz, radiusM, 1.0)
+            && ductRadiation.setMedium(densityKgPerM3, soundSpeedMps)
+            && ambientRadiation.setMedium(densityKgPerM3, soundSpeedMps)
+            && !ambientRadiation.setFarFieldDensity(-1.0)
+            && ambientRadiation.setFarFieldDensity(ambientDensityKgPerM3),
+            "the far-field density must accept only a finite non-negative value");
+    double ductFarSquares = 0.0;
+    double ambientFarSquares = 0.0;
+    for (int index = 0; index < 4'800; ++index) {
+        const auto incident = 500.0 * std::sin(
+            2.0 * std::numbers::pi * 300.0 * index / sampleRateHz);
+        const auto duct = ductRadiation.process(incident);
+        const auto ambient = ambientRadiation.process(incident);
+        require(duct.reflectedPressurePa == ambient.reflectedPressurePa
+                && duct.outletVolumeVelocityM3PerS == ambient.outletVolumeVelocityM3PerS,
+                "the far-field density must not change the wave inside the pipe");
+        ductFarSquares += duct.farFieldPressurePa * duct.farFieldPressurePa;
+        ambientFarSquares += ambient.farFieldPressurePa * ambient.farFieldPressurePa;
+    }
+    require(std::abs(std::sqrt(ambientFarSquares / ductFarSquares)
+                     - ambientDensityKgPerM3 / densityKgPerM3) < 1.0e-9,
+            "radiating into ambient air must scale the far field by rho_ambient / rho_duct");
+
+    // The pressure-release switch: R = -1 at every frequency, the far field
+    // still radiates, and switching back restores the Levine-Schwinger load.
+    enginelab::UnflangedPipeRadiation release;
+    require(release.prepare(sampleRateHz, radiusM, 1.0)
+            && release.setMedium(densityKgPerM3, soundSpeedMps),
+            "pressure-release fixture must prepare");
+    const auto loadedAtFourKilohertz = release.reflectionCoefficient(4'000.0);
+    release.setPressureRelease(true);
+    for (const auto frequencyHz : { 0.0, 500.0, 4'000.0, 12'000.0 })
+        require(std::abs(release.reflectionCoefficient(frequencyHz)
+                         - std::complex<double> { -1.0, 0.0 }) < 1.0e-12,
+                "a pressure-release outlet must reflect R = -1 at every frequency");
+    require(release.setMedium(densityKgPerM3 * 1.1, soundSpeedMps * 1.05)
+            && std::abs(release.reflectionCoefficient(4'000.0).real() + 1.0) < 1.0e-12,
+            "a medium update must keep the pressure release");
+    double releasedFarSquares = 0.0;
+    for (int index = 0; index < 4'800; ++index) {
+        const auto sample = release.process(500.0 * std::sin(
+            2.0 * std::numbers::pi * 300.0 * index / sampleRateHz));
+        releasedFarSquares += sample.farFieldPressurePa * sample.farFieldPressurePa;
+    }
+    require(releasedFarSquares > 0.0,
+            "a pressure-release outlet must still radiate from its volume velocity");
+    release.setPressureRelease(false);
+    require(release.setMedium(densityKgPerM3, soundSpeedMps)
+            && std::abs(release.reflectionCoefficient(4'000.0)
+                        - loadedAtFourKilohertz) < 1.0e-12,
+            "switching the pressure release off must restore the radiation load");
 }
 
 void acousticMonitorCalibrationRegression() {
@@ -2263,13 +2322,13 @@ void acousticMonitorCalibrationRegression() {
         "runtime and SI monitor calibration defaults must not drift apart");
     require(std::abs(
                 enginelab::AcousticMonitorCalibration::defaultFullScaleSplDb
-                    - 134.0) < 1.0e-12,
-        "the documented 134 dB SPL monitor reference must not silently regress");
+                    - 140.0) < 1.0e-12,
+        "the documented 140 dB SPL monitor reference must not silently regress");
     require(std::abs(
                 enginelab::AcousticMonitorCalibration::sinePeakPressurePa(
                     enginelab::AcousticMonitorCalibration::defaultFullScaleSplDb)
-                    - 141.75715661678836) < 1.0e-9,
-        "134 dB SPL full scale must retain its explicit pressure mapping");
+                    - 282.842712474619) < 1.0e-9,
+        "140 dB SPL full scale must retain its explicit pressure mapping");
     const auto fullScalePeakPressurePa =
         enginelab::AcousticMonitorCalibration::sinePeakPressurePa(fullScaleSplDb);
     require(std::abs(enginelab::AcousticMonitorCalibration::normalisePeakPressure(

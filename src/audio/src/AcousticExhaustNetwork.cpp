@@ -182,6 +182,8 @@ struct AcousticExhaustNetwork::Impl final {
     std::array<Medium, maximumPaths> mediaTarget {};
     std::array<StereoPressure, maximumPaths> lastJetNoise {};
     bool jetNoiseEnabled { true };
+    double farFieldDensityKgPerM3 { 0.0 };
+    bool outletPressureRelease { false };
     bool mediaInitialised { false };
     double sampleRateHz { 48'000.0 };
     double maximumDelayScale { 12.5 };
@@ -1069,6 +1071,9 @@ bool AcousticExhaustNetwork::prepare(double sampleRateHz,
             ? unflangedVortexLoss : unflangedVortexLoss * 0.5;
         if (!outlet.radiation.setNonlinearLossCoefficient(edgeCoefficient))
             return false;
+        (void) outlet.radiation.setFarFieldDensity(
+            impl_->farFieldDensityKgPerM3);
+        outlet.radiation.setPressureRelease(impl_->outletPressureRelease);
     }
     impl_->prepared = true;
     reset();
@@ -1648,6 +1653,21 @@ bool AcousticExhaustNetwork::injectReactionPressure(
 
 void AcousticExhaustNetwork::setOutletJetNoiseEnabled(bool enabled) noexcept {
     if (impl_) impl_->jetNoiseEnabled = enabled;
+}
+
+void AcousticExhaustNetwork::setOutletFarFieldDensity(
+    double densityKgPerM3) noexcept {
+    if (!impl_ || !std::isfinite(densityKgPerM3) || densityKgPerM3 < 0.0) return;
+    impl_->farFieldDensityKgPerM3 = densityKgPerM3;
+    for (auto& outlet : impl_->outlets)
+        (void) outlet.radiation.setFarFieldDensity(densityKgPerM3);
+}
+
+void AcousticExhaustNetwork::setOutletPressureRelease(bool enabled) noexcept {
+    if (!impl_) return;
+    impl_->outletPressureRelease = enabled;
+    for (auto& outlet : impl_->outlets)
+        outlet.radiation.setPressureRelease(enabled);
 }
 
 bool AcousticExhaustNetwork::outletJetNoiseEnabled() const noexcept {

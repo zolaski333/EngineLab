@@ -9,6 +9,12 @@ file formats, always with an in-memory migration).
 
 ### Changed
 
+- The exhaust now radiates into the surrounding air rather than into its own
+  hot gas, as a real tailpipe does. Hot engines get louder relative to cool
+  ones (+2.5 to +11.7 dB near redline, the CP2 least), and the exhaust stands
+  out more against the jet and intake noise. The monitor's full scale moves
+  from 134 to 140 dB SPL so the loudest engines stay clear of the safety
+  limiter; the CP2 keeps roughly its old level.
 - The engine runs warm from the start: coolant and oil are held at 90 and
   100 degC, as on a dyno cell, so every run and every A/B comparison is made
   at one temperature (before, every engine started at 22 degC and warmed up

@@ -156,12 +156,43 @@ stale state, and radiated clicks up to 3× full scale on the Merlin at
 3,040 rpm, where the floor (~9.8 kHz) leaves the band empty. A band that closes
 also forgets its state, so reopening settles on the flow of that moment.
 
+`ValveTurbulenceNoise` (off by default; `setValveTurbulenceNoiseEnabled`,
+`EngineLabGeometrySensitivityHarness --valve-noise-ab`, blind clips with
+`EngineLabAbClipRenderer --valve-noise`) adds a turbulent fluctuation of each
+exhaust valve's effective area, re-expressed from another simulator that
+modulates its valve areas inside its gas solver: low-passed uniform noise at a
+Strouhal cut-off (0.35 v/d, 100-3,500 Hz), depth 0.3, weighted out as the
+valve opens fully, and collapsed while the area moves fast. Here the gas
+network cannot carry that band, so the fluctuation is the mass-flow source
+δṁ = ṁ (ψ_eff/ψ − 1), split like the high-band source above. Measured
+2026-10-13: level unchanged, valleys between harmonics filled by up to 9 dB,
+cycle-to-cycle variation up (journal). Blind listening on 2026-10-14: no
+preference at idle, the control preferred on the rev; it stays off.
+
 ## 4. Radiation and calibration
 
 The outlet is terminated by `UnflangedPipeRadiation`, a causal Padé (1,2)
 approximation of the Levine–Schwinger solution fitted by Silva et al. The
 filter returns the reflected pressure into the guide. The net volume velocity
 at the mouth, then its acceleration, give the free-field monopole pressure.
+
+Outside the mouth the field travels in ambient air, and the volume velocity is
+continuous across the hot/cold interface, so the far field is
+p = rho_ambient dQ/dt / (4 pi r). `RealtimeEngineAudio` computes rho_ambient
+every block from the live ambient pressure and temperature (dry air, ideal
+gas), for the compiled network and the fallback paths alike. Before
+2026-10-13 the monopole used the hot duct gas's density, 4 to 12 dB lower;
+`setOutletFarFieldDensity(0)` restores it for measurement, and
+`EngineLabGeometrySensitivityHarness --radiation-density-ab 0` compares the
+two. The band shape changes only through the balance with the outlet jet
+noise, which keeps its own jet density (journal). The monitor full scale rose
+from 134 to 140 dB SPL with it (§ levels below).
+
+`setOutletPressureRelease` (also off by default; `--pressure-release-ab`)
+replaces the load by an ideal pressure release, R = -1 at every frequency.
+Measured 2026-10-13: level within 0.4 dB, but up to +10 dB in the top band,
+where the tailpipe keeps resonances the load would radiate. It is kept for
+measurement only.
 
 Each outlet now publishes its position, its axis, its diameter and its
 termination type (unflanged or flanged). `FreeFieldObserver` computes
@@ -173,7 +204,7 @@ their arrival times and not through invented panning.
 Pascals have no universal mapping to dBFS: it necessarily depends on the
 microphone and the preamp. The capture chain is therefore an explicit
 calibration object (`AcousticMonitorCalibration`), with 20 µPa as the SPL
-reference pressure and 144 dB SPL RMS at 0 dBFS by default. This choice gives
+reference pressure and 140 dB SPL RMS at 0 dBFS by default. This choice gives
 the headroom of a high-level engine recording; it can be changed independently
 of the physics and of the listening volume. There is no hidden "realism" gain on
 the physical exhaust bus, and the safety limiter stays at unity gain in the
@@ -311,7 +342,8 @@ configuration; the catalogue and `EngineRuntime` require zero samples from that 
 
 ### Levels measured at the published observers
 
-The monitor full scale stays fixed at 134 dB SPL. The render uses the microphone
+The monitor full scale stays fixed at 140 dB SPL (134 dB until the outlets
+radiated into ambient air, 2026-10-13). The render uses the microphone
 position published by each engine; the power guard extrapolates that pressure to
 one metre with the same `1/r` law before applying 90–130 dB SPL. It therefore
 does not confuse a distant observer with a weak source. The harness additionally

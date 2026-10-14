@@ -5,6 +5,52 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-14 — Blind listening of the valve noise and the IR, and the fine-mesh question
+
+- Owner, blind, one trial per pair, CP2 Full System clips (`--valve-noise`, `--impulse-response`). Valve turbulence noise: no preference at idle; on the rev the control was preferred ("deeper, less muffled"). It stays off.
+- Stairwell IR at the default convolution 0.45: no difference heard at idle or on the rev, as its 22 dB margin under the dry sound predicts. Free field stays the default. Not tested: a fully wet chain.
+- Earlier blind listening, recorded here: the owner preferred the rev without the output stage (`--output-stage`). Not adopted.
+- A private mesh ablation of the other simulator (owner's captures, kept out of the repo) found its default mesh not converged in the 1-2 kHz band, and no sign that a finer mesh is what the owner hears. The 4 cm lockstep prototype is not pursued.
+- Same analysis on EngineLab CP2 at 3,148 rpm, steady part only (a render starts with a ~5,500 rpm transient 15 dB louder: skip the first 4 s): energy above 2 kHz -50 dB of total, tilt -9.8 dB/oct, crest 10.8 dB, cycle-synchronous share 93.7 %.
+- Merlin spike: `EngineLab.AudioRender` (runtime wiring) failed 4 times in ~17 runs on this branch: Merlin at 3,106 instead of 3,040 rpm, observer up to 4,092 Pa. On `main` (c423400) its 2nd run failed the same way (3,090 rpm, preLimiter 1.53). Pre-existing, still open.
+- Not measured: anything against a real CP2 recording, which remains the arbiter.
+
+## 2026-10-13 — Valve turbulence noise, and the first IR clips
+
+- The other simulator's turbulent valve-area modulation (4 RBJ low-pass sections, f_c = clamp(0.35 v/d, 100, 3,500) Hz, depth 0.3, collapse on fast opening) re-expressed as `ValveTurbulenceNoise`: a Norton mass-flow source beside each exhaust valve's high-band source, own noise per valve. Its tests reproduce the analysis's measured deviations (1.0 / 3.0 / 5.7 %) and fail with 2 sections or a 10x smaller collapse. Off by default; `--valve-noise-ab`.
+- Seven points: level -0.03 to +0.04 dB; shape 1.05-3.47 dB from valleys filled between harmonics (worst band +4.0 to +9.4 dB, anywhere from 25 Hz to 2 kHz); crest +0.2 to +1.2 dB; cycle-to-cycle COV up (LS3 1.2 -> 5.0 %, CP2 Full System 4,000 rpm 0.8 -> 1.8 %); periodicity -0.07 at most (LS3); tilt within 0.9 dB/oct.
+- Blind clips, CP2 Full System (`AbClipRenderer --valve-noise`): the noise is 21-22 dB under the clip (correlation 0.996). Offline renders are deterministic (two controls bit-identical), so that is the noise alone.
+- IR: no catalogue engine authors one, so the application plays in free field. The owner's stairwell IR (provenance unknown, not in the repo) on every path at the default convolution 0.45 is 22 dB under the dry sound; its 0.6 s cut is 60 dB from the 3 s file. Clips: `--impulse-response`.
+- Not measured: realtime cost with the noise on (per-sample trigonometry per valve), intake valves, any listening result.
+
+## 2026-10-13 — Ambient far-field density by default, monitor full scale 140 dB
+
+- Owner-approved sound change: the outlets now radiate with the live ambient air density (p / R T from the runtime's ambient state); `setOutletFarFieldDensity(0)` restores the duct medium. Catalogue at 88 % of redline: +2.5 to +11.7 dB, the CP2 least (coolest gas).
+- At the old 134 dB full scale the CP3 (~210 Pa peak) and the Merlin drove the safety limiter. Full scale moved to 140 dB (282.8 Pa peak): every catalogue engine stays under the 0.82 knee except the Aircooled, whose spikes (crest ~24 dB) were there before (29 soft-limited samples and 1 clamp at 7,166 rpm, against 377 / 32 before the change). The CP2 keeps roughly its old on-screen level.
+- `EngineLab.AudioRuntimeDiscontinuity` (Merlin, 80 ms stall) failed in 2 of ~26 runs: the engine took another trajectory (3,116 instead of 3,040 rpm) and the observer peaked at 454 Pa (preLimiter 1.63; 117 Pa and 0.35 otherwise). Physics does not read the audio, and the duct density is at most 4.9 dB under ambient there (measured, Merlin 3,000 rpm), so the old calibration would have put that peak at ~1.85: a pre-existing intermittent spike, not caused by this change, still open.
+- Not measured: absolute SPL against a calibrated CP2 recording (the MT-07's stationary-noise homologation figure is the cheapest check).
+
+## 2026-10-13 — Pressure-release outlet versus the Levine-Schwinger load
+
+- The other simulator terminates its pipes with an imposed pressure and no radiation load (R = -1 at every frequency). New switch `setOutletPressureRelease`, off by default (renders byte-identical); `GeometrySensitivityHarness --pressure-release-ab`, same seven points.
+- Level: -0.04 to +0.42 dB. Shape 0.47-3.45 dB. Worst band: +7 to +10 dB at 5-10 kHz on CP2 Full System, K20 and LS3; +1.5 to +2.5 dB at 1.25-2 kHz on CP2, Hayabusa and 2JZ. The tailpipe keeps the resonances that the load would radiate away. Crest -0.1 to +0.9 dB, tilt up to +0.9 dB/oct, periodicity unchanged except the 2JZ (0.77 -> 0.72).
+- Verdict: it moves the sound away from the other simulator's character (crest rises), and only above the plane-mode cutoff, where a 1-D pipe means nothing physical. Kept off; only a real CP2 recording could argue otherwise.
+
+## 2026-10-13 — Outlet far field: duct density versus ambient air
+
+- The outlet monopole is p = rho dQ/dt / (4 pi r) with rho = the path's duct medium (hot gas). Outside the mouth the field is in ambient air and Q is continuous across the interface, so the textbook rho is the ambient one. New switch `setOutletFarFieldDensity`, off by default (renders byte-identical); `GeometrySensitivityHarness --radiation-density-ab 1.2`.
+- Same seven points as the output-stage entry, same render otherwise. Exhaust level: CP2 Full System +4.0 dB at 4,000 rpm and +4.5 at 7,000; CP2 +4.4; K20 +8.2; 2JZ +9.4; LS3 +9.9; Hayabusa +10.0. That implies a duct density of 0.4-0.75 kg/m3, i.e. a mean path medium of ~490 K on the CP2 and 740-930 K on the others. Leveler never engaged.
+- Shape 0.9-4.1 dB, but not from the physics of the main band: on the CP2 at 6,000 rpm, 50 Hz-1.6 kHz moves as one block (+-1 dB), and above 2 kHz it rises 1.5-4.4 dB less. That is the outlet jet noise (own jet density, not switched) taking a smaller share. Crest, periodicity and tilt are unchanged within 0.6 dB, 0.01 and 0.35 dB/oct.
+- At equal loudness, then, this is mostly a balance change against the jet noise, plus a level that grows with gas temperature. It does not explain the other simulator's character. Not changed by default: it is a sound change and needs the owner's go-ahead. The absolute SPL is still unchecked against any calibrated CP2 recording.
+
+## 2026-10-13 — How much character an output stage alone gives
+
+- Spec from a static analysis of another simulator, whose sound the owner prefers: after its room convolution it ends in a level-normalising gain (5 Hz envelope, 4x attack, 1 s hold, gain <= 10) into a tanh, on by default. Its August 2026 measurement gave crest 7.4 dB, periodicity 0.92, tilt -4.6 dB/oct (archive). Re-expressed as `AutoGainSoftClipper` (off the default path).
+- Step 0, today's EngineLab at steady wide-open throttle (`GeometrySensitivityHarness`): periodicity 0.77-0.98, crest 7.8-14.5 dB, tilt -4.9 to +2.3 dB/oct. The August EngineLab figures (crest 18-25, periodicity 0.38-0.50) are stale.
+- Step 1, `--output-stage-ab`, same render with the stage at +40 dB drive (at 0 dB the gain sits on the x10 cap, so the stage is just a gain; shape 0.09-1.72 dB). Crest raw -> staged: CP2 Full System 4,000 rpm 11.2 -> 6.2, 7,000 rpm 14.5 -> 7.0; CP2 6,000 11.3 -> 6.3; K20 6,000 9.5 -> 6.1; LS3 4,500 11.3 -> 6.3; Hayabusa 7,000 7.8 -> 5.4; 2JZ 4,500 11.1 -> 6.4. Band shape moves 1.3-3.4 dB; periodicity and tilt are almost unchanged.
+- So the other simulator's low crest factor can come from its output stage alone, not from its gas dynamics. Blind clips: `EngineLabAbClipRenderer --output-stage "Full System"`.
+- Not measured: any listening result, either simulator against the owner's CP2 recordings, transients (idle, rev) beyond the clips, or the other steps of that spec (room response, outlet radiation, fine mesh).
+
 ## 2026-10-13 — A turbo fitted to any engine
 
 - `sizedTurbocharger()`: laws fitted to the four catalogue turbos (turbine 0.028 mm² per L per redline rpm, within 10 %; inducer within 15 %). Boost by compression: 0.5 bar from 10.5:1, 0.7 from 9.5, 0.9 below.
