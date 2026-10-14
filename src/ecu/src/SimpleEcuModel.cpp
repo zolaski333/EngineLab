@@ -129,6 +129,12 @@ void SimpleEcuModel::releasePinnedCalibrationSnapshot() noexcept {
     pinnedCalibration_.reset();
 }
 
+double activeRevLimitRpm(const EngineConfig& config,
+                         const calibration::CalibrationSnapshot& calibration) noexcept {
+    return std::clamp(calibration.scalarOr(calibration::keys::revLimit, config.ignition.revLimitRpm),
+        calibration::ecuLimits::minimumRevLimitRpm, calibration::ecuLimits::maximumRevLimitRpm);
+}
+
 EcuCommand SimpleEcuModel::evaluate(const EngineConfig& config, const EngineState& state,
                                     const EngineControls& controls) const noexcept {
     const auto& calibrationSnapshot = frameCalibration_;
@@ -149,11 +155,7 @@ EcuCommand SimpleEcuModel::evaluate(const EngineConfig& config, const EngineStat
         calibration::CalibrationUnit::ratio,
         normalizedLoad
     };
-    const auto calibratedRevLimit = calibrationSnapshot->scalarOr(
-        calibration::keys::revLimit, config.ignition.revLimitRpm);
-    const auto revLimit = std::clamp(calibratedRevLimit,
-        calibration::ecuLimits::minimumRevLimitRpm,
-        calibration::ecuLimits::maximumRevLimitRpm);
+    const auto revLimit = activeRevLimitRpm(config, *calibrationSnapshot);
     auto limiterActive = limiterLatched_.load(std::memory_order_relaxed);
     if (state.rpm >= revLimit) {
         limiterActive = true;
@@ -692,7 +694,7 @@ EcuCommand SimpleEcuModel::evaluate(const EngineConfig& config, const EngineStat
         && (controls.starterEngaged || afterStartPhase
             || accelerationFuelEnrichment < 0.03)
         && !overrunAfterfireActive;
-    return { mappedAfr, mappedAdvance,
+    EcuCommand command { mappedAfr, mappedAdvance,
              effectiveThrottle, idleAirOpening,
              fuelCorrection, dieselFuelQuantityLimit,
              commandedFuelEnabled,
@@ -706,5 +708,16 @@ EcuCommand SimpleEcuModel::evaluate(const EngineConfig& config, const EngineStat
              overrunAfterfireBlockers,
              lambdaLearningAllowed,
              decelerationFuelResumeEvent };
+    command.revLimitRpm = revLimit;
+    // Telemetry only: which of the ECU's own protections hold the engine back.
+    // Half a degree of knock retard, as the spark map is not finer than that.
+    constexpr double reportedKnockRetardDegrees = 0.5;
+    command.activeLimits =
+        ((softLimit || limiterActive) ? static_cast<std::uint32_t>(ActiveLimit::revLimiter) : 0U)
+        | (state.knockLevel * 12.0 >= reportedKnockRetardDegrees
+            ? static_cast<std::uint32_t>(ActiveLimit::knockRetard) : 0U)
+        | (state.coolantTemperatureC > 108.0
+            ? static_cast<std::uint32_t>(ActiveLimit::coolantProtection) : 0U);
+    return command;
 }
 } // namespace enginelab

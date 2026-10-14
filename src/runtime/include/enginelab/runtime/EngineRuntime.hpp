@@ -9,6 +9,7 @@
 #include <enginelab/physics/SimplifiedGasolinePhysics.hpp>
 #include <enginelab/simulation/DynoAbsorberController.hpp>
 #include <enginelab/simulation/EngineSimulator.hpp>
+#include <enginelab/runtime/DriverCommandArbiter.hpp>
 #include <enginelab/runtime/DrivelineModel.hpp>
 #include <enginelab/runtime/DynoEstimator.hpp>
 #include <enginelab/runtime/DynoQualityGate.hpp>
@@ -463,6 +464,11 @@ private:
                            DynoStopReason reason);
     void updateDriveline(double dtSeconds, const EngineState& engineState,
                          double requestedLoad) noexcept;
+    /** The driver's pedals as the UI set them last. */
+    [[nodiscard]] DriverInputs driverInputs() const noexcept {
+        return { throttle_.load(), clutchPressure_.load(std::memory_order_relaxed),
+                 brakePressure_.load(std::memory_order_relaxed) };
+    }
     /** Static exhaust telemetry for the audio (paths, areas, delays, gains),
      * from the configuration and the graph compiled from it. */
     void publishExhaustTelemetry(const EngineConfig& config,

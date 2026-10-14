@@ -596,6 +596,29 @@ enum class AfterfireBlocker : std::uint32_t {
  *  the same words for the same state. */
 [[nodiscard]] const char* afterfireBlockerName(std::uint32_t mask) noexcept;
 
+/** Why the engine is not giving more right now: bits of
+ *  `EngineState::activeLimits`. Telemetry only; nothing reads it back. */
+enum class ActiveLimit : std::uint32_t {
+    none = 0,
+    /** The ECU's rev limiter is cutting (soft or hard stage). */
+    revLimiter = 1U << 0,
+    /** Knock control is pulling spark. */
+    knockRetard = 1U << 1,
+    /** A hot coolant is pulling spark and richening the mixture. */
+    coolantProtection = 1U << 2,
+    /** A diesel's fuel is capped by the air: the smoke limit. */
+    dieselSmokeLimit = 1U << 3,
+    /** A diesel's fuel is capped by its quantity map. */
+    dieselQuantityLimit = 1U << 4,
+    /** The wastegate is open: boost is held at its target, not by the turbo. */
+    boostAtTarget = 1U << 5,
+    /** The injectors are open for the whole of their window. */
+    injectorSaturated = 1U << 6
+};
+[[nodiscard]] constexpr bool hasActiveLimit(std::uint32_t mask, ActiveLimit bit) noexcept {
+    return (mask & static_cast<std::uint32_t>(bit)) != 0U;
+}
+
 struct ExhaustCylinderConnectionConfig final {
     std::uint32_t cylinderId { 0 };
     std::uint32_t componentId { 0 };
@@ -1523,6 +1546,11 @@ struct EngineState final {
     bool ecuHardRevLimiterActive { false };
     bool ecuAlternatingSparkCutActive { false };
     bool ecuDecelerationFuelCutActive { false };
+    /** The rev limit the ECU applies now: its calibration's, else the
+     *  authored `ignition.revLimitRpm`. */
+    double activeRevLimitRpm { 0.0 };
+    /** Bitmask of `ActiveLimit`: what holds the engine back this frame. */
+    std::uint32_t activeLimits { 0U };
     double indicatedWorkJoulesPerCycle { 0.0 };
     double indicatedMeanEffectivePressureBar { 0.0 };
     /**
@@ -1665,6 +1693,11 @@ struct EcuCommand final {
      *  The simulator uses it to start a bounded port-transport observation
      *  epoch before accepting a new lambda sample. */
     bool decelerationFuelResumeEvent { false };
+    /** The rev limit applied to this command (see `activeRevLimitRpm`). */
+    double revLimitRpm { 0.0 };
+    /** `ActiveLimit` bits the ECU itself decides: rev limiter, knock retard,
+     *  coolant protection. */
+    std::uint32_t activeLimits { 0U };
 };
 
 // Output of the mean-value model SimplifiedGasolinePhysics::evaluateCombustion.

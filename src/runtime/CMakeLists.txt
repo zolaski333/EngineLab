@@ -1,5 +1,6 @@
 add_library(EngineLabRuntime STATIC
     src/EngineRuntime.cpp
+    src/DriverCommandArbiter.cpp
     src/DrivelineModel.cpp
     src/DynoEstimator.cpp
     src/DynoQualityGate.cpp

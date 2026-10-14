@@ -107,14 +107,14 @@ Deterministic, so comparable from one commit to the next:
 - `EngineLabAbClipRenderer`: listening clips; each segment (idle, rev-up…) has
   its own level. A single loudness over idle + full load makes the idle ~23 dB
   too quiet.
-- `EngineLab.CombustionPhasing`: LPP, CA10/50/90, IMEP over an engine-speed
-  sweep.
+- `EngineLab.CombustionPhasing`: LPP, CA10/50/90, IMEP over an engine-speed sweep.
+- `EngineLabDriveScenarioHarness`: a driving complaint as a rerunnable timeline
+  (pedals, gears) through the product's coupling; per-gear ratio, 0-100, limits.
 - `EngineLabAfterfireHarness`: shape of the afterfire heat release. Use
   `--liftoff-rpm` (at 9,999 rpm, pumping masks everything).
 - `EngineLabPhysicsPerfHarness --trace 1 --idle`: a real idle. `--trace <low
   rpm>` without `--idle` = full-load lugging, not an idle.
-- `EngineLabIntakeDuctBench`: bit-exact checksum; an optimisation that leaves it
-  unchanged does not touch the physics.
+- `EngineLabIntakeDuctBench`: bit-exact checksum; unchanged = physics untouched.
 
 Non-deterministic:
 

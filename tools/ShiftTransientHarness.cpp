@@ -31,6 +31,7 @@
 #include <enginelab/events/FourStrokeEventGenerator.hpp>
 #include <enginelab/exhaust/ExhaustGraph.hpp>
 #include <enginelab/physics/SimplifiedGasolinePhysics.hpp>
+#include <enginelab/runtime/DriverCommandArbiter.hpp>
 #include <enginelab/runtime/DrivelineModel.hpp>
 #include <enginelab/runtime/EngineRuntime.hpp>
 #include <enginelab/simulation/EngineSimulator.hpp>
@@ -400,18 +401,14 @@ TickResult coupledStep(enginelab::EngineSimulator& simulator,
     // simulator steps with this tick's torque-cut and clutch reaction torque --
     // exactly the ordering in EngineRuntime::run.
     TickResult result;
-    result.drive = driveline.advance(stepSeconds, simulator.state(), 0.0, clutchPedal, 0.0);
+    const auto vehicle = enginelab::advanceVehicle(driveline, stepSeconds, simulator.state(), 0.0,
+        enginelab::DriverInputs { throttleCmd, clutchPedal, 0.0 });
+    result.drive = vehicle.drive;
+    result.engineThrottle = vehicle.engineThrottle;
     enginelab::EngineControls controls;
     controls.ignitionEnabled = true;
     controls.starterEngaged = starter;
-    result.engineThrottle = std::max(
-        std::clamp(throttleCmd, 0.0, 1.0) * result.drive.torqueCutMultiplier,
-        result.drive.blipThrottle);
-    controls.throttle = result.engineThrottle;
-    controls.shiftIgnitionCut = result.drive.ignitionCut;
-    controls.externalTorqueNm = result.drive.engineCouplingTorqueNm;
-    controls.externalRotatingInertiaKgM2 =
-        result.drive.reflectedRotatingInertiaKgM2;
+    enginelab::applyVehicleStep(controls, vehicle);
     result.frame = simulator.step(stepSeconds, controls);
     return result;
 }

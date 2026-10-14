@@ -18,6 +18,7 @@
 #include <enginelab/events/FourStrokeEventGenerator.hpp>
 #include <enginelab/exhaust/ExhaustGraph.hpp>
 #include <enginelab/physics/SimplifiedGasolinePhysics.hpp>
+#include <enginelab/runtime/DriverCommandArbiter.hpp>
 #include <enginelab/runtime/DrivelineModel.hpp>
 #include <enginelab/serialization/JsonEngineSerializer.hpp>
 #include <enginelab/serialization/YamlEngineSerializer.hpp>
@@ -67,17 +68,13 @@ public:
 
     Tick step(double throttle, double clutch, bool starter = false) {
         Tick tick;
-        tick.drive = driveline_.advance(stepSeconds, simulator_.state(), 0.0, clutch, 0.0);
+        const auto vehicle = enginelab::advanceVehicle(driveline_, stepSeconds, simulator_.state(), 0.0,
+            enginelab::DriverInputs { throttle, clutch, 0.0 });
+        tick.drive = vehicle.drive;
         enginelab::EngineControls controls;
         controls.ignitionEnabled = true;
         controls.starterEngaged = starter;
-        controls.throttle = std::max(
-            std::clamp(throttle, 0.0, 1.0) * tick.drive.torqueCutMultiplier,
-            tick.drive.blipThrottle);
-        controls.externalTorqueNm = tick.drive.engineCouplingTorqueNm;
-        controls.externalRotatingInertiaKgM2 = tick.drive.reflectedRotatingInertiaKgM2;
-        controls.coolingAirSpeedMps = std::abs(tick.drive.vehicleSpeedMps);
-        controls.shiftIgnitionCut = tick.drive.ignitionCut;
+        enginelab::applyVehicleStep(controls, vehicle);
         tick.state = simulator_.step(stepSeconds, controls).state;
         return tick;
     }

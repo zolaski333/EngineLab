@@ -243,6 +243,26 @@ target_compile_definitions(EngineLabShiftStyleTests PRIVATE
 enginelab_set_warnings(EngineLabShiftStyleTests)
 add_test(NAME EngineLab.ShiftStyle COMMAND EngineLabShiftStyleTests)
 
+add_executable(EngineLabDriverCommandTests DriverCommandTests.cpp)
+target_link_libraries(EngineLabDriverCommandTests PRIVATE
+    EngineLab::Foundation EngineLab::Catalog EngineLab::Runtime)
+target_compile_definitions(EngineLabDriverCommandTests PRIVATE
+    ENGINELAB_CATALOG_ROOT="${CMAKE_SOURCE_DIR}")
+enginelab_set_warnings(EngineLabDriverCommandTests)
+add_test(NAME EngineLab.DriverCommand COMMAND EngineLabDriverCommandTests)
+
+add_executable(EngineLabActiveLimitsTests ActiveLimitsTests.cpp)
+target_link_libraries(EngineLabActiveLimitsTests PRIVATE
+    EngineLab::Foundation EngineLab::Calibration EngineLab::Events EngineLab::Physics EngineLab::Ecu
+    EngineLab::Exhaust EngineLab::Simulation EngineLab::Catalog)
+target_compile_definitions(EngineLabActiveLimitsTests PRIVATE
+    ENGINELAB_CATALOG_ROOT="${CMAKE_SOURCE_DIR}")
+if(MSVC)
+    target_link_options(EngineLabActiveLimitsTests PRIVATE /STACK:8388608)
+endif()
+enginelab_set_warnings(EngineLabActiveLimitsTests)
+add_test(NAME EngineLab.ActiveLimits COMMAND EngineLabActiveLimitsTests)
+
 add_executable(EngineLabTurboFitTests TurboFitTests.cpp)
 target_link_libraries(EngineLabTurboFitTests PRIVATE
     EngineLab::Foundation EngineLab::Events EngineLab::Physics EngineLab::Ecu
