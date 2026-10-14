@@ -166,7 +166,8 @@ valve opens fully, and collapsed while the area moves fast. Here the gas
 network cannot carry that band, so the fluctuation is the mass-flow source
 δṁ = ṁ (ψ_eff/ψ − 1), split like the high-band source above. Measured
 2026-10-13: level unchanged, valleys between harmonics filled by up to 9 dB,
-cycle-to-cycle variation up (journal).
+cycle-to-cycle variation up (journal). Blind listening on 2026-10-14: no
+preference at idle, the control preferred on the rev; it stays off.
 
 ## 4. Radiation and calibration
 

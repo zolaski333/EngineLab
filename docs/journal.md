@@ -5,6 +5,15 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-14 — Blind listening of the valve noise and the IR, and the fine-mesh question
+
+- Owner, blind, one trial per pair, CP2 Full System clips (`--valve-noise`, `--impulse-response`). Valve turbulence noise: no preference at idle; on the rev the control was preferred ("deeper, less muffled"). It stays off.
+- Stairwell IR at the default convolution 0.45: no difference heard at idle or on the rev, as its 22 dB margin under the dry sound predicts. Free field stays the default. Not tested: a fully wet chain.
+- Earlier blind listening, recorded here: the owner preferred the rev without the output stage (`--output-stage`). Not adopted.
+- A private mesh ablation of the other simulator (owner's captures, kept out of the repo) found its default mesh not converged in the 1-2 kHz band, and no sign that a finer mesh is what the owner hears. The 4 cm lockstep prototype is not pursued.
+- Same analysis on EngineLab CP2 at 3,148 rpm, steady part only (a render starts with a ~5,500 rpm transient 15 dB louder: skip the first 4 s): energy above 2 kHz -50 dB of total, tilt -9.8 dB/oct, crest 10.8 dB, cycle-synchronous share 93.7 %.
+- Not measured: anything against a real CP2 recording, which remains the arbiter.
+
 ## 2026-10-13 — Valve turbulence noise, and the first IR clips
 
 - The other simulator's turbulent valve-area modulation (4 RBJ low-pass sections, f_c = clamp(0.35 v/d, 100, 3,500) Hz, depth 0.3, collapse on fast opening) re-expressed as `ValveTurbulenceNoise`: a Norton mass-flow source beside each exhaust valve's high-band source, own noise per valve. Its tests reproduce the analysis's measured deviations (1.0 / 3.0 / 5.7 %) and fail with 2 sections or a 10x smaller collapse. Off by default; `--valve-noise-ab`.
