@@ -5,6 +5,14 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-13 — Valve turbulence noise, and the first IR clips
+
+- The other simulator's turbulent valve-area modulation (4 RBJ low-pass sections, f_c = clamp(0.35 v/d, 100, 3,500) Hz, depth 0.3, collapse on fast opening) re-expressed as `ValveTurbulenceNoise`: a Norton mass-flow source beside each exhaust valve's high-band source, own noise per valve. Its tests reproduce the analysis's measured deviations (1.0 / 3.0 / 5.7 %) and fail with 2 sections or a 10x smaller collapse. Off by default; `--valve-noise-ab`.
+- Seven points: level -0.03 to +0.04 dB; shape 1.05-3.47 dB from valleys filled between harmonics (worst band +4.0 to +9.4 dB, anywhere from 25 Hz to 2 kHz); crest +0.2 to +1.2 dB; cycle-to-cycle COV up (LS3 1.2 -> 5.0 %, CP2 Full System 4,000 rpm 0.8 -> 1.8 %); periodicity -0.07 at most (LS3); tilt within 0.9 dB/oct.
+- Blind clips, CP2 Full System (`AbClipRenderer --valve-noise`): the noise is 21-22 dB under the clip (correlation 0.996). Offline renders are deterministic (two controls bit-identical), so that is the noise alone.
+- IR: no catalogue engine authors one, so the application plays in free field. The owner's stairwell IR (provenance unknown, not in the repo) on every path at the default convolution 0.45 is 22 dB under the dry sound; its 0.6 s cut is 60 dB from the 3 s file. Clips: `--impulse-response`.
+- Not measured: realtime cost with the noise on (per-sample trigonometry per valve), intake valves, any listening result.
+
 ## 2026-10-13 — Ambient far-field density by default, monitor full scale 140 dB
 
 - Owner-approved sound change: the outlets now radiate with the live ambient air density (p / R T from the runtime's ambient state); `setOutletFarFieldDensity(0)` restores the duct medium. Catalogue at 88 % of redline: +2.5 to +11.7 dB, the CP2 least (coolest gas).

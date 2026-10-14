@@ -616,6 +616,8 @@ void RealtimeEngineAudio::release() noexcept {
     valveFlowAcousticSource_ = {};
     valveFlowSourceRate_.reset();
     for (auto& state : valveFlowAcousticSourceState_) state.reset();
+    for (std::size_t valve = 0; valve < valveTurbulenceNoise_.size(); ++valve)
+        valveTurbulenceNoise_[valve].reset(static_cast<std::uint32_t>(0x2545F491U * (valve + 1U)));
     completeExhaustSwap();
     completeIntakeSwap();
     if (acousticExhaustNetwork_) acousticExhaustNetwork_->reset();
@@ -1704,12 +1706,23 @@ void RealtimeEngineAudio::renderWithStems(
                             valveFlowAcousticSourceState_[index],
                             massFlowKgPerSecond, densityKgPerM3,
                             characteristicImpedance);
+                        // Turbulent area fluctuation, the same Norton split as
+                        // the high-band source. Off by default.
+                        const auto turbulencePressurePa = valveTurbulenceNoiseEnabled_
+                            ? static_cast<float>(0.5 * characteristicImpedance
+                                * valveTurbulenceNoise_[index].process(
+                                    valveConductanceAreaM2, areaM2, massFlowKgPerSecond,
+                                    densityKgPerM3, sampleRate_)
+                                / densityKgPerM3)
+                            : 0.0F;
                         const auto outgoingMeasured = 0.5F * (pressurePerturbationPa
                             + characteristicImpedance * volumeVelocityPerturbation)
-                            + static_cast<float>(highBandSource.outgoingPressurePa);
+                            + static_cast<float>(highBandSource.outgoingPressurePa)
+                            + turbulencePressurePa;
                         const auto incomingMeasured = 0.5F * (pressurePerturbationPa
                             - characteristicImpedance * volumeVelocityPerturbation)
-                            + static_cast<float>(highBandSource.incomingPressurePa);
+                            + static_cast<float>(highBandSource.incomingPressurePa)
+                            - turbulencePressurePa;
 
                         // Publish the valve state; the termination itself is
                         // evaluated inside the waveguide, where the acoustic

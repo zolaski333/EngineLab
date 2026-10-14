@@ -77,6 +77,8 @@ struct OutletVariant final {
     double farFieldDensityKgPerM3 { -1.0 };
     /** Ideal pressure release instead of the Levine-Schwinger load. */
     bool pressureRelease { false };
+    /** Turbulent fluctuation of the exhaust valves' effective area. */
+    bool valveTurbulenceNoise { false };
 };
 OutletVariant outletVariant;
 
@@ -477,6 +479,7 @@ maskingMarginDb(const Spectrum& exhaust, const Spectrum& others) {
     auto& renderer = *rendererOwner;
     renderer.setOutletFarFieldDensity(outletVariant.farFieldDensityKgPerM3);
     renderer.setOutletPressureRelease(outletVariant.pressureRelease);
+    renderer.setValveTurbulenceNoiseEnabled(outletVariant.valveTurbulenceNoise);
     renderer.prepare(audioRate, samplesPerFrame);
     std::this_thread::sleep_for(std::chrono::milliseconds(200));
 
@@ -1352,7 +1355,9 @@ struct WavSignal final {
  *      Production uses ambient air from the live ambient conditions; 0 gives
  *      the duct medium (hot gas), the model before 2026-10-13.
  *    --pressure-release-ab: the Levine-Schwinger load against an ideal
- *      pressure release that returns every frequency into the pipe. */
+ *      pressure release that returns every frequency into the pipe.
+ *    --valve-noise-ab: the turbulent fluctuation of the exhaust valves'
+ *      effective area (ValveTurbulenceNoise), off in production. */
 [[nodiscard]] int runOutletAb(const EngineConfig& engine, double targetRpm,
                               double seconds, const OutletVariant& candidate,
                               const std::string& candidateLabel,
@@ -1452,6 +1457,7 @@ int main(int argc, char** argv) {
     bool outputStageAb = false;
     std::optional<double> radiationDensityAb;
     bool pressureReleaseAb = false;
+    bool valveNoiseAb = false;
     for (int index = 1; index < argc; ++index) {
         const std::string argument = argv[index];
         if (argument == "--catalog-root" && index + 1 < argc) catalogRoot = argv[++index];
@@ -1463,6 +1469,7 @@ int main(int argc, char** argv) {
         else if (argument == "--radiation-density-ab" && index + 1 < argc)
             radiationDensityAb = std::stod(argv[++index]);
         else if (argument == "--pressure-release-ab") pressureReleaseAb = true;
+        else if (argument == "--valve-noise-ab") valveNoiseAb = true;
         else if (argument == "--wav-reference" && index + 1 < argc)
             wavReference = argv[++index];
         else if (argument == "--wav-variant" && index + 1 < argc)
@@ -1496,7 +1503,7 @@ int main(int argc, char** argv) {
                       << " --output-stage-ab [--filter ...] [--rpm N] [--wav-out f.wav]\n"
                          "       " << argv[0]
                       << " --radiation-density-ab RHO | --pressure-release-ab"
-                         " [--filter ...] [--rpm N] [--wav-out f.wav]\n"
+                         " | --valve-noise-ab [--filter ...] [--rpm N] [--wav-out f.wav]\n"
                          "       " << argv[0]
                       << " --wav-reference ref.wav --wav-variant v.wav [...]"
                          " [--wav-skip S]\n";
@@ -1581,6 +1588,12 @@ int main(int argc, char** argv) {
         candidate.pressureRelease = true;
         return runOutletAb(engine, targetRpm, seconds, candidate,
                            "pressure-release outlets", "-pressure-release", wavOut);
+    }
+    if (valveNoiseAb) {
+        OutletVariant candidate;
+        candidate.valveTurbulenceNoise = true;
+        return runOutletAb(engine, targetRpm, seconds, candidate,
+                           "valve turbulence noise", "-valve-noise", wavOut);
     }
 
     std::cout << "Sound sensitivity to exhaust geometry\n"

@@ -364,6 +364,19 @@ restrictions as `--compare` apply. `EngineLabGeometrySensitivityHarness
 a steady engine speed. The stage is a mixing stage, not acoustics, and is not on
 the default audio path.
 
+## One factor on one engine (`--valve-noise`, `--impulse-response`)
+
+`--valve-noise <substring>` and `--impulse-response <substring> <file>` render
+the same engine twice and pair the render as the application plays it
+(control) against a render with one factor switched on (subject): the valve
+turbulence noise (`ValveTurbulenceNoise`), or `<file>` convolved on every
+exhaust path at the default convolution amount. No catalogue engine authors an
+impulse response, so the control is free field. The offline render is
+deterministic (two controls are bit-identical), so the factor is the only
+difference. The keys carry `mode: "valve-noise"` or `"impulse-response"` and
+`engine`; `scripts/listening.py` scores them as variant tests. An IR of unknown
+provenance stays outside the repository; only its path is written to the key.
+
 ## Remaining limitations
 
 - The gestures of the real recordings do not follow the EngineLab trajectory

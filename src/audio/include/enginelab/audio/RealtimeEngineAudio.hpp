@@ -12,6 +12,7 @@
 #include <enginelab/audio/ReactionCrackSynthesiser.hpp>
 #include <enginelab/audio/ThermoacousticHeatReleaseSource.hpp>
 #include <enginelab/audio/ValveFlowAcousticSource.hpp>
+#include <enginelab/audio/ValveTurbulenceNoise.hpp>
 #include <enginelab/audio/ValvePortTermination.hpp>
 #include <enginelab/foundation/AcousticSourcePlacement.hpp>
 #include <enginelab/runtime/EngineRuntime.hpp>
@@ -242,6 +243,11 @@ public:
         outletPressureRelease_ = enabled;
         if (acousticExhaustNetwork_)
             acousticExhaustNetwork_->setOutletPressureRelease(enabled);
+    }
+    /** Turbulent fluctuation of each exhaust valve's effective area
+     * (ValveTurbulenceNoise), off by default. Same threading rule as above. */
+    void setValveTurbulenceNoiseEnabled(bool enabled) noexcept {
+        valveTurbulenceNoiseEnabled_ = enabled;
     }
     [[nodiscard]] bool outletJetNoiseEnabled() const noexcept {
         return acousticExhaustNetwork_
@@ -731,6 +737,8 @@ private:
     std::array<BoundaryReconstructionFilter::State, 32> boundaryReconstructionFlow_ {};
     ValveFlowAcousticSource::Coefficients valveFlowAcousticSource_ {};
     std::array<ValveFlowAcousticSource::State, 32> valveFlowAcousticSourceState_ {};
+    bool valveTurbulenceNoiseEnabled_ { false };
+    std::array<ValveTurbulenceNoise, 32> valveTurbulenceNoise_ {};
     std::array<bool, 32> thermoacousticMeanInitialised_ {};
     float thermoacousticMeanCoefficient_ { 0.0F };
     // Atomic so a monitoring thread can observe which path is producing audio

@@ -25,6 +25,11 @@ target_link_libraries(EngineLabAutoGainSoftClipperTests PRIVATE EngineLab::Audio
 enginelab_set_warnings(EngineLabAutoGainSoftClipperTests)
 add_test(NAME EngineLab.AutoGainSoftClipper COMMAND EngineLabAutoGainSoftClipperTests)
 
+add_executable(EngineLabValveTurbulenceNoiseTests ValveTurbulenceNoiseTests.cpp)
+target_link_libraries(EngineLabValveTurbulenceNoiseTests PRIVATE EngineLab::Audio)
+enginelab_set_warnings(EngineLabValveTurbulenceNoiseTests)
+add_test(NAME EngineLab.ValveTurbulenceNoise COMMAND EngineLabValveTurbulenceNoiseTests)
+
 add_executable(EngineLabCombustionCycleVariationTests
     CombustionCycleVariationTests.cpp)
 target_link_libraries(EngineLabCombustionCycleVariationTests PRIVATE

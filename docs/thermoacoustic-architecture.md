@@ -156,6 +156,18 @@ stale state, and radiated clicks up to 3× full scale on the Merlin at
 3,040 rpm, where the floor (~9.8 kHz) leaves the band empty. A band that closes
 also forgets its state, so reopening settles on the flow of that moment.
 
+`ValveTurbulenceNoise` (off by default; `setValveTurbulenceNoiseEnabled`,
+`EngineLabGeometrySensitivityHarness --valve-noise-ab`, blind clips with
+`EngineLabAbClipRenderer --valve-noise`) adds a turbulent fluctuation of each
+exhaust valve's effective area, re-expressed from another simulator that
+modulates its valve areas inside its gas solver: low-passed uniform noise at a
+Strouhal cut-off (0.35 v/d, 100-3,500 Hz), depth 0.3, weighted out as the
+valve opens fully, and collapsed while the area moves fast. Here the gas
+network cannot carry that band, so the fluctuation is the mass-flow source
+δṁ = ṁ (ψ_eff/ψ − 1), split like the high-band source above. Measured
+2026-10-13: level unchanged, valleys between harmonics filled by up to 9 dB,
+cycle-to-cycle variation up (journal).
+
 ## 4. Radiation and calibration
 
 The outlet is terminated by `UnflangedPipeRadiation`, a causal Padé (1,2)
