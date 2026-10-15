@@ -188,6 +188,33 @@ gauge boost: the ratio is the one at sea level (101.325 kPa), and in
 thinner air the ratio it allows rises so the gauge boost stays the same. The supercharger uses a separate closure, without claiming to
 model a complete compressor map.
 
+The turbocharger's compressor head comes from a generic map scaled to its
+design point (Moraal and Kolmanovsky, SAE 1999-01-0908): the head coefficient
+against the flow coefficient, both relative to the design point, flat towards
+surge and falling to zero head at 1.5 times the design flow coefficient
+(choke). The design point is the wastegate ratio at
+`compressor_design_mass_flow_kg_s`, by default 100 m/s through an authored
+inducer, else the engine's air flow at 70 % of the redline. Since the
+wastegate holds the boost, the map only shows while the turbo spools. The
+compressor efficiency stays the authored constant: an efficiency island was
+measured further from the makers' torque figures (journal 2026-10-15).
+
+`turbocharger_count` (1 to 4) fits identical turbochargers, each with the
+areas, inertia and design flow authored for one. Each exhaust path's turbine
+face drives the one its `turbocharger` index names (by default the path's
+index modulo the count), and the face's share of that turbine is its share of
+that turbocharger's cylinders. The shafts run independently; their
+compressors feed one charge and are solved together every 0.25 ms: the common
+pressure ratio at which the flows their maps pass at their own speeds add up
+to the engine's draw. A turbocharger fed by fewer cylinders spins slower and
+passes less of the air, without any special rule.
+
+`intercooler_effectiveness` (0 to 0.95, default 0) takes that share of the
+compressor's temperature rise back out of the charge. No catalogue engine
+authors one: with a real one (0.7) the petrol turbo engines make 19-29 % more
+torque than their makers' figures, so the model is optimistic at boost by
+about that much and the missing cooler hides it (journal 2026-10-15).
+
 The turbine lives in the exhaust gas network, as a restriction face (the same
 primitive as an individual throttle) on the single outgoing face of the first
 junction where all of a path's cylinders have met. The face opens to the

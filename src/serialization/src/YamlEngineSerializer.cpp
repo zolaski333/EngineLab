@@ -332,6 +332,7 @@ std::string YamlEngineSerializer::encode(const EngineConfig& config) const {
         << YAML::Key << "turbulent_jet_noise_coefficient" << YAML::Value << config.forcedInduction.turbulentJetNoiseCoefficient
         << YAML::Key << "turbocharger_count" << YAML::Value << config.forcedInduction.turbochargerCount
         << YAML::Key << "compressor_design_mass_flow_kg_s" << YAML::Value << config.forcedInduction.compressorDesignMassFlowKgPerSecond
+        << YAML::Key << "intercooler_effectiveness" << YAML::Value << config.forcedInduction.intercoolerEffectiveness
         << YAML::EndMap
         << YAML::Key << "thermal" << YAML::Value << YAML::BeginMap
         << YAML::Key << "regulated" << YAML::Value << config.thermal.regulated
@@ -815,6 +816,7 @@ EngineDecodeResult YamlEngineSerializer::decode(std::string_view text) const noe
             config.forcedInduction.turbulentJetNoiseCoefficient = forced["turbulent_jet_noise_coefficient"].as<double>(config.forcedInduction.turbulentJetNoiseCoefficient);
             config.forcedInduction.turbochargerCount = forced["turbocharger_count"].as<std::uint32_t>(config.forcedInduction.turbochargerCount);
             config.forcedInduction.compressorDesignMassFlowKgPerSecond = forced["compressor_design_mass_flow_kg_s"].as<double>(config.forcedInduction.compressorDesignMassFlowKgPerSecond);
+            config.forcedInduction.intercoolerEffectiveness = forced["intercooler_effectiveness"].as<double>(config.forcedInduction.intercoolerEffectiveness);
         }
         if (const auto thermal = engine["thermal"]) {
             config.thermal.regulated = thermal["regulated"].as<bool>(config.thermal.regulated);

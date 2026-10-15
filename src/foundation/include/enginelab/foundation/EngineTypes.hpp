@@ -874,6 +874,11 @@ struct ForcedInductionConfig final {
      * diameter is authored, else the engine's air flow at 70 % of the redline
      * at the wastegate boost, shared by the units. */
     double compressorDesignMassFlowKgPerSecond { 0.0 };
+    /** Charge-air cooler effectiveness: the share of the compressor's
+     * temperature rise it removes (0 = none, 0.6-0.8 a road intercooler).
+     * The catalogue engines have none authored: with a real one their
+     * torque rises 19-29 % above their makers' figures (journal 2026-10-15). */
+    double intercoolerEffectiveness { 0.0 };
 };
 
 /** Engine temperatures; the realistic (unregulated) model is

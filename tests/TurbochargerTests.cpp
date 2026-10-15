@@ -184,6 +184,18 @@ void twoIdenticalAreOneDouble() {
     require(std::abs(two.shaftRpm[0] - one.shaftRpm[0]) < 0.01 * one.shaftRpm[0]
             && std::abs(two.shaftRpm[1] - one.shaftRpm[0]) < 0.01 * one.shaftRpm[0],
         "each half spins as the double one does");
+
+    // A charge-air cooler: the same boost, a denser charge.
+    auto cooled = single;
+    cooled.forcedInduction.intercoolerEffectiveness = 0.7;
+    require(!validateEngineConfig(cooled), "valid intercooled fixture");
+    const auto intercooled = heldFullLoad(cooled, 9.0);
+    std::cout << "  with a 0.7 intercooler: boost " << intercooled.boostRatio << ", " << intercooled.torqueNm
+              << " N.m\n";
+    require(intercooled.torqueNm > 1.08 * one.torqueNm,
+        "an intercooler makes more torque from the same boost");
+    require(std::abs(intercooled.boostRatio - one.boostRatio) < 0.05 * one.boostRatio,
+        "the wastegate still holds the boost");
 }
 
 /** A V8 with two cylinders on one turbocharger and six on the other: the

@@ -9,6 +9,15 @@ file formats, always with an in-memory migration).
 
 ### Changed
 
+- Turbo engines can have several turbochargers (`turbocharger_count`, up
+  to 4), each exhaust path driving the one it names. A turbo fed by fewer
+  cylinders spins slower and makes less of the air, as on a real engine.
+  The compressor now follows a map: its boost falls as the flow rises, so
+  spool at low engine speed changes a little (within 2.5 % at 2,000 rpm).
+- New `intercooler_effectiveness` (default none). Catalogue engines do
+  not use one: with it they make about 20-30 % more torque than the real
+  engines, so treat its effect as relative.
+
 - Exhaust collectors no longer sound muffled. A collector without an
   authored volume behaved as a 2-litre chamber, which cut 0.5-5 kHz by up
   to 19 dB on most engines; it now holds only what its pipe sweeps. Engines

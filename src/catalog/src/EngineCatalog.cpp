@@ -630,6 +630,7 @@ template <typename T>
     assignIfPresent(node, "turbulent_jet_noise_coefficient", value.turbulentJetNoiseCoefficient);
     assignIfPresent(node, "turbocharger_count", value.turbochargerCount);
     assignIfPresent(node, "compressor_design_mass_flow_kg_s", value.compressorDesignMassFlowKgPerSecond);
+    assignIfPresent(node, "intercooler_effectiveness", value.intercoolerEffectiveness);
     return value;
 }
 

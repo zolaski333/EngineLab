@@ -5,6 +5,13 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-15 — Several turbochargers, a compressor map, an intercooler
+
+- N turbochargers (1-4), each exhaust path's turbine face on its own shaft, the compressors solved together on one charge. EngineLab.Turbocharger: an I4 on two half-size units = one double (boost, torque within 0.2 %); a V8 with 2 + 6 cylinders per turbine: 113 vs 174 krpm, 22 % of the air through the small one, both at the common boost.
+- Compressor head now from a scaled speed-line map (Moraal-Kolmanovsky, design point = wastegate ratio at the engine's flow at 0.7 x redline). Dyno (catalogue): above 2,000 rpm unchanged (wastegate holds the ratio); at 2,000 rpm EJ25 +2.5 %, I5 -1.8 %, 2JZ +0.8 %, TDI -0.5 %.
+- REFUTED, not kept: an efficiency island (peak at the design point, -0.24 (phi-1)^2 - 0.25 (N-1)^2) costs at 2,000 rpm 2JZ -8.6 %, EJ25 -10.6 %, I5 -19.3 % (397 -> 320 N.m, real 480), TDI -15.9 % (347 -> 291, real 320); phi only (similarity): -7 to -16 %. Peak power unchanged. The low end is spool-limited and was already short (I5); the constant efficiency compensates a weak low-speed turbine. A turbine efficiency against U/C was not tried: its peak is the fitted value, so it can only remove more.
+- Intercooler (`intercooler_effectiveness`, default 0): with 0.7 the petrol turbos make 19-29 % more torque, ABOVE their makers' figures (2JZ 445 -> 524 at 4,000 rpm, real 427; EJ25 411 -> 506, real 393; I5 473 -> 594, real 500); the TDI is fuel-limited (+3 %). IMEP per unit of trapped charge is 14.5-15.2 bar on these vs 16.4 on the K20: the missing intercooler hides a ~20 % optimism at boost (lead, unverified: knock intensity saturates, so no knock-limited retard). The catalogue keeps none authored.
+
 ## 2026-10-15 — Peak firing pressure and its limit; diesel rail pressure
 
 - Peak pressure is now tracked per cylinder at every sub-step and published per cycle (the dyno's `peak_cyl_bar` sampled once per frame). DynoSweepHarness, whole catalogue, maximum over each 1,000 rpm row at full load: K20 116.8 bar, LS3 84.6, CP2 73.6-80.3, Hayabusa 77.1, CP4 87.9; 2JZ 107.1, EJ25 138.3, Audi I5 175.2 (3,000 rpm), TDI 231.5 (2,000 rpm).

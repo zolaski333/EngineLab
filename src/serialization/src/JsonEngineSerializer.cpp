@@ -475,7 +475,8 @@ std::string JsonEngineSerializer::encode(const EngineConfig& config) const {
                                {"tonal_acoustic_efficiency", config.forcedInduction.tonalAcousticEfficiency},
                                {"turbulent_jet_noise_coefficient", config.forcedInduction.turbulentJetNoiseCoefficient},
                                {"turbocharger_count", config.forcedInduction.turbochargerCount},
-                               {"compressor_design_mass_flow_kg_s", config.forcedInduction.compressorDesignMassFlowKgPerSecond}}},
+                               {"compressor_design_mass_flow_kg_s", config.forcedInduction.compressorDesignMassFlowKgPerSecond},
+                               {"intercooler_effectiveness", config.forcedInduction.intercoolerEffectiveness}}},
         {"thermal", {{"regulated", config.thermal.regulated},
                       {"regulated_coolant_c", config.thermal.regulatedCoolantTemperatureC},
                       {"regulated_oil_c", config.thermal.regulatedOilTemperatureC},
@@ -720,6 +721,7 @@ EngineDecodeResult JsonEngineSerializer::decode(std::string_view text) const noe
             config.forcedInduction.turbulentJetNoiseCoefficient = forced.value("turbulent_jet_noise_coefficient", config.forcedInduction.turbulentJetNoiseCoefficient);
             config.forcedInduction.turbochargerCount = forced.value("turbocharger_count", config.forcedInduction.turbochargerCount);
             config.forcedInduction.compressorDesignMassFlowKgPerSecond = forced.value("compressor_design_mass_flow_kg_s", config.forcedInduction.compressorDesignMassFlowKgPerSecond);
+            config.forcedInduction.intercoolerEffectiveness = forced.value("intercooler_effectiveness", config.forcedInduction.intercoolerEffectiveness);
         }
         if (engine.contains("thermal")) {
             const auto& thermal = engine.at("thermal");

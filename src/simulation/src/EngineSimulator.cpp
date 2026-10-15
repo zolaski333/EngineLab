@@ -1866,7 +1866,11 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 / std::max(0.35, config_.forcedInduction.compressorEfficiency);
             const auto chargeTemperatureC = config_.ambientTemperatureC + isentropicRiseC
                 + config_.forcedInduction.chargeTemperatureRiseC * 0.15 * boostBlend;
-            const auto temperatureK = std::max(240.0, chargeTemperatureC + 273.15);
+            // A charge-air cooler takes back its share of the rise.
+            const auto cooledChargeTemperatureC = chargeTemperatureC
+                - std::clamp(config_.forcedInduction.intercoolerEffectiveness, 0.0, 0.95)
+                    * std::max(0.0, chargeTemperatureC - config_.ambientTemperatureC);
+            const auto temperatureK = std::max(240.0, cooledChargeTemperatureC + 273.15);
             if (config_.forcedInduction.enabled
                     && config_.forcedInduction.blowOffValveFlowAreaMm2 > 0.0) {
                 const auto referencePressureRatio = intakeSourcePressureKpa

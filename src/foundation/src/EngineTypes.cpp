@@ -678,6 +678,7 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
         || config.forcedInduction.turbochargerCount > maximumTurbochargers
         || !(config.forcedInduction.compressorDesignMassFlowKgPerSecond == 0.0
             || inRange(config.forcedInduction.compressorDesignMassFlowKgPerSecond, 0.005, 5.0))
+        || !inRange(config.forcedInduction.intercoolerEffectiveness, 0.0, 0.95)
         || !inRange(config.thermal.regulatedCoolantTemperatureC, 40.0, 130.0)
         || !inRange(config.thermal.regulatedOilTemperatureC, 40.0, 150.0)
         || !(config.thermal.coolantMassKjPerC == 0.0 || inRange(config.thermal.coolantMassKjPerC, 5.0, 5'000.0))

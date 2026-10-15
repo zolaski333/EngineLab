@@ -57,7 +57,6 @@ inline constexpr double turboIsentropicExponent = 0.285714285714;
 /** Where a centrifugal compressor runs on its map. */
 struct CompressorOperatingPoint final {
     double pressureRatio { 1.0 };
-    double efficiency { 0.0 };
     /** Corrected shaft speed over the design speed. */
     double speedRatio { 0.0 };
     /** Flow coefficient over the design one: corrected flow over speed. */
@@ -86,9 +85,9 @@ inline constexpr double compressorSurgeFlowCoefficientRatio = 0.4;
  * the design flow and speed the map returns the design pressure ratio, as the
  * affinity law did; it now also falls with flow, as a real wheel's does.
  *
- * Efficiency is an island around the design point, the authored peak at its
- * centre: 6 points lost at half or one and a half the design flow ratio, 4 at
- * 60 % or 140 % of the design speed.
+ * The efficiency stays the authored one: an efficiency island around the
+ * design point cost 9-19 % of the torque at 2,000 rpm, further from the
+ * makers' figures (journal 2026-10-15).
  */
 [[nodiscard]] inline CompressorOperatingPoint compressorOperatingPoint(
     const ForcedInductionConfig& config, double designMassFlowKgPerSecond,
@@ -104,11 +103,9 @@ inline constexpr double compressorSurgeFlowCoefficientRatio = 0.4;
         * std::sqrt(temperatureK / compressorReferenceTemperatureK)
         / (pressureKpa / compressorReferencePressureKpa)
         / std::max(1.0e-6, designMassFlowKgPerSecond);
-    const auto peak = std::clamp(config.compressorEfficiency, 0.35, 0.90);
     if (point.speedRatio < 1.0e-6) {
         point.flowCoefficientRatio = correctedFlowRatio > 0.0 ? compressorChokeFlowCoefficientRatio : 0.0;
         point.choke = correctedFlowRatio > 0.0;
-        point.efficiency = 0.35;
         return point;
     }
     const auto phi = correctedFlowRatio / point.speedRatio;
@@ -122,10 +119,6 @@ inline constexpr double compressorSurgeFlowCoefficientRatio = 0.4;
         1.0 / turboIsentropicExponent);
     point.choke = phi >= compressorChokeFlowCoefficientRatio;
     point.surge = phi < compressorSurgeFlowCoefficientRatio;
-    const auto flowOffset = phi - 1.0;
-    const auto speedOffset = point.speedRatio - 1.0;
-    point.efficiency = std::clamp(peak - 0.24 * flowOffset * flowOffset - 0.25 * speedOffset * speedOffset,
-        0.35, peak);
     return point;
 }
 
