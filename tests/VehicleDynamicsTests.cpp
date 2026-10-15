@@ -276,6 +276,54 @@ int main() {
             "a pre-spool pressure transient must not latch the turbo diagnostic");
     }
 
+    // A stalled engine left in gear with the clutch out: its friction holds
+    // the crank, it does not drive the car. Its resistive torque used to be
+    // passed through the locked clutch as a drive torque, and the car rolled
+    // backwards at a steady 0.3 km/h (Audi I5-like, stalled on a launch).
+    {
+        auto config = launchConfig(enginelab::DrivenAxleLayout::front);
+        config.vehicle.tyreGripLimitEnabled = false;
+        config.vehicle.rollingResistanceCoefficient = 0.012;
+        enginelab::DrivelineModel model(config);
+        model.requestGear(0);
+        enginelab::EngineState stalled;
+        stalled.simulationTimeSeconds = 5.0;
+        stalled.torqueNm = -6.7;
+        stalled.cycleAveragedTorqueNm = -6.7;
+        enginelab::DrivelineOutput output;
+        auto fastest = 0.0;
+        for (int step = 0; step < 2'400; ++step) {
+            output = model.advance(1.0 / 240.0, stalled, 0.0, 1.0, 0.0);
+            fastest = std::max(fastest, std::abs(output.vehicleSpeedMps));
+        }
+        std::cout << "stalled in gear: fastest " << fastest * 3.6 << " km/h\n";
+        require(fastest < 1.0e-3, "a stalled engine in gear must not drive the car");
+    }
+    // A car coasting in neutral comes to rest: rolling resistance
+    // used to vanish below 1 cm/s, so it crept on at whatever speed it had
+    // left there, for ever.
+    {
+        auto config = launchConfig(enginelab::DrivenAxleLayout::front);
+        config.vehicle.tyreGripLimitEnabled = false;
+        config.vehicle.rollingResistanceCoefficient = 0.012;
+        enginelab::DrivelineModel model(config);
+        model.requestGear(0);
+        enginelab::EngineState pulling;
+        pulling.simulationTimeSeconds = 5.0;
+        pulling.rpm = 1'500.0;
+        pulling.angularVelocityRadPerSecond = pulling.rpm * 2.0 * std::numbers::pi / 60.0;
+        pulling.torqueNm = 60.0;
+        pulling.cycleAveragedTorqueNm = 60.0;
+        enginelab::DrivelineOutput output;
+        for (int step = 0; step < 60; ++step) output = model.advance(1.0 / 240.0, pulling, 0.0, 1.0, 0.0);
+        require(output.vehicleSpeedMps > 0.05, "the coasting witness must first move the car");
+        model.requestGear(-1);
+        // About 13.6 km/h, losing 0.12 m/s^2 to rolling: at rest after 33 s.
+        for (int step = 0; step < 240 * 60; ++step) output = model.advance(1.0 / 240.0, pulling, 0.0, 0.0, 0.0);
+        std::cout << "coasted 60 s: " << output.vehicleSpeedMps * 3.6 << " km/h\n";
+        require(std::abs(output.vehicleSpeedMps) < 1.0e-4, "a coasting car must come to rest");
+    }
+
     std::cout << "PASS: load transfer, persistence, catalogue layouts, injector and back-pressure diagnostics\n";
     return 0;
 }

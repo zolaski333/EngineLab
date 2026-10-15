@@ -217,10 +217,14 @@ DrivelineOutput DrivelineModel::advance(double dt, const EngineState& engineStat
     // the completed-cycle work for the mean constraint load; torsional ripple
     // remains in EngineSimulator, but cannot be phase-inverted by the slower
     // vehicle coupling.
-    const auto engineDriveTorque =
-        (engineState.simulationTimeSeconds > 0.0 && engineState.rpm > 220.0
-            ? engineState.cycleAveragedTorqueNm
-            : engineState.torqueNm)
+    // A crank at rest makes no resistive torque of its own: its friction is a
+    // reaction that only opposes motion. Passed through a locked clutch as a
+    // drive torque, a stalled engine's friction rolled the car backwards at a
+    // steady 0.3 km/h, the crank being held at zero against it.
+    const auto crankTorque = engineState.simulationTimeSeconds > 0.0 && engineState.rpm > 220.0
+        ? engineState.cycleAveragedTorqueNm
+        : engineState.torqueNm;
+    const auto engineDriveTorque = (engineOmega > 0.0 ? crankTorque : std::max(0.0, crankTorque))
         + engineState.starterTorqueNm;
     secondsSinceShift_ += dt;
     // An automatic gearbox picks its gear from the driver's pedal, never
@@ -515,8 +519,16 @@ DrivelineOutput DrivelineModel::advance(double dt, const EngineState& engineStat
             ? std::copysign(1.0, previousVehicleSpeed) : 0.0;
         const auto aeroForce = 0.5 * 1.225 * vehicle.dragCoefficient
             * vehicle.frontalAreaM2 * speedSquared * speedSign;
+        // Below 1 cm/s a car slowing down keeps a rolling resistance that
+        // fades with its speed: switched off there, it left a car creeping on
+        // at the speed it had when it crossed that line, for ever. A car
+        // pulling away keeps none there, as before (a launch is unchanged).
+        constexpr double rollingStictionSpeedMps = 0.01;
+        const auto slowing = previousVehicleSpeed * longitudinalAccelerationMps2_ <= 0.0;
+        const auto rollingDirection = std::abs(previousVehicleSpeed) > rollingStictionSpeedMps ? speedSign
+            : (slowing ? previousVehicleSpeed / rollingStictionSpeedMps : 0.0);
         const auto rollingForce = vehicle.massKg * 9.80665
-            * vehicle.rollingResistanceCoefficient * speedSign;
+            * vehicle.rollingResistanceCoefficient * rollingDirection;
         const auto motionSign = std::abs(previousWheelOmega) > 0.01
             ? std::copysign(1.0, previousWheelOmega)
             : (std::abs(previousVehicleSpeed) > 0.01
@@ -675,6 +687,14 @@ DrivelineOutput DrivelineModel::advance(double dt, const EngineState& engineStat
                 + aeroForce + rollingForce + roadLoadForce;
         }
         if (brakePressure > 0.0 && previousVehicleSpeed * vehicleSpeedMps_ < 0.0) vehicleSpeedMps_ = 0.0;
+        // The fading rolling resistance brings a free car to rest
+        // exponentially: end it before the speed reaches denormal numbers.
+        constexpr double restSpeedMps = 1.0e-9;
+        if (std::abs(vehicleSpeedMps_) < restSpeedMps
+                && std::abs(wheelAngularVelocityRadPerSecond_ * vehicle.tireRadiusM) < restSpeedMps) {
+            vehicleSpeedMps_ = 0.0;
+            wheelAngularVelocityRadPerSecond_ = 0.0;
+        }
         vehicleDistanceM_ += std::abs(0.5 * (previousVehicleSpeed + vehicleSpeedMps_)) * mechanicalDt;
 
         const auto meanWheelOmega = 0.5 * (previousWheelOmega + wheelAngularVelocityRadPerSecond_);

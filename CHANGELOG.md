@@ -13,7 +13,8 @@ file formats, always with an in-memory migration).
   port timings and widths and the crankcase compression): piston ports,
   crankcase pumping through a reed, one firing per revolution, fuelled as a
   carburettor is (no overrun fuel cut); the 3-D view and the inspector show
-  its ports instead of valves and cams. New catalogue
+  its ports instead of valves and cams, and the engine language sets the ports
+  (`two_stroke.*` keys). New catalogue
   engine: a Yamaha RD350LC-like twin with expansion chambers. Known gap: at
   the real-time exhaust mesh the expansion chambers barely work, so it makes
   about a quarter of the real bike's torque.
@@ -353,6 +354,9 @@ file formats, always with an in-memory migration).
 
 ### Fixed
 
+- A stalled engine left in gear no longer rolls the car backwards: its
+  friction was passed through the clutch as a drive torque.
+- A coasting car now comes to rest: below 1 cm/s it used to creep on for ever.
 - A two-stroke engine file that leaves out the crank offsets now spaces its
   cylinders over 360 degrees. Before, a twin got 0 and 360 degrees: both
   cylinders fired together.

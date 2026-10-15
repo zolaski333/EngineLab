@@ -5,6 +5,13 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-15 — Every catalogue engine through the drive harness
+
+- `EngineLabDriveScenarioHarness --builtin pull|downshift-clutch|cruise` on all 17 engines. Cruise holds 100 km/h within 0.06-0.96 km/h mean, 2.1 max; no false "injectors saturated" left. Merlin and Radial sit on a test stand (no road vehicle): they do not move, as intended.
+- Bug: the Audi I5-like stalls on the `cruise` launch (60 % throttle, clutch let out linearly over 0.9 s), and the stalled car then rolled BACKWARDS at a steady 0.33 km/h, brake off, flat road. The stopped crank's friction (-6.7 Nm) went through the locked clutch as a drive torque (-71 Nm at the wheel) while the crank was held at zero. A crank at rest now passes no resistive torque.
+- Second bug under it: rolling resistance switched off below 1 cm/s, so a car crossing that line crept on at that speed for ever (0.036 km/h here). It now fades with the speed below 1 cm/s while the car slows; a car pulling away keeps none there, as before. Fading it on launches too moved the 2JZ dual-clutch push by 2 % (EngineLab.ShiftStyle, push 375 -> 369 ms without retard) and failed its retard check: not kept. Both bugs in EngineLab.VehicleDynamics, failing before; dyno bit-identical.
+- Not a bug, not changed: the stall itself. The I5's 900 Nm clutch asks 200 Nm at 0.2 s of a 0.9 s linear release, more than the engine makes at 700 rpm and 60 %; it also stalls from a settled idle (launch at 8 s). The scenario has no clutch modulation; a real driver's launch was not measured. The RD350 never reaches 100 km/h in `cruise` (known torque gap).
+
 ## 2026-10-15 — "Injectors saturated" was read mid-window
 
 - The `injectors_saturated` limit read the injector's open time over the window elapsed SO FAR: a frame ending while the injector was still open read 100 %. Now judged on the last completed cycle. EngineLab.ActiveLimits: CP2 held at 6,000 rpm at full load, own injectors: no (was yes); 2 g/s injectors: yes.
