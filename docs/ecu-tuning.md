@@ -16,6 +16,7 @@ The set created with each engine contains:
 | `fuel.target_afr` | 2D table engine speed × load | bilinearly interpolated AFR target |
 | `ignition.advance_deg` | 2D table engine speed × load | absolute advance before dynamic corrections |
 | `limits.rev_rpm` | scalar | rev limiter threshold |
+| `knock.retard_deg_per_intensity` | scalar | knock control gain (spark-ignition only) |
 
 Load is currently `MAP / ambient_pressure`, clamped between 0 and 4. The
 default tables cover 0 to 400 %, with extra points above 100 % for
@@ -27,9 +28,15 @@ neutral at 0. The spark slider adds a trim in degrees to the table. Cranking,
 temperature, transient enrichment, knock and rev-limiter logic apply after
 that.
 
+Knock control retards the spark by `knock.retard_deg_per_intensity` degrees
+per unit of knock intensity (0 to 1), 12° by default, read with
+`knockRetardGainDegrees()`. Zero turns it off: the knock then runs free. The
+control is proportional and continuous; a real ECU retards in steps per knock
+event and recovers slowly, which is not modelled. Diesels have no entry.
+
 The canonical bounds are shared by validation, the generated metadata and the
 ECU: 10.5 to 18 for AFR, -10° to 55° for advance, and 600 to 25,000 rpm for the
-rev limiter. A cell accepted by the tuner is therefore no longer silently
+rev limiter, 0 to 40° per unit of knock for the knock gain. A cell accepted by the tuner is therefore no longer silently
 re-clamped to a different range. The dynamic corrections stay bounded to the
 same domain after the trims are applied.
 

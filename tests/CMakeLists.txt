@@ -577,3 +577,15 @@ add_executable(EngineLabCvtTests CvtTests.cpp)
 target_link_libraries(EngineLabCvtTests PRIVATE EngineLab::Runtime)
 enginelab_set_warnings(EngineLabCvtTests)
 add_test(NAME EngineLab.Cvt COMMAND EngineLabCvtTests)
+
+add_executable(EngineLabKnockControlTests KnockControlTests.cpp)
+target_link_libraries(EngineLabKnockControlTests PRIVATE
+    EngineLab::Foundation EngineLab::Calibration EngineLab::Events EngineLab::Physics EngineLab::Ecu
+    EngineLab::Exhaust EngineLab::Simulation EngineLab::Catalog)
+target_compile_definitions(EngineLabKnockControlTests PRIVATE
+    ENGINELAB_CATALOG_ROOT="${CMAKE_SOURCE_DIR}")
+if(MSVC)
+    target_link_options(EngineLabKnockControlTests PRIVATE /STACK:8388608)
+endif()
+enginelab_set_warnings(EngineLabKnockControlTests)
+add_test(NAME EngineLab.KnockControl COMMAND EngineLabKnockControlTests)

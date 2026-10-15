@@ -107,6 +107,11 @@ file formats, always with an in-memory migration).
 
 ### Added
 
+- Knock control is an ECU setting: `knock.retard_deg_per_intensity`, the
+  spark retard per unit of knock (12 deg as before; 0 turns it off). Turned
+  off, the 2JZ at full load runs 4 deg more advance and 2 % more torque at a
+  higher knock. Knock still does not punish an over-advanced map as a real
+  engine would (journal).
 - CVT gearboxes: a car's belt CVT that creeps like a dual clutch, and a
   scooter's with a centrifugal clutch that idles free. The variator holds the
   engine at a speed set by the pedal (low when cruising, near peak power flat

@@ -14,6 +14,7 @@ inline constexpr std::string_view variableValveLift = "valvetrain.vvl_mm";
 inline constexpr std::string_view boostTarget = "boost.target_kpa";
 inline constexpr std::string_view wastegateDuty = "boost.wastegate_duty";
 inline constexpr std::string_view revLimit = "limits.rev_rpm";
+inline constexpr std::string_view knockRetardGain = "knock.retard_deg_per_intensity";
 
 } // namespace enginelab::calibration::keys
 
@@ -33,6 +34,11 @@ inline constexpr double minimumIgnitionAdvanceDegrees = -10.0;
 inline constexpr double maximumIgnitionAdvanceDegrees = 55.0;
 inline constexpr double minimumRevLimitRpm = 600.0;
 inline constexpr double maximumRevLimitRpm = 25'000.0;
+// Knock control: spark retard per unit of knock intensity (0 = control off,
+// the knock runs free). 12 deg is the gain the ECU always used.
+inline constexpr double minimumKnockRetardGainDegrees = 0.0;
+inline constexpr double maximumKnockRetardGainDegrees = 40.0;
+inline constexpr double defaultKnockRetardGainDegrees = 12.0;
 inline constexpr double minimumNormalizedLoad = 0.0;
 inline constexpr double maximumNormalizedLoad = 4.0;
 inline constexpr double minimumAirFuelRatioTrim = -3.0;

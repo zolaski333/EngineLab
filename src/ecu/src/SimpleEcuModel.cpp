@@ -135,6 +135,13 @@ double activeRevLimitRpm(const EngineConfig& config,
         calibration::ecuLimits::minimumRevLimitRpm, calibration::ecuLimits::maximumRevLimitRpm);
 }
 
+double knockRetardGainDegrees(const calibration::CalibrationSnapshot& calibration) noexcept {
+    return std::clamp(calibration.scalarOr(calibration::keys::knockRetardGain,
+                                           calibration::ecuLimits::defaultKnockRetardGainDegrees),
+        calibration::ecuLimits::minimumKnockRetardGainDegrees,
+        calibration::ecuLimits::maximumKnockRetardGainDegrees);
+}
+
 EcuCommand SimpleEcuModel::evaluate(const EngineConfig& config, const EngineState& state,
                                     const EngineControls& controls) const noexcept {
     const auto& calibrationSnapshot = frameCalibration_;
@@ -431,7 +438,8 @@ EcuCommand SimpleEcuModel::evaluate(const EngineConfig& config, const EngineStat
     mappedAfr = std::clamp(mappedAfr
         - std::max(0.0, state.coolantTemperatureC - 108.0) * 0.025,
         minimumMappedAfr, maximumMappedAfr);
-    mappedAdvance = std::clamp(mappedAdvance - state.knockLevel * 12.0
+    const auto knockRetardDegrees = state.knockLevel * knockRetardGainDegrees(*calibrationSnapshot);
+    mappedAdvance = std::clamp(mappedAdvance - knockRetardDegrees
         - std::max(0.0, controls.shiftSparkRetardDegrees)
         - std::max(0.0, state.coolantTemperatureC - 108.0) * 0.20,
         calibration::ecuLimits::minimumIgnitionAdvanceDegrees,
@@ -715,7 +723,7 @@ EcuCommand SimpleEcuModel::evaluate(const EngineConfig& config, const EngineStat
     constexpr double reportedKnockRetardDegrees = 0.5;
     command.activeLimits =
         ((softLimit || limiterActive) ? static_cast<std::uint32_t>(ActiveLimit::revLimiter) : 0U)
-        | (state.knockLevel * 12.0 >= reportedKnockRetardDegrees
+        | (knockRetardDegrees >= reportedKnockRetardDegrees
             ? static_cast<std::uint32_t>(ActiveLimit::knockRetard) : 0U)
         | (state.coolantTemperatureC > 108.0
             ? static_cast<std::uint32_t>(ActiveLimit::coolantProtection) : 0U);

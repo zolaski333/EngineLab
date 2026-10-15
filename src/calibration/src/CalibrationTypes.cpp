@@ -241,6 +241,18 @@ void validateKnownEcuEntry(std::string_view id, const CalibrationEntry& entry,
             addIssue(issues, CalibrationErrorCode::invalidDimensions, std::string(path),
                      "The rev limiter must be a scalar calibration.");
         }
+    } else if (id == keys::knockRetardGain) {
+        const auto& metadata = metadataOf(entry);
+        if (metadata.unit != CalibrationUnit::degreeCrankshaft) {
+            addIssue(issues, CalibrationErrorCode::incompatibleUnit, std::string(path) + ".unit",
+                     "The knock retard gain must be expressed in crankshaft degrees.");
+        }
+        validateCanonicalLimits(metadata, ecuLimits::minimumKnockRetardGainDegrees,
+                                ecuLimits::maximumKnockRetardGainDegrees, path, issues);
+        if (!std::holds_alternative<ScalarCalibration>(entry)) {
+            addIssue(issues, CalibrationErrorCode::invalidDimensions, std::string(path),
+                     "The knock retard gain must be a scalar calibration.");
+        }
     }
 }
 

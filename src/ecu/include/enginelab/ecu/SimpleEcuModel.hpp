@@ -13,6 +13,10 @@ namespace enginelab {
  *  here rather than from the authored config. */
 [[nodiscard]] double activeRevLimitRpm(const EngineConfig& config,
                                        const calibration::CalibrationSnapshot& calibration) noexcept;
+/** The ECU's knock control gain: spark retard per unit of knock intensity,
+ *  from the calibration's `knock.retard_deg_per_intensity` (12 deg when the
+ *  calibration has none). Zero turns knock control off. */
+[[nodiscard]] double knockRetardGainDegrees(const calibration::CalibrationSnapshot& calibration) noexcept;
 /** Configured ignition curve plus live AFR/advance trims, transient enrichment and latched limiter. */
 class SimpleEcuModel final : public IEcuModel {
 public:

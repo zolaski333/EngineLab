@@ -5,6 +5,13 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-15 — Knock control as a calibration; knock intensity saturates
+
+- The ECU's knock retard (`knockLevel x 12` deg) is now the calibration `knock.retard_deg_per_intensity` (default 12, 0 = off). EngineLab.KnockControl, 2JZ held at 0.6 x redline, full load, last 6 of 12 s: on: knock 0.35, advance 6.3 deg, 455.6 N.m, damage 0; off: knock 0.43, advance 10.5 deg, 465.4 N.m, damage 3e-6.
+- Same rig with the spark trimmed +5/+10/+20 deg: knock 0.42/0.47/0.47 (on), 0.47/0.47/0.47 (off); torque still +2 to +5 %; damage at most 4.4e-4 after 12 s (0.5 "damaged" would take hours). The intensity (`severity x sqrt(unburned)` at auto-ignition, mean-chamber conditions) saturates just above the 0.45 "severe" threshold whatever the advance.
+- So knock consequences were NOT strengthened: a damage rate or a heat-transfer penalty tuned on this flat scale would be calibrated on a non-physical signal (onset changes are refuted, see the rules). An over-advanced map is not punished as a real engine would; next lead, unverified: the intensity's dependence on advance, not its onset.
+- Not compared with a real knock trace; a real ECU retards in steps per event and recovers slowly, not modelled.
+
 ## 2026-10-15 — CVT, car and scooter
 
 - A variator inside the clutch model: ratio interpolated over the 1 ms steps, the stick constraint follows its rate and takes slip out over 20 ms. Fixed-ratio gearboxes bit-for-bit unchanged (start = end ratio, added terms zero).
