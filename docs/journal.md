@@ -5,6 +5,11 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-15 — "Injectors saturated" was read mid-window
+
+- The `injectors_saturated` limit read the injector's open time over the window elapsed SO FAR: a frame ending while the injector was still open read 100 %. Now judged on the last completed cycle. EngineLab.ActiveLimits: CP2 held at 6,000 rpm at full load, own injectors: no (was yes); 2 g/s injectors: yes.
+- Correction to "Drive-scenario harness: first runs on the CP2" below: the "99 % of their window for 9.3 s" was this artefact. CP2 `pull` now: 0 s saturated, 0-100 km/h 3.97 s (5.86 s before the stage-E motorcycle inertias), top speed 202 km/h. A real MT-07 is quoted near 4 s; not measured here. Physics untouched (flag only).
+
 ## 2026-10-15 — Two-stroke fuelling: delivered air, no overrun cut
 
 - The RD350 was fuelled for its trapped oxygen-equivalent air (~60 mg, mostly retained charge) while ~9 mg crossed the transfers: idle AFR 3.7, trim on its 0.55 floor, 50 % misfires, stalled in the standing start. Fuelled on last cycle's delivered air: idle AFR 13.5, trim 1.01. Four-stroke dyno bit-identical.

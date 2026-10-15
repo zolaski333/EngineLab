@@ -386,7 +386,9 @@ private:
         const auto cylinders = std::min<std::size_t>(config_.cylinders.size(), dieselFuelLimitBits_.size());
         for (std::size_t index = 0; index < cylinders; ++index) {
             bits |= dieselFuelLimitBits_[index];
-            if (injectorWindowUtilisation(index) >= saturatedInjectorUtilisation)
+            // The last completed cycle's: the live counters are mid-window,
+            // where an injector still open reads as open for all of it.
+            if (1.0 - injectorCapacityRatio_[index] >= saturatedInjectorUtilisation)
                 bits |= static_cast<std::uint32_t>(ActiveLimit::injectorSaturated);
         }
         return bits;

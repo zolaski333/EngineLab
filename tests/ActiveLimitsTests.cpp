@@ -182,6 +182,23 @@ void checkSimulator(const enginelab::EngineCatalogLoadResult& catalog) {
         "a diesel at full load is capped by its smoke or quantity limit");
     require(wastegateMatches, "the boost-at-target bit follows the wastegate");
     require(hasActiveLimit(seen, ActiveLimit::boostAtTarget), "the TDI's wastegate regulates at full load");
+
+    // Saturated injectors are judged on a completed cycle: read mid-window,
+    // an injector that is still open has been open for all of the window so
+    // far, and every engine looked saturated whenever a frame ended there.
+    // The CP2's own 20 g/s are far from the limit; at 2 g/s it makes 46 N.m
+    // instead of 60 at 5,900 rpm (LiveSettingsTests).
+    for (const auto flowMgPerSecond : { 0.0, 2'000.0 }) {
+        auto config = cp2;
+        if (flowMgPerSecond > 0.0) config.injection.injectorFlowMgPerSecond = flowMgPerSecond;
+        auto held = std::make_unique<Engine>(config);
+        const auto limits = fullThrottleLimits(*held, config, 6'000.0, 4.0, activeRevLimit, wastegateMatches);
+        std::printf("  CP2 at 6,000 rpm, injectors %s: saturated %s\n",
+            flowMgPerSecond > 0.0 ? "2 g/s" : "its own", hasActiveLimit(limits, ActiveLimit::injectorSaturated) ? "yes" : "no");
+        require(hasActiveLimit(limits, ActiveLimit::injectorSaturated) == (flowMgPerSecond > 0.0),
+            flowMgPerSecond > 0.0 ? "undersized injectors report saturation"
+                                  : "injectors well inside their capacity do not report saturation");
+    }
 }
 /** Damage from over-revving a CP2 motored at `targetRpm` for 3 s: the
  * engine is driven, as by a missed downshift. */

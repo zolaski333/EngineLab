@@ -353,6 +353,9 @@ file formats, always with an in-memory migration).
 
 ### Fixed
 
+- The "injectors saturated" limit no longer lights up on a healthy engine at
+  full load: it is now judged on the last completed cycle, not on the part of
+  the window elapsed so far.
 - The dyno now sweeps up to the rev limiter you set in the ECU tuner. Before,
   it always stopped under the engine's original limiter, whatever the tune.
 - Over-rev damage now starts just past the active rev limiter, not at the
