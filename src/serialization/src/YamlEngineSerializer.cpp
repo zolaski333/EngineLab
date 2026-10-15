@@ -330,6 +330,8 @@ std::string YamlEngineSerializer::encode(const EngineConfig& config) const {
         << YAML::Key << "blow_off_valve_discharge_coefficient" << YAML::Value << config.forcedInduction.blowOffValveDischargeCoefficient
         << YAML::Key << "tonal_acoustic_efficiency" << YAML::Value << config.forcedInduction.tonalAcousticEfficiency
         << YAML::Key << "turbulent_jet_noise_coefficient" << YAML::Value << config.forcedInduction.turbulentJetNoiseCoefficient
+        << YAML::Key << "turbocharger_count" << YAML::Value << config.forcedInduction.turbochargerCount
+        << YAML::Key << "compressor_design_mass_flow_kg_s" << YAML::Value << config.forcedInduction.compressorDesignMassFlowKgPerSecond
         << YAML::EndMap
         << YAML::Key << "thermal" << YAML::Value << YAML::BeginMap
         << YAML::Key << "regulated" << YAML::Value << config.thermal.regulated
@@ -606,6 +608,7 @@ std::string YamlEngineSerializer::encode(const EngineConfig& config) const {
             << YAML::Key << "cylinder_ids" << YAML::Value << YAML::Flow << path.cylinderIds
             << YAML::Key << "impulse_response" << YAML::Value << path.impulseResponsePath
             << YAML::Key << "audio_volume" << YAML::Value << path.audioVolume
+            << YAML::Key << "turbocharger" << YAML::Value << path.turbocharger
             << YAML::Key << "acoustic_position_m" << YAML::Value;
         emitPoint(out, path.acousticPositionM);
         out << YAML::Key << "acoustic_axis" << YAML::Value;
@@ -810,6 +813,8 @@ EngineDecodeResult YamlEngineSerializer::decode(std::string_view text) const noe
             config.forcedInduction.blowOffValveDischargeCoefficient = forced["blow_off_valve_discharge_coefficient"].as<double>(config.forcedInduction.blowOffValveDischargeCoefficient);
             config.forcedInduction.tonalAcousticEfficiency = forced["tonal_acoustic_efficiency"].as<double>(config.forcedInduction.tonalAcousticEfficiency);
             config.forcedInduction.turbulentJetNoiseCoefficient = forced["turbulent_jet_noise_coefficient"].as<double>(config.forcedInduction.turbulentJetNoiseCoefficient);
+            config.forcedInduction.turbochargerCount = forced["turbocharger_count"].as<std::uint32_t>(config.forcedInduction.turbochargerCount);
+            config.forcedInduction.compressorDesignMassFlowKgPerSecond = forced["compressor_design_mass_flow_kg_s"].as<double>(config.forcedInduction.compressorDesignMassFlowKgPerSecond);
         }
         if (const auto thermal = engine["thermal"]) {
             config.thermal.regulated = thermal["regulated"].as<bool>(config.thermal.regulated);
@@ -1135,6 +1140,7 @@ EngineDecodeResult YamlEngineSerializer::decode(std::string_view text) const noe
                 path.cylinderIds = item["cylinder_ids"].as<std::vector<std::uint32_t>>();
                 path.impulseResponsePath = item["impulse_response"].as<std::string>("");
                 path.audioVolume = item["audio_volume"].as<double>(1.0);
+                path.turbocharger = item["turbocharger"].as<std::int32_t>(-1);
                 if (item["acoustic_position_m"])
                     path.acousticPositionM = decodePoint(item["acoustic_position_m"]);
                 if (item["acoustic_axis"])

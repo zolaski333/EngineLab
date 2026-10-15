@@ -674,6 +674,10 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
         || !inRange(config.forcedInduction.bearingFrictionPowerWatts, 0.0, 20'000.0)
         || !inRange(config.forcedInduction.turbineFlowAreaMm2, 10.0, 20'000.0)
         || !inRange(config.forcedInduction.wastegateFlowAreaMm2, 0.0, 20'000.0)
+        || config.forcedInduction.turbochargerCount < 1U
+        || config.forcedInduction.turbochargerCount > maximumTurbochargers
+        || !(config.forcedInduction.compressorDesignMassFlowKgPerSecond == 0.0
+            || inRange(config.forcedInduction.compressorDesignMassFlowKgPerSecond, 0.005, 5.0))
         || !inRange(config.thermal.regulatedCoolantTemperatureC, 40.0, 130.0)
         || !inRange(config.thermal.regulatedOilTemperatureC, 40.0, 150.0)
         || !(config.thermal.coolantMassKjPerC == 0.0 || inRange(config.thermal.coolantMassKjPerC, 5.0, 5'000.0))
@@ -1161,6 +1165,7 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
     for (const auto& path : config.exhaustPaths) {
         const auto& exhaust = path.geometry;
         if (path.id == 0 || path.cylinderIds.empty() || !exhaustPathIds.insert(path.id).second || !inRange(path.audioVolume, 0.0, 8.0)
+            || path.turbocharger >= static_cast<std::int32_t>(config.forcedInduction.turbochargerCount)
             || path.impulseResponsePath.size() > 1'024
             || !inRange(exhaust.primaryLengthMm, 100.0, 3'000.0)
             || !inRange(exhaust.primaryDiameterMm, 15.0, 200.0)

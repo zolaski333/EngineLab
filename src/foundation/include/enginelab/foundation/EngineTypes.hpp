@@ -36,6 +36,8 @@ enum class ExhaustComponentType : std::uint8_t {
 inline constexpr std::uint8_t unspecifiedExhaustComponentPort { 0xffU };
 /** Global CPU bound for acoustic-only delay lines authored as sealed branches. */
 inline constexpr std::size_t maximumExhaustAcousticSideBranches { 8 };
+/** Turbochargers one engine can carry (ForcedInductionConfig::turbochargerCount). */
+inline constexpr std::size_t maximumTurbochargers { 4 };
 enum class AcousticTerminationType : std::uint8_t { unflanged, flanged };
 enum class RunningState : std::uint8_t {
     stopped, cranking, idling, running, unstable, knocking, overheating, damaged, destroyed
@@ -665,6 +667,9 @@ struct ExhaustPathConfig final {
     AcousticPoint3M acousticAxis { 0.0, 1.0, 0.0 };
     AcousticTerminationType acousticTermination {
         AcousticTerminationType::unflanged };
+    /** The turbocharger this path's turbine face drives. Negative: the path's
+     * index modulo ForcedInductionConfig::turbochargerCount. */
+    std::int32_t turbocharger { -1 };
 };
 
 struct IgnitionMapSample final {
@@ -859,6 +864,16 @@ struct ForcedInductionConfig final {
     /** Measurable/semi-empirical conversion parameters, not mix gains. */
     double tonalAcousticEfficiency { 1.0e-6 };
     double turbulentJetNoiseCoefficient { 1.0e-5 };
+    /** Identical turbochargers, each one this unit: the design flow, areas,
+     * inertia and bearing loss above are one turbocharger's. The exhaust
+     * paths share them out (ExhaustPathConfig::turbocharger); their
+     * compressors feed one charge. 1 to maximumTurbochargers. */
+    std::uint32_t turbochargerCount { 1 };
+    /** Corrected mass flow at the centre of the compressor map (peak
+     * efficiency), one unit. Zero: 100 m/s through the inducer when its
+     * diameter is authored, else the engine's air flow at 70 % of the redline
+     * at the wastegate boost, shared by the units. */
+    double compressorDesignMassFlowKgPerSecond { 0.0 };
 };
 
 /** Engine temperatures; the realistic (unregulated) model is
@@ -1588,6 +1603,20 @@ struct EngineState final {
     double forcedInductionShaftSpeedRatio { 0.0 };
     double wastegateOpening { 0.0 };
     double blowOffMassFlowKgPerSecond { 0.0 };
+    /** Each turbocharger. The scalar fields above are their mean shaft speed,
+     * summed powers and the common wastegate. */
+    struct Turbocharger final {
+        double shaftSpeedRpm { 0.0 };
+        double turbinePowerKw { 0.0 };
+        double compressorPowerKw { 0.0 };
+        double compressorMassFlowKgPerSecond { 0.0 };
+        /** Flow coefficient over the map's design one; below 0.4 it surges,
+         * from 1.5 it chokes. */
+        double compressorFlowCoefficientRatio { 0.0 };
+        double compressorEfficiency { 0.0 };
+    };
+    std::uint32_t turbochargerCount { 0 };
+    std::array<Turbocharger, maximumTurbochargers> turbochargers {};
     /** Last resolved ECU command. These are diagnostic telemetry, not a
      * second control path: EngineSimulator publishes the exact command that
      * already drove injection and combustion in the current sub-step. */

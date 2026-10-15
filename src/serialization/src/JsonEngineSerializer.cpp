@@ -359,6 +359,7 @@ std::string JsonEngineSerializer::encode(const EngineConfig& config) const {
     for (const auto& path : config.exhaustPaths) {
         Json encodedPath = { {"id", path.id}, {"cylinder_ids", path.cylinderIds},
             {"impulse_response", path.impulseResponsePath}, {"audio_volume", path.audioVolume},
+            {"turbocharger", path.turbocharger},
             {"acoustic_position_m", pointJson(path.acousticPositionM)},
             {"acoustic_axis", pointJson(path.acousticAxis)},
             {"acoustic_termination", terminationName(path.acousticTermination)},
@@ -472,7 +473,9 @@ std::string JsonEngineSerializer::encode(const EngineConfig& config) const {
                                {"blow_off_valve_opening_pressure_ratio", config.forcedInduction.blowOffValveOpeningPressureRatio},
                                {"blow_off_valve_discharge_coefficient", config.forcedInduction.blowOffValveDischargeCoefficient},
                                {"tonal_acoustic_efficiency", config.forcedInduction.tonalAcousticEfficiency},
-                               {"turbulent_jet_noise_coefficient", config.forcedInduction.turbulentJetNoiseCoefficient}}},
+                               {"turbulent_jet_noise_coefficient", config.forcedInduction.turbulentJetNoiseCoefficient},
+                               {"turbocharger_count", config.forcedInduction.turbochargerCount},
+                               {"compressor_design_mass_flow_kg_s", config.forcedInduction.compressorDesignMassFlowKgPerSecond}}},
         {"thermal", {{"regulated", config.thermal.regulated},
                       {"regulated_coolant_c", config.thermal.regulatedCoolantTemperatureC},
                       {"regulated_oil_c", config.thermal.regulatedOilTemperatureC},
@@ -715,6 +718,8 @@ EngineDecodeResult JsonEngineSerializer::decode(std::string_view text) const noe
             config.forcedInduction.blowOffValveDischargeCoefficient = forced.value("blow_off_valve_discharge_coefficient", config.forcedInduction.blowOffValveDischargeCoefficient);
             config.forcedInduction.tonalAcousticEfficiency = forced.value("tonal_acoustic_efficiency", config.forcedInduction.tonalAcousticEfficiency);
             config.forcedInduction.turbulentJetNoiseCoefficient = forced.value("turbulent_jet_noise_coefficient", config.forcedInduction.turbulentJetNoiseCoefficient);
+            config.forcedInduction.turbochargerCount = forced.value("turbocharger_count", config.forcedInduction.turbochargerCount);
+            config.forcedInduction.compressorDesignMassFlowKgPerSecond = forced.value("compressor_design_mass_flow_kg_s", config.forcedInduction.compressorDesignMassFlowKgPerSecond);
         }
         if (engine.contains("thermal")) {
             const auto& thermal = engine.at("thermal");
@@ -1012,6 +1017,7 @@ EngineDecodeResult JsonEngineSerializer::decode(std::string_view text) const noe
                 path.cylinderIds = item.value("cylinder_ids", std::vector<std::uint32_t> {});
                 path.impulseResponsePath = item.value("impulse_response", std::string {});
                 path.audioVolume = item.value("audio_volume", 1.0);
+                path.turbocharger = item.value("turbocharger", std::int32_t { -1 });
                 if (item.contains("acoustic_position_m"))
                     path.acousticPositionM = decodePoint(item.at("acoustic_position_m"));
                 if (item.contains("acoustic_axis"))

@@ -218,6 +218,8 @@ constexpr double exhaustExternalHeatTransferWPerM2K = 18.0;
 struct TurbineFace final {
     std::size_t interfaceIndex { 0 };
     double cylinderShare { 0.0 };
+    std::size_t pathIndex { 0 };
+    std::size_t cylinders { 0 };
 };
 [[nodiscard]] std::vector<TurbineFace> collectorTurbineFaces(
     const gasdynamics::ExhaustNetworkLayout& layout) {
@@ -273,7 +275,7 @@ struct TurbineFace final {
                     == ExhaustEndpointType::junction)
                 continue;
             faces.push_back({ outgoingIndex, static_cast<double>(pathCylinders[path])
-                / static_cast<double>(std::max<std::size_t>(1, totalCylinders)) });
+                / static_cast<double>(std::max<std::size_t>(1, totalCylinders)), path, pathCylinders[path] });
             found = true;
         }
         if (!found) return {};
@@ -1049,11 +1051,27 @@ void EngineSimulator::configurePhysicalExhaustNetwork() {
     const auto& layout = network->layout();
     constructionExhaustLayout_ = layout;
     exhaustTurbineFaces_.clear();
-    for (const auto& face : collectorTurbineFaces(layout))
-        if (layout.interfaces()[face.interfaceIndex].restriction)
-            exhaustTurbineFaces_.push_back(
-                ExhaustTurbineFace { face.interfaceIndex, face.cylinderShare });
-    networkTurbinePowerW_ = 0.0;
+    // Each path's face drives its turbocharger: the authored one, else the
+    // path's index modulo the count. A face gets the share of its
+    // turbocharger's turbine area that its cylinders are of that one's.
+    const auto turbochargerCount = std::clamp<std::size_t>(
+        config_.forcedInduction.turbochargerCount, 1, maximumTurbochargers);
+    std::array<std::size_t, maximumTurbochargers> turbochargerCylinders {};
+    for (const auto& face : collectorTurbineFaces(layout)) {
+        if (!layout.interfaces()[face.interfaceIndex].restriction) continue;
+        const auto authored = face.pathIndex < config_.exhaustPaths.size()
+            ? config_.exhaustPaths[face.pathIndex].turbocharger : -1;
+        const auto turbocharger = authored >= 0
+            ? std::min<std::size_t>(static_cast<std::size_t>(authored), turbochargerCount - 1)
+            : face.pathIndex % turbochargerCount;
+        turbochargerCylinders[turbocharger] += face.cylinders;
+        exhaustTurbineFaces_.push_back(ExhaustTurbineFace { face.interfaceIndex, face.cylinderShare,
+            turbocharger, static_cast<double>(face.cylinders) });
+    }
+    for (auto& face : exhaustTurbineFaces_)
+        face.turbochargerShare /= static_cast<double>(std::max<std::size_t>(1,
+            turbochargerCylinders[face.turbocharger]));
+    networkTurbinePowerW_.fill(0.0);
     networkTurbineOutletPressureKpa_ = config_.ambientPressureKpa;
     const auto ambientState = network->mixtureModel().conservativeFromPressureTemperature(
         config_.ambientPressureKpa * 1'000.0,
@@ -1605,6 +1623,7 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
         if (stationary) {
             state_.boostPressureRatio = 1.0;
             state_.forcedInductionShaftSpeedRpm = 0.0;
+            for (auto& unit : state_.turbochargers) unit = {};
             state_.wastegateOpening = 0.0;
             wastegateIntegral_ = 0.0;
             state_.blowOffMassFlowKgPerSecond = 0.0;
@@ -1660,12 +1679,15 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                     * config_.forcedInduction.superchargerDriveRatio;
                 state_.wastegateOpening = 0.0;
             } else if (config_.forcedInduction.enabled) {
+                const auto& turbo = config_.forcedInduction;
+                const auto turbochargerCount = std::clamp<std::size_t>(
+                    turbo.turbochargerCount, 1, maximumTurbochargers);
+                // Without turbine faces, the exhaust is shared equally.
                 const auto exhaustFlowSplit = partitionTurboExhaustFlow(
-                    config_.forcedInduction, exhaustMassFlowKgPerSecond,
+                    config_.forcedInduction, exhaustMassFlowKgPerSecond
+                        / static_cast<double>(turbochargerCount),
                     state_.wastegateOpening);
                 const auto designOmega = config_.forcedInduction.designShaftSpeedRpm
-                    * 2.0 * std::numbers::pi / 60.0;
-                auto shaftOmega = state_.forcedInductionShaftSpeedRpm
                     * 2.0 * std::numbers::pi / 60.0;
                 const auto turbineInletPressureKpa = std::max(state_.exhaustPressureKpa,
                                                                state_.exhaustRunnerPressureKpa);
@@ -1712,10 +1734,12 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                     * (1.0 - std::pow(turbineExpansionRatio,
                         -turboIsentropicExponent))
                     * config_.forcedInduction.turbineEfficiency;
+                std::array<double, maximumTurbochargers> turbochargerTurbinePowerW {};
+                turbochargerTurbinePowerW.fill(turbinePowerW);
                 if (!exhaustTurbineFaces_.empty()) {
                     // The network's turbine faces expand the gas itself, pulse
                     // by pulse, into the pressure their downpipe actually holds.
-                    turbinePowerW = networkTurbinePowerW_;
+                    turbochargerTurbinePowerW = networkTurbinePowerW_;
                     state_.turbineOutletPressureKpa = networkTurbineOutletPressureKpa_;
                 }
                 // Boost control: proportional-integral on the pressure ratio,
@@ -1744,26 +1768,76 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                     wastegateIntegral_ = std::clamp(wastegateIntegral_
                         + proportional * subDt / wastegateIntegralSeconds, 0.0, 1.0);
                 state_.wastegateOpening = std::clamp(proportional + wastegateIntegral_, 0.0, 1.0);
-                const auto shaftAdvance = advanceTurboShaft(
-                    config_.forcedInduction, shaftOmega, turbinePowerW,
-                    compressorMassFlowKgPerSecond, ambientTemperatureK,
-                    state_.boostPressureRatio, subDt);
-                shaftOmega = shaftAdvance.angularSpeedRadPerSecond;
-                compressorPowerW = shaftAdvance.compressorPowerWatts;
-                state_.forcedInductionShaftSpeedRpm = shaftOmega * 60.0
-                    / (2.0 * std::numbers::pi);
-                state_.forcedInductionShaftSpeedRatio = shaftOmega
-                    / std::max(1.0, designOmega);
-                state_.turboBearingPowerKw =
-                    shaftAdvance.bearingPowerWatts * 0.001;
-                state_.turboShaftNetPowerKw =
-                    shaftAdvance.netPowerWatts * 0.001;
-                // The pressure head follows the compressor affinity law. The
-                // throttle is not a gain here: its measured flow changes the
-                // compressor work, and a closed throttle can retain upstream
-                // pressure long enough to drive a real bypass valve.
-                pressureRatioTarget =
-                    shaftAdvance.compressorPressureRatio;
+                // The compressors feed one charge. Each passes the share of the
+                // drawn flow its map gives at the common pressure and its own
+                // speed: one compressor takes it all, several are solved
+                // together every 0.25 ms (the charge itself settles over tens
+                // of milliseconds).
+                const auto designFlowKgPerSecond = compressorDesignMassFlowKgPerSecond(config_);
+                std::array<double, maximumTurbochargers> shaftOmega {};
+                for (std::size_t index = 0; index < turbochargerCount; ++index)
+                    shaftOmega[index] = state_.turbochargers[index].shaftSpeedRpm * 2.0 * std::numbers::pi / 60.0;
+                if (turbochargerCount > 1U) {
+                    parallelCompressorSolveAgeSeconds_ += subDt;
+                    if (parallelCompressorSolveAgeSeconds_ >= 2.5e-4
+                            || parallelCompressorFlowShare_[0] + parallelCompressorFlowShare_[1] <= 0.0) {
+                        parallelCompressorSolveAgeSeconds_ = 0.0;
+                        std::array<double, maximumTurbochargers> flows {};
+                        parallelCompressorPressureRatio_ = parallelCompressorPressureRatio(turbo,
+                            designFlowKgPerSecond, shaftOmega, turbochargerCount,
+                            compressorMassFlowKgPerSecond, ambientTemperatureK,
+                            config_.ambientPressureKpa, flows);
+                        for (std::size_t index = 0; index < turbochargerCount; ++index)
+                            parallelCompressorFlowShare_[index] = compressorMassFlowKgPerSecond > 0.0
+                                ? flows[index] / compressorMassFlowKgPerSecond
+                                : 1.0 / static_cast<double>(turbochargerCount);
+                    }
+                }
+                auto shaftSpeedSumRpm = 0.0;
+                turbinePowerW = 0.0;
+                for (std::size_t index = 0; index < turbochargerCount; ++index) {
+                    auto& unit = state_.turbochargers[index];
+                    const auto unitFlowKgPerSecond = turbochargerCount == 1U ? compressorMassFlowKgPerSecond
+                        : compressorMassFlowKgPerSecond * parallelCompressorFlowShare_[index];
+                    const auto shaftAdvance = advanceTurboShaft(turbo, shaftOmega[index],
+                        turbochargerTurbinePowerW[index], unitFlowKgPerSecond, ambientTemperatureK,
+                        state_.boostPressureRatio, subDt);
+                    shaftOmega[index] = shaftAdvance.angularSpeedRadPerSecond;
+                    compressorPowerW += shaftAdvance.compressorPowerWatts;
+                    turbinePowerW += turbochargerTurbinePowerW[index];
+                    state_.turboBearingPowerKw += shaftAdvance.bearingPowerWatts * 0.001;
+                    state_.turboShaftNetPowerKw += shaftAdvance.netPowerWatts * 0.001;
+                    unit.shaftSpeedRpm = shaftOmega[index] * 60.0 / (2.0 * std::numbers::pi);
+                    unit.turbinePowerKw = turbochargerTurbinePowerW[index] * 0.001;
+                    unit.compressorPowerKw = shaftAdvance.compressorPowerWatts * 0.001;
+                    unit.compressorMassFlowKgPerSecond = unitFlowKgPerSecond;
+                    shaftSpeedSumRpm += unit.shaftSpeedRpm;
+                }
+                state_.turbochargerCount = static_cast<std::uint32_t>(turbochargerCount);
+                state_.forcedInductionShaftSpeedRpm = shaftSpeedSumRpm / static_cast<double>(turbochargerCount);
+                state_.forcedInductionShaftSpeedRatio = state_.forcedInductionShaftSpeedRpm
+                    * 2.0 * std::numbers::pi / 60.0 / std::max(1.0, designOmega);
+                // The pressure head is read from the compressor map at the
+                // flow the engine draws. The throttle is not a gain here: its
+                // measured flow changes the compressor work and head, and a
+                // closed throttle can retain upstream pressure long enough to
+                // drive a real bypass valve.
+                if (turbochargerCount == 1U) {
+                    const auto point = compressorOperatingPoint(turbo, designFlowKgPerSecond, shaftOmega[0],
+                        compressorMassFlowKgPerSecond, ambientTemperatureK, config_.ambientPressureKpa);
+                    pressureRatioTarget = point.pressureRatio;
+                    state_.turbochargers[0].compressorFlowCoefficientRatio = point.flowCoefficientRatio;
+                    state_.turbochargers[0].compressorEfficiency = turbo.compressorEfficiency;
+                } else {
+                    pressureRatioTarget = parallelCompressorPressureRatio_;
+                    for (std::size_t index = 0; index < turbochargerCount; ++index) {
+                        const auto point = compressorOperatingPoint(turbo, designFlowKgPerSecond, shaftOmega[index],
+                            state_.turbochargers[index].compressorMassFlowKgPerSecond, ambientTemperatureK,
+                            config_.ambientPressureKpa);
+                        state_.turbochargers[index].compressorFlowCoefficientRatio = point.flowCoefficientRatio;
+                        state_.turbochargers[index].compressorEfficiency = turbo.compressorEfficiency;
+                    }
+                }
             }
             if (!config_.forcedInduction.enabled
                 || config_.forcedInduction.type
@@ -1778,6 +1852,8 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 config_.forcedInduction.enabled ? pressureRatioTarget : 1.0, subDt, 14.0);
             if (!config_.forcedInduction.enabled) {
                 state_.forcedInductionShaftSpeedRpm = 0.0;
+                for (auto& unit : state_.turbochargers) unit = {};
+                state_.turbochargerCount = 0;
                 state_.wastegateOpening = 0.0;
                 state_.blowOffMassFlowKgPerSecond = 0.0;
             }
@@ -4055,7 +4131,9 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
             && exhaustTurbineFaces_.empty()) {
             const auto turbineAreaM2 = (config_.forcedInduction.turbineFlowAreaMm2
                 + state_.wastegateOpening
-                    * config_.forcedInduction.wastegateFlowAreaMm2) * 1.0e-6;
+                    * config_.forcedInduction.wastegateFlowAreaMm2) * 1.0e-6
+                * static_cast<double>(std::clamp<std::size_t>(
+                    config_.forcedInduction.turbochargerCount, 1, maximumTurbochargers));
             // Turbine throat and downstream system are two restrictions IN
             // SERIES, so their losses add and the effective area is the
             // reciprocal-square-sum, not the smaller of the two. The old `min`
@@ -4155,7 +4233,7 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 ? turbineAreaM2 / (turbineAreaM2 + gateAreaM2) : 0.0;
             for (const auto& face : exhaustTurbineFaces_) {
                 static_cast<void>(physicalExhaustNetwork.setRestrictionOpeningAreaM2(
-                    face.interfaceIndex, (turbineAreaM2 + gateAreaM2) * face.cylinderShare));
+                    face.interfaceIndex, (turbineAreaM2 + gateAreaM2) * face.turbochargerShare));
                 static_cast<void>(physicalExhaustNetwork.setRestrictionTurbine(
                     face.interfaceIndex, wheelShare,
                     config_.forcedInduction.turbineEfficiency));
@@ -4168,17 +4246,18 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
             exhaustNetworkCompleted = networkAdvance.completed;
             if (networkAdvance.completed) ++completedExhaustCouplingAdvances;
             if (!exhaustTurbineFaces_.empty() && networkAdvance.advancedTimeSeconds > 0.0) {
-                auto workJ = 0.0;
+                std::array<double, maximumTurbochargers> workJ {};
                 auto outletPressureKpa = 0.0;
                 for (const auto& face : exhaustTurbineFaces_) {
-                    workJ += physicalExhaustNetwork.restrictionWorkJ(face.interfaceIndex);
+                    workJ[face.turbocharger] += physicalExhaustNetwork.restrictionWorkJ(face.interfaceIndex);
                     const auto& outlet = physicalExhaustNetwork.layout()
                         .interfaces()[face.interfaceIndex].downstream;
                     outletPressureKpa += face.cylinderShare * 0.001
                         * physicalExhaustNetwork.ducts()[outlet.elementIndex]
                             .cellPrimitives().front().pressurePa;
                 }
-                networkTurbinePowerW_ = workJ / networkAdvance.advancedTimeSeconds;
+                for (std::size_t turbocharger = 0; turbocharger < maximumTurbochargers; ++turbocharger)
+                    networkTurbinePowerW_[turbocharger] = workJ[turbocharger] / networkAdvance.advancedTimeSeconds;
                 networkTurbineOutletPressureKpa_ = outletPressureKpa;
             }
             exhaustAdvanceDurationSeconds = networkAdvance.advancedTimeSeconds;
@@ -5728,7 +5807,10 @@ void EngineSimulator::reset() noexcept {
     exhaustBoundaryVolumeTimeIntegralM3S_.fill(0.0);
     exhaustCouplingDurationSeconds_ = 0.0;
     outletOpeningScaleTimeIntegralSeconds_ = 0.0;
-    networkTurbinePowerW_ = 0.0;
+    networkTurbinePowerW_.fill(0.0);
+    parallelCompressorPressureRatio_ = 1.0;
+    parallelCompressorFlowShare_.fill(0.0);
+    parallelCompressorSolveAgeSeconds_ = 0.0;
     networkTurbineOutletPressureKpa_ = config_.ambientPressureKpa;
     wastegateIntegral_ = 0.0;
     lastExhaustAcousticStatePublishSeconds_ = -1.0;
@@ -5748,6 +5830,7 @@ void EngineSimulator::reset() noexcept {
     state_.manifoldPressureKpa = config_.ambientPressureKpa;
     state_.boostPressureRatio = 1.0;
     state_.forcedInductionShaftSpeedRpm = 0.0;
+    state_.turbochargers = {};
     state_.wastegateOpening = 0.0;
     state_.blowOffMassFlowKgPerSecond = 0.0;
     dieselFuelLimitBits_.fill(0U);

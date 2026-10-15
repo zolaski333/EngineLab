@@ -601,3 +601,13 @@ if(MSVC)
 endif()
 enginelab_set_warnings(EngineLabPeakPressureTests)
 add_test(NAME EngineLab.PeakPressure COMMAND EngineLabPeakPressureTests)
+
+add_executable(EngineLabTurbochargerTests TurbochargerTests.cpp)
+target_link_libraries(EngineLabTurbochargerTests PRIVATE
+    EngineLab::Foundation EngineLab::Calibration EngineLab::Events EngineLab::Physics EngineLab::Ecu
+    EngineLab::Exhaust EngineLab::Simulation)
+if(MSVC)
+    target_link_options(EngineLabTurbochargerTests PRIVATE /STACK:8388608)
+endif()
+enginelab_set_warnings(EngineLabTurbochargerTests)
+add_test(NAME EngineLab.Turbocharger COMMAND EngineLabTurbochargerTests)

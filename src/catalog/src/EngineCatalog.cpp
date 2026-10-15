@@ -628,6 +628,8 @@ template <typename T>
     assignIfPresent(node, "blow_off_valve_discharge_coefficient", value.blowOffValveDischargeCoefficient);
     assignIfPresent(node, "tonal_acoustic_efficiency", value.tonalAcousticEfficiency);
     assignIfPresent(node, "turbulent_jet_noise_coefficient", value.turbulentJetNoiseCoefficient);
+    assignIfPresent(node, "turbocharger_count", value.turbochargerCount);
+    assignIfPresent(node, "compressor_design_mass_flow_kg_s", value.compressorDesignMassFlowKgPerSecond);
     return value;
 }
 
@@ -1055,6 +1057,7 @@ void applyCrankOffsets(EngineConfig& config) {
             pathConfig.geometry = pathNode["geometry"] ? decodeExhaust(pathNode["geometry"]) : config.exhaust;
             pathConfig.impulseResponsePath = pathNode["impulse_response"].as<std::string>("");
             pathConfig.audioVolume = pathNode["audio_volume"].as<double>(1.0);
+            pathConfig.turbocharger = pathNode["turbocharger"].as<std::int32_t>(-1);
             if (pathNode["acoustic_position_m"])
                 pathConfig.acousticPositionM = decodePoint(
                     pathNode["acoustic_position_m"]);
