@@ -257,6 +257,37 @@ void testBaseFilesIncludesDependenciesAndCycles() {
     require(cycle.dependencies.size() == 2, "cyclic include dependencies should still be tracked");
 }
 
+void testTwoStrokePorts() {
+    TemporaryDirectory directory;
+    auto base = makeDefaultInlineTwo();
+    base.cycle = EngineCycle::twoStroke;
+    base.cylinders[1].crankOffsetDegrees = 180.0;
+    base.injection.startAngleDegrees = 200.0;
+    base.injection.endAngleDegrees = 300.0;
+    // Rebuilt as a two-stroke's: one crankcase circuit per cylinder.
+    base.intakePaths.clear();
+    normaliseEngineConfig(base);
+    writeFile(directory.path() / "twin.yaml", YamlEngineSerializer {}.encode(base));
+    writeFile(directory.path() / "root.engine",
+              "base \"twin.yaml\"\n"
+              "set two_stroke.exhaust_port_open_deg = 88 deg\n"
+              "set two_stroke.transfer_port_open_deg = 116 deg\n"
+              "set two_stroke.exhaust_port_width_mm = 4.4 cm\n"
+              "set two_stroke.transfer_port_width_mm = 52 mm\n"
+              "set two_stroke.port_discharge_coefficient = 0.7 ratio\n"
+              "set two_stroke.crankcase_compression_ratio = 1.4 ratio\n");
+    const auto result = EngineScriptCompiler {}.compileFile(directory.path() / "root.engine");
+    for (const auto& diagnostic : result.diagnostics) std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    require(result && result.config->cycle == EngineCycle::twoStroke, "a two-stroke script should compile");
+    const auto& ports = result.config->twoStroke;
+    requireNear(ports.exhaustPortOpenDegrees, 88.0, 1.0e-12, "the exhaust port timing is set");
+    requireNear(ports.transferPortOpenDegrees, 116.0, 1.0e-12, "the transfer port timing is set");
+    requireNear(ports.exhaustPortWidthMm, 44.0, 1.0e-12, "the exhaust port width is set in its unit");
+    requireNear(ports.transferPortWidthMm, 52.0, 1.0e-12, "the transfer port width is set");
+    requireNear(ports.portDischargeCoefficient, 0.7, 1.0e-12, "the port discharge coefficient is set");
+    requireNear(ports.crankcaseCompressionRatio, 1.4, 1.0e-12, "the crankcase compression ratio is set");
+}
+
 void testBackgroundHotReloadKeepsLastValidConfig() {
     TemporaryDirectory directory;
     const auto root = directory.path() / "root.engine";
@@ -314,6 +345,7 @@ int main() {
     testCompleteUnitAwareScript();
     testDiagnosticsAndSafetyLimits();
     testBaseFilesIncludesDependenciesAndCycles();
+    testTwoStrokePorts();
     testBackgroundHotReloadKeepsLastValidConfig();
     std::cout << "EngineLab scripting tests passed\n";
     return 0;

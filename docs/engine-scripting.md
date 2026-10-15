@@ -146,10 +146,13 @@ compiler checks in particular:
 - normalisation and complete final validation of `EngineConfig`.
 
 `set engine.cycle = two_stroke` gives a two-stroke engine with the default port
-timings (exhaust 92 deg, transfers 118 deg after top dead centre); the language
-has no syntax for the ports yet, so author them in YAML or JSON (`two_stroke:`
-block). The final validation applies the two-stroke rules (petrol, one
-cylinder per intake path).
+timings (exhaust 92 deg, transfers 118 deg after top dead centre). The ports
+are set with `two_stroke.exhaust_port_open_deg`, `two_stroke.transfer_port_open_deg`
+(angles after top dead centre), `two_stroke.exhaust_port_width_mm`,
+`two_stroke.transfer_port_width_mm` (0: from the bore),
+`two_stroke.port_discharge_coefficient` and `two_stroke.crankcase_compression_ratio`.
+The final validation applies the two-stroke rules (petrol, one cylinder per
+intake path).
 
 ## Hot reload in the application
 
