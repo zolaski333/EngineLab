@@ -648,3 +648,10 @@ if(MSVC)
 endif()
 enginelab_set_warnings(EngineLabTwoStrokeTests)
 add_test(NAME EngineLab.TwoStroke COMMAND EngineLabTwoStrokeTests)
+
+add_executable(EngineLabCatalogRoundTripTests CatalogRoundTripTests.cpp)
+target_link_libraries(EngineLabCatalogRoundTripTests PRIVATE
+    EngineLab::Foundation EngineLab::Serialization EngineLab::Catalog)
+target_compile_definitions(EngineLabCatalogRoundTripTests PRIVATE ENGINELAB_CATALOG_ROOT="${CMAKE_SOURCE_DIR}")
+enginelab_set_warnings(EngineLabCatalogRoundTripTests)
+add_test(NAME EngineLab.CatalogRoundTrip COMMAND EngineLabCatalogRoundTripTests)
