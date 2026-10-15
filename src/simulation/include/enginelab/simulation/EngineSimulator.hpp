@@ -353,17 +353,20 @@ private:
      *  advanced inside the pool and must never be given it. */
     void attachNetworkParallelFor() noexcept;
     [[nodiscard]] RunningState determineRunningState(const EngineControls&) const noexcept;
-    /** Injector open time divided by the complete 720-degree cycle. */
+    /** Crank degrees of one cylinder cycle: 720, or 360 for a two-stroke.
+     *  The crank angle itself always runs over 720 degrees. */
+    [[nodiscard]] double cylinderCycleDegrees() const noexcept { return cycleDegreesOf(config_.cycle); }
+    /** Injector open time divided by the complete cylinder cycle. */
     [[nodiscard]] double injectorDutyCycle(std::size_t cylinderIndex) const noexcept {
         const auto windowSubsteps = injectorWindowSubsteps_[cylinderIndex];
         if (windowSubsteps <= 0.0) return 0.0;
         const auto windowDegrees = std::fmod(
             config_.injection.endAngleDegrees
-                - config_.injection.startAngleDegrees + 720.0, 720.0);
+                - config_.injection.startAngleDegrees + cylinderCycleDegrees(), cylinderCycleDegrees());
         const auto openFraction =
             injectorOpenSubsteps_[cylinderIndex] / windowSubsteps;
         return std::clamp(
-            openFraction * windowDegrees / 720.0, 0.0, 1.0);
+            openFraction * windowDegrees / cylinderCycleDegrees(), 0.0, 1.0);
     }
     /** Fraction of the authored crank window for which the injector was open. */
     [[nodiscard]] double injectorWindowUtilisation(

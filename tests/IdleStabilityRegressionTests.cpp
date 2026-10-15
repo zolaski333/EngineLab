@@ -238,7 +238,8 @@ double measureEarlyBlip(const enginelab::EngineConfig& config,
 }
 } // namespace
 
-void traceIdle(const enginelab::EngineConfig& config) {
+/** `wideOpen`: the gate's phase 4 instead (1.2 s wide open, 12 s recovery). */
+void traceIdle(const enginelab::EngineConfig& config, bool wideOpen = false) {
     enginelab::SimpleEcuModel ecu;
     enginelab::SimplifiedGasolinePhysics physics;
     enginelab::FourStrokeEventGenerator events;
@@ -260,14 +261,14 @@ void traceIdle(const enginelab::EngineConfig& config) {
     constexpr double traceStartSeconds = 6.0;
     constexpr double traceIdleSeconds = 16.0;
     const auto blipStart = traceStartSeconds + traceIdleSeconds;
-    const auto blipEnd = blipStart + 0.5;
-    const auto traceEnd = blipEnd + 4.0;
+    const auto blipEnd = blipStart + (wideOpen ? 1.2 : 0.5);
+    const auto traceEnd = blipEnd + (wideOpen ? 12.0 : 4.0);
     for (int step = 0; step < static_cast<int>(traceEnd / stepSeconds); ++step, t += stepSeconds) {
         enginelab::EngineControls controls;
         controls.ignitionEnabled = true;
         controls.starterEngaged =
             t < traceStartSeconds && simulator.state().rpm < config.idleRpm * 0.85;
-        controls.throttle = (t >= blipStart && t < blipEnd) ? 0.5 : 0.0;
+        controls.throttle = (t >= blipStart && t < blipEnd) ? (wideOpen ? 1.0 : 0.5) : 0.0;
         controls.load = 0.0;
         const auto frame = simulator.step(stepSeconds, controls);
         // Fine cadence through the catch and the blip recovery, coarse between.
@@ -328,10 +329,14 @@ int main(int argc, char** argv) {
         }
 
         if (argc > 1 && std::string(argv[1]) == "--trace") {
-            // `--trace [name-substring ...]`; with no substring, the two engines
-            // this mode was first written for.
+            // `--trace [--wot] [name-substring ...]`; with no substring, the two
+            // engines this mode was first written for.
             std::vector<std::string> wanted;
-            for (int index = 2; index < argc; ++index) wanted.emplace_back(argv[index]);
+            auto wideOpen = false;
+            for (int index = 2; index < argc; ++index) {
+                if (std::string(argv[index]) == "--wot") wideOpen = true;
+                else wanted.emplace_back(argv[index]);
+            }
             if (wanted.empty()) wanted = { "Merlin", "LS3" };
             for (const auto& entry : catalog.entries) {
                 auto config = entry.config;
@@ -340,7 +345,7 @@ int main(int argc, char** argv) {
                     [&](const std::string& token) {
                         return config.name.find(token) != std::string::npos;
                     });
-                if (matches) traceIdle(config);
+                if (matches) traceIdle(config, wideOpen);
             }
             return EXIT_SUCCESS;
         }

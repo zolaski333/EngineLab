@@ -541,7 +541,13 @@ EcuCommand SimpleEcuModel::evaluate(const EngineConfig& config, const EngineStat
     const auto afterStartPhase =
         postStartAirOpening_.load(std::memory_order_relaxed) > 0.05
         && !overrunAfterfireArmed;
+    // A two-stroke keeps its fuel on overrun, as its carburettor's pilot
+    // circuit does. Cut, it scavenges the cylinder clean, so every resume
+    // fires a full fresh charge: the RD350 swung between the 1.50 and 1.65 x
+    // idle thresholds for 4 s after a WOT blip (+5 N.m bursts) and settled at
+    // 1,750 rpm against 1,300. Fuelled, it settles at 1,430.
     if (controls.starterEngaged || effectiveThrottle > 0.02
+            || config.cycle == EngineCycle::twoStroke
             || (afterStartPhase && !driverRevvedSinceStart)
             || state.rpm < decelerationFuelResumeRpm) {
         decelerationFuelCut = false;
@@ -575,7 +581,14 @@ EcuCommand SimpleEcuModel::evaluate(const EngineConfig& config, const EngineStat
     // the engine ran AFR 17.4, misfired and fell to 516 rpm (760 target).
     auto lambdaLearningHold = lambdaLearningHoldSeconds_.load(
         std::memory_order_relaxed);
-    lambdaLearningHold = decelerationFuelResumeEvent
+    // A two-stroke's overrun is fuelled (above) but just as unsettled: the
+    // film the open throttle left drains into a charge the meter did not ask
+    // for. Learning it took the RD350's trim to 0.64 by the tip-in (AFR 25,
+    // 20 misfires), or to its 0.55 floor on the way back to idle. The hold is
+    // refreshed through the overrun, so it also runs on after it.
+    const auto twoStrokeOverrun = config.cycle == EngineCycle::twoStroke
+        && state.throttle < 0.02 && state.rpm > idleTargetRpm * 1.65;
+    lambdaLearningHold = decelerationFuelResumeEvent || twoStrokeOverrun
         ? postFuelCutLambdaLearningHoldSeconds
         : std::max(0.0, lambdaLearningHold - idleDt);
     lambdaLearningHoldSeconds_.store(lambdaLearningHold,

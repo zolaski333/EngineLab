@@ -628,6 +628,9 @@ std::string JsonEngineSerializer::encode(const EngineConfig& config) const {
     if (!config.audioVoicingKey.empty())
         document["engine"]["audio_voicing"] = { {"family", config.audioVoicingFamily},
                                                 {"key", config.audioVoicingKey} };
+    // Written for a two-stroke only, so a four-stroke file is unchanged.
+    if (config.cycle == EngineCycle::twoStroke)
+        document["engine"]["two_stroke"] = { {"exhaust_port_open_deg", config.twoStroke.exhaustPortOpenDegrees}, {"transfer_port_open_deg", config.twoStroke.transferPortOpenDegrees}, {"exhaust_port_width_mm", config.twoStroke.exhaustPortWidthMm}, {"transfer_port_width_mm", config.twoStroke.transferPortWidthMm}, {"port_discharge_coefficient", config.twoStroke.portDischargeCoefficient}, {"crankcase_compression_ratio", config.twoStroke.crankcaseCompressionRatio} };
     return document.dump(2);
 }
 
@@ -736,6 +739,15 @@ EngineDecodeResult JsonEngineSerializer::decode(std::string_view text) const noe
             config.thermal.oilCoolingPowerKwPerC = thermal.value("oil_cooling_power_kw_per_c", config.thermal.oilCoolingPowerKwPerC);
             config.thermal.liquidCooled = thermal.value("liquid_cooled", config.thermal.liquidCooled);
             config.thermal.engineDrivenFan = thermal.value("engine_driven_fan", config.thermal.engineDrivenFan);
+        }
+        if (engine.contains("two_stroke")) {
+            const auto& ports = engine.at("two_stroke");
+            config.twoStroke.exhaustPortOpenDegrees = ports.value("exhaust_port_open_deg", config.twoStroke.exhaustPortOpenDegrees);
+            config.twoStroke.transferPortOpenDegrees = ports.value("transfer_port_open_deg", config.twoStroke.transferPortOpenDegrees);
+            config.twoStroke.exhaustPortWidthMm = ports.value("exhaust_port_width_mm", config.twoStroke.exhaustPortWidthMm);
+            config.twoStroke.transferPortWidthMm = ports.value("transfer_port_width_mm", config.twoStroke.transferPortWidthMm);
+            config.twoStroke.portDischargeCoefficient = ports.value("port_discharge_coefficient", config.twoStroke.portDischargeCoefficient);
+            config.twoStroke.crankcaseCompressionRatio = ports.value("crankcase_compression_ratio", config.twoStroke.crankcaseCompressionRatio);
         }
         if (engine.contains("combustion_calibration")) {
             const auto& calibration = engine.at("combustion_calibration");

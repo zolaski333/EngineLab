@@ -2275,7 +2275,13 @@ int main() {
         if (entry.family != "aircraft" && entry.family != "radial aircraft") {
             auto routeMinMm = 3'000.0;
             auto routeMaxMm = 4'000.0;
-            if (entry.family == "motorcycle") {
+            if (entry.config.cycle == enginelab::EngineCycle::twoStroke) {
+                // An expansion chamber tuned to its peak speed (~0.9-1.0 m
+                // from the port to mid-baffle at 8,500 rpm), then its stinger
+                // and silencer.
+                routeMinMm = 1'500.0;
+                routeMaxMm = 2'000.0;
+            } else if (entry.family == "motorcycle") {
                 routeMinMm = 1'200.0;
                 routeMaxMm = 1'500.0;
             } else if (entry.family == "aircooled flat-six") {

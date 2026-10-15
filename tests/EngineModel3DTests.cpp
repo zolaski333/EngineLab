@@ -1168,7 +1168,8 @@ int main() {
     // and is not drawn.
     auto turbosFitted = 0, turbosFittedDrawn = 0;
     for (const auto& entry : catalogue.entries) {
-        if (entry.config.forcedInduction.enabled) continue;
+        // A two-stroke refuses forced induction (validation; TurboFit).
+        if (entry.config.forcedInduction.enabled || entry.config.cycle == EngineCycle::twoStroke) continue;
         const EngineModel3D fitted(withTurbocharger(entry.config));
         ++turbosFitted;
         if (!fitted.turbo().placed) {
@@ -1205,7 +1206,11 @@ int main() {
     // (before it: 107 clashes, 51 self-clashes, 0, 259 tight bends, 6).
     // 2026-10-07: 43 tight bends once a branch leaving an X turns away at
     // once (the LS3's 1,070 mm pipes ran through each other otherwise).
-    const std::array<std::size_t, 5> measured { 7, 4, 0, 43, 7 };
+    // 2026-10-15: the rest of the catalogue at 5 clashes and 42 tight bends;
+    // the RD350LC-like adds 4 and 6, its two 110 mm expansion-chamber
+    // bellies laid side by side at the cylinder pitch (the real bike spreads
+    // them apart under the frame).
+    const std::array<std::size_t, 5> measured { 9, 4, 0, 48, 7 };
     const std::array<const char*, 5> names { "duct clashes", "self-clashes", "engine clashes", "tight bends",
                                              "stretched pipes" };
     for (std::size_t k = 0; k < measured.size(); ++k)

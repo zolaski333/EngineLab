@@ -5,6 +5,21 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-15 — Two-stroke fuelling: delivered air, no overrun cut
+
+- The RD350 was fuelled for its trapped oxygen-equivalent air (~60 mg, mostly retained charge) while ~9 mg crossed the transfers: idle AFR 3.7, trim on its 0.55 floor, 50 % misfires, stalled in the standing start. Fuelled on last cycle's delivered air: idle AFR 13.5, trim 1.01. Four-stroke dyno bit-identical.
+- IdleStability: idle 1,320 rpm (target 1,300, bypass 3 mm2; 6 mm2 gave 1,421) but 1,747 rpm 12 s after a WOT blip. Trace (`--trace --wot`): the overrun fuel cut cycled between 1.50 and 1.65 x idle for 4 s, each resume firing a clean scavenged charge (+5 N.m). No overrun cut on two-strokes: 1,413-1,430 rpm, passes.
+- Fuelled overrun then taught the trim the film drain (0.64 at a tip-in, AFR 25, 141 misfire events in 2 s). Holding learning only during overrun just delayed the crash to the 0.55 floor; holding it through overrun and 2 s after: 4 events, lean peak 62 %. The DFCO-resume test reports two-strokes as n/a.
+- Not compared with a real carburettor's transient; the remaining tip-in lean is the one-cycle lag of a delivered-air reference.
+
+## 2026-10-15 — Two-stroke engines; the expansion chamber needs a finer mesh
+
+- Piston ports, crankcase pumping (path plenum = crankcase volume, reed throttle), 360-degree cylinder phase in a 720-degree crank domain. Four-stroke catalogue dyno bit-identical. Catalogue: RD350LC-like twin (maker 37-40.2 N.m at 8,000 rpm).
+- The maker's 6.2:1 is a trapped ratio; geometric 11.2:1 is used (single cylinder: 40 -> 54 J per cycle).
+- Brake torque at 8,000 rpm against exhaust cell length: 360 mm 8.5 N.m, 100 mm 12.3, 75 mm 15.3, 50 mm 19.1, 25 mm 23.4 (stinger 22 mm). Single cylinder, trapped fresh charge 73 -> 136 mg from 360 to 25 mm: the chamber's suction and plugging waves need cells of 50 mm or less.
+- Real-time capacity (free run, no audio) at 9,500 rpm: 100 mm 1.41, 75 mm 1.29, 50 mm 0.76, 25 mm 0.29; paced with audio, 100 mm already overruns. So the catalogue keeps the 360 mm production mesh: 10.4 N.m at 8,000 rpm with a 26 mm stinger (0.65 x header), a quarter of the maker's. Not compensated by combustion or friction.
+- Second gap: combustion is late (CA50 ~30 deg ATDC at 8,000 rpm); not addressed. Outlet size and silencer restriction are inert. Ports, chambers and crankcase ratio are estimatedFamily; not compared with a recording.
+
 ## 2026-10-15 — Several turbochargers, a compressor map, an intercooler
 
 - N turbochargers (1-4), each exhaust path's turbine face on its own shaft, the compressors solved together on one charge. EngineLab.Turbocharger: an I4 on two half-size units = one double (boost, torque within 0.2 %); a V8 with 2 + 6 cylinders per turbine: 113 vs 174 krpm, 22 % of the air through the small one, both at the common boost.

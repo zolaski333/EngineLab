@@ -524,7 +524,23 @@ void normaliseEngineConfig(EngineConfig& config) {
     }
     if (config.intakePaths.empty()) {
         config.intakePaths.push_back(makeDefaultIntakePath(config));
-    } else if (config.intakePaths.size() == 1) {
+    }
+    // A two-stroke's intake path is its cylinder's crankcase circuit: a
+    // shared default intake becomes one copy per cylinder.
+    if (config.cycle == EngineCycle::twoStroke && config.intakePaths.size() == 1
+        && config.intakePaths.front().inheritsGlobalGeometry && config.cylinders.size() > 1) {
+        const auto shared = config.intakePaths.front();
+        config.intakePaths.clear();
+        for (const auto& cylinder : config.cylinders) {
+            auto path = shared;
+            path.id = cylinder.id;
+            path.cylinderIds = { cylinder.id };
+            path.inheritsGlobalGeometry = false;
+            config.intakePaths.push_back(std::move(path));
+        }
+        for (auto& bank : config.banks) bank.intakeId = 0;
+    }
+    if (config.intakePaths.size() == 1) {
         // As with crankshafts, a serialised path is an explicit topology. Keep
         // the legacy/global view mirrored from it instead of silently
         // overwriting the path during every validation or hot reload.
@@ -615,8 +631,29 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
             || config.schemaVersion > currentEngineSchemaVersion)
         return "Unsupported engine schema version";
     if (config.name.empty() || config.name.size() > 128) return "Engine name must contain between 1 and 128 bytes";
-    if (config.cycle != EngineCycle::fourStroke)
-        return "Only four-stroke engines are currently supported";
+    if (config.cycle == EngineCycle::twoStroke) {
+        const auto& ports = config.twoStroke;
+        if (config.fuel != FuelType::gasoline) return "A two-stroke engine runs on petrol";
+        if (config.forcedInduction.enabled) return "A two-stroke engine has no forced induction";
+        if (!inRange(ports.exhaustPortOpenDegrees, 60.0, 120.0)
+            || !inRange(ports.transferPortOpenDegrees, ports.exhaustPortOpenDegrees + 4.0, 150.0))
+            return "Two-stroke ports open 60-120 deg after TDC (exhaust), the transfers at least 4 deg later "
+                   "and by 150 deg";
+        const auto widthOk = [&inRange](double width) { return width == 0.0 || inRange(width, 5.0, 500.0); };
+        if (!widthOk(ports.exhaustPortWidthMm) || !widthOk(ports.transferPortWidthMm)
+            || !inRange(ports.portDischargeCoefficient, 0.3, 1.0)
+            || !inRange(ports.crankcaseCompressionRatio, 1.1, 2.5))
+            return "Two-stroke port widths are 5-500 mm (0: from the bore), their discharge coefficient 0.3-1, "
+                   "the crankcase compression ratio 1.1-2.5";
+        for (const auto& path : config.intakePaths) {
+            if (path.cylinderIds.size() != 1)
+                return "Each two-stroke cylinder has its own crankcase: one intake path per cylinder";
+            if (path.geometry.individualThrottles)
+                return "A two-stroke crankcase is fed through one carburettor, not individual throttles";
+        }
+        if (config.injection.startAngleDegrees >= 360.0 || config.injection.endAngleDegrees >= 360.0)
+            return "A two-stroke cycle is 360 degrees: injection angles are below 360";
+    }
     if (config.fuel == FuelType::diesel
             && config.injection.mode != InjectionMode::direct)
         return "Compression-ignition diesel engines require direct injection";

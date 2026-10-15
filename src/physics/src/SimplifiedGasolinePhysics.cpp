@@ -216,10 +216,14 @@ CombustionResult SimplifiedGasolinePhysics::evaluateCombustion(
     const auto lowSpeedMisfire = std::max(0.0, 420.0 - state.rpm) / 1'500.0;
     const auto misfire = combustionEnabled ? std::clamp(mixtureMisfire + lowSpeedMisfire + knock * 0.07, 0.0, 0.85) : 0.0;
     const auto displacementM3 = std::max(1.0e-6, displacedVolumeM3);
-    const auto imepBar = indicatedTorque * 4.0 * std::numbers::pi / displacementM3 / 100'000.0;
+    // Work per cylinder cycle over the displacement: 4 pi radians per cycle,
+    // 2 pi for a two-stroke.
+    const auto cycleRadians = config.cycle == EngineCycle::twoStroke ? 2.0 * std::numbers::pi
+                                                                     : 4.0 * std::numbers::pi;
+    const auto imepBar = indicatedTorque * cycleRadians / displacementM3 / 100'000.0;
     const auto heatOutput = combustionEnabled
         ? std::clamp(fuelMassMg / std::max(1.0, displacedVolumeM3 * 100'000.0), 0.0, 1.5) : 0.0;
-    const auto cyclesPerSecond = state.rpm / 120.0;
+    const auto cyclesPerSecond = state.rpm / (cycleDegreesOf(config.cycle) / 6.0);
     const auto fuelPowerKw = combustionEnabled
         ? fuelMassMg * 1.0e-6 * cyclesPerSecond * fuelEnergyJPerKg / 1'000.0 : 0.0;
     const auto heatPowerKw = fuelPowerKw * (1.0 - thermalEfficiency);

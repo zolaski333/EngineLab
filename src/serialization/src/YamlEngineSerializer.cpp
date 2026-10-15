@@ -732,7 +732,18 @@ std::string YamlEngineSerializer::encode(const EngineConfig& config) const {
         << YAML::Key << "intake_valve_diameter_mm" << YAML::Value << cylinder.intakeValveDiameterMm
         << YAML::Key << "exhaust_valve_diameter_mm" << YAML::Value << cylinder.exhaustValveDiameterMm
         << YAML::EndMap;
-    out << YAML::EndSeq << YAML::EndMap << YAML::EndMap;
+    out << YAML::EndSeq;
+    // Written for a two-stroke only, so a four-stroke file is unchanged.
+    if (config.cycle == EngineCycle::twoStroke)
+        out << YAML::Key << "two_stroke" << YAML::Value << YAML::BeginMap
+            << YAML::Key << "exhaust_port_open_deg" << YAML::Value << config.twoStroke.exhaustPortOpenDegrees
+            << YAML::Key << "transfer_port_open_deg" << YAML::Value << config.twoStroke.transferPortOpenDegrees
+            << YAML::Key << "exhaust_port_width_mm" << YAML::Value << config.twoStroke.exhaustPortWidthMm
+            << YAML::Key << "transfer_port_width_mm" << YAML::Value << config.twoStroke.transferPortWidthMm
+            << YAML::Key << "port_discharge_coefficient" << YAML::Value << config.twoStroke.portDischargeCoefficient
+            << YAML::Key << "crankcase_compression_ratio" << YAML::Value << config.twoStroke.crankcaseCompressionRatio
+            << YAML::EndMap;
+    out << YAML::EndMap << YAML::EndMap;
     return out.c_str();
 }
 
@@ -830,6 +841,14 @@ EngineDecodeResult YamlEngineSerializer::decode(std::string_view text) const noe
             config.thermal.oilCoolingPowerKwPerC = thermal["oil_cooling_power_kw_per_c"].as<double>(config.thermal.oilCoolingPowerKwPerC);
             config.thermal.liquidCooled = thermal["liquid_cooled"].as<bool>(config.thermal.liquidCooled);
             config.thermal.engineDrivenFan = thermal["engine_driven_fan"].as<bool>(config.thermal.engineDrivenFan);
+        }
+        if (const auto ports = engine["two_stroke"]) {
+            config.twoStroke.exhaustPortOpenDegrees = ports["exhaust_port_open_deg"].as<double>(config.twoStroke.exhaustPortOpenDegrees);
+            config.twoStroke.transferPortOpenDegrees = ports["transfer_port_open_deg"].as<double>(config.twoStroke.transferPortOpenDegrees);
+            config.twoStroke.exhaustPortWidthMm = ports["exhaust_port_width_mm"].as<double>(config.twoStroke.exhaustPortWidthMm);
+            config.twoStroke.transferPortWidthMm = ports["transfer_port_width_mm"].as<double>(config.twoStroke.transferPortWidthMm);
+            config.twoStroke.portDischargeCoefficient = ports["port_discharge_coefficient"].as<double>(config.twoStroke.portDischargeCoefficient);
+            config.twoStroke.crankcaseCompressionRatio = ports["crankcase_compression_ratio"].as<double>(config.twoStroke.crankcaseCompressionRatio);
         }
         if (const auto calibration = engine["combustion_calibration"]) {
             config.combustionCalibration.baseIgnitionDelaySeconds = calibration["base_ignition_delay_s"].as<double>(config.combustionCalibration.baseIgnitionDelaySeconds);

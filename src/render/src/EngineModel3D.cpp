@@ -1,4 +1,5 @@
 #include <enginelab/render/EngineModel3D.hpp>
+#include <enginelab/foundation/TwoStrokePorts.hpp>
 
 #include <algorithm>
 #include <cmath>
@@ -87,10 +88,11 @@ void appendShaft(Mesh& mesh, Vec3 centreXY, float zStart, float length, float ra
 
 /** Visible flame strength over the cycle: a short kernel before TDC, then a
     fast rise and an exponential burn-out through the first 75 degrees. */
-[[nodiscard]] float burnEnvelope(double phaseDegrees) noexcept {
+[[nodiscard]] float burnEnvelope(double phaseDegrees, double cycleDegrees) noexcept {
     const auto p = static_cast<float>(phaseDegrees);
+    const auto sparkRamp = static_cast<float>(cycleDegrees) - 15.0F;
     if (p < 75.0F) return std::exp(-p / 24.0F) * std::min(1.0F, p / 5.0F + 0.25F);
-    if (p > 705.0F) return (p - 705.0F) / 15.0F * 0.25F;
+    if (p > sparkRamp) return (p - sparkRamp) / 15.0F * 0.25F;
     return 0.0F;
 }
 
@@ -132,7 +134,8 @@ std::uint16_t EngineModel3D::addPart(Mesh mesh, SceneMaterial material, std::uin
 
 double EngineModel3D::cyclePhaseDegrees(std::size_t cylinder, double crankAngleDegrees) const noexcept {
     if (cylinder >= cylinders_.size()) return 0.0;
-    return std::fmod(std::fmod(crankAngleDegrees - cylinders_[cylinder].crankOffsetDegrees, 720.0) + 720.0, 720.0);
+    const auto cycle = cycleDegreesOf(config_.cycle);
+    return std::fmod(std::fmod(crankAngleDegrees - cylinders_[cylinder].crankOffsetDegrees, cycle) + cycle, cycle);
 }
 
 void EngineModel3D::buildCylinders() {
@@ -242,12 +245,37 @@ void EngineModel3D::buildCylinders() {
             }
             return mesh;
         };
-        cylinder.intakeValvePart = addPart(valves(config.intakeValveCount, config.intakeValveDiameterMm,
-                                                  cylinder.intakeValveAxis, -1.0F, true),
-                                           SceneMaterial::intakeValve, layerValves);
-        cylinder.exhaustValvePart = addPart(valves(config.exhaustValveCount, config.exhaustValveDiameterMm,
-                                                   cylinder.exhaustValveAxis, 1.0F, false),
-                                            SceneMaterial::exhaustValve, layerValves);
+        // A two-stroke has no valves: its ports are windows in the cylinder
+        // wall, from where the piston crown uncovers them down to its bottom
+        // dead centre, the exhaust on the exhaust side, the transfers facing.
+        const auto port = [&](double openDegrees, double widthMm, float sideSign) {
+            const auto crown = [&](double fromTopDegrees) {
+                const auto at = evaluateCylinderKinematics(config_, reference_, i,
+                    reference_.topDeadCentreAngleDegrees[i] + fromTopDegrees, 0.0);
+                return world(at.wristPinXMm, at.wristPinYMm, cylinder.z) + axis * cylinder.compressionHeight;
+            };
+            const auto upper = crown(openDegrees);
+            const auto lower = crown(180.0);
+            const auto height = std::max(1.0F, length(upper - lower));
+            const auto width = static_cast<float>(widthMm);
+            Mesh mesh;
+            // A duct leaving the bore: as wide as the window, as tall as its
+            // open height.
+            const auto out = side * sideSign;
+            const auto centre = (upper + lower) * 0.5F + out * (0.5F * b + 0.175F * b);
+            appendBox(mesh, Mat4::basis(lateral, out, cross(lateral, out), centre),
+                      { std::max(1.0F, width), 0.35F * b, height });
+            return mesh;
+        };
+        const auto twoStrokeCycle = config_.cycle == EngineCycle::twoStroke;
+        cylinder.intakeValvePart = addPart(twoStrokeCycle
+                ? port(config_.twoStroke.transferPortOpenDegrees, transferPortWidthMm(config_.twoStroke, config), -1.0F)
+                : valves(config.intakeValveCount, config.intakeValveDiameterMm, cylinder.intakeValveAxis, -1.0F, true),
+            SceneMaterial::intakeValve, layerValves);
+        cylinder.exhaustValvePart = addPart(twoStrokeCycle
+                ? port(config_.twoStroke.exhaustPortOpenDegrees, exhaustPortWidthMm(config_.twoStroke, config), 1.0F)
+                : valves(config.exhaustValveCount, config.exhaustValveDiameterMm, cylinder.exhaustValveAxis, 1.0F, false),
+            SceneMaterial::exhaustValve, layerValves);
 
         Mesh flame;
         appendSphere(flame, Mat4::identity(), 0.42F * b, 24, 12);
@@ -770,18 +798,20 @@ void EngineModel3D::pose(const ScenePoseInput& input, std::vector<SceneInstance>
         const auto phase = cyclePhaseDegrees(i, angle);
         const auto& cams = *cylinder.cams;
         const auto high = cams.variableProfileEnabled && input.rpm >= cams.switchRpm && input.throttle >= cams.switchThrottle;
-        const auto intakeLift = profiledValveLiftMm(phase, 360.0 + cams.intakeCenterlineDegrees,
+        // A two-stroke's ports are in the cylinder wall: its valves stay shut.
+        const auto valves = config_.cycle != EngineCycle::twoStroke;
+        const auto intakeLift = !valves ? 0.0 : profiledValveLiftMm(phase, 360.0 + cams.intakeCenterlineDegrees,
             high ? cams.highIntakeDurationDegrees : cams.intakeDurationDegrees,
             high ? cams.highIntakeLiftMm : cams.intakeLiftMm,
             high && !cams.highIntakeLiftProfile.empty() ? cams.highIntakeLiftProfile : cams.intakeLiftProfile);
-        const auto exhaustLift = profiledValveLiftMm(phase, 360.0 - cams.exhaustCenterlineDegrees,
+        const auto exhaustLift = !valves ? 0.0 : profiledValveLiftMm(phase, 360.0 - cams.exhaustCenterlineDegrees,
             high ? cams.highExhaustDurationDegrees : cams.exhaustDurationDegrees,
             high ? cams.highExhaustLiftMm : cams.exhaustLiftMm,
             high && !cams.highExhaustLiftProfile.empty() ? cams.highExhaustLiftProfile : cams.exhaustLiftProfile);
         out[cylinder.intakeValvePart].transform = Mat4::translation(cylinder.intakeValveAxis * -static_cast<float>(intakeLift));
         out[cylinder.exhaustValvePart].transform = Mat4::translation(cylinder.exhaustValveAxis * -static_cast<float>(exhaustLift));
 
-        const auto burn = burnEnvelope(phase) * std::clamp(input.combustion[i], 0.0F, 1.0F);
+        const auto burn = burnEnvelope(phase, cycleDegreesOf(config_.cycle)) * std::clamp(input.combustion[i], 0.0F, 1.0F);
         const auto scale = 0.6F + 0.5F * burn;
         const auto x = normalise(cross(cylinder.axis, zAxis));
         out[cylinder.flamePart].transform = Mat4::basis(x * scale, cylinder.axis * (scale * 0.45F), zAxis * scale,

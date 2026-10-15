@@ -645,7 +645,8 @@ run name, a typed size), gives the keyboard back to the engine controls.
 
 ## Extension rule
 
-A two-stroke or diesel engine, a torsional crankshaft, a 1D acoustic solver or
-an OpenGL backend must come in through an explicit model or interface. They
+A new engine cycle or fuel (as the two-stroke and the diesel did), a
+torsional crankshaft or an OpenGL backend must come in through an explicit
+model or interface. They
 must not bypass validation, the conservation invariants or the real-time
 boundaries.

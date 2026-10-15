@@ -817,7 +817,7 @@ void applyPart(const std::map<std::string, T>& parts, const YAML::Node& uses, co
 }
 
 void applyCrankOffsets(EngineConfig& config) {
-    const auto spacing = 720.0 / static_cast<double>(config.firingOrder.size());
+    const auto spacing = cycleDegreesOf(config.cycle) / static_cast<double>(config.firingOrder.size());
     for (std::size_t index = 0; index < config.cylinders.size(); ++index) {
         auto& cylinder = config.cylinders[index];
         const auto found = std::find(config.firingOrder.begin(), config.firingOrder.end(), cylinder.id);
@@ -925,6 +925,14 @@ void applyCrankOffsets(EngineConfig& config) {
     if (engine["vehicle"]) config.vehicle = decodeVehicle(engine["vehicle"]);
     if (engine["forced_induction"]) config.forcedInduction = decodeForcedInduction(engine["forced_induction"]);
     if (engine["thermal"]) config.thermal = decodeThermal(engine["thermal"]);
+    if (const auto ports = engine["two_stroke"]) {
+        assignIfPresent(ports, "exhaust_port_open_deg", config.twoStroke.exhaustPortOpenDegrees);
+        assignIfPresent(ports, "transfer_port_open_deg", config.twoStroke.transferPortOpenDegrees);
+        assignIfPresent(ports, "exhaust_port_width_mm", config.twoStroke.exhaustPortWidthMm);
+        assignIfPresent(ports, "transfer_port_width_mm", config.twoStroke.transferPortWidthMm);
+        assignIfPresent(ports, "port_discharge_coefficient", config.twoStroke.portDischargeCoefficient);
+        assignIfPresent(ports, "crankcase_compression_ratio", config.twoStroke.crankcaseCompressionRatio);
+    }
     if (const auto calibration = engine["combustion_calibration"]) {
         assignIfPresent(calibration, "base_ignition_delay_s", config.combustionCalibration.baseIgnitionDelaySeconds);
         assignIfPresent(calibration, "ignition_delay_temperature_exponent", config.combustionCalibration.ignitionDelayTemperatureExponent);

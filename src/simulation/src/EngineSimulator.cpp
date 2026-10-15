@@ -1,4 +1,5 @@
 #include <enginelab/simulation/EngineSimulator.hpp>
+#include <enginelab/foundation/TwoStrokePorts.hpp>
 #include <enginelab/foundation/ForcedInductionFlow.hpp>
 #include <enginelab/simulation/EngineThermalModel.hpp>
 #include <enginelab/simulation/TransientChargeEstimator.hpp>
@@ -299,12 +300,22 @@ void throttleFlowKeepingReversedFuel(GasCell& plenum, AirboxSlug& slug,
                                      double boundaryTemperatureK,
                                      double throttleAreaM2,
                                      double dischargeCoefficient,
-                                     double dtSeconds) noexcept {
+                                     double dtSeconds,
+                                     bool reedValve = false) noexcept {
+    // A two-stroke's reed valve only lets the charge into its crankcase: shut
+    // while the crankcase is above the carburettor, and a step that would
+    // have reversed is undone (a perfect check valve, no petal dynamics).
+    if (reedValve && plenum.pressureKpa() >= boundaryPressureKpa) return;
+    const auto beforeReed = reedValve ? std::optional<GasCell>(plenum) : std::nullopt;
     const auto fuelBeforeMoles = plenum.mixture().fuelMoles;
     const auto massBeforeKg = plenum.massKg();
     (void)ConservativeGasSystem::flowFromBoundary(plenum, boundaryPressureKpa,
         boundaryTemperatureK, throttleAreaM2, dischargeCoefficient, dtSeconds,
         0.0, -1.0); // plenum -> upstream compressor/atmosphere
+    if (beforeReed && plenum.massKg() < massBeforeKg) {
+        plenum = *beforeReed;
+        return;
+    }
     if (!(airboxVolumeLitres > 0.0)) {
         slug = {};
         return;
@@ -475,14 +486,17 @@ struct ParallelSubstepState final {
     return pathIndex < config.intakePaths.size() ? config.intakePaths[pathIndex].geometry : config.intake;
 }
 
-[[nodiscard]] double forwardPhaseDegrees(double previous, double current) noexcept {
-    return std::fmod(current - previous + 720.0, 720.0);
+/** Forward travel from `previous` to `current` on a cycle of `cycle`
+ *  degrees: 720 for a cylinder of a four-stroke, 360 for a two-stroke, and
+ *  720 for the crank angle itself, whatever the engine. */
+[[nodiscard]] double forwardPhaseDegrees(double previous, double current, double cycle) noexcept {
+    return std::fmod(current - previous + cycle, cycle);
 }
 
-[[nodiscard]] bool crossedPhase(double previous, double current, double target) noexcept {
-    const auto travel = forwardPhaseDegrees(previous, current);
+[[nodiscard]] bool crossedPhase(double previous, double current, double target, double cycle) noexcept {
+    const auto travel = forwardPhaseDegrees(previous, current, cycle);
     if (travel <= 1.0e-9) return false;
-    const auto distance = std::fmod(target - previous + 720.0, 720.0);
+    const auto distance = std::fmod(target - previous + cycle, cycle);
     return distance <= travel;
 }
 
@@ -1148,11 +1162,13 @@ void EngineSimulator::advanceCylinderResize() {
     for (std::size_t index = 0; index < config_.cylinders.size(); ++index) {
         if (!resize.pending[index]) continue;
         const auto& cylinder = config_.cylinders[index];
+        const auto cycle = cylinderCycleDegrees();
         const auto phase = std::fmod(state_.crankAngleDegrees - crankOffsetDegreesFor(config_, cylinder)
-            + 1'440.0, 720.0);
+            + 1'440.0, cycle);
         // Phase 0 is firing TDC: 360 is the overlap TDC, the chamber at its
-        // clearance volume with both valves near their crossing.
-        if (!stopped && !crossedPhase(previousCylinderPhases_[index], phase, 360.0)) continue;
+        // clearance volume with both valves near their crossing. A two-stroke
+        // resizes at bottom dead centre (180), its ports open.
+        if (!stopped && !crossedPhase(previousCylinderPhases_[index], phase, cycle * 0.5, cycle)) continue;
         const auto journalId = cylinder.crankJournalId;
         for (std::size_t member = 0; member < config_.cylinders.size(); ++member) {
             auto& sized = config_.cylinders[member];
@@ -1313,7 +1329,8 @@ bool EngineSimulator::settingsReplaceable(const EngineConfig& running,
         && was.turbineBladeCount == now.turbineBladeCount
         && was.superchargerLobeCount == now.superchargerLobeCount
         // The turbine faces are shared out when the exhaust network is built.
-        && was.turbochargerCount == now.turbochargerCount;
+        && was.turbochargerCount == now.turbochargerCount
+        && running.cycle == edited.cycle;
 }
 
 bool EngineSimulator::replaceSettings(EngineConfig& config) noexcept {
@@ -1455,7 +1472,7 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
         25.0e-6, 500.0e-6);
     constexpr auto couplingSamplesPerFiringPeriod = 16.0;
     const auto firingFrequencyHz = std::abs(state_.rpm)
-        * static_cast<double>(config_.cylinders.size()) / 120.0;
+        * static_cast<double>(config_.cylinders.size()) / (cylinderCycleDegrees() / 6.0);
     const auto productionExhaustCouplingSeconds = firingFrequencyHz > 1.0e-9
         ? std::min(maximumLowSpeedCouplingSeconds,
             1.0 / (couplingSamplesPerFiringPeriod * firingFrequencyHz))
@@ -1621,6 +1638,18 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 subDt, 18.0);
         }
         const auto stationary = state_.rpm < 20.0 && !safeControls.starterEngaged;
+        // A two-stroke's intake plenum is its crankcase: one per cylinder,
+        // swept by the underside of the piston. The volume change is the
+        // pumping; its work reaches the crank through the piston (below).
+        const auto twoStrokeCrankcase = config_.cycle == EngineCycle::twoStroke;
+        if (twoStrokeCrankcase)
+            for (std::size_t index = 0; index < config_.cylinders.size(); ++index) {
+                const auto& cylinder = config_.cylinders[index];
+                intakePlenumGas_[intakePathIndexByCylinder_[index]].setVolumeAdiabatic(
+                    crankcaseVolumeLitres(cylinder, config_.twoStroke.crankcaseCompressionRatio,
+                        std::fmod(state_.crankAngleDegrees - crankOffsetDegreesFor(config_, cylinder)
+                            + 1'440.0, 360.0)));
+            }
         // A crank that is not turning passes no gas through its valves. The
         // quasi-steady valve law has an unbounded gain at zero pressure
         // difference, so an open valve held at equilibrium by a stopped crank
@@ -1657,7 +1686,7 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                     airboxSlug_[pathIndex], intake.airboxVolumeLitres,
                     config_.ambientPressureKpa, config_.ambientTemperatureC + 273.15,
                     plenumInletAreaM2(intake, throttleAreaM2, throttlePlateAreaM2),
-                    intake.throttleDischargeCoefficient, subDt);
+                    intake.throttleDischargeCoefficient, subDt, twoStrokeCrankcase);
                 if (intake.individualThrottles)
                     setIndividualThrottleAreas(pathIndex, throttleAreaM2
                         * intake.throttleDischargeCoefficient);
@@ -1920,7 +1949,7 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                     airboxSlug_[pathIndex], intake.airboxVolumeLitres,
                     intakeSourcePressureKpa, temperatureK,
                     plenumInletAreaM2(intake, throttleAreaM2, throttlePlateAreaM2),
-                    intake.throttleDischargeCoefficient, subDt);
+                    intake.throttleDischargeCoefficient, subDt, twoStrokeCrankcase);
                 if (intake.individualThrottles)
                     setIndividualThrottleAreas(pathIndex, throttleAreaM2
                         * intake.throttleDischargeCoefficient);
@@ -2123,6 +2152,8 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
             cylinderGeometryRevision_ };
         const auto reuseCachedKinematics = cachedKinematicsKey.has_value()
             && *cachedKinematicsKey == currentKinematicsKey;
+        const auto twoStroke = config_.cycle == EngineCycle::twoStroke;
+        const auto cycleDegrees = cylinderCycleDegrees();
         const auto processCylinder = [&](std::size_t cylinderIndex) {
             CylinderSubstepScratch serialScratch {};
             auto& contribution = decoupleSharedVolumes
@@ -2130,7 +2161,7 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
             const auto& cylinder = config_.cylinders[cylinderIndex];
             const auto intakePathIndex = intakePathIndexByCylinder_[cylinderIndex];
             const auto crankOffset = crankOffsetDegreesFor(config_, cylinder);
-            const auto cyclePhase = std::fmod(state_.crankAngleDegrees - crankOffset + 1'440.0, 720.0);
+            const auto cyclePhase = std::fmod(state_.crankAngleDegrees - crankOffset + 1'440.0, cycleDegrees);
             auto cams = activeCamshaft(
                 config_, cylinder, state_.rpm, state_.throttle);
             if (cams.config->variableProfileEnabled) {
@@ -2140,7 +2171,7 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 cams.highProfile = actuator.appliedHigh();
             }
             const auto previousPhase = previousCylinderPhases_[cylinderIndex];
-            const auto cycleBoundaryCrossed = crossedPhase(previousPhase, cyclePhase, 0.0);
+            const auto cycleBoundaryCrossed = crossedPhase(previousPhase, cyclePhase, 0.0, cycleDegrees);
             if (cycleBoundaryCrossed) {
                 commandedSparkEventsLastCycle_[cylinderIndex] =
                     commandedSparkEventsThisCycle_[cylinderIndex];
@@ -2197,8 +2228,8 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                         valveTrainStates_[cylinderIndex], cyclePhase, state_.rpm, state_.load, 0.0);
             }
             const auto& valveTrain = valveTrainResults_[cylinderIndex];
-            const auto requestedSparkPhase = std::fmod(720.0 - ecuCommand.ignitionAdvanceDegrees
-                + cylinder.ignitionOffsetDegrees + 720.0, 720.0);
+            const auto requestedSparkPhase = std::fmod(cycleDegrees - ecuCommand.ignitionAdvanceDegrees
+                + cylinder.ignitionOffsetDegrees + cycleDegrees, cycleDegrees);
             // A real ECU commits a spark event ahead of the target tooth. The
             // former code moved the crossing target at every solver substep;
             // under a loaded acceleration, a small advance change could move
@@ -2223,7 +2254,9 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
             // keeps even a malformed configuration inside the same power
             // stroke.
             constexpr double sparkScheduleMaximumTravelDegrees = 260.0;
-            if (crossedPhase(previousPhase, cyclePhase, 540.0)) {
+            // A two-stroke latches at bottom dead centre (180), the start of
+            // its compression stroke.
+            if (crossedPhase(previousPhase, cyclePhase, cycleDegrees - 180.0, cycleDegrees)) {
                 scheduledSparkPhaseDegrees_[cylinderIndex] =
                     requestedSparkPhase;
                 // Measured from the CURRENT phase, not from 540: the crank has
@@ -2231,7 +2264,7 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 // the trigger angle would spend that travel twice.
                 sparkScheduleTravelRemainingDegrees_[cylinderIndex] =
                     std::clamp(std::fmod(requestedSparkPhase - cyclePhase
-                            + 720.0, 720.0),
+                            + cycleDegrees, cycleDegrees),
                         0.0, sparkScheduleMaximumTravelDegrees);
                 sparkScheduleArmed_[cylinderIndex] = true;
             } else if (sparkScheduleArmed_[cylinderIndex]) {
@@ -2241,9 +2274,9 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 // off; an accumulator would not, and would fire the schedule at
                 // once. One substep can never legitimately advance half a
                 // cycle, so anything that large is the wrap artefact.
-                constexpr double maximumCreditedSubstepTravelDegrees = 180.0;
+                const auto maximumCreditedSubstepTravelDegrees = cycleDegrees * 0.25;
                 const auto travel =
-                    forwardPhaseDegrees(previousPhase, cyclePhase);
+                    forwardPhaseDegrees(previousPhase, cyclePhase, cycleDegrees);
                 if (travel <= maximumCreditedSubstepTravelDegrees)
                     sparkScheduleTravelRemainingDegrees_[cylinderIndex] -=
                         travel;
@@ -2253,7 +2286,7 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
             const auto sparkCrossed = sparkScheduleArmed_[cylinderIndex]
                 && sparkScheduleTravelRemainingDegrees_[cylinderIndex] <= 0.0;
             const auto injectionStartCrossed = crossedPhase(previousPhase, cyclePhase,
-                config_.injection.startAngleDegrees);
+                config_.injection.startAngleDegrees, cycleDegrees);
             if (injectionStartCrossed) {
                 if (portInjectedGasoline
                         && portFuelResumePending_[cylinderIndex]
@@ -2317,16 +2350,24 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 : intakePlenumGas_[intakePathIndex];
             const auto chargeSourcePressureKpa = chargeSource.pressureKpa();
             const auto chargeSourceTemperatureK = chargeSource.temperatureK();
-            const auto instantaneousPredictedPortChargeMassMg =
-                TransientChargeEstimator::estimateFreshAirMassMg(
-                0.0,
-                {
+            // A two-stroke is fuelled as a carburettor does: for the fresh air
+            // that crossed its transfers last cycle. Its trapped oxygen is no
+            // reference: at idle ~85 % of the trapped charge is retained from
+            // cycle to cycle, unburned oxygen and fuel alike, and counting
+            // that oxygen as new air fuelled the RD350 for 60 mg against 9 mg
+            // delivered (AFR 3.7, half its cycles misfiring). Nor is its
+            // crankcase density, which swings within every cycle.
+            const TrappedChargeReference chargeReference = twoStroke
+                ? TrappedChargeReference {
+                    std::max(0.0, deliveredAirMgPerCycle_[cylinderIndex]),
+                    chargeSourcePressureKpa, chargeSourceTemperatureK }
+                : TrappedChargeReference {
                     trappedAirMassMgLastCycle_[cylinderIndex],
                     trappedAirSourcePressureKpaLastCycle_[cylinderIndex],
-                    trappedAirSourceTemperatureKLastCycle_[cylinderIndex],
-                },
-                chargeSourcePressureKpa,
-                chargeSourceTemperatureK);
+                    trappedAirSourceTemperatureKLastCycle_[cylinderIndex] };
+            const auto instantaneousPredictedPortChargeMassMg =
+                TransientChargeEstimator::estimateFreshAirMassMg(
+                0.0, chargeReference, chargeSourcePressureKpa, chargeSourceTemperatureK);
             if (injectionStartCrossed) {
                 // Sample the speed-density prediction once per sequential
                 // pulse. Re-evaluating it every solver substep and keeping the
@@ -2372,19 +2413,16 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
             // trapped reference owns the request, as in a speed-density ECU;
             // before any trapped reference exists (cranking) the resolved
             // chamber remains the only estimate.
+            // A two-stroke's closed chamber holds its retained charge: once a
+            // delivered reference exists, its oxygen is never a floor.
             const auto resolvedChargeFloorMg =
-                (valveTrain.intakeLiftMm > 0.01
+                (twoStroke || valveTrain.intakeLiftMm > 0.01
                     || valveTrain.exhaustLiftMm > 0.01)
-                    && trappedAirMassMgLastCycle_[cylinderIndex] > 0.0
+                    && chargeReference.freshAirMassMg > 0.0
                 ? 0.0 : oxygenEquivalentAirMassMg;
             const auto livePredictedPortChargeMassMg =
                 TransientChargeEstimator::estimateFreshAirMassMg(
-                    resolvedChargeFloorMg,
-                    {
-                        trappedAirMassMgLastCycle_[cylinderIndex],
-                        trappedAirSourcePressureKpaLastCycle_[cylinderIndex],
-                        trappedAirSourceTemperatureKLastCycle_[cylinderIndex],
-                    },
+                    resolvedChargeFloorMg, chargeReference,
                     chargeSourcePressureKpa, chargeSourceTemperatureK);
             const auto sampledPredictedPortChargeMassMg = std::max(
                 resolvedChargeFloorMg,
@@ -2476,7 +2514,7 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 requestedFuelMolesThisCycle_[cylinderIndex], physicalFuelTargetMoles);
             const auto requestedFuelMoles = requestedFuelMolesThisCycle_[cylinderIndex];
             const auto crankDegreesToSpark = std::fmod(
-                sparkPhase - cyclePhase + 720.0, 720.0);
+                sparkPhase - cyclePhase + cycleDegrees, cycleDegrees);
             const auto secondsToSpark = state_.rpm > 20.0
                 ? crankDegreesToSpark / (state_.rpm * 6.0) : 0.25;
             // Port injection sprays at the valve, which is now the inlet cell
@@ -3033,17 +3071,19 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 portFuelResumeEpochAgeSeconds_[cylinderIndex] += subDt;
             else
                 portFuelResumeEpochAgeSeconds_[cylinderIndex] = 0.0;
-            const auto phaseTravel = forwardPhaseDegrees(previousPhase, cyclePhase);
+            const auto phaseTravel = forwardPhaseDegrees(previousPhase, cyclePhase, cycleDegrees);
             // Bank angle is spatial geometry, not cam timing. Valve events are
-            // referenced to the cylinder's 720-degree thermodynamic phase.
+            // referenced to the cylinder's thermodynamic phase (720 degrees; a
+            // two-stroke's ports, 360).
             const auto intakeLift = valveTrain.intakeLiftMm;
             const auto exhaustLift = valveTrain.exhaustLiftMm;
             const auto exhaustCenterPhase = std::fmod(360.0 - cams.config->exhaustCenterlineDegrees
                 - valveTrain.exhaustAdvanceDegrees + 720.0, 720.0);
-            const auto exhaustOpenPhase = std::fmod(exhaustCenterPhase
-                - cams.exhaustDuration() * 0.5 + 720.0, 720.0);
+            const auto exhaustOpenPhase = twoStroke
+                ? config_.twoStroke.exhaustPortOpenDegrees
+                : std::fmod(exhaustCenterPhase - cams.exhaustDuration() * 0.5 + 720.0, 720.0);
             const auto distanceToExhaustOpen = std::fmod(
-                exhaustOpenPhase - previousPhase + 720.0, 720.0);
+                exhaustOpenPhase - previousPhase + cycleDegrees, cycleDegrees);
             const auto exhaustOpenedThisStep = phaseTravel > 1.0e-9
                 && distanceToExhaustOpen <= phaseTravel;
             const auto combustionDt = exhaustOpenedThisStep
@@ -3203,14 +3243,25 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
             // the production band in the literature cited on the helper. They
             // are deliberately not race-port figures -- a catalogue engine that
             // wants more says so through its camshaft flow curve.
-            const auto intakeArea = effectiveValveAreaMm2(cylinder.boreMm, intakeLift,
-                cylinder.intakeValveCount, cylinder.intakeValveDiameterMm,
-                valveTrain.intakeDischargeCoefficient, 0.40, 0.50, 0.58);
-            const auto exhaustArea = effectiveValveAreaMm2(cylinder.boreMm, exhaustLift,
-                cylinder.exhaustValveCount, cylinder.exhaustValveDiameterMm,
-                valveTrain.exhaustDischargeCoefficient, 0.34, 0.41,
-                std::clamp(options_.exhaustMaximumHeadAreaFraction.value_or(0.51),
-                    0.05, 1.5));
+            // A two-stroke has ports instead: the piston uncovers them, the
+            // transfer ports standing in for the intake valves (their duct is
+            // the intake runner, the crankcase its plenum).
+            const auto intakeArea = twoStroke
+                ? portOpenAreaMm2(cylinder, config_.twoStroke.transferPortOpenDegrees,
+                    transferPortWidthMm(config_.twoStroke, cylinder),
+                    config_.twoStroke.portDischargeCoefficient, cyclePhase)
+                : effectiveValveAreaMm2(cylinder.boreMm, intakeLift,
+                    cylinder.intakeValveCount, cylinder.intakeValveDiameterMm,
+                    valveTrain.intakeDischargeCoefficient, 0.40, 0.50, 0.58);
+            const auto exhaustArea = twoStroke
+                ? portOpenAreaMm2(cylinder, config_.twoStroke.exhaustPortOpenDegrees,
+                    exhaustPortWidthMm(config_.twoStroke, cylinder),
+                    config_.twoStroke.portDischargeCoefficient, cyclePhase)
+                : effectiveValveAreaMm2(cylinder.boreMm, exhaustLift,
+                    cylinder.exhaustValveCount, cylinder.exhaustValveDiameterMm,
+                    valveTrain.exhaustDischargeCoefficient, 0.34, 0.41,
+                    std::clamp(options_.exhaustMaximumHeadAreaFraction.value_or(0.51),
+                        0.05, 1.5));
             const auto& cylinderIntake = intakeGeometryAt(config_, intakePathIndex);
             const auto pistonAreaM2 = std::numbers::pi * std::pow(cylinder.boreMm * 0.0005, 2.0);
             // Both areas already carry their discharge coefficient, so the
@@ -3229,10 +3280,12 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
             pistonAreaM2ForSplit[cylinderIndex] = pistonAreaM2;
             chamberVolumeLitresForWork[cylinderIndex] = chamberVolume;
             cycleBoundaryForWork[cylinderIndex] = cycleBoundaryCrossed;
-            gasExchangeStrokeForWork[cylinderIndex] =
-                cyclePhase >= 180.0 && cyclePhase < 540.0;
-            exhaustStrokeForWork[cylinderIndex] =
-                cyclePhase >= 180.0 && cyclePhase < 360.0;
+            // A two-stroke has no pumping loop in its cylinder: the crankcase
+            // does the pumping, so all of its cylinder work is gross work.
+            gasExchangeStrokeForWork[cylinderIndex] = !twoStroke
+                && cyclePhase >= 180.0 && cyclePhase < 540.0;
+            exhaustStrokeForWork[cylinderIndex] = !twoStroke
+                && cyclePhase >= 180.0 && cyclePhase < 360.0;
             const auto plenumPressureKpa = chargeSourcePressureKpa;
             // Telemetry only. The resonator frequency feeds the UI and the
             // acoustic path; its former flow role — an admittance modulating a
@@ -3296,11 +3349,18 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
             }
             chamberKpa = cylinderGas_[cylinderIndex].pressureKpa();
             chamberPressureBar_[cylinderIndex] = chamberKpa / 100.0;
-            const auto intakeClosePhase = std::fmod(360.0 + cams.config->intakeCenterlineDegrees
-                - valveTrain.intakeAdvanceDegrees
-                + cams.intakeDuration() * 0.5 + 720.0, 720.0);
+            // A two-stroke traps its charge when the piston covers the
+            // transfer ports again, symmetric about bottom dead centre.
+            const auto intakeClosePhase = twoStroke
+                ? cycleDegrees - config_.twoStroke.transferPortOpenDegrees
+                : std::fmod(360.0 + cams.config->intakeCenterlineDegrees
+                    - valveTrain.intakeAdvanceDegrees
+                    + cams.intakeDuration() * 0.5 + 720.0, 720.0);
+            const auto intakeOpenDuration = twoStroke
+                ? cycleDegrees - 2.0 * config_.twoStroke.transferPortOpenDegrees
+                : cams.intakeDuration();
             intakeCloseForTrappedAir[cylinderIndex] = crossedPhase(
-                previousPhase, cyclePhase, intakeClosePhase);
+                previousPhase, cyclePhase, intakeClosePhase, cycleDegrees);
             if (forwardIntakeFlush) {
                 // Where this chamber and its intake valve will be at the end of
                 // the interval the network is about to run ahead over. The
@@ -3310,19 +3370,24 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                     std::abs(state_.angularVelocityRadPerSecond) * 180.0 / std::numbers::pi);
                 const auto aheadDegrees = degreesPerSecond * forwardIntervalSeconds;
                 const auto intakeOpenPhase = std::fmod(intakeClosePhase
-                    - cams.intakeDuration() + 720.0, 720.0);
+                    - intakeOpenDuration + cycleDegrees, cycleDegrees);
                 secondsToIntakeOpen[cylinderIndex] = std::fmod(
-                    intakeOpenPhase - cyclePhase + 720.0, 720.0) / degreesPerSecond;
+                    intakeOpenPhase - cyclePhase + cycleDegrees, cycleDegrees) / degreesPerSecond;
                 secondsToIntakeClose[cylinderIndex] = std::fmod(
-                    intakeClosePhase - cyclePhase + 720.0, 720.0) / degreesPerSecond;
+                    intakeClosePhase - cyclePhase + cycleDegrees, cycleDegrees) / degreesPerSecond;
                 auto aheadValveTrainState = valveTrainStates_[cylinderIndex];
                 const auto ahead = ValveTrainModel::evaluate(*cams.config, cams.highProfile,
                     aheadValveTrainState, std::fmod(cyclePhase + aheadDegrees, 720.0),
                     state_.rpm, state_.load, 0.0);
-                intakeValveAreaAheadM2[cylinderIndex] = effectiveValveAreaMm2(
-                    cylinder.boreMm, ahead.intakeLiftMm, cylinder.intakeValveCount,
-                    cylinder.intakeValveDiameterMm, ahead.intakeDischargeCoefficient,
-                    0.40, 0.50, 0.58) * valveAreaScale
+                intakeValveAreaAheadM2[cylinderIndex] = (twoStroke
+                    ? portOpenAreaMm2(cylinder, config_.twoStroke.transferPortOpenDegrees,
+                        transferPortWidthMm(config_.twoStroke, cylinder),
+                        config_.twoStroke.portDischargeCoefficient,
+                        std::fmod(cyclePhase + aheadDegrees, cycleDegrees))
+                    : effectiveValveAreaMm2(
+                        cylinder.boreMm, ahead.intakeLiftMm, cylinder.intakeValveCount,
+                        cylinder.intakeValveDiameterMm, ahead.intakeDischargeCoefficient,
+                        0.40, 0.50, 0.58)) * valveAreaScale
                     * std::clamp(options_.intakeValveAreaMultiplier.value_or(1.0),
                         0.05, 8.0);
                 const auto aheadKinematics = evaluateCylinderKinematics(config_,
@@ -3357,7 +3422,10 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
             const auto leverArm = kinematics.displacementDerivativeMPerRadian;
             contribution.reciprocatingTorque += inertiaForce * leverArm;
             // pistonAreaM2 is already defined above for the gas flow calls (same scope).
-            const auto gasForceN = (chamberKpa - config_.ambientPressureKpa) * 1'000.0 * pistonAreaM2;
+            // A two-stroke's piston has its crankcase, not the atmosphere,
+            // underneath: that is how the crankcase pumping loads the crank.
+            const auto undersidePressureKpa = twoStroke ? chargeSourcePressureKpa : config_.ambientPressureKpa;
+            const auto gasForceN = (chamberKpa - undersidePressureKpa) * 1'000.0 * pistonAreaM2;
             chamberPressureBeforeNetworkKpa[cylinderIndex] = chamberKpa;
             gasTorqueLeverArmM[cylinderIndex] = leverArm;
             contribution.gasIndicatedTorque += gasForceN * leverArm;
@@ -4529,12 +4597,15 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
             chamberPressureBar_[index] = finalChamberPressureKpa / 100.0;
             // The cycle's peak is published when the cylinder opens into its
             // gas exchange (bottom of the expansion stroke), where the
-            // pressure is low, so no firing peak straddles two cycles.
-            if (gasExchangeStrokeForWork[index] && !inGasExchange_[index]) {
+            // pressure is low, so no firing peak straddles two cycles. A
+            // two-stroke's is the half cycle from bottom dead centre.
+            const auto inGasExchange = twoStroke ? previousCylinderPhases_[index] >= 180.0
+                                                 : gasExchangeStrokeForWork[index];
+            if (inGasExchange && !inGasExchange_[index]) {
                 lastCyclePeakPressureKpa_[index] = cyclePeakPressureKpa_[index];
                 cyclePeakPressureKpa_[index] = 0.0;
             }
-            inGasExchange_[index] = gasExchangeStrokeForWork[index];
+            inGasExchange_[index] = inGasExchange;
             cyclePeakPressureKpa_[index] = std::max(cyclePeakPressureKpa_[index], finalChamberPressureKpa);
             IndicatedWorkModel::advance(indicatedWorkStates_[index],
                 finalChamberPressureKpa, chamberVolumeLitresForWork[index],
@@ -4914,7 +4985,8 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
         state_.fuelConsumedGrams += meteredFuelMassKg * 1'000.0;
         state_.fuelConsumedLitres = state_.fuelConsumedGrams * 0.001
             / config_.fuelProperties.densityKgPerL;
-        state_.airFlowGramsPerSecond = state_.airMassMgPerCycle * (state_.rpm / 120.0) / 1'000.0;
+        state_.airFlowGramsPerSecond = state_.airMassMgPerCycle
+            * (state_.rpm / (cylinderCycleDegrees() / 6.0)) / 1'000.0;
         state_.exhaustPressureKpa = collectorPressureKpa;
         state_.intakeRunnerPressureKpa = intakeRunnerPressureSum / static_cast<double>(config_.cylinders.size());
         state_.exhaustRunnerPressureKpa = exhaustRunnerPressureSum / static_cast<double>(config_.cylinders.size());
@@ -5048,7 +5120,8 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
             cylinderGeometryRevision_ };
         for (std::size_t index = 0; index < state_.cylinderStateCount; ++index) {
             const auto& cylinder = config_.cylinders[index];
-            const auto phase = std::fmod(state_.crankAngleDegrees - crankOffsetDegreesFor(config_, cylinder) + 1'440.0, 720.0);
+            const auto phase = std::fmod(state_.crankAngleDegrees - crankOffsetDegreesFor(config_, cylinder) + 1'440.0,
+                cylinderCycleDegrees());
             const auto compressionIgnition =
                 config_.fuel == FuelType::diesel;
             const auto active = ((compressionIgnition
@@ -5058,8 +5131,10 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 && !cylinderMisfires_[index];
             const auto pulse = active ? instantaneousCombustionPulse_[index] : 0.0;
             const auto& valveTrain = valveTrainResults_[index];
-            const auto intakeLift = valveTrain.intakeLiftMm;
-            const auto exhaustLift = valveTrain.exhaustLiftMm;
+            // A two-stroke has no valves: its ports are in the cylinder wall.
+            const auto valves = config_.cycle != EngineCycle::twoStroke;
+            const auto intakeLift = valves ? valveTrain.intakeLiftMm : 0.0;
+            const auto exhaustLift = valves ? valveTrain.exhaustLiftMm : 0.0;
             const auto& gas = cylinderGas_[index];
             state_.cylinderStates[index] = { cylinder.id, phase,
                 chamberPressureBar_[index],
@@ -5333,8 +5408,15 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 if (cams.config->variableProfileEnabled)
                     cams.highProfile = valveProfileActuators_[index].appliedHigh();
                 const auto maximumExhaustLiftMm = std::max(0.1, cams.exhaustLift());
+                // A two-stroke's opening is its exhaust port's, as a share of
+                // the port fully open at bottom dead centre.
+                const auto& ported = config_.cylinders[index];
                 pressureSample.exhaustValveOpening[index] = static_cast<float>(std::clamp(
-                    valveTrainResults_[index].exhaustLiftMm / maximumExhaustLiftMm, 0.0, 1.0));
+                    twoStroke
+                        ? exhaustValveAreaM2[index] * 1.0e6 / std::max(1.0e-9, portOpenAreaMm2(ported,
+                            config_.twoStroke.exhaustPortOpenDegrees, exhaustPortWidthMm(config_.twoStroke, ported),
+                            config_.twoStroke.portDischargeCoefficient, 180.0))
+                        : valveTrainResults_[index].exhaustLiftMm / maximumExhaustLiftMm, 0.0, 1.0));
                 pressureSample.exhaustPathIndex[index] =
                     static_cast<std::uint8_t>(
                         exhaustPathIndexByCylinder_[index]);
@@ -5353,7 +5435,7 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
         // publication is bounded by the mechanical solver cadence and avoids
         // reconstructing a whole outer frame from its final limiter state.
         const auto eventTravelled = forwardPhaseDegrees(eventEvaluationAngleDegrees_,
-                                                         subPreviousAngle);
+                                                         subPreviousAngle, eventGenerator_.cycleDegrees());
         const auto eventDt = std::max(0.0, subStepStartTime - eventEvaluationTimeSeconds_);
         if (combustion.combustionEnabled && ecuCommand.fuelEnabled
                 && (ecuCommand.sparkEnabled
@@ -5754,9 +5836,13 @@ void EngineSimulator::accumulateCycleTelemetry(double previousAngleDegrees,
             const auto displacementM3 =
                 engineDisplacementLitres(config_) * 0.001;
             if (sample.numericallyValid) {
-                state_.indicatedWorkJoulesPerCycle = sample.indicatedWorkJoules;
+                // The window is the crank's 720 degrees: two cylinder cycles
+                // of a two-stroke.
+                const auto workPerCylinderCycle = sample.indicatedWorkJoules
+                    / (cycleDegrees / cylinderCycleDegrees());
+                state_.indicatedWorkJoulesPerCycle = workPerCylinderCycle;
                 state_.indicatedMeanEffectivePressureBar = displacementM3 > 0.0
-                    ? sample.indicatedWorkJoules / displacementM3 / 100'000.0
+                    ? workPerCylinderCycle / displacementM3 / 100'000.0
                     : 0.0;
                 state_.indicatedPowerKw = sample.indicatedWorkJoules
                     / sample.durationSeconds / 1'000.0;
@@ -5963,10 +6049,22 @@ void EngineSimulator::reset() noexcept {
         const auto throttleArea = std::numbers::pi * throttleRadius * throttleRadius;
         intakePlenumGas_[pathIndex].setGeometry(throttleArea, 0.0, 1.0);
     }
+    if (config_.cycle == EngineCycle::twoStroke)
+        for (std::size_t index = 0; index < config_.cylinders.size(); ++index) {
+            const auto& cylinder = config_.cylinders[index];
+            auto& crankcase = intakePlenumGas_[intakePathIndexByCylinder_[index]];
+            const auto throttleArea = crankcase.characteristicAreaM2();
+            crankcase.initialise(config_.ambientPressureKpa,
+                crankcaseVolumeLitres(cylinder, config_.twoStroke.crankcaseCompressionRatio,
+                    std::fmod(state_.crankAngleDegrees - crankOffsetDegreesFor(config_, cylinder)
+                        + 1'440.0, 360.0)),
+                config_.ambientTemperatureC + 273.15);
+            crankcase.setGeometry(throttleArea, 0.0, 1.0);
+        }
 
     for (std::size_t index = 0; index < config_.cylinders.size(); ++index) {
         previousCylinderPhases_[index] = std::fmod(state_.crankAngleDegrees
-            - crankOffsetDegreesFor(config_, config_.cylinders[index]) + 1'440.0, 720.0);
+            - crankOffsetDegreesFor(config_, config_.cylinders[index]) + 1'440.0, cylinderCycleDegrees());
         intakeRunnerPressureKpa_[index] = config_.ambientPressureKpa;
         intakePortTemperatureK_[index] = config_.ambientTemperatureC + 273.15;
         intakePortDensityKgPerM3_[index] = config_.ambientPressureKpa * 1'000.0

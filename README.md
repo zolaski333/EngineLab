@@ -5,8 +5,8 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE.md)
 ![Platform: Windows x64](https://img.shields.io/badge/platform-Windows%20x64-lightgrey)
 
-**A four-stroke engine simulator whose sound comes from the simulated gas
-dynamics, not from samples.** Written in C++20 with JUCE.
+**An engine simulator whose sound comes from the simulated gas dynamics, not
+from samples.** Written in C++20 with JUCE.
 
 EngineLab simulates an engine cycle by cycle — induction, combustion, exhaust —
 and makes that simulation *audible*: the exhaust sound is the pressure actually
@@ -69,8 +69,20 @@ factor is shown in the diagnostics.
   different, with no authored random dispersion.
 - **Exhaust afterfire** fed by unburned fuel on overrun and ignited by the pipe
   wall — which has to heat up first, as on a real engine.
-- **Vehicle dynamics**: gearbox, stick/slip clutch, and longitudinal load
-  transfer driven by wheelbase, centre-of-gravity height and driven axle.
+- **Petrol and diesel, four-stroke and two-stroke**: port or direct injection,
+  a common-rail diesel whose burn follows its rail pressure, and piston-ported
+  two-strokes pumped by their crankcase.
+- **Forced induction**: one to four turbochargers on a compressor map, each
+  driven by the exhaust paths that feed it, an optional intercooler, an ECU
+  boost table; or a mechanical supercharger. A turbo can be fitted to any
+  four-stroke engine and is sized for it.
+- **Limits that bite**: knock and its ECU retard, peak firing pressure against
+  the block's limit, over-revving damage, coolant and oil temperatures with a
+  thermostat and fan, the altitude and temperature of the air.
+- **Vehicle dynamics**: manual, sequential (quickshifter, auto-blipper),
+  dual-clutch, automatic and CVT gearboxes, a stick/slip clutch, and
+  longitudinal load transfer driven by wheelbase, centre-of-gravity height and
+  driven axle.
 
 ### Audio
 
@@ -85,6 +97,14 @@ factor is shown in the diagnostics.
 - **Declarative, hot-reloadable voicing** (`voicing/*.yaml`): the mix is data,
   not code.
 
+### Driving
+
+- A **Drive** section with speedometer, gear, consumption and a trip computer;
+  a progressive brake, cruise control, launch control and an automatic
+  gearbox for any engine.
+- A **datalogger** records the main channels and the active limits to CSV.
+- Display **units** chosen per quantity or from a preset (metric, US, UK).
+
 ### Tooling
 
 - **A 3-D engine view rendered on the GPU** (OpenGL 3.2): pistons, rods, crank
@@ -98,15 +118,24 @@ factor is shown in the diagnostics.
   volumes (4-2-1, X-pipe, twin mufflers…), runners, plenum, throttle bores,
   airbox and inlet duct — and an *Exhaust* view frames the whole system. A
   2-D cutaway remains for machines without OpenGL 3.2.
-- **A catalogue of 16 engines** — naturally aspirated and turbocharged I4s, a
+- **A catalogue of 17 engines** — naturally aspirated and turbocharged I4s, a
   V8, a flat-six, a supercharged V12, motorcycle twins and triples, an inline
-  five, a TDI diesel, a five-cylinder radial — all in readable, editable YAML.
+  five, a TDI diesel, a five-cylinder radial, a two-stroke twin — all in
+  readable, editable YAML.
 - **Exhaust designer**, a validated graph editor for exhaust systems: it rejects
   cycles, incomplete branches and inconsistent cardinalities, and reports the
   solver cost of an unusual geometry before applying it.
-- **ECU tuner**: AFR and spark tables plus the rev limiter, applied live through
-  a transactional snapshot — the engine keeps running and keeps its thermal
-  state.
+- **Live editing**: click a part in the 3-D view to change it while the engine
+  runs — exhaust sizes, bore, stroke and rods, cams, flywheel, injectors,
+  turbo, gearbox, the air. An **A/B** button keeps two versions of the engine
+  to switch between by ear.
+- **New engine…** builds an engine from any running one: another bore,
+  stroke, compression, redline or aspiration, with injectors, throttles and
+  clutch resized to match.
+- **ECU tuner**: AFR, spark and boost tables, edited cell by cell or in blocks
+  with undo, plus the rev limit, launch control and knock retard, applied live
+  through a transactional snapshot — the engine keeps running and keeps its
+  thermal state.
 - **`.els` DSL**, declarative and unit-typed, hot-reloaded on save; an invalid
   save keeps the last valid configuration running and shows the diagnostics.
 - **Audio workshop**: mute/solo, JSON scenarios, and WAV export at 48/96/192 kHz in
@@ -158,6 +187,7 @@ under **Units** in the same menu.
 | hold `A` / `S` | ignition / starter |
 | `Q`, `W`, `E`, `R` | throttle 1 %, 10 %, 20 %, 100 % |
 | `D` / `H` | automatic dyno / hold engine speed |
+| `7` | A/B: switch between the two kept versions of the engine |
 | `P` / `Tab` | pause / next side-panel tab |
 | `M` / `,` | next / previous engine view layer |
 | `1` to `5` | time scale 0.25×, 0.5×, 1×, 2×, 4× |
@@ -222,6 +252,7 @@ against the literature or a real recording.
 | `PhysicsPerfHarness` | gas-exchange trace at crank-degree resolution, on both sides of the valve |
 | `CyclicVariabilityHarness` | COV(IMEP) per cylinder, at held engine speed |
 | `DynoSweepHarness` / `UserDynoHarness` | torque and power curves, CSV export |
+| `DriveScenarioHarness` | a driving complaint as a rerunnable timeline (pedals, gears): per-gear ratio, 0-100 km/h, limits |
 | `AfterfireHarness` | the shape of overrun heat release, and its real effect on the audio |
 | `IntakeDuctBench` | bit-exact fingerprint of the duct solver: proves an optimisation is not a physics change |
 | `SceneExport` | the 3-D scene of catalogue engines as JSON (meshes, duct centrelines and radii, ports, engine solids, route check issues), to inspect the laid-out ducts outside the app; prints the issue counts per engine |
@@ -253,8 +284,10 @@ holds the working rules, build notes and verified traps of this repository.
 
 ## Known limitations
 
-- four-stroke only; petrol and direct-injection diesel rely on global,
-  semi-empirical combustion models;
+- petrol and direct-injection diesel rely on global, semi-empirical
+  combustion models; two-stroke engines (petrol, piston-ported) run, but the
+  real-time exhaust mesh is too coarse for an expansion chamber's tuning, so
+  they make well under their maker's torque;
 - 0-D cylinder chambers and low-band quasi-1-D networks — this is not 3-D CFD;
 - audible propagation is linear and plane: transverse modes, 3-D bends and the
   mean-flow correction of radiation are not resolved;

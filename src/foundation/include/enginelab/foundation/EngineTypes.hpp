@@ -1032,6 +1032,41 @@ struct AudioVoicingConfig final {
     AudioMonitorMode monitorMode { AudioMonitorMode::physicalReference };
 };
 
+/**
+ * The piston-controlled ports and crankcase of a two-stroke cylinder
+ * (EngineCycle::twoStroke). Port timings are crank degrees after top dead
+ * centre at which the piston crown uncovers the port's top edge; each port
+ * stays open for 360 - 2 x that, symmetric about bottom dead centre. A port's
+ * open area is its total width (every window and bridge-free width summed)
+ * times the height the piston has uncovered, times the discharge
+ * coefficient.
+ *
+ * Each cylinder has its own crankcase. The engine's intake path for that
+ * cylinder is the crankcase circuit: its plenum is the crankcase, pumped by
+ * the underside of the piston (largest at top dead centre); its throttle
+ * feeds it through a reed valve that only lets air in; its runner is the
+ * transfer duct and its "intake valve" the transfer ports. The exhaust port
+ * takes the exhaust valve's place on the exhaust network.
+ */
+struct TwoStrokeConfig final {
+    double exhaustPortOpenDegrees { 92.0 };
+    double transferPortOpenDegrees { 118.0 };
+    /** Zero: 0.65 x bore (one wide window). */
+    double exhaustPortWidthMm { 0.0 };
+    /** Zero: 1.30 x bore (the transfer windows together). */
+    double transferPortWidthMm { 0.0 };
+    double portDischargeCoefficient { 0.72 };
+    /** Crankcase volume at top dead centre over that at bottom dead centre:
+     *  1.25-1.5 on a road or race engine. */
+    double crankcaseCompressionRatio { 1.35 };
+};
+
+/** Crank degrees of one thermodynamic cycle: 720 for a four-stroke, 360 for
+ *  a two-stroke. */
+[[nodiscard]] inline double cycleDegreesOf(EngineCycle cycle) noexcept {
+    return cycle == EngineCycle::twoStroke ? 360.0 : 720.0;
+}
+
 struct EngineConfig final {
     std::uint32_t schemaVersion { currentEngineSchemaVersion };
     std::string name { "Untitled engine" };
@@ -1083,6 +1118,8 @@ struct EngineConfig final {
     AudioVoicingConfig audioVoicing;
     std::string audioVoicingFamily;
     std::string audioVoicingKey;
+    /** Read only when `cycle` is EngineCycle::twoStroke. */
+    TwoStrokeConfig twoStroke;
 };
 
 struct EngineControls final {

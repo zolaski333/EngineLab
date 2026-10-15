@@ -3,6 +3,7 @@
 #include <enginelab/foundation/CylinderResize.hpp>
 #include <enginelab/foundation/IntakeResize.hpp>
 #include <enginelab/foundation/TurboSizing.hpp>
+#include <enginelab/foundation/TwoStrokePorts.hpp>
 #include <enginelab/render/ListenerFrame.hpp>
 #include <enginelab/exhaust/LegacyExhaustNetwork.hpp>
 
@@ -265,9 +266,10 @@ void EngineCutawayView::drawEngine(juce::Graphics& g, juce::Rectangle<float> are
         }
         g.setColour(juce::Colour(0xff111817)); g.fillRoundedRectangle(x, top, cylinderWidth, height, 7.0F);
         g.setColour(juce::Colour(0xff3a4743)); g.drawRoundedRectangle(x, top, cylinderWidth, height, 7.0F, 1.5F);
-        const auto fallbackIntakeLift = profiledValveLiftMm(phase, 360.0 + config.camshafts.intakeCenterlineDegrees,
+        const auto valves = config.cycle != EngineCycle::twoStroke;
+        const auto fallbackIntakeLift = !valves ? 0.0 : profiledValveLiftMm(phase, 360.0 + config.camshafts.intakeCenterlineDegrees,
             config.camshafts.intakeDurationDegrees, config.camshafts.intakeLiftMm, config.camshafts.intakeLiftProfile);
-        const auto fallbackExhaustLift = profiledValveLiftMm(phase, 360.0 - config.camshafts.exhaustCenterlineDegrees,
+        const auto fallbackExhaustLift = !valves ? 0.0 : profiledValveLiftMm(phase, 360.0 - config.camshafts.exhaustCenterlineDegrees,
             config.camshafts.exhaustDurationDegrees, config.camshafts.exhaustLiftMm, config.camshafts.exhaustLiftProfile);
         const auto intakeLift = liveCylinder != nullptr ? liveCylinder->intakeValveLiftMm : fallbackIntakeLift;
         const auto exhaustLift = liveCylinder != nullptr ? liveCylinder->exhaustValveLiftMm : fallbackExhaustLift;
@@ -369,8 +371,9 @@ const std::array<juce::Colour, 4> strokeBands { juce::Colour(0x55ef6f3c), juce::
                                                 juce::Colour(0x4441b6d7), juce::Colour(0x446a7a75) };
 } // namespace
 
-void CyclePanel::setCylinders(std::vector<juce::String> labels) {
+void CyclePanel::setCylinders(std::vector<juce::String> labels, double cycleDegrees) {
     labels_ = std::move(labels);
+    cycleDegrees_ = cycleDegrees;
     repaint();
 }
 
@@ -390,8 +393,12 @@ void CyclePanel::paint(juce::Graphics& g) {
     const auto rows = std::min(labels_.size(), cycleMaximumRows);
     for (std::size_t i = 0; i < rows; ++i) {
         auto row = area.removeFromTop(cycleRowHeight).toFloat();
-        const auto phase = std::clamp(phaseOf(i), 0.0, 719.999);
-        const auto stroke = static_cast<std::size_t>(phase / 180.0);
+        // A two-stroke has two strokes: power (with exhaust and transfer), then
+        // compression.
+        const auto twoStroke = cycleDegrees_ < 719.0;
+        const auto phase = std::clamp(phaseOf(i), 0.0, cycleDegrees_ - 0.001);
+        const auto halfStroke = static_cast<std::size_t>(phase / 180.0);
+        const auto stroke = twoStroke ? (halfStroke == 0 ? 0U : 3U) : halfStroke;
         g.setFont(monoFont(11.0F));
         g.setColour(colours::muted);
         g.drawText(labels_[i], row.removeFromLeft(28.0F), juce::Justification::centredLeft, false);
@@ -402,14 +409,16 @@ void CyclePanel::paint(juce::Graphics& g) {
         clip.addRoundedRectangle(track, 3.0F);
         g.saveState();
         g.reduceClipRegion(clip);
-        for (std::size_t band = 0; band < 4; ++band) {
-            g.setColour(strokeBands[band]);
-            g.fillRect(track.withX(track.getX() + track.getWidth() * static_cast<float>(band) * 0.25F)
-                           .withWidth(track.getWidth() * 0.25F));
+        const auto bands = twoStroke ? std::size_t { 2 } : std::size_t { 4 };
+        const auto bandWidth = 1.0F / static_cast<float>(bands);
+        for (std::size_t band = 0; band < bands; ++band) {
+            g.setColour(strokeBands[twoStroke && band == 1 ? 3 : band]);
+            g.fillRect(track.withX(track.getX() + track.getWidth() * static_cast<float>(band) * bandWidth)
+                           .withWidth(track.getWidth() * bandWidth));
         }
         g.restoreState();
         g.setColour(juce::Colours::white);
-        g.fillRect(juce::Rectangle<float>(track.getX() + track.getWidth() * static_cast<float>(phase / 720.0) - 1.0F,
+        g.fillRect(juce::Rectangle<float>(track.getX() + track.getWidth() * static_cast<float>(phase / cycleDegrees_) - 1.0F,
                                           track.getY() - 2.0F, 2.0F, 10.0F));
     }
     if (labels_.size() > cycleMaximumRows) {
@@ -1276,7 +1285,7 @@ void EngineViewport::setEngine(const EngineConfig& config) {
     microphoneSpacingM_ = std::isfinite(spacing) && spacing > 0.01 && spacing < 2.0 ? spacing : 0.36;
     std::vector<juce::String> labels;
     for (const auto& cylinder : config.cylinders) labels.push_back("C" + juce::String(cylinder.id));
-    cycle_.setCylinders(std::move(labels));
+    cycle_.setCylinders(std::move(labels), cycleDegreesOf(config.cycle));
     {
         const std::lock_guard lock(sharedMutex_);
         shared_.model = scene_;
@@ -1653,10 +1662,12 @@ void EngineViewport::updateInspector() {
     };
 
     // Fits a turbocharger sized for the engine, or takes it off: a restart.
-    // Not offered on a supercharged engine.
+    // Not offered on a supercharged engine, nor on a two-stroke (its
+    // crankcase does the pumping: validation refuses forced induction).
     const auto turboChoice = [this, &config]() -> std::optional<PartInspector::Edit::Choice> {
         const auto& forced = config.forcedInduction;
         if (forced.enabled && forced.type != ForcedInductionType::turbocharger) return std::nullopt;
+        if (config.cycle == EngineCycle::twoStroke) return std::nullopt;
         const auto sized = sizedTurbocharger(config);
         partChoice_ = [](EngineConfig& edited, int index) {
             edited = index == 1 ? withTurbocharger(edited) : withoutForcedInduction(edited);
@@ -1717,8 +1728,16 @@ void EngineViewport::updateInspector() {
         title = "Cylinder heads";
         subtitle = juce::String(config.name);
         add("Engine speed", juce::String(juce::roundToInt(state.rpm)) + " rpm");
-        const auto& cams = config.banks.empty() ? config.camshafts : config.banks.front().camshafts;
         const auto degrees = [](double value) { return juce::String(juce::roundToInt(value)) + utf8("\xc2\xb0"); };
+        // A two-stroke's head has no valvetrain: its timing is its ports'.
+        if (config.cycle == EngineCycle::twoStroke) {
+            const auto& ports = config.twoStroke;
+            add("Exhaust opens", degrees(ports.exhaustPortOpenDegrees) + " ATDC");
+            add("Transfers open", degrees(ports.transferPortOpenDegrees) + " ATDC");
+            add("Blowdown", degrees(ports.transferPortOpenDegrees - ports.exhaustPortOpenDegrees));
+            break;
+        }
+        const auto& cams = config.banks.empty() ? config.camshafts : config.banks.front().camshafts;
         add("Lobe separation", degrees(0.5 * (cams.intakeCenterlineDegrees + cams.exhaustCenterlineDegrees)));
         add("Valve overlap", degrees(std::max(0.0, 0.5 * (cams.intakeDurationDegrees + cams.exhaustDurationDegrees)
                                                        - cams.intakeCenterlineDegrees - cams.exhaustCenterlineDegrees)));
@@ -1812,6 +1831,18 @@ void EngineViewport::updateInspector() {
     case render::PartRole::intakeValve:
     case render::PartRole::exhaustValve: {
         const auto intake = identity.role == render::PartRole::intakeValve;
+        // A two-stroke's parts here are its ports (EngineModel3D); no cam.
+        if (config.cycle == EngineCycle::twoStroke) {
+            title = intake ? "Transfer ports" : "Exhaust port";
+            const auto opens = intake ? config.twoStroke.transferPortOpenDegrees
+                                      : config.twoStroke.exhaustPortOpenDegrees;
+            add("Opens", juce::String(juce::roundToInt(opens)) + utf8("\xc2\xb0 ATDC"));
+            add("Open for", juce::String(juce::roundToInt(360.0 - 2.0 * opens)) + utf8("\xc2\xb0"));
+            if (cylinder != nullptr)
+                add("Width", millimetres(model_.units, intake ? transferPortWidthMm(config.twoStroke, *cylinder)
+                                                              : exhaustPortWidthMm(config.twoStroke, *cylinder)));
+            break;
+        }
         title = intake ? "Intake valve" : "Exhaust valve";
         const auto& cams = scene_->camshaftsOf(cylinderIndex);
         if (cylinderEditor_) {

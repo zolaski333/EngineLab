@@ -7,12 +7,16 @@ file formats, always with an in-memory migration).
 
 ## [Unreleased]
 
-### Changed
+### Added
 
-- The boost of a turbo engine now lives in the ECU: a boost target table by
-  engine speed (`boost.target_gauge_kpa`), flat at the engine's wastegate
-  setting by default, so a tuner can taper or raise boost through the rev
-  range. The 3-D view's wastegate setting moves the whole table.
+- Two-stroke engines (`cycle: two_stroke`, with a `two_stroke:` block for the
+  port timings and widths and the crankcase compression): piston ports,
+  crankcase pumping through a reed, one firing per revolution, fuelled as a
+  carburettor is (no overrun fuel cut); the 3-D view and the inspector show
+  its ports instead of valves and cams. New catalogue
+  engine: a Yamaha RD350LC-like twin with expansion chambers. Known gap: at
+  the real-time exhaust mesh the expansion chambers barely work, so it makes
+  about a quarter of the real bike's torque.
 - Launch control (`limits.launch_rpm` in the ECU, off by default): standing
   in gear with the throttle past half, the limiter holds the engine at the
   launch speed until the vehicle rolls.
@@ -30,7 +34,6 @@ file formats, always with an in-memory migration).
   and redo. Its table list shows readable names.
 - The Engine panel says what holds the engine back now: rev limiter, launch
   control, knock retard, hot coolant, boost at target, smoke limit...
-
 - Turbo engines can have several turbochargers (`turbocharger_count`, up
   to 4), each exhaust path driving the one it names. A turbo fed by fewer
   cylinders spins slower and makes less of the air, as on a real engine.
@@ -39,112 +42,6 @@ file formats, always with an in-memory migration).
 - New `intercooler_effectiveness` (default none). Catalogue engines do
   not use one: with it they make about 20-30 % more torque than the real
   engines, so treat its effect as relative.
-
-- Exhaust collectors no longer sound muffled. A collector without an
-  authored volume behaved as a 2-litre chamber, which cut 0.5-5 kHz by up
-  to 19 dB on most engines; it now holds only what its pipe sweeps. Engines
-  that author a collector box (MT-09, MT-10) are unchanged. Power moves by
-  at most 2.4 %. Resizing a collector box in the 3-D view now scales its
-  volume.
-
-- Motorcycles accelerate like motorcycles: their wheels, chain and clutch
-  had a car's inertia (the equivalent of 230 kg more bike in first). The
-  MT-07 now does 0-100 km/h in 3.9 s (published 3.85 s, before 5.9 s). The
-  most powerful bikes are now quicker than real ones, which wheelie: there
-  is no wheelie limit yet.
-
-- The dual-clutch gearbox no longer uses the clutch key: it launches on its
-  own clutch, creeps at idle (stops on the brake) and never stalls. It also
-  refuses a downshift that would over-rev the engine, as a real one does;
-  manual and sequential gearboxes still let you do it.
-- A dual-clutch upshift under load now retards the spark (up to 20 deg,
-  `transmission.dual_clutch_upshift_retard_deg`) while the clutch pulls the
-  engine down, as production dual clutches do: the push after the shift is
-  shorter. Its effect on the sound has not been listened to yet.
-
-- The exhaust now radiates into the surrounding air rather than into its own
-  hot gas, as a real tailpipe does. Hot engines get louder relative to cool
-  ones (+2.5 to +11.7 dB near redline, the CP2 least), and the exhaust stands
-  out more against the jet and intake noise. The monitor's full scale moves
-  from 134 to 140 dB SPL so the loudest engines stay clear of the safety
-  limiter; the CP2 keeps roughly its old level.
-- The engine runs warm from the start: coolant and oil are held at 90 and
-  100 degC, as on a dyno cell, so every run and every A/B comparison is made
-  at one temperature (before, every engine started at 22 degC and warmed up
-  over many minutes). Click the cylinder block to switch to realistic
-  temperatures, which start cold and warm up. The sound barely moves (within
-  0.6 dB across the catalogue).
-- Realistic temperatures now behave like a real engine: it warms up in
-  minutes rather than never (a CP2 idling in still air reaches 80 degC in
-  about 18 min; on the dyno it is warm after one or two passes), the
-  thermostat holds it near 90 degC, a fan comes on at 100 degC, and riding
-  cools it. On the dyno a cell fan blows on it, so repeated passes level off
-  instead of climbing. The block's inspector shows when the fan is on.
-  Air-cooled engines (Aircooled, Big Twin, Radial) have no radiator fan; the
-  Aircooled's blower follows the engine speed, and air-cooled engines hold
-  their oil near 90 degC through an oil thermostat (the Big Twin no longer
-  stays near 40 degC on the dyno).
-
-- The turbocharged cars' exhausts have their real length (about 3.4 m from
-  port to tip, like the other cars): a 2.2 m mid pipe behind the turbine.
-  Spool and power stay within a few per cent. The sound changes: 2JZ about
-  6 dB louder and darker, I5 3 dB louder, EJ25 2 dB and TDI 4 dB quieter and
-  brighter.
-- The mechanical sound layer is off by default on every engine; its fader
-  still turns it back on. The mix gets quieter where it was loud (I5 and 2JZ
-  about -5.5 dB, Hayabusa -2.8 dB) and less bright. The starter keeps its own
-  fixed level, so it is heard on every engine while cranking.
-- The turbocharger's turbine sits in the exhaust gas network, on the
-  collector, instead of narrowing the tailpipes: every pulse crosses it, it
-  takes its work from the gas, and the downpipe carries cooler gas at the
-  turbine outlet pressure. The old model overstated the turbine's power, so
-  the catalogue turbine areas are re-fitted to the rated curves (2JZ 600,
-  EJ25 500, I5 450, TDI 280 mm2). The turbo engines sound different: the
-  EJ25 2.7 dB quieter and darker, the TDI 3 dB louder, the I5 1.3 dB louder.
-- The exhaust and the intake manifold spread their pipes over the
-  simulation's worker threads, with bit-identical results. At 95 % of the
-  limiter with audio, every catalogue engine now runs above real time: the
-  LS3 at 1.07 (0.95 before, 1.05 with the 3-D view open) and the Merlin at
-  1.40.
-- Intake valves are a characteristic boundary on the runner: the trapped
-  charge no longer depends on the solver's internal time step (it lost up to
-  11 % before). The cylinders exchange with the intake network every 330 us,
-  with the network running ahead of them, instead of on every sub-step. The
-  LS3 and the Merlin are back above real time (1.08 and 1.15 at 5,000 /
-  3,040 rpm, from 0.78 and 0.80). Torque curves and the sound move: most
-  engines by less than 4 % in level, the 2JZ -15 %, the EJ25 -11 % and the
-  Hayabusa +19 %. The Merlin no longer drives its limiter at steady load
-  (pre-limiter peak 1.51 -> 0.66 of full scale).
-- Exhaust junctions take the same explicit step rule as the pipe cells
-  around them. A compact X crossover no longer halves the step of the whole
-  exhaust: the LS3 runs 13 % faster near its limiter, with the same torque
-  and sound. The Exhaust editor's cost estimate uses the same rule.
-- Catalogue exhausts run their real length from port to tip: 3.0-3.5 m
-  under the naturally aspirated front-engined cars, 1.6 m behind the
-  rear-engined flat-six and 1.2-1.5 m on the motorcycles. They used to end
-  0.9-1.3 m from the port. The turbocharged cars keep theirs: the solver's
-  turbine then sat at the outlet, and a longer pipe ahead of it slowed the
-  spool.
-  The manufacturer torque and power points move by less than 5 %. Exhaust
-  presets and paths gain `midpipe_length_mm` and `midpipe_diameter_mm`.
-- The two pipes leaving an X crossover turn away from each other at once in
-  the 3-D view instead of running through each other.
-- New main window. A top bar holds the engine picker, the run state and the
-  Exhaust, ECU and Audio windows. Engine controls and a vertical throttle with
-  1/10/20/100 % presets are on the left. The engine view sits in the middle with
-  layer tabs, and the tachometer and six live readouts run below it. A tabbed
-  side panel shows the dyno, telemetry, audio mix and diagnostics, and a status
-  bar shows faults and real-time counters. The old full-screen pages
-  (load simulation, mixer, oscilloscope, physics debug) are now side-panel
-  tabs, and `Tab` cycles through them.
-- Edit JSON, import/export, dyno CSV export, key bindings and full screen moved
-  to the `⋯` menu in the top bar.
-- One dark theme for every window, with key caps shown on the controls
-  they trigger. Inter and JetBrains Mono are embedded, so the interface looks
-  the same on every machine.
-
-### Added
-
 - Peak firing pressure is tracked at every physics step and shown against
   the engine's structural limit (side panel); above it the engine is damaged
   and a critical diagnostic says so. The limit is `peak_pressure_limit_bar`,
@@ -152,7 +49,6 @@ file formats, always with an in-memory migration).
 - A diesel's fuel pressure now changes its combustion: higher rail pressure
   mixes faster and burns harder. Its start of injection can be moved live
   from the injector in the 3-D view.
-
 - Knock control is an ECU setting: `knock.retard_deg_per_intensity`, the
   spark retard per unit of knock (12 deg as before; 0 turns it off). Turned
   off, the 2JZ at full load runs 4 deg more advance and 2 % more torque at a
@@ -190,7 +86,6 @@ file formats, always with an in-memory migration).
   and says whether a change applies live or restarts the engine. The
   gearbox is editable from it: clutch and hand-over times, ignition cut,
   final drive and every gear ratio.
-
 - Gearboxes can now shift the way real ones do (`transmission.shift_style`,
   changeable live in the engine file). `manual` is the driver's lift and
   clutch, as before. `sequential` is a motorcycle or race dog box: an upshift
@@ -347,6 +242,111 @@ file formats, always with an in-memory migration).
 - Quitting (the window's close button or Escape) with edits not saved asks
   first and names the engines that would lose them.
 
+### Changed
+
+- The boost of a turbo engine now lives in the ECU: a boost target table by
+  engine speed (`boost.target_gauge_kpa`), flat at the engine's wastegate
+  setting by default, so a tuner can taper or raise boost through the rev
+  range. The 3-D view's wastegate setting moves the whole table.
+- Exhaust collectors no longer sound muffled. A collector without an
+  authored volume behaved as a 2-litre chamber, which cut 0.5-5 kHz by up
+  to 19 dB on most engines; it now holds only what its pipe sweeps. Engines
+  that author a collector box (MT-09, MT-10) are unchanged. Power moves by
+  at most 2.4 %. Resizing a collector box in the 3-D view now scales its
+  volume.
+- Motorcycles accelerate like motorcycles: their wheels, chain and clutch
+  had a car's inertia (the equivalent of 230 kg more bike in first). The
+  MT-07 now does 0-100 km/h in 3.9 s (published 3.85 s, before 5.9 s). The
+  most powerful bikes are now quicker than real ones, which wheelie: there
+  is no wheelie limit yet.
+- The dual-clutch gearbox no longer uses the clutch key: it launches on its
+  own clutch, creeps at idle (stops on the brake) and never stalls. It also
+  refuses a downshift that would over-rev the engine, as a real one does;
+  manual and sequential gearboxes still let you do it.
+- A dual-clutch upshift under load now retards the spark (up to 20 deg,
+  `transmission.dual_clutch_upshift_retard_deg`) while the clutch pulls the
+  engine down, as production dual clutches do: the push after the shift is
+  shorter. Its effect on the sound has not been listened to yet.
+- The exhaust now radiates into the surrounding air rather than into its own
+  hot gas, as a real tailpipe does. Hot engines get louder relative to cool
+  ones (+2.5 to +11.7 dB near redline, the CP2 least), and the exhaust stands
+  out more against the jet and intake noise. The monitor's full scale moves
+  from 134 to 140 dB SPL so the loudest engines stay clear of the safety
+  limiter; the CP2 keeps roughly its old level.
+- The engine runs warm from the start: coolant and oil are held at 90 and
+  100 degC, as on a dyno cell, so every run and every A/B comparison is made
+  at one temperature (before, every engine started at 22 degC and warmed up
+  over many minutes). Click the cylinder block to switch to realistic
+  temperatures, which start cold and warm up. The sound barely moves (within
+  0.6 dB across the catalogue).
+- Realistic temperatures now behave like a real engine: it warms up in
+  minutes rather than never (a CP2 idling in still air reaches 80 degC in
+  about 18 min; on the dyno it is warm after one or two passes), the
+  thermostat holds it near 90 degC, a fan comes on at 100 degC, and riding
+  cools it. On the dyno a cell fan blows on it, so repeated passes level off
+  instead of climbing. The block's inspector shows when the fan is on.
+  Air-cooled engines (Aircooled, Big Twin, Radial) have no radiator fan; the
+  Aircooled's blower follows the engine speed, and air-cooled engines hold
+  their oil near 90 degC through an oil thermostat (the Big Twin no longer
+  stays near 40 degC on the dyno).
+- The turbocharged cars' exhausts have their real length (about 3.4 m from
+  port to tip, like the other cars): a 2.2 m mid pipe behind the turbine.
+  Spool and power stay within a few per cent. The sound changes: 2JZ about
+  6 dB louder and darker, I5 3 dB louder, EJ25 2 dB and TDI 4 dB quieter and
+  brighter.
+- The mechanical sound layer is off by default on every engine; its fader
+  still turns it back on. The mix gets quieter where it was loud (I5 and 2JZ
+  about -5.5 dB, Hayabusa -2.8 dB) and less bright. The starter keeps its own
+  fixed level, so it is heard on every engine while cranking.
+- The turbocharger's turbine sits in the exhaust gas network, on the
+  collector, instead of narrowing the tailpipes: every pulse crosses it, it
+  takes its work from the gas, and the downpipe carries cooler gas at the
+  turbine outlet pressure. The old model overstated the turbine's power, so
+  the catalogue turbine areas are re-fitted to the rated curves (2JZ 600,
+  EJ25 500, I5 450, TDI 280 mm2). The turbo engines sound different: the
+  EJ25 2.7 dB quieter and darker, the TDI 3 dB louder, the I5 1.3 dB louder.
+- The exhaust and the intake manifold spread their pipes over the
+  simulation's worker threads, with bit-identical results. At 95 % of the
+  limiter with audio, every catalogue engine now runs above real time: the
+  LS3 at 1.07 (0.95 before, 1.05 with the 3-D view open) and the Merlin at
+  1.40.
+- Intake valves are a characteristic boundary on the runner: the trapped
+  charge no longer depends on the solver's internal time step (it lost up to
+  11 % before). The cylinders exchange with the intake network every 330 us,
+  with the network running ahead of them, instead of on every sub-step. The
+  LS3 and the Merlin are back above real time (1.08 and 1.15 at 5,000 /
+  3,040 rpm, from 0.78 and 0.80). Torque curves and the sound move: most
+  engines by less than 4 % in level, the 2JZ -15 %, the EJ25 -11 % and the
+  Hayabusa +19 %. The Merlin no longer drives its limiter at steady load
+  (pre-limiter peak 1.51 -> 0.66 of full scale).
+- Exhaust junctions take the same explicit step rule as the pipe cells
+  around them. A compact X crossover no longer halves the step of the whole
+  exhaust: the LS3 runs 13 % faster near its limiter, with the same torque
+  and sound. The Exhaust editor's cost estimate uses the same rule.
+- Catalogue exhausts run their real length from port to tip: 3.0-3.5 m
+  under the naturally aspirated front-engined cars, 1.6 m behind the
+  rear-engined flat-six and 1.2-1.5 m on the motorcycles. They used to end
+  0.9-1.3 m from the port. The turbocharged cars keep theirs: the solver's
+  turbine then sat at the outlet, and a longer pipe ahead of it slowed the
+  spool.
+  The manufacturer torque and power points move by less than 5 %. Exhaust
+  presets and paths gain `midpipe_length_mm` and `midpipe_diameter_mm`.
+- The two pipes leaving an X crossover turn away from each other at once in
+  the 3-D view instead of running through each other.
+- New main window. A top bar holds the engine picker, the run state and the
+  Exhaust, ECU and Audio windows. Engine controls and a vertical throttle with
+  1/10/20/100 % presets are on the left. The engine view sits in the middle with
+  layer tabs, and the tachometer and six live readouts run below it. A tabbed
+  side panel shows the dyno, telemetry, audio mix and diagnostics, and a status
+  bar shows faults and real-time counters. The old full-screen pages
+  (load simulation, mixer, oscilloscope, physics debug) are now side-panel
+  tabs, and `Tab` cycles through them.
+- Edit JSON, import/export, dyno CSV export, key bindings and full screen moved
+  to the `⋯` menu in the top bar.
+- One dark theme for every window, with key caps shown on the controls
+  they trigger. Inter and JetBrains Mono are embedded, so the interface looks
+  the same on every machine.
+
 ### Removed
 
 - The *Manual load* slider: the dyno and the vehicle load the engine.
@@ -362,7 +362,6 @@ file formats, always with an in-memory migration).
 - Holding the clutch while changing gear now makes the shift yours: the gear
   changes at once and the auto-blipper, quickshifter and torque cut stay out
   of it. Before, the blipper opened the throttle with the clutch pulled.
-
 - A throttle blip no longer risks stalling the engine on its way back to
   idle. Warm, the 2JZ fell to about 520 rpm (target 760) and the Audi I5,
   Big Twin and Aircooled nearly as low; blipped in the first seconds after a

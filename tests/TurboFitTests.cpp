@@ -107,6 +107,11 @@ int main() {
     auto fitted = 0;
     for (const auto& entry : catalog.entries) {
         if (entry.config.forcedInduction.enabled) continue;
+        if (entry.config.cycle == EngineCycle::twoStroke) {
+            require(validateEngineConfig(withTurbocharger(entry.config)).has_value(),
+                entry.config.name + ": a two-stroke refuses a turbo");
+            continue;
+        }
         const auto turbo = withTurbocharger(entry.config);
         require(!validateEngineConfig(turbo).has_value(), entry.config.name + ": a fitted turbo leaves the engine valid");
         require(turbo.forcedInduction.enabled && turbo.forcedInduction.type == ForcedInductionType::turbocharger

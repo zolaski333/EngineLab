@@ -18,7 +18,8 @@ date when the code changes; measurement results go into the
 - [Architecture](architecture.md) — modules, threads, ownership and
   transactional boundaries.
 - [Simulation model](simulation-model.md) — kinematics, gas network,
-  injection, combustion, knock, forced induction and driveline.
+  two-stroke ports, injection, combustion, knock, forced induction, engine
+  temperatures, gearboxes (shift styles, automatic, CVT) and the vehicle.
 - [Physical thermoacoustic architecture](thermoacoustic-architecture.md) — the
   exhaust sound chain, from the valve to the microphone, with its measurements.
 - [Real-time audio](realtime-audio.md) — the callback contract, layers, stems

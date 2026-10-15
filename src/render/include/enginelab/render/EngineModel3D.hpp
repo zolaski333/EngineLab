@@ -59,7 +59,7 @@ struct SceneInstance final {
 };
 
 struct ScenePoseInput final {
-    /** Primary crank angle over the 720-degree cycle, as the simulator reports it. */
+    /** Primary crank angle over the 720-degree domain, as the simulator reports it. */
     double crankAngleDegrees {};
     /** Strength of each cylinder's current burn, 0..1 (0 = misfire or cut). */
     std::array<float, 32> combustion {};

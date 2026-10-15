@@ -100,6 +100,50 @@ depends on the area, the length, the volume and the local speed of sound. The
 pressure of this mode changes the admittance of the conservative restriction:
 it creates neither mass nor a torque bonus independent of filling.
 
+### Two-stroke engines
+
+`cycle: two_stroke` gives a piston-ported, crankcase-scavenged petrol engine
+(reed or piston-port intake, one firing per cylinder per revolution). The
+crank angle stays a 720-degree domain for every engine, so the render, the
+crank clock and the gas field are unchanged; each cylinder's thermodynamic
+phase runs on 360 degrees (`EngineSimulator::cylinderCycleDegrees()`), and
+spark, injection, the trapped-charge latch and the cycle telemetry follow it.
+
+- **Ports, not valves** (`TwoStrokePorts.hpp`): the exhaust and transfer
+  ports open when the slider-crank piston uncovers their top edge
+  (`two_stroke.exhaust_port_open_deg`, `transfer_port_open_deg` after top
+  dead centre) and are fully open at bottom dead centre. The open area is
+  width x uncovered height x `port_discharge_coefficient`; widths default to
+  0.65 and 1.30 x bore. No cam, no valve lift (published lifts are zero).
+- **Crankcase pumping**: each cylinder has its own intake path (validation
+  enforces one cylinder per path). That path's plenum is the crankcase: its
+  volume follows the piston's underside every substep, adiabatically, between
+  `crankcase_compression_ratio` x its bottom-dead-centre volume and that
+  volume. The throttle is the carburettor bore with a reed check valve (no
+  flow out of the crankcase), and the runner is the transfer duct. The piston's
+  underside sees the crankcase pressure, not the ambient.
+- **Trapping**: the charge is trapped when the transfers close (symmetric
+  about bottom dead centre); short-circuit losses come out of the same 1-D
+  exhaust flow that scavenges the cylinder. There is no pumping loop in the
+  cylinder: all of its work is gross work.
+- **Fuelling**: the ECU meters for the fresh air that crossed the transfers
+  last cycle, as a carburettor does, not for the trapped oxygen (most of a
+  two-stroke's trapped charge is retained from earlier cycles). There is no
+  overrun fuel cut (a cut scavenges the cylinder clean, and each resume fires
+  a full charge), and lambda learning is held through a closed-throttle
+  overrun and for 2 s after it.
+- **Compression ratio**: the model takes the geometric ratio. A Japanese
+  maker's figure (6.2:1 for the RD350LC) is usually the trapped one, counted
+  from the exhaust port's closing.
+- **Limits**: petrol only, naturally aspirated, one cylinder per intake path,
+  no individual throttles, injection angles inside the 360-degree cycle. Fuel is metered by
+  a port injector in the transfer duct; there is no carburettor model and no
+  oil (premix) in the charge. The expansion chamber's return wave needs exhaust
+  cells of 50 mm or less, and the real-time mesh is 360 mm: the catalogue
+  RD350LC-like twin makes about a quarter of its maker's torque (journal
+  2026-10-15). The script language sets the cycle but not the port timings,
+  which take their defaults (exhaust 92 deg, transfers 118 deg).
+
 ## Injection and mixture
 
 Injector flow depends on its nominal capacity and the square root of the
@@ -481,8 +525,8 @@ full Pacejka; load transfer is a quasi-static longitudinal equilibrium.
 
 ## Limitations and interpretation
 
-- four-stroke petrol only, despite the presence of types reserved for future
-  extensions;
+- two-stroke engines carry no expansion-chamber tuning at the real-time
+  exhaust mesh (see *Two-stroke engines*);
 - 0D gas volumes and an aggregated Helmholtz mode, without CFD or meshed 1D
   acoustics on the intake side;
 - semi-empirical global reaction, turbulence, walls, blow-by, film and knock;
