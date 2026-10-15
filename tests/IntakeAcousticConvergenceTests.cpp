@@ -3,6 +3,8 @@
 // prescribed time step, closed boundaries and physical losses are identical.
 // Total gas energy conservation alone cannot detect spurious conversion of
 // internal energy into an acoustic oscillation, so measure the perturbation.
+// The single-stage MUSCL-Hancock scheme the two-stroke exhaust uses must stay
+// passive where plain forward Euler on the same reconstruction does not.
 #include <enginelab/gasdynamics/ExhaustGasNetwork.hpp>
 #include <enginelab/simulation/EngineSimulator.hpp>
 
@@ -10,6 +12,7 @@
 #include <array>
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
 #include <cstdlib>
 #include <iomanip>
 #include <iostream>
@@ -120,13 +123,25 @@ struct PassiveResult final {
     std::size_t prescribedSteps { 0 };
 };
 
-[[nodiscard]] PassiveResult passiveRun(std::size_t cellCount, bool euler) {
+enum class Integrator { euler, rk2, hancock };
+
+[[nodiscard]] const char* integratorName(Integrator integrator) noexcept {
+    switch (integrator) {
+    case Integrator::euler: return "Euler";
+    case Integrator::rk2: return "RK2";
+    case Integrator::hancock: return "Hancock";
+    }
+    return "?";
+}
+
+[[nodiscard]] PassiveResult passiveRun(std::size_t cellCount, Integrator integrator) {
     ExhaustGasNetworkConfig config;
     config.initialPressurePa = referencePressurePa;
     config.initialTemperatureK = referenceTemperatureK;
     config.absoluteRoughnessM = 1.5e-6;
     config.maximumCourantNumber = 0.80;
-    config.firstOrderTimeIntegration = euler;
+    config.firstOrderTimeIntegration = integrator != Integrator::rk2;
+    config.hancockPredictor = integrator == Integrator::hancock;
     ExhaustGasNetwork network;
     require(network.configure(runnerLayout(cellCount), config),
         "the passive intake runner must configure");
@@ -202,8 +217,123 @@ struct PassiveResult final {
     return result;
 }
 
-void printResult(std::size_t cells, bool euler, const PassiveResult& result) {
-    std::cout << (euler ? "Euler" : "RK2") << " cells=" << cells
+// Two sealed ducts joined by an open area step (38 -> 76 mm): three quarters
+// of the wide duct's first face are wall beside an open aperture, the face a
+// stinger meets its silencer on.
+[[nodiscard]] double steppedMaximumAmplitudeGain(std::size_t cellsPerDuct,
+                                                 Integrator integrator,
+                                                 double& finalAmplitudeGain) {
+    const auto makeDuct = [&](std::uint32_t nodeId, double diameterM) {
+        const auto areaM2 = std::numbers::pi * diameterM * diameterM * 0.25;
+        CompiledExhaustDuct duct;
+        duct.nodeId = nodeId;
+        duct.lengthM = runnerLengthM;
+        duct.flowAreaM2 = areaM2;
+        duct.inletFlowAreaM2 = areaM2;
+        duct.outletFlowAreaM2 = areaM2;
+        duct.connectionAreaM2 = areaM2;
+        duct.inletConnectionAreaM2 = areaM2;
+        duct.outletConnectionAreaM2 = areaM2;
+        duct.hydraulicDiameterM = diameterM;
+        duct.volumeM3 = areaM2 * runnerLengthM;
+        duct.cellCount = cellsPerDuct;
+        return duct;
+    };
+    CompiledExhaustInterface areaStep;
+    areaStep.upstream = { ExhaustEndpointType::ductOutlet, 0, 100 };
+    areaStep.downstream = { ExhaustEndpointType::ductInlet, 1, 101 };
+    CompiledCylinderPort valve;
+    valve.cylinderId = 1;
+    valve.networkEndpoint = { ExhaustEndpointType::ductInlet, 0, 100 };
+    valve.runnerConnectionAreaM2 = std::numbers::pi * runnerDiameterM * runnerDiameterM * 0.25;
+    CompiledExhaustOutlet mouth;
+    mouth.outletNodeId = 200;
+    mouth.networkEndpoint = { ExhaustEndpointType::ductOutlet, 1, 101 };
+    mouth.openingAreaM2 = valve.runnerConnectionAreaM2;
+    const auto layout = ExhaustNetworkLayout::assemble(
+        { makeDuct(100, runnerDiameterM), makeDuct(101, 2.0 * runnerDiameterM) },
+        {}, { areaStep }, { valve }, { mouth });
+    ExhaustGasNetworkConfig config;
+    config.initialPressurePa = referencePressurePa;
+    config.initialTemperatureK = referenceTemperatureK;
+    config.absoluteRoughnessM = 1.5e-6;
+    config.maximumCourantNumber = 0.80;
+    config.firstOrderTimeIntegration = integrator != Integrator::rk2;
+    config.hancockPredictor = integrator == Integrator::hancock;
+    ExhaustGasNetwork network;
+    require(network.configure(layout, config), "the stepped fixture must configure");
+    const auto base = network.mixtureModel().conservativeFromPressureTemperature(
+        referencePressurePa, referenceTemperatureK);
+    require(base.has_value(), "the ambient fixture must be physical");
+    const auto basePrimitive = network.mixtureModel().primitiveFromConservative(*base);
+    require(basePrimitive.has_value(), "the ambient fixture must recover");
+    const auto densityKgPerM3 = basePrimitive->densityKgPerM3;
+    const auto soundSpeedMps = basePrimitive->speedOfSoundMps;
+    // The closed-closed fundamental of the whole length, isentropic.
+    for (std::size_t ductIndex = 0; ductIndex < 2; ++ductIndex) {
+        auto cells = network.ducts()[ductIndex].cells();
+        for (std::size_t index = 0; index < cells.size(); ++index) {
+            const auto positionFraction = (static_cast<double>(ductIndex * cellsPerDuct + index)
+                + 0.5) / static_cast<double>(2 * cellsPerDuct);
+            const auto pressurePa = referencePressurePa + pressureAmplitudePa
+                * std::cos(std::numbers::pi * positionFraction);
+            const auto density = densityKgPerM3 * std::pow(
+                pressurePa / referencePressurePa, 1.0 / basePrimitive->heatCapacityRatio);
+            const auto state = network.mixtureModel().conservativeFromPrimitive(
+                density, 0.0, pressurePa, GasComposition::dryAir());
+            require(state.has_value(), "the stepped mode must be physical");
+            cells[index] = *state;
+        }
+    }
+    const auto energy = [&]() {
+        auto volumeM3 = 0.0;
+        auto pressureVolume = 0.0;
+        for (std::size_t ductIndex = 0; ductIndex < 2; ++ductIndex) {
+            const auto cellVolumeM3 = network.layout().ducts()[ductIndex].volumeM3
+                / static_cast<double>(cellsPerDuct);
+            for (const auto& cell : network.ducts()[ductIndex].cells()) {
+                const auto primitive = network.mixtureModel().primitiveFromConservative(cell);
+                require(primitive.has_value(), "a stepped state must remain physical");
+                pressureVolume += primitive->pressurePa * cellVolumeM3;
+                volumeM3 += cellVolumeM3;
+            }
+        }
+        const auto meanPressurePa = pressureVolume / volumeM3;
+        auto energyJ = 0.0;
+        for (std::size_t ductIndex = 0; ductIndex < 2; ++ductIndex) {
+            const auto cellVolumeM3 = network.layout().ducts()[ductIndex].volumeM3
+                / static_cast<double>(cellsPerDuct);
+            for (const auto& cell : network.ducts()[ductIndex].cells()) {
+                const auto primitive = network.mixtureModel().primitiveFromConservative(cell);
+                const auto pressurePa = primitive->pressurePa - meanPressurePa;
+                energyJ += cellVolumeM3 * 0.5 * (pressurePa * pressurePa
+                        / (densityKgPerM3 * soundSpeedMps * soundSpeedMps)
+                    + densityKgPerM3 * primitive->velocityMps * primitive->velocityMps);
+            }
+        }
+        require(std::isfinite(energyJ), "stepped acoustic energy must remain finite");
+        return energyJ;
+    };
+    const auto initialEnergyJ = energy();
+    const auto stepSeconds = prescribedCourantNumber * runnerLengthM
+        / static_cast<double>(cellsPerDuct) / soundSpeedMps;
+    const auto steps = static_cast<std::size_t>(std::ceil(
+        traversalCount * 2.0 * runnerLengthM / soundSpeedMps / stepSeconds));
+    const ExhaustAmbientBoundary sealedMouth { *base, 0.0 };
+    auto maximumRatio = 1.0;
+    auto ratio = 1.0;
+    for (std::size_t step = 0; step < steps; ++step) {
+        require(network.advance(stepSeconds, {}, sealedMouth).completed,
+            "the stepped fixture must complete every prescribed step");
+        ratio = energy() / initialEnergyJ;
+        maximumRatio = std::max(maximumRatio, ratio);
+    }
+    finalAmplitudeGain = std::sqrt(ratio);
+    return std::sqrt(maximumRatio);
+}
+
+void printResult(std::size_t cells, Integrator integrator, const PassiveResult& result) {
+    std::cout << integratorName(integrator) << " cells=" << cells
               << " dt_us=" << result.stepSeconds * 1.0e6
               << " initial_acoustic_J=" << result.initialEnergyJ
               << " max_amplitude_gain=" << std::sqrt(result.maximumEnergyRatio)
@@ -233,24 +363,44 @@ int main(int argc, char** argv) {
     std::cout << "Production intake integrator: "
               << (productionForwardEuler ? "Euler" : "RK2") << '\n';
     auto allPassive = true;
+    auto hancockPassive = true;
+    const auto passive = [](const PassiveResult& result) noexcept {
+        return std::sqrt(result.maximumEnergyRatio) <= maximumPassiveAmplitudeGain
+            && result.finalEnergyRatio < maximumFinalEnergyFraction;
+    };
     for (const auto cells : std::array<std::size_t, 3> { 3, 6, 12 }) {
-        const auto euler = passiveRun(cells, true);
-        const auto rk2 = passiveRun(cells, false);
-        printResult(cells, true, euler);
-        printResult(cells, false, rk2);
+        const auto euler = passiveRun(cells, Integrator::euler);
+        const auto rk2 = passiveRun(cells, Integrator::rk2);
+        const auto hancock = passiveRun(cells, Integrator::hancock);
+        printResult(cells, Integrator::euler, euler);
+        printResult(cells, Integrator::rk2, rk2);
+        printResult(cells, Integrator::hancock, hancock);
         require(euler.stepSeconds == rk2.stepSeconds
-                    && euler.prescribedSteps == rk2.prescribedSteps,
-            "each Euler/RK2 pair must share the prescribed grid and time steps");
+                    && euler.prescribedSteps == rk2.prescribedSteps
+                    && hancock.prescribedSteps == rk2.prescribedSteps,
+            "each Euler/RK2/Hancock set must share the prescribed grid and time steps");
+        hancockPassive = hancockPassive && passive(hancock);
+        for (const auto integrator : { Integrator::rk2, Integrator::hancock }) {
+            auto finalGain = 0.0;
+            const auto gain = steppedMaximumAmplitudeGain(cells, integrator, finalGain);
+            std::cout << integratorName(integrator) << " stepped cells=" << cells
+                      << " max_amplitude_gain=" << gain
+                      << " final_amplitude_gain=" << finalGain << '\n';
+            if (integrator == Integrator::hancock)
+                hancockPassive = hancockPassive
+                    && gain <= maximumPassiveAmplitudeGain && finalGain < 1.0;
+        }
         // The alternate integrator remains a diagnostic control. The gate
         // follows the exact policy used by EngineSimulator, with unchanged
         // physical passivity and decay requirements for production.
         const auto& production = productionForwardEuler ? euler : rk2;
-        allPassive = allPassive && std::sqrt(production.maximumEnergyRatio)
-            <= maximumPassiveAmplitudeGain
-            && production.finalEnergyRatio < maximumFinalEnergyFraction;
+        allPassive = allPassive && passive(production);
     }
-    if (!diagnosticOnly)
+    if (!diagnosticOnly) {
         require(allPassive,
             "a passive runner must not amplify its initial acoustic mode and must decay");
+        require(hancockPassive,
+            "the Hancock scheme must not amplify the closed acoustic mode and must decay");
+    }
     return EXIT_SUCCESS;
 }

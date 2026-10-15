@@ -1032,7 +1032,8 @@ bool FiniteVolumeDuct::computeResidual(
     const DuctBoundaryCondition& rightBoundary,
     std::span<ConservativeState> residual,
     std::span<EulerFlux> faceFluxes,
-    bool computeBoundaryFluxes) noexcept {
+    bool computeBoundaryFluxes,
+    double hancockHalfStepSeconds) noexcept {
     const auto count = states.size();
     if (primitives.size() != count || sourceTerms.size() != count
         || residual.size() != count
@@ -1079,6 +1080,51 @@ bool FiniteVolumeDuct::computeResidual(
                 reconstructedRight_[index], reconstructedRightPrimitives_[index])) {
             reconstructedRight_[index] = states[index];
             reconstructedRightPrimitives_[index] = primitives[index];
+        }
+    }
+
+    // MUSCL-Hancock: both reconstructed face states of a cell advance half a
+    // step on that cell's own fluxes, quasi-1D wall pressure and sources, so
+    // the face solves below sit at mid-step and one forward-Euler update with
+    // them is second order in time. A cell whose prediction is inadmissible
+    // keeps its unpredicted faces. The wall-pressure term then reads the mean
+    // of the two predicted face pressures, also at mid-step.
+    if (hancockHalfStepSeconds > 0.0 && !periodic) {
+        for (std::size_t index = 0; index < count; ++index) {
+            const auto leftFlux = mixtureModel_.physicalFluxPrepared(
+                reconstructedLeft_[index], reconstructedLeftPrimitives_[index]);
+            const auto rightFlux = mixtureModel_.physicalFluxPrepared(
+                reconstructedRight_[index], reconstructedRightPrimitives_[index]);
+            const auto leftAreaM2 = faceAreasM2_[index];
+            const auto rightAreaM2 = faceAreasM2_[index + 1];
+            const auto scale = hancockHalfStepSeconds * inverseCellVolumesM3_[index];
+            ConservativeState change;
+            for (std::size_t species = 0; species < gasSpeciesCount; ++species)
+                change.speciesMassDensityKgPerM3[species] = -scale
+                    * (rightAreaM2 * rightFlux.speciesMassFluxKgPerM2S[species]
+                       - leftAreaM2 * leftFlux.speciesMassFluxKgPerM2S[species]);
+            change.momentumDensityKgPerM2S = -scale
+                    * (rightAreaM2 * rightFlux.momentumFluxPa
+                       - leftAreaM2 * leftFlux.momentumFluxPa)
+                + scale * primitives[index].pressurePa * (rightAreaM2 - leftAreaM2)
+                + hancockHalfStepSeconds * sourceTerms[index].momentumDensityKgPerM2S;
+            change.totalEnergyDensityJPerM3 = -scale
+                    * (rightAreaM2 * rightFlux.totalEnergyFluxWPerM2
+                       - leftAreaM2 * leftFlux.totalEnergyFluxWPerM2)
+                + hancockHalfStepSeconds * sourceTerms[index].totalEnergyDensityJPerM3;
+            auto predictedLeft = addScaled(reconstructedLeft_[index], change, 1.0);
+            auto predictedRight = addScaled(reconstructedRight_[index], change, 1.0);
+            PrimitiveState predictedLeftPrimitive;
+            PrimitiveState predictedRightPrimitive;
+            if (!mixtureModel_.canonicaliseSpeciesRoundoff(predictedLeft)
+                || !mixtureModel_.canonicaliseSpeciesRoundoff(predictedRight)
+                || !mixtureModel_.recoverPrimitive(predictedLeft, predictedLeftPrimitive)
+                || !mixtureModel_.recoverPrimitive(predictedRight, predictedRightPrimitive))
+                continue;
+            reconstructedLeft_[index] = predictedLeft;
+            reconstructedRight_[index] = predictedRight;
+            reconstructedLeftPrimitives_[index] = predictedLeftPrimitive;
+            reconstructedRightPrimitives_[index] = predictedRightPrimitive;
         }
     }
 
@@ -1131,12 +1177,17 @@ bool FiniteVolumeDuct::computeResidual(
             reconstructedLeft_[face], reconstructedLeftPrimitives_[face]);
     }
 
+    const auto hancock = hancockHalfStepSeconds > 0.0 && !periodic;
     for (std::size_t index = 0; index < count; ++index) {
         auto& cellResidual = residual[index];
         const auto leftAreaM2 = faceAreasM2_[index];
         const auto rightAreaM2 = faceAreasM2_[index + 1];
         const auto inverseCellVolumeM3 =
             inverseCellVolumesM3_[index];
+        const auto wallPressurePa = hancock
+            ? 0.5 * (reconstructedLeftPrimitives_[index].pressurePa
+                     + reconstructedRightPrimitives_[index].pressurePa)
+            : primitives[index].pressurePa;
         for (std::size_t species = 0; species < gasSpeciesCount; ++species) {
             cellResidual.speciesMassDensityKgPerM3[species] =
                 -inverseCellVolumeM3
@@ -1153,7 +1204,7 @@ bool FiniteVolumeDuct::computeResidual(
                    - leftAreaM2 * faceFluxes[index].momentumFluxPa)
             // Quasi-1D wall pressure force. It cancels the pressure part of
             // the face-flux divergence exactly for a stationary uniform gas.
-            + primitives[index].pressurePa
+            + wallPressurePa
                 * (rightAreaM2 - leftAreaM2) * inverseCellVolumeM3;
         cellResidual.totalEnergyDensityJPerM3 =
             -inverseCellVolumeM3

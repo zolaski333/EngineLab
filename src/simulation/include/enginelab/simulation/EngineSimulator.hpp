@@ -83,6 +83,13 @@ struct EngineSimulatorOptions final {
      * the 360 mm production scale. This is a diagnostic/convergence knob: the
      * characteristic audio network still owns audio-band propagation. */
     std::optional<double> exhaustTargetCellLengthM;
+    /** Diagnostic exhaust Courant number. Absent keeps the production 0.8. */
+    std::optional<double> exhaustMaximumCourantNumber;
+    /** Diagnostic exhaust time integration: true takes one forward-Euler
+     * stage per substep, with `exhaustHancockPredictor` its MUSCL-Hancock
+     * form. Absent keeps SSP-RK2. */
+    std::optional<bool> exhaustFirstOrderTimeIntegration;
+    std::optional<bool> exhaustHancockPredictor;
     /** Diagnostic lower-bound experiment: reset the exhaust network to ambient
      * before every coupling advance. Never use in production; it deliberately
      * discards pulse history to reveal the valve/timing-only pumping floor. */

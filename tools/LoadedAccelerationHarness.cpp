@@ -31,6 +31,8 @@
 
 namespace {
 constexpr double stepSeconds = 1.0 / 240.0;
+/** `--exhaust-cell-mm`: a diagnostic exhaust mesh; absent keeps production. */
+enginelab::EngineSimulatorOptions simulatorOptions;
 
 struct TickResult final {
     enginelab::SimulationFrame frame;
@@ -239,7 +241,8 @@ StandingStartMetrics measureStandingStart(
     enginelab::SimplifiedGasolinePhysics physics;
     enginelab::FourStrokeEventGenerator events;
     auto exhaust = enginelab::ExhaustGraph::makeForEngine(config);
-    enginelab::EngineSimulator simulator(config, ecu, physics, events, exhaust);
+    enginelab::EngineSimulator simulator(config, ecu, physics, events, exhaust,
+                                         simulatorOptions);
     enginelab::DrivelineModel driveline(config);
 
     StandingStartMetrics metrics;
@@ -305,7 +308,8 @@ RunMetrics measureAcceleration(
     enginelab::SimplifiedGasolinePhysics physics;
     enginelab::FourStrokeEventGenerator events;
     auto exhaust = enginelab::ExhaustGraph::makeForEngine(config);
-    enginelab::EngineSimulator simulator(config, ecu, physics, events, exhaust);
+    enginelab::EngineSimulator simulator(config, ecu, physics, events, exhaust,
+                                         simulatorOptions);
     enginelab::DrivelineModel driveline(config);
 
     RunMetrics metrics;
@@ -843,6 +847,8 @@ int main(int argc, char** argv) {
             launchAtSeconds = std::max(3.5, std::stod(argv[++index]));
         else if (argument == "--skip" && index + 1 < argc)
             skipped.emplace_back(argv[++index]);
+        else if (argument == "--exhaust-cell-mm" && index + 1 < argc)
+            simulatorOptions.exhaustTargetCellLengthM = std::stod(argv[++index]) * 0.001;
         else {
             std::cerr
                 << "usage: EngineLabLoadedAccelerationHarness"
@@ -850,7 +856,7 @@ int main(int argc, char** argv) {
                    " [--catalog-root DIR] [--trace] [--dfco-tip-in]"
                    " [--standing-start] [--unregulated-thermal] [--launch-at S] [--skip NAME]... [--known-stall NAME]...\n"
                    "  [--resume-afr-envelope X] [--resume-lean-afr-envelope X]"
-                   " [--known-resume-misfire NAME]...\n";
+                   " [--known-resume-misfire NAME]... [--exhaust-cell-mm MM]\n";
             return EXIT_FAILURE;
         }
     }

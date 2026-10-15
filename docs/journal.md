@@ -5,6 +5,15 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-15 — Two-stroke exhaust stays at 360 mm: 50 mm is not real time, 100 mm stalls the launch
+
+- Profile (RD350, 9,025 rpm, 50 mm): the exhaust FV network is most of the physics thread; interfaces were solved serially. Each interface's Riemann solve now runs in its upstream duct's pool share: +4.5 % on a pooled run (min of 4 alternated, 1.262 -> 1.319), bit-identical (four-stroke dyno sweep, IntakeDuctBench, RD350 standing starts unchanged).
+- MUSCL-Hancock (diagnostic `--exhaust-hancock`, one stage per substep): cheaper, but amplified a sealed duct up to 479x above Courant 0.3 (centred wall pressure on closed faces; a reflected Riemann pressure fixes it, test fails without it). That wall on partly open faces cost 43 % torque: not kept. At 75 mm it made 8.3 N.m at 4,000 rpm (RK2 17.8): not production. CFL 0.9: refuted.
+- Real time (free-run, audio + gas view, 9,025 rpm; LS3 1.09 the same hour): RK2 50 mm 0.94-1.05 even with 2-3 pool workers (one invalid run); 75 mm + 2 workers 1.37; 100 mm without pool 1.22-1.26. A pool on the twin gave paced spikes of 25-34 ms and late audio events, even at 360 mm: not kept.
+- RD350 torque, 360 -> 100 mm (N.m): 3,000 15.2->22.3, 5,000 13.8->15.5, 8,000 9.6->11.9, 9,000 9.5->10.4 (maker 37-40.2 at 8,000; 25 mm 22.7, not converged). Steady WOT torque at 1,500 rpm also rises (15.9 -> 20.1).
+- Blockers, so production stays 360 mm: at 75 and 50 mm the idle hunts (std 90-138 rpm; 1-2 mm2 pilot bypass did not settle it, not explained). At 100 mm idle is fine but the launch from a settled idle stalls: the tip-in goes lean (AFR 47-50) before the clutch bites. At 360 mm the same lean tip-in (AFR 36-39) already dips it to 370 rpm (stall 220); 150 mm survives at 228.
+- Not measured: a real RD350 recording; the two-stroke tip-in fuelling itself (the next lever for a finer mesh); the pool's paced spikes on other engines.
+
 ## 2026-10-15 — Every catalogue engine through the drive harness
 
 - `EngineLabDriveScenarioHarness --builtin pull|downshift-clutch|cruise` on all 17 engines. Cruise holds 100 km/h within 0.06-0.96 km/h mean, 2.1 max; no false "injectors saturated" left. Merlin and Radial sit on a test stand (no road vehicle): they do not move, as intended.

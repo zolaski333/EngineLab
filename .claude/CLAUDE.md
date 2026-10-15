@@ -172,6 +172,9 @@ Details of each measurement are in the docs archive (tag `archive/docs-2026-09`)
 
 - "Unified duct" rewrite: the 300 mm mesh carries the audible geometry (12-14 dB).
 - Fork-join per cylinder; AVX/AVX2 (slower: dependent-division latency).
+  Exhaust CFL 0.9; MUSCL-Hancock in production; a two-stroke exhaust at
+  50 mm (not real time) or below 360 mm before its tip-in is fixed (journal
+  2026-10-15).
 - Deepening the muffler's single chamber: 16 dB notch on the EJ25 fundamental.
 - Afterfire: faster chemistry (shape unchanged); "1-D cannot carry a backfire
   front" (it rises in 0.2-0.8 ms, the lock is the ~3.8 kHz bandwidth);

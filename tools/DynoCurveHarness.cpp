@@ -510,7 +510,7 @@ void usage() {
         " [--intake-cfl number --intake-workers integer --intake-joint-manifold 0|1]"
         " [--exhaust-every-substep --exhaust-coupling-us us]"
         " [--mechanical-min-hz hz --mechanical-cap-hz hz --crank-step-deg deg --outer-hz hz]"
-        " [--exhaust-cell-mm mm]"
+        " [--exhaust-cell-mm mm --exhaust-cfl number --exhaust-rk2|--exhaust-euler|--exhaust-hancock]"
         " [--output csv --cycles csv --provenance json] [--schema-only]\n";
 }
 
@@ -567,6 +567,16 @@ Settings parse(int argc, char** argv) {
         else if (arg == "--mechanical-min-hz") s.mechanicalMinHz = number();
         else if (arg == "--mechanical-cap-hz") s.mechanicalCapHz = number();
         else if (arg == "--exhaust-cell-mm") s.simulatorOptions.exhaustTargetCellLengthM = number() / 1000.0;
+        else if (arg == "--exhaust-cfl") s.simulatorOptions.exhaustMaximumCourantNumber = number();
+        else if (arg == "--exhaust-rk2") s.simulatorOptions.exhaustFirstOrderTimeIntegration = false;
+        else if (arg == "--exhaust-euler") {
+            s.simulatorOptions.exhaustFirstOrderTimeIntegration = true;
+            s.simulatorOptions.exhaustHancockPredictor = false;
+        }
+        else if (arg == "--exhaust-hancock") {
+            s.simulatorOptions.exhaustFirstOrderTimeIntegration = true;
+            s.simulatorOptions.exhaustHancockPredictor = true;
+        }
         else if (arg == "--crank-step-deg") s.crankStepDegrees = number();
         else if (arg == "--outer-hz") s.outerHz = number();
         else if (arg == "--output") s.outputPath = next();

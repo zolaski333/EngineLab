@@ -58,9 +58,10 @@ threads, two workers, three from ten cylinders). Per-runner intakes advance
 their runners on it; the exhaust network and a joint intake manifold use it
 through `ExhaustGasNetwork::setParallelFor` for each duct's share of an RK
 stage: its update, cache, wall heat, interior residual and the face fluxes of
-its ports and outlets. Everything that couples ducts (interfaces, junctions,
-applying those fluxes, the shared plenum) stays serial in a fixed order, so
-the result is bit-identical whatever the worker count, including none
+its ports, outlets and the interfaces it owns (the upstream duct's). What
+couples ducts (junctions, restrictions, applying the fluxes, the shared
+plenum) stays serial in a fixed order, so the result is bit-identical
+whatever the worker count, including none
 (`EngineLab.GasDynamics` checks a reversed dispatch order). Cylinders
 themselves are never split across threads.
 

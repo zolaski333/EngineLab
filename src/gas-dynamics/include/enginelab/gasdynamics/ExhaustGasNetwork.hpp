@@ -43,9 +43,18 @@ struct ExhaustGasNetworkConfig final {
      */
     bool wallHeatUpdateExternallyTriggered { false };
     /** Use one conservative forward-Euler stage per accepted substep instead
-     * of SSP-RK2. Intended for deliberately reduced, multirate intake
-     * networks; the exhaust and offline oracle keep RK2. */
+     * of SSP-RK2. Alone (no `hancockPredictor`) it amplifies a closed duct's
+     * acoustic mode and stays a diagnostic. A fully closed graph face then
+     * takes the reflected Riemann pressure instead of the cell's own. */
     bool firstOrderTimeIntegration { false };
+    /** With `firstOrderTimeIntegration`: predict every duct's reconstructed
+     * face states half a step ahead before the face solves (MUSCL-Hancock),
+     * so the single stage is second order in time inside the ducts. Graph
+     * boundaries still read the end cells' averages at the start of the step.
+     * One flux pass and one state cache per substep instead of RK2's two.
+     * Diagnostic: on the RD350LC-like at 75 mm it lost half the torque at
+     * 4,000 rpm against RK2 on the same mesh (journal 2026-10-15). */
+    bool hancockPredictor { false };
     /** Evolve graph-axis momentum through a lumped merge/splitter.
      *
      * False preserves a deliberately well-mixed plenum. True carries the
@@ -527,6 +536,9 @@ private:
     };
 
     ParallelFor parallelFor_ {};
+    /** Half the trial step while the first stage of a Hancock substep is
+     * evaluated, zero otherwise. */
+    double hancockHalfStepSeconds_ { 0.0 };
     std::vector<std::uint8_t> ductSucceeded_;
     /** Set by a duct whose Euler stage is inadmissible in this attempt. */
     std::vector<std::uint8_t> ductStageRejected_;
@@ -536,6 +548,19 @@ private:
     /** Ports and outlets attached to each duct's ends, in index order. */
     std::vector<std::vector<std::size_t>> ductPorts_;
     std::vector<std::vector<std::size_t>> ductOutlets_;
+    /** An open interface's Riemann flux and what each duct end receives. */
+    struct InterfaceFlux {
+        EulerFlux rawFlux {};
+        EulerFlux upstreamDuctFlux {};
+        EulerFlux downstreamDuctFlux {};
+        double effectiveAreaM2 { 0.0 };
+    };
+    static constexpr std::size_t noInterfaceOwner = static_cast<std::size_t>(-1);
+    std::vector<InterfaceFlux> interfaceFluxes_;
+    /** The duct whose pass computes each open interface (noInterfaceOwner for
+     * a restriction or a junction-to-junction one). */
+    std::vector<std::size_t> interfaceOwnerDuct_;
+    std::vector<std::vector<std::size_t>> ductInterfaces_;
 
     EulerMixtureModel mixtureModel_;
     ExhaustNetworkLayout layout_;

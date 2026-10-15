@@ -37,6 +37,14 @@ telemetry loss.
 The kernel uses an HLLC flux with an HLLE safety fallback, a TVD
 reconstruction, SSP-RK2 and a CFL step. A non-physical attempt is rejected and
 retried with a smaller step; no mass or energy is created by a numerical floor.
+A diagnostic option takes one MUSCL-Hancock stage per substep instead of RK2:
+each cell's reconstructed face states advance half a step on their own fluxes
+before the face solves, so one flux pass is second order in time. A fully
+closed graph face (a shut port) then takes the reflected Riemann pressure, not
+the cell's own: that centred term amplified a sealed duct's acoustic mode up to
+479x under a single stage (IntakeAcousticConvergenceTests). It is not the
+production scheme: on the RD350LC-like at 75 mm it lost half the torque at
+4,000 rpm (journal 2026-10-15).
 Local losses, wall friction and heat transfer are declared source terms. The
 engine network walls now have a finite heat capacity: the gas-metal exchange
 conserves the combined energy and only external convection explicitly rejects

@@ -54,6 +54,9 @@
 namespace {
 // --intake-per-runner: one network per runner instead of the joint manifold.
 std::optional<bool> intakeJointManifoldOverride;
+std::optional<double> exhaustCourantOverride;
+/** -1 production (SSP-RK2), 0 SSP-RK2, 1 forward Euler, 2 MUSCL-Hancock. */
+int exhaustIntegrationOverride = -1;
 
 using Clock = std::chrono::steady_clock;
 
@@ -545,6 +548,11 @@ private:
     simulatorOptions.intakeMaximumCourantNumber = intakeCourant;
     if (intakeNozzleValve) simulatorOptions.intakeCharacteristicValve = false;
     simulatorOptions.intakeJointManifold = intakeJointManifoldOverride;
+    simulatorOptions.exhaustMaximumCourantNumber = exhaustCourantOverride;
+    if (exhaustIntegrationOverride >= 0) {
+        simulatorOptions.exhaustFirstOrderTimeIntegration = exhaustIntegrationOverride > 0;
+        simulatorOptions.exhaustHancockPredictor = exhaustIntegrationOverride > 1;
+    }
     simulatorOptions.intakeTargetCellLengthM = intakeTargetCellLengthM;
     simulatorOptions.exhaustTargetCellLengthM = exhaustTargetCellLengthM;
     simulatorOptions.maximumLowSpeedExhaustCouplingSeconds =
@@ -947,6 +955,14 @@ int main(int argc, char** argv) {
             intakeTargetCellLengthM = std::stod(argv[++index]) * 1.0e-3;
         else if (argument == "--exhaust-cell-mm" && index + 1 < argc)
             exhaustTargetCellLengthM = std::stod(argv[++index]) * 1.0e-3;
+        else if (argument == "--exhaust-cfl" && index + 1 < argc)
+            exhaustCourantOverride = std::stod(argv[++index]);
+        else if (argument == "--exhaust-rk2")
+            exhaustIntegrationOverride = 0;
+        else if (argument == "--exhaust-euler")
+            exhaustIntegrationOverride = 1;
+        else if (argument == "--exhaust-hancock")
+            exhaustIntegrationOverride = 2;
         else if (argument == "--exhaust-coupling-us" && index + 1 < argc)
             exhaustCouplingSeconds = std::stod(argv[++index]) * 1.0e-6;
         else if (argument == "--intake-euler")
@@ -983,7 +999,7 @@ int main(int argc, char** argv) {
                          "[--intake-coupling-us N] [--intake-forward] [--intake-cfl C] [--intake-nozzle-valve] [--intake-per-runner] "
                          "[--intake-cell-mm N] "
                          "[--exhaust-cell-mm N] "
-                         "[--exhaust-coupling-us N] "
+                         "[--exhaust-coupling-us N] [--exhaust-cfl C] [--exhaust-rk2|--exhaust-euler|--exhaust-hancock] "
                          "[--intake-euler|--intake-rk2] "
                          "[--intake-wall-us N] "
                          "[--well-mixed-junctions] "

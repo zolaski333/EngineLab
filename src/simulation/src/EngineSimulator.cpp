@@ -1036,7 +1036,11 @@ std::unique_ptr<gasdynamics::ExhaustGasNetwork> EngineSimulator::buildPhysicalEx
     networkConfig.initialPressurePa = config.ambientPressureKpa * 1'000.0;
     networkConfig.initialTemperatureK = config.ambientTemperatureC + 273.15;
     networkConfig.absoluteRoughnessM = 4.5e-5;
-    networkConfig.maximumCourantNumber = 0.8;
+    networkConfig.maximumCourantNumber =
+        options_.exhaustMaximumCourantNumber.value_or(0.8);
+    networkConfig.firstOrderTimeIntegration =
+        options_.exhaustFirstOrderTimeIntegration.value_or(false);
+    networkConfig.hancockPredictor = options_.exhaustHancockPredictor.value_or(false);
     // Exhaust-wall temperature is a finite-capacity state. Internal exchange
     // conserves gas plus metal energy; only the explicit outside convection
     // below rejects heat from that combined subsystem to the environment.

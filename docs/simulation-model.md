@@ -138,9 +138,11 @@ spark, injection, the trapped-charge latch and the cycle telemetry follow it.
 - **Limits**: petrol only, naturally aspirated, one cylinder per intake path,
   no individual throttles, injection angles inside the 360-degree cycle. Fuel is metered by
   a port injector in the transfer duct; there is no carburettor model and no
-  oil (premix) in the charge. The expansion chamber's return wave needs exhaust
-  cells of 50 mm or less, and the real-time mesh is 360 mm: the catalogue
-  RD350LC-like twin makes about a quarter of its maker's torque (journal
+  oil (premix) in the charge. The expansion chamber's return wave needs fine
+  exhaust cells, and the production mesh is 360 mm: the catalogue
+  RD350LC-like twin makes 9.6 N.m at 8,000 rpm against the maker's 37-40;
+  100 mm cells give 11.9 and are real time, but its launch from a settled idle
+  then stalls on a lean tip-in; 25 mm give 23 and are not converged (journal
   2026-10-15). The script language sets the cycle but not the port timings,
   which take their defaults (exhaust 92 deg, transfers 118 deg).
 
