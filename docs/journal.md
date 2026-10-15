@@ -5,6 +5,13 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-15 — Motorcycle rotating inertias were a car's
+
+- The three motorcycle gearboxes inherited the car defaults (wheels 3.6, differential 0.16, input 0.08 kg m^2): 234 kg of equivalent mass in first on a 260 kg bike. Now wheels 1.2 (cruiser 1.6), chain 0.02 (0.03), clutch basket 0.004 (0.008) referred through the primary: 23 kg (28).
+- DriveScenarioHarness `--builtin pull`, 0-100 km/h before -> after: CP2 5.86 -> 3.91 s (published 3.85 s, motostatz), CP3 4.17 -> 2.75, CP4 3.53 -> 2.38, Hayabusa 2.90 -> 1.95, Big Twin 4.52 -> 3.92. Top speeds unchanged (+/-0.6 km/h).
+- CP3, CP4 and Hayabusa are now quicker than published (about 3.0-3.5 s): a real one is wheelie- and grip-limited and the model has neither by default. Next gap, not addressed.
+- Car gearbox input inertias (0.07-0.12 kg m^2) look high too; not changed, not measured.
+
 ## 2026-10-15 — Dual-clutch upshift spark retard (timeboxed)
 
 - Retard of up to 20 deg while the oncoming clutch pulls the engine down, released with the slip (DriveScenarioHarness `--dct-retard`, 2JZ dual clutch, flat-out pull, 0 vs 20 deg). The advance reaches the ECU's -10 deg floor on every loaded upshift (control: 4-7 deg).

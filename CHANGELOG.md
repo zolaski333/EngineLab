@@ -9,6 +9,12 @@ file formats, always with an in-memory migration).
 
 ### Changed
 
+- Motorcycles accelerate like motorcycles: their wheels, chain and clutch
+  had a car's inertia (the equivalent of 230 kg more bike in first). The
+  MT-07 now does 0-100 km/h in 3.9 s (published 3.85 s, before 5.9 s). The
+  most powerful bikes are now quicker than real ones, which wheelie: there
+  is no wheelie limit yet.
+
 - The dual-clutch gearbox no longer uses the clutch key: it launches on its
   own clutch, creeps at idle (stops on the brake) and never stalls. It also
   refuses a downshift that would over-rev the engine, as a real one does;

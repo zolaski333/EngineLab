@@ -345,6 +345,22 @@ int main() {
             "the catalogue CP2 shifts up through a quickshifter, down through its clutch");
         require(jz.transmission.shiftStyle == enginelab::ShiftStyle::manual,
             "the catalogue 2JZ keeps its manual gearbox");
+        // A motorcycle's wheels, chain and clutch basket, reflected to the
+        // road in first gear, are a small share of its mass (a car's
+        // defaults made them 90 % of a CP2's).
+        for (const auto& entry : catalog.entries) {
+            const auto& config = entry.config;
+            if (config.vehicle.massKg > 500.0 || config.transmission.gearRatios.empty()) continue;
+            const auto& box = config.transmission;
+            const auto first = box.gearRatios.front() * box.finalDriveRatio;
+            const auto radius = config.vehicle.tireRadiusM;
+            const auto equivalentKg = (box.drivenWheelInertiaKgM2 + box.differentialInertiaKgM2
+                + box.gearboxInputInertiaKgM2 * first * first) / (radius * radius);
+            std::printf("  %-34s rotating inertia in first: %5.1f kg on %5.0f kg\n", config.name.c_str(),
+                equivalentKg, config.vehicle.massKg);
+            require(equivalentKg < 0.2 * config.vehicle.massKg,
+                config.name + ": a motorcycle's rotating inertia must not weigh like a car's");
+        }
 
         std::printf("upshift 1 -> 2 at full throttle, 70 %% of redline\n");
         const auto cp2Manual = measureUpshift(cp2, enginelab::ShiftStyle::manual);
