@@ -9,6 +9,11 @@ file formats, always with an in-memory migration).
 
 ### Changed
 
+- The dual-clutch gearbox no longer uses the clutch key: it launches on its
+  own clutch, creeps at idle (stops on the brake) and never stalls. It also
+  refuses a downshift that would over-rev the engine, as a real one does;
+  manual and sequential gearboxes still let you do it.
+
 - The exhaust now radiates into the surrounding air rather than into its own
   hot gas, as a real tailpipe does. Hot engines get louder relative to cool
   ones (+2.5 to +11.7 dB near redline, the CP2 least), and the exhaust stands
@@ -253,6 +258,16 @@ file formats, always with an in-memory migration).
 - The *Manual load* slider: the dyno and the vehicle load the engine.
 
 ### Fixed
+
+- The dyno now sweeps up to the rev limiter you set in the ECU tuner. Before,
+  it always stopped under the engine's original limiter, whatever the tune.
+- Over-rev damage now starts just past the active rev limiter, not at the
+  redline: an engine on its limiter takes no damage, and a downshift that
+  throws it past the limiter does. The redline is only a mark on the
+  tachometer.
+- Holding the clutch while changing gear now makes the shift yours: the gear
+  changes at once and the auto-blipper, quickshifter and torque cut stay out
+  of it. Before, the blipper opened the throttle with the clutch pulled.
 
 - A throttle blip no longer risks stalling the engine on its way back to
   idle. Warm, the 2JZ fell to about 520 rpm (target 760) and the Audi I5,

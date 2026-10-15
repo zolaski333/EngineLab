@@ -28,18 +28,24 @@ constexpr double dynoCellFanAirSpeedMps = 12.0;
  * curves collapsed at the top for that reason alone. A percentage margin is
  * insufficient on low-speed engines because the ECU's soft-cut band is an
  * absolute 220 rpm; retain one 50 rpm acquisition bin beyond that band. */
-[[nodiscard]] double sweepCeilingRpm(const EngineConfig& config) noexcept {
-    const auto physicalLimitRpm = std::min(
-        config.redlineRpm, config.ignition.revLimitRpm);
+[[nodiscard]] double sweepCeilingRpm(const EngineConfig& config,
+                                     double appliedRevLimitRpm) noexcept {
+    // Untuned, the bench stops under the lower of the redline and the
+    // limiter, as validated. A tuned limiter is the one the user asked the
+    // bench to reach, above or below the redline.
+    const auto limiterRpm = appliedRevLimitRpm > 0.0
+        ? appliedRevLimitRpm : config.ignition.revLimitRpm;
+    const auto physicalLimitRpm = limiterRpm != config.ignition.revLimitRpm
+        ? limiterRpm : std::min(config.redlineRpm, limiterRpm);
     return std::max(500.0, std::min(
-        0.95 * physicalLimitRpm,
-        config.ignition.revLimitRpm - 300.0));
+        0.95 * physicalLimitRpm, limiterRpm - 300.0));
 }
 
-[[nodiscard]] double sweepEntryRpm(const EngineConfig& config) noexcept {
+[[nodiscard]] double sweepEntryRpm(const EngineConfig& config,
+                                   double appliedRevLimitRpm) noexcept {
     const auto lowCylinderEntry = config.cylinders.size() <= 2U
         ? 1'800.0 : 0.0;
-    return std::min(sweepCeilingRpm(config),
+    return std::min(sweepCeilingRpm(config, appliedRevLimitRpm),
         std::max({ 1'000.0, config.idleRpm + 400.0,
                    lowCylinderEntry }));
 }
@@ -909,8 +915,8 @@ void EngineRuntime::setDynoRampEnabled(bool value) noexcept {
 
 void EngineRuntime::setDynoHoldRpm(double value) noexcept {
     if (!std::isfinite(value)) return;
-    const auto maximumHoldRpm = std::min(
-        config_.redlineRpm, config_.ignition.revLimitRpm);
+    const auto maximumHoldRpm = sweepCeilingRpm(config_,
+        activeRevLimitRpm(config_, *ecu_.calibrationStore()->snapshot()));
     dynoHoldRpm_.store(
         std::clamp(value, std::max(500.0, config_.idleRpm * 0.6), maximumHoldRpm),
         std::memory_order_relaxed);
@@ -951,8 +957,11 @@ void EngineRuntime::startDyno(DynoSessionConfig config) {
     if (!dynoSessionActive_.compare_exchange_strong(
             expected, true, std::memory_order_acq_rel))
         return;
-    const auto defaultEntryRpm = sweepEntryRpm(config_);
-    const auto safeCeilingRpm = sweepCeilingRpm(config_);
+    // The calibration this run will measure: its rev limit sets the sweep.
+    auto acceptedCalibration = ecu_.calibrationStore()->snapshot();
+    const auto revLimitRpm = activeRevLimitRpm(config_, *acceptedCalibration);
+    const auto defaultEntryRpm = sweepEntryRpm(config_, revLimitRpm);
+    const auto safeCeilingRpm = sweepCeilingRpm(config_, revLimitRpm);
     config.sweepEntryRpm = std::isfinite(config.sweepEntryRpm)
             && config.sweepEntryRpm > 0.0
         ? std::clamp(config.sweepEntryRpm, 500.0, safeCeilingRpm)
@@ -984,7 +993,7 @@ void EngineRuntime::startDyno(DynoSessionConfig config) {
         // Acceptance, not the next 240 Hz tick, defines the metrology
         // boundary. Keep this immutable object alive even if the tuner
         // publishes another revision before beginDynoSession() runs.
-        pendingDynoCalibration_ = ecu_.calibrationStore()->snapshot();
+        pendingDynoCalibration_ = std::move(acceptedCalibration);
     }
     dynoRunStatus_.store(DynoRunStatus::running,
                          std::memory_order_release);
@@ -1810,9 +1819,11 @@ void EngineRuntime::run(std::stop_token stopToken) {
             frame.state.dynoWindowMinimumRpm = dynoEstimate.minRpm;
             frame.state.dynoWindowMaximumRpm = dynoEstimate.maxRpm;
             const auto sweepStartRpm = dynoActive_
-                ? activeDynoConfig_.sweepEntryRpm : sweepEntryRpm(config_);
+                ? activeDynoConfig_.sweepEntryRpm
+                : sweepEntryRpm(config_, frame.state.activeRevLimitRpm);
             const auto sweepCeiling = dynoActive_
-                ? activeDynoConfig_.sweepCeilingRpm : sweepCeilingRpm(config_);
+                ? activeDynoConfig_.sweepCeilingRpm
+                : sweepCeilingRpm(config_, frame.state.activeRevLimitRpm);
             const auto sweepRangeRpm = std::max(
                 1.0, sweepCeiling - sweepStartRpm);
             frame.state.dynoProgress = displayedDynoMode == DynoMode::hold

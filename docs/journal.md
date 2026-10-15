@@ -5,6 +5,12 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-15 — Standing starts after the driver's clutch took over the shift
+
+- `EngineLab.StandingStartSettledIdle` failed after B1: the I5 stalled at 25 s. Cause, one factor: a gear selected with the clutch held now engages at once, so the scripted 0.9 s pedal ramp loaded the engine from t = 0 (before, the timed selection held it out for 0.18 s). I5, 8 launch times: 2 stalls, lowest 241-294 rpm; ramp held at 0 for the first 0.18 s: 0 stalls, 383-462 rpm.
+- Fix in the scripted driver, not the driveline: the pedal stays down for the gearbox's shift duration, then ramps over 0.9 s. EJ25, Aircooled, I5, Big Twin over 8 launch times each: 32/32 launch, lowest 595 rpm (Big Twin). The whole catalogue launches at 4 and 25 s, LS3 included: the three declared stalls are removed.
+- Not measured: a human's real clutch timing; the launch is gentler than before, so these tests no longer cover a clutch dumped from the first frame.
+
 ## 2026-10-15 — Drive-scenario harness: first runs on the CP2
 
 - New `EngineLabDriveScenarioHarness`, through the product's coupling (`advanceVehicle`). The shift, loaded-acceleration and afterfire harnesses now use it too: before, they skipped the cooling air, and two of them skipped the quickshifter cut and the blip. Their ctest gates still pass.

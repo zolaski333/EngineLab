@@ -58,8 +58,70 @@ double DrivelineModel::selectedRatio() const noexcept {
     return dogsFree_ ? 0.0 : ratioForGear(engagedGear_);
 }
 
-DrivelineModel::ShiftAction DrivelineModel::chooseShiftAction() const noexcept {
+int DrivelineModel::protectedDownshiftTarget(const EngineState& engineState) const noexcept {
+    const auto limitRpm = engineState.activeRevLimitRpm > 0.0
+        ? engineState.activeRevLimitRpm : config_.ignition.revLimitRpm;
+    for (int gear = requestedGear_; gear < engagedGear_; ++gear) {
+        const auto landingRpm = std::abs(wheelAngularVelocityRadPerSecond_ * ratioForGear(gear))
+            * 60.0 / (2.0 * std::numbers::pi);
+        if (landingRpm <= limitRpm) return gear;
+    }
+    return engagedGear_;
+}
+
+double DrivelineModel::dualClutchLaunchPressure(const EngineState& engineState,
+                                                double brakePressure, double dtSeconds) noexcept {
     const auto& transmission = config_.transmission;
+    const auto idleRpm = std::max(300.0, config_.idleRpm);
+    const auto lockBandRpm = std::max(1.0, transmission.clutchLockSpeedRpm);
+    const auto smoothStep = [](double x) noexcept {
+        const auto t = std::clamp(x, 0.0, 1.0);
+        return t * t * (3.0 - 2.0 * t);
+    };
+    // Shut once the engine turns with the gearbox above idle; open again only
+    // when the engine nears idle, as a dual clutch does coming to a stop.
+    if (launchClutchLocked_ && engineState.rpm < 1.1 * idleRpm)
+        launchClutchLocked_ = false;
+    else if (!launchClutchLocked_ && engagedGear_ >= 0 && launchClutchPressure_ > 0.9
+             && engineState.rpm > 1.2 * idleRpm && std::abs(lastClutchSlipRpm_) < lockBandRpm)
+        launchClutchLocked_ = true;
+    auto target = 1.0;
+    if (!launchClutchLocked_) {
+        // The launch speed rises with the throttle, to about 38 % of the
+        // redline at full throttle; the clutch is fully shut there.
+        const auto throttle = std::clamp(engineState.throttle, 0.0, 1.0);
+        const auto launchRpm = idleRpm
+            + throttle * std::max(200.0, 0.38 * config_.redlineRpm - idleRpm);
+        // Foot off, only the creep: the idle controller's few rpm above idle
+        // must not close the clutch.
+        const auto rise = smoothStep(throttle / 0.05)
+            * smoothStep((engineState.rpm - idleRpm) / std::max(100.0, launchRpm - idleRpm));
+        // Creep: a small fixed clutch torque at idle, released on the brake.
+        constexpr double creepClutchTorqueNm = 25.0;
+        constexpr double creepCapacityShare = 0.05;
+        const auto maximumTorque = std::max(1.0, transmission.maxClutchTorqueNm);
+        const auto creep = brakePressure > 0.2 ? 0.0
+            : std::min(creepClutchTorqueNm, creepCapacityShare * maximumTorque) / maximumTorque;
+        // Opens before the engine stalls.
+        const auto stallGuard = smoothStep((engineState.rpm - 0.75 * idleRpm) / (0.2 * idleRpm));
+        target = stallGuard * (creep + (1.0 - creep) * rise);
+    }
+    // A hydraulic clutch fills in about a tenth of a second and dumps faster
+    // (neither measured).
+    constexpr double fillSeconds = 0.10;
+    constexpr double dumpSeconds = 0.03;
+    const auto timeConstant = target > launchClutchPressure_ ? fillSeconds : dumpSeconds;
+    launchClutchPressure_ += (target - launchClutchPressure_)
+        * std::clamp(dtSeconds / timeConstant, 0.0, 1.0);
+    return launchClutchPressure_;
+}
+
+DrivelineModel::ShiftAction DrivelineModel::chooseShiftAction(double clutchPedal) const noexcept {
+    const auto& transmission = config_.transmission;
+    // With the clutch held out the driver makes the shift: no device acts.
+    constexpr double declutchedPedal = 0.5;
+    if (driverClutchConnected() && clutchPedal < declutchedPedal)
+        return ShiftAction::driverClutch;
     // Only a change between two forward gears; neutral and reverse are
     // always selected the manual way.
     if (shiftFromGear_ < 0 || shiftTargetGear_ < 0 || shiftFromGear_ == shiftTargetGear_)
@@ -111,13 +173,20 @@ DrivelineOutput DrivelineModel::advance(double dt, const EngineState& engineStat
         else if (engineState.rpm <= transmission.automaticDownshiftRpm && engagedGear_ > 0)
             requestGear(engagedGear_ - 1);
     }
+    // A dual clutch has no pedal: its own launch clutch takes its place, and
+    // it refuses the part of a downshift that would over-rev the engine.
+    if (!driverClutchConnected()) {
+        clutchPedal = dualClutchLaunchPressure(engineState, brakePressure, dt);
+        if (!shiftInProgress_ && requestedGear_ >= 0 && engagedGear_ > requestedGear_)
+            requestedGear_ = protectedDownshiftTarget(engineState);
+    }
     if (!shiftInProgress_ && requestedGear_ != engagedGear_) {
         shiftInProgress_ = true;
         shiftTargetGear_ = requestedGear_;
         shiftFromGear_ = engagedGear_;
         shiftElapsedSeconds_ = 0.0;
         resyncReferenceSlipRpm_ = 0.0;
-        shiftAction_ = chooseShiftAction();
+        shiftAction_ = chooseShiftAction(clutchPedal);
         handOverReferenceSlipRadPerSecond_ = 0.0;
     }
     double shiftProgress = 0.0;
@@ -128,7 +197,9 @@ DrivelineOutput DrivelineModel::advance(double dt, const EngineState& engineStat
         shiftInProgress_ = false;
         shiftProgress = 0.0;
     };
-    if (shiftInProgress_ && shiftAction_ == ShiftAction::quickshift) {
+    if (shiftInProgress_ && shiftAction_ == ShiftAction::driverClutch) {
+        finishShift();
+    } else if (shiftInProgress_ && shiftAction_ == ShiftAction::quickshift) {
         // The shift sensor trips, the ignition is cut and the unloaded dogs
         // slide over to the next gear with the clutch left in; the clutch
         // then pulls the engine down to the new gear's speed while it makes
@@ -159,8 +230,10 @@ DrivelineOutput DrivelineModel::advance(double dt, const EngineState& engineStat
         output.blipThrottle = targetOmega > 0.0
             ? std::clamp(missing / (0.15 * targetOmega), 0.0, 1.0) : 0.0;
         shiftProgress = std::clamp(shiftElapsedSeconds_ / maximumBlipSeconds, 0.0, 1.0);
+        // The driver pulling the clutch mid-blip takes the shift over.
+        const auto driverDeclutched = driverClutchConnected() && clutchPedal < 0.5;
         if (engineOmega >= targetOmega * matchedFraction
-                || shiftElapsedSeconds_ >= maximumBlipSeconds) {
+                || shiftElapsedSeconds_ >= maximumBlipSeconds || driverDeclutched) {
             output.blipThrottle = 0.0;
             finishShift();
         }
