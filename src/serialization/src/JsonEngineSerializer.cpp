@@ -602,7 +602,10 @@ std::string JsonEngineSerializer::encode(const EngineConfig& config) const {
                            {"quickshifter_cut_s", config.transmission.quickshifterCutSeconds},
                            {"auto_blipper", config.transmission.autoBlipper},
                            {"dual_clutch_upshift_retard_deg",
-                            config.transmission.dualClutchUpshiftRetardDegrees}}},
+                            config.transmission.dualClutchUpshiftRetardDegrees},
+                           {"centrifugal_clutch", config.transmission.centrifugalClutch},
+                           {"centrifugal_clutch_engage_rpm",
+                            config.transmission.centrifugalClutchEngageRpm}}},
         {"vehicle", {{"mass_kg", config.vehicle.massKg},
                       {"drag_coefficient", config.vehicle.dragCoefficient},
                       {"frontal_area_m2", config.vehicle.frontalAreaM2},
@@ -865,6 +868,10 @@ EngineDecodeResult JsonEngineSerializer::decode(std::string_view text) const noe
             config.transmission.autoBlipper = transmission.value("auto_blipper", config.transmission.autoBlipper);
             config.transmission.dualClutchUpshiftRetardDegrees = transmission.value(
                 "dual_clutch_upshift_retard_deg", config.transmission.dualClutchUpshiftRetardDegrees);
+            config.transmission.centrifugalClutch = transmission.value(
+                "centrifugal_clutch", config.transmission.centrifugalClutch);
+            config.transmission.centrifugalClutchEngageRpm = transmission.value(
+                "centrifugal_clutch_engage_rpm", config.transmission.centrifugalClutchEngageRpm);
         }
         if (engine.contains("vehicle")) {
             const auto& vehicle = engine.at("vehicle");

@@ -54,9 +54,10 @@ const char* layoutName(EngineLayout layout) noexcept {
     return "CUSTOM";
 }
 
-juce::String gearName(int gear) {
+juce::String gearName(int gear, bool continuouslyVariable) {
     if (gear == -2) return "R";
     if (gear == -1) return "N";
+    if (continuouslyVariable) return "D";
     return juce::String(gear + 1);
 }
 

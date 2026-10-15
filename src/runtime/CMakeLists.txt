@@ -4,6 +4,7 @@ add_library(EngineLabRuntime STATIC
     src/CruiseControl.cpp
     src/DrivelineModel.cpp
     src/ShiftSchedule.cpp
+    src/VariatorControl.cpp
     src/DynoEstimator.cpp
     src/DynoQualityGate.cpp
     src/DynoRunArchive.cpp)

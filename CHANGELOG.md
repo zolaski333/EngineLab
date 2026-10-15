@@ -107,6 +107,11 @@ file formats, always with an in-memory migration).
 
 ### Added
 
+- CVT gearboxes: a car's belt CVT that creeps like a dual clutch, and a
+  scooter's with a centrifugal clutch that idles free. The variator holds the
+  engine at a speed set by the pedal (low when cruising, near peak power flat
+  out). Pick `car_cvt` or `scooter_cvt`, or switch any gearbox to CVT from its
+  inspector; the gear shows D.
 - Display units: speed, distance, fuel consumption (L/100 km, km/L, MPG US
   or UK), fuel volume, pressure (kPa, bar, psi, absolute or gauge), torque,
   power, temperature, length, displacement, mass and air flow, chosen one by

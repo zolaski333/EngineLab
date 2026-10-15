@@ -88,7 +88,9 @@ void drawRows(juce::Graphics& g, juce::Rectangle<float>& area, const Rows& rows,
     using units::Quantity;
     const auto& unit = model.units;
     return {
-        { "Gear", gearName(state.gear) + " / " + juce::String(state.gearCount) },
+        { "Gear", state.continuouslyVariable
+              ? gearName(state.gear, true) + ", ratio " + fixed(state.gearboxRatio, 2)
+              : gearName(state.gear) + " / " + juce::String(state.gearCount) },
         { "Clutch", fixed(state.clutchPressure * 100.0, 0) + " %" },
         { "Vehicle speed", unit.text(Quantity::speed, state.vehicleSpeedMps, 1) },
         { "Distance", unit.text(Quantity::distance, state.vehicleDistanceM, 3) },

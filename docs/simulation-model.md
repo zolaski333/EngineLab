@@ -374,6 +374,35 @@ shape is a choice, not a fit to a production schedule. A change between two
 forward gears asked by the driver switches the gearbox back to manual;
 selecting first from neutral does not.
 
+### Continuously variable transmission
+
+`shift_style: cvt` makes the gearbox a belt variator whose ratio runs anywhere
+between the first gear ratio (lowest) and the last (tallest); the selector
+has drive, neutral and reverse only (the UI shows D). `VariatorControl` holds
+the engine at a speed scheduled from the driver's pedal: max(1.5 × idle,
+0.25 × limit) foot-light, 0.85 × the active rev limit flat out, along
+pedal^1.5, never under a centrifugal clutch's lock speed. The ratio moves
+toward the one that gives that speed at the current road speed, at most the
+whole range in 1.5 s (not measured), and goes back to its lowest whenever the
+start clutch is not holding. A car's or a scooter's mechanical balance
+(hydraulics; roller weights, spring and torque cam) is not modelled, only the
+engine speed it holds.
+
+The moving ratio lives inside the clutch model: through a frame the ratio is
+interpolated over the 1 ms mechanical steps, and the stick constraint makes
+the crank follow the ratio's change (rate × wheel speed) and takes any slip
+out over 20 ms, so the clutch stays locked as the ratio moves. Gearboxes with
+fixed ratios are bit-for-bit unchanged.
+
+It starts on its own clutch; the pedal does not reach it. A wet start clutch
+(default) is the dual clutch's launch clutch: it creeps at idle and stops on
+the brake. With `centrifugal_clutch: true` (a scooter's), the clutch is open
+at idle, bites at `centrifugal_clutch_engage_rpm` (0: 1.7 × idle) and is shut
+at 1.35 × that, a smooth step between. There is no torque converter. The
+parts `car_cvt` (2.5-0.4, final 5.0) and `scooter_cvt` (2.6-0.85, final 9.4)
+are typical ranges, not a specific unit's. Any gearbox can be switched to a
+CVT live from the gearbox inspector; the variator takes the gear's ratio.
+
 ### Driver commands
 
 `DriverCommandArbiter` (`src/runtime`) is the one place where the driver's

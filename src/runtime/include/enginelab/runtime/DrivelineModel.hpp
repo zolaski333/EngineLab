@@ -18,6 +18,8 @@ struct DrivelineOutput final {
     double requestedLoad { 0.0 };
     double torqueCutMultiplier { 1.0 };
     int engagedGear { -1 };
+    /** The gearbox's ratio (without the final drive); a CVT's moves. */
+    double gearboxRatio { 0.0 };
     double clutchPressure { 0.0 };
     double vehicleSpeedMps { 0.0 };
     double vehicleDistanceM { 0.0 };
@@ -61,9 +63,12 @@ public:
     [[nodiscard]] int requestedGear() const noexcept { return requestedGear_; }
     [[nodiscard]] const TransmissionConfig& transmission() const noexcept { return config_.transmission; }
     /** Whether the driver's clutch pedal reaches the clutch: not on a dual
-     * clutch, which runs its own launch clutch. */
+     * clutch or a CVT, which run their own start clutch. */
     [[nodiscard]] bool driverClutchConnected() const noexcept {
-        return config_.transmission.shiftStyle != ShiftStyle::dualClutch;
+        return config_.transmission.shiftStyle != ShiftStyle::dualClutch && !continuouslyVariable();
+    }
+    [[nodiscard]] bool continuouslyVariable() const noexcept {
+        return config_.transmission.shiftStyle == ShiftStyle::cvt;
     }
     /** The driver's pedal this frame, which an automatic gearbox reads to
      * place its shift points (advanceVehicle sets it). Unset (negative), it
@@ -109,6 +114,11 @@ private:
      * engine lands under its active rev limit (a dual clutch's protection). */
     [[nodiscard]] int protectedDownshiftTarget(const EngineState&) const noexcept;
     [[nodiscard]] double ratioForGear(int gear) const noexcept;
+    /** A CVT's ratio range: its first gear ratio (lowest) and its last. */
+    [[nodiscard]] double variatorLowestRatio() const noexcept;
+    [[nodiscard]] double variatorTallestRatio() const noexcept;
+    /** Moves a CVT's variator for this frame (VariatorControl). */
+    void advanceVariator(const EngineState&, double clutchPressure, double dtSeconds) noexcept;
     [[nodiscard]] double selectedRatio() const noexcept;
     EngineConfig config_;
     ShiftAction shiftAction_ { ShiftAction::timed };
@@ -121,6 +131,8 @@ private:
     // a synchronised engine (it then stays shut until the engine nears idle).
     double launchClutchPressure_ { 0.0 };
     bool launchClutchLocked_ { false };
+    // A CVT's variator ratio (gearbox only, without the final drive).
+    double variatorRatio_ { 0.0 };
     // Engine + flywheel rotating inertia, cached so the locked-clutch constraint can
     // share one acceleration between the crank and the driveline.
     double engineInertiaKgM2_ { 0.24 };

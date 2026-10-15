@@ -48,6 +48,7 @@
 #include <fstream>
 #include <iostream>
 #include <memory>
+#include <utility>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -493,8 +494,22 @@ int run(const Options& options) {
         config.transmission.quickshifter ? "on" : "off",
         config.transmission.autoBlipper ? "on" : "off",
         config.transmission.automaticShifting ? "on" : "off");
-    std::printf("gear  authored_ratio  measured_ratio  deviation_%%  samples\n");
-    for (int gear = 0; gear < gearCount; ++gear) {
+    // A CVT has one forward position: its ratio moves between the first and
+    // the last gear's, so a per-gear table would compare nothing.
+    const auto variable = config.transmission.shiftStyle == enginelab::ShiftStyle::cvt;
+    if (variable) {
+        const auto& samples = gearSamples.front().ratios;
+        const auto [lowest, tallest] = samples.empty() ? std::pair { 0.0, 0.0 }
+            : std::pair { *std::max_element(samples.begin(), samples.end()),
+                          *std::min_element(samples.begin(), samples.end()) };
+        std::printf("cvt overall ratio: authored %.4f-%.4f, measured %.4f-%.4f (%zu samples)\n",
+            config.transmission.gearRatios.front() * config.transmission.finalDriveRatio,
+            config.transmission.gearRatios.back() * config.transmission.finalDriveRatio, lowest, tallest,
+            samples.size());
+    } else {
+        std::printf("gear  authored_ratio  measured_ratio  deviation_%%  samples\n");
+    }
+    for (int gear = 0; gear < (variable ? 0 : gearCount); ++gear) {
         const auto authored = config.transmission.gearRatios[static_cast<std::size_t>(gear)]
             * config.transmission.finalDriveRatio;
         const auto& samples = gearSamples[static_cast<std::size_t>(gear)].ratios;

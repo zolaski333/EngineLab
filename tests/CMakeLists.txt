@@ -572,3 +572,8 @@ target_compile_definitions(EngineLabShiftScheduleTests PRIVATE
 enginelab_set_warnings(EngineLabShiftScheduleTests)
 add_test(NAME EngineLab.ShiftSchedule COMMAND EngineLabShiftScheduleTests)
 set_tests_properties(EngineLab.ShiftSchedule PROPERTIES TIMEOUT 300)
+
+add_executable(EngineLabCvtTests CvtTests.cpp)
+target_link_libraries(EngineLabCvtTests PRIVATE EngineLab::Runtime)
+enginelab_set_warnings(EngineLabCvtTests)
+add_test(NAME EngineLab.Cvt COMMAND EngineLabCvtTests)

@@ -87,3 +87,29 @@ aircraft_direct:
   gear_ratios: [1.00]
   final_drive_ratio: 1.00
   max_clutch_torque_nm: 10000
+
+# A car's belt CVT (no torque converter: a wet start clutch that creeps, as a
+# dual clutch's). The variator runs between the first and the last ratio; the
+# 2.5-0.4 range (span 6.25) and 5.0 final are typical of current belt CVTs,
+# not a specific unit's published figures.
+car_cvt:
+  gear_ratios: [2.50, 0.40]
+  final_drive_ratio: 5.00
+  max_clutch_torque_nm: 450
+  shift_style: cvt
+  reverse_ratio: 2.50
+
+# A scooter's variator with a centrifugal clutch, which idles free and bites
+# at 1.7 x idle by default. Range 2.6-0.85 (span about 3) and a 9.4 final:
+# a 125 cc scooter reaching ~105 km/h at 8,500 rpm on a 0.26 m rear tyre
+# needs about 8.0 overall at the top, which this gives; the span is typical,
+# not a specific model's.
+scooter_cvt:
+  gear_ratios: [2.60, 0.85]
+  final_drive_ratio: 9.40
+  max_clutch_torque_nm: 60
+  shift_style: cvt
+  centrifugal_clutch: true
+  driven_wheel_inertia_kg_m2: 0.35
+  differential_inertia_kg_m2: 0.005
+  gearbox_input_inertia_kg_m2: 0.001

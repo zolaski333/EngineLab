@@ -1960,13 +1960,20 @@ void EngineViewport::updateInspector() {
         title = "Gearbox";
         const auto style = transmission.shiftStyle;
         subtitle = style == ShiftStyle::dualClutch ? juce::String("Dual clutch")
+            : style == ShiftStyle::cvt ? juce::String(transmission.centrifugalClutch
+                ? "CVT, centrifugal clutch" : "CVT, wet start clutch")
             : style == ShiftStyle::manual ? juce::String("Manual, clutch and lift")
             : juce::String("Sequential") + (transmission.quickshifter ? ", quickshifter" : "")
                 + (transmission.autoBlipper ? ", auto-blipper" : "");
         const auto gear = state.gear;
+        const auto variable = style == ShiftStyle::cvt;
         add("Gear", gear == -2 ? juce::String("Reverse") : gear < 0 || gear >= gears ? juce::String("Neutral")
-                : juce::String(gear + 1) + " of " + juce::String(gears));
-        if (gear >= 0 && gear < gears) {
+                : variable ? juce::String("Drive") : juce::String(gear + 1) + " of " + juce::String(gears));
+        if (variable && gear >= 0) {
+            add("Ratio", juce::String(state.gearboxRatio, 3) + utf8(" : 1, ")
+                             + juce::String(state.gearboxRatio * transmission.finalDriveRatio, 2)
+                             + utf8(" : 1 overall"));
+        } else if (gear >= 0 && gear < gears) {
             const auto ratio = transmission.gearRatios[static_cast<std::size_t>(gear)];
             add("Ratio", juce::String(ratio, 3) + utf8(" : 1, ") + juce::String(ratio * transmission.finalDriveRatio, 2)
                              + utf8(" : 1 overall"));
@@ -1996,20 +2003,26 @@ void EngineViewport::updateInspector() {
                          "drive multiplies each; the next gear must be taller (a smaller ratio). The running engine "
                          "takes them, in the gear it is in.";
             const auto index = style == ShiftStyle::manual ? 0 : style == ShiftStyle::dualClutch ? 3
+                : style == ShiftStyle::cvt ? (transmission.centrifugalClutch ? 5 : 4)
                 : transmission.autoBlipper ? 2 : 1;
             edit->choice = PartInspector::Edit::Choice {
-                { "Manual", "Quickshifter", "QS + blipper", "Dual clutch" },
+                { "Manual", "Quickshifter", "QS + blipper", "Dual clutch", "CVT", "CVT, scooter" },
                 "How a gear change is made. Manual: the clutch dips and the throttle lifts. Quickshifter: a "
                 "sequential box, clutch left in, the ignition cut while the dogs change on the way up. "
                 "QS + blipper: the same, and the throttle blipped to the lower gear's speed on the way down. "
-                "Dual clutch: one clutch hands the drive to the other with no gap, and blips down.",
+                "Dual clutch: one clutch hands the drive to the other with no gap, and blips down. "
+                "CVT: a belt variator between the first and the last gear's ratios, holding the engine at a "
+                "speed set by the pedal; it starts on a wet clutch that creeps (CVT) or a centrifugal one that "
+                "idles free (CVT, scooter).",
                 index };
             partChoice_ = [](EngineConfig& edited, int choice) {
                 auto& box = edited.transmission;
                 box.shiftStyle = choice == 0 ? ShiftStyle::manual
-                    : choice == 3 ? ShiftStyle::dualClutch : ShiftStyle::sequential;
+                    : choice == 3 ? ShiftStyle::dualClutch
+                    : choice >= 4 ? ShiftStyle::cvt : ShiftStyle::sequential;
                 if (choice == 1 || choice == 2) box.quickshifter = true;
-                if (choice >= 1) box.autoBlipper = choice != 1;
+                if (choice >= 1 && choice <= 3) box.autoBlipper = choice != 1;
+                if (choice >= 4) box.centrifugalClutch = choice == 5;
             };
             partEditor_ = [](EngineConfig& edited, const std::vector<double>& values) {
                 const auto shiftMs = values[0];
