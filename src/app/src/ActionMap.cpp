@@ -34,7 +34,10 @@ ActionMap::ActionMap()
         { "wheel_fine_throttle", juce::KeyPress(juce::KeyPress::spaceKey) },
         // Every letter A-Z is already bound, hence a digit.
         { "dyno_ramp", letter('6') },
-        { "ab_switch", letter('7') }
+        { "ab_switch", letter('7') },
+        // Next to the brake: the cruise control sets or cancels.
+        { "cruise", juce::KeyPress(juce::KeyPress::rightKey) },
+        { "automatic_gearbox", letter('8') }
     }} {
     load();
 }

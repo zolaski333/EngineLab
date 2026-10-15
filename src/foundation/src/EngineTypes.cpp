@@ -699,8 +699,8 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
         || !inRange(config.transmission.drivenWheelInertiaKgM2, 0.0, 200.0)
         || !inRange(config.transmission.clutchLockSpeedRpm, 0.1, 500.0)
         || !inRange(config.transmission.shiftDurationSeconds, 0.01, 3.0)
-        || !inRange(config.transmission.automaticUpshiftRpm, 250.0, 50'000.0)
-        || !inRange(config.transmission.automaticDownshiftRpm, 100.0, 30'000.0)
+        || !inRange(config.transmission.automaticUpshiftRpm, 0.0, 50'000.0)
+        || !inRange(config.transmission.automaticDownshiftRpm, 0.0, 30'000.0)
         || !inRange(config.transmission.reverseRatio, 0.1, 10.0)
         || !inRange(config.transmission.gearboxInputInertiaKgM2, 0.0, 20.0)
         || !inRange(config.transmission.differentialInertiaKgM2, 0.0, 50.0)
@@ -907,7 +907,9 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
         return "Transmission must contain between 1 and 12 forward gears";
     for (const auto gearRatio : config.transmission.gearRatios)
         if (!inRange(gearRatio, 0.05, 10.0)) return "Transmission gear ratios must be finite and positive";
-    if (config.transmission.automaticDownshiftRpm >= config.transmission.automaticUpshiftRpm)
+    // Zero derives a shift speed from the engine (ShiftSchedule).
+    if (config.transmission.automaticDownshiftRpm > 0.0 && config.transmission.automaticUpshiftRpm > 0.0
+        && config.transmission.automaticDownshiftRpm >= config.transmission.automaticUpshiftRpm)
         return "Automatic transmission downshift RPM must be lower than upshift RPM";
     if (std::abs(config.plenumVolumeLitres - config.intake.plenumVolumeLitres) > 1.0e-9
         || std::abs(config.throttleDiameterMm - config.intake.throttleDiameterMm) > 1.0e-9)

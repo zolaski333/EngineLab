@@ -878,6 +878,11 @@ void EngineRuntime::applyAudioVoicing(const AudioVoicingConfig& voicing) noexcep
 }
 
 void EngineRuntime::setGear(int gear) noexcept {
+    // A change between two forward gears is the driver taking the gearbox
+    // over: an automatic one goes to manual. Selecting first from neutral
+    // (or reverse) is how an automatic one is driven away, and keeps it.
+    if (gear >= 0 && gear_.load(std::memory_order_relaxed) >= 0)
+        automaticShiftingRequest_.store(0, std::memory_order_release);
     const auto maxGear = static_cast<int>(config_.transmission.gearRatios.size()) - 1;
     const auto selected = std::clamp(gear, -2, maxGear);
     gear_.store(selected, std::memory_order_relaxed);
@@ -925,7 +930,7 @@ void EngineRuntime::setDynoHoldRpm(double value) noexcept {
 void EngineRuntime::updateDriveline(double dtSeconds, const EngineState& engineState,
                                     double requestedLoad) noexcept {
     drivelineOutput_ = advanceVehicle(driveline_, dtSeconds, engineState, requestedLoad,
-        driverInputs()).drive;
+        frameDriver_).drive;
     engagedGear_ = drivelineOutput_.engagedGear;
     effectiveClutchPressure_ = drivelineOutput_.clutchPressure;
     engineClutchTorqueNm_ = drivelineOutput_.engineReactionTorqueNm;
@@ -1327,12 +1332,31 @@ void EngineRuntime::run(std::stop_token stopToken) {
                 requestedLoad = 0.0;
             }
         }
+        if (const auto automatic = automaticShiftingRequest_.exchange(-1, std::memory_order_acq_rel);
+            automatic >= 0)
+            driveline_.setAutomaticShifting(automatic == 1);
         const auto gearGeneration = gearCommandGeneration_.load(std::memory_order_acquire);
         if (gearGeneration != consumedGearGeneration) {
             consumedGearCommand = gear_.load(std::memory_order_relaxed);
             driveline_.requestGear(consumedGearCommand);
             consumedGearGeneration = gearGeneration;
         }
+        // The driver's pedals, with the cruise control's throttle merged in
+        // once per frame: the driveline and the arbiter see the same inputs.
+        frameDriver_ = driverInputs();
+        if (const auto toggles = cruiseToggleRequests_.load(std::memory_order_acquire);
+            toggles != cruiseTogglesConsumed_) {
+            if ((toggles - cruiseTogglesConsumed_) % 2 == 1) {
+                if (cruise_.engaged()) cruise_.cancel();
+                else if (!dynoActive_ && driveline_.requestedGear() >= 0)
+                    cruise_.engage(vehicleSpeedMps_, frameDriver_.throttle);
+            }
+            cruiseTogglesConsumed_ = toggles;
+        }
+        if (dynoActive_) cruise_.cancel();
+        if (cruise_.engaged())
+            frameDriver_ = cruise_.apply(simulationDt, vehicleSpeedMps_, frameDriver_,
+                                         driveline_.requestedGear() >= 0);
         if (!dynoActive_ && simulationDt > 0.0) {
             updateDriveline(simulationDt, simulator_.state(), requestedLoad);
             // Reflect automatic shifts without ever overwriting a concurrent UI
@@ -1374,7 +1398,7 @@ void EngineRuntime::run(std::stop_token stopToken) {
             controls.coolingAirSpeedMps = dynoCellFanAirSpeedMps;
         } else {
             VehicleStep vehicle { drivelineOutput_ };
-            DriverCommandArbiter::arbitrate(driverInputs(), vehicle);
+            DriverCommandArbiter::arbitrate(frameDriver_, vehicle);
             applyVehicleStep(controls, vehicle);
         }
         // The 3-D view's gas field: tracked at the angle it shows, or taken
@@ -1740,6 +1764,26 @@ void EngineRuntime::run(std::stop_token stopToken) {
             frame.state.vehicleDistanceM = vehicleDistanceM_;
             frame.state.fuelEconomyLitresPer100Km = vehicleDistanceM_ > 10.0
                 ? frame.state.fuelConsumedLitres * 100'000.0 / vehicleDistanceM_ : 0.0;
+            if (const auto resets = tripResetRequests_.load(std::memory_order_acquire);
+                resets != tripResetsConsumed_) {
+                tripStartDistanceM_ = vehicleDistanceM_;
+                tripStartFuelLitres_ = frame.state.fuelConsumedLitres;
+                tripResetsConsumed_ = resets;
+            }
+            frame.state.fuelFlowLitresPerHour = frame.state.fuelFlowGramsPerSecond * 3.6
+                / config_.fuelProperties.densityKgPerL;
+            // Instant economy needs a road speed; below walking pace a
+            // litres-per-hour figure says more and the UI shows that instead.
+            frame.state.instantFuelEconomyLitresPer100Km = vehicleSpeedMps_ >= 1.0
+                ? frame.state.fuelFlowLitresPerHour / (vehicleSpeedMps_ * 3.6) * 100.0 : 0.0;
+            frame.state.tripDistanceM = std::max(0.0, vehicleDistanceM_ - tripStartDistanceM_);
+            frame.state.tripFuelLitres = std::max(0.0,
+                frame.state.fuelConsumedLitres - tripStartFuelLitres_);
+            frame.state.tripFuelEconomyLitresPer100Km = frame.state.tripDistanceM >= 100.0
+                ? frame.state.tripFuelLitres * 100'000.0 / frame.state.tripDistanceM : 0.0;
+            frame.state.automaticShifting = driveline_.automaticShifting();
+            frame.state.cruiseEngaged = cruise_.engaged();
+            frame.state.cruiseSetSpeedMps = cruise_.setSpeedMps();
             frame.state.wheelTorqueNm = wheelTorqueNm_;
             frame.state.drivelineLoadTorqueNm = drivelineLoadTorqueNm_;
             frame.state.clutchTorqueNm = -engineClutchTorqueNm_;

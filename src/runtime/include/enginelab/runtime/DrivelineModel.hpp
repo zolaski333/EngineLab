@@ -3,6 +3,7 @@
 #include <enginelab/foundation/EngineTypes.hpp>
 
 #include <algorithm>
+#include <cmath>
 
 namespace enginelab {
 
@@ -61,6 +62,15 @@ public:
     [[nodiscard]] bool driverClutchConnected() const noexcept {
         return config_.transmission.shiftStyle != ShiftStyle::dualClutch;
     }
+    /** The driver's pedal this frame, which an automatic gearbox reads to
+     * place its shift points (advanceVehicle sets it). Unset (negative), it
+     * reads the engine's throttle. */
+    void setDriverThrottle(double throttle) noexcept {
+        driverThrottle_ = std::isfinite(throttle) ? std::clamp(throttle, 0.0, 1.0) : -1.0;
+    }
+    /** Switches the automatic gearbox on or off, live. */
+    void setAutomaticShifting(bool automatic) noexcept { config_.transmission.automaticShifting = automatic; }
+    [[nodiscard]] bool automaticShifting() const noexcept { return config_.transmission.automaticShifting; }
     /** The engine's rotating inertia after a live change of its geometry. */
     void setEngineInertia(double kgM2) noexcept { engineInertiaKgM2_ = std::max(0.001, kgM2); }
     /** A live change of the gearbox and the vehicle: read at every advance(),
@@ -111,6 +121,10 @@ private:
     // Engine + flywheel rotating inertia, cached so the locked-clutch constraint can
     // share one acceleration between the crank and the driveline.
     double engineInertiaKgM2_ { 0.24 };
+    double driverThrottle_ { -1.0 };
+    // Time since the last shift began: an automatic gearbox waits before
+    // choosing again.
+    double secondsSinceShift_ { 1.0e9 };
     int requestedGear_ { -1 };
     int engagedGear_ { -1 };
     int shiftTargetGear_ { -1 };

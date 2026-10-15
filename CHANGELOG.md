@@ -97,6 +97,34 @@ file formats, always with an in-memory migration).
 
 ### Added
 
+- Display units: speed, distance, fuel consumption (L/100 km, km/L, MPG US
+  or UK), fuel volume, pressure (kPa, bar, psi, absolute or gauge), torque,
+  power, temperature, length, displacement, mass and air flow, chosen one by
+  one or from a preset (Metric, Metric bar/PS, US, UK) in the `⋯` menu, under
+  **Units**. Every readout, the dyno, the inspector and its edit fields
+  follow them; the choice is kept in `units.json`.
+- A **Drive** section in the left column: speedometer, gear, instant
+  consumption (litres per hour when standing), a trip computer with its own
+  reset, and buttons for gear down / up, brake, clutch and cruise control,
+  each showing its key.
+- An automatic gearbox for any engine (`8`, or the **Auto** button): it
+  changes up early with a light foot and near the limiter flat out, kicks
+  down when you floor it at low revs, and comes back to first when you stop.
+  Changing gear yourself takes it back to manual; selecting first from
+  neutral does not. `transmission.automatic_upshift_rpm` and
+  `automatic_downshift_rpm` now default to 0, which derives them from the
+  engine (before: fixed 6,400 and 1,650 rpm for every engine).
+- Cruise control (right arrow, or the button): holds the road speed from
+  30 km/h; the pedal overtakes it; the brake, the clutch, neutral or falling
+  far under the set speed cancel it.
+- The brake is progressive: holding the key (or the button) builds the
+  pressure over about a second (three with `Space` held) and releasing it
+  lets go at once.
+- The part inspector edits any number of fields, shows each in your units,
+  and says whether a change applies live or restarts the engine. The
+  gearbox is editable from it: clutch and hand-over times, ignition cut,
+  final drive and every gear ratio.
+
 - Gearboxes can now shift the way real ones do (`transmission.shift_style`,
   changeable live in the engine file). `manual` is the driver's lift and
   clutch, as before. `sequential` is a motorcycle or race dog box: an upshift

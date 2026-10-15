@@ -552,3 +552,23 @@ target_compile_definitions(EngineLabValveProfileTransitionTests PRIVATE
 enginelab_set_warnings(EngineLabValveProfileTransitionTests)
 add_test(NAME EngineLab.ValveProfileTransition COMMAND EngineLabValveProfileTransitionTests)
 set_tests_properties(EngineLab.ValveProfileTransition PROPERTIES TIMEOUT 120)
+
+add_executable(EngineLabUnitsTests UnitsTests.cpp)
+target_link_libraries(EngineLabUnitsTests PRIVATE EngineLab::Foundation)
+enginelab_set_warnings(EngineLabUnitsTests)
+add_test(NAME EngineLab.Units COMMAND EngineLabUnitsTests)
+
+add_executable(EngineLabCruiseControlTests CruiseControlTests.cpp)
+target_link_libraries(EngineLabCruiseControlTests PRIVATE EngineLab::Runtime)
+enginelab_set_warnings(EngineLabCruiseControlTests)
+add_test(NAME EngineLab.CruiseControl COMMAND EngineLabCruiseControlTests)
+
+add_executable(EngineLabShiftScheduleTests ShiftScheduleTests.cpp)
+target_link_libraries(EngineLabShiftScheduleTests PRIVATE
+    EngineLab::Foundation EngineLab::Events EngineLab::Physics EngineLab::Ecu
+    EngineLab::Exhaust EngineLab::Simulation EngineLab::Catalog EngineLab::Runtime)
+target_compile_definitions(EngineLabShiftScheduleTests PRIVATE
+    ENGINELAB_CATALOG_ROOT="${CMAKE_SOURCE_DIR}")
+enginelab_set_warnings(EngineLabShiftScheduleTests)
+add_test(NAME EngineLab.ShiftSchedule COMMAND EngineLabShiftScheduleTests)
+set_tests_properties(EngineLab.ShiftSchedule PROPERTIES TIMEOUT 300)

@@ -105,12 +105,17 @@ void ReadoutStrip::paint(juce::Graphics& g) {
     const auto diesel = config.fuel == FuelType::diesel;
     const auto mixtureOff = state.airFuelRatioValid && !diesel
         && std::abs(state.airFuelRatio - state.targetAirFuelRatio) > 1.0;
+    using units::Quantity;
+    const auto& unit = model_.units;
+    // The second power figure is the other horsepower-or-kilowatt reading.
+    auto alternate = unit;
+    alternate.preferences.select(Quantity::power, unit.preferences.of(Quantity::power).id == "kw" ? "hp" : "kw");
     const std::array<Readout, 6> readouts {{
-        { "Torque", fixed(state.cycleAveragedTorqueNm, 0), "Nm",
-          "inst. " + fixed(state.torqueNm, 0) + " Nm" },
-        { "Power", fixed(state.cycleAveragedPowerKw, 1), "kW",
-          fixed(state.cycleAveragedPowerKw / 0.745700, 1) + " hp" },
-        { "Manifold", fixed(state.manifoldPressureKpa, 0), "kPa",
+        { "Torque", unit.value(Quantity::torque, state.cycleAveragedTorqueNm, 0), unit.symbol(Quantity::torque),
+          "inst. " + unit.text(Quantity::torque, state.torqueNm, 0) },
+        { "Power", unit.value(Quantity::power, state.cycleAveragedPowerKw), unit.symbol(Quantity::power),
+          alternate.text(Quantity::power, state.cycleAveragedPowerKw) },
+        { "Manifold", unit.value(Quantity::pressure, state.manifoldPressureKpa), unit.symbol(Quantity::pressure),
           config.forcedInduction.enabled
               ? "boost " + juce::String(state.boostPressureRatio, 2) + utf8("\xc3\x97")
               : "VE " + fixed(state.volumetricEfficiency * 100.0, 0) + " %" },
@@ -118,11 +123,11 @@ void ReadoutStrip::paint(juce::Graphics& g) {
           !state.airFuelRatioValid ? utf8("cut / sync")
               : (diesel ? "smoke limit " : "target ") + juce::String(state.targetAirFuelRatio, 1),
           mixtureOff ? colours::warn : colours::text },
-        { "Exhaust gas", fixed(state.exhaustTemperatureC, 0), utf8("\xc2\xb0""C"),
-          "runner " + fixed(state.exhaustRunnerPressureKpa, 0) + " kPa",
+        { "Exhaust gas", unit.value(Quantity::temperature, state.exhaustTemperatureC), unit.symbol(Quantity::temperature),
+          "runner " + unit.text(Quantity::pressure, state.exhaustRunnerPressureKpa),
           state.exhaustTemperatureC > 950.0 ? colours::warn : colours::text },
-        { "Coolant", fixed(state.coolantTemperatureC, 0), utf8("\xc2\xb0""C"),
-          "oil " + juce::String(state.oilPressureKpa / 100.0, 1) + " bar",
+        { "Coolant", unit.value(Quantity::temperature, state.coolantTemperatureC), unit.symbol(Quantity::temperature),
+          "oil " + unit.pressureDifference(state.oilPressureKpa, unit.preferences.of(Quantity::pressure).id == "kpa" ? 0 : 1),
           state.coolantTemperatureC > 110.0 ? colours::warn : colours::text },
     }};
     const auto cellWidth = (area.getWidth() - static_cast<float>(readouts.size())) / static_cast<float>(readouts.size());

@@ -7,8 +7,10 @@
 
 namespace enginelab::ui {
 
-/** Left column: ignition, starter, dyno, throttle and the calibration
-    trims. The main component wires the controls to the runtime. */
+/** Left column: ignition, starter, dyno, throttle, driving (speed, gears,
+    brake, clutch, cruise control, trip) and the calibration trims. Every
+    driving action shows its key. The main component wires the controls to
+    the runtime. */
 class ControlPanel final : public juce::Component, private juce::Slider::Listener {
 public:
     ControlPanel();
@@ -28,6 +30,16 @@ public:
     ActionButton throttleLow { percentLabel(10), ActionButton::Style::compact };
     ActionButton throttleMid { percentLabel(20), ActionButton::Style::compact };
     ActionButton throttleFull { percentLabel(100), ActionButton::Style::compact };
+    ActionButton gearDown { "Gear down", ActionButton::Style::compact };
+    ActionButton gearUp { "Gear up", ActionButton::Style::compact };
+    /** Held with the mouse like its key: the brake builds up while held. */
+    ActionButton brake { "Brake", ActionButton::Style::compact };
+    /** Held: the clutch pedal pressed. */
+    ActionButton clutch { "Clutch", ActionButton::Style::compact };
+    ActionButton cruise { "Cruise", ActionButton::Style::compact };
+    /** Lit when the gearbox shifts by itself; a gear key goes back to manual. */
+    ActionButton automatic { "Auto", ActionButton::Style::compact };
+    ActionButton resetTrip { "Reset trip", ActionButton::Style::compact };
     SliderRow afrTrim { "AFR trim" };
     SliderRow sparkTrim { "Spark trim" };
 
@@ -42,6 +54,13 @@ private:
     juce::Rectangle<float> engineLabel_;
     juce::Rectangle<float> throttleLabel_;
     juce::Rectangle<float> throttleValue_;
+    juce::Rectangle<float> driveLabel_;
+    juce::Rectangle<float> speedValue_;
+    juce::Rectangle<float> tripText_;
+    juce::String speedText_;
+    juce::String speedUnit_;
+    juce::String driveDetail_;
+    juce::String tripDetail_;
     juce::Rectangle<float> trimsHeader_;
     bool trimsOpen_ { false };
 };

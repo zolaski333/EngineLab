@@ -22,7 +22,8 @@
 //       { "t": 2, "throttle": 1, "clutch": 1, "ramp_s": 0.9 },
 //       { "t": 2, "shift_up_at_rpm": 8500 },       the driver upshifts there
 //       { "t": 9, "shift": "down" },               or "up"
-//       { "t": 9, "brake": 1, "starter": false, "ignition": true } ] }
+//       { "t": 9, "brake": 1, "starter": false, "ignition": true },
+//       { "t": 12, "cruise": true } ] }           holds the speed it has then
 // Pedal targets are reached linearly over "ramp_s" (0 = at once).
 
 #include <enginelab/catalog/EngineCatalog.hpp>
@@ -30,6 +31,7 @@
 #include <enginelab/events/FourStrokeEventGenerator.hpp>
 #include <enginelab/exhaust/ExhaustGraph.hpp>
 #include <enginelab/physics/SimplifiedGasolinePhysics.hpp>
+#include <enginelab/runtime/CruiseControl.hpp>
 #include <enginelab/runtime/DriverCommandArbiter.hpp>
 #include <enginelab/runtime/DrivelineModel.hpp>
 #include <enginelab/simulation/EngineSimulator.hpp>
@@ -72,11 +74,14 @@ struct ScenarioEvent final {
     std::optional<bool> ignition;
     bool start { false };
     std::optional<double> shiftUpAtRpm;
+    std::optional<bool> cruise;
 };
 
 struct Scenario final {
     std::string engine;
     double durationSeconds { 30.0 };
+    /** Built-in "cruise": lift and set the cruise control at this speed. */
+    double cruiseAtKmh { 0.0 };
     std::vector<ScenarioEvent> events;
 };
 
@@ -155,6 +160,7 @@ ScenarioEvent parseEvent(const Json& json) {
     if (json.contains("ignition")) event.ignition = json["ignition"].get<bool>();
     event.start = json.value("start", false);
     if (json.contains("shift_up_at_rpm")) event.shiftUpAtRpm = json["shift_up_at_rpm"].get<double>();
+    if (json.contains("cruise")) event.cruise = json["cruise"].get<bool>();
     return event;
 }
 
@@ -204,7 +210,22 @@ Scenario builtinScenario(const std::string& name, const enginelab::EngineConfig&
             { { "t", 15.0 }, { "clutch", 1.0 }, { "ramp_s", 0.8 } } });
         return parseScenario(Json { { "duration_s", 20.0 }, { "events", events } });
     }
-    fail("unknown builtin scenario '" + name + "' (pull, downshift-clutch)");
+    if (name == "cruise") {
+        // Pull to 100 km/h in the second-highest gear's range, lift, set the
+        // cruise control there, then a brake tap that must cancel it.
+        events = Json::array({
+            { { "t", 0.0 }, { "start", true }, { "clutch", 0.0 } },
+            { { "t", 3.0 }, { "gear", 1 } },
+            { { "t", 3.5 }, { "throttle", 0.6 } },
+            { { "t", 3.5 }, { "clutch", 1.0 }, { "ramp_s", 0.9 },
+              { "shift_up_at_rpm", 0.55 * ceilingRpm(config) } },
+            { { "t", 40.0 }, { "brake", 1.0 } },
+            { { "t", 40.5 }, { "brake", 0.0 } } });
+        auto scenario = parseScenario(Json { { "duration_s", 50.0 }, { "events", events } });
+        scenario.cruiseAtKmh = 100.0;
+        return scenario;
+    }
+    fail("unknown builtin scenario '" + name + "' (pull, downshift-clutch, cruise)");
 }
 
 const enginelab::EngineConfig& selectEngine(const enginelab::EngineCatalogLoadResult& catalog,
@@ -304,7 +325,7 @@ int run(const Options& options) {
     Scenario scenario;
     if (scenarioJson) scenario = parseScenario(*scenarioJson);
     else if (!options.builtin.empty()) scenario = builtinScenario(options.builtin, config);
-    else fail("pass --scenario <file.json> or --builtin pull|downshift-clutch");
+    else fail("pass --scenario <file.json> or --builtin pull|downshift-clutch|cruise");
     if (options.durationSeconds) scenario.durationSeconds = *options.durationSeconds;
 
     const auto vehicle = std::make_unique<Vehicle>(config);
@@ -331,6 +352,14 @@ int run(const Options& options) {
     double autoStartSince = -1.0;
     double shiftUpAtRpm = 0.0;
     std::size_t nextEvent = 0;
+    enginelab::CruiseControl cruise;
+    bool pendingCruise = false;
+    double roadSpeedMps = 0.0;
+    double cruiseEngagedAt = -1.0;
+    double cruiseCancelledAt = -1.0;
+    double cruiseErrorSum = 0.0;
+    double cruiseErrorMaximum = 0.0;
+    std::size_t cruiseErrorSamples = 0;
 
     std::vector<GearRatioSample> gearSamples(static_cast<std::size_t>(std::max(gearCount, 0)));
     std::array<std::size_t, 3> authorityTicks {};
@@ -362,6 +391,10 @@ int run(const Options& options) {
             if (event.ignition) ignition = *event.ignition;
             if (event.start) { ignition = true; autoStartSince = now; }
             if (event.shiftUpAtRpm) shiftUpAtRpm = *event.shiftUpAtRpm;
+            if (event.cruise) {
+                if (*event.cruise) pendingCruise = true;
+                else cruise.cancel();
+            }
         }
         const auto& previous = vehicle->simulator.state();
         if (autoStartSince >= 0.0) {
@@ -370,7 +403,30 @@ int run(const Options& options) {
             if (!cranking) autoStartSince = -1.0;
         }
 
-        const enginelab::DriverInputs inputs { throttle.value(now), clutch.value(now), brake.value(now) };
+        const auto speedNow = std::abs(roadSpeedMps);
+        if (scenario.cruiseAtKmh > 0.0 && cruiseEngagedAt < 0.0 && speedNow * 3.6 >= scenario.cruiseAtKmh) {
+            shiftUpAtRpm = 0.0;
+            pendingCruise = true;
+        }
+        if (pendingCruise) {
+            pendingCruise = false;
+            if (cruise.engage(speedNow, throttle.value(now))) {
+                cruiseEngagedAt = now;
+                throttle.moveTo(0.0, now, 0.0);
+            }
+        }
+        const auto wasEngaged = cruise.engaged();
+        const auto driverInputs = enginelab::DriverInputs { throttle.value(now), clutch.value(now), brake.value(now) };
+        const auto inGear = vehicle->driveline.requestedGear() >= 0 || vehicle->driveline.requestedGear() == -2;
+        const auto inputs = cruise.apply(stepSeconds, speedNow, driverInputs, inGear);
+        if (wasEngaged && !cruise.engaged() && cruiseCancelledAt < 0.0) cruiseCancelledAt = now;
+        // The hold is judged once the controller has had 5 s to settle.
+        if (cruise.engaged() && now - cruiseEngagedAt > 5.0) {
+            const auto error = speedNow - cruise.setSpeedMps();
+            cruiseErrorSum += std::abs(error);
+            cruiseErrorMaximum = std::max(cruiseErrorMaximum, std::abs(error));
+            ++cruiseErrorSamples;
+        }
         const auto step = enginelab::advanceVehicle(vehicle->driveline, stepSeconds, previous, 0.0, inputs);
         enginelab::EngineControls controls;
         controls.ignitionEnabled = ignition;
@@ -380,13 +436,15 @@ int run(const Options& options) {
         const auto& state = frame.state;
         const auto& drive = step.drive;
 
-        // The driver's own upshift at a set speed, once the last shift is done.
+        // The driver's own upshift at a set speed, once the last shift is
+        // done; an automatic gearbox shifts by itself instead.
         const auto requested = vehicle->driveline.requestedGear();
-        if (shiftUpAtRpm > 0.0 && state.rpm >= shiftUpAtRpm && !drive.shiftInProgress
+        if (shiftUpAtRpm > 0.0 && !vehicle->driveline.automaticShifting() && state.rpm >= shiftUpAtRpm && !drive.shiftInProgress
                 && requested >= 0 && requested < gearCount - 1 && drive.engagedGear == requested)
             vehicle->driveline.shiftUp();
 
         const auto speed = drive.vehicleSpeedMps;
+        roadSpeedMps = speed;
         topSpeedMps = std::max(topSpeedMps, speed);
         maximumRpm = std::max(maximumRpm, state.rpm);
         if (motionStart < 0.0 && speed > 0.1) motionStart = now;
@@ -455,6 +513,15 @@ int run(const Options& options) {
         authorityTicks[0], authorityTicks[1], authorityTicks[2]);
     std::printf("ignition-cut ticks %zu, soft-limiter ticks %zu, hard-limiter ticks %zu\n",
         ignitionCutTicks, softLimiterTicks, hardLimiterTicks);
+    if (cruiseEngagedAt >= 0.0) {
+        std::printf("cruise: set at %.2f s, %.1f km/h; ", cruiseEngagedAt, cruise.engaged()
+            ? cruise.setSpeedMps() * 3.6 : scenario.cruiseAtKmh);
+        if (cruiseErrorSamples > 0)
+            std::printf("mean |error| %.2f km/h, max %.2f km/h after 5 s; ",
+                cruiseErrorSum / static_cast<double>(cruiseErrorSamples) * 3.6, cruiseErrorMaximum * 3.6);
+        if (cruiseCancelledAt >= 0.0) std::printf("cancelled at %.2f s\n", cruiseCancelledAt);
+        else std::printf("still engaged\n");
+    }
     std::printf("active-limit seconds:");
     for (std::size_t bit = 0; bit < activeLimitNames.size(); ++bit)
         std::printf(" %s %.2f", activeLimitNames[bit], static_cast<double>(activeLimitTicks[bit]) * stepSeconds);

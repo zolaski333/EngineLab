@@ -136,6 +136,8 @@ private:
     void showEcuTuner();
     void showExhaustDesigner();
     void showMoreMenu();
+    /** Repaints every panel after the display units changed. */
+    void unitsChanged();
     void startEngineScriptWatcher(const std::filesystem::path&);
     void stopEngineScriptWatcher() noexcept;
     void pollEngineScript();
@@ -213,6 +215,9 @@ private:
         from earlier in the session. */
     [[nodiscard]] juce::StringArray unsavedEngineNames() const;
     bool brakeKeyDown_ { false };
+    /** The brake pressure sent to the runtime: it builds up while the brake
+        key or button is held and lets go at once. */
+    double brakeCommand_ { 0.0 };
     bool throttleKeyActive_ { false };
     double targetClutchPressure_ { 1.0 };
     double currentClutchPressure_ { 1.0 };

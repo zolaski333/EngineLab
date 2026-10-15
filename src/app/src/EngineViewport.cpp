@@ -189,7 +189,7 @@ void EngineCutawayView::drawEngine(juce::Graphics& g, juce::Rectangle<float> are
                 g.setColour(liveCylinder->misfireProbability > 0.2 ? juce::Colour(0xffffca28) : juce::Colour(0xffaab7b2));
                 g.setFont(juce::FontOptions(10.5F, juce::Font::bold));
                 g.drawFittedText("C" + juce::String(liveCylinder->id) + "  "
-                    + juce::String(liveCylinder->pressureEstimateBar, 1) + " bar",
+                    + model_.units.text(units::Quantity::pressure, liveCylinder->pressureEstimateBar * 100.0),
                     juce::Rectangle<float>(cylinderCenterX - 38.0F, cylinderCenterY - 8.0F, 76.0F, 16.0F).toNearestInt(),
                     juce::Justification::centred, 1);
             }
@@ -302,7 +302,7 @@ void EngineCutawayView::drawEngine(juce::Graphics& g, juce::Rectangle<float> are
             g.setColour(cylinderState.misfireProbability > 0.2 ? juce::Colour(0xffffca28) : juce::Colour(0xff82918b));
             g.setFont(juce::FontOptions(10.5F, juce::Font::bold));
             g.drawFittedText("C" + juce::String(cylinderState.id) + "  "
-                + juce::String(cylinderState.pressureEstimateBar, 1) + " bar",
+                + model_.units.text(units::Quantity::pressure, cylinderState.pressureEstimateBar * 100.0),
                 juce::Rectangle<float>(x + 3.0F, top + height - 14.0F, cylinderWidth - 6.0F, 12.0F).toNearestInt(),
                 juce::Justification::centred, 1);
         }
@@ -495,9 +495,36 @@ constexpr int inspectorStepperWidth = 26;
 constexpr int inspectorValueWidth = 78;
 } // namespace
 
+PartInspector::Field& PartInspector::Edit::length(juce::String label, double millimetres, double step,
+                                                  double fineStep, double minimum, double maximum) {
+    auto& field = fields.emplace_back();
+    field.label = std::move(label);
+    field.unit = " mm";
+    field.quantity = units::Quantity::length;
+    field.value = millimetres;
+    field.step = step;
+    field.fineStep = fineStep;
+    field.minimum = minimum;
+    field.maximum = maximum;
+    return field;
+}
+
+PartInspector::Field& PartInspector::Edit::value(juce::String label, double value, juce::String unit, int decimals,
+                                                 double step, double fineStep, double minimum, double maximum) {
+    auto& field = fields.emplace_back();
+    field.label = std::move(label);
+    field.unit = std::move(unit);
+    field.decimals = decimals;
+    field.value = value;
+    field.step = step;
+    field.fineStep = fineStep;
+    field.minimum = minimum;
+    field.maximum = maximum;
+    return field;
+}
+
 PartInspector::PartInspector() {
-    for (auto* button : { &firstDown_, &firstUp_, &secondDown_, &secondUp_, &resetEdit_, &rampEdit_, &choiceEdit_ })
-        addChildComponent(button);
+    for (auto* button : { &resetEdit_, &rampEdit_, &choiceEdit_ }) addChildComponent(button);
     choiceEdit_.onClick = [this] {
         if (!edit_ || !edit_->choice || edit_->choice->options.empty()) return;
         auto& choice = *edit_->choice;
@@ -505,10 +532,6 @@ PartInspector::PartInspector() {
         choiceEdit_.setButtonText(choice.options[static_cast<std::size_t>(choice.index)]);
         if (onChoice) onChoice(choice.index);
     };
-    firstDown_.onClick = [this] { stepEdit(true, -1.0); };
-    firstUp_.onClick = [this] { stepEdit(true, 1.0); };
-    secondDown_.onClick = [this] { stepEdit(false, -1.0); };
-    secondUp_.onClick = [this] { stepEdit(false, 1.0); };
     rampEdit_.setTooltip("When the engine takes the change: at the next cycle, or gradually over "
                          + juce::String(EngineViewport::cylinderRampSeconds, 0) + " s");
     const auto showRamp = [this] {
@@ -523,7 +546,7 @@ PartInspector::PartInspector() {
     valueEditor_.setJustification(juce::Justification::centred);
     valueEditor_.setFont(monoFont(11.5F, false));
     valueEditor_.setIndents(4, 3);
-    valueEditor_.setInputRestrictions(8, "0123456789.,");
+    valueEditor_.setInputRestrictions(9, "-0123456789.,");
     valueEditor_.setColour(juce::TextEditor::backgroundColourId, colours::panelRaised);
     valueEditor_.setColour(juce::TextEditor::textColourId, colours::text);
     valueEditor_.setColour(juce::TextEditor::outlineColourId, colours::accent);
@@ -532,11 +555,10 @@ PartInspector::PartInspector() {
     valueEditor_.onEscapeKey = [this] { endTyping(false); };
     valueEditor_.onFocusLost = [this] { endTyping(false); };
     addChildComponent(valueEditor_);
-    resetEdit_.setTooltip("Back to the size this part had when you selected it");
+    resetEdit_.setTooltip("Back to the values this part had when you selected it");
     resetEdit_.onClick = [this] {
         if (!edit_) return;
-        pendingFirst_ = originFirst_;
-        pendingSecond_ = originSecond_;
+        pending_ = origin_;
         setEditStatus({});
         updateEditButtons();
         sendEdit();
@@ -547,28 +569,35 @@ void PartInspector::timerCallback() { sendEdit(); }
 
 void PartInspector::sendEdit() {
     stopTimer();
-    if (!edit_ || !onApplyEdit) return;
-    if (std::abs(pendingFirst_ - edit_->first) < 1.0e-6
-        && std::abs(pendingSecond_ - edit_->second) < 1.0e-6)
-        return;
-    onApplyEdit(pendingFirst_, pendingSecond_, gradual_);
+    if (!edit_ || !onApplyEdit || pending_.size() != edit_->fields.size()) return;
+    auto changed = false;
+    for (std::size_t index = 0; index < pending_.size(); ++index)
+        changed = changed || std::abs(pending_[index] - edit_->fields[index].value) >= 1.0e-6;
+    if (changed) onApplyEdit(pending_, gradual_);
 }
 
 void PartInspector::setEdit(std::optional<Edit> edit) {
-    const auto keep = edit && edit_ && edit->key == edit_->key && edit->first == edit_->first
-        && edit->second == edit_->second;
-    const auto resize = edit.has_value() != edit_.has_value()
-        || (edit && edit_ && (edit->firstEditable != edit_->firstEditable || edit->note != edit_->note));
-    // A live edit comes back as the same component with its new size: the
+    const auto sameValues = [](const Edit& left, const Edit& right) {
+        if (left.fields.size() != right.fields.size()) return false;
+        for (std::size_t index = 0; index < left.fields.size(); ++index)
+            if (left.fields[index].value != right.fields[index].value) return false;
+        return true;
+    };
+    const auto keep = edit && edit_ && edit->key == edit_->key && sameValues(*edit, *edit_);
+    const auto layoutOf = [](const std::optional<Edit>& candidate) {
+        juce::String layout;
+        if (!candidate) return layout;
+        for (const auto& field : candidate->fields) layout << (field.editable ? "e" : "r");
+        return layout << candidate->note;
+    };
+    const auto resize = layoutOf(edit) != layoutOf(edit_);
+    // A live edit comes back as the same part with its new values: the
     // origin stays, so Reset still knows where the editing started.
-    const auto sameComponent = edit && edit_ && edit->key == edit_->key;
+    const auto samePart = edit && edit_ && edit->key == edit_->key && edit->fields.size() == edit_->fields.size();
     if (!keep && edit) {
-        pendingFirst_ = edit->first;
-        pendingSecond_ = edit->second;
-        if (!sameComponent) {
-            originFirst_ = edit->first;
-            originSecond_ = edit->second;
-        }
+        pending_.clear();
+        for (const auto& field : edit->fields) pending_.push_back(field.value);
+        if (!samePart) origin_ = pending_;
     }
     if (!keep) {
         editStatus_.clear();
@@ -579,9 +608,30 @@ void PartInspector::setEdit(std::optional<Edit> edit) {
         }
     }
     edit_ = std::move(edit);
-    for (auto* button : { &firstDown_, &firstUp_ })
-        button->setVisible(edit_.has_value() && edit_->firstEditable);
-    for (auto* button : { &secondDown_, &secondUp_, &resetEdit_ }) button->setVisible(edit_.has_value());
+    const auto fieldCount = edit_ ? edit_->fields.size() : 0U;
+    while (downButtons_.size() < fieldCount) {
+        const auto index = downButtons_.size();
+        auto& down = downButtons_.emplace_back(std::make_unique<ActionButton>("-", ActionButton::Style::compact));
+        auto& up = upButtons_.emplace_back(std::make_unique<ActionButton>("+", ActionButton::Style::compact));
+        down->onClick = [this, index] { stepEdit(index, -1.0); };
+        up->onClick = [this, index] { stepEdit(index, 1.0); };
+        addChildComponent(*down);
+        addChildComponent(*up);
+    }
+    for (std::size_t index = 0; index < downButtons_.size(); ++index) {
+        const auto shown = index < fieldCount && edit_->fields[index].editable;
+        downButtons_[index]->setVisible(shown);
+        upButtons_[index]->setVisible(shown);
+        if (!shown) continue;
+        const auto& field = edit_->fields[index];
+        const auto tip = [&](double sign) {
+            return field.label + (sign > 0.0 ? " +" : utf8(" \xe2\x88\x92")) + formatValue(index, field.step, true, true)
+                + " (Shift: " + formatValue(index, field.fineStep, true, true) + ")";
+        };
+        downButtons_[index]->setTooltip(tip(-1.0));
+        upButtons_[index]->setTooltip(tip(1.0));
+    }
+    resetEdit_.setVisible(edit_.has_value());
     rampEdit_.setVisible(edit_.has_value() && edit_->offersRamp);
     choiceEdit_.setVisible(edit_.has_value() && edit_->choice.has_value() && !edit_->choice->options.empty());
     if (edit_ && edit_->choice && !edit_->choice->options.empty()) {
@@ -590,34 +640,26 @@ void PartInspector::setEdit(std::optional<Edit> edit) {
         choiceEdit_.setButtonText(choice.options[static_cast<std::size_t>(choice.index)]);
         choiceEdit_.setTooltip(choice.tooltip);
     }
-    if (edit_) {
-        const auto tip = [this](bool first, double sign) {
-            const auto& label = first ? edit_->firstLabel : edit_->secondLabel;
-            const auto step = first ? edit_->firstStep : edit_->secondStep;
-            const auto fine = first ? edit_->firstFineStep : edit_->secondFineStep;
-            return label + (sign > 0.0 ? " +" : utf8(" \xe2\x88\x92")) + formatValue(step, first)
-                + " (Shift: " + formatValue(fine, first) + ")";
-        };
-        firstDown_.setTooltip(tip(true, -1.0));
-        firstUp_.setTooltip(tip(true, 1.0));
-        secondDown_.setTooltip(tip(false, -1.0));
-        secondUp_.setTooltip(tip(false, 1.0));
-    }
     updateEditButtons();
     if (resize) setSize(getWidth(), idealHeight());
     resized();
 }
 
-juce::String PartInspector::formatValue(double value, bool first, bool withUnit) const {
-    if (!edit_) return {};
-    const auto fixed = first ? edit_->firstDecimals : edit_->secondDecimals;
-    const auto decimals = fixed >= 0 ? fixed : (std::abs(value - std::round(value)) > 1.0e-6 ? 1 : 0);
-    return juce::String(value, decimals) + (withUnit ? (first ? edit_->firstUnit : edit_->secondUnit) : juce::String());
-}
-
-double PartInspector::lowest(bool first) const {
-    if (!edit_) return 0.0;
-    return first ? edit_->minimum : edit_->secondMinimum.value_or(edit_->minimum);
+juce::String PartInspector::formatValue(std::size_t index, double value, bool withUnit, bool difference) const {
+    if (!edit_ || index >= edit_->fields.size()) return {};
+    const auto& field = edit_->fields[index];
+    // A field with a quantity in a unit other than its own: the viewer's
+    // unit and its precision.
+    if (field.quantity && units_ != nullptr
+        && &units_->preferences.of(*field.quantity) != units::unitsOf(*field.quantity).data()) {
+        const auto& unit = units_->preferences.of(*field.quantity);
+        const auto shown = value * unit.scale + (difference ? 0.0 : unit.offset);
+        return juce::String(shown, unit.decimals)
+            + (withUnit ? " " + units_->symbol(*field.quantity) : juce::String());
+    }
+    const auto decimals = field.decimals >= 0 ? field.decimals
+                                              : (std::abs(value - std::round(value)) > 1.0e-6 ? 1 : 0);
+    return juce::String(value, decimals) + (withUnit ? field.unit : juce::String());
 }
 
 void PartInspector::setEditStatus(juce::String status) {
@@ -628,32 +670,34 @@ void PartInspector::setEditStatus(juce::String status) {
     repaint();
 }
 
-void PartInspector::stepEdit(bool length, double direction) {
-    if (!edit_) return;
+void PartInspector::stepEdit(std::size_t index, double direction) {
+    if (!edit_ || index >= edit_->fields.size() || index >= pending_.size()) return;
+    const auto& field = edit_->fields[index];
     const auto fine = juce::ModifierKeys::currentModifiers.isShiftDown();
-    auto& value = length ? pendingFirst_ : pendingSecond_;
-    const auto step = length ? (fine ? edit_->firstFineStep : edit_->firstStep)
-                             : (fine ? edit_->secondFineStep : edit_->secondStep);
+    auto& value = pending_[index];
+    const auto step = fine ? field.fineStep : field.step;
     // Snap to the step, so a 452 mm pipe goes to 460 then 470.
     value = direction > 0.0 ? std::floor(value / step + 1.0e-6) * step + step
                             : std::ceil(value / step - 1.0e-6) * step - step;
-    value = std::clamp(value, lowest(length), length ? edit_->firstMaximum : edit_->secondMaximum);
+    value = std::clamp(value, field.minimum, field.maximum);
     setEditStatus({});
     updateEditButtons();
     startTimer(editSettleMs);
 }
 
 void PartInspector::updateEditButtons() {
-    const auto changed = edit_ && (std::abs(pendingFirst_ - originFirst_) > 1.0e-6
-                                   || std::abs(pendingSecond_ - originSecond_) > 1.0e-6);
-    resetEdit_.setEnabled(changed);
+    auto changed = false;
+    for (std::size_t index = 0; index < pending_.size() && index < origin_.size(); ++index)
+        changed = changed || std::abs(pending_[index] - origin_[index]) > 1.0e-6;
+    resetEdit_.setEnabled(edit_.has_value() && changed);
     repaint();
 }
 
 int PartInspector::editHeight() const {
     if (!edit_) return 0;
     const auto width = static_cast<float>((getWidth() > 0 ? getWidth() : 280) - 24);
-    auto height = inspectorEditHeader + inspectorEditRow * (edit_->firstEditable ? 2 : 1) + inspectorEditButtons;
+    auto height = inspectorEditHeader + inspectorEditRow * static_cast<int>(edit_->fields.size())
+        + inspectorEditButtons;
     for (const auto* text : { &edit_->note, &editStatus_ })
         if (text->isNotEmpty())
             height += 4 + static_cast<int>(std::ceil(noteLayout(*text, colours::faint, width).getHeight()));
@@ -665,15 +709,14 @@ void PartInspector::resized() {
     auto area = getLocalBounds().reduced(12, 8);
     area = area.removeFromBottom(editHeight());
     area.removeFromTop(inspectorEditHeader);
-    const auto place = [&area](ActionButton& down, ActionButton& up) {
+    for (std::size_t index = 0; index < edit_->fields.size(); ++index) {
         auto row = area.removeFromTop(inspectorEditRow).reduced(0, 2);
-        up.setBounds(row.removeFromRight(inspectorStepperWidth));
+        if (index >= downButtons_.size()) continue;
+        upButtons_[index]->setBounds(row.removeFromRight(inspectorStepperWidth));
         row.removeFromRight(inspectorValueWidth);
-        down.setBounds(row.removeFromRight(inspectorStepperWidth));
-    };
-    if (edit_->firstEditable) place(firstDown_, firstUp_);
-    place(secondDown_, secondUp_);
-    if (typing_ >= 0) valueEditor_.setBounds(valueArea(typing_ == 0));
+        downButtons_[index]->setBounds(row.removeFromRight(inspectorStepperWidth));
+    }
+    if (typing_ >= 0) valueEditor_.setBounds(valueArea(static_cast<std::size_t>(typing_)));
     auto buttons = area.removeFromTop(inspectorEditButtons).withTrimmedTop(4);
     resetEdit_.setBounds(buttons.removeFromRight(64));
     buttons.removeFromRight(6);
@@ -685,25 +728,33 @@ void PartInspector::paintEdit(juce::Graphics& g, juce::Rectangle<int> area) cons
     auto header = area.removeFromTop(inspectorEditHeader);
     g.setColour(colours::line);
     g.drawHorizontalLine(header.getY() + 6, static_cast<float>(header.getX()), static_cast<float>(header.getRight()));
-    g.setColour(colours::muted);
     g.setFont(uiFont(10.5F, true).withExtraKerningFactor(0.06F));
+    g.setColour(colours::muted);
     g.drawText(edit_->heading, header.withTrimmedTop(8), juce::Justification::centredLeft, false);
-    const auto row = [&](const juce::String& label, double value, double original, bool first) {
+    // Whether the engine keeps running through the edit, or restarts.
+    g.setColour(edit_->restarts ? colours::warn : colours::ok);
+    g.drawText(edit_->restarts ? "RESTARTS" : "LIVE", header.withTrimmedTop(8), juce::Justification::centredRight,
+               false);
+    for (std::size_t index = 0; index < edit_->fields.size(); ++index) {
+        const auto& field = edit_->fields[index];
         auto line = area.removeFromTop(inspectorEditRow);
         g.setColour(colours::muted);
         g.setFont(uiFont(12.0F));
-        g.drawText(label, line, juce::Justification::centredLeft, true);
+        g.drawText(field.label, line, juce::Justification::centredLeft, true);
         line.removeFromRight(inspectorStepperWidth);
         const auto valueArea = line.removeFromRight(inspectorValueWidth);
+        const auto value = index < pending_.size() ? pending_[index] : field.value;
+        const auto original = index < origin_.size() ? origin_[index] : field.value;
         // A faint box: the value can be clicked and typed.
-        g.setColour(colours::line);
-        g.drawRoundedRectangle(valueArea.reduced(2, 3).toFloat(), 4.0F, 1.0F);
-        g.setColour(std::abs(value - original) > 1.0e-6 ? colours::accentLight : colours::text);
+        if (field.editable) {
+            g.setColour(colours::line);
+            g.drawRoundedRectangle(valueArea.reduced(2, 3).toFloat(), 4.0F, 1.0F);
+        }
+        g.setColour(std::abs(value - original) > 1.0e-6 ? colours::accentLight
+                                                         : (field.editable ? colours::text : colours::muted));
         g.setFont(monoFont(11.5F, false));
-        g.drawText(formatValue(value, first), valueArea, juce::Justification::centred, false);
-    };
-    if (edit_->firstEditable) row(edit_->firstLabel, pendingFirst_, originFirst_, true);
-    row(edit_->secondLabel, pendingSecond_, originSecond_, false);
+        g.drawText(formatValue(index, value), valueArea, juce::Justification::centred, false);
+    }
     area.removeFromTop(inspectorEditButtons);
     for (const auto* text : { &edit_->note, &editStatus_ }) {
         if (text->isEmpty()) continue;
@@ -754,36 +805,40 @@ juce::Rectangle<int> PartInspector::closeArea() const { return { getWidth() - 30
 void PartInspector::mouseUp(const juce::MouseEvent& event) {
     if (closeArea().contains(event.getPosition()) && onClose) onClose();
     if (!edit_ || event.mouseWasDraggedSinceMouseDown()) return;
-    if (edit_->firstEditable && valueArea(true).contains(event.getPosition())) beginTyping(true);
-    else if (valueArea(false).contains(event.getPosition())) beginTyping(false);
+    for (std::size_t index = 0; index < edit_->fields.size(); ++index) {
+        if (edit_->fields[index].editable && valueArea(index).contains(event.getPosition())) {
+            beginTyping(index);
+            return;
+        }
+    }
 }
 
 void PartInspector::mouseMove(const juce::MouseEvent& event) {
-    const auto overValue = edit_
-        && ((edit_->firstEditable && valueArea(true).contains(event.getPosition()))
-            || valueArea(false).contains(event.getPosition()));
+    auto overValue = false;
+    if (edit_)
+        for (std::size_t index = 0; index < edit_->fields.size(); ++index)
+            overValue = overValue || (edit_->fields[index].editable && valueArea(index).contains(event.getPosition()));
     setMouseCursor(overValue ? juce::MouseCursor::IBeamCursor : juce::MouseCursor::NormalCursor);
 }
 
-juce::Rectangle<int> PartInspector::valueArea(bool first) const {
-    if (!edit_) return {};
+juce::Rectangle<int> PartInspector::valueArea(std::size_t index) const {
+    if (!edit_ || index >= edit_->fields.size()) return {};
     auto area = getLocalBounds().reduced(12, 8);
     area = area.removeFromBottom(editHeight());
     area.removeFromTop(inspectorEditHeader);
-    if (edit_->firstEditable && !first) area.removeFromTop(inspectorEditRow);
+    area.removeFromTop(inspectorEditRow * static_cast<int>(index));
     auto row = area.removeFromTop(inspectorEditRow).reduced(0, 2);
     row.removeFromRight(inspectorStepperWidth);
     return row.removeFromRight(inspectorValueWidth);
 }
 
-void PartInspector::beginTyping(bool first) {
-    if (!edit_) return;
+void PartInspector::beginTyping(std::size_t index) {
+    if (!edit_ || index >= pending_.size()) return;
     stopTimer();
     sendEdit();
-    typing_ = first ? 0 : 1;
-    const auto value = first ? pendingFirst_ : pendingSecond_;
-    valueEditor_.setText(formatValue(value, first, false), false);
-    valueEditor_.setBounds(valueArea(first));
+    typing_ = static_cast<int>(index);
+    valueEditor_.setText(formatValue(index, pending_[index], false), false);
+    valueEditor_.setBounds(valueArea(index));
     valueEditor_.setVisible(true);
     valueEditor_.grabKeyboardFocus();
     valueEditor_.selectAll();
@@ -793,13 +848,19 @@ void PartInspector::beginTyping(bool first) {
 void PartInspector::endTyping(bool apply) {
     // Hiding the editor takes its focus, which calls this again.
     if (typing_ < 0) return;
-    const auto first = typing_ == 0;
+    const auto index = static_cast<std::size_t>(typing_);
     typing_ = -1;
     const auto text = valueEditor_.getText().replaceCharacter(',', '.').trim();
     valueEditor_.setVisible(false);
-    if (apply && edit_ && text.containsAnyOf("0123456789")) {
-        auto& value = first ? pendingFirst_ : pendingSecond_;
-        value = std::clamp(text.getDoubleValue(), lowest(first), first ? edit_->firstMaximum : edit_->secondMaximum);
+    if (apply && edit_ && index < pending_.size() && text.containsAnyOf("0123456789")) {
+        const auto& field = edit_->fields[index];
+        auto typed = text.getDoubleValue();
+        // Typed in the viewer's unit: back to the field's own.
+        if (field.quantity && units_ != nullptr) {
+            const auto& unit = units_->preferences.of(*field.quantity);
+            typed = (typed - unit.offset) / unit.scale;
+        }
+        pending_[index] = std::clamp(typed, field.minimum, field.maximum);
         setEditStatus({});
         updateEditButtons();
         sendEdit();
@@ -944,7 +1005,11 @@ constexpr std::array<double, 3> simulationSpeeds { 0.25, 0.5, 1.0 };
         * distance;
 }
 
-[[nodiscard]] juce::String millimetres(double value) { return juce::String(value, value < 100.0 ? 1 : 0) + " mm"; }
+[[nodiscard]] juce::String millimetres(const UnitFormat& unitFormat, double value) {
+    if (unitFormat.preferences.of(units::Quantity::length).id != "mm")
+        return unitFormat.text(units::Quantity::length, value);
+    return juce::String(value, value < 100.0 ? 1 : 0) + " mm";
+}
 
 /** The standard atmosphere's pressure at `altitudeM`, and back. */
 [[nodiscard]] double pressureKpaAtAltitude(double altitudeM) noexcept {
@@ -1032,7 +1097,8 @@ EngineViewport::EngineViewport(const DashboardModel& model) : model_(model), cut
     cycle_.setInterceptsMouseClicks(false, false);
     legend_.setInterceptsMouseClicks(false, false);
     inspector_.onClose = [this] { setSelectedPart(-1); };
-    inspector_.onApplyEdit = [this](double first, double second, bool gradual) { applyEdit(first, second, gradual); };
+    inspector_.setUnits(&model_.units);
+    inspector_.onApplyEdit = [this](const std::vector<double>& values, bool gradual) { applyEdit(values, gradual); };
     inspector_.onChoice = [this](int index) { applyPartChoice(index); };
     inspector_.onDoneTyping = [this] { if (onClaimKeyboard) onClaimKeyboard(); };
 
@@ -1077,8 +1143,12 @@ void EngineViewport::setCylinderEditor(std::function<bool(const EngineConfig&, d
     cylinderEditor_ = std::move(editor);
 }
 
-void EngineViewport::applyEdit(double first, double second, bool gradual) {
-    if (!scene_ || selectedPart_ < 0) return;
+void EngineViewport::applyEdit(const std::vector<double>& values, bool gradual) {
+    if (!scene_ || selectedPart_ < 0 || values.empty()) return;
+    // Every edit has its own field count; a pair below is a length and a
+    // diameter, a bore and a stroke...
+    const auto first = values[0];
+    const auto second = values.size() > 1 ? values[1] : values[0];
     const auto role = scene_->identify(static_cast<std::uint16_t>(selectedPart_)).role;
     const auto identity = scene_->identify(static_cast<std::uint16_t>(selectedPart_));
     if (role == render::PartRole::duct && identity.duct >= 0
@@ -1087,24 +1157,24 @@ void EngineViewport::applyEdit(double first, double second, bool gradual) {
     else if (role == render::PartRole::liner || role == render::PartRole::piston)
         applyCylinderEdit(first, second, gradual);
     else if (role == render::PartRole::rod)
-        applyRodEdit(second, gradual);
+        applyRodEdit(first, gradual);
     else if (partEditor_ && (role == render::PartRole::head || role == render::PartRole::intakeValve
                              || role == render::PartRole::exhaustValve))
-        applyCamshaftEdit(first, second, gradual);
+        applyCamshaftEdit(values, gradual);
     else if (partEditor_)
-        applyPartEdit(first, second);
+        applyPartEdit(values);
 }
 
-void EngineViewport::applyCamshaftEdit(double first, double second, bool gradual) {
+void EngineViewport::applyCamshaftEdit(const std::vector<double>& values, bool gradual) {
     if (!scene_ || !cylinderEditor_ || !partEditor_ || selectedPart_ < 0) return;
     auto edited = scene_->config();
-    sendCylinderEdit(edited, partEditor_(edited, first, second), gradual);
+    sendCylinderEdit(edited, partEditor_(edited, values), gradual);
 }
 
-void EngineViewport::applyPartEdit(double first, double second) {
+void EngineViewport::applyPartEdit(const std::vector<double>& values) {
     if (!scene_ || !configEditor_ || !partEditor_ || selectedPart_ < 0) return;
     auto edited = scene_->config();
-    if (const auto error = partEditor_(edited, first, second); !error.empty()) {
+    if (const auto error = partEditor_(edited, values); !error.empty()) {
         inspector_.setEditStatus(juce::String::fromUTF8(error.c_str()));
         return;
     }
@@ -1538,15 +1608,8 @@ void EngineViewport::updateInspector() {
         if (!cylinderEditor_ || !size) return std::nullopt;
         PartInspector::Edit result;
         result.key = std::uint64_t { 1 } << 63U;
-        result.firstLabel = "Bore";
-        result.secondLabel = "Stroke";
-        result.first = size->boreMm;
-        result.second = size->strokeMm;
-        result.firstStep = 1.0;
-        result.firstFineStep = 0.1;
-        result.minimum = 20.0;
-        result.firstMaximum = 200.0;
-        result.secondMaximum = 200.0;
+        result.length("Bore", size->boreMm, 1.0, 0.1, 20.0, 200.0);
+        result.length("Stroke", size->strokeMm, 1.0, 0.1, 20.0, 200.0);
         result.offersRamp = true;
         result.note = "Every cylinder changes, each crank throw at its gas-exchange TDC.";
         return result;
@@ -1558,27 +1621,16 @@ void EngineViewport::updateInspector() {
         PartInspector::Edit result;
         result.key = std::uint64_t { 2 } << 60U;
         result.heading = "INJECTORS";
-        result.firstLabel = "Flow";
-        result.secondLabel = "Fuel pressure";
-        result.firstUnit = " g/min";
-        result.secondUnit = " bar";
-        result.firstDecimals = 0;
-        result.secondDecimals = direct ? 0 : 1;
         // mg/s to g/min.
-        result.first = injection.injectorFlowMgPerSecond * 0.06;
-        result.second = injection.railPressureBar;
-        result.firstStep = 10.0;
-        result.firstFineStep = 1.0;
-        result.secondStep = direct ? 10.0 : 0.5;
-        result.secondFineStep = direct ? 1.0 : 0.1;
-        result.minimum = 1.0;
-        result.secondMinimum = 1.2;
-        result.firstMaximum = 30'000.0;
-        result.secondMaximum = 3'000.0;
+        result.value("Flow", injection.injectorFlowMgPerSecond * 0.06, " g/min", 0, 10.0, 1.0, 1.0, 30'000.0);
+        result.value("Fuel pressure", injection.railPressureBar, " bar", direct ? 0 : 1, direct ? 10.0 : 0.5,
+                     direct ? 1.0 : 0.1, 1.2, 3'000.0);
         result.note = "Every injector changes. The flow is rated at "
             + juce::String(injection.referencePressureBar, direct ? 0 : 1)
             + " bar; the fuel pressure moves it as its square root. The running engine takes them.";
-        partEditor_ = [](EngineConfig& edited, double flowGPerMin, double pressureBar) {
+        partEditor_ = [](EngineConfig& edited, const std::vector<double>& values) {
+            const auto flowGPerMin = values[0];
+            const auto pressureBar = values[1];
             edited.injection.injectorFlowMgPerSecond = flowGPerMin / 0.06;
             edited.injection.railPressureBar = pressureBar;
             return std::string();
@@ -1614,29 +1666,18 @@ void EngineViewport::updateInspector() {
         subtitle = juce::String(config.name);
         add("Cylinders", juce::String(static_cast<int>(config.cylinders.size())));
         add("Displacement", juce::String(engineDisplacementLitres(config), 2) + " L");
-        add("Air pressure", juce::String(config.ambientPressureKpa, 1) + " kPa");
-        add("Coolant", juce::String(juce::roundToInt(state.coolantTemperatureC)) + utf8(" \xc2\xb0""C")
+        // The ambient itself is never shown as a gauge pressure (it would read 0).
+        add("Air pressure", model_.units.pressureDifference(config.ambientPressureKpa, 1));
+        add("Coolant", model_.units.text(units::Quantity::temperature, state.coolantTemperatureC)
                            + (config.thermal.regulated ? ", held" : state.coolingFanOn ? ", fan on" : ", free"));
         if (configEditor_) {
             edit = PartInspector::Edit {};
             edit->key = std::uint64_t { 8 } << 60U;
             edit->heading = "AIR";
-            edit->firstLabel = "Altitude";
-            edit->secondLabel = "Temperature";
-            edit->firstUnit = " m";
-            edit->secondUnit = utf8(" \xc2\xb0""C");
-            edit->firstDecimals = 0;
-            edit->secondDecimals = 0;
-            edit->first = std::round(altitudeForPressureKpa(config.ambientPressureKpa));
-            edit->second = config.ambientTemperatureC;
-            edit->firstStep = 250.0;
-            edit->firstFineStep = 50.0;
-            edit->secondStep = 5.0;
-            edit->secondFineStep = 1.0;
-            edit->minimum = 0.0;
-            edit->firstMaximum = 5'000.0;
-            edit->secondMinimum = -30.0;
-            edit->secondMaximum = 50.0;
+            edit->value("Altitude", std::round(altitudeForPressureKpa(config.ambientPressureKpa)), " m", 0, 250.0,
+                        50.0, 0.0, 5'000.0);
+            edit->value("Temperature", config.ambientTemperatureC, utf8(" \xc2\xb0""C"), 0, 5.0, 1.0, -30.0, 50.0)
+                .quantity = units::Quantity::temperature;
             edit->note = "The air the engine breathes and its exhaust leaves into: the standard atmosphere's "
                          "pressure at that altitude. The running engine takes it.";
             edit->choice = PartInspector::Edit::Choice {
@@ -1649,7 +1690,9 @@ void EngineViewport::updateInspector() {
                            "the air of its speed and its fan (a dyno cell's fan on the dyno)."),
                 config.thermal.regulated ? 1 : 0 };
             partChoice_ = [](EngineConfig& edited, int index) { edited.thermal.regulated = index == 1; };
-            partEditor_ = [](EngineConfig& edited, double altitudeM, double temperatureC) {
+            partEditor_ = [](EngineConfig& edited, const std::vector<double>& values) {
+                const auto altitudeM = values[0];
+                const auto temperatureC = values[1];
                 edited.ambientPressureKpa = pressureKpaAtAltitude(altitudeM);
                 edited.ambientTemperatureC = temperatureC;
                 return std::string();
@@ -1671,28 +1714,18 @@ void EngineViewport::updateInspector() {
             PartInspector::Edit timing;
             timing.key = std::uint64_t { 7 } << 60U;
             timing.heading = "CAM TIMING";
-            timing.firstLabel = "Intake centreline";
-            timing.secondLabel = "Exhaust centreline";
-            timing.firstUnit = utf8("\xc2\xb0");
-            timing.secondUnit = utf8("\xc2\xb0");
-            timing.firstDecimals = 0;
-            timing.secondDecimals = 0;
-            timing.first = cams.intakeCenterlineDegrees;
-            timing.second = cams.exhaustCenterlineDegrees;
-            timing.firstStep = 2.0;
-            timing.firstFineStep = 1.0;
-            timing.secondStep = 2.0;
-            timing.secondFineStep = 1.0;
-            timing.minimum = 60.0;
-            timing.firstMaximum = 160.0;
-            timing.secondMaximum = 160.0;
+            timing.value("Intake centreline", cams.intakeCenterlineDegrees, utf8("\xc2\xb0"), 0, 2.0, 1.0, 60.0, 160.0);
+            timing.value("Exhaust centreline", cams.exhaustCenterlineDegrees, utf8("\xc2\xb0"), 0, 2.0, 1.0, 60.0,
+                         160.0);
             timing.offersRamp = true;
             timing.note = "Degrees after TDC for the intake, before it for the exhaust: smaller centrelines, more "
                           "overlap. Every camshaft moves by as much. The running engine takes it.";
             edit = timing;
             const auto intakeNow = cams.intakeCenterlineDegrees;
             const auto exhaustNow = cams.exhaustCenterlineDegrees;
-            partEditor_ = [=](EngineConfig& edited, double intakeCentreline, double exhaustCentreline) {
+            partEditor_ = [=](EngineConfig& edited, const std::vector<double>& values) {
+                const auto intakeCentreline = values[0];
+                const auto exhaustCentreline = values[1];
                 shiftCamshafts(edited, &CamshaftConfig::intakeCenterlineDegrees, nullptr, intakeCentreline - intakeNow);
                 shiftCamshafts(edited, &CamshaftConfig::exhaustCenterlineDegrees, nullptr,
                                exhaustCentreline - exhaustNow);
@@ -1705,8 +1738,8 @@ void EngineViewport::updateInspector() {
         title = "Cylinder liner";
         edit = cylinderEdit();
         if (cylinder != nullptr) {
-            add("Bore", millimetres(cylinder->boreMm));
-            add("Stroke", millimetres(cylinder->strokeMm));
+            add("Bore", millimetres(model_.units, cylinder->boreMm));
+            add("Stroke", millimetres(model_.units, cylinder->strokeMm));
             add("Compression ratio", juce::String(cylinder->compressionRatio, 1) + utf8(" : 1"));
         }
         break;
@@ -1721,18 +1754,11 @@ void EngineViewport::updateInspector() {
             edit = PartInspector::Edit {};
             edit->key = std::uint64_t { 6 } << 60U;
             edit->heading = "FLYWHEEL";
-            edit->firstEditable = false;
-            edit->secondLabel = "Inertia";
-            edit->secondUnit = utf8(" kg\xc2\xb7m\xc2\xb2");
-            edit->secondDecimals = 3;
-            edit->second = config.rotatingInertiaKgM2;
-            edit->secondStep = 0.01;
-            edit->secondFineStep = 0.001;
-            edit->secondMinimum = 0.01;
-            edit->secondMaximum = 5.0;
+            edit->value("Inertia", config.rotatingInertiaKgM2, utf8(" kg\xc2\xb7m\xc2\xb2"), 3, 0.01, 0.001, 0.01, 5.0);
             edit->note = "The crankshaft and its flywheel, every shaft scaled alike. A lighter flywheel revs up and "
                          "down faster. The running engine takes it.";
-            partEditor_ = [](EngineConfig& edited, double, double inertia) {
+            partEditor_ = [](EngineConfig& edited, const std::vector<double>& values) {
+                const auto inertia = values[0];
                 const auto scale = inertia / std::max(1.0e-6, edited.rotatingInertiaKgM2);
                 for (auto& crankshaft : edited.crankshafts) crankshaft.momentOfInertiaKgM2 *= scale;
                 edited.rotatingInertiaKgM2 = inertia;
@@ -1744,12 +1770,12 @@ void EngineViewport::updateInspector() {
         title = "Piston";
         edit = cylinderEdit();
         if (cylinder != nullptr) {
-            add("Bore", millimetres(cylinder->boreMm));
+            add("Bore", millimetres(model_.units, cylinder->boreMm));
             add("Mass", juce::String(juce::roundToInt(cylinder->pistonMassGrams)) + " g");
         }
         if (live != nullptr) {
-            add("Cylinder pressure", juce::String(live->pressureEstimateBar, 1) + " bar");
-            add("Gas temperature", juce::String(juce::roundToInt(live->gasTemperatureC)) + utf8(" °""C"));
+            add("Cylinder pressure", model_.units.text(units::Quantity::pressure, live->pressureEstimateBar * 100.0));
+            add("Gas temperature", model_.units.text(units::Quantity::temperature, live->gasTemperatureC));
         }
         break;
     case render::PartRole::rod:
@@ -1757,20 +1783,14 @@ void EngineViewport::updateInspector() {
         if (const auto rodMm = connectingRodLength(config); cylinderEditor_ && rodMm && cylinder != nullptr) {
             PartInspector::Edit rodEdit;
             rodEdit.key = std::uint64_t { 3 } << 60U;
-            rodEdit.firstEditable = false;
-            rodEdit.secondLabel = "Length";
-            rodEdit.second = *rodMm;
-            rodEdit.secondStep = 5.0;
-            rodEdit.secondFineStep = 0.5;
-            rodEdit.secondMinimum = std::ceil(12.0 * cylinder->strokeMm) / 10.0;
-            rodEdit.secondMaximum = 500.0;
+            rodEdit.length("Length", *rodMm, 5.0, 0.5, std::ceil(12.0 * cylinder->strokeMm) / 10.0, 500.0);
             rodEdit.offersRamp = true;
             rodEdit.note = "Every rod changes, each crank throw at its gas-exchange TDC. "
                            "The compression ratio stays.";
             edit = rodEdit;
         }
         if (cylinder != nullptr) {
-            add("Length", millimetres(cylinder->connectingRodMm));
+            add("Length", millimetres(model_.units, cylinder->connectingRodMm));
             add("Rod / stroke", juce::String(cylinder->connectingRodMm / std::max(1.0, cylinder->strokeMm), 2));
             add("Mass", juce::String(juce::roundToInt(cylinder->connectingRodMassGrams)) + " g");
         }
@@ -1784,22 +1804,9 @@ void EngineViewport::updateInspector() {
             PartInspector::Edit camEdit;
             camEdit.key = (std::uint64_t { 7 } << 60U) | (intake ? 1U : 2U);
             camEdit.heading = intake ? "INTAKE CAM" : "EXHAUST CAM";
-            camEdit.firstLabel = "Duration";
-            camEdit.secondLabel = "Lift";
-            camEdit.firstUnit = utf8("\xc2\xb0");
-            camEdit.secondUnit = " mm";
-            camEdit.firstDecimals = 0;
-            camEdit.secondDecimals = 1;
-            camEdit.first = intake ? cams.intakeDurationDegrees : cams.exhaustDurationDegrees;
-            camEdit.second = intake ? cams.intakeLiftMm : cams.exhaustLiftMm;
-            camEdit.firstStep = 5.0;
-            camEdit.firstFineStep = 1.0;
-            camEdit.secondStep = 0.5;
-            camEdit.secondFineStep = 0.1;
-            camEdit.minimum = 120.0;
-            camEdit.firstMaximum = 360.0;
-            camEdit.secondMinimum = 1.0;
-            camEdit.secondMaximum = 20.0;
+            camEdit.value("Duration", intake ? cams.intakeDurationDegrees : cams.exhaustDurationDegrees,
+                          utf8("\xc2\xb0"), 0, 5.0, 1.0, 120.0, 360.0);
+            camEdit.length("Lift", intake ? cams.intakeLiftMm : cams.exhaustLiftMm, 0.5, 0.1, 1.0, 20.0).decimals = 1;
             camEdit.offersRamp = true;
             camEdit.note = "Every camshaft moves by as much, its high profile too. The running engine takes it.";
             edit = camEdit;
@@ -1811,19 +1818,21 @@ void EngineViewport::updateInspector() {
             const auto highLiftField = intake ? &CamshaftConfig::highIntakeLiftMm : &CamshaftConfig::highExhaustLiftMm;
             const auto durationNow = cams.*durationField;
             const auto liftNow = cams.*liftField;
-            partEditor_ = [=](EngineConfig& edited, double duration, double lift) {
+            partEditor_ = [=](EngineConfig& edited, const std::vector<double>& values) {
+                const auto duration = values[0];
+                const auto lift = values[1];
                 shiftCamshafts(edited, durationField, highDurationField, duration - durationNow);
                 shiftCamshafts(edited, liftField, highLiftField, lift - liftNow);
                 return std::string();
             };
         }
-        add("Lift", millimetres(intake ? cams.intakeLiftMm : cams.exhaustLiftMm));
+        add("Lift", millimetres(model_.units, intake ? cams.intakeLiftMm : cams.exhaustLiftMm));
         add("Duration", juce::String(juce::roundToInt(intake ? cams.intakeDurationDegrees : cams.exhaustDurationDegrees))
                             + utf8("°"));
         add("Centreline", juce::String(juce::roundToInt(intake ? cams.intakeCenterlineDegrees : cams.exhaustCenterlineDegrees))
                               + utf8("°"));
         if (live != nullptr)
-            add("Lift now", millimetres(intake ? live->intakeValveLiftMm : live->exhaustValveLiftMm));
+            add("Lift now", millimetres(model_.units, intake ? live->intakeValveLiftMm : live->exhaustValveLiftMm));
         break;
     }
     case render::PartRole::combustion:
@@ -1861,12 +1870,12 @@ void EngineViewport::updateInspector() {
     }
     case render::PartRole::exhaustPorts:
         title = "Exhaust ports";
-        if (live != nullptr) add("Exhaust gas", juce::String(juce::roundToInt(live->exhaustTemperatureC)) + utf8(" °""C"));
+        if (live != nullptr) add("Exhaust gas", model_.units.text(units::Quantity::temperature, live->exhaustTemperatureC));
         break;
     case render::PartRole::afterfire:
         title = "Afterfire";
         subtitle = "Flame at the outlet";
-        add("Heat release", juce::String(state.exhaustAfterfireHeatReleaseKw, 2) + " kW");
+        add("Heat release", model_.units.text(units::Quantity::power, state.exhaustAfterfireHeatReleaseKw, 2));
         break;
     case render::PartRole::turbo: {
         const auto& forced = config.forcedInduction;
@@ -1876,9 +1885,10 @@ void EngineViewport::updateInspector() {
         subtitle = "On exhaust path " + juce::String(scene_->turbo().pathId);
         add("Shaft speed", krpm(state.forcedInductionShaftSpeedRpm));
         add("Pressure ratio", juce::String(state.boostPressureRatio, 2) + " (target " + juce::String(forced.pressureRatio, 2) + ")");
-        add("Turbine outlet", juce::String(state.turbineOutletPressureKpa, 1) + " kPa");
+        add("Turbine outlet", model_.units.text(units::Quantity::pressure, state.turbineOutletPressureKpa));
         add("Wastegate", juce::String(juce::roundToInt(100.0 * state.wastegateOpening)) + " % open");
-        add("Turbine / compressor", juce::String(state.turbinePowerKw, 1) + " / " + juce::String(state.compressorPowerKw, 1) + " kW");
+        add("Turbine / compressor", model_.units.value(units::Quantity::power, state.turbinePowerKw) + " / "
+                                        + model_.units.text(units::Quantity::power, state.compressorPowerKw));
         add("Design shaft speed", krpm(forced.designShaftSpeedRpm));
         add("Turbine flow area", area(forced.turbineFlowAreaMm2));
         add("Wastegate flow area", area(forced.wastegateFlowAreaMm2));
@@ -1888,7 +1898,7 @@ void EngineViewport::updateInspector() {
                 : juce::String("not set"));
         if (forced.compressorInducerDiameterMm > 0.0 && forced.turbineExducerDiameterMm > 0.0)
             add("Inducer / exducer", juce::String(juce::roundToInt(forced.compressorInducerDiameterMm)) + " / "
-                                         + millimetres(forced.turbineExducerDiameterMm));
+                                         + millimetres(model_.units, forced.turbineExducerDiameterMm));
         note = "The turbine is a face of the exhaust network at the collector (at the outlets on a path without "
                "one): what follows it is its cold side, and its shaft is driven by the pressure and flow across "
                "it. The compressor raises the intake pressure; the charge piping is not drawn.";
@@ -1896,25 +1906,14 @@ void EngineViewport::updateInspector() {
             edit = PartInspector::Edit {};
             edit->key = std::uint64_t { 3 } << 60U;
             edit->heading = "TUNE";
-            edit->firstLabel = "Wastegate opens at";
-            edit->secondLabel = "Turbine flow area";
-            edit->firstUnit = utf8(" \xc3\x97");
-            edit->secondUnit = utf8(" mm\xc2\xb2");
-            edit->firstDecimals = 2;
-            edit->secondDecimals = 0;
-            edit->first = forced.wastegatePressureRatio;
-            edit->second = forced.turbineFlowAreaMm2;
-            edit->firstStep = 0.05;
-            edit->firstFineStep = 0.01;
-            edit->secondStep = 50.0;
-            edit->secondFineStep = 5.0;
-            edit->minimum = 1.0;
-            edit->secondMinimum = 20.0;
-            edit->firstMaximum = 4.0;
-            edit->secondMaximum = 20'000.0;
+            edit->value("Wastegate opens at", forced.wastegatePressureRatio, utf8(" \xc3\x97"), 2, 0.05, 0.01, 1.0, 4.0);
+            edit->value("Turbine flow area", forced.turbineFlowAreaMm2, utf8(" mm\xc2\xb2"), 0, 50.0, 5.0, 20.0,
+                        20'000.0);
             edit->note = "The wastegate pressure ratio limits the boost; the rated ratio keeps its distance to it. "
                          "The running engine takes both.";
-            partEditor_ = [](EngineConfig& edited, double wastegate, double turbineAreaMm2) {
+            partEditor_ = [](EngineConfig& edited, const std::vector<double>& values) {
+                const auto wastegate = values[0];
+                const auto turbineAreaMm2 = values[1];
                 auto& turbo = edited.forcedInduction;
                 const auto margin = turbo.pressureRatio - turbo.wastegatePressureRatio;
                 turbo.wastegatePressureRatio = wastegate;
@@ -1933,8 +1932,8 @@ void EngineViewport::updateInspector() {
         add("Drive ratio", juce::String(forced.superchargerDriveRatio, 2) + utf8(" : 1"));
         add("Impeller speed", juce::String(state.rpm * forced.superchargerDriveRatio / 1'000.0, 1) + " krpm");
         add("Pressure ratio", juce::String(state.boostPressureRatio, 2) + " (target " + juce::String(forced.pressureRatio, 2) + ")");
-        add("Compressor", juce::String(state.compressorPowerKw, 1) + " kW");
-        if (forced.compressorInducerDiameterMm > 0.0) add("Inducer", millimetres(forced.compressorInducerDiameterMm));
+        add("Compressor", model_.units.text(units::Quantity::power, state.compressorPowerKw));
+        if (forced.compressorInducerDiameterMm > 0.0) add("Inducer", millimetres(model_.units, forced.compressorInducerDiameterMm));
         if (forced.compressorBladeCount > 0U) add("Blades", juce::String(static_cast<int>(forced.compressorBladeCount)));
         note = "The gas solver has no compressor in its network: the supercharger raises the intake pressure by its "
                "ratio, geared to the crank. Drawn between the airbox and the throttle, with its charge pipe.";
@@ -1942,24 +1941,12 @@ void EngineViewport::updateInspector() {
             edit = PartInspector::Edit {};
             edit->key = std::uint64_t { 4 } << 60U;
             edit->heading = "TUNE";
-            edit->firstLabel = "Pressure ratio";
-            edit->secondLabel = "Drive ratio";
-            edit->firstUnit = utf8(" \xc3\x97");
-            edit->secondUnit = utf8(" : 1");
-            edit->firstDecimals = 2;
-            edit->secondDecimals = 2;
-            edit->first = forced.pressureRatio;
-            edit->second = forced.superchargerDriveRatio;
-            edit->firstStep = 0.05;
-            edit->firstFineStep = 0.01;
-            edit->secondStep = 0.1;
-            edit->secondFineStep = 0.01;
-            edit->minimum = 1.0;
-            edit->secondMinimum = 0.2;
-            edit->firstMaximum = 4.0;
-            edit->secondMaximum = 20.0;
+            edit->value("Pressure ratio", forced.pressureRatio, utf8(" \xc3\x97"), 2, 0.05, 0.01, 1.0, 4.0);
+            edit->value("Drive ratio", forced.superchargerDriveRatio, utf8(" : 1"), 2, 0.1, 0.01, 0.2, 20.0);
             edit->note = "The running engine takes both.";
-            partEditor_ = [](EngineConfig& edited, double ratio, double drive) {
+            partEditor_ = [](EngineConfig& edited, const std::vector<double>& values) {
+                const auto ratio = values[0];
+                const auto drive = values[1];
                 edited.forcedInduction.pressureRatio = ratio;
                 edited.forcedInduction.superchargerDriveRatio = drive;
                 return std::string();
@@ -1986,7 +1973,7 @@ void EngineViewport::updateInspector() {
         }
         add("Input shaft", juce::String(juce::roundToInt(gear == -1 ? state.rpm : state.rpm - state.clutchSlipRpm)) + " rpm");
         add("Clutch slip", juce::String(juce::roundToInt(gear == -1 ? 0.0 : state.clutchSlipRpm)) + " rpm");
-        add("Road speed", juce::String(state.vehicleSpeedMps * 3.6, 0) + " km/h");
+        add("Road speed", model_.units.text(units::Quantity::speed, state.vehicleSpeedMps));
         if (state.shiftInProgress) add("Shifting", juce::String(juce::roundToInt(state.shiftProgress * 100.0)) + " %");
         note = "Each pair turns at its own ratio; the blue collar locks the engaged gear to the output shaft. "
                "A shift is made the way its style makes it: clutch and lift, an ignition cut, a blip on the way "
@@ -1994,24 +1981,20 @@ void EngineViewport::updateInspector() {
         if (configEditor_) {
             edit = PartInspector::Edit {};
             edit->key = std::uint64_t { 9 } << 60U;
-            edit->heading = "SHIFT";
-            edit->firstLabel = style == ShiftStyle::dualClutch ? "Hand-over" : "Clutch shift";
-            edit->secondLabel = "Ignition cut";
-            edit->firstUnit = " ms";
-            edit->secondUnit = " ms";
-            edit->firstDecimals = 0;
-            edit->secondDecimals = 0;
-            edit->first = std::round(transmission.shiftDurationSeconds * 1'000.0);
-            edit->second = std::round(transmission.quickshifterCutSeconds * 1'000.0);
-            edit->firstStep = 20.0;
-            edit->firstFineStep = 5.0;
-            edit->secondStep = 10.0;
-            edit->secondFineStep = 1.0;
-            edit->minimum = 10.0;
-            edit->firstMaximum = 3'000.0;
-            edit->secondMaximum = 500.0;
+            edit->heading = "GEARBOX";
+            edit->value(style == ShiftStyle::dualClutch ? "Hand-over" : "Clutch shift",
+                        std::round(transmission.shiftDurationSeconds * 1'000.0), " ms", 0, 20.0, 5.0, 10.0, 3'000.0);
+            edit->value("Ignition cut", std::round(transmission.quickshifterCutSeconds * 1'000.0), " ms", 0, 10.0,
+                        1.0, 10.0, 500.0);
+            edit->value("Final drive", transmission.finalDriveRatio, utf8(" : 1"), 3, 0.1, 0.01, 0.5, 20.0);
+            for (int index = 0; index < gears; ++index)
+                edit->value("Gear " + juce::String(index + 1),
+                            transmission.gearRatios[static_cast<std::size_t>(index)], utf8(" : 1"), 3, 0.05, 0.005,
+                            0.05, 10.0);
             edit->note = "Clutch shift: the time a shift made with the clutch takes (a dual clutch's hand-over). "
-                         "Ignition cut: the quickshifter's, on the way up. The running engine takes them.";
+                         "Ignition cut: the quickshifter's, on the way up. Ratios: input over output, the final "
+                         "drive multiplies each; the next gear must be taller (a smaller ratio). The running engine "
+                         "takes them, in the gear it is in.";
             const auto index = style == ShiftStyle::manual ? 0 : style == ShiftStyle::dualClutch ? 3
                 : transmission.autoBlipper ? 2 : 1;
             edit->choice = PartInspector::Edit::Choice {
@@ -2028,9 +2011,22 @@ void EngineViewport::updateInspector() {
                 if (choice == 1 || choice == 2) box.quickshifter = true;
                 if (choice >= 1) box.autoBlipper = choice != 1;
             };
-            partEditor_ = [](EngineConfig& edited, double shiftMs, double cutMs) {
-                edited.transmission.shiftDurationSeconds = shiftMs / 1'000.0;
-                edited.transmission.quickshifterCutSeconds = cutMs / 1'000.0;
+            partEditor_ = [](EngineConfig& edited, const std::vector<double>& values) {
+                const auto shiftMs = values[0];
+                const auto cutMs = values[1];
+                auto& box = edited.transmission;
+                box.shiftDurationSeconds = shiftMs / 1'000.0;
+                box.quickshifterCutSeconds = cutMs / 1'000.0;
+                if (values.size() != 3 + box.gearRatios.size()) return std::string("The gearbox changed meanwhile.");
+                box.finalDriveRatio = values[2];
+                for (std::size_t gear = 0; gear < box.gearRatios.size(); ++gear) {
+                    box.gearRatios[gear] = values[3 + gear];
+                    // Each gear taller than the one below: the scheduler and
+                    // the shift protection count on it.
+                    if (gear > 0 && box.gearRatios[gear] >= box.gearRatios[gear - 1])
+                        return "Gear " + std::to_string(gear + 1) + " must be taller (a smaller ratio) than gear "
+                            + std::to_string(gear) + ".";
+                }
                 return std::string();
             };
         }
@@ -2052,9 +2048,8 @@ void EngineViewport::updateInspector() {
             if (const auto size = exhaustComponentSize(config, duct.pathId, duct.elementId)) {
                 edit = PartInspector::Edit {};
                 edit->key = (static_cast<std::uint64_t>(duct.pathId) << 32U) | duct.elementId;
-                edit->first = size->lengthMm;
-                edit->second = size->diameterMm;
-                edit->firstEditable = size->lengthEditable;
+                edit->length("Length", size->lengthMm).editable = size->lengthEditable;
+                edit->length("Diameter", size->diameterMm, 1.0, 0.1, 10.0, 400.0);
                 if (size->sharedByPrimaries)
                     edit->note = "The configuration gives the primaries of a path one size: all of them change.";
                 edit->choice = turboChoice();
@@ -2071,45 +2066,33 @@ void EngineViewport::updateInspector() {
                 edit = PartInspector::Edit {};
                 edit->key = (std::uint64_t { 5 } << 60U) | (static_cast<std::uint64_t>(pathId) << 32U)
                     | (static_cast<std::uint64_t>(part) << 16U) | (part == IntakePart::runner ? cylinderIndex : 0U);
-                edit->firstEditable = part == IntakePart::runner;
                 if (part == IntakePart::runner) {
-                    edit->first = size->first;
-                    edit->second = size->second;
-                    edit->firstMaximum = 2'000.0;
-                    edit->secondMaximum = 200.0;
+                    edit->length("Length", size->first, 10.0, 1.0, 10.0, 2'000.0);
+                    edit->length("Diameter", size->second, 1.0, 0.1, 10.0, 200.0);
                     if (size->sharedByRunners)
                         edit->note = "The configuration gives the runners of a path one size: all of them change.";
                 } else if (part == IntakePart::plenum) {
-                    edit->secondLabel = "Volume";
-                    edit->secondUnit = " L";
-                    edit->secondDecimals = 2;
-                    edit->second = size->first;
-                    edit->secondStep = 0.1;
-                    edit->secondFineStep = 0.01;
-                    edit->minimum = 0.05;
-                    edit->secondMaximum = 40.0;
+                    edit->value("Volume", size->first, " L", 2, 0.1, 0.01, 0.05, 40.0);
                 } else {
-                    edit->secondLabel = "Bore";
-                    edit->second = size->first;
-                    edit->secondMaximum = 150.0;
+                    edit->length("Bore", size->first, 1.0, 0.1, 10.0, 150.0);
                 }
-                partEditor_ = [part, pathId, cylinderIndex](EngineConfig& edited, double first, double second) {
+                partEditor_ = [part, pathId, cylinderIndex](EngineConfig& edited, const std::vector<double>& values) {
                     return part == IntakePart::runner
-                        ? resizeIntakePart(edited, pathId, part, cylinderIndex, first, second)
-                        : resizeIntakePart(edited, pathId, part, cylinderIndex, second);
+                        ? resizeIntakePart(edited, pathId, part, cylinderIndex, values[0], values[1])
+                        : resizeIntakePart(edited, pathId, part, cylinderIndex, values[0]);
                 };
             }
         }
         subtitle = (exhaust ? "Exhaust path " : "Intake path ") + juce::String(duct.pathId);
         if (duct.kind == render::DuctKind::intakeRunner) subtitle = cylinderName;
-        if (duct.authoredLengthMm > 1.0F) add("Length", millimetres(duct.authoredLengthMm));
+        if (duct.authoredLengthMm > 1.0F) add("Length", millimetres(model_.units, duct.authoredLengthMm));
         if (exhaust) {
             for (const auto& path : config.exhaustPaths) {
                 if (path.id != duct.pathId) continue;
                 const auto network = path.network ? *path.network : makeEditableExhaustNetwork(path);
                 for (const auto& component : network.components) {
                     if (component.id != duct.elementId || duct.kind != render::DuctKind::exhaustComponent) continue;
-                    add("Diameter", millimetres(component.diameterMm));
+                    add("Diameter", millimetres(model_.units, component.diameterMm));
                     if (component.volumeLitres > 0.0) add("Volume", juce::String(component.volumeLitres, 2) + " L");
                 }
             }
@@ -2133,11 +2116,23 @@ void EngineViewport::updateInspector() {
                 wall = std::max(wall, element.wallTemperatureK[s]);
             }
             if (element.sampleCount > 0) {
-                const auto kpa = [](float pa) { return (pa >= 0.0F ? "+" : "") + juce::String(pa / 1'000.0F, 1); };
-                add("Pressure vs ambient", element.sampleCount > 1 ? kpa(low) + " to " + kpa(high) + " kPa" : kpa(low) + " kPa");
-                add("Gas temperature",
-                    juce::String(juce::roundToInt(gas / static_cast<float>(element.sampleCount) - 273.15F)) + utf8(" °""C"));
-                if (wall > 0.0F) add("Wall temperature", juce::String(juce::roundToInt(wall - 273.15F)) + utf8(" °""C"));
+                // A difference to ambient: converted, never offset again.
+                const auto& unitFormat = model_.units;
+                auto difference = unitFormat;
+                difference.preferences.pressureReference = units::PressureReference::absolute;
+                const auto pressureUnit = difference.symbol(units::Quantity::pressure);
+                const auto signedPressure = [&difference](float pa) {
+                    return (pa >= 0.0F ? "+" : "")
+                        + difference.value(units::Quantity::pressure, static_cast<double>(pa) / 1'000.0,
+                                           difference.preferences.of(units::Quantity::pressure).decimals + 1);
+                };
+                add("Pressure vs ambient", element.sampleCount > 1
+                        ? signedPressure(low) + " to " + signedPressure(high) + " " + pressureUnit
+                        : signedPressure(low) + " " + pressureUnit);
+                add("Gas temperature", unitFormat.text(units::Quantity::temperature,
+                    static_cast<double>(gas / static_cast<float>(element.sampleCount)) - 273.15));
+                if (wall > 0.0F)
+                    add("Wall temperature", unitFormat.text(units::Quantity::temperature, static_cast<double>(wall) - 273.15));
                 add("Solver cells", juce::String(static_cast<int>(element.sampleCount)));
             }
         }

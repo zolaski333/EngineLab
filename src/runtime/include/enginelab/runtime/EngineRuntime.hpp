@@ -9,6 +9,7 @@
 #include <enginelab/physics/SimplifiedGasolinePhysics.hpp>
 #include <enginelab/simulation/DynoAbsorberController.hpp>
 #include <enginelab/simulation/EngineSimulator.hpp>
+#include <enginelab/runtime/CruiseControl.hpp>
 #include <enginelab/runtime/DriverCommandArbiter.hpp>
 #include <enginelab/runtime/DrivelineModel.hpp>
 #include <enginelab/runtime/DynoEstimator.hpp>
@@ -184,6 +185,16 @@ public:
     void setBrakePressure(double value) noexcept { brakePressure_.store(std::isfinite(value) ? std::clamp(value, 0.0, 1.0) : 0.0); }
     void shiftUp() noexcept;
     void shiftDown() noexcept;
+    /** Switches the gearbox between automatic and manual shifting. A gear
+        change between two forward gears asked by the driver switches it to
+        manual, as the paddles of a dual-clutch gearbox do. */
+    void setAutomaticShifting(bool automatic) noexcept {
+        automaticShiftingRequest_.store(automatic ? 1 : 0, std::memory_order_release);
+    }
+    /** Engages the cruise control at the current road speed, or cancels it. */
+    void toggleCruise() noexcept { cruiseToggleRequests_.fetch_add(1, std::memory_order_release); }
+    /** Starts a new trip: distance and fuel count from zero again. */
+    void resetTrip() noexcept { tripResetRequests_.fetch_add(1, std::memory_order_release); }
     void setGear(int gear) noexcept;
     void setDynoMode(DynoMode value) noexcept;
     [[nodiscard]] DynoMode dynoMode() const noexcept {
@@ -548,6 +559,18 @@ private:
     std::atomic<double> brakePressure_ { 0.0 };
     std::atomic<int> gear_ { -1 };
     std::atomic<std::uint64_t> gearCommandGeneration_ { 0 };
+    std::atomic<std::uint64_t> cruiseToggleRequests_ { 0 };
+    // -1 nothing asked, else the automatic-shifting mode the UI asked for.
+    std::atomic<int> automaticShiftingRequest_ { -1 };
+    std::atomic<std::uint64_t> tripResetRequests_ { 0 };
+    // Simulation thread only: this frame's driver inputs with the cruise
+    // control merged in, and where the current trip started.
+    CruiseControl cruise_;
+    DriverInputs frameDriver_;
+    std::uint64_t cruiseTogglesConsumed_ { 0 };
+    std::uint64_t tripResetsConsumed_ { 0 };
+    double tripStartDistanceM_ { 0.0 };
+    double tripStartFuelLitres_ { 0.0 };
     std::atomic<DynoMode> configuredDynoMode_ {
         DynoMode::continuousRamp };
     std::atomic<double> dynoHoldRpm_ { 2'500.0 };

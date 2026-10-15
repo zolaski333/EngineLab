@@ -1,4 +1,6 @@
 #include <enginelab/runtime/DrivelineModel.hpp>
+#include <enginelab/runtime/ShiftSchedule.hpp>
+#include <array>
 #include <algorithm>
 #include <cmath>
 #include <numbers>
@@ -26,7 +28,11 @@ DrivelineModel::DrivelineModel(const EngineConfig& config) : config_(config) {
 
 bool DrivelineModel::replaceVehicle(const TransmissionConfig& transmission, const VehicleConfig& vehicle) {
     if (transmission.gearRatios.size() != config_.transmission.gearRatios.size()) return false;
+    // Automatic or manual is a driving mode, switched while driving like the
+    // gear: an edit of the gearbox keeps it.
+    const auto automatic = config_.transmission.automaticShifting;
     config_.transmission = transmission;
+    config_.transmission.automaticShifting = automatic;
     config_.vehicle = vehicle;
     return true;
 }
@@ -167,11 +173,29 @@ DrivelineOutput DrivelineModel::advance(double dt, const EngineState& engineStat
             ? engineState.cycleAveragedTorqueNm
             : engineState.torqueNm)
         + engineState.starterTorqueNm;
-    if (transmission.automaticShifting && !shiftInProgress_ && engagedGear_ >= 0) {
-        if (engineState.rpm >= transmission.automaticUpshiftRpm && engagedGear_ < maximumGear
-            && engineState.throttle > 0.12) requestGear(engagedGear_ + 1);
-        else if (engineState.rpm <= transmission.automaticDownshiftRpm && engagedGear_ > 0)
-            requestGear(engagedGear_ - 1);
+    secondsSinceShift_ += dt;
+    // An automatic gearbox picks its gear from the driver's pedal, never
+    // right after a shift, and never while the driver holds the clutch.
+    constexpr double scheduleHoldSeconds = 0.8;
+    if (transmission.automaticShifting && !shiftInProgress_ && engagedGear_ >= 0
+        && requestedGear_ == engagedGear_ && secondsSinceShift_ >= scheduleHoldSeconds
+        && (!driverClutchConnected() || clutchPedal >= 0.5)) {
+        std::array<double, 16> overall {};
+        const auto count = std::min(overall.size(), transmission.gearRatios.size());
+        for (std::size_t gear = 0; gear < count; ++gear) overall[gear] = ratioForGear(static_cast<int>(gear));
+        ShiftScheduleInput schedule;
+        schedule.engineRpm = engineState.rpm;
+        schedule.driverThrottle = driverThrottle_ >= 0.0 ? driverThrottle_ : engineState.throttle;
+        schedule.engagedGear = engagedGear_;
+        schedule.overallRatios = std::span<const double>(overall.data(), count);
+        schedule.wheelRadPerSecond = wheelAngularVelocityRadPerSecond_;
+        schedule.idleRpm = config_.idleRpm;
+        schedule.revLimitRpm = engineState.activeRevLimitRpm > 0.0
+            ? engineState.activeRevLimitRpm : config_.ignition.revLimitRpm;
+        schedule.fullThrottleUpshiftRpm = transmission.automaticUpshiftRpm;
+        schedule.coastDownshiftRpm = transmission.automaticDownshiftRpm;
+        if (const auto gear = ShiftSchedule::chooseGear(schedule); gear != engagedGear_)
+            requestGear(std::min(gear, maximumGear));
     }
     // A dual clutch has no pedal: its own launch clutch takes its place, and
     // it refuses the part of a downshift that would over-rev the engine.
@@ -185,6 +209,7 @@ DrivelineOutput DrivelineModel::advance(double dt, const EngineState& engineStat
         shiftTargetGear_ = requestedGear_;
         shiftFromGear_ = engagedGear_;
         shiftElapsedSeconds_ = 0.0;
+        secondsSinceShift_ = 0.0;
         resyncReferenceSlipRpm_ = 0.0;
         shiftAction_ = chooseShiftAction(clutchPedal);
         handOverReferenceSlipRadPerSecond_ = 0.0;

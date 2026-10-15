@@ -31,6 +31,7 @@ VehicleStep advanceVehicle(DrivelineModel& driveline, double dtSeconds,
                            const EngineState& engineState, double requestedLoad,
                            const DriverInputs& inputs) noexcept {
     VehicleStep step;
+    driveline.setDriverThrottle(unitOr(inputs.throttle, 0.0));
     step.drive = driveline.advance(dtSeconds, engineState, requestedLoad,
         DriverCommandArbiter::drivelineClutch(inputs, driveline.transmission()),
         unitOr(inputs.brake, 0.0));

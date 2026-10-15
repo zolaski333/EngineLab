@@ -148,7 +148,10 @@ deterministic harnesses and sanitizer builds are in
 ## Controls
 
 Key bindings can be changed from **Key bindings…** in the `⋯` menu; `keybindings.json`
-rejects unknown actions, duplicates and reserved shortcuts.
+rejects unknown actions, duplicates and reserved shortcuts. The **Drive** section of
+the left column has a button for every driving action, showing its key. Display
+units (km/h or mph, L/100 km or MPG, bar or psi, gauge or absolute...) are chosen
+under **Units** in the same menu.
 
 | Input | Default action |
 |---|---|
@@ -158,7 +161,10 @@ rejects unknown actions, duplicates and reserved shortcuts.
 | `P` / `Tab` | pause / next side-panel tab |
 | `M` / `,` | next / previous engine view layer |
 | `1` to `5` | time scale 0.25×, 0.5×, 1×, 2×, 4× |
-| up / down / left arrow | upshift, downshift, wheel brake |
+| up / down arrow | upshift, downshift (a gear key takes an automatic gearbox back to manual) |
+| hold left arrow | brake, building up over about a second (three with `Space` held) |
+| right arrow | cruise control: set at the current speed, or cancel |
+| `8` | automatic / manual gearbox |
 | hold `Y` or `Shift` | declutch; `T` / `U` adjust the setpoint |
 | `;` | next exhaust acoustic preset |
 | wheel / drag / right-drag | zoom, orbit and pan the 3-D engine view |

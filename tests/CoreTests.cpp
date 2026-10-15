@@ -3738,10 +3738,15 @@ int main() {
         runtime->start();
         std::this_thread::sleep_for(std::chrono::milliseconds(1'500));
         const auto freeRunning = runtime->snapshot();
-        require(freeRunning.gear > 0,
-                "automatic transmission must upshift from configured RPM thresholds");
+        // Revved with the clutch held out at a standstill: nothing to land
+        // on in a higher gear, and the driver's clutch keeps the schedule out.
+        require(freeRunning.gear == 0,
+                "an automatic gearbox must not shift while the driver holds the clutch at a standstill");
         runtime->setStarterEngaged(false);
         runtime->setThrottle(0.0);
+        // Third gear, as the old fixed-threshold automatic had reached here.
+        runtime->setGear(2);
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
         runtime->setClutchPressure(1.0);
         std::this_thread::sleep_for(std::chrono::milliseconds(900));
         const auto stalled = runtime->snapshot();
