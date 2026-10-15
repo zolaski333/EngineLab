@@ -304,6 +304,7 @@ std::string YamlEngineSerializer::encode(const EngineConfig& config) const {
         << YAML::Key << "plenum_volume_l" << YAML::Value << config.plenumVolumeLitres
         << YAML::Key << "throttle_diameter_mm" << YAML::Value << config.throttleDiameterMm
         << YAML::Key << "bank_angle_deg" << YAML::Value << config.bankAngleDegrees
+        << YAML::Key << "peak_pressure_limit_bar" << YAML::Value << config.peakFiringPressureLimitBar
         << YAML::Key << "forced_induction" << YAML::Value << YAML::BeginMap
         << YAML::Key << "enabled" << YAML::Value << config.forcedInduction.enabled
         << YAML::Key << "type" << YAML::Value << (config.forcedInduction.type == ForcedInductionType::supercharger ? "supercharger" : "turbocharger")
@@ -776,6 +777,8 @@ EngineDecodeResult YamlEngineSerializer::decode(std::string_view text) const noe
         if (engine["cooling_efficiency"]) config.coolingEfficiency = engine["cooling_efficiency"].as<double>();
         if (engine["plenum_volume_l"]) config.plenumVolumeLitres = engine["plenum_volume_l"].as<double>();
         if (engine["throttle_diameter_mm"]) config.throttleDiameterMm = engine["throttle_diameter_mm"].as<double>();
+        if (engine["peak_pressure_limit_bar"])
+            config.peakFiringPressureLimitBar = engine["peak_pressure_limit_bar"].as<double>();
         if (engine["bank_angle_deg"]) config.bankAngleDegrees = engine["bank_angle_deg"].as<double>();
         else config.bankAngleDegrees = config.layout == EngineLayout::vLayout ? 60.0
             : (config.layout == EngineLayout::flat ? 180.0 : (config.layout == EngineLayout::radial ? 72.0 : 0.0));

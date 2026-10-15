@@ -305,10 +305,10 @@ Sample holdPoint(enginelab::EngineSimulator& simulator,
             exhaustAcc += frame.state.exhaustPressureKpa;
             airAcc += frame.state.airMassMgPerCycle;
             fuelAcc += frame.state.fuelFlowGramsPerSecond;
-            for (std::size_t c = 0; c < frame.state.cylinderStateCount; ++c) {
-                peak = std::max(peak, frame.state.cylinderStates[c].pressureEstimateBar);
-                cylN += 1.0;
-            }
+            // The simulator's per-sub-step cycle peak: a per-frame sample of
+            // the chamber pressure misses the firing peak.
+            peak = std::max(peak, frame.state.peakCylinderPressureBar);
+            cylN += static_cast<double>(frame.state.cylinderStateCount);
         }
     }
     const auto d = std::max(1.0, n);

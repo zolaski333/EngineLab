@@ -114,6 +114,14 @@ file formats, always with an in-memory migration).
 
 ### Added
 
+- Peak firing pressure is tracked at every physics step and shown against
+  the engine's structural limit (side panel); above it the engine is damaged
+  and a critical diagnostic says so. The limit is `peak_pressure_limit_bar`,
+  by default 120 bar naturally aspirated, 140 boosted, 200 for a diesel.
+- A diesel's fuel pressure now changes its combustion: higher rail pressure
+  mixes faster and burns harder. Its start of injection can be moved live
+  from the injector in the 3-D view.
+
 - Knock control is an ECU setting: `knock.retard_deg_per_intensity`, the
   spark retard per unit of knock (12 deg as before; 0 turns it off). Turned
   off, the 2JZ at full load runs 4 deg more advance and 2 % more torque at a

@@ -56,6 +56,13 @@ class CompressionIgnitionModel final {
 public:
     static void beginCycle(CompressionIgnitionState& state) noexcept;
 
+    /** The diffusion burn is mixing-controlled and the spray's kinetic energy
+     *  drives the mixing; the jet leaves the nozzle at a speed proportional to
+     *  the square root of the rail pressure (Chmela and Orthaber, SAE
+     *  1999-01-0186). The mixing time is calibrated at the injector's rated
+     *  pressure, so it scales with sqrt(rated / rail). */
+    [[nodiscard]] static double railMixingTimeFactor(const InjectionConfig& injection) noexcept;
+
     [[nodiscard]] static double ignitionDelaySeconds(
         const CombustionCalibrationConfig& calibration,
         double cetaneNumber, double pressureBar, double temperatureK,

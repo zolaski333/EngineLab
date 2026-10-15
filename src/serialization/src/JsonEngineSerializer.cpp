@@ -448,6 +448,7 @@ std::string JsonEngineSerializer::encode(const EngineConfig& config) const {
         {"plenum_volume_l", config.plenumVolumeLitres},
         {"throttle_diameter_mm", config.throttleDiameterMm},
         {"bank_angle_deg", config.bankAngleDegrees},
+        {"peak_pressure_limit_bar", config.peakFiringPressureLimitBar},
         {"forced_induction", {{"enabled", config.forcedInduction.enabled},
                                {"type", forcedInductionTypeName(config.forcedInduction.type)},
                                {"pressure_ratio", config.forcedInduction.pressureRatio},
@@ -682,6 +683,7 @@ EngineDecodeResult JsonEngineSerializer::decode(std::string_view text) const noe
         config.coolingEfficiency = engine.value("cooling_efficiency", 1.0);
         config.plenumVolumeLitres = engine.value("plenum_volume_l", 3.0);
         config.throttleDiameterMm = engine.value("throttle_diameter_mm", 60.0);
+        config.peakFiringPressureLimitBar = engine.value("peak_pressure_limit_bar", 0.0);
         config.bankAngleDegrees = engine.value("bank_angle_deg", config.layout == EngineLayout::vLayout ? 60.0
             : (config.layout == EngineLayout::flat ? 180.0 : (config.layout == EngineLayout::radial ? 72.0 : 0.0)));
         if (engine.contains("forced_induction")) {

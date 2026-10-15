@@ -1032,6 +1032,11 @@ struct EngineConfig final {
     double plenumVolumeLitres { 3.0 };
     double throttleDiameterMm { 60.0 };
     double bankAngleDegrees { 0.0 };
+    /** Structural limit of the peak firing pressure, bar absolute: above it
+     * the head gasket, ring lands and bearings are overloaded and the engine
+     * accumulates damage. Zero: a typical limit for the fuel and induction
+     * (see peakCylinderPressureLimitBar()). */
+    double peakFiringPressureLimitBar { 0.0 };
     IntakeConfig intake;
     std::vector<IntakePathConfig> intakePaths;
     std::vector<CylinderBankConfig> banks;
@@ -1567,6 +1572,10 @@ struct EngineState final {
     double mechanicalEfficiency { 0.0 };
     double oilPressureKpa { 0.0 };
     double peakPistonAccelerationG { 0.0 };
+    /** Highest firing pressure of the last completed cycle over all
+     * cylinders, bar absolute, tracked at every physics sub-step (a per-frame
+     * sample of the chamber pressure misses the peak). */
+    double peakCylinderPressureBar { 0.0 };
     double resolvedHeatReleaseKw { 0.0 };
     double compressorPowerKw { 0.0 };
     double turbinePowerKw { 0.0 };
@@ -1859,6 +1868,9 @@ struct DynoRun final {
 [[nodiscard]] std::vector<EngineConfig> makeBaseEnginePresets();
 [[nodiscard]] double engineDisplacementLitres(const EngineConfig&) noexcept;
 [[nodiscard]] double effectiveRotatingInertiaKgM2(const EngineConfig&) noexcept;
+/** The authored peak firing pressure limit, or a typical one for the fuel and
+ * induction when none is authored. */
+[[nodiscard]] double peakCylinderPressureLimitBar(const EngineConfig&) noexcept;
 [[nodiscard]] double intakeRunnerVolumeLitres(const CylinderConfig&, const IntakeConfig&) noexcept;
 void normaliseEngineConfig(EngineConfig&);
 [[nodiscard]] double valveFlowCoefficient(double liftMm, double fallback,

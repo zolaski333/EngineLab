@@ -258,6 +258,15 @@ double intakeRunnerVolumeLitres(const CylinderConfig& cylinder, const IntakeConf
     return std::max(0.001, volumeMm3 / 1'000'000.0);
 }
 
+double peakCylinderPressureLimitBar(const EngineConfig& config) noexcept {
+    if (config.peakFiringPressureLimitBar > 0.0) return config.peakFiringPressureLimitBar;
+    // The upper end of production design limits: a passenger-car diesel
+    // 180-200 bar, a boosted spark-ignition engine 120-140, a naturally
+    // aspirated one 100-120.
+    if (config.fuel == FuelType::diesel) return 200.0;
+    return config.forcedInduction.enabled ? 140.0 : 120.0;
+}
+
 double effectiveRotatingInertiaKgM2(const EngineConfig& config) noexcept {
     if (config.crankshafts.empty()) return std::max(0.001, config.rotatingInertiaKgM2);
     double inertia = 0.0;
@@ -644,6 +653,8 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
         || !inRange(config.plenumVolumeLitres, 0.1, 50.0)
         || !inRange(config.throttleDiameterMm, 15.0, 150.0)
         || !inRange(config.bankAngleDegrees, 0.0, 180.0)
+        || !(config.peakFiringPressureLimitBar == 0.0
+            || inRange(config.peakFiringPressureLimitBar, 20.0, 400.0))
         || !validPoint(config.acousticObserver.leftMicrophoneM)
         || !validPoint(config.acousticObserver.rightMicrophoneM)
         || !(config.acousticObserver.soundSpeedMps == 0.0

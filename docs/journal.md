@@ -5,6 +5,13 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-15 — Peak firing pressure and its limit; diesel rail pressure
+
+- Peak pressure is now tracked per cylinder at every sub-step and published per cycle (the dyno's `peak_cyl_bar` sampled once per frame). DynoSweepHarness, whole catalogue, maximum over each 1,000 rpm row at full load: K20 116.8 bar, LS3 84.6, CP2 73.6-80.3, Hayabusa 77.1, CP4 87.9; 2JZ 107.1, EJ25 138.3, Audi I5 175.2 (3,000 rpm), TDI 231.5 (2,000 rpm).
+- Pmax/IMEP at those rows: 5.1-7.3 on petrol engines, 9.9 on the TDI. Real production limits are about 120 (NA), 140 (boosted) and 200 bar (diesel): the I5 and the TDI fire above them, so their full-load phasing is probably earlier than a real calibration. Not addressed; both carry a limit 10 % over their stock peak (195, 255 bar).
+- Damage above the limit grows as the square of the excess (0.05/s at 100 % over). EngineLab.PeakPressure: K20 held at full load (106.5 bar mean, 0 damage); with a limit at 70 % of that, 0.069 damage in 8 s. Stock dyno torque bit-identical.
+- Diesel mixing time x sqrt(rated / rail pressure) (Chmela-Orthaber jet velocity). TDI held at full load, injector capacity held: 198.4 bar at 2,000 bar rail, 177.0 at 1,000. Stock rail = rated pressure, so bit-identical at stock. Not compared with a measured pressure trace or a noise recording.
+
 ## 2026-10-15 — The default collector was a 2 L chamber
 
 - Owner complaint: a short collector sounds muffled on every engine. GeometrySensitivityHarness, collector volume -> swept only: CP2 +10 to +19 dB over 0.5-5 kHz, TDI +8 to +12 dB at 1.2-3 kHz. Cause: `collectorVolumeLitres` defaulted to 2.0 L, lumped as a compliance at the branch (a pre-chamber the geometry does not have), and the catalogue floored it at 0.05 L.

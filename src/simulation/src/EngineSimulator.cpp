@@ -2980,6 +2980,8 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 cycleCalibration.compressionIgnitionMixingTimeSeconds /=
                     std::max(0.55,
                         combustionCycleMultiplier_[cylinderIndex]);
+                cycleCalibration.compressionIgnitionMixingTimeSeconds *=
+                    CompressionIgnitionModel::railMixingTimeFactor(config_.injection);
                 compressionResult = CompressionIgnitionModel::advance(
                     compressionIgnitionStates_[cylinderIndex],
                     cylinderGas_[cylinderIndex], config_.fuelProperties,
@@ -4430,6 +4432,15 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
             }
             const auto finalChamberPressureKpa = cylinderGas_[index].pressureKpa();
             chamberPressureBar_[index] = finalChamberPressureKpa / 100.0;
+            // The cycle's peak is published when the cylinder opens into its
+            // gas exchange (bottom of the expansion stroke), where the
+            // pressure is low, so no firing peak straddles two cycles.
+            if (gasExchangeStrokeForWork[index] && !inGasExchange_[index]) {
+                lastCyclePeakPressureKpa_[index] = cyclePeakPressureKpa_[index];
+                cyclePeakPressureKpa_[index] = 0.0;
+            }
+            inGasExchange_[index] = gasExchangeStrokeForWork[index];
+            cyclePeakPressureKpa_[index] = std::max(cyclePeakPressureKpa_[index], finalChamberPressureKpa);
             IndicatedWorkModel::advance(indicatedWorkStates_[index],
                 finalChamberPressureKpa, chamberVolumeLitresForWork[index],
                 config_.ambientPressureKpa, cycleBoundaryForWork[index],
@@ -4879,6 +4890,10 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
         state_.oilPressureKpa = state_.rpm > 0.0
             ? std::clamp(80.0 + state_.rpm * 0.055 - std::max(0.0, state_.oilTemperatureC - 105.0) * 2.0, 0.0, 520.0) : 0.0;
         state_.peakPistonAccelerationG = peakPistonAcceleration / 9.80665;
+        state_.peakCylinderPressureBar = 0.0;
+        for (std::size_t index = 0; index < config_.cylinders.size(); ++index)
+            state_.peakCylinderPressureBar = std::max(state_.peakCylinderPressureBar,
+                lastCyclePeakPressureKpa_[index] / 100.0);
 
         state_.resolvedHeatReleaseKw = releasedEnergyJoules / subDt / 1'000.0;
         const auto exhaustTarget = exhaustTemperatureSumK
@@ -4917,9 +4932,15 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
         // per WOT dyno pass: they all sit at a light 0.14-0.37 there, held by
         // the ECU's proportional retard (journal 2026-10-13).
         const auto severeKnock = std::max(0.0, state_.knockLevel - 0.45) / 0.55;
+        // A firing pressure over the structural limit loads the head gasket,
+        // ring lands and bearings beyond their design: 10 % over takes about
+        // 17 min to "damaged", 30 % about 2 min, 50 % about 40 s.
+        const auto overPressure = std::max(0.0,
+            state_.peakCylinderPressureBar / peakCylinderPressureLimitBar(config_) - 1.0);
         const auto damageRate = severeKnock * state_.throttle * 0.0012 + overrev * overrev * 0.022
                               + std::max(0.0, state_.coolantTemperatureC - 115.0) * 0.000025 + oilStarvation * 0.002
-                              + excessivePistonAcceleration * excessivePistonAcceleration * 0.002;
+                              + excessivePistonAcceleration * excessivePistonAcceleration * 0.002
+                              + overPressure * overPressure * 0.05;
         state_.damage = std::clamp(state_.damage + damageRate * subDt, 0.0, 1.0);
         state_.wear = std::clamp(state_.wear + (state_.rpm / config_.redlineRpm * 0.000002 + damageRate * 0.12) * subDt, 0.0, 1.0);
         state_.runningState = determineRunningState(safeControls);
@@ -5859,6 +5880,9 @@ void EngineSimulator::reset() noexcept {
         exhaustRunnerPressureKpa_[index] = config_.ambientPressureKpa;
         exhaustBoundaryKnots_[index].fill({});
         chamberPressureBar_[index] = config_.ambientPressureKpa / 100.0;
+        cyclePeakPressureKpa_[index] = 0.0;
+        lastCyclePeakPressureKpa_[index] = 0.0;
+        inGasExchange_[index] = false;
         cylinderWallTemperatureC_[index] = config_.ambientTemperatureC;
         blowByPendingSeconds_[index] = 0.0;
         individualThrottleMapKpa_[index] = config_.ambientPressureKpa;

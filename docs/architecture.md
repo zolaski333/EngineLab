@@ -578,8 +578,9 @@ The other parts edit the same way, each through `MainComponent::applyEngineEdit`
 - the injectors, on each drawn injector (`PartRole::injector`: in the runner
   out of the head for port injection, in the chamber's roof on the intake side
   for direct injection), and also on the intake ports or the combustion: flow
-  in g/min (the configuration keeps mg/s) and fuel pressure in bar, with the
-  window, live duty cycle, fuel per cycle and, for port injection, the wall
+  in g/min (the configuration keeps mg/s) and fuel pressure in bar, plus a
+  diesel's start of injection in degrees before firing TDC (the window keeps
+  its length and moves with it), with the window, live duty cycle, fuel per cycle and, for port injection, the wall
   film. The side panel's Telemetry tab has a *Fuel injection* section whose
   *Show in 3-D* button selects cylinder 1's injector
   (`EngineViewport::showInjectors`, back to the All layer if the current one

@@ -31,9 +31,7 @@ void drawRows(juce::Graphics& g, juce::Rectangle<float>& area, const Rows& rows,
 
 [[nodiscard]] Rows engineRows(const DashboardModel& model) {
     const auto& state = model.state;
-    double peakPressure = 0.0;
-    for (std::size_t index = 0; index < state.cylinderStateCount; ++index)
-        peakPressure = std::max(peakPressure, state.cylinderStates[index].pressureEstimateBar);
+    const auto peakPressure = state.peakCylinderPressureBar;
     const auto dot = utf8("  \xc2\xb7  ");
     const auto degree = utf8("\xc2\xb0");
     using units::Quantity;
@@ -49,7 +47,8 @@ void drawRows(juce::Graphics& g, juce::Rectangle<float>& area, const Rows& rows,
         { "Ignition advance", juce::String(state.ignitionAdvanceDegrees, 1) + degree },
         { "Knock level", juce::String(state.knockLevel, 2) },
         { "Peak cylinder pressure", unit.text(Quantity::pressure, peakPressure * 100.0,
-              unit.preferences.of(Quantity::pressure).id == "kpa" ? 0 : 1) },
+              unit.preferences.of(Quantity::pressure).id == "kpa" ? 0 : 1) + " / "
+              + unit.text(Quantity::pressure, peakCylinderPressureLimitBar(model.config) * 100.0, 0) },
         { "Exhaust runner", unit.text(Quantity::pressure, state.exhaustRunnerPressureKpa) },
         { "Oil", unit.pressureDifference(state.oilPressureKpa) + dot
               + unit.text(Quantity::temperature, state.oilTemperatureC) },

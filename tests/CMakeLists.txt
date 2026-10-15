@@ -589,3 +589,15 @@ if(MSVC)
 endif()
 enginelab_set_warnings(EngineLabKnockControlTests)
 add_test(NAME EngineLab.KnockControl COMMAND EngineLabKnockControlTests)
+
+add_executable(EngineLabPeakPressureTests PeakPressureTests.cpp)
+target_link_libraries(EngineLabPeakPressureTests PRIVATE
+    EngineLab::Foundation EngineLab::Calibration EngineLab::Events EngineLab::Physics EngineLab::Ecu
+    EngineLab::Exhaust EngineLab::Simulation EngineLab::Catalog EngineLab::Diagnostics)
+target_compile_definitions(EngineLabPeakPressureTests PRIVATE
+    ENGINELAB_CATALOG_ROOT="${CMAKE_SOURCE_DIR}")
+if(MSVC)
+    target_link_options(EngineLabPeakPressureTests PRIVATE /STACK:8388608)
+endif()
+enginelab_set_warnings(EngineLabPeakPressureTests)
+add_test(NAME EngineLab.PeakPressure COMMAND EngineLabPeakPressureTests)

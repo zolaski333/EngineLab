@@ -110,6 +110,12 @@ the instantaneous cylinder back-pressure is subtracted.
 
 - With direct injection, fuel goes into the cylinder and its latent heat cools
   the charge according to the configured efficiency.
+- On a diesel, the mixing-controlled burn (and the premixed burn, a fixed
+  fraction of its time) is calibrated at the injector's rated pressure and
+  scales with sqrt(rated / rail pressure): the jet's speed, which drives the
+  mixing, goes as the square root of the pressure drop (Chmela and Orthaber).
+  Halving the TDI's rail pressure at full load lowers its firing peak from 198
+  to 177 bar with the injector capacity held.
 - With port injection, a fraction joins a persistent liquid film on the port.
   Its evaporation depends on temperature and a time constant.
 
@@ -159,6 +165,16 @@ the knock level, so at WOT engines sit at a light, constant knock (0.1-0.4)
 rather than stepping back and holding as a real knock control does. Only knock
 above 0.45 (the diagnostics' "severe") adds damage, which lowers efficiency for
 good. This global correlation is not multi-species chemical kinetics.
+
+Each cylinder's firing peak is tracked at every physics sub-step and published
+once per cycle, when the cylinder opens into its gas exchange
+(`EngineState::peakCylinderPressureBar`, the highest over the cylinders). Above
+the engine's structural limit (`peak_pressure_limit_bar`; zero takes 120 bar
+naturally aspirated, 140 boosted, 200 for a diesel, the upper end of production
+designs) it adds damage as the square of the excess: 10 % over takes about
+17 minutes to "damaged", 30 % about 2 minutes. The simulated full-load peaks of
+the boosted catalogue engines run above real ones (Audi I5 175 bar, TDI 231 bar),
+so those two carry their own limit 10 % over their stock peak.
 
 ## Forced induction
 

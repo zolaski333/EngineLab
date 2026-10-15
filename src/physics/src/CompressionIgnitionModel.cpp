@@ -26,6 +26,13 @@ void CompressionIgnitionModel::beginCycle(
     state = {};
 }
 
+double CompressionIgnitionModel::railMixingTimeFactor(
+    const InjectionConfig& injection) noexcept {
+    if (!(injection.railPressureBar > 0.0) || !(injection.referencePressureBar > 0.0))
+        return 1.0;
+    return std::clamp(std::sqrt(injection.referencePressureBar / injection.railPressureBar), 0.3, 4.0);
+}
+
 double CompressionIgnitionModel::ignitionDelaySeconds(
     const CombustionCalibrationConfig& calibration,
     double cetaneNumber, double pressureBar, double temperatureK,

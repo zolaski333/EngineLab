@@ -862,6 +862,7 @@ void applyCrankOffsets(EngineConfig& config) {
     assignIfPresent(engine, "plenum_volume_l", config.plenumVolumeLitres);
     assignIfPresent(engine, "throttle_diameter_mm", config.throttleDiameterMm);
     assignIfPresent(engine, "bank_angle_deg", config.bankAngleDegrees);
+    assignIfPresent(engine, "peak_pressure_limit_bar", config.peakFiringPressureLimitBar);
     config.intake.plenumVolumeLitres = config.plenumVolumeLitres;
     config.intake.throttleDiameterMm = config.throttleDiameterMm;
     if (const auto intake = engine["intake"]) {

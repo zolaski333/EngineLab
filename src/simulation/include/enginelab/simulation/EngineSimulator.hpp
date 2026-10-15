@@ -501,6 +501,12 @@ private:
     std::size_t exhaustDuctMediumCount_ { 0 };
     double lastExhaustAcousticStatePublishSeconds_ { -1.0 };
     std::array<double, 32> chamberPressureBar_ {};
+    /** Each cylinder's highest pressure since it last entered its gas
+     * exchange (kPa), the highest of its last completed cycle, and whether it
+     * was in its gas exchange at the previous sub-step. */
+    std::array<double, 32> cyclePeakPressureKpa_ {};
+    std::array<double, 32> lastCyclePeakPressureKpa_ {};
+    std::array<bool, 32> inGasExchange_ {};
     std::array<double, 32> intakeFlowMgPerCycle_ {};
     std::array<double, 32> exhaustFlowMgPerCycle_ {};
     std::array<double, 32> intakeFlowMgThisCycle_ {};

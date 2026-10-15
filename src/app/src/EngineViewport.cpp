@@ -1625,14 +1625,28 @@ void EngineViewport::updateInspector() {
         result.value("Flow", injection.injectorFlowMgPerSecond * 0.06, " g/min", 0, 10.0, 1.0, 1.0, 30'000.0);
         result.value("Fuel pressure", injection.railPressureBar, " bar", direct ? 0 : 1, direct ? 10.0 : 0.5,
                      direct ? 1.0 : 0.1, 1.2, 3'000.0);
+        // A diesel's start of injection, before firing TDC: the window keeps
+        // its length and moves with it.
+        const auto diesel = config.fuel == FuelType::diesel;
+        if (diesel)
+            result.value("Start of injection", 720.0 - std::fmod(injection.startAngleDegrees + 360.0, 720.0) - 360.0,
+                         utf8("\xc2\xb0 BTDC"), 0, 2.0, 1.0, -20.0, 60.0);
         result.note = "Every injector changes. The flow is rated at "
             + juce::String(injection.referencePressureBar, direct ? 0 : 1)
-            + " bar; the fuel pressure moves it as its square root. The running engine takes them.";
-        partEditor_ = [](EngineConfig& edited, const std::vector<double>& values) {
+            + " bar; the fuel pressure moves it as its square root"
+            + (diesel ? juce::String(", and a diesel's mixing burn with it") : juce::String())
+            + ". The running engine takes them.";
+        partEditor_ = [diesel](EngineConfig& edited, const std::vector<double>& values) {
             const auto flowGPerMin = values[0];
             const auto pressureBar = values[1];
             edited.injection.injectorFlowMgPerSecond = flowGPerMin / 0.06;
             edited.injection.railPressureBar = pressureBar;
+            if (diesel && values.size() > 2U) {
+                auto& injection = edited.injection;
+                const auto windowDegrees = std::fmod(injection.endAngleDegrees - injection.startAngleDegrees + 720.0, 720.0);
+                injection.startAngleDegrees = std::fmod(720.0 - values[2] + 720.0, 720.0);
+                injection.endAngleDegrees = std::fmod(injection.startAngleDegrees + windowDegrees, 720.0);
+            }
             return std::string();
         };
         return result;
