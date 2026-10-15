@@ -67,7 +67,7 @@ int main() {
 
         const auto catalogue = enginelab::loadEngineCatalog(
             ENGINELAB_CATALOG_ROOT);
-        require(catalogue.errors.empty() && catalogue.entries.size() == 16,
+        require(catalogue.errors.empty() && catalogue.entries.size() == 17,
             "shipping catalogue and all authored voicing files must load");
         const auto authoredCount = std::count_if(
             catalogue.entries.begin(), catalogue.entries.end(),

@@ -145,9 +145,11 @@ compiler checks in particular:
 - reading and decoding a base file;
 - normalisation and complete final validation of `EngineConfig`.
 
-The current runtime ultimately rejects engines that are not four-stroke petrol
-engines, even though the reserved symbols `two_stroke` and `diesel` exist in
-the parser in preparation for a future extension.
+`set engine.cycle = two_stroke` gives a two-stroke engine with the default port
+timings (exhaust 92 deg, transfers 118 deg after top dead centre); the language
+has no syntax for the ports yet, so author them in YAML or JSON (`two_stroke:`
+block). The final validation applies the two-stroke rules (petrol, one
+cylinder per intake path).
 
 ## Hot reload in the application
 

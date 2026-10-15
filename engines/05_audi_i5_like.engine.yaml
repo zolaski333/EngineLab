@@ -7,6 +7,11 @@ engine:
   firing_order: [1, 2, 4, 5, 3]
   idle_rpm: 780
   redline_rpm: 7100
+  # Simulated stock firing pressure reaches 175 bar at 3,000 rpm full load,
+  # above the 140 bar of a typical boosted petrol engine: the limit sits 10 %
+  # over this engine's own stock peak so the stock calibration does no harm
+  # (journal 2026-10-15). Not a manufacturer figure.
+  peak_pressure_limit_bar: 195
   rotating_inertia_kg_m2: 0.31
   friction_coefficient: 0.13
   octane_rating: 98

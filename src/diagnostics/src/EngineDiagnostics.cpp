@@ -87,6 +87,9 @@ std::vector<Diagnostic> EngineDiagnostics::evaluate(const EngineConfig& config, 
     if (state.damage > 0.5) result.push_back({ DiagnosticSeverity::critical, "mechanical.damage", "Significant mechanical damage: power and reliability degraded." });
     else if (state.wear > 0.35) result.push_back({ DiagnosticSeverity::warning, "mechanical.wear", "Measurable mechanical wear." });
     if (state.meanPistonSpeedMps > 25.0) result.push_back({ DiagnosticSeverity::warning, "mechanical.piston_speed", "High mean piston speed." });
+    if (state.peakCylinderPressureBar > peakCylinderPressureLimitBar(config))
+        result.push_back({ DiagnosticSeverity::critical, "mechanical.peak_pressure",
+            "Firing pressure above the engine's structural limit: the engine is being damaged." });
     if (state.peakPistonAccelerationG > 5'500.0)
         result.push_back({ DiagnosticSeverity::critical, "mechanical.piston_acceleration", "Critical piston acceleration for the reciprocating assembly." });
     if (state.clutchTemperatureC >= config.transmission.clutchFailureTemperatureC)

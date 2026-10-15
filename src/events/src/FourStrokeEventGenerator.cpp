@@ -16,7 +16,11 @@ std::size_t FourStrokeEventGenerator::generate(
         return 0;
 
     std::size_t written = 0;
-    const auto cycle = cycleDegrees();
+    // Events are placed on the cylinder's own cycle (360 degrees for a
+    // two-stroke) inside the crank angle's 720-degree domain.
+    const auto domain = cycleDegrees();
+    const auto cycle = cycleDegreesOf(config.cycle);
+    const auto twoStroke = config.cycle == EngineCycle::twoStroke;
     for (std::size_t orderIndex = 0; orderIndex < config.firingOrder.size(); ++orderIndex) {
         const auto cylinderId = config.firingOrder[orderIndex];
         const auto cylinder = std::find_if(config.cylinders.begin(), config.cylinders.end(),
@@ -59,7 +63,7 @@ std::size_t FourStrokeEventGenerator::generate(
                 - ecu.ignitionAdvanceDegrees;
         const auto target = std::fmod(cylinder->crankOffsetDegrees
             + combustionPhase + cycle * 2.0, cycle);
-        auto distance = std::fmod(target - previousAngle + cycle, cycle);
+        auto distance = std::fmod(target - previousAngle + domain, cycle);
         if (distance < 1.0e-9) distance = cycle;
         while (distance <= travelledDegrees + 1.0e-9) {
             const auto misfire = cylinderState != state.cylinderStates.begin()
@@ -89,8 +93,8 @@ std::size_t FourStrokeEventGenerator::generate(
                 && state.rpm >= bankCam->switchRpm && state.throttle >= bankCam->switchThrottle;
             const auto exhaustDuration = highProfile
                 ? bankCam->highExhaustDurationDegrees : bankCam->exhaustDurationDegrees;
-            const auto exhaustOpenCylinderPhase = std::fmod(360.0 - bankCam->exhaustCenterlineDegrees
-                - exhaustDuration * 0.5 + cycle, cycle);
+            const auto exhaustOpenCylinderPhase = twoStroke ? config.twoStroke.exhaustPortOpenDegrees
+                : std::fmod(360.0 - bankCam->exhaustCenterlineDegrees - exhaustDuration * 0.5 + cycle, cycle);
             const auto exhaustOpenGlobalAngle = std::fmod(cylinder->crankOffsetDegrees
                 + exhaustOpenCylinderPhase + cycle, cycle);
             const auto crankDegreesToExhaustOpen = std::fmod(exhaustOpenGlobalAngle - target + cycle, cycle);
@@ -109,7 +113,8 @@ std::size_t FourStrokeEventGenerator::generate(
                 * static_cast<float>(combustion.combustionQuality)
                 * variation * fuelDelivery * (0.65F + resolvedPulse * 0.35F),
                 0.001F, 1.0F);
-            FiringEvent event { eventTime, cylinderId, target,
+            const auto eventAngle = cycle < domain ? std::fmod(previousAngle + distance, domain) : target;
+            FiringEvent event { eventTime, cylinderId, eventAngle,
                 eventIntensity,
                 resolvedPressureBar,
                 resolvedCombustionDurationMs,

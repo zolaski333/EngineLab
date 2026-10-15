@@ -359,6 +359,7 @@ std::string JsonEngineSerializer::encode(const EngineConfig& config) const {
     for (const auto& path : config.exhaustPaths) {
         Json encodedPath = { {"id", path.id}, {"cylinder_ids", path.cylinderIds},
             {"impulse_response", path.impulseResponsePath}, {"audio_volume", path.audioVolume},
+            {"turbocharger", path.turbocharger},
             {"acoustic_position_m", pointJson(path.acousticPositionM)},
             {"acoustic_axis", pointJson(path.acousticAxis)},
             {"acoustic_termination", terminationName(path.acousticTermination)},
@@ -448,6 +449,7 @@ std::string JsonEngineSerializer::encode(const EngineConfig& config) const {
         {"plenum_volume_l", config.plenumVolumeLitres},
         {"throttle_diameter_mm", config.throttleDiameterMm},
         {"bank_angle_deg", config.bankAngleDegrees},
+        {"peak_pressure_limit_bar", config.peakFiringPressureLimitBar},
         {"forced_induction", {{"enabled", config.forcedInduction.enabled},
                                {"type", forcedInductionTypeName(config.forcedInduction.type)},
                                {"pressure_ratio", config.forcedInduction.pressureRatio},
@@ -471,7 +473,10 @@ std::string JsonEngineSerializer::encode(const EngineConfig& config) const {
                                {"blow_off_valve_opening_pressure_ratio", config.forcedInduction.blowOffValveOpeningPressureRatio},
                                {"blow_off_valve_discharge_coefficient", config.forcedInduction.blowOffValveDischargeCoefficient},
                                {"tonal_acoustic_efficiency", config.forcedInduction.tonalAcousticEfficiency},
-                               {"turbulent_jet_noise_coefficient", config.forcedInduction.turbulentJetNoiseCoefficient}}},
+                               {"turbulent_jet_noise_coefficient", config.forcedInduction.turbulentJetNoiseCoefficient},
+                               {"turbocharger_count", config.forcedInduction.turbochargerCount},
+                               {"compressor_design_mass_flow_kg_s", config.forcedInduction.compressorDesignMassFlowKgPerSecond},
+                               {"intercooler_effectiveness", config.forcedInduction.intercoolerEffectiveness}}},
         {"thermal", {{"regulated", config.thermal.regulated},
                       {"regulated_coolant_c", config.thermal.regulatedCoolantTemperatureC},
                       {"regulated_oil_c", config.thermal.regulatedOilTemperatureC},
@@ -623,6 +628,9 @@ std::string JsonEngineSerializer::encode(const EngineConfig& config) const {
     if (!config.audioVoicingKey.empty())
         document["engine"]["audio_voicing"] = { {"family", config.audioVoicingFamily},
                                                 {"key", config.audioVoicingKey} };
+    // Written for a two-stroke only, so a four-stroke file is unchanged.
+    if (config.cycle == EngineCycle::twoStroke)
+        document["engine"]["two_stroke"] = { {"exhaust_port_open_deg", config.twoStroke.exhaustPortOpenDegrees}, {"transfer_port_open_deg", config.twoStroke.transferPortOpenDegrees}, {"exhaust_port_width_mm", config.twoStroke.exhaustPortWidthMm}, {"transfer_port_width_mm", config.twoStroke.transferPortWidthMm}, {"port_discharge_coefficient", config.twoStroke.portDischargeCoefficient}, {"crankcase_compression_ratio", config.twoStroke.crankcaseCompressionRatio} };
     return document.dump(2);
 }
 
@@ -682,6 +690,7 @@ EngineDecodeResult JsonEngineSerializer::decode(std::string_view text) const noe
         config.coolingEfficiency = engine.value("cooling_efficiency", 1.0);
         config.plenumVolumeLitres = engine.value("plenum_volume_l", 3.0);
         config.throttleDiameterMm = engine.value("throttle_diameter_mm", 60.0);
+        config.peakFiringPressureLimitBar = engine.value("peak_pressure_limit_bar", 0.0);
         config.bankAngleDegrees = engine.value("bank_angle_deg", config.layout == EngineLayout::vLayout ? 60.0
             : (config.layout == EngineLayout::flat ? 180.0 : (config.layout == EngineLayout::radial ? 72.0 : 0.0)));
         if (engine.contains("forced_induction")) {
@@ -713,6 +722,9 @@ EngineDecodeResult JsonEngineSerializer::decode(std::string_view text) const noe
             config.forcedInduction.blowOffValveDischargeCoefficient = forced.value("blow_off_valve_discharge_coefficient", config.forcedInduction.blowOffValveDischargeCoefficient);
             config.forcedInduction.tonalAcousticEfficiency = forced.value("tonal_acoustic_efficiency", config.forcedInduction.tonalAcousticEfficiency);
             config.forcedInduction.turbulentJetNoiseCoefficient = forced.value("turbulent_jet_noise_coefficient", config.forcedInduction.turbulentJetNoiseCoefficient);
+            config.forcedInduction.turbochargerCount = forced.value("turbocharger_count", config.forcedInduction.turbochargerCount);
+            config.forcedInduction.compressorDesignMassFlowKgPerSecond = forced.value("compressor_design_mass_flow_kg_s", config.forcedInduction.compressorDesignMassFlowKgPerSecond);
+            config.forcedInduction.intercoolerEffectiveness = forced.value("intercooler_effectiveness", config.forcedInduction.intercoolerEffectiveness);
         }
         if (engine.contains("thermal")) {
             const auto& thermal = engine.at("thermal");
@@ -727,6 +739,15 @@ EngineDecodeResult JsonEngineSerializer::decode(std::string_view text) const noe
             config.thermal.oilCoolingPowerKwPerC = thermal.value("oil_cooling_power_kw_per_c", config.thermal.oilCoolingPowerKwPerC);
             config.thermal.liquidCooled = thermal.value("liquid_cooled", config.thermal.liquidCooled);
             config.thermal.engineDrivenFan = thermal.value("engine_driven_fan", config.thermal.engineDrivenFan);
+        }
+        if (engine.contains("two_stroke")) {
+            const auto& ports = engine.at("two_stroke");
+            config.twoStroke.exhaustPortOpenDegrees = ports.value("exhaust_port_open_deg", config.twoStroke.exhaustPortOpenDegrees);
+            config.twoStroke.transferPortOpenDegrees = ports.value("transfer_port_open_deg", config.twoStroke.transferPortOpenDegrees);
+            config.twoStroke.exhaustPortWidthMm = ports.value("exhaust_port_width_mm", config.twoStroke.exhaustPortWidthMm);
+            config.twoStroke.transferPortWidthMm = ports.value("transfer_port_width_mm", config.twoStroke.transferPortWidthMm);
+            config.twoStroke.portDischargeCoefficient = ports.value("port_discharge_coefficient", config.twoStroke.portDischargeCoefficient);
+            config.twoStroke.crankcaseCompressionRatio = ports.value("crankcase_compression_ratio", config.twoStroke.crankcaseCompressionRatio);
         }
         if (engine.contains("combustion_calibration")) {
             const auto& calibration = engine.at("combustion_calibration");
@@ -1010,6 +1031,7 @@ EngineDecodeResult JsonEngineSerializer::decode(std::string_view text) const noe
                 path.cylinderIds = item.value("cylinder_ids", std::vector<std::uint32_t> {});
                 path.impulseResponsePath = item.value("impulse_response", std::string {});
                 path.audioVolume = item.value("audio_volume", 1.0);
+                path.turbocharger = item.value("turbocharger", std::int32_t { -1 });
                 if (item.contains("acoustic_position_m"))
                     path.acousticPositionM = decodePoint(item.at("acoustic_position_m"));
                 if (item.contains("acoustic_axis"))

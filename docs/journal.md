@@ -5,6 +5,51 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-15 — Two-stroke fuelling: delivered air, no overrun cut
+
+- The RD350 was fuelled for its trapped oxygen-equivalent air (~60 mg, mostly retained charge) while ~9 mg crossed the transfers: idle AFR 3.7, trim on its 0.55 floor, 50 % misfires, stalled in the standing start. Fuelled on last cycle's delivered air: idle AFR 13.5, trim 1.01. Four-stroke dyno bit-identical.
+- IdleStability: idle 1,320 rpm (target 1,300, bypass 3 mm2; 6 mm2 gave 1,421) but 1,747 rpm 12 s after a WOT blip. Trace (`--trace --wot`): the overrun fuel cut cycled between 1.50 and 1.65 x idle for 4 s, each resume firing a clean scavenged charge (+5 N.m). No overrun cut on two-strokes: 1,413-1,430 rpm, passes.
+- Fuelled overrun then taught the trim the film drain (0.64 at a tip-in, AFR 25, 141 misfire events in 2 s). Holding learning only during overrun just delayed the crash to the 0.55 floor; holding it through overrun and 2 s after: 4 events, lean peak 62 %. The DFCO-resume test reports two-strokes as n/a.
+- Not compared with a real carburettor's transient; the remaining tip-in lean is the one-cycle lag of a delivered-air reference.
+
+## 2026-10-15 — Two-stroke engines; the expansion chamber needs a finer mesh
+
+- Piston ports, crankcase pumping (path plenum = crankcase volume, reed throttle), 360-degree cylinder phase in a 720-degree crank domain. Four-stroke catalogue dyno bit-identical. Catalogue: RD350LC-like twin (maker 37-40.2 N.m at 8,000 rpm).
+- The maker's 6.2:1 is a trapped ratio; geometric 11.2:1 is used (single cylinder: 40 -> 54 J per cycle).
+- Brake torque at 8,000 rpm against exhaust cell length: 360 mm 8.5 N.m, 100 mm 12.3, 75 mm 15.3, 50 mm 19.1, 25 mm 23.4 (stinger 22 mm). Single cylinder, trapped fresh charge 73 -> 136 mg from 360 to 25 mm: the chamber's suction and plugging waves need cells of 50 mm or less.
+- Real-time capacity (free run, no audio) at 9,500 rpm: 100 mm 1.41, 75 mm 1.29, 50 mm 0.76, 25 mm 0.29; paced with audio, 100 mm already overruns. So the catalogue keeps the 360 mm production mesh: 10.4 N.m at 8,000 rpm with a 26 mm stinger (0.65 x header), a quarter of the maker's. Not compensated by combustion or friction.
+- Second gap: combustion is late (CA50 ~30 deg ATDC at 8,000 rpm); not addressed. Outlet size and silencer restriction are inert. Ports, chambers and crankcase ratio are estimatedFamily; not compared with a recording.
+
+## 2026-10-15 — Several turbochargers, a compressor map, an intercooler
+
+- N turbochargers (1-4), each exhaust path's turbine face on its own shaft, the compressors solved together on one charge. EngineLab.Turbocharger: an I4 on two half-size units = one double (boost, torque within 0.2 %); a V8 with 2 + 6 cylinders per turbine: 113 vs 174 krpm, 22 % of the air through the small one, both at the common boost.
+- Compressor head now from a scaled speed-line map (Moraal-Kolmanovsky, design point = wastegate ratio at the engine's flow at 0.7 x redline). Dyno (catalogue): above 2,000 rpm unchanged (wastegate holds the ratio); at 2,000 rpm EJ25 +2.5 %, I5 -1.8 %, 2JZ +0.8 %, TDI -0.5 %.
+- REFUTED, not kept: an efficiency island (peak at the design point, -0.24 (phi-1)^2 - 0.25 (N-1)^2) costs at 2,000 rpm 2JZ -8.6 %, EJ25 -10.6 %, I5 -19.3 % (397 -> 320 N.m, real 480), TDI -15.9 % (347 -> 291, real 320); phi only (similarity): -7 to -16 %. Peak power unchanged. The low end is spool-limited and was already short (I5); the constant efficiency compensates a weak low-speed turbine. A turbine efficiency against U/C was not tried: its peak is the fitted value, so it can only remove more.
+- Intercooler (`intercooler_effectiveness`, default 0): with 0.7 the petrol turbos make 19-29 % more torque, ABOVE their makers' figures (2JZ 445 -> 524 at 4,000 rpm, real 427; EJ25 411 -> 506, real 393; I5 473 -> 594, real 500); the TDI is fuel-limited (+3 %). IMEP per unit of trapped charge is 14.5-15.2 bar on these vs 16.4 on the K20: the missing intercooler hides a ~20 % optimism at boost (lead, unverified: knock intensity saturates, so no knock-limited retard). The catalogue keeps none authored.
+
+## 2026-10-15 — Peak firing pressure and its limit; diesel rail pressure
+
+- Peak pressure is now tracked per cylinder at every sub-step and published per cycle (the dyno's `peak_cyl_bar` sampled once per frame). DynoSweepHarness, whole catalogue, maximum over each 1,000 rpm row at full load: K20 116.8 bar, LS3 84.6, CP2 73.6-80.3, Hayabusa 77.1, CP4 87.9; 2JZ 107.1, EJ25 138.3, Audi I5 175.2 (3,000 rpm), TDI 231.5 (2,000 rpm).
+- Pmax/IMEP at those rows: 5.1-7.3 on petrol engines, 9.9 on the TDI. Real production limits are about 120 (NA), 140 (boosted) and 200 bar (diesel): the I5 and the TDI fire above them, so their full-load phasing is probably earlier than a real calibration. Not addressed; both carry a limit 10 % over their stock peak (195, 255 bar).
+- Damage above the limit grows as the square of the excess (0.05/s at 100 % over). EngineLab.PeakPressure: K20 held at full load (106.5 bar mean, 0 damage); with a limit at 70 % of that, 0.069 damage in 8 s. Stock dyno torque bit-identical.
+- Diesel mixing time x sqrt(rated / rail pressure) (Chmela-Orthaber jet velocity). TDI held at full load, injector capacity held: 198.4 bar at 2,000 bar rail, 177.0 at 1,000. Stock rail = rated pressure, so bit-identical at stock. Not compared with a measured pressure trace or a noise recording.
+
+## 2026-10-15 — The default collector was a 2 L chamber
+
+- Owner complaint: a short collector sounds muffled on every engine. GeometrySensitivityHarness, collector volume -> swept only: CP2 +10 to +19 dB over 0.5-5 kHz, TDI +8 to +12 dB at 1.2-3 kHz. Cause: `collectorVolumeLitres` defaulted to 2.0 L, lumped as a compliance at the branch (a pre-chamber the geometry does not have), and the catalogue floored it at 0.05 L.
+- Now 0 = no body: the collector holds what its trunk sweeps (legacy graph, editable network, catalogue builder). An authored body (CP3 1.7 L, CP4 2.0 L) is kept and scales with the collector on resize.
+- First attempt collapsed the CFL (2JZ 64.8 -> 9.3 mm): the catalogue's 0.05 L floor, not the swept stiffness. Final: CFL identical on all 10 engines measured (CP2 44.4, 2JZ 64.8, Hayabusa 44.4 ...).
+- Sound vs before (default render, 2 s skip): shape CP2 7.2, Hayabusa 12.3 (+5.8 dB level), TDI 6.9, I5 6.7, K20 4.1, 2JZ 3.8, EJ25 3.6; tilt brighter (CP2 -2.80 -> -1.25, Hayabusa -0.06 -> +3.43 dB/oct). LS3, Harley, CP4: bit-identical.
+- Dyno (whole catalogue, 1,000 rpm steps): peak power -1.9 to +2.4 %, torque rows within -4.9/+3.0 %.
+- Not listened to; not compared with a recording. The real stock MT-07 and Hayabusa have an under-engine box that is not authored here (could be, as on CP3/CP4).
+
+## 2026-10-15 — Knock control as a calibration; knock intensity saturates
+
+- The ECU's knock retard (`knockLevel x 12` deg) is now the calibration `knock.retard_deg_per_intensity` (default 12, 0 = off). EngineLab.KnockControl, 2JZ held at 0.6 x redline, full load, last 6 of 12 s: on: knock 0.35, advance 6.3 deg, 455.6 N.m, damage 0; off: knock 0.43, advance 10.5 deg, 465.4 N.m, damage 3e-6.
+- Same rig with the spark trimmed +5/+10/+20 deg: knock 0.42/0.47/0.47 (on), 0.47/0.47/0.47 (off); torque still +2 to +5 %; damage at most 4.4e-4 after 12 s (0.5 "damaged" would take hours). The intensity (`severity x sqrt(unburned)` at auto-ignition, mean-chamber conditions) saturates just above the 0.45 "severe" threshold whatever the advance.
+- So knock consequences were NOT strengthened: a damage rate or a heat-transfer penalty tuned on this flat scale would be calibrated on a non-physical signal (onset changes are refuted, see the rules). An over-advanced map is not punished as a real engine would; next lead, unverified: the intensity's dependence on advance, not its onset.
+- Not compared with a real knock trace; a real ECU retards in steps per event and recovers slowly, not modelled.
+
 ## 2026-10-15 — CVT, car and scooter
 
 - A variator inside the clutch model: ratio interpolated over the 1 ms steps, the stick constraint follows its rate and takes slip out over 20 ms. Fixed-ratio gearboxes bit-for-bit unchanged (start = end ratio, added terms zero).

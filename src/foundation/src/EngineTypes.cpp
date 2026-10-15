@@ -258,6 +258,15 @@ double intakeRunnerVolumeLitres(const CylinderConfig& cylinder, const IntakeConf
     return std::max(0.001, volumeMm3 / 1'000'000.0);
 }
 
+double peakCylinderPressureLimitBar(const EngineConfig& config) noexcept {
+    if (config.peakFiringPressureLimitBar > 0.0) return config.peakFiringPressureLimitBar;
+    // The upper end of production design limits: a passenger-car diesel
+    // 180-200 bar, a boosted spark-ignition engine 120-140, a naturally
+    // aspirated one 100-120.
+    if (config.fuel == FuelType::diesel) return 200.0;
+    return config.forcedInduction.enabled ? 140.0 : 120.0;
+}
+
 double effectiveRotatingInertiaKgM2(const EngineConfig& config) noexcept {
     if (config.crankshafts.empty()) return std::max(0.001, config.rotatingInertiaKgM2);
     double inertia = 0.0;
@@ -515,7 +524,23 @@ void normaliseEngineConfig(EngineConfig& config) {
     }
     if (config.intakePaths.empty()) {
         config.intakePaths.push_back(makeDefaultIntakePath(config));
-    } else if (config.intakePaths.size() == 1) {
+    }
+    // A two-stroke's intake path is its cylinder's crankcase circuit: a
+    // shared default intake becomes one copy per cylinder.
+    if (config.cycle == EngineCycle::twoStroke && config.intakePaths.size() == 1
+        && config.intakePaths.front().inheritsGlobalGeometry && config.cylinders.size() > 1) {
+        const auto shared = config.intakePaths.front();
+        config.intakePaths.clear();
+        for (const auto& cylinder : config.cylinders) {
+            auto path = shared;
+            path.id = cylinder.id;
+            path.cylinderIds = { cylinder.id };
+            path.inheritsGlobalGeometry = false;
+            config.intakePaths.push_back(std::move(path));
+        }
+        for (auto& bank : config.banks) bank.intakeId = 0;
+    }
+    if (config.intakePaths.size() == 1) {
         // As with crankshafts, a serialised path is an explicit topology. Keep
         // the legacy/global view mirrored from it instead of silently
         // overwriting the path during every validation or hot reload.
@@ -606,8 +631,29 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
             || config.schemaVersion > currentEngineSchemaVersion)
         return "Unsupported engine schema version";
     if (config.name.empty() || config.name.size() > 128) return "Engine name must contain between 1 and 128 bytes";
-    if (config.cycle != EngineCycle::fourStroke)
-        return "Only four-stroke engines are currently supported";
+    if (config.cycle == EngineCycle::twoStroke) {
+        const auto& ports = config.twoStroke;
+        if (config.fuel != FuelType::gasoline) return "A two-stroke engine runs on petrol";
+        if (config.forcedInduction.enabled) return "A two-stroke engine has no forced induction";
+        if (!inRange(ports.exhaustPortOpenDegrees, 60.0, 120.0)
+            || !inRange(ports.transferPortOpenDegrees, ports.exhaustPortOpenDegrees + 4.0, 150.0))
+            return "Two-stroke ports open 60-120 deg after TDC (exhaust), the transfers at least 4 deg later "
+                   "and by 150 deg";
+        const auto widthOk = [&inRange](double width) { return width == 0.0 || inRange(width, 5.0, 500.0); };
+        if (!widthOk(ports.exhaustPortWidthMm) || !widthOk(ports.transferPortWidthMm)
+            || !inRange(ports.portDischargeCoefficient, 0.3, 1.0)
+            || !inRange(ports.crankcaseCompressionRatio, 1.1, 2.5))
+            return "Two-stroke port widths are 5-500 mm (0: from the bore), their discharge coefficient 0.3-1, "
+                   "the crankcase compression ratio 1.1-2.5";
+        for (const auto& path : config.intakePaths) {
+            if (path.cylinderIds.size() != 1)
+                return "Each two-stroke cylinder has its own crankcase: one intake path per cylinder";
+            if (path.geometry.individualThrottles)
+                return "A two-stroke crankcase is fed through one carburettor, not individual throttles";
+        }
+        if (config.injection.startAngleDegrees >= 360.0 || config.injection.endAngleDegrees >= 360.0)
+            return "A two-stroke cycle is 360 degrees: injection angles are below 360";
+    }
     if (config.fuel == FuelType::diesel
             && config.injection.mode != InjectionMode::direct)
         return "Compression-ignition diesel engines require direct injection";
@@ -644,6 +690,8 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
         || !inRange(config.plenumVolumeLitres, 0.1, 50.0)
         || !inRange(config.throttleDiameterMm, 15.0, 150.0)
         || !inRange(config.bankAngleDegrees, 0.0, 180.0)
+        || !(config.peakFiringPressureLimitBar == 0.0
+            || inRange(config.peakFiringPressureLimitBar, 20.0, 400.0))
         || !validPoint(config.acousticObserver.leftMicrophoneM)
         || !validPoint(config.acousticObserver.rightMicrophoneM)
         || !(config.acousticObserver.soundSpeedMps == 0.0
@@ -663,6 +711,11 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
         || !inRange(config.forcedInduction.bearingFrictionPowerWatts, 0.0, 20'000.0)
         || !inRange(config.forcedInduction.turbineFlowAreaMm2, 10.0, 20'000.0)
         || !inRange(config.forcedInduction.wastegateFlowAreaMm2, 0.0, 20'000.0)
+        || config.forcedInduction.turbochargerCount < 1U
+        || config.forcedInduction.turbochargerCount > maximumTurbochargers
+        || !(config.forcedInduction.compressorDesignMassFlowKgPerSecond == 0.0
+            || inRange(config.forcedInduction.compressorDesignMassFlowKgPerSecond, 0.005, 5.0))
+        || !inRange(config.forcedInduction.intercoolerEffectiveness, 0.0, 0.95)
         || !inRange(config.thermal.regulatedCoolantTemperatureC, 40.0, 130.0)
         || !inRange(config.thermal.regulatedOilTemperatureC, 40.0, 150.0)
         || !(config.thermal.coolantMassKjPerC == 0.0 || inRange(config.thermal.coolantMassKjPerC, 5.0, 5'000.0))
@@ -684,7 +737,8 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
         || !inRange(config.exhaust.collectorDiameterMm, 15.0, 300.0)
         || !inRange(config.exhaust.outletDiameterMm, 15.0, 300.0)
         || !inRange(config.exhaust.mufflerRestriction, 0.0, 1.0)
-        || !inRange(config.exhaust.collectorVolumeLitres, 0.05, 200.0)
+        || !(config.exhaust.collectorVolumeLitres == 0.0
+             || inRange(config.exhaust.collectorVolumeLitres, 0.05, 200.0))
         || !inRange(config.exhaust.outletDischargeCoefficient, 0.02, 1.5)
         || !inRange(config.exhaust.mufflerChamberDiameterMm, 0.0, 600.0)
         || !inRange(config.exhaust.mufflerChamberLengthMm, 0.0, 3'000.0)
@@ -1149,13 +1203,15 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
     for (const auto& path : config.exhaustPaths) {
         const auto& exhaust = path.geometry;
         if (path.id == 0 || path.cylinderIds.empty() || !exhaustPathIds.insert(path.id).second || !inRange(path.audioVolume, 0.0, 8.0)
+            || path.turbocharger >= static_cast<std::int32_t>(config.forcedInduction.turbochargerCount)
             || path.impulseResponsePath.size() > 1'024
             || !inRange(exhaust.primaryLengthMm, 100.0, 3'000.0)
             || !inRange(exhaust.primaryDiameterMm, 15.0, 200.0)
             || !inRange(exhaust.collectorDiameterMm, 15.0, 300.0)
             || !inRange(exhaust.outletDiameterMm, 15.0, 300.0)
             || !inRange(exhaust.mufflerRestriction, 0.0, 1.0)
-            || !inRange(exhaust.collectorVolumeLitres, 0.05, 200.0)
+            || !(exhaust.collectorVolumeLitres == 0.0
+                 || inRange(exhaust.collectorVolumeLitres, 0.05, 200.0))
             || !inRange(exhaust.outletDischargeCoefficient, 0.02, 1.5)
             || !inRange(exhaust.mufflerChamberDiameterMm, 0.0, 600.0)
             || !inRange(exhaust.mufflerChamberLengthMm, 0.0, 3'000.0)

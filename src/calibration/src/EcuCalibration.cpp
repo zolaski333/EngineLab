@@ -5,9 +5,12 @@
 #include <array>
 #include <cmath>
 #include <string>
+#include <variant>
 
 namespace enginelab::calibration {
 namespace {
+
+constexpr double seaLevelPressureKpa = 101.325;
 
 [[nodiscard]] CalibrationMetadata metadata(std::string id, std::string displayName,
                                            std::string description, CalibrationUnit unit,
@@ -148,6 +151,36 @@ CalibrationDraft makeDefaultEcuCalibration(const EngineConfig& config) {
         std::clamp(config.ignition.revLimitRpm, ecuLimits::minimumRevLimitRpm,
                    ecuLimits::maximumRevLimitRpm)
     });
+    draft.set(ScalarCalibration {
+        metadata(std::string(keys::launchLimit), "Launch control",
+                 "Rev limit while the vehicle stands in gear with the throttle past half (two-step): the clutch takes up from there. Released above 5 km/h. Zero turns it off.",
+                 CalibrationUnit::revolutionsPerMinute, 0.0, ecuLimits::maximumRevLimitRpm, 0),
+        0.0
+    });
+    if (config.forcedInduction.enabled
+            && config.forcedInduction.type == ForcedInductionType::turbocharger) {
+        // The configuration's wastegate ratio is a sea-level ratio, so the
+        // same gauge boost: flat, the controller holds what it always held.
+        const auto gaugeKpa = std::clamp(
+            (config.forcedInduction.wastegatePressureRatio - 1.0) * seaLevelPressureKpa,
+            ecuLimits::minimumBoostTargetGaugeKpa, ecuLimits::maximumBoostTargetGaugeKpa);
+        draft.set(CalibrationCurve1D {
+            metadata(std::string(keys::boostTargetGauge), "Boost target",
+                     "Gauge boost the wastegate controller holds, by engine speed. Below the speed where the turbo can make it, it is a ceiling the turbo does not reach.",
+                     CalibrationUnit::kilopascal, ecuLimits::minimumBoostTargetGaugeKpa,
+                     ecuLimits::maximumBoostTargetGaugeKpa, 1),
+            speed, std::vector<double>(speed.breakpoints.size(), gaugeKpa)
+        });
+    }
+    if (!diesel) {
+        draft.set(ScalarCalibration {
+            metadata(std::string(keys::knockRetardGain), "Knock retard gain",
+                     "Spark retard per unit of knock intensity. Zero turns knock control off: the knock then runs free and severe knock damages the engine.",
+                     CalibrationUnit::degreeCrankshaft, ecuLimits::minimumKnockRetardGainDegrees,
+                     ecuLimits::maximumKnockRetardGainDegrees, 1),
+            ecuLimits::defaultKnockRetardGainDegrees
+        });
+    }
     return draft;
 }
 
@@ -160,6 +193,20 @@ CalibrationDraft makeDraft(const CalibrationSnapshot& snapshot) {
         draft.set(entry);
     }
     return draft;
+}
+
+bool shiftBoostTargetTable(CalibrationStore& store, double gaugeStepKpa) {
+    auto draft = makeDraft(*store.snapshot());
+    const auto* found = draft.find(keys::boostTargetGauge);
+    if (found == nullptr) return false;
+    auto entry = *found;
+    auto* curve = std::get_if<CalibrationCurve1D>(&entry);
+    if (curve == nullptr) return false;
+    for (auto& value : curve->values)
+        value = std::clamp(value + gaugeStepKpa, ecuLimits::minimumBoostTargetGaugeKpa,
+                           ecuLimits::maximumBoostTargetGaugeKpa);
+    draft.set(std::move(entry));
+    return store.publish(draft, { std::nullopt, "wastegate-edit" }).published;
 }
 
 } // namespace enginelab::calibration

@@ -37,7 +37,8 @@ ActionMap::ActionMap()
         { "ab_switch", letter('7') },
         // Next to the brake: the cruise control sets or cancels.
         { "cruise", juce::KeyPress(juce::KeyPress::rightKey) },
-        { "automatic_gearbox", letter('8') }
+        { "automatic_gearbox", letter('8') },
+        { "datalog", letter('9') }
     }} {
     load();
 }

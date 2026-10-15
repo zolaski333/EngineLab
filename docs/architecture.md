@@ -180,6 +180,22 @@ recycle bin; the running engine carries on, unsaved. *Export engine* in JSON
 writes the tables beside the engine the same way, and *Import engine* reads
 them back when they are there.
 
+### New engine
+
+*New engine…* (the menu) builds an engine from a base one that runs (the
+running engine or any listed one) and a recipe: name, bore, stroke,
+compression ratio, redline and aspiration (the base's, natural, or a
+turbocharger sized for the new engine shared over 1-4 identical units).
+`buildEngine()` (`EngineBuilder.hpp`) applies it: bore and stroke through
+`resizeCylinders()`, pistons and rods scaled as similar parts, the rev
+limiter's margin and the ignition curve stretched with the redline, and what
+feeds the air kept in the base's proportions to the new air flow (injector
+flow, throttle bores at the same air speed, plenums, a diesel's fuel limit,
+clutch capacity). The layout, heads, camshafts, exhaust and gearbox stay the
+base's. The result is validated, saved under *My engines* and run.
+`EngineLab.EngineBuilder` checks the recipe and that a 20 % stroker makes
+its share more torque on the same mixture without saturating its injectors.
+
 ### Live exhaust changes
 
 An edit of `exhaust` and `exhaustPaths` only (the inspector's steppers, the
@@ -578,8 +594,9 @@ The other parts edit the same way, each through `MainComponent::applyEngineEdit`
 - the injectors, on each drawn injector (`PartRole::injector`: in the runner
   out of the head for port injection, in the chamber's roof on the intake side
   for direct injection), and also on the intake ports or the combustion: flow
-  in g/min (the configuration keeps mg/s) and fuel pressure in bar, with the
-  window, live duty cycle, fuel per cycle and, for port injection, the wall
+  in g/min (the configuration keeps mg/s) and fuel pressure in bar, plus a
+  diesel's start of injection in degrees before firing TDC (the window keeps
+  its length and moves with it), with the window, live duty cycle, fuel per cycle and, for port injection, the wall
   film. The side panel's Telemetry tab has a *Fuel injection* section whose
   *Show in 3-D* button selects cylinder 1's injector
   (`EngineViewport::showInjectors`, back to the All layer if the current one
@@ -628,7 +645,8 @@ run name, a typed size), gives the keyboard back to the engine controls.
 
 ## Extension rule
 
-A two-stroke or diesel engine, a torsional crankshaft, a 1D acoustic solver or
-an OpenGL backend must come in through an explicit model or interface. They
+A new engine cycle or fuel (as the two-stroke and the diesel did), a
+torsional crankshaft or an OpenGL backend must come in through an explicit
+model or interface. They
 must not bypass validation, the conservation invariants or the real-time
 boundaries.

@@ -62,7 +62,7 @@ network.
 
 ## Catalogue profiles and instant A/B
 
-All sixteen shipped engines now have an override under `voicing/engines/`.
+All seventeen shipped engines have an override under `voicing/engines/`.
 These profiles are `estimatedFamily` presentations: they bring out the
 character produced by pressure, topology and geometry, but are not presented as
 measured microphone equalisations. The CC0 takes whose engine speed, load or

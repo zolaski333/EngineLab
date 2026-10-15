@@ -99,9 +99,11 @@ TopBar::TopBar() {
     ecuButton.setTooltip(utf8("ECU tuner: fuel, ignition and boost tables"));
     audioButton.setTooltip(utf8("AUDIO HQ: mix, voicing and physical calibration"));
     moreButton.setTooltip(utf8("Import, export, JSON editor, dyno CSV, key bindings"));
+    logButton.setTooltip(utf8("Datalogger: records rpm, boost, lambda, spark, knock, torque, speed and the "
+                              "active limits to a CSV file in Documents/EngineLab logs (key 9)"));
     abButton.setTooltip(utf8("A/B: two versions of this engine. Switch to B, change it, then switch back and "
                              "forth to hear the difference; each keeps its own edits (key 7)"));
-    for (auto* button : { &abButton, &exhaustButton, &ecuButton, &audioButton, &moreButton })
+    for (auto* button : { &abButton, &logButton, &exhaustButton, &ecuButton, &audioButton, &moreButton })
         addAndMakeVisible(*button);
 }
 
@@ -192,7 +194,7 @@ void TopBar::resized() {
 
     auto tools = area;
     moreButton.setBounds(tools.removeFromRight(36).withSizeKeepingCentre(36, 34));
-    for (auto* button : { &audioButton, &ecuButton, &exhaustButton, &abButton }) {
+    for (auto* button : { &audioButton, &ecuButton, &exhaustButton, &logButton, &abButton }) {
         tools.removeFromRight(6);
         const auto width = button->idealWidth();
         button->setBounds(tools.removeFromRight(width).withSizeKeepingCentre(width, 34));

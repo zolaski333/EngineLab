@@ -135,8 +135,9 @@ void compileCatalogueExhaustPath(ExhaustPathConfig& path,
         }
         auto merge = exhaustComponent(400,
             ExhaustComponentType::merge, 130.0, collectorDiameter);
-        merge.volumeLitres = std::max(0.20,
-            geometry.collectorVolumeLitres);
+        // Zero (no authored body): what the merge's trunk sweeps.
+        merge.volumeLitres = geometry.collectorVolumeLitres > 0.0
+            ? std::max(0.20, geometry.collectorVolumeLitres) : 0.0;
         network.components.push_back(merge);
         addConnection(300, 400);
         addConnection(301, 400);
@@ -147,8 +148,8 @@ void compileCatalogueExhaustPath(ExhaustPathConfig& path,
         auto merge = exhaustComponent(200,
             ExhaustComponentType::merge,
             std::max(120.0, primaryLength * 0.35), collectorDiameter);
-        merge.volumeLitres = std::max(0.05,
-            geometry.collectorVolumeLitres);
+        merge.volumeLitres = geometry.collectorVolumeLitres > 0.0
+            ? std::max(0.05, geometry.collectorVolumeLitres) : 0.0;
         network.components.push_back(merge);
         for (const auto primaryId : primaryIds)
             addConnection(primaryId, 200);
@@ -627,6 +628,9 @@ template <typename T>
     assignIfPresent(node, "blow_off_valve_discharge_coefficient", value.blowOffValveDischargeCoefficient);
     assignIfPresent(node, "tonal_acoustic_efficiency", value.tonalAcousticEfficiency);
     assignIfPresent(node, "turbulent_jet_noise_coefficient", value.turbulentJetNoiseCoefficient);
+    assignIfPresent(node, "turbocharger_count", value.turbochargerCount);
+    assignIfPresent(node, "compressor_design_mass_flow_kg_s", value.compressorDesignMassFlowKgPerSecond);
+    assignIfPresent(node, "intercooler_effectiveness", value.intercoolerEffectiveness);
     return value;
 }
 
@@ -813,7 +817,7 @@ void applyPart(const std::map<std::string, T>& parts, const YAML::Node& uses, co
 }
 
 void applyCrankOffsets(EngineConfig& config) {
-    const auto spacing = 720.0 / static_cast<double>(config.firingOrder.size());
+    const auto spacing = cycleDegreesOf(config.cycle) / static_cast<double>(config.firingOrder.size());
     for (std::size_t index = 0; index < config.cylinders.size(); ++index) {
         auto& cylinder = config.cylinders[index];
         const auto found = std::find(config.firingOrder.begin(), config.firingOrder.end(), cylinder.id);
@@ -861,6 +865,7 @@ void applyCrankOffsets(EngineConfig& config) {
     assignIfPresent(engine, "plenum_volume_l", config.plenumVolumeLitres);
     assignIfPresent(engine, "throttle_diameter_mm", config.throttleDiameterMm);
     assignIfPresent(engine, "bank_angle_deg", config.bankAngleDegrees);
+    assignIfPresent(engine, "peak_pressure_limit_bar", config.peakFiringPressureLimitBar);
     config.intake.plenumVolumeLitres = config.plenumVolumeLitres;
     config.intake.throttleDiameterMm = config.throttleDiameterMm;
     if (const auto intake = engine["intake"]) {
@@ -920,6 +925,14 @@ void applyCrankOffsets(EngineConfig& config) {
     if (engine["vehicle"]) config.vehicle = decodeVehicle(engine["vehicle"]);
     if (engine["forced_induction"]) config.forcedInduction = decodeForcedInduction(engine["forced_induction"]);
     if (engine["thermal"]) config.thermal = decodeThermal(engine["thermal"]);
+    if (const auto ports = engine["two_stroke"]) {
+        assignIfPresent(ports, "exhaust_port_open_deg", config.twoStroke.exhaustPortOpenDegrees);
+        assignIfPresent(ports, "transfer_port_open_deg", config.twoStroke.transferPortOpenDegrees);
+        assignIfPresent(ports, "exhaust_port_width_mm", config.twoStroke.exhaustPortWidthMm);
+        assignIfPresent(ports, "transfer_port_width_mm", config.twoStroke.transferPortWidthMm);
+        assignIfPresent(ports, "port_discharge_coefficient", config.twoStroke.portDischargeCoefficient);
+        assignIfPresent(ports, "crankcase_compression_ratio", config.twoStroke.crankcaseCompressionRatio);
+    }
     if (const auto calibration = engine["combustion_calibration"]) {
         assignIfPresent(calibration, "base_ignition_delay_s", config.combustionCalibration.baseIgnitionDelaySeconds);
         assignIfPresent(calibration, "ignition_delay_temperature_exponent", config.combustionCalibration.ignitionDelayTemperatureExponent);
@@ -1053,6 +1066,7 @@ void applyCrankOffsets(EngineConfig& config) {
             pathConfig.geometry = pathNode["geometry"] ? decodeExhaust(pathNode["geometry"]) : config.exhaust;
             pathConfig.impulseResponsePath = pathNode["impulse_response"].as<std::string>("");
             pathConfig.audioVolume = pathNode["audio_volume"].as<double>(1.0);
+            pathConfig.turbocharger = pathNode["turbocharger"].as<std::int32_t>(-1);
             if (pathNode["acoustic_position_m"])
                 pathConfig.acousticPositionM = decodePoint(
                     pathNode["acoustic_position_m"]);

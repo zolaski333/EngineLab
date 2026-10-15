@@ -6,8 +6,13 @@ it.
 
 ## What EngineLab must be
 
-A four-stroke engine simulator **whose sound is as close to reality as
-possible**, for any engine the user builds.
+A four-stroke and two-stroke engine simulator **whose sound is as close to
+reality as possible**, for any engine the user builds.
+
+*Amended 2026-10-15 by the owner's decision: two-stroke engines are in scope
+(piston-ported, crankcase-scavenged). The four-stroke milestones below are
+unchanged; a two-stroke follows the same rules: plausible figures against the
+maker's, real time, no per-engine recording.*
 
 1. **Sound first.** Someone who knows the real engine should recognise it by
    ear: not just "a parallel twin", but "a CP2". The method is open: physics,

@@ -36,6 +36,8 @@ enum class ExhaustComponentType : std::uint8_t {
 inline constexpr std::uint8_t unspecifiedExhaustComponentPort { 0xffU };
 /** Global CPU bound for acoustic-only delay lines authored as sealed branches. */
 inline constexpr std::size_t maximumExhaustAcousticSideBranches { 8 };
+/** Turbochargers one engine can carry (ForcedInductionConfig::turbochargerCount). */
+inline constexpr std::size_t maximumTurbochargers { 4 };
 enum class AcousticTerminationType : std::uint8_t { unflanged, flanged };
 enum class RunningState : std::uint8_t {
     stopped, cranking, idling, running, unstable, knocking, overheating, damaged, destroyed
@@ -172,13 +174,21 @@ struct CamshaftConfig final {
     ValveControlConfig continuousControl;
 };
 
+/** Length of the common trunk the scalar exhaust geometry gives its
+ *  collector, mm. */
+inline constexpr double legacyCollectorTrunkLengthMm = 120.0;
+
 struct ExhaustConfig final {
     double primaryLengthMm { 480.0 };
     double primaryDiameterMm { 42.0 };
     double collectorDiameterMm { 58.0 };
     double mufflerRestriction { 0.28 };
     double outletDiameterMm { 65.0 };
-    double collectorVolumeLitres { 2.0 };
+    /** Gas volume of the collector body. Zero: no body, the collector holds
+     *  what its own trunk sweeps, as a cone of merging primaries does. It was
+     *  2.0 L by default: a pre-chamber behind every catalogue collector, which
+     *  muffled 0.5-5 kHz by up to 19 dB (journal 2026-10-15). */
+    double collectorVolumeLitres { 0.0 };
     double outletDischargeCoefficient { 0.72 };
     /** Single expansion chamber on the collector-to-outlet duct. Zero on either
      *  field means "no silencer": the audio element becomes an exact
@@ -613,7 +623,9 @@ enum class ActiveLimit : std::uint32_t {
     /** The wastegate is open: boost is held at its target, not by the turbo. */
     boostAtTarget = 1U << 5,
     /** The injectors are open for the whole of their window. */
-    injectorSaturated = 1U << 6
+    injectorSaturated = 1U << 6,
+    /** Launch control holds the engine at its launch speed. */
+    launchControl = 1U << 7
 };
 [[nodiscard]] constexpr bool hasActiveLimit(std::uint32_t mask, ActiveLimit bit) noexcept {
     return (mask & static_cast<std::uint32_t>(bit)) != 0U;
@@ -657,6 +669,9 @@ struct ExhaustPathConfig final {
     AcousticPoint3M acousticAxis { 0.0, 1.0, 0.0 };
     AcousticTerminationType acousticTermination {
         AcousticTerminationType::unflanged };
+    /** The turbocharger this path's turbine face drives. Negative: the path's
+     * index modulo ForcedInductionConfig::turbochargerCount. */
+    std::int32_t turbocharger { -1 };
 };
 
 struct IgnitionMapSample final {
@@ -851,6 +866,21 @@ struct ForcedInductionConfig final {
     /** Measurable/semi-empirical conversion parameters, not mix gains. */
     double tonalAcousticEfficiency { 1.0e-6 };
     double turbulentJetNoiseCoefficient { 1.0e-5 };
+    /** Identical turbochargers, each one this unit: the design flow, areas,
+     * inertia and bearing loss above are one turbocharger's. The exhaust
+     * paths share them out (ExhaustPathConfig::turbocharger); their
+     * compressors feed one charge. 1 to maximumTurbochargers. */
+    std::uint32_t turbochargerCount { 1 };
+    /** Corrected mass flow at the centre of the compressor map (peak
+     * efficiency), one unit. Zero: 100 m/s through the inducer when its
+     * diameter is authored, else the engine's air flow at 70 % of the redline
+     * at the wastegate boost, shared by the units. */
+    double compressorDesignMassFlowKgPerSecond { 0.0 };
+    /** Charge-air cooler effectiveness: the share of the compressor's
+     * temperature rise it removes (0 = none, 0.6-0.8 a road intercooler).
+     * The catalogue engines have none authored: with a real one their
+     * torque rises 19-29 % above their makers' figures (journal 2026-10-15). */
+    double intercoolerEffectiveness { 0.0 };
 };
 
 /** Engine temperatures; the realistic (unregulated) model is
@@ -1002,6 +1032,41 @@ struct AudioVoicingConfig final {
     AudioMonitorMode monitorMode { AudioMonitorMode::physicalReference };
 };
 
+/**
+ * The piston-controlled ports and crankcase of a two-stroke cylinder
+ * (EngineCycle::twoStroke). Port timings are crank degrees after top dead
+ * centre at which the piston crown uncovers the port's top edge; each port
+ * stays open for 360 - 2 x that, symmetric about bottom dead centre. A port's
+ * open area is its total width (every window and bridge-free width summed)
+ * times the height the piston has uncovered, times the discharge
+ * coefficient.
+ *
+ * Each cylinder has its own crankcase. The engine's intake path for that
+ * cylinder is the crankcase circuit: its plenum is the crankcase, pumped by
+ * the underside of the piston (largest at top dead centre); its throttle
+ * feeds it through a reed valve that only lets air in; its runner is the
+ * transfer duct and its "intake valve" the transfer ports. The exhaust port
+ * takes the exhaust valve's place on the exhaust network.
+ */
+struct TwoStrokeConfig final {
+    double exhaustPortOpenDegrees { 92.0 };
+    double transferPortOpenDegrees { 118.0 };
+    /** Zero: 0.65 x bore (one wide window). */
+    double exhaustPortWidthMm { 0.0 };
+    /** Zero: 1.30 x bore (the transfer windows together). */
+    double transferPortWidthMm { 0.0 };
+    double portDischargeCoefficient { 0.72 };
+    /** Crankcase volume at top dead centre over that at bottom dead centre:
+     *  1.25-1.5 on a road or race engine. */
+    double crankcaseCompressionRatio { 1.35 };
+};
+
+/** Crank degrees of one thermodynamic cycle: 720 for a four-stroke, 360 for
+ *  a two-stroke. */
+[[nodiscard]] inline double cycleDegreesOf(EngineCycle cycle) noexcept {
+    return cycle == EngineCycle::twoStroke ? 360.0 : 720.0;
+}
+
 struct EngineConfig final {
     std::uint32_t schemaVersion { currentEngineSchemaVersion };
     std::string name { "Untitled engine" };
@@ -1024,6 +1089,11 @@ struct EngineConfig final {
     double plenumVolumeLitres { 3.0 };
     double throttleDiameterMm { 60.0 };
     double bankAngleDegrees { 0.0 };
+    /** Structural limit of the peak firing pressure, bar absolute: above it
+     * the head gasket, ring lands and bearings are overloaded and the engine
+     * accumulates damage. Zero: a typical limit for the fuel and induction
+     * (see peakCylinderPressureLimitBar()). */
+    double peakFiringPressureLimitBar { 0.0 };
     IntakeConfig intake;
     std::vector<IntakePathConfig> intakePaths;
     std::vector<CylinderBankConfig> banks;
@@ -1048,6 +1118,8 @@ struct EngineConfig final {
     AudioVoicingConfig audioVoicing;
     std::string audioVoicingFamily;
     std::string audioVoicingKey;
+    /** Read only when `cycle` is EngineCycle::twoStroke. */
+    TwoStrokeConfig twoStroke;
 };
 
 struct EngineControls final {
@@ -1559,6 +1631,10 @@ struct EngineState final {
     double mechanicalEfficiency { 0.0 };
     double oilPressureKpa { 0.0 };
     double peakPistonAccelerationG { 0.0 };
+    /** Highest firing pressure of the last completed cycle over all
+     * cylinders, bar absolute, tracked at every physics sub-step (a per-frame
+     * sample of the chamber pressure misses the peak). */
+    double peakCylinderPressureBar { 0.0 };
     double resolvedHeatReleaseKw { 0.0 };
     double compressorPowerKw { 0.0 };
     double turbinePowerKw { 0.0 };
@@ -1571,6 +1647,20 @@ struct EngineState final {
     double forcedInductionShaftSpeedRatio { 0.0 };
     double wastegateOpening { 0.0 };
     double blowOffMassFlowKgPerSecond { 0.0 };
+    /** Each turbocharger. The scalar fields above are their mean shaft speed,
+     * summed powers and the common wastegate. */
+    struct Turbocharger final {
+        double shaftSpeedRpm { 0.0 };
+        double turbinePowerKw { 0.0 };
+        double compressorPowerKw { 0.0 };
+        double compressorMassFlowKgPerSecond { 0.0 };
+        /** Flow coefficient over the map's design one; below 0.4 it surges,
+         * from 1.5 it chokes. */
+        double compressorFlowCoefficientRatio { 0.0 };
+        double compressorEfficiency { 0.0 };
+    };
+    std::uint32_t turbochargerCount { 0 };
+    std::array<Turbocharger, maximumTurbochargers> turbochargers {};
     /** Last resolved ECU command. These are diagnostic telemetry, not a
      * second control path: EngineSimulator publishes the exact command that
      * already drove injection and combustion in the current sub-step. */
@@ -1741,6 +1831,10 @@ struct EcuCommand final {
     /** `ActiveLimit` bits the ECU itself decides: rev limiter, knock retard,
      *  coolant protection. */
     std::uint32_t activeLimits { 0U };
+    /** Gauge boost the wastegate controller holds (calibration
+     *  `boost.target_gauge_kpa`); negative: the configuration's wastegate
+     *  pressure ratio. */
+    double boostTargetGaugeKpa { -1.0 };
 };
 
 // Output of the mean-value model SimplifiedGasolinePhysics::evaluateCombustion.
@@ -1851,6 +1945,9 @@ struct DynoRun final {
 [[nodiscard]] std::vector<EngineConfig> makeBaseEnginePresets();
 [[nodiscard]] double engineDisplacementLitres(const EngineConfig&) noexcept;
 [[nodiscard]] double effectiveRotatingInertiaKgM2(const EngineConfig&) noexcept;
+/** The authored peak firing pressure limit, or a typical one for the fuel and
+ * induction when none is authored. */
+[[nodiscard]] double peakCylinderPressureLimitBar(const EngineConfig&) noexcept;
 [[nodiscard]] double intakeRunnerVolumeLitres(const CylinderConfig&, const IntakeConfig&) noexcept;
 void normaliseEngineConfig(EngineConfig&);
 [[nodiscard]] double valveFlowCoefficient(double liftMm, double fallback,

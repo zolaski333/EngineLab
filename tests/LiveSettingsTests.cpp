@@ -4,6 +4,7 @@
 // off, type, blade and lobe counts). These tests drive the real simulator and
 // the real renderer the way EngineRuntime does, deterministically.
 #include <enginelab/audio/RealtimeEngineAudio.hpp>
+#include <enginelab/calibration/EcuCalibration.hpp>
 #include <enginelab/catalog/EngineCatalog.hpp>
 #include <enginelab/ecu/SimpleEcuModel.hpp>
 #include <enginelab/events/FourStrokeEventGenerator.hpp>
@@ -179,7 +180,16 @@ void changedSettingsSettleLikeARestart() {
         double minimumRpm = 1.0e9;
         for (auto frame = 0; frame < frames; ++frame) {
             const auto t = frame * frameSeconds;
-            if (frame == swapFrame) swapSettings(swapped, edited);
+            if (frame == swapFrame) {
+                swapSettings(swapped, edited);
+                // The boost table owns the boost target; a wastegate edit
+                // moves it, as the application's engine edit does.
+                if (boost)
+                    require(calibration::shiftBoostTargetTable(*swapped.ecu.calibrationStore(),
+                                (edited.forcedInduction.wastegatePressureRatio
+                                    - original.forcedInduction.wastegatePressureRatio) * 101.325),
+                        std::string(name) + ": the boost table moves with the wastegate");
+            }
             std::size_t index = 0;
             for (auto* rig : { &built, &swapped, &untouched }) {
                 const auto controls = heldAt(t, rpm[index], original);

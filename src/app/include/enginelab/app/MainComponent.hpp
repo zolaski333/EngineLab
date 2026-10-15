@@ -16,6 +16,7 @@
 #include <enginelab/diagnostics/EngineDiagnostics.hpp>
 #include <enginelab/foundation/EngineTypes.hpp>
 #include <enginelab/render/RenderSnapshot.hpp>
+#include <enginelab/runtime/DataLogger.hpp>
 #include <enginelab/runtime/EngineRuntime.hpp>
 #include <enginelab/scripting/EngineScriptHotReloader.hpp>
 #include <enginelab/serialization/EngineEditScope.hpp>
@@ -95,14 +96,24 @@ private:
     void saveEngine();
     void saveEngineAs();
     void confirmSaveAs(const juce::String& name);
+    /** "New engine...": a recipe over a base engine (see buildEngine()). */
+    void showEngineBuilder();
+    void fillEngineBuilder(int baseIndex);
+    void buildEngineFromDialog(int baseIndex, const juce::String& name, const juce::StringArray& numbers,
+                               int aspiration, int turbochargers);
     void writeSavedEngine(const std::string& name, const std::filesystem::path& file);
     void deleteSavedEngine();
     void removeSavedEngine(const std::filesystem::path& file);
     /** Any edit of the running engine: the groups it can take live
         (engineEditScope) are taken live, one after the other; anything else
         restarts it with its tables kept. Nothing changed, nothing done.
-        Cylinder sizes and camshafts glide over `rampSeconds`. */
+        Cylinder sizes and camshafts glide over `rampSeconds`. A wastegate
+        edit moves the ECU's boost table by the same gauge step: the table
+        owns the boost. */
     bool applyEngineEdit(const EngineConfig&, double rampSeconds = ui::EngineViewport::cylinderRampSeconds);
+    bool applyEngineEditGroups(const EngineConfig&, double rampSeconds);
+    /** Starts or stops the datalogger (Documents/EngineLab logs). */
+    void toggleDatalog();
     /** An edit of the camshafts only: taken by the running engine over
         `rampSeconds` when its banks and valve controls stay
         (EngineSimulator::camshaftsReplaceable), else a restart. */
@@ -204,6 +215,7 @@ private:
     RenderSnapshotInterpolator renderSnapshotInterpolator_;
     std::shared_ptr<DynoRunArchive> dynoArchive_ {
         std::make_shared<DynoRunArchive>() };
+    DataLogger dataLogger_;
     std::uint64_t visibleDynoArchiveRevision_ {
         std::numeric_limits<std::uint64_t>::max() };
     bool starterKeyDown_ { false };
@@ -253,6 +265,7 @@ private:
     std::unique_ptr<juce::AlertWindow> configEditor_;
     std::unique_ptr<juce::AlertWindow> keyBindingsEditor_;
     std::unique_ptr<juce::AlertWindow> saveDialog_;
+    std::unique_ptr<juce::AlertWindow> builderDialog_;
     std::unique_ptr<EcuTunerWindow> ecuTunerWindow_;
     std::unique_ptr<ExhaustDesignerWindow> exhaustDesignerWindow_;
     std::unique_ptr<AudioWorkshopWindow> audioWorkshopWindow_;

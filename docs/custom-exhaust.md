@@ -60,7 +60,7 @@ exhaust_paths:
       collector_diameter_mm: 60
       muffler_restriction: 0.25
       outlet_diameter_mm: 70
-      collector_volume_l: 2.5
+      collector_volume_l: 2.5      # optional; 0 or absent: what the collector's trunk sweeps
       outlet_discharge_coefficient: 0.78
     graph:
       components:

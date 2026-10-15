@@ -100,6 +100,50 @@ depends on the area, the length, the volume and the local speed of sound. The
 pressure of this mode changes the admittance of the conservative restriction:
 it creates neither mass nor a torque bonus independent of filling.
 
+### Two-stroke engines
+
+`cycle: two_stroke` gives a piston-ported, crankcase-scavenged petrol engine
+(reed or piston-port intake, one firing per cylinder per revolution). The
+crank angle stays a 720-degree domain for every engine, so the render, the
+crank clock and the gas field are unchanged; each cylinder's thermodynamic
+phase runs on 360 degrees (`EngineSimulator::cylinderCycleDegrees()`), and
+spark, injection, the trapped-charge latch and the cycle telemetry follow it.
+
+- **Ports, not valves** (`TwoStrokePorts.hpp`): the exhaust and transfer
+  ports open when the slider-crank piston uncovers their top edge
+  (`two_stroke.exhaust_port_open_deg`, `transfer_port_open_deg` after top
+  dead centre) and are fully open at bottom dead centre. The open area is
+  width x uncovered height x `port_discharge_coefficient`; widths default to
+  0.65 and 1.30 x bore. No cam, no valve lift (published lifts are zero).
+- **Crankcase pumping**: each cylinder has its own intake path (validation
+  enforces one cylinder per path). That path's plenum is the crankcase: its
+  volume follows the piston's underside every substep, adiabatically, between
+  `crankcase_compression_ratio` x its bottom-dead-centre volume and that
+  volume. The throttle is the carburettor bore with a reed check valve (no
+  flow out of the crankcase), and the runner is the transfer duct. The piston's
+  underside sees the crankcase pressure, not the ambient.
+- **Trapping**: the charge is trapped when the transfers close (symmetric
+  about bottom dead centre); short-circuit losses come out of the same 1-D
+  exhaust flow that scavenges the cylinder. There is no pumping loop in the
+  cylinder: all of its work is gross work.
+- **Fuelling**: the ECU meters for the fresh air that crossed the transfers
+  last cycle, as a carburettor does, not for the trapped oxygen (most of a
+  two-stroke's trapped charge is retained from earlier cycles). There is no
+  overrun fuel cut (a cut scavenges the cylinder clean, and each resume fires
+  a full charge), and lambda learning is held through a closed-throttle
+  overrun and for 2 s after it.
+- **Compression ratio**: the model takes the geometric ratio. A Japanese
+  maker's figure (6.2:1 for the RD350LC) is usually the trapped one, counted
+  from the exhaust port's closing.
+- **Limits**: petrol only, naturally aspirated, one cylinder per intake path,
+  no individual throttles, injection angles inside the 360-degree cycle. Fuel is metered by
+  a port injector in the transfer duct; there is no carburettor model and no
+  oil (premix) in the charge. The expansion chamber's return wave needs exhaust
+  cells of 50 mm or less, and the real-time mesh is 360 mm: the catalogue
+  RD350LC-like twin makes about a quarter of its maker's torque (journal
+  2026-10-15). The script language sets the cycle but not the port timings,
+  which take their defaults (exhaust 92 deg, transfers 118 deg).
+
 ## Injection and mixture
 
 Injector flow depends on its nominal capacity and the square root of the
@@ -110,6 +154,12 @@ the instantaneous cylinder back-pressure is subtracted.
 
 - With direct injection, fuel goes into the cylinder and its latent heat cools
   the charge according to the configured efficiency.
+- On a diesel, the mixing-controlled burn (and the premixed burn, a fixed
+  fraction of its time) is calibrated at the injector's rated pressure and
+  scales with sqrt(rated / rail pressure): the jet's speed, which drives the
+  mixing, goes as the square root of the pressure drop (Chmela and Orthaber).
+  Halving the TDI's rail pressure at full load lowers its firing peak from 198
+  to 177 bar with the injector capacity held.
 - With port injection, a fraction joins a persistent liquid film on the port.
   Its evaporation depends on temperature and a time constant.
 
@@ -160,6 +210,16 @@ rather than stepping back and holding as a real knock control does. Only knock
 above 0.45 (the diagnostics' "severe") adds damage, which lowers efficiency for
 good. This global correlation is not multi-species chemical kinetics.
 
+Each cylinder's firing peak is tracked at every physics sub-step and published
+once per cycle, when the cylinder opens into its gas exchange
+(`EngineState::peakCylinderPressureBar`, the highest over the cylinders). Above
+the engine's structural limit (`peak_pressure_limit_bar`; zero takes 120 bar
+naturally aspirated, 140 boosted, 200 for a diesel, the upper end of production
+designs) it adds damage as the square of the excess: 10 % over takes about
+17 minutes to "damaged", 30 % about 2 minutes. The simulated full-load peaks of
+the boosted catalogue engines run above real ones (Audi I5 175 bar, TDI 231 bar),
+so those two carry their own limit 10 % over their stock peak.
+
 ## Forced induction
 
 The turbocharger follows a power balance: turbine minus compressor and bearing
@@ -171,6 +231,33 @@ saturated. Like an actuator spring set against the atmosphere, it holds a
 gauge boost: the ratio is the one at sea level (101.325 kPa), and in
 thinner air the ratio it allows rises so the gauge boost stays the same. The supercharger uses a separate closure, without claiming to
 model a complete compressor map.
+
+The turbocharger's compressor head comes from a generic map scaled to its
+design point (Moraal and Kolmanovsky, SAE 1999-01-0908): the head coefficient
+against the flow coefficient, both relative to the design point, flat towards
+surge and falling to zero head at 1.5 times the design flow coefficient
+(choke). The design point is the wastegate ratio at
+`compressor_design_mass_flow_kg_s`, by default 100 m/s through an authored
+inducer, else the engine's air flow at 70 % of the redline. Since the
+wastegate holds the boost, the map only shows while the turbo spools. The
+compressor efficiency stays the authored constant: an efficiency island was
+measured further from the makers' torque figures (journal 2026-10-15).
+
+`turbocharger_count` (1 to 4) fits identical turbochargers, each with the
+areas, inertia and design flow authored for one. Each exhaust path's turbine
+face drives the one its `turbocharger` index names (by default the path's
+index modulo the count), and the face's share of that turbine is its share of
+that turbocharger's cylinders. The shafts run independently; their
+compressors feed one charge and are solved together every 0.25 ms: the common
+pressure ratio at which the flows their maps pass at their own speeds add up
+to the engine's draw. A turbocharger fed by fewer cylinders spins slower and
+passes less of the air, without any special rule.
+
+`intercooler_effectiveness` (0 to 0.95, default 0) takes that share of the
+compressor's temperature rise back out of the charge. No catalogue engine
+authors one: with a real one (0.7) the petrol turbo engines make 19-29 % more
+torque than their makers' figures, so the model is optimistic at boost by
+about that much and the missing cooler hides it (journal 2026-10-15).
 
 The turbine lives in the exhaust gas network, as a restriction face (the same
 primitive as an individual throttle) on the single outgoing face of the first
@@ -438,8 +525,8 @@ full Pacejka; load transfer is a quasi-static longitudinal equilibrium.
 
 ## Limitations and interpretation
 
-- four-stroke petrol only, despite the presence of types reserved for future
-  extensions;
+- two-stroke engines carry no expansion-chamber tuning at the real-time
+  exhaust mesh (see *Two-stroke engines*);
 - 0D gas volumes and an aggregated Helmholtz mode, without CFD or meshed 1D
   acoustics on the intake side;
 - semi-empirical global reaction, turbulence, walls, blow-by, film and knock;

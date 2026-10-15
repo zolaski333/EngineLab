@@ -934,6 +934,45 @@ void testMidpipeIsCarriedEverywhere() {
             && std::abs(edited.exhaust.primaryLengthMm - primaryLengthMm) < 1.0e-9,
         "resizing the mid pipe must change the mid pipe, not the primaries: " + error);
 }
+
+// A collector without an authored body is its trunk: it holds the gas the
+// trunk sweeps. It used to default to a 2 L chamber, which muffled 0.5-5 kHz
+// by up to 19 dB on every engine that did not author one (journal 2026-10-15).
+void testDefaultCollectorIsItsTrunk() {
+    require(ExhaustConfig {}.collectorVolumeLitres == 0.0, "a collector has no body unless one is authored");
+    auto config = makeDefaultInlineFour();
+    const auto& path = config.exhaustPaths.front();
+    require(path.geometry.collectorVolumeLitres == 0.0 && path.geometry.collectorDiameterMm > 0.0,
+        "the fixture needs a collector without an authored body");
+
+    const auto graph = ExhaustGraph::makeForEngine(config);
+    const auto merge = std::find_if(graph.nodes().begin(), graph.nodes().end(),
+        [](const ExhaustNode& node) { return node.type == ExhaustNodeType::merge; });
+    const auto radiusM = path.geometry.collectorDiameterMm * 0.0005;
+    const auto sweptLitres = std::numbers::pi * radiusM * radiusM * legacyCollectorTrunkLengthMm * 0.001 * 1'000.0;
+    require(merge != graph.nodes().end() && std::abs(merge->volumeLitres - sweptLitres) < 1.0e-9,
+        "the solver's collector must hold what its trunk sweeps, got " + std::to_string(merge->volumeLitres) + " L");
+
+    auto network = makeEditableExhaustNetwork(path);
+    auto collector = std::find_if(network.components.begin(), network.components.end(),
+        [](const ExhaustComponentConfig& component) { return component.type == ExhaustComponentType::merge; });
+    require(collector != network.components.end() && collector->volumeLitres == 0.0
+            && std::abs(collector->lengthMm - legacyCollectorTrunkLengthMm) < 1.0e-9,
+        "the editable collector must be the solver's trunk, not a body");
+
+    // An authored body follows its geometry when the collector is resized.
+    collector->lengthMm = 200.0;
+    collector->diameterMm = 50.0;
+    collector->volumeLitres = 1.0;
+    const auto collectorId = collector->id;
+    config.exhaustPaths.front().network = network;
+    const auto error = resizeExhaustComponent(config, config.exhaustPaths.front().id, collectorId, 100.0, 50.0);
+    const auto& resized = config.exhaustPaths.front().network->components;
+    const auto after = std::find_if(resized.begin(), resized.end(),
+        [collectorId](const ExhaustComponentConfig& component) { return component.id == collectorId; });
+    require(error.empty() && after != resized.end() && std::abs(after->volumeLitres - 0.5) < 1.0e-9,
+        "halving an authored collector's length must halve its body: " + error);
+}
 } // namespace
 
 int main() {
@@ -943,6 +982,7 @@ int main() {
         testDegenerateChamberIsFlooredToItsResolutionLimit();
         testEditableLegacyConversionIsNeutral();
         testMidpipeIsCarriedEverywhere();
+        testDefaultCollectorIsItsTrunk();
         testValidationAndRouting();
         testDirectionalCrossoverRouting();
         testTerminalResonatorIsAcousticOnly();

@@ -304,6 +304,7 @@ std::string YamlEngineSerializer::encode(const EngineConfig& config) const {
         << YAML::Key << "plenum_volume_l" << YAML::Value << config.plenumVolumeLitres
         << YAML::Key << "throttle_diameter_mm" << YAML::Value << config.throttleDiameterMm
         << YAML::Key << "bank_angle_deg" << YAML::Value << config.bankAngleDegrees
+        << YAML::Key << "peak_pressure_limit_bar" << YAML::Value << config.peakFiringPressureLimitBar
         << YAML::Key << "forced_induction" << YAML::Value << YAML::BeginMap
         << YAML::Key << "enabled" << YAML::Value << config.forcedInduction.enabled
         << YAML::Key << "type" << YAML::Value << (config.forcedInduction.type == ForcedInductionType::supercharger ? "supercharger" : "turbocharger")
@@ -329,6 +330,9 @@ std::string YamlEngineSerializer::encode(const EngineConfig& config) const {
         << YAML::Key << "blow_off_valve_discharge_coefficient" << YAML::Value << config.forcedInduction.blowOffValveDischargeCoefficient
         << YAML::Key << "tonal_acoustic_efficiency" << YAML::Value << config.forcedInduction.tonalAcousticEfficiency
         << YAML::Key << "turbulent_jet_noise_coefficient" << YAML::Value << config.forcedInduction.turbulentJetNoiseCoefficient
+        << YAML::Key << "turbocharger_count" << YAML::Value << config.forcedInduction.turbochargerCount
+        << YAML::Key << "compressor_design_mass_flow_kg_s" << YAML::Value << config.forcedInduction.compressorDesignMassFlowKgPerSecond
+        << YAML::Key << "intercooler_effectiveness" << YAML::Value << config.forcedInduction.intercoolerEffectiveness
         << YAML::EndMap
         << YAML::Key << "thermal" << YAML::Value << YAML::BeginMap
         << YAML::Key << "regulated" << YAML::Value << config.thermal.regulated
@@ -605,6 +609,7 @@ std::string YamlEngineSerializer::encode(const EngineConfig& config) const {
             << YAML::Key << "cylinder_ids" << YAML::Value << YAML::Flow << path.cylinderIds
             << YAML::Key << "impulse_response" << YAML::Value << path.impulseResponsePath
             << YAML::Key << "audio_volume" << YAML::Value << path.audioVolume
+            << YAML::Key << "turbocharger" << YAML::Value << path.turbocharger
             << YAML::Key << "acoustic_position_m" << YAML::Value;
         emitPoint(out, path.acousticPositionM);
         out << YAML::Key << "acoustic_axis" << YAML::Value;
@@ -727,7 +732,18 @@ std::string YamlEngineSerializer::encode(const EngineConfig& config) const {
         << YAML::Key << "intake_valve_diameter_mm" << YAML::Value << cylinder.intakeValveDiameterMm
         << YAML::Key << "exhaust_valve_diameter_mm" << YAML::Value << cylinder.exhaustValveDiameterMm
         << YAML::EndMap;
-    out << YAML::EndSeq << YAML::EndMap << YAML::EndMap;
+    out << YAML::EndSeq;
+    // Written for a two-stroke only, so a four-stroke file is unchanged.
+    if (config.cycle == EngineCycle::twoStroke)
+        out << YAML::Key << "two_stroke" << YAML::Value << YAML::BeginMap
+            << YAML::Key << "exhaust_port_open_deg" << YAML::Value << config.twoStroke.exhaustPortOpenDegrees
+            << YAML::Key << "transfer_port_open_deg" << YAML::Value << config.twoStroke.transferPortOpenDegrees
+            << YAML::Key << "exhaust_port_width_mm" << YAML::Value << config.twoStroke.exhaustPortWidthMm
+            << YAML::Key << "transfer_port_width_mm" << YAML::Value << config.twoStroke.transferPortWidthMm
+            << YAML::Key << "port_discharge_coefficient" << YAML::Value << config.twoStroke.portDischargeCoefficient
+            << YAML::Key << "crankcase_compression_ratio" << YAML::Value << config.twoStroke.crankcaseCompressionRatio
+            << YAML::EndMap;
+    out << YAML::EndMap << YAML::EndMap;
     return out.c_str();
 }
 
@@ -776,6 +792,8 @@ EngineDecodeResult YamlEngineSerializer::decode(std::string_view text) const noe
         if (engine["cooling_efficiency"]) config.coolingEfficiency = engine["cooling_efficiency"].as<double>();
         if (engine["plenum_volume_l"]) config.plenumVolumeLitres = engine["plenum_volume_l"].as<double>();
         if (engine["throttle_diameter_mm"]) config.throttleDiameterMm = engine["throttle_diameter_mm"].as<double>();
+        if (engine["peak_pressure_limit_bar"])
+            config.peakFiringPressureLimitBar = engine["peak_pressure_limit_bar"].as<double>();
         if (engine["bank_angle_deg"]) config.bankAngleDegrees = engine["bank_angle_deg"].as<double>();
         else config.bankAngleDegrees = config.layout == EngineLayout::vLayout ? 60.0
             : (config.layout == EngineLayout::flat ? 180.0 : (config.layout == EngineLayout::radial ? 72.0 : 0.0));
@@ -807,6 +825,9 @@ EngineDecodeResult YamlEngineSerializer::decode(std::string_view text) const noe
             config.forcedInduction.blowOffValveDischargeCoefficient = forced["blow_off_valve_discharge_coefficient"].as<double>(config.forcedInduction.blowOffValveDischargeCoefficient);
             config.forcedInduction.tonalAcousticEfficiency = forced["tonal_acoustic_efficiency"].as<double>(config.forcedInduction.tonalAcousticEfficiency);
             config.forcedInduction.turbulentJetNoiseCoefficient = forced["turbulent_jet_noise_coefficient"].as<double>(config.forcedInduction.turbulentJetNoiseCoefficient);
+            config.forcedInduction.turbochargerCount = forced["turbocharger_count"].as<std::uint32_t>(config.forcedInduction.turbochargerCount);
+            config.forcedInduction.compressorDesignMassFlowKgPerSecond = forced["compressor_design_mass_flow_kg_s"].as<double>(config.forcedInduction.compressorDesignMassFlowKgPerSecond);
+            config.forcedInduction.intercoolerEffectiveness = forced["intercooler_effectiveness"].as<double>(config.forcedInduction.intercoolerEffectiveness);
         }
         if (const auto thermal = engine["thermal"]) {
             config.thermal.regulated = thermal["regulated"].as<bool>(config.thermal.regulated);
@@ -820,6 +841,14 @@ EngineDecodeResult YamlEngineSerializer::decode(std::string_view text) const noe
             config.thermal.oilCoolingPowerKwPerC = thermal["oil_cooling_power_kw_per_c"].as<double>(config.thermal.oilCoolingPowerKwPerC);
             config.thermal.liquidCooled = thermal["liquid_cooled"].as<bool>(config.thermal.liquidCooled);
             config.thermal.engineDrivenFan = thermal["engine_driven_fan"].as<bool>(config.thermal.engineDrivenFan);
+        }
+        if (const auto ports = engine["two_stroke"]) {
+            config.twoStroke.exhaustPortOpenDegrees = ports["exhaust_port_open_deg"].as<double>(config.twoStroke.exhaustPortOpenDegrees);
+            config.twoStroke.transferPortOpenDegrees = ports["transfer_port_open_deg"].as<double>(config.twoStroke.transferPortOpenDegrees);
+            config.twoStroke.exhaustPortWidthMm = ports["exhaust_port_width_mm"].as<double>(config.twoStroke.exhaustPortWidthMm);
+            config.twoStroke.transferPortWidthMm = ports["transfer_port_width_mm"].as<double>(config.twoStroke.transferPortWidthMm);
+            config.twoStroke.portDischargeCoefficient = ports["port_discharge_coefficient"].as<double>(config.twoStroke.portDischargeCoefficient);
+            config.twoStroke.crankcaseCompressionRatio = ports["crankcase_compression_ratio"].as<double>(config.twoStroke.crankcaseCompressionRatio);
         }
         if (const auto calibration = engine["combustion_calibration"]) {
             config.combustionCalibration.baseIgnitionDelaySeconds = calibration["base_ignition_delay_s"].as<double>(config.combustionCalibration.baseIgnitionDelaySeconds);
@@ -1132,6 +1161,7 @@ EngineDecodeResult YamlEngineSerializer::decode(std::string_view text) const noe
                 path.cylinderIds = item["cylinder_ids"].as<std::vector<std::uint32_t>>();
                 path.impulseResponsePath = item["impulse_response"].as<std::string>("");
                 path.audioVolume = item["audio_volume"].as<double>(1.0);
+                path.turbocharger = item["turbocharger"].as<std::int32_t>(-1);
                 if (item["acoustic_position_m"])
                     path.acousticPositionM = decodePoint(item["acoustic_position_m"]);
                 if (item["acoustic_axis"])

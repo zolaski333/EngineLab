@@ -952,6 +952,13 @@ int main(int argc, char** argv) {
                 entry->config.name.c_str());
             continue;
         }
+        // A two-stroke keeps its fuel on overrun (SimpleEcuModel): there is
+        // no cut to resume from.
+        if (dfcoTipIn && entry->config.cycle == enginelab::EngineCycle::twoStroke) {
+            std::printf("  %-32s   n/a (two-stroke: no overrun fuel cut)\n",
+                entry->config.name.c_str());
+            continue;
+        }
         try {
             const auto metrics = measureAcceleration(
                 entry->config, gearNumber, csvDirectory, traceEvents,

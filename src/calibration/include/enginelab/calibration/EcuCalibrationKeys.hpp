@@ -11,9 +11,15 @@ inline constexpr std::string_view ignitionAdvance = "ignition.advance_deg";
 inline constexpr std::string_view volumetricEfficiency = "fuel.volumetric_efficiency";
 inline constexpr std::string_view variableValveTiming = "valvetrain.vvt_deg";
 inline constexpr std::string_view variableValveLift = "valvetrain.vvl_mm";
-inline constexpr std::string_view boostTarget = "boost.target_kpa";
-inline constexpr std::string_view wastegateDuty = "boost.wastegate_duty";
+// Turbocharged engines: the boost the wastegate controller holds, gauge kPa
+// by engine speed. Absent (supercharger, saved tables without it): the
+// configuration's wastegate pressure ratio.
+inline constexpr std::string_view boostTargetGauge = "boost.target_gauge_kpa";
 inline constexpr std::string_view revLimit = "limits.rev_rpm";
+// Launch control (two-step): the rev limit while the vehicle stands in gear
+// under throttle. Zero: off.
+inline constexpr std::string_view launchLimit = "limits.launch_rpm";
+inline constexpr std::string_view knockRetardGain = "knock.retard_deg_per_intensity";
 
 } // namespace enginelab::calibration::keys
 
@@ -33,6 +39,14 @@ inline constexpr double minimumIgnitionAdvanceDegrees = -10.0;
 inline constexpr double maximumIgnitionAdvanceDegrees = 55.0;
 inline constexpr double minimumRevLimitRpm = 600.0;
 inline constexpr double maximumRevLimitRpm = 25'000.0;
+// Knock control: spark retard per unit of knock intensity (0 = control off,
+// the knock runs free). 12 deg is the gain the ECU always used.
+inline constexpr double minimumKnockRetardGainDegrees = 0.0;
+inline constexpr double maximumKnockRetardGainDegrees = 40.0;
+inline constexpr double defaultKnockRetardGainDegrees = 12.0;
+// Gauge boost: the configuration's pressure ratio stops at 3.5 (253 kPa).
+inline constexpr double minimumBoostTargetGaugeKpa = 0.0;
+inline constexpr double maximumBoostTargetGaugeKpa = 250.0;
 inline constexpr double minimumNormalizedLoad = 0.0;
 inline constexpr double maximumNormalizedLoad = 4.0;
 inline constexpr double minimumAirFuelRatioTrim = -3.0;

@@ -702,6 +702,14 @@ struct Variant final {
             if (exhaust.mufflerChamberDiameterMm > 1.0)
                 exhaust.mufflerChamberDiameterMm *= 2.3;
         } },
+        // Single-factor collector volume: the collector keeps its length and
+        // diameter but holds only the gas its own trunk sweeps, as a real
+        // cone of primaries does (the default since 2026-10-15). An authored
+        // collector volume is otherwise lumped, beyond that trunk, into one
+        // well-mixed node of the acoustic network.
+        { "collector-swept", [](ExhaustConfig& exhaust) {
+            exhaust.collectorVolumeLitres = 0.0;
+        } },
         // The user's own test case, kept as a compound: "even a basic 125 with
         // a short pipe and no silencer makes an unbelievable racket". Read it
         // against the two single factors above rather than on its own.
@@ -872,6 +880,19 @@ struct Variant final {
         } else if (name == "short-open") {
             setPrimaryLength(250.0);
             bypassMufflers();
+        } else if (name == "collector-swept") {
+            // No authored volume: a merge then holds what its trunk sweeps
+            // (or one hydraulic diameter's worth when it has no length).
+            for (auto& component : network.components) {
+                if (component.type != ExhaustComponentType::merge) continue;
+                const auto primaryInputs = std::count_if(
+                    network.connections.begin(), network.connections.end(),
+                    [&](const auto& connection) {
+                        return connection.toComponentId == component.id
+                            && primaryIds.contains(connection.fromComponentId);
+                    });
+                if (primaryInputs >= 2) component.volumeLitres = 0.0;
+            }
         }
     }
     return config;
@@ -1443,6 +1464,7 @@ int main(int argc, char** argv) {
     double targetRpm = 0.0;
     double seconds = 6.0;
     bool listEngines = false;
+    std::string onlyVariants;
     std::filesystem::path wavReference;
     std::vector<std::filesystem::path> wavVariants;
     std::filesystem::path wavOut;
@@ -1465,6 +1487,7 @@ int main(int argc, char** argv) {
         else if (argument == "--rpm" && index + 1 < argc) targetRpm = std::stod(argv[++index]);
         else if (argument == "--seconds" && index + 1 < argc) seconds = std::stod(argv[++index]);
         else if (argument == "--list") listEngines = true;
+        else if (argument == "--variants" && index + 1 < argc) onlyVariants = argv[++index];
         else if (argument == "--output-stage-ab") outputStageAb = true;
         else if (argument == "--radiation-density-ab" && index + 1 < argc)
             radiationDensityAb = std::stod(argv[++index]);
@@ -1604,7 +1627,15 @@ int main(int argc, char** argv) {
               << "  shape = RMS third-octave distance, broadband offset "
                  "removed. This is THE figure.\n\n";
 
-    const auto catalogueVariants = variants();
+    auto catalogueVariants = variants();
+    // `--variants a,b`: the reference and the named variants only.
+    if (!onlyVariants.empty()) {
+        const auto wanted = "," + onlyVariants + ",";
+        std::erase_if(catalogueVariants, [&](const Variant& variant) {
+            return std::string_view { variant.name } != "reference"
+                && wanted.find("," + std::string { variant.name } + ",") == std::string::npos;
+        });
+    }
     std::vector<RenderResult> results;
     results.reserve(catalogueVariants.size());
     for (const auto& variant : catalogueVariants) {
@@ -1727,6 +1758,19 @@ int main(int argc, char** argv) {
                   << exhaustDistance.shapeRmsDb << " dB, worst_band "
                   << exhaustDistance.worstBandDb << " dB)"
                   << '\n';
+        if (!onlyVariants.empty()) {
+            // Selected variants: the mix's level change per third octave,
+            // offset NOT removed, so its direction can be read band by band.
+            std::cout << "    per band:";
+            for (std::size_t band = 0; band < thirdOctaveCentresHz.size(); ++band) {
+                if (!results[0].mix.bandPresent[band] || !results[index].mix.bandPresent[band]) continue;
+                std::cout << ' ' << std::setprecision(0) << thirdOctaveCentresHz[band] << ':'
+                          << std::showpos << std::setprecision(1)
+                          << results[index].mix.bandDb[band] - results[0].mix.bandDb[band]
+                          << std::noshowpos;
+            }
+            std::cout << '\n';
+        }
     }
 
     std::cout << "\n  SENSITIVITY     mix " << std::fixed << std::setprecision(2)

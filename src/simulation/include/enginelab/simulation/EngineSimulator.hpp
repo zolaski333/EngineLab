@@ -353,17 +353,20 @@ private:
      *  advanced inside the pool and must never be given it. */
     void attachNetworkParallelFor() noexcept;
     [[nodiscard]] RunningState determineRunningState(const EngineControls&) const noexcept;
-    /** Injector open time divided by the complete 720-degree cycle. */
+    /** Crank degrees of one cylinder cycle: 720, or 360 for a two-stroke.
+     *  The crank angle itself always runs over 720 degrees. */
+    [[nodiscard]] double cylinderCycleDegrees() const noexcept { return cycleDegreesOf(config_.cycle); }
+    /** Injector open time divided by the complete cylinder cycle. */
     [[nodiscard]] double injectorDutyCycle(std::size_t cylinderIndex) const noexcept {
         const auto windowSubsteps = injectorWindowSubsteps_[cylinderIndex];
         if (windowSubsteps <= 0.0) return 0.0;
         const auto windowDegrees = std::fmod(
             config_.injection.endAngleDegrees
-                - config_.injection.startAngleDegrees + 720.0, 720.0);
+                - config_.injection.startAngleDegrees + cylinderCycleDegrees(), cylinderCycleDegrees());
         const auto openFraction =
             injectorOpenSubsteps_[cylinderIndex] / windowSubsteps;
         return std::clamp(
-            openFraction * windowDegrees / 720.0, 0.0, 1.0);
+            openFraction * windowDegrees / cylinderCycleDegrees(), 0.0, 1.0);
     }
     /** Fraction of the authored crank window for which the injector was open. */
     [[nodiscard]] double injectorWindowUtilisation(
@@ -501,6 +504,12 @@ private:
     std::size_t exhaustDuctMediumCount_ { 0 };
     double lastExhaustAcousticStatePublishSeconds_ { -1.0 };
     std::array<double, 32> chamberPressureBar_ {};
+    /** Each cylinder's highest pressure since it last entered its gas
+     * exchange (kPa), the highest of its last completed cycle, and whether it
+     * was in its gas exchange at the previous sub-step. */
+    std::array<double, 32> cyclePeakPressureKpa_ {};
+    std::array<double, 32> lastCyclePeakPressureKpa_ {};
+    std::array<bool, 32> inGasExchange_ {};
     std::array<double, 32> intakeFlowMgPerCycle_ {};
     std::array<double, 32> exhaustFlowMgPerCycle_ {};
     std::array<double, 32> intakeFlowMgThisCycle_ {};
@@ -791,11 +800,20 @@ private:
     struct ExhaustTurbineFace final {
         std::size_t interfaceIndex { 0 };
         double cylinderShare { 0.0 };
+        /** The turbocharger it drives, and its share of that one's cylinders
+         *  (the share of the turbine area it gets). */
+        std::size_t turbocharger { 0 };
+        double turbochargerShare { 0.0 };
     };
     std::vector<ExhaustTurbineFace> exhaustTurbineFaces_;
-    /** What the turbine faces did over the last exhaust advance. */
-    double networkTurbinePowerW_ { 0.0 };
+    /** What each turbocharger's faces did over the last exhaust advance. */
+    std::array<double, maximumTurbochargers> networkTurbinePowerW_ {};
     double networkTurbineOutletPressureKpa_ { 0.0 };
+    /** Several compressors: the ratio they last held together, each one's
+     *  share of the flow, and the time since that solve. */
+    double parallelCompressorPressureRatio_ { 1.0 };
+    std::array<double, maximumTurbochargers> parallelCompressorFlowShare_ {};
+    double parallelCompressorSolveAgeSeconds_ { 0.0 };
     /** The boost controller's integral term, as a wastegate opening. */
     double wastegateIntegral_ { 0.0 };
     /** Network-port order -> EngineConfig cylinder order, compiled once. */

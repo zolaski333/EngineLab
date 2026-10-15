@@ -4,7 +4,11 @@
 #include <enginelab/audio/ImpulseResponseLoader.hpp>
 #include <enginelab/calibration/EcuCalibration.hpp>
 #include <enginelab/calibration/EcuCalibrationKeys.hpp>
+#include <enginelab/foundation/CylinderResize.hpp>
+#include <enginelab/foundation/EngineBuilder.hpp>
 #include <algorithm>
+#include <array>
+#include <variant>
 #include <cmath>
 #include <stdexcept>
 #include <utility>
@@ -75,6 +79,7 @@ MainComponent::MainComponent() {
     topBar_.ecuButton.onClick = [this] { showEcuTuner(); };
     topBar_.audioButton.onClick = [this] { showAudioWorkshop(); };
     topBar_.moreButton.onClick = [this] { showMoreMenu(); };
+    topBar_.logButton.onClick = [this] { toggleDatalog(); };
 
     controls_.ignition.onClick = [this] {
         if (runtime_) runtime_->setIgnitionEnabled(controls_.ignition.getToggleState());
@@ -381,7 +386,37 @@ bool MainComponent::applyConfig(const EngineConfig& newConfig, bool preserveScri
     return true;
 }
 
+void MainComponent::toggleDatalog() {
+    if (dataLogger_.recording()) {
+        dataLogger_.stop();
+        topBar_.logButton.setEngaged(false);
+        topBar_.logButton.setTooltip(utf8("Datalogger: last log ") + fileOf(dataLogger_.file()).getFullPathName()
+            + " (" + juce::String(static_cast<juce::int64>(dataLogger_.rows())) + " rows). Key 9 starts another.");
+        return;
+    }
+    auto name = juce::File::createLegalFileName(utf8(config_.name)).replaceCharacter(' ', '-');
+    const auto file = juce::File::getSpecialLocation(juce::File::userDocumentsDirectory)
+        .getChildFile("EngineLab logs")
+        .getChildFile(name + "-" + juce::Time::getCurrentTime().formatted("%Y%m%d-%H%M%S") + ".csv");
+    if (!dataLogger_.start(pathOf(file))) {
+        showError(utf8("Datalogger"), utf8("Cannot write ") + file.getFullPathName());
+        return;
+    }
+    topBar_.logButton.setEngaged(true);
+    topBar_.logButton.setTooltip(utf8("Recording to ") + file.getFullPathName() + utf8(" (key 9 stops)"));
+}
+
 bool MainComponent::applyEngineEdit(const EngineConfig& edited, double rampSeconds) {
+    constexpr double seaLevelPressureKpa = 101.325;
+    const auto boostStepKpa = (edited.forcedInduction.wastegatePressureRatio
+        - config_.forcedInduction.wastegatePressureRatio) * seaLevelPressureKpa;
+    const auto applied = applyEngineEditGroups(edited, rampSeconds);
+    if (applied && boostStepKpa != 0.0 && runtime_)
+        (void)calibration::shiftBoostTargetTable(*runtime_->calibrationStore(), boostStepKpa);
+    return applied;
+}
+
+bool MainComponent::applyEngineEditGroups(const EngineConfig& edited, double rampSeconds) {
     auto scope = engineEditScope(config_, edited);
     if (!scope.any()) return true;
     if (scope.other || !runtime_ || !audio_ || runtime_->dynoRunning())
@@ -929,6 +964,7 @@ void MainComponent::showMoreMenu() {
     add(utf8("Save engine as…"), runtime_ != nullptr, utf8("Ctrl+Shift+S"), &MainComponent::saveEngineAs);
     add(utf8("Delete saved engine…"), savedEngine, {}, &MainComponent::deleteSavedEngine);
     menu.addSeparator();
+    add(utf8("New engine…"), runtime_ != nullptr && !running, {}, &MainComponent::showEngineBuilder);
     add(utf8("Edit engine JSON…"), !running, {},
         static_cast<void (MainComponent::*)()>(&MainComponent::showConfigEditor));
     add(utf8("Import engine…"), !running, {}, &MainComponent::importEngine);
@@ -1289,6 +1325,125 @@ void MainComponent::confirmSaveAs(const juce::String& typedName) {
         }));
 }
 
+void MainComponent::showEngineBuilder() {
+    if (!runtime_ || builderDialog_) return;
+    builderDialog_ = std::make_unique<juce::AlertWindow>(utf8("New engine"),
+        utf8("Starts from an engine that runs and changes what you set. What feeds the air follows the new size "
+             "(injectors, throttles, plenums, clutch); the layout, heads, camshafts, exhaust and gearbox stay the "
+             "base's. The new engine is saved under My engines and runs at once."),
+        juce::MessageBoxIconType::NoIcon);
+    juce::StringArray bases;
+    bases.add(utf8("This engine: ") + utf8(config_.name));
+    for (const auto& preset : presets_) bases.add(utf8(preset.config.name));
+    builderDialog_->addComboBox("base", bases, utf8("Base engine"));
+    builderDialog_->addTextEditor("name", {}, utf8("Name"));
+    builderDialog_->addTextEditor("bore", {}, utf8("Bore (mm)"));
+    builderDialog_->addTextEditor("stroke", {}, utf8("Stroke (mm)"));
+    builderDialog_->addTextEditor("compression", {}, utf8("Compression ratio"));
+    builderDialog_->addTextEditor("redline", {}, utf8("Redline (rpm)"));
+    builderDialog_->addComboBox("aspiration",
+        { utf8("The base's"), utf8("Natural"), utf8("Turbocharged, sized for the new engine") }, utf8("Aspiration"));
+    builderDialog_->addComboBox("turbos",
+        { utf8("1 turbocharger"), utf8("2 turbochargers"), utf8("3 turbochargers"), utf8("4 turbochargers") },
+        utf8("Turbochargers (when turbocharged)"));
+    auto safe = juce::Component::SafePointer<MainComponent>(this);
+    if (auto* base = builderDialog_->getComboBoxComponent("base")) {
+        base->setSelectedItemIndex(0, juce::dontSendNotification);
+        base->onChange = [safe] {
+            if (!safe || !safe->builderDialog_) return;
+            if (const auto* combo = safe->builderDialog_->getComboBoxComponent("base"))
+                safe->fillEngineBuilder(combo->getSelectedItemIndex());
+        };
+    }
+    for (const auto* id : { "aspiration", "turbos" })
+        if (auto* combo = builderDialog_->getComboBoxComponent(id)) combo->setSelectedItemIndex(0, juce::dontSendNotification);
+    fillEngineBuilder(0);
+    builderDialog_->addButton(utf8("BUILD"), 1, juce::KeyPress(juce::KeyPress::returnKey));
+    builderDialog_->addButton(utf8("CANCEL"), 0, juce::KeyPress(juce::KeyPress::escapeKey));
+    builderDialog_->enterModalState(true, juce::ModalCallbackFunction::create([safe](int result) {
+        if (!safe || !safe->builderDialog_) return;
+        auto& dialog = *safe->builderDialog_;
+        const auto selected = [&dialog](const char* id) {
+            const auto* combo = dialog.getComboBoxComponent(id);
+            return combo != nullptr ? combo->getSelectedItemIndex() : 0;
+        };
+        const auto text = [&dialog](const char* id) {
+            const auto* editor = dialog.getTextEditor(id);
+            return editor != nullptr ? editor->getText() : juce::String {};
+        };
+        const auto baseIndex = selected("base");
+        const auto name = text("name");
+        const juce::StringArray numbers { text("bore"), text("stroke"), text("compression"), text("redline") };
+        const auto aspiration = selected("aspiration");
+        const auto turbochargers = selected("turbos") + 1;
+        safe->builderDialog_.reset();
+        safe->grabKeyboardFocus();
+        if (result == 1) safe->buildEngineFromDialog(baseIndex, name, numbers, aspiration, turbochargers);
+    }), false);
+}
+
+void MainComponent::fillEngineBuilder(int baseIndex) {
+    if (!builderDialog_) return;
+    const auto& base = baseIndex > 0 && baseIndex <= static_cast<int>(presets_.size())
+        ? presets_[static_cast<std::size_t>(baseIndex - 1)].config : config_;
+    const auto size = cylinderSize(base);
+    const auto set = [this](const char* id, const juce::String& value) {
+        if (auto* editor = builderDialog_->getTextEditor(id)) editor->setText(value, false);
+    };
+    set("name", utf8(base.name) + utf8(" build"));
+    set("bore", size ? juce::String(size->boreMm, 1) : juce::String {});
+    set("stroke", size ? juce::String(size->strokeMm, 1) : juce::String {});
+    set("compression", base.cylinders.empty() ? juce::String {} : juce::String(base.cylinders.front().compressionRatio, 1));
+    set("redline", juce::String(juce::roundToInt(base.redlineRpm)));
+}
+
+void MainComponent::buildEngineFromDialog(int baseIndex, const juce::String& typedName,
+                                          const juce::StringArray& numbers, int aspiration, int turbochargers) {
+    const auto base = baseIndex > 0 && baseIndex <= static_cast<int>(presets_.size())
+        ? presets_[static_cast<std::size_t>(baseIndex - 1)].config : config_;
+    EngineRecipe recipe;
+    recipe.name = typedName.trim().toStdString();
+    if (const auto error = savedEngineNameError(recipe.name, catalogueNames())) {
+        showError(utf8("Engine not built"), utf8(*error));
+        return;
+    }
+    if (presetIndexOf(recipe.name) >= 0 || recipe.name == config_.name) {
+        showError(utf8("Engine not built"), utf8("Another engine is named \"") + utf8(recipe.name)
+            + utf8("\": choose another name."));
+        return;
+    }
+    const auto size = cylinderSize(base);
+    const std::array<const char*, 4> labels { "bore", "stroke", "compression ratio", "redline" };
+    const std::array<double, 4> current { size ? size->boreMm : 0.0, size ? size->strokeMm : 0.0,
+        base.cylinders.empty() ? 0.0 : base.cylinders.front().compressionRatio, base.redlineRpm };
+    std::array<double, 4> wanted {};
+    for (std::size_t index = 0; index < wanted.size(); ++index) {
+        const auto text = index < static_cast<std::size_t>(numbers.size())
+            ? numbers[static_cast<int>(index)].trim() : juce::String {};
+        if (text.isEmpty()) continue;
+        const auto value = text.getDoubleValue();
+        if (!text.containsOnly("0123456789.") || !(value > 0.0)) {
+            showError(utf8("Engine not built"), utf8("The ") + labels[index] + utf8(" must be a positive number."));
+            return;
+        }
+        // The base's own value, as shown rounded, keeps the base's exactly.
+        if (std::abs(value - current[index]) > 0.051 * (index == 3 ? 10.0 : 1.0)) wanted[index] = value;
+    }
+    recipe.boreMm = wanted[0];
+    recipe.strokeMm = wanted[1];
+    recipe.compressionRatio = wanted[2];
+    recipe.redlineRpm = wanted[3];
+    recipe.aspiration = static_cast<Aspiration>(std::clamp(aspiration, 0, 2));
+    recipe.turbochargerCount = static_cast<std::uint32_t>(std::clamp(turbochargers, 1, 4));
+    auto built = buildEngine(base, recipe);
+    if (!built.config) {
+        showError(utf8("Engine not built"), utf8(built.error));
+        return;
+    }
+    if (!switchEngine(*built.config, {}, std::nullopt)) return;
+    writeSavedEngine(recipe.name, savedEngineFile(pathOf(savedEnginesFolder()), recipe.name));
+}
+
 void MainComponent::writeSavedEngine(const std::string& name, const std::filesystem::path& file) {
     if (!runtime_) return;
     auto config = config_;
@@ -1566,6 +1721,7 @@ bool MainComponent::keyPressed(const juce::KeyPress& key) {
     if (actionMap_.matches(AppAction::dynoRamp, key)) { if (runtime_) runtime_->setDynoRampEnabled(!runtime_->dynoRampEnabled()); return true; }
     if (actionMap_.matches(AppAction::abSwitch, key)) { switchAbVersion(); return true; }
     if (actionMap_.matches(AppAction::cruise, key)) { if (runtime_) runtime_->toggleCruise(); return true; }
+    if (actionMap_.matches(AppAction::datalog, key)) { toggleDatalog(); return true; }
     if (actionMap_.matches(AppAction::automaticGearbox, key)) {
         if (runtime_) runtime_->setAutomaticShifting(!model_.state.automaticShifting);
         return true;
@@ -1660,6 +1816,7 @@ void MainComponent::timerCallback() {
         model_.renderSnapshot = renderSnapshotInterpolator_.sample(model_.state.simulationTimeSeconds);
     }
     model_.telemetry.push(model_.state);
+    dataLogger_.push(model_.state);
     model_.currentRun = runtime_->currentDynoRun();
     model_.diagnostics = diagnostics_.evaluate(config_, model_.state);
     model_.dynoRunning = runtime_->dynoRunning();

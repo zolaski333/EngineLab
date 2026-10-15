@@ -32,6 +32,8 @@ public:
     ActionButton abButton { "A", ActionButton::Style::tool };
     ActionButton exhaustButton { "Exhaust", ActionButton::Style::tool };
     ActionButton ecuButton { "ECU", ActionButton::Style::tool };
+    /** Lit while the datalogger records. */
+    ActionButton logButton { "Log", ActionButton::Style::tool };
     ActionButton audioButton { "Audio", ActionButton::Style::tool };
     ActionButton moreButton { {}, ActionButton::Style::tool };
 

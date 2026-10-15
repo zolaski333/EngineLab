@@ -508,8 +508,11 @@ ExhaustGraph ExhaustGraph::makeForEngine(
         const auto collectorDiameter = finiteClamped(geometry.collectorDiameterMm, 20.0, 500.0, 58.0);
         const auto outletDiameter = finiteClamped(geometry.outletDiameterMm, 20.0, 500.0, 65.0);
         const auto collectorRestriction = 0.055 * std::pow(58.0 / collectorDiameter, 4.0);
-        const auto collectorVolumeLitres = finiteClamped(
-            geometry.collectorVolumeLitres, 0.01, 1'000.0, 2.5);
+        // No authored body: the trunk's own swept volume.
+        const auto collectorVolumeLitres = geometry.collectorVolumeLitres > 0.0
+            ? finiteClamped(geometry.collectorVolumeLitres, 0.01, 1'000.0, 2.5)
+            : std::numbers::pi * std::pow(collectorDiameter * 0.0005, 2.0)
+                * legacyCollectorTrunkLengthMm * 0.001 * 1'000.0;
         const auto outletDischargeCoefficient = finiteClamped(
             geometry.outletDischargeCoefficient, 0.02, 1.5, 0.72);
         const auto outletRestriction = 0.01 * std::pow(65.0 / outletDiameter, 4.0)
@@ -532,7 +535,7 @@ ExhaustGraph ExhaustGraph::makeForEngine(
             graph.edges_.push_back({ cylinder->id, mergeId });
             roots.push_back({ cylinder->id, cylinder->id, runtimePathIndex });
         }
-        graph.nodes_.push_back({ mergeId, ExhaustNodeType::merge, 120.0, collectorDiameter,
+        graph.nodes_.push_back({ mergeId, ExhaustNodeType::merge, legacyCollectorTrunkLengthMm, collectorDiameter,
             collectorRestriction, 0.0, 1.0, runtimePathIndex, 0, 0.0,
             collectorVolumeLitres, 1.0, 0.0 });
         const auto chamberConfigured = geometry.mufflerChamberDiameterMm > 1.0

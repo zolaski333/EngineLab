@@ -1,4 +1,5 @@
 #include <enginelab/foundation/TurboSizing.hpp>
+#include <enginelab/foundation/ForcedInductionFlow.hpp>
 
 #include <algorithm>
 #include <cmath>
@@ -41,6 +42,25 @@ EngineConfig withTurbocharger(EngineConfig config) {
 
 EngineConfig withoutForcedInduction(EngineConfig config) {
     config.forcedInduction = ForcedInductionConfig {};
+    return config;
+}
+
+EngineConfig withTurbochargerCount(EngineConfig config, std::uint32_t count) {
+    auto& turbo = config.forcedInduction;
+    const auto was = std::clamp<std::uint32_t>(turbo.turbochargerCount, 1U,
+        static_cast<std::uint32_t>(maximumTurbochargers));
+    const auto now = std::clamp<std::uint32_t>(count, 1U, static_cast<std::uint32_t>(maximumTurbochargers));
+    if (!turbo.enabled || turbo.type != ForcedInductionType::turbocharger || was == now) return config;
+    const auto share = static_cast<double>(was) / static_cast<double>(now);
+    // Resolved before the count changes: the default reads it.
+    turbo.compressorDesignMassFlowKgPerSecond = compressorDesignMassFlowKgPerSecond(config) * share;
+    turbo.turbineFlowAreaMm2 *= share;
+    turbo.wastegateFlowAreaMm2 *= share;
+    turbo.shaftInertiaKgM2 *= share;
+    turbo.bearingFrictionPowerWatts *= share;
+    turbo.turbochargerCount = now;
+    for (auto& path : config.exhaustPaths)
+        if (path.turbocharger >= static_cast<std::int32_t>(now)) path.turbocharger = -1;
     return config;
 }
 

@@ -130,6 +130,13 @@ std::string resizeExhaustComponent(EngineConfig& config, std::uint32_t pathId, s
     } else {
         auto& component = *std::find_if(path.network->components.begin(), path.network->components.end(),
             [componentId](const ExhaustComponentConfig& item) { return item.id == componentId; });
+        // An authored collector body follows its geometry: a shorter or
+        // narrower collector holds less gas. Left as it was, the volume stayed
+        // lumped at the branch however short the trunk was made.
+        if (component.type == ExhaustComponentType::merge && component.volumeLitres > 0.0
+                && component.lengthMm > 0.0 && component.diameterMm > 0.0)
+            component.volumeLitres *= (lengthMm * diameterMm * diameterMm)
+                / (component.lengthMm * component.diameterMm * component.diameterMm);
         component.lengthMm = lengthMm;
         component.diameterMm = diameterMm;
     }

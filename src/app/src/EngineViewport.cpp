@@ -3,6 +3,7 @@
 #include <enginelab/foundation/CylinderResize.hpp>
 #include <enginelab/foundation/IntakeResize.hpp>
 #include <enginelab/foundation/TurboSizing.hpp>
+#include <enginelab/foundation/TwoStrokePorts.hpp>
 #include <enginelab/render/ListenerFrame.hpp>
 #include <enginelab/exhaust/LegacyExhaustNetwork.hpp>
 
@@ -265,9 +266,10 @@ void EngineCutawayView::drawEngine(juce::Graphics& g, juce::Rectangle<float> are
         }
         g.setColour(juce::Colour(0xff111817)); g.fillRoundedRectangle(x, top, cylinderWidth, height, 7.0F);
         g.setColour(juce::Colour(0xff3a4743)); g.drawRoundedRectangle(x, top, cylinderWidth, height, 7.0F, 1.5F);
-        const auto fallbackIntakeLift = profiledValveLiftMm(phase, 360.0 + config.camshafts.intakeCenterlineDegrees,
+        const auto valves = config.cycle != EngineCycle::twoStroke;
+        const auto fallbackIntakeLift = !valves ? 0.0 : profiledValveLiftMm(phase, 360.0 + config.camshafts.intakeCenterlineDegrees,
             config.camshafts.intakeDurationDegrees, config.camshafts.intakeLiftMm, config.camshafts.intakeLiftProfile);
-        const auto fallbackExhaustLift = profiledValveLiftMm(phase, 360.0 - config.camshafts.exhaustCenterlineDegrees,
+        const auto fallbackExhaustLift = !valves ? 0.0 : profiledValveLiftMm(phase, 360.0 - config.camshafts.exhaustCenterlineDegrees,
             config.camshafts.exhaustDurationDegrees, config.camshafts.exhaustLiftMm, config.camshafts.exhaustLiftProfile);
         const auto intakeLift = liveCylinder != nullptr ? liveCylinder->intakeValveLiftMm : fallbackIntakeLift;
         const auto exhaustLift = liveCylinder != nullptr ? liveCylinder->exhaustValveLiftMm : fallbackExhaustLift;
@@ -369,8 +371,9 @@ const std::array<juce::Colour, 4> strokeBands { juce::Colour(0x55ef6f3c), juce::
                                                 juce::Colour(0x4441b6d7), juce::Colour(0x446a7a75) };
 } // namespace
 
-void CyclePanel::setCylinders(std::vector<juce::String> labels) {
+void CyclePanel::setCylinders(std::vector<juce::String> labels, double cycleDegrees) {
     labels_ = std::move(labels);
+    cycleDegrees_ = cycleDegrees;
     repaint();
 }
 
@@ -390,8 +393,12 @@ void CyclePanel::paint(juce::Graphics& g) {
     const auto rows = std::min(labels_.size(), cycleMaximumRows);
     for (std::size_t i = 0; i < rows; ++i) {
         auto row = area.removeFromTop(cycleRowHeight).toFloat();
-        const auto phase = std::clamp(phaseOf(i), 0.0, 719.999);
-        const auto stroke = static_cast<std::size_t>(phase / 180.0);
+        // A two-stroke has two strokes: power (with exhaust and transfer), then
+        // compression.
+        const auto twoStroke = cycleDegrees_ < 719.0;
+        const auto phase = std::clamp(phaseOf(i), 0.0, cycleDegrees_ - 0.001);
+        const auto halfStroke = static_cast<std::size_t>(phase / 180.0);
+        const auto stroke = twoStroke ? (halfStroke == 0 ? 0U : 3U) : halfStroke;
         g.setFont(monoFont(11.0F));
         g.setColour(colours::muted);
         g.drawText(labels_[i], row.removeFromLeft(28.0F), juce::Justification::centredLeft, false);
@@ -402,14 +409,16 @@ void CyclePanel::paint(juce::Graphics& g) {
         clip.addRoundedRectangle(track, 3.0F);
         g.saveState();
         g.reduceClipRegion(clip);
-        for (std::size_t band = 0; band < 4; ++band) {
-            g.setColour(strokeBands[band]);
-            g.fillRect(track.withX(track.getX() + track.getWidth() * static_cast<float>(band) * 0.25F)
-                           .withWidth(track.getWidth() * 0.25F));
+        const auto bands = twoStroke ? std::size_t { 2 } : std::size_t { 4 };
+        const auto bandWidth = 1.0F / static_cast<float>(bands);
+        for (std::size_t band = 0; band < bands; ++band) {
+            g.setColour(strokeBands[twoStroke && band == 1 ? 3 : band]);
+            g.fillRect(track.withX(track.getX() + track.getWidth() * static_cast<float>(band) * bandWidth)
+                           .withWidth(track.getWidth() * bandWidth));
         }
         g.restoreState();
         g.setColour(juce::Colours::white);
-        g.fillRect(juce::Rectangle<float>(track.getX() + track.getWidth() * static_cast<float>(phase / 720.0) - 1.0F,
+        g.fillRect(juce::Rectangle<float>(track.getX() + track.getWidth() * static_cast<float>(phase / cycleDegrees_) - 1.0F,
                                           track.getY() - 2.0F, 2.0F, 10.0F));
     }
     if (labels_.size() > cycleMaximumRows) {
@@ -1276,7 +1285,7 @@ void EngineViewport::setEngine(const EngineConfig& config) {
     microphoneSpacingM_ = std::isfinite(spacing) && spacing > 0.01 && spacing < 2.0 ? spacing : 0.36;
     std::vector<juce::String> labels;
     for (const auto& cylinder : config.cylinders) labels.push_back("C" + juce::String(cylinder.id));
-    cycle_.setCylinders(std::move(labels));
+    cycle_.setCylinders(std::move(labels), cycleDegreesOf(config.cycle));
     {
         const std::lock_guard lock(sharedMutex_);
         shared_.model = scene_;
@@ -1625,24 +1634,40 @@ void EngineViewport::updateInspector() {
         result.value("Flow", injection.injectorFlowMgPerSecond * 0.06, " g/min", 0, 10.0, 1.0, 1.0, 30'000.0);
         result.value("Fuel pressure", injection.railPressureBar, " bar", direct ? 0 : 1, direct ? 10.0 : 0.5,
                      direct ? 1.0 : 0.1, 1.2, 3'000.0);
+        // A diesel's start of injection, before firing TDC: the window keeps
+        // its length and moves with it.
+        const auto diesel = config.fuel == FuelType::diesel;
+        if (diesel)
+            result.value("Start of injection", 720.0 - std::fmod(injection.startAngleDegrees + 360.0, 720.0) - 360.0,
+                         utf8("\xc2\xb0 BTDC"), 0, 2.0, 1.0, -20.0, 60.0);
         result.note = "Every injector changes. The flow is rated at "
             + juce::String(injection.referencePressureBar, direct ? 0 : 1)
-            + " bar; the fuel pressure moves it as its square root. The running engine takes them.";
-        partEditor_ = [](EngineConfig& edited, const std::vector<double>& values) {
+            + " bar; the fuel pressure moves it as its square root"
+            + (diesel ? juce::String(", and a diesel's mixing burn with it") : juce::String())
+            + ". The running engine takes them.";
+        partEditor_ = [diesel](EngineConfig& edited, const std::vector<double>& values) {
             const auto flowGPerMin = values[0];
             const auto pressureBar = values[1];
             edited.injection.injectorFlowMgPerSecond = flowGPerMin / 0.06;
             edited.injection.railPressureBar = pressureBar;
+            if (diesel && values.size() > 2U) {
+                auto& injection = edited.injection;
+                const auto windowDegrees = std::fmod(injection.endAngleDegrees - injection.startAngleDegrees + 720.0, 720.0);
+                injection.startAngleDegrees = std::fmod(720.0 - values[2] + 720.0, 720.0);
+                injection.endAngleDegrees = std::fmod(injection.startAngleDegrees + windowDegrees, 720.0);
+            }
             return std::string();
         };
         return result;
     };
 
     // Fits a turbocharger sized for the engine, or takes it off: a restart.
-    // Not offered on a supercharged engine.
+    // Not offered on a supercharged engine, nor on a two-stroke (its
+    // crankcase does the pumping: validation refuses forced induction).
     const auto turboChoice = [this, &config]() -> std::optional<PartInspector::Edit::Choice> {
         const auto& forced = config.forcedInduction;
         if (forced.enabled && forced.type != ForcedInductionType::turbocharger) return std::nullopt;
+        if (config.cycle == EngineCycle::twoStroke) return std::nullopt;
         const auto sized = sizedTurbocharger(config);
         partChoice_ = [](EngineConfig& edited, int index) {
             edited = index == 1 ? withTurbocharger(edited) : withoutForcedInduction(edited);
@@ -1703,8 +1728,16 @@ void EngineViewport::updateInspector() {
         title = "Cylinder heads";
         subtitle = juce::String(config.name);
         add("Engine speed", juce::String(juce::roundToInt(state.rpm)) + " rpm");
-        const auto& cams = config.banks.empty() ? config.camshafts : config.banks.front().camshafts;
         const auto degrees = [](double value) { return juce::String(juce::roundToInt(value)) + utf8("\xc2\xb0"); };
+        // A two-stroke's head has no valvetrain: its timing is its ports'.
+        if (config.cycle == EngineCycle::twoStroke) {
+            const auto& ports = config.twoStroke;
+            add("Exhaust opens", degrees(ports.exhaustPortOpenDegrees) + " ATDC");
+            add("Transfers open", degrees(ports.transferPortOpenDegrees) + " ATDC");
+            add("Blowdown", degrees(ports.transferPortOpenDegrees - ports.exhaustPortOpenDegrees));
+            break;
+        }
+        const auto& cams = config.banks.empty() ? config.camshafts : config.banks.front().camshafts;
         add("Lobe separation", degrees(0.5 * (cams.intakeCenterlineDegrees + cams.exhaustCenterlineDegrees)));
         add("Valve overlap", degrees(std::max(0.0, 0.5 * (cams.intakeDurationDegrees + cams.exhaustDurationDegrees)
                                                        - cams.intakeCenterlineDegrees - cams.exhaustCenterlineDegrees)));
@@ -1798,6 +1831,18 @@ void EngineViewport::updateInspector() {
     case render::PartRole::intakeValve:
     case render::PartRole::exhaustValve: {
         const auto intake = identity.role == render::PartRole::intakeValve;
+        // A two-stroke's parts here are its ports (EngineModel3D); no cam.
+        if (config.cycle == EngineCycle::twoStroke) {
+            title = intake ? "Transfer ports" : "Exhaust port";
+            const auto opens = intake ? config.twoStroke.transferPortOpenDegrees
+                                      : config.twoStroke.exhaustPortOpenDegrees;
+            add("Opens", juce::String(juce::roundToInt(opens)) + utf8("\xc2\xb0 ATDC"));
+            add("Open for", juce::String(juce::roundToInt(360.0 - 2.0 * opens)) + utf8("\xc2\xb0"));
+            if (cylinder != nullptr)
+                add("Width", millimetres(model_.units, intake ? transferPortWidthMm(config.twoStroke, *cylinder)
+                                                              : exhaustPortWidthMm(config.twoStroke, *cylinder)));
+            break;
+        }
         title = intake ? "Intake valve" : "Exhaust valve";
         const auto& cams = scene_->camshaftsOf(cylinderIndex);
         if (cylinderEditor_) {
@@ -1883,8 +1928,36 @@ void EngineViewport::updateInspector() {
         const auto area = [](double mm2) { return juce::String(juce::roundToInt(mm2)) + utf8(" mm²"); };
         title = "Turbocharger";
         subtitle = "On exhaust path " + juce::String(scene_->turbo().pathId);
-        add("Shaft speed", krpm(state.forcedInductionShaftSpeedRpm));
+        const auto units = std::min<std::size_t>(state.turbochargerCount, maximumTurbochargers);
+        if (units > 1U) {
+            juce::String speeds;
+            juce::String shares;
+            auto totalFlow = 0.0;
+            for (std::size_t index = 0; index < units; ++index)
+                totalFlow += state.turbochargers[index].compressorMassFlowKgPerSecond;
+            for (std::size_t index = 0; index < units; ++index) {
+                const auto& unit = state.turbochargers[index];
+                speeds << (index > 0 ? " / " : "") << juce::String(unit.shaftSpeedRpm / 1'000.0, 0);
+                shares << (index > 0 ? " / " : "")
+                       << juce::roundToInt(totalFlow > 0.0 ? 100.0 * unit.compressorMassFlowKgPerSecond / totalFlow : 0.0);
+            }
+            add("Turbochargers", juce::String(static_cast<int>(units)) + " on one charge");
+            add("Shaft speeds", speeds + " krpm");
+            add("Air shares", shares + " %");
+        } else {
+            add("Shaft speed", krpm(state.forcedInductionShaftSpeedRpm));
+        }
+        if (units > 0U) {
+            // The compressor map: below 0.4 x its design flow coefficient it
+            // surges, from 1.5 x it chokes.
+            const auto ratio = state.turbochargers[0].compressorFlowCoefficientRatio;
+            add(units > 1U ? "Map position (turbo 1)" : "Map position",
+                juce::String(ratio, 2) + utf8(" \xc3\x97 design")
+                    + (ratio < 0.4 ? ", surge" : ratio >= 1.5 ? ", choke" : ""));
+        }
         add("Pressure ratio", juce::String(state.boostPressureRatio, 2) + " (target " + juce::String(forced.pressureRatio, 2) + ")");
+        if (forced.intercoolerEffectiveness > 0.0)
+            add("Intercooler", juce::String(juce::roundToInt(100.0 * forced.intercoolerEffectiveness)) + " %");
         add("Turbine outlet", model_.units.text(units::Quantity::pressure, state.turbineOutletPressureKpa));
         add("Wastegate", juce::String(juce::roundToInt(100.0 * state.wastegateOpening)) + " % open");
         add("Turbine / compressor", model_.units.value(units::Quantity::power, state.turbinePowerKw) + " / "
@@ -1907,18 +1980,50 @@ void EngineViewport::updateInspector() {
             edit->key = std::uint64_t { 3 } << 60U;
             edit->heading = "TUNE";
             edit->value("Wastegate opens at", forced.wastegatePressureRatio, utf8(" \xc3\x97"), 2, 0.05, 0.01, 1.0, 4.0);
-            edit->value("Turbine flow area", forced.turbineFlowAreaMm2, utf8(" mm\xc2\xb2"), 0, 50.0, 5.0, 20.0,
-                        20'000.0);
-            edit->note = "The wastegate pressure ratio limits the boost; the rated ratio keeps its distance to it. "
-                         "The running engine takes both.";
-            partEditor_ = [](EngineConfig& edited, const std::vector<double>& values) {
+            edit->value(forced.turbochargerCount > 1U ? "Turbine flow area, each" : "Turbine flow area",
+                        forced.turbineFlowAreaMm2, utf8(" mm\xc2\xb2"), 0, 50.0, 5.0, 20.0, 20'000.0);
+            edit->value("Intercooler", 100.0 * forced.intercoolerEffectiveness, " %", 0, 5.0, 1.0, 0.0, 95.0);
+            edit->value("Turbochargers", static_cast<double>(forced.turbochargerCount), "", 0, 1.0, 1.0, 1.0,
+                        static_cast<double>(maximumTurbochargers));
+            // Which turbocharger this path's turbine drives, when there is a choice.
+            const auto pathId = scene_->turbo().pathId;
+            const auto path = std::find_if(config.exhaustPaths.begin(), config.exhaustPaths.end(),
+                [pathId](const ExhaustPathConfig& candidate) { return candidate.id == pathId; });
+            const auto pathIndex = static_cast<std::size_t>(std::distance(config.exhaustPaths.begin(), path));
+            const auto choosesUnit = forced.turbochargerCount > 1U && path != config.exhaustPaths.end();
+            if (choosesUnit) {
+                const auto unit = path->turbocharger >= 0
+                    ? static_cast<std::size_t>(path->turbocharger) : pathIndex % forced.turbochargerCount;
+                edit->value("Path " + juce::String(pathId) + " drives turbo", static_cast<double>(unit + 1U), "", 0,
+                            1.0, 1.0, 1.0, static_cast<double>(forced.turbochargerCount));
+            }
+            edit->note = utf8("The wastegate pressure ratio limits the boost; the rated ratio keeps its distance to "
+                              "it (the ECU's boost table moves with it). The intercooler removes that share of the "
+                              "compressor's heat. The running engine takes these. Another turbocharger count "
+                              "shares the same total turbo out between identical units, and a path given another "
+                              "turbo: both restart the engine.");
+            partEditor_ = [choosesUnit, pathIndex](EngineConfig& edited, const std::vector<double>& values) {
                 const auto wastegate = values[0];
                 const auto turbineAreaMm2 = values[1];
+                const auto intercoolerPercent = values[2];
+                const auto count = static_cast<std::uint32_t>(std::lround(values[3]));
                 auto& turbo = edited.forcedInduction;
                 const auto margin = turbo.pressureRatio - turbo.wastegatePressureRatio;
                 turbo.wastegatePressureRatio = wastegate;
                 turbo.pressureRatio = std::max(1.0, wastegate + margin);
                 turbo.turbineFlowAreaMm2 = turbineAreaMm2;
+                turbo.intercoolerEffectiveness = std::clamp(intercoolerPercent / 100.0, 0.0, 0.95);
+                if (choosesUnit && values.size() > 4U && pathIndex < edited.exhaustPaths.size()
+                    && count == turbo.turbochargerCount) {
+                    // Written only when it changes: an authored index equal to
+                    // the default is still another config, and a restart.
+                    auto& path = edited.exhaustPaths[pathIndex];
+                    const auto now = path.turbocharger >= 0
+                        ? path.turbocharger : static_cast<std::int32_t>(pathIndex % turbo.turbochargerCount);
+                    const auto wanted = static_cast<std::int32_t>(std::lround(values[4])) - 1;
+                    if (wanted != now) path.turbocharger = wanted;
+                }
+                if (count != turbo.turbochargerCount) edited = withTurbochargerCount(std::move(edited), count);
                 return std::string();
             };
             edit->choice = turboChoice();

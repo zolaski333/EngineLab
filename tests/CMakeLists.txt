@@ -577,3 +577,74 @@ add_executable(EngineLabCvtTests CvtTests.cpp)
 target_link_libraries(EngineLabCvtTests PRIVATE EngineLab::Runtime)
 enginelab_set_warnings(EngineLabCvtTests)
 add_test(NAME EngineLab.Cvt COMMAND EngineLabCvtTests)
+
+add_executable(EngineLabKnockControlTests KnockControlTests.cpp)
+target_link_libraries(EngineLabKnockControlTests PRIVATE
+    EngineLab::Foundation EngineLab::Calibration EngineLab::Events EngineLab::Physics EngineLab::Ecu
+    EngineLab::Exhaust EngineLab::Simulation EngineLab::Catalog)
+target_compile_definitions(EngineLabKnockControlTests PRIVATE
+    ENGINELAB_CATALOG_ROOT="${CMAKE_SOURCE_DIR}")
+if(MSVC)
+    target_link_options(EngineLabKnockControlTests PRIVATE /STACK:8388608)
+endif()
+enginelab_set_warnings(EngineLabKnockControlTests)
+add_test(NAME EngineLab.KnockControl COMMAND EngineLabKnockControlTests)
+
+add_executable(EngineLabPeakPressureTests PeakPressureTests.cpp)
+target_link_libraries(EngineLabPeakPressureTests PRIVATE
+    EngineLab::Foundation EngineLab::Calibration EngineLab::Events EngineLab::Physics EngineLab::Ecu
+    EngineLab::Exhaust EngineLab::Simulation EngineLab::Catalog EngineLab::Diagnostics)
+target_compile_definitions(EngineLabPeakPressureTests PRIVATE
+    ENGINELAB_CATALOG_ROOT="${CMAKE_SOURCE_DIR}")
+if(MSVC)
+    target_link_options(EngineLabPeakPressureTests PRIVATE /STACK:8388608)
+endif()
+enginelab_set_warnings(EngineLabPeakPressureTests)
+add_test(NAME EngineLab.PeakPressure COMMAND EngineLabPeakPressureTests)
+
+add_executable(EngineLabTurbochargerTests TurbochargerTests.cpp)
+target_link_libraries(EngineLabTurbochargerTests PRIVATE
+    EngineLab::Foundation EngineLab::Calibration EngineLab::Events EngineLab::Physics EngineLab::Ecu
+    EngineLab::Exhaust EngineLab::Simulation)
+if(MSVC)
+    target_link_options(EngineLabTurbochargerTests PRIVATE /STACK:8388608)
+endif()
+enginelab_set_warnings(EngineLabTurbochargerTests)
+add_test(NAME EngineLab.Turbocharger COMMAND EngineLabTurbochargerTests)
+
+add_executable(EngineLabLaunchControlTests LaunchControlTests.cpp)
+target_link_libraries(EngineLabLaunchControlTests PRIVATE
+    EngineLab::Foundation EngineLab::Calibration EngineLab::Ecu)
+enginelab_set_warnings(EngineLabLaunchControlTests)
+add_test(NAME EngineLab.LaunchControl COMMAND EngineLabLaunchControlTests)
+
+add_executable(EngineLabDataLoggerTests DataLoggerTests.cpp)
+target_link_libraries(EngineLabDataLoggerTests PRIVATE EngineLab::Foundation EngineLab::Runtime)
+enginelab_set_warnings(EngineLabDataLoggerTests)
+add_test(NAME EngineLab.DataLogger COMMAND EngineLabDataLoggerTests)
+
+add_executable(EngineLabCalibrationEditingTests CalibrationEditingTests.cpp)
+target_link_libraries(EngineLabCalibrationEditingTests PRIVATE EngineLab::Calibration)
+enginelab_set_warnings(EngineLabCalibrationEditingTests)
+add_test(NAME EngineLab.CalibrationEditing COMMAND EngineLabCalibrationEditingTests)
+
+add_executable(EngineLabEngineBuilderTests EngineBuilderTests.cpp)
+target_link_libraries(EngineLabEngineBuilderTests PRIVATE
+    EngineLab::Foundation EngineLab::Calibration EngineLab::Events EngineLab::Physics EngineLab::Ecu
+    EngineLab::Exhaust EngineLab::Simulation)
+if(MSVC)
+    target_link_options(EngineLabEngineBuilderTests PRIVATE /STACK:8388608)
+endif()
+enginelab_set_warnings(EngineLabEngineBuilderTests)
+add_test(NAME EngineLab.EngineBuilder COMMAND EngineLabEngineBuilderTests)
+
+add_executable(EngineLabTwoStrokeTests TwoStrokeTests.cpp)
+target_link_libraries(EngineLabTwoStrokeTests PRIVATE
+    EngineLab::Foundation EngineLab::Calibration EngineLab::Events EngineLab::Physics EngineLab::Ecu
+    EngineLab::Exhaust EngineLab::Simulation EngineLab::Catalog)
+target_compile_definitions(EngineLabTwoStrokeTests PRIVATE ENGINELAB_CATALOG_ROOT="${CMAKE_SOURCE_DIR}")
+if(MSVC)
+    target_link_options(EngineLabTwoStrokeTests PRIVATE /STACK:8388608)
+endif()
+enginelab_set_warnings(EngineLabTwoStrokeTests)
+add_test(NAME EngineLab.TwoStroke COMMAND EngineLabTwoStrokeTests)
