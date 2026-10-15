@@ -1,6 +1,8 @@
 // Turbochargers: the compressor map, parallel compressors feeding one charge,
 // and several turbochargers sharing an engine's exhaust paths.
 
+#include <enginelab/calibration/EcuCalibration.hpp>
+#include <enginelab/calibration/EcuCalibrationKeys.hpp>
 #include <enginelab/ecu/SimpleEcuModel.hpp>
 #include <enginelab/events/FourStrokeEventGenerator.hpp>
 #include <enginelab/exhaust/ExhaustGraph.hpp>
@@ -18,6 +20,7 @@
 #include <numbers>
 #include <string_view>
 #include <utility>
+#include <variant>
 #include <vector>
 
 namespace {
@@ -104,10 +107,23 @@ struct HeldRun final {
     std::array<double, maximumTurbochargers> flowShare {};
 };
 
+/** The ECU's boost table set flat at `gaugeKpa`. */
+void publishBoostTable(SimpleEcuModel& ecu, double gaugeKpa) {
+    auto draft = calibration::makeDraft(*ecu.calibrationStore()->snapshot());
+    const auto* found = draft.find(calibration::keys::boostTargetGauge);
+    require(found != nullptr, "a turbocharged engine's tables carry a boost target");
+    auto entry = *found;
+    for (auto& value : std::get<calibration::CalibrationCurve1D>(entry).values) value = gaugeKpa;
+    draft.set(std::move(entry));
+    require(ecu.calibrationStore()->publish(draft).published, "a boost table must publish");
+}
+
 /** Cranked, then full throttle against a dyno holding 0.7 x redline; means over
- *  the last 3 s. */
-[[nodiscard]] HeldRun heldFullLoad(const EngineConfig& config, double seconds) {
+ *  the last 3 s. A non-negative `boostTableGaugeKpa` replaces the ECU's boost
+ *  table. */
+[[nodiscard]] HeldRun heldFullLoad(const EngineConfig& config, double seconds, double boostTableGaugeKpa = -1.0) {
     auto rig = std::make_unique<Rig>(config);
+    if (boostTableGaugeKpa >= 0.0) publishBoostTable(rig->ecu, boostTableGaugeKpa);
     const auto frames = static_cast<int>(seconds * 240.0);
     const auto firstMeasured = frames - 3 * 240;
     const auto weight = 1.0 / static_cast<double>(frames - firstMeasured);
@@ -165,6 +181,35 @@ struct HeldRun final {
     return config;
 }
 
+/** Changing the count keeps the set's total size: the same units as a
+ *  hand split, and back again. */
+void countKeepsTheSize() {
+    auto single = withPaths(withTurbocharger(makeDefaultInlineFour()), { { 1, 4 }, { 2, 3 } });
+    const auto designFlow = compressorDesignMassFlowKgPerSecond(single);
+    const auto split = withTurbochargerCount(single, 2);
+    const auto byHand = asTwinUnits(single, 2);
+    const auto& a = split.forcedInduction;
+    const auto& b = byHand.forcedInduction;
+    require(a.turbochargerCount == 2U && !validateEngineConfig(split), "two valid units");
+    require(std::abs(a.compressorDesignMassFlowKgPerSecond - b.compressorDesignMassFlowKgPerSecond) < 1.0e-12
+            && a.turbineFlowAreaMm2 == b.turbineFlowAreaMm2 && a.wastegateFlowAreaMm2 == b.wastegateFlowAreaMm2
+            && a.shaftInertiaKgM2 == b.shaftInertiaKgM2 && a.bearingFrictionPowerWatts == b.bearingFrictionPowerWatts,
+        "each unit is half the one");
+    require(a.blowOffValveFlowAreaMm2 == single.forcedInduction.blowOffValveFlowAreaMm2,
+        "the blow-off valve is on the common charge");
+    auto named = split;
+    named.exhaustPaths[1].turbocharger = 1;
+    const auto back = withTurbochargerCount(named, 1);
+    require(back.forcedInduction.turbochargerCount == 1U && back.exhaustPaths[1].turbocharger == -1
+            && !validateEngineConfig(back), "a path naming a unit that went goes back to the default");
+    require(std::abs(back.forcedInduction.compressorDesignMassFlowKgPerSecond - designFlow) < 1.0e-12 * designFlow
+            && std::abs(back.forcedInduction.turbineFlowAreaMm2 - single.forcedInduction.turbineFlowAreaMm2) < 1.0e-9,
+        "and one unit is the original again");
+    const auto natural = makeDefaultInlineFour();
+    require(withTurbochargerCount(natural, 3).forcedInduction.turbochargerCount
+            == natural.forcedInduction.turbochargerCount, "an engine without a turbo is left alone");
+}
+
 /** Two identical turbochargers, one per pair of cylinders, run as one of
  *  twice the size on both pairs. */
 void twoIdenticalAreOneDouble() {
@@ -212,6 +257,33 @@ void aSmallBankSpinsSlower() {
     require(run.flowShare[0] < 0.4, "and its compressor passes the smaller share of the air");
 }
 
+/** The ECU's boost table is the boost: by default the configuration's
+ *  wastegate ratio, and a lower table holds a lower boost. */
+void boostTableIsTheTarget() {
+    const auto config = withTurbocharger(makeDefaultInlineFour());
+    const auto defaults = calibration::makeDefaultEcuCalibration(config);
+    const auto* table = defaults.find(calibration::keys::boostTargetGauge);
+    require(table != nullptr, "a turbocharged engine's default tables carry a boost target");
+    const auto expectedGaugeKpa = (config.forcedInduction.wastegatePressureRatio - 1.0) * 101.325;
+    for (const auto value : std::get<calibration::CalibrationCurve1D>(*table).values)
+        require(std::abs(value - expectedGaugeKpa) < 1.0e-9, "the default table is the wastegate ratio, flat");
+    auto aspirated = makeDefaultInlineFour();
+    aspirated.forcedInduction.enabled = false;
+    require(calibration::makeDefaultEcuCalibration(aspirated).find(calibration::keys::boostTargetGauge) == nullptr,
+        "a naturally aspirated engine has no boost table");
+
+    const auto stock = heldFullLoad(config, 9.0);
+    const auto lower = heldFullLoad(config, 9.0, expectedGaugeKpa - 20.0);
+    std::cout << "  boost table " << expectedGaugeKpa << " kPa: ratio " << stock.boostRatio << ", "
+              << stock.torqueNm << " N.m; " << expectedGaugeKpa - 20.0 << " kPa: ratio " << lower.boostRatio
+              << ", " << lower.torqueNm << " N.m\n";
+    require(std::abs(stock.boostRatio - (1.0 + expectedGaugeKpa / 101.325)) < 0.02,
+        "the default table holds the configured boost");
+    require(std::abs(lower.boostRatio - (1.0 + (expectedGaugeKpa - 20.0) / 101.325)) < 0.02,
+        "a table 20 kPa lower holds a boost 20 kPa lower");
+    require(lower.torqueNm < stock.torqueNm, "and the engine makes less torque");
+}
+
 } // namespace
 
 int main() {
@@ -219,9 +291,13 @@ int main() {
     std::cout << "compressor map: ok\n";
     parallelCompressorsShareTheCharge();
     std::cout << "parallel compressors: ok\n";
+    countKeepsTheSize();
+    std::cout << "turbocharger count: ok\n";
     twoIdenticalAreOneDouble();
     std::cout << "two identical = one double: ok\n";
     aSmallBankSpinsSlower();
     std::cout << "two plus six cylinders: ok\n";
+    boostTableIsTheTarget();
+    std::cout << "ECU boost table: ok\n";
     return 0;
 }

@@ -165,6 +165,7 @@ under **Units** in the same menu.
 | hold left arrow | brake, building up over about a second (three with `Space` held) |
 | right arrow | cruise control: set at the current speed, or cancel |
 | `8` | automatic / manual gearbox |
+| `9` | datalogger: start / stop a CSV log (Documents/EngineLab logs) |
 | hold `Y` or `Shift` | declutch; `T` / `U` adjust the setpoint |
 | `;` | next exhaust acoustic preset |
 | wheel / drag / right-drag | zoom, orbit and pan the 3-D engine view |

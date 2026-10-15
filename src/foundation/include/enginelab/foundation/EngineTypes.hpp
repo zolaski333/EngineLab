@@ -623,7 +623,9 @@ enum class ActiveLimit : std::uint32_t {
     /** The wastegate is open: boost is held at its target, not by the turbo. */
     boostAtTarget = 1U << 5,
     /** The injectors are open for the whole of their window. */
-    injectorSaturated = 1U << 6
+    injectorSaturated = 1U << 6,
+    /** Launch control holds the engine at its launch speed. */
+    launchControl = 1U << 7
 };
 [[nodiscard]] constexpr bool hasActiveLimit(std::uint32_t mask, ActiveLimit bit) noexcept {
     return (mask & static_cast<std::uint32_t>(bit)) != 0U;
@@ -1792,6 +1794,10 @@ struct EcuCommand final {
     /** `ActiveLimit` bits the ECU itself decides: rev limiter, knock retard,
      *  coolant protection. */
     std::uint32_t activeLimits { 0U };
+    /** Gauge boost the wastegate controller holds (calibration
+     *  `boost.target_gauge_kpa`); negative: the configuration's wastegate
+     *  pressure ratio. */
+    double boostTargetGaugeKpa { -1.0 };
 };
 
 // Output of the mean-value model SimplifiedGasolinePhysics::evaluateCombustion.

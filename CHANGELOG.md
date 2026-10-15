@@ -9,6 +9,28 @@ file formats, always with an in-memory migration).
 
 ### Changed
 
+- The boost of a turbo engine now lives in the ECU: a boost target table by
+  engine speed (`boost.target_gauge_kpa`), flat at the engine's wastegate
+  setting by default, so a tuner can taper or raise boost through the rev
+  range. The 3-D view's wastegate setting moves the whole table.
+- Launch control (`limits.launch_rpm` in the ECU, off by default): standing
+  in gear with the throttle past half, the limiter holds the engine at the
+  launch speed until the vehicle rolls.
+- A datalogger (`Log` in the top bar, key `9`) records the main channels and
+  the active limits to a CSV file while you drive or pull.
+- New engine… (menu): build an engine from any engine that runs, with
+  another bore, stroke, compression, redline or aspiration (natural or 1-4
+  turbochargers). Injectors, throttles, plenums and clutch follow the new
+  size; the result is saved under My engines.
+- The turbo inspector (3-D view) sets the intercooler, the number of
+  turbochargers and which one each exhaust path drives, and shows each
+  turbocharger's speed, air share and map position.
+- The ECU tuner edits blocks of cells: select with click, shift-click and
+  ctrl-click, then step, scale by 5 %, smooth or interpolate them, with undo
+  and redo. Its table list shows readable names.
+- The Engine panel says what holds the engine back now: rev limiter, launch
+  control, knock retard, hot coolant, boost at target, smoke limit...
+
 - Turbo engines can have several turbochargers (`turbocharger_count`, up
   to 4), each exhaust path driving the one it names. A turbo fed by fewer
   cylinders spins slower and makes less of the air, as on a real engine.

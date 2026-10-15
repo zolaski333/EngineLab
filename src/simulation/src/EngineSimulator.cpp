@@ -1274,7 +1274,13 @@ void EngineSimulator::advanceCamshaftChange() {
 bool EngineSimulator::replaceExhaustNetwork(
     std::unique_ptr<gasdynamics::ExhaustGasNetwork>& network,
     const EngineConfig& config) {
-    if (!network || !physicalExhaustNetwork_
+    // The turbine faces are shared out between turbochargers when the network
+    // is built: another sharing takes a restart.
+    auto sameTurbochargers = true;
+    for (std::size_t index = 0; index < std::min(config.exhaustPaths.size(), config_.exhaustPaths.size()); ++index)
+        sameTurbochargers = sameTurbochargers
+            && config.exhaustPaths[index].turbocharger == config_.exhaustPaths[index].turbocharger;
+    if (!network || !physicalExhaustNetwork_ || !sameTurbochargers
         || !network->layout().sameTopology(constructionExhaustLayout_)
         || !network->adoptStateFrom(*physicalExhaustNetwork_))
         return false;
@@ -1305,7 +1311,9 @@ bool EngineSimulator::settingsReplaceable(const EngineConfig& running,
         && was.enabled == now.enabled && was.type == now.type
         && was.compressorBladeCount == now.compressorBladeCount
         && was.turbineBladeCount == now.turbineBladeCount
-        && was.superchargerLobeCount == now.superchargerLobeCount;
+        && was.superchargerLobeCount == now.superchargerLobeCount
+        // The turbine faces are shared out when the exhaust network is built.
+        && was.turbochargerCount == now.turbochargerCount;
 }
 
 bool EngineSimulator::replaceSettings(EngineConfig& config) noexcept {
@@ -1757,10 +1765,14 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 // sea-level pressure, and up high the ratio it allows rises.
                 // A ratio target lost as much manifold pressure as an
                 // unblown engine (2JZ at 2,000 m: -25 % torque).
+                // The ECU's boost table, when it has one, is that gauge boost
+                // by engine speed.
                 constexpr double seaLevelPressureKpa = 101.325;
-                const auto wastegateRatio = config_.forcedInduction.wastegatePressureRatio
-                    + (config_.forcedInduction.wastegatePressureRatio - 1.0)
-                        * (seaLevelPressureKpa / std::max(1.0, config_.ambientPressureKpa) - 1.0);
+                const auto wastegateRatio = ecuCommand.boostTargetGaugeKpa >= 0.0
+                    ? 1.0 + ecuCommand.boostTargetGaugeKpa / std::max(1.0, config_.ambientPressureKpa)
+                    : config_.forcedInduction.wastegatePressureRatio
+                        + (config_.forcedInduction.wastegatePressureRatio - 1.0)
+                            * (seaLevelPressureKpa / std::max(1.0, config_.ambientPressureKpa) - 1.0);
                 const auto proportional = (state_.boostPressureRatio
                     - wastegateRatio) / wastegateBandRatio;
                 const auto unclamped = proportional + wastegateIntegral_;
@@ -5441,7 +5453,8 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
     // are read here, once the wastegate and injectors have their final state.
     constexpr auto ecuLimitBits = static_cast<std::uint32_t>(ActiveLimit::revLimiter)
         | static_cast<std::uint32_t>(ActiveLimit::knockRetard)
-        | static_cast<std::uint32_t>(ActiveLimit::coolantProtection);
+        | static_cast<std::uint32_t>(ActiveLimit::coolantProtection)
+        | static_cast<std::uint32_t>(ActiveLimit::launchControl);
     state_.activeLimits = (state_.activeLimits & ecuLimitBits) | publishedSimulatorLimits();
     frame.state = state_;
     return frame;

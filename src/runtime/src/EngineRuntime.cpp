@@ -493,6 +493,12 @@ bool EngineRuntime::applyLiveExhaust(const EngineConfig& edited,
     try {
         normaliseEngineConfig(change->config);
         if (validateEngineConfig(change->config)) return false;
+        // Paths driving other turbochargers take a restart (the simulator
+        // shares the turbine faces out when it builds the network).
+        const auto paths = std::min(change->config.exhaustPaths.size(), config_.exhaustPaths.size());
+        for (std::size_t index = 0; index < paths; ++index)
+            if (change->config.exhaustPaths[index].turbocharger != config_.exhaustPaths[index].turbocharger)
+                return false;
         change->graph = ExhaustGraph::makeForEngine(change->config);
     } catch (const std::exception&) {
         return false;

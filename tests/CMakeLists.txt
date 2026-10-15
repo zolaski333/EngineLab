@@ -611,3 +611,29 @@ if(MSVC)
 endif()
 enginelab_set_warnings(EngineLabTurbochargerTests)
 add_test(NAME EngineLab.Turbocharger COMMAND EngineLabTurbochargerTests)
+
+add_executable(EngineLabLaunchControlTests LaunchControlTests.cpp)
+target_link_libraries(EngineLabLaunchControlTests PRIVATE
+    EngineLab::Foundation EngineLab::Calibration EngineLab::Ecu)
+enginelab_set_warnings(EngineLabLaunchControlTests)
+add_test(NAME EngineLab.LaunchControl COMMAND EngineLabLaunchControlTests)
+
+add_executable(EngineLabDataLoggerTests DataLoggerTests.cpp)
+target_link_libraries(EngineLabDataLoggerTests PRIVATE EngineLab::Foundation EngineLab::Runtime)
+enginelab_set_warnings(EngineLabDataLoggerTests)
+add_test(NAME EngineLab.DataLogger COMMAND EngineLabDataLoggerTests)
+
+add_executable(EngineLabCalibrationEditingTests CalibrationEditingTests.cpp)
+target_link_libraries(EngineLabCalibrationEditingTests PRIVATE EngineLab::Calibration)
+enginelab_set_warnings(EngineLabCalibrationEditingTests)
+add_test(NAME EngineLab.CalibrationEditing COMMAND EngineLabCalibrationEditingTests)
+
+add_executable(EngineLabEngineBuilderTests EngineBuilderTests.cpp)
+target_link_libraries(EngineLabEngineBuilderTests PRIVATE
+    EngineLab::Foundation EngineLab::Calibration EngineLab::Events EngineLab::Physics EngineLab::Ecu
+    EngineLab::Exhaust EngineLab::Simulation)
+if(MSVC)
+    target_link_options(EngineLabEngineBuilderTests PRIVATE /STACK:8388608)
+endif()
+enginelab_set_warnings(EngineLabEngineBuilderTests)
+add_test(NAME EngineLab.EngineBuilder COMMAND EngineLabEngineBuilderTests)

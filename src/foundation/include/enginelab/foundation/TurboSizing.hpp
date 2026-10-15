@@ -36,4 +36,13 @@ namespace enginelab {
 /** The engine without forced induction. */
 [[nodiscard]] EngineConfig withoutForcedInduction(EngineConfig);
 
+/** The turbo engine's air shared over `count` identical turbochargers
+ *  (clamped to 1..maximumTurbochargers): each unit's design flow, turbine and
+ *  wastegate areas, rotor inertia and bearing loss scale by old / new count,
+ *  so the set has the old one's total size and shaft speed. The blow-off
+ *  valve stays, on the common charge. A path naming a turbocharger that no
+ *  longer exists goes back to the default (its index modulo the count). It
+ *  takes a restart. */
+[[nodiscard]] EngineConfig withTurbochargerCount(EngineConfig, std::uint32_t count);
+
 } // namespace enginelab

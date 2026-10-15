@@ -180,6 +180,22 @@ recycle bin; the running engine carries on, unsaved. *Export engine* in JSON
 writes the tables beside the engine the same way, and *Import engine* reads
 them back when they are there.
 
+### New engine
+
+*New engine…* (the menu) builds an engine from a base one that runs (the
+running engine or any listed one) and a recipe: name, bore, stroke,
+compression ratio, redline and aspiration (the base's, natural, or a
+turbocharger sized for the new engine shared over 1-4 identical units).
+`buildEngine()` (`EngineBuilder.hpp`) applies it: bore and stroke through
+`resizeCylinders()`, pistons and rods scaled as similar parts, the rev
+limiter's margin and the ignition curve stretched with the redline, and what
+feeds the air kept in the base's proportions to the new air flow (injector
+flow, throttle bores at the same air speed, plenums, a diesel's fuel limit,
+clutch capacity). The layout, heads, camshafts, exhaust and gearbox stay the
+base's. The result is validated, saved under *My engines* and run.
+`EngineLab.EngineBuilder` checks the recipe and that a 20 % stroker makes
+its share more torque on the same mixture without saturating its injectors.
+
 ### Live exhaust changes
 
 An edit of `exhaust` and `exhaustPaths` only (the inspector's steppers, the

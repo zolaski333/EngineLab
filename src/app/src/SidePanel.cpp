@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <utility>
 
 namespace enginelab::ui {
 namespace {
@@ -29,6 +30,27 @@ void drawRows(juce::Graphics& g, juce::Rectangle<float>& area, const Rows& rows,
     }
 }
 
+/** What holds the engine back now, in words ("none" when nothing does). */
+[[nodiscard]] juce::String activeLimitsText(std::uint32_t limits) {
+    constexpr std::array<std::pair<ActiveLimit, const char*>, 8> names { {
+        { ActiveLimit::launchControl, "launch control" },
+        { ActiveLimit::revLimiter, "rev limiter" },
+        { ActiveLimit::knockRetard, "knock retard" },
+        { ActiveLimit::coolantProtection, "hot coolant" },
+        { ActiveLimit::dieselSmokeLimit, "smoke limit" },
+        { ActiveLimit::dieselQuantityLimit, "fuel quantity map" },
+        { ActiveLimit::boostAtTarget, "boost at target" },
+        { ActiveLimit::injectorSaturated, "injectors saturated" },
+    } };
+    juce::String text;
+    for (const auto& [limit, name] : names) {
+        if (!hasActiveLimit(limits, limit)) continue;
+        if (text.isNotEmpty()) text << ", ";
+        text << name;
+    }
+    return text.isEmpty() ? juce::String("none") : text;
+}
+
 [[nodiscard]] Rows engineRows(const DashboardModel& model) {
     const auto& state = model.state;
     const auto peakPressure = state.peakCylinderPressureBar;
@@ -38,6 +60,7 @@ void drawRows(juce::Graphics& g, juce::Rectangle<float>& area, const Rows& rows,
     const auto& unit = model.units;
     return {
         { "State", runningStateName(state.runningState) },
+        { "Limits", activeLimitsText(state.activeLimits) },
         { "Layout", juce::String(layoutName(model.config.layout)) + dot
               + juce::String(static_cast<int>(model.config.cylinders.size())) + " cyl" },
         { "Volumetric efficiency", juce::String(state.volumetricEfficiency * 100.0, 1) + " %" },
@@ -114,7 +137,7 @@ struct Trace final {
 };
 
 constexpr int traceChartHeight = 190;
-constexpr int engineRowCount = 12;
+constexpr int engineRowCount = 13;
 constexpr int injectionRowCount = 4;
 constexpr int drivelineRowCount = 13;
 constexpr int mixRowHeight = 34;

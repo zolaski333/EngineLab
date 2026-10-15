@@ -44,15 +44,35 @@ EcuTunerComponent::EcuTunerComponent(
       hotReloader_(std::make_unique<calibration::CalibrationFileHotReloader>(*store_)) {
     setOpaque(true);
     mapSelector_.setTextWhenNothingSelected("Select a table");
-    mapSelector_.onChange = [this] { rebuildCells(); };
+    mapSelector_.onChange = [this] {
+        selection_.clear();
+        rebuildCells();
+    };
     loadButton_.onClick = [this] { chooseCalibrationToLoad(); };
     saveButton_.onClick = [this] { chooseCalibrationToSave(); };
     refreshButton_.onClick = [this] { reloadFromSnapshot(); };
+    using calibration::CellOperation;
+    const auto step = [this] {
+        const auto* entry = draft_.find(selectedCalibrationId().toStdString());
+        return entry != nullptr ? calibration::cellStep(calibration::metadataOf(*entry)) : 0.0;
+    };
+    stepDownButton_.onClick = [this, step] { applyTool(CellOperation::add, -step()); };
+    stepUpButton_.onClick = [this, step] { applyTool(CellOperation::add, step()); };
+    percentDownButton_.onClick = [this] { applyTool(CellOperation::scalePercent, -5.0); };
+    percentUpButton_.onClick = [this] { applyTool(CellOperation::scalePercent, 5.0); };
+    smoothButton_.onClick = [this] { applyTool(CellOperation::smooth, 0.0); };
+    interpolateButton_.onClick = [this] { applyTool(CellOperation::interpolate, 0.0); };
+    undoButton_.onClick = [this] { stepHistory(true); };
+    redoButton_.onClick = [this] { stepHistory(false); };
     statusLabel_.setColour(juce::Label::textColourId, juce::Colour(0xff8fb7a8));
     descriptionLabel_.setColour(juce::Label::textColourId, juce::Colour(0xffa8b0ad));
     descriptionLabel_.setFont(juce::FontOptions(12.0F));
-    const std::array<juce::Component*, 6> components {
-        &mapSelector_, &loadButton_, &saveButton_, &refreshButton_, &statusLabel_, &descriptionLabel_
+    selectionLabel_.setColour(juce::Label::textColourId, juce::Colour(0xff9eaaa6));
+    selectionLabel_.setFont(juce::FontOptions(12.0F));
+    const std::array<juce::Component*, 15> components {
+        &mapSelector_, &loadButton_, &saveButton_, &refreshButton_, &statusLabel_, &descriptionLabel_,
+        &stepDownButton_, &stepUpButton_, &percentDownButton_, &percentUpButton_, &smoothButton_,
+        &interpolateButton_, &undoButton_, &redoButton_, &selectionLabel_
     };
     for (auto* component : components)
         addAndMakeVisible(*component);
@@ -96,6 +116,7 @@ void EcuTunerComponent::setSessionLocked(bool locked) {
     }
     for (auto& editor : valueEditors_)
         editor->setReadOnly(locked);
+    updateToolState();
     statusLabel_.setText(locked
         ? utf8("DYNO SESSION · REVISION ") + juce::String(baseRevision_)
             + utf8(" PINNED · EDITING LOCKED")
@@ -104,7 +125,9 @@ void EcuTunerComponent::setSessionLocked(bool locked) {
 }
 
 juce::String EcuTunerComponent::selectedCalibrationId() const {
-    return mapSelector_.getText();
+    const auto index = mapSelector_.getSelectedItemIndex();
+    return index >= 0 && static_cast<std::size_t>(index) < mapIds_.size()
+        ? utf8(mapIds_[static_cast<std::size_t>(index)]) : juce::String {};
 }
 
 void EcuTunerComponent::reloadFromSnapshot(bool preserveSelection) {
@@ -113,21 +136,25 @@ void EcuTunerComponent::reloadFromSnapshot(bool preserveSelection) {
     draft_ = calibration::makeDraft(*snapshot);
     baseRevision_ = snapshot->revision();
     mapSelector_.clear(juce::dontSendNotification);
+    mapIds_.clear();
     int itemId = 1;
     for (const auto& [id, entry] : snapshot->entries()) {
-        (void)entry;
-        mapSelector_.addItem(utf8(id), itemId++);
+        const auto& name = calibration::metadataOf(entry).displayName;
+        mapSelector_.addItem(utf8(name.empty() || name == id ? id : name + "  (" + id + ")"), itemId++);
+        mapIds_.push_back(id);
     }
     if (selected.isNotEmpty()) {
-        for (int index = 0; index < mapSelector_.getNumItems(); ++index) {
-            if (mapSelector_.getItemText(index) == selected) {
-                mapSelector_.setSelectedItemIndex(index, juce::dontSendNotification);
+        for (std::size_t index = 0; index < mapIds_.size(); ++index) {
+            if (utf8(mapIds_[index]) == selected) {
+                mapSelector_.setSelectedItemIndex(static_cast<int>(index), juce::dontSendNotification);
                 break;
             }
         }
     }
-    if (mapSelector_.getText().isEmpty() && mapSelector_.getNumItems() > 0)
+    if (mapSelector_.getSelectedItemIndex() < 0 && mapSelector_.getNumItems() > 0) {
         mapSelector_.setSelectedItemIndex(0, juce::dontSendNotification);
+        selection_.clear();
+    }
     statusLabel_.setText("REVISION " + juce::String(baseRevision_) + utf8("  ·  ")
         + (hotReloader_->watching() ? "HOT RELOAD: " + juce::String(hotReloader_->path().string())
                                     : juce::String("LIVE MODE")),
@@ -215,6 +242,7 @@ void EcuTunerComponent::rebuildCells() {
         editor->setColour(juce::TextEditor::highlightColourId, juce::Colour(0xffe89945));
         editor->onReturnKey = [this, index] { commitCell(index); };
         editor->onFocusLost = [this, index] { commitCell(index); };
+        editor->addMouseListener(this, true);
         addAndMakeVisible(*editor);
         committedTexts_.push_back(text);
         valueEditors_.push_back(std::move(editor));
@@ -223,6 +251,8 @@ void EcuTunerComponent::rebuildCells() {
     updateActiveCellHighlight();
     for (auto& editor : valueEditors_)
         editor->setReadOnly(sessionLocked_);
+    std::erase_if(selection_, [count](std::size_t index) { return index >= count; });
+    updateToolState();
     rebuilding_ = false;
     resized();
     repaint();
@@ -280,17 +310,123 @@ void EcuTunerComponent::commitCell(std::size_t valueIndex) {
         }
     }, edited);
     if (!changed) return;
+    const auto previous = *current;
+    if (publishEdit(std::move(edited), previous)) committedTexts_[valueIndex] = text;
+}
+
+bool EcuTunerComponent::publishEdit(calibration::CalibrationEntry edited,
+                                    const calibration::CalibrationEntry& previous) {
     draft_.set(std::move(edited));
     const auto result = store_->publish(draft_, { baseRevision_, "ecu-tuner" });
     if (!result.published) {
         showIssues(result, "Calibration rejected");
         reloadFromSnapshot();
+        return false;
+    }
+    baseRevision_ = result.activeRevision;
+    undo_.push_back(previous);
+    redo_.clear();
+    if (undo_.size() > 200) undo_.erase(undo_.begin());
+    statusLabel_.setText("REVISION " + juce::String(baseRevision_) + utf8("  ·  APPLIED LIVE"),
+                         juce::dontSendNotification);
+    updateToolState();
+    return true;
+}
+
+void EcuTunerComponent::applyTool(calibration::CellOperation operation, double amount) {
+    if (sessionLocked_ || selection_.empty()) return;
+    const auto* current = draft_.find(selectedCalibrationId().toStdString());
+    if (current == nullptr) return;
+    auto edited = *current;
+    if (!calibration::applyCellOperation(edited, selection_, operation, amount)) return;
+    const auto previous = *current;
+    if (publishEdit(std::move(edited), previous)) rebuildCells();
+}
+
+void EcuTunerComponent::stepHistory(bool undo) {
+    auto& from = undo ? undo_ : redo_;
+    auto& to = undo ? redo_ : undo_;
+    if (sessionLocked_ || from.empty()) return;
+    auto restored = std::move(from.back());
+    from.pop_back();
+    const auto id = calibration::metadataOf(restored).id;
+    const auto* current = draft_.find(id);
+    if (current == nullptr) {
+        // The engine changed under the history: it no longer applies.
+        undo_.clear();
+        redo_.clear();
+        updateToolState();
+        return;
+    }
+    to.push_back(*current);
+    draft_.set(std::move(restored));
+    const auto result = store_->publish(draft_, { baseRevision_, "ecu-tuner" });
+    if (!result.published) {
+        undo_.clear();
+        redo_.clear();
+        showIssues(result, "Calibration rejected");
+        reloadFromSnapshot();
         return;
     }
     baseRevision_ = result.activeRevision;
-    committedTexts_[valueIndex] = text;
-    statusLabel_.setText("REVISION " + juce::String(baseRevision_) + utf8("  ·  APPLIED LIVE"),
-                         juce::dontSendNotification);
+    for (std::size_t index = 0; index < mapIds_.size(); ++index)
+        if (mapIds_[index] == id && mapSelector_.getSelectedItemIndex() != static_cast<int>(index)) {
+            mapSelector_.setSelectedItemIndex(static_cast<int>(index), juce::dontSendNotification);
+            selection_.clear();
+        }
+    statusLabel_.setText("REVISION " + juce::String(baseRevision_)
+        + utf8(undo ? "  ·  UNDONE" : "  ·  REDONE"), juce::dontSendNotification);
+    rebuildCells();
+}
+
+void EcuTunerComponent::updateToolState() {
+    const auto editable = !sessionLocked_ && !selection_.empty();
+    const auto* entry = draft_.find(selectedCalibrationId().toStdString());
+    const auto isGrid = entry != nullptr && !std::holds_alternative<calibration::ScalarCalibration>(*entry);
+    for (auto* button : { &stepDownButton_, &stepUpButton_, &percentDownButton_, &percentUpButton_ })
+        button->setEnabled(editable);
+    smoothButton_.setEnabled(editable && isGrid);
+    interpolateButton_.setEnabled(editable && isGrid && selection_.size() > 1);
+    undoButton_.setEnabled(!sessionLocked_ && !undo_.empty());
+    redoButton_.setEnabled(!sessionLocked_ && !redo_.empty());
+    const auto step = entry != nullptr ? calibration::cellStep(calibration::metadataOf(*entry)) : 0.0;
+    selectionLabel_.setText(selection_.empty() || entry == nullptr
+            ? juce::String("Click a cell; shift-click selects a block, ctrl-click adds a cell")
+            : juce::String(static_cast<int>(selection_.size())) + utf8(selection_.size() == 1 ? " cell" : " cells")
+                + utf8("  ·  step ") + juce::String(step, std::max(0, calibration::metadataOf(*entry).displayPrecision - 1)),
+        juce::dontSendNotification);
+    repaint();
+}
+
+void EcuTunerComponent::mouseDown(const juce::MouseEvent& event) {
+    // The click lands on the editor's inner text holder: walk up to the cell.
+    const auto found = std::find_if(valueEditors_.begin(), valueEditors_.end(), [&](const auto& editor) {
+        for (auto* component = event.eventComponent; component != nullptr && component != this;
+             component = component->getParentComponent())
+            if (component == editor.get()) return true;
+        return false;
+    });
+    if (found == valueEditors_.end()) return;
+    const auto index = static_cast<std::size_t>(std::distance(valueEditors_.begin(), found));
+    if (event.mods.isShiftDown() && !selection_.empty()) {
+        selection_ = calibration::cellRectangle(selectionAnchor_, index, std::max<std::size_t>(1, xCount_));
+    } else if (event.mods.isCtrlDown() || event.mods.isCommandDown()) {
+        const auto existing = std::find(selection_.begin(), selection_.end(), index);
+        if (existing != selection_.end()) selection_.erase(existing);
+        else selection_.push_back(index);
+        selectionAnchor_ = index;
+    } else {
+        selection_ = { index };
+        selectionAnchor_ = index;
+    }
+    updateToolState();
+}
+
+void EcuTunerComponent::paintOverChildren(juce::Graphics& graphics) {
+    graphics.setColour(juce::Colour(0xff6fd3ff));
+    for (const auto index : selection_)
+        if (index < valueEditors_.size())
+            graphics.drawRect(valueEditors_[index]->getBounds().expanded(2), 2);
 }
 
 void EcuTunerComponent::showIssues(const calibration::PublishResult& result,
@@ -392,10 +528,21 @@ void EcuTunerComponent::resized() {
     refreshButton_.setBounds(top.removeFromLeft(105));
     descriptionLabel_.setBounds(12, 50, getWidth() - 24, 22);
     statusLabel_.setBounds(12, getHeight() - 34, getWidth() - 24, 22);
+    auto tools = juce::Rectangle<int>(12, getHeight() - 68, getWidth() - 24, 28);
+    for (auto* button : { &stepDownButton_, &stepUpButton_, &percentDownButton_, &percentUpButton_ }) {
+        button->setBounds(tools.removeFromLeft(button == &stepDownButton_ || button == &stepUpButton_ ? 38 : 56));
+        tools.removeFromLeft(4);
+    }
+    tools.removeFromLeft(8);
+    smoothButton_.setBounds(tools.removeFromLeft(80)); tools.removeFromLeft(4);
+    interpolateButton_.setBounds(tools.removeFromLeft(108)); tools.removeFromLeft(12);
+    undoButton_.setBounds(tools.removeFromLeft(64)); tools.removeFromLeft(4);
+    redoButton_.setBounds(tools.removeFromLeft(64)); tools.removeFromLeft(12);
+    selectionLabel_.setBounds(tools);
 
     const auto availableWidth = std::max(100, getWidth() - 126);
     const auto cellWidth = std::clamp(availableWidth / static_cast<int>(std::max<std::size_t>(1, xCount_)), 58, 112);
-    const auto cellHeight = std::clamp((getHeight() - 145)
+    const auto cellHeight = std::clamp((getHeight() - 190)
         / static_cast<int>(std::max<std::size_t>(1, yCount_)), 34, 54);
     const auto gridWidth = cellWidth * static_cast<int>(xCount_);
     const auto originX = 108 + std::max(0, (availableWidth - gridWidth) / 2);

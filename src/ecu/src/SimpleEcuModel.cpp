@@ -135,6 +135,11 @@ double activeRevLimitRpm(const EngineConfig& config,
         calibration::ecuLimits::minimumRevLimitRpm, calibration::ecuLimits::maximumRevLimitRpm);
 }
 
+double launchControlRpm(const calibration::CalibrationSnapshot& calibration) noexcept {
+    return std::clamp(calibration.scalarOr(calibration::keys::launchLimit, 0.0),
+        0.0, calibration::ecuLimits::maximumRevLimitRpm);
+}
+
 double knockRetardGainDegrees(const calibration::CalibrationSnapshot& calibration) noexcept {
     return std::clamp(calibration.scalarOr(calibration::keys::knockRetardGain,
                                            calibration::ecuLimits::defaultKnockRetardGainDegrees),
@@ -163,12 +168,19 @@ EcuCommand SimpleEcuModel::evaluate(const EngineConfig& config, const EngineStat
         normalizedLoad
     };
     const auto revLimit = activeRevLimitRpm(config, *calibrationSnapshot);
+    // Launch control (two-step): standing in gear with the throttle past half,
+    // the limiter cuts at the launch speed instead, so the clutch takes up
+    // from there; it lets go once the vehicle rolls.
+    const auto launchRpm = launchControlRpm(*calibrationSnapshot);
+    const auto launchActive = launchRpm > 0.0 && state.gear >= 1
+        && state.vehicleSpeedMps < launchControlReleaseSpeedMps && controls.throttle > 0.5;
+    const auto cutRpm = launchActive ? std::min(revLimit, launchRpm) : revLimit;
     auto limiterActive = limiterLatched_.load(std::memory_order_relaxed);
-    if (state.rpm >= revLimit) {
+    if (state.rpm >= cutRpm) {
         limiterActive = true;
         limiterReleaseTime_.store(state.simulationTimeSeconds + config.ignition.limiterDurationSeconds,
                                   std::memory_order_relaxed);
-    } else if (state.rpm < revLimit - 180.0
+    } else if (state.rpm < cutRpm - 180.0
                && state.simulationTimeSeconds >= limiterReleaseTime_.load(std::memory_order_relaxed)) {
         limiterActive = false;
     }
@@ -454,7 +466,7 @@ EcuCommand SimpleEcuModel::evaluate(const EngineConfig& config, const EngineStat
     // recover: it alone took the 2JZ idle from 728/709 rpm (sigma 12.1) to
     // 682/559 (sigma 52.8) and the Audi I5 from 760/737 to 718/594. A real
     // start-mode retard is gated on the ECU's run/start state, not on speed.
-    const auto softLimit = state.rpm > revLimit - 220.0;
+    const auto softLimit = state.rpm > cutRpm - 220.0;
     const auto alternatingCut = softLimit && (static_cast<std::uint64_t>(state.simulationTimeSeconds * 120.0) & 1U) != 0U;
     // A quickshifter cuts the way the limiter does: spark, and fuel too
     // unless the limiter keeps it, so a wet cut sends the charge unburnt to
@@ -718,6 +730,14 @@ EcuCommand SimpleEcuModel::evaluate(const EngineConfig& config, const EngineStat
              lambdaLearningAllowed,
              decelerationFuelResumeEvent };
     command.revLimitRpm = revLimit;
+    if (config.forcedInduction.enabled
+            && config.forcedInduction.type == ForcedInductionType::turbocharger) {
+        if (const auto boost = calibrationSnapshot->sampleCurve(
+                calibration::keys::boostTargetGauge, rpmCoordinate))
+            command.boostTargetGaugeKpa = std::clamp(*boost,
+                calibration::ecuLimits::minimumBoostTargetGaugeKpa,
+                calibration::ecuLimits::maximumBoostTargetGaugeKpa);
+    }
     // Telemetry only: which of the ECU's own protections hold the engine back.
     // Half a degree of knock retard, as the spark map is not finer than that.
     constexpr double reportedKnockRetardDegrees = 0.5;
@@ -726,7 +746,9 @@ EcuCommand SimpleEcuModel::evaluate(const EngineConfig& config, const EngineStat
         | (knockRetardDegrees >= reportedKnockRetardDegrees
             ? static_cast<std::uint32_t>(ActiveLimit::knockRetard) : 0U)
         | (state.coolantTemperatureC > 108.0
-            ? static_cast<std::uint32_t>(ActiveLimit::coolantProtection) : 0U);
+            ? static_cast<std::uint32_t>(ActiveLimit::coolantProtection) : 0U)
+        | (launchActive && (softLimit || limiterActive)
+            ? static_cast<std::uint32_t>(ActiveLimit::launchControl) : 0U);
     return command;
 }
 } // namespace enginelab

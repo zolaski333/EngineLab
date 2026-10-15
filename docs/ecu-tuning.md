@@ -16,7 +16,9 @@ The set created with each engine contains:
 | `fuel.target_afr` | 2D table engine speed × load | bilinearly interpolated AFR target |
 | `ignition.advance_deg` | 2D table engine speed × load | absolute advance before dynamic corrections |
 | `limits.rev_rpm` | scalar | rev limiter threshold |
+| `limits.launch_rpm` | scalar | launch control (two-step) rev limit; 0 = off |
 | `knock.retard_deg_per_intensity` | scalar | knock control gain (spark-ignition only) |
+| `boost.target_gauge_kpa` | curve by engine speed | boost the wastegate controller holds (turbocharged only) |
 
 Load is currently `MAP / ambient_pressure`, clamped between 0 and 4. The
 default tables cover 0 to 400 %, with extra points above 100 % for
@@ -34,9 +36,26 @@ per unit of knock intensity (0 to 1), 12° by default, read with
 control is proportional and continuous; a real ECU retards in steps per knock
 event and recovers slowly, which is not modelled. Diesels have no entry.
 
+Launch control (`limits.launch_rpm`, off by default) moves the limiter's cut
+down to that speed while the vehicle stands in gear (under 5 km/h) with the
+throttle past half, so a launch takes up the clutch from there; it lets go
+as soon as the vehicle rolls, in neutral and on the dyno. The limiter cuts as
+it does at the rev limit (the engine's limiter style), and the engine's rev
+limit, which over-rev damage follows, does not change.
+
+On a turbocharged engine, `boost.target_gauge_kpa` is the boost the
+wastegate controller holds, in kPa above the atmosphere, by engine speed. It
+owns the boost: the default table is flat at the configuration's
+`wastegate_pressure_ratio` (the same gauge boost at any altitude, as before),
+and the 3-D view's "Wastegate opens at" moves the whole table by the same
+step. Where the turbo cannot make the target (low engine speed), the table is
+a ceiling it does not reach. Saved tables without this entry and
+superchargers fall back on the configuration's ratio.
+
 The canonical bounds are shared by validation, the generated metadata and the
 ECU: 10.5 to 18 for AFR, -10° to 55° for advance, and 600 to 25,000 rpm for the
-rev limiter, 0 to 40° per unit of knock for the knock gain. A cell accepted by the tuner is therefore no longer silently
+rev limiter, 0 to 40° per unit of knock for the knock gain, 0 to 250 kPa for
+the boost target. A cell accepted by the tuner is therefore no longer silently
 re-clamped to a different range. The dynamic corrections stay bounded to the
 same domain after the trims are applied.
 
@@ -79,6 +98,29 @@ limiter raised too far.
 The framework defines reserved keys for future volumetric-efficiency, VVT/VVL,
 boost or wastegate maps. They are not instantiated in the default calibration
 and are not consumed by the current ECU.
+
+## Editing blocks of cells
+
+Click a cell to select it; shift-click selects the block between it and the
+last clicked cell; ctrl-click adds or removes one cell. The tool row then acts
+on the whole selection at once:
+
+- `-` / `+`: one step, ten units of the last displayed digit (0.1 for a table
+  shown with two decimals, 10 rpm for a whole-number limit);
+- `-5 %` / `+5 %`: scales the cells;
+- `SMOOTH`: each cell becomes the mean of itself and its four neighbours
+  (selected or not), read before the pass so the order does not matter;
+- `INTERPOLATE`: fills the selection's rectangle bilinearly from its four
+  corner cells (a curve: linearly between its two ends).
+
+Results are clamped to the entry's hard limits. Every published change, typed
+or from a tool, goes on an undo stack (200 steps); `UNDO` and `REDO` publish
+the previous or next version of that entry live, switching to its table if
+another one is shown. The history is dropped when it no longer applies (an
+engine change removed the entry, or the store rejected the version). The
+operations are in `calibration::applyCellOperation`, tested by
+`EngineLab.CalibrationEditing`. The selector shows each entry's display name
+with its id.
 
 ## Transactional publishing
 
@@ -200,11 +242,11 @@ interpolation, limits, revision conflicts and concurrent reads.
 
 ## Limitations and next extensions
 
-- no axis editing, multi-cell selection, smoothing, undo/redo or visual
-  comparison of two revisions yet;
-- no synchronised datalogger, history trace of the active point or table
-  auto-tune;
-- only AFR, advance and rev limiter have a runtime effect;
+- no axis editing or visual comparison of two revisions yet;
+- the datalogger writes a CSV file but the tuner shows no history trace of
+  the active point, and there is no table auto-tune;
+- no wastegate duty table: the boost target drives the controller, whose
+  gains are fixed;
 - the per-cylinder lambda correction compensates for fuel transport, but there
   is no detailed model yet of sensors, short/long-term trims, OBD strategies or
   torque management comparable to a production ECU;

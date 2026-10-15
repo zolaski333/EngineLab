@@ -17,6 +17,10 @@ namespace enginelab {
  *  from the calibration's `knock.retard_deg_per_intensity` (12 deg when the
  *  calibration has none). Zero turns knock control off. */
 [[nodiscard]] double knockRetardGainDegrees(const calibration::CalibrationSnapshot& calibration) noexcept;
+/** Launch control's rev limit (calibration `limits.launch_rpm`); 0 = off. */
+[[nodiscard]] double launchControlRpm(const calibration::CalibrationSnapshot& calibration) noexcept;
+/** Launch control lets go above this road speed (5 km/h). */
+inline constexpr double launchControlReleaseSpeedMps = 5.0 / 3.6;
 /** Configured ignition curve plus live AFR/advance trims, transient enrichment and latched limiter. */
 class SimpleEcuModel final : public IEcuModel {
 public:

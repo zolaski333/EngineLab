@@ -1897,8 +1897,36 @@ void EngineViewport::updateInspector() {
         const auto area = [](double mm2) { return juce::String(juce::roundToInt(mm2)) + utf8(" mm²"); };
         title = "Turbocharger";
         subtitle = "On exhaust path " + juce::String(scene_->turbo().pathId);
-        add("Shaft speed", krpm(state.forcedInductionShaftSpeedRpm));
+        const auto units = std::min<std::size_t>(state.turbochargerCount, maximumTurbochargers);
+        if (units > 1U) {
+            juce::String speeds;
+            juce::String shares;
+            auto totalFlow = 0.0;
+            for (std::size_t index = 0; index < units; ++index)
+                totalFlow += state.turbochargers[index].compressorMassFlowKgPerSecond;
+            for (std::size_t index = 0; index < units; ++index) {
+                const auto& unit = state.turbochargers[index];
+                speeds << (index > 0 ? " / " : "") << juce::String(unit.shaftSpeedRpm / 1'000.0, 0);
+                shares << (index > 0 ? " / " : "")
+                       << juce::roundToInt(totalFlow > 0.0 ? 100.0 * unit.compressorMassFlowKgPerSecond / totalFlow : 0.0);
+            }
+            add("Turbochargers", juce::String(static_cast<int>(units)) + " on one charge");
+            add("Shaft speeds", speeds + " krpm");
+            add("Air shares", shares + " %");
+        } else {
+            add("Shaft speed", krpm(state.forcedInductionShaftSpeedRpm));
+        }
+        if (units > 0U) {
+            // The compressor map: below 0.4 x its design flow coefficient it
+            // surges, from 1.5 x it chokes.
+            const auto ratio = state.turbochargers[0].compressorFlowCoefficientRatio;
+            add(units > 1U ? "Map position (turbo 1)" : "Map position",
+                juce::String(ratio, 2) + utf8(" \xc3\x97 design")
+                    + (ratio < 0.4 ? ", surge" : ratio >= 1.5 ? ", choke" : ""));
+        }
         add("Pressure ratio", juce::String(state.boostPressureRatio, 2) + " (target " + juce::String(forced.pressureRatio, 2) + ")");
+        if (forced.intercoolerEffectiveness > 0.0)
+            add("Intercooler", juce::String(juce::roundToInt(100.0 * forced.intercoolerEffectiveness)) + " %");
         add("Turbine outlet", model_.units.text(units::Quantity::pressure, state.turbineOutletPressureKpa));
         add("Wastegate", juce::String(juce::roundToInt(100.0 * state.wastegateOpening)) + " % open");
         add("Turbine / compressor", model_.units.value(units::Quantity::power, state.turbinePowerKw) + " / "
@@ -1921,18 +1949,50 @@ void EngineViewport::updateInspector() {
             edit->key = std::uint64_t { 3 } << 60U;
             edit->heading = "TUNE";
             edit->value("Wastegate opens at", forced.wastegatePressureRatio, utf8(" \xc3\x97"), 2, 0.05, 0.01, 1.0, 4.0);
-            edit->value("Turbine flow area", forced.turbineFlowAreaMm2, utf8(" mm\xc2\xb2"), 0, 50.0, 5.0, 20.0,
-                        20'000.0);
-            edit->note = "The wastegate pressure ratio limits the boost; the rated ratio keeps its distance to it. "
-                         "The running engine takes both.";
-            partEditor_ = [](EngineConfig& edited, const std::vector<double>& values) {
+            edit->value(forced.turbochargerCount > 1U ? "Turbine flow area, each" : "Turbine flow area",
+                        forced.turbineFlowAreaMm2, utf8(" mm\xc2\xb2"), 0, 50.0, 5.0, 20.0, 20'000.0);
+            edit->value("Intercooler", 100.0 * forced.intercoolerEffectiveness, " %", 0, 5.0, 1.0, 0.0, 95.0);
+            edit->value("Turbochargers", static_cast<double>(forced.turbochargerCount), "", 0, 1.0, 1.0, 1.0,
+                        static_cast<double>(maximumTurbochargers));
+            // Which turbocharger this path's turbine drives, when there is a choice.
+            const auto pathId = scene_->turbo().pathId;
+            const auto path = std::find_if(config.exhaustPaths.begin(), config.exhaustPaths.end(),
+                [pathId](const ExhaustPathConfig& candidate) { return candidate.id == pathId; });
+            const auto pathIndex = static_cast<std::size_t>(std::distance(config.exhaustPaths.begin(), path));
+            const auto choosesUnit = forced.turbochargerCount > 1U && path != config.exhaustPaths.end();
+            if (choosesUnit) {
+                const auto unit = path->turbocharger >= 0
+                    ? static_cast<std::size_t>(path->turbocharger) : pathIndex % forced.turbochargerCount;
+                edit->value("Path " + juce::String(pathId) + " drives turbo", static_cast<double>(unit + 1U), "", 0,
+                            1.0, 1.0, 1.0, static_cast<double>(forced.turbochargerCount));
+            }
+            edit->note = utf8("The wastegate pressure ratio limits the boost; the rated ratio keeps its distance to "
+                              "it (the ECU's boost table moves with it). The intercooler removes that share of the "
+                              "compressor's heat. The running engine takes these. Another turbocharger count "
+                              "shares the same total turbo out between identical units, and a path given another "
+                              "turbo: both restart the engine.");
+            partEditor_ = [choosesUnit, pathIndex](EngineConfig& edited, const std::vector<double>& values) {
                 const auto wastegate = values[0];
                 const auto turbineAreaMm2 = values[1];
+                const auto intercoolerPercent = values[2];
+                const auto count = static_cast<std::uint32_t>(std::lround(values[3]));
                 auto& turbo = edited.forcedInduction;
                 const auto margin = turbo.pressureRatio - turbo.wastegatePressureRatio;
                 turbo.wastegatePressureRatio = wastegate;
                 turbo.pressureRatio = std::max(1.0, wastegate + margin);
                 turbo.turbineFlowAreaMm2 = turbineAreaMm2;
+                turbo.intercoolerEffectiveness = std::clamp(intercoolerPercent / 100.0, 0.0, 0.95);
+                if (choosesUnit && values.size() > 4U && pathIndex < edited.exhaustPaths.size()
+                    && count == turbo.turbochargerCount) {
+                    // Written only when it changes: an authored index equal to
+                    // the default is still another config, and a restart.
+                    auto& path = edited.exhaustPaths[pathIndex];
+                    const auto now = path.turbocharger >= 0
+                        ? path.turbocharger : static_cast<std::int32_t>(pathIndex % turbo.turbochargerCount);
+                    const auto wanted = static_cast<std::int32_t>(std::lround(values[4])) - 1;
+                    if (wanted != now) path.turbocharger = wanted;
+                }
+                if (count != turbo.turbochargerCount) edited = withTurbochargerCount(std::move(edited), count);
                 return std::string();
             };
             edit->choice = turboChoice();
