@@ -432,6 +432,7 @@ EcuCommand SimpleEcuModel::evaluate(const EngineConfig& config, const EngineStat
         - std::max(0.0, state.coolantTemperatureC - 108.0) * 0.025,
         minimumMappedAfr, maximumMappedAfr);
     mappedAdvance = std::clamp(mappedAdvance - state.knockLevel * 12.0
+        - std::max(0.0, controls.shiftSparkRetardDegrees)
         - std::max(0.0, state.coolantTemperatureC - 108.0) * 0.20,
         calibration::ecuLimits::minimumIgnitionAdvanceDegrees,
         calibration::ecuLimits::maximumIgnitionAdvanceDegrees);

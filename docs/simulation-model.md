@@ -331,9 +331,15 @@ edit, taken live.
   either device, that shift is made the manual way.
 - `dual_clutch`: an upshift hands the drive to the oncoming clutch at once,
   with no torque gap. Its pressure carries the engine's torque plus what pulls
-  the engine down to the new speed over `shift_duration_s`; the engine's torque
-  is not reduced meanwhile, so the wheel feels that inertia as a push. A
-  downshift is blipped as above. The clutch pedal is not connected: the
+  the engine down to the new speed over `shift_duration_s`. Under drive, the
+  ECU retards the spark by up to `dual_clutch_upshift_retard_deg` (default
+  20°, taken off the mapped advance within its -10° floor) while the clutch
+  pulls the engine down, and gives it back with the same speed-matched
+  release as a manual shift's torque cut. The engine, making less torque,
+  reaches the new speed sooner; the clutch's torque does not drop where it is
+  already at its capacity (the 2JZ at 70-85 % of redline), so the push keeps
+  its peak and is only shorter (journal). Production calibrations are not
+  published: the 20° is a choice. A downshift is blipped as above. The clutch pedal is not connected: the
   gearbox runs its own launch clutch. At idle, foot off, it holds a creep
   torque (25 Nm, or 5 % of the clutch's capacity if lower), released on the
   brake. With the throttle open it closes with the engine's speed, fully at a

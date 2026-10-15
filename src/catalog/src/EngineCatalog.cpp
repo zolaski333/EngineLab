@@ -508,6 +508,7 @@ template <typename T>
     assignIfPresent(node, "quickshifter", value.quickshifter);
     assignIfPresent(node, "quickshifter_cut_s", value.quickshifterCutSeconds);
     assignIfPresent(node, "auto_blipper", value.autoBlipper);
+    assignIfPresent(node, "dual_clutch_upshift_retard_deg", value.dualClutchUpshiftRetardDegrees);
     return value;
 }
 

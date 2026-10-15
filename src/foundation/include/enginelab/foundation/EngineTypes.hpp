@@ -774,6 +774,11 @@ struct TransmissionConfig final {
     bool quickshifter { true };
     double quickshifterCutSeconds { 0.065 };
     bool autoBlipper { true };
+    /** A dual clutch's torque intervention on a loaded upshift: the ECU
+     * retards the spark by up to this much while the oncoming clutch pulls
+     * the engine down, released as the speeds meet (0 = none). Production
+     * calibrations are not published; the default is a choice. */
+    double dualClutchUpshiftRetardDegrees { 20.0 };
 };
 
 struct VehicleConfig final {
@@ -1057,6 +1062,9 @@ struct EngineControls final {
     /** A quickshifter's ignition cut: the ECU cuts as its rev limiter does
      * (spark, and fuel too unless `ignition.limiter_keeps_fuel`). */
     bool shiftIgnitionCut { false };
+    /** A dual clutch's upshift torque intervention: spark retard, degrees,
+     * taken off the mapped advance (within the ECU's advance limits). */
+    double shiftSparkRetardDegrees { 0.0 };
 };
 
 struct CylinderState final {

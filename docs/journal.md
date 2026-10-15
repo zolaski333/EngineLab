@@ -5,6 +5,13 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-15 — Dual-clutch upshift spark retard (timeboxed)
+
+- Retard of up to 20 deg while the oncoming clutch pulls the engine down, released with the slip (DriveScenarioHarness `--dct-retard`, 2JZ dual clutch, flat-out pull, 0 vs 20 deg). The advance reaches the ECU's -10 deg floor on every loaded upshift (control: 4-7 deg).
+- Sync time: 237.5 -> 225, 216.7 -> 208.3, 216.7 -> 204.2, 237.5 -> 200, 308 -> 238 ms (gears 1-2 to 5-6). Peak wheel torque unchanged (6,471, 4,634, 3,592, 2,742, 2,137 vs 2,151 Nm): the clutch sits at its 760 Nm capacity through the pull-down either way, so the retard only shortens the push (-4 % impulse at 85 % of redline, EngineLab.ShiftStyle).
+- EGT peak +1 to +3 degC: the retard window (0.2 s) is shorter than the EGT lag.
+- Kept (no catalogue engine uses a dual clutch, default sound unchanged). Not listened to: whether the late burn gives the "DSG fart" is the owner's ear. No production retard calibration found to compare.
+
 ## 2026-10-15 — Cruise control and the automatic shift schedule, driven
 
 - `DriveScenarioHarness --builtin cruise --automatic 1` (60 % pedal, set at 100 km/h, brake at 40 s). First version: the 2JZ ran to 116 km/h, because the integral started at the 60 % accelerating throttle and bled at 0.03/s per m/s. Added: past the set speed and still gaining, the throttle falls at 0.5/s (and the mirror case). Toy-car test: peak 111.1 -> 103.0 km/h.

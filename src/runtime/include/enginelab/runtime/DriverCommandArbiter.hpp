@@ -32,6 +32,7 @@ struct VehicleStep final {
     DrivelineOutput drive;
     double engineThrottle { 0.0 };
     bool shiftIgnitionCut { false };
+    double shiftSparkRetardDegrees { 0.0 };
     ThrottleAuthority throttleAuthority { ThrottleAuthority::driver };
 };
 

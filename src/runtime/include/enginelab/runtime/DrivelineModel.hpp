@@ -34,6 +34,9 @@ struct DrivelineOutput final {
     /** An auto-blipper downshift: the throttle opening it commands while the
      * dogs are free, to bring the engine to the new gear's speed. */
     double blipThrottle { 0.0 };
+    /** A dual-clutch upshift's torque intervention: the spark retard it
+     * asks of the ECU while the oncoming clutch pulls the engine down. */
+    double sparkRetardDegrees { 0.0 };
     double brakePressure { 0.0 };
     double brakeForceN { 0.0 };
     double roadLoadForceN { 0.0 };

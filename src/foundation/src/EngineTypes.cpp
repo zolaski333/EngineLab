@@ -711,6 +711,7 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
                     config.transmission.clutchFadeStartTemperatureC + 1.0, 1'200.0)
         || !inRange(config.transmission.shiftTorqueCutFraction, 0.0, 1.0)
         || !inRange(config.transmission.quickshifterCutSeconds, 0.01, 0.5)
+        || !inRange(config.transmission.dualClutchUpshiftRetardDegrees, 0.0, 40.0)
         || !inRange(config.vehicle.massKg, 50.0, 20'000.0)
         || !inRange(config.vehicle.dragCoefficient, 0.05, 2.0)
         || !inRange(config.vehicle.frontalAreaM2, 0.1, 20.0)

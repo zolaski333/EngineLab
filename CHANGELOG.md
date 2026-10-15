@@ -13,6 +13,10 @@ file formats, always with an in-memory migration).
   own clutch, creeps at idle (stops on the brake) and never stalls. It also
   refuses a downshift that would over-rev the engine, as a real one does;
   manual and sequential gearboxes still let you do it.
+- A dual-clutch upshift under load now retards the spark (up to 20 deg,
+  `transmission.dual_clutch_upshift_retard_deg`) while the clutch pulls the
+  engine down, as production dual clutches do: the push after the shift is
+  shorter. Its effect on the sound has not been listened to yet.
 
 - The exhaust now radiates into the surrounding air rather than into its own
   hot gas, as a real tailpipe does. Hot engines get louder relative to cool

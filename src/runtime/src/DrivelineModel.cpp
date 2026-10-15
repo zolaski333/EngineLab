@@ -283,6 +283,12 @@ DrivelineOutput DrivelineModel::advance(double dt, const EngineState& engineStat
             neededCapacity / std::max(1.0, transmission.maxClutchTorqueNm), 0.0, 1.0);
         shiftProgress = std::clamp(
             1.0 - std::abs(slipOmega) / handOverReferenceSlipRadPerSecond_, 0.0, 1.0);
+        // A loaded upshift: the ECU retards the spark while the clutch pulls
+        // the engine down, and gives it back as the speeds meet, as a dual
+        // clutch's torque intervention does.
+        if (shiftTargetGear_ > shiftFromGear_ && engineDriveTorque > 0.0)
+            output.sparkRetardDegrees = std::max(0.0, transmission.dualClutchUpshiftRetardDegrees)
+                * synchronisationTorqueRelease(1.0 - shiftProgress);
         if (std::abs(slipOmega) <= lockBandOmega
                 || shiftElapsedSeconds_ >= 4.0 * transmission.shiftDurationSeconds) {
             effectiveClutch = clutchPedal;
