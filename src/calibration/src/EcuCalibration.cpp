@@ -5,6 +5,7 @@
 #include <array>
 #include <cmath>
 #include <string>
+#include <variant>
 
 namespace enginelab::calibration {
 namespace {
@@ -192,6 +193,20 @@ CalibrationDraft makeDraft(const CalibrationSnapshot& snapshot) {
         draft.set(entry);
     }
     return draft;
+}
+
+bool shiftBoostTargetTable(CalibrationStore& store, double gaugeStepKpa) {
+    auto draft = makeDraft(*store.snapshot());
+    const auto* found = draft.find(keys::boostTargetGauge);
+    if (found == nullptr) return false;
+    auto entry = *found;
+    auto* curve = std::get_if<CalibrationCurve1D>(&entry);
+    if (curve == nullptr) return false;
+    for (auto& value : curve->values)
+        value = std::clamp(value + gaugeStepKpa, ecuLimits::minimumBoostTargetGaugeKpa,
+                           ecuLimits::maximumBoostTargetGaugeKpa);
+    draft.set(std::move(entry));
+    return store.publish(draft, { std::nullopt, "wastegate-edit" }).published;
 }
 
 } // namespace enginelab::calibration

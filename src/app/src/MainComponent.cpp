@@ -35,21 +35,6 @@ constexpr std::array<std::uint32_t, 8> curveColours {
 
 [[nodiscard]] juce::String utf8(const std::string& text) { return juce::String::fromUTF8(text.c_str()); }
 
-/** Moves the ECU's boost table, when it has one, by a gauge step. */
-void moveBoostTable(calibration::CalibrationStore& store, double gaugeStepKpa) {
-    auto draft = calibration::makeDraft(*store.snapshot());
-    const auto* found = draft.find(calibration::keys::boostTargetGauge);
-    if (found == nullptr) return;
-    auto entry = *found;
-    auto* curve = std::get_if<calibration::CalibrationCurve1D>(&entry);
-    if (curve == nullptr) return;
-    for (auto& value : curve->values)
-        value = std::clamp(value + gaugeStepKpa, calibration::ecuLimits::minimumBoostTargetGaugeKpa,
-                           calibration::ecuLimits::maximumBoostTargetGaugeKpa);
-    draft.set(std::move(entry));
-    (void)store.publish(draft, { std::nullopt, "wastegate-edit" });
-}
-
 /** A path that keeps every character of the file name, on Windows too. */
 [[nodiscard]] std::filesystem::path pathOf(const juce::File& file) {
     return std::filesystem::path(file.getFullPathName().toWideCharPointer());
@@ -426,7 +411,8 @@ bool MainComponent::applyEngineEdit(const EngineConfig& edited, double rampSecon
     const auto boostStepKpa = (edited.forcedInduction.wastegatePressureRatio
         - config_.forcedInduction.wastegatePressureRatio) * seaLevelPressureKpa;
     const auto applied = applyEngineEditGroups(edited, rampSeconds);
-    if (applied && boostStepKpa != 0.0 && runtime_) moveBoostTable(*runtime_->calibrationStore(), boostStepKpa);
+    if (applied && boostStepKpa != 0.0 && runtime_)
+        (void)calibration::shiftBoostTargetTable(*runtime_->calibrationStore(), boostStepKpa);
     return applied;
 }
 
