@@ -7,6 +7,8 @@
 #include <enginelab/exhaust/ExhaustGraph.hpp>
 #include <enginelab/foundation/TwoStrokePorts.hpp>
 #include <enginelab/physics/SimplifiedGasolinePhysics.hpp>
+#include <enginelab/serialization/JsonEngineSerializer.hpp>
+#include <enginelab/serialization/YamlEngineSerializer.hpp>
 #include <enginelab/simulation/EngineSimulator.hpp>
 
 #include <algorithm>
@@ -84,6 +86,29 @@ void configurationIsChecked() {
     auto injection = config;
     injection.injection.endAngleDegrees = 400.0;
     require(validateEngineConfig(injection).has_value(), "an injection angle past the 360-degree cycle is refused");
+}
+
+/** A file that leaves out the crank offsets spaces the cylinders evenly over
+ *  the engine's own cycle: 180 degrees apart for a two-stroke twin, not 360,
+ *  where both would fire together. */
+void missingCrankOffsetsFollowTheCycle() {
+    const auto config = catalogueTwoStroke();
+    const auto withoutOffsets = [](std::string text) {
+        for (auto at = text.find("crank_offset_deg"); at != std::string::npos;
+             at = text.find("crank_offset_deg", at + 1))
+            text.replace(at, 16, "unread_offset_d");
+        return text;
+    };
+    const JsonEngineSerializer json;
+    const YamlEngineSerializer yaml;
+    for (const auto* serializer : { static_cast<const IEngineSerializer*>(&json),
+                                    static_cast<const IEngineSerializer*>(&yaml) }) {
+        const auto decoded = serializer->decode(withoutOffsets(serializer->encode(config)));
+        require(decoded && decoded.config->cylinders.size() == 2, "a file without crank offsets decodes");
+        const auto apart = std::fmod(std::abs(decoded.config->cylinders[1].crankOffsetDegrees
+            - decoded.config->cylinders[0].crankOffsetDegrees), 360.0);
+        require(std::abs(apart - 180.0) < 1.0e-9, "without crank offsets, the twin's cylinders are 180 degrees apart");
+    }
 }
 
 struct Held final {
@@ -238,6 +263,7 @@ int main(int argc, char** argv) {
     }
     portsFollowThePiston();
     configurationIsChecked();
+    missingCrankOffsetsFollowTheCycle();
     catalogueTwinIdles();
     catalogueTwinMakesItsTorque();
     std::cout << "two-stroke: ok\n";

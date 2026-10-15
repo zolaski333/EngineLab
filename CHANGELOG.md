@@ -353,6 +353,9 @@ file formats, always with an in-memory migration).
 
 ### Fixed
 
+- A two-stroke engine file that leaves out the crank offsets now spaces its
+  cylinders over 360 degrees. Before, a twin got 0 and 360 degrees: both
+  cylinders fired together.
 - The "injectors saturated" limit no longer lights up on a healthy engine at
   full load: it is now judged on the last completed cycle, not on the part of
   the window elapsed so far.

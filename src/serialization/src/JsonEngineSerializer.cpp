@@ -1138,7 +1138,7 @@ EngineDecodeResult JsonEngineSerializer::decode(std::string_view text) const noe
                 const auto it = std::find(config.firingOrder.begin(), config.firingOrder.end(), cylinderId);
                 if (it != config.firingOrder.end()) {
                     const auto orderIndex = static_cast<double>(std::distance(config.firingOrder.begin(), it));
-                    crankOffset = orderIndex * (720.0 / static_cast<double>(config.firingOrder.size()));
+                    crankOffset = orderIndex * (cycleDegreesOf(config.cycle) / static_cast<double>(config.firingOrder.size()));
                 }
             }
             CylinderConfig cylinder {

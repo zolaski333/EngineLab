@@ -641,7 +641,7 @@ add_test(NAME EngineLab.EngineBuilder COMMAND EngineLabEngineBuilderTests)
 add_executable(EngineLabTwoStrokeTests TwoStrokeTests.cpp)
 target_link_libraries(EngineLabTwoStrokeTests PRIVATE
     EngineLab::Foundation EngineLab::Calibration EngineLab::Events EngineLab::Physics EngineLab::Ecu
-    EngineLab::Exhaust EngineLab::Simulation EngineLab::Catalog)
+    EngineLab::Exhaust EngineLab::Simulation EngineLab::Catalog EngineLab::Serialization)
 target_compile_definitions(EngineLabTwoStrokeTests PRIVATE ENGINELAB_CATALOG_ROOT="${CMAKE_SOURCE_DIR}")
 if(MSVC)
     target_link_options(EngineLabTwoStrokeTests PRIVATE /STACK:8388608)
