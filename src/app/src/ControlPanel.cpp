@@ -43,6 +43,20 @@ ControlPanel::ControlPanel() {
         addAndMakeVisible(*button);
     }
 
+    gearDown.setTooltip(utf8("Shift down a gear"));
+    gearUp.setTooltip(utf8("Shift up a gear"));
+    brake.setTooltip(utf8("Hold to brake: the pressure builds up while held (slower with Space held), "
+                          "and lets go at once. Cancels the cruise control"));
+    clutch.setTooltip(utf8("Hold to press the clutch pedal (Shift does the same). A dual-clutch gearbox has no "
+                           "pedal and ignores it"));
+    cruise.setTooltip(utf8("Cruise control: holds the road speed you have when you set it (from 30 km/h). "
+                           "The pedal overtakes it; the brake, the clutch or neutral cancel it"));
+    resetTrip.setTooltip(utf8("Starts the trip computer again: distance, fuel and average consumption"));
+    automatic.setTooltip(utf8("Automatic gearbox: it changes gear from your pedal, early with a light foot, "
+                              "near the limiter flat out, and kicks down. A gear key takes it back to manual"));
+    for (auto* button : { &gearDown, &gearUp, &brake, &clutch, &cruise, &resetTrip, &automatic })
+        addAndMakeVisible(*button);
+
     prepareSlider(afrTrim.slider, -3.0, 3.0, 0.1, 0.0);
     afrTrim.slider.setDoubleClickReturnValue(true, 0.0);
     afrTrim.format = [](double value) { return signedValue(value, 1, {}); };
@@ -64,6 +78,12 @@ void ControlPanel::setKeyCaps(const ActionMap& actions) {
     throttleLow.setKeyCap(cap(AppAction::throttleQuarter));
     throttleMid.setKeyCap(cap(AppAction::throttleHalf));
     throttleFull.setKeyCap(cap(AppAction::throttleFull));
+    gearDown.setKeyCap(cap(AppAction::shiftDown));
+    gearUp.setKeyCap(cap(AppAction::shiftUp));
+    brake.setKeyCap(cap(AppAction::brake));
+    clutch.setKeyCap(cap(AppAction::clutchHold));
+    cruise.setKeyCap(cap(AppAction::cruise));
+    automatic.setKeyCap(cap(AppAction::automaticGearbox));
 }
 
 void ControlPanel::setDiesel(bool diesel) {
@@ -89,6 +109,44 @@ void ControlPanel::refresh(const DashboardModel& model) {
                                        static_cast<juce::Component*>(&afrTrim),
                                        static_cast<juce::Component*>(&sparkTrim) })
         control->setEnabled(!running);
+    for (auto* button : { &gearDown, &gearUp, &brake, &clutch, &cruise, &automatic })
+        button->setEnabled(!running);
+
+    // The speedometer and trip computer. Nothing here repaints unless a
+    // figure as shown changed.
+    using units::Quantity;
+    const auto& state = model.state;
+    const auto& unit = model.units;
+    const auto speed = unit.value(Quantity::speed, std::abs(state.vehicleSpeedMps), 0);
+    const auto speedUnit = unit.symbol(Quantity::speed);
+    const auto gear = juce::String("gear ") + gearName(state.gear);
+    // Standing still, L/100 km has no meaning: the flow is shown instead.
+    const auto consumption = std::abs(state.vehicleSpeedMps) >= 1.0
+        ? unit.text(Quantity::fuelConsumption, state.instantFuelEconomyLitresPer100Km)
+        : unit.value(Quantity::fuelVolume, state.fuelFlowLitresPerHour, 2) + " "
+            + unit.symbol(Quantity::fuelVolume) + "/h";
+    const auto detail = gear + utf8("  \xc2\xb7  ") + consumption;
+    const auto trip = "trip " + unit.text(Quantity::distance, state.tripDistanceM,
+                                          unit.preferences.of(Quantity::distance).id == "m" ? 0 : 1)
+        + utf8("  \xc2\xb7  ")
+        + (state.tripFuelEconomyLitresPer100Km > 0.0
+            ? unit.text(Quantity::fuelConsumption, state.tripFuelEconomyLitresPer100Km)
+            : utf8("\xe2\x80\x94"));
+    if (speed != speedText_ || speedUnit != speedUnit_ || detail != driveDetail_ || trip != tripDetail_) {
+        speedText_ = speed;
+        speedUnit_ = speedUnit;
+        driveDetail_ = detail;
+        tripDetail_ = trip;
+        repaint(speedValue_.getUnion(tripText_).getSmallestIntegerContainer().expanded(2));
+    }
+    brake.setEngaged(state.brakePressure > 0.01);
+    clutch.setEngaged(state.clutchPressure < 0.5 && state.gear != -1);
+    cruise.setEngaged(state.cruiseEngaged);
+    automatic.setEngaged(state.automaticShifting);
+    const auto cruiseText = state.cruiseEngaged
+        ? "Cruise " + unit.value(Quantity::speed, state.cruiseSetSpeedMps, 0)
+        : juce::String("Cruise");
+    if (cruise.getButtonText() != cruiseText) cruise.setButtonText(cruiseText);
 }
 
 void ControlPanel::sliderValueChanged(juce::Slider*) {
@@ -101,6 +159,22 @@ void ControlPanel::paint(juce::Graphics& g) {
     g.fillRect(getLocalBounds().removeFromRight(1));
     drawSectionLabel(g, engineLabel_, "Engine");
     drawSectionLabel(g, throttleLabel_, "Throttle");
+    drawSectionLabel(g, driveLabel_, "Drive");
+    const auto speedFont = monoFont(32.0F);
+    const auto speedWidth = juce::GlyphArrangement::getStringWidth(speedFont, speedText_);
+    g.setColour(colours::text);
+    g.setFont(speedFont);
+    g.drawText(speedText_, speedValue_, juce::Justification::topLeft, false);
+    g.setColour(colours::muted);
+    g.setFont(uiFont(14.0F));
+    g.drawText(speedUnit_, speedValue_.withTrimmedLeft(speedWidth + 5.0F).withTrimmedTop(12.0F),
+               juce::Justification::topLeft, true);
+    auto lines = tripText_;
+    g.setFont(uiFont(13.5F));
+    g.drawFittedText(driveDetail_, lines.removeFromTop(lines.getHeight() * 0.5F).toNearestInt(),
+                     juce::Justification::centredLeft, 1, 0.8F);
+    g.setColour(colours::faint);
+    g.drawFittedText(tripDetail_, lines.toNearestInt(), juce::Justification::centredLeft, 1, 0.8F);
     g.setColour(throttle.isEnabled() ? colours::text : colours::muted);
     g.setFont(monoFont(32.0F));
     g.drawText(fixed(throttle.getValue(), 0) + " %", throttleValue_,
@@ -124,9 +198,9 @@ void ControlPanel::resized() {
         button->setBounds(area.removeFromTop(42));
         area.removeFromTop(8);
     }
-    area.removeFromTop(14);
+    area.removeFromTop(10);
     throttleLabel_ = area.removeFromTop(22).toFloat();
-    auto throttleRow = area.removeFromTop(170);
+    auto throttleRow = area.removeFromTop(150);
     throttle.setBounds(throttleRow.removeFromLeft(44));
     throttleRow.removeFromLeft(12);
     throttleValue_ = throttleRow.removeFromTop(40).toFloat();
@@ -138,7 +212,30 @@ void ControlPanel::resized() {
     throttleLow.setBounds(topPresets.removeFromRight(half));
     throttleMid.setBounds(bottomPresets.removeFromLeft(half));
     throttleFull.setBounds(bottomPresets.removeFromRight(half));
-    area.removeFromTop(20);
+    area.removeFromTop(14);
+    driveLabel_ = area.removeFromTop(22).toFloat();
+    speedValue_ = area.removeFromTop(38).toFloat();
+    tripText_ = area.removeFromTop(36).toFloat();
+    area.removeFromTop(6);
+    const auto pair = [&area](ActionButton& left, ActionButton& right) {
+        auto row = area.removeFromTop(30);
+        const auto width = (row.getWidth() - 6) / 2;
+        left.setBounds(row.removeFromLeft(width));
+        right.setBounds(row.removeFromRight(width));
+        area.removeFromTop(6);
+    };
+    {
+        // Gear down, Auto, Gear up on one row.
+        auto row = area.removeFromTop(30);
+        const auto third = (row.getWidth() - 12) / 3;
+        gearDown.setBounds(row.removeFromLeft(third));
+        gearUp.setBounds(row.removeFromRight(third));
+        automatic.setBounds(row.reduced(6, 0));
+        area.removeFromTop(6);
+    }
+    pair(brake, clutch);
+    pair(cruise, resetTrip);
+    area.removeFromTop(8);
     trimsHeader_ = area.removeFromTop(22).toFloat();
     area.removeFromTop(4);
     if (trimsOpen_) {

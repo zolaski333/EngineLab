@@ -351,6 +351,23 @@ ends the blip.
 
 There is no dog-box engagement noise and no torque converter.
 
+### Automatic shifting
+
+With `transmission.automatic_shifting` (switched live with the **Auto**
+button or `8`), `ShiftSchedule` chooses the gear from the driver's pedal, not
+the engine's throttle, so a blip or a torque cut does not move the points.
+The upshift point runs from max(2.2 × idle, 0.3 × limit) foot-light to
+0.94 × the active rev limit flat out (`automatic_upshift_rpm` replaces the
+latter when set), along pedal^1.5; the downshift point from 1.3 × idle
+(`automatic_downshift_rpm`) to 0.55 × the full-throttle upshift, which is the
+kickdown. An upshift must land above 1.15 × the downshift point and a
+downshift under 0.9 × the upshift point, so a gear it lands in is kept; a
+kickdown goes down several gears while the gear reached still lugs. It waits
+0.8 s after any shift and never acts while the driver holds the clutch. The
+shape is a choice, not a fit to a production schedule. A change between two
+forward gears asked by the driver switches the gearbox back to manual;
+selecting first from neutral does not.
+
 ### Driver commands
 
 `DriverCommandArbiter` (`src/runtime`) is the one place where the driver's
@@ -363,6 +380,15 @@ quickshifter's ignition cut through. It also records who held the throttle
 and the shift, loaded-acceleration, afterfire and drive-scenario harnesses all
 step the vehicle through it, so they cannot drift from the product. The dyno
 bypasses it: the bench, not a driver, holds the engine.
+
+The cruise control (`CruiseControl`) is a driver-side device: a PI on road
+speed (0.08 per m/s, integral 0.03) whose throttle joins the driver's pedal,
+the higher one winning, before the arbiter. It engages from 30 km/h at the
+throttle in use (no surge); past the set speed and still gaining, or under it
+and still losing, that throttle moves at 0.5/s, so a set pressed while
+accelerating hard overshoots by a few km/h only. The brake, the clutch,
+neutral or falling under 0.6 × the set speed cancel it. The runtime merges it once per frame, so
+the driveline and the arbiter see the same inputs.
 
 In vehicle mode, the runtime's external load (`EngineRuntime::setLoad`; the
 application keeps it at zero since it no longer has a *Manual load* control)

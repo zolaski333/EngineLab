@@ -36,20 +36,23 @@ void drawRows(juce::Graphics& g, juce::Rectangle<float>& area, const Rows& rows,
         peakPressure = std::max(peakPressure, state.cylinderStates[index].pressureEstimateBar);
     const auto dot = utf8("  \xc2\xb7  ");
     const auto degree = utf8("\xc2\xb0");
+    using units::Quantity;
+    const auto& unit = model.units;
     return {
         { "State", runningStateName(state.runningState) },
         { "Layout", juce::String(layoutName(model.config.layout)) + dot
               + juce::String(static_cast<int>(model.config.cylinders.size())) + " cyl" },
         { "Volumetric efficiency", juce::String(state.volumetricEfficiency * 100.0, 1) + " %" },
-        { "Air / fuel flow", juce::String(state.airFlowGramsPerSecond, 1) + " / "
-              + juce::String(state.fuelFlowGramsPerSecond, 2) + " g/s" },
+        { "Air / fuel flow", unit.value(Quantity::airFlow, state.airFlowGramsPerSecond) + " / "
+              + unit.text(Quantity::airFlow, state.fuelFlowGramsPerSecond, 2) },
         { "Lambda", juce::String(state.lambda, 3) },
         { "Ignition advance", juce::String(state.ignitionAdvanceDegrees, 1) + degree },
         { "Knock level", juce::String(state.knockLevel, 2) },
-        { "Peak cylinder pressure", juce::String(peakPressure, 1) + " bar" },
-        { "Exhaust runner", fixed(state.exhaustRunnerPressureKpa, 0) + " kPa" },
-        { "Oil", fixed(state.oilPressureKpa, 0) + " kPa" + dot
-              + fixed(state.oilTemperatureC, 0) + degree + "C" },
+        { "Peak cylinder pressure", unit.text(Quantity::pressure, peakPressure * 100.0,
+              unit.preferences.of(Quantity::pressure).id == "kpa" ? 0 : 1) },
+        { "Exhaust runner", unit.text(Quantity::pressure, state.exhaustRunnerPressureKpa) },
+        { "Oil", unit.pressureDifference(state.oilPressureKpa) + dot
+              + unit.text(Quantity::temperature, state.oilTemperatureC) },
         { "Mean piston speed", juce::String(state.meanPistonSpeedMps, 1) + " m/s" },
         { "Peak piston acceleration", groupedInteger(state.peakPistonAccelerationG) + " g" },
     };
@@ -69,7 +72,7 @@ void drawRows(juce::Graphics& g, juce::Rectangle<float>& area, const Rows& rows,
         { "Injection", juce::String(direct ? "Direct" : "Port") + utf8("  \xc2\xb7  ")
               + juce::String(static_cast<int>(model.config.cylinders.size())) + " injectors" },
         { "Flow / pressure", fixed(injection.injectorFlowMgPerSecond * 0.06, 0) + " g/min / "
-              + juce::String(injection.railPressureBar, direct ? 0 : 1) + " bar" },
+              + model.units.pressureDifference(injection.railPressureBar * 100.0, direct ? 0 : 1) },
         { "Duty cycle (highest)", juce::String(duty * 100.0, 1) + " %" },
         { "Fuel per cycle (highest)", juce::String(fuel, 1) + " mg" },
     };
@@ -82,18 +85,20 @@ void drawRows(juce::Graphics& g, juce::Rectangle<float>& area, const Rows& rows,
         : (state.dynoRampEnabled
             ? "ramp " + fixed(state.dynoRampRpmPerSecond, 0) + " rpm/s"
             : juce::String("steps 250 rpm"));
+    using units::Quantity;
+    const auto& unit = model.units;
     return {
         { "Gear", gearName(state.gear) + " / " + juce::String(state.gearCount) },
         { "Clutch", fixed(state.clutchPressure * 100.0, 0) + " %" },
-        { "Vehicle speed", juce::String(state.vehicleSpeedMps * 3.6, 1) + " km/h" },
-        { "Distance", juce::String(state.vehicleDistanceM / 1'000.0, 3) + " km" },
-        { "Wheel torque", fixed(state.wheelTorqueNm, 0) + " Nm" },
-        { "Driveline drag", fixed(state.drivelineLoadTorqueNm, 0) + " Nm" },
-        { "Clutch temperature", juce::String(state.clutchTemperatureC, 1) + utf8(" \xc2\xb0""C") },
-        { "Clutch loss", juce::String(state.clutchPowerLossKw, 2) + " kW" },
+        { "Vehicle speed", unit.text(Quantity::speed, state.vehicleSpeedMps, 1) },
+        { "Distance", unit.text(Quantity::distance, state.vehicleDistanceM, 3) },
+        { "Wheel torque", unit.text(Quantity::torque, state.wheelTorqueNm, 0) },
+        { "Driveline drag", unit.text(Quantity::torque, state.drivelineLoadTorqueNm, 0) },
+        { "Clutch temperature", unit.text(Quantity::temperature, state.clutchTemperatureC, 1) },
+        { "Clutch loss", unit.text(Quantity::power, state.clutchPowerLossKw, 2) },
         { "Brake", fixed(state.brakePressure * 100.0, 0) + " %" },
         { "Tyre force", fixed(state.tireLongitudinalForceN, 0) + " N" },
-        { "Fuel economy", juce::String(state.fuelEconomyLitresPer100Km, 2) + " L/100 km" },
+        { "Fuel economy", unit.text(Quantity::fuelConsumption, state.fuelEconomyLitresPer100Km) },
         { "Dyno mode", benchText },
         { "Hold speed", groupedInteger(state.dynoHoldRpm) + " rpm" },
     };

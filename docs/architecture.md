@@ -95,7 +95,7 @@ constructor.
 | Panel | Area |
 |---|---|
 | `TopBar` | engine picker, run state, Exhaust / ECU / Audio windows, `⋯` menu |
-| `ControlPanel` | ignition, starter, dyno, throttle column and presets, load and trims |
+| `ControlPanel` | ignition, starter, dyno, throttle column and presets, Drive section (speedometer, trip computer, gears, brake, clutch, cruise control, each with its key), trims |
 | `EngineViewport` | the GPU 3-D engine view with its overlays, or the 2-D cutaway |
 | `ReadoutStrip` | tachometer and six live readouts |
 | `SidePanel` | Dyno, Telemetry, Audio and Diagnostics tabs |
@@ -103,8 +103,22 @@ constructor.
 
 `Theme` holds the colour tokens, fonts and the `ui::LookAndFeel` installed for
 the whole application, so the tool windows and alerts share it. `Widgets` holds
-the buttons, segmented controls and slider rows the panels are built from. The
-main component keeps the keyboard: no button or slider takes focus, and a
+the buttons, segmented controls and slider rows the panels are built from.
+
+**Display units.** The simulation keeps one internal unit per quantity (m/s,
+kPa absolute, N m, kW, °C, mm, cm³, kg, g/s, L/100 km). `units::` in
+`foundation/Units.hpp` lists the units offered for each quantity (exact
+definitions: international mile and pound, US and imperial gallons, standard
+gravity, mechanical hp, metric PS) and four presets: Metric (the default, the
+simulator's own readouts), Metric bar/PS, US and UK. `ui::UnitFormat`, held in
+the `DashboardModel`, formats the readouts the panels show; a pressure can be
+shown absolute or gauge (relative to the engine's ambient air), and a pressure
+that is already a difference (oil, rail, a duct against ambient) is never
+offset again. The choice is in `⋯ › Units` and is saved in `units.json` next
+to `keybindings.json`. The physics debug list of the Telemetry tab stays in
+the internal units on purpose: it is the engineering view.
+
+The main component keeps the keyboard: no button or slider takes focus, and a
 mouse wheel a child does not use goes up to the main component's mouse-wheel
 handler (`mouseWheelMove`).
 

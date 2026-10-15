@@ -743,9 +743,14 @@ struct TransmissionConfig final {
     // and carries torque up to capacity, outside it slips at capacity (kinetic).
     double clutchLockSpeedRpm { 35.0 };
     double shiftDurationSeconds { 0.18 };
+    /** An automatic gearbox chooses the gear from the driver's pedal
+     * (ShiftSchedule); the driver can switch it on and off while driving. */
     bool automaticShifting { false };
-    double automaticUpshiftRpm { 6'400.0 };
-    double automaticDownshiftRpm { 1'650.0 };
+    /** Full-throttle upshift speed; 0 places it just under the active rev
+     * limit. Part throttle shifts earlier. */
+    double automaticUpshiftRpm { 0.0 };
+    /** Foot-off downshift speed; 0 places it at 1.3 x idle. */
+    double automaticDownshiftRpm { 0.0 };
     double reverseRatio { 3.20 };
     double gearboxInputInertiaKgM2 { 0.08 };
     double differentialInertiaKgM2 { 0.16 };
@@ -1513,7 +1518,23 @@ struct EngineState final {
     double fuelFlowGramsPerSecond { 0.0 };
     double fuelConsumedGrams { 0.0 };
     double fuelConsumedLitres { 0.0 };
+    /** Average since the engine was built (fuel burnt standing still included). */
     double fuelEconomyLitresPer100Km { 0.0 };
+    /** Fuel flow now, by volume; what a standing car shows instead of L/100 km. */
+    double fuelFlowLitresPerHour { 0.0 };
+    /** Fuel flow over road speed now; 0 below 1 m/s, where it has no meaning. */
+    double instantFuelEconomyLitresPer100Km { 0.0 };
+    /** The trip computer: distance, fuel and average since the last trip reset. */
+    double tripDistanceM { 0.0 };
+    double tripFuelLitres { 0.0 };
+    /** 0 until the trip has covered 100 m. */
+    double tripFuelEconomyLitresPer100Km { 0.0 };
+    /** Cruise control: engaged, and the speed it holds. */
+    /** The gearbox chooses its gears (TransmissionConfig::automaticShifting,
+     * switched live from the UI). */
+    bool automaticShifting { false };
+    bool cruiseEngaged { false };
+    double cruiseSetSpeedMps { 0.0 };
     double airFlowGramsPerSecond { 0.0 };
     double lambda { 1.0 };
     double brakeSpecificFuelConsumptionGPerKwh { 0.0 };

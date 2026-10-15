@@ -18,6 +18,8 @@ enum class AppAction : std::size_t {
     // the middle silently rebinds every action after it.
     dynoRamp,
     abSwitch,
+    cruise,
+    automaticGearbox,
     count
 };
 

@@ -66,6 +66,7 @@ MainComponent::MainComponent() {
     setSize(1'440, 860);
     setOpaque(true);
     setWantsKeyboardFocus(true);
+    model_.units.load();
 
     refreshEngineChoices();
     topBar_.onEngineSelected = [this](int presetIndex) { selectEngine(presetIndex); };
@@ -83,6 +84,13 @@ MainComponent::MainComponent() {
             || controls_.starter.getState() == juce::Button::buttonDown);
     };
     controls_.dyno.onClick = [this] { toggleDyno(); };
+    controls_.gearDown.onClick = [this] { if (runtime_) runtime_->shiftDown(); };
+    controls_.gearUp.onClick = [this] { if (runtime_) runtime_->shiftUp(); };
+    controls_.cruise.onClick = [this] { if (runtime_) runtime_->toggleCruise(); };
+    controls_.automatic.onClick = [this] {
+        if (runtime_) runtime_->setAutomaticShifting(!model_.state.automaticShifting);
+    };
+    controls_.resetTrip.onClick = [this] { if (runtime_) runtime_->resetTrip(); };
     controls_.onThrottlePreset = [this](double fraction) { setThrottlePreset(fraction); };
     controls_.throttle.onValueChange = [this] {
         if (runtime_) runtime_->setThrottle(controls_.throttle.getValue() / 100.0);
@@ -929,6 +937,9 @@ void MainComponent::showMoreMenu() {
     menu.addSeparator();
     add(utf8("Reload engine"), !running, "Return", &MainComponent::reloadEngine);
     add(utf8("Key bindings…"), true, {}, &MainComponent::showKeyBindingsEditor);
+    juce::PopupMenu unitsMenu;
+    model_.units.addMenu(unitsMenu, [safe] { if (safe) safe->unitsChanged(); });
+    menu.addSubMenu(utf8("Units"), unitsMenu);
     juce::PopupMenu::Item fullScreen(utf8("Full screen"));
     fullScreen.shortcutKeyDescription = actionMap_.shortcut(AppAction::fullscreen);
     fullScreen.action = [safe] {
@@ -940,6 +951,13 @@ void MainComponent::showMoreMenu() {
     menu.showMenuAsync(juce::PopupMenu::Options {}
         .withTargetComponent(&topBar_.moreButton)
         .withMinimumWidth(240));
+}
+
+void MainComponent::unitsChanged() {
+    // Panels format on paint, from model_.units: a full repaint is the update.
+    repaint();
+    for (auto* child : getChildren()) child->repaint();
+    side_.resized();
 }
 
 void MainComponent::startEngineScriptWatcher(const std::filesystem::path& path) {
@@ -1547,6 +1565,11 @@ bool MainComponent::keyPressed(const juce::KeyPress& key) {
     if (actionMap_.matches(AppAction::dynoHold, key)) { if (runtime_) runtime_->setDynoHoldEnabled(!runtime_->dynoHoldEnabled()); return true; }
     if (actionMap_.matches(AppAction::dynoRamp, key)) { if (runtime_) runtime_->setDynoRampEnabled(!runtime_->dynoRampEnabled()); return true; }
     if (actionMap_.matches(AppAction::abSwitch, key)) { switchAbVersion(); return true; }
+    if (actionMap_.matches(AppAction::cruise, key)) { if (runtime_) runtime_->toggleCruise(); return true; }
+    if (actionMap_.matches(AppAction::automaticGearbox, key)) {
+        if (runtime_) runtime_->setAutomaticShifting(!model_.state.automaticShifting);
+        return true;
+    }
     if (actionMap_.matches(AppAction::clutchDecrease, key)) {
         targetClutchPressure_ = std::clamp(targetClutchPressure_ - 0.08, 0.0, 1.0);
         return true;
@@ -1574,11 +1597,9 @@ bool MainComponent::keyStateChanged(bool) {
         if (runtime_) runtime_->setStarterEngaged(down || controls_.starter.getState() == juce::Button::buttonDown);
         controls_.starter.setEngaged(down);
     }
+    // The brake builds up in the UI timer (timerCallback).
     const auto brakeDown = actionMap_.isDown(AppAction::brake);
-    if (brakeDown != brakeKeyDown_) {
-        brakeKeyDown_ = brakeDown;
-        if (runtime_) runtime_->setBrakePressure(brakeDown ? 1.0 : 0.0);
-    }
+    brakeKeyDown_ = brakeDown;
     return down || brakeDown || anyThrottleDown || actionMap_.isDown(AppAction::clutchHold)
         || juce::ModifierKeys::getCurrentModifiersRealtime().isShiftDown();
 }
@@ -1592,6 +1613,7 @@ void MainComponent::focusLost(FocusChangeType) {
     }
     starterKeyDown_ = false;
     brakeKeyDown_ = false;
+    brakeCommand_ = 0.0;
     controls_.starter.setEngaged(false);
 }
 
@@ -1608,7 +1630,16 @@ void MainComponent::timerCallback() {
     // the audio thread.
     if (audio_) audio_->collectRetiredExhaustNetworks();
     if (throttleKeyActive_) updateMomentaryThrottle();
-    const auto clutchTarget = (actionMap_.isDown(AppAction::clutchHold)
+    // A held brake builds up over ~1.1 s (~3 s with the fine key held) and
+    // lets go in ~0.1 s: a key gives a progressive pedal, not an on/off one.
+    const auto brakeHeld = brakeKeyDown_ || controls_.brake.isDown();
+    const auto brakeRate = brakeHeld ? (actionMap_.isDown(AppAction::wheelFineThrottle) ? 0.33 : 0.9) : -10.0;
+    const auto brake = std::clamp(brakeCommand_ + brakeRate / 30.0, 0.0, 1.0);
+    if (brake != brakeCommand_) {
+        brakeCommand_ = brake;
+        runtime_->setBrakePressure(brake);
+    }
+    const auto clutchTarget = (actionMap_.isDown(AppAction::clutchHold) || controls_.clutch.isDown()
         || juce::ModifierKeys::getCurrentModifiersRealtime().isShiftDown())
         ? 0.0 : targetClutchPressure_;
     const auto slowClutch = actionMap_.isDown(AppAction::wheelFineThrottle);
@@ -1616,6 +1647,7 @@ void MainComponent::timerCallback() {
     currentClutchPressure_ += (clutchTarget - currentClutchPressure_) * (1.0 - std::exp(-clutchRate / 30.0));
     runtime_->setClutchPressure(currentClutchPressure_);
     model_.state = runtime_->snapshot();
+    model_.units.ambientPressureKpa = config_.ambientPressureKpa;
     if (ecuTunerWindow_) {
         const auto normalizedLoad = std::clamp(model_.state.manifoldPressureKpa
             / std::max(1.0, config_.ambientPressureKpa),

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <enginelab/app/UnitFormat.hpp>
 #include <enginelab/audio/OfflineAudioExporter.hpp>
 #include <enginelab/audio/RealtimeEngineAudio.hpp>
 #include <enginelab/diagnostics/EngineDiagnostics.hpp>
@@ -91,6 +92,8 @@ struct DashboardModel final {
     std::vector<Diagnostic> diagnostics;
     RuntimeHealth health;
     AudioView audio;
+    /** The viewer's display units; every panel formats through it. */
+    ui::UnitFormat units;
     bool dynoRunning { false };
     bool scriptLive { false };
     std::uint64_t scriptRevision {};

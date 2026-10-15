@@ -103,10 +103,10 @@ void DynoChart::paint(juce::Graphics& g) {
         g.setColour(colours::grid);
         g.drawHorizontalLine(static_cast<int>(y), plot.getX(), plot.getRight());
         g.setColour(colours::faint);
-        g.drawText(fixed(maxTorque * static_cast<double>(grid) / 5.0, 0),
+        g.drawText(model.units.value(units::Quantity::torque, maxTorque * static_cast<double>(grid) / 5.0, 0),
                    juce::Rectangle<float>(area.getX() + 4.0F, y - 7.0F, 34.0F, 14.0F),
                    juce::Justification::centredRight);
-        g.drawText(fixed(maxPower * static_cast<double>(grid) / 5.0, 0),
+        g.drawText(model.units.value(units::Quantity::power, maxPower * static_cast<double>(grid) / 5.0, 0),
                    juce::Rectangle<float>(plot.getRight() + 6.0F, y - 7.0F, 34.0F, 14.0F),
                    juce::Justification::centredLeft);
     }
@@ -119,8 +119,8 @@ void DynoChart::paint(juce::Graphics& g) {
     g.setFont(uiFont(13.0F));
     const auto top = juce::Rectangle<float>(area.getX() + 12.0F, area.getY() + 7.0F,
                                             area.getWidth() - 24.0F, 16.0F);
-    g.drawText("Nm", top, juce::Justification::centredLeft);
-    g.drawText("kW", top, juce::Justification::centredRight);
+    g.drawText(model.units.symbol(units::Quantity::torque), top, juce::Justification::centredLeft);
+    g.drawText(model.units.symbol(units::Quantity::power), top, juce::Justification::centredRight);
     g.drawText(utf8("solid: torque  \xc2\xb7  dashed: power"), top, juce::Justification::centred);
 
     const auto drawRun = [&](const DynoRun& run, juce::Colour colour, bool emphasised) {
@@ -198,8 +198,8 @@ void DynoChart::paint(juce::Graphics& g) {
     if (nearestPoint == nullptr || nearestDistance > 14.0F) return;
     const auto text = nearestName + "\n"
         + groupedInteger(nearestPoint->rpm) + utf8(" rpm  \xc2\xb7  ")
-        + juce::String(torqueOf(*nearestPoint), 1) + utf8(" Nm  \xc2\xb7  ")
-        + juce::String(powerOf(*nearestPoint), 1) + " kW\n"
+        + model.units.text(units::Quantity::torque, torqueOf(*nearestPoint), 1) + utf8("  \xc2\xb7  ")
+        + model.units.text(units::Quantity::power, powerOf(*nearestPoint), 1) + "\n"
         + (nearestPoint->airFuelRatioValid
             ? "AFR " + juce::String(nearestPoint->airFuelRatio, 2) + " / target "
                 + juce::String(nearestPoint->targetAirFuelRatio, 2)
@@ -245,7 +245,7 @@ void RunList::paint(juce::Graphics& g) {
         const auto power = run.peakCorrectedPowerKw > 0.0 ? run.peakCorrectedPowerKw : run.peakPowerKw;
         g.setFont(monoFont(13.0F, false));
         g.setColour(colours::muted);
-        g.drawText(juce::String(power, 1) + " kW", content.removeFromRight(70.0F),
+        g.drawText(model_.units.text(units::Quantity::power, power, 1), content.removeFromRight(70.0F),
                    juce::Justification::centredRight, false);
         if (run.status != DynoRunStatus::completed) {
             g.setColour(colours::warn);
@@ -365,13 +365,13 @@ void DynoPanel::paint(juce::Graphics& g) {
     auto cards = peaks_;
     const auto cardWidth = (cards.getWidth() - 8.0F) * 0.5F;
     const auto drawPeak = [&g](juce::Rectangle<float> card, const juce::String& label, const Peak& peak,
-                               const juce::String& unit, int decimals) {
+                               const juce::String& unit, auto display, int decimals) {
         fillCard(g, card);
         auto body = card.reduced(11.0F, 8.0F);
         g.setColour(colours::faint);
         g.setFont(sectionFont());
         g.drawText(label, body.removeFromTop(16.0F), juce::Justification::centredLeft, false);
-        const auto value = peak.value > 0.0 ? juce::String(peak.value, decimals) : utf8("\xe2\x80\x94");
+        const auto value = peak.value > 0.0 ? display(peak.value, decimals) : utf8("\xe2\x80\x94");
         const auto valueFont = monoFont(23.0F);
         const auto valueWidth = juce::GlyphArrangement::getStringWidth(valueFont, value);
         g.setColour(colours::text);
@@ -383,8 +383,11 @@ void DynoPanel::paint(juce::Graphics& g) {
         g.drawText(unit + " @ " + groupedInteger(peak.rpm), body.withTrimmedLeft(valueWidth + 5.0F).withTrimmedTop(4.0F),
                    juce::Justification::centredLeft, true);
     };
-    drawPeak(cards.removeFromLeft(cardWidth), "PEAK TORQUE", torque, "Nm", 0);
-    drawPeak(cards.removeFromRight(cardWidth), "PEAK POWER", power, "kW", 1);
+    const auto& unitFormat = model_.units;
+    drawPeak(cards.removeFromLeft(cardWidth), "PEAK TORQUE", torque, unitFormat.symbol(units::Quantity::torque),
+             [&unitFormat](double value, int decimals) { return unitFormat.value(units::Quantity::torque, value, decimals); }, 0);
+    drawPeak(cards.removeFromRight(cardWidth), "PEAK POWER", power, unitFormat.symbol(units::Quantity::power),
+             [&unitFormat](double value, int decimals) { return unitFormat.value(units::Quantity::power, value, decimals); }, 1);
 
     drawSectionLabel(g, runsLabel_, "Saved runs");
     if (model_.archivedRuns.empty()) {

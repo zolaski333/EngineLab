@@ -113,37 +113,40 @@ public:
         double cycleDegrees { 720.0 };
         juce::String caption;
     };
-    /** Two values edited live: an exhaust component's or a runner's length
-        and diameter, the cylinders' bore and stroke, a plenum's volume, the
-        turbo's boost, the injectors' flow. Steppers, or a click on the value
-        to type it (Enter applies, Escape cancels; both hand the keyboard back
-        to the engine). */
+    /** One value of an edit: a stepper pair and a value that can be clicked
+        and typed (Enter applies, Escape cancels; both hand the keyboard back
+        to the engine). A field with a `quantity` is shown and typed in the
+        viewer's units; its value, steps and bounds stay in the internal unit
+        (mm, degrees Celsius...). */
+    struct Field final {
+        juce::String label;
+        /** Shown after the value when the field has no `quantity`. */
+        juce::String unit;
+        std::optional<units::Quantity> quantity;
+        /** Digits shown; -1 shows a tenth only when the value has one. */
+        int decimals { -1 };
+        double value {};
+        /** False: shown, not edited (a length the configuration fixes). */
+        bool editable { true };
+        /** A press, and a press with Shift. */
+        double step { 1.0 };
+        double fineStep { 0.1 };
+        double minimum { 0.0 };
+        double maximum { 1.0e9 };
+    };
+    /** The values of one part edited together: an exhaust component's or a
+        runner's length and diameter, the cylinders' bore and stroke, the
+        turbo's boost, the injectors' flow, the gearbox's ratios... */
     struct Edit final {
         /** Which part: the same key keeps the values being edited. */
         std::uint64_t key {};
         juce::String heading { "RESIZE" };
-        juce::String firstLabel { "Length" };
-        juce::String secondLabel { "Diameter" };
-        juce::String firstUnit { " mm" };
-        juce::String secondUnit { " mm" };
-        /** Digits shown; -1 shows a tenth only when the value has one. */
-        int firstDecimals { -1 };
-        int secondDecimals { -1 };
-        double first {};
-        double second {};
-        bool firstEditable { true };
-        /** A press, and a press with Shift. */
-        double firstStep { 10.0 };
-        double firstFineStep { 1.0 };
-        double secondStep { 1.0 };
-        double secondFineStep { 0.1 };
-        double minimum { 10.0 };
-        /** The second value's lower bound, when not `minimum`. */
-        std::optional<double> secondMinimum;
-        double firstMaximum { 5'000.0 };
-        double secondMaximum { 400.0 };
+        std::vector<Field> fields;
         /** Offers the choice between the next cycle and a gradual change. */
         bool offersRamp {};
+        /** The engine restarts to take the values (the badge says so);
+            otherwise the running engine takes them. */
+        bool restarts {};
         /** A switch the engine takes at once (the block's regulated
             temperatures, the gearbox's shift style), in the ramp choice's
             place. A click steps to the next option; the button shows the
@@ -155,12 +158,23 @@ public:
         };
         std::optional<Choice> choice;
         juce::String note;
+
+        /** A length in mm, shown in the viewer's length unit. */
+        Field& length(juce::String label, double millimetres, double step = 10.0, double fineStep = 1.0,
+                      double minimum = 10.0, double maximum = 5'000.0);
+        /** Any other value. */
+        Field& value(juce::String label, double value, juce::String unit, int decimals, double step,
+                     double fineStep, double minimum, double maximum);
     };
     PartInspector();
-    /** Called with the edited sizes a moment after the last stepper press,
-        and at once by Reset: the engine hears each size live. `gradual` is
-        the ramp choice, when offered. */
-    std::function<void(double first, double second, bool gradual)> onApplyEdit;
+    /** Called with every field's value (edited or not, in field order) a
+        moment after the last stepper press, and at once by Reset or a typed
+        value: the engine hears each size live. `gradual` is the ramp choice,
+        when offered. */
+    std::function<void(const std::vector<double>& values, bool gradual)> onApplyEdit;
+    /** The viewer's units, for fields with a quantity; null shows the
+        internal units. */
+    void setUnits(const UnitFormat* units) noexcept { units_ = units; }
     /** Called at once when the edit's choice is switched, with its new index. */
     std::function<void(int index)> onChoice;
     /** Called when a typed value is applied or cancelled, to hand the
@@ -186,8 +200,10 @@ public:
 private:
     void timerCallback() override;
     void sendEdit();
-    [[nodiscard]] juce::String formatValue(double value, bool first, bool withUnit = true) const;
-    [[nodiscard]] double lowest(bool first) const;
+    /** A field's value in its shown unit, with the unit when asked. A
+        `difference` (a step) is scaled but never offset (degrees F). */
+    [[nodiscard]] juce::String formatValue(std::size_t field, double value, bool withUnit = true,
+                                           bool difference = false) const;
     [[nodiscard]] juce::Rectangle<int> closeArea() const;
     juce::String title_;
     juce::String subtitle_;
@@ -195,16 +211,14 @@ private:
     juce::String note_;
     std::optional<Scope> scope_;
     std::optional<Edit> edit_;
-    double pendingFirst_ {};
-    double pendingSecond_ {};
-    /** The size when the component was selected, which Reset goes back to. */
-    double originFirst_ {};
-    double originSecond_ {};
+    const UnitFormat* units_ { nullptr };
+    std::vector<double> pending_;
+    /** The values when the part was selected, which Reset goes back to. */
+    std::vector<double> origin_;
     juce::String editStatus_;
-    ActionButton firstDown_ { "-", ActionButton::Style::compact };
-    ActionButton firstUp_ { "+", ActionButton::Style::compact };
-    ActionButton secondDown_ { "-", ActionButton::Style::compact };
-    ActionButton secondUp_ { "+", ActionButton::Style::compact };
+    /** One stepper pair per field (hidden for a field that is not editable). */
+    std::vector<std::unique_ptr<ActionButton>> downButtons_;
+    std::vector<std::unique_ptr<ActionButton>> upButtons_;
     ActionButton resetEdit_ { "Reset", ActionButton::Style::compact };
     ActionButton rampEdit_ { "Next cycle", ActionButton::Style::compact };
     ActionButton choiceEdit_ { {}, ActionButton::Style::compact };
@@ -212,14 +226,14 @@ private:
         default, which also avoids the lean cycle of an instant change. */
     bool gradual_ { true };
     juce::TextEditor valueEditor_;
-    /** The value being typed: 0 the first, 1 the second, -1 none. */
+    /** The field being typed, or -1. */
     int typing_ { -1 };
-    [[nodiscard]] juce::Rectangle<int> valueArea(bool first) const;
-    void beginTyping(bool first);
+    [[nodiscard]] juce::Rectangle<int> valueArea(std::size_t field) const;
+    void beginTyping(std::size_t field);
     void endTyping(bool apply);
     [[nodiscard]] juce::TextLayout noteLayout(const juce::String& text, juce::Colour, float width) const;
     [[nodiscard]] int editHeight() const;
-    void stepEdit(bool length, double direction);
+    void stepEdit(std::size_t field, double direction);
     void updateEditButtons();
     void paintScope(juce::Graphics&, juce::Rectangle<float> area) const;
     void paintEdit(juce::Graphics&, juce::Rectangle<int> area) const;
@@ -348,16 +362,16 @@ private:
     void updateInspector();
     /** Asks for the oscilloscope trace of the selected duct and shows it. */
     void updateScope();
-    void applyEdit(double first, double second, bool gradual);
+    void applyEdit(const std::vector<double>& values, bool gradual);
     void applyExhaustEdit(double lengthMm, double diameterMm);
     void applyCylinderEdit(double boreMm, double strokeMm, bool gradual);
     void applyRodEdit(double rodMm, bool gradual);
     /** A valve's cam or the heads' cam timing, through the ramped editor. */
-    void applyCamshaftEdit(double first, double second, bool gradual);
+    void applyCamshaftEdit(const std::vector<double>& values, bool gradual);
     /** Hands a resized engine to cylinderEditor_, or says why it was refused. */
     void sendCylinderEdit(const EngineConfig& edited, const std::string& error, bool gradual);
     /** Applies the selected part's partEditor_ through configEditor_. */
-    void applyPartEdit(double first, double second);
+    void applyPartEdit(const std::vector<double>& values);
     /** Applies the selected part's partChoice_ through configEditor_. */
     void applyPartChoice(int index);
     void updateLegend();
@@ -378,10 +392,10 @@ private:
     std::function<bool(std::int32_t, std::uint8_t, GasProbeTrace&)> gasProbeSource_;
     std::function<bool(const EngineConfig&)> configEditor_;
     std::function<bool(const EngineConfig&, double)> cylinderEditor_;
-    /** How the selected intake part, turbo or injectors take an edit: the two
-        values into a copy of the configuration, or why not. Set by
-        updateInspector(). */
-    std::function<std::string(EngineConfig&, double, double)> partEditor_;
+    /** How the selected intake part, turbo, injectors or gearbox take an
+        edit: the fields' values, in order, into a copy of the configuration,
+        or why not. Set by updateInspector(). */
+    std::function<std::string(EngineConfig&, const std::vector<double>&)> partEditor_;
     /** How the selected part takes its edit's choice, when it has one. */
     std::function<void(EngineConfig&, int)> partChoice_;
     /** When the choice adds or removes parts (a turbo): the role to select

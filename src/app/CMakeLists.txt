@@ -18,6 +18,7 @@ target_sources(EngineLabApp PRIVATE
     src/ExhaustDesignerWindow.cpp
     src/Theme.cpp src/Widgets.cpp src/DashboardModel.cpp src/TopBar.cpp src/ControlPanel.cpp
     src/EngineViewport.cpp src/EngineScene.cpp src/ReadoutStrip.cpp src/DynoPanel.cpp src/SidePanel.cpp src/StatusBar.cpp
+    src/UnitFormat.cpp include/enginelab/app/UnitFormat.hpp
     include/enginelab/app/MainComponent.hpp include/enginelab/app/ActionMap.hpp
     include/enginelab/app/AudioWorkshopWindow.hpp
     include/enginelab/app/EcuTunerWindow.hpp

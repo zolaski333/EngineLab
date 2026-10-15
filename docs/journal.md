@@ -5,6 +5,13 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-15 — Cruise control and the automatic shift schedule, driven
+
+- `DriveScenarioHarness --builtin cruise --automatic 1` (60 % pedal, set at 100 km/h, brake at 40 s). First version: the 2JZ ran to 116 km/h, because the integral started at the 60 % accelerating throttle and bled at 0.03/s per m/s. Added: past the set speed and still gaining, the throttle falls at 0.5/s (and the mirror case). Toy-car test: peak 111.1 -> 103.0 km/h.
+- After, the gearbox shifting itself (the scenario's scripted rpm upshifts are now skipped under `--automatic`): peak 106.7 (2JZ), 107.9 (CP2), 101.6 (TDI), 108.6 km/h (LS3); then mean |error| 0.67 / 0.05 / 0.22 / 0.87, max 1.42 / 0.70 / 0.40 / 2.05 km/h. Gains are choices, not fits to a real controller.
+- Upshifts at 60 % pedal, one gear at a time: 2JZ 4,601-4,768 rpm, CP2 5,994-6,032, TDI 3,263-3,427, LS3 4,068-4,507; under cruise the LS3 lifts up to sixth at 2,308. Dual-clutch 2JZ test: flat out 6,581-6,769 rpm (limit 7,000), 25 % pedal 2,660; braked from sixth to a stop, back in first, lowest 629 rpm.
+- Reference: MT-07 0-100 km/h 3.85 s (MotoStatz), 0-60 mph 3.80 s (MCN 2014); EngineLab CP2 5.86-6.35 s. Not changed yet (plan E5).
+
 ## 2026-10-15 — Standing starts after the driver's clutch took over the shift
 
 - `EngineLab.StandingStartSettledIdle` failed after B1: the I5 stalled at 25 s. Cause, one factor: a gear selected with the clutch held now engages at once, so the scripted 0.9 s pedal ramp loaded the engine from t = 0 (before, the timed selection held it out for 0.18 s). I5, 8 launch times: 2 stalls, lowest 241-294 rpm; ramp held at 0 for the first 0.18 s: 0 stalls, 383-462 rpm.
