@@ -5,6 +5,15 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-15 — The default collector was a 2 L chamber
+
+- Owner complaint: a short collector sounds muffled on every engine. GeometrySensitivityHarness, collector volume -> swept only: CP2 +10 to +19 dB over 0.5-5 kHz, TDI +8 to +12 dB at 1.2-3 kHz. Cause: `collectorVolumeLitres` defaulted to 2.0 L, lumped as a compliance at the branch (a pre-chamber the geometry does not have), and the catalogue floored it at 0.05 L.
+- Now 0 = no body: the collector holds what its trunk sweeps (legacy graph, editable network, catalogue builder). An authored body (CP3 1.7 L, CP4 2.0 L) is kept and scales with the collector on resize.
+- First attempt collapsed the CFL (2JZ 64.8 -> 9.3 mm): the catalogue's 0.05 L floor, not the swept stiffness. Final: CFL identical on all 10 engines measured (CP2 44.4, 2JZ 64.8, Hayabusa 44.4 ...).
+- Sound vs before (default render, 2 s skip): shape CP2 7.2, Hayabusa 12.3 (+5.8 dB level), TDI 6.9, I5 6.7, K20 4.1, 2JZ 3.8, EJ25 3.6; tilt brighter (CP2 -2.80 -> -1.25, Hayabusa -0.06 -> +3.43 dB/oct). LS3, Harley, CP4: bit-identical.
+- Dyno (whole catalogue, 1,000 rpm steps): peak power -1.9 to +2.4 %, torque rows within -4.9/+3.0 %.
+- Not listened to; not compared with a recording. The real stock MT-07 and Hayabusa have an under-engine box that is not authored here (could be, as on CP3/CP4).
+
 ## 2026-10-15 — Knock control as a calibration; knock intensity saturates
 
 - The ECU's knock retard (`knockLevel x 12` deg) is now the calibration `knock.retard_deg_per_intensity` (default 12, 0 = off). EngineLab.KnockControl, 2JZ held at 0.6 x redline, full load, last 6 of 12 s: on: knock 0.35, advance 6.3 deg, 455.6 N.m, damage 0; off: knock 0.43, advance 10.5 deg, 465.4 N.m, damage 3e-6.

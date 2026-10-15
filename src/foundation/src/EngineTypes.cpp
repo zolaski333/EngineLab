@@ -684,7 +684,8 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
         || !inRange(config.exhaust.collectorDiameterMm, 15.0, 300.0)
         || !inRange(config.exhaust.outletDiameterMm, 15.0, 300.0)
         || !inRange(config.exhaust.mufflerRestriction, 0.0, 1.0)
-        || !inRange(config.exhaust.collectorVolumeLitres, 0.05, 200.0)
+        || !(config.exhaust.collectorVolumeLitres == 0.0
+             || inRange(config.exhaust.collectorVolumeLitres, 0.05, 200.0))
         || !inRange(config.exhaust.outletDischargeCoefficient, 0.02, 1.5)
         || !inRange(config.exhaust.mufflerChamberDiameterMm, 0.0, 600.0)
         || !inRange(config.exhaust.mufflerChamberLengthMm, 0.0, 3'000.0)
@@ -1155,7 +1156,8 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
             || !inRange(exhaust.collectorDiameterMm, 15.0, 300.0)
             || !inRange(exhaust.outletDiameterMm, 15.0, 300.0)
             || !inRange(exhaust.mufflerRestriction, 0.0, 1.0)
-            || !inRange(exhaust.collectorVolumeLitres, 0.05, 200.0)
+            || !(exhaust.collectorVolumeLitres == 0.0
+                 || inRange(exhaust.collectorVolumeLitres, 0.05, 200.0))
             || !inRange(exhaust.outletDischargeCoefficient, 0.02, 1.5)
             || !inRange(exhaust.mufflerChamberDiameterMm, 0.0, 600.0)
             || !inRange(exhaust.mufflerChamberLengthMm, 0.0, 3'000.0)

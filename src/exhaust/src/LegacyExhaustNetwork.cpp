@@ -40,7 +40,10 @@ ExhaustNetworkConfig makeEditableExhaustNetwork(const ExhaustPathConfig& path) {
     std::uint32_t previousId = 0;
     if (primaryIds.size() > 1U) {
         auto collector = component(ExhaustComponentType::merge, nextId++);
-        collector.lengthMm = 0.0;
+        // Without an authored body the collector is its trunk and holds what
+        // it sweeps (zero volume), as the solver's own geometry has it.
+        collector.lengthMm = path.geometry.collectorVolumeLitres > 0.0
+            ? 0.0 : legacyCollectorTrunkLengthMm;
         collector.diameterMm = path.geometry.collectorDiameterMm;
         collector.volumeLitres = path.geometry.collectorVolumeLitres;
         previousId = collector.id;

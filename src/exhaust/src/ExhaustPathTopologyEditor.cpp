@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <limits>
+#include <numbers>
 #include <optional>
 #include <unordered_map>
 #include <unordered_set>
@@ -65,9 +66,14 @@ using PathIterator = std::vector<ExhaustPathConfig>::iterator;
     ExhaustComponentConfig merge;
     merge.id = id;
     merge.type = ExhaustComponentType::merge;
+    // A junction inserted into existing routes: zero length, so no tuned
+    // primary changes. Without an authored body it holds what a collector
+    // trunk of the same bore would sweep, not an empty point.
     merge.lengthMm = 0.0;
     merge.diameterMm = path.geometry.collectorDiameterMm;
-    merge.volumeLitres = path.geometry.collectorVolumeLitres;
+    const auto radiusM = path.geometry.collectorDiameterMm * 0.0005;
+    merge.volumeLitres = path.geometry.collectorVolumeLitres > 0.0 ? path.geometry.collectorVolumeLitres
+        : std::numbers::pi * radiusM * radiusM * legacyCollectorTrunkLengthMm * 0.001 * 1'000.0;
     return merge;
 }
 

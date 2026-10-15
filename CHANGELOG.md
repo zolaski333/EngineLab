@@ -9,6 +9,13 @@ file formats, always with an in-memory migration).
 
 ### Changed
 
+- Exhaust collectors no longer sound muffled. A collector without an
+  authored volume behaved as a 2-litre chamber, which cut 0.5-5 kHz by up
+  to 19 dB on most engines; it now holds only what its pipe sweeps. Engines
+  that author a collector box (MT-09, MT-10) are unchanged. Power moves by
+  at most 2.4 %. Resizing a collector box in the 3-D view now scales its
+  volume.
+
 - Motorcycles accelerate like motorcycles: their wheels, chain and clutch
   had a car's inertia (the equivalent of 230 kg more bike in first). The
   MT-07 now does 0-100 km/h in 3.9 s (published 3.85 s, before 5.9 s). The

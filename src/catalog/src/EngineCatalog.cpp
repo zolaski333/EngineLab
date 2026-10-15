@@ -135,8 +135,9 @@ void compileCatalogueExhaustPath(ExhaustPathConfig& path,
         }
         auto merge = exhaustComponent(400,
             ExhaustComponentType::merge, 130.0, collectorDiameter);
-        merge.volumeLitres = std::max(0.20,
-            geometry.collectorVolumeLitres);
+        // Zero (no authored body): what the merge's trunk sweeps.
+        merge.volumeLitres = geometry.collectorVolumeLitres > 0.0
+            ? std::max(0.20, geometry.collectorVolumeLitres) : 0.0;
         network.components.push_back(merge);
         addConnection(300, 400);
         addConnection(301, 400);
@@ -147,8 +148,8 @@ void compileCatalogueExhaustPath(ExhaustPathConfig& path,
         auto merge = exhaustComponent(200,
             ExhaustComponentType::merge,
             std::max(120.0, primaryLength * 0.35), collectorDiameter);
-        merge.volumeLitres = std::max(0.05,
-            geometry.collectorVolumeLitres);
+        merge.volumeLitres = geometry.collectorVolumeLitres > 0.0
+            ? std::max(0.05, geometry.collectorVolumeLitres) : 0.0;
         network.components.push_back(merge);
         for (const auto primaryId : primaryIds)
             addConnection(primaryId, 200);

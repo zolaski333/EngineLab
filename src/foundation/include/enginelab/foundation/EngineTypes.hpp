@@ -172,13 +172,21 @@ struct CamshaftConfig final {
     ValveControlConfig continuousControl;
 };
 
+/** Length of the common trunk the scalar exhaust geometry gives its
+ *  collector, mm. */
+inline constexpr double legacyCollectorTrunkLengthMm = 120.0;
+
 struct ExhaustConfig final {
     double primaryLengthMm { 480.0 };
     double primaryDiameterMm { 42.0 };
     double collectorDiameterMm { 58.0 };
     double mufflerRestriction { 0.28 };
     double outletDiameterMm { 65.0 };
-    double collectorVolumeLitres { 2.0 };
+    /** Gas volume of the collector body. Zero: no body, the collector holds
+     *  what its own trunk sweeps, as a cone of merging primaries does. It was
+     *  2.0 L by default: a pre-chamber behind every catalogue collector, which
+     *  muffled 0.5-5 kHz by up to 19 dB (journal 2026-10-15). */
+    double collectorVolumeLitres { 0.0 };
     double outletDischargeCoefficient { 0.72 };
     /** Single expansion chamber on the collector-to-outlet duct. Zero on either
      *  field means "no silencer": the audio element becomes an exact
