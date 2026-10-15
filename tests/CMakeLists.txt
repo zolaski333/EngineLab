@@ -254,7 +254,7 @@ add_test(NAME EngineLab.DriverCommand COMMAND EngineLabDriverCommandTests)
 add_executable(EngineLabActiveLimitsTests ActiveLimitsTests.cpp)
 target_link_libraries(EngineLabActiveLimitsTests PRIVATE
     EngineLab::Foundation EngineLab::Calibration EngineLab::Events EngineLab::Physics EngineLab::Ecu
-    EngineLab::Exhaust EngineLab::Simulation EngineLab::Catalog)
+    EngineLab::Exhaust EngineLab::Simulation EngineLab::Catalog EngineLab::Runtime)
 target_compile_definitions(EngineLabActiveLimitsTests PRIVATE
     ENGINELAB_CATALOG_ROOT="${CMAKE_SOURCE_DIR}")
 if(MSVC)
@@ -477,23 +477,19 @@ if(TARGET EngineLabLoadedAccelerationHarness)
     # stalled six road engines at 4 s (x2.12 start reserve stacked on X-tau)
     # and no other test launched this quickly. The Merlin and the radial sit
     # on `vehicle: test_stand` and also stalled before d70e8b8: a road launch
-    # is not a meaningful test for them. Declared stalls (lean and lugged
-    # below idle by the clutch; an asynchronous tip-in pulse did not save
-    # them) are tracked in docs/journal.md; any other stall fails. At 4 s the
-    # LS3 pushes half its metered fuel back into its plenum and stalls lean
-    # (declared 2026-09-23); the 2JZ, declared before, now launches. At 25 s
-    # the EJ25 runs at its regulated 90 degC (default since 2026-10-13) and
-    # stalls on 9 launch times out of 41 (0 when it warms freely from cold):
-    # declared, journal 2026-10-13.
+    # is not a meaningful test for them. Any stall fails. The scripted driver
+    # holds the clutch down while the lever moves, then feeds it in: with it,
+    # the stalls once declared here (LS3 at 4 s, EJ25 and Aircooled at 25 s)
+    # launch, and the four most fragile (EJ25, Aircooled, I5, Big Twin) keep
+    # at least 595 rpm over eight launch times (journal 2026-10-15).
     add_test(NAME EngineLab.StandingStartCatalogue
         COMMAND EngineLabLoadedAccelerationHarness
             --standing-start --gear 1 --launch-at 4
-            --skip Merlin --skip Radial --known-stall LS3)
+            --skip Merlin --skip Radial)
     add_test(NAME EngineLab.StandingStartSettledIdle
         COMMAND EngineLabLoadedAccelerationHarness
             --standing-start --gear 1 --launch-at 25
-            --skip Merlin --skip Radial --known-stall Aircooled
-            --known-stall EJ25)
+            --skip Merlin --skip Radial)
     set_tests_properties(
         EngineLab.LoadedAccelerationCP2
         EngineLab.LoadedAccelerationAudi

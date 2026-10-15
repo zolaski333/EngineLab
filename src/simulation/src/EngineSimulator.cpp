@@ -4901,7 +4901,14 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
             state_.coolingFanOn = false;
         }
         state_.exhaustTemperatureC = smooth(state_.exhaustTemperatureC, exhaustTarget, subDt, 0.18);
-        const auto overrev = std::max(0.0, state_.rpm / config_.redlineRpm - 1.0);
+        // Over-revving is measured against the limiter the ECU applies now,
+        // with 2 % for its own overshoot: under its own power the engine
+        // stays there, only a driven engine (a missed downshift) goes past.
+        // The redline is a display mark. The piston-acceleration term below
+        // remains the physical cap whatever the limiter is set to.
+        const auto overrevReferenceRpm = 1.02 * (state_.activeRevLimitRpm > 0.0
+            ? state_.activeRevLimitRpm : config_.ignition.revLimitRpm);
+        const auto overrev = std::max(0.0, state_.rpm / overrevReferenceRpm - 1.0);
         const auto oilStarvation = state_.rpm > 800.0 && state_.oilPressureKpa < 90.0 ? 1.0 : 0.0;
         const auto excessivePistonAcceleration = std::max(0.0, state_.peakPistonAccelerationG - 5'500.0) / 5'500.0;
         // Only severe knock (above the 0.45 the diagnostics call severe) wears

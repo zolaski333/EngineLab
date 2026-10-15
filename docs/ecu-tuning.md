@@ -44,6 +44,14 @@ protection (above 108 °C), a diesel's smoke or quantity ceiling, an open
 wastegate (boost held at its target) and a saturated injector (open for at
 least 99 % of its window). It is telemetry: nothing reads it back.
 
+Two things follow the active rev limit rather than the authored one. The
+dyno's sweep stops at 0.95 of it (and 300 rpm under it); an untuned engine
+keeps its validated ceiling, under the lower of redline and limiter. Over-rev
+damage starts 2 % past it: under its own power the engine stays at its
+limiter, and only a driven engine (a missed downshift) goes past. The redline
+is a display mark. The piston-acceleration term (above 5,500 g) still caps a
+limiter raised too far.
+
 ### Idle and fuel-cut strategies (not tunable)
 
 - **Fuel cut on overrun**: below 2 % throttle and above 1.65 × the idle

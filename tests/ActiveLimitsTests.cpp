@@ -10,9 +10,11 @@
 #include <enginelab/events/FourStrokeEventGenerator.hpp>
 #include <enginelab/exhaust/ExhaustGraph.hpp>
 #include <enginelab/physics/SimplifiedGasolinePhysics.hpp>
+#include <enginelab/runtime/EngineRuntime.hpp>
 #include <enginelab/simulation/EngineSimulator.hpp>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -23,6 +25,7 @@
 #include <memory>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <variant>
 
 namespace {
@@ -180,6 +183,82 @@ void checkSimulator(const enginelab::EngineCatalogLoadResult& catalog) {
     require(wastegateMatches, "the boost-at-target bit follows the wastegate");
     require(hasActiveLimit(seen, ActiveLimit::boostAtTarget), "the TDI's wastegate regulates at full load");
 }
+/** Damage from over-revving a CP2 motored at `targetRpm` for 3 s: the
+ * engine is driven, as by a missed downshift. */
+double motoredDamage(const enginelab::EngineConfig& config, double revLimitRpm, double targetRpm) {
+    auto engine = std::make_unique<Engine>(config);
+    if (revLimitRpm > 0.0) {
+        engine->ecu.initialiseCalibration(config);
+        publishRevLimit(engine->ecu, revLimitRpm);
+    }
+    enginelab::EngineControls controls;
+    controls.ignitionEnabled = true;
+    for (int index = 0; index < static_cast<int>(2.0 / stepSeconds); ++index) {
+        controls.starterEngaged = engine->simulator.state().rpm < config.idleRpm * 0.85 && index * stepSeconds < 1.5;
+        (void)engine->simulator.step(stepSeconds, controls);
+    }
+    controls.starterEngaged = false;
+    double heldRpm = 0.0;
+    for (int index = 0; index < static_cast<int>(3.0 / stepSeconds); ++index) {
+        const auto rpm = engine->simulator.state().rpm;
+        // Positive external torque drives the crank.
+        controls.externalTorqueNm = std::clamp(0.2 * (targetRpm - rpm), -400.0, 400.0);
+        heldRpm = engine->simulator.step(stepSeconds, controls).state.rpm;
+    }
+    const auto damage = engine->simulator.state().damage;
+    std::printf("  motored at %.0f rpm (held %.0f), limit %.0f: damage %.3g\n",
+        targetRpm, heldRpm, revLimitRpm > 0.0 ? revLimitRpm : config.ignition.revLimitRpm, damage);
+    require(std::abs(heldRpm - targetRpm) < 0.05 * targetRpm, "the motoring brake must hold its speed");
+    return damage;
+}
+
+void checkOverrevDamage(const enginelab::EngineConfig& cp2) {
+    require(cp2.redlineRpm < cp2.ignition.revLimitRpm, "the CP2's limiter sits above its redline");
+    // Between the redline and the limiter: not an over-rev any more.
+    require(motoredDamage(cp2, 0.0, 0.5 * (cp2.redlineRpm + cp2.ignition.revLimitRpm)) == 0.0,
+        "running between the redline and the limiter does not damage the engine");
+    // Past a lowered limiter, well under the redline: an over-rev.
+    require(motoredDamage(cp2, 6'000.0, 7'000.0) > 0.0,
+        "driven past a lowered limiter, the engine is damaged");
+}
+
+/** The ceiling of a dyno run the runtime accepts, with an optional tune. */
+double dynoCeiling(const enginelab::EngineConfig& config, double revLimitRpm) {
+    auto runtime = std::make_unique<enginelab::EngineRuntime>(config);
+    if (revLimitRpm > 0.0) {
+        auto draft = enginelab::calibration::makeDraft(*runtime->calibrationStore()->snapshot());
+        auto limiter = *draft.find(enginelab::calibration::keys::revLimit);
+        std::get<enginelab::calibration::ScalarCalibration>(limiter).value = revLimitRpm;
+        draft.set(std::move(limiter));
+        require(runtime->calibrationStore()->publish(draft).published, "a rev limit must publish");
+    }
+    runtime->setIgnitionEnabled(true);
+    runtime->start();
+    runtime->startDyno();
+    auto run = runtime->currentDynoRun();
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    while (run.engineName.empty() && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        run = runtime->currentDynoRun();
+    }
+    runtime->stopDyno();
+    runtime->stop();
+    require(!run.engineName.empty(), "the dyno run must start");
+    std::printf("  dyno, limit %.0f: sweep ceiling %.0f rpm\n",
+        revLimitRpm > 0.0 ? revLimitRpm : config.ignition.revLimitRpm, run.sessionConfig.sweepCeilingRpm);
+    return run.sessionConfig.sweepCeilingRpm;
+}
+
+void checkDynoCeiling(const enginelab::EngineConfig& cp2) {
+    const auto authored = std::min(0.95 * std::min(cp2.redlineRpm, cp2.ignition.revLimitRpm),
+                                   cp2.ignition.revLimitRpm - 300.0);
+    require(std::abs(dynoCeiling(cp2, 0.0) - authored) < 1.0e-6,
+        "untuned, the dyno keeps its validated ceiling");
+    require(std::abs(dynoCeiling(cp2, 7'000.0) - 0.95 * 7'000.0) < 1.0e-6,
+        "a lowered limiter lowers the dyno's ceiling");
+    require(std::abs(dynoCeiling(cp2, 12'000.0) - 0.95 * 12'000.0) < 1.0e-6,
+        "a raised limiter raises the dyno's ceiling past the redline");
+}
 } // namespace
 
 int main() {
@@ -188,6 +267,11 @@ int main() {
         const auto catalog = enginelab::loadEngineCatalog(std::filesystem::path(ENGINELAB_CATALOG_ROOT));
         require(catalog.errors.empty(), "the catalogue must load");
         checkSimulator(catalog);
+        const auto& cp2 = findEngine(catalog, "CP2 MT-07");
+        std::printf("over-rev damage against the active limiter\n");
+        checkOverrevDamage(cp2);
+        std::printf("dyno ceiling from the active limiter\n");
+        checkDynoCeiling(cp2);
         std::printf("active limits: all checks passed\n");
         return EXIT_SUCCESS;
     } catch (const std::exception& error) {

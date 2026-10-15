@@ -215,6 +215,11 @@ struct StandingStartMetrics final {
 
 /** Standing start from idle: requested gear, WOT, clutch fed in over 0.9 s.
  *
+ * The pedal stays down while the lever moves (the gearbox's shift duration):
+ * since the driver's clutch overrides the shift devices, a gear selected with
+ * the pedal down engages at once, and a ramp starting with it loaded the
+ * engine before a driver would (the I5 then stalled at 2 of 8 launch times).
+ *
  * This is the launch the afterfire harness and a user at the keyboard make. It
  * is harsher than the rolling pull above (0.35 s delay, 1.65 s ramp), and it
  * is the one d70e8b8 broke: with the high-load fuel cell starting at unity, the
@@ -255,11 +260,12 @@ StandingStartMetrics measureStandingStart(
     if (!metrics.started) return metrics;
 
     driveline.requestGear(gearNumber - 1);
+    const auto leverSeconds = config.transmission.shiftDurationSeconds;
     const auto misfiresBefore = simulator.state().misfireEventCount;
     for (int tick = 0; tick < static_cast<int>(2.4 / stepSeconds);
          ++tick, timeSeconds += stepSeconds) {
         const auto clutch = std::clamp(
-            static_cast<double>(tick) * stepSeconds / 0.9, 0.0, 1.0);
+            (static_cast<double>(tick) * stepSeconds - leverSeconds) / 0.9, 0.0, 1.0);
         const auto result = coupledStep(simulator, driveline, 1.0, clutch, false);
         const auto& state = result.frame.state;
         metrics.minimumRpm = std::min(metrics.minimumRpm, state.rpm);
