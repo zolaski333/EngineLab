@@ -128,20 +128,33 @@ struct UpshiftResult final {
     double syncSeconds { -1.0 };      // to the new gear, clutch locked
     double minimumWheelShare { 1.0 }; // lowest wheel torque / new gear's
     double syncErrorShare { 1.0 };    // |engine - new gear speed| / that speed
+    double peakWheelShare { 0.0 };    // highest wheel torque / new gear's
+    double pushImpulse { 0.0 };       // integral of the excess over it, s
+    double advanceBefore { 0.0 };     // ignition advance before the shift
+    double lowestAdvance { 0.0 };     // lowest advance until synchronised
 };
 
-UpshiftResult measureUpshift(enginelab::EngineConfig config, enginelab::ShiftStyle style) {
+UpshiftResult measureUpshift(enginelab::EngineConfig config, enginelab::ShiftStyle style,
+                             double dualClutchRetardDegrees = -1.0, double shiftAtRedlineShare = 0.70) {
     config.transmission.shiftStyle = style;
+    if (dualClutchRetardDegrees >= 0.0)
+        config.transmission.dualClutchUpshiftRetardDegrees = dualClutchRetardDegrees;
     auto rig = std::make_unique<Rig>(config);
-    rig->launchTo(config.redlineRpm * 0.70);
+    rig->launchTo(config.redlineRpm * shiftAtRedlineShare);
     // Wheel torque before the shift, over the last 0.1 s.
     double before = 0.0;
+    double advanceBefore = 0.0;
     const auto beforeSteps = static_cast<int>(0.1 / stepSeconds);
-    for (int index = 0; index < beforeSteps; ++index)
-        before += rig->step(1.0, 1.0).drive.wheelTorqueNm / beforeSteps;
+    for (int index = 0; index < beforeSteps; ++index) {
+        const auto tick = rig->step(1.0, 1.0);
+        before += tick.drive.wheelTorqueNm / beforeSteps;
+        advanceBefore += tick.state.ignitionAdvanceDegrees / beforeSteps;
+    }
     const auto expectedAfter = before * rig->gearRatio(1) / rig->gearRatio(0);
     rig->driveline().shiftUp();
     UpshiftResult result;
+    result.advanceBefore = advanceBefore;
+    result.lowestAdvance = advanceBefore;
     const auto lockBand = 2.0 * config.transmission.clutchLockSpeedRpm;
     for (int index = 0; index < static_cast<int>(1.0 / stepSeconds); ++index) {
         const auto tick = rig->step(1.0, 1.0);
@@ -152,6 +165,9 @@ UpshiftResult measureUpshift(enginelab::EngineConfig config, enginelab::ShiftSty
         const auto share = tick.drive.wheelTorqueNm / std::max(1.0, expectedAfter);
         if (result.syncSeconds < 0.0) {
             result.minimumWheelShare = std::min(result.minimumWheelShare, share);
+            result.peakWheelShare = std::max(result.peakWheelShare, share);
+            result.pushImpulse += std::max(0.0, share - 1.0) * stepSeconds;
+            result.lowestAdvance = std::min(result.lowestAdvance, tick.state.ignitionAdvanceDegrees);
             if (share < 0.5) result.gapSeconds += stepSeconds;
         }
         if (result.syncSeconds < 0.0 && tick.drive.engagedGear == 1 && !tick.drive.shiftInProgress
@@ -162,10 +178,12 @@ UpshiftResult measureUpshift(enginelab::EngineConfig config, enginelab::ShiftSty
         }
     }
     std::printf("  %-34s %-11s cut %5.1f ms spark-off %d gap %5.1f ms sync %6.1f ms"
-                " min wheel %5.2f sync err %5.3f\n",
+                " wheel %5.2f-%5.2f push %5.1f ms sync err %5.3f advance %5.1f -> %5.1f deg\n",
         config.name.c_str(), enginelab::shiftStyleName(style), result.cutSeconds * 1000.0,
         result.sparkCutSeen ? 1 : 0, result.gapSeconds * 1000.0, result.syncSeconds * 1000.0,
-        result.minimumWheelShare, result.syncErrorShare);
+        result.minimumWheelShare, result.peakWheelShare, result.pushImpulse * 1000.0, result.syncErrorShare,
+        result.advanceBefore,
+        result.lowestAdvance);
     return result;
 }
 
@@ -327,12 +345,31 @@ int main() {
             "the catalogue CP2 shifts up through a quickshifter, down through its clutch");
         require(jz.transmission.shiftStyle == enginelab::ShiftStyle::manual,
             "the catalogue 2JZ keeps its manual gearbox");
+        // A motorcycle's wheels, chain and clutch basket, reflected to the
+        // road in first gear, are a small share of its mass (a car's
+        // defaults made them 90 % of a CP2's).
+        for (const auto& entry : catalog.entries) {
+            const auto& config = entry.config;
+            if (config.vehicle.massKg > 500.0 || config.transmission.gearRatios.empty()) continue;
+            const auto& box = config.transmission;
+            const auto first = box.gearRatios.front() * box.finalDriveRatio;
+            const auto radius = config.vehicle.tireRadiusM;
+            const auto equivalentKg = (box.drivenWheelInertiaKgM2 + box.differentialInertiaKgM2
+                + box.gearboxInputInertiaKgM2 * first * first) / (radius * radius);
+            std::printf("  %-34s rotating inertia in first: %5.1f kg on %5.0f kg\n", config.name.c_str(),
+                equivalentKg, config.vehicle.massKg);
+            require(equivalentKg < 0.2 * config.vehicle.massKg,
+                config.name + ": a motorcycle's rotating inertia must not weigh like a car's");
+        }
 
         std::printf("upshift 1 -> 2 at full throttle, 70 %% of redline\n");
         const auto cp2Manual = measureUpshift(cp2, enginelab::ShiftStyle::manual);
         const auto cp2Quick = measureUpshift(cp2, enginelab::ShiftStyle::sequential);
         const auto jzManual = measureUpshift(jz, enginelab::ShiftStyle::manual);
         const auto jzDual = measureUpshift(jz, enginelab::ShiftStyle::dualClutch);
+        std::printf("dual-clutch upshift 1 -> 2 at 85 %% of redline, spark retard 20 and 0 deg\n");
+        const auto jzRetard = measureUpshift(jz, enginelab::ShiftStyle::dualClutch, 20.0, 0.85);
+        const auto jzNoRetard = measureUpshift(jz, enginelab::ShiftStyle::dualClutch, 0.0, 0.85);
 
         // Quickshifter: the ignition is cut for the authored length (one
         // frame of rounding), the ECU really drops the spark, and the drive
@@ -353,6 +390,17 @@ int main() {
         require(jzDual.gapSeconds == 0.0 && jzDual.minimumWheelShare > 0.5,
             "a dual-clutch upshift must have no torque gap");
         require(jzManual.gapSeconds > 0.05, "a clutch shift must have a torque gap (control)");
+        // Its torque intervention: the spark is retarded while the clutch
+        // pulls the engine down. The 2JZ's clutch is at its capacity through
+        // the pull-down either way, so the push's peak stays; the engine,
+        // making less torque, reaches the new speed sooner and the push is
+        // shorter.
+        require(jzRetard.lowestAdvance < jzNoRetard.lowestAdvance - 8.0,
+            "a loaded dual-clutch upshift must retard the spark");
+        require(jzRetard.pushImpulse < 0.98 * jzNoRetard.pushImpulse,
+            "the spark retard must shorten the push the wheel feels");
+        require(jzNoRetard.gapSeconds == 0.0 && jzNoRetard.syncErrorShare < 0.03,
+            "without it the hand-over still completes with no gap");
 
         std::printf("downshift 3 -> 2, throttle shut\n");
         const auto blipped = measureDownshift(cp2, true);

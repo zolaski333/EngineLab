@@ -5,6 +5,27 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-15 — CVT, car and scooter
+
+- A variator inside the clutch model: ratio interpolated over the 1 ms steps, the stick constraint follows its rate and takes slip out over 20 ms. Fixed-ratio gearboxes bit-for-bit unchanged (start = end ratio, added terms zero).
+- Toy engine (EngineLab.Cvt, 200 Nm, 1,300 kg): the scheduled speed is held within 0.0 %, no step over 0.0 rpm/frame; 30 % pedal 2,510 rpm (centrifugal 2,717), flat out 6,120; launches and braked stops never under 0.85 x idle; the scooter's centrifugal clutch idles free, the car's creeps.
+- K20 switched to CVT (its 1st-6th range), DriveScenarioHarness `--builtin pull`: held 7,396 rpm from 6 s to top speed, slip 0-1 rpm; 0-100 km/h 5.80 s (its manual 6.19 s), 235.5 km/h. `--builtin cruise`: 100 km/h held, mean error 0.59 km/h.
+- Not compared with a real CVT's engine-speed trace; the 1.5 s ratio rate, the pedal schedule and both parts' ranges are typical values, not a unit's. No scooter engine in the catalogue yet.
+
+## 2026-10-15 — Motorcycle rotating inertias were a car's
+
+- The three motorcycle gearboxes inherited the car defaults (wheels 3.6, differential 0.16, input 0.08 kg m^2): 234 kg of equivalent mass in first on a 260 kg bike. Now wheels 1.2 (cruiser 1.6), chain 0.02 (0.03), clutch basket 0.004 (0.008) referred through the primary: 23 kg (28).
+- DriveScenarioHarness `--builtin pull`, 0-100 km/h before -> after: CP2 5.86 -> 3.91 s (published 3.85 s, motostatz), CP3 4.17 -> 2.75, CP4 3.53 -> 2.38, Hayabusa 2.90 -> 1.95, Big Twin 4.52 -> 3.92. Top speeds unchanged (+/-0.6 km/h).
+- CP3, CP4 and Hayabusa are now quicker than published (about 3.0-3.5 s): a real one is wheelie- and grip-limited and the model has neither by default. Next gap, not addressed.
+- Car gearbox input inertias (0.07-0.12 kg m^2) look high too; not changed, not measured.
+
+## 2026-10-15 — Dual-clutch upshift spark retard (timeboxed)
+
+- Retard of up to 20 deg while the oncoming clutch pulls the engine down, released with the slip (DriveScenarioHarness `--dct-retard`, 2JZ dual clutch, flat-out pull, 0 vs 20 deg). The advance reaches the ECU's -10 deg floor on every loaded upshift (control: 4-7 deg).
+- Sync time: 237.5 -> 225, 216.7 -> 208.3, 216.7 -> 204.2, 237.5 -> 200, 308 -> 238 ms (gears 1-2 to 5-6). Peak wheel torque unchanged (6,471, 4,634, 3,592, 2,742, 2,137 vs 2,151 Nm): the clutch sits at its 760 Nm capacity through the pull-down either way, so the retard only shortens the push (-4 % impulse at 85 % of redline, EngineLab.ShiftStyle).
+- EGT peak +1 to +3 degC: the retard window (0.2 s) is shorter than the EGT lag.
+- Kept (no catalogue engine uses a dual clutch, default sound unchanged). Not listened to: whether the late burn gives the "DSG fart" is the owner's ear. No production retard calibration found to compare.
+
 ## 2026-10-15 — Cruise control and the automatic shift schedule, driven
 
 - `DriveScenarioHarness --builtin cruise --automatic 1` (60 % pedal, set at 100 km/h, brake at 40 s). First version: the 2JZ ran to 116 km/h, because the integral started at the 60 % accelerating throttle and bled at 0.03/s per m/s. Added: past the set speed and still gaining, the throttle falls at 0.5/s (and the mirror case). Toy-car test: peak 111.1 -> 103.0 km/h.

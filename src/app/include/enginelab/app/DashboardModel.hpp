@@ -106,7 +106,8 @@ struct DashboardModel final {
 namespace ui {
 [[nodiscard]] const char* runningStateName(RunningState) noexcept;
 [[nodiscard]] const char* layoutName(EngineLayout) noexcept;
-[[nodiscard]] juce::String gearName(int gear);
+/** R, N, the gear's number, or D on a CVT. */
+[[nodiscard]] juce::String gearName(int gear, bool continuouslyVariable = false);
 [[nodiscard]] const char* dynoModeToken(DynoMode) noexcept;
 [[nodiscard]] const char* dynoStatusToken(DynoRunStatus) noexcept;
 [[nodiscard]] const char* dynoStatusLabel(DynoRunStatus) noexcept;

@@ -1758,7 +1758,10 @@ void EngineRuntime::run(std::stop_token stopToken) {
             droppedEvents_.fetch_add(frame.droppedFiringEventCount, std::memory_order_relaxed);
         {
             frame.state.gear = engagedGear_;
-            frame.state.gearCount = static_cast<int>(config_.transmission.gearRatios.size());
+            frame.state.continuouslyVariable = driveline_.continuouslyVariable();
+            frame.state.gearCount = frame.state.continuouslyVariable
+                ? 1 : static_cast<int>(config_.transmission.gearRatios.size());
+            frame.state.gearboxRatio = drivelineOutput_.gearboxRatio;
             frame.state.clutchPressure = effectiveClutchPressure_;
             frame.state.vehicleSpeedMps = vehicleSpeedMps_;
             frame.state.vehicleDistanceM = vehicleDistanceM_;

@@ -1,5 +1,6 @@
 #include <enginelab/runtime/DrivelineModel.hpp>
 #include <enginelab/runtime/ShiftSchedule.hpp>
+#include <enginelab/runtime/VariatorControl.hpp>
 #include <array>
 #include <algorithm>
 #include <cmath>
@@ -24,6 +25,7 @@ double synchronisationTorqueRelease(double speedMatchedFraction) noexcept {
 DrivelineModel::DrivelineModel(const EngineConfig& config) : config_(config) {
     clutchTemperatureC_ = config_.ambientTemperatureC;
     engineInertiaKgM2_ = std::max(0.001, effectiveRotatingInertiaKgM2(config_));
+    variatorRatio_ = variatorLowestRatio();
 }
 
 bool DrivelineModel::replaceVehicle(const TransmissionConfig& transmission, const VehicleConfig& vehicle) {
@@ -31,14 +33,27 @@ bool DrivelineModel::replaceVehicle(const TransmissionConfig& transmission, cons
     // Automatic or manual is a driving mode, switched while driving like the
     // gear: an edit of the gearbox keeps it.
     const auto automatic = config_.transmission.automaticShifting;
+    const auto wasVariable = continuouslyVariable();
+    const auto gearboxRatio = engagedGear_ >= 0 && !wasVariable
+        ? config_.transmission.gearRatios[static_cast<std::size_t>(engagedGear_)] : variatorRatio_;
     config_.transmission = transmission;
     config_.transmission.automaticShifting = automatic;
     config_.vehicle = vehicle;
+    // Becoming a CVT, the variator takes the ratio of the gear it was in;
+    // ceasing to be one, the selector goes to first.
+    if (continuouslyVariable()) {
+        variatorRatio_ = std::clamp(gearboxRatio, variatorTallestRatio(), variatorLowestRatio());
+        if (requestedGear_ > 0) requestedGear_ = 0;
+        if (engagedGear_ > 0) engagedGear_ = 0;
+    } else if (wasVariable) {
+        variatorRatio_ = variatorLowestRatio();
+    }
     return true;
 }
 
 void DrivelineModel::requestGear(int gear) noexcept {
-    const auto maximum = static_cast<int>(config_.transmission.gearRatios.size()) - 1;
+    // A CVT has one forward position.
+    const auto maximum = continuouslyVariable() ? 0 : static_cast<int>(config_.transmission.gearRatios.size()) - 1;
     const auto selected = std::clamp(gear, -2, maximum);
     // A real selector cannot engage a ratio that would instantly reverse a
     // moving driveline. Neutral remains available so the vehicle can coast to
@@ -56,8 +71,42 @@ void DrivelineModel::shiftDown() noexcept { requestGear(requestedGear_ - 1); }
 double DrivelineModel::ratioForGear(int gear) const noexcept {
     if (gear == -2) return -config_.transmission.reverseRatio * config_.transmission.finalDriveRatio;
     if (gear < 0 || gear >= static_cast<int>(config_.transmission.gearRatios.size())) return 0.0;
+    if (continuouslyVariable()) return variatorRatio_ * config_.transmission.finalDriveRatio;
     return config_.transmission.gearRatios[static_cast<std::size_t>(gear)]
         * config_.transmission.finalDriveRatio;
+}
+
+double DrivelineModel::variatorLowestRatio() const noexcept {
+    const auto& ratios = config_.transmission.gearRatios;
+    return ratios.empty() ? 1.0 : std::max(ratios.front(), ratios.back());
+}
+
+double DrivelineModel::variatorTallestRatio() const noexcept {
+    const auto& ratios = config_.transmission.gearRatios;
+    return ratios.empty() ? 1.0 : std::min(ratios.front(), ratios.back());
+}
+
+void DrivelineModel::advanceVariator(const EngineState& engineState, double clutchPressure,
+                                     double dtSeconds) noexcept {
+    const auto& transmission = config_.transmission;
+    VariatorInput input;
+    input.driverThrottle = driverThrottle_ >= 0.0 ? driverThrottle_ : engineState.throttle;
+    input.outputRadPerSecond = wheelAngularVelocityRadPerSecond_ * transmission.finalDriveRatio;
+    input.lowestRatio = variatorLowestRatio();
+    input.tallestRatio = variatorTallestRatio();
+    input.currentRatio = variatorRatio_;
+    input.idleRpm = config_.idleRpm;
+    input.revLimitRpm = engineState.activeRevLimitRpm > 0.0
+        ? engineState.activeRevLimitRpm : config_.ignition.revLimitRpm;
+    const auto lockBandRpm = std::max(1.0, transmission.clutchLockSpeedRpm);
+    if (transmission.centrifugalClutch) {
+        input.centrifugalLockRpm = VariatorControl::centrifugalLockRpm(
+            transmission.centrifugalClutchEngageRpm, config_.idleRpm);
+        input.coupled = clutchPressure > 0.999 && std::abs(lastClutchSlipRpm_) < lockBandRpm;
+    } else {
+        input.coupled = launchClutchLocked_;
+    }
+    variatorRatio_ = VariatorControl::nextRatio(input, dtSeconds);
 }
 
 double DrivelineModel::selectedRatio() const noexcept {
@@ -177,7 +226,7 @@ DrivelineOutput DrivelineModel::advance(double dt, const EngineState& engineStat
     // An automatic gearbox picks its gear from the driver's pedal, never
     // right after a shift, and never while the driver holds the clutch.
     constexpr double scheduleHoldSeconds = 0.8;
-    if (transmission.automaticShifting && !shiftInProgress_ && engagedGear_ >= 0
+    if (transmission.automaticShifting && !continuouslyVariable() && !shiftInProgress_ && engagedGear_ >= 0
         && requestedGear_ == engagedGear_ && secondsSinceShift_ >= scheduleHoldSeconds
         && (!driverClutchConnected() || clutchPedal >= 0.5)) {
         std::array<double, 16> overall {};
@@ -199,7 +248,10 @@ DrivelineOutput DrivelineModel::advance(double dt, const EngineState& engineStat
     }
     // A dual clutch has no pedal: its own launch clutch takes its place, and
     // it refuses the part of a downshift that would over-rev the engine.
-    if (!driverClutchConnected()) {
+    if (continuouslyVariable() && transmission.centrifugalClutch) {
+        clutchPedal = VariatorControl::centrifugalClutchPressure(
+            engineState.rpm, transmission.centrifugalClutchEngageRpm, config_.idleRpm);
+    } else if (!driverClutchConnected()) {
         clutchPedal = dualClutchLaunchPressure(engineState, brakePressure, dt);
         if (!shiftInProgress_ && requestedGear_ >= 0 && engagedGear_ > requestedGear_)
             requestedGear_ = protectedDownshiftTarget(engineState);
@@ -283,6 +335,12 @@ DrivelineOutput DrivelineModel::advance(double dt, const EngineState& engineStat
             neededCapacity / std::max(1.0, transmission.maxClutchTorqueNm), 0.0, 1.0);
         shiftProgress = std::clamp(
             1.0 - std::abs(slipOmega) / handOverReferenceSlipRadPerSecond_, 0.0, 1.0);
+        // A loaded upshift: the ECU retards the spark while the clutch pulls
+        // the engine down, and gives it back as the speeds meet, as a dual
+        // clutch's torque intervention does.
+        if (shiftTargetGear_ > shiftFromGear_ && engineDriveTorque > 0.0)
+            output.sparkRetardDegrees = std::max(0.0, transmission.dualClutchUpshiftRetardDegrees)
+                * synchronisationTorqueRelease(1.0 - shiftProgress);
         if (std::abs(slipOmega) <= lockBandOmega
                 || shiftElapsedSeconds_ >= 4.0 * transmission.shiftDurationSeconds) {
             effectiveClutch = clutchPedal;
@@ -365,10 +423,19 @@ DrivelineOutput DrivelineModel::advance(double dt, const EngineState& engineStat
         }
     }
 
-    const auto totalRatio = selectedRatio();
-    const auto wheelInertia = std::max(0.01, transmission.drivenWheelInertiaKgM2
-        + transmission.differentialInertiaKgM2
-        + transmission.gearboxInputInertiaKgM2 * totalRatio * totalRatio);
+    // A CVT's ratio moves through the frame, from where it was to where the
+    // variator takes it; other gearboxes hold one ratio (start == end).
+    const auto frameStartRatio = selectedRatio();
+    if (continuouslyVariable() && engagedGear_ >= 0 && !dogsFree_)
+        advanceVariator(engineState, effectiveClutch, dt);
+    const auto frameEndRatio = selectedRatio();
+    const auto ratioRate = dt > 0.0 ? (frameEndRatio - frameStartRatio) / dt : 0.0;
+    const auto inertiaAtRatio = [&](double ratio) noexcept {
+        return std::max(0.01, transmission.drivenWheelInertiaKgM2
+            + transmission.differentialInertiaKgM2
+            + transmission.gearboxInputInertiaKgM2 * ratio * ratio);
+    };
+    const auto wheelInertia = inertiaAtRatio(frameEndRatio);
     constexpr double gravityMps2 = 9.80665;
     const auto totalNormalForce = vehicle.massKg * gravityMps2;
     const auto drivenAxleNormalForce = [&](double accelerationMps2) noexcept {
@@ -432,6 +499,8 @@ DrivelineOutput DrivelineModel::advance(double dt, const EngineState& engineStat
     // of the frame on its friction limit. Display-only: no physics reads this.
     std::size_t tractionLimitedSteps = 0;
     for (int step = 0; step < mechanicalStepCount; ++step) {
+        const auto totalRatio = frameStartRatio + (frameEndRatio - frameStartRatio)
+            * static_cast<double>(step + 1) / static_cast<double>(mechanicalStepCount);
         const auto previousWheelOmega = wheelAngularVelocityRadPerSecond_;
         const auto previousVehicleSpeed = vehicleSpeedMps_;
         const auto gearboxOmega = previousWheelOmega * totalRatio;
@@ -469,7 +538,7 @@ DrivelineOutput DrivelineModel::advance(double dt, const EngineState& engineStat
         // by the tyre relaxation state and avoids an algebraic traction loop.
         const auto normalForce =
             drivenAxleNormalForce(longitudinalAccelerationMps2_);
-        auto wheelInertiaForConstraint = wheelInertia;
+        auto wheelInertiaForConstraint = inertiaAtRatio(totalRatio);
         auto wheelLoadTorque = 0.0;
         auto roadLoadForce = 0.0;
         if (vehicle.tyreGripLimitEnabled) {
@@ -515,6 +584,13 @@ DrivelineOutput DrivelineModel::advance(double dt, const EngineState& engineStat
         //    demanded stick torque exceeds capacity the clutch breaks away into slip.
         double clutchTorque = 0.0;
         auto clutchSticking = false;
+        // A moving ratio: held together, the crank must also follow the
+        // change of ratio (its rate times the wheel speed), and any slip left
+        // is taken out over a short time rather than left to drift into the
+        // kinetic band.
+        constexpr double variatorSlipRecoverySeconds = 0.02;
+        const auto ratioAcceleration = continuouslyVariable()
+            ? ratioRate * previousWheelOmega - slipOmega / variatorSlipRecoverySeconds : 0.0;
         if (totalRatio != 0.0 && effectiveClutch > 0.0) {
             const auto lockBandRpm = std::max(1.0, transmission.clutchLockSpeedRpm);
             if (std::abs(lastSlipRpm) > lockBandRpm) {
@@ -524,7 +600,8 @@ DrivelineOutput DrivelineModel::advance(double dt, const EngineState& engineStat
                     + engineInertiaKgM2_ * totalRatio * totalRatio * transmission.drivelineEfficiency;
                 const auto stickTorque = coupledInertia > 0.0
                     ? (wheelInertiaForConstraint * engineDriveTorque
-                       + engineInertiaKgM2_ * totalRatio * wheelLoadTorque) / coupledInertia
+                       + engineInertiaKgM2_ * totalRatio * wheelLoadTorque
+                       - engineInertiaKgM2_ * wheelInertiaForConstraint * ratioAcceleration) / coupledInertia
                     : 0.0;
                 clutchTorque = std::clamp(stickTorque, -capacity, capacity);
                 clutchSticking = std::abs(stickTorque) <= capacity + 1.0e-9;
@@ -543,7 +620,8 @@ DrivelineOutput DrivelineModel::advance(double dt, const EngineState& engineStat
                 * transmission.drivelineEfficiency;
             reflectedInertiaKgM2 = wheelInertiaForConstraint
                 / (totalRatio * ratioEfficiency);
-            engineCouplingTorque = -wheelLoadTorque / ratioEfficiency;
+            engineCouplingTorque = -wheelLoadTorque / ratioEfficiency
+                + reflectedInertiaKgM2 * ratioAcceleration;
         }
         const auto wheelTorque = clutchTorque * totalRatio * transmission.drivelineEfficiency;
         const auto wheelAcceleration = (wheelTorque - wheelLoadTorque)
@@ -656,6 +734,9 @@ DrivelineOutput DrivelineModel::advance(double dt, const EngineState& engineStat
 
     output.requestedLoad = requestedLoad;
     output.engagedGear = engagedGear_;
+    output.gearboxRatio = engagedGear_ == -2 ? transmission.reverseRatio
+        : engagedGear_ >= 0 && !dogsFree_ ? selectedRatio() / std::max(1.0e-9, transmission.finalDriveRatio)
+        : 0.0;
     output.clutchPressure = effectiveClutch;
     output.vehicleSpeedMps = vehicleSpeedMps_;
     output.vehicleDistanceM = vehicleDistanceM_;

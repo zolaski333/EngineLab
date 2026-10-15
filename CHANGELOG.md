@@ -9,10 +9,20 @@ file formats, always with an in-memory migration).
 
 ### Changed
 
+- Motorcycles accelerate like motorcycles: their wheels, chain and clutch
+  had a car's inertia (the equivalent of 230 kg more bike in first). The
+  MT-07 now does 0-100 km/h in 3.9 s (published 3.85 s, before 5.9 s). The
+  most powerful bikes are now quicker than real ones, which wheelie: there
+  is no wheelie limit yet.
+
 - The dual-clutch gearbox no longer uses the clutch key: it launches on its
   own clutch, creeps at idle (stops on the brake) and never stalls. It also
   refuses a downshift that would over-rev the engine, as a real one does;
   manual and sequential gearboxes still let you do it.
+- A dual-clutch upshift under load now retards the spark (up to 20 deg,
+  `transmission.dual_clutch_upshift_retard_deg`) while the clutch pulls the
+  engine down, as production dual clutches do: the push after the shift is
+  shorter. Its effect on the sound has not been listened to yet.
 
 - The exhaust now radiates into the surrounding air rather than into its own
   hot gas, as a real tailpipe does. Hot engines get louder relative to cool
@@ -97,6 +107,11 @@ file formats, always with an in-memory migration).
 
 ### Added
 
+- CVT gearboxes: a car's belt CVT that creeps like a dual clutch, and a
+  scooter's with a centrifugal clutch that idles free. The variator holds the
+  engine at a speed set by the pedal (low when cruising, near peak power flat
+  out). Pick `car_cvt` or `scooter_cvt`, or switch any gearbox to CVT from its
+  inspector; the gear shows D.
 - Display units: speed, distance, fuel consumption (L/100 km, km/L, MPG US
   or UK), fuel volume, pressure (kPa, bar, psi, absolute or gauge), torque,
   power, temperature, length, displacement, mass and air flow, chosen one by

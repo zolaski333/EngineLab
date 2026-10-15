@@ -711,6 +711,8 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
                     config.transmission.clutchFadeStartTemperatureC + 1.0, 1'200.0)
         || !inRange(config.transmission.shiftTorqueCutFraction, 0.0, 1.0)
         || !inRange(config.transmission.quickshifterCutSeconds, 0.01, 0.5)
+        || !inRange(config.transmission.dualClutchUpshiftRetardDegrees, 0.0, 40.0)
+        || !inRange(config.transmission.centrifugalClutchEngageRpm, 0.0, 20'000.0)
         || !inRange(config.vehicle.massKg, 50.0, 20'000.0)
         || !inRange(config.vehicle.dragCoefficient, 0.05, 2.0)
         || !inRange(config.vehicle.frontalAreaM2, 0.1, 20.0)
@@ -1526,6 +1528,7 @@ const char* shiftStyleName(ShiftStyle style) noexcept {
     case ShiftStyle::manual: return "manual";
     case ShiftStyle::sequential: return "sequential";
     case ShiftStyle::dualClutch: return "dual_clutch";
+    case ShiftStyle::cvt: return "cvt";
     }
     return "manual";
 }
@@ -1534,6 +1537,7 @@ std::optional<ShiftStyle> parseShiftStyle(const std::string& name) noexcept {
     if (name == "manual") return ShiftStyle::manual;
     if (name == "sequential") return ShiftStyle::sequential;
     if (name == "dual_clutch") return ShiftStyle::dualClutch;
+    if (name == "cvt") return ShiftStyle::cvt;
     return std::nullopt;
 }
 

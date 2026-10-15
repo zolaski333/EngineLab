@@ -119,7 +119,7 @@ void ControlPanel::refresh(const DashboardModel& model) {
     const auto& unit = model.units;
     const auto speed = unit.value(Quantity::speed, std::abs(state.vehicleSpeedMps), 0);
     const auto speedUnit = unit.symbol(Quantity::speed);
-    const auto gear = juce::String("gear ") + gearName(state.gear);
+    const auto gear = juce::String("gear ") + gearName(state.gear, state.continuouslyVariable);
     // Standing still, L/100 km has no meaning: the flow is shown instead.
     const auto consumption = std::abs(state.vehicleSpeedMps) >= 1.0
         ? unit.text(Quantity::fuelConsumption, state.instantFuelEconomyLitresPer100Km)

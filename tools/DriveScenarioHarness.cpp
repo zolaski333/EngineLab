@@ -48,6 +48,7 @@
 #include <fstream>
 #include <iostream>
 #include <memory>
+#include <utility>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -94,6 +95,7 @@ struct Options final {
     std::optional<bool> quickshifter;
     std::optional<bool> blipper;
     std::optional<bool> automatic;
+    std::optional<double> dualClutchRetardDegrees;
     std::optional<double> durationSeconds;
     bool list { false };
 };
@@ -125,6 +127,7 @@ Options parseOptions(int argc, char** argv) {
         } else if (argument == "--quickshifter") options.quickshifter = parseFlag(next());
         else if (argument == "--blipper") options.blipper = parseFlag(next());
         else if (argument == "--automatic") options.automatic = parseFlag(next());
+        else if (argument == "--dct-retard") options.dualClutchRetardDegrees = std::stod(next());
         else if (argument == "--duration") options.durationSeconds = std::stod(next());
         else if (argument == "--list") options.list = true;
         else fail("unknown argument '" + argument + "'");
@@ -321,6 +324,8 @@ int run(const Options& options) {
     if (options.quickshifter) config.transmission.quickshifter = *options.quickshifter;
     if (options.blipper) config.transmission.autoBlipper = *options.blipper;
     if (options.automatic) config.transmission.automaticShifting = *options.automatic;
+    if (options.dualClutchRetardDegrees)
+        config.transmission.dualClutchUpshiftRetardDegrees = *options.dualClutchRetardDegrees;
 
     Scenario scenario;
     if (scenarioJson) scenario = parseScenario(*scenarioJson);
@@ -341,7 +346,7 @@ int run(const Options& options) {
                "throttle_authority,clutch_pedal,clutch_pressure,clutch_slip_rpm,engine_torque_nm,"
                "wheel_torque_nm,shift_in_progress,ignition_cut,blip_throttle,brake,knock_level,"
                "boost_ratio,fuel_g_s,soft_limiter,hard_limiter,traction_limited,"
-               "active_rev_limit_rpm,active_limits\n";
+               "active_rev_limit_rpm,active_limits,spark_retard_deg,spark_advance_deg,egt_c\n";
     }
 
     Pedal throttle(0.0);
@@ -467,9 +472,9 @@ int run(const Options& options) {
         }
 
         if (csv.is_open()) {
-            char row[640];
+            char row[704];
             std::snprintf(row, sizeof(row),
-                "%.5f,%.2f,%.3f,%d,%d,%.4f,%.4f,%s,%.4f,%.4f,%.2f,%.3f,%.3f,%d,%d,%.4f,%.4f,%.4f,%.4f,%.4f,%d,%d,%d,%.0f,%u\n",
+                "%.5f,%.2f,%.3f,%d,%d,%.4f,%.4f,%s,%.4f,%.4f,%.2f,%.3f,%.3f,%d,%d,%.4f,%.4f,%.4f,%.4f,%.4f,%d,%d,%d,%.0f,%u,%.2f,%.2f,%.1f\n",
                 now, state.rpm, speed * 3.6, humanGear(requested), humanGear(drive.engagedGear),
                 inputs.throttle, step.engineThrottle, authorityName(step.throttleAuthority),
                 inputs.clutchPedal, drive.clutchPressure, drive.clutchSlipRpm, state.torqueNm,
@@ -477,7 +482,8 @@ int run(const Options& options) {
                 drive.blipThrottle, drive.brakePressure, state.knockLevel, state.boostPressureRatio,
                 state.fuelFlowGramsPerSecond, state.ecuSoftRevLimiterActive ? 1 : 0,
                 state.ecuHardRevLimiterActive ? 1 : 0, drive.tractionLimited ? 1 : 0,
-                state.activeRevLimitRpm, static_cast<unsigned>(state.activeLimits));
+                state.activeRevLimitRpm, static_cast<unsigned>(state.activeLimits),
+                step.shiftSparkRetardDegrees, state.ignitionAdvanceDegrees, state.exhaustTemperatureC);
             csv << row;
         }
     }
@@ -488,8 +494,22 @@ int run(const Options& options) {
         config.transmission.quickshifter ? "on" : "off",
         config.transmission.autoBlipper ? "on" : "off",
         config.transmission.automaticShifting ? "on" : "off");
-    std::printf("gear  authored_ratio  measured_ratio  deviation_%%  samples\n");
-    for (int gear = 0; gear < gearCount; ++gear) {
+    // A CVT has one forward position: its ratio moves between the first and
+    // the last gear's, so a per-gear table would compare nothing.
+    const auto variable = config.transmission.shiftStyle == enginelab::ShiftStyle::cvt;
+    if (variable) {
+        const auto& samples = gearSamples.front().ratios;
+        const auto [lowest, tallest] = samples.empty() ? std::pair { 0.0, 0.0 }
+            : std::pair { *std::max_element(samples.begin(), samples.end()),
+                          *std::min_element(samples.begin(), samples.end()) };
+        std::printf("cvt overall ratio: authored %.4f-%.4f, measured %.4f-%.4f (%zu samples)\n",
+            config.transmission.gearRatios.front() * config.transmission.finalDriveRatio,
+            config.transmission.gearRatios.back() * config.transmission.finalDriveRatio, lowest, tallest,
+            samples.size());
+    } else {
+        std::printf("gear  authored_ratio  measured_ratio  deviation_%%  samples\n");
+    }
+    for (int gear = 0; gear < (variable ? 0 : gearCount); ++gear) {
         const auto authored = config.transmission.gearRatios[static_cast<std::size_t>(gear)]
             * config.transmission.finalDriveRatio;
         const auto& samples = gearSamples[static_cast<std::size_t>(gear)].ratios;

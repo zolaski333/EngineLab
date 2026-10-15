@@ -25,6 +25,7 @@ void DriverCommandArbiter::arbitrate(const DriverInputs& inputs, VehicleStep& st
         : lifted < driver ? ThrottleAuthority::shiftTorqueCut
         : ThrottleAuthority::driver;
     step.shiftIgnitionCut = step.drive.ignitionCut;
+    step.shiftSparkRetardDegrees = step.drive.sparkRetardDegrees;
 }
 
 VehicleStep advanceVehicle(DrivelineModel& driveline, double dtSeconds,
@@ -46,6 +47,7 @@ void applyVehicleStep(EngineControls& controls, const VehicleStep& step) noexcep
     controls.externalRotatingInertiaKgM2 = step.drive.reflectedRotatingInertiaKgM2;
     controls.coolingAirSpeedMps = std::abs(step.drive.vehicleSpeedMps);
     controls.shiftIgnitionCut = step.shiftIgnitionCut;
+    controls.shiftSparkRetardDegrees = step.shiftSparkRetardDegrees;
 }
 
 } // namespace enginelab

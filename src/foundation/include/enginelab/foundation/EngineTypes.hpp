@@ -20,7 +20,7 @@ enum class EngineLayout : std::uint8_t { inlineLayout, vLayout, flat, radial, cu
 enum class ConnectingRodType : std::uint8_t { conventional, master, articulated };
 enum class ForcedInductionType : std::uint8_t { turbocharger, supercharger };
 enum class DrivenAxleLayout : std::uint8_t { front, rear, all };
-enum class ShiftStyle : std::uint8_t { manual, sequential, dualClutch };
+enum class ShiftStyle : std::uint8_t { manual, sequential, dualClutch, cvt };
 enum class StructuralNvhProvenance : std::uint8_t {
     estimatedFamily, calculatedGeometry, measured
 };
@@ -769,11 +769,26 @@ struct TransmissionConfig final {
      *    Without them, a shift is made as a manual one.
      *  - dualClutch: one clutch hands the drive over to the other with no
      *    torque gap; the oncoming clutch pulls the engine to the new speed
-     *    over shiftDurationSeconds. Downshifts are blipped. */
+     *    over shiftDurationSeconds. Downshifts are blipped.
+     *  - cvt: a belt variator, its ratio anywhere between the first gear
+     *    ratio (lowest) and the last (tallest), held where it keeps the
+     *    engine at a speed scheduled from the pedal (VariatorControl). One
+     *    forward position. It starts on its own clutch: a wet one that
+     *    creeps, as a dual clutch's, or a scooter's centrifugal one. */
     ShiftStyle shiftStyle { ShiftStyle::manual };
     bool quickshifter { true };
     double quickshifterCutSeconds { 0.065 };
     bool autoBlipper { true };
+    /** A dual clutch's torque intervention on a loaded upshift: the ECU
+     * retards the spark by up to this much while the oncoming clutch pulls
+     * the engine down, released as the speeds meet (0 = none). Production
+     * calibrations are not published; the default is a choice. */
+    double dualClutchUpshiftRetardDegrees { 20.0 };
+    /** A CVT's start clutch: centrifugal (a scooter's: open at idle, no
+     * creep) rather than wet. It bites at centrifugalClutchEngageRpm (0:
+     * 1.7 x idle) and is shut at 1.35 x that. */
+    bool centrifugalClutch { false };
+    double centrifugalClutchEngageRpm { 0.0 };
 };
 
 struct VehicleConfig final {
@@ -1057,6 +1072,9 @@ struct EngineControls final {
     /** A quickshifter's ignition cut: the ECU cuts as its rev limiter does
      * (spark, and fuel too unless `ignition.limiter_keeps_fuel`). */
     bool shiftIgnitionCut { false };
+    /** A dual clutch's upshift torque intervention: spark retard, degrees,
+     * taken off the mapped advance (within the ECU's advance limits). */
+    double shiftSparkRetardDegrees { 0.0 };
 };
 
 struct CylinderState final {
@@ -1529,10 +1547,10 @@ struct EngineState final {
     double tripFuelLitres { 0.0 };
     /** 0 until the trip has covered 100 m. */
     double tripFuelEconomyLitresPer100Km { 0.0 };
-    /** Cruise control: engaged, and the speed it holds. */
     /** The gearbox chooses its gears (TransmissionConfig::automaticShifting,
      * switched live from the UI). */
     bool automaticShifting { false };
+    /** Cruise control: engaged, and the speed it holds. */
     bool cruiseEngaged { false };
     double cruiseSetSpeedMps { 0.0 };
     double airFlowGramsPerSecond { 0.0 };
@@ -1618,6 +1636,10 @@ struct EngineState final {
     double damage { 0.0 };
     int gear { -1 };
     int gearCount { 0 };
+    /** A CVT: one forward position (drive), the ratio below varies. */
+    bool continuouslyVariable { false };
+    /** The gearbox's ratio now (without the final drive); 0 in neutral. */
+    double gearboxRatio { 0.0 };
     double clutchPressure { 1.0 };
     double vehicleSpeedMps { 0.0 };
     double vehicleDistanceM { 0.0 };

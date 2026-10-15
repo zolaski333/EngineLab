@@ -465,7 +465,12 @@ std::string YamlEngineSerializer::encode(const EngineConfig& config) const {
         << YAML::Key << "shift_style" << YAML::Value << shiftStyleName(config.transmission.shiftStyle)
         << YAML::Key << "quickshifter" << YAML::Value << config.transmission.quickshifter
         << YAML::Key << "quickshifter_cut_s" << YAML::Value << config.transmission.quickshifterCutSeconds
-        << YAML::Key << "auto_blipper" << YAML::Value << config.transmission.autoBlipper << YAML::EndMap
+        << YAML::Key << "auto_blipper" << YAML::Value << config.transmission.autoBlipper
+        << YAML::Key << "dual_clutch_upshift_retard_deg" << YAML::Value
+        << config.transmission.dualClutchUpshiftRetardDegrees
+        << YAML::Key << "centrifugal_clutch" << YAML::Value << config.transmission.centrifugalClutch
+        << YAML::Key << "centrifugal_clutch_engage_rpm" << YAML::Value
+        << config.transmission.centrifugalClutchEngageRpm << YAML::EndMap
         << YAML::Key << "vehicle" << YAML::Value << YAML::BeginMap
         << YAML::Key << "mass_kg" << YAML::Value << config.vehicle.massKg
         << YAML::Key << "drag_coefficient" << YAML::Value << config.vehicle.dragCoefficient
@@ -944,6 +949,14 @@ EngineDecodeResult YamlEngineSerializer::decode(std::string_view text) const noe
             if (transmission["quickshifter"]) config.transmission.quickshifter = transmission["quickshifter"].as<bool>();
             if (transmission["quickshifter_cut_s"]) config.transmission.quickshifterCutSeconds = transmission["quickshifter_cut_s"].as<double>();
             if (transmission["auto_blipper"]) config.transmission.autoBlipper = transmission["auto_blipper"].as<bool>();
+            if (transmission["dual_clutch_upshift_retard_deg"])
+                config.transmission.dualClutchUpshiftRetardDegrees =
+                    transmission["dual_clutch_upshift_retard_deg"].as<double>();
+            if (transmission["centrifugal_clutch"])
+                config.transmission.centrifugalClutch = transmission["centrifugal_clutch"].as<bool>();
+            if (transmission["centrifugal_clutch_engage_rpm"])
+                config.transmission.centrifugalClutchEngageRpm =
+                    transmission["centrifugal_clutch_engage_rpm"].as<double>();
         }
         if (const auto vehicle = engine["vehicle"]) {
             if (vehicle["mass_kg"]) config.vehicle.massKg = vehicle["mass_kg"].as<double>();
