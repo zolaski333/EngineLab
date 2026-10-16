@@ -155,9 +155,14 @@ EcuCommand SimpleEcuModel::evaluate(const EngineConfig& config, const EngineStat
         calibration::CalibrationUnit::revolutionsPerMinute,
         state.rpm
     };
+    // A two-stroke's manifold pressure is its crankcase's pumping, about
+    // ambient at any throttle; its load is the delivery ratio the simulator
+    // keeps in state.load (alpha-N would be the closest real ECU input).
     const auto normalizedLoad = std::clamp(
         config.fuel == FuelType::diesel
             ? std::max(controls.throttle, state.load)
+            : config.cycle == EngineCycle::twoStroke
+            ? state.load
             : state.manifoldPressureKpa
                 / std::max(1.0, config.ambientPressureKpa),
         calibration::ecuLimits::minimumNormalizedLoad,

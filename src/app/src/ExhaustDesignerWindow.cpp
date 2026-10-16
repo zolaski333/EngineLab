@@ -4,6 +4,7 @@
 #include <enginelab/exhaust/LegacyExhaustNetwork.hpp>
 #include <enginelab/foundation/CatalystMonolithGeometry.hpp>
 #include <enginelab/gasdynamics/ExhaustNetworkLayout.hpp>
+#include <enginelab/simulation/EngineSimulator.hpp>
 
 #include <algorithm>
 #include <array>
@@ -49,8 +50,10 @@ constexpr std::size_t maximumConnections = 1'024;
 [[nodiscard]] double minimumExhaustCflLengthM(const EngineConfig& config) {
     try {
         const auto graph = ExhaustGraph::makeForEngine(config);
-        const auto layout = gasdynamics::ExhaustNetworkLayout::compile(
-            graph, gasdynamics::realtimeExhaustFeedbackDiscretisation());
+        // At the engine's own production mesh (100 mm on a two-stroke).
+        auto mesh = gasdynamics::realtimeExhaustFeedbackDiscretisation();
+        mesh.targetCellLengthM = EngineSimulator::productionExhaustCellLengthM(config);
+        const auto layout = gasdynamics::ExhaustNetworkLayout::compile(graph, mesh);
         if (!layout.valid()) return 0.0;
         return layout.minimumCflLengthM();
     } catch (...) {

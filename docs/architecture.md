@@ -229,7 +229,9 @@ as above.
 The same path remeshes the running exhaust: the view settings' *Exhaust
 waves* choice (`ViewSettings::fineExhaustWaves`) passes 180 mm instead of the
 production 360 mm as the target cell length, and every later restart of the
-runtime keeps it. 360 mm cells show 29 to 61 % less pressure swing than a
+runtime keeps it. It never coarsens a mesh: a two-stroke's production cells
+are already 100 mm (`EngineSimulator::productionExhaustCellLengthM`) and stay
+so. 360 mm cells show 29 to 61 % less pressure swing than a
 45 mm reference, 180 mm within 5 % on most engines; the simulation then has
 13 to 20 % less headroom. The audio does not depend on it.
 

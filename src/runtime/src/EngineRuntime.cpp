@@ -303,7 +303,7 @@ EngineRuntime::EngineRuntime(EngineConfig config,
                                : std::make_shared<DynoRunArchive>()) {
     simulator_.setPressureSamplingEnabled(true);
     exhaustCellLengthM_ = simulatorOptions.exhaustTargetCellLengthM.value_or(
-        gasdynamics::realtimeExhaustFeedbackDiscretisation().targetCellLengthM);
+        EngineSimulator::productionExhaustCellLengthM(config_));
     applyAudioVoicing(config_.audioVoicing);
     audioState_.cylinderCount.store(static_cast<float>(config_.cylinders.size()), std::memory_order_relaxed);
     audioState_.redlineRpm.store(static_cast<float>(config_.redlineRpm), std::memory_order_relaxed);

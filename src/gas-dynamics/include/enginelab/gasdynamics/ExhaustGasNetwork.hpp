@@ -67,6 +67,19 @@ struct ExhaustGasNetworkConfig final {
      * against the first cell's average, whose stiffness near zero pressure
      * difference makes the result depend on the Courant number. */
     bool characteristicValveBoundary { false };
+    /** Reconstruct across every open duct-to-duct interface: each end cell
+     * takes a limited slope through its neighbour's end cell, and the
+     * interface's Riemann problem joins the two reconstructed faces instead
+     * of the two cell averages. False keeps both end cells first order, which
+     * leaves a duct of one or two cells entirely first order. */
+    bool reconstructAcrossInterfaces { false };
+    /** Diagnostic, with reconstructAcrossInterfaces: a duct end with no
+     * neighbour (a port, an outlet, a junction) takes the one-sided slope of
+     * its two end cells. */
+    bool extrapolateOpenEnds { false };
+    /** Diagnostic: every duct reconstructs third-order (kappa = 1/3) face
+     * values, limited to the MC slope's bounds. */
+    bool thirdOrderReconstruction { false };
     double maximumCourantNumber { 0.42 };
     std::size_t maximumSubstepsPerAdvance { 100'000 };
 
@@ -561,6 +574,12 @@ private:
      * a restriction or a junction-to-junction one). */
     std::vector<std::size_t> interfaceOwnerDuct_;
     std::vector<std::vector<std::size_t>> ductInterfaces_;
+    /** With reconstructAcrossInterfaces: per interface, whether it joins two
+     * duct ends openly; per duct end (2 x duct + 0 inlet, + 1 outlet), the
+     * neighbouring duct end it reconstructs through, if any. */
+    std::vector<std::uint8_t> interfaceReconstructed_;
+    std::vector<std::optional<ExhaustEndpoint>> ductEndNeighbour_;
+    std::vector<ConservativeState> ductEndGhost_;
 
     EulerMixtureModel mixtureModel_;
     ExhaustNetworkLayout layout_;

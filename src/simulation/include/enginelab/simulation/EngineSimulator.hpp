@@ -80,8 +80,9 @@ struct EngineSimulatorOptions final {
      * against the historical 250 us cap and the full-substep oracle. */
     std::optional<double> maximumLowSpeedExhaustCouplingSeconds;
     /** Target cell length of the nonlinear exhaust feedback mesh. Absent keeps
-     * the 360 mm production scale. This is a diagnostic/convergence knob: the
-     * characteristic audio network still owns audio-band propagation. */
+     * the production scale (EngineSimulator::productionExhaustCellLengthM:
+     * 360 mm, 100 mm on a two-stroke). This is a diagnostic/convergence knob:
+     * the characteristic audio network still owns audio-band propagation. */
     std::optional<double> exhaustTargetCellLengthM;
     /** Diagnostic exhaust Courant number. Absent keeps the production 0.8. */
     std::optional<double> exhaustMaximumCourantNumber;
@@ -90,6 +91,17 @@ struct EngineSimulatorOptions final {
      * form. Absent keeps SSP-RK2. */
     std::optional<bool> exhaustFirstOrderTimeIntegration;
     std::optional<bool> exhaustHancockPredictor;
+    /** Exhaust reconstruction across duct-to-duct interfaces
+     * (ExhaustGasNetworkConfig::reconstructAcrossInterfaces). Absent: on for
+     * a two-stroke only. */
+    std::optional<bool> exhaustReconstructAcrossInterfaces;
+    /** Diagnostic: meter the exhaust valves with the characteristic boundary
+     * (ExhaustGasNetworkConfig::characteristicValveBoundary). Absent: off. */
+    std::optional<bool> exhaustCharacteristicValve;
+    /** Diagnostic (ExhaustGasNetworkConfig::extrapolateOpenEnds). */
+    std::optional<bool> exhaustExtrapolateOpenEnds;
+    /** Diagnostic: third-order limited face reconstruction in every exhaust duct. */
+    std::optional<bool> exhaustThirdOrderReconstruction;
     /** Diagnostic lower-bound experiment: reset the exhaust network to ambient
      * before every coupling advance. Never use in production; it deliberately
      * discards pulse history to reveal the valve/timing-only pumping floor. */
@@ -191,6 +203,12 @@ public:
         exhaustCouplingEverySubstep_ = enabled;
     }
     void reset() noexcept override;
+    /** Production cell length of `config`'s nonlinear exhaust mesh, used when
+     * EngineSimulatorOptions::exhaustTargetCellLengthM is absent: 360 mm
+     * (realtimeExhaustFeedbackDiscretisation), 100 mm on a two-stroke, whose
+     * expansion chamber needs the finer mesh for its suction and plugging
+     * waves (RD350 at 8,000 rpm: 9.8 N.m at 360 mm, 12.3 at 100). */
+    [[nodiscard]] static double productionExhaustCellLengthM(const EngineConfig& config) noexcept;
     /** The nonlinear exhaust network of `config` built as the simulator builds
      * its own, at `targetCellLengthM` (absent: the construction mesh), for
      * replaceExhaustNetwork(). Null when it does not compile or does not have
@@ -528,6 +546,11 @@ private:
      *  the total-charge accumulators above. */
     std::array<double, 32> deliveredAirMgPerCycle_ {};
     std::array<double, 32> deliveredAirMgThisCycle_ {};
+    /** Two-stroke only, per intake path (one crankcase each): air drawn
+     *  through the reed since the cylinder's transfers last closed, and the
+     *  fill latched at that closing, which is the charge reference. */
+    std::array<double, 32> reedInflowMgThisFill_ {};
+    std::array<double, 32> reedInflowMgLastFill_ {};
     std::array<bool, 32> cylinderFlowCycleStarted_ {};
     std::array<double, 32> cylinderWallTemperatureC_ {};
     /** Time each chamber's ring blow-by has not yet been applied for; see

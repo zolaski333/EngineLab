@@ -201,7 +201,8 @@ StepMetrics measurePoint(
  * take absolute figures from the swept CSV.
  */
 void traceEngine(const enginelab::EngineConfig& baseConfig, double targetRpm,
-                 double throttle, bool freeIdle, bool watchSettle) {
+                 double throttle, bool freeIdle, bool watchSettle,
+                 double exhaustCellMm) {
     auto config = baseConfig;
     enginelab::normaliseEngineConfig(config);
     const auto kinematicsReference =
@@ -210,7 +211,9 @@ void traceEngine(const enginelab::EngineConfig& baseConfig, double targetRpm,
     enginelab::SimplifiedGasolinePhysics physics;
     enginelab::FourStrokeEventGenerator events;
     auto exhaust = enginelab::ExhaustGraph::makeForEngine(config);
-    enginelab::EngineSimulator simulator(config, ecu, physics, events, exhaust);
+    enginelab::EngineSimulatorOptions options;
+    if (exhaustCellMm > 0.0) options.exhaustTargetCellLengthM = exhaustCellMm / 1000.0;
+    enginelab::EngineSimulator simulator(config, ecu, physics, events, exhaust, options);
     constexpr double dt = 1.0 / 240.0;
     enginelab::DynoAbsorberController absorber(config);
     absorber.reset(
@@ -562,6 +565,7 @@ int main(int argc, char** argv) {
     std::string filter;
     auto runs = 3;
     auto traceRpm = 0.0;
+    auto traceExhaustCellMm = 0.0;
     auto traceThrottle = 1.0;
     auto traceFreeIdle = false;
     auto traceWatch = false;
@@ -575,6 +579,8 @@ int main(int argc, char** argv) {
         if (argument == "--catalog-root" && index + 1 < argc) catalogRoot = argv[++index];
         else if (argument == "--filter" && index + 1 < argc) filter = argv[++index];
         else if (argument == "--trace" && index + 1 < argc) traceRpm = std::stod(argv[++index]);
+        else if (argument == "--exhaust-cell-mm" && index + 1 < argc)
+            traceExhaustCellMm = std::stod(argv[++index]);
         else if (argument == "--overrun" && index + 1 < argc) overrunSeconds = std::stod(argv[++index]);
         else if (argument == "--runs" && index + 1 < argc) runs = std::max(1, std::stoi(argv[++index]));
         else if (argument == "--throttle" && index + 1 < argc)
@@ -591,7 +597,7 @@ int main(int argc, char** argv) {
             freeRevSettleSeconds = std::max(1.0, std::stod(argv[++index]));
         else {
             std::cerr << "usage: EngineLabPhysicsPerfHarness [--catalog-root dir]"
-                         " [--filter name-fragment] [--runs count] [--trace rpm]"
+                         " [--filter name-fragment] [--runs count] [--trace rpm [--exhaust-cell-mm mm]]"
                          " [--throttle 0..1] [--idle] [--overrun seconds]"
                          " [--freerev 0..1 [--seconds S] [--release S]]\n";
             return EXIT_FAILURE;
@@ -619,7 +625,8 @@ int main(int argc, char** argv) {
     std::cout << std::fixed << std::setprecision(3);
     // --trace is a single-engine instrument: pair it with --filter.
     if (traceRpm > 0.0) {
-        traceEngine(engines.front(), traceRpm, traceThrottle, traceFreeIdle, traceWatch);
+        traceEngine(engines.front(), traceRpm, traceThrottle, traceFreeIdle, traceWatch,
+                    traceExhaustCellMm);
         return EXIT_SUCCESS;
     }
     if (freeRevThrottle >= 0.0) {

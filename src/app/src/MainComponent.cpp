@@ -35,6 +35,16 @@ constexpr std::array<std::uint32_t, 8> curveColours {
 
 [[nodiscard]] juce::String utf8(const std::string& text) { return juce::String::fromUTF8(text.c_str()); }
 
+/** The view's fine exhaust mesh, never coarser than `config`'s production
+ *  mesh: a two-stroke already runs 100 mm cells, finer than the 180 mm view.
+ *  Empty: the production mesh. */
+[[nodiscard]] std::optional<double> exhaustCellLengthFor(const ui::EngineViewport& viewport,
+                                                         const EngineConfig& config) {
+    const auto chosen = viewport.exhaustCellLengthM();
+    if (!chosen) return std::nullopt;
+    return std::min(*chosen, EngineSimulator::productionExhaustCellLengthM(config));
+}
+
 /** A path that keeps every character of the file name, on Windows too. */
 [[nodiscard]] std::filesystem::path pathOf(const juce::File& file) {
     return std::filesystem::path(file.getFullPathName().toWideCharPointer());
@@ -327,7 +337,7 @@ bool MainComponent::applyConfig(const EngineConfig& newConfig, bool preserveScri
         if (const auto error = validateEngineConfig(canonicalConfig))
             throw std::invalid_argument(*error);
         EngineSimulatorOptions options;
-        options.exhaustTargetCellLengthM = viewport_.exhaustCellLengthM();
+        options.exhaustTargetCellLengthM = exhaustCellLengthFor(viewport_, canonicalConfig);
         replacement = std::make_unique<EngineRuntime>(
             canonicalConfig, retainedCalibration, options, dynoArchive_);
     } catch (const std::exception& error) {
@@ -561,8 +571,8 @@ bool MainComponent::applyCylinderResize(const EngineConfig& edited, double rampS
 
 void MainComponent::applyExhaustResolution() {
     if (!runtime_) return;
-    const auto cellLengthM = viewport_.exhaustCellLengthM().value_or(
-        gasdynamics::realtimeExhaustFeedbackDiscretisation().targetCellLengthM);
+    const auto cellLengthM = exhaustCellLengthFor(viewport_, config_).value_or(
+        EngineSimulator::productionExhaustCellLengthM(config_));
     if (runtime_->dynoRunning() || !runtime_->applyLiveExhaust(config_, cellLengthM))
         (void) applyConfig(config_, false, true);
 }

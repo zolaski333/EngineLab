@@ -126,24 +126,44 @@ spark, injection, the trapped-charge latch and the cycle telemetry follow it.
   about bottom dead centre); short-circuit losses come out of the same 1-D
   exhaust flow that scavenges the cylinder. There is no pumping loop in the
   cylinder: all of its work is gross work.
-- **Fuelling**: the ECU meters for the fresh air that crossed the transfers
-  last cycle, as a carburettor does, not for the trapped oxygen (most of a
-  two-stroke's trapped charge is retained from earlier cycles). There is no
+- **Fuelling**: the ECU meters for the air that crossed the reed into the
+  crankcase during its last fill (latched when the transfers close, just
+  before the pulse), as a carburettor meters the air through it; not for the
+  trapped oxygen (most of a two-stroke's trapped charge is retained from
+  earlier cycles), nor for the air across the transfers, which lags the fill
+  by an event on a tip-in and left the RD350 lean and stalling. There is no
   overrun fuel cut (a cut scavenges the cylinder clean, and each resume fires
   a full charge), and lambda learning is held through a closed-throttle
   overrun and for 2 s after it.
+- **Load**: a two-stroke's "manifold" is its crankcase, which pumps about
+  ambient at any throttle (75-87 kPa at idle), so its load is the delivery
+  ratio of its last cycle, not the manifold pressure; the ECU's load axis
+  reads the same (an alpha-N calibration is the closest real input). Read as
+  a four-stroke MAP, the crankcase made the ECU retard a full-load RD350 by
+  about 2 deg, and read an idle as a 0.77 load.
+- **Exhaust reconstruction**: an expansion chamber is a chain of short cones,
+  most of them two or three cells at the two-stroke mesh. A two-stroke's
+  exhaust reconstructs across every open duct-to-duct interface
+  (`ExhaustGasNetworkConfig::reconstructAcrossInterfaces`), so two components
+  of one section are one pipe to the solver; a four-stroke keeps first-order
+  duct ends.
 - **Compression ratio**: the model takes the geometric ratio. A Japanese
   maker's figure (6.2:1 for the RD350LC) is usually the trapped one, counted
   from the exhaust port's closing.
 - **Limits**: petrol only, naturally aspirated, one cylinder per intake path,
   no individual throttles, injection angles inside the 360-degree cycle. Fuel is metered by
   a port injector in the transfer duct; there is no carburettor model and no
-  oil (premix) in the charge. The expansion chamber's return wave needs fine
-  exhaust cells, and the production mesh is 360 mm: the catalogue
-  RD350LC-like twin makes 9.6 N.m at 8,000 rpm against the maker's 37-40;
-  100 mm cells give 11.9 and are real time, but its launch from a settled idle
-  then stalls on a lean tip-in; 25 mm give 23 and are not converged (journal
-  2026-10-15). The script language sets the cycle but not the port timings,
+  oil (premix) in the charge; the fuel reaches the cylinder about an event
+  before the crankcase would deliver a carburettor's mixture, so a tip-in
+  runs rich (AFR 9-10) for a few events. The expansion chamber's return wave
+  needs fine exhaust cells: a two-stroke's production mesh is 100 mm
+  (`EngineSimulator::productionExhaustCellLengthM`, 360 mm for a four-stroke;
+  the view's fine mode never coarsens it). The catalogue RD350LC-like twin
+  makes 26 N.m at 8,000 rpm and 27.8 kW at 9,000 against the maker's 37-40
+  and 34.5 kW; 25 mm give 34.1 N.m and 35.1 kW. The gap is the mesh: the
+  first exhaust cell behind the port holds about a cylinder's volume and
+  acts as a plenum. 75-80 mm make its idle hunt (journal 2026-10-15/16).
+  The script language sets the cycle but not the port timings,
   which take their defaults (exhaust 92 deg, transfers 118 deg).
 
 ## Injection and mixture
@@ -527,8 +547,9 @@ full Pacejka; load transfer is a quasi-static longitudinal equilibrium.
 
 ## Limitations and interpretation
 
-- two-stroke engines carry no expansion-chamber tuning at the real-time
-  exhaust mesh (see *Two-stroke engines*);
+- two-stroke engines lose about a quarter of their full-load torque at the
+  100 mm real-time exhaust mesh against 25 mm cells (see *Two-stroke
+  engines*);
 - 0D gas volumes and an aggregated Helmholtz mode, without CFD or meshed 1D
   acoustics on the intake side;
 - semi-empirical global reaction, turbulence, walls, blow-by, film and knock;

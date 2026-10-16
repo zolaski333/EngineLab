@@ -5,6 +5,33 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-16 — RD350 combustion: maker's timing, crankcase no longer read as load
+
+- Burn phasing from traces (CA10/50/90, `burn.py` on PhysicsPerfHarness `--trace 8000`): with the maker's fixed 20 deg BTDC (CDI, 2.0 mm, workshop manual as quoted by owners) and the default flame, CA50 sat at 28.5 deg ATDC, far past MBT (8-10); the catalogue's 13 deg gave 29.0.
+- Cause 1: the two-stroke "MAP" is its crankcase (75-87 kPa at idle, ~107 at WOT), read as load: the flame saw an idle at 0.77 load and the ECU took 2 deg off at WOT for "boost". Load is now the delivery ratio, in the simulator and the ECU (EngineLab.TwoStroke, fails before: 17.65 vs 19.8 deg, idle load 0.77).
+- Cause 2, a calibration, not a measurement: `chamber_turbulence_intensity_ratio` 2.0 (squish head) puts CA50 at 9.2 deg ATDC with 20 deg (CA10/90 -4.0/17.6, peak 51.5 bar; 1.0: 28.5, 1.75: 12.1). 1.75 with the MAP load failed the idle gate alone.
+- Single geometry factors, earlier (12.3 N.m state, 8,000 rpm): crankcase compression 1.50, exhaust port 50 mm wide, transfers 115 mm, throttle 36 mm, runner 50 mm gave 10.3-13.7; none kept. The port timing matches two forum port maps that agree (exhaust 193-209 deg, transfers 125-130 deg duration); it was not swept. Port widths were not checked.
+- RD350 dyno 100 mm (N.m, before -> after): 3,000 21.1->23.1, 5,000 19.1->21.9, 8,000 21.9->26.0, 9,000 22.6->29.5 (27.8 kW). 25 mm: 8,000 30.1->34.1, 9,000 26.8->37.2 (35.1 kW; maker 34.5 kW at 8,500, 37-40.2 N.m at 8,000).
+- Gates: idle 1,300 std 14.7 drift -0.8, WOT blip min 1,122 settled 1,257, early blip 1,128; launch at 4/25 s min 704/574. Four-stroke dyno and IntakeDuctBench bit-identical.
+- Render `--catalogue-filter RD350` (both entries of the day): RMS 0.0086 -> 0.0077 (-1.0 dB), bands 1.9/68.0/30.2 -> 0.4/77.8/21.8 %, brightness 0.51 -> 0.48, max 6,241 -> 6,902 rpm. Not measured: any recording, the real burn duration, 12.5 mm with this setup.
+
+## 2026-10-16 — Two-stroke exhaust reconstructed across interfaces; where 100 mm loses
+
+- The chambers are short cones: at 100 mm most are 2-3 cells, and duct end cells were first order, so a whole cone was. Reconstructing across every open duct-to-duct interface (on for two-strokes only), RD350 at 8,000 rpm: 100 mm 12.1->21.9 N.m, 50 mm 17.9->27.1, 25 mm 22.3->30.1; 18 mm 30.9, 12.5 mm 31.3 (converged near 31-32 with the timing of the day). New EngineLab.GasDynamics case: a 400 mm pipe authored as two 200 mm components carries a pulse as one pipe.
+- What 100 mm still loses against 12.5 mm (one factor at a time): the time step ~2.2 N.m, the port cells ~1.8, the rest ~5.6. The first cell behind a port holds ~126 cm3, about the cylinder's volume, so the blowdown lingers in a plenum.
+- Not kept (8,000 rpm, 100/25 mm): third-order kappa = 1/3 faces 21.6/29.8; one-sided slopes at open ends 22.5/30.4; the characteristic valve 22.7/28.2 (gains at 100, loses at 25: mesh-dependent). They stay as diagnostics.
+- Real time (free-run, audio + gas view, 9,025 rpm, 4 alternated rounds after a warm-up): RD350 reconstructed 1.149-1.170, first-order ends 1.287-1.302, LS3 control 1.081-1.114. The reconstruction un-fuses RK2's second stage on two-strokes.
+- Not measured: a solver fast enough for 25 mm in real time (multirate per duct is the lead), any recording.
+
+## 2026-10-16 — Two-stroke fuelled from its reed fill; two-strokes now at 100 mm cells
+
+- Lean launch (RD350, 100 mm, launch after a 25 s idle, traced every 12.5 ms): the pulse (sprayed 250-355°) was sized from the air across the transfers latched at TDC, i.e. for the event before last, and that transfer air itself lags the crankcase fill by one event (mg per event from idle: fill 81, 328, 287; transfers 18, 127, 192). Five lean misfires before the clutch bit.
+- A, latch the transfer air at transfer close: min 389/592 rpm (launch at 25/4 s), but stalls a 12 s launch and at 90 mm; at 360 mm the early WOT blip falls to 614 (gate 1,014). Not kept.
+- B, kept: the reference is the reed inflow into the crankcase since the last transfer close, latched at that close. 100 mm: launches at 4-30 s all survive (min 430-653, stall 220); 90/110/125 mm pass; 80 mm stalls at 25 s on top of its known idle hunt. At 360 mm B also fails the early blip (626): it only stands with the finer mesh, rich early idle (below).
+- Two-stroke production mesh is now 100 mm (`EngineSimulator::productionExhaustCellLengthM`), in EngineRuntime, the app's fine view (never coarser) and the designer's cost. IdleStability RD350: mean 1,322, std 28.8, drift -42.7, WOT blip min 1,251, settled 1,433 (gate 1,495; 1,258 before); early blip 1,372. Standing start at 4/25 s: min 629/486.
+- RD350 dyno (N.m, before -> after): 2,000 15.3->20.5, 3,000 15.3->22.4, 5,000 13.9->15.7, 8,000 9.8->12.3, 9,000 8.2->9.7 (maker 37-40). Four-stroke dyno sweep and IntakeDuctBench checksums bit-identical. Render `--catalogue-filter RD350`: RMS 0.0056 -> 0.0086 (+3.7 dB), bands 1.6/87.0/11.4 -> 1.9/68.0/30.2 %, brightness 0.38 -> 0.51.
+- Left: B coasts lean after a WOT blip (AFR 18-25, misfire 0.6-0.9; reed fill ~3 mg vs 4-7 mg of oxygen-based delivery, not explained), hence the settle near its gate. While cranking the trim winds up to 2.2 and acts as a choke (early idle rich). Not measured: the real-time factor with B (no added cost expected; 1.22-1.26 is the 2026-10-15 figure), any recording.
+
 ## 2026-10-15 — Two-stroke exhaust stays at 360 mm: 50 mm is not real time, 100 mm stalls the launch
 
 - Profile (RD350, 9,025 rpm, 50 mm): the exhaust FV network is most of the physics thread; interfaces were solved serially. Each interface's Riemann solve now runs in its upstream duct's pool share: +4.5 % on a pooled run (min of 4 alternated, 1.262 -> 1.319), bit-identical (four-stroke dyno sweep, IntakeDuctBench, RD350 standing starts unchanged).

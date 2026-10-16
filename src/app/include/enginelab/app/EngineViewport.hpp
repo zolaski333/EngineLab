@@ -55,7 +55,8 @@ struct ViewSettings final {
     bool antiAliasing { true };
     /** 180 mm exhaust gas cells instead of 360 mm: the waves keep their
         shape; the simulation has 13 to 20 % less headroom (LS3 at 60 %
-        of redline: 1.05 times real time instead of 1.31). */
+        of redline: 1.05 times real time instead of 1.31). A two-stroke
+        keeps its finer 100 mm production cells either way. */
     bool fineExhaustWaves { false };
     /** How the gas field colours the ducts in the All layer: not at all
         (the default: nothing flickers), by how strongly each cell pulses

@@ -2327,7 +2327,7 @@ void EngineViewport::showSettingsMenu() {
     menu.addItem(21, utf8("Motion blur"), use3d, settings_.motionBlur);
     menu.addItem(22, utf8("Anti-aliasing (4\xc3\x97 MSAA)"), use3d, settings_.antiAliasing);
     menu.addSectionHeader(utf8("Exhaust waves"));
-    menu.addItem(30, utf8("Standard (360 mm cells)"), true, !settings_.fineExhaustWaves);
+    menu.addItem(30, utf8("Standard (360 mm cells; two-strokes 100 mm)"), true, !settings_.fineExhaustWaves);
     menu.addItem(31, utf8("Fine (180 mm cells, slower)"), true, settings_.fineExhaustWaves);
     menu.addSectionHeader(utf8("Pressure waves (All layer)"));
     menu.addItem(40, utf8("Hidden"), use3d, settings_.pressureWaves == ViewSettings::PressureWaves::hidden);

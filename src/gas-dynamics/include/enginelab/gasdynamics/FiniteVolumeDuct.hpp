@@ -374,6 +374,16 @@ private:
     std::vector<ConservativeState> residual_;
     std::vector<ConservativeState> stageResidual_;
     std::vector<ConservativeState> slopes_;
+    /** Cell states just past each end, set by ExhaustGasNetwork around one
+     * computeResidual: that end cell then takes a limited slope like an
+     * interior one. Null keeps the end first order. */
+    const ConservativeState* leftReconstructionNeighbour_ { nullptr };
+    const ConservativeState* rightReconstructionNeighbour_ { nullptr };
+    /** Diagnostic: third-order (kappa = 1/3) upwind-biased face values,
+     * limited to the MC slope's bounds, instead of one symmetric slope. Each
+     * face then has its own increment: slopes_ the right, leftSlopes_ the left. */
+    bool thirdOrderReconstruction_ { false };
+    std::vector<ConservativeState> leftSlopes_;
     mutable std::vector<PrimitiveState> cellPrimitives_;
     std::vector<PrimitiveState> stagePrimitives_;
     std::vector<PrimitiveState> candidatePrimitives_;

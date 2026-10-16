@@ -274,13 +274,16 @@ StandingStartMetrics measureStandingStart(
         metrics.minimumRpm = std::min(metrics.minimumRpm, state.rpm);
         if (state.airFuelRatio > 0.0)
             metrics.minimumAfr = std::min(metrics.minimumAfr, state.airFuelRatio);
-        if (traceEvents && tick % 12 == 0)
+        // Every 12.5 ms over the first 0.5 s, where a lean tip-in decides the
+        // launch; every 50 ms after.
+        if (traceEvents && tick % (tick * stepSeconds < 0.5 ? 3 : 12) == 0)
             std::printf("    t=%.3f rpm=%.0f clutch=%.2f afr=%.2f misfires=%llu"
-                        " | c0 air=%.1f req=%.2f met=%.2f del=%.2f portV=%.2f"
+                        " | c0 air=%.1f dair=%.1f req=%.2f met=%.2f del=%.2f portV=%.2f"
                         " film=%.2f trim=%.3f\n",
                 timeSeconds, state.rpm, clutch, state.airFuelRatio,
                 static_cast<unsigned long long>(state.misfireEventCount),
                 state.cylinderStates[0].trappedFreshAirMassMg,
+                state.cylinderStates[0].deliveredFreshAirMassMgPerCycle,
                 state.cylinderStates[0].requestedFuelMgPerCycle,
                 state.cylinderStates[0].meteredFuelMgPerCycle,
                 state.cylinderStates[0].deliveredFuelMgPerCycle,

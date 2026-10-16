@@ -510,7 +510,7 @@ void usage() {
         " [--intake-cfl number --intake-workers integer --intake-joint-manifold 0|1]"
         " [--exhaust-every-substep --exhaust-coupling-us us]"
         " [--mechanical-min-hz hz --mechanical-cap-hz hz --crank-step-deg deg --outer-hz hz]"
-        " [--exhaust-cell-mm mm --exhaust-cfl number --exhaust-rk2|--exhaust-euler|--exhaust-hancock]"
+        " [--exhaust-cell-mm mm --exhaust-cfl number --exhaust-rk2|--exhaust-euler|--exhaust-hancock --exhaust-interface-muscl]"
         " [--output csv --cycles csv --provenance json] [--schema-only]\n";
 }
 
@@ -577,6 +577,16 @@ Settings parse(int argc, char** argv) {
             s.simulatorOptions.exhaustFirstOrderTimeIntegration = true;
             s.simulatorOptions.exhaustHancockPredictor = true;
         }
+        else if (arg == "--exhaust-interface-muscl")
+            s.simulatorOptions.exhaustReconstructAcrossInterfaces = true;
+        else if (arg == "--exhaust-interface-first-order")
+            s.simulatorOptions.exhaustReconstructAcrossInterfaces = false;
+        else if (arg == "--exhaust-extrapolate-ends")
+            s.simulatorOptions.exhaustExtrapolateOpenEnds = true;
+        else if (arg == "--exhaust-third-order")
+            s.simulatorOptions.exhaustThirdOrderReconstruction = true;
+        else if (arg == "--exhaust-characteristic-valve")
+            s.simulatorOptions.exhaustCharacteristicValve = true;
         else if (arg == "--crank-step-deg") s.crankStepDegrees = number();
         else if (arg == "--outer-hz") s.outerHz = number();
         else if (arg == "--output") s.outputPath = next();

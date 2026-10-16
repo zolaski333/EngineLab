@@ -1041,6 +1041,18 @@ std::unique_ptr<gasdynamics::ExhaustGasNetwork> EngineSimulator::buildPhysicalEx
     networkConfig.firstOrderTimeIntegration =
         options_.exhaustFirstOrderTimeIntegration.value_or(false);
     networkConfig.hancockPredictor = options_.exhaustHancockPredictor.value_or(false);
+    // An expansion chamber is a chain of short cones: at the two-stroke mesh
+    // most of them are two or three cells, which first-order ends left
+    // entirely first order (RD350 at 8,000 rpm: 12.1 N.m, 21.9 reconstructed
+    // across, as much as 25 mm cells gave without; journal 2026-10-16).
+    networkConfig.reconstructAcrossInterfaces =
+        options_.exhaustReconstructAcrossInterfaces.value_or(
+            config.cycle == EngineCycle::twoStroke);
+    networkConfig.characteristicValveBoundary =
+        options_.exhaustCharacteristicValve.value_or(false);
+    networkConfig.extrapolateOpenEnds = options_.exhaustExtrapolateOpenEnds.value_or(false);
+    networkConfig.thirdOrderReconstruction =
+        options_.exhaustThirdOrderReconstruction.value_or(false);
     // Exhaust-wall temperature is a finite-capacity state. Internal exchange
     // conserves gas plus metal energy; only the explicit outside convection
     // below rejects heat from that combined subsystem to the environment.
@@ -1062,9 +1074,21 @@ std::unique_ptr<gasdynamics::ExhaustGasNetwork> EngineSimulator::buildPhysicalEx
     return network;
 }
 
+double EngineSimulator::productionExhaustCellLengthM(const EngineConfig& config) noexcept {
+    // A two-stroke's torque lives in its expansion chamber's waves: 360 mm
+    // cells left the RD350 a quarter of its maker's torque. 100 mm is the
+    // finest mesh measured in real time on the reference machine (1.22-1.26
+    // free run with audio and the gas view, RK2, no duct worker pool on a
+    // twin); 75 and 50 mm were not (journal 2026-10-15).
+    constexpr double twoStrokeCellLengthM = 0.100;
+    return config.cycle == EngineCycle::twoStroke
+        ? twoStrokeCellLengthM
+        : gasdynamics::realtimeExhaustFeedbackDiscretisation().targetCellLengthM;
+}
+
 void EngineSimulator::configurePhysicalExhaustNetwork() {
     constructionExhaustCellLengthM_ = options_.exhaustTargetCellLengthM.value_or(
-        gasdynamics::realtimeExhaustFeedbackDiscretisation().targetCellLengthM);
+        productionExhaustCellLengthM(config_));
     auto network = buildPhysicalExhaustNetwork(config_, constructionExhaustCellLengthM_);
     const auto& layout = network->layout();
     constructionExhaustLayout_ = layout;
@@ -1562,12 +1586,17 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
         // for a naturally aspirated SI engine), not the operator's brake
         // command.  Coupling flame turbulence and VVT to the dyno slider made
         // a wide-open, unloaded engine look like a zero-load combustion event.
+        // A two-stroke's "manifold" is its crankcase, which pumps about
+        // ambient at any throttle (75-87 kPa at idle): its filling is the
+        // charge it delivered last cycle, the analogue of a four-stroke's MAP.
         const auto compressionIgnitionEngine =
             config_.fuel == FuelType::diesel;
         const auto thermodynamicLoad = compressionIgnitionEngine
             ? std::clamp(std::max(safeControls.throttle,
                 (safeControls.ignitionEnabled || safeControls.starterEngaged)
                     ? 0.08 : 0.0), 0.0, 1.0)
+            : config_.cycle == EngineCycle::twoStroke
+            ? std::clamp(state_.deliveredVolumetricEfficiency, 0.0, 1.5)
             : std::clamp(state_.manifoldPressureKpa
                 / std::max(1.0, config_.ambientPressureKpa), 0.0, 1.5);
         state_.load = smooth(state_.load, thermodynamicLoad, subDt, 12.0);
@@ -1949,11 +1978,15 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                             state_.throttle, intake.throttleGamma);
                 intakeThrottleConductanceAreaM2[pathIndex] = throttleAreaM2
                     * intake.throttleDischargeCoefficient;
+                const auto crankcaseMassBeforeKg = intakePlenumGas_[pathIndex].massKg();
                 throttleFlowKeepingReversedFuel(intakePlenumGas_[pathIndex],
                     airboxSlug_[pathIndex], intake.airboxVolumeLitres,
                     intakeSourcePressureKpa, temperatureK,
                     plenumInletAreaM2(intake, throttleAreaM2, throttlePlateAreaM2),
                     intake.throttleDischargeCoefficient, subDt, twoStrokeCrankcase);
+                if (twoStrokeCrankcase)
+                    reedInflowMgThisFill_[pathIndex] += std::max(0.0,
+                        intakePlenumGas_[pathIndex].massKg() - crankcaseMassBeforeKg) * 1.0e6;
                 if (intake.individualThrottles)
                     setIndividualThrottleAreas(pathIndex, throttleAreaM2
                         * intake.throttleDischargeCoefficient);
@@ -2214,6 +2247,15 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 exhaustFlowMgThisCycle_[cylinderIndex] = 0.0;
                 deliveredAirMgThisCycle_[cylinderIndex] = 0.0;
             }
+            // A two-stroke's crankcase fill ends when the piston covers the
+            // transfers: everything the reed let in since the last closing is
+            // the charge the next transfer event draws on, and the pulse that
+            // fuels that event is sprayed just after this point.
+            if (twoStroke && crossedPhase(previousPhase, cyclePhase,
+                    cycleDegrees - config_.twoStroke.transferPortOpenDegrees, cycleDegrees)) {
+                reedInflowMgLastFill_[intakePathIndex] = reedInflowMgThisFill_[intakePathIndex];
+                reedInflowMgThisFill_[intakePathIndex] = 0.0;
+            }
             const auto kinematics = reuseCachedKinematics ? cachedKinematics[cylinderIndex]
                 : evaluateCylinderKinematics(config_, kinematicsReference_, cylinderIndex,
                     state_.crankAngleDegrees, state_.angularVelocityRadPerSecond,
@@ -2354,16 +2396,22 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
                 : intakePlenumGas_[intakePathIndex];
             const auto chargeSourcePressureKpa = chargeSource.pressureKpa();
             const auto chargeSourceTemperatureK = chargeSource.temperatureK();
-            // A two-stroke is fuelled as a carburettor does: for the fresh air
-            // that crossed its transfers last cycle. Its trapped oxygen is no
-            // reference: at idle ~85 % of the trapped charge is retained from
-            // cycle to cycle, unburned oxygen and fuel alike, and counting
-            // that oxygen as new air fuelled the RD350 for 60 mg against 9 mg
-            // delivered (AFR 3.7, half its cycles misfiring). Nor is its
-            // crankcase density, which swings within every cycle.
+            // A two-stroke is fuelled as a carburettor does: for the air that
+            // crossed it, here the crankcase's last fill through the reed. Its
+            // trapped oxygen is no reference: at idle ~85 % of the trapped
+            // charge is retained from cycle to cycle, unburned oxygen and fuel
+            // alike, and counting that oxygen as new air fuelled the RD350 for
+            // 60 mg against 9 mg delivered (AFR 3.7, half its cycles
+            // misfiring). Nor is its crankcase density, which swings within
+            // every cycle. The air across the transfers was the reference
+            // before: steady, it equals the fill, but on a tip-in the fill
+            // leads it by an event (RD350 from idle, mg per event: fill 81,
+            // 328, 287; transfers 18, 127, 192), and the pulse it sized was
+            // for the event before last. Five lean misfires stalled the
+            // launch from a settled idle at 100 mm cells (journal 2026-10-16).
             const TrappedChargeReference chargeReference = twoStroke
                 ? TrappedChargeReference {
-                    std::max(0.0, deliveredAirMgPerCycle_[cylinderIndex]),
+                    std::max(0.0, reedInflowMgLastFill_[intakePathIndex]),
                     chargeSourcePressureKpa, chargeSourceTemperatureK }
                 : TrappedChargeReference {
                     trappedAirMassMgLastCycle_[cylinderIndex],
@@ -5963,6 +6011,8 @@ void EngineSimulator::reset() noexcept {
     exhaustFlowMgThisCycle_.fill(0.0);
     deliveredAirMgPerCycle_.fill(0.0);
     deliveredAirMgThisCycle_.fill(0.0);
+    reedInflowMgThisFill_.fill(0.0);
+    reedInflowMgLastFill_.fill(0.0);
     exhaustRunnerVelocityMps_.fill(0.0);
     exhaustRunnerTemperatureK_.fill(config_.ambientTemperatureC + 273.15);
     cylinderFlowCycleStarted_.fill(false);

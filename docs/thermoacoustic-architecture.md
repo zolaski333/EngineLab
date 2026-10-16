@@ -45,6 +45,14 @@ the cell's own: that centred term amplified a sealed duct's acoustic mode up to
 479x under a single stage (IntakeAcousticConvergenceTests). It is not the
 production scheme: on the RD350LC-like at 75 mm it lost half the torque at
 4,000 rpm (journal 2026-10-15).
+A duct's end cells are first order unless `reconstructAcrossInterfaces` lets
+them take a limited slope through the neighbouring duct's end cell, the
+interface's Riemann problem then joining the two reconstructed faces (on for
+two-strokes: at their 100 mm mesh, an expansion chamber's cones are two or
+three cells long). Diagnostics only, not kept on the RD350 (journal
+2026-10-16): `extrapolateOpenEnds` (one-sided slopes at ports, outlets and
+junctions), `thirdOrderReconstruction` (kappa = 1/3 face values) and
+`characteristicValveBoundary`.
 Local losses, wall friction and heat transfer are declared source terms. The
 engine network walls now have a finite heat capacity: the gas-metal exchange
 conserves the combined energy and only external convection explicitly rejects

@@ -238,8 +238,10 @@ double measureEarlyBlip(const enginelab::EngineConfig& config,
 }
 } // namespace
 
-/** `wideOpen`: the gate's phase 4 instead (1.2 s wide open, 12 s recovery). */
-void traceIdle(const enginelab::EngineConfig& config, bool wideOpen = false) {
+/** `wideOpen`: the gate's phase 4 instead (1.2 s wide open, 12 s recovery).
+ *  `early`: the early-blip check (0.5 s wide open 6 s after the start). */
+void traceIdle(const enginelab::EngineConfig& config, bool wideOpen = false,
+               bool early = false) {
     enginelab::SimpleEcuModel ecu;
     enginelab::SimplifiedGasolinePhysics physics;
     enginelab::FourStrokeEventGenerator events;
@@ -260,15 +262,16 @@ void traceIdle(const enginelab::EngineConfig& config, bool wideOpen = false) {
     // instrument was explaining a different experiment from the one that failed.
     constexpr double traceStartSeconds = 6.0;
     constexpr double traceIdleSeconds = 16.0;
-    const auto blipStart = traceStartSeconds + traceIdleSeconds;
-    const auto blipEnd = blipStart + (wideOpen ? 1.2 : 0.5);
-    const auto traceEnd = blipEnd + (wideOpen ? 12.0 : 4.0);
+    const auto blipStart = early ? traceStartSeconds : traceStartSeconds + traceIdleSeconds;
+    const auto blipEnd = blipStart + (wideOpen && !early ? 1.2 : 0.5);
+    const auto traceEnd = blipEnd + (early ? 10.0 : wideOpen ? 12.0 : 4.0);
     for (int step = 0; step < static_cast<int>(traceEnd / stepSeconds); ++step, t += stepSeconds) {
         enginelab::EngineControls controls;
         controls.ignitionEnabled = true;
         controls.starterEngaged =
             t < traceStartSeconds && simulator.state().rpm < config.idleRpm * 0.85;
-        controls.throttle = (t >= blipStart && t < blipEnd) ? (wideOpen ? 1.0 : 0.5) : 0.0;
+        controls.throttle = (t >= blipStart && t < blipEnd)
+            ? (wideOpen || early ? 1.0 : 0.5) : 0.0;
         controls.load = 0.0;
         const auto frame = simulator.step(stepSeconds, controls);
         // Fine cadence through the catch and the blip recovery, coarse between.
@@ -321,20 +324,28 @@ void traceIdle(const enginelab::EngineConfig& config, bool wideOpen = false) {
 
 int main(int argc, char** argv) {
     try {
-        const auto catalog = enginelab::loadEngineCatalog(
-            std::filesystem::path(ENGINELAB_CATALOG_ROOT));
+        // `--catalog-root DIR` first: a diagnostic catalogue (one-factor variants).
+        auto catalogRoot = std::filesystem::path(ENGINELAB_CATALOG_ROOT);
+        if (argc > 2 && std::string(argv[1]) == "--catalog-root") {
+            catalogRoot = argv[2];
+            argv += 2;
+            argc -= 2;
+        }
+        const auto catalog = enginelab::loadEngineCatalog(catalogRoot);
         if (!catalog.errors.empty()) {
             std::cerr << "FAILED: catalogue load: " << catalog.errors.front() << '\n';
             return EXIT_FAILURE;
         }
 
         if (argc > 1 && std::string(argv[1]) == "--trace") {
-            // `--trace [--wot] [name-substring ...]`; with no substring, the two
-            // engines this mode was first written for.
+            // `--trace [--wot|--early] [name-substring ...]`; with no substring,
+            // the two engines this mode was first written for.
             std::vector<std::string> wanted;
             auto wideOpen = false;
+            auto early = false;
             for (int index = 2; index < argc; ++index) {
                 if (std::string(argv[index]) == "--wot") wideOpen = true;
+                else if (std::string(argv[index]) == "--early") early = true;
                 else wanted.emplace_back(argv[index]);
             }
             if (wanted.empty()) wanted = { "Merlin", "LS3" };
@@ -345,7 +356,7 @@ int main(int argc, char** argv) {
                     [&](const std::string& token) {
                         return config.name.find(token) != std::string::npos;
                     });
-                if (matches) traceIdle(config, wideOpen);
+                if (matches) traceIdle(config, wideOpen, early);
             }
             return EXIT_SUCCESS;
         }

@@ -762,6 +762,131 @@ void testDirectDuctInterfaceTransmitsWavesWithoutInventoryLoss() {
                              network.cylinderExchanges(), network.outletSamples(), 3.0e-9);
 }
 
+// One straight 400 mm pipe per cylinder, or the same pipe authored as two
+// 200 mm components, then the outlet.
+[[nodiscard]] EngineConfig straightPipeConfig(bool split) {
+    auto config = makeDefaultInlineFour();
+    auto& path = config.exhaustPaths.front();
+    ExhaustNetworkConfig authored;
+    for (std::size_t index = 0; index < config.cylinders.size(); ++index) {
+        const auto firstId = static_cast<std::uint32_t>(100 + index);
+        const auto secondId = static_cast<std::uint32_t>(200 + index);
+        const auto outletId = static_cast<std::uint32_t>(300 + index);
+        ExhaustComponentConfig first;
+        first.id = firstId;
+        first.type = ExhaustComponentType::pipe;
+        first.lengthMm = split ? 200.0 : 400.0;
+        first.diameterMm = 42.0;
+        ExhaustComponentConfig outlet = first;
+        outlet.id = outletId;
+        outlet.type = ExhaustComponentType::outlet;
+        outlet.lengthMm = 100.0;
+        outlet.dischargeCoefficient = 0.80;
+        authored.components.push_back(first);
+        authored.cylinderConnections.push_back({ config.cylinders[index].id, firstId });
+        if (split) {
+            auto second = first;
+            second.id = secondId;
+            authored.components.push_back(second);
+            authored.connections.push_back({ firstId, secondId });
+            authored.connections.push_back({ secondId, outletId });
+        } else {
+            authored.connections.push_back({ firstId, outletId });
+        }
+        authored.components.push_back(outlet);
+    }
+    path.network = std::move(authored);
+    normaliseEngineConfig(config);
+    return config;
+}
+
+// The pressure along the first cylinder's pipe after a right-running pulse
+// has crossed its middle, whether or not that middle is an interface.
+[[nodiscard]] std::vector<double> pressureAlongStraightPipe(
+    bool split, bool reconstructAcrossInterfaces) {
+    ExhaustGasNetworkConfig networkConfig;
+    networkConfig.reconstructAcrossInterfaces = reconstructAcrossInterfaces;
+    ExhaustNetworkDiscretisation mesh;
+    mesh.targetCellLengthM = 0.020;
+    mesh.minimumCellsPerDuct = 1;
+    const auto graph = ExhaustGraph::makeForEngine(straightPipeConfig(split));
+    const auto layout = ExhaustNetworkLayout::compile(graph, mesh);
+    requireNetwork(layout.valid(), "straight-pipe fixture must compile");
+    ExhaustGasNetwork network;
+    requireNetwork(network.configure(layout, networkConfig),
+        "straight-pipe network must configure");
+    std::vector<std::size_t> pipe;
+    for (const auto componentId : { 100u, 200u })
+        for (std::size_t index = 0; index < layout.ducts().size(); ++index)
+            if (layout.ducts()[index].sourceComponentId == componentId)
+                pipe.push_back(index);
+    requireNetwork(pipe.size() == (split ? 2u : 1u), "straight-pipe ducts must be found");
+    constexpr double basePressurePa = 101'325.0;
+    constexpr double baseDensity = 1.18;
+    const auto base = network.mixtureModel().conservativeFromPrimitive(
+        baseDensity, 0.0, basePressurePa, GasComposition::dryAir());
+    requireNetwork(base.has_value(), "straight-pipe base state must be physical");
+    const auto basePrimitive = network.mixtureModel().primitiveFromConservative(*base);
+    requireNetwork(basePrimitive.has_value(), "straight-pipe base primitive must recover");
+    auto startM = 0.0;
+    for (const auto ductIndex : pipe) {
+        auto& duct = network.ducts()[ductIndex];
+        for (std::size_t index = 0; index < duct.cells().size(); ++index) {
+            const auto offset = (startM + duct.cellCentreM(index) - 0.15) / 0.02;
+            const auto pressurePerturbation = 2'000.0 * std::exp(-0.5 * offset * offset);
+            const auto density = baseDensity + pressurePerturbation
+                / (basePrimitive->speedOfSoundMps * basePrimitive->speedOfSoundMps);
+            const auto velocity = pressurePerturbation
+                / (baseDensity * basePrimitive->speedOfSoundMps);
+            const auto state = network.mixtureModel().conservativeFromPrimitive(
+                density, velocity, basePressurePa + pressurePerturbation,
+                GasComposition::dryAir());
+            requireNetwork(state.has_value(), "straight-pipe pulse must be physical");
+            duct.cells()[index] = *state;
+        }
+        startM += duct.geometry().lengthM;
+    }
+    const auto before = network.inventory();
+    const auto result = network.advance(
+        0.00040, {}, ambientFor(network, basePressurePa, 300.0, 0.0));
+    requireNetwork(result.completed, "straight-pipe pulse must advance");
+    requireMassEnergyBalance(before, network.inventory(),
+                             network.cylinderExchanges(), network.outletSamples(), 3.0e-9);
+    std::vector<double> pressures;
+    for (const auto ductIndex : pipe)
+        for (const auto& state : network.ducts()[ductIndex].cells()) {
+            const auto primitive = network.mixtureModel().primitiveFromConservative(state);
+            requireNetwork(primitive.has_value(), "straight-pipe state must stay physical");
+            pressures.push_back(primitive->pressurePa);
+        }
+    return pressures;
+}
+
+void testReconstructionAcrossAnInterfaceMakesASplitPipeOnePipe() {
+    // A duct's end cells are first order unless the network reconstructs
+    // through its neighbour: then two components with the same section are
+    // one pipe to the solver. At the 100 mm two-stroke production mesh most
+    // expansion-chamber components are two or three cells long.
+    const auto whole = pressureAlongStraightPipe(false, true);
+    const auto split = pressureAlongStraightPipe(true, true);
+    const auto splitFirstOrder = pressureAlongStraightPipe(true, false);
+    requireNetwork(whole.size() == split.size() && whole.size() == splitFirstOrder.size(),
+        "both straight pipes must have the same cells");
+    auto reconstructedGapPa = 0.0;
+    auto firstOrderGapPa = 0.0;
+    for (std::size_t index = 0; index < whole.size(); ++index) {
+        reconstructedGapPa = std::max(reconstructedGapPa, std::abs(split[index] - whole[index]));
+        firstOrderGapPa = std::max(firstOrderGapPa,
+            std::abs(splitFirstOrder[index] - whole[index]));
+    }
+    std::cout << "  split pipe: reconstructed gap " << reconstructedGapPa
+              << " Pa, first-order gap " << firstOrderGapPa << " Pa (pulse 2000 Pa)\n";
+    requireNetwork(reconstructedGapPa < 1.0e-6,
+        "reconstructed across, a split pipe must evolve as the whole pipe");
+    requireNetwork(firstOrderGapPa > 1.0,
+        "first-order end cells must visibly perturb a pulse crossing the split");
+}
+
 void testCatalystThermalStateAggregatesTheWholeSubstrate() {
     ExhaustGasNetworkConfig configuration;
     configuration.initialTemperatureK = 300.0;
@@ -1287,6 +1412,7 @@ void runExhaustGasNetworkTests() {
     testSmallSignalReservoirInflowUsesInteriorWaveAndReservoirDensity();
     testOpenEndDischargesTowardFreeExpansion();
     testDirectDuctInterfaceTransmitsWavesWithoutInventoryLoss();
+    testReconstructionAcrossAnInterfaceMakesASplitPipeOnePipe();
     testCatalystThermalStateAggregatesTheWholeSubstrate();
     testBoundaryInputOrderIsIrrelevant();
     testHotUnburnedFuelReactsConservatively();

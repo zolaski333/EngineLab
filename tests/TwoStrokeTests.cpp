@@ -150,11 +150,12 @@ struct Held final {
 }
 
 /** Maker: 40.2 N.m at 8,000 rpm (37 N.m in the Japanese listing). The model
- *  makes about a quarter of it (journal 2026-10-15): the real-time exhaust
- *  mesh (360 mm cells) cannot carry the expansion chamber's return wave, and
- *  finer meshes break real time. The test guards what holds -- one firing per
- *  cylinder per revolution, a sane mixture, positive torque -- and prints the
- *  figure; it does not pretend the gap is closed. */
+ *  makes about three quarters of it at the 100 mm real-time exhaust mesh
+ *  (journal 2026-10-16): the first cell behind the port holds about a
+ *  cylinder's volume, and 25 mm cells, not real time, make 34. The test
+ *  guards what holds -- one firing per cylinder per revolution, a sane
+ *  mixture, positive torque -- and prints the figure; it does not pretend the
+ *  gap is closed. */
 void catalogueTwinMakesItsTorque() {
     const auto config = catalogueTwoStroke();
     const auto held = heldFullLoad(config, 8'000.0);
@@ -166,6 +167,59 @@ void catalogueTwinMakesItsTorque() {
     require(held.lambda > 0.7 && held.lambda < 1.3, "the full-load mixture is near stoichiometric");
     require(held.torqueNm > 0.0 && held.torqueNm < 1.15 * 40.2,
         "the full-load torque at 8,000 rpm is positive and not above the maker's");
+}
+
+/** A two-stroke's "manifold" is its crankcase, which pumps about ambient at
+ *  any throttle. Read as MAP it put the idle at 0.8 of full load: the flame
+ *  burned with almost full-load turbulence and the ECU's maps saw boost at
+ *  WOT. Its load is the charge it delivered (journal 2026-10-16). */
+void loadIsTheDeliveredCharge() {
+    const auto config = catalogueTwoStroke();
+    SimpleEcuModel ecu;
+    ecu.initialiseCalibration(config);
+    ecu.beginFrame();
+    EngineState state;
+    state.rpm = 8'000.0;
+    state.load = 0.8;
+    state.coolantTemperatureC = 90.0;
+    state.simulationTimeSeconds = 1.0;
+    EngineControls controls;
+    controls.ignitionEnabled = true;
+    controls.throttle = 1.0;
+    state.manifoldPressureKpa = config.ambientPressureKpa * 1.07;
+    const auto pumping = ecu.evaluate(config, state, controls);
+    state.manifoldPressureKpa = config.ambientPressureKpa * 0.8;
+    const auto atLoad = ecu.evaluate(config, state, controls);
+    std::cout << "ECU advance at delivery ratio 0.8, crankcase 1.07 vs 0.8 x ambient: "
+              << pumping.ignitionAdvanceDegrees << " / " << atLoad.ignitionAdvanceDegrees << " deg\n";
+    require(std::abs(pumping.ignitionAdvanceDegrees - atLoad.ignitionAdvanceDegrees) < 1.0e-9,
+        "the ECU's advance follows the delivered charge, not the crankcase pressure");
+
+    auto rig = std::make_unique<Rig>(config);
+    auto crankcase = 0.0;
+    auto load = 0.0;
+    auto delivered = 0.0;
+    auto samples = 0.0;
+    for (auto frame = 0; frame < 10 * 240; ++frame) {
+        const auto t = frame * frameSeconds;
+        EngineControls idle;
+        idle.ignitionEnabled = true;
+        idle.starterEngaged = t < 1.5;
+        const auto& result = rig->simulator->step(frameSeconds, idle);
+        if (t < 8.0) continue;
+        crankcase += result.state.manifoldPressureKpa / config.ambientPressureKpa;
+        load += result.state.load;
+        delivered += result.state.deliveredVolumetricEfficiency;
+        samples += 1.0;
+    }
+    crankcase /= samples;
+    load /= samples;
+    delivered /= samples;
+    std::cout << "RD350LC-like idle: crankcase/ambient " << crankcase << ", load " << load
+              << ", delivery ratio " << delivered << '\n';
+    require(crankcase > 0.6, "the idling crankcase pumps near ambient");
+    require(load < 0.4 && std::abs(load - delivered) < 0.05,
+        "the idle load is the delivery ratio, far below the crankcase's pressure");
 }
 
 /** Left at idle, it keeps running. */
@@ -264,6 +318,7 @@ int main(int argc, char** argv) {
     portsFollowThePiston();
     configurationIsChecked();
     missingCrankOffsetsFollowTheCycle();
+    loadIsTheDeliveredCharge();
     catalogueTwinIdles();
     catalogueTwinMakesItsTorque();
     std::cout << "two-stroke: ok\n";

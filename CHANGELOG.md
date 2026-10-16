@@ -15,9 +15,12 @@ file formats, always with an in-memory migration).
   carburettor is (no overrun fuel cut); the 3-D view and the inspector show
   its ports instead of valves and cams, and the engine language sets the ports
   (`two_stroke.*` keys). New catalogue
-  engine: a Yamaha RD350LC-like twin with expansion chambers. Known gap: at
-  the real-time exhaust mesh the expansion chambers barely work, so it makes
-  about a quarter of the real bike's torque.
+  engine: a Yamaha RD350LC-like twin with expansion chambers. Two-strokes
+  run a finer real-time exhaust mesh (100 mm cells) so the chambers can
+  work, reconstructed across their short cones; its load is its delivery
+  ratio, not its crankcase pressure. Known gap: at that mesh it makes about
+  three quarters of the real bike's torque (26 N.m at 8,000 rpm, maker
+  37-40); 25 mm cells, not real time, make 34.
 - Launch control (`limits.launch_rpm` in the ECU, off by default): standing
   in gear with the throttle past half, the limiter holds the engine at the
   launch speed until the vehicle rolls.

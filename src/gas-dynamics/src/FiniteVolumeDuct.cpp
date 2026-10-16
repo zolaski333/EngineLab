@@ -85,6 +85,26 @@ constexpr double reconstructionBias = 1.5;
     return result;
 }
 
+// The kappa = 1/3 face increment towards the `far` side, (near + 2 far) / 3,
+// held inside the same bounds as monotonisedCentralSlope (Koren's limiter).
+[[nodiscard]] ConservativeState thirdOrderIncrement(
+    const ConservativeState& near, const ConservativeState& far) noexcept {
+    const auto limited = [](double nearDifference, double farDifference) noexcept {
+        return minmod(reconstructionBias * nearDifference,
+            (nearDifference + 2.0 * farDifference) / 3.0,
+            reconstructionBias * farDifference);
+    };
+    ConservativeState result;
+    for (std::size_t index = 0; index < gasSpeciesCount; ++index)
+        result.speciesMassDensityKgPerM3[index] = limited(
+            near.speciesMassDensityKgPerM3[index], far.speciesMassDensityKgPerM3[index]);
+    result.momentumDensityKgPerM2S =
+        limited(near.momentumDensityKgPerM2S, far.momentumDensityKgPerM2S);
+    result.totalEnergyDensityJPerM3 =
+        limited(near.totalEnergyDensityJPerM3, far.totalEnergyDensityJPerM3);
+    return result;
+}
+
 [[nodiscard]] ConservativeState mirrored(const ConservativeState& state) noexcept {
     auto result = state;
     result.momentumDensityKgPerM2S = -result.momentumDensityKgPerM2S;
@@ -670,6 +690,7 @@ bool FiniteVolumeDuct::configure(const DuctGeometry& geometry,
     residual_.resize(geometry.cellCount);
     stageResidual_.resize(geometry.cellCount);
     slopes_.resize(geometry.cellCount);
+    leftSlopes_.resize(geometry.cellCount);
     cellPrimitives_.resize(geometry.cellCount);
     stagePrimitives_.resize(geometry.cellCount);
     candidatePrimitives_.resize(geometry.cellCount);
@@ -1053,7 +1074,34 @@ bool FiniteVolumeDuct::computeResidual(
         for (std::size_t index = 1; index + 1 < count; ++index)
             slopes_[index] = monotonisedCentralSlope(
                 states[index - 1], states[index], states[index + 1]);
+        const auto* left = leftReconstructionNeighbour_;
+        const auto* right = rightReconstructionNeighbour_;
+        if (count == 1 && left && right) {
+            slopes_.front() = monotonisedCentralSlope(*left, states.front(), *right);
+        } else if (count > 1) {
+            if (left)
+                slopes_.front() = monotonisedCentralSlope(*left, states[0], states[1]);
+            if (right)
+                slopes_.back() = monotonisedCentralSlope(
+                    states[count - 2], states[count - 1], *right);
+        }
+        if (thirdOrderReconstruction_) {
+            for (std::size_t index = 0; index < count; ++index) {
+                const auto* previous = index > 0 ? &states[index - 1] : left;
+                const auto* next = index + 1 < count ? &states[index + 1] : right;
+                if (!previous || !next) {
+                    slopes_[index] = {};
+                    leftSlopes_[index] = {};
+                    continue;
+                }
+                const auto backward = difference(states[index], *previous);
+                const auto forward = difference(*next, states[index]);
+                slopes_[index] = thirdOrderIncrement(backward, forward);
+                leftSlopes_[index] = thirdOrderIncrement(forward, backward);
+            }
+        }
     }
+    const auto thirdOrder = thirdOrderReconstruction_ && !periodic;
 
     // This block -- the limiter, the two reconstructions and the two primitive
     // recoveries they need -- is 16-29% of the duct solver depending on cell
@@ -1062,14 +1110,15 @@ bool FiniteVolumeDuct::computeResidual(
     // dropping the scheme to first order, and the runner mesh is already known
     // not to be converged (see the mesh note in .claude/CLAUDE.md).
     for (std::size_t index = 0; index < count; ++index) {
-        if (isZero(slopes_[index])) {
+        const auto& leftSlope = thirdOrder ? leftSlopes_[index] : slopes_[index];
+        if (isZero(slopes_[index]) && isZero(leftSlope)) {
             reconstructedLeft_[index] = states[index];
             reconstructedRight_[index] = states[index];
             reconstructedLeftPrimitives_[index] = primitives[index];
             reconstructedRightPrimitives_[index] = primitives[index];
             continue;
         }
-        reconstructedLeft_[index] = addScaled(states[index], slopes_[index], -0.5);
+        reconstructedLeft_[index] = addScaled(states[index], leftSlope, -0.5);
         if (!mixtureModel_.recoverPrimitive(
                 reconstructedLeft_[index], reconstructedLeftPrimitives_[index])) {
             reconstructedLeft_[index] = states[index];

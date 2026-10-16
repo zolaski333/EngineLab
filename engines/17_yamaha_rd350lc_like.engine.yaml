@@ -13,8 +13,10 @@ family: motorcycle
 #
 # Port timings, port widths and the crankcase compression ratio are
 # estimatedFamily: typical of a road two-stroke of this class (exhaust
-# duration ~197 deg, transfers ~128 deg), not the maker's figures. So are the
-# expansion chambers below: dimensions from the usual tuned-length rule for an
+# duration ~197 deg, transfers ~128 deg), not the maker's figures; two forum
+# readings of an RD350LC port map agree (exhaust 193-209 deg, transfers
+# 125-130 deg); widths are not checked. The expansion chambers below are
+# estimated too: dimensions from the usual tuned-length rule for an
 # 8,500 rpm peak, not measured from the bike.
 #
 # The real bike has Mikuni carburettors. EngineLab meters fuel with a port
@@ -53,15 +55,22 @@ engine:
     transfer_port_open_deg: 116
     port_discharge_coefficient: 0.72
     crankcase_compression_ratio: 1.35
+  # The CDI is fixed: 2.0 mm, 20 deg BTDC (Yamaha workshop manual for the
+  # 4L0, as quoted by owners; parts makers give 1.8-2.0 mm), with no advance
+  # curve. The 0 rpm point is the cranking advance.
   ignition:
     rev_limit_rpm: 10000
     limiter_duration_s: 0.05
     timing_curve:
       - { rpm: 0, advance_deg: 12 }
-      - { rpm: 2000, advance_deg: 17 }
-      - { rpm: 6000, advance_deg: 17 }
-      - { rpm: 9000, advance_deg: 15 }
-      - { rpm: 10000, advance_deg: 14 }
+      - { rpm: 2000, advance_deg: 20 }
+      - { rpm: 10000, advance_deg: 20 }
+  # Squish-band head. A flame-speed calibration, not an output multiplier:
+  # at 1.0 the burn centred 28 deg ATDC at 8,000 rpm with the maker's 20 deg;
+  # 2.0 puts CA50 at 9 deg ATDC, the maximum-brake-torque phasing a maker
+  # sets its timing for (journal 2026-10-16).
+  combustion_calibration:
+    chamber_turbulence_intensity_ratio: 2.00
   injection:
     mode: port
     start_angle_deg: 250

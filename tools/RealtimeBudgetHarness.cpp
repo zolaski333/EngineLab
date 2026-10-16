@@ -57,6 +57,9 @@ std::optional<bool> intakeJointManifoldOverride;
 std::optional<double> exhaustCourantOverride;
 /** -1 production (SSP-RK2), 0 SSP-RK2, 1 forward Euler, 2 MUSCL-Hancock. */
 int exhaustIntegrationOverride = -1;
+/** --exhaust-interface-first-order: duct ends stay first order (a two-stroke
+ * reconstructs across interfaces by default). */
+std::optional<bool> exhaustReconstructAcrossInterfacesOverride;
 
 using Clock = std::chrono::steady_clock;
 
@@ -555,6 +558,8 @@ private:
     }
     simulatorOptions.intakeTargetCellLengthM = intakeTargetCellLengthM;
     simulatorOptions.exhaustTargetCellLengthM = exhaustTargetCellLengthM;
+    simulatorOptions.exhaustReconstructAcrossInterfaces =
+        exhaustReconstructAcrossInterfacesOverride;
     simulatorOptions.maximumLowSpeedExhaustCouplingSeconds =
         exhaustCouplingSeconds;
     simulatorOptions.intakeFirstOrderTimeIntegration =
@@ -963,6 +968,8 @@ int main(int argc, char** argv) {
             exhaustIntegrationOverride = 1;
         else if (argument == "--exhaust-hancock")
             exhaustIntegrationOverride = 2;
+        else if (argument == "--exhaust-interface-first-order")
+            exhaustReconstructAcrossInterfacesOverride = false;
         else if (argument == "--exhaust-coupling-us" && index + 1 < argc)
             exhaustCouplingSeconds = std::stod(argv[++index]) * 1.0e-6;
         else if (argument == "--intake-euler")
@@ -1000,6 +1007,7 @@ int main(int argc, char** argv) {
                          "[--intake-cell-mm N] "
                          "[--exhaust-cell-mm N] "
                          "[--exhaust-coupling-us N] [--exhaust-cfl C] [--exhaust-rk2|--exhaust-euler|--exhaust-hancock] "
+                         "[--exhaust-interface-first-order] "
                          "[--intake-euler|--intake-rk2] "
                          "[--intake-wall-us N] "
                          "[--well-mixed-junctions] "

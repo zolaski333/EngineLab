@@ -967,6 +967,26 @@ bool ExhaustGasNetwork::configure(const ExhaustNetworkLayout& layout,
         interfaceOwnerDuct_[index] = owner.elementIndex;
         ductInterfaces_[owner.elementIndex].push_back(index);
     }
+    for (auto& duct : ducts_) duct.thirdOrderReconstruction_ = config_.thirdOrderReconstruction;
+    interfaceReconstructed_.assign(layout_.interfaces().size(), std::uint8_t { 0 });
+    ductEndNeighbour_.assign(2 * ducts_.size(), std::nullopt);
+    ductEndGhost_.assign(2 * ducts_.size(), ConservativeState {});
+    if (config_.reconstructAcrossInterfaces) {
+        const auto endSlot = [](const ExhaustEndpoint& endpoint) noexcept {
+            return 2 * endpoint.elementIndex
+                + (endpoint.type == ExhaustEndpointType::ductInlet ? 0 : 1);
+        };
+        for (std::size_t index = 0; index < layout_.interfaces().size(); ++index) {
+            const auto& connection = layout_.interfaces()[index];
+            if (connection.restriction
+                || connection.upstream.type == ExhaustEndpointType::junction
+                || connection.downstream.type == ExhaustEndpointType::junction)
+                continue;
+            interfaceReconstructed_[index] = 1;
+            ductEndNeighbour_[endSlot(connection.upstream)] = connection.downstream;
+            ductEndNeighbour_[endSlot(connection.downstream)] = connection.upstream;
+        }
+    }
     cylinderFirstStageFlow_.resize(layout_.cylinderPorts().size());
     cylinderSecondStageFlow_.resize(layout_.cylinderPorts().size());
     outletFirstStageFlow_.resize(layout_.outlets().size());
@@ -1926,11 +1946,31 @@ bool ExhaustGasNetwork::evaluateStage(
                 + layout_.junctions()[upstream.elementIndex].lossCoefficient);
         }
         auto& result = interfaceFluxes_[index];
-        result.rawFlux = effectiveArea > 0.0
-            ? mixtureModel_.riemannFluxPrepared(
-                endpointState(upstream), endpointPrimitive(upstream),
-                endpointState(downstream), endpointPrimitive(downstream))
-            : EulerFlux {};
+        if (interfaceReconstructed_[index] != 0) {
+            // Both ends were reconstructed through each other by their own
+            // duct passes, which have all run by now.
+            const auto& up = ducts_[upstream.elementIndex];
+            const auto& down = ducts_[downstream.elementIndex];
+            const auto upInlet = upstream.type == ExhaustEndpointType::ductInlet;
+            const auto downInlet = downstream.type == ExhaustEndpointType::ductInlet;
+            const auto upCell = upInlet ? std::size_t { 0 } : up.reconstructedRight_.size() - 1;
+            const auto downCell = downInlet ? std::size_t { 0 } : down.reconstructedRight_.size() - 1;
+            result.rawFlux = effectiveArea > 0.0
+                ? mixtureModel_.riemannFluxPrepared(
+                    upInlet ? up.reconstructedLeft_[upCell] : up.reconstructedRight_[upCell],
+                    upInlet ? up.reconstructedLeftPrimitives_[upCell]
+                            : up.reconstructedRightPrimitives_[upCell],
+                    downInlet ? down.reconstructedLeft_[downCell] : down.reconstructedRight_[downCell],
+                    downInlet ? down.reconstructedLeftPrimitives_[downCell]
+                              : down.reconstructedRightPrimitives_[downCell])
+                : EulerFlux {};
+        } else {
+            result.rawFlux = effectiveArea > 0.0
+                ? mixtureModel_.riemannFluxPrepared(
+                    endpointState(upstream), endpointPrimitive(upstream),
+                    endpointState(downstream), endpointPrimitive(downstream))
+                : EulerFlux {};
+        }
         result.effectiveAreaM2 = effectiveArea;
         if (upstream.type != ExhaustEndpointType::junction)
             result.upstreamDuctFlux = ductBoundaryFlux(upstream, result.rawFlux, effectiveArea);
@@ -1959,7 +1999,9 @@ bool ExhaustGasNetwork::evaluateStage(
     };
     // A stage pass with a prelude rewrites each duct's states as it goes, so
     // a neighbour's end cell is only ready once every duct has passed.
-    const auto interfacesInDuctPass = part == StagePart::whole;
+    // Reconstructed across, an interface also needs its other duct's pass.
+    const auto interfacesInDuctPass = part == StagePart::whole
+        && !config_.reconstructAcrossInterfaces;
 
     // A port's face flux depends only on its cylinder reservoir and its own
     // duct end, so it can be computed with that duct; it is applied below.
@@ -2078,10 +2120,34 @@ bool ExhaustGasNetwork::evaluateStage(
             ? std::span<EulerFlux>(duct.stageFaceFluxes_)
             : std::span<EulerFlux>(duct.faceFluxes_);
         if (!prelude(ductIndex)) return false;
-        if (!duct.computeResidual(states, primitives, sourceTerms,
+        const auto neighbourCell = [&](std::size_t slot) noexcept
+            -> const ConservativeState* {
+            const auto& neighbour = ductEndNeighbour_[slot];
+            if (!neighbour) {
+                if (!config_.reconstructAcrossInterfaces || !config_.extrapolateOpenEnds
+                    || states.size() < 2)
+                    return nullptr;
+                const auto inlet = slot % 2 == 0;
+                const auto& end = inlet ? states.front() : states.back();
+                const auto& next = inlet ? states[1] : states[states.size() - 2];
+                auto& ghost = ductEndGhost_[slot];
+                ghost = addScaled(addScaled(end, end, 1.0), next, -1.0);
+                PrimitiveState primitive;
+                return mixtureModel_.recoverPrimitive(ghost, primitive) ? &ghost : nullptr;
+            }
+            const auto& other = ducts_[neighbour->elementIndex];
+            const auto& otherStates = useStageState ? other.stage_ : other.cells_;
+            return neighbour->type == ExhaustEndpointType::ductInlet
+                ? &otherStates.front() : &otherStates.back();
+        };
+        duct.leftReconstructionNeighbour_ = neighbourCell(2 * ductIndex);
+        duct.rightReconstructionNeighbour_ = neighbourCell(2 * ductIndex + 1);
+        const auto computed = duct.computeResidual(states, primitives, sourceTerms,
                 transmissive, transmissive, residual, faceFluxes, false,
-                useStageState ? 0.0 : hancockHalfStepSeconds_))
-            return false;
+                useStageState ? 0.0 : hancockHalfStepSeconds_);
+        duct.leftReconstructionNeighbour_ = nullptr;
+        duct.rightReconstructionNeighbour_ = nullptr;
+        if (!computed) return false;
         for (const auto port : ductPorts_[ductIndex]) computePortFlux(port);
         for (const auto outlet : ductOutlets_[ductIndex]) computeOutletFlux(outlet);
         if (interfacesInDuctPass)
@@ -2527,8 +2593,14 @@ ExhaustNetworkAdvanceResult ExhaustGasNetwork::advance(
                 interfaceSecondStageRate_ = interfaceFirstStageRate_;
             } else {
                 placeBoundaries(durationSeconds - remaining + trialStep);
-                const auto stagePassed = evaluateStage(true, cylinderBoundaries,
-                    ambient, StagePart::ductPass, eulerStage);
+                // Reconstructing across interfaces, a duct's second-stage pass
+                // reads its neighbours' stage states: every Euler stage first.
+                const auto stagePassed = config_.reconstructAcrossInterfaces
+                    ? forEachDuct(eulerStage)
+                        && evaluateStage(true, cylinderBoundaries, ambient,
+                            StagePart::ductPass, [](std::size_t) noexcept { return true; })
+                    : evaluateStage(true, cylinderBoundaries,
+                        ambient, StagePart::ductPass, eulerStage);
                 if (stageRejected()) {
                     if (!rejectAttempt()) break;
                     continue;
