@@ -503,8 +503,9 @@ solver's own state, not by an animation:
   solver does not carry; they keep their metal colour. Each duct vertex has a
   station (0 at the inlet, 1 at the outlet) and the shader interpolates
   between cell centres.
-- **Resolution.** The real-time mesh has cells of about 0.36 m, so a primary
-  shows one to three cells. The view shows what the solver resolves, not the
+- **Resolution.** The real-time mesh has cells of about 0.36 m on a
+  four-stroke (0.10 m on a two-stroke), so a four-stroke primary shows one to
+  three cells. The view shows what the solver resolves, not the
   audio band, which the characteristic network carries separately. Measured
   against a 45 mm mesh at full load: in a primary it shows 29 to 61 % less
   peak-to-peak; 180 mm closes most of it but costs 13 to 20 % of real-time

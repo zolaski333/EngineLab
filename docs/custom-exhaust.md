@@ -102,7 +102,8 @@ path as it was before these fields existed.
 The catalogue uses it to give every system its family's length from port to
 tip: 3.0-3.7 m under a front-engined car, 1.6 m behind the rear-engined
 flat-six, 1.2-1.5 m on a motorcycle. `EngineLab.Core` holds those bands. A
-long pipe costs realtime solver cells (one per 0.36 m): check a costly engine
+long pipe costs realtime solver cells (one per 0.36 m on a four-stroke, one per
+0.10 m on a two-stroke): check a costly engine
 with `EngineLabRealtimeBudgetHarness --free-run --with-audio` before
 lengthening it.
 

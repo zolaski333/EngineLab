@@ -161,6 +161,43 @@ out\build\windows-vs2022\tools\Release\EngineLabDriveScenarioHarness.exe `
   --engine "CP2 MT-07" --builtin pull --csv cp2-pull.csv
 ```
 
+## Instruments
+
+Every tool under `tools/` is built with the project (target
+`EngineLab<Name>`, in `out\build\windows-vs2022\tools\Release`). Each source
+file's header says which question it answers and lists its options.
+
+| Tool | Question it answers |
+|---|---|
+| `AbClipRenderer` | listening clips, each segment (idle, rev-up...) at its own loudness, for blind A/B against a recording or another engine |
+| `AfterfireHarness` | the shape of the overrun heat release in the exhaust (use `--liftoff-rpm`) |
+| `AudioAbHarness` | the real-time audio path rendered offline over an idle-to-redline sweep of every catalogue engine, with the same metrics as `AudioRenderHarness` |
+| `AudioRenderHarness` | the real-time audio path rendered offline: RMS, crest, DC, spectral bands, exhaust RT60 |
+| `ComparisonHarness` | deterministic scenarios on the catalogue with an operating gate, compared against a reference `summary.csv` (above) |
+| `CyclicVariabilityHarness` | COV(IMEP) per cylinder at a held engine speed |
+| `DieselControlHarness` | does the editable injected-quantity curve reach a diesel's fuel and torque? |
+| `DriveScenarioHarness` | a driving complaint as a timeline of pedals and gears (above) |
+| `DynoCurveHarness` | torque at established points, integrated over whole cycles once the engine has settled; writes per-cycle data and a provenance file next to its CSV |
+| `DynoRuntimeCurveHarness` | the application's own dyno run, captured from the runtime's public snapshots |
+| `DynoSweepHarness` | torque and power over an engine-speed sweep, CSV export |
+| `ExhaustFlowBench` | an authored exhaust under a steady mass flow, engine removed: is the back-pressure the pipes' or the pulses'? |
+| `ExhaustNetworkCostBench` | does the same geometry cost more solver time when authored as a designer network? |
+| `GeometrySensitivityHarness` | does an exhaust change alter the timbre (`shape`) or only the level? |
+| `IntakeDuctBench` | bit-exact checksum of the duct solver: unchanged means the physics is untouched |
+| `LoadedAccelerationHarness` | a wide-open-throttle pull held in one gear, without shifts, to attribute a torque collapse |
+| `OfflineAudioExporter` | high-quality WAV render with stems ([offline rendering](offline-hq-rendering.md)) |
+| `PhysicsPerfHarness` | gas-exchange trace at crank-degree resolution; `--trace 1 --idle` is a real idle |
+| `RealtimeBudgetHarness` | the real-time factor on the runtime thread (`--free-run` for capacity); back-to-back comparisons only |
+| `SceneExport` | the 3-D scene of the catalogue as JSON, with the route check issues per engine |
+| `ShiftTransientHarness` | the exhaust mass-flow step (the "crack") of a clutchless full-throttle upshift, and with `--audio-output` its sound |
+| `ThermalHarness` | coolant and oil temperatures over repeated dyno passes, tied to the power lost from pass to pass |
+| `TurboDownstreamAuthorityHarness` | does the exhaust after the turbine change a turbocharged engine's power? |
+| `UserDynoHarness` | the dyno started as a user does, from an engine already running above the first point: a preparation phase, no stall, points from the low end |
+
+`WasapiLoopbackRecorder.cpp` is not part of the build: a standalone recorder of
+the sound card's output (compile line in its header), used to measure another
+program's sound with the same analysis.
+
 ## Sanitizers and static analysis
 
 In a dedicated build tree:
@@ -187,6 +224,6 @@ outputs and expected trends on the shipped scenarios. They make regressions
 visible.
 
 They do not prove the accuracy of a real torque curve, the fidelity of a
-specific exhaust, stability on every possible configuration or perceptual
-parity with ES2D. Those claims need external data, A/B protocols and physical
-references that the repository does not hold today.
+specific exhaust, stability on every possible configuration or that an engine
+sounds like the real one. Those claims need external data, A/B protocols and
+physical references that the repository does not hold today.

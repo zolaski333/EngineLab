@@ -254,11 +254,15 @@ against the literature or a real recording.
 | `DynoSweepHarness` / `UserDynoHarness` | torque and power curves, CSV export |
 | `DriveScenarioHarness` | a driving complaint as a rerunnable timeline (pedals, gears): per-gear ratio, 0-100 km/h, limits |
 | `AfterfireHarness` | the shape of overrun heat release, and its real effect on the audio |
+| `ThermalHarness` | coolant and oil temperatures over repeated dyno passes, tied to the power lost from pass to pass |
+| `ExhaustFlowBench` | an authored exhaust under a steady mass flow, engine removed: is the back-pressure the pipes' or the pulses'? |
 | `IntakeDuctBench` | bit-exact fingerprint of the duct solver: proves an optimisation is not a physics change |
 | `SceneExport` | the 3-D scene of catalogue engines as JSON (meshes, duct centrelines and radii, ports, engine solids, route check issues), to inspect the laid-out ducts outside the app; prints the issue counts per engine |
 
-Reference figures come from engine and acoustics literature or from real
-recordings, never from the simulator's own output.
+Every instrument has a line in
+[tests and validation](docs/tests-and-validation.md#instruments). Reference
+figures come from engine and acoustics literature or from real recordings,
+never from the simulator's own output.
 
 ---
 
@@ -285,9 +289,11 @@ holds the working rules, build notes and verified traps of this repository.
 ## Known limitations
 
 - petrol and direct-injection diesel rely on global, semi-empirical
-  combustion models; two-stroke engines (petrol, piston-ported) run, but the
-  real-time exhaust mesh is too coarse for an expansion chamber's tuning, so
-  they make well under their maker's torque;
+  combustion models; two-stroke engines (petrol, piston-ported) run on a
+  finer real-time exhaust mesh (100 mm cells) so the expansion chamber works,
+  but still fall short of their maker's torque (the RD350LC-like twin makes
+  29-33 N.m at 8,000 rpm against 37-40, though 34 kW at 9,000 rpm against
+  the maker's 34.5);
 - 0-D cylinder chambers and low-band quasi-1-D networks — this is not 3-D CFD;
 - audible propagation is linear and plane: transverse modes, 3-D bends and the
   mean-flow correction of radiation are not resolved;
@@ -300,7 +306,7 @@ holds the working rules, build notes and verified traps of this repository.
   diameters and volumes are the configured ones, but the routing is invented
   (a pipe that must span more than its length is drawn longer), and the
   pressure waves shown on it are the real-time gas solver's, whose cells are
-  about 0.36 m long (see
+  about 0.36 m long on a four-stroke and 0.10 m on a two-stroke (see
   [the architecture document](docs/architecture.md#gas-field-on-the-ducts));
 - Windows only for now: the code is standard C++20 and JUCE, but no other
   platform is built or tested;
