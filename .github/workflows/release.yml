@@ -15,7 +15,7 @@ jobs:
     runs-on: windows-2022
     timeout-minutes: 180
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - name: Check that the tag matches the project version
         shell: pwsh
