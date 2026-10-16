@@ -7,12 +7,11 @@ This file is deliberately short (ceiling: ~200 lines). To add a rule, remove or
 merge another one. The project is English-only: code, comments, UI, docs and
 commit messages.
 
-The full measurement history (audits, validations, batches, plans, the old
-1,080-line agent notes) was removed from the tree and lives in the git tag
-`archive/docs-2026-09`, under `docs/archive/`. Read it with
-`git show archive/docs-2026-09:docs/archive/<file>.md` (list the files with
-`git ls-tree --name-only archive/docs-2026-09 docs/archive/`). It is a source to
-consult, not a set of instructions, and it is in French.
+The measurement history to September 2026 (audits, plans, the old agent notes;
+in French) lives in the git tag `archive/docs-2026-09`, under `docs/archive/`:
+`git ls-tree --name-only archive/docs-2026-09 docs/archive/` lists it,
+`git show archive/docs-2026-09:docs/archive/<file>.md` reads it. A source to
+consult, not a set of instructions.
 
 ## Current priority
 
@@ -30,27 +29,24 @@ without the owner's explicit agreement.
 
 Known leads, **not verified**, to be tested by measurement first:
 
-- Afterfire: causes **measured** on 2026-09-23 (see `docs/journal.md`). The
-  sound of a backfire is capped at ~3.8 kHz by the source reconstruction
-  (0.47 × coupling rate ≤ 8 kHz), and it only exceeds the engine's peak by 0 to
-  +10 dB. Physics decides *when* and *how much*; the crack layer
-  (`ReactionCrackSynthesiser`) provides the > 4 kHz band, uncalibrated. On the
-  CP2, nothing burns at the 800 K threshold: measure that first.
+- Afterfire (causes measured 2026-09-23, journal): its sound is capped at
+  ~3.8 kHz (0.47 × coupling rate ≤ 8 kHz) and only 0 to +10 dB over the
+  engine's peak. Physics decides *when* and *how much*; `ReactionCrackSynthesiser`
+  adds the > 4 kHz band, uncalibrated. On the CP2 nothing burns at the 800 K
+  threshold: measure that first.
 - Above the plane-mode cutoff (a few kHz for a 50-80 mm tube), a 1-D model no
   longer carries anything physical: that is the band where generic synthesis is
   most likely to help.
 
 ## Working rules
 
-- **Measure before fixing.** This code contains deliberate compensations (flame
-  volume fraction compensated by a 1.12 factor; an exhaust "voice" layer that
-  serves as a fallback without telemetry…). "Fixing" one of them alone degrades
-  an observable behaviour that was right. Ask yourself what compensates
-  downstream.
+- **Measure before fixing.** This code holds deliberate compensations (flame
+  volume fraction × 1.12; an exhaust "voice" layer as a fallback without
+  telemetry…). "Fixing" one alone degrades a behaviour that was right: ask what
+  compensates downstream.
 - **References come from reality** (recordings, literature), never from the
   simulator's current output.
-- **One measurement changes one factor.** A variant that changes two proves
-  nothing.
+- **One measurement changes one factor.** Changing two proves nothing.
 - **Do not change the default sound** unless the task is explicitly a sound
   change, checked with the harness before/after.
 - **No new dated document.** A measurement result goes into `docs/journal.md`
@@ -79,31 +75,30 @@ cmake --build out/build/windows-vs2022 --config Release --target package   # rel
   cause for MSBuild: on `C1060`, rerun with `/m:1`. It is not a code bug.
 - **Never enable `ENGINELAB_ENABLE_COMPILER_CACHE`**: sccache breaks Ninja's
   header tracking, and a modified header no longer recompiles anything.
-- `scripts/vsenv.ps1` fixes a broken environment (VS 18 installed next to
-  VS 2022, empty `vswhere`). If CMake starts targeting VS 18, reconfigure with
-  `-DCMAKE_GENERATOR_INSTANCE="C:/Program Files/Microsoft Visual Studio/2022/Community"`,
-  including in the `CMakeCache.txt` of the `_deps/*` sub-builds.
+- `scripts/vsenv.ps1` fixes a broken environment (VS 18 next to VS 2022, empty
+  `vswhere`). If CMake targets VS 18, reconfigure (and the `_deps/*` caches) with
+  `-DCMAKE_GENERATOR_INSTANCE="C:/Program Files/Microsoft Visual Studio/2022/Community"`.
 - **Stale binary trap**: a wrong target name (`MSB1009`) compiles nothing, and
-  `ctest` reruns the old binary. Test executables: `EngineLabCoreTests`,
-  `EngineLabExhaustTests`, `EngineLabPhysicsRegressionTests`,
-  `EngineLabCombustionPhasingTests`, `EngineLabRealtimeRegressionTests`,
-  `EngineLabComparisonHarness`, `EngineLabAudioRenderHarness`. Check that the
-  target was actually relinked.
+  `ctest` reruns the old binary (`EngineLabCoreTests`, `EngineLabExhaustTests`,
+  `EngineLabPhysicsRegressionTests`, `EngineLabCombustionPhasingTests`...).
+  Check that the target was actually relinked.
 - A new test must **fail without the fix** (after rebuilding the right target).
-- A `ctest` that prints nothing more after `Start N:` is **stuck**, not slow:
-  check with `Get-Process ... | Select CPU,StartTime`. Conversely, a very short
-  time can be a failure (`EngineLab.Core`: ~90 s if it passes, ~8 s if it
-  aborts).
+- A `ctest` that prints nothing more after `Start N:` is **stuck**, not slow
+  (`Get-Process ... | Select CPU,StartTime`). A very short time can be a
+  failure (`EngineLab.Core`: ~90 s if it passes, ~8 s if it aborts).
+- **Release**: bump `project(EngineLab VERSION ...)`, date the `[Unreleased]`
+  section of `CHANGELOG.md`, then push the tag `v<version>`: `release.yml`
+  refuses a tag that does not match the CMake version.
 
 ## Instruments
 
-Deterministic, so comparable from one commit to the next:
+Every tool has a line in `docs/tests-and-validation.md` (Instruments). The
+deterministic ones, comparable from one commit to the next:
 
 - `EngineLabAudioRenderHarness`: renders the real real-time path offline; RMS,
   crest factor, spectral bands, exhaust RT60.
 - `EngineLabGeometrySensitivityHarness`: does an exhaust change alter the
-  timbre (`shape`) or the level (`level`)? Separates the exhaust from the
-  layers.
+  timbre (`shape`) or the level (`level`)? Separates exhaust from layers.
 - `EngineLabAbClipRenderer`: listening clips; each segment (idle, rev-up…) has
   its own level. A single loudness over idle + full load makes the idle ~23 dB
   too quiet.
@@ -154,9 +149,8 @@ Non-deterministic:
 - **Any average over a window mixing very different levels reflects the loudest
   part** (loudness, event thresholds, cycle averages). Same for a fixed window
   over an unsettled signal: check the drift.
-- **Idles are fragile attractors**: an algebraically equivalent change (one ULP)
-  can stall an engine. Do not revert the optimisation: fix what makes the idle
-  so sensitive.
+- **Idles are fragile attractors**: a one-ULP equivalent change can stall an
+  engine. Do not revert the optimisation: fix what makes the idle so sensitive.
 - **Wrapping phases**: a crank event is a remaining distance, not an absolute
   angle. An accumulator must not receive `forwardPhaseDegrees` without a guard
   (at most 180° per sub-step).
@@ -208,9 +202,7 @@ Details of each measurement are in the docs archive (tag `archive/docs-2026-09`)
 
 ## Document layout
 
-- `VISION.md`: the intent. `.claude/CLAUDE.md` (this file): the method.
-  `AGENTS.md` points here.
-- `docs/*.md`: how each part works (architecture, audio, exhaust, ECU, DSL…).
-  Keep them up to date when the code changes. `docs/README.md` is the index.
-- `docs/journal.md`: measurement results, short entries.
-- `CHANGELOG.md`: user-visible changes per release.
+`VISION.md`: the intent; this file: the method (`AGENTS.md` points here).
+`docs/*.md`: how each part works, kept up to date with the code (index:
+`docs/README.md`). `docs/journal.md`: measurement results, short entries.
+`CHANGELOG.md`: user-visible changes per release.
