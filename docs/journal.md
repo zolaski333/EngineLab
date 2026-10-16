@@ -5,6 +5,16 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-16 — Two-stroke exhaust coupled every substep from BDC to transfer close
+
+- Where 100 mm lost (RD350, 8,000 rpm, single-point dyno, one factor each): first the cylinder/exhaust coupling, not the cells. Production couples every 117 us (3 substeps, exchange applied as a lump): 27.6 N.m; every substep 31.3; 25 mm coupled at 40 us 35.9. 78 us gains nothing over 117 (not explained).
+- Fine coupling inside one crank window only: blowdown 28.0, 115-180 deg (first half of scavenging) 26.8, whole scavenging 115-245 30.8, BDC to transfer close (180-245) 31.1. There the cylinder pressure is a few-kPa balance between two open ports, and it sets the trapped charge. Finer transfer (intake) coupling: 26.0-27.4, not a lever.
+- Kept: a two-stroke couples every substep while a cylinder is between 180 deg and 360 - transfer open. Dyno sweep (N.m, coarse -> window, every substep): 6,000 19.2 -> 22.3 (21.3), 7,000 24.6 -> 28.3 (27.9), 8,000 26.0 -> 28.9 (29.2), 9,000 29.5 -> 33.6 (34.5); 3,000-5,000 within 1.4 %.
+- Real time (free-run, audio + gas view, 9,025 rpm, 4 alternated rounds): window 1.057-1.068 (36.0 N.m, 34.0 kW), coarse 1.164-1.177 (31.7, 30.0), LS3 control 1.107-1.123. Whole scavenging window 0.968-0.985 and every substep (cpl 40 us, dropped samples) are not real time.
+- EngineLab.TwoStroke: production within 5 % of every-substep at 8,000 rpm (33.0 vs 33.6; fails before: 29.2). Gates: idle 1,300 std 14.7, WOT blip min 1,133; launch at 4/25 s min 704/574. Four-stroke dyno and IntakeDuctBench bit-identical. ctest 89/89.
+- Render `--catalogue-filter RD350`: RMS 0.0077 -> 0.0079, bands 0.4/77.8/21.8 -> 1.0/72.6/26.5 %, brightness 0.48 -> 0.50, crest 6.7 -> 9.3, max 6,902 -> 7,232 rpm.
+- Left: ~35-36 N.m converged vs 37-40.2 (maker). Not measured: any recording, scavenging efficiency against literature, friction.
+
 ## 2026-10-16 — RD350 combustion: maker's timing, crankcase no longer read as load
 
 - Burn phasing from traces (CA10/50/90, `burn.py` on PhysicsPerfHarness `--trace 8000`): with the maker's fixed 20 deg BTDC (CDI, 2.0 mm, workshop manual as quoted by owners) and the default flame, CA50 sat at 28.5 deg ATDC, far past MBT (8-10); the catalogue's 13 deg gave 29.0.

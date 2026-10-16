@@ -79,6 +79,14 @@ struct EngineSimulatorOptions final {
      * 125 us (at least 4 kHz physical-boundary Nyquist); harnesses can A/B it
      * against the historical 250 us cap and the full-substep oracle. */
     std::optional<double> maximumLowSpeedExhaustCouplingSeconds;
+    /** Diagnostic: couple the exhaust every mechanical substep while any
+     * cylinder's phase lies in [first, second] degrees, in place of the
+     * scavenging window below. Absent: that window. */
+    std::optional<std::array<double, 2>> exhaustFineCouplingWindowDegrees;
+    /** A two-stroke couples its exhaust every mechanical substep while any
+     * cylinder is between bottom dead centre and its transfers' closing.
+     * Absent: on; false for A/B controls. */
+    std::optional<bool> exhaustFineCouplingWhileScavenging;
     /** Target cell length of the nonlinear exhaust feedback mesh. Absent keeps
      * the production scale (EngineSimulator::productionExhaustCellLengthM:
      * 360 mm, 100 mm on a two-stroke). This is a diagnostic/convergence knob:

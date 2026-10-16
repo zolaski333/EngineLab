@@ -119,8 +119,10 @@ struct Held final {
 
 /** Cranked, then full throttle against a dyno holding `rpm`; means over the
  *  last 2 s of 8. */
-[[nodiscard]] Held heldFullLoad(const EngineConfig& config, double rpm) {
+[[nodiscard]] Held heldFullLoad(const EngineConfig& config, double rpm,
+                                bool exhaustEverySubstep = false) {
     auto rig = std::make_unique<Rig>(config);
+    rig->simulator->setExhaustCouplingEverySubstep(exhaustEverySubstep);
     constexpr int frames = 8 * 240;
     constexpr int firstMeasured = frames - 2 * 240;
     constexpr double weight = 1.0 / static_cast<double>(frames - firstMeasured);
@@ -150,9 +152,9 @@ struct Held final {
 }
 
 /** Maker: 40.2 N.m at 8,000 rpm (37 N.m in the Japanese listing). The model
- *  makes about three quarters of it at the 100 mm real-time exhaust mesh
- *  (journal 2026-10-16): the first cell behind the port holds about a
- *  cylinder's volume, and 25 mm cells, not real time, make 34. The test
+ *  makes about 33 here at the 100 mm real-time exhaust mesh (journal
+ *  2026-10-16): the first cell behind the port holds about a cylinder's
+ *  volume, and 25 mm cells, not real time, make about 36. The test
  *  guards what holds -- one firing per cylinder per revolution, a sane
  *  mixture, positive torque -- and prints the figure; it does not pretend the
  *  gap is closed. */
@@ -167,6 +169,21 @@ void catalogueTwinMakesItsTorque() {
     require(held.lambda > 0.7 && held.lambda < 1.3, "the full-load mixture is near stoichiometric");
     require(held.torqueNm > 0.0 && held.torqueNm < 1.15 * 40.2,
         "the full-load torque at 8,000 rpm is positive and not above the maker's");
+}
+
+/** From bottom dead centre to the transfers' closing the cylinder's pressure
+ *  rides on a few kPa between two open ports. Coupled to the exhaust every
+ *  117 us there, the RD350 made 12 % less than with the exhaust coupled on
+ *  every substep (journal 2026-10-16); the production coupling must stay
+ *  within 5 % of that reference. */
+void scavengingIsCoupledFinely() {
+    const auto config = catalogueTwoStroke();
+    const auto production = heldFullLoad(config, 8'000.0);
+    const auto reference = heldFullLoad(config, 8'000.0, true);
+    std::cout << "RD350LC-like at 8,000 rpm: " << production.torqueNm
+              << " N.m, exhaust coupled every substep " << reference.torqueNm << " N.m\n";
+    require(std::abs(production.torqueNm - reference.torqueNm) < 0.05 * reference.torqueNm,
+        "the production exhaust coupling is within 5 % of the every-substep torque");
 }
 
 /** A two-stroke's "manifold" is its crankcase, which pumps about ambient at
@@ -321,6 +338,7 @@ int main(int argc, char** argv) {
     loadIsTheDeliveredCharge();
     catalogueTwinIdles();
     catalogueTwinMakesItsTorque();
+    scavengingIsCoupledFinely();
     std::cout << "two-stroke: ok\n";
     return EXIT_SUCCESS;
 }

@@ -1569,7 +1569,33 @@ SimulationFrame EngineSimulator::step(double dtSeconds, const EngineControls& co
         ++integratedSubStepCount;
         // All consumers below use the same accepted duration: gas exchange,
         // chemistry, moving piston, crank work, thermal state and events.
+        // From bottom dead centre to the transfers' closing, a two-stroke's
+        // cylinder is a small volume between two open ports whose pressure
+        // rides on a few kPa of balance between the charge coming in and the
+        // gas going out, and that balance sets the trapped charge. Coupled to
+        // the exhaust every 117 us there (RD350 at 8,000 rpm: 27.6 N.m), the
+        // charge came out short; coupled every substep in that window only,
+        // 31.1, as with every substep over the whole cycle (31.3). The first
+        // half of scavenging gains nothing (journal 2026-10-16).
+        const auto fineCouplingWindow = options_.exhaustFineCouplingWindowDegrees
+            ? options_.exhaustFineCouplingWindowDegrees
+            : config_.cycle == EngineCycle::twoStroke
+                && options_.exhaustFineCouplingWhileScavenging.value_or(true)
+            ? std::optional<std::array<double, 2>> { std::array<double, 2> {
+                180.0, 360.0 - config_.twoStroke.transferPortOpenDegrees } }
+            : std::nullopt;
+        const auto inFineCouplingWindow = [&]() noexcept {
+            if (!fineCouplingWindow) return false;
+            const auto [first, last] = *fineCouplingWindow;
+            for (const auto& cylinder : config_.cylinders) {
+                const auto phase = std::fmod(state_.crankAngleDegrees
+                    - crankOffsetDegreesFor(config_, cylinder) + 1'440.0, cylinderCycleDegrees());
+                if (phase >= first && phase <= last) return true;
+            }
+            return false;
+        };
         const auto maximumExhaustCouplingSeconds = exhaustCouplingEverySubstep_
+                || inFineCouplingWindow()
             ? subDt : productionExhaustCouplingSeconds;
         pollGasFieldCapture();
         recordGasProbe();

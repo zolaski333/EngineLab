@@ -508,7 +508,7 @@ void usage() {
         " [--stable-relative fraction --thermal-drift-c-per-s rate]"
         " [--intake-cell-mm mm --intake-rk2|--intake-euler --intake-coupling-us us --intake-forward --intake-nozzle-valve]"
         " [--intake-cfl number --intake-workers integer --intake-joint-manifold 0|1]"
-        " [--exhaust-every-substep --exhaust-coupling-us us]"
+        " [--exhaust-every-substep --exhaust-coupling-us us --exhaust-coarse-scavenging --exhaust-fine-window deg deg]"
         " [--mechanical-min-hz hz --mechanical-cap-hz hz --crank-step-deg deg --outer-hz hz]"
         " [--exhaust-cell-mm mm --exhaust-cfl number --exhaust-rk2|--exhaust-euler|--exhaust-hancock --exhaust-interface-muscl]"
         " [--output csv --cycles csv --provenance json] [--schema-only]\n";
@@ -564,6 +564,11 @@ Settings parse(int argc, char** argv) {
         }
         else if (arg == "--exhaust-every-substep") s.exhaustEverySubstep = true;
         else if (arg == "--exhaust-coupling-us") s.simulatorOptions.maximumLowSpeedExhaustCouplingSeconds = number() * 1.0e-6;
+        else if (arg == "--exhaust-coarse-scavenging") s.simulatorOptions.exhaustFineCouplingWhileScavenging = false;
+        else if (arg == "--exhaust-fine-window") {
+            const auto first = number();
+            s.simulatorOptions.exhaustFineCouplingWindowDegrees = std::array<double, 2> { first, number() };
+        }
         else if (arg == "--mechanical-min-hz") s.mechanicalMinHz = number();
         else if (arg == "--mechanical-cap-hz") s.mechanicalCapHz = number();
         else if (arg == "--exhaust-cell-mm") s.simulatorOptions.exhaustTargetCellLengthM = number() / 1000.0;

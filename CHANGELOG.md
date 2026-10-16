@@ -18,9 +18,10 @@ file formats, always with an in-memory migration).
   engine: a Yamaha RD350LC-like twin with expansion chambers. Two-strokes
   run a finer real-time exhaust mesh (100 mm cells) so the chambers can
   work, reconstructed across their short cones; its load is its delivery
-  ratio, not its crankcase pressure. Known gap: at that mesh it makes about
-  three quarters of the real bike's torque (26 N.m at 8,000 rpm, maker
-  37-40); 25 mm cells, not real time, make 34.
+  ratio, not its crankcase pressure, and its exhaust is coupled to the
+  cylinder every step from bottom dead centre to the transfers' closing.
+  Known gap: it makes 29-33 N.m at 8,000 rpm (maker 37-40) and 34 kW at
+  9,000 (maker 34.5 kW at 8,500); 25 mm cells, not real time, make 36.
 - Launch control (`limits.launch_rpm` in the ECU, off by default): standing
   in gear with the throttle past half, the limiter holds the engine at the
   launch speed until the vehicle rolls.

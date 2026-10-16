@@ -171,10 +171,10 @@ Non-deterministic:
 Details of each measurement are in the docs archive (tag `archive/docs-2026-09`).
 
 - "Unified duct" rewrite: the 300 mm mesh carries the audible geometry (12-14 dB).
-- Fork-join per cylinder; AVX/AVX2 (slower: dependent-division latency).
-  Exhaust CFL 0.9; MUSCL-Hancock in production; a two-stroke exhaust at
-  50 mm (not real time). Third-order faces, one-sided open-end slopes, the
-  characteristic valve: RD350 at 100 mm still -25 % (journal 2026-10-16).
+- Fork-join per cylinder; AVX/AVX2 (dependent-division latency); exhaust CFL
+  0.9; MUSCL-Hancock. Two-stroke: 50 mm, or exhaust coupled every substep
+  beyond BDC-to-transfer-close (not real time); third-order faces, one-sided
+  open ends, characteristic valve, finer transfer coupling (journal 10-16).
 - Deepening the muffler's single chamber: 16 dB notch on the EJ25 fundamental.
 - Afterfire: faster chemistry (shape unchanged); "1-D cannot carry a backfire
   front" (it rises in 0.2-0.8 ms, the lock is the ~3.8 kHz bandwidth);

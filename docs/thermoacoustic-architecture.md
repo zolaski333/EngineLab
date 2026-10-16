@@ -89,7 +89,11 @@ multirate decomposition:
   flushed on the last mechanical sub-step that keeps the window within them.
   Until 2026-10-09 it flushed on the sub-step nearest the bound, which could
   overrun it by half a sub-step and, with sub-steps sized from the crank angle,
-  switch between one and two sub-steps per window from one frame to the next;
+  switch between one and two sub-steps per window from one frame to the next.
+  A two-stroke's window is one sub-step while any cylinder is between bottom
+  dead centre and its transfers' closing (2026-10-16): there the trapped
+  charge rides on a few kPa between two open ports, and 117 µs windows cost
+  the RD350 10-14 % of its torque above 6,000 rpm;
 - conservative state, chamber volume, valve `CdA` and outlet opening are
   integrated over time across each window;
 - each macro exchange stays bidirectional and closes the species mass and

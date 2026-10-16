@@ -147,6 +147,15 @@ spark, injection, the trapped-charge latch and the cycle telemetry follow it.
   (`ExhaustGasNetworkConfig::reconstructAcrossInterfaces`), so two components
   of one section are one pipe to the solver; a four-stroke keeps first-order
   duct ends.
+- **Exhaust coupling**: the exhaust network is coupled to the cylinders at
+  intervals of up to 125 us (117 us, three mechanical substeps, for the RD350
+  at 8,000 rpm), and the exchange reaches the cylinder as one lump. From
+  bottom dead centre to the transfers' closing, a two-stroke's cylinder
+  pressure is a few-kPa balance between two open ports that sets the trapped
+  charge, so while any cylinder is in that window the exhaust is coupled every
+  substep (`EngineSimulatorOptions::exhaustFineCouplingWhileScavenging`).
+  Coupled coarsely there, the RD350 lost 10-14 % of its torque above
+  6,000 rpm; coupling every substep over the whole cycle is not real time.
 - **Compression ratio**: the model takes the geometric ratio. A Japanese
   maker's figure (6.2:1 for the RD350LC) is usually the trapped one, counted
   from the exhaust port's closing.
@@ -159,10 +168,12 @@ spark, injection, the trapped-charge latch and the cycle telemetry follow it.
   needs fine exhaust cells: a two-stroke's production mesh is 100 mm
   (`EngineSimulator::productionExhaustCellLengthM`, 360 mm for a four-stroke;
   the view's fine mode never coarsens it). The catalogue RD350LC-like twin
-  makes 26 N.m at 8,000 rpm and 27.8 kW at 9,000 against the maker's 37-40
-  and 34.5 kW; 25 mm give 34.1 N.m and 35.1 kW. The gap is the mesh: the
-  first exhaust cell behind the port holds about a cylinder's volume and
-  acts as a plenum. 75-80 mm make its idle hunt (journal 2026-10-15/16).
+  makes 29-33 N.m at 8,000 rpm (dyno sweep and held test) and 34 kW at
+  9,025 rpm in real time, against the maker's 37-40 N.m and 34.5 kW; 25 mm
+  cells coupled every substep give 35.9 N.m. What is left of the mesh gap is
+  mostly the first exhaust cell behind the port, which holds about a
+  cylinder's volume and acts as a plenum. 75-80 mm make its idle hunt
+  (journal 2026-10-15/16).
   The script language sets the cycle but not the port timings,
   which take their defaults (exhaust 92 deg, transfers 118 deg).
 
@@ -547,7 +558,7 @@ full Pacejka; load transfer is a quasi-static longitudinal equilibrium.
 
 ## Limitations and interpretation
 
-- two-stroke engines lose about a quarter of their full-load torque at the
+- two-stroke engines lose about a tenth of their full-load torque at the
   100 mm real-time exhaust mesh against 25 mm cells (see *Two-stroke
   engines*);
 - 0D gas volumes and an aggregated Helmholtz mode, without CFD or meshed 1D
