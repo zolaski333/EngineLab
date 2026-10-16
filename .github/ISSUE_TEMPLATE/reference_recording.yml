@@ -1,0 +1,68 @@
+name: Reference recording
+description: Share a recording of a real engine at a known engine speed, to measure the simulation against.
+labels: [recording]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you. EngineLab's sound is judged against real engines, and a
+        recording at a **known engine speed** is the most useful thing a
+        non-programmer can give the project. The
+        [recording protocol](https://github.com/zolaski333/EngineLab/blob/main/docs/recording-protocol-cp2.md)
+        says how; it is written for the MT-07 but works for any engine.
+
+        Please do not attach the audio here: upload it somewhere stable
+        (Freesound, Zenodo, a cloud folder) and paste the link.
+  - type: input
+    id: engine
+    attributes:
+      label: Engine and vehicle
+      description: Make, model, year, engine code if you know it.
+      placeholder: Yamaha MT-07 2019, CP2 689 cc
+    validations:
+      required: true
+  - type: textarea
+    id: exhaust
+    attributes:
+      label: Exhaust and modifications
+      description: Stock or aftermarket (brand, slip-on or full system, dB-killer in or out), air filter, ECU map.
+    validations:
+      required: true
+  - type: textarea
+    id: setup
+    attributes:
+      label: Equipment and microphone positions
+      description: Recorder or phone (with its automatic processing turned off?), sample rate, distance and angle from the outlet.
+    validations:
+      required: true
+  - type: textarea
+    id: takes
+    attributes:
+      label: Takes and engine speeds
+      description: For each file, what happens when (idle, steady holds, sweeps, blips) with the engine speed, e.g. "0-20 s idle; 25-30 s 3,000 rpm".
+    validations:
+      required: true
+  - type: input
+    id: link
+    attributes:
+      label: Link to the audio files
+      description: WAV or FLAC preferred, unprocessed.
+    validations:
+      required: true
+  - type: dropdown
+    id: license
+    attributes:
+      label: License
+      description: The project can only use recordings it may redistribute.
+      options:
+        - CC0 1.0 (public domain)
+        - CC BY 4.0 (credit me)
+    validations:
+      required: true
+  - type: checkboxes
+    id: consent
+    attributes:
+      label: Confirmation
+      options:
+        - label: I made this recording myself and agree to share it under the license above.
+          required: true

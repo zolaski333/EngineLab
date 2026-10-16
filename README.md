@@ -325,6 +325,17 @@ Contributions are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) and the
 - measurement beats code reading: if a change touches physics or audio, include
   the output of the matching harness, before and after.
 
+**Help wanted:**
+
+- **Recordings of real engines at a known engine speed**, no code needed:
+  see [contributing a recording](CONTRIBUTING.md#contributing-a-recording).
+  They are what the sound is measured against.
+- **A Linux or macOS build**: the code is standard C++20 and JUCE, but only
+  Windows is built today.
+- Issues labelled
+  [good first issue](https://github.com/zolaski333/EngineLab/labels/good%20first%20issue)
+  are scoped for a first contribution.
+
 ---
 
 ## Acknowledgements
