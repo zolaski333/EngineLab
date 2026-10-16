@@ -7,6 +7,28 @@ file formats, always with an in-memory migration).
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-10-16
+
+### Highlights
+
+- **A new main window and a GPU 3-D engine view** in X-ray: pistons, valves,
+  gearbox, turbo and routed pipes placed by the simulator's own kinematics,
+  with the gas solver's pressure waves drawn on the exhaust and intake, and
+  a microphone that follows the camera.
+- **Live editing**: click a part to change it while the engine runs (exhaust
+  and intake sizes, bore, stroke, rods, cams, flywheel, injectors, turbo,
+  gearbox, the air), an **A/B** button to compare two versions by ear, and
+  *Save engine* to keep the result.
+- **Two-stroke engines**, with a Yamaha RD350LC-like twin in the catalogue.
+- **Forced induction**: one to four turbochargers on a compressor map, an
+  intercooler, an ECU boost table, and a turbo that can be fitted to any
+  engine.
+- **Driving**: a Drive section, automatic, dual-clutch, sequential and CVT
+  gearboxes, cruise control, launch control, a progressive brake, display
+  units and a datalogger.
+- **New engine…** builds an engine from a running one; the ECU tuner edits
+  blocks of cells with undo.
+
 ### Added
 
 - Two-stroke engines (`cycle: two_stroke`, with a `two_stroke:` block for the
