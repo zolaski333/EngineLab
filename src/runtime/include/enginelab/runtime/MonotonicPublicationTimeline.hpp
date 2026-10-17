@@ -52,6 +52,29 @@ public:
         return window;
     }
 
+    /**
+     * As above, for a frame whose samples are published at `publishSeconds`.
+     *
+     * The audio renderer reads the samples a fixed look-ahead behind the
+     * producer (at least 20 ms). A frame preempted for longer than that while
+     * it was being computed arrived with every timestamp already behind the
+     * audio cursor: the renderer stepped through all of them within one audio
+     * sample, the exhaust boundary jumped, and the outlet radiated it as a
+     * full-scale click (the Merlin's intermittent spike, journal 2026-10-17).
+     * Such a window starts no earlier than `maximumAgeSeconds` before its
+     * publication, so the renderer interpolates across the gap instead. A frame
+     * published in time keeps its observed start.
+     */
+    [[nodiscard]] RealtimePublicationWindow beginWindow(double observedStartSeconds,
+                                                        double durationSeconds,
+                                                        double publishSeconds,
+                                                        double maximumAgeSeconds) noexcept {
+        const auto oldestStart = std::isfinite(publishSeconds)
+                && std::isfinite(maximumAgeSeconds)
+            ? publishSeconds - std::max(0.0, maximumAgeSeconds) : observedStartSeconds;
+        return beginWindow(std::max(observedStartSeconds, oldestStart), durationSeconds);
+    }
+
 private:
     double nextWindowStartSeconds_ { 0.0 };
     bool initialised_ { false };

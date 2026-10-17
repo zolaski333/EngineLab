@@ -1149,6 +1149,10 @@ void EngineRuntime::run(std::stop_token stopToken) {
     realtimeLoadProtectionActive_.store(false, std::memory_order_relaxed);
     constexpr double maximumPressurePublishRateHz = 96'000.0;
     constexpr double minimumPressurePublishInterval = 1.0 / maximumPressurePublishRateHz;
+    // Half the renderer's shortest look-ahead (RealtimeEngineAudio::prepare,
+    // 20 ms): a frame published later than this after its start is restamped
+    // so its samples still arrive ahead of the audio cursor.
+    constexpr double maximumPublicationAgeSeconds = 0.010;
     while (!stopToken.stop_requested()) {
         const auto iterationStart = Clock::now();
         const auto realtimeSeconds = std::chrono::duration<double>(iterationStart - clockEpoch).count();
@@ -1449,7 +1453,9 @@ void EngineRuntime::run(std::stop_token stopToken) {
         if (simulationDt > 0.0) {
             const auto simulationStart = frame.state.simulationTimeSeconds - simulationDt;
             const auto publicationWindow = publicationTimeline.beginWindow(
-                realtimeSeconds, baseStep.count());
+                realtimeSeconds, baseStep.count(),
+                std::chrono::duration<double>(Clock::now() - clockEpoch).count(),
+                maximumPublicationAgeSeconds);
             for (std::size_t index = 0; index < frame.firingEventCount; ++index) {
                 frame.firingEvents[index].timeSeconds = publicationWindow.mapSimulationTime(
                     frame.firingEvents[index].timeSeconds, simulationStart, simulationDt);

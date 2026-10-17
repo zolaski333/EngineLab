@@ -16,9 +16,15 @@ Two SPSC queues separate the responsibilities:
   not tied to the physical exhaust.
 
 Flows are signed, in kg/s. A negative value represents a real reversion from
-the network back into the cylinder. Timestamps use simulation time; a slow
+the network back into the cylinder. Each physics frame maps its simulation
+times onto a wall-clock window that starts when the frame starts, windows never
+overlap, and the renderer reads them at least 20 ms behind the producer; a slow
 software PLL compensates for the drift between the producer clock and the
-sound card clock without abruptly moving events.
+sound card clock without abruptly moving events. A frame published more than
+10 ms after its start (preempted while computing) starts its window 10 ms
+before publication instead, so its samples still arrive ahead of the renderer:
+otherwise they were all skipped at once and the exhaust boundary's jump was
+heard as a click.
 
 When a valid thermoacoustic graph is compiled, it owns the output from the
 first sample and propagates silence up to the first boundary. If the telemetry

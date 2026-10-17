@@ -5,6 +5,14 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-17 — The Merlin's runtime spike was a late frame stamped in the past
+
+- `EngineLab.AudioRender` and `AudioRuntimeDiscontinuity` (Merlin, live runtime) failed CI on 6a1d505. Locally 2 of 40 runs fail alone, 15 of 50 with two runs in parallel (preLimiter up to 8.9, observer up to 3 kPa).
+- Per-block trace (harness instrumentation, not committed): every spike follows 20-37 ms in which the renderer's rpm does not move, i.e. one physics frame preempted while computing. Its samples were stamped from the frame's start, so all of them arrived behind the renderer's 20 ms look-ahead; the renderer stepped through them in one audio sample, and the exhaust boundary's jump radiated as a one-block, full-scale click. Not the rev limiter (one spike at 1,696 rpm), not the jet nor reactions (0).
+- Fix: a frame published more than 10 ms after its start is stamped from 10 ms before publication (`MonotonicPublicationTimeline`); the renderer then interpolates across the gap. A frame in time keeps its stamps, and offline renders do not use the runtime.
+- Same stress, 50 runs: 0 failures, preLimiter max 0.42 (median 0.35, as alone). Same overrun band (400-699): 12 of 34 failed before, 0 of 12 after. dropped pressure samples 0 both.
+- Not measured: a long run on a machine below real time, and the audibility of the held boundary during the gap (a short freeze instead of a click).
+
 ## 2026-10-16 — Two-stroke exhaust coupled every substep from BDC to transfer close
 
 - Where 100 mm lost (RD350, 8,000 rpm, single-point dyno, one factor each): first the cylinder/exhaust coupling, not the cells. Production couples every 117 us (3 substeps, exchange applied as a lump): 27.6 N.m; every substep 31.3; 25 mm coupled at 40 us 35.9. 78 us gains nothing over 117 (not explained).
@@ -166,7 +174,7 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 - Earlier blind listening, recorded here: the owner preferred the rev without the output stage (`--output-stage`). Not adopted.
 - A private mesh ablation of the other simulator (owner's captures, kept out of the repo) found its default mesh not converged in the 1-2 kHz band, and no sign that a finer mesh is what the owner hears. The 4 cm lockstep prototype is not pursued.
 - Same analysis on EngineLab CP2 at 3,148 rpm, steady part only (a render starts with a ~5,500 rpm transient 15 dB louder: skip the first 4 s): energy above 2 kHz -50 dB of total, tilt -9.8 dB/oct, crest 10.8 dB, cycle-synchronous share 93.7 %.
-- Merlin spike: `EngineLab.AudioRender` (runtime wiring) failed 4 times in ~17 runs on this branch: Merlin at 3,106 instead of 3,040 rpm, observer up to 4,092 Pa. On `main` (c423400) its 2nd run failed the same way (3,090 rpm, preLimiter 1.53). Pre-existing, still open.
+- Merlin spike: `EngineLab.AudioRender` (runtime wiring) failed 4 times in ~17 runs on this branch: Merlin at 3,106 instead of 3,040 rpm, observer up to 4,092 Pa. On `main` (c423400) its 2nd run failed the same way (3,090 rpm, preLimiter 1.53). Pre-existing; cause found 2026-10-17.
 - Not measured: anything against a real CP2 recording, which remains the arbiter.
 
 ## 2026-10-13 — Valve turbulence noise, and the first IR clips
@@ -181,7 +189,7 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 
 - Owner-approved sound change: the outlets now radiate with the live ambient air density (p / R T from the runtime's ambient state); `setOutletFarFieldDensity(0)` restores the duct medium. Catalogue at 88 % of redline: +2.5 to +11.7 dB, the CP2 least (coolest gas).
 - At the old 134 dB full scale the CP3 (~210 Pa peak) and the Merlin drove the safety limiter. Full scale moved to 140 dB (282.8 Pa peak): every catalogue engine stays under the 0.82 knee except the Aircooled, whose spikes (crest ~24 dB) were there before (29 soft-limited samples and 1 clamp at 7,166 rpm, against 377 / 32 before the change). The CP2 keeps roughly its old on-screen level.
-- `EngineLab.AudioRuntimeDiscontinuity` (Merlin, 80 ms stall) failed in 2 of ~26 runs: the engine took another trajectory (3,116 instead of 3,040 rpm) and the observer peaked at 454 Pa (preLimiter 1.63; 117 Pa and 0.35 otherwise). Physics does not read the audio, and the duct density is at most 4.9 dB under ambient there (measured, Merlin 3,000 rpm), so the old calibration would have put that peak at ~1.85: a pre-existing intermittent spike, not caused by this change, still open.
+- `EngineLab.AudioRuntimeDiscontinuity` (Merlin, 80 ms stall) failed in 2 of ~26 runs: the engine took another trajectory (3,116 instead of 3,040 rpm) and the observer peaked at 454 Pa (preLimiter 1.63; 117 Pa and 0.35 otherwise). Physics does not read the audio, and the duct density is at most 4.9 dB under ambient there (measured, Merlin 3,000 rpm), so the old calibration would have put that peak at ~1.85: a pre-existing intermittent spike, not caused by this change; cause found 2026-10-17.
 - Not measured: absolute SPL against a calibrated CP2 recording (the MT-07's stationary-noise homologation figure is the cheapest check).
 
 ## 2026-10-13 — Pressure-release outlet versus the Levine-Schwinger load

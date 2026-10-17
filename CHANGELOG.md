@@ -380,6 +380,9 @@ file formats, always with an in-memory migration).
 
 ### Fixed
 
+- No more full-scale clicks in the exhaust when the physics thread falls
+  briefly behind on a busy machine (heard intermittently on the Merlin): a
+  late frame's sound is now played across the gap instead of being skipped.
 - A stalled engine left in gear no longer rolls the car backwards: its
   friction was passed through the clutch as a drive torque.
 - A coasting car now comes to rest: below 1 cm/s it used to creep on for ever.

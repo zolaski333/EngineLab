@@ -503,6 +503,15 @@ int main() {
         const auto nextFirstTimestamp = catchingUp.mapSimulationTime(2.0, 2.0, 1.0);
         require(previousLastTimestamp <= nextFirstTimestamp,
                 "successive realtime event timestamps must remain monotonic after a late frame");
+        enginelab::MonotonicPublicationTimeline publishedTimeline;
+        const auto inTime = publishedTimeline.beginWindow(0.100, frameDuration, 0.103, 0.010);
+        require(inTime.startSeconds == 0.100,
+                "a frame published in time must keep its observed start");
+        const auto preempted = publishedTimeline.beginWindow(0.105, frameDuration, 0.140, 0.010);
+        require(preempted.startSeconds >= 0.130 - 1.0e-12
+                && inTime.endSeconds() <= preempted.startSeconds,
+                "a frame published 35 ms after its start must not be stamped behind the audio "
+                "look-ahead (the Merlin's runtime click)");
         enginelab::CylinderPressureSample physicalCadence;
         physicalCadence.mechanicalSamplingFrequencyHz = 6'720.0F;
         require(std::abs(
