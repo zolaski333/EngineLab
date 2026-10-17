@@ -7,7 +7,7 @@ file formats, always with an in-memory migration).
 
 ## [Unreleased]
 
-## [0.3.0] — 2026-10-16
+## [0.3.0] — 2026-10-17
 
 ### Highlights
 
