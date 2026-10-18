@@ -190,6 +190,25 @@ void crankBalanceMatchesTheTextbook() {
     require(zero(five.primaryForce) && zero(five.secondaryForce) && five.primaryCouple > 0.1,
         "an inline five has no free force but a primary couple");
 
+    // A 90 deg cross-plane V8: pins at 0/90/270/180 deg, one per row, each
+    // shared by a cylinder of each bank (top dead centre when the pin meets
+    // the bore axis).
+    std::vector<BalanceCylinder> crossPlane;
+    const double pins[] = { 0.0, 90.0, 270.0, 180.0 };
+    for (int row = 0; row < 4; ++row) {
+        for (const auto bank : { -45.0, 45.0 }) {
+            BalanceCylinder cylinder;
+            cylinder.bankDegrees = bank;
+            cylinder.tdcDegrees = bank - pins[row];
+            cylinder.axialPitches = static_cast<double>(row);
+            crossPlane.push_back(cylinder);
+        }
+    }
+    const auto v8 = analyseCrankBalance(crossPlane, 720.0);
+    require(zero(v8.primaryForce) && zero(v8.secondaryForce) && zero(v8.secondaryCouple),
+        "a cross-plane V8 has no free force and no secondary couple");
+    require(near(v8.primaryCouple, std::sqrt(10.0), 1.0e-4), "its primary couple is sqrt(10) m r w^2 a");
+
     auto twin = inlineCrank({ 1, 2 }, 270.0);
     const auto cp2 = analyseCrankBalance(twin, 720.0);
     require(cp2.firingIntervalsDegrees.size() == 2 && near(cp2.firingIntervalsDegrees[0], 270.0, 1.0e-9)
