@@ -7,7 +7,7 @@ file formats, always with an in-memory migration).
 
 ## [Unreleased]
 
-## [0.3.1] — 2026-10-17
+## [0.3.1] — 2026-10-18
 
 The tag `v0.3.0` exists but 0.3.0 was never published: its release build
 failed the tests on the intermittent click fixed below (the Merlin's). 0.3.1
