@@ -1,4 +1,4 @@
-# EngineLab
+﻿# EngineLab
 
 [![CI](https://github.com/zolaski333/EngineLab/actions/workflows/ci.yml/badge.svg)](https://github.com/zolaski333/EngineLab/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/zolaski333/EngineLab?include_prereleases&sort=semver)](https://github.com/zolaski333/EngineLab/releases)
@@ -15,7 +15,7 @@ tailpipe and radiated to a pair of virtual microphones.
 
 Design an engine, draw its exhaust system, put it on the dyno, listen to it.
 
-![EngineLab main window: the GPU-rendered 3-D engine in X-ray, live gauges and telemetry](docs/media/main-window.png)
+![EngineLab main window: the 2JZ-like turbo six in X-ray with its gas flow shown, live gauges and telemetry](docs/media/main-window.png)
 
 > **Project status: early.** The physics, tooling and real-time pipeline are
 > solid and heavily tested. The sound is not there yet: in blind listening
