@@ -4,6 +4,7 @@
 #include <enginelab/ecu/SimpleEcuModel.hpp>
 #include <enginelab/events/FourStrokeEventGenerator.hpp>
 #include <enginelab/exhaust/ExhaustGraph.hpp>
+#include <enginelab/foundation/CrankBalance.hpp>
 #include <enginelab/foundation/CylinderResize.hpp>
 #include <enginelab/foundation/EngineBuilder.hpp>
 #include <enginelab/foundation/IntakeResize.hpp>
@@ -16,6 +17,7 @@
 #include <iostream>
 #include <memory>
 #include <string_view>
+#include <vector>
 #include <utility>
 
 namespace {
@@ -158,9 +160,71 @@ void strokerRuns() {
     require(after.injectorDuty < 0.95, "the injectors are not saturated");
 }
 
+/** An even-firing inline crank: cylinder ids in firing order, one pitch apart. */
+[[nodiscard]] std::vector<BalanceCylinder> inlineCrank(const std::vector<std::uint32_t>& order, double interval) {
+    std::vector<BalanceCylinder> cylinders(order.size());
+    for (std::size_t position = 0; position < order.size(); ++position) {
+        auto& cylinder = cylinders[order[position] - 1];
+        cylinder.tdcDegrees = static_cast<double>(position) * interval;
+        cylinder.axialPitches = static_cast<double>(order[position] - 1);
+    }
+    return cylinders;
+}
+
+[[nodiscard]] bool zero(double value) { return std::abs(value) < 1.0e-6; }
+
+/** Textbook free forces and couples of inline cranks (rod ratio 0.3). */
+void crankBalanceMatchesTheTextbook() {
+    const auto four = analyseCrankBalance(inlineCrank({ 1, 3, 4, 2 }, 180.0), 720.0);
+    require(zero(four.primaryForce) && zero(four.primaryCouple) && zero(four.secondaryCouple),
+        "a flat-plane inline four has no primary and no secondary couple");
+    require(near(four.secondaryForce, 4.0 * 0.3, 1.0e-4), "its secondary force is 4 m r w^2 x r/l");
+    const auto three = analyseCrankBalance(inlineCrank({ 1, 2, 3 }, 240.0), 720.0);
+    require(zero(three.primaryForce) && zero(three.secondaryForce), "an inline three has no free force");
+    require(near(three.primaryCouple, std::sqrt(3.0), 1.0e-4), "its primary couple is sqrt(3) m r w^2 a");
+    require(near(three.secondaryCouple, std::sqrt(3.0) * 0.3, 1.0e-4), "its secondary couple is sqrt(3) r/l");
+    const auto six = analyseCrankBalance(inlineCrank({ 1, 5, 3, 6, 2, 4 }, 120.0), 720.0);
+    require(zero(six.primaryForce) && zero(six.secondaryForce) && zero(six.primaryCouple)
+            && zero(six.secondaryCouple), "an inline six is balanced in both orders");
+    const auto five = analyseCrankBalance(inlineCrank({ 1, 2, 4, 5, 3 }, 144.0), 720.0);
+    require(zero(five.primaryForce) && zero(five.secondaryForce) && five.primaryCouple > 0.1,
+        "an inline five has no free force but a primary couple");
+
+    auto twin = inlineCrank({ 1, 2 }, 270.0);
+    const auto cp2 = analyseCrankBalance(twin, 720.0);
+    require(cp2.firingIntervalsDegrees.size() == 2 && near(cp2.firingIntervalsDegrees[0], 270.0, 1.0e-9)
+            && near(cp2.firingIntervalsDegrees[1], 450.0, 1.0e-9), "a 270 deg twin fires at 270 / 450");
+}
+
+void firingOrdersAreRanked() {
+    const auto six = inlineFiringOrders(6, EngineCycle::fourStroke, 0.3, 8);
+    require(!six.empty() && zero(six.front().balance.primaryCouple) && zero(six.front().balance.secondaryCouple),
+        "the best inline-six crank is balanced");
+    const auto four = inlineFiringOrders(4, EngineCycle::fourStroke, 0.3, 8);
+    require(!four.empty() && zero(four.front().balance.primaryCouple)
+            && near(four.front().balance.secondaryForce, 1.2, 1.0e-4), "the best inline four is the flat plane");
+    const auto seven = inlineFiringOrders(7, EngineCycle::fourStroke, 0.3, 4);
+    require(seven.size() == 4 && zero(seven.front().balance.primaryForce)
+            && seven.front().balance.firingIntervalsDegrees.size() == 7
+            && near(seven.front().balance.firingIntervalsDegrees.front(), 720.0 / 7.0, 1.0e-9),
+        "an inline seven fires every 102.9 deg with no free force");
+    std::cout << "inline seven, best orders:";
+    for (const auto& candidate : seven) {
+        std::cout << "\n  ";
+        for (const auto id : candidate.order) std::cout << id << ' ';
+        std::cout << " primary couple " << candidate.balance.primaryCouple << ", secondary couple "
+                  << candidate.balance.secondaryCouple << ", adjacent firings " << candidate.adjacentFirings;
+    }
+    std::cout << '\n';
+}
+
 } // namespace
 
 int main() {
+    crankBalanceMatchesTheTextbook();
+    std::cout << "crank balance: ok\n";
+    firingOrdersAreRanked();
+    std::cout << "firing orders: ok\n";
     recipeIsApplied();
     std::cout << "recipe: ok\n";
     strokerRuns();

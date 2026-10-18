@@ -1,0 +1,52 @@
+schema_version: 5
+family: torture
+# Torture engine: 8.0 L W16, four banks (two VR8 at 90 deg, 15 deg VR angle),
+# even 45 deg firing, authored cylinder by cylinder with bank_offset_deg.
+engine:
+  name: Torture W16 8.0
+  layout: custom
+  bank_angle_deg: 90
+  firing_order: [1, 14, 9, 4, 7, 12, 15, 6, 13, 8, 3, 16, 11, 2, 5, 10]
+  idle_rpm: 750
+  redline_rpm: 6800
+  rotating_inertia_kg_m2: 0.45
+  friction_coefficient: 0.13
+  octane_rating: 98
+  plenum_volume_l: 8.0
+  throttle_diameter_mm: 100
+  intake:
+    plenum_volume_l: 8.0
+    throttle_diameter_mm: 100
+    runner_length_mm: 300
+    runner_diameter_mm: 40
+    idle_bypass_area_mm2: 45
+  ignition:
+    rev_limit_rpm: 7000
+    timing_curve:
+      - { rpm: 0, advance_deg: 10 }
+      - { rpm: 2500, advance_deg: 24 }
+      - { rpm: 5000, advance_deg: 30 }
+      - { rpm: 7000, advance_deg: 30 }
+  uses:
+    injection: sequential_port
+    camshafts: street_mild
+    exhaust: crossplane_dual
+    transmission: sport_6_speed
+    vehicle: muscle_car
+  cylinders:
+    - { id: 1, bore_mm: 86.0, stroke_mm: 86.0, connecting_rod_mm: 145.0, piston_mass_g: 360, compression_ratio: 9.0, crank_offset_deg: 0, bank_offset_deg: -52.5 }
+    - { id: 2, bore_mm: 86.0, stroke_mm: 86.0, connecting_rod_mm: 145.0, piston_mass_g: 360, compression_ratio: 9.0, crank_offset_deg: 585, bank_offset_deg: -37.5 }
+    - { id: 3, bore_mm: 86.0, stroke_mm: 86.0, connecting_rod_mm: 145.0, piston_mass_g: 360, compression_ratio: 9.0, crank_offset_deg: 450, bank_offset_deg: 37.5 }
+    - { id: 4, bore_mm: 86.0, stroke_mm: 86.0, connecting_rod_mm: 145.0, piston_mass_g: 360, compression_ratio: 9.0, crank_offset_deg: 135, bank_offset_deg: 52.5 }
+    - { id: 5, bore_mm: 86.0, stroke_mm: 86.0, connecting_rod_mm: 145.0, piston_mass_g: 360, compression_ratio: 9.0, crank_offset_deg: 630, bank_offset_deg: -52.5 }
+    - { id: 6, bore_mm: 86.0, stroke_mm: 86.0, connecting_rod_mm: 145.0, piston_mass_g: 360, compression_ratio: 9.0, crank_offset_deg: 315, bank_offset_deg: -37.5 }
+    - { id: 7, bore_mm: 86.0, stroke_mm: 86.0, connecting_rod_mm: 145.0, piston_mass_g: 360, compression_ratio: 9.0, crank_offset_deg: 180, bank_offset_deg: 37.5 }
+    - { id: 8, bore_mm: 86.0, stroke_mm: 86.0, connecting_rod_mm: 145.0, piston_mass_g: 360, compression_ratio: 9.0, crank_offset_deg: 405, bank_offset_deg: 52.5 }
+    - { id: 9, bore_mm: 86.0, stroke_mm: 86.0, connecting_rod_mm: 145.0, piston_mass_g: 360, compression_ratio: 9.0, crank_offset_deg: 90, bank_offset_deg: -52.5 }
+    - { id: 10, bore_mm: 86.0, stroke_mm: 86.0, connecting_rod_mm: 145.0, piston_mass_g: 360, compression_ratio: 9.0, crank_offset_deg: 675, bank_offset_deg: -37.5 }
+    - { id: 11, bore_mm: 86.0, stroke_mm: 86.0, connecting_rod_mm: 145.0, piston_mass_g: 360, compression_ratio: 9.0, crank_offset_deg: 540, bank_offset_deg: 37.5 }
+    - { id: 12, bore_mm: 86.0, stroke_mm: 86.0, connecting_rod_mm: 145.0, piston_mass_g: 360, compression_ratio: 9.0, crank_offset_deg: 225, bank_offset_deg: 52.5 }
+    - { id: 13, bore_mm: 86.0, stroke_mm: 86.0, connecting_rod_mm: 145.0, piston_mass_g: 360, compression_ratio: 9.0, crank_offset_deg: 360, bank_offset_deg: -52.5 }
+    - { id: 14, bore_mm: 86.0, stroke_mm: 86.0, connecting_rod_mm: 145.0, piston_mass_g: 360, compression_ratio: 9.0, crank_offset_deg: 45, bank_offset_deg: -37.5 }
+    - { id: 15, bore_mm: 86.0, stroke_mm: 86.0, connecting_rod_mm: 145.0, piston_mass_g: 360, compression_ratio: 9.0, crank_offset_deg: 270, bank_offset_deg: 37.5 }
+    - { id: 16, bore_mm: 86.0, stroke_mm: 86.0, connecting_rod_mm: 145.0, piston_mass_g: 360, compression_ratio: 9.0, crank_offset_deg: 495, bank_offset_deg: 52.5 }

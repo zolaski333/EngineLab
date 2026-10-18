@@ -5,6 +5,16 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-18 — Builder phase 0: eight engines written with no base
+
+- Question: what breaks when an engine is described from nothing? Eight files in `tools/torture-engines/engines/` (I7 petrol, single, flat twin, V10 72 deg, V16, I7 diesel = TDI x 7/4, W16 as four `bank_offset_deg` banks, two-stroke triple = RD350 x 3/2). Catalogue root = that folder plus `parts/` and `voicing/default.yaml` copied beside `engines/`.
+- All eight load, validate and hold their idle 20 s (PhysicsPerfHarness `--freerev 0`): mean at target within 1 % except W16 711 vs 750 (672-735). The triple misfires at idle (0.55 at start) on the four-stroke 4-2-1 part.
+- Dyno (`--step 1000`), peak N.m and BMEP: I7 329 (14.7 bar), single 72 (13.8), flat twin 142 (14.2), V10 518 at 3,000 (13.5), V16 869 (13.7), I7 diesel 611 (22.3). Generic parts give upper-edge NA BMEP (typical 11-13.5); the V10's peak at 3,000 rpm on a 9,000 rpm engine shows parts not matched to it.
+- Real time (free-run, audio + gas view, one run each, not back-to-back): I7 1.29, single 4.03, flat twin 2.50, I7 diesel 1.22, triple 1.59, V10 0.96 (below the hard limit), V16 and W16 invalid (40,000 dropped pressure samples); V16 without audio 0.65 (exhaust substeps 28 kHz).
+- So the format already takes any piston layout up to 32 cylinders; what a from-zero builder lacks is matched parts (cams, pipes, plenum for the target rpm) and a real-time cost known before the engine is delivered.
+- New `CrankBalance` (foundation): free forces and couples, firing intervals, ranked even-firing inline orders. EngineLab.EngineBuilder checks the textbook I3/I4/I5/I6 values. Best I7 orders: 1-3-5-7-6-4-2 and its mirror (couples 0.27 / 0.30 m r w^2 a); the torture I7's 1-4-7-3-6-2-5 was not among the top four.
+- Not measured: sound of any of them, the 3-D view (W16 would be drawn as a radial: banks > 2), V/W axial positions (assumed one pitch per row).
+
 ## 2026-10-17 — The Merlin's runtime spike was a late frame stamped in the past
 
 - `EngineLab.AudioRender` and `AudioRuntimeDiscontinuity` (Merlin, live runtime) failed CI on 6a1d505. Locally 2 of 40 runs fail alone, 15 of 50 with two runs in parallel (preLimiter up to 8.9, observer up to 3 kPa).

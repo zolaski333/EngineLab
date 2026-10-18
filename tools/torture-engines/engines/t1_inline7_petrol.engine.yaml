@@ -1,0 +1,41 @@
+schema_version: 5
+family: torture
+# Torture engine: inline seven, 2.8 L, naturally aspirated petrol. Written
+# with no base engine to see what the format and the model accept.
+engine:
+  name: Torture I7 2.8 NA
+  layout: inline
+  cylinder_count: 7
+  firing_order: [1, 4, 7, 3, 6, 2, 5]
+  idle_rpm: 800
+  redline_rpm: 7000
+  rotating_inertia_kg_m2: 0.25
+  friction_coefficient: 0.12
+  octane_rating: 98
+  plenum_volume_l: 3.0
+  throttle_diameter_mm: 70
+  intake:
+    plenum_volume_l: 3.0
+    throttle_diameter_mm: 70
+    runner_length_mm: 350
+    runner_diameter_mm: 40
+    idle_bypass_area_mm2: 20
+  ignition:
+    rev_limit_rpm: 7200
+    timing_curve:
+      - { rpm: 0, advance_deg: 10 }
+      - { rpm: 2000, advance_deg: 22 }
+      - { rpm: 4500, advance_deg: 32 }
+      - { rpm: 7200, advance_deg: 32 }
+  uses:
+    injection: sequential_port
+    camshafts: sport_na
+    exhaust: equal_length_header
+    transmission: sport_6_speed
+    vehicle: compact_coupe
+  cylinder_template:
+    bore_mm: 80.0
+    stroke_mm: 80.0
+    connecting_rod_mm: 140.0
+    piston_mass_g: 330
+    compression_ratio: 11.0

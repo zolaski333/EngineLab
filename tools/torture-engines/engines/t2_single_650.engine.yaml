@@ -1,0 +1,40 @@
+schema_version: 5
+family: torture
+# Torture engine: 650 cc single (a big thumper).
+engine:
+  name: Torture Single 650
+  layout: inline
+  cylinder_count: 1
+  firing_order: [1]
+  idle_rpm: 1300
+  redline_rpm: 7500
+  rotating_inertia_kg_m2: 0.06
+  friction_coefficient: 0.10
+  octane_rating: 95
+  plenum_volume_l: 0.6
+  throttle_diameter_mm: 40
+  intake:
+    plenum_volume_l: 0.6
+    throttle_diameter_mm: 40
+    runner_length_mm: 200
+    runner_diameter_mm: 40
+    idle_bypass_area_mm2: 8
+  ignition:
+    rev_limit_rpm: 7700
+    timing_curve:
+      - { rpm: 0, advance_deg: 8 }
+      - { rpm: 2500, advance_deg: 20 }
+      - { rpm: 5000, advance_deg: 30 }
+      - { rpm: 7700, advance_deg: 30 }
+  uses:
+    injection: high_flow_port
+    camshafts: street_mild
+    exhaust: short_v_twin
+    transmission: motorcycle_6_speed_quickshifter
+    vehicle: motorcycle
+  cylinder_template:
+    bore_mm: 100.0
+    stroke_mm: 83.0
+    connecting_rod_mm: 140.0
+    piston_mass_g: 420
+    compression_ratio: 10.5
