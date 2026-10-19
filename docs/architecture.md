@@ -192,13 +192,26 @@ from the use's mean piston speed, rods, pistons, compression, cams, intake and
 exhaust sizes for the peak-power speed, plenum, throttles, injectors, ignition
 template, gearing for the top speed the estimated power reaches. Each value is
 returned as a `DesignValue` with its rule; any can be set by key
-(`overrides`), and what derives from it follows.
+(`overrides`), and what derives from it follows. A rule that would fall
+outside the simulator's limits (`validateEngineConfig()`: on a 50-250 cc
+engine the flywheel, final drive, plenum, piston and throttle) is held at the
+limit (`minimumRotatingInertiaKgM2` and the others, `EngineTypes.hpp`), and its
+rule says so; a value set by hand outside them is refused by name. The
+closed-throttle leak follows the throttle bore (0.6 mm2 at 60 mm and over).
 
 The crank: banks at the layout's angles (a W's as given), cylinders shared
-over them in id order, a firing order searched for the best balance
-(`evenFiringOrders()`, `CrankBalance.hpp`) unless one is given, or crank
-offsets for an uneven crank (a 270 deg twin). A radial fires from its single
-throw. A two-stroke gets one expansion chamber per cylinder, tuned to its
+over them in id order, one row per pin position along the crank. A V's or a
+W's cylinders of a row share one pin, as on the real engines (`crank_pins`,
+`rowPinCrank()`, `CrankBalance.hpp`): a 90 deg twin fires 270-450, a V8, a
+72 deg V10 and a 60 deg V12 fire evenly. Where a shared pin cannot fire six
+cylinders or more evenly (a 60 or 90 deg V6, a W16), *automatic* splits the
+pins of a row by the least angle that does (`splitPinCrank()`: 60 and 30 deg);
+`shared` keeps them (a 90 deg V6 fires 90-150), `separate` gives each cylinder
+its own pin, placed for the best balance (`evenFiringOrders()`), as inline and
+flat engines have. A firing order given is kept, on shared pins when they
+allow it; crank offsets give an uneven crank (a 270 deg twin), the cylinders
+they put on one pin sharing it. A radial fires from its single throw. The
+`crank_pins` value says which, and the firing intervals. A two-stroke gets one expansion chamber per cylinder, tuned to its
 peak-power speed. Silencers, gearboxes and vehicles come from the family parts
 (`parts/`); a designed engine has the default voicing only.
 
@@ -206,7 +219,7 @@ An engine file may hold `design:` (the spec, same keys) instead of `engine:`;
 the catalogue loads it through the same function, so every harness runs a
 designed engine. The window (`EngineDesignerWindow`) shows the derived values
 and their rules as the spec changes; *Advanced* adds firing order, crank
-offsets, W bank angles and setting any value by hand. *Build and run* first
+pins, crank offsets, W bank angles and setting any value by hand. *Build and run* first
 runs the design off-screen for a few seconds with the live engine paused
 (`measureRealtimeCapacity()`, `runtime/RealtimeCapacityProbe.hpp`: the
 physics-only factor at the realtime harness's speed) and asks before building
@@ -394,6 +407,9 @@ bank like a V, a head per bank, banks next in angle interleaved half a pitch
 along the crank as a VR's are; only a radial is drawn as one. On a designed
 W16 (`EngineLabSceneExport --catalog-root`) that took duct clashes from 58 to
 15 and ducts through the engine from 70 to 8 (journal 2026-10-19).
+Rods on one crank journal are drawn on one pin; journals of their own
+pointing the same way share a pin within a row only (a V's banks sit 0.45
+pitch apart, rows 0.55), so a V12's two middle throws stay two.
 
 Threads:
 

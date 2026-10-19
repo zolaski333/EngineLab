@@ -16,6 +16,41 @@ double realtimeCapacityHoldRpm(const EngineConfig& config) noexcept {
     return std::min(5'000.0, 0.95 * limiterRpm);
 }
 
+RealtimeHoldJudge::RealtimeHoldJudge(double holdRpm) noexcept
+    : holdRpm_(holdRpm), toleranceRpm_(std::max(60.0, 0.03 * holdRpm)) {}
+
+bool RealtimeHoldJudge::add(double simulationTimeSeconds, double rpm) noexcept {
+    if (!started_) {
+        started_ = true;
+        meanRpm_ = rpm;
+        settleStartSeconds_ = simulationTimeSeconds;
+        settleStartRpm_ = rpm;
+    } else {
+        const auto dt = simulationTimeSeconds - lastTimeSeconds_;
+        if (dt <= 0.0) return held_;
+        // The budget harness's filter: a 1/3 s time constant.
+        meanRpm_ += (rpm - meanRpm_) * (1.0 - std::exp(-3.0 * dt));
+    }
+    lastTimeSeconds_ = simulationTimeSeconds;
+    if (std::abs(meanRpm_ - holdRpm_) <= toleranceRpm_) {
+        if (withinSince_ < 0.0) withinSince_ = simulationTimeSeconds;
+        held_ = simulationTimeSeconds - withinSince_ >= 0.5;
+    } else {
+        withinSince_ = -1.0;
+        held_ = false;
+    }
+    // Settled short of the target: the dyno cannot drag a full-load engine
+    // up to it (the Merlin and the radial stop 5 % short). The cost there is
+    // as good a reading.
+    if (!held_ && simulationTimeSeconds - settleStartSeconds_ >= 1.0) {
+        held_ = std::abs(meanRpm_ - settleStartRpm_) <= 0.005 * holdRpm_
+            && std::abs(meanRpm_ - holdRpm_) <= 0.15 * holdRpm_;
+        settleStartSeconds_ = simulationTimeSeconds;
+        settleStartRpm_ = meanRpm_;
+    }
+    return held_;
+}
+
 RealtimeCapacity measureRealtimeCapacity(const EngineConfig& config, double measureWallSeconds,
                                          double wallSecondsLimit, const std::atomic<bool>* cancel) {
     using Clock = std::chrono::steady_clock;
@@ -36,9 +71,7 @@ RealtimeCapacity measureRealtimeCapacity(const EngineConfig& config, double meas
         runtime->start();
         runtime->startDyno();
 
-        // Held: within 3 % (60 rpm at least) for half a simulated second.
-        const auto tolerance = std::max(60.0, 0.03 * result.holdRpm);
-        auto heldSince = -1.0;
+        RealtimeHoldJudge judge(result.holdRpm);
         auto held = false;
         while (!held) {
             if (cancelled()) {
@@ -46,19 +79,17 @@ RealtimeCapacity measureRealtimeCapacity(const EngineConfig& config, double meas
                 break;
             }
             if (Clock::now() >= deadline) {
-                result.error = "did not hold " + std::to_string(static_cast<int>(result.holdRpm)) + " rpm in time";
+                result.error = "did not hold " + std::to_string(static_cast<int>(result.holdRpm))
+                    + " rpm in time; mean speed " + std::to_string(static_cast<int>(std::lround(judge.meanRpm())))
+                    + " rpm";
                 break;
             }
             const auto state = runtime->snapshot();
-            if (std::abs(state.rpm - result.holdRpm) <= tolerance) {
-                if (heldSince < 0.0) heldSince = state.simulationTimeSeconds;
-                held = state.simulationTimeSeconds - heldSince >= 0.5;
-            } else {
-                heldSince = -1.0;
-            }
+            held = judge.add(state.simulationTimeSeconds, state.rpm);
             std::this_thread::sleep_for(std::chrono::milliseconds(5));
         }
         if (held) {
+            result.measuredRpm = judge.meanRpm();
             const auto wallStart = Clock::now();
             const auto simulatedStart = runtime->snapshot().simulationTimeSeconds;
             const auto measureEnd = wallStart

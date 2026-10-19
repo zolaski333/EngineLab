@@ -83,11 +83,14 @@ public:
         addField(boost_, "Boost (absolute ratio)", "");
         addChoice(turbos_, "Turbochargers", { "1", "2", "3", "4" });
         addField(firingOrder_, "Firing order", "");
+        addChoice(crankPins_, "Crank pins", { "Automatic", "One per row (shared)", "One per cylinder" });
         addField(crankOffsets_, "Crank offsets (deg)", "");
         addField(bankAngles_, "W bank angles (deg)", "");
         firingOrder_.editor.setTooltip(utf8("Cylinder ids in firing order, e.g. 1 3 4 2. Empty: the best balanced."));
         crankOffsets_.editor.setTooltip(
             utf8("Each cylinder's top dead centre in crank degrees, in id order, e.g. 0 270 for a 270° twin."));
+        crankPins_.combo.setTooltip(utf8("A V's two cylinders of a row share one pin, as on real engines (a 90° "
+            "twin fires 270-450). Automatic splits the pins when sharing cannot fire six or more evenly."));
         bankAngles_.editor.setTooltip(utf8("Each bank's angle from vertical, e.g. -52.5 -37.5 37.5 52.5."));
 
         table_.setModel(this);
@@ -237,6 +240,7 @@ private:
         show(boost_, boosted);
         show(turbos_, induction_.combo.getSelectedItemIndex() == 1);
         show(firingOrder_, advanced && layout != EngineLayout::radial);
+        show(crankPins_, advanced && (layout == EngineLayout::vLayout || layout == EngineLayout::custom));
         show(crankOffsets_, advanced);
         show(bankAngles_, advanced && layout == EngineLayout::custom);
         for (auto* component : std::initializer_list<juce::Component*> {
@@ -297,6 +301,8 @@ private:
             }
             for (const auto id : *order) spec.firingOrder.push_back(static_cast<std::uint32_t>(id));
         }
+        if (crankPins_.label.isVisible())
+            spec.crankPins = static_cast<CrankPins>(std::max(0, crankPins_.combo.getSelectedItemIndex()));
         if (crankOffsets_.label.isVisible()) {
             const auto offsets = numbersOf(crankOffsets_.editor.getText());
             if (!offsets) {
@@ -476,7 +482,8 @@ private:
         probing_ = false;
         if (pauseLive_) pauseLive_(livePausedBefore_);
         build_.setEnabled(designed_.config.has_value());
-        const auto rpm = juce::String(juce::roundToInt(capacity.holdRpm));
+        const auto rpm = juce::String(juce::roundToInt(capacity.measuredRpm > 0.0 ? capacity.measuredRpm
+                                                                                     : capacity.holdRpm));
         if (capacity.error.empty() && capacity.factor >= realtimeCapacityMargin) {
             if (buildCallback_(config)) close_();
             return;
@@ -493,7 +500,8 @@ private:
         status_.setColour(juce::Label::textColourId, ui::colours::critical);
         status_.setText(message, juce::dontSendNotification);
         auto safe = juce::Component::SafePointer<DesignerContent>(this);
-        juce::AlertWindow::showOkCancelBox(juce::MessageBoxIconType::WarningIcon, utf8("Not real time"), message,
+        juce::AlertWindow::showOkCancelBox(juce::MessageBoxIconType::WarningIcon,
+            utf8(capacity.error.empty() ? "Not real time" : "Real time not checked"), message,
             utf8("Build anyway"), utf8("Back"), this,
             juce::ModalCallbackFunction::create([safe, config = std::move(config)](int result) {
                 if (safe && result == 1 && safe->buildCallback_(config)) safe->close_();
@@ -516,7 +524,7 @@ private:
     std::map<std::string, double> overrides_;
     std::vector<Field*> fields_;
     Field name_, cycle_, fuel_, use_, layout_, cylinders_, bankAngle_, bankCount_, bore_, stroke_, displacement_,
-        induction_, boost_, turbos_, firingOrder_, crankOffsets_, bankAngles_;
+        induction_, boost_, turbos_, firingOrder_, crankPins_, crankOffsets_, bankAngles_;
     juce::TableListBox table_;
     juce::Label overrideLabel_;
     juce::TextEditor overrideEditor_;

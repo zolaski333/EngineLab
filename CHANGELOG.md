@@ -22,6 +22,28 @@ file formats, always with an in-memory migration).
 - The 3-D view draws engines with more than two banks (a W16, a broad-arrow
   W12) as W engines, bank by bank, instead of as radials.
 - `EngineLabSceneExport --catalog-root` exports another catalogue folder.
+- `EngineLabRealtimeBudgetHarness --designer-probe` runs the designer's
+  real-time check on each engine.
+
+### Fixed
+
+- A designed V or W engine shares one crank pin between the cylinders of a
+  row, as real ones do; each had its own pin. A 90 deg V-twin now fires
+  270-450 and a 45 deg one 315-405. Where a shared pin cannot fire six
+  cylinders or more evenly (a 60 or 90 deg V6), the pins are split by the
+  least angle that does. *Advanced* > *Crank pins* (`crank_pins` in a design
+  file) forces shared pins or one per cylinder.
+- The 3-D view drew two neighbouring crank throws pointing the same way as
+  one (a V12's middle pair, a boxer four's).
+- Small engines (50-250 cc) can be designed: the values the rules gave
+  under the simulator's limits (flywheel, final drive, plenum, piston,
+  throttle) are held at the limit, each saying so. A refused engine now names
+  the value at fault and its range, instead of one generic line. A small
+  throttle leaks less when closed, so small engines idle at their speed.
+- The designer's real-time check no longer fails single-cylinder engines,
+  whose speed swings within each cycle, nor engines the dyno cannot pull up to
+  the measuring speed (it measures where they settle). When the check cannot
+  finish, the box says so instead of "Not real time".
 
 ### Removed
 

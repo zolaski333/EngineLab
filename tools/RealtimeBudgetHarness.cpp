@@ -32,6 +32,7 @@
 #include <enginelab/foundation/EngineTypes.hpp>
 #include <enginelab/foundation/TurboSizing.hpp>
 #include <enginelab/runtime/EngineRuntime.hpp>
+#include <enginelab/runtime/RealtimeCapacityProbe.hpp>
 
 #include <algorithm>
 #include <array>
@@ -913,6 +914,7 @@ int main(int argc, char** argv) {
     // scheduler noise on a loaded desktop without admitting a real deficit.
     double failBelow = 0.0;
     bool freeRun = false;
+    bool designerProbe = false;
     std::optional<double> relativeRpm;
     std::optional<std::size_t> intakeWorkers;
     std::optional<std::size_t> intakeMaximumCells;
@@ -987,6 +989,7 @@ int main(int argc, char** argv) {
         else if (argument == "--seconds" && index + 1 < argc) measureSeconds = std::stod(argv[++index]);
         else if (argument == "--enforce" && index + 1 < argc) failBelow = std::stod(argv[++index]);
         else if (argument == "--free-run") freeRun = true;
+        else if (argument == "--designer-probe") designerProbe = true;
         else if (argument == "--with-audio") withAudio = true;
         else if (argument == "--gas-view") gasView = true;
         else if (argument == "--disable-exhaust-jet-noise")
@@ -1017,12 +1020,14 @@ int main(int argc, char** argv) {
                          "[--intake-wall-us N] "
                          "[--well-mixed-junctions] "
                          "[--disable-muffler-packing] "
-                         "[--enforce FACTOR] [--free-run] "
+                         "[--enforce FACTOR] [--free-run] [--designer-probe] "
                          "[--with-audio] [--gas-view] [--disable-exhaust-jet-noise] "
                          "[--disable-fi-power-normalisation] "
                          "[--audio-rate HZ] [--audio-block N]\n"
                          "  --free-run  remove the loop's wall-clock sleep, so the factor\n"
                          "              reads capacity instead of saturating at 1.0.\n"
+                         "  --designer-probe  run the engine designer's real-time check\n"
+                         "                    (RealtimeCapacityProbe) on each engine and stop.\n"
                          "  --with-audio  run the production renderer on a fixed-period\n"
                          "                consumer thread and enforce its realtime contract.\n"
                          "  --gas-view  ask for the gas field and a probe trace at 60 Hz from\n"
@@ -1086,6 +1091,21 @@ int main(int argc, char** argv) {
             return 1;
         }
         selectedEntries.push_back(selected.entry);
+    }
+
+    if (designerProbe) {
+        // The engine designer's own check (RealtimeCapacityProbe), as it runs
+        // before a design is built: the factor, or why there is none.
+        std::cout << "engine,hold_rpm,measured_rpm,factor,wall_s,error\n";
+        for (const auto* entry : selectedEntries) {
+            const auto start = std::chrono::steady_clock::now();
+            const auto capacity = enginelab::measureRealtimeCapacity(entry->config);
+            const auto wall = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+            std::cout << '"' << entry->config.name << "\"," << capacity.holdRpm << ','
+                      << std::lround(capacity.measuredRpm) << ',' << capacity.factor << ','
+                      << wall << ",\"" << capacity.error << "\"\n";
+        }
+        return 0;
     }
 
     std::cout << "Realtime budget: simulated seconds produced per wall second by the\n"

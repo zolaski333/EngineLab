@@ -319,6 +319,7 @@ void EngineModel3D::buildCrankshaft() {
         float bore {};
         float rodLength {};
         std::size_t reference {};
+        std::uint32_t journalId {};
     };
     std::vector<Group> groups;
     for (std::size_t i = 0; i < cylinders_.size(); ++i) {
@@ -327,9 +328,14 @@ void EngineModel3D::buildCrankshaft() {
         const auto k = evaluateCylinderKinematics(config_, reference_, i, 0.0, 0.0);
         const auto pin = world(k.crankPinXMm, k.crankPinYMm, 0.0F);
         const auto z = cylinders_[i].z;
+        // Rods on one journal share its pin. A journal per cylinder pointing
+        // the same way is shared too within a row (a V's banks sit 0.45 pitch
+        // apart), not across rows (0.55 pitch): two neighbouring rows whose
+        // pins point alike, as in a V12's middle, are two throws.
         const auto shared = std::find_if(groups.begin(), groups.end(), [&](const Group& group) {
-            return group.crankshaftId == k.crankshaftId && length(group.pin - pin) < 0.5F
-                && z - group.zMax < pitch_ * 0.75F && group.zMin - z < pitch_ * 0.75F;
+            if (group.crankshaftId != k.crankshaftId || length(group.pin - pin) >= 0.5F) return false;
+            if (group.journalId == config.crankJournalId) return true;
+            return z - group.zMax < pitch_ * 0.5F && group.zMin - z < pitch_ * 0.5F;
         });
         if (shared != groups.end()) {
             shared->zMin = std::min(shared->zMin, z);
@@ -341,7 +347,7 @@ void EngineModel3D::buildCrankshaft() {
         const auto origin = crankshaft == config_.crankshafts.end() ? Vec3 {}
             : world(crankshaft->positionXMm, crankshaft->positionYMm, 0.0F);
         groups.push_back({ k.crankshaftId, pin, origin, z, z, cylinders_[i].bore,
-                           static_cast<float>(config.connectingRodMm), i });
+                           static_cast<float>(config.connectingRodMm), i, config.crankJournalId });
     }
 
     std::vector<std::uint32_t> crankshaftIds;

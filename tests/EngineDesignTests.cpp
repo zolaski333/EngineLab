@@ -316,6 +316,39 @@ void everyLayoutDesigns() {
     const auto intervals = analyseCrankBalance(*cp2.config).firingIntervalsDegrees;
     require(intervals.size() == 2 && std::abs(intervals[0] - 270.0) < 1.0e-6, "a 270 deg crank as given");
 
+    // Small engines: below some 0.3 L the rules gave values under the
+    // simulator's floors (inertia, final drive, then plenum, piston, throttle)
+    // and every one was refused with one generic line.
+    for (const auto use : { EngineUse::roadMotorcycle, EngineUse::sportMotorcycle, EngineUse::cruiserMotorcycle,
+             EngineUse::roadCar, EngineUse::sportCar }) {
+        for (const auto litres : { 0.05, 0.08, 0.125, 0.2, 0.25 }) {
+            EngineSpec small;
+            small.name = "Small single";
+            small.use = use;
+            small.cylinderCount = 1;
+            small.displacementLitres = litres;
+            const auto designedSmall = designed(small);
+            require(designedSmall.config->transmission.finalDriveRatio <= maximumFinalDriveRatio,
+                "a small engine designs, its values held within the simulator's limits");
+        }
+    }
+    EngineSpec tiny;
+    tiny.name = "Tiny";
+    tiny.use = EngineUse::sportMotorcycle;
+    tiny.cylinderCount = 1;
+    tiny.displacementLitres = 0.125;
+    const auto tinyEngine = designed(tiny);
+    const auto* inertia = valueOf(tinyEngine, "rotating_inertia_kg_m2");
+    require(inertia && inertia->value == minimumRotatingInertiaKgM2 && inertia->rule.find("floor") != std::string::npos,
+        "a value raised to a floor says so");
+    tiny.overrides["rotating_inertia_kg_m2"] = 0.005;
+    const auto tooLight = designEngine(tiny, parts());
+    require(!tooLight.config && tooLight.error.find("rotatingInertiaKgM2") != std::string::npos,
+        "a value set below a floor is refused by name");
+    tiny.overrides.clear();
+    tiny.displacementLitres = 0.04;
+    require(!designEngine(tiny, parts()).config, "under 50 cc is refused");
+
     auto twice = inlineSeven();
     twice.firingOrder = { 1, 2, 2, 4, 5, 6, 7 };
     require(!designEngine(twice, parts()).config, "a cylinder named twice in the firing order is refused");
@@ -390,6 +423,143 @@ void inlineSevenRuns() {
 }
 
 /** A catalogue file may hold a design instead of a whole engine. */
+[[nodiscard]] std::size_t pinsOf(const EngineConfig& config) {
+    std::vector<std::uint32_t> ids;
+    for (const auto& cylinder : config.cylinders) ids.push_back(cylinder.crankJournalId);
+    std::sort(ids.begin(), ids.end());
+    return static_cast<std::size_t>(std::unique(ids.begin(), ids.end()) - ids.begin());
+}
+
+/** Each cylinder reaches top dead centre where its pin points along its bore:
+ *  the journal the 3-D view and the kinematics draw agrees with the phase the
+ *  combustion runs on. */
+void pinsMatchTheFiring(const EngineConfig& config) {
+    for (const auto& cylinder : config.cylinders) {
+        const auto journal = std::find_if(config.crankJournals.begin(), config.crankJournals.end(),
+            [&cylinder](const auto& item) { return item.id == cylinder.crankJournalId; });
+        require(journal != config.crankJournals.end(), "every cylinder is on a pin");
+        const auto gap = std::fmod(journal->angleDegrees + cylinder.bankOffsetDegrees
+            - cylinder.crankOffsetDegrees + 7'200.0, 360.0);
+        require(gap < 1.0e-6 || gap > 360.0 - 1.0e-6, "its pin points along its bore at its top dead centre");
+    }
+}
+
+[[nodiscard]] std::vector<double> sortedIntervals(const EngineConfig& config) {
+    auto intervals = analyseCrankBalance(config).firingIntervalsDegrees;
+    std::sort(intervals.begin(), intervals.end());
+    return intervals;
+}
+
+[[nodiscard]] EngineSpec vee(std::uint32_t cylinders, double bankAngle, EngineUse use, double litres) {
+    EngineSpec spec;
+    spec.name = "V" + std::to_string(cylinders);
+    spec.use = use;
+    spec.layout = EngineLayout::vLayout;
+    spec.cylinderCount = cylinders;
+    spec.bankAngleDegrees = bankAngle;
+    spec.displacementLitres = litres;
+    return spec;
+}
+
+/** A V's two cylinders of a row share one crank pin, as on the real engines;
+ *  each had its own pin, placed for even firing (the owner's report,
+ *  2026-10-19). */
+void vCranksSharePins() {
+    const auto ducati = designed(vee(2, 90.0, EngineUse::sportMotorcycle, 0.9));
+    require(pinsOf(*ducati.config) == 1, "a V-twin's two rods share one pin");
+    require(sortedIntervals(*ducati.config) == std::vector<double>({ 270.0, 450.0 }),
+        "so a 90 deg twin fires 270-450");
+    pinsMatchTheFiring(*ducati.config);
+    const auto harley = designed(vee(2, 45.0, EngineUse::cruiserMotorcycle, 1.6));
+    require(pinsOf(*harley.config) == 1 && sortedIntervals(*harley.config) == std::vector<double>({ 315.0, 405.0 }),
+        "and a 45 deg twin 315-405");
+    pinsMatchTheFiring(*harley.config);
+
+    const auto v8 = designed(vee(8, 90.0, EngineUse::sportCar, 6.2));
+    require(pinsOf(*v8.config) == 4, "a V8 has four pins");
+    evenlySpaced(*v8.config);
+    pinsMatchTheFiring(*v8.config);
+    const auto v12 = designed(vee(12, 60.0, EngineUse::sportCar, 6.0));
+    require(pinsOf(*v12.config) == 6, "a 60 deg V12 six");
+    evenlySpaced(*v12.config);
+    pinsMatchTheFiring(*v12.config);
+    const auto v10 = designed(vee(10, 72.0, EngineUse::sportCar, 5.0));
+    require(pinsOf(*v10.config) == 5, "a 72 deg V10 five");
+    evenlySpaced(*v10.config);
+    const auto v4 = designed(vee(4, 90.0, EngineUse::sportMotorcycle, 1.0));
+    require(pinsOf(*v4.config) == 2, "a V4 two");
+    pinsMatchTheFiring(*v4.config);
+
+    // A shared pin cannot fire a 90 deg V6 evenly: its pins are split by the
+    // least that does (30 deg, as the even-firing ones), unless asked.
+    auto sixSpec = vee(6, 90.0, EngineUse::roadCar, 3.8);
+    const auto split = designed(sixSpec);
+    require(pinsOf(*split.config) == 6, "a 90 deg V6 splits its pins");
+    evenlySpaced(*split.config);
+    pinsMatchTheFiring(*split.config);
+    const auto& journals = split.config->crankJournals;
+    for (std::size_t row = 0; row < 3; ++row) {
+        const auto lead = std::abs(std::remainder(journals[2 * row + 1].angleDegrees
+            - journals[2 * row].angleDegrees, 360.0));
+        require(std::abs(lead - 30.0) < 1.0e-6, "by 30 deg within each row");
+    }
+    const auto* pins = valueOf(split, "crank_pins");
+    require(pins && pins->value == 6.0 && pins->rule.find("split") != std::string::npos,
+        "and the design says so");
+    sixSpec.crankPins = CrankPins::shared;
+    const auto oddFire = designed(sixSpec);
+    require(pinsOf(*oddFire.config) == 3 && sortedIntervals(*oddFire.config).back() > 140.0,
+        "shared, it fires unevenly, as the odd-fire ones");
+    pinsMatchTheFiring(*oddFire.config);
+    auto separateSpec = vee(8, 90.0, EngineUse::sportCar, 6.2);
+    separateSpec.crankPins = CrankPins::separate;
+    const auto separate = designed(separateSpec);
+    require(separate.config->firingOrder
+            == evenFiringOrders(balanceCylinders(*separate.config), 720.0, 1).front().order,
+        "one pin per cylinder is still the best balanced even-firing crank");
+    evenlySpaced(*separate.config);
+
+    // A firing order given is kept, on shared pins when they allow it.
+    auto ordered = vee(8, 90.0, EngineUse::sportCar, 6.2);
+    ordered.firingOrder = v8.config->firingOrder;
+    const auto kept = designed(ordered);
+    require(kept.config->firingOrder == ordered.firingOrder && pinsOf(*kept.config) == 4,
+        "a firing order a shared crank allows keeps four pins");
+    ordered.firingOrder = { 1, 3, 2, 4, 5, 7, 6, 8 };
+    const auto apart = designed(ordered);
+    require(apart.config->firingOrder == ordered.firingOrder && pinsOf(*apart.config) == 8,
+        "one it does not is still kept, on a pin per cylinder");
+    evenlySpaced(*apart.config);
+    pinsMatchTheFiring(*apart.config);
+
+    EngineSpec w16;
+    w16.name = "W16";
+    w16.layout = EngineLayout::custom;
+    w16.cylinderCount = 16;
+    w16.bankCount = 4;
+    w16.displacementLitres = 8.0;
+    const auto w = designed(w16);
+    evenlySpaced(*w.config);
+    pinsMatchTheFiring(*w.config);
+    std::cout << "crank pins:";
+    for (const auto* engine : { &ducati, &harley, &v4, &split, &oddFire, &v8, &v10, &v12, &w }) {
+        const auto* value = valueOf(*engine, "crank_pins");
+        require(value != nullptr, "every design says how its pins are shared");
+        std::cout << "\n  " << engine->config->name << ' ' << engine->config->bankAngleDegrees << " deg: "
+                  << value->value << ", " << value->rule;
+    }
+    std::cout << '\n';
+
+    // Inline and flat engines keep one pin per cylinder.
+    require(pinsOf(*designed(inlineSeven()).config) == 7, "an inline engine keeps a pin per cylinder");
+    EngineSpec boxer;
+    boxer.name = "Boxer Four";
+    boxer.layout = EngineLayout::flat;
+    boxer.cylinderCount = 4;
+    boxer.displacementLitres = 2.0;
+    require(pinsOf(*designed(boxer).config) == 4, "a boxer too");
+}
+
 void catalogueReadsDesigns() {
     const std::filesystem::path source = ENGINELAB_CATALOG_ROOT;
     const auto root = std::filesystem::temp_directory_path() / "enginelab-design-test";
@@ -432,6 +602,37 @@ void realtimeIsChecked() {
         "at the catalogue's measuring speed");
     const std::atomic<bool> cancelled { true };
     require(measureRealtimeCapacity(config, 1.0, 60.0, &cancelled).error == "cancelled", "and can be cancelled");
+
+    // A single's speed swings some +4 / -6 % within each cycle at 5,000 rpm
+    // on the dyno: the hold is judged on the mean speed, not on one sample.
+    const auto heldAfter = [](auto speedAt) {
+        RealtimeHoldJudge judge(5'000.0);
+        for (auto t = 0.0; t < 10.0; t += 0.0117)
+            if (judge.add(t, speedAt(t))) return t;
+        return -1.0;
+    };
+    const auto rippling = heldAfter([](double t) { return 5'000.0 + 250.0 * std::sin(2.0 * 3.14159265 * 41.7 * t); });
+    std::cout << "  a +-5 % rippling 5,000 rpm is held after " << rippling << " s\n";
+    require(rippling > 0.0 && rippling < 1.5, "a speed rippling +-5 % about the target is held");
+    require(heldAfter([](double) { return 4'700.0; }) >= 1.0, "a speed settled 6 % short is taken, after a second");
+    require(heldAfter([](double) { return 3'000.0; }) < 0.0, "one 40 % short is not");
+    const auto ramp = heldAfter([](double t) { return std::min(5'000.0, 1'000.0 + 2'000.0 * t); });
+    require(ramp > 2.0, "nor a ramp before it arrives");
+    const auto slowRamp = heldAfter([](double t) { return std::min(4'500.0, 3'000.0 + 400.0 * t); });
+    std::cout << "  slow climb held after " << slowRamp << " s\n";
+    require(slowRamp > 3.75, "nor a slow climb before it levels off");
+
+    EngineSpec single;
+    single.name = "Single";
+    single.use = EngineUse::roadMotorcycle;
+    single.cylinderCount = 1;
+    single.displacementLitres = 0.5;
+    const auto thumper = designCatalogueEngine(single, ENGINELAB_CATALOG_ROOT);
+    require(thumper.config.has_value(), "a 500 cc single designs");
+    const auto singleCapacity = measureRealtimeCapacity(*thumper.config, 1.0, 30.0);
+    std::cout << "  designed single: physics at " << singleCapacity.factor << " x real time"
+              << (singleCapacity.error.empty() ? "" : " (" + singleCapacity.error + ")") << '\n';
+    require(singleCapacity.error.empty() && singleCapacity.factor > 0.0, "a single holds its measuring speed");
 }
 
 } // namespace
@@ -442,6 +643,7 @@ int main() {
     inlineSevenFromNothing();
     overridesWin();
     everyLayoutDesigns();
+    vCranksSharePins();
     catalogueReadsDesigns();
     inlineSevenRuns();
     realtimeIsChecked();

@@ -5,6 +5,37 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-19 — Catalogue Vs: the LS3 and the Merlin share no pin either
+
+- Catalogue V8 and V12 cylinders are generated: TDC from the firing order, odd ids on the -half bank. A row shares a pin only if its two TDCs differ by the bank angle (mod 360). Checked by hand from the files, not changed.
+- LS3 (1-8-7-2-6-5-4-3): rows differ by 270, so pins pair 1-8, 3-6, 4-5, 2-7 across rows. With odd ids on the +45 bank every row shares (pins 315/225/45/135, the cross-plane): the GM order assumes the other rotation sense. That fix moves no TDC, but swaps the cylinders' stereo pan.
+- Merlin (1-8-5-10-3-7-6-11-2-9-4-12): no bank side shares a pin; the real order 1A 6B 4A 3B 2A 5B 6A 1B 3A 4B 5A 2B with A odd, B even is 1-12-7-6-3-10-11-2-5-8-9-4, which shares all six. That fix changes the firing sequence over its 12 stubs.
+- Both are sound changes to catalogue engines: left for the owner. Big Twin (explicit pins): shared, right.
+
+## 2026-10-19 — V cranks: one pin per row
+
+- Owner report: a designed V gives each piston its own crank pin. Measured (SceneExport, throws drawn): V2 90/45 2, V4 4, V6 60/90 6, V8 4 (by luck), V10 72 7, V12 60 5. The even-firing search placed pins freely.
+- Fix: a V's or W's row shares a pin (`rowPinCrank()`, every pin set on a 360/rows grid, evenest then best balanced). After: V2 1 (270-450, 315-405), V4 2 (90-180-270-180), V8 4, V10 5, V12 6, all even. 60/90 deg V6 and W16: shared cannot fire evenly, so split pins (60, 30, 5 deg), as the real even-firing V6s; `crank_pins: shared` gives the odd-fire V6 (90-150).
+- 3-D view: neighbouring rows with pins alike were merged into one throw (the V12's 6th); now only within a row. Catalogue: EJ25 3 -> 4 throws (right), LS3 7 -> 8, Merlin 11 -> 12: their own data pairs no cylinders on a pin (next entry).
+- 8 V designs: idle on target (V4 1,392 for 1,300), designer probe passes except the 6 L V12 at 0.99. Back to back with the old binary, 3 runs each: V12 1.005-1.030 old, 0.993-1.013 new, I6 control 1.74-1.81 both: borderline before, not caused.
+- Not measured: the sound of the V-twins now firing 270-450 (designed engines only; the catalogue's are unchanged).
+
+## 2026-10-19 — Small engines: refused, then idling high
+
+- Owner report: a 200 cc single cannot be designed. 31 designs (singles 50-250 cc x 5 uses, small twins/four, 2T, diesel): 29 refused, all with the generic validator line. The validator now names the value: final drive 8.0-20.2 over the limit of 8 (a motorcycle's ratio includes the primary: ~10 on a 125), inertia 0.002-0.009 under 0.01; under 0.1 L also plenum, piston mass (< 50 g), throttle (< 15 mm), and 50 cc failed a 0.05 L check by round-off.
+- Fix: final drive limit 15; the designer holds every such value at the simulator's limit and says so in its rule. 31/31 design.
+- Idle, then: 50 cc 2,042 rpm for 1,350. One factor, the per-bore closed-throttle leak 0.6 -> 0.1 mm2: 1,329 (cruiser 1,196 -> 800, sport car 1,385 -> 901). Rule: 0.6 mm2 x bore / 60 mm below 60 mm. 15 rebuilt designs: idle unchanged (CP2 1,350 -> 1,349, RD350 1,316 -> 1,311). 26/31 small designs within 30 % of target.
+- Not fixed: sport motorcycles <= 125 cc idle ~2,000 for 1,300. One factor each on the 125: leak 0.05 1,859, bypass 0.5 2,009, inertia x3 2,029, bore/stroke 1.15 1,761, road cams 1,361: the sport cams' overlap on a small cylinder. No rule from size is backed by data (the CP4 design, 250 cc a cylinder, idles on target). Diesel single 0.3 L 1,106 for 800; 50 cc two-stroke 3 Nm (BMEP ~4 bar).
+- Full load: 125 road single 14 Nm, 11.4 kW at 9,000 (BMEP 14 bar); 50 cc 5 Nm; 250 twin 27 Nm.
+
+## 2026-10-19 — The designer's real-time check failed engines that run fine
+
+- Owner report: some designs fail "the 5,000 rpm test" yet run well. New `EngineLabRealtimeBudgetHarness --designer-probe` runs the designer's own check. Before: 3/3 singles (450-650 cc) and the Merlin and the radial (catalogue) "did not hold" in 30 s; 14 other designs and 15 catalogue engines passed.
+- Singles: held on the mean (5,000 rpm), but one polled sample swings 4,711-5,436 rpm (trace at 2 deg: +3.7 / -5.7 % on the 500 cc); the check wanted every sample within 3 % for 0.5 s. A test-binary single passed by poll timing, so the regression test is a synthetic +-5 % ripple (fails on the old rule).
+- Merlin, radial: the dyno cannot pull a full-load engine up to 95 % of the limiter; they settle 5 % short (2,900 / 3,040, 2,151 / 2,280 rpm).
+- Rule now: mean speed (1/3 s filter, as the harness) within 3 % for 0.5 s, or settled (< 0.5 % in 1 s) within 15 %, measured where it settled. After: 17/17 designs and 17/17 catalogue engines measured in 1.9-4.4 s; factors as before within run-to-run noise.
+- Not measured: the check from the app with the 3-D view and audio running.
+
 ## 2026-10-19 — Builder phase 6: W engines in 3-D, and a W with no angle
 
 - A W designed with no bank angle had every bank at 0 deg: four cylinders stacked per row. The phase 4 W16 figures were that engine. Rule now: banks spread over 120 deg (at most 90 between neighbours; 3 banks 60 deg, 4 banks 40 deg); two banks at one angle are refused. Corrected W16: physics-only 0.533 (stacked 0.537, so cost is per cylinder, not geometry), still INVALID with audio; idle 901 / 900 rpm.

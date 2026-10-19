@@ -828,7 +828,7 @@ void applyCrankOffsets(EngineConfig& config) {
 [[nodiscard]] EngineSpec decodeEngineSpec(const YAML::Node& node) {
     requireKnownKeys(node, { "name", "cycle", "fuel", "use", "layout", "cylinders", "bank_count", "bank_angle_deg",
         "bank_angles_deg", "bore_mm", "stroke_mm", "displacement_l", "induction", "boost_pressure_ratio", "turbochargers",
-        "firing_order", "crank_offsets_deg", "overrides" }, "design");
+        "firing_order", "crank_offsets_deg", "crank_pins", "overrides" }, "design");
     EngineSpec spec;
     spec.name = node["name"].as<std::string>();
     const auto cycle = node["cycle"].as<std::string>("four_stroke");
@@ -860,6 +860,10 @@ void applyCrankOffsets(EngineConfig& config) {
     assignIfPresent(node, "turbochargers", spec.turbochargerCount);
     assignIfPresent(node, "firing_order", spec.firingOrder);
     assignIfPresent(node, "crank_offsets_deg", spec.crankOffsetsDegrees);
+    const auto pins = node["crank_pins"].as<std::string>("automatic");
+    const auto parsedPins = parseCrankPins(pins);
+    if (!parsedPins) throw std::runtime_error("Unknown crank pins: " + pins + " (automatic, shared or separate)");
+    spec.crankPins = *parsedPins;
     if (const auto overrides = node["overrides"])
         for (const auto& item : overrides) spec.overrides[item.first.as<std::string>()] = item.second.as<double>();
     return spec;
