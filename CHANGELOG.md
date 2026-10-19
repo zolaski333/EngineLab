@@ -15,6 +15,10 @@ file formats, always with an in-memory migration).
   turbocharged or supercharged) and every other value follows, each shown with
   the rule behind it. *Advanced* sets the firing order, an uneven crank, a W's
   bank angles or any value by hand. An engine file can hold such a design.
+  Before building, the design runs for a few seconds to check that this
+  computer keeps it in real time, and asks first if it would not.
+- `EngineLabDynoSweepHarness --advance-offset deg` shifts the whole ignition
+  curve, to see how far an engine is from its best-torque timing.
 
 ### Removed
 

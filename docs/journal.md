@@ -5,6 +5,14 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-19 — Builder phase 4: spark advance, real-time check, idle
+
+- Advance: DynoSweep `--advance-offset` -6/-3/0/+3/+6/+9 deg on the 15 rebuilt designs, `--step 1000`. Most still gain at +9 (2JZ, EJ25, CP3/4, Hayabusa, I5, flat six: +2 to +9 %); K20A, Harley, RD350 peak at -3..+3; the TDI ignores it. No MBT auto-calibration: designs already exceed the maker's power (2JZ 312 vs 206 kW, flat six 289 vs 200) and nothing here limits advance by knock, so "best torque" would walk away from the datasheets.
+- Real time, 7 harder designs (free-run, audio + gas view): I7 1.51, radial 9 1.60, I10 1.16, V8 diesel 0.99, V12 sport 0.95, two-stroke four 0.93, quad-turbo W16 INVALID (physics 0.54). V12 physics only 1.00: exhaust mesh 600 mm +3 %, intake mesh 0; it is per-cylinder work, rising with rpm.
+- The whole chain ran at 0.88-0.97 of the physics-only factor (19 designs). The designer now runs a design for ~3 s (`measureRealtimeCapacity`, same speed as the harness: 5,000 rpm, at most 95 % of the limiter) with the live engine paused, and asks before building under 1.14 physics-only. The I7 probe read 1.598 against the harness's 1.599.
+- Idle, 22 designs, PhysicsPerfHarness `--freerev 0 --seconds 25`, last 8 s: 21 within 7 % of target, no misfire. Two-stroke four 2,070 rpm for 1,300, misfiring: one factor at a time, bypass 0 2,203; idle target 1,600 2,475; one throttle body 1,433, no misfire. Rule: a two-stroke gets one throttle (the catalogue RD350's carburettor-to-crankcase convention). RD350 design idle 1,393 -> 1,304 (sd 42 -> 16), WOT -2 to -5 % (34.4 kW at 9,000, maker 35).
+- Not measured: the designer window on screen (access declined), the probe inside the app against the harness, catalogue engines' advance sensitivity, transients.
+
 ## 2026-10-19 — Builder phases 1-3: the catalogue rebuilt from datasheets alone
 
 - `designEngine()` (catalog): cycle, fuel, use, layout, cylinders, bore x stroke (or litres), induction -> a whole engine; each value derived by a rule fitted to the catalogue, or set by key (its rule kept). A file may hold `design:` instead of `engine:`, so every harness runs designed engines.

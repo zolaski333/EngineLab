@@ -18,12 +18,18 @@ namespace enginelab {
  *
  * The callback receives the designed, validated engine and returns whether it
  * was taken (the name may be refused there); the window closes if it was.
+ *
+ * Before that, the design is run for a few seconds off-screen
+ * (measureRealtimeCapacity()); below the margin the build asks first. The
+ * running engine is paused meanwhile through `pauseLive`, which sets the pause
+ * and returns the previous state.
  */
 class EngineDesignerWindow final : public juce::DocumentWindow {
 public:
     using BuildCallback = std::function<bool(const EngineConfig&)>;
+    using PauseCallback = std::function<bool(bool)>;
 
-    EngineDesignerWindow(std::filesystem::path catalogRoot, BuildCallback buildCallback);
+    EngineDesignerWindow(std::filesystem::path catalogRoot, BuildCallback buildCallback, PauseCallback pauseLive);
     ~EngineDesignerWindow() override;
 
     void closeButtonPressed() override;

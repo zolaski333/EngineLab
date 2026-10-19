@@ -1339,7 +1339,14 @@ void MainComponent::showEngineDesigner() {
     if (!engineDesignerWindow_) {
         auto safe = juce::Component::SafePointer<MainComponent>(this);
         engineDesignerWindow_ = std::make_unique<EngineDesignerWindow>(catalogRoot_,
-            [safe](const EngineConfig& designed) { return safe && safe->runDesignedEngine(designed); });
+            [safe](const EngineConfig& designed) { return safe && safe->runDesignedEngine(designed); },
+            // The design's real-time check must not share the computer with the running engine.
+            [safe](bool pause) {
+                if (!safe || !safe->runtime_) return false;
+                const auto before = safe->runtime_->paused();
+                safe->runtime_->setPaused(pause);
+                return before;
+            });
     }
     engineDesignerWindow_->setVisible(true);
     engineDesignerWindow_->toFront(true);

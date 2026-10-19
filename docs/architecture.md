@@ -206,7 +206,13 @@ An engine file may hold `design:` (the spec, same keys) instead of `engine:`;
 the catalogue loads it through the same function, so every harness runs a
 designed engine. The window (`EngineDesignerWindow`) shows the derived values
 and their rules as the spec changes; *Advanced* adds firing order, crank
-offsets, W bank angles and setting any value by hand. *Build and run* saves the
+offsets, W bank angles and setting any value by hand. *Build and run* first
+runs the design off-screen for a few seconds with the live engine paused
+(`measureRealtimeCapacity()`, `runtime/RealtimeCapacityProbe.hpp`: the
+physics-only factor at the realtime harness's speed) and asks before building
+below `realtimeCapacityMargin` (1.14: the sound and the 3-D view cost 3-12 %
+on top). Cost grows with cylinders and speed: a 12-cylinder sport car is at
+the limit on the reference machine, a quad-turbo W16 at half. Then it saves the
 engine under *My engines*. `EngineLab.EngineDesign` checks it.
 
 ### Live exhaust changes

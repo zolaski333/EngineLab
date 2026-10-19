@@ -2,13 +2,16 @@
 #include <enginelab/app/Theme.hpp>
 #include <enginelab/catalog/EngineCatalog.hpp>
 #include <enginelab/foundation/CrankBalance.hpp>
+#include <enginelab/runtime/RealtimeCapacityProbe.hpp>
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cmath>
 #include <exception>
 #include <optional>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -53,8 +56,10 @@ class EngineDesignerWindow::DesignerContent final : public juce::Component,
                                                     private juce::TableListBoxModel,
                                                     private juce::Timer {
 public:
-    DesignerContent(std::filesystem::path catalogRoot, BuildCallback buildCallback, std::function<void()> close)
-        : catalogRoot_(std::move(catalogRoot)), buildCallback_(std::move(buildCallback)), close_(std::move(close)) {
+    DesignerContent(std::filesystem::path catalogRoot, BuildCallback buildCallback, PauseCallback pauseLive,
+                    std::function<void()> close)
+        : catalogRoot_(std::move(catalogRoot)), buildCallback_(std::move(buildCallback)),
+          pauseLive_(std::move(pauseLive)), close_(std::move(close)) {
         setOpaque(true);
         try {
             parts_ = loadPartsLibrary(catalogRoot_);
@@ -110,7 +115,7 @@ public:
         advanced_.setClickingTogglesState(true);
         advanced_.onClick = [this] { showMode(); };
         build_.onClick = [this] { build(); };
-        cancel_.onClick = [this] { close_(); };
+        cancel_.onClick = [this] { cancel(); };
         addAndMakeVisible(advanced_);
         addAndMakeVisible(build_);
         addAndMakeVisible(cancel_);
@@ -118,7 +123,17 @@ public:
         redesign();
     }
 
-    ~DesignerContent() override { stopTimer(); }
+    ~DesignerContent() override {
+        stopTimer();
+        stopProbe();
+    }
+
+    /** Closes the window; a real-time check under way is abandoned. */
+    void cancel() {
+        stopProbe();
+        build_.setEnabled(designed_.config.has_value());
+        close_();
+    }
 
     void paint(juce::Graphics& graphics) override {
         graphics.fillAll(ui::colours::background);
@@ -313,7 +328,7 @@ private:
         if (!partsError_.empty()) error = utf8("The parts library did not load: ") + utf8(partsError_.c_str());
         else if (const auto described = spec(error)) designed_ = designEngine(*described, parts_);
         if (error.isEmpty() && !designed_.config) error = utf8(designed_.error.c_str());
-        build_.setEnabled(designed_.config.has_value());
+        build_.setEnabled(designed_.config.has_value() && !probing_);
         if (designed_.config) {
             const auto& config = *designed_.config;
             const auto balance = analyseCrankBalance(config);
@@ -423,12 +438,78 @@ private:
             return;
         }
         config.audioVoicing = voicing.voicing;
-        if (buildCallback_(config)) close_();
+        checkRealtimeThenBuild(std::move(config));
     }
+
+    /** Real time is a hard limit: a design is run off-screen before it is built
+     * (journal 2026-10-19: a 12-cylinder sport car, a two-stroke four and a
+     * diesel V8 all came out under real time, and a quad-turbo W16 at half). */
+    void checkRealtimeThenBuild(EngineConfig config) {
+        if (probing_) return;
+        if (probe_.joinable()) probe_.join();
+        probing_ = true;
+        build_.setEnabled(false);
+        livePausedBefore_ = pauseLive_ ? pauseLive_(true) : false;
+        status_.setColour(juce::Label::textColourId, ui::colours::text);
+        status_.setText(utf8("Checking that this engine runs in real time on this computer (a few seconds)…"),
+            juce::dontSendNotification);
+        cancelProbe_.store(false);
+        auto safe = juce::Component::SafePointer<DesignerContent>(this);
+        probe_ = std::thread([this, safe, config = std::move(config)]() mutable {
+            auto capacity = measureRealtimeCapacity(config, 1.5, 30.0, &cancelProbe_);
+            if (cancelProbe_.load()) return;
+            juce::MessageManager::callAsync([safe, config = std::move(config), capacity]() mutable {
+                if (safe) safe->probeFinished(std::move(config), capacity);
+            });
+        });
+    }
+
+    void stopProbe() {
+        cancelProbe_.store(true);
+        if (probe_.joinable()) probe_.join();
+        if (probing_ && pauseLive_) pauseLive_(livePausedBefore_);
+        probing_ = false;
+    }
+
+    void probeFinished(EngineConfig config, const RealtimeCapacity& capacity) {
+        if (!probing_) return;
+        probing_ = false;
+        if (pauseLive_) pauseLive_(livePausedBefore_);
+        build_.setEnabled(designed_.config.has_value());
+        const auto rpm = juce::String(juce::roundToInt(capacity.holdRpm));
+        if (capacity.error.empty() && capacity.factor >= realtimeCapacityMargin) {
+            if (buildCallback_(config)) close_();
+            return;
+        }
+        const auto message = capacity.error.empty()
+            ? utf8("At ") + rpm + utf8(" rpm this computer runs the engine's physics at ")
+                + ui::fixed(capacity.factor, 2) + utf8(utf8Times)
+                + utf8(" real time; the sound and the 3-D view need about ")
+                + ui::fixed(realtimeCapacityMargin, 2) + utf8(utf8Times)
+                + utf8(". It will lag, then go dull and silent.\n\nEach cylinder costs physics time, and more so "
+                       "at high speed: fewer cylinders or a lower redline bring it back.")
+            : utf8("The real-time check did not finish (") + utf8(capacity.error.c_str())
+                + utf8("), so whether this engine runs in real time is not known.");
+        status_.setColour(juce::Label::textColourId, ui::colours::critical);
+        status_.setText(message, juce::dontSendNotification);
+        auto safe = juce::Component::SafePointer<DesignerContent>(this);
+        juce::AlertWindow::showOkCancelBox(juce::MessageBoxIconType::WarningIcon, utf8("Not real time"), message,
+            utf8("Build anyway"), utf8("Back"), this,
+            juce::ModalCallbackFunction::create([safe, config = std::move(config)](int result) {
+                if (safe && result == 1 && safe->buildCallback_(config)) safe->close_();
+            }));
+    }
+
+    static constexpr const char* utf8Times = "\xc3\x97";
 
     std::filesystem::path catalogRoot_;
     BuildCallback buildCallback_;
+    PauseCallback pauseLive_;
     std::function<void()> close_;
+    std::thread probe_;
+    std::atomic<bool> cancelProbe_ { false };
+    bool probing_ { false };
+    bool livePausedBefore_ { false };
     PartsLibrary parts_;
     std::string partsError_;
     DesignedEngine designed_;
@@ -447,10 +528,12 @@ private:
     juce::TextButton cancel_ { utf8("Cancel") };
 };
 
-EngineDesignerWindow::EngineDesignerWindow(std::filesystem::path catalogRoot, BuildCallback buildCallback)
+EngineDesignerWindow::EngineDesignerWindow(std::filesystem::path catalogRoot, BuildCallback buildCallback,
+                                           PauseCallback pauseLive)
     : juce::DocumentWindow("EngineLab - New engine", ui::colours::background, juce::DocumentWindow::closeButton,
           true) {
-    content_ = new DesignerContent(std::move(catalogRoot), std::move(buildCallback), [this] { setVisible(false); });
+    content_ = new DesignerContent(std::move(catalogRoot), std::move(buildCallback), std::move(pauseLive),
+        [this] { setVisible(false); });
     setContentOwned(content_, true);
     setUsingNativeTitleBar(true);
     setResizable(true, false);
@@ -460,6 +543,6 @@ EngineDesignerWindow::EngineDesignerWindow(std::filesystem::path catalogRoot, Bu
 
 EngineDesignerWindow::~EngineDesignerWindow() = default;
 
-void EngineDesignerWindow::closeButtonPressed() { setVisible(false); }
+void EngineDesignerWindow::closeButtonPressed() { content_->cancel(); }
 
 } // namespace enginelab

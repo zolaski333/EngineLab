@@ -427,9 +427,13 @@ DesignedEngine designEngine(const EngineSpec& spec, const PartsLibrary& parts) {
             twoStroke ? "1.0e6 / peak power rpm" : "1.9e6 / peak power rpm (catalogue 1.6-2.3e6)");
         intake.runnerDiameterMm = derive("intake_runner_diameter_mm", "Intake runner diameter", "mm",
             (twoStroke ? 0.56 : valvesPerSide > 1 ? 0.47 : 0.44) * bore, "a share of the bore (catalogue 0.42-0.52)");
-        const auto perCylinderThrottles = profile.throttlePerCylinder && !diesel && count <= 16;
+        // A two-stroke's throttle is the carburettor bore feeding the crankcase
+        // circuit, as in the catalogue's RD350: one. Four bodies there idled a
+        // two-stroke four at 2,070 rpm for 1,300, misfiring (journal 2026-10-19).
+        const auto perCylinderThrottles = profile.throttlePerCylinder && !diesel && !twoStroke && count <= 16;
         intake.throttleCount = static_cast<std::uint32_t>(std::lround(derive("throttle_count", "Throttle bodies", "",
-            perCylinderThrottles ? countD : 1.0, perCylinderThrottles ? "one per cylinder" : "one")));
+            perCylinderThrottles ? countD : 1.0,
+            perCylinderThrottles ? "one per cylinder" : twoStroke ? "one, feeding the crankcase circuit" : "one")));
         const auto throttleAreaFactor = diesel ? 0.27 : twoStroke ? 0.16 : profile.throttleAreaMm2PerLitreRpm;
         const auto throttleArea = throttleAreaFactor * litres * config.redlineRpm;
         intake.throttleDiameterMm = derive("throttle_diameter_mm", "Throttle diameter", "mm",

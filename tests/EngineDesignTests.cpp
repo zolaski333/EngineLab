@@ -10,9 +10,11 @@
 #include <enginelab/exhaust/ExhaustGraph.hpp>
 #include <enginelab/foundation/CrankBalance.hpp>
 #include <enginelab/physics/SimplifiedGasolinePhysics.hpp>
+#include <enginelab/runtime/RealtimeCapacityProbe.hpp>
 #include <enginelab/simulation/EngineSimulator.hpp>
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstdlib>
 #include <filesystem>
@@ -283,6 +285,7 @@ void everyLayoutDesigns() {
     const auto stinger = designed(twin);
     require(stinger.config->exhaustPaths.size() == 2, "a two-stroke has one pipe per cylinder");
     require(stinger.config->twoStroke.exhaustPortOpenDegrees > 0.0, "and ports");
+    require(stinger.config->intake.throttleCount == 1, "one carburettor bore feeds the crankcase circuit");
     const auto& chamber = stinger.config->exhaustPaths.front().network;
     require(chamber && chamber->components.size() == 8, "each pipe is an expansion chamber");
     const auto* tuned = valueOf(stinger, "expansion_chamber_tuned_length_mm");
@@ -401,6 +404,23 @@ void catalogueReadsDesigns() {
     std::filesystem::remove_all(root);
 }
 
+/** The designer runs a design off-screen before building it; the probe holds
+ * the catalogue's measuring speed and reports a factor, or why it has none. */
+void realtimeIsChecked() {
+    const auto designedEngine = designCatalogueEngine(inlineSeven(), ENGINELAB_CATALOG_ROOT);
+    require(designedEngine.config.has_value(), "the I7 designs with its voicing");
+    const auto& config = *designedEngine.config;
+    const auto capacity = measureRealtimeCapacity(config, 1.0, 60.0);
+    std::cout << "  designed I7: physics at " << capacity.factor << " x real time at " << capacity.holdRpm
+              << " rpm" << (capacity.error.empty() ? "" : " (" + capacity.error + ")") << '\n';
+    require(capacity.error.empty() && capacity.factor > 0.0 && std::isfinite(capacity.factor),
+        "the probe measures a factor");
+    require(capacity.holdRpm == std::min(5'000.0, 0.95 * std::min(config.redlineRpm, config.ignition.revLimitRpm)),
+        "at the catalogue's measuring speed");
+    const std::atomic<bool> cancelled { true };
+    require(measureRealtimeCapacity(config, 1.0, 60.0, &cancelled).error == "cancelled", "and can be cancelled");
+}
+
 } // namespace
 
 int main() {
@@ -411,6 +431,7 @@ int main() {
     everyLayoutDesigns();
     catalogueReadsDesigns();
     inlineSevenRuns();
+    realtimeIsChecked();
     std::cout << "engine design tests passed\n";
     return EXIT_SUCCESS;
 }
