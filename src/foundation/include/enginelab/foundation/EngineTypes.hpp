@@ -1961,6 +1961,14 @@ void normaliseEngineConfig(EngineConfig&);
                                          const std::vector<ValveLiftSample>& samples) noexcept;
 [[nodiscard]] double combustionPulse(double cylinderPhaseDegrees, double ignitionAdvanceDegrees,
                                      double ignitionOffsetDegrees) noexcept;
+/** validateEngineConfig()'s limits that the engine designer clamps to. */
+inline constexpr double minimumRotatingInertiaKgM2 { 0.01 };
+inline constexpr double minimumPlenumVolumeLitres { 0.1 };
+inline constexpr double minimumThrottleDiameterMm { 15.0 };
+inline constexpr double minimumPistonMassGrams { 50.0 };
+/** Everything outside the gearbox, a motorcycle's primary drive included: a
+ *  125 cc bike runs about 10 (primary ~3 x chain ~3.3), a scooter 9.4. */
+inline constexpr double maximumFinalDriveRatio { 15.0 };
 [[nodiscard]] std::optional<std::string> validateEngineConfig(const EngineConfig&);
 
 } // namespace enginelab

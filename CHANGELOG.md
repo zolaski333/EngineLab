@@ -27,6 +27,11 @@ file formats, always with an in-memory migration).
 
 ### Fixed
 
+- Small engines (50-250 cc) can be designed: the values the rules gave
+  under the simulator's limits (flywheel, final drive, plenum, piston,
+  throttle) are held at the limit, each saying so. A refused engine now names
+  the value at fault and its range, instead of one generic line. A small
+  throttle leaks less when closed, so small engines idle at their speed.
 - The designer's real-time check no longer fails single-cylinder engines,
   whose speed swings within each cycle, nor engines the dyno cannot pull up to
   the measuring speed (it measures where they settle). When the check cannot

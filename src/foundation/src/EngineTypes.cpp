@@ -2,6 +2,7 @@
 #include <enginelab/foundation/CatalystMonolithGeometry.hpp>
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <numbers>
 #include <functional>
 #include <unordered_map>
@@ -622,6 +623,19 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
     const auto inRange = [](double value, double minimum, double maximum) {
         return std::isfinite(value) && value >= minimum && value <= maximum;
     };
+    // The first value found outside its range, named in the message: a
+    // designed engine is refused by what is wrong, not with a generic line.
+    std::string rangeFailure;
+    const auto outOfRange = [&inRange, &rangeFailure](const char* name, double value, double minimum,
+                                                      double maximum) {
+        if (inRange(value, minimum, maximum)) return false;
+        if (rangeFailure.empty()) {
+            char text[192];
+            std::snprintf(text, sizeof(text), "%s = %g, outside %g to %g", name, value, minimum, maximum);
+            rangeFailure = text;
+        }
+        return true;
+    };
     const auto validPoint = [&inRange](const AcousticPoint3M& point) {
         return inRange(point.x, -100.0, 100.0)
             && inRange(point.y, -100.0, 100.0)
@@ -678,18 +692,18 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
         return "Fuel stoichiometric AFR is inconsistent with its molar oxygen requirement";
     if (config.cylinders.empty() || config.cylinders.size() > 32 || config.firingOrder.size() != config.cylinders.size())
         return "Firing order must reference between 1 and 32 cylinders";
-    if (!inRange(config.idleRpm, 200.0, 3'000.0)
-        || !inRange(config.redlineRpm, config.idleRpm + 100.0, 20'000.0)
-        || !inRange(config.rotatingInertiaKgM2, 0.01, 5.0)
-        || !inRange(config.frictionCoefficient, 0.0, 1.0)
+    if (outOfRange("idleRpm", config.idleRpm, 200.0, 3'000.0)
+        || outOfRange("redlineRpm", config.redlineRpm, config.idleRpm + 100.0, 20'000.0)
+        || outOfRange("rotatingInertiaKgM2", config.rotatingInertiaKgM2, minimumRotatingInertiaKgM2, 5.0)
+        || outOfRange("frictionCoefficient", config.frictionCoefficient, 0.0, 1.0)
         || (config.fuel == FuelType::gasoline
-            && !inRange(config.octaneRating, 70.0, 130.0))
-        || !inRange(config.ambientPressureKpa, 50.0, 120.0)
-        || !inRange(config.ambientTemperatureC, -50.0, 60.0)
-        || !inRange(config.coolingEfficiency, 0.1, 5.0)
-        || !inRange(config.plenumVolumeLitres, 0.1, 50.0)
-        || !inRange(config.throttleDiameterMm, 15.0, 150.0)
-        || !inRange(config.bankAngleDegrees, 0.0, 180.0)
+            && outOfRange("octaneRating", config.octaneRating, 70.0, 130.0))
+        || outOfRange("ambientPressureKpa", config.ambientPressureKpa, 50.0, 120.0)
+        || outOfRange("ambientTemperatureC", config.ambientTemperatureC, -50.0, 60.0)
+        || outOfRange("coolingEfficiency", config.coolingEfficiency, 0.1, 5.0)
+        || outOfRange("plenumVolumeLitres", config.plenumVolumeLitres, minimumPlenumVolumeLitres, 50.0)
+        || outOfRange("throttleDiameterMm", config.throttleDiameterMm, minimumThrottleDiameterMm, 150.0)
+        || outOfRange("bankAngleDegrees", config.bankAngleDegrees, 0.0, 180.0)
         || !(config.peakFiringPressureLimitBar == 0.0
             || inRange(config.peakFiringPressureLimitBar, 20.0, 400.0))
         || !validPoint(config.acousticObserver.leftMicrophoneM)
@@ -700,137 +714,136 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
         // the listener at a real, human distance from the engine.
         || !(config.acousticObserver.listeningDistanceM == 0.0
             || inRange(config.acousticObserver.listeningDistanceM, 0.5, 200.0))
-        || !inRange(config.forcedInduction.pressureRatio, 1.0, 3.5)
-        || !inRange(config.forcedInduction.fullBoostRpm, 200.0, 20'000.0)
-        || !inRange(config.forcedInduction.compressorEfficiency, 0.35, 0.95)
-        || !inRange(config.forcedInduction.chargeTemperatureRiseC, 0.0, 160.0)
-        || !inRange(config.forcedInduction.turbineEfficiency, 0.20, 0.95)
-        || !inRange(config.forcedInduction.shaftInertiaKgM2, 0.000001, 0.1)
-        || !inRange(config.forcedInduction.wastegatePressureRatio, 1.0, 3.5)
-        || !inRange(config.forcedInduction.designShaftSpeedRpm, 10'000.0, 400'000.0)
-        || !inRange(config.forcedInduction.bearingFrictionPowerWatts, 0.0, 20'000.0)
-        || !inRange(config.forcedInduction.turbineFlowAreaMm2, 10.0, 20'000.0)
-        || !inRange(config.forcedInduction.wastegateFlowAreaMm2, 0.0, 20'000.0)
+        || outOfRange("forcedInduction.pressureRatio", config.forcedInduction.pressureRatio, 1.0, 3.5)
+        || outOfRange("forcedInduction.fullBoostRpm", config.forcedInduction.fullBoostRpm, 200.0, 20'000.0)
+        || outOfRange("forcedInduction.compressorEfficiency", config.forcedInduction.compressorEfficiency, 0.35, 0.95)
+        || outOfRange("forcedInduction.chargeTemperatureRiseC", config.forcedInduction.chargeTemperatureRiseC, 0.0, 160.0)
+        || outOfRange("forcedInduction.turbineEfficiency", config.forcedInduction.turbineEfficiency, 0.20, 0.95)
+        || outOfRange("forcedInduction.shaftInertiaKgM2", config.forcedInduction.shaftInertiaKgM2, 0.000001, 0.1)
+        || outOfRange("forcedInduction.wastegatePressureRatio", config.forcedInduction.wastegatePressureRatio, 1.0, 3.5)
+        || outOfRange("forcedInduction.designShaftSpeedRpm", config.forcedInduction.designShaftSpeedRpm, 10'000.0, 400'000.0)
+        || outOfRange("forcedInduction.bearingFrictionPowerWatts", config.forcedInduction.bearingFrictionPowerWatts, 0.0, 20'000.0)
+        || outOfRange("forcedInduction.turbineFlowAreaMm2", config.forcedInduction.turbineFlowAreaMm2, 10.0, 20'000.0)
+        || outOfRange("forcedInduction.wastegateFlowAreaMm2", config.forcedInduction.wastegateFlowAreaMm2, 0.0, 20'000.0)
         || config.forcedInduction.turbochargerCount < 1U
         || config.forcedInduction.turbochargerCount > maximumTurbochargers
         || !(config.forcedInduction.compressorDesignMassFlowKgPerSecond == 0.0
             || inRange(config.forcedInduction.compressorDesignMassFlowKgPerSecond, 0.005, 5.0))
-        || !inRange(config.forcedInduction.intercoolerEffectiveness, 0.0, 0.95)
-        || !inRange(config.thermal.regulatedCoolantTemperatureC, 40.0, 130.0)
-        || !inRange(config.thermal.regulatedOilTemperatureC, 40.0, 150.0)
+        || outOfRange("forcedInduction.intercoolerEffectiveness", config.forcedInduction.intercoolerEffectiveness, 0.0, 0.95)
+        || outOfRange("thermal.regulatedCoolantTemperatureC", config.thermal.regulatedCoolantTemperatureC, 40.0, 130.0)
+        || outOfRange("thermal.regulatedOilTemperatureC", config.thermal.regulatedOilTemperatureC, 40.0, 150.0)
         || !(config.thermal.coolantMassKjPerC == 0.0 || inRange(config.thermal.coolantMassKjPerC, 5.0, 5'000.0))
         || !(config.thermal.oilMassKjPerC == 0.0 || inRange(config.thermal.oilMassKjPerC, 2.0, 2'500.0))
-        || !inRange(config.thermal.coolantHeatShare, 0.0, 1.0)
-        || !inRange(config.thermal.oilHeatShare, 0.0, 1.0)
+        || outOfRange("thermal.coolantHeatShare", config.thermal.coolantHeatShare, 0.0, 1.0)
+        || outOfRange("thermal.oilHeatShare", config.thermal.oilHeatShare, 0.0, 1.0)
         || !(config.thermal.coolingPowerKwPerC == 0.0 || inRange(config.thermal.coolingPowerKwPerC, 0.02, 20.0))
         || !(config.thermal.oilCoolingPowerKwPerC == 0.0 || inRange(config.thermal.oilCoolingPowerKwPerC, 0.002, 10.0))
-        || !inRange(config.camshafts.intakeDurationDegrees, 1.0, 720.0)
-        || !inRange(config.camshafts.exhaustDurationDegrees, 1.0, 720.0)
-        || !inRange(config.camshafts.intakeLiftMm, 0.0, 30.0)
-        || !inRange(config.camshafts.exhaustLiftMm, 0.0, 30.0)
-        || !inRange(config.camshafts.intakeCenterlineDegrees, 0.0, 720.0)
-        || !inRange(config.camshafts.exhaustCenterlineDegrees, 0.0, 720.0)
-        || !inRange(config.camshafts.intakeFlowCoefficient, 0.05, 1.50)
-        || !inRange(config.camshafts.exhaustFlowCoefficient, 0.05, 1.50)
-        || !inRange(config.exhaust.primaryLengthMm, 100.0, 3'000.0)
-        || !inRange(config.exhaust.primaryDiameterMm, 15.0, 200.0)
-        || !inRange(config.exhaust.collectorDiameterMm, 15.0, 300.0)
-        || !inRange(config.exhaust.outletDiameterMm, 15.0, 300.0)
-        || !inRange(config.exhaust.mufflerRestriction, 0.0, 1.0)
+        || outOfRange("camshafts.intakeDurationDegrees", config.camshafts.intakeDurationDegrees, 1.0, 720.0)
+        || outOfRange("camshafts.exhaustDurationDegrees", config.camshafts.exhaustDurationDegrees, 1.0, 720.0)
+        || outOfRange("camshafts.intakeLiftMm", config.camshafts.intakeLiftMm, 0.0, 30.0)
+        || outOfRange("camshafts.exhaustLiftMm", config.camshafts.exhaustLiftMm, 0.0, 30.0)
+        || outOfRange("camshafts.intakeCenterlineDegrees", config.camshafts.intakeCenterlineDegrees, 0.0, 720.0)
+        || outOfRange("camshafts.exhaustCenterlineDegrees", config.camshafts.exhaustCenterlineDegrees, 0.0, 720.0)
+        || outOfRange("camshafts.intakeFlowCoefficient", config.camshafts.intakeFlowCoefficient, 0.05, 1.50)
+        || outOfRange("camshafts.exhaustFlowCoefficient", config.camshafts.exhaustFlowCoefficient, 0.05, 1.50)
+        || outOfRange("exhaust.primaryLengthMm", config.exhaust.primaryLengthMm, 100.0, 3'000.0)
+        || outOfRange("exhaust.primaryDiameterMm", config.exhaust.primaryDiameterMm, 15.0, 200.0)
+        || outOfRange("exhaust.collectorDiameterMm", config.exhaust.collectorDiameterMm, 15.0, 300.0)
+        || outOfRange("exhaust.outletDiameterMm", config.exhaust.outletDiameterMm, 15.0, 300.0)
+        || outOfRange("exhaust.mufflerRestriction", config.exhaust.mufflerRestriction, 0.0, 1.0)
         || !(config.exhaust.collectorVolumeLitres == 0.0
              || inRange(config.exhaust.collectorVolumeLitres, 0.05, 200.0))
-        || !inRange(config.exhaust.outletDischargeCoefficient, 0.02, 1.5)
-        || !inRange(config.exhaust.mufflerChamberDiameterMm, 0.0, 600.0)
-        || !inRange(config.exhaust.mufflerChamberLengthMm, 0.0, 3'000.0)
-        || !inRange(config.exhaust.mufflerPackingFlowResistivityPaSPerM2, 0.0, 200'000.0)
-        || !inRange(config.exhaust.mufflerPackingThicknessMm, 0.0, 300.0)
-        || !inRange(config.exhaust.mufflerPerforatedOpenAreaRatio, 0.0, 1.0)
+        || outOfRange("exhaust.outletDischargeCoefficient", config.exhaust.outletDischargeCoefficient, 0.02, 1.5)
+        || outOfRange("exhaust.mufflerChamberDiameterMm", config.exhaust.mufflerChamberDiameterMm, 0.0, 600.0)
+        || outOfRange("exhaust.mufflerChamberLengthMm", config.exhaust.mufflerChamberLengthMm, 0.0, 3'000.0)
+        || outOfRange("exhaust.mufflerPackingFlowResistivityPaSPerM2", config.exhaust.mufflerPackingFlowResistivityPaSPerM2, 0.0, 200'000.0)
+        || outOfRange("exhaust.mufflerPackingThicknessMm", config.exhaust.mufflerPackingThicknessMm, 0.0, 300.0)
+        || outOfRange("exhaust.mufflerPerforatedOpenAreaRatio", config.exhaust.mufflerPerforatedOpenAreaRatio, 0.0, 1.0)
         || !validMufflerPacking(config.exhaust)
         || !validMidpipe(config.exhaust)
-        || !inRange(config.transmission.finalDriveRatio, 1.0, 8.0)
-        || !inRange(config.transmission.maxClutchTorqueNm, 10.0, 10'000.0)
-        || !inRange(config.transmission.drivelineEfficiency, 0.2, 1.0)
-        || !inRange(config.transmission.drivenWheelInertiaKgM2, 0.0, 200.0)
-        || !inRange(config.transmission.clutchLockSpeedRpm, 0.1, 500.0)
-        || !inRange(config.transmission.shiftDurationSeconds, 0.01, 3.0)
-        || !inRange(config.transmission.automaticUpshiftRpm, 0.0, 50'000.0)
-        || !inRange(config.transmission.automaticDownshiftRpm, 0.0, 30'000.0)
-        || !inRange(config.transmission.reverseRatio, 0.1, 10.0)
-        || !inRange(config.transmission.gearboxInputInertiaKgM2, 0.0, 20.0)
-        || !inRange(config.transmission.differentialInertiaKgM2, 0.0, 50.0)
-        || !inRange(config.transmission.clutchThermalCapacityJPerC, 100.0, 2'000'000.0)
-        || !inRange(config.transmission.clutchCoolingWPerC, 0.0, 2'000.0)
-        || !inRange(config.transmission.clutchFadeStartTemperatureC, 50.0, 800.0)
-        || !inRange(config.transmission.clutchFailureTemperatureC,
+        || outOfRange("transmission.finalDriveRatio", config.transmission.finalDriveRatio, 1.0, maximumFinalDriveRatio)
+        || outOfRange("transmission.maxClutchTorqueNm", config.transmission.maxClutchTorqueNm, 10.0, 10'000.0)
+        || outOfRange("transmission.drivelineEfficiency", config.transmission.drivelineEfficiency, 0.2, 1.0)
+        || outOfRange("transmission.drivenWheelInertiaKgM2", config.transmission.drivenWheelInertiaKgM2, 0.0, 200.0)
+        || outOfRange("transmission.clutchLockSpeedRpm", config.transmission.clutchLockSpeedRpm, 0.1, 500.0)
+        || outOfRange("transmission.shiftDurationSeconds", config.transmission.shiftDurationSeconds, 0.01, 3.0)
+        || outOfRange("transmission.automaticUpshiftRpm", config.transmission.automaticUpshiftRpm, 0.0, 50'000.0)
+        || outOfRange("transmission.automaticDownshiftRpm", config.transmission.automaticDownshiftRpm, 0.0, 30'000.0)
+        || outOfRange("transmission.reverseRatio", config.transmission.reverseRatio, 0.1, 10.0)
+        || outOfRange("transmission.gearboxInputInertiaKgM2", config.transmission.gearboxInputInertiaKgM2, 0.0, 20.0)
+        || outOfRange("transmission.differentialInertiaKgM2", config.transmission.differentialInertiaKgM2, 0.0, 50.0)
+        || outOfRange("transmission.clutchThermalCapacityJPerC", config.transmission.clutchThermalCapacityJPerC, 100.0, 2'000'000.0)
+        || outOfRange("transmission.clutchCoolingWPerC", config.transmission.clutchCoolingWPerC, 0.0, 2'000.0)
+        || outOfRange("transmission.clutchFadeStartTemperatureC", config.transmission.clutchFadeStartTemperatureC, 50.0, 800.0)
+        || outOfRange("transmission.clutchFailureTemperatureC", config.transmission.clutchFailureTemperatureC,
                     config.transmission.clutchFadeStartTemperatureC + 1.0, 1'200.0)
-        || !inRange(config.transmission.shiftTorqueCutFraction, 0.0, 1.0)
-        || !inRange(config.transmission.quickshifterCutSeconds, 0.01, 0.5)
-        || !inRange(config.transmission.dualClutchUpshiftRetardDegrees, 0.0, 40.0)
-        || !inRange(config.transmission.centrifugalClutchEngageRpm, 0.0, 20'000.0)
-        || !inRange(config.vehicle.massKg, 50.0, 20'000.0)
-        || !inRange(config.vehicle.dragCoefficient, 0.05, 2.0)
-        || !inRange(config.vehicle.frontalAreaM2, 0.1, 20.0)
-        || !inRange(config.vehicle.tireRadiusM, 0.05, 2.0)
-        || !inRange(config.vehicle.rollingResistanceCoefficient, 0.0, 0.20)
-        || !inRange(config.vehicle.tireFrictionCoefficient, 0.05, 3.0)
-        || !inRange(config.vehicle.drivenAxleWeightFraction, 0.05, 1.0)
-        || !inRange(config.vehicle.wheelbaseM, 0.5, 10.0)
-        || !inRange(config.vehicle.centerOfGravityHeightM, 0.05, 3.0)
+        || outOfRange("transmission.shiftTorqueCutFraction", config.transmission.shiftTorqueCutFraction, 0.0, 1.0)
+        || outOfRange("transmission.quickshifterCutSeconds", config.transmission.quickshifterCutSeconds, 0.01, 0.5)
+        || outOfRange("transmission.dualClutchUpshiftRetardDegrees", config.transmission.dualClutchUpshiftRetardDegrees, 0.0, 40.0)
+        || outOfRange("transmission.centrifugalClutchEngageRpm", config.transmission.centrifugalClutchEngageRpm, 0.0, 20'000.0)
+        || outOfRange("vehicle.massKg", config.vehicle.massKg, 50.0, 20'000.0)
+        || outOfRange("vehicle.dragCoefficient", config.vehicle.dragCoefficient, 0.05, 2.0)
+        || outOfRange("vehicle.frontalAreaM2", config.vehicle.frontalAreaM2, 0.1, 20.0)
+        || outOfRange("vehicle.tireRadiusM", config.vehicle.tireRadiusM, 0.05, 2.0)
+        || outOfRange("vehicle.rollingResistanceCoefficient", config.vehicle.rollingResistanceCoefficient, 0.0, 0.20)
+        || outOfRange("vehicle.tireFrictionCoefficient", config.vehicle.tireFrictionCoefficient, 0.05, 3.0)
+        || outOfRange("vehicle.drivenAxleWeightFraction", config.vehicle.drivenAxleWeightFraction, 0.05, 1.0)
+        || outOfRange("vehicle.wheelbaseM", config.vehicle.wheelbaseM, 0.5, 10.0)
+        || outOfRange("vehicle.centerOfGravityHeightM", config.vehicle.centerOfGravityHeightM, 0.05, 3.0)
         || config.vehicle.centerOfGravityHeightM >= config.vehicle.wheelbaseM
-        || !inRange(config.vehicle.maximumBrakeForceN, 0.0, 200'000.0)
-        || !inRange(config.combustionCalibration.baseIgnitionDelaySeconds, 0.0, 0.02)
-        || !inRange(config.combustionCalibration.ignitionDelayTemperatureExponent, 0.0, 5.0)
-        || !inRange(config.combustionCalibration.ignitionDelayPressureExponent, 0.0, 3.0)
-        || !inRange(config.combustionCalibration.wallHeatTransferCoefficientWPerK, 0.0, 5'000.0)
-        || !inRange(config.combustionCalibration.residualDilutionSensitivity, 0.0, 3.0)
-        || !inRange(config.combustionCalibration.chamberTurbulenceIntensityRatio, 0.1, 4.0)
+        || outOfRange("vehicle.maximumBrakeForceN", config.vehicle.maximumBrakeForceN, 0.0, 200'000.0)
+        || outOfRange("combustionCalibration.baseIgnitionDelaySeconds", config.combustionCalibration.baseIgnitionDelaySeconds, 0.0, 0.02)
+        || outOfRange("combustionCalibration.ignitionDelayTemperatureExponent", config.combustionCalibration.ignitionDelayTemperatureExponent, 0.0, 5.0)
+        || outOfRange("combustionCalibration.ignitionDelayPressureExponent", config.combustionCalibration.ignitionDelayPressureExponent, 0.0, 3.0)
+        || outOfRange("combustionCalibration.wallHeatTransferCoefficientWPerK", config.combustionCalibration.wallHeatTransferCoefficientWPerK, 0.0, 5'000.0)
+        || outOfRange("combustionCalibration.residualDilutionSensitivity", config.combustionCalibration.residualDilutionSensitivity, 0.0, 3.0)
+        || outOfRange("combustionCalibration.chamberTurbulenceIntensityRatio", config.combustionCalibration.chamberTurbulenceIntensityRatio, 0.1, 4.0)
         || config.combustionCalibration.ignitionSiteCount < 1
         || config.combustionCalibration.ignitionSiteCount > 4
-        || !inRange(config.combustionCalibration.compressionIgnitionDelayScale, 0.2, 5.0)
-        || !inRange(config.combustionCalibration.compressionIgnitionMixingTimeSeconds,
+        || outOfRange("combustionCalibration.compressionIgnitionDelayScale", config.combustionCalibration.compressionIgnitionDelayScale, 0.2, 5.0)
+        || outOfRange("combustionCalibration.compressionIgnitionMixingTimeSeconds", config.combustionCalibration.compressionIgnitionMixingTimeSeconds,
                     0.00005, 0.02)
-        || !inRange(config.combustionCalibration.compressionIgnitionPremixedFraction,
+        || outOfRange("combustionCalibration.compressionIgnitionPremixedFraction", config.combustionCalibration.compressionIgnitionPremixedFraction,
                     0.0, 0.8)
-        || !inRange(config.combustionCalibration
+        || outOfRange("combustionCalibration.cycleVariationCoefficientOfVariation", config.combustionCalibration
                         .cycleVariationCoefficientOfVariation,
                     0.0, 0.20)
-        || !inRange(config.combustionCalibration.cycleVariationCorrelation,
+        || outOfRange("combustionCalibration.cycleVariationCorrelation", config.combustionCalibration.cycleVariationCorrelation,
                     0.0, 0.98)
-        || !inRange(config.exhaustAfterfire.ignitionTemperatureK,
+        || outOfRange("exhaustAfterfire.ignitionTemperatureK", config.exhaustAfterfire.ignitionTemperatureK,
                     500.0, 2'000.0)
-        || !inRange(config.exhaustAfterfire.reactionTimeConstantSeconds,
+        || outOfRange("exhaustAfterfire.reactionTimeConstantSeconds", config.exhaustAfterfire.reactionTimeConstantSeconds,
                     0.0001, 1.0)
-        || !inRange(config.exhaustAfterfire.reactionEfficiency, 0.0, 1.0)
-        || !inRange(config.exhaustAfterfire.overrunFuelFraction, 0.0, 0.25)
-        || !inRange(config.exhaustAfterfire.overrunMinimumRpm, 500.0, 20'000.0)
-        || !inRange(config.exhaustAfterfire.overrunMaximumThrottle, 0.0, 0.20)
+        || outOfRange("exhaustAfterfire.reactionEfficiency", config.exhaustAfterfire.reactionEfficiency, 0.0, 1.0)
+        || outOfRange("exhaustAfterfire.overrunFuelFraction", config.exhaustAfterfire.overrunFuelFraction, 0.0, 0.25)
+        || outOfRange("exhaustAfterfire.overrunMinimumRpm", config.exhaustAfterfire.overrunMinimumRpm, 500.0, 20'000.0)
+        || outOfRange("exhaustAfterfire.overrunMaximumThrottle", config.exhaustAfterfire.overrunMaximumThrottle, 0.0, 0.20)
         // Zero means "every cycle", the historical continuous strategy. The
         // upper bound is where chopping stops being audible as separate events
         // and merges back into the steady burn it exists to break up.
-        || !inRange(config.exhaustAfterfire.overrunPulseHz, 0.0, 60.0)
-        || !inRange(config.exhaustAfterfire.overrunPulseDutyCycle, 0.02, 1.0)
-        || !inRange(config.exhaustAfterfire.overrunPulseTimingVariation,
+        || outOfRange("exhaustAfterfire.overrunPulseHz", config.exhaustAfterfire.overrunPulseHz, 0.0, 60.0)
+        || outOfRange("exhaustAfterfire.overrunPulseDutyCycle", config.exhaustAfterfire.overrunPulseDutyCycle, 0.02, 1.0)
+        || outOfRange("exhaustAfterfire.overrunPulseTimingVariation", config.exhaustAfterfire.overrunPulseTimingVariation,
                     0.0, 0.45)
-        || !inRange(config.exhaustAfterfire.inductionTimeSeconds,
+        || outOfRange("exhaustAfterfire.inductionTimeSeconds", config.exhaustAfterfire.inductionTimeSeconds,
                     0.0001, 0.100)
-        || !inRange(config.exhaustAfterfire.inductionReferencePressureKpa,
+        || outOfRange("exhaustAfterfire.inductionReferencePressureKpa", config.exhaustAfterfire.inductionReferencePressureKpa,
                     10.0, 10'000.0)
-        || !inRange(config.exhaustAfterfire.inductionActivationTemperatureK,
+        || outOfRange("exhaustAfterfire.inductionActivationTemperatureK", config.exhaustAfterfire.inductionActivationTemperatureK,
                     0.0, 50'000.0)
-        || !inRange(config.exhaustAfterfire.inductionPressureExponent,
+        || outOfRange("exhaustAfterfire.inductionPressureExponent", config.exhaustAfterfire.inductionPressureExponent,
                     0.0, 3.0)
-        || !inRange(
-            config.exhaustAfterfire.inductionEquivalenceRatioExponent,
+        || outOfRange("exhaustAfterfire.inductionEquivalenceRatioExponent", config.exhaustAfterfire.inductionEquivalenceRatioExponent,
             -3.0, 3.0)
-        || !inRange(config.exhaustAfterfire.inductionDecayTimeSeconds,
+        || outOfRange("exhaustAfterfire.inductionDecayTimeSeconds", config.exhaustAfterfire.inductionDecayTimeSeconds,
                     0.0001, 1.0)
-        || !inRange(config.exhaustAfterfire.minimumEquivalenceRatio,
+        || outOfRange("exhaustAfterfire.minimumEquivalenceRatio", config.exhaustAfterfire.minimumEquivalenceRatio,
                     0.05, 1.0)
-        || !inRange(config.exhaustAfterfire.maximumEquivalenceRatio,
+        || outOfRange("exhaustAfterfire.maximumEquivalenceRatio", config.exhaustAfterfire.maximumEquivalenceRatio,
                     1.0, 5.0)
         || config.exhaustAfterfire.minimumEquivalenceRatio
             >= config.exhaustAfterfire.maximumEquivalenceRatio
-        || !inRange(config.exhaustAfterfire.quenchTemperatureK,
+        || outOfRange("exhaustAfterfire.quenchTemperatureK", config.exhaustAfterfire.quenchTemperatureK,
                     250.0, 1'500.0)
         || (afterfireRetainsFuel(config.exhaustAfterfire.strategy)
             && !(config.exhaustAfterfire.overrunFuelFraction > 0.0))
@@ -841,59 +854,60 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
                 == ExhaustAfterfireStrategy::discreteAfterfire
             && config.exhaustAfterfire.overrunFuelFraction
                 > config.exhaustAfterfire.overrunPulseDutyCycle)
-        || !inRange(config.runnerAcoustics.dampingRatio, 0.01, 2.0)
-        || !inRange(config.runnerAcoustics.couplingGain, 0.0, 2.0)
-        || !inRange(config.runnerAcoustics.maximumPressureAmplitudeKpa, 0.1, 200.0)
+        || outOfRange("runnerAcoustics.dampingRatio", config.runnerAcoustics.dampingRatio, 0.01, 2.0)
+        || outOfRange("runnerAcoustics.couplingGain", config.runnerAcoustics.couplingGain, 0.0, 2.0)
+        || outOfRange("runnerAcoustics.maximumPressureAmplitudeKpa", config.runnerAcoustics.maximumPressureAmplitudeKpa, 0.1, 200.0)
         || config.forcedInduction.compressorBladeCount > 100
         || config.forcedInduction.turbineBladeCount > 100
         || config.forcedInduction.superchargerLobeCount > 20
-        || !inRange(config.forcedInduction.superchargerDriveRatio, 0.1, 30.0)
-        || !inRange(config.forcedInduction.compressorInducerDiameterMm, 0.0, 500.0)
-        || !inRange(config.forcedInduction.turbineExducerDiameterMm, 0.0, 500.0)
-        || !inRange(config.forcedInduction.blowOffValveFlowAreaMm2, 0.0, 5'000.0)
-        || !inRange(config.forcedInduction.blowOffValveOpeningPressureRatio, 1.001, 3.0)
-        || !inRange(config.forcedInduction.blowOffValveDischargeCoefficient, 0.05, 1.5)
-        || !inRange(config.forcedInduction.tonalAcousticEfficiency, 0.0, 0.01)
-        || !inRange(config.forcedInduction.turbulentJetNoiseCoefficient, 0.0, 0.1)
-        || !inRange(config.intake.plenumVolumeLitres, 0.1, 50.0)
-        || !inRange(config.intake.throttleDiameterMm, 15.0, 150.0)
+        || outOfRange("forcedInduction.superchargerDriveRatio", config.forcedInduction.superchargerDriveRatio, 0.1, 30.0)
+        || outOfRange("forcedInduction.compressorInducerDiameterMm", config.forcedInduction.compressorInducerDiameterMm, 0.0, 500.0)
+        || outOfRange("forcedInduction.turbineExducerDiameterMm", config.forcedInduction.turbineExducerDiameterMm, 0.0, 500.0)
+        || outOfRange("forcedInduction.blowOffValveFlowAreaMm2", config.forcedInduction.blowOffValveFlowAreaMm2, 0.0, 5'000.0)
+        || outOfRange("forcedInduction.blowOffValveOpeningPressureRatio", config.forcedInduction.blowOffValveOpeningPressureRatio, 1.001, 3.0)
+        || outOfRange("forcedInduction.blowOffValveDischargeCoefficient", config.forcedInduction.blowOffValveDischargeCoefficient, 0.05, 1.5)
+        || outOfRange("forcedInduction.tonalAcousticEfficiency", config.forcedInduction.tonalAcousticEfficiency, 0.0, 0.01)
+        || outOfRange("forcedInduction.turbulentJetNoiseCoefficient", config.forcedInduction.turbulentJetNoiseCoefficient, 0.0, 0.1)
+        || outOfRange("intake.plenumVolumeLitres", config.intake.plenumVolumeLitres, minimumPlenumVolumeLitres, 50.0)
+        || outOfRange("intake.throttleDiameterMm", config.intake.throttleDiameterMm, minimumThrottleDiameterMm, 150.0)
         || config.intake.throttleCount < 1 || config.intake.throttleCount > 16
-        || !inRange(config.intake.throttleDischargeCoefficient, 0.05, 1.5)
-        || !inRange(config.intake.runnerLengthMm, 20.0, 2'000.0)
-        || !inRange(config.intake.runnerDiameterMm, 10.0, 150.0)
+        || outOfRange("intake.throttleDischargeCoefficient", config.intake.throttleDischargeCoefficient, 0.05, 1.5)
+        || outOfRange("intake.runnerLengthMm", config.intake.runnerLengthMm, 20.0, 2'000.0)
+        || outOfRange("intake.runnerDiameterMm", config.intake.runnerDiameterMm, 10.0, 150.0)
         || !(config.intake.runnerPlenumDiameterMm == 0.0
             || inRange(config.intake.runnerPlenumDiameterMm, 10.0, 150.0))
-        || !inRange(config.intake.airboxVolumeLitres, 0.0, 100.0)
+        || outOfRange("intake.airboxVolumeLitres", config.intake.airboxVolumeLitres, 0.0, 100.0)
         || !(config.intake.throttleDistanceFromValveMm >= 0.0
             && config.intake.throttleDistanceFromValveMm < config.intake.runnerLengthMm)
-        || !inRange(config.intake.inletDuctLengthMm, 0.0, 5'000.0)
-        || !inRange(config.intake.inletDuctDiameterMm, 0.0, 500.0)
-        || !inRange(config.intake.bellmouthDiameterMm, 0.0, 1'000.0)
-        || !inRange(config.intake.idleBypassAreaMm2, 0.0, 1'000.0)
-        || !inRange(config.intake.throttleGamma, 0.2, 5.0)
-        || !inRange(config.ignition.revLimitRpm, config.idleRpm + 100.0, 25'000.0)
-        || !inRange(config.ignition.limiterDurationSeconds, 0.005, 2.0)
-        || !inRange(config.injection.startAngleDegrees, 0.0, 720.0)
-        || !inRange(config.injection.endAngleDegrees, 0.0, 720.0)
+        || outOfRange("intake.inletDuctLengthMm", config.intake.inletDuctLengthMm, 0.0, 5'000.0)
+        || outOfRange("intake.inletDuctDiameterMm", config.intake.inletDuctDiameterMm, 0.0, 500.0)
+        || outOfRange("intake.bellmouthDiameterMm", config.intake.bellmouthDiameterMm, 0.0, 1'000.0)
+        || outOfRange("intake.idleBypassAreaMm2", config.intake.idleBypassAreaMm2, 0.0, 1'000.0)
+        || outOfRange("intake.throttleGamma", config.intake.throttleGamma, 0.2, 5.0)
+        || outOfRange("ignition.revLimitRpm", config.ignition.revLimitRpm, config.idleRpm + 100.0, 25'000.0)
+        || outOfRange("ignition.limiterDurationSeconds", config.ignition.limiterDurationSeconds, 0.005, 2.0)
+        || outOfRange("injection.startAngleDegrees", config.injection.startAngleDegrees, 0.0, 720.0)
+        || outOfRange("injection.endAngleDegrees", config.injection.endAngleDegrees, 0.0, 720.0)
         || std::abs(config.injection.startAngleDegrees - config.injection.endAngleDegrees) < 1.0
-        || !inRange(config.injection.injectorFlowMgPerSecond, 10.0, 500'000.0)
-        || !inRange(config.injection.fuelTemperatureC, -50.0, 180.0)
-        || !inRange(config.injection.railPressureBar, 1.2, 3'000.0)
-        || !inRange(config.injection.referencePressureBar, 1.2, 3'000.0)
-        || !inRange(config.injection.wallFilmFraction, 0.0, 0.98)
-        || !inRange(config.injection.vaporisationTimeConstantSeconds, 0.001, 2.0)
-        || !inRange(config.injection.latentHeatKjPerKg, 10.0, 1'000.0)
-        || !inRange(config.injection.directChargeCoolingEfficiency, 0.0, 1.0)
-        || !inRange(config.injection.portChargeCoolingEfficiency, 0.0, 1.0)
-        || !inRange(config.injection.directSprayVaporisationTimeConstantSeconds,
+        || outOfRange("injection.injectorFlowMgPerSecond", config.injection.injectorFlowMgPerSecond, 10.0, 500'000.0)
+        || outOfRange("injection.fuelTemperatureC", config.injection.fuelTemperatureC, -50.0, 180.0)
+        || outOfRange("injection.railPressureBar", config.injection.railPressureBar, 1.2, 3'000.0)
+        || outOfRange("injection.referencePressureBar", config.injection.referencePressureBar, 1.2, 3'000.0)
+        || outOfRange("injection.wallFilmFraction", config.injection.wallFilmFraction, 0.0, 0.98)
+        || outOfRange("injection.vaporisationTimeConstantSeconds", config.injection.vaporisationTimeConstantSeconds, 0.001, 2.0)
+        || outOfRange("injection.latentHeatKjPerKg", config.injection.latentHeatKjPerKg, 10.0, 1'000.0)
+        || outOfRange("injection.directChargeCoolingEfficiency", config.injection.directChargeCoolingEfficiency, 0.0, 1.0)
+        || outOfRange("injection.portChargeCoolingEfficiency", config.injection.portChargeCoolingEfficiency, 0.0, 1.0)
+        || outOfRange("injection.directSprayVaporisationTimeConstantSeconds", config.injection.directSprayVaporisationTimeConstantSeconds,
                     0.0, 0.02)
-        || !inRange(config.injection.directSprayEntrainmentTimeConstantSeconds,
+        || outOfRange("injection.directSprayEntrainmentTimeConstantSeconds", config.injection.directSprayEntrainmentTimeConstantSeconds,
                     0.0, 0.02)
-        || !inRange(config.solver.mechanicalFrequencyHz, 240.0, 50'000.0)
-        || !inRange(config.solver.maximumMechanicalFrequencyHz, config.solver.mechanicalFrequencyHz, 100'000.0)
-        || !inRange(config.solver.maximumCrankDegreesPerStep, 0.1, 30.0)
+        || outOfRange("solver.mechanicalFrequencyHz", config.solver.mechanicalFrequencyHz, 240.0, 50'000.0)
+        || outOfRange("solver.maximumMechanicalFrequencyHz", config.solver.maximumMechanicalFrequencyHz, config.solver.mechanicalFrequencyHz, 100'000.0)
+        || outOfRange("solver.maximumCrankDegreesPerStep", config.solver.maximumCrankDegreesPerStep, 0.1, 30.0)
         || config.solver.gasSubsteps < 1 || config.solver.gasSubsteps > 32)
-        return "Engine configuration contains non-finite or physically invalid values";
+        return rangeFailure.empty() ? std::string("Engine configuration contains non-finite or physically invalid values")
+                                    : "Engine value out of range: " + rangeFailure;
     if (config.injection.fullLoadFuelLimit.size() > 64
             || (config.fuel != FuelType::diesel
                 && !config.injection.fullLoadFuelLimit.empty()))
@@ -1065,43 +1079,45 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
     std::unordered_set<std::uint32_t> cylinderIds;
     constexpr std::uint32_t mergeId = std::numeric_limits<std::uint32_t>::max() - 2U;
     for (const auto& cylinder : config.cylinders) {
-        if (cylinder.id == 0 || cylinder.id >= mergeId || !inRange(cylinder.boreMm, 20.0, 200.0)
-            || !inRange(cylinder.strokeMm, 20.0, 200.0)
-            || !inRange(cylinder.connectingRodMm, cylinder.strokeMm * 0.5 + 0.01, 500.0)
-            || !inRange(cylinder.pistonMassGrams, 50.0, 2'500.0)
-            || !inRange(cylinder.compressionRatio, 5.0, 20.0)
-            || !inRange(cylinder.ignitionOffsetDegrees, -30.0, 30.0)
-            || !inRange(cylinder.efficiencyOffset, -0.5, 0.5)
-            || !inRange(cylinder.crankOffsetDegrees, -360.0, 720.0)
-            || !inRange(cylinder.bankOffsetDegrees, -360.0, 360.0)
+        if (cylinder.id == 0 || cylinder.id >= mergeId || outOfRange("boreMm", cylinder.boreMm, 20.0, 200.0)
+            || outOfRange("strokeMm", cylinder.strokeMm, 20.0, 200.0)
+            || outOfRange("connectingRodMm", cylinder.connectingRodMm, cylinder.strokeMm * 0.5 + 0.01, 500.0)
+            || outOfRange("pistonMassGrams", cylinder.pistonMassGrams, minimumPistonMassGrams, 2'500.0)
+            || outOfRange("compressionRatio", cylinder.compressionRatio, 5.0, 20.0)
+            || outOfRange("ignitionOffsetDegrees", cylinder.ignitionOffsetDegrees, -30.0, 30.0)
+            || outOfRange("efficiencyOffset", cylinder.efficiencyOffset, -0.5, 0.5)
+            || outOfRange("crankOffsetDegrees", cylinder.crankOffsetDegrees, -360.0, 720.0)
+            || outOfRange("bankOffsetDegrees", cylinder.bankOffsetDegrees, -360.0, 360.0)
             || !(cylinder.intakeRunnerLengthMm == 0.0
                 || inRange(cylinder.intakeRunnerLengthMm, 20.0, 2'000.0))
             || !(cylinder.intakeRunnerDiameterMm == 0.0
                 || inRange(cylinder.intakeRunnerDiameterMm, 10.0, 150.0))
-            || !inRange(cylinder.exhaustPrimaryLengthMm, 0.0, 3'000.0)
-            || !inRange(cylinder.soundAttenuation, 0.0, 4.0)
-            || !inRange(cylinder.blowByCoefficient, 0.0, 0.1)
-            || !inRange(cylinder.connectingRodMassGrams, 20.0, 5'000.0)
-            || !inRange(cylinder.pistonFrictionCoefficient, 0.0, 0.5)
-            || !inRange(cylinder.pistonBreakawayForceN, 0.0, 5'000.0)
-            || !inRange(cylinder.pistonBreakawayVelocityMps, 0.001, 5.0)
-            || !inRange(cylinder.pistonViscousFrictionNsPerM, 0.0, 2'000.0)
-            || !inRange(cylinder.articulatedJournalRadiusMm, 0.0, 250.0)
-            || !inRange(cylinder.articulatedJournalAngleDegrees, -720.0, 720.0)
-            || !inRange(cylinder.deckHeightMm, 0.0, 1'000.0)
-            || !inRange(cylinder.compressionHeightMm, 0.0, 250.0)
-            || !inRange(cylinder.wristPinOffsetMm, -20.0, 20.0)
-            || !inRange(cylinder.pistonCrownVolumeCc, -250.0, 250.0)
-            || !inRange(cylinder.headChamberVolumeCc, 0.0, 500.0)
-            || !inRange(cylinder.headGasketThicknessMm, 0.0, 10.0)
-            || !inRange(cylinder.connectingRodMomentOfInertiaKgM2, 0.0, 1.0)
+            || outOfRange("exhaustPrimaryLengthMm", cylinder.exhaustPrimaryLengthMm, 0.0, 3'000.0)
+            || outOfRange("soundAttenuation", cylinder.soundAttenuation, 0.0, 4.0)
+            || outOfRange("blowByCoefficient", cylinder.blowByCoefficient, 0.0, 0.1)
+            || outOfRange("connectingRodMassGrams", cylinder.connectingRodMassGrams, 20.0, 5'000.0)
+            || outOfRange("pistonFrictionCoefficient", cylinder.pistonFrictionCoefficient, 0.0, 0.5)
+            || outOfRange("pistonBreakawayForceN", cylinder.pistonBreakawayForceN, 0.0, 5'000.0)
+            || outOfRange("pistonBreakawayVelocityMps", cylinder.pistonBreakawayVelocityMps, 0.001, 5.0)
+            || outOfRange("pistonViscousFrictionNsPerM", cylinder.pistonViscousFrictionNsPerM, 0.0, 2'000.0)
+            || outOfRange("articulatedJournalRadiusMm", cylinder.articulatedJournalRadiusMm, 0.0, 250.0)
+            || outOfRange("articulatedJournalAngleDegrees", cylinder.articulatedJournalAngleDegrees, -720.0, 720.0)
+            || outOfRange("deckHeightMm", cylinder.deckHeightMm, 0.0, 1'000.0)
+            || outOfRange("compressionHeightMm", cylinder.compressionHeightMm, 0.0, 250.0)
+            || outOfRange("wristPinOffsetMm", cylinder.wristPinOffsetMm, -20.0, 20.0)
+            || outOfRange("pistonCrownVolumeCc", cylinder.pistonCrownVolumeCc, -250.0, 250.0)
+            || outOfRange("headChamberVolumeCc", cylinder.headChamberVolumeCc, 0.0, 500.0)
+            || outOfRange("headGasketThicknessMm", cylinder.headGasketThicknessMm, 0.0, 10.0)
+            || outOfRange("connectingRodMomentOfInertiaKgM2", cylinder.connectingRodMomentOfInertiaKgM2, 0.0, 1.0)
             || cylinder.intakeValveCount < 1 || cylinder.intakeValveCount > 4
             || cylinder.exhaustValveCount < 1 || cylinder.exhaustValveCount > 4
             || !(cylinder.intakeValveDiameterMm == 0.0
                 || inRange(cylinder.intakeValveDiameterMm, 10.0, 80.0))
             || !(cylinder.exhaustValveDiameterMm == 0.0
                 || inRange(cylinder.exhaustValveDiameterMm, 10.0, 80.0)))
-            return "Cylinder IDs and dimensions must be finite and physically valid";
+            return rangeFailure.empty() ? std::string("Cylinder IDs and dimensions must be finite and physically valid")
+                                        : "Cylinder " + std::to_string(cylinder.id) + " value out of range: "
+                                            + rangeFailure;
         if (cylinder.crankJournalId == 0)
             return "Every cylinder must explicitly reference a configured crank journal";
         if (!journalIds.contains(cylinder.crankJournalId))
@@ -1559,7 +1575,9 @@ std::optional<std::string> validateEngineConfig(const EngineConfig& config) {
         if (!config.exhaustPaths.empty() && bank.exhaustPathId != 0 && !exhaustPathIds.contains(bank.exhaustPathId))
             return "Bank exhaustPathId must reference a configured exhaust path";
     const auto displacement = engineDisplacementLitres(config);
-    if (!inRange(displacement, 0.05, 20.0)) return "Total displacement must be between 0.05 and 20 litres";
+    // The tolerance lets a 50 cc design through the round trip from litres
+    // to bore and stroke and back.
+    if (!inRange(displacement, 0.05 - 1.0e-9, 20.0)) return "Total displacement must be between 0.05 and 20 litres";
     return std::nullopt;
 }
 

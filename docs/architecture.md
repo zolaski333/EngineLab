@@ -192,7 +192,12 @@ from the use's mean piston speed, rods, pistons, compression, cams, intake and
 exhaust sizes for the peak-power speed, plenum, throttles, injectors, ignition
 template, gearing for the top speed the estimated power reaches. Each value is
 returned as a `DesignValue` with its rule; any can be set by key
-(`overrides`), and what derives from it follows.
+(`overrides`), and what derives from it follows. A rule that would fall
+outside the simulator's limits (`validateEngineConfig()`: on a 50-250 cc
+engine the flywheel, final drive, plenum, piston and throttle) is held at the
+limit (`minimumRotatingInertiaKgM2` and the others, `EngineTypes.hpp`), and its
+rule says so; a value set by hand outside them is refused by name. The
+closed-throttle leak follows the throttle bore (0.6 mm2 at 60 mm and over).
 
 The crank: banks at the layout's angles (a W's as given), cylinders shared
 over them in id order, a firing order searched for the best balance

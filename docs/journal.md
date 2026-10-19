@@ -5,6 +5,14 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-19 — Small engines: refused, then idling high
+
+- Owner report: a 200 cc single cannot be designed. 31 designs (singles 50-250 cc x 5 uses, small twins/four, 2T, diesel): 29 refused, all with the generic validator line. The validator now names the value: final drive 8.0-20.2 over the limit of 8 (a motorcycle's ratio includes the primary: ~10 on a 125), inertia 0.002-0.009 under 0.01; under 0.1 L also plenum, piston mass (< 50 g), throttle (< 15 mm), and 50 cc failed a 0.05 L check by round-off.
+- Fix: final drive limit 15; the designer holds every such value at the simulator's limit and says so in its rule. 31/31 design.
+- Idle, then: 50 cc 2,042 rpm for 1,350. One factor, the per-bore closed-throttle leak 0.6 -> 0.1 mm2: 1,329 (cruiser 1,196 -> 800, sport car 1,385 -> 901). Rule: 0.6 mm2 x bore / 60 mm below 60 mm. 15 rebuilt designs: idle unchanged (CP2 1,350 -> 1,349, RD350 1,316 -> 1,311). 26/31 small designs within 30 % of target.
+- Not fixed: sport motorcycles <= 125 cc idle ~2,000 for 1,300. One factor each on the 125: leak 0.05 1,859, bypass 0.5 2,009, inertia x3 2,029, bore/stroke 1.15 1,761, road cams 1,361: the sport cams' overlap on a small cylinder. No rule from size is backed by data (the CP4 design, 250 cc a cylinder, idles on target). Diesel single 0.3 L 1,106 for 800; 50 cc two-stroke 3 Nm (BMEP ~4 bar).
+- Full load: 125 road single 14 Nm, 11.4 kW at 9,000 (BMEP 14 bar); 50 cc 5 Nm; 250 twin 27 Nm.
+
 ## 2026-10-19 — The designer's real-time check failed engines that run fine
 
 - Owner report: some designs fail "the 5,000 rpm test" yet run well. New `EngineLabRealtimeBudgetHarness --designer-probe` runs the designer's own check. Before: 3/3 singles (450-650 cc) and the Merlin and the radial (catalogue) "did not hold" in 30 s; 14 other designs and 15 catalogue engines passed.

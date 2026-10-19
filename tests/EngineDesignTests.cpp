@@ -316,6 +316,39 @@ void everyLayoutDesigns() {
     const auto intervals = analyseCrankBalance(*cp2.config).firingIntervalsDegrees;
     require(intervals.size() == 2 && std::abs(intervals[0] - 270.0) < 1.0e-6, "a 270 deg crank as given");
 
+    // Small engines: below some 0.3 L the rules gave values under the
+    // simulator's floors (inertia, final drive, then plenum, piston, throttle)
+    // and every one was refused with one generic line.
+    for (const auto use : { EngineUse::roadMotorcycle, EngineUse::sportMotorcycle, EngineUse::cruiserMotorcycle,
+             EngineUse::roadCar, EngineUse::sportCar }) {
+        for (const auto litres : { 0.05, 0.08, 0.125, 0.2, 0.25 }) {
+            EngineSpec small;
+            small.name = "Small single";
+            small.use = use;
+            small.cylinderCount = 1;
+            small.displacementLitres = litres;
+            const auto designedSmall = designed(small);
+            require(designedSmall.config->transmission.finalDriveRatio <= maximumFinalDriveRatio,
+                "a small engine designs, its values held within the simulator's limits");
+        }
+    }
+    EngineSpec tiny;
+    tiny.name = "Tiny";
+    tiny.use = EngineUse::sportMotorcycle;
+    tiny.cylinderCount = 1;
+    tiny.displacementLitres = 0.125;
+    const auto tinyEngine = designed(tiny);
+    const auto* inertia = valueOf(tinyEngine, "rotating_inertia_kg_m2");
+    require(inertia && inertia->value == minimumRotatingInertiaKgM2 && inertia->rule.find("floor") != std::string::npos,
+        "a value raised to a floor says so");
+    tiny.overrides["rotating_inertia_kg_m2"] = 0.005;
+    const auto tooLight = designEngine(tiny, parts());
+    require(!tooLight.config && tooLight.error.find("rotatingInertiaKgM2") != std::string::npos,
+        "a value set below a floor is refused by name");
+    tiny.overrides.clear();
+    tiny.displacementLitres = 0.04;
+    require(!designEngine(tiny, parts()).config, "under 50 cc is refused");
+
     auto twice = inlineSeven();
     twice.firingOrder = { 1, 2, 2, 4, 5, 6, 7 };
     require(!designEngine(twice, parts()).config, "a cylinder named twice in the firing order is refused");

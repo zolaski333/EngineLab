@@ -306,7 +306,9 @@ holds the working rules, build notes and verified traps of this repository.
   car is at the real-time limit and a W16 at half of it;
 - a designed engine has a template ignition curve (not calibrated to best
   torque), the default voicing, and has been compared with its maker's
-  figures only for the 15 catalogue engines rebuilt from their datasheets;
+  figures only for the 15 catalogue engines rebuilt from their datasheets; a
+  sport-motorcycle design of 125 cc or less idles near 2,000 rpm (its cams'
+  overlap), and 50 cc is the smallest engine;
 - the exhaust designer has no drag-and-drop, no undo/redo and no IR picker —
   the IR stays editable in JSON/YAML;
 - structural modes stay estimated per engine family until sourced measurements

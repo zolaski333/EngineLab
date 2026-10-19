@@ -259,6 +259,7 @@ DesignedEngine designEngine(const EngineSpec& spec, const PartsLibrary& parts) {
             throw std::invalid_argument("Give a bore and a stroke of 20-200 mm, or a displacement");
         const auto litres = cylinderDisplacementLitres(bore, stroke) * countD;
         if (litres > 20.0) throw std::invalid_argument("The simulator runs engines of 20 litres at most");
+        if (litres < 0.05 - 1.0e-9) throw std::invalid_argument("The simulator runs engines of 50 cc at least");
 
         // Speeds: the redline from the mean piston speed the use reaches.
         const auto pistonSpeed = diesel ? std::min(16.0, profile.redlinePistonSpeedMps)
@@ -294,15 +295,23 @@ DesignedEngine designEngine(const EngineSpec& spec, const PartsLibrary& parts) {
             twoStroke ? "max(2.0 x stroke, 1.7 x bore)" : "max(1.6 x stroke, 1.25 x bore)");
         const auto density = diesel ? 0.96 : twoStroke ? 0.88
             : profile.pistonDensityGPerCm3 * (boosted ? 1.25 : 1.0);
+        const auto pistonByBore = density * std::pow(bore / 10.0, 3.0);
         const auto piston = derive("piston_mass_g", "Piston mass", "g",
-            std::min(2'400.0, density * std::pow(bore / 10.0, 3.0)), format(density) + " g/cm3 x bore^3");
+            std::clamp(pistonByBore, minimumPistonMassGrams, 2'400.0), pistonByBore < minimumPistonMassGrams
+                ? format(density) + " g/cm3 x bore^3 gives " + format(pistonByBore) + ", raised to the simulator's floor"
+                : format(density) + " g/cm3 x bore^3");
         const auto rodMass = derive("connecting_rod_mass_g", "Connecting rod mass", "g", 1.3 * piston,
             "1.3 x the piston");
         const auto valvesPerSide = static_cast<std::uint32_t>(std::lround(derive("valves_per_side",
             "Valves per side", "", diesel ? 2.0 : static_cast<double>(profile.valvesPerSide), "the use's")));
+        // Below 0.22 L the per-litre rule falls under the simulator's 0.01
+        // floor (a 125 cc sport single: 0.0056): it is raised to the floor.
+        const auto inertiaPerLitre = (diesel ? 0.135 : twoStroke ? 0.087 : profile.inertiaKgM2PerLitre) * litres;
         config.rotatingInertiaKgM2 = derive("rotating_inertia_kg_m2", "Rotating inertia", "kg m2",
-            (diesel ? 0.135 : twoStroke ? 0.087 : profile.inertiaKgM2PerLitre) * litres,
-            "per litre, the use's (cars 0.09-0.10, sport bikes 0.045, cruisers 0.11)");
+            std::max(minimumRotatingInertiaKgM2, inertiaPerLitre),
+            inertiaPerLitre < minimumRotatingInertiaKgM2
+                ? "per litre gives " + format(inertiaPerLitre) + ", raised to the simulator's floor"
+                : std::string("per litre, the use's (cars 0.09-0.10, sport bikes 0.045, cruisers 0.11)"));
         config.frictionCoefficient = derive("friction_coefficient", "Friction coefficient", "",
             diesel ? 0.16 : twoStroke ? 0.07 : profile.frictionCoefficient, "the use's");
         config.octaneRating = derive("octane_rating", "Octane", "RON", profile.octane, "the use's");
@@ -448,13 +457,27 @@ DesignedEngine designEngine(const EngineSpec& spec, const PartsLibrary& parts) {
             perCylinderThrottles ? "one per cylinder" : twoStroke ? "one, feeding the crankcase circuit" : "one")));
         const auto throttleAreaFactor = diesel ? 0.27 : twoStroke ? 0.16 : profile.throttleAreaMm2PerLitreRpm;
         const auto throttleArea = throttleAreaFactor * litres * config.redlineRpm;
+        const auto throttleDiameter = std::sqrt(4.0 * throttleArea
+            / (std::numbers::pi * static_cast<double>(std::max(1U, intake.throttleCount))));
+        const auto throttleRule = format(throttleAreaFactor) + " mm2 per litre and redline rpm, shared by the bodies";
         intake.throttleDiameterMm = derive("throttle_diameter_mm", "Throttle diameter", "mm",
-            std::sqrt(4.0 * throttleArea / (std::numbers::pi * static_cast<double>(std::max(1U, intake.throttleCount)))),
-            format(throttleAreaFactor) + " mm2 per litre and redline rpm, shared by the bodies");
+            std::max(minimumThrottleDiameterMm, throttleDiameter), throttleDiameter < minimumThrottleDiameterMm
+                ? throttleRule + " gives " + format(throttleDiameter) + ", raised to the simulator's floor"
+                : throttleRule);
+        const auto plenum = (spec.use == EngineUse::aircraft ? 0.7 : twoStroke ? 1.44 : 1.3) * litres;
         intake.plenumVolumeLitres = derive("plenum_volume_l", "Plenum", "L",
-            (spec.use == EngineUse::aircraft ? 0.7 : twoStroke ? 1.44 : 1.3) * litres, "per litre of displacement");
+            std::max(minimumPlenumVolumeLitres, plenum), plenum < minimumPlenumVolumeLitres
+                ? "per litre gives " + format(plenum) + ", raised to the simulator's floor"
+                : std::string("per litre of displacement"));
         intake.idleBypassAreaMm2 = derive("idle_bypass_area_mm2", "Idle bypass", "mm2",
             diesel ? 0.0 : (twoStroke ? 9.0 : 12.0) * litres, diesel ? "none: a diesel is unthrottled" : "per litre");
+        // The plate-in-bore gap leaks in proportion to the bore's rim. Held at
+        // the simulator's 0.6 mm2 on a small bore, the leak alone outran a
+        // 50 cc engine's idle air: 2,042 rpm for 1,350; 0.1 mm2 gave 1,329
+        // (journal 2026-10-19).
+        intake.closedThrottleLeakageAreaMm2 = derive("closed_throttle_leak_mm2", "Closed throttle leak", "mm2",
+            intake.closedThrottleLeakageAreaMm2 * std::min(1.0, intake.throttleDiameterMm / 60.0),
+            "per bore: 0.6 mm2 at 60 mm and over, in proportion below");
         intake.airboxVolumeLitres = derive("airbox_volume_l", "Airbox", "L",
             spec.use == EngineUse::aircraft ? 0.0 : profile.motorcycle ? std::clamp(2.5 * litres, 3.0, 10.0)
                 : 4.0 + 0.5 * litres, profile.motorcycle ? "2.5 x litres, 3-10 L" : "4 L + 0.5 x litres");
@@ -680,9 +703,14 @@ DesignedEngine designEngine(const EngineSpec& spec, const PartsLibrary& parts) {
             const auto speed = topSpeedMps(estimatedPowerW * config.transmission.drivelineEfficiency, config.vehicle);
             const auto engineRadPerS = 1.05 * peakPowerRpm * 2.0 * std::numbers::pi / 60.0;
             const auto wheelRadPerS = speed / config.vehicle.tireRadiusM;
+            // A very small engine in a car's gearing would need more than the
+            // simulator takes (a 50 cc single: 20): it is held there.
+            const auto finalDrive = engineRadPerS / (wheelRadPerS * config.transmission.gearRatios.back());
+            const auto rule = "top gear at 1.05 x peak power speed at the top speed (" + format(speed * 3.6) + " km/h)";
             config.transmission.finalDriveRatio = derive("final_drive_ratio", "Final drive", "",
-                engineRadPerS / (wheelRadPerS * config.transmission.gearRatios.back()),
-                "top gear at 1.05 x peak power speed at the top speed (" + format(speed * 3.6) + " km/h)");
+                std::clamp(finalDrive, 1.0, maximumFinalDriveRatio),
+                finalDrive > maximumFinalDriveRatio || finalDrive < 1.0
+                    ? rule + " gives " + format(finalDrive) + ", held at the simulator's limit" : rule);
         }
 
         config.thermal.liquidCooled = derive("liquid_cooled", "Liquid cooled", "", radial ? 0.0 : 1.0,
