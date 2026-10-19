@@ -15,14 +15,14 @@ juce_add_binary_data(EngineLabFonts
         resources/fonts/JetBrainsMono-Medium.ttf resources/fonts/JetBrainsMono-Bold.ttf)
 target_sources(EngineLabApp PRIVATE
     src/Main.cpp src/MainComponent.cpp src/ActionMap.cpp src/AudioWorkshopWindow.cpp src/EcuTunerWindow.cpp
-    src/ExhaustDesignerWindow.cpp
+    src/EngineDesignerWindow.cpp src/ExhaustDesignerWindow.cpp
     src/Theme.cpp src/Widgets.cpp src/DashboardModel.cpp src/TopBar.cpp src/ControlPanel.cpp
     src/EngineViewport.cpp src/EngineScene.cpp src/ReadoutStrip.cpp src/DynoPanel.cpp src/SidePanel.cpp src/StatusBar.cpp
     src/UnitFormat.cpp include/enginelab/app/UnitFormat.hpp
     include/enginelab/app/MainComponent.hpp include/enginelab/app/ActionMap.hpp
     include/enginelab/app/AudioWorkshopWindow.hpp
     include/enginelab/app/EcuTunerWindow.hpp
-    include/enginelab/app/ExhaustDesignerWindow.hpp
+    include/enginelab/app/EngineDesignerWindow.hpp include/enginelab/app/ExhaustDesignerWindow.hpp
     include/enginelab/app/Theme.hpp include/enginelab/app/Widgets.hpp
     include/enginelab/app/DashboardModel.hpp include/enginelab/app/TopBar.hpp
     include/enginelab/app/ControlPanel.hpp include/enginelab/app/EngineViewport.hpp

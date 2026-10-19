@@ -183,19 +183,31 @@ them back when they are there.
 
 ### New engine
 
-*New engine…* (the menu) builds an engine from a base one that runs (the
-running engine or any listed one) and a recipe: name, bore, stroke,
-compression ratio, redline and aspiration (the base's, natural, or a
-turbocharger sized for the new engine shared over 1-4 identical units).
-`buildEngine()` (`EngineBuilder.hpp`) applies it: bore and stroke through
-`resizeCylinders()`, pistons and rods scaled as similar parts, the rev
-limiter's margin and the ignition curve stretched with the redline, and what
-feeds the air kept in the base's proportions to the new air flow (injector
-flow, throttle bores at the same air speed, plenums, a diesel's fuel limit,
-clutch capacity). The layout, heads, camshafts, exhaust and gearbox stay the
-base's. The result is validated, saved under *My engines* and run.
-`EngineLab.EngineBuilder` checks the recipe and that a 20 % stroker makes
-its share more torque on the same mixture without saturating its injectors.
+*New engine…* (the menu) designs an engine from nothing: no base engine.
+`designEngine()` (`catalog/EngineDesign.hpp`) takes an `EngineSpec` (cycle,
+fuel, use, layout, cylinder count, banks, bore and stroke or a displacement,
+induction and boost) and derives everything else by rules fitted to the
+catalogue engines, which were authored from their makers' figures: redline
+from the use's mean piston speed, rods, pistons, compression, cams, intake and
+exhaust sizes for the peak-power speed, plenum, throttles, injectors, ignition
+template, gearing for the top speed the estimated power reaches. Each value is
+returned as a `DesignValue` with its rule; any can be set by key
+(`overrides`), and what derives from it follows.
+
+The crank: banks at the layout's angles (a W's as given), cylinders shared
+over them in id order, a firing order searched for the best balance
+(`evenFiringOrders()`, `CrankBalance.hpp`) unless one is given, or crank
+offsets for an uneven crank (a 270 deg twin). A radial fires from its single
+throw. A two-stroke gets one expansion chamber per cylinder, tuned to its
+peak-power speed. Silencers, gearboxes and vehicles come from the family parts
+(`parts/`); a designed engine has the default voicing only.
+
+An engine file may hold `design:` (the spec, same keys) instead of `engine:`;
+the catalogue loads it through the same function, so every harness runs a
+designed engine. The window (`EngineDesignerWindow`) shows the derived values
+and their rules as the spec changes; *Advanced* adds firing order, crank
+offsets, W bank angles and setting any value by hand. *Build and run* saves the
+engine under *My engines*. `EngineLab.EngineDesign` checks it.
 
 ### Live exhaust changes
 

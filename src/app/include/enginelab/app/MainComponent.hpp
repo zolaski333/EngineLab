@@ -6,6 +6,7 @@
 #include <enginelab/app/DashboardModel.hpp>
 #include <enginelab/app/EcuTunerWindow.hpp>
 #include <enginelab/app/EngineViewport.hpp>
+#include <enginelab/app/EngineDesignerWindow.hpp>
 #include <enginelab/app/ExhaustDesignerWindow.hpp>
 #include <enginelab/app/ReadoutStrip.hpp>
 #include <enginelab/app/SidePanel.hpp>
@@ -96,11 +97,10 @@ private:
     void saveEngine();
     void saveEngineAs();
     void confirmSaveAs(const juce::String& name);
-    /** "New engine...": a recipe over a base engine (see buildEngine()). */
-    void showEngineBuilder();
-    void fillEngineBuilder(int baseIndex);
-    void buildEngineFromDialog(int baseIndex, const juce::String& name, const juce::StringArray& numbers,
-                               int aspiration, int turbochargers);
+    /** "New engine...": an engine designed from nothing (EngineDesignerWindow). */
+    void showEngineDesigner();
+    /** Runs and saves a designed engine; false (with a message) if its name is taken. */
+    bool runDesignedEngine(const EngineConfig& designed);
     void writeSavedEngine(const std::string& name, const std::filesystem::path& file);
     void deleteSavedEngine();
     void removeSavedEngine(const std::filesystem::path& file);
@@ -265,7 +265,7 @@ private:
     std::unique_ptr<juce::AlertWindow> configEditor_;
     std::unique_ptr<juce::AlertWindow> keyBindingsEditor_;
     std::unique_ptr<juce::AlertWindow> saveDialog_;
-    std::unique_ptr<juce::AlertWindow> builderDialog_;
+    std::unique_ptr<EngineDesignerWindow> engineDesignerWindow_;
     std::unique_ptr<EcuTunerWindow> ecuTunerWindow_;
     std::unique_ptr<ExhaustDesignerWindow> exhaustDesignerWindow_;
     std::unique_ptr<AudioWorkshopWindow> audioWorkshopWindow_;

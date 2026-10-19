@@ -7,6 +7,20 @@ file formats, always with an in-memory migration).
 
 ## [Unreleased]
 
+### Added
+
+- **New engine… designs an engine from nothing**: say what it is (four- or
+  two-stroke, petrol or diesel, what it is built for, inline, V, flat, radial
+  or W, any number of cylinders, bore and stroke or a displacement, natural,
+  turbocharged or supercharged) and every other value follows, each shown with
+  the rule behind it. *Advanced* sets the firing order, an uneven crank, a W's
+  bank angles or any value by hand. An engine file can hold such a design.
+
+### Removed
+
+- The old *New engine…* that changed the size of an existing engine: the
+  designer replaces it.
+
 ## [0.3.1] — 2026-10-18
 
 The tag `v0.3.0` exists but 0.3.0 was never published: its release build

@@ -628,16 +628,6 @@ target_link_libraries(EngineLabCalibrationEditingTests PRIVATE EngineLab::Calibr
 enginelab_set_warnings(EngineLabCalibrationEditingTests)
 add_test(NAME EngineLab.CalibrationEditing COMMAND EngineLabCalibrationEditingTests)
 
-add_executable(EngineLabEngineBuilderTests EngineBuilderTests.cpp)
-target_link_libraries(EngineLabEngineBuilderTests PRIVATE
-    EngineLab::Foundation EngineLab::Calibration EngineLab::Events EngineLab::Physics EngineLab::Ecu
-    EngineLab::Exhaust EngineLab::Simulation)
-if(MSVC)
-    target_link_options(EngineLabEngineBuilderTests PRIVATE /STACK:8388608)
-endif()
-enginelab_set_warnings(EngineLabEngineBuilderTests)
-add_test(NAME EngineLab.EngineBuilder COMMAND EngineLabEngineBuilderTests)
-
 add_executable(EngineLabTwoStrokeTests TwoStrokeTests.cpp)
 target_link_libraries(EngineLabTwoStrokeTests PRIVATE
     EngineLab::Foundation EngineLab::Calibration EngineLab::Events EngineLab::Physics EngineLab::Ecu
@@ -655,3 +645,14 @@ target_link_libraries(EngineLabCatalogRoundTripTests PRIVATE
 target_compile_definitions(EngineLabCatalogRoundTripTests PRIVATE ENGINELAB_CATALOG_ROOT="${CMAKE_SOURCE_DIR}")
 enginelab_set_warnings(EngineLabCatalogRoundTripTests)
 add_test(NAME EngineLab.CatalogRoundTrip COMMAND EngineLabCatalogRoundTripTests)
+
+add_executable(EngineLabEngineDesignTests EngineDesignTests.cpp)
+target_link_libraries(EngineLabEngineDesignTests PRIVATE
+    EngineLab::Foundation EngineLab::Calibration EngineLab::Events EngineLab::Physics EngineLab::Ecu
+    EngineLab::Exhaust EngineLab::Simulation EngineLab::Catalog)
+target_compile_definitions(EngineLabEngineDesignTests PRIVATE ENGINELAB_CATALOG_ROOT="${CMAKE_SOURCE_DIR}")
+if(MSVC)
+    target_link_options(EngineLabEngineDesignTests PRIVATE /STACK:8388608)
+endif()
+enginelab_set_warnings(EngineLabEngineDesignTests)
+add_test(NAME EngineLab.EngineDesign COMMAND EngineLabEngineDesignTests)

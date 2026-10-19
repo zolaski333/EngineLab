@@ -28,7 +28,8 @@ struct BalanceCylinder final {
  * counterweights (a rotating primary can be cancelled by them, an oscillating
  * one cannot). Amplitudes over a turn: forces in units of one cylinder's
  * m r w^2, couples in m r w^2 x cylinder pitch, measured about the cylinders'
- * axial centroid.
+ * axial centroid. Each order is a sum of sinusoids of one frequency, so its
+ * peak is exact (the largest singular value of its two phasor vectors).
  */
 struct CrankBalance final {
     double primaryForce { 0.0 };
@@ -53,21 +54,27 @@ struct CrankBalance final {
 [[nodiscard]] CrankBalance analyseCrankBalance(const EngineConfig& config);
 
 struct FiringOrderCandidate final {
-    /** Cylinder ids in firing order, starting with 1. */
+    /** Cylinder ids (1-based index into the cylinders given) in firing order,
+     *  starting with 1. */
     std::vector<std::uint32_t> order;
     CrankBalance balance;
-    /** Successive firings of neighbouring cylinders (feeds and bearings
+    /** Successive firings of axial neighbours on one bank (feeds and bearings
      *  are shared there); fewer is better at equal balance. */
     std::uint32_t adjacentFirings { 0 };
 };
 
 /**
- * Even-firing inline cranks for `cylinderCount` cylinders, best balanced first:
- * every firing order starting with cylinder 1 places the pins (firing k at
- * k x cycle / N), ranked by primary + secondary couple, then by adjacent
- * firings. A crank and its mirror both appear. Empty above 9 cylinders, where
- * the enumeration is too long (8! orders at 9).
+ * Even-firing orders for cylinders whose bank and axial position are given
+ * (their tdcDegrees are ignored): firing k comes k x cycle / N after the first.
+ * Ranked by twice the free forces plus the couples, then by adjacent firings.
+ * Every order is tried up to 8 cylinders; above, a deterministic local search
+ * (pairwise swaps from several regular starting orders) keeps the best it
+ * finds, which is not proven optimal. A crank and its mirror both appear.
  */
+[[nodiscard]] std::vector<FiringOrderCandidate> evenFiringOrders(
+    const std::vector<BalanceCylinder>& cylinders, double cycleDegrees, std::size_t maxCandidates);
+
+/** evenFiringOrders() for `cylinderCount` inline cylinders one pitch apart. */
 [[nodiscard]] std::vector<FiringOrderCandidate> inlineFiringOrders(
     std::uint32_t cylinderCount, EngineCycle cycle, double rodRatio, std::size_t maxCandidates);
 

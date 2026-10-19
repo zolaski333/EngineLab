@@ -18,7 +18,14 @@ consult, not a set of instructions.
 The only place where the priority is written. Do not work on anything else
 without the owner's explicit agreement.
 
-**Milestone 1 — the sound of the CP2 (MT-07, Arrow exhaust).**
+**Now (owner, 2026-10-19): the engine builder from zero.** Any piston engine
+(four- or two-stroke, petrol or diesel, any layout) from a short description,
+with no base engine; simple and advanced modes; the base-copy builder goes.
+Phases: spec + derived values with provenance, crank generator, generated
+intake/exhaust, offline auto-calibration with a real-time gate, wizard UI.
+Proof: catalogue engines rebuilt from their datasheet (journal 2026-10-18).
+
+**Then, milestone 1 — the sound of the CP2 (MT-07, Arrow exhaust).**
 
 1. Reference recordings made by the owner, at a known engine speed
    (protocol: `docs/recording-protocol-cp2.md`).

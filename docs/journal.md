@@ -5,6 +5,17 @@ measured, how, and what was not. Anything that becomes a lasting rule goes into
 `.claude/CLAUDE.md`. Earlier history lives in the `archive/docs-2026-09` git tag
 (`docs/archive/`).
 
+## 2026-10-19 — Builder phases 1-3: the catalogue rebuilt from datasheets alone
+
+- `designEngine()` (catalog): cycle, fuel, use, layout, cylinders, bore x stroke (or litres), induction -> a whole engine; each value derived by a rule fitted to the catalogue, or set by key (its rule kept). A file may hold `design:` instead of `engine:`, so every harness runs designed engines.
+- Rebuild: the 15 distinct catalogue engines as datasheet specs only (size, layout, use, boost, firing order or crank offsets). Dyno `--step 1000`, peak torque design / catalogue 0.88-1.18 (median 1.04): K20A 244/236, LS3 718/645, EJ25 372/424, CP4 104/116, Harley 212/188, flat six 406/344 N.m.
+- Power first ran high where the derived redline was (sport car 23.5 m/s: 2JZ 8,200 rpm vs 7,200, 349 vs 276 kW). Refit: sport car 22.0 m/s, boosted petrol 1.5 lower. Then 2JZ 312, EJ25 267, I5 297, flat six 289 kW (catalogue 276/235/283/203). Not refitted further: 15 engines are the whole fitting set.
+- Two-stroke on the four-stroke 4-2-1 part: RD350 design 13.5 kW at 9,000 rpm. With a generated expansion chamber per cylinder (tuned length 500 x exhaust duration / 12 n, Blair; RD350LC proportions): 36.1 kW (catalogue 34.2, Yamaha 35).
+- Crank: V/flat/W banks, W bank angles as given (W16 +-37.5/+-52.5); a radial's TDCs follow its single throw (an even-count radial cannot fire evenly). With no order given, the best balanced one is searched.
+- Correction to 2026-10-18: the W16 had no banks, so it loaded as one bank at 0 deg (a 16 in line); its idle and real-time figures are not a W's.
+- Real time (free-run, audio + gas view, one run each): 13 designs 1.26 (LS3) to 2.88 (CP2); catalogue 1.20-2.83. Merlin and radial designs INVALID (leveler, limiter, clamp): outlet jet 1,640 / 920 Pa vs 1.5 Pa. Not the voicing (catalogue Merlin's: same); the stack lip, 108 mm from "1.1 x collector" vs the part's 140. Lip 2.7 x stack, radial on `radial_collector`: valid, 1.29 / 1.91, jet 0.3 / 0.7 Pa.
+- Not measured: sound of any design against its catalogue twin, idle of all 15, transients.
+
 ## 2026-10-18 — Builder phase 0: eight engines written with no base
 
 - Question: what breaks when an engine is described from nothing? Eight files in `tools/torture-engines/engines/` (I7 petrol, single, flat twin, V10 72 deg, V16, I7 diesel = TDI x 7/4, W16 as four `bank_offset_deg` banks, two-stroke triple = RD350 x 3/2). Catalogue root = that folder plus `parts/` and `voicing/default.yaml` copied beside `engines/`.
